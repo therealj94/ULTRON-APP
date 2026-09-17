@@ -841,16 +841,23 @@ app.post('/api/qwen/chat', async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
 
   const send = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (!res.writableEnded) {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    }
   };
 
   send('start', { mode, conversationId, toolCall, model: 'Qwen 3.8 27B' });
 
   const ac = new AbortController();
-  req.on('close', () => ac.abort());
+  // Only abort when the *response* is closed by the client mid-stream.
+  // req 'close' fires too early behind Render/Cloudflare after the body is read.
+  res.on('close', () => {
+    if (!res.writableEnded) ac.abort();
+  });
 
   let full = '';
   try {
