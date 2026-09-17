@@ -1032,7 +1032,7 @@ app.post('/api/vision/analyze', async (req, res) => {
   });
 });
 
-/** STT para app nativa (mic siempre-on): audio base64 → texto vía Gemini. */
+/** STT para app nativa (mic siempre-on): audio base64 → ElevenLabs Scribe (o Gemini). */
 app.post('/api/stt/transcribe', async (req, res) => {
   const { audioBase64, mimeType, language } = req.body || {};
   if (!audioBase64 || typeof audioBase64 !== 'string') {
@@ -1047,8 +1047,34 @@ app.post('/api/stt/transcribe', async (req, res) => {
 
   let text = '';
   let modelUsed = 'none';
+  const elevenKey = VAULT_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '';
 
-  if (ai) {
+  if (elevenKey) {
+    try {
+      const bin = Buffer.from(clean, 'base64');
+      const form = new FormData();
+      form.append('model_id', 'scribe_v2');
+      form.append('language_code', (language || 'es').slice(0, 2));
+      form.append('file', new Blob([bin], { type: mime }), 'chunk.m4a');
+      const sttRes = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+        method: 'POST',
+        headers: { 'xi-api-key': elevenKey },
+        body: form as any,
+      });
+      if (sttRes.ok) {
+        const data = (await sttRes.json()) as { text?: string; transcript?: string };
+        text = String(data.text || data.transcript || '').trim();
+        modelUsed = 'ElevenLabs Scribe';
+      } else {
+        const errTxt = await sttRes.text();
+        console.warn('[STT ElevenLabs]', sttRes.status, errTxt.slice(0, 200));
+      }
+    } catch (err: any) {
+      console.warn('[STT ElevenLabs]', err.message);
+    }
+  }
+
+  if (!text && ai) {
     try {
       const stt = await ai.models.generateContent({
         model: 'gemini-3.6-flash',
@@ -1072,11 +1098,13 @@ app.post('/api/stt/transcribe', async (req, res) => {
     } catch (err: any) {
       console.warn('[STT Gemini]', err.message);
     }
-  } else {
+  }
+
+  if (!text && !elevenKey && !ai) {
     return res.json({
       text: '',
       model: 'unavailable',
-      note: 'Configura GEMINI_API_KEY para STT nativo',
+      note: 'Configura ELEVENLABS_API_KEY o GEMINI_API_KEY para STT nativo',
     });
   }
 
