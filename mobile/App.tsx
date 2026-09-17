@@ -7,35 +7,47 @@ import {
   ActivityIndicator,
   Platform,
   PermissionsAndroid,
+  Image,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const ULTRON_URL =
   (Constants.expoConfig?.extra as { ultronUrl?: string } | undefined)?.ultronUrl ||
   'https://ultron-looi-desk.onrender.com';
 
 async function requestAndroidPermissions() {
-  if (Platform.OS !== 'android') return;
+  if (Platform.OS !== 'android') return true;
   try {
-    await PermissionsAndroid.requestMultiple([
+    const result = await PermissionsAndroid.requestMultiple([
       PermissionsAndroid.PERMISSIONS.CAMERA,
       PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
     ]);
+    const cam = result[PermissionsAndroid.PERMISSIONS.CAMERA];
+    const mic = result[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO];
+    return (
+      cam === PermissionsAndroid.RESULTS.GRANTED &&
+      mic === PermissionsAndroid.RESULTS.GRANTED
+    );
   } catch {
-    // La WebView pedirá de nuevo al usar mic/cámara
+    return false;
   }
 }
 
 export default function App() {
   const [loading, setLoading] = useState(true);
   const [ready, setReady] = useState(false);
+  const [permsOk, setPermsOk] = useState(false);
+  const webRef = useRef<WebView>(null);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
-      await requestAndroidPermissions();
-      if (mounted) setReady(true);
+      const ok = await requestAndroidPermissions();
+      if (mounted) {
+        setPermsOk(ok);
+        setReady(true);
+      }
     })();
     return () => {
       mounted = false;
@@ -47,9 +59,10 @@ export default function App() {
       <View style={styles.root}>
         <StatusBar style="light" hidden />
         <View style={styles.boot}>
-          <ActivityIndicator color="#3EC9D6" size="large" />
+          <Image source={require('./assets/icon.png')} style={styles.logo} />
+          <ActivityIndicator color="#00E5FF" size="large" />
           <Text style={styles.bootText}>ULTRON FP</Text>
-          <Text style={styles.bootSub}>Preparando permisos…</Text>
+          <Text style={styles.bootSub}>Preparando cámara y micrófono…</Text>
         </View>
       </View>
     );
@@ -59,6 +72,7 @@ export default function App() {
     <View style={styles.root}>
       <StatusBar style="light" hidden />
       <WebView
+        ref={webRef}
         source={{ uri: ULTRON_URL }}
         style={styles.web}
         allowsInlineMediaPlayback
@@ -72,13 +86,34 @@ export default function App() {
         mixedContentMode="always"
         geolocationEnabled={false}
         setSupportMultipleWindows={false}
-        userAgent={`ULTRON-FP-Android/${Constants.expoConfig?.version || '1.0'} WebView`}
+        allowsProtectedMedia
+        // @ts-expect-error RN WebView Android media permission hook
+        onPermissionRequest={(e: any) => {
+          // Auto-grant camera/mic inside WebView when OS already approved
+          try {
+            e?.nativeEvent?.request?.grant?.(e.nativeEvent.resources);
+          } catch {
+            /* older RN WebView */
+          }
+        }}
+        userAgent={`ULTRON-FP-Android/${Constants.expoConfig?.version || '1.1'} WebView`}
+        injectedJavaScriptBeforeContentLoaded={`
+          (function(){
+            try {
+              window.__ULTRON_NATIVE__ = { permsOk: ${permsOk ? 'true' : 'false'}, platform: 'android' };
+            } catch(e) {}
+          })();
+          true;
+        `}
       />
       {loading && (
         <View style={styles.boot}>
-          <ActivityIndicator color="#3EC9D6" size="large" />
+          <Image source={require('./assets/icon.png')} style={styles.logo} />
+          <ActivityIndicator color="#00E5FF" size="large" />
           <Text style={styles.bootText}>ULTRON FP</Text>
-          <Text style={styles.bootSub}>Conectando desk…</Text>
+          <Text style={styles.bootSub}>
+            {permsOk ? 'Conectando desk…' : 'Concede cámara/mic y reabre la app'}
+          </Text>
         </View>
       )}
     </View>
@@ -86,17 +121,23 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#07090c' },
-  web: { flex: 1, backgroundColor: '#07090c' },
+  root: { flex: 1, backgroundColor: '#000000' },
+  web: { flex: 1, backgroundColor: '#000000' },
   boot: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#07090c',
+    backgroundColor: '#000000',
     gap: 10,
   },
+  logo: {
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    marginBottom: 8,
+  },
   bootText: {
-    color: '#E8EEF4',
+    color: '#E8FBFF',
     fontSize: 18,
     letterSpacing: 6,
     fontWeight: '700',
@@ -105,5 +146,7 @@ const styles = StyleSheet.create({
     color: '#8B9AAB',
     fontSize: 12,
     letterSpacing: 1,
+    textAlign: 'center',
+    paddingHorizontal: 24,
   },
 });

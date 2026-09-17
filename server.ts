@@ -2,6 +2,8 @@ import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI } from '@google/genai';
@@ -361,6 +363,79 @@ app.get('/api/tts/status', async (_req, res) => {
   const cfg = ttsNodeStatus();
   const salud = await ttsSalud();
   res.json({ ...cfg, online: salud.ok, detail: salud.detail || { error: salud.error } });
+});
+
+const execFileAsync = promisify(execFile);
+const TTS_INSTANCE_ID = process.env.ULTRON_TTS_INSTANCE_ID || 'i-02653feadc919d3a4';
+
+async function awsEc2Json(args: string[]) {
+  const { accessKeyId, secretAccessKey } = requireAwsCredentials();
+  const { stdout } = await execFileAsync(
+    'aws',
+    ['ec2', ...args, '--region', AWS_DEFAULT_REGION, '--output', 'json'],
+    {
+      env: {
+        ...process.env,
+        AWS_ACCESS_KEY_ID: accessKeyId,
+        AWS_SECRET_ACCESS_KEY: secretAccessKey,
+        AWS_DEFAULT_REGION,
+      },
+      timeout: 25_000,
+      maxBuffer: 2_000_000,
+    }
+  );
+  return JSON.parse(stdout || '{}');
+}
+
+/** Estado del nodo T4 dedicado a Qwen3-TTS (nunca A10G / Playwright). */
+app.get('/api/aws/tts-node', async (_req, res) => {
+  try {
+    const data = await awsEc2Json([
+      'describe-instances',
+      '--instance-ids',
+      TTS_INSTANCE_ID,
+    ]);
+    const inst = data?.Reservations?.[0]?.Instances?.[0];
+    if (!inst) {
+      return res.status(404).json({ error: 'Instancia TTS no encontrada', instanceId: TTS_INSTANCE_ID });
+    }
+    const publicIp = inst.PublicIpAddress || null;
+    const state = inst.State?.Name || 'unknown';
+    const suggestedUrl = publicIp ? `http://${publicIp}:8790` : null;
+    res.json({
+      ok: true,
+      instanceId: TTS_INSTANCE_ID,
+      state,
+      publicIp,
+      privateIp: inst.PrivateIpAddress || null,
+      instanceType: inst.InstanceType,
+      suggestedUltronTtsUrl: suggestedUrl,
+      note: 'Define ULTRON_TTS_URL con suggestedUltronTtsUrl cuando state=running',
+      proxy: ttsNodeStatus(),
+    });
+  } catch (e: any) {
+    res.status(e.message?.includes('Faltan AWS') ? 503 : 500).json({
+      error: e.message || String(e),
+      instanceId: TTS_INSTANCE_ID,
+    });
+  }
+});
+
+/** Arranca la T4 TTS si está stopped (requiere ec2:StartInstances). */
+app.post('/api/aws/tts-node/start', async (_req, res) => {
+  try {
+    await awsEc2Json(['start-instances', '--instance-ids', TTS_INSTANCE_ID]);
+    res.json({
+      ok: true,
+      instanceId: TTS_INSTANCE_ID,
+      message: 'StartInstances enviado. Espera 1-2 min y consulta GET /api/aws/tts-node',
+    });
+  } catch (e: any) {
+    res.status(e.message?.includes('Faltan AWS') ? 503 : 500).json({
+      error: e.message || String(e),
+      instanceId: TTS_INSTANCE_ID,
+    });
+  }
 });
 
 app.get('/api/tts/normalize', (req, res) => {

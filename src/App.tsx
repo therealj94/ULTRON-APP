@@ -69,6 +69,7 @@ export default function App() {
   const [speakerEnabled, setSpeakerEnabled] = useState<boolean>(true);
   const [soundFxEnabled, setSoundFxEnabled] = useState<boolean>(true);
   const [visionEnabled, setVisionEnabled] = useState<boolean>(true); // cámara ON para que la AI vea
+  const [cameraOnline, setCameraOnline] = useState(false);
   const [resetTrigger, setResetTrigger] = useState<number>(0);
 
   // ElevenLabs Voice Configuration — Nexo by default
@@ -243,16 +244,21 @@ export default function App() {
   // Bienvenida animada (logo) tras login
   useEffect(() => {
     if (!sessionReady || bootDoneRef.current) return;
+    setDeskPresence('stay');
     setVisionEnabled(true);
+    setFace('IDLE');
+    listenModeRef.current = 'wake';
     const timer = setTimeout(() => {
       if (bootDoneRef.current) return;
       bootDoneRef.current = true;
       setIsBooting(false);
       playSfx('boot', true);
+      const camHint = cameraOnline
+        ? 'Cámara en vivo.'
+        : 'Activa la cámara si el permiso está pendiente.';
       vocalize(
-        `Hola ${currentUser.name || ''}. ULTRON en línea. Cámara lista. Di hey Ultron o toca el micrófono.`
+        `Hola ${currentUser.name || ''}. ULTRON en línea. ${camHint} Di hey Ultron o toca el micrófono.`
       );
-      // Ofrecer conocer si es primera sesión del día
       try {
         const key = `ultron_conocer_offer_${new Date().toISOString().slice(0, 10)}`;
         if (!localStorage.getItem(key)) {
@@ -261,7 +267,9 @@ export default function App() {
             vocalize('Si quieres, activa modo Conocer en ajustes y te haré preguntas para recordarte mejor.', 'HAPPY');
           }, 4500);
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }, 2800);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -535,6 +543,7 @@ export default function App() {
       handleSleep();
     } else if (p === 'stay') {
       setFace('IDLE');
+      setVisionEnabled(true);
       setMicEnabled(false);
       setCommandListening(false);
       listenModeRef.current = 'wake';
@@ -542,6 +551,7 @@ export default function App() {
     } else {
       setMode('EXPLORER');
       setFace('HAPPY');
+      setVisionEnabled(true);
       setCommandListening(false);
       listenModeRef.current = 'wake';
       vocalize('Modo explore.');
@@ -1340,6 +1350,7 @@ export default function App() {
           onTriggerDrink={handleTriggerDrink}
           onTriggerWave={handleTriggerWave}
           onTriggerBlaster={handleTriggerCombat}
+          onCameraStatus={(ok) => setCameraOnline(ok)}
         />
 
         {/* Slide-Up Dock Drawer */}
