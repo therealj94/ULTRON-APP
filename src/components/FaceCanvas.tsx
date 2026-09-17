@@ -274,7 +274,6 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const timer = setTimeout(() => {
         drinkRef.current.isActive = false;
         onDrinkComplete?.();
-        onSpeak('¡Electrolitos corporativos al 100%! Muy refrescante.');
       }, 3400);
       return () => clearTimeout(timer);
     } else {
@@ -292,7 +291,6 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const timer = setTimeout(() => {
         waveRef.current.isActive = false;
         onWaveComplete?.();
-        onSpeak('¡Hola! Saludos cordiales de Ultron.');
       }, 2800);
       return () => clearTimeout(timer);
     } else {
@@ -439,15 +437,20 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const targetVisor = S.hasVisor ? 1 : 0;
       A.visorDrop += (targetVisor - A.visorDrop) * Math.min(1, dt * 10);
 
-      // Autonomous Blink Timer
+      // Autonomous Blink Timer — más calmado; casi no parpadea al hablar
       if (S.face !== 'SLEEPING') {
         A.next -= dt;
         if (A.next <= 0 && !A.blinking) {
-          const r = Math.random();
-          if (r < 0.18) scheduleBlink('double');
-          else if (r < 0.28) scheduleBlink('wink');
-          else scheduleBlink('single');
-          A.next = 2.2 + Math.random() * 3.5;
+          if (S.face === 'SPEAKING') {
+            scheduleBlink('single');
+            A.next = 4.5 + Math.random() * 3.5;
+          } else {
+            const r = Math.random();
+            if (r < 0.12) scheduleBlink('double');
+            else if (r < 0.18) scheduleBlink('wink');
+            else scheduleBlink('single');
+            A.next = 3.2 + Math.random() * 4.2;
+          }
         }
       }
 
@@ -657,65 +660,65 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     };
   }, []);
 
-  // Color Palette per Mode (High-contrast OLED palette inspired by LOOI & Boardroom Tablets)
+  // Color Palette per Mode — soft desk LOOI (menos neón)
   function getThemeColors(m: Mode) {
     switch (m) {
       case 'GOLD':
         return {
-          primary: '#F5C542',
-          glow: '#FFE17D',
-          core: '#FFF4C2',
-          accent: '#FFB800',
-          dark: '#3D2800',
+          primary: '#D4A84B',
+          glow: '#E8C878',
+          core: '#F5E6C0',
+          accent: '#C4922E',
+          dark: '#2A1F08',
         };
       case 'CREATIVE':
         return {
-          primary: '#05E1FF',
-          glow: '#67EFFF',
-          core: '#E0FAFF',
-          accent: '#FF4DF0',
-          dark: '#002530',
+          primary: '#3EC9D6',
+          glow: '#7AE4EF',
+          core: '#D8F6FA',
+          accent: '#E07AB5',
+          dark: '#0A1A1E',
         };
       case 'ANALYTICAL':
         return {
-          primary: '#05E1FF',
-          glow: '#4FE4FF',
-          core: '#D8F7FF',
-          accent: '#00FFA3',
-          dark: '#00242E',
+          primary: '#3EC9D6',
+          glow: '#6FDBE6',
+          core: '#D4F3F7',
+          accent: '#5DDEA0',
+          dark: '#0A181C',
         };
       case 'STRATEGIC':
         return {
-          primary: '#05E1FF',
-          glow: '#4AE1FF',
-          core: '#D9F8FF',
-          accent: '#4C82FF',
-          dark: '#001E2B',
+          primary: '#3EC9D6',
+          glow: '#6FDBE6',
+          core: '#D4F3F7',
+          accent: '#6B8CFF',
+          dark: '#0A151C',
         };
       case 'EXPLORER':
         return {
-          primary: '#05E1FF',
-          glow: '#64E5FF',
-          core: '#E3FAFF',
-          accent: '#26C6DA',
-          dark: '#00222B',
+          primary: '#3EC9D6',
+          glow: '#7AE4EF',
+          core: '#D8F6FA',
+          accent: '#4DB8C4',
+          dark: '#0A181C',
         };
       case 'MINING':
         return {
-          primary: '#05E1FF',
-          glow: '#59E3FF',
-          core: '#DDF9FF',
-          accent: '#FF9E2C',
-          dark: '#00222B',
+          primary: '#3EC9D6',
+          glow: '#6FDBE6',
+          core: '#D4F3F7',
+          accent: '#C4922E',
+          dark: '#0A1818',
         };
       case 'GUARDIAN':
       default:
         return {
-          primary: '#05E1FF',
-          glow: '#5CE4FF',
-          core: '#E0F9FF',
-          accent: '#00C8FF',
-          dark: '#001E29',
+          primary: '#3EC9D6',
+          glow: '#7AE4EF',
+          core: '#E2F8FB',
+          accent: '#5DDEA0',
+          dark: '#071014',
         };
     }
   }
@@ -731,7 +734,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     const H = canvas.height;
 
     // Pitch Black OLED Canvas
-    ctx.fillStyle = '#000000';
+    ctx.fillStyle = '#07090c';
     ctx.fillRect(0, 0, W, H);
 
     // Subtle Vignette Glow according to energy
@@ -749,7 +752,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       ctx.globalAlpha = sw.alpha * 0.8;
       ctx.lineWidth = 3;
       ctx.shadowColor = sw.color;
-      ctx.shadowBlur = 16;
+      ctx.shadowBlur = 7;
       ctx.beginPath();
       ctx.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2);
       ctx.stroke();
@@ -859,7 +862,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       ctx.lineWidth = R * 0.18;
       ctx.lineCap = 'round';
       ctx.shadowColor = theme.glow;
-      ctx.shadowBlur = 24;
+      ctx.shadowBlur = 10;
 
       ctx.beginPath();
       // Upward welcoming arc
@@ -912,7 +915,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
 
       ctx.fillStyle = eyeGrad;
       ctx.shadowColor = theme.primary;
-      ctx.shadowBlur = 28;
+      ctx.shadowBlur = 12;
       ctx.beginPath();
       ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
       ctx.fill();
@@ -984,7 +987,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.strokeStyle = theme.primary;
     ctx.lineWidth = R * 0.055;
     ctx.shadowColor = theme.glow;
-    ctx.shadowBlur = 18;
+    ctx.shadowBlur = 8;
     ctx.beginPath();
     ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
     ctx.stroke();
@@ -1025,7 +1028,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   ) {
     ctx.save();
     ctx.strokeStyle = '#000000';
-    ctx.fillStyle = '#000000';
+    ctx.fillStyle = '#07090c';
     ctx.lineWidth = rx * 0.09;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
@@ -1080,7 +1083,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
         ctx.lineTo(0, -rx * 0.1);
         ctx.stroke();
         // Brush bristle tip
-        ctx.fillStyle = '#000000';
+        ctx.fillStyle = '#07090c';
         ctx.beginPath();
         ctx.moveTo(-rx * 0.12, -rx * 0.1);
         ctx.lineTo(rx * 0.12, -rx * 0.1);
@@ -1227,7 +1230,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
 
     // Glowing red drop shadow
     ctx.shadowColor = '#FF2A4D';
-    ctx.shadowBlur = 28;
+    ctx.shadowBlur = 12;
 
     // Outer Futuristic Red Bezel Frame
     ctx.fillStyle = '#CC0D28';
@@ -1278,7 +1281,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.translate(starX, starY);
     ctx.fillStyle = '#FFFFFF';
     ctx.shadowColor = '#FFFFFF';
-    ctx.shadowBlur = 18;
+    ctx.shadowBlur = 8;
 
     // 4-point glittering star
     ctx.beginPath();
@@ -1312,7 +1315,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.fillStyle = theme.primary;
     ctx.lineWidth = R * 0.06;
     ctx.shadowColor = theme.glow;
-    ctx.shadowBlur = 20;
+    ctx.shadowBlur = 9;
 
     switch (m) {
       case 'MINING': {
@@ -1553,7 +1556,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.lineWidth = baseR * 0.06;
     ctx.lineCap = 'round';
     ctx.shadowColor = color;
-    ctx.shadowBlur = 16;
+    ctx.shadowBlur = 7;
 
     const mw = baseR * 0.85;
 
@@ -1604,7 +1607,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.save();
     if (m === 'CREATIVE') {
       // Color paint specks floating around
-      const colors = ['#05E1FF', '#FF3BB0', '#FFD800', '#00FFA3'];
+      const colors = ['#3EC9D6', '#FF3BB0', '#FFD800', '#00FFA3'];
       for (let i = 0; i < 14; i++) {
         const a = t * 0.4 + i * 0.75;
         const r = R * (1.9 + (i % 3) * 0.3);
@@ -1689,7 +1692,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.stroke();
 
     // Hydraulic piston detail
-    ctx.strokeStyle = '#05E1FF';
+    ctx.strokeStyle = '#3EC9D6';
     ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.moveTo(-15 * (1 - level), -5);
@@ -1751,7 +1754,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     if (firingThisSide) {
       ctx.fillStyle = '#FFFFFF';
       ctx.shadowColor = '#FF4400';
-      ctx.shadowBlur = 30;
+      ctx.shadowBlur = 12;
       ctx.beginPath();
       ctx.arc(50 + recoil, -14, 14, 0, Math.PI * 2);
       ctx.arc(50 + recoil, 13, 14, 0, Math.PI * 2);
@@ -1790,10 +1793,10 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.globalAlpha = Math.min(1, progress * 1.2);
 
     // Holographic Cup Body (Tapered tumbler glass)
-    ctx.strokeStyle = '#05E1FF';
+    ctx.strokeStyle = '#3EC9D6';
     ctx.lineWidth = 2.5;
-    ctx.shadowColor = '#05E1FF';
-    ctx.shadowBlur = 18;
+    ctx.shadowColor = '#3EC9D6';
+    ctx.shadowBlur = 8;
 
     // Glass Tumbler
     ctx.beginPath();
@@ -1838,7 +1841,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const by = 35 - ((t * 25 + b * 14) % 65);
       const bx = Math.sin(b * 3 + t * 4) * 12;
       ctx.fillStyle = '#FFFFFF';
-      ctx.shadowColor = '#05E1FF';
+      ctx.shadowColor = '#3EC9D6';
       ctx.shadowBlur = 8;
       ctx.beginPath();
       ctx.arc(bx, by, 1.8 + (b % 3) * 0.8, 0, Math.PI * 2);
@@ -1864,7 +1867,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.stroke();
 
     // "ELECTRO-DRINK" hologram label badge
-    ctx.fillStyle = '#05E1FF';
+    ctx.fillStyle = '#3EC9D6';
     ctx.font = 'bold 8px monospace';
     ctx.textAlign = 'center';
     ctx.fillText('REFRESH · 100%', 0, 24);
@@ -1903,7 +1906,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.stroke();
 
     // Glowing cyan cyber conduit
-    ctx.strokeStyle = '#05E1FF';
+    ctx.strokeStyle = '#3EC9D6';
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(30, 42);
@@ -1912,9 +1915,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
 
     // Palm base plate
     ctx.fillStyle = '#0F172A';
-    ctx.strokeStyle = '#05E1FF';
+    ctx.strokeStyle = '#3EC9D6';
     ctx.lineWidth = 2;
-    ctx.shadowColor = '#05E1FF';
+    ctx.shadowColor = '#3EC9D6';
     ctx.shadowBlur = 14;
     ctx.beginPath();
     ctx.roundRect(-14, -10, 28, 26, 8);
@@ -1922,7 +1925,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.stroke();
 
     // Center repulsor palm beacon (pulsing friendly greeting light)
-    ctx.fillStyle = '#05E1FF';
+    ctx.fillStyle = '#3EC9D6';
     ctx.beginPath();
     ctx.arc(0, 3, 5 + Math.sin(t * 10) * 1.5, 0, Math.PI * 2);
     ctx.fill();
@@ -1944,7 +1947,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       ctx.save();
       ctx.translate(fx, -10);
       ctx.fillStyle = '#0F172A';
-      ctx.strokeStyle = '#05E1FF';
+      ctx.strokeStyle = '#3EC9D6';
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.roundRect(-2.5, -fh + fBend, 5, fh, 3);
@@ -1964,7 +1967,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.translate(14, 0);
     ctx.rotate(0.5);
     ctx.fillStyle = '#0F172A';
-    ctx.strokeStyle = '#05E1FF';
+    ctx.strokeStyle = '#3EC9D6';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.roundRect(-2.5, -12, 5, 12, 3);
@@ -1976,8 +1979,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     for (let s = 0; s < 4; s++) {
       const sa = t * 3 + s * 1.57;
       const sr = 24 + Math.sin(t * 4 + s) * 6;
-      ctx.fillStyle = '#05E1FF';
-      ctx.shadowColor = '#05E1FF';
+      ctx.fillStyle = '#3EC9D6';
+      ctx.shadowColor = '#3EC9D6';
       ctx.shadowBlur = 10;
       ctx.beginPath();
       ctx.arc(Math.cos(sa) * sr, Math.sin(sa) * sr - 10, 2, 0, Math.PI * 2);
@@ -2011,7 +2014,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       ctx.strokeStyle = '#FF1133';
       ctx.lineWidth = 6;
       ctx.shadowColor = '#FF0033';
-      ctx.shadowBlur = 20;
+      ctx.shadowBlur = 9;
       ctx.beginPath();
       ctx.moveTo(-len, 0);
       ctx.lineTo(0, 0);
@@ -2091,9 +2094,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const marginY = H * 0.08;
       const bracketLen = Math.min(W, H) * 0.08;
 
-      ctx.strokeStyle = '#05E1FF';
+      ctx.strokeStyle = '#3EC9D6';
       ctx.lineWidth = 3;
-      ctx.shadowColor = '#05E1FF';
+      ctx.shadowColor = '#3EC9D6';
       ctx.shadowBlur = 12;
 
       // Top-Left bracket
@@ -2130,13 +2133,13 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       ctx.strokeRect(W / 2 - 30, H / 2 - 30, 60, 60);
 
       // Center crosshair dot
-      ctx.fillStyle = '#05E1FF';
+      ctx.fillStyle = '#3EC9D6';
       ctx.beginPath();
       ctx.arc(W / 2, H / 2, 3, 0, Math.PI * 2);
       ctx.fill();
 
       // Telemetry OSD
-      ctx.fillStyle = '#05E1FF';
+      ctx.fillStyle = '#3EC9D6';
       ctx.font = 'bold 11px monospace';
       ctx.fillText('AF-L · 4K UHD 60FPS · ISO 400 · 1/500s', marginX + 8, marginY + 24);
 

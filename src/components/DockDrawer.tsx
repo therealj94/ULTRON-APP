@@ -9,7 +9,6 @@ import {
   Sun,
   Smartphone,
   Send,
-  Sparkles,
   Cpu,
   Glasses,
   Fingerprint,
@@ -23,6 +22,7 @@ import {
   Cloud,
   HelpCircle,
   RotateCcw,
+  AudioLines,
 } from 'lucide-react';
 import { playSfx } from '../utils/audio';
 
@@ -61,16 +61,12 @@ interface DockDrawerProps {
 }
 
 const QUICK_COMMANDS = [
-  { label: 'Foto 3-2-1', cmd: 'toma una foto' },
-  { label: 'Playwright Web', cmd: 'revisar página web con playwright' },
-  { label: 'Visión Multimodal', cmd: 'analizar imagen o video con visión' },
-  { label: 'Orden Global', cmd: 'consultar cerebro de orden global' },
-  { label: 'Bóveda de APIs', cmd: 'abrir bóveda de ultron fp' },
-  { label: 'Bebida', cmd: 'tomar agua refresco' },
-  { label: 'Saludo', cmd: 'hola ultron saluda' },
-  { label: 'Modo Blaster', cmd: 'activar modo combate' },
-  { label: 'WhatsApp', cmd: 'whatsapp despacho junta directiva' },
-  { label: 'Correo', cmd: 'correo borrador minuta ejecutiva' },
+  { label: 'Foto', cmd: 'toma una foto' },
+  { label: 'Web', cmd: 'revisar página web con playwright' },
+  { label: 'Visión', cmd: 'analizar imagen o video con visión' },
+  { label: 'Orden', cmd: 'consultar cerebro de orden global' },
+  { label: 'Hola', cmd: 'hola ultron saluda' },
+  { label: 'Normal', cmd: 'normalizar sistemas' },
 ];
 
 export const DockDrawer: React.FC<DockDrawerProps> = ({
@@ -115,302 +111,168 @@ export const DockDrawer: React.FC<DockDrawerProps> = ({
     setInputValue('');
   };
 
-  const handleChipClick = (cmd: string) => {
-    playSfx('tap', soundFxEnabled);
-    onSubmitCommand(cmd);
-  };
-
   return (
     <div
       id="ultron-dock-drawer"
-      className={`absolute left-0 right-0 bottom-0 z-30 transition-transform duration-300 ease-out px-4 pb-5 pt-3 bg-gradient-to-t from-black via-black/95 to-transparent ${
+      className={`absolute left-0 right-0 bottom-0 z-30 transition-transform duration-300 ease-out px-3 pb-4 pt-2 ${
         isOpen ? 'translate-y-0' : 'translate-y-[115%] pointer-events-none'
       }`}
     >
-      <div className="max-w-2xl mx-auto flex flex-col gap-3">
-        {/* Primary Hardware Controls */}
-        <div className="flex items-center justify-center gap-3">
-          <button
-            type="button"
-            id="dock-btn-mic"
-            onClick={onToggleMic}
-            title={micEnabled ? 'Micrófono activo (escuchando)' : 'Micrófono silenciado'}
-            className={`w-11 h-11 rounded-full flex items-center justify-center border transition-all duration-200 cursor-pointer ${
-              micEnabled
-                ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF] shadow-[0_0_12px_rgba(5,225,255,0.4)]'
-                : 'border-[#05E1FF]/30 bg-black/60 text-[#8FA3B0] hover:text-[#05E1FF]'
-            }`}
-          >
-            {micEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
-          </button>
-
-          <button
-            type="button"
-            id="dock-btn-speaker"
-            onClick={onToggleSpeaker}
-            title={speakerEnabled ? 'Voz sintética activa' : 'Voz silenciada'}
-            className={`w-11 h-11 rounded-full flex items-center justify-center border transition-all duration-200 cursor-pointer ${
-              speakerEnabled
-                ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF] shadow-[0_0_12px_rgba(5,225,255,0.4)]'
-                : 'border-[#05E1FF]/30 bg-black/60 text-[#8FA3B0] hover:text-[#05E1FF]'
-            }`}
-          >
-            {speakerEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
-          </button>
-
-          <button
-            type="button"
-            id="dock-btn-vision"
-            onClick={onToggleVision}
-            title={visionEnabled ? 'Visor de seguimiento biométrico activo' : 'Activar cámara / tracking'}
-            className={`w-11 h-11 rounded-full flex items-center justify-center border transition-all duration-200 cursor-pointer ${
-              visionEnabled
-                ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF] shadow-[0_0_12px_rgba(5,225,255,0.4)]'
-                : 'border-[#05E1FF]/30 bg-black/60 text-[#8FA3B0] hover:text-[#05E1FF]'
-            }`}
-          >
-            <Eye className="w-5 h-5" />
-          </button>
-
-          <button
-            type="button"
-            id="dock-btn-sleep"
-            onClick={onToggleSleep}
-            title={isSleeping ? 'Despertar ULTRON' : 'Poner en reposo'}
-            className={`w-11 h-11 rounded-full flex items-center justify-center border transition-all duration-200 cursor-pointer ${
-              isSleeping
-                ? 'border-[#FFB648] bg-[#FFB648]/20 text-[#FFB648]'
-                : 'border-[#05E1FF]/30 bg-black/60 text-[#8FA3B0] hover:text-[#05E1FF]'
-            }`}
-          >
-            {isSleeping ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
-
-          <button
-            type="button"
-            id="dock-btn-frame"
-            onClick={onToggleKioskFrame}
-            title="Alternar vista soporte de mesa (Stand) / Kiosk pantalla completa"
-            className={`w-11 h-11 rounded-full flex items-center justify-center border transition-all duration-200 cursor-pointer ${
-              isKioskFrame
-                ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF]'
-                : 'border-[#05E1FF]/30 bg-black/60 text-[#8FA3B0] hover:text-[#05E1FF]'
-            }`}
-          >
-            <Smartphone className="w-5 h-5" />
-          </button>
-
-          {onToggleVisor && (
-            <button
-              type="button"
-              id="dock-btn-visor"
-              onClick={onToggleVisor}
-              title={hasVisor ? 'Quitar visor óptico' : 'Equipar visor óptico'}
-              className={`w-11 h-11 rounded-full flex items-center justify-center border transition-all duration-200 cursor-pointer ${
-                hasVisor
-                  ? 'border-[#FF3B5C] bg-[#FF3B5C]/20 text-[#FF3B5C] shadow-[0_0_12px_rgba(255,59,92,0.4)]'
-                  : 'border-[#05E1FF]/30 bg-black/60 text-[#8FA3B0] hover:text-[#FF3B5C]'
-              }`}
-            >
-              <Glasses className="w-5 h-5" />
+      <div className="ui-dock max-w-3xl mx-auto p-4 flex flex-col gap-4">
+        {/* Hardware */}
+        <div>
+          <div className="ui-section-label mb-2">Hardware</div>
+          <div className="flex items-center justify-center gap-2 flex-wrap">
+            <button type="button" id="dock-btn-mic" className={`ui-icon-btn ${micEnabled ? 'ui-icon-btn--on' : ''}`} onClick={onToggleMic} title="Micrófono">
+              {micEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
             </button>
-          )}
-
-          {onOpenVault && (
-            <button
-              type="button"
-              id="dock-btn-vault"
-              onClick={onOpenVault}
-              title="Bóveda Central de APIs · ULTRON FP"
-              className="w-11 h-11 rounded-full flex items-center justify-center border border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF] shadow-[0_0_12px_rgba(5,225,255,0.4)] hover:scale-105 transition-all cursor-pointer"
-            >
-              <ShieldCheck className="w-5 h-5" />
+            <button type="button" id="dock-btn-speaker" className={`ui-icon-btn ${speakerEnabled ? 'ui-icon-btn--on' : ''}`} onClick={onToggleSpeaker} title="Voz">
+              {speakerEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}
             </button>
-          )}
-
-          {onOpenAgenticHarness && (
-            <button
-              type="button"
-              id="dock-btn-harness"
-              onClick={onOpenAgenticHarness}
-              title="Núcleo de Inteligencia y Modos Semánticos"
-              className="w-11 h-11 rounded-full flex items-center justify-center border border-[#05E1FF]/40 bg-[#05E1FF]/10 text-[#05E1FF] hover:border-[#05E1FF] hover:bg-[#05E1FF]/20 transition-all cursor-pointer"
-            >
-              <Cpu className="w-5 h-5" />
+            <button type="button" id="dock-btn-vision" className={`ui-icon-btn ${visionEnabled ? 'ui-icon-btn--on' : ''}`} onClick={onToggleVision} title="Cámara">
+              <Eye className="w-5 h-5" />
             </button>
-          )}
+            <button type="button" id="dock-btn-sleep" className={`ui-icon-btn ${isSleeping ? 'ui-icon-btn--on' : ''}`} onClick={onToggleSleep} title="Reposo">
+              {isSleeping ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+            </button>
+            <button type="button" id="dock-btn-frame" className={`ui-icon-btn ${isKioskFrame ? 'ui-icon-btn--on' : ''}`} onClick={onToggleKioskFrame} title="Kiosk">
+              <Smartphone className="w-5 h-5" />
+            </button>
+            {onToggleVisor && (
+              <button type="button" id="dock-btn-visor" className={`ui-icon-btn ${hasVisor ? 'ui-icon-btn--on' : ''}`} onClick={onToggleVisor} title="Visor">
+                <Glasses className="w-5 h-5" />
+              </button>
+            )}
+            {onResetToNormal && (
+              <button type="button" className="ui-icon-btn" onClick={onResetToNormal} title="Normalizar">
+                <RotateCcw className="w-5 h-5" />
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Secondary Executive Action Toolbar */}
-        <div className="flex items-center justify-center gap-1.5 flex-wrap">
-          {onResetToNormal && (
-            <button
-              type="button"
-              onClick={onResetToNormal}
-              className="px-3 py-1.5 rounded-full border border-emerald-400/50 bg-emerald-400/15 text-emerald-400 hover:bg-emerald-400/25 text-xs font-display font-bold tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_10px_rgba(52,211,153,0.2)]"
-              title="Restaurar a estado normal y disarmar cualquier sistema de defensa"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>NORMALIZAR</span>
-            </button>
-          )}
-
-          {onOpenTutorial && (
-            <button
-              type="button"
-              onClick={onOpenTutorial}
-              className="px-3 py-1.5 rounded-full border border-[#05E1FF]/50 bg-[#05E1FF]/15 text-[#05E1FF] hover:bg-[#05E1FF]/25 text-xs font-display font-bold tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_10px_rgba(5,225,255,0.2)]"
-              title="Abrir guía de uso y tutorial de botones"
-            >
-              <HelpCircle className="w-3.5 h-3.5" />
-              <span>GUÍA & TUTORIAL</span>
-            </button>
-          )}
-
-          {onOpenVault && (
-            <button
-              type="button"
-              onClick={onOpenVault}
-              className="px-3 py-1.5 rounded-full border border-[#05E1FF] bg-[#05E1FF]/15 text-[#05E1FF] hover:bg-[#05E1FF]/25 text-xs font-display font-bold tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_10px_rgba(5,225,255,0.25)]"
-            >
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>BÓVEDA DE APIS</span>
-            </button>
-          )}
-
-          {onOpenCameraCountdown && (
-            <button
-              type="button"
-              onClick={onOpenCameraCountdown}
-              className="px-3 py-1.5 rounded-full border border-[#05E1FF]/40 bg-[#05E1FF]/10 text-[#05E1FF] hover:bg-[#05E1FF]/20 text-xs font-display font-medium tracking-wide flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Camera className="w-3.5 h-3.5" />
-              <span>Cámara 3-2-1</span>
-            </button>
-          )}
-
-          {onOpenPlaywrightBrowser && (
-            <button
-              type="button"
-              onClick={onOpenPlaywrightBrowser}
-              className="px-3 py-1.5 rounded-full border border-[#05E1FF]/40 bg-[#05E1FF]/10 text-[#05E1FF] hover:bg-[#05E1FF]/20 text-xs font-display font-medium tracking-wide flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Globe className="w-3.5 h-3.5" />
-              <span>Explorador Web</span>
-            </button>
-          )}
-
-          {onOpenVisionAnalyzer && (
-            <button
-              type="button"
-              onClick={onOpenVisionAnalyzer}
-              className="px-3 py-1.5 rounded-full border border-[#00FFA3]/40 bg-[#00FFA3]/10 text-[#00FFA3] hover:bg-[#00FFA3]/20 text-xs font-display font-medium tracking-wide flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Eye className="w-3.5 h-3.5" />
-              <span>Visión Neural</span>
-            </button>
-          )}
-
-          {onOpenGlobalOrderBrain && (
-            <button
-              type="button"
-              onClick={onOpenGlobalOrderBrain}
-              className="px-3 py-1.5 rounded-full border border-[#F5C542]/40 bg-[#F5C542]/10 text-[#F5C542] hover:bg-[#F5C542]/20 text-xs font-display font-medium tracking-wide flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>Doctrinas</span>
-            </button>
-          )}
-
-          {onOpenBiometric && (
-            <button
-              type="button"
-              onClick={onOpenBiometric}
-              className="px-3 py-1.5 rounded-full border border-[#00FFA3]/40 bg-[#00FFA3]/10 text-[#00FFA3] hover:bg-[#00FFA3]/20 text-xs font-display font-medium tracking-wide flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Fingerprint className="w-3.5 h-3.5" />
-              <span>Biometría</span>
-            </button>
-          )}
-
-          {onTriggerDrink && (
-            <button
-              type="button"
-              onClick={onTriggerDrink}
-              className="px-3 py-1.5 rounded-full border border-[#00FFA3]/40 bg-[#00FFA3]/10 text-[#00FFA3] hover:bg-[#00FFA3]/20 text-xs font-display font-medium tracking-wide flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Coffee className="w-3.5 h-3.5" />
-              <span>Bebida</span>
-            </button>
-          )}
-
-          {onTriggerWave && (
-            <button
-              type="button"
-              onClick={onTriggerWave}
-              className="px-3 py-1.5 rounded-full border border-[#FFD800]/40 bg-[#FFD800]/10 text-[#FFD800] hover:bg-[#FFD800]/20 text-xs font-display font-medium tracking-wide flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Hand className="w-3.5 h-3.5" />
-              <span>Saludo</span>
-            </button>
-          )}
-
-          {onTriggerCombat && (
-            <button
-              type="button"
-              onClick={onTriggerCombat}
-              className="px-3 py-1.5 rounded-full border border-red-500/50 bg-red-500/15 text-red-400 hover:bg-red-500/25 text-xs font-display font-medium tracking-wide flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <span>Blaster</span>
-            </button>
-          )}
-
-          {onOpenVoices && (
-            <button
-              type="button"
-              onClick={onOpenVoices}
-              className="px-3 py-1.5 rounded-full border border-[#F5C542]/40 bg-[#F5C542]/10 text-[#F5C542] hover:bg-[#F5C542]/20 text-xs font-display font-medium tracking-wide flex items-center gap-1.5 transition-all cursor-pointer"
-            >
-              <Volume2 className="w-3.5 h-3.5" />
-              <span>Voces</span>
-            </button>
-          )}
+        {/* Tools grid — keep all tools, clearer icons */}
+        <div>
+          <div className="ui-section-label mb-2">Herramientas</div>
+          <div className="grid grid-cols-4 sm:grid-cols-6 gap-1">
+            {onOpenAgenticHarness && (
+              <button type="button" id="dock-btn-harness" className="ui-tool" onClick={onOpenAgenticHarness}>
+                <div className="ui-tool__icon"><Cpu className="w-4 h-4" /></div>
+                <span>Harness</span>
+              </button>
+            )}
+            {onOpenVoices && (
+              <button type="button" className="ui-tool" onClick={onOpenVoices}>
+                <div className="ui-tool__icon"><AudioLines className="w-4 h-4" /></div>
+                <span>Voces</span>
+              </button>
+            )}
+            {onOpenVault && (
+              <button type="button" id="dock-btn-vault" className="ui-tool" onClick={onOpenVault}>
+                <div className="ui-tool__icon"><ShieldCheck className="w-4 h-4" /></div>
+                <span>Bóveda</span>
+              </button>
+            )}
+            {onOpenCameraCountdown && (
+              <button type="button" className="ui-tool" onClick={onOpenCameraCountdown}>
+                <div className="ui-tool__icon"><Camera className="w-4 h-4" /></div>
+                <span>Foto</span>
+              </button>
+            )}
+            {onOpenPlaywrightBrowser && (
+              <button type="button" className="ui-tool" onClick={onOpenPlaywrightBrowser}>
+                <div className="ui-tool__icon"><Globe className="w-4 h-4" /></div>
+                <span>Web</span>
+              </button>
+            )}
+            {onOpenVisionAnalyzer && (
+              <button type="button" className="ui-tool" onClick={onOpenVisionAnalyzer}>
+                <div className="ui-tool__icon"><Eye className="w-4 h-4" /></div>
+                <span>Visión</span>
+              </button>
+            )}
+            {onOpenGlobalOrderBrain && (
+              <button type="button" className="ui-tool" onClick={onOpenGlobalOrderBrain}>
+                <div className="ui-tool__icon"><BookOpen className="w-4 h-4" /></div>
+                <span>Orden</span>
+              </button>
+            )}
+            {onOpenCloudModal && (
+              <button type="button" className="ui-tool" onClick={onOpenCloudModal}>
+                <div className="ui-tool__icon"><Cloud className="w-4 h-4" /></div>
+                <span>Cloud</span>
+              </button>
+            )}
+            {onOpenBiometric && (
+              <button type="button" className="ui-tool" onClick={onOpenBiometric}>
+                <div className="ui-tool__icon"><Fingerprint className="w-4 h-4" /></div>
+                <span>Acceso</span>
+              </button>
+            )}
+            {onOpenPhotos && (
+              <button type="button" className="ui-tool" onClick={onOpenPhotos}>
+                <div className="ui-tool__icon"><Camera className="w-4 h-4" /></div>
+                <span>Galería</span>
+              </button>
+            )}
+            {onTriggerWave && (
+              <button type="button" className="ui-tool" onClick={onTriggerWave}>
+                <div className="ui-tool__icon"><Hand className="w-4 h-4" /></div>
+                <span>Saludo</span>
+              </button>
+            )}
+            {onTriggerDrink && (
+              <button type="button" className="ui-tool" onClick={onTriggerDrink}>
+                <div className="ui-tool__icon"><Coffee className="w-4 h-4" /></div>
+                <span>Bebida</span>
+              </button>
+            )}
+            {onTriggerCombat && (
+              <button type="button" className="ui-tool" onClick={onTriggerCombat}>
+                <div className="ui-tool__icon"><Zap className="w-4 h-4" /></div>
+                <span>Blaster</span>
+              </button>
+            )}
+            {onOpenTutorial && (
+              <button type="button" className="ui-tool" onClick={onOpenTutorial}>
+                <div className="ui-tool__icon"><HelpCircle className="w-4 h-4" /></div>
+                <span>Guía</span>
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Quick Prompt Chips (Professional Clean Design) */}
-        <div className="flex items-center justify-center gap-2 flex-wrap">
-          {QUICK_COMMANDS.map((chip) => (
+        {/* Quick chips */}
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {QUICK_COMMANDS.map((item) => (
             <button
-              key={chip.label}
+              key={item.cmd}
               type="button"
-              onClick={() => handleChipClick(chip.cmd)}
-              className="text-xs px-3 py-1 rounded-md border border-[#05E1FF]/25 bg-black/50 text-[#8FA3B0] hover:text-[#05E1FF] hover:border-[#05E1FF] hover:bg-[#05E1FF]/10 transition-colors whitespace-nowrap flex items-center gap-1.5 cursor-pointer font-mono"
+              className="ui-chip whitespace-nowrap"
+              onClick={() => {
+                playSfx('tap', soundFxEnabled);
+                onSubmitCommand(item.cmd);
+              }}
             >
-              <Sparkles className="w-3 h-3 text-[#05E1FF]" />
-              <span>{chip.label}</span>
+              {item.label}
             </button>
           ))}
         </div>
 
-        {/* Command Input Form */}
+        {/* Command line */}
         <form onSubmit={handleSubmit} className="flex gap-2">
           <input
-            id="dock-cmd-input"
-            type="text"
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            placeholder="Escribe o dicta una instrucción ejecutiva (ej: toma una foto, abre la bóveda, revisa la web)..."
-            autoComplete="off"
-            className="flex-1 bg-[#05080c] border border-[#05E1FF]/30 text-[#05E1FF] placeholder-[#8FA3B0]/50 text-xs font-mono px-4 py-2.5 rounded-lg focus:outline-none focus:border-[#05E1FF] focus:shadow-[0_0_12px_rgba(5,225,255,0.25)] transition-all"
+            placeholder="Orden para ULTRON…"
+            className="flex-1 rounded-xl bg-black/40 border border-[var(--line)] px-4 py-2.5 text-sm text-[var(--ink)] placeholder:text-[var(--muted)] focus:outline-none focus:border-[var(--accent)] font-body"
           />
           <button
             type="submit"
-            id="dock-btn-submit"
-            className="bg-[#05E1FF] text-[#001418] font-display font-bold text-xs tracking-wider px-5 py-2.5 rounded-lg hover:bg-[#05E1FF]/90 transition-all active:scale-95 shadow-[0_0_15px_rgba(5,225,255,0.3)] flex items-center gap-1.5 cursor-pointer uppercase"
+            className="rounded-xl px-4 py-2.5 bg-[var(--accent)] text-[var(--bg-0)] font-display font-bold text-xs tracking-wider flex items-center gap-1.5"
           >
             <Send className="w-3.5 h-3.5" />
-            <span>EJECUTAR</span>
+            ENVIAR
           </button>
         </form>
       </div>

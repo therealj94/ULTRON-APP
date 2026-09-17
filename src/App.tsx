@@ -18,7 +18,7 @@ import { GlobalOrderBrainModal } from './components/GlobalOrderBrainModal';
 import { AwsDeploymentModal } from './components/AwsDeploymentModal';
 import { TutorialModal } from './components/TutorialModal';
 import { playSfx } from './utils/audio';
-import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
+import { cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
 import { DEFAULT_ELEVENLABS_VOICES, speakWithElevenLabsOrFallback, stopCurrentVoice } from './utils/elevenlabs';
 import { downloadStandaloneSimulator } from './utils/exporter';
 import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck, HelpCircle, RotateCcw } from 'lucide-react';
@@ -57,8 +57,11 @@ export default function App() {
   const [visionEnabled, setVisionEnabled] = useState<boolean>(true);
   const [resetTrigger, setResetTrigger] = useState<number>(0);
 
-  // ElevenLabs Voice Configuration
+  // ElevenLabs Voice Configuration — Nexo by default
   const [activeVoice, setActiveVoice] = useState<ElevenLabsVoiceConfig>(DEFAULT_ELEVENLABS_VOICES[0]);
+  const bootDoneRef = useRef(false);
+  const presenceCooldownRef = useRef(0);
+  const speakSafetyRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Expressive Interactive Actions
   const [isDrinking, setIsDrinking] = useState<boolean>(false);
@@ -139,45 +142,39 @@ export default function App() {
     }, durationMs);
   }, []);
 
-  // Voice utterance helper (with ElevenLabs fallback)
+  // Voice: siempre ElevenLabs (proxy). Timeout de seguridad para no dejar SPEAKING/ojos pegados.
   const vocalize = useCallback(
     (text: string, faceOverride: FaceState = 'SPEAKING') => {
-      showBubble(text);
-      if (speakerEnabled) {
-        setFace(faceOverride);
-        if (activeVoice?.apiKey) {
-          speakWithElevenLabsOrFallback(text, activeVoice, {
-            onStart: () => setFace(faceOverride),
-            onEnd: () => setFace('IDLE'),
-            onError: () => {
-              speakUtterance(text, {
-                enabled: true,
-                onEnd: () => setFace('IDLE'),
-              });
-            },
-          });
-        } else {
-          speakUtterance(text, {
-            enabled: true,
-            onEnd: () => {
-              setFace('IDLE');
-            },
-          });
+      const clean = text.trim();
+      if (!clean) return;
+      showBubble(clean, Math.min(12000, 2200 + clean.length * 45));
+      if (!speakerEnabled) return;
+
+      if (speakSafetyRef.current) clearTimeout(speakSafetyRef.current);
+      setFace(faceOverride);
+
+      const releaseFace = () => {
+        if (speakSafetyRef.current) {
+          clearTimeout(speakSafetyRef.current);
+          speakSafetyRef.current = null;
         }
-      }
+        setFace((curr) => (curr === faceOverride || curr === 'SPEAKING' ? 'IDLE' : curr));
+      };
+
+      // Si el audio se cuelga, soltar cara a los ~12s
+      speakSafetyRef.current = setTimeout(releaseFace, 12000);
+
+      void speakWithElevenLabsOrFallback(clean, activeVoice, {
+        onStart: () => setFace(faceOverride),
+        onEnd: releaseFace,
+        onError: () => releaseFace(),
+      });
     },
     [showBubble, speakerEnabled, activeVoice]
   );
 
-  // Add log to bridge telemetry
-  const logBridgeEvent = useCallback((direction: 'in' | 'out', payload: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    setBridgeLog((prev) => [{ timestamp, direction, payload }, ...prev.slice(0, 30)]);
-  }, []);
-
-  // Boot sequence and remote Ultron session check
+  // Boot: un solo saludo, corto, sin loops
   useEffect(() => {
-    // Check if session exists in Ultron FP (Render)
     fetch('/api/ultron/sesion')
       .then((res) => res.json())
       .then((data) => {
@@ -192,13 +189,22 @@ export default function App() {
       .catch(() => {});
 
     const timer = setTimeout(() => {
+      if (bootDoneRef.current) return;
+      bootDoneRef.current = true;
       setIsBooting(false);
       playSfx('boot', true);
-      vocalize('Junta directiva en línea. Sistema ULTRON activo.');
-    }, 1400);
+      vocalize('ULTRON listo.');
+    }, 1100);
 
     return () => clearTimeout(timer);
-  }, [vocalize]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Add log to bridge telemetry
+  const logBridgeEvent = useCallback((direction: 'in' | 'out', payload: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setBridgeLog((prev) => [{ timestamp, direction, payload }, ...prev.slice(0, 30)]);
+  }, []);
 
   // Handle Fullscreen Toggle
   const toggleFullscreen = () => {
@@ -268,12 +274,12 @@ export default function App() {
     setIsWaving(true);
     setFace('HAPPY');
     playSfx('wink', soundFxEnabled);
-    vocalize('¡Hola! Saludos cordiales a la junta directiva.');
+    vocalize('Hola.');
 
     waveTimerRef.current = setTimeout(() => {
       setIsWaving(false);
       setFace('IDLE');
-    }, 3800);
+    }, 2800);
   }, [soundFxEnabled, vocalize]);
 
   // Trigger Combat Blaster Mode (with auto-disarm timeout)
@@ -307,8 +313,11 @@ export default function App() {
     vocalize('Sistemas defensivos retraídos. Estado normalizado.');
   }, [soundFxEnabled, vocalize]);
 
-  // Handle presence events from optical tracking
+  // Handle presence events from optical tracking (cooldown anti-loop)
   const handlePresenceEvent = useCallback((event: { type: 'wave' | 'drink'; spatialZone: string }) => {
+    const now = Date.now();
+    if (now - presenceCooldownRef.current < 8000) return;
+    presenceCooldownRef.current = now;
     if (event.type === 'wave') {
       handleTriggerWave();
     } else if (event.type === 'drink') {
@@ -814,63 +823,47 @@ export default function App() {
         />
 
         {/* Clean Executive Telemetry & Controls Bar */}
-        <div className="absolute top-4 left-5 right-5 z-20 flex items-center justify-between pointer-events-none">
-          {/* Left: Brand & Remote Status Link to ultron.ordenglobal.link */}
-          <div className="flex items-center gap-2.5 pointer-events-auto">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 border border-[#05E1FF]/30 backdrop-blur-md shadow-[0_0_15px_rgba(5,225,255,0.15)]">
-              <span className="w-2 h-2 rounded-full bg-[#05E1FF] animate-pulse" />
-              <span className="font-display font-bold tracking-[0.2em] text-[#05E1FF] text-xs">
-                ULTRON FP
-              </span>
+        <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between pointer-events-none">
+          <div className="flex items-center gap-2 pointer-events-auto">
+            <div className="ui-chip ui-chip--live font-display font-semibold tracking-[0.14em]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)]" />
+              ULTRON FP
             </div>
-
-            {/* Direct Link & Connection Indicator to Render */}
             <a
               href="https://ultron.ordenglobal.link"
               target="_blank"
               rel="noopener noreferrer"
-              title="Nodo Central de Orden Global (Render - ultron.ordenglobal.link). Clic para abrir."
-              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 border border-emerald-400/30 text-[10px] font-mono text-emerald-400 hover:bg-emerald-400/10 transition-colors"
+              className="ui-chip hidden sm:inline-flex"
+              title="Cerebro Orden Global"
             >
               <Globe className="w-3 h-3" />
-              <span>ORDEN GLOBAL</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              CEREBRO
             </a>
           </div>
 
-          {/* Right: Essential, decluttered controls */}
           <div className="flex items-center gap-2 pointer-events-auto">
-            {/* Listening indicator */}
             {face === 'LISTENING' && (
-              <div className="font-display font-bold tracking-[0.25em] text-[#05E1FF] text-[10px] hidden md:block px-2.5 py-1 rounded-full bg-[#05E1FF]/10 border border-[#05E1FF]/30 animate-pulse">
-                RECEPTANDO VOZ
-              </div>
+              <div className="ui-chip ui-chip--live font-display tracking-[0.16em]">ESCUCHANDO</div>
+            )}
+            {face === 'SPEAKING' && (
+              <div className="ui-chip ui-chip--live font-display tracking-[0.16em]">HABLANDO</div>
             )}
 
-            {/* Biometric / Session Access Button */}
             <button
               type="button"
               onClick={() => setIsBiometricOpen(true)}
-              title={
-                currentUser.authenticated
-                  ? `Sesión activa: ${currentUser.name} (${currentUser.role})`
-                  : 'Autenticación Biométrica y Acceso a Render (ultron.ordenglobal.link)'
-              }
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono transition-all cursor-pointer ${
-                currentUser.authenticated
-                  ? 'bg-[#00FF88]/15 border border-[#00FF88]/50 text-[#00FF88] shadow-[0_0_12px_rgba(0,255,136,0.25)]'
-                  : 'bg-black/60 border border-[#05E1FF]/40 text-[#05E1FF] hover:bg-[#05E1FF]/15 shadow-[0_0_10px_rgba(5,225,255,0.2)]'
-              }`}
+              title={currentUser.authenticated ? `Sesión: ${currentUser.name}` : 'Acceso'}
+              className="ui-chip"
             >
               {currentUser.authenticated ? (
                 <>
-                  <ShieldCheck className="w-3.5 h-3.5 text-[#00FF88]" />
-                  <span className="font-bold">{currentUser.name.toUpperCase()}</span>
+                  <ShieldCheck className="w-3.5 h-3.5 text-[var(--ok)]" />
+                  <span className="font-semibold">{currentUser.name}</span>
                 </>
               ) : (
                 <>
-                  <Fingerprint className="w-3.5 h-3.5 text-[#05E1FF]" />
-                  <span className="font-bold">ACCESO</span>
+                  <Fingerprint className="w-3.5 h-3.5" />
+                  <span className="font-semibold">Acceso</span>
                 </>
               )}
             </button>
@@ -1284,21 +1277,22 @@ export default function App() {
         {/* Initial Boot Screen */}
         <div
           id="ultron-boot-screen"
-          className={`absolute inset-0 z-50 flex items-center justify-center bg-black transition-opacity duration-700 ${
+          className={`absolute inset-0 z-50 flex items-center justify-center transition-opacity duration-700 ${
             isBooting ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
           }`}
+          style={{ background: 'radial-gradient(80% 60% at 50% 40%, rgba(62,201,214,0.08), #07090c 70%)' }}
         >
           <div className="flex flex-col items-center gap-3">
-            <svg width="76" height="60" viewBox="0 0 68 52" fill="none" className="animate-pulse">
-              <path d="M6 36C6 14 62 14 62 36" stroke="#05E1FF" strokeWidth="2.5" />
-              <circle cx="34" cy="34" r="11" stroke="#05E1FF" strokeWidth="2" />
-              <circle cx="34" cy="34" r="3" fill="#05E1FF" />
+            <svg width="72" height="56" viewBox="0 0 68 52" fill="none">
+              <path d="M6 36C6 14 62 14 62 36" stroke="#3EC9D6" strokeWidth="2" opacity="0.9" />
+              <circle cx="34" cy="34" r="11" stroke="#3EC9D6" strokeWidth="1.8" />
+              <circle cx="34" cy="34" r="3" fill="#3EC9D6" />
             </svg>
-            <h1 className="font-display font-bold tracking-[0.45em] text-2xl text-[#05E1FF]">
+            <h1 className="font-display font-bold tracking-[0.28em] text-2xl text-[var(--ink)]">
               ULTRON FP
             </h1>
-            <p className="font-mono text-xs text-[#8FA3B0] tracking-widest uppercase">
-              ASISTENTE DE JUNTA DIRECTIVA
+            <p className="font-body text-xs text-[var(--muted)] tracking-[0.18em] uppercase">
+              Desk assistant
             </p>
           </div>
         </div>

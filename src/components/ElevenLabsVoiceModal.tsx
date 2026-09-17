@@ -19,7 +19,7 @@ export const ElevenLabsVoiceModal: React.FC<ElevenLabsVoiceModalProps> = ({
   const [voices, setVoices] = useState<ElevenLabsVoiceConfig[]>(DEFAULT_ELEVENLABS_VOICES);
   const [apiKey, setApiKey] = useState<string>(activeVoice.apiKey || '');
   const [isPlayingId, setIsPlayingId] = useState<string | null>(null);
-  const [testSampleText, setTestSampleText] = useState('Sesión de junta directiva iniciada. Soy Ultron, su asistente cibernético.');
+  const [testSampleText, setTestSampleText] = useState('Hola. Soy ULTRON, tu asistente de escritorio.');
 
   if (!isOpen) return null;
 

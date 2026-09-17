@@ -2,40 +2,171 @@
 
 @layer base {
   :root {
-    --font-display: 'Rajdhani', sans-serif;
+    /* Desk LOOI — graphite + soft aqua (menos neón, más producto) */
+    --bg-0: #07090c;
+    --bg-1: #0c1016;
+    --bg-2: #121820;
+    --ink: #e8eef4;
+    --muted: #8b9aab;
+    --line: rgba(232, 238, 244, 0.1);
+    --accent: #3ec9d6;
+    --accent-soft: rgba(62, 201, 214, 0.14);
+    --accent-strong: #7ae4ef;
+    --ok: #5ddea0;
+    --warn: #e6b45a;
+    --danger: #e86b7a;
+    --font-display: 'Syne', sans-serif;
+    --font-body: 'DM Sans', sans-serif;
     --font-mono: 'IBM Plex Mono', monospace;
+    --radius: 14px;
+    --glow: 0 0 0 transparent;
   }
-  
+
+  html,
+  body,
+  #root {
+    width: 100%;
+    height: 100%;
+  }
+
   body {
-    font-family: var(--font-mono);
-    background-color: #000000;
-    color: #05E1FF;
+    font-family: var(--font-body);
+    background:
+      radial-gradient(120% 80% at 50% -10%, rgba(62, 201, 214, 0.08), transparent 55%),
+      radial-gradient(80% 50% at 100% 100%, rgba(93, 222, 160, 0.05), transparent 45%),
+      var(--bg-0);
+    color: var(--ink);
     user-select: none;
     -webkit-user-select: none;
     touch-action: none;
+    overflow: hidden;
   }
 }
 
 .font-display {
-  font-family: 'Rajdhani', sans-serif;
+  font-family: var(--font-display);
 }
 
 .font-mono {
-  font-family: 'IBM Plex Mono', monospace;
+  font-family: var(--font-mono);
 }
 
-/* Custom cyber scrollbar */
+.font-body {
+  font-family: var(--font-body);
+}
+
+.ui-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(12, 16, 22, 0.72);
+  backdrop-filter: blur(12px);
+  color: var(--ink);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+.ui-chip:hover {
+  border-color: rgba(62, 201, 214, 0.45);
+  background: var(--accent-soft);
+}
+
+.ui-chip--live {
+  border-color: rgba(62, 201, 214, 0.35);
+  color: var(--accent-strong);
+}
+
+.ui-dock {
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(18, 24, 32, 0.92), rgba(7, 9, 12, 0.96));
+  backdrop-filter: blur(18px);
+  border-radius: 22px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+}
+
+.ui-icon-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.18s ease;
+  cursor: pointer;
+}
+
+.ui-icon-btn:hover {
+  color: var(--accent-strong);
+  border-color: rgba(62, 201, 214, 0.4);
+  background: var(--accent-soft);
+}
+
+.ui-icon-btn--on {
+  color: var(--bg-0);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.ui-section-label {
+  font-family: var(--font-display);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ui-tool {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 64px;
+  padding: 0.55rem 0.4rem;
+  border-radius: 14px;
+  border: 1px solid transparent;
+  color: var(--ink);
+  cursor: pointer;
+  transition: all 0.18s ease;
+  background: transparent;
+}
+
+.ui-tool:hover {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ui-tool__icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border: 1px solid rgba(62, 201, 214, 0.22);
+}
+
+.ui-tool span {
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+}
+
 ::-webkit-scrollbar {
   width: 4px;
   height: 4px;
 }
 ::-webkit-scrollbar-track {
-  background: #000000;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(5, 225, 255, 0.25);
+  background: rgba(62, 201, 214, 0.28);
   border-radius: 2px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(5, 225, 255, 0.5);
 }

@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "ULTRON FP",
+    "slug": "ultron-fp",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#07090c"
+    },
+    "android": {
+      "package": "link.ordenglobal.ultronfp",
+      "versionCode": 1,
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS",
+        "INTERNET"
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#07090c"
+      }
+    },
+    "scheme": "ultronfp",
+    "extra": {
+      "ultronUrl": "https://ultron-looi-desk.onrender.com",
+      "eas": {
+        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+      }
+    }
+  }
+}
