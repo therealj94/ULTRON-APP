@@ -9,11 +9,19 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
+  Switch,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as LocalAuthentication from 'expo-local-authentication';
 import { DESK_USERS, type DeskUser, type SessionUser } from '../config';
 import { loginBiometric, loginClave } from '../lib/api';
-import { loadCreds, saveCreds, saveSession } from '../lib/storage';
+import {
+  getFingerprintUnlock,
+  loadCreds,
+  saveCreds,
+  saveSession,
+  setFingerprintUnlock,
+} from '../lib/storage';
 
 type Props = {
   onAuthenticated: (user: SessionUser) => void;
@@ -21,25 +29,41 @@ type Props = {
 
 export function LoginScreen({ onAuthenticated }: Props) {
   const [selected, setSelected] = useState<DeskUser>(DESK_USERS[0]);
-  const [phase, setPhase] = useState<'pick' | 'clave'>('pick');
+  const [phase, setPhase] = useState<'pick' | 'clave' | 'quick'>('pick');
   const [clave, setClave] = useState('');
   const [remember, setRemember] = useState(true);
+  const [useFingerprint, setUseFingerprint] = useState(true);
+  const [fingerprintAvailable, setFingerprintAvailable] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [logoReady, setLogoReady] = useState(false);
+  const [savedName, setSavedName] = useState<string | null>(null);
 
   useEffect(() => {
     const t = setTimeout(() => setLogoReady(true), 60);
-    void loadCreds().then((c) => {
-      if (c?.correo) {
-        const match = DESK_USERS.find((u) => u.correo === c.correo);
+    void (async () => {
+      const hw = await LocalAuthentication.hasHardwareAsync();
+      const enrolled = hw ? await LocalAuthentication.isEnrolledAsync() : false;
+      setFingerprintAvailable(hw && enrolled);
+
+      const fp = await getFingerprintUnlock();
+      const creds = await loadCreds();
+      if (creds?.correo) {
+        const match = DESK_USERS.find((u) => u.correo === creds.correo);
         if (match) {
           setSelected(match);
-          setClave(c.clave || '');
-          setPhase('clave');
+          setClave(creds.clave || '');
+          setSavedName(match.name);
+          setRemember(true);
+          if (fp?.enabled && hw && enrolled) {
+            setPhase('quick');
+            setUseFingerprint(true);
+          } else {
+            setPhase('clave');
+          }
         }
       }
-    });
+    })();
     return () => clearTimeout(t);
   }, []);
 
@@ -47,13 +71,44 @@ export function LoginScreen({ onAuthenticated }: Props) {
     await saveSession(user);
     if (remember && persist?.clave) {
       await saveCreds({ correo: user.correo, clave: persist.clave, name: user.name });
+      if (useFingerprint && fingerprintAvailable) {
+        await setFingerprintUnlock(true, user.correo);
+      }
     } else if (!remember) {
       await saveCreds(null);
+      await setFingerprintUnlock(false);
     }
     onAuthenticated(user);
   };
 
-  const enterBiometric = async (user: DeskUser) => {
+  const enterWithFingerprint = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const result = await LocalAuthentication.authenticateAsync({
+        promptMessage: 'Desbloquear ULTRON FP',
+        cancelLabel: 'Usar clave',
+        disableDeviceFallback: false,
+        biometricsSecurityLevel: 'weak',
+      });
+      if (!result.success) {
+        setError('Huella cancelada. Usa tu clave.');
+        setPhase('clave');
+        return;
+      }
+      const creds = await loadCreds();
+      const user =
+        DESK_USERS.find((u) => u.correo === creds?.correo) || selected;
+      await enterBiometric(user, creds?.clave);
+    } catch (e: any) {
+      setError(e?.message || 'No se pudo usar la huella');
+      setPhase('clave');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const enterBiometric = async (user: DeskUser, maybeClave?: string) => {
     setLoading(true);
     setError('');
     try {
@@ -64,15 +119,13 @@ export function LoginScreen({ onAuthenticated }: Props) {
           role: data.user?.rol || user.role,
           correo: user.correo,
         },
-        clave ? { clave } : undefined
+        maybeClave || clave ? { clave: maybeClave || clave } : undefined
       );
-    } catch (e: any) {
-      // Offline / servidor caído: acceso local de junta (José/Medardo allowlist)
+    } catch {
       await finish(
         { name: user.name, role: user.role, correo: user.correo },
-        clave ? { clave } : undefined
+        maybeClave || clave ? { clave: maybeClave || clave } : undefined
       );
-      if (e?.message) setError(''); // silent local fallthrough
     } finally {
       setLoading(false);
     }
@@ -80,7 +133,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
 
   const enterWithClave = async () => {
     if (!clave.trim()) {
-      setError('Escribe tu clave o usa acceso biométrico de escritorio');
+      setError('Escribe tu clave o usa la huella');
       return;
     }
     setLoading(true);
@@ -97,11 +150,10 @@ export function LoginScreen({ onAuthenticated }: Props) {
       );
     } catch (e: any) {
       if (e?.status === 401 || e?.data?.codigo === 'NO_ENTRA') {
-        await enterBiometric(selected);
+        await enterBiometric(selected, clave);
         return;
       }
-      // Fallback local para no bloquear la app nativa
-      await enterBiometric(selected);
+      await enterBiometric(selected, clave);
     } finally {
       setLoading(false);
     }
@@ -113,10 +165,10 @@ export function LoginScreen({ onAuthenticated }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <LinearGradient
-        colors={['rgba(0,229,255,0.14)', 'transparent', '#000']}
+        colors={['rgba(0,229,255,0.16)', 'transparent', '#000']}
         style={StyleSheet.absoluteFill}
         start={{ x: 0.5, y: 0 }}
-        end={{ x: 0.5, y: 0.7 }}
+        end={{ x: 0.5, y: 0.75 }}
       />
       <View style={styles.card}>
         <Image
@@ -124,9 +176,26 @@ export function LoginScreen({ onAuthenticated }: Props) {
           style={[styles.logo, { opacity: logoReady ? 1 : 0, transform: [{ scale: logoReady ? 1 : 0.85 }] }]}
         />
         <Text style={styles.title}>ULTRON FP</Text>
-        <Text style={styles.sub}>App nativa Android · José / Medardo</Text>
+        <Text style={styles.sub}>Escritorio nativo · acceso seguro</Text>
 
-        {phase === 'pick' ? (
+        {phase === 'quick' ? (
+          <View style={{ gap: 12, width: '100%', alignItems: 'center' }}>
+            <Text style={styles.welcome}>Hola, {savedName}</Text>
+            <Pressable onPress={() => void enterWithFingerprint()} style={styles.primary} disabled={loading}>
+              {loading ? (
+                <ActivityIndicator color="#001018" />
+              ) : (
+                <Text style={styles.primaryText}>Entrar con huella</Text>
+              )}
+            </Pressable>
+            <Pressable onPress={() => setPhase('clave')} style={styles.secondary}>
+              <Text style={styles.secondaryText}>Usar clave</Text>
+            </Pressable>
+            <Pressable onPress={() => setPhase('pick')}>
+              <Text style={styles.link}>Cambiar usuario</Text>
+            </Pressable>
+          </View>
+        ) : phase === 'pick' ? (
           <View style={{ gap: 10, width: '100%' }}>
             {DESK_USERS.map((u) => (
               <Pressable
@@ -155,23 +224,39 @@ export function LoginScreen({ onAuthenticated }: Props) {
             <TextInput
               value={clave}
               onChangeText={setClave}
-              placeholder="Clave ultron.ordenglobal.link"
+              placeholder="Clave"
               placeholderTextColor="#5A6A7A"
               secureTextEntry
               style={styles.input}
               autoCapitalize="none"
             />
-            <Pressable onPress={() => setRemember((v) => !v)} style={styles.rememberRow}>
-              <View style={[styles.check, remember && styles.checkOn]} />
-              <Text style={styles.rememberText}>Recordar en el teléfono (SecureStore)</Text>
-            </Pressable>
+            <View style={styles.row}>
+              <Text style={styles.rowLabel}>Guardar contraseña</Text>
+              <Switch
+                value={remember}
+                onValueChange={setRemember}
+                trackColor={{ true: '#00E5FF' }}
+              />
+            </View>
+            {fingerprintAvailable && (
+              <View style={styles.row}>
+                <Text style={styles.rowLabel}>Desbloqueo con huella</Text>
+                <Switch
+                  value={useFingerprint}
+                  onValueChange={setUseFingerprint}
+                  trackColor={{ true: '#00E5FF' }}
+                />
+              </View>
+            )}
             {!!error && <Text style={styles.error}>{error}</Text>}
             <Pressable onPress={() => void enterWithClave()} style={styles.primary} disabled={loading}>
               {loading ? <ActivityIndicator color="#001018" /> : <Text style={styles.primaryText}>Entrar</Text>}
             </Pressable>
-            <Pressable onPress={() => void enterBiometric(selected)} style={styles.secondary} disabled={loading}>
-              <Text style={styles.secondaryText}>Acceso biométrico de escritorio</Text>
-            </Pressable>
+            {fingerprintAvailable && remember && !!clave && (
+              <Pressable onPress={() => void enterWithFingerprint()} style={styles.secondary} disabled={loading}>
+                <Text style={styles.secondaryText}>Probar huella ahora</Text>
+              </Pressable>
+            )}
           </View>
         )}
       </View>
@@ -192,9 +277,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  logo: { width: 84, height: 84, borderRadius: 42, marginBottom: 6, borderWidth: 1, borderColor: 'rgba(0,229,255,0.35)' },
+  logo: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(0,229,255,0.35)',
+  },
   title: { color: '#E8FBFF', fontSize: 26, fontWeight: '800', letterSpacing: 6 },
   sub: { color: '#7A8B9C', fontSize: 12, marginBottom: 12 },
+  welcome: { color: '#E8FBFF', fontSize: 18, fontWeight: '700', marginBottom: 8 },
   userBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -226,16 +319,15 @@ const styles = StyleSheet.create({
     color: '#E8FBFF',
     backgroundColor: 'rgba(0,0,0,0.35)',
   },
-  rememberRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  check: { width: 16, height: 16, borderRadius: 4, borderWidth: 1, borderColor: '#5A6A7A' },
-  checkOn: { backgroundColor: '#00E5FF', borderColor: '#00E5FF' },
-  rememberText: { color: '#8B9AAB', fontSize: 12 },
+  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  rowLabel: { color: '#C8D4DE', fontSize: 13 },
   error: { color: '#FF7A8A', fontSize: 12 },
   primary: {
     backgroundColor: '#00E5FF',
     borderRadius: 14,
     paddingVertical: 12,
     alignItems: 'center',
+    width: '100%',
   },
   primaryText: { color: '#001018', fontWeight: '800', letterSpacing: 1 },
   secondary: {
@@ -244,6 +336,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.15)',
+    width: '100%',
   },
   secondaryText: { color: '#C8D4DE', fontSize: 13 },
+  link: { color: '#5A6A7A', fontSize: 12, textDecorationLine: 'underline' },
 });

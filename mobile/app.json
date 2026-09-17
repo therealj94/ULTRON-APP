@@ -2,7 +2,7 @@
   "expo": {
     "name": "ULTRON FP",
     "slug": "ultron-fp",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -13,14 +13,16 @@
     },
     "android": {
       "package": "link.ordenglobal.ultronfp",
-      "versionCode": 7,
+      "versionCode": 8,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE",
-        "android.permission.WAKE_LOCK"
+        "android.permission.WAKE_LOCK",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -53,11 +55,19 @@
         }
       ],
       "expo-secure-store",
+      "expo-local-authentication",
+      [
+        "@react-native-voice/voice",
+        {
+          "microphonePermission": "ULTRON FP necesita el micrófono siempre activo para oír «hey ULTRON».",
+          "speechRecognitionPermission": "ULTRON FP usa reconocimiento de voz nativo de Android."
+        }
+      ],
       [
         "expo-camera",
         {
-          "cameraPermission": "ULTRON FP usa la c\u00e1mara para visi\u00f3n del escritorio.",
-          "microphonePermission": "ULTRON FP necesita micr\u00f3fono con la c\u00e1mara.",
+          "cameraPermission": "ULTRON FP usa la cámara para mirarte a los ojos e identificar objetos.",
+          "microphonePermission": "ULTRON FP necesita micrófono junto a la cámara.",
           "recordAudioAndroid": true
         }
       ],

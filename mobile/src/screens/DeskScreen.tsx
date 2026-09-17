@@ -7,26 +7,32 @@ import {
   StyleSheet,
   ScrollView,
   Platform,
+  Alert,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useCameraPermissions } from 'expo-camera';
 import { UltronFace } from '../components/UltronFace';
+import { GazeCamera } from '../components/GazeCamera';
+import { CapabilitiesMenu } from '../components/CapabilitiesMenu';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
 import { APP_VERSION } from '../config';
 import { chatUltron, postPersonMemory } from '../lib/api';
 import { CONOCER_QUESTIONS, localAnswer } from '../lib/knowledge';
 import {
-  abortListening,
+  destroySpeech,
+  enableAlwaysOnMic,
   ensureSpeechPermissions,
-  startListening,
-  stopListening,
-  useSpeechRecognitionEvent,
+  isMicWanted,
+  muteMic,
+  setSpeechCallbacks,
+  unmuteMic,
 } from '../lib/speech';
 import {
   appendChatLog,
+  loadConocerProgress,
   loadSettings,
-  markConocerOfferedToday,
+  saveConocerProgress,
+  saveSettings,
   upsertPersonFact,
-  wasConocerOfferedToday,
 } from '../lib/storage';
 import { speak, stopSpeaking } from '../lib/tts';
 import { matchVoiceAct } from '../lib/voiceActs';
@@ -38,23 +44,35 @@ type Props = {
   onOpenSettings: () => void;
 };
 
+const CORE_COUNT = 10;
+
 export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
   const [face, setFace] = useState<FaceState>('IDLE');
   const [mode, setMode] = useState<Mode>('GUARDIAN');
   const [presence, setPresence] = useState<DeskPresence>('stay');
   const [bubble, setBubble] = useState('');
-  const [status, setStatus] = useState('Listo');
+  const [status, setStatus] = useState('Preparando micrófono…');
   const [draft, setDraft] = useState('');
   const [listening, setListening] = useState(false);
-  const [booting, setBooting] = useState(true);
-  const [showVision, setShowVision] = useState(false);
+  const [micMuted, setMicMuted] = useState(false);
+  const [visionOn, setVisionOn] = useState(true);
+  const [gaze, setGaze] = useState({ x: 0, y: 0 });
+  const [objects, setObjects] = useState<string[]>([]);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [conocerIdx, setConocerIdx] = useState(-1);
+  const [conocerDone, setConocerDone] = useState(false);
   const [camPerm, requestCam] = useCameraPermissions();
   const conversationId = useRef(`native-${Date.now().toString(36)}`).current;
-  const listenMode = useRef<'wake' | 'command'>('wake');
+  const listenMode = useRef<'wake' | 'command'>('command');
   const speakingRef = useRef(false);
   const voiceId = useRef('jarvis');
   const handling = useRef(false);
+  const presenceRef = useRef<DeskPresence>('stay');
+  const partialRef = useRef('');
+
+  useEffect(() => {
+    presenceRef.current = presence;
+  }, [presence]);
 
   const say = useCallback(async (text: string, nextFace?: FaceState) => {
     setBubble(text);
@@ -67,21 +85,53 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
       onStart: () => setFace(nextFace || 'SPEAKING'),
       onEnd: () => {
         speakingRef.current = false;
-        setFace((f) => (f === 'SPEAKING' || f === nextFace ? (presence === 'sleep' ? 'SLEEPING' : 'LISTENING') : f));
+        setFace((f) =>
+          f === 'SPEAKING' || f === nextFace
+            ? presenceRef.current === 'sleep'
+              ? 'SLEEPING'
+              : 'LISTENING'
+            : f
+        );
       },
     });
-  }, [presence]);
+  }, []);
+
+  const startConocer = useCallback(
+    async (force = false) => {
+      const progress = await loadConocerProgress(user.correo);
+      if (progress.completedCore && !force) {
+        setConocerDone(true);
+        await say(
+          'Ya completamos las 10 preguntas principales. Si quieres saber más, escribe «conocer más».',
+          'HAPPY'
+        );
+        return;
+      }
+      const next = CONOCER_QUESTIONS.findIndex((q) => !progress.answeredIds.includes(q.id));
+      const idx = next < 0 ? 0 : next;
+      setMode('CONOCER');
+      setConocerIdx(idx);
+      setConocerDone(false);
+      listenMode.current = 'command';
+      await say(
+        force
+          ? `Sigamos conociéndonos. ${CONOCER_QUESTIONS[idx].prompt}`
+          : `Quiero conocerte. Pregunta ${idx + 1} de ${CORE_COUNT}: ${CONOCER_QUESTIONS[idx].prompt}`,
+        'HAPPY'
+      );
+    },
+    [say, user.correo]
+  );
 
   const handleCommand = useCallback(
     async (raw: string) => {
       const cmd = raw.trim();
       if (!cmd || handling.current) return;
       handling.current = true;
-      setStatus(`Comando: ${cmd.slice(0, 48)}`);
+      setStatus(`Tú: ${cmd.slice(0, 52)}`);
       await appendChatLog({ role: 'user', text: cmd });
 
       try {
-        // Presence shortcuts
         if (/^(duerme|a dormir|modo sleep|vete a dormir)/i.test(cmd)) {
           setPresence('sleep');
           setFace('SLEEPING');
@@ -91,35 +141,53 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
         }
         if (/^(despierta|wake|levantate|modo stay)/i.test(cmd)) {
           setPresence('stay');
+          listenMode.current = 'command';
           await say('Despierto. Te escucho.', 'HAPPY');
           return;
         }
         if (/modo explore|explorar/i.test(cmd)) {
           setPresence('explore');
           setMode('EXPLORER');
+          listenMode.current = 'command';
           await say('Modo explore. Listo para investigar.', 'SCAN');
           return;
         }
-        if (/modo guardian/i.test(cmd)) {
-          setMode('GUARDIAN');
-          await say('Modo GUARDIAN activo.', 'IDLE');
+        if (/menu|menú|opciones|capacidades|que puedes|qué puedes/i.test(cmd)) {
+          setMenuOpen(true);
+          await say('Aquí tienes el menú de capacidades.', 'IDLE');
           return;
         }
-        if (/modo conocer|conocerme|conocernos/i.test(cmd)) {
-          setMode('CONOCER');
-          setConocerIdx(0);
-          await say(CONOCER_QUESTIONS[0].prompt, 'HAPPY');
+        if (/conocer mas|conocer más|saber mas|saber más/i.test(cmd)) {
+          await startConocer(true);
+          return;
+        }
+        if (/modo conocer|quiero conocerte|conocerme|conocernos/i.test(cmd)) {
+          await startConocer(false);
           return;
         }
         if (/logout|cerrar sesion|cerrar sesión|salir sesion/i.test(cmd)) {
-          await say('Cerrando sesión. Hasta pronto.', 'IDLE');
+          await say('Hasta pronto.', 'IDLE');
           onLogout();
           return;
         }
-        if (/camara|cámara|vision|visión/i.test(cmd)) {
-          if (!camPerm?.granted) await requestCam();
-          setShowVision((v) => !v);
-          await say(showVision ? 'Visión desactivada.' : 'Visión activada.', 'SCAN');
+        if (/vision|visión|camara|cámara/i.test(cmd)) {
+          if (!camPerm?.granted) {
+            const res = await requestCam();
+            if (!res.granted) {
+              await say('Necesito permiso de cámara. Actívalo cuando puedas.', 'CONCERNED');
+              return;
+            }
+          }
+          setVisionOn(true);
+          await say('Visión activa. Te estoy mirando.', 'SCAN');
+          return;
+        }
+        if (/que ves|qué ves|que hay|qué hay|objetos/i.test(cmd)) {
+          if (objects.length) {
+            await say(`Veo: ${objects.join(', ')}.`, 'SCAN');
+          } else {
+            await say('Aún no identifiqué objetos. Mantén la cámara un momento.', 'THINKING');
+          }
           return;
         }
 
@@ -139,14 +207,32 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
             rol: user.role,
             hecho: { key: q.memoryKey, value: cmd, source: 'conocer' },
           });
-          const next = conocerIdx + 1;
-          if (next >= CONOCER_QUESTIONS.length) {
+          const progress = await loadConocerProgress(user.correo);
+          const answeredIds = Array.from(new Set([...progress.answeredIds, q.id]));
+          const completedCore = answeredIds.length >= CORE_COUNT;
+          await saveConocerProgress({
+            correo: user.correo,
+            answeredIds,
+            completedCore,
+          });
+
+          const next = CONOCER_QUESTIONS.findIndex((qq) => !answeredIds.includes(qq.id));
+          if (completedCore && (next < 0 || next >= CORE_COUNT)) {
             setConocerIdx(-1);
+            setConocerDone(true);
             setMode('GUARDIAN');
-            await say('Gracias. Ya te conozco mejor. Lo guardé en memoria local y en el servidor.', 'HAPPY');
-          } else {
+            await say(
+              'Gracias. Completamos las 10 preguntas. No te las volveré a pedir. Si quieres más, di «conocer más».',
+              'HAPPY'
+            );
+          } else if (next >= 0) {
             setConocerIdx(next);
-            await say(`Anotado. ${CONOCER_QUESTIONS[next].prompt}`, 'LISTENING');
+            await say(`Anotado. Pregunta ${answeredIds.length + 1}: ${CONOCER_QUESTIONS[next].prompt}`, 'LISTENING');
+          } else {
+            setConocerIdx(-1);
+            setConocerDone(true);
+            setMode('GUARDIAN');
+            await say('Listo. Ya te conozco mejor.', 'HAPPY');
           }
           return;
         }
@@ -173,7 +259,7 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
         if (result.error || !result.reply) {
           await say(
             result.error
-              ? `Sin cerebro remoto (${result.error}). Prueba gestos de voz o preguntas locales.`
+              ? `Sin cerebro remoto ahora. Prueba gestos o preguntas locales. (${result.error})`
               : 'No recibí respuesta. Intenta de nuevo.',
             'CONFUSED'
           );
@@ -184,79 +270,166 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
         await say(result.reply, result.face || 'SPEAKING');
       } finally {
         handling.current = false;
-        listenMode.current = presence === 'sleep' ? 'wake' : 'command';
+        if (presenceRef.current !== 'sleep') listenMode.current = 'command';
       }
     },
-    [camPerm?.granted, conocerIdx, mode, onLogout, presence, requestCam, say, showVision, user]
+    [
+      camPerm?.granted,
+      conocerIdx,
+      conversationId,
+      mode,
+      objects,
+      onLogout,
+      requestCam,
+      say,
+      startConocer,
+      user,
+    ]
   );
 
-  // Speech events
-  useSpeechRecognitionEvent('result', (ev) => {
-    const text = ev.results?.[0]?.transcript || ev.transcript || '';
-    if (!text) return;
+  const onSpeechFinal = useCallback(
+    (text: string) => {
+      const t = text.trim();
+      if (!t || speakingRef.current) return;
 
-    if (presence === 'sleep' || listenMode.current === 'wake') {
-      if (ev.isFinal === false) return;
-      if (isHeyUltron(text)) {
-        setPresence('stay');
-        listenMode.current = 'command';
-        setFace('LISTENING');
-        const rest = stripHeyUltron(text);
-        void say('Te escucho.', 'LISTENING').then(() => {
-          if (rest.length > 2) void handleCommand(rest);
-        });
+      if (presenceRef.current === 'sleep' || listenMode.current === 'wake') {
+        if (isHeyUltron(t)) {
+          setPresence('stay');
+          listenMode.current = 'command';
+          const rest = stripHeyUltron(t);
+          void say('Te escucho.', 'LISTENING').then(() => {
+            if (rest.length > 2) void handleCommand(rest);
+          });
+        }
+        return;
       }
-      return;
-    }
 
-    if (speakingRef.current) return;
+      if (isHeyUltron(t)) {
+        const rest = stripHeyUltron(t);
+        if (rest.length > 2) void handleCommand(rest);
+        else void say('Dime.', 'LISTENING');
+        return;
+      }
+      if (t.length > 1) void handleCommand(t);
+    },
+    [handleCommand, say]
+  );
 
-    if (ev.isFinal === false) {
-      setStatus(text.slice(0, 60));
-      setFace('LISTENING');
-      return;
-    }
-    const cmd = isHeyUltron(text) ? stripHeyUltron(text) : text;
-    if (cmd.length > 1) void handleCommand(cmd);
-  });
-
-  useSpeechRecognitionEvent('start', () => setListening(true));
-  useSpeechRecognitionEvent('end', () => setListening(false));
-  useSpeechRecognitionEvent('error', (e) => {
-    setListening(false);
-    if (e?.error) setStatus(`Mic: ${e.error}`);
-  });
-
+  // Boot sensors + conocer gate
   useEffect(() => {
     let alive = true;
     (async () => {
       const settings = await loadSettings();
       voiceId.current = settings.voiceId || 'jarvis';
-      await ensureSpeechPermissions();
+      setMicMuted(settings.micMuted);
+      setVisionOn(settings.visionEnabled);
+
+      // Cámara
+      if (settings.visionEnabled && !camPerm?.granted) {
+        await new Promise<void>((resolve) => {
+          Alert.alert(
+            'Cámara ULTRON FP',
+            'Quiero mirarte a los ojos e identificar lo que hay frente a mí (persona, lápiz, teléfono…). ¿Permitir cámara?',
+            [
+              {
+                text: 'Denegar',
+                style: 'cancel',
+                onPress: () => {
+                  setVisionOn(false);
+                  resolve();
+                },
+              },
+              {
+                text: 'Permitir',
+                onPress: () => {
+                  void requestCam().finally(() => resolve());
+                },
+              },
+            ]
+          );
+        });
+      }
+
+      const micOk = await ensureSpeechPermissions();
       if (!alive) return;
-      setBooting(false);
+
+      setSpeechCallbacks({
+        onPartial: (t) => {
+          partialRef.current = t;
+          setStatus(t.slice(0, 56));
+          if (!speakingRef.current) setFace('LISTENING');
+        },
+        onFinal: onSpeechFinal,
+        onListeningChange: setListening,
+        onError: (msg) => setStatus(`Mic: ${msg}`),
+      });
+
+      if (micOk && !settings.micMuted) {
+        await enableAlwaysOnMic();
+        setStatus('Micrófono siempre activo · di hey ULTRON');
+      } else {
+        setStatus(micOk ? 'Mic silenciado' : 'Sin permiso de mic — usa el teclado');
+      }
+
       setFace('HAPPY');
-      await say(
-        `Bienvenido, ${user.name}. ULTRON FP nativo listo. Escribe comandos abajo — la voz TTS responde.`,
-        'HAPPY'
-      );
-      listenMode.current = 'command';
-      setFace('LISTENING');
-      setStatus('Escribe un comando (quién eres, ponte feliz, modo conocer…)');
-      if (!(await wasConocerOfferedToday())) {
-        await markConocerOfferedToday();
+      await say(`Bienvenido, ${user.name}. Estoy contigo.`, 'HAPPY');
+
+      const progress = await loadConocerProgress(user.correo);
+      setConocerDone(progress.completedCore);
+      if (!progress.completedCore) {
         setTimeout(() => {
-          void say('Si quieres, escribe «modo conocer» y te haré unas preguntas.', 'IDLE');
-        }, 3500);
+          void startConocer(false);
+        }, 1600);
+      } else {
+        setFace('LISTENING');
       }
     })();
+
     return () => {
       alive = false;
-      abortListening();
+      void destroySpeech();
       void stopSpeaking();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Keep speech callback fresh
+  useEffect(() => {
+    setSpeechCallbacks({
+      onPartial: (t) => {
+        partialRef.current = t;
+        setStatus(t.slice(0, 56));
+        if (!speakingRef.current) setFace('LISTENING');
+      },
+      onFinal: onSpeechFinal,
+      onListeningChange: setListening,
+      onError: (msg) => setStatus(`Mic: ${msg}`),
+    });
+  }, [onSpeechFinal]);
+
+  const toggleMute = async () => {
+    if (isMicWanted() && !micMuted) {
+      await muteMic();
+      setMicMuted(true);
+      await saveSettings({ micMuted: true });
+      setStatus('Mic silenciado');
+      await say('Micrófono en silencio. Toca Mic para volver a oírme.', 'IDLE');
+    } else {
+      const ok = await ensureSpeechPermissions();
+      if (!ok) {
+        Alert.alert('Micrófono', 'Necesito permiso de micrófono para escucharte.', [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Reintentar', onPress: () => void ensureSpeechPermissions() },
+        ]);
+        return;
+      }
+      await unmuteMic();
+      setMicMuted(false);
+      await saveSettings({ micMuted: false });
+      setStatus('Micrófono siempre activo');
+      await say('Te escucho de nuevo.', 'LISTENING');
+    }
+  };
 
   const sendDraft = () => {
     const t = draft.trim();
@@ -267,40 +440,51 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
 
   return (
     <View style={styles.root}>
+      <GazeCamera
+        enabled={visionOn && !!camPerm?.granted}
+        onGaze={(x, y) => setGaze({ x, y })}
+        onObjects={setObjects}
+      />
+
       <View style={styles.topBar}>
         <Text style={styles.brand}>ULTRON FP</Text>
         <Text style={styles.meta}>
           {mode} · {presence} · v{APP_VERSION}
-          {listening ? ' · MIC' : ''}
+          {listening && !micMuted ? ' · OYENDO' : micMuted ? ' · MUTE' : ''}
         </Text>
-        <View style={styles.topActions}>
-          <Pressable onPress={onOpenSettings} style={styles.chip}>
-            <Text style={styles.chipText}>Ajustes</Text>
-          </Pressable>
-          <Pressable onPress={onLogout} style={styles.chip}>
-            <Text style={styles.chipText}>Salir</Text>
-          </Pressable>
-        </View>
+        <Pressable onPress={() => setMenuOpen(true)} style={styles.chip}>
+          <Text style={styles.chipText}>Menú</Text>
+        </Pressable>
+        <Pressable onPress={onOpenSettings} style={styles.chip}>
+          <Text style={styles.chipText}>Ajustes</Text>
+        </Pressable>
       </View>
 
       <View style={styles.stage}>
-        <UltronFace face={face} />
-        {showVision && camPerm?.granted && (
-          <View style={styles.camBox}>
-            <CameraView style={StyleSheet.absoluteFill} facing="front" />
+        <UltronFace face={face} gazeX={gaze.x} gazeY={gaze.y} />
+        {visionOn && camPerm?.granted && (
+          <View style={styles.visionBadge}>
+            <Text style={styles.visionBadgeText}>
+              {objects.length ? objects.slice(0, 3).join(' · ') : 'visión activa'}
+            </Text>
           </View>
         )}
       </View>
 
       {!!bubble && (
         <View style={styles.bubble}>
-          <ScrollView style={{ maxHeight: 72 }}>
+          <ScrollView style={{ maxHeight: 70 }}>
             <Text style={styles.bubbleText}>{bubble}</Text>
           </ScrollView>
         </View>
       )}
 
       <Text style={styles.status}>{status}</Text>
+      {!conocerDone && conocerIdx >= 0 && (
+        <Text style={styles.conocerHint}>
+          Conociéndote {Math.min(conocerIdx + 1, CORE_COUNT)}/{CORE_COUNT}
+        </Text>
+      )}
 
       <View style={styles.dock}>
         <Pressable
@@ -308,7 +492,7 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
             setPresence('sleep');
             setFace('SLEEPING');
             listenMode.current = 'wake';
-            void say('Sleep.', 'SLEEPING');
+            void say('Sleep. Di hey ULTRON.', 'SLEEPING');
           }}
           style={styles.dockBtn}
         >
@@ -318,8 +502,6 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
           onPress={() => {
             setPresence('stay');
             listenMode.current = 'command';
-            setFace('LISTENING');
-            startListening({ continuous: true });
             void say('Stay.', 'LISTENING');
           }}
           style={[styles.dockBtn, presence === 'stay' && styles.dockOn]}
@@ -338,21 +520,27 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
         </Pressable>
         <Pressable
           onPress={async () => {
-            if (!camPerm?.granted) await requestCam();
-            setShowVision((v) => !v);
+            if (!visionOn) {
+              if (!camPerm?.granted) {
+                const r = await requestCam();
+                if (!r.granted) {
+                  Alert.alert('Cámara denegada', 'Sin cámara no puedo mirarte ni identificar objetos.');
+                  return;
+                }
+              }
+              setVisionOn(true);
+              await saveSettings({ visionEnabled: true });
+            } else {
+              setVisionOn(false);
+              await saveSettings({ visionEnabled: false });
+            }
           }}
-          style={[styles.dockBtn, showVision && styles.dockOn]}
+          style={[styles.dockBtn, visionOn && styles.dockOn]}
         >
           <Text style={styles.dockText}>Visión</Text>
         </Pressable>
-        <Pressable
-          onPress={() => {
-            if (listening) stopListening();
-            else startListening({ continuous: true });
-          }}
-          style={[styles.dockBtn, listening && styles.dockOn]}
-        >
-          <Text style={styles.dockText}>{listening ? 'Mic·ON' : 'Mic'}</Text>
+        <Pressable onPress={() => void toggleMute()} style={[styles.dockBtn, !micMuted && styles.dockOn]}>
+          <Text style={styles.dockText}>{micMuted ? 'Mic OFF' : 'Mic ON'}</Text>
         </Pressable>
       </View>
 
@@ -360,7 +548,7 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
         <TextInput
           value={draft}
           onChangeText={setDraft}
-          placeholder="Escribe un comando…"
+          placeholder="Escribe o habla… hey ULTRON"
           placeholderTextColor="#5A6A7A"
           style={styles.input}
           onSubmitEditing={sendDraft}
@@ -370,16 +558,30 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
           <Text style={styles.sendText}>Enviar</Text>
         </Pressable>
       </View>
+
+      <CapabilitiesMenu
+        visible={menuOpen}
+        onClose={() => setMenuOpen(false)}
+        onStartConocer={() => void startConocer(false)}
+        onEnableVision={() => {
+          setVisionOn(true);
+          void requestCam();
+        }}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000', paddingHorizontal: 16, paddingTop: 8, paddingBottom: 10 },
-  topBar: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 4 },
+  topBar: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 4 },
   brand: { color: '#E8FBFF', fontWeight: '800', letterSpacing: 4, fontSize: 14 },
-  meta: { color: '#5A6A7A', fontSize: 11, flex: 1, fontFamily: Platform.OS === 'android' ? 'monospace' : 'Courier' },
-  topActions: { flexDirection: 'row', gap: 8 },
+  meta: {
+    color: '#5A6A7A',
+    fontSize: 11,
+    flex: 1,
+    fontFamily: Platform.OS === 'android' ? 'monospace' : 'Courier',
+  },
   chip: {
     paddingHorizontal: 10,
     paddingVertical: 6,
@@ -389,17 +591,19 @@ const styles = StyleSheet.create({
   },
   chipText: { color: '#C8D4DE', fontSize: 12 },
   stage: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  camBox: {
+  visionBadge: {
     position: 'absolute',
     right: 8,
     top: 8,
-    width: 120,
-    height: 90,
-    borderRadius: 12,
-    overflow: 'hidden',
+    maxWidth: 180,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(0,20,28,0.75)',
     borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.35)',
+    borderColor: 'rgba(0,229,255,0.25)',
   },
+  visionBadgeText: { color: '#8B9AAB', fontSize: 10 },
   bubble: {
     alignSelf: 'center',
     maxWidth: '90%',
@@ -412,7 +616,8 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   bubbleText: { color: '#E8FBFF', fontSize: 14, lineHeight: 20, textAlign: 'center' },
-  status: { color: '#5A6A7A', fontSize: 11, textAlign: 'center', marginBottom: 6 },
+  status: { color: '#5A6A7A', fontSize: 11, textAlign: 'center', marginBottom: 2 },
+  conocerHint: { color: '#00E5FF', fontSize: 11, textAlign: 'center', marginBottom: 6 },
   dock: { flexDirection: 'row', justifyContent: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' },
   dockBtn: {
     paddingHorizontal: 12,

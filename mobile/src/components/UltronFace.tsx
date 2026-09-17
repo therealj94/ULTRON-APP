@@ -1,55 +1,94 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { View, StyleSheet, useWindowDimensions, Animated, Easing } from 'react-native';
 import type { FaceState } from '../config';
 
 type Props = {
   face: FaceState;
+  /** -1..1 gaze from camera / touch */
+  gazeX?: number;
+  gazeY?: number;
   energy?: number;
 };
 
+/** Paleta más cálida / tierna (menos “scanner robótico”). */
 const FACE_COLORS: Record<FaceState, string> = {
-  IDLE: '#00E5FF',
-  LISTENING: '#5CFFB0',
-  THINKING: '#7AB8FF',
-  SPEAKING: '#00E5FF',
-  HAPPY: '#FFE566',
-  CONCERNED: '#FF9F6B',
-  ANGRY: '#FF4D6A',
-  SLEEPING: '#6B7C8F',
-  STARTLE: '#FF6BCB',
-  WINK: '#FFE566',
-  CONFUSED: '#C4A7FF',
-  MUSIC: '#FF7AD9',
-  SCAN: '#00FFC6',
-  YAWNING: '#8FA3B8',
+  IDLE: '#7EE8FF',
+  LISTENING: '#9AF5C8',
+  THINKING: '#A8C8FF',
+  SPEAKING: '#8DE4FF',
+  HAPPY: '#FFE9A8',
+  CONCERNED: '#FFC4A8',
+  ANGRY: '#FF9AAA',
+  SLEEPING: '#9AA8B8',
+  STARTLE: '#FFB8E0',
+  WINK: '#FFE9A8',
+  CONFUSED: '#D4C0FF',
+  MUSIC: '#FFB8E8',
+  SCAN: '#9AFFE0',
+  YAWNING: '#B0BCC8',
 };
 
-export function UltronFace({ face, energy = 85 }: Props) {
+export function UltronFace({ face, gazeX = 0, gazeY = 0, energy = 85 }: Props) {
   const { width, height } = useWindowDimensions();
-  const size = Math.min(width * 0.55, height * 0.72, 420);
+  const size = Math.min(width * 0.48, height * 0.78, 400);
   const color = FACE_COLORS[face] || FACE_COLORS.IDLE;
+
   const breath = useRef(new Animated.Value(1)).current;
   const blink = useRef(new Animated.Value(1)).current;
-  const mouth = useRef(new Animated.Value(0.22)).current;
-  const [tick, setTick] = useState(0);
+  const mouth = useRef(new Animated.Value(0.18)).current;
+  const pupilX = useRef(new Animated.Value(0)).current;
+  const pupilY = useRef(new Animated.Value(0)).current;
+  const softGlow = useRef(new Animated.Value(0.4)).current;
 
   useEffect(() => {
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(breath, { toValue: 1.03, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(breath, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(breath, {
+          toValue: 1.025,
+          duration: 2600,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
+        Animated.timing(breath, {
+          toValue: 1,
+          duration: 2600,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+        }),
       ])
     );
     loop.start();
-    return () => loop.stop();
-  }, [breath]);
+    const glowLoop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(softGlow, { toValue: 0.55, duration: 2200, useNativeDriver: true }),
+        Animated.timing(softGlow, { toValue: 0.32, duration: 2200, useNativeDriver: true }),
+      ])
+    );
+    glowLoop.start();
+    return () => {
+      loop.stop();
+      glowLoop.stop();
+    };
+  }, [breath, softGlow]);
+
+  // Gaze follow (suave)
+  useEffect(() => {
+    const tx = Math.max(-1, Math.min(1, gazeX)) * 7;
+    const ty = Math.max(-1, Math.min(1, gazeY)) * 5;
+    Animated.spring(pupilX, { toValue: tx, useNativeDriver: true, friction: 8, tension: 40 }).start();
+    Animated.spring(pupilY, { toValue: ty, useNativeDriver: true, friction: 8, tension: 40 }).start();
+  }, [gazeX, gazeY, pupilX, pupilY]);
 
   useEffect(() => {
     blink.setValue(1);
     const blinkLoop = Animated.loop(
       Animated.sequence([
-        Animated.delay(1800 + Math.random() * 1200),
-        Animated.timing(blink, { toValue: 0.08, duration: 80, useNativeDriver: true }),
+        Animated.delay(2400 + Math.random() * 1800),
+        Animated.timing(blink, { toValue: 0.06, duration: 70, useNativeDriver: true }),
+        Animated.timing(blink, { toValue: 1, duration: 140, useNativeDriver: true }),
+        // parpadeo doble suave a veces
+        Animated.delay(40),
+        Animated.timing(blink, { toValue: Math.random() > 0.7 ? 0.08 : 1, duration: 60, useNativeDriver: true }),
         Animated.timing(blink, { toValue: 1, duration: 120, useNativeDriver: true }),
       ])
     );
@@ -60,152 +99,211 @@ export function UltronFace({ face, energy = 85 }: Props) {
     if (speak) {
       mouthLoop = Animated.loop(
         Animated.sequence([
-          Animated.timing(mouth, { toValue: 0.9, duration: 140, useNativeDriver: true }),
-          Animated.timing(mouth, { toValue: 0.25, duration: 160, useNativeDriver: true }),
+          Animated.timing(mouth, { toValue: 0.72, duration: 160, useNativeDriver: true }),
+          Animated.timing(mouth, { toValue: 0.22, duration: 180, useNativeDriver: true }),
         ])
       );
       mouthLoop.start();
     } else {
       const target =
         face === 'YAWNING'
-          ? 1
+          ? 0.95
           : face === 'HAPPY' || face === 'WINK'
-            ? 0.55
+            ? 0.48
             : face === 'CONCERNED'
-              ? 0.12
+              ? 0.1
               : face === 'ANGRY'
-                ? 0.35
+                ? 0.28
                 : face === 'SLEEPING'
-                  ? 0.05
-                  : 0.22;
-      Animated.timing(mouth, { toValue: target, duration: 280, useNativeDriver: true }).start();
+                  ? 0.04
+                  : 0.18;
+      Animated.timing(mouth, { toValue: target, duration: 320, useNativeDriver: true }).start();
     }
 
-    const id = setInterval(() => setTick((n) => n + 1), 500);
     return () => {
       blinkLoop.stop();
       mouthLoop?.stop();
-      clearInterval(id);
     };
   }, [face, blink, mouth]);
 
-  const dilate = face === 'LISTENING' ? 1.15 : face === 'SLEEPING' ? 0.7 : 1;
-  const eyeH = 28 * dilate;
   const leftWink = face === 'WINK';
-  const glow = 0.35 + (energy / 400) + (tick % 2) * 0.05;
+  const sleeping = face === 'SLEEPING';
+  const eyeW = size * 0.13;
+  const eyeH = size * 0.09;
 
   return (
     <Animated.View style={[styles.wrap, { width: size, height: size, transform: [{ scale: breath }] }]}>
-      <View style={[styles.ring, { borderColor: color, opacity: glow, width: size * 0.84, height: size * 0.84, borderRadius: size * 0.42 }]} />
-      <View style={[styles.ringInner, { borderColor: color, width: size * 0.68, height: size * 0.68, borderRadius: size * 0.34 }]} />
-      <View style={[styles.visor, { borderColor: color }]}>
-        <View style={styles.eyesRow}>
+      {/* Aura suave */}
+      <Animated.View
+        style={[
+          styles.aura,
+          {
+            width: size * 0.92,
+            height: size * 0.92,
+            borderRadius: size * 0.46,
+            backgroundColor: color,
+            opacity: softGlow,
+          },
+        ]}
+      />
+      <View style={[styles.head, { width: size * 0.72, height: size * 0.72, borderRadius: size * 0.36 }]}>
+        <View style={[styles.visorSoft, { borderColor: `${color}55` }]}>
+          {/* Ojos tiernos — ovalados grandes, iris suave, pupilas que siguen */}
+          <View style={styles.eyesRow}>
+            <Animated.View
+              style={[
+                styles.eyeWhite,
+                {
+                  width: eyeW,
+                  height: eyeH,
+                  transform: [{ scaleY: leftWink ? 0.12 : blink }],
+                  opacity: sleeping ? 0.25 : 1,
+                },
+              ]}
+            >
+              <View style={[styles.iris, { backgroundColor: color, width: eyeW * 0.55, height: eyeH * 0.72 }]}>
+                <Animated.View
+                  style={[
+                    styles.pupil,
+                    { transform: [{ translateX: pupilX }, { translateY: pupilY }] },
+                  ]}
+                />
+                <View style={styles.glintBig} />
+                <View style={styles.glintSmall} />
+              </View>
+            </Animated.View>
+            <Animated.View
+              style={[
+                styles.eyeWhite,
+                {
+                  width: eyeW,
+                  height: eyeH,
+                  transform: [{ scaleY: blink }],
+                  opacity: sleeping ? 0.25 : 1,
+                },
+              ]}
+            >
+              <View style={[styles.iris, { backgroundColor: color, width: eyeW * 0.55, height: eyeH * 0.72 }]}>
+                <Animated.View
+                  style={[
+                    styles.pupil,
+                    { transform: [{ translateX: pupilX }, { translateY: pupilY }] },
+                  ]}
+                />
+                <View style={styles.glintBig} />
+                <View style={styles.glintSmall} />
+              </View>
+            </Animated.View>
+          </View>
+
+          {/* Boca suave */}
           <Animated.View
             style={[
-              styles.eye,
+              styles.mouth,
               {
                 backgroundColor: color,
-                height: eyeH,
-                transform: [{ scaleY: leftWink ? 0.1 : blink }],
-                opacity: face === 'SLEEPING' ? 0.35 : 1,
+                width: size * 0.12,
+                height: size * 0.035,
+                transform: [{ scaleY: mouth }, { scaleX: face === 'HAPPY' ? 1.25 : 1 }],
+                borderRadius: face === 'HAPPY' || face === 'WINK' ? 20 : 10,
+                opacity: 0.9,
               },
             ]}
-          >
-            <View style={styles.pupil} />
-            <View style={styles.glint} />
-          </Animated.View>
-          <Animated.View
-            style={[
-              styles.eye,
-              {
-                backgroundColor: color,
-                height: eyeH,
-                transform: [{ scaleY: blink }],
-                opacity: face === 'SLEEPING' ? 0.35 : 1,
-              },
-            ]}
-          >
-            <View style={styles.pupil} />
-            <View style={styles.glint} />
-          </Animated.View>
+          />
         </View>
-        <Animated.View
-          style={[
-            styles.mouth,
-            {
-              backgroundColor: color,
-              transform: [{ scaleY: mouth }, { scaleX: 1 }],
-              opacity: face === 'HAPPY' ? 0.95 : 0.85,
-            },
-          ]}
-        />
       </View>
-      {face === 'LISTENING' && <View style={[styles.listenPulse, { borderColor: color }]} />}
-      <View style={styles.badge}>
-        <View style={[styles.badgeDot, { backgroundColor: color }]} />
+      {face === 'LISTENING' && (
+        <View style={[styles.listenRing, { borderColor: color, width: size * 0.88, height: size * 0.88 }]} />
+      )}
+      <View style={styles.energyBar}>
+        <View style={[styles.energyFill, { width: `${Math.min(100, energy)}%` as any, backgroundColor: color }]} />
       </View>
     </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: {
+  wrap: { alignItems: 'center', justifyContent: 'center' },
+  aura: {
+    position: 'absolute',
+    opacity: 0.12,
+  },
+  head: {
+    backgroundColor: '#0B1018',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#05070A',
-    borderRadius: 36,
-    overflow: 'hidden',
+    shadowColor: '#00E5FF',
+    shadowOpacity: 0.25,
+    shadowRadius: 24,
+    elevation: 8,
   },
-  ring: {
-    position: 'absolute',
-    borderWidth: 2,
-  },
-  ringInner: {
-    position: 'absolute',
-    borderWidth: 1.5,
-    opacity: 0.35,
-  },
-  visor: {
-    width: '64%',
-    height: '36%',
-    borderRadius: 28,
-    borderWidth: 1.5,
-    backgroundColor: 'rgba(8,14,22,0.92)',
+  visorSoft: {
+    width: '78%',
+    height: '48%',
+    borderRadius: 40,
+    borderWidth: 1,
+    backgroundColor: 'rgba(14,20,30,0.95)',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 14,
-    paddingVertical: 10,
+    gap: 16,
+    paddingVertical: 12,
   },
   eyesRow: { flexDirection: 'row', gap: 28, alignItems: 'center' },
-  eye: {
-    width: 56,
-    borderRadius: 20,
+  eyeWhite: {
+    backgroundColor: '#F4FBFF',
+    borderRadius: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  iris: {
+    borderRadius: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  pupil: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#001018' },
-  glint: {
+  pupil: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    backgroundColor: '#0A121A',
+  },
+  glintBig: {
     position: 'absolute',
-    top: 6,
-    left: 14,
+    top: 3,
+    left: 5,
     width: 5,
     height: 5,
     borderRadius: 3,
-    backgroundColor: '#E8FBFF',
+    backgroundColor: '#FFFFFF',
+    opacity: 0.95,
   },
-  mouth: {
-    width: 54,
-    height: 18,
-    borderRadius: 12,
-  },
-  listenPulse: {
+  glintSmall: {
     position: 'absolute',
-    width: '92%',
-    height: '92%',
+    bottom: 4,
+    right: 5,
+    width: 2.5,
+    height: 2.5,
+    borderRadius: 2,
+    backgroundColor: '#FFFFFF',
+    opacity: 0.55,
+  },
+  mouth: { marginTop: 2 },
+  listenRing: {
+    position: 'absolute',
     borderRadius: 999,
     borderWidth: 1,
-    opacity: 0.25,
+    opacity: 0.22,
   },
-  badge: { position: 'absolute', bottom: 18, alignItems: 'center' },
-  badgeDot: { width: 8, height: 8, borderRadius: 4 },
+  energyBar: {
+    position: 'absolute',
+    bottom: 14,
+    width: '40%',
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    overflow: 'hidden',
+  },
+  energyFill: { height: '100%', borderRadius: 2 },
 });

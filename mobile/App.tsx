@@ -3,6 +3,7 @@ import * as SystemUI from 'expo-system-ui';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   AppState,
   Image,
   PermissionsAndroid,
@@ -15,7 +16,6 @@ import {
 import { APP_VERSION, type SessionUser } from './src/config';
 import { healthCheck } from './src/lib/api';
 import { loadSession, saveSession } from './src/lib/storage';
-import { ensureSpeechPermissions } from './src/lib/speech';
 import { DeskScreen } from './src/screens/DeskScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
@@ -49,7 +49,8 @@ async function hideSystemBars() {
   }
 }
 
-async function requestOsPermissions() {
+/** Pide permisos con diálogo nativo Android (aceptar / denegar). */
+async function requestOsPermissionsExplained() {
   if (Platform.OS !== 'android') return;
   try {
     await PermissionsAndroid.requestMultiple([
@@ -57,9 +58,8 @@ async function requestOsPermissions() {
       PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
     ]);
   } catch {
-    /* */
+    /* Desk pedirá de nuevo con Alert contextual */
   }
-  await ensureSpeechPermissions();
 }
 
 export default function App() {
@@ -69,11 +69,25 @@ export default function App() {
 
   const boot = useCallback(async () => {
     setPhase('boot');
-    setBootLine('Bloqueando landscape…');
+    setBootLine('Orientación landscape…');
     await lockLandscape();
     await hideSystemBars();
-    setBootLine('Permisos de sensores…');
-    await requestOsPermissions();
+    setBootLine('Autorizaciones de sensores…');
+    await new Promise<void>((resolve) => {
+      Alert.alert(
+        'ULTRON FP necesita permisos',
+        'Cámara (mirarte e identificar objetos) y micrófono (siempre escuchando «hey ULTRON»). Puedes denegar y usar solo teclado.',
+        [
+          {
+            text: 'Continuar',
+            onPress: () => {
+              void requestOsPermissionsExplained().finally(() => resolve());
+            },
+          },
+        ],
+        { cancelable: false }
+      );
+    });
     setBootLine('Comprobando núcleo…');
     try {
       const h = await healthCheck();
@@ -128,7 +142,7 @@ export default function App() {
           <ActivityIndicator color="#00E5FF" size="large" />
           <Text style={styles.bootTitle}>ULTRON FP</Text>
           <Text style={styles.bootSub}>{bootLine}</Text>
-          <Text style={styles.meta}>v{APP_VERSION} · native</Text>
+          <Text style={styles.meta}>v{APP_VERSION} · native production</Text>
         </View>
       )}
       {phase === 'login' && (

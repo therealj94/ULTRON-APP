@@ -11,6 +11,11 @@ export const CONOCER_QUESTIONS = [
   { id: 'meta', prompt: '¿Qué objetivo grande tienes este año?', memoryKey: 'meta_anual' },
   { id: 'estilo', prompt: '¿Prefieres que te hable formal, cálido o bien directo?', memoryKey: 'estilo_habla' },
   { id: 'apodo', prompt: '¿Algún apodo o detalle raro que deba recordar de ti?', memoryKey: 'apodo' },
+  // Extra (después de las 10): solo con «conocer más»
+  { id: 'miedo', prompt: '¿Hay algo que te preocupe y quieras que yo vigile?', memoryKey: 'preocupacion' },
+  { id: 'energia', prompt: '¿En qué momento del día sueles estar más cansado o más afilado?', memoryKey: 'ritmo_energia' },
+  { id: 'limites', prompt: '¿Hay temas que prefieres que yo no toque?', memoryKey: 'limites' },
+  { id: 'cumple', prompt: 'Si quieres, dime tu cumpleaños (día/mes).', memoryKey: 'cumpleanos' },
 ] as const;
 
 type FaqItem = { match: RegExp; answer: string | (() => string) };
@@ -37,7 +42,7 @@ export const LOCAL_FAQ: FaqItem[] = [
   {
     match: /ayuda|tutorial|que puedes|qué puedes|comandos/,
     answer:
-      'Di «hey ULTRON» y luego: chatea, canta, ponte feliz, enójate, modo guardian, conocer, o pregunta lo que necesites. También puedes escribir abajo.',
+      'Di «hey ULTRON» (mic siempre on). Menú → capacidades. Visión te mira. «modo conocer», gestos (ponte feliz, canta), Sleep/Stay/Explore. También puedes escribir.',
   },
   {
     match: /orden global|doctrina|alfa/,

@@ -1,6 +1,6 @@
 {
   "name": "ultron-fp-mobile",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -12,12 +12,15 @@
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
+    "@react-native-voice/voice": "^3.2.4",
     "expo": "~54.0.37",
     "expo-av": "~16.0.8",
+    "expo-blur": "~15.0.8",
     "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.14",
     "expo-file-system": "~19.0.24",
     "expo-linear-gradient": "~15.0.8",
+    "expo-local-authentication": "~17.0.9",
     "expo-navigation-bar": "~5.0.10",
     "expo-screen-orientation": "~9.0.9",
     "expo-secure-store": "~15.0.8",

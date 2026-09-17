@@ -6,9 +6,10 @@ const KEYS = {
   session: 'ultron_fp_session_v2',
   creds: 'ultron_fp_creds_v2',
   memory: 'ultron_fp_person_memory_v2',
-  conocerDay: 'ultron_fp_conocer_day',
+  conocerProgress: 'ultron_fp_conocer_progress_v2',
   settings: 'ultron_fp_settings_v2',
   chatLog: 'ultron_fp_chat_log_v2',
+  fingerprint: 'ultron_fp_fingerprint_v2',
 } as const;
 
 export type SavedCreds = { correo: string; clave: string; name?: string };
@@ -21,16 +22,21 @@ export type LocalPerson = {
 };
 export type AppSettings = {
   voiceId: string;
-  micEnabled: boolean;
+  micMuted: boolean;
   visionEnabled: boolean;
-  autoListen: boolean;
+  gazeEnabled: boolean;
+};
+export type ConocerProgress = {
+  correo: string;
+  answeredIds: string[];
+  completedCore: boolean; // primeras 10
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
   voiceId: 'jarvis',
-  micEnabled: true,
+  micMuted: false,
   visionEnabled: true,
-  autoListen: true,
+  gazeEnabled: true,
 };
 
 export async function saveSession(user: SessionUser | null) {
@@ -62,6 +68,23 @@ export async function loadCreds(): Promise<SavedCreds | null> {
   try {
     const raw = await SecureStore.getItemAsync(KEYS.creds);
     return raw ? (JSON.parse(raw) as SavedCreds) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setFingerprintUnlock(enabled: boolean, correo?: string) {
+  if (!enabled) {
+    await AsyncStorage.removeItem(KEYS.fingerprint);
+    return;
+  }
+  await AsyncStorage.setItem(KEYS.fingerprint, JSON.stringify({ enabled: true, correo: correo || '' }));
+}
+
+export async function getFingerprintUnlock(): Promise<{ enabled: boolean; correo: string } | null> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.fingerprint);
+    return raw ? JSON.parse(raw) : null;
   } catch {
     return null;
   }
@@ -115,6 +138,31 @@ export async function upsertPersonFact(opts: {
   return person;
 }
 
+export async function loadConocerProgress(correo: string): Promise<ConocerProgress> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.conocerProgress);
+    const all = raw ? (JSON.parse(raw) as ConocerProgress[]) : [];
+    return (
+      all.find((p) => p.correo === correo) || {
+        correo,
+        answeredIds: [],
+        completedCore: false,
+      }
+    );
+  } catch {
+    return { correo, answeredIds: [], completedCore: false };
+  }
+}
+
+export async function saveConocerProgress(progress: ConocerProgress) {
+  const raw = await AsyncStorage.getItem(KEYS.conocerProgress);
+  const all = raw ? (JSON.parse(raw) as ConocerProgress[]) : [];
+  const idx = all.findIndex((p) => p.correo === progress.correo);
+  if (idx >= 0) all[idx] = progress;
+  else all.push(progress);
+  await AsyncStorage.setItem(KEYS.conocerProgress, JSON.stringify(all));
+}
+
 export async function appendChatLog(entry: { role: 'user' | 'ultron'; text: string }) {
   try {
     const raw = await AsyncStorage.getItem(KEYS.chatLog);
@@ -133,15 +181,4 @@ export async function loadChatLog() {
   } catch {
     return [];
   }
-}
-
-export async function markConocerOfferedToday() {
-  const day = new Date().toISOString().slice(0, 10);
-  await AsyncStorage.setItem(KEYS.conocerDay, day);
-}
-
-export async function wasConocerOfferedToday() {
-  const day = new Date().toISOString().slice(0, 10);
-  const prev = await AsyncStorage.getItem(KEYS.conocerDay);
-  return prev === day;
 }

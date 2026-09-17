@@ -40,7 +40,7 @@ export function SettingsScreen({ onBack }: Props) {
       <Pressable onPress={onBack}>
         <Text style={styles.back}>← Escritorio</Text>
       </Pressable>
-      <Text style={styles.title}>Ajustes nativos</Text>
+      <Text style={styles.title}>Ajustes</Text>
       <Text style={styles.sub}>
         v{APP_VERSION} · {API_BASE}
       </Text>
@@ -53,18 +53,18 @@ export function SettingsScreen({ onBack }: Props) {
 
       <View style={styles.card}>
         <View style={styles.row}>
-          <Text style={styles.label}>Micrófono automático</Text>
+          <Text style={styles.label}>Visión / mirada</Text>
           <Switch
-            value={settings.autoListen}
-            onValueChange={(v) => void patch({ autoListen: v })}
+            value={settings.visionEnabled}
+            onValueChange={(v) => void patch({ visionEnabled: v, gazeEnabled: v })}
             trackColor={{ true: '#00E5FF' }}
           />
         </View>
         <View style={styles.row}>
-          <Text style={styles.label}>Visión por defecto</Text>
+          <Text style={styles.label}>Mic silenciado al abrir</Text>
           <Switch
-            value={settings.visionEnabled}
-            onValueChange={(v) => void patch({ visionEnabled: v })}
+            value={settings.micMuted}
+            onValueChange={(v) => void patch({ micMuted: v })}
             trackColor={{ true: '#00E5FF' }}
           />
         </View>
@@ -93,7 +93,8 @@ export function SettingsScreen({ onBack }: Props) {
       </View>
 
       <Text style={styles.hint}>
-        Esta app es React Native + Expo nativa (cara Animated, cámara, mic, SecureStore). Ya no usa WebView del desk web.
+        Micrófono siempre activo por defecto. El botón Mic solo silencia. Huella y contraseña se guardan en
+        SecureStore del teléfono.
       </Text>
     </ScrollView>
   );
