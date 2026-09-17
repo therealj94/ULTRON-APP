@@ -70,6 +70,13 @@ export default function App() {
   const [soundFxEnabled, setSoundFxEnabled] = useState<boolean>(true);
   const [visionEnabled, setVisionEnabled] = useState<boolean>(true); // cámara ON para que la AI vea
   const [cameraOnline, setCameraOnline] = useState(false);
+  const [ttsNodeInfo, setTtsNodeInfo] = useState<{
+    state?: string;
+    publicIp?: string | null;
+    suggestedUltronTtsUrl?: string | null;
+    error?: string;
+    proxyConfigured?: boolean;
+  } | null>(null);
   const [resetTrigger, setResetTrigger] = useState<number>(0);
 
   // ElevenLabs Voice Configuration — Nexo by default
@@ -750,6 +757,34 @@ export default function App() {
     conocerIdxRef.current = next;
     vocalize(`Anotado. ${CONOCER_QUESTIONS[next].prompt}`, 'LISTENING');
   };
+
+  const refreshTtsNode = useCallback(async () => {
+    try {
+      const st = await fetch('/api/aws/tts-node').then((r) => r.json());
+      if (st.error && /Faltan AWS|MISSING/i.test(st.error)) {
+        setTtsNodeInfo({ error: st.error, proxyConfigured: false });
+        vocalize('AWS no está en este entorno. En Render, tras el deploy, esta consulta usará tus keys.');
+        return;
+      }
+      if (st.state === 'stopped' || st.state === 'stopping') {
+        await fetch('/api/aws/tts-node/start', { method: 'POST' });
+        vocalize('Arrancando el nodo T4 de voz. Espera un minuto.');
+      } else if (st.state === 'running' && st.suggestedUltronTtsUrl) {
+        vocalize(`Nodo TTS en ${st.publicIp}. Configura ULTRON_TTS_URL en Render si aún no está.`);
+      } else {
+        vocalize(`Nodo TTS: ${st.state || st.error || 'sin datos'}.`);
+      }
+      setTtsNodeInfo({
+        state: st.state,
+        publicIp: st.publicIp,
+        suggestedUltronTtsUrl: st.suggestedUltronTtsUrl,
+        error: st.error,
+        proxyConfigured: Boolean(st.proxy?.configured),
+      });
+    } catch (e: any) {
+      setTtsNodeInfo({ error: e.message || String(e) });
+    }
+  }, [vocalize]);
 
   const handleLogout = async () => {
     try {
@@ -1516,6 +1551,8 @@ export default function App() {
           }}
           onLogout={handleLogout}
           onStartConocer={startConocerFlow}
+          onRefreshTtsNode={refreshTtsNode}
+          ttsNodeInfo={ttsNodeInfo}
         />
 
         {/* Permission Gate Modal */}

@@ -46,6 +46,14 @@ interface SettingsSheetProps {
   onOpenPhotos?: () => void;
   onLogout?: () => void;
   onStartConocer?: () => void;
+  onRefreshTtsNode?: () => void;
+  ttsNodeInfo?: {
+    state?: string;
+    publicIp?: string | null;
+    suggestedUltronTtsUrl?: string | null;
+    error?: string;
+    proxyConfigured?: boolean;
+  } | null;
 }
 
 const MODE_ICONS: Record<Mode, React.ReactNode> = {
@@ -99,6 +107,8 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   onOpenPhotos,
   onLogout,
   onStartConocer,
+  onRefreshTtsNode,
+  ttsNodeInfo,
 }) => {
   const [showSavedClave, setShowSavedClave] = React.useState(false);
   const savedClave = React.useMemo(() => {
@@ -195,6 +205,39 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
               </button>
             )}
           </div>
+        </div>
+
+        {/* Nodo TTS T4 */}
+        <div className="rounded-xl border border-[#F5C542]/25 bg-black/50 p-3 space-y-2">
+          <div className="text-xs font-display tracking-[0.2em] text-[#8FA3B0]">
+            QWEN3-TTS · T4 dedicada
+          </div>
+          <div className="text-[11px] font-mono text-[#8FA3B0] space-y-1">
+            <div>
+              Estado:{' '}
+              <span className="text-[#F5C542]">
+                {ttsNodeInfo?.state || (ttsNodeInfo?.error ? 'sin AWS env' : '—')}
+              </span>
+            </div>
+            <div>IP: {ttsNodeInfo?.publicIp || '—'}</div>
+            <div className="break-all">
+              URL:{' '}
+              <span className="text-[#00E5FF]">
+                {ttsNodeInfo?.suggestedUltronTtsUrl ||
+                  (ttsNodeInfo?.proxyConfigured ? 'proxy configurado' : 'ULTRON_TTS_URL pendiente')}
+              </span>
+            </div>
+            {ttsNodeInfo?.error && <div className="text-amber-300">{ttsNodeInfo.error}</div>}
+          </div>
+          {onRefreshTtsNode && (
+            <button
+              type="button"
+              onClick={onRefreshTtsNode}
+              className="px-3 py-1.5 rounded-lg border border-[#F5C542]/40 bg-[#F5C542]/10 text-[#F5C542] text-xs font-mono"
+            >
+              Consultar / arrancar T4
+            </button>
+          )}
         </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
