@@ -518,33 +518,45 @@ app.post('/api/ultron/entrar', async (req, res) => {
 });
 
 app.post('/api/ultron/biometric-login', async (req, res) => {
-  const { biometricType, userName, role } = req.body;
+  const { biometricType, userName, role, correo } = req.body;
+  const allowed = [
+    'mjoseenamorado1994@gmail.com',
+    'medardo@ordenglobal.org',
+  ];
+  const mail = String(correo || '').toLowerCase();
+  if (mail && !allowed.includes(mail)) {
+    return res.status(403).json({ error: 'Acceso desk solo para José y Medardo.' });
+  }
+
+  let isLive = false;
   try {
     const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/salud`, {
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(4000),
     });
-    const isLive = remoteRes.ok;
-    ultronRemoteSession = {
-      authenticated: true,
-      user: {
-        nombre: userName || 'José',
-        correo: 'mjoseenamorado1994@gmail.com',
-        rol: role || 'Junta Directiva · Orden Global',
-      },
-      lastLogin: new Date().toISOString(),
-    };
-    return res.json({
-      ok: true,
-      authenticated: true,
-      user: ultronRemoteSession.user,
-      remoteSystemLive: isLive,
-      remoteUrl: ULTRON_REMOTE_URL,
-      biometricType: biometricType || 'fingerprint',
-      message: `Acceso biométrico verificado. Sesión sincronizada con ULTRON FP (${ULTRON_REMOTE_URL}).`,
-    });
-  } catch (err: any) {
-    return res.status(500).json({ error: 'Error durante verificación biométrica', message: err.message });
+    isLive = remoteRes.ok;
+  } catch {
+    isLive = false;
   }
+
+  // Acceso desk local siempre permitido para los dos miembros (cerebro remoto opcional)
+  ultronRemoteSession = {
+    authenticated: true,
+    user: {
+      nombre: userName || 'José',
+      correo: mail || 'mjoseenamorado1994@gmail.com',
+      rol: role || 'Junta Directiva · Orden Global',
+    },
+    lastLogin: new Date().toISOString(),
+  };
+  return res.json({
+    ok: true,
+    authenticated: true,
+    user: ultronRemoteSession.user,
+    remoteSystemLive: isLive,
+    remoteUrl: ULTRON_REMOTE_URL,
+    biometricType: biometricType || 'fingerprint',
+    message: `Acceso verificado. Bienvenido ${ultronRemoteSession.user.nombre}.`,
+  });
 });
 
 app.get('/api/ultron/sesion', async (req, res) => {

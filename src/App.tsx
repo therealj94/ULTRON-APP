@@ -21,10 +21,14 @@ import { playSfx } from './utils/audio';
 import { cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
 import { DEFAULT_ELEVENLABS_VOICES, speakWithElevenLabsOrFallback, stopCurrentVoice } from './utils/elevenlabs';
 import { downloadStandaloneSimulator } from './utils/exporter';
-import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck, HelpCircle, RotateCcw } from 'lucide-react';
+import { Maximize2, Minimize2, Camera, ShieldCheck, Sparkles, RotateCcw } from 'lucide-react';
 import { AgenticHarnessModal } from './components/AgenticHarnessModal';
 import { analyzeConversationTopic, SemanticClassification } from './utils/qwenHarness';
 import { streamUltronChat } from './utils/ultronChat';
+import { LoginScreen } from './components/LoginScreen';
+import { OrientationGate } from './components/OrientationGate';
+import { LooiSidebar, DeskPresence } from './components/LooiSidebar';
+import { SpeechBubble } from './components/SpeechBubble';
 
 export default function App() {
   // Session State
@@ -51,10 +55,10 @@ export default function App() {
   const chatAbortRef = useRef<AbortController | null>(null);
 
   // Audio & Hardware State
-  const [micEnabled, setMicEnabled] = useState<boolean>(true);
+  const [micEnabled, setMicEnabled] = useState<boolean>(false); // push-to-talk: off al abrir
   const [speakerEnabled, setSpeakerEnabled] = useState<boolean>(true);
   const [soundFxEnabled, setSoundFxEnabled] = useState<boolean>(true);
-  const [visionEnabled, setVisionEnabled] = useState<boolean>(true);
+  const [visionEnabled, setVisionEnabled] = useState<boolean>(false); // cámara OFF al abrir
   const [resetTrigger, setResetTrigger] = useState<number>(0);
 
   // ElevenLabs Voice Configuration — Nexo by default
@@ -92,15 +96,20 @@ export default function App() {
   const [pendingPermission, setPendingPermission] = useState<BoardPermissionRequest | null>(null);
 
   // Current Authenticated User (Render / Ultron FP & Biometrics)
+  const [sessionReady, setSessionReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<{
     name: string;
     role: string;
     authenticated: boolean;
+    correo?: string;
   }>({
-    name: 'José',
-    role: 'Junta Directiva · Orden Global',
+    name: '',
+    role: '',
     authenticated: false,
   });
+  const [deskPresence, setDeskPresence] = useState<DeskPresence>('stay');
+  const [fullBubbleText, setFullBubbleText] = useState('');
+  const [wantDetail, setWantDetail] = useState<'ask' | 'summary' | 'full' | null>(null);
 
   // Action timers to ensure animations always complete and return to IDLE
   const combatTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -135,11 +144,12 @@ export default function App() {
   // Display speech bubble helper
   const showBubble = useCallback((text: string, durationMs = 3200) => {
     setBubbleText(text);
+    setFullBubbleText(text);
     setBubbleVisible(true);
     if (bubbleTimeoutRef.current) clearTimeout(bubbleTimeoutRef.current);
     bubbleTimeoutRef.current = setTimeout(() => {
       setBubbleVisible(false);
-    }, durationMs);
+    }, Math.max(durationMs, 5000));
   }, []);
 
   // Voice: siempre ElevenLabs (proxy). Timeout de seguridad para no dejar SPEAKING/ojos pegados.
@@ -173,7 +183,7 @@ export default function App() {
     [showBubble, speakerEnabled, activeVoice]
   );
 
-  // Boot: un solo saludo, corto, sin loops
+  // Sesión previa (si existe) — no saludar hasta login listo
   useEffect(() => {
     fetch('/api/ultron/sesion')
       .then((res) => res.json())
@@ -183,22 +193,27 @@ export default function App() {
             name: data.user.nombre || 'José',
             role: data.user.rol || 'Junta Directiva · Orden Global',
             authenticated: true,
+            correo: data.user.correo,
           });
+          setSessionReady(true);
         }
       })
       .catch(() => {});
+  }, []);
 
+  // Boot corto solo después del login
+  useEffect(() => {
+    if (!sessionReady || bootDoneRef.current) return;
     const timer = setTimeout(() => {
       if (bootDoneRef.current) return;
       bootDoneRef.current = true;
       setIsBooting(false);
       playSfx('boot', true);
-      vocalize('ULTRON listo.');
-    }, 1100);
-
+      vocalize(`Hola ${currentUser.name || ''}. ULTRON listo.`);
+    }, 900);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [sessionReady]);
 
   // Add log to bridge telemetry
   const logBridgeEvent = useCallback((direction: 'in' | 'out', payload: string) => {
@@ -325,9 +340,9 @@ export default function App() {
     }
   }, [handleTriggerWave, handleTriggerDrink]);
 
-  // Speech Recognition hook with full barge-in interruption
+  // Speech Recognition — solo con mic ON; no barge-in mientras habla (evita glitch)
   useEffect(() => {
-    if (!micEnabled) {
+    if (!micEnabled || deskPresence === 'sleep') {
       if (speechRecognizerRef.current) {
         speechRecognizerRef.current.stop();
         speechRecognizerRef.current = null;
@@ -339,32 +354,30 @@ export default function App() {
       (text, isFinal) => {
         if (!text.trim()) return;
         if (isFinal) {
+          setMicEnabled(false); // una orden y se apaga (push-to-talk)
           handleVoiceCommand(text.trim());
         } else {
-          // Live stream transcript
           showBubble(text, 2500);
-          setFace('LISTENING');
+          setFace((f) => (f === 'SPEAKING' ? f : 'LISTENING'));
         }
       },
       () => {
-        // Immediate Barge-in interruption: user started speaking, silence assistant voice instantly!
+        // Barge-in solo si no estamos en TTS activo
+        if (face === 'SPEAKING') return;
         cancelSpeech();
-        stopCurrentVoice();
         chatAbortRef.current?.abort();
         setFace('LISTENING');
-        showBubble('Escuchando...');
+        showBubble('Escuchando…');
       },
-      () => {
-        // Recognition ended / auto-restarted
-      },
-      () => {
-        // Recognition error
-      }
+      () => {},
+      () => {}
     );
 
     if (rec) {
       speechRecognizerRef.current = rec;
       rec.start();
+      setFace('LISTENING');
+      showBubble('Te escucho…', 4000);
     }
 
     return () => {
@@ -374,22 +387,32 @@ export default function App() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [micEnabled]);
+  }, [micEnabled, deskPresence]);
 
-  // Manual Trigger Voice
+  // Manual Trigger Voice (push-to-talk)
   const triggerVoicePipeline = () => {
-    if (!micEnabled) {
-      setMicEnabled(true);
-      playSfx('wake', soundFxEnabled);
-      vocalize('Micrófono activado. Te escucho.');
-      return;
+    if (deskPresence === 'sleep') {
+      setDeskPresence('stay');
+      setFace('IDLE');
     }
-
     playSfx('tap', soundFxEnabled);
-    setFace('LISTENING');
-    showBubble('Escuchando orden...');
-    if (speechRecognizerRef.current) {
-      speechRecognizerRef.current.start();
+    setMicEnabled(true);
+  };
+
+  const handleDeskPresence = (p: DeskPresence) => {
+    setDeskPresence(p);
+    if (p === 'sleep') {
+      setMicEnabled(false);
+      setVisionEnabled(false);
+      handleSleep();
+    } else if (p === 'stay') {
+      setFace('IDLE');
+      setMicEnabled(false);
+      vocalize('Modo stay.');
+    } else {
+      setMode('EXPLORER');
+      setFace('HAPPY');
+      vocalize('Modo explore.');
     }
   };
 
@@ -531,6 +554,38 @@ export default function App() {
       return;
     }
 
+    // Music / headphones expression
+    if (/música|musica|canción|cancion|headphones|auricular/.test(q)) {
+      setFace('MUSIC');
+      vocalize('Poniendo vibes. Auriculares on.');
+      setTimeout(() => setFace('IDLE'), 4500);
+      return;
+    }
+
+    // Confused
+    if (/confund|no entiendo|\bhuh\b|no te entiendo/.test(q)) {
+      setFace('CONFUSED');
+      vocalize('Hmm, ¿puedes repetir más claro?');
+      setTimeout(() => setFace('IDLE'), 3500);
+      return;
+    }
+
+    // Scan
+    if (/escanea|escáner|escaner|laser|láser|scan/.test(q)) {
+      setFace('SCAN');
+      vocalize('Escaneando el escritorio.');
+      setTimeout(() => setFace('IDLE'), 4000);
+      return;
+    }
+
+    // Offline / dead face
+    if (/offline|apagado|muerto|desconect/.test(q)) {
+      setFace('OFFLINE');
+      vocalize('Modo offline simulado.');
+      setTimeout(() => setFace('IDLE'), 3500);
+      return;
+    }
+
     // Interactive Hand Wave Greeting
     if (/^(hola|saluda|saludo|wave|mano)\b/.test(q) || /saluda|choca la mano/.test(q)) {
       handleTriggerWave();
@@ -655,7 +710,15 @@ export default function App() {
       return;
     }
 
-    // Default: real Qwen brain
+    // Default: real Qwen brain (corto). Resumen/completo si el usuario lo pide.
+    if (/completo|entero|todo el detalle|lee todo/.test(q)) {
+      void askUltronBrain(`${cmd}\n\n[Usuario pidió la versión completa, puedes extender hasta 2 párrafos.]`);
+      return;
+    }
+    if (/resumen|resum|corto|breve/.test(q)) {
+      void askUltronBrain(`${cmd}\n\n[Usuario pidió SOLO resumen en una frase.]`);
+      return;
+    }
     void askUltronBrain(cmd);
   };
 
@@ -748,11 +811,25 @@ export default function App() {
     }
   };
 
+  const handleLoginSuccess = (user: { name: string; role: string; correo: string }) => {
+    setCurrentUser({
+      name: user.name,
+      role: user.role,
+      authenticated: true,
+      correo: user.correo,
+    });
+    setSessionReady(true);
+    playSfx('grant', true);
+  };
+
   return (
+    <OrientationGate>
     <div
       id="ultron-app-root"
       className="relative w-screen h-screen overflow-hidden bg-black flex items-center justify-center select-none"
     >
+      {!sessionReady && <LoginScreen onAuthenticated={handleLoginSuccess} />}
+
       {/* Stand Frame Container: Supports both Horizontal (Desk Kiosk LOOI Stand) and Vertical (Handheld Smartphone) */}
       <div
         id="ultron-stand-container"
@@ -822,23 +899,19 @@ export default function App() {
           }}
         />
 
-        {/* Clean Executive Telemetry & Controls Bar */}
-        <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between pointer-events-none">
+        {/* Clean LOOI top strip — mínimo, sin cámara auto */}
+        <div className="absolute top-3 left-4 right-[88px] z-20 flex items-center justify-between pointer-events-none">
           <div className="flex items-center gap-2 pointer-events-auto">
             <div className="ui-chip ui-chip--live font-display font-semibold tracking-[0.14em]">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)]" />
               ULTRON FP
             </div>
-            <a
-              href="https://ultron.ordenglobal.link"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ui-chip hidden sm:inline-flex"
-              title="Cerebro Orden Global"
-            >
-              <Globe className="w-3 h-3" />
-              CEREBRO
-            </a>
+            {currentUser.authenticated && (
+              <div className="ui-chip hidden sm:inline-flex">
+                <ShieldCheck className="w-3 h-3 text-[var(--ok)]" />
+                {currentUser.name}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-2 pointer-events-auto">
@@ -848,71 +921,29 @@ export default function App() {
             {face === 'SPEAKING' && (
               <div className="ui-chip ui-chip--live font-display tracking-[0.16em]">HABLANDO</div>
             )}
-
-            <button
-              type="button"
-              onClick={() => setIsBiometricOpen(true)}
-              title={currentUser.authenticated ? `Sesión: ${currentUser.name}` : 'Acceso'}
-              className="ui-chip"
-            >
-              {currentUser.authenticated ? (
-                <>
-                  <ShieldCheck className="w-3.5 h-3.5 text-[var(--ok)]" />
-                  <span className="font-semibold">{currentUser.name}</span>
-                </>
-              ) : (
-                <>
-                  <Fingerprint className="w-3.5 h-3.5" />
-                  <span className="font-semibold">Acceso</span>
-                </>
-              )}
-            </button>
-
-            {/* Camera Optical Tracking Toggle */}
             <button
               type="button"
               onClick={() => {
                 setVisionEnabled((prev) => !prev);
                 playSfx('tap', soundFxEnabled);
               }}
-              title={visionEnabled ? 'Cámara frontal activa (siguiendo rostro)' : 'Activar cámara frontal'}
+              title={visionEnabled ? 'Apagar cámara' : 'Activar cámara (manual)'}
               className={`p-2 rounded-full border transition-all cursor-pointer ${
                 visionEnabled
-                  ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF] shadow-[0_0_10px_rgba(5,225,255,0.3)]'
+                  ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF]'
                   : 'border-[#8FA3B0]/30 bg-black/60 text-[#8FA3B0] hover:text-[#05E1FF]'
               }`}
             >
               <Camera className="w-3.5 h-3.5" />
             </button>
-
-            {/* Normalizer / Disarm Reset Button */}
             <button
               type="button"
               onClick={handleNormalize}
-              title="Normalizar estado, replegar armas y volver a reposo IDLE"
-              className="p-2 rounded-full border border-emerald-400/40 bg-black/60 text-emerald-400 hover:bg-emerald-400/20 transition-all cursor-pointer shadow-[0_0_10px_rgba(52,211,153,0.15)]"
+              title="Normalizar"
+              className="p-2 rounded-full border border-emerald-400/40 bg-black/60 text-emerald-400 hover:bg-emerald-400/20 transition-all cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
-
-            {/* Panel Button (Opens Dock Drawer with all modular tools) */}
-            <button
-              type="button"
-              onClick={() => setDockOpen((prev) => !prev)}
-              title="Abrir panel central con herramientas: Bóveda, Playwright, Visión, Blaster"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#05E1FF]/40 bg-[#05E1FF]/10 text-[#05E1FF] hover:bg-[#05E1FF]/25 text-xs font-display font-bold tracking-wider transition-all cursor-pointer shadow-[0_0_12px_rgba(5,225,255,0.2)]"
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">PANEL</span>
-            </button>
-
-            {/* Battery Indicator */}
-            <span className="text-[11px] text-[#8FA3B0] hidden md:flex items-center gap-1 pl-1">
-              <BatteryMedium className="w-3.5 h-3.5 text-[#05E1FF]" />
-              {Math.round(energy)}%
-            </span>
-
-            {/* Fullscreen Kiosk Toggle */}
             <button
               type="button"
               onClick={toggleFullscreen}
@@ -924,20 +955,41 @@ export default function App() {
           </div>
         </div>
 
-        {/* Central Speech Bubble */}
-        <div
-          id="ultron-speech-bubble"
-          className={`absolute left-1/2 bottom-[17%] -translate-x-1/2 z-20 max-w-[85vw] sm:max-w-xl text-center px-4 py-2 rounded-full border border-[#05E1FF]/30 bg-black/75 backdrop-blur-sm text-sm font-mono text-[#dff8ff] transition-all duration-300 pointer-events-none shadow-[0_0_20px_rgba(5,225,255,0.2)] ${
-            bubbleVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
-          }`}
-        >
-          {bubbleText}
-        </div>
+        {/* LOOI speech bubble (derecha) */}
+        <SpeechBubble
+          text={bubbleText}
+          visible={bubbleVisible && deskPresence !== 'sleep'}
+          hint={
+            fullBubbleText.length > 180
+              ? 'Toca: ¿quieres el completo o solo el resumen?'
+              : 'ULTRON · ElevenLabs'
+          }
+          onExpand={() => {
+            if (fullBubbleText.length > 180) {
+              setWantDetail('ask');
+              showBubble(
+                '¿Quieres que lea el completo o solo un resumen corto?',
+                8000
+              );
+              vocalize('¿Quieres el completo o solo el resumen?');
+            } else {
+              showBubble(fullBubbleText, 6000);
+            }
+          }}
+          compact={wantDetail !== 'full'}
+        />
+
+        {/* LOOI sidebar: sleep / stay / explore + menú */}
+        <LooiSidebar
+          presence={deskPresence}
+          onPresenceChange={handleDeskPresence}
+          onOpenMenu={() => setDockOpen(true)}
+        />
 
         {/* Personality Mode Tag */}
         <div
           id="ultron-mode-tag"
-          className="absolute left-1/2 bottom-[10%] -translate-x-1/2 z-10 font-display font-bold tracking-[0.38em] text-base text-[#05E1FF]/80 pointer-events-none flex items-center gap-2"
+          className="absolute left-1/2 bottom-[8%] -translate-x-1/2 z-10 font-display font-bold tracking-[0.38em] text-sm text-[#05E1FF]/70 pointer-events-none flex items-center gap-2"
         >
           <span>{mode}</span>
           {mode === 'GOLD' && <Sparkles className="w-3.5 h-3.5 text-[#F5C542]" />}
@@ -1298,5 +1350,6 @@ export default function App() {
         </div>
       </div>
     </div>
+    </OrientationGate>
   );
 }

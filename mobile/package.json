@@ -6,11 +6,12 @@
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
-    "eas:build:android": "eas build -p android --profile preview"
+    "eas:build:android": "eas build -p android --profile preview --non-interactive"
   },
   "dependencies": {
     "expo": "~54.0.0",
     "expo-constants": "~18.0.0",
+    "expo-screen-orientation": "~8.1.0",
     "expo-status-bar": "~3.0.0",
     "expo-system-ui": "~5.0.0",
     "react": "19.0.0",
