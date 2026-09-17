@@ -920,35 +920,61 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       // Draw Mode Specific Eye Glyphs (Faithful to Image 3 Tablets!)
       drawModeEyeGlyph(ctx, rx, ry, side, S.mode, theme, S.t, A);
 
-      // Specular Catchlight Highlights (LOOI's adorable eye reflections)
+      // Specular Catchlight Highlights (LOOI spherical disc)
       const lookOffsetX = A.lx * rx * 0.32;
       const lookOffsetY = A.ly * ry * 0.32;
+
+      // Soft highlight bloom behind catchlight
+      const bloom = ctx.createRadialGradient(
+        lookOffsetX - rx * 0.28,
+        lookOffsetY - ry * 0.34,
+        0,
+        lookOffsetX - rx * 0.28,
+        lookOffsetY - ry * 0.34,
+        rx * 0.42
+      );
+      bloom.addColorStop(0, 'rgba(255,255,255,0.35)');
+      bloom.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = bloom;
+      ctx.beginPath();
+      ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
+      ctx.fill();
 
       // Primary top-left catchlight
       ctx.fillStyle = '#ffffff';
       ctx.shadowColor = '#ffffff';
-      ctx.shadowBlur = 8;
-      ctx.globalAlpha = 0.95;
+      ctx.shadowBlur = 10;
+      ctx.globalAlpha = 0.98;
       ctx.beginPath();
-      ctx.arc(
-        lookOffsetX - rx * 0.32,
-        lookOffsetY - ry * 0.32,
-        rx * 0.16 * A.breath,
+      ctx.ellipse(
+        lookOffsetX - rx * 0.3,
+        lookOffsetY - ry * 0.34,
+        rx * 0.17 * A.breath,
+        ry * 0.14 * A.breath,
+        -0.4,
         0,
         Math.PI * 2
       );
       ctx.fill();
 
       // Secondary micro-sparkle bottom-right
-      ctx.globalAlpha = 0.65;
+      ctx.globalAlpha = 0.7;
+      ctx.shadowBlur = 4;
       ctx.beginPath();
       ctx.arc(
-        lookOffsetX + rx * 0.28,
-        lookOffsetY + ry * 0.28,
-        rx * 0.08,
+        lookOffsetX + rx * 0.3,
+        lookOffsetY + ry * 0.26,
+        rx * 0.07,
         0,
         Math.PI * 2
       );
+      ctx.fill();
+
+      // Tertiary rim glint
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      ctx.arc(lookOffsetX - rx * 0.05, lookOffsetY + ry * 0.05, rx * 0.045, 0, Math.PI * 2);
       ctx.fill();
 
       ctx.restore();

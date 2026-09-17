@@ -1,0 +1,21 @@
+{
+  "name": "ULTRON FP",
+  "short_name": "ULTRON",
+  "description": "Robot de escritorio LOOI · agentic harness de la junta Orden Global",
+  "start_url": "/",
+  "scope": "/",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "lang": "es",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

@@ -24,6 +24,7 @@ import { downloadStandaloneSimulator } from './utils/exporter';
 import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck, HelpCircle, RotateCcw } from 'lucide-react';
 import { AgenticHarnessModal } from './components/AgenticHarnessModal';
 import { analyzeConversationTopic, SemanticClassification } from './utils/qwenHarness';
+import { streamUltronChat } from './utils/ultronChat';
 
 export default function App() {
   // Session State
@@ -46,6 +47,8 @@ export default function App() {
   // Agentic Harness & Qwen 3.8 27B State
   const [autoModeSwitch, setAutoModeSwitch] = useState<boolean>(true);
   const [harnessModalOpen, setHarnessModalOpen] = useState<boolean>(false);
+  const [conversationId] = useState(() => `desk-${Date.now().toString(36)}`);
+  const chatAbortRef = useRef<AbortController | null>(null);
 
   // Audio & Hardware State
   const [micEnabled, setMicEnabled] = useState<boolean>(true);
@@ -338,6 +341,7 @@ export default function App() {
         // Immediate Barge-in interruption: user started speaking, silence assistant voice instantly!
         cancelSpeech();
         stopCurrentVoice();
+        chatAbortRef.current?.abort();
         setFace('LISTENING');
         showBubble('Escuchando...');
       },
@@ -389,6 +393,96 @@ export default function App() {
     }, 900);
   };
 
+  const dispatchToolName = useCallback(
+    (tool: string, args?: Record<string, unknown>) => {
+      logBridgeEvent('out', `Tool Call: ${tool}()`);
+      if (tool === 'take_camera_photo_countdown') {
+        setIsCameraCountdownModalOpen(true);
+      } else if (tool === 'browse_web_page_playwright') {
+        setIsPlaywrightBrowserOpen(true);
+      } else if (tool === 'analyze_vision_media' || tool === 'open_vision_analyzer') {
+        setIsVisionAnalyzerOpen(true);
+      } else if (tool === 'query_global_order_brain') {
+        setIsGlobalOrderBrainOpen(true);
+      } else if (tool === 'trigger_blaster_combat') {
+        handleTriggerCombat();
+      } else if (tool === 'drink_refreshment') {
+        handleTriggerDrink();
+      } else if (tool === 'wave_greeting') {
+        handleTriggerWave();
+      } else if (tool === 'open_biometric_auth') {
+        setIsBiometricOpen(true);
+      } else if (tool === 'open_cloud_deployment') {
+        setIsVaultModalOpen(true);
+      }
+      void args;
+    },
+    [handleTriggerCombat, handleTriggerDrink, handleTriggerWave, logBridgeEvent]
+  );
+
+  /** Cerebro real: Qwen vía proxy Express (SSE). Herramientas locales se despachan aparte. */
+  const askUltronBrain = useCallback(
+    async (cmd: string, localTool?: string) => {
+      chatAbortRef.current?.abort();
+      const ac = new AbortController();
+      chatAbortRef.current = ac;
+      setFace('THINKING');
+      playSfx('think', soundFxEnabled);
+      showBubble('Pensando…', 8000);
+      logBridgeEvent('out', `Qwen ← "${cmd.slice(0, 120)}"`);
+
+      try {
+        const result = await streamUltronChat({
+          message: cmd,
+          mode,
+          conversationId,
+          signal: ac.signal,
+          onToken: () => {
+            setFace('SPEAKING');
+          },
+        });
+
+        if (result.error && !result.reply) {
+          logBridgeEvent('in', `Qwen error: ${result.error}`);
+          const classification = analyzeConversationTopic(cmd.toLowerCase());
+          if (classification) {
+            if (autoModeSwitch && classification.mode !== mode) {
+              setMode(classification.mode);
+              playSfx(classification.mode === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
+            }
+            if (classification.toolCall) dispatchToolName(classification.toolCall.name);
+            vocalize(classification.thought);
+            return;
+          }
+          proceedThinkingAndSpeaking(`Nodo ocupado (${result.error}). Reintento disponible.`);
+          return;
+        }
+
+        if (result.toolCall?.name) {
+          dispatchToolName(result.toolCall.name, result.toolCall.arguments);
+        } else if (localTool) {
+          dispatchToolName(localTool);
+        }
+
+        logBridgeEvent('in', `Qwen [${result.model || 'nodo'}]: ${(result.reply || '').slice(0, 160)}`);
+        vocalize(result.reply || 'Listo.');
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        logBridgeEvent('in', `Qwen fallo: ${String(err?.message || err)}`);
+        proceedThinkingAndSpeaking('No pude contactar el nodo Qwen. Sistemas locales activos.');
+      }
+    },
+    [
+      autoModeSwitch,
+      conversationId,
+      dispatchToolName,
+      logBridgeEvent,
+      mode,
+      soundFxEnabled,
+      vocalize,
+    ]
+  );
+
   // Dispatcher for voice commands
   const handleVoiceCommand = (cmd: string) => {
     const q = cmd.toLowerCase();
@@ -397,28 +491,28 @@ export default function App() {
     // 1. Camera Photo with 3-2-1 Countdown & Live Stream
     if (/foto|captura|fotograf|selfie|picture|cámara|sonríe/.test(q)) {
       setIsCameraCountdownModalOpen(true);
-      vocalize('Encendiendo cámara frontal. Preparando cuenta regresiva de tres segundos.');
+      void askUltronBrain(cmd, 'take_camera_photo_countdown');
       return;
     }
 
     // 2. Playwright Web Scraping on AWS EC2
     if (/web|página|navega|playwright|sitio|url|investiga|noticia/.test(q)) {
       setIsPlaywrightBrowserOpen(true);
-      vocalize('Despachando nodo Playwright en AWS para inspección y análisis web.');
+      void askUltronBrain(cmd, 'browse_web_page_playwright');
       return;
     }
 
     // 3. Vision Media Analysis with Auto-Purge Privacy
     if (/visión|imagen|video|inspeccion|subir|bajar|multimodal|purga/.test(q)) {
       setIsVisionAnalyzerOpen(true);
-      vocalize('Abriendo visor de visión neural con protocolo de auto-purga para máxima privacidad.');
+      void askUltronBrain(cmd, 'open_vision_analyzer');
       return;
     }
 
     // 4. Cerebro de Inteligencia Estratégica de Orden Global
     if (/orden global|doctrina|geopolítica|tratado|resolución|estatuto|soberanía/.test(q)) {
       setIsGlobalOrderBrainOpen(true);
-      vocalize('Accediendo al archivo de Inteligencia Estratégica del Cerebro de Orden Global.');
+      void askUltronBrain(cmd, 'query_global_order_brain');
       return;
     }
 
@@ -429,7 +523,7 @@ export default function App() {
     }
 
     // Interactive Hand Wave Greeting
-    if (/hola|saluda|saludo|wave|mano/.test(q)) {
+    if (/^(hola|saluda|saludo|wave|mano)\b/.test(q) || /saluda|choca la mano/.test(q)) {
       handleTriggerWave();
       return;
     }
@@ -455,7 +549,7 @@ export default function App() {
     }
 
     // Bóveda Central de ULTRON FP, APIs y Conduits
-    if (/bóveda|boveda|clave|credencial|conduit|api|llave|seguridad/.test(q)) {
+    if (/bóveda|boveda|clave|credencial|conduit|api|llave/.test(q)) {
       setIsVaultModalOpen(true);
       vocalize('Abriendo la Bóveda Central de ULTRON FP. Acceso institucional a credenciales y conduits.');
       return;
@@ -513,51 +607,20 @@ export default function App() {
       return;
     }
 
-    // Agentic Harness Semantic Mode Detection (Qwen 3.8 27B)
+    // Local semantic mode switch (fast) + Qwen for the spoken reply
     if (autoModeSwitch) {
       const classification = analyzeConversationTopic(q);
-      if (classification) {
+      if (classification && classification.mode !== mode) {
+        setMode(classification.mode);
+        playSfx(classification.mode === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
         logBridgeEvent(
           'in',
-          `Qwen Intent: ${classification.intent} (${Math.round(classification.confidence * 100)}%) -> MODO ${classification.mode}`
+          `Modo → ${classification.mode} (${classification.intent})`
         );
-        if (classification.mode !== mode) {
-          setMode(classification.mode);
-          playSfx(classification.mode === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
-        }
-        if (classification.toolCall) {
-          const tool = classification.toolCall.name;
-          logBridgeEvent('out', `Tool Call: ${tool}()`);
-          if (tool === 'take_camera_photo_countdown') {
-            setIsCameraCountdownModalOpen(true);
-          } else if (tool === 'browse_web_page_playwright') {
-            setIsPlaywrightBrowserOpen(true);
-          } else if (tool === 'analyze_vision_media') {
-            setIsVisionAnalyzerOpen(true);
-          } else if (tool === 'query_global_order_brain') {
-            setIsGlobalOrderBrainOpen(true);
-          } else if (tool === 'trigger_blaster_combat') {
-            handleTriggerCombat();
-          } else if (tool === 'drink_refreshment') {
-            handleTriggerDrink();
-          } else if (tool === 'wave_greeting') {
-            handleTriggerWave();
-          } else if (tool === 'open_biometric_auth') {
-            setIsBiometricOpen(true);
-          } else if (tool === 'open_cloud_deployment') {
-            setIsVaultModalOpen(true);
-          }
-        }
-        setFace('SPEAKING');
-        vocalize(classification.thought);
-        return;
       }
-    }
-
-    // Corporate Weather
-    if (/clima|tiempo|temperatura/.test(q)) {
-      vocalize('27 grados en la sede corporativa. Cielo despejado y atmósfera estable.');
-      return;
+      if (classification?.toolCall) {
+        dispatchToolName(classification.toolCall.name);
+      }
     }
 
     // Mode switching via command
@@ -573,14 +636,6 @@ export default function App() {
       }
     }
 
-    // Financial Audit / Gold
-    if (/auditor|balance|oro|gold/.test(q)) {
-      setMode('GOLD');
-      playSfx('grant', soundFxEnabled);
-      vocalize('Balance de reservas auditado. Calificación triple A.');
-      return;
-    }
-
     // Sleep / Wake commands
     if (/dormir|reposo|apagar/.test(q)) {
       handleSleep();
@@ -591,8 +646,8 @@ export default function App() {
       return;
     }
 
-    // Generic acknowledgment
-    proceedThinkingAndSpeaking(`Orden procesada: "${cmd}".`);
+    // Default: real Qwen brain
+    void askUltronBrain(cmd);
   };
 
   // Permission Responses

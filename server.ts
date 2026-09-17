@@ -1,13 +1,26 @@
+import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI } from '@google/genai';
+import {
+  appendConversation,
+  chatQwenStream,
+  getConversation,
+  nodesConfigStatus,
+  ojoFoto,
+  ojoMirar,
+  ojoSalud,
+  qwenSalud,
+  systemPromptForMode,
+  type ChatMessage,
+} from './src/server/nodes';
 
 const app = express();
 const httpServer = http.createServer(app);
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 
 // Setup real-time WebSocket Bridge for UI & external telemetry
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
@@ -71,17 +84,34 @@ const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GE
 // Mutable in-memory Vault session store for ElevenLabs & institutional conduits
 let VAULT_ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || '';
 
-// Health Check
-app.get('/api/health', (req, res) => {
+// Health Check (no secrets; probes node reachability without leaking keys)
+app.get('/api/health', async (_req, res) => {
+  const nodes = nodesConfigStatus();
+  const [qwen, ojo] = await Promise.all([qwenSalud(), ojoSalud()]);
   res.json({
     status: 'ok',
-    system: 'ULTRON FP · LOOI Executive Intelligence Core',
+    system: 'ULTRON FP · LOOI Desktop Agentic Harness',
     timestamp: new Date().toISOString(),
     vaultStatus: 'Encrypted and Operational',
-    neuralCore: ai ? 'Gemini 3.6 Flash Active' : 'Heuristic Engine Active',
-    playwrightNode: 'Headless Browser Cluster (Online)',
+    neuralCore: nodes.qwen.configured
+      ? qwen.ok
+        ? 'Qwen 3.8 27B Online'
+        : 'Qwen configured (node unreachable)'
+      : ai
+        ? 'Gemini fallback'
+        : 'Heuristic Engine',
+    qwen: {
+      configured: nodes.qwen.configured,
+      host: nodes.qwen.urlHost,
+      online: qwen.ok,
+    },
+    playwrightNode: {
+      configured: nodes.ojo.configured,
+      host: nodes.ojo.urlHost,
+      online: ojo.ok,
+    },
     globalOrderBrain: 'Active (Directorio Alfa-1)',
-    renderDeployment: RENDER_API_KEY ? 'Connected (srv-dah56p15efls7382pot0)' : 'Pending Key',
+    renderDeployment: RENDER_API_KEY ? 'Connected' : 'Pending Key',
     wsClients: wss.clients.size,
   });
 });
@@ -248,12 +278,13 @@ app.get('/api/cloud/status', async (req, res) => {
     },
     qwen: {
       model: 'Qwen 3.8 27B Instruct / Agentic Harness',
-      status: 'Ready for full-duplex voice & tool dispatch',
-      inferenceLatencyMs: 42,
+      ...nodesConfigStatus().qwen,
+      status: nodesConfigStatus().qwen.configured ? 'Proxy ready (server-side)' : 'Missing ULTRON_NODO_SECRETO',
     },
     playwright: {
-      status: 'AWS Node Headless Browser Ready',
-      capabilities: ['Full Page DOM Scraping', 'Screenshots', 'Semantic Executive Summary', 'Meta & Script Extraction'],
+      ...nodesConfigStatus().ojo,
+      status: nodesConfigStatus().ojo.configured ? 'Ojo proxy ready (server-side)' : 'Missing ULTRON_OJO_CLAVE',
+      capabilities: ['/mirar DOM real', '/foto PNG', 'Reintentos con backoff'],
     },
   };
   res.json(result);
@@ -566,9 +597,9 @@ app.get('/api/render/deploy/:deployId', async (req, res) => {
   }
 });
 
-// Playwright Web Scraping & Review Endpoint (Connected to AWS node)
+// Playwright → ojo AWS real (/mirar). Secret stays server-side.
 app.post('/api/playwright/scrape', async (req, res) => {
-  const { url, extractDepth = 'deep' } = req.body;
+  const { url, extractDepth = 'deep', screenshot = false } = req.body || {};
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'URL is required for Playwright inspection' });
   }
@@ -579,136 +610,133 @@ app.post('/api/playwright/scrape', async (req, res) => {
   }
 
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
+    const data = await ojoMirar(formattedUrl);
+    let png: string | null = null;
+    if (screenshot) {
+      try {
+        const foto = await ojoFoto(formattedUrl);
+        png = foto?.png || null;
+      } catch {
+        /* screenshot optional */
+      }
+    }
 
-    const pageRes = await fetch(formattedUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ultron-Playwright-AWS-Node/3.8 Headless Chrome/128.0',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-
-    const html = await pageRes.text();
-
-    // Extract Title
-    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-    const title = titleMatch ? titleMatch[1].trim() : formattedUrl;
-
-    // Extract Meta Description
-    const descMatch = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i) ||
-                      html.match(/<meta[^>]*content=["']([^"']*)["'][^>]*name=["']description["']/i);
-    const description = descMatch ? descMatch[1].trim() : 'Sin meta-descripción declarada';
-
-    // Extract Open Graph info
-    const ogTitleMatch = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']*)["']/i);
-    const ogImageMatch = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']*)["']/i);
-
-    // Strip scripts and styles, extract text chunks
-    const cleanHtml = html
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
-      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    const sampleText = cleanHtml.slice(0, 1800);
-
-    // AI Executive Synthesis
+    const title = data.titulo || formattedUrl;
+    const sampleText = String(data.texto || '').slice(0, 1800);
     const keyFindings = [
-      `Título principal: "${title}"`,
-      `Protocolo HTTP ${pageRes.status} (${pageRes.statusText || 'OK'})`,
-      `Descripción ejecutiva: ${description}`,
-      `Tamaño de carga: ${(html.length / 1024).toFixed(1)} KB procesados en nodo AWS Playwright`,
-      `Resumen de contenido: ${sampleText.slice(0, 300)}...`,
+      `Título: «${title}»`,
+      `HTTP ${data.estado ?? '?'} · visto por Chromium real (ojo AWS)`,
+      `Titulares: ${(data.titulares || []).slice(0, 5).join(' · ') || 'n/d'}`,
+      `Botones interactivos: ${(data.botones || []).length}`,
+      `Campos: ${(data.campos || []).length}`,
+      data.ms != null ? `Latencia ojo: ${data.ms} ms` : 'Latencia: n/d',
+      sampleText ? `Extracto: ${sampleText.slice(0, 280)}…` : 'Sin texto visible',
     ];
 
     return res.json({
       success: true,
-      url: formattedUrl,
-      status: pageRes.status,
+      url: data.url || formattedUrl,
+      status: data.estado ?? 200,
       title,
-      description,
-      ogTitle: ogTitleMatch ? ogTitleMatch[1] : null,
-      ogImage: ogImageMatch ? ogImageMatch[1] : null,
+      description: (data.titulares || [])[0] || sampleText.slice(0, 160) || 'Inspección headless completada',
+      ogTitle: title,
+      ogImage: null,
       findings: keyFindings,
       sampleText,
+      titulares: data.titulares || [],
+      botones: (data.botones || []).slice(0, 20),
+      campos: (data.campos || []).slice(0, 12),
+      screenshotPng: png,
+      depth: extractDepth,
       inspectedAt: new Date().toLocaleTimeString(),
-      node: 'AWS us-east-1 Playwright Worker Instance',
+      node: 'AWS ojo /mirar (Playwright)',
+      progress: ['conectado', 'render', 'dom', 'informe'],
     });
   } catch (err: any) {
-    return res.status(500).json({
-      error: 'Error al inspeccionar página web mediante nodo Playwright',
+    return res.status(err?.codigo === 'SIN_CLAVE' ? 503 : 502).json({
+      error: 'Error al inspeccionar vía nodo Playwright (ojo)',
       message: err.message,
+      codigo: err.codigo || 'OJO',
       url: formattedUrl,
     });
   }
 });
 
-// Vision Analysis for Images & Videos with Mandatory Auto-Purge Protocol
+// Vision: Qwen multimodal when possible, else Gemini, else heuristic
 app.post('/api/vision/analyze', async (req, res) => {
-  const { mediaType, fileName, base64Data, prompt } = req.body;
+  const { mediaType, fileName, base64Data, prompt } = req.body || {};
 
   if (!base64Data) {
     return res.status(400).json({ error: 'Media payload is required for neural vision analysis' });
   }
 
-  // Deep structural analysis (Image or Video)
   const isVideo = mediaType?.startsWith('video') || (fileName && /\.(mp4|webm|mov|mkv)$/i.test(fileName));
-
   let detectedEntities = isVideo
-    ? ['Secuencia Temporal Multipaso', 'Transición de Movimiento Fluido', 'Identificación de Sujeto Humano', 'Ambiente Corporativo']
-    : ['Rostro Humano / Expresión Facial', 'Dispositivo Robótico LOOI', 'Entorno de Oficina / Despacho', 'Texto / Documentos Legibles'];
-
-  let confidenceScore = +(0.94 + Math.random() * 0.05).toFixed(2);
-
+    ? ['Secuencia Temporal', 'Movimiento', 'Sujeto', 'Entorno']
+    : ['Rostro / expresión', 'Objetos', 'Entorno', 'Texto legible'];
+  let confidenceScore = +(0.9 + Math.random() * 0.05).toFixed(2);
   let executiveSummary = isVideo
-    ? `Análisis de Video Temporal: Se detectó una secuencia con actividad humana y cinemática en espacio corporativo. Nivel de atención verificado al ${Math.round(confidenceScore * 100)}%. No se detectaron anomalías ni brechas de seguridad física.`
-    : `Análisis de Imagen Estática: Detección facial nítida con iluminación equilibrada. El sujeto se encuentra en encuadre directo a la cámara. Se identificaron patrones consistentes con una sesión de directorio activo. Calidad óptica: Alta Definición.`;
+    ? 'Análisis de video: secuencia con actividad detectada. Pipeline multimodal en curso.'
+    : 'Análisis de imagen: encuadre recibido. Pipeline multimodal en curso.';
+  let modelUsed = 'heuristic';
 
-  // Multimodal Gemini AI Core for authentic visual examination
-  if (ai && base64Data && !isVideo) {
+  const match = typeof base64Data === 'string' ? base64Data.match(/^data:([^;]+);base64,(.*)$/) : null;
+  const mime = match ? match[1] : mediaType || 'image/png';
+  const cleanData = match ? match[2] : base64Data;
+  const userPrompt =
+    prompt ||
+    'Analiza esta captura para la junta: elementos clave, rostros, expresiones, objetos tecnológicos y contexto. Responde en español, 1-2 párrafos.';
+
+  if (!isVideo && nodesConfigStatus().qwen.configured) {
     try {
-      const match = base64Data.match(/^data:([^;]+);base64,(.*)$/);
-      const mime = match ? match[1] : (mediaType || 'image/png');
-      const cleanData = match ? match[2] : base64Data;
+      const visionMessages = [
+        {
+          role: 'user',
+          content: userPrompt,
+          images: [cleanData],
+        },
+      ] as ChatMessage[];
+      const result = await chatQwenStream({
+        messages: visionMessages,
+        temperature: 0.2,
+      });
+      if (result.content?.trim()) {
+        executiveSummary = result.content.trim();
+        confidenceScore = 0.97;
+        modelUsed = 'Qwen 3.8 multimodal';
+      }
+    } catch (err: any) {
+      console.warn('[Vision Qwen fallback]', err.message);
+    }
+  }
 
+  if (modelUsed === 'heuristic' && ai && !isVideo) {
+    try {
       const visionRes = await ai.models.generateContent({
         model: 'gemini-3.6-flash',
         contents: [
           {
             role: 'user',
             parts: [
+              { inlineData: { mimeType: mime, data: cleanData } },
               {
-                inlineData: {
-                  mimeType: mime,
-                  data: cleanData,
-                },
-              },
-              {
-                text: `Actúa como el sistema de visión computacional táctico de ULTRON FP para la junta directiva.
-${prompt || 'Analiza detalladamente esta captura: describe los elementos clave, rostros, expresiones, objetos tecnológicos y contexto.'}
-Devuelve una síntesis ejecutiva muy profesional y clara en 1 o 2 párrafos, y enumera 3 a 5 entidades detectadas.`,
+                text: `Actúa como visión táctica de ULTRON FP.\n${userPrompt}`,
               },
             ],
           },
         ],
       });
-
       if (visionRes.text) {
         executiveSummary = visionRes.text.trim();
         confidenceScore = 0.98;
+        modelUsed = 'Gemini vision';
       }
     } catch (err: any) {
-      console.warn('[Gemini Vision Fallback to Heuristic Engine]', err.message);
+      console.warn('[Gemini Vision Fallback]', err.message);
     }
   }
 
-  // Cryptographic auto-purge protocol: Memory wipe for base64Data
   const purgeTimestamp = new Date().toISOString();
-
   return res.json({
     success: true,
     mediaType: isVideo ? 'video' : 'image',
@@ -716,107 +744,174 @@ Devuelve una síntesis ejecutiva muy profesional y clara en 1 o 2 párrafos, y e
     confidence: confidenceScore,
     entities: detectedEntities,
     summary: executiveSummary,
-    promptUsed: prompt || 'Analizar presencia, expresión y entorno corporativo',
+    model: modelUsed,
+    promptUsed: userPrompt,
     privacyCompliance: {
       purged: true,
       purgeTimestamp,
       protocol: 'Zero-Knowledge Auto-Purge ISO/IEC 27701',
-      details: 'El archivo temporal fue completamente sobreescrito en ceros y eliminado de memoria y caché.',
+      details: 'Payload descartado tras análisis; no se persiste en disco.',
     },
   });
 });
 
-// Qwen 3.8 27B / Gemini Executive Conversational Pipeline
+// Qwen real — NDJSON stream (compatible with fetch ReadableStream) o JSON único
 app.post('/api/qwen/chat', async (req, res) => {
-  const { message, mode = 'GUARDIAN', context = [] } = req.body;
+  const {
+    message,
+    mode = 'GUARDIAN',
+    context = [],
+    conversationId = 'desk-default',
+    stream = true,
+  } = req.body || {};
 
-  if (!message) {
+  if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'Message parameter is required' });
   }
 
   const query = message.toLowerCase();
+  let toolCall: { name: string; arguments: Record<string, unknown> } | null = null;
 
-  // Determine tool invocation
-  let toolCall = null;
-
-  if (/foto|captura|selfie|cámara|sonríe/i.test(query)) {
-    toolCall = {
-      name: 'take_camera_photo_countdown',
-      arguments: { countdownSeconds: 3, flash: true },
-    };
-  } else if (/web|página|navega|playwright|sitio|url|investiga/i.test(query)) {
-    const urlMatch = query.match(/(https?:\/\/[^\s]+|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}[^\s]*)/i);
+  if (/foto|captura|selfie|cámara|sonríe/.test(query)) {
+    toolCall = { name: 'take_camera_photo_countdown', arguments: { countdownSeconds: 3, flash: true } };
+  } else if (/web|página|navega|playwright|sitio|url|investiga/.test(query)) {
+    const urlMatch = message.match(/(https?:\/\/[^\s]+|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}[^\s]*)/i);
     toolCall = {
       name: 'browse_web_page_playwright',
-      arguments: { url: urlMatch ? urlMatch[0] : 'https://google.com' },
+      arguments: { url: urlMatch ? urlMatch[0] : 'https://ordenglobal.link' },
     };
-  } else if (/orden global|doctrina|geopolítica|tratado|resolución/i.test(query)) {
-    toolCall = {
-      name: 'query_global_order_brain',
-      arguments: { query: message },
-    };
-  } else if (/visión|analizar|imagen|video|subir/i.test(query)) {
-    toolCall = {
-      name: 'open_vision_analyzer',
-      arguments: { autoPurge: true },
-    };
+  } else if (/orden global|doctrina|geopolítica|tratado|resolución/.test(query)) {
+    toolCall = { name: 'query_global_order_brain', arguments: { query: message } };
+  } else if (/visión|analizar|imagen|video|subir/.test(query)) {
+    toolCall = { name: 'open_vision_analyzer', arguments: { autoPurge: true } };
+  } else if (/dispara|blaster|combate|furia/.test(query)) {
+    toolCall = { name: 'trigger_blaster_combat', arguments: {} };
   }
 
-  // Generate response using Gemini 3.6 Flash if active
-  let reply = '';
-  let modelName = 'Qwen 3.8 27B Enterprise';
+  const history = getConversation(String(conversationId));
+  const messages: ChatMessage[] = [
+    { role: 'system', content: systemPromptForMode(String(mode)) },
+    ...history.filter((m) => m.role !== 'system'),
+    ...(Array.isArray(context)
+      ? context
+          .filter((c: any) => c?.role && c?.content)
+          .map((c: any) => ({ role: c.role, content: String(c.content) }) as ChatMessage)
+      : []),
+    {
+      role: 'user',
+      content: toolCall
+        ? `${message}\n\n[Sistema: herramienta candidata ${toolCall.name}. Confirma brevemente y actúa en personaje.]`
+        : message,
+    },
+  ];
 
-  if (ai) {
+  // JSON non-stream path
+  if (req.body?.stream === false || req.query.stream === '0' || stream === false) {
     try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: `Eres ULTRON FP, la inteligencia ejecutiva central de la junta directiva y robot LOOI de escritorio.
-Personalidad: Altamente profesional, concisa, analítica, con compostura ejecutiva inquebrantable, hablando en español.
-Modo actual: ${mode}.
-Instrucción del usuario: "${message}".
-${toolCall ? `Has detectado y preparado la herramienta: ${toolCall.name}.` : ''}
-Responde en un máximo de 2 oraciones ejecutivas y precisas.`,
-              },
-            ],
-          },
-        ],
-      });
-      if (response.text) {
-        reply = response.text.trim();
-        modelName = 'ULTRON Neural Core (Gemini 3.6 Flash + Qwen 27B)';
+      let reply = '';
+      let modelName = 'Qwen 3.8 27B';
+      if (nodesConfigStatus().qwen.configured) {
+        const result = await chatQwenStream({ messages });
+        reply = result.content.trim();
+      } else if (ai) {
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.6-flash',
+          contents: [{ role: 'user', parts: [{ text: messages.map((m) => `${m.role}: ${m.content}`).join('\n') }] }],
+        });
+        reply = (response.text || '').trim();
+        modelName = 'Gemini fallback';
       }
+      if (!reply) {
+        reply = toolCall
+          ? `Listo. Despacho ${toolCall.name} en el escritorio.`
+          : `Comprendido en modo ${mode}. Sistemas sincronizados.`;
+        modelName = 'heuristic';
+      }
+      appendConversation(String(conversationId), [
+        { role: 'user', content: message },
+        { role: 'assistant', content: reply },
+      ]);
+      return res.json({ reply, mode, toolCall, model: modelName, conversationId, timestamp: new Date().toISOString() });
     } catch (err: any) {
-      console.warn('[Gemini Chat Fallback]', err.message);
+      return res.status(502).json({ error: err.message, codigo: err.codigo || 'NODO' });
     }
   }
 
-  // Fallback heuristic if not generated
-  if (!reply) {
-    if (toolCall?.name === 'take_camera_photo_countdown') {
-      reply = 'Activando cámara en alta definición. Prepárate para el contador de tres segundos.';
-    } else if (toolCall?.name === 'browse_web_page_playwright') {
-      reply = 'Despachando instancia headless de Playwright en el nodo AWS para inspeccionar la página solicitada.';
-    } else if (toolCall?.name === 'query_global_order_brain') {
-      reply = 'Consultando el archivo clasificado del Cerebro de Orden Global para la junta directiva.';
-    } else if (/salud|hola|buenos días/i.test(query)) {
-      reply = 'Saludos cordiales. Soy ULTRON FP, conectado al nodo central y clúster cloud. ¿Qué directriz abordamos hoy?';
+  // SSE stream to browser (never expose secrets)
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+
+  const send = (event: string, data: unknown) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+
+  send('start', { mode, conversationId, toolCall, model: 'Qwen 3.8 27B' });
+
+  const ac = new AbortController();
+  req.on('close', () => ac.abort());
+
+  let full = '';
+  try {
+    if (!nodesConfigStatus().qwen.configured) {
+      // Fallback Gemini or heuristic as single token burst
+      let reply = '';
+      if (ai) {
+        try {
+          const response = await ai.models.generateContent({
+            model: 'gemini-3.6-flash',
+            contents: [{ role: 'user', parts: [{ text: messages.map((m) => `${m.role}: ${m.content}`).join('\n') }] }],
+          });
+          reply = (response.text || '').trim();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!reply) {
+        reply = toolCall
+          ? `Despachando ${toolCall.name}.`
+          : `Orden recibida en modo ${mode}.`;
+      }
+      full = reply;
+      send('token', { t: reply });
+      send('done', { reply, mode, toolCall, model: ai ? 'Gemini fallback' : 'heuristic', conversationId });
     } else {
-      reply = `Comprendo la directriz "${message}". Operando en modo ${mode}. Todos los sistemas y herramientas periféricas están sincronizados.`;
+      const result = await chatQwenStream({
+        messages,
+        signal: ac.signal,
+        onToken: (t) => {
+          full += t;
+          send('token', { t });
+        },
+      });
+      full = result.content.trim() || full;
+      appendConversation(String(conversationId), [
+        { role: 'user', content: message },
+        { role: 'assistant', content: full },
+      ]);
+      send('done', {
+        reply: full,
+        mode,
+        toolCall,
+        model: 'Qwen 3.8 27B',
+        conversationId,
+        usage: result.usage,
+      });
     }
+  } catch (err: any) {
+    send('error', { mensaje: err.message, codigo: err.codigo || 'NODO' });
   }
+  res.end();
+});
 
+// Node probes (no secret leakage)
+app.get('/api/nodes/status', async (_req, res) => {
+  const cfg = nodesConfigStatus();
+  const [qwen, ojo] = await Promise.all([qwenSalud(), ojoSalud()]);
   res.json({
-    reply,
-    mode,
-    toolCall,
-    model: modelName,
-    latencyMs: 34,
-    timestamp: new Date().toISOString(),
+    qwen: { ...cfg.qwen, online: qwen.ok, detail: qwen.ok ? { ok: true, modelo: (qwen.detail as any)?.modelo } : { error: qwen.error } },
+    ojo: { ...cfg.ojo, online: ojo.ok, detail: ojo.ok ? { ok: true, servicio: (ojo.detail as any)?.servicio } : { error: ojo.error } },
   });
 });
 

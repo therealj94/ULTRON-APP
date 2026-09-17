@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Mode } from '../types';
 import { X, Cpu, Sparkles, Activity, CheckCircle2, Sliders, Glasses, MessageSquare, Terminal, Send } from 'lucide-react';
 import { analyzeConversationTopic, SemanticClassification } from '../utils/qwenHarness';
+import { streamUltronChat } from '../utils/ultronChat';
 
 interface AgenticHarnessModalProps {
   isOpen: boolean;
@@ -27,6 +28,8 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
   onSpeak,
 }) => {
   const [testPrompt, setTestPrompt] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamPreview, setStreamPreview] = useState('');
   const [activeLog, setActiveLog] = useState<Array<{
     timestamp: string;
     text: string;
@@ -36,7 +39,7 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
   }>>([
     {
       timestamp: '19:04:12',
-      text: 'Iniciando núcleo de inteligencia semántica de ULTRON FP...',
+      text: 'Núcleo agentic en línea — Qwen vía proxy seguro.',
       mode: 'GUARDIAN',
       intent: 'SYSTEM_BOOT',
       tool: 'initialize_boardroom_kernel',
@@ -45,40 +48,51 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleTestEvaluation = (e: React.FormEvent) => {
+  const handleTestEvaluation = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!testPrompt.trim()) return;
+    if (!testPrompt.trim() || isStreaming) return;
 
-    const res = analyzeConversationTopic(testPrompt);
+    const prompt = testPrompt.trim();
     const time = new Date().toLocaleTimeString();
+    const local = analyzeConversationTopic(prompt);
+    if (local) onApplyClassification(local);
 
-    if (res) {
-      onApplyClassification(res);
-      setActiveLog((prev) => [
-        {
-          timestamp: time,
-          text: testPrompt,
-          mode: res.mode,
-          intent: res.intent,
-          tool: res.toolCall?.name,
-        },
-        ...prev.slice(0, 15),
-      ]);
-      onSpeak(res.thought);
-    } else {
-      setActiveLog((prev) => [
-        {
-          timestamp: time,
-          text: testPrompt,
-          mode: currentMode,
-          intent: 'GENERAL_CONVERSATION',
-        },
-        ...prev.slice(0, 15),
-      ]);
-      onSpeak(`Procesando consulta general: "${testPrompt}".`);
-    }
-
+    setIsStreaming(true);
+    setStreamPreview('');
     setTestPrompt('');
+
+    try {
+      const result = await streamUltronChat({
+        message: prompt,
+        mode: local?.mode || currentMode,
+        conversationId: 'harness-lab',
+        onToken: (t) => setStreamPreview((prev) => prev + t),
+      });
+
+      setActiveLog((prev) => [
+        {
+          timestamp: time,
+          text: result.reply || result.error || prompt,
+          mode: (result.mode as Mode) || local?.mode || currentMode,
+          intent: local?.intent || (result.error ? 'QWEN_ERROR' : 'QWEN_STREAM'),
+          tool: result.toolCall?.name || local?.toolCall?.name,
+        },
+        ...prev.slice(0, 15),
+      ]);
+      onSpeak(result.reply || result.error || 'Sin respuesta del nodo.');
+    } catch (err: any) {
+      setActiveLog((prev) => [
+        {
+          timestamp: time,
+          text: err?.message || 'Fallo de red',
+          mode: currentMode,
+          intent: 'QWEN_ERROR',
+        },
+        ...prev.slice(0, 15),
+      ]);
+    } finally {
+      setIsStreaming(false);
+    }
   };
 
   const PRESET_TOPICS = [
@@ -250,17 +264,26 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
               type="text"
               value={testPrompt}
               onChange={(e) => setTestPrompt(e.target.value)}
-              placeholder="Escribe una instrucción de junta para analizar su clasificación..."
+              placeholder="Habla con Qwen real (streaming SSE vía proxy)…"
+              disabled={isStreaming}
               className="flex-1 bg-[#020508] border border-[#05E1FF]/30 text-[#05E1FF] placeholder-[#8FA3B0]/50 text-xs px-4 py-2.5 rounded-lg focus:outline-none focus:border-[#05E1FF] focus:shadow-[0_0_12px_rgba(5,225,255,0.25)] transition-all font-mono"
             />
             <button
               type="submit"
-              className="bg-[#05E1FF] text-[#001418] font-display font-bold text-xs tracking-wider px-5 py-2.5 rounded-lg hover:bg-[#05E1FF]/90 transition-all flex items-center gap-1.5 cursor-pointer uppercase"
+              disabled={isStreaming}
+              className="bg-[#05E1FF] text-[#001418] font-display font-bold text-xs tracking-wider px-5 py-2.5 rounded-lg hover:bg-[#05E1FF]/90 transition-all flex items-center gap-1.5 cursor-pointer uppercase disabled:opacity-50"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>ANALIZAR</span>
+              <span>{isStreaming ? 'QWEN…' : 'ENVIAR'}</span>
             </button>
           </form>
+
+          {streamPreview && (
+            <div className="p-3 rounded-xl bg-[#05E1FF]/8 border border-[#05E1FF]/25 text-xs text-white/90 font-mono leading-relaxed max-h-28 overflow-y-auto">
+              <span className="text-[#05E1FF] font-bold mr-2">LIVE</span>
+              {streamPreview}
+            </div>
+          )}
 
           {/* Activity Log */}
           <div className="space-y-2">
