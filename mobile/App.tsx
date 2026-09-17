@@ -21,7 +21,7 @@ const ULTRON_URL =
   (Constants.expoConfig?.extra as { ultronUrl?: string } | undefined)?.ultronUrl ||
   'https://ultron-looi-desk.onrender.com';
 
-const APP_VERSION = Constants.expoConfig?.version || '1.2.1';
+const APP_VERSION = Constants.expoConfig?.version || '1.3.0';
 const MAX_AUTO_RETRIES = 3;
 
 type Phase = 'boot' | 'perms' | 'preflight' | 'web' | 'ready' | 'error';
@@ -32,6 +32,16 @@ type Diag = {
   code: string;
   detail: string;
 };
+
+async function lockLandscape() {
+  if (Platform.OS !== 'android') return;
+  try {
+    const ScreenOrientation = require('expo-screen-orientation') as typeof import('expo-screen-orientation');
+    await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+  } catch {
+    /* optional until native rebuild includes the module */
+  }
+}
 
 async function hideSystemBars() {
   try {
@@ -91,17 +101,22 @@ async function preflightDesk(url: string): Promise<{ ok: boolean; detail: string
   } catch (e: any) {
     const ms = Date.now() - t0;
     const name = e?.name === 'AbortError' ? 'timeout 25s' : String(e?.message || e);
-    // Desk puede despertar lento en Render: no bloqueamos, solo avisamos
     return { ok: false, detail: `preflight: ${name}`, ms };
   }
 }
 
+/**
+ * Solo reporta ready cuando existe #ultron-app-root con contenido real.
+ * NUNCA usar document.title / #root / body — eso causaba pantalla negra
+ * (overlay se quitaba antes de que React pintara el desk).
+ */
 const BOOTSTRAP_JS = `
 (function(){
   try {
-    window.__ULTRON_NATIVE__ = { platform: 'android', immersive: true, v: '${APP_VERSION}' };
+    window.__ULTRON_NATIVE__ = { platform: 'android', immersive: true, landscape: true, v: '${APP_VERSION}' };
     document.documentElement.style.background = '#000';
     if (document.body) document.body.style.background = '#000';
+    var sentReady = false;
     function ping(type, extra) {
       try {
         window.ReactNativeWebView && window.ReactNativeWebView.postMessage(
@@ -115,21 +130,46 @@ const BOOTSTRAP_JS = `
     window.addEventListener('unhandledrejection', function (ev) {
       ping('js_reject', { msg: String((ev.reason && ev.reason.message) || ev.reason || 'reject') });
     });
-    function checkReady() {
-      var root = document.getElementById('ultron-app-root') || document.getElementById('root') || document.body;
-      if (root && (root.children.length > 0 || document.title)) {
-        ping('ready', { title: document.title || '', hasRoot: !!document.getElementById('ultron-app-root') });
-        return true;
-      }
+    function deskRootReady() {
+      var el = document.getElementById('ultron-app-root');
+      if (!el) return false;
+      if (el.children && el.children.length > 0) return true;
+      if ((el.textContent || '').trim().length > 0) return true;
       return false;
     }
-    if (document.readyState === 'complete' || document.readyState === 'interactive') {
-      setTimeout(function(){ if (!checkReady()) ping('dom', { state: document.readyState }); }, 400);
-    } else {
-      document.addEventListener('DOMContentLoaded', function(){ setTimeout(checkReady, 300); });
+    function checkReady() {
+      if (sentReady) return true;
+      if (!deskRootReady()) return false;
+      sentReady = true;
+      ping('ready', { title: document.title || '', hasRoot: true, source: 'dom' });
+      return true;
     }
-    setTimeout(function(){ if (!checkReady()) ping('slow', { state: document.readyState }); }, 12000);
-    setTimeout(function(){ if (!checkReady()) ping('blank_suspect', { state: document.readyState, html: (document.body && document.body.innerText || '').slice(0,80) }); }, 22000);
+    var mo = null;
+    try {
+      mo = new MutationObserver(function () { checkReady(); });
+      mo.observe(document.documentElement, { childList: true, subtree: true });
+    } catch (e) {}
+    var iv = setInterval(function () {
+      if (checkReady()) {
+        clearInterval(iv);
+        if (mo) try { mo.disconnect(); } catch (e) {}
+      }
+    }, 250);
+    setTimeout(function () {
+      clearInterval(iv);
+      if (mo) try { mo.disconnect(); } catch (e) {}
+      if (!sentReady) ping('slow', { state: document.readyState, hasRoot: !!document.getElementById('ultron-app-root') });
+    }, 12000);
+    setTimeout(function () {
+      if (!sentReady) {
+        ping('blank_suspect', {
+          state: document.readyState,
+          hasRoot: !!document.getElementById('ultron-app-root'),
+          html: (document.body && document.body.innerText || '').slice(0, 120)
+        });
+      }
+    }, 28000);
+    ping('dom', { state: document.readyState });
   } catch (e) {
     try { window.ReactNativeWebView.postMessage(JSON.stringify({ type: 'boot_js_fail', msg: String(e) })); } catch (_) {}
   }
@@ -182,6 +222,21 @@ export default function App() {
     [pushDiag]
   );
 
+  const markReady = useCallback(
+    (source: string, title?: string) => {
+      if (readyRef.current) return;
+      readyRef.current = true;
+      clearWatchdog();
+      setLoading(false);
+      setWebError(null);
+      setPhase('ready');
+      setAutoRetries(0);
+      pushDiag('READY', `src=${source} title=${title || ''}`);
+      void hideSystemBars();
+    },
+    [pushDiag]
+  );
+
   const startSequence = useCallback(async () => {
     if (startingRef.current) return;
     startingRef.current = true;
@@ -192,9 +247,9 @@ export default function App() {
     setShowDiag(false);
     setPhase('boot');
     setStatusLine('Preparando ULTRON…');
+    await lockLandscape();
     await hideSystemBars();
 
-    // 1) Permisos primero (sin WebView montada)
     setPhase('perms');
     setStatusLine('Permisos de cámara y micrófono…');
     const perms = await requestAndroidPermissions();
@@ -204,7 +259,6 @@ export default function App() {
       setStatusLine('Sin cámara/mic — puedes continuar; visión/voz limitadas.');
     }
 
-    // 2) Preflight red (no bloquea si falla: Render cold start)
     setPhase('preflight');
     setStatusLine('Comprobando servidor…');
     const pf = await preflightDesk(ULTRON_URL);
@@ -213,17 +267,15 @@ export default function App() {
       setStatusLine('Servidor despertando… cargando igual.');
     }
 
-    // 3) Montar WebView solo ahora
     setPhase('web');
     setStatusLine(pf.ok ? 'Cargando escritorio…' : 'Cargando (servidor lento)…');
     setWebMounted(true);
-    armWatchdog(pf.ok ? 40_000 : 70_000, 'La página no terminó de cargar');
+    armWatchdog(pf.ok ? 45_000 : 75_000, 'La página no terminó de cargar');
     startingRef.current = false;
   }, [armWatchdog, pushDiag]);
 
   useEffect(() => {
     void startSequence();
-    // Defer OTA check — nunca en el camino crítico del arranque
     const t = setTimeout(() => {
       try {
         const Updates = require('expo-updates') as typeof import('expo-updates');
@@ -245,10 +297,12 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Si la app vuelve de background tras crash parcial, rehidratar barras
   useEffect(() => {
     const onChange = (s: AppStateStatus) => {
-      if (s === 'active') void hideSystemBars();
+      if (s === 'active') {
+        void lockLandscape();
+        void hideSystemBars();
+      }
     };
     const sub = AppState.addEventListener('change', onChange);
     return () => sub.remove();
@@ -305,18 +359,16 @@ export default function App() {
       try {
         const data = JSON.parse(ev.nativeEvent.data);
         if (data.type === 'ready') {
-          readyRef.current = true;
-          clearWatchdog();
-          setLoading(false);
-          setWebError(null);
-          setPhase('ready');
-          setAutoRetries(0);
-          pushDiag('READY', `title=${data.title || ''} root=${data.hasRoot}`);
-          void hideSystemBars();
+          // Crítico: ignorar ready falso (sin #ultron-app-root)
+          if (data.hasRoot !== true) {
+            pushDiag('READY_IGNORED', `title=${data.title || ''} hasRoot=${data.hasRoot}`);
+            return;
+          }
+          markReady(String(data.source || 'unknown'), data.title);
         } else if (data.type === 'js_error' || data.type === 'js_reject' || data.type === 'boot_js_fail') {
           pushDiag(String(data.type).toUpperCase(), data.msg || JSON.stringify(data));
         } else if (data.type === 'blank_suspect') {
-          pushDiag('BLANK', data.html || data.state || 'blank');
+          pushDiag('BLANK', `root=${data.hasRoot} ${(data.html || data.state || 'blank')}`);
           if (!readyRef.current) {
             setWebError('La página cargó vacía (pantalla negra). Reintenta.');
             setPhase('error');
@@ -324,14 +376,16 @@ export default function App() {
             setShowDiag(true);
           }
         } else if (data.type === 'slow') {
-          pushDiag('SLOW', data.state || 'slow');
+          pushDiag('SLOW', `root=${data.hasRoot} ${data.state || 'slow'}`);
           setStatusLine('Casi listo… el desk responde lento');
+        } else if (data.type === 'dom') {
+          pushDiag('DOM', data.state || 'dom');
         }
       } catch {
         /* ignore non-json */
       }
     },
-    [pushDiag]
+    [markReady, pushDiag]
   );
 
   const overlayVisible = phase !== 'ready' || !!webError;
@@ -346,30 +400,33 @@ export default function App() {
           ref={webRef}
           source={{ uri: ULTRON_URL }}
           style={styles.web}
-          // Estabilidad Android: evitar hardware layer + grant agresivo (causan pantalla negra)
-          androidLayerType="software"
+          // hardware: software layer deja pantalla negra en muchos Android WebView
+          androidLayerType="hardware"
           javaScriptEnabled
           domStorageEnabled
           thirdPartyCookiesEnabled
           sharedCookiesEnabled
           allowsInlineMediaPlayback
           mediaPlaybackRequiresUserAction={false}
+          mediaCapturePermissionGrantType="grant"
           mixedContentMode="always"
           setSupportMultipleWindows={false}
           overScrollMode="never"
-          cacheEnabled
+          cacheEnabled={false}
           startInLoadingState={false}
+          allowsFullscreenVideo
+          nestedScrollEnabled
           originWhitelist={['https://*', 'http://*']}
           applicationNameForUserAgent={`ULTRON-FP/${APP_VERSION}`}
           onLoadStart={() => {
             setLoading(true);
             setStatusLine('Descargando escritorio…');
-            armWatchdog(50_000, 'onLoadStart sin fin');
+            armWatchdog(55_000, 'onLoadStart sin fin');
           }}
           onLoadEnd={() => {
-            setStatusLine('Escritorio recibido… esperando UI');
-            // No quitar overlay hasta ping 'ready' — evita negro vacío
-            armWatchdog(28_000, 'UI del desk no respondió');
+            setStatusLine('Escritorio recibido… esperando UI nativa');
+            // Overlay permanece hasta ping ready con hasRoot
+            armWatchdog(35_000, 'UI del desk no montó (#ultron-app-root)');
           }}
           onError={(e) => {
             const d = e.nativeEvent?.description || 'Error de red WebView';
@@ -400,7 +457,8 @@ export default function App() {
             (function(){
               try {
                 document.documentElement.style.background='#000';
-                window.__ULTRON_NATIVE__={permsOk:${permsOk ? 'true' : 'false'},platform:'android',v:'${APP_VERSION}'};
+                if (document.body) document.body.style.background='#000';
+                window.__ULTRON_NATIVE__={permsOk:${permsOk ? 'true' : 'false'},platform:'android',landscape:true,immersive:true,v:'${APP_VERSION}'};
               } catch(e) {}
               true;
             })();
@@ -456,7 +514,7 @@ export default function App() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000000' },
-  web: { flex: 1, backgroundColor: '#000000' },
+  web: { flex: 1, backgroundColor: '#000000', opacity: 0.99 },
   boot: {
     ...StyleSheet.absoluteFillObject,
     alignItems: 'center',
@@ -464,6 +522,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
     gap: 8,
     paddingHorizontal: 20,
+    zIndex: 10,
   },
   logo: {
     width: 88,

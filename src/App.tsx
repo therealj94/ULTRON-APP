@@ -40,16 +40,38 @@ export default function App() {
   // Session State
   const [face, setFace] = useState<FaceState>('IDLE');
 
-  // Avisa al APK nativo que el desk React ya montó (evita pantalla negra eterna)
+  // Avisa al APK nativo solo cuando #ultron-app-root ya pintó (nunca por title/DOM vacío)
   useEffect(() => {
-    try {
-      const w = window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } };
-      w.ReactNativeWebView?.postMessage(
-        JSON.stringify({ type: 'ready', title: document.title, hasRoot: true, t: Date.now() })
-      );
-    } catch {
-      /* browser normal */
-    }
+    let cancelled = false;
+    const pingReady = () => {
+      if (cancelled) return;
+      try {
+        const root = document.getElementById('ultron-app-root');
+        if (!root) {
+          requestAnimationFrame(pingReady);
+          return;
+        }
+        const w = window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } };
+        w.ReactNativeWebView?.postMessage(
+          JSON.stringify({
+            type: 'ready',
+            title: document.title,
+            hasRoot: true,
+            source: 'react',
+            t: Date.now(),
+          })
+        );
+      } catch {
+        /* browser normal */
+      }
+    };
+    // Doble rAF: tras layout/paint real del desk
+    requestAnimationFrame(() => requestAnimationFrame(pingReady));
+    const fallback = window.setTimeout(pingReady, 800);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(fallback);
+    };
   }, []);
   const [mode, setMode] = useState<Mode>('GUARDIAN');
   const [energy, setEnergy] = useState<number>(85);
