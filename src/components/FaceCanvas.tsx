@@ -395,6 +395,11 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     }
   }
 
+  const onFaceChangeRef = useRef(onFaceChange);
+  useEffect(() => {
+    onFaceChangeRef.current = onFaceChange;
+  }, [onFaceChange]);
+
   const scheduleBlink = useCallback((type: 'single' | 'double' | 'wink' = 'single') => {
     const A = animRef.current;
     if (A.blinking) return;
@@ -525,22 +530,21 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       }
 
       // Idle yawn / restless eyes when waiting for speech a long time
-      if (S.face === 'IDLE' || S.face === 'LISTENING') {
+      if ((S.face === 'IDLE' || S.face === 'LISTENING') && S.face !== 'YAWNING') {
         A.nextYawn -= dt;
-        if (A.nextYawn <= 0 && now - S.lastInteraction > 8000) {
-          A.nextYawn = 14 + Math.random() * 16;
+        if (A.nextYawn <= 0 && now - S.lastInteraction > 8000 && A.yawn < 0.05) {
+          A.nextYawn = 18 + Math.random() * 20;
           A.yawn = 1;
-          onFaceChange('YAWNING', 2200);
-          // slight eye roll while yawning
           A.ty = 0.35;
-          setTimeout(() => {
-            if (stateRef.current.face === 'YAWNING') onFaceChange('IDLE', 0);
-          }, 2100);
+          onFaceChangeRef.current('YAWNING', 2000);
         }
       }
       if (A.yawn > 0.01) {
-        A.yawn *= 0.965;
+        A.yawn *= 0.96;
         A.mouthT = Math.max(A.mouthT, 0.55 + A.yawn * 0.4);
+        if (A.yawn < 0.08 && S.face === 'YAWNING') {
+          onFaceChangeRef.current('IDLE', 0);
+        }
       }
 
       // Look interpolation with elastic damping

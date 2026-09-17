@@ -178,6 +178,16 @@ export const VisionOverlay = forwardRef<VisionOverlayHandle, VisionOverlayProps>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isActive]);
 
+  // Auto-reintento si la cámara falla (permiso tardío / WebView Android)
+  useEffect(() => {
+    if (!isActive || streamActive) return;
+    const id = window.setInterval(() => {
+      void startCamera();
+    }, 5000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isActive, streamActive]);
+
   if (!isActive) return null;
 
   return (

@@ -1244,6 +1244,8 @@ export default function App() {
           <div className="flex items-center gap-2 pointer-events-auto">
             {face === 'LISTENING' || commandListening ? (
               <div className="ui-chip ui-chip--live font-display tracking-[0.16em]">ESCUCHANDO</div>
+            ) : deskPresence !== 'sleep' && sessionReady ? (
+              <div className="ui-chip font-display tracking-[0.16em] text-[#3EC9D6]/80">WAKE · hey Ultron</div>
             ) : null}
             {face === 'SPEAKING' && (
               <div className="ui-chip ui-chip--live font-display tracking-[0.16em]">HABLANDO</div>
@@ -1268,6 +1270,7 @@ export default function App() {
               onClick={() => {
                 setSettingsOpen(true);
                 playSfx('tap', soundFxEnabled);
+                void refreshTtsNode();
               }}
               title="Ajustes · sesión · modos"
               className="p-2 rounded-full border border-[#05E1FF]/40 bg-black/60 text-[#05E1FF] hover:bg-[#05E1FF]/15 transition-all cursor-pointer"
@@ -1332,19 +1335,29 @@ export default function App() {
               setCommandListening(false);
               setMicEnabled(false);
               setFace('IDLE');
-              showBubble('Mic off', 1500);
+              showBubble('Mic off · sigo atento a hey Ultron', 1800);
             } else {
               triggerVoicePipeline();
             }
           }}
-          title={commandListening ? 'Dejar de escuchar' : 'Activar micrófono (o di hey Ultron)'}
+          title={
+            commandListening || micEnabled
+              ? 'Dejar de escuchar comando'
+              : 'Toca para hablar · o di hey Ultron (wake activo)'
+          }
           className={`pointer-events-auto absolute bottom-5 left-5 z-[60] flex h-16 w-16 items-center justify-center rounded-full border-2 transition-all ${
             commandListening || micEnabled
               ? 'border-[#3EC9D6] bg-[#3EC9D6]/30 text-[#7AE4EF] shadow-[0_0_24px_rgba(62,201,214,0.55)] scale-105'
+              : deskPresence !== 'sleep'
+              ? 'border-[#3EC9D6]/50 bg-[#0c1016]/95 text-[#3EC9D6] shadow-[0_0_16px_rgba(62,201,214,0.25)] animate-pulse'
               : 'border-white/20 bg-[#0c1016]/95 text-[#E8EEF4] hover:border-[#3EC9D6]/50'
           }`}
         >
-          {commandListening || micEnabled ? <Mic className="h-7 w-7" /> : <MicOff className="h-7 w-7" />}
+          {commandListening || micEnabled || deskPresence !== 'sleep' ? (
+            <Mic className="h-7 w-7" />
+          ) : (
+            <MicOff className="h-7 w-7" />
+          )}
         </button>
 
         {/* Sidebar: sleep / stay / explore + menú */}
@@ -1551,7 +1564,9 @@ export default function App() {
           }}
           onLogout={handleLogout}
           onStartConocer={startConocerFlow}
-          onRefreshTtsNode={refreshTtsNode}
+          onRefreshTtsNode={() => {
+            void refreshTtsNode();
+          }}
           ttsNodeInfo={ttsNodeInfo}
         />
 
