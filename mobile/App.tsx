@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { useEffect, useState } from 'react';
-import * as ScreenOrientation from 'expo-screen-orientation';
 
 const ULTRON_URL =
   (Constants.expoConfig?.extra as { ultronUrl?: string } | undefined)?.ultronUrl ||
@@ -35,13 +34,6 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
     (async () => {
-      try {
-        await ScreenOrientation.unlockAsync();
-        // Preferimos landscape pero permitimos girar (OrientationGate en web guía)
-        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-      } catch {
-        // Emuladores / tablets pueden fallar el lock
-      }
       await requestAndroidPermissions();
       if (mounted) setReady(true);
     })();
@@ -80,7 +72,6 @@ export default function App() {
         mixedContentMode="always"
         geolocationEnabled={false}
         setSupportMultipleWindows={false}
-        // No forzar cámara: el sitio decide (visionEnabled=false al abrir)
         userAgent={`ULTRON-FP-Android/${Constants.expoConfig?.version || '1.0'} WebView`}
       />
       {loading && (
