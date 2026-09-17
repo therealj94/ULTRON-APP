@@ -1,7 +1,7 @@
 {
   "name": "ULTRON FP",
   "short_name": "ULTRON",
-  "description": "Robot de escritorio LOOI · agentic harness de la junta Orden Global",
+  "description": "Robot de escritorio ULTRON · agentic harness de la junta Orden Global",
   "start_url": "/",
   "scope": "/",
   "display": "fullscreen",

@@ -1,5 +1,67 @@
-// ElevenLabs — 4 voces de escritorio LOOI (siempre vía proxy servidor)
+// ElevenLabs — 4 voces de escritorio ULTRON FP (siempre vía proxy servidor)
 import { ElevenLabsVoiceConfig } from '../types';
+
+/** Frases cortas de sistema: Web Speech local (ahorra tokens ElevenLabs). */
+const LOCAL_SYSTEM_PHRASES = new Set(
+  [
+    'modo stay',
+    'modo explore',
+    'modo sleep',
+    'ultron listo',
+    'te escucho',
+    'escuchando',
+    'listo',
+    'ok',
+  ].map((s) => s.toLowerCase())
+);
+
+export function isLocalSystemPhrase(text: string): boolean {
+  const t = text.trim().toLowerCase().replace(/[.!…]+$/g, '');
+  if (t.length <= 28 && LOCAL_SYSTEM_PHRASES.has(t)) return true;
+  if (/^(modo\s+\w+|hola\s+\w+|ultron\s+listo)/i.test(t) && t.split(/\s+/).length <= 4) {
+    return true;
+  }
+  return false;
+}
+
+/** Habla local (sin ElevenLabs) para confirmaciones cortas. */
+export function speakLocalSystem(
+  text: string,
+  callbacks?: {
+    onStart?: () => void;
+    onEnd?: () => void;
+    onError?: (err: unknown) => void;
+  }
+): void {
+  stopCurrentVoice();
+  const gen = speakGeneration;
+  const clean = text.trim();
+  if (!clean) {
+    callbacks?.onEnd?.();
+    return;
+  }
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+    callbacks?.onEnd?.();
+    return;
+  }
+  callbacks?.onStart?.();
+  const utterance = new SpeechSynthesisUtterance(clean);
+  utterance.lang = 'es-ES';
+  utterance.rate = 1.02;
+  utterance.pitch = 0.85;
+  const voices = window.speechSynthesis.getVoices();
+  const matched =
+    voices.find((v) => v.lang.startsWith('es')) || voices[0];
+  if (matched) utterance.voice = matched;
+  utterance.onend = () => {
+    if (gen === speakGeneration) callbacks?.onEnd?.();
+  };
+  utterance.onerror = (e) => {
+    callbacks?.onError?.(e);
+    if (gen === speakGeneration) callbacks?.onEnd?.();
+  };
+  window.speechSynthesis.speak(utterance);
+}
 
 /** Voces curadas para robot de escritorio: claras, cortas, en español. */
 export const DEFAULT_ELEVENLABS_VOICES: ElevenLabsVoiceConfig[] = [
@@ -106,13 +168,20 @@ export async function speakWithElevenLabsOrFallback(
     onStart?: () => void;
     onEnd?: () => void;
     onError?: (err: unknown) => void;
-  }
+  },
+  opts?: { forceEleven?: boolean }
 ): Promise<void> {
   stopCurrentVoice();
   const gen = speakGeneration;
   const clean = text.trim();
   if (!clean) {
     callbacks?.onEnd?.();
+    return;
+  }
+
+  // Confirmaciones cortas → voz local (ahorra tokens)
+  if (!opts?.forceEleven && isLocalSystemPhrase(clean)) {
+    speakLocalSystem(clean, callbacks);
     return;
   }
 

@@ -38,6 +38,8 @@ interface FaceCanvasProps {
   onWake: () => void;
   onSleep: () => void;
   onCloseOverlays: () => void;
+  onPokeWarn?: () => void;
+  onPokeBlaster?: () => void;
 }
 
 const MODES: Mode[] = ['GUARDIAN', 'MINING', 'GOLD', 'CREATIVE', 'ANALYTICAL', 'STRATEGIC', 'EXPLORER'];
@@ -69,6 +71,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   onWake,
   onSleep,
   onCloseOverlays,
+  onPokeWarn,
+  onPokeBlaster,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -216,10 +220,10 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     C.lastShotTime = performance.now();
     onFaceChange('FURY', 2600);
     playSfx('gun_draw', soundFxEnabled);
-    onSpeak('Sistemas defensivos tácticos desplegados.');
+    // Sin frase hablada: evita doble voz / “me reset”
     animRef.current.shake = 1.2;
     onTriggerBlasterCombat?.();
-  }, [onFaceChange, onSpeak, soundFxEnabled, onTriggerBlasterCombat]);
+  }, [onFaceChange, soundFxEnabled, onTriggerBlasterCombat]);
 
   // Handle external reset trigger
   useEffect(() => {
@@ -797,10 +801,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.translate(cx + shakeX, cy + shakeY);
     ctx.scale(A.squashX, A.squashY);
 
-    // 1. Draw Top Mode Crown / Emblem (Faithful to Photo 3)
-    drawModeCrown(ctx, 0, -baseR * 1.45, baseR, S.mode, theme, S.t, A);
+    // Sin corona/candados (ensuciaban la cara). Solo ojos + boca.
 
-    // 2. Draw the Two Volumetric Living Eyes (LOOI Style)
+    // 2. Draw the Two Volumetric Living Eyes
     const leftX = -eyeSpacing;
     const rightX = eyeSpacing;
     const eyeY = 0;
@@ -2454,12 +2457,11 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     const S = stateRef.current;
     const C = combatRef.current;
 
-    // Instant disarm if combat was active
+    // Si ya está en combate: desarmar en silencio (sin “reset” hablado)
     if (C.isActive) {
       disarmCombat();
       onFaceChange('IDLE', 0);
       playSfx('tap', soundFxEnabled);
-      onSpeak('Sistemas defensivos desactivados. Normalizando.');
       return;
     }
 
@@ -2469,28 +2471,24 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     }
 
     const now = performance.now();
-    S.poke = now - S.lastPokeTime < 750 ? S.poke + 1 : 1;
+    S.poke = now - S.lastPokeTime < 900 ? S.poke + 1 : 1;
     S.lastPokeTime = now;
-
-    // Shake reaction
     animRef.current.jiggle = 0.8;
 
     if (S.poke === 1) {
+      // Toque = interactuar (parpadeo). Micrófono es el botón / hey ultron.
       scheduleBlink('single');
       playSfx('tap', soundFxEnabled);
     } else if (S.poke === 2) {
-      // 2 Taps -> Listen for voice order
-      playSfx('wake', soundFxEnabled);
-      onTriggerVoice();
-    } else if (S.poke === 3) {
-      onFaceChange('CURIOSITY', 1600);
-      onSpeak('Aquí estoy. ¿En qué te ayudo?');
-      playSfx('tap', soundFxEnabled);
-    } else {
-      // Friendly Petting / Purring mode (Never anger or weapons!)
-      onFaceChange('PURR', 1800);
-      playSfx('purr', soundFxEnabled);
+      // 2 toques → aviso amarillo (no sigas)
+      playSfx('warning', soundFxEnabled);
+      onFaceChange('CONCERNED', 1400);
+      onPokeWarn?.();
+    } else if (S.poke >= 3) {
+      // 3 toques → pantalla roja + blasters, luego vuelve normal en silencio
+      playSfx('gun_draw', soundFxEnabled);
       S.poke = 0;
+      onPokeBlaster?.();
     }
   };
 

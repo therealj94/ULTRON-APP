@@ -52,7 +52,7 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({
             </div>
             <div>
               <span className="text-[10px] font-mono tracking-[0.25em] text-[#8FA3B0] block uppercase">
-                MANUAL OPERATIVO · ULTRON FP & LOOI
+                MANUAL OPERATIVO · ULTRON FP
               </span>
               <h2 className="font-display font-bold text-base text-white tracking-wider">
                 GUÍA DE FUNCIONAMIENTO & CONTROLES
@@ -155,7 +155,7 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({
                 ¿Qué es ULTRON FP?
               </h3>
               <p className="leading-relaxed">
-                ULTRON FP es un asistente robótico de escritorio y núcleo de inteligencia para la junta directiva, basado en la arquitectura de hardware interactiva de LOOI con pantalla OLED y física de mirada en tiempo real.
+                ULTRON FP es un asistente robótico de escritorio y núcleo de inteligencia para la junta directiva, con pantalla OLED y física de mirada en tiempo real.
               </p>
               <p className="leading-relaxed text-white/70">
                 Está diseñado para operar en horizontal (pantalla de escritorio tipo quiosco) o vertical (teléfono móvil), integrando seguimiento facial por cámara, reconocimiento de voz bidireccional y procesamiento en la nube con modelos de lenguaje.
@@ -386,7 +386,7 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({
         {/* Footer */}
         <div className="flex items-center justify-between pt-2 border-t border-white/10 text-[11px] font-mono">
           <span className="text-[#8FA3B0]">
-            LOOI Desktop Agent · Versión 3.8
+            ULTRON FP · Versión 3.8
           </span>
           <button
             type="button"
