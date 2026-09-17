@@ -63,13 +63,13 @@ export function speakLocalSystem(
   window.speechSynthesis.speak(utterance);
 }
 
-/** Voces curadas para robot de escritorio: claras, cortas, en español. */
+/** Voces ULTRON FP (JARVIS default). voiceId = id Qwen3-TTS; ElevenLabs solo fallback. */
 export const DEFAULT_ELEVENLABS_VOICES: ElevenLabsVoiceConfig[] = [
   {
-    voiceId: 'pNInz6obpgDQGcFmaJgB', // Adam
-    name: 'Nexo',
-    category: 'Desk Calm',
-    description: 'Asistente de mesa: grave, cercano, sin prisa. Ideal para idle y reportes.',
+    voiceId: 'jarvis',
+    name: 'JARVIS',
+    category: 'Principal',
+    description: 'Formal, calmado, elegante. Voz por defecto.',
     stability: 0.62,
     similarityBoost: 0.82,
     pitch: 0.9,
@@ -77,36 +77,47 @@ export const DEFAULT_ELEVENLABS_VOICES: ElevenLabsVoiceConfig[] = [
     apiKey: '',
   },
   {
-    voiceId: 'EXAVITQu4vr4xnSDxMaL', // Bella
-    name: 'Aura',
-    category: 'Warm Guide',
-    description: 'Guía cálida y nítida para tutoriales, saludos y confirmaciones.',
+    voiceId: 'formal',
+    name: 'FORMAL',
+    category: 'Junta',
+    description: 'Institucional y seria para la junta directiva.',
+    stability: 0.7,
+    similarityBoost: 0.85,
+    pitch: 0.92,
+    rate: 0.95,
+    apiKey: '',
+  },
+  {
+    voiceId: 'tierna',
+    name: 'TIERNA',
+    category: 'Cálida',
+    description: 'Suave y amigable — cara luminosa de ULTRON.',
     stability: 0.55,
     similarityBoost: 0.78,
     pitch: 1.05,
-    rate: 1.0,
+    rate: 0.98,
     apiKey: '',
   },
   {
-    voiceId: 'onwK4e9ZLuTAKqWW03F9', // Daniel
-    name: 'Órbita',
-    category: 'Brief Crisp',
-    description: 'Briefing ejecutivo: ritmo limpio, preciso, sin relleno.',
-    stability: 0.7,
-    similarityBoost: 0.85,
-    pitch: 0.95,
-    rate: 1.04,
-    apiKey: '',
-  },
-  {
-    voiceId: 'N2lVS1w4EtoT3dr4eOWO', // Callum
-    name: 'Pulse',
-    category: 'Alert Soft',
-    description: 'Alertas y herramientas: presencia firme pero no agresiva.',
+    voiceId: 'estrategia',
+    name: 'ESTRATEGIA',
+    category: 'Analítica',
+    description: 'Precisa para reportes y Cerebro de Orden Global.',
     stability: 0.68,
     similarityBoost: 0.8,
     pitch: 0.88,
     rate: 0.98,
+    apiKey: '',
+  },
+  {
+    voiceId: 'orbita',
+    name: 'ÓRBITA',
+    category: 'Exploradora',
+    description: 'Curiosa y ligera para modos creativos.',
+    stability: 0.6,
+    similarityBoost: 0.8,
+    pitch: 1.0,
+    rate: 1.0,
     apiKey: '',
   },
 ];
@@ -185,13 +196,35 @@ export async function speakWithElevenLabsOrFallback(
     return;
   }
 
-  // 1) Proxy servidor (clave nunca en el cliente)
+  // 1) API unificada: Qwen3-TTS (T4) → ElevenLabs → …
+  try {
+    const ttsRes = await fetch('/api/tts/synthesize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: clean,
+        voice: config.voiceId,
+      }),
+    });
+    if (ttsRes.ok) {
+      const contentType = ttsRes.headers.get('content-type') || '';
+      if (contentType.includes('audio')) {
+        await playBlob(await ttsRes.blob(), callbacks, gen);
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn('[ULTRON TTS]', err);
+  }
+
+  // 2) Legacy proxy bóveda (también intenta Qwen3 luego ElevenLabs)
   try {
     const proxyRes = await fetch('/api/vault/elevenlabs/synthesize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: clean,
+        voice: config.voiceId,
         voiceId: config.voiceId,
         stability: config.stability,
         similarityBoost: config.similarityBoost,
@@ -210,37 +243,7 @@ export async function speakWithElevenLabsOrFallback(
     console.warn('[ElevenLabs proxy]', err);
   }
 
-  // 2) Clave cliente opcional (bóveda)
-  if (config.apiKey && config.apiKey.trim().length >= 40) {
-    try {
-      const response = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${config.voiceId}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'xi-api-key': config.apiKey.trim(),
-          },
-          body: JSON.stringify({
-            text: clean,
-            model_id: 'eleven_multilingual_v2',
-            voice_settings: {
-              stability: config.stability,
-              similarity_boost: config.similarityBoost,
-            },
-          }),
-        }
-      );
-      if (response.ok) {
-        await playBlob(await response.blob(), callbacks, gen);
-        return;
-      }
-    } catch (err) {
-      console.warn('[ElevenLabs direct]', err);
-    }
-  }
-
-  // 3) Fallback Web Speech (solo si ElevenLabs no responde)
+  // 3) Fallback Web Speech
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     callbacks?.onStart?.();
     const utterance = new SpeechSynthesisUtterance(clean);

@@ -17,6 +17,16 @@ import {
   systemPromptForMode,
   type ChatMessage,
 } from './src/server/nodes';
+import { ULTRON_VOICES, getVoice } from './src/server/tts/voices';
+import { normalizeNumbersForSpeech } from './src/server/tts/normalizeNumbers';
+import { HUMAN_EXPRESSIONS, expressionsSystemHint } from './src/server/tts/expressions';
+import {
+  extractPersonHints,
+  listPeople,
+  memoryPromptBlock,
+  upsertPerson,
+} from './src/server/tts/personMemory';
+import { synthesizeWithQwenTts, ttsNodeStatus, ttsSalud } from './src/server/tts/qwenTtsClient';
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -111,6 +121,7 @@ app.get('/api/health', async (_req, res) => {
       online: ojo.ok,
     },
     globalOrderBrain: 'Active (Directorio Alfa-1)',
+    tts: ttsNodeStatus(),
     renderDeployment: RENDER_API_KEY ? 'Connected' : 'Pending Key',
     wsClients: wss.clients.size,
   });
@@ -125,7 +136,7 @@ app.get('/api/vault/status', async (req, res) => {
     conduits: [
       {
         id: 'elevenlabs',
-        name: 'Canal de Voz Neural ElevenLabs',
+        name: 'Canal de Voz Neural ElevenLabs (fallback)',
         type: 'audio_synthesis',
         configured: Boolean(VAULT_ELEVENLABS_API_KEY),
         status: VAULT_ELEVENLABS_API_KEY ? 'CONECTADO' : 'PENDIENTE_API_KEY',
@@ -133,6 +144,15 @@ app.get('/api/vault/status', async (req, res) => {
           ? `${VAULT_ELEVENLABS_API_KEY.substring(0, 4)}••••••••${VAULT_ELEVENLABS_API_KEY.slice(-3)}`
           : null,
         latencyMs: 18,
+      },
+      {
+        id: 'qwen3_tts',
+        name: 'Qwen3-TTS · Nodo T4 dedicado',
+        type: 'audio_synthesis',
+        configured: ttsNodeStatus().configured,
+        status: ttsNodeStatus().configured ? 'PROXY_READY' : 'PENDIENTE_ULTRON_TTS_URL',
+        host: ttsNodeStatus().urlHost,
+        latencyMs: 40,
       },
       {
         id: 'neural_core',
@@ -206,16 +226,27 @@ app.post('/api/vault/elevenlabs/synthesize', async (req, res) => {
   const { text, voiceId = 'pNInz6obpgDQGcFmaJgB', stability = 0.65, similarityBoost = 0.85, apiKeyOverride } = req.body;
 
   const keyToUse = (apiKeyOverride && apiKeyOverride.trim()) || VAULT_ELEVENLABS_API_KEY;
+  const spoken = normalizeNumbersForSpeech(String(text || ''));
 
-  if (!keyToUse) {
-    return res.status(400).json({
-      error: 'No hay API Key de ElevenLabs configurada en la Bóveda.',
-      suggestion: 'Introduce tu API Key en la Bóveda de ULTRON FP para habilitar síntesis neuronal.',
-    });
+  if (!spoken) {
+    return res.status(400).json({ error: 'El parámetro "text" es requerido.' });
   }
 
-  if (!text || typeof text !== 'string') {
-    return res.status(400).json({ error: 'El parámetro "text" es requerido.' });
+  // 1) Preferir Qwen3-TTS en nodo T4 dedicado
+  const qwen = await synthesizeWithQwenTts({ text: spoken, voice: req.body.voice || req.body.voiceId });
+  if (qwen.ok) {
+    res.setHeader('Content-Type', qwen.contentType);
+    res.setHeader('X-Ultron-TTS', 'qwen3-tts');
+    return res.send(qwen.audio);
+  }
+  const qwenTtsError = qwen.ok === false ? qwen.error : 'unknown';
+
+  if (!keyToUse) {
+    return res.status(503).json({
+      error: 'TTS no disponible',
+      qwenTts: qwenTtsError,
+      suggestion: 'Configura ULTRON_TTS_URL (T4) o ELEVENLABS_API_KEY. Arranca i-02653feadc919d3a4.',
+    });
   }
 
   try {
@@ -227,7 +258,7 @@ app.post('/api/vault/elevenlabs/synthesize', async (req, res) => {
         Accept: 'audio/mpeg',
       },
       body: JSON.stringify({
-        text,
+        text: spoken,
         model_id: 'eleven_multilingual_v2',
         voice_settings: {
           stability: Number(stability) || 0.65,
@@ -241,19 +272,101 @@ app.post('/api/vault/elevenlabs/synthesize', async (req, res) => {
       return res.status(elRes.status).json({
         error: `Error de ElevenLabs (${elRes.status})`,
         details: errText,
+        qwenTts: qwenTtsError,
       });
     }
 
     const audioBuffer = await elRes.arrayBuffer();
     res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('X-Ultron-TTS', 'elevenlabs-fallback');
     res.setHeader('Content-Length', audioBuffer.byteLength.toString());
     return res.send(Buffer.from(audioBuffer));
   } catch (err: any) {
     return res.status(500).json({
-      error: 'Fallo al contactar el servicio de ElevenLabs',
+      error: 'Fallo al contactar ElevenLabs',
       message: err.message,
+      qwenTts: qwenTtsError,
     });
   }
+});
+
+/** API unificada TTS: Qwen3-TTS (T4) → ElevenLabs → error (cliente usa Web Speech). */
+app.post('/api/tts/synthesize', async (req, res) => {
+  const voice = getVoice(req.body.voice || req.body.voiceId || 'jarvis');
+  const spoken = normalizeNumbersForSpeech(String(req.body.text || ''));
+  if (!spoken) return res.status(400).json({ error: 'text requerido' });
+
+  const qwen = await synthesizeWithQwenTts({ text: spoken, voice: voice.id });
+  if (qwen.ok) {
+    res.setHeader('Content-Type', qwen.contentType);
+    res.setHeader('X-Ultron-TTS', 'qwen3-tts');
+    res.setHeader('X-Ultron-Voice', voice.id);
+    return res.send(qwen.audio);
+  }
+  const qwenTtsError = qwen.ok === false ? qwen.error : 'unknown';
+
+  if (VAULT_ELEVENLABS_API_KEY && voice.elevenLabsVoiceId) {
+    try {
+      const elRes = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voice.elevenLabsVoiceId}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'xi-api-key': VAULT_ELEVENLABS_API_KEY,
+            Accept: 'audio/mpeg',
+          },
+          body: JSON.stringify({
+            text: spoken,
+            model_id: 'eleven_multilingual_v2',
+            voice_settings: { stability: 0.62, similarity_boost: 0.82 },
+          }),
+        }
+      );
+      if (elRes.ok) {
+        const buf = await elRes.arrayBuffer();
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('X-Ultron-TTS', 'elevenlabs-fallback');
+        res.setHeader('X-Ultron-Voice', voice.id);
+        return res.send(Buffer.from(buf));
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  return res.status(503).json({
+    error: 'TTS no disponible',
+    qwenTts: qwenTtsError,
+    voice: voice.id,
+    hint: 'Arranca T4 i-02653feadc919d3a4 y define ULTRON_TTS_URL',
+  });
+});
+
+app.get('/api/tts/voces', (_req, res) => {
+  res.json({ voces: ULTRON_VOICES, expressions: HUMAN_EXPRESSIONS.length });
+});
+
+app.get('/api/tts/status', async (_req, res) => {
+  const cfg = ttsNodeStatus();
+  const salud = await ttsSalud();
+  res.json({ ...cfg, online: salud.ok, detail: salud.detail || { error: salud.error } });
+});
+
+app.get('/api/tts/normalize', (req, res) => {
+  const text = String(req.query.text || '');
+  res.json({ input: text, output: normalizeNumbersForSpeech(text) });
+});
+
+app.get('/api/memoria/personas', (_req, res) => {
+  res.json({ personas: listPeople() });
+});
+
+app.post('/api/memoria/personas', (req, res) => {
+  const { nombre, rol, correo, conversationId, hecho } = req.body || {};
+  if (!nombre) return res.status(400).json({ error: 'nombre requerido' });
+  const p = upsertPerson({ nombre, rol, correo, conversationId, hecho });
+  res.json({ ok: true, persona: p });
 });
 
 // Cloud Status Verification Endpoint
@@ -264,7 +377,7 @@ app.get('/api/cloud/status', async (req, res) => {
       accessKeyIdMasked: AWS_ACCESS_KEY_ID ? `${AWS_ACCESS_KEY_ID.substring(0, 6)}...${AWS_ACCESS_KEY_ID.slice(-4)}` : null,
       region: AWS_DEFAULT_REGION,
       status: 'Connected',
-      services: ['SageMaker Qwen-27B', 'Playwright Browser Cluster', 'S3 Storage'],
+      services: ['EC2 Qwen-27B A10G', 'EC2 Playwright t3', 'EC2 Qwen3-TTS T4', 'S3 Storage'],
     },
     github: {
       configured: Boolean(GITHUB_PAT),
@@ -285,6 +398,12 @@ app.get('/api/cloud/status', async (req, res) => {
       ...nodesConfigStatus().ojo,
       status: nodesConfigStatus().ojo.configured ? 'Ojo proxy ready (server-side)' : 'Missing ULTRON_OJO_CLAVE',
       capabilities: ['/mirar DOM real', '/foto PNG', 'Reintentos con backoff'],
+    },
+    tts: {
+      model: 'Qwen3-TTS VoiceDesign (T4 g4dn)',
+      instance: 'i-02653feadc919d3a4',
+      ...ttsNodeStatus(),
+      status: ttsNodeStatus().configured ? 'Proxy ready (server-side)' : 'Missing ULTRON_TTS_URL — start T4',
     },
   };
   res.json(result);
@@ -801,8 +920,47 @@ app.post('/api/qwen/chat', async (req, res) => {
   }
 
   const history = getConversation(String(conversationId));
+
+  // Memoria de personas: extraer hints del mensaje + contexto de sesión
+  for (const h of extractPersonHints(message)) {
+    if (ultronRemoteSession.user?.nombre) {
+      upsertPerson({
+        nombre: ultronRemoteSession.user.nombre,
+        rol: ultronRemoteSession.user.rol,
+        correo: ultronRemoteSession.user.correo,
+        conversationId: String(conversationId),
+        hecho: { key: h.key, value: h.value, source: 'chat' },
+      });
+    } else if (h.key === 'nombre_declarado') {
+      upsertPerson({
+        nombre: h.value,
+        conversationId: String(conversationId),
+        hecho: { key: h.key, value: h.value, source: 'chat' },
+      });
+    }
+  }
+
+  const memBlock = memoryPromptBlock({
+    currentUser: ultronRemoteSession.user
+      ? {
+          nombre: ultronRemoteSession.user.nombre,
+          rol: ultronRemoteSession.user.rol,
+          correo: ultronRemoteSession.user.correo,
+        }
+      : null,
+    conversationId: String(conversationId),
+  });
+
+  const systemContent = [
+    systemPromptForMode(String(mode)),
+    expressionsSystemHint(),
+    memBlock,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
   const messages: ChatMessage[] = [
-    { role: 'system', content: systemPromptForMode(String(mode)) },
+    { role: 'system', content: systemContent },
     ...history.filter((m) => m.role !== 'system'),
     ...(Array.isArray(context)
       ? context
