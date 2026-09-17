@@ -180,7 +180,13 @@ export async function speakWithElevenLabsOrFallback(
     onEnd?: () => void;
     onError?: (err: unknown) => void;
   },
-  opts?: { forceEleven?: boolean }
+  opts?: {
+    forceEleven?: boolean;
+    pitch?: number;
+    rate?: number;
+    emotion?: string;
+    instructAddon?: string;
+  }
 ): Promise<void> {
   stopCurrentVoice();
   const gen = speakGeneration;
@@ -189,6 +195,11 @@ export async function speakWithElevenLabsOrFallback(
     callbacks?.onEnd?.();
     return;
   }
+
+  const pitch = opts?.pitch ?? config.pitch;
+  const rate = opts?.rate ?? config.rate;
+  const emotion = opts?.emotion;
+  const instructAddon = opts?.instructAddon;
 
   // Confirmaciones cortas → voz local (ahorra tokens)
   if (!opts?.forceEleven && isLocalSystemPhrase(clean)) {
@@ -204,6 +215,8 @@ export async function speakWithElevenLabsOrFallback(
       body: JSON.stringify({
         text: clean,
         voice: config.voiceId,
+        emotion,
+        instructAddon,
       }),
     });
     if (ttsRes.ok) {
@@ -243,13 +256,13 @@ export async function speakWithElevenLabsOrFallback(
     console.warn('[ElevenLabs proxy]', err);
   }
 
-  // 3) Fallback Web Speech
+  // 3) Fallback Web Speech (aquí sí aplican pitch/rate emocionales)
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     callbacks?.onStart?.();
     const utterance = new SpeechSynthesisUtterance(clean);
     utterance.lang = 'es-ES';
-    utterance.pitch = config.pitch;
-    utterance.rate = config.rate;
+    utterance.pitch = pitch;
+    utterance.rate = rate;
     const voices = window.speechSynthesis.getVoices();
     const matched =
       voices.find((v) => v.lang.startsWith('es') && /jorge|diego|pablo|monica|helena/i.test(v.name)) ||

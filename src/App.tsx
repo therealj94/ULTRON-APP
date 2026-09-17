@@ -175,9 +175,21 @@ export default function App() {
     }, Math.max(durationMs, 5000));
   }, []);
 
-  // Voice: una sola voz a la vez. Frases cortas → local; resto ElevenLabs.
+  // Voice: una sola voz a la vez. Frases cortas → local; resto ElevenLabs / Qwen3-TTS.
   const vocalize = useCallback(
-    (text: string, faceOverride: FaceState = 'SPEAKING', opts?: { forceEleven?: boolean; allowRepeat?: boolean }) => {
+    (
+      text: string,
+      faceOverride: FaceState = 'SPEAKING',
+      opts?: {
+        forceEleven?: boolean;
+        allowRepeat?: boolean;
+        pauseMs?: number;
+        emotion?: string;
+        pitch?: number;
+        rate?: number;
+        instructAddon?: string;
+      }
+    ) => {
       const clean = text.trim();
       if (!clean) return;
 
@@ -200,32 +212,49 @@ export default function App() {
 
       if (speakSafetyRef.current) clearTimeout(speakSafetyRef.current);
       speakingRef.current = true;
-      setFace(faceOverride);
 
-      const releaseFace = () => {
-        if (speakSafetyRef.current) {
-          clearTimeout(speakSafetyRef.current);
-          speakSafetyRef.current = null;
-        }
-        speakingRef.current = false;
-        setFace((curr) => (curr === faceOverride || curr === 'SPEAKING' ? 'IDLE' : curr));
+      const startSpeak = () => {
+        setFace(faceOverride);
+
+        const releaseFace = () => {
+          if (speakSafetyRef.current) {
+            clearTimeout(speakSafetyRef.current);
+            speakSafetyRef.current = null;
+          }
+          speakingRef.current = false;
+          setFace((curr) => (curr === faceOverride || curr === 'SPEAKING' ? 'IDLE' : curr));
+        };
+
+        speakSafetyRef.current = setTimeout(releaseFace, 12000);
+
+        void speakWithElevenLabsOrFallback(
+          clean,
+          activeVoice,
+          {
+            onStart: () => {
+              speakingRef.current = true;
+              setFace(faceOverride);
+            },
+            onEnd: releaseFace,
+            onError: () => releaseFace(),
+          },
+          {
+            forceEleven: opts?.forceEleven,
+            pitch: opts?.pitch,
+            rate: opts?.rate,
+            emotion: opts?.emotion,
+            instructAddon: opts?.instructAddon,
+          }
+        );
       };
 
-      speakSafetyRef.current = setTimeout(releaseFace, 12000);
-
-      void speakWithElevenLabsOrFallback(
-        clean,
-        activeVoice,
-        {
-          onStart: () => {
-            speakingRef.current = true;
-            setFace(faceOverride);
-          },
-          onEnd: releaseFace,
-          onError: () => releaseFace(),
-        },
-        { forceEleven: opts?.forceEleven }
-      );
+      const pause = Math.max(0, Number(opts?.pauseMs) || 0);
+      if (pause > 0) {
+        setFace('THINKING');
+        window.setTimeout(startSpeak, pause);
+      } else {
+        startSpeak();
+      }
     },
     [showBubble, speakerEnabled, activeVoice]
   );
@@ -663,7 +692,14 @@ export default function App() {
         }
 
         logBridgeEvent('in', `Qwen [${result.model || 'nodo'}]: ${(result.reply || '').slice(0, 160)}`);
-        vocalize(result.reply || 'Listo.');
+        const faceForSpeak = (result.face as FaceState) || 'SPEAKING';
+        vocalize(result.reply || 'Listo.', faceForSpeak, {
+          pauseMs: result.pauseMs,
+          emotion: result.emotion,
+          pitch: result.voice?.pitch,
+          rate: result.voice?.rate,
+          instructAddon: result.voice?.instructAddon,
+        });
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
         logBridgeEvent('in', `Qwen fallo: ${String(err?.message || err)}`);

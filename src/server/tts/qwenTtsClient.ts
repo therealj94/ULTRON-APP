@@ -41,11 +41,16 @@ export async function ttsSalud(): Promise<{ ok: boolean; detail?: unknown; error
 export async function synthesizeWithQwenTts(opts: {
   text: string;
   voice?: string | UltronVoiceId;
+  /** Overlay emocional (tono/ritmo) sobre el instruct de la voz */
+  instructAddon?: string;
 }): Promise<{ ok: true; audio: Buffer; contentType: string } | { ok: false; error: string }> {
   if (!TTS_URL) return { ok: false, error: 'ULTRON_TTS_URL no configurada' };
   const voice = getVoice(opts.voice);
   const text = normalizeNumbersForSpeech(opts.text.trim());
   if (!text) return { ok: false, error: 'texto vacío' };
+  const instruct = opts.instructAddon
+    ? `${voice.instruct}; ${opts.instructAddon}`
+    : voice.instruct;
 
   try {
     const r = await fetch(`${TTS_URL}/synthesize`, {
@@ -59,7 +64,7 @@ export async function synthesizeWithQwenTts(opts: {
         voice: voice.id,
         name: voice.name,
         language: voice.language,
-        instruct: voice.instruct,
+        instruct,
       }),
       signal: AbortSignal.timeout(TTS_TIMEOUT_MS),
     });

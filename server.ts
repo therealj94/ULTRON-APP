@@ -29,6 +29,21 @@ import {
   upsertPerson,
 } from './src/server/tts/personMemory';
 import { synthesizeWithQwenTts, ttsNodeStatus, ttsSalud } from './src/server/tts/qwenTtsClient';
+import { buildPersonalityBlock } from './src/server/tts/personalidad';
+import {
+  getEmotionSnapshot,
+  humanizeReply,
+  boostEmotion,
+  voiceParamsFor,
+  type UltronEmotion,
+} from './src/server/tts/emociones';
+import {
+  cacheStats,
+  getCachedPersonalityReply,
+  setCachedPersonalityReply,
+  getCachedTts,
+  setCachedTts,
+} from './src/server/tts/responseCache';
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -308,11 +323,30 @@ app.post('/api/tts/synthesize', async (req, res) => {
   const spoken = normalizeNumbersForSpeech(String(req.body.text || ''));
   if (!spoken) return res.status(400).json({ error: 'text requerido' });
 
-  const qwen = await synthesizeWithQwenTts({ text: spoken, voice: voice.id });
+  const emotion = String(req.body.emotion || '') as UltronEmotion;
+  const instructAddon =
+    (req.body.instructAddon as string) ||
+    (emotion ? voiceParamsFor(emotion as UltronEmotion)?.instructAddon : undefined);
+  const cacheKey = `${voice.id}|${emotion || 'n'}|${spoken}`;
+  const cached = getCachedTts(cacheKey);
+  if (cached) {
+    res.setHeader('Content-Type', cached.contentType);
+    res.setHeader('X-Ultron-TTS', 'cache');
+    res.setHeader('X-Ultron-Voice', voice.id);
+    return res.send(cached.audio);
+  }
+
+  const qwen = await synthesizeWithQwenTts({
+    text: spoken,
+    voice: voice.id,
+    instructAddon,
+  });
   if (qwen.ok) {
+    setCachedTts(cacheKey, qwen.audio, qwen.contentType);
     res.setHeader('Content-Type', qwen.contentType);
     res.setHeader('X-Ultron-TTS', 'qwen3-tts');
     res.setHeader('X-Ultron-Voice', voice.id);
+    if (emotion) res.setHeader('X-Ultron-Emotion', emotion);
     return res.send(qwen.audio);
   }
   const qwenTtsError = qwen.ok === false ? qwen.error : 'unknown';
@@ -336,11 +370,12 @@ app.post('/api/tts/synthesize', async (req, res) => {
         }
       );
       if (elRes.ok) {
-        const buf = await elRes.arrayBuffer();
+        const buf = Buffer.from(await elRes.arrayBuffer());
+        setCachedTts(cacheKey, buf, 'audio/mpeg');
         res.setHeader('Content-Type', 'audio/mpeg');
         res.setHeader('X-Ultron-TTS', 'elevenlabs-fallback');
         res.setHeader('X-Ultron-Voice', voice.id);
-        return res.send(Buffer.from(buf));
+        return res.send(buf);
       }
     } catch {
       /* fall through */
@@ -355,6 +390,17 @@ app.post('/api/tts/synthesize', async (req, res) => {
   });
 });
 
+app.get('/api/emociones', (_req, res) => {
+  res.json({ ...getEmotionSnapshot(), cache: cacheStats() });
+});
+
+app.post('/api/emociones/pulse', (req, res) => {
+  const emotion = String(req.body.emotion || 'NEUTRAL') as UltronEmotion;
+  const amount = Number(req.body.amount || 20);
+  boostEmotion(emotion, amount);
+  res.json(getEmotionSnapshot());
+});
+
 app.get('/api/tts/voces', (_req, res) => {
   res.json({ voces: ULTRON_VOICES, expressions: HUMAN_EXPRESSIONS.length });
 });
@@ -365,36 +411,24 @@ app.get('/api/tts/status', async (_req, res) => {
   res.json({ ...cfg, online: salud.ok, detail: salud.detail || { error: salud.error } });
 });
 
-const execFileAsync = promisify(execFile);
+import { EC2Client, DescribeInstancesCommand, StartInstancesCommand } from '@aws-sdk/client-ec2';
+
 const TTS_INSTANCE_ID = process.env.ULTRON_TTS_INSTANCE_ID || 'i-02653feadc919d3a4';
 
-async function awsEc2Json(args: string[]) {
+function ec2Client() {
   const { accessKeyId, secretAccessKey } = requireAwsCredentials();
-  const { stdout } = await execFileAsync(
-    'aws',
-    ['ec2', ...args, '--region', AWS_DEFAULT_REGION, '--output', 'json'],
-    {
-      env: {
-        ...process.env,
-        AWS_ACCESS_KEY_ID: accessKeyId,
-        AWS_SECRET_ACCESS_KEY: secretAccessKey,
-        AWS_DEFAULT_REGION,
-      },
-      timeout: 25_000,
-      maxBuffer: 2_000_000,
-    }
-  );
-  return JSON.parse(stdout || '{}');
+  return new EC2Client({
+    region: AWS_DEFAULT_REGION,
+    credentials: { accessKeyId, secretAccessKey },
+  });
 }
 
 /** Estado del nodo T4 dedicado a Qwen3-TTS (nunca A10G / Playwright). */
 app.get('/api/aws/tts-node', async (_req, res) => {
   try {
-    const data = await awsEc2Json([
-      'describe-instances',
-      '--instance-ids',
-      TTS_INSTANCE_ID,
-    ]);
+    const data = await ec2Client().send(
+      new DescribeInstancesCommand({ InstanceIds: [TTS_INSTANCE_ID] })
+    );
     const inst = data?.Reservations?.[0]?.Instances?.[0];
     if (!inst) {
       return res.status(404).json({ error: 'Instancia TTS no encontrada', instanceId: TTS_INSTANCE_ID });
@@ -424,7 +458,7 @@ app.get('/api/aws/tts-node', async (_req, res) => {
 /** Arranca la T4 TTS si está stopped (requiere ec2:StartInstances). */
 app.post('/api/aws/tts-node/start', async (_req, res) => {
   try {
-    await awsEc2Json(['start-instances', '--instance-ids', TTS_INSTANCE_ID]);
+    await ec2Client().send(new StartInstancesCommand({ InstanceIds: [TTS_INSTANCE_ID] }));
     res.json({
       ok: true,
       instanceId: TTS_INSTANCE_ID,
@@ -997,6 +1031,47 @@ app.post('/api/qwen/chat', async (req, res) => {
     return res.status(400).json({ error: 'Message parameter is required' });
   }
 
+  // Caché de saludos / frases frecuentes (personalidad)
+  const cachedReply = getCachedPersonalityReply(message);
+  if (cachedReply && !req.body?.bypassCache) {
+    const hum = humanizeReply(message, cachedReply);
+    if (req.body?.stream === false || req.query.stream === '0' || stream === false) {
+      return res.json({
+        reply: hum.text,
+        mode,
+        toolCall: null,
+        model: 'personality-cache',
+        conversationId,
+        emotion: hum.emotion,
+        face: hum.face,
+        pauseMs: hum.pauseMs,
+        filler: hum.filler,
+        voice: hum.voice,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+    res.write(`event: start\ndata: ${JSON.stringify({ mode, conversationId, model: 'personality-cache' })}\n\n`);
+    res.write(`event: token\ndata: ${JSON.stringify({ t: hum.text })}\n\n`);
+    res.write(
+      `event: done\ndata: ${JSON.stringify({
+        reply: hum.text,
+        mode,
+        conversationId,
+        model: 'personality-cache',
+        emotion: hum.emotion,
+        face: hum.face,
+        pauseMs: hum.pauseMs,
+        filler: hum.filler,
+        voice: hum.voice,
+      })}\n\n`
+    );
+    return res.end();
+  }
+
   const query = message.toLowerCase();
   let toolCall: { name: string; arguments: Record<string, unknown> } | null = null;
 
@@ -1050,6 +1125,7 @@ app.post('/api/qwen/chat', async (req, res) => {
 
   const systemContent = [
     systemPromptForMode(String(mode)),
+    buildPersonalityBlock(),
     expressionsSystemHint(),
     memBlock,
   ]
@@ -1094,11 +1170,32 @@ app.post('/api/qwen/chat', async (req, res) => {
           : `Comprendido en modo ${mode}. Sistemas sincronizados.`;
         modelName = 'heuristic';
       }
+      const hum = humanizeReply(message, reply);
+      setCachedPersonalityReply(message, hum.text);
+      if (ultronRemoteSession.user?.nombre) {
+        upsertPerson({
+          nombre: ultronRemoteSession.user.nombre,
+          conversationId: String(conversationId),
+          hecho: { key: 'ultima_emocion_ultron', value: hum.emotion, source: 'emociones' },
+        });
+      }
       appendConversation(String(conversationId), [
         { role: 'user', content: message },
-        { role: 'assistant', content: reply },
+        { role: 'assistant', content: hum.text },
       ]);
-      return res.json({ reply, mode, toolCall, model: modelName, conversationId, timestamp: new Date().toISOString() });
+      return res.json({
+        reply: hum.text,
+        mode,
+        toolCall,
+        model: modelName,
+        conversationId,
+        emotion: hum.emotion,
+        face: hum.face,
+        pauseMs: hum.pauseMs,
+        filler: hum.filler,
+        voice: hum.voice,
+        timestamp: new Date().toISOString(),
+      });
     } catch (err: any) {
       return res.status(502).json({ error: err.message, codigo: err.codigo || 'NODO' });
     }
@@ -1147,9 +1244,22 @@ app.post('/api/qwen/chat', async (req, res) => {
           ? `Despachando ${toolCall.name}.`
           : `Orden recibida en modo ${mode}.`;
       }
-      full = reply;
-      send('token', { t: reply });
-      send('done', { reply, mode, toolCall, model: ai ? 'Gemini fallback' : 'heuristic', conversationId });
+      const hum = humanizeReply(message, reply);
+      setCachedPersonalityReply(message, hum.text);
+      full = hum.text;
+      send('token', { t: hum.text });
+      send('done', {
+        reply: hum.text,
+        mode,
+        toolCall,
+        model: ai ? 'Gemini fallback' : 'heuristic',
+        conversationId,
+        emotion: hum.emotion,
+        face: hum.face,
+        pauseMs: hum.pauseMs,
+        filler: hum.filler,
+        voice: hum.voice,
+      });
     } else {
       const result = await chatQwenStream({
         messages,
@@ -1160,17 +1270,31 @@ app.post('/api/qwen/chat', async (req, res) => {
         },
       });
       full = result.content.trim() || full;
+      const hum = humanizeReply(message, full);
+      setCachedPersonalityReply(message, hum.text);
+      if (ultronRemoteSession.user?.nombre) {
+        upsertPerson({
+          nombre: ultronRemoteSession.user.nombre,
+          conversationId: String(conversationId),
+          hecho: { key: 'ultima_emocion_ultron', value: hum.emotion, source: 'emociones' },
+        });
+      }
       appendConversation(String(conversationId), [
         { role: 'user', content: message },
-        { role: 'assistant', content: full },
+        { role: 'assistant', content: hum.text },
       ]);
       send('done', {
-        reply: full,
+        reply: hum.text,
         mode,
         toolCall,
         model: 'Qwen 3.8 27B',
         conversationId,
         usage: result.usage,
+        emotion: hum.emotion,
+        face: hum.face,
+        pauseMs: hum.pauseMs,
+        filler: hum.filler,
+        voice: hum.voice,
       });
     }
   } catch (err: any) {

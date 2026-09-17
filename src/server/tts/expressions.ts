@@ -11,7 +11,9 @@ export type ExpressionContext =
   | 'understanding'
   | 'agreeing'
   | 'greeting'
-  | 'closing';
+  | 'closing'
+  | 'laughing'
+  | 'anger';
 
 export interface HumanExpression {
   id: string;
@@ -59,6 +61,16 @@ export const HUMAN_EXPRESSIONS: HumanExpression[] = [
   { id: 'dime', text: 'Dime.', context: 'greeting' },
   { id: 'cuando_quieras', text: 'Cuando quieras.', context: 'closing' },
   { id: 'quedamos_asi', text: 'Quedamos así.', context: 'closing' },
+  // laughing
+  { id: 'jeje', text: 'Jeje.', context: 'laughing' },
+  { id: 'jaja', text: 'Jaja.', context: 'laughing' },
+  { id: 'jajaja', text: 'Jajaja.', context: 'laughing' },
+  { id: 'jojo', text: 'Jojo.', context: 'laughing' },
+  // anger
+  { id: 'oye', text: 'Oye…', context: 'anger' },
+  { id: 'por_favor', text: 'Por favor…', context: 'anger' },
+  { id: 'no_puedo', text: 'No puedo hacer eso.', context: 'anger' },
+  { id: 'basta', text: 'Basta…', context: 'anger' },
 ];
 
 const BY_CONTEXT = HUMAN_EXPRESSIONS.reduce(
@@ -79,17 +91,19 @@ export function pickExpression(context: ExpressionContext, seed?: number): Human
 export function expressionsSystemHint(): string {
   return `Puedes empezar ocasionalmente (no siempre) con una expresión humana breve según el momento:
 pensando: "Mmm…", "Déjame pensar…"; buscando: "A ver…"; confirmando: "Perfecto.", "Claro.";
-entendiendo: "Ah, entiendo."; esperando: "Un momento.". Máximo una por respuesta, tono calmado.`;
+entendiendo: "Ah, entiendo."; esperando: "Un momento."; risa: "Jeje.", "Jaja."; enojo contenido: "Oye…", "Por favor…".
+Máximo una por respuesta, tono calmado.`;
 }
 
 export function inferExpressionContext(userMessage: string, assistantDraft?: string): ExpressionContext | null {
   const q = userMessage.toLowerCase();
+  if (/estúpido|cállate|idiota|inútil/.test(q)) return 'anger';
+  if (/jaja|jeje|gracioso|chiste/.test(q)) return 'laughing';
   if (/^(hola|hey|buenas|saludos)/.test(q)) return 'greeting';
   if (/busca|encuentra|dónde|donde|quién|quien|orden global|doctrina/.test(q)) return 'searching';
   if (/explica|por qué|porque|cómo|como|analiza|calcul/.test(q)) return 'thinking';
   if (/ok|vale|hazlo|confirma|sí|si\b|adelante/.test(q)) return 'confirming';
   if (assistantDraft && /interesante|vaya/.test(assistantDraft.toLowerCase())) return 'reacting';
-  // ~35% chance of a soft lead-in for longer replies
   if ((assistantDraft?.length || 0) > 40 && Date.now() % 10 < 4) return 'thinking';
   return null;
 }
