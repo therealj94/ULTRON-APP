@@ -7,18 +7,20 @@ export type ConocerQuestion = {
 };
 
 export const CONOCER_QUESTIONS: ConocerQuestion[] = [
-  { id: 'nombre', prompt: 'Para conocerte mejor: ¿cómo te gusta que te diga?', memoryKey: 'nombre_preferido' },
-  { id: 'origen', prompt: '¿De dónde eres o dónde vives ahora?', memoryKey: 'origen' },
-  { id: 'trabajo', prompt: '¿A qué te dedicas o cuál es tu rol en la junta?', memoryKey: 'trabajo' },
-  { id: 'familia', prompt: 'Cuéntame algo de tu familia o personas importantes para ti.', memoryKey: 'familia' },
-  { id: 'gustos', prompt: '¿Qué te gusta hacer cuando no estás en modo junta?', memoryKey: 'gustos' },
-  { id: 'musica', prompt: '¿Qué música o estilo te relaja?', memoryKey: 'musica' },
-  { id: 'comida', prompt: '¿Cuál es tu comida o bebida favorita?', memoryKey: 'comida' },
+  { id: 'nombre', prompt: 'Para conocerte mejor… ¿cómo te gusta que te diga?', memoryKey: 'nombre_preferido' },
+  { id: 'origen', prompt: '¿De dónde eres, o dónde vives ahora?', memoryKey: 'origen' },
+  { id: 'trabajo', prompt: '¿Cuál es tu rol en la junta o a qué te dedicas día a día?', memoryKey: 'trabajo' },
+  { id: 'familia', prompt: 'Cuéntame de alguien importante para ti — familia o personas cercanas.', memoryKey: 'familia' },
+  { id: 'gustos', prompt: 'Cuando sales del modo junta… ¿qué te gusta hacer?', memoryKey: 'gustos' },
+  { id: 'musica', prompt: '¿Qué música te relaja o te pone de buen humor?', memoryKey: 'musica' },
+  { id: 'comida', prompt: '¿Comida o bebida favorita? Por si algún día te sorprendo.', memoryKey: 'comida' },
   { id: 'meta', prompt: '¿Qué objetivo grande tienes este año?', memoryKey: 'meta_anual' },
   { id: 'miedo', prompt: '¿Hay algo que te preocupe y quieras que yo vigile?', memoryKey: 'preocupacion' },
-  { id: 'estilo', prompt: '¿Prefieres que te hable formal, cálido o directo?', memoryKey: 'estilo_habla' },
-  { id: 'cumple', prompt: 'Si quieres, dime tu fecha de cumpleaños (día/mes).', memoryKey: 'cumpleanos' },
-  { id: 'apodo', prompt: 'Última por ahora: ¿tienes algún apodo o detalle que deba recordar?', memoryKey: 'apodo' },
+  { id: 'estilo', prompt: '¿Prefieres que te hable formal, cálido o bien directo?', memoryKey: 'estilo_habla' },
+  { id: 'energia', prompt: '¿En qué momento del día sueles estar más cansado o más afilado?', memoryKey: 'ritmo_energia' },
+  { id: 'limites', prompt: '¿Hay temas que prefieres que yo no toque?', memoryKey: 'limites' },
+  { id: 'cumple', prompt: 'Si quieres, dime tu cumpleaños (día/mes).', memoryKey: 'cumpleanos' },
+  { id: 'apodo', prompt: 'Última por ahora: ¿algún apodo o detalle raro que deba recordar de ti?', memoryKey: 'apodo' },
 ];
 
 export function nextConocerIndex(answeredIds: string[]): number {

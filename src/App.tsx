@@ -21,7 +21,8 @@ import { WelcomeBootScreen } from './components/WelcomeBootScreen';
 import type { VisionOverlayHandle } from './components/VisionOverlay';
 import { CONOCER_QUESTIONS, nextConocerIndex, savePersonFact } from './utils/conocerInterview';
 import { EXPERT_MODE_PROMPTS } from './utils/expertModes';
-import { playSfx } from './utils/audio';
+import { playSfx, type SfxType } from './utils/audio';
+import { matchVoiceAct } from './utils/voiceActs';
 import { cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
 import { DEFAULT_ELEVENLABS_VOICES, speakWithElevenLabsOrFallback, stopCurrentVoice } from './utils/elevenlabs';
 import { downloadStandaloneSimulator } from './utils/exporter';
@@ -118,6 +119,7 @@ export default function App() {
   const visionRef = useRef<VisionOverlayHandle | null>(null);
   const [conocerAnswered, setConocerAnswered] = useState<string[]>([]);
   const [conocerActive, setConocerActive] = useState(false);
+  const [showConocerCta, setShowConocerCta] = useState(false);
   const conocerIdxRef = useRef(0);
 
   const [currentUser, setCurrentUser] = useState<{
@@ -289,19 +291,17 @@ export default function App() {
       bootDoneRef.current = true;
       setIsBooting(false);
       playSfx('boot', true);
-      const camHint = cameraOnline
-        ? 'Cámara en vivo.'
-        : 'Activa la cámara si el permiso está pendiente.';
       vocalize(
-        `Hola ${currentUser.name || ''}. ULTRON en línea. ${camHint} Di hey Ultron o toca el micrófono.`
+        `Hola ${currentUser.name || ''}. Ya estoy contigo. Di hey Ultron… o toca el micrófono.`
       );
       try {
         const key = `ultron_conocer_offer_${new Date().toISOString().slice(0, 10)}`;
         if (!localStorage.getItem(key)) {
           localStorage.setItem(key, '1');
+          setShowConocerCta(true);
           setTimeout(() => {
-            vocalize('Si quieres, activa modo Conocer en ajustes y te haré preguntas para recordarte mejor.', 'HAPPY');
-          }, 4500);
+            vocalize('Si quieres, toca Conocerme y te haré unas preguntas para recordarte mejor.', 'HAPPY');
+          }, 4200);
         }
       } catch {
         /* ignore */
@@ -357,7 +357,7 @@ export default function App() {
     listenModeRef.current = 'wake';
     playSfx('sleep', soundFxEnabled);
     // Sin frase larga; confirmación local corta
-    vocalize('Modo sleep.', 'SLEEPING');
+    vocalize('Descanso…');
   }, [soundFxEnabled, vocalize]);
 
   // Trigger expressive photo capture with shutter effect
@@ -753,6 +753,7 @@ export default function App() {
   };
 
   const startConocerFlow = () => {
+    setShowConocerCta(false);
     setMode('CONOCER');
     setConocerActive(true);
     const idx = nextConocerIndex(conocerAnswered);
@@ -761,11 +762,50 @@ export default function App() {
     playSfx('mode', soundFxEnabled);
     vocalize(
       idx < 0
-        ? 'Ya te conozco bastante. ¿Quieres que repase algo o empiece de nuevo?'
-        : `Modo conocer. ${q.prompt}`,
+        ? 'Ya te conozco bastante. ¿Repasamos algo o empezamos de nuevo?'
+        : `Vamos a conocernos… ${q.prompt}`,
       'HAPPY'
     );
   };
+
+  /** Emoción / canción / gesto inmediato (cara + voz humana). */
+  const performVoiceAct = useCallback(
+    async (cmd: string) => {
+      const act = matchVoiceAct(cmd);
+      if (!act) return false;
+      if (act.sfx) playSfx(act.sfx as SfxType, soundFxEnabled);
+      setFace(act.face);
+      try {
+        void fetch('/api/emociones/pulse', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emotion: act.emotion, amount: 45 }),
+        });
+      } catch {
+        /* ignore */
+      }
+      const gap = act.lineGapMs ?? 500;
+      const startPause = act.pauseMs ?? 300;
+      await new Promise((r) => setTimeout(r, startPause));
+      for (let i = 0; i < act.lines.length; i++) {
+        const line = act.lines[i];
+        if (line.trim() === '…' || line.trim() === '...') {
+          setFace('THINKING');
+          await new Promise((r) => setTimeout(r, gap));
+          continue;
+        }
+        vocalize(line, act.face, {
+          allowRepeat: true,
+          emotion: act.emotion,
+          pauseMs: i === 0 ? 0 : 120,
+        });
+        // Espera aproximada por longitud + gap (el TTS sigue en paralelo; gap da respiración)
+        await new Promise((r) => setTimeout(r, Math.min(4200, 700 + line.length * 55) + gap));
+      }
+      return true;
+    },
+    [soundFxEnabled, vocalize]
+  );
 
   const handleConocerAnswer = async (answer: string) => {
     const idx = conocerIdxRef.current;
@@ -840,6 +880,19 @@ export default function App() {
   const handleVoiceCommand = (cmd: string) => {
     const q = cmd.toLowerCase();
     logBridgeEvent('out', `Comando de voz: "${q}"`);
+
+    // Actos emocionales / canción / gestos (antes del cerebro)
+    if (
+      /ponte |estate |enoj|triste|feliz|canta|cancion|guiñ|bostez|rie|ríete|asust|confund|tierno|orgull|timid|escanea|hum(ea)?/.test(
+        q
+      )
+    ) {
+      void (async () => {
+        const done = await performVoiceAct(cmd);
+        if (!done) void askUltronBrain(cmd);
+      })();
+      return;
+    }
 
     // Visión en vivo: qué tengo en la mano / qué ves
     if (
@@ -1600,6 +1653,7 @@ export default function App() {
           }}
           onLogout={handleLogout}
           onStartConocer={startConocerFlow}
+          onOpenTutorial={() => setIsTutorialOpen(true)}
           onRefreshTtsNode={() => {
             void refreshTtsNode();
           }}
@@ -1755,8 +1809,41 @@ export default function App() {
         <TutorialModal
           isOpen={isTutorialOpen}
           onClose={() => setIsTutorialOpen(false)}
+          onStartConocer={startConocerFlow}
           soundFxEnabled={soundFxEnabled}
         />
+
+        {showConocerCta && sessionReady && !isBooting && (
+          <div className="absolute bottom-24 left-1/2 z-[45] -translate-x-1/2 flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setShowConocerCta(false);
+                startConocerFlow();
+              }}
+              className="rounded-full border border-pink-400/50 bg-pink-500/20 px-5 py-2.5 text-sm text-pink-50 shadow-[0_0_24px_rgba(244,114,182,0.25)] backdrop-blur-md"
+            >
+              Conocerme
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowConocerCta(false);
+                setIsTutorialOpen(true);
+              }}
+              className="rounded-full border border-[#00E5FF]/40 bg-black/50 px-4 py-2.5 text-sm text-[#00E5FF] backdrop-blur-md"
+            >
+              Tutorial
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowConocerCta(false)}
+              className="rounded-full border border-white/15 bg-black/40 px-3 py-2.5 text-xs text-[#8FA3B0]"
+            >
+              Luego
+            </button>
+          </div>
+        )}
 
         <WelcomeBootScreen visible={isBooting} userName={currentUser.name} />
       </div>

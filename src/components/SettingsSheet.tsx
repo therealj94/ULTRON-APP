@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   Camera,
   LogOut,
+  BookOpen,
   HeartHandshake,
   Eye,
   EyeOff,
@@ -47,6 +48,7 @@ interface SettingsSheetProps {
   onLogout?: () => void;
   onStartConocer?: () => void;
   onRefreshTtsNode?: () => void;
+  onOpenTutorial?: () => void;
   ttsNodeInfo?: {
     state?: string;
     publicIp?: string | null;
@@ -108,6 +110,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
   onLogout,
   onStartConocer,
   onRefreshTtsNode,
+  onOpenTutorial,
   ttsNodeInfo,
 }) => {
   const [showSavedClave, setShowSavedClave] = React.useState(false);
@@ -178,6 +181,19 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
             <div className="text-[11px] text-[#8FA3B0]">No hay clave guardada en este dispositivo.</div>
           )}
           <div className="flex flex-wrap gap-2 pt-1">
+            {onOpenTutorial && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenTutorial();
+                }}
+                className="px-3 py-1.5 rounded-lg border border-[#00E5FF]/40 bg-[#00E5FF]/10 text-[#00E5FF] text-xs font-mono flex items-center gap-1.5"
+              >
+                <BookOpen className="w-3.5 h-3.5" />
+                Tutorial
+              </button>
+            )}
             {onStartConocer && (
               <button
                 type="button"
