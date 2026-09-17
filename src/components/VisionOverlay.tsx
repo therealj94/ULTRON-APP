@@ -63,14 +63,22 @@ export const VisionOverlay = forwardRef<VisionOverlayHandle, VisionOverlayProps>
   const startCamera = async (): Promise<boolean> => {
     try {
       setCamError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-        },
-        audio: false,
-      });
+      let stream: MediaStream | null = null;
+      const attempts: MediaStreamConstraints[] = [
+        { video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
+        { video: { facingMode: { ideal: 'user' } }, audio: false },
+        { video: true, audio: false },
+      ];
+      let lastErr: any = null;
+      for (const constraints of attempts) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia(constraints);
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      if (!stream) throw lastErr || new Error('getUserMedia failed');
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -175,7 +183,7 @@ export const VisionOverlay = forwardRef<VisionOverlayHandle, VisionOverlayProps>
   return (
     <div
       id="ultron-vision-overlay"
-      className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between p-4"
+      className="absolute inset-0 z-[15] pointer-events-none flex flex-col justify-between p-4"
     >
       <div className="flex items-center justify-between pointer-events-auto">
         <div className="flex items-center gap-2 px-3 py-1 bg-black/60 border border-[#00E5FF]/30 rounded-full text-[11px] font-mono text-[#00E5FF] backdrop-blur-md shadow-[0_0_12px_rgba(0,229,255,0.15)]">

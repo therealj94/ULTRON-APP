@@ -25,7 +25,7 @@ import { playSfx } from './utils/audio';
 import { cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
 import { DEFAULT_ELEVENLABS_VOICES, speakWithElevenLabsOrFallback, stopCurrentVoice } from './utils/elevenlabs';
 import { downloadStandaloneSimulator } from './utils/exporter';
-import { Maximize2, Minimize2, Camera, ShieldCheck, Sparkles, RotateCcw, Mic, MicOff } from 'lucide-react';
+import { Maximize2, Minimize2, Camera, ShieldCheck, Sparkles, RotateCcw, Mic, MicOff, SlidersHorizontal } from 'lucide-react';
 import { AgenticHarnessModal } from './components/AgenticHarnessModal';
 import { analyzeConversationTopic, SemanticClassification } from './utils/qwenHarness';
 import { streamUltronChat } from './utils/ultronChat';
@@ -1181,8 +1181,8 @@ export default function App() {
           />
         )}
 
-        {/* Clean top strip */}
-        <div className="absolute top-3 left-4 right-[88px] z-20 flex items-center justify-between pointer-events-none">
+        {/* Clean top strip — above vision HUD so ajustes/cámara son clicables */}
+        <div className="absolute top-3 left-4 right-[88px] z-30 flex items-center justify-between pointer-events-none">
           <div className="flex items-center gap-2 pointer-events-auto">
             <div className="ui-chip ui-chip--live font-display font-semibold tracking-[0.14em]">
               <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)]" />
@@ -1217,6 +1217,17 @@ export default function App() {
               }`}
             >
               <Camera className="w-3.5 h-3.5" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsOpen(true);
+                playSfx('tap', soundFxEnabled);
+              }}
+              title="Ajustes · sesión · modos"
+              className="p-2 rounded-full border border-[#05E1FF]/40 bg-black/60 text-[#05E1FF] hover:bg-[#05E1FF]/15 transition-all cursor-pointer"
+            >
+              <SlidersHorizontal className="w-3.5 h-3.5" />
             </button>
             <button
               type="button"
