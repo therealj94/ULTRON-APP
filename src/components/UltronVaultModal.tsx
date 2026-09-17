@@ -300,7 +300,7 @@ export const UltronVaultModal: React.FC<UltronVaultModalProps> = ({
                     type={showKey ? 'text' : 'password'}
                     value={apiKeyInput}
                     onChange={(e) => setApiKeyInput(e.target.value)}
-                    placeholder="Pega aquí tu clave de API de ElevenLabs (ej: sk_...)"
+                    placeholder="Pega aquí tu clave de API de ElevenLabs"
                     className="w-full bg-[#020508] border border-[#05E1FF]/30 text-[#05E1FF] text-xs font-mono px-4 py-3 rounded-lg focus:outline-none focus:border-[#05E1FF] focus:shadow-[0_0_12px_rgba(5,225,255,0.3)] transition-all pr-12"
                   />
                   <button
