@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "link.ordenglobal.ultronfp",
-      "versionCode": 6,
+      "versionCode": 7,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -54,6 +54,13 @@
       ],
       "expo-secure-store",
       [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "ULTRON FP necesita el micrófono para escucharte.",
+          "speechRecognitionPermission": "ULTRON FP usa reconocimiento de voz nativo."
+        }
+      ],
+      [
         "expo-camera",
         {
           "cameraPermission": "ULTRON FP usa la cámara para visión del escritorio.",
@@ -61,7 +68,8 @@
           "recordAudioAndroid": true
         }
       ],
-      "expo-av"
+      "expo-av",
+      "expo-speech-recognition"
     ]
   }
 }
