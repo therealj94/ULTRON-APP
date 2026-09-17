@@ -192,12 +192,11 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
 
   // Speech events
   useSpeechRecognitionEvent('result', (ev) => {
-    const text = ev.results?.[0]?.transcript || '';
+    const text = ev.results?.[0]?.transcript || ev.transcript || '';
     if (!text) return;
 
-    // En sleep solo aceptamos wake word
     if (presence === 'sleep' || listenMode.current === 'wake') {
-      if (!ev.isFinal) return;
+      if (ev.isFinal === false) return;
       if (isHeyUltron(text)) {
         setPresence('stay');
         listenMode.current = 'command';
@@ -212,7 +211,7 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
 
     if (speakingRef.current) return;
 
-    if (!ev.isFinal) {
+    if (ev.isFinal === false) {
       setStatus(text.slice(0, 60));
       setFace('LISTENING');
       return;
@@ -222,18 +221,10 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
   });
 
   useSpeechRecognitionEvent('start', () => setListening(true));
-  useSpeechRecognitionEvent('end', () => {
-    setListening(false);
-    // Auto-restart continuous listen
-    if (!booting && presence !== 'sleep') {
-      setTimeout(() => startListening({ continuous: true }), 400);
-    } else if (presence === 'sleep') {
-      setTimeout(() => startListening({ continuous: true }), 800);
-    }
-  });
+  useSpeechRecognitionEvent('end', () => setListening(false));
   useSpeechRecognitionEvent('error', (e) => {
     setListening(false);
-    setStatus(`Mic: ${e.error || 'error'}`);
+    if (e?.error) setStatus(`Mic: ${e.error}`);
   });
 
   useEffect(() => {
@@ -245,14 +236,17 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
       if (!alive) return;
       setBooting(false);
       setFace('HAPPY');
-      await say(`Bienvenido, ${user.name}. ULTRON FP nativo listo.`, 'HAPPY');
+      await say(
+        `Bienvenido, ${user.name}. ULTRON FP nativo listo. Escribe abajo o usa los botones del dock.`,
+        'HAPPY'
+      );
       listenMode.current = 'command';
       setFace('LISTENING');
-      startListening({ continuous: true });
+      setStatus('Escribe un comando o toca Mic (voz en siguiente módulo)');
       if (!(await wasConocerOfferedToday())) {
         await markConocerOfferedToday();
         setTimeout(() => {
-          void say('Si quieres, dime «modo conocer» y te haré unas preguntas para recordarte mejor.', 'IDLE');
+          void say('Si quieres, escribe «modo conocer» y te haré unas preguntas.', 'IDLE');
         }, 3500);
       }
     })();

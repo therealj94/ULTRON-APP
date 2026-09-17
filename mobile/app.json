@@ -26,12 +26,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#000000"
       },
-      "softwareKeyboardLayoutMode": "pan",
-      "navigationBar": {
-        "visible": "immersive",
-        "barStyle": "light-content",
-        "backgroundColor": "#000000"
-      }
+      "softwareKeyboardLayoutMode": "pan"
     },
     "scheme": "ultronfp",
     "runtimeVersion": {
@@ -58,13 +53,6 @@
         }
       ],
       "expo-secure-store",
-      [
-        "expo-speech-recognition",
-        {
-          "microphonePermission": "ULTRON FP necesita el micrófono para escucharte.",
-          "speechRecognitionPermission": "ULTRON FP usa reconocimiento de voz nativo."
-        }
-      ],
       [
         "expo-camera",
         {

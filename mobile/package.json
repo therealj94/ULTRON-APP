@@ -5,10 +5,11 @@
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
+    "android": "expo run:android",
     "typecheck": "tsc --noEmit",
     "eas:build:android": "eas build -p android --profile preview --non-interactive",
-    "eas:update": "eas update --channel preview --non-interactive --message"
+    "eas:update": "eas update --channel preview --non-interactive --message",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -22,7 +23,6 @@
     "expo-screen-orientation": "~9.0.9",
     "expo-secure-store": "~15.0.8",
     "expo-speech": "~14.0.8",
-    "expo-speech-recognition": "^57.1.0",
     "expo-status-bar": "~3.0.9",
     "expo-system-ui": "~6.0.9",
     "expo-updates": "~29.0.20",

@@ -1,44 +1,41 @@
-import {
-  ExpoSpeechRecognitionModule,
-  useSpeechRecognitionEvent,
-} from 'expo-speech-recognition';
+/** Speech recognition layer — optional native module; text composer always works. */
 
-export { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent };
+type SpeechHandlers = {
+  onResult?: (ev: { transcript: string; isFinal: boolean }) => void;
+  onStart?: () => void;
+  onEnd?: () => void;
+  onError?: (msg: string) => void;
+};
 
-export async function ensureSpeechPermissions(): Promise<boolean> {
-  try {
-    const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-    return Boolean(result.granted);
-  } catch {
-    return false;
-  }
+let handlers: SpeechHandlers = {};
+
+export function setSpeechHandlers(h: SpeechHandlers) {
+  handlers = h;
 }
 
-export function startListening(opts?: { lang?: string; continuous?: boolean }) {
-  try {
-    ExpoSpeechRecognitionModule.start({
-      lang: opts?.lang || 'es-ES',
-      interimResults: true,
-      continuous: opts?.continuous ?? true,
-      addsPunctuation: false,
-    });
-  } catch {
-    /* module may be unavailable in Expo Go */
-  }
+export async function ensureSpeechPermissions(): Promise<boolean> {
+  // OS RECORD_AUDIO is requested in App boot; no extra module required
+  return true;
+}
+
+export function startListening(_opts?: { lang?: string; continuous?: boolean }) {
+  handlers.onError?.(
+    'Reconocimiento de voz nativo se activará en el próximo build con el módulo de speech. Usa el teclado por ahora.'
+  );
 }
 
 export function stopListening() {
-  try {
-    ExpoSpeechRecognitionModule.stop();
-  } catch {
-    /* */
-  }
+  /* no-op */
 }
 
 export function abortListening() {
-  try {
-    ExpoSpeechRecognitionModule.abort();
-  } catch {
-    /* */
-  }
+  /* no-op */
+}
+
+/** Compatibility shim used by DeskScreen (replaces expo-speech-recognition hook). */
+export function useSpeechRecognitionEvent(
+  _event: 'result' | 'start' | 'end' | 'error',
+  _cb: (ev: any) => void
+) {
+  // no native module in this build — events won't fire
 }
