@@ -78,7 +78,7 @@ export const ElevenLabsVoiceModal: React.FC<ElevenLabsVoiceModalProps> = ({
               <span>CLAVE API DE ELEVENLABS (OPCIONAL)</span>
             </div>
             <span className="text-[10px] font-mono text-[#00FF88]">
-              {apiKey ? 'API KEY CONFIGURADA' : 'MODO EMULACIÓN ACTIVO'}
+              {apiKey ? 'CLAVE LOCAL' : 'USA CLAVE DEL SERVIDOR'}
             </span>
           </div>
           <input
