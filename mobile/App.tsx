@@ -1,4 +1,3 @@
-import 'react-native-gesture-handler';
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 import { useCallback, useEffect, useState } from 'react';
@@ -13,7 +12,6 @@ import {
   View,
   type AppStateStatus,
 } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { APP_VERSION, type SessionUser } from './src/config';
 import { healthCheck } from './src/lib/api';
 import { loadSession, saveSession } from './src/lib/storage';
@@ -122,7 +120,7 @@ export default function App() {
   }, [boot]);
 
   return (
-    <GestureHandlerRootView style={styles.root}>
+    <View style={styles.root}>
       <StatusBar style="light" hidden />
       {phase === 'boot' && (
         <View style={styles.boot}>
@@ -153,7 +151,7 @@ export default function App() {
         />
       )}
       {phase === 'settings' && <SettingsScreen onBack={() => setPhase('desk')} />}
-    </GestureHandlerRootView>
+    </View>
   );
 }
 
@@ -169,5 +167,10 @@ const styles = StyleSheet.create({
   logo: { width: 88, height: 88, borderRadius: 44, marginBottom: 8 },
   bootTitle: { color: '#E8FBFF', fontSize: 18, letterSpacing: 6, fontWeight: '800' },
   bootSub: { color: '#8B9AAB', fontSize: 13, textAlign: 'center', maxWidth: 360 },
-  meta: { color: '#5A6A7A', fontSize: 11, marginTop: 4, fontFamily: Platform.OS === 'android' ? 'monospace' : 'Courier' },
+  meta: {
+    color: '#5A6A7A',
+    fontSize: 11,
+    marginTop: 4,
+    fontFamily: Platform.OS === 'android' ? 'monospace' : 'Courier',
+  },
 });

@@ -93,7 +93,7 @@ export function SettingsScreen({ onBack }: Props) {
       </View>
 
       <Text style={styles.hint}>
-        Esta app es React Native + Expo (Skia, cámara, mic, SecureStore). Ya no usa WebView del desk web.
+        Esta app es React Native + Expo nativa (cara Animated, cámara, mic, SecureStore). Ya no usa WebView del desk web.
       </Text>
     </ScrollView>
   );

@@ -4,7 +4,7 @@ App **nativa** React Native + Expo. **No usa WebView.**
 
 ## Stack
 - Expo SDK 54 + React Native
-- Face: `@shopify/react-native-skia`
+- Face: React Native Animated (cyber eyes)
 - Mic: `expo-speech-recognition`
 - Cámara: `expo-camera`
 - TTS: `expo-av` + `/api/tts/synthesize` (fallback `expo-speech`)

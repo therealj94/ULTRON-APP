@@ -1,16 +1,5 @@
-import { useEffect, useState } from 'react';
-import { View, StyleSheet, useWindowDimensions } from 'react-native';
-import {
-  Canvas,
-  Circle,
-  Group,
-  Oval,
-  Path,
-  RadialGradient,
-  RoundedRect,
-  Skia,
-  vec,
-} from '@shopify/react-native-skia';
+import { useEffect, useRef, useState } from 'react';
+import { View, StyleSheet, useWindowDimensions, Animated, Easing } from 'react-native';
 import type { FaceState } from '../config';
 
 type Props = {
@@ -39,152 +28,184 @@ export function UltronFace({ face, energy = 85 }: Props) {
   const { width, height } = useWindowDimensions();
   const size = Math.min(width * 0.55, height * 0.72, 420);
   const color = FACE_COLORS[face] || FACE_COLORS.IDLE;
-  const [phase, setPhase] = useState(0);
-  const [blink, setBlink] = useState(1);
-  const [mouth, setMouth] = useState(0.22);
+  const breath = useRef(new Animated.Value(1)).current;
+  const blink = useRef(new Animated.Value(1)).current;
+  const mouth = useRef(new Animated.Value(0.22)).current;
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
-    let raf = 0;
-    let start = Date.now();
-    let blinkAt = start + 2200;
-    let blinkUntil = 0;
-    let mouthT = 0;
-    const tick = () => {
-      const now = Date.now();
-      const t = ((now - start) % 4000) / 4000;
-      setPhase(t);
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(breath, { toValue: 1.03, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(breath, { toValue: 1, duration: 2000, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [breath]);
 
-      if (now >= blinkAt) {
-        blinkUntil = now + 110;
-        blinkAt = now + 1800 + Math.random() * 1600;
-      }
-      setBlink(now < blinkUntil ? 0.08 : 1);
+  useEffect(() => {
+    blink.setValue(1);
+    const blinkLoop = Animated.loop(
+      Animated.sequence([
+        Animated.delay(1800 + Math.random() * 1200),
+        Animated.timing(blink, { toValue: 0.08, duration: 80, useNativeDriver: true }),
+        Animated.timing(blink, { toValue: 1, duration: 120, useNativeDriver: true }),
+      ])
+    );
+    blinkLoop.start();
 
-      const speak = face === 'SPEAKING' || face === 'MUSIC';
-      if (speak) {
-        mouthT += 0.18;
-        setMouth(0.25 + Math.abs(Math.sin(mouthT)) * 0.6);
-      } else if (face === 'YAWNING') setMouth(0.95);
-      else if (face === 'HAPPY' || face === 'WINK') setMouth(0.55);
-      else if (face === 'CONCERNED') setMouth(0.12);
-      else if (face === 'ANGRY') setMouth(0.35);
-      else if (face === 'SLEEPING') setMouth(0.05);
-      else setMouth(0.22);
-
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [face]);
-
-  const cx = size / 2;
-  const cy = size / 2;
-  const breath = 1 + Math.sin(phase * Math.PI * 2) * 0.018;
-  const glow = 0.35 + Math.sin(phase * Math.PI * 2) * 0.12 + energy / 400;
-  const eyeY =
-    face === 'SLEEPING' ? 8 : face === 'THINKING' ? -4 + Math.sin(phase * Math.PI * 4) * 2 : Math.sin(phase * Math.PI * 2) * 3;
-  const dilate = face === 'LISTENING' ? 1.2 : face === 'THINKING' || face === 'SCAN' ? 0.85 : face === 'SLEEPING' ? 0.6 : 1;
-  const leftWink = face === 'WINK';
-  const browAngry = face === 'ANGRY' || face === 'STARTLE';
-  const smile = face === 'HAPPY' || face === 'WINK' || face === 'MUSIC' ? 1 : face === 'CONCERNED' ? -1 : 0;
-
-  const mouthPath = (() => {
-    const p = Skia.Path.Make();
-    const w = 54 + mouth * 10;
-    const h = 6 + mouth * 28;
-    const my = 38 + (smile < 0 ? 6 : 0);
-    if (smile > 0 && mouth < 0.4) {
-      p.moveTo(-w / 2, my);
-      p.quadTo(0, my + 18, w / 2, my);
-    } else if (smile < 0 && mouth < 0.35) {
-      p.moveTo(-w / 2, my + 10);
-      p.quadTo(0, my - 8, w / 2, my + 10);
+    const speak = face === 'SPEAKING' || face === 'MUSIC';
+    let mouthLoop: Animated.CompositeAnimation | null = null;
+    if (speak) {
+      mouthLoop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(mouth, { toValue: 0.9, duration: 140, useNativeDriver: true }),
+          Animated.timing(mouth, { toValue: 0.25, duration: 160, useNativeDriver: true }),
+        ])
+      );
+      mouthLoop.start();
     } else {
-      p.addOval(Skia.XYWHRect(-w / 2, my - h / 2, w, h));
+      const target =
+        face === 'YAWNING'
+          ? 1
+          : face === 'HAPPY' || face === 'WINK'
+            ? 0.55
+            : face === 'CONCERNED'
+              ? 0.12
+              : face === 'ANGRY'
+                ? 0.35
+                : face === 'SLEEPING'
+                  ? 0.05
+                  : 0.22;
+      Animated.timing(mouth, { toValue: target, duration: 280, useNativeDriver: true }).start();
     }
-    return p;
-  })();
+
+    const id = setInterval(() => setTick((n) => n + 1), 500);
+    return () => {
+      blinkLoop.stop();
+      mouthLoop?.stop();
+      clearInterval(id);
+    };
+  }, [face, blink, mouth]);
+
+  const dilate = face === 'LISTENING' ? 1.15 : face === 'SLEEPING' ? 0.7 : 1;
+  const eyeH = 28 * dilate;
+  const leftWink = face === 'WINK';
+  const glow = 0.35 + (energy / 400) + (tick % 2) * 0.05;
 
   return (
-    <View style={[styles.wrap, { width: size, height: size }]}>
-      <Canvas style={{ width: size, height: size }}>
-        <RoundedRect x={0} y={0} width={size} height={size} r={size * 0.12} color="#05070A" />
-        <Circle cx={cx} cy={cy} r={size * 0.46}>
-          <RadialGradient c={vec(cx, cy)} r={size * 0.5} colors={['rgba(0,229,255,0.16)', 'rgba(0,0,0,0)']} />
-        </Circle>
-
-        <Group origin={vec(cx, cy)} transform={[{ scale: breath }]}>
-          <Circle cx={cx} cy={cy} r={size * 0.42} style="stroke" strokeWidth={2} color={color} opacity={glow} />
-          <Circle cx={cx} cy={cy} r={size * 0.34} style="stroke" strokeWidth={1.5} color={color} opacity={0.35} />
-        </Group>
-
-        <RoundedRect
-          x={cx - size * 0.32}
-          y={cy - size * 0.18}
-          width={size * 0.64}
-          height={size * 0.36}
-          r={28}
-          color="rgba(8,14,22,0.92)"
+    <Animated.View style={[styles.wrap, { width: size, height: size, transform: [{ scale: breath }] }]}>
+      <View style={[styles.ring, { borderColor: color, opacity: glow, width: size * 0.84, height: size * 0.84, borderRadius: size * 0.42 }]} />
+      <View style={[styles.ringInner, { borderColor: color, width: size * 0.68, height: size * 0.68, borderRadius: size * 0.34 }]} />
+      <View style={[styles.visor, { borderColor: color }]}>
+        <View style={styles.eyesRow}>
+          <Animated.View
+            style={[
+              styles.eye,
+              {
+                backgroundColor: color,
+                height: eyeH,
+                transform: [{ scaleY: leftWink ? 0.1 : blink }],
+                opacity: face === 'SLEEPING' ? 0.35 : 1,
+              },
+            ]}
+          >
+            <View style={styles.pupil} />
+            <View style={styles.glint} />
+          </Animated.View>
+          <Animated.View
+            style={[
+              styles.eye,
+              {
+                backgroundColor: color,
+                height: eyeH,
+                transform: [{ scaleY: blink }],
+                opacity: face === 'SLEEPING' ? 0.35 : 1,
+              },
+            ]}
+          >
+            <View style={styles.pupil} />
+            <View style={styles.glint} />
+          </Animated.View>
+        </View>
+        <Animated.View
+          style={[
+            styles.mouth,
+            {
+              backgroundColor: color,
+              transform: [{ scaleY: mouth }, { scaleX: 1 }],
+              opacity: face === 'HAPPY' ? 0.95 : 0.85,
+            },
+          ]}
         />
-        <RoundedRect
-          x={cx - size * 0.32}
-          y={cy - size * 0.18}
-          width={size * 0.64}
-          height={size * 0.36}
-          r={28}
-          style="stroke"
-          strokeWidth={1.5}
-          color={color}
-          opacity={0.45}
-        />
-
-        <Group transform={[{ translateX: cx - size * 0.12 }, { translateY: cy - size * 0.04 + eyeY }]}>
-          <Group transform={[{ scaleY: (leftWink ? 0.1 : blink) * dilate }]}>
-            <Oval x={-28} y={-16} width={56} height={32} color={color} opacity={0.95} />
-            <Circle cx={0} cy={0} r={7} color="#001018" />
-            <Circle cx={-3} cy={-3} r={2.2} color="#E8FBFF" />
-          </Group>
-          {browAngry && (
-            <Path
-              path={Skia.Path.Make().moveTo(-30, -28).lineTo(26, -18)}
-              color={color}
-              style="stroke"
-              strokeWidth={3}
-            />
-          )}
-        </Group>
-
-        <Group transform={[{ translateX: cx + size * 0.12 }, { translateY: cy - size * 0.04 + eyeY }]}>
-          <Group transform={[{ scaleY: blink * dilate }]}>
-            <Oval x={-28} y={-16} width={56} height={32} color={color} opacity={0.95} />
-            <Circle cx={0} cy={0} r={7} color="#001018" />
-            <Circle cx={-3} cy={-3} r={2.2} color="#E8FBFF" />
-          </Group>
-          {browAngry && (
-            <Path
-              path={Skia.Path.Make().moveTo(-26, -18).lineTo(30, -28)}
-              color={color}
-              style="stroke"
-              strokeWidth={3}
-            />
-          )}
-        </Group>
-
-        <Group transform={[{ translateX: cx }, { translateY: cy + size * 0.02 }]}>
-          <Path path={mouthPath} color={color} />
-        </Group>
-
-        {face === 'LISTENING' && (
-          <Group>
-            <Circle cx={cx} cy={cy} r={size * 0.48} style="stroke" strokeWidth={1} color={color} opacity={0.25} />
-            <Circle cx={cx} cy={cy} r={size * 0.52} style="stroke" strokeWidth={1} color={color} opacity={0.12} />
-          </Group>
-        )}
-      </Canvas>
-    </View>
+      </View>
+      {face === 'LISTENING' && <View style={[styles.listenPulse, { borderColor: color }]} />}
+      <View style={styles.badge}>
+        <View style={[styles.badgeDot, { backgroundColor: color }]} />
+      </View>
+    </Animated.View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { alignItems: 'center', justifyContent: 'center' },
+  wrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#05070A',
+    borderRadius: 36,
+    overflow: 'hidden',
+  },
+  ring: {
+    position: 'absolute',
+    borderWidth: 2,
+  },
+  ringInner: {
+    position: 'absolute',
+    borderWidth: 1.5,
+    opacity: 0.35,
+  },
+  visor: {
+    width: '64%',
+    height: '36%',
+    borderRadius: 28,
+    borderWidth: 1.5,
+    backgroundColor: 'rgba(8,14,22,0.92)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 14,
+    paddingVertical: 10,
+  },
+  eyesRow: { flexDirection: 'row', gap: 28, alignItems: 'center' },
+  eye: {
+    width: 56,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pupil: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#001018' },
+  glint: {
+    position: 'absolute',
+    top: 6,
+    left: 14,
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#E8FBFF',
+  },
+  mouth: {
+    width: 54,
+    height: 18,
+    borderRadius: 12,
+  },
+  listenPulse: {
+    position: 'absolute',
+    width: '92%',
+    height: '92%',
+    borderRadius: 999,
+    borderWidth: 1,
+    opacity: 0.25,
+  },
+  badge: { position: 'absolute', bottom: 18, alignItems: 'center' },
+  badgeDot: { width: 8, height: 8, borderRadius: 4 },
 });
