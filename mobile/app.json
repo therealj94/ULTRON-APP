@@ -2,7 +2,7 @@
   "expo": {
     "name": "ULTRON FP",
     "slug": "ultron-fp",
-    "version": "1.3.0",
+    "version": "2.0.0",
     "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "link.ordenglobal.ultronfp",
-      "versionCode": 5,
+      "versionCode": 6,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -56,7 +56,24 @@
         {
           "initialOrientation": "LANDSCAPE"
         }
-      ]
+      ],
+      "expo-secure-store",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "ULTRON FP necesita el micrófono para escucharte.",
+          "speechRecognitionPermission": "ULTRON FP usa reconocimiento de voz nativo."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "ULTRON FP usa la cámara para visión del escritorio.",
+          "microphonePermission": "ULTRON FP necesita micrófono con la cámara.",
+          "recordAudioAndroid": true
+        }
+      ],
+      "expo-av"
     ]
   }
 }

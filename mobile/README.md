@@ -1,26 +1,24 @@
-# ULTRON FP — APK nativo (Expo)
+# ULTRON FP — Native Android (Expo)
 
-App Android landscape que carga el desk en WebView:
+App **nativa** React Native + Expo. **No usa WebView.**
 
-`https://ultron-looi-desk.onrender.com`
+## Stack
+- Expo SDK 54 + React Native
+- Face: `@shopify/react-native-skia`
+- Mic: `expo-speech-recognition`
+- Cámara: `expo-camera`
+- TTS: `expo-av` + `/api/tts/synthesize` (fallback `expo-speech`)
+- Credenciales: `expo-secure-store`
+- Memoria / chat offline: AsyncStorage + pack local
 
 ## Build APK
-
 ```bash
 cd mobile
-npm install
-export EXPO_TOKEN='…'   # https://expo.dev/settings/access-tokens
-npx eas build -p android --profile preview --non-interactive
+npx eas-cli build -p android --profile preview --non-interactive
 ```
 
-El enlace del APK aparece al terminar en Expo.
-
-## Permisos
-
-Al abrir pide **CAMERA** + **RECORD_AUDIO**. La WebView auto-concede captura si el OS ya aprobó.
-
-## Notas
-
-- Icono/splash = logo ULTRON cyan
-- Versión app: `1.1.0`
-- ElevenLabs / AWS / TTS viven en Render, no en el APK
+## Pantallas
+1. Boot nativo (permisos + health)
+2. Login José/Medardo
+3. Desk: cara Skia, voz, texto, visión, sleep/stay/explore
+4. Ajustes
