@@ -68,14 +68,24 @@ wss.on('connection', (ws: WebSocket) => {
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// System & Cloud Credentials configured from environment or supplied by the Board
+// System & Cloud Credentials — solo desde variables de entorno (sin defaults con secretos)
 const GITHUB_PAT = process.env.GITHUB_PAT || '';
 const RENDER_API_KEY = process.env.RENDER_API_KEY || '';
-const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || 'srv-dah56p15efls7382pot0';
+const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || '';
 const ULTRON_REMOTE_URL = process.env.ULTRON_REMOTE_URL || 'https://ultron.ordenglobal.link';
-const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || '';
-const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || '';
+const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
+const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY;
 const AWS_DEFAULT_REGION = (process.env.AWS_DEFAULT_REGION || 'us-east-1').replace(' ', '-');
+
+/** Falla si AWS no está en el entorno. No hay valores por defecto embebidos. */
+function requireAwsCredentials(): { accessKeyId: string; secretAccessKey: string } {
+  if (!AWS_ACCESS_KEY_ID?.trim() || !AWS_SECRET_ACCESS_KEY?.trim()) {
+    throw new Error(
+      'Faltan AWS_ACCESS_KEY_ID y/o AWS_SECRET_ACCESS_KEY en variables de entorno (sin defaults)'
+    );
+  }
+  return { accessKeyId: AWS_ACCESS_KEY_ID.trim(), secretAccessKey: AWS_SECRET_ACCESS_KEY.trim() };
+}
 
 // Session store for ULTRON FP remote connection
 let ultronRemoteCookie = '';
@@ -371,12 +381,24 @@ app.post('/api/memoria/personas', (req, res) => {
 
 // Cloud Status Verification Endpoint
 app.get('/api/cloud/status', async (req, res) => {
+  let awsConfigured = false;
+  let awsError: string | null = null;
+  try {
+    requireAwsCredentials();
+    awsConfigured = true;
+  } catch (e: any) {
+    awsError = e.message || String(e);
+  }
+
   const result = {
     aws: {
-      configured: Boolean(AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY),
-      accessKeyIdMasked: AWS_ACCESS_KEY_ID ? `${AWS_ACCESS_KEY_ID.substring(0, 6)}...${AWS_ACCESS_KEY_ID.slice(-4)}` : null,
+      configured: awsConfigured,
+      accessKeyIdMasked: awsConfigured && AWS_ACCESS_KEY_ID
+        ? `${AWS_ACCESS_KEY_ID.substring(0, 6)}...${AWS_ACCESS_KEY_ID.slice(-4)}`
+        : null,
       region: AWS_DEFAULT_REGION,
-      status: 'Connected',
+      status: awsConfigured ? 'Connected' : 'MISSING_ENV',
+      error: awsError,
       services: ['EC2 Qwen-27B A10G', 'EC2 Playwright t3', 'EC2 Qwen3-TTS T4', 'S3 Storage'],
     },
     github: {
