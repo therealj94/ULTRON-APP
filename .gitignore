@@ -7,3 +7,4 @@ coverage/
 .env*
 !.env.example
 mobile/node_modules/
+data/

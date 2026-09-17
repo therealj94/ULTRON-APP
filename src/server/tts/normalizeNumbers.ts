@@ -72,9 +72,19 @@ function bajoCien(n: number, femenino = false): string {
   }
   if (n < 30) {
     if (n === 20) return 'veinte';
-    const u = n - 20;
-    if (u === 1 && femenino) return 'veintiuna';
-    return `veinti${UNIDADES[u].replace('ú', 'u')}`;
+    // Formas ortográficas correctas (acentos) para 21–29
+    const veinti: Record<number, string> = {
+      21: femenino ? 'veintiuna' : 'veintiuno',
+      22: 'veintidós',
+      23: 'veintitrés',
+      24: 'veinticuatro',
+      25: 'veinticinco',
+      26: 'veintiséis',
+      27: 'veintisiete',
+      28: 'veintiocho',
+      29: 'veintinueve',
+    };
+    return veinti[n] || `veinti${UNIDADES[n - 20]}`;
   }
   const d = Math.floor(n / 10);
   const u = n % 10;
@@ -203,15 +213,13 @@ export function normalizeNumbersForSpeech(text: string): string {
     return `${spoken} por ciento`;
   });
 
-  // Números con separadores de miles / decimales
+  // Números con separadores / decimales / enteros (incl. 1–3 dígitos para TTS)
   out = out.replace(
-    /\b\d{1,3}(?:[.,]\d{3})+(?:[.,]\d+)?\b|\b\d+[.,]\d+\b|\b\d{4,}\b/g,
+    /\b\d{1,3}(?:[.,]\d{3})+(?:[.,]\d+)?\b|\b\d+[.,]\d+\b|\b\d+\b/g,
     (raw) => {
-      // avoid years already spoken in dates — years 19xx/20xx alone: read as number ok
       const n = parseGroupedNumber(raw);
       if (n == null) return raw;
       if (String(raw).includes('.') || String(raw).includes(',')) {
-        // if only thousand grouping (no decimal part with ≤2 digits ambiguity)
         if (/^\d{1,3}([.,]\d{3})+$/.test(raw)) return integerToSpanish(n);
         return decimalToSpanish(n);
       }

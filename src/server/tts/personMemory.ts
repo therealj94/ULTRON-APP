@@ -1,7 +1,10 @@
 /**
- * Memoria de personas + hechos — en RAM con snapshot opcional.
+ * Memoria de personas + hechos — RAM + snapshot en disco.
  * Se inyecta en el system prompt junto al Cerebro de Orden Global.
  */
+
+import fs from 'node:fs';
+import path from 'node:path';
 
 export type PersonFact = {
   key: string;
@@ -21,6 +24,34 @@ export type PersonMemory = {
 };
 
 const people = new Map<string, PersonMemory>();
+
+const STORE_PATH =
+  process.env.ULTRON_PERSON_MEMORY_PATH ||
+  path.join(process.cwd(), 'data', 'person-memory.json');
+
+function loadStore(): void {
+  try {
+    if (!fs.existsSync(STORE_PATH)) return;
+    const raw = JSON.parse(fs.readFileSync(STORE_PATH, 'utf8')) as PersonMemory[];
+    if (!Array.isArray(raw)) return;
+    for (const p of raw) {
+      if (p?.id && p?.nombre) people.set(p.id, p);
+    }
+  } catch {
+    /* store opcional */
+  }
+}
+
+function persistStore(): void {
+  try {
+    fs.mkdirSync(path.dirname(STORE_PATH), { recursive: true });
+    fs.writeFileSync(STORE_PATH, JSON.stringify([...people.values()], null, 2), 'utf8');
+  } catch {
+    /* disco efímero en algunos hosts — no bloquear chat */
+  }
+}
+
+loadStore();
 
 function idFrom(nombre: string, correo?: string): string {
   const base = (correo || nombre).toLowerCase().trim();
@@ -61,12 +92,17 @@ export function upsertPerson(input: {
     ].slice(-40);
   }
   people.set(id, next);
+  persistStore();
   return next;
 }
 
 export function getPerson(nombreOrCorreo: string): PersonMemory | null {
   const id = idFrom(nombreOrCorreo, nombreOrCorreo.includes('@') ? nombreOrCorreo : undefined);
-  return people.get(id) || [...people.values()].find((p) => p.nombre.toLowerCase() === nombreOrCorreo.toLowerCase()) || null;
+  return (
+    people.get(id) ||
+    [...people.values()].find((p) => p.nombre.toLowerCase() === nombreOrCorreo.toLowerCase()) ||
+    null
+  );
 }
 
 export function listPeople(): PersonMemory[] {
@@ -78,9 +114,13 @@ export function extractPersonHints(text: string): Array<{ key: string; value: st
   const hints: Array<{ key: string; value: string }> = [];
   const soy = text.match(/\b(?:me llamo|soy|mi nombre es)\s+([A-ZÁÉÍÓÚÑ][\wÁÉÍÓÚáéíóúñ]+)/i);
   if (soy) hints.push({ key: 'nombre_declarado', value: soy[1] });
-  const rol = text.match(/\b(?:soy|actuó como|actuo como)\s+(el\s+)?(director|ceo|cto|junta|ingeniero|medico|médico)[\w\s]{0,40}/i);
+  const rol = text.match(
+    /\b(?:soy|actuó como|actuo como)\s+(el\s+)?(director|ceo|cto|junta|ingeniero|medico|médico)[\w\s]{0,40}/i
+  );
   if (rol) hints.push({ key: 'rol_declarado', value: rol[0] });
-  const fecha = text.match(/\b(?:nací|naci|cumpleaños|cumple)\s+(?:el\s+)?(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i);
+  const fecha = text.match(
+    /\b(?:nací|naci|cumpleaños|cumple)\s+(?:el\s+)?(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})/i
+  );
   if (fecha) hints.push({ key: 'fecha_personal', value: fecha[1] });
   const email = text.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/i);
   if (email) hints.push({ key: 'correo', value: email[0] });
@@ -100,7 +140,9 @@ export function memoryPromptBlock(opts: {
       correo: opts.currentUser.correo,
       conversationId: opts.conversationId,
     });
-    lines.push(`Usuario activo: ${p.nombre}${p.rol ? ` · ${p.rol}` : ''}${p.correo ? ` · ${p.correo}` : ''}.`);
+    lines.push(
+      `Usuario activo: ${p.nombre}${p.rol ? ` · ${p.rol}` : ''}${p.correo ? ` · ${p.correo}` : ''}.`
+    );
     if (p.hechos.length) {
       lines.push(
         'Hechos recordados: ' +
