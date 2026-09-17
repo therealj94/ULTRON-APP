@@ -38,9 +38,11 @@ interface FaceCanvasProps {
   onWake: () => void;
   onSleep: () => void;
   onCloseOverlays: () => void;
+  onPokeWarn?: () => void;
+  onPokeBlaster?: () => void;
 }
 
-const MODES: Mode[] = ['GUARDIAN', 'MINING', 'GOLD', 'CREATIVE', 'ANALYTICAL', 'STRATEGIC', 'EXPLORER'];
+const MODES: Mode[] = ['GUARDIAN', 'MINING', 'GOLD', 'CREATIVE', 'ANALYTICAL', 'STRATEGIC', 'EXPLORER', 'CONOCER'];
 
 export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   face,
@@ -69,6 +71,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   onWake,
   onSleep,
   onCloseOverlays,
+  onPokeWarn,
+  onPokeBlaster,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -132,6 +136,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     tickle: 0,
     visorDrop: hasVisor ? 1 : 0,
     shockwaves: [],
+    yawn: 0,
+    nextYawn: 12 + Math.random() * 10,
   });
 
   // Touch tracking
@@ -216,10 +222,10 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     C.lastShotTime = performance.now();
     onFaceChange('FURY', 2600);
     playSfx('gun_draw', soundFxEnabled);
-    onSpeak('Sistemas defensivos tácticos desplegados.');
+    // Sin frase hablada: evita doble voz / “me reset”
     animRef.current.shake = 1.2;
     onTriggerBlasterCombat?.();
-  }, [onFaceChange, onSpeak, soundFxEnabled, onTriggerBlasterCombat]);
+  }, [onFaceChange, soundFxEnabled, onTriggerBlasterCombat]);
 
   // Handle external reset trigger
   useEffect(() => {
@@ -379,11 +385,20 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
         return { dilate: 0.2, brow: 0.3, mouth: 0, smile: -0.4, bounce: 0 };
       case 'SCAN':
         return { dilate: 0.3, brow: 0.35, mouth: 0.08, smile: 0, bounce: 0 };
+      case 'YAWNING':
+        return { dilate: 0.28, brow: -0.15, mouth: 0.92, smile: 0.05, bounce: 0.02 };
+      case 'CURIOSITY':
+        return { dilate: 0.48, brow: 0.28, mouth: 0.14, smile: 0.2, bounce: 0.06 };
       case 'IDLE':
       default:
         return { dilate: 0.36, brow: 0, mouth: 0.08, smile: 0.15, bounce: 0 };
     }
   }
+
+  const onFaceChangeRef = useRef(onFaceChange);
+  useEffect(() => {
+    onFaceChangeRef.current = onFaceChange;
+  }, [onFaceChange]);
 
   const scheduleBlink = useCallback((type: 'single' | 'double' | 'wink' = 'single') => {
     const A = animRef.current;
@@ -511,6 +526,24 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
           A.tx = (Math.random() - 0.5) * 0.45;
           A.ty = (Math.random() - 0.5) * 0.3;
           A.saccadeIn = 1.4 + Math.random() * 2.6;
+        }
+      }
+
+      // Idle yawn / restless eyes when waiting for speech a long time
+      if ((S.face === 'IDLE' || S.face === 'LISTENING') && S.face !== 'YAWNING') {
+        A.nextYawn -= dt;
+        if (A.nextYawn <= 0 && now - S.lastInteraction > 8000 && A.yawn < 0.05) {
+          A.nextYawn = 18 + Math.random() * 20;
+          A.yawn = 1;
+          A.ty = 0.35;
+          onFaceChangeRef.current('YAWNING', 2000);
+        }
+      }
+      if (A.yawn > 0.01) {
+        A.yawn *= 0.96;
+        A.mouthT = Math.max(A.mouthT, 0.55 + A.yawn * 0.4);
+        if (A.yawn < 0.08 && S.face === 'YAWNING') {
+          onFaceChangeRef.current('IDLE', 0);
         }
       }
 
@@ -797,10 +830,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ctx.translate(cx + shakeX, cy + shakeY);
     ctx.scale(A.squashX, A.squashY);
 
-    // 1. Draw Top Mode Crown / Emblem (Faithful to Photo 3)
-    drawModeCrown(ctx, 0, -baseR * 1.45, baseR, S.mode, theme, S.t, A);
+    // Sin corona/candados (ensuciaban la cara). Solo ojos + boca.
 
-    // 2. Draw the Two Volumetric Living Eyes (LOOI Style)
+    // 2. Draw the Two Volumetric Living Eyes
     const leftX = -eyeSpacing;
     const rightX = eyeSpacing;
     const eyeY = 0;
@@ -1074,10 +1106,10 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Draw Mode Specific Eye Glyphs (Faithful to Image 3 Tablets!)
-      drawModeEyeGlyph(ctx, rx, ry, side, S.mode, theme, S.t, A);
+      // Ojos limpios (sin glifos/escudos dentro) — más legible en desk
+      // drawModeEyeGlyph omitted by design
 
-      // Specular Catchlight Highlights (LOOI spherical disc)
+      // Specular Catchlight Highlights
       const lookOffsetX = A.lx * rx * 0.32;
       const lookOffsetY = A.ly * ry * 0.32;
 
@@ -2454,12 +2486,11 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     const S = stateRef.current;
     const C = combatRef.current;
 
-    // Instant disarm if combat was active
+    // Si ya está en combate: desarmar en silencio (sin “reset” hablado)
     if (C.isActive) {
       disarmCombat();
       onFaceChange('IDLE', 0);
       playSfx('tap', soundFxEnabled);
-      onSpeak('Sistemas defensivos desactivados. Normalizando.');
       return;
     }
 
@@ -2469,28 +2500,24 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     }
 
     const now = performance.now();
-    S.poke = now - S.lastPokeTime < 750 ? S.poke + 1 : 1;
+    S.poke = now - S.lastPokeTime < 900 ? S.poke + 1 : 1;
     S.lastPokeTime = now;
-
-    // Shake reaction
     animRef.current.jiggle = 0.8;
 
     if (S.poke === 1) {
+      // Toque = interactuar (parpadeo). Micrófono es el botón / hey ultron.
       scheduleBlink('single');
       playSfx('tap', soundFxEnabled);
     } else if (S.poke === 2) {
-      // 2 Taps -> Listen for voice order
-      playSfx('wake', soundFxEnabled);
-      onTriggerVoice();
-    } else if (S.poke === 3) {
-      onFaceChange('CURIOSITY', 1600);
-      onSpeak('Aquí estoy. ¿En qué te ayudo?');
-      playSfx('tap', soundFxEnabled);
-    } else {
-      // Friendly Petting / Purring mode (Never anger or weapons!)
-      onFaceChange('PURR', 1800);
-      playSfx('purr', soundFxEnabled);
+      // 2 toques → aviso amarillo (no sigas)
+      playSfx('warning', soundFxEnabled);
+      onFaceChange('CONCERNED', 1400);
+      onPokeWarn?.();
+    } else if (S.poke >= 3) {
+      // 3 toques → pantalla roja + blasters, luego vuelve normal en silencio
+      playSfx('gun_draw', soundFxEnabled);
       S.poke = 0;
+      onPokeBlaster?.();
     }
   };
 

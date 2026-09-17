@@ -25,6 +25,7 @@ interface TutorialModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSelectAction?: (action: string) => void;
+  onStartConocer?: () => void;
   soundFxEnabled?: boolean;
 }
 
@@ -32,6 +33,7 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({
   isOpen,
   onClose,
   onSelectAction,
+  onStartConocer,
   soundFxEnabled = true,
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'buttons' | 'touch' | 'camera' | 'voice'>('overview');
@@ -52,7 +54,7 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({
             </div>
             <div>
               <span className="text-[10px] font-mono tracking-[0.25em] text-[#8FA3B0] block uppercase">
-                MANUAL OPERATIVO · ULTRON FP & LOOI
+                MANUAL OPERATIVO · ULTRON FP
               </span>
               <h2 className="font-display font-bold text-base text-white tracking-wider">
                 GUÍA DE FUNCIONAMIENTO & CONTROLES
@@ -155,10 +157,10 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({
                 ¿Qué es ULTRON FP?
               </h3>
               <p className="leading-relaxed">
-                ULTRON FP es un asistente robótico de escritorio y núcleo de inteligencia para la junta directiva, basado en la arquitectura de hardware interactiva de LOOI con pantalla OLED y física de mirada en tiempo real.
+                ULTRON FP es tu asistente de escritorio para la junta: cara viva, voz y memoria de quién eres.
               </p>
               <p className="leading-relaxed text-white/70">
-                Está diseñado para operar en horizontal (pantalla de escritorio tipo quiosco) o vertical (teléfono móvil), integrando seguimiento facial por cámara, reconocimiento de voz bidireccional y procesamiento en la nube con modelos de lenguaje.
+                Funciona en horizontal (quiosco) o vertical (móvil). Cámara, micrófono y modos de experto — sin tono de call center.
               </p>
             </div>
 
@@ -356,48 +358,53 @@ export const TutorialModal: React.FC<TutorialModalProps> = ({
             <div className="p-4 rounded-xl bg-black/60 border border-purple-400/30 space-y-2">
               <h3 className="text-sm font-bold text-purple-300 flex items-center gap-2">
                 <Mic className="w-4 h-4" />
-                Comandos de Voz e Inteligencia Qwen 27B
+                Voz, emociones y canciones
               </h3>
               <p className="leading-relaxed">
-                Ultron procesa tus preguntas a través de su núcleo neuronal de lenguaje en el backend y te responde con voz sintetizada.
+                Di «hey Ultron» o toca el mic. Respondo como persona: pausas, respiración, gestos en la cara.
               </p>
               <div className="space-y-1.5 text-[11px] text-white/70">
-                <p className="text-white font-bold">Ejemplos de frases que puedes decirle:</p>
-                <div className="p-2 rounded bg-black/40 border border-white/10">
-                  «Hola Ultron, dame un resumen de estado de la corporación.»
-                </div>
-                <div className="p-2 rounded bg-black/40 border border-white/10">
-                  «Toma una foto con conteo regresivo.»
-                </div>
-                <div className="p-2 rounded bg-black/40 border border-white/10">
-                  «Cambia a modo Gold / Guardián.»
-                </div>
-                <div className="p-2 rounded bg-black/40 border border-white/10">
-                  «Ponte las gafas oscuras.»
-                </div>
-                <div className="p-2 rounded bg-black/40 border border-white/10">
-                  «¿Cuál es la estrategia de tesorería del directorio?»
-                </div>
+                <p className="text-white font-bold">Emociones / gestos</p>
+                <div className="p-2 rounded bg-black/40 border border-white/10">«Ponte triste» · «Ponte feliz» · «Enójate» · «Ríete»</div>
+                <div className="p-2 rounded bg-black/40 border border-white/10">«Bosteza» · «Guiña» · «Asústate» · «Ponte tierno»</div>
+                <p className="text-white font-bold pt-1">Cantar</p>
+                <div className="p-2 rounded bg-black/40 border border-white/10">«Canta una canción» · «Canta suave»</div>
+                <p className="text-white font-bold pt-1">Útiles</p>
+                <div className="p-2 rounded bg-black/40 border border-white/10">«Conóceme» · «Toma una foto» · «Qué tengo en la mano»</div>
+                <div className="p-2 rounded bg-black/40 border border-white/10">«Modo estratégico» · «Cerebro de Orden Global»</div>
               </div>
             </div>
           </div>
         )}
 
         {/* Footer */}
-        <div className="flex items-center justify-between pt-2 border-t border-white/10 text-[11px] font-mono">
-          <span className="text-[#8FA3B0]">
-            LOOI Desktop Agent · Versión 3.8
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              playSfx('tap', soundFxEnabled);
-              onClose();
-            }}
-            className="px-4 py-1.5 rounded-lg bg-[#05E1FF]/20 border border-[#05E1FF]/40 text-[#05E1FF] font-bold hover:bg-[#05E1FF]/30 transition-colors cursor-pointer"
-          >
-            Entendido
-          </button>
+        <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10 text-[11px] font-mono">
+          <span className="text-[#8FA3B0]">ULTRON FP · asistente vivo</span>
+          <div className="flex gap-2">
+            {onStartConocer && (
+              <button
+                type="button"
+                onClick={() => {
+                  playSfx('tap', soundFxEnabled);
+                  onClose();
+                  onStartConocer();
+                }}
+                className="px-3 py-1.5 rounded-lg border border-pink-400/40 bg-pink-500/10 text-pink-100"
+              >
+                Conocerme
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                playSfx('tap', soundFxEnabled);
+                onClose();
+              }}
+              className="px-3 py-1.5 rounded-lg border border-[#05E1FF]/40 bg-[#05E1FF]/10 text-[#05E1FF]"
+            >
+              Entendido
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -2,17 +2,18 @@
   "expo": {
     "name": "ULTRON FP",
     "slug": "ultron-fp",
-    "version": "1.0.0",
+    "version": "1.3.0",
     "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#07090c"
+      "backgroundColor": "#000000"
     },
     "android": {
       "package": "link.ordenglobal.ultronfp",
+      "versionCode": 5,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -23,17 +24,39 @@
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#07090c"
+        "backgroundColor": "#000000"
       },
-      "softwareKeyboardLayoutMode": "pan"
+      "softwareKeyboardLayoutMode": "pan",
+      "navigationBar": {
+        "visible": "immersive",
+        "barStyle": "light-content",
+        "backgroundColor": "#000000"
+      }
     },
     "scheme": "ultronfp",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/d41656ec-6fc7-4fd2-b183-eba687473fd9",
+      "fallbackToCacheTimeout": 0,
+      "checkAutomatically": "ON_LOAD"
+    },
     "extra": {
       "ultronUrl": "https://ultron-looi-desk.onrender.com",
       "eas": {
         "projectId": "d41656ec-6fc7-4fd2-b183-eba687473fd9"
       }
     },
-    "owner": "vetawallet"
+    "owner": "vetawallet",
+    "plugins": [
+      "expo-system-ui",
+      [
+        "expo-screen-orientation",
+        {
+          "initialOrientation": "LANDSCAPE"
+        }
+      ]
+    ]
   }
 }
