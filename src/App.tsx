@@ -39,6 +39,18 @@ import { isHeyUltron, stripHeyUltron } from './utils/wakeWord';
 export default function App() {
   // Session State
   const [face, setFace] = useState<FaceState>('IDLE');
+
+  // Avisa al APK nativo que el desk React ya montó (evita pantalla negra eterna)
+  useEffect(() => {
+    try {
+      const w = window as unknown as { ReactNativeWebView?: { postMessage: (s: string) => void } };
+      w.ReactNativeWebView?.postMessage(
+        JSON.stringify({ type: 'ready', title: document.title, hasRoot: true, t: Date.now() })
+      );
+    } catch {
+      /* browser normal */
+    }
+  }, []);
   const [mode, setMode] = useState<Mode>('GUARDIAN');
   const [energy, setEnergy] = useState<number>(85);
   const [isBooting, setIsBooting] = useState<boolean>(true);
