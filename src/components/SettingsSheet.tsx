@@ -170,7 +170,7 @@ export const SettingsSheet: React.FC<SettingsSheetProps> = ({
               className="p-2.5 rounded border border-[#05E1FF]/30 bg-black/60 text-[#8FA3B0] hover:text-[#05E1FF] hover:border-[#05E1FF] transition-all flex items-center justify-center gap-2 text-xs font-mono cursor-pointer"
             >
               <Camera className="w-4 h-4 text-[#05E1FF]" />
-              <span>Fotos LOOI</span>
+              <span>Fotos</span>
             </button>
           )}
 

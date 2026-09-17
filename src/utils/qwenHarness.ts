@@ -27,7 +27,7 @@ const ACTION_TOOL_PATTERNS: Array<{
     regex: /foto|captura|selfie|cámara|sonríe|fotografía/i,
     toolName: 'take_camera_photo_countdown',
     intent: 'CAMERA_PHOTO_CAPTURE_COUNTDOWN',
-    thought: 'Activando óptica frontal y retículo LOOI con temporizador de cuenta regresiva.',
+    thought: 'Activando óptica frontal y retículo óptico con temporizador de cuenta regresiva.',
     suggestedAction: 'Encender cámara, mostrar contador 3-2-1 y capturar fotografía en alta resolución.',
     mode: 'CREATIVE',
   },
@@ -60,7 +60,7 @@ const ACTION_TOOL_PATTERNS: Array<{
     toolName: 'trigger_blaster_combat',
     intent: 'TRIGGER_COMBAT_BLASTERS',
     thought: 'Desplegando torretas balísticas retráctiles y disparando ráfagas láser disuasivas.',
-    suggestedAction: 'Activar cañones blaster LOOI y estado de alerta FURY.',
+    suggestedAction: 'Activar cañones blaster y estado de alerta FURY.',
     mode: 'GUARDIAN',
   },
   {

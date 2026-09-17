@@ -90,7 +90,7 @@ app.get('/api/health', async (_req, res) => {
   const [qwen, ojo] = await Promise.all([qwenSalud(), ojoSalud()]);
   res.json({
     status: 'ok',
-    system: 'ULTRON FP · LOOI Desktop Agentic Harness',
+    system: 'ULTRON FP · Desktop Agentic Harness',
     timestamp: new Date().toISOString(),
     vaultStatus: 'Encrypted and Operational',
     neuralCore: nodes.qwen.configured
@@ -1030,7 +1030,7 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`[ULTRON LOOI SERVER] Running on port ${PORT} with Gemini 3.6 Flash, Render API, AWS and WebSocket Bridge`);
+    console.log(`[ULTRON FP SERVER] Running on port ${PORT} with Gemini 3.6 Flash, Render API, AWS and WebSocket Bridge`);
   });
 }
 

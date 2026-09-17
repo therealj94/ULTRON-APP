@@ -111,11 +111,11 @@ export const VisionMediaAnalyzerModal: React.FC<VisionMediaAnalyzerModalProps> =
           entities:
             mediaType === 'video'
               ? ['Sujeto en Movimiento Dinámico', 'Gesto de Aprobación', 'Espacio de Trabajo Seguro']
-              : ['Rostro Humano Registrado', 'Postura Ejecutiva', 'Iluminación Óptima', 'Alineación LOOI'],
+              : ['Rostro Humano Registrado', 'Postura Ejecutiva', 'Iluminación Óptima', 'Alineación óptica'],
           summary:
             mediaType === 'video'
               ? 'Secuencia de video analizada: Movimiento fluido del usuario frente a la terminal. Sin presencia de interferencias externas ni anomalías auditivas. Aprobado para sesión ejecutiva.'
-              : 'Imagen analizada: Sujeto reconocido con alta fidelidad óptica. Coordenadas de mirada centradas en el eje del robot LOOI. Índice de fatiga: Bajo (Estado de alerta óptimo).',
+              : 'Imagen analizada: Sujeto reconocido con alta fidelidad óptica. Coordenadas de mirada centradas en el eje del ULTRON FP. Índice de fatiga: Bajo (Estado de alerta óptimo).',
           privacyCompliance: {
             purged: true,
             protocol: 'Zero-Knowledge Auto-Purge ISO/IEC 27701',
