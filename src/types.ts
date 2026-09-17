@@ -5,7 +5,8 @@ export type Mode =
   | 'CREATIVE'
   | 'ANALYTICAL'
   | 'STRATEGIC'
-  | 'EXPLORER';
+  | 'EXPLORER'
+  | 'CONOCER';
 
 export type FaceState = 
   | 'IDLE'
@@ -23,7 +24,9 @@ export type FaceState =
   | 'CONFUSED'
   | 'MUSIC'
   | 'OFFLINE'
-  | 'SCAN';
+  | 'SCAN'
+  | 'YAWNING'
+  | 'CURIOSITY';
 
 export interface FaceTargets {
   dilate: number;
@@ -79,6 +82,8 @@ export interface AnimationEngineState {
   tickle: number;
   visorDrop: number; // 0 (hidden) to 1 (fully worn)
   shockwaves: TouchRipple[];
+  yawn: number; // 0..1 mouth open for idle yawn
+  nextYawn: number; // seconds until next idle yawn
 }
 
 export interface AgenticHarnessState {

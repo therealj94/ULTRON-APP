@@ -1,7 +1,13 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { Camera, CameraOff, Scan, ShieldCheck, Eye, Compass, Sparkles, Coffee, Hand, Zap } from 'lucide-react';
+import React, { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react';
+import { Camera, CameraOff, AlertTriangle } from 'lucide-react';
 import { OpticalFaceTracker, FaceTrackResult } from '../utils/faceTracker';
 import { DetectedObject } from '../types';
+
+export type VisionOverlayHandle = {
+  captureFrame: () => string | null;
+  isStreamActive: () => boolean;
+  ensureCamera: () => Promise<boolean>;
+};
 
 interface VisionOverlayProps {
   isActive: boolean;
@@ -12,21 +18,23 @@ interface VisionOverlayProps {
   onTriggerDrink?: () => void;
   onTriggerWave?: () => void;
   onTriggerBlaster?: () => void;
+  onCameraStatus?: (ok: boolean, error?: string) => void;
 }
 
-export const VisionOverlay: React.FC<VisionOverlayProps> = ({
-  isActive,
-  onClose,
-  onGazeUpdate,
-  onPresenceEvent,
-  onTriggerPhoto,
-  onTriggerDrink,
-  onTriggerWave,
-  onTriggerBlaster,
-}) => {
+export const VisionOverlay = forwardRef<VisionOverlayHandle, VisionOverlayProps>(function VisionOverlay(
+  {
+    isActive,
+    onClose,
+    onGazeUpdate,
+    onPresenceEvent,
+    onCameraStatus,
+  },
+  ref
+) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const trackerRef = useRef<OpticalFaceTracker | null>(null);
   const [streamActive, setStreamActive] = useState(false);
+  const [camError, setCamError] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState({
     faceConfidence: 98.4,
     x: 0,
@@ -38,10 +46,74 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({
     objects: [] as DetectedObject[],
   });
 
-  // Track state to debounce automatic gesture reactions
   const lastGestureTime = useRef<number>(0);
 
-  // Initialize and run tracker
+  const captureFrame = (): string | null => {
+    const video = videoRef.current;
+    if (!video || !streamActive || video.readyState < 2) return null;
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640;
+    canvas.height = video.videoHeight || 480;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.82);
+  };
+
+  const startCamera = async (): Promise<boolean> => {
+    try {
+      setCamError(null);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'user',
+          width: { ideal: 640 },
+          height: { ideal: 480 },
+        },
+        audio: false,
+      });
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play();
+        if (trackerRef.current) {
+          trackerRef.current.setVideoElement(videoRef.current);
+        }
+        setStreamActive(true);
+        onCameraStatus?.(true);
+        return true;
+      }
+      return false;
+    } catch (e: any) {
+      setStreamActive(false);
+      const msg =
+        e?.name === 'NotAllowedError'
+          ? 'Permiso de cámara denegado. Actívalo en el navegador/APK.'
+          : 'No se pudo acceder a la cámara.';
+      setCamError(msg);
+      onCameraStatus?.(false, msg);
+      return false;
+    }
+  };
+
+  const stopCamera = () => {
+    if (videoRef.current?.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach((track) => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    setStreamActive(false);
+    onGazeUpdate?.({ x: 0, y: 0, active: false });
+  };
+
+  useImperativeHandle(ref, () => ({
+    captureFrame,
+    isStreamActive: () => streamActive,
+    ensureCamera: async () => {
+      if (streamActive) return true;
+      return startCamera();
+    },
+  }));
+
   useEffect(() => {
     if (!isActive) return;
 
@@ -63,15 +135,12 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({
         objects: res.objects,
       });
 
-      if (onGazeUpdate) {
-        onGazeUpdate({
-          x: res.x,
-          y: res.y,
-          active: res.detected,
-        });
-      }
+      onGazeUpdate?.({
+        x: res.x,
+        y: res.y,
+        active: res.detected,
+      });
 
-      // Check gestures and trigger reactive interactions (debounced 4s)
       const now = performance.now();
       if (now - lastGestureTime.current > 4000) {
         if (res.isWaving) {
@@ -89,55 +158,11 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({
     };
   }, [isActive, onGazeUpdate, onPresenceEvent]);
 
-  // Handle webcam stream
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: 'user',
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-        },
-        audio: false,
-      });
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-        if (trackerRef.current) {
-          trackerRef.current.setVideoElement(videoRef.current);
-        }
-        setStreamActive(true);
-      }
-    } catch {
-      setStreamActive(false);
-    }
-  };
-
-  const stopCamera = () => {
-    if (videoRef.current?.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach((track) => track.stop());
-      videoRef.current.srcObject = null;
-    }
-    setStreamActive(false);
-    if (onGazeUpdate) {
-      onGazeUpdate({ x: 0, y: 0, active: false });
-    }
-  };
-
-  const toggleRealCamera = () => {
-    if (streamActive) {
-      stopCamera();
-    } else {
-      startCamera();
-    }
-  };
-
-  // Auto-request camera when user opens vision overlay
   useEffect(() => {
-    if (isActive && !streamActive) {
-      startCamera();
+    if (isActive) {
+      void startCamera();
+    } else {
+      stopCamera();
     }
     return () => {
       stopCamera();
@@ -152,11 +177,24 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({
       id="ultron-vision-overlay"
       className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between p-4"
     >
-      {/* Top minimal status indicator */}
       <div className="flex items-center justify-between pointer-events-auto">
-        <div className="flex items-center gap-2 px-3 py-1 bg-black/60 border border-[#05E1FF]/30 rounded-full text-[11px] font-mono text-[#05E1FF] backdrop-blur-md shadow-[0_0_12px_rgba(5,225,255,0.15)]">
-          <span className={`w-2 h-2 rounded-full ${telemetry.detected ? 'bg-emerald-400 animate-pulse' : 'bg-[#05E1FF]/40'}`} />
-          <span>{telemetry.detected ? `Seguimiento Activo (${telemetry.spatialZone})` : 'Sensor Óptico Calibrando'}</span>
+        <div className="flex items-center gap-2 px-3 py-1 bg-black/60 border border-[#00E5FF]/30 rounded-full text-[11px] font-mono text-[#00E5FF] backdrop-blur-md shadow-[0_0_12px_rgba(0,229,255,0.15)]">
+          <span
+            className={`w-2 h-2 rounded-full ${
+              streamActive
+                ? telemetry.detected
+                  ? 'bg-emerald-400 animate-pulse'
+                  : 'bg-[#00E5FF] animate-pulse'
+                : 'bg-red-400'
+            }`}
+          />
+          <span>
+            {!streamActive
+              ? 'Cámara off'
+              : telemetry.detected
+              ? `Te veo (${telemetry.spatialZone})`
+              : 'Óptica activa · busca rostro'}
+          </span>
           <span className="text-[#8FA3B0]">·</span>
           <span className="text-[#8FA3B0] text-[10px]">{telemetry.fps} FPS</span>
         </div>
@@ -164,9 +202,8 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            onClick={toggleRealCamera}
-            title={streamActive ? 'Pausar transmisión de cámara' : 'Activar transmisión de cámara'}
-            className="px-2.5 py-1 bg-black/60 border border-[#05E1FF]/40 rounded-lg text-[11px] font-mono text-[#05E1FF] hover:bg-[#05E1FF]/15 transition-all flex items-center gap-1 backdrop-blur-md cursor-pointer"
+            onClick={() => (streamActive ? stopCamera() : void startCamera())}
+            className="px-2.5 py-1 bg-black/60 border border-[#00E5FF]/40 rounded-lg text-[11px] font-mono text-[#00E5FF] hover:bg-[#00E5FF]/15 transition-all flex items-center gap-1 backdrop-blur-md cursor-pointer"
           >
             {streamActive ? <CameraOff className="w-3.5 h-3.5" /> : <Camera className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline">{streamActive ? 'Pausar' : 'Cámara'}</span>
@@ -174,33 +211,42 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({
           <button
             type="button"
             onClick={onClose}
-            title="Cerrar seguimiento"
-            className="p-1.5 bg-black/60 border border-[#8FA3B0]/30 rounded-lg text-[#8FA3B0] hover:text-[#05E1FF] hover:border-[#05E1FF]/40 transition-all backdrop-blur-md cursor-pointer"
+            className="p-1.5 bg-black/60 border border-[#8FA3B0]/30 rounded-lg text-[#8FA3B0] hover:text-[#00E5FF] hover:border-[#00E5FF]/40 transition-all backdrop-blur-md cursor-pointer"
           >
-            <CameraOff className="w-3.5 h-3.5" />
+            ✕
           </button>
         </div>
       </div>
 
-      {/* Floating PIP Camera in bottom-right corner */}
-      <div className="absolute bottom-6 right-6 flex flex-col items-end gap-1.5 pointer-events-auto">
-        <div className="relative group">
-          <video
-            ref={videoRef}
-            playsInline
-            muted
-            className={`w-36 h-26 object-cover rounded-xl border border-[#05E1FF]/40 shadow-[0_0_20px_rgba(5,225,255,0.2)] scale-x-[-1] transition-all duration-300 ${
-              streamActive ? 'block opacity-90 hover:opacity-100' : 'hidden'
-            }`}
-          />
-          {streamActive && telemetry.detected && (
-            <div className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/75 border border-emerald-400/40 text-[9px] font-mono text-emerald-400">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span>ENFOCADO</span>
-            </div>
-          )}
+      {camError && (
+        <div className="pointer-events-auto mx-auto mt-2 flex max-w-sm items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-950/50 px-3 py-2 text-[11px] text-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+          <span>{camError}</span>
+          <button
+            type="button"
+            className="ml-auto underline"
+            onClick={() => void startCamera()}
+          >
+            Reintentar
+          </button>
+        </div>
+      )}
+
+      {/* PIP camera preview — AI can see this stream */}
+      <div className="pointer-events-none absolute bottom-20 right-4 overflow-hidden rounded-2xl border border-[#00E5FF]/35 shadow-[0_0_24px_rgba(0,229,255,0.25)]">
+        <video
+          ref={videoRef}
+          muted
+          playsInline
+          autoPlay
+          className={`h-28 w-40 object-cover ${streamActive ? 'opacity-100' : 'opacity-40'}`}
+          style={{ transform: 'scaleX(-1)' }}
+        />
+        <div className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded bg-black/60 px-1.5 py-0.5 text-[9px] font-mono text-[#00E5FF]">
+          <span className={`h-1.5 w-1.5 rounded-full ${streamActive ? 'bg-red-500 animate-pulse' : 'bg-gray-500'}`} />
+          LIVE
         </div>
       </div>
     </div>
   );
-};
+});

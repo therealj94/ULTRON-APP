@@ -47,6 +47,8 @@ export const BiometricAuthModal: React.FC<BiometricAuthModalProps> = ({
   }>({ connected: false });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberCreds, setRememberCreds] = useState(true);
 
   // Check health of ultron.ordenglobal.link on open
   useEffect(() => {
@@ -324,13 +326,16 @@ export const BiometricAuthModal: React.FC<BiometricAuthModalProps> = ({
               <div className="relative">
                 <Lock className="w-4 h-4 text-[#8FA3B0] absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
                   placeholder="••••••••••••"
-                  className="w-full pl-9 pr-3 py-2 bg-black/60 border border-[#05E1FF]/30 rounded-lg text-xs font-mono text-white placeholder:text-gray-500 focus:border-[#05E1FF] focus:outline-none"
+                  className="w-full pl-9 pr-12 py-2 bg-black/60 border border-[#05E1FF]/30 rounded-lg text-xs font-mono text-white placeholder:text-gray-500 focus:border-[#05E1FF] focus:outline-none"
                   required
                 />
+                <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8FA3B0] text-[10px] font-mono">
+                  {showPassword ? 'OCULTAR' : 'VER'}
+                </button>
               </div>
             </div>
 

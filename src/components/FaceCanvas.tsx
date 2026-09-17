@@ -42,7 +42,7 @@ interface FaceCanvasProps {
   onPokeBlaster?: () => void;
 }
 
-const MODES: Mode[] = ['GUARDIAN', 'MINING', 'GOLD', 'CREATIVE', 'ANALYTICAL', 'STRATEGIC', 'EXPLORER'];
+const MODES: Mode[] = ['GUARDIAN', 'MINING', 'GOLD', 'CREATIVE', 'ANALYTICAL', 'STRATEGIC', 'EXPLORER', 'CONOCER'];
 
 export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   face,
@@ -136,6 +136,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     tickle: 0,
     visorDrop: hasVisor ? 1 : 0,
     shockwaves: [],
+    yawn: 0,
+    nextYawn: 12 + Math.random() * 10,
   });
 
   // Touch tracking
@@ -383,6 +385,10 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
         return { dilate: 0.2, brow: 0.3, mouth: 0, smile: -0.4, bounce: 0 };
       case 'SCAN':
         return { dilate: 0.3, brow: 0.35, mouth: 0.08, smile: 0, bounce: 0 };
+      case 'YAWNING':
+        return { dilate: 0.28, brow: -0.15, mouth: 0.92, smile: 0.05, bounce: 0.02 };
+      case 'CURIOSITY':
+        return { dilate: 0.48, brow: 0.28, mouth: 0.14, smile: 0.2, bounce: 0.06 };
       case 'IDLE':
       default:
         return { dilate: 0.36, brow: 0, mouth: 0.08, smile: 0.15, bounce: 0 };
@@ -516,6 +522,25 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
           A.ty = (Math.random() - 0.5) * 0.3;
           A.saccadeIn = 1.4 + Math.random() * 2.6;
         }
+      }
+
+      // Idle yawn / restless eyes when waiting for speech a long time
+      if (S.face === 'IDLE' || S.face === 'LISTENING') {
+        A.nextYawn -= dt;
+        if (A.nextYawn <= 0 && now - S.lastInteraction > 8000) {
+          A.nextYawn = 14 + Math.random() * 16;
+          A.yawn = 1;
+          onFaceChange('YAWNING', 2200);
+          // slight eye roll while yawning
+          A.ty = 0.35;
+          setTimeout(() => {
+            if (stateRef.current.face === 'YAWNING') onFaceChange('IDLE', 0);
+          }, 2100);
+        }
+      }
+      if (A.yawn > 0.01) {
+        A.yawn *= 0.965;
+        A.mouthT = Math.max(A.mouthT, 0.55 + A.yawn * 0.4);
       }
 
       // Look interpolation with elastic damping

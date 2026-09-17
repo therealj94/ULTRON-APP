@@ -17,6 +17,10 @@ import { PlaywrightBrowserModal } from './components/PlaywrightBrowserModal';
 import { GlobalOrderBrainModal } from './components/GlobalOrderBrainModal';
 import { AwsDeploymentModal } from './components/AwsDeploymentModal';
 import { TutorialModal } from './components/TutorialModal';
+import { WelcomeBootScreen } from './components/WelcomeBootScreen';
+import type { VisionOverlayHandle } from './components/VisionOverlay';
+import { CONOCER_QUESTIONS, nextConocerIndex, savePersonFact } from './utils/conocerInterview';
+import { EXPERT_MODE_PROMPTS } from './utils/expertModes';
 import { playSfx } from './utils/audio';
 import { cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
 import { DEFAULT_ELEVENLABS_VOICES, speakWithElevenLabsOrFallback, stopCurrentVoice } from './utils/elevenlabs';
@@ -64,7 +68,7 @@ export default function App() {
   const [micEnabled, setMicEnabled] = useState<boolean>(false); // push-to-talk: off al abrir
   const [speakerEnabled, setSpeakerEnabled] = useState<boolean>(true);
   const [soundFxEnabled, setSoundFxEnabled] = useState<boolean>(true);
-  const [visionEnabled, setVisionEnabled] = useState<boolean>(false); // cámara OFF al abrir
+  const [visionEnabled, setVisionEnabled] = useState<boolean>(true); // cámara ON para que la AI vea
   const [resetTrigger, setResetTrigger] = useState<number>(0);
 
   // ElevenLabs Voice Configuration — Nexo by default
@@ -103,6 +107,11 @@ export default function App() {
 
   // Current Authenticated User (Render / Ultron FP & Biometrics)
   const [sessionReady, setSessionReady] = useState(false);
+  const visionRef = useRef<VisionOverlayHandle | null>(null);
+  const [conocerAnswered, setConocerAnswered] = useState<string[]>([]);
+  const [conocerActive, setConocerActive] = useState(false);
+  const conocerIdxRef = useRef(0);
+
   const [currentUser, setCurrentUser] = useState<{
     name: string;
     role: string;
@@ -231,16 +240,29 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Boot corto solo después del login
+  // Bienvenida animada (logo) tras login
   useEffect(() => {
     if (!sessionReady || bootDoneRef.current) return;
+    setVisionEnabled(true);
     const timer = setTimeout(() => {
       if (bootDoneRef.current) return;
       bootDoneRef.current = true;
       setIsBooting(false);
       playSfx('boot', true);
-      vocalize(`Hola ${currentUser.name || ''}. ULTRON listo.`);
-    }, 900);
+      vocalize(
+        `Hola ${currentUser.name || ''}. ULTRON en línea. Cámara lista. Di hey Ultron o toca el micrófono.`
+      );
+      // Ofrecer conocer si es primera sesión del día
+      try {
+        const key = `ultron_conocer_offer_${new Date().toISOString().slice(0, 10)}`;
+        if (!localStorage.getItem(key)) {
+          localStorage.setItem(key, '1');
+          setTimeout(() => {
+            vocalize('Si quieres, activa modo Conocer en ajustes y te haré preguntas para recordarte mejor.', 'HAPPY');
+          }, 4500);
+        }
+      } catch { /* ignore */ }
+    }, 2800);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionReady]);
@@ -642,10 +664,127 @@ export default function App() {
     ]
   );
 
+  const askWithCameraVision = async (cmd: string) => {
+    setVisionEnabled(true);
+    setFace('SCAN');
+    showBubble('Mirando…', 6000);
+    const ok = (await visionRef.current?.ensureCamera()) ?? false;
+    if (!ok) {
+      vocalize('No tengo acceso a la cámara. Activa el permiso y vuelve a preguntarme.');
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 350));
+    const frame = visionRef.current?.captureFrame();
+    if (!frame) {
+      vocalize('La cámara está encendida pero no pude capturar el fotograma. Enséñame de nuevo.');
+      return;
+    }
+    try {
+      setFace('THINKING');
+      const res = await fetch('/api/vision/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mediaType: 'image/jpeg',
+          fileName: 'desk-live.jpg',
+          base64Data: frame,
+          prompt: `El usuario pregunta: "${cmd}". Describe con claridad qué ves (objeto en la mano, rostro, entorno). Español, 1-2 oraciones.`,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'visión falló');
+      vocalize(data.executiveSummary || data.summary || 'Veo la escena, pero sin detalle suficiente.');
+    } catch (e: any) {
+      vocalize(`Problema de visión: ${e.message || 'reintento disponible'}.`);
+    }
+  };
+
+  const startConocerFlow = () => {
+    setMode('CONOCER');
+    setConocerActive(true);
+    const idx = nextConocerIndex(conocerAnswered);
+    conocerIdxRef.current = idx < 0 ? 0 : idx;
+    const q = CONOCER_QUESTIONS[conocerIdxRef.current];
+    playSfx('mode', soundFxEnabled);
+    vocalize(
+      idx < 0
+        ? 'Ya te conozco bastante. ¿Quieres que repase algo o empiece de nuevo?'
+        : `Modo conocer. ${q.prompt}`,
+      'HAPPY'
+    );
+  };
+
+  const handleConocerAnswer = async (answer: string) => {
+    const idx = conocerIdxRef.current;
+    const q = CONOCER_QUESTIONS[idx];
+    if (!q) {
+      setConocerActive(false);
+      vocalize('Perfecto. Guardé lo que me contaste en mi memoria.');
+      return;
+    }
+    await savePersonFact({
+      nombre: currentUser.name || 'Usuario',
+      rol: currentUser.role,
+      correo: currentUser.correo,
+      key: q.memoryKey,
+      value: answer.trim(),
+      conversationId,
+    });
+    setConocerAnswered((prev) => [...prev, q.id]);
+    const next = idx + 1;
+    if (next >= CONOCER_QUESTIONS.length) {
+      setConocerActive(false);
+      vocalize('Gracias. Ya te conozco mejor y lo recordaré.', 'HAPPY');
+      return;
+    }
+    conocerIdxRef.current = next;
+    vocalize(`Anotado. ${CONOCER_QUESTIONS[next].prompt}`, 'LISTENING');
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/ultron/salir', { method: 'POST' });
+    } catch {
+      /* ignore */
+    }
+    setCurrentUser({ name: 'José', role: 'Junta Directiva · Orden Global', authenticated: false });
+    setSessionReady(false);
+    bootDoneRef.current = false;
+    setIsBooting(true);
+    setVisionEnabled(false);
+    vocalize('Sesión cerrada. Hasta pronto.');
+  };
+
   // Dispatcher for voice commands
   const handleVoiceCommand = (cmd: string) => {
     const q = cmd.toLowerCase();
     logBridgeEvent('out', `Comando de voz: "${q}"`);
+
+    // Visión en vivo: qué tengo en la mano / qué ves
+    if (
+      /qué (tengo|hay) en (la |mi )?mano|que (tengo|hay) en (la |mi )?mano|qué ves|que ves|qué estoy (mostrando|sosteniendo)|mira (esto|mi mano)|what do you see|en mi mano/.test(
+        q
+      )
+    ) {
+      void askWithCameraVision(cmd);
+      return;
+    }
+
+    // Modo conocer
+    if (/modo conocer|conóceme|conoceme|quiero que me conozcas|preguntas personales/.test(q)) {
+      startConocerFlow();
+      return;
+    }
+    if (conocerActive || mode === 'CONOCER') {
+      if (/salir|deja de preguntar|basta|cancelar conocer/.test(q)) {
+        setConocerActive(false);
+        setMode('GUARDIAN');
+        vocalize('Salgo de modo conocer.');
+        return;
+      }
+      void handleConocerAnswer(cmd);
+      return;
+    }
 
     // 1. Camera Photo with 3-2-1 Countdown & Live Stream
     if (/foto|captura|fotograf|selfie|picture|cámara|sonríe/.test(q)) {
@@ -1162,7 +1301,7 @@ export default function App() {
           id="ultron-mode-tag"
           className="absolute left-1/2 bottom-[8%] -translate-x-1/2 z-10 font-display font-bold tracking-[0.38em] text-sm text-[#05E1FF]/70 pointer-events-none flex items-center gap-2"
         >
-          <span>{mode}</span>
+          <span>{EXPERT_MODE_PROMPTS[mode]?.title || mode}</span>
           {mode === 'GOLD' && <Sparkles className="w-3.5 h-3.5 text-[#F5C542]" />}
         </div>
 
@@ -1179,6 +1318,7 @@ export default function App() {
 
         {/* Vision & Optical Tracking HUD Overlay with Spatial Tracking and Quick Actions */}
         <VisionOverlay
+          ref={visionRef}
           isActive={visionEnabled}
           onClose={() => setVisionEnabled(false)}
           onGazeUpdate={setCameraGaze}
@@ -1304,11 +1444,18 @@ export default function App() {
           currentFace={face}
           soundFxEnabled={soundFxEnabled}
           speakerEnabled={speakerEnabled}
+          currentUser={currentUser}
           onClose={() => setSettingsOpen(false)}
           onSelectMode={(newMode) => {
             setMode(newMode);
             playSfx(newMode === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
-            vocalize(`Modo ${newMode} configurado.`);
+            const meta = EXPERT_MODE_PROMPTS[newMode];
+            if (newMode === 'CONOCER') {
+              startConocerFlow();
+              return;
+            }
+            setConocerActive(false);
+            vocalize(`Modo ${meta.title}: actúo como ${meta.role}.`);
           }}
           onSelectFace={(newFace) => {
             handleFaceChange(newFace, newFace === 'IDLE' ? 0 : 2500);
@@ -1343,6 +1490,8 @@ export default function App() {
             setSettingsOpen(false);
             downloadStandaloneSimulator();
           }}
+          onLogout={handleLogout}
+          onStartConocer={startConocerFlow}
         />
 
         {/* Permission Gate Modal */}
@@ -1497,28 +1646,7 @@ export default function App() {
           soundFxEnabled={soundFxEnabled}
         />
 
-        {/* Initial Boot Screen */}
-        <div
-          id="ultron-boot-screen"
-          className={`absolute inset-0 z-50 flex items-center justify-center transition-opacity duration-700 ${
-            isBooting ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
-          }`}
-          style={{ background: 'radial-gradient(80% 60% at 50% 40%, rgba(62,201,214,0.08), #07090c 70%)' }}
-        >
-          <div className="flex flex-col items-center gap-3">
-            <svg width="72" height="56" viewBox="0 0 68 52" fill="none">
-              <path d="M6 36C6 14 62 14 62 36" stroke="#3EC9D6" strokeWidth="2" opacity="0.9" />
-              <circle cx="34" cy="34" r="11" stroke="#3EC9D6" strokeWidth="1.8" />
-              <circle cx="34" cy="34" r="3" fill="#3EC9D6" />
-            </svg>
-            <h1 className="font-display font-bold tracking-[0.28em] text-2xl text-[var(--ink)]">
-              ULTRON FP
-            </h1>
-            <p className="font-body text-xs text-[var(--muted)] tracking-[0.18em] uppercase">
-              Desk assistant
-            </p>
-          </div>
-        </div>
+        <WelcomeBootScreen visible={isBooting && sessionReady} userName={currentUser.name} />
       </div>
     </div>
     </OrientationGate>
