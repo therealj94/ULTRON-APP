@@ -2,11 +2,19 @@
  * Micrófono siempre-on sin módulo ASR nativo roto en EAS:
  * graba chunks cortos con expo-av → /api/stt/transcribe.
  * El botón Mic solo MUTEA / DESMUTEA.
+ *
+ * VAD (idea DeskBot EnergyActivityDetector): no enviar silencio al STT.
+ * Usa metering dBFS de expo-av; si el dispositivo no reporta metering, se transcribe igual.
  */
 import { Audio } from 'expo-av';
 import { PermissionsAndroid, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { API_BASE } from '../config';
+
+/** dBFS: ~0 pico, ~-160 silencio. Umbral suave para voz conversacional. */
+const VAD_METERING_THRESHOLD_DB = -48;
+/** Mínimo de muestras metering válidas para confiar en el gate. */
+const VAD_MIN_SAMPLES = 3;
 
 export type SpeechCallbacks = {
   onPartial?: (text: string) => void;
@@ -20,6 +28,9 @@ let wanted = true;
 let loopAlive = false;
 let recording: Audio.Recording | null = null;
 let pausedForTts = false;
+/** Peak metering del chunk actual (dBFS); null si aún no hubo lecturas. */
+let chunkPeakMetering: number | null = null;
+let chunkMeterSamples = 0;
 
 export function setSpeechCallbacks(cb: SpeechCallbacks) {
   callbacks = cb;
@@ -73,6 +84,28 @@ async function transcribeFile(uri: string): Promise<string> {
   }
 }
 
+function resetChunkMeter() {
+  chunkPeakMetering = null;
+  chunkMeterSamples = 0;
+}
+
+function onRecordingStatus(status: Audio.RecordingStatus) {
+  if (!status.isRecording) return;
+  const m = status.metering;
+  if (typeof m !== 'number' || Number.isNaN(m)) return;
+  chunkMeterSamples += 1;
+  chunkPeakMetering =
+    chunkPeakMetering == null ? m : Math.max(chunkPeakMetering, m);
+}
+
+/** true = hay actividad de voz (o metering no disponible → no bloquear). */
+function chunkHasVoiceActivity(): boolean {
+  if (chunkMeterSamples < VAD_MIN_SAMPLES || chunkPeakMetering == null) {
+    return true;
+  }
+  return chunkPeakMetering >= VAD_METERING_THRESHOLD_DB;
+}
+
 async function stopRecording(): Promise<string | null> {
   if (!recording) return null;
   try {
@@ -89,6 +122,7 @@ async function stopRecording(): Promise<string | null> {
 async function startChunk() {
   if (!wanted || pausedForTts || !loopAlive) return;
   try {
+    resetChunkMeter();
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
       playsInSilentModeIOS: true,
@@ -96,7 +130,12 @@ async function startChunk() {
       playThroughEarpieceAndroid: false,
     });
     const rec = new Audio.Recording();
-    await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+    await rec.prepareToRecordAsync({
+      ...Audio.RecordingOptionsPresets.HIGH_QUALITY,
+      isMeteringEnabled: true,
+    });
+    rec.setProgressUpdateInterval(100);
+    rec.setOnRecordingStatusUpdate(onRecordingStatus);
     await rec.startAsync();
     recording = rec;
     callbacks.onListeningChange?.(true);
@@ -116,20 +155,24 @@ async function tickLoop() {
     // Escucha ~2.4s por chunk
     await new Promise((r) => setTimeout(r, 2400));
     if (!loopAlive) break;
+    const hadVoice = chunkHasVoiceActivity();
     const uri = await stopRecording();
     callbacks.onListeningChange?.(false);
     if (uri && wanted && !pausedForTts) {
-      const text = await transcribeFile(uri);
+      if (hadVoice) {
+        const text = await transcribeFile(uri);
+        if (text) {
+          callbacks.onPartial?.(text);
+          callbacks.onFinal?.(text);
+        }
+      }
       try {
         await FileSystem.deleteAsync(uri, { idempotent: true });
       } catch {
         /* */
       }
-      if (text) {
-        callbacks.onPartial?.(text);
-        callbacks.onFinal?.(text);
-      }
     }
+    resetChunkMeter();
     await new Promise((r) => setTimeout(r, 180));
   }
 }
