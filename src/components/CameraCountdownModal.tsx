@@ -125,7 +125,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
       // Reset transform for cyber HUD overlay stamp
       ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-      // Cyber LOOI Watermark Stamp in bottom corner
+      // Cyber watermark Stamp in bottom corner
       ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
       ctx.fillRect(24, height - 60, 360, 36);
       ctx.strokeStyle = '#05E1FF';
@@ -134,7 +134,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
 
       ctx.fillStyle = '#05E1FF';
       ctx.font = 'bold 14px monospace';
-      ctx.fillText(`ULTRON FP · LOOI CAM [${new Date().toLocaleTimeString()}]`, 36, height - 37);
+      ctx.fillText(`ULTRON FP · CAM [${new Date().toLocaleTimeString()}]`, 36, height - 37);
 
       const dataUrl = canvas.toDataURL('image/png', 0.95);
       setCapturedImage(dataUrl);
@@ -193,7 +193,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
     if (!capturedImage) return;
     const a = document.createElement('a');
     a.href = capturedImage;
-    a.download = `ultron-looi-camera-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
+    a.download = `ultron-fp-camera-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -230,7 +230,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
             </div>
             <div>
               <h3 className="text-white font-mono font-bold text-base tracking-wide flex items-center gap-2">
-                LOOI OPTICAL SHUTTER · CÁMARA EN VIVO
+                OPTICAL SHUTTER · CÁMARA EN VIVO
                 <span className="text-[10px] uppercase px-2 py-0.5 rounded-full bg-[#05E1FF]/20 text-[#05E1FF] border border-[#05E1FF]/40">
                   FHD 1080P
                 </span>
@@ -330,7 +330,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                     </span>
                   </div>
                   <span className="mt-4 text-white font-mono text-sm tracking-widest uppercase bg-black/70 px-4 py-1.5 rounded-full border border-[#05E1FF]/40">
-                    ¡SONRÍE AL ROBOT LOOI!
+                    ¡SONRÍE!
                   </span>
                 </div>
               )}

@@ -21,7 +21,7 @@ import { playSfx } from './utils/audio';
 import { cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
 import { DEFAULT_ELEVENLABS_VOICES, speakWithElevenLabsOrFallback, stopCurrentVoice } from './utils/elevenlabs';
 import { downloadStandaloneSimulator } from './utils/exporter';
-import { Maximize2, Minimize2, Camera, ShieldCheck, Sparkles, RotateCcw } from 'lucide-react';
+import { Maximize2, Minimize2, Camera, ShieldCheck, Sparkles, RotateCcw, Mic, MicOff } from 'lucide-react';
 import { AgenticHarnessModal } from './components/AgenticHarnessModal';
 import { analyzeConversationTopic, SemanticClassification } from './utils/qwenHarness';
 import { streamUltronChat } from './utils/ultronChat';
@@ -29,6 +29,7 @@ import { LoginScreen } from './components/LoginScreen';
 import { OrientationGate } from './components/OrientationGate';
 import { LooiSidebar, DeskPresence } from './components/LooiSidebar';
 import { SpeechBubble } from './components/SpeechBubble';
+import { isHeyUltron, stripHeyUltron } from './utils/wakeWord';
 
 export default function App() {
   // Session State
@@ -38,8 +39,13 @@ export default function App() {
   const [isBooting, setIsBooting] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isKioskFrame, setIsKioskFrame] = useState<boolean>(false);
-  const [hasVisor, setHasVisor] = useState<boolean>(false); // LOOI Cyber Sunglasses (Photo 2)
-  const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal'); // Horizontal (desk LOOI) or Vertical (mobile)
+  const [hasVisor, setHasVisor] = useState<boolean>(false);
+  const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal');
+  const [screenFlash, setScreenFlash] = useState<'none' | 'warn' | 'danger'>('none');
+  const [commandListening, setCommandListening] = useState(false);
+  const speakingRef = useRef(false);
+  const lastSpokenRef = useRef({ text: '', at: 0 });
+  const listenModeRef = useRef<'wake' | 'command'>('wake');
 
   // Camera Sensor & Gaze Tracking
   const [cameraGaze, setCameraGaze] = useState<{ x: number; y: number; active: boolean }>({
@@ -152,15 +158,31 @@ export default function App() {
     }, Math.max(durationMs, 5000));
   }, []);
 
-  // Voice: siempre ElevenLabs (proxy). Timeout de seguridad para no dejar SPEAKING/ojos pegados.
+  // Voice: una sola voz a la vez. Frases cortas → local; resto ElevenLabs.
   const vocalize = useCallback(
-    (text: string, faceOverride: FaceState = 'SPEAKING') => {
+    (text: string, faceOverride: FaceState = 'SPEAKING', opts?: { forceEleven?: boolean; allowRepeat?: boolean }) => {
       const clean = text.trim();
       if (!clean) return;
+
+      const now = Date.now();
+      // Evitar hablar dos veces el mismo texto seguido
+      if (
+        !opts?.allowRepeat &&
+        lastSpokenRef.current.text === clean &&
+        now - lastSpokenRef.current.at < 4500
+      ) {
+        return;
+      }
+      // Si ya hay voz activa, cortar y no apilar
+      stopCurrentVoice();
+      chatAbortRef.current?.abort();
+
+      lastSpokenRef.current = { text: clean, at: now };
       showBubble(clean, Math.min(12000, 2200 + clean.length * 45));
       if (!speakerEnabled) return;
 
       if (speakSafetyRef.current) clearTimeout(speakSafetyRef.current);
+      speakingRef.current = true;
       setFace(faceOverride);
 
       const releaseFace = () => {
@@ -168,17 +190,25 @@ export default function App() {
           clearTimeout(speakSafetyRef.current);
           speakSafetyRef.current = null;
         }
+        speakingRef.current = false;
         setFace((curr) => (curr === faceOverride || curr === 'SPEAKING' ? 'IDLE' : curr));
       };
 
-      // Si el audio se cuelga, soltar cara a los ~12s
       speakSafetyRef.current = setTimeout(releaseFace, 12000);
 
-      void speakWithElevenLabsOrFallback(clean, activeVoice, {
-        onStart: () => setFace(faceOverride),
-        onEnd: releaseFace,
-        onError: () => releaseFace(),
-      });
+      void speakWithElevenLabsOrFallback(
+        clean,
+        activeVoice,
+        {
+          onStart: () => {
+            speakingRef.current = true;
+            setFace(faceOverride);
+          },
+          onEnd: releaseFace,
+          onError: () => releaseFace(),
+        },
+        { forceEleven: opts?.forceEleven }
+      );
     },
     [showBubble, speakerEnabled, activeVoice]
   );
@@ -248,14 +278,20 @@ export default function App() {
   // Wake and Sleep
   const handleWake = useCallback(() => {
     setFace('IDLE');
+    setDeskPresence('stay');
     playSfx('wake', soundFxEnabled);
-    vocalize('Sistemas activos y listos para la sesión.');
+    vocalize('Listo.');
   }, [soundFxEnabled, vocalize]);
 
   const handleSleep = useCallback(() => {
     setFace('SLEEPING');
+    setDeskPresence('sleep');
+    setCommandListening(false);
+    setMicEnabled(false);
+    listenModeRef.current = 'wake';
     playSfx('sleep', soundFxEnabled);
-    vocalize('Entrando en modo de reposo y ahorro energético.', 'SLEEPING');
+    // Sin frase larga; confirmación local corta
+    vocalize('Modo sleep.', 'SLEEPING');
   }, [soundFxEnabled, vocalize]);
 
   // Trigger expressive photo capture with shutter effect
@@ -303,16 +339,17 @@ export default function App() {
     setIsCombatBlasterActive(true);
     setFace('FURY');
     playSfx('angry', soundFxEnabled);
-    vocalize('¡Alerta de combate! Cañones blaster desplegados.');
+    vocalize('¡Alerta!');
 
     combatTimerRef.current = setTimeout(() => {
       setIsCombatBlasterActive(false);
+      setScreenFlash('none');
       setFace('IDLE');
     }, 3200);
   }, [soundFxEnabled, vocalize]);
 
-  // Force Reset & Normalize Ultron back to calm IDLE state
-  const handleNormalize = useCallback(() => {
+  // Force Reset & Normalize Ultron back to calm IDLE state (silencioso por defecto)
+  const handleNormalize = useCallback((opts?: { silent?: boolean }) => {
     if (combatTimerRef.current) clearTimeout(combatTimerRef.current);
     if (drinkTimerRef.current) clearTimeout(drinkTimerRef.current);
     if (waveTimerRef.current) clearTimeout(waveTimerRef.current);
@@ -321,11 +358,16 @@ export default function App() {
     setIsDrinking(false);
     setIsWaving(false);
     setIsCameraFlashing(false);
+    setScreenFlash('none');
     setFace('IDLE');
     setResetTrigger((prev) => prev + 1);
     stopCurrentVoice();
+    speakingRef.current = false;
     playSfx('tap', soundFxEnabled);
-    vocalize('Sistemas defensivos retraídos. Estado normalizado.');
+    if (!opts?.silent) {
+      // Sin “me reset”: solo confirma corto si el usuario lo pidió por voz
+      vocalize('Listo.');
+    }
   }, [soundFxEnabled, vocalize]);
 
   // Handle presence events from optical tracking (cooldown anti-loop)
@@ -340,9 +382,9 @@ export default function App() {
     }
   }, [handleTriggerWave, handleTriggerDrink]);
 
-  // Speech Recognition — solo con mic ON; no barge-in mientras habla (evita glitch)
+  // Escucha continua: wake "hey ultron" (también en sleep) + modo comando
   useEffect(() => {
-    if (!micEnabled || deskPresence === 'sleep') {
+    if (!sessionReady) {
       if (speechRecognizerRef.current) {
         speechRecognizerRef.current.stop();
         speechRecognizerRef.current = null;
@@ -350,24 +392,81 @@ export default function App() {
       return;
     }
 
+    const enterCommandMode = (hint?: string) => {
+      if (deskPresence === 'sleep') {
+        setDeskPresence('stay');
+      }
+      listenModeRef.current = 'command';
+      setCommandListening(true);
+      setMicEnabled(true);
+      setFace('LISTENING');
+      showBubble(hint || 'Te escucho…', 4000);
+      playSfx('listen', soundFxEnabled);
+    };
+
     const rec = initSpeechRecognizer(
       (text, isFinal) => {
         if (!text.trim()) return;
+        const raw = text.trim();
+
+        // En sleep solo reacciona a hey ultron
+        if (deskPresence === 'sleep' && !isHeyUltron(raw)) {
+          return;
+        }
+
+        // Barge-in: si está hablando y dice hey ultron → corta y escucha
+        if (speakingRef.current && isHeyUltron(raw)) {
+          cancelSpeech();
+          stopCurrentVoice();
+          speakingRef.current = false;
+          chatAbortRef.current?.abort();
+          enterCommandMode('Hey Ultron — te escucho');
+          const rest = stripHeyUltron(raw);
+          if (isFinal && rest.length > 2) {
+            listenModeRef.current = 'wake';
+            setCommandListening(false);
+            setMicEnabled(false);
+            handleVoiceCommand(rest);
+          }
+          return;
+        }
+
+        if (listenModeRef.current === 'wake' || deskPresence === 'sleep') {
+          if (isHeyUltron(raw)) {
+            if (speakingRef.current) {
+              cancelSpeech();
+              stopCurrentVoice();
+              speakingRef.current = false;
+              chatAbortRef.current?.abort();
+            }
+            enterCommandMode('Hey Ultron — te escucho');
+            const rest = stripHeyUltron(raw);
+            if (isFinal && rest.length > 2) {
+              listenModeRef.current = 'wake';
+              setCommandListening(false);
+              setMicEnabled(false);
+              handleVoiceCommand(rest);
+            }
+          }
+          return;
+        }
+
+        // Modo comando
         if (isFinal) {
-          setMicEnabled(false); // una orden y se apaga (push-to-talk)
-          handleVoiceCommand(text.trim());
+          listenModeRef.current = 'wake';
+          setCommandListening(false);
+          setMicEnabled(false);
+          const cmd = stripHeyUltron(raw) || raw;
+          if (cmd.length > 1) handleVoiceCommand(cmd);
         } else {
-          showBubble(text, 2500);
+          showBubble(raw, 2500);
           setFace((f) => (f === 'SPEAKING' ? f : 'LISTENING'));
         }
       },
       () => {
-        // Barge-in solo si no estamos en TTS activo
-        if (face === 'SPEAKING') return;
-        cancelSpeech();
-        chatAbortRef.current?.abort();
-        setFace('LISTENING');
-        showBubble('Escuchando…');
+        if (listenModeRef.current === 'command' && !speakingRef.current) {
+          setFace('LISTENING');
+        }
       },
       () => {},
       () => {}
@@ -376,8 +475,6 @@ export default function App() {
     if (rec) {
       speechRecognizerRef.current = rec;
       rec.start();
-      setFace('LISTENING');
-      showBubble('Te escucho…', 4000);
     }
 
     return () => {
@@ -387,33 +484,63 @@ export default function App() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [micEnabled, deskPresence]);
+  }, [sessionReady, deskPresence]);
 
-  // Manual Trigger Voice (push-to-talk)
+  // Manual Trigger Voice (botón mic / push-to-talk)
   const triggerVoicePipeline = () => {
     if (deskPresence === 'sleep') {
       setDeskPresence('stay');
       setFace('IDLE');
     }
     playSfx('tap', soundFxEnabled);
+    cancelSpeech();
+    stopCurrentVoice();
+    speakingRef.current = false;
+    listenModeRef.current = 'command';
+    setCommandListening(true);
     setMicEnabled(true);
+    setFace('LISTENING');
+    showBubble('Te escucho…', 4000);
   };
 
   const handleDeskPresence = (p: DeskPresence) => {
     setDeskPresence(p);
     if (p === 'sleep') {
       setMicEnabled(false);
+      setCommandListening(false);
+      listenModeRef.current = 'wake';
       setVisionEnabled(false);
       handleSleep();
     } else if (p === 'stay') {
       setFace('IDLE');
       setMicEnabled(false);
+      setCommandListening(false);
+      listenModeRef.current = 'wake';
       vocalize('Modo stay.');
     } else {
       setMode('EXPLORER');
       setFace('HAPPY');
+      setCommandListening(false);
+      listenModeRef.current = 'wake';
       vocalize('Modo explore.');
     }
+  };
+
+  const handlePokeWarn = () => {
+    setScreenFlash('warn');
+    playSfx('warning', soundFxEnabled);
+    setTimeout(() => setScreenFlash((f) => (f === 'warn' ? 'none' : f)), 1200);
+  };
+
+  const handlePokeBlaster = () => {
+    setScreenFlash('danger');
+    setIsCombatBlasterActive(true);
+    setFace('FURY');
+    if (combatTimerRef.current) clearTimeout(combatTimerRef.current);
+    combatTimerRef.current = setTimeout(() => {
+      setScreenFlash('none');
+      handleNormalize({ silent: true });
+    }, 3200);
   };
 
   // Thinking & Speaking Simulation
@@ -665,7 +792,7 @@ export default function App() {
       setHasVisor((prev) => {
         const next = !prev;
         playSfx('visor', soundFxEnabled);
-        vocalize(next ? 'Gafas cibernéticas LOOI equipadas.' : 'Gafas guardadas.');
+        vocalize(next ? 'Visor equipado.' : 'Visor guardado.');
         return next;
       });
       return;
@@ -833,7 +960,7 @@ export default function App() {
     >
       {!sessionReady && <LoginScreen onAuthenticated={handleLoginSuccess} />}
 
-      {/* Stand Frame Container: Supports both Horizontal (Desk Kiosk LOOI Stand) and Vertical (Handheld Smartphone) */}
+        {/* Stand Frame */}
       <div
         id="ultron-stand-container"
         className={`relative overflow-hidden transition-all duration-300 flex items-center justify-center ${
@@ -844,7 +971,7 @@ export default function App() {
             : 'w-full h-full max-w-full max-h-full'
         }`}
       >
-        {/* Procedural Living Face Canvas with LOOI OLED & Interaction Physics */}
+        {/* Face canvas */}
         <FaceCanvas
           face={face}
           mode={mode}
@@ -867,7 +994,7 @@ export default function App() {
               dataUrl,
               timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
               mode,
-              caption: `Captura LOOI Desktop Agent · Expresión ${face} · Modo ${mode}`,
+              caption: `Captura ULTRON FP · Expresión ${face} · Modo ${mode}`,
             };
             setPhotos((prev) => [newPhoto, ...prev]);
             setIsPhotoModalOpen(true);
@@ -900,9 +1027,20 @@ export default function App() {
             setDockOpen(false);
             setSettingsOpen(false);
           }}
+          onPokeWarn={handlePokeWarn}
+          onPokeBlaster={handlePokeBlaster}
         />
 
-        {/* Clean LOOI top strip — mínimo, sin cámara auto */}
+        {/* Flash amarillo (2 toques) / rojo (3 toques + blaster) */}
+        {screenFlash !== 'none' && (
+          <div
+            className={`pointer-events-none absolute inset-0 z-40 transition-opacity duration-200 ${
+              screenFlash === 'warn' ? 'bg-[#F5C542]/35' : 'bg-[#E84A4A]/45'
+            }`}
+          />
+        )}
+
+        {/* Clean top strip */}
         <div className="absolute top-3 left-4 right-[88px] z-20 flex items-center justify-between pointer-events-none">
           <div className="flex items-center gap-2 pointer-events-auto">
             <div className="ui-chip ui-chip--live font-display font-semibold tracking-[0.14em]">
@@ -918,9 +1056,9 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 pointer-events-auto">
-            {face === 'LISTENING' && (
+            {face === 'LISTENING' || commandListening ? (
               <div className="ui-chip ui-chip--live font-display tracking-[0.16em]">ESCUCHANDO</div>
-            )}
+            ) : null}
             {face === 'SPEAKING' && (
               <div className="ui-chip ui-chip--live font-display tracking-[0.16em]">HABLANDO</div>
             )}
@@ -941,8 +1079,8 @@ export default function App() {
             </button>
             <button
               type="button"
-              onClick={handleNormalize}
-              title="Normalizar"
+              onClick={() => handleNormalize({ silent: true })}
+              title="Normalizar (silencioso)"
               className="p-2 rounded-full border border-emerald-400/40 bg-black/60 text-emerald-400 hover:bg-emerald-400/20 transition-all cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -958,14 +1096,14 @@ export default function App() {
           </div>
         </div>
 
-        {/* LOOI speech bubble (derecha) */}
+        {/* Speech bubble abajo-derecha (no tapa los ojos) */}
         <SpeechBubble
           text={bubbleText}
           visible={bubbleVisible && deskPresence !== 'sleep'}
           hint={
             fullBubbleText.length > 180
               ? 'Toca: ¿quieres el completo o solo el resumen?'
-              : 'ULTRON · ElevenLabs'
+              : 'Di «hey Ultron» o usa el mic'
           }
           onExpand={() => {
             if (fullBubbleText.length > 180) {
@@ -982,7 +1120,37 @@ export default function App() {
           compact={wantDetail !== 'full'}
         />
 
-        {/* LOOI sidebar: sleep / stay / explore + menú */}
+        {/* Micrófono manual — esquina inferior izquierda (encima del canvas) */}
+        <button
+          type="button"
+          id="ultron-mic-btn"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (commandListening || micEnabled) {
+              listenModeRef.current = 'wake';
+              setCommandListening(false);
+              setMicEnabled(false);
+              setFace('IDLE');
+              showBubble('Mic off', 1500);
+            } else {
+              triggerVoicePipeline();
+            }
+          }}
+          title={commandListening ? 'Dejar de escuchar' : 'Activar micrófono (o di hey Ultron)'}
+          className={`pointer-events-auto absolute bottom-5 left-5 z-[60] flex h-16 w-16 items-center justify-center rounded-full border-2 transition-all ${
+            commandListening || micEnabled
+              ? 'border-[#3EC9D6] bg-[#3EC9D6]/30 text-[#7AE4EF] shadow-[0_0_24px_rgba(62,201,214,0.55)] scale-105'
+              : 'border-white/20 bg-[#0c1016]/95 text-[#E8EEF4] hover:border-[#3EC9D6]/50'
+          }`}
+        >
+          {commandListening || micEnabled ? <Mic className="h-7 w-7" /> : <MicOff className="h-7 w-7" />}
+        </button>
+
+        {/* Sidebar: sleep / stay / explore + menú */}
         <LooiSidebar
           presence={deskPresence}
           onPresenceChange={handleDeskPresence}
@@ -1077,7 +1245,7 @@ export default function App() {
           }}
           onResetToNormal={() => {
             setDockOpen(false);
-            handleNormalize();
+            handleNormalize({ silent: true });
           }}
           onOpenCloudModal={() => {
             setDockOpen(false);
@@ -1311,7 +1479,7 @@ export default function App() {
         <GlobalOrderBrainModal
           isOpen={isGlobalOrderBrainOpen}
           onClose={() => setIsGlobalOrderBrainOpen(false)}
-          onSpeak={(t) => vocalize(t)}
+          onSpeakDoctrine={(t) => vocalize(t, 'SPEAKING', { forceEleven: true })}
         />
 
         {/* Cloud Infrastructure & Live Render Deployment Modal */}

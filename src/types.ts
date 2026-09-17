@@ -74,7 +74,7 @@ export interface AnimationEngineState {
   pulse: number;
   think: number;
   sleepZ: number;
-  // LOOI Interactive Physics
+  // Interactive Physics
   jiggle: number;
   tickle: number;
   visorDrop: number; // 0 (hidden) to 1 (fully worn)
