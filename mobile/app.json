@@ -40,8 +40,9 @@
     "extra": {
       "ultronUrl": "https://ultron-looi-desk.onrender.com",
       "eas": {
-        "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
+        "projectId": "d41656ec-6fc7-4fd2-b183-eba687473fd9"
       }
-    }
+    },
+    "owner": "vetawallet"
   }
 }
