@@ -28,6 +28,7 @@ import {
   upsertPerson,
 } from './src/server/tts/personMemory';
 import { synthesizeWithQwenTts, ttsNodeStatus, ttsSalud } from './src/server/tts/qwenTtsClient';
+import { applyVocalPerformance } from './src/server/tts/vocalPerformance';
 import { buildPersonalityBlock } from './src/server/tts/personalidad';
 import {
   getEmotionSnapshot,
@@ -471,7 +472,24 @@ app.post('/api/aws/tts-node/start', async (_req, res) => {
 
 app.get('/api/tts/normalize', (req, res) => {
   const text = String(req.query.text || '');
-  res.json({ input: text, output: normalizeNumbersForSpeech(text) });
+  const perf = applyVocalPerformance(text);
+  res.json({
+    input: text,
+    output: normalizeNumbersForSpeech(perf.spoken),
+    performance: {
+      spoken: perf.spoken,
+      instructAddon: perf.instructAddon,
+      genre: perf.genre,
+      tags: perf.tags,
+      isPerformance: perf.isPerformance,
+    },
+  });
+});
+
+/** Preview del motor vocal (tags → texto + instruct) sin sintetizar audio. */
+app.get('/api/tts/vocal-preview', (req, res) => {
+  const text = String(req.query.text || '');
+  res.json(applyVocalPerformance(text));
 });
 
 app.get('/api/memoria/personas', (_req, res) => {

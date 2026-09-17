@@ -4,31 +4,19 @@
  */
 import type { FaceState } from '../types';
 import type { UltronEmotion } from './faceEmotionMap';
+import { pickSongLines } from '../server/tts/vocalPerformance';
 
 export type VoiceAct = {
   id: string;
   face: FaceState;
   emotion: UltronEmotion;
   sfx?: string;
-  /** Texto hablado (puede incluir pausas humanas con … y saltos) */
+  /** Texto hablado (puede incluir tags [breath] y pausas humanas) */
   lines: string[];
   /** Pausa entre líneas (ms) */
   lineGapMs?: number;
   pauseMs?: number;
 };
-
-const SONG_BREATH =
-  'Hmm… déjame tomar aire…\n' +
-  'En la noche quieta, brillan dos luces de cian…\n' +
-  '…\n' +
-  'Si me llamas, yo respondo con calma…\n' +
-  'ULTRON te escucha… sin prisa… contigo.';
-
-const SONG_SOFT =
-  'Jeje… una canción corta…\n' +
-  'Respira… uno… dos…\n' +
-  'No estás solo en la junta…\n' +
-  'Yo estoy aquí… cuando digas hey Ultron.';
 
 /** Patrones: emoción / gesto / canción */
 export function matchVoiceAct(raw: string): VoiceAct | null {
@@ -36,14 +24,17 @@ export function matchVoiceAct(raw: string): VoiceAct | null {
 
   if (/canta|cancion|karaoke|entona|hum(ea)?/.test(q)) {
     const soft = /suave|lenta|cuna|triste/.test(q);
+    const jazz = /jazz|swing/.test(q);
+    const pop = /pop|alegre|fiesta/.test(q);
+    const kind = soft ? 'soft' : jazz ? 'jazz' : pop ? 'pop' : 'ballad';
     return {
-      id: soft ? 'song_soft' : 'song',
+      id: `song_${kind}`,
       face: 'MUSIC',
       emotion: soft ? 'TRISTE' : 'EMOCIONADO',
       sfx: 'wave',
-      lines: (soft ? SONG_SOFT : SONG_BREATH).split('\n').filter(Boolean),
-      lineGapMs: 900,
-      pauseMs: 600,
+      lines: pickSongLines(kind),
+      lineGapMs: soft ? 1000 : 850,
+      pauseMs: 550,
     };
   }
 

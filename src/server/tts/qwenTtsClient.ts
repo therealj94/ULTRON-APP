@@ -4,6 +4,7 @@
  */
 import { getVoice, UltronVoiceId } from './voices';
 import { normalizeNumbersForSpeech } from './normalizeNumbers';
+import { applyVocalPerformance } from './vocalPerformance';
 
 const TTS_URL = (process.env.ULTRON_TTS_URL || '').replace(/\/+$/, '');
 const TTS_CLAVE = (process.env.ULTRON_TTS_CLAVE || '').trim();
@@ -46,11 +47,13 @@ export async function synthesizeWithQwenTts(opts: {
 }): Promise<{ ok: true; audio: Buffer; contentType: string } | { ok: false; error: string }> {
   if (!TTS_URL) return { ok: false, error: 'ULTRON_TTS_URL no configurada' };
   const voice = getVoice(opts.voice);
-  const text = normalizeNumbersForSpeech(opts.text.trim());
+  // 1) performance tags → texto + instruct  2) números hablados
+  const perf = applyVocalPerformance(opts.text.trim());
+  const text = normalizeNumbersForSpeech(perf.spoken);
   if (!text) return { ok: false, error: 'texto vacío' };
-  const instruct = opts.instructAddon
-    ? `${voice.instruct}; ${opts.instructAddon}`
-    : voice.instruct;
+  const instruct = [voice.instruct, perf.instructAddon, opts.instructAddon]
+    .filter(Boolean)
+    .join('; ');
 
   try {
     const r = await fetch(`${TTS_URL}/synthesize`, {
