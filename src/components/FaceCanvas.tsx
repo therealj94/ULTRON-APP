@@ -1077,10 +1077,10 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
       ctx.fill();
 
-      // Draw Mode Specific Eye Glyphs (Faithful to Image 3 Tablets!)
-      drawModeEyeGlyph(ctx, rx, ry, side, S.mode, theme, S.t, A);
+      // Ojos limpios (sin glifos/escudos dentro) — más legible en desk
+      // drawModeEyeGlyph omitted by design
 
-      // Specular Catchlight Highlights (LOOI spherical disc)
+      // Specular Catchlight Highlights
       const lookOffsetX = A.lx * rx * 0.32;
       const lookOffsetY = A.ly * ry * 0.32;
 

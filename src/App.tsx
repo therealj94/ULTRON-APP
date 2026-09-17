@@ -529,14 +529,13 @@ export default function App() {
   const handlePokeWarn = () => {
     setScreenFlash('warn');
     playSfx('warning', soundFxEnabled);
-    setTimeout(() => setScreenFlash('none'), 900);
+    setTimeout(() => setScreenFlash((f) => (f === 'warn' ? 'none' : f)), 1200);
   };
 
   const handlePokeBlaster = () => {
     setScreenFlash('danger');
     setIsCombatBlasterActive(true);
     setFace('FURY');
-    // Auto reset silencioso tras blasters
     if (combatTimerRef.current) clearTimeout(combatTimerRef.current);
     combatTimerRef.current = setTimeout(() => {
       setScreenFlash('none');
@@ -1057,9 +1056,9 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 pointer-events-auto">
-            {face === 'LISTENING' && (
+            {face === 'LISTENING' || commandListening ? (
               <div className="ui-chip ui-chip--live font-display tracking-[0.16em]">ESCUCHANDO</div>
-            )}
+            ) : null}
             {face === 'SPEAKING' && (
               <div className="ui-chip ui-chip--live font-display tracking-[0.16em]">HABLANDO</div>
             )}
@@ -1121,10 +1120,16 @@ export default function App() {
           compact={wantDetail !== 'full'}
         />
 
-        {/* Micrófono manual — esquina inferior izquierda */}
+        {/* Micrófono manual — esquina inferior izquierda (encima del canvas) */}
         <button
           type="button"
-          onClick={() => {
+          id="ultron-mic-btn"
+          onPointerDown={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+          }}
+          onClick={(e) => {
+            e.stopPropagation();
             if (commandListening || micEnabled) {
               listenModeRef.current = 'wake';
               setCommandListening(false);
@@ -1136,13 +1141,13 @@ export default function App() {
             }
           }}
           title={commandListening ? 'Dejar de escuchar' : 'Activar micrófono (o di hey Ultron)'}
-          className={`pointer-events-auto absolute bottom-5 left-5 z-30 flex h-14 w-14 items-center justify-center rounded-full border-2 transition-all ${
+          className={`pointer-events-auto absolute bottom-5 left-5 z-[60] flex h-16 w-16 items-center justify-center rounded-full border-2 transition-all ${
             commandListening || micEnabled
-              ? 'border-[#3EC9D6] bg-[#3EC9D6]/25 text-[#7AE4EF] shadow-[0_0_20px_rgba(62,201,214,0.45)]'
-              : 'border-white/15 bg-[#0c1016]/85 text-[#8B9AAB] hover:border-[#3EC9D6]/50 hover:text-[#E8EEF4]'
+              ? 'border-[#3EC9D6] bg-[#3EC9D6]/30 text-[#7AE4EF] shadow-[0_0_24px_rgba(62,201,214,0.55)] scale-105'
+              : 'border-white/20 bg-[#0c1016]/95 text-[#E8EEF4] hover:border-[#3EC9D6]/50'
           }`}
         >
-          {commandListening || micEnabled ? <Mic className="h-6 w-6" /> : <MicOff className="h-6 w-6" />}
+          {commandListening || micEnabled ? <Mic className="h-7 w-7" /> : <MicOff className="h-7 w-7" />}
         </button>
 
         {/* Sidebar: sleep / stay / explore + menú */}
