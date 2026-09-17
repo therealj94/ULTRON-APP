@@ -36,7 +36,7 @@ export const BiometricAuthModal: React.FC<BiometricAuthModalProps> = ({
   const [progress, setProgress] = useState(0);
   const [userName, setUserName] = useState('José');
   const [role, setRole] = useState('Junta Directiva · Orden Global');
-  const [emailInput, setEmailInput] = useState('mjoseenamorado1994@gmail.com');
+  const [emailInput, setEmailInput] = useState('j.ordonez@ordenglobal.org');
   const [passwordInput, setPasswordInput] = useState('');
   const [remoteStatus, setRemoteStatus] = useState<{
     connected: boolean;
@@ -312,7 +312,7 @@ export const BiometricAuthModal: React.FC<BiometricAuthModalProps> = ({
                   type="email"
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}
-                  placeholder="mjoseenamorado1994@gmail.com"
+                  placeholder="j.ordonez@ordenglobal.org"
                   className="w-full pl-9 pr-3 py-2 bg-black/60 border border-[#05E1FF]/30 rounded-lg text-xs font-mono text-white placeholder:text-gray-500 focus:border-[#05E1FF] focus:outline-none"
                   required
                 />

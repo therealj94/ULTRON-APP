@@ -117,17 +117,24 @@ export default function App() {
     const t = setTimeout(() => {
       try {
         const Updates = require('expo-updates') as typeof import('expo-updates');
+        if (!Updates?.checkForUpdateAsync || Updates.isEmbeddedLaunch === undefined) {
+          /* keep going even if fields differ by SDK */
+        }
         if (Updates?.checkForUpdateAsync) {
           void Updates.checkForUpdateAsync()
             .then(async (check) => {
-              if (check.isAvailable) await Updates.fetchUpdateAsync();
+              if (!check.isAvailable) return;
+              const result = await Updates.fetchUpdateAsync();
+              if (result.isNew && Updates.reloadAsync) {
+                await Updates.reloadAsync();
+              }
             })
             .catch(() => {});
         }
       } catch {
         /* */
       }
-    }, 10_000);
+    }, 4_000);
     return () => {
       sub.remove();
       clearTimeout(t);

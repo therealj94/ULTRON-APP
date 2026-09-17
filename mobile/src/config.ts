@@ -3,29 +3,48 @@ import Constants from 'expo-constants';
 const extra = (Constants.expoConfig?.extra || {}) as { ultronUrl?: string };
 
 export const API_BASE = (extra.ultronUrl || 'https://ultron-looi-desk.onrender.com').replace(/\/+$/, '');
-export const APP_VERSION = Constants.expoConfig?.version || '2.1.0';
+export const APP_VERSION = Constants.expoConfig?.version || '2.1.1';
 
 export type DeskUser = {
-  id: 'jose' | 'medardo';
+  id: 'jose' | 'medardo' | 'otro';
   name: string;
   correo: string;
   role: string;
 };
 
+/** Correos oficiales de junta (Orden Global). */
 export const DESK_USERS: DeskUser[] = [
   {
     id: 'jose',
     name: 'José',
-    correo: 'mjoseenamorado1994@gmail.com',
+    correo: 'j.ordonez@ordenglobal.org',
     role: 'Junta Directiva · Orden Global',
   },
   {
     id: 'medardo',
     name: 'Medardo',
-    correo: 'medardo@ordenglobal.org',
+    correo: 'm.ordonez@ordenglobal.org',
     role: 'Junta Directiva · Orden Global',
   },
 ];
+
+/** Alias antiguos → correo canónico (migración login / SecureStore). */
+export const EMAIL_ALIASES: Record<string, string> = {
+  'mjoseenamorado1994@gmail.com': 'j.ordonez@ordenglobal.org',
+  'medardo@ordenglobal.org': 'm.ordonez@ordenglobal.org',
+  'j.ordonez@ordenglobal.org': 'j.ordonez@ordenglobal.org',
+  'm.ordonez@ordenglobal.org': 'm.ordonez@ordenglobal.org',
+};
+
+export function normalizeDeskEmail(correo: string): string {
+  const raw = String(correo || '').trim().toLowerCase();
+  return EMAIL_ALIASES[raw] || raw;
+}
+
+export function findDeskUserByEmail(correo: string): DeskUser | undefined {
+  const n = normalizeDeskEmail(correo);
+  return DESK_USERS.find((u) => u.correo === n);
+}
 
 export type FaceState =
   | 'IDLE'

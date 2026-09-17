@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
@@ -10,10 +10,17 @@ import {
   KeyboardAvoidingView,
   Platform,
   Switch,
+  ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as LocalAuthentication from 'expo-local-authentication';
-import { DESK_USERS, type DeskUser, type SessionUser } from '../config';
+import {
+  DESK_USERS,
+  findDeskUserByEmail,
+  normalizeDeskEmail,
+  type DeskUser,
+  type SessionUser,
+} from '../config';
 import { loginBiometric, loginClave } from '../lib/api';
 import {
   getFingerprintUnlock,
@@ -27,8 +34,16 @@ type Props = {
   onAuthenticated: (user: SessionUser) => void;
 };
 
+const OTRO_TEMPLATE: DeskUser = {
+  id: 'otro',
+  name: 'Otro miembro',
+  correo: '',
+  role: 'Junta Directiva · Orden Global',
+};
+
 export function LoginScreen({ onAuthenticated }: Props) {
   const [selected, setSelected] = useState<DeskUser>(DESK_USERS[0]);
+  const [customCorreo, setCustomCorreo] = useState('');
   const [phase, setPhase] = useState<'pick' | 'clave' | 'quick'>('pick');
   const [clave, setClave] = useState('');
   const [remember, setRemember] = useState(true);
@@ -38,6 +53,20 @@ export function LoginScreen({ onAuthenticated }: Props) {
   const [error, setError] = useState('');
   const [logoReady, setLogoReady] = useState(false);
   const [savedName, setSavedName] = useState<string | null>(null);
+
+  const activeUser: DeskUser = useMemo(() => {
+    if (selected.id !== 'otro') return selected;
+    const correo = normalizeDeskEmail(customCorreo);
+    const known = findDeskUserByEmail(correo);
+    if (known) return known;
+    const local = correo.split('@')[0] || 'Miembro';
+    return {
+      id: 'otro',
+      name: local.charAt(0).toUpperCase() + local.slice(1),
+      correo,
+      role: 'Junta Directiva · Orden Global',
+    };
+  }, [selected, customCorreo]);
 
   useEffect(() => {
     const t = setTimeout(() => setLogoReady(true), 60);
@@ -49,18 +78,28 @@ export function LoginScreen({ onAuthenticated }: Props) {
       const fp = await getFingerprintUnlock();
       const creds = await loadCreds();
       if (creds?.correo) {
-        const match = DESK_USERS.find((u) => u.correo === creds.correo);
+        const correo = normalizeDeskEmail(creds.correo);
+        const match = findDeskUserByEmail(correo);
         if (match) {
           setSelected(match);
           setClave(creds.clave || '');
           setSavedName(match.name);
           setRemember(true);
+          if (creds.correo !== match.correo && creds.clave) {
+            await saveCreds({ ...creds, correo: match.correo, name: match.name });
+          }
           if (fp?.enabled && hw && enrolled) {
             setPhase('quick');
             setUseFingerprint(true);
           } else {
             setPhase('clave');
           }
+        } else {
+          setSelected(OTRO_TEMPLATE);
+          setCustomCorreo(correo);
+          setClave(creds.clave || '');
+          setSavedName(creds.name || correo);
+          setPhase('clave');
         }
       }
     })();
@@ -68,17 +107,19 @@ export function LoginScreen({ onAuthenticated }: Props) {
   }, []);
 
   const finish = async (user: SessionUser, persist?: { clave: string }) => {
-    await saveSession(user);
+    const correo = normalizeDeskEmail(user.correo);
+    const session = { ...user, correo };
+    await saveSession(session);
     if (remember && persist?.clave) {
-      await saveCreds({ correo: user.correo, clave: persist.clave, name: user.name });
+      await saveCreds({ correo, clave: persist.clave, name: session.name });
       if (useFingerprint && fingerprintAvailable) {
-        await setFingerprintUnlock(true, user.correo);
+        await setFingerprintUnlock(true, correo);
       }
     } else if (!remember) {
       await saveCreds(null);
       await setFingerprintUnlock(false);
     }
-    onAuthenticated(user);
+    onAuthenticated(session);
   };
 
   const enterWithFingerprint = async () => {
@@ -98,7 +139,8 @@ export function LoginScreen({ onAuthenticated }: Props) {
       }
       const creds = await loadCreds();
       const user =
-        DESK_USERS.find((u) => u.correo === creds?.correo) || selected;
+        findDeskUserByEmail(creds?.correo || '') ||
+        (activeUser.correo ? activeUser : selected);
       await enterBiometric(user, creds?.clave);
     } catch (e: any) {
       setError(e?.message || 'No se pudo usar la huella');
@@ -109,10 +151,18 @@ export function LoginScreen({ onAuthenticated }: Props) {
   };
 
   const enterBiometric = async (user: DeskUser, maybeClave?: string) => {
+    if (!user.correo) {
+      setError('Escribe el correo del miembro');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      const data = await loginBiometric({ name: user.name, role: user.role, correo: user.correo });
+      const data = await loginBiometric({
+        name: user.name,
+        role: user.role,
+        correo: normalizeDeskEmail(user.correo),
+      });
       await finish(
         {
           name: data.user?.nombre || user.name,
@@ -132,33 +182,47 @@ export function LoginScreen({ onAuthenticated }: Props) {
   };
 
   const enterWithClave = async () => {
+    const user = activeUser;
+    if (!user.correo) {
+      setError('Escribe el correo Orden Global');
+      return;
+    }
     if (!clave.trim()) {
-      setError('Escribe tu clave o usa la huella');
+      setError('Escribe tu clave o entra al escritorio sin clave remota');
       return;
     }
     setLoading(true);
     setError('');
     try {
-      const data = await loginClave(selected.correo, clave);
+      const data = await loginClave(normalizeDeskEmail(user.correo), clave);
       await finish(
         {
-          name: data.miembro?.nombre || selected.name,
-          role: data.miembro?.rol || selected.role,
-          correo: selected.correo,
+          name: data.miembro?.nombre || user.name,
+          role: data.miembro?.rol || user.role,
+          correo: user.correo,
         },
         { clave }
       );
     } catch (e: any) {
-      // Solo fallback biométrico de escritorio si el servidor está caído / red
       const status = e?.status;
       if (!status || status >= 500) {
-        await enterBiometric(selected, clave);
+        await enterBiometric(user, clave);
         return;
       }
-      setError(e?.message || 'Correo o clave incorrectos');
+      setError(
+        e?.message ||
+          'Correo o clave incorrectos. Usa j.ordonez@ / m.ordonez@ o «Solo escritorio».'
+      );
     } finally {
       setLoading(false);
     }
+  };
+
+  const pickUser = (u: DeskUser) => {
+    setSelected(u);
+    setError('');
+    if (u.id === 'otro') setCustomCorreo('');
+    setPhase('clave');
   };
 
   return (
@@ -172,105 +236,164 @@ export function LoginScreen({ onAuthenticated }: Props) {
         start={{ x: 0.5, y: 0 }}
         end={{ x: 0.5, y: 0.75 }}
       />
-      <View style={styles.card}>
-        <Image
-          source={require('../../assets/ultron-logo.jpg')}
-          style={[styles.logo, { opacity: logoReady ? 1 : 0, transform: [{ scale: logoReady ? 1 : 0.85 }] }]}
-        />
-        <Text style={styles.title}>ULTRON FP</Text>
-        <Text style={styles.sub}>Escritorio nativo · acceso seguro</Text>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator
+        bounces
+      >
+        <View style={styles.card}>
+          <Image
+            source={require('../../assets/ultron-logo.jpg')}
+            style={[
+              styles.logo,
+              { opacity: logoReady ? 1 : 0, transform: [{ scale: logoReady ? 1 : 0.85 }] },
+            ]}
+          />
+          <Text style={styles.title}>ULTRON FP</Text>
+          <Text style={styles.sub}>Escritorio nativo · acceso seguro</Text>
 
-        {phase === 'quick' ? (
-          <View style={{ gap: 12, width: '100%', alignItems: 'center' }}>
-            <Text style={styles.welcome}>Hola, {savedName}</Text>
-            <Pressable onPress={() => void enterWithFingerprint()} style={styles.primary} disabled={loading}>
-              {loading ? (
-                <ActivityIndicator color="#001018" />
-              ) : (
-                <Text style={styles.primaryText}>Entrar con huella</Text>
-              )}
-            </Pressable>
-            <Pressable onPress={() => setPhase('clave')} style={styles.secondary}>
-              <Text style={styles.secondaryText}>Usar clave</Text>
-            </Pressable>
-            <Pressable onPress={() => setPhase('pick')}>
-              <Text style={styles.link}>Cambiar usuario</Text>
-            </Pressable>
-          </View>
-        ) : phase === 'pick' ? (
-          <View style={{ gap: 10, width: '100%' }}>
-            {DESK_USERS.map((u) => (
+          {phase === 'quick' ? (
+            <View style={{ gap: 12, width: '100%', alignItems: 'center' }}>
+              <Text style={styles.welcome}>Hola, {savedName}</Text>
               <Pressable
-                key={u.id}
-                onPress={() => {
-                  setSelected(u);
-                  setPhase('clave');
-                }}
-                style={styles.userBtn}
+                onPress={() => void enterWithFingerprint()}
+                style={styles.primary}
+                disabled={loading}
               >
-                <View style={styles.avatar}>
-                  <Text style={styles.avatarText}>{u.name[0]}</Text>
+                {loading ? (
+                  <ActivityIndicator color="#001018" />
+                ) : (
+                  <Text style={styles.primaryText}>Entrar con huella</Text>
+                )}
+              </Pressable>
+              <Pressable onPress={() => setPhase('clave')} style={styles.secondary}>
+                <Text style={styles.secondaryText}>Usar clave</Text>
+              </Pressable>
+              <Pressable onPress={() => setPhase('pick')}>
+                <Text style={styles.link}>Cambiar usuario</Text>
+              </Pressable>
+            </View>
+          ) : phase === 'pick' ? (
+            <View style={{ gap: 10, width: '100%' }}>
+              <Text style={styles.hint}>Junta · desliza si hay más miembros</Text>
+              {DESK_USERS.map((u) => (
+                <Pressable key={u.id} onPress={() => pickUser(u)} style={styles.userBtn}>
+                  <View style={styles.avatar}>
+                    <Text style={styles.avatarText}>{u.name[0]}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.userName}>{u.name}</Text>
+                    <Text style={styles.userMail}>{u.correo}</Text>
+                  </View>
+                </Pressable>
+              ))}
+              <Pressable onPress={() => pickUser(OTRO_TEMPLATE)} style={styles.userBtn}>
+                <View style={[styles.avatar, { backgroundColor: 'rgba(255,255,255,0.06)' }]}>
+                  <Text style={[styles.avatarText, { color: '#8B9AAB' }]}>+</Text>
                 </View>
-                <View>
-                  <Text style={styles.userName}>{u.name}</Text>
-                  <Text style={styles.userMail}>{u.correo}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.userName}>Otro miembro</Text>
+                  <Text style={styles.userMail}>Escribir correo @ordenglobal.org</Text>
                 </View>
               </Pressable>
-            ))}
-          </View>
-        ) : (
-          <View style={{ gap: 12, width: '100%' }}>
-            <Pressable onPress={() => setPhase('pick')}>
-              <Text style={styles.back}>← {selected.name}</Text>
-            </Pressable>
-            <TextInput
-              value={clave}
-              onChangeText={setClave}
-              placeholder="Clave"
-              placeholderTextColor="#5A6A7A"
-              secureTextEntry
-              style={styles.input}
-              autoCapitalize="none"
-            />
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>Guardar contraseña</Text>
-              <Switch
-                value={remember}
-                onValueChange={setRemember}
-                trackColor={{ true: '#00E5FF' }}
-              />
             </View>
-            {fingerprintAvailable && (
+          ) : (
+            <View style={{ gap: 12, width: '100%' }}>
+              <Pressable onPress={() => setPhase('pick')}>
+                <Text style={styles.back}>← {activeUser.name || selected.name}</Text>
+              </Pressable>
+              {selected.id === 'otro' && (
+                <TextInput
+                  value={customCorreo}
+                  onChangeText={setCustomCorreo}
+                  placeholder="correo@ordenglobal.org"
+                  placeholderTextColor="#5A6A7A"
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  style={styles.input}
+                />
+              )}
+              {selected.id !== 'otro' && (
+                <Text style={styles.userMailCenter}>{activeUser.correo}</Text>
+              )}
+              <TextInput
+                value={clave}
+                onChangeText={setClave}
+                placeholder="Clave (ultron.ordenglobal.link)"
+                placeholderTextColor="#5A6A7A"
+                secureTextEntry
+                style={styles.input}
+                autoCapitalize="none"
+              />
               <View style={styles.row}>
-                <Text style={styles.rowLabel}>Desbloqueo con huella</Text>
+                <Text style={styles.rowLabel}>Guardar contraseña</Text>
                 <Switch
-                  value={useFingerprint}
-                  onValueChange={setUseFingerprint}
+                  value={remember}
+                  onValueChange={setRemember}
                   trackColor={{ true: '#00E5FF' }}
                 />
               </View>
-            )}
-            {!!error && <Text style={styles.error}>{error}</Text>}
-            <Pressable onPress={() => void enterWithClave()} style={styles.primary} disabled={loading}>
-              {loading ? <ActivityIndicator color="#001018" /> : <Text style={styles.primaryText}>Entrar</Text>}
-            </Pressable>
-            {fingerprintAvailable && remember && !!clave && (
-              <Pressable onPress={() => void enterWithFingerprint()} style={styles.secondary} disabled={loading}>
-                <Text style={styles.secondaryText}>Probar huella ahora</Text>
+              {fingerprintAvailable && (
+                <View style={styles.row}>
+                  <Text style={styles.rowLabel}>Desbloqueo con huella</Text>
+                  <Switch
+                    value={useFingerprint}
+                    onValueChange={setUseFingerprint}
+                    trackColor={{ true: '#00E5FF' }}
+                  />
+                </View>
+              )}
+              {!!error && <Text style={styles.error}>{error}</Text>}
+              <Pressable
+                onPress={() => void enterWithClave()}
+                style={styles.primary}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#001018" />
+                ) : (
+                  <Text style={styles.primaryText}>Entrar</Text>
+                )}
               </Pressable>
-            )}
-          </View>
-        )}
-      </View>
+              <Pressable
+                onPress={() => void enterBiometric(activeUser, clave || undefined)}
+                style={styles.secondary}
+                disabled={loading}
+              >
+                <Text style={styles.secondaryText}>Solo escritorio (sin clave remota)</Text>
+              </Pressable>
+              {fingerprintAvailable && remember && !!clave && (
+                <Pressable
+                  onPress={() => void enterWithFingerprint()}
+                  style={styles.secondary}
+                  disabled={loading}
+                >
+                  <Text style={styles.secondaryText}>Probar huella ahora</Text>
+                </Pressable>
+              )}
+            </View>
+          )}
+        </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 20 },
+  root: { flex: 1, backgroundColor: '#000' },
+  scroll: { flex: 1, width: '100%' },
+  scrollContent: {
+    flexGrow: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+  },
   card: {
     width: '100%',
-    maxWidth: 440,
+    maxWidth: 480,
     borderRadius: 24,
     borderWidth: 1,
     borderColor: 'rgba(0,229,255,0.22)',
@@ -288,7 +411,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(0,229,255,0.35)',
   },
   title: { color: '#E8FBFF', fontSize: 26, fontWeight: '800', letterSpacing: 6 },
-  sub: { color: '#7A8B9C', fontSize: 12, marginBottom: 12 },
+  sub: { color: '#7A8B9C', fontSize: 12, marginBottom: 8 },
+  hint: { color: '#5A6A7A', fontSize: 11, marginBottom: 2 },
   welcome: { color: '#E8FBFF', fontSize: 18, fontWeight: '700', marginBottom: 8 },
   userBtn: {
     flexDirection: 'row',
@@ -311,6 +435,7 @@ const styles = StyleSheet.create({
   avatarText: { color: '#00E5FF', fontWeight: '700', fontSize: 16 },
   userName: { color: '#fff', fontSize: 16, fontWeight: '700' },
   userMail: { color: '#8B9AAB', fontSize: 11 },
+  userMailCenter: { color: '#8B9AAB', fontSize: 12, textAlign: 'center' },
   back: { color: '#00E5FF', fontSize: 14, marginBottom: 4 },
   input: {
     borderWidth: 1,

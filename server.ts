@@ -747,11 +747,19 @@ app.post('/api/ultron/entrar', async (req, res) => {
   if (!correo || !clave) {
     return res.status(400).json({ error: 'Correo y clave requeridos.' });
   }
+  const mailAliases: Record<string, string> = {
+    'mjoseenamorado1994@gmail.com': 'j.ordonez@ordenglobal.org',
+    'medardo@ordenglobal.org': 'm.ordonez@ordenglobal.org',
+  };
+  const correoNorm = (() => {
+    const raw = String(correo).trim().toLowerCase();
+    return mailAliases[raw] || raw;
+  })();
   try {
     const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/entrar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ correo, clave }),
+      body: JSON.stringify({ correo: correoNorm, clave }),
       signal: AbortSignal.timeout(10000),
     });
     const setCookie = remoteRes.headers.get('set-cookie');
@@ -765,8 +773,8 @@ app.post('/api/ultron/entrar', async (req, res) => {
     ultronRemoteSession = {
       authenticated: true,
       user: {
-        nombre: data.miembro?.nombre || correo.split('@')[0],
-        correo,
+        nombre: data.miembro?.nombre || correoNorm.split('@')[0],
+        correo: correoNorm,
         rol: 'Junta Directiva · Orden Global',
       },
       lastLogin: new Date().toISOString(),
@@ -785,12 +793,20 @@ app.post('/api/ultron/entrar', async (req, res) => {
 app.post('/api/ultron/biometric-login', async (req, res) => {
   const { biometricType, userName, role, correo } = req.body;
   const allowed = [
+    'j.ordonez@ordenglobal.org',
+    'm.ordonez@ordenglobal.org',
+    // alias legacy (migración)
     'mjoseenamorado1994@gmail.com',
     'medardo@ordenglobal.org',
   ];
-  const mail = String(correo || '').toLowerCase();
-  if (mail && !allowed.includes(mail)) {
-    return res.status(403).json({ error: 'Acceso desk solo para José y Medardo.' });
+  const mailAliases: Record<string, string> = {
+    'mjoseenamorado1994@gmail.com': 'j.ordonez@ordenglobal.org',
+    'medardo@ordenglobal.org': 'm.ordonez@ordenglobal.org',
+  };
+  const mailRaw = String(correo || '').toLowerCase().trim();
+  const mail = mailAliases[mailRaw] || mailRaw;
+  if (mail && !allowed.includes(mail) && !allowed.includes(mailRaw)) {
+    return res.status(403).json({ error: 'Acceso desk solo para José y Medardo (u otro miembro autorizado).' });
   }
 
   let isLive = false;
@@ -808,7 +824,7 @@ app.post('/api/ultron/biometric-login', async (req, res) => {
     authenticated: true,
     user: {
       nombre: userName || 'José',
-      correo: mail || 'mjoseenamorado1994@gmail.com',
+      correo: mail || 'j.ordonez@ordenglobal.org',
       rol: role || 'Junta Directiva · Orden Global',
     },
     lastLogin: new Date().toISOString(),

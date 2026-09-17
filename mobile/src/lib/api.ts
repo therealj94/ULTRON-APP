@@ -46,7 +46,7 @@ export async function loginBiometric(user: SessionUser) {
 export async function loginClave(correo: string, clave: string) {
   return api<{ miembro?: { nombre?: string; rol?: string }; codigo?: string }>('/api/ultron/entrar', {
     method: 'POST',
-    body: JSON.stringify({ correo, clave }),
+    body: JSON.stringify({ correo: String(correo).trim().toLowerCase(), clave }),
   });
 }
 

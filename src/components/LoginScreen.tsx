@@ -12,13 +12,13 @@ export const DESK_USERS: DeskUser[] = [
   {
     id: 'jose',
     name: 'José',
-    correo: 'mjoseenamorado1994@gmail.com',
+    correo: 'j.ordonez@ordenglobal.org',
     role: 'Junta Directiva · Orden Global',
   },
   {
     id: 'medardo',
     name: 'Medardo',
-    correo: 'medardo@ordenglobal.org',
+    correo: 'm.ordonez@ordenglobal.org',
     role: 'Junta Directiva · Orden Global',
   },
 ];
