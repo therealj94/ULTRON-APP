@@ -221,12 +221,7 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
   });
 
   useSpeechRecognitionEvent('start', () => setListening(true));
-  useSpeechRecognitionEvent('end', () => {
-    setListening(false);
-    if (!booting) {
-      setTimeout(() => startListening({ continuous: true }), 500);
-    }
-  });
+  useSpeechRecognitionEvent('end', () => setListening(false));
   useSpeechRecognitionEvent('error', (e) => {
     setListening(false);
     if (e?.error) setStatus(`Mic: ${e.error}`);
@@ -237,22 +232,21 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
     (async () => {
       const settings = await loadSettings();
       voiceId.current = settings.voiceId || 'jarvis';
-      const micOk = await ensureSpeechPermissions();
+      await ensureSpeechPermissions();
       if (!alive) return;
       setBooting(false);
       setFace('HAPPY');
       await say(
-        `Bienvenido, ${user.name}. ULTRON FP nativo listo.${micOk ? ' Micrófono activo.' : ' Usa el teclado si el mic no responde.'}`,
+        `Bienvenido, ${user.name}. ULTRON FP nativo listo. Escribe comandos abajo — la voz TTS responde.`,
         'HAPPY'
       );
       listenMode.current = 'command';
       setFace('LISTENING');
-      setStatus(micOk ? 'Escuchando… di hey ULTRON o escribe abajo' : 'Escribe un comando abajo');
-      if (micOk) startListening({ continuous: true });
+      setStatus('Escribe un comando (quién eres, ponte feliz, modo conocer…)');
       if (!(await wasConocerOfferedToday())) {
         await markConocerOfferedToday();
         setTimeout(() => {
-          void say('Si quieres, escribe o di «modo conocer» y te haré unas preguntas.', 'IDLE');
+          void say('Si quieres, escribe «modo conocer» y te haré unas preguntas.', 'IDLE');
         }, 3500);
       }
     })();

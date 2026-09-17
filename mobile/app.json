@@ -54,22 +54,14 @@
       ],
       "expo-secure-store",
       [
-        "expo-speech-recognition",
-        {
-          "microphonePermission": "ULTRON FP necesita el micrófono para escucharte.",
-          "speechRecognitionPermission": "ULTRON FP usa reconocimiento de voz nativo."
-        }
-      ],
-      [
         "expo-camera",
         {
-          "cameraPermission": "ULTRON FP usa la cámara para visión del escritorio.",
-          "microphonePermission": "ULTRON FP necesita micrófono con la cámara.",
+          "cameraPermission": "ULTRON FP usa la c\u00e1mara para visi\u00f3n del escritorio.",
+          "microphonePermission": "ULTRON FP necesita micr\u00f3fono con la c\u00e1mara.",
           "recordAudioAndroid": true
         }
       ],
-      "expo-av",
-      "expo-speech-recognition"
+      "expo-av"
     ]
   }
 }
