@@ -1052,10 +1052,15 @@ app.post('/api/stt/transcribe', async (req, res) => {
   if (elevenKey) {
     try {
       const bin = Buffer.from(clean, 'base64');
+      const bytes = new Uint8Array(bin);
       const form = new FormData();
       form.append('model_id', 'scribe_v2');
       form.append('language_code', (language || 'es').slice(0, 2));
-      form.append('file', new Blob([bin], { type: mime }), 'chunk.m4a');
+      const file =
+        typeof File !== 'undefined'
+          ? new File([bytes], 'chunk.m4a', { type: mime })
+          : new Blob([bytes], { type: mime });
+      form.append('file', file, 'chunk.m4a');
       const sttRes = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
         method: 'POST',
         headers: { 'xi-api-key': elevenKey },
@@ -1067,10 +1072,12 @@ app.post('/api/stt/transcribe', async (req, res) => {
         modelUsed = 'ElevenLabs Scribe';
       } else {
         const errTxt = await sttRes.text();
-        console.warn('[STT ElevenLabs]', sttRes.status, errTxt.slice(0, 200));
+        console.warn('[STT ElevenLabs]', sttRes.status, errTxt.slice(0, 300));
+        modelUsed = `eleven_http_${sttRes.status}`;
       }
     } catch (err: any) {
       console.warn('[STT ElevenLabs]', err.message);
+      modelUsed = 'eleven_error';
     }
   }
 
