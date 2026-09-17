@@ -711,14 +711,17 @@ export default function App() {
     }
 
     // Default: real Qwen brain (corto). Resumen/completo si el usuario lo pide.
-    if (/completo|entero|todo el detalle|lee todo/.test(q)) {
+    if (/completo|entero|todo el detalle|lee todo|versión completa|version completa/.test(q)) {
+      setWantDetail('full');
       void askUltronBrain(`${cmd}\n\n[Usuario pidió la versión completa, puedes extender hasta 2 párrafos.]`);
       return;
     }
-    if (/resumen|resum|corto|breve/.test(q)) {
+    if (/resumen|resum|corto|breve|solo resumen/.test(q)) {
+      setWantDetail('summary');
       void askUltronBrain(`${cmd}\n\n[Usuario pidió SOLO resumen en una frase.]`);
       return;
     }
+    setWantDetail('ask');
     void askUltronBrain(cmd);
   };
 
