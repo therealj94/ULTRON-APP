@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
-    "@react-native-voice/voice": "^3.2.4",
     "expo": "~54.0.37",
     "expo-av": "~16.0.8",
     "expo-blur": "~15.0.8",

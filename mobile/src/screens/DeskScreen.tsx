@@ -23,6 +23,7 @@ import {
   ensureSpeechPermissions,
   isMicWanted,
   muteMic,
+  pauseMicForTts,
   setSpeechCallbacks,
   unmuteMic,
 } from '../lib/speech';
@@ -78,6 +79,7 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
     setBubble(text);
     await appendChatLog({ role: 'ultron', text });
     speakingRef.current = true;
+    pauseMicForTts(true);
     if (nextFace) setFace(nextFace);
     else setFace('SPEAKING');
     await speak(text, {
@@ -85,6 +87,7 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
       onStart: () => setFace(nextFace || 'SPEAKING'),
       onEnd: () => {
         speakingRef.current = false;
+        pauseMicForTts(false);
         setFace((f) =>
           f === 'SPEAKING' || f === nextFace
             ? presenceRef.current === 'sleep'

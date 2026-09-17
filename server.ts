@@ -1032,6 +1032,57 @@ app.post('/api/vision/analyze', async (req, res) => {
   });
 });
 
+/** STT para app nativa (mic siempre-on): audio base64 → texto vía Gemini. */
+app.post('/api/stt/transcribe', async (req, res) => {
+  const { audioBase64, mimeType, language } = req.body || {};
+  if (!audioBase64 || typeof audioBase64 !== 'string') {
+    return res.status(400).json({ error: 'audioBase64 required' });
+  }
+  const match = audioBase64.match(/^data:([^;]+);base64,(.*)$/);
+  const mime = match ? match[1] : mimeType || 'audio/m4a';
+  const clean = match ? match[2] : audioBase64;
+  if (clean.length < 80) {
+    return res.json({ text: '', model: 'empty' });
+  }
+
+  let text = '';
+  let modelUsed = 'none';
+
+  if (ai) {
+    try {
+      const stt = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { inlineData: { mimeType: mime, data: clean } },
+              {
+                text:
+                  `Transcribe este audio a texto en ${language || 'es-ES'}. ` +
+                  'Devuelve SOLO el texto hablado, sin comillas ni explicación. Si no hay habla clara, responde vacío.',
+              },
+            ],
+          },
+        ],
+      });
+      text = (stt.text || '').trim().replace(/^["']|["']$/g, '');
+      if (/^(vac[ií]o|empty|silence|\(silence\)|\[silence\]|n\/a)$/i.test(text)) text = '';
+      modelUsed = 'Gemini STT';
+    } catch (err: any) {
+      console.warn('[STT Gemini]', err.message);
+    }
+  } else {
+    return res.json({
+      text: '',
+      model: 'unavailable',
+      note: 'Configura GEMINI_API_KEY para STT nativo',
+    });
+  }
+
+  return res.json({ text, model: modelUsed, analysis: text, summary: text });
+});
+
 // Qwen real — NDJSON stream (compatible with fetch ReadableStream) o JSON único
 app.post('/api/qwen/chat', async (req, res) => {
   const {

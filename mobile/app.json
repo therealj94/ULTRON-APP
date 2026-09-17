@@ -57,17 +57,10 @@
       "expo-secure-store",
       "expo-local-authentication",
       [
-        "@react-native-voice/voice",
-        {
-          "microphonePermission": "ULTRON FP necesita el micrófono siempre activo para oír «hey ULTRON».",
-          "speechRecognitionPermission": "ULTRON FP usa reconocimiento de voz nativo de Android."
-        }
-      ],
-      [
         "expo-camera",
         {
-          "cameraPermission": "ULTRON FP usa la cámara para mirarte a los ojos e identificar objetos.",
-          "microphonePermission": "ULTRON FP necesita micrófono junto a la cámara.",
+          "cameraPermission": "ULTRON FP usa la c\u00e1mara para mirarte a los ojos e identificar objetos.",
+          "microphonePermission": "ULTRON FP necesita micr\u00f3fono junto a la c\u00e1mara.",
           "recordAudioAndroid": true
         }
       ],

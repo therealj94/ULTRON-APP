@@ -1,12 +1,12 @@
 /**
- * Micrófono siempre escuchando (ASR nativo Android).
- * El botón Mic solo MUTEA / DESMUTEA — no “enciende” el sistema.
+ * Micrófono siempre-on sin módulo ASR nativo roto en EAS:
+ * graba chunks cortos con expo-av → /api/stt/transcribe.
+ * El botón Mic solo MUTEA / DESMUTEA.
  */
+import { Audio } from 'expo-av';
 import { PermissionsAndroid, Platform } from 'react-native';
-import Voice, {
-  type SpeechErrorEvent,
-  type SpeechResultsEvent,
-} from '@react-native-voice/voice';
+import * as FileSystem from 'expo-file-system/legacy';
+import { API_BASE } from '../config';
 
 export type SpeechCallbacks = {
   onPartial?: (text: string) => void;
@@ -16,46 +16,21 @@ export type SpeechCallbacks = {
 };
 
 let callbacks: SpeechCallbacks = {};
-let wanted = true; // usuario quiere mic activo (no mute)
-let starting = false;
-let bound = false;
-
-function bindOnce() {
-  if (bound) return;
-  bound = true;
-  Voice.onSpeechStart = () => callbacks.onListeningChange?.(true);
-  Voice.onSpeechEnd = () => {
-    callbacks.onListeningChange?.(false);
-    // Reinicio continuo si sigue sin mute
-    if (wanted) setTimeout(() => void resumeListening(), 280);
-  };
-  Voice.onSpeechPartialResults = (e: SpeechResultsEvent) => {
-    const t = e.value?.[0];
-    if (t) callbacks.onPartial?.(t);
-  };
-  Voice.onSpeechResults = (e: SpeechResultsEvent) => {
-    const t = e.value?.[0];
-    if (t) callbacks.onFinal?.(t);
-  };
-  Voice.onSpeechError = (e: SpeechErrorEvent) => {
-    callbacks.onListeningChange?.(false);
-    const msg = String(e.error?.message || e.error?.code || 'speech_error');
-    // "No match" / cancel son normales en continuous — reiniciar
-    if (/7|6|5|no.?match|client|cancel/i.test(msg) && wanted) {
-      setTimeout(() => void resumeListening(), 400);
-      return;
-    }
-    callbacks.onError?.(msg);
-    if (wanted) setTimeout(() => void resumeListening(), 900);
-  };
-}
+let wanted = true;
+let loopAlive = false;
+let recording: Audio.Recording | null = null;
+let pausedForTts = false;
 
 export function setSpeechCallbacks(cb: SpeechCallbacks) {
   callbacks = cb;
-  bindOnce();
 }
 
 export async function ensureSpeechPermissions(): Promise<boolean> {
+  try {
+    await Audio.requestPermissionsAsync();
+  } catch {
+    /* */
+  }
   if (Platform.OS !== 'android') return true;
   try {
     const granted = await PermissionsAndroid.request(
@@ -63,7 +38,7 @@ export async function ensureSpeechPermissions(): Promise<boolean> {
       {
         title: 'Micrófono ULTRON FP',
         message:
-          'Necesito el micrófono siempre activo para oír «hey ULTRON» y tus comandos. Puedes silenciarlo con el botón Mic.',
+          'Necesito el micrófono siempre activo para oír «hey ULTRON» y tus comandos. El botón Mic solo silencia.',
         buttonPositive: 'Permitir',
         buttonNegative: 'Denegar',
         buttonNeutral: 'Ahora no',
@@ -75,47 +50,125 @@ export async function ensureSpeechPermissions(): Promise<boolean> {
   }
 }
 
-async function resumeListening() {
-  if (!wanted || starting) return;
-  starting = true;
+async function transcribeFile(uri: string): Promise<string> {
   try {
-    const avail = await Voice.isAvailable();
-    if (!avail) {
-      callbacks.onError?.('Reconocimiento de voz no disponible en este dispositivo');
-      return;
-    }
-    await Voice.start('es-ES');
+    const b64 = await FileSystem.readAsStringAsync(uri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
+    const res = await fetch(`${API_BASE}/api/stt/transcribe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        audioBase64: `data:audio/m4a;base64,${b64}`,
+        mimeType: 'audio/m4a',
+        language: 'es-ES',
+      }),
+    });
+    if (!res.ok) return '';
+    const data = await res.json();
+    return String(data.text || data.summary || '').trim();
   } catch (e: any) {
     callbacks.onError?.(String(e?.message || e));
-    if (wanted) setTimeout(() => void resumeListening(), 1200);
-  } finally {
-    starting = false;
+    return '';
   }
 }
 
-/** Arranca el mic siempre-on (si no está muteado). */
-export async function enableAlwaysOnMic() {
-  wanted = true;
-  bindOnce();
-  await resumeListening();
+async function stopRecording(): Promise<string | null> {
+  if (!recording) return null;
+  try {
+    await recording.stopAndUnloadAsync();
+    const uri = recording.getURI();
+    recording = null;
+    return uri;
+  } catch {
+    recording = null;
+    return null;
+  }
 }
 
-/** Mute: deja de escuchar. */
+async function startChunk() {
+  if (!wanted || pausedForTts || !loopAlive) return;
+  try {
+    await Audio.setAudioModeAsync({
+      allowsRecordingIOS: true,
+      playsInSilentModeIOS: true,
+      shouldDuckAndroid: true,
+      playThroughEarpieceAndroid: false,
+    });
+    const rec = new Audio.Recording();
+    await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+    await rec.startAsync();
+    recording = rec;
+    callbacks.onListeningChange?.(true);
+  } catch (e: any) {
+    callbacks.onError?.(String(e?.message || e));
+    callbacks.onListeningChange?.(false);
+  }
+}
+
+async function tickLoop() {
+  while (loopAlive) {
+    if (!wanted || pausedForTts) {
+      await new Promise((r) => setTimeout(r, 400));
+      continue;
+    }
+    await startChunk();
+    // Escucha ~2.4s por chunk
+    await new Promise((r) => setTimeout(r, 2400));
+    if (!loopAlive) break;
+    const uri = await stopRecording();
+    callbacks.onListeningChange?.(false);
+    if (uri && wanted && !pausedForTts) {
+      const text = await transcribeFile(uri);
+      try {
+        await FileSystem.deleteAsync(uri, { idempotent: true });
+      } catch {
+        /* */
+      }
+      if (text) {
+        callbacks.onPartial?.(text);
+        callbacks.onFinal?.(text);
+      }
+    }
+    await new Promise((r) => setTimeout(r, 180));
+  }
+}
+
+export async function enableAlwaysOnMic() {
+  wanted = true;
+  if (loopAlive) return;
+  loopAlive = true;
+  void tickLoop();
+}
+
 export async function muteMic() {
   wanted = false;
-  try {
-    await Voice.stop();
-    await Voice.cancel();
-  } catch {
-    /* */
+  const uri = await stopRecording();
+  if (uri) {
+    try {
+      await FileSystem.deleteAsync(uri, { idempotent: true });
+    } catch {
+      /* */
+    }
   }
   callbacks.onListeningChange?.(false);
 }
 
-/** Unmute: vuelve a escuchar siempre. */
 export async function unmuteMic() {
   wanted = true;
-  await resumeListening();
+  if (!loopAlive) {
+    loopAlive = true;
+    void tickLoop();
+  }
+}
+
+/** Pausar captura mientras ULTRON habla (evita eco). */
+export function pauseMicForTts(pause: boolean) {
+  pausedForTts = pause;
+  if (pause) {
+    void stopRecording();
+    callbacks.onListeningChange?.(false);
+  }
 }
 
 export function isMicWanted() {
@@ -123,12 +176,8 @@ export function isMicWanted() {
 }
 
 export async function destroySpeech() {
+  loopAlive = false;
   wanted = false;
-  try {
-    await Voice.destroy();
-    Voice.removeAllListeners();
-  } catch {
-    /* */
-  }
-  bound = false;
+  await stopRecording();
+  callbacks = {};
 }
