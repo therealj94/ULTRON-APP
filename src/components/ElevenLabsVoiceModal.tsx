@@ -19,7 +19,7 @@ export const ElevenLabsVoiceModal: React.FC<ElevenLabsVoiceModalProps> = ({
   const [voices, setVoices] = useState<ElevenLabsVoiceConfig[]>(DEFAULT_ELEVENLABS_VOICES);
   const [apiKey, setApiKey] = useState<string>(activeVoice.apiKey || '');
   const [isPlayingId, setIsPlayingId] = useState<string | null>(null);
-  const [testSampleText, setTestSampleText] = useState('Sesión de junta directiva iniciada. Soy Ultron, su asistente cibernético.');
+  const [testSampleText, setTestSampleText] = useState('Hola. Soy ULTRON, tu asistente de escritorio.');
 
   if (!isOpen) return null;
 
@@ -78,7 +78,7 @@ export const ElevenLabsVoiceModal: React.FC<ElevenLabsVoiceModalProps> = ({
               <span>CLAVE API DE ELEVENLABS (OPCIONAL)</span>
             </div>
             <span className="text-[10px] font-mono text-[#00FF88]">
-              {apiKey ? 'API KEY CONFIGURADA' : 'MODO EMULACIÓN ACTIVO'}
+              {apiKey ? 'CLAVE LOCAL' : 'USA CLAVE DEL SERVIDOR'}
             </span>
           </div>
           <input

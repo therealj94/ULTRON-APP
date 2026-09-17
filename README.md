@@ -1,11 +1,27 @@
-<div align="center">
+# ULTRON FP
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Robot de escritorio tipo LOOI · agentic harness para la junta de Orden Global.
 
-  <h1>Built with AI Studio</h2>
+## Stack
+- React + Vite + Tailwind (cara animada, voz, visión)
+- Express bridge (`server.ts`) → nodos AWS Qwen + Playwright
+- PWA instalable (`manifest.webmanifest` + service worker)
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## Desarrollo
+```bash
+cp .env.example .env.local   # rellenar secretos (nunca commitear)
+npm install
+npm run dev
+```
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## Secretos (solo servidor / Render)
+| Variable | Uso |
+|---|---|
+| `ULTRON_NODO_URL` + `ULTRON_NODO_SECRETO` | Motor Qwen (`x-ultron-secreto`) |
+| `ULTRON_NODO_INSECURE_TLS=1` | Cert IP del motor |
+| `ULTRON_OJO_URL` + `ULTRON_OJO_CLAVE` | Playwright ojo (`X-Ojo-Clave`) |
+| `GITHUB_PAT` / `RENDER_API_KEY` / `AWS_*` | Infra |
+| `ELEVENLABS_API_KEY` / `GEMINI_API_KEY` | Voz / fallback visión |
 
-</div>
+## Kiosk Android
+Ver [`docs/FULLY_KIOSK.md`](docs/FULLY_KIOSK.md).

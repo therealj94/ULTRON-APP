@@ -1,78 +1,59 @@
-// ElevenLabs Voice Engine & Presets for ULTRON FP
+// ElevenLabs — 4 voces de escritorio LOOI (siempre vía proxy servidor)
 import { ElevenLabsVoiceConfig } from '../types';
 
+/** Voces curadas para robot de escritorio: claras, cortas, en español. */
 export const DEFAULT_ELEVENLABS_VOICES: ElevenLabsVoiceConfig[] = [
   {
     voiceId: 'pNInz6obpgDQGcFmaJgB', // Adam
-    name: 'Adam (Director Ejecutivo)',
-    category: 'Executive Deep',
-    description: 'Voz institucional profunda, serena y con autoridad corporativa.',
-    stability: 0.65,
-    similarityBoost: 0.85,
-    pitch: 0.68,
-    rate: 0.94,
-    apiKey: '',
-  },
-  {
-    voiceId: '21m00Tcm4TlvDq8ikWAM', // Rachel
-    name: 'Rachel (Analítica & Calma)',
-    category: 'Analytical Calm',
-    description: 'Tono claro, preciso y estructurado para reportes y telemetría.',
-    stability: 0.72,
-    similarityBoost: 0.8,
-    pitch: 1.05,
-    rate: 0.98,
-    apiKey: '',
-  },
-  {
-    voiceId: 'ErXwobaYiN019PkySvjV', // Antoni
-    name: 'Antoni (Estratégico & Firme)',
-    category: 'Strategic Bold',
-    description: 'Energía ejecutiva equilibrada con modulaciones tácticas.',
-    stability: 0.58,
+    name: 'Nexo',
+    category: 'Desk Calm',
+    description: 'Asistente de mesa: grave, cercano, sin prisa. Ideal para idle y reportes.',
+    stability: 0.62,
     similarityBoost: 0.82,
-    pitch: 0.82,
-    rate: 1.02,
-    apiKey: '',
-  },
-  {
-    voiceId: 'VR6AewLTigWG4xSOukaG', // Arnold
-    name: 'Arnold (Cyber Ultron / Heavy)',
-    category: 'Heavy Cyber Mecha',
-    description: 'Voz de resonancia cibernética grave para órdenes de defensa.',
-    stability: 0.8,
-    similarityBoost: 0.9,
-    pitch: 0.52,
-    rate: 0.9,
+    pitch: 0.9,
+    rate: 0.96,
     apiKey: '',
   },
   {
     voiceId: 'EXAVITQu4vr4xnSDxMaL', // Bella
-    name: 'Bella (Creativa & Cálida)',
-    category: 'Creative Expressive',
-    description: 'Modulación amistosa, fluida e inspiradora para innovación.',
-    stability: 0.5,
-    similarityBoost: 0.75,
-    pitch: 1.15,
-    rate: 1.05,
+    name: 'Aura',
+    category: 'Warm Guide',
+    description: 'Guía cálida y nítida para tutoriales, saludos y confirmaciones.',
+    stability: 0.55,
+    similarityBoost: 0.78,
+    pitch: 1.05,
+    rate: 1.0,
     apiKey: '',
   },
   {
-    voiceId: 'JBFqnCBsd6RMkjVDRZzb', // George
-    name: 'George (Gobernanza / Formal)',
-    category: 'Boardroom Formal',
-    description: 'Cadencia solemne y formal para resoluciones de la junta directiva.',
-    stability: 0.75,
-    similarityBoost: 0.88,
-    pitch: 0.78,
-    rate: 0.92,
+    voiceId: 'onwK4e9ZLuTAKqWW03F9', // Daniel
+    name: 'Órbita',
+    category: 'Brief Crisp',
+    description: 'Briefing ejecutivo: ritmo limpio, preciso, sin relleno.',
+    stability: 0.7,
+    similarityBoost: 0.85,
+    pitch: 0.95,
+    rate: 1.04,
     apiKey: '',
-  }
+  },
+  {
+    voiceId: 'N2lVS1w4EtoT3dr4eOWO', // Callum
+    name: 'Pulse',
+    category: 'Alert Soft',
+    description: 'Alertas y herramientas: presencia firme pero no agresiva.',
+    stability: 0.68,
+    similarityBoost: 0.8,
+    pitch: 0.88,
+    rate: 0.98,
+    apiKey: '',
+  },
 ];
 
 let currentAudio: HTMLAudioElement | null = null;
+let speakGeneration = 0;
 
 export function stopCurrentVoice(): void {
+  speakGeneration += 1;
   if (currentAudio) {
     currentAudio.pause();
     currentAudio.currentTime = 0;
@@ -83,6 +64,41 @@ export function stopCurrentVoice(): void {
   }
 }
 
+async function playBlob(
+  blob: Blob,
+  callbacks?: {
+    onStart?: () => void;
+    onEnd?: () => void;
+    onError?: (err: unknown) => void;
+  },
+  gen?: number
+): Promise<void> {
+  callbacks?.onStart?.();
+  const url = URL.createObjectURL(blob);
+  const audio = new Audio(url);
+  currentAudio = audio;
+
+  await new Promise<void>((resolve, reject) => {
+    audio.onended = () => {
+      URL.revokeObjectURL(url);
+      if (currentAudio === audio) currentAudio = null;
+      if (gen === undefined || gen === speakGeneration) callbacks?.onEnd?.();
+      resolve();
+    };
+    audio.onerror = (e) => {
+      URL.revokeObjectURL(url);
+      if (currentAudio === audio) currentAudio = null;
+      callbacks?.onError?.(e);
+      reject(e);
+    };
+    audio.play().catch(reject);
+  });
+}
+
+/**
+ * Siempre intenta ElevenLabs (proxy servidor con ELEVENLABS_API_KEY).
+ * Solo cae a Web Speech si el nodo de voz falla.
+ */
 export async function speakWithElevenLabsOrFallback(
   text: string,
   config: ElevenLabsVoiceConfig,
@@ -93,53 +109,41 @@ export async function speakWithElevenLabsOrFallback(
   }
 ): Promise<void> {
   stopCurrentVoice();
+  const gen = speakGeneration;
+  const clean = text.trim();
+  if (!clean) {
+    callbacks?.onEnd?.();
+    return;
+  }
 
-  // Try server-side synthesis proxy first (which has ELEVENLABS_API_KEY if configured in .env)
+  // 1) Proxy servidor (clave nunca en el cliente)
   try {
     const proxyRes = await fetch('/api/vault/elevenlabs/synthesize', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        text,
+        text: clean,
         voiceId: config.voiceId,
         stability: config.stability,
         similarityBoost: config.similarityBoost,
-        apiKeyOverride: config.apiKey,
+        apiKeyOverride: config.apiKey || undefined,
       }),
     });
 
     if (proxyRes.ok) {
-      const contentType = proxyRes.headers.get('content-type');
-      if (contentType && contentType.includes('audio')) {
-        callbacks?.onStart?.();
-        const blob = await proxyRes.blob();
-        const url = URL.createObjectURL(blob);
-        const audio = new Audio(url);
-        currentAudio = audio;
-
-        audio.onended = () => {
-          URL.revokeObjectURL(url);
-          currentAudio = null;
-          callbacks?.onEnd?.();
-        };
-        audio.onerror = (e) => {
-          URL.revokeObjectURL(url);
-          currentAudio = null;
-          callbacks?.onError?.(e);
-        };
-
-        await audio.play();
+      const contentType = proxyRes.headers.get('content-type') || '';
+      if (contentType.includes('audio')) {
+        await playBlob(await proxyRes.blob(), callbacks, gen);
         return;
       }
     }
   } catch (err) {
-    // Continue to direct client key or web speech fallback
+    console.warn('[ElevenLabs proxy]', err);
   }
 
-  // If user provided a real ElevenLabs API Key, make actual direct fetch
-  if (config.apiKey && config.apiKey.trim().length > 10) {
+  // 2) Clave cliente opcional (bóveda)
+  if (config.apiKey && config.apiKey.trim().length >= 40) {
     try {
-      callbacks?.onStart?.();
       const response = await fetch(
         `https://api.elevenlabs.io/v1/text-to-speech/${config.voiceId}`,
         {
@@ -149,7 +153,7 @@ export async function speakWithElevenLabsOrFallback(
             'xi-api-key': config.apiKey.trim(),
           },
           body: JSON.stringify({
-            text: text,
+            text: clean,
             model_id: 'eleven_multilingual_v2',
             voice_settings: {
               stability: config.stability,
@@ -158,67 +162,37 @@ export async function speakWithElevenLabsOrFallback(
           }),
         }
       );
-
-      if (!response.ok) {
-        throw new Error(`ElevenLabs API HTTP Error ${response.status}`);
+      if (response.ok) {
+        await playBlob(await response.blob(), callbacks, gen);
+        return;
       }
-
-      const blob = await response.blob();
-      const url = URL.createObjectURL(blob);
-      const audio = new Audio(url);
-      currentAudio = audio;
-
-      audio.onended = () => {
-        URL.revokeObjectURL(url);
-        currentAudio = null;
-        callbacks?.onEnd?.();
-      };
-      audio.onerror = (e) => {
-        URL.revokeObjectURL(url);
-        currentAudio = null;
-        callbacks?.onError?.(e);
-      };
-
-      await audio.play();
-      return;
     } catch (err) {
-      console.warn('ElevenLabs API request failed, falling back to simulated neural acoustic speech:', err);
+      console.warn('[ElevenLabs direct]', err);
     }
   }
 
-  // Fallback: Client Web Speech API configured with voice persona attributes
+  // 3) Fallback Web Speech (solo si ElevenLabs no responde)
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     callbacks?.onStart?.();
-    const utterance = new SpeechSynthesisUtterance(text);
+    const utterance = new SpeechSynthesisUtterance(clean);
     utterance.lang = 'es-ES';
     utterance.pitch = config.pitch;
     utterance.rate = config.rate;
-
     const voices = window.speechSynthesis.getVoices();
-    // Prioritize natural or matching gender/profile
-    const isFemale = config.pitch > 1.0;
-    const matchedVoice = voices.find(v => {
-      const matchLang = v.lang.startsWith('es');
-      if (!matchLang) return false;
-      const n = v.name.toLowerCase();
-      if (isFemale) {
-        return n.includes('monica') || n.includes('helena') || n.includes('paulina') || n.includes('female');
-      }
-      return n.includes('jorge') || n.includes('diego') || n.includes('pablo') || n.includes('natural') || n.includes('male');
-    }) || voices.find(v => v.lang.startsWith('es'));
-
-    if (matchedVoice) {
-      utterance.voice = matchedVoice;
-    }
-
-    utterance.onend = () => callbacks?.onEnd?.();
+    const matched =
+      voices.find((v) => v.lang.startsWith('es') && /jorge|diego|pablo|monica|helena/i.test(v.name)) ||
+      voices.find((v) => v.lang.startsWith('es'));
+    if (matched) utterance.voice = matched;
+    utterance.onend = () => {
+      if (gen === speakGeneration) callbacks?.onEnd?.();
+    };
     utterance.onerror = (e) => {
       callbacks?.onError?.(e);
-      callbacks?.onEnd?.();
+      if (gen === speakGeneration) callbacks?.onEnd?.();
     };
-
     window.speechSynthesis.speak(utterance);
-  } else {
-    callbacks?.onEnd?.();
+    return;
   }
+
+  callbacks?.onEnd?.();
 }

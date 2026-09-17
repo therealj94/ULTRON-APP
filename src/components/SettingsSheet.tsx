@@ -39,10 +39,15 @@ const EMOTIONS_LIST: FaceState[] = [
   'THINKING',
   'SPEAKING',
   'HAPPY',
+  'WINK',
   'CONCERNED',
+  'CONFUSED',
   'ANGRY',
   'FURY',
   'SLEEPING',
+  'MUSIC',
+  'SCAN',
+  'OFFLINE',
   'STARTLE',
 ];
 

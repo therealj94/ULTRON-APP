@@ -366,7 +366,7 @@ export const AwsDeploymentModal: React.FC<AwsDeploymentModalProps> = ({
                     <p>
                       Key ID:{' '}
                       <span className="text-[#FF9900]">
-                        {cloudStatus?.aws?.accessKeyIdMasked || 'AKIAX7...6HB'}
+                        {cloudStatus?.aws?.accessKeyIdMasked || 'No configurada'}
                       </span>
                     </p>
                     <p>
@@ -606,7 +606,7 @@ export const AwsDeploymentModal: React.FC<AwsDeploymentModalProps> = ({
               <div className="p-3 bg-black/70 rounded-lg border border-white/10">
                 <span className="text-white/50 block text-[10px]">AWS_ACCESS_KEY_ID</span>
                 <span className="text-white font-bold">
-                  {cloudStatus?.aws?.accessKeyIdMasked || 'AKIAX7LQENZ7GIW3G6HB'}
+                  {cloudStatus?.aws?.accessKeyIdMasked || 'No configurada (env)'}
                 </span>
               </div>
               <div className="p-3 bg-black/70 rounded-lg border border-white/10">

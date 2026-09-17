@@ -18,12 +18,17 @@ import { GlobalOrderBrainModal } from './components/GlobalOrderBrainModal';
 import { AwsDeploymentModal } from './components/AwsDeploymentModal';
 import { TutorialModal } from './components/TutorialModal';
 import { playSfx } from './utils/audio';
-import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
+import { cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
 import { DEFAULT_ELEVENLABS_VOICES, speakWithElevenLabsOrFallback, stopCurrentVoice } from './utils/elevenlabs';
 import { downloadStandaloneSimulator } from './utils/exporter';
-import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck, HelpCircle, RotateCcw } from 'lucide-react';
+import { Maximize2, Minimize2, Camera, ShieldCheck, Sparkles, RotateCcw } from 'lucide-react';
 import { AgenticHarnessModal } from './components/AgenticHarnessModal';
 import { analyzeConversationTopic, SemanticClassification } from './utils/qwenHarness';
+import { streamUltronChat } from './utils/ultronChat';
+import { LoginScreen } from './components/LoginScreen';
+import { OrientationGate } from './components/OrientationGate';
+import { LooiSidebar, DeskPresence } from './components/LooiSidebar';
+import { SpeechBubble } from './components/SpeechBubble';
 
 export default function App() {
   // Session State
@@ -46,16 +51,21 @@ export default function App() {
   // Agentic Harness & Qwen 3.8 27B State
   const [autoModeSwitch, setAutoModeSwitch] = useState<boolean>(true);
   const [harnessModalOpen, setHarnessModalOpen] = useState<boolean>(false);
+  const [conversationId] = useState(() => `desk-${Date.now().toString(36)}`);
+  const chatAbortRef = useRef<AbortController | null>(null);
 
   // Audio & Hardware State
-  const [micEnabled, setMicEnabled] = useState<boolean>(true);
+  const [micEnabled, setMicEnabled] = useState<boolean>(false); // push-to-talk: off al abrir
   const [speakerEnabled, setSpeakerEnabled] = useState<boolean>(true);
   const [soundFxEnabled, setSoundFxEnabled] = useState<boolean>(true);
-  const [visionEnabled, setVisionEnabled] = useState<boolean>(true);
+  const [visionEnabled, setVisionEnabled] = useState<boolean>(false); // cámara OFF al abrir
   const [resetTrigger, setResetTrigger] = useState<number>(0);
 
-  // ElevenLabs Voice Configuration
+  // ElevenLabs Voice Configuration — Nexo by default
   const [activeVoice, setActiveVoice] = useState<ElevenLabsVoiceConfig>(DEFAULT_ELEVENLABS_VOICES[0]);
+  const bootDoneRef = useRef(false);
+  const presenceCooldownRef = useRef(0);
+  const speakSafetyRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Expressive Interactive Actions
   const [isDrinking, setIsDrinking] = useState<boolean>(false);
@@ -86,15 +96,20 @@ export default function App() {
   const [pendingPermission, setPendingPermission] = useState<BoardPermissionRequest | null>(null);
 
   // Current Authenticated User (Render / Ultron FP & Biometrics)
+  const [sessionReady, setSessionReady] = useState(false);
   const [currentUser, setCurrentUser] = useState<{
     name: string;
     role: string;
     authenticated: boolean;
+    correo?: string;
   }>({
-    name: 'José',
-    role: 'Junta Directiva · Orden Global',
+    name: '',
+    role: '',
     authenticated: false,
   });
+  const [deskPresence, setDeskPresence] = useState<DeskPresence>('stay');
+  const [fullBubbleText, setFullBubbleText] = useState('');
+  const [wantDetail, setWantDetail] = useState<'ask' | 'summary' | 'full' | null>(null);
 
   // Action timers to ensure animations always complete and return to IDLE
   const combatTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -129,52 +144,47 @@ export default function App() {
   // Display speech bubble helper
   const showBubble = useCallback((text: string, durationMs = 3200) => {
     setBubbleText(text);
+    setFullBubbleText(text);
     setBubbleVisible(true);
     if (bubbleTimeoutRef.current) clearTimeout(bubbleTimeoutRef.current);
     bubbleTimeoutRef.current = setTimeout(() => {
       setBubbleVisible(false);
-    }, durationMs);
+    }, Math.max(durationMs, 5000));
   }, []);
 
-  // Voice utterance helper (with ElevenLabs fallback)
+  // Voice: siempre ElevenLabs (proxy). Timeout de seguridad para no dejar SPEAKING/ojos pegados.
   const vocalize = useCallback(
     (text: string, faceOverride: FaceState = 'SPEAKING') => {
-      showBubble(text);
-      if (speakerEnabled) {
-        setFace(faceOverride);
-        if (activeVoice?.apiKey) {
-          speakWithElevenLabsOrFallback(text, activeVoice, {
-            onStart: () => setFace(faceOverride),
-            onEnd: () => setFace('IDLE'),
-            onError: () => {
-              speakUtterance(text, {
-                enabled: true,
-                onEnd: () => setFace('IDLE'),
-              });
-            },
-          });
-        } else {
-          speakUtterance(text, {
-            enabled: true,
-            onEnd: () => {
-              setFace('IDLE');
-            },
-          });
+      const clean = text.trim();
+      if (!clean) return;
+      showBubble(clean, Math.min(12000, 2200 + clean.length * 45));
+      if (!speakerEnabled) return;
+
+      if (speakSafetyRef.current) clearTimeout(speakSafetyRef.current);
+      setFace(faceOverride);
+
+      const releaseFace = () => {
+        if (speakSafetyRef.current) {
+          clearTimeout(speakSafetyRef.current);
+          speakSafetyRef.current = null;
         }
-      }
+        setFace((curr) => (curr === faceOverride || curr === 'SPEAKING' ? 'IDLE' : curr));
+      };
+
+      // Si el audio se cuelga, soltar cara a los ~12s
+      speakSafetyRef.current = setTimeout(releaseFace, 12000);
+
+      void speakWithElevenLabsOrFallback(clean, activeVoice, {
+        onStart: () => setFace(faceOverride),
+        onEnd: releaseFace,
+        onError: () => releaseFace(),
+      });
     },
     [showBubble, speakerEnabled, activeVoice]
   );
 
-  // Add log to bridge telemetry
-  const logBridgeEvent = useCallback((direction: 'in' | 'out', payload: string) => {
-    const timestamp = new Date().toLocaleTimeString();
-    setBridgeLog((prev) => [{ timestamp, direction, payload }, ...prev.slice(0, 30)]);
-  }, []);
-
-  // Boot sequence and remote Ultron session check
+  // Sesión previa (si existe) — no saludar hasta login listo
   useEffect(() => {
-    // Check if session exists in Ultron FP (Render)
     fetch('/api/ultron/sesion')
       .then((res) => res.json())
       .then((data) => {
@@ -183,19 +193,33 @@ export default function App() {
             name: data.user.nombre || 'José',
             role: data.user.rol || 'Junta Directiva · Orden Global',
             authenticated: true,
+            correo: data.user.correo,
           });
+          setSessionReady(true);
         }
       })
       .catch(() => {});
+  }, []);
 
+  // Boot corto solo después del login
+  useEffect(() => {
+    if (!sessionReady || bootDoneRef.current) return;
     const timer = setTimeout(() => {
+      if (bootDoneRef.current) return;
+      bootDoneRef.current = true;
       setIsBooting(false);
       playSfx('boot', true);
-      vocalize('Junta directiva en línea. Sistema ULTRON activo.');
-    }, 1400);
-
+      vocalize(`Hola ${currentUser.name || ''}. ULTRON listo.`);
+    }, 900);
     return () => clearTimeout(timer);
-  }, [vocalize]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionReady]);
+
+  // Add log to bridge telemetry
+  const logBridgeEvent = useCallback((direction: 'in' | 'out', payload: string) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setBridgeLog((prev) => [{ timestamp, direction, payload }, ...prev.slice(0, 30)]);
+  }, []);
 
   // Handle Fullscreen Toggle
   const toggleFullscreen = () => {
@@ -265,12 +289,12 @@ export default function App() {
     setIsWaving(true);
     setFace('HAPPY');
     playSfx('wink', soundFxEnabled);
-    vocalize('¡Hola! Saludos cordiales a la junta directiva.');
+    vocalize('Hola.');
 
     waveTimerRef.current = setTimeout(() => {
       setIsWaving(false);
       setFace('IDLE');
-    }, 3800);
+    }, 2800);
   }, [soundFxEnabled, vocalize]);
 
   // Trigger Combat Blaster Mode (with auto-disarm timeout)
@@ -304,8 +328,11 @@ export default function App() {
     vocalize('Sistemas defensivos retraídos. Estado normalizado.');
   }, [soundFxEnabled, vocalize]);
 
-  // Handle presence events from optical tracking
+  // Handle presence events from optical tracking (cooldown anti-loop)
   const handlePresenceEvent = useCallback((event: { type: 'wave' | 'drink'; spatialZone: string }) => {
+    const now = Date.now();
+    if (now - presenceCooldownRef.current < 8000) return;
+    presenceCooldownRef.current = now;
     if (event.type === 'wave') {
       handleTriggerWave();
     } else if (event.type === 'drink') {
@@ -313,9 +340,9 @@ export default function App() {
     }
   }, [handleTriggerWave, handleTriggerDrink]);
 
-  // Speech Recognition hook with full barge-in interruption
+  // Speech Recognition — solo con mic ON; no barge-in mientras habla (evita glitch)
   useEffect(() => {
-    if (!micEnabled) {
+    if (!micEnabled || deskPresence === 'sleep') {
       if (speechRecognizerRef.current) {
         speechRecognizerRef.current.stop();
         speechRecognizerRef.current = null;
@@ -327,31 +354,30 @@ export default function App() {
       (text, isFinal) => {
         if (!text.trim()) return;
         if (isFinal) {
+          setMicEnabled(false); // una orden y se apaga (push-to-talk)
           handleVoiceCommand(text.trim());
         } else {
-          // Live stream transcript
           showBubble(text, 2500);
-          setFace('LISTENING');
+          setFace((f) => (f === 'SPEAKING' ? f : 'LISTENING'));
         }
       },
       () => {
-        // Immediate Barge-in interruption: user started speaking, silence assistant voice instantly!
+        // Barge-in solo si no estamos en TTS activo
+        if (face === 'SPEAKING') return;
         cancelSpeech();
-        stopCurrentVoice();
+        chatAbortRef.current?.abort();
         setFace('LISTENING');
-        showBubble('Escuchando...');
+        showBubble('Escuchando…');
       },
-      () => {
-        // Recognition ended / auto-restarted
-      },
-      () => {
-        // Recognition error
-      }
+      () => {},
+      () => {}
     );
 
     if (rec) {
       speechRecognizerRef.current = rec;
       rec.start();
+      setFace('LISTENING');
+      showBubble('Te escucho…', 4000);
     }
 
     return () => {
@@ -361,22 +387,32 @@ export default function App() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [micEnabled]);
+  }, [micEnabled, deskPresence]);
 
-  // Manual Trigger Voice
+  // Manual Trigger Voice (push-to-talk)
   const triggerVoicePipeline = () => {
-    if (!micEnabled) {
-      setMicEnabled(true);
-      playSfx('wake', soundFxEnabled);
-      vocalize('Micrófono activado. Te escucho.');
-      return;
+    if (deskPresence === 'sleep') {
+      setDeskPresence('stay');
+      setFace('IDLE');
     }
-
     playSfx('tap', soundFxEnabled);
-    setFace('LISTENING');
-    showBubble('Escuchando orden...');
-    if (speechRecognizerRef.current) {
-      speechRecognizerRef.current.start();
+    setMicEnabled(true);
+  };
+
+  const handleDeskPresence = (p: DeskPresence) => {
+    setDeskPresence(p);
+    if (p === 'sleep') {
+      setMicEnabled(false);
+      setVisionEnabled(false);
+      handleSleep();
+    } else if (p === 'stay') {
+      setFace('IDLE');
+      setMicEnabled(false);
+      vocalize('Modo stay.');
+    } else {
+      setMode('EXPLORER');
+      setFace('HAPPY');
+      vocalize('Modo explore.');
     }
   };
 
@@ -389,6 +425,96 @@ export default function App() {
     }, 900);
   };
 
+  const dispatchToolName = useCallback(
+    (tool: string, args?: Record<string, unknown>) => {
+      logBridgeEvent('out', `Tool Call: ${tool}()`);
+      if (tool === 'take_camera_photo_countdown') {
+        setIsCameraCountdownModalOpen(true);
+      } else if (tool === 'browse_web_page_playwright') {
+        setIsPlaywrightBrowserOpen(true);
+      } else if (tool === 'analyze_vision_media' || tool === 'open_vision_analyzer') {
+        setIsVisionAnalyzerOpen(true);
+      } else if (tool === 'query_global_order_brain') {
+        setIsGlobalOrderBrainOpen(true);
+      } else if (tool === 'trigger_blaster_combat') {
+        handleTriggerCombat();
+      } else if (tool === 'drink_refreshment') {
+        handleTriggerDrink();
+      } else if (tool === 'wave_greeting') {
+        handleTriggerWave();
+      } else if (tool === 'open_biometric_auth') {
+        setIsBiometricOpen(true);
+      } else if (tool === 'open_cloud_deployment') {
+        setIsVaultModalOpen(true);
+      }
+      void args;
+    },
+    [handleTriggerCombat, handleTriggerDrink, handleTriggerWave, logBridgeEvent]
+  );
+
+  /** Cerebro real: Qwen vía proxy Express (SSE). Herramientas locales se despachan aparte. */
+  const askUltronBrain = useCallback(
+    async (cmd: string, localTool?: string) => {
+      chatAbortRef.current?.abort();
+      const ac = new AbortController();
+      chatAbortRef.current = ac;
+      setFace('THINKING');
+      playSfx('think', soundFxEnabled);
+      showBubble('Pensando…', 8000);
+      logBridgeEvent('out', `Qwen ← "${cmd.slice(0, 120)}"`);
+
+      try {
+        const result = await streamUltronChat({
+          message: cmd,
+          mode,
+          conversationId,
+          signal: ac.signal,
+          onToken: () => {
+            setFace('SPEAKING');
+          },
+        });
+
+        if (result.error && !result.reply) {
+          logBridgeEvent('in', `Qwen error: ${result.error}`);
+          const classification = analyzeConversationTopic(cmd.toLowerCase());
+          if (classification) {
+            if (autoModeSwitch && classification.mode !== mode) {
+              setMode(classification.mode);
+              playSfx(classification.mode === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
+            }
+            if (classification.toolCall) dispatchToolName(classification.toolCall.name);
+            vocalize(classification.thought);
+            return;
+          }
+          proceedThinkingAndSpeaking(`Nodo ocupado (${result.error}). Reintento disponible.`);
+          return;
+        }
+
+        if (result.toolCall?.name) {
+          dispatchToolName(result.toolCall.name, result.toolCall.arguments);
+        } else if (localTool) {
+          dispatchToolName(localTool);
+        }
+
+        logBridgeEvent('in', `Qwen [${result.model || 'nodo'}]: ${(result.reply || '').slice(0, 160)}`);
+        vocalize(result.reply || 'Listo.');
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        logBridgeEvent('in', `Qwen fallo: ${String(err?.message || err)}`);
+        proceedThinkingAndSpeaking('No pude contactar el nodo Qwen. Sistemas locales activos.');
+      }
+    },
+    [
+      autoModeSwitch,
+      conversationId,
+      dispatchToolName,
+      logBridgeEvent,
+      mode,
+      soundFxEnabled,
+      vocalize,
+    ]
+  );
+
   // Dispatcher for voice commands
   const handleVoiceCommand = (cmd: string) => {
     const q = cmd.toLowerCase();
@@ -397,28 +523,28 @@ export default function App() {
     // 1. Camera Photo with 3-2-1 Countdown & Live Stream
     if (/foto|captura|fotograf|selfie|picture|cámara|sonríe/.test(q)) {
       setIsCameraCountdownModalOpen(true);
-      vocalize('Encendiendo cámara frontal. Preparando cuenta regresiva de tres segundos.');
+      void askUltronBrain(cmd, 'take_camera_photo_countdown');
       return;
     }
 
     // 2. Playwright Web Scraping on AWS EC2
     if (/web|página|navega|playwright|sitio|url|investiga|noticia/.test(q)) {
       setIsPlaywrightBrowserOpen(true);
-      vocalize('Despachando nodo Playwright en AWS para inspección y análisis web.');
+      void askUltronBrain(cmd, 'browse_web_page_playwright');
       return;
     }
 
     // 3. Vision Media Analysis with Auto-Purge Privacy
     if (/visión|imagen|video|inspeccion|subir|bajar|multimodal|purga/.test(q)) {
       setIsVisionAnalyzerOpen(true);
-      vocalize('Abriendo visor de visión neural con protocolo de auto-purga para máxima privacidad.');
+      void askUltronBrain(cmd, 'open_vision_analyzer');
       return;
     }
 
     // 4. Cerebro de Inteligencia Estratégica de Orden Global
     if (/orden global|doctrina|geopolítica|tratado|resolución|estatuto|soberanía/.test(q)) {
       setIsGlobalOrderBrainOpen(true);
-      vocalize('Accediendo al archivo de Inteligencia Estratégica del Cerebro de Orden Global.');
+      void askUltronBrain(cmd, 'query_global_order_brain');
       return;
     }
 
@@ -428,8 +554,40 @@ export default function App() {
       return;
     }
 
+    // Music / headphones expression
+    if (/música|musica|canción|cancion|headphones|auricular/.test(q)) {
+      setFace('MUSIC');
+      vocalize('Poniendo vibes. Auriculares on.');
+      setTimeout(() => setFace('IDLE'), 4500);
+      return;
+    }
+
+    // Confused
+    if (/confund|no entiendo|\bhuh\b|no te entiendo/.test(q)) {
+      setFace('CONFUSED');
+      vocalize('Hmm, ¿puedes repetir más claro?');
+      setTimeout(() => setFace('IDLE'), 3500);
+      return;
+    }
+
+    // Scan
+    if (/escanea|escáner|escaner|laser|láser|scan/.test(q)) {
+      setFace('SCAN');
+      vocalize('Escaneando el escritorio.');
+      setTimeout(() => setFace('IDLE'), 4000);
+      return;
+    }
+
+    // Offline / dead face
+    if (/offline|apagado|muerto|desconect/.test(q)) {
+      setFace('OFFLINE');
+      vocalize('Modo offline simulado.');
+      setTimeout(() => setFace('IDLE'), 3500);
+      return;
+    }
+
     // Interactive Hand Wave Greeting
-    if (/hola|saluda|saludo|wave|mano/.test(q)) {
+    if (/^(hola|saluda|saludo|wave|mano)\b/.test(q) || /saluda|choca la mano/.test(q)) {
       handleTriggerWave();
       return;
     }
@@ -455,7 +613,7 @@ export default function App() {
     }
 
     // Bóveda Central de ULTRON FP, APIs y Conduits
-    if (/bóveda|boveda|clave|credencial|conduit|api|llave|seguridad/.test(q)) {
+    if (/bóveda|boveda|clave|credencial|conduit|api|llave/.test(q)) {
       setIsVaultModalOpen(true);
       vocalize('Abriendo la Bóveda Central de ULTRON FP. Acceso institucional a credenciales y conduits.');
       return;
@@ -513,51 +671,20 @@ export default function App() {
       return;
     }
 
-    // Agentic Harness Semantic Mode Detection (Qwen 3.8 27B)
+    // Local semantic mode switch (fast) + Qwen for the spoken reply
     if (autoModeSwitch) {
       const classification = analyzeConversationTopic(q);
-      if (classification) {
+      if (classification && classification.mode !== mode) {
+        setMode(classification.mode);
+        playSfx(classification.mode === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
         logBridgeEvent(
           'in',
-          `Qwen Intent: ${classification.intent} (${Math.round(classification.confidence * 100)}%) -> MODO ${classification.mode}`
+          `Modo → ${classification.mode} (${classification.intent})`
         );
-        if (classification.mode !== mode) {
-          setMode(classification.mode);
-          playSfx(classification.mode === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
-        }
-        if (classification.toolCall) {
-          const tool = classification.toolCall.name;
-          logBridgeEvent('out', `Tool Call: ${tool}()`);
-          if (tool === 'take_camera_photo_countdown') {
-            setIsCameraCountdownModalOpen(true);
-          } else if (tool === 'browse_web_page_playwright') {
-            setIsPlaywrightBrowserOpen(true);
-          } else if (tool === 'analyze_vision_media') {
-            setIsVisionAnalyzerOpen(true);
-          } else if (tool === 'query_global_order_brain') {
-            setIsGlobalOrderBrainOpen(true);
-          } else if (tool === 'trigger_blaster_combat') {
-            handleTriggerCombat();
-          } else if (tool === 'drink_refreshment') {
-            handleTriggerDrink();
-          } else if (tool === 'wave_greeting') {
-            handleTriggerWave();
-          } else if (tool === 'open_biometric_auth') {
-            setIsBiometricOpen(true);
-          } else if (tool === 'open_cloud_deployment') {
-            setIsVaultModalOpen(true);
-          }
-        }
-        setFace('SPEAKING');
-        vocalize(classification.thought);
-        return;
       }
-    }
-
-    // Corporate Weather
-    if (/clima|tiempo|temperatura/.test(q)) {
-      vocalize('27 grados en la sede corporativa. Cielo despejado y atmósfera estable.');
-      return;
+      if (classification?.toolCall) {
+        dispatchToolName(classification.toolCall.name);
+      }
     }
 
     // Mode switching via command
@@ -573,14 +700,6 @@ export default function App() {
       }
     }
 
-    // Financial Audit / Gold
-    if (/auditor|balance|oro|gold/.test(q)) {
-      setMode('GOLD');
-      playSfx('grant', soundFxEnabled);
-      vocalize('Balance de reservas auditado. Calificación triple A.');
-      return;
-    }
-
     // Sleep / Wake commands
     if (/dormir|reposo|apagar/.test(q)) {
       handleSleep();
@@ -591,8 +710,19 @@ export default function App() {
       return;
     }
 
-    // Generic acknowledgment
-    proceedThinkingAndSpeaking(`Orden procesada: "${cmd}".`);
+    // Default: real Qwen brain (corto). Resumen/completo si el usuario lo pide.
+    if (/completo|entero|todo el detalle|lee todo|versión completa|version completa/.test(q)) {
+      setWantDetail('full');
+      void askUltronBrain(`${cmd}\n\n[Usuario pidió la versión completa, puedes extender hasta 2 párrafos.]`);
+      return;
+    }
+    if (/resumen|resum|corto|breve|solo resumen/.test(q)) {
+      setWantDetail('summary');
+      void askUltronBrain(`${cmd}\n\n[Usuario pidió SOLO resumen en una frase.]`);
+      return;
+    }
+    setWantDetail('ask');
+    void askUltronBrain(cmd);
   };
 
   // Permission Responses
@@ -684,11 +814,25 @@ export default function App() {
     }
   };
 
+  const handleLoginSuccess = (user: { name: string; role: string; correo: string }) => {
+    setCurrentUser({
+      name: user.name,
+      role: user.role,
+      authenticated: true,
+      correo: user.correo,
+    });
+    setSessionReady(true);
+    playSfx('grant', true);
+  };
+
   return (
+    <OrientationGate>
     <div
       id="ultron-app-root"
       className="relative w-screen h-screen overflow-hidden bg-black flex items-center justify-center select-none"
     >
+      {!sessionReady && <LoginScreen onAuthenticated={handleLoginSuccess} />}
+
       {/* Stand Frame Container: Supports both Horizontal (Desk Kiosk LOOI Stand) and Vertical (Handheld Smartphone) */}
       <div
         id="ultron-stand-container"
@@ -758,113 +902,51 @@ export default function App() {
           }}
         />
 
-        {/* Clean Executive Telemetry & Controls Bar */}
-        <div className="absolute top-4 left-5 right-5 z-20 flex items-center justify-between pointer-events-none">
-          {/* Left: Brand & Remote Status Link to ultron.ordenglobal.link */}
-          <div className="flex items-center gap-2.5 pointer-events-auto">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 border border-[#05E1FF]/30 backdrop-blur-md shadow-[0_0_15px_rgba(5,225,255,0.15)]">
-              <span className="w-2 h-2 rounded-full bg-[#05E1FF] animate-pulse" />
-              <span className="font-display font-bold tracking-[0.2em] text-[#05E1FF] text-xs">
-                ULTRON FP
-              </span>
-            </div>
-
-            {/* Direct Link & Connection Indicator to Render */}
-            <a
-              href="https://ultron.ordenglobal.link"
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Nodo Central de Orden Global (Render - ultron.ordenglobal.link). Clic para abrir."
-              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 border border-emerald-400/30 text-[10px] font-mono text-emerald-400 hover:bg-emerald-400/10 transition-colors"
-            >
-              <Globe className="w-3 h-3" />
-              <span>ORDEN GLOBAL</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            </a>
-          </div>
-
-          {/* Right: Essential, decluttered controls */}
+        {/* Clean LOOI top strip — mínimo, sin cámara auto */}
+        <div className="absolute top-3 left-4 right-[88px] z-20 flex items-center justify-between pointer-events-none">
           <div className="flex items-center gap-2 pointer-events-auto">
-            {/* Listening indicator */}
-            {face === 'LISTENING' && (
-              <div className="font-display font-bold tracking-[0.25em] text-[#05E1FF] text-[10px] hidden md:block px-2.5 py-1 rounded-full bg-[#05E1FF]/10 border border-[#05E1FF]/30 animate-pulse">
-                RECEPTANDO VOZ
+            <div className="ui-chip ui-chip--live font-display font-semibold tracking-[0.14em]">
+              <span className="w-1.5 h-1.5 rounded-full bg-[var(--accent)]" />
+              ULTRON FP
+            </div>
+            {currentUser.authenticated && (
+              <div className="ui-chip hidden sm:inline-flex">
+                <ShieldCheck className="w-3 h-3 text-[var(--ok)]" />
+                {currentUser.name}
               </div>
             )}
+          </div>
 
-            {/* Biometric / Session Access Button */}
-            <button
-              type="button"
-              onClick={() => setIsBiometricOpen(true)}
-              title={
-                currentUser.authenticated
-                  ? `Sesión activa: ${currentUser.name} (${currentUser.role})`
-                  : 'Autenticación Biométrica y Acceso a Render (ultron.ordenglobal.link)'
-              }
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono transition-all cursor-pointer ${
-                currentUser.authenticated
-                  ? 'bg-[#00FF88]/15 border border-[#00FF88]/50 text-[#00FF88] shadow-[0_0_12px_rgba(0,255,136,0.25)]'
-                  : 'bg-black/60 border border-[#05E1FF]/40 text-[#05E1FF] hover:bg-[#05E1FF]/15 shadow-[0_0_10px_rgba(5,225,255,0.2)]'
-              }`}
-            >
-              {currentUser.authenticated ? (
-                <>
-                  <ShieldCheck className="w-3.5 h-3.5 text-[#00FF88]" />
-                  <span className="font-bold">{currentUser.name.toUpperCase()}</span>
-                </>
-              ) : (
-                <>
-                  <Fingerprint className="w-3.5 h-3.5 text-[#05E1FF]" />
-                  <span className="font-bold">ACCESO</span>
-                </>
-              )}
-            </button>
-
-            {/* Camera Optical Tracking Toggle */}
+          <div className="flex items-center gap-2 pointer-events-auto">
+            {face === 'LISTENING' && (
+              <div className="ui-chip ui-chip--live font-display tracking-[0.16em]">ESCUCHANDO</div>
+            )}
+            {face === 'SPEAKING' && (
+              <div className="ui-chip ui-chip--live font-display tracking-[0.16em]">HABLANDO</div>
+            )}
             <button
               type="button"
               onClick={() => {
                 setVisionEnabled((prev) => !prev);
                 playSfx('tap', soundFxEnabled);
               }}
-              title={visionEnabled ? 'Cámara frontal activa (siguiendo rostro)' : 'Activar cámara frontal'}
+              title={visionEnabled ? 'Apagar cámara' : 'Activar cámara (manual)'}
               className={`p-2 rounded-full border transition-all cursor-pointer ${
                 visionEnabled
-                  ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF] shadow-[0_0_10px_rgba(5,225,255,0.3)]'
+                  ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF]'
                   : 'border-[#8FA3B0]/30 bg-black/60 text-[#8FA3B0] hover:text-[#05E1FF]'
               }`}
             >
               <Camera className="w-3.5 h-3.5" />
             </button>
-
-            {/* Normalizer / Disarm Reset Button */}
             <button
               type="button"
               onClick={handleNormalize}
-              title="Normalizar estado, replegar armas y volver a reposo IDLE"
-              className="p-2 rounded-full border border-emerald-400/40 bg-black/60 text-emerald-400 hover:bg-emerald-400/20 transition-all cursor-pointer shadow-[0_0_10px_rgba(52,211,153,0.15)]"
+              title="Normalizar"
+              className="p-2 rounded-full border border-emerald-400/40 bg-black/60 text-emerald-400 hover:bg-emerald-400/20 transition-all cursor-pointer"
             >
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
-
-            {/* Panel Button (Opens Dock Drawer with all modular tools) */}
-            <button
-              type="button"
-              onClick={() => setDockOpen((prev) => !prev)}
-              title="Abrir panel central con herramientas: Bóveda, Playwright, Visión, Blaster"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#05E1FF]/40 bg-[#05E1FF]/10 text-[#05E1FF] hover:bg-[#05E1FF]/25 text-xs font-display font-bold tracking-wider transition-all cursor-pointer shadow-[0_0_12px_rgba(5,225,255,0.2)]"
-            >
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">PANEL</span>
-            </button>
-
-            {/* Battery Indicator */}
-            <span className="text-[11px] text-[#8FA3B0] hidden md:flex items-center gap-1 pl-1">
-              <BatteryMedium className="w-3.5 h-3.5 text-[#05E1FF]" />
-              {Math.round(energy)}%
-            </span>
-
-            {/* Fullscreen Kiosk Toggle */}
             <button
               type="button"
               onClick={toggleFullscreen}
@@ -876,20 +958,41 @@ export default function App() {
           </div>
         </div>
 
-        {/* Central Speech Bubble */}
-        <div
-          id="ultron-speech-bubble"
-          className={`absolute left-1/2 bottom-[17%] -translate-x-1/2 z-20 max-w-[85vw] sm:max-w-xl text-center px-4 py-2 rounded-full border border-[#05E1FF]/30 bg-black/75 backdrop-blur-sm text-sm font-mono text-[#dff8ff] transition-all duration-300 pointer-events-none shadow-[0_0_20px_rgba(5,225,255,0.2)] ${
-            bubbleVisible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
-          }`}
-        >
-          {bubbleText}
-        </div>
+        {/* LOOI speech bubble (derecha) */}
+        <SpeechBubble
+          text={bubbleText}
+          visible={bubbleVisible && deskPresence !== 'sleep'}
+          hint={
+            fullBubbleText.length > 180
+              ? 'Toca: ¿quieres el completo o solo el resumen?'
+              : 'ULTRON · ElevenLabs'
+          }
+          onExpand={() => {
+            if (fullBubbleText.length > 180) {
+              setWantDetail('ask');
+              showBubble(
+                '¿Quieres que lea el completo o solo un resumen corto?',
+                8000
+              );
+              vocalize('¿Quieres el completo o solo el resumen?');
+            } else {
+              showBubble(fullBubbleText, 6000);
+            }
+          }}
+          compact={wantDetail !== 'full'}
+        />
+
+        {/* LOOI sidebar: sleep / stay / explore + menú */}
+        <LooiSidebar
+          presence={deskPresence}
+          onPresenceChange={handleDeskPresence}
+          onOpenMenu={() => setDockOpen(true)}
+        />
 
         {/* Personality Mode Tag */}
         <div
           id="ultron-mode-tag"
-          className="absolute left-1/2 bottom-[10%] -translate-x-1/2 z-10 font-display font-bold tracking-[0.38em] text-base text-[#05E1FF]/80 pointer-events-none flex items-center gap-2"
+          className="absolute left-1/2 bottom-[8%] -translate-x-1/2 z-10 font-display font-bold tracking-[0.38em] text-sm text-[#05E1FF]/70 pointer-events-none flex items-center gap-2"
         >
           <span>{mode}</span>
           {mode === 'GOLD' && <Sparkles className="w-3.5 h-3.5 text-[#F5C542]" />}
@@ -1229,25 +1332,27 @@ export default function App() {
         {/* Initial Boot Screen */}
         <div
           id="ultron-boot-screen"
-          className={`absolute inset-0 z-50 flex items-center justify-center bg-black transition-opacity duration-700 ${
+          className={`absolute inset-0 z-50 flex items-center justify-center transition-opacity duration-700 ${
             isBooting ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
           }`}
+          style={{ background: 'radial-gradient(80% 60% at 50% 40%, rgba(62,201,214,0.08), #07090c 70%)' }}
         >
           <div className="flex flex-col items-center gap-3">
-            <svg width="76" height="60" viewBox="0 0 68 52" fill="none" className="animate-pulse">
-              <path d="M6 36C6 14 62 14 62 36" stroke="#05E1FF" strokeWidth="2.5" />
-              <circle cx="34" cy="34" r="11" stroke="#05E1FF" strokeWidth="2" />
-              <circle cx="34" cy="34" r="3" fill="#05E1FF" />
+            <svg width="72" height="56" viewBox="0 0 68 52" fill="none">
+              <path d="M6 36C6 14 62 14 62 36" stroke="#3EC9D6" strokeWidth="2" opacity="0.9" />
+              <circle cx="34" cy="34" r="11" stroke="#3EC9D6" strokeWidth="1.8" />
+              <circle cx="34" cy="34" r="3" fill="#3EC9D6" />
             </svg>
-            <h1 className="font-display font-bold tracking-[0.45em] text-2xl text-[#05E1FF]">
+            <h1 className="font-display font-bold tracking-[0.28em] text-2xl text-[var(--ink)]">
               ULTRON FP
             </h1>
-            <p className="font-mono text-xs text-[#8FA3B0] tracking-widest uppercase">
-              ASISTENTE DE JUNTA DIRECTIVA
+            <p className="font-body text-xs text-[var(--muted)] tracking-[0.18em] uppercase">
+              Desk assistant
             </p>
           </div>
         </div>
       </div>
     </div>
+    </OrientationGate>
   );
 }
