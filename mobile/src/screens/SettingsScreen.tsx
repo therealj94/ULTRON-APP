@@ -72,7 +72,7 @@ export function SettingsScreen({ onBack }: Props) {
 
       <View style={styles.card}>
         <Text style={styles.label}>Voz TTS</Text>
-        {(['jarvis', 'formal', 'tierna', 'firme', 'narrador'] as const).map((v) => (
+        {(['jarvis', 'formal', 'tierna', 'estrategia', 'orbita'] as const).map((v) => (
           <Pressable
             key={v}
             onPress={() => void patch({ voiceId: v })}

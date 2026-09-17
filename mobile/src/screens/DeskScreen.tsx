@@ -324,30 +324,35 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
       setMicMuted(settings.micMuted);
       setVisionOn(settings.visionEnabled);
 
-      // Cámara
-      if (settings.visionEnabled && !camPerm?.granted) {
-        await new Promise<void>((resolve) => {
-          Alert.alert(
-            'Cámara ULTRON FP',
-            'Quiero mirarte a los ojos e identificar lo que hay frente a mí (persona, lápiz, teléfono…). ¿Permitir cámara?',
-            [
-              {
-                text: 'Denegar',
-                style: 'cancel',
-                onPress: () => {
-                  setVisionOn(false);
-                  resolve();
+      // Cámara — solo pedir si el estado ya resolvió y no hay permiso
+      if (settings.visionEnabled) {
+        const camStatus = camPerm;
+        if (camStatus && !camStatus.granted && camStatus.canAskAgain !== false) {
+          await new Promise<void>((resolve) => {
+            Alert.alert(
+              'Cámara ULTRON FP',
+              'Quiero mirarte a los ojos e identificar lo que hay frente a mí (persona, lápiz, teléfono…). ¿Permitir cámara?',
+              [
+                {
+                  text: 'Denegar',
+                  style: 'cancel',
+                  onPress: () => {
+                    setVisionOn(false);
+                    resolve();
+                  },
                 },
-              },
-              {
-                text: 'Permitir',
-                onPress: () => {
-                  void requestCam().finally(() => resolve());
+                {
+                  text: 'Permitir',
+                  onPress: () => {
+                    void requestCam().finally(() => resolve());
+                  },
                 },
-              },
-            ]
-          );
-        });
+              ]
+            );
+          });
+        } else if (camStatus?.granted) {
+          setVisionOn(true);
+        }
       }
 
       const micOk = await ensureSpeechPermissions();
@@ -438,12 +443,15 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
     void handleCommand(t);
   };
 
+  const onGazeStable = useCallback((x: number, y: number) => setGaze({ x, y }), []);
+  const onObjectsStable = useCallback((labels: string[]) => setObjects(labels), []);
+
   return (
     <View style={styles.root}>
       <GazeCamera
         enabled={visionOn && !!camPerm?.granted}
-        onGaze={(x, y) => setGaze({ x, y })}
-        onObjects={setObjects}
+        onGaze={onGazeStable}
+        onObjects={onObjectsStable}
       />
 
       <View style={styles.topBar}>
@@ -512,6 +520,7 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
           onPress={() => {
             setPresence('explore');
             setMode('EXPLORER');
+            listenMode.current = 'command';
             void say('Explore.', 'SCAN');
           }}
           style={[styles.dockBtn, presence === 'explore' && styles.dockOn]}

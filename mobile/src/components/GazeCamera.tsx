@@ -11,25 +11,36 @@ type Props = {
 };
 
 /**
- * Cámara frontal silenciosa: estima mirada (centro-masa de luminancia)
- * y cada ~5s pide al desk identificar objetos (lápiz, persona, etc.).
+ * Cámara frontal: cuando hay persona → mirada al centro.
+ * Sin detección reciente → micro-saccades suaves (no overwrite constante).
  */
 export function GazeCamera({ enabled, onGaze, onObjects, onPresence }: Props) {
   const ref = useRef<CameraView>(null);
   const busy = useRef(false);
+  const onGazeRef = useRef(onGaze);
+  const onObjectsRef = useRef(onObjects);
+  const onPresenceRef = useRef(onPresence);
+  const lastPersonAt = useRef(0);
+
+  useEffect(() => {
+    onGazeRef.current = onGaze;
+    onObjectsRef.current = onObjects;
+    onPresenceRef.current = onPresence;
+  }, [onGaze, onObjects, onPresence]);
 
   useEffect(() => {
     if (!enabled) return;
-    // Mirada suave idle + micro-movimientos (hasta que haya frame analysis)
     let t = 0;
     const id = setInterval(() => {
-      t += 0.35;
-      const x = Math.sin(t * 0.7) * 0.25;
-      const y = Math.cos(t * 0.45) * 0.15;
-      onGaze?.(x, y);
-    }, 120);
+      // Solo idle si no vimos persona en los últimos 4s
+      if (Date.now() - lastPersonAt.current < 4000) return;
+      t += 0.2;
+      const x = Math.sin(t * 0.35) * 0.12;
+      const y = Math.cos(t * 0.22) * 0.08;
+      onGazeRef.current?.(x, y);
+    }, 400);
     return () => clearInterval(id);
-  }, [enabled, onGaze]);
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -45,9 +56,7 @@ export function GazeCamera({ enabled, onGaze, onObjects, onPresence }: Props) {
             skipProcessing: true,
           });
           if (!photo?.base64) return;
-          onPresence?.(true);
-          // Heurística local rápida: sesgo de mirada por “presencia”
-          onGaze?.(0, -0.05);
+          onPresenceRef.current?.(true);
 
           const res = await fetch(`${API_BASE}/api/vision/analyze`, {
             method: 'POST',
@@ -68,11 +77,11 @@ export function GazeCamera({ enabled, onGaze, onObjects, onPresence }: Props) {
             .map((s: string) => s.trim().toLowerCase())
             .filter((s: string) => s.length > 2 && s.length < 28)
             .slice(0, 6);
-          if (labels.length) onObjects?.(labels);
+          if (labels.length) onObjectsRef.current?.(labels);
 
-          // Si hay persona, mirada al centro (te está viendo)
-          if (labels.some((l) => /persona|rostro|cara|hombre|mujer|jose|medardo/.test(l))) {
-            onGaze?.(0, 0);
+          if (labels.some((l) => /persona|rostro|cara|hombre|mujer|face|person/.test(l))) {
+            lastPersonAt.current = Date.now();
+            onGazeRef.current?.(0, 0);
           }
         } catch {
           /* red / cámara */
@@ -82,13 +91,13 @@ export function GazeCamera({ enabled, onGaze, onObjects, onPresence }: Props) {
       })();
     }, 5500);
     return () => clearInterval(id);
-  }, [enabled, onGaze, onObjects, onPresence]);
+  }, [enabled]);
 
   if (!enabled) return null;
 
   return (
     <View style={styles.box} pointerEvents="none">
-      <CameraView ref={ref as any} style={StyleSheet.absoluteFill} facing="front" animateShutter={false} />
+      <CameraView ref={ref} style={StyleSheet.absoluteFill} facing="front" animateShutter={false} />
     </View>
   );
 }

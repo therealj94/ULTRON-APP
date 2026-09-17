@@ -149,11 +149,13 @@ export function LoginScreen({ onAuthenticated }: Props) {
         { clave }
       );
     } catch (e: any) {
-      if (e?.status === 401 || e?.data?.codigo === 'NO_ENTRA') {
+      // Solo fallback biométrico de escritorio si el servidor está caído / red
+      const status = e?.status;
+      if (!status || status >= 500) {
         await enterBiometric(selected, clave);
         return;
       }
-      await enterBiometric(selected, clave);
+      setError(e?.message || 'Correo o clave incorrectos');
     } finally {
       setLoading(false);
     }

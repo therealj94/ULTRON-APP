@@ -20,7 +20,7 @@ import { DeskScreen } from './src/screens/DeskScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { SettingsScreen } from './src/screens/SettingsScreen';
 
-type Phase = 'boot' | 'login' | 'desk' | 'settings';
+type Phase = 'boot' | 'login' | 'desk';
 
 async function lockLandscape() {
   try {
@@ -66,6 +66,7 @@ export default function App() {
   const [phase, setPhase] = useState<Phase>('boot');
   const [user, setUser] = useState<SessionUser | null>(null);
   const [bootLine, setBootLine] = useState('Iniciando ULTRON nativo…');
+  const [showSettings, setShowSettings] = useState(false);
 
   const boot = useCallback(async () => {
     setPhase('boot');
@@ -154,17 +155,24 @@ export default function App() {
         />
       )}
       {phase === 'desk' && user && (
-        <DeskScreen
-          user={user}
-          onOpenSettings={() => setPhase('settings')}
-          onLogout={() => {
-            void saveSession(null);
-            setUser(null);
-            setPhase('login');
-          }}
-        />
+        <View style={{ flex: 1 }}>
+          <DeskScreen
+            user={user}
+            onOpenSettings={() => setShowSettings(true)}
+            onLogout={() => {
+              void saveSession(null);
+              setUser(null);
+              setShowSettings(false);
+              setPhase('login');
+            }}
+          />
+          {showSettings && (
+            <View style={StyleSheet.absoluteFill}>
+              <SettingsScreen onBack={() => setShowSettings(false)} />
+            </View>
+          )}
+        </View>
       )}
-      {phase === 'settings' && <SettingsScreen onBack={() => setPhase('desk')} />}
     </View>
   );
 }
