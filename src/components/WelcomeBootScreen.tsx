@@ -22,12 +22,12 @@ export const WelcomeBootScreen: React.FC<WelcomeBootScreenProps> = ({
       setPhase(0);
       return;
     }
-    const steps = [0, 1, 2, 3, 4];
-    const timers = steps.map((s, i) =>
+    setPhase(1); // logo visible immediately
+    const timers = [2, 3, 4].map((s, i) =>
       setTimeout(() => {
         setPhase(s);
         if (s === 4) onFinished?.();
-      }, 280 + i * 520)
+      }, 450 + i * 520)
     );
     return () => timers.forEach(clearTimeout);
   }, [visible, onFinished]);

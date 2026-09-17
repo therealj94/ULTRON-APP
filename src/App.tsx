@@ -1097,8 +1097,10 @@ export default function App() {
       id="ultron-app-root"
       className="relative w-screen h-screen overflow-hidden bg-black flex items-center justify-center select-none"
     >
-      {!sessionReady && <LoginScreen onAuthenticated={handleLoginSuccess} />}
-
+      {!sessionReady ? (
+        <LoginScreen onAuthenticated={handleLoginSuccess} />
+      ) : (
+      <>
         {/* Stand Frame */}
       <div
         id="ultron-stand-container"
@@ -1646,8 +1648,10 @@ export default function App() {
           soundFxEnabled={soundFxEnabled}
         />
 
-        <WelcomeBootScreen visible={isBooting && sessionReady} userName={currentUser.name} />
+        <WelcomeBootScreen visible={isBooting} userName={currentUser.name} />
       </div>
+      </>
+      )}
     </div>
     </OrientationGate>
   );
