@@ -15,11 +15,13 @@ import { CameraCountdownModal } from './components/CameraCountdownModal';
 import { VisionMediaAnalyzerModal } from './components/VisionMediaAnalyzerModal';
 import { PlaywrightBrowserModal } from './components/PlaywrightBrowserModal';
 import { GlobalOrderBrainModal } from './components/GlobalOrderBrainModal';
+import { AwsDeploymentModal } from './components/AwsDeploymentModal';
+import { TutorialModal } from './components/TutorialModal';
 import { playSfx } from './utils/audio';
 import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
 import { DEFAULT_ELEVENLABS_VOICES, speakWithElevenLabsOrFallback, stopCurrentVoice } from './utils/elevenlabs';
 import { downloadStandaloneSimulator } from './utils/exporter';
-import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck } from 'lucide-react';
+import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck, HelpCircle, RotateCcw } from 'lucide-react';
 import { AgenticHarnessModal } from './components/AgenticHarnessModal';
 import { analyzeConversationTopic, SemanticClassification } from './utils/qwenHarness';
 
@@ -49,7 +51,8 @@ export default function App() {
   const [micEnabled, setMicEnabled] = useState<boolean>(true);
   const [speakerEnabled, setSpeakerEnabled] = useState<boolean>(true);
   const [soundFxEnabled, setSoundFxEnabled] = useState<boolean>(true);
-  const [visionEnabled, setVisionEnabled] = useState<boolean>(false);
+  const [visionEnabled, setVisionEnabled] = useState<boolean>(true);
+  const [resetTrigger, setResetTrigger] = useState<number>(0);
 
   // ElevenLabs Voice Configuration
   const [activeVoice, setActiveVoice] = useState<ElevenLabsVoiceConfig>(DEFAULT_ELEVENLABS_VOICES[0]);
@@ -62,6 +65,7 @@ export default function App() {
   const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
 
   // UI Overlays & Modals
+  const [isTutorialOpen, setIsTutorialOpen] = useState<boolean>(false);
   const [dockOpen, setDockOpen] = useState<boolean>(false);
   const [settingsOpen, setSettingsOpen] = useState<boolean>(false);
   const [backendBridgeOpen, setBackendBridgeOpen] = useState<boolean>(false);
@@ -78,7 +82,24 @@ export default function App() {
   });
   const [isPlaywrightBrowserOpen, setIsPlaywrightBrowserOpen] = useState<boolean>(false);
   const [isGlobalOrderBrainOpen, setIsGlobalOrderBrainOpen] = useState<boolean>(false);
+  const [isAwsDeploymentModalOpen, setIsAwsDeploymentModalOpen] = useState<boolean>(false);
   const [pendingPermission, setPendingPermission] = useState<BoardPermissionRequest | null>(null);
+
+  // Current Authenticated User (Render / Ultron FP & Biometrics)
+  const [currentUser, setCurrentUser] = useState<{
+    name: string;
+    role: string;
+    authenticated: boolean;
+  }>({
+    name: 'José',
+    role: 'Junta Directiva · Orden Global',
+    authenticated: false,
+  });
+
+  // Action timers to ensure animations always complete and return to IDLE
+  const combatTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const drinkTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const waveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Speech bubble text
   const [bubbleText, setBubbleText] = useState<string>('');
@@ -93,7 +114,11 @@ export default function App() {
   });
 
   // Backend Bridge Configuration & Telemetry
-  const [wsUrl, setWsUrl] = useState<string>('ws://127.0.0.1:8000/api/v1/ws/events');
+  const defaultWs =
+    typeof window !== 'undefined'
+      ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws`
+      : 'ws://127.0.0.1:3000/ws';
+  const [wsUrl, setWsUrl] = useState<string>(defaultWs);
   const [bridgeStatus, setBridgeStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
   const [bridgeLog, setBridgeLog] = useState<Array<{ timestamp: string; direction: 'in' | 'out'; payload: string }>>([]);
   const wsRef = useRef<WebSocket | null>(null);
@@ -147,8 +172,22 @@ export default function App() {
     setBridgeLog((prev) => [{ timestamp, direction, payload }, ...prev.slice(0, 30)]);
   }, []);
 
-  // Boot sequence
+  // Boot sequence and remote Ultron session check
   useEffect(() => {
+    // Check if session exists in Ultron FP (Render)
+    fetch('/api/ultron/sesion')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.authenticated && data.user) {
+          setCurrentUser({
+            name: data.user.nombre || 'José',
+            role: data.user.rol || 'Junta Directiva · Orden Global',
+            authenticated: true,
+          });
+        }
+      })
+      .catch(() => {});
+
     const timer = setTimeout(() => {
       setIsBooting(false);
       playSfx('boot', true);
@@ -208,12 +247,13 @@ export default function App() {
 
   // Trigger holographic drink
   const handleTriggerDrink = useCallback(() => {
+    if (drinkTimerRef.current) clearTimeout(drinkTimerRef.current);
     setIsDrinking(true);
     setFace('HAPPY');
     playSfx('purr', soundFxEnabled);
     vocalize('Refresco electro-químico servido. ¡Salud!');
 
-    setTimeout(() => {
+    drinkTimerRef.current = setTimeout(() => {
       setIsDrinking(false);
       setFace('IDLE');
     }, 4500);
@@ -221,23 +261,47 @@ export default function App() {
 
   // Trigger robotic wave greeting
   const handleTriggerWave = useCallback(() => {
+    if (waveTimerRef.current) clearTimeout(waveTimerRef.current);
     setIsWaving(true);
     setFace('HAPPY');
     playSfx('wink', soundFxEnabled);
     vocalize('¡Hola! Saludos cordiales a la junta directiva.');
 
-    setTimeout(() => {
+    waveTimerRef.current = setTimeout(() => {
       setIsWaving(false);
       setFace('IDLE');
-    }, 4000);
+    }, 3800);
   }, [soundFxEnabled, vocalize]);
 
-  // Trigger Combat Blaster Mode
+  // Trigger Combat Blaster Mode (with auto-disarm timeout)
   const handleTriggerCombat = useCallback(() => {
+    if (combatTimerRef.current) clearTimeout(combatTimerRef.current);
     setIsCombatBlasterActive(true);
     setFace('FURY');
     playSfx('angry', soundFxEnabled);
-    vocalize('¡Alerta de combate! Desplegando cañones blaster retráctiles.');
+    vocalize('¡Alerta de combate! Cañones blaster desplegados.');
+
+    combatTimerRef.current = setTimeout(() => {
+      setIsCombatBlasterActive(false);
+      setFace('IDLE');
+    }, 3200);
+  }, [soundFxEnabled, vocalize]);
+
+  // Force Reset & Normalize Ultron back to calm IDLE state
+  const handleNormalize = useCallback(() => {
+    if (combatTimerRef.current) clearTimeout(combatTimerRef.current);
+    if (drinkTimerRef.current) clearTimeout(drinkTimerRef.current);
+    if (waveTimerRef.current) clearTimeout(waveTimerRef.current);
+
+    setIsCombatBlasterActive(false);
+    setIsDrinking(false);
+    setIsWaving(false);
+    setIsCameraFlashing(false);
+    setFace('IDLE');
+    setResetTrigger((prev) => prev + 1);
+    stopCurrentVoice();
+    playSfx('tap', soundFxEnabled);
+    vocalize('Sistemas defensivos retraídos. Estado normalizado.');
   }, [soundFxEnabled, vocalize]);
 
   // Handle presence events from optical tracking
@@ -648,6 +712,7 @@ export default function App() {
           isWaving={isWaving}
           isCameraFlashing={isCameraFlashing}
           isCombatBlasterActive={isCombatBlasterActive}
+          resetTrigger={resetTrigger}
           onBlasterCombatEnd={() => {
             setIsCombatBlasterActive(false);
             setFace('IDLE');
@@ -693,154 +758,120 @@ export default function App() {
           }}
         />
 
-        {/* Ambient Top Telemetry Bar (Stealth Minimalist) */}
-        <div className="absolute top-4 left-6 right-6 z-10 flex items-center justify-between pointer-events-none text-xs font-mono opacity-85">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[#05E1FF] animate-pulse" />
-            <span className="font-display font-bold tracking-[0.25em] text-[#05E1FF]">
-              ULTRON FP · LOOI HARNESS
-            </span>
-          </div>
-
-          <div className="flex items-center gap-2 pointer-events-auto">
-            {/* Listening indicator */}
-            <div
-              className={`transition-opacity duration-300 font-display font-bold tracking-[0.3em] text-[#05E1FF] text-[11px] hidden sm:block ${
-                face === 'LISTENING' ? 'opacity-100 animate-pulse' : 'opacity-0'
-              }`}
-            >
-              LISTENING · RECEPTANDO VOZ
+        {/* Clean Executive Telemetry & Controls Bar */}
+        <div className="absolute top-4 left-5 right-5 z-20 flex items-center justify-between pointer-events-none">
+          {/* Left: Brand & Remote Status Link to ultron.ordenglobal.link */}
+          <div className="flex items-center gap-2.5 pointer-events-auto">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 border border-[#05E1FF]/30 backdrop-blur-md shadow-[0_0_15px_rgba(5,225,255,0.15)]">
+              <span className="w-2 h-2 rounded-full bg-[#05E1FF] animate-pulse" />
+              <span className="font-display font-bold tracking-[0.2em] text-[#05E1FF] text-xs">
+                ULTRON FP
+              </span>
             </div>
 
-            {/* Quick Orientation Toggle (Horizontal LOOI Stand / Vertical Mobile) */}
-            <button
-              type="button"
-              onClick={() => {
-                setOrientation((prev) => (prev === 'horizontal' ? 'vertical' : 'horizontal'));
-                playSfx('tap', soundFxEnabled);
-              }}
-              title={`Orientación: ${orientation.toUpperCase()}. Clic para alternar Horizontal / Vertical`}
-              className="p-1.5 rounded text-[#05E1FF] hover:bg-[#05E1FF]/15 transition-colors flex items-center gap-1 border border-[#05E1FF]/30 bg-black/60 shadow-[0_0_10px_rgba(5,225,255,0.2)] cursor-pointer"
+            {/* Direct Link & Connection Indicator to Render */}
+            <a
+              href="https://ultron.ordenglobal.link"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Nodo Central de Orden Global (Render - ultron.ordenglobal.link). Clic para abrir."
+              className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 border border-emerald-400/30 text-[10px] font-mono text-emerald-400 hover:bg-emerald-400/10 transition-colors"
             >
-              <RotateCw className="w-3.5 h-3.5" />
-              <span className="text-[10px] font-bold uppercase hidden md:inline">{orientation}</span>
-            </button>
+              <Globe className="w-3 h-3" />
+              <span>ORDEN GLOBAL</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            </a>
+          </div>
 
-            {/* Quick Biometric Button */}
+          {/* Right: Essential, decluttered controls */}
+          <div className="flex items-center gap-2 pointer-events-auto">
+            {/* Listening indicator */}
+            {face === 'LISTENING' && (
+              <div className="font-display font-bold tracking-[0.25em] text-[#05E1FF] text-[10px] hidden md:block px-2.5 py-1 rounded-full bg-[#05E1FF]/10 border border-[#05E1FF]/30 animate-pulse">
+                RECEPTANDO VOZ
+              </div>
+            )}
+
+            {/* Biometric / Session Access Button */}
             <button
               type="button"
               onClick={() => setIsBiometricOpen(true)}
-              title="Autenticación Biométrica Dactilar"
-              className="p-1.5 rounded text-[#00FFA3] hover:bg-[#00FFA3]/15 transition-colors flex items-center gap-1 border border-[#00FFA3]/30 bg-black/60 shadow-[0_0_10px_rgba(0,255,163,0.2)] cursor-pointer"
+              title={
+                currentUser.authenticated
+                  ? `Sesión activa: ${currentUser.name} (${currentUser.role})`
+                  : 'Autenticación Biométrica y Acceso a Render (ultron.ordenglobal.link)'
+              }
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono transition-all cursor-pointer ${
+                currentUser.authenticated
+                  ? 'bg-[#00FF88]/15 border border-[#00FF88]/50 text-[#00FF88] shadow-[0_0_12px_rgba(0,255,136,0.25)]'
+                  : 'bg-black/60 border border-[#05E1FF]/40 text-[#05E1FF] hover:bg-[#05E1FF]/15 shadow-[0_0_10px_rgba(5,225,255,0.2)]'
+              }`}
             >
-              <Fingerprint className="w-3.5 h-3.5" />
+              {currentUser.authenticated ? (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#00FF88]" />
+                  <span className="font-bold">{currentUser.name.toUpperCase()}</span>
+                </>
+              ) : (
+                <>
+                  <Fingerprint className="w-3.5 h-3.5 text-[#05E1FF]" />
+                  <span className="font-bold">ACCESO</span>
+                </>
+              )}
             </button>
 
-            {/* Quick Camera Countdown (3-2-1) Button */}
+            {/* Camera Optical Tracking Toggle */}
             <button
               type="button"
-              onClick={() => setIsCameraCountdownModalOpen(true)}
-              title="Cámara 3-2-1 con Detección & Guardado"
-              className="p-1.5 rounded text-[#05E1FF] hover:bg-[#05E1FF]/15 transition-colors flex items-center gap-1 border border-[#05E1FF]/30 bg-black/60 shadow-[0_0_10px_rgba(5,225,255,0.2)] cursor-pointer"
+              onClick={() => {
+                setVisionEnabled((prev) => !prev);
+                playSfx('tap', soundFxEnabled);
+              }}
+              title={visionEnabled ? 'Cámara frontal activa (siguiendo rostro)' : 'Activar cámara frontal'}
+              className={`p-2 rounded-full border transition-all cursor-pointer ${
+                visionEnabled
+                  ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF] shadow-[0_0_10px_rgba(5,225,255,0.3)]'
+                  : 'border-[#8FA3B0]/30 bg-black/60 text-[#8FA3B0] hover:text-[#05E1FF]'
+              }`}
             >
               <Camera className="w-3.5 h-3.5" />
             </button>
 
-            {/* Quick Playwright AWS Web Browser */}
+            {/* Normalizer / Disarm Reset Button */}
             <button
               type="button"
-              onClick={() => setIsPlaywrightBrowserOpen(true)}
-              title="Playwright Web Browser en AWS"
-              className="p-1.5 rounded text-[#05E1FF] hover:bg-[#05E1FF]/15 transition-colors flex items-center gap-1 border border-[#05E1FF]/30 bg-black/60 shadow-[0_0_10px_rgba(5,225,255,0.2)] cursor-pointer"
+              onClick={handleNormalize}
+              title="Normalizar estado, replegar armas y volver a reposo IDLE"
+              className="p-2 rounded-full border border-emerald-400/40 bg-black/60 text-emerald-400 hover:bg-emerald-400/20 transition-all cursor-pointer shadow-[0_0_10px_rgba(52,211,153,0.15)]"
             >
-              <Globe className="w-3.5 h-3.5" />
+              <RotateCcw className="w-3.5 h-3.5" />
             </button>
 
-            {/* Quick Vision Auto-Purge Modal */}
+            {/* Panel Button (Opens Dock Drawer with all modular tools) */}
             <button
               type="button"
-              onClick={() => setIsVisionAnalyzerOpen(true)}
-              title="Visión Multimedia con Auto-Purga (Privacidad)"
-              className="p-1.5 rounded text-[#00FFA3] hover:bg-[#00FFA3]/15 transition-colors flex items-center gap-1 border border-[#00FFA3]/30 bg-black/60 shadow-[0_0_10px_rgba(0,255,163,0.2)] cursor-pointer"
+              onClick={() => setDockOpen((prev) => !prev)}
+              title="Abrir panel central con herramientas: Bóveda, Playwright, Visión, Blaster"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#05E1FF]/40 bg-[#05E1FF]/10 text-[#05E1FF] hover:bg-[#05E1FF]/25 text-xs font-display font-bold tracking-wider transition-all cursor-pointer shadow-[0_0_12px_rgba(5,225,255,0.2)]"
             >
-              <EyeIcon className="w-3.5 h-3.5" />
+              <SlidersHorizontal className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">PANEL</span>
             </button>
 
-            {/* Quick Global Order Brain Modal */}
-            <button
-              type="button"
-              onClick={() => setIsGlobalOrderBrainOpen(true)}
-              title="Cerebro de Orden Global y Doctrinas"
-              className="p-1.5 rounded text-[#F5C542] hover:bg-[#F5C542]/15 transition-colors flex items-center gap-1 border border-[#F5C542]/30 bg-black/60 shadow-[0_0_10px_rgba(245,197,66,0.2)] cursor-pointer"
-            >
-              <BookOpen className="w-3.5 h-3.5" />
-            </button>
-
-            {/* Quick Ultron FP Vault & APIs */}
-            <button
-              type="button"
-              onClick={() => setIsVaultModalOpen(true)}
-              title="Bóveda Central de APIs · ULTRON FP"
-              className="p-1.5 rounded text-[#05E1FF] hover:bg-[#05E1FF]/20 transition-all flex items-center gap-1.5 border border-[#05E1FF]/40 bg-[#05E1FF]/10 shadow-[0_0_12px_rgba(5,225,255,0.25)] cursor-pointer"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-[#05E1FF]" />
-              <span className="text-[10px] font-bold font-display tracking-wider hidden sm:inline text-[#05E1FF]">BÓVEDA</span>
-            </button>
-
-            {/* Quick LOOI Visor Toggle */}
-            <button
-              type="button"
-              onClick={() => {
-                setHasVisor((prev) => !prev);
-                playSfx('visor', soundFxEnabled);
-              }}
-              title={hasVisor ? 'Quitar Visor Óptico' : 'Equipar Visor Óptico'}
-              className={`p-1.5 rounded transition-colors flex items-center gap-1 cursor-pointer ${
-                hasVisor
-                  ? 'text-[#FF3B5C] bg-[#FF3B5C]/20 shadow-[0_0_10px_rgba(255,59,92,0.4)]'
-                  : 'text-[#8FA3B0] hover:text-[#FF3B5C] hover:bg-[#FF3B5C]/10'
-              }`}
-            >
-              <Glasses className="w-4 h-4" />
-            </button>
-
-            {/* Quick Intelligence Harness Toggle */}
-            <button
-              type="button"
-              onClick={() => setHarnessModalOpen(true)}
-              title="Núcleo de Inteligencia y Modos Semánticos"
-              className="p-1.5 rounded text-[#05E1FF] hover:bg-[#05E1FF]/15 transition-colors flex items-center gap-1.5 border border-[#05E1FF]/30 bg-black/60 shadow-[0_0_10px_rgba(5,225,255,0.25)] cursor-pointer"
-            >
-              <Cpu className="w-4 h-4" />
-              <span className="text-[10px] font-bold hidden sm:inline">NÚCLEO</span>
-            </button>
-
-            <span className="text-[11px] text-[#8FA3B0] hidden sm:flex items-center gap-1">
-              <Wifi className="w-3 h-3 text-[#05E1FF]" />
-              {bridgeStatus === 'connected' ? 'WS LINKED' : 'STANDALONE'}
-            </span>
-
-            <span className="text-[11px] text-[#8FA3B0] flex items-center gap-1">
+            {/* Battery Indicator */}
+            <span className="text-[11px] text-[#8FA3B0] hidden md:flex items-center gap-1 pl-1">
               <BatteryMedium className="w-3.5 h-3.5 text-[#05E1FF]" />
               {Math.round(energy)}%
             </span>
 
-            <button
-              type="button"
-              onClick={() => setSettingsOpen((prev) => !prev)}
-              title="Abrir Ajustes (o deslizar hacia abajo)"
-              className="p-1 rounded text-[#8FA3B0] hover:text-[#05E1FF] hover:bg-[#05E1FF]/10 transition-colors cursor-pointer"
-            >
-              <SlidersHorizontal className="w-4 h-4" />
-            </button>
-
+            {/* Fullscreen Kiosk Toggle */}
             <button
               type="button"
               onClick={toggleFullscreen}
-              title="Pantalla Completa Kiosk"
-              className="p-1 rounded text-[#8FA3B0] hover:text-[#05E1FF] hover:bg-[#05E1FF]/10 transition-colors cursor-pointer"
+              title="Pantalla Completa"
+              className="p-2 rounded-full text-[#8FA3B0] hover:text-[#05E1FF] hover:bg-[#05E1FF]/10 transition-colors cursor-pointer bg-black/40 border border-white/10"
             >
-              {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+              {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
             </button>
           </div>
         </div>
@@ -936,6 +967,18 @@ export default function App() {
           onOpenVault={() => {
             setDockOpen(false);
             setIsVaultModalOpen(true);
+          }}
+          onOpenTutorial={() => {
+            setDockOpen(false);
+            setIsTutorialOpen(true);
+          }}
+          onResetToNormal={() => {
+            setDockOpen(false);
+            handleNormalize();
+          }}
+          onOpenCloudModal={() => {
+            setDockOpen(false);
+            setIsAwsDeploymentModalOpen(true);
           }}
           onOpenCameraCountdown={() => {
             setDockOpen(false);
@@ -1091,6 +1134,7 @@ export default function App() {
           soundFxEnabled={soundFxEnabled}
           onSpeak={(t) => vocalize(t)}
           onAuthSuccess={(name, role) => {
+            setCurrentUser({ name, role, authenticated: true });
             vocalize(`Acceso confirmado. Bienvenido ${name}. Privilegios ejecutivos desbloqueados.`);
             setFace('HAPPY');
             playSfx('grant', soundFxEnabled);
@@ -1165,6 +1209,21 @@ export default function App() {
           isOpen={isGlobalOrderBrainOpen}
           onClose={() => setIsGlobalOrderBrainOpen(false)}
           onSpeak={(t) => vocalize(t)}
+        />
+
+        {/* Cloud Infrastructure & Live Render Deployment Modal */}
+        <AwsDeploymentModal
+          isOpen={isAwsDeploymentModalOpen}
+          onClose={() => setIsAwsDeploymentModalOpen(false)}
+          onSpeak={(t) => vocalize(t)}
+          soundFxEnabled={soundFxEnabled}
+        />
+
+        {/* Interactive Controls & Features Tutorial Modal */}
+        <TutorialModal
+          isOpen={isTutorialOpen}
+          onClose={() => setIsTutorialOpen(false)}
+          soundFxEnabled={soundFxEnabled}
         />
 
         {/* Initial Boot Screen */}

@@ -20,6 +20,9 @@ import {
   ShieldCheck,
   Globe,
   BookOpen,
+  Cloud,
+  HelpCircle,
+  RotateCcw,
 } from 'lucide-react';
 import { playSfx } from '../utils/audio';
 
@@ -44,6 +47,9 @@ interface DockDrawerProps {
   onOpenPhotos?: () => void;
   onOpenVoices?: () => void;
   onOpenVault?: () => void;
+  onOpenTutorial?: () => void;
+  onResetToNormal?: () => void;
+  onOpenCloudModal?: () => void;
   onOpenCameraCountdown?: () => void;
   onOpenVisionAnalyzer?: () => void;
   onOpenPlaywrightBrowser?: () => void;
@@ -87,6 +93,9 @@ export const DockDrawer: React.FC<DockDrawerProps> = ({
   onOpenPhotos,
   onOpenVoices,
   onOpenVault,
+  onOpenTutorial,
+  onResetToNormal,
+  onOpenCloudModal,
   onOpenCameraCountdown,
   onOpenVisionAnalyzer,
   onOpenPlaywrightBrowser,
@@ -234,6 +243,30 @@ export const DockDrawer: React.FC<DockDrawerProps> = ({
 
         {/* Secondary Executive Action Toolbar */}
         <div className="flex items-center justify-center gap-1.5 flex-wrap">
+          {onResetToNormal && (
+            <button
+              type="button"
+              onClick={onResetToNormal}
+              className="px-3 py-1.5 rounded-full border border-emerald-400/50 bg-emerald-400/15 text-emerald-400 hover:bg-emerald-400/25 text-xs font-display font-bold tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_10px_rgba(52,211,153,0.2)]"
+              title="Restaurar a estado normal y disarmar cualquier sistema de defensa"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>NORMALIZAR</span>
+            </button>
+          )}
+
+          {onOpenTutorial && (
+            <button
+              type="button"
+              onClick={onOpenTutorial}
+              className="px-3 py-1.5 rounded-full border border-[#05E1FF]/50 bg-[#05E1FF]/15 text-[#05E1FF] hover:bg-[#05E1FF]/25 text-xs font-display font-bold tracking-wider flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_10px_rgba(5,225,255,0.2)]"
+              title="Abrir guía de uso y tutorial de botones"
+            >
+              <HelpCircle className="w-3.5 h-3.5" />
+              <span>GUÍA & TUTORIAL</span>
+            </button>
+          )}
+
           {onOpenVault && (
             <button
               type="button"

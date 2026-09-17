@@ -68,10 +68,10 @@ h2{font-family:Rajdhani,sans-serif;letter-spacing:.3em;font-size:15px}
   <div class="tag" id="tag">GUARDIAN</div>
   <div class="dock" id="dock">
     <div class="fabs">
-      <button class="fab on" id="mic" title="Micrófono">◉</button>
-      <button class="fab on" id="spk" title="Voz / Síntesis">♪</button>
-      <button class="fab" id="cam" title="Visión">▣</button>
-      <button class="fab" id="slp" title="Reposo / Despertar">☾</button>
+      <button class="fab on" id="mic" title="Micrófono">REC</button>
+      <button class="fab on" id="spk" title="Voz / Síntesis">VOL</button>
+      <button class="fab" id="cam" title="Visión">CAM</button>
+      <button class="fab" id="slp" title="Reposo / Despertar">SLP</button>
     </div>
     <form class="row" id="form"><input id="cmd" placeholder="whatsapp · correo · clima · modo gold" autocomplete="off"/><button>ENVIAR</button></form>
   </div>
@@ -385,8 +385,8 @@ function drawMode(cx,cy,R,C){
   } else if(m==="STRATEGIC"){
     stroke(C,R*.04,10);
     x.beginPath(); x.moveTo(cx-R*.4,cy-R*1.38); x.lineTo(cx-R*.16,cy-R*1.68); x.lineTo(cx,cy-R*1.38); x.lineTo(cx+R*.16,cy-R*1.68); x.lineTo(cx+R*.4,cy-R*1.38); x.stroke();
-    livingEye(cx-d,ey,R,C,{side:-1,hollow:S.face==="IDLE",glyph(R){x.font=\`\${Math.round(R*.55)}px serif\`;x.textAlign="center";x.textBaseline="middle";x.shadowBlur=0;x.fillStyle=C;x.fillText("♞",0,2);}});
-    livingEye(cx+d,ey,R,C,{side:1,hollow:S.face==="IDLE",glyph(R){x.font=\`\${Math.round(R*.55)}px serif\`;x.textAlign="center";x.textBaseline="middle";x.shadowBlur=0;x.fillStyle=C;x.fillText("♜",0,2);}});
+    livingEye(cx-d,ey,R,C,{side:-1,hollow:S.face==="IDLE",glyph(R){x.font=\`\${Math.round(R*.55)}px serif\`;x.textAlign="center";x.textBaseline="middle";x.shadowBlur=0;x.fillStyle=C;stroke(C,R*.05,6);x.beginPath();x.arc(0,0,R*.2,0,Math.PI*2);x.moveTo(-R*.3,0);x.lineTo(R*.3,0);x.moveTo(0,-R*.3);x.lineTo(0,R*.3);x.stroke();}});
+    livingEye(cx+d,ey,R,C,{side:1,hollow:S.face==="IDLE",glyph(R){x.font=\`\${Math.round(R*.55)}px serif\`;x.textAlign="center";x.textBaseline="middle";x.shadowBlur=0;x.fillStyle=C;stroke(C,R*.05,6);x.beginPath();x.arc(0,0,R*.2,0,Math.PI*2);x.moveTo(-R*.3,0);x.lineTo(R*.3,0);x.moveTo(0,-R*.3);x.lineTo(0,R*.3);x.stroke();}});
     mouth(cx,cy+R*1.42,R,C,"flat");
   } else if(m==="GUARDIAN"){
     stroke(C,R*.04,10);

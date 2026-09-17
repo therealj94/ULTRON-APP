@@ -22,6 +22,7 @@ interface FaceCanvasProps {
   isWaving?: boolean;
   isCameraFlashing?: boolean;
   isCombatBlasterActive?: boolean;
+  resetTrigger?: number;
   onDrinkComplete?: () => void;
   onWaveComplete?: () => void;
   onBlasterCombatEnd?: () => void;
@@ -52,6 +53,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   isWaving = false,
   isCameraFlashing = false,
   isCombatBlasterActive = false,
+  resetTrigger = 0,
   onDrinkComplete,
   onWaveComplete,
   onBlasterCombatEnd,
@@ -149,12 +151,13 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     strokePoints: [],
   });
 
-  // Combat Blaster State (Gun Draw & Rapid Laser Fire when tapped repeatedly)
+  // Combat Blaster State (Gun Draw & Rapid Laser Fire)
   const combatRef = useRef<{
     isActive: boolean;
     level: number; // 0 to 1
     shotsRemaining: number;
     lastShotTime: number;
+    startTime: number;
     lasers: BlasterLaserBolt[];
     impacts: BulletImpact[];
   }>({
@@ -162,6 +165,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     level: 0,
     shotsRemaining: 0,
     lastShotTime: 0,
+    startTime: 0,
     lasers: [],
     impacts: [],
   });
@@ -191,25 +195,55 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     alpha: 0,
   });
 
+  const disarmCombat = useCallback(() => {
+    const C = combatRef.current;
+    C.isActive = false;
+    C.shotsRemaining = 0;
+    C.lasers = [];
+    C.impacts = [];
+    C.level = 0;
+    animRef.current.shake = 0;
+    onBlasterCombatEndRef.current?.();
+    onFaceChange('IDLE', 0);
+  }, [onFaceChange]);
+
   const triggerBlasterCombat = useCallback(() => {
     const C = combatRef.current;
     if (C.isActive) return;
     C.isActive = true;
-    C.shotsRemaining = 12;
+    C.startTime = performance.now();
+    C.shotsRemaining = 8;
     C.lastShotTime = performance.now();
-    onFaceChange('FURY', 4500);
+    onFaceChange('FURY', 2600);
     playSfx('gun_draw', soundFxEnabled);
-    onSpeak('¡LÍMITE DE CONTACTO EXCEDIDO! ¡DESPLEGANDO CAÑONES BLASTER!');
-    animRef.current.shake = 1.8;
+    onSpeak('Sistemas defensivos tácticos desplegados.');
+    animRef.current.shake = 1.2;
     onTriggerBlasterCombat?.();
   }, [onFaceChange, onSpeak, soundFxEnabled, onTriggerBlasterCombat]);
+
+  // Handle external reset trigger
+  useEffect(() => {
+    if (resetTrigger > 0) {
+      disarmCombat();
+      drinkRef.current.isActive = false;
+      drinkRef.current.progress = 0;
+      waveRef.current.isActive = false;
+      waveRef.current.progress = 0;
+      animRef.current.shake = 0;
+      animRef.current.jiggle = 0;
+      stateRef.current.poke = 0;
+      onFaceChange('IDLE', 0);
+    }
+  }, [resetTrigger, disarmCombat, onFaceChange]);
 
   // Sync external combat blaster prop
   useEffect(() => {
     if (isCombatBlasterActive && !combatRef.current.isActive) {
       triggerBlasterCombat();
+    } else if (!isCombatBlasterActive && combatRef.current.isActive) {
+      disarmCombat();
     }
-  }, [isCombatBlasterActive, triggerBlasterCombat]);
+  }, [isCombatBlasterActive, triggerBlasterCombat, disarmCombat]);
 
   // Handle camera shutter flash & high-res snapshot capture
   useEffect(() => {
@@ -500,9 +534,19 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       // Update Combat Blaster System
       const C = combatRef.current;
       if (C.isActive) {
-        C.level = Math.min(1, C.level + dt * 3.5);
+        // Enforce safety watchdog: Force disarm after 2.6 seconds
+        if (now - (C.startTime || now) > 2600) {
+          C.shotsRemaining = 0;
+          C.lasers = [];
+        }
+
+        // Only extend level while shots remain
+        if (C.shotsRemaining > 0) {
+          C.level = Math.min(1, C.level + dt * 4.0);
+        }
+
         // Rapid fire bursts when blasters are extended
-        if (C.level > 0.75 && C.shotsRemaining > 0 && now - C.lastShotTime > 150) {
+        if (C.level > 0.75 && C.shotsRemaining > 0 && now - C.lastShotTime > 140) {
           C.lastShotTime = now;
           C.shotsRemaining--;
           const side = C.shotsRemaining % 2 === 0 ? -1 : 1;
@@ -530,7 +574,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
         // Advance laser bolts
         for (let i = C.lasers.length - 1; i >= 0; i--) {
           const l = C.lasers[i];
-          l.progress += dt * 4.5;
+          l.progress += dt * 5.0;
           l.currentX = l.startX + (l.targetX - l.startX) * Math.min(1, l.progress);
           l.currentY = l.startY + (l.targetY - l.startY) * Math.min(1, l.progress);
 
@@ -550,23 +594,33 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
         // Fade impacts on screen glass
         for (let i = C.impacts.length - 1; i >= 0; i--) {
           const imp = C.impacts[i];
-          imp.alpha -= dt * 0.55;
+          imp.alpha -= dt * 0.8;
           if (imp.alpha <= 0) {
             C.impacts.splice(i, 1);
           }
         }
 
-        // Finish combat when all shots fired and impacts settling
-        if (C.shotsRemaining <= 0 && C.lasers.length === 0) {
-          C.level = Math.max(0, C.level - dt * 2.0);
-          if (C.level <= 0.01) {
+        // Retract weapons cleanly once all shots fired
+        if (C.shotsRemaining <= 0) {
+          C.level = Math.max(0, C.level - dt * 3.5);
+          if (C.level <= 0.02) {
             C.isActive = false;
+            C.level = 0;
+            C.lasers = [];
+            C.impacts = [];
+            A.shake = 0;
             onBlasterCombatEndRef.current?.();
+            onFaceChange('IDLE', 0);
             onSpeakRef.current?.('Sistemas de armas enfriados y retraídos.');
           }
         }
       } else {
-        C.level = Math.max(0, C.level - dt * 3.0);
+        C.level = Math.max(0, C.level - dt * 4.0);
+        if (C.level <= 0.02) {
+          C.level = 0;
+          C.lasers = [];
+          C.impacts = [];
+        }
       }
 
       // Update Drink and Wave Progress
@@ -1032,19 +1086,31 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
         break;
 
       case 'STRATEGIC':
-        if (side < 0) {
-          // Left Eye: Knight Chess Piece (♞)
-          ctx.font = `bold ${Math.round(rx * 0.82)}px sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('♞', ix, iy);
-        } else {
-          // Right Eye: Rook Chess Piece (♜)
-          ctx.font = `bold ${Math.round(rx * 0.82)}px sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('♜', ix, iy);
-        }
+        ctx.save();
+        ctx.translate(ix, iy);
+        ctx.lineWidth = Math.max(1.5, rx * 0.05);
+        // Outer rotated tactical diamond
+        ctx.beginPath();
+        ctx.moveTo(0, -ry * 0.42);
+        ctx.lineTo(rx * 0.42, 0);
+        ctx.lineTo(0, ry * 0.42);
+        ctx.lineTo(-rx * 0.42, 0);
+        ctx.closePath();
+        ctx.stroke();
+
+        // Inner tactical crosshair and focal ring
+        ctx.beginPath();
+        ctx.arc(0, 0, rx * 0.18, 0, Math.PI * 2);
+        ctx.moveTo(-rx * 0.5, 0);
+        ctx.lineTo(-rx * 0.22, 0);
+        ctx.moveTo(rx * 0.22, 0);
+        ctx.lineTo(rx * 0.5, 0);
+        ctx.moveTo(0, -ry * 0.5);
+        ctx.lineTo(0, -ry * 0.22);
+        ctx.moveTo(0, ry * 0.22);
+        ctx.lineTo(0, ry * 0.5);
+        ctx.stroke();
+        ctx.restore();
         break;
 
       case 'GUARDIAN':
@@ -2203,6 +2269,17 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
 
   const handlePoke = () => {
     const S = stateRef.current;
+    const C = combatRef.current;
+
+    // Instant disarm if combat was active
+    if (C.isActive) {
+      disarmCombat();
+      onFaceChange('IDLE', 0);
+      playSfx('tap', soundFxEnabled);
+      onSpeak('Sistemas defensivos desactivados. Normalizando.');
+      return;
+    }
+
     if (S.face === 'SLEEPING') {
       onWake();
       return;
@@ -2213,25 +2290,24 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     S.lastPokeTime = now;
 
     // Shake reaction
-    animRef.current.jiggle = 1.0;
+    animRef.current.jiggle = 0.8;
 
     if (S.poke === 1) {
       scheduleBlink('single');
       playSfx('tap', soundFxEnabled);
     } else if (S.poke === 2) {
       // 2 Taps -> Listen for voice order
+      playSfx('wake', soundFxEnabled);
       onTriggerVoice();
     } else if (S.poke === 3) {
-      onFaceChange('STARTLE', 1400);
-      onSpeak('¡Atención en el visor!');
-      playSfx('warning', soundFxEnabled);
-    } else if (S.poke === 4) {
-      onFaceChange('ANGRY', 2400);
-      onSpeak('Por favor, no golpees la pantalla.');
-      playSfx('angry', soundFxEnabled);
+      onFaceChange('CURIOSITY', 1600);
+      onSpeak('Aquí estoy. ¿En qué te ayudo?');
+      playSfx('tap', soundFxEnabled);
     } else {
-      // 5 or more taps: COMBAT BLASTER MODE TRIGGERED!
-      triggerBlasterCombat();
+      // Friendly Petting / Purring mode (Never anger or weapons!)
+      onFaceChange('PURR', 1800);
+      playSfx('purr', soundFxEnabled);
+      S.poke = 0;
     }
   };
 

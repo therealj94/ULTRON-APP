@@ -94,7 +94,49 @@ export async function speakWithElevenLabsOrFallback(
 ): Promise<void> {
   stopCurrentVoice();
 
-  // If user provided a real ElevenLabs API Key, make actual fetch
+  // Try server-side synthesis proxy first (which has ELEVENLABS_API_KEY if configured in .env)
+  try {
+    const proxyRes = await fetch('/api/vault/elevenlabs/synthesize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text,
+        voiceId: config.voiceId,
+        stability: config.stability,
+        similarityBoost: config.similarityBoost,
+        apiKeyOverride: config.apiKey,
+      }),
+    });
+
+    if (proxyRes.ok) {
+      const contentType = proxyRes.headers.get('content-type');
+      if (contentType && contentType.includes('audio')) {
+        callbacks?.onStart?.();
+        const blob = await proxyRes.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        currentAudio = audio;
+
+        audio.onended = () => {
+          URL.revokeObjectURL(url);
+          currentAudio = null;
+          callbacks?.onEnd?.();
+        };
+        audio.onerror = (e) => {
+          URL.revokeObjectURL(url);
+          currentAudio = null;
+          callbacks?.onError?.(e);
+        };
+
+        await audio.play();
+        return;
+      }
+    }
+  } catch (err) {
+    // Continue to direct client key or web speech fallback
+  }
+
+  // If user provided a real ElevenLabs API Key, make actual direct fetch
   if (config.apiKey && config.apiKey.trim().length > 10) {
     try {
       callbacks?.onStart?.();
