@@ -2,11 +2,10 @@ import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
 import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI } from '@google/genai';
+import { EC2Client, DescribeInstancesCommand, StartInstancesCommand } from '@aws-sdk/client-ec2';
 import {
   appendConversation,
   chatQwenStream,
@@ -410,8 +409,6 @@ app.get('/api/tts/status', async (_req, res) => {
   const salud = await ttsSalud();
   res.json({ ...cfg, online: salud.ok, detail: salud.detail || { error: salud.error } });
 });
-
-import { EC2Client, DescribeInstancesCommand, StartInstancesCommand } from '@aws-sdk/client-ec2';
 
 const TTS_INSTANCE_ID = process.env.ULTRON_TTS_INSTANCE_ID || 'i-02653feadc919d3a4';
 
