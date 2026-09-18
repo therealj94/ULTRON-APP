@@ -333,11 +333,13 @@ export default function App() {
     }
   }, [handleTriggerWave, handleTriggerDrink]);
 
-  const lastFaceSeenRef = useRef<number>(Date.now());
+  const lastFaceSeenRef = useRef<number>(0);
+  const sawFaceOnceRef = useRef(false);
   const sleptByAbsenceRef = useRef(false);
 
   useEffect(() => {
     if (cameraGaze.active) {
+      sawFaceOnceRef.current = true;
       lastFaceSeenRef.current = Date.now();
       if (sleptByAbsenceRef.current && face === 'SLEEPING') {
         sleptByAbsenceRef.current = false;
@@ -349,8 +351,9 @@ export default function App() {
   useEffect(() => {
     const id = setInterval(() => {
       if (isBooting || dockOpen || settingsOpen) return;
+      if (!sawFaceOnceRef.current) return;
       if (face === 'SPEAKING' || face === 'THINKING' || face === 'LISTENING') return;
-      if (!cameraGaze.active && Date.now() - lastFaceSeenRef.current > 45000 && face !== 'SLEEPING') {
+      if (!cameraGaze.active && lastFaceSeenRef.current && Date.now() - lastFaceSeenRef.current > 45000 && face !== 'SLEEPING') {
         sleptByAbsenceRef.current = true;
         setFace('SLEEPING');
       }
@@ -434,209 +437,7 @@ export default function App() {
     }, 900);
   };
 
-  // Dispatcher for voice commands
-  const handleVoiceCommand = (cmd: string) => {
-    const q = cmd.toLowerCase();
-    logBridgeEvent('out', `Comando de voz: "${q}"`);
-
-    // 1. Camera Photo with 3-2-1 Countdown & Live Stream
-    if (/foto|captura|fotograf|selfie|picture|cámara|sonríe/.test(q)) {
-      setIsCameraCountdownModalOpen(true);
-      vocalize('Encendiendo cámara frontal. Preparando cuenta regresiva de tres segundos.');
-      return;
-    }
-
-    // 2. Playwright Web Scraping on AWS EC2
-    if (/web|página|navega|playwright|sitio|url|investiga|noticia/.test(q)) {
-      setIsPlaywrightBrowserOpen(true);
-      vocalize('Despachando nodo Playwright en AWS para inspección y análisis web.');
-      return;
-    }
-
-    // 3. Vision Media Analysis with Auto-Purge Privacy
-    if (/visión|imagen|video|inspeccion|subir|bajar|multimodal|purga/.test(q)) {
-      setIsVisionAnalyzerOpen(true);
-      vocalize('Abriendo visor de visión neural con protocolo de auto-purga para máxima privacidad.');
-      return;
-    }
-
-    // 4. Cerebro de Inteligencia Estratégica de Orden Global
-    if (/orden global|doctrina|geopolítica|tratado|resolución|estatuto|soberanía/.test(q)) {
-      setIsGlobalOrderBrainOpen(true);
-      vocalize('Accediendo al archivo de Inteligencia Estratégica del Cerebro de Orden Global.');
-      return;
-    }
-
-    // Interactive Drink / Soda
-    if (/agua|refresco|bebida|sed|drink|toma/.test(q)) {
-      handleTriggerDrink();
-      return;
-    }
-
-    // Interactive Hand Wave Greeting
-    if (/hola|saluda|saludo|wave|mano/.test(q)) {
-      handleTriggerWave();
-      return;
-    }
-
-    // Combat Blaster Mode
-    if (/dispara|arma|pistola|combate|blaster|shoot|fury/.test(q)) {
-      handleTriggerCombat();
-      return;
-    }
-
-    // Biometric Auth Modal
-    if (/biometr|huella|seguridad|auth|identidad/.test(q)) {
-      setIsBiometricOpen(true);
-      vocalize('Iniciando escáner biométrico dactilar.');
-      return;
-    }
-
-    // ElevenLabs Voices
-    if (/voz|voces|elevenlabs|tonalidad/.test(q)) {
-      setIsVaultModalOpen(true);
-      vocalize('Abriendo la Bóveda de ULTRON FP en el canal de síntesis ElevenLabs.');
-      return;
-    }
-
-    // Bóveda Central de ULTRON FP, APIs y Conduits
-    if (/bóveda|boveda|clave|credencial|conduit|api|llave|seguridad/.test(q)) {
-      setIsVaultModalOpen(true);
-      vocalize('Abriendo la Bóveda Central de ULTRON FP. Acceso institucional a credenciales y conduits.');
-      return;
-    }
-
-    // Backend e Infraestructura
-    if (/aws|github|render|despliegue|servidor|nube|sagemaker/.test(q)) {
-      setIsVaultModalOpen(true);
-      vocalize('Abriendo la Bóveda Central de ULTRON FP. Conexiones backend e infraestructura sincronizadas.');
-      return;
-    }
-
-    // WhatsApp Dispatch (Requires Board Permission)
-    if (/whats|wsp/.test(q)) {
-      if (grantedPerms.wa) {
-        vocalize('Despachando resumen ejecutivo a WhatsApp.');
-      } else {
-        setPendingPermission({
-          id: 'perm_wa',
-          serviceKey: 'wa',
-          title: 'DESPACHO WHATSAPP · JUNTA DIRECTIVA',
-          description: 'Esta acción transmitirá la minuta ejecutiva cifrada a los teléfonos de la junta directiva.',
-          payloadSummary: 'Minuta_Directorio_v3.pdf · 7 destinatarios autorizados',
-        });
-        setFace('LISTENING');
-      }
-      return;
-    }
-
-    // Corporate Email Draft (Requires Board Permission)
-    if (/correo|mail|email/.test(q)) {
-      if (grantedPerms.em) {
-        vocalize('Borrador institucional generado y archivado en servidor.');
-      } else {
-        setPendingPermission({
-          id: 'perm_em',
-          serviceKey: 'em',
-          title: 'DESPACHO CORREO INSTITUCIONAL',
-          description: 'Generación y envío del memorándum de junta con firma corporativa.',
-          payloadSummary: 'Para: consejo@corporacion.global · Asunto: Resoluciones del Directorio',
-        });
-        setFace('LISTENING');
-      }
-      return;
-    }
-
-    // Visor sunglasses commands
-    if (/gafas|lentes|visor|sunglasses/.test(q)) {
-      setHasVisor((prev) => {
-        const next = !prev;
-        playSfx('visor', soundFxEnabled);
-        vocalize(next ? 'Gafas cibernéticas LOOI equipadas.' : 'Gafas guardadas.');
-        return next;
-      });
-      return;
-    }
-
-    // Agentic Harness Semantic Mode Detection (Qwen 3.8 27B)
-    if (autoModeSwitch) {
-      const classification = analyzeConversationTopic(q);
-      if (classification) {
-        logBridgeEvent(
-          'in',
-          `Qwen Intent: ${classification.intent} (${Math.round(classification.confidence * 100)}%) -> MODO ${classification.mode}`
-        );
-        if (classification.mode !== mode) {
-          setMode(classification.mode);
-          playSfx(classification.mode === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
-        }
-        if (classification.toolCall) {
-          const tool = classification.toolCall.name;
-          logBridgeEvent('out', `Tool Call: ${tool}()`);
-          if (tool === 'take_camera_photo_countdown') {
-            setIsCameraCountdownModalOpen(true);
-          } else if (tool === 'browse_web_page_playwright') {
-            setIsPlaywrightBrowserOpen(true);
-          } else if (tool === 'analyze_vision_media') {
-            setIsVisionAnalyzerOpen(true);
-          } else if (tool === 'query_global_order_brain') {
-            setIsGlobalOrderBrainOpen(true);
-          } else if (tool === 'trigger_blaster_combat') {
-            handleTriggerCombat();
-          } else if (tool === 'drink_refreshment') {
-            handleTriggerDrink();
-          } else if (tool === 'wave_greeting') {
-            handleTriggerWave();
-          } else if (tool === 'open_biometric_auth') {
-            setIsBiometricOpen(true);
-          } else if (tool === 'open_cloud_deployment') {
-            setIsVaultModalOpen(true);
-          }
-        }
-        setFace('SPEAKING');
-        vocalize(classification.thought);
-        return;
-      }
-    }
-
-    // Corporate Weather
-    if (/clima|tiempo|temperatura/.test(q)) {
-      vocalize('27 grados en la sede corporativa. Cielo despejado y atmósfera estable.');
-      return;
-    }
-
-    // Mode switching via command
-    if (/modo/.test(q)) {
-      const targetMode = (['GUARDIAN', 'MINING', 'GOLD', 'CREATIVE', 'ANALYTICAL', 'STRATEGIC', 'EXPLORER'] as Mode[]).find((m) =>
-        q.includes(m.toLowerCase())
-      );
-      if (targetMode) {
-        setMode(targetMode);
-        playSfx('mode', soundFxEnabled);
-        vocalize(`Modo ${targetMode} activado.`);
-        return;
-      }
-    }
-
-    // Financial Audit / Gold
-    if (/auditor|balance|oro|gold/.test(q)) {
-      setMode('GOLD');
-      playSfx('grant', soundFxEnabled);
-      vocalize('Balance de reservas auditado. Calificación triple A.');
-      return;
-    }
-
-    // Sleep / Wake commands
-    if (/dormir|reposo|apagar/.test(q)) {
-      handleSleep();
-      return;
-    }
-    if (/despertar|activa/.test(q)) {
-      handleWake();
-      return;
-    }
-
-    // Cerebro real: Qwen 27B via /api/turno
+  const askCerebro = (cmd: string) => {
     setFace('THINKING');
     fetch('/api/turno', {
       method: 'POST',
@@ -646,6 +447,7 @@ export default function App() {
       .then((r) => r.json())
       .then((data) => {
         const text = data.reply || data.error || 'Qwen no contestó.';
+        if (data.foto) logBridgeEvent('in', `foto ${data.foto}`);
         logBridgeEvent('in', `${data.modelo || 'turno'} ${data.ms || ''}ms`);
         vocalize(String(text));
       })
@@ -653,6 +455,55 @@ export default function App() {
         setFace('CONCERNED');
         vocalize(`Sin cerebro: ${String(e?.message || e).slice(0, 120)}`);
       });
+  };
+
+  // Dispatcher: gags locales sí; datos SIEMPRE al cerebro.
+  const handleVoiceCommand = (cmd: string) => {
+    const q = cmd.toLowerCase();
+    logBridgeEvent('out', `Comando de voz: "${q}"`);
+
+    if (/^(toma una )?foto$|selfie|sonríe/.test(q) && !/precio|web|página/.test(q)) {
+      setIsCameraCountdownModalOpen(true);
+      return;
+    }
+    if (/agua|refresco|bebida|tomas agua/.test(q) && !/precio/.test(q)) {
+      handleTriggerDrink();
+      return;
+    }
+    if (/^(hola ultron|saluda|choca)$/.test(q)) {
+      handleTriggerWave();
+      return;
+    }
+    if (/blaster|cañones|modo combate/.test(q)) {
+      handleTriggerCombat();
+      return;
+    }
+    if (/gafas|lentes|visor/.test(q)) {
+      setHasVisor((prev) => {
+        const next = !prev;
+        playSfx('visor', soundFxEnabled);
+        vocalize(next ? 'Gafas puestas.' : 'Gafas guardadas.');
+        return next;
+      });
+      return;
+    }
+    if (/dormir|reposo/.test(q)) {
+      handleSleep();
+      return;
+    }
+    if (/despertar/.test(q)) {
+      handleWake();
+      return;
+    }
+
+    if (autoModeSwitch) {
+      const classification = analyzeConversationTopic(q);
+      if (classification && classification.mode !== mode) {
+        setMode(classification.mode);
+      }
+    }
+
+    askCerebro(cmd);
   };
 
   // Permission Responses

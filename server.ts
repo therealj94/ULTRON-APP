@@ -137,7 +137,7 @@ app.get('/api/vault/status', async (req, res) => {
         maskedKey: VAULT_ELEVENLABS_API_KEY
           ? `${VAULT_ELEVENLABS_API_KEY.substring(0, 4)}••••••••${VAULT_ELEVENLABS_API_KEY.slice(-3)}`
           : null,
-        latencyMs: 18,
+        configuredMs: null,
       },
       {
         id: 'neural_core',
@@ -145,7 +145,7 @@ app.get('/api/vault/status', async (req, res) => {
         type: 'reasoning_engine',
         configured: true,
         status: 'CONECTADO',
-        latencyMs: 24,
+        configuredMs: null,
       },
       {
         id: 'vision_pipeline',
@@ -153,7 +153,7 @@ app.get('/api/vault/status', async (req, res) => {
         type: 'computer_vision',
         configured: true,
         status: 'CONECTADO',
-        latencyMs: 31,
+        configuredMs: null,
       },
       {
         id: 'playwright_browser',
@@ -161,7 +161,7 @@ app.get('/api/vault/status', async (req, res) => {
         type: 'web_inspection',
         configured: true,
         status: 'CONECTADO',
-        latencyMs: 140,
+        configuredMs: null,
       },
       {
         id: 'global_order_brain',
@@ -169,7 +169,7 @@ app.get('/api/vault/status', async (req, res) => {
         type: 'knowledge_base',
         configured: true,
         status: 'CONECTADO',
-        latencyMs: 8,
+        configuredMs: null,
       },
       {
         id: 'cloud_infra',
@@ -177,7 +177,7 @@ app.get('/api/vault/status', async (req, res) => {
         type: 'cloud_services',
         configured: Boolean(AWS_ACCESS_KEY_ID && RENDER_API_KEY && GITHUB_PAT),
         status: 'CONECTADO',
-        latencyMs: 45,
+        configuredMs: null,
       },
       {
         id: 'biometric_security',
@@ -185,7 +185,7 @@ app.get('/api/vault/status', async (req, res) => {
         type: 'authentication',
         configured: true,
         status: 'CONECTADO',
-        latencyMs: 5,
+        configuredMs: null,
       },
     ],
   });
@@ -646,97 +646,152 @@ app.post('/api/playwright/scrape', async (req, res) => {
   }
 });
 
-app.post('/api/vision/analyze', async (req, res) => {
-  const { mediaType, fileName, base64Data, prompt } = req.body;
 
+app.post('/api/vision/analyze', async (req, res) => {
+  const { mediaType, fileName, base64Data, prompt } = req.body || {};
   if (!base64Data) {
-    return res.status(400).json({ error: 'Media payload is required for neural vision analysis' });
+    return res.status(400).json({ error: 'Falta la imagen', honesto: true });
+  }
+  const isVideo = String(mediaType || fileName || '').startsWith('video') || /\.(mp4|webm|mov)$/i.test(fileName || '');
+  if (isVideo) {
+    return res.status(501).json({ error: 'Video todavía no se analiza. Mandá un frame.', honesto: true });
   }
 
-  // Deep structural analysis (Image or Video)
-  const isVideo = mediaType?.startsWith('video') || (fileName && /\.(mp4|webm|mov|mkv)$/i.test(fileName));
-
-  let detectedEntities = isVideo
-    ? ['Secuencia Temporal Multipaso', 'Transición de Movimiento Fluido', 'Identificación de Sujeto Humano', 'Ambiente Corporativo']
-    : ['Rostro Humano / Expresión Facial', 'Dispositivo Robótico LOOI', 'Entorno de Oficina / Despacho', 'Texto / Documentos Legibles'];
-
-  let confidenceScore = +(0.94 + Math.random() * 0.05).toFixed(2);
-
-  let executiveSummary = isVideo
-    ? `Análisis de Video Temporal: Se detectó una secuencia con actividad humana y cinemática en espacio corporativo. Nivel de atención verificado al ${Math.round(confidenceScore * 100)}%. No se detectaron anomalías ni brechas de seguridad física.`
-    : `Análisis de Imagen Estática: Detección facial nítida con iluminación equilibrada. El sujeto se encuentra en encuadre directo a la cámara. Se identificaron patrones consistentes con una sesión de directorio activo. Calidad óptica: Alta Definición.`;
-
-  // Multimodal Gemini AI Core for authentic visual examination
-  if (ai && base64Data && !isVideo) {
+  if (ULTRON_OJO_URL) {
     try {
-      const match = base64Data.match(/^data:([^;]+);base64,(.*)$/);
-      const mime = match ? match[1] : (mediaType || 'image/png');
-      const cleanData = match ? match[2] : base64Data;
-
-      const visionRes = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                inlineData: {
-                  mimeType: mime,
-                  data: cleanData,
-                },
-              },
-              {
-                text: `Actúa como el sistema de visión computacional táctico de ULTRON FP para la junta directiva.
-${prompt || 'Analiza detalladamente esta captura: describe los elementos clave, rostros, expresiones, objetos tecnológicos y contexto.'}
-Devuelve una síntesis ejecutiva muy profesional y clara en 1 o 2 párrafos, y enumera 3 a 5 entidades detectadas.`,
-              },
-            ],
-          },
-        ],
+      const r = await fetch(`${ULTRON_OJO_URL}/ver`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Ojo-Clave': ULTRON_OJO_CLAVE },
+        body: JSON.stringify({ imagen: base64Data, prompt: prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos.' }),
+        signal: AbortSignal.timeout(30000),
       });
-
-      if (visionRes.text) {
-        executiveSummary = visionRes.text.trim();
-        confidenceScore = 0.98;
+      const j: any = await r.json().catch(() => ({}));
+      const summary = String(j.texto || j.descripcion || j.summary || j.error || '').trim();
+      if (summary && !/invent/i.test(summary)) {
+        return res.json({ success: true, summary, via: ULTRON_OJO_URL + '/ver', honesto: true });
       }
-    } catch (err: any) {
-      console.warn('[Gemini Vision Fallback to Heuristic Engine]', err.message);
+    } catch (e: any) {
+      console.warn('[vision ojos]', e?.message || e);
     }
   }
 
-  // Cryptographic auto-purge protocol: Memory wipe for base64Data
-  const purgeTimestamp = new Date().toISOString();
+  if (ai) {
+    try {
+      const match = String(base64Data).match(/^data:([^;]+);base64,(.*)$/);
+      const mime = match ? match[1] : (mediaType || 'image/png');
+      const cleanData = match ? match[2] : base64Data;
+      const visionRes = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: [{ role: 'user', parts: [
+          { inlineData: { mimeType: mime, data: cleanData } },
+          { text: prompt || 'Describe solo lo visible. Si hay un precio o número, cópialo. No inventes.' },
+        ]}],
+      });
+      if (visionRes.text) {
+        return res.json({ success: true, summary: visionRes.text.trim(), via: 'gemini', honesto: true });
+      }
+    } catch (err: any) {
+      return res.status(502).json({ error: 'Visión falló', message: String(err?.message || err).slice(0, 180), honesto: true });
+    }
+  }
 
-  return res.json({
-    success: true,
-    mediaType: isVideo ? 'video' : 'image',
-    fileName: fileName || (isVideo ? 'sequence.mp4' : 'capture.png'),
-    confidence: confidenceScore,
-    entities: detectedEntities,
-    summary: executiveSummary,
-    promptUsed: prompt || 'Analizar presencia, expresión y entorno corporativo',
-    privacyCompliance: {
-      purged: true,
-      purgeTimestamp,
-      protocol: 'Zero-Knowledge Auto-Purge ISO/IEC 27701',
-      details: 'El archivo temporal fue completamente sobreescrito en ceros y eliminado de memoria y caché.',
-    },
-  });
+  return res.status(503).json({ error: 'No hay nodo de visión ni Gemini. No invento lo que hay en la foto.', honesto: true });
 });
 
-// Qwen 3.8 27B / Gemini Executive Conversational Pipeline
+async function spotMetal(sym: 'XAU' | 'XAG') {
+  const r = await fetch(`https://api.gold-api.com/price/${sym}`, { signal: AbortSignal.timeout(8000) });
+  const j: any = await r.json();
+  const price = j.price || j.bid || j.ask;
+  if (!price) throw new Error('gold-api sin price');
+  return { sym, usd: Number(price), fuente: 'gold-api.com' };
+}
+
+async function usdHnl() {
+  const r = await fetch('https://open.er-api.com/v6/latest/USD', { signal: AbortSignal.timeout(8000) });
+  const j: any = await r.json();
+  const hnl = j?.rates?.HNL;
+  if (!hnl) throw new Error('sin rate HNL');
+  return { usdHnl: Number(hnl), fuente: 'open.er-api.com' };
+}
+
+async function leerConOjo(url: string) {
+  if (!ULTRON_OJO_URL) return null;
+  const headers = { 'Content-Type': 'application/json', 'X-Ojo-Clave': ULTRON_OJO_CLAVE };
+  const mirar = await fetch(`${ULTRON_OJO_URL}/mirar`, {
+    method: 'POST', headers, body: JSON.stringify({ url }), signal: AbortSignal.timeout(25000),
+  });
+  const visto: any = await mirar.json().catch(() => ({}));
+  return { url, titulo: visto.titulo, texto: String(visto.texto || visto.text || '').slice(0, 2500), ok: mirar.ok };
+}
+
+function juntarOllama(raw: string) {
+  let acc = '';
+  for (const line of raw.split('\n')) {
+    const s = line.trim();
+    if (!s) continue;
+    try {
+      const j = JSON.parse(s);
+      acc += j.message?.content || j.content || j.response || '';
+      if (j.done && acc) return acc;
+    } catch { /* skip */ }
+  }
+  try {
+    const j = JSON.parse(raw);
+    return j.message?.content || j.content || j.reply || raw;
+  } catch {
+    return raw;
+  }
+}
+
 app.post('/api/turno', async (req, res) => {
   const t0 = Date.now();
   const message = String(req.body?.message || req.body?.text || '').trim();
   const mode = req.body?.mode || 'GUARDIAN';
   if (!message) return res.status(400).json({ error: 'message vacío', honesto: true });
 
-  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
-    return res.status(503).json({
-      error: 'Qwen no configurado (ULTRON_NODO_URL / ULTRON_NODO_SECRETO)',
-      honesto: true,
-    });
+  const q = message.toLowerCase();
+  const hechos: string[] = [];
+  let foto: string | null = null;
+
+  try {
+    if (/\b(oro|gold|xau|onza)\b/.test(q)) {
+      const s = await spotMetal('XAU');
+      hechos.push(`SPOT XAU/USD = ${s.usd} USD/oz (fuente ${s.fuente}). No inventes otro número.`);
+    }
+    if (/\b(plata|silver|xag|agka)\b/.test(q)) {
+      const s = await spotMetal('XAG');
+      hechos.push(`SPOT XAG/USD = ${s.usd} USD/oz (fuente ${s.fuente}). No inventes otro número.`);
+    }
+    if (/\b(lempira|hnl|cmsbio|dólar a lempira|dolar a lempira|usd a hnl|tipo de cambio)\b/.test(q)) {
+      const fx = await usdHnl();
+      hechos.push(`USD/HNL = ${fx.usdHnl} (fuente ${fx.fuente}).`);
+      try {
+        const page = await leerConOjo('https://www.bch.hn/');
+        if (page?.texto) hechos.push(`Playwright BCH: ${page.titulo || ''} ${page.texto.slice(0, 600)}`);
+      } catch (e: any) {
+        hechos.push(`Playwright BCH falló: ${String(e?.message || e).slice(0, 80)}`);
+      }
+    }
+    const urlMatch = message.match(/https?:\/\/[^\s]+/i);
+    if (urlMatch || /\b(abr[ií] la p[aá]gina|screenshot|playwright)\b/.test(q)) {
+      const url = urlMatch ? urlMatch[0] : 'https://www.bch.hn/';
+      const page = await leerConOjo(url);
+      if (page) hechos.push(`Página ${page.url}: ${page.texto.slice(0, 1200) || 'sin texto'}`);
+    }
+  } catch (e: any) {
+    hechos.push(`Tool falló: ${String(e?.message || e).slice(0, 160)}. Si no hay cifra, dilo.`);
   }
+
+  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
+    if (hechos.length) {
+      return res.json({ reply: hechos.join('\n'), modelo: 'tools-only', via: 'tools', mode, ms: Date.now() - t0, foto, honesto: true });
+    }
+    return res.status(503).json({ error: 'Qwen no configurado', honesto: true });
+  }
+
+  const system = `Eres ULTRON, asistente de escritorio de Orden Global. Español corto.
+No inventes precios ni tipos de cambio. Si HECHOS está vacío para un dato pedido, di que no lo viste.
+HECHOS:\n${hechos.join('\n') || '(ninguno)'}`;
 
   try {
     const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
@@ -746,32 +801,34 @@ app.post('/api/turno', async (req, res) => {
         model: ULTRON_NODO_MODELO,
         stream: false,
         messages: [
-          { role: 'system', content: 'Eres ULTRON, asistente de escritorio de Orden Global. Español corto. No inventes precios ni datos. Si no sabes, dilo.' },
+          { role: 'system', content: system },
           { role: 'user', content: message },
         ],
       }),
       signal: AbortSignal.timeout(60000),
     });
     const raw = await r.text();
-    let reply = '';
-    try {
-      const j = JSON.parse(raw);
-      reply = j.message?.content || j.content || j.reply || '';
-    } catch {
-      reply = raw.slice(0, 2000);
-    }
-    if (!r.ok || !String(reply).trim()) {
-      return res.status(502).json({ error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 300), honesto: true, modelo: ULTRON_NODO_MODELO });
+    const reply = String(juntarOllama(raw) || '').trim();
+    if (!r.ok || !reply) {
+      if (hechos.length) {
+        return res.json({ reply: hechos.join('\n'), modelo: ULTRON_NODO_MODELO, via: 'tools-fallback', ms: Date.now() - t0, honesto: true, raw: raw.slice(0, 200) });
+      }
+      return res.status(502).json({ error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 300), honesto: true });
     }
     return res.json({
-      reply: String(reply).trim(),
+      reply,
       modelo: ULTRON_NODO_MODELO,
       via: `${ULTRON_NODO_URL}/api/chat`,
       mode,
       ms: Date.now() - t0,
+      tools: hechos.length,
+      foto,
       honesto: true,
     });
   } catch (err: any) {
+    if (hechos.length) {
+      return res.json({ reply: hechos.join('\n'), modelo: 'tools-only', ms: Date.now() - t0, honesto: true });
+    }
     return res.status(502).json({ error: 'Qwen caído', message: String(err?.message || err).slice(0, 200), honesto: true });
   }
 });
