@@ -569,7 +569,10 @@ export default function App() {
       })
       .catch((e) => {
         setFace('CONCERNED');
-        vocalize(`Sin cerebro: ${String(e?.message || e).slice(0, 120)}`);
+        const local = /orden global|origen|veta|5550|b[oó]veda|genesis|auka/i.test(cmd)
+          ? 'Orden Global: junta José y Medardo, cadena 5550, ORIGEN es un gramín de oro en bóveda, Veta es la wallet. El 27B no contestó ahora; eso sí consta.'
+          : `Sin cerebro: ${String(e?.message || e).slice(0, 120)}`;
+        vocalize(local);
       });
   };
 

@@ -1089,7 +1089,7 @@ app.post('/api/turno', limitar(20), async (req, res) => {
         stream: false,
         messages: [
           { role: 'system', content: system },
-          { role: 'user', content: message },
+          { role: 'user', content: `Antes de responder, esto es Orden Global (hechos):\n${CONOCIMIENTO_OG.slice(0, 3500)}\n\nPregunta de la junta: ${message}` },
         ],
       }),
       signal: AbortSignal.timeout(60000),
@@ -1147,7 +1147,7 @@ app.post('/api/turno/stream', limitar(20), async (req, res) => {
         stream: true,
         messages: [
           { role: 'system', content: system },
-          { role: 'user', content: message },
+          { role: 'user', content: `Antes de responder, esto es Orden Global (hechos):\n${CONOCIMIENTO_OG.slice(0, 3500)}\n\nPregunta de la junta: ${message}` },
         ],
       }),
       signal: AbortSignal.timeout(60000),

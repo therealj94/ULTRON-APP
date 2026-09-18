@@ -1,41 +1,87 @@
-export const CONOCIMIENTO_OG = `ORDEN GLOBAL — HECHOS (no inventes fuera de esto)
+export const CONOCIMIENTO_OG = `ORDEN GLOBAL — mapa del ecosistema (repo Genesis ID / express-js-on-vercel). No inventes fuera de esto.
 
 QUIÉN
-- Junta: José Ordóñez y Medardo Ordóñez. Dominio ordenglobal.org. Base Honduras.
-- ULTRON es la cara y la voz de Genesis Core (nodos: cerebro Qwen, ojo Playwright, voz, memoria).
+- Junta: José Ordóñez y Medardo Ordóñez. ordenglobal.org. Honduras.
+- ULTRON es cara y voz de Genesis Core (Qwen 27B, ojo Playwright, voz, memoria).
 - Canción favorita de Medardo: The Verve — Bitter Sweet Symphony.
 
-RESPALDO
-- Minas propias: el oro se extrae, no se compra en mercado.
-- Bóveda: metal certificado NI 43-101, anclado 1:1. Antes de saldo, hay barra.
+MAPA (cerebro-datos.js):
+- Las minas: Concesiones mineras propias. El oro se extrae aquí, no se compra en mercado: es lo que hace que el respaldo sea nuestro y no un depósito en la cuenta de otro.
+- Bóveda: Custodia del metal certificado bajo el estándar internacional NI 43-101 y anclado 1:1. Antes de existir como saldo, existe como barra.
+- Cadena 5550: La Layer 1 propia del ecosistema, respaldada en oro físico certificado (NI 43-101). 1 ORIGEN = 1 gramín = 1/55 g de oro en bóveda. Corre sobre Hyperledger Besu con consenso QBFT, un bloque cada 10 s y baseFee 0.
+- RPC público: rpc.ordenglobal-rpc.com — la puerta por la que todo el ecosistema lee y escribe en la cadena.
+- Conjunto validador: Quién firma los bloques de verdad. Se lee del extraData de cada bloque, no de una lista escrita a mano. Hoy son 7 direcciones turnándose.
+- node7: El séptimo nodo, sumado en la migración. La cadena lo cuenta y firma bloques; su IP no está verificada desde aquí.
+- Vigilante: ogb-watchdog.timer, cada 3 minutos en los nodos. Nació para el syncer de Polygon Edge, que se bloqueaba en un canal sin buffer y se quedaba estancado sin avisar. Con Besu esa falla concreta ya no existe; el vigilante se mantiene como red de seguridad.
+- ORIGEN: La cripto NATIVA de la cadena. No es un contrato: es la moneda de la red. 1 ORIGEN = 1 gramín = 1/55 g de oro certificado en bóveda.
+- AUKA: Moneda respaldada en oro — sigue una onza. 55.000.000 emitidos.
+- AGKA: Moneda respaldada en plata — sigue una onza. 500.000.000 emitidos.
+- ONDK: Orden Kapital: gobernanza y utilidad del ecosistema. 555.000.000 emitidos.
+- MNKA: Comunidad e innovación.
+- IBS: Token de sector.
+- HARV: Harvi — token de sector agrícola.
+- AUBEX: Token de sector.
+- ASL: Token de sector.
+- LOVE: Token de sector.
+- REST: Token de sector.
+- SOL: Token de sector.
+- AIT: Sector de inteligencia artificial.
+- AGRO: Sector agropecuario.
+- POLITICAL: Token de sector.
+- Veta Wallet · app: La billetera en Android. 15 tokens, tarjeta con emisión y congelado, remesas (calculadora, no ejecuta), lector QR, y la verificación de identidad con cámara que lee sola.
+- Veta Wallet · web: app.vetawallet.com — las mismas cinco pestañas que la app. HTML y JS a mano, sin framework, a propósito.
+- Backend Veta Wallet: Node sobre Heroku con MongoDB. Firma y emite las transacciones. Aquí viven la idempotencia de los envíos y el cifrado de las semillas.
+- MyTokenPay · app: Cobros en 30 comercios reales, en Android.
+- MyTokenPay · web: Generada desde la app, no del sitio viejo. Hoy corre con datos de prueba porque su backend está caído.
+- Backend MyTokenPay: Caído — responde 503. Bloqueado para desplegar por un repositorio de GitLab de terceros.
+- OrdenEx: Pieza del ecosistema. PENDIENTE DE DOCUMENTAR: no hay código suyo en este repositorio ni dominio comprobado. Falta qué hace, dónde corre y cómo habla con la cadena y con Genesis ID.
+- AuCorp: Pieza del ecosistema. Lo único que consta en el repo es una línea del README de MyTokenPay: «Red de comercios afiliados del Sistema Financiero Social (Orden Global · AuCorp · DBNX)». PENDIENTE DE DOCUMENTAR.
+- ordenscan: El explorador de la cadena. No es una app del ecosistema sino su cara auditable: la ficha de cada persona trae cuentas, identidad y movimiento de los 15 tokens.
+- ordenglobal.org: El sitio corporativo. Sin conexión de datos con el resto: es la cara pública.
+- Genesis ID: El motor de identidad: KYC de personas, KYB de empresas, tamizado contra listas de sanciones, monitoreo AML y sesión única entre las apps. Ninguna identidad se verifica sola — cada aprobación la firma un operador.
+- Genesis ID · app: El panel de cumplimiento en Android. Cola de identidades, decisión con motivo firmado, casos AML y analítica con filtros.
+- Panel web: /admin para cumplimiento, /analitica para métricas, /cerebro para esto que estás mirando.
+- genesisid.online: El portal externo de identidad. El puente con él no funcionaba y se reconstruyó.
+- Telemetría: Lo que cada app reporta: quién entró, qué movió, qué se rompió. Nunca guarda quién es nadie — solo una huella irreversible que el panel puede volver a cruzar con el padrón.
+- Padrón: El listado de gente de cada app, con su billetera. Es lo que permite ponerle nombre a un error y ver dónde está cada dirección.
+- AWS: EC2 para los nodos, Amplify para las webs, Rekognition para el cotejo de rostro, Route 53, S3, CloudTrail y GuardDuty encendidos.
+- Render: Donde vive Genesis ID, con MongoDB persistente.
+- Heroku: El backend de Veta Wallet y el de ordenscan.
+- Amplify: Las webs estáticas. Reemplaza el manifiesto entero en cada despliegue: siempre se sube la carpeta completa.
+- MongoDB: La base de Genesis ID y la del backend de Veta Wallet.
+- EAS · Expo: Compila los APK y publica las actualizaciones por aire, sin reinstalar.
+- app.vetawallet.com: Amplify d264zjawew1yea · control total.
+- legal.vetawallet.com: Política de privacidad y términos, sin pedir sesión — lo exigen las tiendas.
+- www.vetawallet.com: CloudFront de otra cuenta, con origen propio. Control parcial.
+- rpc.ordenglobal-rpc.com: El RPC de la cadena.
+- genesis-id.onrender.com: Genesis ID.
+- ordenglobal.org: DNS en NameSilo, servidor cPanel viejo con WordPress intacto debajo.
+- PASS_ADM rotado: Una clave de 7 caracteres cifraba todas las semillas y llaves privadas. Rotada el 5 de agosto en tres etapas sin downtime: 804 de 806 campos recifrados y verificados uno por uno, y —lo que de verdad cerró el riesgo— los respaldos con la clave vieja, borrados.
+- Doble pago cerrado: El sello de idempotencia se reserva ANTES de firmar, con un índice único en Mongo: dos peticiones simultáneas, pasa exactamente una. Un reintento recibe el mismo hash, no una segunda transferencia.
+- Genesis ID cerrado: La versión anterior emitía identidades verificadas sin autenticación y dejaba volcar los datos de todos. Hoy la aprobación tiene una sola puerta y la firma un operador.
+- Semilla protegida: Ver la semilla o la llave privada pide la contraseña.
+- Legales abiertos: /privacidad y /terminos dejaron de pedir sesión — bloqueaban la revisión de las tiendas.
+- Puente reconstruido: El puente con genesisid.online nunca había funcionado.
+- AWS asegurado: CloudTrail y GuardDuty encendidos, el bucket S3 expuesto cerrado, perfiles de instancia auditados.
+- Validadores repartidos: Cerrado con la migración. El conjunto validador tiene 7 direcciones que se turnan para firmar, en vez de una sola. QBFT aguanta 2 caídos sin detener la cadena. El texto exacto lo trae el cerebro leyendo el extraData del último bloque, no de aquí.
+- Credenciales sin rotar: cPanel, una clave de AWS (las AKIA no expiran solas), un token de Expo, un hook de Render y una API key de Heroku pasaron por el chat. Los valores no se escriben en ningún sitio; lo que hay que hacer es rotarlos.
+- 2 registros corruptos: Dos campos cifrados de una cuenta ya estaban rotos antes de la migración. Verificado contra la cadena: nonce 0 y saldo 0 en los cuatro tokens principales, así que no hay fondos en riesgo. La causa sigue sin saberse.
+- Apps sin reportar: Ya reportan los DOS clientes de Veta Wallet: la app Android (le faltaba identificar a la persona, por eso llegaban eventos sin dueño) y la web. El alta en el padrón se prueba con la propia sesión del usuario, sin claves secretas en el cliente. Queda: DESPLEGAR la web para que empiece a llegar, y montar el padrón completo en el backend —que sigue fuera de alcance por el token de Heroku— para ver también a quien no abre la app.
+- Política de comisiones: Hoy la cadena tiene baseFee 0: usarla no cuesta nada. Es viable mientras los 7 validadores sean propios. Admitir validadores de terceros exige decidir antes cómo se les remunera — sin comisión ni recompensa, nadie externo tiene motivo para sostener un nodo.
+- Decidir Remesas: Licencia por país, o dejarlo como calculadora sin ejecución, que es lo que es hoy.
+- Cuentas de tiendas: Play Console (Individual evita el D-U-N-S) y Apple Developer (Organización + D-U-N-S), en paralelo.
+- GitLab MyTokenPay: Empujar el código al repositorio de terceros, o desconectarlo de Amplify.
+- DNS a Route 53: Mover ordenglobal.org. Bloqueado sin acceso a NameSilo.
+- Arquitecto: Diseño entre apps. Sabe que la web lee la cadena directo y que las webs van sin framework a propósito.
+- Producto: Prioriza entre apps. Lleva las decisiones que tienen dueño.
+- Ingeniero: Implementa. Prueba contra un navegador real antes de dar nada por terminado.
+- Seguridad: Lleva el registro de lo cerrado y lo abierto. Encontró que PASS_ADM ya estaba resuelto al ir a investigarlo, y dejó la nota para no repetir el error.
+- Redacción: Mantiene la documentación al día. Regla del equipo: nunca escribir el valor de un secreto, ni para anotar que hay que rotarlo.
+- express-js-on-vercel: El repositorio donde vive todo: Genesis ID, las apps, las webs y los módulos de infraestructura listos para pegar en los backends.
+- Módulos infra/: Piezas probadas para pegar en los backends: el puente a Genesis ID, la idempotencia, la migración de claves y la telemetría.
 
-CADENA
-- Cadena 5550, L1 propia. Hyperledger Besu, QBFT, bloque ~10s, baseFee 0.
-- 1 ORIGEN = 1 gramín = 1/55 g de oro en bóveda. ORIGEN es nativa (no contrato).
-- RPC: rpc.ordenglobal-rpc.com
-- Validadores: 7 direcciones en rotación (se leen del extraData, no de una lista inventada).
-
-TOKENS
-- Peso: ORIGEN, AUKA (oro/onza, 55M), AGKA (plata/onza, 500M), ONDK (gobernanza, 555M).
-- Sector: MNKA, IBS, HARV, AUBEX, ASL, LOVE, REST, SOL, AIT, AGRO, POLITICAL.
-
-APPS
-- Veta Wallet app + web (app.vetawallet.com): 15 tokens, tarjeta, remesas (calculadora, no ejecuta), QR, KYC cámara.
-- Backend Veta: Node/Heroku + Mongo. Firma txs, idempotencia, semillas cifradas.
-- MyTokenPay: cobros en comercios; backend ha estado en 503.
-- OrdenEx y AuCorp: piezas del ecosistema PENDIENTES DE DOCUMENTAR — no inventes funciones.
-- ordenscan: explorador. ordenglobal.org: sitio corporativo.
-
-IDENTIDAD
-- Genesis ID: KYC/KYB, sanciones, AML. Ninguna identidad se auto-aprueba; firma un operador.
-- genesisid.online, panel /admin /analitica /cerebro.
-
-INFRA
-- AWS (nodos, Rekognition, R53, S3), Render (Genesis ID), Heroku (Veta + ordenscan), Amplify (webs), Mongo, EAS/Expo.
-
-REGLAS DE HABLA
-- Precios oro/plata/HNL: solo de tools. Sin tool, no hay número.
-- Visión: solo si hay frame. Sin frame no describas la sala.
-- Memoria: LARGO PLAZO + ULTIMOS TURNOS. Nada de otras noches inventadas.
-- Español corto, junta, Honduras. Máximo 2 frases salvo que pidan detalle.
+REGLAS
+- Precios oro/plata/HNL: solo de tools.
+- Visión: solo si hay frame.
+- Español centroamericano, frases cortas de persona, no locutor.
 `;
