@@ -1,3 +1,15 @@
+/** Letra EXACTA de cada clip. Si se regraba, usar este texto. */
+export const LETRAS = {
+  bohemian:
+    "Is this the real life? Is this just fantasy? Caught in a landslide, no escape from reality. Open your eyes, look up to the skies and see.",
+  ligera:
+    "Ella durmió al calor de las masas, y yo desperté queriendo soñarla. De aquel amor, de música ligera, nada nos libra, nada más queda.",
+  bittersweet:
+    "You're a slave to money, then you die. I'll take you down the only road I've ever been down. You know the one that takes you to the places where all the veins meet, yeah.",
+  runaway:
+    "Let's have a toast for the douchebags. Let's have a toast for the assholes. Let's have a toast for the scumbags, every one of them that I know.",
+} as const;
+
 /** Clips de Gabriela ya grabados. Cero tokens. */
 
 export const BANCO: { id: string; file: string; keys: RegExp }[] = [
