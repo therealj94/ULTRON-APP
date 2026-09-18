@@ -1,8 +1,17 @@
 /** Cliente del harness: habla con /api/qwen/chat (SSE) sin tocar secretos AWS. */
 
+import type { FaceState } from '../types';
+
 export type UltronToolCall = {
   name: string;
   arguments: Record<string, unknown>;
+};
+
+export type UltronVoiceEmotion = {
+  pitch: number;
+  rate: number;
+  volume: number;
+  instructAddon: string;
 };
 
 export type UltronChatResult = {
@@ -12,6 +21,11 @@ export type UltronChatResult = {
   model?: string;
   conversationId?: string;
   error?: string;
+  emotion?: string;
+  face?: FaceState;
+  pauseMs?: number;
+  filler?: string | null;
+  voice?: UltronVoiceEmotion;
 };
 
 export async function streamUltronChat(opts: {
@@ -72,6 +86,11 @@ export async function streamUltronChat(opts: {
         toolCall: payload.toolCall,
         model: payload.model,
         conversationId: payload.conversationId,
+        emotion: payload.emotion,
+        face: payload.face,
+        pauseMs: payload.pauseMs,
+        filler: payload.filler,
+        voice: payload.voice,
       };
       reply = meta.reply;
     } else if (event === 'error') {
@@ -117,5 +136,10 @@ export async function chatUltronJson(opts: {
     toolCall: data.toolCall,
     model: data.model,
     conversationId: data.conversationId,
+    emotion: data.emotion,
+    face: data.face,
+    pauseMs: data.pauseMs,
+    filler: data.filler,
+    voice: data.voice,
   };
 }

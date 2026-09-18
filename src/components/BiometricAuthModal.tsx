@@ -36,7 +36,7 @@ export const BiometricAuthModal: React.FC<BiometricAuthModalProps> = ({
   const [progress, setProgress] = useState(0);
   const [userName, setUserName] = useState('José');
   const [role, setRole] = useState('Junta Directiva · Orden Global');
-  const [emailInput, setEmailInput] = useState('mjoseenamorado1994@gmail.com');
+  const [emailInput, setEmailInput] = useState('j.ordonez@ordenglobal.org');
   const [passwordInput, setPasswordInput] = useState('');
   const [remoteStatus, setRemoteStatus] = useState<{
     connected: boolean;
@@ -47,6 +47,8 @@ export const BiometricAuthModal: React.FC<BiometricAuthModalProps> = ({
   }>({ connected: false });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberCreds, setRememberCreds] = useState(true);
 
   // Check health of ultron.ordenglobal.link on open
   useEffect(() => {
@@ -310,7 +312,7 @@ export const BiometricAuthModal: React.FC<BiometricAuthModalProps> = ({
                   type="email"
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}
-                  placeholder="mjoseenamorado1994@gmail.com"
+                  placeholder="j.ordonez@ordenglobal.org"
                   className="w-full pl-9 pr-3 py-2 bg-black/60 border border-[#05E1FF]/30 rounded-lg text-xs font-mono text-white placeholder:text-gray-500 focus:border-[#05E1FF] focus:outline-none"
                   required
                 />
@@ -324,13 +326,16 @@ export const BiometricAuthModal: React.FC<BiometricAuthModalProps> = ({
               <div className="relative">
                 <Lock className="w-4 h-4 text-[#8FA3B0] absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
-                  type="password"
+                  type={showPassword ? 'text' : 'password'}
                   value={passwordInput}
                   onChange={(e) => setPasswordInput(e.target.value)}
                   placeholder="••••••••••••"
-                  className="w-full pl-9 pr-3 py-2 bg-black/60 border border-[#05E1FF]/30 rounded-lg text-xs font-mono text-white placeholder:text-gray-500 focus:border-[#05E1FF] focus:outline-none"
+                  className="w-full pl-9 pr-12 py-2 bg-black/60 border border-[#05E1FF]/30 rounded-lg text-xs font-mono text-white placeholder:text-gray-500 focus:border-[#05E1FF] focus:outline-none"
                   required
                 />
+                <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8FA3B0] text-[10px] font-mono">
+                  {showPassword ? 'OCULTAR' : 'VER'}
+                </button>
               </div>
             </div>
 

@@ -5,6 +5,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI } from '@google/genai';
+import { EC2Client, DescribeInstancesCommand, StartInstancesCommand } from '@aws-sdk/client-ec2';
 import {
   appendConversation,
   chatQwenStream,
@@ -17,6 +18,32 @@ import {
   systemPromptForMode,
   type ChatMessage,
 } from './src/server/nodes';
+import { ULTRON_VOICES, getVoice } from './src/server/tts/voices';
+import { normalizeNumbersForSpeech } from './src/server/tts/normalizeNumbers';
+import { HUMAN_EXPRESSIONS, expressionsSystemHint } from './src/server/tts/expressions';
+import {
+  extractPersonHints,
+  listPeople,
+  memoryPromptBlock,
+  upsertPerson,
+} from './src/server/tts/personMemory';
+import { synthesizeWithQwenTts, ttsNodeStatus, ttsSalud } from './src/server/tts/qwenTtsClient';
+import { applyVocalPerformance } from './src/server/tts/vocalPerformance';
+import { buildPersonalityBlock } from './src/server/tts/personalidad';
+import {
+  getEmotionSnapshot,
+  humanizeReply,
+  boostEmotion,
+  voiceParamsFor,
+  type UltronEmotion,
+} from './src/server/tts/emociones';
+import {
+  cacheStats,
+  getCachedPersonalityReply,
+  setCachedPersonalityReply,
+  getCachedTts,
+  setCachedTts,
+} from './src/server/tts/responseCache';
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -58,14 +85,24 @@ wss.on('connection', (ws: WebSocket) => {
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// System & Cloud Credentials configured from environment or supplied by the Board
+// System & Cloud Credentials — solo desde variables de entorno (sin defaults con secretos)
 const GITHUB_PAT = process.env.GITHUB_PAT || '';
 const RENDER_API_KEY = process.env.RENDER_API_KEY || '';
-const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || 'srv-dah56p15efls7382pot0';
+const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || '';
 const ULTRON_REMOTE_URL = process.env.ULTRON_REMOTE_URL || 'https://ultron.ordenglobal.link';
-const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || '';
-const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || '';
+const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID;
+const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY;
 const AWS_DEFAULT_REGION = (process.env.AWS_DEFAULT_REGION || 'us-east-1').replace(' ', '-');
+
+/** Falla si AWS no está en el entorno. No hay valores por defecto embebidos. */
+function requireAwsCredentials(): { accessKeyId: string; secretAccessKey: string } {
+  if (!AWS_ACCESS_KEY_ID?.trim() || !AWS_SECRET_ACCESS_KEY?.trim()) {
+    throw new Error(
+      'Faltan AWS_ACCESS_KEY_ID y/o AWS_SECRET_ACCESS_KEY en variables de entorno (sin defaults)'
+    );
+  }
+  return { accessKeyId: AWS_ACCESS_KEY_ID.trim(), secretAccessKey: AWS_SECRET_ACCESS_KEY.trim() };
+}
 
 // Session store for ULTRON FP remote connection
 let ultronRemoteCookie = '';
@@ -90,7 +127,7 @@ app.get('/api/health', async (_req, res) => {
   const [qwen, ojo] = await Promise.all([qwenSalud(), ojoSalud()]);
   res.json({
     status: 'ok',
-    system: 'ULTRON FP · LOOI Desktop Agentic Harness',
+    system: 'ULTRON FP · Desktop Agentic Harness',
     timestamp: new Date().toISOString(),
     vaultStatus: 'Encrypted and Operational',
     neuralCore: nodes.qwen.configured
@@ -111,6 +148,7 @@ app.get('/api/health', async (_req, res) => {
       online: ojo.ok,
     },
     globalOrderBrain: 'Active (Directorio Alfa-1)',
+    tts: ttsNodeStatus(),
     renderDeployment: RENDER_API_KEY ? 'Connected' : 'Pending Key',
     wsClients: wss.clients.size,
   });
@@ -125,7 +163,7 @@ app.get('/api/vault/status', async (req, res) => {
     conduits: [
       {
         id: 'elevenlabs',
-        name: 'Canal de Voz Neural ElevenLabs',
+        name: 'Canal de Voz Neural ElevenLabs (fallback)',
         type: 'audio_synthesis',
         configured: Boolean(VAULT_ELEVENLABS_API_KEY),
         status: VAULT_ELEVENLABS_API_KEY ? 'CONECTADO' : 'PENDIENTE_API_KEY',
@@ -133,6 +171,15 @@ app.get('/api/vault/status', async (req, res) => {
           ? `${VAULT_ELEVENLABS_API_KEY.substring(0, 4)}••••••••${VAULT_ELEVENLABS_API_KEY.slice(-3)}`
           : null,
         latencyMs: 18,
+      },
+      {
+        id: 'qwen3_tts',
+        name: 'Qwen3-TTS · Nodo T4 dedicado',
+        type: 'audio_synthesis',
+        configured: ttsNodeStatus().configured,
+        status: ttsNodeStatus().configured ? 'PROXY_READY' : 'PENDIENTE_ULTRON_TTS_URL',
+        host: ttsNodeStatus().urlHost,
+        latencyMs: 40,
       },
       {
         id: 'neural_core',
@@ -206,16 +253,27 @@ app.post('/api/vault/elevenlabs/synthesize', async (req, res) => {
   const { text, voiceId = 'pNInz6obpgDQGcFmaJgB', stability = 0.65, similarityBoost = 0.85, apiKeyOverride } = req.body;
 
   const keyToUse = (apiKeyOverride && apiKeyOverride.trim()) || VAULT_ELEVENLABS_API_KEY;
+  const spoken = normalizeNumbersForSpeech(String(text || ''));
 
-  if (!keyToUse) {
-    return res.status(400).json({
-      error: 'No hay API Key de ElevenLabs configurada en la Bóveda.',
-      suggestion: 'Introduce tu API Key en la Bóveda de ULTRON FP para habilitar síntesis neuronal.',
-    });
+  if (!spoken) {
+    return res.status(400).json({ error: 'El parámetro "text" es requerido.' });
   }
 
-  if (!text || typeof text !== 'string') {
-    return res.status(400).json({ error: 'El parámetro "text" es requerido.' });
+  // 1) Preferir Qwen3-TTS en nodo T4 dedicado
+  const qwen = await synthesizeWithQwenTts({ text: spoken, voice: req.body.voice || req.body.voiceId });
+  if (qwen.ok) {
+    res.setHeader('Content-Type', qwen.contentType);
+    res.setHeader('X-Ultron-TTS', 'qwen3-tts');
+    return res.send(qwen.audio);
+  }
+  const qwenTtsError = qwen.ok === false ? qwen.error : 'unknown';
+
+  if (!keyToUse) {
+    return res.status(503).json({
+      error: 'TTS no disponible',
+      qwenTts: qwenTtsError,
+      suggestion: 'Configura ULTRON_TTS_URL (T4) o ELEVENLABS_API_KEY. Arranca i-02653feadc919d3a4.',
+    });
   }
 
   try {
@@ -227,7 +285,7 @@ app.post('/api/vault/elevenlabs/synthesize', async (req, res) => {
         Accept: 'audio/mpeg',
       },
       body: JSON.stringify({
-        text,
+        text: spoken,
         model_id: 'eleven_multilingual_v2',
         voice_settings: {
           stability: Number(stability) || 0.65,
@@ -241,30 +299,286 @@ app.post('/api/vault/elevenlabs/synthesize', async (req, res) => {
       return res.status(elRes.status).json({
         error: `Error de ElevenLabs (${elRes.status})`,
         details: errText,
+        qwenTts: qwenTtsError,
       });
     }
 
     const audioBuffer = await elRes.arrayBuffer();
     res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('X-Ultron-TTS', 'elevenlabs-fallback');
     res.setHeader('Content-Length', audioBuffer.byteLength.toString());
     return res.send(Buffer.from(audioBuffer));
   } catch (err: any) {
     return res.status(500).json({
-      error: 'Fallo al contactar el servicio de ElevenLabs',
+      error: 'Fallo al contactar ElevenLabs',
       message: err.message,
+      qwenTts: qwenTtsError,
     });
   }
 });
 
+/** API unificada TTS: Qwen3-TTS (T4) → ElevenLabs → error (cliente usa Web Speech). */
+app.post('/api/tts/synthesize', async (req, res) => {
+  const voice = getVoice(req.body.voice || req.body.voiceId || 'ultron');
+  const spoken = normalizeNumbersForSpeech(String(req.body.text || ''));
+  if (!spoken) return res.status(400).json({ error: 'text requerido' });
+
+  const emotion = String(req.body.emotion || '') as UltronEmotion;
+  const performance = String(req.body.performance || 'speak');
+  const singing = performance === 'sing';
+  const instructAddon =
+    (req.body.instructAddon as string) ||
+    (singing
+      ? 'sing with melody, clear pitch, musical phrasing, not spoken recitation'
+      : emotion
+        ? voiceParamsFor(emotion as UltronEmotion)?.instructAddon
+        : undefined);
+  const engine = String(req.body.engine || 'auto');
+  const cacheKey = `${engine === 'fast' ? 'f' : 'a'}|${singing ? 's' : 't'}|${voice.id}|${emotion || 'n'}|${spoken}`;
+  const cached = getCachedTts(cacheKey);
+  if (cached) {
+    res.setHeader('Content-Type', cached.contentType);
+    res.setHeader('X-Ultron-TTS', 'cache');
+    res.setHeader('X-Ultron-Voice', voice.id);
+    return res.send(cached.audio);
+  }
+
+  const speakEleven = async (model: string, settings: Record<string, unknown>, timeoutMs: number) => {
+    if (!VAULT_ELEVENLABS_API_KEY || !voice.elevenLabsVoiceId) return null;
+    const elRes = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voice.elevenLabsVoiceId}?output_format=mp3_22050_32`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'xi-api-key': VAULT_ELEVENLABS_API_KEY,
+          Accept: 'audio/mpeg',
+        },
+        body: JSON.stringify({
+          text: spoken,
+          model_id: model,
+          language_code: 'es',
+          voice_settings: settings,
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      }
+    );
+    if (!elRes.ok) {
+      console.warn('[TTS]', model, elRes.status, (await elRes.text()).slice(0, 180));
+      return null;
+    }
+    return Buffer.from(await elRes.arrayBuffer());
+  };
+
+  if (engine === 'fast') {
+    try {
+      const buf = singing
+        ? await speakEleven('eleven_multilingual_v2', { stability: 0.32, similarity_boost: 0.72, style: 0.55, speed: 0.92 }, 20000)
+        : await speakEleven('eleven_flash_v2_5', { stability: 0.55, similarity_boost: 0.8, style: 0.05, speed: 1.04 }, 12000);
+      const fallback =
+        buf ||
+        (await speakEleven('eleven_multilingual_v2', { stability: 0.5, similarity_boost: 0.8, style: singing ? 0.5 : 0.1 }, 18000));
+      if (fallback) {
+        setCachedTts(cacheKey, fallback, 'audio/mpeg');
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('X-Ultron-TTS', singing ? 'elevenlabs-sing' : 'elevenlabs-flash');
+        res.setHeader('X-Ultron-Voice', voice.id);
+        return res.send(fallback);
+      }
+    } catch (err: any) {
+      console.warn('[TTS fast]', err.message);
+    }
+    return res.status(503).json({ error: 'TTS rápido no disponible', voice: voice.id });
+  }
+
+  const qwen = await synthesizeWithQwenTts({
+    text: spoken,
+    voice: voice.id,
+    instructAddon,
+  });
+  if (qwen.ok) {
+    setCachedTts(cacheKey, qwen.audio, qwen.contentType);
+    res.setHeader('Content-Type', qwen.contentType);
+    res.setHeader('X-Ultron-TTS', 'qwen3-tts');
+    res.setHeader('X-Ultron-Voice', voice.id);
+    if (emotion) res.setHeader('X-Ultron-Emotion', emotion);
+    return res.send(qwen.audio);
+  }
+  const qwenTtsError = qwen.ok === false ? qwen.error : 'unknown';
+
+  if (VAULT_ELEVENLABS_API_KEY && voice.elevenLabsVoiceId) {
+    try {
+      const elRes = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voice.elevenLabsVoiceId}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'xi-api-key': VAULT_ELEVENLABS_API_KEY,
+            Accept: 'audio/mpeg',
+          },
+          body: JSON.stringify({
+            text: spoken,
+            model_id: 'eleven_multilingual_v2',
+            voice_settings: { stability: 0.62, similarity_boost: 0.82 },
+          }),
+        }
+      );
+      if (elRes.ok) {
+        const buf = Buffer.from(await elRes.arrayBuffer());
+        setCachedTts(cacheKey, buf, 'audio/mpeg');
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('X-Ultron-TTS', 'elevenlabs-fallback');
+        res.setHeader('X-Ultron-Voice', voice.id);
+        return res.send(buf);
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+
+  return res.status(503).json({
+    error: 'TTS no disponible',
+    qwenTts: qwenTtsError,
+    voice: voice.id,
+    hint: 'Arranca T4 i-02653feadc919d3a4 y define ULTRON_TTS_URL',
+  });
+});
+
+app.get('/api/emociones', (_req, res) => {
+  res.json({ ...getEmotionSnapshot(), cache: cacheStats() });
+});
+
+app.post('/api/emociones/pulse', (req, res) => {
+  const emotion = String(req.body.emotion || 'NEUTRAL') as UltronEmotion;
+  const amount = Number(req.body.amount || 20);
+  boostEmotion(emotion, amount);
+  res.json(getEmotionSnapshot());
+});
+
+app.get('/api/tts/voces', (_req, res) => {
+  res.json({ voces: ULTRON_VOICES, expressions: HUMAN_EXPRESSIONS.length });
+});
+
+app.get('/api/tts/status', async (_req, res) => {
+  const cfg = ttsNodeStatus();
+  const salud = await ttsSalud();
+  res.json({ ...cfg, online: salud.ok, detail: salud.detail || { error: salud.error } });
+});
+
+const TTS_INSTANCE_ID = process.env.ULTRON_TTS_INSTANCE_ID || 'i-02653feadc919d3a4';
+
+function ec2Client() {
+  const { accessKeyId, secretAccessKey } = requireAwsCredentials();
+  return new EC2Client({
+    region: AWS_DEFAULT_REGION,
+    credentials: { accessKeyId, secretAccessKey },
+  });
+}
+
+/** Estado del nodo T4 dedicado a Qwen3-TTS (nunca A10G / Playwright). */
+app.get('/api/aws/tts-node', async (_req, res) => {
+  try {
+    const data = await ec2Client().send(
+      new DescribeInstancesCommand({ InstanceIds: [TTS_INSTANCE_ID] })
+    );
+    const inst = data?.Reservations?.[0]?.Instances?.[0];
+    if (!inst) {
+      return res.status(404).json({ error: 'Instancia TTS no encontrada', instanceId: TTS_INSTANCE_ID });
+    }
+    const publicIp = inst.PublicIpAddress || null;
+    const state = inst.State?.Name || 'unknown';
+    const suggestedUrl = publicIp ? `http://${publicIp}:8790` : null;
+    res.json({
+      ok: true,
+      instanceId: TTS_INSTANCE_ID,
+      state,
+      publicIp,
+      privateIp: inst.PrivateIpAddress || null,
+      instanceType: inst.InstanceType,
+      suggestedUltronTtsUrl: suggestedUrl,
+      note: 'Define ULTRON_TTS_URL con suggestedUltronTtsUrl cuando state=running',
+      proxy: ttsNodeStatus(),
+    });
+  } catch (e: any) {
+    res.status(e.message?.includes('Faltan AWS') ? 503 : 500).json({
+      error: e.message || String(e),
+      instanceId: TTS_INSTANCE_ID,
+    });
+  }
+});
+
+/** Arranca la T4 TTS si está stopped (requiere ec2:StartInstances). */
+app.post('/api/aws/tts-node/start', async (_req, res) => {
+  try {
+    await ec2Client().send(new StartInstancesCommand({ InstanceIds: [TTS_INSTANCE_ID] }));
+    res.json({
+      ok: true,
+      instanceId: TTS_INSTANCE_ID,
+      message: 'StartInstances enviado. Espera 1-2 min y consulta GET /api/aws/tts-node',
+    });
+  } catch (e: any) {
+    res.status(e.message?.includes('Faltan AWS') ? 503 : 500).json({
+      error: e.message || String(e),
+      instanceId: TTS_INSTANCE_ID,
+    });
+  }
+});
+
+app.get('/api/tts/normalize', (req, res) => {
+  const text = String(req.query.text || '');
+  const perf = applyVocalPerformance(text);
+  res.json({
+    input: text,
+    output: normalizeNumbersForSpeech(perf.spoken),
+    performance: {
+      spoken: perf.spoken,
+      instructAddon: perf.instructAddon,
+      genre: perf.genre,
+      tags: perf.tags,
+      isPerformance: perf.isPerformance,
+    },
+  });
+});
+
+/** Preview del motor vocal (tags → texto + instruct) sin sintetizar audio. */
+app.get('/api/tts/vocal-preview', (req, res) => {
+  const text = String(req.query.text || '');
+  res.json(applyVocalPerformance(text));
+});
+
+app.get('/api/memoria/personas', (_req, res) => {
+  res.json({ personas: listPeople() });
+});
+
+app.post('/api/memoria/personas', (req, res) => {
+  const { nombre, rol, correo, conversationId, hecho } = req.body || {};
+  if (!nombre) return res.status(400).json({ error: 'nombre requerido' });
+  const p = upsertPerson({ nombre, rol, correo, conversationId, hecho });
+  res.json({ ok: true, persona: p });
+});
+
 // Cloud Status Verification Endpoint
 app.get('/api/cloud/status', async (req, res) => {
+  let awsConfigured = false;
+  let awsError: string | null = null;
+  try {
+    requireAwsCredentials();
+    awsConfigured = true;
+  } catch (e: any) {
+    awsError = e.message || String(e);
+  }
+
   const result = {
     aws: {
-      configured: Boolean(AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY),
-      accessKeyIdMasked: AWS_ACCESS_KEY_ID ? `${AWS_ACCESS_KEY_ID.substring(0, 6)}...${AWS_ACCESS_KEY_ID.slice(-4)}` : null,
+      configured: awsConfigured,
+      accessKeyIdMasked: awsConfigured && AWS_ACCESS_KEY_ID
+        ? `${AWS_ACCESS_KEY_ID.substring(0, 6)}...${AWS_ACCESS_KEY_ID.slice(-4)}`
+        : null,
       region: AWS_DEFAULT_REGION,
-      status: 'Connected',
-      services: ['SageMaker Qwen-27B', 'Playwright Browser Cluster', 'S3 Storage'],
+      status: awsConfigured ? 'Connected' : 'MISSING_ENV',
+      error: awsError,
+      services: ['EC2 Qwen-27B A10G', 'EC2 Playwright t3', 'EC2 Qwen3-TTS T4', 'S3 Storage'],
     },
     github: {
       configured: Boolean(GITHUB_PAT),
@@ -285,6 +599,12 @@ app.get('/api/cloud/status', async (req, res) => {
       ...nodesConfigStatus().ojo,
       status: nodesConfigStatus().ojo.configured ? 'Ojo proxy ready (server-side)' : 'Missing ULTRON_OJO_CLAVE',
       capabilities: ['/mirar DOM real', '/foto PNG', 'Reintentos con backoff'],
+    },
+    tts: {
+      model: 'Qwen3-TTS VoiceDesign (T4 g4dn)',
+      instance: 'i-02653feadc919d3a4',
+      ...ttsNodeStatus(),
+      status: ttsNodeStatus().configured ? 'Proxy ready (server-side)' : 'Missing ULTRON_TTS_URL — start T4',
     },
   };
   res.json(result);
@@ -482,11 +802,19 @@ app.post('/api/ultron/entrar', async (req, res) => {
   if (!correo || !clave) {
     return res.status(400).json({ error: 'Correo y clave requeridos.' });
   }
+  const mailAliases: Record<string, string> = {
+    'mjoseenamorado1994@gmail.com': 'j.ordonez@ordenglobal.org',
+    'medardo@ordenglobal.org': 'm.ordonez@ordenglobal.org',
+  };
+  const correoNorm = (() => {
+    const raw = String(correo).trim().toLowerCase();
+    return mailAliases[raw] || raw;
+  })();
   try {
     const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/entrar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ correo, clave }),
+      body: JSON.stringify({ correo: correoNorm, clave }),
       signal: AbortSignal.timeout(10000),
     });
     const setCookie = remoteRes.headers.get('set-cookie');
@@ -500,8 +828,8 @@ app.post('/api/ultron/entrar', async (req, res) => {
     ultronRemoteSession = {
       authenticated: true,
       user: {
-        nombre: data.miembro?.nombre || correo.split('@')[0],
-        correo,
+        nombre: data.miembro?.nombre || correoNorm.split('@')[0],
+        correo: correoNorm,
         rol: 'Junta Directiva · Orden Global',
       },
       lastLogin: new Date().toISOString(),
@@ -520,12 +848,20 @@ app.post('/api/ultron/entrar', async (req, res) => {
 app.post('/api/ultron/biometric-login', async (req, res) => {
   const { biometricType, userName, role, correo } = req.body;
   const allowed = [
+    'j.ordonez@ordenglobal.org',
+    'm.ordonez@ordenglobal.org',
+    // alias legacy (migración)
     'mjoseenamorado1994@gmail.com',
     'medardo@ordenglobal.org',
   ];
-  const mail = String(correo || '').toLowerCase();
-  if (mail && !allowed.includes(mail)) {
-    return res.status(403).json({ error: 'Acceso desk solo para José y Medardo.' });
+  const mailAliases: Record<string, string> = {
+    'mjoseenamorado1994@gmail.com': 'j.ordonez@ordenglobal.org',
+    'medardo@ordenglobal.org': 'm.ordonez@ordenglobal.org',
+  };
+  const mailRaw = String(correo || '').toLowerCase().trim();
+  const mail = mailAliases[mailRaw] || mailRaw;
+  if (mail && !allowed.includes(mail) && !allowed.includes(mailRaw)) {
+    return res.status(403).json({ error: 'Acceso desk solo para José y Medardo (u otro miembro autorizado).' });
   }
 
   let isLive = false;
@@ -543,7 +879,7 @@ app.post('/api/ultron/biometric-login', async (req, res) => {
     authenticated: true,
     user: {
       nombre: userName || 'José',
-      correo: mail || 'mjoseenamorado1994@gmail.com',
+      correo: mail || 'j.ordonez@ordenglobal.org',
       rol: role || 'Junta Directiva · Orden Global',
     },
     lastLogin: new Date().toISOString(),
@@ -767,6 +1103,92 @@ app.post('/api/vision/analyze', async (req, res) => {
   });
 });
 
+/** STT para app nativa (mic siempre-on): audio base64 → ElevenLabs Scribe (o Gemini). */
+app.post('/api/stt/transcribe', async (req, res) => {
+  const { audioBase64, mimeType, language } = req.body || {};
+  if (!audioBase64 || typeof audioBase64 !== 'string') {
+    return res.status(400).json({ error: 'audioBase64 required' });
+  }
+  const match = audioBase64.match(/^data:([^;]+);base64,(.*)$/);
+  const mime = match ? match[1] : mimeType || 'audio/m4a';
+  const clean = match ? match[2] : audioBase64;
+  if (clean.length < 80) {
+    return res.json({ text: '', model: 'empty' });
+  }
+
+  let text = '';
+  let modelUsed = 'none';
+  const elevenKey = VAULT_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '';
+
+  if (elevenKey) {
+    try {
+      const bin = Buffer.from(clean, 'base64');
+      const bytes = new Uint8Array(bin);
+      const form = new FormData();
+      form.append('model_id', 'scribe_v2');
+      form.append('language_code', (language || 'es').slice(0, 2));
+      const file =
+        typeof File !== 'undefined'
+          ? new File([bytes], 'chunk.m4a', { type: mime })
+          : new Blob([bytes], { type: mime });
+      form.append('file', file, 'chunk.m4a');
+      const sttRes = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+        method: 'POST',
+        headers: { 'xi-api-key': elevenKey },
+        body: form as any,
+      });
+      if (sttRes.ok) {
+        const data = (await sttRes.json()) as { text?: string; transcript?: string };
+        text = String(data.text || data.transcript || '').trim();
+        modelUsed = 'ElevenLabs Scribe';
+      } else {
+        const errTxt = await sttRes.text();
+        console.warn('[STT ElevenLabs]', sttRes.status, errTxt.slice(0, 300));
+        modelUsed = `eleven_http_${sttRes.status}`;
+      }
+    } catch (err: any) {
+      console.warn('[STT ElevenLabs]', err.message);
+      modelUsed = 'eleven_error';
+    }
+  }
+
+  if (!text && ai) {
+    try {
+      const stt = await ai.models.generateContent({
+        model: 'gemini-3.6-flash',
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { inlineData: { mimeType: mime, data: clean } },
+              {
+                text:
+                  `Transcribe este audio a texto en ${language || 'es-ES'}. ` +
+                  'Devuelve SOLO el texto hablado, sin comillas ni explicación. Si no hay habla clara, responde vacío.',
+              },
+            ],
+          },
+        ],
+      });
+      text = (stt.text || '').trim().replace(/^["']|["']$/g, '');
+      if (/^(vac[ií]o|empty|silence|\(silence\)|\[silence\]|n\/a)$/i.test(text)) text = '';
+      modelUsed = 'Gemini STT';
+    } catch (err: any) {
+      console.warn('[STT Gemini]', err.message);
+    }
+  }
+
+  if (!text && !elevenKey && !ai) {
+    return res.json({
+      text: '',
+      model: 'unavailable',
+      note: 'Configura ELEVENLABS_API_KEY o GEMINI_API_KEY para STT nativo',
+    });
+  }
+
+  return res.json({ text, model: modelUsed, analysis: text, summary: text });
+});
+
 // Qwen real — NDJSON stream (compatible with fetch ReadableStream) o JSON único
 app.post('/api/qwen/chat', async (req, res) => {
   const {
@@ -779,6 +1201,47 @@ app.post('/api/qwen/chat', async (req, res) => {
 
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'Message parameter is required' });
+  }
+
+  // Caché de saludos / frases frecuentes (personalidad)
+  const cachedReply = getCachedPersonalityReply(message);
+  if (cachedReply && !req.body?.bypassCache) {
+    const hum = humanizeReply(message, cachedReply);
+    if (req.body?.stream === false || req.query.stream === '0' || stream === false) {
+      return res.json({
+        reply: hum.text,
+        mode,
+        toolCall: null,
+        model: 'personality-cache',
+        conversationId,
+        emotion: hum.emotion,
+        face: hum.face,
+        pauseMs: hum.pauseMs,
+        filler: hum.filler,
+        voice: hum.voice,
+        timestamp: new Date().toISOString(),
+      });
+    }
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders?.();
+    res.write(`event: start\ndata: ${JSON.stringify({ mode, conversationId, model: 'personality-cache' })}\n\n`);
+    res.write(`event: token\ndata: ${JSON.stringify({ t: hum.text })}\n\n`);
+    res.write(
+      `event: done\ndata: ${JSON.stringify({
+        reply: hum.text,
+        mode,
+        conversationId,
+        model: 'personality-cache',
+        emotion: hum.emotion,
+        face: hum.face,
+        pauseMs: hum.pauseMs,
+        filler: hum.filler,
+        voice: hum.voice,
+      })}\n\n`
+    );
+    return res.end();
   }
 
   const query = message.toLowerCase();
@@ -801,8 +1264,48 @@ app.post('/api/qwen/chat', async (req, res) => {
   }
 
   const history = getConversation(String(conversationId));
+
+  // Memoria de personas: extraer hints del mensaje + contexto de sesión
+  for (const h of extractPersonHints(message)) {
+    if (ultronRemoteSession.user?.nombre) {
+      upsertPerson({
+        nombre: ultronRemoteSession.user.nombre,
+        rol: ultronRemoteSession.user.rol,
+        correo: ultronRemoteSession.user.correo,
+        conversationId: String(conversationId),
+        hecho: { key: h.key, value: h.value, source: 'chat' },
+      });
+    } else if (h.key === 'nombre_declarado') {
+      upsertPerson({
+        nombre: h.value,
+        conversationId: String(conversationId),
+        hecho: { key: h.key, value: h.value, source: 'chat' },
+      });
+    }
+  }
+
+  const memBlock = memoryPromptBlock({
+    currentUser: ultronRemoteSession.user
+      ? {
+          nombre: ultronRemoteSession.user.nombre,
+          rol: ultronRemoteSession.user.rol,
+          correo: ultronRemoteSession.user.correo,
+        }
+      : null,
+    conversationId: String(conversationId),
+  });
+
+  const systemContent = [
+    systemPromptForMode(String(mode)),
+    buildPersonalityBlock(),
+    expressionsSystemHint(),
+    memBlock,
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+
   const messages: ChatMessage[] = [
-    { role: 'system', content: systemPromptForMode(String(mode)) },
+    { role: 'system', content: systemContent },
     ...history.filter((m) => m.role !== 'system'),
     ...(Array.isArray(context)
       ? context
@@ -839,11 +1342,32 @@ app.post('/api/qwen/chat', async (req, res) => {
           : `Comprendido en modo ${mode}. Sistemas sincronizados.`;
         modelName = 'heuristic';
       }
+      const hum = humanizeReply(message, reply);
+      setCachedPersonalityReply(message, hum.text);
+      if (ultronRemoteSession.user?.nombre) {
+        upsertPerson({
+          nombre: ultronRemoteSession.user.nombre,
+          conversationId: String(conversationId),
+          hecho: { key: 'ultima_emocion_ultron', value: hum.emotion, source: 'emociones' },
+        });
+      }
       appendConversation(String(conversationId), [
         { role: 'user', content: message },
-        { role: 'assistant', content: reply },
+        { role: 'assistant', content: hum.text },
       ]);
-      return res.json({ reply, mode, toolCall, model: modelName, conversationId, timestamp: new Date().toISOString() });
+      return res.json({
+        reply: hum.text,
+        mode,
+        toolCall,
+        model: modelName,
+        conversationId,
+        emotion: hum.emotion,
+        face: hum.face,
+        pauseMs: hum.pauseMs,
+        filler: hum.filler,
+        voice: hum.voice,
+        timestamp: new Date().toISOString(),
+      });
     } catch (err: any) {
       return res.status(502).json({ error: err.message, codigo: err.codigo || 'NODO' });
     }
@@ -892,9 +1416,22 @@ app.post('/api/qwen/chat', async (req, res) => {
           ? `Despachando ${toolCall.name}.`
           : `Orden recibida en modo ${mode}.`;
       }
-      full = reply;
-      send('token', { t: reply });
-      send('done', { reply, mode, toolCall, model: ai ? 'Gemini fallback' : 'heuristic', conversationId });
+      const hum = humanizeReply(message, reply);
+      setCachedPersonalityReply(message, hum.text);
+      full = hum.text;
+      send('token', { t: hum.text });
+      send('done', {
+        reply: hum.text,
+        mode,
+        toolCall,
+        model: ai ? 'Gemini fallback' : 'heuristic',
+        conversationId,
+        emotion: hum.emotion,
+        face: hum.face,
+        pauseMs: hum.pauseMs,
+        filler: hum.filler,
+        voice: hum.voice,
+      });
     } else {
       const result = await chatQwenStream({
         messages,
@@ -905,17 +1442,31 @@ app.post('/api/qwen/chat', async (req, res) => {
         },
       });
       full = result.content.trim() || full;
+      const hum = humanizeReply(message, full);
+      setCachedPersonalityReply(message, hum.text);
+      if (ultronRemoteSession.user?.nombre) {
+        upsertPerson({
+          nombre: ultronRemoteSession.user.nombre,
+          conversationId: String(conversationId),
+          hecho: { key: 'ultima_emocion_ultron', value: hum.emotion, source: 'emociones' },
+        });
+      }
       appendConversation(String(conversationId), [
         { role: 'user', content: message },
-        { role: 'assistant', content: full },
+        { role: 'assistant', content: hum.text },
       ]);
       send('done', {
-        reply: full,
+        reply: hum.text,
         mode,
         toolCall,
         model: 'Qwen 3.8 27B',
         conversationId,
         usage: result.usage,
+        emotion: hum.emotion,
+        face: hum.face,
+        pauseMs: hum.pauseMs,
+        filler: hum.filler,
+        voice: hum.voice,
       });
     }
   } catch (err: any) {
@@ -1030,7 +1581,7 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`[ULTRON LOOI SERVER] Running on port ${PORT} with Gemini 3.6 Flash, Render API, AWS and WebSocket Bridge`);
+    console.log(`[ULTRON FP SERVER] Running on port ${PORT} with Gemini 3.6 Flash, Render API, AWS and WebSocket Bridge`);
   });
 }
 

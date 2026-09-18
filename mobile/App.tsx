@@ -1,21 +1,60 @@
 import { StatusBar } from 'expo-status-bar';
-import Constants from 'expo-constants';
+import * as SystemUI from 'expo-system-ui';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  StyleSheet,
-  View,
-  Text,
   ActivityIndicator,
-  Platform,
+  Alert,
+  AppState,
+  Image,
   PermissionsAndroid,
+  Platform,
+  StyleSheet,
+  Text,
+  View,
+  type AppStateStatus,
 } from 'react-native';
-import { WebView } from 'react-native-webview';
-import { useEffect, useState } from 'react';
+import { APP_VERSION, type SessionUser } from './src/config';
+import { healthCheck } from './src/lib/api';
+import { loadSession, saveSession } from './src/lib/storage';
+import { DeskScreen } from './src/screens/DeskScreen';
+import { LoginScreen } from './src/screens/LoginScreen';
+import { SettingsScreen } from './src/screens/SettingsScreen';
 
-const ULTRON_URL =
-  (Constants.expoConfig?.extra as { ultronUrl?: string } | undefined)?.ultronUrl ||
-  'https://ultron-looi-desk.onrender.com';
+type Phase = 'boot' | 'login' | 'desk';
 
-async function requestAndroidPermissions() {
+async function lockOrientation(kind: 'portrait' | 'landscape') {
+  try {
+    const ScreenOrientation = require('expo-screen-orientation') as typeof import('expo-screen-orientation');
+    await ScreenOrientation.lockAsync(
+      kind === 'portrait'
+        ? ScreenOrientation.OrientationLock.PORTRAIT
+        : ScreenOrientation.OrientationLock.LANDSCAPE
+    );
+  } catch {
+    /* */
+  }
+}
+
+async function hideSystemBars() {
+  try {
+    await SystemUI.setBackgroundColorAsync('#000000');
+  } catch {
+    /* */
+  }
+  if (Platform.OS !== 'android') return;
+  try {
+    const NavigationBar = require('expo-navigation-bar') as typeof import('expo-navigation-bar');
+    await NavigationBar.setVisibilityAsync('hidden');
+    await NavigationBar.setBehaviorAsync('overlay-swipe');
+    await NavigationBar.setBackgroundColorAsync('#000000');
+    await NavigationBar.setButtonStyleAsync('light');
+  } catch {
+    /* */
+  }
+}
+
+/** Pide permisos con diálogo nativo Android (aceptar / denegar). */
+async function requestOsPermissionsExplained() {
   if (Platform.OS !== 'android') return;
   try {
     await PermissionsAndroid.requestMultiple([
@@ -23,62 +62,131 @@ async function requestAndroidPermissions() {
       PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
     ]);
   } catch {
-    // La WebView pedirá de nuevo al usar mic/cámara
+    /* Desk pedirá de nuevo con Alert contextual */
   }
 }
 
 export default function App() {
-  const [loading, setLoading] = useState(true);
-  const [ready, setReady] = useState(false);
+  const [phase, setPhase] = useState<Phase>('boot');
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [bootLine, setBootLine] = useState('Iniciando ULTRON nativo…');
+  const [showSettings, setShowSettings] = useState(false);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
 
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      await requestAndroidPermissions();
-      if (mounted) setReady(true);
-    })();
-    return () => {
-      mounted = false;
-    };
+  const boot = useCallback(async () => {
+    setPhase('boot');
+    setBootLine('Preparando acceso…');
+    await lockOrientation('portrait');
+    await hideSystemBars();
+    setBootLine('Autorizaciones de sensores…');
+    await new Promise<void>((resolve) => {
+      Alert.alert(
+        'ULTRON FP necesita permisos',
+        'Cámara para mirarte e identificar objetos, y micrófono siempre activo para conversar. Puedes denegar y usar el menú.',
+        [
+          {
+            text: 'Continuar',
+            onPress: () => {
+              void requestOsPermissionsExplained().finally(() => resolve());
+            },
+          },
+        ],
+        { cancelable: false }
+      );
+    });
+    setBootLine('Comprobando núcleo…');
+    try {
+      const h = await healthCheck();
+      setBootLine(`Núcleo OK · ${h.status}`);
+    } catch {
+      setBootLine('Sin red — modo offline local');
+    }
+    const session = await loadSession();
+    if (session) {
+      setUser(session);
+      await lockOrientation('landscape');
+      setPhase('desk');
+    } else {
+      await lockOrientation('portrait');
+      setPhase('login');
+    }
   }, []);
 
-  if (!ready) {
-    return (
-      <View style={styles.root}>
-        <StatusBar style="light" hidden />
-        <View style={styles.boot}>
-          <ActivityIndicator color="#3EC9D6" size="large" />
-          <Text style={styles.bootText}>ULTRON FP</Text>
-          <Text style={styles.bootSub}>Preparando permisos…</Text>
-        </View>
-      </View>
-    );
-  }
+  useEffect(() => {
+    void boot();
+    const onChange = (s: AppStateStatus) => {
+      if (s === 'active') {
+        void lockOrientation(phaseRef.current === 'desk' ? 'landscape' : 'portrait');
+        void hideSystemBars();
+      }
+    };
+    const sub = AppState.addEventListener('change', onChange);
+    const t = setTimeout(() => {
+      try {
+        const Updates = require('expo-updates') as typeof import('expo-updates');
+        if (!Updates?.checkForUpdateAsync || Updates.isEmbeddedLaunch === undefined) {
+          /* keep going even if fields differ by SDK */
+        }
+        if (Updates?.checkForUpdateAsync) {
+          void Updates.checkForUpdateAsync()
+            .then(async (check) => {
+              if (!check.isAvailable) return;
+              const result = await Updates.fetchUpdateAsync();
+              if (result.isNew && Updates.reloadAsync) {
+                await Updates.reloadAsync();
+              }
+            })
+            .catch(() => {});
+        }
+      } catch {
+        /* */
+      }
+    }, 4_000);
+    return () => {
+      sub.remove();
+      clearTimeout(t);
+    };
+  }, [boot]);
 
   return (
     <View style={styles.root}>
       <StatusBar style="light" hidden />
-      <WebView
-        source={{ uri: ULTRON_URL }}
-        style={styles.web}
-        allowsInlineMediaPlayback
-        mediaPlaybackRequiresUserAction={false}
-        javaScriptEnabled
-        domStorageEnabled
-        startInLoadingState
-        onLoadEnd={() => setLoading(false)}
-        mediaCapturePermissionGrantType="grant"
-        allowsFullscreenVideo
-        mixedContentMode="always"
-        geolocationEnabled={false}
-        setSupportMultipleWindows={false}
-        userAgent={`ULTRON-FP-Android/${Constants.expoConfig?.version || '1.0'} WebView`}
-      />
-      {loading && (
+      {phase === 'boot' && (
         <View style={styles.boot}>
-          <ActivityIndicator color="#3EC9D6" size="large" />
-          <Text style={styles.bootText}>ULTRON FP</Text>
-          <Text style={styles.bootSub}>Conectando desk…</Text>
+          <Image source={require('./assets/icon.png')} style={styles.logo} />
+          <ActivityIndicator color="#00E5FF" size="large" />
+          <Text style={styles.bootTitle}>ULTRON FP</Text>
+          <Text style={styles.bootSub}>{bootLine}</Text>
+          <Text style={styles.meta}>v{APP_VERSION} · native production</Text>
+        </View>
+      )}
+      {phase === 'login' && (
+        <LoginScreen
+          onAuthenticated={(u) => {
+            setUser(u);
+            void lockOrientation('landscape').then(() => setPhase('desk'));
+          }}
+        />
+      )}
+      {phase === 'desk' && user && (
+        <View style={{ flex: 1 }}>
+          <DeskScreen
+            user={user}
+            onOpenSettings={() => setShowSettings(true)}
+            onLogout={() => {
+              void saveSession(null);
+              setUser(null);
+              setShowSettings(false);
+              setPhase('login');
+              void lockOrientation('portrait');
+            }}
+          />
+          {showSettings && (
+            <View style={StyleSheet.absoluteFill}>
+              <SettingsScreen onBack={() => setShowSettings(false)} />
+            </View>
+          )}
         </View>
       )}
     </View>
@@ -86,24 +194,21 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#07090c' },
-  web: { flex: 1, backgroundColor: '#07090c' },
+  root: { flex: 1, backgroundColor: '#000' },
   boot: {
-    ...StyleSheet.absoluteFillObject,
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#07090c',
     gap: 10,
+    backgroundColor: '#000',
   },
-  bootText: {
-    color: '#E8EEF4',
-    fontSize: 18,
-    letterSpacing: 6,
-    fontWeight: '700',
-  },
-  bootSub: {
-    color: '#8B9AAB',
-    fontSize: 12,
-    letterSpacing: 1,
+  logo: { width: 88, height: 88, borderRadius: 44, marginBottom: 8 },
+  bootTitle: { color: '#E8FBFF', fontSize: 18, letterSpacing: 6, fontWeight: '800' },
+  bootSub: { color: '#8B9AAB', fontSize: 13, textAlign: 'center', maxWidth: 360 },
+  meta: {
+    color: '#5A6A7A',
+    fontSize: 11,
+    marginTop: 4,
+    fontFamily: Platform.OS === 'android' ? 'monospace' : 'Courier',
   },
 });

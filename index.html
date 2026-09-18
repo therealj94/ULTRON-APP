@@ -24,9 +24,15 @@
     <div id="root" class="w-full h-full"></div>
     <script type="module" src="/src/main.tsx"></script>
     <script>
+      // Desregistrar SW: la cache shell-v1 servía index viejo sin #ultron-app-root (APK negro/error).
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js').catch(() => {});
+          navigator.serviceWorker.getRegistrations().then((regs) => {
+            regs.forEach((r) => r.unregister());
+          }).catch(() => {});
+          if (window.caches && caches.keys) {
+            caches.keys().then((keys) => keys.forEach((k) => caches.delete(k))).catch(() => {});
+          }
         });
       }
     </script>
