@@ -400,7 +400,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       x,
       y,
       radius: 6,
-      maxRadius: 110,
+      maxRadius: 220,
       alpha: 1,
       color,
     });
@@ -443,7 +443,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
 
       // Animate visor drop (LOOI sunglasses)
       const targetVisor = S.hasVisor ? 1 : 0;
-      A.visorDrop += (targetVisor - A.visorDrop) * Math.min(1, dt * 10);
+      A.visorDrop += (targetVisor - A.visorDrop) * Math.min(1, dt * 4.2);
 
       // Autonomous Blink Timer
       if (S.face !== 'SLEEPING') {
@@ -453,13 +453,13 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
           if (r < 0.18) scheduleBlink('double');
           else if (r < 0.28) scheduleBlink('wink');
           else scheduleBlink('single');
-          A.next = 2.2 + Math.random() * 3.5;
+          A.next = 3.2 + Math.random() * 4.2;
         }
       }
 
       // Blink animation progression
       if (A.blinking) {
-        A.phase += dt * (A.double ? 9.5 : 7.2);
+        A.phase += dt * (A.double ? 5.2 : 3.8);
         let b = 1;
         if (A.phase < Math.PI) {
           b = Math.max(0.04, Math.cos(A.phase));
@@ -502,8 +502,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       }
 
       // Look interpolation with elastic damping
-      A.lx += (A.tx - A.lx) * Math.min(1, dt * 7);
-      A.ly += (A.ty - A.ly) * Math.min(1, dt * 7);
+      A.lx += (A.tx - A.lx) * Math.min(1, dt * 3.4);
+      A.ly += (A.ty - A.ly) * Math.min(1, dt * 3.4);
 
       // Facial Parameter Lerping
       A.dilate += (A.dilateT - A.dilate) * Math.min(1, dt * 6);
@@ -519,19 +519,19 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       A.sleepZ += dt;
 
       // Jiggle and decay
-      if (A.jiggle > 0.001) A.jiggle *= 0.88;
-      if (A.tickle > 0.001) A.tickle *= 0.92;
-      if (A.shake > 0.001) A.shake *= 0.9;
-      if (A.bounce > 0.001) A.bounce *= 0.92;
+      if (A.jiggle > 0.001) A.jiggle *= 0.945;
+      if (A.tickle > 0.001) A.tickle *= 0.96;
+      if (A.shake > 0.001) A.shake *= 0.94;
+      if (A.bounce > 0.001) A.bounce *= 0.965;
 
       // Squashing
-      A.squashX = 1 + A.jiggle * 0.15 * Math.sin(S.t * 18);
-      A.squashY = 1 - A.jiggle * 0.12 * Math.sin(S.t * 18);
+      A.squashX = 1 + A.jiggle * 0.18 * Math.sin(S.t * 7);
+      A.squashY = 1 - A.jiggle * 0.14 * Math.sin(S.t * 7);
 
       // Update and filter shockwaves
       for (let i = A.shockwaves.length - 1; i >= 0; i--) {
         const sw = A.shockwaves[i];
-        sw.radius += dt * 180;
+        sw.radius += dt * 72;
         sw.alpha = Math.max(0, 1 - sw.radius / sw.maxRadius);
         if (sw.alpha <= 0) {
           A.shockwaves.splice(i, 1);
@@ -2180,15 +2180,23 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const distRightEye = Math.hypot(clickX - eyeSpacing, clickY);
 
       if (distLeftEye < baseR * 1.1) {
-        // Tapped Left Eye -> Wink right, squish left
-        animRef.current.blinkL = 0.05;
-        animRef.current.jiggle = 1.2;
+        animRef.current.wink = -1;
+        animRef.current.blinking = true;
+        animRef.current.phase = 0;
+        animRef.current.jiggle = 0.45;
+        animRef.current.bounce = 0.18;
+        animRef.current.smileT = 0.9;
+        onFaceChange('WINK', 1600);
         playSfx('wink', soundFxEnabled);
         return;
       } else if (distRightEye < baseR * 1.1) {
-        // Tapped Right Eye -> Wink left, squish right
-        animRef.current.blinkR = 0.05;
-        animRef.current.jiggle = 1.2;
+        animRef.current.wink = 1;
+        animRef.current.blinking = true;
+        animRef.current.phase = 0;
+        animRef.current.jiggle = 0.45;
+        animRef.current.bounce = 0.18;
+        animRef.current.smileT = 0.9;
+        onFaceChange('WINK', 1600);
         playSfx('wink', soundFxEnabled);
         return;
       }
@@ -2222,7 +2230,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
         if (dist > 30 && relY > 0) {
           animRef.current.tickle = Math.min(1, animRef.current.tickle + 0.1);
           if (animRef.current.tickle > 0.4 && stateRef.current.face !== 'PURR') {
-            onFaceChange('PURR', 2200);
+            onFaceChange('PURR', 3400);
             playSfx('purr', soundFxEnabled);
             animRef.current.bounce = 0.3;
           }
@@ -2302,26 +2310,28 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     }
 
     const now = performance.now();
-    S.poke = now - S.lastPokeTime < 750 ? S.poke + 1 : 1;
+    S.poke = now - S.lastPokeTime < 1400 ? S.poke + 1 : 1;
     S.lastPokeTime = now;
 
     // Shake reaction
-    animRef.current.jiggle = 0.8;
+    animRef.current.jiggle = 0.55;
+    animRef.current.bounce = 0.22;
+    animRef.current.smileT = Math.min(1.2, animRef.current.smileT + 0.35);
 
     if (S.poke === 1) {
-      scheduleBlink('single');
-      playSfx('tap', soundFxEnabled);
+      scheduleBlink('wink');
+      playSfx('wink', soundFxEnabled);
     } else if (S.poke === 2) {
       // 2 Taps -> Listen for voice order
       playSfx('wake', soundFxEnabled);
       onTriggerVoice();
     } else if (S.poke === 3) {
-      onFaceChange('CURIOSITY', 1600);
+      onFaceChange('CURIOSITY', 2600);
       onSpeak('Aquí estoy. ¿En qué te ayudo?');
       playSfx('tap', soundFxEnabled);
     } else {
       // Friendly Petting / Purring mode (Never anger or weapons!)
-      onFaceChange('PURR', 1800);
+      onFaceChange('PURR', 3400);
       playSfx('purr', soundFxEnabled);
       S.poke = 0;
     }

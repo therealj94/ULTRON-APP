@@ -1,3 +1,4 @@
+// face-timing 3.8 blink / soft poke
 import React, { useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, ActivityIndicator, Platform, StatusBar as RNStatusBar } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
