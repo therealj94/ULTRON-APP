@@ -5,6 +5,7 @@ import { DetectedObject } from '../types';
 
 interface VisionOverlayProps {
   isActive: boolean;
+  stealth?: boolean;
   onClose: () => void;
   onGazeUpdate?: (gaze: { x: number; y: number; active: boolean }) => void;
   onPresenceEvent?: (event: { type: 'wave' | 'drink'; spatialZone: string }) => void;
@@ -16,6 +17,7 @@ interface VisionOverlayProps {
 
 export const VisionOverlay: React.FC<VisionOverlayProps> = ({
   isActive,
+  stealth = true,
   onClose,
   onGazeUpdate,
   onPresenceEvent,
@@ -146,6 +148,18 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({
   }, [isActive]);
 
   if (!isActive) return null;
+
+  if (stealth) {
+    return (
+      <video
+        ref={videoRef}
+        className="absolute w-px h-px opacity-0 pointer-events-none"
+        playsInline
+        muted
+        autoPlay
+      />
+    );
+  }
 
   return (
     <div

@@ -1,6 +1,6 @@
 # ULTRON DESK — Plan maestro (no se lanza hasta cerrar cada fase)
 
-Estado: **FASE A EN CURSO · no production launch**
+Estado: **FASE B EN CURSO · no production launch**
 Repo: `therealj94/ULTRON-APP`
 Cara/desk: Render `ultron-looi-desk` (`srv-dalojou1egvs73fb7lfg`)
 Cerebro: Ultron FP `https://ultron.ordenglobal.link` + Qwen 3.8 27B (g5) + manos Playwright/visión (`34.229.88.165:8787`)

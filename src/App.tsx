@@ -173,12 +173,15 @@ export default function App() {
     setBridgeLog((prev) => [{ timestamp, direction, payload }, ...prev.slice(0, 30)]);
   }, []);
 
-  // Boot sequence and remote Ultron session check
+  // Boot: ojos + chequeo silencioso. Sin muro de sistema.
   useEffect(() => {
-    // Check if session exists in Ultron FP (Render)
+    let cancelled = false;
+    const nombre = currentUser.name || 'José';
+
     fetch('/api/ultron/sesion')
       .then((res) => res.json())
       .then((data) => {
+        if (cancelled) return;
         if (data.authenticated && data.user) {
           setCurrentUser({
             name: data.user.nombre || 'José',
@@ -189,14 +192,31 @@ export default function App() {
       })
       .catch(() => {});
 
-    const timer = setTimeout(() => {
+    Promise.race([
+      fetch('/api/health').then((r) => r.json()).catch(() => null),
+      new Promise((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]).then((health: any) => {
+      if (cancelled) return;
       setIsBooting(false);
       playSfx('boot', true);
-      vocalize('Junta directiva en línea. Sistema ULTRON activo.');
-    }, 1400);
+      const qwenOk = !!health?.qwen?.vivo;
+      const fpOk = !!health?.fp?.vivo;
+      if (qwenOk) vocalize(`${nombre}. Listo.`);
+      else if (fpOk) vocalize(`${nombre}. Cara ok, Qwen no responde.`);
+      else vocalize(`${nombre}. Sin cerebro.`);
+    });
 
-    return () => clearTimeout(timer);
-  }, [vocalize]);
+    const fallback = setTimeout(() => {
+      if (cancelled) return;
+      setIsBooting(false);
+    }, 3200);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(fallback);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Handle Fullscreen Toggle
   const toggleFullscreen = () => {
@@ -226,14 +246,13 @@ export default function App() {
   const handleWake = useCallback(() => {
     setFace('IDLE');
     playSfx('wake', soundFxEnabled);
-    vocalize('Sistemas activos y listos para la sesión.');
+    vocalize('Aquí.');
   }, [soundFxEnabled, vocalize]);
 
   const handleSleep = useCallback(() => {
     setFace('SLEEPING');
     playSfx('sleep', soundFxEnabled);
-    vocalize('Entrando en modo de reposo y ahorro energético.', 'SLEEPING');
-  }, [soundFxEnabled, vocalize]);
+  }, [soundFxEnabled]);
 
   // Trigger expressive photo capture with shutter effect
   const handleTriggerPhoto = useCallback(() => {
@@ -313,6 +332,31 @@ export default function App() {
       handleTriggerDrink();
     }
   }, [handleTriggerWave, handleTriggerDrink]);
+
+  const lastFaceSeenRef = useRef<number>(Date.now());
+  const sleptByAbsenceRef = useRef(false);
+
+  useEffect(() => {
+    if (cameraGaze.active) {
+      lastFaceSeenRef.current = Date.now();
+      if (sleptByAbsenceRef.current && face === 'SLEEPING') {
+        sleptByAbsenceRef.current = false;
+        handleWake();
+      }
+    }
+  }, [cameraGaze.active, face, handleWake]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (isBooting || dockOpen || settingsOpen) return;
+      if (face === 'SPEAKING' || face === 'THINKING' || face === 'LISTENING') return;
+      if (!cameraGaze.active && Date.now() - lastFaceSeenRef.current > 45000 && face !== 'SLEEPING') {
+        sleptByAbsenceRef.current = true;
+        setFace('SLEEPING');
+      }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [cameraGaze.active, face, isBooting, dockOpen, settingsOpen]);
 
   // Speech Recognition hook with full barge-in interruption
   useEffect(() => {
@@ -905,7 +949,7 @@ export default function App() {
         {/* Personality Mode Tag */}
         <div
           id="ultron-mode-tag"
-          className="absolute left-1/2 bottom-[10%] -translate-x-1/2 z-10 font-display font-bold tracking-[0.38em] text-base text-[#05E1FF]/80 pointer-events-none flex items-center gap-2"
+          className="absolute left-1/2 bottom-[10%] -translate-x-1/2 z-10 font-display font-bold tracking-[0.38em] text-[11px] text-[#05E1FF]/35 pointer-events-none flex items-center gap-2"
         >
           <span>{mode}</span>
           {mode === 'GOLD' && <Sparkles className="w-3.5 h-3.5 text-[#F5C542]" />}
@@ -925,6 +969,7 @@ export default function App() {
         {/* Vision & Optical Tracking HUD Overlay with Spatial Tracking and Quick Actions */}
         <VisionOverlay
           isActive={visionEnabled}
+          stealth
           onClose={() => setVisionEnabled(false)}
           onGazeUpdate={setCameraGaze}
           onPresenceEvent={handlePresenceEvent}
@@ -1249,18 +1294,11 @@ export default function App() {
             isBooting ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'
           }`}
         >
-          <div className="flex flex-col items-center gap-3">
-            <svg width="76" height="60" viewBox="0 0 68 52" fill="none" className="animate-pulse">
-              <path d="M6 36C6 14 62 14 62 36" stroke="#05E1FF" strokeWidth="2.5" />
-              <circle cx="34" cy="34" r="11" stroke="#05E1FF" strokeWidth="2" />
-              <circle cx="34" cy="34" r="3" fill="#05E1FF" />
-            </svg>
-            <h1 className="font-display font-bold tracking-[0.45em] text-2xl text-[#05E1FF]">
-              ULTRON FP
-            </h1>
-            <p className="font-mono text-xs text-[#8FA3B0] tracking-widest uppercase">
-              ASISTENTE DE JUNTA DIRECTIVA
-            </p>
+          <div className="flex flex-col items-center gap-6">
+            <div className="flex gap-10">
+              <span className="block w-16 h-16 rounded-full bg-[#05E1FF] shadow-[0_0_28px_#05E1FF] animate-pulse" />
+              <span className="block w-16 h-16 rounded-full bg-[#05E1FF] shadow-[0_0_28px_#05E1FF] animate-pulse" />
+            </div>
           </div>
         </div>
       </div>
