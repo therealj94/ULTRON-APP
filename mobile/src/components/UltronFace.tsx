@@ -94,6 +94,7 @@ export function UltronFace({
   const { width, height } = useWindowDimensions();
   const stageH = stageHeight ?? height;
   const D = size ?? Math.min(height * 0.42, width * 0.28, 320);
+  const compact = size !== undefined;
   const ring = Math.max(6, D * 0.09);
   const gap = D * 0.55;
   const firing = blaster || attack === 'blaster';
@@ -458,12 +459,14 @@ export function UltronFace({
       delayLongPress={450}
     >
       <Animated.View style={[styles.faceRow, { gap, transform: [{ scale: breath }, { translateX: shakeX }] }]}>
-        <Animated.Text style={[styles.glyph, glyphStyle, { transform: [{ translateY: glyphTy }] }]}>{gL}</Animated.Text>
+        {!compact && <Animated.Text style={[styles.glyph, glyphStyle, { transform: [{ translateY: glyphTy }] }]}>{gL}</Animated.Text>}
         {renderEye('L')}
         {renderEye('R')}
-        <Animated.Text style={[styles.glyph, glyphStyle, { transform: [{ translateY: Animated.multiply(glyphTy, -1) }] }]}>
-          {gR}
-        </Animated.Text>
+        {!compact && (
+          <Animated.Text style={[styles.glyph, glyphStyle, { transform: [{ translateY: Animated.multiply(glyphTy, -1) }] }]}>
+            {gR}
+          </Animated.Text>
+        )}
       </Animated.View>
 
       {/* boca */}
@@ -510,7 +513,7 @@ export function UltronFace({
         <Animated.Text style={[styles.zzz, { color: CYAN, right: width * 0.28, transform: [{ translateY: glyphTy }] }]}>z z</Animated.Text>
       )}
 
-      {irritation > 0.35 && !blaster && (
+      {irritation > 0.35 && !blaster && !compact && (
         <View style={[styles.irrBar, { width: D * 2 }]}>
           <View style={[styles.irrFill, { width: `${Math.round(irritation * 100)}%`, backgroundColor: irritation > 0.75 ? RED : accent }]} />
         </View>

@@ -493,22 +493,40 @@ export function DeskScreen({ user, onLogout }: Props) {
     return () => clearInterval(id);
   }, [visionOn, camPerm?.granted]);
 
-  // Comentario proactivo sobre la escena (máx. 1 cada 2 min, solo si hay calma).
+  // Comentario proactivo: si la escena cambia y hay calma, el cerebro mira un frame y comenta (máx. 1 cada 2 min).
   const onScene = useCallback(
-    (summary: string, labels: string[]) => {
+    (_summary: string, labels: string[]) => {
       const prev = sceneRef.current;
-      sceneRef.current = labels.join(',');
+      const cur = labels.join(',');
+      sceneRef.current = cur;
       const now = Date.now();
       const calm = !handling.current && !speakingRef.current && presenceRef.current === 'stay' && now - lastUserAt.current > 25_000;
-      const novel = prev && sceneRef.current !== prev && labels.filter((l) => !prev.includes(l)).length >= 2;
-      if (calm && novel && now - lastSceneRemark.current > 120_000 && labels.length) {
-        lastSceneRemark.current = now;
-        const nuevo = labels.filter((l) => !prev.includes(l)).slice(0, 2).join(' y ');
-        void say(`Veo ${nuevo} ahí. Si necesitas algo, dime.`, 'SCAN');
-      }
-      void summary;
+      const novel = !!prev && cur !== prev && labels.filter((l) => !prev.includes(l)).length >= 2;
+      if (!calm || !novel || now - lastSceneRemark.current < 120_000 || !grabFrame.current) return;
+      lastSceneRemark.current = now;
+      void (async () => {
+        const frame = await grabFrame.current?.();
+        if (!frame || handling.current || speakingRef.current) return;
+        handling.current = true;
+        try {
+          const r = await turno({
+            message: 'Comenta en UNA frase corta y natural algo nuevo o útil que veas en la cámara (persona, gesto, objeto). Si no hay nada que valga la pena, responde solo: nada.',
+            mode: modeRef.current,
+            userName: user.name,
+            historial: [],
+            image: `data:image/jpeg;base64,${frame}`,
+          });
+          const reply = (r.reply || '').trim();
+          if (reply && !/^nada\b/i.test(reply)) await say(reply, 'SCAN');
+        } finally {
+          handling.current = false;
+          const next = pending.current;
+          pending.current = null;
+          if (next) void handleCommand(next);
+        }
+      })();
     },
-    [say]
+    [handleCommand, say, user.name]
   );
 
   const toggleMute = async () => {
