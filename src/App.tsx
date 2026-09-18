@@ -23,7 +23,7 @@ import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHan
 import { speakWithElevenLabsOrFallback, stopCurrentVoice, DEFAULT_ELEVENLABS_VOICES } from './03-voz/elevenlabs';
 import { vozPorId, VozId } from './03-voz/voces';
 import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip, playFile } from './03-voz/player';
-import { clipDeTexto, saludoHora } from './03-voz/banco';
+import { clipDeTexto, saludoHora, siguienteChiste } from './03-voz/banco';
 import { bargeIn } from './03-voz/barge';
 import { pedirTurno } from './04-cerebro/turno';
 import { grabFrame } from './04-cerebro/grabFrame';
@@ -42,7 +42,7 @@ export default function App() {
   const FUN_MODE = true;
   useEffect(() => { onLip(setLipLevel); return () => onLip(null); }, []);
   useEffect(() => {
-    ['/voz/bohemian.mp3', '/voz/ligera.mp3', '/voz/bittersweet.mp3', '/voz/runaway.mp3', '/voz/dias.mp3', '/voz/tardes.mp3', '/voz/noches.mp3'].forEach((src) => {
+    ['/voz/bohemian.mp3', '/voz/ligera.mp3', '/voz/bittersweet.mp3', '/voz/runaway.mp3', '/voz/bruno.mp3', '/voz/dias.mp3', '/voz/tardes.mp3', '/voz/noches.mp3', '/voz/discurso.mp3', '/voz/quien.mp3', '/voz/puedo.mp3'].forEach((src) => {
       const a = new Audio();
       a.preload = 'auto';
       a.src = src;
@@ -672,17 +672,36 @@ export default function App() {
       handleWake();
       return;
     }
-    if (/\bcanta|\bcanci[oó]n|\bfavorita/.test(q)) {
+    if (/chiste|cont[aá]me un chiste|hazme re[ií]r|otro chiste/.test(q)) {
+      setFace('HAPPY');
+      vocalize(siguienteChiste().id);
+      return;
+    }
+    if (/discurso|v[eé]ndete|qui[eé]n eres de verdad|tu misi[oó]n/.test(q)) {
+      vocalize('discurso');
+      return;
+    }
+    if (/qui[eé]n eres|qu[eé] eres|qui[eé]n sos|qu[eé] es ultron/.test(q)) {
+      vocalize('quien');
+      return;
+    }
+    if (/qu[eé] puedes|qu[eé] hac[eé]s|capacidades|qu[eé] sabes hacer/.test(q)) {
+      vocalize('puedo');
+      return;
+    }
+    if (/\bcanta|\bcanci[oó]n|\bfavorita|bruno|die with/.test(q)) {
       const clip =
         clipDeTexto(q) ||
         clipDeTexto(
-          /queen|bohemian|canta\s*1/.test(q)
-            ? 'bohemian'
-            : /ligera|soda|canta\s*2/.test(q)
-              ? 'ligera'
-              : /jos[eé]|runaway|kanye|canta\s*4/.test(q)
-                ? 'runaway'
-                : 'bittersweet'
+          /bruno|die with|canta\s*5|mundo/.test(q)
+            ? 'bruno'
+            : /queen|bohemian|canta\s*1/.test(q)
+              ? 'bohemian'
+              : /ligera|soda|canta\s*2/.test(q)
+                ? 'ligera'
+                : /jos[eé]|runaway|kanye|canta\s*4/.test(q)
+                  ? 'runaway'
+                  : 'bittersweet'
         );
       if (clip) {
         setFace('HAPPY');

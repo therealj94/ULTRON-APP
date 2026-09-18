@@ -134,13 +134,28 @@ function detectGenre(q: string): Song {
 export function matchVoiceAct(raw: string): VoiceAct | null {
   const q = raw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-  if (/canta|cancion|karaoke|entona|hum(ea)?|favorita|bohemian|ligera|runaway|bittersweet/.test(q)) {
+  if (/chiste|hazme reir|contame un chiste/.test(q)) {
+    const n = ((matchVoiceAct as any)._c = ((((matchVoiceAct as any)._c || 0) % 5) + 1));
+    return { id: 'chiste'+n, face: 'HAPPY', lines: [], audioUrl: '/voz/chiste'+n+'.mp3' };
+  }
+  if (/discurso|vendete|quien eres de verdad|tu mision/.test(q)) {
+    return { id: 'discurso', face: 'SPEAKING', lines: [], audioUrl: '/voz/discurso.mp3' };
+  }
+  if (/quien eres|que eres|quien sos|que es ultron/.test(q)) {
+    return { id: 'quien', face: 'IDLE', lines: [], audioUrl: '/voz/quien.mp3' };
+  }
+  if (/que puedes|que haces|capacidades|que sabes hacer/.test(q)) {
+    return { id: 'puedo', face: 'IDLE', lines: [], audioUrl: '/voz/puedo.mp3' };
+  }
+  if (/canta|cancion|karaoke|entona|hum(ea)?|favorita|bohemian|ligera|runaway|bittersweet|bruno|die with/.test(q)) {
     const clip =
-      /bohemian|rhapsody|queen|canta\s*1/.test(q)
+      /bruno|die with|canta\s*5|mundo/.test(q)
+        ? 'bruno'
+        : /bohemian|rhapsody|queen|canta\s*1/.test(q)
         ? 'bohemian'
         : /ligera|soda|cerati|canta\s*2/.test(q)
           ? 'ligera'
-          : /jos[eé]|runaway|kanye|toast|canta\s*4/.test(q)
+          : /jose|runaway|kanye|toast|canta\s*4/.test(q)
             ? 'runaway'
             : /medardo|bitter|verve|sinfonia|canta\s*3|favorita/.test(q)
               ? 'bittersweet'

@@ -8,7 +8,7 @@ import { Audio, type AVPlaybackSource } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { ttsUrl, type TtsEngineParam } from './api';
 import { API_BASE } from '../config';
-import { VOICE_BANK, bankKey } from './voiceBank';
+import { REMOTE_CLIPS, bankKey } from './voiceBank';
 
 type Perf = 'speak' | 'sing';
 
@@ -91,8 +91,8 @@ async function ensureAudioMode() {
 
 function canned(text: string, perf: Perf): AVPlaybackSource | null {
   if (perf !== 'speak' || engine === 'qwen') return null;
-  const hit = VOICE_BANK[bankKey(text)];
-  return hit ? (hit as AVPlaybackSource) : null;
+  const remote = REMOTE_CLIPS[bankKey(text)];
+  return remote ? { uri: `${API_BASE}${remote}` } : null;
 }
 
 async function fetchSource(text: string, perf: Perf): Promise<AVPlaybackSource | null> {
