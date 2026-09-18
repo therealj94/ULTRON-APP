@@ -1,27 +1,39 @@
 {
-  "name": "ultron-native",
-  "version": "1.0.0",
+  "name": "ultron-fp-mobile",
+  "version": "3.0.0",
   "private": true,
-  "main": "expo/AppEntry.js",
+  "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "build:apk": "eas build -p android --profile preview --non-interactive"
+    "android": "expo run:android",
+    "typecheck": "tsc --noEmit",
+    "voice-bank": "node scripts/build-voice-bank.mjs",
+    "eas:build:android": "eas build -p android --profile preview --non-interactive",
+    "eas:update": "eas update --channel preview --non-interactive --message",
+    "ios": "expo run:ios"
   },
   "dependencies": {
-    "expo": "~52.0.46",
-    "expo-av": "~15.0.2",
-    "expo-camera": "~16.0.18",
-    "expo-status-bar": "~2.0.1",
-    "expo-sensors": "~14.0.2",
-    "react": "18.3.1",
-    "react-native": "0.76.9",
-    "react-native-reanimated": "~3.16.7",
-    "react-native-safe-area-context": "4.12.0",
-    "expo-file-system": "~18.0.12"
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "expo": "~54.0.37",
+    "expo-av": "~16.0.8",
+    "expo-camera": "~17.0.10",
+    "expo-constants": "~18.0.14",
+    "expo-file-system": "~19.0.24",
+    "expo-linear-gradient": "~15.0.8",
+    "expo-local-authentication": "~17.0.9",
+    "expo-navigation-bar": "~5.0.10",
+    "expo-screen-orientation": "~9.0.9",
+    "expo-secure-store": "~15.0.8",
+    "expo-sensors": "~15.0.8",
+    "expo-status-bar": "~3.0.9",
+    "expo-system-ui": "~6.0.9",
+    "expo-updates": "~29.0.20",
+    "react": "19.1.0",
+    "react-native": "0.81.5"
   },
   "devDependencies": {
-    "@types/react": "~18.3.12",
-    "typescript": "~5.3.3"
+    "@types/react": "~19.1.0",
+    "eas-cli": "^16.28.0",
+    "typescript": "~5.9.2"
   }
 }

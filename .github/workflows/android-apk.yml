@@ -3,14 +3,18 @@ name: Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, "cursor/**"]
     paths:
       - "mobile/**"
       - ".github/workflows/android-apk.yml"
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
@@ -25,9 +29,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - uses: gradle/actions/setup-gradle@v4
+
       - name: Install JS
         working-directory: mobile
         run: npm ci
+
+      - name: Typecheck
+        working-directory: mobile
+        run: npm run typecheck
 
       - name: Prebuild Android
         working-directory: mobile
@@ -36,15 +46,29 @@ jobs:
           EXPO_NO_TELEMETRY: "1"
         run: npx expo prebuild -p android --non-interactive --no-install
 
-      - name: Debug APK
+      # Release = JS empaquetado + Hermes optimizado (fluido). Firmado con la keystore debug del template
+      # para que se instale directo; para Play Store se cambia la firma.
+      - name: Release APK
         working-directory: mobile/android
+        env:
+          GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          # solo ABIs de teléfonos reales (arm): el APK universal pesaba 88 MB
+          ./gradlew assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+
+      - name: Rename APK
+        working-directory: mobile
+        run: |
+          VERSION=$(node -p "require('./app.json').expo.version")
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk "out/ULTRON-FP-${VERSION}.apk"
+          ls -la out
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Ultron-debug
-          path: mobile/android/app/build/outputs/apk/debug/*.apk
+          name: ULTRON-FP-apk
+          path: mobile/out/*.apk
           if-no-files-found: error
+          retention-days: 30

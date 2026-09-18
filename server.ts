@@ -5,10 +5,22 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI } from '@google/genai';
+import {
+  JUNTA,
+  ULTRON_VOICE,
+  buildPersonality,
+  decodeDataUrl,
+  elevenSpeak,
+  elevenTranscribe,
+  getCachedAudio,
+  limpiarParaVoz,
+  normalizarCorreo,
+  setCachedAudio,
+} from './server/desk';
 
 const app = express();
 const httpServer = http.createServer(app);
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Setup real-time WebSocket Bridge for UI & external telemetry
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
@@ -483,7 +495,8 @@ app.get('/api/ultron/salud', async (req, res) => {
 });
 
 app.post('/api/ultron/entrar', async (req, res) => {
-  const { correo, clave } = req.body;
+  const clave = req.body?.clave;
+  const correo = normalizarCorreo(req.body?.correo);
   if (!correo || !clave) {
     return res.status(400).json({ error: 'Correo y clave requeridos.' });
   }
@@ -505,9 +518,9 @@ app.post('/api/ultron/entrar', async (req, res) => {
     ultronRemoteSession = {
       authenticated: true,
       user: {
-        nombre: data.miembro?.nombre || correo.split('@')[0],
+        nombre: data.miembro?.nombre || JUNTA[correo]?.nombre || correo.split('@')[0],
         correo,
-        rol: 'Junta Directiva · Orden Global',
+        rol: JUNTA[correo]?.rol || 'Junta Directiva · Orden Global',
       },
       lastLogin: new Date().toISOString(),
     };
@@ -524,17 +537,24 @@ app.post('/api/ultron/entrar', async (req, res) => {
 
 app.post('/api/ultron/biometric-login', async (req, res) => {
   const { biometricType, userName, role } = req.body;
+  const correo = normalizarCorreo(req.body?.correo) || 'j.ordonez@ordenglobal.org';
+  if (!JUNTA[correo] && !/@ordenglobal\.org$/.test(correo)) {
+    return res.status(403).json({ error: 'Acceso de escritorio solo para miembros @ordenglobal.org.' });
+  }
+  let isLive = false;
   try {
-    const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/salud`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    const isLive = remoteRes.ok;
+    const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/salud`, { signal: AbortSignal.timeout(5000) });
+    isLive = remoteRes.ok;
+  } catch {
+    isLive = false;
+  }
+  try {
     ultronRemoteSession = {
       authenticated: true,
       user: {
-        nombre: userName || 'José',
-        correo: 'mjoseenamorado1994@gmail.com',
-        rol: role || 'Junta Directiva · Orden Global',
+        nombre: JUNTA[correo]?.nombre || userName || correo.split('@')[0],
+        correo,
+        rol: role || JUNTA[correo]?.rol || 'Junta Directiva · Orden Global',
       },
       lastLogin: new Date().toISOString(),
     };
@@ -837,13 +857,48 @@ app.post('/api/tts/stream', async (req, res) => {
   }
 });
 
-app.post('/api/tts', async (req, res) => {
-  const text = String(req.body?.text || '').slice(0, 2000).trim();
-  const voice = String(req.body?.voice || 'formal');
+/**
+ * TTS de la app nativa. Una sola voz (ULTRON).
+ * engine=fast (default): ElevenLabs Flash v2.5 (~0.5–0.9 s) con caché en RAM; performance=sing usa Multilingual v2.
+ * engine=qwen: nodo Qwen3-TTS (T4). Si Flash falla, cae al nodo; si el nodo falla, 503 (la app nunca usa voz robótica).
+ */
+// GET permite a la app descargar el audio directo a disco (FileSystem.downloadAsync) sin pasar por base64.
+app.get('/api/tts', (req, res, next) => {
+  req.body = { ...req.query };
+  next();
+});
+app.all('/api/tts', async (req, res) => {
+  const text = limpiarParaVoz(String(req.body?.text || '').slice(0, 2000));
+  const voice = String(req.body?.voice || ULTRON_VOICE.qwenVoice);
   const instruct = String(req.body?.instruct || '').slice(0, 400);
+  const engine = String(req.body?.engine || 'fast');
+  const performance: 'speak' | 'sing' = req.body?.performance === 'sing' ? 'sing' : 'speak';
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
+
+  const key = `${engine}|${performance}|${voice}|${text}`;
+  const hit = getCachedAudio(key);
+  if (hit) {
+    res.setHeader('Content-Type', hit.contentType);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Ultron-TTS', 'cache');
+    return res.send(hit.audio);
+  }
+
+  if (engine !== 'qwen' && VAULT_ELEVENLABS_API_KEY) {
+    const t0 = Date.now();
+    const out = await elevenSpeak({ apiKey: VAULT_ELEVENLABS_API_KEY, text, performance });
+    if (out) {
+      setCachedAudio(key, out.audio, 'audio/mpeg');
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Ultron-TTS', out.model);
+      res.setHeader('X-Ultron-MS', String(Date.now() - t0));
+      return res.send(out.audio);
+    }
+  }
+
   if (!ULTRON_TTS_URL || !ULTRON_TTS_CLAVE) {
-    return res.status(503).json({ error: 'TTS Qwen no configurado', honesto: true });
+    return res.status(503).json({ error: 'TTS no disponible (sin ElevenLabs ni nodo Qwen)', honesto: true });
   }
   try {
     const r = await fetch(`${ULTRON_TTS_URL}/synthesize`, {
@@ -862,18 +917,39 @@ app.post('/api/tts', async (req, res) => {
       return res.status(502).json({ error: 'TTS falló', detalle: err.slice(0, 200), honesto: true });
     }
     const buf = Buffer.from(await r.arrayBuffer());
-    res.setHeader('Content-Type', r.headers.get('content-type') || 'audio/wav');
+    const ct = r.headers.get('content-type') || 'audio/wav';
+    setCachedAudio(key, buf, ct);
+    res.setHeader('Content-Type', ct);
     res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Ultron-TTS', 'qwen3-tts');
     return res.send(buf);
   } catch (e: any) {
     return res.status(502).json({ error: 'TTS caído', message: String(e?.message || e).slice(0, 180), honesto: true });
   }
 });
 
+/**
+ * Oído de la app nativa: ElevenLabs Scribe. Body: { audioBase64 (data URL o base64), mimeType, language }.
+ * Devuelve { text } vacío si no hay habla clara (la app descarta).
+ */
+app.post('/api/stt', async (req, res) => {
+  const t0 = Date.now();
+  const raw = String(req.body?.audioBase64 || req.body?.audio || '');
+  if (!raw) return res.status(400).json({ error: 'audioBase64 requerido', honesto: true });
+  const { mime, buffer } = decodeDataUrl(raw, String(req.body?.mimeType || 'audio/m4a'));
+  if (buffer.length < 1200) return res.json({ text: '', model: 'vacio', ms: Date.now() - t0 });
+  if (!VAULT_ELEVENLABS_API_KEY) {
+    return res.status(503).json({ error: 'STT no configurado (ELEVENLABS_API_KEY)', honesto: true });
+  }
+  const out = await elevenTranscribe({ apiKey: VAULT_ELEVENLABS_API_KEY, audio: buffer, mime, language: String(req.body?.language || 'es') });
+  return res.json({ text: out.text, model: out.model, ms: Date.now() - t0, bytes: buffer.length });
+});
+
 app.post('/api/turno', async (req, res) => {
   const t0 = Date.now();
   const message = String(req.body?.message || req.body?.text || '').trim();
   const mode = req.body?.mode || 'GUARDIAN';
+  const nombre = String(req.body?.usuario || req.body?.userName || '').trim().slice(0, 40);
   const historial = Array.isArray(req.body?.historial) ? req.body.historial.slice(-12) : [];
   const larga = leerMemoria().larga.slice(0, 12);
   if (!message) return res.status(400).json({ error: 'message vacío', honesto: true });
@@ -942,8 +1018,8 @@ app.post('/api/turno', async (req, res) => {
     return res.status(503).json({ error: 'Qwen no configurado', honesto: true });
   }
 
-  const system = `Eres ULTRON, asistente de escritorio de Orden Global. Español corto.
-No inventes precios ni tipos de cambio. Si HECHOS está vacío para un dato pedido, di que no lo viste.
+  const system = `${buildPersonality({ nombre: nombre || undefined })}
+MODO ACTUAL: ${mode}.
 No finjas recuerdos de otras noches: solo LARGO PLAZO y ULTIMOS TURNOS.
 HECHOS:\n${hechos.join('\n') || '(ninguno)'}\nLARGO PLAZO:\n${larga.map((x:any)=>x.hecho).join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h:any)=>`${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
 
