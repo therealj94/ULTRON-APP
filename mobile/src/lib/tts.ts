@@ -1,7 +1,7 @@
 /**
  * Voz de ULTRON — una sola voz neural, nunca la robótica del sistema.
  * - Frases grabadas (assets/voice) → 0 ms, funcionan sin red.
- * - Resto: /api/tts (ElevenLabs Flash) descargado directo a disco, por oraciones,
+ * - Resto: /api/tts (Eleven v3 conversational) descargado a disco, por oraciones,
  *   con la siguiente oración precargada mientras suena la actual.
  */
 import { Audio, type AVPlaybackSource } from 'expo-av';
