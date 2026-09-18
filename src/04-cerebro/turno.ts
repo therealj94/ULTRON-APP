@@ -1,3 +1,5 @@
+import { leerLarga } from '../09-estado/memoria';
+
 export type Turno = {
   reply?: string;
   error?: string;
@@ -22,6 +24,7 @@ export async function pedirTurno(opts: {
       mode: opts.mode || 'GUARDIAN',
       historial: opts.historial || [],
       image: opts.image || undefined,
+      memoria: leerLarga(),
     }),
     signal: opts.signal,
   });

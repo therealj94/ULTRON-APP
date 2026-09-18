@@ -575,12 +575,20 @@ export default function App() {
     stopVoice();
     const rec = cmd.match(/recuerda(?: que)? (.+)/i);
     if (rec) guardarHecho(rec[1]);
+    else if (/junta|rol|medardo|guarda|anota|se llama|orden global/i.test(cmd) && cmd.length > 12) {
+      guardarHecho(cmd);
+    }
     const quiereVer = /qu[eé] ves|qu[eé] hay aqu[ií]|imagen|c[aá]mara|le[eé] (esto|la foto)/i.test(cmd);
     const image = quiereVer ? grabFrame() : null;
     pedirTurno({ message: cmd, mode, historial: historialRef.current, image })
       .then((data) => {
         const text = data.reply || data.error || 'Qwen no contestó.';
         historialRef.current = [...historialRef.current, { rol: 'user', texto: cmd }, { rol: 'ultron', texto: String(text) }].slice(-12);
+        fetch('/api/memoria', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ corta: historialRef.current }),
+        }).catch(() => {});
         if (data.foto) logBridgeEvent('in', `foto ${data.foto}`);
         logBridgeEvent('in', `${data.modelo || 'turno'} ${data.ms || ''}ms`);
         vocalize(String(text));

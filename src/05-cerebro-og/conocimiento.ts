@@ -1,7 +1,7 @@
 export const CONOCIMIENTO_OG = `ORDEN GLOBAL — mapa del ecosistema (repo Genesis ID / express-js-on-vercel). No inventes fuera de esto.
 
 QUIÉN
-- Junta: José Ordóñez y Medardo Ordóñez. ordenglobal.org. Honduras.
+- Junta Directiva: José Ordóñez (fundador, habla con ULTRON) y Medardo Ordóñez (junta). ordenglobal.org. Honduras.
 - ULTRON es cara y voz de Genesis Core (Qwen 27B, ojo Playwright, voz, memoria).
 - Canción favorita de Medardo: The Verve — Bitter Sweet Symphony.
 

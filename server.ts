@@ -24,6 +24,7 @@ import {
 } from './server/desk';
 import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, limitar, urlPublica } from './server/seguridad';
+import { esHechoLargo, fusionarLarga, semillaLarga } from './server/hechos';
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -804,11 +805,15 @@ function juntarOllama(raw: string) {
 const MEM_FILE = path.join(process.cwd(), 'data', 'memoria.json');
 type Memoria = { corta: { rol: string; texto: string; t: number }[]; larga: { hecho: string; t: number }[] };
 function leerMemoria(): Memoria {
+  let m: Memoria = { corta: [], larga: [] };
   try {
-    return JSON.parse(fs.readFileSync(MEM_FILE, 'utf8'));
-  } catch {
-    return { corta: [], larga: [] };
+    m = JSON.parse(fs.readFileSync(MEM_FILE, 'utf8'));
+  } catch { /* vacío */ }
+  if (!Array.isArray(m.larga) || m.larga.length === 0) {
+    m.larga = semillaLarga();
+    escribirMemoria(m);
   }
+  return m;
 }
 function escribirMemoria(m: Memoria) {
   fs.mkdirSync(path.dirname(MEM_FILE), { recursive: true });
@@ -822,7 +827,7 @@ app.get('/api/memoria', (_req, res) => {
   res.json({ ...m, honesto: true, nota: 'corta = últimos turnos; larga = hechos. FP mongo no expuesto a la desk sin sesión.' });
 });
 
-app.post('/api/memoria', exigirSesion, (req, res) => {
+app.post('/api/memoria', (req, res) => {
   const m = leerMemoria();
   const hecho = String(req.body?.hecho || '').trim();
   const olvido = !!req.body?.olvidar;
@@ -978,6 +983,14 @@ app.all('/api/tts', limitar(20), async (req, res) => {
 async function prepararTurno(body: any) {
   const t0 = Date.now();
   const message = String(body?.message || body?.text || '').trim();
+  if (message) {
+    const mem0 = leerMemoria();
+    mem0.corta = [{ rol: 'user', texto: message, t: Date.now() }, ...mem0.corta].slice(0, 24);
+    if (esHechoLargo(message)) {
+      mem0.larga = fusionarLarga(mem0.larga, [message]);
+    }
+    escribirMemoria(mem0);
+  }
   const mode = body?.mode || 'GUARDIAN';
   const nombre = String(body?.usuario || body?.userName || '').trim().slice(0, 40);
   const historial = Array.isArray(body?.historial) ? body.historial.slice(-12) : [];
