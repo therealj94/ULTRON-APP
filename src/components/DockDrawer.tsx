@@ -61,16 +61,11 @@ interface DockDrawerProps {
 }
 
 const QUICK_COMMANDS = [
-  { label: 'Foto 3-2-1', cmd: 'toma una foto' },
-  { label: 'Playwright Web', cmd: 'revisar página web con playwright' },
-  { label: 'Visión Multimodal', cmd: 'analizar imagen o video con visión' },
-  { label: 'Orden Global', cmd: 'consultar cerebro de orden global' },
-  { label: 'Bóveda de APIs', cmd: 'abrir bóveda de ultron fp' },
-  { label: 'Bebida', cmd: 'tomar agua refresco' },
-  { label: 'Saludo', cmd: 'hola ultron saluda' },
-  { label: 'Modo Blaster', cmd: 'activar modo combate' },
-  { label: 'WhatsApp', cmd: 'whatsapp despacho junta directiva' },
-  { label: 'Correo', cmd: 'correo borrador minuta ejecutiva' },
+  { label: 'Oro', cmd: 'precio del oro hoy' },
+  { label: 'Plata', cmd: 'precio de la plata' },
+  { label: 'Lempira', cmd: 'lempira a dólar' },
+  { label: 'Qué ves', cmd: 'qué ves en la cámara' },
+  { label: 'Saludo', cmd: 'hola ultron' },
 ];
 
 export const DockDrawer: React.FC<DockDrawerProps> = ({

@@ -109,6 +109,7 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({
         if (trackerRef.current) {
           trackerRef.current.setVideoElement(videoRef.current);
         }
+        (window as any).__ultronVideo = videoRef.current;
         setStreamActive(true);
       }
     } catch {

@@ -21,6 +21,10 @@ import { playSfx } from './utils/audio';
 import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
 import { speakWithElevenLabsOrFallback, stopCurrentVoice, DEFAULT_ELEVENLABS_VOICES } from './utils/elevenlabs';
 import { vozPorId, VozId } from './utils/voces';
+import { stopVoice, playWavBlob, newTtsAbort } from './voice/player';
+import { pedirTurno } from './agent/turno';
+import { grabFrame } from './agent/grabFrame';
+import { guardarHecho } from './session/memoria';
 import { downloadStandaloneSimulator } from './utils/exporter';
 import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck, HelpCircle, RotateCcw } from 'lucide-react';
 import { AgenticHarnessModal } from './components/AgenticHarnessModal';
@@ -156,29 +160,22 @@ export default function App() {
         speakUtterance(text, { enabled: true, onEnd: () => setFace('IDLE') });
 
       const voz = vozPorId(vozId);
+      const ac = newTtsAbort();
       fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, voice: voz.motor, instruct: voz.instruct }),
+        signal: ac.signal,
       })
         .then(async (r) => {
           if (!r.ok || !(r.headers.get('content-type') || '').includes('audio')) {
             throw new Error('tts-qwen-off');
           }
           const blob = await r.blob();
-          const url = URL.createObjectURL(blob);
-          const audio = new Audio(url);
-          audio.onended = () => {
-            URL.revokeObjectURL(url);
-            setFace('IDLE');
-          };
-          audio.onerror = () => {
-            URL.revokeObjectURL(url);
-            browserFallback();
-          };
-          await audio.play();
+          await playWavBlob(blob, () => setFace('IDLE'), browserFallback);
         })
-        .catch(() => {
+        .catch((err: any) => {
+          if (err?.name === 'AbortError') return;
           if (activeVoice?.apiKey) {
             speakWithElevenLabsOrFallback(text, activeVoice, {
               onStart: () => setFace(faceOverride),
@@ -284,7 +281,7 @@ export default function App() {
   const handleTriggerPhoto = useCallback(() => {
     playSfx('shutter', soundFxEnabled);
     setIsCameraFlashing(true);
-    vocalize('¡Sonríe! Tomando captura de alta resolución.');
+    vocalize('Foto.');
 
     setTimeout(() => {
       setIsCameraFlashing(false);
@@ -297,7 +294,7 @@ export default function App() {
     setIsDrinking(true);
     setFace('HAPPY');
     playSfx('purr', soundFxEnabled);
-    vocalize('Refresco electro-químico servido. ¡Salud!');
+    vocalize('Salud.');
 
     drinkTimerRef.current = setTimeout(() => {
       setIsDrinking(false);
@@ -311,7 +308,7 @@ export default function App() {
     setIsWaving(true);
     setFace('HAPPY');
     playSfx('wink', soundFxEnabled);
-    vocalize('¡Hola! Saludos cordiales a la junta directiva.');
+    vocalize('Hola.');
 
     waveTimerRef.current = setTimeout(() => {
       setIsWaving(false);
@@ -325,7 +322,7 @@ export default function App() {
     setIsCombatBlasterActive(true);
     setFace('FURY');
     playSfx('angry', soundFxEnabled);
-    vocalize('¡Alerta de combate! Cañones blaster desplegados.');
+    vocalize('Blaster.');
 
     combatTimerRef.current = setTimeout(() => {
       setIsCombatBlasterActive(false);
@@ -346,8 +343,9 @@ export default function App() {
     setFace('IDLE');
     setResetTrigger((prev) => prev + 1);
     stopCurrentVoice();
+    stopVoice();
     playSfx('tap', soundFxEnabled);
-    vocalize('Sistemas defensivos retraídos. Estado normalizado.');
+    vocalize('Listo.');
   }, [soundFxEnabled, vocalize]);
 
   // Handle presence events from optical tracking
@@ -412,6 +410,7 @@ export default function App() {
         // Immediate Barge-in interruption: user started speaking, silence assistant voice instantly!
         cancelSpeech();
         stopCurrentVoice();
+        stopVoice();
         setFace('LISTENING');
         showBubble('Escuchando...');
       },
@@ -448,7 +447,7 @@ export default function App() {
 
     playSfx('tap', soundFxEnabled);
     setFace('LISTENING');
-    showBubble('Escuchando orden...');
+    showBubble('Te escucho');
     if (speechRecognizerRef.current) {
       speechRecognizerRef.current.start();
     }
@@ -465,20 +464,15 @@ export default function App() {
 
   const askCerebro = (cmd: string) => {
     setFace('THINKING');
+    stopVoice();
     const rec = cmd.match(/recuerda(?: que)? (.+)/i);
-    if (rec) {
-      fetch('/api/memoria', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hecho: rec[1] }) });
-    }
-    fetch('/api/turno', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: cmd, mode, historial: historialRef.current }),
-    })
-      .then((r) => r.json())
+    if (rec) guardarHecho(rec[1]);
+    const quiereVer = /qu[eé] ves|qu[eé] hay aqu[ií]|imagen|c[aá]mara|le[eé] (esto|la foto)/i.test(cmd);
+    const image = quiereVer ? grabFrame() : null;
+    pedirTurno({ message: cmd, mode, historial: historialRef.current, image })
       .then((data) => {
         const text = data.reply || data.error || 'Qwen no contestó.';
-        historialRef.current = [...historialRef.current, { rol:'user', texto: cmd }, { rol:'ultron', texto: String(text) }].slice(-12);
-        fetch('/api/memoria', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ corta: historialRef.current }) });
+        historialRef.current = [...historialRef.current, { rol: 'user', texto: cmd }, { rol: 'ultron', texto: String(text) }].slice(-12);
         if (data.foto) logBridgeEvent('in', `foto ${data.foto}`);
         logBridgeEvent('in', `${data.modelo || 'turno'} ${data.ms || ''}ms`);
         vocalize(String(text));
@@ -1046,7 +1040,7 @@ export default function App() {
 
         {/* Agentic Harness Modal (Qwen 3.8 27B) */}
         <AgenticHarnessModal
-          isOpen={harnessModalOpen}
+          isOpen={false}
           onClose={() => setHarnessModalOpen(false)}
           currentMode={mode}
           autoModeSwitch={autoModeSwitch}
@@ -1073,7 +1067,7 @@ export default function App() {
 
         {/* Biometric Authentication Modal */}
         <BiometricAuthModal
-          isOpen={isBiometricOpen}
+          isOpen={false}
           onClose={() => setIsBiometricOpen(false)}
           soundFxEnabled={soundFxEnabled}
           onSpeak={(t) => vocalize(t)}
@@ -1137,7 +1131,7 @@ export default function App() {
 
         {/* Vision Media Analyzer (Images & Videos) with Zero-Knowledge Auto-Purge */}
         <VisionMediaAnalyzerModal
-          isOpen={isVisionAnalyzerOpen}
+          isOpen={false}
           onClose={() => setIsVisionAnalyzerOpen(false)}
           initialMediaUrl={visionMediaData.url}
           initialMediaType={visionMediaData.type}
@@ -1146,21 +1140,21 @@ export default function App() {
 
         {/* Playwright Headless Web Scraper & Browser on AWS */}
         <PlaywrightBrowserModal
-          isOpen={isPlaywrightBrowserOpen}
+          isOpen={false}
           onClose={() => setIsPlaywrightBrowserOpen(false)}
           onSpeak={(t) => vocalize(t)}
         />
 
         {/* Global Order Intelligence Strategic Brain Modal */}
         <GlobalOrderBrainModal
-          isOpen={isGlobalOrderBrainOpen}
+          isOpen={false}
           onClose={() => setIsGlobalOrderBrainOpen(false)}
           onSpeak={(t) => vocalize(t)}
         />
 
         {/* Cloud Infrastructure & Live Render Deployment Modal */}
         <AwsDeploymentModal
-          isOpen={isAwsDeploymentModalOpen}
+          isOpen={false}
           onClose={() => setIsAwsDeploymentModalOpen(false)}
           onSpeak={(t) => vocalize(t)}
           soundFxEnabled={soundFxEnabled}
@@ -1168,7 +1162,7 @@ export default function App() {
 
         {/* Interactive Controls & Features Tutorial Modal */}
         <TutorialModal
-          isOpen={isTutorialOpen}
+          isOpen={false}
           onClose={() => setIsTutorialOpen(false)}
           soundFxEnabled={soundFxEnabled}
         />

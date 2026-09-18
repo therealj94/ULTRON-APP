@@ -861,6 +861,20 @@ app.post('/api/turno', async (req, res) => {
       const page = await leerConOjo(url);
       if (page) hechos.push(`Página ${page.url}: ${page.texto.slice(0, 1200) || 'sin texto'}`);
     }
+    const image = req.body?.image;
+    if (image && ULTRON_OJO_URL) {
+      const r = await fetch(`${ULTRON_OJO_URL}/ver`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Ojo-Clave': ULTRON_OJO_CLAVE },
+        body: JSON.stringify({ imagen: image, prompt: 'Describe solo lo visible. Copia números y precios. No inventes.' }),
+        signal: AbortSignal.timeout(25000),
+      });
+      const j: any = await r.json().catch(() => ({}));
+      const desc = String(j.texto || j.descripcion || j.summary || '').trim();
+      hechos.push(desc ? `VISION: ${desc.slice(0, 1800)}` : 'VISION: no se pudo leer la imagen.');
+    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !image) {
+      hechos.push('VISION: no llegó frame. Decí que no viste.');
+    }
   } catch (e: any) {
     hechos.push(`Tool falló: ${String(e?.message || e).slice(0, 160)}. Si no hay cifra, dilo.`);
   }
@@ -936,85 +950,10 @@ app.post('/api/qwen/chat', (_req, res) => {
   res.status(410).json({ error: 'Deprecado. Usar POST /api/turno.', honesto: true });
 });
 
-app.get('/api/orden-global', (req, res) => {
-  const { q } = req.query;
-
-  const DOCTRINES = [
-    {
-      id: 'og_01',
-      category: 'Geopolítica & Alianzas Estratégicas',
-      title: 'Doctrina de Soberanía Tecnológica e Infraestructura Crítica',
-      code: 'ALFA-770-GEO',
-      summary: 'Garantiza la autonomía de cómputo neural, nodos de inteligencia distribuida y redundancia transfronteriza sin subordinación a proveedores únicos.',
-      principles: [
-        'Despliegue multi-región con failover autónomo en AWS, bare-metal y nodos locales.',
-        'Cifrado post-cuántico en los canales de audio y telemetría de la mesa directiva.',
-        'Preservación de la soberanía de datos y eliminación instantánea de telemetría biométrica tras su análisis.',
-      ],
-      classificationLevel: 'DIRECTORIO EJECUTIVO',
-    },
-    {
-      id: 'og_02',
-      category: 'Tesorería & Arbitraje Financiero Global',
-      title: 'Protocolo de Reserva Líquida y Arbitraje Multidivisa',
-      code: 'BETA-912-FIN',
-      summary: 'Estrategia de cobertura patrimonial basada en activos tangibles (oro, tierras raras) y reservas sintéticas con calificación AAA.',
-      principles: [
-        'Diversificación continua de tesorería institucional ante fluctuaciones cambiarias.',
-        'Modelos predictivos en Qwen 27B para anticipar shocks de liquidez en mercados emergentes.',
-        'Auditoría criptográfica de estados financieros con doble firma de los directores.',
-      ],
-      classificationLevel: 'RESTRINGIDO - ALTA DIRECCIÓN',
-    },
-    {
-      id: 'og_03',
-      category: 'Gobernanza Corporativa & Resoluciones',
-      title: 'Estatuto de Voto Blindado y Minutas Inmutables',
-      code: 'GAMMA-404-GOB',
-      summary: 'Mecanismo de consenso para decisiones críticas de la junta directiva con sellado de tiempo y distribución autorizada por WhatsApp y correo cifrado.',
-      principles: [
-        'Requerimiento de autorización explícita biométrica para despacho de memorandos.',
-        'Firma criptográfica en minutas ejecutivas previo a transmisión.',
-        'Registro de auditoría inmutable de cada orden verbal procesada por ULTRON.',
-      ],
-      classificationLevel: 'JUNTA DIRECTIVA PLENA',
-    },
-    {
-      id: 'og_04',
-      category: 'Defensa Cibernética & Contingencias',
-      title: 'Directriz de Contención Perimetral y Repuesta Activa',
-      code: 'DELTA-108-DEF',
-      summary: 'Procedimientos de respuesta ante intrusiones, acoso físico o ciberamenazas contra la sede ejecutiva o terminales de mando.',
-      principles: [
-        'Despliegue de sistemas de disuasión y modo combate blaster en terminales tácticos.',
-        'Aislamiento de sockets WebSocket no autorizados.',
-        'Cierre hermético de credenciales de nube ante detección de anomalías.',
-      ],
-      classificationLevel: 'SEGURIDAD CORPORATIVA',
-    },
-  ];
-
-  let filtered = DOCTRINES;
-  if (q && typeof q === 'string') {
-    const term = q.toLowerCase();
-    filtered = DOCTRINES.filter(
-      (d) =>
-        d.title.toLowerCase().includes(term) ||
-        d.summary.toLowerCase().includes(term) ||
-        d.category.toLowerCase().includes(term) ||
-        d.principles.some((p) => p.toLowerCase().includes(term))
-    );
-  }
-
-  res.json({
-    total: filtered.length,
-    doctrines: filtered,
-    updatedAt: '2026-09-16T19:46:00Z',
-    securityClearance: 'Director Alfa-1',
-  });
+app.get('/api/orden-global', (_req, res) => {
+  res.status(410).json({ error: 'Retirado. No hay doctrinas de ficción.', honesto: true });
 });
 
-// Vite Middleware for development vs static build serving for production
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -1031,7 +970,7 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`[ULTRON LOOI SERVER] Running on port ${PORT} with Gemini 3.6 Flash, Render API, AWS and WebSocket Bridge`);
+    console.log(`[ULTRON] :${PORT} fase C — health/turno/tts`);
   });
 }
 
