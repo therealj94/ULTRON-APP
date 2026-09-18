@@ -26,7 +26,7 @@ const phrases = new Set();
 for (const name of lines.names) for (const part of lines.greetingParts) {
   phrases.add(lines.greetingTemplate.replace('{part}', part).replace('{name}', name));
 }
-for (const k of ['acks', 'tap', 'eye', 'mouth', 'forehead', 'tickle', 'double', 'annoy', 'angry', 'love', 'shake', 'thinking', 'system']) for (const p of lines[k]) phrases.add(p);
+for (const k of ['acks', 'annoy', 'angry', 'love', 'shake', 'thinking', 'curiosity', 'jefe', 'system']) for (const p of lines[k]) phrases.add(p);
 
 const entries = [];
 let downloaded = 0;

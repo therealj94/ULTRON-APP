@@ -12,6 +12,8 @@ import {
   decodeDataUrl,
   elevenSpeak,
   elevenTranscribe,
+  extraerTono,
+  normalizarTono,
   getCachedAudio,
   limpiarParaVoz,
   normalizarCorreo,
@@ -913,9 +915,11 @@ app.all('/api/tts', async (req, res) => {
   const engineRaw = String(req.body?.engine || 'auto');
   const engine = engineRaw === 'fast' ? 'eleven' : engineRaw;
   const performance: 'speak' | 'sing' = req.body?.performance === 'sing' ? 'sing' : 'speak';
+  const tono = normalizarTono(req.body?.tono);
+  const lang = String(req.body?.lang || 'es').slice(0, 2);
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
 
-  const key = `${engine}|${performance}|${voice}|${text}`;
+  const key = `${engine}|${performance}|${voice}|${tono}|${lang}|${text}`;
   const hit = getCachedAudio(key);
   if (hit) {
     res.setHeader('Content-Type', hit.contentType);
@@ -927,7 +931,7 @@ app.all('/api/tts', async (req, res) => {
   const speakEleven = async () => {
     if (!VAULT_ELEVENLABS_API_KEY) return false;
     const t0 = Date.now();
-    const out = await elevenSpeak({ apiKey: VAULT_ELEVENLABS_API_KEY, text, performance });
+    const out = await elevenSpeak({ apiKey: VAULT_ELEVENLABS_API_KEY, text, performance, tono, lang });
     if (!out) return false;
     setCachedAudio(key, out.audio, 'audio/mpeg');
     res.setHeader('Content-Type', 'audio/mpeg');
@@ -1094,14 +1098,15 @@ app.post('/api/turno', async (req, res) => {
       signal: AbortSignal.timeout(60000),
     });
     const raw = await r.text();
-    const reply = String(juntarOllama(raw) || '').trim();
+    const bruto = String(juntarOllama(raw) || '').trim();
+    const { tono, texto: reply } = extraerTono(bruto);
     if (!r.ok || !reply) {
       if (hechos.length) {
         return res.json({ reply: hechos.join('\n'), modelo: ULTRON_NODO_MODELO, via: 'tools-fallback', ms: Date.now() - t0, honesto: true, raw: raw.slice(0, 200) });
       }
       return res.status(502).json({ error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 300), honesto: true });
     }
-    return res.json({ reply, modelo: ULTRON_NODO_MODELO, via: `${ULTRON_NODO_URL}/api/chat`, mode, ms: Date.now() - t0, tools: tools.length, herramientas: tools, foto, honesto: true });
+    return res.json({ reply, tono, modelo: ULTRON_NODO_MODELO, via: `${ULTRON_NODO_URL}/api/chat`, mode, ms: Date.now() - t0, tools: tools.length, herramientas: tools, foto, honesto: true });
   } catch (err: any) {
     if (hechos.length) return res.json({ reply: hechos.join('\n'), modelo: 'tools-only', ms: Date.now() - t0, honesto: true });
     return res.status(502).json({ error: 'Qwen caído', message: String(err?.message || err).slice(0, 200), honesto: true });
@@ -1164,6 +1169,28 @@ app.post('/api/turno/stream', async (req, res) => {
     const dec = new TextDecoder();
     let buf = '';
     let full = '';
+    // La respuesta abre con [TONO]: se retiene el texto hasta ver el cierre (o 28 chars) y se emite `tono`.
+    let head = '';
+    let headDone = false;
+    let tono = 'IDLE';
+    const emitText = (piece: string) => {
+      if (headDone) {
+        full += piece;
+        send('delta', { text: piece });
+        return;
+      }
+      head += piece;
+      const closed = /\]/.test(head) || (!/^\s*\[/.test(head) && head.trim().length > 2) || head.length > 28;
+      if (!closed) return;
+      const ex = extraerTono(head);
+      tono = ex.tono;
+      headDone = true;
+      send('tono', { tono });
+      if (ex.texto) {
+        full += ex.texto;
+        send('delta', { text: ex.texto });
+      }
+    };
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -1176,10 +1203,7 @@ app.post('/api/turno/stream', async (req, res) => {
         try {
           const j = JSON.parse(s);
           const piece = j.message?.content || j.response || '';
-          if (piece) {
-            full += piece;
-            send('delta', { text: piece });
-          }
+          if (piece) emitText(piece);
         } catch {
           /* línea parcial */
         }
@@ -1189,12 +1213,19 @@ app.post('/api/turno/stream', async (req, res) => {
       try {
         const j = JSON.parse(buf.trim());
         const piece = j.message?.content || j.response || '';
-        if (piece) {
-          full += piece;
-          send('delta', { text: piece });
-        }
+        if (piece) emitText(piece);
       } catch {
         /* */
+      }
+    }
+    if (!headDone && head) {
+      const ex = extraerTono(head);
+      tono = ex.tono;
+      headDone = true;
+      send('tono', { tono });
+      if (ex.texto) {
+        full += ex.texto;
+        send('delta', { text: ex.texto });
       }
     }
     full = full.trim();
@@ -1202,7 +1233,7 @@ app.post('/api/turno/stream', async (req, res) => {
       full = hechos.join('\n');
       send('delta', { text: full });
     }
-    send('done', { reply: full, ms: Date.now() - t0, via: `${ULTRON_NODO_URL}/api/chat` });
+    send('done', { reply: full, tono, ms: Date.now() - t0, via: `${ULTRON_NODO_URL}/api/chat` });
     res.end();
   } catch (err: any) {
     send('error', { error: 'Qwen caído', message: String(err?.message || err).slice(0, 200) });

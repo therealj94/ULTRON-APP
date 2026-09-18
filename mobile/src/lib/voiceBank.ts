@@ -15,92 +15,66 @@ export const VOICE_BANK: Record<string, number> = {
   "buenastardesjoseestoylistoenqueteayudo": require('../../assets/voice/521bc33cb170.mp3'),
   // Buenas noches, José. Estoy listo. ¿En qué te ayudo?
   "buenasnochesjoseestoylistoenqueteayudo": require('../../assets/voice/5b6aec8b2f01.mp3'),
-  // Buenos días, Medardo. Estoy listo. ¿En qué te ayudo?
-  "buenosdiasmedardoestoylistoenqueteayudo": require('../../assets/voice/f81f315f598d.mp3'),
-  // Buenas tardes, Medardo. Estoy listo. ¿En qué te ayudo?
-  "buenastardesmedardoestoylistoenqueteayudo": require('../../assets/voice/24c28f17f220.mp3'),
-  // Buenas noches, Medardo. Estoy listo. ¿En qué te ayudo?
-  "buenasnochesmedardoestoylistoenqueteayudo": require('../../assets/voice/97730cc68816.mp3'),
+  // Buenos días, jefe. Estoy listo. ¿En qué te ayudo?
+  "buenosdiasjefeestoylistoenqueteayudo": require('../../assets/voice/47f640ac078c.mp3'),
+  // Buenas tardes, jefe. Estoy listo. ¿En qué te ayudo?
+  "buenastardesjefeestoylistoenqueteayudo": require('../../assets/voice/0d808611c4a2.mp3'),
+  // Buenas noches, jefe. Estoy listo. ¿En qué te ayudo?
+  "buenasnochesjefeestoylistoenqueteayudo": require('../../assets/voice/05b967ca54ae.mp3'),
   // Un momento.
   "unmomento": require('../../assets/voice/f31d4232cd0c.mp3'),
   // Déjame ver.
   "dejamever": require('../../assets/voice/50b0edc74c4e.mp3'),
-  // Claro, dame un segundo.
-  "clarodameunsegundo": require('../../assets/voice/91731792bea6.mp3'),
   // Voy.
   "voy": require('../../assets/voice/4215b0c922d6.mp3'),
-  // ¿Sí?
-  "si": require('../../assets/voice/7dd9b3388122.mp3'),
-  // Jeje.
-  "jeje": require('../../assets/voice/ad930d57ccd7.mp3'),
-  // Aquí estoy.
-  "aquiestoy": require('../../assets/voice/1af31b4b2611.mp3'),
-  // Te veo.
-  "teveo": require('../../assets/voice/2c6ae495853a.mp3'),
-  // ¿Me llamabas?
-  "mellamabas": require('../../assets/voice/35d277d4e2c0.mp3'),
-  // Presente.
-  "presente": require('../../assets/voice/88b7ff90b48f.mp3'),
-  // ¡Ay, mi ojo!
-  "aymiojo": require('../../assets/voice/2d44b1e32062.mp3'),
-  // Ese es mi sensor óptico, cuidado.
-  "eseesmisensoropticocuidado": require('../../assets/voice/a8713cee54d5.mp3'),
-  // Guiño. Ahora tú.
-  "guinoahoratu": require('../../assets/voice/8b9f3efc8e7e.mp3'),
-  // Jaja, eso cosquillea.
-  "jajaesocosquillea": require('../../assets/voice/33a8bf96653e.mp3'),
-  // Mmm, no me tapes la boca.
-  "mmmnometapeslaboca": require('../../assets/voice/bb2c13bb8ff0.mp3'),
-  // ¿Quieres que cante? Solo di canta.
-  "quieresquecantesolodicanta": require('../../assets/voice/4c3731e8db06.mp3'),
-  // Ahí está mi procesador. Trátalo bien.
-  "ahiestamiprocesadortratalobien": require('../../assets/voice/f5b801e9c2e1.mp3'),
-  // Mmm. Estoy pensando… no molestes.
-  "mmmestoypensandonomolestes": require('../../assets/voice/8b885e3e7d55.mp3'),
-  // Cuidado con la CPU.
-  "cuidadoconlacpu": require('../../assets/voice/30f8b6ec2fc1.mp3'),
-  // ¡Jajaja! ¡Para, para!
-  "jajajaparapara": require('../../assets/voice/341f8b519de7.mp3'),
-  // ¡Jaja! Eso… eso hace cosquillas.
-  "jajaesoesohacecosquillas": require('../../assets/voice/f206418e95d8.mp3'),
-  // Jajaja, ya, ya, me vas a descalibrar.
-  "jajajayayamevasadescalibrar": require('../../assets/voice/9328020c08ea.mp3'),
-  // Doble toque. ¿Urgente?
-  "dobletoqueurgente": require('../../assets/voice/53dec7098528.mp3'),
-  // Dos toques. Te escucho con atención.
-  "dostoquesteescuchoconatencion": require('../../assets/voice/703aa08da319.mp3'),
   // Oye… ¿qué haces?
   "oyequehaces": require('../../assets/voice/05f6cc834251.mp3'),
   // Ya, ya. Con cuidado.
   "yayaconcuidado": require('../../assets/voice/6c80a19cc093.mp3'),
-  // Mmm, eso hace cosquillas… para.
-  "mmmesohacecosquillaspara": require('../../assets/voice/2d72eb444d93.mp3'),
-  // Última advertencia, en serio.
-  "ultimaadvertenciaenserio": require('../../assets/voice/3a519fabcf75.mp3'),
   // ¡Basta! Pium, pium, pium.
   "bastapiumpiumpium": require('../../assets/voice/09e7f9d7a89f.mp3'),
-  // ¡Te lo advertí! Pium, pium.
-  "teloadvertipiumpium": require('../../assets/voice/96e1fbeb4849.mp3'),
   // Suficiente. Disparando… de broma.
   "suficientedisparandodebroma": require('../../assets/voice/5d4257f651c3.mp3'),
   // Mmm… gracias. Eso me gusta.
   "mmmgraciasesomegusta": require('../../assets/voice/f59a57394643.mp3'),
-  // Vale, vale. Sigo contigo.
-  "valevalesigocontigo": require('../../assets/voice/0b155a4bbd21.mp3'),
-  // Esto sí. Recargando ánimo.
-  "estosirecargandoanimo": require('../../assets/voice/0100989832ab.mp3'),
   // ¡Ey! No me sacudas.
   "eynomesacudas": require('../../assets/voice/b25701ca61d8.mp3'),
   // Uy. ¿Terremoto o eres tú?
   "uyterremotooerestu": require('../../assets/voice/73b716c81275.mp3'),
-  // Todo se mueve… ya pasó.
-  "todosemueveyapaso": require('../../assets/voice/c98a8198aefb.mp3'),
   // Investigando en internet.
   "investigandoeninternet": require('../../assets/voice/19f8b366dd00.mp3'),
-  // Estoy leyendo las fuentes.
-  "estoyleyendolasfuentes": require('../../assets/voice/0ca41997dcb3.mp3'),
   // Consultando el precio ahora.
   "consultandoelprecioahora": require('../../assets/voice/d9a70742a66e.mp3'),
+  // Aquí estoy. ¿En qué te ayudo?
+  "aquiestoyenqueteayudo": require('../../assets/voice/c9b42b66330c.mp3'),
+  // Esta es la tuya, jefe. ¿Sigo o me detengo?
+  "estaeslatuyajefesigoomedetengo": require('../../assets/voice/eca65bcdfc2d.mp3'),
+  // Jefe, no sabía que tenías esos gustos. ¿Sigo o me detengo?
+  "jefenosabiaqueteniasesosgustossigoomedetengo": require('../../assets/voice/f90f754d2520.mp3'),
+  // Solo tengo esos cuatro ganchos, jefe.
+  "solotengoesoscuatroganchosjefe": require('../../assets/voice/d8e8d8fe61bd.mp3'),
+  // Me falta la toma de canto, jefe.
+  "mefaltalatomadecantojefe": require('../../assets/voice/824c2b439c7e.mp3'),
+  // Hecho, jefe.
+  "hechojefe": require('../../assets/voice/3f48faba3b6c.mp3'),
+  // Esta es la tuya, José. ¿Sigo o me detengo?
+  "estaeslatuyajosesigoomedetengo": require('../../assets/voice/e34485abe8b7.mp3'),
+  // José, no sabía que tenías esos gustos. ¿Sigo o me detengo?
+  "josenosabiaqueteniasesosgustossigoomedetengo": require('../../assets/voice/474fb16ecc0a.mp3'),
+  // Solo tengo esos cuatro ganchos, José.
+  "solotengoesoscuatroganchosjose": require('../../assets/voice/272a2b92dae5.mp3'),
+  // Me falta la toma de canto, José.
+  "mefaltalatomadecantojose": require('../../assets/voice/d0895f125d97.mp3'),
+  // Hecho, José.
+  "hechojose": require('../../assets/voice/278d45e14147.mp3'),
+  // No puedo enojarme contigo jefe, eres demasiado predecible.
+  "nopuedoenojarmecontigojefeeresdemasiadopredecible": require('../../assets/voice/37ab0236d62b.mp3'),
+  // Hecho.
+  "hecho": require('../../assets/voice/23af90bc8d7b.mp3'),
+  // Te escucho, jefe.
+  "teescuchojefe": require('../../assets/voice/e6de649d4b2b.mp3'),
+  // Te escucho, José.
+  "teescuchojose": require('../../assets/voice/523aa0b38e5e.mp3'),
   // Te escucho de nuevo.
   "teescuchodenuevo": require('../../assets/voice/680b3bb0628a.mp3'),
   // Micrófono en silencio.

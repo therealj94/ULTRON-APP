@@ -75,3 +75,48 @@ reacciones táctiles, ni ajustes. Las funciones "que no funcionaban" no existía
 
 **Medidas (servidor local con env de producción):** `engine=eleven` 1.3 s primera vez / 0.3 s en caché; `engine=qwen`
 8.7 s (WAV). Stream: primer delta de Qwen ~0.6 s. Búsqueda web + lectura + Qwen: 4.4 s.
+
+## 3.2 — ULTRON para el jefe (tonos, gestos lentos, canto fijo)
+
+Spec de Medardo integrada sin tocar lo que ya funcionaba (oído nativo, stream, búsqueda, memoria, ajustes).
+
+**Voz.** Una sola (Daniel, la misma de las 70 frases grabadas), ajustada a "seca": `stability 0.62`, `style 0.05`,
+`speaker_boost off`. Sin efectos. Responde en el idioma en que le hablan (`language_code` en TTS, regla en el prompt).
+
+**Tonos (A).** Qwen abre cada respuesta con `[TONO]` (IDLE, BURLA, CANSADO, ENOJO_JUEGO, ENOJO_REAL, TRISTE, ESTRES,
+EUFORIA, FOCUS). El servidor lo extrae (`extraerTono`) y lo emite como evento SSE `tono` antes del primer `delta`; la
+app lo usa para cara + voz. `TONOS` en `server/desk.ts` y `TONES` en `mobile/src/config.ts` (semitonos / wpm):
+
+| Tono | Pitch | wpm | Cómo se hace |
+| --- | --- | --- | --- |
+| IDLE | 0 | 150 | base |
+| BURLA | −1 | 145 | pausa 0.4 s en la app antes del audio + `rate 0.944` |
+| CANSADO | −2 | 125 | `rate 0.891` + `speed` ElevenLabs para el tempo |
+| ENOJO_JUEGO | 0 | 140 | frase ancla en el prompt |
+| ENOJO_REAL | −2 | 130 | cara ANGRY sostenida |
+| TRISTE | −3 | 120 | `rate 0.841` |
+| ESTRÉS | 0 | 155 | temblor sutil en la cara |
+| EUFORIA | +1 | 160 | `rate 1.059` |
+| FOCUS | 0 | 150 | "Hecho." |
+
+Pitch = `rate = 2^(st/12)` en expo-av con `shouldCorrectPitch: false`; el tempo lo compensa `speed` de ElevenLabs
+(`elevenSpeedFor`). Las frases grabadas son IDLE y se reproducen con la misma `rate`.
+
+**Sonidos (B).** `tap` 130 ms click blando · `wink` tic 110 ms · `purr` 1.75 s con fade · `wake` uptone 240 ms.
+`playSfx` no encima dos (ventana por duración) y `silenceSfx()` los apaga durante el canto. Se quitaron giggle/boing/whoosh.
+
+**Gestos (C).** `UltronFace` pasó de `Pressable` a `PanResponder` y expone `onTouchStart/Move/End` con coordenadas −1..1.
+El escritorio decide: 1 toque → blink 0.4 s + squash 7 Hz (`pokeSeq`) · ojo → `winkSide` 1.4–1.8 s + SMILE, sin habla ·
+2 toques (<1.4 s) → wake + LISTENING · 3 → CURIOSITY 2.6 s + "Aquí estoy. ¿En qué te ayudo?" · 4 → PURR 3.2 s + purr ·
+hold 0.8 s → FOCUS 3.4 s · deslizar → mirada lerp (spring lento). `holdFace()` sostiene 1.2–3.4 s. Transiciones a 420 ms.
+El menú ahora solo abre desde el borde derecho. Ya no hay enojo/blaster por toques (solo por voz: «dispara», «sable»).
+
+**Canto (D).** `mobile/src/lib/sing.ts`: cuatro ganchos con letra e idioma fijos, tomas en `assets/sing/*.mp3`
+generadas con `eleven_v3` (`[singing softly, a cappella, in tune]`, 9.8–13.9 s) vía `scripts/build-sing-takes.mjs`.
+Solo con «canta»: sin nombre/«la mía» → EN · «dramática»/«la larga» → EN · «ligera»/«la suave» → ES · «piano»/«la íntima» → EN.
+Otra canción → «Solo tengo esos cuatro ganchos, jefe.» Sin toma → «Me falta la toma de canto, jefe.» Durante el canto la boca
+sigue el nivel, sin SFX, y si el jefe habla (parcial con palabras fuera de la letra) se corta. Al terminar: SMILE 1.5 s +
+frase DESPUÉS_CANTO. «Para» = silencio sin comentario. «Sigo/sigue» repite el último gancho. Qwen tiene prohibido cantar o
+nombrar artistas/discos; los géneros improvisados anteriores se quitaron.
+
+**Trato.** `tratoPara`/`tratoFor`: Medardo = «jefe» (saludo, botones de canto, «Hecho, jefe.»); José sigue siendo José.

@@ -2,14 +2,15 @@ import { Audio } from 'expo-av';
 
 const SOURCES = {
   tap: require('../../assets/sfx/tap.mp3'),
+  wink: require('../../assets/sfx/wink.mp3'),
+  purr: require('../../assets/sfx/purr.mp3'),
+  wake: require('../../assets/sfx/wake.mp3'),
   blaster: require('../../assets/sfx/blaster.mp3'),
   saber: require('../../assets/sfx/saber.mp3'),
-  purr: require('../../assets/sfx/purr.mp3'),
-  giggle: require('../../assets/sfx/giggle.mp3'),
-  wink: require('../../assets/sfx/wink.mp3'),
-  boing: require('../../assets/sfx/boing.mp3'),
-  whoosh: require('../../assets/sfx/whoosh.mp3'),
 } as const;
+
+/** Duración aproximada: nunca dos SFX a la vez. */
+const DURATION_MS: Record<keyof typeof SOURCES, number> = { tap: 130, wink: 110, purr: 1750, wake: 240, blaster: 900, saber: 1400 };
 
 export type SfxName = keyof typeof SOURCES;
 
@@ -39,12 +40,21 @@ export async function preloadSfx() {
 }
 
 let sfxEnabled = true;
+let busyUntil = 0;
+let silencedUntil = 0;
 export function setSfxEnabled(on: boolean) {
   sfxEnabled = on;
+}
+/** Canto en curso: sin SFX. */
+export function silenceSfx(ms: number) {
+  silencedUntil = Date.now() + ms;
 }
 
 export function playSfx(name: SfxName) {
   if (!sfxEnabled) return;
+  const now = Date.now();
+  if (now < silencedUntil || now < busyUntil) return;
+  busyUntil = now + DURATION_MS[name];
   const s = pool.get(name);
   if (!s) {
     void (async () => {

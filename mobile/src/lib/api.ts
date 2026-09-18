@@ -77,6 +77,7 @@ export type Turn = { rol: 'usuario' | 'ultron'; texto: string };
 
 export type ChatResult = {
   reply: string;
+  tono?: string;
   mode?: Mode;
   ms?: number;
   via?: string;
@@ -108,7 +109,7 @@ export async function turno(opts: {
       },
       opts.image ? 45_000 : 28_000
     );
-    return { reply: String(data.reply || ''), mode: data.mode, ms: data.ms, via: data.via, error: data.error };
+    return { reply: String(data.reply || ''), tono: data.tono, mode: data.mode, ms: data.ms, via: data.via, error: data.error };
   } catch (e: any) {
     return { reply: '', error: e?.message || 'Sin conexión al cerebro' };
   }
@@ -122,7 +123,8 @@ export async function turno(opts: {
 export function turnoStream(
   opts: { message: string; mode: Mode; userName: string; historial: Turn[]; memoria?: string[]; image?: string },
   onDelta: (piece: string) => void,
-  onTools?: (tools: string[]) => void
+  onTools?: (tools: string[]) => void,
+  onTono?: (tono: string) => void
 ): { promise: Promise<ChatResult>; abort: () => void } {
   const xhr = new XMLHttpRequest();
   let seen = 0;
@@ -162,7 +164,8 @@ export function turnoStream(
           full += data.text;
           onDelta(String(data.text));
         } else if (ev === 'tools' && Array.isArray(data.tools)) onTools?.(data.tools);
-        else if (ev === 'done') done = { reply: String(data.reply || full), ms: data.ms, via: data.via };
+        else if (ev === 'tono' && data.tono) onTono?.(String(data.tono));
+        else if (ev === 'done') done = { reply: String(data.reply || full), tono: data.tono, ms: data.ms, via: data.via };
         else if (ev === 'error') done = { reply: full, error: String(data.error || 'error') };
       }
     };
@@ -195,8 +198,8 @@ export function turnoStream(
 
 export type TtsEngineParam = 'eleven' | 'qwen' | 'auto';
 
-export function ttsUrl(text: string, performance: 'speak' | 'sing', engine: TtsEngineParam = 'eleven') {
-  const q = new URLSearchParams({ text, performance, engine });
+export function ttsUrl(text: string, performance: 'speak' | 'sing', engine: TtsEngineParam = 'eleven', tono = 'IDLE', lang = 'es') {
+  const q = new URLSearchParams({ text, performance, engine, tono, lang });
   return `${API_BASE}/api/tts?${q.toString()}`;
 }
 
