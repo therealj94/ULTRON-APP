@@ -104,7 +104,7 @@ app.get('/api/health', async (_req, res) => {
     ? await probeJson(`${ULTRON_OJO_URL}/salud`, { 'X-Ojo-Clave': ULTRON_OJO_CLAVE })
     : { ok: false, status: 0, json: null, text: 'ULTRON_OJO_URL vacío' };
   const tts = ULTRON_TTS_URL
-    ? await probeJson(`${ULTRON_TTS_URL}/salud`, { 'X-Tts-Clave': ULTRON_TTS_CLAVE })
+    ? await probeJson(`${ULTRON_TTS_URL}/salud`, { 'x-ultron-tts-clave': ULTRON_TTS_CLAVE })
     : { ok: false, status: 0, json: null, text: 'ULTRON_TTS_URL vacío' };
   res.json({
     ok: true,
@@ -755,6 +755,34 @@ function juntarOllama(raw: string) {
     return raw;
   }
 }
+
+
+app.post('/api/tts', async (req, res) => {
+  const text = String(req.body?.text || '').slice(0, 2000).trim();
+  const voice = String(req.body?.voice || 'jarvis');
+  if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
+  if (!ULTRON_TTS_URL || !ULTRON_TTS_CLAVE) {
+    return res.status(503).json({ error: 'TTS Qwen no configurado', honesto: true });
+  }
+  try {
+    const r = await fetch(`${ULTRON_TTS_URL}/synthesize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-ultron-tts-clave': ULTRON_TTS_CLAVE },
+      body: JSON.stringify({ text, voice, language: 'Spanish' }),
+      signal: AbortSignal.timeout(45000),
+    });
+    if (!r.ok) {
+      const err = await r.text();
+      return res.status(502).json({ error: 'TTS falló', detalle: err.slice(0, 200), honesto: true });
+    }
+    const buf = Buffer.from(await r.arrayBuffer());
+    res.setHeader('Content-Type', r.headers.get('content-type') || 'audio/wav');
+    res.setHeader('Cache-Control', 'no-store');
+    return res.send(buf);
+  } catch (e: any) {
+    return res.status(502).json({ error: 'TTS caído', message: String(e?.message || e).slice(0, 180), honesto: true });
+  }
+});
 
 app.post('/api/turno', async (req, res) => {
   const t0 = Date.now();

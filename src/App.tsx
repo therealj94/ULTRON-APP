@@ -141,28 +141,45 @@ export default function App() {
   const vocalize = useCallback(
     (text: string, faceOverride: FaceState = 'SPEAKING') => {
       showBubble(text);
-      if (speakerEnabled) {
-        setFace(faceOverride);
-        if (activeVoice?.apiKey) {
-          speakWithElevenLabsOrFallback(text, activeVoice, {
-            onStart: () => setFace(faceOverride),
-            onEnd: () => setFace('IDLE'),
-            onError: () => {
-              speakUtterance(text, {
-                enabled: true,
-                onEnd: () => setFace('IDLE'),
-              });
-            },
-          });
-        } else {
-          speakUtterance(text, {
-            enabled: true,
-            onEnd: () => {
-              setFace('IDLE');
-            },
-          });
-        }
-      }
+      if (!speakerEnabled) return;
+      setFace(faceOverride);
+
+      const browserFallback = () =>
+        speakUtterance(text, { enabled: true, onEnd: () => setFace('IDLE') });
+
+      fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: 'jarvis' }),
+      })
+        .then(async (r) => {
+          if (!r.ok || !(r.headers.get('content-type') || '').includes('audio')) {
+            throw new Error('tts-qwen-off');
+          }
+          const blob = await r.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = new Audio(url);
+          audio.onended = () => {
+            URL.revokeObjectURL(url);
+            setFace('IDLE');
+          };
+          audio.onerror = () => {
+            URL.revokeObjectURL(url);
+            browserFallback();
+          };
+          await audio.play();
+        })
+        .catch(() => {
+          if (activeVoice?.apiKey) {
+            speakWithElevenLabsOrFallback(text, activeVoice, {
+              onStart: () => setFace(faceOverride),
+              onEnd: () => setFace('IDLE'),
+              onError: browserFallback,
+            });
+          } else {
+            browserFallback();
+          }
+        });
     },
     [showBubble, speakerEnabled, activeVoice]
   );
