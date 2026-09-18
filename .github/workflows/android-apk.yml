@@ -54,7 +54,8 @@ jobs:
           GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon --stacktrace
+          # solo ABIs de teléfonos reales (arm): el APK universal pesaba 88 MB
+          ./gradlew assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
 
       - name: Rename APK
         working-directory: mobile
