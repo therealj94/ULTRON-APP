@@ -23,6 +23,7 @@ import {
   leerPagina,
 } from './server/desk';
 import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
+import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, limitar, urlPublica } from './server/seguridad';
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -61,8 +62,8 @@ wss.on('connection', (ws: WebSocket) => {
   });
 });
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '12mb' }));
+app.use(express.urlencoded({ extended: true, limit: '12mb' }));
 
 // System & Cloud Credentials configured from environment or supplied by the Board
 const GITHUB_PAT = process.env.GITHUB_PAT || '';
@@ -76,7 +77,7 @@ const ULTRON_OJO_URL = (process.env.ULTRON_OJO_URL || process.env.PLAYWRIGHT_NOD
 const ULTRON_OJO_CLAVE = process.env.ULTRON_OJO_CLAVE || '';
 const ULTRON_TTS_URL = (process.env.CHATTERBOX_URL || process.env.ULTRON_TTS_URL || '').replace(/\/$/, '');
 const ULTRON_TTS_CLAVE = process.env.ULTRON_TTS_CLAVE || '';
-if (process.env.ULTRON_NODO_INSECURE_TLS === '1') process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+// TLS: no desactivar VERIFY global. El nodo Qwen usa ULTRON_NODO_INSECURE_TLS solo en su fetch.
 const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || '';
 const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || '';
 const AWS_DEFAULT_REGION = (process.env.AWS_DEFAULT_REGION || 'us-east-1').replace(' ', '-');
@@ -153,9 +154,6 @@ app.get('/api/vault/status', async (req, res) => {
         type: 'audio_synthesis',
         configured: Boolean(VAULT_ELEVENLABS_API_KEY),
         status: VAULT_ELEVENLABS_API_KEY ? 'CONECTADO' : 'PENDIENTE_API_KEY',
-        maskedKey: VAULT_ELEVENLABS_API_KEY
-          ? `${VAULT_ELEVENLABS_API_KEY.substring(0, 4)}••••••••${VAULT_ELEVENLABS_API_KEY.slice(-3)}`
-          : null,
         configuredMs: null,
       },
       {
@@ -211,7 +209,7 @@ app.get('/api/vault/status', async (req, res) => {
 });
 
 // BÓVEDA: ElevenLabs Key Update Endpoint
-app.post('/api/vault/elevenlabs', (req, res) => {
+app.post('/api/vault/elevenlabs', exigirSesion, (req, res) => {
   const { apiKey } = req.body;
   if (!apiKey || typeof apiKey !== 'string') {
     return res.status(400).json({ error: 'La API Key de ElevenLabs es requerida.' });
@@ -221,7 +219,7 @@ app.post('/api/vault/elevenlabs', (req, res) => {
   return res.json({
     success: true,
     message: 'API Key de ElevenLabs archivada con éxito en la Bóveda de ULTRON FP.',
-    maskedKey: `${VAULT_ELEVENLABS_API_KEY.substring(0, 4)}••••••••${VAULT_ELEVENLABS_API_KEY.slice(-3)}`,
+    configured: true,
   });
 });
 
@@ -285,19 +283,16 @@ app.get('/api/cloud/status', async (req, res) => {
   const result = {
     aws: {
       configured: Boolean(AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY),
-      accessKeyIdMasked: AWS_ACCESS_KEY_ID ? `${AWS_ACCESS_KEY_ID.substring(0, 6)}...${AWS_ACCESS_KEY_ID.slice(-4)}` : null,
       region: AWS_DEFAULT_REGION,
       status: 'Connected',
       services: ['SageMaker Qwen-27B', 'Playwright Browser Cluster', 'S3 Storage'],
     },
     github: {
       configured: Boolean(GITHUB_PAT),
-      tokenMasked: GITHUB_PAT ? `${GITHUB_PAT.substring(0, 12)}...` : null,
       status: 'Authenticated',
     },
     render: {
       configured: Boolean(RENDER_API_KEY),
-      keyMasked: RENDER_API_KEY ? `${RENDER_API_KEY.substring(0, 8)}...` : null,
       status: 'Linked',
     },
     qwen: {
@@ -431,7 +426,7 @@ app.get('/api/render/deploys', async (req, res) => {
 });
 
 // Render API: Trigger Live Deployment to Render
-app.post('/api/render/deploy', async (req, res) => {
+app.post('/api/render/deploy', exigirSesion, async (req, res) => {
   if (!RENDER_API_KEY) {
     return res.status(400).json({ error: 'RENDER_API_KEY no configurada en variables de entorno.' });
   }
@@ -530,8 +525,14 @@ app.post('/api/ultron/entrar', async (req, res) => {
       },
       lastLogin: new Date().toISOString(),
     };
+    const s = emitirSesion({
+      correo,
+      nombre: ultronRemoteSession.user.nombre,
+      rol: ultronRemoteSession.user.rol || 'Junta',
+    });
     return res.json({
       ok: true,
+      token: s.token,
       miembro: ultronRemoteSession.user,
       message: `Bienvenido a ULTRON FP, ${ultronRemoteSession.user.nombre}`,
       remoteUrl: ULTRON_REMOTE_URL,
@@ -542,40 +543,17 @@ app.post('/api/ultron/entrar', async (req, res) => {
 });
 
 app.post('/api/ultron/biometric-login', async (req, res) => {
-  const { biometricType, userName, role } = req.body;
-  const correo = normalizarCorreo(req.body?.correo) || 'j.ordonez@ordenglobal.org';
-  if (!JUNTA[correo] && !/@ordenglobal\.org$/.test(correo)) {
-    return res.status(403).json({ error: 'Acceso de escritorio solo para miembros @ordenglobal.org.' });
+  const correo = normalizarCorreo(req.body?.correo);
+  if (!correo || !JUNTA[correo]) {
+    return res.status(403).json({ error: 'biometría solo para junta registrada', honesto: true });
   }
-  let isLive = false;
-  try {
-    const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/salud`, { signal: AbortSignal.timeout(5000) });
-    isLive = remoteRes.ok;
-  } catch {
-    isLive = false;
+  const previa = sesionDe(req);
+  if (!previa || previa.correo !== correo) {
+    return res.status(401).json({ error: 'entra primero con clave; la huella no abre la casa sola', honesto: true });
   }
-  try {
-    ultronRemoteSession = {
-      authenticated: true,
-      user: {
-        nombre: JUNTA[correo]?.nombre || userName || correo.split('@')[0],
-        correo,
-        rol: role || JUNTA[correo]?.rol || 'Junta Directiva · Orden Global',
-      },
-      lastLogin: new Date().toISOString(),
-    };
-    return res.json({
-      ok: true,
-      authenticated: true,
-      user: ultronRemoteSession.user,
-      remoteSystemLive: isLive,
-      remoteUrl: ULTRON_REMOTE_URL,
-      biometricType: biometricType || 'fingerprint',
-      message: `Acceso biométrico verificado. Sesión sincronizada con ULTRON FP (${ULTRON_REMOTE_URL}).`,
-    });
-  } catch (err: any) {
-    return res.status(500).json({ error: 'Error durante verificación biométrica', message: err.message });
-  }
+  const s = emitirSesion({ correo, nombre: JUNTA[correo].nombre, rol: JUNTA[correo].rol });
+  ultronRemoteSession = { authenticated: true, user: { nombre: s.nombre, correo, rol: s.rol }, lastLogin: new Date().toISOString() };
+  return res.json({ ok: true, authenticated: true, token: s.token, user: { nombre: s.nombre, correo, rol: s.rol }, honesto: true });
 });
 
 app.get('/api/ultron/sesion', async (req, res) => {
@@ -587,6 +565,7 @@ app.get('/api/ultron/sesion', async (req, res) => {
 });
 
 app.post('/api/ultron/salir', async (req, res) => {
+  borrarSesion(tokenDe(req));
   ultronRemoteCookie = '';
   ultronRemoteSession = { authenticated: false, user: null };
   res.json({ ok: true, message: 'Sesión cerrada exitosamente.' });
@@ -629,13 +608,16 @@ app.get('/api/render/deploy/:deployId', async (req, res) => {
 });
 
 // Playwright Web Scraping & Review Endpoint (Connected to AWS node)
-app.post('/api/playwright/scrape', async (req, res) => {
+app.post('/api/playwright/scrape', exigirSesion, limitar(10), async (req, res) => {
   const { url } = req.body || {};
   if (!url || typeof url !== 'string') {
     return res.status(400).json({ error: 'URL requerida', honesto: true });
   }
   let formattedUrl = url.trim();
   if (!/^https?:\/\//i.test(formattedUrl)) formattedUrl = `https://${formattedUrl}`;
+  const gate = await urlPublica(formattedUrl);
+  if (!gate.ok) return res.status(400).json({ error: gate.error, honesto: true });
+  formattedUrl = gate.url;
   if (!ULTRON_OJO_URL) {
     return res.status(503).json({ error: 'ULTRON_OJO_URL no configurada', honesto: true });
   }
@@ -796,7 +778,9 @@ function leerMemoria(): Memoria {
 }
 function escribirMemoria(m: Memoria) {
   fs.mkdirSync(path.dirname(MEM_FILE), { recursive: true });
-  fs.writeFileSync(MEM_FILE, JSON.stringify(m));
+  const tmp = MEM_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(m));
+  fs.renameSync(tmp, MEM_FILE);
 }
 
 app.get('/api/memoria', (_req, res) => {
@@ -804,7 +788,7 @@ app.get('/api/memoria', (_req, res) => {
   res.json({ ...m, honesto: true, nota: 'corta = últimos turnos; larga = hechos. FP mongo no expuesto a la desk sin sesión.' });
 });
 
-app.post('/api/memoria', (req, res) => {
+app.post('/api/memoria', exigirSesion, (req, res) => {
   const m = leerMemoria();
   const hecho = String(req.body?.hecho || '').trim();
   const olvido = !!req.body?.olvidar;
@@ -824,7 +808,7 @@ app.post('/api/memoria', (req, res) => {
 });
 
 
-app.post('/api/tts/stream', async (req, res) => {
+app.post('/api/tts/stream', limitar(20), async (req, res) => {
   const text = String(req.body?.text || '').slice(0, 2000).trim();
   const voice = String(req.body?.voice || 'luna');
   const instruct = String(req.body?.instruct || '').slice(0, 400);
@@ -862,7 +846,7 @@ app.post('/api/tts/stream', async (req, res) => {
  * Oído de la app nativa: ElevenLabs Scribe (v2 → v1), Gemini de reserva si hay key.
  * Body: { audioBase64 | audio (data URL o base64), mimeType | mime, language }.
  */
-app.post('/api/stt', async (req, res) => {
+app.post('/api/stt', limitar(20), async (req, res) => {
   const t0 = Date.now();
   const raw = String(req.body?.audioBase64 || req.body?.audio || '');
   if (!raw || raw.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
@@ -902,7 +886,7 @@ app.get('/api/tts', (req, res, next) => {
   req.body = { ...req.query };
   next();
 });
-app.all('/api/tts', async (req, res) => {
+app.all('/api/tts', limitar(20), async (req, res) => {
   const text = limpiarParaVoz(String(req.body?.text || '').slice(0, 2000));
   const voice = String(req.body?.voice || ULTRON_VOICE.qwenVoice);
   const instruct = String(req.body?.instruct || '').slice(0, 400);
@@ -1049,7 +1033,7 @@ HECHOS:\n${hechos.join('\n') || '(ninguno)'}\nLARGO PLAZO:\n${larga.join('\n') |
   return { t0, message, mode, hechos, tools, foto, directo, system };
 }
 
-app.post('/api/turno', async (req, res) => {
+app.post('/api/turno', limitar(20), async (req, res) => {
   const p = await prepararTurno(req.body);
   if (!p.message) return res.status(400).json({ error: 'message vacío', honesto: true });
   const { t0, mode, hechos, tools, foto, system, message } = p;
@@ -1095,7 +1079,7 @@ app.post('/api/turno', async (req, res) => {
  * Turno en streaming (SSE): la app empieza a hablar con la primera frase mientras Qwen sigue escribiendo.
  * Eventos: `tools` (herramientas usadas), `delta` (texto), `done` ({ reply, ms }), `error`.
  */
-app.post('/api/turno/stream', async (req, res) => {
+app.post('/api/turno/stream', limitar(20), async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Accel-Buffering', 'no');

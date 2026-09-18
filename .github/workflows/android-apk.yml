@@ -6,6 +6,9 @@ on:
     branches: [main, "cursor/**"]
     paths:
       - "mobile/**"
+      - "src/**"
+      - "server.ts"
+      - "server/**"
       - ".github/workflows/android-apk.yml"
 concurrency:
   group: apk-${{ github.ref }}
@@ -72,3 +75,15 @@ jobs:
           path: mobile/out/*.apk
           if-no-files-found: error
           retention-days: 30
+
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm run build

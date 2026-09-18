@@ -177,11 +177,8 @@ export function LoginScreen({ onAuthenticated }: Props) {
         },
         maybeClave || clave ? { clave: maybeClave || clave } : undefined
       );
-    } catch {
-      await finish(
-        { name: user.name, role: user.role, correo: user.correo },
-        maybeClave || clave ? { clave: maybeClave || clave } : undefined
-      );
+    } catch (e: any) {
+      setError(e?.message || 'La huella no abre sin sesión previa. Entrá con clave.');
     } finally {
       setLoading(false);
     }

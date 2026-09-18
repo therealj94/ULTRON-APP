@@ -93,7 +93,9 @@ export function buildPersonality(opts: { nombre?: string; hora?: Date }) {
 
 type AudioHit = { audio: Buffer; contentType: string; at: number };
 const audioCache = new Map<string, AudioHit>();
-const AUDIO_CACHE_MAX = 240;
+const AUDIO_CACHE_MAX = 40;
+const AUDIO_CACHE_BYTES = 24 * 1024 * 1024;
+let audioCacheBytes = 0;
 
 export function getCachedAudio(key: string): AudioHit | null {
   const hit = audioCache.get(key);
@@ -104,11 +106,16 @@ export function getCachedAudio(key: string): AudioHit | null {
 }
 
 export function setCachedAudio(key: string, audio: Buffer, contentType: string) {
+  const prev = audioCache.get(key);
+  if (prev) audioCacheBytes -= prev.audio.length;
   audioCache.set(key, { audio, contentType, at: Date.now() });
-  while (audioCache.size > AUDIO_CACHE_MAX) {
+  audioCacheBytes += audio.length;
+  while (audioCache.size > AUDIO_CACHE_MAX || audioCacheBytes > AUDIO_CACHE_BYTES) {
     const oldest = audioCache.keys().next().value;
     if (oldest === undefined) break;
+    const gone = audioCache.get(oldest);
     audioCache.delete(oldest);
+    if (gone) audioCacheBytes -= gone.audio.length;
   }
 }
 
