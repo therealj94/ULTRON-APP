@@ -1,14 +1,9 @@
 /**
- * TTS de baja latencia:
- * - Divide la respuesta en frases y sintetiza en paralelo (pipeline):
- *   la 1ª frase suena mientras se sintetizan las siguientes.
- * - Motor rápido del servidor (engine=fast → ElevenLabs Flash) con
- *   fallback a voz del sistema si no hay red.
- * - Prefetch de frases frecuentes (saludo, acks) para respuesta instantánea.
+ * TTS neural only (nunca voz robótica del sistema).
+ * Pipeline por frases + prefetch. performance=sing usa modelo musical.
  */
 import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as Speech from 'expo-speech';
 import { synthesizeTts } from './api';
 
 let sound: Audio.Sound | null = null;
@@ -43,7 +38,6 @@ function cleanForSpeech(text: string) {
     .trim();
 }
 
-/** Corta en frases cortas (máx ~140 chars) para pipeline. */
 export function splitSentences(text: string): string[] {
   const parts = text
     .split(/(?<=[.!?…;:])\s+|\n+/)
@@ -69,7 +63,6 @@ export function splitSentences(text: string): string[] {
 }
 
 async function ensureAudioMode() {
-  if (audioModeReady) return;
   try {
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
@@ -80,25 +73,25 @@ async function ensureAudioMode() {
     });
     audioModeReady = true;
   } catch {
-    /* */
+    audioModeReady = false;
   }
 }
 
-function cacheKey(text: string, voiceId: string) {
-  return `${voiceId}|${text}`;
+function cacheKey(text: string, voiceId: string, performance: string) {
+  return `${voiceId}|${performance}|${text}`;
 }
 
-/** Sintetiza y guarda en archivo. Devuelve uri o null. */
-async function fetchToFile(text: string, voiceId: string): Promise<string | null> {
-  const key = cacheKey(text, voiceId);
+async function fetchToFile(text: string, voiceId: string, performance: 'speak' | 'sing'): Promise<string | null> {
+  const key = cacheKey(text, voiceId, performance);
   const hit = fileCache.get(key);
   if (hit) return hit;
-  const buf = await synthesizeTts({ text, voiceId, engine: 'fast' });
+  let buf = await synthesizeTts({ text, voiceId, engine: 'fast', performance });
+  if (!buf || buf.byteLength < 64) {
+    buf = await synthesizeTts({ text, voiceId, engine: 'fast', performance });
+  }
   if (!buf || buf.byteLength < 64) return null;
   try {
-    const path = `${FileSystem.cacheDirectory}ultron-tts-${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 7)}.mp3`;
+    const path = `${FileSystem.cacheDirectory}ultron-tts-${Date.now()}-${Math.random().toString(36).slice(2, 7)}.mp3`;
     await FileSystem.writeAsStringAsync(path, bytesToBase64(buf), {
       encoding: FileSystem.EncodingType.Base64,
     });
@@ -112,9 +105,11 @@ async function fetchToFile(text: string, voiceId: string): Promise<string | null
 function playFile(uri: string, my: number): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const end = () => {
       if (done) return;
       done = true;
+      if (timer) clearTimeout(timer);
       resolve();
     };
     (async () => {
@@ -131,14 +126,15 @@ function playFile(uri: string, my: number): Promise<void> {
             if ((st as any).error) end();
             return;
           }
+          const dur = st.durationMillis || 8000;
+          if (!timer) timer = setTimeout(end, dur + 800);
           if (st.didJustFinish) {
             void s.unloadAsync().catch(() => {});
             if (sound === s) sound = null;
             end();
           }
         });
-        // Guardia por si el status update no llega
-        setTimeout(end, 30_000);
+        timer = setTimeout(end, 20_000);
       } catch {
         end();
       }
@@ -146,27 +142,8 @@ function playFile(uri: string, my: number): Promise<void> {
   });
 }
 
-function speakSystem(text: string, my: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    if (my !== gen) return resolve();
-    Speech.speak(text, {
-      language: 'es-MX',
-      pitch: 0.95,
-      rate: 1.02,
-      onDone: () => resolve(),
-      onStopped: () => resolve(),
-      onError: () => resolve(),
-    });
-  });
-}
-
 export async function stopSpeaking() {
   gen += 1;
-  try {
-    Speech.stop();
-  } catch {
-    /* */
-  }
   if (sound) {
     const s = sound;
     sound = null;
@@ -183,16 +160,14 @@ export function isSpeaking() {
   return sound !== null;
 }
 
-/** Precalienta frases (saludo, acks) para que suenen al instante. */
 export async function prefetchPhrases(phrases: string[], voiceId: string) {
-  // Concurrencia 2 para no chocar con el límite de ElevenLabs; la 1ª frase (saludo) va sola.
   const queue = phrases.map((p) => cleanForSpeech(p)).filter(Boolean);
   const first = queue.shift();
-  if (first) await fetchToFile(first, voiceId).catch(() => null);
+  if (first) await fetchToFile(first, voiceId, 'speak').catch(() => null);
   const worker = async () => {
     while (queue.length) {
       const p = queue.shift()!;
-      await fetchToFile(p, voiceId).catch(() => null);
+      await fetchToFile(p, voiceId, 'speak').catch(() => null);
     }
   };
   await Promise.all([worker(), worker()]);
@@ -202,9 +177,9 @@ export async function speak(
   text: string,
   opts?: {
     voiceId?: string;
+    performance?: 'speak' | 'sing';
     onStart?: () => void;
     onEnd?: () => void;
-    /** Llamado cuando empieza realmente el audio (para pausar mic). */
     onAudioStart?: () => void;
   }
 ) {
@@ -216,17 +191,17 @@ export async function speak(
   await stopSpeaking();
   const my = gen;
   const voiceId = opts?.voiceId || 'ultron';
+  const performance = opts?.performance || 'speak';
   opts?.onStart?.();
   await ensureAudioMode();
 
-  const sentences = splitSentences(clean);
-  // Pipeline: lanzar síntesis de todas (máx 4 en vuelo) y reproducir en orden.
+  const sentences = performance === 'sing' ? [clean] : splitSentences(clean);
   const jobs: Promise<string | null>[] = [];
   const MAX_AHEAD = 3;
   let audioStarted = false;
 
   const launch = (i: number) => {
-    if (i < sentences.length && !jobs[i]) jobs[i] = fetchToFile(sentences[i], voiceId);
+    if (i < sentences.length && !jobs[i]) jobs[i] = fetchToFile(sentences[i], voiceId, performance);
   };
   for (let i = 0; i < Math.min(MAX_AHEAD, sentences.length); i++) launch(i);
 
@@ -236,12 +211,12 @@ export async function speak(
       launch(i + MAX_AHEAD - 1);
       const uri = await jobs[i];
       if (my !== gen) return;
+      if (!uri) continue; // nunca caer a voz de sistema
       if (!audioStarted) {
         audioStarted = true;
         opts?.onAudioStart?.();
       }
-      if (uri) await playFile(uri, my);
-      else await speakSystem(sentences[i], my);
+      await playFile(uri, my);
     }
   } finally {
     if (my === gen) opts?.onEnd?.();

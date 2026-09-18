@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, Platform, Alert } from 'react-native';
+import { View, Text, StyleSheet, Alert, PanResponder } from 'react-native';
 import { useCameraPermissions } from 'expo-camera';
 import { UltronFace } from '../components/UltronFace';
 import { GazeCamera } from '../components/GazeCamera';
-import { CapabilitiesMenu } from '../components/CapabilitiesMenu';
+import { DeskMenu } from '../components/DeskMenu';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
-import { APP_VERSION } from '../config';
 import { chatUltron, postPersonMemory } from '../lib/api';
 import { CONOCER_QUESTIONS, localAnswer } from '../lib/knowledge';
+import { answerOrdenGlobal, OG_BRIEF } from '../lib/ordenGlobal';
 import {
   destroySpeech,
   enableAlwaysOnMic,
   ensureSpeechPermissions,
+  micWatchdogOk,
   muteMic,
   pauseMicForTts,
   setSpeechCallbacks,
@@ -25,17 +26,17 @@ import {
   saveSettings,
   upsertPersonFact,
 } from '../lib/storage';
+import { playSfx, preloadSfx } from '../lib/sfx';
 import { prefetchPhrases, speak, stopSpeaking } from '../lib/tts';
 import { matchVoiceAct } from '../lib/voiceActs';
 
 type Props = {
   user: SessionUser;
   onLogout: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings?: () => void;
 };
 
 const CORE_COUNT = 10;
-const CYAN = '#00E5FF';
 
 const ACKS = ['Un momento.', 'Déjame ver.', 'Claro, dame un segundo.', 'Voy.'];
 const TAP_LINES = ['¿Sí?', 'Jeje.', 'Aquí estoy.', 'Te veo.'];
@@ -76,7 +77,9 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
   const [conocerIdx, setConocerIdx] = useState(-1);
   const [conocerDone, setConocerDone] = useState(false);
   const [blaster, setBlaster] = useState(false);
+  const [attack, setAttack] = useState<'blaster' | 'saber' | null>(null);
   const [irritation, setIrritation] = useState(0);
+  const [voiceName, setVoiceName] = useState('ultron');
   const [camPerm, requestCam] = useCameraPermissions();
 
   const conversationId = useRef(`native-${Date.now().toString(36)}`).current;
@@ -100,14 +103,15 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
   const restFace = useCallback((): FaceState => (presenceRef.current === 'sleep' ? 'SLEEPING' : 'IDLE'), []);
 
   const say = useCallback(
-    async (text: string, nextFace?: FaceState) => {
+    async (text: string, nextFace?: FaceState, performance: 'speak' | 'sing' = 'speak') => {
       setBubble(text);
       void appendChatLog({ role: 'ultron', text });
       speakingRef.current = true;
-      const f = nextFace || 'SPEAKING';
+      const f = nextFace || (performance === 'sing' ? 'MUSIC' : 'SPEAKING');
       setFace(f);
       await speak(text, {
         voiceId: voiceId.current,
+        performance,
         onAudioStart: () => {
           pauseMicForTts(true);
           setFace(f === 'IDLE' || f === 'LISTENING' ? 'SPEAKING' : f);
@@ -212,6 +216,12 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
           await fireBlaster('¡Blaster listo! Pium, pium, pium.');
           return;
         }
+        if (/espada|sable|jedi|lightsaber/.test(q)) {
+          await fireSaber();
+          return;
+        }
+        const og = answerOrdenGlobal(cmd);
+        if (og) return void (await say(og, 'IDLE'));
 
         // Conocer
         const ci = conocerIdxRef.current;
@@ -243,9 +253,13 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
 
         const act = matchVoiceAct(cmd);
         if (act) {
+          if (act.id === 'saber') {
+            await fireSaber();
+            return;
+          }
           setFace(act.face);
           for (const line of act.lines) {
-            await say(line, act.face);
+            await say(line, act.face, act.sing ? 'sing' : 'speak');
             if (act.lineGapMs) await new Promise((r) => setTimeout(r, act.lineGapMs));
           }
           return;
@@ -257,7 +271,12 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
         // Cerebro remoto — ack si tarda
         setFace('THINKING');
         setStatus('Pensando…');
-        const chat = chatUltron({ message: cmd, mode: modeRef.current, conversationId });
+        const chat = chatUltron({
+          message: cmd,
+          mode: modeRef.current,
+          conversationId,
+          context: [{ role: 'system', content: OG_BRIEF }],
+        });
         const ackTimer = new Promise<'ack'>((r) => setTimeout(() => r('ack'), 1400));
         const first = await Promise.race([chat, ackTimer]);
         if (first === 'ack') {
@@ -288,16 +307,28 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
 
   const fireBlaster = useCallback(
     async (line: string) => {
+      setAttack('blaster');
       setBlaster(true);
       setFace('ANGRY');
+      playSfx('blaster');
       await say(line, 'ANGRY');
       setBlaster(false);
+      setAttack(null);
       irritationRef.current = 0.25;
       setIrritation(0.25);
       setFace('IDLE');
     },
     [say]
   );
+
+  const fireSaber = useCallback(async () => {
+    setAttack('saber');
+    setFace('ANGRY');
+    playSfx('saber');
+    await say('Sable de luz, listo. Que Orden Global te acompañe.', 'ANGRY');
+    setAttack(null);
+    setFace('IDLE');
+  }, [say]);
 
   // Toques
   const onTap = useCallback(
@@ -309,9 +340,11 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
       if (presenceRef.current === 'sleep') {
         setPresence('stay');
         presenceRef.current = 'stay';
+        playSfx('tap');
         void say('Ya despierto.', 'STARTLE');
         return;
       }
+      playSfx('tap');
       tapCount.current += 1;
       const irr = Math.min(1, irritationRef.current + 0.17);
       irritationRef.current = irr;
@@ -368,10 +401,12 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
     (async () => {
       const settings = await loadSettings();
       voiceId.current = settings.voiceId || 'ultron';
+      setVoiceName(voiceId.current);
       setMicMuted(settings.micMuted);
       setVisionOn(settings.visionEnabled);
 
       const greeting = greetingByHour(user.name);
+      void preloadSfx();
       void prefetchPhrases([greeting, ...ACKS, ...TAP_LINES, ...ANNOY_LINES, ...ANGRY_LINES, ...LOVE_LINES, 'Te escucho de nuevo.', 'Micrófono en silencio.'], voiceId.current);
 
       const micOk = await ensureSpeechPermissions();
@@ -463,164 +498,118 @@ export function DeskScreen({ user, onLogout, onOpenSettings }: Props) {
   const onGazeStable = useCallback((x: number, y: number) => setGaze({ x, y }), []);
   const onObjectsStable = useCallback((labels: string[]) => setObjects(labels), []);
 
-  const micLabel = micMuted ? 'Mic off' : listening ? 'Oyendo' : 'Mic';
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (micMuted) return;
+      if (!micWatchdogOk()) {
+        setStatus('Reconectando mic…');
+        void enableAlwaysOnMic();
+      }
+    }, 4000);
+    return () => clearInterval(id);
+  }, [micMuted]);
+
+  const pan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 18 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+      onPanResponderRelease: (_, g) => {
+        if (g.dx < -36) setMenuOpen(true);
+        if (g.dx > 36) setMenuOpen(false);
+      },
+    })
+  ).current;
+
+  const toggleVision = async () => {
+    if (!visionOn) {
+      if (!camPerm?.granted) {
+        const r = await requestCam();
+        if (!r.granted) return;
+      }
+      setVisionOn(true);
+      await saveSettings({ visionEnabled: true });
+    } else {
+      setVisionOn(false);
+      await saveSettings({ visionEnabled: false });
+    }
+  };
 
   return (
-    <View style={styles.root}>
+    <View style={styles.root} {...pan.panHandlers}>
       <GazeCamera enabled={visionOn && !!camPerm?.granted} onGaze={onGazeStable} onObjects={onObjectsStable} />
-
-      <View style={styles.topBar}>
-        <View style={styles.brandChip}>
-          <View style={[styles.dot, { backgroundColor: listening && !micMuted ? CYAN : '#3A4A5A' }]} />
-          <Text style={styles.brand}>ULTRON FP</Text>
+      <UltronFace
+        face={face}
+        mode={mode}
+        gazeX={gaze.x}
+        gazeY={gaze.y}
+        level={level}
+        blaster={blaster}
+        attack={attack}
+        irritation={irritation}
+        onTap={onTap}
+        onLongPress={onLongPress}
+      />
+      {!!bubble && (
+        <View pointerEvents="none" style={styles.bubbleFloat}>
+          <Text numberOfLines={2} style={styles.bubbleText}>
+            {bubble}
+          </Text>
         </View>
-        <View style={styles.userChip}>
-          <Text style={styles.userText}>{user.name}</Text>
-        </View>
-        <Text style={styles.meta}>{mode}</Text>
-        <View style={{ flex: 1 }} />
-        <Pressable onPress={() => setMenuOpen(true)} style={styles.iconBtn}>
-          <Text style={styles.iconText}>Menú</Text>
-        </Pressable>
-        <Pressable onPress={onOpenSettings} style={styles.iconBtn}>
-          <Text style={styles.iconText}>Ajustes</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.stage}>
-        <UltronFace
-          face={face}
-          mode={mode}
-          gazeX={gaze.x}
-          gazeY={gaze.y}
-          level={level}
-          blaster={blaster}
-          irritation={irritation}
-          onTap={onTap}
-          onLongPress={onLongPress}
-        />
-        {visionOn && camPerm?.granted && !!objects.length && (
-          <View style={styles.visionBadge}>
-            <Text style={styles.visionBadgeText}>{objects.slice(0, 3).join(' · ')}</Text>
-          </View>
-        )}
-      </View>
-
-      <View style={styles.bubbleRow}>
-        <Text numberOfLines={2} style={styles.bubbleText}>
-          {bubble}
-        </Text>
-        <Text style={styles.status}>
-          {status}
-          {!conocerDone && conocerIdx >= 0 ? ` · Conociéndote ${Math.min(conocerIdx + 1, CORE_COUNT)}/${CORE_COUNT}` : ''}
-        </Text>
-      </View>
-
-      <View style={styles.bottom}>
-        <View style={styles.dock}>
-          {(['sleep', 'stay', 'explore'] as DeskPresence[]).map((p) => (
-            <Pressable key={p} onPress={() => setPresenceUI(p)} style={[styles.dockBtn, presence === p && styles.dockOn]}>
-              <Text style={[styles.dockText, presence === p && { color: CYAN }]}>{p}</Text>
-            </Pressable>
-          ))}
-          <Pressable
-            onPress={async () => {
-              if (!visionOn) {
-                if (!camPerm?.granted) {
-                  const r = await requestCam();
-                  if (!r.granted) return;
-                }
-                setVisionOn(true);
-                await saveSettings({ visionEnabled: true });
-              } else {
-                setVisionOn(false);
-                await saveSettings({ visionEnabled: false });
-              }
-            }}
-            style={[styles.dockBtn, visionOn && styles.dockOn]}
-          >
-            <Text style={[styles.dockText, visionOn && { color: CYAN }]}>visión</Text>
-          </Pressable>
-          <Pressable onPress={() => void toggleMute()} style={[styles.dockBtn, !micMuted && styles.dockOn]}>
-            <Text style={[styles.dockText, !micMuted && { color: CYAN }]}>{micLabel.toLowerCase()}</Text>
-          </Pressable>
-        </View>
-        <View style={styles.composer}>
-          <TextInput
-            value={draft}
-            onChangeText={setDraft}
-            placeholder="Escribe o simplemente habla…"
-            placeholderTextColor="#4A5A6A"
-            style={styles.input}
-            onSubmitEditing={sendDraft}
-            returnKeyType="send"
-          />
-          <Pressable onPress={sendDraft} style={styles.send}>
-            <Text style={styles.sendText}>Enviar</Text>
-          </Pressable>
-        </View>
-        <Text style={styles.version}>v{APP_VERSION}</Text>
-      </View>
-
-      <CapabilitiesMenu
+      )}
+      <View pointerEvents="none" style={styles.edgeHint} />
+      <DeskMenu
         visible={menuOpen}
+        userName={user.name}
+        mode={mode}
+        presence={presence}
+        voiceId={voiceName}
+        micMuted={micMuted}
+        listening={listening}
+        visionOn={visionOn}
+        draft={draft}
+        onChangeDraft={setDraft}
+        onSendDraft={sendDraft}
         onClose={() => setMenuOpen(false)}
-        onStartConocer={() => void startConocer(false)}
-        onEnableVision={() => {
-          setVisionOn(true);
-          void requestCam();
+        onSetMode={(m) => {
+          setMode(m);
+          void handleCommand(`modo ${m.toLowerCase()}`);
         }}
+        onSetPresence={setPresenceUI}
+        onSetVoice={(id) => {
+          voiceId.current = id;
+          setVoiceName(id);
+          void saveSettings({ voiceId: id });
+          void say(`Voz ${id}.`, 'HAPPY');
+        }}
+        onToggleMic={() => void toggleMute()}
+        onToggleVision={() => void toggleVision()}
+        onConocer={() => void startConocer(false)}
+        onBlaster={() => void fireBlaster('¡Blaster listo! Pium, pium, pium.')}
+        onSaber={() => void fireSaber()}
+        onSing={(g) => void handleCommand(`canta ${g}`)}
+        onLogout={onLogout}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#000', paddingHorizontal: 14, paddingTop: 6, paddingBottom: 6 },
-  topBar: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  brandChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,229,255,0.08)',
-    borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.25)',
-  },
-  dot: { width: 7, height: 7, borderRadius: 4 },
-  brand: { color: '#E8FBFF', fontWeight: '800', letterSpacing: 2, fontSize: 12 },
-  userChip: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
-  userText: { color: '#C8D4DE', fontSize: 12 },
-  meta: { color: '#4A5A6A', fontSize: 11, letterSpacing: 2, fontFamily: Platform.OS === 'android' ? 'monospace' : 'Courier' },
-  iconBtn: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)' },
-  iconText: { color: '#C8D4DE', fontSize: 12 },
-  stage: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  visionBadge: {
+  root: { flex: 1, backgroundColor: '#000' },
+  bubbleFloat: {
     position: 'absolute',
-    right: 4,
-    top: 4,
-    maxWidth: 200,
-    borderRadius: 10,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    backgroundColor: 'rgba(0,20,28,0.75)',
-    borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.25)',
+    left: 24,
+    right: 24,
+    bottom: 18,
+    alignItems: 'center',
   },
-  visionBadgeText: { color: '#8B9AAB', fontSize: 10 },
-  bubbleRow: { alignItems: 'center', minHeight: 44, justifyContent: 'center', paddingHorizontal: 20 },
-  bubbleText: { color: '#E8FBFF', fontSize: 15, lineHeight: 20, textAlign: 'center' },
-  status: { color: '#4A5A6A', fontSize: 11, textAlign: 'center', marginTop: 2 },
-  bottom: { gap: 6 },
-  dock: { flexDirection: 'row', justifyContent: 'center', gap: 6 },
-  dockBtn: { paddingHorizontal: 12, paddingVertical: 7, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)', backgroundColor: 'rgba(255,255,255,0.03)' },
-  dockOn: { borderColor: 'rgba(0,229,255,0.45)', backgroundColor: 'rgba(0,229,255,0.1)' },
-  dockText: { color: '#9AAABA', fontSize: 12, fontWeight: '600', letterSpacing: 1 },
-  composer: { flexDirection: 'row', gap: 8, alignItems: 'center' },
-  input: { flex: 1, borderWidth: 1, borderColor: 'rgba(0,229,255,0.2)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9, color: '#E8FBFF', backgroundColor: 'rgba(10,14,20,0.9)' },
-  send: { backgroundColor: CYAN, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
-  sendText: { color: '#001018', fontWeight: '800' },
-  version: { color: '#2A3A4A', fontSize: 9, textAlign: 'right' },
+  bubbleText: { color: 'rgba(232,251,255,0.88)', fontSize: 15, lineHeight: 20, textAlign: 'center' },
+  edgeHint: {
+    position: 'absolute',
+    right: 0,
+    top: '35%',
+    width: 5,
+    height: 90,
+    borderTopLeftRadius: 4,
+    borderBottomLeftRadius: 4,
+    backgroundColor: 'rgba(0,229,255,0.35)',
+  },
 });

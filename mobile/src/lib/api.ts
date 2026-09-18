@@ -80,6 +80,7 @@ export async function chatUltron(opts: {
   message: string;
   mode: Mode;
   conversationId: string;
+  context?: Array<{ role: string; content: string }>;
 }): Promise<ChatResult> {
   try {
     const data = await api<any>(
@@ -91,6 +92,7 @@ export async function chatUltron(opts: {
           mode: opts.mode,
           conversationId: opts.conversationId,
           stream: false,
+          context: opts.context || [],
         }),
       },
       25_000
@@ -112,10 +114,11 @@ export async function synthesizeTts(opts: {
   text: string;
   voiceId?: string;
   engine?: 'fast' | 'auto';
+  performance?: 'speak' | 'sing';
 }): Promise<ArrayBuffer | null> {
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), opts.engine === 'fast' ? 14_000 : 45_000);
+    const timer = setTimeout(() => ctrl.abort(), opts.performance === 'sing' ? 22_000 : opts.engine === 'fast' ? 14_000 : 45_000);
     const res = await fetch(`${API_BASE}/api/tts/synthesize`, {
       method: 'POST',
       signal: ctrl.signal,
@@ -125,6 +128,7 @@ export async function synthesizeTts(opts: {
         voiceId: opts.voiceId || 'ultron',
         voice: opts.voiceId || 'ultron',
         engine: opts.engine || 'fast',
+        performance: opts.performance || 'speak',
       }),
     });
     clearTimeout(timer);

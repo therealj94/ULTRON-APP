@@ -94,8 +94,7 @@ export async function loadSettings(): Promise<AppSettings> {
   try {
     const raw = await AsyncStorage.getItem(KEYS.settings);
     const s: AppSettings = raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
-    // migración: la voz 'jarvis' (lenta/sensual en T4) pasa a 'ultron' (rápida, profesional)
-    if (s.voiceId === 'jarvis' || s.voiceId === 'tierna') s.voiceId = 'ultron';
+    if (!['ultron', 'luna', 'spark', 'jarvis'].includes(s.voiceId)) s.voiceId = 'ultron';
     return s;
   } catch {
     return DEFAULT_SETTINGS;

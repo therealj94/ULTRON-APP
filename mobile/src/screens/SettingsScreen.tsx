@@ -4,6 +4,7 @@ import { API_BASE, APP_VERSION } from '../config';
 import { healthCheck } from '../lib/api';
 import { loadLocalMemory, loadSettings, saveSettings, type AppSettings } from '../lib/storage';
 import { MODE_HINTS } from '../lib/knowledge';
+import { DESK_VOICES } from '../components/DeskMenu';
 
 type Props = {
   onBack: () => void;
@@ -72,13 +73,14 @@ export function SettingsScreen({ onBack }: Props) {
 
       <View style={styles.card}>
         <Text style={styles.label}>Voz TTS</Text>
-        {(['ultron', 'formal', 'jarvis', 'estrategia', 'orbita', 'tierna'] as const).map((v) => (
+        {DESK_VOICES.map((v) => (
           <Pressable
-            key={v}
-            onPress={() => void patch({ voiceId: v })}
-            style={[styles.voice, settings.voiceId === v && styles.voiceOn]}
+            key={v.id}
+            onPress={() => void patch({ voiceId: v.id })}
+            style={[styles.voice, settings.voiceId === v.id && styles.voiceOn]}
           >
-            <Text style={styles.voiceText}>{v.toUpperCase()}</Text>
+            <Text style={styles.voiceText}>{v.name}</Text>
+            <Text style={{ color: '#7A8B9C', fontSize: 11 }}>{v.hint}</Text>
           </Pressable>
         ))}
       </View>

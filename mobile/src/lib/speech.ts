@@ -19,11 +19,11 @@ export type SpeechCallbacks = {
   onError?: (msg: string) => void;
 };
 
-const SILENCE_MS = 700;
-const MIN_UTTERANCE_MS = 350;
-const MAX_UTTERANCE_MS = 12_000;
-const IDLE_ROTATE_MS = 9_000;
-const FIXED_CHUNK_MS = 3_000;
+const SILENCE_MS = 550;
+const MIN_UTTERANCE_MS = 280;
+const MAX_UTTERANCE_MS = 10_000;
+const IDLE_ROTATE_MS = 7_000;
+const FIXED_CHUNK_MS = 2_600;
 const METER_INTERVAL_MS = 80;
 
 const REC_OPTIONS: Audio.RecordingOptions = {
@@ -193,38 +193,61 @@ async function discard(uri: string | null) {
 }
 
 function queueTranscription(uri: string) {
-  transcribeChain = transcribeChain.then(async () => {
-    const text = await transcribeFile(uri);
-    await discard(uri);
-    if (text && wanted) callbacks.onFinal?.(text);
-  });
+  transcribeChain = transcribeChain
+    .then(async () => {
+      const text = await transcribeFile(uri);
+      await discard(uri);
+      if (text && wanted && !paused) callbacks.onFinal?.(text);
+    })
+    .catch(() => {
+      void discard(uri);
+    });
 }
+
+let lastLoopAt = Date.now();
+let failStarts = 0;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function loop() {
   while (loopAlive) {
+    try {
+    lastLoopAt = Date.now();
     if (!wanted || paused) {
       if (recording) await discard(await stopRecording());
       callbacks.onListeningChange?.(false);
-      await sleep(150);
+      await sleep(120);
       continue;
     }
     if (!recording) {
       const ok = await startRecording();
       if (!ok) {
-        await sleep(1200);
+        failStarts += 1;
+        if (failStarts >= 3) {
+          try {
+            await Audio.setAudioModeAsync({
+              allowsRecordingIOS: true,
+              playsInSilentModeIOS: true,
+              shouldDuckAndroid: true,
+              playThroughEarpieceAndroid: false,
+            });
+          } catch {
+            /* */
+          }
+          failStarts = 0;
+        }
+        await sleep(800);
         continue;
       }
+      failStarts = 0;
     }
-    await sleep(100);
+    await sleep(90);
     if (!recording || !wanted || paused) continue;
 
     const now = Date.now();
     const elapsed = now - recStartedAt;
 
-    // Fallback sin metering: chunks fijos
-    if (meteringSupported === false || (meteringSupported === null && elapsed > 1800 && meterSamples === 0)) {
+    if (meteringSupported === false || (meteringSupported === null && elapsed > 1600 && meterSamples === 0)) {
       meteringSupported = false;
       if (elapsed >= FIXED_CHUNK_MS) {
         const uri = await stopRecording();
@@ -240,11 +263,13 @@ async function loop() {
         const uri = await stopRecording();
         if (uri) queueTranscription(uri);
       } else if (silence >= SILENCE_MS) {
-        // ruido corto, no voz
         await discard(await stopRecording());
       }
     } else if (elapsed >= IDLE_ROTATE_MS) {
       await discard(await stopRecording());
+    }
+    } catch {
+      await sleep(400);
     }
   }
   await discard(await stopRecording());
@@ -275,6 +300,12 @@ export async function unmuteMic() {
 /** Pausar captura mientras ULTRON reproduce audio (evita eco). */
 export function pauseMicForTts(pause: boolean) {
   paused = pause;
+  if (!pause) {
+    speechStartedAt = 0;
+    lastVoiceAt = 0;
+    // no endurecer el umbral tras TTS
+    if (noiseFloor < -58) noiseFloor = -52;
+  }
 }
 
 export function isMicWanted() {
@@ -283,6 +314,10 @@ export function isMicWanted() {
 
 export function isMicPaused() {
   return paused;
+}
+
+export function micWatchdogOk() {
+  return Date.now() - lastLoopAt < 4000;
 }
 
 export async function destroySpeech() {

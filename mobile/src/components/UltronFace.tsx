@@ -16,6 +16,7 @@ type Props = {
   level?: number;
   /** disparo de broma */
   blaster?: boolean;
+  attack?: 'blaster' | 'saber' | null;
   /** 0..1 enojo acumulado por toques */
   irritation?: number;
   onTap?: (x01: number, y01: number) => void;
@@ -25,6 +26,7 @@ type Props = {
 const CYAN = '#00E5FF';
 const GOLD = '#FFD166';
 const RED = '#FF3B5C';
+const SABER = '#39FF14';
 
 const MODE_GLYPHS: Record<Mode, [string, string]> = {
   GUARDIAN: ['⛨', '⚿'],
@@ -79,16 +81,19 @@ export function UltronFace({
   gazeY = 0,
   level = 0,
   blaster = false,
+  attack = null,
   irritation = 0,
   onTap,
   onLongPress,
 }: Props) {
   const { width, height } = useWindowDimensions();
-  const stageH = Math.min(height * 0.62, 420);
-  const D = Math.min(stageH * 0.56, width * 0.2, 230); // diámetro ojo
-  const ring = Math.max(5, D * 0.085);
-  const gap = D * 0.62;
-  const accent = face === 'ANGRY' || blaster ? RED : mode === 'GOLD' ? GOLD : CYAN;
+  const stageH = height;
+  const D = Math.min(height * 0.42, width * 0.28, 320);
+  const ring = Math.max(6, D * 0.09);
+  const gap = D * 0.55;
+  const firing = blaster || attack === 'blaster';
+  const saberOn = attack === 'saber';
+  const accent = face === 'ANGRY' || firing ? RED : saberOn ? SABER : mode === 'GOLD' ? GOLD : CYAN;
   const dim = face === 'SLEEPING';
   const lids = LIDS[face] || NEUTRAL;
   const [gL, gR] = MODE_GLYPHS[mode] || MODE_GLYPHS.GUARDIAN;
@@ -112,6 +117,7 @@ export function UltronFace({
   const glyphBob = useAnim(0);
   const beam = useAnim(0);
   const flash = useAnim(0);
+  const saber = useAnim(0);
   const thinkDots = useAnim(0);
 
   // respiración + glifos flotando
@@ -228,17 +234,16 @@ export function UltronFace({
     Animated.timing(pulse, { toValue: face === 'LISTENING' ? level : 0, duration: 90, useNativeDriver: true }).start();
   }, [level, face, pulse]);
 
-  // blaster
   useEffect(() => {
-    if (!blaster) {
+    if (!firing) {
       beam.setValue(0);
-      flash.setValue(0);
+      if (!saberOn) flash.setValue(0);
       return;
     }
     const shot = Animated.sequence([
       Animated.parallel([
         Animated.timing(beam, { toValue: 1, duration: 110, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.timing(flash, { toValue: 0.55, duration: 60, useNativeDriver: true }),
+        Animated.timing(flash, { toValue: 0.45, duration: 60, useNativeDriver: true }),
       ]),
       Animated.parallel([
         Animated.timing(beam, { toValue: 0, duration: 160, useNativeDriver: true }),
@@ -249,7 +254,28 @@ export function UltronFace({
     const l = Animated.loop(shot, { iterations: 3 });
     l.start();
     return () => l.stop();
-  }, [blaster, beam, flash]);
+  }, [firing, saberOn, beam, flash]);
+
+  useEffect(() => {
+    if (!saberOn) {
+      saber.setValue(0);
+      return;
+    }
+    const swing = Animated.sequence([
+      Animated.parallel([
+        Animated.timing(saber, { toValue: 1, duration: 160, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(flash, { toValue: 0.28, duration: 80, useNativeDriver: true }),
+      ]),
+      Animated.timing(saber, { toValue: 0.92, duration: 80, useNativeDriver: true }),
+      Animated.delay(720),
+      Animated.parallel([
+        Animated.timing(saber, { toValue: 0, duration: 220, useNativeDriver: true }),
+        Animated.timing(flash, { toValue: 0, duration: 220, useNativeDriver: true }),
+      ]),
+    ]);
+    swing.start();
+    return () => swing.stop();
+  }, [saberOn, saber, flash]);
 
   const lidH = D * 1.1;
   const topLidY = topLid.interpolate({ inputRange: [0, 1], outputRange: [-lidH, -lidH + D * 1.02] });
@@ -268,9 +294,13 @@ export function UltronFace({
   const mouthArcH = D * 0.26;
   const mouthScaleY = mouthCurve.interpolate({ inputRange: [-1, 0, 1], outputRange: [-1, 0.08, 1] });
   const mouthOpenScale = mouthOpen.interpolate({ inputRange: [0, 1], outputRange: [0.01, 1] });
-  const beamH = stageH * 0.9;
+  const beamH = stageH * 0.95;
   const beamScale = beam.interpolate({ inputRange: [0, 1], outputRange: [0.01, 1] });
   const beamTy = beam.interpolate({ inputRange: [0, 1], outputRange: [-beamH / 2, 0] });
+  const saberH = stageH * 0.85;
+  const saberScale = saber.interpolate({ inputRange: [0, 1], outputRange: [0.02, 1] });
+  const saberRotL = saber.interpolate({ inputRange: [0, 1], outputRange: ['-8deg', '-28deg'] });
+  const saberRotR = saber.interpolate({ inputRange: [0, 1], outputRange: ['8deg', '28deg'] });
 
   const glyphStyle = useMemo(
     () => ({ color: accent, opacity: dim ? 0.15 : 0.42, fontSize: D * 0.22 }),
@@ -372,7 +402,7 @@ export function UltronFace({
           ]}
         />
         {/* haz blaster */}
-        {blaster && (
+        {firing && (
           <Animated.View
             pointerEvents="none"
             style={[
@@ -384,6 +414,26 @@ export function UltronFace({
                 backgroundColor: RED,
                 opacity: beam,
                 transform: [{ translateY: beamTy }, { scaleY: beamScale }],
+              },
+            ]}
+          />
+        )}
+        {saberOn && (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.beam,
+              {
+                width: Math.max(6, ring * 1.1),
+                height: saberH,
+                top: D * 0.42,
+                backgroundColor: SABER,
+                shadowColor: SABER,
+                opacity: saber,
+                transform: [
+                  { rotate: side === 'L' ? saberRotL : saberRotR },
+                  { scaleY: saberScale },
+                ],
               },
             ]}
           />
@@ -461,7 +511,8 @@ export function UltronFace({
         </View>
       )}
 
-      {blaster && <Animated.View pointerEvents="none" style={[styles.flash, { opacity: flash }]} />}
+      {firing && <Animated.View pointerEvents="none" style={[styles.flash, { opacity: flash, backgroundColor: RED }]} />}
+      {saberOn && <Animated.View pointerEvents="none" style={[styles.flash, { opacity: flash, backgroundColor: SABER }]} />}
     </Pressable>
   );
 }
@@ -480,7 +531,7 @@ const styles = StyleSheet.create({
   lid: { position: 'absolute', top: 0, backgroundColor: '#000' },
   brow: { position: 'absolute' },
   beam: { position: 'absolute', borderRadius: 2 },
-  glyph: { marginHorizontal: 18, textAlign: 'center', includeFontPadding: false },
+  glyph: { marginHorizontal: 8, textAlign: 'center', includeFontPadding: false },
   mouthWrap: { alignItems: 'center', justifyContent: 'center' },
   mouthArc: { position: 'absolute' },
   mouthOpen: { position: 'absolute' },
@@ -489,5 +540,5 @@ const styles = StyleSheet.create({
   zzz: { position: 'absolute', top: 0, fontSize: 22, letterSpacing: 4, opacity: 0.6 },
   irrBar: { position: 'absolute', bottom: 4, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' },
   irrFill: { height: '100%', borderRadius: 2 },
-  flash: { ...StyleSheet.absoluteFillObject, backgroundColor: RED },
+  flash: { ...StyleSheet.absoluteFillObject },
 });

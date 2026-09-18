@@ -319,17 +319,22 @@ app.post('/api/vault/elevenlabs/synthesize', async (req, res) => {
 
 /** API unificada TTS: Qwen3-TTS (T4) → ElevenLabs → error (cliente usa Web Speech). */
 app.post('/api/tts/synthesize', async (req, res) => {
-  const voice = getVoice(req.body.voice || req.body.voiceId || 'jarvis');
+  const voice = getVoice(req.body.voice || req.body.voiceId || 'ultron');
   const spoken = normalizeNumbersForSpeech(String(req.body.text || ''));
   if (!spoken) return res.status(400).json({ error: 'text requerido' });
 
   const emotion = String(req.body.emotion || '') as UltronEmotion;
+  const performance = String(req.body.performance || 'speak');
+  const singing = performance === 'sing';
   const instructAddon =
     (req.body.instructAddon as string) ||
-    (emotion ? voiceParamsFor(emotion as UltronEmotion)?.instructAddon : undefined);
-  // engine=fast (app nativa): ElevenLabs Flash primero (~0.5s) — el nodo T4 tarda ~12s/frase.
+    (singing
+      ? 'sing with melody, clear pitch, musical phrasing, not spoken recitation'
+      : emotion
+        ? voiceParamsFor(emotion as UltronEmotion)?.instructAddon
+        : undefined);
   const engine = String(req.body.engine || 'auto');
-  const cacheKey = `${engine === 'fast' ? 'f' : 'a'}|${voice.id}|${emotion || 'n'}|${spoken}`;
+  const cacheKey = `${engine === 'fast' ? 'f' : 'a'}|${singing ? 's' : 't'}|${voice.id}|${emotion || 'n'}|${spoken}`;
   const cached = getCachedTts(cacheKey);
   if (cached) {
     res.setHeader('Content-Type', cached.contentType);
@@ -338,38 +343,52 @@ app.post('/api/tts/synthesize', async (req, res) => {
     return res.send(cached.audio);
   }
 
-  if (engine === 'fast' && VAULT_ELEVENLABS_API_KEY && voice.elevenLabsVoiceId) {
-    try {
-      const elRes = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${voice.elevenLabsVoiceId}?output_format=mp3_22050_32`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'xi-api-key': VAULT_ELEVENLABS_API_KEY,
-            Accept: 'audio/mpeg',
-          },
-          body: JSON.stringify({
-            text: spoken,
-            model_id: 'eleven_flash_v2_5',
-            language_code: 'es',
-            voice_settings: { stability: 0.55, similarity_boost: 0.8, style: 0, speed: 1.05 },
-          }),
-          signal: AbortSignal.timeout(12000),
-        }
-      );
-      if (elRes.ok) {
-        const buf = Buffer.from(await elRes.arrayBuffer());
-        setCachedTts(cacheKey, buf, 'audio/mpeg');
-        res.setHeader('Content-Type', 'audio/mpeg');
-        res.setHeader('X-Ultron-TTS', 'elevenlabs-flash');
-        res.setHeader('X-Ultron-Voice', voice.id);
-        return res.send(buf);
+  const speakEleven = async (model: string, settings: Record<string, unknown>, timeoutMs: number) => {
+    if (!VAULT_ELEVENLABS_API_KEY || !voice.elevenLabsVoiceId) return null;
+    const elRes = await fetch(
+      `https://api.elevenlabs.io/v1/text-to-speech/${voice.elevenLabsVoiceId}?output_format=mp3_22050_32`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'xi-api-key': VAULT_ELEVENLABS_API_KEY,
+          Accept: 'audio/mpeg',
+        },
+        body: JSON.stringify({
+          text: spoken,
+          model_id: model,
+          language_code: 'es',
+          voice_settings: settings,
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
       }
-      console.warn('[TTS fast]', elRes.status, (await elRes.text()).slice(0, 200));
+    );
+    if (!elRes.ok) {
+      console.warn('[TTS]', model, elRes.status, (await elRes.text()).slice(0, 180));
+      return null;
+    }
+    return Buffer.from(await elRes.arrayBuffer());
+  };
+
+  if (engine === 'fast') {
+    try {
+      const buf = singing
+        ? await speakEleven('eleven_multilingual_v2', { stability: 0.32, similarity_boost: 0.72, style: 0.55, speed: 0.92 }, 20000)
+        : await speakEleven('eleven_flash_v2_5', { stability: 0.55, similarity_boost: 0.8, style: 0.05, speed: 1.04 }, 12000);
+      const fallback =
+        buf ||
+        (await speakEleven('eleven_multilingual_v2', { stability: 0.5, similarity_boost: 0.8, style: singing ? 0.5 : 0.1 }, 18000));
+      if (fallback) {
+        setCachedTts(cacheKey, fallback, 'audio/mpeg');
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('X-Ultron-TTS', singing ? 'elevenlabs-sing' : 'elevenlabs-flash');
+        res.setHeader('X-Ultron-Voice', voice.id);
+        return res.send(fallback);
+      }
     } catch (err: any) {
       console.warn('[TTS fast]', err.message);
     }
+    return res.status(503).json({ error: 'TTS rápido no disponible', voice: voice.id });
   }
 
   const qwen = await synthesizeWithQwenTts({

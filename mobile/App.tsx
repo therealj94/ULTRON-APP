@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -22,10 +22,14 @@ import { SettingsScreen } from './src/screens/SettingsScreen';
 
 type Phase = 'boot' | 'login' | 'desk';
 
-async function lockLandscape() {
+async function lockOrientation(kind: 'portrait' | 'landscape') {
   try {
     const ScreenOrientation = require('expo-screen-orientation') as typeof import('expo-screen-orientation');
-    await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+    await ScreenOrientation.lockAsync(
+      kind === 'portrait'
+        ? ScreenOrientation.OrientationLock.PORTRAIT
+        : ScreenOrientation.OrientationLock.LANDSCAPE
+    );
   } catch {
     /* */
   }
@@ -67,17 +71,19 @@ export default function App() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [bootLine, setBootLine] = useState('Iniciando ULTRON nativo…');
   const [showSettings, setShowSettings] = useState(false);
+  const phaseRef = useRef(phase);
+  phaseRef.current = phase;
 
   const boot = useCallback(async () => {
     setPhase('boot');
-    setBootLine('Orientación landscape…');
-    await lockLandscape();
+    setBootLine('Preparando acceso…');
+    await lockOrientation('portrait');
     await hideSystemBars();
     setBootLine('Autorizaciones de sensores…');
     await new Promise<void>((resolve) => {
       Alert.alert(
         'ULTRON FP necesita permisos',
-        'Cámara (mirarte e identificar objetos) y micrófono (siempre escuchando «hey ULTRON»). Puedes denegar y usar solo teclado.',
+        'Cámara para mirarte e identificar objetos, y micrófono siempre activo para conversar. Puedes denegar y usar el menú.',
         [
           {
             text: 'Continuar',
@@ -99,8 +105,10 @@ export default function App() {
     const session = await loadSession();
     if (session) {
       setUser(session);
+      await lockOrientation('landscape');
       setPhase('desk');
     } else {
+      await lockOrientation('portrait');
       setPhase('login');
     }
   }, []);
@@ -109,7 +117,7 @@ export default function App() {
     void boot();
     const onChange = (s: AppStateStatus) => {
       if (s === 'active') {
-        void lockLandscape();
+        void lockOrientation(phaseRef.current === 'desk' ? 'landscape' : 'portrait');
         void hideSystemBars();
       }
     };
@@ -157,7 +165,7 @@ export default function App() {
         <LoginScreen
           onAuthenticated={(u) => {
             setUser(u);
-            setPhase('desk');
+            void lockOrientation('landscape').then(() => setPhase('desk'));
           }}
         />
       )}
@@ -171,6 +179,7 @@ export default function App() {
               setUser(null);
               setShowSettings(false);
               setPhase('login');
+              void lockOrientation('portrait');
             }}
           />
           {showSettings && (

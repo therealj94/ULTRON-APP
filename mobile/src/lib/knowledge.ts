@@ -42,12 +42,12 @@ export const LOCAL_FAQ: FaqItem[] = [
   {
     match: /ayuda|tutorial|que puedes|qué puedes|comandos/,
     answer:
-      'Habla y te respondo, sin palabra clave. Menú → capacidades. Visión te mira. «modo conocer», gestos (ponte feliz, canta), Sleep/Stay/Explore. También puedes escribir o tocarme.',
+      'Habla y te respondo. Desliza desde la derecha para el menú. Tócame: reacciono; si insistes, me enojo y disparo. Di «canta salsa» o «sable jedi».',
   },
   {
     match: /orden global|doctrina|alfa/,
-    answer:
-      'Orden Global · Directorio Alfa-1. Yo custodio el escritorio de junta: visión, voz, memoria de personas y puente al cerebro Qwen cuando hay red.',
+    answer: () =>
+      'Orden Global es el Directorio Alfa-1. Tengo cinco doctrinas: ALFA-770 soberanía tecnológica, BETA-912 tesorería, GAMMA-404 voto blindado, DELTA-108 perímetro y EPSILON-221 cadena de mando. ¿Cuál quieres?',
   },
   {
     match: /offline|sin internet|sin red/,

@@ -2,7 +2,7 @@
  * ULTRON FP — 5 voces Qwen3-TTS (español neutro LATAM, ritmo calmado).
  * Se sintetizan en el nodo T4 (VoiceDesign instruct), no en el A10G del 27B.
  */
-export type UltronVoiceId = 'ultron' | 'jarvis' | 'formal' | 'tierna' | 'estrategia' | 'orbita';
+export type UltronVoiceId = 'ultron' | 'jarvis' | 'luna' | 'spark' | 'formal' | 'tierna' | 'estrategia' | 'orbita';
 
 export interface UltronVoiceProfile {
   id: UltronVoiceId;
@@ -27,6 +27,27 @@ export const ULTRON_VOICES: UltronVoiceProfile[] = [
       'Adult male, 35s, professional executive assistant, neutral Latin American Spanish, clear crisp articulation, confident mid-low pitch, brisk natural pace, friendly but not sensual, no breathiness',
     language: 'Spanish',
     elevenLabsVoiceId: 'onwK4e9ZLuTAKqWW03F9',
+    default: true,
+  },
+  {
+    id: 'luna',
+    name: 'LUNA',
+    label: 'Asistente',
+    description: 'Mujer asistente, clara y alegre. Ideal para mesa cotidiana.',
+    instruct:
+      'Adult woman, 30s, professional cheerful executive assistant, neutral Latin American Spanish, bright clear mid pitch, natural smile in the voice, brisk friendly pace, never sensual, never childish, never robotic',
+    language: 'Spanish',
+    elevenLabsVoiceId: 'cgSgspJ2msm6clMCkdW9',
+  },
+  {
+    id: 'spark',
+    name: 'SPARK',
+    label: 'Bot',
+    description: 'Bot alegre, energético, sin sonar a juguete ni a vocoder.',
+    instruct:
+      'Young adult, upbeat helpful robot-companion who still sounds human, neutral Latin American Spanish, bright energetic mid pitch, playful but articulate, no metallic vocoder, no cartoon voice',
+    language: 'Spanish',
+    elevenLabsVoiceId: 'IKne3meq5aSn9XLyUdCD',
   },
   {
     id: 'jarvis',
@@ -36,7 +57,6 @@ export const ULTRON_VOICES: UltronVoiceProfile[] = [
     instruct:
       'Adult male, 40s, calm British-butler elegance adapted to neutral Latin American Spanish, warm low pitch, slow measured pace, clear refined articulation, never rushed, never robotic',
     language: 'Spanish',
-    default: true,
     elevenLabsVoiceId: 'pNInz6obpgDQGcFmaJgB',
   },
   {
