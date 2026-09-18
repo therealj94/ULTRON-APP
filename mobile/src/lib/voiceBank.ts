@@ -99,4 +99,14 @@ export const VOICE_BANK: Record<string, number> = {
   "modostrategicdecisionesdejunta": require('../../assets/voice/7de16e10cfeb.mp3'),
   // Modo Explorer. Listo para investigar.
   "modoexplorerlistoparainvestigar": require('../../assets/voice/5bb0922cf6ac.mp3'),
+  // Todavía estoy mirando.
+  "todaviaestoymirando": require('../../assets/voice/379d19323c95.mp3'),
+  // Anotado. Lo recuerdo.
+  "anotadolorecuerdo": require('../../assets/voice/0cb047a51626.mp3'),
+  // No recibí respuesta. Intenta de nuevo.
+  "norecibirespuestaintentadenuevo": require('../../assets/voice/5aa9f8d897ff.mp3'),
+  // Gracias. Ya te conozco mejor; no repetiré estas preguntas. Si quieres más, di «conocer más».
+  "graciasyateconozcomejornorepetireestaspreguntassiquieresmasdiconocermas": require('../../assets/voice/791d4b681938.mp3'),
+  // Listo. Ya te conozco mejor.
+  "listoyateconozcomejor": require('../../assets/voice/aa0d8ef18a2d.mp3'),
 };

@@ -1,13 +1,44 @@
 {
-  "names": ["José", "Medardo"],
-  "greetingParts": ["Buenos días", "Buenas tardes", "Buenas noches"],
+  "names": [
+    "José",
+    "Medardo"
+  ],
+  "greetingParts": [
+    "Buenos días",
+    "Buenas tardes",
+    "Buenas noches"
+  ],
   "greetingTemplate": "{part}, {name}. Estoy listo. ¿En qué te ayudo?",
-  "acks": ["Un momento.", "Déjame ver.", "Claro, dame un segundo.", "Voy."],
-  "tap": ["¿Sí?", "Jeje.", "Aquí estoy.", "Te veo."],
-  "annoy": ["Oye… ¿qué haces?", "Ya, ya. Con cuidado.", "Mmm, eso hace cosquillas… para."],
-  "angry": ["¡Basta! Pium, pium, pium.", "¡Te lo advertí! Pium, pium.", "Suficiente. Disparando… de broma."],
-  "love": ["Mmm… gracias. Eso me gusta.", "Vale, vale. Sigo contigo."],
-  "shake": ["¡Ey! No me sacudas.", "Uy. ¿Terremoto o eres tú?"],
+  "acks": [
+    "Un momento.",
+    "Déjame ver.",
+    "Claro, dame un segundo.",
+    "Voy."
+  ],
+  "tap": [
+    "¿Sí?",
+    "Jeje.",
+    "Aquí estoy.",
+    "Te veo."
+  ],
+  "annoy": [
+    "Oye… ¿qué haces?",
+    "Ya, ya. Con cuidado.",
+    "Mmm, eso hace cosquillas… para."
+  ],
+  "angry": [
+    "¡Basta! Pium, pium, pium.",
+    "¡Te lo advertí! Pium, pium.",
+    "Suficiente. Disparando… de broma."
+  ],
+  "love": [
+    "Mmm… gracias. Eso me gusta.",
+    "Vale, vale. Sigo contigo."
+  ],
+  "shake": [
+    "¡Ey! No me sacudas.",
+    "Uy. ¿Terremoto o eres tú?"
+  ],
   "system": [
     "Te escucho de nuevo.",
     "Micrófono en silencio.",
@@ -29,6 +60,11 @@
     "Modo Creative. Ideas en marcha.",
     "Modo Analytical. Análisis frío.",
     "Modo Strategic. Decisiones de junta.",
-    "Modo Explorer. Listo para investigar."
+    "Modo Explorer. Listo para investigar.",
+    "Todavía estoy mirando.",
+    "Anotado. Lo recuerdo.",
+    "No recibí respuesta. Intenta de nuevo.",
+    "Gracias. Ya te conozco mejor; no repetiré estas preguntas. Si quieres más, di «conocer más».",
+    "Listo. Ya te conozco mejor."
   ]
 }

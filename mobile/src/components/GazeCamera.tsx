@@ -15,12 +15,12 @@ type Props = {
   onPresence?: (present: boolean) => void;
 };
 
-const SCENE_EVERY_MS = 6500;
+const SCENE_EVERY_MS = 12_000;
 const LABEL_PROMPT =
   'Responde SOLO con una lista corta en español, separada por comas, de lo visible (máximo 6): persona, objetos, gestos evidentes (ej: persona, taza, teléfono, saluda). Sin frases.';
 
 /**
- * Cámara frontal siempre activa (1x1 px, invisible): cada ~6.5 s manda un frame al nodo de visión.
+ * Cámara frontal siempre activa (1x1 px, invisible): cada ~12 s manda un frame al nodo de visión (tarda ~10 s).
  * - Etiquetas → ULTRON sabe qué hay en la mesa ("¿qué ves?").
  * - Persona detectada → mirada al centro; sin persona → micro-sacadas suaves.
  * - grabRef → frame fresco bajo demanda (preguntas visuales al cerebro).

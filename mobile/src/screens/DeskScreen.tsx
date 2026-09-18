@@ -185,13 +185,22 @@ export function DeskScreen({ user, onLogout }: Props) {
       setFace('THINKING');
       setStatus('thinking');
       const chat = turno({ message: cmd, mode: modeRef.current, userName: user.name, historial: historial.current, image: opts?.image });
+      const filler = (text: string) => speak(text, { onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) });
       const ackTimer = new Promise<'ack'>((r) => setTimeout(() => r('ack'), opts?.image ? 900 : 1500));
       let ack: Promise<unknown> | null = null;
       if ((await Promise.race([chat, ackTimer])) === 'ack') {
-        ack = speak(pick(LINES.acks), { onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) });
+        ack = filler(opts?.image ? 'Déjame ver.' : pick(LINES.acks));
+        if (opts?.image) {
+          // el nodo de visión tarda ~10 s: segundo relleno si sigue sin volver
+          const still = new Promise<'still'>((r) => setTimeout(() => r('still'), 6500));
+          if ((await Promise.race([chat, still])) === 'still') {
+            await ack;
+            ack = filler('Todavía estoy mirando.');
+          }
+        }
       }
       const result = await chat;
-      if (ack) await ack; // no cortar el "un momento" a la mitad
+      if (ack) await ack; // no cortar el relleno a la mitad
       if (result.error || !result.reply) {
         setOnline(false);
         await say(result.error ? 'No alcanzo al cerebro remoto ahora. Sigo contigo con lo básico.' : 'No recibí respuesta. Intenta de nuevo.', 'CONFUSED');
@@ -441,7 +450,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       handling.current = true;
       await say(greetingFor(user.name), 'HAPPY');
       handling.current = false;
-      void prefetchPhrases(['Anotado. Lo recuerdo.', 'No recibí respuesta. Intenta de nuevo.', 'Veo: ' + (objectsRef.current.join(', ') || 'nada aún') + '.']);
+      void prefetchPhrases(['Ya completamos las diez preguntas principales. Si quieres, di «conocer más».']);
 
       if (settings.visionEnabled && camPerm && !camPerm.granted && camPerm.canAskAgain !== false) {
         Alert.alert('Cámara', '¿Permitir cámara para mirarte e identificar lo que hay en la mesa?', [

@@ -7,11 +7,6 @@ on:
     paths:
       - "mobile/**"
       - ".github/workflows/android-apk.yml"
-  pull_request:
-    paths:
-      - "mobile/**"
-      - ".github/workflows/android-apk.yml"
-
 concurrency:
   group: apk-${{ github.ref }}
   cancel-in-progress: true
