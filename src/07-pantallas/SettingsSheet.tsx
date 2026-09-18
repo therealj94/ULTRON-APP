@@ -44,6 +44,10 @@ const EMOTIONS_LIST: FaceState[] = [
   'FURY',
   'SLEEPING',
   'STARTLE',
+  'PURR',
+  'WINK',
+  'CURIOSITY',
+  'JEDI',
 ];
 
 export const SettingsSheet: React.FC<SettingsSheetProps> = ({

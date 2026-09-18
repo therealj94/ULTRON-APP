@@ -604,6 +604,33 @@ export default function App() {
       handleTriggerCombat();
       return;
     }
+    if (/\b(jedi|sable|espada l[aá]ser)\b/.test(q)) {
+      setFace('JEDI');
+      vocalize('Sable listo.');
+      return;
+    }
+    if (/emociones|men[uú] de emociones|qu[eé] emociones/.test(q)) {
+      vocalize('Puedo: idle, escuchar, pensar, hablar, feliz, preocupado, enojado, furia, dormir, susto, ronroneo, guiño, curiosidad y jedi. Decime el nombre.');
+      return;
+    }
+    const caraVoz: { re: RegExp; face: FaceState; dicho: string }[] = [
+      { re: /\benojad/, face: 'ANGRY', dicho: 'Enojado.' },
+      { re: /\bfuria|\bfurioso/, face: 'FURY', dicho: 'Furia.' },
+      { re: /\bfeliz|\bcontento|\balegre/, face: 'HAPPY', dicho: 'Feliz.' },
+      { re: /\bpreocup/, face: 'CONCERNED', dicho: 'Preocupado.' },
+      { re: /\bcurios/, face: 'CURIOSITY', dicho: 'Curioso.' },
+      { re: /\bgui[nñ]o/, face: 'WINK', dicho: 'Guiño.' },
+      { re: /\bronroneo|\bpurr/, face: 'PURR', dicho: 'Así.' },
+      { re: /\bsusto|\basust/, face: 'STARTLE', dicho: 'Susto.' },
+      { re: /\bpensando|\bpensar/, face: 'THINKING', dicho: 'Pensando.' },
+    ];
+    for (const c of caraVoz) {
+      if (c.re.test(q) && q.length < 48) {
+        setFace(c.face);
+        vocalize(c.dicho);
+        return;
+      }
+    }
     if (/gafas|lentes|visor/.test(q)) {
       setHasVisor((prev) => {
         const next = !prev;

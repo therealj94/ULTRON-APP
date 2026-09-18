@@ -168,6 +168,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     startTime: number;
     lasers: BlasterLaserBolt[];
     impacts: BulletImpact[];
+    weapon: 'none' | 'blaster' | 'jedi';
   }>({
     isActive: false,
     level: 0,
@@ -175,6 +176,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     lastShotTime: 0,
     startTime: 0,
     lasers: [],
+    weapon: 'none',
     impacts: [],
   });
 
@@ -210,6 +212,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     C.lasers = [];
     C.impacts = [];
     C.level = 0;
+    C.weapon = 'none';
     animRef.current.shake = 0;
     onBlasterCombatEndRef.current?.();
     onFaceChange('IDLE', 0);
@@ -219,15 +222,29 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     const C = combatRef.current;
     if (C.isActive) return;
     C.isActive = true;
+    C.weapon = 'blaster';
     C.startTime = performance.now();
     C.shotsRemaining = 8;
     C.lastShotTime = performance.now();
     onFaceChange('FURY', 2600);
     playSfx('gun_draw', soundFxEnabled);
-    onSpeak('Sistemas defensivos tácticos desplegados.');
+    onSpeak('Blasters fuera.');
     animRef.current.shake = 1.2;
     onTriggerBlasterCombat?.();
   }, [onFaceChange, onSpeak, soundFxEnabled, onTriggerBlasterCombat]);
+
+  const triggerJediSaber = useCallback(() => {
+    const C = combatRef.current;
+    C.isActive = true;
+    C.weapon = 'jedi';
+    C.shotsRemaining = 0;
+    C.lasers = [];
+    C.level = 1;
+    onFaceChange('JEDI', 4000);
+    playSfx('gun_draw', soundFxEnabled);
+    onSpeak('Sable listo.');
+    animRef.current.shake = 0.4;
+  }, [onFaceChange, onSpeak, soundFxEnabled]);
 
   // Handle external reset trigger
   useEffect(() => {
@@ -383,6 +400,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
         return { dilate: 0.58, brow: 0.55, mouth: 0.45, smile: -0.25, bounce: 0.2 };
       case 'CURIOSITY':
         return { dilate: 0.5, brow: 0.28, mouth: 0.16, smile: 0.25, bounce: 0.06 };
+      case 'JEDI':
+        return { dilate: 0.4, brow: -0.1, mouth: 0.18, smile: 0.35, bounce: 0.08 };
       case 'IDLE':
       default:
         return { dilate: 0.36, brow: 0, mouth: 0.08, smile: 0.15, bounce: 0 };
@@ -544,12 +563,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
 
       // Update Combat Blaster System
       const C = combatRef.current;
-      if (C.isActive) {
-        // Enforce safety watchdog: Force disarm after 2.6 seconds
-        if (now - (C.startTime || now) > 2600) {
-          C.shotsRemaining = 0;
-          C.lasers = [];
-        }
+      if (C.isActive && C.weapon === 'jedi') {
+        C.level = Math.min(1, C.level + dt * 5);
+      } else if (C.isActive) {
 
         // Only extend level while shots remain
         if (C.shotsRemaining > 0) {
@@ -826,7 +842,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     }
 
     // 6. Dual Retractable Combat Blaster Cannons (Rage trigger)
-    if (combatRef.current.level > 0.005) {
+    if (combatRef.current.weapon === 'jedi' || S.face === 'JEDI') {
+      drawJediSaber(ctx, canvas.width, canvas.height, S.t);
+    } else if (combatRef.current.level > 0.005) {
       drawCombatBlasterTurrets(ctx, baseR, eyeSpacing, combatRef.current, S.t);
     }
 
@@ -1647,6 +1665,26 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   }
 
   // 6. Draw Combat Blaster Turrets (Dual Retractable Mecha Cannons)
+  function drawJediSaber(ctx: CanvasRenderingContext2D, W: number, H: number, t: number) {
+    const x = W * 0.72;
+    const y = H * 0.62;
+    const sway = Math.sin(t * 2.2) * 0.08;
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(-0.7 + sway);
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillRect(-7, 0, 14, 46);
+    ctx.fillStyle = '#05E1FF';
+    ctx.shadowColor = '#05E1FF';
+    ctx.shadowBlur = 28;
+    const len = 160 + Math.sin(t * 8) * 6;
+    ctx.fillRect(-4, -len, 8, len);
+    ctx.fillStyle = '#E8FFFF';
+    ctx.shadowBlur = 12;
+    ctx.fillRect(-1.5, -len, 3, len);
+    ctx.restore();
+  }
+
   function drawCombatBlasterTurrets(
     ctx: CanvasRenderingContext2D,
     baseR: number,
@@ -2304,12 +2342,16 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     const S = stateRef.current;
     const C = combatRef.current;
 
-    // Instant disarm if combat was active
-    if (C.isActive) {
+    if (C.isActive && C.weapon === 'blaster') {
+      triggerJediSaber();
+      S.poke = 4;
+      return;
+    }
+    if (C.isActive && C.weapon === 'jedi') {
       disarmCombat();
       onFaceChange('IDLE', 0);
       playSfx('tap', soundFxEnabled);
-      onSpeak('Sistemas defensivos desactivados. Normalizando.');
+      onSpeak('Sable guardado.');
       return;
     }
 
@@ -2331,17 +2373,13 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       scheduleBlink('wink');
       playSfx('wink', soundFxEnabled);
     } else if (S.poke === 2) {
-      // 2 Taps -> Listen for voice order
-      playSfx('wake', soundFxEnabled);
-      onTriggerVoice();
+      onFaceChange('ANGRY', 2200);
+      playSfx('deny', soundFxEnabled);
+      onSpeak('Cuidado.');
     } else if (S.poke === 3) {
-      onFaceChange('CURIOSITY', 2600);
-      onSpeak('Aquí estoy. ¿En qué te ayudo?');
-      playSfx('tap', soundFxEnabled);
+      triggerBlasterCombat();
     } else {
-      // Friendly Petting / Purring mode (Never anger or weapons!)
-      onFaceChange('PURR', 3400);
-      playSfx('purr', soundFxEnabled);
+      triggerJediSaber();
       S.poke = 0;
     }
   };

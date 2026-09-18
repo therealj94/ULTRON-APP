@@ -20,7 +20,8 @@ export type FaceState =
   | 'STARTLE'
   | 'PURR'
   | 'WINK'
-  | 'CURIOSITY';
+  | 'CURIOSITY'
+  | 'JEDI';
 
 export interface FaceTargets {
   dilate: number;
