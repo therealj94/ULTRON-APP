@@ -140,14 +140,19 @@ export async function elevenSpeak(opts: {
     ? [{ model: 'eleven_multilingual_v2', settings: { stability: 0.35, similarity_boost: 0.75, style: 0.45, speed: 0.94, use_speaker_boost: true }, timeout: 22000 }]
     : [
         {
-          model: 'eleven_multilingual_v2',
-          settings: { stability: 0.26, similarity_boost: 0.8, style: 0.52, speed: 0.98, use_speaker_boost: true },
-          timeout: opts.timeoutMs || 16000,
+          model: 'eleven_v3_conversational',
+          settings: { stability: 0.35, similarity_boost: 0.8 },
+          timeout: opts.timeoutMs || 18000,
         },
         {
-          model: 'eleven_turbo_v2_5',
-          settings: { stability: 0.35, similarity_boost: 0.8, style: 0.35, speed: 0.97, use_speaker_boost: true },
-          timeout: 9000,
+          model: 'eleven_v3',
+          settings: { stability: 0.32, similarity_boost: 0.82 },
+          timeout: 18000,
+        },
+        {
+          model: 'eleven_multilingual_v2',
+          settings: { stability: 0.26, similarity_boost: 0.8, style: 0.52, speed: 0.98, use_speaker_boost: true },
+          timeout: 16000,
         },
       ];
   for (const a of attempts) {
