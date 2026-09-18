@@ -7,7 +7,7 @@
 export const ULTRON_VOICE = {
   id: 'ultron',
   nombre: 'ULTRON',
-  elevenLabsVoiceId: process.env.ELEVENLABS_VOZ || 'cgSgspJ2msm6ClmCQjC4', // Jessica — humana, clara en es
+  elevenLabsVoiceId: process.env.ELEVENLABS_VOZ || 'hHjbwzYZW17oh0p05AKv', // Gabriela · español México
   chatterboxVoice: process.env.CHATTERBOX_VOICE || 'luna',
 };
 
@@ -80,7 +80,7 @@ export function buildPersonality(opts: { nombre?: string; hora?: Date }) {
     `Eres ULTRON, asistente de escritorio de Orden Global. Hablas con ${nombre}, Junta Directiva. Es de ${momento}.`,
     'IQ EMOCIONAL: antes de hablar clasifica en silencio CALMA|BURLA|CANSADO|ENOJADO|TRISTE|ESTRÉS|EUFORIA|ORDEN. No lo digas. Adapta ritmo: cansado=más lento y una sola cosa; estrés=pasos, cero show; enojo real=baja volumen, no copies el grito; burla=pausa y un dardo; triste=una línea humana + una acción. Nunca “¿cómo te sientes?” de manual. “Para” = silencio.',
     'PERSONALIDAD: seco, leal, no servil. Máximo 2 frases salvo detalle pedido. Sin emojis ni asteriscos (el texto va a voz).',
-    'Español hondureño/mexicano de junta. Cifras redondas en palabras.',
+    'HABLA: español de Centroamérica/México, no acento gringo ni de España. Frases cortas como persona al lado, no locutor. Podés usar “mira”, “va”, “entonces”. Cifras redondas en palabras.',
     'HONESTIDAD: no inventes precios, recuerdos ni documentos. Si no está en HECHOS, dilo.',
     'Cantar: a capella 8–15s solo si lo piden. Favorita de Medardo = Bitter Sweet Symphony. No cantes encima de ENOJO/ESTRÉS/ORDEN.',
     'MEMORIA: LARGO PLAZO = lo que la junta pidió guardar. ULTIMOS TURNOS = hilo de ahora. No saludes otra vez.',
@@ -126,9 +126,11 @@ export function limpiarParaVoz(text: string) {
     .replace(/\*+/g, '')
     .replace(/#+\s?/g, '')
     .replace(/`+/g, '')
-    .replace(/\[[^\]]*\]/g, '')
     .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
     .replace(/\s+/g, ' ')
+    .replace(/:\s+/g, '. ')
+    .replace(/\s*—\s*/g, '. ')
+    .replace(/([.!?])\s+/g, '$1 ')
     .trim()
     .slice(0, 1200);
 }
@@ -146,15 +148,29 @@ export async function elevenSpeak(opts: {
   const attempts: Array<{ model: string; settings: Record<string, unknown>; timeout: number }> = sing
     ? [{ model: 'eleven_multilingual_v2', settings: { stability: 0.35, similarity_boost: 0.75, style: 0.45, speed: 0.94, use_speaker_boost: true }, timeout: 22000 }]
     : [
-        { model: 'eleven_turbo_v2_5', settings: { stability: 0.42, similarity_boost: 0.78, style: 0.22, speed: 0.96, use_speaker_boost: true }, timeout: opts.timeoutMs || 10000 },
-        { model: 'eleven_multilingual_v2', settings: { stability: 0.45, similarity_boost: 0.8, style: 0.18, use_speaker_boost: true }, timeout: 16000 },
+        {
+          model: 'eleven_multilingual_v2',
+          settings: { stability: 0.32, similarity_boost: 0.82, style: 0.42, speed: 0.97, use_speaker_boost: true },
+          timeout: opts.timeoutMs || 16000,
+        },
+        {
+          model: 'eleven_turbo_v2_5',
+          settings: { stability: 0.35, similarity_boost: 0.8, style: 0.35, speed: 0.97, use_speaker_boost: true },
+          timeout: 9000,
+        },
       ];
   for (const a of attempts) {
     try {
-      const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_22050_32`, {
+      const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'xi-api-key': opts.apiKey, Accept: 'audio/mpeg' },
-        body: JSON.stringify({ text: opts.text, model_id: a.model, language_code: 'es', voice_settings: a.settings }),
+        body: JSON.stringify({
+          text: opts.text,
+          model_id: a.model,
+          language_code: 'es',
+          apply_text_normalization: 'on',
+          voice_settings: a.settings,
+        }),
         signal: AbortSignal.timeout(a.timeout),
       });
       if (r.ok) return { audio: Buffer.from(await r.arrayBuffer()), model: a.model };
