@@ -21,14 +21,12 @@ import { playSfx } from './utils/audio';
 import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
 import { speakWithElevenLabsOrFallback, stopCurrentVoice, DEFAULT_ELEVENLABS_VOICES } from './utils/elevenlabs';
 import { vozPorId, VozId } from './utils/voces';
-import { stopVoice, playWavBlob, newTtsAbort } from './voice/player';
+import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip } from './voice/player';
 import { pedirTurno } from './agent/turno';
 import { grabFrame } from './agent/grabFrame';
 import { guardarHecho } from './session/memoria';
 import { downloadStandaloneSimulator } from './utils/exporter';
 import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck, HelpCircle, RotateCcw } from 'lucide-react';
-import { AgenticHarnessModal } from './components/AgenticHarnessModal';
-import { analyzeConversationTopic, SemanticClassification } from './utils/qwenHarness';
 
 export default function App() {
   // Session State
@@ -38,8 +36,10 @@ export default function App() {
   const [isBooting, setIsBooting] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isKioskFrame, setIsKioskFrame] = useState<boolean>(false);
-  const FUN_MODE = true; // siempre on; no va en ajustes
-  const [hasVisor, setHasVisor] = useState<boolean>(true);
+  const FUN_MODE = true;
+  useEffect(() => { onLip(setLipLevel); return () => onLip(null); }, []);
+  const [hasVisor, setHasVisor] = useState<boolean>(false);
+  const [lipLevel, setLipLevel] = useState(0);
   const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal'); // Horizontal (desk LOOI) or Vertical (mobile)
 
   // Camera Sensor & Gaze Tracking
@@ -154,25 +154,66 @@ export default function App() {
     (text: string, faceOverride: FaceState = 'SPEAKING') => {
       showBubble(text);
       if (!speakerEnabled) return;
-      setFace(faceOverride);
+      setFace('THINKING');
 
       const browserFallback = () =>
         speakUtterance(text, { enabled: true, onEnd: () => setFace('IDLE') });
 
       const voz = vozPorId(vozId);
       const ac = newTtsAbort();
-      fetch('/api/tts', {
+      const speakBlob = (blob: Blob, last: boolean) => {
+        const play = currentQueueEmpty ? playWavBlob : enqueueWav;
+        // first chunk starts playback
+        return playWavBlob(blob, () => { if (last) setFace('IDLE'); }, browserFallback);
+      };
+      fetch('/api/tts/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, voice: voz.motor, instruct: voz.instruct }),
         signal: ac.signal,
       })
         .then(async (r) => {
-          if (!r.ok || !(r.headers.get('content-type') || '').includes('audio')) {
-            throw new Error('tts-qwen-off');
+          const ctype = r.headers.get('content-type') || '';
+          if (!r.ok) throw new Error('tts-stream-off');
+          if (ctype.includes('audio')) {
+            setFace(faceOverride);
+            const blob = await r.blob();
+            await playWavBlob(blob, () => setFace('IDLE'), browserFallback);
+            return;
           }
-          const blob = await r.blob();
-          await playWavBlob(blob, () => setFace('IDLE'), browserFallback);
+          const reader = r.body?.getReader();
+          if (!reader) throw new Error('no-body');
+          const dec = new TextDecoder();
+          let buf = '';
+          let first = true;
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            const parts = buf.split('\n\n');
+            buf = parts.pop() || '';
+            for (const part of parts) {
+              const line = part.replace(/^data:\s*/, '').trim();
+              if (!line) continue;
+              let j: any;
+              try { j = JSON.parse(line); } catch { continue; }
+              if (j.done) continue;
+              if (j.audio) {
+                const raw = atob(j.audio);
+                const arr = new Uint8Array(raw.length);
+                for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+                const blob = new Blob([arr], { type: 'audio/wav' });
+                if (first) {
+                  first = false;
+                  setFace(faceOverride);
+                  await playWavBlob(blob);
+                } else {
+                  enqueueWav(blob);
+                }
+              }
+            }
+          }
+          if (first) throw new Error('empty-stream');
         })
         .catch((err: any) => {
           if (err?.name === 'AbortError') return;
@@ -522,13 +563,6 @@ export default function App() {
       return;
     }
 
-    if (autoModeSwitch) {
-      const classification = analyzeConversationTopic(q);
-      if (classification && classification.mode !== mode) {
-        setMode(classification.mode);
-      }
-    }
-
     askCerebro(cmd);
   };
 
@@ -639,6 +673,8 @@ export default function App() {
       >
         {/* Procedural Living Face Canvas with LOOI OLED & Interaction Physics */}
         <FaceCanvas
+          lipLevel={lipLevel}
+          showHud={false}
           face={face}
           mode={mode}
           energy={energy}
@@ -1036,33 +1072,6 @@ export default function App() {
         <AndroidBlueprintModal
           isOpen={androidBlueprintOpen}
           onClose={() => setAndroidBlueprintOpen(false)}
-        />
-
-        {/* Agentic Harness Modal (Qwen 3.8 27B) */}
-        <AgenticHarnessModal
-          isOpen={false}
-          onClose={() => setHarnessModalOpen(false)}
-          currentMode={mode}
-          autoModeSwitch={autoModeSwitch}
-          onToggleAutoModeSwitch={() => setAutoModeSwitch((prev) => !prev)}
-          hasVisor={hasVisor}
-          onToggleVisor={() => {
-            setHasVisor((prev) => {
-              const next = !prev;
-              playSfx('visor', soundFxEnabled);
-              return next;
-            });
-          }}
-          onApplyClassification={(classification: SemanticClassification) => {
-            if (classification.mode !== mode) {
-              setMode(classification.mode);
-              playSfx(classification.mode === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
-            }
-            if (classification.toolCall) {
-              logBridgeEvent('out', `Tool Dispatched: ${classification.toolCall.name}()`);
-            }
-          }}
-          onSpeak={(text) => vocalize(text)}
         />
 
         {/* Biometric Authentication Modal */}

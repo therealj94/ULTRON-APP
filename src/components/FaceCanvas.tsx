@@ -38,6 +38,8 @@ interface FaceCanvasProps {
   onWake: () => void;
   onSleep: () => void;
   onCloseOverlays: () => void;
+  lipLevel?: number;
+  showHud?: boolean;
 }
 
 const MODES: Mode[] = ['GUARDIAN', 'MINING', 'GOLD', 'CREATIVE', 'ANALYTICAL', 'STRATEGIC', 'EXPLORER'];
@@ -69,8 +71,12 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   onWake,
   onSleep,
   onCloseOverlays,
+  lipLevel = 0,
+  showHud = false,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const lipRef = useRef(0);
+  lipRef.current = lipLevel;
 
   // References to preserve state across 60fps render loop
   const stateRef = useRef<{
@@ -502,7 +508,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       // Facial Parameter Lerping
       A.dilate += (A.dilateT - A.dilate) * Math.min(1, dt * 6);
       A.brow += (A.browT - A.brow) * Math.min(1, dt * 6);
-      A.mouth += (A.mouthT - A.mouth) * Math.min(1, dt * 10);
+      const mouthWant = S.face === 'SPEAKING' ? (0.08 + Math.min(1, lipRef.current) * 0.72) : A.mouthT;
+      A.mouth += (mouthWant - A.mouth) * Math.min(1, dt * 10);
       A.smile += (A.smileT - A.smile) * Math.min(1, dt * 7);
 
       // Organic Secondary Oscillations
@@ -649,9 +656,16 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       animId = requestAnimationFrame(render);
     };
 
+    const onVis = () => {
+      if (document.hidden) cancelAnimationFrame(animId);
+      else animId = requestAnimationFrame(render);
+    };
+    document.addEventListener('visibilitychange', onVis);
+
     animId = requestAnimationFrame(render);
 
     return () => {
+      document.removeEventListener('visibilitychange', onVis);
       cancelAnimationFrame(animId);
       window.removeEventListener('resize', resize);
     };
@@ -769,17 +783,18 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     const baseR = Math.min(W * 0.115, H * 0.22);
     const eyeSpacing = baseR * 1.58;
     const cx = W / 2;
-    const cy = H / 2 + Math.sin(S.t * 2) * (baseR * 0.04) - A.bounce * baseR;
+    const cy = H / 2 + Math.sin(S.t * 1.15) * (baseR * 0.018) - A.bounce * baseR;
 
-    const shakeX = (Math.random() - 0.5) * A.shake * 12;
-    const shakeY = (Math.random() - 0.5) * A.shake * 8;
+    const shakeX = A.shake * (Math.sin(S.t * 37.1) * 0.7 + Math.sin(S.t * 19.3) * 0.3) * 10;
+    const shakeY = A.shake * (Math.sin(S.t * 29.7) * 0.6 + Math.cos(S.t * 13.1) * 0.4) * 7;
 
     ctx.save();
     ctx.translate(cx + shakeX, cy + shakeY);
     ctx.scale(A.squashX, A.squashY);
 
-    // 1. Draw Top Mode Crown / Emblem (Faithful to Photo 3)
-    drawModeCrown(ctx, 0, -baseR * 1.45, baseR, S.mode, theme, S.t, A);
+    if (showHud) {
+      drawModeCrown(ctx, 0, -baseR * 1.45, baseR, S.mode, theme, S.t, A);
+    }
 
     // 2. Draw the Two Volumetric Living Eyes (LOOI Style)
     const leftX = -eyeSpacing;
@@ -797,8 +812,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     // 4. Draw Reactive Mouth Line
     drawCyberMouth(ctx, 0, baseR * 1.25, baseR, theme.primary, S, A);
 
-    // 5. Special Mode Ambient Overlays (Stars, Sparks, Data Nodes)
-    drawModeEnvironment(ctx, baseR, S.mode, theme, S.t);
+    if (showHud) {
+      drawModeEnvironment(ctx, baseR, S.mode, theme, S.t);
+    }
 
     // 6. Dual Retractable Combat Blaster Cannons (Rage trigger)
     if (combatRef.current.level > 0.005) {
@@ -918,7 +934,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       ctx.fill();
 
       // Draw Mode Specific Eye Glyphs (Faithful to Image 3 Tablets!)
-      drawModeEyeGlyph(ctx, rx, ry, side, S.mode, theme, S.t, A);
+      // glyphs off — ojo limpio
 
       // Specular Catchlight Highlights (LOOI's adorable eye reflections)
       const lookOffsetX = A.lx * rx * 0.32;

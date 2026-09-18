@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "Ultron Desk",
+    "slug": "ultron-desk",
+    "version": "1.0.0",
+    "orientation": "default",
+    "backgroundColor": "#000000",
+    "ios": { "supportsTablet": true, "bundleIdentifier": "org.ordenglobal.ultrondesk" },
+    "android": { "package": "org.ordenglobal.ultrondesk", "permissions": ["CAMERA", "RECORD_AUDIO"] }
+  }
+}

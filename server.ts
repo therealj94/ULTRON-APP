@@ -797,6 +797,46 @@ app.post('/api/memoria', (req, res) => {
   res.json({ ok: true, ...m });
 });
 
+
+app.post('/api/tts/stream', async (req, res) => {
+  const text = String(req.body?.text || '').slice(0, 2000).trim();
+  const voice = String(req.body?.voice || 'formal');
+  const instruct = String(req.body?.instruct || '').slice(0, 400);
+  if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
+  if (!ULTRON_TTS_URL || !ULTRON_TTS_CLAVE) {
+    return res.status(503).json({ error: 'TTS Qwen no configurado', honesto: true });
+  }
+  try {
+    const r = await fetch(`${ULTRON_TTS_URL}/synthesize_stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-ultron-tts-clave': ULTRON_TTS_CLAVE },
+      body: JSON.stringify({ text, voice, language: 'Spanish', ...(instruct ? { instruct } : {}) }),
+      signal: AbortSignal.timeout(90000),
+    });
+    if (!r.ok) {
+      const err = await r.text();
+      return res.status(502).json({ error: 'TTS stream falló', detalle: err.slice(0, 200), honesto: true });
+    }
+    res.setHeader('Content-Type', r.headers.get('content-type') || 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-store');
+    if (!r.body) return res.status(502).json({ error: 'sin body', honesto: true });
+    const reader = (r.body as any).getReader?.();
+    if (!reader) {
+      const buf = Buffer.from(await r.arrayBuffer());
+      return res.send(buf);
+    }
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(value);
+    }
+    res.end();
+  } catch (e: any) {
+    if (!res.headersSent) res.status(502).json({ error: 'TTS stream caído', message: String(e?.message || e).slice(0, 180), honesto: true });
+    else res.end();
+  }
+});
+
 app.post('/api/tts', async (req, res) => {
   const text = String(req.body?.text || '').slice(0, 2000).trim();
   const voice = String(req.body?.voice || 'formal');
@@ -904,6 +944,7 @@ app.post('/api/turno', async (req, res) => {
 
   const system = `Eres ULTRON, asistente de escritorio de Orden Global. Español corto.
 No inventes precios ni tipos de cambio. Si HECHOS está vacío para un dato pedido, di que no lo viste.
+No finjas recuerdos de otras noches: solo LARGO PLAZO y ULTIMOS TURNOS.
 HECHOS:\n${hechos.join('\n') || '(ninguno)'}\nLARGO PLAZO:\n${larga.map((x:any)=>x.hecho).join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h:any)=>`${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
 
   try {
