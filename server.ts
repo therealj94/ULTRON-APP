@@ -327,13 +327,49 @@ app.post('/api/tts/synthesize', async (req, res) => {
   const instructAddon =
     (req.body.instructAddon as string) ||
     (emotion ? voiceParamsFor(emotion as UltronEmotion)?.instructAddon : undefined);
-  const cacheKey = `${voice.id}|${emotion || 'n'}|${spoken}`;
+  // engine=fast (app nativa): ElevenLabs Flash primero (~0.5s) — el nodo T4 tarda ~12s/frase.
+  const engine = String(req.body.engine || 'auto');
+  const cacheKey = `${engine === 'fast' ? 'f' : 'a'}|${voice.id}|${emotion || 'n'}|${spoken}`;
   const cached = getCachedTts(cacheKey);
   if (cached) {
     res.setHeader('Content-Type', cached.contentType);
     res.setHeader('X-Ultron-TTS', 'cache');
     res.setHeader('X-Ultron-Voice', voice.id);
     return res.send(cached.audio);
+  }
+
+  if (engine === 'fast' && VAULT_ELEVENLABS_API_KEY && voice.elevenLabsVoiceId) {
+    try {
+      const elRes = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${voice.elevenLabsVoiceId}?output_format=mp3_22050_32`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'xi-api-key': VAULT_ELEVENLABS_API_KEY,
+            Accept: 'audio/mpeg',
+          },
+          body: JSON.stringify({
+            text: spoken,
+            model_id: 'eleven_flash_v2_5',
+            language_code: 'es',
+            voice_settings: { stability: 0.55, similarity_boost: 0.8, style: 0, speed: 1.05 },
+          }),
+          signal: AbortSignal.timeout(12000),
+        }
+      );
+      if (elRes.ok) {
+        const buf = Buffer.from(await elRes.arrayBuffer());
+        setCachedTts(cacheKey, buf, 'audio/mpeg');
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('X-Ultron-TTS', 'elevenlabs-flash');
+        res.setHeader('X-Ultron-Voice', voice.id);
+        return res.send(buf);
+      }
+      console.warn('[TTS fast]', elRes.status, (await elRes.text()).slice(0, 200));
+    } catch (err: any) {
+      console.warn('[TTS fast]', err.message);
+    }
   }
 
   const qwen = await synthesizeWithQwenTts({

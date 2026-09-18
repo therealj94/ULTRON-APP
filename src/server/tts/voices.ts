@@ -2,7 +2,7 @@
  * ULTRON FP — 5 voces Qwen3-TTS (español neutro LATAM, ritmo calmado).
  * Se sintetizan en el nodo T4 (VoiceDesign instruct), no en el A10G del 27B.
  */
-export type UltronVoiceId = 'jarvis' | 'formal' | 'tierna' | 'estrategia' | 'orbita';
+export type UltronVoiceId = 'ultron' | 'jarvis' | 'formal' | 'tierna' | 'estrategia' | 'orbita';
 
 export interface UltronVoiceProfile {
   id: UltronVoiceId;
@@ -18,6 +18,16 @@ export interface UltronVoiceProfile {
 }
 
 export const ULTRON_VOICES: UltronVoiceProfile[] = [
+  {
+    id: 'ultron',
+    name: 'ULTRON',
+    label: 'Asistente',
+    description: 'Voz profesional, clara y ágil. Predeterminada de la app nativa (motor rápido).',
+    instruct:
+      'Adult male, 35s, professional executive assistant, neutral Latin American Spanish, clear crisp articulation, confident mid-low pitch, brisk natural pace, friendly but not sensual, no breathiness',
+    language: 'Spanish',
+    elevenLabsVoiceId: 'onwK4e9ZLuTAKqWW03F9',
+  },
   {
     id: 'jarvis',
     name: 'JARVIS',
@@ -37,7 +47,7 @@ export const ULTRON_VOICES: UltronVoiceProfile[] = [
     instruct:
       'Adult male, 45s, institutional boardroom tone, neutral Latin American Spanish, steady serious cadence, precise diction, calm authority, no emotion spikes',
     language: 'Spanish',
-    elevenLabsVoiceId: 'onwK4e9ZLuTAKqWW03F9',
+    elevenLabsVoiceId: 'JBFqnCBsd6RMkjVDRZzb',
   },
   {
     id: 'tierna',
