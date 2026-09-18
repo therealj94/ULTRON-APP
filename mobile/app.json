@@ -36,8 +36,7 @@
     },
     "plugins": [
       "expo-camera",
-      "expo-av",
-      "react-native-webview"
+      "expo-av"
     ],
     "extra": {
       "eas": {
