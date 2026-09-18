@@ -8,6 +8,7 @@ import { GoogleGenAI } from '@google/genai';
 import {
   JUNTA,
   ULTRON_VOICE,
+  elevenVoiceIdFor,
   buildPersonality,
   decodeDataUrl,
   elevenSpeak,
@@ -20,6 +21,7 @@ import {
   consultaWeb,
   leerPagina,
 } from './server/desk';
+import { CONOCIMIENTO_OG } from './src/og/conocimiento';
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -823,11 +825,27 @@ app.post('/api/memoria', (req, res) => {
 
 app.post('/api/tts/stream', async (req, res) => {
   const text = String(req.body?.text || '').slice(0, 2000).trim();
-  const voice = String(req.body?.voice || 'formal');
+  const voice = String(req.body?.voice || 'luna');
   const instruct = String(req.body?.instruct || '').slice(0, 400);
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
+
+  // ElevenLabs primero: Flash v2.5 ~300ms. El stream de Qwen T4 es el que se siente pésimo.
+  if (VAULT_ELEVENLABS_API_KEY) {
+    const out = await elevenSpeak({
+      apiKey: VAULT_ELEVENLABS_API_KEY,
+      text: limpiarParaVoz(text),
+      performance: req.body?.performance === 'sing' ? 'sing' : 'speak',
+      voiceId: elevenVoiceIdFor(voice) || String(req.body?.voiceId || ''),
+    });
+    if (out) {
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Ultron-TTS', out.model);
+      return res.send(out.audio);
+    }
+  }
   if (!ULTRON_TTS_URL || !ULTRON_TTS_CLAVE) {
-    return res.status(503).json({ error: 'TTS Qwen no configurado', honesto: true });
+    return res.status(503).json({ error: 'TTS no configurado', honesto: true });
   }
   try {
     const r = await fetch(`${ULTRON_TTS_URL}/synthesize_stream`, {
@@ -927,7 +945,12 @@ app.all('/api/tts', async (req, res) => {
   const speakEleven = async () => {
     if (!VAULT_ELEVENLABS_API_KEY) return false;
     const t0 = Date.now();
-    const out = await elevenSpeak({ apiKey: VAULT_ELEVENLABS_API_KEY, text, performance });
+    const out = await elevenSpeak({
+      apiKey: VAULT_ELEVENLABS_API_KEY,
+      text,
+      performance,
+      voiceId: elevenVoiceIdFor(voice),
+    });
     if (!out) return false;
     setCachedAudio(key, out.audio, 'audio/mpeg');
     res.setHeader('Content-Type', 'audio/mpeg');
@@ -938,11 +961,14 @@ app.all('/api/tts', async (req, res) => {
     return true;
   };
 
-  if (engine === 'eleven' && (await speakEleven())) return;
+  // Calidad primero: ElevenLabs. Qwen3-TTS en T4 es lento y metálico — solo fallback.
+  if (engine !== 'qwen' && (await speakEleven())) return;
+  if (engine === 'eleven') {
+    return res.status(503).json({ error: 'ElevenLabs no disponible', honesto: true });
+  }
 
   if (!ULTRON_TTS_URL || !ULTRON_TTS_CLAVE) {
-    if (engine !== 'eleven' && (await speakEleven())) return;
-    return res.status(503).json({ error: 'TTS no disponible (sin nodo Qwen ni ElevenLabs)', honesto: true });
+    return res.status(503).json({ error: 'TTS no disponible (sin ElevenLabs ni nodo local)', honesto: true });
   }
   try {
     const r = await fetch(`${ULTRON_TTS_URL}/synthesize`, {
@@ -1059,6 +1085,10 @@ async function prepararTurno(body: any) {
   const directo = soloDato && hechos.length ? hechos.map((h) => h.replace(/ No inventes otro número\./g, '')).join(' ') : null;
 
   const system = `${buildPersonality({ nombre: nombre || undefined })}
+
+CEREBRO ORDEN GLOBAL:
+${CONOCIMIENTO_OG}
+
 No finjas recuerdos de otras noches: solo LARGO PLAZO y ULTIMOS TURNOS.
 Modo de mesa pedido: ${mode}.
 HECHOS:\n${hechos.join('\n') || '(ninguno)'}\nLARGO PLAZO:\n${larga.join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h: any) => `${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
@@ -1220,7 +1250,7 @@ app.get('/api/orden-global', (_req, res) => {
     producto: 'web-kiosk',
     mesa: 'https://ultron-looi-desk.onrender.com',
     cerebro: 'Qwen 3.8 27B',
-    voz: 'T4 local primero; ElevenLabs solo fallback',
+    voz: 'ElevenLabs Rachel/Daniel primero; Qwen T4 solo fallback',
     datos: 'oro/plata/HNL solo via tools',
   });
 });

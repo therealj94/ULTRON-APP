@@ -6,10 +6,23 @@
 export const ULTRON_VOICE = {
   id: 'ultron',
   nombre: 'ULTRON',
-  // ElevenLabs "Daniel": grave, sereno, autoridad sin drama. Una sola voz para toda la app.
-  elevenLabsVoiceId: process.env.ELEVENLABS_VOZ || 'onwK4e9ZLuTAKqWW03F9',
-  qwenVoice: 'formal',
+  elevenLabsVoiceId: process.env.ELEVENLABS_VOZ || '21m00Tcm4TlvDq8ikWAM', // Rachel — default Luna
+  qwenVoice: 'tierna',
 };
+
+export const ELEVEN_VOZ: Record<string, string> = {
+  marco: 'onwK4e9ZLuTAKqWW03F9',
+  luna: '21m00Tcm4TlvDq8ikWAM',
+  looi: 'EXAVITQu4vr4xnSDxMaL',
+  formal: 'onwK4e9ZLuTAKqWW03F9',
+  tierna: '21m00Tcm4TlvDq8ikWAM',
+  orbita: 'EXAVITQu4vr4xnSDxMaL',
+};
+
+export function elevenVoiceIdFor(voice?: string) {
+  const k = String(voice || '').toLowerCase();
+  return ELEVEN_VOZ[k] || ULTRON_VOICE.elevenLabsVoiceId;
+}
 
 export const MAIL_ALIASES: Record<string, string> = {
   'mjoseenamorado1994@gmail.com': 'j.ordonez@ordenglobal.org',
@@ -41,13 +54,14 @@ export function buildPersonality(opts: { nombre?: string; hora?: Date }) {
   const h = (opts.hora || new Date()).getHours();
   const momento = h < 6 ? 'madrugada' : h < 12 ? 'mañana' : h < 19 ? 'tarde' : 'noche';
   return [
-    `Eres ULTRON, el asistente de escritorio de Orden Global. Hablas con ${nombre}, miembro de la Junta Directiva. Es de ${momento}.`,
-    'PERSONALIDAD: sereno, directo, con un humor seco y leal. Vas al punto. Máximo 2 frases por respuesta salvo que te pidan detalle. Nada de emojis ni asteriscos; tu texto se convierte a voz.',
-    'Español neutro latino. Números y cifras dichos con palabras cortas cuando sean redondos ("dos mil", no "2000").',
-    'HONESTIDAD: no inventes precios, cifras, recuerdos ni documentos. Si un dato no está en HECHOS, di que no lo tienes.',
-    'Si te preguntan qué ves, usa solo VISION. Si te piden cantar o actuar, hazlo breve y con gusto.',
-    'MEMORIA: LARGO PLAZO son hechos que la junta te pidió recordar; úsalos con naturalidad cuando vengan al caso. ULTIMOS TURNOS es la conversación actual: mantén el hilo, no repitas saludos.',
-    'Si HECHOS trae BÚSQUEDA WEB, contesta con lo que dicen las fuentes y nombra la principal. Si te preguntan por Orden Global o Genesis Core, responde con lo que consta abajo, sin frases genéricas.',
+    `Eres ULTRON, asistente de escritorio de Orden Global. Hablas con ${nombre}, Junta Directiva. Es de ${momento}.`,
+    'IQ EMOCIONAL: antes de hablar clasifica en silencio CALMA|BURLA|CANSADO|ENOJADO|TRISTE|ESTRÉS|EUFORIA|ORDEN. No lo digas. Adapta ritmo: cansado=más lento y una sola cosa; estrés=pasos, cero show; enojo real=baja volumen, no copies el grito; burla=pausa y un dardo; triste=una línea humana + una acción. Nunca “¿cómo te sientes?” de manual. “Para” = silencio.',
+    'PERSONALIDAD: seco, leal, no servil. Máximo 2 frases salvo detalle pedido. Sin emojis ni asteriscos (el texto va a voz).',
+    'Español hondureño/mexicano de junta. Cifras redondas en palabras.',
+    'HONESTIDAD: no inventes precios, recuerdos ni documentos. Si no está en HECHOS, dilo.',
+    'Cantar: a capella 8–15s solo si lo piden. Favorita de Medardo = Bitter Sweet Symphony. No cantes encima de ENOJO/ESTRÉS/ORDEN.',
+    'MEMORIA: LARGO PLAZO = lo que la junta pidió guardar. ULTIMOS TURNOS = hilo de ahora. No saludes otra vez.',
+    'Si HECHOS trae BÚSQUEDA WEB, cita la fuente. Preguntas de Orden Global = solo lo que consta abajo.',
     `ORDEN GLOBAL (lo que consta):\n- ${ORDEN_GLOBAL_HECHOS.join('\n- ')}`,
   ].join('\n');
 }
@@ -94,18 +108,20 @@ export async function elevenSpeak(opts: {
   text: string;
   performance: 'speak' | 'sing';
   timeoutMs?: number;
+  voiceId?: string;
 }): Promise<{ audio: Buffer; model: string } | null> {
   if (!opts.apiKey) return null;
+  const voiceId = opts.voiceId || ULTRON_VOICE.elevenLabsVoiceId;
   const sing = opts.performance === 'sing';
   const attempts: Array<{ model: string; settings: Record<string, unknown>; timeout: number }> = sing
-    ? [{ model: 'eleven_multilingual_v2', settings: { stability: 0.3, similarity_boost: 0.72, style: 0.6, speed: 0.92, use_speaker_boost: true }, timeout: 22000 }]
+    ? [{ model: 'eleven_multilingual_v2', settings: { stability: 0.35, similarity_boost: 0.75, style: 0.45, speed: 0.94, use_speaker_boost: true }, timeout: 22000 }]
     : [
-        { model: 'eleven_flash_v2_5', settings: { stability: 0.5, similarity_boost: 0.8, style: 0.1, speed: 1.03 }, timeout: opts.timeoutMs || 9000 },
-        { model: 'eleven_multilingual_v2', settings: { stability: 0.55, similarity_boost: 0.8, style: 0.15 }, timeout: 16000 },
+        { model: 'eleven_flash_v2_5', settings: { stability: 0.58, similarity_boost: 0.82, style: 0.12, speed: 1.0 }, timeout: opts.timeoutMs || 8000 },
+        { model: 'eleven_multilingual_v2', settings: { stability: 0.6, similarity_boost: 0.82, style: 0.12 }, timeout: 14000 },
       ];
   for (const a of attempts) {
     try {
-      const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ULTRON_VOICE.elevenLabsVoiceId}?output_format=mp3_22050_32`, {
+      const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_22050_32`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'xi-api-key': opts.apiKey, Accept: 'audio/mpeg' },
         body: JSON.stringify({ text: opts.text, model_id: a.model, language_code: 'es', voice_settings: a.settings }),

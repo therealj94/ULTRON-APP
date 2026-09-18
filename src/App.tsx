@@ -66,9 +66,9 @@ export default function App() {
       const saved = localStorage.getItem('ultron_voz');
       if (saved === 'marco' || saved === 'luna' || saved === 'looi') return saved;
     } catch { /* */ }
-    return 'marco';
+    return 'luna';
   });
-  const [activeVoice, setActiveVoice] = useState(DEFAULT_ELEVENLABS_VOICES[0]);
+  const [activeVoice, setActiveVoice] = useState(DEFAULT_ELEVENLABS_VOICES[1]);
 
   // Expressive Interactive Actions
   const [isDrinking, setIsDrinking] = useState<boolean>(false);
@@ -169,7 +169,13 @@ export default function App() {
       fetch('/api/tts/stream', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: voz.motor, instruct: voz.instruct }),
+        body: JSON.stringify({
+          text,
+          voice: voz.id,
+          instruct: voz.instruct,
+          engine: 'eleven',
+          voiceId: voz.elevenVoiceId,
+        }),
         signal: ac.signal,
       })
         .then(async (r) => {
