@@ -136,36 +136,33 @@ export async function elevenSpeak(opts: {
   if (!opts.apiKey) return null;
   const voiceId = opts.voiceId || ULTRON_VOICE.elevenLabsVoiceId;
   const sing = opts.performance === 'sing';
-  if (!sing) {
-    for (const model of ['eleven_v3_conversational', 'eleven_v3'] as const) {
-      try {
-        const r = await fetch(`https://api.elevenlabs.io/v1/text-to-dialogue?output_format=mp3_44100_128`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'xi-api-key': opts.apiKey, Accept: 'audio/mpeg' },
-          body: JSON.stringify({
-            model_id: model,
-            language_code: 'es',
-            inputs: [{ text: opts.text, voice_id: voiceId }],
-          }),
-          signal: AbortSignal.timeout(opts.timeoutMs || 18000),
-        });
-        if (r.ok) return { audio: Buffer.from(await r.arrayBuffer()), model };
-        console.warn('[tts eleven dialogue]', model, r.status, (await r.text()).slice(0, 180));
-      } catch (e: any) {
-        console.warn('[tts eleven dialogue]', model, String(e?.message || e).slice(0, 120));
-      }
+  const spoken = sing ? `[singing] ${opts.text}` : opts.text;
+  for (const model of ['eleven_v3_conversational', 'eleven_v3'] as const) {
+    try {
+      const r = await fetch(`https://api.elevenlabs.io/v1/text-to-dialogue?output_format=mp3_44100_128`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'xi-api-key': opts.apiKey, Accept: 'audio/mpeg' },
+        body: JSON.stringify({
+          model_id: model,
+          language_code: sing ? undefined : 'es',
+          inputs: [{ text: spoken, voice_id: voiceId }],
+        }),
+        signal: AbortSignal.timeout(opts.timeoutMs || (sing ? 28000 : 18000)),
+      });
+      if (r.ok) return { audio: Buffer.from(await r.arrayBuffer()), model };
+      console.warn('[tts eleven dialogue]', model, r.status, (await r.text()).slice(0, 180));
+    } catch (e: any) {
+      console.warn('[tts eleven dialogue]', model, String(e?.message || e).slice(0, 120));
     }
   }
-  const attempts: Array<{ model: string; settings: Record<string, unknown>; timeout: number }> = sing
-    ? [{ model: 'eleven_multilingual_v2', settings: { stability: 0.35, similarity_boost: 0.75, style: 0.45, speed: 0.94, use_speaker_boost: true }, timeout: 22000 }]
-    : [
-        { model: 'eleven_v3', settings: { stability: 0.35, similarity_boost: 0.8 }, timeout: 16000 },
-        {
-          model: 'eleven_multilingual_v2',
-          settings: { stability: 0.26, similarity_boost: 0.8, style: 0.52, speed: 0.98, use_speaker_boost: true },
-          timeout: 16000,
-        },
-      ];
+  const attempts: Array<{ model: string; settings: Record<string, unknown>; timeout: number }> = [
+    { model: 'eleven_v3', settings: { stability: 0.32, similarity_boost: 0.8 }, timeout: sing ? 24000 : 16000 },
+    {
+      model: 'eleven_multilingual_v2',
+      settings: { stability: 0.26, similarity_boost: 0.8, style: 0.52, speed: 0.98, use_speaker_boost: true },
+      timeout: 16000,
+    },
+  ];
   for (const a of attempts) {
     try {
       const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
