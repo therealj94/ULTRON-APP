@@ -19,7 +19,7 @@ import {
   Cpu,
   Compass,
 } from 'lucide-react';
-import { playSfx } from '../utils/audio';
+import { playSfx } from '../03-voz/audio';
 
 interface TutorialModalProps {
   isOpen: boolean;

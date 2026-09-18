@@ -1,7 +1,7 @@
 import React from 'react';
 import { Mode, FaceState } from '../types';
 import { Shield, Pickaxe, Award, Lightbulb, BarChart3, Castle, Compass, Radio, Cpu, Download, X, Volume2, Sparkles, Fingerprint, ShieldCheck, Camera } from 'lucide-react';
-import { playSfx } from '../utils/audio';
+import { playSfx } from '../03-voz/audio';
 
 interface SettingsSheetProps {
   isOpen: boolean;

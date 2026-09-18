@@ -20,8 +20,8 @@ import {
   X,
 } from 'lucide-react';
 import { ElevenLabsVoiceConfig } from '../types';
-import { DEFAULT_ELEVENLABS_VOICES } from '../utils/elevenlabs';
-import { playSfx } from '../utils/audio';
+import { DEFAULT_ELEVENLABS_VOICES } from '../03-voz/elevenlabs';
+import { playSfx } from '../03-voz/audio';
 
 interface UltronVaultModalProps {
   isOpen: boolean;

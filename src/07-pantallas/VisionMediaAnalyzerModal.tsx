@@ -16,7 +16,7 @@ import {
   FileVideo,
   FileImage,
 } from 'lucide-react';
-import { playSfx } from '../utils/audio';
+import { playSfx } from '../03-voz/audio';
 
 interface VisionMediaAnalyzerModalProps {
   isOpen: boolean;

@@ -8,7 +8,7 @@ import {
   BlasterLaserBolt,
   BulletImpact,
 } from '../types';
-import { playSfx } from '../utils/audio';
+import { playSfx } from '../03-voz/audio';
 
 interface FaceCanvasProps {
   face: FaceState;

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Volume2, Play, Check, X } from 'lucide-react';
-import { VOCES, VozId, VozUltron } from '../utils/voces';
+import { VOCES, VozId, VozUltron } from '../03-voz/voces';
 
 interface Props {
   isOpen: boolean;

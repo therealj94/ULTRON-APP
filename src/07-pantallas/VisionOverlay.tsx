@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Camera, CameraOff, Scan, ShieldCheck, Eye, Compass, Sparkles, Coffee, Hand, Zap } from 'lucide-react';
-import { OpticalFaceTracker, FaceTrackResult } from '../utils/faceTracker';
+import { OpticalFaceTracker, FaceTrackResult } from '../02-cara/faceTracker';
 import { DetectedObject } from '../types';
 
 interface VisionOverlayProps {

@@ -24,7 +24,7 @@ import {
   HelpCircle,
   RotateCcw,
 } from 'lucide-react';
-import { playSfx } from '../utils/audio';
+import { playSfx } from '../03-voz/audio';
 
 interface DockDrawerProps {
   isOpen: boolean;

@@ -21,7 +21,7 @@ import {
   consultaWeb,
   leerPagina,
 } from './server/desk';
-import { CONOCIMIENTO_OG } from './src/og/conocimiento';
+import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
 
 const app = express();
 const httpServer = http.createServer(app);

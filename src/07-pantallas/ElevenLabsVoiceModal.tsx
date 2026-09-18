@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Volume2, Mic, Play, Check, Sparkles, Sliders, X, Key } from 'lucide-react';
 import { ElevenLabsVoiceConfig } from '../types';
-import { DEFAULT_ELEVENLABS_VOICES, speakWithElevenLabsOrFallback } from '../utils/elevenlabs';
+import { DEFAULT_ELEVENLABS_VOICES, speakWithElevenLabsOrFallback } from '../03-voz/elevenlabs';
 
 interface ElevenLabsVoiceModalProps {
   isOpen: boolean;

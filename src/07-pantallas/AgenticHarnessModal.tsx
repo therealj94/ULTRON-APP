@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Mode } from '../types';
 import { X, Cpu, Sparkles, Activity, CheckCircle2, Sliders, Glasses, MessageSquare, Terminal, Send } from 'lucide-react';
-import { analyzeConversationTopic, SemanticClassification } from '../utils/qwenHarness';
+import { analyzeConversationTopic, SemanticClassification } from '../04-cerebro/qwenHarness';
 
 interface AgenticHarnessModalProps {
   isOpen: boolean;

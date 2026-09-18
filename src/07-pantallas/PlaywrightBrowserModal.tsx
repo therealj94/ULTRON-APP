@@ -15,7 +15,7 @@ import {
   Copy,
   Check,
 } from 'lucide-react';
-import { playSfx } from '../utils/audio';
+import { playSfx } from '../03-voz/audio';
 
 interface PlaywrightBrowserModalProps {
   isOpen: boolean;
