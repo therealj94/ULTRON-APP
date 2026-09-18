@@ -2,8 +2,12 @@ import { Modal, View, Text, Pressable, StyleSheet, ScrollView } from 'react-nati
 
 const CAPABILITIES = [
   {
-    title: 'Voz siempre activa',
-    detail: 'Di «hey ULTRON» en cualquier momento. El botón Mic solo silencia.',
+    title: 'Conversación continua',
+    detail: 'Sin palabra clave: habla y te respondo. El botón Mic solo silencia.',
+  },
+  {
+    title: 'Tócame',
+    detail: 'Un toque: reacción. Muchos toques: me enojo… y disparo de broma. Mantén pulsado: cariño.',
   },
   {
     title: 'Mirada con cámara',
@@ -31,7 +35,7 @@ const CAPABILITIES = [
   },
   {
     title: 'Sleep / Stay / Explore',
-    detail: 'Presencia del escritorio. En Sleep solo despierta con hey ULTRON.',
+    detail: 'Presencia del escritorio. En Sleep despierta al hablarle o tocarlo.',
   },
 ];
 

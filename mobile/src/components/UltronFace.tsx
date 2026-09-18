@@ -1,309 +1,493 @@
-import { useEffect, useRef } from 'react';
-import { View, StyleSheet, useWindowDimensions, Animated, Easing } from 'react-native';
-import type { FaceState } from '../config';
+/**
+ * Cara ULTRON — estilo LOOI / DeskBot: dos anillos luminosos sobre negro,
+ * párpados para emociones, cejas, boca en arco y glifos por modo.
+ * Solo RN Animated (native driver) — sin Skia/Reanimated (EAS-safe).
+ */
+import { useEffect, useMemo, useRef } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import type { FaceState, Mode } from '../config';
 
 type Props = {
   face: FaceState;
-  /** -1..1 gaze from camera / touch */
+  mode?: Mode;
   gazeX?: number;
   gazeY?: number;
-  energy?: number;
+  /** 0..1 nivel de mic → pulso al escuchar */
+  level?: number;
+  /** disparo de broma */
+  blaster?: boolean;
+  /** 0..1 enojo acumulado por toques */
+  irritation?: number;
+  onTap?: (x01: number, y01: number) => void;
+  onLongPress?: () => void;
 };
 
-/** Paleta más cálida / tierna (menos “scanner robótico”). */
-const FACE_COLORS: Record<FaceState, string> = {
-  IDLE: '#7EE8FF',
-  LISTENING: '#9AF5C8',
-  THINKING: '#A8C8FF',
-  SPEAKING: '#8DE4FF',
-  HAPPY: '#FFE9A8',
-  CONCERNED: '#FFC4A8',
-  ANGRY: '#FF9AAA',
-  SLEEPING: '#9AA8B8',
-  STARTLE: '#FFB8E0',
-  WINK: '#FFE9A8',
-  CONFUSED: '#D4C0FF',
-  MUSIC: '#FFB8E8',
-  SCAN: '#9AFFE0',
-  YAWNING: '#B0BCC8',
+const CYAN = '#00E5FF';
+const GOLD = '#FFD166';
+const RED = '#FF3B5C';
+
+const MODE_GLYPHS: Record<Mode, [string, string]> = {
+  GUARDIAN: ['⛨', '⚿'],
+  MINING: ['⚙', '⛏'],
+  GOLD: ['✦', '✧'],
+  CREATIVE: ['✎', '☼'],
+  ANALYTICAL: ['♛', '⌕'],
+  STRATEGIC: ['♞', '♚'],
+  EXPLORER: ['⌖', '✈'],
+  CONOCER: ['♡', '✉'],
 };
 
-export function UltronFace({ face, gazeX = 0, gazeY = 0, energy = 85 }: Props) {
+type Lids = {
+  top: number; // 0..1 cobertura párpado superior
+  bottom: number; // 0..1 cobertura inferior (ojos sonrientes)
+  tilt: number; // grados: + = ceño (interior baja)
+  browY: number; // -1 arriba .. 1 abajo
+  browTilt: number; // grados
+  browOpacity: number;
+  pupil: number; // escala pupila
+  mouth: number; // -1 triste .. 1 sonrisa
+  mouthW: number; // escala ancho
+};
+
+const NEUTRAL: Lids = { top: 0, bottom: 0, tilt: 0, browY: 0, browTilt: 0, browOpacity: 0, pupil: 1, mouth: 0.15, mouthW: 1 };
+
+const LIDS: Record<FaceState, Lids> = {
+  IDLE: NEUTRAL,
+  LISTENING: { ...NEUTRAL, pupil: 1.15, mouth: 0.2 },
+  THINKING: { ...NEUTRAL, top: 0.18, pupil: 0.85, mouth: 0.05, browOpacity: 0.5, browY: -0.5 },
+  SPEAKING: { ...NEUTRAL, mouth: 0.3 },
+  HAPPY: { ...NEUTRAL, bottom: 0.42, mouth: 1, mouthW: 1.25, pupil: 1.1 },
+  WINK: { ...NEUTRAL, bottom: 0.3, mouth: 0.8, mouthW: 1.15 },
+  CONCERNED: { ...NEUTRAL, top: 0.2, browOpacity: 0.9, browY: -0.6, browTilt: -14, mouth: -0.6, mouthW: 0.7 },
+  ANGRY: { ...NEUTRAL, top: 0.42, tilt: 22, browOpacity: 1, browY: 0.6, browTilt: 22, mouth: -0.4, mouthW: 0.8, pupil: 0.7 },
+  SLEEPING: { ...NEUTRAL, top: 0.94, mouth: 0.1, mouthW: 0.5, pupil: 0.6 },
+  STARTLE: { ...NEUTRAL, pupil: 0.55, mouth: -0.2, mouthW: 0.5, browOpacity: 0.8, browY: -1 },
+  CONFUSED: { ...NEUTRAL, top: 0.12, browOpacity: 0.8, browY: -0.4, browTilt: 10, mouth: -0.1, mouthW: 0.6 },
+  MUSIC: { ...NEUTRAL, bottom: 0.35, mouth: 0.9, mouthW: 0.8 },
+  SCAN: { ...NEUTRAL, top: 0.26, pupil: 0.8, mouth: 0.1 },
+  YAWNING: { ...NEUTRAL, top: 0.7, mouth: -0.9, mouthW: 0.6 },
+};
+
+function useAnim(v: number) {
+  return useRef(new Animated.Value(v)).current;
+}
+
+export function UltronFace({
+  face,
+  mode = 'GUARDIAN',
+  gazeX = 0,
+  gazeY = 0,
+  level = 0,
+  blaster = false,
+  irritation = 0,
+  onTap,
+  onLongPress,
+}: Props) {
   const { width, height } = useWindowDimensions();
-  const size = Math.min(width * 0.48, height * 0.78, 400);
-  const color = FACE_COLORS[face] || FACE_COLORS.IDLE;
+  const stageH = Math.min(height * 0.62, 420);
+  const D = Math.min(stageH * 0.56, width * 0.2, 230); // diámetro ojo
+  const ring = Math.max(5, D * 0.085);
+  const gap = D * 0.62;
+  const accent = face === 'ANGRY' || blaster ? RED : mode === 'GOLD' ? GOLD : CYAN;
+  const dim = face === 'SLEEPING';
+  const lids = LIDS[face] || NEUTRAL;
+  const [gL, gR] = MODE_GLYPHS[mode] || MODE_GLYPHS.GUARDIAN;
 
-  const breath = useRef(new Animated.Value(1)).current;
-  const blink = useRef(new Animated.Value(1)).current;
-  const mouth = useRef(new Animated.Value(0.18)).current;
-  const pupilX = useRef(new Animated.Value(0)).current;
-  const pupilY = useRef(new Animated.Value(0)).current;
-  const softGlow = useRef(new Animated.Value(0.4)).current;
+  const breath = useAnim(1);
+  const blink = useAnim(1);
+  const topLid = useAnim(lids.top);
+  const bottomLid = useAnim(lids.bottom);
+  const tilt = useAnim(lids.tilt);
+  const browY = useAnim(lids.browY);
+  const browTilt = useAnim(lids.browTilt);
+  const browOp = useAnim(lids.browOpacity);
+  const pupilScale = useAnim(lids.pupil);
+  const mouthCurve = useAnim(lids.mouth);
+  const mouthW = useAnim(lids.mouthW);
+  const mouthOpen = useAnim(0);
+  const px = useAnim(0);
+  const py = useAnim(0);
+  const pulse = useAnim(0);
+  const shake = useAnim(0);
+  const glyphBob = useAnim(0);
+  const beam = useAnim(0);
+  const flash = useAnim(0);
+  const thinkDots = useAnim(0);
 
+  // respiración + glifos flotando
   useEffect(() => {
-    const loop = Animated.loop(
+    const b = Animated.loop(
       Animated.sequence([
-        Animated.timing(breath, {
-          toValue: 1.025,
-          duration: 2600,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
-        Animated.timing(breath, {
-          toValue: 1,
-          duration: 2600,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: true,
-        }),
+        Animated.timing(breath, { toValue: 1.02, duration: 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(breath, { toValue: 1, duration: 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       ])
     );
-    loop.start();
-    const glowLoop = Animated.loop(
+    const g = Animated.loop(
       Animated.sequence([
-        Animated.timing(softGlow, { toValue: 0.55, duration: 2200, useNativeDriver: true }),
-        Animated.timing(softGlow, { toValue: 0.32, duration: 2200, useNativeDriver: true }),
+        Animated.timing(glyphBob, { toValue: 1, duration: 2800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(glyphBob, { toValue: 0, duration: 2800, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       ])
     );
-    glowLoop.start();
+    b.start();
+    g.start();
     return () => {
-      loop.stop();
-      glowLoop.stop();
+      b.stop();
+      g.stop();
     };
-  }, [breath, softGlow]);
+  }, [breath, glyphBob]);
 
-  // Gaze follow (suave)
+  // parpadeo natural
   useEffect(() => {
-    const tx = Math.max(-1, Math.min(1, gazeX)) * 7;
-    const ty = Math.max(-1, Math.min(1, gazeY)) * 5;
-    Animated.spring(pupilX, { toValue: tx, useNativeDriver: true, friction: 8, tension: 40 }).start();
-    Animated.spring(pupilY, { toValue: ty, useNativeDriver: true, friction: 8, tension: 40 }).start();
-  }, [gazeX, gazeY, pupilX, pupilY]);
-
-  useEffect(() => {
-    blink.setValue(1);
-    const blinkLoop = Animated.loop(
-      Animated.sequence([
-        Animated.delay(2400 + Math.random() * 1800),
-        Animated.timing(blink, { toValue: 0.06, duration: 70, useNativeDriver: true }),
-        Animated.timing(blink, { toValue: 1, duration: 140, useNativeDriver: true }),
-        // parpadeo doble suave a veces
-        Animated.delay(40),
-        Animated.timing(blink, { toValue: Math.random() > 0.7 ? 0.08 : 1, duration: 60, useNativeDriver: true }),
-        Animated.timing(blink, { toValue: 1, duration: 120, useNativeDriver: true }),
-      ])
-    );
-    blinkLoop.start();
-
-    const speak = face === 'SPEAKING' || face === 'MUSIC';
-    let mouthLoop: Animated.CompositeAnimation | null = null;
-    if (speak) {
-      mouthLoop = Animated.loop(
+    let alive = true;
+    let t: ReturnType<typeof setTimeout>;
+    const doBlink = () => {
+      if (!alive) return;
+      if (face !== 'SLEEPING') {
         Animated.sequence([
-          Animated.timing(mouth, { toValue: 0.72, duration: 160, useNativeDriver: true }),
-          Animated.timing(mouth, { toValue: 0.22, duration: 180, useNativeDriver: true }),
+          Animated.timing(blink, { toValue: 0.05, duration: 70, useNativeDriver: true }),
+          Animated.timing(blink, { toValue: 1, duration: 130, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        ]).start();
+      }
+      t = setTimeout(doBlink, 2600 + Math.random() * 2600);
+    };
+    t = setTimeout(doBlink, 1200);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [blink, face]);
+
+  // transición de emoción
+  useEffect(() => {
+    const ease = Easing.out(Easing.cubic);
+    const dur = 260;
+    Animated.parallel([
+      Animated.timing(topLid, { toValue: lids.top, duration: dur, easing: ease, useNativeDriver: true }),
+      Animated.timing(bottomLid, { toValue: lids.bottom, duration: dur, easing: ease, useNativeDriver: true }),
+      Animated.timing(tilt, { toValue: lids.tilt, duration: dur, easing: ease, useNativeDriver: true }),
+      Animated.timing(browY, { toValue: lids.browY, duration: dur, easing: ease, useNativeDriver: true }),
+      Animated.timing(browTilt, { toValue: lids.browTilt, duration: dur, easing: ease, useNativeDriver: true }),
+      Animated.timing(browOp, { toValue: lids.browOpacity, duration: dur, useNativeDriver: true }),
+      Animated.spring(pupilScale, { toValue: lids.pupil, friction: 6, useNativeDriver: true }),
+      Animated.timing(mouthCurve, { toValue: lids.mouth, duration: dur, easing: ease, useNativeDriver: true }),
+      Animated.timing(mouthW, { toValue: lids.mouthW, duration: dur, easing: ease, useNativeDriver: true }),
+    ]).start();
+
+    let loop: Animated.CompositeAnimation | null = null;
+    if (face === 'SPEAKING' || face === 'MUSIC') {
+      loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(mouthOpen, { toValue: 1, duration: 120 + Math.random() * 80, useNativeDriver: true }),
+          Animated.timing(mouthOpen, { toValue: 0.25, duration: 140 + Math.random() * 90, useNativeDriver: true }),
+          Animated.timing(mouthOpen, { toValue: 0.7, duration: 110, useNativeDriver: true }),
+          Animated.timing(mouthOpen, { toValue: 0.1, duration: 160, useNativeDriver: true }),
         ])
       );
-      mouthLoop.start();
+      loop.start();
     } else {
-      const target =
-        face === 'YAWNING'
-          ? 0.95
-          : face === 'HAPPY' || face === 'WINK'
-            ? 0.48
-            : face === 'CONCERNED'
-              ? 0.1
-              : face === 'ANGRY'
-                ? 0.28
-                : face === 'SLEEPING'
-                  ? 0.04
-                  : 0.18;
-      Animated.timing(mouth, { toValue: target, duration: 320, useNativeDriver: true }).start();
+      Animated.timing(mouthOpen, { toValue: 0, duration: 160, useNativeDriver: true }).start();
     }
-
+    let think: Animated.CompositeAnimation | null = null;
+    if (face === 'THINKING') {
+      think = Animated.loop(
+        Animated.sequence([
+          Animated.timing(thinkDots, { toValue: 1, duration: 900, useNativeDriver: true }),
+          Animated.timing(thinkDots, { toValue: 0, duration: 900, useNativeDriver: true }),
+        ])
+      );
+      think.start();
+    }
+    let sh: Animated.CompositeAnimation | null = null;
+    if (face === 'ANGRY' || face === 'STARTLE') {
+      sh = Animated.sequence([
+        Animated.timing(shake, { toValue: 1, duration: 40, useNativeDriver: true }),
+        Animated.timing(shake, { toValue: -1, duration: 60, useNativeDriver: true }),
+        Animated.timing(shake, { toValue: 0.6, duration: 50, useNativeDriver: true }),
+        Animated.timing(shake, { toValue: 0, duration: 70, useNativeDriver: true }),
+      ]);
+      sh.start();
+    }
     return () => {
-      blinkLoop.stop();
-      mouthLoop?.stop();
+      loop?.stop();
+      think?.stop();
+      sh?.stop();
     };
-  }, [face, blink, mouth]);
+  }, [face, lids, topLid, bottomLid, tilt, browY, browTilt, browOp, pupilScale, mouthCurve, mouthW, mouthOpen, shake, thinkDots]);
 
-  const leftWink = face === 'WINK';
-  const sleeping = face === 'SLEEPING';
-  const eyeW = size * 0.13;
-  const eyeH = size * 0.09;
+  // mirada
+  useEffect(() => {
+    const think = face === 'THINKING';
+    const tx = (think ? 0.55 : Math.max(-1, Math.min(1, gazeX))) * D * 0.18;
+    const ty = (think ? -0.6 : Math.max(-1, Math.min(1, gazeY))) * D * 0.14;
+    Animated.spring(px, { toValue: tx, friction: 7, tension: 50, useNativeDriver: true }).start();
+    Animated.spring(py, { toValue: ty, friction: 7, tension: 50, useNativeDriver: true }).start();
+  }, [gazeX, gazeY, face, D, px, py]);
 
-  return (
-    <Animated.View style={[styles.wrap, { width: size, height: size, transform: [{ scale: breath }] }]}>
-      {/* Aura suave */}
+  // pulso por nivel de mic
+  useEffect(() => {
+    Animated.timing(pulse, { toValue: face === 'LISTENING' ? level : 0, duration: 90, useNativeDriver: true }).start();
+  }, [level, face, pulse]);
+
+  // blaster
+  useEffect(() => {
+    if (!blaster) {
+      beam.setValue(0);
+      flash.setValue(0);
+      return;
+    }
+    const shot = Animated.sequence([
+      Animated.parallel([
+        Animated.timing(beam, { toValue: 1, duration: 110, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.timing(flash, { toValue: 0.55, duration: 60, useNativeDriver: true }),
+      ]),
+      Animated.parallel([
+        Animated.timing(beam, { toValue: 0, duration: 160, useNativeDriver: true }),
+        Animated.timing(flash, { toValue: 0, duration: 200, useNativeDriver: true }),
+      ]),
+      Animated.delay(120),
+    ]);
+    const l = Animated.loop(shot, { iterations: 3 });
+    l.start();
+    return () => l.stop();
+  }, [blaster, beam, flash]);
+
+  const lidH = D * 1.1;
+  const topLidY = topLid.interpolate({ inputRange: [0, 1], outputRange: [-lidH, -lidH + D * 1.02] });
+  const bottomLidY = bottomLid.interpolate({ inputRange: [0, 1], outputRange: [lidH, lidH - D * 1.0] });
+  const tiltL = tilt.interpolate({ inputRange: [-45, 45], outputRange: ['-45deg', '45deg'] });
+  const tiltR = tilt.interpolate({ inputRange: [-45, 45], outputRange: ['45deg', '-45deg'] });
+  const browTiltL = browTilt.interpolate({ inputRange: [-45, 45], outputRange: ['-45deg', '45deg'] });
+  const browTiltR = browTilt.interpolate({ inputRange: [-45, 45], outputRange: ['45deg', '-45deg'] });
+  const browTy = browY.interpolate({ inputRange: [-1, 1], outputRange: [-D * 0.12, D * 0.14] });
+  const shakeX = shake.interpolate({ inputRange: [-1, 1], outputRange: [-8, 8] });
+  const glyphTy = glyphBob.interpolate({ inputRange: [0, 1], outputRange: [0, -8] });
+  const pulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.22] });
+  const pulseOp = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.5] });
+
+  const mouthWpx = D * 0.62;
+  const mouthArcH = D * 0.26;
+  const mouthScaleY = mouthCurve.interpolate({ inputRange: [-1, 0, 1], outputRange: [-1, 0.08, 1] });
+  const mouthOpenScale = mouthOpen.interpolate({ inputRange: [0, 1], outputRange: [0.01, 1] });
+  const beamH = stageH * 0.9;
+  const beamScale = beam.interpolate({ inputRange: [0, 1], outputRange: [0.01, 1] });
+  const beamTy = beam.interpolate({ inputRange: [0, 1], outputRange: [-beamH / 2, 0] });
+
+  const glyphStyle = useMemo(
+    () => ({ color: accent, opacity: dim ? 0.15 : 0.42, fontSize: D * 0.22 }),
+    [accent, dim, D]
+  );
+
+  const renderEye = (side: 'L' | 'R') => {
+    const wink = face === 'WINK' && side === 'L';
+    const scaleY = wink ? 0.06 : blink;
+    return (
       <Animated.View
+        key={side}
         style={[
-          styles.aura,
-          {
-            width: size * 0.92,
-            height: size * 0.92,
-            borderRadius: size * 0.46,
-            backgroundColor: color,
-            opacity: softGlow,
-          },
+          styles.eyeWrap,
+          { width: D, height: D, transform: [{ scaleY }] },
         ]}
-      />
-      <View style={[styles.head, { width: size * 0.72, height: size * 0.72, borderRadius: size * 0.36 }]}>
-        <View style={[styles.visorSoft, { borderColor: `${color}55` }]}>
-          {/* Ojos tiernos — ovalados grandes, iris suave, pupilas que siguen */}
-          <View style={styles.eyesRow}>
-            <Animated.View
-              style={[
-                styles.eyeWhite,
-                {
-                  width: eyeW,
-                  height: eyeH,
-                  transform: [{ scaleY: leftWink ? 0.12 : blink }],
-                  opacity: sleeping ? 0.25 : 1,
-                },
-              ]}
-            >
-              <View style={[styles.iris, { backgroundColor: color, width: eyeW * 0.55, height: eyeH * 0.72 }]}>
-                <Animated.View
-                  style={[
-                    styles.pupil,
-                    { transform: [{ translateX: pupilX }, { translateY: pupilY }] },
-                  ]}
-                />
-                <View style={styles.glintBig} />
-                <View style={styles.glintSmall} />
-              </View>
-            </Animated.View>
-            <Animated.View
-              style={[
-                styles.eyeWhite,
-                {
-                  width: eyeW,
-                  height: eyeH,
-                  transform: [{ scaleY: blink }],
-                  opacity: sleeping ? 0.25 : 1,
-                },
-              ]}
-            >
-              <View style={[styles.iris, { backgroundColor: color, width: eyeW * 0.55, height: eyeH * 0.72 }]}>
-                <Animated.View
-                  style={[
-                    styles.pupil,
-                    { transform: [{ translateX: pupilX }, { translateY: pupilY }] },
-                  ]}
-                />
-                <View style={styles.glintBig} />
-                <View style={styles.glintSmall} />
-              </View>
-            </Animated.View>
-          </View>
-
-          {/* Boca suave */}
+      >
+        <Animated.View
+          pointerEvents="none"
+          style={[
+            styles.pulseRing,
+            {
+              width: D * 1.18,
+              height: D * 1.18,
+              borderRadius: D * 0.59,
+              borderColor: accent,
+              opacity: pulseOp,
+              transform: [{ scale: pulseScale }],
+            },
+          ]}
+        />
+        <View
+          style={[
+            styles.glow,
+            { width: D * 1.06, height: D * 1.06, borderRadius: D * 0.53, borderColor: accent, opacity: dim ? 0.08 : 0.28 },
+          ]}
+        />
+        <View style={[styles.eye, { width: D, height: D, borderRadius: D / 2, overflow: 'hidden' }]}>
+          <View
+            style={[
+              styles.ring,
+              { width: D, height: D, borderRadius: D / 2, borderWidth: ring, borderColor: accent, opacity: dim ? 0.35 : 1 },
+            ]}
+          />
+          <View
+            style={[
+              styles.innerGlow,
+              { width: D * 0.78, height: D * 0.78, borderRadius: D * 0.39, backgroundColor: accent, opacity: dim ? 0.03 : 0.08 },
+            ]}
+          />
           <Animated.View
             style={[
-              styles.mouth,
+              styles.pupil,
               {
-                backgroundColor: color,
-                width: size * 0.12,
-                height: size * 0.035,
-                transform: [{ scaleY: mouth }, { scaleX: face === 'HAPPY' ? 1.25 : 1 }],
-                borderRadius: face === 'HAPPY' || face === 'WINK' ? 20 : 10,
-                opacity: 0.9,
+                width: D * 0.24,
+                height: D * 0.24,
+                borderRadius: D * 0.12,
+                backgroundColor: accent,
+                opacity: dim ? 0.35 : 1,
+                transform: [{ translateX: px }, { translateY: py }, { scale: pupilScale }],
+              },
+            ]}
+          >
+            <View style={[styles.glint, { width: D * 0.06, height: D * 0.06, borderRadius: D * 0.03 }]} />
+          </Animated.View>
+          {/* párpado superior (con inclinación para ceño) */}
+          <Animated.View
+            style={[
+              styles.lid,
+              {
+                width: D * 1.6,
+                height: lidH,
+                left: -D * 0.3,
+                transform: [{ translateY: topLidY }, { rotate: side === 'L' ? tiltL : tiltR }],
               },
             ]}
           />
+          {/* párpado inferior (ojos sonrientes) */}
+          <Animated.View
+            style={[
+              styles.lid,
+              { width: D * 1.6, height: lidH, left: -D * 0.3, borderRadius: D * 0.6, transform: [{ translateY: bottomLidY }] },
+            ]}
+          />
         </View>
+        {/* ceja */}
+        <Animated.View
+          style={[
+            styles.brow,
+            {
+              width: D * 0.72,
+              height: Math.max(4, ring * 0.8),
+              borderRadius: ring,
+              backgroundColor: accent,
+              top: -D * 0.16,
+              opacity: browOp,
+              transform: [{ translateY: browTy }, { rotate: side === 'L' ? browTiltL : browTiltR }],
+            },
+          ]}
+        />
+        {/* haz blaster */}
+        {blaster && (
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.beam,
+              {
+                width: Math.max(3, ring * 0.7),
+                height: beamH,
+                top: D * 0.5,
+                backgroundColor: RED,
+                opacity: beam,
+                transform: [{ translateY: beamTy }, { scaleY: beamScale }],
+              },
+            ]}
+          />
+        )}
+      </Animated.View>
+    );
+  };
+
+  return (
+    <Pressable
+      style={[styles.stage, { height: stageH }]}
+      onPress={(e) => {
+        const { locationX, locationY } = e.nativeEvent;
+        onTap?.(Math.max(-1, Math.min(1, (locationX / width) * 2 - 1)), Math.max(-1, Math.min(1, (locationY / stageH) * 2 - 1)));
+      }}
+      onLongPress={onLongPress}
+      delayLongPress={450}
+    >
+      <Animated.View style={[styles.faceRow, { gap, transform: [{ scale: breath }, { translateX: shakeX }] }]}>
+        <Animated.Text style={[styles.glyph, glyphStyle, { transform: [{ translateY: glyphTy }] }]}>{gL}</Animated.Text>
+        {renderEye('L')}
+        {renderEye('R')}
+        <Animated.Text style={[styles.glyph, glyphStyle, { transform: [{ translateY: Animated.multiply(glyphTy, -1) }] }]}>
+          {gR}
+        </Animated.Text>
+      </Animated.View>
+
+      {/* boca */}
+      <View style={[styles.mouthWrap, { height: mouthArcH * 1.3, marginTop: D * 0.16 }]}>
+        <Animated.View
+          style={[
+            styles.mouthArc,
+            {
+              width: mouthWpx,
+              height: mouthArcH,
+              borderBottomWidth: Math.max(4, ring * 0.75),
+              borderColor: accent,
+              borderBottomLeftRadius: mouthWpx / 2,
+              borderBottomRightRadius: mouthWpx / 2,
+              opacity: dim ? 0.3 : face === 'SPEAKING' || face === 'MUSIC' ? 0 : 1,
+              transform: [{ scaleX: mouthW }, { scaleY: mouthScaleY }],
+            },
+          ]}
+        />
+        {(face === 'SPEAKING' || face === 'MUSIC') && (
+          <Animated.View
+            style={[
+              styles.mouthOpen,
+              {
+                width: mouthWpx * 0.55,
+                height: mouthArcH * 0.9,
+                borderRadius: mouthWpx * 0.3,
+                backgroundColor: accent,
+                transform: [{ scaleY: mouthOpenScale }],
+              },
+            ]}
+          />
+        )}
+        {face === 'THINKING' && (
+          <Animated.View style={[styles.dots, { opacity: thinkDots }]}>
+            {[0, 1, 2].map((i) => (
+              <View key={i} style={[styles.dot, { backgroundColor: accent, opacity: 0.4 + i * 0.3 }]} />
+            ))}
+          </Animated.View>
+        )}
       </View>
-      {face === 'LISTENING' && (
-        <View style={[styles.listenRing, { borderColor: color, width: size * 0.88, height: size * 0.88 }]} />
+
+      {face === 'SLEEPING' && (
+        <Animated.Text style={[styles.zzz, { color: CYAN, right: width * 0.28, transform: [{ translateY: glyphTy }] }]}>z z</Animated.Text>
       )}
-      <View style={styles.energyBar}>
-        <View style={[styles.energyFill, { width: `${Math.min(100, energy)}%` as any, backgroundColor: color }]} />
-      </View>
-    </Animated.View>
+
+      {irritation > 0.35 && !blaster && (
+        <View style={[styles.irrBar, { width: D * 2 }]}>
+          <View style={[styles.irrFill, { width: `${Math.round(irritation * 100)}%`, backgroundColor: irritation > 0.75 ? RED : accent }]} />
+        </View>
+      )}
+
+      {blaster && <Animated.View pointerEvents="none" style={[styles.flash, { opacity: flash }]} />}
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { alignItems: 'center', justifyContent: 'center' },
-  aura: {
-    position: 'absolute',
-    opacity: 0.12,
-  },
-  head: {
-    backgroundColor: '#0B1018',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#00E5FF',
-    shadowOpacity: 0.25,
-    shadowRadius: 24,
-    elevation: 8,
-  },
-  visorSoft: {
-    width: '78%',
-    height: '48%',
-    borderRadius: 40,
-    borderWidth: 1,
-    backgroundColor: 'rgba(14,20,30,0.95)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-    paddingVertical: 12,
-  },
-  eyesRow: { flexDirection: 'row', gap: 28, alignItems: 'center' },
-  eyeWhite: {
-    backgroundColor: '#F4FBFF',
-    borderRadius: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden',
-  },
-  iris: {
-    borderRadius: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  pupil: {
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    backgroundColor: '#0A121A',
-  },
-  glintBig: {
-    position: 'absolute',
-    top: 3,
-    left: 5,
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: '#FFFFFF',
-    opacity: 0.95,
-  },
-  glintSmall: {
-    position: 'absolute',
-    bottom: 4,
-    right: 5,
-    width: 2.5,
-    height: 2.5,
-    borderRadius: 2,
-    backgroundColor: '#FFFFFF',
-    opacity: 0.55,
-  },
-  mouth: { marginTop: 2 },
-  listenRing: {
-    position: 'absolute',
-    borderRadius: 999,
-    borderWidth: 1,
-    opacity: 0.22,
-  },
-  energyBar: {
-    position: 'absolute',
-    bottom: 14,
-    width: '40%',
-    height: 3,
-    borderRadius: 2,
-    backgroundColor: 'rgba(255,255,255,0.08)',
-    overflow: 'hidden',
-  },
-  energyFill: { height: '100%', borderRadius: 2 },
+  stage: { width: '100%', alignItems: 'center', justifyContent: 'center' },
+  faceRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  eyeWrap: { alignItems: 'center', justifyContent: 'center' },
+  pulseRing: { position: 'absolute', borderWidth: 2 },
+  glow: { position: 'absolute', borderWidth: 6 },
+  eye: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
+  ring: { position: 'absolute' },
+  innerGlow: { position: 'absolute' },
+  pupil: { alignItems: 'flex-start', justifyContent: 'flex-start', padding: 3 },
+  glint: { backgroundColor: '#FFFFFF', opacity: 0.9 },
+  lid: { position: 'absolute', top: 0, backgroundColor: '#000' },
+  brow: { position: 'absolute' },
+  beam: { position: 'absolute', borderRadius: 2 },
+  glyph: { marginHorizontal: 18, textAlign: 'center', includeFontPadding: false },
+  mouthWrap: { alignItems: 'center', justifyContent: 'center' },
+  mouthArc: { position: 'absolute' },
+  mouthOpen: { position: 'absolute' },
+  dots: { flexDirection: 'row', gap: 8, position: 'absolute' },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  zzz: { position: 'absolute', top: 0, fontSize: 22, letterSpacing: 4, opacity: 0.6 },
+  irrBar: { position: 'absolute', bottom: 4, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' },
+  irrFill: { height: '100%', borderRadius: 2 },
+  flash: { ...StyleSheet.absoluteFillObject, backgroundColor: RED },
 });

@@ -72,7 +72,7 @@ export function SettingsScreen({ onBack }: Props) {
 
       <View style={styles.card}>
         <Text style={styles.label}>Voz TTS</Text>
-        {(['jarvis', 'formal', 'tierna', 'estrategia', 'orbita'] as const).map((v) => (
+        {(['ultron', 'formal', 'jarvis', 'estrategia', 'orbita', 'tierna'] as const).map((v) => (
           <Pressable
             key={v}
             onPress={() => void patch({ voiceId: v })}
@@ -93,8 +93,8 @@ export function SettingsScreen({ onBack }: Props) {
       </View>
 
       <Text style={styles.hint}>
-        Micrófono siempre activo por defecto. El botón Mic solo silencia. Huella y contraseña se guardan en
-        SecureStore del teléfono.
+        Escucha continua sin palabra clave: habla y ULTRON responde. El botón Mic solo silencia. Huella y
+        contraseña se guardan en SecureStore del teléfono.
       </Text>
     </ScrollView>
   );

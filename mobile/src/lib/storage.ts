@@ -33,7 +33,7 @@ export type ConocerProgress = {
 };
 
 const DEFAULT_SETTINGS: AppSettings = {
-  voiceId: 'jarvis',
+  voiceId: 'ultron',
   micMuted: false,
   visionEnabled: true,
   gazeEnabled: true,
@@ -93,7 +93,10 @@ export async function getFingerprintUnlock(): Promise<{ enabled: boolean; correo
 export async function loadSettings(): Promise<AppSettings> {
   try {
     const raw = await AsyncStorage.getItem(KEYS.settings);
-    return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
+    const s: AppSettings = raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
+    // migración: la voz 'jarvis' (lenta/sensual en T4) pasa a 'ultron' (rápida, profesional)
+    if (s.voiceId === 'jarvis' || s.voiceId === 'tierna') s.voiceId = 'ultron';
+    return s;
   } catch {
     return DEFAULT_SETTINGS;
   }

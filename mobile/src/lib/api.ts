@@ -1,9 +1,9 @@
 import { API_BASE } from '../config';
 import type { FaceState, Mode, SessionUser } from '../config';
 
-async function api<T = any>(path: string, init?: RequestInit): Promise<T> {
+async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 45_000): Promise<T> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 45_000);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(`${API_BASE}${path}`, {
       ...init,
@@ -82,15 +82,19 @@ export async function chatUltron(opts: {
   conversationId: string;
 }): Promise<ChatResult> {
   try {
-    const data = await api<any>('/api/qwen/chat', {
-      method: 'POST',
-      body: JSON.stringify({
-        message: opts.message,
-        mode: opts.mode,
-        conversationId: opts.conversationId,
-        stream: false,
-      }),
-    });
+    const data = await api<any>(
+      '/api/qwen/chat',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          message: opts.message,
+          mode: opts.mode,
+          conversationId: opts.conversationId,
+          stream: false,
+        }),
+      },
+      25_000
+    );
     return {
       reply: data.reply || data.mensaje || '',
       mode: data.mode,
@@ -107,18 +111,20 @@ export async function chatUltron(opts: {
 export async function synthesizeTts(opts: {
   text: string;
   voiceId?: string;
+  engine?: 'fast' | 'auto';
 }): Promise<ArrayBuffer | null> {
   try {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 60_000);
+    const timer = setTimeout(() => ctrl.abort(), opts.engine === 'fast' ? 14_000 : 45_000);
     const res = await fetch(`${API_BASE}/api/tts/synthesize`, {
       method: 'POST',
       signal: ctrl.signal,
-      headers: { 'Content-Type': 'application/json', Accept: 'audio/wav, audio/mpeg, application/json' },
+      headers: { 'Content-Type': 'application/json', Accept: 'audio/mpeg, audio/wav, application/json' },
       body: JSON.stringify({
         text: opts.text,
-        voiceId: opts.voiceId || 'jarvis',
-        voice: opts.voiceId || 'jarvis',
+        voiceId: opts.voiceId || 'ultron',
+        voice: opts.voiceId || 'ultron',
+        engine: opts.engine || 'fast',
       }),
     });
     clearTimeout(timer);

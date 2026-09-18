@@ -42,7 +42,7 @@ export const LOCAL_FAQ: FaqItem[] = [
   {
     match: /ayuda|tutorial|que puedes|qué puedes|comandos/,
     answer:
-      'Di «hey ULTRON» (mic siempre on). Menú → capacidades. Visión te mira. «modo conocer», gestos (ponte feliz, canta), Sleep/Stay/Explore. También puedes escribir.',
+      'Habla y te respondo, sin palabra clave. Menú → capacidades. Visión te mira. «modo conocer», gestos (ponte feliz, canta), Sleep/Stay/Explore. También puedes escribir o tocarme.',
   },
   {
     match: /orden global|doctrina|alfa/,
@@ -67,7 +67,7 @@ export function localAnswer(cmd: string): string | null {
   if (/modo\s+(conocer)/.test(q)) return 'Modo CONOCER. Vamos a conocernos mejor.';
   if (/modo\s+(explorer|explorar)/.test(q)) return 'Modo EXPLORER. Listo para investigar.';
   if (/modo\s+(creative|creativo)/.test(q)) return 'Modo CREATIVE. Ideas en marcha.';
-  if (/duerme|a dormir|modo sleep|vete a dormir/.test(q)) return 'Modo sleep. Di hey ULTRON para despertarme.';
+  if (/duerme|a dormir|modo sleep|vete a dormir/.test(q)) return 'Modo sleep. Háblame o tócame para despertar.';
   if (/despierta|wake|levantate/.test(q)) return 'Despierto. Te escucho.';
   return null;
 }
