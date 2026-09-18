@@ -49,7 +49,15 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 const GITHUB_PAT = process.env.GITHUB_PAT || '';
 const RENDER_API_KEY = process.env.RENDER_API_KEY || '';
 const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || 'srv-dah56p15efls7382pot0';
-const ULTRON_REMOTE_URL = process.env.ULTRON_REMOTE_URL || 'https://ultron.ordenglobal.link';
+const ULTRON_REMOTE_URL = process.env.ULTRON_FP_URL || process.env.ULTRON_REMOTE_URL || 'https://ultron.ordenglobal.link';
+const ULTRON_NODO_URL = (process.env.ULTRON_NODO_URL || process.env.QWEN_ENDPOINT_URL || '').replace(/\/$/, '');
+const ULTRON_NODO_SECRETO = process.env.ULTRON_NODO_SECRETO || '';
+const ULTRON_NODO_MODELO = process.env.ULTRON_NODO_MODELO || 'orcarouter/Qwen3.8-27B-Uncensored';
+const ULTRON_OJO_URL = (process.env.ULTRON_OJO_URL || process.env.PLAYWRIGHT_NODE_URL || '').replace(/\/$/, '');
+const ULTRON_OJO_CLAVE = process.env.ULTRON_OJO_CLAVE || '';
+const ULTRON_TTS_URL = (process.env.ULTRON_TTS_URL || '').replace(/\/$/, '');
+const ULTRON_TTS_CLAVE = process.env.ULTRON_TTS_CLAVE || '';
+if (process.env.ULTRON_NODO_INSECURE_TLS === '1') process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || '';
 const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || '';
 const AWS_DEFAULT_REGION = (process.env.AWS_DEFAULT_REGION || 'us-east-1').replace(' ', '-');
@@ -71,17 +79,44 @@ const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GE
 // Mutable in-memory Vault session store for ElevenLabs & institutional conduits
 let VAULT_ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || '';
 
-// Health Check
-app.get('/api/health', (req, res) => {
+async function probeJson(url: string, headers: Record<string, string> = {}, timeoutMs = 4000) {
+  const ctrl = new AbortController();
+  const tmr = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const r = await fetch(url, { headers, signal: ctrl.signal });
+    const text = await r.text();
+    let json: any = null;
+    try { json = JSON.parse(text); } catch { /* raw */ }
+    return { ok: r.ok, status: r.status, json, text: text.slice(0, 180) };
+  } catch (e: any) {
+    return { ok: false, status: 0, json: null, text: String(e?.message || e).slice(0, 180) };
+  } finally {
+    clearTimeout(tmr);
+  }
+}
+
+app.get('/api/health', async (_req, res) => {
+  const fp = await probeJson(`${ULTRON_REMOTE_URL}/salud`);
+  const nodo = ULTRON_NODO_URL
+    ? await probeJson(`${ULTRON_NODO_URL}/salud`, { 'x-ultron-secreto': ULTRON_NODO_SECRETO })
+    : { ok: false, status: 0, json: null, text: 'ULTRON_NODO_URL vacío' };
+  const ojo = ULTRON_OJO_URL
+    ? await probeJson(`${ULTRON_OJO_URL}/salud`, { 'X-Ojo-Clave': ULTRON_OJO_CLAVE })
+    : { ok: false, status: 0, json: null, text: 'ULTRON_OJO_URL vacío' };
+  const tts = ULTRON_TTS_URL
+    ? await probeJson(`${ULTRON_TTS_URL}/salud`, { 'X-Tts-Clave': ULTRON_TTS_CLAVE })
+    : { ok: false, status: 0, json: null, text: 'ULTRON_TTS_URL vacío' };
   res.json({
-    status: 'ok',
-    system: 'ULTRON FP · LOOI Executive Intelligence Core',
-    timestamp: new Date().toISOString(),
-    vaultStatus: 'Encrypted and Operational',
-    neuralCore: ai ? 'Gemini 3.6 Flash Active' : 'Heuristic Engine Active',
-    playwrightNode: 'Headless Browser Cluster (Online)',
-    globalOrderBrain: 'Active (Directorio Alfa-1)',
-    renderDeployment: RENDER_API_KEY ? 'Connected (srv-dah56p15efls7382pot0)' : 'Pending Key',
+    ok: true,
+    fase: 'A',
+    launch: false,
+    cerebro: ULTRON_REMOTE_URL,
+    qwen: { url: ULTRON_NODO_URL || null, vivo: !!(nodo.ok && nodo.json), modelo: nodo.json?.modelo || null, rutaChat: '/api/chat' },
+    fp: { url: ULTRON_REMOTE_URL, vivo: !!fp.ok, modelo: fp.json?.modelo || null },
+    ojo: { url: ULTRON_OJO_URL || null, vivo: !!(ojo.ok && ojo.json?.playwright), playwright: !!ojo.json?.playwright, vision: !!ojo.json?.vision },
+    tts: { url: ULTRON_TTS_URL || null, status: tts.status, vivo: tts.status === 200 || tts.status === 401 },
+    elevenlabs: !!process.env.ELEVENLABS_API_KEY,
+    geminiFallback: !!ai,
     wsClients: wss.clients.size,
   });
 });
@@ -568,86 +603,49 @@ app.get('/api/render/deploy/:deployId', async (req, res) => {
 
 // Playwright Web Scraping & Review Endpoint (Connected to AWS node)
 app.post('/api/playwright/scrape', async (req, res) => {
-  const { url, extractDepth = 'deep' } = req.body;
+  const { url } = req.body || {};
   if (!url || typeof url !== 'string') {
-    return res.status(400).json({ error: 'URL is required for Playwright inspection' });
+    return res.status(400).json({ error: 'URL requerida', honesto: true });
   }
-
   let formattedUrl = url.trim();
-  if (!/^https?:\/\//i.test(formattedUrl)) {
-    formattedUrl = `https://${formattedUrl}`;
+  if (!/^https?:\/\//i.test(formattedUrl)) formattedUrl = `https://${formattedUrl}`;
+  if (!ULTRON_OJO_URL) {
+    return res.status(503).json({ error: 'ULTRON_OJO_URL no configurada', honesto: true });
   }
-
   try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 12000);
-
-    const pageRes = await fetch(formattedUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ultron-Playwright-AWS-Node/3.8 Headless Chrome/128.0',
-        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      },
-      signal: controller.signal,
+    const headers = { 'Content-Type': 'application/json', 'X-Ojo-Clave': ULTRON_OJO_CLAVE };
+    const mirar = await fetch(`${ULTRON_OJO_URL}/mirar`, {
+      method: 'POST', headers, body: JSON.stringify({ url: formattedUrl }),
+      signal: AbortSignal.timeout(25000),
     });
-    clearTimeout(timeoutId);
-
-    const html = await pageRes.text();
-
-    // Extract Title
-    const titleMatch = html.match(/<title[^>]*>([^<]+)<\/title>/i);
-    const title = titleMatch ? titleMatch[1].trim() : formattedUrl;
-
-    // Extract Meta Description
-    const descMatch = html.match(/<meta[^>]*name=["']description["'][^>]*content=["']([^"']*)["']/i) ||
-                      html.match(/<meta[^>]*content=["']([^"']*)["'][^>]*name=["']description["']/i);
-    const description = descMatch ? descMatch[1].trim() : 'Sin meta-descripción declarada';
-
-    // Extract Open Graph info
-    const ogTitleMatch = html.match(/<meta[^>]*property=["']og:title["'][^>]*content=["']([^"']*)["']/i);
-    const ogImageMatch = html.match(/<meta[^>]*property=["']og:image["'][^>]*content=["']([^"']*)["']/i);
-
-    // Strip scripts and styles, extract text chunks
-    const cleanHtml = html
-      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
-      .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    const sampleText = cleanHtml.slice(0, 1800);
-
-    // AI Executive Synthesis
-    const keyFindings = [
-      `Título principal: "${title}"`,
-      `Protocolo HTTP ${pageRes.status} (${pageRes.statusText || 'OK'})`,
-      `Descripción ejecutiva: ${description}`,
-      `Tamaño de carga: ${(html.length / 1024).toFixed(1)} KB procesados en nodo AWS Playwright`,
-      `Resumen de contenido: ${sampleText.slice(0, 300)}...`,
-    ];
-
+    const visto: any = await mirar.json().catch(() => ({}));
+    let fotoId: string | null = null;
+    try {
+      const fotoRes = await fetch(`${ULTRON_OJO_URL}/foto`, {
+        method: 'POST', headers, body: JSON.stringify({ url: formattedUrl }),
+        signal: AbortSignal.timeout(25000),
+      });
+      const foto: any = await fotoRes.json().catch(() => ({}));
+      fotoId = foto.id || null;
+    } catch { /* screenshot opcional */ }
+    const texto = String(visto.texto || visto.textoPlano || visto.text || '').slice(0, 4000);
+    if (!mirar.ok && !texto) {
+      return res.status(502).json({ error: 'Playwright/manos no abrió la página', detalle: visto.error || mirar.status, url: formattedUrl, nodo: ULTRON_OJO_URL, honesto: true });
+    }
     return res.json({
-      success: true,
-      url: formattedUrl,
-      status: pageRes.status,
-      title,
-      description,
-      ogTitle: ogTitleMatch ? ogTitleMatch[1] : null,
-      ogImage: ogImageMatch ? ogImageMatch[1] : null,
-      findings: keyFindings,
-      sampleText,
-      inspectedAt: new Date().toLocaleTimeString(),
-      node: 'AWS us-east-1 Playwright Worker Instance',
+      success: true, url: formattedUrl, title: visto.titulo || formattedUrl,
+      sampleText: texto,
+      findings: [`Playwright real ${ULTRON_OJO_URL}`, texto ? `Texto ${texto.length} chars` : 'Sin texto útil'],
+      foto: fotoId ? `/ojo/foto/${fotoId}` : null,
+      inspectedAt: new Date().toISOString(),
+      node: ULTRON_OJO_URL,
+      honesto: true,
     });
   } catch (err: any) {
-    return res.status(500).json({
-      error: 'Error al inspeccionar página web mediante nodo Playwright',
-      message: err.message,
-      url: formattedUrl,
-    });
+    return res.status(500).json({ error: 'Fallo nodo Playwright/manos', message: String(err?.message || err).slice(0, 200), url: formattedUrl, nodo: ULTRON_OJO_URL, honesto: true });
   }
 });
 
-// Vision Analysis for Images & Videos with Mandatory Auto-Purge Protocol
 app.post('/api/vision/analyze', async (req, res) => {
   const { mediaType, fileName, base64Data, prompt } = req.body;
 
@@ -727,100 +725,61 @@ Devuelve una síntesis ejecutiva muy profesional y clara en 1 o 2 párrafos, y e
 });
 
 // Qwen 3.8 27B / Gemini Executive Conversational Pipeline
-app.post('/api/qwen/chat', async (req, res) => {
-  const { message, mode = 'GUARDIAN', context = [] } = req.body;
+app.post('/api/turno', async (req, res) => {
+  const t0 = Date.now();
+  const message = String(req.body?.message || req.body?.text || '').trim();
+  const mode = req.body?.mode || 'GUARDIAN';
+  if (!message) return res.status(400).json({ error: 'message vacío', honesto: true });
 
-  if (!message) {
-    return res.status(400).json({ error: 'Message parameter is required' });
+  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
+    return res.status(503).json({
+      error: 'Qwen no configurado (ULTRON_NODO_URL / ULTRON_NODO_SECRETO)',
+      honesto: true,
+    });
   }
 
-  const query = message.toLowerCase();
-
-  // Determine tool invocation
-  let toolCall = null;
-
-  if (/foto|captura|selfie|cámara|sonríe/i.test(query)) {
-    toolCall = {
-      name: 'take_camera_photo_countdown',
-      arguments: { countdownSeconds: 3, flash: true },
-    };
-  } else if (/web|página|navega|playwright|sitio|url|investiga/i.test(query)) {
-    const urlMatch = query.match(/(https?:\/\/[^\s]+|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}[^\s]*)/i);
-    toolCall = {
-      name: 'browse_web_page_playwright',
-      arguments: { url: urlMatch ? urlMatch[0] : 'https://google.com' },
-    };
-  } else if (/orden global|doctrina|geopolítica|tratado|resolución/i.test(query)) {
-    toolCall = {
-      name: 'query_global_order_brain',
-      arguments: { query: message },
-    };
-  } else if (/visión|analizar|imagen|video|subir/i.test(query)) {
-    toolCall = {
-      name: 'open_vision_analyzer',
-      arguments: { autoPurge: true },
-    };
-  }
-
-  // Generate response using Gemini 3.6 Flash if active
-  let reply = '';
-  let modelName = 'Qwen 3.8 27B Enterprise';
-
-  if (ai) {
-    try {
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: `Eres ULTRON FP, la inteligencia ejecutiva central de la junta directiva y robot LOOI de escritorio.
-Personalidad: Altamente profesional, concisa, analítica, con compostura ejecutiva inquebrantable, hablando en español.
-Modo actual: ${mode}.
-Instrucción del usuario: "${message}".
-${toolCall ? `Has detectado y preparado la herramienta: ${toolCall.name}.` : ''}
-Responde en un máximo de 2 oraciones ejecutivas y precisas.`,
-              },
-            ],
-          },
+  try {
+    const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
+      body: JSON.stringify({
+        model: ULTRON_NODO_MODELO,
+        stream: false,
+        messages: [
+          { role: 'system', content: 'Eres ULTRON, asistente de escritorio de Orden Global. Español corto. No inventes precios ni datos. Si no sabes, dilo.' },
+          { role: 'user', content: message },
         ],
-      });
-      if (response.text) {
-        reply = response.text.trim();
-        modelName = 'ULTRON Neural Core (Gemini 3.6 Flash + Qwen 27B)';
-      }
-    } catch (err: any) {
-      console.warn('[Gemini Chat Fallback]', err.message);
+      }),
+      signal: AbortSignal.timeout(60000),
+    });
+    const raw = await r.text();
+    let reply = '';
+    try {
+      const j = JSON.parse(raw);
+      reply = j.message?.content || j.content || j.reply || '';
+    } catch {
+      reply = raw.slice(0, 2000);
     }
-  }
-
-  // Fallback heuristic if not generated
-  if (!reply) {
-    if (toolCall?.name === 'take_camera_photo_countdown') {
-      reply = 'Activando cámara en alta definición. Prepárate para el contador de tres segundos.';
-    } else if (toolCall?.name === 'browse_web_page_playwright') {
-      reply = 'Despachando instancia headless de Playwright en el nodo AWS para inspeccionar la página solicitada.';
-    } else if (toolCall?.name === 'query_global_order_brain') {
-      reply = 'Consultando el archivo clasificado del Cerebro de Orden Global para la junta directiva.';
-    } else if (/salud|hola|buenos días/i.test(query)) {
-      reply = 'Saludos cordiales. Soy ULTRON FP, conectado al nodo central y clúster cloud. ¿Qué directriz abordamos hoy?';
-    } else {
-      reply = `Comprendo la directriz "${message}". Operando en modo ${mode}. Todos los sistemas y herramientas periféricas están sincronizados.`;
+    if (!r.ok || !String(reply).trim()) {
+      return res.status(502).json({ error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 300), honesto: true, modelo: ULTRON_NODO_MODELO });
     }
+    return res.json({
+      reply: String(reply).trim(),
+      modelo: ULTRON_NODO_MODELO,
+      via: `${ULTRON_NODO_URL}/api/chat`,
+      mode,
+      ms: Date.now() - t0,
+      honesto: true,
+    });
+  } catch (err: any) {
+    return res.status(502).json({ error: 'Qwen caído', message: String(err?.message || err).slice(0, 200), honesto: true });
   }
-
-  res.json({
-    reply,
-    mode,
-    toolCall,
-    model: modelName,
-    latencyMs: 34,
-    timestamp: new Date().toISOString(),
-  });
 });
 
-// Cerebro de Orden Global Query Endpoint
+app.post('/api/qwen/chat', (_req, res) => {
+  res.status(410).json({ error: 'Deprecado. Usar POST /api/turno.', honesto: true });
+});
+
 app.get('/api/orden-global', (req, res) => {
   const { q } = req.query;
 

@@ -1,5 +1,4 @@
-// Qwen 3.8 27B Agentic Harness Engine
-// Real-time intent classification, multimodal tool dispatch, full-duplex conversational reasoning.
+// Detector LOCAL de gags/atajos. NO es Qwen. Cerebro: POST /api/turno.
 
 import { Mode } from '../types';
 

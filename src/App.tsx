@@ -33,7 +33,8 @@ export default function App() {
   const [isBooting, setIsBooting] = useState<boolean>(true);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isKioskFrame, setIsKioskFrame] = useState<boolean>(false);
-  const [hasVisor, setHasVisor] = useState<boolean>(false); // LOOI Cyber Sunglasses (Photo 2)
+  const FUN_MODE = true; // siempre on; no va en ajustes
+  const [hasVisor, setHasVisor] = useState<boolean>(true);
   const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal'); // Horizontal (desk LOOI) or Vertical (mobile)
 
   // Camera Sensor & Gaze Tracking
@@ -591,8 +592,23 @@ export default function App() {
       return;
     }
 
-    // Generic acknowledgment
-    proceedThinkingAndSpeaking(`Orden procesada: "${cmd}".`);
+    // Cerebro real: Qwen 27B via /api/turno
+    setFace('THINKING');
+    fetch('/api/turno', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: cmd, mode }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        const text = data.reply || data.error || 'Qwen no contestó.';
+        logBridgeEvent('in', `${data.modelo || 'turno'} ${data.ms || ''}ms`);
+        vocalize(String(text));
+      })
+      .catch((e) => {
+        setFace('CONCERNED');
+        vocalize(`Sin cerebro: ${String(e?.message || e).slice(0, 120)}`);
+      });
   };
 
   // Permission Responses
@@ -706,7 +722,7 @@ export default function App() {
           mode={mode}
           energy={energy}
           soundFxEnabled={soundFxEnabled}
-          hasVisor={hasVisor}
+          hasVisor={FUN_MODE && hasVisor}
           cameraGaze={cameraGaze}
           isDrinking={isDrinking}
           isWaving={isWaving}

@@ -1,11 +1,11 @@
-<div align="center">
+# ULTRON Desk
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Cara de escritorio + puente al cerebro real. No es un launch. Plan: PLAN.md.
 
-  <h1>Built with AI Studio</h2>
+- Cerebro: https://ultron.ordenglobal.link
+- Modelo: Qwen 3.8 27B (`ULTRON_NODO_URL` /api/chat)
+- Playwright / vision: `ULTRON_OJO_URL`
+- TTS Qwen: `ULTRON_TTS_URL` (Fase D)
 
-  <p>The fastest path from prompt to production with Gemini.</p>
-
-  <a href="https://aistudio.google.com/apps">Start building</a>
-
-</div>
+Fase A: GET /api/health (nodos reales). POST /api/turno (Qwen). POST /api/playwright/scrape (manos).
+Fun Mode encendido en código. Sin switch en ajustes.
