@@ -6,6 +6,7 @@ export type VoiceAct = {
   lines: string[];
   lineGapMs?: number;
   sing?: boolean;
+  audioUrl?: string;
 };
 
 type Song = { id: string; genre: string; lines: string[]; lineGapMs: number };
@@ -133,7 +134,28 @@ function detectGenre(q: string): Song {
 export function matchVoiceAct(raw: string): VoiceAct | null {
   const q = raw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
-  if (/canta|cancion|karaoke|entona|hum(ea)?/.test(q)) {
+  if (/canta|cancion|karaoke|entona|hum(ea)?|favorita|bohemian|ligera|runaway|bittersweet/.test(q)) {
+    const clip =
+      /bohemian|rhapsody|queen|canta\s*1/.test(q)
+        ? 'bohemian'
+        : /ligera|soda|cerati|canta\s*2/.test(q)
+          ? 'ligera'
+          : /jos[eé]|runaway|kanye|toast|canta\s*4/.test(q)
+            ? 'runaway'
+            : /medardo|bitter|verve|sinfonia|canta\s*3|favorita/.test(q)
+              ? 'bittersweet'
+              : /canta/.test(q)
+                ? 'bittersweet'
+                : null;
+    if (clip) {
+      return {
+        id: `clip-${clip}`,
+        face: 'HAPPY',
+        lines: [],
+        sing: true,
+        audioUrl: `/voz/${clip}.mp3`,
+      };
+    }
     const song = detectGenre(q);
     return {
       id: `song-${song.id}`,

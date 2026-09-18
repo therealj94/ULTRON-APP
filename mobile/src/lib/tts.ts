@@ -7,6 +7,7 @@
 import { Audio, type AVPlaybackSource } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { ttsUrl, type TtsEngineParam } from './api';
+import { API_BASE } from '../config';
 import { VOICE_BANK, bankKey } from './voiceBank';
 
 type Perf = 'speak' | 'sing';
@@ -220,6 +221,22 @@ export async function stopSpeaking() {
 
 export function isSpeaking() {
   return current !== null;
+}
+
+export async function speakUrl(pathOrUrl: string, opts?: { onEnd?: () => void; onStart?: () => void }) {
+  const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${API_BASE}${pathOrUrl}`;
+  await stopSpeaking();
+  const my = gen;
+  opts?.onStart?.();
+  await ensureAudioMode();
+  const sound = await prepare({ uri: url });
+  if (!sound) {
+    opts?.onEnd?.();
+    return false;
+  }
+  await playPrepared(sound, my);
+  opts?.onEnd?.();
+  return true;
 }
 
 /** Calienta la caché del servidor/disco para frases que no están grabadas. */

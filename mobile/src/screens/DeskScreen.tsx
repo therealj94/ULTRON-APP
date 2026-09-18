@@ -37,7 +37,7 @@ import {
   type TtsEngine,
 } from '../lib/storage';
 import { playSfx, preloadSfx, setSfxEnabled } from '../lib/sfx';
-import { StreamSpeaker, prefetchPhrases, setTtsEngine, speak, stopSpeaking } from '../lib/tts';
+import { StreamSpeaker, prefetchPhrases, setTtsEngine, speak, speakUrl, stopSpeaking } from '../lib/tts';
 import { matchVoiceAct } from '../lib/voiceActs';
 
 type Props = {
@@ -450,6 +450,10 @@ export function DeskScreen({ user, onLogout }: Props) {
         if (act) {
           if (act.id === 'saber') return void (await fireSaber());
           setFace(act.face);
+          if (act.audioUrl) {
+            await speakUrl(act.audioUrl);
+            return;
+          }
           for (const line of act.lines) {
             await say(line, act.face, act.sing ? 'sing' : 'speak');
             if (act.lineGapMs) await new Promise((r) => setTimeout(r, act.lineGapMs));
