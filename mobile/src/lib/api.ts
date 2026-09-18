@@ -205,7 +205,8 @@ export async function transcribe(opts: { base64: string; mime: string }): Promis
     '/api/stt',
     {
       method: 'POST',
-      body: JSON.stringify({ audioBase64: `data:${opts.mime};base64,${opts.base64}`, mimeType: opts.mime, language: 'es' }),
+      // audioBase64/mimeType: servidor 3.1; audio/mime: servidor anterior
+      body: JSON.stringify({ audioBase64: `data:${opts.mime};base64,${opts.base64}`, mimeType: opts.mime, audio: opts.base64, mime: opts.mime, language: 'es' }),
     },
     16_000
   );

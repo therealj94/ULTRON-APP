@@ -105,11 +105,17 @@ async function fetchSource(text: string, perf: Perf): Promise<AVPlaybackSource |
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const r = await FileSystem.downloadAsync(ttsUrl(text, perf, engine), path, { headers: { Accept: 'audio/*' } });
+      const ct = String((r.headers as any)?.['Content-Type'] || (r.headers as any)?.['content-type'] || '');
       const info = await FileSystem.getInfoAsync(path);
-      if (r.status === 200 && info.exists && (info.size || 0) > 64) {
+      if (r.status === 200 && info.exists && (info.size || 0) > 64 && (!ct || /audio|octet/.test(ct))) {
         fileCache.set(key, path);
         lastEngineUsed = String((r.headers as any)?.['X-Ultron-TTS'] || (r.headers as any)?.['x-ultron-tts'] || engine);
         return { uri: path };
+      }
+      if (r.status === 200 && ct && !/audio|octet/.test(ct)) {
+        // servidor viejo (sin GET /api/tts): devolvió HTML. Usar POST clásico.
+        await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
+        return await fetchSourcePost(text, perf, key);
       }
     } catch {
       /* reintento */
@@ -117,6 +123,49 @@ async function fetchSource(text: string, perf: Perf): Promise<AVPlaybackSource |
     await new Promise((res) => setTimeout(res, 250));
   }
   return null;
+}
+
+/** Compatibilidad con el servidor anterior: POST /api/tts → blob → base64 → disco. */
+function fetchSourcePost(text: string, perf: Perf, key: string): Promise<AVPlaybackSource | null> {
+  return new Promise((resolve) => {
+    try {
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', ttsUrl('', perf, engine).split('?')[0]);
+      xhr.setRequestHeader('Content-Type', 'application/json');
+      xhr.setRequestHeader('Accept', 'audio/*');
+      xhr.responseType = 'blob';
+      xhr.timeout = 40_000;
+      xhr.onerror = () => resolve(null);
+      xhr.ontimeout = () => resolve(null);
+      xhr.onload = () => {
+        if (xhr.status !== 200 || !xhr.response) return resolve(null);
+        const blob: Blob = xhr.response;
+        const ct = String(xhr.getResponseHeader('content-type') || blob.type || '');
+        if (!/audio|octet/.test(ct)) return resolve(null);
+        const reader = new FileReader();
+        reader.onerror = () => resolve(null);
+        reader.onloadend = async () => {
+          try {
+            const dataUrl = String(reader.result || '');
+            const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+            if (b64.length < 100) return resolve(null);
+            const ext = /mpeg|mp3/.test(ct) ? 'mp3' : 'wav';
+            const path = `${FileSystem.cacheDirectory}ultron-p-${Date.now().toString(36)}.${ext}`;
+            await FileSystem.writeAsStringAsync(path, b64, { encoding: FileSystem.EncodingType.Base64 });
+            fileCache.set(key, path);
+            lastEngineUsed = String(xhr.getResponseHeader('x-ultron-tts') || 'qwen3-tts');
+            resolve({ uri: path });
+          } catch {
+            resolve(null);
+          }
+        };
+        reader.readAsDataURL(blob);
+      };
+      xhr.send(JSON.stringify({ text, performance: perf, engine, voice: 'formal' }));
+    } catch {
+      resolve(null);
+    }
+  });
 }
 
 async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {

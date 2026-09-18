@@ -897,8 +897,8 @@ app.post('/api/stt', async (req, res) => {
 
 /**
  * Voz. Una sola voz (ULTRON) en dos motores, elegible desde Ajustes de la app:
- *   engine=eleven (default app): ElevenLabs Flash v2.5 (~0.3 s) con caché; performance=sing → Multilingual v2.
- *   engine=qwen: nodo Qwen3-TTS local (T4). engine=auto: Qwen primero, ElevenLabs si cae (política de la mesa web).
+ *   engine=eleven (app): ElevenLabs Flash v2.5 (~0.3 s) con caché; performance=sing → Multilingual v2.
+ *   engine=qwen: nodo Qwen3-TTS local (T4). engine=auto (default, mesa web): Qwen primero, ElevenLabs si cae.
  * Si todo falla → 503 (la app nunca usa la voz robótica del sistema).
  */
 app.get('/api/tts', (req, res, next) => {
@@ -909,7 +909,8 @@ app.all('/api/tts', async (req, res) => {
   const text = limpiarParaVoz(String(req.body?.text || '').slice(0, 2000));
   const voice = String(req.body?.voice || ULTRON_VOICE.qwenVoice);
   const instruct = String(req.body?.instruct || '').slice(0, 400);
-  const engineRaw = String(req.body?.engine || 'eleven');
+  // Sin engine (mesa web): política de main → Qwen T4 primero, ElevenLabs si cae. La app manda engine explícito.
+  const engineRaw = String(req.body?.engine || 'auto');
   const engine = engineRaw === 'fast' ? 'eleven' : engineRaw;
   const performance: 'speak' | 'sing' = req.body?.performance === 'sing' ? 'sing' : 'speak';
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
