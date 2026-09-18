@@ -106,6 +106,26 @@ function playNext(onAllEnd?: () => void, onError?: () => void) {
   return audio.play();
 }
 
+export function playFile(src: string, onEnd?: () => void, onError?: () => void) {
+  stopVoice();
+  const audio = new Audio(src);
+  audio.preload = 'auto';
+  audio.playsInline = true;
+  current = audio;
+  try { ensureAnalyser(audio); } catch { /* */ }
+  audio.onplaying = () => startLip();
+  audio.onended = () => {
+    if (current === audio) current = null;
+    lipCb?.(0);
+    onEnd?.();
+  };
+  audio.onerror = () => {
+    if (current === audio) current = null;
+    onError?.();
+  };
+  return audio.play().catch(() => onError?.());
+}
+
 export function playWavBlob(blob: Blob, onEnd?: () => void, onError?: () => void) {
   queue = [blob];
   if (current) {

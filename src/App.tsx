@@ -22,7 +22,7 @@ import { playSfx } from './03-voz/audio';
 import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './03-voz/speech';
 import { speakWithElevenLabsOrFallback, stopCurrentVoice, DEFAULT_ELEVENLABS_VOICES } from './03-voz/elevenlabs';
 import { vozPorId, VozId } from './03-voz/voces';
-import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip } from './03-voz/player';
+import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip, playFile } from './03-voz/player';
 import { clipDeTexto } from './03-voz/banco';
 import { bargeIn } from './03-voz/barge';
 import { pedirTurno } from './04-cerebro/turno';
@@ -41,6 +41,13 @@ export default function App() {
   const [isKioskFrame, setIsKioskFrame] = useState<boolean>(false);
   const FUN_MODE = true;
   useEffect(() => { onLip(setLipLevel); return () => onLip(null); }, []);
+  useEffect(() => {
+    ['/voz/bohemian.mp3', '/voz/ligera.mp3', '/voz/bittersweet.mp3', '/voz/runaway.mp3'].forEach((src) => {
+      const a = new Audio();
+      a.preload = 'auto';
+      a.src = src;
+    });
+  }, []);
   const [hasVisor, setHasVisor] = useState<boolean>(false);
   const [lipLevel, setLipLevel] = useState(0);
   const [orientation, setOrientation] = useState<'horizontal' | 'vertical'>('horizontal'); // Horizontal (desk LOOI) or Vertical (mobile)
@@ -165,10 +172,8 @@ export default function App() {
       if (clip) {
         setFace(clip.id === 'je' ? 'HAPPY' : faceOverride === 'SPEAKING' && /canta|bitter|queen|ligera|runaway/.test(text) ? 'HAPPY' : faceOverride);
         showBubble(text);
-        fetch(clip.file)
-          .then((r) => r.blob())
-          .then((blob) => playWavBlob(blob, () => setFace('IDLE')))
-          .catch(() => speakUtterance(text, { enabled: true, onEnd: () => setFace('IDLE') }));
+        setFace('HAPPY');
+        playFile(clip.file, () => setFace('IDLE'), () => speakUtterance(text, { enabled: true, onEnd: () => setFace('IDLE') }));
         return;
       }
       setFace('THINKING');
