@@ -1,6 +1,7 @@
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI } from '@google/genai';
@@ -757,6 +758,45 @@ function juntarOllama(raw: string) {
 }
 
 
+
+const MEM_FILE = path.join(process.cwd(), 'data', 'memoria.json');
+type Memoria = { corta: { rol: string; texto: string; t: number }[]; larga: { hecho: string; t: number }[] };
+function leerMemoria(): Memoria {
+  try {
+    return JSON.parse(fs.readFileSync(MEM_FILE, 'utf8'));
+  } catch {
+    return { corta: [], larga: [] };
+  }
+}
+function escribirMemoria(m: Memoria) {
+  fs.mkdirSync(path.dirname(MEM_FILE), { recursive: true });
+  fs.writeFileSync(MEM_FILE, JSON.stringify(m));
+}
+
+app.get('/api/memoria', (_req, res) => {
+  const m = leerMemoria();
+  res.json({ ...m, honesto: true, nota: 'corta = últimos turnos; larga = hechos. FP mongo no expuesto a la desk sin sesión.' });
+});
+
+app.post('/api/memoria', (req, res) => {
+  const m = leerMemoria();
+  const hecho = String(req.body?.hecho || '').trim();
+  const olvido = !!req.body?.olvidar;
+  if (olvido) {
+    escribirMemoria({ corta: [], larga: [] });
+    return res.json({ ok: true, olvidado: true });
+  }
+  if (hecho) {
+    m.larga = [{ hecho, t: Date.now() }, ...m.larga].slice(0, 80);
+    escribirMemoria(m);
+  }
+  if (Array.isArray(req.body?.corta)) {
+    m.corta = req.body.corta.slice(-12);
+    escribirMemoria(m);
+  }
+  res.json({ ok: true, ...m });
+});
+
 app.post('/api/tts', async (req, res) => {
   const text = String(req.body?.text || '').slice(0, 2000).trim();
   const voice = String(req.body?.voice || 'formal');
@@ -794,6 +834,8 @@ app.post('/api/turno', async (req, res) => {
   const t0 = Date.now();
   const message = String(req.body?.message || req.body?.text || '').trim();
   const mode = req.body?.mode || 'GUARDIAN';
+  const historial = Array.isArray(req.body?.historial) ? req.body.historial.slice(-12) : [];
+  const larga = leerMemoria().larga.slice(0, 12);
   if (!message) return res.status(400).json({ error: 'message vacío', honesto: true });
 
   const q = message.toLowerCase();
@@ -848,7 +890,7 @@ app.post('/api/turno', async (req, res) => {
 
   const system = `Eres ULTRON, asistente de escritorio de Orden Global. Español corto.
 No inventes precios ni tipos de cambio. Si HECHOS está vacío para un dato pedido, di que no lo viste.
-HECHOS:\n${hechos.join('\n') || '(ninguno)'}`;
+HECHOS:\n${hechos.join('\n') || '(ninguno)'}\nLARGO PLAZO:\n${larga.map((x:any)=>x.hecho).join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h:any)=>`${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
 
   try {
     const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {

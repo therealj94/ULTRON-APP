@@ -56,6 +56,7 @@ export default function App() {
   const [visionEnabled, setVisionEnabled] = useState<boolean>(true);
   const [resetTrigger, setResetTrigger] = useState<number>(0);
 
+  const historialRef = useRef<{ rol: string; texto: string }[]>([]);
   const [vozId, setVozId] = useState<VozId>(() => {
     try {
       const saved = localStorage.getItem('ultron_voz');
@@ -464,14 +465,20 @@ export default function App() {
 
   const askCerebro = (cmd: string) => {
     setFace('THINKING');
+    const rec = cmd.match(/recuerda(?: que)? (.+)/i);
+    if (rec) {
+      fetch('/api/memoria', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ hecho: rec[1] }) });
+    }
     fetch('/api/turno', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: cmd, mode }),
+      body: JSON.stringify({ message: cmd, mode, historial: historialRef.current }),
     })
       .then((r) => r.json())
       .then((data) => {
         const text = data.reply || data.error || 'Qwen no contestó.';
+        historialRef.current = [...historialRef.current, { rol:'user', texto: cmd }, { rol:'ultron', texto: String(text) }].slice(-12);
+        fetch('/api/memoria', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ corta: historialRef.current }) });
         if (data.foto) logBridgeEvent('in', `foto ${data.foto}`);
         logBridgeEvent('in', `${data.modelo || 'turno'} ${data.ms || ''}ms`);
         vocalize(String(text));

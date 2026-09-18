@@ -14,24 +14,21 @@ export const VOCES: VozUltron[] = [
     etiqueta: 'Marco',
     rol: 'Hombre · asistente',
     motor: 'formal',
-    instruct:
-      'Adult male assistant, 35 years old, calm clear Latin American Spanish, mid-low pitch, measured pace, no cartoon, no shout. Professional desk aide.',
+    instruct: '',
   },
   {
     id: 'luna',
     etiqueta: 'Luna',
     rol: 'Mujer · asistente',
     motor: 'tierna',
-    instruct:
-      'Adult female assistant, warm and clear Latin American Spanish, natural mid pitch, unhurried, no little-girl voice, no whisper.',
+    instruct: '',
   },
   {
     id: 'looi',
     etiqueta: 'Looi',
     rol: 'Compañero de mesa',
     motor: 'orbita',
-    instruct:
-      'Small cute desktop robot companion. Light mid-high pitch, slightly synthetic mecha-cute, playful short phrases, Spanish, not a child, not sexy, like a pocket robot pet.',
+    instruct: 'Cute small desktop robot, short Spanish, slightly synthetic.',
   },
 ];
 
