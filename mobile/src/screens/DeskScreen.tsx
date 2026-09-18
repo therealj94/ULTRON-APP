@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, Animated, PanResponder, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, Dimensions, PanResponder, StyleSheet, Text, View } from 'react-native';
 import { useCameraPermissions } from 'expo-camera';
 import { Accelerometer } from 'expo-sensors';
 import { UltronFace } from '../components/UltronFace';
 import { GazeCamera, type FrameGrabber } from '../components/GazeCamera';
 import { DeskMenu } from '../components/DeskMenu';
-import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
+import { TONES, normalizeTone, tratoFor, type DeskPresence, type FaceState, type Mode, type SessionUser, type Tone } from '../config';
+import { HOOKS, MISSING_TAKE, NO_MORE_HOOKS, pickHook, withTrato, type Hook } from '../lib/sing';
+import type { TouchPoint } from '../components/UltronFace';
 import { healthCheck, rememberFact, turno, turnoStream, type Turn } from '../lib/api';
 import { CONOCER_QUESTIONS, localAnswer } from '../lib/knowledge';
 import LINES from '../../voice-lines.json';
@@ -36,8 +38,8 @@ import {
   type SttEngine,
   type TtsEngine,
 } from '../lib/storage';
-import { playSfx, preloadSfx, setSfxEnabled } from '../lib/sfx';
-import { StreamSpeaker, prefetchPhrases, setTtsEngine, speak, stopSpeaking } from '../lib/tts';
+import { playSfx, preloadSfx, setSfxEnabled, silenceSfx } from '../lib/sfx';
+import { StreamSpeaker, playTake, prefetchPhrases, setTtsEngine, speak, stopSpeaking } from '../lib/tts';
 import { matchVoiceAct } from '../lib/voiceActs';
 
 type Props = {
@@ -51,8 +53,12 @@ const pick = (arr: readonly string[]) => arr[Math.floor(Math.random() * arr.leng
 function greetingFor(name: string) {
   const h = new Date().getHours();
   const part = h < 12 ? LINES.greetingParts[0] : h < 19 ? LINES.greetingParts[1] : LINES.greetingParts[2];
-  return LINES.greetingTemplate.replace('{part}', part).replace('{name}', name);
+  return LINES.greetingTemplate.replace('{part}', part).replace('{name}', tratoFor(name));
 }
+
+/** Cara con la que se sostiene un tono al terminar de hablar (1.2–3.4 s, nada de flash). */
+const TONE_HOLD_MS: Partial<Record<Tone, number>> = { BURLA: 2200, ENOJO_JUEGO: 2200, TRISTE: 3000, EUFORIA: 2400, CANSADO: 2600, FOCUS: 1400, ESTRES: 1600, ENOJO_REAL: 2400 };
+const TONE_REST_FACE: Partial<Record<Tone, FaceState>> = { BURLA: 'BURLA', ENOJO_JUEGO: 'BURLA', TRISTE: 'TRISTE', EUFORIA: 'SMILE', CANSADO: 'CANSADO', FOCUS: 'FOCUS', ESTRES: 'ESTRES', ENOJO_REAL: 'ANGRY' };
 
 const MODE_WORDS: Array<[RegExp, Mode, string]> = [
   [/modo\s+(guardian|guardián|vigilancia)/, 'GUARDIAN', 'Modo Guardian. Vigilo el escritorio.'],
@@ -106,7 +112,6 @@ export function DeskScreen({ user, onLogout }: Props) {
   const presenceRef = useRef<DeskPresence>('stay');
   const modeRef = useRef<Mode>('GUARDIAN');
   const irritationRef = useRef(0);
-  const tapCount = useRef(0);
   const touchGazeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conocerIdxRef = useRef(-1);
   const objectsRef = useRef<string[]>([]);
@@ -115,9 +120,16 @@ export function DeskScreen({ user, onLogout }: Props) {
   const lastUserAt = useRef(Date.now());
   const historial = useRef<Turn[]>([]);
   const longMemory = useRef<string[]>([]);
-  const lastTapAt = useRef(0);
   const listenOffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentTaps = useRef<number[]>([]);
+  const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const faceHold = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const singingRef = useRef<Hook | null>(null);
+  const lastHook = useRef<Hook | null>(null);
+  const [pokeSeq, setPokeSeq] = useState(0);
+  const [winkSide, setWinkSide] = useState<'L' | 'R' | null>(null);
+  const trato = tratoFor(user.name);
   const proactiveRef = useRef(true);
   const grabFrame = useRef<FrameGrabber | null>(null);
   const bubbleOp = useRef(new Animated.Value(0)).current;
@@ -142,17 +154,33 @@ export function DeskScreen({ user, onLogout }: Props) {
     return () => clearTimeout(t);
   }, [bubble, bubbleOp]);
 
+  /** Sostiene una cara un rato (1.2–3.4 s) y vuelve al reposo. Cancela el hold anterior. */
+  const holdFace = useCallback(
+    (f: FaceState, ms: number) => {
+      if (faceHold.current) clearTimeout(faceHold.current);
+      setFace(f);
+      faceHold.current = setTimeout(() => {
+        faceHold.current = null;
+        if (!speakingRef.current && !handling.current) setFace(restFace());
+      }, Math.max(1200, Math.min(3400, ms)));
+    },
+    [restFace]
+  );
+
   const say = useCallback(
-    async (text: string, nextFace?: FaceState, performance: 'speak' | 'sing' = 'speak') => {
+    async (text: string, nextFace?: FaceState, performance: 'speak' | 'sing' = 'speak', tone: Tone = 'IDLE') => {
       showBubble(text);
       void appendChatLog({ role: 'ultron', text });
       historial.current = [...historial.current, { rol: 'ultron' as const, texto: text }].slice(-12);
       speakingRef.current = true;
-      const f = nextFace || (performance === 'sing' ? 'MUSIC' : 'SPEAKING');
+      const toneFace = tone !== 'IDLE' ? TONES[tone].face : null;
+      const f = nextFace && nextFace !== 'SPEAKING' && nextFace !== 'IDLE' ? nextFace : toneFace || (performance === 'sing' ? 'MUSIC' : 'SPEAKING');
+      if (faceHold.current) clearTimeout(faceHold.current);
       setFace(f);
       setStatus('speaking');
       await speak(text, {
         performance,
+        tone,
         onAudioStart: () => {
           pauseMicForTts(true);
           setFace(f === 'IDLE' || f === 'LISTENING' ? 'SPEAKING' : f);
@@ -160,12 +188,54 @@ export function DeskScreen({ user, onLogout }: Props) {
         onEnd: () => {
           speakingRef.current = false;
           pauseMicForTts(false);
-          setFace(restFace());
+          const rest = TONE_REST_FACE[tone];
+          if (rest) holdFace(rest, TONE_HOLD_MS[tone] || 1600);
+          else if (nextFace === 'HAPPY' || nextFace === 'SMILE' || nextFace === 'WINK') holdFace(nextFace === 'WINK' ? 'WINK' : 'SMILE', 1500);
+          else setFace(restFace());
           setStatus(micMuted ? 'muted' : 'listening');
         },
       });
     },
-    [micMuted, restFace, showBubble]
+    [holdFace, micMuted, restFace, showBubble]
+  );
+
+  /** Canto: toma fija a capella, boca al volumen, sin SFX; si el jefe habla, corta. Luego SMILE + botón en español. */
+  const singHook = useCallback(
+    async (hook: Hook) => {
+      lastHook.current = hook;
+      if (!hook.take) return void (await say(withTrato(MISSING_TAKE, trato), 'CONCERNED'));
+      singingRef.current = hook;
+      speakingRef.current = true;
+      silenceSfx(20_000);
+      setStatus('speaking');
+      setFace('MUSIC');
+      showBubble(hook.lyrics.replace(/\n/g, ' · '));
+      // el mic sigue abierto durante el canto para que "para" o cualquier frase del jefe corte
+      let tick = 0;
+      const ok = await playTake(hook.take, {
+        onProgress: () => {
+          tick += 1;
+          // envolvente pseudo-vocal: la boca se mueve al ritmo, no al azar
+          const v = 0.35 + 0.65 * Math.abs(Math.sin(tick * 0.9)) * (0.6 + 0.4 * Math.abs(Math.sin(tick * 0.23)));
+          setLevel(v);
+        },
+        onEnd: () => setLevel(0),
+      });
+      const cut = singingRef.current !== hook;
+      singingRef.current = null;
+      speakingRef.current = false;
+      silenceSfx(0);
+      setLevel(0);
+      if (!ok || cut) {
+        setFace(restFace());
+        setStatus(micMuted ? 'muted' : 'listening');
+        return;
+      }
+      holdFace('SMILE', 1500);
+      await new Promise((r) => setTimeout(r, 600));
+      await say(withTrato(hook.after, trato), 'SMILE', 'speak', 'DESPUES_CANTO');
+    },
+    [holdFace, micMuted, restFace, say, showBubble, trato]
   );
 
   const startConocer = useCallback(
@@ -224,6 +294,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       setStatus('thinking');
       setToolHint('');
       const base = { message: cmd, mode: modeRef.current, userName: user.name, historial: historial.current, memoria: longMemory.current, image: opts?.image };
+      const toneRef = { current: 'IDLE' as Tone };
       const filler = (text: string) => speak(text, { onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) });
 
       // 1) Streaming: empieza a hablar con la primera oración mientras Qwen sigue escribiendo.
@@ -243,13 +314,14 @@ export function DeskScreen({ user, onLogout }: Props) {
               }
               if (!speaker) {
                 speaker = new StreamSpeaker({
+                  tone: toneRef.current,
                   onAudioStart: () => {
                     pauseMicForTts(true);
                     speakingRef.current = true;
                     setStatus('speaking');
                   },
                   onSentence: (sentence) => {
-                    setFace(faceForReply(sentence));
+                    setFace(toneRef.current !== 'IDLE' ? TONES[toneRef.current].face : faceForReply(sentence));
                     showBubble(sentence);
                   },
                 });
@@ -262,6 +334,11 @@ export function DeskScreen({ user, onLogout }: Props) {
                 void filler(pick(LINES.thinking));
               } else if (tools.includes('oro') || tools.includes('plata') || tools.includes('hnl')) setToolHint('consultando precio');
               else if (tools.includes('pagina')) setToolHint('leyendo la página');
+            },
+            (tono) => {
+              toneRef.current = normalizeTone(tono);
+              speaker?.setTone(toneRef.current);
+              if (toneRef.current !== 'IDLE') setFace(TONES[toneRef.current].face);
             }
           );
           const result = await st.promise;
@@ -275,11 +352,14 @@ export function DeskScreen({ user, onLogout }: Props) {
             setOnline(true);
             void appendChatLog({ role: 'ultron', text: result.reply });
             historial.current = [...historial.current, { rol: 'ultron' as const, texto: result.reply }].slice(-12);
-            if (!(speaker as StreamSpeaker | null)?.hasSpoken) await say(result.reply, faceForReply(result.reply));
+            const tone = normalizeTone(result.tono || toneRef.current);
+            if (!(speaker as StreamSpeaker | null)?.hasSpoken) await say(result.reply, faceForReply(result.reply), 'speak', tone);
             else {
               speakingRef.current = false;
               pauseMicForTts(false);
-              setFace(restFace());
+              const rest = TONE_REST_FACE[tone];
+              if (rest) holdFace(rest, TONE_HOLD_MS[tone] || 1600);
+              else setFace(restFace());
               setStatus(micMuted ? 'muted' : 'listening');
             }
             if (result.mode && result.mode !== 'CONOCER' && MODE_WORDS.some(([, m]) => m === result.mode)) setMode(result.mode);
@@ -324,9 +404,9 @@ export function DeskScreen({ user, onLogout }: Props) {
       }
       setOnline(true);
       if (result.mode && result.mode !== 'CONOCER' && MODE_WORDS.some(([, m]) => m === result.mode)) setMode(result.mode);
-      await say(result.reply, faceForReply(result.reply));
+      await say(result.reply, faceForReply(result.reply), 'speak', normalizeTone(result.tono));
     },
-    [micMuted, restFace, say, showBubble, user.name]
+    [holdFace, micMuted, restFace, say, showBubble, user.name]
   );
 
   const whatDoYouSee = useCallback(async () => {
@@ -402,11 +482,20 @@ export function DeskScreen({ user, onLogout }: Props) {
           const mine = longMemory.current.filter((f) => f.startsWith(user.name)).slice(0, 4).map((f) => f.replace(/^[^:]+:\s*/, ''));
           if (mine.length) return void (await say(`Recuerdo: ${mine.join('. ')}.`, 'HAPPY'));
         }
-        if (/^(callate|cállate|silencio|para|basta|shh)\b/.test(q)) {
+        if (/^(callate|cállate|silencio|para|parale|detente|basta|shh|ya|stop|no)\b/.test(q) && q.split(/\s+/).length <= 3) {
+          // "Para" = silencio total. Sin tono de ofendido.
+          singingRef.current = null;
           await stopSpeaking();
+          setLevel(0);
           setFace(restFace());
           return;
         }
+        if (lastHook.current && /^(sigo|sigue|siguele|continua|continúa|otra vez|de nuevo|dale|si sigue|sí sigue)\b/.test(q)) {
+          return void (await singHook(lastHook.current));
+        }
+        const hook = pickHook(cmd);
+        if (hook === 'other') return void (await say(withTrato(NO_MORE_HOOKS, trato), 'BURLA', 'speak', 'BURLA'));
+        if (hook) return void (await singHook(hook));
         if (/\b(vision|camara)\b/.test(q) && !/que ves|que hay|que miras/.test(q)) {
           if (!camPerm?.granted) {
             const res = await requestCam();
@@ -451,7 +540,7 @@ export function DeskScreen({ user, onLogout }: Props) {
           if (act.id === 'saber') return void (await fireSaber());
           setFace(act.face);
           for (const line of act.lines) {
-            await say(line, act.face, act.sing ? 'sing' : 'speak');
+            await say(line, act.face, 'speak');
             if (act.lineGapMs) await new Promise((r) => setTimeout(r, act.lineGapMs));
           }
           return;
@@ -474,103 +563,113 @@ export function DeskScreen({ user, onLogout }: Props) {
     [askBrain, camPerm?.granted, fireBlaster, fireSaber, micMuted, onLogout, online, requestCam, say, startConocer, user, whatDoYouSee]
   );
 
-  // ---------- Tacto: reacciones distintas según zona, ritmo y humor ----------
-  const onTap = useCallback(
-    (x: number, y: number) => {
-      setGaze({ x: x * 0.8, y: y * 0.6 });
-      if (touchGazeTimer.current) clearTimeout(touchGazeTimer.current);
-      touchGazeTimer.current = setTimeout(() => setGaze({ x: 0, y: 0 }), 1500);
+  // ---------- Tacto (gestos lentos, que se vean) ----------
+  // 1 toque → blink ~0.4 s · ojo → wink 1.4–1.8 s · 2 toques → wake + escuchar · 3 → "Aquí estoy…" · 4 → purr 3.2 s
+  // hold 0.8 s → FOCUS · deslizar → la mirada sigue el dedo (lento)
+  const isEye = (p: TouchPoint) => p.y < 0.05 && p.y > -0.75 && Math.abs(p.x) > 0.16 && Math.abs(p.x) < 0.62;
+
+  const resolveTaps = useCallback(
+    (n: number) => {
+      if (n >= 4) {
+        playSfx('purr');
+        holdFace('PURR', 3200);
+        return;
+      }
+      if (n === 3) {
+        holdFace('CURIOSITY', 2600);
+        if (!speakingRef.current && !handling.current) setTimeout(() => void say(pick(LINES.curiosity), 'CURIOSITY'), 700);
+        return;
+      }
+      if (n === 2) {
+        if (singingRef.current) return; // no interrumpir el canto
+        playSfx('wake');
+        if (presenceRef.current === 'sleep') {
+          setPresence('stay');
+          presenceRef.current = 'stay';
+        }
+        holdFace('LISTENING', 1600);
+        return;
+      }
+      // 1 toque: solo el parpadeo lento (ya hecho) y cara IDLE/BURLA sostenida
+      holdFace(Math.random() < 0.3 ? 'BURLA' : 'IDLE', 1200);
+    },
+    [holdFace, say]
+  );
+
+  const onFaceTouchStart = useCallback(
+    (p: TouchPoint) => {
       lastUserAt.current = Date.now();
-      const now = Date.now();
-      const sinceLast = now - lastTapAt.current;
-      lastTapAt.current = now;
-      recentTaps.current = [...recentTaps.current.filter((t) => now - t < 2200), now];
+      if (holdTimer.current) clearTimeout(holdTimer.current);
+      holdTimer.current = setTimeout(() => {
+        holdTimer.current = null;
+        // Hold 0.8 s+ → FOCUS, espera orden (sin hablar)
+        if (singingRef.current) return;
+        holdFace('FOCUS', 3400);
+        setGaze({ x: 0, y: 0 });
+      }, 800);
+      // la mirada va al dedo, despacio
+      setGaze({ x: p.x * 0.8, y: p.y * 0.6 });
+    },
+    [holdFace]
+  );
+
+  const onFaceTouchMove = useCallback((p: TouchPoint) => {
+    if (holdTimer.current) {
+      clearTimeout(holdTimer.current);
+      holdTimer.current = null;
+    }
+    setGaze({ x: p.x * 0.8, y: p.y * 0.6 });
+  }, []);
+
+  const onFaceTouchEnd = useCallback(
+    (p: TouchPoint, start: TouchPoint, moved: boolean) => {
+      if (holdTimer.current) {
+        clearTimeout(holdTimer.current);
+        holdTimer.current = null;
+      }
+      if (touchGazeTimer.current) clearTimeout(touchGazeTimer.current);
+      touchGazeTimer.current = setTimeout(() => setGaze({ x: 0, y: 0 }), 1800);
+      const dur = p.t - start.t;
+      if (moved || dur >= 800) return; // deslizar o hold ya atendidos
+      if (singingRef.current) return; // canto: sin SFX ni gestos que tapen la letra
 
       if (presenceRef.current === 'sleep') {
         setPresence('stay');
         presenceRef.current = 'stay';
-        playSfx('boing');
-        void say('Ya despierto.', 'STARTLE');
+        playSfx('wake');
+        holdFace('LISTENING', 1600);
         return;
       }
-      tapCount.current += 1;
-      const irr = Math.min(1, irritationRef.current + 0.15);
-      irritationRef.current = irr;
-      setIrritation(irr);
-      const busy = handling.current || speakingRef.current;
-
-      // Cosquillas: 5+ toques rápidos → risa (gana a todo lo demás)
-      if (recentTaps.current.length >= 5) {
-        recentTaps.current = [];
-        playSfx('giggle');
-        setFace('HAPPY');
-        if (!busy) void say(pick(LINES.tickle), 'HAPPY');
-        return;
-      }
-      if (busy) {
-        playSfx('tap');
-        return;
-      }
-      // Enojo por acumulación
-      if (irr >= 0.85) {
-        handling.current = true;
-        void fireBlaster(pick(LINES.angry)).finally(() => {
-          handling.current = false;
-        });
-        return;
-      }
-      if (irr >= 0.55) {
-        playSfx('tap');
-        void say(pick(LINES.annoy), 'CONFUSED');
-        return;
-      }
-      // Doble toque
-      if (sinceLast < 380) {
+      // Ojo → wink 1.4–1.8 s + tic + sonrisa. No dispara habla ni cuenta como toque.
+      if (isEye(start)) {
         playSfx('wink');
-        setFace('WINK');
-        void say(pick(LINES.double), 'WINK');
+        const side = start.x < 0 ? 'L' : 'R';
+        setWinkSide(side);
+        holdFace('SMILE', 1800);
+        setTimeout(() => setWinkSide((cur) => (cur === side ? null : cur)), 1400 + Math.random() * 400);
         return;
       }
-      // Zonas: ojos (arriba, a los lados), frente (arriba centro), boca (abajo centro)
-      const eyeZone = y < -0.05 && Math.abs(x) > 0.22;
-      const foreheadZone = y < -0.45 && Math.abs(x) <= 0.22;
-      const mouthZone = y > 0.35 && Math.abs(x) < 0.4;
-      if (eyeZone) {
-        playSfx('wink');
-        setFace(tapCount.current % 2 ? 'WINK' : 'STARTLE');
-        if (tapCount.current % 2) void say(pick(LINES.eye), 'WINK');
-        else setTimeout(() => setFace(restFace()), 800);
-        return;
-      }
-      if (foreheadZone) {
-        playSfx('tap');
-        setFace('THINKING');
-        void say(pick(LINES.forehead), 'THINKING');
-        return;
-      }
-      if (mouthZone) {
-        playSfx('giggle');
-        setFace('HAPPY');
-        void say(pick(LINES.mouth), 'HAPPY');
-        return;
-      }
-      // Toque normal: alterna guiño / sonrisa, a veces habla
+      // Toque de cara: tap + blink lento + squash
       playSfx('tap');
-      setFace(tapCount.current % 2 ? 'WINK' : 'HAPPY');
-      if (tapCount.current % 3 === 1) void say(pick(LINES.tap), 'HAPPY');
-      else setTimeout(() => setFace(restFace()), 700);
+      setPokeSeq((n) => n + 1);
+      const now = Date.now();
+      recentTaps.current = [...recentTaps.current.filter((t) => now - t < 1400), now];
+      const n = recentTaps.current.length;
+      if (tapTimer.current) clearTimeout(tapTimer.current);
+      if (n >= 4) {
+        recentTaps.current = [];
+        resolveTaps(4);
+        return;
+      }
+      tapTimer.current = setTimeout(() => {
+        tapTimer.current = null;
+        const count = recentTaps.current.length;
+        recentTaps.current = [];
+        resolveTaps(count);
+      }, 1400);
     },
-    [fireBlaster, restFace, say]
+    [holdFace, resolveTaps]
   );
-
-  const onLongPress = useCallback(() => {
-    irritationRef.current = 0;
-    setIrritation(0);
-    playSfx('purr');
-    setFace('HAPPY');
-    if (speakingRef.current || handling.current) return;
-    void say(pick(LINES.love), 'HAPPY');
-  }, [say]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -610,6 +709,17 @@ export function DeskScreen({ user, onLogout }: Props) {
         if (!speakingRef.current && !handling.current) setFace('LISTENING');
       },
       onPartial: (t) => {
+        if (singingRef.current) {
+          // Si el jefe habla, cortas. Se ignora lo que pueda ser la propia letra.
+          const lyr = singingRef.current.lyrics.toLowerCase();
+          const words = t.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+          const foreign = words.filter((w) => !lyr.includes(w));
+          if (words.length >= 2 && foreign.length >= Math.ceil(words.length / 2)) {
+            singingRef.current = null;
+            void stopSpeaking();
+          }
+          return;
+        }
         if (!speakingRef.current) {
           setFace('LISTENING');
           setPartial(t);
@@ -819,12 +929,17 @@ export function DeskScreen({ user, onLogout }: Props) {
     void handleCommand(t);
   };
 
+  const screenW = useRef(Dimensions.get('window').width);
+  useEffect(() => {
+    const sub = Dimensions.addEventListener('change', ({ window }) => (screenW.current = window.width));
+    return () => sub.remove();
+  }, []);
   const pan = useRef(
     PanResponder.create({
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 18 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+      // menú solo desde el borde derecho: el resto de la pantalla es de la cara (deslizar = mirada)
+      onMoveShouldSetPanResponderCapture: (e, g) => e.nativeEvent.pageX > screenW.current - 56 && g.dx < -14 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
       onPanResponderRelease: (_, g) => {
         if (g.dx < -36) setMenuOpen(true);
-        if (g.dx > 36) setMenuOpen(false);
       },
     })
   ).current;
@@ -861,7 +976,20 @@ export function DeskScreen({ user, onLogout }: Props) {
         onObjects={onObjectsStable}
         onScene={onScene}
       />
-      <UltronFace face={face} mode={mode} gazeX={gaze.x} gazeY={gaze.y} level={level} attack={attack} irritation={irritation} onTap={onTap} onLongPress={onLongPress} />
+      <UltronFace
+        face={face}
+        mode={mode}
+        gazeX={gaze.x}
+        gazeY={gaze.y}
+        level={level}
+        attack={attack}
+        irritation={irritation}
+        pokeSeq={pokeSeq}
+        winkSide={winkSide}
+        onTouchStart={onFaceTouchStart}
+        onTouchMove={onFaceTouchMove}
+        onTouchEnd={onFaceTouchEnd}
+      />
 
       <View pointerEvents="none" style={styles.hud}>
         <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
@@ -925,9 +1053,10 @@ export function DeskScreen({ user, onLogout }: Props) {
           setMenuOpen(false);
           void fireSaber();
         }}
-        onSing={(g) => {
+        onSing={(id) => {
           setMenuOpen(false);
-          void handleCommand(`canta ${g}`);
+          const hook = HOOKS.find((h) => h.id === id);
+          if (hook) void handleCommand(`canta ${hook.label}`);
         }}
         onWhatDoYouSee={() => {
           setMenuOpen(false);

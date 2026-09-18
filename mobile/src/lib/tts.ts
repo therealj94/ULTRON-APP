@@ -7,9 +7,15 @@
 import { Audio, type AVPlaybackSource } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { ttsUrl, type TtsEngineParam } from './api';
+import { TONES, type Tone } from '../config';
 import { VOICE_BANK, bankKey } from './voiceBank';
 
 type Perf = 'speak' | 'sing';
+
+/** Tasa de reproducción para el pitch de un tono (sin corrección: baja/sube el tono y el tempo lo compensa el servidor). */
+export function rateForTone(tone: Tone) {
+  return Math.pow(2, TONES[tone].st / 12);
+}
 
 let current: Audio.Sound | null = null;
 let gen = 0;
@@ -94,17 +100,17 @@ function canned(text: string, perf: Perf): AVPlaybackSource | null {
   return hit ? (hit as AVPlaybackSource) : null;
 }
 
-async function fetchSource(text: string, perf: Perf): Promise<AVPlaybackSource | null> {
+async function fetchSource(text: string, perf: Perf, tone: Tone = 'IDLE', lang = 'es'): Promise<AVPlaybackSource | null> {
   const pre = canned(text, perf);
   if (pre) return pre;
-  const key = `${engine}|${perf}|${text}`;
+  const key = `${engine}|${perf}|${tone}|${lang}|${text}`;
   const hit = fileCache.get(key);
   if (hit) return { uri: hit };
   const ext = engine === 'eleven' ? 'mp3' : 'wav';
   const path = `${FileSystem.cacheDirectory}ultron-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, engine), path, { headers: { Accept: 'audio/*' } });
+      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, engine, tone, lang), path, { headers: { Accept: 'audio/*' } });
       const ct = String((r.headers as any)?.['Content-Type'] || (r.headers as any)?.['content-type'] || '');
       const info = await FileSystem.getInfoAsync(path);
       if (r.status === 200 && info.exists && (info.size || 0) > 64 && (!ct || /audio|octet/.test(ct))) {
@@ -161,16 +167,20 @@ function fetchSourcePost(text: string, perf: Perf, key: string): Promise<AVPlayb
         };
         reader.readAsDataURL(blob);
       };
-      xhr.send(JSON.stringify({ text, performance: perf, engine, voice: 'formal' }));
+      xhr.send(JSON.stringify({ text, performance: perf, engine, voice: 'formal', tono: 'IDLE' }));
     } catch {
       resolve(null);
     }
   });
 }
 
-async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
+async function prepare(source: AVPlaybackSource, rate = 1): Promise<Audio.Sound | null> {
   try {
-    const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: false, progressUpdateIntervalMillis: 200 });
+    const { sound } = await Audio.Sound.createAsync(source, {
+      shouldPlay: false,
+      progressUpdateIntervalMillis: 200,
+      ...(rate !== 1 ? { rate, shouldCorrectPitch: false } : {}),
+    });
     return sound;
   } catch {
     return null;
@@ -241,6 +251,9 @@ export async function speak(
     onStart?: () => void;
     onEnd?: () => void;
     onAudioStart?: () => void;
+    /** Tono de la toma: pitch/velocidad. BURLA añade la pausa de 0.4 s antes del dardo. */
+    tone?: Tone;
+    lang?: string;
   }
 ): Promise<boolean> {
   const clean = cleanForSpeech(text);
@@ -251,6 +264,9 @@ export async function speak(
   await stopSpeaking();
   const my = gen;
   const perf = opts?.performance || 'speak';
+  const tone: Tone = opts?.tone || (perf === 'sing' ? 'CANTAR' : 'IDLE');
+  const lang = opts?.lang || 'es';
+  const rate = rateForTone(tone);
   opts?.onStart?.();
   await ensureAudioMode();
   releaseLastSpeak?.();
@@ -260,7 +276,7 @@ export async function speak(
   const AHEAD = 2;
   const sources: Array<Promise<AVPlaybackSource | null>> = [];
   const launch = (i: number) => {
-    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf);
+    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, tone, lang);
   };
   for (let i = 0; i < Math.min(AHEAD + 1, sentences.length); i++) launch(i);
 
@@ -272,7 +288,7 @@ export async function speak(
       launch(i + AHEAD);
       const sound = nextPrepared ? await nextPrepared : await (async () => {
         const src = await sources[i];
-        return src ? prepare(src) : null;
+        return src ? prepare(src, rate) : null;
       })();
       nextPrepared = null;
       if (my !== gen) {
@@ -284,12 +300,17 @@ export async function speak(
       if (i + 1 < sentences.length) {
         nextPrepared = (async () => {
           const src = await sources[i + 1];
-          return src ? prepare(src) : null;
+          return src ? prepare(src, rate) : null;
         })();
       }
       if (!spoke) {
         spoke = true;
         opts?.onAudioStart?.();
+        if (tone === 'BURLA') await new Promise((r) => setTimeout(r, 400));
+        if (my !== gen) {
+          void sound.unloadAsync().catch(() => {});
+          return spoke;
+        }
       }
       await playPrepared(sound, my);
     }
@@ -319,11 +340,21 @@ export class StreamSpeaker {
   private resolveDone!: () => void;
   readonly done: Promise<void>;
 
-  constructor(private opts: { onAudioStart?: () => void; onSentence?: (s: string) => void }) {
+  private tone: Tone = 'IDLE';
+  private lang = 'es';
+
+  constructor(private opts: { onAudioStart?: () => void; onSentence?: (s: string) => void; tone?: Tone; lang?: string }) {
     // Comparte generación con speak(): stopSpeaking() lo cancela; no corta un relleno en curso.
     this.my = gen;
+    this.tone = opts.tone || 'IDLE';
+    this.lang = opts.lang || 'es';
     this.done = new Promise<void>((r) => (this.resolveDone = r));
     void ensureAudioMode();
+  }
+
+  /** El tono llega antes del primer texto (evento `tono` del stream). */
+  setTone(tone: Tone) {
+    if (!this.spoke && !this.sources.size) this.tone = tone;
   }
 
   /** Texto nuevo del stream. */
@@ -370,7 +401,7 @@ export class StreamSpeaker {
   private source(sentence: string) {
     let p = this.sources.get(sentence);
     if (!p) {
-      p = fetchSource(sentence, 'speak');
+      p = fetchSource(sentence, 'speak', this.tone, this.lang);
       this.sources.set(sentence, p);
     }
     return p;
@@ -388,11 +419,12 @@ export class StreamSpeaker {
       if (!this.spoke) await lastSpeak.catch(() => {});
       while (this.queue.length && this.my === gen) {
         const sentence = this.queue.shift()!;
+        const rate = rateForTone(this.tone);
         const sound = this.nextPrepared
           ? await this.nextPrepared
           : await (async () => {
               const src = await this.source(sentence);
-              return src ? prepare(src) : null;
+              return src ? prepare(src, rate) : null;
             })();
         this.nextPrepared = null;
         if (this.my !== gen) {
@@ -403,13 +435,18 @@ export class StreamSpeaker {
           const nxt = this.queue[0];
           this.nextPrepared = (async () => {
             const src = await this.source(nxt);
-            return src ? prepare(src) : null;
+            return src ? prepare(src, rate) : null;
           })();
         }
         if (!sound) continue;
         if (!this.spoke) {
           this.spoke = true;
           this.opts.onAudioStart?.();
+          if (this.tone === 'BURLA') await new Promise((r) => setTimeout(r, 400));
+          if (this.my !== gen) {
+            void sound.unloadAsync().catch(() => {});
+            break;
+          }
         }
         this.opts.onSentence?.(sentence);
         await playPrepared(sound, this.my);
@@ -424,4 +461,54 @@ export class StreamSpeaker {
       } else if (this.closed && !this.queue.length) this.resolveDone();
     }
   }
+}
+
+/**
+ * Reproduce una toma embebida (canto) o un archivo. Misma generación que speak(): stopSpeaking() la corta.
+ * onProgress recibe 0..1 (posición) cada ~120 ms para animar la boca.
+ */
+export async function playTake(
+  source: AVPlaybackSource,
+  opts?: { onAudioStart?: () => void; onEnd?: () => void; onProgress?: (pos01: number, positionMs: number) => void }
+): Promise<boolean> {
+  await stopSpeaking();
+  const my = gen;
+  await ensureAudioMode();
+  let sound: Audio.Sound | null = null;
+  try {
+    const created = await Audio.Sound.createAsync(source, { shouldPlay: false, progressUpdateIntervalMillis: 120 });
+    sound = created.sound;
+  } catch {
+    opts?.onEnd?.();
+    return false;
+  }
+  if (my !== gen) {
+    void sound.unloadAsync().catch(() => {});
+    return false;
+  }
+  opts?.onAudioStart?.();
+  const prev = sound;
+  await new Promise<void>((resolve) => {
+    let done = false;
+    const end = () => {
+      if (done) return;
+      done = true;
+      if (current === prev) current = null;
+      void prev.unloadAsync().catch(() => {});
+      resolve();
+    };
+    current = prev;
+    prev.setOnPlaybackStatusUpdate((st) => {
+      if (!st.isLoaded) {
+        if ((st as any).error) end();
+        return;
+      }
+      if (st.durationMillis) opts?.onProgress?.(Math.min(1, st.positionMillis / st.durationMillis), st.positionMillis);
+      if (st.didJustFinish) end();
+    });
+    prev.playAsync().catch(end);
+    setTimeout(end, 30_000);
+  });
+  if (my === gen) opts?.onEnd?.();
+  return true;
 }

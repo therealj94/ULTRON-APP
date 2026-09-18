@@ -60,7 +60,46 @@ export type FaceState =
   | 'CONFUSED'
   | 'MUSIC'
   | 'SCAN'
-  | 'YAWNING';
+  | 'YAWNING'
+  | 'BURLA'
+  | 'CANSADO'
+  | 'TRISTE'
+  | 'ESTRES'
+  | 'EUFORIA'
+  | 'FOCUS'
+  | 'CURIOSITY'
+  | 'PURR'
+  | 'SMILE';
+
+/** Tonos de una toma (espejo de server/desk.ts): semitonos vs voz base, palabras por minuto, cara. */
+export const TONES = {
+  IDLE: { st: 0, wpm: 150, face: 'SPEAKING' as FaceState },
+  BURLA: { st: -1, wpm: 145, face: 'BURLA' as FaceState },
+  CANSADO: { st: -2, wpm: 125, face: 'CANSADO' as FaceState },
+  ENOJO_JUEGO: { st: 0, wpm: 140, face: 'BURLA' as FaceState },
+  ENOJO_REAL: { st: -2, wpm: 130, face: 'ANGRY' as FaceState },
+  TRISTE: { st: -3, wpm: 120, face: 'TRISTE' as FaceState },
+  ESTRES: { st: 0, wpm: 155, face: 'ESTRES' as FaceState },
+  EUFORIA: { st: 1, wpm: 160, face: 'EUFORIA' as FaceState },
+  FOCUS: { st: 0, wpm: 150, face: 'FOCUS' as FaceState },
+  CANTAR: { st: 0, wpm: 150, face: 'MUSIC' as FaceState },
+  DESPUES_CANTO: { st: 0, wpm: 145, face: 'SMILE' as FaceState },
+} as const;
+export type Tone = keyof typeof TONES;
+
+export function normalizeTone(raw: unknown): Tone {
+  const t = String(raw || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z_]/g, '');
+  return (t in TONES ? t : 'IDLE') as Tone;
+}
+
+/** Cómo se dirige ULTRON a cada miembro: Medardo es "jefe". */
+export function tratoFor(name: string) {
+  return /medardo/i.test(name) ? 'jefe' : name;
+}
 
 export type Mode =
   | 'GUARDIAN'

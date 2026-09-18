@@ -14,7 +14,13 @@ const MODES: Array<{ id: Mode; hint: string }> = [
   { id: 'CONOCER', hint: 'entrevista' },
 ];
 
-const GENRES = ['balada', 'ranchera', 'pop', 'rock', 'salsa', 'cumbia', 'corrido', 'jazz', 'cuna'];
+// Cuatro ganchos fijos (a capella, una voz). Letra e idioma fijos.
+const HOOKS: Array<{ id: string; label: string; sub: string }> = [
+  { id: 'mia', label: 'la mía', sub: 'sin nombre · EN' },
+  { id: 'dramatica', label: 'la dramática', sub: 'la larga · EN' },
+  { id: 'ligera', label: 'la suave', sub: 'ligera · ES' },
+  { id: 'piano', label: 'la íntima', sub: 'piano · EN' },
+];
 
 type Props = {
   visible: boolean;
@@ -37,7 +43,7 @@ type Props = {
   onConocer: () => void;
   onBlaster: () => void;
   onSaber: () => void;
-  onSing: (genre: string) => void;
+  onSing: (hookId: string) => void;
   onWhatDoYouSee: () => void;
   onRemember: (fact: string) => void;
   settings: { ttsEngine: TtsEngine; sttEngine: SttEngine; proactive: boolean; sfx: boolean };
@@ -158,9 +164,10 @@ export function DeskMenu(p: Props) {
           <Text style={styles.hint}>También por voz: «busca…», «investiga…», «noticias de…».</Text>
 
           <Text style={styles.section}>Cantar</Text>
+          <Text style={styles.sub}>A capella, una voz. Por voz: «canta», «canta la dramática», «canta la suave», «canta la íntima». «Para» = silencio.</Text>
           <View style={styles.chips}>
-            {GENRES.map((g) => (
-              <Chip key={g} label={g} onPress={() => p.onSing(g)} />
+            {HOOKS.map((h) => (
+              <Chip key={h.id} label={h.label} sub={h.sub} onPress={() => p.onSing(h.id)} />
             ))}
           </View>
 
@@ -197,8 +204,8 @@ export function DeskMenu(p: Props) {
           </View>
 
           <Text style={styles.hint}>
-            Tócalo: reacciona distinto en ojos, frente y boca. Doble toque: guiño. Toques rápidos: cosquillas. Insiste: se enoja y dispara.
-            Mantén pulsado: se calma. Sacude el teléfono: se asusta.
+            Un toque: parpadea. Toca un ojo: guiña. Dos toques: despierta y escucha. Tres: «Aquí estoy». Cuatro: ronronea. Mantén pulsado:
+            se concentra y espera tu orden. Desliza: te sigue con la mirada. Menú: desliza desde el borde derecho.
           </Text>
 
           <Text style={styles.section}>Ajustes</Text>

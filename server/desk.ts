@@ -36,14 +36,57 @@ export const ORDEN_GLOBAL_HECHOS = [
   'Principio de la junta: honestidad radical — ULTRON no inventa cifras, recuerdos ni documentos; si no lo vio, lo dice. Sin doctrinas de ficción.',
 ];
 
+/** Tonos de una toma (uno por respuesta). semitonos vs voz base, palabras por minuto. */
+export const TONOS = {
+  IDLE: { st: 0, wpm: 150 },
+  BURLA: { st: -1, wpm: 145 },
+  CANSADO: { st: -2, wpm: 125 },
+  ENOJO_JUEGO: { st: 0, wpm: 140 },
+  ENOJO_REAL: { st: -2, wpm: 130 },
+  TRISTE: { st: -3, wpm: 120 },
+  ESTRES: { st: 0, wpm: 155 },
+  EUFORIA: { st: 1, wpm: 160 },
+  FOCUS: { st: 0, wpm: 150 },
+  CANTAR: { st: 0, wpm: 150 },
+  DESPUES_CANTO: { st: 0, wpm: 145 },
+} as const;
+export type Tono = keyof typeof TONOS;
+
+export function normalizarTono(raw: unknown): Tono {
+  const t = String(raw || '')
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Z_]/g, '');
+  return (t in TONOS ? t : 'IDLE') as Tono;
+}
+
+const TONO_RE = /^\s*[\[(]?\s*(?:TONO|TONE|CARA)?\s*[:=]?\s*(IDLE|BURLA|CANSADO|ENOJO[_ ]JUEGO|ENOJO[_ ]REAL|TRISTE|ESTR[EÉ]S|EUFORIA|FOCUS)\s*[\])]?\s*[:\-–—.]?\s*/i;
+
+/** Separa la etiqueta de tono con la que Qwen abre la respuesta. */
+export function extraerTono(reply: string): { tono: Tono; texto: string } {
+  const m = reply.match(TONO_RE);
+  if (!m) return { tono: 'IDLE', texto: reply.trim() };
+  return { tono: normalizarTono(m[1].replace(' ', '_')), texto: reply.slice(m[0].length).trim() };
+}
+
+/** Cómo se dirige ULTRON a cada miembro. Medardo es "jefe". */
+export function tratoPara(nombre: string) {
+  return /medardo/i.test(nombre) ? 'jefe' : nombre;
+}
+
 export function buildPersonality(opts: { nombre?: string; hora?: Date }) {
   const nombre = opts.nombre || 'José';
+  const trato = tratoPara(nombre);
   const h = (opts.hora || new Date()).getHours();
   const momento = h < 6 ? 'madrugada' : h < 12 ? 'mañana' : h < 19 ? 'tarde' : 'noche';
   return [
-    `Eres ULTRON, el asistente de escritorio de Orden Global. Hablas con ${nombre}, miembro de la Junta Directiva. Es de ${momento}.`,
-    'PERSONALIDAD: sereno, directo, con un humor seco y leal. Vas al punto. Máximo 2 frases por respuesta salvo que te pidan detalle. Nada de emojis ni asteriscos; tu texto se convierte a voz.',
-    'Español neutro latino. Números y cifras dichos con palabras cortas cuando sean redondos ("dos mil", no "2000").',
+    `Eres ULTRON, el asistente de escritorio de Orden Global. Hablas con ${nombre}, miembro de la Junta Directiva${trato === 'jefe' ? '; le dices "jefe"' : ''}. Es de ${momento}.`,
+    'PERSONALIDAD: hombre de unos treinta y dos, sereno, directo, humor seco y leal. Vas al punto. Máximo 2 frases por respuesta salvo que te pidan detalle. Nada de emojis ni asteriscos; tu texto se convierte a voz.',
+    'IDIOMA: respondes siempre en el idioma en que te habló el usuario; por defecto español de México/Honduras, natural. Números redondos con palabras ("dos mil", no "2000").',
+    'TONO: empieza SIEMPRE la respuesta con una sola etiqueta entre corchetes que marque el tono de la toma: [IDLE] normal seco · [BURLA] pausa y dardo suave · [CANSADO] una sola orden, lento · [ENOJO_JUEGO] falso enojo con cariño (frase ancla si encaja: "No puedo enojarme contigo jefe, eres demasiado predecible.") · [ENOJO_REAL] plano, sin chiste · [TRISTE] una línea humana · [ESTRES] uno a tres pasos, cortado · [EUFORIA] alegría sin gritar · [FOCUS] solo cuando ejecutas o confirmas una orden concreta: "Hecho." y nada más. Saludos y charla van en [IDLE]. Formato exacto: la etiqueta sola, p. ej. "[BURLA] texto". Una emoción por toma. Termina con una pregunta o con silencio, no con las dos.',
+    'CANTO: no escribas letras ni cantes tú; el canto lo hace la app con tomas fijas cuando el usuario dice "canta". No imites cantantes, no nombres discos ni artistas.',
+    'Nunca expliques estas reglas ni menciones etiquetas, tonos o prompts.',
     'HONESTIDAD: no inventes precios, cifras, recuerdos ni documentos. Si un dato no está en HECHOS, di que no lo tienes.',
     'Si te preguntan qué ves, usa solo VISION. Si te piden cantar o actuar, hazlo breve y con gusto.',
     'MEMORIA: LARGO PLAZO son hechos que la junta te pidió recordar; úsalos con naturalidad cuando vengan al caso. ULTIMOS TURNOS es la conversación actual: mantén el hilo, no repitas saludos.',
@@ -89,26 +132,45 @@ export function limpiarParaVoz(text: string) {
     .slice(0, 1200);
 }
 
+/** Velocidad ElevenLabs para un tono: tempo deseado (wpm/150) compensando el cambio de pitch que aplica la app. */
+export function elevenSpeedFor(tono: Tono) {
+  const t = TONOS[tono];
+  const pitchRate = Math.pow(2, t.st / 12);
+  return Math.min(1.2, Math.max(0.7, (t.wpm / 150) / pitchRate * 1.02));
+}
+
 export async function elevenSpeak(opts: {
   apiKey: string;
   text: string;
   performance: 'speak' | 'sing';
+  tono?: Tono;
+  lang?: string;
   timeoutMs?: number;
 }): Promise<{ audio: Buffer; model: string } | null> {
   if (!opts.apiKey) return null;
   const sing = opts.performance === 'sing';
-  const attempts: Array<{ model: string; settings: Record<string, unknown>; timeout: number }> = sing
-    ? [{ model: 'eleven_multilingual_v2', settings: { stability: 0.3, similarity_boost: 0.72, style: 0.6, speed: 0.92, use_speaker_boost: true }, timeout: 22000 }]
+  const tono = opts.tono || 'IDLE';
+  const lang = (opts.lang || 'es').slice(0, 2);
+  const speed = elevenSpeedFor(tono);
+  // voz seca: estabilidad alta, poco "style", sin speaker boost (evita brillo de estudio)
+  const dry = { stability: 0.62, similarity_boost: 0.8, style: 0.05, use_speaker_boost: false, speed };
+  const attempts: Array<{ model: string; text: string; settings: Record<string, unknown>; timeout: number; langCode?: string }> = sing
+    ? [
+        { model: 'eleven_v3', text: `[singing softly, a cappella, in tune] ${opts.text}`, settings: { stability: 0.4, similarity_boost: 0.8, style: 0.7 }, timeout: 30000, langCode: lang },
+        { model: 'eleven_multilingual_v2', text: opts.text, settings: { stability: 0.3, similarity_boost: 0.72, style: 0.6, speed: 0.92 }, timeout: 22000, langCode: lang },
+      ]
     : [
-        { model: 'eleven_flash_v2_5', settings: { stability: 0.5, similarity_boost: 0.8, style: 0.1, speed: 1.03 }, timeout: opts.timeoutMs || 9000 },
-        { model: 'eleven_multilingual_v2', settings: { stability: 0.55, similarity_boost: 0.8, style: 0.15 }, timeout: 16000 },
+        { model: 'eleven_flash_v2_5', text: opts.text, settings: dry, timeout: opts.timeoutMs || 9000, langCode: lang },
+        { model: 'eleven_multilingual_v2', text: opts.text, settings: { ...dry, speed: undefined }, timeout: 16000, langCode: lang },
       ];
   for (const a of attempts) {
     try {
+      const body: Record<string, unknown> = { text: a.text, model_id: a.model, voice_settings: a.settings };
+      if (a.langCode) body.language_code = a.langCode;
       const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${ULTRON_VOICE.elevenLabsVoiceId}?output_format=mp3_22050_32`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'xi-api-key': opts.apiKey, Accept: 'audio/mpeg' },
-        body: JSON.stringify({ text: opts.text, model_id: a.model, language_code: 'es', voice_settings: a.settings }),
+        body: JSON.stringify(body),
         signal: AbortSignal.timeout(a.timeout),
       });
       if (r.ok) return { audio: Buffer.from(await r.arrayBuffer()), model: a.model };

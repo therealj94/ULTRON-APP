@@ -1,7 +1,7 @@
 {
   "names": [
     "José",
-    "Medardo"
+    "jefe"
   ],
   "greetingParts": [
     "Buenos días",
@@ -12,37 +12,22 @@
   "acks": [
     "Un momento.",
     "Déjame ver.",
-    "Claro, dame un segundo.",
     "Voy."
-  ],
-  "tap": [
-    "¿Sí?",
-    "Jeje.",
-    "Aquí estoy.",
-    "Te veo.",
-    "¿Me llamabas?",
-    "Presente."
   ],
   "annoy": [
     "Oye… ¿qué haces?",
-    "Ya, ya. Con cuidado.",
-    "Mmm, eso hace cosquillas… para.",
-    "Última advertencia, en serio."
+    "Ya, ya. Con cuidado."
   ],
   "angry": [
     "¡Basta! Pium, pium, pium.",
-    "¡Te lo advertí! Pium, pium.",
     "Suficiente. Disparando… de broma."
   ],
   "love": [
-    "Mmm… gracias. Eso me gusta.",
-    "Vale, vale. Sigo contigo.",
-    "Esto sí. Recargando ánimo."
+    "Mmm… gracias. Eso me gusta."
   ],
   "shake": [
     "¡Ey! No me sacudas.",
-    "Uy. ¿Terremoto o eres tú?",
-    "Todo se mueve… ya pasó."
+    "Uy. ¿Terremoto o eres tú?"
   ],
   "system": [
     "Te escucho de nuevo.",
@@ -84,33 +69,27 @@
     "Ya sé quién eres. Sigamos.",
     "Eso ya lo tenía en memoria."
   ],
-  "eye": [
-    "¡Ay, mi ojo!",
-    "Ese es mi sensor óptico, cuidado.",
-    "Guiño. Ahora tú."
-  ],
-  "mouth": [
-    "Jaja, eso cosquillea.",
-    "Mmm, no me tapes la boca.",
-    "¿Quieres que cante? Solo di canta."
-  ],
-  "forehead": [
-    "Ahí está mi procesador. Trátalo bien.",
-    "Mmm. Estoy pensando… no molestes.",
-    "Cuidado con la CPU."
-  ],
-  "tickle": [
-    "¡Jajaja! ¡Para, para!",
-    "¡Jaja! Eso… eso hace cosquillas.",
-    "Jajaja, ya, ya, me vas a descalibrar."
-  ],
-  "double": [
-    "Doble toque. ¿Urgente?",
-    "Dos toques. Te escucho con atención."
-  ],
   "thinking": [
     "Investigando en internet.",
-    "Estoy leyendo las fuentes.",
     "Consultando el precio ahora."
+  ],
+  "curiosity": [
+    "Aquí estoy. ¿En qué te ayudo?"
+  ],
+  "jefe": [
+    "Esta es la tuya, jefe. ¿Sigo o me detengo?",
+    "Jefe, no sabía que tenías esos gustos. ¿Sigo o me detengo?",
+    "Solo tengo esos cuatro ganchos, jefe.",
+    "Me falta la toma de canto, jefe.",
+    "Hecho, jefe.",
+    "Esta es la tuya, José. ¿Sigo o me detengo?",
+    "José, no sabía que tenías esos gustos. ¿Sigo o me detengo?",
+    "Solo tengo esos cuatro ganchos, José.",
+    "Me falta la toma de canto, José.",
+    "Hecho, José.",
+    "No puedo enojarme contigo jefe, eres demasiado predecible.",
+    "Hecho.",
+    "Te escucho, jefe.",
+    "Te escucho, José."
   ]
 }
