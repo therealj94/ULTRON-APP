@@ -25,9 +25,8 @@ export async function chatterboxSpeak(opts: {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'audio/wav,audio/mpeg,*/*' };
   if (opts.clave) headers['x-ultron-tts-clave'] = opts.clave;
   const bodies = [
-    { path: '/v1/audio/speech', body: { model: 'tts-1', voice: ULTRON_VOICE.chatterboxVoice, input: opts.text, language: 'es', response_format: 'wav' } },
-    { path: '/tts', body: { text: opts.text, language: 'es', voice: ULTRON_VOICE.chatterboxVoice } },
-    { path: '/synthesize', body: { text: opts.text, language: 'Spanish', voice: ULTRON_VOICE.chatterboxVoice } },
+    { path: '/tts', body: { texto: opts.text, voz: 'calida', idioma: 'es', correo: 'servicio@ordenglobal.org', llave: opts.clave || '' } },
+    { path: '/hablar', body: { texto: opts.text, voz: 'calida', idioma: 'es', correo: 'servicio@ordenglobal.org', llave: opts.clave || '' } },
   ];
   for (const a of bodies) {
     try {
