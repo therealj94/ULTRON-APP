@@ -3,7 +3,7 @@ import Constants from 'expo-constants';
 const extra = (Constants.expoConfig?.extra || {}) as { ultronUrl?: string };
 
 export const API_BASE = (extra.ultronUrl || 'https://ultron-looi-desk.onrender.com').replace(/\/+$/, '');
-export const APP_VERSION = Constants.expoConfig?.version || '2.1.1';
+export const APP_VERSION = Constants.expoConfig?.version || '2.2.0';
 
 export type DeskUser = {
   id: 'jose' | 'medardo' | 'otro';
