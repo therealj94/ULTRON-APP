@@ -698,20 +698,33 @@ app.post('/api/vision/analyze', async (req, res) => {
   return res.status(503).json({ error: 'No hay nodo de visión ni Gemini. No invento lo que hay en la foto.', honesto: true });
 });
 
+const spotCache: Record<string, { at: number; data: any }> = {};
+async function cached(key: string, ttlMs: number, fn: () => Promise<any>) {
+  const hit = spotCache[key];
+  if (hit && Date.now() - hit.at < ttlMs) return hit.data;
+  const data = await fn();
+  spotCache[key] = { at: Date.now(), data };
+  return data;
+}
+
 async function spotMetal(sym: 'XAU' | 'XAG') {
-  const r = await fetch(`https://api.gold-api.com/price/${sym}`, { signal: AbortSignal.timeout(8000) });
-  const j: any = await r.json();
-  const price = j.price || j.bid || j.ask;
-  if (!price) throw new Error('gold-api sin price');
-  return { sym, usd: Number(price), fuente: 'gold-api.com' };
+  return cached(`metal:${sym}`, 30000, async () => {
+    const r = await fetch(`https://api.gold-api.com/price/${sym}`, { signal: AbortSignal.timeout(8000) });
+    const j: any = await r.json();
+    const price = j.price || j.bid || j.ask;
+    if (!price) throw new Error('gold-api sin price');
+    return { sym, usd: Number(price), fuente: 'gold-api.com', updatedAt: j.updatedAt || null };
+  });
 }
 
 async function usdHnl() {
-  const r = await fetch('https://open.er-api.com/v6/latest/USD', { signal: AbortSignal.timeout(8000) });
-  const j: any = await r.json();
-  const hnl = j?.rates?.HNL;
-  if (!hnl) throw new Error('sin rate HNL');
-  return { usdHnl: Number(hnl), fuente: 'open.er-api.com' };
+  return cached('hnl', 60000, async () => {
+    const r = await fetch('https://open.er-api.com/v6/latest/USD', { signal: AbortSignal.timeout(8000) });
+    const j: any = await r.json();
+    const hnl = j?.rates?.HNL;
+    if (!hnl) throw new Error('sin rate HNL');
+    return { usdHnl: Number(hnl), fuente: 'open.er-api.com' };
+  });
 }
 
 async function leerConOjo(url: string) {
@@ -765,12 +778,6 @@ app.post('/api/turno', async (req, res) => {
     if (/\b(lempira|hnl|cmsbio|dólar a lempira|dolar a lempira|usd a hnl|tipo de cambio)\b/.test(q)) {
       const fx = await usdHnl();
       hechos.push(`USD/HNL = ${fx.usdHnl} (fuente ${fx.fuente}).`);
-      try {
-        const page = await leerConOjo('https://www.bch.hn/');
-        if (page?.texto) hechos.push(`Playwright BCH: ${page.titulo || ''} ${page.texto.slice(0, 600)}`);
-      } catch (e: any) {
-        hechos.push(`Playwright BCH falló: ${String(e?.message || e).slice(0, 80)}`);
-      }
     }
     const urlMatch = message.match(/https?:\/\/[^\s]+/i);
     if (urlMatch || /\b(abr[ií] la p[aá]gina|screenshot|playwright)\b/.test(q)) {
@@ -780,6 +787,22 @@ app.post('/api/turno', async (req, res) => {
     }
   } catch (e: any) {
     hechos.push(`Tool falló: ${String(e?.message || e).slice(0, 160)}. Si no hay cifra, dilo.`);
+  }
+
+  const soloDato = /precio|spot|oro|plata|gold|silver|xau|xag|lempira|hnl|tipo de cambio|cu[aá]nto/.test(q)
+    && !/por qu[eé]|explica|an[aá]lisis/.test(q);
+  if (soloDato && hechos.length) {
+    const limpio = hechos.map((h) => h.replace(/ No inventes otro número\./g, '')).join(' ');
+    return res.json({
+      reply: limpio,
+      modelo: 'tools',
+      via: 'gold-api/er-api',
+      mode,
+      ms: Date.now() - t0,
+      tools: hechos.length,
+      foto,
+      honesto: true,
+    });
   }
 
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
