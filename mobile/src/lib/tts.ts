@@ -185,9 +185,17 @@ export function isSpeaking() {
 
 /** Precalienta frases (saludo, acks) para que suenen al instante. */
 export async function prefetchPhrases(phrases: string[], voiceId: string) {
-  await Promise.all(
-    phrases.map((p) => fetchToFile(cleanForSpeech(p), voiceId).catch(() => null))
-  );
+  // Concurrencia 2 para no chocar con el límite de ElevenLabs; la 1ª frase (saludo) va sola.
+  const queue = phrases.map((p) => cleanForSpeech(p)).filter(Boolean);
+  const first = queue.shift();
+  if (first) await fetchToFile(first, voiceId).catch(() => null);
+  const worker = async () => {
+    while (queue.length) {
+      const p = queue.shift()!;
+      await fetchToFile(p, voiceId).catch(() => null);
+    }
+  };
+  await Promise.all([worker(), worker()]);
 }
 
 export async function speak(

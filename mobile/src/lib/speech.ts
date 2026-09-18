@@ -54,6 +54,7 @@ let paused = false;
 let recording: Audio.Recording | null = null;
 let meteringSupported: boolean | null = null;
 let noiseFloor = -60;
+let lastLevelSent = 0;
 let transcribeChain: Promise<void> = Promise.resolve();
 
 // estado del chunk actual
@@ -126,7 +127,10 @@ function onStatus(st: Audio.RecordingStatus) {
   const now = Date.now();
   const th = threshold();
   const level = Math.max(0, Math.min(1, (m - (th - 10)) / 40));
-  callbacks.onLevel?.(level);
+  if (Math.abs(level - lastLevelSent) > 0.08 || (level === 0 && lastLevelSent !== 0)) {
+    lastLevelSent = level;
+    callbacks.onLevel?.(level);
+  }
   if (m >= th) {
     if (!speechStartedAt) {
       speechStartedAt = now;
