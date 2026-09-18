@@ -4,6 +4,7 @@ const SEMILLA = [
   'Junta Directiva de Orden Global: José Ordóñez y Medardo Ordóñez.',
   'José Ordóñez: junta, fundador, habla con ULTRON en el escritorio.',
   'Medardo Ordóñez: junta. Canción favorita: The Verve — Bitter Sweet Symphony.',
+  'José Ordóñez: canción favorita Kanye West — Runaway (el brindis).',
 ];
 
 export function semillaLarga() {

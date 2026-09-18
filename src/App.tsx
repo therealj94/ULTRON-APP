@@ -670,7 +670,15 @@ export default function App() {
     if (/\bcanta|\bcanci[oó]n|\bfavorita/.test(q)) {
       const clip =
         clipDeTexto(q) ||
-        clipDeTexto(/queen|bohemian/.test(q) ? 'bohemian' : /ligera|soda/.test(q) ? 'ligera' : /runaway|kanye/.test(q) ? 'runaway' : 'bittersweet');
+        clipDeTexto(
+          /queen|bohemian|canta\s*1/.test(q)
+            ? 'bohemian'
+            : /ligera|soda|canta\s*2/.test(q)
+              ? 'ligera'
+              : /jos[eé]|runaway|kanye|canta\s*4/.test(q)
+                ? 'runaway'
+                : 'bittersweet'
+        );
       if (clip) {
         setFace('HAPPY');
         vocalize(clip.id === 'bittersweet' ? 'favorita de Medardo bittersweet' : clip.id);

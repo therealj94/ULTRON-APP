@@ -4,6 +4,7 @@ QUIÉN
 - Junta Directiva: José Ordóñez (fundador, habla con ULTRON) y Medardo Ordóñez (junta). ordenglobal.org. Honduras.
 - ULTRON es cara y voz de Genesis Core (Qwen 27B, ojo Playwright, voz, memoria).
 - Canción favorita de Medardo: The Verve — Bitter Sweet Symphony.
+- Canción favorita de José: Kanye West — Runaway (el brindis).
 
 MAPA (cerebro-datos.js):
 - Las minas: Concesiones mineras propias. El oro se extrae aquí, no se compra en mercado: es lo que hace que el respaldo sea nuestro y no un depósito en la cuenta de otro.
