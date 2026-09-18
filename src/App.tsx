@@ -10,7 +10,7 @@ import { VisionOverlay } from './components/VisionOverlay';
 import { BiometricAuthModal } from './components/BiometricAuthModal';
 import { PhotoCaptureModal } from './components/PhotoCaptureModal';
 import { UltronVaultModal } from './components/UltronVaultModal';
-import { ElevenLabsVoiceModal } from './components/ElevenLabsVoiceModal';
+import { VoicePickerModal } from './components/VoicePickerModal';
 import { CameraCountdownModal } from './components/CameraCountdownModal';
 import { VisionMediaAnalyzerModal } from './components/VisionMediaAnalyzerModal';
 import { PlaywrightBrowserModal } from './components/PlaywrightBrowserModal';
@@ -19,7 +19,8 @@ import { AwsDeploymentModal } from './components/AwsDeploymentModal';
 import { TutorialModal } from './components/TutorialModal';
 import { playSfx } from './utils/audio';
 import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './utils/speech';
-import { DEFAULT_ELEVENLABS_VOICES, speakWithElevenLabsOrFallback, stopCurrentVoice } from './utils/elevenlabs';
+import { speakWithElevenLabsOrFallback, stopCurrentVoice, DEFAULT_ELEVENLABS_VOICES } from './utils/elevenlabs';
+import { vozPorId, VozId } from './utils/voces';
 import { downloadStandaloneSimulator } from './utils/exporter';
 import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck, HelpCircle, RotateCcw } from 'lucide-react';
 import { AgenticHarnessModal } from './components/AgenticHarnessModal';
@@ -55,8 +56,14 @@ export default function App() {
   const [visionEnabled, setVisionEnabled] = useState<boolean>(true);
   const [resetTrigger, setResetTrigger] = useState<number>(0);
 
-  // ElevenLabs Voice Configuration
-  const [activeVoice, setActiveVoice] = useState<ElevenLabsVoiceConfig>(DEFAULT_ELEVENLABS_VOICES[0]);
+  const [vozId, setVozId] = useState<VozId>(() => {
+    try {
+      const saved = localStorage.getItem('ultron_voz');
+      if (saved === 'marco' || saved === 'luna' || saved === 'looi') return saved;
+    } catch { /* */ }
+    return 'marco';
+  });
+  const [activeVoice, setActiveVoice] = useState(DEFAULT_ELEVENLABS_VOICES[0]);
 
   // Expressive Interactive Actions
   const [isDrinking, setIsDrinking] = useState<boolean>(false);
@@ -147,10 +154,11 @@ export default function App() {
       const browserFallback = () =>
         speakUtterance(text, { enabled: true, onEnd: () => setFace('IDLE') });
 
+      const voz = vozPorId(vozId);
       fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: 'jarvis' }),
+        body: JSON.stringify({ text, voice: voz.motor, instruct: voz.instruct }),
       })
         .then(async (r) => {
           if (!r.ok || !(r.headers.get('content-type') || '').includes('audio')) {
@@ -181,7 +189,7 @@ export default function App() {
           }
         });
     },
-    [showBubble, speakerEnabled, activeVoice]
+    [showBubble, speakerEnabled, activeVoice, vozId]
   );
 
   // Add log to bridge telemetry
@@ -1080,13 +1088,16 @@ export default function App() {
         />
 
         {/* ElevenLabs Neural Voices Modal */}
-        <ElevenLabsVoiceModal
+        <VoicePickerModal
           isOpen={isVoiceModalOpen}
+          actual={vozId}
           onClose={() => setIsVoiceModalOpen(false)}
-          activeVoice={activeVoice}
-          onSelectVoice={(v) => {
-            setActiveVoice(v);
-            vocalize(`Voz de ElevenLabs configurada a ${v.name}.`);
+          onSelect={(id) => {
+            setVozId(id);
+            try { localStorage.setItem('ultron_voz', id); } catch { /* */ }
+            setIsVoiceModalOpen(false);
+            const v = vozPorId(id);
+            vocalize(id === 'looi' ? 'Aquí. En la mesa.' : `Voz ${v.etiqueta}.`);
           }}
         />
 

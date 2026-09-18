@@ -759,7 +759,8 @@ function juntarOllama(raw: string) {
 
 app.post('/api/tts', async (req, res) => {
   const text = String(req.body?.text || '').slice(0, 2000).trim();
-  const voice = String(req.body?.voice || 'jarvis');
+  const voice = String(req.body?.voice || 'formal');
+  const instruct = String(req.body?.instruct || '').slice(0, 400);
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
   if (!ULTRON_TTS_URL || !ULTRON_TTS_CLAVE) {
     return res.status(503).json({ error: 'TTS Qwen no configurado', honesto: true });
@@ -768,7 +769,12 @@ app.post('/api/tts', async (req, res) => {
     const r = await fetch(`${ULTRON_TTS_URL}/synthesize`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-tts-clave': ULTRON_TTS_CLAVE },
-      body: JSON.stringify({ text, voice, language: 'Spanish' }),
+      body: JSON.stringify({
+        text,
+        voice,
+        language: 'Spanish',
+        ...(instruct ? { instruct } : {}),
+      }),
       signal: AbortSignal.timeout(45000),
     });
     if (!r.ok) {
