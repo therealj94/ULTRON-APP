@@ -83,7 +83,10 @@ const ULTRON_OJO_URL = (process.env.ULTRON_OJO_URL || process.env.PLAYWRIGHT_NOD
 const ULTRON_OJO_CLAVE = process.env.ULTRON_OJO_CLAVE || '';
 const ULTRON_TTS_URL = (process.env.CHATTERBOX_URL || process.env.ULTRON_TTS_URL || '').replace(/\/$/, '');
 const ULTRON_TTS_CLAVE = process.env.ULTRON_TTS_CLAVE || '';
-// TLS: no desactivar VERIFY global. El nodo Qwen usa ULTRON_NODO_INSECURE_TLS solo en su fetch.
+// El 27B usa cert self-signed. Sin esto /salud y /listo dan fetch failed y la luz se queda FRÍO.
+if (process.env.ULTRON_NODO_INSECURE_TLS === '1') {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+}
 const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || '';
 const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || '';
 const AWS_DEFAULT_REGION = (process.env.AWS_DEFAULT_REGION || 'us-east-1').replace(' ', '-');
