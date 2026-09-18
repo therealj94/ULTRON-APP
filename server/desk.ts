@@ -136,7 +136,7 @@ export async function elevenSpeak(opts: {
   if (!opts.apiKey) return null;
   const voiceId = opts.voiceId || ULTRON_VOICE.elevenLabsVoiceId;
   const sing = opts.performance === 'sing';
-  const spoken = sing ? `[singing] ${opts.text}` : opts.text;
+  const spoken = /\[/.test(opts.text) ? opts.text : sing ? `[singing] ${opts.text}` : opts.text;
   for (const model of ['eleven_v3_conversational', 'eleven_v3'] as const) {
     try {
       const r = await fetch(`https://api.elevenlabs.io/v1/text-to-dialogue?output_format=mp3_44100_128`, {

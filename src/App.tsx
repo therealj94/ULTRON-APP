@@ -23,7 +23,7 @@ import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHan
 import { speakWithElevenLabsOrFallback, stopCurrentVoice, DEFAULT_ELEVENLABS_VOICES } from './03-voz/elevenlabs';
 import { vozPorId, VozId } from './03-voz/voces';
 import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip, playFile } from './03-voz/player';
-import { clipDeTexto } from './03-voz/banco';
+import { clipDeTexto, saludoHora } from './03-voz/banco';
 import { bargeIn } from './03-voz/barge';
 import { pedirTurno } from './04-cerebro/turno';
 import { grabFrame } from './04-cerebro/grabFrame';
@@ -42,7 +42,7 @@ export default function App() {
   const FUN_MODE = true;
   useEffect(() => { onLip(setLipLevel); return () => onLip(null); }, []);
   useEffect(() => {
-    ['/voz/bohemian.mp3', '/voz/ligera.mp3', '/voz/bittersweet.mp3', '/voz/runaway.mp3'].forEach((src) => {
+    ['/voz/bohemian.mp3', '/voz/ligera.mp3', '/voz/bittersweet.mp3', '/voz/runaway.mp3', '/voz/dias.mp3', '/voz/tardes.mp3', '/voz/noches.mp3'].forEach((src) => {
       const a = new Audio();
       a.preload = 'auto';
       a.src = src;
@@ -307,7 +307,7 @@ export default function App() {
           if (d?.listo) {
             setCerebroListo('listo');
             setMicEnabled(true);
-            vocalize(`${nombre}. Ahora sí. Estamos listos.`);
+            vocalize(saludoHora().id);
           } else {
             setCerebroListo('calentando');
           }
@@ -334,7 +334,7 @@ export default function App() {
         .then((d) => {
           if (d?.listo) {
             setCerebroListo((s) => {
-              if (s !== 'listo') vocalize('Ahora sí. Estamos listos.');
+              if (s !== 'listo') vocalize(saludoHora().id);
               return 'listo';
             });
             setMicEnabled(true);
