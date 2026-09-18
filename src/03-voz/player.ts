@@ -27,6 +27,27 @@ export function stopVoice() {
   }
 }
 
+/** Baja volumen y para. Evita el corte a cuchillo del barge-in. */
+export function fadeStopVoice(ms = 160) {
+  const a = current;
+  abortCtl?.abort();
+  abortCtl = null;
+  queue = [];
+  if (!a) {
+    stopVoice();
+    return;
+  }
+  const start = a.volume;
+  const t0 = performance.now();
+  const tick = () => {
+    const p = Math.min(1, (performance.now() - t0) / ms);
+    a.volume = Math.max(0, start * (1 - p));
+    if (p < 1) requestAnimationFrame(tick);
+    else stopVoice();
+  };
+  requestAnimationFrame(tick);
+}
+
 function ensureAnalyser(audio: HTMLAudioElement) {
   try {
     if (!ctx) ctx = new AudioContext();

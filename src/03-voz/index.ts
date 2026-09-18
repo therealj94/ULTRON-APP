@@ -3,3 +3,4 @@ export * from './speech';
 export * from './audio';
 export * from './voces';
 export * from './elevenlabs';
+export * from './barge';

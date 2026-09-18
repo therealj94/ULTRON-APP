@@ -106,7 +106,8 @@ export function initSpeechRecognizer(
         }
       }
       const live = (finalTxt || interim).trim();
-      if (live.length >= 2 && !barged) {
+      // 3+ chars evita barge por ruido / "eh"
+      if (live.length >= 3 && !barged) {
         barged = true;
         onBargeIn?.();
       }

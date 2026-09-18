@@ -22,6 +22,7 @@ import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHan
 import { speakWithElevenLabsOrFallback, stopCurrentVoice, DEFAULT_ELEVENLABS_VOICES } from './03-voz/elevenlabs';
 import { vozPorId, VozId } from './03-voz/voces';
 import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip } from './03-voz/player';
+import { bargeIn } from './03-voz/barge';
 import { pedirTurno } from './04-cerebro/turno';
 import { grabFrame } from './04-cerebro/grabFrame';
 import { guardarHecho } from './09-estado/memoria';
@@ -454,10 +455,7 @@ export default function App() {
         }
       },
       () => {
-        // Immediate Barge-in interruption: user started speaking, silence assistant voice instantly!
-        cancelSpeech();
-        stopCurrentVoice();
-        stopVoice();
+        bargeIn();
         setFace('LISTENING');
         showBubble('Escuchando...');
       },
