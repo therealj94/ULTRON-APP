@@ -116,6 +116,7 @@ export function DeskScreen({ user, onLogout }: Props) {
   const historial = useRef<Turn[]>([]);
   const longMemory = useRef<string[]>([]);
   const lastTapAt = useRef(0);
+  const listenOffTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const recentTaps = useRef<number[]>([]);
   const proactiveRef = useRef(true);
   const grabFrame = useRef<FrameGrabber | null>(null);
@@ -619,7 +620,12 @@ export function DeskScreen({ user, onLogout }: Props) {
         setPartial('');
         onSpeechFinal(t);
       },
-      onListeningChange: setListening,
+      // el reconocedor nativo reinicia entre frases (~300 ms): no parpadear el HUD
+      onListeningChange: (on) => {
+        if (listenOffTimer.current) clearTimeout(listenOffTimer.current);
+        if (on) setListening(true);
+        else listenOffTimer.current = setTimeout(() => setListening(false), 1500);
+      },
       onError: () => {},
       onEngineChange: (eng) => setSettings((p) => ({ ...p, sttEngine: eng })),
     });
