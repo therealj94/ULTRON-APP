@@ -141,7 +141,7 @@ export async function elevenSpeak(opts: {
     : [
         {
           model: 'eleven_multilingual_v2',
-          settings: { stability: 0.32, similarity_boost: 0.82, style: 0.42, speed: 0.97, use_speaker_boost: true },
+          settings: { stability: 0.26, similarity_boost: 0.8, style: 0.52, speed: 0.98, use_speaker_boost: true },
           timeout: opts.timeoutMs || 16000,
         },
         {

@@ -529,11 +529,16 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       A.ly += (A.ty - A.ly) * Math.min(1, dt * 3.4);
 
       // Facial Parameter Lerping
-      A.dilate += (A.dilateT - A.dilate) * Math.min(1, dt * 6);
-      A.brow += (A.browT - A.brow) * Math.min(1, dt * 6);
-      const mouthWant = S.face === 'SPEAKING' ? (0.08 + Math.min(1, lipRef.current) * 0.72) : A.mouthT;
-      A.mouth += (mouthWant - A.mouth) * Math.min(1, dt * 10);
-      A.smile += (A.smileT - A.smile) * Math.min(1, dt * 7);
+      A.dilate += (A.dilateT - A.dilate) * Math.min(1, dt * 4.2);
+      const lip = Math.min(1, lipRef.current);
+      const canta = S.face === 'HAPPY' && lip > 0.04;
+      const mouthWant =
+        S.face === 'SPEAKING' || canta
+          ? 0.1 + lip * (canta ? 0.9 : 0.78)
+          : A.mouthT + (S.face === 'IDLE' ? 0.04 * Math.sin(S.t * 1.3) : 0);
+      A.mouth += (mouthWant - A.mouth) * Math.min(1, dt * (canta ? 14 : 9));
+      A.smile += (A.smileT - A.smile) * Math.min(1, dt * 4.2);
+      A.brow += (A.browT - A.brow) * Math.min(1, dt * 3.2);
 
       // Organic Secondary Oscillations
       A.breath = 1 + 0.02 * Math.sin(S.t * 2.2);

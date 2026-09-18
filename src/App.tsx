@@ -23,6 +23,7 @@ import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHan
 import { speakWithElevenLabsOrFallback, stopCurrentVoice, DEFAULT_ELEVENLABS_VOICES } from './03-voz/elevenlabs';
 import { vozPorId, VozId } from './03-voz/voces';
 import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip } from './03-voz/player';
+import { clipDeTexto } from './03-voz/banco';
 import { bargeIn } from './03-voz/barge';
 import { pedirTurno } from './04-cerebro/turno';
 import { grabFrame } from './04-cerebro/grabFrame';
@@ -160,6 +161,16 @@ export default function App() {
   const vocalize = useCallback(
     (text: string, faceOverride: FaceState = 'SPEAKING') => {
       if (!speakerEnabled) return;
+      const clip = clipDeTexto(text);
+      if (clip) {
+        setFace(clip.id === 'je' ? 'HAPPY' : faceOverride === 'SPEAKING' && /canta|bitter|queen|ligera|runaway/.test(text) ? 'HAPPY' : faceOverride);
+        showBubble(text);
+        fetch(clip.file)
+          .then((r) => r.blob())
+          .then((blob) => playWavBlob(blob, () => setFace('IDLE')))
+          .catch(() => speakUtterance(text, { enabled: true, onEnd: () => setFace('IDLE') }));
+        return;
+      }
       setFace('THINKING');
 
       const browserFallback = () =>
@@ -647,6 +658,16 @@ export default function App() {
     if (/despertar/.test(q)) {
       handleWake();
       return;
+    }
+    if (/\bcanta|\bcanci[oó]n|\bfavorita/.test(q)) {
+      const clip =
+        clipDeTexto(q) ||
+        clipDeTexto(/queen|bohemian/.test(q) ? 'bohemian' : /ligera|soda/.test(q) ? 'ligera' : /runaway|kanye/.test(q) ? 'runaway' : 'bittersweet');
+      if (clip) {
+        setFace('HAPPY');
+        vocalize(clip.id === 'bittersweet' ? 'favorita de Medardo bittersweet' : clip.id);
+        return;
+      }
     }
 
     const modoVoz: { re: RegExp; mode: Mode; dicho: string }[] = [
