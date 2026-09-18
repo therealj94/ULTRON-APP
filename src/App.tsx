@@ -56,7 +56,7 @@ export default function App() {
   const [harnessModalOpen, setHarnessModalOpen] = useState<boolean>(false);
 
   // Audio & Hardware State
-  const [micEnabled, setMicEnabled] = useState<boolean>(true);
+  const [micEnabled, setMicEnabled] = useState<boolean>(false);
   const [speakerEnabled, setSpeakerEnabled] = useState<boolean>(true);
   const [soundFxEnabled, setSoundFxEnabled] = useState<boolean>(true);
   const [visionEnabled, setVisionEnabled] = useState<boolean>(() => {
@@ -159,7 +159,6 @@ export default function App() {
   // Voice utterance helper (with ElevenLabs fallback)
   const vocalize = useCallback(
     (text: string, faceOverride: FaceState = 'SPEAKING') => {
-      showBubble(text);
       if (!speakerEnabled) return;
       setFace('THINKING');
 
@@ -190,6 +189,7 @@ export default function App() {
           if (!r.ok) throw new Error('tts-stream-off');
           if (ctype.includes('audio')) {
             setFace(faceOverride);
+            showBubble(text);
             const blob = await r.blob();
             await playWavBlob(blob, () => setFace('IDLE'), browserFallback);
             return;
@@ -278,19 +278,22 @@ export default function App() {
       playSfx('boot', true);
       const qwenOk = !!health?.qwen?.vivo;
       if (!qwenOk) {
-        setCerebroListo('frio');
+        setCerebroListo('calentando');
+        vocalize('Espera. Estamos calentando el motor de veintisiete B.');
         return;
       }
       setCerebroListo('calentando');
+      vocalize('Espera. Estamos calentando el motor de veintisiete B.');
       fetch('/api/nodo/listo')
         .then((r) => r.json())
         .then((d) => {
           if (cancelled) return;
           if (d?.listo) {
             setCerebroListo('listo');
-            vocalize(`${nombre}. Cerebro listo. Ya puedes hablar.`);
+            setMicEnabled(true);
+            vocalize(`${nombre}. Ahora sí. Estamos listos.`);
           } else {
-            setCerebroListo('frio');
+            setCerebroListo('calentando');
           }
         })
         .catch(() => { if (!cancelled) setCerebroListo('frio'); });
@@ -314,7 +317,11 @@ export default function App() {
         .then((r) => r.json())
         .then((d) => {
           if (d?.listo) {
-            setCerebroListo('listo');
+            setCerebroListo((s) => {
+              if (s !== 'listo') vocalize('Ahora sí. Estamos listos.');
+              return 'listo';
+            });
+            setMicEnabled(true);
           } else {
             setCerebroListo((s) => (s === 'listo' ? s : 'calentando'));
           }
@@ -470,7 +477,7 @@ export default function App() {
 
   // Speech Recognition hook with full barge-in interruption
   useEffect(() => {
-    if (!micEnabled) {
+    if (!micEnabled || cerebroListo !== 'listo') {
       if (speechRecognizerRef.current) {
         speechRecognizerRef.current.stop();
         speechRecognizerRef.current = null;
@@ -519,7 +526,7 @@ export default function App() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [micEnabled]);
+  }, [micEnabled, cerebroListo]);
 
   // Manual Trigger Voice
   const triggerVoicePipeline = () => {
@@ -613,6 +620,24 @@ export default function App() {
     if (/despertar/.test(q)) {
       handleWake();
       return;
+    }
+
+    const modoVoz: { re: RegExp; mode: Mode; dicho: string }[] = [
+      { re: /modo explorador|explorador/, mode: 'EXPLORER', dicho: 'Modo explorador.' },
+      { re: /modo guardi[aá]n|guardi[aá]n/, mode: 'GUARDIAN', dicho: 'Modo guardián.' },
+      { re: /modo miner[ií]a|miner[ií]a/, mode: 'MINING', dicho: 'Modo minería.' },
+      { re: /modo oro|modo gold/, mode: 'GOLD', dicho: 'Modo oro.' },
+      { re: /modo creativo/, mode: 'CREATIVE', dicho: 'Modo creativo.' },
+      { re: /modo anal[ií]tico/, mode: 'ANALYTICAL', dicho: 'Modo analítico.' },
+      { re: /modo estrat[eé]gico/, mode: 'STRATEGIC', dicho: 'Modo estratégico.' },
+    ];
+    for (const m of modoVoz) {
+      if (m.re.test(q)) {
+        setMode(m.mode);
+        playSfx(m.mode === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
+        vocalize(m.dicho);
+        return;
+      }
     }
 
     askCerebro(cmd);

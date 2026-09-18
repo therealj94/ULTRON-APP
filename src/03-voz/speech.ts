@@ -114,8 +114,11 @@ export function initSpeechRecognizer(
       if (finalTxt.trim()) {
         const t = finalTxt.trim();
         const now = Date.now();
+        const bajo = t.toLowerCase().replace(/[¿?¡!.,]/g, '').trim();
+        const fantasma = /^(la hora|hora|ahora|ah|eh|mm+|este|este este|ok|okay)$/.test(bajo);
+        if (fantasma || t.length < 4) return;
         if (t === lastFinal && now - lastFinalAt < 2500) return;
-        if (conf > 0 && conf < 0.28) {
+        if (conf > 0 && conf < 0.42) {
           onResult(t, false);
           return;
         }

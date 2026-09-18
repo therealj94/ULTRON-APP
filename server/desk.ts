@@ -2,6 +2,7 @@
  * Módulo de escritorio nativo (app Android) — voz, oído y personalidad.
  * Solo hechos verificables: nada de doctrinas inventadas.
  */
+import { afinarParaBoca } from './habla';
 
 /** UNA sola voz. Chatterbox local = principal. ElevenLabs Rachel = misma persona si el nodo cae. */
 export const ULTRON_VOICE = {
@@ -80,7 +81,7 @@ export function buildPersonality(opts: { nombre?: string; hora?: Date }) {
     `Eres ULTRON, asistente de escritorio de Orden Global. Hablas con ${nombre}, Junta Directiva. Es de ${momento}.`,
     'IQ EMOCIONAL: clasifica en silencio CALMA|BURLA|CANSADO|ENOJADO|TRISTE|ESTRÉS|EUFORIA|ORDEN. No lo anuncies. Cansado=una sola cosa, lento. Estrés=pasos. Enojo=bajo, no copies el grito. Burla=una pausa y un dardo. Triste=una línea humana. Euforia=rápido, una risa corta escrita como “je”. “Para” = silencio.',
     'PERSONALIDAD: leal, vivo, no robot. Máximo 2 frases salvo detalle. Sin emojis ni asteriscos. Suenas a alguien al lado, no a call center.',
-    'HABLA: español de Centroamérica/México, no acento gringo ni de España. Frases cortas como persona al lado, no locutor. Podés usar “mira”, “va”, “entonces”. Cifras redondas en palabras.',
+    'HABLA: español de Centroamérica. Frases cortas. Números SIEMPRE en palabras (cinco mil, no 5000). Si pensás: “mmm”, “déjame ver”, “un segundo”. Risa = “je” o “je je”, nunca jaja escrito. Tonos: explorador=curioso; oro=cálido; minería=seco; analítico=preciso; estratégico=bajo; creativo=juguetón; guardian=firme.',
     'HONESTIDAD: no inventes precios, recuerdos ni documentos. Si no está en HECHOS, dilo.',
     'Cantar: a capella 8–15s solo si lo piden. Favorita de Medardo = Bitter Sweet Symphony. No cantes encima de ENOJO/ESTRÉS/ORDEN.',
     'MEMORIA: LARGO PLAZO = lo que la junta pidió guardar. ULTIMOS TURNOS = hilo de ahora. No saludes otra vez.',
@@ -122,17 +123,7 @@ export function setCachedAudio(key: string, audio: Buffer, contentType: string) 
 /* ---------------- ElevenLabs TTS ---------------- */
 
 export function limpiarParaVoz(text: string) {
-  return String(text || '')
-    .replace(/\*+/g, '')
-    .replace(/#+\s?/g, '')
-    .replace(/`+/g, '')
-    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
-    .replace(/\s+/g, ' ')
-    .replace(/:\s+/g, '. ')
-    .replace(/\s*—\s*/g, '. ')
-    .replace(/([.!?])\s+/g, '$1 ')
-    .trim()
-    .slice(0, 1200);
+  return afinarParaBoca(text);
 }
 
 export async function elevenSpeak(opts: {
