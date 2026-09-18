@@ -6,7 +6,9 @@
     "orientation": "portrait",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#000000",
-    "splash": { "backgroundColor": "#000000" },
+    "splash": {
+      "backgroundColor": "#000000"
+    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "org.ordenglobal.ultron",
@@ -17,9 +19,27 @@
     },
     "android": {
       "package": "org.ordenglobal.ultron",
-      "adaptiveIcon": { "backgroundColor": "#000000" },
-      "permissions": ["CAMERA", "RECORD_AUDIO", "VIBRATE"]
+      "adaptiveIcon": {
+        "backgroundColor": "#000000"
+      },
+      "permissions": [
+        "CAMERA",
+        "RECORD_AUDIO",
+        "VIBRATE",
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
     },
-    "plugins": ["expo-camera", "expo-av"]
+    "plugins": [
+      "expo-camera",
+      "expo-av"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "65ea32b0-18d1-4cf7-92eb-14cd1434fbbd"
+      }
+    },
+    "owner": "vetawallet"
   }
 }
