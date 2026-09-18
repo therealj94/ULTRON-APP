@@ -840,7 +840,7 @@ app.post('/api/tts/stream', async (req, res) => {
       return res.send(local.audio);
     }
   }
-  if (VAULT_ELEVENLABS_API_KEY) {
+  if (process.env.ULTRON_TTS_ALLOW_ELEVEN === '1' && VAULT_ELEVENLABS_API_KEY) {
     const out = await elevenSpeak({
       apiKey: VAULT_ELEVENLABS_API_KEY,
       text: clean,
@@ -908,7 +908,7 @@ app.all('/api/tts', async (req, res) => {
   const instruct = String(req.body?.instruct || '').slice(0, 400);
   // Sin engine (mesa web): política de main → Qwen T4 primero, ElevenLabs si cae. La app manda engine explícito.
   const engineRaw = String(req.body?.engine || 'auto');
-  const engine = engineRaw === 'fast' ? 'eleven' : engineRaw;
+  const engine = engineRaw === 'fast' ? 'auto' : engineRaw; // nunca forzar Eleven
   const performance: 'speak' | 'sing' = req.body?.performance === 'sing' ? 'sing' : 'speak';
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
 
@@ -932,7 +932,7 @@ app.all('/api/tts', async (req, res) => {
     }
   }
 
-  if (VAULT_ELEVENLABS_API_KEY) {
+  if (process.env.ULTRON_TTS_ALLOW_ELEVEN === '1' && VAULT_ELEVENLABS_API_KEY) {
     const t0 = Date.now();
     const out = await elevenSpeak({
       apiKey: VAULT_ELEVENLABS_API_KEY,

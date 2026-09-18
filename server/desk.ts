@@ -25,8 +25,8 @@ export async function chatterboxSpeak(opts: {
   const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'audio/wav,audio/mpeg,*/*' };
   if (opts.clave) headers['x-ultron-tts-clave'] = opts.clave;
   const bodies = [
+    { path: '/decir', body: { texto: opts.text, voz: 'calida', idioma: 'es', correo: 'servicio@ordenglobal.org', llave: opts.clave || '' } },
     { path: '/tts', body: { texto: opts.text, voz: 'calida', idioma: 'es', correo: 'servicio@ordenglobal.org', llave: opts.clave || '' } },
-    { path: '/hablar', body: { texto: opts.text, voz: 'calida', idioma: 'es', correo: 'servicio@ordenglobal.org', llave: opts.clave || '' } },
   ];
   for (const a of bodies) {
     try {
@@ -34,7 +34,7 @@ export async function chatterboxSpeak(opts: {
         method: 'POST',
         headers,
         body: JSON.stringify(a.body),
-        signal: AbortSignal.timeout(opts.timeoutMs || 20000),
+        signal: AbortSignal.timeout(opts.timeoutMs || 35000),
       });
       if (!r.ok) continue;
       const buf = Buffer.from(await r.arrayBuffer());
