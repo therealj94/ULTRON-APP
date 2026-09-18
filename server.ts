@@ -837,6 +837,30 @@ app.post('/api/tts/stream', async (req, res) => {
   }
 });
 
+
+app.post('/api/stt', async (req, res) => {
+  const audio = String(req.body?.audio || '').replace(/^data:[^;]+;base64,/, '');
+  const mime = String(req.body?.mime || 'audio/m4a');
+  if (!audio || audio.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
+  if (!ai) return res.status(503).json({ error: 'STT necesita GEMINI_API_KEY en Render', honesto: true });
+  try {
+    const r: any = await ai.models.generateContent({
+      model: process.env.GEMINI_STT_MODEL || 'gemini-2.0-flash',
+      contents: [{
+        parts: [
+          { inlineData: { mimeType: mime, data: audio } },
+          { text: 'Transcribe el audio a español. Devuelve SOLO el texto dicho, sin comillas ni explicación. Si no hay voz, responde VACIO.' },
+        ],
+      }],
+    });
+    const text = String(r?.text || r?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+    if (!text || /^VACIO$/i.test(text)) return res.json({ text: '', honesto: true });
+    return res.json({ text, honesto: true });
+  } catch (e: any) {
+    return res.status(502).json({ error: 'STT falló', message: String(e?.message || e).slice(0, 180), honesto: true });
+  }
+});
+
 app.post('/api/tts', async (req, res) => {
   const text = String(req.body?.text || '').slice(0, 2000).trim();
   const voice = String(req.body?.voice || 'formal');
@@ -945,6 +969,7 @@ app.post('/api/turno', async (req, res) => {
   const system = `Eres ULTRON, asistente de escritorio de Orden Global. Español corto.
 No inventes precios ni tipos de cambio. Si HECHOS está vacío para un dato pedido, di que no lo viste.
 No finjas recuerdos de otras noches: solo LARGO PLAZO y ULTIMOS TURNOS.
+Modo de mesa pedido: ${mode}.
 HECHOS:\n${hechos.join('\n') || '(ninguno)'}\nLARGO PLAZO:\n${larga.map((x:any)=>x.hecho).join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h:any)=>`${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
 
   try {
