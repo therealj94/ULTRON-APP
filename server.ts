@@ -842,7 +842,28 @@ app.post('/api/stt', async (req, res) => {
   const audio = String(req.body?.audio || '').replace(/^data:[^;]+;base64,/, '');
   const mime = String(req.body?.mime || 'audio/m4a');
   if (!audio || audio.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
-  if (!ai) return res.status(503).json({ error: 'STT necesita GEMINI_API_KEY en Render', honesto: true });
+  const key = VAULT_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '';
+  if (key) {
+    try {
+      const bin = Buffer.from(audio, 'base64');
+      const form = new FormData();
+      form.append('model_id', 'scribe_v1');
+      form.append('file', new Blob([bin], { type: mime }), 'clip.m4a');
+      const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
+        method: 'POST',
+        headers: { 'xi-api-key': key },
+        body: form as any,
+        signal: AbortSignal.timeout(45000),
+      });
+      const j: any = await r.json();
+      const text = String(j.text || j.transcript || '').trim();
+      if (r.ok && text) return res.json({ text, via: 'elevenlabs', honesto: true });
+      if (!ai) return res.status(502).json({ error: 'STT ElevenLabs vacío', detalle: JSON.stringify(j).slice(0, 180), honesto: true });
+    } catch (e: any) {
+      if (!ai) return res.status(502).json({ error: 'STT ElevenLabs falló', message: String(e?.message || e).slice(0, 160), honesto: true });
+    }
+  }
+  if (!ai) return res.status(503).json({ error: 'STT sin Gemini ni ElevenLabs', honesto: true });
   try {
     const r: any = await ai.models.generateContent({
       model: process.env.GEMINI_STT_MODEL || 'gemini-2.0-flash',
@@ -855,7 +876,7 @@ app.post('/api/stt', async (req, res) => {
     });
     const text = String(r?.text || r?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
     if (!text || /^VACIO$/i.test(text)) return res.json({ text: '', honesto: true });
-    return res.json({ text, honesto: true });
+    return res.json({ text, via: 'gemini', honesto: true });
   } catch (e: any) {
     return res.status(502).json({ error: 'STT falló', message: String(e?.message || e).slice(0, 180), honesto: true });
   }
