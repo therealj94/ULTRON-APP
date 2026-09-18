@@ -1018,19 +1018,20 @@ async function prepararTurno(body: any) {
     }
     const consulta = consultaWeb(message);
     if (consulta) {
+      tools.push('web');
       const hits = await buscarWeb(consulta, 5);
       if (hits.length) {
         hechos.push(
           `BÚSQUEDA WEB "${consulta}" (${new Date().toISOString().slice(0, 10)}):\n` +
             hits.map((h, i) => `${i + 1}. ${h.title} — ${h.snippet} [${h.url}]`).join('\n')
         );
-        const texto = await leerPagina(hits[0].url, 1600);
-        if (texto) hechos.push(`PRIMERA FUENTE (${hits[0].url}): ${texto}`);
+        const first = hits.find((h) => /^https?:\/\/[^/]+\/.+/.test(h.url));
+        const texto = first ? await leerPagina(first.url, 1600) : '';
+        if (first && texto) hechos.push(`PRIMERA FUENTE (${first.url}): ${texto}`);
         hechos.push('Responde con lo que dicen las fuentes, cita la fuente principal por nombre. Si las fuentes no contestan, dilo.');
       } else {
         hechos.push(`BÚSQUEDA WEB "${consulta}": sin resultados. Dilo.`);
       }
-      tools.push('web');
     }
     const image = body?.image;
     if (image && ULTRON_OJO_URL) {
