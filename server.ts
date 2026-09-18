@@ -987,7 +987,9 @@ app.post('/api/turno', async (req, res) => {
     return res.status(503).json({ error: 'Qwen no configurado', honesto: true });
   }
 
+  const conocimiento = `ORDEN GLOBAL: mesa web ultron-looi-desk.onrender.com. Cerebro Qwen 3.8 27B. Voz T4 local; ElevenLabs solo si T4 cae. Precios solo de HECHOS. Visión solo con frame. No doctrinas de ficción.`;
   const system = `Eres ULTRON, asistente de escritorio de Orden Global. Español corto.
+${conocimiento}
 No inventes precios ni tipos de cambio. Si HECHOS está vacío para un dato pedido, di que no lo viste.
 No finjas recuerdos de otras noches: solo LARGO PLAZO y ULTIMOS TURNOS.
 Modo de mesa pedido: ${mode}.
@@ -1038,7 +1040,14 @@ app.post('/api/qwen/chat', (_req, res) => {
 });
 
 app.get('/api/orden-global', (_req, res) => {
-  res.status(410).json({ error: 'Retirado. No hay doctrinas de ficción.', honesto: true });
+  res.json({
+    honesto: true,
+    producto: 'web-kiosk',
+    mesa: 'https://ultron-looi-desk.onrender.com',
+    cerebro: 'Qwen 3.8 27B',
+    voz: 'T4 local primero; ElevenLabs solo fallback',
+    datos: 'oro/plata/HNL solo via tools',
+  });
 });
 
 async function startServer() {

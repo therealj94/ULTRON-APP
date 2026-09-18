@@ -1,0 +1,15 @@
+{
+  "name": "Ultron · Orden Global",
+  "short_name": "Ultron",
+  "description": "Mesa de Orden Global",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#000000",
+  "theme_color": "#000000",
+  "lang": "es-HN",
+  "icons": [
+    { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

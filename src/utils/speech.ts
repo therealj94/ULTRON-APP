@@ -75,10 +75,10 @@ export function initSpeechRecognizer(
 
   try {
     const recognition = new SpeechRecognitionClass();
-    recognition.lang = 'es-ES';
+    recognition.lang = 'es-HN';
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.maxAlternatives = 1;
+    recognition.maxAlternatives = 3;
 
     let isManuallyStopped = false;
 
