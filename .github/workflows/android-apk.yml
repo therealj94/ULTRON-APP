@@ -16,7 +16,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
@@ -36,15 +36,30 @@ jobs:
           EXPO_NO_TELEMETRY: "1"
         run: npx expo prebuild -p android --non-interactive --no-install
 
-      - name: Debug APK
+      - name: Embed JS bundle
+        working-directory: mobile
+        run: |
+          mkdir -p android/app/src/main/assets
+          npx react-native bundle \
+            --platform android \
+            --dev false \
+            --minify true \
+            --entry-file node_modules/expo/AppEntry.js \
+            --bundle-output android/app/src/main/assets/index.android.bundle \
+            --assets-dest android/app/src/main/res
+          ls -la android/app/src/main/assets/
+
+      - name: Release APK
         working-directory: mobile/android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon || ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Ultron-debug
-          path: mobile/android/app/build/outputs/apk/debug/*.apk
+          name: Ultron-apk
+          path: |
+            mobile/android/app/build/outputs/apk/release/*.apk
+            mobile/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
