@@ -7,7 +7,7 @@
 export const ULTRON_VOICE = {
   id: 'ultron',
   nombre: 'ULTRON',
-  elevenLabsVoiceId: process.env.ELEVENLABS_VOZ || '21m00Tcm4TlvDq8ikWAM', // Rachel
+  elevenLabsVoiceId: process.env.ELEVENLABS_VOZ || 'cgSgspJ2msm6ClmCQjC4', // Jessica — humana, clara en es
   chatterboxVoice: process.env.CHATTERBOX_VOICE || 'luna',
 };
 
@@ -146,8 +146,8 @@ export async function elevenSpeak(opts: {
   const attempts: Array<{ model: string; settings: Record<string, unknown>; timeout: number }> = sing
     ? [{ model: 'eleven_multilingual_v2', settings: { stability: 0.35, similarity_boost: 0.75, style: 0.45, speed: 0.94, use_speaker_boost: true }, timeout: 22000 }]
     : [
-        { model: 'eleven_flash_v2_5', settings: { stability: 0.58, similarity_boost: 0.82, style: 0.12, speed: 1.0 }, timeout: opts.timeoutMs || 8000 },
-        { model: 'eleven_multilingual_v2', settings: { stability: 0.6, similarity_boost: 0.82, style: 0.12 }, timeout: 14000 },
+        { model: 'eleven_turbo_v2_5', settings: { stability: 0.42, similarity_boost: 0.78, style: 0.22, speed: 0.96, use_speaker_boost: true }, timeout: opts.timeoutMs || 10000 },
+        { model: 'eleven_multilingual_v2', settings: { stability: 0.45, similarity_boost: 0.8, style: 0.18, use_speaker_boost: true }, timeout: 16000 },
       ];
   for (const a of attempts) {
     try {

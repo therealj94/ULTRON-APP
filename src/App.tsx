@@ -59,7 +59,12 @@ export default function App() {
   const [micEnabled, setMicEnabled] = useState<boolean>(true);
   const [speakerEnabled, setSpeakerEnabled] = useState<boolean>(true);
   const [soundFxEnabled, setSoundFxEnabled] = useState<boolean>(true);
-  const [visionEnabled, setVisionEnabled] = useState<boolean>(true);
+  const [visionEnabled, setVisionEnabled] = useState<boolean>(() => {
+    try { return localStorage.getItem('ultron_vision') === '1'; } catch { return false; }
+  });
+  const [cerebroListo, setCerebroListo] = useState<'frio' | 'calentando' | 'listo'>('frio');
+  const cerebroListoRef = useRef(cerebroListo);
+  cerebroListoRef.current = cerebroListo;
   const [resetTrigger, setResetTrigger] = useState<number>(0);
 
   const historialRef = useRef<{ rol: string; texto: string }[]>([]);
@@ -272,10 +277,23 @@ export default function App() {
       setIsBooting(false);
       playSfx('boot', true);
       const qwenOk = !!health?.qwen?.vivo;
-      const fpOk = !!health?.fp?.vivo;
-      if (qwenOk) vocalize(`${nombre}. Listo.`);
-      else if (fpOk) vocalize(`${nombre}. Cara ok, Qwen no responde.`);
-      else vocalize(`${nombre}. Sin cerebro.`);
+      if (!qwenOk) {
+        setCerebroListo('frio');
+        return;
+      }
+      setCerebroListo('calentando');
+      fetch('/api/nodo/listo')
+        .then((r) => r.json())
+        .then((d) => {
+          if (cancelled) return;
+          if (d?.listo) {
+            setCerebroListo('listo');
+            vocalize(`${nombre}. Cerebro listo. Ya puedes hablar.`);
+          } else {
+            setCerebroListo('frio');
+          }
+        })
+        .catch(() => { if (!cancelled) setCerebroListo('frio'); });
     });
 
     const fallback = setTimeout(() => {
@@ -287,8 +305,24 @@ export default function App() {
       cancelled = true;
       clearTimeout(fallback);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (cerebroListo === 'listo') return;
+    const id = setInterval(() => {
+      fetch('/api/nodo/listo')
+        .then((r) => r.json())
+        .then((d) => {
+          if (d?.listo) {
+            setCerebroListo('listo');
+          } else {
+            setCerebroListo((s) => (s === 'listo' ? s : 'calentando'));
+          }
+        })
+        .catch(() => {});
+    }, 8000);
+    return () => clearInterval(id);
+  }, [cerebroListo]);
 
   // Handle Fullscreen Toggle
   const toggleFullscreen = () => {
@@ -448,6 +482,10 @@ export default function App() {
       (text, isFinal) => {
         if (!text.trim()) return;
         if (isFinal) {
+          if (cerebroListoRef.current !== 'listo') {
+            showBubble(cerebroListoRef.current === 'calentando' ? 'Calentando el 27B… espera la luz cian.' : 'Cerebro frío. Espera.');
+            return;
+          }
           setFace(caraDeTexto(text));
           handleVoiceCommand(text.trim());
         } else {
@@ -485,6 +523,11 @@ export default function App() {
 
   // Manual Trigger Voice
   const triggerVoicePipeline = () => {
+    if (cerebroListoRef.current !== 'listo') {
+      showBubble(cerebroListoRef.current === 'calentando' ? 'Aún calienta. Espera la luz cian.' : 'Cerebro no listo.');
+      playSfx('tap', soundFxEnabled);
+      return;
+    }
     if (!micEnabled) {
       setMicEnabled(true);
       playSfx('wake', soundFxEnabled);
@@ -799,11 +842,40 @@ export default function App() {
               )}
             </button>
 
+            <button
+              type="button"
+              title={
+                cerebroListo === 'listo'
+                  ? 'Cerebro listo — puedes hablar'
+                  : cerebroListo === 'calentando'
+                    ? 'Qwen 27B calentando… no preguntes aún'
+                    : 'Cerebro frío'
+              }
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-full border text-[10px] font-mono ${
+                cerebroListo === 'listo'
+                  ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF] shadow-[0_0_12px_rgba(5,225,255,0.45)]'
+                  : cerebroListo === 'calentando'
+                    ? 'border-amber-400/60 bg-amber-400/10 text-amber-300'
+                    : 'border-red-500/40 bg-red-500/10 text-red-400'
+              }`}
+            >
+              <span
+                className={`inline-block w-2 h-2 rounded-full ${
+                  cerebroListo === 'listo' ? 'bg-[#05E1FF] animate-pulse' : cerebroListo === 'calentando' ? 'bg-amber-400 animate-pulse' : 'bg-red-500'
+                }`}
+              />
+              {cerebroListo === 'listo' ? 'LISTO' : cerebroListo === 'calentando' ? 'CALENTA' : 'FRÍO'}
+            </button>
+
             {/* Camera Optical Tracking Toggle */}
             <button
               type="button"
               onClick={() => {
-                setVisionEnabled((prev) => !prev);
+                setVisionEnabled((prev) => {
+                  const next = !prev;
+                  try { localStorage.setItem('ultron_vision', next ? '1' : '0'); } catch { /* */ }
+                  return next;
+                });
                 playSfx('tap', soundFxEnabled);
               }}
               title={visionEnabled ? 'Cámara frontal activa (siguiendo rostro)' : 'Activar cámara frontal'}

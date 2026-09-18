@@ -147,6 +147,31 @@ app.get('/api/health', async (_req, res) => {
   });
 });
 
+/** Calienta Qwen 27B. La mesa espera `listo` antes de dejar hablar. */
+app.get('/api/nodo/listo', async (_req, res) => {
+  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
+    return res.json({ listo: false, motivo: 'sin nodo', honesto: true });
+  }
+  const t0 = Date.now();
+  try {
+    const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content: 'Responde solo: LISTO' }],
+        max_tokens: 8,
+        temperature: 0,
+      }),
+      signal: AbortSignal.timeout(45000),
+    });
+    const raw = await r.text();
+    const listo = r.ok && /listo/i.test(raw);
+    return res.json({ listo: listo || r.ok, ms: Date.now() - t0, honesto: true });
+  } catch (e: any) {
+    return res.json({ listo: false, ms: Date.now() - t0, motivo: String(e?.message || e).slice(0, 160), honesto: true });
+  }
+});
+
 // BÓVEDA DE ULTRON FP: Unified Security & Conduit Status
 app.get('/api/vault/status', async (req, res) => {
   res.json({
@@ -821,16 +846,7 @@ app.post('/api/tts/stream', limitar(20), async (req, res) => {
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
 
   const clean = limpiarParaVoz(text);
-  if (ULTRON_TTS_URL) {
-    const local = await chatterboxSpeak({ baseUrl: ULTRON_TTS_URL, text: clean, clave: ULTRON_TTS_CLAVE });
-    if (local) {
-      res.setHeader('Content-Type', local.contentType);
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('X-Ultron-TTS', 'chatterbox');
-      return res.send(local.audio);
-    }
-  }
-  if (process.env.ULTRON_TTS_ALLOW_ELEVEN === '1' && VAULT_ELEVENLABS_API_KEY) {
+  if (VAULT_ELEVENLABS_API_KEY) {
     const out = await elevenSpeak({
       apiKey: VAULT_ELEVENLABS_API_KEY,
       text: clean,
@@ -844,7 +860,16 @@ app.post('/api/tts/stream', limitar(20), async (req, res) => {
       return res.send(out.audio);
     }
   }
-  return res.status(503).json({ error: 'TTS no configurado (Chatterbox ni ElevenLabs)', honesto: true });
+  if (ULTRON_TTS_URL) {
+    const local = await chatterboxSpeak({ baseUrl: ULTRON_TTS_URL, text: clean, clave: ULTRON_TTS_CLAVE });
+    if (local) {
+      res.setHeader('Content-Type', local.contentType);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Ultron-TTS', 'chatterbox');
+      return res.send(local.audio);
+    }
+  }
+  return res.status(503).json({ error: 'TTS no configurado (ElevenLabs ni Chatterbox)', honesto: true });
 });
 
 
@@ -911,18 +936,7 @@ app.all('/api/tts', limitar(20), async (req, res) => {
     return res.send(hit.audio);
   }
 
-  if (engine !== 'eleven' && ULTRON_TTS_URL) {
-    const local = await chatterboxSpeak({ baseUrl: ULTRON_TTS_URL, text, clave: ULTRON_TTS_CLAVE });
-    if (local) {
-      setCachedAudio(key, local.audio, local.contentType);
-      res.setHeader('Content-Type', local.contentType);
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('X-Ultron-TTS', 'chatterbox');
-      return res.send(local.audio);
-    }
-  }
-
-  if (process.env.ULTRON_TTS_ALLOW_ELEVEN === '1' && VAULT_ELEVENLABS_API_KEY) {
+  if (VAULT_ELEVENLABS_API_KEY) {
     const t0 = Date.now();
     const out = await elevenSpeak({
       apiKey: VAULT_ELEVENLABS_API_KEY,
@@ -940,7 +954,18 @@ app.all('/api/tts', limitar(20), async (req, res) => {
     }
   }
 
-  return res.status(503).json({ error: 'TTS no disponible (Chatterbox caído y sin ElevenLabs)', honesto: true });
+  if (ULTRON_TTS_URL) {
+    const local = await chatterboxSpeak({ baseUrl: ULTRON_TTS_URL, text, clave: ULTRON_TTS_CLAVE });
+    if (local) {
+      setCachedAudio(key, local.audio, local.contentType);
+      res.setHeader('Content-Type', local.contentType);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Ultron-TTS', 'chatterbox');
+      return res.send(local.audio);
+    }
+  }
+
+  return res.status(503).json({ error: 'TTS no disponible', honesto: true });
 });
 
 /**

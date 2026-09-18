@@ -34,7 +34,7 @@ export const VOCES: VozUltron[] = [
     rol: 'Mujer · asistente',
     motor: 'tierna',
     instruct: 'Female assistant, warm, clear, human, Spanish Latin America, never valley-girl, never announcer.',
-    elevenVoiceId: '21m00Tcm4TlvDq8ikWAM',
+    elevenVoiceId: 'cgSgspJ2msm6ClmCQjC4',
     stability: 0.58,
     similarity: 0.8,
   },
