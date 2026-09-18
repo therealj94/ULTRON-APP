@@ -1,4 +1,4 @@
-export type VozId = 'marco' | 'luna' | 'looi';
+export type VozId = 'ultron' | 'marco' | 'luna' | 'looi';
 
 export interface VozUltron {
   id: VozId;
@@ -50,6 +50,7 @@ export const VOCES: VozUltron[] = [
   },
 ];
 
-export function vozPorId(id?: string | null): VozUltron {
-  return VOCES.find((v) => v.id === id) || VOCES[1];
+export function vozPorId(_id?: string | null): VozUltron {
+  // Una sola voz: Luna/Rachel. El picker no cambia el timbre.
+  return VOCES.find((v) => v.id === 'luna') || VOCES[0];
 }

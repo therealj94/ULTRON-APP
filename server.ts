@@ -12,6 +12,7 @@ import {
   buildPersonality,
   decodeDataUrl,
   elevenSpeak,
+  chatterboxSpeak,
   elevenTranscribe,
   getCachedAudio,
   limpiarParaVoz,
@@ -73,7 +74,7 @@ const ULTRON_NODO_SECRETO = process.env.ULTRON_NODO_SECRETO || '';
 const ULTRON_NODO_MODELO = process.env.ULTRON_NODO_MODELO || 'orcarouter/Qwen3.8-27B-Uncensored';
 const ULTRON_OJO_URL = (process.env.ULTRON_OJO_URL || process.env.PLAYWRIGHT_NODE_URL || '').replace(/\/$/, '');
 const ULTRON_OJO_CLAVE = process.env.ULTRON_OJO_CLAVE || '';
-const ULTRON_TTS_URL = (process.env.ULTRON_TTS_URL || '').replace(/\/$/, '');
+const ULTRON_TTS_URL = (process.env.CHATTERBOX_URL || process.env.ULTRON_TTS_URL || '').replace(/\/$/, '');
 const ULTRON_TTS_CLAVE = process.env.ULTRON_TTS_CLAVE || '';
 if (process.env.ULTRON_NODO_INSECURE_TLS === '1') process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || '';
@@ -829,13 +830,22 @@ app.post('/api/tts/stream', async (req, res) => {
   const instruct = String(req.body?.instruct || '').slice(0, 400);
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
 
-  // ElevenLabs primero: Flash v2.5 ~300ms. El stream de Qwen T4 es el que se siente pésimo.
+  const clean = limpiarParaVoz(text);
+  if (ULTRON_TTS_URL) {
+    const local = await chatterboxSpeak({ baseUrl: ULTRON_TTS_URL, text: clean, clave: ULTRON_TTS_CLAVE });
+    if (local) {
+      res.setHeader('Content-Type', local.contentType);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Ultron-TTS', 'chatterbox');
+      return res.send(local.audio);
+    }
+  }
   if (VAULT_ELEVENLABS_API_KEY) {
     const out = await elevenSpeak({
       apiKey: VAULT_ELEVENLABS_API_KEY,
-      text: limpiarParaVoz(text),
+      text: clean,
       performance: req.body?.performance === 'sing' ? 'sing' : 'speak',
-      voiceId: elevenVoiceIdFor(voice) || String(req.body?.voiceId || ''),
+      voiceId: elevenVoiceIdFor('luna'),
     });
     if (out) {
       res.setHeader('Content-Type', 'audio/mpeg');
@@ -844,38 +854,7 @@ app.post('/api/tts/stream', async (req, res) => {
       return res.send(out.audio);
     }
   }
-  if (!ULTRON_TTS_URL || !ULTRON_TTS_CLAVE) {
-    return res.status(503).json({ error: 'TTS no configurado', honesto: true });
-  }
-  try {
-    const r = await fetch(`${ULTRON_TTS_URL}/synthesize_stream`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-ultron-tts-clave': ULTRON_TTS_CLAVE },
-      body: JSON.stringify({ text, voice, language: 'Spanish', ...(instruct ? { instruct } : {}) }),
-      signal: AbortSignal.timeout(90000),
-    });
-    if (!r.ok) {
-      const err = await r.text();
-      return res.status(502).json({ error: 'TTS stream falló', detalle: err.slice(0, 200), honesto: true });
-    }
-    res.setHeader('Content-Type', r.headers.get('content-type') || 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-store');
-    if (!r.body) return res.status(502).json({ error: 'sin body', honesto: true });
-    const reader = (r.body as any).getReader?.();
-    if (!reader) {
-      const buf = Buffer.from(await r.arrayBuffer());
-      return res.send(buf);
-    }
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      res.write(value);
-    }
-    res.end();
-  } catch (e: any) {
-    if (!res.headersSent) res.status(502).json({ error: 'TTS stream caído', message: String(e?.message || e).slice(0, 180), honesto: true });
-    else res.end();
-  }
+  return res.status(503).json({ error: 'TTS no configurado (Chatterbox ni ElevenLabs)', honesto: true });
 });
 
 
@@ -942,62 +921,36 @@ app.all('/api/tts', async (req, res) => {
     return res.send(hit.audio);
   }
 
-  const speakEleven = async () => {
-    if (!VAULT_ELEVENLABS_API_KEY) return false;
+  if (engine !== 'eleven' && ULTRON_TTS_URL) {
+    const local = await chatterboxSpeak({ baseUrl: ULTRON_TTS_URL, text, clave: ULTRON_TTS_CLAVE });
+    if (local) {
+      setCachedAudio(key, local.audio, local.contentType);
+      res.setHeader('Content-Type', local.contentType);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Ultron-TTS', 'chatterbox');
+      return res.send(local.audio);
+    }
+  }
+
+  if (VAULT_ELEVENLABS_API_KEY) {
     const t0 = Date.now();
     const out = await elevenSpeak({
       apiKey: VAULT_ELEVENLABS_API_KEY,
       text,
       performance,
-      voiceId: elevenVoiceIdFor(voice),
+      voiceId: elevenVoiceIdFor('luna'),
     });
-    if (!out) return false;
-    setCachedAudio(key, out.audio, 'audio/mpeg');
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Ultron-TTS', out.model);
-    res.setHeader('X-Ultron-MS', String(Date.now() - t0));
-    res.send(out.audio);
-    return true;
-  };
-
-  // Calidad primero: ElevenLabs. Qwen3-TTS en T4 es lento y metálico — solo fallback.
-  if (engine !== 'qwen' && (await speakEleven())) return;
-  if (engine === 'eleven') {
-    return res.status(503).json({ error: 'ElevenLabs no disponible', honesto: true });
-  }
-
-  if (!ULTRON_TTS_URL || !ULTRON_TTS_CLAVE) {
-    return res.status(503).json({ error: 'TTS no disponible (sin ElevenLabs ni nodo local)', honesto: true });
-  }
-  try {
-    const r = await fetch(`${ULTRON_TTS_URL}/synthesize`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-ultron-tts-clave': ULTRON_TTS_CLAVE },
-      body: JSON.stringify({
-        text,
-        voice,
-        language: 'Spanish',
-        ...(instruct ? { instruct } : {}),
-      }),
-      signal: AbortSignal.timeout(45000),
-    });
-    if (!r.ok) {
-      const err = await r.text();
-      if (engine !== 'eleven' && (await speakEleven())) return;
-      return res.status(502).json({ error: 'TTS falló', detalle: err.slice(0, 200), honesto: true });
+    if (out) {
+      setCachedAudio(key, out.audio, 'audio/mpeg');
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Ultron-TTS', out.model);
+      res.setHeader('X-Ultron-MS', String(Date.now() - t0));
+      return res.send(out.audio);
     }
-    const buf = Buffer.from(await r.arrayBuffer());
-    const ct = r.headers.get('content-type') || 'audio/wav';
-    setCachedAudio(key, buf, ct);
-    res.setHeader('Content-Type', ct);
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Ultron-TTS', 'qwen3-tts');
-    return res.send(buf);
-  } catch (e: any) {
-    if (engine !== 'eleven' && (await speakEleven())) return;
-    return res.status(502).json({ error: 'TTS caído', message: String(e?.message || e).slice(0, 180), honesto: true });
   }
+
+  return res.status(503).json({ error: 'TTS no disponible (Chatterbox caído y sin ElevenLabs)', honesto: true });
 });
 
 /**

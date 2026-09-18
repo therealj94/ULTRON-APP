@@ -3,25 +3,49 @@
  * Solo hechos verificables: nada de doctrinas inventadas.
  */
 
+/** UNA sola voz. Chatterbox local = principal. ElevenLabs Rachel = misma persona si el nodo cae. */
 export const ULTRON_VOICE = {
   id: 'ultron',
   nombre: 'ULTRON',
-  elevenLabsVoiceId: process.env.ELEVENLABS_VOZ || '21m00Tcm4TlvDq8ikWAM', // Rachel — default Luna
-  qwenVoice: 'tierna',
+  elevenLabsVoiceId: process.env.ELEVENLABS_VOZ || '21m00Tcm4TlvDq8ikWAM', // Rachel
+  chatterboxVoice: process.env.CHATTERBOX_VOICE || 'luna',
 };
 
-export const ELEVEN_VOZ: Record<string, string> = {
-  marco: 'onwK4e9ZLuTAKqWW03F9',
-  luna: '21m00Tcm4TlvDq8ikWAM',
-  looi: 'EXAVITQu4vr4xnSDxMaL',
-  formal: 'onwK4e9ZLuTAKqWW03F9',
-  tierna: '21m00Tcm4TlvDq8ikWAM',
-  orbita: 'EXAVITQu4vr4xnSDxMaL',
-};
+export function elevenVoiceIdFor(_voice?: string) {
+  return ULTRON_VOICE.elevenLabsVoiceId;
+}
 
-export function elevenVoiceIdFor(voice?: string) {
-  const k = String(voice || '').toLowerCase();
-  return ELEVEN_VOZ[k] || ULTRON_VOICE.elevenLabsVoiceId;
+export async function chatterboxSpeak(opts: {
+  baseUrl: string;
+  text: string;
+  clave?: string;
+  timeoutMs?: number;
+}): Promise<{ audio: Buffer; contentType: string } | null> {
+  const base = opts.baseUrl.replace(/\/$/, '');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'audio/wav,audio/mpeg,*/*' };
+  if (opts.clave) headers['x-ultron-tts-clave'] = opts.clave;
+  const bodies = [
+    { path: '/v1/audio/speech', body: { model: 'tts-1', voice: ULTRON_VOICE.chatterboxVoice, input: opts.text, language: 'es', response_format: 'wav' } },
+    { path: '/tts', body: { text: opts.text, language: 'es', voice: ULTRON_VOICE.chatterboxVoice } },
+    { path: '/synthesize', body: { text: opts.text, language: 'Spanish', voice: ULTRON_VOICE.chatterboxVoice } },
+  ];
+  for (const a of bodies) {
+    try {
+      const r = await fetch(`${base}${a.path}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(a.body),
+        signal: AbortSignal.timeout(opts.timeoutMs || 20000),
+      });
+      if (!r.ok) continue;
+      const buf = Buffer.from(await r.arrayBuffer());
+      if (buf.length < 200) continue;
+      return { audio: buf, contentType: r.headers.get('content-type') || 'audio/wav' };
+    } catch {
+      /* siguiente forma de API */
+    }
+  }
+  return null;
 }
 
 export const MAIL_ALIASES: Record<string, string> = {
