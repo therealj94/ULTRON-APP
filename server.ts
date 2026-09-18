@@ -5,10 +5,25 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
 import { GoogleGenAI } from '@google/genai';
+import {
+  JUNTA,
+  ULTRON_VOICE,
+  buildPersonality,
+  decodeDataUrl,
+  elevenSpeak,
+  elevenTranscribe,
+  getCachedAudio,
+  limpiarParaVoz,
+  normalizarCorreo,
+  setCachedAudio,
+  buscarWeb,
+  consultaWeb,
+  leerPagina,
+} from './server/desk';
 
 const app = express();
 const httpServer = http.createServer(app);
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Setup real-time WebSocket Bridge for UI & external telemetry
 const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
@@ -483,7 +498,8 @@ app.get('/api/ultron/salud', async (req, res) => {
 });
 
 app.post('/api/ultron/entrar', async (req, res) => {
-  const { correo, clave } = req.body;
+  const clave = req.body?.clave;
+  const correo = normalizarCorreo(req.body?.correo);
   if (!correo || !clave) {
     return res.status(400).json({ error: 'Correo y clave requeridos.' });
   }
@@ -505,9 +521,9 @@ app.post('/api/ultron/entrar', async (req, res) => {
     ultronRemoteSession = {
       authenticated: true,
       user: {
-        nombre: data.miembro?.nombre || correo.split('@')[0],
+        nombre: data.miembro?.nombre || JUNTA[correo]?.nombre || correo.split('@')[0],
         correo,
-        rol: 'Junta Directiva · Orden Global',
+        rol: JUNTA[correo]?.rol || 'Junta Directiva · Orden Global',
       },
       lastLogin: new Date().toISOString(),
     };
@@ -524,17 +540,24 @@ app.post('/api/ultron/entrar', async (req, res) => {
 
 app.post('/api/ultron/biometric-login', async (req, res) => {
   const { biometricType, userName, role } = req.body;
+  const correo = normalizarCorreo(req.body?.correo) || 'j.ordonez@ordenglobal.org';
+  if (!JUNTA[correo] && !/@ordenglobal\.org$/.test(correo)) {
+    return res.status(403).json({ error: 'Acceso de escritorio solo para miembros @ordenglobal.org.' });
+  }
+  let isLive = false;
   try {
-    const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/salud`, {
-      signal: AbortSignal.timeout(5000),
-    });
-    const isLive = remoteRes.ok;
+    const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/salud`, { signal: AbortSignal.timeout(5000) });
+    isLive = remoteRes.ok;
+  } catch {
+    isLive = false;
+  }
+  try {
     ultronRemoteSession = {
       authenticated: true,
       user: {
-        nombre: userName || 'José',
-        correo: 'mjoseenamorado1994@gmail.com',
-        rol: role || 'Junta Directiva · Orden Global',
+        nombre: JUNTA[correo]?.nombre || userName || correo.split('@')[0],
+        correo,
+        rol: role || JUNTA[correo]?.rol || 'Junta Directiva · Orden Global',
       },
       lastLogin: new Date().toISOString(),
     };
@@ -838,57 +861,87 @@ app.post('/api/tts/stream', async (req, res) => {
 });
 
 
+/**
+ * Oído de la app nativa: ElevenLabs Scribe (v2 → v1), Gemini de reserva si hay key.
+ * Body: { audioBase64 | audio (data URL o base64), mimeType | mime, language }.
+ */
 app.post('/api/stt', async (req, res) => {
-  const audio = String(req.body?.audio || '').replace(/^data:[^;]+;base64,/, '');
-  const mime = String(req.body?.mime || 'audio/m4a');
-  if (!audio || audio.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
+  const t0 = Date.now();
+  const raw = String(req.body?.audioBase64 || req.body?.audio || '');
+  if (!raw || raw.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
+  const { mime, buffer } = decodeDataUrl(raw, String(req.body?.mimeType || req.body?.mime || 'audio/m4a'));
+  if (buffer.length < 1200) return res.json({ text: '', model: 'vacio', ms: Date.now() - t0, honesto: true });
   const key = VAULT_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '';
   if (key) {
-    try {
-      const bin = Buffer.from(audio, 'base64');
-      const form = new FormData();
-      form.append('model_id', 'scribe_v1');
-      form.append('file', new Blob([bin], { type: mime }), 'clip.m4a');
-      const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
-        method: 'POST',
-        headers: { 'xi-api-key': key },
-        body: form as any,
-        signal: AbortSignal.timeout(45000),
-      });
-      const j: any = await r.json();
-      const text = String(j.text || j.transcript || '').trim();
-      if (r.ok && text) return res.json({ text, via: 'elevenlabs', honesto: true });
-      if (!ai) return res.status(502).json({ error: 'STT ElevenLabs vacío', detalle: JSON.stringify(j).slice(0, 180), honesto: true });
-    } catch (e: any) {
-      if (!ai) return res.status(502).json({ error: 'STT ElevenLabs falló', message: String(e?.message || e).slice(0, 160), honesto: true });
-    }
+    const out = await elevenTranscribe({ apiKey: key, audio: buffer, mime, language: String(req.body?.language || 'es') });
+    if (out.model !== 'error') return res.json({ text: out.text, model: out.model, via: 'elevenlabs', ms: Date.now() - t0, bytes: buffer.length, honesto: true });
   }
-  if (!ai) return res.status(503).json({ error: 'STT sin Gemini ni ElevenLabs', honesto: true });
+  if (!ai) return res.status(503).json({ error: 'STT sin ElevenLabs ni Gemini', honesto: true });
   try {
     const r: any = await ai.models.generateContent({
       model: process.env.GEMINI_STT_MODEL || 'gemini-2.0-flash',
       contents: [{
         parts: [
-          { inlineData: { mimeType: mime, data: audio } },
+          { inlineData: { mimeType: mime, data: buffer.toString('base64') } },
           { text: 'Transcribe el audio a español. Devuelve SOLO el texto dicho, sin comillas ni explicación. Si no hay voz, responde VACIO.' },
         ],
       }],
     });
     const text = String(r?.text || r?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
     if (!text || /^VACIO$/i.test(text)) return res.json({ text: '', honesto: true });
-    return res.json({ text, via: 'gemini', honesto: true });
+    return res.json({ text, via: 'gemini', ms: Date.now() - t0, honesto: true });
   } catch (e: any) {
     return res.status(502).json({ error: 'STT falló', message: String(e?.message || e).slice(0, 180), honesto: true });
   }
 });
 
-app.post('/api/tts', async (req, res) => {
-  const text = String(req.body?.text || '').slice(0, 2000).trim();
-  const voice = String(req.body?.voice || 'formal');
+/**
+ * Voz. Una sola voz (ULTRON) en dos motores, elegible desde Ajustes de la app:
+ *   engine=eleven (default app): ElevenLabs Flash v2.5 (~0.3 s) con caché; performance=sing → Multilingual v2.
+ *   engine=qwen: nodo Qwen3-TTS local (T4). engine=auto: Qwen primero, ElevenLabs si cae (política de la mesa web).
+ * Si todo falla → 503 (la app nunca usa la voz robótica del sistema).
+ */
+app.get('/api/tts', (req, res, next) => {
+  req.body = { ...req.query };
+  next();
+});
+app.all('/api/tts', async (req, res) => {
+  const text = limpiarParaVoz(String(req.body?.text || '').slice(0, 2000));
+  const voice = String(req.body?.voice || ULTRON_VOICE.qwenVoice);
   const instruct = String(req.body?.instruct || '').slice(0, 400);
+  const engineRaw = String(req.body?.engine || 'eleven');
+  const engine = engineRaw === 'fast' ? 'eleven' : engineRaw;
+  const performance: 'speak' | 'sing' = req.body?.performance === 'sing' ? 'sing' : 'speak';
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
+
+  const key = `${engine}|${performance}|${voice}|${text}`;
+  const hit = getCachedAudio(key);
+  if (hit) {
+    res.setHeader('Content-Type', hit.contentType);
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Ultron-TTS', 'cache');
+    return res.send(hit.audio);
+  }
+
+  const speakEleven = async () => {
+    if (!VAULT_ELEVENLABS_API_KEY) return false;
+    const t0 = Date.now();
+    const out = await elevenSpeak({ apiKey: VAULT_ELEVENLABS_API_KEY, text, performance });
+    if (!out) return false;
+    setCachedAudio(key, out.audio, 'audio/mpeg');
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Ultron-TTS', out.model);
+    res.setHeader('X-Ultron-MS', String(Date.now() - t0));
+    res.send(out.audio);
+    return true;
+  };
+
+  if (engine === 'eleven' && (await speakEleven())) return;
+
   if (!ULTRON_TTS_URL || !ULTRON_TTS_CLAVE) {
-    return res.status(503).json({ error: 'TTS Qwen no configurado', honesto: true });
+    if (engine !== 'eleven' && (await speakEleven())) return;
+    return res.status(503).json({ error: 'TTS no disponible (sin nodo Qwen ni ElevenLabs)', honesto: true });
   }
   try {
     const r = await fetch(`${ULTRON_TTS_URL}/synthesize`, {
@@ -904,96 +957,125 @@ app.post('/api/tts', async (req, res) => {
     });
     if (!r.ok) {
       const err = await r.text();
+      if (engine !== 'eleven' && (await speakEleven())) return;
       return res.status(502).json({ error: 'TTS falló', detalle: err.slice(0, 200), honesto: true });
     }
     const buf = Buffer.from(await r.arrayBuffer());
-    res.setHeader('Content-Type', r.headers.get('content-type') || 'audio/wav');
+    const ct = r.headers.get('content-type') || 'audio/wav';
+    setCachedAudio(key, buf, ct);
+    res.setHeader('Content-Type', ct);
     res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Ultron-TTS', 'qwen3-tts');
     return res.send(buf);
   } catch (e: any) {
+    if (engine !== 'eleven' && (await speakEleven())) return;
     return res.status(502).json({ error: 'TTS caído', message: String(e?.message || e).slice(0, 180), honesto: true });
   }
 });
 
-app.post('/api/turno', async (req, res) => {
+/**
+ * Prepara un turno: herramientas → HECHOS, memoria y system prompt.
+ * Compartido por /api/turno (JSON) y /api/turno/stream (SSE, la app habla frase a frase).
+ */
+async function prepararTurno(body: any) {
   const t0 = Date.now();
-  const message = String(req.body?.message || req.body?.text || '').trim();
-  const mode = req.body?.mode || 'GUARDIAN';
-  const historial = Array.isArray(req.body?.historial) ? req.body.historial.slice(-12) : [];
-  const larga = leerMemoria().larga.slice(0, 12);
-  if (!message) return res.status(400).json({ error: 'message vacío', honesto: true });
+  const message = String(body?.message || body?.text || '').trim();
+  const mode = body?.mode || 'GUARDIAN';
+  const nombre = String(body?.usuario || body?.userName || '').trim().slice(0, 40);
+  const historial = Array.isArray(body?.historial) ? body.historial.slice(-12) : [];
+  // Memoria larga: la del servidor + la que trae la app (sobrevive a redeploys de Render).
+  const largaApp: string[] = Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
+  const larga = Array.from(new Set([...largaApp, ...leerMemoria().larga.map((x) => x.hecho)])).slice(0, 30);
 
   const q = message.toLowerCase();
   const hechos: string[] = [];
-  let foto: string | null = null;
+  const foto: string | null = null;
+  const tools: string[] = [];
 
   try {
     if (/\b(oro|gold|xau|onza)\b/.test(q)) {
       const s = await spotMetal('XAU');
       hechos.push(`SPOT XAU/USD = ${s.usd} USD/oz (fuente ${s.fuente}). No inventes otro número.`);
+      tools.push('oro');
     }
-    if (/\b(plata|silver|xag|agka)\b/.test(q)) {
+    if (/\b(plata|silver|xag)\b/.test(q)) {
       const s = await spotMetal('XAG');
       hechos.push(`SPOT XAG/USD = ${s.usd} USD/oz (fuente ${s.fuente}). No inventes otro número.`);
+      tools.push('plata');
     }
-    if (/\b(lempira|hnl|cmsbio|dólar a lempira|dolar a lempira|usd a hnl|tipo de cambio)\b/.test(q)) {
+    if (/\b(lempira|hnl|d[oó]lar a lempira|usd a hnl|tipo de cambio)\b/.test(q)) {
       const fx = await usdHnl();
       hechos.push(`USD/HNL = ${fx.usdHnl} (fuente ${fx.fuente}).`);
+      tools.push('hnl');
     }
     const urlMatch = message.match(/https?:\/\/[^\s]+/i);
     if (urlMatch || /\b(abr[ií] la p[aá]gina|screenshot|playwright)\b/.test(q)) {
       const url = urlMatch ? urlMatch[0] : 'https://www.bch.hn/';
       const page = await leerConOjo(url);
       if (page) hechos.push(`Página ${page.url}: ${page.texto.slice(0, 1200) || 'sin texto'}`);
+      tools.push('pagina');
     }
-    const image = req.body?.image;
+    const consulta = consultaWeb(message);
+    if (consulta) {
+      const hits = await buscarWeb(consulta, 5);
+      if (hits.length) {
+        hechos.push(
+          `BÚSQUEDA WEB "${consulta}" (${new Date().toISOString().slice(0, 10)}):\n` +
+            hits.map((h, i) => `${i + 1}. ${h.title} — ${h.snippet} [${h.url}]`).join('\n')
+        );
+        const texto = await leerPagina(hits[0].url, 1600);
+        if (texto) hechos.push(`PRIMERA FUENTE (${hits[0].url}): ${texto}`);
+        hechos.push('Responde con lo que dicen las fuentes, cita la fuente principal por nombre. Si las fuentes no contestan, dilo.');
+      } else {
+        hechos.push(`BÚSQUEDA WEB "${consulta}": sin resultados. Dilo.`);
+      }
+      tools.push('web');
+    }
+    const image = body?.image;
     if (image && ULTRON_OJO_URL) {
       const r = await fetch(`${ULTRON_OJO_URL}/ver`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Ojo-Clave': ULTRON_OJO_CLAVE },
-        body: JSON.stringify({ imagen: image, prompt: 'Describe solo lo visible. Copia números y precios. No inventes.' }),
+        body: JSON.stringify({ imagen: image, prompt: 'Describe solo lo visible: personas, gestos, objetos, texto y números. No inventes.' }),
         signal: AbortSignal.timeout(25000),
       });
       const j: any = await r.json().catch(() => ({}));
       const desc = String(j.texto || j.descripcion || j.summary || '').trim();
       hechos.push(desc ? `VISION: ${desc.slice(0, 1800)}` : 'VISION: no se pudo leer la imagen.');
+      tools.push('vision');
     } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !image) {
-      hechos.push('VISION: no llegó frame. Decí que no viste.');
+      hechos.push('VISION: no llegó frame. Di que no viste.');
     }
   } catch (e: any) {
     hechos.push(`Tool falló: ${String(e?.message || e).slice(0, 160)}. Si no hay cifra, dilo.`);
   }
 
-  const soloDato = /precio|spot|oro|plata|gold|silver|xau|xag|lempira|hnl|tipo de cambio|cu[aá]nto/.test(q)
-    && !/por qu[eé]|explica|an[aá]lisis/.test(q);
-  if (soloDato && hechos.length) {
-    const limpio = hechos.map((h) => h.replace(/ No inventes otro número\./g, '')).join(' ');
-    return res.json({
-      reply: limpio,
-      modelo: 'tools',
-      via: 'gold-api/er-api',
-      mode,
-      ms: Date.now() - t0,
-      tools: hechos.length,
-      foto,
-      honesto: true,
-    });
-  }
+  const soloDato =
+    /precio|spot|oro|plata|gold|silver|xau|xag|lempira|hnl|tipo de cambio|cu[aá]nto/.test(q) &&
+    !/por qu[eé]|explica|an[aá]lisis|busca|investiga/.test(q) &&
+    !tools.includes('web');
+  const directo = soloDato && hechos.length ? hechos.map((h) => h.replace(/ No inventes otro número\./g, '')).join(' ') : null;
 
-  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
-    if (hechos.length) {
-      return res.json({ reply: hechos.join('\n'), modelo: 'tools-only', via: 'tools', mode, ms: Date.now() - t0, foto, honesto: true });
-    }
-    return res.status(503).json({ error: 'Qwen no configurado', honesto: true });
-  }
-
-  const conocimiento = `ORDEN GLOBAL: mesa web ultron-looi-desk.onrender.com. Cerebro Qwen 3.8 27B. Voz T4 local; ElevenLabs solo si T4 cae. Precios solo de HECHOS. Visión solo con frame. No doctrinas de ficción.`;
-  const system = `Eres ULTRON, asistente de escritorio de Orden Global. Español corto.
-${conocimiento}
-No inventes precios ni tipos de cambio. Si HECHOS está vacío para un dato pedido, di que no lo viste.
+  const system = `${buildPersonality({ nombre: nombre || undefined })}
 No finjas recuerdos de otras noches: solo LARGO PLAZO y ULTIMOS TURNOS.
 Modo de mesa pedido: ${mode}.
-HECHOS:\n${hechos.join('\n') || '(ninguno)'}\nLARGO PLAZO:\n${larga.map((x:any)=>x.hecho).join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h:any)=>`${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
+HECHOS:\n${hechos.join('\n') || '(ninguno)'}\nLARGO PLAZO:\n${larga.join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h: any) => `${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
+
+  return { t0, message, mode, hechos, tools, foto, directo, system };
+}
+
+app.post('/api/turno', async (req, res) => {
+  const p = await prepararTurno(req.body);
+  if (!p.message) return res.status(400).json({ error: 'message vacío', honesto: true });
+  const { t0, mode, hechos, tools, foto, system, message } = p;
+
+  if (p.directo) {
+    return res.json({ reply: p.directo, modelo: 'tools', via: 'gold-api/er-api', mode, ms: Date.now() - t0, tools: tools.length, foto, honesto: true });
+  }
+  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
+    if (hechos.length) return res.json({ reply: hechos.join('\n'), modelo: 'tools-only', via: 'tools', mode, ms: Date.now() - t0, foto, honesto: true });
+    return res.status(503).json({ error: 'Qwen no configurado', honesto: true });
+  }
 
   try {
     const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
@@ -1017,21 +1099,112 @@ HECHOS:\n${hechos.join('\n') || '(ninguno)'}\nLARGO PLAZO:\n${larga.map((x:any)=
       }
       return res.status(502).json({ error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 300), honesto: true });
     }
-    return res.json({
-      reply,
-      modelo: ULTRON_NODO_MODELO,
-      via: `${ULTRON_NODO_URL}/api/chat`,
-      mode,
-      ms: Date.now() - t0,
-      tools: hechos.length,
-      foto,
-      honesto: true,
-    });
+    return res.json({ reply, modelo: ULTRON_NODO_MODELO, via: `${ULTRON_NODO_URL}/api/chat`, mode, ms: Date.now() - t0, tools: tools.length, herramientas: tools, foto, honesto: true });
   } catch (err: any) {
-    if (hechos.length) {
-      return res.json({ reply: hechos.join('\n'), modelo: 'tools-only', ms: Date.now() - t0, honesto: true });
-    }
+    if (hechos.length) return res.json({ reply: hechos.join('\n'), modelo: 'tools-only', ms: Date.now() - t0, honesto: true });
     return res.status(502).json({ error: 'Qwen caído', message: String(err?.message || err).slice(0, 200), honesto: true });
+  }
+});
+
+/**
+ * Turno en streaming (SSE): la app empieza a hablar con la primera frase mientras Qwen sigue escribiendo.
+ * Eventos: `tools` (herramientas usadas), `delta` (texto), `done` ({ reply, ms }), `error`.
+ */
+app.post('/api/turno/stream', async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+  const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+
+  const p = await prepararTurno(req.body);
+  if (!p.message) {
+    send('error', { error: 'message vacío' });
+    return res.end();
+  }
+  const { t0, hechos, tools, system, message } = p;
+  send('tools', { tools });
+  if (p.directo) {
+    send('delta', { text: p.directo });
+    send('done', { reply: p.directo, ms: Date.now() - t0, via: 'tools' });
+    return res.end();
+  }
+  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
+    const reply = hechos.join('\n') || '';
+    if (reply) send('delta', { text: reply });
+    send(reply ? 'done' : 'error', reply ? { reply, ms: Date.now() - t0, via: 'tools-only' } : { error: 'Qwen no configurado' });
+    return res.end();
+  }
+  try {
+    const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
+      body: JSON.stringify({
+        model: ULTRON_NODO_MODELO,
+        stream: true,
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: message },
+        ],
+      }),
+      signal: AbortSignal.timeout(60000),
+    });
+    if (!r.ok || !r.body) {
+      const raw = await r.text().catch(() => '');
+      const reply = hechos.join('\n');
+      if (reply) {
+        send('delta', { text: reply });
+        send('done', { reply, ms: Date.now() - t0, via: 'tools-fallback' });
+      } else send('error', { error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 200) });
+      return res.end();
+    }
+    const reader = (r.body as any).getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    let full = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        const s = line.trim();
+        if (!s) continue;
+        try {
+          const j = JSON.parse(s);
+          const piece = j.message?.content || j.response || '';
+          if (piece) {
+            full += piece;
+            send('delta', { text: piece });
+          }
+        } catch {
+          /* línea parcial */
+        }
+      }
+    }
+    if (buf.trim()) {
+      try {
+        const j = JSON.parse(buf.trim());
+        const piece = j.message?.content || j.response || '';
+        if (piece) {
+          full += piece;
+          send('delta', { text: piece });
+        }
+      } catch {
+        /* */
+      }
+    }
+    full = full.trim();
+    if (!full && hechos.length) {
+      full = hechos.join('\n');
+      send('delta', { text: full });
+    }
+    send('done', { reply: full, ms: Date.now() - t0, via: `${ULTRON_NODO_URL}/api/chat` });
+    res.end();
+  } catch (err: any) {
+    send('error', { error: 'Qwen caído', message: String(err?.message || err).slice(0, 200) });
+    res.end();
   }
 });
 

@@ -1,0 +1,116 @@
+{
+  "names": [
+    "José",
+    "Medardo"
+  ],
+  "greetingParts": [
+    "Buenos días",
+    "Buenas tardes",
+    "Buenas noches"
+  ],
+  "greetingTemplate": "{part}, {name}. Estoy listo. ¿En qué te ayudo?",
+  "acks": [
+    "Un momento.",
+    "Déjame ver.",
+    "Claro, dame un segundo.",
+    "Voy."
+  ],
+  "tap": [
+    "¿Sí?",
+    "Jeje.",
+    "Aquí estoy.",
+    "Te veo.",
+    "¿Me llamabas?",
+    "Presente."
+  ],
+  "annoy": [
+    "Oye… ¿qué haces?",
+    "Ya, ya. Con cuidado.",
+    "Mmm, eso hace cosquillas… para.",
+    "Última advertencia, en serio."
+  ],
+  "angry": [
+    "¡Basta! Pium, pium, pium.",
+    "¡Te lo advertí! Pium, pium.",
+    "Suficiente. Disparando… de broma."
+  ],
+  "love": [
+    "Mmm… gracias. Eso me gusta.",
+    "Vale, vale. Sigo contigo.",
+    "Esto sí. Recargando ánimo."
+  ],
+  "shake": [
+    "¡Ey! No me sacudas.",
+    "Uy. ¿Terremoto o eres tú?",
+    "Todo se mueve… ya pasó."
+  ],
+  "system": [
+    "Te escucho de nuevo.",
+    "Micrófono en silencio.",
+    "Ya despierto.",
+    "Despierto. Te escucho.",
+    "Descanso un momento. Háblame o tócame para despertar.",
+    "Aquí tienes lo que puedo hacer.",
+    "Visión activa. Te estoy mirando.",
+    "Sable de luz, listo. Que Orden Global te acompañe.",
+    "¡Blaster listo! Pium, pium, pium.",
+    "No alcanzo al cerebro remoto ahora. Sigo contigo con lo básico.",
+    "Hasta pronto.",
+    "Explore. Listo para investigar.",
+    "Necesito permiso de cámara para mirarte.",
+    "Aún no identifico nada. Dame un momento con la cámara.",
+    "Modo Guardian. Vigilo el escritorio.",
+    "Modo Mining. Extrayendo señales.",
+    "Modo Gold. Prioridad de alto valor.",
+    "Modo Creative. Ideas en marcha.",
+    "Modo Analytical. Análisis frío.",
+    "Modo Strategic. Decisiones de junta.",
+    "Modo Explorer. Listo para investigar.",
+    "Todavía estoy mirando.",
+    "Anotado. Lo recuerdo.",
+    "No recibí respuesta. Intenta de nuevo.",
+    "Gracias. Ya te conozco mejor; no repetiré estas preguntas. Si quieres más, di «conocer más».",
+    "Listo. Ya te conozco mejor.",
+    "Motor de voz: ElevenLabs.",
+    "Motor de voz: nodo Qwen local.",
+    "Motor de voz: automático.",
+    "Oído: reconocimiento del teléfono.",
+    "Oído: transcripción en la nube.",
+    "Comentarios de cámara activados.",
+    "Comentarios de cámara apagados.",
+    "Memoria de largo plazo borrada.",
+    "Investigando en internet.",
+    "No encontré nada en internet sobre eso.",
+    "Ya sé quién eres. Sigamos.",
+    "Eso ya lo tenía en memoria."
+  ],
+  "eye": [
+    "¡Ay, mi ojo!",
+    "Ese es mi sensor óptico, cuidado.",
+    "Guiño. Ahora tú."
+  ],
+  "mouth": [
+    "Jaja, eso cosquillea.",
+    "Mmm, no me tapes la boca.",
+    "¿Quieres que cante? Solo di canta."
+  ],
+  "forehead": [
+    "Ahí está mi procesador. Trátalo bien.",
+    "Mmm. Estoy pensando… no molestes.",
+    "Cuidado con la CPU."
+  ],
+  "tickle": [
+    "¡Jajaja! ¡Para, para!",
+    "¡Jaja! Eso… eso hace cosquillas.",
+    "Jajaja, ya, ya, me vas a descalibrar."
+  ],
+  "double": [
+    "Doble toque. ¿Urgente?",
+    "Dos toques. Te escucho con atención."
+  ],
+  "thinking": [
+    "Investigando en internet.",
+    "Estoy leyendo las fuentes.",
+    "Consultando el precio ahora."
+  ]
+}

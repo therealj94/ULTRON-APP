@@ -3,20 +3,24 @@ name: Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, "cursor/**"]
     paths:
       - "mobile/**"
       - ".github/workflows/android-apk.yml"
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   apk:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "20"
           cache: npm
           cache-dependency-path: mobile/package-lock.json
 
@@ -25,9 +29,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - uses: gradle/actions/setup-gradle@v4
+
       - name: Install JS
         working-directory: mobile
-        run: npm install
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: mobile
+        run: npm run typecheck
 
       - name: Prebuild Android
         working-directory: mobile
@@ -36,28 +46,29 @@ jobs:
           EXPO_NO_TELEMETRY: "1"
         run: npx expo prebuild -p android --non-interactive --no-install
 
-      - name: Sign release with debug key
-        working-directory: mobile/android
-        run: |
-          chmod +x gradlew
-          # release must ship JS; debug signing so CI no pide keystore de Play
-          python3 - << 'PY'
-          from pathlib import Path
-          p = Path("app/build.gradle")
-          t = p.read_text() if p.exists() else Path("app/build.gradle.kts").read_text()
-          print("gradle exists", p.exists() or Path("app/build.gradle.kts").exists())
-          PY
-          ls app | head
-
+      # Release = JS empaquetado + Hermes optimizado (fluido). Firmado con la keystore debug del template
+      # para que se instale directo; para Play Store se cambia la firma.
       - name: Release APK
         working-directory: mobile/android
+        env:
+          GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          # solo ABIs de teléfonos reales (arm): el APK universal pesaba 88 MB
+          ./gradlew assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+
+      - name: Rename APK
+        working-directory: mobile
+        run: |
+          VERSION=$(node -p "require('./app.json').expo.version")
+          mkdir -p out
+          cp android/app/build/outputs/apk/release/app-release.apk "out/ULTRON-FP-${VERSION}.apk"
+          ls -la out
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Ultron-apk
-          path: mobile/android/app/build/outputs/apk/release/*.apk
+          name: ULTRON-FP-apk
+          path: mobile/out/*.apk
           if-no-files-found: error
+          retention-days: 30
