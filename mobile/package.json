@@ -22,7 +22,8 @@
     "expo-asset": "~11.0.5",
     "expo-font": "~13.0.4",
     "expo-system-ui": "~4.0.9",
-    "expo-constants": "~17.0.8"
+    "expo-constants": "~17.0.8",
+    "react-native-webview": "13.12.5"
   },
   "devDependencies": {
     "@types/react": "~18.3.12",
