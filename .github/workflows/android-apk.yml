@@ -27,7 +27,7 @@ jobs:
 
       - name: Install JS
         working-directory: mobile
-        run: npm ci
+        run: npm install
 
       - name: Prebuild Android
         working-directory: mobile
