@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Mode, FaceState, BoardPermissionRequest, CapturedPhoto, ElevenLabsVoiceConfig } from './types';
 import { FaceCanvas } from './02-cara/FaceCanvas';
+import { caraDeTexto } from './02-cara/emocion';
 import { DockDrawer } from './07-pantallas/DockDrawer';
 import { SettingsSheet } from './07-pantallas/SettingsSheet';
 import { PermissionModal } from './07-pantallas/PermissionModal';
@@ -447,6 +448,7 @@ export default function App() {
       (text, isFinal) => {
         if (!text.trim()) return;
         if (isFinal) {
+          setFace(caraDeTexto(text));
           handleVoiceCommand(text.trim());
         } else {
           // Live stream transcript
@@ -508,7 +510,7 @@ export default function App() {
   };
 
   const askCerebro = (cmd: string) => {
-    setFace('THINKING');
+    setFace(caraDeTexto(cmd) === 'LISTENING' ? 'THINKING' : caraDeTexto(cmd));
     stopVoice();
     const rec = cmd.match(/recuerda(?: que)? (.+)/i);
     if (rec) guardarHecho(rec[1]);
