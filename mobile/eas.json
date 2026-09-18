@@ -1,0 +1,10 @@
+{
+  "cli": { "version": ">= 13.0.0", "appVersionSource": "local" },
+  "build": {
+    "preview": {
+      "android": { "buildType": "apk" },
+      "distribution": "internal",
+      "env": { "API_URL": "https://ultron-looi-desk.onrender.com" }
+    }
+  }
+}

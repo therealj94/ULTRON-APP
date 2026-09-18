@@ -1,11 +1,25 @@
 {
   "expo": {
-    "name": "Ultron Desk",
-    "slug": "ultron-desk",
+    "name": "Ultron",
+    "slug": "ultron-desk-native",
     "version": "1.0.0",
-    "orientation": "default",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
     "backgroundColor": "#000000",
-    "ios": { "supportsTablet": true, "bundleIdentifier": "org.ordenglobal.ultrondesk" },
-    "android": { "package": "org.ordenglobal.ultrondesk", "permissions": ["CAMERA", "RECORD_AUDIO"] }
+    "splash": { "backgroundColor": "#000000" },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "org.ordenglobal.ultron",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Ultron te mira para saber si estas en la mesa.",
+        "NSMicrophoneUsageDescription": "Ultron te escucha para responder."
+      }
+    },
+    "android": {
+      "package": "org.ordenglobal.ultron",
+      "adaptiveIcon": { "backgroundColor": "#000000" },
+      "permissions": ["CAMERA", "RECORD_AUDIO", "VIBRATE"]
+    },
+    "plugins": ["expo-camera", "expo-av"]
   }
 }
