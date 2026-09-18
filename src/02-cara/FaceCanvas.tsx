@@ -77,6 +77,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lipRef = useRef(0);
   lipRef.current = lipLevel;
+  const cameraFlashLiveRef = useRef(false);
+  cameraFlashLiveRef.current = isCameraFlashing;
 
   // References to preserve state across 60fps render loop
   const stateRef = useRef<{
@@ -379,6 +381,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
         return { dilate: 0.2, brow: 0.05, mouth: 0, smile: 0, bounce: 0 };
       case 'STARTLE':
         return { dilate: 0.58, brow: 0.55, mouth: 0.45, smile: -0.25, bounce: 0.2 };
+      case 'CURIOSITY':
+        return { dilate: 0.5, brow: 0.28, mouth: 0.16, smile: 0.25, bounce: 0.06 };
       case 'IDLE':
       default:
         return { dilate: 0.36, brow: 0, mouth: 0.08, smile: 0.15, bounce: 0 };
@@ -743,6 +747,11 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   ) {
     const W = canvas.width;
     const H = canvas.height;
+    if (typeof (ctx as any).roundRect !== 'function') {
+      (ctx as any).roundRect = function (this: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
+        this.rect(x, y, w, h);
+      };
+    }
 
     // Pitch Black OLED Canvas
     ctx.fillStyle = '#000000';
@@ -839,8 +848,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     }
 
     // 10. Optical Camera Viewfinder & Shutter Flash
-    if (isCameraFlashing || flashRef.current.alpha > 0.01) {
-      drawCameraViewfinderAndFlash(ctx, W, H, flashRef.current.alpha, isCameraFlashing);
+    if (cameraFlashLiveRef.current || flashRef.current.alpha > 0.01) {
+      drawCameraViewfinderAndFlash(ctx, W, H, flashRef.current.alpha, cameraFlashLiveRef.current);
     }
   }
 

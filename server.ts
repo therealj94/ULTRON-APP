@@ -64,6 +64,12 @@ wss.on('connection', (ws: WebSocket) => {
 
 app.use(express.json({ limit: '12mb' }));
 app.use(express.urlencoded({ extended: true, limit: '12mb' }));
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Frame-Options', 'DENY');
+  next();
+});
 
 // System & Cloud Credentials configured from environment or supplied by the Board
 const GITHUB_PAT = process.env.GITHUB_PAT || '';
