@@ -270,3 +270,6 @@ No se toca voz streaming ni dock bonito hasta que C pase las 5 pruebas.
 - Doctrinas geopolíticas de ficción.
 - Combate láser en el producto que usa José para trabajar.
 - Segundo harness en el client.
+
+
+Detalle operativo de 9 frentes: ver PLAN-9.md
