@@ -92,9 +92,11 @@ export default function App() {
   const boot = useCallback(async () => {
     setPhase('boot');
     Animated.timing(fade, { toValue: 1, duration: 600, useNativeDriver: true }).start();
-    await lockOrientation('portrait');
     await hideSystemBars();
-    const [session] = await Promise.all([loadSession(), new Promise((r) => setTimeout(r, 900))]);
+    // Con sesión guardada la mesa arranca ya en horizontal (manifest); solo el login gira a vertical.
+    const session = await loadSession();
+    if (!session) await lockOrientation('portrait');
+    await new Promise((r) => setTimeout(r, session ? 500 : 800));
     if (session) await enterDesk(session);
     else setPhase('login');
   }, [enterDesk, fade]);

@@ -53,3 +53,25 @@ Diagnóstico aplicado a la app que hoy despliega Render/GitHub Actions:
 - **Login**: la cara compacta mira los campos; sin servidor solo entra si la clave coincide con la última validada.
 - **Latencia medida (servidor local con env de producción)**: STT 0.36–0.55 s · Qwen 0.8–2.2 s · TTS 0.35 s (caché 2 ms).
 - **CI**: `assembleRelease` (JS empaquetado, Hermes) en vez de `assembleDebug` (que carga el bundle de Metro).
+
+## 3.1 — diagnóstico del APK de `main` y qué se cambió
+
+**Lo que había instalado (main, 18-sep 14:00):** `App.tsx` era un `WebView` a la mesa web. Por eso se veía vertical
+(`orientation: portrait`), el mic dependía de Web Speech dentro del WebView, no había cámara nativa, ni menú, ni
+reacciones táctiles, ni ajustes. Las funciones "que no funcionaban" no existían en ese binario.
+
+**Decisiones 3.1**
+
+| Problema | Decisión |
+| --- | --- |
+| Vertical | `orientation: landscape` en manifest (la mesa arranca horizontal antes del JS) + `lockAsync` con reintento; login gira a vertical. |
+| Mic tarda / no oye | Oído nativo (`expo-speech-recognition`, Google SpeechRecognizer continuo, sin beep). Parciales en vivo, final ~0.3 s. El pipeline grabación+Scribe queda como respaldo y como opción en Ajustes. |
+| Respuesta lenta | `POST /api/turno/stream` (SSE) + `StreamSpeaker`: habla la primera oración mientras Qwen sigue escribiendo. 83 frases fijas grabadas con la voz oficial (0 ms). |
+| "De dónde sale la voz" | Ajustes → Voz: ElevenLabs Flash / nodo Qwen3-TTS local / auto. `GET /api/tts?engine=`. Mismo timbre, motor distinto, para comparar. |
+| Sabe poco de Orden Global | `ORDEN_GLOBAL_HECHOS` ampliado (Genesis Core, sistemas, herramientas reales). Sin ficción. |
+| Sin internet | `buscarWeb` (DuckDuckGo lite) + lectura de la primera fuente → HECHOS. Se activa con «busca / investiga / noticias de…». |
+| Memoria | Largo plazo local (AsyncStorage) + servidor; la app manda `memoria[]` en cada turno. «recuerda…», «qué recuerdas», «olvida todo». |
+| Toques iguales | Zonas (ojos, frente, boca), doble toque, cosquillas (5 toques rápidos), enojo acumulado → blaster, mantener → ronroneo. SFX: purr, giggle, wink, boing, whoosh. |
+
+**Medidas (servidor local con env de producción):** `engine=eleven` 1.3 s primera vez / 0.3 s en caché; `engine=qwen`
+8.7 s (WAV). Stream: primer delta de Qwen ~0.6 s. Búsqueda web + lectura + Qwen: 4.4 s.
