@@ -2,7 +2,7 @@
   "expo": {
     "name": "ULTRON FP",
     "slug": "ultron-fp",
-    "version": "2.3.0",
+    "version": "3.0.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "link.ordenglobal.ultronfp",
-      "versionCode": 11,
+      "versionCode": 30,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -59,8 +59,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "ULTRON FP usa la c\u00e1mara para mirarte a los ojos e identificar objetos.",
-          "microphonePermission": "ULTRON FP necesita micr\u00f3fono junto a la c\u00e1mara.",
+          "cameraPermission": "ULTRON FP usa la c\u00e1mara para mirarte e identificar lo que hay en la mesa.",
+          "microphonePermission": "ULTRON FP te escucha de forma continua para conversar sin palabra clave.",
           "recordAudioAndroid": true
         }
       ],

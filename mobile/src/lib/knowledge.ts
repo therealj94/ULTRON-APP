@@ -23,7 +23,7 @@ type FaqItem = { match: RegExp; answer: string | (() => string) };
 export const LOCAL_FAQ: FaqItem[] = [
   {
     match: /estado|status|salud|como estas|cómo estás/,
-    answer: 'Estoy en línea en modo nativo Android. Sensores listos. Núcleo ULTRON FP operativo.',
+    answer: 'En línea. Micrófono, cámara y voz listos.',
   },
   {
     match: /hora|que hora|qué hora/,
@@ -42,17 +42,12 @@ export const LOCAL_FAQ: FaqItem[] = [
   {
     match: /ayuda|tutorial|que puedes|qué puedes|comandos/,
     answer:
-      'Habla y te respondo. Desliza desde la derecha para el menú. Tócame: reacciono; si insistes, me enojo y disparo. Di «canta salsa» o «sable jedi».',
-  },
-  {
-    match: /orden global|doctrina|alfa/,
-    answer: () =>
-      'Orden Global es el Directorio Alfa-1. Tengo cinco doctrinas: ALFA-770 soberanía tecnológica, BETA-912 tesorería, GAMMA-404 voto blindado, DELTA-108 perímetro y EPSILON-221 cadena de mando. ¿Cuál quieres?',
+      'Habla y te respondo; no hace falta llamarme. Desliza desde el borde derecho para el menú. Tócame y reacciono; si insistes, me enojo y disparo. Di «qué ves», «canta salsa» o «sable jedi».',
   },
   {
     match: /offline|sin internet|sin red/,
     answer:
-      'Sin red sigo contigo: gestos de voz, memoria local, conocer, y respuestas básicas. El cerebro Qwen y TTS neural necesitan servidor.',
+      'Sin red sigo contigo con lo básico: gestos, memoria local y frases grabadas. Para pensar y ver necesito el servidor.',
   },
 ];
 

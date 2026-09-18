@@ -1,7 +1,10 @@
+/**
+ * Cliente del backend (Render, rama main): /api/turno, /api/tts, /api/stt, /api/vision/analyze, /api/memoria.
+ */
 import { API_BASE } from '../config';
-import type { FaceState, Mode, SessionUser } from '../config';
+import type { Mode, SessionUser } from '../config';
 
-async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 45_000): Promise<T> {
+async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 30_000): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -27,125 +30,117 @@ async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 45_000
   }
 }
 
+export type Health = {
+  ok: boolean;
+  qwen?: { vivo?: boolean; modelo?: string | null };
+  tts?: { vivo?: boolean };
+  ojo?: { vivo?: boolean; vision?: boolean };
+  elevenlabs?: boolean;
+};
+
 export async function healthCheck() {
-  return api<{ status: string; tts?: { urlHost?: string } }>('/api/health');
+  return api<Health>('/api/health', undefined, 8_000);
 }
 
 export async function loginBiometric(user: SessionUser) {
-  return api<{ user?: { nombre?: string; rol?: string } }>('/api/ultron/biometric-login', {
+  return api<{ user?: { nombre?: string; rol?: string; correo?: string } }>('/api/ultron/biometric-login', {
     method: 'POST',
-    body: JSON.stringify({
-      biometricType: 'desk_access',
-      userName: user.name,
-      role: user.role,
-      correo: user.correo,
-    }),
-  });
+    body: JSON.stringify({ biometricType: 'desk_access', userName: user.name, role: user.role, correo: user.correo }),
+  }, 12_000);
 }
 
 export async function loginClave(correo: string, clave: string) {
-  return api<{ miembro?: { nombre?: string; rol?: string }; codigo?: string }>('/api/ultron/entrar', {
+  return api<{ miembro?: { nombre?: string; rol?: string; correo?: string } }>('/api/ultron/entrar', {
     method: 'POST',
     body: JSON.stringify({ correo: String(correo).trim().toLowerCase(), clave }),
-  });
+  }, 15_000);
 }
 
 export async function logoutRemote() {
   try {
-    await api('/api/ultron/salir', { method: 'POST', body: '{}' });
+    await api('/api/ultron/salir', { method: 'POST', body: '{}' }, 6_000);
   } catch {
     /* offline ok */
   }
 }
 
-export async function postPersonMemory(body: Record<string, unknown>) {
+/** Memoria de largo plazo del servidor (hechos). */
+export async function rememberFact(hecho: string) {
   try {
-    await api('/api/memoria/personas', { method: 'POST', body: JSON.stringify(body) });
+    await api('/api/memoria', { method: 'POST', body: JSON.stringify({ hecho }) }, 8_000);
   } catch {
-    /* keep local only */
+    /* se guarda local igual */
   }
 }
+
+export type Turn = { rol: 'usuario' | 'ultron'; texto: string };
 
 export type ChatResult = {
   reply: string;
   mode?: Mode;
-  face?: FaceState;
-  emotion?: string;
+  ms?: number;
+  via?: string;
   error?: string;
-  conversationId?: string;
 };
 
-/** Chat no-stream (más fiable en RN que SSE parcial). */
-export async function chatUltron(opts: {
+/** Un turno con el cerebro (Qwen 27B). `image` = data URL jpeg opcional para preguntas visuales. */
+export async function turno(opts: {
   message: string;
   mode: Mode;
-  conversationId: string;
-  context?: Array<{ role: string; content: string }>;
+  userName: string;
+  historial: Turn[];
+  image?: string;
 }): Promise<ChatResult> {
   try {
     const data = await api<any>(
-      '/api/qwen/chat',
+      '/api/turno',
       {
         method: 'POST',
         body: JSON.stringify({
           message: opts.message,
           mode: opts.mode,
-          conversationId: opts.conversationId,
-          stream: false,
-          context: opts.context || [],
+          usuario: opts.userName,
+          historial: opts.historial.slice(-10),
+          ...(opts.image ? { image: opts.image } : {}),
         }),
       },
-      25_000
+      opts.image ? 45_000 : 28_000
     );
-    return {
-      reply: data.reply || data.mensaje || '',
-      mode: data.mode,
-      face: data.face,
-      emotion: data.emotion,
-      conversationId: data.conversationId || opts.conversationId,
-      error: data.error,
-    };
+    return { reply: String(data.reply || ''), mode: data.mode, ms: data.ms, via: data.via, error: data.error };
   } catch (e: any) {
     return { reply: '', error: e?.message || 'Sin conexión al cerebro' };
   }
 }
 
-export async function synthesizeTts(opts: {
-  text: string;
-  voiceId?: string;
-  engine?: 'fast' | 'auto';
-  performance?: 'speak' | 'sing';
-}): Promise<ArrayBuffer | null> {
-  try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), opts.performance === 'sing' ? 22_000 : opts.engine === 'fast' ? 14_000 : 45_000);
-    const res = await fetch(`${API_BASE}/api/tts/synthesize`, {
+export function ttsUrl(text: string, performance: 'speak' | 'sing') {
+  const q = new URLSearchParams({ text, performance, engine: 'fast' });
+  return `${API_BASE}/api/tts?${q.toString()}`;
+}
+
+export async function transcribe(opts: { base64: string; mime: string }): Promise<string> {
+  const data = await api<{ text?: string }>(
+    '/api/stt',
+    {
       method: 'POST',
-      signal: ctrl.signal,
-      headers: { 'Content-Type': 'application/json', Accept: 'audio/mpeg, audio/wav, application/json' },
-      body: JSON.stringify({
-        text: opts.text,
-        voiceId: opts.voiceId || 'ultron',
-        voice: opts.voiceId || 'ultron',
-        engine: opts.engine || 'fast',
-        performance: opts.performance || 'speak',
-      }),
-    });
-    clearTimeout(timer);
-    if (!res.ok) return null;
-    const ct = res.headers.get('content-type') || '';
-    if (ct.includes('application/json')) {
-      const j = await res.json();
-      if (j.audioBase64) {
-        const bin = atob(j.audioBase64);
-        const bytes = new Uint8Array(bin.length);
-        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-        return bytes.buffer;
-      }
-      return null;
-    }
-    return await res.arrayBuffer();
+      body: JSON.stringify({ audioBase64: `data:${opts.mime};base64,${opts.base64}`, mimeType: opts.mime, language: 'es' }),
+    },
+    16_000
+  );
+  return String(data.text || '').trim();
+}
+
+export async function describeImage(base64Jpeg: string, prompt: string): Promise<string> {
+  try {
+    const data = await api<{ summary?: string }>(
+      '/api/vision/analyze',
+      {
+        method: 'POST',
+        body: JSON.stringify({ mediaType: 'image/jpeg', fileName: 'desk.jpg', base64Data: `data:image/jpeg;base64,${base64Jpeg}`, prompt }),
+      },
+      35_000
+    );
+    return String(data.summary || '').trim();
   } catch {
-    return null;
+    return '';
   }
 }

@@ -94,7 +94,7 @@ export async function loadSettings(): Promise<AppSettings> {
   try {
     const raw = await AsyncStorage.getItem(KEYS.settings);
     const s: AppSettings = raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
-    if (!['ultron', 'luna', 'spark', 'jarvis'].includes(s.voiceId)) s.voiceId = 'ultron';
+    s.voiceId = 'ultron';
     return s;
   } catch {
     return DEFAULT_SETTINGS;

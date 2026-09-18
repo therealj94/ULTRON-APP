@@ -1,20 +1,21 @@
 {
   "name": "ultron-fp-mobile",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
+    "android": "expo run:android",
     "typecheck": "tsc --noEmit",
+    "voice-bank": "node scripts/build-voice-bank.mjs",
     "eas:build:android": "eas build -p android --profile preview --non-interactive",
-    "eas:update": "eas update --channel preview --non-interactive --message"
+    "eas:update": "eas update --channel preview --non-interactive --message",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~54.0.37",
     "expo-av": "~16.0.8",
-    "expo-blur": "~15.0.8",
     "expo-camera": "~17.0.10",
     "expo-constants": "~18.0.14",
     "expo-file-system": "~19.0.24",
@@ -23,7 +24,7 @@
     "expo-navigation-bar": "~5.0.10",
     "expo-screen-orientation": "~9.0.9",
     "expo-secure-store": "~15.0.8",
-    "expo-speech": "~14.0.8",
+    "expo-sensors": "~15.0.8",
     "expo-status-bar": "~3.0.9",
     "expo-system-ui": "~6.0.9",
     "expo-updates": "~29.0.20",

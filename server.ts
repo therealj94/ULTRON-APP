@@ -862,7 +862,12 @@ app.post('/api/tts/stream', async (req, res) => {
  * engine=fast (default): ElevenLabs Flash v2.5 (~0.5–0.9 s) con caché en RAM; performance=sing usa Multilingual v2.
  * engine=qwen: nodo Qwen3-TTS (T4). Si Flash falla, cae al nodo; si el nodo falla, 503 (la app nunca usa voz robótica).
  */
-app.post('/api/tts', async (req, res) => {
+// GET permite a la app descargar el audio directo a disco (FileSystem.downloadAsync) sin pasar por base64.
+app.get('/api/tts', (req, res, next) => {
+  req.body = { ...req.query };
+  next();
+});
+app.all('/api/tts', async (req, res) => {
   const text = limpiarParaVoz(String(req.body?.text || '').slice(0, 2000));
   const voice = String(req.body?.voice || ULTRON_VOICE.qwenVoice);
   const instruct = String(req.body?.instruct || '').slice(0, 400);

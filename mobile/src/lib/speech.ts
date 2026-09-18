@@ -9,7 +9,7 @@
 import { Audio } from 'expo-av';
 import { PermissionsAndroid, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
-import { API_BASE } from '../config';
+import { transcribe } from './api';
 
 export type SpeechCallbacks = {
   onSpeechStart?: () => void;
@@ -88,25 +88,12 @@ export async function ensureSpeechPermissions(): Promise<boolean> {
   }
 }
 
-const HALLUCINATIONS = /^(subt[ií]tulos.*|gracias por ver.*|suscr[ií]bete.*|\.+|…|music|\[.*\])$/i;
-
 async function transcribeFile(uri: string): Promise<string> {
   try {
     const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), 15_000);
-    const res = await fetch(`${API_BASE}/api/stt/transcribe`, {
-      method: 'POST',
-      signal: ctrl.signal,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ audioBase64: `data:audio/m4a;base64,${b64}`, mimeType: 'audio/m4a', language: 'es' }),
-    });
-    clearTimeout(t);
-    if (!res.ok) return '';
-    const data = await res.json();
-    const text = String(data.text || '').trim();
-    if (text.length < 2 || HALLUCINATIONS.test(text)) return '';
-    return text;
+    if (b64.length < 1600) return '';
+    const text = await transcribe({ base64: b64, mime: 'audio/m4a' });
+    return text.length < 2 ? '' : text;
   } catch (e: any) {
     callbacks.onError?.(String(e?.message || e));
     return '';
@@ -206,11 +193,13 @@ function queueTranscription(uri: string) {
 
 let lastLoopAt = Date.now();
 let failStarts = 0;
+let loopToken = 0;
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function loop() {
-  while (loopAlive) {
+  const token = ++loopToken;
+  while (loopAlive && token === loopToken) {
     try {
     lastLoopAt = Date.now();
     if (!wanted || paused) {
@@ -272,8 +261,10 @@ async function loop() {
       await sleep(400);
     }
   }
-  await discard(await stopRecording());
-  callbacks.onListeningChange?.(false);
+  if (token === loopToken) {
+    await discard(await stopRecording());
+    callbacks.onListeningChange?.(false);
+  }
 }
 
 export async function enableAlwaysOnMic() {
@@ -317,7 +308,28 @@ export function isMicPaused() {
 }
 
 export function micWatchdogOk() {
-  return Date.now() - lastLoopAt < 4000;
+  return !loopAlive || Date.now() - lastLoopAt < 4000;
+}
+
+/** Reinicio duro: mata el bucle colgado (p. ej. prepareToRecordAsync sin volver) y arranca otro. */
+export async function restartMic() {
+  loopAlive = false;
+  const rec = recording;
+  recording = null;
+  if (rec) {
+    try {
+      rec.setOnRecordingStatusUpdate(null);
+      await Promise.race([rec.stopAndUnloadAsync(), sleep(1500)]);
+    } catch {
+      /* */
+    }
+  }
+  meteringSupported = null;
+  failStarts = 0;
+  lastLoopAt = Date.now();
+  if (!wanted) return;
+  loopAlive = true;
+  void loop();
 }
 
 export async function destroySpeech() {

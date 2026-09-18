@@ -1,43 +1,67 @@
 import { useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { CameraView } from 'expo-camera';
-import { API_BASE } from '../config';
+import { describeImage } from '../lib/api';
+
+export type FrameGrabber = () => Promise<string | null>;
 
 type Props = {
   enabled: boolean;
+  /** Se rellena con una función que devuelve el frame actual en base64 (jpeg). */
+  grabRef?: React.MutableRefObject<FrameGrabber | null>;
   onGaze?: (x: number, y: number) => void;
   onObjects?: (labels: string[]) => void;
+  onScene?: (summary: string, labels: string[]) => void;
   onPresence?: (present: boolean) => void;
 };
 
+const SCENE_EVERY_MS = 6500;
+const LABEL_PROMPT =
+  'Responde SOLO con una lista corta en español, separada por comas, de lo visible (máximo 6): persona, objetos, gestos evidentes (ej: persona, taza, teléfono, saluda). Sin frases.';
+
 /**
- * Cámara frontal: cuando hay persona → mirada al centro.
- * Sin detección reciente → micro-saccades suaves (no overwrite constante).
+ * Cámara frontal siempre activa (1x1 px, invisible): cada ~6.5 s manda un frame al nodo de visión.
+ * - Etiquetas → ULTRON sabe qué hay en la mesa ("¿qué ves?").
+ * - Persona detectada → mirada al centro; sin persona → micro-sacadas suaves.
+ * - grabRef → frame fresco bajo demanda (preguntas visuales al cerebro).
  */
-export function GazeCamera({ enabled, onGaze, onObjects, onPresence }: Props) {
+export function GazeCamera({ enabled, grabRef, onGaze, onObjects, onScene, onPresence }: Props) {
   const ref = useRef<CameraView>(null);
   const busy = useRef(false);
-  const onGazeRef = useRef(onGaze);
-  const onObjectsRef = useRef(onObjects);
-  const onPresenceRef = useRef(onPresence);
+  const cb = useRef({ onGaze, onObjects, onScene, onPresence });
   const lastPersonAt = useRef(0);
+  const readyRef = useRef(false);
 
   useEffect(() => {
-    onGazeRef.current = onGaze;
-    onObjectsRef.current = onObjects;
-    onPresenceRef.current = onPresence;
-  }, [onGaze, onObjects, onPresence]);
+    cb.current = { onGaze, onObjects, onScene, onPresence };
+  }, [onGaze, onObjects, onScene, onPresence]);
+
+  const grab = async (quality = 0.25): Promise<string | null> => {
+    if (!ref.current || !readyRef.current) return null;
+    try {
+      const photo = await ref.current.takePictureAsync({ quality, base64: true, shutterSound: false, skipProcessing: true });
+      return photo?.base64 || null;
+    } catch {
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    if (!grabRef) return;
+    grabRef.current = enabled ? () => grab(0.35) : null;
+    return () => {
+      grabRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, grabRef]);
 
   useEffect(() => {
     if (!enabled) return;
     let t = 0;
     const id = setInterval(() => {
-      // Solo idle si no vimos persona en los últimos 4s
-      if (Date.now() - lastPersonAt.current < 4000) return;
+      if (Date.now() - lastPersonAt.current < 5000) return;
       t += 0.2;
-      const x = Math.sin(t * 0.35) * 0.12;
-      const y = Math.cos(t * 0.22) * 0.08;
-      onGazeRef.current?.(x, y);
+      cb.current.onGaze?.(Math.sin(t * 0.35) * 0.12, Math.cos(t * 0.22) * 0.08);
     }, 400);
     return () => clearInterval(id);
   }, [enabled]);
@@ -46,42 +70,26 @@ export function GazeCamera({ enabled, onGaze, onObjects, onPresence }: Props) {
     if (!enabled) return;
     const id = setInterval(() => {
       void (async () => {
-        if (busy.current || !ref.current) return;
+        if (busy.current) return;
         busy.current = true;
         try {
-          const photo = await ref.current.takePictureAsync({
-            quality: 0.2,
-            base64: true,
-            shutterSound: false,
-            skipProcessing: true,
-          });
-          if (!photo?.base64) return;
-          onPresenceRef.current?.(true);
-
-          const res = await fetch(`${API_BASE}/api/vision/analyze`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              mediaType: 'image/jpeg',
-              fileName: 'gaze.jpg',
-              base64Data: `data:image/jpeg;base64,${photo.base64}`,
-              prompt:
-                'Lista en español, máximo 6 objetos o personas visibles (ej: persona, lápiz, teléfono, taza, libro). Solo palabras separadas por coma.',
-            }),
-          });
-          if (!res.ok) return;
-          const data = await res.json();
-          const text = String(data.analysis || data.summary || data.result || data.reply || '');
+          const b64 = await grab(0.2);
+          if (!b64) return;
+          const text = await describeImage(b64, LABEL_PROMPT);
+          if (!text) return;
           const labels = text
+            .replace(/\.$/, '')
             .split(/[,;\n]/)
-            .map((s: string) => s.trim().toLowerCase())
-            .filter((s: string) => s.length > 2 && s.length < 28)
+            .map((s) => s.trim().toLowerCase().replace(/^(una?|el|la|los|las|unos|unas)\s+/, ''))
+            .filter((s) => s.length > 2 && s.length < 32)
             .slice(0, 6);
-          if (labels.length) onObjectsRef.current?.(labels);
-
-          if (labels.some((l) => /persona|rostro|cara|hombre|mujer|face|person/.test(l))) {
+          if (labels.length) cb.current.onObjects?.(labels);
+          cb.current.onScene?.(text, labels);
+          const person = labels.some((l) => /persona|rostro|cara|hombre|mujer|niñ|gente|face|person/.test(l));
+          cb.current.onPresence?.(person);
+          if (person) {
             lastPersonAt.current = Date.now();
-            onGazeRef.current?.(0, 0);
+            cb.current.onGaze?.(0, 0);
           }
         } catch {
           /* red / cámara */
@@ -89,7 +97,7 @@ export function GazeCamera({ enabled, onGaze, onObjects, onPresence }: Props) {
           busy.current = false;
         }
       })();
-    }, 5500);
+    }, SCENE_EVERY_MS);
     return () => clearInterval(id);
   }, [enabled]);
 
@@ -97,17 +105,19 @@ export function GazeCamera({ enabled, onGaze, onObjects, onPresence }: Props) {
 
   return (
     <View style={styles.box} pointerEvents="none">
-      <CameraView ref={ref} style={StyleSheet.absoluteFill} facing="front" animateShutter={false} />
+      <CameraView
+        ref={ref}
+        style={StyleSheet.absoluteFill}
+        facing="front"
+        animateShutter={false}
+        onCameraReady={() => {
+          readyRef.current = true;
+        }}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  box: {
-    position: 'absolute',
-    width: 1,
-    height: 1,
-    opacity: 0.02,
-    overflow: 'hidden',
-  },
+  box: { position: 'absolute', width: 1, height: 1, opacity: 0.02, overflow: 'hidden' },
 });

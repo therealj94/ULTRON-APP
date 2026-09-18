@@ -33,3 +33,23 @@ openWakeWord, bus de eventos asyncio, LLM OpenAI/Ollama. Hardware detrás de pro
 - Pipeline por frases: la 1ª frase suena mientras se sintetizan las siguientes; acks («Un momento.») precargados
   si el cerebro tarda > 1.4 s.
 - El mic ya no se pausa durante la síntesis, solo durante la reproducción real de audio.
+
+## Revisión 3.0 (2026-09-18) — sobre la rama `main` nativa
+Diagnóstico aplicado a la app que hoy despliega Render/GitHub Actions:
+- **Backend `main` había retirado `/api/qwen/chat`, `/api/tts/synthesize`, `/api/stt/transcribe`** → la app 2.3.0
+  quedó sin cerebro, sin voz y sin oído. La app 3.0 habla con `/api/turno`, `/api/tts`, `/api/stt`, `/api/vision/analyze`.
+- **Servidor** (sin romper la filosofía "honesto" de `main`): `/api/stt` nuevo (Scribe, ~0.4 s); `/api/tts` con
+  ElevenLabs Flash + caché LRU (~0.35 s, `X-Ultron-TTS`), canto con Multilingual v2, fallback al nodo T4;
+  `/api/turno` con personalidad, nombre del miembro y hechos verificables de Orden Global (se quitaron las
+  "doctrinas" inventadas también del cliente). Login normaliza `mjoseenamorado1994@gmail.com → j.ordonez@`.
+- **Una sola voz** (ElevenLabs *Daniel*, id `ultron`); 45 frases fijas grabadas en `assets/voice` (0 ms, offline).
+- **Micrófono**: el watchdog antes llamaba `enableAlwaysOnMic()` que retornaba sin hacer nada si el bucle
+  seguía "vivo" pero colgado → ahora `restartMic()` mata el bucle por token y arranca otro.
+- **Acks**: `say()` ya no corta el «Un momento» a medias; espera a que termine antes de la respuesta.
+- **Saludo**: el modo Conocer ya no interrumpe el saludo (arrancaba a 1.2 s con `stopSpeaking()`).
+- **Cámara**: frame fresco bajo demanda para «¿qué ves?» (va al cerebro con la imagen) y comentario
+  proactivo si la escena cambia y hay calma (máx. 1 cada 2 min).
+- **Sacudida** (acelerómetro, idea de `main`) → sobresalto con frase grabada.
+- **Login**: la cara compacta mira los campos; sin servidor solo entra si la clave coincide con la última validada.
+- **Latencia medida (servidor local con env de producción)**: STT 0.36–0.55 s · Qwen 0.8–2.2 s · TTS 0.35 s (caché 2 ms).
+- **CI**: `assembleRelease` (JS empaquetado, Hermes) en vez de `assembleDebug` (que carga el bundle de Metro).

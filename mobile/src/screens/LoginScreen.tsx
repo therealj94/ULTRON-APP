@@ -5,15 +5,17 @@ import {
   TextInput,
   Pressable,
   StyleSheet,
-  Image,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Switch,
   ScrollView,
+  useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as LocalAuthentication from 'expo-local-authentication';
+import { UltronFace } from '../components/UltronFace';
+import type { FaceState } from '../config';
 import {
   DESK_USERS,
   findDeskUserByEmail,
@@ -53,6 +55,10 @@ export function LoginScreen({ onAuthenticated }: Props) {
   const [error, setError] = useState('');
   const [logoReady, setLogoReady] = useState(false);
   const [savedName, setSavedName] = useState<string | null>(null);
+  const [focus, setFocus] = useState<'none' | 'mail' | 'clave'>('none');
+  const { width } = useWindowDimensions();
+  const eye = Math.min(64, Math.round(width * 0.15));
+  const faceState: FaceState = loading ? 'THINKING' : error ? 'CONCERNED' : phase === 'quick' ? 'HAPPY' : focus === 'clave' ? 'WINK' : 'IDLE';
 
   const activeUser: DeskUser = useMemo(() => {
     if (selected.id !== 'otro') return selected;
@@ -206,13 +212,16 @@ export function LoginScreen({ onAuthenticated }: Props) {
     } catch (e: any) {
       const status = e?.status;
       if (!status || status >= 500) {
-        await enterBiometric(user, clave);
+        // Cerebro remoto sin respuesta: solo dejo pasar si la clave coincide con la última validada en este teléfono.
+        const creds = await loadCreds();
+        if (creds && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(user.correo) && creds.clave === clave) {
+          await enterBiometric(user, clave);
+          return;
+        }
+        setError('El servidor no responde y no tengo tu clave verificada en este teléfono. Intenta en un momento.');
         return;
       }
-      setError(
-        e?.message ||
-          'Correo o clave incorrectos. Usa j.ordonez@ / m.ordonez@ o «Solo escritorio».'
-      );
+      setError(status === 401 || status === 403 ? 'Correo o clave incorrectos.' : e?.message || 'No pude verificar la clave.');
     } finally {
       setLoading(false);
     }
@@ -243,16 +252,12 @@ export function LoginScreen({ onAuthenticated }: Props) {
         showsVerticalScrollIndicator
         bounces
       >
+        <View pointerEvents="none" style={{ opacity: logoReady ? 1 : 0 }}>
+          <UltronFace face={faceState} size={eye} stageHeight={eye * 2.3} gazeX={0} gazeY={focus === 'none' ? 0 : 0.6} />
+        </View>
+        <Text style={styles.title}>ULTRON FP</Text>
+        <Text style={styles.sub}>Junta Directiva · Orden Global</Text>
         <View style={styles.card}>
-          <Image
-            source={require('../../assets/ultron-logo.jpg')}
-            style={[
-              styles.logo,
-              { opacity: logoReady ? 1 : 0, transform: [{ scale: logoReady ? 1 : 0.85 }] },
-            ]}
-          />
-          <Text style={styles.title}>ULTRON FP</Text>
-          <Text style={styles.sub}>Escritorio nativo · acceso seguro</Text>
 
           {phase === 'quick' ? (
             <View style={{ gap: 12, width: '100%', alignItems: 'center' }}>
@@ -277,7 +282,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
             </View>
           ) : phase === 'pick' ? (
             <View style={{ gap: 10, width: '100%' }}>
-              <Text style={styles.hint}>Junta · desliza si hay más miembros</Text>
+              <Text style={styles.hint}>¿Quién está en la mesa?</Text>
               {DESK_USERS.map((u) => (
                 <Pressable key={u.id} onPress={() => pickUser(u)} style={styles.userBtn}>
                   <View style={styles.avatar}>
@@ -313,6 +318,8 @@ export function LoginScreen({ onAuthenticated }: Props) {
                   autoCapitalize="none"
                   keyboardType="email-address"
                   style={styles.input}
+                  onFocus={() => setFocus('mail')}
+                  onBlur={() => setFocus('none')}
                 />
               )}
               {selected.id !== 'otro' && (
@@ -321,11 +328,14 @@ export function LoginScreen({ onAuthenticated }: Props) {
               <TextInput
                 value={clave}
                 onChangeText={setClave}
-                placeholder="Clave (ultron.ordenglobal.link)"
+                placeholder="Clave de ultron.ordenglobal.link"
                 placeholderTextColor="#5A6A7A"
                 secureTextEntry
                 style={styles.input}
                 autoCapitalize="none"
+                onFocus={() => setFocus('clave')}
+                onBlur={() => setFocus('none')}
+                onSubmitEditing={() => void enterWithClave()}
               />
               <View style={styles.row}>
                 <Text style={styles.rowLabel}>Guardar contraseña</Text>
@@ -362,7 +372,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
                 style={styles.secondary}
                 disabled={loading}
               >
-                <Text style={styles.secondaryText}>Solo escritorio (sin clave remota)</Text>
+                <Text style={styles.secondaryText}>Entrar solo al escritorio</Text>
               </Pressable>
               {fingerprintAvailable && remember && !!clave && (
                 <Pressable
@@ -410,8 +420,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(0,229,255,0.35)',
   },
-  title: { color: '#E8FBFF', fontSize: 26, fontWeight: '800', letterSpacing: 6 },
-  sub: { color: '#7A8B9C', fontSize: 12, marginBottom: 8 },
+  title: { color: '#E8FBFF', fontSize: 24, fontWeight: '800', letterSpacing: 8, marginTop: -6 },
+  sub: { color: '#7A8B9C', fontSize: 12, marginBottom: 14, letterSpacing: 1 },
   hint: { color: '#5A6A7A', fontSize: 11, marginBottom: 2 },
   welcome: { color: '#E8FBFF', fontSize: 18, fontWeight: '700', marginBottom: 8 },
   userBtn: {

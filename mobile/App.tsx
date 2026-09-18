@@ -1,35 +1,20 @@
 import { StatusBar } from 'expo-status-bar';
 import * as SystemUI from 'expo-system-ui';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  AppState,
-  Image,
-  PermissionsAndroid,
-  Platform,
-  StyleSheet,
-  Text,
-  View,
-  type AppStateStatus,
-} from 'react-native';
+import { Animated, AppState, PermissionsAndroid, Platform, StyleSheet, Text, View, type AppStateStatus } from 'react-native';
 import { APP_VERSION, type SessionUser } from './src/config';
-import { healthCheck } from './src/lib/api';
+import { UltronFace } from './src/components/UltronFace';
+import { logoutRemote } from './src/lib/api';
 import { loadSession, saveSession } from './src/lib/storage';
 import { DeskScreen } from './src/screens/DeskScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
-import { SettingsScreen } from './src/screens/SettingsScreen';
 
 type Phase = 'boot' | 'login' | 'desk';
 
 async function lockOrientation(kind: 'portrait' | 'landscape') {
   try {
     const ScreenOrientation = require('expo-screen-orientation') as typeof import('expo-screen-orientation');
-    await ScreenOrientation.lockAsync(
-      kind === 'portrait'
-        ? ScreenOrientation.OrientationLock.PORTRAIT
-        : ScreenOrientation.OrientationLock.LANDSCAPE
-    );
+    await ScreenOrientation.lockAsync(kind === 'portrait' ? ScreenOrientation.OrientationLock.PORTRAIT_UP : ScreenOrientation.OrientationLock.LANDSCAPE);
   } catch {
     /* */
   }
@@ -53,96 +38,65 @@ async function hideSystemBars() {
   }
 }
 
-/** Pide permisos con diálogo nativo Android (aceptar / denegar). */
-async function requestOsPermissionsExplained() {
+/** Un solo diálogo nativo (cámara + micrófono) al entrar al escritorio. */
+async function requestDeskPermissions() {
   if (Platform.OS !== 'android') return;
   try {
-    await PermissionsAndroid.requestMultiple([
-      PermissionsAndroid.PERMISSIONS.CAMERA,
-      PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-    ]);
+    await PermissionsAndroid.requestMultiple([PermissionsAndroid.PERMISSIONS.RECORD_AUDIO, PermissionsAndroid.PERMISSIONS.CAMERA]);
   } catch {
-    /* Desk pedirá de nuevo con Alert contextual */
+    /* DeskScreen vuelve a pedir con contexto */
+  }
+}
+
+function checkOta() {
+  try {
+    const Updates = require('expo-updates') as typeof import('expo-updates');
+    if (!Updates?.checkForUpdateAsync) return;
+    void Updates.checkForUpdateAsync()
+      .then(async (check) => {
+        if (!check.isAvailable) return;
+        const result = await Updates.fetchUpdateAsync();
+        if (result.isNew) await Updates.reloadAsync();
+      })
+      .catch(() => {});
+  } catch {
+    /* build sin expo-updates */
   }
 }
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>('boot');
   const [user, setUser] = useState<SessionUser | null>(null);
-  const [bootLine, setBootLine] = useState('Iniciando ULTRON nativo…');
-  const [showSettings, setShowSettings] = useState(false);
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
+  const fade = useRef(new Animated.Value(0)).current;
+
+  const enterDesk = useCallback(async (u: SessionUser) => {
+    setUser(u);
+    await requestDeskPermissions();
+    await lockOrientation('landscape');
+    setPhase('desk');
+  }, []);
 
   const boot = useCallback(async () => {
     setPhase('boot');
-    setBootLine('Preparando acceso…');
+    Animated.timing(fade, { toValue: 1, duration: 600, useNativeDriver: true }).start();
     await lockOrientation('portrait');
     await hideSystemBars();
-    setBootLine('Autorizaciones de sensores…');
-    await new Promise<void>((resolve) => {
-      Alert.alert(
-        'ULTRON FP necesita permisos',
-        'Cámara para mirarte e identificar objetos, y micrófono siempre activo para conversar. Puedes denegar y usar el menú.',
-        [
-          {
-            text: 'Continuar',
-            onPress: () => {
-              void requestOsPermissionsExplained().finally(() => resolve());
-            },
-          },
-        ],
-        { cancelable: false }
-      );
-    });
-    setBootLine('Comprobando núcleo…');
-    try {
-      const h = await healthCheck();
-      setBootLine(`Núcleo OK · ${h.status}`);
-    } catch {
-      setBootLine('Sin red — modo offline local');
-    }
-    const session = await loadSession();
-    if (session) {
-      setUser(session);
-      await lockOrientation('landscape');
-      setPhase('desk');
-    } else {
-      await lockOrientation('portrait');
-      setPhase('login');
-    }
-  }, []);
+    const [session] = await Promise.all([loadSession(), new Promise((r) => setTimeout(r, 900))]);
+    if (session) await enterDesk(session);
+    else setPhase('login');
+  }, [enterDesk, fade]);
 
   useEffect(() => {
     void boot();
-    const onChange = (s: AppStateStatus) => {
+    const sub = AppState.addEventListener('change', (s: AppStateStatus) => {
       if (s === 'active') {
         void lockOrientation(phaseRef.current === 'desk' ? 'landscape' : 'portrait');
         void hideSystemBars();
       }
-    };
-    const sub = AppState.addEventListener('change', onChange);
-    const t = setTimeout(() => {
-      try {
-        const Updates = require('expo-updates') as typeof import('expo-updates');
-        if (!Updates?.checkForUpdateAsync || Updates.isEmbeddedLaunch === undefined) {
-          /* keep going even if fields differ by SDK */
-        }
-        if (Updates?.checkForUpdateAsync) {
-          void Updates.checkForUpdateAsync()
-            .then(async (check) => {
-              if (!check.isAvailable) return;
-              const result = await Updates.fetchUpdateAsync();
-              if (result.isNew && Updates.reloadAsync) {
-                await Updates.reloadAsync();
-              }
-            })
-            .catch(() => {});
-        }
-      } catch {
-        /* */
-      }
-    }, 4_000);
+    });
+    const t = setTimeout(checkOta, 5_000);
     return () => {
       sub.remove();
       clearTimeout(t);
@@ -153,41 +107,26 @@ export default function App() {
     <View style={styles.root}>
       <StatusBar style="light" hidden />
       {phase === 'boot' && (
-        <View style={styles.boot}>
-          <Image source={require('./assets/icon.png')} style={styles.logo} />
-          <ActivityIndicator color="#00E5FF" size="large" />
+        <Animated.View style={[styles.boot, { opacity: fade }]}>
+          <View pointerEvents="none">
+            <UltronFace face="SLEEPING" size={96} stageHeight={220} />
+          </View>
           <Text style={styles.bootTitle}>ULTRON FP</Text>
-          <Text style={styles.bootSub}>{bootLine}</Text>
-          <Text style={styles.meta}>v{APP_VERSION} · native production</Text>
-        </View>
+          <Text style={styles.meta}>v{APP_VERSION}</Text>
+        </Animated.View>
       )}
-      {phase === 'login' && (
-        <LoginScreen
-          onAuthenticated={(u) => {
-            setUser(u);
-            void lockOrientation('landscape').then(() => setPhase('desk'));
+      {phase === 'login' && <LoginScreen onAuthenticated={(u) => void enterDesk(u)} />}
+      {phase === 'desk' && user && (
+        <DeskScreen
+          user={user}
+          onLogout={() => {
+            void saveSession(null);
+            void logoutRemote();
+            setUser(null);
+            setPhase('login');
+            void lockOrientation('portrait');
           }}
         />
-      )}
-      {phase === 'desk' && user && (
-        <View style={{ flex: 1 }}>
-          <DeskScreen
-            user={user}
-            onOpenSettings={() => setShowSettings(true)}
-            onLogout={() => {
-              void saveSession(null);
-              setUser(null);
-              setShowSettings(false);
-              setPhase('login');
-              void lockOrientation('portrait');
-            }}
-          />
-          {showSettings && (
-            <View style={StyleSheet.absoluteFill}>
-              <SettingsScreen onBack={() => setShowSettings(false)} />
-            </View>
-          )}
-        </View>
       )}
     </View>
   );
@@ -195,20 +134,7 @@ export default function App() {
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#000' },
-  boot: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 10,
-    backgroundColor: '#000',
-  },
-  logo: { width: 88, height: 88, borderRadius: 44, marginBottom: 8 },
-  bootTitle: { color: '#E8FBFF', fontSize: 18, letterSpacing: 6, fontWeight: '800' },
-  bootSub: { color: '#8B9AAB', fontSize: 13, textAlign: 'center', maxWidth: 360 },
-  meta: {
-    color: '#5A6A7A',
-    fontSize: 11,
-    marginTop: 4,
-    fontFamily: Platform.OS === 'android' ? 'monospace' : 'Courier',
-  },
+  boot: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 6, backgroundColor: '#000' },
+  bootTitle: { color: '#E8FBFF', fontSize: 18, letterSpacing: 8, fontWeight: '800', marginTop: 8 },
+  meta: { color: '#3A4A5A', fontSize: 11, fontFamily: Platform.OS === 'android' ? 'monospace' : 'Courier' },
 });

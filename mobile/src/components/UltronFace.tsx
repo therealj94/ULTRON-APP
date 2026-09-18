@@ -21,6 +21,9 @@ type Props = {
   irritation?: number;
   onTap?: (x01: number, y01: number) => void;
   onLongPress?: () => void;
+  /** Versión compacta (login/boot): diámetro de ojo y alto del escenario fijos. */
+  size?: number;
+  stageHeight?: number;
 };
 
 const CYAN = '#00E5FF';
@@ -85,10 +88,12 @@ export function UltronFace({
   irritation = 0,
   onTap,
   onLongPress,
+  size,
+  stageHeight,
 }: Props) {
   const { width, height } = useWindowDimensions();
-  const stageH = height;
-  const D = Math.min(height * 0.42, width * 0.28, 320);
+  const stageH = stageHeight ?? height;
+  const D = size ?? Math.min(height * 0.42, width * 0.28, 320);
   const ring = Math.max(6, D * 0.09);
   const gap = D * 0.55;
   const firing = blaster || attack === 'blaster';
