@@ -10,6 +10,7 @@ const KEYS = {
   settings: 'ultron_fp_settings_v2',
   chatLog: 'ultron_fp_chat_log_v2',
   fingerprint: 'ultron_fp_fingerprint_v2',
+  mesaToken: 'ultron_fp_mesa_token_v2',
 } as const;
 
 export type SavedCreds = { correo: string; clave: string; name?: string };
@@ -222,5 +223,21 @@ export async function loadChatLog() {
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
+  }
+}
+
+export async function saveMesaToken(token: string | null) {
+  if (!token) {
+    await SecureStore.deleteItemAsync(KEYS.mesaToken).catch(() => {});
+    return;
+  }
+  await SecureStore.setItemAsync(KEYS.mesaToken, token);
+}
+
+export async function loadMesaToken(): Promise<string> {
+  try {
+    return (await SecureStore.getItemAsync(KEYS.mesaToken)) || '';
+  } catch {
+    return '';
   }
 }

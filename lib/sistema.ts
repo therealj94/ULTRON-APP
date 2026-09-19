@@ -2,6 +2,8 @@
  * Foto del sistema: nodos vivos, canales listos, qué falta. Sin fingir reparaciones.
  */
 
+import { ejecutorActivo } from './ejecutor';
+
 export type Nodo = { id: string; vivo: boolean; detalle: string };
 
 async function probe(url: string, headers: Record<string, string> = {}, timeoutMs = 4000) {
@@ -23,6 +25,8 @@ export type Canal = { id: string; nombre: string; listo: boolean; falta?: string
 
 export function catalogoCanales(): Canal[] {
   const tg = !!(process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID);
+  const tgIn = tg && !!process.env.TELEGRAM_WEBHOOK_SECRET;
+  const codigo = ejecutorActivo();
   const wa = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_WHATSAPP_FROM && process.env.JEFE_WHATSAPP);
   const mail = !!(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
   const call = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_VOICE_FROM && process.env.JEFE_TELEFONO);
@@ -30,9 +34,10 @@ export function catalogoCanales(): Canal[] {
     { id: 'sistema', nombre: 'Estado de nodos', listo: true },
     { id: 'tareas', nombre: 'Pendientes', listo: true },
     { id: 'pdf', nombre: 'Generar PDF', listo: true },
-    { id: 'codigo', nombre: 'Código y ejecutor', listo: true },
+    { id: 'codigo', nombre: 'Código y ejecutor', listo: codigo, falta: codigo ? undefined : 'EJECUTOR_ACTIVO=false' },
     { id: 'web', nombre: 'Buscar / leer páginas', listo: true },
-    { id: 'telegram', nombre: 'Telegram', listo: tg, falta: tg ? undefined : 'TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID' },
+    { id: 'telegram', nombre: 'Telegram (enviar)', listo: tg, falta: tg ? undefined : 'TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID' },
+    { id: 'telegram-in', nombre: 'Telegram (responder)', listo: tgIn, falta: tgIn ? undefined : 'TELEGRAM_WEBHOOK_SECRET + chat de junta' },
     { id: 'whatsapp', nombre: 'WhatsApp', listo: wa, falta: wa ? undefined : 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, JEFE_WHATSAPP' },
     { id: 'correo', nombre: 'Correo', listo: mail, falta: mail ? undefined : 'RESEND_API_KEY + MAIL_FROM' },
     { id: 'llamada', nombre: 'Llamada de voz', listo: call, falta: call ? undefined : 'TWILIO_VOICE_FROM + JEFE_TELEFONO' },

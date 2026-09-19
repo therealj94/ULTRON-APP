@@ -15,6 +15,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { playSfx } from '../03-voz/audio';
+import { guardarTokenMesa, headersMesa } from '../10-infra/sesionCliente';
 
 interface BiometricAuthModalProps {
   isOpen: boolean;
@@ -97,14 +98,16 @@ export const BiometricAuthModal: React.FC<BiometricAuthModalProps> = ({
           try {
             const res = await fetch('/api/ultron/biometric-login', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: { 'Content-Type': 'application/json', ...headersMesa() },
               body: JSON.stringify({
                 biometricType: 'fingerprint',
                 userName,
                 role,
+                correo: emailInput,
               }),
             });
             const data = await res.json();
+            if (data.token) guardarTokenMesa(String(data.token));
             setPhase('granted');
             playSfx('biometric_success', soundFxEnabled);
             onAuthSuccess(data.user?.nombre || userName, data.user?.rol || role);
@@ -140,6 +143,7 @@ export const BiometricAuthModal: React.FC<BiometricAuthModalProps> = ({
       setIsSubmitting(false);
 
       if (res.ok && data.ok) {
+        if (data.token) guardarTokenMesa(String(data.token));
         const loggedName = data.miembro?.nombre || emailInput.split('@')[0];
         setUserName(loggedName);
         setPhase('granted');

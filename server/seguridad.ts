@@ -43,6 +43,28 @@ export function exigirSesion(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+function secretosIguales(a: string, b: string) {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  if (ba.length !== bb.length || ba.length === 0) return false;
+  return crypto.timingSafeEqual(ba, bb);
+}
+
+/** Junta: sesión emitida en /entrar, o clave de mesa en header. En producción no hay hueco. */
+export function mesaAutorizada(req: Request): boolean {
+  if (sesionDe(req)) return true;
+  const clave = process.env.ULTRON_MESA_CLAVE || '';
+  const got = String(req.headers['x-ultron-mesa'] || '');
+  if (clave && got && secretosIguales(clave, got)) return true;
+  if (process.env.NODE_ENV !== 'production' && !clave) return true;
+  return false;
+}
+
+export function exigirMesa(req: Request, res: Response, next: NextFunction) {
+  if (mesaAutorizada(req)) return next();
+  return res.status(401).json({ error: 'ULTRON es privado. Entra con sesión de junta.', honesto: true });
+}
+
 export function limitar(max: number, ventanaMs = 60_000) {
   return (req: Request, res: Response, next: NextFunction) => {
     const ip = String(req.ip || req.socket.remoteAddress || 'x');
@@ -76,7 +98,10 @@ export async function urlPublica(raw: string): Promise<{ ok: true; url: string }
   }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return { ok: false, error: 'solo http(s)' };
   const host = u.hostname.replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host.endsWith('.local') || ipPrivada(host)) {
+  if (host === 'localhost' || host.endsWith('.local')) {
+    return { ok: false, error: 'host privado bloqueado' };
+  }
+  if (net.isIP(host) && ipPrivada(host)) {
     return { ok: false, error: 'host privado bloqueado' };
   }
   try {

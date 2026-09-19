@@ -3,17 +3,20 @@
  */
 import { API_BASE } from '../config';
 import type { Mode, SessionUser } from '../config';
+import { loadMesaToken, saveMesaToken } from './storage';
 
 async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 30_000): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
+    const token = await loadMesaToken();
     const res = await fetch(`${API_BASE}${path}`, {
       ...init,
       signal: ctrl.signal,
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
+        ...(token ? { 'x-ultron-sesion': token } : {}),
         ...(init?.headers || {}),
       },
     });
@@ -43,17 +46,21 @@ export async function healthCheck() {
 }
 
 export async function loginBiometric(user: SessionUser) {
-  return api<{ user?: { nombre?: string; rol?: string; correo?: string } }>('/api/ultron/biometric-login', {
+  const data = await api<{ user?: { nombre?: string; rol?: string; correo?: string }; token?: string }>('/api/ultron/biometric-login', {
     method: 'POST',
     body: JSON.stringify({ biometricType: 'desk_access', userName: user.name, role: user.role, correo: user.correo }),
   }, 12_000);
+  if (data.token) await saveMesaToken(data.token);
+  return data;
 }
 
 export async function loginClave(correo: string, clave: string) {
-  return api<{ miembro?: { nombre?: string; rol?: string; correo?: string } }>('/api/ultron/entrar', {
+  const data = await api<{ miembro?: { nombre?: string; rol?: string; correo?: string }; token?: string }>('/api/ultron/entrar', {
     method: 'POST',
     body: JSON.stringify({ correo: String(correo).trim().toLowerCase(), clave }),
   }, 15_000);
+  if (data.token) await saveMesaToken(data.token);
+  return data;
 }
 
 export async function logoutRemote() {
@@ -62,6 +69,7 @@ export async function logoutRemote() {
   } catch {
     /* offline ok */
   }
+  await saveMesaToken(null);
 }
 
 /** Memoria de largo plazo del servidor (hechos). */
@@ -179,16 +187,19 @@ export function turnoStream(
     };
     xhr.onerror = () => fail(new Error('red'));
     xhr.ontimeout = () => (full ? finish({ reply: full.trim(), error: 'timeout' }) : fail(new Error('timeout')));
-    xhr.send(
-      JSON.stringify({
-        message: opts.message,
-        mode: opts.mode,
-        usuario: opts.userName,
-        historial: opts.historial.slice(-10),
-        memoria: opts.memoria || [],
-        ...(opts.image ? { image: opts.image } : {}),
-      })
-    );
+    const payload = JSON.stringify({
+      message: opts.message,
+      mode: opts.mode,
+      usuario: opts.userName,
+      historial: opts.historial.slice(-10),
+      memoria: opts.memoria || [],
+      ...(opts.image ? { image: opts.image } : {}),
+    });
+    void loadMesaToken().then((t) => {
+      if (settled) return;
+      if (t) xhr.setRequestHeader('x-ultron-sesion', t);
+      xhr.send(payload);
+    });
   });
   return { promise, abort: () => xhr.abort() };
 }
