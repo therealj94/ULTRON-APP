@@ -52,6 +52,10 @@ async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 30_000
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (res.status === 429 && retry401) {
+        await new Promise((r) => setTimeout(r, 900));
+        return api<T>(path, init, timeoutMs, false);
+      }
       if (retry401 && esSesionCaida(res.status, data) && !path.includes('/entrar')) {
         const ok = await renovarSesion();
         if (ok) return api<T>(path, init, timeoutMs, false);
@@ -76,7 +80,19 @@ export type Health = {
 };
 
 export async function healthCheck() {
-  return api<Health>('/api/health', undefined, 8_000);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 8_000);
+  try {
+    const res = await fetch(`${API_BASE}/api/health`, {
+      signal: ctrl.signal,
+      headers: { Accept: 'application/json' },
+    });
+    const data = (await res.json().catch(() => ({}))) as Health;
+    if (!res.ok) throw new Error((data as any).error || `HTTP ${res.status}`);
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function loginBiometric(user: SessionUser) {
@@ -130,6 +146,7 @@ export async function turno(opts: {
   message: string;
   mode: Mode;
   userName: string;
+  correo?: string;
   historial: Turn[];
   memoria?: string[];
   image?: string;
@@ -143,6 +160,7 @@ export async function turno(opts: {
           message: opts.message,
           mode: opts.mode,
           usuario: opts.userName,
+          correo: opts.correo,
           historial: opts.historial.slice(-10),
           memoria: opts.memoria || [],
           ...(opts.image ? { image: opts.image } : {}),
@@ -162,7 +180,7 @@ export async function turno(opts: {
  * Si el servidor no soporta stream (404/5xx) lanza para que el caller use turno().
  */
 export function turnoStream(
-  opts: { message: string; mode: Mode; userName: string; historial: Turn[]; memoria?: string[]; image?: string },
+  opts: { message: string; mode: Mode; userName: string; correo?: string; historial: Turn[]; memoria?: string[]; image?: string },
   onDelta: (piece: string) => void,
   onTools?: (tools: string[]) => void
 ): { promise: Promise<ChatResult>; abort: () => void } {
@@ -215,9 +233,12 @@ export function turnoStream(
     xhr.onprogress = consume;
     xhr.onreadystatechange = () => {
       if (xhr.readyState !== 4) return;
+      if (xhr.status === 429) return fail(new Error('HTTP 429'));
       if (xhr.status < 200 || xhr.status >= 300) return fail(new Error(`HTTP ${xhr.status}`));
       consume();
-      finish(done || { reply: full.trim(), error: full ? undefined : 'stream vacío' });
+      const reply = String((done && done.reply) || full).trim();
+      if (!reply) return fail(new Error('stream vacío'));
+      finish(done || { reply });
     };
     xhr.onerror = () => fail(new Error('red'));
     xhr.ontimeout = () => (full ? finish({ reply: full.trim(), error: 'timeout' }) : fail(new Error('timeout')));
@@ -225,6 +246,7 @@ export function turnoStream(
       message: opts.message,
       mode: opts.mode,
       usuario: opts.userName,
+      correo: opts.correo,
       historial: opts.historial.slice(-10),
       memoria: opts.memoria || [],
       ...(opts.image ? { image: opts.image } : {}),

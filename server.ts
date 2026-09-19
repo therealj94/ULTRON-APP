@@ -63,6 +63,7 @@ import {
 } from './lib/telegram-in';
 
 const app = express();
+app.set('trust proxy', 1);
 const httpServer = http.createServer(app);
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -813,7 +814,7 @@ app.post('/api/memoria', exigirMesaODesk, async (req, res) => {
 });
 
 
-app.post('/api/tts/stream', exigirMesaODesk, limitar(20), async (req, res) => {
+app.post('/api/tts/stream', exigirMesaODesk, limitar(60), async (req, res) => {
   const text = String(req.body?.text || '').slice(0, 2000).trim();
   const voice = String(req.body?.voice || 'luna');
   const instruct = String(req.body?.instruct || '').slice(0, 400);
@@ -851,7 +852,7 @@ app.post('/api/tts/stream', exigirMesaODesk, limitar(20), async (req, res) => {
  * Oído de la app nativa: ElevenLabs Scribe (v2 → v1), Gemini de reserva si hay key.
  * Body: { audioBase64 | audio (data URL o base64), mimeType | mime, language }.
  */
-app.post('/api/stt', exigirMesaODesk, limitar(20), async (req, res) => {
+app.post('/api/stt', exigirMesaODesk, limitar(60), async (req, res) => {
   const t0 = Date.now();
   const raw = String(req.body?.audioBase64 || req.body?.audio || '');
   if (!raw || raw.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
@@ -877,7 +878,7 @@ app.get('/api/tts', exigirMesaODesk, (req, res, next) => {
   req.body = { ...req.query };
   next();
 });
-app.all('/api/tts', exigirMesaODesk, limitar(20), async (req, res) => {
+app.all('/api/tts', exigirMesaODesk, limitar(60), async (req, res) => {
   const text = limpiarParaVoz(String(req.body?.text || '').slice(0, 2000));
   const voice = String(req.body?.voice || ULTRON_VOICE.qwenVoice);
   const instruct = String(req.body?.instruct || '').slice(0, 400);
@@ -1281,7 +1282,7 @@ async function correrTurno(body: any): Promise<{
   return guardar({ reply, via, mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
 }
 
-app.post('/api/turno', exigirMesaODesk, limitar(20), async (req, res) => {
+app.post('/api/turno', exigirMesaODesk, limitar(60), async (req, res) => {
   const s = sesionDe(req);
   const out = await correrTurno({
     ...req.body,
@@ -1310,7 +1311,7 @@ app.post('/api/turno', exigirMesaODesk, limitar(20), async (req, res) => {
  * Turno en streaming (SSE): la app empieza a hablar con la primera frase mientras Qwen sigue escribiendo.
  * Eventos: `tools` (herramientas usadas), `delta` (texto), `done` ({ reply, ms }), `error`.
  */
-app.post('/api/turno/stream', exigirMesaODesk, limitar(20), async (req, res) => {
+app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Accel-Buffering', 'no');

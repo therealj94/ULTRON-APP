@@ -63,10 +63,15 @@ test('mesa nativa entra por nombre de junta aunque el token haya muerto', () => 
     true
   );
   assert.equal(
+    mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/turno' } as any),
+    true
+  );
+  assert.equal(
     mesaDeskAutorizada({ headers: {}, body: { usuario: 'Melany' }, path: '/api/turno' } as any),
-    false
+    true
   );
   assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/tts', query: {} } as any), true);
+  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/ejecutar' } as any), false);
   if (prevN === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = prevN;
   if (prevK === undefined) delete process.env.ULTRON_MESA_CLAVE;

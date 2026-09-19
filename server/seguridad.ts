@@ -121,17 +121,27 @@ export function mesaAutorizada(req: Request): boolean {
   return false;
 }
 
+const RUTAS_MESA = [
+  '/api/turno',
+  '/api/tts',
+  '/api/stt',
+  '/api/vision/analyze',
+  '/api/memoria',
+];
+
+function rutaMesa(path: string) {
+  const p = String(path || '').split('?')[0];
+  return RUTAS_MESA.some((r) => p === r || p.startsWith(`${r}/`));
+}
+
 /**
- * Mesa nativa: guarda el usuario en el teléfono y reutiliza un token de Render.
- * Ese token muere al redesplegar (Map en memoria). La APK instalada no vuelve a /entrar
- * y traduce el 401 a «no alcanzo el cerebro remoto». Si el cuerpo trae un miembro de
- * junta, dejamos hablar/oír/ver. Redeploy, ejecutor y bóveda siguen exigiendo sesión.
+ * Mesa nativa: el token de Render muere al redesplegar y la APK no vuelve a /entrar.
+ * Hablar, oír, ver y memoria corta pasan (con rate limit). Bóveda, ejecutor y
+ * redeploy siguen exigiendo sesión real.
  */
 export function mesaDeskAutorizada(req: Request): boolean {
   if (mesaAutorizada(req)) return true;
-  const path = String(req.path || '');
-  if (path === '/api/tts' || path.startsWith('/api/tts/')) return true;
-  if (path === '/api/stt' || path === '/api/vision/analyze') return true;
+  if (rutaMesa(req.path) || rutaMesa((req as any).originalUrl)) return true;
   return !!quienEs({
     nombre: String(req.body?.usuario || req.body?.userName || req.body?.nombre || req.query?.usuario || ''),
     correo: String(req.body?.correo || req.query?.correo || ''),
@@ -158,8 +168,12 @@ export function exigirMesaODesk(req: Request, res: Response, next: NextFunction)
 
 export function limitar(max: number, ventanaMs = 60_000) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const ip = String(req.ip || req.socket.remoteAddress || 'x');
-    const k = `${ip}:${req.path}`;
+    const forwarded = String(req.headers['x-forwarded-for'] || '')
+      .split(',')[0]
+      .trim();
+    const ip = forwarded || String(req.ip || req.socket.remoteAddress || 'x');
+    const quien = String(req.body?.usuario || req.body?.correo || req.query?.usuario || '');
+    const k = `${ip}:${quien}:${req.path}`;
     const now = Date.now();
     const arr = (hits.get(k) || []).filter((t) => now - t < ventanaMs);
     if (arr.length >= max) {

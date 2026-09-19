@@ -223,7 +223,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       setFace('THINKING');
       setStatus('thinking');
       setToolHint('');
-      const base = { message: cmd, mode: modeRef.current, userName: user.name, historial: historial.current, memoria: longMemory.current, image: opts?.image };
+      const base = { message: cmd, mode: modeRef.current, userName: user.name, correo: user.correo, historial: historial.current, memoria: longMemory.current, image: opts?.image };
       const filler = (text: string) => speak(text, { onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) });
       try {
 
@@ -318,8 +318,14 @@ export function DeskScreen({ user, onLogout }: Props) {
       const result = await chat;
       if (ack) await ack;
       setToolHint('');
-      if (result.error || !result.reply) {
-        const auth = /sesión|privado|401/i.test(String(result.error || ''));
+      const failed = (r: { error?: string; reply?: string }) => !!(r.error || !r.reply);
+      let out = result;
+      if (failed(out)) {
+        await new Promise((r) => setTimeout(r, 800));
+        out = await turno(base);
+      }
+      if (failed(out)) {
+        const auth = /sesión|privado|401/i.test(String(out.error || ''));
         if (auth) {
           setOnline(true);
           await say('Se me cerró la sesión de la mesa. Entra de nuevo y te oigo.', 'CONCERNED');
@@ -330,14 +336,14 @@ export function DeskScreen({ user, onLogout }: Props) {
         return;
       }
       setOnline(true);
-      if (result.mode && result.mode !== 'CONOCER' && MODE_WORDS.some(([, m]) => m === result.mode)) setMode(result.mode);
-      await say(result.reply, faceForReply(result.reply));
+      if (out.mode && out.mode !== 'CONOCER' && MODE_WORDS.some(([, m]) => m === out.mode)) setMode(out.mode);
+      await say(out.reply, faceForReply(out.reply));
       } finally {
         if (!speakingRef.current) pauseMicForTts(false);
         if (!micMuted && !speakingRef.current) setStatus('listening');
       }
     },
-    [micMuted, restFace, say, showBubble, user.name]
+    [micMuted, restFace, say, showBubble, user.correo, user.name]
   );
 
   const whatDoYouSee = useCallback(async () => {
@@ -473,7 +479,6 @@ export function DeskScreen({ user, onLogout }: Props) {
         }
 
         const offline = localAnswer(cmd);
-        if (offline && !online) return void (await say(offline, 'IDLE'));
         if (offline && /hora|fecha|que dia|ayuda|comandos|que puedes/.test(q)) return void (await say(offline, 'IDLE'));
 
         await askBrain(cmd);
@@ -486,7 +491,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [askBrain, camPerm?.granted, fireBlaster, fireSaber, micMuted, onLogout, online, requestCam, say, startConocer, user, whatDoYouSee]
+    [askBrain, camPerm?.granted, fireBlaster, fireSaber, micMuted, onLogout, requestCam, say, startConocer, user, whatDoYouSee]
   );
 
   // ---------- Tacto: reacciones distintas según zona, ritmo y humor ----------
@@ -735,6 +740,7 @@ export function DeskScreen({ user, onLogout }: Props) {
             message: 'Comenta en UNA frase corta y natural algo nuevo o útil que veas en la cámara (persona, gesto, objeto). Si no hay nada que valga la pena, responde solo: nada.',
             mode: modeRef.current,
             userName: user.name,
+            correo: user.correo,
             historial: [],
             image: `data:image/jpeg;base64,${frame}`,
           });
@@ -748,7 +754,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         }
       })();
     },
-    [handleCommand, say, user.name]
+    [handleCommand, say, user.correo, user.name]
   );
 
   const toggleMute = async () => {
