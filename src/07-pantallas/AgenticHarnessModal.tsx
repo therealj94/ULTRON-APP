@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { Mode } from '../types';
-import { X, Cpu, Sparkles, Activity, CheckCircle2, Sliders, Glasses, MessageSquare, Terminal, Send } from 'lucide-react';
+import { X, Cpu, Sparkles, Activity, Sliders, Glasses, Terminal, Send } from 'lucide-react';
 import { analyzeConversationTopic, SemanticClassification } from '../04-cerebro/qwenHarness';
+import { pedirTurno } from '../04-cerebro/turno';
+import { enrutar } from '../04-cerebro/skills';
 
 interface AgenticHarnessModalProps {
   isOpen: boolean;
@@ -13,6 +15,7 @@ interface AgenticHarnessModalProps {
   onToggleVisor: () => void;
   onApplyClassification: (classification: SemanticClassification) => void;
   onSpeak: (text: string) => void;
+  usuario?: string;
 }
 
 export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
@@ -25,8 +28,10 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
   onToggleVisor,
   onApplyClassification,
   onSpeak,
+  usuario,
 }) => {
   const [testPrompt, setTestPrompt] = useState('');
+  const [busy, setBusy] = useState(false);
   const [activeLog, setActiveLog] = useState<Array<{
     timestamp: string;
     text: string;
@@ -35,87 +40,92 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
     tool?: string;
   }>>([
     {
-      timestamp: '19:04:12',
-      text: 'Iniciando núcleo de inteligencia semántica de ULTRON FP...',
+      timestamp: '—',
+      text: 'Harness real: POST /api/turno. Sin teatro.',
       mode: 'GUARDIAN',
-      intent: 'SYSTEM_BOOT',
-      tool: 'initialize_boardroom_kernel',
+      intent: 'HARNESS',
+      tool: '/api/turno',
     },
   ]);
 
   if (!isOpen) return null;
 
+  const correr = async (prompt: string) => {
+    const q = prompt.trim();
+    if (!q || busy) return;
+    setBusy(true);
+    const time = new Date().toLocaleTimeString();
+    const local = analyzeConversationTopic(q);
+    if (local) onApplyClassification(local);
+    const ruta = enrutar(q);
+    try {
+      const data = await pedirTurno({ message: q, mode: local?.mode || currentMode, usuario });
+      const reply = String(data.reply || data.error || 'Sin respuesta').slice(0, 400);
+      const tools = (data.herramientas || []).join(',') || ruta.skill;
+      setActiveLog((prev) => [
+        {
+          timestamp: time,
+          text: `${q} → ${reply}`,
+          mode: (local?.mode || currentMode) as Mode,
+          intent: ruta.skill,
+          tool: tools,
+        },
+        ...prev.slice(0, 15),
+      ]);
+      onSpeak(reply);
+    } catch (e: any) {
+      const err = String(e?.message || e).slice(0, 160);
+      setActiveLog((prev) => [
+        {
+          timestamp: time,
+          text: `${q} → ${err}`,
+          mode: currentMode,
+          intent: 'ERROR',
+        },
+        ...prev.slice(0, 15),
+      ]);
+      onSpeak(err);
+    } finally {
+      setBusy(false);
+      setTestPrompt('');
+    }
+  };
+
   const handleTestEvaluation = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!testPrompt.trim()) return;
-
-    const res = analyzeConversationTopic(testPrompt);
-    const time = new Date().toLocaleTimeString();
-
-    if (res) {
-      onApplyClassification(res);
-      setActiveLog((prev) => [
-        {
-          timestamp: time,
-          text: testPrompt,
-          mode: res.mode,
-          intent: res.intent,
-          tool: res.toolCall?.name,
-        },
-        ...prev.slice(0, 15),
-      ]);
-      onSpeak(res.thought);
-    } else {
-      setActiveLog((prev) => [
-        {
-          timestamp: time,
-          text: testPrompt,
-          mode: currentMode,
-          intent: 'GENERAL_CONVERSATION',
-        },
-        ...prev.slice(0, 15),
-      ]);
-      onSpeak(`Procesando consulta general: "${testPrompt}".`);
-    }
-
-    setTestPrompt('');
+    void correr(testPrompt);
   };
 
   const PRESET_TOPICS = [
     {
-      label: 'Finanzas & Tesorería',
-      mode: 'GOLD',
-      prompt: 'Revisemos el balance de tesorería, reservas en metales y utilidades del trimestre.',
-    },
-    {
-      label: 'Seguridad & Protección',
+      label: 'Hora Honduras',
       mode: 'GUARDIAN',
-      prompt: 'Alerta de seguridad: blindar acceso del directorio y activar firewall corporativo.',
+      prompt: 'qué hora es',
     },
     {
-      label: 'Métricas & Telemetría',
+      label: 'Spot oro',
+      mode: 'GOLD',
+      prompt: 'precio del oro',
+    },
+    {
+      label: 'Web BCH',
       mode: 'ANALYTICAL',
-      prompt: 'Analizar gráficos de conversión, métricas y telemetría de rendimiento.',
+      prompt: 'busca tipo de cambio BCH',
     },
     {
-      label: 'Estrategia Táctica',
-      mode: 'STRATEGIC',
-      prompt: 'Simular jugada táctica y posicionamiento competitivo para ganar cuota de mercado.',
-    },
-    {
-      label: 'Innovación & Diseño',
-      mode: 'CREATIVE',
-      prompt: 'Generar ideas innovadoras y diseño de concepto disruptivo para la junta directiva.',
-    },
-    {
-      label: 'Exploración Global',
+      label: 'Clima',
       mode: 'EXPLORER',
-      prompt: 'Explorar tendencias geopolíticas y buscar oportunidades en nuevos mercados.',
+      prompt: 'clima en Tegucigalpa',
     },
     {
-      label: 'Minería & Datos Masivos',
-      mode: 'MINING',
-      prompt: 'Ejecutar análisis de datos masivos y optimizar los conductos de información.',
+      label: 'Genesis',
+      mode: 'STRATEGIC',
+      prompt: 'actualiza el cerebro',
+    },
+    {
+      label: 'Canto 1',
+      mode: 'CREATIVE',
+      prompt: 'canta 1',
     },
   ];
 
@@ -129,7 +139,6 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
         className="relative w-full max-w-3xl bg-[#060B10] border border-[#05E1FF]/40 rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.9),0_0_35px_rgba(5,225,255,0.2)] flex flex-col max-h-[90vh] overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-[#05E1FF]/20 bg-[#03070B]">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-lg border border-[#05E1FF]/40 bg-[#05E1FF]/10 flex items-center justify-center text-[#05E1FF]">
@@ -137,10 +146,10 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
             </div>
             <div>
               <h2 className="font-display font-bold tracking-widest text-lg text-[#05E1FF] uppercase">
-                NÚCLEO DE INTELIGENCIA SEMÁNTICA · ULTRON FP
+                HARNESS /api/turno · ULTRON FP
               </h2>
               <p className="text-xs text-[#8FA3B0]">
-                ORQUESTADOR AUTÓNOMO PARA TRANSICIÓN DE MODOS Y DESPACHO DE HERRAMIENTAS
+                ROUTER DE SKILLS + QWEN. MÁXIMO 2 HOPS JSON.
               </p>
             </div>
           </div>
@@ -153,11 +162,8 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
           </button>
         </div>
 
-        {/* Body Content */}
         <div className="p-6 overflow-y-auto space-y-6">
-          {/* Controls */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Auto-Mode Switch */}
             <div className="p-4 rounded-xl bg-black/60 border border-[#05E1FF]/20 flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -181,7 +187,6 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
               </button>
             </div>
 
-            {/* Visor Toggle */}
             <div className="p-4 rounded-xl bg-black/60 border border-[#05E1FF]/20 flex items-center justify-between">
               <div>
                 <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -206,11 +211,10 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
             </div>
           </div>
 
-          {/* Presets */}
           <div className="space-y-2">
             <h3 className="text-xs font-bold text-[#05E1FF] uppercase tracking-wider flex items-center gap-2">
               <Sliders className="w-4 h-4" />
-              <span>Directrices Temáticas de Prueba</span>
+              <span>Pruebas reales contra el harness</span>
             </h3>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -218,15 +222,12 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
                 <button
                   key={i}
                   type="button"
+                  disabled={busy}
                   onClick={() => {
                     setTestPrompt(topic.prompt);
-                    const res = analyzeConversationTopic(topic.prompt);
-                    if (res) {
-                      onApplyClassification(res);
-                      onSpeak(res.thought);
-                    }
+                    void correr(topic.prompt);
                   }}
-                  className="p-3 rounded-lg border border-[#05E1FF]/20 bg-[#04080D] hover:border-[#05E1FF] hover:bg-[#05E1FF]/10 text-left transition-all cursor-pointer flex flex-col justify-between gap-1"
+                  className="p-3 rounded-lg border border-[#05E1FF]/20 bg-[#04080D] hover:border-[#05E1FF] hover:bg-[#05E1FF]/10 text-left transition-all cursor-pointer flex flex-col justify-between gap-1 disabled:opacity-50"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-display font-bold text-white tracking-wide">
@@ -244,29 +245,29 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
             </div>
           </div>
 
-          {/* Test Input */}
           <form onSubmit={handleTestEvaluation} className="flex gap-2">
             <input
               type="text"
               value={testPrompt}
               onChange={(e) => setTestPrompt(e.target.value)}
-              placeholder="Escribe una instrucción de junta para analizar su clasificación..."
+              placeholder="Orden para /api/turno…"
               className="flex-1 bg-[#020508] border border-[#05E1FF]/30 text-[#05E1FF] placeholder-[#8FA3B0]/50 text-xs px-4 py-2.5 rounded-lg focus:outline-none focus:border-[#05E1FF] focus:shadow-[0_0_12px_rgba(5,225,255,0.25)] transition-all font-mono"
             />
             <button
               type="submit"
-              className="bg-[#05E1FF] text-[#001418] font-display font-bold text-xs tracking-wider px-5 py-2.5 rounded-lg hover:bg-[#05E1FF]/90 transition-all flex items-center gap-1.5 cursor-pointer uppercase"
+              disabled={busy}
+              className="bg-[#05E1FF] text-[#001418] font-display font-bold text-xs tracking-wider px-5 py-2.5 rounded-lg hover:bg-[#05E1FF]/90 transition-all flex items-center gap-1.5 cursor-pointer uppercase disabled:opacity-50"
             >
               <Send className="w-3.5 h-3.5" />
-              <span>ANALIZAR</span>
+              <span>{busy ? 'TURNO…' : 'TURNO'}</span>
             </button>
           </form>
 
-          {/* Activity Log */}
           <div className="space-y-2">
             <h3 className="text-xs font-bold text-[#05E1FF] uppercase tracking-wider flex items-center gap-2">
               <Terminal className="w-4 h-4" />
-              <span>Registro de Inferencia Semántica</span>
+              <span>Registro del harness</span>
+              {busy && <Activity className="w-3 h-3 text-[#05E1FF] animate-pulse" />}
             </h3>
 
             <div className="p-3 rounded-xl bg-[#020508] border border-[#05E1FF]/20 max-h-40 overflow-y-auto space-y-2">
@@ -277,7 +278,7 @@ export const AgenticHarnessModal: React.FC<AgenticHarnessModalProps> = ({
                   <span className="text-white flex-1 truncate">{log.text}</span>
                   {log.tool && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-[#00FFA3]/15 text-[#00FFA3] font-mono">
-                      {log.tool}()
+                      {log.tool}
                     </span>
                   )}
                 </div>
