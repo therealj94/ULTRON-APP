@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { chatsPermitidos, telegramAutorizado, telegramWebhookSecretOk, parsearUpdateTelegram } from '../lib/telegram-in';
+import { chatsPermitidos, telegramAutorizado, telegramWebhookSecretOk, parsearUpdateTelegram, recordarTelegram, hiloTelegram, resetHilosTelegramTest } from '../lib/telegram-in';
 
 describe('Telegram inbound privado', () => {
   it('sin chat configurado nadie entra', () => {
@@ -106,5 +106,29 @@ describe('Telegram inbound privado', () => {
     assert.equal(p?.texto, 'cómo está el sistema');
     assert.equal(p?.nombre, 'José');
     assert.equal(p?.comando, undefined);
+  });
+
+  it('el hilo de un chat sobrevive en memoria entre turnos', () => {
+    resetHilosTelegramTest();
+    recordarTelegram('chat-test-hilo', 'busca tipo de cambio BCH', 'El BCH publica el promedio.');
+    const h = hiloTelegram('chat-test-hilo');
+    assert.equal(h.length, 2);
+    assert.equal(h[0].texto, 'busca tipo de cambio BCH');
+    recordarTelegram('chat-test-hilo', 'y eso en lempiras?', 'Sigue el promedio del BCH.');
+    assert.equal(hiloTelegram('chat-test-hilo').length, 4);
+    resetHilosTelegramTest();
+  });
+
+  it('toma el reply_to como contexto del hilo', async () => {
+    const p = await parsearUpdateTelegram({
+      message: {
+        chat: { id: 1 },
+        from: { id: 1, first_name: 'José' },
+        text: 'y eso?',
+        reply_to_message: { text: 'El BCH publica el tipo de cambio. Fuente bch.hn' },
+      },
+    });
+    assert.equal(p?.texto, 'y eso?');
+    assert.match(String(p?.replyTo), /BCH/);
   });
 });

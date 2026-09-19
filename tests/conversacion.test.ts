@@ -6,6 +6,7 @@ import {
   esPreguntaExterna,
   extraerUrls,
   fusionarHilo,
+  hechoHilo,
   pedidoRed,
   resolverReferencia,
   urlsParaLeer,
@@ -36,6 +37,9 @@ describe('Hilo y búsqueda sin que se lo pidan', () => {
     const resuelto = resolverReferencia(msg, hilo);
     assert.match(resuelto, /github\.com\/concept-bytes\/jarvis/i);
     assert.match(resuelto, /No pidas el enlace/);
+    assert.equal(esContinuacion('y eso?'), true);
+    assert.equal(esContinuacion('sigue'), true);
+    assert.equal(esContinuacion('dale más'), true);
   });
 
   it('pregunta externa busca sola; saludo y «recuerda que» no', () => {
@@ -57,6 +61,23 @@ describe('Hilo y búsqueda sin que se lo pidan', () => {
     assert.equal(msgs.at(-1)?.role, 'assistant');
     assert.match(msgs.at(-1)?.content || '', /Jarvis/);
     assert.equal(msgs.some((m) => m.content === 'revisa profundo esto'), false);
+  });
+
+  it('el chat de Telegram no lo pisa la memoria vieja del escritorio', () => {
+    const cliente = [
+      { rol: 'user', texto: 'busca tipo de cambio BCH' },
+      { rol: 'ultron', texto: 'El BCH publica el promedio. Fuente bch.hn.' },
+    ];
+    const durable = [
+      { rol: 'user', texto: 'hola de la mesa' },
+      { rol: 'ultron', texto: 'Aquí en el escritorio.' },
+      { rol: 'user', texto: 'busca tipo de cambio BCH' },
+      { rol: 'ultron', texto: 'El BCH publica el promedio. Fuente bch.hn.' },
+    ];
+    const msgs = fusionarHilo({ durable, cliente, mensaje: 'y eso en lempiras?' });
+    assert.ok(msgs.some((m) => /BCH/.test(m.content)));
+    const hecho = hechoHilo(cliente);
+    assert.match(String(hecho), /BCH|bch/i);
   });
 
   it('separa hilo corto y mediano', () => {

@@ -49,7 +49,7 @@ import {
   hiloDe,
   type CanalMem,
 } from './lib/memoria';
-import { fusionarHilo, pedidoRed, resolverReferencia, urlsParaLeer, type MsgHilo } from './lib/conversacion';
+import { fusionarHilo, hechoHilo, pedidoRed, resolverReferencia, urlsParaLeer, unirHilos, type MsgHilo } from './lib/conversacion';
 import { ahoraHonduras, lineaReloj, preguntaHora } from './lib/reloj';
 import { enrutar, type SkillRoute } from './lib/skills';
 import { appendAprendido, bloqueLargoPlazo } from './lib/aprendido';
@@ -58,11 +58,14 @@ import { nombreDe, puedeCambiarSistema } from './lib/junta';
 import { mensajeBienvenidaUltron } from './lib/bienvenida';
 import {
   ayudaTelegram,
+  cargarHilosTelegram,
   hiloTelegram,
   parsearUpdateTelegram,
+  persistirHilosTelegram,
   recordarTelegram,
   registrarWebhookTelegram,
   telegramAutorizado,
+  telegramEscribiendo,
   telegramResponder,
   telegramWebhookSecretOk,
 } from './lib/telegram-in';
@@ -957,12 +960,17 @@ async function prepararTurno(body: any) {
       }))
     : [];
   const durable = hiloDe(quien).map((t) => ({ rol: t.rol, texto: t.texto }));
-  const hiloTodo = durable.length >= 2 ? durable : [...clienteHilo, ...durable];
+  const hiloTodo = clienteHilo.length ? unirHilos(clienteHilo, durable) : durable;
   const hiloPrevio = hiloTodo.filter(
     (t, i) => !(i === hiloTodo.length - 1 && t.rol === 'user' && t.texto === message)
   );
   const mensajeHilo = resolverReferencia(message, hiloPrevio);
-  const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: 16 });
+  const hilo: MsgHilo[] = fusionarHilo({
+    durable,
+    cliente: clienteHilo,
+    mensaje: message,
+    max: canal === 'telegram' ? 24 : 16,
+  });
   const largaApp: string[] = Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
   for (const h of largaApp) {
     if (h.trim().length > 8) await guardarHechoQuien({ quien, hecho: h.trim(), canal: 'mesa' });
@@ -976,6 +984,8 @@ async function prepararTurno(body: any) {
   const ruta = enrutar(message);
 
   hechos.push(lineaReloj());
+  const temaHilo = hechoHilo(hiloPrevio);
+  if (temaHilo) hechos.push(temaHilo);
   if (preguntaHora(message)) {
     hechos.push(`HORA JUNTA: ${ahoraHonduras()} America/Tegucigalpa. Usá esta cifra. No inventes otra.`);
   }
@@ -1145,7 +1155,7 @@ async function prepararTurno(body: any) {
     (soloDato && cifra ? cifra.replace(/ No inventes otro número\./g, '') : preguntaHora(message) ? `AHORA Honduras: ${ahoraHonduras()} (America/Tegucigalpa).` : null);
 
   const hiloTxt = hiloPrevio
-    .slice(-12)
+    .slice(canal === 'telegram' ? -24 : -12)
     .map((t) => `${t.rol === 'ultron' ? 'ULTRON' : 'Junta'}: ${String(t.texto).replace(/\s+/g, ' ').slice(0, 280)}`)
     .join('\n');
   const mem = fotoMemoria(quien);
@@ -1157,11 +1167,11 @@ async function prepararTurno(body: any) {
     lineaReloj(),
     `Sos ULTRON, voz de Genesis Core. Junta: Medardo fundador; José, Melany y Leonardo cofundadores. Hablás con ${nombreDe(quien)}.`,
     canal === 'telegram'
-      ? 'TELEGRAM: hasta ocho frases. «esto» es lo último del hilo.'
+      ? 'TELEGRAM: texto, no voz. Hasta ocho frases. ESTE chat es una sola conversación: los mensajes anteriores son el hilo. No saludes de nuevo ni pidas que te repitan el tema. «esto/eso/dale/sigue/y eso» es HILO ACTIVO. Si hay [RESPONDE AL MENSAJE], contestá eso.'
       : 'ESCRITORIO: [TONO] al inicio, máximo 2 frases, sin emojis.',
     `HECHOS:\n${hechos.join('\n') || '(ninguno)'}`,
     `LARGO PLAZO:\n${bloqueLargoPlazo(hechosMem)}`,
-    `ÚLTIMOS 12 TURNOS:\n${hiloTxt || '(nada)'}`,
+    `ÚLTIMOS TURNOS:\n${hiloTxt || '(nada)'}`,
     'No inventes precios ni HTML que no leíste. Si preguntan la hora, usá AHORA Honduras.',
     'Si te falta un dato de internet o una página, respondé SOLO el JSON del tool. Si ya tenés HECHOS, no pidas tool.\n{"tool":"web","q":"..."}\n{"tool":"pagina","url":"https://..."}\n{"tool":"spot_oro"}',
   ].join('\n\n');
@@ -1174,15 +1184,20 @@ async function prepararTurno(body: any) {
   return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system, quien, canal, hilo, ruta };
 }
 
-function wrapUser(hechos: string[], message: string) {
-  return `CONOCIMIENTO_OG:\n${topeTokens(CONOCIMIENTO_OG, 4000)}\n\nHECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nJunta: ${message}`;
+function wrapUser(hechos: string[], message: string, canal?: CanalMem) {
+  const sigue =
+    canal === 'telegram'
+      ? '\n\nSeguí el hilo de los mensajes anteriores. No empieces de cero. «esto» es HILO ACTIVO si está en HECHOS.'
+      : '';
+  return `CONOCIMIENTO_OG:\n${topeTokens(CONOCIMIENTO_OG, 4000)}\n\nHECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nJunta: ${message}${sigue}`;
 }
 
 async function preguntarQwen(
   system: string,
   message: string,
   hechos: string[],
-  hilo: MsgHilo[] = []
+  hilo: MsgHilo[] = [],
+  canal: CanalMem = 'mesa'
 ): Promise<{ ok: boolean; reply: string; error?: string }> {
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return { ok: false, reply: '', error: 'Qwen no configurado' };
@@ -1199,7 +1214,7 @@ async function preguntarQwen(
           ...hilo.map((m) => ({ role: m.role, content: m.content })),
           {
             role: 'user',
-            content: wrapUser(hechos, message),
+            content: wrapUser(hechos, message, canal),
           },
         ],
       }),
@@ -1335,7 +1350,7 @@ async function correrTurno(body: any): Promise<{
     if (reply) return guardar({ reply, via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
     return { reply: '', via: 'none', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: 'Qwen no configurado' };
   }
-  const q1 = await preguntarQwen(system, message, hechos, hilo);
+  const q1 = await preguntarQwen(system, message, hechos, hilo, canal);
   if (!q1.ok) {
     if (hechos.length) return guardar({ reply: hechos.join('\n'), via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
     return { reply: '', via: 'qwen', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: q1.error };
@@ -1355,7 +1370,7 @@ async function correrTurno(body: any): Promise<{
       extra = await correrHerramientaPedida(ped, reply, quien);
     }
     hechos.push(extra);
-    const qn = await preguntarQwen(system, message, hechos, hilo);
+    const qn = await preguntarQwen(system, message, hechos, hilo, canal);
     if (!qn.ok) {
       reply = quitarJsonTool(quitarLineaPedido(reply)) + (extra ? `\n\n${extra}` : '');
       via = 'harness-parcial';
@@ -1383,7 +1398,7 @@ async function correrTurno(body: any): Promise<{
     const hecho = `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
     hechos.push(hecho);
     if (!r.ok) {
-      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos, hilo);
+      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos, hilo, canal);
       reply = qn.ok ? quitarLineaPedido(qn.reply) : `${quitarLineaPedido(reply)}\n\n${hecho}`;
     } else {
       reply = `${quitarLineaPedido(reply)}\n\n${hecho}`;
@@ -1471,7 +1486,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
           ...(hilo || []).map((m) => ({ role: m.role, content: m.content })),
           {
             role: 'user',
-            content: wrapUser(hechos, message),
+            content: wrapUser(hechos, message, canal),
           },
         ],
       }),
@@ -1582,6 +1597,8 @@ async function procesarTelegram(update: any) {
     console.warn('[ULTRON] telegram rechazado', parsed.chatId, parsed.userId, parsed.nombre);
     return;
   }
+  await cargarHilosTelegram();
+  await telegramEscribiendo(parsed.chatId);
   if (parsed.comando === '/start') {
     const quien = resolverQuien({
       usuario: parsed.nombre,
@@ -1610,6 +1627,10 @@ async function procesarTelegram(update: any) {
   }
   if (!texto && parsed.imageDataUrl) texto = '¿qué ves en esta imagen?';
   if (!texto && parsed.documento) texto = `Lee este PDF (${parsed.documento.filename}) y resume solo lo que dice. No inventes.`;
+  if (parsed.replyTo) {
+    texto = `${texto || '…'}\n\n[RESPONDE AL MENSAJE: ${parsed.replyTo}]`;
+  }
+  await telegramEscribiendo(parsed.chatId);
   const out = await correrTurno({
     message: texto,
     usuario: parsed.nombre,
@@ -1623,6 +1644,7 @@ async function procesarTelegram(update: any) {
   });
   const reply = out.reply || out.error || 'No pude contestar.';
   recordarTelegram(parsed.chatId, texto, reply);
+  void persistirHilosTelegram();
   await telegramResponder(parsed.chatId, reply);
   const yaMandóVoz = out.herramientas.includes('voz') || out.herramientas.includes('urgente');
   const quiereVoz = parsed.comando === '/audio' || pideNotaDeVoz(texto);
@@ -1686,6 +1708,9 @@ async function startServer() {
     cargarMemoria()
       .then(() => console.log('[ULTRON] memoria', estadoMemoria().detalle))
       .catch((e) => console.warn('[ULTRON] memoria', String(e?.message || e).slice(0, 160)));
+    cargarHilosTelegram()
+      .then(() => console.log('[ULTRON] hilo telegram', hiloTelegram(process.env.TELEGRAM_CHAT_ID || '').length, 'turnos'))
+      .catch((e) => console.warn('[ULTRON] hilo telegram', String(e?.message || e).slice(0, 160)));
   });
 }
 
