@@ -13,7 +13,6 @@ import {
   decodeDataUrl,
   elevenSpeak,
   chatterboxSpeak,
-  elevenTranscribe,
   getCachedAudio,
   limpiarParaVoz,
   normalizarCorreo,
@@ -36,6 +35,7 @@ import { iniciarCentinela } from './lib/centinela';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verImagen } from './lib/vision';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
+import { transcribirAudio } from './lib/oido';
 import { esTareaDeCodigo } from './lib/prompts/cot';
 import {
   cargarMemoria,
@@ -840,28 +840,14 @@ app.post('/api/stt', exigirMesa, limitar(20), async (req, res) => {
   if (!raw || raw.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
   const { mime, buffer } = decodeDataUrl(raw, String(req.body?.mimeType || req.body?.mime || 'audio/m4a'));
   if (buffer.length < 1200) return res.json({ text: '', model: 'vacio', ms: Date.now() - t0, honesto: true });
-  const key = clave('elevenlabs') || process.env.ELEVENLABS_API_KEY || '';
-  if (key) {
-    const out = await elevenTranscribe({ apiKey: key, audio: buffer, mime, language: String(req.body?.language || 'es') });
-    if (out.model !== 'error') return res.json({ text: out.text, model: out.model, via: 'elevenlabs', ms: Date.now() - t0, bytes: buffer.length, honesto: true });
+  const oido = await transcribirAudio({ audio: buffer, mime, language: String(req.body?.language || 'es') });
+  if (oido.texto) {
+    return res.json({ text: oido.texto, via: oido.via, ms: Date.now() - t0, bytes: buffer.length, honesto: true });
   }
-  if (!ai) return res.status(503).json({ error: 'STT sin ElevenLabs ni Gemini', honesto: true });
-  try {
-    const r: any = await ai.models.generateContent({
-      model: process.env.GEMINI_STT_MODEL || 'gemini-2.0-flash',
-      contents: [{
-        parts: [
-          { inlineData: { mimeType: mime, data: buffer.toString('base64') } },
-          { text: 'Transcribe el audio a español. Devuelve SOLO el texto dicho, sin comillas ni explicación. Si no hay voz, responde VACIO.' },
-        ],
-      }],
-    });
-    const text = String(r?.text || r?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
-    if (!text || /^VACIO$/i.test(text)) return res.json({ text: '', honesto: true });
-    return res.json({ text, via: 'gemini', ms: Date.now() - t0, honesto: true });
-  } catch (e: any) {
-    return res.status(502).json({ error: 'STT falló', message: String(e?.message || e).slice(0, 180), honesto: true });
+  if (oido.via === 'ninguno' || oido.via === 'vacio') {
+    return res.status(oido.via === 'ninguno' ? 503 : 200).json({ text: '', error: oido.detalle, via: oido.via, honesto: true });
   }
+  return res.json({ text: '', via: oido.via, detalle: oido.detalle, ms: Date.now() - t0, honesto: true });
 });
 
 /**
@@ -1437,18 +1423,13 @@ async function procesarTelegram(update: any) {
   }
   let texto = parsed.texto;
   if (parsed.comando === '/audio') texto = 'mándame audio del sistema';
-  if (parsed.audio && !texto) {
-    const key = clave('elevenlabs') || process.env.ELEVENLABS_API_KEY || '';
-    if (key) {
-      const out = await elevenTranscribe({
-        apiKey: key,
-        audio: parsed.audio.buffer,
-        mime: parsed.audio.mime,
-        language: 'es',
-      });
-      texto = String(out.text || '').trim();
+  if (parsed.audio) {
+    const oido = await transcribirAudio({ audio: parsed.audio.buffer, mime: parsed.audio.mime, language: 'es' });
+    if (oido.texto) texto = oido.texto;
+    else if (!texto) {
+      await telegramResponder(parsed.chatId, oido.detalle);
+      return;
     }
-    if (!texto) texto = 'No pude oír el audio. Escríbeme.';
   }
   if (!texto && parsed.imageDataUrl) texto = '¿qué ves en esta imagen?';
   if (!texto && parsed.documento) texto = `Lee este PDF (${parsed.documento.filename}) y resume solo lo que dice. No inventes.`;
@@ -1467,7 +1448,7 @@ async function procesarTelegram(update: any) {
   recordarTelegram(parsed.chatId, texto, reply);
   await telegramResponder(parsed.chatId, reply);
   const yaMandóVoz = out.herramientas.includes('voz') || out.herramientas.includes('urgente');
-  const quiereVoz = !!parsed.audio || parsed.comando === '/audio' || pideNotaDeVoz(texto);
+  const quiereVoz = parsed.comando === '/audio' || pideNotaDeVoz(texto);
   if (quiereVoz && !yaMandóVoz) {
     const audio = await notaDeVoz(limpiarParaVoz(reply).slice(0, 400));
     if (audio) await telegramVoz({ buf: audio, caption: 'ULTRON' });
