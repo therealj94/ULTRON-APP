@@ -38,7 +38,7 @@ export interface SpeechRecognizerHandle {
   abort: () => void;
 }
 
-const LANGS = ['es-HN', 'es-MX', 'es-US', 'es-ES'];
+const LANGS = ['es-HN', 'es-MX', 'es-ES'];
 
 export function initSpeechRecognizer(
   onResult: (text: string, isFinal: boolean) => void,

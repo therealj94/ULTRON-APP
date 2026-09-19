@@ -28,7 +28,7 @@ import { despacharTaller, hechosCatalogo } from './lib/taller';
 import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
-import { extraerPedidoHerramienta, quitarLineaPedido, resolverPedido } from './lib/harness';
+import { extraerPedidoHerramienta, extraerJsonTool, esSoloJsonTool, quitarJsonTool, quitarLineaPedido, resolverPedido, topeTokens, type JsonTool } from './lib/harness';
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
@@ -50,6 +50,10 @@ import {
   type CanalMem,
 } from './lib/memoria';
 import { fusionarHilo, pedidoRed, resolverReferencia, urlsParaLeer, type MsgHilo } from './lib/conversacion';
+import { ahoraHonduras, lineaReloj, preguntaHora } from './lib/reloj';
+import { enrutar, type SkillRoute } from './lib/skills';
+import { appendAprendido, bloqueLargoPlazo } from './lib/aprendido';
+import { consultarClima } from './lib/clima';
 import { nombreDe, puedeCambiarSistema } from './lib/junta';
 import { mensajeBienvenidaUltron } from './lib/bienvenida';
 import {
@@ -810,6 +814,7 @@ app.post('/api/memoria', exigirMesaODesk, async (req, res) => {
   }
   if (hecho) {
     await guardarHechoQuien({ quien, hecho, canal: 'mesa', junta: !!req.body?.junta });
+    appendAprendido(hecho);
   }
   res.json({ ok: true, ...fotoMemoria(quien) });
 });
@@ -942,7 +947,6 @@ async function prepararTurno(body: any) {
   const canal: CanalMem = body?.canal === 'telegram' ? 'telegram' : 'mesa';
   await cargarMemoria();
   const quien = resolverQuien(body, body?.sesion || null);
-  const memSt = estadoMemoria();
   if (message) {
     await recordarTurno({ quien, rol: 'user', texto: message, canal });
   }
@@ -966,66 +970,59 @@ async function prepararTurno(body: any) {
 
   const q = message.toLowerCase();
   const hechos: string[] = [];
-  const foto: string | null = null;
+  let foto: string | null = null;
   const tools: string[] = [];
   let decirTaller: string | undefined;
+  const ruta = enrutar(message);
 
-  hechos.push(
-    memSt.durable
-      ? `MEMORIA: S3 activo. Hablas con ${nombreDe(quien)}. La conversación del otro miembro no entra.`
-      : `MEMORIA: ${memSt.detalle}`
-  );
-  hechos.push(
-    puedeCambiarSistema(quien)
-      ? `ACCESO: mando (${nombreDe(quien)}). Puede pedir redespliegue, mantenimiento y ejecutor.`
-      : `ACCESO: consulta (${nombreDe(quien)}). No cambia el sistema: no redespliego, no hago mantenimiento ni corro el ejecutor. El resto (estado, PDF, fotos, voz, web, oro, pendientes, memoria propia) sí.`
-  );
-
+  hechos.push(lineaReloj());
+  if (preguntaHora(message)) {
+    hechos.push(`HORA JUNTA: ${ahoraHonduras()} America/Tegucigalpa. Usá esta cifra. No inventes otra.`);
+  }
 
   try {
-    if (/\b(oro|gold|xau|onza)\b/.test(q)) {
+    if (ruta.skill === 'spot_oro') {
       const s = await spotMetal('XAU');
       hechos.push(`SPOT XAU/USD = ${s.usd} USD/oz (fuente ${s.fuente}). No inventes otro número.`);
       tools.push('oro');
-    }
-    if (/\b(plata|silver|xag)\b/.test(q)) {
+    } else if (ruta.skill === 'spot_plata') {
       const s = await spotMetal('XAG');
       hechos.push(`SPOT XAG/USD = ${s.usd} USD/oz (fuente ${s.fuente}). No inventes otro número.`);
       tools.push('plata');
-    }
-    if (/\b(lempira|hnl|d[oó]lar a lempira|usd a hnl|tipo de cambio)\b/.test(q)) {
+    } else if (ruta.skill === 'fx_hnl') {
       const fx = await usdHnl();
       hechos.push(`USD/HNL = ${fx.usdHnl} (fuente ${fx.fuente}).`);
       tools.push('hnl');
-    }
-    const urlMatch = message.match(/https?:\/\/[^\s]+/i);
-    const quiereCaptura = urlMatch || /\b(abr[ií] la p[aá]gina|screenshot|playwright|captura)\b/.test(q);
-    if (quiereCaptura) {
-      const url = urlMatch ? urlMatch[0] : 'https://www.bch.hn/';
+    } else if (ruta.skill === 'clima') {
+      const c = await consultarClima(ruta.payload.ciudad || 'Tegucigalpa');
+      hechos.push(c.hecho);
+      tools.push('clima');
+    } else if (ruta.skill === 'pagina') {
+      const url = ruta.payload.url || 'https://www.bch.hn/';
       const page = await capturaPagina(url);
       hechos.push(`Página ${page.url}: ${page.texto.slice(0, 1200) || 'sin texto'}`);
       tools.push('pagina');
       if (page.foto) {
         tools.push('foto');
-        if (body?.canal === 'telegram' || /telegram|captura|screenshot|m[aá]ndame (la )?foto/.test(q)) {
+        if (body?.canal === 'telegram' || /captura|screenshot|mandame (la )?foto/i.test(q)) {
           const envio = await telegramFoto({ buf: page.foto, caption: page.titulo || page.url });
           hechos.push(`FOTO TELEGRAM: ${envio.detalle}`);
         }
       }
-    }
-    const red = pedidoRed(message, hiloPrevio);
-    if (red) {
+    } else if (ruta.skill === 'web') {
+      const consulta = ruta.payload.query || message;
       tools.push('web');
-      const hits = await buscarWeb(red.query, 5);
+      const hits = await buscarWeb(consulta, 5);
       if (hits.length) {
         hechos.push(
-          `BÚSQUEDA WEB "${red.query}" (${new Date().toISOString().slice(0, 10)}):\n` +
+          `BÚSQUEDA WEB "${consulta}" (${new Date().toISOString().slice(0, 10)}):\n` +
             hits.map((h, i) => `${i + 1}. ${h.title} — ${h.snippet} [${h.url}]`).join('\n')
         );
-      } else {
-        hechos.push(`BÚSQUEDA WEB "${red.query}": sin resultados. Dilo.`);
-      }
-      let leer = red.leer || hits.find((h) => /github\.com\//i.test(h.url))?.url || hits.find((h) => /^https?:\/\/[^/]+\/.+/.test(h.url))?.url;
+      } else hechos.push(`BÚSQUEDA WEB "${consulta}": sin resultados. Dilo.`);
+      const leer =
+        ruta.payload.url ||
+        hits.find((h) => /github\.com\//i.test(h.url))?.url ||
+        hits.find((h) => /^https?:\/\/[^/]+\/.+/.test(h.url))?.url;
       if (leer) {
         for (const u of urlsParaLeer(leer).slice(0, 3)) {
           const pub = await urlPublica(u);
@@ -1038,14 +1035,38 @@ async function prepararTurno(body: any) {
           }
         }
       }
-      hechos.push('Responde con lo que dicen las fuentes y el hilo. Si el usuario dijo «esto», es el tema o la URL anterior. No pidas otra vez el enlace. Si las fuentes no contestan, dilo.');
+      hechos.push('Responde con las fuentes. No inventes HTML que no leíste.');
+    } else if (ruta.skill === 'chat') {
+      const red = pedidoRed(message, hiloPrevio);
+      if (red) {
+        tools.push('web');
+        const hits = await buscarWeb(red.query, 5);
+        if (hits.length) {
+          hechos.push(
+            `BÚSQUEDA WEB "${red.query}":\n` + hits.map((h, i) => `${i + 1}. ${h.title} — ${h.snippet} [${h.url}]`).join('\n')
+          );
+        }
+        const leer = red.leer || hits[0]?.url;
+        if (leer) {
+          for (const u of urlsParaLeer(leer).slice(0, 2)) {
+            const pub = await urlPublica(u);
+            if (pub.ok === false) continue;
+            const texto = await leerPagina(pub.url, 1800);
+            if (texto && texto.length > 80) {
+              hechos.push(`FUENTE (${pub.url}): ${texto}`);
+              break;
+            }
+          }
+        }
+      }
     }
+
     const image = body?.image;
-    if (image) {
+    if (image && (ruta.skill === 'vision' || ruta.skill === 'chat')) {
       const vista = await verImagen(String(image));
       hechos.push(`VISION (${vista.via}): ${vista.texto}`);
       tools.push('vision');
-    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !quiereCaptura && !body?.documento && !body?.pdf) {
+    } else if (ruta.skill === 'vision' && !image) {
       hechos.push('VISION: no llegó frame. Di que no viste.');
     }
     const doc = body?.documento || body?.pdf;
@@ -1117,30 +1138,44 @@ async function prepararTurno(body: any) {
     hechos.push(`Ejecutor falló: ${String(e?.message || e).slice(0, 160)}.`);
   }
 
-  const soloDato =
-    /precio|spot|oro|plata|gold|silver|xau|xag|lempira|hnl|tipo de cambio|cu[aá]nto/.test(q) &&
-    !/por qu[eé]|explica|an[aá]lisis|busca|investiga/.test(q) &&
-    !tools.includes('web');
+  const soloDato = (ruta.skill === 'spot_oro' || ruta.skill === 'spot_plata' || ruta.skill === 'fx_hnl' || ruta.skill === 'clima') && !tools.includes('web');
+  const cifra = hechos.filter((h) => /SPOT |USD\/HNL|CLIMA |HORA JUNTA/.test(h)).join(' ');
   const directo =
     decirTaller ||
-    (soloDato && hechos.length ? hechos.map((h) => h.replace(/ No inventes otro número\./g, '')).join(' ') : null);
+    (soloDato && cifra ? cifra.replace(/ No inventes otro número\./g, '') : preguntaHora(message) ? `AHORA Honduras: ${ahoraHonduras()} (America/Tegucigalpa).` : null);
 
-  const personalidad = `${buildPersonality({ nombre: (quien ? nombreDe(quien) : nombre) || undefined, canal })}
+  const hiloTxt = hiloPrevio
+    .slice(-12)
+    .map((t) => `${t.rol === 'ultron' ? 'ULTRON' : 'Junta'}: ${String(t.texto).replace(/\s+/g, ' ').slice(0, 280)}`)
+    .join('\n');
+  const mem = fotoMemoria(quien);
+  const hechosMem = [
+    ...((mem.junta || []) as { hecho?: string }[]).map((h) => String(h?.hecho || '').trim()),
+    ...((mem.privada?.larga || []) as { hecho?: string }[]).map((h) => String(h?.hecho || '').trim()),
+  ].filter(Boolean);
+  const system = [
+    lineaReloj(),
+    `Sos ULTRON, voz de Genesis Core. Junta: Medardo fundador; José, Melany y Leonardo cofundadores. Hablás con ${nombreDe(quien)}.`,
+    canal === 'telegram'
+      ? 'TELEGRAM: hasta ocho frases. «esto» es lo último del hilo.'
+      : 'ESCRITORIO: [TONO] al inicio, máximo 2 frases, sin emojis.',
+    `HECHOS:\n${hechos.join('\n') || '(ninguno)'}`,
+    `LARGO PLAZO:\n${bloqueLargoPlazo(hechosMem)}`,
+    `ÚLTIMOS 12 TURNOS:\n${hiloTxt || '(nada)'}`,
+    'No inventes precios ni HTML que no leíste. Si preguntan la hora, usá AHORA Honduras.',
+    'Si te falta un dato de internet o una página, respondé SOLO el JSON del tool. Si ya tenés HECHOS, no pidas tool.\n{"tool":"web","q":"..."}\n{"tool":"pagina","url":"https://..."}\n{"tool":"spot_oro"}',
+  ].join('\n\n');
 
-CEREBRO ORDEN GLOBAL:
-${CONOCIMIENTO_OG}
-
-No finjas recuerdos: solo la memoria de ${quien ? nombreDe(quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.
-Modo de mesa pedido: ${mode}.
-HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemoria(quien)}`;
-
-  const compuesto = construirMensajes({ personalidad, user: mensajeHilo || message, canal, historial: hilo });
+  const compuesto = construirMensajes({ personalidad: system, user: mensajeHilo || message, canal, historial: hilo });
   if (compuesto.meta.rag) tools.push('rag');
   if (compuesto.meta.cot) tools.push('cot');
   if (compuesto.meta.harness) tools.push('harness');
-  const system = compuesto.messages[0].content;
 
-  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system, quien, canal, hilo };
+  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system, quien, canal, hilo, ruta };
+}
+
+function wrapUser(hechos: string[], message: string) {
+  return `CONOCIMIENTO_OG:\n${topeTokens(CONOCIMIENTO_OG, 4000)}\n\nHECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nJunta: ${message}`;
 }
 
 async function preguntarQwen(
@@ -1164,7 +1199,7 @@ async function preguntarQwen(
           ...hilo.map((m) => ({ role: m.role, content: m.content })),
           {
             role: 'user',
-            content: `HECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nJunta: ${message}`,
+            content: wrapUser(hechos, message),
           },
         ],
       }),
@@ -1221,6 +1256,42 @@ async function correrHerramientaPedida(
   );
 }
 
+async function correrJsonTool(j: JsonTool): Promise<string> {
+  if (j.tool === 'web') {
+    const q = String(j.q || '').trim();
+    if (!q) return 'HARNESS web: consulta vacía. No busqué.';
+    const hits = await buscarWeb(q, 5);
+    if (!hits.length) return `HARNESS web "${q}": sin resultados.`;
+    const first = hits.find((h) => /^https?:\/\/[^/]+\/.+/.test(h.url));
+    const texto = first ? await leerPagina(first.url, 1200) : '';
+    return (
+      `HARNESS web "${q}":\n` +
+      hits.map((h, i) => `${i + 1}. ${h.title} — ${h.snippet} [${h.url}]`).join('\n') +
+      (first && texto ? `\nPRIMERA FUENTE (${first.url}): ${texto}` : '')
+    );
+  }
+  if (j.tool === 'pagina') {
+    const url = String(j.url || '').trim();
+    if (!/^https?:\/\//i.test(url)) return 'HARNESS pagina: URL inválida. No abrí.';
+    const page = await capturaPagina(url);
+    return `Página ${page.url}: ${page.texto.slice(0, 1200) || 'sin texto'}`;
+  }
+  if (j.tool === 'spot_oro') {
+    const s = await spotMetal('XAU');
+    return `SPOT XAU/USD = ${s.usd} USD/oz (fuente ${s.fuente}). No inventes otro número.`;
+  }
+  if (j.tool === 'spot_plata') {
+    const s = await spotMetal('XAG');
+    return `SPOT XAG/USD = ${s.usd} USD/oz (fuente ${s.fuente}). No inventes otro número.`;
+  }
+  if (j.tool === 'fx_hnl') {
+    const fx = await usdHnl();
+    return `USD/HNL = ${fx.usdHnl} (fuente ${fx.fuente}).`;
+  }
+  const c = await consultarClima('Tegucigalpa');
+  return c.hecho;
+}
+
 async function correrTurno(body: any): Promise<{
   reply: string;
   via: string;
@@ -1272,21 +1343,32 @@ async function correrTurno(body: any): Promise<{
   let reply = q1.reply;
   let via = `${ULTRON_NODO_URL}/api/chat`;
   for (let i = 0; i < 2; i++) {
+    const json = extraerJsonTool(reply);
     const ped = extraerPedidoHerramienta(reply);
-    if (!ped) break;
-    tools.push(ped.herramienta);
-    const extra = await correrHerramientaPedida(ped, reply, quien);
+    if (!json && !ped) break;
+    let extra = '';
+    if (json) {
+      tools.push(json.tool);
+      extra = await correrJsonTool(json);
+    } else if (ped) {
+      tools.push(ped.herramienta);
+      extra = await correrHerramientaPedida(ped, reply, quien);
+    }
     hechos.push(extra);
     const qn = await preguntarQwen(system, message, hechos, hilo);
     if (!qn.ok) {
-      reply = quitarLineaPedido(reply) + (extra ? `\n\n${extra}` : '');
+      reply = quitarJsonTool(quitarLineaPedido(reply)) + (extra ? `\n\n${extra}` : '');
       via = 'harness-parcial';
       break;
     }
     reply = qn.reply;
     via = 'harness';
   }
-  reply = quitarLineaPedido(reply);
+  reply = quitarJsonTool(quitarLineaPedido(reply));
+  if (!reply || esSoloJsonTool(reply)) {
+    const utiles = hechos.filter((h) => !/^AHORA Honduras/.test(h)).slice(-4);
+    reply = utiles.join('\n') || reply;
+  }
 
   const py = extraerPython(reply);
   if (
@@ -1389,7 +1471,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
           ...(hilo || []).map((m) => ({ role: m.role, content: m.content })),
           {
             role: 'user',
-            content: `HECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nJunta: ${message}`,
+            content: wrapUser(hechos, message),
           },
         ],
       }),
