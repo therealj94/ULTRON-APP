@@ -13,10 +13,63 @@ export type Sesion = {
 
 const sesiones = new Map<string, Sesion>();
 const hits = new Map<string, number[]>();
+const SESION_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+function secretoSesion() {
+  return String(process.env.ULTRON_SESION_SECRETO || process.env.ULTRON_MESA_CLAVE || process.env.ULTRON_NODO_SECRETO || '').trim();
+}
+
+function firmarSesion(user: { correo: string; nombre: string; rol: string; at: number; exp: number }): string {
+  const secret = secretoSesion();
+  const body = Buffer.from(JSON.stringify(user)).toString('base64url');
+  if (!secret) return crypto.randomBytes(24).toString('hex');
+  const sig = crypto.createHmac('sha256', secret).update(body).digest('base64url');
+  return `u1.${body}.${sig}`;
+}
+
+function leerSesionFirmada(token: string): Sesion | null {
+  if (!token.startsWith('u1.')) return null;
+  const secret = secretoSesion();
+  if (!secret) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  const body = parts[1];
+  const sig = parts[2];
+  const expect = crypto.createHmac('sha256', secret).update(body).digest();
+  let got: Buffer;
+  try {
+    got = Buffer.from(sig, 'base64url');
+  } catch {
+    return null;
+  }
+  if (expect.length !== got.length || expect.length === 0) return null;
+  if (!crypto.timingSafeEqual(expect, got)) return null;
+  try {
+    const p = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
+    if (!p?.correo || !p?.nombre) return null;
+    if (Number(p.exp) && Date.now() > Number(p.exp)) return null;
+    return {
+      token,
+      correo: String(p.correo),
+      nombre: String(p.nombre),
+      rol: String(p.rol || 'Junta'),
+      at: Number(p.at) || Date.now(),
+    };
+  } catch {
+    return null;
+  }
+}
 
 export function emitirSesion(user: { correo: string; nombre: string; rol: string }): Sesion {
-  const token = crypto.randomBytes(24).toString('hex');
-  const s: Sesion = { token, correo: user.correo, nombre: user.nombre, rol: user.rol, at: Date.now() };
+  const at = Date.now();
+  const token = firmarSesion({
+    correo: user.correo,
+    nombre: user.nombre,
+    rol: user.rol,
+    at,
+    exp: at + SESION_TTL_MS,
+  });
+  const s: Sesion = { token, correo: user.correo, nombre: user.nombre, rol: user.rol, at };
   sesiones.set(token, s);
   return s;
 }
@@ -33,12 +86,19 @@ export function tokenDe(req: Request): string {
 export function sesionDe(req: Request): Sesion | null {
   const t = tokenDe(req);
   if (!t) return null;
-  return sesiones.get(t) || null;
+  const cached = sesiones.get(t);
+  if (cached) return cached;
+  const firmada = leerSesionFirmada(t);
+  if (firmada) {
+    sesiones.set(t, firmada);
+    return firmada;
+  }
+  return null;
 }
 
 export function exigirSesion(req: Request, res: Response, next: NextFunction) {
   const s = sesionDe(req);
-  if (!s) return res.status(401).json({ error: 'sesión requerida', honesto: true });
+  if (!s) return res.status(401).json({ error: 'sesión requerida', code: 'sesion_requerida', honesto: true });
   (req as any).sesion = s;
   next();
 }
@@ -62,7 +122,11 @@ export function mesaAutorizada(req: Request): boolean {
 
 export function exigirMesa(req: Request, res: Response, next: NextFunction) {
   if (mesaAutorizada(req)) return next();
-  return res.status(401).json({ error: 'ULTRON es privado. Entra con sesión de junta.', honesto: true });
+  return res.status(401).json({
+    error: 'ULTRON es privado. Entra con sesión de junta.',
+    code: 'sesion_requerida',
+    honesto: true,
+  });
 }
 
 export function limitar(max: number, ventanaMs = 60_000) {

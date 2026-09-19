@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { urlPublica, mesaAutorizada } from './seguridad';
+import { urlPublica, mesaAutorizada, emitirSesion, sesionDe, borrarSesion } from './seguridad';
 import { limpiarParaVoz } from './desk';
 
 test('bloquea metadata AWS y localhost', async () => {
@@ -35,4 +35,19 @@ test('mesa en producción no deja pasar sin sesión ni clave', () => {
   else process.env.NODE_ENV = prevN;
   if (prevK === undefined) delete process.env.ULTRON_MESA_CLAVE;
   else process.env.ULTRON_MESA_CLAVE = prevK;
+});
+
+test('sesión firmada sobrevive sin el Map en memoria', () => {
+  const prev = process.env.ULTRON_NODO_SECRETO;
+  process.env.ULTRON_NODO_SECRETO = 'secreto-de-prueba-para-hmac-sesion';
+  const s = emitirSesion({ correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' });
+  assert.match(s.token, /^u1\./);
+  borrarSesion(s.token);
+  const viva = sesionDe({ headers: { 'x-ultron-sesion': s.token } } as any);
+  assert.equal(viva?.correo, 'j.ordonez@ordenglobal.org');
+  assert.equal(viva?.nombre, 'José');
+  const fake = sesionDe({ headers: { 'x-ultron-sesion': s.token.slice(0, -2) + 'xx' } } as any);
+  assert.equal(fake, null);
+  if (prev === undefined) delete process.env.ULTRON_NODO_SECRETO;
+  else process.env.ULTRON_NODO_SECRETO = prev;
 });

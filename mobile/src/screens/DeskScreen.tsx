@@ -225,6 +225,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       setToolHint('');
       const base = { message: cmd, mode: modeRef.current, userName: user.name, historial: historial.current, memoria: longMemory.current, image: opts?.image };
       const filler = (text: string) => speak(text, { onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) });
+      try {
 
       // 1) Streaming: empieza a hablar con la primera oración mientras Qwen sigue escribiendo.
       if (!opts?.image) {
@@ -318,13 +319,23 @@ export function DeskScreen({ user, onLogout }: Props) {
       if (ack) await ack;
       setToolHint('');
       if (result.error || !result.reply) {
+        const auth = /sesión|privado|401/i.test(String(result.error || ''));
+        if (auth) {
+          setOnline(true);
+          await say('Se me cerró la sesión de la mesa. Entra de nuevo y te oigo.', 'CONCERNED');
+          return;
+        }
         setOnline(false);
-        await say(result.error ? 'No alcanzo al cerebro remoto ahora. Sigo contigo con lo básico.' : 'No recibí respuesta. Intenta de nuevo.', 'CONFUSED');
+        await say('No alcanzo al cerebro remoto ahora. Sigo contigo con lo básico.', 'CONFUSED');
         return;
       }
       setOnline(true);
       if (result.mode && result.mode !== 'CONOCER' && MODE_WORDS.some(([, m]) => m === result.mode)) setMode(result.mode);
       await say(result.reply, faceForReply(result.reply));
+      } finally {
+        if (!speakingRef.current) pauseMicForTts(false);
+        if (!micMuted && !speakingRef.current) setStatus('listening');
+      }
     },
     [micMuted, restFace, say, showBubble, user.name]
   );
