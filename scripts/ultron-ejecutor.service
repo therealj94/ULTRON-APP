@@ -1,0 +1,16 @@
+[Unit]
+Description=Ejecutor de código Python en sandbox (opcional; no instalar en el nodo Qwen)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ultron
+ExecStart=/usr/bin/python3 /opt/ultron/ejecutor.py
+Restart=always
+RestartSec=3
+Environment=EJECUTOR_DOCKER=0
+Environment=EJECUTOR_PORT=11436
+
+[Install]
+WantedBy=multi-user.target

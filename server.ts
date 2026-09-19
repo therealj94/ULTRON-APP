@@ -22,6 +22,10 @@ import {
   consultaWeb,
   leerPagina,
 } from './server/desk';
+import { completarTurnoCodigo, extraerRespuestaQwen } from './lib/agente';
+import { criticaActiva } from './lib/critico';
+import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
+import { construirMensajes } from './lib/qwen';
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -764,22 +768,7 @@ async function leerConOjo(url: string) {
 }
 
 function juntarOllama(raw: string) {
-  let acc = '';
-  for (const line of raw.split('\n')) {
-    const s = line.trim();
-    if (!s) continue;
-    try {
-      const j = JSON.parse(s);
-      acc += j.message?.content || j.content || j.response || '';
-      if (j.done && acc) return acc;
-    } catch { /* skip */ }
-  }
-  try {
-    const j = JSON.parse(raw);
-    return j.message?.content || j.content || j.reply || raw;
-  } catch {
-    return raw;
-  }
+  return extraerRespuestaQwen(raw);
 }
 
 
@@ -1062,18 +1051,19 @@ async function prepararTurno(body: any) {
     !tools.includes('web');
   const directo = soloDato && hechos.length ? hechos.map((h) => h.replace(/ No inventes otro número\./g, '')).join(' ') : null;
 
-  const system = `${buildPersonality({ nombre: nombre || undefined })}
+  const personalidad = `${buildPersonality({ nombre: nombre || undefined })}
 No finjas recuerdos de otras noches: solo LARGO PLAZO y ULTIMOS TURNOS.
 Modo de mesa pedido: ${mode}.
 HECHOS:\n${hechos.join('\n') || '(ninguno)'}\nLARGO PLAZO:\n${larga.join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h: any) => `${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
 
-  return { t0, message, mode, hechos, tools, foto, directo, system };
+  const { messages, meta } = construirMensajes({ personalidad, user: message });
+  return { t0, message, mode, hechos, tools, foto, directo, system: messages[0].content, messages, meta, personalidad };
 }
 
 app.post('/api/turno', async (req, res) => {
   const p = await prepararTurno(req.body);
   if (!p.message) return res.status(400).json({ error: 'message vacío', honesto: true });
-  const { t0, mode, hechos, tools, foto, system, message } = p;
+  const { t0, mode, hechos, tools, foto, message } = p;
 
   if (p.directo) {
     return res.json({ reply: p.directo, modelo: 'tools', via: 'gold-api/er-api', mode, ms: Date.now() - t0, tools: tools.length, foto, honesto: true });
@@ -1084,16 +1074,33 @@ app.post('/api/turno', async (req, res) => {
   }
 
   try {
+    if (p.meta.codigo && (criticaActiva() || /\b(ejecuta(?:lo|r)?|corre(?:los)?\s+tests?|verifica(?:lo)?)\b/i.test(message))) {
+      const t = await completarTurnoCodigo({ personalidad: p.personalidad, user: message });
+      const { tono, texto: reply } = extraerTono(t.reply);
+      return res.json({
+        reply,
+        tono,
+        modelo: ULTRON_NODO_MODELO,
+        via: `${ULTRON_NODO_URL}/api/chat`,
+        mode,
+        ms: Date.now() - t0,
+        tools: tools.length,
+        herramientas: tools,
+        foto,
+        honesto: true,
+        critica: t.critica && !t.critica.skipped ? t.critica.texto : undefined,
+        ejecucion: t.ejecucion,
+        corregido: t.corregido,
+        meta: t.meta,
+      });
+    }
     const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
       body: JSON.stringify({
         model: ULTRON_NODO_MODELO,
         stream: false,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: message },
-        ],
+        messages: p.messages,
       }),
       signal: AbortSignal.timeout(60000),
     });
@@ -1106,7 +1113,7 @@ app.post('/api/turno', async (req, res) => {
       }
       return res.status(502).json({ error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 300), honesto: true });
     }
-    return res.json({ reply, tono, modelo: ULTRON_NODO_MODELO, via: `${ULTRON_NODO_URL}/api/chat`, mode, ms: Date.now() - t0, tools: tools.length, herramientas: tools, foto, honesto: true });
+    return res.json({ reply, tono, modelo: ULTRON_NODO_MODELO, via: `${ULTRON_NODO_URL}/api/chat`, mode, ms: Date.now() - t0, tools: tools.length, herramientas: tools, foto, honesto: true, meta: p.meta });
   } catch (err: any) {
     if (hechos.length) return res.json({ reply: hechos.join('\n'), modelo: 'tools-only', ms: Date.now() - t0, honesto: true });
     return res.status(502).json({ error: 'Qwen caído', message: String(err?.message || err).slice(0, 200), honesto: true });
@@ -1149,10 +1156,7 @@ app.post('/api/turno/stream', async (req, res) => {
       body: JSON.stringify({
         model: ULTRON_NODO_MODELO,
         stream: true,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: message },
-        ],
+        messages: p.messages,
       }),
       signal: AbortSignal.timeout(60000),
     });
@@ -1239,6 +1243,13 @@ app.post('/api/turno/stream', async (req, res) => {
     send('error', { error: 'Qwen caído', message: String(err?.message || err).slice(0, 200) });
     res.end();
   }
+});
+
+app.post('/api/ejecutar', async (req, res) => {
+  if (!ejecutorActivo()) return res.status(503).json({ error: 'Ejecutor desactivado', honesto: true, ok: false });
+  const codigo = String(req.body?.codigo || '');
+  const r = await ejecutarCodigo(codigo);
+  return res.status(r.ok ? 200 : r.exit_code === 400 || r.exit_code === 413 ? r.exit_code : 200).json({ ...r, honesto: true });
 });
 
 app.post('/api/qwen/chat', (_req, res) => {
