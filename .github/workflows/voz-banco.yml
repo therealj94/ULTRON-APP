@@ -1,0 +1,49 @@
+name: Banco de voz
+
+# Solo a mano. Cada corrida gasta ElevenLabs. No corre en push.
+on:
+  workflow_dispatch:
+    inputs:
+      que:
+        description: Qué grabar. Bohemian nunca se toca.
+        type: choice
+        options:
+          - cortos
+          - saludos
+          - canciones
+          - all
+        default: cortos
+
+jobs:
+  grabar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Grabar
+        env:
+          ELEVENLABS_API_KEY: ${{ secrets.ELEVENLABS_API_KEY }}
+          ELEVENLABS_VOZ: ${{ secrets.ELEVENLABS_VOZ }}
+        run: |
+          test -n "$ELEVENLABS_API_KEY" || { echo "Falta secret ELEVENLABS_API_KEY"; exit 1; }
+          sha_antes=$(sha256sum public/voz/bohemian.mp3 | awk '{print $1}')
+          node scripts/grabar-banco.mjs "${{ inputs.que }}"
+          sha_despues=$(sha256sum public/voz/bohemian.mp3 | awk '{print $1}')
+          test "$sha_antes" = "$sha_despues" || { echo "Bohemian cambió"; exit 1; }
+          ls -la public/voz
+
+      - name: Subir mp3
+        uses: actions/upload-artifact@v4
+        with:
+          name: ultron-banco-voz
+          path: public/voz/*.mp3
+          if-no-files-found: error
+          retention-days: 14

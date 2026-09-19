@@ -2,14 +2,31 @@
  * Nota de voz real: ElevenLabs, si falla Chatterbox. Cero teatro.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { clave } from './boveda';
 import { chatterboxSpeak, elevenSpeak } from '../server/desk';
+import { clipCanned } from '../src/03-voz/banco';
 import type { Nodo } from './sistema';
 import type { Canal } from './sistema';
+
+function audioDelBanco(texto: string): Buffer | undefined {
+  const clip = clipCanned(texto);
+  if (!clip) return undefined;
+  const p = path.join(process.cwd(), 'public', clip.file.replace(/^\//, ''));
+  try {
+    if (fs.existsSync(p) && fs.statSync(p).size > 800) return fs.readFileSync(p);
+  } catch {
+    /* */
+  }
+  return undefined;
+}
 
 export async function notaDeVoz(texto: string): Promise<Buffer | undefined> {
   const dicho = String(texto || '').replace(/\s+/g, ' ').trim().slice(0, 420);
   if (dicho.length < 8) return undefined;
+  const canned = audioDelBanco(dicho);
+  if (canned) return canned;
   const el = clave('elevenlabs');
   if (el) {
     const spoken = await elevenSpeak({ apiKey: el, text: dicho, performance: 'speak' });

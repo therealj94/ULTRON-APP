@@ -21,6 +21,7 @@ import {
   leerPagina,
 } from './server/desk';
 import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
+import { clipCanned } from './src/03-voz/banco';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica } from './server/seguridad';
 import { leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
@@ -823,6 +824,18 @@ app.post('/api/memoria', exigirMesaODesk, async (req, res) => {
 });
 
 
+function audioDelBanco(text: string): Buffer | null {
+  const clip = clipCanned(text);
+  if (!clip) return null;
+  const p = path.join(process.cwd(), 'public', clip.file.replace(/^\//, ''));
+  try {
+    if (fs.existsSync(p) && fs.statSync(p).size > 800) return fs.readFileSync(p);
+  } catch {
+    /* */
+  }
+  return null;
+}
+
 app.post('/api/tts/stream', exigirMesaODesk, limitar(60), async (req, res) => {
   const text = String(req.body?.text || '').slice(0, 2000).trim();
   const voice = String(req.body?.voice || 'luna');
@@ -830,6 +843,13 @@ app.post('/api/tts/stream', exigirMesaODesk, limitar(60), async (req, res) => {
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
 
   const clean = limpiarParaVoz(text);
+  const canned = audioDelBanco(clean) || audioDelBanco(text);
+  if (canned) {
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('X-Ultron-TTS', 'banco');
+    return res.send(canned);
+  }
   if (clave('elevenlabs')) {
     const out = await elevenSpeak({
       apiKey: clave('elevenlabs'),
@@ -896,6 +916,14 @@ app.all('/api/tts', exigirMesaODesk, limitar(60), async (req, res) => {
   const engine = engineRaw === 'fast' ? 'auto' : engineRaw; // nunca forzar Eleven
   const performance: 'speak' | 'sing' = req.body?.performance === 'sing' ? 'sing' : 'speak';
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
+
+  const canned = audioDelBanco(text);
+  if (canned) {
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('X-Ultron-TTS', 'banco');
+    return res.send(canned);
+  }
 
   const key = `${engine}|${performance}|${voice}|${text}`;
   const hit = getCachedAudio(key);
