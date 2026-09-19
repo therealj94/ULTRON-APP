@@ -35,7 +35,7 @@ export async function pedirTurno(opts: {
   });
   const data = await r.json().catch(() => ({}));
   if (r.status === 401) {
-    return { reply: '', error: 'sesión requerida', honesto: true, ...data };
+    return { reply: '', honesto: true, ...data, error: 'sesión requerida' };
   }
   return data;
 }

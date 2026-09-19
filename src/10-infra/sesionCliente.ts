@@ -1,9 +1,23 @@
 const KEY = 'ultron_sesion_token';
 
-export function guardarTokenMesa(token: string) {
+function store() {
   try {
-    if (token) sessionStorage.setItem(KEY, token);
-    else sessionStorage.removeItem(KEY);
+    return window.localStorage;
+  } catch {
+    try {
+      return window.sessionStorage;
+    } catch {
+      return null;
+    }
+  }
+}
+
+export function guardarTokenMesa(token: string) {
+  const s = store();
+  if (!s) return;
+  try {
+    if (token) s.setItem(KEY, token);
+    else s.removeItem(KEY);
   } catch {
     /* private mode */
   }
@@ -11,7 +25,7 @@ export function guardarTokenMesa(token: string) {
 
 export function tokenMesa(): string {
   try {
-    return sessionStorage.getItem(KEY) || '';
+    return localStorage.getItem(KEY) || sessionStorage.getItem(KEY) || '';
   } catch {
     return '';
   }

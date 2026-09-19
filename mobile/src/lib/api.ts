@@ -3,9 +3,39 @@
  */
 import { API_BASE } from '../config';
 import type { Mode, SessionUser } from '../config';
-import { loadMesaToken, saveMesaToken } from './storage';
+import { loadCreds, loadMesaToken, saveMesaToken } from './storage';
 
-async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 30_000): Promise<T> {
+let refreshing: Promise<boolean> | null = null;
+
+async function renovarSesion(): Promise<boolean> {
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    const creds = await loadCreds();
+    if (!creds?.correo || !creds?.clave) return false;
+    try {
+      const res = await fetch(`${API_BASE}/api/ultron/entrar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ correo: creds.correo, clave: creds.clave }),
+      });
+      const data: any = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.token) return false;
+      await saveMesaToken(String(data.token));
+      return true;
+    } catch {
+      return false;
+    }
+  })().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+function esSesionCaida(status: number, data: any) {
+  return status === 401 || data?.code === 'sesion_requerida' || /sesión requerida|privado/i.test(String(data?.error || ''));
+}
+
+async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 30_000, retry401 = true): Promise<T> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -22,6 +52,10 @@ async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 30_000
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
+      if (retry401 && esSesionCaida(res.status, data) && !path.includes('/entrar')) {
+        const ok = await renovarSesion();
+        if (ok) return api<T>(path, init, timeoutMs, false);
+      }
       const err = new Error((data as any).error || `HTTP ${res.status}`);
       (err as any).status = res.status;
       (err as any).data = data;
@@ -114,7 +148,7 @@ export async function turno(opts: {
           ...(opts.image ? { image: opts.image } : {}),
         }),
       },
-      opts.image ? 45_000 : 28_000
+      opts.image ? 70_000 : 70_000
     );
     return { reply: String(data.reply || ''), mode: data.mode, ms: data.ms, via: data.via, error: data.error };
   } catch (e: any) {
@@ -177,7 +211,7 @@ export function turnoStream(
     xhr.open('POST', `${API_BASE}/api/turno/stream`);
     xhr.setRequestHeader('Content-Type', 'application/json');
     xhr.setRequestHeader('Accept', 'text/event-stream');
-    xhr.timeout = opts.image ? 60_000 : 45_000;
+    xhr.timeout = opts.image ? 75_000 : 70_000;
     xhr.onprogress = consume;
     xhr.onreadystatechange = () => {
       if (xhr.readyState !== 4) return;

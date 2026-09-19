@@ -293,13 +293,8 @@ export default function App() {
       if (cancelled) return;
       setIsBooting(false);
       playSfx('boot', true);
-      const qwenOk = !!health?.qwen?.vivo;
-      if (!qwenOk) {
-        setCerebroListo('calentando');
-        vocalize('Espera. Estamos calentando el motor de veintisiete B.');
-        return;
-      }
       setCerebroListo('calentando');
+      setMicEnabled(true);
       vocalize('Espera. Estamos calentando el motor de veintisiete B.');
       fetch('/api/nodo/listo')
         .then((r) => r.json())
@@ -307,7 +302,6 @@ export default function App() {
           if (cancelled) return;
           if (d?.listo) {
             setCerebroListo('listo');
-            setMicEnabled(true);
             vocalize(saludoHora().id);
           } else {
             setCerebroListo('calentando');
@@ -344,7 +338,7 @@ export default function App() {
           }
         })
         .catch(() => {});
-    }, 8000);
+    }, 3000);
     return () => clearInterval(id);
   }, [cerebroListo]);
 
@@ -494,7 +488,7 @@ export default function App() {
 
   // Speech Recognition hook with full barge-in interruption
   useEffect(() => {
-    if (!micEnabled || cerebroListo !== 'listo') {
+    if (!micEnabled) {
       if (speechRecognizerRef.current) {
         speechRecognizerRef.current.stop();
         speechRecognizerRef.current = null;
@@ -526,14 +520,20 @@ export default function App() {
       () => {
         // Recognition ended / auto-restarted
       },
-      () => {
-        // Recognition error
+      (err) => {
+        const msg = String((err as any)?.error || (err as any)?.message || err);
+        if (/not-allowed|mic-denied|denied/i.test(msg)) {
+          showBubble('Permite el micrófono en el navegador para hablarme.');
+          setMicEnabled(false);
+        }
       }
     );
 
     if (rec) {
       speechRecognizerRef.current = rec;
       rec.start();
+    } else {
+      showBubble('Este navegador no oye voz. Usá Chrome o el botón de hablar.');
     }
 
     return () => {
@@ -543,7 +543,7 @@ export default function App() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [micEnabled, cerebroListo]);
+  }, [micEnabled]);
 
   // Manual Trigger Voice
   const triggerVoicePipeline = () => {
@@ -591,7 +591,7 @@ export default function App() {
     const image = quiereVer ? grabFrame() : null;
     pedirTurno({ message: cmd, mode, historial: historialRef.current, image, usuario: currentUser.name })
       .then((data) => {
-        if (data.error === 'sesión requerida' || /sesión requerida/.test(String(data.error || ''))) {
+        if (data.error === 'sesión requerida' || /sesión requerida|privado|sesion_requerida/i.test(String(data.error || ''))) {
           setIsBiometricOpen(true);
           vocalize('ULTRON es privado. Entra con tu sesión de junta.');
           return;

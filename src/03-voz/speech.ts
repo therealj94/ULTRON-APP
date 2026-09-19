@@ -63,6 +63,19 @@ export function initSpeechRecognizer(
     let lastFinal = '';
     let lastFinalAt = 0;
     let barged = false;
+    let micStream: MediaStream | null = null;
+    let langTries = 0;
+
+    const ensureMic = async () => {
+      if (micStream && micStream.getAudioTracks().some((t) => t.readyState === 'live')) return true;
+      if (!navigator.mediaDevices?.getUserMedia) return true;
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        return true;
+      } catch {
+        return false;
+      }
+    };
 
     const pick = (item: any): { text: string; conf: number } => {
       let best = { text: String(item?.[0]?.transcript || ''), conf: Number(item?.[0]?.confidence || 0) };
@@ -115,8 +128,8 @@ export function initSpeechRecognizer(
         const t = finalTxt.trim();
         const now = Date.now();
         const bajo = t.toLowerCase().replace(/[¿?¡!.,]/g, '').trim();
-        const fantasma = /^(la hora|hora|ahora|ah|eh|mm+|este|este este|ok|okay)$/.test(bajo);
-        if (fantasma || t.length < 4) return;
+        const fantasma = /^(la hora|hora|ah|eh|mm+|este|este este|ok|okay)$/.test(bajo);
+        if (fantasma || t.length < 3) return;
         if (t === lastFinal && now - lastFinalAt < 2500) return;
         if (conf > 0 && conf < 0.42) {
           onResult(t, false);
@@ -145,8 +158,13 @@ export function initSpeechRecognizer(
         return;
       }
       if (code === 'language-not-supported') {
+        langTries += 1;
         const i = LANGS.indexOf(recognition.lang);
         recognition.lang = LANGS[(i + 1) % LANGS.length];
+        if (langTries > LANGS.length) {
+          onError?.(err);
+          return;
+        }
       }
       if (code !== 'no-speech' && code !== 'aborted') onError?.(err);
     };
@@ -155,11 +173,18 @@ export function initSpeechRecognizer(
       start: () => {
         isManuallyStopped = false;
         if (restartTimer) clearTimeout(restartTimer);
-        try {
-          recognition.start();
-        } catch {
-          scheduleRestart(300);
-        }
+        void ensureMic().then((ok) => {
+          if (isManuallyStopped) return;
+          if (!ok) {
+            onError?.(new Error('mic-denied'));
+            return;
+          }
+          try {
+            recognition.start();
+          } catch {
+            scheduleRestart(300);
+          }
+        });
       },
       stop: () => {
         isManuallyStopped = true;
