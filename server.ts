@@ -1382,7 +1382,7 @@ async function procesarTelegram(update: any) {
   await telegramResponder(parsed.chatId, reply);
 }
 
-app.post('/api/telegram/webhook', limitar(40), async (req, res) => {
+app.post(['/api/telegram/webhook', '/api/telegram/webhook/'], limitar(40), async (req, res) => {
   if (!telegramWebhookSecretOk(req.headers['x-telegram-bot-api-secret-token'])) {
     return res.status(401).json({ ok: false, honesto: true });
   }
@@ -1420,6 +1420,9 @@ async function startServer() {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
+      if (String(req.path || '').startsWith('/api/')) {
+        return res.status(404).json({ error: 'no está', honesto: true });
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
