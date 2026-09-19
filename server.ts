@@ -47,6 +47,7 @@ import {
   recordarTurno,
   registrarCambio,
   resolverQuien,
+  type CanalMem,
 } from './lib/memoria';
 import { nombreDe } from './lib/junta';
 import {
@@ -641,7 +642,7 @@ app.post('/api/playwright/scrape', exigirSesion, limitar(10), async (req, res) =
   let formattedUrl = url.trim();
   if (!/^https?:\/\//i.test(formattedUrl)) formattedUrl = `https://${formattedUrl}`;
   const gate = await urlPublica(formattedUrl);
-  if (!gate.ok) return res.status(400).json({ error: gate.error, honesto: true });
+  if (gate.ok === false) return res.status(400).json({ error: gate.error, honesto: true });
   formattedUrl = gate.url;
   if (!ULTRON_OJO_URL) {
     return res.status(503).json({ error: 'ULTRON_OJO_URL no configurada', honesto: true });
@@ -933,7 +934,7 @@ async function prepararTurno(body: any) {
   const message = String(body?.message || body?.text || '').trim();
   const mode = body?.mode || 'GUARDIAN';
   const nombre = String(body?.usuario || body?.userName || '').trim().slice(0, 40);
-  const canal = body?.canal === 'telegram' ? 'telegram' : 'mesa';
+  const canal: CanalMem = body?.canal === 'telegram' ? 'telegram' : 'mesa';
   await cargarMemoria();
   const quien = resolverQuien(body, body?.sesion || null);
   const memSt = estadoMemoria();
@@ -1194,7 +1195,7 @@ async function correrTurno(body: any): Promise<{
     honesto: true;
     error?: string;
   }) => {
-    if (out.reply) await recordarTurno({ quien, rol: 'ultron', texto: out.reply, canal: canal || 'mesa' });
+    if (out.reply) await recordarTurno({ quien, rol: 'ultron', texto: out.reply, canal });
     return out;
   };
   if (p.directo) {
@@ -1304,7 +1305,7 @@ app.post('/api/turno/stream', exigirMesa, limitar(20), async (req, res) => {
   }
   const { t0, hechos, tools, system, message, quien, canal } = p;
   const guardarStream = async (texto: string) => {
-    if (texto) await recordarTurno({ quien, rol: 'ultron', texto, canal: canal || 'mesa' });
+    if (texto) await recordarTurno({ quien, rol: 'ultron', texto, canal });
   };
   send('tools', { tools });
   if (p.directo) {

@@ -110,7 +110,7 @@ export function playFile(src: string, onEnd?: () => void, onError?: () => void) 
   stopVoice();
   const audio = new Audio(src);
   audio.preload = 'auto';
-  audio.playsInline = true;
+  audio.setAttribute('playsinline', 'true');
   current = audio;
   try { ensureAnalyser(audio); } catch { /* */ }
   audio.onplaying = () => startLip();
@@ -139,6 +139,10 @@ export function playWavBlob(blob: Blob, onEnd?: () => void, onError?: () => void
 export function enqueueWav(blob: Blob) {
   queue.push(blob);
   if (!current) playNext();
+}
+
+export function colaVacia() {
+  return !current && queue.length === 0;
 }
 
 export function newTtsAbort() {

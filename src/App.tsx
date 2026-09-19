@@ -22,7 +22,7 @@ import { playSfx } from './03-voz/audio';
 import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './03-voz/speech';
 import { speakWithElevenLabsOrFallback, stopCurrentVoice, DEFAULT_ELEVENLABS_VOICES } from './03-voz/elevenlabs';
 import { vozPorId, VozId } from './03-voz/voces';
-import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip, playFile } from './03-voz/player';
+import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip, playFile, colaVacia } from './03-voz/player';
 import { clipDeTexto, saludoHora, siguienteChiste } from './03-voz/banco';
 import { bargeIn } from './03-voz/barge';
 import { pedirTurno } from './04-cerebro/turno';
@@ -186,9 +186,8 @@ export default function App() {
       const voz = vozPorId(vozId);
       const ac = newTtsAbort();
       const speakBlob = (blob: Blob, last: boolean) => {
-        const play = currentQueueEmpty ? playWavBlob : enqueueWav;
-        // first chunk starts playback
-        return playWavBlob(blob, () => { if (last) setFace('IDLE'); }, browserFallback);
+        const play = colaVacia() ? playWavBlob : enqueueWav;
+        return play(blob, () => { if (last) setFace('IDLE'); }, browserFallback);
       };
       fetch('/api/tts/stream', {
         method: 'POST',

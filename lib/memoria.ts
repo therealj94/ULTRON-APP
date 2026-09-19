@@ -206,10 +206,12 @@ export async function recordarTurno(opts: {
       const junta = /junta|orden global|prospera|aucorp|ordenex|mina|concesi[oó]n|genesis/i.test(texto);
       if (junta) {
         if (!a.junta.larga.some((x) => x.hecho === texto)) {
-          a.junta.larga = [{ hecho: texto, t, quien: 'junta', canal: opts.canal }, ...a.junta.larga].slice(0, MAX_LARGA);
+          const item: HechoMem = { hecho: texto, t, quien: 'junta', canal: opts.canal };
+          a.junta.larga = [item, ...a.junta.larga].slice(0, MAX_LARGA);
         }
       } else {
-        p.larga = [{ hecho: texto, t, quien: opts.quien, canal: opts.canal }, ...p.larga.filter((x) => x.hecho !== texto)].slice(0, MAX_LARGA);
+        const item: HechoMem = { hecho: texto, t, quien: opts.quien, canal: opts.canal };
+        p.larga = [item, ...p.larga.filter((x) => x.hecho !== texto)].slice(0, MAX_LARGA);
       }
     }
   }
@@ -219,10 +221,13 @@ export async function recordarTurno(opts: {
 
 export async function registrarCambio(opts: { quien: MiembroId | null; canal: CanalMem; que: string }): Promise<void> {
   const a = await cargarMemoria();
-  a.cambios = [
-    ...a.cambios,
-    { t: Date.now(), quien: opts.quien || 'junta', canal: opts.canal, que: String(opts.que || '').slice(0, 200) },
-  ].slice(-MAX_CAMBIOS);
+  const cambio: CambioMem = {
+    t: Date.now(),
+    quien: opts.quien || 'junta',
+    canal: opts.canal,
+    que: String(opts.que || '').slice(0, 200),
+  };
+  a.cambios = [...a.cambios, cambio].slice(-MAX_CAMBIOS);
   cache = a;
   await enqueue(() => persistirMemoria().then(() => undefined));
 }
@@ -243,7 +248,8 @@ export async function guardarHechoQuien(opts: {
     canal: opts.canal || 'mesa',
   };
   if (item.quien === 'junta') {
-    a.junta.larga = [{ ...item, quien: 'junta' }, ...a.junta.larga.filter((x) => x.hecho !== hecho)].slice(0, MAX_LARGA);
+    const juntaItem: HechoMem = { ...item, quien: 'junta' };
+    a.junta.larga = [juntaItem, ...a.junta.larga.filter((x) => x.hecho !== hecho)].slice(0, MAX_LARGA);
   } else {
     const p = a.perfiles[item.quien];
     p.larga = [item, ...p.larga.filter((x) => x.hecho !== hecho)].slice(0, MAX_LARGA);

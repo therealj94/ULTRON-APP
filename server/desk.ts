@@ -10,6 +10,7 @@ export const ULTRON_VOICE = {
   nombre: 'ULTRON',
   elevenLabsVoiceId: process.env.ELEVENLABS_VOZ || 'hHjbwzYZW17oh0p05AKv', // Gabriela · español México
   chatterboxVoice: process.env.CHATTERBOX_VOICE || 'luna',
+  qwenVoice: process.env.QWEN_VOICE || process.env.CHATTERBOX_VOICE || 'luna',
 };
 
 export function elevenVoiceIdFor(_voice?: string) {
