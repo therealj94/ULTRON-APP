@@ -28,6 +28,7 @@ import { bargeIn } from './03-voz/barge';
 import { pedirTurno } from './04-cerebro/turno';
 import { grabFrame } from './04-cerebro/grabFrame';
 import { guardarHecho } from './09-estado/memoria';
+const pendienteCerebro = { hecho: '' };
 import { downloadStandaloneSimulator } from './08-servicios/exporter';
 import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck, HelpCircle, RotateCcw } from 'lucide-react';
 
@@ -579,9 +580,12 @@ export default function App() {
     setFace(caraDeTexto(cmd) === 'LISTENING' ? 'THINKING' : caraDeTexto(cmd));
     stopVoice();
     const rec = cmd.match(/recuerda(?: que)? (.+)/i);
-    if (rec) guardarHecho(rec[1]);
-    else if (/junta|rol|medardo|guarda|anota|se llama|orden global/i.test(cmd) && cmd.length > 12) {
+    if (rec) {
+      guardarHecho(rec[1]);
+      pendienteCerebro.hecho = rec[1];
+    } else if (/junta|rol|medardo|guarda|anota|se llama|orden global|prospera|mina|aucorp|ordenex/i.test(cmd) && cmd.length > 12) {
       guardarHecho(cmd);
+      pendienteCerebro.hecho = cmd;
     }
     const quiereVer = /qu[eé] ves|qu[eé] hay aqu[ií]|imagen|c[aá]mara|le[eé] (esto|la foto)/i.test(cmd);
     const image = quiereVer ? grabFrame() : null;
@@ -596,7 +600,11 @@ export default function App() {
         }).catch(() => {});
         if (data.foto) logBridgeEvent('in', `foto ${data.foto}`);
         logBridgeEvent('in', `${data.modelo || 'turno'} ${data.ms || ''}ms`);
-        vocalize(String(text));
+        const pregunta =
+          pendienteCerebro.hecho && /orden global|junta|mina|prospera|aucorp|token|fund|cofund|concesi/i.test(cmd)
+            ? ' ¿Lo actualizo en el cerebro Genesis Core?'
+            : '';
+        vocalize(String(text) + pregunta);
       })
       .catch((e) => {
         setFace('CONCERNED');
@@ -612,6 +620,17 @@ export default function App() {
     const q = cmd.toLowerCase();
     logBridgeEvent('out', `Comando de voz: "${q}"`);
 
+    if (/actualiza(r)? (el )?cerebro|guarda(lo)? en genesis|s[ií],? (actualiza|guarda|aprend[eé])|aprend[eé] eso|m[eé]telo al cerebro/.test(q)) {
+      const hecho = pendienteCerebro.hecho || historialRef.current.filter((h) => h.rol === 'user').slice(-1)[0]?.texto || '';
+      if (!hecho) {
+        vocalize('Decime el hecho y después “actualiza el cerebro”.');
+        return;
+      }
+      guardarHecho(`[Genesis] ${hecho}`);
+      pendienteCerebro.hecho = '';
+      vocalize('Quedó en Genesis Core. La próxima pregunta ya lo usa.');
+      return;
+    }
     if (/^(toma una )?foto$|selfie|sonríe/.test(q) && !/precio|web|página/.test(q)) {
       setIsCameraCountdownModalOpen(true);
       return;

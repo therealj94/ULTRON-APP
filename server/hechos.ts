@@ -1,10 +1,10 @@
 /** Qué va a largo plazo vs plática. */
 
 const SEMILLA = [
-  'Junta Directiva de Orden Global: José Ordóñez y Medardo Ordóñez.',
-  'José Ordóñez: junta, fundador, habla con ULTRON en el escritorio.',
-  'Medardo Ordóñez: junta. Canción favorita: The Verve — Bitter Sweet Symphony.',
-  'José Ordóñez: canción favorita Kanye West — Runaway (el brindis).',
+  'Junta: Medardo Ordóñez fundador; José, Melany Ordóñez y Leonardo Paguada cofundadores.',
+  'José Ordóñez: cofundador, junta, habla con ULTRON.',
+  'Medardo José Ordóñez Enamorado: fundador. The Verve — Bitter Sweet Symphony.',
+  'José Ordóñez: Kanye West — Runaway (el brindis).',
 ];
 
 export function semillaLarga() {
@@ -15,7 +15,7 @@ export function esHechoLargo(texto: string): boolean {
   const t = texto.toLowerCase();
   if (t.length < 8) return false;
   if (/^(hola|hey|qué onda|como estas|gracias|ok|va|sí|no)\b/.test(t) && t.length < 24) return false;
-  return /recuerda|guard[ae]|anot[ae]|junta|rol(es)?|se llama|mi hermano|medardo|jos[eé] ord|fund[eé]|soy el|soy la|nuestra empresa|orden global/.test(t);
+  return /recuerda|guard[ae]|anot[ae]|junta|rol(es)?|se llama|mi hermano|medardo|jos[eé] ord|melany|paguada|fund[eé]|cofund|soy el|soy la|nuestra empresa|orden global|prospera|aucorp|ordenex|mina|concesi[oó]n/.test(t);
 }
 
 export function fusionarLarga(existente: { hecho: string; t: number }[], extra: string[]) {
