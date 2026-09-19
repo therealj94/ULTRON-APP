@@ -42,7 +42,7 @@ export function catalogoCanales(): Canal[] {
     { id: 'telegram', nombre: 'Telegram (enviar)', listo: tg, falta: tg ? undefined : 'TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID' },
     { id: 'telegram-in', nombre: 'Telegram (responder)', listo: tgIn, falta: tgIn ? undefined : 'TELEGRAM_WEBHOOK_SECRET + chat de junta' },
     { id: 'oido', nombre: 'Oír nota de voz', listo: !!clave('elevenlabs') || !!clave('gemini'), falta: !!clave('elevenlabs') || !!clave('gemini') ? undefined : 'ELEVENLABS_API_KEY o GEMINI_API_KEY' },
-    { id: 'memoria', nombre: 'Memoria durable José/Medardo', listo: !!(process.env.ULTRON_MEMORIA_BUCKET && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY), falta: process.env.ULTRON_MEMORIA_BUCKET ? undefined : 'ULTRON_MEMORIA_BUCKET + AWS_*' },
+    { id: 'memoria', nombre: 'Memoria durable José/Medardo/Carlos', listo: !!(process.env.ULTRON_MEMORIA_BUCKET && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY), falta: process.env.ULTRON_MEMORIA_BUCKET ? undefined : 'ULTRON_MEMORIA_BUCKET + AWS_*' },
     { id: 'whatsapp', nombre: 'WhatsApp', listo: wa, falta: wa ? undefined : 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, JEFE_WHATSAPP' },
     { id: 'correo', nombre: 'Correo', listo: mail, falta: mail ? undefined : 'RESEND_API_KEY + MAIL_FROM' },
     { id: 'llamada', nombre: 'Llamada de voz', listo: call, falta: call ? undefined : 'TWILIO_VOICE_FROM + JEFE_TELEFONO' },

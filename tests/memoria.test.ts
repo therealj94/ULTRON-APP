@@ -38,4 +38,16 @@ describe('Memoria por miembro', () => {
     assert.ok(j.privada.larga.some((h) => /café negro/.test(h.hecho)));
     assert.equal(m.privada.larga.some((h) => /café negro/.test(h.hecho)), false);
   });
+
+  it('no mezcla la conversación de Carlos con la de José', async () => {
+    resetMemoriaTest();
+    await recordarTurno({ quien: 'carlos', rol: 'user', texto: 'Carlos: reviso operaciones ORIGEN', canal: 'telegram' });
+    await recordarTurno({ quien: 'jose', rol: 'user', texto: 'José: firmo yo mañana', canal: 'telegram' });
+    const pc = promptMemoria('carlos');
+    const pj = promptMemoria('jose');
+    assert.match(pc, /HABLAS CON: Carlos/);
+    assert.match(pc, /operaciones ORIGEN/);
+    assert.equal(pc.includes('firmo yo mañana'), false);
+    assert.equal(pj.includes('operaciones ORIGEN'), false);
+  });
 });
