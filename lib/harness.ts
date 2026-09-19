@@ -20,6 +20,43 @@ No inventes el resultado. No pidas herramienta si ya hay HECHOS suficientes. No 
 `.trim();
 
 const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer)\s*(.*)$/im;
+const JSON_TOOLS = /"tool"\s*:\s*"(web|pagina|spot_oro|spot_plata|fx_hnl|clima)"/;
+
+export type JsonTool = { tool: 'web' | 'pagina' | 'spot_oro' | 'spot_plata' | 'fx_hnl' | 'clima'; q?: string; url?: string };
+
+/** Function-call real. Si el modelo responde SOLO este JSON, se ejecuta una ronda más. */
+export function extraerJsonTool(texto: string): JsonTool | null {
+  const t = String(texto || '').trim();
+  const m = t.match(/\{[^{}]*"tool"\s*:\s*"(web|pagina|spot_oro|spot_plata|fx_hnl|clima)"[^{}]*\}/);
+  if (!m) return null;
+  try {
+    const j = JSON.parse(m[0]) as JsonTool;
+    if (!j?.tool || !JSON_TOOLS.test(JSON.stringify(j))) return null;
+    return j;
+  } catch {
+    return null;
+  }
+}
+
+export function quitarJsonTool(texto: string): string {
+  return String(texto || '')
+    .replace(/\{[^{}]*"tool"\s*:\s*"(web|pagina|spot_oro|spot_plata|fx_hnl|clima)"[^{}]*\}/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+export function esSoloJsonTool(texto: string): boolean {
+  const t = String(texto || '').trim();
+  return !!extraerJsonTool(t) && t.startsWith('{') && t.endsWith('}') && t.length < 400;
+}
+
+/** ~4 caracteres por token. Tope del wrap CONOCIMIENTO_OG. */
+export function topeTokens(texto: string, maxTokens = 4000): string {
+  const s = String(texto || '');
+  const max = Math.max(0, maxTokens) * 4;
+  if (s.length <= max) return s;
+  return s.slice(0, max);
+}
 
 export function extraerPedidoHerramienta(texto: string): PedidoHerramienta | null {
   const m = String(texto || '').match(RE);

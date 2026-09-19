@@ -5,9 +5,11 @@ export type Turno = {
   reply?: string;
   error?: string;
   modelo?: string;
+  via?: string;
   ms?: number;
   foto?: string | null;
   honesto?: boolean;
+  herramientas?: string[];
 };
 
 export async function pedirTurno(opts: {

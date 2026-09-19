@@ -70,14 +70,19 @@ export function esContinuacion(message: string): boolean {
   const q = fold(message);
   if (!q) return false;
   if (
-    /^(si|dale|ok|vale|hazlo|hazlo vos|procede|adelante|claro|bueno|si hacerlo|si,? haz|si, hacerlo)/.test(q) &&
+    /^(si|dale|ok|vale|hazlo|hazlo vos|procede|adelante|claro|bueno|sigue|continua|mas|explica|por que|entonces|y eso|y eso\?|y\?|si hacerlo|si,? haz|si, hacerlo)/.test(q) &&
     q.length < 240
   ) {
     return true;
   }
+  if (q.length < 80 && /^(y |e |entonces |pero |ok |vale |si |mas |sigue |continua )/.test(q)) {
+    return true;
+  }
   return (
     q.length < 280 &&
-    /\b(esto|eso|ese codigo|el codigo|el repo|el readme|la pagina|el enlace|el link|el proyecto|profund[oa]|descarga(lo| el codigo)?|analiza(lo)?|revisa (esto|eso|el|la|lo|profundo)|el objeto)\b/.test(q)
+    /\b(esto|eso|ese codigo|el codigo|el repo|el readme|la pagina|el enlace|el link|el proyecto|profund[oa]|descarga(lo| el codigo)?|analiza(lo)?|revisa (esto|eso|el|la|lo|profundo)|el objeto|lo de antes|el mismo|sigue|continua|mas detalle)\b/.test(
+      q
+    )
   );
 }
 
@@ -99,17 +104,25 @@ export function esPreguntaExterna(message: string): boolean {
   return false;
 }
 
-function ultimoTema(hilo: TurnoHilo[]): { tema: string; url?: string } {
+export function ultimoTema(hilo: TurnoHilo[]): { tema: string; url?: string } {
   const urls: string[] = [];
   let tema = '';
   for (let i = hilo.length - 1; i >= 0; i--) {
     const t = String(hilo[i]?.texto || '').trim();
     if (!t) continue;
+    if (/^\[(HILO|RESPONDE)/.test(t)) continue;
     for (const u of extraerUrls(t)) if (!urls.includes(u)) urls.push(u);
-    if (!tema && t.length > 24) tema = t.replace(/\s+/g, ' ').slice(0, 220);
+    if (!tema && t.length > 8) tema = t.replace(/\s+/g, ' ').slice(0, 280);
     if (urls.length && tema) break;
   }
   return { tema, url: urls[0] };
+}
+
+export function hechoHilo(hilo: TurnoHilo[]): string | null {
+  const t = ultimoTema(hilo);
+  if (!t.tema && !t.url) return null;
+  const url = t.url && t.tema && !t.tema.includes(t.url) ? ` [${t.url}]` : '';
+  return `HILO ACTIVO: ${t.tema || t.url}${url}. Seguí esto. No pidas que te lo repitan.`;
 }
 
 /** Si no está en el cerebro (hechos OG / memoria), hay que ir a internet. */
@@ -129,14 +142,34 @@ export function pedidoRed(message: string, hilo: TurnoHilo[] = []): PedidoRed | 
   return null;
 }
 
-/** Reescribe «esto/hazlo» con el objeto del hilo para que Qwen no pida el archivo otra vez. */
+/** Reescribe «esto/hazlo/sigue» con el objeto del hilo para que Qwen no pida el archivo otra vez. */
 export function resolverReferencia(message: string, hilo: TurnoHilo[] = []): string {
   const q = String(message || '').trim();
-  if (!q || !esContinuacion(q)) return q;
+  if (!q || !hilo.length) return q;
+  if (!esContinuacion(q) && q.length > 90) return q;
+  if (!esContinuacion(q) && q.length <= 90 && !/^(y |e |entonces |dale|ok|sigue|mas|explica)/i.test(fold(q))) {
+    return q;
+  }
   const prev = ultimoTema(hilo);
   if (!prev.url && !prev.tema) return q;
   const objeto = prev.url ? prev.url : prev.tema;
-  return `${q}\n\n[HILO: «esto» es lo último que hablamos: ${objeto}. No pidas el enlace ni el archivo otra vez. Si hay URL, léela y analiza a fondo. Si no, busca el proyecto en internet y revisa el README.]`;
+  return `${q}\n\n[HILO: seguimos con «${objeto}». No pidas el enlace ni el archivo otra vez. Si hay URL, léela. No empieces de cero.]`;
+}
+
+/** El chat de Telegram es la columna. La memoria personal rellena huecos, no la pisa. */
+export function unirHilos(chat: TurnoHilo[], persona: TurnoHilo[]): TurnoHilo[] {
+  const seen = new Set<string>();
+  const key = (t: TurnoHilo) => `${t.rol === 'ultron' || t.rol === 'assistant' ? 'a' : 'u'}|${String(t.texto || '').replace(/\s+/g, ' ').trim().slice(0, 220)}`;
+  const out: TurnoHilo[] = [];
+  for (const t of [...(persona || []), ...(chat || [])]) {
+    const texto = String(t?.texto || '').trim();
+    if (!texto) continue;
+    const k = key(t);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push({ rol: t.rol, texto });
+  }
+  return out;
 }
 
 export function fusionarHilo(opts: {
@@ -147,7 +180,7 @@ export function fusionarHilo(opts: {
 }): MsgHilo[] {
   const durable = opts.durable || [];
   const cliente = opts.cliente || [];
-  const src = durable.length >= 2 ? durable : [...cliente, ...durable];
+  const src = cliente.length ? unirHilos(cliente, durable) : durable;
   const msgs: MsgHilo[] = [];
   for (const t of src.slice(-(opts.max ?? 16))) {
     const content = String(t.texto || '').trim().slice(0, 1800);
