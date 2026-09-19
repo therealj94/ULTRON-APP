@@ -1,10 +1,14 @@
 /**
  * Telegram inbound: solo chats/usuarios de la junta. Cero teatro, nadie más entra.
+ * El hilo del chat se persiste (disco + S3): no vive solo en RAM.
  */
 
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { dataUrlDeImagen, esImagenNombre, esPdfNombre } from './leer-pdf';
 import { esAudioNombre, mimeDeAudio } from './oido';
+import { s3GetJson, s3Listo, s3PutJson } from './s3';
 
 export type TgParsed = {
   chatId: string;
@@ -12,6 +16,7 @@ export type TgParsed = {
   nombre: string;
   texto: string;
   comando?: string;
+  replyTo?: string;
   imageDataUrl?: string;
   audio?: { mime: string; buffer: Buffer };
   documento?: { filename: string; mime: string; buffer: Buffer };
@@ -88,21 +93,102 @@ export function ayudaTelegram(): string {
     'Si me subes una foto o un PDF, los leo. No invento lo que no está en el archivo. Imagen como archivo también vale.',
     'Si me mandas una nota de voz, la oigo, la transcribo y te contesto por escrito. Audio de vuelta solo si lo pides (`/audio`).',
     'Urgente: «avísame urgente…» o «llámanos por telegram». Suena el teléfono y, si hay voz, te mando nota. El bot no hace llamada de teléfono; eso es Twilio (aún sin clave).',
-    'Memoria: una para José, otra para Medardo, otra para Carlos y otra para Mayra, en S3. Corto, mediano y largo por persona. No mezclo las conversaciones. «esto» es lo último que hablamos. Si no está en el cerebro, busco en internet sin que me lo pidas.',
+    'Memoria: una para José, otra para Medardo, otra para Carlos y otra para Mayra, en S3. Corto, mediano y largo por persona. No mezclo las conversaciones. Este chat es un solo hilo: «esto» es lo último. Si no está en el cerebro, busco en internet sin que me lo pidas.',
     'Carlos y Mayra: consulta. Pueden usar el taller; no cambian el sistema (sin redespliegue, sin mantenimiento, sin ejecutor).',
     'Ejemplos: «cómo está el sistema», «mándame audio del sistema», «busca noticias de oro», «anota que mañana hay junta», «haz un pdf del resumen».',
   ].join('\n');
 }
 
-const hilos = new Map<string, { rol: string; texto: string }[]>();
+const FILE_HILO = path.join(process.cwd(), 'data', 'telegram-hilo.json');
+const S3_HILO = 'ultron/telegram-hilo.json';
+const MAX_HILO = 40;
+
+type HiloItem = { rol: string; texto: string; t?: number };
+
+const hilos = new Map<string, HiloItem[]>();
+let hilosLoaded = false;
+
+function escribirHilosDisco() {
+  const obj: Record<string, HiloItem[]> = {};
+  for (const [k, v] of hilos) obj[k] = v.slice(-MAX_HILO);
+  fs.mkdirSync(path.dirname(FILE_HILO), { recursive: true });
+  const tmp = FILE_HILO + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(obj));
+  fs.renameSync(tmp, FILE_HILO);
+}
+
+function leerHilosDisco(): Record<string, HiloItem[]> {
+  try {
+    const j = JSON.parse(fs.readFileSync(FILE_HILO, 'utf8'));
+    return j && typeof j === 'object' ? j : {};
+  } catch {
+    return {};
+  }
+}
+
+function cargarMapa(raw: Record<string, HiloItem[]>) {
+  hilos.clear();
+  for (const [k, v] of Object.entries(raw || {})) {
+    if (!Array.isArray(v)) continue;
+    hilos.set(
+      String(k),
+      v
+        .filter((x) => x && String(x.texto || '').trim())
+        .map((x) => ({ rol: String(x.rol || 'user'), texto: String(x.texto || ''), t: x.t }))
+        .slice(-MAX_HILO)
+    );
+  }
+}
+
+export async function cargarHilosTelegram(): Promise<void> {
+  if (hilosLoaded) return;
+  cargarMapa(leerHilosDisco());
+  if (s3Listo()) {
+    const r = await s3GetJson(S3_HILO);
+    if (r.ok && r.json && typeof r.json === 'object') cargarMapa(r.json as Record<string, HiloItem[]>);
+  }
+  hilosLoaded = true;
+}
+
+async function persistirHilosRemoto() {
+  if (!s3Listo()) return;
+  const obj: Record<string, HiloItem[]> = {};
+  for (const [k, v] of hilos) obj[k] = v.slice(-MAX_HILO);
+  await s3PutJson(S3_HILO, obj);
+}
 
 export function hiloTelegram(chatId: string): { rol: string; texto: string }[] {
-  return hilos.get(String(chatId)) || [];
+  return (hilos.get(String(chatId)) || []).map((x) => ({ rol: x.rol, texto: x.texto }));
 }
 
 export function recordarTelegram(chatId: string, user: string, ultron: string) {
   const prev = hiloTelegram(chatId);
-  hilos.set(String(chatId), [...prev, { rol: 'user', texto: user }, { rol: 'ultron', texto: ultron }].slice(-24));
+  const t = Date.now();
+  hilos.set(
+    String(chatId),
+    [...prev, { rol: 'user', texto: user, t }, { rol: 'ultron', texto: ultron, t }].slice(-MAX_HILO)
+  );
+  try {
+    escribirHilosDisco();
+  } catch {
+    /* disco lleno o RO */
+  }
+}
+
+export async function persistirHilosTelegram(): Promise<void> {
+  try {
+    escribirHilosDisco();
+  } catch {
+    /* */
+  }
+  await persistirHilosRemoto();
+}
+
+/** Tests: vacía el mapa. No toca S3. */
+export function resetHilosTelegramTest(seed?: Record<string, HiloItem[]>) {
+  hilos.clear();
+  hilosLoaded = true;
+  if (seed) cargarMapa(seed);
 }
 
 async function archivoTelegram(token: string, fileId: string): Promise<Buffer | null> {
@@ -125,6 +211,7 @@ export async function parsearUpdateTelegram(update: any): Promise<TgParsed | nul
   if (!chatId) return null;
   const nombre = String(msg.from?.first_name || msg.from?.username || 'jefe').slice(0, 40);
   const texto = String(msg.text || msg.caption || '').trim();
+  const replyTo = String(msg.reply_to_message?.text || msg.reply_to_message?.caption || '').trim().slice(0, 600) || undefined;
   const comando = texto.startsWith('/') ? texto.split(/\s+/)[0].split('@')[0].toLowerCase() : undefined;
   const token = process.env.TELEGRAM_BOT_TOKEN || '';
   let imageDataUrl: string | undefined;
@@ -178,7 +265,22 @@ export async function parsearUpdateTelegram(update: any): Promise<TgParsed | nul
     };
   }
   if (!texto && !imageDataUrl && !audio && !documento) return null;
-  return { chatId, userId, nombre, texto, comando, imageDataUrl, audio, documento };
+  return { chatId, userId, nombre, texto, comando, replyTo, imageDataUrl, audio, documento };
+}
+
+export async function telegramEscribiendo(chatId: string): Promise<void> {
+  const token = process.env.TELEGRAM_BOT_TOKEN || '';
+  if (!token) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, action: 'typing' }),
+      signal: AbortSignal.timeout(4000),
+    });
+  } catch {
+    /* no bloquea el turno */
+  }
 }
 
 export async function telegramResponder(chatId: string, texto: string): Promise<{ ok: boolean; detalle: string }> {

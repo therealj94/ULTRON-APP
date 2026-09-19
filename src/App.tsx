@@ -23,14 +23,17 @@ import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHan
 import { speakWithElevenLabsOrFallback, stopCurrentVoice, DEFAULT_ELEVENLABS_VOICES } from './03-voz/elevenlabs';
 import { vozPorId, VozId } from './03-voz/voces';
 import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip, playFile, colaVacia } from './03-voz/player';
-import { clipDeTexto, saludoHora, siguienteChiste } from './03-voz/banco';
+import { clipDeTexto, saludoHora, siguienteChiste, PRELOAD_CLIPS } from './03-voz/banco';
 import { bargeIn } from './03-voz/barge';
+import { LoopJarvis, type FaseMic } from './03-voz/hotword';
 import { pedirTurno } from './04-cerebro/turno';
+import { enrutar } from './04-cerebro/skills';
 import { grabFrame } from './04-cerebro/grabFrame';
 import { guardarHecho } from './09-estado/memoria';
 import { headersMesa } from './10-infra/sesionCliente';
 const pendienteCerebro = { hecho: '' };
 import { downloadStandaloneSimulator } from './08-servicios/exporter';
+import { AgenticHarnessModal } from './07-pantallas/AgenticHarnessModal';
 import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck, HelpCircle, RotateCcw } from 'lucide-react';
 
 export default function App() {
@@ -44,7 +47,7 @@ export default function App() {
   const FUN_MODE = true;
   useEffect(() => { onLip(setLipLevel); return () => onLip(null); }, []);
   useEffect(() => {
-    ['/voz/bohemian.mp3', '/voz/ligera.mp3', '/voz/bittersweet.mp3', '/voz/runaway.mp3', '/voz/bruno.mp3', '/voz/dias.mp3', '/voz/tardes.mp3', '/voz/noches.mp3', '/voz/discurso.mp3', '/voz/quien.mp3', '/voz/puedo.mp3'].forEach((src) => {
+    PRELOAD_CLIPS.forEach((src) => {
       const a = new Audio();
       a.preload = 'auto';
       a.src = src;
@@ -75,6 +78,10 @@ export default function App() {
   const [cerebroListo, setCerebroListo] = useState<'frio' | 'calentando' | 'listo'>('frio');
   const cerebroListoRef = useRef(cerebroListo);
   cerebroListoRef.current = cerebroListo;
+  const [faseMic, setFaseMic] = useState<FaseMic>('frio');
+  const loopRef = useRef<LoopJarvis | null>(null);
+  const cmdRef = useRef<(t: string) => void>(() => {});
+  const hablandoRef = useRef(false);
   const [resetTrigger, setResetTrigger] = useState<number>(0);
 
   const historialRef = useRef<{ rol: string; texto: string }[]>([]);
@@ -170,24 +177,29 @@ export default function App() {
   const vocalize = useCallback(
     (text: string, faceOverride: FaceState = 'SPEAKING') => {
       if (!speakerEnabled) return;
+      hablandoRef.current = true;
+      const finHabla = () => {
+        hablandoRef.current = false;
+        setFace('IDLE');
+      };
       const clip = clipDeTexto(text);
       if (clip) {
         setFace(clip.id === 'je' ? 'HAPPY' : faceOverride === 'SPEAKING' && /canta|bitter|queen|ligera|runaway/.test(text) ? 'HAPPY' : faceOverride);
         showBubble(text);
         setFace('HAPPY');
-        playFile(clip.file, () => setFace('IDLE'), () => speakUtterance(text, { enabled: true, onEnd: () => setFace('IDLE') }));
+        playFile(clip.file, finHabla, () => speakUtterance(text, { enabled: true, onEnd: finHabla }));
         return;
       }
       setFace('THINKING');
 
       const browserFallback = () =>
-        speakUtterance(text, { enabled: true, onEnd: () => setFace('IDLE') });
+        speakUtterance(text, { enabled: true, onEnd: finHabla });
 
       const voz = vozPorId(vozId);
       const ac = newTtsAbort();
       const speakBlob = (blob: Blob, last: boolean) => {
         const play = colaVacia() ? playWavBlob : enqueueWav;
-        return play(blob, () => { if (last) setFace('IDLE'); }, browserFallback);
+        return play(blob, () => { if (last) finHabla(); }, browserFallback);
       };
       fetch('/api/tts/stream', {
         method: 'POST',
@@ -208,7 +220,7 @@ export default function App() {
             setFace(faceOverride);
             showBubble(text);
             const blob = await r.blob();
-            await playWavBlob(blob, () => setFace('IDLE'), browserFallback);
+            await playWavBlob(blob, finHabla, browserFallback);
             return;
           }
           const reader = r.body?.getReader();
@@ -250,7 +262,7 @@ export default function App() {
           if (activeVoice?.apiKey) {
             speakWithElevenLabsOrFallback(text, activeVoice, {
               onStart: () => setFace(faceOverride),
-              onEnd: () => setFace('IDLE'),
+              onEnd: finHabla,
               onError: browserFallback,
             });
           } else {
@@ -340,6 +352,22 @@ export default function App() {
         .catch(() => {});
     }, 3000);
     return () => clearInterval(id);
+  }, [cerebroListo]);
+
+  useEffect(() => {
+    const loop = new LoopJarvis((texto) => cmdRef.current(texto), setFaseMic);
+    loopRef.current = loop;
+    loop.setListo(cerebroListoRef.current === 'listo');
+    const id = setInterval(() => loop.tick(), 400);
+    return () => {
+      loop.dispose();
+      clearInterval(id);
+      if (loopRef.current === loop) loopRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    loopRef.current?.setListo(cerebroListo === 'listo');
   }, [cerebroListo]);
 
   // Handle Fullscreen Toggle
@@ -486,34 +514,50 @@ export default function App() {
     return () => clearInterval(id);
   }, [cameraGaze.active, face, isBooting, dockOpen, settingsOpen]);
 
-  // Speech Recognition hook with full barge-in interruption
+  // Speech Recognition: mic continuo solo con cerebro listo. Hotword + barge-in.
   useEffect(() => {
-    if (!micEnabled) {
+    if (!micEnabled || cerebroListo !== 'listo') {
       if (speechRecognizerRef.current) {
         speechRecognizerRef.current.stop();
         speechRecognizerRef.current = null;
       }
+      if (cerebroListo !== 'listo') loopRef.current?.setListo(false);
       return;
     }
+
+    loopRef.current?.setListo(true);
 
     const rec = initSpeechRecognizer(
       (text, isFinal) => {
         if (!text.trim()) return;
-        if (isFinal) {
-          if (cerebroListoRef.current !== 'listo') {
-            showBubble(cerebroListoRef.current === 'calentando' ? 'Calentando el 27B… espera la luz cian.' : 'Cerebro frío. Espera.');
-            return;
+        if (cerebroListoRef.current !== 'listo') {
+          showBubble(cerebroListoRef.current === 'calentando' ? 'Calentando motor.' : 'Cerebro frío. Espera.');
+          return;
+        }
+        if (!isFinal) {
+          if (hablandoRef.current && text.trim().length >= 3) {
+            bargeIn();
+            hablandoRef.current = false;
+            loopRef.current?.barge();
           }
-          setFace(caraDeTexto(text));
-          handleVoiceCommand(text.trim());
-        } else {
-          // Live stream transcript
           showBubble(text, 2500);
           setFace('LISTENING');
+          return;
         }
+        if (hablandoRef.current) {
+          bargeIn();
+          hablandoRef.current = false;
+          loopRef.current?.barge();
+        }
+        setFace(caraDeTexto(text));
+        loopRef.current?.onFinal(text.trim());
       },
       () => {
-        bargeIn();
+        if (hablandoRef.current) {
+          bargeIn();
+          hablandoRef.current = false;
+          loopRef.current?.barge();
+        }
         setFace('LISTENING');
         showBubble('Escuchando...');
       },
@@ -543,12 +587,13 @@ export default function App() {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [micEnabled]);
+  }, [micEnabled, cerebroListo]);
 
   // Manual Trigger Voice
   const triggerVoicePipeline = () => {
     if (cerebroListoRef.current !== 'listo') {
-      showBubble(cerebroListoRef.current === 'calentando' ? 'Aún calienta. Espera la luz cian.' : 'Cerebro no listo.');
+      showBubble(cerebroListoRef.current === 'calentando' ? 'Calentando motor.' : 'Cerebro no listo.');
+      vocalize('calentando el motor');
       playSfx('tap', soundFxEnabled);
       return;
     }
@@ -578,7 +623,6 @@ export default function App() {
 
   const askCerebro = (cmd: string) => {
     setFace(caraDeTexto(cmd) === 'LISTENING' ? 'THINKING' : caraDeTexto(cmd));
-    stopVoice();
     const rec = cmd.match(/recuerda(?: que)? (.+)/i);
     if (rec) {
       guardarHecho(rec[1], { usuario: currentUser.name });
@@ -587,10 +631,14 @@ export default function App() {
       guardarHecho(cmd, { usuario: currentUser.name });
       pendienteCerebro.hecho = cmd;
     }
-    const quiereVer = /qu[eé] ves|qu[eé] hay aqu[ií]|imagen|c[aá]mara|le[eé] (esto|la foto)/i.test(cmd);
-    const image = quiereVer ? grabFrame() : null;
+    const ruta = enrutar(cmd);
+    const image = ruta.skill === 'vision' || /qu[eé] ves|qu[eé] hay aqu[ií]|imagen|c[aá]mara|le[eé] (esto|la foto)/i.test(cmd) ? grabFrame() : null;
+    hablandoRef.current = true;
+    playFile('/voz/mmm.mp3', undefined, () => {});
     pedirTurno({ message: cmd, mode, historial: historialRef.current, image, usuario: currentUser.name })
       .then((data) => {
+        stopVoice();
+        hablandoRef.current = false;
         if (data.error === 'sesión requerida' || /sesión requerida|privado|sesion_requerida/i.test(String(data.error || ''))) {
           setIsBiometricOpen(true);
           vocalize('ULTRON es privado. Entra con tu sesión de junta.');
@@ -612,6 +660,8 @@ export default function App() {
         vocalize(String(text) + pregunta);
       })
       .catch((e) => {
+        stopVoice();
+        hablandoRef.current = false;
         setFace('CONCERNED');
         const local = /orden global|origen|veta|5550|b[oó]veda|genesis|auka/i.test(cmd)
           ? 'Orden Global: junta José y Medardo, cadena 5550, ORIGEN es un gramín de oro en bóveda, Veta es la wallet. El 27B no contestó ahora; eso sí consta.'
@@ -620,12 +670,19 @@ export default function App() {
       });
   };
 
-  // Dispatcher: gags locales sí; datos SIEMPRE al cerebro.
+  // Dispatcher: router único. Canto/cerebro locales; el resto al harness.
   const handleVoiceCommand = (cmd: string) => {
     const q = cmd.toLowerCase();
     logBridgeEvent('out', `Comando de voz: "${q}"`);
+    const ruta = enrutar(cmd);
 
-    if (/actualiza(r)? (el )?cerebro|guarda(lo)? en genesis|s[ií],? (actualiza|guarda|aprend[eé])|aprend[eé] eso|m[eé]telo al cerebro/.test(q)) {
+    if (ruta.skill === 'canto') {
+      const id = ruta.payload.clip || 'bittersweet';
+      setFace('HAPPY');
+      vocalize(id);
+      return;
+    }
+    if (ruta.skill === 'cerebro') {
       const hecho = pendienteCerebro.hecho || historialRef.current.filter((h) => h.rol === 'user').slice(-1)[0]?.texto || '';
       if (!hecho) {
         vocalize('Decime el hecho y después “actualiza el cerebro”.');
@@ -636,6 +693,11 @@ export default function App() {
       vocalize('Quedó en Genesis Core. La próxima pregunta ya lo usa.');
       return;
     }
+    if (ruta.skill !== 'chat') {
+      askCerebro(cmd);
+      return;
+    }
+
     if (/^(toma una )?foto$|selfie|sonríe/.test(q) && !/precio|web|página/.test(q)) {
       setIsCameraCountdownModalOpen(true);
       return;
@@ -754,6 +816,7 @@ export default function App() {
 
     askCerebro(cmd);
   };
+  cmdRef.current = handleVoiceCommand;
 
   // Permission Responses
   const handleDenyPermission = () => {
@@ -1007,6 +1070,24 @@ export default function App() {
               {cerebroListo === 'listo' ? 'LISTO' : cerebroListo === 'calentando' ? 'CALENTA' : 'FRÍO'}
             </button>
 
+            <span
+              id="loop-jarvis-dot"
+              title={
+                faseMic === 'frio'
+                  ? 'Micrófono frío'
+                  : faseMic === 'hotword'
+                    ? 'Escuchando Ultron'
+                    : 'Turno abierto'
+              }
+              className={`inline-block w-2.5 h-2.5 rounded-full ${
+                faseMic === 'frio'
+                  ? 'bg-[#8FA3B0]'
+                  : faseMic === 'hotword'
+                    ? 'bg-[#05E1FF] animate-pulse shadow-[0_0_10px_rgba(5,225,255,0.55)]'
+                    : 'bg-[#05E1FF] shadow-[0_0_12px_rgba(5,225,255,0.85)]'
+              }`}
+            />
+
             {/* Camera Optical Tracking Toggle */}
             <button
               type="button"
@@ -1122,6 +1203,12 @@ export default function App() {
           soundFxEnabled={soundFxEnabled}
           hasVisor={hasVisor}
           onToggleMic={() => {
+            if (cerebroListo !== 'listo') {
+              showBubble('Calentando motor.');
+              vocalize('calentando el motor');
+              playSfx('tap', soundFxEnabled);
+              return;
+            }
             setMicEnabled((prev) => !prev);
             playSfx('tap', soundFxEnabled);
           }}
@@ -1392,6 +1479,21 @@ export default function App() {
           isOpen={false}
           onClose={() => setIsTutorialOpen(false)}
           soundFxEnabled={soundFxEnabled}
+        />
+
+        <AgenticHarnessModal
+          isOpen={harnessModalOpen}
+          onClose={() => setHarnessModalOpen(false)}
+          currentMode={mode}
+          autoModeSwitch={autoModeSwitch}
+          onToggleAutoModeSwitch={() => setAutoModeSwitch((v) => !v)}
+          hasVisor={hasVisor}
+          onToggleVisor={() => setHasVisor((v) => !v)}
+          onApplyClassification={(res) => {
+            if (autoModeSwitch && res?.mode) setMode(res.mode);
+          }}
+          onSpeak={(t) => vocalize(t)}
+          usuario={currentUser.name}
         />
 
         {/* Initial Boot Screen */}

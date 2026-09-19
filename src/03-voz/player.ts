@@ -145,6 +145,10 @@ export function colaVacia() {
   return !current && queue.length === 0;
 }
 
+export function vozActiva() {
+  return !!(current && !current.paused) || queue.length > 0;
+}
+
 export function newTtsAbort() {
   abortCtl?.abort();
   abortCtl = new AbortController();
