@@ -24,8 +24,16 @@ function listaIds(raw: string | undefined): string[] {
 export function chatsPermitidos(): string[] {
   const extra = listaIds(process.env.TELEGRAM_ALLOWED_CHAT_IDS);
   const uno = String(process.env.TELEGRAM_CHAT_ID || '').trim();
-  const jose = listaIds(process.env.TELEGRAM_JOSE_CHAT_ID);
-  const medardo = listaIds(process.env.TELEGRAM_MEDARDO_CHAT_ID);
+  const jose = [
+    ...listaIds(process.env.TELEGRAM_JOSE_CHAT_ID),
+    ...listaIds(process.env.TELEGRAM_JOSE_USER_ID),
+    ...listaIds(process.env.TELEGRAM_JOSE_USER_IDS),
+  ];
+  const medardo = [
+    ...listaIds(process.env.TELEGRAM_MEDARDO_CHAT_ID),
+    ...listaIds(process.env.TELEGRAM_MEDARDO_USER_ID),
+    ...listaIds(process.env.TELEGRAM_MEDARDO_USER_IDS),
+  ];
   return [...new Set([...extra, ...(uno ? [uno] : []), ...jose, ...medardo])];
 }
 
@@ -36,10 +44,14 @@ export function usuariosPermitidos(): string[] {
 export function telegramAutorizado(chatId: string | number, userId?: string | number): boolean {
   const chats = chatsPermitidos();
   if (!chats.length) return false;
-  if (!chats.includes(String(chatId))) return false;
-  const users = usuariosPermitidos();
-  if (!users.length) return true;
-  return users.includes(String(userId || ''));
+  const cid = String(chatId);
+  const uid = String(userId || '');
+  if (chats.includes(cid) || (uid && chats.includes(uid))) {
+    const users = usuariosPermitidos();
+    if (!users.length) return true;
+    return users.includes(uid);
+  }
+  return false;
 }
 
 export function telegramWebhookSecretOk(header: unknown): boolean {

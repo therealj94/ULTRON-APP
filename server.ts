@@ -1385,7 +1385,7 @@ async function procesarTelegram(update: any) {
   const parsed = await parsearUpdateTelegram(update);
   if (!parsed) return;
   if (!telegramAutorizado(parsed.chatId, parsed.userId)) {
-    console.warn('[ULTRON] telegram rechazado', parsed.chatId);
+    console.warn('[ULTRON] telegram rechazado', parsed.chatId, parsed.userId, parsed.nombre);
     return;
   }
   if (parsed.comando === '/start' || parsed.comando === '/ayuda' || parsed.comando === '/help') {
