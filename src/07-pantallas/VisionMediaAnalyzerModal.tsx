@@ -34,7 +34,7 @@ export const VisionMediaAnalyzerModal: React.FC<VisionMediaAnalyzerModalProps> =
   soundFxEnabled = true,
 }) => {
   const [mediaUrl, setMediaUrl] = useState<string | null>(initialMediaUrl);
-  const [mediaType, setMediaType] = useState<'image' | 'video'>(initialMediaType);
+  const [mediaType, setMediaType] = useState<'image' | 'video' | 'pdf'>(initialMediaType);
   const [fileName, setFileName] = useState<string>('captura_inspeccion.png');
   const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
   const [analysisResult, setAnalysisResult] = useState<any | null>(null);
@@ -63,13 +63,14 @@ export const VisionMediaAnalyzerModal: React.FC<VisionMediaAnalyzerModalProps> =
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const isVid = file.type.startsWith('video');
+    const isVid = file.type.startsWith('video') || /\.(mp4|webm|mov)$/i.test(file.name);
+    const isPdf = file.type.includes('pdf') || /\.pdf$/i.test(file.name);
     const reader = new FileReader();
 
     reader.onload = (event) => {
       const dataUrl = event.target?.result as string;
       setMediaUrl(dataUrl);
-      setMediaType(isVid ? 'video' : 'image');
+      setMediaType(isVid ? 'video' : isPdf ? 'pdf' : 'image');
       setFileName(file.name);
       setIsPurged(false);
       setAnalysisResult(null);
@@ -91,37 +92,25 @@ export const VisionMediaAnalyzerModal: React.FC<VisionMediaAnalyzerModalProps> =
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          mediaType,
+          mediaType: mediaType === 'pdf' ? 'application/pdf' : mediaType,
           fileName,
-          base64Data: mediaUrl.slice(0, 5000), // metadata sample
-          prompt: 'Analizar presencia ejecutiva, seguridad y contexto ambiental para la junta directiva',
+          base64Data: mediaUrl,
+          prompt:
+            mediaType === 'pdf'
+              ? 'Lee el documento. Copia texto y números. No inventes.'
+              : 'Describe con precisión lo que se ve. Si hay texto o números, cópialos. No inventes.',
         }),
       });
 
-      let data;
-      if (response.ok) {
-        data = await response.json();
-      } else {
-        // Fallback local neural mock if server is running client-only
-        data = {
-          success: true,
-          mediaType,
-          fileName,
-          confidence: 0.98,
-          entities:
-            mediaType === 'video'
-              ? ['Sujeto en Movimiento Dinámico', 'Gesto de Aprobación', 'Espacio de Trabajo Seguro']
-              : ['Rostro Humano Registrado', 'Postura Ejecutiva', 'Iluminación Óptima', 'Alineación LOOI'],
-          summary:
-            mediaType === 'video'
-              ? 'Secuencia de video analizada: Movimiento fluido del usuario frente a la terminal. Sin presencia de interferencias externas ni anomalías auditivas. Aprobado para sesión ejecutiva.'
-              : 'Imagen analizada: Sujeto reconocido con alta fidelidad óptica. Coordenadas de mirada centradas en el eje del robot LOOI. Índice de fatiga: Bajo (Estado de alerta óptimo).',
-          privacyCompliance: {
-            purged: true,
-            protocol: 'Zero-Knowledge Auto-Purge ISO/IEC 27701',
-          },
-        };
-      }
+      const payload = await response.json().catch(() => ({}));
+      const data = response.ok
+        ? { ...payload, summary: payload.summary || payload.detalle }
+        : {
+            success: false,
+            summary: payload.error || payload.summary || `No pude leer el archivo (${response.status}). No invento el contenido.`,
+            via: payload.via,
+            honesto: true,
+          };
 
       setAnalysisResult(data);
       playSfx('grant', soundFxEnabled);
@@ -139,8 +128,12 @@ export const VisionMediaAnalyzerModal: React.FC<VisionMediaAnalyzerModalProps> =
           }
         }, 1000);
       }
-    } catch (err) {
-      console.error('Vision analysis error:', err);
+    } catch (err: any) {
+      setAnalysisResult({
+        success: false,
+        summary: `No pude leer el archivo: ${String(err?.message || err).slice(0, 160)}. No invento el contenido.`,
+        honesto: true,
+      });
     } finally {
       setIsAnalyzing(false);
     }
@@ -207,7 +200,7 @@ export const VisionMediaAnalyzerModal: React.FC<VisionMediaAnalyzerModalProps> =
               type="file"
               ref={fileInputRef}
               onChange={handleFileUpload}
-              accept="image/*,video/*"
+              accept="image/*,application/pdf,.pdf,video/*"
               className="hidden"
             />
 
@@ -218,7 +211,7 @@ export const VisionMediaAnalyzerModal: React.FC<VisionMediaAnalyzerModalProps> =
                 className="px-4 py-2 rounded-xl bg-[#05E1FF]/15 hover:bg-[#05E1FF]/25 border border-[#05E1FF]/40 text-[#05E1FF] font-mono text-xs font-bold flex items-center gap-2 transition-all"
               >
                 <Upload className="w-4 h-4" />
-                <span>Subir Imagen / Video</span>
+                <span>Subir imagen o PDF</span>
               </button>
 
               {/* BAJAR BOTÓN */}
@@ -277,6 +270,11 @@ export const VisionMediaAnalyzerModal: React.FC<VisionMediaAnalyzerModalProps> =
                     controls
                     className="max-h-[360px] max-w-full rounded-lg"
                   />
+                ) : mediaType === 'pdf' ? (
+                  <div className="text-center p-8">
+                    <p className="text-sm font-mono text-white/90 mb-1">{fileName}</p>
+                    <p className="text-xs font-mono text-white/50">PDF listo. Lo leo de verdad al analizar: texto y páginas escaneadas.</p>
+                  </div>
                 ) : (
                   <img
                     src={mediaUrl}
@@ -304,10 +302,10 @@ export const VisionMediaAnalyzerModal: React.FC<VisionMediaAnalyzerModalProps> =
                   <Upload className="w-6 h-6" />
                 </div>
                 <p className="text-sm font-mono text-white/80 mb-1">
-                  Arrastra o selecciona una Imagen o Video
+                  Arrastra o selecciona una imagen o PDF
                 </p>
                 <p className="text-xs font-mono text-white/40">
-                  Formatos compatibles: PNG, JPG, WebP, MP4, WebM
+                  PNG, JPG, WebP, PDF. Si no se puede leer, se dice.
                 </p>
               </div>
             )}
@@ -335,19 +333,20 @@ export const VisionMediaAnalyzerModal: React.FC<VisionMediaAnalyzerModalProps> =
               <div className="flex items-center justify-between">
                 <span className="text-xs text-[#05E1FF] font-bold flex items-center gap-1.5">
                   <Sparkles className="w-4 h-4" />
-                  RESULTADO DE INSPECCIÓN NEURAL MULTIMODAL
+                  Lo que leí
                 </span>
                 <span className="text-[11px] text-white/50">
-                  Confianza: {Math.round(analysisResult.confidence * 100)}%
+                  {analysisResult.via || (analysisResult.success === false ? 'sin lectura' : '')}
                 </span>
               </div>
 
-              <p className="text-xs text-white/90 leading-relaxed">
-                {analysisResult.summary}
+              <p className="text-xs text-white/90 leading-relaxed whitespace-pre-wrap">
+                {analysisResult.summary || analysisResult.error || analysisResult.detalle}
               </p>
 
+              {analysisResult.entities?.length ? (
               <div className="flex flex-wrap gap-2 pt-1">
-                {analysisResult.entities?.map((e: string, idx: number) => (
+                {analysisResult.entities.map((e: string, idx: number) => (
                   <span
                     key={idx}
                     className="px-2.5 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] text-white/80"
@@ -356,6 +355,11 @@ export const VisionMediaAnalyzerModal: React.FC<VisionMediaAnalyzerModalProps> =
                   </span>
                 ))}
               </div>
+              ) : null}
+
+              {analysisResult.detalle && analysisResult.summary !== analysisResult.detalle ? (
+                <p className="text-[10px] text-white/50">{analysisResult.detalle}</p>
+              ) : null}
 
               <div className="pt-2 border-t border-white/10 flex items-center justify-between text-[10px] text-[#00FFA3]">
                 <span className="flex items-center gap-1">

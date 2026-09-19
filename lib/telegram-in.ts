@@ -3,6 +3,7 @@
  */
 
 import crypto from 'node:crypto';
+import { dataUrlDeImagen, esImagenNombre, esPdfNombre } from './leer-pdf';
 
 export type TgParsed = {
   chatId: string;
@@ -12,6 +13,7 @@ export type TgParsed = {
   comando?: string;
   imageDataUrl?: string;
   audio?: { mime: string; buffer: Buffer };
+  documento?: { filename: string; mime: string; buffer: Buffer };
 };
 
 function listaIds(raw: string | undefined): string[] {
@@ -24,7 +26,17 @@ function listaIds(raw: string | undefined): string[] {
 export function chatsPermitidos(): string[] {
   const extra = listaIds(process.env.TELEGRAM_ALLOWED_CHAT_IDS);
   const uno = String(process.env.TELEGRAM_CHAT_ID || '').trim();
-  return [...new Set(extra.length ? extra : uno ? [uno] : [])];
+  const jose = [
+    ...listaIds(process.env.TELEGRAM_JOSE_CHAT_ID),
+    ...listaIds(process.env.TELEGRAM_JOSE_USER_ID),
+    ...listaIds(process.env.TELEGRAM_JOSE_USER_IDS),
+  ];
+  const medardo = [
+    ...listaIds(process.env.TELEGRAM_MEDARDO_CHAT_ID),
+    ...listaIds(process.env.TELEGRAM_MEDARDO_USER_ID),
+    ...listaIds(process.env.TELEGRAM_MEDARDO_USER_IDS),
+  ];
+  return [...new Set([...extra, ...(uno ? [uno] : []), ...jose, ...medardo])];
 }
 
 export function usuariosPermitidos(): string[] {
@@ -34,10 +46,14 @@ export function usuariosPermitidos(): string[] {
 export function telegramAutorizado(chatId: string | number, userId?: string | number): boolean {
   const chats = chatsPermitidos();
   if (!chats.length) return false;
-  if (!chats.includes(String(chatId))) return false;
-  const users = usuariosPermitidos();
-  if (!users.length) return true;
-  return users.includes(String(userId || ''));
+  const cid = String(chatId);
+  const uid = String(userId || '');
+  if (chats.includes(cid) || (uid && chats.includes(uid))) {
+    const users = usuariosPermitidos();
+    if (!users.length) return true;
+    return users.includes(uid);
+  }
+  return false;
 }
 
 export function telegramWebhookSecretOk(header: unknown): boolean {
@@ -57,10 +73,12 @@ export function telegramPublicBase(): string {
 export function ayudaTelegram(): string {
   return [
     'ULTRON privado. Solo este chat de la junta.',
-    'Puedo: estado del sistema, bóveda, pendientes, PDF, buscar en internet, leer una página y mandarte la captura, código, oro/plata/HNL, visión si mandas foto.',
-    'Urgente: «avísame urgente…» o «llámanos por telegram». Suena el teléfono y, si hay ElevenLabs, te mando nota de voz. El bot no hace llamada de teléfono; eso es Twilio (aún sin clave).',
-    'WhatsApp, correo y llamada: sin clave todavía. No los finjo.',
-    'Ejemplos: «cómo está el sistema», «busca noticias de oro», «anota que mañana hay junta», «haz un pdf del resumen».',
+    'Puedo: estado del sistema, nota de voz (`/audio`), bóveda, pendientes, PDF, buscar en internet, leer una página, código, oro/plata/HNL.',
+    'Si me subes una foto o un PDF, los leo. No invento lo que no está en el archivo. Imagen como archivo también vale.',
+    'Si me mandas una nota de voz, te contesto en texto y, si pude oírte, te devuelvo audio.',
+    'Urgente: «avísame urgente…» o «llámanos por telegram». Suena el teléfono y, si hay voz, te mando nota. El bot no hace llamada de teléfono; eso es Twilio (aún sin clave).',
+    'Memoria: una para José y otra para Medardo, en S3. No mezclo las conversaciones. Dime «recuerda que…» y queda atado a ti.',
+    'Ejemplos: «cómo está el sistema», «mándame audio del sistema», «busca noticias de oro», «anota que mañana hay junta», «haz un pdf del resumen».',
   ].join('\n');
 }
 
@@ -99,18 +117,40 @@ export async function parsearUpdateTelegram(update: any): Promise<TgParsed | nul
   const token = process.env.TELEGRAM_BOT_TOKEN || '';
   let imageDataUrl: string | undefined;
   let audio: TgParsed['audio'];
+  let documento: TgParsed['documento'];
   if (token && Array.isArray(msg.photo) && msg.photo.length) {
     const best = msg.photo[msg.photo.length - 1];
     const buf = best?.file_id ? await archivoTelegram(token, best.file_id) : null;
-    if (buf && buf.length > 80) imageDataUrl = `data:image/jpeg;base64,${buf.toString('base64')}`;
+    if (buf && buf.length > 80) imageDataUrl = dataUrlDeImagen(buf);
+  }
+  if (token && msg.document?.file_id) {
+    const filename = String(msg.document.file_name || 'archivo');
+    const mime = String(msg.document.mime_type || '');
+    const buf = await archivoTelegram(token, msg.document.file_id);
+    if (buf && buf.length > 80) {
+      if (esImagenNombre(filename, mime) && !imageDataUrl) {
+        imageDataUrl = dataUrlDeImagen(buf);
+      } else if (esPdfNombre(filename, mime) || buf.subarray(0, 5).toString('latin1') === '%PDF-') {
+        documento = { filename, mime: mime || 'application/pdf', buffer: buf };
+      }
+    } else if (esPdfNombre(filename, mime) || (buf && buf.subarray(0, 5).toString('latin1') === '%PDF-')) {
+      documento = { filename, mime: mime || 'application/pdf', buffer: buf && buf.length > 80 ? buf : Buffer.alloc(0) };
+    }
+  }
+  if (!token && msg.document) {
+    documento = {
+      filename: String(msg.document.file_name || 'archivo'),
+      mime: String(msg.document.mime_type || ''),
+      buffer: Buffer.alloc(0),
+    };
   }
   if (token && (msg.voice?.file_id || msg.audio?.file_id)) {
     const id = msg.voice?.file_id || msg.audio?.file_id;
     const buf = await archivoTelegram(token, id);
     if (buf && buf.length > 80) audio = { mime: msg.voice ? 'audio/ogg' : 'audio/mpeg', buffer: buf };
   }
-  if (!texto && !imageDataUrl && !audio) return null;
-  return { chatId, userId, nombre, texto, comando, imageDataUrl, audio };
+  if (!texto && !imageDataUrl && !audio && !documento) return null;
+  return { chatId, userId, nombre, texto, comando, imageDataUrl, audio, documento };
 }
 
 export async function telegramResponder(chatId: string, texto: string): Promise<{ ok: boolean; detalle: string }> {

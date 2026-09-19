@@ -8,3 +8,5 @@ coverage/
 !.env.example
 data/pdfs/
 data/tareas.json
+data/telegram-hilo.json
+data/memoria-junta.json

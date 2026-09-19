@@ -19,6 +19,8 @@ describe('Taller ULTRON', () => {
     assert.equal(pdfConLlamada.accion, 'enviar');
     assert.equal(pdfConLlamada.canal, 'telegram');
     assert.equal(parsePedido('hola jefe').accion, null);
+    assert.equal(parsePedido('mándame audio del sistema').accion, 'voz');
+    assert.equal(parsePedido('envía por telegram el resumen').accion, 'enviar');
   });
 
   it('genera un PDF que empieza por %PDF', () => {
@@ -44,6 +46,24 @@ describe('Taller ULTRON', () => {
     assert.match(r.decir || '', /Falta TELEGRAM/);
     if (prevT !== undefined) process.env.TELEGRAM_BOT_TOKEN = prevT;
     if (prevC !== undefined) process.env.TELEGRAM_CHAT_ID = prevC;
+  });
+
+  it('audio del sistema no finge envío sin Telegram', async () => {
+    const prevT = process.env.TELEGRAM_BOT_TOKEN;
+    const prevC = process.env.TELEGRAM_CHAT_ID;
+    const prevN = process.env.ULTRON_NODO_URL;
+    const prevQ = process.env.QWEN_ENDPOINT_URL;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.TELEGRAM_CHAT_ID;
+    delete process.env.ULTRON_NODO_URL;
+    delete process.env.QWEN_ENDPOINT_URL;
+    const r = await despacharTaller('mándame audio del sistema');
+    assert.ok(r.tools.includes('voz'));
+    assert.match(r.decir || '', /Falta TELEGRAM/);
+    if (prevT !== undefined) process.env.TELEGRAM_BOT_TOKEN = prevT;
+    if (prevC !== undefined) process.env.TELEGRAM_CHAT_ID = prevC;
+    if (prevN !== undefined) process.env.ULTRON_NODO_URL = prevN;
+    if (prevQ !== undefined) process.env.QWEN_ENDPOINT_URL = prevQ;
   });
 
   it('el catálogo no marca Telegram listo sin token', () => {

@@ -25,6 +25,9 @@ const ENV: Record<string, string[]> = {
   telegram_token: ['TELEGRAM_BOT_TOKEN'],
   telegram_chat: ['TELEGRAM_CHAT_ID'],
   telegram_webhook: ['TELEGRAM_WEBHOOK_SECRET'],
+  aws_key: ['AWS_ACCESS_KEY_ID'],
+  aws_secret: ['AWS_SECRET_ACCESS_KEY'],
+  memoria_bucket: ['ULTRON_MEMORIA_BUCKET'],
   twilio_sid: ['TWILIO_ACCOUNT_SID'],
   twilio_tok: ['TWILIO_AUTH_TOKEN'],
   twilio_wa: ['TWILIO_WHATSAPP_FROM'],
@@ -60,6 +63,7 @@ export function cajas(): Caja[] {
   const wa = !!(clave('twilio_sid') && clave('twilio_tok') && clave('twilio_wa') && clave('jefe_wa'));
   const call = !!(clave('twilio_sid') && clave('twilio_tok') && clave('twilio_voz') && clave('jefe_tel'));
   const mail = !!(clave('resend') && clave('mail_from'));
+  const mem = !!(clave('aws_key') && clave('aws_secret') && clave('memoria_bucket'));
   return [
     { id: 'qwen', nombre: 'Cerebro Qwen', listo: !!clave('nodo_url'), falta: clave('nodo_url') ? undefined : 'ULTRON_NODO_URL', usa: 'pensar y contestar' },
     { id: 'ojo', nombre: 'Ojo (visión + páginas)', listo: ojo, falta: ojo ? undefined : 'ULTRON_OJO_URL + ULTRON_OJO_CLAVE', usa: 'ver fotos y capturar pantallas' },
@@ -68,6 +72,7 @@ export function cajas(): Caja[] {
     { id: 'tts', nombre: 'Chatterbox TTS', listo: !!clave('tts_url'), falta: clave('tts_url') ? undefined : 'ULTRON_TTS_URL', usa: 'voz de respaldo' },
     { id: 'telegram', nombre: 'Telegram junta', listo: tg, falta: tg ? undefined : 'TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID', usa: 'chat, fotos, aviso urgente' },
     { id: 'telegram-in', nombre: 'Telegram webhook', listo: tg && !!clave('telegram_webhook'), falta: clave('telegram_webhook') ? undefined : 'TELEGRAM_WEBHOOK_SECRET', usa: 'responder desde Telegram' },
+    { id: 'memoria', nombre: 'Memoria S3 (José / Medardo)', listo: mem, falta: mem ? undefined : 'ULTRON_MEMORIA_BUCKET + AWS_*', usa: 'conversaciones y hechos que no se pierden al redesplegar' },
     { id: 'whatsapp', nombre: 'WhatsApp', listo: wa, falta: wa ? undefined : 'TWILIO_* + JEFE_WHATSAPP', usa: 'mensajes WhatsApp' },
     { id: 'correo', nombre: 'Correo', listo: mail, falta: mail ? undefined : 'RESEND_API_KEY + MAIL_FROM', usa: 'email' },
     { id: 'llamada', nombre: 'Llamada telefónica', listo: call, falta: call ? undefined : 'TWILIO_VOICE_FROM + JEFE_TELEFONO', usa: 'llamada de verdad (no Telegram)' },

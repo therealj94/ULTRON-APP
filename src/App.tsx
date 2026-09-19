@@ -22,7 +22,7 @@ import { playSfx } from './03-voz/audio';
 import { speakUtterance, cancelSpeech, initSpeechRecognizer, SpeechRecognizerHandle } from './03-voz/speech';
 import { speakWithElevenLabsOrFallback, stopCurrentVoice, DEFAULT_ELEVENLABS_VOICES } from './03-voz/elevenlabs';
 import { vozPorId, VozId } from './03-voz/voces';
-import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip, playFile } from './03-voz/player';
+import { stopVoice, playWavBlob, enqueueWav, newTtsAbort, onLip, playFile, colaVacia } from './03-voz/player';
 import { clipDeTexto, saludoHora, siguienteChiste } from './03-voz/banco';
 import { bargeIn } from './03-voz/barge';
 import { pedirTurno } from './04-cerebro/turno';
@@ -186,9 +186,8 @@ export default function App() {
       const voz = vozPorId(vozId);
       const ac = newTtsAbort();
       const speakBlob = (blob: Blob, last: boolean) => {
-        const play = currentQueueEmpty ? playWavBlob : enqueueWav;
-        // first chunk starts playback
-        return playWavBlob(blob, () => { if (last) setFace('IDLE'); }, browserFallback);
+        const play = colaVacia() ? playWavBlob : enqueueWav;
+        return play(blob, () => { if (last) setFace('IDLE'); }, browserFallback);
       };
       fetch('/api/tts/stream', {
         method: 'POST',
@@ -582,15 +581,15 @@ export default function App() {
     stopVoice();
     const rec = cmd.match(/recuerda(?: que)? (.+)/i);
     if (rec) {
-      guardarHecho(rec[1]);
+      guardarHecho(rec[1], { usuario: currentUser.name });
       pendienteCerebro.hecho = rec[1];
     } else if (/junta|rol|medardo|guarda|anota|se llama|orden global|prospera|mina|aucorp|ordenex/i.test(cmd) && cmd.length > 12) {
-      guardarHecho(cmd);
+      guardarHecho(cmd, { usuario: currentUser.name });
       pendienteCerebro.hecho = cmd;
     }
     const quiereVer = /qu[eé] ves|qu[eé] hay aqu[ií]|imagen|c[aá]mara|le[eé] (esto|la foto)/i.test(cmd);
     const image = quiereVer ? grabFrame() : null;
-    pedirTurno({ message: cmd, mode, historial: historialRef.current, image })
+    pedirTurno({ message: cmd, mode, historial: historialRef.current, image, usuario: currentUser.name })
       .then((data) => {
         if (data.error === 'sesión requerida' || /sesión requerida/.test(String(data.error || ''))) {
           setIsBiometricOpen(true);
@@ -601,8 +600,8 @@ export default function App() {
         historialRef.current = [...historialRef.current, { rol: 'user', texto: cmd }, { rol: 'ultron', texto: String(text) }].slice(-12);
         fetch('/api/memoria', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ corta: historialRef.current }),
+          headers: { 'Content-Type': 'application/json', ...headersMesa() },
+          body: JSON.stringify({ corta: historialRef.current, usuario: currentUser.name }),
         }).catch(() => {});
         if (data.foto) logBridgeEvent('in', `foto ${data.foto}`);
         logBridgeEvent('in', `${data.modelo || 'turno'} ${data.ms || ''}ms`);

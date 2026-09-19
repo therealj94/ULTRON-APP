@@ -4,23 +4,31 @@ import { chatsPermitidos, telegramAutorizado, telegramWebhookSecretOk, parsearUp
 
 describe('Telegram inbound privado', () => {
   it('sin chat configurado nadie entra', () => {
-    const prevC = process.env.TELEGRAM_CHAT_ID;
-    const prevA = process.env.TELEGRAM_ALLOWED_CHAT_IDS;
-    delete process.env.TELEGRAM_CHAT_ID;
-    delete process.env.TELEGRAM_ALLOWED_CHAT_IDS;
+    const prev = {
+      TELEGRAM_CHAT_ID: process.env.TELEGRAM_CHAT_ID,
+      TELEGRAM_ALLOWED_CHAT_IDS: process.env.TELEGRAM_ALLOWED_CHAT_IDS,
+      TELEGRAM_JOSE_CHAT_ID: process.env.TELEGRAM_JOSE_CHAT_ID,
+      TELEGRAM_JOSE_USER_ID: process.env.TELEGRAM_JOSE_USER_ID,
+      TELEGRAM_MEDARDO_CHAT_ID: process.env.TELEGRAM_MEDARDO_CHAT_ID,
+      TELEGRAM_MEDARDO_USER_ID: process.env.TELEGRAM_MEDARDO_USER_ID,
+    };
+    for (const k of Object.keys(prev)) delete process.env[k];
     assert.equal(chatsPermitidos().length, 0);
     assert.equal(telegramAutorizado('123'), false);
-    if (prevC !== undefined) process.env.TELEGRAM_CHAT_ID = prevC;
-    if (prevA !== undefined) process.env.TELEGRAM_ALLOWED_CHAT_IDS = prevA;
+    for (const [k, v] of Object.entries(prev)) {
+      if (v !== undefined) process.env[k] = v;
+    }
   });
 
   it('solo el chat de la junta pasa', () => {
     const prevC = process.env.TELEGRAM_CHAT_ID;
     const prevU = process.env.TELEGRAM_ALLOWED_USER_IDS;
+    const prevM = process.env.TELEGRAM_MEDARDO_CHAT_ID;
     process.env.TELEGRAM_CHAT_ID = '5673842734';
     delete process.env.TELEGRAM_ALLOWED_USER_IDS;
+    delete process.env.TELEGRAM_MEDARDO_CHAT_ID;
     assert.equal(telegramAutorizado('5673842734', '5673842734'), true);
-    assert.equal(telegramAutorizado('999', '5673842734'), false);
+    assert.equal(telegramAutorizado('999', '888'), false);
     process.env.TELEGRAM_ALLOWED_USER_IDS = '111';
     assert.equal(telegramAutorizado('5673842734', '111'), true);
     assert.equal(telegramAutorizado('5673842734', '222'), false);
@@ -28,6 +36,23 @@ describe('Telegram inbound privado', () => {
     else delete process.env.TELEGRAM_CHAT_ID;
     if (prevU !== undefined) process.env.TELEGRAM_ALLOWED_USER_IDS = prevU;
     else delete process.env.TELEGRAM_ALLOWED_USER_IDS;
+    if (prevM !== undefined) process.env.TELEGRAM_MEDARDO_CHAT_ID = prevM;
+    else delete process.env.TELEGRAM_MEDARDO_CHAT_ID;
+  });
+
+  it('Medardo entra por su chat o por su user id', () => {
+    const keys = ['TELEGRAM_CHAT_ID', 'TELEGRAM_ALLOWED_CHAT_IDS', 'TELEGRAM_MEDARDO_CHAT_ID', 'TELEGRAM_MEDARDO_USER_ID', 'TELEGRAM_ALLOWED_USER_IDS'];
+    const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    for (const k of keys) delete process.env[k];
+    process.env.TELEGRAM_CHAT_ID = '5673842734';
+    process.env.TELEGRAM_MEDARDO_USER_ID = '5273354540';
+    assert.equal(telegramAutorizado('5273354540', '5273354540'), true);
+    assert.equal(telegramAutorizado('-100grupo', '5273354540'), true);
+    assert.equal(telegramAutorizado('999', '999'), false);
+    for (const [k, v] of Object.entries(prev)) {
+      if (v !== undefined) process.env[k] = v;
+      else delete process.env[k];
+    }
   });
 
   it('el secret del webhook no acepta basura', () => {
