@@ -37,9 +37,12 @@ export function nombreDe(id: MiembroId | null | undefined): string {
   return MIEMBROS[id].nombre;
 }
 
-/** Carlos y Mayra: consulta. José, Medardo y la mesa sin identificar: mando. */
+/**
+ * Mando = José o Medardo IDENTIFICADOS (sesión firmada o Telegram verificado).
+ * Carlos, Mayra y cualquiera sin identificar: consulta. Nadie anónimo cambia el sistema.
+ */
 export function puedeCambiarSistema(id: MiembroId | null | undefined): boolean {
-  return id !== 'carlos' && id !== 'mayra';
+  return id === 'jose' || id === 'medardo';
 }
 
 export function quienEs(opts: {

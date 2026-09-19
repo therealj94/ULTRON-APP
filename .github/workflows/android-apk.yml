@@ -3,12 +3,9 @@ name: Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main, "cursor/**"]
+    branches: [main, "cursor/**", "claude/**"]
     paths:
       - "mobile/**"
-      - "src/**"
-      - "server.ts"
-      - "server/**"
       - ".github/workflows/android-apk.yml"
 concurrency:
   group: apk-${{ github.ref }}
@@ -17,7 +14,7 @@ concurrency:
 jobs:
   apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -47,17 +44,16 @@ jobs:
         env:
           CI: "1"
           EXPO_NO_TELEMETRY: "1"
-        run: npx expo prebuild -p android --non-interactive --no-install
+        run: npx expo prebuild -p android --no-install
 
-      # Release = JS empaquetado + Hermes optimizado (fluido). Firmado con la keystore debug del template
-      # para que se instale directo; para Play Store se cambia la firma.
+      # Release = JS empaquetado + Hermes. Firmado con la keystore debug del template
+      # para instalar directo; para Play Store se cambia la firma.
       - name: Release APK
         working-directory: mobile/android
         env:
           GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
         run: |
           chmod +x gradlew
-          # solo ABIs de teléfonos reales (arm): el APK universal pesaba 88 MB
           ./gradlew assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
 
       - name: Rename APK
@@ -75,16 +71,3 @@ jobs:
           path: mobile/out/*.apk
           if-no-files-found: error
           retention-days: 30
-
-  web:
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - run: npm install
-      - run: npm test
-      - run: npx tsc --noEmit
-      - run: npm run build

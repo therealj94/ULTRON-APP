@@ -1,3 +1,3 @@
 # 05 — Cerebro Orden Global
-Hechos: bóveda, cadena 5550, ORIGEN, Veta, Genesis ID.
-Destino de `src/og/conocimiento.ts`.
+
+`conocimiento.ts` es la ÚNICA fuente de hechos de Orden Global que recibe el 27B (junta, sociedades, minas, cadena 5550, tokens, apps, legal, Próspera). Si un hecho cambia, cambia aquí; `server/desk.ts` ya no duplica esta lista.

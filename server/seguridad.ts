@@ -2,7 +2,6 @@ import type { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import dns from 'dns/promises';
 import net from 'net';
-import { quienEs } from '../lib/junta';
 
 export type Sesion = {
   token: string;
@@ -88,7 +87,13 @@ export function sesionDe(req: Request): Sesion | null {
   const t = tokenDe(req);
   if (!t) return null;
   const cached = sesiones.get(t);
-  if (cached) return cached;
+  if (cached) {
+    if (Date.now() - cached.at > SESION_TTL_MS) {
+      sesiones.delete(t);
+      return null;
+    }
+    return cached;
+  }
   const firmada = leerSesionFirmada(t);
   if (firmada) {
     sesiones.set(t, firmada);
@@ -121,31 +126,21 @@ export function mesaAutorizada(req: Request): boolean {
   return false;
 }
 
-const RUTAS_MESA = [
-  '/api/turno',
-  '/api/tts',
-  '/api/stt',
-  '/api/vision/analyze',
-  '/api/memoria',
-];
+/**
+ * Rutas de conversación: hablar, oír y ver. Decisión de la junta (19-sep): la APK no debe
+ * quedar muda si el token murió en un redespliegue, así que pasan con rate limit por IP.
+ * Todo lo que cambia estado (memoria, bóveda, ejecutor, redeploy) exige sesión real.
+ */
+const RUTAS_CONVERSACION = ['/api/turno', '/api/tts', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/voz'];
 
-function rutaMesa(path: string) {
+function rutaConversacion(path: string) {
   const p = String(path || '').split('?')[0];
-  return RUTAS_MESA.some((r) => p === r || p.startsWith(`${r}/`));
+  return RUTAS_CONVERSACION.some((r) => p === r || p.startsWith(`${r}/`));
 }
 
-/**
- * Mesa nativa: el token de Render muere al redesplegar y la APK no vuelve a /entrar.
- * Hablar, oír, ver y memoria corta pasan (con rate limit). Bóveda, ejecutor y
- * redeploy siguen exigiendo sesión real.
- */
 export function mesaDeskAutorizada(req: Request): boolean {
   if (mesaAutorizada(req)) return true;
-  if (rutaMesa(req.path) || rutaMesa((req as any).originalUrl)) return true;
-  return !!quienEs({
-    nombre: String(req.body?.usuario || req.body?.userName || req.body?.nombre || req.query?.usuario || ''),
-    correo: String(req.body?.correo || req.query?.correo || ''),
-  });
+  return rutaConversacion(req.path) || rutaConversacion((req as any).originalUrl);
 }
 
 export function exigirMesa(req: Request, res: Response, next: NextFunction) {
@@ -168,12 +163,10 @@ export function exigirMesaODesk(req: Request, res: Response, next: NextFunction)
 
 export function limitar(max: number, ventanaMs = 60_000) {
   return (req: Request, res: Response, next: NextFunction) => {
-    const forwarded = String(req.headers['x-forwarded-for'] || '')
-      .split(',')[0]
-      .trim();
-    const ip = forwarded || String(req.ip || req.socket.remoteAddress || 'x');
-    const quien = String(req.body?.usuario || req.body?.correo || req.query?.usuario || '');
-    const k = `${ip}:${quien}:${req.path}`;
+    // req.ip ya respeta `trust proxy` (Render pone la IP real). El body no entra en la clave:
+    // rotar `usuario` no puede regalar más cupo.
+    const ip = String(req.ip || req.socket.remoteAddress || 'x');
+    const k = `${ip}:${req.path}`;
     const now = Date.now();
     const arr = (hits.get(k) || []).filter((t) => now - t < ventanaMs);
     if (arr.length >= max) {
@@ -181,16 +174,26 @@ export function limitar(max: number, ventanaMs = 60_000) {
     }
     arr.push(now);
     hits.set(k, arr);
+    if (hits.size > 5000) {
+      for (const [key, arr2] of hits) if (!arr2.some((t) => now - t < ventanaMs)) hits.delete(key);
+    }
     next();
   };
 }
 
 function ipPrivada(ip: string) {
   if (!net.isIP(ip)) return true;
-  const n = ip.toLowerCase();
-  if (n === '::1' || n.startsWith('127.') || n.startsWith('10.') || n.startsWith('192.168.') || n.startsWith('169.254.')) return true;
+  let n = ip.toLowerCase();
+  // IPv4 mapeada en IPv6 (::ffff:127.0.0.1)
+  const mapped = n.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  if (mapped) n = mapped[1];
+  if (n === '::' || n === '::1') return true;
+  if (/^(fc|fd)[0-9a-f]{2}:/.test(n) || n.startsWith('fe80:')) return true; // ULA y link-local v6
+  if (n.startsWith('127.') || n.startsWith('10.') || n.startsWith('192.168.') || n.startsWith('169.254.') || n.startsWith('0.')) return true;
   const m = n.match(/^172\.(\d+)\./);
   if (m && Number(m[1]) >= 16 && Number(m[1]) <= 31) return true;
+  const cg = n.match(/^100\.(\d+)\./);
+  if (cg && Number(cg[1]) >= 64 && Number(cg[1]) <= 127) return true; // CGNAT
   return false;
 }
 

@@ -1,3 +1,4 @@
 # 01 — Diseño
-Paleta negro + cian `#05E1FF`. Tipografías Rajdhani + IBM Plex Mono.
-Editar `tokens.ts` aquí; no hardcodear hex en cara/voz.
+
+Paleta negro + cian `#05E1FF`. Tipografías Rajdhani (display) + IBM Plex Mono.
+Tokens en `tokens.ts`. La cara define sus colores por modo en `src/02-cara/dibujo.ts` (`getThemeColors`).

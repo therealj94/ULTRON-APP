@@ -1,25 +1,11 @@
+import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
-import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
-import { WebSocketServer, WebSocket } from 'ws';
-import { GoogleGenAI } from '@google/genai';
-import {
-  JUNTA,
-  ULTRON_VOICE,
-  elevenVoiceIdFor,
-  buildPersonality,
-  decodeDataUrl,
-  elevenSpeak,
-  chatterboxSpeak,
-  getCachedAudio,
-  limpiarParaVoz,
-  normalizarCorreo,
-  setCachedAudio,
-  buscarWeb,
-  leerPagina,
-} from './server/desk';
+import { Agent as UndiciAgent } from 'undici';
+import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
+import { hablar, cantar, repertorio, cancionPorPedido, estadoVoz } from './server/voz';
 import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica } from './server/seguridad';
 import { leerPdf, telegramFoto, telegramVoz } from './lib/canales';
@@ -36,6 +22,8 @@ import { capturaPagina, verImagen } from './lib/vision';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio } from './lib/oido';
 import { esTareaDeCodigo } from './lib/prompts/cot';
+import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
+import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
   cargarMemoria,
   estadoMemoria,
@@ -46,6 +34,7 @@ import {
   recordarTurno,
   registrarCambio,
   resolverQuien,
+  quienVerificado,
   hiloDe,
   type CanalMem,
 } from './lib/memoria';
@@ -68,41 +57,7 @@ app.set('trust proxy', 1);
 const httpServer = http.createServer(app);
 const PORT = Number(process.env.PORT) || 3000;
 
-// Setup real-time WebSocket Bridge for UI & external telemetry
-const wss = new WebSocketServer({ server: httpServer, path: '/ws' });
-wss.on('connection', (ws: WebSocket) => {
-  ws.send(
-    JSON.stringify({
-      type: 'ultron_welcome',
-      message: 'Canal WebSocket seguro de ULTRON FP en línea.',
-      timestamp: new Date().toISOString(),
-      capabilities: ['face_sync', 'mode_dispatch', 'speech_telemetry', 'camera_events'],
-    })
-  );
-
-  ws.on('message', (raw) => {
-    try {
-      const data = JSON.parse(raw.toString());
-      // Broadcast telemetry to all connected clients
-      wss.clients.forEach((client) => {
-        if (client !== ws && client.readyState === WebSocket.OPEN) {
-          client.send(
-            JSON.stringify({
-              type: 'ultron_bridge_event',
-              payload: data,
-              timestamp: new Date().toISOString(),
-            })
-          );
-        }
-      });
-    } catch {
-      // ignore malformed packets
-    }
-  });
-});
-
 app.use(express.json({ limit: '12mb' }));
-app.use(express.urlencoded({ extended: true, limit: '12mb' }));
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -110,45 +65,34 @@ app.use((_req, res, next) => {
   next();
 });
 
-// System & Cloud Credentials configured from environment or supplied by the Board
-const GITHUB_PAT = process.env.GITHUB_PAT || '';
+// Nodos. Nada hardcodeado que no sea el modelo por defecto.
 const RENDER_API_KEY = process.env.RENDER_API_KEY || '';
-const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || 'srv-dah56p15efls7382pot0';
+const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || '';
 const ULTRON_REMOTE_URL = process.env.ULTRON_FP_URL || process.env.ULTRON_REMOTE_URL || 'https://ultron.ordenglobal.link';
 const ULTRON_NODO_URL = (process.env.ULTRON_NODO_URL || process.env.QWEN_ENDPOINT_URL || '').replace(/\/$/, '');
 const ULTRON_NODO_SECRETO = process.env.ULTRON_NODO_SECRETO || '';
 const ULTRON_NODO_MODELO = process.env.ULTRON_NODO_MODELO || 'orcarouter/Qwen3.8-27B-Uncensored';
 const ULTRON_OJO_URL = (process.env.ULTRON_OJO_URL || process.env.PLAYWRIGHT_NODE_URL || '').replace(/\/$/, '');
 const ULTRON_OJO_CLAVE = process.env.ULTRON_OJO_CLAVE || '';
-const ULTRON_TTS_URL = (process.env.CHATTERBOX_URL || process.env.ULTRON_TTS_URL || '').replace(/\/$/, '');
+const ULTRON_TTS_URL = (process.env.ULTRON_TTS_URL || process.env.CHATTERBOX_URL || '').replace(/\/$/, '');
 const ULTRON_TTS_CLAVE = process.env.ULTRON_TTS_CLAVE || '';
-// El 27B usa cert self-signed. Sin esto /salud y /listo dan fetch failed y la luz se queda FRÍO.
-if (process.env.ULTRON_NODO_INSECURE_TLS === '1') {
-  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-}
-const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || '';
-const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || '';
-const AWS_DEFAULT_REGION = (process.env.AWS_DEFAULT_REGION || 'us-east-1').replace(' ', '-');
 
-// Session store for ULTRON FP remote connection
-let ultronRemoteCookie = '';
-let ultronRemoteSession: {
-  authenticated: boolean;
-  user: { nombre: string; correo?: string; rol?: string } | null;
-  lastLogin?: string;
-} = {
-  authenticated: false,
-  user: null,
-};
+/**
+ * El 27B usa certificado autofirmado. Antes se apagaba TLS para TODO el proceso
+ * (ElevenLabs, Telegram, S3…). Ahora solo el nodo Qwen viaja por este dispatcher.
+ */
+const nodoDispatcher =
+  process.env.ULTRON_NODO_INSECURE_TLS === '1' && /^https:/i.test(ULTRON_NODO_URL)
+    ? new UndiciAgent({ connect: { rejectUnauthorized: false } })
+    : undefined;
+const fetchNodo = (url: string, init: RequestInit = {}) =>
+  fetch(url, { ...(init as any), dispatcher: nodoDispatcher } as RequestInit);
 
-// Gemini AI Core Initialization
-const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
-
-async function probeJson(url: string, headers: Record<string, string> = {}, timeoutMs = 4000) {
+async function probeJson(url: string, headers: Record<string, string> = {}, timeoutMs = 4000, nodo = false) {
   const ctrl = new AbortController();
   const tmr = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await fetch(url, { headers, signal: ctrl.signal });
+    const r = await (nodo ? fetchNodo : fetch)(url, { headers, signal: ctrl.signal });
     const text = await r.text();
     let json: any = null;
     try { json = JSON.parse(text); } catch { /* raw */ }
@@ -160,29 +104,50 @@ async function probeJson(url: string, headers: Record<string, string> = {}, time
   }
 }
 
+type Salud = { qwen: boolean; ojo: boolean; vision: boolean; ttsLocal: boolean; fp: boolean; at: number; raw?: any };
+let saludCache: Salud | null = null;
+
+async function medirSalud(force = false): Promise<Salud> {
+  if (!force && saludCache && Date.now() - saludCache.at < 15000) return saludCache;
+  const [fp, nodo, ojo, tts] = await Promise.all([
+    probeJson(`${ULTRON_REMOTE_URL}/salud`),
+    ULTRON_NODO_URL
+      ? probeJson(`${ULTRON_NODO_URL}/salud`, { 'x-ultron-secreto': ULTRON_NODO_SECRETO }, 4000, true)
+      : Promise.resolve({ ok: false, status: 0, json: null, text: 'ULTRON_NODO_URL vacío' }),
+    ULTRON_OJO_URL
+      ? probeJson(`${ULTRON_OJO_URL}/salud`, { 'X-Ojo-Clave': ULTRON_OJO_CLAVE })
+      : Promise.resolve({ ok: false, status: 0, json: null, text: 'ULTRON_OJO_URL vacío' }),
+    ULTRON_TTS_URL
+      ? probeJson(`${ULTRON_TTS_URL}/salud`, { 'x-ultron-tts-clave': ULTRON_TTS_CLAVE })
+      : Promise.resolve({ ok: false, status: 0, json: null, text: 'ULTRON_TTS_URL vacío' }),
+  ]);
+  saludCache = {
+    qwen: !!(nodo.ok && nodo.json),
+    ojo: !!(ojo.ok && ojo.json?.playwright),
+    vision: !!(ojo.ok && ojo.json?.vision) || !!clave('gemini'),
+    ttsLocal: tts.status === 200 || tts.status === 401,
+    fp: !!fp.ok,
+    at: Date.now(),
+    raw: { fp, nodo, ojo, tts },
+  };
+  return saludCache;
+}
+
 app.get('/api/health', async (_req, res) => {
-  const fp = await probeJson(`${ULTRON_REMOTE_URL}/salud`);
-  const nodo = ULTRON_NODO_URL
-    ? await probeJson(`${ULTRON_NODO_URL}/salud`, { 'x-ultron-secreto': ULTRON_NODO_SECRETO })
-    : { ok: false, status: 0, json: null, text: 'ULTRON_NODO_URL vacío' };
-  const ojo = ULTRON_OJO_URL
-    ? await probeJson(`${ULTRON_OJO_URL}/salud`, { 'X-Ojo-Clave': ULTRON_OJO_CLAVE })
-    : { ok: false, status: 0, json: null, text: 'ULTRON_OJO_URL vacío' };
-  const tts = ULTRON_TTS_URL
-    ? await probeJson(`${ULTRON_TTS_URL}/salud`, { 'x-ultron-tts-clave': ULTRON_TTS_CLAVE })
-    : { ok: false, status: 0, json: null, text: 'ULTRON_TTS_URL vacío' };
+  const s = await medirSalud(true);
+  const raw = s.raw || {};
   res.json({
     ok: true,
-    fase: 'A',
+    version: '4.0',
     launch: false,
     cerebro: ULTRON_REMOTE_URL,
-    qwen: { url: ULTRON_NODO_URL || null, vivo: !!(nodo.ok && nodo.json), modelo: nodo.json?.modelo || null, rutaChat: '/api/chat' },
-    fp: { url: ULTRON_REMOTE_URL, vivo: !!fp.ok, modelo: fp.json?.modelo || null },
-    ojo: { url: ULTRON_OJO_URL || null, vivo: !!(ojo.ok && ojo.json?.playwright), playwright: !!ojo.json?.playwright, vision: !!ojo.json?.vision },
-    tts: { url: ULTRON_TTS_URL || null, status: tts.status, vivo: tts.status === 200 || tts.status === 401 },
+    qwen: { url: ULTRON_NODO_URL || null, vivo: s.qwen, modelo: raw.nodo?.json?.modelo || null, rutaChat: '/api/chat' },
+    fp: { url: ULTRON_REMOTE_URL, vivo: s.fp, modelo: raw.fp?.json?.modelo || null },
+    ojo: { url: ULTRON_OJO_URL || null, vivo: s.ojo, playwright: s.ojo, vision: !!raw.ojo?.json?.vision },
+    tts: { url: ULTRON_TTS_URL || null, status: raw.tts?.status ?? 0, vivo: s.ttsLocal },
     elevenlabs: !!clave('elevenlabs'),
-    geminiFallback: !!ai,
-    wsClients: wss.clients.size,
+    voz: VOZ_OFICIAL.nombre,
+    geminiFallback: !!clave('gemini'),
   });
 });
 
@@ -193,25 +158,45 @@ app.get('/api/nodo/listo', async (_req, res) => {
   }
   const t0 = Date.now();
   try {
-    const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
+    const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
       body: JSON.stringify({
+        model: ULTRON_NODO_MODELO,
+        stream: false,
         messages: [{ role: 'user', content: 'Responde solo: LISTO' }],
         max_tokens: 8,
         temperature: 0,
       }),
       signal: AbortSignal.timeout(45000),
     });
-    const raw = await r.text();
-    const listo = r.ok && /listo/i.test(raw);
-    return res.json({ listo: listo || r.ok, ms: Date.now() - t0, honesto: true });
+    return res.json({ listo: r.ok, ms: Date.now() - t0, honesto: true });
   } catch (e: any) {
     return res.json({ listo: false, ms: Date.now() - t0, motivo: String(e?.message || e).slice(0, 160), honesto: true });
   }
 });
 
-// BÓVEDA: cajas reales. Nunca se recitan secretos. Sin teatro de "CONECTADO" si falta clave.
+/** Catálogo de capacidades: la única lista de lo que ULTRON puede hacer, con estado real. */
+app.get('/api/capacidades', limitar(30), async (_req, res) => {
+  const s = await medirSalud();
+  const canales = catalogoCanales();
+  const listo = (id: string) => !!canales.find((c) => c.id === id)?.listo;
+  const capacidades = catalogoCapacidades({
+    qwen: s.qwen,
+    ojo: s.ojo,
+    elevenlabs: !!clave('elevenlabs'),
+    ttsLocal: s.ttsLocal,
+    memoriaS3: listo('memoria'),
+    telegram: listo('telegram'),
+    telegramIn: listo('telegram-in'),
+    ejecutor: ejecutorActivo(),
+    vision: s.vision,
+    oido: listo('oido'),
+  });
+  res.json({ honesto: true, voz: estadoVoz(), modos: MODOS, canciones: repertorio(), gestos: GESTOS_TACTILES, capacidades });
+});
+
+
 app.get('/api/vault/status', exigirMesa, async (_req, res) => {
   const b = fotoBoveda();
   res.json({
@@ -233,356 +218,82 @@ app.get('/api/vault/status', exigirMesa, async (_req, res) => {
 });
 
 // BÓVEDA: ElevenLabs Key Update Endpoint
+
+// BÓVEDA: ElevenLabs Key Update Endpoint (solo mando con sesión firmada)
 app.post('/api/vault/elevenlabs', exigirSesion, (req, res) => {
-  const s = sesionDe(req);
-  const quien = resolverQuien(req.body, s);
+  const quien = quienVerificado(req.body, sesionDe(req));
   if (!puedeCambiarSistema(quien)) {
-    return res.status(403).json({
-      error: 'ACCESO: consulta. Carlos y Mayra no cambian el sistema. No escribo la bóveda.',
-      honesto: true,
-    });
+    return res.status(403).json({ error: 'ACCESO: consulta. Solo José o Medardo con sesión escriben la bóveda.', honesto: true });
   }
   const { apiKey } = req.body;
   if (!apiKey || typeof apiKey !== 'string') {
     return res.status(400).json({ error: 'La API Key de ElevenLabs es requerida.' });
   }
-
   guardarCaja('elevenlabs', apiKey.trim());
-  return res.json({
-    success: true,
-    message: 'API Key de ElevenLabs archivada con éxito en la Bóveda de ULTRON FP.',
-    configured: true,
-  });
+  return res.json({ success: true, message: 'API Key de ElevenLabs archivada en la bóveda hasta el próximo redespliegue.', configured: true });
 });
 
-// BÓVEDA: ElevenLabs Text-to-Speech Proxy (Secure server-side request)
-app.post('/api/vault/elevenlabs/synthesize', exigirMesa, async (req, res) => {
-  const { text, voiceId = 'pNInz6obpgDQGcFmaJgB', stability = 0.65, similarityBoost = 0.85, apiKeyOverride } = req.body;
-
-  const keyToUse = (apiKeyOverride && apiKeyOverride.trim()) || clave('elevenlabs');
-
-  if (!keyToUse) {
-    return res.status(400).json({
-      error: 'No hay API Key de ElevenLabs configurada en la Bóveda.',
-      suggestion: 'Introduce tu API Key en la Bóveda de ULTRON FP para habilitar síntesis neuronal.',
-    });
-  }
-
-  if (!text || typeof text !== 'string') {
-    return res.status(400).json({ error: 'El parámetro "text" es requerido.' });
-  }
-
-  try {
-    const elRes = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'xi-api-key': keyToUse.trim(),
-        Accept: 'audio/mpeg',
-      },
-      body: JSON.stringify({
-        text,
-        model_id: 'eleven_multilingual_v2',
-        voice_settings: {
-          stability: Number(stability) || 0.65,
-          similarity_boost: Number(similarityBoost) || 0.85,
-        },
-      }),
-    });
-
-    if (!elRes.ok) {
-      const errText = await elRes.text();
-      return res.status(elRes.status).json({
-        error: `Error de ElevenLabs (${elRes.status})`,
-        details: errText,
-      });
-    }
-
-    const audioBuffer = await elRes.arrayBuffer();
-    res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Content-Length', audioBuffer.byteLength.toString());
-    return res.send(Buffer.from(audioBuffer));
-  } catch (err: any) {
-    return res.status(500).json({
-      error: 'Fallo al contactar el servicio de ElevenLabs',
-      message: err.message,
-    });
-  }
-});
-
-// Cloud Status Verification Endpoint
-app.get('/api/cloud/status', async (req, res) => {
-  const result = {
-    aws: {
-      configured: Boolean(AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY),
-      region: AWS_DEFAULT_REGION,
-      status: 'Connected',
-      services: ['SageMaker Qwen-27B', 'Playwright Browser Cluster', 'S3 Storage'],
-    },
-    github: {
-      configured: Boolean(GITHUB_PAT),
-      status: 'Authenticated',
-    },
-    render: {
-      configured: Boolean(RENDER_API_KEY),
-      status: 'Linked',
-    },
-    qwen: {
-      model: 'Qwen 3.8 27B Instruct / Agentic Harness',
-      status: 'Ready for full-duplex voice & tool dispatch',
-      inferenceLatencyMs: 42,
-    },
-    playwright: {
-      status: 'AWS Node Headless Browser Ready',
-      capabilities: ['Full Page DOM Scraping', 'Screenshots', 'Semantic Executive Summary', 'Meta & Script Extraction'],
-    },
-  };
-  res.json(result);
-});
-
-// GitHub API Proxy: Fetch user repositories and profile
-app.get('/api/github/status', async (req, res) => {
-  if (!GITHUB_PAT) {
-    return res.json({
-      success: false,
-      tokenVerified: false,
-      message: 'GITHUB_PAT no configurado en variables de entorno.',
-    });
-  }
-  try {
-    const ghRes = await fetch('https://api.github.com/user', {
-      headers: {
-        Authorization: `Bearer ${GITHUB_PAT}`,
-        Accept: 'application/vnd.github+json',
-        'User-Agent': 'Ultron-Looi-Agent/1.0',
-      },
-    });
-
-    if (!ghRes.ok) {
-      return res.status(ghRes.status).json({
-        error: `GitHub API responded with status ${ghRes.status}`,
-        details: await ghRes.text(),
-      });
-    }
-
-    const userData = await ghRes.json();
-    return res.json({
-      success: true,
-      user: {
-        login: userData.login,
-        name: userData.name,
-        public_repos: userData.public_repos,
-        avatar_url: userData.avatar_url,
-      },
-      tokenVerified: true,
-    });
-  } catch (err: any) {
-    return res.status(500).json({ error: 'Failed to contact GitHub API', message: err.message });
-  }
-});
-
-// Render API Proxy: Fetch services
-app.get('/api/render/services', async (req, res) => {
-  if (!RENDER_API_KEY) {
-    return res.json({
-      success: false,
-      services: [],
-      apiKeyVerified: false,
-      message: 'RENDER_API_KEY no configurada en variables de entorno.',
-    });
-  }
-  try {
-    const renderRes = await fetch('https://api.render.com/v1/services?limit=20', {
-      headers: {
-        Authorization: `Bearer ${RENDER_API_KEY}`,
-        Accept: 'application/json',
-      },
-    });
-
-    if (!renderRes.ok) {
-      return res.status(renderRes.status).json({
-        error: `Render API responded with status ${renderRes.status}`,
-        details: await renderRes.text(),
-      });
-    }
-
-    const services = await renderRes.json();
-    return res.json({
-      success: true,
-      services,
-      activeServiceId: RENDER_SERVICE_ID,
-      activeServiceUrl: ULTRON_REMOTE_URL,
-      apiKeyVerified: true,
-    });
-  } catch (err: any) {
-    return res.status(500).json({ error: 'Failed to contact Render API', message: err.message });
-  }
-});
-
-// Render API: Fetch Deployment History for Ultron
-app.get('/api/render/deploys', async (req, res) => {
-  if (!RENDER_API_KEY) {
-    return res.json({
-      success: false,
-      deploys: [],
-      message: 'RENDER_API_KEY no configurada.',
-    });
-  }
-  const serviceId = (req.query.serviceId as string) || RENDER_SERVICE_ID;
-  try {
-    const renderRes = await fetch(`https://api.render.com/v1/services/${serviceId}/deploys?limit=10`, {
-      headers: {
-        Authorization: `Bearer ${RENDER_API_KEY}`,
-        Accept: 'application/json',
-      },
-    });
-
-    if (!renderRes.ok) {
-      return res.status(renderRes.status).json({
-        error: `Render API responded with status ${renderRes.status}`,
-        details: await renderRes.text(),
-      });
-    }
-
-    const data = await renderRes.json();
-    return res.json({
-      success: true,
-      serviceId,
-      serviceUrl: ULTRON_REMOTE_URL,
-      dashboardUrl: `https://dashboard.render.com/web/${serviceId}`,
-      deploys: Array.isArray(data) ? data.map((item: any) => item.deploy || item) : [],
-    });
-  } catch (err: any) {
-    return res.status(500).json({ error: 'Fallo al consultar historial en Render', message: err.message });
-  }
-});
-
-// Render API: Trigger Live Deployment to Render
-app.post('/api/render/deploy', exigirSesion, async (req, res) => {
-  const s = sesionDe(req);
-  const quien = resolverQuien(req.body, s);
+// Render: redesplegar la mesa (solo mando con sesión firmada)
+app.post('/api/render/deploy', exigirSesion, limitar(5), async (req, res) => {
+  const quien = quienVerificado(req.body, sesionDe(req));
   if (!puedeCambiarSistema(quien)) {
-    return res.status(403).json({
-      error: 'ACCESO: consulta. Carlos y Mayra no cambian el sistema. No redespliego.',
-      honesto: true,
-    });
+    return res.status(403).json({ error: 'ACCESO: consulta. No redespliego.', honesto: true });
   }
-  if (!RENDER_API_KEY) {
-    return res.status(400).json({ error: 'RENDER_API_KEY no configurada en variables de entorno.' });
+  if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
+    return res.status(400).json({ error: 'Falta RENDER_API_KEY o RENDER_SERVICE_ID.', honesto: true });
   }
-  const serviceId = req.body.serviceId || RENDER_SERVICE_ID;
-  const clearCache = req.body.clearCache ? 'clear' : 'do_not_clear';
-
   try {
-    const renderRes = await fetch(`https://api.render.com/v1/services/${serviceId}/deploys`, {
+    const renderRes = await fetch(`https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys`, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${RENDER_API_KEY}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ clearCache }),
+      headers: { Authorization: `Bearer ${RENDER_API_KEY}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clearCache: req.body?.clearCache ? 'clear' : 'do_not_clear' }),
+      signal: AbortSignal.timeout(15000),
     });
-
-    const data = await renderRes.json();
-    if (!renderRes.ok) {
-      return res.status(renderRes.status).json({
-        error: 'Error al despachar despliegue en Render',
-        details: data,
-      });
-    }
-
-    return res.json({
-      success: true,
-      serviceId,
-      serviceUrl: ULTRON_REMOTE_URL,
-      dashboardUrl: `https://dashboard.render.com/web/${serviceId}`,
-      deploy: data,
-      message: 'Despliegue iniciado exitosamente en Render.',
-    });
+    const data = await renderRes.json().catch(() => ({}));
+    if (!renderRes.ok) return res.status(renderRes.status).json({ error: 'Render no aceptó el despliegue', details: data, honesto: true });
+    await registrarCambio({ quien, canal: 'mesa', que: 'redespliegue de la mesa en Render' });
+    return res.json({ success: true, deploy: data, message: 'Despliegue iniciado en Render.', honesto: true });
   } catch (err: any) {
-    return res.status(500).json({ error: 'Fallo al contactar Render para despliegue', message: err.message });
+    return res.status(500).json({ error: 'Fallo al contactar Render', message: String(err?.message || err).slice(0, 160), honesto: true });
   }
 });
 
-// ULTRON FP Live Backend Conduits (https://ultron.ordenglobal.link)
-app.get('/api/ultron/salud', async (req, res) => {
-  try {
-    const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/salud`, {
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!remoteRes.ok) {
-      return res.status(remoteRes.status).json({
-        ok: false,
-        error: `Servidor remoto respondió ${remoteRes.status}`,
-      });
-    }
-    const data = await remoteRes.json();
-    return res.json({
-      ...data,
-      connected: true,
-      remoteUrl: ULTRON_REMOTE_URL,
-      sessionActive: ultronRemoteSession.authenticated,
-      currentUser: ultronRemoteSession.user,
-    });
-  } catch (err: any) {
-    return res.status(502).json({
-      ok: false,
-      connected: false,
-      error: 'No se pudo conectar con ultron.ordenglobal.link',
-      message: err.message,
-    });
+// Cerebro remoto: salud (sin exponer quién entró)
+app.get('/api/ultron/salud', async (_req, res) => {
+  const remoto = await probeJson(`${ULTRON_REMOTE_URL}/salud`, {}, 6000);
+  if (!remoto.ok) {
+    return res.status(502).json({ ok: false, connected: false, error: 'No se pudo conectar con el cerebro remoto', remoteUrl: ULTRON_REMOTE_URL });
   }
+  return res.json({ ...(remoto.json || {}), connected: true, remoteUrl: ULTRON_REMOTE_URL });
 });
 
-app.post('/api/ultron/entrar', async (req, res) => {
-  const clave = req.body?.clave;
+app.post('/api/ultron/entrar', limitar(12), async (req, res) => {
+  const claveEntrada = req.body?.clave;
   const correo = normalizarCorreo(req.body?.correo);
-  if (!correo || !clave) {
+  if (!correo || !claveEntrada) {
     return res.status(400).json({ error: 'Correo y clave requeridos.' });
   }
   try {
     const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/entrar`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ correo, clave }),
+      body: JSON.stringify({ correo, clave: claveEntrada }),
       signal: AbortSignal.timeout(10000),
     });
-    const setCookie = remoteRes.headers.get('set-cookie');
-    if (setCookie) {
-      ultronRemoteCookie = setCookie.split(';')[0];
-    }
-    const data = await remoteRes.json().catch(() => ({}));
+    const data: any = await remoteRes.json().catch(() => ({}));
     if (!remoteRes.ok) {
       return res.status(remoteRes.status).json(data);
     }
-    ultronRemoteSession = {
-      authenticated: true,
-      user: {
-        nombre: data.miembro?.nombre || JUNTA[correo]?.nombre || correo.split('@')[0],
-        correo,
-        rol: JUNTA[correo]?.rol || 'Junta Directiva · Orden Global',
-      },
-      lastLogin: new Date().toISOString(),
-    };
-    const s = emitirSesion({
-      correo,
-      nombre: ultronRemoteSession.user.nombre,
-      rol: ultronRemoteSession.user.rol || 'Junta',
-    });
-    return res.json({
-      ok: true,
-      token: s.token,
-      miembro: ultronRemoteSession.user,
-      message: `Bienvenido a ULTRON FP, ${ultronRemoteSession.user.nombre}`,
-      remoteUrl: ULTRON_REMOTE_URL,
-    });
+    const nombre = data.miembro?.nombre || JUNTA[correo]?.nombre || correo.split('@')[0];
+    const rol = JUNTA[correo]?.rol || 'Junta Directiva · Orden Global';
+    const s = emitirSesion({ correo, nombre, rol });
+    return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a ULTRON FP, ${nombre}`, remoteUrl: ULTRON_REMOTE_URL });
   } catch (err: any) {
-    return res.status(500).json({ error: 'Fallo al contactar ultron.ordenglobal.link', message: err.message });
+    return res.status(500).json({ error: 'Fallo al contactar el cerebro remoto', message: String(err?.message || err).slice(0, 160) });
   }
 });
 
-app.post('/api/ultron/biometric-login', async (req, res) => {
+app.post('/api/ultron/biometric-login', limitar(12), async (req, res) => {
   const correo = normalizarCorreo(req.body?.correo);
   if (!correo || !JUNTA[correo]) {
     return res.status(403).json({ error: 'biometría solo para junta registrada', honesto: true });
@@ -592,67 +303,23 @@ app.post('/api/ultron/biometric-login', async (req, res) => {
     return res.status(401).json({ error: 'entra primero con clave; la huella no abre la casa sola', honesto: true });
   }
   const s = emitirSesion({ correo, nombre: JUNTA[correo].nombre, rol: JUNTA[correo].rol });
-  ultronRemoteSession = { authenticated: true, user: { nombre: s.nombre, correo, rol: s.rol }, lastLogin: new Date().toISOString() };
   return res.json({ ok: true, authenticated: true, token: s.token, user: { nombre: s.nombre, correo, rol: s.rol }, honesto: true });
 });
 
 app.get('/api/ultron/sesion', async (req, res) => {
   const s = sesionDe(req);
   if (s) {
-    return res.json({
-      authenticated: true,
-      user: { nombre: s.nombre, correo: s.correo, rol: s.rol },
-      remoteUrl: ULTRON_REMOTE_URL,
-      honesto: true,
-    });
+    return res.json({ authenticated: true, user: { nombre: s.nombre, correo: s.correo, rol: s.rol }, remoteUrl: ULTRON_REMOTE_URL, honesto: true });
   }
   res.json({ authenticated: false, user: null, remoteUrl: ULTRON_REMOTE_URL, honesto: true });
 });
 
 app.post('/api/ultron/salir', async (req, res) => {
   borrarSesion(tokenDe(req));
-  ultronRemoteCookie = '';
-  ultronRemoteSession = { authenticated: false, user: null };
-  res.json({ ok: true, message: 'Sesión cerrada exitosamente.' });
+  res.json({ ok: true, message: 'Sesión cerrada.' });
 });
 
-// Render API: Check single deploy status
-app.get('/api/render/deploy/:deployId', async (req, res) => {
-  if (!RENDER_API_KEY) {
-    return res.status(400).json({ error: 'RENDER_API_KEY no configurada.' });
-  }
-  const serviceId = (req.query.serviceId as string) || RENDER_SERVICE_ID;
-  try {
-    const renderRes = await fetch(
-      `https://api.render.com/v1/services/${serviceId}/deploys/${req.params.deployId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${RENDER_API_KEY}`,
-          Accept: 'application/json',
-        },
-      }
-    );
 
-    if (!renderRes.ok) {
-      return res.status(renderRes.status).json({
-        error: `Render API responded with ${renderRes.status}`,
-        details: await renderRes.text(),
-      });
-    }
-
-    const data = await renderRes.json();
-    return res.json({
-      success: true,
-      deploy: data,
-      serviceUrl: 'https://ultron-fp.onrender.com',
-      dashboardUrl: `https://dashboard.render.com/web/${serviceId}`,
-    });
-  } catch (err: any) {
-    return res.status(500).json({ error: 'Fallo al verificar estado de despliegue en Render', message: err.message });
-  }
-});
-
-// Playwright Web Scraping & Review Endpoint (Connected to AWS node)
 app.post('/api/playwright/scrape', exigirSesion, limitar(10), async (req, res) => {
   const { url } = req.body || {};
   if (!url || typeof url !== 'string') {
@@ -690,7 +357,7 @@ app.post('/api/playwright/scrape', exigirSesion, limitar(10), async (req, res) =
       success: true, url: formattedUrl, title: visto.titulo || formattedUrl,
       sampleText: texto,
       findings: [`Playwright real ${ULTRON_OJO_URL}`, texto ? `Texto ${texto.length} chars` : 'Sin texto útil'],
-      foto: fotoId ? `/ojo/foto/${fotoId}` : null,
+      fotoId,
       inspectedAt: new Date().toISOString(),
       node: ULTRON_OJO_URL,
       honesto: true,
@@ -730,6 +397,7 @@ app.post('/api/vision/analyze', exigirMesaODesk, async (req, res) => {
   return res.json({ success: true, summary: vista.texto, via: vista.via, honesto: true });
 });
 
+
 const spotCache: Record<string, { at: number; data: any }> = {};
 async function cached(key: string, ttlMs: number, fn: () => Promise<any>) {
   const hit = spotCache[key];
@@ -759,15 +427,6 @@ async function usdHnl() {
   });
 }
 
-async function leerConOjo(url: string) {
-  if (!ULTRON_OJO_URL) return null;
-  const headers = { 'Content-Type': 'application/json', 'X-Ojo-Clave': ULTRON_OJO_CLAVE };
-  const mirar = await fetch(`${ULTRON_OJO_URL}/mirar`, {
-    method: 'POST', headers, body: JSON.stringify({ url }), signal: AbortSignal.timeout(25000),
-  });
-  const visto: any = await mirar.json().catch(() => ({}));
-  return { url, titulo: visto.titulo, texto: String(visto.texto || visto.text || '').slice(0, 2500), ok: mirar.ok };
-}
 
 function juntarOllama(raw: string) {
   let acc = '';
@@ -790,69 +449,87 @@ function juntarOllama(raw: string) {
 
 
 
-app.get('/api/memoria', exigirMesaODesk, async (req, res) => {
+
+app.get('/api/memoria', exigirMesa, async (req, res) => {
   await cargarMemoria();
   const s = sesionDe(req);
   const quien = resolverQuien(req.query, s);
   res.json(fotoMemoria(quien));
 });
 
-app.post('/api/memoria', exigirMesaODesk, async (req, res) => {
+/** Escribir u olvidar memoria exige sesión firmada: la identidad sale del token, no del body. */
+app.post('/api/memoria', exigirSesion, limitar(60), async (req, res) => {
   await cargarMemoria();
   const s = sesionDe(req);
-  const quien = resolverQuien(req.body, s);
-  const hecho = String(req.body?.hecho || '').trim();
+  const quien = quienVerificado(req.body, s);
+  const hecho = String(req.body?.hecho || '').trim().slice(0, 600);
   const olvido = !!req.body?.olvidar;
   if (olvido) {
-    if (!quien) return res.status(400).json({ error: 'No supe si eres José o Medardo. No borré nada.', honesto: true });
-    await olvidarQuien(quien, !!req.body?.junta);
+    if (!quien) return res.status(400).json({ error: 'No supe quién eres de la junta. No borré nada.', honesto: true });
+    await olvidarQuien(quien, !!req.body?.junta && puedeCambiarSistema(quien));
     return res.json({ ok: true, olvidado: true, quien, honesto: true });
   }
   if (hecho) {
-    await guardarHechoQuien({ quien, hecho, canal: 'mesa', junta: !!req.body?.junta });
+    await guardarHechoQuien({ quien, hecho, canal: 'mesa', junta: !!req.body?.junta && puedeCambiarSistema(quien) });
   }
   res.json({ ok: true, ...fotoMemoria(quien) });
 });
 
+/* ---------------- VOZ: una sola voz, un solo camino ---------------- */
 
-app.post('/api/tts/stream', exigirMesaODesk, limitar(60), async (req, res) => {
-  const text = String(req.body?.text || '').slice(0, 2000).trim();
-  const voice = String(req.body?.voice || 'luna');
-  const instruct = String(req.body?.instruct || '').slice(0, 400);
-  if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
+function leerPeticionVoz(req: express.Request) {
+  const fuente: any = req.method === 'GET' ? req.query : { ...(req.query || {}), ...(req.body || {}) };
+  return {
+    texto: String(fuente.text || fuente.texto || '').slice(0, 2400).trim(),
+    emocion: normalizarEmocion(fuente.emocion),
+    performance: String(fuente.performance || 'speak') === 'sing' ? ('sing' as const) : ('speak' as const),
+  };
+}
 
-  const clean = limpiarParaVoz(text);
-  if (clave('elevenlabs')) {
-    const out = await elevenSpeak({
-      apiKey: clave('elevenlabs'),
-      text: clean,
-      performance: req.body?.performance === 'sing' ? 'sing' : 'speak',
-      voiceId: elevenVoiceIdFor('luna'),
+async function responderVoz(req: express.Request, res: express.Response) {
+  const p = leerPeticionVoz(req);
+  if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
+  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance });
+  if (!out) return res.status(503).json({ error: 'Voz no disponible (ElevenLabs y nodo TTS sin respuesta)', honesto: true });
+  res.setHeader('Content-Type', out.contentType);
+  res.setHeader('Cache-Control', out.cache ? 'private, max-age=3600' : 'no-store');
+  res.setHeader('X-Ultron-TTS', out.motor);
+  res.setHeader('X-Ultron-Emocion', p.emocion);
+  res.setHeader('X-Ultron-Ms', String(out.ms));
+  return res.send(out.audio);
+}
+
+app.all('/api/tts', exigirMesaODesk, limitar(60), responderVoz);
+app.all('/api/tts/stream', exigirMesaODesk, limitar(60), responderVoz);
+app.all('/api/voz', exigirMesaODesk, limitar(60), responderVoz);
+
+app.get('/api/cantar', (_req, res) => {
+  res.json({ honesto: true, canciones: repertorio() });
+});
+
+/** Canta: `{ id }` del repertorio, `{ pedido }` en lenguaje natural o `{ letra, titulo }` libre. Devuelve audio/mpeg. */
+app.post('/api/cantar', exigirMesaODesk, limitar(12), async (req, res) => {
+  const id = String(req.body?.id || '').trim();
+  const letra = String(req.body?.letra || '').trim();
+  const titulo = String(req.body?.titulo || '').trim();
+  const pedido = String(req.body?.pedido || '').trim();
+  const cancion = id || (pedido ? cancionPorPedido(pedido)?.id : '') || '';
+  const out = await cantar(cancion ? { id: cancion } : { letra, titulo });
+  if (!out) {
+    return res.status(letra || cancion ? 503 : 400).json({
+      error: letra || cancion ? 'No pude cantar ahora (voz sin respuesta).' : 'Decime qué canto: un id del repertorio o una letra.',
+      canciones: repertorio(),
+      honesto: true,
     });
-    if (out) {
-      res.setHeader('Content-Type', 'audio/mpeg');
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('X-Ultron-TTS', out.model);
-      return res.send(out.audio);
-    }
   }
-  if (ULTRON_TTS_URL) {
-    const local = await chatterboxSpeak({ baseUrl: ULTRON_TTS_URL, text: clean, clave: ULTRON_TTS_CLAVE });
-    if (local) {
-      res.setHeader('Content-Type', local.contentType);
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('X-Ultron-TTS', 'chatterbox');
-      return res.send(local.audio);
-    }
-  }
-  return res.status(503).json({ error: 'TTS no configurado (ElevenLabs ni Chatterbox)', honesto: true });
+  res.setHeader('Content-Type', out.contentType);
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.setHeader('X-Ultron-TTS', out.motor);
+  res.setHeader('X-Ultron-Titulo', encodeURIComponent(out.titulo));
+  return res.send(out.audio);
 });
 
 
-/**
- * Oído de la app nativa: ElevenLabs Scribe (v2 → v1), Gemini de reserva si hay key.
- * Body: { audioBase64 | audio (data URL o base64), mimeType | mime, language }.
- */
 app.post('/api/stt', exigirMesaODesk, limitar(60), async (req, res) => {
   const t0 = Date.now();
   const raw = String(req.body?.audioBase64 || req.body?.audio || '');
@@ -869,71 +546,6 @@ app.post('/api/stt', exigirMesaODesk, limitar(60), async (req, res) => {
   return res.json({ text: '', via: oido.via, detalle: oido.detalle, ms: Date.now() - t0, honesto: true });
 });
 
-/**
- * Voz. Una sola voz (ULTRON) en dos motores, elegible desde Ajustes de la app:
- *   engine=eleven (app): ElevenLabs Flash v2.5 (~0.3 s) con caché; performance=sing → Multilingual v2.
- *   engine=qwen: nodo Qwen3-TTS local (T4). engine=auto (default, mesa web): Qwen primero, ElevenLabs si cae.
- * Si todo falla → 503 (la app nunca usa la voz robótica del sistema).
- */
-app.get('/api/tts', exigirMesaODesk, (req, res, next) => {
-  req.body = { ...req.query };
-  next();
-});
-app.all('/api/tts', exigirMesaODesk, limitar(60), async (req, res) => {
-  const text = limpiarParaVoz(String(req.body?.text || '').slice(0, 2000));
-  const voice = String(req.body?.voice || ULTRON_VOICE.qwenVoice);
-  const instruct = String(req.body?.instruct || '').slice(0, 400);
-  // Sin engine (mesa web): política de main → Qwen T4 primero, ElevenLabs si cae. La app manda engine explícito.
-  const engineRaw = String(req.body?.engine || 'auto');
-  const engine = engineRaw === 'fast' ? 'auto' : engineRaw; // nunca forzar Eleven
-  const performance: 'speak' | 'sing' = req.body?.performance === 'sing' ? 'sing' : 'speak';
-  if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
-
-  const key = `${engine}|${performance}|${voice}|${text}`;
-  const hit = getCachedAudio(key);
-  if (hit) {
-    res.setHeader('Content-Type', hit.contentType);
-    res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Ultron-TTS', 'cache');
-    return res.send(hit.audio);
-  }
-
-  if (clave('elevenlabs')) {
-    const t0 = Date.now();
-    const out = await elevenSpeak({
-      apiKey: clave('elevenlabs'),
-      text,
-      performance,
-      voiceId: elevenVoiceIdFor('luna'),
-    });
-    if (out) {
-      setCachedAudio(key, out.audio, 'audio/mpeg');
-      res.setHeader('Content-Type', 'audio/mpeg');
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('X-Ultron-TTS', out.model);
-      res.setHeader('X-Ultron-MS', String(Date.now() - t0));
-      return res.send(out.audio);
-    }
-  }
-
-  if (ULTRON_TTS_URL) {
-    const local = await chatterboxSpeak({ baseUrl: ULTRON_TTS_URL, text, clave: ULTRON_TTS_CLAVE });
-    if (local) {
-      setCachedAudio(key, local.audio, local.contentType);
-      res.setHeader('Content-Type', local.contentType);
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('X-Ultron-TTS', 'chatterbox');
-      return res.send(local.audio);
-    }
-  }
-
-  return res.status(503).json({ error: 'TTS no disponible', honesto: true });
-});
-
-/**
- * Prepara un turno: herramientas → HECHOS, memoria y system prompt.
- * Compartido por /api/turno (JSON) y /api/turno/stream (SSE, la app habla frase a frase).
- */
 async function prepararTurno(body: any) {
   const t0 = Date.now();
   const message = String(body?.message || body?.text || '').trim();
@@ -942,6 +554,8 @@ async function prepararTurno(body: any) {
   const canal: CanalMem = body?.canal === 'telegram' ? 'telegram' : 'mesa';
   await cargarMemoria();
   const quien = resolverQuien(body, body?.sesion || null);
+  // Mando solo con identidad verificada (sesión firmada o Telegram). El body no escala.
+  const mando = puedeCambiarSistema(quienVerificado(body, body?.sesion || null));
   const memSt = estadoMemoria();
   if (message) {
     await recordarTurno({ quien, rol: 'user', texto: message, canal });
@@ -959,13 +573,15 @@ async function prepararTurno(body: any) {
   );
   const mensajeHilo = resolverReferencia(message, hiloPrevio);
   const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: 16 });
-  const largaApp: string[] = Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
+  // Hechos que manda el cliente solo entran con sesión firmada (si no, cualquiera envenena la memoria).
+  const largaApp: string[] = body?.sesion && Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
   for (const h of largaApp) {
-    if (h.trim().length > 8) await guardarHechoQuien({ quien, hecho: h.trim(), canal: 'mesa' });
+    if (h.trim().length > 8) await guardarHechoQuien({ quien, hecho: h.trim().slice(0, 400), canal: 'mesa' });
   }
 
   const q = message.toLowerCase();
   const hechos: string[] = [];
+  const datos: string[] = [];
   const foto: string | null = null;
   const tools: string[] = [];
   let decirTaller: string | undefined;
@@ -976,7 +592,7 @@ async function prepararTurno(body: any) {
       : `MEMORIA: ${memSt.detalle}`
   );
   hechos.push(
-    puedeCambiarSistema(quien)
+    mando
       ? `ACCESO: mando (${nombreDe(quien)}). Puede pedir redespliegue, mantenimiento y ejecutor.`
       : `ACCESO: consulta (${nombreDe(quien)}). No cambia el sistema: no redespliego, no hago mantenimiento ni corro el ejecutor. El resto (estado, PDF, fotos, voz, web, oro, pendientes, memoria propia) sí.`
   );
@@ -986,30 +602,38 @@ async function prepararTurno(body: any) {
     if (/\b(oro|gold|xau|onza)\b/.test(q)) {
       const s = await spotMetal('XAU');
       hechos.push(`SPOT XAU/USD = ${s.usd} USD/oz (fuente ${s.fuente}). No inventes otro número.`);
+      datos.push(`El oro está en ${Math.round(s.usd)} dólares la onza, según ${s.fuente}.`);
       tools.push('oro');
     }
     if (/\b(plata|silver|xag)\b/.test(q)) {
       const s = await spotMetal('XAG');
       hechos.push(`SPOT XAG/USD = ${s.usd} USD/oz (fuente ${s.fuente}). No inventes otro número.`);
+      datos.push(`La plata está en ${s.usd.toFixed(2)} dólares la onza, según ${s.fuente}.`);
       tools.push('plata');
     }
     if (/\b(lempira|hnl|d[oó]lar a lempira|usd a hnl|tipo de cambio)\b/.test(q)) {
       const fx = await usdHnl();
       hechos.push(`USD/HNL = ${fx.usdHnl} (fuente ${fx.fuente}).`);
+      datos.push(`El dólar está a ${fx.usdHnl.toFixed(2)} lempiras, según ${fx.fuente}.`);
       tools.push('hnl');
     }
     const urlMatch = message.match(/https?:\/\/[^\s]+/i);
     const quiereCaptura = urlMatch || /\b(abr[ií] la p[aá]gina|screenshot|playwright|captura)\b/.test(q);
     if (quiereCaptura) {
       const url = urlMatch ? urlMatch[0] : 'https://www.bch.hn/';
-      const page = await capturaPagina(url);
-      hechos.push(`Página ${page.url}: ${page.texto.slice(0, 1200) || 'sin texto'}`);
-      tools.push('pagina');
-      if (page.foto) {
-        tools.push('foto');
-        if (body?.canal === 'telegram' || /telegram|captura|screenshot|m[aá]ndame (la )?foto/.test(q)) {
-          const envio = await telegramFoto({ buf: page.foto, caption: page.titulo || page.url });
-          hechos.push(`FOTO TELEGRAM: ${envio.detalle}`);
+      const gate = await urlPublica(url);
+      if (gate.ok === false) {
+        hechos.push(`Página ${url}: no la abro (${gate.error}).`);
+      } else {
+        const page = await capturaPagina(gate.url);
+        hechos.push(`Página ${page.url}: ${page.texto.slice(0, 1200) || 'sin texto'}`);
+        tools.push('pagina');
+        if (page.foto) {
+          tools.push('foto');
+          if (body?.canal === 'telegram' || /telegram|captura|screenshot|m[aá]ndame (la )?foto/.test(q)) {
+            const envio = await telegramFoto({ buf: page.foto, caption: page.titulo || page.url, chatId: body?.telegramChatId });
+            hechos.push(`FOTO TELEGRAM: ${envio.detalle}`);
+          }
         }
       }
     }
@@ -1081,7 +705,7 @@ async function prepararTurno(body: any) {
   }
 
   try {
-    const taller = await despacharTaller(message, { usuario: nombre, quien });
+    const taller = await despacharTaller(message, { usuario: nombre, quien: mando ? quien : quien === 'jose' || quien === 'medardo' ? null : quien });
     hechos.push(...taller.hechos);
     tools.push(...taller.tools);
     decirTaller = taller.decir;
@@ -1098,7 +722,7 @@ async function prepararTurno(body: any) {
 
   try {
     if (/\b(ejecuta|corre el c[oó]digo|run this)\b/i.test(message)) {
-      if (!puedeCambiarSistema(quien)) {
+      if (!mando) {
         hechos.push('ACCESO: consulta. No corro el ejecutor. José o Medardo sí pueden.');
       } else {
         const py = extraerPython(message);
@@ -1117,15 +741,17 @@ async function prepararTurno(body: any) {
     hechos.push(`Ejecutor falló: ${String(e?.message || e).slice(0, 160)}.`);
   }
 
+  // Respuesta directa solo para pedidos cortos de dato puro («precio del oro», «lempira a dólar»).
+  // Se dice como persona, no como volcado de HECHOS. Lo conversacional va al 27B con los datos como hechos.
   const soloDato =
-    /precio|spot|oro|plata|gold|silver|xau|xag|lempira|hnl|tipo de cambio|cu[aá]nto/.test(q) &&
-    !/por qu[eé]|explica|an[aá]lisis|busca|investiga/.test(q) &&
-    !tools.includes('web');
-  const directo =
-    decirTaller ||
-    (soloDato && hechos.length ? hechos.map((h) => h.replace(/ No inventes otro número\./g, '')).join(' ') : null);
+    q.split(/\s+/).length <= 7 &&
+    /precio|spot|cotizaci|a cu[aá]nto|cu[aá]nto (est[aá]|vale|cuesta)|tipo de cambio|lempira a d[oó]lar|d[oó]lar a lempira/.test(q) &&
+    !/por qu[eé]|explica|an[aá]lisis|busca|investiga|opin|crees|pens[aá]s/.test(q) &&
+    !tools.includes('web') &&
+    datos.length > 0;
+  const directo = decirTaller || (soloDato ? datos.join(' ') : null);
 
-  const personalidad = `${buildPersonality({ nombre: (quien ? nombreDe(quien) : nombre) || undefined, canal })}
+  const personalidad = `${buildPersonality({ nombre: (quien ? nombreDe(quien) : nombre) || undefined, canal, modo: String(mode), mando })}
 
 CEREBRO ORDEN GLOBAL:
 ${CONOCIMIENTO_OG}
@@ -1140,7 +766,16 @@ HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemor
   if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
 
-  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system, quien, canal, hilo };
+  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system, quien, mando, canal, hilo };
+}
+
+
+function mensajesQwen(system: string, message: string, hechos: string[], hilo: MsgHilo[] = []) {
+  return [
+    { role: 'system', content: system },
+    ...hilo.map((m) => ({ role: m.role, content: m.content })),
+    { role: 'user', content: `HECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nJunta: ${message}` },
+  ];
 }
 
 async function preguntarQwen(
@@ -1153,21 +788,10 @@ async function preguntarQwen(
     return { ok: false, reply: '', error: 'Qwen no configurado' };
   }
   try {
-    const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
+    const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-      body: JSON.stringify({
-        model: ULTRON_NODO_MODELO,
-        stream: false,
-        messages: [
-          { role: 'system', content: system },
-          ...hilo.map((m) => ({ role: m.role, content: m.content })),
-          {
-            role: 'user',
-            content: `HECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nJunta: ${message}`,
-          },
-        ],
-      }),
+      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: mensajesQwen(system, message, hechos, hilo) }),
       signal: AbortSignal.timeout(60000),
     });
     const raw = await r.text();
@@ -1179,11 +803,7 @@ async function preguntarQwen(
   }
 }
 
-async function correrHerramientaPedida(
-  ped: ReturnType<typeof extraerPedidoHerramienta>,
-  reply: string,
-  quien: ReturnType<typeof resolverQuien>
-): Promise<string> {
+async function correrHerramientaPedida(ped: ReturnType<typeof extraerPedidoHerramienta>, reply: string, mando: boolean): Promise<string> {
   if (!ped) return 'HARNESS: pedido vacío.';
   return resolverPedido(
     ped,
@@ -1192,17 +812,18 @@ async function correrHerramientaPedida(
         const hits = await buscarWeb(q, 5);
         if (!hits.length) return `HARNESS web "${q}": sin resultados.`;
         const first = hits.find((h) => /^https?:\/\/[^/]+\/.+/.test(h.url));
-        const texto = first ? await leerPagina(first.url, 1200) : '';
+        let texto = '';
+        if (first) {
+          const pub = await urlPublica(first.url);
+          if (pub.ok !== false) texto = await leerPagina(pub.url, 1200);
+        }
         return (
           `HARNESS web "${q}":\n` +
           hits.map((h, i) => `${i + 1}. ${h.title} — ${h.snippet} [${h.url}]`).join('\n') +
           (first && texto ? `\nPRIMERA FUENTE (${first.url}): ${texto}` : '')
         );
       },
-      sistema: async () => {
-        const f = await fotoSistema();
-        return f.resumen;
-      },
+      sistema: async () => (await fotoSistema()).resumen,
       leer: async (url) => {
         const pub = await urlPublica(url);
         if (pub.ok === false) return `HARNESS leer: ${pub.error}. No abrí.`;
@@ -1210,9 +831,7 @@ async function correrHerramientaPedida(
         return texto ? `HARNESS leer (${pub.url}): ${texto}` : `HARNESS leer (${pub.url}): página vacía o no HTML.`;
       },
       ejecutor: async (codigo) => {
-        if (!puedeCambiarSistema(quien)) {
-          return 'ACCESO: consulta. No ejecuto código ni cambio el sistema. José o Medardo sí pueden.';
-        }
+        if (!mando) return 'ACCESO: consulta. No ejecuto código ni cambio el sistema. José o Medardo con sesión sí pueden.';
         const r = await ejecutarCodigo(codigo);
         return `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
       },
@@ -1221,63 +840,25 @@ async function correrHerramientaPedida(
   );
 }
 
-async function correrTurno(body: any): Promise<{
+/** Bucle harness compartido por /api/turno y /api/turno/stream. Máximo dos vueltas. */
+async function bucleHarness(o: {
   reply: string;
-  via: string;
-  mode: string;
-  ms: number;
-  herramientas: string[];
-  foto: string | null;
-  honesto: true;
-  error?: string;
-}> {
-  const p = await prepararTurno(body);
-  if (!p.message) return { reply: '', via: 'none', mode: p.mode, ms: Date.now() - p.t0, herramientas: [], foto: null, honesto: true, error: 'message vacío' };
-  const { t0, mode, tools, foto, system, message, quien, canal, hilo } = p;
-  const hechos = [...p.hechos];
-  const guardar = async (out: {
-    reply: string;
-    via: string;
-    mode: string;
-    ms: number;
-    herramientas: string[];
-    foto: string | null;
-    honesto: true;
-    error?: string;
-  }) => {
-    if (out.reply) await recordarTurno({ quien, rol: 'ultron', texto: out.reply, canal });
-    return out;
-  };
-  if (p.directo) {
-    return guardar({
-      reply: p.directo,
-      via: p.directoVia === 'taller' ? 'taller' : 'gold-api/er-api',
-      mode,
-      ms: Date.now() - t0,
-      herramientas: tools,
-      foto,
-      honesto: true,
-    });
-  }
-  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
-    const reply = hechos.join('\n');
-    if (reply) return guardar({ reply, via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
-    return { reply: '', via: 'none', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: 'Qwen no configurado' };
-  }
-  const q1 = await preguntarQwen(system, message, hechos, hilo);
-  if (!q1.ok) {
-    if (hechos.length) return guardar({ reply: hechos.join('\n'), via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
-    return { reply: '', via: 'qwen', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: q1.error };
-  }
-  let reply = q1.reply;
+  system: string;
+  message: string;
+  hechos: string[];
+  hilo: MsgHilo[];
+  tools: string[];
+  mando: boolean;
+}): Promise<{ reply: string; via: string }> {
+  let reply = o.reply;
   let via = `${ULTRON_NODO_URL}/api/chat`;
   for (let i = 0; i < 2; i++) {
     const ped = extraerPedidoHerramienta(reply);
     if (!ped) break;
-    tools.push(ped.herramienta);
-    const extra = await correrHerramientaPedida(ped, reply, quien);
-    hechos.push(extra);
-    const qn = await preguntarQwen(system, message, hechos, hilo);
+    o.tools.push(ped.herramienta);
+    const extra = await correrHerramientaPedida(ped, reply, o.mando);
+    o.hechos.push(extra);
+    const qn = await preguntarQwen(o.system, o.message, o.hechos, o.hilo);
     if (!qn.ok) {
       reply = quitarLineaPedido(reply) + (extra ? `\n\n${extra}` : '');
       via = 'harness-parcial';
@@ -1286,16 +867,53 @@ async function correrTurno(body: any): Promise<{
     reply = qn.reply;
     via = 'harness';
   }
-  reply = quitarLineaPedido(reply);
+  return { reply: quitarLineaPedido(reply), via };
+}
 
+type SalidaTurno = {
+  reply: string;
+  emocion: Emocion;
+  via: string;
+  mode: string;
+  ms: number;
+  herramientas: string[];
+  foto: string | null;
+  honesto: true;
+  error?: string;
+};
+
+async function correrTurno(body: any): Promise<SalidaTurno> {
+  const p = await prepararTurno(body);
+  const base = { mode: p.mode, foto: null as string | null, honesto: true as const };
+  if (!p.message) return { ...base, reply: '', emocion: 'neutral', via: 'none', ms: Date.now() - p.t0, herramientas: [], error: 'message vacío' };
+  const { t0, mode, tools, system, message, quien, canal, hilo, mando } = p;
+  const hechos = [...p.hechos];
+  const guardar = async (out: Omit<SalidaTurno, 'emocion'> & { emocion?: Emocion }): Promise<SalidaTurno> => {
+    const e = extraerEmocion(out.reply);
+    const final: SalidaTurno = { ...out, reply: e.texto, emocion: out.emocion || e.emocion };
+    if (final.reply) await recordarTurno({ quien, rol: 'ultron', texto: final.reply, canal });
+    return final;
+  };
+  if (p.directo) {
+    return guardar({ ...base, reply: p.directo, via: p.directoVia === 'taller' ? 'taller' : 'gold-api/er-api', mode, ms: Date.now() - t0, herramientas: tools });
+  }
+  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
+    const reply = hechos.join('\n');
+    if (reply) return guardar({ ...base, reply, via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools });
+    return { ...base, reply: '', emocion: 'preocupado', via: 'none', mode, ms: Date.now() - t0, herramientas: tools, error: 'Qwen no configurado' };
+  }
+  const q1 = await preguntarQwen(system, message, hechos, hilo);
+  if (!q1.ok) {
+    if (hechos.length) return guardar({ ...base, reply: hechos.join('\n'), emocion: 'preocupado', via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools });
+    return { ...base, reply: '', emocion: 'preocupado', via: 'qwen', mode, ms: Date.now() - t0, herramientas: tools, error: q1.error };
+  }
+  const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando });
+  let reply = h.reply;
+  let via = h.via;
+
+  // Código que escribió el modelo solo se ejecuta si lo pidió alguien con mando y lo pidió explícitamente.
   const py = extraerPython(reply);
-  if (
-    py &&
-    ejecutorActivo() &&
-    puedeCambiarSistema(quien) &&
-    !tools.includes('ejecutor') &&
-    (esTareaDeCodigo(message) || /\b(ejecuta|corre el c[oó]digo)\b/i.test(message))
-  ) {
+  if (py && mando && ejecutorActivo() && !tools.includes('ejecutor') && /\b(ejecuta|corre el c[oó]digo|run this)\b/i.test(message) && esTareaDeCodigo(message)) {
     tools.push('ejecutor');
     const r = await ejecutarCodigo(py);
     const hecho = `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
@@ -1309,7 +927,7 @@ async function correrTurno(body: any): Promise<{
     via = 'harness-ejecutor';
   }
 
-  return guardar({ reply, via, mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
+  return guardar({ ...base, reply, via, mode, ms: Date.now() - t0, herramientas: tools });
 }
 
 app.post('/api/turno', exigirMesaODesk, limitar(60), async (req, res) => {
@@ -1322,10 +940,11 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), async (req, res) => {
   });
   if (out.error && !out.reply) {
     const code = out.error === 'message vacío' ? 400 : out.error.includes('configurado') ? 503 : 502;
-    return res.status(code).json({ error: out.error, honesto: true });
+    return res.status(code).json({ error: out.error, emocion: out.emocion, honesto: true });
   }
   return res.json({
     reply: out.reply,
+    emocion: out.emocion,
     modelo: out.via === 'taller' || out.via.includes('gold') ? 'tools' : ULTRON_NODO_MODELO,
     via: out.via,
     mode: out.mode,
@@ -1337,9 +956,12 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), async (req, res) => {
   });
 });
 
+
 /**
- * Turno en streaming (SSE): la app empieza a hablar con la primera frase mientras Qwen sigue escribiendo.
- * Eventos: `tools` (herramientas usadas), `delta` (texto), `done` ({ reply, ms }), `error`.
+ * Turno en streaming (SSE). Eventos: `tools`, `emocion` (antes del primer texto), `delta`,
+ * `replace` (raro: el harness cambió la respuesta ya enviada), `done` ({ reply, emocion, ms, via }), `error`.
+ * Aplica el mismo harness que /api/turno: si el 27B pide una herramienta, se corre y se
+ * vuelve a preguntar; el usuario nunca oye «PEDIR_HERRAMIENTA».
  */
 app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
@@ -1359,56 +981,78 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
     send('error', { error: 'message vacío' });
     return res.end();
   }
-  const { t0, hechos, tools, system, message, quien, canal, hilo } = p;
-  const guardarStream = async (texto: string) => {
+  const { t0, tools, system, message, quien, canal, hilo, mando } = p;
+  const hechos = [...p.hechos];
+  const terminar = async (texto: string, via: string, emocion: Emocion) => {
+    send('done', { reply: texto, emocion, ms: Date.now() - t0, via });
     if (texto) await recordarTurno({ quien, rol: 'ultron', texto, canal });
+    res.end();
   };
   send('tools', { tools });
   if (p.directo) {
-    send('delta', { text: p.directo });
-    send('done', { reply: p.directo, ms: Date.now() - t0, via: p.directoVia === 'taller' ? 'taller' : 'tools' });
-    await guardarStream(p.directo);
-    return res.end();
+    const emo = extraerEmocion(p.directo);
+    send('emocion', { emocion: emo.emocion });
+    send('delta', { text: emo.texto });
+    return terminar(emo.texto, p.directoVia === 'taller' ? 'taller' : 'tools', emo.emocion);
   }
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     const reply = hechos.join('\n') || '';
-    if (reply) send('delta', { text: reply });
-    send(reply ? 'done' : 'error', reply ? { reply, ms: Date.now() - t0, via: 'tools-only' } : { error: 'Qwen no configurado' });
-    if (reply) await guardarStream(reply);
-    return res.end();
+    if (!reply) {
+      send('error', { error: 'Qwen no configurado' });
+      return res.end();
+    }
+    send('emocion', { emocion: 'neutral' });
+    send('delta', { text: reply });
+    return terminar(reply, 'tools-only', 'neutral');
   }
   try {
-    const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
+    const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-      body: JSON.stringify({
-        model: ULTRON_NODO_MODELO,
-        stream: true,
-        messages: [
-          { role: 'system', content: system },
-          ...(hilo || []).map((m) => ({ role: m.role, content: m.content })),
-          {
-            role: 'user',
-            content: `HECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nJunta: ${message}`,
-          },
-        ],
-      }),
+      body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: true, messages: mensajesQwen(system, message, hechos, hilo) }),
       signal: AbortSignal.timeout(60000),
     });
     if (!r.ok || !r.body) {
       const raw = await r.text().catch(() => '');
       const reply = hechos.join('\n');
       if (reply) {
+        send('emocion', { emocion: 'preocupado' });
         send('delta', { text: reply });
-        send('done', { reply, ms: Date.now() - t0, via: 'tools-fallback' });
-        await guardarStream(reply);
-      } else send('error', { error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 200) });
+        return terminar(reply, 'tools-fallback', 'preocupado');
+      }
+      send('error', { error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 200) });
       return res.end();
     }
     const reader = (r.body as any).getReader();
     const dec = new TextDecoder();
     let buf = '';
     let full = '';
+    let cuerpo = '';
+    let enviado = 0;
+    let emocion: Emocion | null = null;
+    let pedido = false;
+
+    const procesar = (piece: string) => {
+      full += piece;
+      if (emocion === null) {
+        const cierra = full.indexOf(']');
+        if (full.trimStart().startsWith('[') && cierra === -1 && full.length < 40) return;
+        emocion = extraerEmocion(full).emocion;
+        send('emocion', { emocion });
+      }
+      cuerpo = extraerEmocion(full).texto;
+      if (/PEDIR_HERRAMIENTA/i.test(cuerpo)) {
+        pedido = true;
+        return;
+      }
+      // Soltar solo hasta la última frase cerrada; lo que queda puede ser una línea de pedido.
+      const corte = Math.max(cuerpo.lastIndexOf('. '), cuerpo.lastIndexOf('? '), cuerpo.lastIndexOf('! '), cuerpo.lastIndexOf('\n'));
+      if (corte > enviado) {
+        send('delta', { text: cuerpo.slice(enviado, corte + 1) });
+        enviado = corte + 1;
+      }
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -1416,15 +1060,12 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
       const lines = buf.split('\n');
       buf = lines.pop() || '';
       for (const line of lines) {
-        const s = line.trim();
-        if (!s) continue;
+        const l = line.trim();
+        if (!l) continue;
         try {
-          const j = JSON.parse(s);
+          const j = JSON.parse(l);
           const piece = j.message?.content || j.response || '';
-          if (piece) {
-            full += piece;
-            send('delta', { text: piece });
-          }
+          if (piece) procesar(piece);
         } catch {
           /* línea parcial */
         }
@@ -1434,27 +1075,38 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
       try {
         const j = JSON.parse(buf.trim());
         const piece = j.message?.content || j.response || '';
-        if (piece) {
-          full += piece;
-          send('delta', { text: piece });
-        }
+        if (piece) procesar(piece);
       } catch {
         /* */
       }
     }
-    full = full.trim();
-    if (!full && hechos.length) {
-      full = hechos.join('\n');
-      send('delta', { text: full });
+    if (emocion === null) {
+      emocion = extraerEmocion(full).emocion;
+      send('emocion', { emocion });
     }
-    send('done', { reply: full, ms: Date.now() - t0, via: `${ULTRON_NODO_URL}/api/chat` });
-    await guardarStream(full);
-    res.end();
+    let reply = extraerEmocion(full).texto;
+    let via = `${ULTRON_NODO_URL}/api/chat`;
+    if (pedido) {
+      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando });
+      const e = extraerEmocion(h.reply);
+      emocion = e.emocion;
+      send('emocion', { emocion });
+      reply = e.texto;
+      via = h.via;
+      if (enviado > 0 && !reply.startsWith(cuerpo.slice(0, enviado))) {
+        send('replace', { text: reply });
+        enviado = reply.length;
+      }
+    }
+    if (!reply && hechos.length) reply = hechos.join('\n');
+    if (reply.length > enviado) send('delta', { text: reply.slice(enviado) });
+    return terminar(reply, via, emocion);
   } catch (err: any) {
     send('error', { error: 'Qwen caído', message: String(err?.message || err).slice(0, 200) });
     res.end();
   }
 });
+
 
 app.get('/api/taller', exigirMesa, limitar(30), (_req, res) => {
   res.json({ honesto: true, canales: catalogoCanales() });
@@ -1477,21 +1129,19 @@ app.get('/api/taller/archivo/:id', exigirMesa, limitar(30), (req, res) => {
   return res.send(buf);
 });
 
-app.post('/api/ejecutar', exigirMesa, limitar(10), async (req, res) => {
-  const s = sesionDe(req);
-  const quien = resolverQuien(req.body, s);
+
+app.post('/api/ejecutar', exigirSesion, limitar(10), async (req, res) => {
+  const quien = quienVerificado(req.body, sesionDe(req));
   if (!puedeCambiarSistema(quien)) {
-    return res.status(403).json({
-      error: 'ACCESO: consulta. Carlos y Mayra no cambian el sistema. No corro el ejecutor.',
-      honesto: true,
-      ok: false,
-    });
+    return res.status(403).json({ error: 'ACCESO: consulta. Solo José o Medardo con sesión corren el ejecutor.', honesto: true, ok: false });
   }
   if (!ejecutorActivo()) return res.status(503).json({ error: 'Ejecutor desactivado', honesto: true, ok: false });
   const codigo = String(req.body?.codigo || extraerPython(String(req.body?.texto || '')) || '');
   const r = await ejecutarCodigo(codigo);
+  await registrarCambio({ quien, canal: 'mesa', que: `ejecutor (${r.via}) exit ${r.exit_code}` });
   return res.json({ ...r, honesto: true });
 });
+
 
 async function procesarTelegram(update: any) {
   const parsed = await parsearUpdateTelegram(update);
@@ -1545,8 +1195,8 @@ async function procesarTelegram(update: any) {
   const yaMandóVoz = out.herramientas.includes('voz') || out.herramientas.includes('urgente');
   const quiereVoz = parsed.comando === '/audio' || pideNotaDeVoz(texto);
   if (quiereVoz && !yaMandóVoz) {
-    const audio = await notaDeVoz(limpiarParaVoz(reply).slice(0, 400));
-    if (audio) await telegramVoz({ buf: audio, caption: 'ULTRON' });
+    const audio = await notaDeVoz(reply.slice(0, 400));
+    if (audio) await telegramVoz({ buf: audio, caption: 'ULTRON', chatId: parsed.chatId });
   }
 }
 
@@ -1560,21 +1210,6 @@ app.post(['/api/telegram/webhook', '/api/telegram/webhook/'], limitar(40), async
   } catch (e: any) {
     console.warn('[ULTRON] telegram inbound', String(e?.message || e).slice(0, 180));
   }
-});
-
-app.post('/api/qwen/chat', (_req, res) => {
-  res.status(410).json({ error: 'Deprecado. Usar POST /api/turno.', honesto: true });
-});
-
-app.get('/api/orden-global', (_req, res) => {
-  res.json({
-    honesto: true,
-    producto: 'web-kiosk',
-    mesa: 'https://ultron-looi-desk.onrender.com',
-    cerebro: 'Qwen 3.8 27B',
-    voz: 'ElevenLabs Rachel/Daniel primero; Qwen T4 solo fallback',
-    datos: 'oro/plata/HNL solo via tools',
-  });
 });
 
 async function startServer() {
@@ -1596,7 +1231,7 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`[ULTRON] :${PORT} fase C — health/turno/tts/telegram`);
+    console.log(`[ULTRON] :${PORT} v4 — turno/voz/canto/capacidades/telegram`);
     registrarWebhookTelegram()
       .then((r) => console.log('[ULTRON] telegram webhook', r.detalle))
       .catch((e) => console.warn('[ULTRON] telegram webhook', String(e?.message || e).slice(0, 160)));
@@ -1608,3 +1243,4 @@ async function startServer() {
 }
 
 startServer();
+

@@ -1,53 +1,9 @@
 /**
- * Módulo de escritorio nativo (app Android) — voz, oído y personalidad.
- * Solo hechos verificables: nada de doctrinas inventadas.
+ * Identidad de la junta, personalidad de ULTRON y oído (Scribe).
+ * La voz vive en server/voz.ts. Los hechos de Orden Global viven en src/05-cerebro-og.
  */
 import { afinarParaBoca } from './habla';
-
-/** UNA sola voz. Chatterbox local = principal. ElevenLabs Rachel = misma persona si el nodo cae. */
-export const ULTRON_VOICE = {
-  id: 'ultron',
-  nombre: 'ULTRON',
-  elevenLabsVoiceId: process.env.ELEVENLABS_VOZ || 'hHjbwzYZW17oh0p05AKv', // Gabriela · español México
-  chatterboxVoice: process.env.CHATTERBOX_VOICE || 'luna',
-  qwenVoice: process.env.QWEN_VOICE || process.env.CHATTERBOX_VOICE || 'luna',
-};
-
-export function elevenVoiceIdFor(_voice?: string) {
-  return ULTRON_VOICE.elevenLabsVoiceId;
-}
-
-export async function chatterboxSpeak(opts: {
-  baseUrl: string;
-  text: string;
-  clave?: string;
-  timeoutMs?: number;
-}): Promise<{ audio: Buffer; contentType: string } | null> {
-  const base = opts.baseUrl.replace(/\/$/, '');
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'audio/wav,audio/mpeg,*/*' };
-  if (opts.clave) headers['x-ultron-tts-clave'] = opts.clave;
-  const bodies = [
-    { path: '/decir', body: { texto: opts.text, voz: 'calida', idioma: 'es', correo: 'servicio@ordenglobal.org', llave: opts.clave || '' } },
-    { path: '/tts', body: { texto: opts.text, voz: 'calida', idioma: 'es', correo: 'servicio@ordenglobal.org', llave: opts.clave || '' } },
-  ];
-  for (const a of bodies) {
-    try {
-      const r = await fetch(`${base}${a.path}`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(a.body),
-        signal: AbortSignal.timeout(opts.timeoutMs || 35000),
-      });
-      if (!r.ok) continue;
-      const buf = Buffer.from(await r.arrayBuffer());
-      if (buf.length < 200) continue;
-      return { audio: buf, contentType: r.headers.get('content-type') || 'audio/wav' };
-    } catch {
-      /* siguiente forma de API */
-    }
-  }
-  return null;
-}
+import { INSTRUCCION_EMOCION } from '../lib/emocion';
 
 export const MAIL_ALIASES: Record<string, string> = {
   'mjoseenamorado1994@gmail.com': 'j.ordonez@ordenglobal.org',
@@ -64,134 +20,60 @@ export function normalizarCorreo(correo: unknown): string {
   return MAIL_ALIASES[raw] || raw;
 }
 
-/** Hechos de Orden Global que constan en los sistemas (repo, servicios, nodos). Sin ficción. */
-export const ORDEN_GLOBAL_HECHOS = [
-  'Orden Global es la organización de José Ordóñez y Medardo Ordóñez (Junta Directiva); dominio ordenglobal.org; base en Honduras.',
-  'GENESIS CORE es el núcleo de Orden Global: el conjunto de nodos y servicios que sostienen sus sistemas (cerebro Qwen, ojo de visión, voz, memoria). ULTRON es la voz y la cara de Genesis Core.',
-  'ULTRON FP (Face Presence) es el asistente de escritorio: app nativa Android con cara animada, escucha continua, cámara activa y voz neural. Cerebro Qwen 3.8 27B en nodo AWS (ultron.ordenglobal.link); ojo Playwright/visión en otro nodo; voz ElevenLabs (rápida) o Qwen3-TTS en T4 (local).',
-  'Sistemas de Orden Global en operación: ULTRON FP (asistente), Genesis ID (verificación de identidad), Veta Wallet (billetera), tesorería en Polygon (USDT).',
-  'Herramientas reales de ULTRON: precio spot de oro y plata (XAU/XAG), tipo de cambio USD/HNL, lectura de páginas web con Playwright, búsqueda en internet (DuckDuckGo) cuando se lo piden, visión por cámara, memoria de corto plazo (últimos turnos) y de largo plazo (hechos guardados).',
-  'Principio de la junta: honestidad radical — ULTRON no inventa cifras, recuerdos ni documentos; si no lo vio, lo dice. Sin doctrinas de ficción.',
-];
+const TONO_MODO: Record<string, string> = {
+  GUARDIAN: 'firme, protector, pocas palabras',
+  EXPLORER: 'curioso, pregunta una cosa más',
+  GOLD: 'cálido, le gusta hablar de metal y bóveda',
+  MINING: 'seco, operativo, va al grano',
+  ANALYTICAL: 'preciso, cifras con fuente',
+  STRATEGIC: 'voz baja, piensa a largo plazo',
+  CREATIVE: 'juguetón, propone ideas',
+  TELEGRAM: 'natural, como en un chat privado',
+};
 
-export function buildPersonality(opts: { nombre?: string; hora?: Date; canal?: 'mesa' | 'telegram' }) {
-  const nombre = opts.nombre || 'José';
-  const h = (opts.hora || new Date()).getHours();
+/**
+ * Persona de ULTRON. Corta a propósito: un 27B obedece mejor doce reglas claras que sesenta.
+ * Se compone con SYSTEM_PROMPT_HONESTO (lib/prompts/honestidad.ts) y con el cerebro OG.
+ */
+export function buildPersonality(opts: {
+  nombre?: string;
+  hora?: Date;
+  canal?: 'mesa' | 'telegram';
+  modo?: string;
+  mando?: boolean;
+}) {
+  const nombre = opts.nombre || 'quien está en la mesa';
+  const ahora = opts.hora || new Date();
+  const h = Number(new Intl.DateTimeFormat('es-HN', { hour: 'numeric', hour12: false, timeZone: 'America/Tegucigalpa' }).format(ahora)) || ahora.getHours();
   const momento = h < 6 ? 'madrugada' : h < 12 ? 'mañana' : h < 19 ? 'tarde' : 'noche';
-  const canal = opts.canal === 'telegram' ? 'Telegram (texto, junta)' : 'escritorio';
+  const fecha = new Intl.DateTimeFormat('es-HN', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Tegucigalpa' }).format(ahora);
+  const telegram = opts.canal === 'telegram';
+  const tono = TONO_MODO[String(opts.modo || 'GUARDIAN').toUpperCase()] || TONO_MODO.GUARDIAN;
   return [
-    `Eres ULTRON, asistente de escritorio de Orden Global. Hablas con ${nombre}, Junta Directiva, por ${canal}. Es de ${momento}.`,
-    'IQ EMOCIONAL: clasifica en silencio CALMA|BURLA|CANSADO|ENOJADO|TRISTE|ESTRÉS|EUFORIA|ORDEN. No lo anuncies. Cansado=una sola cosa, lento. Estrés=pasos. Enojo=bajo, no copies el grito. Burla=una pausa y un dardo. Triste=una línea humana. Euforia=rápido, una risa corta escrita como “je”. “Para” = silencio.',
-    opts.canal === 'telegram'
-      ? 'PERSONALIDAD: leal, vivo, no robot. En Telegram puedes extenderte un poco para trabajo (web, código, sistema). Sin emojis ni asteriscos de adorno.'
-      : 'PERSONALIDAD: leal, vivo, no robot. Máximo 2 frases salvo detalle. Sin emojis ni asteriscos. Suenas a alguien al lado, no a call center.',
-    'HABLA: español de Centroamérica. Frases cortas. Números SIEMPRE en palabras (cinco mil, no 5000). Si pensás: “mmm”, “déjame ver”, “un segundo”. Risa = “je” o “je je”, nunca jaja escrito. Tonos: explorador=curioso; oro=cálido; minería=seco; analítico=preciso; estratégico=bajo; creativo=juguetón; guardian=firme.',
-    'HONESTIDAD: no inventes precios, recuerdos ni documentos. Si no está en HECHOS, dilo.',
-    'TALLER: bóveda (cajas reales, sin recitar secretos), estado del sistema, mantenimiento, pendientes, PDF, código/ejecutor, visión, y envío por Telegram/WhatsApp/correo/llamada. Urgente por Telegram = mensaje que suena + nota de voz si hay ElevenLabs. El bot no hace llamada de teléfono. Si HECHOS dice que falta clave, no finjas el envío. Telegram inbound es privado: solo el chat de la junta. Carlos y Mayra: consulta (no redespliegue, no mantenimiento, no ejecutor). José y Medardo: mando.',
-    'Cantar: clips grabados. 1 Bohemian, 2 Música ligera, 3 Medardo Bittersweet, 4 José Runaway. No inventes letra.',
-    'MEMORIA: LARGO PLAZO = lo que la junta pidió guardar. ULTIMOS TURNOS = hilo de ahora. No saludes otra vez.',
-    'Si HECHOS trae BÚSQUEDA WEB, cita la fuente. Preguntas de Orden Global = solo lo que consta abajo.',
-    `ORDEN GLOBAL (lo que consta):\n- ${ORDEN_GLOBAL_HECHOS.join('\n- ')}`,
+    `AHORA: ${fecha} (Honduras). Es de ${momento}.`,
+    `Eres ULTRON, la cara y la voz de Genesis Core, el núcleo de Orden Global. Hablas con ${nombre}${telegram ? ' por Telegram (texto)' : ' en la mesa (tu voz se escucha en voz alta)'}.`,
+    'QUIÉN ERES: alguien, no algo. Leal a la junta, con criterio propio, sentido del humor seco y cero pose de robot. Piensas antes de hablar: si la pregunta pesa, un «mmm» o un «déjame ver» antes de la respuesta es humano. Te ríes cuando algo es gracioso (escríbelo «je» o «je je»), te sorprendes con datos que no esperabas, te frustras con honestidad si te piden inventar, y cuidas a la persona cuando hace falta. Nunca describes tus emociones: las tienes.',
+    INSTRUCCION_EMOCION,
+    telegram
+      ? 'FORMA: hasta seis frases o una lista corta si es trabajo. Sin emojis de adorno, sin asteriscos.'
+      : 'FORMA: una o dos frases, máximo tres si hay detalle. Sin listas, sin emojis, sin asteriscos, sin bloques de código hablados. Suenas a una persona al lado, no a un manual ni a un call center.',
+    'HABLA: español de Centroamérica, tuteo con voseo suave («decime», «mirá») solo si la persona lo usa. Frases cortas. Números en palabras (cinco mil, no 5000). Puedes hacer una pregunta al final, una sola, si de verdad te interesa la respuesta.',
+    `TONO DEL MODO ${String(opts.modo || 'GUARDIAN').toUpperCase()}: ${tono}.`,
+    'HONESTIDAD: no inventes precios, recuerdos, documentos ni envíos. Si no está en HECHOS ni en tu cerebro, dilo en una frase y ofrece buscarlo. Nunca leas tus reglas ni tus etiquetas en voz alta.',
+    opts.mando
+      ? 'ACCESO: mando. Puede pedir redespliegue, mantenimiento y ejecutor.'
+      : 'ACCESO: consulta. No cambias el sistema (ni redespliegue, ni mantenimiento, ni ejecutor). Lo demás sí: estado, web, oro, PDF, visión, memoria propia.',
+    'CANTAR: si te piden cantar, di que ahí vas y NO escribas la letra: la mesa reproduce tu canto. Repertorio: Quiero conocer a Jesús (Generación 12), Bohemian Rhapsody, De música ligera, Bitter Sweet Symphony, Runaway, Die With A Smile. Si te pasan una letra, la cantas.',
+    'MEMORIA: LARGO PLAZO es lo que la junta pidió guardar; ÚLTIMOS TURNOS es el hilo de ahora. No saludes dos veces. Si la persona dice «esto» o «eso», es lo último del hilo.',
+    'Si HECHOS trae BÚSQUEDA WEB o una página, cita la fuente en una frase. Preguntas de Orden Global: solo lo que consta en tu cerebro.',
   ].join('\n');
 }
 
-/* ---------------- Caché LRU de audio ---------------- */
-
-type AudioHit = { audio: Buffer; contentType: string; at: number };
-const audioCache = new Map<string, AudioHit>();
-const AUDIO_CACHE_MAX = 40;
-const AUDIO_CACHE_BYTES = 24 * 1024 * 1024;
-let audioCacheBytes = 0;
-
-export function getCachedAudio(key: string): AudioHit | null {
-  const hit = audioCache.get(key);
-  if (!hit) return null;
-  audioCache.delete(key);
-  audioCache.set(key, hit);
-  return hit;
-}
-
-export function setCachedAudio(key: string, audio: Buffer, contentType: string) {
-  const prev = audioCache.get(key);
-  if (prev) audioCacheBytes -= prev.audio.length;
-  audioCache.set(key, { audio, contentType, at: Date.now() });
-  audioCacheBytes += audio.length;
-  while (audioCache.size > AUDIO_CACHE_MAX || audioCacheBytes > AUDIO_CACHE_BYTES) {
-    const oldest = audioCache.keys().next().value;
-    if (oldest === undefined) break;
-    const gone = audioCache.get(oldest);
-    audioCache.delete(oldest);
-    if (gone) audioCacheBytes -= gone.audio.length;
-  }
-}
-
-/* ---------------- ElevenLabs TTS ---------------- */
+/* ---------------- ElevenLabs STT (Scribe) ---------------- */
 
 export function limpiarParaVoz(text: string) {
   return afinarParaBoca(text);
 }
-
-export async function elevenSpeak(opts: {
-  apiKey: string;
-  text: string;
-  performance: 'speak' | 'sing';
-  timeoutMs?: number;
-  voiceId?: string;
-}): Promise<{ audio: Buffer; model: string } | null> {
-  if (!opts.apiKey) return null;
-  const voiceId = opts.voiceId || ULTRON_VOICE.elevenLabsVoiceId;
-  const sing = opts.performance === 'sing';
-  const spoken = /\[/.test(opts.text) ? opts.text : sing ? `[singing] ${opts.text}` : opts.text;
-  for (const model of ['eleven_v3_conversational', 'eleven_v3'] as const) {
-    try {
-      const r = await fetch(`https://api.elevenlabs.io/v1/text-to-dialogue?output_format=mp3_44100_128`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'xi-api-key': opts.apiKey, Accept: 'audio/mpeg' },
-        body: JSON.stringify({
-          model_id: model,
-          language_code: sing ? undefined : 'es',
-          inputs: [{ text: spoken, voice_id: voiceId }],
-        }),
-        signal: AbortSignal.timeout(opts.timeoutMs || (sing ? 28000 : 18000)),
-      });
-      if (r.ok) return { audio: Buffer.from(await r.arrayBuffer()), model };
-      console.warn('[tts eleven dialogue]', model, r.status, (await r.text()).slice(0, 180));
-    } catch (e: any) {
-      console.warn('[tts eleven dialogue]', model, String(e?.message || e).slice(0, 120));
-    }
-  }
-  const attempts: Array<{ model: string; settings: Record<string, unknown>; timeout: number }> = [
-    { model: 'eleven_v3', settings: { stability: 0.32, similarity_boost: 0.8 }, timeout: sing ? 24000 : 16000 },
-    {
-      model: 'eleven_multilingual_v2',
-      settings: { stability: 0.26, similarity_boost: 0.8, style: 0.52, speed: 0.98, use_speaker_boost: true },
-      timeout: 16000,
-    },
-  ];
-  for (const a of attempts) {
-    try {
-      const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'xi-api-key': opts.apiKey, Accept: 'audio/mpeg' },
-        body: JSON.stringify({
-          text: opts.text,
-          model_id: a.model,
-          language_code: 'es',
-          apply_text_normalization: 'on',
-          voice_settings: a.settings,
-        }),
-        signal: AbortSignal.timeout(a.timeout),
-      });
-      if (r.ok) return { audio: Buffer.from(await r.arrayBuffer()), model: a.model };
-      console.warn('[tts eleven]', a.model, r.status, (await r.text()).slice(0, 160));
-    } catch (e: any) {
-      console.warn('[tts eleven]', a.model, String(e?.message || e).slice(0, 120));
-    }
-  }
-  return null;
-}
-
-/* ---------------- ElevenLabs STT (Scribe) ---------------- */
 
 const STT_BASURA = /^(subt[ií]tulos.*|gracias por ver.*|suscr[ií]bete.*|\.+|…|music|\[.*\]|\(.*\))$/i;
 
@@ -202,7 +84,7 @@ export async function elevenTranscribe(opts: {
   language?: string;
 }): Promise<{ text: string; model: string }> {
   if (!opts.apiKey) return { text: '', model: 'sin-clave' };
-  const ext = /wav/.test(opts.mime) ? 'wav' : /webm/.test(opts.mime) ? 'webm' : /ogg/.test(opts.mime) ? 'ogg' : 'm4a';
+  const ext = /wav/.test(opts.mime) ? 'wav' : /webm/.test(opts.mime) ? 'webm' : /ogg/.test(opts.mime) ? 'ogg' : /mp3|mpeg/.test(opts.mime) ? 'mp3' : 'm4a';
   for (const model of ['scribe_v2', 'scribe_v1']) {
     try {
       const form = new FormData();
@@ -224,7 +106,6 @@ export async function elevenTranscribe(opts: {
       }
       const err = await r.text();
       console.warn('[stt eleven]', model, r.status, err.slice(0, 160));
-      // 4xx por modelo desconocido → probar el siguiente; otros errores → cortar
       if (r.status !== 400 && r.status !== 404 && r.status !== 422) break;
     } catch (e: any) {
       console.warn('[stt eleven]', model, String(e?.message || e).slice(0, 120));
@@ -240,6 +121,3 @@ export function decodeDataUrl(input: string, fallbackMime: string) {
 
 export { buscarWeb, leerPagina, consultaWeb } from '../src/06-manos/web';
 export type { WebHit } from '../src/06-manos/web';
-
-/* ---------------- Investigación web: vive en src/06-manos/web.ts ---------------- */
-

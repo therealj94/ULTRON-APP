@@ -52,13 +52,20 @@ function ensureAnalyser(audio: HTMLAudioElement) {
   try {
     if (!ctx) ctx = new AudioContext();
     if (ctx.state === 'suspended') ctx.resume();
-    analyser = ctx.createAnalyser();
-    analyser.fftSize = 256;
+    if (!analyser) {
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.connect(ctx.destination);
+    }
+    try {
+      source?.disconnect();
+    } catch {
+      /* */
+    }
     source = ctx.createMediaElementSource(audio);
     source.connect(analyser);
-    analyser.connect(ctx.destination);
   } catch {
-    analyser = null;
+    /* sin analizador: la boca usa un nivel fijo */
   }
 }
 
@@ -81,7 +88,7 @@ function startLip() {
   }, 40);
 }
 
-function playNext(onAllEnd?: () => void, onError?: () => void) {
+function playNext(onAllEnd?: () => void, onError?: () => void, onStart?: () => void) {
   const blob = queue.shift();
   if (!blob) {
     lipCb?.(0);
@@ -90,9 +97,13 @@ function playNext(onAllEnd?: () => void, onError?: () => void) {
   }
   const url = URL.createObjectURL(blob);
   const audio = new Audio(url);
+  audio.setAttribute('playsinline', 'true');
   current = audio;
   ensureAnalyser(audio);
-  audio.onplaying = () => startLip();
+  audio.onplaying = () => {
+    startLip();
+    onStart?.();
+  };
   audio.onended = () => {
     URL.revokeObjectURL(url);
     if (current === audio) current = null;
@@ -106,14 +117,17 @@ function playNext(onAllEnd?: () => void, onError?: () => void) {
   return audio.play();
 }
 
-export function playFile(src: string, onEnd?: () => void, onError?: () => void) {
+export function playFile(src: string, onEnd?: () => void, onError?: () => void, onStart?: () => void) {
   stopVoice();
   const audio = new Audio(src);
   audio.preload = 'auto';
   audio.setAttribute('playsinline', 'true');
   current = audio;
   try { ensureAnalyser(audio); } catch { /* */ }
-  audio.onplaying = () => startLip();
+  audio.onplaying = () => {
+    startLip();
+    onStart?.();
+  };
   audio.onended = () => {
     if (current === audio) current = null;
     lipCb?.(0);
@@ -126,14 +140,14 @@ export function playFile(src: string, onEnd?: () => void, onError?: () => void) 
   return audio.play().catch(() => onError?.());
 }
 
-export function playWavBlob(blob: Blob, onEnd?: () => void, onError?: () => void) {
+export function playWavBlob(blob: Blob, onEnd?: () => void, onError?: () => void, onStart?: () => void) {
   queue = [blob];
   if (current) {
     current.pause();
     current.src = '';
     current = null;
   }
-  return playNext(onEnd, onError);
+  return playNext(onEnd, onError, onStart);
 }
 
 export function enqueueWav(blob: Blob) {

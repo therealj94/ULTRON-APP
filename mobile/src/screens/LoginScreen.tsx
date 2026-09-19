@@ -156,6 +156,11 @@ export function LoginScreen({ onAuthenticated }: Props) {
     }
   };
 
+  /**
+   * «Entrar solo al escritorio»: pide sesión al servidor si responde; si no hay red (o el servidor cae)
+   * entra igual en modo local — gestos, banco de voz y memoria de la mesa funcionan sin cerebro, y la app
+   * renueva la sesión sola con las credenciales guardadas en cuanto el servidor vuelve.
+   */
   const enterBiometric = async (user: DeskUser, maybeClave?: string) => {
     if (!user.correo) {
       setError('Escribe el correo del miembro');
@@ -163,22 +168,20 @@ export function LoginScreen({ onAuthenticated }: Props) {
     }
     setLoading(true);
     setError('');
+    const persist = maybeClave || clave ? { clave: maybeClave || clave } : undefined;
     try {
-      const data = await loginBiometric({
-        name: user.name,
-        role: user.role,
-        correo: normalizeDeskEmail(user.correo),
-      });
-      await finish(
-        {
-          name: data.user?.nombre || user.name,
-          role: data.user?.rol || user.role,
-          correo: user.correo,
-        },
-        maybeClave || clave ? { clave: maybeClave || clave } : undefined
-      );
+      const data = await loginBiometric({ name: user.name, role: user.role, correo: normalizeDeskEmail(user.correo) }, 8_000);
+      await finish({ name: data.user?.nombre || user.name, role: data.user?.rol || user.role, correo: user.correo }, persist);
     } catch (e: any) {
-      setError(e?.message || 'La huella no abre sin sesión previa. Entrá con clave.');
+      const status = e?.status;
+      const creds = await loadCreds();
+      const known = !!creds && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(user.correo);
+      if (!status || status >= 500 || known) {
+        // sin servidor, o miembro ya validado antes en este teléfono → escritorio local
+        await finish({ name: user.name, role: user.role, correo: user.correo }, persist);
+        return;
+      }
+      setError(status === 401 || status === 403 ? 'La huella y el acceso directo solo abren si ya entraste con clave en este teléfono.' : e?.message || 'No pude abrir el escritorio.');
     } finally {
       setLoading(false);
     }
@@ -191,7 +194,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
       return;
     }
     if (!clave.trim()) {
-      setError('Escribe tu clave o entra al escritorio sin clave remota');
+      setError('Escribe tu clave, o usa «Entrar solo al escritorio».');
       return;
     }
     setLoading(true);
@@ -209,10 +212,10 @@ export function LoginScreen({ onAuthenticated }: Props) {
     } catch (e: any) {
       const status = e?.status;
       if (!status || status >= 500) {
-        // Cerebro remoto sin respuesta: solo dejo pasar si la clave coincide con la última validada en este teléfono.
+        // Servidor sin respuesta: solo dejo pasar si la clave coincide con la última validada en este teléfono.
         const creds = await loadCreds();
         if (creds && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(user.correo) && creds.clave === clave) {
-          await enterBiometric(user, clave);
+          await finish({ name: creds.name || user.name, role: user.role, correo: user.correo }, { clave });
           return;
         }
         setError('El servidor no responde y no tengo tu clave verificada en este teléfono. Intenta en un momento.');
@@ -408,14 +411,6 @@ const styles = StyleSheet.create({
     padding: 22,
     alignItems: 'center',
     gap: 8,
-  },
-  logo: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(0,229,255,0.35)',
   },
   title: { color: '#E8FBFF', fontSize: 24, fontWeight: '800', letterSpacing: 8, marginTop: -6 },
   sub: { color: '#7A8B9C', fontSize: 12, marginBottom: 14, letterSpacing: 1 },

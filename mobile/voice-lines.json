@@ -66,23 +66,18 @@
     "Modo Analytical. Análisis frío.",
     "Modo Strategic. Decisiones de junta.",
     "Modo Explorer. Listo para investigar.",
-    "Todavía estoy mirando.",
     "Anotado. Lo recuerdo.",
-    "No recibí respuesta. Intenta de nuevo.",
     "Gracias. Ya te conozco mejor; no repetiré estas preguntas. Si quieres más, di «conocer más».",
     "Listo. Ya te conozco mejor.",
-    "Motor de voz: ElevenLabs.",
-    "Motor de voz: nodo Qwen local.",
-    "Motor de voz: automático.",
     "Oído: reconocimiento del teléfono.",
     "Oído: transcripción en la nube.",
     "Comentarios de cámara activados.",
     "Comentarios de cámara apagados.",
     "Memoria de largo plazo borrada.",
-    "Investigando en internet.",
-    "No encontré nada en internet sobre eso.",
-    "Ya sé quién eres. Sigamos.",
-    "Eso ya lo tenía en memoria."
+    "Eso ya lo tenía en memoria.",
+    "Vale, lo dejamos aquí. Cuando quieras seguimos.",
+    "Aquí tienes todo lo que puedo hacer.",
+    "Ya, ya."
   ],
   "eye": [
     "¡Ay, mi ojo!",
@@ -107,10 +102,5 @@
   "double": [
     "Doble toque. ¿Urgente?",
     "Dos toques. Te escucho con atención."
-  ],
-  "thinking": [
-    "Investigando en internet.",
-    "Estoy leyendo las fuentes.",
-    "Consultando el precio ahora."
   ]
 }

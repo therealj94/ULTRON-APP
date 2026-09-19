@@ -1,26 +1,13 @@
 /**
- * Nota de voz real: ElevenLabs, si falla Chatterbox. Cero teatro.
+ * Nota de voz real para Telegram y avisos. Misma voz y misma política que la mesa (server/voz.ts).
  */
 
-import { clave } from './boveda';
-import { chatterboxSpeak, elevenSpeak } from '../server/desk';
+import { notaDeVozBuffer } from '../server/voz';
 import type { Nodo } from './sistema';
 import type { Canal } from './sistema';
 
 export async function notaDeVoz(texto: string): Promise<Buffer | undefined> {
-  const dicho = String(texto || '').replace(/\s+/g, ' ').trim().slice(0, 420);
-  if (dicho.length < 8) return undefined;
-  const el = clave('elevenlabs');
-  if (el) {
-    const spoken = await elevenSpeak({ apiKey: el, text: dicho, performance: 'speak' });
-    if (spoken?.audio && spoken.audio.length > 80) return spoken.audio;
-  }
-  const tts = clave('tts_url');
-  if (tts) {
-    const local = await chatterboxSpeak({ baseUrl: tts, text: dicho, clave: clave('tts_clave') || undefined });
-    if (local?.audio && local.audio.length > 80) return local.audio;
-  }
-  return undefined;
+  return notaDeVozBuffer(texto);
 }
 
 export function dictarSistema(foto: { nodos: Nodo[]; canales: Canal[] }): string {
@@ -37,7 +24,7 @@ export function pideNotaDeVoz(raw: string): boolean {
   const l = String(raw || '')
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
+    .replace(/[̀-ͯ]/g, '');
   return (
     /\b(nota de voz|audio del sistema|voz del sistema|\/audio\b)\b/.test(l) ||
     (/\b(audio|nota de voz)\b/.test(l) && /\b(manda|envia|sistema|nodos|salud|estado|contesta)\b/.test(l))

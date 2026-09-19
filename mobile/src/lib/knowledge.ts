@@ -1,4 +1,4 @@
-/** Pack offline embebido — responde sin red cuando el servidor falla. */
+/** Respuestas locales (sin red) y la entrevista opcional «Conocer». */
 
 export const CONOCER_QUESTIONS = [
   { id: 'nombre', prompt: 'Para conocerte mejor… ¿cómo te gusta que te diga?', memoryKey: 'nombre_preferido' },
@@ -18,62 +18,18 @@ export const CONOCER_QUESTIONS = [
   { id: 'cumple', prompt: 'Si quieres, dime tu cumpleaños (día/mes).', memoryKey: 'cumpleanos' },
 ] as const;
 
-type FaqItem = { match: RegExp; answer: string | (() => string) };
+/** Preguntas del núcleo (la entrevista termina sola al responderlas). */
+export const CONOCER_CORE = 10;
 
-export const LOCAL_FAQ: FaqItem[] = [
-  {
-    match: /estado|status|salud|como estas|cómo estás/,
-    answer: 'En línea. Micrófono, cámara y voz listos.',
-  },
-  {
-    match: /hora|que hora|qué hora/,
-    answer: () => {
-      const d = new Date();
-      return `Son las ${d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}.`;
-    },
-  },
-  {
-    match: /fecha|que dia|qué día|que dia es/,
-    answer: () => {
-      const d = new Date();
-      return `Hoy es ${d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}.`;
-    },
-  },
-  {
-    match: /ayuda|tutorial|que puedes|qué puedes|comandos/,
-    answer:
-      'Habla y te respondo; no hace falta llamarme. Desliza desde el borde derecho para el menú. Tócame y reacciono; si insistes, me enojo y disparo. Di «qué ves», «canta salsa» o «sable jedi».',
-  },
-  {
-    match: /offline|sin internet|sin red/,
-    answer:
-      'Sin red sigo contigo con lo básico: gestos, memoria local y frases grabadas. Para pensar y ver necesito el servidor.',
-  },
-];
-
-export function localAnswer(cmd: string): string | null {
-  const q = cmd.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  for (const item of LOCAL_FAQ) {
-    if (item.match.test(q)) {
-      return typeof item.answer === 'function' ? item.answer() : item.answer;
-    }
-  }
-  if (/modo\s+(guardian|guardian)/.test(q)) return 'Modo GUARDIAN activo. Vigilo el escritorio.';
-  if (/modo\s+(conocer)/.test(q)) return 'Modo CONOCER. Vamos a conocernos mejor.';
-  if (/modo\s+(explorer|explorar)/.test(q)) return 'Modo EXPLORER. Listo para investigar.';
-  if (/modo\s+(creative|creativo)/.test(q)) return 'Modo CREATIVE. Ideas en marcha.';
-  if (/duerme|a dormir|modo sleep|vete a dormir/.test(q)) return 'Modo sleep. Háblame o tócame para despertar.';
-  if (/despierta|wake|levantate/.test(q)) return 'Despierto. Te escucho.';
-  return null;
+export function horaLocal(d = new Date()) {
+  return `Son las ${d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}.`;
 }
 
-export const MODE_HINTS: Record<string, string> = {
-  GUARDIAN: 'Vigilancia y seguridad del escritorio',
-  MINING: 'Extracción de datos y señales',
-  GOLD: 'Prioridad alto valor',
-  CREATIVE: 'Ideas y narrativa',
-  ANALYTICAL: 'Análisis frío',
-  STRATEGIC: 'Decisiones de junta',
-  EXPLORER: 'Investigación abierta',
-  CONOCER: 'Entrevista personal',
-};
+export function fechaLocal(d = new Date()) {
+  return `Hoy es ${d.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}.`;
+}
+
+export const AYUDA =
+  'Habla y te respondo; no hace falta llamarme. Desliza desde el borde derecho para el menú y el catálogo de lo que puedo hacer. ' +
+  'Tócame: los ojos guiñan, la frente me da curiosidad, la barbilla me hace reír; arrastra el dedo y te sigo con la mirada. ' +
+  'Di «qué ves», «canta 1», «cuéntame un chiste» o «modo gold».';
