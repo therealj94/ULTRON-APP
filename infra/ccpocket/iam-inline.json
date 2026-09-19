@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BedrockClaudeAndCodex",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:ListFoundationModels"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BridgeApiKeyParam",
+      "Effect": "Allow",
+      "Action": ["ssm:PutParameter", "ssm:AddTagsToResource"],
+      "Resource": "arn:aws:ssm:us-east-1:548380372606:parameter/ultron/ccpocket/*"
+    }
+  ]
+}
