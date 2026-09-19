@@ -214,7 +214,7 @@ export async function elevenTranscribe(opts: {
         method: 'POST',
         headers: { 'xi-api-key': opts.apiKey },
         body: form,
-        signal: AbortSignal.timeout(14000),
+        signal: AbortSignal.timeout(20000),
       });
       if (r.ok) {
         const j: any = await r.json().catch(() => ({}));

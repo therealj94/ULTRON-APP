@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx --test --test-concurrency=1 server/seguridad.test.ts tests/taller.test.ts tests/telegram-in.test.ts tests/ejecutor.test.ts tests/rag.test.ts tests/cot.test.ts tests/few-shot.test.ts tests/boveda.test.ts tests/harness.test.ts tests/centinela.test.ts tests/junta.test.ts tests/memoria.test.ts tests/leer-pdf.test.ts"
+    "test": "tsx --test --test-concurrency=1 server/seguridad.test.ts tests/taller.test.ts tests/telegram-in.test.ts tests/ejecutor.test.ts tests/rag.test.ts tests/cot.test.ts tests/few-shot.test.ts tests/boveda.test.ts tests/harness.test.ts tests/centinela.test.ts tests/junta.test.ts tests/memoria.test.ts tests/leer-pdf.test.ts tests/oido.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

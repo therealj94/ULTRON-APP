@@ -4,6 +4,7 @@
 
 import crypto from 'node:crypto';
 import { dataUrlDeImagen, esImagenNombre, esPdfNombre } from './leer-pdf';
+import { esAudioNombre, mimeDeAudio } from './oido';
 
 export type TgParsed = {
   chatId: string;
@@ -75,7 +76,7 @@ export function ayudaTelegram(): string {
     'ULTRON privado. Solo este chat de la junta.',
     'Puedo: estado del sistema, nota de voz (`/audio`), bóveda, pendientes, PDF, buscar en internet, leer una página, código, oro/plata/HNL.',
     'Si me subes una foto o un PDF, los leo. No invento lo que no está en el archivo. Imagen como archivo también vale.',
-    'Si me mandas una nota de voz, te contesto en texto y, si pude oírte, te devuelvo audio.',
+    'Si me mandas una nota de voz, la oigo, la transcribo y te contesto por escrito. Audio de vuelta solo si lo pides (`/audio`).',
     'Urgente: «avísame urgente…» o «llámanos por telegram». Suena el teléfono y, si hay voz, te mando nota. El bot no hace llamada de teléfono; eso es Twilio (aún sin clave).',
     'Memoria: una para José y otra para Medardo, en S3. No mezclo las conversaciones. Dime «recuerda que…» y queda atado a ti.',
     'Ejemplos: «cómo está el sistema», «mándame audio del sistema», «busca noticias de oro», «anota que mañana hay junta», «haz un pdf del resumen».',
@@ -130,6 +131,8 @@ export async function parsearUpdateTelegram(update: any): Promise<TgParsed | nul
     if (buf && buf.length > 80) {
       if (esImagenNombre(filename, mime) && !imageDataUrl) {
         imageDataUrl = dataUrlDeImagen(buf);
+      } else if (esAudioNombre(filename, mime) && !audio) {
+        audio = { mime: mimeDeAudio(filename, mime), buffer: buf };
       } else if (esPdfNombre(filename, mime) || buf.subarray(0, 5).toString('latin1') === '%PDF-') {
         documento = { filename, mime: mime || 'application/pdf', buffer: buf };
       }
@@ -138,16 +141,30 @@ export async function parsearUpdateTelegram(update: any): Promise<TgParsed | nul
     }
   }
   if (!token && msg.document) {
-    documento = {
-      filename: String(msg.document.file_name || 'archivo'),
-      mime: String(msg.document.mime_type || ''),
-      buffer: Buffer.alloc(0),
-    };
+    const filename = String(msg.document.file_name || 'archivo');
+    const mime = String(msg.document.mime_type || '');
+    if (esAudioNombre(filename, mime) && !audio) {
+      audio = { mime: mimeDeAudio(filename, mime), buffer: Buffer.alloc(0) };
+    } else {
+      documento = { filename, mime, buffer: Buffer.alloc(0) };
+    }
   }
   if (token && (msg.voice?.file_id || msg.audio?.file_id)) {
     const id = msg.voice?.file_id || msg.audio?.file_id;
     const buf = await archivoTelegram(token, id);
-    if (buf && buf.length > 80) audio = { mime: msg.voice ? 'audio/ogg' : 'audio/mpeg', buffer: buf };
+    const mime = mimeDeAudio(
+      msg.audio?.file_name || (msg.voice ? 'nota.ogg' : 'audio.mp3'),
+      msg.voice?.mime_type || msg.audio?.mime_type || '',
+      !!msg.voice
+    );
+    if (buf && buf.length > 80) audio = { mime, buffer: buf };
+    else audio = { mime, buffer: Buffer.alloc(0) };
+  }
+  if (!token && (msg.voice || msg.audio)) {
+    audio = {
+      mime: mimeDeAudio('', msg.voice?.mime_type || msg.audio?.mime_type || '', !!msg.voice),
+      buffer: Buffer.alloc(0),
+    };
   }
   if (!texto && !imageDataUrl && !audio && !documento) return null;
   return { chatId, userId, nombre, texto, comando, imageDataUrl, audio, documento };
