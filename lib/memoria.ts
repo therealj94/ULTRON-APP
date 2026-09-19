@@ -1,5 +1,5 @@
 /**
- * Memoria durable por miembro de junta (José / Medardo) + hechos compartidos.
+ * Memoria durable por miembro de junta (José / Medardo / Carlos) + hechos compartidos.
  * Disco local = caché. S3 = la copia que no se pierde al redesplegar Render.
  */
 
@@ -42,6 +42,7 @@ function vacio(): Almacen {
     perfiles: {
       jose: { corta: [], larga: [] },
       medardo: { corta: [], larga: [] },
+      carlos: { corta: [], larga: [] },
     },
     junta: {
       larga: semillaLarga().map((x) => ({ hecho: x.hecho, t: x.t, quien: 'junta' as const, canal: 'sistema' as const })),
@@ -55,6 +56,9 @@ function migrar(raw: any): Almacen {
   if (!raw || typeof raw !== 'object') return base;
   if (raw.version === 1 && raw.perfiles?.jose && raw.perfiles?.medardo) {
     const a = raw as Almacen;
+    for (const id of Object.keys(MIEMBROS) as MiembroId[]) {
+      if (!a.perfiles[id]) a.perfiles[id] = { corta: [], larga: [] };
+    }
     if (!Array.isArray(a.junta?.larga) || !a.junta.larga.length) a.junta = base.junta;
     a.cambios = Array.isArray(a.cambios) ? a.cambios : [];
     return a;
@@ -200,7 +204,7 @@ export async function recordarTurno(opts: {
   if (!texto) return;
   const t = Date.now();
   if (opts.quien) {
-    const p = a.perfiles[opts.quien];
+    const p = a.perfiles[opts.quien] || (a.perfiles[opts.quien] = { corta: [], larga: [] });
     p.corta = [...p.corta, { rol: opts.rol, texto, t, canal: opts.canal }].slice(-MAX_CORTA);
     if (opts.rol === 'user' && esHechoLargo(texto)) {
       const junta = /junta|orden global|prospera|aucorp|ordenex|mina|concesi[oó]n|genesis/i.test(texto);
@@ -285,7 +289,7 @@ export function fotoMemoria(quien: MiembroId | null) {
     junta: a.junta.larga,
     cambios: a.cambios.slice(-24),
     nota: st.durable
-      ? 'Memoria en S3, una carpeta por José y otra por Medardo. El otro no ve la conversación privada.'
+      ? 'Memoria en S3, una carpeta por José, Medardo y Carlos. El otro no ve la conversación privada.'
       : 'S3 no está listo. Esto se pierde si Render redespliega. Falta ULTRON_MEMORIA_BUCKET o AWS_*.',
   };
 }
