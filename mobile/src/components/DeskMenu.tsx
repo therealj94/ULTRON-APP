@@ -55,6 +55,8 @@ type Props = {
   onForget: () => void;
   onSearch: (q: string) => void;
   onLogout: () => void;
+  canales?: Array<{ id: string; nombre: string; listo: boolean; falta?: string }>;
+  onTaller: (cmd: string) => void;
 };
 
 export function DeskMenu(p: Props) {
@@ -162,6 +164,31 @@ export function DeskMenu(p: Props) {
             />
           </View>
           <Text style={styles.hint}>También por voz: «busca…», «investiga…», «noticias de…».</Text>
+
+          <Text style={styles.section}>Taller</Text>
+          <Text style={styles.sub}>
+            Estado del sistema, pendientes, PDF y canales. Lo que no tenga clave no se finge: ULTRON te dice qué falta.
+          </Text>
+          <View style={styles.chips}>
+            <Chip label="sistema" sub="nodos" onPress={() => p.onTaller('cómo está el sistema')} />
+            <Chip label="mantenimiento" sub="re-probar" onPress={() => p.onTaller('mantenimiento')} />
+            <Chip label="pendientes" sub="tareas" onPress={() => p.onTaller('pendientes')} />
+          </View>
+          <View style={styles.chips}>
+            {(p.canales || []).filter((c) => ['telegram', 'whatsapp', 'correo', 'llamada', 'pdf'].includes(c.id)).map((c) => (
+              <Chip
+                key={c.id}
+                on={c.listo}
+                label={c.nombre.toLowerCase()}
+                sub={c.listo ? 'listo' : 'falta clave'}
+                onPress={() => {
+                  if (c.id === 'pdf') p.onTaller('haz un pdf de nota de junta');
+                  else if (c.id === 'llamada') p.onTaller('llámame y dime que es ULTRON');
+                  else p.onTaller(`envía por ${c.id} un saludo de ULTRON`);
+                }}
+              />
+            ))}
+          </View>
 
           <Text style={styles.section}>Cantar</Text>
           <Text style={styles.sub}>A capella, una voz. Por voz: «canta», «canta la dramática», «canta la suave», «canta la íntima». «Para» = silencio.</Text>
