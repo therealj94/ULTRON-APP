@@ -22,7 +22,7 @@ import {
   leerPagina,
 } from './server/desk';
 import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
-import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, limitar, urlPublica } from './server/seguridad';
+import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica } from './server/seguridad';
 import { leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, hechosCatalogo } from './lib/taller';
@@ -699,7 +699,7 @@ app.post('/api/playwright/scrape', exigirSesion, limitar(10), async (req, res) =
 });
 
 
-app.post('/api/vision/analyze', exigirMesa, async (req, res) => {
+app.post('/api/vision/analyze', exigirMesaODesk, async (req, res) => {
   const { mediaType, fileName, base64Data, prompt } = req.body || {};
   if (!base64Data) {
     return res.status(400).json({ error: 'Falta la imagen', honesto: true });
@@ -788,14 +788,14 @@ function juntarOllama(raw: string) {
 
 
 
-app.get('/api/memoria', exigirMesa, async (req, res) => {
+app.get('/api/memoria', exigirMesaODesk, async (req, res) => {
   await cargarMemoria();
   const s = sesionDe(req);
   const quien = resolverQuien(req.query, s);
   res.json(fotoMemoria(quien));
 });
 
-app.post('/api/memoria', exigirMesa, async (req, res) => {
+app.post('/api/memoria', exigirMesaODesk, async (req, res) => {
   await cargarMemoria();
   const s = sesionDe(req);
   const quien = resolverQuien(req.body, s);
@@ -813,7 +813,7 @@ app.post('/api/memoria', exigirMesa, async (req, res) => {
 });
 
 
-app.post('/api/tts/stream', exigirMesa, limitar(20), async (req, res) => {
+app.post('/api/tts/stream', exigirMesaODesk, limitar(20), async (req, res) => {
   const text = String(req.body?.text || '').slice(0, 2000).trim();
   const voice = String(req.body?.voice || 'luna');
   const instruct = String(req.body?.instruct || '').slice(0, 400);
@@ -851,7 +851,7 @@ app.post('/api/tts/stream', exigirMesa, limitar(20), async (req, res) => {
  * Oído de la app nativa: ElevenLabs Scribe (v2 → v1), Gemini de reserva si hay key.
  * Body: { audioBase64 | audio (data URL o base64), mimeType | mime, language }.
  */
-app.post('/api/stt', exigirMesa, limitar(20), async (req, res) => {
+app.post('/api/stt', exigirMesaODesk, limitar(20), async (req, res) => {
   const t0 = Date.now();
   const raw = String(req.body?.audioBase64 || req.body?.audio || '');
   if (!raw || raw.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
@@ -873,11 +873,11 @@ app.post('/api/stt', exigirMesa, limitar(20), async (req, res) => {
  *   engine=qwen: nodo Qwen3-TTS local (T4). engine=auto (default, mesa web): Qwen primero, ElevenLabs si cae.
  * Si todo falla → 503 (la app nunca usa la voz robótica del sistema).
  */
-app.get('/api/tts', exigirMesa, (req, res, next) => {
+app.get('/api/tts', exigirMesaODesk, (req, res, next) => {
   req.body = { ...req.query };
   next();
 });
-app.all('/api/tts', exigirMesa, limitar(20), async (req, res) => {
+app.all('/api/tts', exigirMesaODesk, limitar(20), async (req, res) => {
   const text = limpiarParaVoz(String(req.body?.text || '').slice(0, 2000));
   const voice = String(req.body?.voice || ULTRON_VOICE.qwenVoice);
   const instruct = String(req.body?.instruct || '').slice(0, 400);
@@ -1281,7 +1281,7 @@ async function correrTurno(body: any): Promise<{
   return guardar({ reply, via, mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
 }
 
-app.post('/api/turno', exigirMesa, limitar(20), async (req, res) => {
+app.post('/api/turno', exigirMesaODesk, limitar(20), async (req, res) => {
   const s = sesionDe(req);
   const out = await correrTurno({
     ...req.body,
@@ -1310,7 +1310,7 @@ app.post('/api/turno', exigirMesa, limitar(20), async (req, res) => {
  * Turno en streaming (SSE): la app empieza a hablar con la primera frase mientras Qwen sigue escribiendo.
  * Eventos: `tools` (herramientas usadas), `delta` (texto), `done` ({ reply, ms }), `error`.
  */
-app.post('/api/turno/stream', exigirMesa, limitar(20), async (req, res) => {
+app.post('/api/turno/stream', exigirMesaODesk, limitar(20), async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Accel-Buffering', 'no');

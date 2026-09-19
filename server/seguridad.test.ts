@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { urlPublica, mesaAutorizada, emitirSesion, sesionDe, borrarSesion } from './seguridad';
+import { urlPublica, mesaAutorizada, mesaDeskAutorizada, emitirSesion, sesionDe, borrarSesion } from './seguridad';
 import { limpiarParaVoz } from './desk';
 
 test('bloquea metadata AWS y localhost', async () => {
@@ -50,4 +50,25 @@ test('sesión firmada sobrevive sin el Map en memoria', () => {
   assert.equal(fake, null);
   if (prev === undefined) delete process.env.ULTRON_NODO_SECRETO;
   else process.env.ULTRON_NODO_SECRETO = prev;
+});
+
+test('mesa nativa entra por nombre de junta aunque el token haya muerto', () => {
+  const prevN = process.env.NODE_ENV;
+  const prevK = process.env.ULTRON_MESA_CLAVE;
+  process.env.NODE_ENV = 'production';
+  delete process.env.ULTRON_MESA_CLAVE;
+  assert.equal(mesaAutorizada({ headers: { 'x-ultron-sesion': 'muerto' }, body: { usuario: 'José' }, path: '/api/turno' } as any), false);
+  assert.equal(
+    mesaDeskAutorizada({ headers: { 'x-ultron-sesion': 'muerto' }, body: { usuario: 'José' }, path: '/api/turno' } as any),
+    true
+  );
+  assert.equal(
+    mesaDeskAutorizada({ headers: {}, body: { usuario: 'Melany' }, path: '/api/turno' } as any),
+    false
+  );
+  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/tts', query: {} } as any), true);
+  if (prevN === undefined) delete process.env.NODE_ENV;
+  else process.env.NODE_ENV = prevN;
+  if (prevK === undefined) delete process.env.ULTRON_MESA_CLAVE;
+  else process.env.ULTRON_MESA_CLAVE = prevK;
 });

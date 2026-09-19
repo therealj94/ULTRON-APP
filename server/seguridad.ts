@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 import dns from 'dns/promises';
 import net from 'net';
+import { quienEs } from '../lib/junta';
 
 export type Sesion = {
   token: string;
@@ -120,8 +121,34 @@ export function mesaAutorizada(req: Request): boolean {
   return false;
 }
 
+/**
+ * Mesa nativa: guarda el usuario en el teléfono y reutiliza un token de Render.
+ * Ese token muere al redesplegar (Map en memoria). La APK instalada no vuelve a /entrar
+ * y traduce el 401 a «no alcanzo el cerebro remoto». Si el cuerpo trae un miembro de
+ * junta, dejamos hablar/oír/ver. Redeploy, ejecutor y bóveda siguen exigiendo sesión.
+ */
+export function mesaDeskAutorizada(req: Request): boolean {
+  if (mesaAutorizada(req)) return true;
+  const path = String(req.path || '');
+  if (path === '/api/tts' || path.startsWith('/api/tts/')) return true;
+  if (path === '/api/stt' || path === '/api/vision/analyze') return true;
+  return !!quienEs({
+    nombre: String(req.body?.usuario || req.body?.userName || req.body?.nombre || req.query?.usuario || ''),
+    correo: String(req.body?.correo || req.query?.correo || ''),
+  });
+}
+
 export function exigirMesa(req: Request, res: Response, next: NextFunction) {
   if (mesaAutorizada(req)) return next();
+  return res.status(401).json({
+    error: 'ULTRON es privado. Entra con sesión de junta.',
+    code: 'sesion_requerida',
+    honesto: true,
+  });
+}
+
+export function exigirMesaODesk(req: Request, res: Response, next: NextFunction) {
+  if (mesaDeskAutorizada(req)) return next();
   return res.status(401).json({
     error: 'ULTRON es privado. Entra con sesión de junta.',
     code: 'sesion_requerida',
