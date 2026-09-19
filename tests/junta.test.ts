@@ -27,7 +27,7 @@ describe('Junta: José, Medardo, Carlos y Mayra', () => {
     assert.equal(puedeCambiarSistema('medardo'), true);
     assert.equal(puedeCambiarSistema('carlos'), false);
     assert.equal(puedeCambiarSistema('mayra'), false);
-    assert.equal(puedeCambiarSistema(null), true);
+    assert.equal(puedeCambiarSistema(null), false); // anónimo = consulta, nunca mando
   });
 
   it('usa ids de Telegram si están en env', () => {

@@ -1,7 +1,7 @@
-import { stopCurrentVoice } from './elevenlabs';
+import { stopVoice } from './player';
 
 export function cancelSpeech(): void {
-  stopCurrentVoice();
+  stopVoice();
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }

@@ -22,14 +22,13 @@ const LABEL_PROMPT =
 /**
  * Cámara frontal siempre activa (1x1 px, invisible): cada ~12 s manda un frame al nodo de visión (tarda ~10 s).
  * - Etiquetas → ULTRON sabe qué hay en la mesa ("¿qué ves?").
- * - Persona detectada → mirada al centro; sin persona → micro-sacadas suaves.
+ * - Persona detectada → onPresence(true) y mirada al centro (la mirada errante vive en DeskScreen).
  * - grabRef → frame fresco bajo demanda (preguntas visuales al cerebro).
  */
 export function GazeCamera({ enabled, grabRef, onGaze, onObjects, onScene, onPresence }: Props) {
   const ref = useRef<CameraView>(null);
   const busy = useRef(false);
   const cb = useRef({ onGaze, onObjects, onScene, onPresence });
-  const lastPersonAt = useRef(0);
   const readyRef = useRef(false);
 
   useEffect(() => {
@@ -57,17 +56,6 @@ export function GazeCamera({ enabled, grabRef, onGaze, onObjects, onScene, onPre
 
   useEffect(() => {
     if (!enabled) return;
-    let t = 0;
-    const id = setInterval(() => {
-      if (Date.now() - lastPersonAt.current < 5000) return;
-      t += 0.2;
-      cb.current.onGaze?.(Math.sin(t * 0.35) * 0.12, Math.cos(t * 0.22) * 0.08);
-    }, 400);
-    return () => clearInterval(id);
-  }, [enabled]);
-
-  useEffect(() => {
-    if (!enabled) return;
     const id = setInterval(() => {
       void (async () => {
         if (busy.current) return;
@@ -87,10 +75,7 @@ export function GazeCamera({ enabled, grabRef, onGaze, onObjects, onScene, onPre
           cb.current.onScene?.(text, labels);
           const person = labels.some((l) => /persona|rostro|cara|hombre|mujer|niñ|gente|face|person/.test(l));
           cb.current.onPresence?.(person);
-          if (person) {
-            lastPersonAt.current = Date.now();
-            cb.current.onGaze?.(0, 0);
-          }
+          if (person) cb.current.onGaze?.(0, 0);
         } catch {
           /* red / cámara */
         } finally {

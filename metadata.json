@@ -1,6 +1,0 @@
-{
-  "name": "ULTRON FP",
-  "description": "Asistente de junta directiva a pantalla completa en modo kiosk horizontal con rostro cibernético reactivo y puente de backend.",
-  "requestFramePermissions": ["camera", "microphone"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

@@ -2,18 +2,13 @@
   "expo": {
     "name": "ULTRON FP",
     "slug": "ultron-fp",
-    "version": "3.1.0",
+    "version": "4.0.0",
     "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
-    "splash": {
-      "image": "./assets/splash.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#000000"
-    },
     "android": {
       "package": "link.ordenglobal.ultronfp",
-      "versionCode": 31,
+      "versionCode": 40,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -31,14 +26,6 @@
       "softwareKeyboardLayoutMode": "pan"
     },
     "scheme": "ultronfp",
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
-    "updates": {
-      "url": "https://u.expo.dev/d41656ec-6fc7-4fd2-b183-eba687473fd9",
-      "fallbackToCacheTimeout": 0,
-      "checkAutomatically": "ON_LOAD"
-    },
     "extra": {
       "ultronUrl": "https://ultron-looi-desk.onrender.com",
       "eas": {
@@ -47,6 +34,15 @@
     },
     "owner": "vetawallet",
     "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 220,
+          "resizeMode": "contain",
+          "backgroundColor": "#000000"
+        }
+      ],
       "expo-system-ui",
       [
         "expo-screen-orientation",

@@ -1,11 +1,43 @@
-# ULTRON Desk
+# ULTRON FP
 
-Cara de escritorio + puente al cerebro real. No es un launch. Plan: PLAN.md.
+Asistente con cuerpo digital para la junta directiva de **Orden Global**. Una cara viva, una voz humana y un cerebro propio. No es un chatbot: piensa, siente, reacciona y trabaja.
 
-- Cerebro: https://ultron.ordenglobal.link
-- Modelo: Qwen 3.8 27B (`ULTRON_NODO_URL` /api/chat)
-- Playwright / vision: `ULTRON_OJO_URL`
-- TTS Qwen: `ULTRON_TTS_URL` (Fase D)
+- **Web (mesa):** React + Vite + canvas 2D, servida por el mismo servidor Express. Producción en Render (`ultron-looi-desk`).
+- **APK (Expo / React Native):** `mobile/`. Se compila sola en GitHub Actions.
+- **Servidor:** `server.ts` + `server/` + `lib/`. Cerebro Qwen 3.8 27B en nodo AWS propio, ojo Playwright/visión en otro nodo, voz ElevenLabs v3, memoria en S3, Telegram de ida y vuelta.
 
-Fase A: GET /api/health (nodos reales). POST /api/turno (Qwen). POST /api/playwright/scrape (manos).
-Fun Mode encendido en código. Sin switch en ajustes.
+## Correr
+
+```bash
+cp .env.example .env      # rellenar claves
+npm install
+npm run dev               # servidor + Vite en :3000
+npm test                  # 88 tests
+npm run build && npm start
+```
+
+APK: `cd mobile && npm ci && npx expo run:android`, o bajar el artefacto de la acción **Android APK**.
+
+## Mapa del repo
+
+| Dónde | Qué | Tocar para… |
+|---|---|---|
+| `lib/emocion.ts` | Contrato de emoción (14 emociones) | cambiar qué siente ULTRON |
+| `lib/capacidades.ts` | Catálogo único de capacidades | añadir o quitar algo que ULTRON hace |
+| `server/voz.ts` | La única voz: hablar, cantar, expresividad, caché | timbre, etiquetas de audio, repertorio |
+| `server/desk.ts` | Personalidad e identidad de la junta | cómo habla, tono por modo, oído |
+| `server/seguridad.ts` | Sesión firmada, rate limit, SSRF | quién entra y qué puede tocar |
+| `server.ts` | Rutas `/api/*`: turno, stream, voz, canto, capacidades, memoria, Telegram | el harness y el flujo de un turno |
+| `lib/` | memoria S3, Telegram, taller, PDF, visión, harness, ejecutor | herramientas del cerebro |
+| `src/02-cara/` | Cara web (motor, gestos, fun pack) | expresiones, tacto, partículas |
+| `src/03-voz/` | Cliente de voz: banco de clips, `hablar`, oído | qué suena en el navegador |
+| `src/04-cerebro/` | Cliente del turno (stream) e intenciones locales | gags locales, qué va al cerebro |
+| `src/07-pantallas/` | Arranque, Ajustes + catálogo, dock, acceso, bóveda, cámara | UI |
+| `src/App.tsx` | Composición (≈ 470 líneas) | flujo de la mesa |
+| `public/voz/` | Clips grabados con la voz oficial (`scripts/grabar-banco.mjs`) | frases sin red, canciones |
+| `mobile/` | APK | ver `mobile/README.md` |
+| `docs/` | Entrega 4.0 y planes históricos | contexto |
+
+Reglas: la voz es una (Gabriela, ElevenLabs v3). El nodo Qwen no se toca. Nada que cambie estado pasa sin sesión firmada. Si una herramienta no respondió, ULTRON lo dice.
+
+Detalle de qué se hizo y por qué: `docs/ENTREGA-4.0.md`.

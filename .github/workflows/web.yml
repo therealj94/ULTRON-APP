@@ -1,0 +1,30 @@
+name: Web (mesa + servidor)
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main, "cursor/**", "claude/**"]
+    paths-ignore:
+      - "mobile/**"
+      - "**.md"
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NODE_ENV: test
+      ULTRON_MEMORIA_BUCKET: ""
+      AWS_ACCESS_KEY_ID: ""
+      AWS_SECRET_ACCESS_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npx tsc --noEmit
+      - run: npm run build

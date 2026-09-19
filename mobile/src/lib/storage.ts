@@ -21,15 +21,12 @@ export type LocalPerson = {
   rol?: string;
   hechos: PersonFact[];
 };
-export type TtsEngine = 'eleven' | 'qwen' | 'auto';
 export type SttEngine = 'native' | 'cloud';
 export type AppSettings = {
   voiceId: string;
   micMuted: boolean;
   visionEnabled: boolean;
   gazeEnabled: boolean;
-  /** De dónde sale la voz: ElevenLabs (rápida), nodo Qwen3-TTS local (T4) o auto (Qwen y si cae, ElevenLabs). */
-  ttsEngine: TtsEngine;
   /** Oído: reconocimiento del sistema en el teléfono o grabación + Scribe en el servidor. */
   sttEngine: SttEngine;
   /** Comentarios espontáneos de lo que ve la cámara. */
@@ -48,7 +45,6 @@ const DEFAULT_SETTINGS: AppSettings = {
   micMuted: false,
   visionEnabled: true,
   gazeEnabled: true,
-  ttsEngine: 'eleven',
   sttEngine: 'native',
   proactive: true,
   sfx: true,
@@ -215,15 +211,6 @@ export async function addLongFact(hecho: string) {
 
 export async function clearLongMemory() {
   await AsyncStorage.removeItem(LONG_MEMORY_KEY);
-}
-
-export async function loadChatLog() {
-  try {
-    const raw = await AsyncStorage.getItem(KEYS.chatLog);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
 }
 
 export async function saveMesaToken(token: string | null) {

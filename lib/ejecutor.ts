@@ -10,7 +10,6 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
 
 export type Ejecucion = {
   stdout: string;
@@ -24,9 +23,22 @@ export type Ejecucion = {
 const MAX_OUT = 5000;
 const TIMEOUT_MS = 10_000;
 
+/**
+ * Activo por defecto SOLO si hay dónde correr con aislamiento: EJECUTOR_URL (sandbox remoto)
+ * o EJECUTOR_DOCKER=1. python3 en el propio host (Render) solo con EJECUTOR_LOCAL=1 y fuera
+ * de producción: ahí corre con el mismo usuario que el servidor y ve todas las claves.
+ */
 export function ejecutorActivo(): boolean {
   const v = process.env.EJECUTOR_ACTIVO;
   if (v === 'false' || v === '0') return false;
+  if (process.env.EJECUTOR_URL) return true;
+  if (process.env.EJECUTOR_DOCKER === '1' || process.env.EJECUTOR_DOCKER === 'true') return true;
+  if (process.env.EJECUTOR_LOCAL === '1') return process.env.NODE_ENV !== 'production';
+  return process.env.NODE_ENV !== 'production';
+}
+
+function localPermitido(): boolean {
+  if (process.env.NODE_ENV === 'production') return false;
   return true;
 }
 
@@ -145,11 +157,11 @@ export async function ejecutarCodigo(codigo: string): Promise<Ejecucion> {
 
   if (process.env.EJECUTOR_DOCKER === '1' || process.env.EJECUTOR_DOCKER === 'true') {
     if (await dockerDisponible()) return ejecutarDocker(src);
+    return { stdout: '', stderr: 'Docker no disponible', exit_code: 503, ok: false, via: 'omitido', error: 'Docker no disponible' };
+  }
+  if (!localPermitido()) {
+    return { stdout: '', stderr: 'Sin sandbox en producción (configura EJECUTOR_URL o EJECUTOR_DOCKER=1)', exit_code: 503, ok: false, via: 'omitido', error: 'sin sandbox' };
   }
   return ejecutarLocal(src);
 }
 
-/** Identificador único por petición (debug). */
-export function ejecucionId() {
-  return randomUUID().slice(0, 8);
-}

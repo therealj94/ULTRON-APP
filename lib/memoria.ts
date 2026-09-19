@@ -216,7 +216,9 @@ export async function recordarTurno(opts: {
     const p = a.perfiles[opts.quien] || (a.perfiles[opts.quien] = { corta: [], larga: [] });
     p.corta = [...p.corta, { rol: opts.rol, texto, t, canal: opts.canal }].slice(-MAX_CORTA);
     if (opts.rol === 'user' && esHechoLargo(texto)) {
-      const junta = /junta|orden global|prospera|aucorp|ordenex|mina|concesi[oó]n|genesis/i.test(texto);
+      // Al pool compartido de la junta solo va lo que se pide guardar PARA la junta de forma explícita.
+      // Mencionar «la mina» en una charla privada no lo convierte en hecho que vean los demás.
+      const junta = /\b(recuerda|record[aá]|guarda|anota|apunta)\b[^.]{0,80}\b(para|de) la junta\b|\bpara (toda )?la junta\b/i.test(texto);
       if (junta) {
         if (!a.junta.larga.some((x) => x.hecho === texto)) {
           const item: HechoMem = { hecho: texto, t, quien: 'junta', canal: opts.canal };
@@ -303,13 +305,31 @@ export function fotoMemoria(quien: MiembroId | null) {
   };
 }
 
+/**
+ * Quién habla. La identidad sale de la sesión firmada o del id de Telegram verificado.
+ * El cuerpo (usuario/correo) solo sirve para nombrar a alguien sin sesión —nunca para
+ * escalar: con sesión válida, el body no puede convertir a Carlos en José.
+ */
 export function resolverQuien(body: any, sesion?: { nombre?: string; correo?: string } | null): MiembroId | null {
+  if (sesion && (sesion.correo || sesion.nombre)) {
+    const deSesion = quienEs({ nombre: String(sesion.nombre || ''), correo: String(sesion.correo || '') });
+    if (deSesion) return deSesion;
+  }
+  const porTelegram = quienEs({ telegramUserId: body?.telegramUserId, telegramChatId: body?.telegramChatId });
+  if (porTelegram) return porTelegram;
+  if (sesion) return null;
   return quienEs({
-    nombre: String(body?.usuario || body?.userName || body?.nombre || sesion?.nombre || ''),
-    correo: String(body?.correo || sesion?.correo || ''),
-    telegramUserId: body?.telegramUserId,
-    telegramChatId: body?.telegramChatId,
+    nombre: String(body?.usuario || body?.userName || body?.nombre || ''),
+    correo: String(body?.correo || ''),
   });
+}
+
+/** Identidad verificada: sesión firmada o Telegram. Lo que diga el body no cuenta. */
+export function quienVerificado(body: any, sesion?: { nombre?: string; correo?: string } | null): MiembroId | null {
+  if (sesion && (sesion.correo || sesion.nombre)) {
+    return quienEs({ nombre: String(sesion.nombre || ''), correo: String(sesion.correo || '') });
+  }
+  return quienEs({ telegramUserId: body?.telegramUserId, telegramChatId: body?.telegramChatId });
 }
 
 /** Tests: reset in-memory cache. */

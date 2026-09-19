@@ -52,26 +52,22 @@ test('sesión firmada sobrevive sin el Map en memoria', () => {
   else process.env.ULTRON_NODO_SECRETO = prev;
 });
 
-test('mesa nativa entra por nombre de junta aunque el token haya muerto', () => {
+test('conversación abierta con rate limit; nada que cambie estado pasa sin sesión', () => {
   const prevN = process.env.NODE_ENV;
   const prevK = process.env.ULTRON_MESA_CLAVE;
   process.env.NODE_ENV = 'production';
   delete process.env.ULTRON_MESA_CLAVE;
+  // El nombre en el body no es credencial.
   assert.equal(mesaAutorizada({ headers: { 'x-ultron-sesion': 'muerto' }, body: { usuario: 'José' }, path: '/api/turno' } as any), false);
-  assert.equal(
-    mesaDeskAutorizada({ headers: { 'x-ultron-sesion': 'muerto' }, body: { usuario: 'José' }, path: '/api/turno' } as any),
-    true
-  );
-  assert.equal(
-    mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/turno' } as any),
-    true
-  );
-  assert.equal(
-    mesaDeskAutorizada({ headers: {}, body: { usuario: 'Melany' }, path: '/api/turno' } as any),
-    true
-  );
+  // Hablar, oír, ver y cantar: pasan (decisión de la junta, la APK no se queda muda).
+  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/turno' } as any), true);
   assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/tts', query: {} } as any), true);
-  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/ejecutar' } as any), false);
+  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/stt' } as any), true);
+  assert.equal(mesaDeskAutorizada({ headers: {}, body: {}, path: '/api/cantar' } as any), true);
+  // Memoria, ejecutor, bóveda, redeploy: sesión real o nada. El body con "José" no abre.
+  assert.equal(mesaDeskAutorizada({ headers: {}, body: { usuario: 'José' }, path: '/api/memoria' } as any), false);
+  assert.equal(mesaDeskAutorizada({ headers: {}, body: { usuario: 'José' }, path: '/api/ejecutar' } as any), false);
+  assert.equal(mesaDeskAutorizada({ headers: {}, body: { correo: 'j.ordonez@ordenglobal.org' }, path: '/api/render/deploy' } as any), false);
   if (prevN === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = prevN;
   if (prevK === undefined) delete process.env.ULTRON_MESA_CLAVE;

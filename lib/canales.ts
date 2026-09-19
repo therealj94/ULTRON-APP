@@ -136,9 +136,9 @@ function escapeXml(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export async function telegramFoto(opts: { buf: Buffer; caption?: string; filename?: string }): Promise<Envio> {
+export async function telegramFoto(opts: { buf: Buffer; caption?: string; filename?: string; chatId?: string | number }): Promise<Envio> {
   const token = clave('telegram_token');
-  const chat = clave('telegram_chat');
+  const chat = String(opts.chatId || clave('telegram_chat'));
   if (!token || !chat) return { ok: false, via: 'telegram', detalle: 'Falta Telegram en la bóveda. No mandé la foto.' };
   try {
     const form = new FormData();
@@ -158,9 +158,9 @@ export async function telegramFoto(opts: { buf: Buffer; caption?: string; filena
   }
 }
 
-export async function telegramVoz(opts: { buf: Buffer; caption?: string }): Promise<Envio> {
+export async function telegramVoz(opts: { buf: Buffer; caption?: string; chatId?: string | number }): Promise<Envio> {
   const token = clave('telegram_token');
-  const chat = clave('telegram_chat');
+  const chat = String(opts.chatId || clave('telegram_chat'));
   if (!token || !chat) return { ok: false, via: 'telegram', detalle: 'Falta Telegram en la bóveda. No mandé la voz.' };
   try {
     const form = new FormData();

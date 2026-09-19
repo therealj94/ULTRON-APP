@@ -1,37 +1,40 @@
 /**
- * Voz de ULTRON — una sola voz neural, nunca la robótica del sistema.
- * - Frases grabadas (assets/voice) → 0 ms, funcionan sin red.
- * - Resto: /api/tts (Eleven v3 conversational) descargado a disco, por oraciones,
- *   con la siguiente oración precargada mientras suena la actual.
+ * Voz de ULTRON — una sola voz (ElevenLabs v3, timbre Gabriela), nunca la robótica del sistema.
+ *
+ *  - Banco offline (assets/voice, generado por scripts/build-voice-bank.mjs): 0 ms, sin red.
+ *  - Clips remotos (/voz/<id>.mp3): canciones grabadas, chistes, discurso y los clips nuevos; si el
+ *    servidor no los sirve como audio, se cae a TTS con el texto del clip.
+ *  - Resto: GET /api/tts?text&emocion&performance descargado a disco, por oraciones, con la siguiente
+ *    oración precargada mientras suena la actual.
+ *  - Canto real: POST /api/cantar {id} | {letra,titulo} → mp3 (hasta ~40 s la primera vez).
+ *
+ * Todo lo que suena pasa por playPrepared() y comparte la generación `gen`: stopSpeaking() corta
+ * cualquier cosa, y cada función avisa onStart/onAudioStart/onEnd para que la mesa pause el mic.
  */
 import { Audio, type AVPlaybackSource } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
-import { ttsUrl, type TtsEngineParam } from './api';
+import { CANTAR_ENDPOINT, TTS_ENDPOINT, sessionHeaders, ttsUrl } from './api';
 import { API_BASE } from '../config';
-import { REMOTE_CLIPS, bankKey } from './voiceBank';
+import type { Emocion } from './emocion';
+import { CLIP_TEXT, PHRASE_TO_CLIP, REMOTE_CLIPS, VOICE_BANK, bankKey, type ClipId } from './voiceBank';
 
 type Perf = 'speak' | 'sing';
+
+export type SpeakCallbacks = {
+  /** Se decidió hablar (antes de tener audio). */
+  onStart?: () => void;
+  /** Empezó a sonar el primer audio: aquí se pausa el mic. */
+  onAudioStart?: () => void;
+  /** Terminó (o se canceló) todo el audio de esta locución. */
+  onEnd?: () => void;
+};
 
 let current: Audio.Sound | null = null;
 let gen = 0;
 const fileCache = new Map<string, string>();
-let engine: TtsEngineParam = 'eleven';
-/** Última locución en curso: el StreamSpeaker espera a que termine (no corta el «un momento» a la mitad). */
+/** Última locución en curso: el StreamSpeaker espera a que termine (no corta un clip a la mitad). */
 let lastSpeak: Promise<unknown> = Promise.resolve();
 let releaseLastSpeak: (() => void) | null = null;
-let lastEngineUsed = '';
-
-/** Motor de voz (Ajustes): eleven | qwen | auto. Las frases grabadas suenan igual en todos. */
-export function setTtsEngine(next: TtsEngineParam) {
-  engine = next;
-}
-export function getTtsEngine() {
-  return engine;
-}
-/** Qué motor sirvió la última frase dinámica (cabecera X-Ultron-TTS), para el HUD. */
-export function lastTtsEngine() {
-  return lastEngineUsed;
-}
 
 export function cleanForSpeech(text: string) {
   return String(text || '')
@@ -89,34 +92,85 @@ async function ensureAudioMode() {
   }
 }
 
-function canned(text: string, perf: Perf): AVPlaybackSource | null {
-  if (perf !== 'speak' || engine === 'qwen') return null;
-  const remote = REMOTE_CLIPS[bankKey(text)];
-  return remote ? { uri: `${API_BASE}${remote}` } : null;
+// ---------------------------------------------------------------- banco / clips
+
+/** ¿Está el clip empaquetado en el APK? */
+export function isBundled(id: ClipId) {
+  return VOICE_BANK[id] !== undefined;
 }
 
-async function fetchSource(text: string, perf: Perf): Promise<AVPlaybackSource | null> {
-  const pre = canned(text, perf);
-  if (pre) return pre;
-  const key = `${engine}|${perf}|${text}`;
+const remoteOk = new Map<ClipId, { ok: boolean; at: number }>();
+const REMOTE_NEG_TTL = 10 * 60_000;
+
+/**
+ * ¿Sirve el servidor este clip como audio? Los clips que aún no se subieron devuelven la SPA (HTML 200),
+ * no 404: por eso se mira el content-type. Positivo se recuerda siempre; negativo 10 min.
+ */
+export async function remoteClipAvailable(id: ClipId): Promise<boolean> {
+  const hit = remoteOk.get(id);
+  if (hit && (hit.ok || Date.now() - hit.at < REMOTE_NEG_TTL)) return hit.ok;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6_000);
+  try {
+    const res = await fetch(`${API_BASE}${REMOTE_CLIPS[id]}`, { method: 'HEAD', signal: ctrl.signal });
+    const ct = String(res.headers.get('content-type') || '');
+    const ok = res.ok && /audio|octet/.test(ct);
+    remoteOk.set(id, { ok, at: Date.now() });
+    return ok;
+  } catch {
+    remoteOk.set(id, { ok: false, at: Date.now() });
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Fuente de un clip: asset local si está empaquetado; si no, remoto cuando el servidor lo sirve. */
+async function clipSource(id: ClipId): Promise<AVPlaybackSource | null> {
+  const local = VOICE_BANK[id];
+  if (local !== undefined) return local;
+  return (await remoteClipAvailable(id)) ? { uri: `${API_BASE}${REMOTE_CLIPS[id]}` } : null;
+}
+
+/** Clip que dice exactamente esta frase (0 ms si está empaquetado). */
+export function clipForPhrase(text: string): ClipId | null {
+  return PHRASE_TO_CLIP[bankKey(text)] || null;
+}
+
+// ---------------------------------------------------------------- descarga TTS
+
+function tmpPath(prefix: string, ext = 'mp3') {
+  return `${FileSystem.cacheDirectory}${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+}
+
+async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<AVPlaybackSource | null> {
+  if (perf === 'speak') {
+    const clip = clipForPhrase(text);
+    if (clip) {
+      const src = await clipSource(clip);
+      if (src) return src;
+    }
+  }
+  const key = `${perf}|${emocion}|${text}`;
   const hit = fileCache.get(key);
   if (hit) return { uri: hit };
-  const ext = engine === 'eleven' ? 'mp3' : 'wav';
-  const path = `${FileSystem.cacheDirectory}ultron-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+  const headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
   for (let attempt = 0; attempt < 2; attempt++) {
+    const path = tmpPath('ultron');
     try {
-      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, engine), path, { headers: { Accept: 'audio/*' } });
+      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, emocion), path, { headers });
       const ct = String((r.headers as any)?.['Content-Type'] || (r.headers as any)?.['content-type'] || '');
       const info = await FileSystem.getInfoAsync(path);
       if (r.status === 200 && info.exists && (info.size || 0) > 64 && (!ct || /audio|octet/.test(ct))) {
         fileCache.set(key, path);
-        lastEngineUsed = String((r.headers as any)?.['X-Ultron-TTS'] || (r.headers as any)?.['x-ultron-tts'] || engine);
         return { uri: path };
       }
+      await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
       if (r.status === 200 && ct && !/audio|octet/.test(ct)) {
-        // servidor viejo (sin GET /api/tts): devolvió HTML. Usar POST clásico.
-        await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
-        return await fetchSourcePost(text, perf, key);
+        // servidor sin GET /api/tts: devolvió HTML. Usar POST.
+        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion }, 40_000);
+        if (uri) fileCache.set(key, uri);
+        return uri ? { uri } : null;
       }
     } catch {
       /* reintento */
@@ -126,16 +180,21 @@ async function fetchSource(text: string, perf: Perf): Promise<AVPlaybackSource |
   return null;
 }
 
-/** Compatibilidad con el servidor anterior: POST /api/tts → blob → base64 → disco. */
-function fetchSourcePost(text: string, perf: Perf, key: string): Promise<AVPlaybackSource | null> {
+/**
+ * POST JSON → audio → disco. FileSystem.downloadAsync solo hace GET, así que /api/cantar y el POST de
+ * /api/tts van por XHR (blob → base64 → archivo).
+ */
+async function downloadPost(url: string, body: Record<string, unknown>, timeoutMs: number): Promise<string | null> {
+  const headers = await sessionHeaders();
   return new Promise((resolve) => {
     try {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', ttsUrl('', perf, engine).split('?')[0]);
+      xhr.open('POST', url);
       xhr.setRequestHeader('Content-Type', 'application/json');
       xhr.setRequestHeader('Accept', 'audio/*');
+      for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
       xhr.responseType = 'blob';
-      xhr.timeout = 40_000;
+      xhr.timeout = timeoutMs;
       xhr.onerror = () => resolve(null);
       xhr.ontimeout = () => resolve(null);
       xhr.onload = () => {
@@ -150,24 +209,23 @@ function fetchSourcePost(text: string, perf: Perf, key: string): Promise<AVPlayb
             const dataUrl = String(reader.result || '');
             const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
             if (b64.length < 100) return resolve(null);
-            const ext = /mpeg|mp3/.test(ct) ? 'mp3' : 'wav';
-            const path = `${FileSystem.cacheDirectory}ultron-p-${Date.now().toString(36)}.${ext}`;
+            const path = tmpPath('ultron-p', /wav/.test(ct) ? 'wav' : 'mp3');
             await FileSystem.writeAsStringAsync(path, b64, { encoding: FileSystem.EncodingType.Base64 });
-            fileCache.set(key, path);
-            lastEngineUsed = String(xhr.getResponseHeader('x-ultron-tts') || 'qwen3-tts');
-            resolve({ uri: path });
+            resolve(path);
           } catch {
             resolve(null);
           }
         };
         reader.readAsDataURL(blob);
       };
-      xhr.send(JSON.stringify({ text, performance: perf, engine, voice: 'formal' }));
+      xhr.send(JSON.stringify(body));
     } catch {
       resolve(null);
     }
   });
 }
+
+// ---------------------------------------------------------------- reproducción
 
 async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
   try {
@@ -178,7 +236,7 @@ async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
   }
 }
 
-function playPrepared(sound: Audio.Sound, my: number): Promise<void> {
+function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
     let guard: ReturnType<typeof setTimeout> | null = null;
@@ -201,7 +259,7 @@ function playPrepared(sound: Audio.Sound, my: number): Promise<void> {
       if (st.didJustFinish) end();
     });
     sound.playAsync().catch(end);
-    if (!guard) guard = setTimeout(end, 25_000);
+    if (!guard) guard = setTimeout(end, maxMs);
   });
 }
 
@@ -219,33 +277,107 @@ export async function stopSpeaking() {
   }
 }
 
-export function isSpeaking() {
-  return current !== null;
+function beginSpeak() {
+  releaseLastSpeak?.();
+  lastSpeak = new Promise<void>((r) => (releaseLastSpeak = r));
+}
+function endSpeak() {
+  releaseLastSpeak?.();
+  releaseLastSpeak = null;
 }
 
-export async function speakUrl(pathOrUrl: string, opts?: { onEnd?: () => void; onStart?: () => void }) {
+/** Reproduce una fuente ya resuelta con el protocolo de callbacks. */
+async function playSource(source: AVPlaybackSource | null, my: number, cb: SpeakCallbacks | undefined, maxMs: number): Promise<boolean> {
+  if (!source || my !== gen) return false;
+  const sound = await prepare(source);
+  if (!sound || my !== gen) {
+    if (sound) void sound.unloadAsync().catch(() => {});
+    return false;
+  }
+  cb?.onAudioStart?.();
+  await playPrepared(sound, my, maxMs);
+  return true;
+}
+
+/**
+ * Clip del banco por id (local → remoto → TTS con su texto). Ideal para «mmm», risas, «ya, ya».
+ * `fallback: false` = si no hay clip, no hablar nada (para no pagar TTS por una muletilla).
+ */
+export async function speakClip(id: ClipId, opts?: SpeakCallbacks & { fallback?: boolean; emocion?: Emocion }): Promise<boolean> {
+  await stopSpeaking();
+  const my = gen;
+  opts?.onStart?.();
+  await ensureAudioMode();
+  beginSpeak();
+  try {
+    const src = await clipSource(id);
+    if (src) return await playSource(src, my, opts, 120_000);
+    if (opts?.fallback === false || my !== gen) return false;
+    const text = CLIP_TEXT[id];
+    const tts = await fetchSource(text, 'speak', opts?.emocion || 'neutral');
+    return await playSource(tts, my, opts, 25_000);
+  } finally {
+    endSpeak();
+    if (my === gen) opts?.onEnd?.();
+  }
+}
+
+/** URL/ruta arbitraria (p. ej. un mp3 del servidor). Avisa onAudioStart/onEnd como todo lo demás. */
+export async function speakUrl(pathOrUrl: string, opts?: SpeakCallbacks) {
   const url = pathOrUrl.startsWith('http') ? pathOrUrl : `${API_BASE}${pathOrUrl}`;
   await stopSpeaking();
   const my = gen;
   opts?.onStart?.();
   await ensureAudioMode();
-  const sound = await prepare({ uri: url });
-  if (!sound) {
-    opts?.onEnd?.();
-    return false;
+  beginSpeak();
+  try {
+    return await playSource({ uri: url }, my, opts, 120_000);
+  } finally {
+    endSpeak();
+    if (my === gen) opts?.onEnd?.();
   }
-  await playPrepared(sound, my);
-  opts?.onEnd?.();
-  return true;
+}
+
+export type SongRequest = { id: string } | { letra: string; titulo?: string };
+
+const songCache = new Map<string, string>();
+
+/**
+ * ULTRON canta de verdad: POST /api/cantar → mp3 (la primera vez puede tardar ~40 s; el servidor lo
+ * cachea). Para ids del repertorio, si el clip estático /voz/<id>.mp3 existe se usa directo (más rápido).
+ */
+export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPreparing?: () => void }): Promise<boolean> {
+  await stopSpeaking();
+  const my = gen;
+  opts?.onStart?.();
+  await ensureAudioMode();
+  beginSpeak();
+  try {
+    const key = 'id' in req ? `id:${req.id}` : `letra:${req.titulo || ''}|${req.letra}`;
+    let uri = songCache.get(key) || null;
+    if (!uri && 'id' in req && (req.id as ClipId) in REMOTE_CLIPS && (await remoteClipAvailable(req.id as ClipId))) {
+      return await playSource({ uri: `${API_BASE}${REMOTE_CLIPS[req.id as ClipId]}` }, my, opts, 180_000);
+    }
+    if (!uri) {
+      opts?.onPreparing?.();
+      uri = await downloadPost(CANTAR_ENDPOINT, req as Record<string, unknown>, 55_000);
+      if (uri) songCache.set(key, uri);
+    }
+    if (my !== gen) return false;
+    return await playSource(uri ? { uri } : null, my, opts, 180_000);
+  } finally {
+    endSpeak();
+    if (my === gen) opts?.onEnd?.();
+  }
 }
 
 /** Calienta la caché del servidor/disco para frases que no están grabadas. */
-export async function prefetchPhrases(phrases: string[]) {
-  const queue = phrases.map(cleanForSpeech).filter((p) => p && !canned(p, 'speak'));
+export async function prefetchPhrases(phrases: string[], emocion: Emocion = 'neutral') {
+  const queue = phrases.map(cleanForSpeech).filter((p) => p && !clipForPhrase(p));
   const worker = async () => {
     while (queue.length) {
       const p = queue.shift()!;
-      await fetchSource(p, 'speak').catch(() => null);
+      await fetchSource(p, 'speak', emocion).catch(() => null);
     }
   };
   await Promise.all([worker(), worker()]);
@@ -253,11 +385,9 @@ export async function prefetchPhrases(phrases: string[]) {
 
 export async function speak(
   text: string,
-  opts?: {
+  opts?: SpeakCallbacks & {
     performance?: Perf;
-    onStart?: () => void;
-    onEnd?: () => void;
-    onAudioStart?: () => void;
+    emocion?: Emocion;
   }
 ): Promise<boolean> {
   const clean = cleanForSpeech(text);
@@ -268,16 +398,16 @@ export async function speak(
   await stopSpeaking();
   const my = gen;
   const perf = opts?.performance || 'speak';
+  const emocion = opts?.emocion || 'neutral';
   opts?.onStart?.();
   await ensureAudioMode();
-  releaseLastSpeak?.();
-  lastSpeak = new Promise<void>((r) => (releaseLastSpeak = r));
+  beginSpeak();
 
   const sentences = perf === 'sing' ? [clean] : splitSentences(clean);
   const AHEAD = 2;
   const sources: Array<Promise<AVPlaybackSource | null>> = [];
   const launch = (i: number) => {
-    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf);
+    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion);
   };
   for (let i = 0; i < Math.min(AHEAD + 1, sentences.length); i++) launch(i);
 
@@ -308,13 +438,12 @@ export async function speak(
         spoke = true;
         opts?.onAudioStart?.();
       }
-      await playPrepared(sound, my);
+      await playPrepared(sound, my, perf === 'sing' ? 120_000 : 25_000);
     }
     return spoke;
   } finally {
     if (nextPrepared) void nextPrepared.then((s) => s?.unloadAsync().catch(() => {}));
-    releaseLastSpeak?.();
-    releaseLastSpeak = null;
+    endSpeak();
     if (my === gen) opts?.onEnd?.();
   }
 }
@@ -336,11 +465,16 @@ export class StreamSpeaker {
   private resolveDone!: () => void;
   readonly done: Promise<void>;
 
-  constructor(private opts: { onAudioStart?: () => void; onSentence?: (s: string) => void }) {
-    // Comparte generación con speak(): stopSpeaking() lo cancela; no corta un relleno en curso.
+  constructor(private opts: { emocion?: Emocion; onAudioStart?: () => void; onSentence?: (s: string) => void }) {
+    // Comparte generación con speak(): stopSpeaking() lo cancela; no corta un clip en curso.
     this.my = gen;
     this.done = new Promise<void>((r) => (this.resolveDone = r));
     void ensureAudioMode();
+  }
+
+  /** La emoción llega antes del primer delta; si cambia antes de pedir audio, se aplica. */
+  setEmocion(e: Emocion) {
+    if (!this.sources.size) this.opts.emocion = e;
   }
 
   /** Texto nuevo del stream. */
@@ -387,7 +521,7 @@ export class StreamSpeaker {
   private source(sentence: string) {
     let p = this.sources.get(sentence);
     if (!p) {
-      p = fetchSource(sentence, 'speak');
+      p = fetchSource(sentence, 'speak', this.opts.emocion || 'neutral');
       this.sources.set(sentence, p);
     }
     return p;

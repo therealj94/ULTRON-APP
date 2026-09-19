@@ -1,23 +1,53 @@
 import React, { useEffect, useRef, useCallback } from 'react';
-import {
-  Mode,
-  FaceState,
-  AnimationEngineState,
-  FaceTargets,
-  TouchRipple,
-  BlasterLaserBolt,
-  BulletImpact,
-} from '../types';
+import { Mode, FaceState, AnimationEngineState, FaceTargets } from '../types';
+import type { Emocion } from '../../lib/emocion';
 import { playSfx } from '../03-voz/audio';
+import type { Gesto } from './gestos';
+import {
+  type Vida,
+  type Escena,
+  getThemeColors,
+  crearVida,
+  clamp,
+  smoothstep,
+  backOut,
+  approach,
+  actualizarMotas,
+  drawMotes,
+  emitirChispa,
+  actualizarChispas,
+  drawChispas,
+  drawHalo,
+  drawVoiceRing,
+  drawShockwaves,
+  drawLivingEye,
+  drawCyberMouth,
+} from './dibujo';
+import {
+  type CombatState,
+  ensureRoundRect,
+  drawLooiVisor,
+  drawModeCrown,
+  drawModeEnvironment,
+  drawJediSaber,
+  drawCombatBlasterTurrets,
+  drawHolographicDrinkCup,
+  drawCyberWavingHand,
+  drawLaserBoltsAndImpacts,
+  drawCameraViewfinderAndFlash,
+} from './funPack';
 
-interface FaceCanvasProps {
+export interface FaceCanvasProps {
   face: FaceState;
   mode: Mode;
   energy: number;
   soundFxEnabled: boolean;
+  /** Emoción del cerebro (`[EMO:x]`). Al cambiar dispara una micro-expresión sobre la cara base. */
+  emocion?: Emocion;
+  /** Pack de juguete: blásters, sable, coronas de modo, escalada al picar. Por defecto apagado. */
+  funMode?: boolean;
   hasVisor?: boolean;
   cameraGaze?: { x: number; y: number; active: boolean };
-  // New interactive actions requested by user
   isDrinking?: boolean;
   isWaving?: boolean;
   isCameraFlashing?: boolean;
@@ -38,17 +68,178 @@ interface FaceCanvasProps {
   onWake: () => void;
   onSleep: () => void;
   onCloseOverlays: () => void;
+  /** Reporta cada gesto táctil o de expresión que la cara ejecuta. */
+  onGesto?: (g: Gesto) => void;
   lipLevel?: number;
   showHud?: boolean;
 }
 
 const MODES: Mode[] = ['GUARDIAN', 'MINING', 'GOLD', 'CREATIVE', 'ANALYTICAL', 'STRATEGIC', 'EXPLORER'];
+const N_MOTAS = 40;
+const WAKE_S = 1.5;
+
+/** Duración (s) de la capa de expresión por emoción. */
+const EXPRESION_DUR: Record<Emocion, number> = {
+  neutral: 0,
+  feliz: 2.8,
+  risa: 3.4,
+  sorpresa: 1.5,
+  curioso: 2.8,
+  pensando: 3.0,
+  preocupado: 2.8,
+  triste: 3.2,
+  molesto: 2.4,
+  cansado: 3.4,
+  carino: 3.0,
+  orgullo: 2.8,
+  travieso: 2.2,
+  canto: 4.0,
+};
+
+const GESTO_POR_EMOCION: Record<Emocion, Gesto | null> = {
+  neutral: null,
+  feliz: 'feliz',
+  risa: 'risa',
+  sorpresa: 'sorpresa',
+  curioso: 'curioso',
+  pensando: 'pensar',
+  preocupado: 'preocupado',
+  triste: 'tristeza',
+  molesto: 'molesto',
+  cansado: 'cansado',
+  carino: 'carino',
+  orgullo: 'orgullo',
+  travieso: 'travieso',
+  canto: 'canto',
+};
+
+/** Energía ambiental (motas, halo) por cara. */
+const ENERGIA: Partial<Record<FaceState, number>> = {
+  HAPPY: 0.95,
+  LAUGH: 1,
+  SING: 1,
+  PURR: 0.85,
+  WINK: 0.8,
+  SPEAKING: 0.7,
+  CURIOSITY: 0.7,
+  SURPRISED: 0.75,
+  STARTLE: 0.75,
+  JEDI: 0.7,
+  ANGRY: 0.8,
+  FURY: 0.9,
+  IDLE: 0.45,
+  LISTENING: 0.5,
+  THINKING: 0.45,
+  CONCERNED: 0.4,
+  SAD: 0.22,
+  TIRED: 0.12,
+  SLEEPING: 0.05,
+};
+
+interface Expresion {
+  tipo: Emocion | null;
+  t: number;
+  dur: number;
+  nextPulse: number;
+}
+
+/** Metas de la capa viva por cara (se recalculan cada frame; la expresión suma encima). */
+interface MetasVida {
+  lid: number;
+  wide: number;
+  browLift: number;
+  browAsym: number;
+  tilt: number;
+  lift: number;
+  gazeX: number;
+  gazeY: number;
+  breathRate: number;
+  blinkSpeed: number;
+}
+
+function metasDeCara(f: FaceState, t: number, age: number): MetasVida {
+  const M: MetasVida = {
+    lid: 1,
+    wide: 1,
+    browLift: 0,
+    browAsym: 0,
+    tilt: 0,
+    lift: 0,
+    gazeX: 0,
+    gazeY: 0,
+    breathRate: 1,
+    blinkSpeed: 1,
+  };
+  switch (f) {
+    case 'THINKING':
+      M.gazeX = -0.42;
+      M.gazeY = -0.38;
+      M.browAsym = 0.35;
+      M.browLift = 0.12;
+      M.tilt = -0.035;
+      break;
+    case 'CURIOSITY':
+      M.tilt = 0.11;
+      M.browAsym = 0.55;
+      M.browLift = 0.3;
+      break;
+    case 'SURPRISED':
+      M.wide = age < 0.6 ? 1.12 : 1.03;
+      M.browLift = age < 0.7 ? 1 : 0.55;
+      M.blinkSpeed = 1.3;
+      break;
+    case 'STARTLE':
+      M.wide = 1.08;
+      M.browLift = 0.8;
+      break;
+    case 'SAD':
+      M.lid = 0.62;
+      M.gazeY = 0.32;
+      M.gazeX = 0.1;
+      M.breathRate = 0.6;
+      M.blinkSpeed = 0.75;
+      M.tilt = 0.03;
+      break;
+    case 'TIRED':
+      M.lid = 0.55;
+      M.gazeY = 0.15 + 0.06 * Math.sin(t * 0.7);
+      M.tilt = 0.025 * Math.sin(t * 0.5);
+      M.breathRate = 0.7;
+      M.blinkSpeed = 0.55;
+      break;
+    case 'SLEEPING':
+      M.breathRate = 0.5;
+      M.lift = -0.02;
+      break;
+    case 'LAUGH':
+      M.browLift = 0.2;
+      break;
+    case 'SING':
+      M.tilt = Math.sin(t * 1.7) * 0.05;
+      break;
+    case 'PURR':
+      M.tilt = 0.06 * Math.sin(t * 1.3);
+      break;
+    case 'CONCERNED':
+      M.lid = 0.92;
+      break;
+    case 'ANGRY':
+    case 'FURY':
+      M.lid = 0.86;
+      break;
+    default:
+      break;
+  }
+  return M;
+}
 
 export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   face,
   mode,
   energy,
   soundFxEnabled,
+  emocion,
+  funMode = false,
   hasVisor = false,
   cameraGaze,
   isDrinking = false,
@@ -71,26 +262,36 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   onWake,
   onSleep,
   onCloseOverlays,
+  onGesto,
   lipLevel = 0,
   showHud = false,
 }) => {
+  void onToggleVisor;
+  void onTriggerVoice;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lipRef = useRef(0);
   lipRef.current = lipLevel;
   const cameraFlashLiveRef = useRef(false);
   cameraFlashLiveRef.current = isCameraFlashing;
 
-  // References to preserve state across 60fps render loop
+  // Estado de escena que sobrevive al bucle de 60fps
   const stateRef = useRef<{
     face: FaceState;
     prevFace: FaceState;
     mode: Mode;
     energy: number;
     hasVisor: boolean;
+    funMode: boolean;
+    showHud: boolean;
     t: number;
+    faceSince: number;
     poke: number;
     lastPokeTime: number;
     lastInteraction: number;
+    burstActive: boolean;
+    burstSpoken: boolean;
+    lipSeen: number;
+    lipSeenAt: number;
     mix: number;
   }>({
     face,
@@ -98,10 +299,17 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     mode,
     energy,
     hasVisor,
+    funMode,
+    showHud,
     t: 0,
+    faceSince: 0,
     poke: 0,
     lastPokeTime: 0,
     lastInteraction: 0,
+    burstActive: false,
+    burstSpoken: false,
+    lipSeen: 0,
+    lipSeenAt: 0,
     mix: 1,
   });
 
@@ -111,7 +319,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     blinkR: 1,
     blinking: false,
     phase: 0,
-    next: 1.8,
+    next: 2.4,
     double: false,
     wink: 0,
     lx: 0,
@@ -142,71 +350,79 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     shockwaves: [],
   });
 
-  // Touch tracking
+  const vidaRef = useRef<Vida>(crearVida(N_MOTAS));
+  const expRef = useRef<Expresion>({ tipo: null, t: 0, dur: 0, nextPulse: 0 });
+
+  // Seguimiento táctil
   const touchState = useRef<{
     startX: number;
     startY: number;
     downTime: number;
     movedDistance: number;
-    touches: number;
+    tapHandled: boolean;
+    dragReported: boolean;
     strokePoints: Array<{ x: number; y: number; time: number }>;
   }>({
     startX: 0,
     startY: 0,
     downTime: 0,
     movedDistance: 0,
-    touches: 0,
+    tapHandled: false,
+    dragReported: false,
     strokePoints: [],
   });
 
-  // Combat Blaster State (Gun Draw & Rapid Laser Fire)
-  const combatRef = useRef<{
-    isActive: boolean;
-    level: number; // 0 to 1
-    shotsRemaining: number;
-    lastShotTime: number;
-    startTime: number;
-    lasers: BlasterLaserBolt[];
-    impacts: BulletImpact[];
-    weapon: 'none' | 'blaster' | 'jedi';
-  }>({
+  const combatRef = useRef<CombatState>({
     isActive: false,
     level: 0,
     shotsRemaining: 0,
     lastShotTime: 0,
     startTime: 0,
     lasers: [],
-    weapon: 'none',
     impacts: [],
+    weapon: 'none',
   });
+  const drinkRef = useRef({ isActive: false, progress: 0 });
+  const waveRef = useRef({ isActive: false, progress: 0 });
+  const flashRef = useRef({ alpha: 0 });
+  const timersRef = useRef<number[]>([]);
 
-  // Holographic Refreshing Drink State (Soda / Water recognition)
-  const drinkRef = useRef<{
-    isActive: boolean;
-    progress: number;
-  }>({
-    isActive: false,
-    progress: 0,
-  });
+  // Refs estables para el bucle (evitan re-crear el rAF)
+  const cameraGazeRef = useRef(cameraGaze);
+  const soundFxEnabledRef = useRef(soundFxEnabled);
+  const onBlasterCombatEndRef = useRef(onBlasterCombatEnd);
+  const onSpeakRef = useRef(onSpeak);
+  const onFaceChangeRef = useRef(onFaceChange);
+  const onGestoRef = useRef(onGesto);
+  useEffect(() => {
+    soundFxEnabledRef.current = soundFxEnabled;
+    onBlasterCombatEndRef.current = onBlasterCombatEnd;
+    onSpeakRef.current = onSpeak;
+    onFaceChangeRef.current = onFaceChange;
+    onGestoRef.current = onGesto;
+  }, [soundFxEnabled, onBlasterCombatEnd, onSpeak, onFaceChange, onGesto]);
 
-  // Cyber-Robotic Waving Hand State (Hand greeting recognition)
-  const waveRef = useRef<{
-    isActive: boolean;
-    progress: number;
-  }>({
-    isActive: false,
-    progress: 0,
-  });
+  const gesto = useCallback((g: Gesto) => {
+    onGestoRef.current?.(g);
+  }, []);
 
-  // Optical Camera Viewfinder & Shutter Flash State
-  const flashRef = useRef<{
-    alpha: number;
-  }>({
-    alpha: 0,
-  });
+  const later = useCallback((fn: () => void, ms: number) => {
+    const id = window.setTimeout(fn, ms);
+    timersRef.current.push(id);
+    return id;
+  }, []);
+  useEffect(() => {
+    const timers = timersRef.current;
+    return () => {
+      for (const id of timers) window.clearTimeout(id);
+      timers.length = 0;
+    };
+  }, []);
 
+  // ───────────────────────── fun pack: armas ─────────────────────────
   const disarmCombat = useCallback(() => {
     const C = combatRef.current;
+    const wasActive = C.isActive;
     C.isActive = false;
     C.shotsRemaining = 0;
     C.lasers = [];
@@ -215,38 +431,44 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     C.weapon = 'none';
     animRef.current.shake = 0;
     onBlasterCombatEndRef.current?.();
-    onFaceChange('IDLE', 0);
-  }, [onFaceChange]);
+    if (wasActive) onFaceChangeRef.current('IDLE', 0);
+  }, []);
 
   const triggerBlasterCombat = useCallback(() => {
     const C = combatRef.current;
     if (C.isActive) return;
+    if (!stateRef.current.funMode) {
+      // Sin funMode no hay armas: cerramos el ciclo para que App no quede colgada.
+      onBlasterCombatEndRef.current?.();
+      return;
+    }
     C.isActive = true;
     C.weapon = 'blaster';
     C.startTime = performance.now();
     C.shotsRemaining = 8;
     C.lastShotTime = performance.now();
-    onFaceChange('FURY', 2600);
-    playSfx('gun_draw', soundFxEnabled);
-    onSpeak('Blasters fuera.');
+    onFaceChangeRef.current('FURY', 2600);
+    playSfx('gun_draw', soundFxEnabledRef.current);
+    onSpeakRef.current('Blasters fuera.');
     animRef.current.shake = 1.2;
     onTriggerBlasterCombat?.();
-  }, [onFaceChange, onSpeak, soundFxEnabled, onTriggerBlasterCombat]);
+  }, [onTriggerBlasterCombat]);
 
   const triggerJediSaber = useCallback(() => {
+    if (!stateRef.current.funMode) return;
     const C = combatRef.current;
     C.isActive = true;
     C.weapon = 'jedi';
     C.shotsRemaining = 0;
     C.lasers = [];
     C.level = 1;
-    onFaceChange('JEDI', 4000);
-    playSfx('gun_draw', soundFxEnabled);
-    onSpeak('Sable listo.');
+    onFaceChangeRef.current('JEDI', 4000);
+    playSfx('gun_draw', soundFxEnabledRef.current);
+    onSpeakRef.current('Sable listo.');
     animRef.current.shake = 0.4;
-  }, [onFaceChange, onSpeak, soundFxEnabled]);
+  }, []);
 
-  // Handle external reset trigger
+  // Reset externo
   useEffect(() => {
     if (resetTrigger > 0) {
       disarmCombat();
@@ -257,11 +479,14 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       animRef.current.shake = 0;
       animRef.current.jiggle = 0;
       stateRef.current.poke = 0;
+      stateRef.current.burstActive = false;
+      stateRef.current.burstSpoken = false;
+      expRef.current.tipo = null;
       onFaceChange('IDLE', 0);
     }
   }, [resetTrigger, disarmCombat, onFaceChange]);
 
-  // Sync external combat blaster prop
+  // Sincronía de blásters externos
   useEffect(() => {
     if (isCombatBlasterActive && !combatRef.current.isActive) {
       triggerBlasterCombat();
@@ -270,7 +495,13 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     }
   }, [isCombatBlasterActive, triggerBlasterCombat, disarmCombat]);
 
-  // Handle camera shutter flash & high-res snapshot capture
+  // Apagar funMode en caliente desarma
+  useEffect(() => {
+    stateRef.current.funMode = funMode;
+    if (!funMode && combatRef.current.isActive) disarmCombat();
+  }, [funMode, disarmCombat]);
+
+  // Flash de cámara + captura
   useEffect(() => {
     if (isCameraFlashing) {
       flashRef.current.alpha = 1.0;
@@ -278,8 +509,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const timer = setTimeout(() => {
         if (canvasRef.current && onSnapshotReady) {
           try {
-            const dataUrl = canvasRef.current.toDataURL('image/png');
-            onSnapshotReady(dataUrl);
+            onSnapshotReady(canvasRef.current.toDataURL('image/png'));
           } catch (err) {
             console.error('Canvas snapshot error:', err);
           }
@@ -289,13 +519,14 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     }
   }, [isCameraFlashing, onSnapshotReady, soundFxEnabled]);
 
-  // Handle Drink Action
+  // Vaso
   useEffect(() => {
     if (isDrinking) {
       drinkRef.current.isActive = true;
       drinkRef.current.progress = 0;
       onFaceChange('HAPPY', 3200);
       playSfx('sip', soundFxEnabled);
+      gesto('sip');
       const timer = setTimeout(() => {
         drinkRef.current.isActive = false;
         onDrinkComplete?.();
@@ -305,9 +536,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     } else {
       drinkRef.current.isActive = false;
     }
-  }, [isDrinking, onDrinkComplete, onFaceChange, onSpeak, soundFxEnabled]);
+  }, [isDrinking, onDrinkComplete, onFaceChange, onSpeak, soundFxEnabled, gesto]);
 
-  // Handle Hand Wave Action
+  // Mano que saluda
   useEffect(() => {
     if (isWaving) {
       waveRef.current.isActive = true;
@@ -324,55 +555,6 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       waveRef.current.isActive = false;
     }
   }, [isWaving, onWaveComplete, onFaceChange, onSpeak, soundFxEnabled]);
-
-  // Sync props to stateRef
-  useEffect(() => {
-    stateRef.current.face = face;
-    stateRef.current.mode = mode;
-    stateRef.current.energy = energy;
-    stateRef.current.hasVisor = hasVisor;
-
-    const tg = getTargetsFor(face);
-    animRef.current.dilateT = tg.dilate;
-    animRef.current.browT = tg.brow;
-    animRef.current.mouthT = tg.mouth;
-    animRef.current.smileT = tg.smile;
-
-    if (face === 'ANGRY' || face === 'FURY') {
-      animRef.current.shake = 1.4;
-    } else if (face === 'CONCERNED' || face === 'STARTLE') {
-      animRef.current.shake = 0.7;
-    } else if (face === 'HAPPY' || face === 'PURR') {
-      animRef.current.bounce = 0.25;
-    }
-  }, [face, mode, energy, hasVisor]);
-
-  // Keep stable refs for animation loop to avoid re-instantiating requestAnimationFrame
-  const cameraGazeRef = useRef(cameraGaze);
-  const soundFxEnabledRef = useRef(soundFxEnabled);
-  const onBlasterCombatEndRef = useRef(onBlasterCombatEnd);
-  const onSpeakRef = useRef(onSpeak);
-
-  useEffect(() => {
-    cameraGazeRef.current = cameraGaze;
-    if (cameraGaze && cameraGaze.active) {
-      animRef.current.tx = cameraGaze.x * 0.95;
-      animRef.current.ty = cameraGaze.y * 0.65;
-      stateRef.current.lastInteraction = performance.now();
-    }
-  }, [cameraGaze]);
-
-  useEffect(() => {
-    soundFxEnabledRef.current = soundFxEnabled;
-  }, [soundFxEnabled]);
-
-  useEffect(() => {
-    onBlasterCombatEndRef.current = onBlasterCombatEnd;
-    onSpeakRef.current = onSpeak;
-  }, [onBlasterCombatEnd, onSpeak]);
-
-  const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-  const clamp = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
 
   function getTargetsFor(f: FaceState): FaceTargets {
     switch (f) {
@@ -399,14 +581,169 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       case 'STARTLE':
         return { dilate: 0.58, brow: 0.55, mouth: 0.45, smile: -0.25, bounce: 0.2 };
       case 'CURIOSITY':
-        return { dilate: 0.5, brow: 0.28, mouth: 0.16, smile: 0.25, bounce: 0.06 };
+        return { dilate: 0.5, brow: 0.05, mouth: 0.16, smile: 0.25, bounce: 0.06 };
       case 'JEDI':
         return { dilate: 0.4, brow: -0.1, mouth: 0.18, smile: 0.35, bounce: 0.08 };
+      case 'LAUGH':
+        return { dilate: 0.34, brow: -0.2, mouth: 0.2, smile: 1.1, bounce: 0.15 };
+      case 'SURPRISED':
+        return { dilate: 0.62, brow: 0.1, mouth: 0.42, smile: 0.05, bounce: 0.1 };
+      case 'SAD':
+        return { dilate: 0.3, brow: -0.6, mouth: 0.05, smile: -0.5, bounce: 0 };
+      case 'TIRED':
+        return { dilate: 0.28, brow: -0.15, mouth: 0.06, smile: -0.05, bounce: 0 };
+      case 'SING':
+        return { dilate: 0.4, brow: -0.2, mouth: 0.3, smile: 0.7, bounce: 0.1 };
       case 'IDLE':
       default:
         return { dilate: 0.36, brow: 0, mouth: 0.08, smile: 0.15, bounce: 0 };
     }
   }
+
+  /** Reacciones de entrada a una cara (una sola vez por cambio). */
+  const entrarCara = useCallback(
+    (f: FaceState) => {
+      const A = animRef.current;
+      const V = vidaRef.current;
+      const S = stateRef.current;
+      const tg = getTargetsFor(f);
+      A.dilateT = tg.dilate;
+      A.browT = tg.brow;
+      A.mouthT = tg.mouth;
+      A.smileT = tg.smile;
+      S.faceSince = S.t;
+
+      switch (f) {
+        case 'ANGRY':
+        case 'FURY':
+          A.shake = 1.4;
+          break;
+        case 'CONCERNED':
+        case 'STARTLE':
+          A.shake = 0.7;
+          break;
+        case 'HAPPY':
+        case 'PURR':
+          A.bounce = 0.25;
+          break;
+        case 'LAUGH':
+          V.laughAmp = 1;
+          V.laughPhase = 0;
+          A.bounce = 0.2;
+          gesto('risa');
+          break;
+        case 'SURPRISED':
+          V.freeze = 0.35;
+          A.dilate = Math.max(A.dilate, 0.55); // dilatación casi instantánea
+          A.bounce = 0.12;
+          A.blinking = false;
+          A.wink = 0;
+          gesto('sorpresa');
+          break;
+        case 'TIRED':
+          V.yawning = true;
+          V.yawn = 0;
+          gesto('bostezo');
+          break;
+        case 'SAD':
+          gesto('tristeza');
+          break;
+        case 'SING':
+          gesto('canto');
+          break;
+        case 'THINKING':
+          V.hmmIn = 1.6 + Math.random() * 1.2;
+          gesto('thinkHold');
+          break;
+        case 'SLEEPING':
+          gesto('sleepBreathe');
+          break;
+        default:
+          break;
+      }
+    },
+    [gesto]
+  );
+
+  // Props → estado de escena
+  useEffect(() => {
+    const S = stateRef.current;
+    const changed = S.face !== face;
+    S.prevFace = S.face;
+    S.face = face;
+    S.mode = mode;
+    S.energy = energy;
+    S.hasVisor = hasVisor;
+    S.showHud = showHud;
+    if (changed || S.t < 0.01) entrarCara(face);
+  }, [face, mode, energy, hasVisor, showHud, entrarCara]);
+
+  // ───────────────────────── capa de expresión ─────────────────────────
+  const iniciarExpresion = useCallback(
+    (e: Emocion) => {
+      const X = expRef.current;
+      const A = animRef.current;
+      const V = vidaRef.current;
+      if (e === 'neutral') {
+        X.tipo = null;
+        return;
+      }
+      X.tipo = e;
+      X.t = 0;
+      X.dur = EXPRESION_DUR[e] ?? 2.8;
+      X.nextPulse = 1.1;
+      switch (e) {
+        case 'risa':
+          V.laughAmp = Math.max(V.laughAmp, 0.9);
+          V.laughPhase = 0;
+          A.bounce = Math.max(A.bounce, 0.15);
+          break;
+        case 'sorpresa':
+          V.freeze = 0.25;
+          A.dilate = Math.min(0.7, A.dilate + 0.14);
+          A.bounce = Math.max(A.bounce, 0.1);
+          A.blinking = false;
+          A.wink = 0;
+          break;
+        case 'molesto':
+          A.shake = Math.max(A.shake, 0.35);
+          break;
+        case 'feliz':
+          A.bounce = Math.max(A.bounce, 0.18);
+          break;
+        case 'orgullo':
+          A.bounce = Math.max(A.bounce, 0.22);
+          break;
+        case 'curioso':
+          A.bounce = Math.max(A.bounce, 0.06);
+          break;
+        case 'travieso':
+          A.blinking = true;
+          A.phase = 0;
+          A.double = false;
+          A.wink = 1; // guiño con el ojo derecho
+          break;
+        default:
+          break;
+      }
+      const g = GESTO_POR_EMOCION[e];
+      if (g) gesto(g);
+    },
+    [gesto]
+  );
+
+  useEffect(() => {
+    if (emocion) iniciarExpresion(emocion);
+  }, [emocion, iniciarExpresion]);
+
+  useEffect(() => {
+    cameraGazeRef.current = cameraGaze;
+    if (cameraGaze && cameraGaze.active) {
+      animRef.current.tx = cameraGaze.x * 0.95;
+      animRef.current.ty = cameraGaze.y * 0.65;
+      stateRef.current.lastInteraction = performance.now();
+    }
+  }, [cameraGaze]);
 
   const scheduleBlink = useCallback((type: 'single' | 'double' | 'wink' = 'single') => {
     const A = animRef.current;
@@ -418,30 +755,21 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   }, []);
 
   const addShockwave = (x: number, y: number, color: string) => {
-    animRef.current.shockwaves.push({
-      id: Math.random(),
-      x,
-      y,
-      radius: 6,
-      maxRadius: 220,
-      alpha: 1,
-      color,
-    });
-    // Limit to 5 active ripples
-    if (animRef.current.shockwaves.length > 5) {
-      animRef.current.shockwaves.shift();
-    }
+    animRef.current.shockwaves.push({ id: Math.random(), x, y, radius: 6, maxRadius: 220, alpha: 1, color });
+    if (animRef.current.shockwaves.length > 5) animRef.current.shockwaves.shift();
   };
 
-  // Main Canvas Render Loop
+  // ───────────────────────── bucle principal ─────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
+    ensureRoundRect(ctx);
 
-    let animId: number;
+    let animId = 0;
     let lastTime = performance.now();
+    let running = false;
 
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -452,9 +780,36 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       canvas.style.width = `${w}px`;
       canvas.style.height = `${h}px`;
     };
-
     window.addEventListener('resize', resize);
     resize();
+
+    /** Sacudida de risa compartida por la cara LAUGH y la expresión 'risa'. */
+    const reir = (V: Vida, dt: number) => {
+      if (V.laughAmp <= 0.01) {
+        V.laughAmp = 0;
+        return;
+      }
+      V.laughPhase += dt * Math.PI * 2 * 5; // ~5 Hz
+      V.laughAmp *= 1 - dt * 0.42;
+      const s = Math.abs(Math.sin(V.laughPhase));
+      V.mouthExtra += V.laughAmp * (0.22 + 0.5 * s);
+      V.jolt += V.laughAmp * 0.1 * s;
+      V.tiltT += V.laughAmp * 0.06 * Math.sin(V.laughPhase * 0.5);
+      V.browLiftT += V.laughAmp * 0.3;
+      V.smileExtra += V.laughAmp * 0.5;
+    };
+
+    /** Balanceo y chispas de canto (cara SING y expresión 'canto'). */
+    const cantar = (V: Vida, t: number, lip: number, dt: number, baseR: number, w: number) => {
+      V.swayX = Math.sin(t * 1.7) * 0.07 * w;
+      V.tiltT += Math.sin(t * 1.7) * 0.05 * w;
+      V.jolt += Math.abs(Math.sin(t * 3.4)) * 0.02 * lip * w;
+      V.sparkAcc += dt * (1.5 + lip * 14) * w;
+      while (V.sparkAcc > 1) {
+        V.sparkAcc -= 1;
+        emitirChispa(V.sparkles, (Math.random() - 0.5) * baseR * 1.6, baseR * 1.25, baseR);
+      }
+    };
 
     const render = (now: number) => {
       const dt = Math.min((now - lastTime) / 1000, 0.06);
@@ -462,27 +817,214 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
 
       const S = stateRef.current;
       const A = animRef.current;
+      const V = vidaRef.current;
+      const X = expRef.current;
       S.t += dt;
+      const age = S.t - S.faceSince;
+      const lip = clamp(lipRef.current, 0, 1);
+      if (lip > 0.03) {
+        S.lipSeen = lip;
+        S.lipSeenAt = S.t;
+      }
+      const W = canvas.width;
+      const H = canvas.height;
+      const baseR = Math.min(W * 0.115, H * 0.22);
 
-      // Animate visor drop (LOOI sunglasses)
+      // Despertar: párpados de 0 → 1 con leve rebote en los primeros 1.5 s
+      V.wakeT += dt;
+      V.wake = V.wakeT < 0.12 ? 0 : V.wakeT > WAKE_S + 0.12 ? 1 : backOut((V.wakeT - 0.12) / WAKE_S);
+      const awake = V.wakeT > WAKE_S + 0.1;
+
+      // Visor
       const targetVisor = S.hasVisor ? 1 : 0;
       A.visorDrop += (targetVisor - A.visorDrop) * Math.min(1, dt * 4.2);
 
-      // Autonomous Blink Timer
-      if (S.face !== 'SLEEPING') {
+      // ── metas de la capa viva según cara ──
+      const M = metasDeCara(S.face, S.t, age);
+      V.lidT = M.lid;
+      V.wideT = M.wide;
+      V.browLiftT = M.browLift;
+      V.browAsymT = M.browAsym;
+      V.tiltT = M.tilt;
+      V.liftT = M.lift;
+      V.gazeXT = M.gazeX;
+      V.gazeYT = M.gazeY;
+      V.breathRate = M.breathRate;
+      V.blinkSpeed = M.blinkSpeed;
+      V.mouthExtra = 0;
+      V.browExtra = 0;
+      V.smileExtra = 0;
+      V.dilateExtra = 0;
+      V.mouthSkewT = 0;
+      V.swayX = 0;
+      V.jolt = 0;
+      let energiaT = (ENERGIA[S.face] ?? 0.45) * (0.55 + 0.45 * clamp(S.energy / 100, 0, 1));
+      let mouthGain = S.face === 'SING' ? 1.0 : 0.78;
+      let ringOn = S.face === 'SPEAKING' || S.face === 'SING';
+
+      // Dinámicas propias de cada cara
+      if (S.face === 'LAUGH') reir(V, dt);
+      if (S.face === 'SING') cantar(V, S.t, lip, dt, baseR, 1);
+      if (S.face === 'LISTENING') {
+        V.dilateExtra += 0.03 * Math.sin(S.t * 2);
+        if (now - S.lastInteraction > 1200) {
+          A.tx = approach(A.tx, 0, 1.4, dt);
+          A.ty = approach(A.ty, 0, 1.4, dt);
+        }
+      }
+      if (V.yawning) {
+        V.yawn += dt / 1.9;
+        const k = Math.sin(Math.PI * clamp(V.yawn, 0, 1));
+        V.mouthExtra += k * 0.85;
+        V.lidT *= 1 - 0.45 * k;
+        V.browLiftT += k * 0.2;
+        V.tiltT += k * 0.03;
+        if (V.yawn >= 1) {
+          V.yawning = false;
+          V.yawn = 0;
+        }
+      }
+      // "Hmm" pensativo
+      const pensando = S.face === 'THINKING' || X.tipo === 'pensando';
+      if (pensando) {
+        V.hmmIn -= dt;
+        if (V.hmmIn <= 0) {
+          V.hmm = 1;
+          V.hmmIn = 2.6 + Math.random() * 2.2;
+          gesto('hmm');
+        }
+      }
+      if (V.hmm > 0.01) {
+        V.hmm *= 1 - dt * 2.6;
+        V.browLiftT += V.hmm * 0.25;
+        V.mouthExtra += V.hmm * 0.1;
+        V.jolt += V.hmm * 0.03;
+        V.dilateExtra += V.hmm * 0.05;
+      } else V.hmm = 0;
+
+      // ── capa de expresión (emoción del cerebro) sobre la cara base ──
+      if (X.tipo) {
+        X.t += dt;
+        if (X.t >= X.dur) X.tipo = null;
+      }
+      if (X.tipo) {
+        const w = smoothstep(X.t / 0.3) * smoothstep((X.dur - X.t) / 0.7);
+        switch (X.tipo) {
+          case 'feliz':
+            V.smileExtra += 0.55 * w;
+            V.browExtra -= 0.15 * w;
+            energiaT += 0.3 * w;
+            break;
+          case 'risa':
+            X.nextPulse -= dt;
+            if (X.nextPulse <= 0) {
+              V.laughAmp = Math.max(V.laughAmp, 0.65);
+              X.nextPulse = 1.1 + Math.random() * 0.4;
+            }
+            if (S.face !== 'LAUGH') reir(V, dt);
+            energiaT += 0.4 * w;
+            break;
+          case 'sorpresa':
+            V.browLiftT += 1.0 * w;
+            V.wideT += 0.1 * w;
+            V.dilateExtra += 0.18 * w;
+            V.mouthExtra += 0.2 * w;
+            break;
+          case 'curioso':
+            V.tiltT += 0.12 * w;
+            V.browAsymT += 0.6 * w;
+            V.browLiftT += 0.25 * w;
+            V.dilateExtra += 0.08 * w;
+            break;
+          case 'pensando':
+            V.gazeXT += -0.4 * w;
+            V.gazeYT += -0.35 * w;
+            V.browAsymT += 0.3 * w;
+            break;
+          case 'preocupado':
+            V.browExtra += 0.45 * w;
+            V.smileExtra -= 0.35 * w;
+            V.lidT *= 1 - 0.1 * w;
+            break;
+          case 'triste':
+            V.browExtra -= 0.55 * w;
+            V.lidT *= 1 - 0.3 * w;
+            V.gazeYT += 0.3 * w;
+            V.smileExtra -= 0.5 * w;
+            V.breathRate = 1 - 0.4 * w;
+            energiaT *= 1 - 0.5 * w;
+            break;
+          case 'molesto':
+            V.browExtra += 0.7 * w;
+            V.dilateExtra -= 0.12 * w;
+            V.smileExtra -= 0.55 * w;
+            V.lidT *= 1 - 0.12 * w;
+            break;
+          case 'cansado':
+            V.lidT *= 1 - 0.4 * w;
+            V.gazeYT += 0.12 * w;
+            V.browExtra -= 0.1 * w;
+            V.blinkSpeed = 1 - 0.45 * w;
+            V.breathRate = 1 - 0.3 * w;
+            energiaT *= 1 - 0.6 * w;
+            break;
+          case 'carino':
+            V.smileExtra += 0.45 * w;
+            V.lidT *= 1 - 0.2 * w;
+            V.dilateExtra += 0.08 * w;
+            V.tiltT += 0.05 * w;
+            break;
+          case 'orgullo':
+            V.liftT += 0.08 * w;
+            V.smileExtra += 0.55 * w;
+            V.browExtra -= 0.2 * w;
+            V.browLiftT += 0.15 * w;
+            break;
+          case 'travieso':
+            V.smileExtra += 0.45 * w;
+            V.mouthSkewT += 0.8 * w;
+            V.browAsymT += 0.5 * w;
+            break;
+          case 'canto':
+            cantar(V, S.t, lip, dt, baseR, w);
+            V.smileExtra += 0.4 * w;
+            mouthGain = 1.0;
+            ringOn = ringOn || lip > 0.02;
+            energiaT += 0.4 * w;
+            break;
+          default:
+            break;
+        }
+      }
+
+      // ── suavizados de la capa viva ──
+      V.lid = approach(V.lid, V.lidT, 4, dt);
+      V.wide = approach(V.wide, V.wideT, S.face === 'SURPRISED' && age < 0.5 ? 18 : 5, dt);
+      V.browLift = approach(V.browLift, V.browLiftT, X.tipo === 'sorpresa' || S.face === 'SURPRISED' ? 14 : 5, dt);
+      V.browAsym = approach(V.browAsym, V.browAsymT, 4, dt);
+      V.tilt = approach(V.tilt, V.tiltT, 3.2, dt);
+      V.lift = approach(V.lift, V.liftT, 3, dt);
+      V.gazeX = approach(V.gazeX, V.gazeXT, 2.8, dt);
+      V.gazeY = approach(V.gazeY, V.gazeYT, 2.8, dt);
+      V.mouthSkew = approach(V.mouthSkew, V.mouthSkewT, 5, dt);
+      V.energia = approach(V.energia, clamp(energiaT, 0, 1), 1.5, dt);
+      if (V.freeze > 0) V.freeze -= dt;
+
+      // ── parpadeo autónomo ──
+      if (S.face !== 'SLEEPING' && awake && V.freeze <= 0) {
         A.next -= dt;
         if (A.next <= 0 && !A.blinking) {
           const r = Math.random();
           if (r < 0.18) scheduleBlink('double');
-          else if (r < 0.28) scheduleBlink('wink');
+          else if (r < 0.26) scheduleBlink('wink');
           else scheduleBlink('single');
-          A.next = 3.2 + Math.random() * 4.2;
+          V.longBlink = V.blinkSpeed < 0.7 && Math.random() < 0.35;
+          A.next = (3.2 + Math.random() * 4.2) / Math.max(0.45, V.blinkSpeed);
         }
       }
-
-      // Blink animation progression
       if (A.blinking) {
-        A.phase += dt * (A.double ? 5.2 : 3.8);
+        const hold = V.longBlink && !A.double && A.phase > 1.3 && A.phase < 1.85 ? 0.35 : 1;
+        A.phase += dt * (A.double ? 5.2 : 3.8) * V.blinkSpeed * hold;
         let b = 1;
         if (A.phase < Math.PI) {
           b = Math.max(0.04, Math.cos(A.phase));
@@ -492,101 +1034,107 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
           A.blinking = false;
           A.phase = 0;
           A.wink = 0;
+          V.longBlink = false;
           b = 1;
         }
         A.blink = b;
         A.blinkL = A.wink > 0 ? 1 : b;
         A.blinkR = A.wink < 0 ? 1 : b;
       } else if (S.face === 'SLEEPING') {
-        A.blink = 0.06;
-        A.blinkL = 0.06;
-        A.blinkR = 0.06;
+        A.blink = A.blinkL = A.blinkR = 0.06;
       } else if (S.face === 'WINK') {
         A.blinkL = 1;
         A.blinkR = 0.08;
       } else if (S.face === 'PURR') {
-        A.blink = 0.22;
-        A.blinkL = 0.22;
-        A.blinkR = 0.22;
+        A.blink = A.blinkL = A.blinkR = 0.22;
       } else {
-        A.blink = 1;
-        A.blinkL = 1;
-        A.blinkR = 1;
+        A.blink = A.blinkL = A.blinkR = 1;
       }
 
-      // Idle Micro-Saccades if not tracked by camera or touch
-      if (now - S.lastInteraction > 3500 && (!cameraGazeRef.current || !cameraGazeRef.current.active)) {
+      // ── mirada: micro-sacadas hacia el último toque, luego vuelta al centro ──
+      const camActive = !!(cameraGazeRef.current && cameraGazeRef.current.active);
+      const pointerDown = touchState.current.downTime > 0;
+      if (V.freeze <= 0 && !camActive && !pointerDown) {
         A.saccadeIn -= dt;
         if (A.saccadeIn <= 0) {
-          A.tx = (Math.random() - 0.5) * 0.45;
-          A.ty = (Math.random() - 0.5) * 0.3;
-          A.saccadeIn = 1.4 + Math.random() * 2.6;
+          const lt = V.lastTouch;
+          const ageT = lt ? (now - lt.t) / 1000 : 99;
+          if (lt && ageT > 0.5 && ageT < 7) {
+            const k = 1 - ageT / 7; // retorno lento al centro
+            A.tx = lt.x * 1.4 * k + (Math.random() - 0.5) * 0.14;
+            A.ty = lt.y * 0.9 * k + (Math.random() - 0.5) * 0.1;
+            A.saccadeIn = 0.45 + Math.random() * 0.9;
+          } else if (now - S.lastInteraction > 3500) {
+            A.tx = (Math.random() - 0.5) * 0.45;
+            A.ty = (Math.random() - 0.5) * 0.3;
+            A.saccadeIn = 1.4 + Math.random() * 2.6;
+          }
         }
       }
+      A.lx = approach(A.lx, clamp(A.tx + V.gazeX, -1, 1), 3.4, dt);
+      A.ly = approach(A.ly, clamp(A.ty + V.gazeY, -1, 1), 3.4, dt);
 
-      // Look interpolation with elastic damping
-      A.lx += (A.tx - A.lx) * Math.min(1, dt * 3.4);
-      A.ly += (A.ty - A.ly) * Math.min(1, dt * 3.4);
+      // ── parámetros faciales ──
+      const dilRate = S.face === 'SURPRISED' && age < 0.5 ? 16 : 4.2;
+      A.dilate = approach(A.dilate, A.dilateT, dilRate, dt);
+      const hablaConLabio = (S.face === 'SPEAKING' || S.face === 'SING' || X.tipo === 'canto') && lip > 0.02;
+      const sinSenal = S.face === 'SPEAKING' && S.t - S.lipSeenAt > 1.5;
+      let mouthWant: number;
+      if (hablaConLabio) {
+        mouthWant = 0.1 + lip * mouthGain;
+      } else if (sinSenal) {
+        // Sin señal de labios: visema sintético para que nunca hable "mudo".
+        mouthWant = 0.12 + 0.3 * Math.abs(Math.sin(S.t * 11)) * (0.6 + 0.4 * Math.sin(S.t * 3.1));
+      } else {
+        mouthWant = A.mouthT + (S.face === 'IDLE' ? 0.04 * Math.sin(S.t * 1.3) : 0);
+      }
+      A.mouth = approach(A.mouth, mouthWant, hablaConLabio ? 16 : 9, dt);
+      A.smile = approach(A.smile, A.smileT, 4.2, dt);
+      A.brow = approach(A.brow, A.browT, 3.2, dt);
 
-      // Facial Parameter Lerping
-      A.dilate += (A.dilateT - A.dilate) * Math.min(1, dt * 4.2);
-      const lip = Math.min(1, lipRef.current);
-      const canta = S.face === 'HAPPY' && lip > 0.04;
-      const mouthWant =
-        S.face === 'SPEAKING' || canta
-          ? 0.1 + lip * (canta ? 0.9 : 0.78)
-          : A.mouthT + (S.face === 'IDLE' ? 0.04 * Math.sin(S.t * 1.3) : 0);
-      A.mouth += (mouthWant - A.mouth) * Math.min(1, dt * (canta ? 14 : 9));
-      A.smile += (A.smileT - A.smile) * Math.min(1, dt * 4.2);
-      A.brow += (A.browT - A.brow) * Math.min(1, dt * 3.2);
+      // Anillo de voz
+      const ringT = ringOn ? lip : 0;
+      V.ring = approach(V.ring, ringT, ringT > V.ring ? 18 : 5, dt);
+      V.ring2 = approach(V.ring2, V.ring, 4, dt);
 
-      // Organic Secondary Oscillations
-      A.breath = 1 + 0.02 * Math.sin(S.t * 2.2);
+      // Oscilaciones secundarias
+      V.breathPhase += dt * 2.2 * V.breathRate;
+      A.breath = 1 + 0.02 * Math.sin(V.breathPhase);
       A.pulse = (A.pulse + dt * 0.8) % 1;
       A.think += dt * 3.5;
       A.sleepZ += dt;
 
-      // Jiggle and decay
       if (A.jiggle > 0.001) A.jiggle *= 0.945;
       if (A.tickle > 0.001) A.tickle *= 0.96;
       if (A.shake > 0.001) A.shake *= 0.94;
       if (A.bounce > 0.001) A.bounce *= 0.965;
-
-      // Squashing
       A.squashX = 1 + A.jiggle * 0.18 * Math.sin(S.t * 7);
       A.squashY = 1 - A.jiggle * 0.14 * Math.sin(S.t * 7);
 
-      // Update and filter shockwaves
+      // Ambiente
+      actualizarMotas(V.motes, dt, V.energia, S.t);
+      actualizarChispas(V.sparkles, dt);
       for (let i = A.shockwaves.length - 1; i >= 0; i--) {
         const sw = A.shockwaves[i];
         sw.radius += dt * 72;
         sw.alpha = Math.max(0, 1 - sw.radius / sw.maxRadius);
-        if (sw.alpha <= 0) {
-          A.shockwaves.splice(i, 1);
-        }
+        if (sw.alpha <= 0) A.shockwaves.splice(i, 1);
       }
 
-      // Update Combat Blaster System
+      // ── fun pack: blásters / sable ──
       const C = combatRef.current;
       if (C.isActive && C.weapon === 'jedi') {
         C.level = Math.min(1, C.level + dt * 5);
       } else if (C.isActive) {
-
-        // Only extend level while shots remain
-        if (C.shotsRemaining > 0) {
-          C.level = Math.min(1, C.level + dt * 4.0);
-        }
-
-        // Rapid fire bursts when blasters are extended
+        if (C.shotsRemaining > 0) C.level = Math.min(1, C.level + dt * 4.0);
         if (C.level > 0.75 && C.shotsRemaining > 0 && now - C.lastShotTime > 140) {
           C.lastShotTime = now;
           C.shotsRemaining--;
           const side = C.shotsRemaining % 2 === 0 ? -1 : 1;
-          const originX = canvas.width / 2 + (side < 0 ? -canvas.width * 0.28 : canvas.width * 0.28);
-          const originY = canvas.height / 2;
-          const targetX = canvas.width * 0.12 + Math.random() * (canvas.width * 0.76);
-          const targetY = canvas.height * 0.12 + Math.random() * (canvas.height * 0.76);
-
+          const originX = W / 2 + (side < 0 ? -W * 0.28 : W * 0.28);
+          const originY = H / 2;
+          const targetX = W * 0.12 + Math.random() * (W * 0.76);
+          const targetY = H * 0.12 + Math.random() * (H * 0.76);
           C.lasers.push({
             id: Math.random(),
             startX: originX,
@@ -602,14 +1150,11 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
           playSfx('laser', soundFxEnabledRef.current);
           A.shake = 1.6;
         }
-
-        // Advance laser bolts
         for (let i = C.lasers.length - 1; i >= 0; i--) {
           const l = C.lasers[i];
           l.progress += dt * 5.0;
           l.currentX = l.startX + (l.targetX - l.startX) * Math.min(1, l.progress);
           l.currentY = l.startY + (l.targetY - l.startY) * Math.min(1, l.progress);
-
           if (l.progress >= 1) {
             C.impacts.push({
               id: Math.random(),
@@ -622,17 +1167,11 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
             C.lasers.splice(i, 1);
           }
         }
-
-        // Fade impacts on screen glass
         for (let i = C.impacts.length - 1; i >= 0; i--) {
           const imp = C.impacts[i];
           imp.alpha -= dt * 0.8;
-          if (imp.alpha <= 0) {
-            C.impacts.splice(i, 1);
-          }
+          if (imp.alpha <= 0) C.impacts.splice(i, 1);
         }
-
-        // Retract weapons cleanly once all shots fired
         if (C.shotsRemaining <= 0) {
           C.level = Math.max(0, C.level - dt * 3.5);
           if (C.level <= 0.02) {
@@ -642,7 +1181,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
             C.impacts = [];
             A.shake = 0;
             onBlasterCombatEndRef.current?.();
-            onFaceChange('IDLE', 0);
+            onFaceChangeRef.current('IDLE', 0);
             onSpeakRef.current?.('Sistemas de armas enfriados y retraídos.');
           }
         }
@@ -655,1613 +1194,209 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
         }
       }
 
-      // Update Drink and Wave Progress
       const D = drinkRef.current;
-      if (D.isActive) {
-        D.progress = Math.min(1, D.progress + dt * 3.0);
-      } else {
-        D.progress = Math.max(0, D.progress - dt * 3.5);
-      }
-
+      D.progress = D.isActive ? Math.min(1, D.progress + dt * 3.0) : Math.max(0, D.progress - dt * 3.5);
       const Wv = waveRef.current;
-      if (Wv.isActive) {
-        Wv.progress = Math.min(1, Wv.progress + dt * 3.0);
-      } else {
-        Wv.progress = Math.max(0, Wv.progress - dt * 3.5);
-      }
+      Wv.progress = Wv.isActive ? Math.min(1, Wv.progress + dt * 3.0) : Math.max(0, Wv.progress - dt * 3.5);
+      if (flashRef.current.alpha > 0.01) flashRef.current.alpha = Math.max(0, flashRef.current.alpha - dt * 3.2);
 
-      // Update Camera Flash Alpha
-      if (flashRef.current.alpha > 0.01) {
-        flashRef.current.alpha = Math.max(0, flashRef.current.alpha - dt * 3.2);
-      }
-
-      // Clear & Draw
-      drawScene(ctx, canvas, S, A);
-
+      drawScene(ctx, canvas, S, A, V, lip);
       animId = requestAnimationFrame(render);
     };
 
+    const start = () => {
+      if (running) return;
+      running = true;
+      lastTime = performance.now();
+      animId = requestAnimationFrame(render);
+    };
+    const stop = () => {
+      running = false;
+      cancelAnimationFrame(animId);
+    };
     const onVis = () => {
-      if (document.hidden) cancelAnimationFrame(animId);
-      else animId = requestAnimationFrame(render);
+      if (document.hidden) stop();
+      else start();
     };
     document.addEventListener('visibilitychange', onVis);
-
-    animId = requestAnimationFrame(render);
+    if (!document.hidden) start();
 
     return () => {
       document.removeEventListener('visibilitychange', onVis);
-      cancelAnimationFrame(animId);
+      stop();
       window.removeEventListener('resize', resize);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Color Palette per Mode (High-contrast OLED palette inspired by LOOI & Boardroom Tablets)
-  function getThemeColors(m: Mode) {
-    switch (m) {
-      case 'GOLD':
-        return {
-          primary: '#F5C542',
-          glow: '#FFE17D',
-          core: '#FFF4C2',
-          accent: '#FFB800',
-          dark: '#3D2800',
-        };
-      case 'CREATIVE':
-        return {
-          primary: '#05E1FF',
-          glow: '#67EFFF',
-          core: '#E0FAFF',
-          accent: '#FF4DF0',
-          dark: '#002530',
-        };
-      case 'ANALYTICAL':
-        return {
-          primary: '#05E1FF',
-          glow: '#4FE4FF',
-          core: '#D8F7FF',
-          accent: '#00FFA3',
-          dark: '#00242E',
-        };
-      case 'STRATEGIC':
-        return {
-          primary: '#05E1FF',
-          glow: '#4AE1FF',
-          core: '#D9F8FF',
-          accent: '#4C82FF',
-          dark: '#001E2B',
-        };
-      case 'EXPLORER':
-        return {
-          primary: '#05E1FF',
-          glow: '#64E5FF',
-          core: '#E3FAFF',
-          accent: '#26C6DA',
-          dark: '#00222B',
-        };
-      case 'MINING':
-        return {
-          primary: '#05E1FF',
-          glow: '#59E3FF',
-          core: '#DDF9FF',
-          accent: '#FF9E2C',
-          dark: '#00222B',
-        };
-      case 'GUARDIAN':
-      default:
-        return {
-          primary: '#05E1FF',
-          glow: '#5CE4FF',
-          core: '#E0F9FF',
-          accent: '#00C8FF',
-          dark: '#001E29',
-        };
-    }
-  }
-
-  // Master Canvas Drawing Function
+  // ───────────────────────── dibujo de la escena ─────────────────────────
   function drawScene(
     ctx: CanvasRenderingContext2D,
     canvas: HTMLCanvasElement,
     S: typeof stateRef.current,
-    A: AnimationEngineState
+    A: AnimationEngineState,
+    V: Vida,
+    lip: number
   ) {
     const W = canvas.width;
     const H = canvas.height;
-    if (typeof (ctx as any).roundRect !== 'function') {
-      (ctx as any).roundRect = function (this: CanvasRenderingContext2D, x: number, y: number, w: number, h: number) {
-        this.rect(x, y, w, h);
-      };
-    }
+    const theme = getThemeColors(S.mode);
+    const fun = S.funMode;
+    const E: Escena = { face: S.face, mode: S.mode, t: S.t, lip, funMode: fun };
 
-    // Pitch Black OLED Canvas
+    // OLED negro
     ctx.fillStyle = '#000000';
     ctx.fillRect(0, 0, W, H);
 
-    // Subtle Vignette Glow according to energy
-    const theme = getThemeColors(S.mode);
-    const bgRad = ctx.createRadialGradient(W / 2, H / 2, H * 0.1, W / 2, H / 2, W * 0.65);
-    bgRad.addColorStop(0, theme.primary + '0a');
-    bgRad.addColorStop(1, '#000000');
-    ctx.fillStyle = bgRad;
-    ctx.fillRect(0, 0, W, H);
-
-    // Draw touch shockwaves
-    for (const sw of A.shockwaves) {
-      ctx.save();
-      ctx.strokeStyle = sw.color;
-      ctx.globalAlpha = sw.alpha * 0.8;
-      ctx.lineWidth = 3;
-      ctx.shadowColor = sw.color;
-      ctx.shadowBlur = 16;
-      ctx.beginPath();
-      ctx.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2);
-      ctx.stroke();
-
-      // Outer faint echo ring
-      if (sw.radius > 20) {
-        ctx.globalAlpha = sw.alpha * 0.35;
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(sw.x, sw.y, sw.radius * 0.7, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-      ctx.restore();
-    }
-
-    // Geometry Metrics (Desk Stand Landscape Ratio)
     const baseR = Math.min(W * 0.115, H * 0.22);
     const eyeSpacing = baseR * 1.58;
     const cx = W / 2;
-    const cy = H / 2 + Math.sin(S.t * 1.15) * (baseR * 0.018) - A.bounce * baseR;
+    const cy = H / 2 + Math.sin(S.t * 1.15) * (baseR * 0.018) - (A.bounce + V.lift + V.jolt) * baseR;
+
+    // Halo exterior que respira
+    const breathK = (A.breath - 1) / 0.02; // −1..1
+    const haloI = (0.45 + 0.22 * breathK + V.energia * 0.35 + V.ring * 0.4) * clamp(V.wake, 0, 1);
+    drawHalo(ctx, cx, cy, baseR, theme, haloI);
+
+    // Motas ambientales (detrás de la cara)
+    drawMotes(ctx, W, H, baseR, V.motes, theme, V.energia, A.breath, V.wake, S.t);
+
+    drawShockwaves(ctx, A.shockwaves);
 
     const shakeX = A.shake * (Math.sin(S.t * 37.1) * 0.7 + Math.sin(S.t * 19.3) * 0.3) * 10;
     const shakeY = A.shake * (Math.sin(S.t * 29.7) * 0.6 + Math.cos(S.t * 13.1) * 0.4) * 7;
 
     ctx.save();
-    ctx.translate(cx + shakeX, cy + shakeY);
+    ctx.translate(cx + shakeX + V.swayX * baseR, cy + shakeY);
+    ctx.rotate(V.tilt);
     ctx.scale(A.squashX, A.squashY);
 
-    if (showHud) {
-      drawModeCrown(ctx, 0, -baseR * 1.45, baseR, S.mode, theme, S.t, A);
+    if (fun && S.showHud) {
+      drawModeCrown(ctx, 0, -baseR * 1.45, baseR, S.mode, theme, S.t);
     }
 
-    // 2. Draw the Two Volumetric Living Eyes (LOOI Style)
-    const leftX = -eyeSpacing;
-    const rightX = eyeSpacing;
-    const eyeY = 0;
+    // Ojos
+    drawLivingEye(ctx, -eyeSpacing, 0, baseR, theme, E, A, V, -1);
+    drawLivingEye(ctx, eyeSpacing, 0, baseR, theme, E, A, V, 1);
 
-    drawLivingEye(ctx, leftX, eyeY, baseR, theme, S, A, -1);
-    drawLivingEye(ctx, rightX, eyeY, baseR, theme, S, A, 1);
-
-    // 3. Draw Cyber Red Visor Sunglasses if equipped (LOOI Photo 2)
     if (A.visorDrop > 0.01) {
-      drawLooiVisor(ctx, 0, eyeY, baseR, eyeSpacing, A.visorDrop, S.t);
+      drawLooiVisor(ctx, 0, 0, baseR, eyeSpacing, A.visorDrop, S.t);
     }
 
-    // 4. Draw Reactive Mouth Line
-    drawCyberMouth(ctx, 0, baseR * 1.25, baseR, theme.primary, S, A);
+    // Boca
+    drawCyberMouth(ctx, 0, baseR * 1.25, baseR, theme, E, A, V);
 
-    if (showHud) {
+    // Chispas de canto (suben desde la boca)
+    drawChispas(ctx, V.sparkles, theme, S.t);
+
+    if (fun && S.showHud) {
       drawModeEnvironment(ctx, baseR, S.mode, theme, S.t);
     }
 
-    // 6. Dual Retractable Combat Blaster Cannons (Rage trigger)
-    if (combatRef.current.weapon === 'jedi' || S.face === 'JEDI') {
-      drawJediSaber(ctx, canvas.width, canvas.height, S.t);
-    } else if (combatRef.current.level > 0.005) {
-      drawCombatBlasterTurrets(ctx, baseR, eyeSpacing, combatRef.current, S.t);
+    if (fun) {
+      if (combatRef.current.weapon === 'jedi' || S.face === 'JEDI') {
+        drawJediSaber(ctx, W, H, S.t);
+      } else if (combatRef.current.level > 0.005) {
+        drawCombatBlasterTurrets(ctx, baseR, eyeSpacing, combatRef.current, S.t);
+      }
     }
-
-    // 7. Holographic Drink Cup with Ice & Neon Straw
     if (drinkRef.current.progress > 0.005) {
       drawHolographicDrinkCup(ctx, baseR, eyeSpacing, drinkRef.current.progress, S.t);
     }
-
-    // 8. Cute Articulated Cyber-Robotic Waving Hand
     if (waveRef.current.progress > 0.005) {
       drawCyberWavingHand(ctx, baseR, eyeSpacing, waveRef.current.progress, S.t);
     }
-
     ctx.restore();
 
-    // 9. Fullscreen Lasers and Glass Impact Fractures
-    if (combatRef.current.lasers.length > 0 || combatRef.current.impacts.length > 0) {
+    // Anillo de voz (espacio de pantalla, no gira con la cabeza)
+    drawVoiceRing(ctx, cx, cy, baseR, eyeSpacing, theme, V.ring, V.ring2);
+
+    if (fun && (combatRef.current.lasers.length > 0 || combatRef.current.impacts.length > 0)) {
       drawLaserBoltsAndImpacts(ctx, W, H, combatRef.current);
     }
-
-    // 10. Optical Camera Viewfinder & Shutter Flash
     if (cameraFlashLiveRef.current || flashRef.current.alpha > 0.01) {
       drawCameraViewfinderAndFlash(ctx, W, H, flashRef.current.alpha, cameraFlashLiveRef.current);
     }
   }
 
-  // Draw OLED Volumetric Eye (LOOI Inspired)
-  function drawLivingEye(
-    ctx: CanvasRenderingContext2D,
-    ex: number,
-    ey: number,
-    R: number,
-    theme: ReturnType<typeof getThemeColors>,
-    S: typeof stateRef.current,
-    A: AnimationEngineState,
-    side: number // -1 = Left, 1 = Right
-  ) {
-    const open = side < 0 ? A.blinkL : A.blinkR;
-    const isHappy = S.face === 'HAPPY' || S.face === 'PURR' || A.smile > 0.75;
-    const rx = R;
-    const ry = Math.max(2, R * open);
+  // ───────────────────────── mapa táctil ─────────────────────────
+  type Zona = 'ojoIzq' | 'ojoDer' | 'frente' | 'barbilla' | 'mejilla' | 'fuera';
+
+  const zonaDe = (clientX: number, clientY: number): Zona => {
+    const canvas = canvasRef.current;
+    if (!canvas) return 'fuera';
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left - rect.width / 2;
+    const y = clientY - rect.top - rect.height / 2;
+    const baseR = Math.min(rect.width * 0.115, rect.height * 0.22);
+    const eyeSpacing = baseR * 1.58;
+    if (Math.hypot(x + eyeSpacing, y) < baseR * 1.1) return 'ojoIzq';
+    if (Math.hypot(x - eyeSpacing, y) < baseR * 1.1) return 'ojoDer';
+    if (y < -baseR * 1.2 && Math.abs(x) < eyeSpacing + baseR * 1.4) return 'frente';
+    if (y > baseR * 0.6 && y < baseR * 2.7 && Math.abs(x) < baseR * 1.9) return 'barbilla';
+    if (y > -baseR * 0.6 && y < baseR * 2.2 && Math.abs(x) < eyeSpacing + baseR * 2.2) return 'mejilla';
+    return 'fuera';
+  };
+
+  const guinar = (side: -1 | 1) => {
+    const A = animRef.current;
+    A.wink = side;
+    A.blinking = true;
+    A.phase = 0;
+    A.double = false;
+    A.jiggle = 0.45;
+    A.bounce = 0.18;
+    A.smileT = 0.9;
+    onFaceChange('WINK', 1600);
+    playSfx('wink', soundFxEnabled);
+    gesto('tapOjo');
+    gesto('wink');
+  };
 
-    ctx.save();
-    ctx.translate(ex, ey);
-
-    // Thinking slight tilt
-    if (S.face === 'THINKING') {
-      ctx.rotate(side * 0.12 * Math.sin(S.t * 2));
-    }
-
-    // Happy Crescent Eyes (When smiling or petted)
-    if (isHappy && open > 0.15) {
-      ctx.save();
-      ctx.strokeStyle = theme.primary;
-      ctx.lineWidth = R * 0.18;
-      ctx.lineCap = 'round';
-      ctx.shadowColor = theme.glow;
-      ctx.shadowBlur = 24;
-
-      ctx.beginPath();
-      // Upward welcoming arc
-      ctx.arc(0, R * 0.18, rx * 0.85, Math.PI * 1.15, Math.PI * 1.85);
-      ctx.stroke();
-
-      // Inner white core
-      ctx.strokeStyle = theme.core;
-      ctx.lineWidth = R * 0.08;
-      ctx.beginPath();
-      ctx.arc(0, R * 0.18, rx * 0.85, Math.PI * 1.2, Math.PI * 1.8);
-      ctx.stroke();
-
-      ctx.restore();
-      ctx.restore();
-      return;
-    }
-
-    // Outer Multi-layer OLED Neon Halo
-    const halo = ctx.createRadialGradient(0, 0, rx * 0.4, 0, 0, rx * 1.45);
-    halo.addColorStop(0, theme.primary + '38');
-    halo.addColorStop(0.65, theme.primary + '12');
-    halo.addColorStop(1, '#00000000');
-    ctx.fillStyle = halo;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, rx * 1.4, ry * 1.4, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Solid Volumetric Glowing Disc (LOOI Hallmark)
-    if (open > 0.1) {
-      ctx.save();
-      // Clip eye boundary for pupil and glyphs
-      ctx.beginPath();
-      ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-      ctx.clip();
-
-      // Deep, rich spherical gradient disc
-      const eyeGrad = ctx.createRadialGradient(
-        A.lx * rx * 0.25,
-        A.ly * ry * 0.25 - ry * 0.1,
-        rx * 0.1,
-        0,
-        0,
-        rx * 1.05
-      );
-      eyeGrad.addColorStop(0, theme.core);
-      eyeGrad.addColorStop(0.35, theme.primary);
-      eyeGrad.addColorStop(0.85, theme.glow + 'cc');
-      eyeGrad.addColorStop(1, theme.dark);
-
-      ctx.fillStyle = eyeGrad;
-      ctx.shadowColor = theme.primary;
-      ctx.shadowBlur = 28;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Draw Mode Specific Eye Glyphs (Faithful to Image 3 Tablets!)
-      // glyphs off — ojo limpio
-
-      // Specular Catchlight Highlights (LOOI's adorable eye reflections)
-      const lookOffsetX = A.lx * rx * 0.32;
-      const lookOffsetY = A.ly * ry * 0.32;
-
-      // Primary top-left catchlight
-      ctx.fillStyle = '#ffffff';
-      ctx.shadowColor = '#ffffff';
-      ctx.shadowBlur = 8;
-      ctx.globalAlpha = 0.95;
-      ctx.beginPath();
-      ctx.arc(
-        lookOffsetX - rx * 0.32,
-        lookOffsetY - ry * 0.32,
-        rx * 0.16 * A.breath,
-        0,
-        Math.PI * 2
-      );
-      ctx.fill();
-
-      // Secondary micro-sparkle bottom-right
-      ctx.globalAlpha = 0.65;
-      ctx.beginPath();
-      ctx.arc(
-        lookOffsetX + rx * 0.28,
-        lookOffsetY + ry * 0.28,
-        rx * 0.08,
-        0,
-        Math.PI * 2
-      );
-      ctx.fill();
-
-      ctx.restore();
-    }
-
-    // Outer Precision Neon Border Ring
-    ctx.strokeStyle = theme.primary;
-    ctx.lineWidth = R * 0.055;
-    ctx.shadowColor = theme.glow;
-    ctx.shadowBlur = 18;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, rx, ry, 0, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Expressive Cyber Eyebrow
-    if (Math.abs(A.brow) > 0.08 || S.face === 'ANGRY' || S.face === 'CONCERNED') {
-      ctx.strokeStyle = theme.primary;
-      ctx.lineWidth = R * 0.07;
-      ctx.lineCap = 'round';
-      ctx.shadowColor = theme.glow;
-      ctx.shadowBlur = 12;
-
-      const browY = -ry * (1.15 + A.brow * 0.28);
-      ctx.beginPath();
-      if (side < 0) {
-        ctx.moveTo(-rx * 0.95, browY - A.brow * R * 0.2);
-        ctx.lineTo(rx * 0.65, browY + A.brow * R * 0.22);
-      } else {
-        ctx.moveTo(rx * 0.95, browY - A.brow * R * 0.2);
-        ctx.lineTo(-rx * 0.65, browY + A.brow * R * 0.22);
-      }
-      ctx.stroke();
-    }
-
-    ctx.restore();
-  }
-
-  // Draw Specific In-Eye Glyphs from User Tablet Image 3
-  function drawModeEyeGlyph(
-    ctx: CanvasRenderingContext2D,
-    rx: number,
-    ry: number,
-    side: number,
-    m: Mode,
-    theme: ReturnType<typeof getThemeColors>,
-    t: number,
-    A: AnimationEngineState
-  ) {
-    ctx.save();
-    ctx.strokeStyle = '#000000';
-    ctx.fillStyle = '#000000';
-    ctx.lineWidth = rx * 0.09;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    ctx.globalAlpha = 0.85;
-
-    const ix = A.lx * rx * 0.2;
-    const iy = A.ly * ry * 0.2;
-
-    switch (m) {
-      case 'MINING':
-        if (side < 0) {
-          // Left Eye: Double Concentric Ring
-          ctx.beginPath();
-          ctx.arc(ix, iy, rx * 0.42, 0, Math.PI * 2);
-          ctx.stroke();
-        } else {
-          // Right Eye: Pickaxe (Laser-cut silhouette)
-          ctx.save();
-          ctx.translate(ix, iy);
-          ctx.rotate(Math.PI * 0.25);
-          // Pickaxe head arc
-          ctx.lineWidth = rx * 0.12;
-          ctx.beginPath();
-          ctx.arc(0, -rx * 0.2, rx * 0.38, Math.PI * 0.2, Math.PI * 0.8);
-          ctx.stroke();
-          // Pickaxe handle
-          ctx.lineWidth = rx * 0.09;
-          ctx.beginPath();
-          ctx.moveTo(0, -rx * 0.2);
-          ctx.lineTo(0, rx * 0.42);
-          ctx.stroke();
-          ctx.restore();
-        }
-        break;
-
-      case 'GOLD':
-        // Dual glowing gold rings
-        ctx.beginPath();
-        ctx.arc(ix, iy, rx * 0.46, 0, Math.PI * 2);
-        ctx.stroke();
-        break;
-
-      case 'CREATIVE':
-        // Paintbrush in both eyes
-        ctx.save();
-        ctx.translate(ix, iy);
-        ctx.rotate(side * -0.4);
-        ctx.lineWidth = rx * 0.08;
-        // Brush handle
-        ctx.beginPath();
-        ctx.moveTo(0, rx * 0.45);
-        ctx.lineTo(0, -rx * 0.1);
-        ctx.stroke();
-        // Brush bristle tip
-        ctx.fillStyle = '#000000';
-        ctx.beginPath();
-        ctx.moveTo(-rx * 0.12, -rx * 0.1);
-        ctx.lineTo(rx * 0.12, -rx * 0.1);
-        ctx.lineTo(0, -rx * 0.42);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-        break;
-
-      case 'ANALYTICAL':
-        if (side < 0) {
-          // Left Eye: Target concentric ring
-          ctx.beginPath();
-          ctx.arc(ix, iy, rx * 0.45, 0, Math.PI * 2);
-          ctx.stroke();
-        } else {
-          // Right Eye: Magnifying glass / Precision scanner
-          ctx.save();
-          ctx.translate(ix, iy);
-          ctx.beginPath();
-          ctx.arc(-rx * 0.08, -ry * 0.08, rx * 0.28, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.beginPath();
-          ctx.moveTo(rx * 0.12, ry * 0.12);
-          ctx.lineTo(rx * 0.38, ry * 0.38);
-          ctx.stroke();
-          ctx.restore();
-        }
-        break;
-
-      case 'STRATEGIC':
-        ctx.save();
-        ctx.translate(ix, iy);
-        ctx.lineWidth = Math.max(1.5, rx * 0.05);
-        // Outer rotated tactical diamond
-        ctx.beginPath();
-        ctx.moveTo(0, -ry * 0.42);
-        ctx.lineTo(rx * 0.42, 0);
-        ctx.lineTo(0, ry * 0.42);
-        ctx.lineTo(-rx * 0.42, 0);
-        ctx.closePath();
-        ctx.stroke();
-
-        // Inner tactical crosshair and focal ring
-        ctx.beginPath();
-        ctx.arc(0, 0, rx * 0.18, 0, Math.PI * 2);
-        ctx.moveTo(-rx * 0.5, 0);
-        ctx.lineTo(-rx * 0.22, 0);
-        ctx.moveTo(rx * 0.22, 0);
-        ctx.lineTo(rx * 0.5, 0);
-        ctx.moveTo(0, -ry * 0.5);
-        ctx.lineTo(0, -ry * 0.22);
-        ctx.moveTo(0, ry * 0.22);
-        ctx.lineTo(0, ry * 0.5);
-        ctx.stroke();
-        ctx.restore();
-        break;
-
-      case 'GUARDIAN':
-        // Heraldic knight shield in both eyes
-        ctx.save();
-        ctx.translate(ix, iy);
-        ctx.beginPath();
-        ctx.moveTo(-rx * 0.28, -ry * 0.32);
-        ctx.lineTo(rx * 0.28, -ry * 0.32);
-        ctx.lineTo(rx * 0.28, 0);
-        ctx.quadraticCurveTo(rx * 0.25, ry * 0.36, 0, ry * 0.44);
-        ctx.quadraticCurveTo(-rx * 0.25, ry * 0.36, -rx * 0.28, 0);
-        ctx.closePath();
-        ctx.stroke();
-        // Shield vertical divider
-        ctx.beginPath();
-        ctx.moveTo(0, -ry * 0.32);
-        ctx.lineTo(0, ry * 0.42);
-        ctx.stroke();
-        ctx.restore();
-        break;
-
-      case 'EXPLORER':
-        if (side < 0) {
-          // Left Eye: Compass with needle
-          ctx.save();
-          ctx.translate(ix, iy);
-          ctx.beginPath();
-          ctx.arc(0, 0, rx * 0.42, 0, Math.PI * 2);
-          ctx.stroke();
-          // Needle
-          ctx.rotate(t * 0.8);
-          ctx.beginPath();
-          ctx.moveTo(0, -rx * 0.38);
-          ctx.lineTo(rx * 0.1, 0);
-          ctx.lineTo(0, rx * 0.38);
-          ctx.lineTo(-rx * 0.1, 0);
-          ctx.closePath();
-          ctx.fill();
-          ctx.restore();
-        } else {
-          // Right Eye: 8-point nautical windrose star
-          ctx.save();
-          ctx.translate(ix, iy);
-          ctx.rotate(t * 0.3);
-          for (let i = 0; i < 4; i++) {
-            ctx.rotate(Math.PI / 4);
-            ctx.beginPath();
-            ctx.moveTo(0, -rx * 0.42);
-            ctx.lineTo(0, rx * 0.42);
-            ctx.stroke();
-          }
-          ctx.restore();
-        }
-        break;
-
-      default:
-        // Standard Pupil
-        ctx.beginPath();
-        ctx.arc(ix, iy, rx * A.dilate * A.breath, 0, Math.PI * 2);
-        ctx.fill();
-        break;
-    }
-
-    ctx.restore();
-  }
-
-  // Draw LOOI Red Cyberpunk Sunglasses (Photo 2)
-  function drawLooiVisor(
-    ctx: CanvasRenderingContext2D,
-    cx: number,
-    cy: number,
-    baseR: number,
-    eyeSpacing: number,
-    dropProgress: number,
-    t: number
-  ) {
-    ctx.save();
-    // Drop down from forehead
-    const startY = cy - baseR * 2.2;
-    const finalY = cy - baseR * 0.15;
-    const curY = lerp(startY, finalY, dropProgress);
-
-    ctx.translate(cx, curY);
-
-    const visorW = eyeSpacing * 2.2 + baseR * 1.5;
-    const visorH = baseR * 1.25;
-
-    // Glowing red drop shadow
-    ctx.shadowColor = '#FF2A4D';
-    ctx.shadowBlur = 28;
-
-    // Outer Futuristic Red Bezel Frame
-    ctx.fillStyle = '#CC0D28';
-    ctx.strokeStyle = '#FF3B5C';
-    ctx.lineWidth = baseR * 0.08;
-    ctx.lineJoin = 'miter';
-
-    ctx.beginPath();
-    // Modern angular shape like LOOI Photo 2
-    ctx.moveTo(-visorW * 0.5, -visorH * 0.4);
-    ctx.lineTo(-visorW * 0.15, -visorH * 0.55);
-    ctx.lineTo(0, -visorH * 0.38); // bridge dip
-    ctx.lineTo(visorW * 0.15, -visorH * 0.55);
-    ctx.lineTo(visorW * 0.5, -visorH * 0.4);
-    ctx.lineTo(visorW * 0.44, visorH * 0.5);
-    ctx.lineTo(0, visorH * 0.3); // bottom center
-    ctx.lineTo(-visorW * 0.44, visorH * 0.5);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-
-    // Dark Tinted Lens Cutout
-    ctx.fillStyle = 'rgba(15, 0, 3, 0.78)';
-    ctx.beginPath();
-    ctx.moveTo(-visorW * 0.45, -visorH * 0.3);
-    ctx.lineTo(-visorW * 0.12, -visorH * 0.45);
-    ctx.lineTo(-visorW * 0.02, -visorH * 0.28);
-    ctx.lineTo(-visorW * 0.02, visorH * 0.22);
-    ctx.lineTo(-visorW * 0.38, visorH * 0.4);
-    ctx.closePath();
-    ctx.fill();
-
-    ctx.beginPath();
-    ctx.moveTo(visorW * 0.45, -visorH * 0.3);
-    ctx.lineTo(visorW * 0.12, -visorH * 0.45);
-    ctx.lineTo(visorW * 0.02, -visorH * 0.28);
-    ctx.lineTo(visorW * 0.02, visorH * 0.22);
-    ctx.lineTo(visorW * 0.38, visorH * 0.4);
-    ctx.closePath();
-    ctx.fill();
-
-    // Star Catchlight Sparkle on Right Lens (Exact from LOOI Photo 2!)
-    const starX = visorW * 0.36;
-    const starY = -visorH * 0.08;
-    const starR = baseR * 0.25 * (0.85 + 0.15 * Math.sin(t * 5));
-
-    ctx.save();
-    ctx.translate(starX, starY);
-    ctx.fillStyle = '#FFFFFF';
-    ctx.shadowColor = '#FFFFFF';
-    ctx.shadowBlur = 18;
-
-    // 4-point glittering star
-    ctx.beginPath();
-    ctx.moveTo(0, -starR);
-    ctx.quadraticCurveTo(0, 0, starR, 0);
-    ctx.quadraticCurveTo(0, 0, 0, starR);
-    ctx.quadraticCurveTo(0, 0, -starR, 0);
-    ctx.quadraticCurveTo(0, 0, 0, -starR);
-    ctx.closePath();
-    ctx.fill();
-    ctx.restore();
-
-    ctx.restore();
-  }
-
-  // Draw Mode Crowns / Emblems (Exact to Photo 3 Tablets)
-  function drawModeCrown(
-    ctx: CanvasRenderingContext2D,
-    cx: number,
-    cy: number,
-    R: number,
-    m: Mode,
-    theme: ReturnType<typeof getThemeColors>,
-    t: number,
-    A: AnimationEngineState
-  ) {
-    ctx.save();
-    ctx.translate(cx, cy);
-
-    ctx.strokeStyle = theme.primary;
-    ctx.fillStyle = theme.primary;
-    ctx.lineWidth = R * 0.06;
-    ctx.shadowColor = theme.glow;
-    ctx.shadowBlur = 20;
-
-    switch (m) {
-      case 'MINING': {
-        // Rotating Mechanical Gear on forehead
-        ctx.save();
-        ctx.rotate(t * 1.5);
-        const gearR = R * 0.48;
-        const teeth = 10;
-        ctx.beginPath();
-        for (let i = 0; i < teeth * 2; i++) {
-          const angle = (i * Math.PI) / teeth;
-          const r = i % 2 === 0 ? gearR : gearR * 0.76;
-          const gx = Math.cos(angle) * r;
-          const gy = Math.sin(angle) * r;
-          if (i === 0) ctx.moveTo(gx, gy);
-          else ctx.lineTo(gx, gy);
-        }
-        ctx.closePath();
-        ctx.stroke();
-        // Inner bore
-        ctx.beginPath();
-        ctx.arc(0, 0, gearR * 0.32, 0, Math.PI * 2);
-        ctx.stroke();
-        ctx.restore();
-        break;
-      }
-
-      case 'GOLD': {
-        // 3D Gold Ingot on forehead (Image 3)
-        ctx.save();
-        const ingotW = R * 0.85;
-        const ingotH = R * 0.38;
-
-        // Ingot Top Face (bright metallic gold)
-        const topGrad = ctx.createLinearGradient(-ingotW * 0.4, -ingotH, ingotW * 0.4, 0);
-        topGrad.addColorStop(0, '#FFF6A3');
-        topGrad.addColorStop(0.5, '#F5C542');
-        topGrad.addColorStop(1, '#D99B00');
-        ctx.fillStyle = topGrad;
-
-        ctx.beginPath();
-        ctx.moveTo(-ingotW * 0.38, -ingotH * 0.8);
-        ctx.lineTo(ingotW * 0.38, -ingotH * 0.8);
-        ctx.lineTo(ingotW * 0.5, 0);
-        ctx.lineTo(-ingotW * 0.5, 0);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-
-        // Ingot Front Face
-        const frontGrad = ctx.createLinearGradient(0, 0, 0, ingotH);
-        frontGrad.addColorStop(0, '#F5C542');
-        frontGrad.addColorStop(1, '#875C00');
-        ctx.fillStyle = frontGrad;
-
-        ctx.beginPath();
-        ctx.moveTo(-ingotW * 0.5, 0);
-        ctx.lineTo(ingotW * 0.5, 0);
-        ctx.lineTo(ingotW * 0.42, ingotH * 0.65);
-        ctx.lineTo(-ingotW * 0.42, ingotH * 0.65);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-
-        // Gold Shimmer Glint
-        const glintX = Math.sin(t * 3) * (ingotW * 0.28);
-        ctx.fillStyle = '#FFFFFF';
-        ctx.beginPath();
-        ctx.arc(glintX, -ingotH * 0.4, R * 0.08, 0, Math.PI * 2);
-        ctx.fill();
-
-        ctx.restore();
-        break;
-      }
-
-      case 'CREATIVE': {
-        // Glowing Lightbulb with internal filament and radiation sparks
-        const bulbR = R * 0.38;
-        ctx.beginPath();
-        ctx.arc(0, -bulbR * 0.3, bulbR, Math.PI * 0.75, Math.PI * 2.25);
-        ctx.lineTo(bulbR * 0.4, bulbR * 0.75);
-        ctx.lineTo(-bulbR * 0.4, bulbR * 0.75);
-        ctx.closePath();
-        ctx.stroke();
-
-        // Screw base
-        ctx.beginPath();
-        ctx.moveTo(-bulbR * 0.3, bulbR * 0.95);
-        ctx.lineTo(bulbR * 0.3, bulbR * 0.95);
-        ctx.moveTo(-bulbR * 0.2, bulbR * 1.15);
-        ctx.lineTo(bulbR * 0.2, bulbR * 1.15);
-        ctx.stroke();
-
-        // Filament
-        ctx.lineWidth = R * 0.04;
-        ctx.beginPath();
-        ctx.moveTo(-bulbR * 0.2, bulbR * 0.5);
-        ctx.lineTo(0, -bulbR * 0.3);
-        ctx.lineTo(bulbR * 0.2, bulbR * 0.5);
-        ctx.stroke();
-
-        // Radiating light rays
-        for (let i = 0; i < 5; i++) {
-          const a = -Math.PI * 0.8 + (i * Math.PI * 0.6) / 4;
-          const r1 = bulbR * 1.35;
-          const r2 = bulbR * 1.75 + Math.sin(t * 6 + i) * (bulbR * 0.25);
-          ctx.beginPath();
-          ctx.moveTo(Math.cos(a) * r1, -bulbR * 0.3 + Math.sin(a) * r1);
-          ctx.lineTo(Math.cos(a) * r2, -bulbR * 0.3 + Math.sin(a) * r2);
-          ctx.stroke();
-        }
-        break;
-      }
-
-      case 'ANALYTICAL': {
-        // Telemetry Crown: Connected nodes and peak graph
-        const pts = [
-          { x: -R * 0.65, y: R * 0.2 },
-          { x: -R * 0.35, y: -R * 0.4 },
-          { x: 0, y: -R * 0.1 },
-          { x: R * 0.35, y: -R * 0.55 },
-          { x: R * 0.65, y: R * 0.1 },
-        ];
-        ctx.beginPath();
-        pts.forEach((p, i) => {
-          if (i === 0) ctx.moveTo(p.x, p.y);
-          else ctx.lineTo(p.x, p.y);
-        });
-        ctx.stroke();
-
-        // Nodes
-        pts.forEach((p, i) => {
-          ctx.fillStyle = i === 3 ? '#00FFA3' : theme.primary;
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, R * 0.08, 0, Math.PI * 2);
-          ctx.fill();
-        });
-        break;
-      }
-
-      case 'STRATEGIC': {
-        // Tactical Crown with tactical directional vectors
-        ctx.beginPath();
-        ctx.moveTo(-R * 0.6, R * 0.15);
-        ctx.lineTo(-R * 0.4, -R * 0.45);
-        ctx.lineTo(0, -R * 0.15);
-        ctx.lineTo(R * 0.4, -R * 0.45);
-        ctx.lineTo(R * 0.6, R * 0.15);
-        ctx.closePath();
-        ctx.stroke();
-
-        // Central strategic diamond
-        ctx.fillStyle = theme.primary;
-        ctx.beginPath();
-        ctx.moveTo(0, -R * 0.5);
-        ctx.lineTo(R * 0.1, -R * 0.35);
-        ctx.lineTo(0, -R * 0.2);
-        ctx.lineTo(-R * 0.1, -R * 0.35);
-        ctx.closePath();
-        ctx.fill();
-        break;
-      }
-
-      case 'GUARDIAN': {
-        // Fortress Battlement Crown with locks
-        const cw = R * 0.85;
-        const ch = R * 0.42;
-        ctx.beginPath();
-        ctx.moveTo(-cw * 0.5, ch * 0.5);
-        ctx.lineTo(-cw * 0.5, -ch * 0.5);
-        ctx.lineTo(-cw * 0.25, -ch * 0.5);
-        ctx.lineTo(-cw * 0.25, -ch * 0.15);
-        ctx.lineTo(-cw * 0.08, -ch * 0.15);
-        ctx.lineTo(-cw * 0.08, -ch * 0.5);
-        ctx.lineTo(cw * 0.08, -ch * 0.5);
-        ctx.lineTo(cw * 0.08, -ch * 0.15);
-        ctx.lineTo(cw * 0.25, -ch * 0.15);
-        ctx.lineTo(cw * 0.25, -ch * 0.5);
-        ctx.lineTo(cw * 0.5, -ch * 0.5);
-        ctx.lineTo(cw * 0.5, ch * 0.5);
-        ctx.closePath();
-        ctx.stroke();
-
-        // Peripheral Floating Padlocks
-        const drawLock = (px: number, py: number) => {
-          ctx.save();
-          ctx.translate(px, py);
-          ctx.beginPath();
-          ctx.arc(0, -R * 0.1, R * 0.08, Math.PI, 0);
-          ctx.stroke();
-          ctx.fillRect(-R * 0.1, -R * 0.02, R * 0.2, R * 0.16);
-          ctx.restore();
-        };
-        drawLock(-R * 0.88, -R * 0.15 + Math.sin(t * 2) * 5);
-        drawLock(R * 0.88, -R * 0.25 + Math.cos(t * 2.2) * 5);
-        break;
-      }
-
-      case 'EXPLORER': {
-        // Astrological Telescope angled to the upper right
-        ctx.save();
-        ctx.rotate(-Math.PI * 0.18);
-        ctx.beginPath();
-        // Main barrel
-        ctx.rect(-R * 0.14, -R * 0.65, R * 0.28, R * 0.8);
-        ctx.stroke();
-        // Front lens hood
-        ctx.beginPath();
-        ctx.rect(-R * 0.2, -R * 0.82, R * 0.4, R * 0.18);
-        ctx.stroke();
-        // Eyepiece
-        ctx.beginPath();
-        ctx.rect(-R * 0.09, R * 0.15, R * 0.18, R * 0.18);
-        ctx.stroke();
-        ctx.restore();
-        break;
-      }
-    }
-
-    ctx.restore();
-  }
-
-  // Draw Cybernetic Reactive Mouth
-  function drawCyberMouth(
-    ctx: CanvasRenderingContext2D,
-    cx: number,
-    cy: number,
-    baseR: number,
-    color: string,
-    S: typeof stateRef.current,
-    A: AnimationEngineState
-  ) {
-    ctx.save();
-    ctx.translate(cx, cy);
-
-    ctx.strokeStyle = color;
-    ctx.fillStyle = color;
-    ctx.lineWidth = baseR * 0.06;
-    ctx.lineCap = 'round';
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 16;
-
-    const mw = baseR * 0.85;
-
-    if (S.mode === 'CREATIVE') {
-      // Wavy whimsical mouth (from Tablet Image 3)
-      ctx.beginPath();
-      for (let x = -mw * 0.5; x <= mw * 0.5; x += 4) {
-        const wave = Math.sin(x * 0.12 + S.t * 6) * (baseR * 0.12);
-        if (x === -mw * 0.5) ctx.moveTo(x, wave);
-        else ctx.lineTo(x, wave);
-      }
-      ctx.stroke();
-    } else if (S.mode === 'EXPLORER') {
-      // Inverted crescent curve (from Tablet Image 3)
-      ctx.beginPath();
-      ctx.arc(0, baseR * 0.45, mw * 0.5, Math.PI * 1.25, Math.PI * 1.75);
-      ctx.stroke();
-    } else if (S.face === 'SPEAKING') {
-      // Viseme talking modulation
-      const visemeH = baseR * (0.15 + 0.3 * Math.abs(Math.sin(S.t * 14)));
-      ctx.beginPath();
-      ctx.ellipse(0, 0, mw * 0.42, visemeH, 0, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (S.mode === 'GOLD' || S.face === 'HAPPY' || S.face === 'PURR') {
-      // Warm welcoming smile
-      ctx.beginPath();
-      ctx.arc(0, -baseR * 0.25, mw * 0.5, Math.PI * 0.22, Math.PI * 0.78);
-      ctx.stroke();
-    } else {
-      // Resolute board horizontal line
-      ctx.beginPath();
-      ctx.moveTo(-mw * 0.45, 0);
-      ctx.lineTo(mw * 0.45, 0);
-      ctx.stroke();
-    }
-
-    ctx.restore();
-  }
-
-  // Draw Mode Floating Atmospheric Particles
-  function drawModeEnvironment(
-    ctx: CanvasRenderingContext2D,
-    R: number,
-    m: Mode,
-    theme: ReturnType<typeof getThemeColors>,
-    t: number
-  ) {
-    ctx.save();
-    if (m === 'CREATIVE') {
-      // Color paint specks floating around
-      const colors = ['#05E1FF', '#FF3BB0', '#FFD800', '#00FFA3'];
-      for (let i = 0; i < 14; i++) {
-        const a = t * 0.4 + i * 0.75;
-        const r = R * (1.9 + (i % 3) * 0.3);
-        const px = Math.cos(a) * r * 1.35;
-        const py = Math.sin(a * 0.8) * r * 0.65;
-        ctx.fillStyle = colors[i % colors.length];
-        ctx.globalAlpha = 0.55 + 0.35 * Math.sin(t * 3 + i);
-        ctx.beginPath();
-        ctx.arc(px, py, R * 0.045, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    } else if (m === 'GOLD') {
-      // Golden 4-point twinkling stars
-      ctx.fillStyle = '#FFE58F';
-      ctx.shadowColor = '#F5C542';
-      ctx.shadowBlur = 10;
-      for (let i = 0; i < 9; i++) {
-        const a = t * 0.3 + i * 1.1;
-        const r = R * (1.85 + (i % 4) * 0.25);
-        const px = Math.cos(a) * r * 1.4;
-        const py = Math.sin(a) * r * 0.7;
-        const sr = R * 0.07 * (0.5 + 0.5 * Math.abs(Math.sin(t * 2 + i)));
-
-        ctx.save();
-        ctx.translate(px, py);
-        ctx.beginPath();
-        ctx.moveTo(0, -sr);
-        ctx.lineTo(sr * 0.25, -sr * 0.25);
-        ctx.lineTo(sr, 0);
-        ctx.lineTo(sr * 0.25, sr * 0.25);
-        ctx.lineTo(0, sr);
-        ctx.lineTo(-sr * 0.25, sr * 0.25);
-        ctx.lineTo(-sr, 0);
-        ctx.lineTo(-sr * 0.25, -sr * 0.25);
-        ctx.closePath();
-        ctx.fill();
-        ctx.restore();
-      }
-    }
-    ctx.restore();
-  }
-
-  // 6. Draw Combat Blaster Turrets (Dual Retractable Mecha Cannons)
-  function drawJediSaber(ctx: CanvasRenderingContext2D, W: number, H: number, t: number) {
-    const x = W * 0.72;
-    const y = H * 0.62;
-    const sway = Math.sin(t * 2.2) * 0.08;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(-0.7 + sway);
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fillRect(-7, 0, 14, 46);
-    ctx.fillStyle = '#05E1FF';
-    ctx.shadowColor = '#05E1FF';
-    ctx.shadowBlur = 28;
-    const len = 160 + Math.sin(t * 8) * 6;
-    ctx.fillRect(-4, -len, 8, len);
-    ctx.fillStyle = '#E8FFFF';
-    ctx.shadowBlur = 12;
-    ctx.fillRect(-1.5, -len, 3, len);
-    ctx.restore();
-  }
-
-  function drawCombatBlasterTurrets(
-    ctx: CanvasRenderingContext2D,
-    baseR: number,
-    eyeSpacing: number,
-    combat: typeof combatRef.current,
-    t: number
-  ) {
-    const lvl = combat.level;
-    if (lvl <= 0.005) return;
-
-    const turretDistance = eyeSpacing + baseR * (0.85 + lvl * 0.65);
-
-    // Left Blaster Cannon
-    drawSingleBlasterTurret(ctx, -turretDistance, 0, -1, lvl, t, combat);
-    // Right Blaster Cannon
-    drawSingleBlasterTurret(ctx, turretDistance, 0, 1, lvl, t, combat);
-  }
-
-  function drawSingleBlasterTurret(
-    ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
-    side: number,
-    level: number,
-    t: number,
-    combat: typeof combatRef.current
-  ) {
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(side, 1);
-
-    // Mechanical mounting arm connecting from head
-    ctx.strokeStyle = '#1E293B';
-    ctx.lineWidth = 10;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(-35 * (1 - level), 0);
-    ctx.lineTo(20, 0);
-    ctx.stroke();
-
-    // Hydraulic piston detail
-    ctx.strokeStyle = '#05E1FF';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(-15 * (1 - level), -5);
-    ctx.lineTo(15, -5);
-    ctx.stroke();
-
-    // Heavy Armor Housing
-    ctx.fillStyle = '#0F172A';
-    ctx.strokeStyle = '#EF4444';
-    ctx.lineWidth = 2;
-    ctx.shadowColor = '#EF4444';
-    ctx.shadowBlur = 10 * level;
-
-    ctx.beginPath();
-    ctx.roundRect(-22, -26, 44, 52, [8, 14, 14, 8]);
-    ctx.fill();
-    ctx.stroke();
-
-    // Warning hazard stripes / glowing red energy chamber
-    ctx.fillStyle = '#FF1133';
-    ctx.shadowColor = '#FF1133';
-    ctx.shadowBlur = 14;
-    ctx.beginPath();
-    ctx.roundRect(-10, -16, 20, 32, 4);
-    ctx.fill();
-
-    // Energy core pulsing
-    ctx.fillStyle = '#FFFFFF';
-    ctx.beginPath();
-    ctx.arc(0, 0, 4 + Math.sin(t * 16) * 1.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Twin Plasma Barrels extending forward
-    const firingThisSide = combat.shotsRemaining > 0 && ((side < 0 && combat.shotsRemaining % 2 === 0) || (side > 0 && combat.shotsRemaining % 2 !== 0));
-    const recoil = firingThisSide ? -8 : 0;
-
-    ctx.fillStyle = '#334155';
-    ctx.strokeStyle = '#64748B';
-    ctx.lineWidth = 1.5;
-
-    // Upper barrel
-    ctx.beginPath();
-    ctx.roundRect(16 + recoil, -18, 28, 9, 3);
-    ctx.fill();
-    ctx.stroke();
-
-    // Lower barrel
-    ctx.beginPath();
-    ctx.roundRect(16 + recoil, 9, 28, 9, 3);
-    ctx.fill();
-    ctx.stroke();
-
-    // Barrel interior plasma glow
-    ctx.fillStyle = '#FF1133';
-    ctx.fillRect(40 + recoil, -16, 5, 5);
-    ctx.fillRect(40 + recoil, 11, 5, 5);
-
-    // Muzzle flash when firing
-    if (firingThisSide) {
-      ctx.fillStyle = '#FFFFFF';
-      ctx.shadowColor = '#FF4400';
-      ctx.shadowBlur = 30;
-      ctx.beginPath();
-      ctx.arc(50 + recoil, -14, 14, 0, Math.PI * 2);
-      ctx.arc(50 + recoil, 13, 14, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Muzzle spark spikes
-      ctx.strokeStyle = '#FFAA00';
-      ctx.lineWidth = 2;
-      for (let s = 0; s < 5; s++) {
-        const a = (s / 5) * Math.PI * 2 + t * 20;
-        ctx.beginPath();
-        ctx.moveTo(50 + recoil, -14);
-        ctx.lineTo(50 + recoil + Math.cos(a) * 25, -14 + Math.sin(a) * 25);
-        ctx.stroke();
-      }
-    }
-
-    ctx.restore();
-  }
-
-  // 7. Draw Holographic Drink Cup (Refreshing Soda / Water)
-  function drawHolographicDrinkCup(
-    ctx: CanvasRenderingContext2D,
-    baseR: number,
-    eyeSpacing: number,
-    progress: number,
-    t: number
-  ) {
-    if (progress <= 0.005) return;
-
-    ctx.save();
-    // Position on lower right near mouth
-    const cupX = eyeSpacing * 0.98;
-    const cupY = baseR * 0.95 + (1 - progress) * 80;
-    ctx.translate(cupX, cupY);
-    ctx.globalAlpha = Math.min(1, progress * 1.2);
-
-    // Holographic Cup Body (Tapered tumbler glass)
-    ctx.strokeStyle = '#05E1FF';
-    ctx.lineWidth = 2.5;
-    ctx.shadowColor = '#05E1FF';
-    ctx.shadowBlur = 18;
-
-    // Glass Tumbler
-    ctx.beginPath();
-    ctx.moveTo(-22, -35);
-    ctx.lineTo(22, -35);
-    ctx.lineTo(16, 42);
-    ctx.quadraticCurveTo(0, 48, -16, 42);
-    ctx.closePath();
-
-    // Liquid fill (sparkling cyan/blue soda)
-    const liquidGrad = ctx.createLinearGradient(0, -25, 0, 42);
-    liquidGrad.addColorStop(0, 'rgba(5, 225, 255, 0.45)');
-    liquidGrad.addColorStop(0.5, 'rgba(0, 180, 255, 0.65)');
-    liquidGrad.addColorStop(1, 'rgba(0, 100, 220, 0.85)');
-    ctx.fillStyle = liquidGrad;
-    ctx.fill();
-    ctx.stroke();
-
-    // Liquid surface meniscus wave
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-    ctx.beginPath();
-    ctx.ellipse(0, -22 + Math.sin(t * 4) * 2, 18, 5, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 3 Floating 3D-styled Ice Cubes
-    for (let c = 0; c < 3; c++) {
-      const ix = -10 + c * 10 + Math.sin(t * 2 + c) * 3;
-      const iy = -12 + (c % 2) * 16 + Math.cos(t * 3 + c) * 2;
-      ctx.save();
-      ctx.translate(ix, iy);
-      ctx.rotate(0.2 * (c + 1) + Math.sin(t * 2) * 0.1);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(-6, -6, 12, 12);
-      ctx.fillRect(-6, -6, 12, 12);
-      ctx.restore();
-    }
-
-    // Carbonated fizzy rising bubbles
-    for (let b = 0; b < 7; b++) {
-      const by = 35 - ((t * 25 + b * 14) % 65);
-      const bx = Math.sin(b * 3 + t * 4) * 12;
-      ctx.fillStyle = '#FFFFFF';
-      ctx.shadowColor = '#05E1FF';
-      ctx.shadowBlur = 8;
-      ctx.beginPath();
-      ctx.arc(bx, by, 1.8 + (b % 3) * 0.8, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Glowing Neon Straw curving directly toward Ultron's mouth
-    ctx.strokeStyle = '#FF3BB0';
-    ctx.lineWidth = 4;
-    ctx.shadowColor = '#FF3BB0';
-    ctx.shadowBlur = 12;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(4, 30);
-    ctx.lineTo(12, -35);
-    // Bend toward mouth (to the left)
-    ctx.quadraticCurveTo(15, -55, -25, -52);
-    ctx.stroke();
-
-    // Inner bright core of straw
-    ctx.strokeStyle = '#FFFFFF';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // "ELECTRO-DRINK" hologram label badge
-    ctx.fillStyle = '#05E1FF';
-    ctx.font = 'bold 8px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('REFRESH · 100%', 0, 24);
-
-    ctx.restore();
-  }
-
-  // 8. Draw Cute Cyber-Robotic Waving Hand
-  function drawCyberWavingHand(
-    ctx: CanvasRenderingContext2D,
-    baseR: number,
-    eyeSpacing: number,
-    progress: number,
-    t: number
-  ) {
-    if (progress <= 0.005) return;
-
-    ctx.save();
-    // Position on right side of face
-    const handX = eyeSpacing * 1.38;
-    const handY = -baseR * 0.15 + (1 - progress) * 60;
-    ctx.translate(handX, handY);
-    ctx.globalAlpha = Math.min(1, progress * 1.2);
-
-    // Oscillation for wave gesture (back and forth)
-    const waveAngle = Math.sin(t * 8) * 0.38;
-    ctx.rotate(waveAngle);
-
-    // Sleek robotic arm link
-    ctx.strokeStyle = '#1E293B';
-    ctx.lineWidth = 12;
-    ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(35, 45);
-    ctx.lineTo(0, 15);
-    ctx.stroke();
-
-    // Glowing cyan cyber conduit
-    ctx.strokeStyle = '#05E1FF';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(30, 42);
-    ctx.lineTo(0, 15);
-    ctx.stroke();
-
-    // Palm base plate
-    ctx.fillStyle = '#0F172A';
-    ctx.strokeStyle = '#05E1FF';
-    ctx.lineWidth = 2;
-    ctx.shadowColor = '#05E1FF';
-    ctx.shadowBlur = 14;
-    ctx.beginPath();
-    ctx.roundRect(-14, -10, 28, 26, 8);
-    ctx.fill();
-    ctx.stroke();
-
-    // Center repulsor palm beacon (pulsing friendly greeting light)
-    ctx.fillStyle = '#05E1FF';
-    ctx.beginPath();
-    ctx.arc(0, 3, 5 + Math.sin(t * 10) * 1.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = '#FFFFFF';
-    ctx.beginPath();
-    ctx.arc(0, 3, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 4 Articulated fingers waving
-    const fingerHeights = [18, 22, 21, 16];
-    const fingerXs = [-9, -3, 3, 9];
-
-    for (let f = 0; f < 4; f++) {
-      const fx = fingerXs[f];
-      const fh = fingerHeights[f];
-      const fBend = Math.sin(t * 8 + f * 0.4) * 3;
-
-      ctx.save();
-      ctx.translate(fx, -10);
-      ctx.fillStyle = '#0F172A';
-      ctx.strokeStyle = '#05E1FF';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.roundRect(-2.5, -fh + fBend, 5, fh, 3);
-      ctx.fill();
-      ctx.stroke();
-
-      // Finger tip LED node
-      ctx.fillStyle = '#00FFA3';
-      ctx.beginPath();
-      ctx.arc(0, -fh + fBend + 2.5, 1.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-
-    // Thumb pointing outward
-    ctx.save();
-    ctx.translate(14, 0);
-    ctx.rotate(0.5);
-    ctx.fillStyle = '#0F172A';
-    ctx.strokeStyle = '#05E1FF';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.roundRect(-2.5, -12, 5, 12, 3);
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-
-    // Radiating friendly greeting sparkle stars around hand
-    for (let s = 0; s < 4; s++) {
-      const sa = t * 3 + s * 1.57;
-      const sr = 24 + Math.sin(t * 4 + s) * 6;
-      ctx.fillStyle = '#05E1FF';
-      ctx.shadowColor = '#05E1FF';
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.arc(Math.cos(sa) * sr, Math.sin(sa) * sr - 10, 2, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    ctx.restore();
-  }
-
-  // 9. Draw Laser Bolts and Glass Impact Fractures across Full Screen
-  function drawLaserBoltsAndImpacts(
-    ctx: CanvasRenderingContext2D,
-    W: number,
-    H: number,
-    combat: typeof combatRef.current
-  ) {
-    ctx.save();
-
-    // Laser Beams
-    for (const l of combat.lasers) {
-      const dx = l.targetX - l.startX;
-      const dy = l.targetY - l.startY;
-      const angle = Math.atan2(dy, dx);
-      const len = 42;
-
-      ctx.save();
-      ctx.translate(l.currentX, l.currentY);
-      ctx.rotate(angle);
-
-      // Outer plasma trail
-      ctx.strokeStyle = '#FF1133';
-      ctx.lineWidth = 6;
-      ctx.shadowColor = '#FF0033';
-      ctx.shadowBlur = 20;
-      ctx.beginPath();
-      ctx.moveTo(-len, 0);
-      ctx.lineTo(0, 0);
-      ctx.stroke();
-
-      // White hot core
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 2.5;
-      ctx.shadowColor = '#FFFFFF';
-      ctx.shadowBlur = 10;
-      ctx.beginPath();
-      ctx.moveTo(-len * 0.7, 0);
-      ctx.lineTo(0, 0);
-      ctx.stroke();
-
-      ctx.restore();
-    }
-
-    // Impact Craters on the Screen Glass
-    for (const imp of combat.impacts) {
-      ctx.save();
-      ctx.translate(imp.x, imp.y);
-      ctx.globalAlpha = Math.min(1, imp.alpha);
-
-      // Red thermal burn glow
-      const burnGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, imp.radius);
-      burnGrad.addColorStop(0, 'rgba(255, 50, 50, 0.85)');
-      burnGrad.addColorStop(0.4, 'rgba(255, 0, 0, 0.45)');
-      burnGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = burnGrad;
-      ctx.beginPath();
-      ctx.arc(0, 0, imp.radius, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Shattered Glass Radial Fracture Spikes
-      ctx.strokeStyle = '#FFFFFF';
-      ctx.lineWidth = 1.6;
-      ctx.shadowColor = '#FF3366';
-      ctx.shadowBlur = 8;
-
-      for (let r = 0; r < 7; r++) {
-        const a = imp.angle + (r / 7) * Math.PI * 2;
-        const rad = imp.radius * (0.8 + (r % 3) * 0.35);
-        ctx.beginPath();
-        ctx.moveTo(0, 0);
-        ctx.lineTo(Math.cos(a) * rad * 0.5, Math.sin(a) * rad * 0.5);
-        ctx.lineTo(Math.cos(a + 0.15) * rad, Math.sin(a + 0.15) * rad);
-        ctx.stroke();
-      }
-
-      // Concentric fracture ring
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.arc(0, 0, imp.radius * 0.45, 0, Math.PI * 2);
-      ctx.stroke();
-
-      ctx.restore();
-    }
-
-    ctx.restore();
-  }
-
-  // 10. Draw Optical Camera Viewfinder & White Shutter Flash
-  function drawCameraViewfinderAndFlash(
-    ctx: CanvasRenderingContext2D,
-    W: number,
-    H: number,
-    flashAlpha: number,
-    isViewfinderActive: boolean
-  ) {
-    ctx.save();
-
-    // Camera viewfinder reticles if active
-    if (isViewfinderActive) {
-      const marginX = W * 0.08;
-      const marginY = H * 0.08;
-      const bracketLen = Math.min(W, H) * 0.08;
-
-      ctx.strokeStyle = '#05E1FF';
-      ctx.lineWidth = 3;
-      ctx.shadowColor = '#05E1FF';
-      ctx.shadowBlur = 12;
-
-      // Top-Left bracket
-      ctx.beginPath();
-      ctx.moveTo(marginX + bracketLen, marginY);
-      ctx.lineTo(marginX, marginY);
-      ctx.lineTo(marginX, marginY + bracketLen);
-      ctx.stroke();
-
-      // Top-Right bracket
-      ctx.beginPath();
-      ctx.moveTo(W - marginX - bracketLen, marginY);
-      ctx.lineTo(W - marginX, marginY);
-      ctx.lineTo(W - marginX, marginY + bracketLen);
-      ctx.stroke();
-
-      // Bottom-Left bracket
-      ctx.beginPath();
-      ctx.moveTo(marginX, H - marginY - bracketLen);
-      ctx.lineTo(marginX, H - marginY);
-      ctx.lineTo(marginX + bracketLen, H - marginY);
-      ctx.stroke();
-
-      // Bottom-Right bracket
-      ctx.beginPath();
-      ctx.moveTo(W - marginX - bracketLen, H - marginY);
-      ctx.lineTo(W - marginX, H - marginY);
-      ctx.lineTo(W - marginX, H - marginY - bracketLen);
-      ctx.stroke();
-
-      // Center auto-focus targeting box
-      ctx.strokeStyle = 'rgba(5, 225, 255, 0.7)';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(W / 2 - 30, H / 2 - 30, 60, 60);
-
-      // Center crosshair dot
-      ctx.fillStyle = '#05E1FF';
-      ctx.beginPath();
-      ctx.arc(W / 2, H / 2, 3, 0, Math.PI * 2);
-      ctx.fill();
-
-      // Telemetry OSD
-      ctx.fillStyle = '#05E1FF';
-      ctx.font = 'bold 11px monospace';
-      ctx.fillText('AF-L · 4K UHD 60FPS · ISO 400 · 1/500s', marginX + 8, marginY + 24);
-
-      // Flashing REC indicator
-      ctx.fillStyle = '#FF1133';
-      ctx.beginPath();
-      ctx.arc(W - marginX - 45, marginY + 20, 5, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = '#FFFFFF';
-      ctx.font = 'bold 11px monospace';
-      ctx.fillText('REC', W - marginX - 35, marginY + 24);
-    }
-
-    // Pure White Shutter Flash
-    if (flashAlpha > 0.005) {
-      ctx.fillStyle = `rgba(255, 255, 255, ${Math.min(1, flashAlpha)})`;
-      ctx.fillRect(0, 0, W, H);
-    }
-
-    ctx.restore();
-  }
-
-  // Pointer & Tactile Gesture Handlers
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const ts = touchState.current;
+    const now = performance.now();
     ts.startX = e.clientX;
     ts.startY = e.clientY;
-    ts.downTime = performance.now();
+    ts.downTime = now;
     ts.movedDistance = 0;
-    ts.touches = (e.pointerType === 'touch' ? 1 : 1);
-    ts.strokePoints = [{ x: e.clientX, y: e.clientY, time: performance.now() }];
+    ts.tapHandled = false;
+    ts.dragReported = false;
+    ts.strokePoints = [{ x: e.clientX, y: e.clientY, time: now }];
+    stateRef.current.lastInteraction = now;
 
-    stateRef.current.lastInteraction = performance.now();
+    const rect = e.currentTarget.getBoundingClientRect();
+    vidaRef.current.lastTouch = {
+      x: (e.clientX - rect.left) / rect.width - 0.5,
+      y: (e.clientY - rect.top) / rect.height - 0.5,
+      t: now,
+    };
 
-    // Spawn energetic touch shockwave at contact point
     const theme = getThemeColors(stateRef.current.mode);
-    addShockwave(e.clientX, e.clientY, theme.primary);
+    const kx = e.currentTarget.width / Math.max(1, rect.width);
+    const ky = e.currentTarget.height / Math.max(1, rect.height);
+    addShockwave((e.clientX - rect.left) * kx, (e.clientY - rect.top) * ky, theme.primary);
     playSfx('tap', soundFxEnabled);
 
-    // Check if tapped directly on an eye for an interactive wink!
-    const canvas = canvasRef.current;
-    if (canvas) {
-      const rect = canvas.getBoundingClientRect();
-      const clickX = e.clientX - rect.left - rect.width / 2;
-      const clickY = e.clientY - rect.top - rect.height / 2;
-      const baseR = Math.min(rect.width * 0.115, rect.height * 0.22);
-      const eyeSpacing = baseR * 1.58;
+    if (stateRef.current.face === 'SLEEPING') return; // el despertar se decide al soltar
 
-      const distLeftEye = Math.hypot(clickX - (-eyeSpacing), clickY);
-      const distRightEye = Math.hypot(clickX - eyeSpacing, clickY);
-
-      if (distLeftEye < baseR * 1.1) {
-        animRef.current.wink = -1;
-        animRef.current.blinking = true;
-        animRef.current.phase = 0;
-        animRef.current.jiggle = 0.45;
-        animRef.current.bounce = 0.18;
-        animRef.current.smileT = 0.9;
-        onFaceChange('WINK', 1600);
-        playSfx('wink', soundFxEnabled);
-        return;
-      } else if (distRightEye < baseR * 1.1) {
-        animRef.current.wink = 1;
-        animRef.current.blinking = true;
-        animRef.current.phase = 0;
-        animRef.current.jiggle = 0.45;
-        animRef.current.bounce = 0.18;
-        animRef.current.smileT = 0.9;
-        onFaceChange('WINK', 1600);
-        playSfx('wink', soundFxEnabled);
-        return;
-      }
+    const z = zonaDe(e.clientX, e.clientY);
+    if (z === 'ojoIzq') {
+      guinar(-1);
+      ts.tapHandled = true;
+    } else if (z === 'ojoDer') {
+      guinar(1);
+      ts.tapHandled = true;
     }
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     stateRef.current.lastInteraction = performance.now();
-    const rect = (e.target as HTMLCanvasElement).getBoundingClientRect();
+    const rect = e.currentTarget.getBoundingClientRect();
     const relX = (e.clientX - rect.left) / rect.width - 0.5;
     const relY = (e.clientY - rect.top) / rect.height - 0.5;
 
-    // Magnetic eye attraction towards finger/mouse
+    // Imán de mirada hacia el dedo / puntero
     animRef.current.tx = relX * 1.4;
     animRef.current.ty = relY * 0.9;
 
@@ -2269,22 +1404,23 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     if (ts.downTime > 0) {
       ts.movedDistance += Math.hypot(e.clientX - ts.startX, e.clientY - ts.startY);
       ts.strokePoints.push({ x: e.clientX, y: e.clientY, time: performance.now() });
+      vidaRef.current.lastTouch = { x: relX, y: relY, t: performance.now() };
+      if (!ts.dragReported && ts.movedDistance > 40) {
+        ts.dragReported = true;
+        gesto('arrastre');
+      }
 
-      // Cheek Rubbing / Petting Interaction (Tickle & Purr)
+      // Frotar mejilla (mitad inferior, trazo) → ronroneo
       if (ts.strokePoints.length > 8) {
         const recent = ts.strokePoints.slice(-6);
-        const dist = Math.hypot(
-          recent[recent.length - 1].x - recent[0].x,
-          recent[recent.length - 1].y - recent[0].y
-        );
-
-        // If gentle circular rubbing on lower half of screen (cheeks)
+        const dist = Math.hypot(recent[recent.length - 1].x - recent[0].x, recent[recent.length - 1].y - recent[0].y);
         if (dist > 30 && relY > 0) {
           animRef.current.tickle = Math.min(1, animRef.current.tickle + 0.1);
           if (animRef.current.tickle > 0.4 && stateRef.current.face !== 'PURR') {
             onFaceChange('PURR', 3400);
             playSfx('purr', soundFxEnabled);
             animRef.current.bounce = 0.3;
+            gesto('frotarMejilla');
           }
         }
       }
@@ -2298,70 +1434,69 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     const deltaY = e.clientY - ts.startY;
     ts.downTime = 0;
 
-    // Tap outside open panels closes them if slight movement
-    if (ts.movedDistance < 24) {
-      onCloseOverlays();
-    }
+    if (ts.movedDistance < 24) onCloseOverlays();
 
-    // Swipe Up -> Open Dock
     if (ts.movedDistance > 70 && Math.abs(deltaY) > Math.abs(deltaX) && deltaY < -40) {
       onSwipeUp();
       playSfx('mode', soundFxEnabled);
+      gesto('swipeArriba');
       return;
     }
-
-    // Swipe Down -> Open Settings
     if (ts.movedDistance > 70 && Math.abs(deltaY) > Math.abs(deltaX) && deltaY > 40) {
       onSwipeDown();
       playSfx('mode', soundFxEnabled);
+      gesto('swipeAbajo');
       return;
     }
-
-    // Swipe Horizontal -> Cycle Mode
     if (ts.movedDistance > 70 && Math.abs(deltaX) > Math.abs(deltaY)) {
       const currentIndex = MODES.indexOf(stateRef.current.mode);
       const step = deltaX > 0 ? 1 : -1;
-      const nextIndex = (currentIndex + step + MODES.length) % MODES.length;
-      onModeChange(MODES[nextIndex]);
+      onModeChange(MODES[(currentIndex + step + MODES.length) % MODES.length]);
       playSfx('mode', soundFxEnabled);
+      gesto('swipeLado');
       return;
     }
 
-    // Long Press (> 650ms) -> Toggle Sleep / Wake
-    if (holdDuration > 650) {
+    // Pulsación larga → dormir / despertar
+    if (holdDuration > 650 && ts.movedDistance < 40) {
+      gesto('longPress');
       if (stateRef.current.face === 'SLEEPING') {
         onWake();
+        gesto('despertar');
       } else {
         onSleep();
+        gesto('dormir');
       }
       return;
     }
 
-    // Tap Sequences
-    if (ts.movedDistance < 28) {
-      handlePoke();
-    }
+    if (ts.movedDistance < 28) handleTap(e.clientX, e.clientY);
   };
 
-  const handlePoke = () => {
+  const handleTap = (clientX: number, clientY: number) => {
     const S = stateRef.current;
+    const A = animRef.current;
+    const V = vidaRef.current;
     const C = combatRef.current;
+    const ts = touchState.current;
 
-    if (C.isActive && C.weapon === 'blaster') {
-      triggerJediSaber();
-      S.poke = 4;
-      return;
-    }
-    if (C.isActive && C.weapon === 'jedi') {
-      disarmCombat();
-      onFaceChange('IDLE', 0);
-      playSfx('tap', soundFxEnabled);
-      onSpeak('Sable guardado.');
-      return;
+    if (S.funMode) {
+      if (C.isActive && C.weapon === 'blaster') {
+        triggerJediSaber();
+        S.poke = 4;
+        return;
+      }
+      if (C.isActive && C.weapon === 'jedi') {
+        disarmCombat();
+        playSfx('tap', soundFxEnabled);
+        onSpeak('Sable guardado.');
+        return;
+      }
     }
 
     if (S.face === 'SLEEPING') {
       onWake();
+      gesto('despertar');
       return;
     }
 
@@ -2369,24 +1504,84 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     S.poke = now - S.lastPokeTime < 1400 ? S.poke + 1 : 1;
     S.lastPokeTime = now;
 
-    // Shake reaction
-    animRef.current.jiggle = 0.55;
-    animRef.current.bounce = 0.22;
-    animRef.current.smileT = Math.min(1.2, animRef.current.smileT + 0.35);
+    A.jiggle = Math.max(A.jiggle, 0.4);
+    A.bounce = Math.max(A.bounce, 0.15);
 
-    if (S.poke === 1) {
-      scheduleBlink('wink');
-      playSfx('wink', soundFxEnabled);
-    } else if (S.poke === 2) {
-      onFaceChange('ANGRY', 2200);
-      playSfx('deny', soundFxEnabled);
-      onSpeak('Cuidado.');
-    } else if (S.poke === 3) {
-      triggerBlasterCombat();
-    } else {
-      triggerJediSaber();
-      S.poke = 0;
+    // ── escalada de juguete (sólo funMode) ──
+    if (S.funMode) {
+      A.smileT = Math.min(1.2, A.smileT + 0.35);
+      if (S.poke === 1) {
+        if (!ts.tapHandled) {
+          scheduleBlink('wink');
+          playSfx('wink', soundFxEnabled);
+        }
+      } else if (S.poke === 2) {
+        onFaceChange('ANGRY', 2200);
+        playSfx('deny', soundFxEnabled);
+        onSpeak('Cuidado.');
+      } else if (S.poke === 3) {
+        triggerBlasterCombat();
+      } else {
+        triggerJediSaber();
+        S.poke = 0;
+      }
+      return;
     }
+
+    // ── mapa humano ──
+    if (S.poke >= 3) {
+      // "Ya, ya": molestia de juego 1.2 s y luego risa
+      if (!S.burstActive) {
+        S.burstActive = true;
+        onFaceChange('ANGRY', 1200);
+        A.shake = 0.8;
+        playSfx('deny', soundFxEnabled);
+        gesto('molestoJuego');
+        if (!S.burstSpoken) {
+          S.burstSpoken = true;
+          onSpeak('Ya, ya. Je.');
+        }
+        later(() => {
+          onFaceChangeRef.current('LAUGH', 1800);
+          V.laughAmp = 1;
+          V.laughPhase = 0;
+          gesto('risa');
+        }, 1200);
+        later(() => {
+          S.burstActive = false;
+          S.burstSpoken = false;
+          S.poke = 0;
+        }, 3400);
+      }
+      return;
+    }
+    if (ts.tapHandled) return; // guiño ya hecho al bajar el dedo
+
+    const z = zonaDe(clientX, clientY);
+    if (z === 'frente') {
+      V.browLift = Math.max(V.browLift, 0.6);
+      A.dilate = Math.min(0.7, A.dilate + 0.1);
+      onFaceChange('CURIOSITY', 1800);
+      playSfx('blip', soundFxEnabled);
+      gesto('tapFrente');
+      gesto('curioso');
+      return;
+    }
+    if (z === 'barbilla') {
+      V.laughAmp = 1;
+      V.laughPhase = 0;
+      A.tickle = Math.min(1, A.tickle + 0.5);
+      onFaceChange('LAUGH', 2200);
+      playSfx('chirp', soundFxEnabled);
+      gesto('tapBarbilla');
+      gesto('risa');
+      return;
+    }
+    // Mejilla u otro sitio: guiño suave y media sonrisa
+    A.smileT = Math.min(1.0, A.smileT + 0.3);
+    scheduleBlink(Math.random() < 0.5 ? 'wink' : 'double');
+    playSfx('wink', soundFxEnabled);
+    gesto('tapMejilla');
   };
 
   return (

@@ -1,6 +1,6 @@
 export * from './player';
 export * from './speech';
 export * from './audio';
-export * from './voces';
-export * from './elevenlabs';
-export * from './barge';
+export * from './banco';
+export * from './hablar';
+export { useOido } from './useOido';
