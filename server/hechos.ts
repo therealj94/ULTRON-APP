@@ -1,10 +1,12 @@
 /** Qué va a largo plazo vs plática. */
 
 const SEMILLA = [
-  'Junta: Medardo Ordóñez fundador; José, Melany Ordóñez y Leonardo Paguada cofundadores.',
-  'José Ordóñez: cofundador, junta, habla con ULTRON.',
-  'Medardo José Ordóñez Enamorado: fundador. The Verve — Bitter Sweet Symphony.',
+  'Junta: Medardo Ordóñez fundador; José, Melany Ordóñez y Leonardo Paguada cofundadores. Mayra Enamorado también junta.',
+  'José Ordóñez: cofundador, junta, habla con ULTRON. Acceso mando: puede cambiar el sistema.',
+  'Medardo José Ordóñez Enamorado: fundador. The Verve — Bitter Sweet Symphony. Acceso mando.',
   'José Ordóñez: Kanye West — Runaway (el brindis).',
+  'Carlos Paguada: junta. Acceso consulta a ULTRON. Cerebro propio. No cambia el sistema.',
+  'Mayra Enamorado: junta. Acceso consulta a ULTRON. Cerebro propio. No cambia el sistema.',
 ];
 
 export function semillaLarga() {

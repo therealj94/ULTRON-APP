@@ -1,12 +1,12 @@
 /**
- * Memoria durable por miembro de junta (José / Medardo / Carlos) + hechos compartidos.
+ * Memoria durable por miembro de junta (José / Medardo / Carlos / Mayra) + hechos compartidos.
  * Disco local = caché. S3 = la copia que no se pierde al redesplegar Render.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { esHechoLargo, semillaLarga } from '../server/hechos';
-import { MIEMBROS, nombreDe, quienEs, type MiembroId } from './junta';
+import { MIEMBROS, nombreDe, puedeCambiarSistema, quienEs, type MiembroId } from './junta';
 import { bucketMemoria, s3GetJson, s3Listo, s3PutJson } from './s3';
 
 export type CanalMem = 'mesa' | 'telegram' | 'sistema';
@@ -43,6 +43,7 @@ function vacio(): Almacen {
       jose: { corta: [], larga: [] },
       medardo: { corta: [], larga: [] },
       carlos: { corta: [], larga: [] },
+      mayra: { corta: [], larga: [] },
     },
     junta: {
       larga: semillaLarga().map((x) => ({ hecho: x.hecho, t: x.t, quien: 'junta' as const, canal: 'sistema' as const })),
@@ -186,7 +187,10 @@ export function promptMemoria(quien: MiembroId | null): string {
     .join('\n');
   return [
     `HABLAS CON: ${nombre}. No mezcles la conversación privada del otro miembro.`,
-    id ? `MEMORIA PRIVADA DE ${nombre.toUpperCase()}:\n${hechosYo || '(nada aún)'}` : 'No identifiqué si es José o Medardo. No recito memoria privada de nadie.',
+    id
+      ? `MEMORIA PRIVADA DE ${nombre.toUpperCase()}:\n${hechosYo || '(nada aún)'}`
+      : 'No identifiqué si es José, Medardo, Carlos o Mayra. No recito memoria privada de nadie.',
+    `ACCESO: ${puedeCambiarSistema(id) ? 'mando. Puede pedir redespliegue, mantenimiento y ejecutor.' : 'consulta. No cambia el sistema: sin redespliegue, sin mantenimiento, sin ejecutor. El resto del taller sí.'}`,
     `HECHOS COMPARTIDOS DE LA JUNTA:\n${hechosJunta || '(nada)'}`,
     `CONVERSACIÓN LARGA CON ${nombre.toUpperCase()} (no la del otro):\n${corta || '(nada)'}`,
     `CAMBIOS RECIENTES (quién los pidió):\n${cambios || '(nada)'}`,
@@ -289,7 +293,7 @@ export function fotoMemoria(quien: MiembroId | null) {
     junta: a.junta.larga,
     cambios: a.cambios.slice(-24),
     nota: st.durable
-      ? 'Memoria en S3, una carpeta por José, Medardo y Carlos. El otro no ve la conversación privada.'
+      ? 'Memoria en S3, una carpeta por José, Medardo, Carlos y Mayra. El otro no ve la conversación privada.'
       : 'S3 no está listo. Esto se pierde si Render redespliega. Falta ULTRON_MEMORIA_BUCKET o AWS_*.',
   };
 }

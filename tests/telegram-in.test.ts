@@ -11,12 +11,31 @@ describe('Telegram inbound privado', () => {
       TELEGRAM_JOSE_USER_ID: process.env.TELEGRAM_JOSE_USER_ID,
       TELEGRAM_MEDARDO_CHAT_ID: process.env.TELEGRAM_MEDARDO_CHAT_ID,
       TELEGRAM_MEDARDO_USER_ID: process.env.TELEGRAM_MEDARDO_USER_ID,
+      TELEGRAM_CARLOS_CHAT_ID: process.env.TELEGRAM_CARLOS_CHAT_ID,
+      TELEGRAM_CARLOS_USER_ID: process.env.TELEGRAM_CARLOS_USER_ID,
+      TELEGRAM_MAYRA_CHAT_ID: process.env.TELEGRAM_MAYRA_CHAT_ID,
+      TELEGRAM_MAYRA_USER_ID: process.env.TELEGRAM_MAYRA_USER_ID,
     };
     for (const k of Object.keys(prev)) delete process.env[k];
     assert.equal(chatsPermitidos().length, 0);
     assert.equal(telegramAutorizado('123'), false);
     for (const [k, v] of Object.entries(prev)) {
       if (v !== undefined) process.env[k] = v;
+    }
+  });
+
+  it('Mayra entra por su chat o por su user id', () => {
+    const keys = ['TELEGRAM_CHAT_ID', 'TELEGRAM_ALLOWED_CHAT_IDS', 'TELEGRAM_MAYRA_CHAT_ID', 'TELEGRAM_MAYRA_USER_ID', 'TELEGRAM_ALLOWED_USER_IDS'];
+    const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    for (const k of keys) delete process.env[k];
+    process.env.TELEGRAM_CHAT_ID = '5673842734';
+    process.env.TELEGRAM_MAYRA_USER_ID = '1997178235';
+    assert.equal(telegramAutorizado('1997178235', '1997178235'), true);
+    assert.equal(telegramAutorizado('-100grupo', '1997178235'), true);
+    assert.equal(telegramAutorizado('999', '999'), false);
+    for (const [k, v] of Object.entries(prev)) {
+      if (v !== undefined) process.env[k] = v;
+      else delete process.env[k];
     }
   });
 

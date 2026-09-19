@@ -1,13 +1,15 @@
 /**
- * Quién de la junta está hablando. José, Medardo y Carlos no se mezclan.
+ * Quién de la junta está hablando. José, Medardo, Carlos y Mayra no se mezclan.
+ * Carlos y Mayra: consulta. No cambian el sistema.
  */
 
-export type MiembroId = 'jose' | 'medardo' | 'carlos';
+export type MiembroId = 'jose' | 'medardo' | 'carlos' | 'mayra';
 
 export const MIEMBROS: Record<MiembroId, { id: MiembroId; nombre: string; correo: string }> = {
   jose: { id: 'jose', nombre: 'José', correo: 'j.ordonez@ordenglobal.org' },
   medardo: { id: 'medardo', nombre: 'Medardo', correo: 'm.ordonez@ordenglobal.org' },
   carlos: { id: 'carlos', nombre: 'Carlos', correo: '' },
+  mayra: { id: 'mayra', nombre: 'Mayra', correo: '' },
 };
 
 function idsDe(envKey: string): string[] {
@@ -15,6 +17,11 @@ function idsDe(envKey: string): string[] {
     .split(/[,\s]+/)
     .map((s) => s.trim())
     .filter(Boolean);
+}
+
+function idsTelegramDe(quien: MiembroId): string[] {
+  const u = quien.toUpperCase();
+  return [...idsDe(`TELEGRAM_${u}_USER_IDS`), ...idsDe(`TELEGRAM_${u}_CHAT_ID`), ...idsDe(`TELEGRAM_${u}_USER_ID`)];
 }
 
 function fold(s: string) {
@@ -30,6 +37,11 @@ export function nombreDe(id: MiembroId | null | undefined): string {
   return MIEMBROS[id].nombre;
 }
 
+/** Carlos y Mayra: consulta. José, Medardo y la mesa sin identificar: mando. */
+export function puedeCambiarSistema(id: MiembroId | null | undefined): boolean {
+  return id !== 'carlos' && id !== 'mayra';
+}
+
 export function quienEs(opts: {
   nombre?: string;
   correo?: string;
@@ -42,19 +54,16 @@ export function quienEs(opts: {
 
   const uid = String(opts.telegramUserId || '').trim();
   const cid = String(opts.telegramChatId || '').trim();
-  const joseIds = [...idsDe('TELEGRAM_JOSE_USER_IDS'), ...idsDe('TELEGRAM_JOSE_CHAT_ID'), ...idsDe('TELEGRAM_JOSE_USER_ID')];
-  const medIds = [...idsDe('TELEGRAM_MEDARDO_USER_IDS'), ...idsDe('TELEGRAM_MEDARDO_CHAT_ID'), ...idsDe('TELEGRAM_MEDARDO_USER_ID')];
-  const carlosIds = [...idsDe('TELEGRAM_CARLOS_USER_IDS'), ...idsDe('TELEGRAM_CARLOS_CHAT_ID'), ...idsDe('TELEGRAM_CARLOS_USER_ID')];
-  if (uid && joseIds.includes(uid)) return 'jose';
-  if (cid && joseIds.includes(cid)) return 'jose';
-  if (uid && medIds.includes(uid)) return 'medardo';
-  if (cid && medIds.includes(cid)) return 'medardo';
-  if (uid && carlosIds.includes(uid)) return 'carlos';
-  if (cid && carlosIds.includes(cid)) return 'carlos';
+  for (const id of Object.keys(MIEMBROS) as MiembroId[]) {
+    const ids = idsTelegramDe(id);
+    if (uid && ids.includes(uid)) return id;
+    if (cid && ids.includes(cid)) return id;
+  }
 
   const n = fold(opts.nombre || '');
   if (!n) return null;
   if (/\bmedardo\b/.test(n)) return 'medardo';
+  if (/\bmayra\b/.test(n)) return 'mayra';
   if (/\b(carlos|paguada)\b/.test(n) || /\bleonardo paguada\b/.test(n)) return 'carlos';
   if (/\bjose\b/.test(n) || n === 'j' || n.startsWith('jose ')) return 'jose';
   return null;

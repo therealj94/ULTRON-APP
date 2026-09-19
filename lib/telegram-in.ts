@@ -42,7 +42,12 @@ export function chatsPermitidos(): string[] {
     ...listaIds(process.env.TELEGRAM_CARLOS_USER_ID),
     ...listaIds(process.env.TELEGRAM_CARLOS_USER_IDS),
   ];
-  return [...new Set([...extra, ...(uno ? [uno] : []), ...jose, ...medardo, ...carlos])];
+  const mayra = [
+    ...listaIds(process.env.TELEGRAM_MAYRA_CHAT_ID),
+    ...listaIds(process.env.TELEGRAM_MAYRA_USER_ID),
+    ...listaIds(process.env.TELEGRAM_MAYRA_USER_IDS),
+  ];
+  return [...new Set([...extra, ...(uno ? [uno] : []), ...jose, ...medardo, ...carlos, ...mayra])];
 }
 
 export function usuariosPermitidos(): string[] {
@@ -83,7 +88,8 @@ export function ayudaTelegram(): string {
     'Si me subes una foto o un PDF, los leo. No invento lo que no está en el archivo. Imagen como archivo también vale.',
     'Si me mandas una nota de voz, la oigo, la transcribo y te contesto por escrito. Audio de vuelta solo si lo pides (`/audio`).',
     'Urgente: «avísame urgente…» o «llámanos por telegram». Suena el teléfono y, si hay voz, te mando nota. El bot no hace llamada de teléfono; eso es Twilio (aún sin clave).',
-    'Memoria: una para José, otra para Medardo y otra para Carlos, en S3. No mezclo las conversaciones. Dime «recuerda que…» y queda atado a ti.',
+    'Memoria: una para José, otra para Medardo, otra para Carlos y otra para Mayra, en S3. No mezclo las conversaciones. Dime «recuerda que…» y queda atado a ti.',
+    'Carlos y Mayra: consulta. Pueden usar el taller; no cambian el sistema (sin redespliegue, sin mantenimiento, sin ejecutor).',
     'Ejemplos: «cómo está el sistema», «mándame audio del sistema», «busca noticias de oro», «anota que mañana hay junta», «haz un pdf del resumen».',
   ].join('\n');
 }
