@@ -28,6 +28,7 @@ import { bargeIn } from './03-voz/barge';
 import { pedirTurno } from './04-cerebro/turno';
 import { grabFrame } from './04-cerebro/grabFrame';
 import { guardarHecho } from './09-estado/memoria';
+import { headersMesa } from './10-infra/sesionCliente';
 const pendienteCerebro = { hecho: '' };
 import { downloadStandaloneSimulator } from './08-servicios/exporter';
 import { Maximize2, Minimize2, BatteryMedium, Wifi, Sparkles, SlidersHorizontal, Cpu, Glasses, RotateCw, Fingerprint, Camera, Zap, Globe, BookOpen, Eye as EyeIcon, Cloud, ShieldCheck, HelpCircle, RotateCcw } from 'lucide-react';
@@ -272,7 +273,7 @@ export default function App() {
     let cancelled = false;
     const nombre = currentUser.name || 'José';
 
-    fetch('/api/ultron/sesion')
+    fetch('/api/ultron/sesion', { headers: headersMesa() })
       .then((res) => res.json())
       .then((data) => {
         if (cancelled) return;
@@ -591,6 +592,11 @@ export default function App() {
     const image = quiereVer ? grabFrame() : null;
     pedirTurno({ message: cmd, mode, historial: historialRef.current, image })
       .then((data) => {
+        if (data.error === 'sesión requerida' || /sesión requerida/.test(String(data.error || ''))) {
+          setIsBiometricOpen(true);
+          vocalize('ULTRON es privado. Entra con tu sesión de junta.');
+          return;
+        }
         const text = data.reply || data.error || 'Qwen no contestó.';
         historialRef.current = [...historialRef.current, { rol: 'user', texto: cmd }, { rol: 'ultron', texto: String(text) }].slice(-12);
         fetch('/api/memoria', {
@@ -1289,7 +1295,7 @@ export default function App() {
 
         {/* Biometric Authentication Modal */}
         <BiometricAuthModal
-          isOpen={false}
+          isOpen={isBiometricOpen}
           onClose={() => setIsBiometricOpen(false)}
           soundFxEnabled={soundFxEnabled}
           onSpeak={(t) => vocalize(t)}

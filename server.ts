@@ -23,12 +23,24 @@ import {
   leerPagina,
 } from './server/desk';
 import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
-import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, limitar, urlPublica } from './server/seguridad';
+import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, limitar, urlPublica } from './server/seguridad';
 import { esHechoLargo, fusionarLarga, semillaLarga } from './server/hechos';
 import { leerPdf } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, hechosCatalogo } from './lib/taller';
 import { listarTareas } from './lib/tareas';
+import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
+import { construirMensajes, extraerPython } from './lib/qwen';
+import {
+  ayudaTelegram,
+  hiloTelegram,
+  parsearUpdateTelegram,
+  recordarTelegram,
+  registrarWebhookTelegram,
+  telegramAutorizado,
+  telegramResponder,
+  telegramWebhookSecretOk,
+} from './lib/telegram-in';
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -263,7 +275,7 @@ app.post('/api/vault/elevenlabs', exigirSesion, (req, res) => {
 });
 
 // BÓVEDA: ElevenLabs Text-to-Speech Proxy (Secure server-side request)
-app.post('/api/vault/elevenlabs/synthesize', async (req, res) => {
+app.post('/api/vault/elevenlabs/synthesize', exigirMesa, async (req, res) => {
   const { text, voiceId = 'pNInz6obpgDQGcFmaJgB', stability = 0.65, similarityBoost = 0.85, apiKeyOverride } = req.body;
 
   const keyToUse = (apiKeyOverride && apiKeyOverride.trim()) || VAULT_ELEVENLABS_API_KEY;
@@ -596,11 +608,16 @@ app.post('/api/ultron/biometric-login', async (req, res) => {
 });
 
 app.get('/api/ultron/sesion', async (req, res) => {
-  res.json({
-    authenticated: ultronRemoteSession.authenticated,
-    user: ultronRemoteSession.user,
-    remoteUrl: ULTRON_REMOTE_URL,
-  });
+  const s = sesionDe(req);
+  if (s) {
+    return res.json({
+      authenticated: true,
+      user: { nombre: s.nombre, correo: s.correo, rol: s.rol },
+      remoteUrl: ULTRON_REMOTE_URL,
+      honesto: true,
+    });
+  }
+  res.json({ authenticated: false, user: null, remoteUrl: ULTRON_REMOTE_URL, honesto: true });
 });
 
 app.post('/api/ultron/salir', async (req, res) => {
@@ -695,7 +712,7 @@ app.post('/api/playwright/scrape', exigirSesion, limitar(10), async (req, res) =
 });
 
 
-app.post('/api/vision/analyze', async (req, res) => {
+app.post('/api/vision/analyze', exigirMesa, async (req, res) => {
   const { mediaType, fileName, base64Data, prompt } = req.body || {};
   if (!base64Data) {
     return res.status(400).json({ error: 'Falta la imagen', honesto: true });
@@ -826,12 +843,12 @@ function escribirMemoria(m: Memoria) {
   fs.renameSync(tmp, MEM_FILE);
 }
 
-app.get('/api/memoria', (_req, res) => {
+app.get('/api/memoria', exigirMesa, (_req, res) => {
   const m = leerMemoria();
   res.json({ ...m, honesto: true, nota: 'corta = últimos turnos; larga = hechos. FP mongo no expuesto a la desk sin sesión.' });
 });
 
-app.post('/api/memoria', (req, res) => {
+app.post('/api/memoria', exigirMesa, (req, res) => {
   const m = leerMemoria();
   const hecho = String(req.body?.hecho || '').trim();
   const olvido = !!req.body?.olvidar;
@@ -851,7 +868,7 @@ app.post('/api/memoria', (req, res) => {
 });
 
 
-app.post('/api/tts/stream', limitar(20), async (req, res) => {
+app.post('/api/tts/stream', exigirMesa, limitar(20), async (req, res) => {
   const text = String(req.body?.text || '').slice(0, 2000).trim();
   const voice = String(req.body?.voice || 'luna');
   const instruct = String(req.body?.instruct || '').slice(0, 400);
@@ -889,7 +906,7 @@ app.post('/api/tts/stream', limitar(20), async (req, res) => {
  * Oído de la app nativa: ElevenLabs Scribe (v2 → v1), Gemini de reserva si hay key.
  * Body: { audioBase64 | audio (data URL o base64), mimeType | mime, language }.
  */
-app.post('/api/stt', limitar(20), async (req, res) => {
+app.post('/api/stt', exigirMesa, limitar(20), async (req, res) => {
   const t0 = Date.now();
   const raw = String(req.body?.audioBase64 || req.body?.audio || '');
   if (!raw || raw.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
@@ -925,11 +942,11 @@ app.post('/api/stt', limitar(20), async (req, res) => {
  *   engine=qwen: nodo Qwen3-TTS local (T4). engine=auto (default, mesa web): Qwen primero, ElevenLabs si cae.
  * Si todo falla → 503 (la app nunca usa la voz robótica del sistema).
  */
-app.get('/api/tts', (req, res, next) => {
+app.get('/api/tts', exigirMesa, (req, res, next) => {
   req.body = { ...req.query };
   next();
 });
-app.all('/api/tts', limitar(20), async (req, res) => {
+app.all('/api/tts', exigirMesa, limitar(20), async (req, res) => {
   const text = limpiarParaVoz(String(req.body?.text || '').slice(0, 2000));
   const voice = String(req.body?.voice || ULTRON_VOICE.qwenVoice);
   const instruct = String(req.body?.instruct || '').slice(0, 400);
@@ -1076,6 +1093,23 @@ async function prepararTurno(body: any) {
     hechos.push(`Taller falló: ${String(e?.message || e).slice(0, 160)}.`);
   }
 
+  try {
+    if (/\b(ejecuta|corre el c[oó]digo|run this)\b/i.test(message)) {
+      const py = extraerPython(message);
+      if (py) {
+        tools.push('ejecutor');
+        const r = await ejecutarCodigo(py);
+        hechos.push(
+          `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`
+        );
+      } else {
+        hechos.push('EJECUTOR: pediste ejecutar pero no vino un bloque ```python. Pégalo.');
+      }
+    }
+  } catch (e: any) {
+    hechos.push(`Ejecutor falló: ${String(e?.message || e).slice(0, 160)}.`);
+  }
+
   const soloDato =
     /precio|spot|oro|plata|gold|silver|xau|xag|lempira|hnl|tipo de cambio|cu[aá]nto/.test(q) &&
     !/por qu[eé]|explica|an[aá]lisis|busca|investiga/.test(q) &&
@@ -1084,7 +1118,8 @@ async function prepararTurno(body: any) {
     decirTaller ||
     (soloDato && hechos.length ? hechos.map((h) => h.replace(/ No inventes otro número\./g, '')).join(' ') : null);
 
-  const system = `${buildPersonality({ nombre: nombre || undefined })}
+  const canal = body?.canal === 'telegram' ? 'telegram' : 'mesa';
+  const personalidad = `${buildPersonality({ nombre: nombre || undefined, canal })}
 
 CEREBRO ORDEN GLOBAL:
 ${CONOCIMIENTO_OG}
@@ -1093,32 +1128,43 @@ No finjas recuerdos de otras noches: solo LARGO PLAZO y ULTIMOS TURNOS.
 Modo de mesa pedido: ${mode}.
 HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\nLARGO PLAZO:\n${larga.join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h: any) => `${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
 
+  const compuesto = construirMensajes({ personalidad, user: message, canal });
+  if (compuesto.meta.rag) tools.push('rag');
+  if (compuesto.meta.cot) tools.push('cot');
+  const system = compuesto.messages[0].content;
+
   return { t0, message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system };
 }
 
-app.post('/api/turno', limitar(20), async (req, res) => {
-  const p = await prepararTurno(req.body);
-  if (!p.message) return res.status(400).json({ error: 'message vacío', honesto: true });
-  const { t0, mode, hechos, tools, foto, system, message } = p;
-
+async function correrTurno(body: any): Promise<{
+  reply: string;
+  via: string;
+  mode: string;
+  ms: number;
+  herramientas: string[];
+  foto: string | null;
+  honesto: true;
+  error?: string;
+}> {
+  const p = await prepararTurno(body);
+  if (!p.message) return { reply: '', via: 'none', mode: p.mode, ms: Date.now() - p.t0, herramientas: [], foto: null, honesto: true, error: 'message vacío' };
+  const { t0, mode, tools, foto, system, message, hechos } = p;
   if (p.directo) {
-    return res.json({
+    return {
       reply: p.directo,
-      modelo: 'tools',
       via: p.directoVia === 'taller' ? 'taller' : 'gold-api/er-api',
       mode,
       ms: Date.now() - t0,
-      tools: tools.length,
       herramientas: tools,
       foto,
       honesto: true,
-    });
+    };
   }
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
-    if (hechos.length) return res.json({ reply: hechos.join('\n'), modelo: 'tools-only', via: 'tools', mode, ms: Date.now() - t0, foto, honesto: true });
-    return res.status(503).json({ error: 'Qwen no configurado', honesto: true });
+    const reply = hechos.join('\n');
+    if (reply) return { reply, via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
+    return { reply: '', via: 'none', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: 'Qwen no configurado' };
   }
-
   try {
     const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',
@@ -1137,22 +1183,41 @@ app.post('/api/turno', limitar(20), async (req, res) => {
     const reply = String(juntarOllama(raw) || '').trim();
     if (!r.ok || !reply) {
       if (hechos.length) {
-        return res.json({ reply: hechos.join('\n'), modelo: ULTRON_NODO_MODELO, via: 'tools-fallback', ms: Date.now() - t0, honesto: true, raw: raw.slice(0, 200) });
+        return { reply: hechos.join('\n'), via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
       }
-      return res.status(502).json({ error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 300), honesto: true });
+      return { reply: '', via: 'qwen', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: 'Qwen no contestó' };
     }
-    return res.json({ reply, modelo: ULTRON_NODO_MODELO, via: `${ULTRON_NODO_URL}/api/chat`, mode, ms: Date.now() - t0, tools: tools.length, herramientas: tools, foto, honesto: true });
+    return { reply, via: `${ULTRON_NODO_URL}/api/chat`, mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
   } catch (err: any) {
-    if (hechos.length) return res.json({ reply: hechos.join('\n'), modelo: 'tools-only', ms: Date.now() - t0, honesto: true });
-    return res.status(502).json({ error: 'Qwen caído', message: String(err?.message || err).slice(0, 200), honesto: true });
+    if (hechos.length) return { reply: hechos.join('\n'), via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
+    return { reply: '', via: 'qwen', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: String(err?.message || err).slice(0, 200) };
   }
+}
+
+app.post('/api/turno', exigirMesa, limitar(20), async (req, res) => {
+  const out = await correrTurno(req.body);
+  if (out.error && !out.reply) {
+    const code = out.error === 'message vacío' ? 400 : out.error.includes('configurado') ? 503 : 502;
+    return res.status(code).json({ error: out.error, honesto: true });
+  }
+  return res.json({
+    reply: out.reply,
+    modelo: out.via === 'taller' || out.via.includes('gold') ? 'tools' : ULTRON_NODO_MODELO,
+    via: out.via,
+    mode: out.mode,
+    ms: out.ms,
+    tools: out.herramientas.length,
+    herramientas: out.herramientas,
+    foto: out.foto,
+    honesto: true,
+  });
 });
 
 /**
  * Turno en streaming (SSE): la app empieza a hablar con la primera frase mientras Qwen sigue escribiendo.
  * Eventos: `tools` (herramientas usadas), `delta` (texto), `done` ({ reply, ms }), `error`.
  */
-app.post('/api/turno/stream', limitar(20), async (req, res) => {
+app.post('/api/turno/stream', exigirMesa, limitar(20), async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Accel-Buffering', 'no');
@@ -1250,25 +1315,83 @@ app.post('/api/turno/stream', limitar(20), async (req, res) => {
   }
 });
 
-app.get('/api/taller', limitar(30), (_req, res) => {
+app.get('/api/taller', exigirMesa, limitar(30), (_req, res) => {
   res.json({ honesto: true, canales: catalogoCanales() });
 });
 
-app.get('/api/sistema', limitar(20), async (_req, res) => {
+app.get('/api/sistema', exigirMesa, limitar(20), async (_req, res) => {
   const foto = await fotoSistema();
   res.json({ honesto: true, ...foto });
 });
 
-app.get('/api/tareas', limitar(20), (_req, res) => {
+app.get('/api/tareas', exigirMesa, limitar(20), (_req, res) => {
   res.json({ honesto: true, tareas: listarTareas() });
 });
 
-app.get('/api/taller/archivo/:id', limitar(30), (req, res) => {
+app.get('/api/taller/archivo/:id', exigirMesa, limitar(30), (req, res) => {
   const buf = leerPdf(String(req.params.id || ''));
   if (!buf) return res.status(404).json({ error: 'PDF no encontrado', honesto: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename="${path.basename(String(req.params.id))}"`);
   return res.send(buf);
+});
+
+app.post('/api/ejecutar', exigirMesa, limitar(10), async (req, res) => {
+  if (!ejecutorActivo()) return res.status(503).json({ error: 'Ejecutor desactivado', honesto: true, ok: false });
+  const codigo = String(req.body?.codigo || extraerPython(String(req.body?.texto || '')) || '');
+  const r = await ejecutarCodigo(codigo);
+  return res.json({ ...r, honesto: true });
+});
+
+async function procesarTelegram(update: any) {
+  const parsed = await parsearUpdateTelegram(update);
+  if (!parsed) return;
+  if (!telegramAutorizado(parsed.chatId, parsed.userId)) {
+    console.warn('[ULTRON] telegram rechazado', parsed.chatId);
+    return;
+  }
+  if (parsed.comando === '/start' || parsed.comando === '/ayuda' || parsed.comando === '/help') {
+    await telegramResponder(parsed.chatId, ayudaTelegram());
+    return;
+  }
+  let texto = parsed.texto;
+  if (parsed.audio && !texto) {
+    const key = VAULT_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '';
+    if (key) {
+      const out = await elevenTranscribe({
+        apiKey: key,
+        audio: parsed.audio.buffer,
+        mime: parsed.audio.mime,
+        language: 'es',
+      });
+      texto = String(out.text || '').trim();
+    }
+    if (!texto) texto = 'No pude oír el audio. Escríbeme.';
+  }
+  if (!texto && parsed.imageDataUrl) texto = '¿qué ves en esta imagen?';
+  const out = await correrTurno({
+    message: texto,
+    usuario: parsed.nombre,
+    mode: 'TELEGRAM',
+    canal: 'telegram',
+    historial: hiloTelegram(parsed.chatId),
+    image: parsed.imageDataUrl,
+  });
+  const reply = out.reply || out.error || 'No pude contestar.';
+  recordarTelegram(parsed.chatId, texto, reply);
+  await telegramResponder(parsed.chatId, reply);
+}
+
+app.post('/api/telegram/webhook', limitar(40), async (req, res) => {
+  if (!telegramWebhookSecretOk(req.headers['x-telegram-bot-api-secret-token'])) {
+    return res.status(401).json({ ok: false, honesto: true });
+  }
+  res.json({ ok: true, honesto: true });
+  try {
+    await procesarTelegram(req.body);
+  } catch (e: any) {
+    console.warn('[ULTRON] telegram inbound', String(e?.message || e).slice(0, 180));
+  }
 });
 
 app.post('/api/qwen/chat', (_req, res) => {
@@ -1302,7 +1425,10 @@ async function startServer() {
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`[ULTRON] :${PORT} fase C — health/turno/tts`);
+    console.log(`[ULTRON] :${PORT} fase C — health/turno/tts/telegram`);
+    registrarWebhookTelegram()
+      .then((r) => console.log('[ULTRON] telegram webhook', r.detalle))
+      .catch((e) => console.warn('[ULTRON] telegram webhook', String(e?.message || e).slice(0, 160)));
   });
 }
 

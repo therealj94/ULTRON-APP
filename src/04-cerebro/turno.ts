@@ -1,4 +1,5 @@
 import { leerLarga } from '../09-estado/memoria';
+import { headersMesa } from '../10-infra/sesionCliente';
 
 export type Turno = {
   reply?: string;
@@ -18,7 +19,7 @@ export async function pedirTurno(opts: {
 }): Promise<Turno> {
   const r = await fetch('/api/turno', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headersMesa() },
     body: JSON.stringify({
       message: opts.message,
       mode: opts.mode || 'GUARDIAN',
@@ -28,5 +29,9 @@ export async function pedirTurno(opts: {
     }),
     signal: opts.signal,
   });
-  return r.json();
+  const data = await r.json().catch(() => ({}));
+  if (r.status === 401) {
+    return { reply: '', error: 'sesión requerida', honesto: true, ...data };
+  }
+  return data;
 }
