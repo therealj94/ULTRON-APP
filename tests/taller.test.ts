@@ -14,6 +14,10 @@ describe('Taller ULTRON', () => {
     assert.equal(parsePedido('envía por telegram el resumen').canal, 'telegram');
     assert.equal(parsePedido('mándame un pdf por whatsapp').canal, 'whatsapp');
     assert.equal(parsePedido('llámame y dime hola').accion, 'llamar');
+    assert.equal(parsePedido('haz una llamada').accion, 'llamar');
+    const pdfConLlamada = parsePedido('envía por telegram un pdf: faltan whatsapp, correo, llamada');
+    assert.equal(pdfConLlamada.accion, 'enviar');
+    assert.equal(pdfConLlamada.canal, 'telegram');
     assert.equal(parsePedido('hola jefe').accion, null);
   });
 

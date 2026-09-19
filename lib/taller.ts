@@ -32,7 +32,14 @@ export function parsePedido(raw: string): {
   if (/\b(como esta|cómo está|estado del sistema|los nodos|salud del sistema|que nodos)\b/.test(l) || /^(status|salud)\b/.test(l)) {
     return { accion: 'sistema', canal, texto: q };
   }
-  if (/\b(llama|llamame|llámame|llamada|call me)\b/.test(l)) return { accion: 'llamar', canal, texto: q };
+  // Envío gana a "llamada": el cuerpo de un PDF/Telegram puede listar canales pendientes.
+  if (/\b(envia|envía|manda|mandale|mandame|mándame)\b/.test(l) || (canal && /\bpdf\b/.test(l))) {
+    return { accion: 'enviar', canal, texto: q };
+  }
+  if (/\b(haz un pdf|genera(?:r)? (un )?pdf|pdf de)\b/.test(l)) return { accion: 'pdf', canal, texto: q };
+  if (/\b(llama(?:me)?|ll[aá]mame|haz una llamada|hacer una llamada|call me)\b/.test(l)) {
+    return { accion: 'llamar', canal, texto: q };
+  }
   if (/\b(pendientes|tareas|lista de tareas)\b/.test(l) && !/\b(anota|agrega|apunta|recuerda)\b/.test(l)) {
     return { accion: 'listar', canal, texto: q };
   }
@@ -40,10 +47,6 @@ export function parsePedido(raw: string): {
   if (mHecho) return { accion: 'hecho', canal, texto: mHecho[2] };
   const mAdd = q.match(/\b(?:anota|apunta|agrega|recu[eé]dame|nueva tarea)(?:\s+(?:que|esto))?\s*[:\-]?\s*(.+)$/i);
   if (mAdd && mAdd[1].trim().length > 2) return { accion: 'tarea', canal, texto: mAdd[1].trim() };
-  if (/\b(envia|envía|manda|mandale|mandame|mándame)\b/.test(l) || (canal && /\bpdf\b/.test(l))) {
-    return { accion: 'enviar', canal, texto: q };
-  }
-  if (/\b(haz un pdf|genera(?:r)? (un )?pdf|pdf de)\b/.test(l)) return { accion: 'pdf', canal, texto: q };
   return { accion: null, canal, texto: q };
 }
 
