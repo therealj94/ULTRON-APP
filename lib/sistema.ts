@@ -3,6 +3,7 @@
  */
 
 import { ejecutorActivo } from './ejecutor';
+import { clave } from './boveda';
 
 export type Nodo = { id: string; vivo: boolean; detalle: string };
 
@@ -36,6 +37,7 @@ export function catalogoCanales(): Canal[] {
     { id: 'pdf', nombre: 'Generar PDF', listo: true },
     { id: 'codigo', nombre: 'Código y ejecutor', listo: codigo, falta: codigo ? undefined : 'EJECUTOR_ACTIVO=false' },
     { id: 'web', nombre: 'Buscar / leer páginas', listo: true },
+    { id: 'vision', nombre: 'Ver imágenes', listo: !!(clave('ojo_url') && clave('ojo_clave')) || !!clave('gemini'), falta: !!(clave('ojo_url') && clave('ojo_clave')) || !!clave('gemini') ? undefined : 'ULTRON_OJO_* o GEMINI_API_KEY' },
     { id: 'telegram', nombre: 'Telegram (enviar)', listo: tg, falta: tg ? undefined : 'TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID' },
     { id: 'telegram-in', nombre: 'Telegram (responder)', listo: tgIn, falta: tgIn ? undefined : 'TELEGRAM_WEBHOOK_SECRET + chat de junta' },
     { id: 'whatsapp', nombre: 'WhatsApp', listo: wa, falta: wa ? undefined : 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, JEFE_WHATSAPP' },

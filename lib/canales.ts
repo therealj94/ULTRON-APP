@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { textoAPdf } from './pdf';
+import { clave } from './boveda';
 
 export type Envio = { ok: boolean; via: string; detalle: string; archivo?: string };
 
@@ -30,8 +31,8 @@ export function hacerPdf(titulo: string, cuerpo: string) {
 }
 
 async function telegram(opts: { texto?: string; pdf?: { id: string; buf: Buffer; filename: string } }): Promise<Envio> {
-  const token = process.env.TELEGRAM_BOT_TOKEN || '';
-  const chat = process.env.TELEGRAM_CHAT_ID || '';
+  const token = clave('telegram_token');
+  const chat = clave('telegram_chat');
   if (!token || !chat) return { ok: false, via: 'telegram', detalle: 'Falta TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID. No envié nada.' };
   const base = `https://api.telegram.org/bot${token}`;
   try {
@@ -135,4 +136,85 @@ function escapeXml(s: string) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-export const canales = { telegram, whatsapp, correo, llamada };
+export async function telegramFoto(opts: { buf: Buffer; caption?: string; filename?: string }): Promise<Envio> {
+  const token = clave('telegram_token');
+  const chat = clave('telegram_chat');
+  if (!token || !chat) return { ok: false, via: 'telegram', detalle: 'Falta Telegram en la bóveda. No mandé la foto.' };
+  try {
+    const form = new FormData();
+    form.set('chat_id', chat);
+    form.set('caption', String(opts.caption || 'Captura de ULTRON').slice(0, 900));
+    form.set('photo', new Blob([new Uint8Array(opts.buf)], { type: 'image/jpeg' }), opts.filename || 'ultron.jpg');
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(20000),
+    });
+    const j: any = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) return { ok: false, via: 'telegram', detalle: `Telegram foto ${r.status}: ${JSON.stringify(j).slice(0, 160)}` };
+    return { ok: true, via: 'telegram', detalle: 'Foto enviada a la junta.' };
+  } catch (e: any) {
+    return { ok: false, via: 'telegram', detalle: String(e?.message || e).slice(0, 160) };
+  }
+}
+
+export async function telegramVoz(opts: { buf: Buffer; caption?: string }): Promise<Envio> {
+  const token = clave('telegram_token');
+  const chat = clave('telegram_chat');
+  if (!token || !chat) return { ok: false, via: 'telegram', detalle: 'Falta Telegram en la bóveda. No mandé la voz.' };
+  try {
+    const form = new FormData();
+    form.set('chat_id', chat);
+    form.set('caption', String(opts.caption || 'ULTRON').slice(0, 900));
+    form.set('disable_notification', 'false');
+    form.set('voice', new Blob([new Uint8Array(opts.buf)], { type: 'audio/mpeg' }), 'ultron.mp3');
+    let r = await fetch(`https://api.telegram.org/bot${token}/sendVoice`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(20000),
+    });
+    let j: any = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) {
+      const form2 = new FormData();
+      form2.set('chat_id', chat);
+      form2.set('caption', String(opts.caption || 'ULTRON').slice(0, 900));
+      form2.set('audio', new Blob([new Uint8Array(opts.buf)], { type: 'audio/mpeg' }), 'ultron.mp3');
+      r = await fetch(`https://api.telegram.org/bot${token}/sendAudio`, {
+        method: 'POST',
+        body: form2,
+        signal: AbortSignal.timeout(20000),
+      });
+      j = await r.json().catch(() => ({}));
+    }
+    if (!r.ok || !j.ok) return { ok: false, via: 'telegram', detalle: `Telegram voz ${r.status}: ${JSON.stringify(j).slice(0, 160)}` };
+    return { ok: true, via: 'telegram', detalle: 'Nota de voz enviada a la junta.' };
+  } catch (e: any) {
+    return { ok: false, via: 'telegram', detalle: String(e?.message || e).slice(0, 160) };
+  }
+}
+
+export async function telegramUrgente(texto: string, voz?: Buffer): Promise<Envio> {
+  const token = clave('telegram_token');
+  const chat = clave('telegram_chat');
+  if (!token || !chat) return { ok: false, via: 'telegram', detalle: 'Falta Telegram en la bóveda. No avisé.' };
+  const body = `URGENTE · ULTRON\n${String(texto || 'Te necesita la junta.').slice(0, 3000)}`;
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chat, text: body, disable_notification: false }),
+      signal: AbortSignal.timeout(12000),
+    });
+    const j: any = await r.json().catch(() => ({}));
+    if (!r.ok || !j.ok) return { ok: false, via: 'telegram', detalle: `Telegram urgente ${r.status}: ${JSON.stringify(j).slice(0, 160)}` };
+    if (voz && voz.length > 80) {
+      const v = await telegramVoz({ buf: voz, caption: 'ULTRON urgente' });
+      return { ok: v.ok, via: 'telegram', detalle: `Aviso urgente enviado. ${v.detalle}` };
+    }
+    return { ok: true, via: 'telegram', detalle: 'Aviso urgente enviado (suena el teléfono). El bot de Telegram no hace llamada de voz tipo teléfono.' };
+  } catch (e: any) {
+    return { ok: false, via: 'telegram', detalle: String(e?.message || e).slice(0, 160) };
+  }
+}
+
+export const canales = { telegram, whatsapp, correo, llamada, telegramFoto, telegramVoz, telegramUrgente };
