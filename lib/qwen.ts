@@ -7,6 +7,7 @@
 import { FEW_SHOT_HONESTO } from './prompts/few-shot';
 import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './prompts/cot';
 import { SYSTEM_PROMPT_HONESTO, TEXTO_TELEGRAM, VOZ_ESCRITORIO } from './prompts/honestidad';
+import { INSTRUCCION_HARNESS } from './harness';
 import { buscarSnippets } from './rag';
 
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
@@ -17,6 +18,7 @@ export type MensajesMeta = {
   codigo: boolean;
   rag: number;
   voz: boolean;
+  harness: boolean;
 };
 
 export function construirMensajes(opts: {
@@ -33,10 +35,12 @@ export function construirMensajes(opts: {
   const fewShot = opts.fewShot ?? codigo;
   const ragOn = opts.rag ?? codigo;
   const telegram = opts.canal === 'telegram';
+  const harness = telegram || codigo;
 
   const parts: string[] = [SYSTEM_PROMPT_HONESTO];
   if (!codigo) parts.push(telegram ? TEXTO_TELEGRAM : VOZ_ESCRITORIO);
   parts.push(String(opts.personalidad || '').trim());
+  if (harness) parts.push(INSTRUCCION_HARNESS);
   if (cot) parts.push(COT_FORZADO);
   if (fewShot) parts.push(FEW_SHOT_HONESTO);
 
@@ -58,7 +62,7 @@ export function construirMensajes(opts: {
       { role: 'system', content: system },
       { role: 'user', content: user },
     ],
-    meta: { cot, fewShot, codigo, rag, voz: !codigo },
+    meta: { cot, fewShot, codigo, rag, voz: !codigo, harness },
   };
 }
 

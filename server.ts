@@ -25,14 +25,18 @@ import {
 import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, limitar, urlPublica } from './server/seguridad';
 import { esHechoLargo, fusionarLarga, semillaLarga } from './server/hechos';
-import { leerPdf, telegramFoto } from './lib/canales';
+import { leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, hechosCatalogo } from './lib/taller';
 import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
+import { extraerPedidoHerramienta, quitarLineaPedido, resolverPedido } from './lib/harness';
+import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
+import { iniciarCentinela } from './lib/centinela';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verImagen } from './lib/vision';
+import { esTareaDeCodigo } from './lib/prompts/cot';
 import {
   ayudaTelegram,
   hiloTelegram,
@@ -1050,9 +1054,75 @@ HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\nLARGO PLAZO:\
   const compuesto = construirMensajes({ personalidad, user: message, canal });
   if (compuesto.meta.rag) tools.push('rag');
   if (compuesto.meta.cot) tools.push('cot');
+  if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
 
   return { t0, message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system };
+}
+
+async function preguntarQwen(system: string, message: string, hechos: string[]): Promise<{ ok: boolean; reply: string; error?: string }> {
+  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
+    return { ok: false, reply: '', error: 'Qwen no configurado' };
+  }
+  try {
+    const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
+      body: JSON.stringify({
+        model: ULTRON_NODO_MODELO,
+        stream: false,
+        messages: [
+          { role: 'system', content: system },
+          {
+            role: 'user',
+            content: `Antes de responder, esto es Orden Global (hechos):\n${CONOCIMIENTO_OG.slice(0, 3500)}\n\nHECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nPregunta de la junta: ${message}`,
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(60000),
+    });
+    const raw = await r.text();
+    const reply = String(juntarOllama(raw) || '').trim();
+    if (!r.ok || !reply) return { ok: false, reply: '', error: 'Qwen no contestó' };
+    return { ok: true, reply };
+  } catch (err: any) {
+    return { ok: false, reply: '', error: String(err?.message || err).slice(0, 200) };
+  }
+}
+
+async function correrHerramientaPedida(ped: ReturnType<typeof extraerPedidoHerramienta>, reply: string): Promise<string> {
+  if (!ped) return 'HARNESS: pedido vacío.';
+  return resolverPedido(
+    ped,
+    {
+      web: async (q) => {
+        const hits = await buscarWeb(q, 5);
+        if (!hits.length) return `HARNESS web "${q}": sin resultados.`;
+        const first = hits.find((h) => /^https?:\/\/[^/]+\/.+/.test(h.url));
+        const texto = first ? await leerPagina(first.url, 1200) : '';
+        return (
+          `HARNESS web "${q}":\n` +
+          hits.map((h, i) => `${i + 1}. ${h.title} — ${h.snippet} [${h.url}]`).join('\n') +
+          (first && texto ? `\nPRIMERA FUENTE (${first.url}): ${texto}` : '')
+        );
+      },
+      sistema: async () => {
+        const f = await fotoSistema();
+        return f.resumen;
+      },
+      leer: async (url) => {
+        const pub = await urlPublica(url);
+        if (pub.ok === false) return `HARNESS leer: ${pub.error}. No abrí.`;
+        const texto = await leerPagina(pub.url, 1600);
+        return texto ? `HARNESS leer (${pub.url}): ${texto}` : `HARNESS leer (${pub.url}): página vacía o no HTML.`;
+      },
+      ejecutor: async (codigo) => {
+        const r = await ejecutarCodigo(codigo);
+        return `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
+      },
+    },
+    extraerPython(reply)
+  );
 }
 
 async function correrTurno(body: any): Promise<{
@@ -1067,7 +1137,8 @@ async function correrTurno(body: any): Promise<{
 }> {
   const p = await prepararTurno(body);
   if (!p.message) return { reply: '', via: 'none', mode: p.mode, ms: Date.now() - p.t0, herramientas: [], foto: null, honesto: true, error: 'message vacío' };
-  const { t0, mode, tools, foto, system, message, hechos } = p;
+  const { t0, mode, tools, foto, system, message } = p;
+  const hechos = [...p.hechos];
   if (p.directo) {
     return {
       reply: p.directo,
@@ -1084,33 +1155,46 @@ async function correrTurno(body: any): Promise<{
     if (reply) return { reply, via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
     return { reply: '', via: 'none', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: 'Qwen no configurado' };
   }
-  try {
-    const r = await fetch(`${ULTRON_NODO_URL}/api/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
-      body: JSON.stringify({
-        model: ULTRON_NODO_MODELO,
-        stream: false,
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: `Antes de responder, esto es Orden Global (hechos):\n${CONOCIMIENTO_OG.slice(0, 3500)}\n\nPregunta de la junta: ${message}` },
-        ],
-      }),
-      signal: AbortSignal.timeout(60000),
-    });
-    const raw = await r.text();
-    const reply = String(juntarOllama(raw) || '').trim();
-    if (!r.ok || !reply) {
-      if (hechos.length) {
-        return { reply: hechos.join('\n'), via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
-      }
-      return { reply: '', via: 'qwen', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: 'Qwen no contestó' };
-    }
-    return { reply, via: `${ULTRON_NODO_URL}/api/chat`, mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
-  } catch (err: any) {
-    if (hechos.length) return { reply: hechos.join('\n'), via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
-    return { reply: '', via: 'qwen', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: String(err?.message || err).slice(0, 200) };
+  const q1 = await preguntarQwen(system, message, hechos);
+  if (!q1.ok) {
+    if (hechos.length) return { reply: hechos.join('\n'), via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
+    return { reply: '', via: 'qwen', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: q1.error };
   }
+  let reply = q1.reply;
+  let via = `${ULTRON_NODO_URL}/api/chat`;
+  for (let i = 0; i < 2; i++) {
+    const ped = extraerPedidoHerramienta(reply);
+    if (!ped) break;
+    tools.push(ped.herramienta);
+    const extra = await correrHerramientaPedida(ped, reply);
+    hechos.push(extra);
+    const qn = await preguntarQwen(system, message, hechos);
+    if (!qn.ok) {
+      reply = quitarLineaPedido(reply) + (extra ? `\n\n${extra}` : '');
+      via = 'harness-parcial';
+      break;
+    }
+    reply = qn.reply;
+    via = 'harness';
+  }
+  reply = quitarLineaPedido(reply);
+
+  const py = extraerPython(reply);
+  if (py && ejecutorActivo() && !tools.includes('ejecutor') && (esTareaDeCodigo(message) || /\b(ejecuta|corre el c[oó]digo)\b/i.test(message))) {
+    tools.push('ejecutor');
+    const r = await ejecutarCodigo(py);
+    const hecho = `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
+    hechos.push(hecho);
+    if (!r.ok) {
+      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos);
+      reply = qn.ok ? quitarLineaPedido(qn.reply) : `${quitarLineaPedido(reply)}\n\n${hecho}`;
+    } else {
+      reply = `${quitarLineaPedido(reply)}\n\n${hecho}`;
+    }
+    via = 'harness-ejecutor';
+  }
+
+  return { reply, via, mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
 }
 
 app.post('/api/turno', exigirMesa, limitar(20), async (req, res) => {
@@ -1274,6 +1358,7 @@ async function procesarTelegram(update: any) {
     return;
   }
   let texto = parsed.texto;
+  if (parsed.comando === '/audio') texto = 'mándame audio del sistema';
   if (parsed.audio && !texto) {
     const key = clave('elevenlabs') || process.env.ELEVENLABS_API_KEY || '';
     if (key) {
@@ -1299,6 +1384,12 @@ async function procesarTelegram(update: any) {
   const reply = out.reply || out.error || 'No pude contestar.';
   recordarTelegram(parsed.chatId, texto, reply);
   await telegramResponder(parsed.chatId, reply);
+  const yaMandóVoz = out.herramientas.includes('voz') || out.herramientas.includes('urgente');
+  const quiereVoz = !!parsed.audio || parsed.comando === '/audio' || pideNotaDeVoz(texto);
+  if (quiereVoz && !yaMandóVoz) {
+    const audio = await notaDeVoz(limpiarParaVoz(reply).slice(0, 400));
+    if (audio) await telegramVoz({ buf: audio, caption: 'ULTRON' });
+  }
 }
 
 app.post(['/api/telegram/webhook', '/api/telegram/webhook/'], limitar(40), async (req, res) => {
@@ -1351,6 +1442,7 @@ async function startServer() {
     registrarWebhookTelegram()
       .then((r) => console.log('[ULTRON] telegram webhook', r.detalle))
       .catch((e) => console.warn('[ULTRON] telegram webhook', String(e?.message || e).slice(0, 160)));
+    iniciarCentinela(180_000);
   });
 }
 

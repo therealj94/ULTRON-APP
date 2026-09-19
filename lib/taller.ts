@@ -7,7 +7,7 @@ import { canales, hacerPdf, leerPdf } from './canales';
 import { catalogoCanales, fotoSistema, redesplegarMesa } from './sistema';
 import { agregarTarea, marcarTarea, resumenTareas } from './tareas';
 import { fotoBoveda, clave } from './boveda';
-import { elevenSpeak } from '../server/desk';
+import { dictarSistema, notaDeVoz, pideNotaDeVoz } from './voz';
 
 export type TallerOut = { hechos: string[]; tools: string[]; decir?: string };
 
@@ -16,7 +16,7 @@ function publicBase() {
 }
 
 export function parsePedido(raw: string): {
-  accion: 'sistema' | 'mantenimiento' | 'redeploy' | 'tarea' | 'listar' | 'hecho' | 'pdf' | 'enviar' | 'llamar' | 'boveda' | 'urgente' | null;
+  accion: 'sistema' | 'mantenimiento' | 'redeploy' | 'tarea' | 'listar' | 'hecho' | 'pdf' | 'enviar' | 'llamar' | 'boveda' | 'urgente' | 'voz' | null;
   canal: 'telegram' | 'whatsapp' | 'correo' | null;
   texto: string;
 } {
@@ -31,6 +31,7 @@ export function parsePedido(raw: string): {
         : null;
   if (/\b(boveda|cajas de (la )?boveda|abri la boveda|abre la boveda)\b/.test(l)) return { accion: 'boveda', canal, texto: q };
   if (/\b(redeploy|redespleg|reinicia(r)? la mesa|nuevo deploy)\b/.test(l)) return { accion: 'redeploy', canal, texto: q };
+  if (pideNotaDeVoz(q)) return { accion: 'voz', canal: canal || 'telegram', texto: q };
   if (/\b(mantenimiento|repara|arregla|diagnostico|diagnóstico)\b/.test(l)) return { accion: 'mantenimiento', canal, texto: q };
   if (/\b(como esta|cómo está|estado del sistema|los nodos|salud del sistema|que nodos)\b/.test(l) || /^(status|salud)\b/.test(l)) {
     return { accion: 'sistema', canal, texto: q };
@@ -97,18 +98,35 @@ export async function despacharTaller(message: string, opts?: { usuario?: string
     return out(decir);
   }
 
+  if (p.accion === 'voz') {
+    tools.push('voz');
+    const foto = await fotoSistema();
+    hechos.push(foto.resumen);
+    hechos.push('Nodos: ' + foto.nodos.map((n) => `${n.id}=${n.vivo ? 'vivo' : 'caído'} (${n.detalle})`).join('; '));
+    const dicho = dictarSistema(foto);
+    if (!clave('telegram_token') || !clave('telegram_chat')) {
+      hechos.push('VOZ: Falta TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID. No envié audio.');
+      return out('Falta TELEGRAM_BOT_TOKEN o TELEGRAM_CHAT_ID. No envié nada.');
+    }
+    const voz = await notaDeVoz(dicho);
+    if (!voz) {
+      hechos.push('VOZ: no pude sintetizar audio (ElevenLabs y Chatterbox fallaron o sin clave). No mandé nota de voz.');
+      const r = await canales.telegram({ texto: dicho });
+      hechos.push(`TELEGRAM TEXTO: ${r.detalle}`);
+      return out(r.ok ? `${dicho} Mandé el estado por texto. Sin audio.` : r.detalle);
+    }
+    const r = await canales.telegramVoz({ buf: voz, caption: 'ULTRON · estado del sistema' });
+    hechos.push(`VOZ TELEGRAM: ${r.detalle}`);
+    return out(r.ok ? dicho : r.detalle);
+  }
+
   if (p.accion === 'urgente') {
     tools.push('urgente');
     const dicho = extraerCuerpo(p.texto) || 'ULTRON te necesita. Es urgente.';
-    let voz: Buffer | undefined;
-    const el = clave('elevenlabs');
-    if (el) {
-      const spoken = await elevenSpeak({ apiKey: el, text: dicho.slice(0, 400), performance: 'speak' });
-      voz = spoken?.audio;
-    }
+    const voz = await notaDeVoz(dicho);
     const r = await canales.telegramUrgente(dicho, voz);
     hechos.push(`URGENTE TELEGRAM: ${r.detalle}`);
-    if (!el) hechos.push('Sin ElevenLabs: avisé por texto que suena. No hay nota de voz.');
+    if (!voz) hechos.push('Sin audio: avisé por texto que suena. ElevenLabs/Chatterbox no devolvieron nota.');
     hechos.push('El bot de Telegram no hace llamada de teléfono. Llamada real = Twilio (caja llamada).');
     return out(r.detalle);
   }
@@ -148,12 +166,7 @@ export async function despacharTaller(message: string, opts?: { usuario?: string
     const r = await canales.llamada(dicho);
     hechos.push(`LLAMADA: ${r.detalle}`);
     if (!r.ok) {
-      const el = clave('elevenlabs');
-      let voz: Buffer | undefined;
-      if (el) {
-        const spoken = await elevenSpeak({ apiKey: el, text: dicho.slice(0, 400), performance: 'speak' });
-        voz = spoken?.audio;
-      }
+      const voz = await notaDeVoz(dicho);
       const tg = await canales.telegramUrgente(dicho, voz);
       hechos.push(`FALLBACK TELEGRAM: ${tg.detalle}`);
       return out(`${r.detalle} Te avisé por Telegram.`);
