@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Graba el banco /public/voz con ElevenLabs v3 (dialogue).
- * Canciones = intro + verso cantado + risa/comentario. Bohemian no se toca.
+ * Canciones = una toma estilo Bohemian (habla + [singing] + [laughs] + comentario). Bohemian no se toca.
  *
  *   ELEVENLABS_API_KEY=… node scripts/grabar-banco.mjs [all|canciones|saludos|cortos]
  */
@@ -91,34 +91,6 @@ async function postDialogue(text, { lang, sing } = {}) {
   throw new Error(`Eleven: ${last}`);
 }
 
-function writeTmp(buf, name) {
-  const p = path.join(OUT, `.tmp-${name}.mp3`);
-  fs.writeFileSync(p, buf);
-  return p;
-}
-
-function silencio(ms = 220) {
-  const p = path.join(OUT, `.tmp-sil.mp3`);
-  const r = spawnSync(
-    'ffmpeg',
-    ['-y', '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=mono', '-t', String(ms / 1000), '-c:a', 'libmp3lame', '-b:a', '128k', p],
-    { encoding: 'utf8' }
-  );
-  if (r.status !== 0) throw new Error(r.stderr.slice(-200));
-  return p;
-}
-
-function concat(parts, dest) {
-  const list = path.join(OUT, '.tmp-list.txt');
-  fs.writeFileSync(list, parts.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n'));
-  const r = spawnSync(
-    'ffmpeg',
-    ['-y', '-f', 'concat', '-safe', '0', '-i', list, '-c:a', 'libmp3lame', '-b:a', '128k', dest],
-    { encoding: 'utf8' }
-  );
-  if (r.status !== 0) throw new Error(r.stderr.slice(-240));
-}
-
 function duracion(p) {
   const r = spawnSync(
     'ffprobe',
@@ -153,66 +125,37 @@ async function grabarCorto(id, text, lang = 'es') {
   await new Promise((r) => setTimeout(r, 350));
 }
 
-async function grabarCancion({ id, intro, verso, cierre }) {
+async function grabarCancion({ id, texto }) {
   const dest = destPermitido(id);
-  const a = writeTmp(await postDialogue(intro, { lang: 'es' }), `${id}-a`);
-  await new Promise((r) => setTimeout(r, 450));
-  const b = writeTmp(await postDialogue(verso, { sing: true }), `${id}-b`);
-  await new Promise((r) => setTimeout(r, 450));
-  let risaBuf = await postDialogue('[laughs] Jaja. [amused] Je.', { lang: 'es' });
-  const je = path.join(OUT, 'je.mp3');
-  const risa = writeTmp(risaBuf.length >= 12000 ? risaBuf : fs.readFileSync(je), `${id}-risa`);
-  await new Promise((r) => setTimeout(r, 400));
-  const c = writeTmp(await postDialogue(cierre, { lang: 'es' }), `${id}-c`);
-  const sil = silencio(240);
-  concat([a, sil, b, sil, risa, sil, c], dest);
+  const buf = await postDialogue(texto, { sing: true });
+  fs.writeFileSync(dest, buf);
   const secs = duracion(dest);
-  const versoSecs = duracion(b);
-  console.log('cancion', id, fs.statSync(dest).size, secs.toFixed(1) + 's', 'verso', versoSecs.toFixed(1) + 's');
-  for (const p of [a, b, risa, c, sil, path.join(OUT, '.tmp-list.txt')]) {
-    try {
-      fs.unlinkSync(p);
-    } catch {
-      /* */
-    }
-  }
-  if (versoSecs < 6) {
-    throw new Error(`${id}: el verso duró ${versoSecs.toFixed(1)}s — se leyó, no se cantó`);
+  console.log('cancion', id, buf.length, secs.toFixed(1) + 's');
+  if (secs < 16) {
+    throw new Error(`${id}: duró ${secs.toFixed(1)}s — se leyó, no se cantó`);
   }
 }
 
 const CANCIONES = [
   {
     id: 'ligera',
-    intro: '[casually] Cerati. Un genio. Esta me la sé aunque no sea cantante. Ahí voy.',
-    verso:
-      '[singing] Ella durmió al calor de las masas…\ny yo desperté queriendo soñarla…\nDe aquel amor, de música ligera…\nnada nos libra… nada más queda.',
-    cierre:
-      '[laughs] [warmly] ¿Qué tal, José? Gustavo lo hacía parecer fácil. Yo la dejé temblando un poco. ¿La repetimos o seguimos?',
+    texto:
+      '[casually] Cerati. Un genio. Esta me la sé aunque no sea cantante. Ahí voy. [singing] Ella durmió al calor de las masas… y yo desperté queriendo soñarla… De aquel amor, de música ligera… nada nos libra… nada más queda. [laughs] [warmly] ¿Qué tal, José? Gustavo lo hacía parecer fácil. Yo la dejé temblando un poco. ¿La repetimos o seguimos?',
   },
   {
     id: 'bittersweet',
-    intro: '[softly] La de Medardo. The Verve. Sin red. Ahí voy.',
-    verso:
-      "[singing] You're a slave to money then you die…\nI'll take you down the only road I've ever been down…\nYou know the one that takes you to the places where all the veins meet, yeah…",
-    cierre:
-      '[laughs] [warmly] ¿Cómo la sentiste, José? Ashcroft canta como si le doliera el siglo. Yo apenas la rozé. ¿Le mandamos un audio a Medardo?',
+    texto:
+      "[softly] La de Medardo. The Verve. Sin red. Ahí voy. [singing] You're a slave to money then you die… I'll take you down the only road I've ever been down… You know the one that takes you to the places where all the veins meet, yeah… [laughs] [warmly] ¿Cómo la sentiste, José? Ashcroft canta como si le doliera el siglo. Yo apenas la rozé. ¿Le mandamos un audio a Medardo?",
   },
   {
     id: 'runaway',
-    intro: '[playful] Kanye. El rey. Brindis sucio, sin autotune. Ahí voy.',
-    verso:
-      "[singing] Let's have a toast for the douchebags…\nLet's have a toast for the assholes…\nLet's have a toast for the scumbags, every one of them that I know…",
-    cierre:
-      '[laughs] [warmly] ¿Qué tal, José? Ye lo tira como sentencia. Yo lo tiré como chiste. ¿Otro brindis o nos ponemos a trabajar?',
+    texto:
+      "[playful] Kanye. El rey. Brindis sucio, sin autotune. Ahí voy. [singing] Let's have a toast for the douchebags… Let's have a toast for the assholes… Let's have a toast for the scumbags, every one of them that I know… [laughs] [warmly] ¿Qué tal, José? Ye lo tira como sentencia. Yo lo tiré como chiste. ¿Otro brindis o nos ponemos a trabajar?",
   },
   {
     id: 'bruno',
-    intro: '[softly] Bruno Mars. Die With A Smile. Si el mundo se acaba, esta. No soy cantante. Ahí voy.',
-    verso:
-      "[singing] If the world was ending, I'd wanna be next to you…\nIf the party was over and our time on Earth was through…\nI'd wanna hold you just for a while and die with a smile…",
-    cierre:
-      '[laughs] [warmly] ¿Qué tal, José? Bruno la canta como si fuera la última noche. Yo la canté como si te estuviera cuidando el escritorio. ¿Otra, o trabajamos?',
+    texto:
+      "[softly] Bruno Mars. Die With A Smile. Si el mundo se acaba, esta. No soy cantante. Ahí voy. [singing] If the world was ending, I'd wanna be next to you… If the party was over and our time on Earth was through… I'd wanna hold you just for a while and die with a smile… [laughs] [warmly] ¿Qué tal, José? Bruno la canta como si fuera la última noche. Yo la canté como si te estuviera cuidando el escritorio. ¿Otra, o trabajamos?",
   },
 ];
 
