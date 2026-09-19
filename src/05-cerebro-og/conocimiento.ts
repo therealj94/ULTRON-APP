@@ -48,7 +48,7 @@ APPS Y CAPAS
 - Genesis ID: identidad.
 - PULSE2CHAT: hablar y pagar.
 - MyTokenPay: QR.
-- Ordenex: casa de cambio (prensa: vínculo NZ; versión LATAM). Cambia ORIGEN/AUKA/AGKA.
+- OrdenExchange (prensa: OrdenEx; vínculo NZ; versión LATAM): casa de cambio P2P estilo Binance P2P. Compra y venta de ORIGEN/AUKA/AGKA en la moneda y bancos de cada país de LATAM, custodia (escrow), chat, apelaciones, agentes de cambio. Exige Genesis ID verificado. Código: express-js-on-vercel/ordenexchange (Express+TS, Render). Precio de referencia: oro USD/oz ÷ 31.1035 ÷ 55 por ORIGEN.
 - AuCorp: fiat <-> metal/token.
 - También del grupo: Sport Kapital, Monark Brand Labs, Forge 333, Hyperflow.
 - Repo express-js-on-vercel: Genesis ID, apps, infra (puente ID, idempotencia, migración de claves, telemetría).
