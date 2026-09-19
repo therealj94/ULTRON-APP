@@ -50,4 +50,18 @@ describe('Memoria por miembro', () => {
     assert.equal(pc.includes('firmo yo mañana'), false);
     assert.equal(pj.includes('operaciones ORIGEN'), false);
   });
+
+  it('no mezcla la conversación de Mayra con la de Carlos', async () => {
+    resetMemoriaTest();
+    await recordarTurno({ quien: 'mayra', rol: 'user', texto: 'Mayra: tomo té verde por la mañana', canal: 'telegram' });
+    await recordarTurno({ quien: 'carlos', rol: 'user', texto: 'Carlos: reviso operaciones ORIGEN', canal: 'telegram' });
+    const py = promptMemoria('mayra');
+    const pc = promptMemoria('carlos');
+    assert.match(py, /HABLAS CON: Mayra/);
+    assert.match(py, /té verde/);
+    assert.equal(py.includes('operaciones ORIGEN'), false);
+    assert.equal(pc.includes('té verde'), false);
+    assert.match(py, /ACCESO: consulta/);
+    assert.match(promptMemoria('jose'), /ACCESO: mando/);
+  });
 });

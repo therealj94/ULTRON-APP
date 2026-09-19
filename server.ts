@@ -49,7 +49,8 @@ import {
   resolverQuien,
   type CanalMem,
 } from './lib/memoria';
-import { nombreDe } from './lib/junta';
+import { nombreDe, puedeCambiarSistema } from './lib/junta';
+import { mensajeBienvenidaUltron } from './lib/bienvenida';
 import {
   ayudaTelegram,
   hiloTelegram,
@@ -231,6 +232,14 @@ app.get('/api/vault/status', exigirMesa, async (_req, res) => {
 
 // BÓVEDA: ElevenLabs Key Update Endpoint
 app.post('/api/vault/elevenlabs', exigirSesion, (req, res) => {
+  const s = sesionDe(req);
+  const quien = resolverQuien(req.body, s);
+  if (!puedeCambiarSistema(quien)) {
+    return res.status(403).json({
+      error: 'ACCESO: consulta. Carlos y Mayra no cambian el sistema. No escribo la bóveda.',
+      honesto: true,
+    });
+  }
   const { apiKey } = req.body;
   if (!apiKey || typeof apiKey !== 'string') {
     return res.status(400).json({ error: 'La API Key de ElevenLabs es requerida.' });
@@ -448,6 +457,14 @@ app.get('/api/render/deploys', async (req, res) => {
 
 // Render API: Trigger Live Deployment to Render
 app.post('/api/render/deploy', exigirSesion, async (req, res) => {
+  const s = sesionDe(req);
+  const quien = resolverQuien(req.body, s);
+  if (!puedeCambiarSistema(quien)) {
+    return res.status(403).json({
+      error: 'ACCESO: consulta. Carlos y Mayra no cambian el sistema. No redespliego.',
+      honesto: true,
+    });
+  }
   if (!RENDER_API_KEY) {
     return res.status(400).json({ error: 'RENDER_API_KEY no configurada en variables de entorno.' });
   }
@@ -943,6 +960,11 @@ async function prepararTurno(body: any) {
       ? `MEMORIA: S3 activo. Hablas con ${nombreDe(quien)}. La conversación del otro miembro no entra.`
       : `MEMORIA: ${memSt.detalle}`
   );
+  hechos.push(
+    puedeCambiarSistema(quien)
+      ? `ACCESO: mando (${nombreDe(quien)}). Puede pedir redespliegue, mantenimiento y ejecutor.`
+      : `ACCESO: consulta (${nombreDe(quien)}). No cambia el sistema: no redespliego, no hago mantenimiento ni corro el ejecutor. El resto (estado, PDF, fotos, voz, web, oro, pendientes, memoria propia) sí.`
+  );
 
 
   try {
@@ -1034,7 +1056,7 @@ async function prepararTurno(body: any) {
   }
 
   try {
-    const taller = await despacharTaller(message, { usuario: nombre });
+    const taller = await despacharTaller(message, { usuario: nombre, quien });
     hechos.push(...taller.hechos);
     tools.push(...taller.tools);
     decirTaller = taller.decir;
@@ -1051,15 +1073,19 @@ async function prepararTurno(body: any) {
 
   try {
     if (/\b(ejecuta|corre el c[oó]digo|run this)\b/i.test(message)) {
-      const py = extraerPython(message);
-      if (py) {
-        tools.push('ejecutor');
-        const r = await ejecutarCodigo(py);
-        hechos.push(
-          `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`
-        );
+      if (!puedeCambiarSistema(quien)) {
+        hechos.push('ACCESO: consulta. No corro el ejecutor. José o Medardo sí pueden.');
       } else {
-        hechos.push('EJECUTOR: pediste ejecutar pero no vino un bloque ```python. Pégalo.');
+        const py = extraerPython(message);
+        if (py) {
+          tools.push('ejecutor');
+          const r = await ejecutarCodigo(py);
+          hechos.push(
+            `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`
+          );
+        } else {
+          hechos.push('EJECUTOR: pediste ejecutar pero no vino un bloque ```python. Pégalo.');
+        }
       }
     }
   } catch (e: any) {
@@ -1122,7 +1148,11 @@ async function preguntarQwen(system: string, message: string, hechos: string[]):
   }
 }
 
-async function correrHerramientaPedida(ped: ReturnType<typeof extraerPedidoHerramienta>, reply: string): Promise<string> {
+async function correrHerramientaPedida(
+  ped: ReturnType<typeof extraerPedidoHerramienta>,
+  reply: string,
+  quien: ReturnType<typeof resolverQuien>
+): Promise<string> {
   if (!ped) return 'HARNESS: pedido vacío.';
   return resolverPedido(
     ped,
@@ -1149,6 +1179,9 @@ async function correrHerramientaPedida(ped: ReturnType<typeof extraerPedidoHerra
         return texto ? `HARNESS leer (${pub.url}): ${texto}` : `HARNESS leer (${pub.url}): página vacía o no HTML.`;
       },
       ejecutor: async (codigo) => {
+        if (!puedeCambiarSistema(quien)) {
+          return 'ACCESO: consulta. No ejecuto código ni cambio el sistema. José o Medardo sí pueden.';
+        }
         const r = await ejecutarCodigo(codigo);
         return `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
       },
@@ -1211,7 +1244,7 @@ async function correrTurno(body: any): Promise<{
     const ped = extraerPedidoHerramienta(reply);
     if (!ped) break;
     tools.push(ped.herramienta);
-    const extra = await correrHerramientaPedida(ped, reply);
+    const extra = await correrHerramientaPedida(ped, reply, quien);
     hechos.push(extra);
     const qn = await preguntarQwen(system, message, hechos);
     if (!qn.ok) {
@@ -1225,7 +1258,13 @@ async function correrTurno(body: any): Promise<{
   reply = quitarLineaPedido(reply);
 
   const py = extraerPython(reply);
-  if (py && ejecutorActivo() && !tools.includes('ejecutor') && (esTareaDeCodigo(message) || /\b(ejecuta|corre el c[oó]digo)\b/i.test(message))) {
+  if (
+    py &&
+    ejecutorActivo() &&
+    puedeCambiarSistema(quien) &&
+    !tools.includes('ejecutor') &&
+    (esTareaDeCodigo(message) || /\b(ejecuta|corre el c[oó]digo)\b/i.test(message))
+  ) {
     tools.push('ejecutor');
     const r = await ejecutarCodigo(py);
     const hecho = `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
@@ -1404,6 +1443,15 @@ app.get('/api/taller/archivo/:id', exigirMesa, limitar(30), (req, res) => {
 });
 
 app.post('/api/ejecutar', exigirMesa, limitar(10), async (req, res) => {
+  const s = sesionDe(req);
+  const quien = resolverQuien(req.body, s);
+  if (!puedeCambiarSistema(quien)) {
+    return res.status(403).json({
+      error: 'ACCESO: consulta. Carlos y Mayra no cambian el sistema. No corro el ejecutor.',
+      honesto: true,
+      ok: false,
+    });
+  }
   if (!ejecutorActivo()) return res.status(503).json({ error: 'Ejecutor desactivado', honesto: true, ok: false });
   const codigo = String(req.body?.codigo || extraerPython(String(req.body?.texto || '')) || '');
   const r = await ejecutarCodigo(codigo);
@@ -1417,7 +1465,19 @@ async function procesarTelegram(update: any) {
     console.warn('[ULTRON] telegram rechazado', parsed.chatId, parsed.userId, parsed.nombre);
     return;
   }
-  if (parsed.comando === '/start' || parsed.comando === '/ayuda' || parsed.comando === '/help') {
+  if (parsed.comando === '/start') {
+    const quien = resolverQuien({
+      usuario: parsed.nombre,
+      telegramUserId: parsed.userId,
+      telegramChatId: parsed.chatId,
+    });
+    const bienvenida = quien
+      ? mensajeBienvenidaUltron({ nombre: nombreDe(quien), quien })
+      : ayudaTelegram();
+    await telegramResponder(parsed.chatId, bienvenida);
+    return;
+  }
+  if (parsed.comando === '/ayuda' || parsed.comando === '/help') {
     await telegramResponder(parsed.chatId, ayudaTelegram());
     return;
   }

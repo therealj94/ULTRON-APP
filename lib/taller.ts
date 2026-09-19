@@ -8,6 +8,7 @@ import { catalogoCanales, fotoSistema, redesplegarMesa } from './sistema';
 import { agregarTarea, marcarTarea, resumenTareas } from './tareas';
 import { fotoBoveda, clave } from './boveda';
 import { dictarSistema, notaDeVoz, pideNotaDeVoz } from './voz';
+import { puedeCambiarSistema, type MiembroId } from './junta';
 
 export type TallerOut = { hechos: string[]; tools: string[]; decir?: string };
 
@@ -65,12 +66,24 @@ function extraerCuerpo(q: string) {
     .trim();
 }
 
-export async function despacharTaller(message: string, opts?: { usuario?: string }): Promise<TallerOut> {
+export async function despacharTaller(
+  message: string,
+  opts?: { usuario?: string; quien?: MiembroId | null }
+): Promise<TallerOut> {
   const p = parsePedido(message);
   if (!p.accion) return { hechos: [], tools: [] };
   const tools: string[] = [];
   const hechos: string[] = [];
   const out = (decir?: string): TallerOut => ({ hechos, tools, decir });
+  const consulta = !puedeCambiarSistema(opts?.quien);
+
+  if (consulta && (p.accion === 'redeploy' || p.accion === 'mantenimiento')) {
+    tools.push(p.accion);
+    hechos.push(
+      'ACCESO: consulta. Carlos y Mayra no cambian el sistema. No redespliego, no hago mantenimiento ni corro el ejecutor. José o Medardo sí pueden. El resto del taller (estado, PDF, fotos, voz, web, oro, pendientes, memoria propia) sí.'
+    );
+    return out('Eso cambia el sistema. Tu acceso es consulta: no lo hago. Pedile a José o a Medardo.');
+  }
 
   if (p.accion === 'sistema' || p.accion === 'mantenimiento') {
     tools.push(p.accion === 'mantenimiento' ? 'mantenimiento' : 'sistema');

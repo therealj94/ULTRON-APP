@@ -73,4 +73,16 @@ describe('Taller ULTRON', () => {
     assert.equal(tg?.listo, false);
     if (prev !== undefined) process.env.TELEGRAM_BOT_TOKEN = prev;
   });
+
+  it('Carlos y Mayra no redespliegan ni hacen mantenimiento', async () => {
+    const rC = await despacharTaller('redeploy', { quien: 'carlos' });
+    assert.ok(rC.tools.includes('redeploy'));
+    assert.match(rC.decir || '', /consulta/);
+    const rM = await despacharTaller('mantenimiento', { quien: 'mayra' });
+    assert.ok(rM.tools.includes('mantenimiento'));
+    assert.match(rM.decir || '', /consulta/);
+    const rJ = await despacharTaller('cómo está el sistema', { quien: 'mayra' });
+    assert.ok(rJ.tools.includes('sistema'));
+    assert.equal(/consulta/.test(rJ.decir || ''), false);
+  });
 });

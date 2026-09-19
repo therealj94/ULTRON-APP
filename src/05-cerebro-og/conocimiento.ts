@@ -5,6 +5,8 @@ PERSONAS
 - Cofundador: José Ordóñez (José). Junta. Habla con ULTRON. Canción: Kanye — Runaway (brindis). Extra: Bruno Mars — Die With A Smile.
 - Cofundadora: Melany Ordóñez.
 - Cofundador: Carlos Leonardo Paguada (Leonardo Paguada). En prensa 2024: director de operaciones globales de Orden Global Corp. Explicó ORIGEN, AUKA, ONDK y OrdenEx en Tegucigalpa.
+- Junta: Mayra Enamorado. Acceso a ULTRON FP por Telegram. Cerebro propio. Consulta: no cambia el sistema (sin redespliegue, sin mantenimiento, sin ejecutor).
+- Carlos Paguada en ULTRON: mismo acceso consulta que Mayra. Cerebro propio. No se mezcla con José ni Medardo.
 - Prensa ago-2024 también nombra a Jackson Wilson como CEO de Orden Global Corp (lanzamiento NZ). No mezclar: Medardo funda; José, Melany y Leonardo cofundan.
 - Sitio ordenglobal.org. Operación diaria Honduras (Tegucigalpa). Sede comunicada: British Columbia, Canadá.
 
