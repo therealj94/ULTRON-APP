@@ -25,12 +25,14 @@ import {
 import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, limitar, urlPublica } from './server/seguridad';
 import { esHechoLargo, fusionarLarga, semillaLarga } from './server/hechos';
-import { leerPdf } from './lib/canales';
+import { leerPdf, telegramFoto } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, hechosCatalogo } from './lib/taller';
 import { listarTareas } from './lib/tareas';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes, extraerPython } from './lib/qwen';
+import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
+import { capturaPagina, verImagen } from './lib/vision';
 import {
   ayudaTelegram,
   hiloTelegram,
@@ -122,9 +124,6 @@ let ultronRemoteSession: {
 // Gemini AI Core Initialization
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 
-// Mutable in-memory Vault session store for ElevenLabs & institutional conduits
-let VAULT_ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || '';
-
 async function probeJson(url: string, headers: Record<string, string> = {}, timeoutMs = 4000) {
   const ctrl = new AbortController();
   const tmr = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -161,7 +160,7 @@ app.get('/api/health', async (_req, res) => {
     fp: { url: ULTRON_REMOTE_URL, vivo: !!fp.ok, modelo: fp.json?.modelo || null },
     ojo: { url: ULTRON_OJO_URL || null, vivo: !!(ojo.ok && ojo.json?.playwright), playwright: !!ojo.json?.playwright, vision: !!ojo.json?.vision },
     tts: { url: ULTRON_TTS_URL || null, status: tts.status, vivo: tts.status === 200 || tts.status === 401 },
-    elevenlabs: !!process.env.ELEVENLABS_API_KEY,
+    elevenlabs: !!clave('elevenlabs'),
     geminiFallback: !!ai,
     wsClients: wss.clients.size,
   });
@@ -192,70 +191,24 @@ app.get('/api/nodo/listo', async (_req, res) => {
   }
 });
 
-// BÓVEDA DE ULTRON FP: Unified Security & Conduit Status
-app.get('/api/vault/status', async (req, res) => {
+// BÓVEDA: cajas reales. Nunca se recitan secretos. Sin teatro de "CONECTADO" si falta clave.
+app.get('/api/vault/status', exigirMesa, async (_req, res) => {
+  const b = fotoBoveda();
   res.json({
-    vaultId: 'VAULT-ULTRON-FP-CORE',
-    status: 'SEALED_OPERATIONAL',
+    vaultId: 'ULTRON-BOVEDA',
+    status: b.faltan.length ? 'OPERATIVA_INCOMPLETA' : 'OPERATIVA',
     lastSync: new Date().toISOString(),
-    conduits: [
-      {
-        id: 'elevenlabs',
-        name: 'Canal de Voz Neural ElevenLabs',
-        type: 'audio_synthesis',
-        configured: Boolean(VAULT_ELEVENLABS_API_KEY),
-        status: VAULT_ELEVENLABS_API_KEY ? 'CONECTADO' : 'PENDIENTE_API_KEY',
-        configuredMs: null,
-      },
-      {
-        id: 'neural_core',
-        name: 'Núcleo Neural & Clasificador Semántico',
-        type: 'reasoning_engine',
-        configured: true,
-        status: 'CONECTADO',
-        configuredMs: null,
-      },
-      {
-        id: 'vision_pipeline',
-        name: 'Visor Multimodal & Protocolo Zero-Knowledge',
-        type: 'computer_vision',
-        configured: true,
-        status: 'CONECTADO',
-        configuredMs: null,
-      },
-      {
-        id: 'playwright_browser',
-        name: 'Clúster Headless Playwright',
-        type: 'web_inspection',
-        configured: true,
-        status: 'CONECTADO',
-        configuredMs: null,
-      },
-      {
-        id: 'global_order_brain',
-        name: 'Cerebro Estratégico de Orden Global',
-        type: 'knowledge_base',
-        configured: true,
-        status: 'CONECTADO',
-        configuredMs: null,
-      },
-      {
-        id: 'cloud_infra',
-        name: 'Infraestructura Cloud & Sincronización Backend',
-        type: 'cloud_services',
-        configured: Boolean(AWS_ACCESS_KEY_ID && RENDER_API_KEY && GITHUB_PAT),
-        status: 'CONECTADO',
-        configuredMs: null,
-      },
-      {
-        id: 'biometric_security',
-        name: 'Bóveda de Credenciales Biométricas',
-        type: 'authentication',
-        configured: true,
-        status: 'CONECTADO',
-        configuredMs: null,
-      },
-    ],
+    honesto: true,
+    resumen: b.resumen,
+    conduits: b.cajas.map((c) => ({
+      id: c.id,
+      name: c.nombre,
+      type: c.usa,
+      configured: c.listo,
+      status: c.listo ? 'CONECTADO' : 'FALTA_CLAVE',
+      falta: c.falta,
+      usa: c.usa,
+    })),
   });
 });
 
@@ -266,7 +219,7 @@ app.post('/api/vault/elevenlabs', exigirSesion, (req, res) => {
     return res.status(400).json({ error: 'La API Key de ElevenLabs es requerida.' });
   }
 
-  VAULT_ELEVENLABS_API_KEY = apiKey.trim();
+  guardarCaja('elevenlabs', apiKey.trim());
   return res.json({
     success: true,
     message: 'API Key de ElevenLabs archivada con éxito en la Bóveda de ULTRON FP.',
@@ -278,7 +231,7 @@ app.post('/api/vault/elevenlabs', exigirSesion, (req, res) => {
 app.post('/api/vault/elevenlabs/synthesize', exigirMesa, async (req, res) => {
   const { text, voiceId = 'pNInz6obpgDQGcFmaJgB', stability = 0.65, similarityBoost = 0.85, apiKeyOverride } = req.body;
 
-  const keyToUse = (apiKeyOverride && apiKeyOverride.trim()) || VAULT_ELEVENLABS_API_KEY;
+  const keyToUse = (apiKeyOverride && apiKeyOverride.trim()) || clave('elevenlabs');
 
   if (!keyToUse) {
     return res.status(400).json({
@@ -721,46 +674,11 @@ app.post('/api/vision/analyze', exigirMesa, async (req, res) => {
   if (isVideo) {
     return res.status(501).json({ error: 'Video todavía no se analiza. Mandá un frame.', honesto: true });
   }
-
-  if (ULTRON_OJO_URL) {
-    try {
-      const r = await fetch(`${ULTRON_OJO_URL}/ver`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Ojo-Clave': ULTRON_OJO_CLAVE },
-        body: JSON.stringify({ imagen: base64Data, prompt: prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos.' }),
-        signal: AbortSignal.timeout(30000),
-      });
-      const j: any = await r.json().catch(() => ({}));
-      const summary = String(j.texto || j.descripcion || j.summary || j.error || '').trim();
-      if (summary && !/invent/i.test(summary)) {
-        return res.json({ success: true, summary, via: ULTRON_OJO_URL + '/ver', honesto: true });
-      }
-    } catch (e: any) {
-      console.warn('[vision ojos]', e?.message || e);
-    }
+  const vista = await verImagen(String(base64Data), prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos. No inventes.');
+  if (vista.via === 'ninguno' || vista.via === 'error') {
+    return res.status(503).json({ error: vista.texto, honesto: true });
   }
-
-  if (ai) {
-    try {
-      const match = String(base64Data).match(/^data:([^;]+);base64,(.*)$/);
-      const mime = match ? match[1] : (mediaType || 'image/png');
-      const cleanData = match ? match[2] : base64Data;
-      const visionRes = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: [{ role: 'user', parts: [
-          { inlineData: { mimeType: mime, data: cleanData } },
-          { text: prompt || 'Describe solo lo visible. Si hay un precio o número, cópialo. No inventes.' },
-        ]}],
-      });
-      if (visionRes.text) {
-        return res.json({ success: true, summary: visionRes.text.trim(), via: 'gemini', honesto: true });
-      }
-    } catch (err: any) {
-      return res.status(502).json({ error: 'Visión falló', message: String(err?.message || err).slice(0, 180), honesto: true });
-    }
-  }
-
-  return res.status(503).json({ error: 'No hay nodo de visión ni Gemini. No invento lo que hay en la foto.', honesto: true });
+  return res.json({ success: true, summary: vista.texto, via: vista.via, honesto: true });
 });
 
 const spotCache: Record<string, { at: number; data: any }> = {};
@@ -875,9 +793,9 @@ app.post('/api/tts/stream', exigirMesa, limitar(20), async (req, res) => {
   if (!text) return res.status(400).json({ error: 'text vacío', honesto: true });
 
   const clean = limpiarParaVoz(text);
-  if (VAULT_ELEVENLABS_API_KEY) {
+  if (clave('elevenlabs')) {
     const out = await elevenSpeak({
-      apiKey: VAULT_ELEVENLABS_API_KEY,
+      apiKey: clave('elevenlabs'),
       text: clean,
       performance: req.body?.performance === 'sing' ? 'sing' : 'speak',
       voiceId: elevenVoiceIdFor('luna'),
@@ -912,7 +830,7 @@ app.post('/api/stt', exigirMesa, limitar(20), async (req, res) => {
   if (!raw || raw.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
   const { mime, buffer } = decodeDataUrl(raw, String(req.body?.mimeType || req.body?.mime || 'audio/m4a'));
   if (buffer.length < 1200) return res.json({ text: '', model: 'vacio', ms: Date.now() - t0, honesto: true });
-  const key = VAULT_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '';
+  const key = clave('elevenlabs') || process.env.ELEVENLABS_API_KEY || '';
   if (key) {
     const out = await elevenTranscribe({ apiKey: key, audio: buffer, mime, language: String(req.body?.language || 'es') });
     if (out.model !== 'error') return res.json({ text: out.text, model: out.model, via: 'elevenlabs', ms: Date.now() - t0, bytes: buffer.length, honesto: true });
@@ -965,10 +883,10 @@ app.all('/api/tts', exigirMesa, limitar(20), async (req, res) => {
     return res.send(hit.audio);
   }
 
-  if (VAULT_ELEVENLABS_API_KEY) {
+  if (clave('elevenlabs')) {
     const t0 = Date.now();
     const out = await elevenSpeak({
-      apiKey: VAULT_ELEVENLABS_API_KEY,
+      apiKey: clave('elevenlabs'),
       text,
       performance,
       voiceId: elevenVoiceIdFor('luna'),
@@ -1042,11 +960,19 @@ async function prepararTurno(body: any) {
       tools.push('hnl');
     }
     const urlMatch = message.match(/https?:\/\/[^\s]+/i);
-    if (urlMatch || /\b(abr[ií] la p[aá]gina|screenshot|playwright)\b/.test(q)) {
+    const quiereCaptura = urlMatch || /\b(abr[ií] la p[aá]gina|screenshot|playwright|captura)\b/.test(q);
+    if (quiereCaptura) {
       const url = urlMatch ? urlMatch[0] : 'https://www.bch.hn/';
-      const page = await leerConOjo(url);
-      if (page) hechos.push(`Página ${page.url}: ${page.texto.slice(0, 1200) || 'sin texto'}`);
+      const page = await capturaPagina(url);
+      hechos.push(`Página ${page.url}: ${page.texto.slice(0, 1200) || 'sin texto'}`);
       tools.push('pagina');
+      if (page.foto) {
+        tools.push('foto');
+        if (body?.canal === 'telegram' || /telegram|captura|screenshot|m[aá]ndame (la )?foto/.test(q)) {
+          const envio = await telegramFoto({ buf: page.foto, caption: page.titulo || page.url });
+          hechos.push(`FOTO TELEGRAM: ${envio.detalle}`);
+        }
+      }
     }
     const consulta = consultaWeb(message);
     if (consulta) {
@@ -1066,18 +992,11 @@ async function prepararTurno(body: any) {
       }
     }
     const image = body?.image;
-    if (image && ULTRON_OJO_URL) {
-      const r = await fetch(`${ULTRON_OJO_URL}/ver`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Ojo-Clave': ULTRON_OJO_CLAVE },
-        body: JSON.stringify({ imagen: image, prompt: 'Describe solo lo visible: personas, gestos, objetos, texto y números. No inventes.' }),
-        signal: AbortSignal.timeout(25000),
-      });
-      const j: any = await r.json().catch(() => ({}));
-      const desc = String(j.texto || j.descripcion || j.summary || '').trim();
-      hechos.push(desc ? `VISION: ${desc.slice(0, 1800)}` : 'VISION: no se pudo leer la imagen.');
+    if (image) {
+      const vista = await verImagen(String(image));
+      hechos.push(`VISION (${vista.via}): ${vista.texto}`);
       tools.push('vision');
-    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !image) {
+    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !quiereCaptura) {
       hechos.push('VISION: no llegó frame. Di que no viste.');
     }
   } catch (e: any) {
@@ -1356,7 +1275,7 @@ async function procesarTelegram(update: any) {
   }
   let texto = parsed.texto;
   if (parsed.audio && !texto) {
-    const key = VAULT_ELEVENLABS_API_KEY || process.env.ELEVENLABS_API_KEY || '';
+    const key = clave('elevenlabs') || process.env.ELEVENLABS_API_KEY || '';
     if (key) {
       const out = await elevenTranscribe({
         apiKey: key,

@@ -57,7 +57,8 @@ export function telegramPublicBase(): string {
 export function ayudaTelegram(): string {
   return [
     'ULTRON privado. Solo este chat de la junta.',
-    'Puedo: estado del sistema, pendientes, PDF, buscar en internet, leer una página, código (y ejecutarlo si me lo pides), oro/plata/HNL, visión si mandas foto.',
+    'Puedo: estado del sistema, bóveda, pendientes, PDF, buscar en internet, leer una página y mandarte la captura, código, oro/plata/HNL, visión si mandas foto.',
+    'Urgente: «avísame urgente…» o «llámanos por telegram». Suena el teléfono y, si hay ElevenLabs, te mando nota de voz. El bot no hace llamada de teléfono; eso es Twilio (aún sin clave).',
     'WhatsApp, correo y llamada: sin clave todavía. No los finjo.',
     'Ejemplos: «cómo está el sistema», «busca noticias de oro», «anota que mañana hay junta», «haz un pdf del resumen».',
   ].join('\n');

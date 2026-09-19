@@ -6,6 +6,8 @@
 import { canales, hacerPdf, leerPdf } from './canales';
 import { catalogoCanales, fotoSistema, redesplegarMesa } from './sistema';
 import { agregarTarea, marcarTarea, resumenTareas } from './tareas';
+import { fotoBoveda, clave } from './boveda';
+import { elevenSpeak } from '../server/desk';
 
 export type TallerOut = { hechos: string[]; tools: string[]; decir?: string };
 
@@ -14,7 +16,7 @@ function publicBase() {
 }
 
 export function parsePedido(raw: string): {
-  accion: 'sistema' | 'mantenimiento' | 'redeploy' | 'tarea' | 'listar' | 'hecho' | 'pdf' | 'enviar' | 'llamar' | null;
+  accion: 'sistema' | 'mantenimiento' | 'redeploy' | 'tarea' | 'listar' | 'hecho' | 'pdf' | 'enviar' | 'llamar' | 'boveda' | 'urgente' | null;
   canal: 'telegram' | 'whatsapp' | 'correo' | null;
   texto: string;
 } {
@@ -27,6 +29,7 @@ export function parsePedido(raw: string): {
       : /correo|email|gmail|mail\b/.test(l)
         ? 'correo'
         : null;
+  if (/\b(boveda|cajas de (la )?boveda|abri la boveda|abre la boveda)\b/.test(l)) return { accion: 'boveda', canal, texto: q };
   if (/\b(redeploy|redespleg|reinicia(r)? la mesa|nuevo deploy)\b/.test(l)) return { accion: 'redeploy', canal, texto: q };
   if (/\b(mantenimiento|repara|arregla|diagnostico|diagnóstico)\b/.test(l)) return { accion: 'mantenimiento', canal, texto: q };
   if (/\b(como esta|cómo está|estado del sistema|los nodos|salud del sistema|que nodos)\b/.test(l) || /^(status|salud)\b/.test(l)) {
@@ -37,6 +40,9 @@ export function parsePedido(raw: string): {
     return { accion: 'enviar', canal, texto: q };
   }
   if (/\b(haz un pdf|genera(?:r)? (un )?pdf|pdf de)\b/.test(l)) return { accion: 'pdf', canal, texto: q };
+  if (/\b(urgente|avisame|alerta junta)\b/.test(l) || (canal === 'telegram' && /\b(llama(?:me|nos)?|ll[aá]mame|llamanos)\b/.test(l))) {
+    return { accion: 'urgente', canal: canal || 'telegram', texto: q };
+  }
   if (/\b(llama(?:me)?|ll[aá]mame|haz una llamada|hacer una llamada|call me)\b/.test(l)) {
     return { accion: 'llamar', canal, texto: q };
   }
@@ -52,7 +58,7 @@ export function parsePedido(raw: string): {
 
 function extraerCuerpo(q: string) {
   return q
-    .replace(/^(env[ií]a|manda|m[aá]ndame|mandale|haz un pdf|genera(r)? (un )?pdf|pdf de|por telegram|por whatsapp|por correo|ll[aá]mame[,:]?)\s*/i, '')
+    .replace(/^(env[ií]a|manda|m[aá]ndame|mandale|haz un pdf|genera(r)? (un )?pdf|pdf de|por telegram|por whatsapp|por correo|ll[aá]mame[,:]?|avisame urgente|avísame urgente|urgente)\s*/i, '')
     .replace(/\b(por|a|al|en)\s+(telegram|whatsapp|wsp|correo|email|gmail)\b/gi, '')
     .replace(/\b(un )?pdf\b/gi, '')
     .trim();
@@ -79,6 +85,32 @@ export async function despacharTaller(message: string, opts?: { usuario?: string
       ? `${caidos.join(', ')} no responde. ${p.accion === 'mantenimiento' ? 'Re-probé. No toqué el nodo Qwen.' : 'El resto, sí.'}`
       : `Nodos en pie. Sin clave: ${faltan.join(', ') || 'ningún canal'}.`;
     return out(decir);
+  }
+
+  if (p.accion === 'boveda') {
+    tools.push('boveda');
+    const f = fotoBoveda();
+    hechos.push(f.resumen);
+    const decir = f.faltan.length
+      ? `Bóveda: ${f.listos.join(', ') || 'nada listo'}. Falta: ${f.faltan.join('; ')}.`
+      : 'Bóveda completa. Todas las cajas con clave.';
+    return out(decir);
+  }
+
+  if (p.accion === 'urgente') {
+    tools.push('urgente');
+    const dicho = extraerCuerpo(p.texto) || 'ULTRON te necesita. Es urgente.';
+    let voz: Buffer | undefined;
+    const el = clave('elevenlabs');
+    if (el) {
+      const spoken = await elevenSpeak({ apiKey: el, text: dicho.slice(0, 400), performance: 'speak' });
+      voz = spoken?.audio;
+    }
+    const r = await canales.telegramUrgente(dicho, voz);
+    hechos.push(`URGENTE TELEGRAM: ${r.detalle}`);
+    if (!el) hechos.push('Sin ElevenLabs: avisé por texto que suena. No hay nota de voz.');
+    hechos.push('El bot de Telegram no hace llamada de teléfono. Llamada real = Twilio (caja llamada).');
+    return out(r.detalle);
   }
 
   if (p.accion === 'redeploy') {
@@ -115,6 +147,17 @@ export async function despacharTaller(message: string, opts?: { usuario?: string
     const dicho = extraerCuerpo(p.texto) || 'Hola, te llama ULTRON.';
     const r = await canales.llamada(dicho);
     hechos.push(`LLAMADA: ${r.detalle}`);
+    if (!r.ok) {
+      const el = clave('elevenlabs');
+      let voz: Buffer | undefined;
+      if (el) {
+        const spoken = await elevenSpeak({ apiKey: el, text: dicho.slice(0, 400), performance: 'speak' });
+        voz = spoken?.audio;
+      }
+      const tg = await canales.telegramUrgente(dicho, voz);
+      hechos.push(`FALLBACK TELEGRAM: ${tg.detalle}`);
+      return out(`${r.detalle} Te avisé por Telegram.`);
+    }
     return out(r.detalle);
   }
 

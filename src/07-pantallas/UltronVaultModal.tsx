@@ -22,6 +22,7 @@ import {
 import { ElevenLabsVoiceConfig } from '../types';
 import { DEFAULT_ELEVENLABS_VOICES } from '../03-voz/elevenlabs';
 import { playSfx } from '../03-voz/audio';
+import { headersMesa } from '../10-infra/sesionCliente';
 
 interface UltronVaultModalProps {
   isOpen: boolean;
@@ -37,8 +38,8 @@ interface VaultConduit {
   type: string;
   configured: boolean;
   status: string;
-  maskedKey?: string | null;
-  latencyMs: number;
+  falta?: string;
+  usa?: string;
 }
 
 export const UltronVaultModal: React.FC<UltronVaultModalProps> = ({
@@ -82,7 +83,7 @@ export const UltronVaultModal: React.FC<UltronVaultModalProps> = ({
   const fetchVaultStatus = async () => {
     setLoadingConduits(true);
     try {
-      const res = await fetch('/api/vault/status');
+      const res = await fetch('/api/vault/status', { headers: headersMesa() });
       if (res.ok) {
         const data = await res.json();
         setConduits(data.conduits || []);
@@ -120,16 +121,11 @@ export const UltronVaultModal: React.FC<UltronVaultModalProps> = ({
       apiKey: apiKeyInput.trim(),
     };
 
-    // Save to localStorage
-    if (apiKeyInput.trim()) {
-      localStorage.setItem('ultron_elevenlabs_key', apiKeyInput.trim());
-    }
-
-    // Save to Backend Vault
+    // Save to Backend Vault (sesión de junta). No se deja la clave en localStorage.
     try {
       await fetch('/api/vault/elevenlabs', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...headersMesa() },
         body: JSON.stringify({ apiKey: apiKeyInput.trim() }),
       });
     } catch {
@@ -160,7 +156,7 @@ export const UltronVaultModal: React.FC<UltronVaultModalProps> = ({
     try {
       const res = await fetch('/api/vault/elevenlabs/synthesize', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...headersMesa() },
         body: JSON.stringify({
           text: 'Sistemas de voz neural ElevenLabs verificados y activos en la Bóveda de ULTRON FP.',
           voiceId: selectedVoiceId,
@@ -446,7 +442,7 @@ export const UltronVaultModal: React.FC<UltronVaultModalProps> = ({
                     CONEXIONES ACTIVAS DEL SISTEMA
                   </h3>
                   <p className="text-xs text-[#8FA3B0]">
-                    Todos los accesos e integraciones corren de forma nativa e interna en el backend
+                    Lo que hay de verdad en Render. Si falta clave, se dice. No se recitan secretos.
                   </p>
                 </div>
 
@@ -470,27 +466,26 @@ export const UltronVaultModal: React.FC<UltronVaultModalProps> = ({
                       <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-lg border border-[#05E1FF]/30 bg-[#05E1FF]/10 flex items-center justify-center text-[#05E1FF]">
                           {conduit.id === 'elevenlabs' && <Volume2 className="w-4 h-4" />}
-                          {conduit.id === 'neural_core' && <Layers className="w-4 h-4" />}
-                          {conduit.id === 'vision_pipeline' && <Eye className="w-4 h-4" />}
-                          {conduit.id === 'playwright_browser' && <Globe className="w-4 h-4" />}
-                          {conduit.id === 'global_order_brain' && <BookOpen className="w-4 h-4" />}
-                          {conduit.id === 'cloud_infra' && <Server className="w-4 h-4" />}
-                          {conduit.id === 'biometric_security' && <Fingerprint className="w-4 h-4" />}
+                          {(conduit.id === 'ojo' || conduit.id === 'gemini' || conduit.id === 'vision_pipeline') && <Eye className="w-4 h-4" />}
+                          {conduit.id === 'qwen' && <Layers className="w-4 h-4" />}
+                          {conduit.id === 'telegram' && <Globe className="w-4 h-4" />}
+                          {conduit.id === 'telegram-in' && <Globe className="w-4 h-4" />}
+                          {conduit.id === 'tts' && <Volume2 className="w-4 h-4" />}
+                          {conduit.id === 'llamada' && <Fingerprint className="w-4 h-4" />}
+                          {conduit.id === 'whatsapp' && <Globe className="w-4 h-4" />}
+                          {conduit.id === 'correo' && <BookOpen className="w-4 h-4" />}
                         </div>
                         <div>
                           <div className="font-display font-bold text-xs text-[#05E1FF] tracking-wide">
                             {conduit.name}
                           </div>
                           <div className="text-[11px] text-[#8FA3B0]">
-                            {conduit.maskedKey ? `Clave en Bóveda: ${conduit.maskedKey}` : 'Enlace Interno Seguro'}
+                            {conduit.configured ? conduit.usa || 'Listo' : conduit.falta || 'Falta clave'}
                           </div>
                         </div>
                       </div>
 
                       <div className="flex items-center gap-3">
-                        <span className="text-[11px] font-mono text-[#8FA3B0]">
-                          {conduit.latencyMs}ms
-                        </span>
                         <span
                           className={`px-2.5 py-1 rounded-full text-[10px] font-display font-bold tracking-wider uppercase border ${
                             conduit.configured
