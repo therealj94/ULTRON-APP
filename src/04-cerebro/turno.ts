@@ -16,6 +16,8 @@ export async function pedirTurno(opts: {
   historial?: { rol: string; texto: string }[];
   image?: string | null;
   signal?: AbortSignal;
+  usuario?: string;
+  correo?: string;
 }): Promise<Turno> {
   const r = await fetch('/api/turno', {
     method: 'POST',
@@ -26,6 +28,8 @@ export async function pedirTurno(opts: {
       historial: opts.historial || [],
       image: opts.image || undefined,
       memoria: leerLarga(),
+      usuario: opts.usuario,
+      correo: opts.correo,
     }),
     signal: opts.signal,
   });

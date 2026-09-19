@@ -24,7 +24,6 @@ import {
 } from './server/desk';
 import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, limitar, urlPublica } from './server/seguridad';
-import { esHechoLargo, fusionarLarga, semillaLarga } from './server/hechos';
 import { leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, hechosCatalogo } from './lib/taller';
@@ -37,6 +36,18 @@ import { iniciarCentinela } from './lib/centinela';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verImagen } from './lib/vision';
 import { esTareaDeCodigo } from './lib/prompts/cot';
+import {
+  cargarMemoria,
+  estadoMemoria,
+  fotoMemoria,
+  guardarHechoQuien,
+  olvidarQuien,
+  promptMemoria,
+  recordarTurno,
+  registrarCambio,
+  resolverQuien,
+} from './lib/memoria';
+import { nombreDe } from './lib/junta';
 import {
   ayudaTelegram,
   hiloTelegram,
@@ -745,48 +756,28 @@ function juntarOllama(raw: string) {
 
 
 
-const MEM_FILE = path.join(process.cwd(), 'data', 'memoria.json');
-type Memoria = { corta: { rol: string; texto: string; t: number }[]; larga: { hecho: string; t: number }[] };
-function leerMemoria(): Memoria {
-  let m: Memoria = { corta: [], larga: [] };
-  try {
-    m = JSON.parse(fs.readFileSync(MEM_FILE, 'utf8'));
-  } catch { /* vacío */ }
-  if (!Array.isArray(m.larga) || m.larga.length === 0) {
-    m.larga = semillaLarga();
-    escribirMemoria(m);
-  }
-  return m;
-}
-function escribirMemoria(m: Memoria) {
-  fs.mkdirSync(path.dirname(MEM_FILE), { recursive: true });
-  const tmp = MEM_FILE + '.tmp';
-  fs.writeFileSync(tmp, JSON.stringify(m));
-  fs.renameSync(tmp, MEM_FILE);
-}
-
-app.get('/api/memoria', exigirMesa, (_req, res) => {
-  const m = leerMemoria();
-  res.json({ ...m, honesto: true, nota: 'corta = últimos turnos; larga = hechos. FP mongo no expuesto a la desk sin sesión.' });
+app.get('/api/memoria', exigirMesa, async (req, res) => {
+  await cargarMemoria();
+  const s = sesionDe(req);
+  const quien = resolverQuien(req.query, s);
+  res.json(fotoMemoria(quien));
 });
 
-app.post('/api/memoria', exigirMesa, (req, res) => {
-  const m = leerMemoria();
+app.post('/api/memoria', exigirMesa, async (req, res) => {
+  await cargarMemoria();
+  const s = sesionDe(req);
+  const quien = resolverQuien(req.body, s);
   const hecho = String(req.body?.hecho || '').trim();
   const olvido = !!req.body?.olvidar;
   if (olvido) {
-    escribirMemoria({ corta: [], larga: [] });
-    return res.json({ ok: true, olvidado: true });
+    if (!quien) return res.status(400).json({ error: 'No supe si eres José o Medardo. No borré nada.', honesto: true });
+    await olvidarQuien(quien, !!req.body?.junta);
+    return res.json({ ok: true, olvidado: true, quien, honesto: true });
   }
   if (hecho) {
-    m.larga = [{ hecho, t: Date.now() }, ...m.larga].slice(0, 80);
-    escribirMemoria(m);
+    await guardarHechoQuien({ quien, hecho, canal: 'mesa', junta: !!req.body?.junta });
   }
-  if (Array.isArray(req.body?.corta)) {
-    m.corta = req.body.corta.slice(-12);
-    escribirMemoria(m);
-  }
-  res.json({ ok: true, ...m });
+  res.json({ ok: true, ...fotoMemoria(quien) });
 });
 
 
@@ -926,26 +917,32 @@ app.all('/api/tts', exigirMesa, limitar(20), async (req, res) => {
 async function prepararTurno(body: any) {
   const t0 = Date.now();
   const message = String(body?.message || body?.text || '').trim();
-  if (message) {
-    const mem0 = leerMemoria();
-    mem0.corta = [{ rol: 'user', texto: message, t: Date.now() }, ...mem0.corta].slice(0, 24);
-    if (esHechoLargo(message)) {
-      mem0.larga = fusionarLarga(mem0.larga, [message]);
-    }
-    escribirMemoria(mem0);
-  }
   const mode = body?.mode || 'GUARDIAN';
   const nombre = String(body?.usuario || body?.userName || '').trim().slice(0, 40);
-  const historial = Array.isArray(body?.historial) ? body.historial.slice(-12) : [];
-  // Memoria larga: la del servidor + la que trae la app (sobrevive a redeploys de Render).
+  const canal = body?.canal === 'telegram' ? 'telegram' : 'mesa';
+  await cargarMemoria();
+  const quien = resolverQuien(body, body?.sesion || null);
+  const memSt = estadoMemoria();
+  if (message) {
+    await recordarTurno({ quien, rol: 'user', texto: message, canal });
+  }
   const largaApp: string[] = Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
-  const larga = Array.from(new Set([...largaApp, ...leerMemoria().larga.map((x) => x.hecho)])).slice(0, 30);
+  for (const h of largaApp) {
+    if (h.trim().length > 8) await guardarHechoQuien({ quien, hecho: h.trim(), canal: 'mesa' });
+  }
 
   const q = message.toLowerCase();
   const hechos: string[] = [];
   const foto: string | null = null;
   const tools: string[] = [];
   let decirTaller: string | undefined;
+
+  hechos.push(
+    memSt.durable
+      ? `MEMORIA: S3 activo. Hablas con ${nombreDe(quien)}. La conversación del otro miembro no entra.`
+      : `MEMORIA: ${memSt.detalle}`
+  );
+
 
   try {
     if (/\b(oro|gold|xau|onza)\b/.test(q)) {
@@ -1012,6 +1009,13 @@ async function prepararTurno(body: any) {
     hechos.push(...taller.hechos);
     tools.push(...taller.tools);
     decirTaller = taller.decir;
+    if (taller.tools.length) {
+      await registrarCambio({
+        quien,
+        canal,
+        que: `${taller.tools.join('+')}: ${(taller.decir || taller.hechos[0] || '').slice(0, 140)}`,
+      });
+    }
   } catch (e: any) {
     hechos.push(`Taller falló: ${String(e?.message || e).slice(0, 160)}.`);
   }
@@ -1041,15 +1045,14 @@ async function prepararTurno(body: any) {
     decirTaller ||
     (soloDato && hechos.length ? hechos.map((h) => h.replace(/ No inventes otro número\./g, '')).join(' ') : null);
 
-  const canal = body?.canal === 'telegram' ? 'telegram' : 'mesa';
-  const personalidad = `${buildPersonality({ nombre: nombre || undefined, canal })}
+  const personalidad = `${buildPersonality({ nombre: (quien ? nombreDe(quien) : nombre) || undefined, canal })}
 
 CEREBRO ORDEN GLOBAL:
 ${CONOCIMIENTO_OG}
 
-No finjas recuerdos de otras noches: solo LARGO PLAZO y ULTIMOS TURNOS.
+No finjas recuerdos: solo la memoria de ${quien ? nombreDe(quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.
 Modo de mesa pedido: ${mode}.
-HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\nLARGO PLAZO:\n${larga.join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h: any) => `${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
+HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemoria(quien)}`;
 
   const compuesto = construirMensajes({ personalidad, user: message, canal });
   if (compuesto.meta.rag) tools.push('rag');
@@ -1057,7 +1060,7 @@ HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\nLARGO PLAZO:\
   if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
 
-  return { t0, message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system };
+  return { t0, message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system, quien, canal };
 }
 
 async function preguntarQwen(system: string, message: string, hechos: string[]): Promise<{ ok: boolean; reply: string; error?: string }> {
@@ -1137,10 +1140,23 @@ async function correrTurno(body: any): Promise<{
 }> {
   const p = await prepararTurno(body);
   if (!p.message) return { reply: '', via: 'none', mode: p.mode, ms: Date.now() - p.t0, herramientas: [], foto: null, honesto: true, error: 'message vacío' };
-  const { t0, mode, tools, foto, system, message } = p;
+  const { t0, mode, tools, foto, system, message, quien, canal } = p;
   const hechos = [...p.hechos];
+  const guardar = async (out: {
+    reply: string;
+    via: string;
+    mode: string;
+    ms: number;
+    herramientas: string[];
+    foto: string | null;
+    honesto: true;
+    error?: string;
+  }) => {
+    if (out.reply) await recordarTurno({ quien, rol: 'ultron', texto: out.reply, canal: canal || 'mesa' });
+    return out;
+  };
   if (p.directo) {
-    return {
+    return guardar({
       reply: p.directo,
       via: p.directoVia === 'taller' ? 'taller' : 'gold-api/er-api',
       mode,
@@ -1148,16 +1164,16 @@ async function correrTurno(body: any): Promise<{
       herramientas: tools,
       foto,
       honesto: true,
-    };
+    });
   }
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     const reply = hechos.join('\n');
-    if (reply) return { reply, via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
+    if (reply) return guardar({ reply, via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
     return { reply: '', via: 'none', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: 'Qwen no configurado' };
   }
   const q1 = await preguntarQwen(system, message, hechos);
   if (!q1.ok) {
-    if (hechos.length) return { reply: hechos.join('\n'), via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
+    if (hechos.length) return guardar({ reply: hechos.join('\n'), via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
     return { reply: '', via: 'qwen', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: q1.error };
   }
   let reply = q1.reply;
@@ -1194,11 +1210,17 @@ async function correrTurno(body: any): Promise<{
     via = 'harness-ejecutor';
   }
 
-  return { reply, via, mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true };
+  return guardar({ reply, via, mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
 }
 
 app.post('/api/turno', exigirMesa, limitar(20), async (req, res) => {
-  const out = await correrTurno(req.body);
+  const s = sesionDe(req);
+  const out = await correrTurno({
+    ...req.body,
+    correo: req.body?.correo || s?.correo,
+    usuario: req.body?.usuario || req.body?.userName || s?.nombre,
+    sesion: s,
+  });
   if (out.error && !out.reply) {
     const code = out.error === 'message vacío' ? 400 : out.error.includes('configurado') ? 503 : 502;
     return res.status(code).json({ error: out.error, honesto: true });
@@ -1227,22 +1249,33 @@ app.post('/api/turno/stream', exigirMesa, limitar(20), async (req, res) => {
   res.flushHeaders?.();
   const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 
-  const p = await prepararTurno(req.body);
+  const s = sesionDe(req);
+  const p = await prepararTurno({
+    ...req.body,
+    correo: req.body?.correo || s?.correo,
+    usuario: req.body?.usuario || req.body?.userName || s?.nombre,
+    sesion: s,
+  });
   if (!p.message) {
     send('error', { error: 'message vacío' });
     return res.end();
   }
-  const { t0, hechos, tools, system, message } = p;
+  const { t0, hechos, tools, system, message, quien, canal } = p;
+  const guardarStream = async (texto: string) => {
+    if (texto) await recordarTurno({ quien, rol: 'ultron', texto, canal: canal || 'mesa' });
+  };
   send('tools', { tools });
   if (p.directo) {
     send('delta', { text: p.directo });
     send('done', { reply: p.directo, ms: Date.now() - t0, via: p.directoVia === 'taller' ? 'taller' : 'tools' });
+    await guardarStream(p.directo);
     return res.end();
   }
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     const reply = hechos.join('\n') || '';
     if (reply) send('delta', { text: reply });
     send(reply ? 'done' : 'error', reply ? { reply, ms: Date.now() - t0, via: 'tools-only' } : { error: 'Qwen no configurado' });
+    if (reply) await guardarStream(reply);
     return res.end();
   }
   try {
@@ -1265,6 +1298,7 @@ app.post('/api/turno/stream', exigirMesa, limitar(20), async (req, res) => {
       if (reply) {
         send('delta', { text: reply });
         send('done', { reply, ms: Date.now() - t0, via: 'tools-fallback' });
+        await guardarStream(reply);
       } else send('error', { error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 200) });
       return res.end();
     }
@@ -1311,6 +1345,7 @@ app.post('/api/turno/stream', exigirMesa, limitar(20), async (req, res) => {
       send('delta', { text: full });
     }
     send('done', { reply: full, ms: Date.now() - t0, via: `${ULTRON_NODO_URL}/api/chat` });
+    await guardarStream(full);
     res.end();
   } catch (err: any) {
     send('error', { error: 'Qwen caído', message: String(err?.message || err).slice(0, 200) });
@@ -1378,6 +1413,8 @@ async function procesarTelegram(update: any) {
     usuario: parsed.nombre,
     mode: 'TELEGRAM',
     canal: 'telegram',
+    telegramUserId: parsed.userId,
+    telegramChatId: parsed.chatId,
     historial: hiloTelegram(parsed.chatId),
     image: parsed.imageDataUrl,
   });
@@ -1443,6 +1480,9 @@ async function startServer() {
       .then((r) => console.log('[ULTRON] telegram webhook', r.detalle))
       .catch((e) => console.warn('[ULTRON] telegram webhook', String(e?.message || e).slice(0, 160)));
     iniciarCentinela(180_000);
+    cargarMemoria()
+      .then(() => console.log('[ULTRON] memoria', estadoMemoria().detalle))
+      .catch((e) => console.warn('[ULTRON] memoria', String(e?.message || e).slice(0, 160)));
   });
 }
 

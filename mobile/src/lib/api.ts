@@ -73,9 +73,9 @@ export async function logoutRemote() {
 }
 
 /** Memoria de largo plazo del servidor (hechos). */
-export async function rememberFact(hecho: string) {
+export async function rememberFact(hecho: string, usuario?: string) {
   try {
-    await api('/api/memoria', { method: 'POST', body: JSON.stringify({ hecho }) }, 8_000);
+    await api('/api/memoria', { method: 'POST', body: JSON.stringify({ hecho, usuario }) }, 8_000);
   } catch {
     /* se guarda local igual */
   }

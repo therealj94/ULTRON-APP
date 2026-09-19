@@ -1,3 +1,5 @@
+import { headersMesa } from '../10-infra/sesionCliente';
+
 const KEY = 'ultron_memoria_larga';
 
 export function leerLarga(): string[] {
@@ -10,25 +12,29 @@ export function leerLarga(): string[] {
   }
 }
 
-export function guardarHecho(hecho: string) {
+export function guardarHecho(hecho: string, opts?: { usuario?: string; junta?: boolean }) {
   const next = [hecho, ...leerLarga().filter((x) => x !== hecho)].slice(0, 80);
   try {
     localStorage.setItem(KEY, JSON.stringify(next));
-  } catch { /* quota */ }
+  } catch {
+    /* quota */
+  }
   fetch('/api/memoria', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ hecho }),
+    headers: { 'Content-Type': 'application/json', ...headersMesa() },
+    body: JSON.stringify({ hecho, usuario: opts?.usuario, junta: !!opts?.junta }),
   }).catch(() => {});
 }
 
-export function olvidarTodo() {
+export function olvidarTodo(opts?: { usuario?: string; junta?: boolean }) {
   try {
     localStorage.removeItem(KEY);
-  } catch { /* */ }
+  } catch {
+    /* */
+  }
   fetch('/api/memoria', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ olvidar: true }),
+    headers: { 'Content-Type': 'application/json', ...headersMesa() },
+    body: JSON.stringify({ olvidar: true, usuario: opts?.usuario, junta: !!opts?.junta }),
   }).catch(() => {});
 }

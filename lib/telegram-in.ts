@@ -3,8 +3,6 @@
  */
 
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
 
 export type TgParsed = {
   chatId: string;
@@ -26,7 +24,9 @@ function listaIds(raw: string | undefined): string[] {
 export function chatsPermitidos(): string[] {
   const extra = listaIds(process.env.TELEGRAM_ALLOWED_CHAT_IDS);
   const uno = String(process.env.TELEGRAM_CHAT_ID || '').trim();
-  return [...new Set(extra.length ? extra : uno ? [uno] : [])];
+  const jose = listaIds(process.env.TELEGRAM_JOSE_CHAT_ID);
+  const medardo = listaIds(process.env.TELEGRAM_MEDARDO_CHAT_ID);
+  return [...new Set([...extra, ...(uno ? [uno] : []), ...jose, ...medardo])];
 }
 
 export function usuariosPermitidos(): string[] {
@@ -62,40 +62,12 @@ export function ayudaTelegram(): string {
     'Puedo: estado del sistema, nota de voz del sistema (`/audio`), bóveda, pendientes, PDF, buscar en internet, leer una página y mandarte la captura, código con ejecutor, oro/plata/HNL, visión si mandas foto.',
     'Si me mandas una nota de voz, te contesto en texto y, si pude oírte, te devuelvo audio.',
     'Urgente: «avísame urgente…» o «llámanos por telegram». Suena el teléfono y, si hay voz, te mando nota. El bot no hace llamada de teléfono; eso es Twilio (aún sin clave).',
-    'WhatsApp, correo y llamada: sin clave todavía. No los finjo.',
+    'Memoria: una para José y otra para Medardo, en S3. No mezclo las conversaciones. Dime «recuerda que…» y queda atado a ti.',
     'Ejemplos: «cómo está el sistema», «mándame audio del sistema», «busca noticias de oro», «anota que mañana hay junta», «haz un pdf del resumen».',
   ].join('\n');
 }
 
-const HILO_FILE = path.join(process.cwd(), 'data', 'telegram-hilo.json');
 const hilos = new Map<string, { rol: string; texto: string }[]>();
-
-function cargarHilos() {
-  try {
-    const raw = JSON.parse(fs.readFileSync(HILO_FILE, 'utf8'));
-    if (raw && typeof raw === 'object') {
-      for (const [k, v] of Object.entries(raw)) {
-        if (Array.isArray(v)) hilos.set(k, v as { rol: string; texto: string }[]);
-      }
-    }
-  } catch {
-    /* vacío */
-  }
-}
-cargarHilos();
-
-function persistirHilos() {
-  try {
-    fs.mkdirSync(path.dirname(HILO_FILE), { recursive: true });
-    const obj: Record<string, { rol: string; texto: string }[]> = {};
-    for (const [k, v] of hilos) obj[k] = v;
-    const tmp = HILO_FILE + '.tmp';
-    fs.writeFileSync(tmp, JSON.stringify(obj));
-    fs.renameSync(tmp, HILO_FILE);
-  } catch {
-    /* disco efímero: el Map sigue en memoria */
-  }
-}
 
 export function hiloTelegram(chatId: string): { rol: string; texto: string }[] {
   return hilos.get(String(chatId)) || [];
@@ -104,7 +76,6 @@ export function hiloTelegram(chatId: string): { rol: string; texto: string }[] {
 export function recordarTelegram(chatId: string, user: string, ultron: string) {
   const prev = hiloTelegram(chatId);
   hilos.set(String(chatId), [...prev, { rol: 'user', texto: user }, { rol: 'ultron', texto: ultron }].slice(-12));
-  persistirHilos();
 }
 
 async function archivoTelegram(token: string, fileId: string): Promise<Buffer | null> {

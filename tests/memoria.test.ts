@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import { guardarHechoQuien, promptMemoria, recordarTurno, registrarCambio, resetMemoriaTest, fotoMemoria } from '../lib/memoria';
+
+describe('Memoria por miembro', () => {
+  it('no mezcla la conversación de José con la de Medardo', async () => {
+    resetMemoriaTest();
+    await recordarTurno({ quien: 'jose', rol: 'user', texto: 'José: anota que mañana firmo yo', canal: 'telegram' });
+    await recordarTurno({ quien: 'jose', rol: 'ultron', texto: 'Anotado para vos, José.', canal: 'telegram' });
+    await recordarTurno({ quien: 'medardo', rol: 'user', texto: 'Medardo: el precio del mineral lo veo yo', canal: 'mesa' });
+    await recordarTurno({ quien: 'medardo', rol: 'ultron', texto: 'Quedó en tu hilo, Medardo.', canal: 'mesa' });
+
+    const pj = promptMemoria('jose');
+    const pm = promptMemoria('medardo');
+    assert.match(pj, /HABLAS CON: José/);
+    assert.match(pj, /Anotado para vos, José/);
+    assert.equal(pj.includes('precio del mineral'), false);
+    assert.match(pm, /HABLAS CON: Medardo/);
+    assert.match(pm, /precio del mineral/);
+    assert.equal(pm.includes('mañana firmo yo'), false);
+  });
+
+  it('registra quién pidió el cambio', async () => {
+    resetMemoriaTest();
+    await registrarCambio({ quien: 'jose', canal: 'telegram', que: 'pdf enviado' });
+    await registrarCambio({ quien: 'medardo', canal: 'mesa', que: 'tarea anotada' });
+    const f = fotoMemoria('jose');
+    assert.ok(f.cambios.some((c) => c.quien === 'jose' && /pdf/.test(c.que)));
+    assert.ok(f.cambios.some((c) => c.quien === 'medardo' && /tarea/.test(c.que)));
+    assert.equal(f.honesto, true);
+  });
+
+  it('guarda un hecho personal solo en ese perfil', async () => {
+    resetMemoriaTest();
+    await guardarHechoQuien({ quien: 'jose', hecho: 'José toma café negro', canal: 'mesa' });
+    const j = fotoMemoria('jose');
+    const m = fotoMemoria('medardo');
+    assert.ok(j.privada.larga.some((h) => /café negro/.test(h.hecho)));
+    assert.equal(m.privada.larga.some((h) => /café negro/.test(h.hecho)), false);
+  });
+});
