@@ -35,6 +35,7 @@ import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verImagen } from './lib/vision';
+import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { esTareaDeCodigo } from './lib/prompts/cot';
 import {
   cargarMemoria,
@@ -689,6 +690,19 @@ app.post('/api/vision/analyze', exigirMesa, async (req, res) => {
   if (isVideo) {
     return res.status(501).json({ error: 'Video todavía no se analiza. Mandá un frame.', honesto: true });
   }
+  const isPdf = String(mediaType || '').includes('pdf') || /\.pdf$/i.test(fileName || '') || String(base64Data).includes('application/pdf');
+  if (isPdf) {
+    const buf = bufferDeCualquier(base64Data);
+    if (!buf) return res.status(400).json({ error: 'PDF vacío. No lo leí.', honesto: true });
+    const leido = extraerPdf(buf);
+    const visiones: string[] = [];
+    for (const img of leido.imagenes.slice(0, leido.texto.length < 240 ? 3 : 1)) {
+      const vista = await verImagen(dataUrlDeImagen(img), prompt || 'Lee el documento. Copia texto y números. No inventes.');
+      visiones.push(vista.texto);
+    }
+    const summary = [leido.texto, ...visiones].filter(Boolean).join('\n\n') || leido.detalle;
+    return res.json({ success: !!leido.texto || visiones.length > 0, summary, detalle: leido.detalle, via: 'pdf-leer', honesto: true });
+  }
   const vista = await verImagen(String(base64Data), prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos. No inventes.');
   if (vista.via === 'ninguno' || vista.via === 'error') {
     return res.status(503).json({ error: vista.texto, honesto: true });
@@ -997,8 +1011,36 @@ async function prepararTurno(body: any) {
       const vista = await verImagen(String(image));
       hechos.push(`VISION (${vista.via}): ${vista.texto}`);
       tools.push('vision');
-    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !quiereCaptura) {
+    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !quiereCaptura && !body?.documento && !body?.pdf) {
       hechos.push('VISION: no llegó frame. Di que no viste.');
+    }
+    const doc = body?.documento || body?.pdf;
+    if (doc) {
+      const filename = String(doc.filename || 'archivo.pdf');
+      const buf =
+        bufferDeCualquier(doc.buffer) ||
+        bufferDeCualquier(doc.data) ||
+        bufferDeCualquier(body?.pdfBase64);
+      if (!buf) {
+        hechos.push(`PDF "${filename}": no pude bajar el archivo. No invento el contenido.`);
+        tools.push('pdf-leer');
+      } else {
+        const leido = extraerPdf(buf);
+        tools.push('pdf-leer');
+        hechos.push(`PDF "${filename}" (${leido.bytes} bytes, ~${leido.paginas || '?'} pág.): ${leido.detalle}`);
+        if (leido.texto) hechos.push(`TEXTO DEL PDF:\n${leido.texto}`);
+        if (leido.imagenes.length) {
+          const cuantas = leido.texto.length < 240 ? leido.imagenes.length : Math.min(1, leido.imagenes.length);
+          for (let i = 0; i < cuantas; i++) {
+            const vista = await verImagen(dataUrlDeImagen(leido.imagenes[i]), 'Lee el documento en la imagen. Copia texto y números. No inventes.');
+            hechos.push(`VISION PDF img ${i + 1} (${vista.via}): ${vista.texto}`);
+            tools.push('vision');
+          }
+        }
+        if (!leido.texto && !leido.imagenes.length) {
+          hechos.push('No extraí texto ni imágenes del PDF. Dilo. No inventes cláusulas ni cifras.');
+        }
+      }
     }
   } catch (e: any) {
     hechos.push(`Tool falló: ${String(e?.message || e).slice(0, 160)}. Si no hay cifra, dilo.`);
@@ -1408,6 +1450,7 @@ async function procesarTelegram(update: any) {
     if (!texto) texto = 'No pude oír el audio. Escríbeme.';
   }
   if (!texto && parsed.imageDataUrl) texto = '¿qué ves en esta imagen?';
+  if (!texto && parsed.documento) texto = `Lee este PDF (${parsed.documento.filename}) y resume solo lo que dice. No inventes.`;
   const out = await correrTurno({
     message: texto,
     usuario: parsed.nombre,
@@ -1417,6 +1460,7 @@ async function procesarTelegram(update: any) {
     telegramChatId: parsed.chatId,
     historial: hiloTelegram(parsed.chatId),
     image: parsed.imageDataUrl,
+    documento: parsed.documento,
   });
   const reply = out.reply || out.error || 'No pude contestar.';
   recordarTelegram(parsed.chatId, texto, reply);

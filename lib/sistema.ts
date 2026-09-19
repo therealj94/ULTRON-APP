@@ -35,6 +35,7 @@ export function catalogoCanales(): Canal[] {
     { id: 'sistema', nombre: 'Estado de nodos', listo: true },
     { id: 'tareas', nombre: 'Pendientes', listo: true },
     { id: 'pdf', nombre: 'Generar PDF', listo: true },
+    { id: 'pdf-leer', nombre: 'Leer PDF subido', listo: true },
     { id: 'codigo', nombre: 'Código y ejecutor', listo: codigo, falta: codigo ? undefined : 'EJECUTOR_ACTIVO=false' },
     { id: 'web', nombre: 'Buscar / leer páginas', listo: true },
     { id: 'vision', nombre: 'Ver imágenes', listo: !!(clave('ojo_url') && clave('ojo_clave')) || !!clave('gemini'), falta: !!(clave('ojo_url') && clave('ojo_clave')) || !!clave('gemini') ? undefined : 'ULTRON_OJO_* o GEMINI_API_KEY' },
