@@ -88,7 +88,7 @@ export function ayudaTelegram(): string {
     'Si me subes una foto o un PDF, los leo. No invento lo que no está en el archivo. Imagen como archivo también vale.',
     'Si me mandas una nota de voz, la oigo, la transcribo y te contesto por escrito. Audio de vuelta solo si lo pides (`/audio`).',
     'Urgente: «avísame urgente…» o «llámanos por telegram». Suena el teléfono y, si hay voz, te mando nota. El bot no hace llamada de teléfono; eso es Twilio (aún sin clave).',
-    'Memoria: una para José, otra para Medardo, otra para Carlos y otra para Mayra, en S3. No mezclo las conversaciones. Dime «recuerda que…» y queda atado a ti.',
+    'Memoria: una para José, otra para Medardo, otra para Carlos y otra para Mayra, en S3. Corto, mediano y largo por persona. No mezclo las conversaciones. «esto» es lo último que hablamos. Si no está en el cerebro, busco en internet sin que me lo pidas.',
     'Carlos y Mayra: consulta. Pueden usar el taller; no cambian el sistema (sin redespliegue, sin mantenimiento, sin ejecutor).',
     'Ejemplos: «cómo está el sistema», «mándame audio del sistema», «busca noticias de oro», «anota que mañana hay junta», «haz un pdf del resumen».',
   ].join('\n');
@@ -102,7 +102,7 @@ export function hiloTelegram(chatId: string): { rol: string; texto: string }[] {
 
 export function recordarTelegram(chatId: string, user: string, ultron: string) {
   const prev = hiloTelegram(chatId);
-  hilos.set(String(chatId), [...prev, { rol: 'user', texto: user }, { rol: 'ultron', texto: ultron }].slice(-12));
+  hilos.set(String(chatId), [...prev, { rol: 'user', texto: user }, { rol: 'ultron', texto: ultron }].slice(-24));
 }
 
 async function archivoTelegram(token: string, fileId: string): Promise<Buffer | null> {

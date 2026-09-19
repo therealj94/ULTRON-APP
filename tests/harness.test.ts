@@ -46,5 +46,8 @@ describe('Harness agentic', () => {
     const mesa = construirMensajes({ personalidad: 'p', user: 'buenas tardes jefe' });
     assert.equal(mesa.meta.harness, false);
     assert.ok(!mesa.messages[0].content.includes('PEDIR_HERRAMIENTA: web'));
+
+    const mesaDato = construirMensajes({ personalidad: 'p', user: 'qué es el proyecto Jarvis' });
+    assert.equal(mesaDato.meta.harness, true);
   });
 });

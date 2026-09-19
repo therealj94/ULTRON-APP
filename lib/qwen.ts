@@ -9,6 +9,7 @@ import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './prompts/cot';
 import { SYSTEM_PROMPT_HONESTO, TEXTO_TELEGRAM, VOZ_ESCRITORIO } from './prompts/honestidad';
 import { INSTRUCCION_HARNESS } from './harness';
 import { buscarSnippets } from './rag';
+import { esSaludoCorto, type MsgHilo } from './conversacion';
 
 export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 
@@ -28,6 +29,8 @@ export function construirMensajes(opts: {
   cot?: boolean;
   rag?: boolean;
   canal?: 'mesa' | 'telegram';
+  historial?: MsgHilo[];
+  harness?: boolean;
 }): { messages: ChatMessage[]; meta: MensajesMeta } {
   const user = String(opts.user || '').trim();
   const codigo = esTareaDeCodigo(user);
@@ -35,7 +38,7 @@ export function construirMensajes(opts: {
   const fewShot = opts.fewShot ?? codigo;
   const ragOn = opts.rag ?? codigo;
   const telegram = opts.canal === 'telegram';
-  const harness = telegram || codigo;
+  const harness = opts.harness ?? (telegram || codigo || !esSaludoCorto(user));
 
   const parts: string[] = [SYSTEM_PROMPT_HONESTO];
   if (!codigo) parts.push(telegram ? TEXTO_TELEGRAM : VOZ_ESCRITORIO);
@@ -57,11 +60,9 @@ export function construirMensajes(opts: {
   }
 
   const system = parts.filter(Boolean).join('\n\n');
+  const historial = (opts.historial || []).slice(-16);
   return {
-    messages: [
-      { role: 'system', content: system },
-      { role: 'user', content: user },
-    ],
+    messages: [{ role: 'system', content: system }, ...historial, { role: 'user', content: user }],
     meta: { cot, fewShot, codigo, rag, voz: !codigo, harness },
   };
 }

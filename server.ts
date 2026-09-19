@@ -18,7 +18,6 @@ import {
   normalizarCorreo,
   setCachedAudio,
   buscarWeb,
-  consultaWeb,
   leerPagina,
 } from './server/desk';
 import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
@@ -47,8 +46,10 @@ import {
   recordarTurno,
   registrarCambio,
   resolverQuien,
+  hiloDe,
   type CanalMem,
 } from './lib/memoria';
+import { fusionarHilo, pedidoRed, resolverReferencia, urlsParaLeer, type MsgHilo } from './lib/conversacion';
 import { nombreDe, puedeCambiarSistema } from './lib/junta';
 import { mensajeBienvenidaUltron } from './lib/bienvenida';
 import {
@@ -945,6 +946,19 @@ async function prepararTurno(body: any) {
   if (message) {
     await recordarTurno({ quien, rol: 'user', texto: message, canal });
   }
+  const clienteHilo = Array.isArray(body?.historial)
+    ? (body.historial as any[]).map((x) => ({
+        rol: String(x?.rol || x?.role || 'user'),
+        texto: String(x?.texto || x?.content || ''),
+      }))
+    : [];
+  const durable = hiloDe(quien).map((t) => ({ rol: t.rol, texto: t.texto }));
+  const hiloTodo = durable.length >= 2 ? durable : [...clienteHilo, ...durable];
+  const hiloPrevio = hiloTodo.filter(
+    (t, i) => !(i === hiloTodo.length - 1 && t.rol === 'user' && t.texto === message)
+  );
+  const mensajeHilo = resolverReferencia(message, hiloPrevio);
+  const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: 16 });
   const largaApp: string[] = Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
   for (const h of largaApp) {
     if (h.trim().length > 8) await guardarHechoQuien({ quien, hecho: h.trim(), canal: 'mesa' });
@@ -999,22 +1013,32 @@ async function prepararTurno(body: any) {
         }
       }
     }
-    const consulta = consultaWeb(message);
-    if (consulta) {
+    const red = pedidoRed(message, hiloPrevio);
+    if (red) {
       tools.push('web');
-      const hits = await buscarWeb(consulta, 5);
+      const hits = await buscarWeb(red.query, 5);
       if (hits.length) {
         hechos.push(
-          `BÚSQUEDA WEB "${consulta}" (${new Date().toISOString().slice(0, 10)}):\n` +
+          `BÚSQUEDA WEB "${red.query}" (${new Date().toISOString().slice(0, 10)}):\n` +
             hits.map((h, i) => `${i + 1}. ${h.title} — ${h.snippet} [${h.url}]`).join('\n')
         );
-        const first = hits.find((h) => /^https?:\/\/[^/]+\/.+/.test(h.url));
-        const texto = first ? await leerPagina(first.url, 1600) : '';
-        if (first && texto) hechos.push(`PRIMERA FUENTE (${first.url}): ${texto}`);
-        hechos.push('Responde con lo que dicen las fuentes, cita la fuente principal por nombre. Si las fuentes no contestan, dilo.');
       } else {
-        hechos.push(`BÚSQUEDA WEB "${consulta}": sin resultados. Dilo.`);
+        hechos.push(`BÚSQUEDA WEB "${red.query}": sin resultados. Dilo.`);
       }
+      let leer = red.leer || hits.find((h) => /github\.com\//i.test(h.url))?.url || hits.find((h) => /^https?:\/\/[^/]+\/.+/.test(h.url))?.url;
+      if (leer) {
+        for (const u of urlsParaLeer(leer).slice(0, 3)) {
+          const pub = await urlPublica(u);
+          if (pub.ok === false) continue;
+          const texto = await leerPagina(pub.url, /raw\.githubusercontent/.test(u) ? 4500 : 1800);
+          if (texto && texto.length > 80 && !/^\s*(404|not found|file not found)/i.test(texto)) {
+            hechos.push(`FUENTE (${pub.url}): ${texto}`);
+            tools.push('pagina');
+            break;
+          }
+        }
+      }
+      hechos.push('Responde con lo que dicen las fuentes y el hilo. Si el usuario dijo «esto», es el tema o la URL anterior. No pidas otra vez el enlace. Si las fuentes no contestan, dilo.');
     }
     const image = body?.image;
     if (image) {
@@ -1110,16 +1134,21 @@ No finjas recuerdos: solo la memoria de ${quien ? nombreDe(quien) : 'quien no id
 Modo de mesa pedido: ${mode}.
 HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemoria(quien)}`;
 
-  const compuesto = construirMensajes({ personalidad, user: message, canal });
+  const compuesto = construirMensajes({ personalidad, user: mensajeHilo || message, canal, historial: hilo });
   if (compuesto.meta.rag) tools.push('rag');
   if (compuesto.meta.cot) tools.push('cot');
   if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
 
-  return { t0, message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system, quien, canal };
+  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system, quien, canal, hilo };
 }
 
-async function preguntarQwen(system: string, message: string, hechos: string[]): Promise<{ ok: boolean; reply: string; error?: string }> {
+async function preguntarQwen(
+  system: string,
+  message: string,
+  hechos: string[],
+  hilo: MsgHilo[] = []
+): Promise<{ ok: boolean; reply: string; error?: string }> {
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return { ok: false, reply: '', error: 'Qwen no configurado' };
   }
@@ -1132,9 +1161,10 @@ async function preguntarQwen(system: string, message: string, hechos: string[]):
         stream: false,
         messages: [
           { role: 'system', content: system },
+          ...hilo.map((m) => ({ role: m.role, content: m.content })),
           {
             role: 'user',
-            content: `Antes de responder, esto es Orden Global (hechos):\n${CONOCIMIENTO_OG.slice(0, 3500)}\n\nHECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nPregunta de la junta: ${message}`,
+            content: `HECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nJunta: ${message}`,
           },
         ],
       }),
@@ -1203,7 +1233,7 @@ async function correrTurno(body: any): Promise<{
 }> {
   const p = await prepararTurno(body);
   if (!p.message) return { reply: '', via: 'none', mode: p.mode, ms: Date.now() - p.t0, herramientas: [], foto: null, honesto: true, error: 'message vacío' };
-  const { t0, mode, tools, foto, system, message, quien, canal } = p;
+  const { t0, mode, tools, foto, system, message, quien, canal, hilo } = p;
   const hechos = [...p.hechos];
   const guardar = async (out: {
     reply: string;
@@ -1234,7 +1264,7 @@ async function correrTurno(body: any): Promise<{
     if (reply) return guardar({ reply, via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
     return { reply: '', via: 'none', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: 'Qwen no configurado' };
   }
-  const q1 = await preguntarQwen(system, message, hechos);
+  const q1 = await preguntarQwen(system, message, hechos, hilo);
   if (!q1.ok) {
     if (hechos.length) return guardar({ reply: hechos.join('\n'), via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true });
     return { reply: '', via: 'qwen', mode, ms: Date.now() - t0, herramientas: tools, foto, honesto: true, error: q1.error };
@@ -1247,7 +1277,7 @@ async function correrTurno(body: any): Promise<{
     tools.push(ped.herramienta);
     const extra = await correrHerramientaPedida(ped, reply, quien);
     hechos.push(extra);
-    const qn = await preguntarQwen(system, message, hechos);
+    const qn = await preguntarQwen(system, message, hechos, hilo);
     if (!qn.ok) {
       reply = quitarLineaPedido(reply) + (extra ? `\n\n${extra}` : '');
       via = 'harness-parcial';
@@ -1271,7 +1301,7 @@ async function correrTurno(body: any): Promise<{
     const hecho = `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
     hechos.push(hecho);
     if (!r.ok) {
-      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos);
+      const qn = await preguntarQwen(system, `${message}\n\nEl ejecutor falló. Corrige el código. No afirmes que funciona.`, hechos, hilo);
       reply = qn.ok ? quitarLineaPedido(qn.reply) : `${quitarLineaPedido(reply)}\n\n${hecho}`;
     } else {
       reply = `${quitarLineaPedido(reply)}\n\n${hecho}`;
@@ -1329,7 +1359,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
     send('error', { error: 'message vacío' });
     return res.end();
   }
-  const { t0, hechos, tools, system, message, quien, canal } = p;
+  const { t0, hechos, tools, system, message, quien, canal, hilo } = p;
   const guardarStream = async (texto: string) => {
     if (texto) await recordarTurno({ quien, rol: 'ultron', texto, canal });
   };
@@ -1356,7 +1386,11 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
         stream: true,
         messages: [
           { role: 'system', content: system },
-          { role: 'user', content: `Antes de responder, esto es Orden Global (hechos):\n${CONOCIMIENTO_OG.slice(0, 3500)}\n\nPregunta de la junta: ${message}` },
+          ...(hilo || []).map((m) => ({ role: m.role, content: m.content })),
+          {
+            role: 'user',
+            content: `HECHOS DE ESTE TURNO:\n${hechos.join('\n') || '(ninguno)'}\n\nJunta: ${message}`,
+          },
         ],
       }),
       signal: AbortSignal.timeout(60000),

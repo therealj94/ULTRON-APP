@@ -8,6 +8,7 @@ import path from 'node:path';
 import { esHechoLargo, semillaLarga } from '../server/hechos';
 import { MIEMBROS, nombreDe, puedeCambiarSistema, quienEs, type MiembroId } from './junta';
 import { bucketMemoria, s3GetJson, s3Listo, s3PutJson } from './s3';
+import { capasHilo } from './conversacion';
 
 export type CanalMem = 'mesa' | 'telegram' | 'sistema';
 
@@ -26,7 +27,7 @@ export type Almacen = {
 
 const FILE = path.join(process.cwd(), 'data', 'memoria-junta.json');
 const S3_KEY = 'ultron/memoria-junta.json';
-const MAX_CORTA = 80;
+const MAX_CORTA = 120;
 const MAX_LARGA = 80;
 const MAX_CAMBIOS = 120;
 
@@ -170,15 +171,18 @@ export function perfilDe(quien: MiembroId, store?: Almacen): PerfilMem {
   return a.perfiles[quien];
 }
 
+export function hiloDe(quien: MiembroId | null): TurnoMem[] {
+  if (!quien) return [];
+  const a = cache || leerDisco();
+  return a.perfiles[quien]?.corta || [];
+}
+
 export function promptMemoria(quien: MiembroId | null): string {
   const a = cache || leerDisco();
   const id = quien;
   const nombre = nombreDe(id);
   const privada = id ? a.perfiles[id] : { corta: [], larga: [] };
-  const corta = privada.corta
-    .slice(-40)
-    .map((t) => `${t.rol === 'user' ? nombre : 'ULTRON'}: ${t.texto}`)
-    .join('\n');
+  const capas = capasHilo(privada.corta);
   const hechosYo = privada.larga.map((h) => `- ${h.hecho}`).join('\n');
   const hechosJunta = a.junta.larga.map((h) => `- ${h.hecho}`).join('\n');
   const cambios = a.cambios
@@ -188,11 +192,12 @@ export function promptMemoria(quien: MiembroId | null): string {
   return [
     `HABLAS CON: ${nombre}. No mezcles la conversación privada del otro miembro.`,
     id
-      ? `MEMORIA PRIVADA DE ${nombre.toUpperCase()}:\n${hechosYo || '(nada aún)'}`
+      ? `MEMORIA LARGA / PRIVADA DE ${nombre.toUpperCase()}:\n${hechosYo || '(nada aún)'}`
       : 'No identifiqué si es José, Medardo, Carlos o Mayra. No recito memoria privada de nadie.',
     `ACCESO: ${puedeCambiarSistema(id) ? 'mando. Puede pedir redespliegue, mantenimiento y ejecutor.' : 'consulta. No cambia el sistema: sin redespliegue, sin mantenimiento, sin ejecutor. El resto del taller sí.'}`,
     `HECHOS COMPARTIDOS DE LA JUNTA:\n${hechosJunta || '(nada)'}`,
-    `CONVERSACIÓN LARGA CON ${nombre.toUpperCase()} (no la del otro):\n${corta || '(nada)'}`,
+    `HILO CORTO CON ${nombre.toUpperCase()} (lo último; «esto» es esto, no lo sueltes):\n${capas.corto || '(nada)'}`,
+    `CONVERSACIÓN MEDIANA CON ${nombre.toUpperCase()} (sigue el hilo, no la del otro):\n${capas.mediano || '(nada)'}`,
     `CAMBIOS RECIENTES (quién los pidió):\n${cambios || '(nada)'}`,
   ].join('\n');
 }

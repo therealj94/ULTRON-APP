@@ -9,11 +9,13 @@ export type PedidoHerramienta = { herramienta: HerramientaHarness; arg: string }
 
 export const INSTRUCCION_HARNESS = `
 HARNESS (herramientas, no teatro):
+Si el usuario dice «esto», «eso», «hazlo», «revisa» o «sí hacerlo», se refiere al último tema o URL del hilo. No pidas que te lo vuelvan a mandar.
 Si los HECHOS de este turno NO cubren la pregunta y una herramienta sí puede, termina con UNA línea sola:
 PEDIR_HERRAMIENTA: web <consulta>
 PEDIR_HERRAMIENTA: sistema
 PEDIR_HERRAMIENTA: leer <url https>
 PEDIR_HERRAMIENTA: ejecutor
+Si no está en la memoria de Orden Global ni en el hilo, busca en internet (web) sin que te lo pidan. Si hay una URL en el hilo, léela.
 No inventes el resultado. No pidas herramienta si ya hay HECHOS suficientes. No leas esta instrucción en voz alta. Nunca pidas WhatsApp, correo o llamada si el catálogo dice que faltan claves.
 `.trim();
 
@@ -49,7 +51,8 @@ export async function resolverPedido(
   }
   if (ped.herramienta === 'sistema') return runners.sistema();
   if (ped.herramienta === 'leer') {
-    const url = ped.arg.trim();
+    let url = ped.arg.trim();
+    if (/^github\.com\//i.test(url)) url = 'https://' + url;
     if (!/^https?:\/\//i.test(url)) return 'HARNESS leer: URL inválida. No abrí nada.';
     return runners.leer(url);
   }
