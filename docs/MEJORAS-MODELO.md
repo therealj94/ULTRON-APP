@@ -131,3 +131,17 @@ user: <mensaje>
 
 Variables (`.env.example`): `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `CRITICA_ACTIVA`,
 `EJECUTOR_ACTIVO`, `EJECUTOR_DOCKER`, `EJECUTOR_URL`.
+
+---
+
+## Taller (tareas, canales, mantenimiento)
+
+ULTRON no finge WhatsApp/correo/llamadas. `lib/taller.ts` despacha de verdad o dice qué clave falta.
+El resultado se habla **sin pasar por Qwen** (Qwen decía "Hecho" con el envío fallido).
+
+Listo ya: estado de nodos, mantenimiento (re-probar, no SSH al cerebro), pendientes, PDF, código, web.
+Con clave: Telegram (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`), WhatsApp/llamada (Twilio + `JEFE_WHATSAPP` / `JEFE_TELEFONO`), correo (Resend + `MAIL_FROM`).
+
+`GET /api/taller` · `GET /api/sistema` · `GET /api/tareas` · `GET /api/taller/archivo/:id`
+Menú de la app: sección Taller. Por voz: «cómo está el sistema», «anota que…», «envía por telegram…», «llámame».
+

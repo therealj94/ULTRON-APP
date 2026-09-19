@@ -8,7 +8,7 @@ import { DeskMenu } from '../components/DeskMenu';
 import { TONES, normalizeTone, tratoFor, type DeskPresence, type FaceState, type Mode, type SessionUser, type Tone } from '../config';
 import { HOOKS, MISSING_TAKE, NO_MORE_HOOKS, pickHook, withTrato, type Hook } from '../lib/sing';
 import type { TouchPoint } from '../components/UltronFace';
-import { healthCheck, rememberFact, turno, turnoStream, type Turn } from '../lib/api';
+import { healthCheck, rememberFact, tallerCatalogo, turno, turnoStream, type Turn } from '../lib/api';
 import { CONOCER_QUESTIONS, localAnswer } from '../lib/knowledge';
 import LINES from '../../voice-lines.json';
 import {
@@ -104,6 +104,7 @@ export function DeskScreen({ user, onLogout }: Props) {
     proactive: true,
     sfx: true,
   });
+  const [canales, setCanales] = useState<Array<{ id: string; nombre: string; listo: boolean; falta?: string }>>([]);
   const [camPerm, requestCam] = useCameraPermissions();
 
   const speakingRef = useRef(false);
@@ -756,6 +757,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       longMemory.current = (await loadLongMemory()).map((f) => f.hecho);
       void preloadSfx();
       void healthCheck().then((h) => setOnline(!!h.ok)).catch(() => setOnline(false));
+      void tallerCatalogo().then((c) => { if (alive) setCanales(c.canales || []); });
 
       const micOk = await ensureSpeechPermissions();
       if (!alive) return;
@@ -1073,6 +1075,11 @@ export function DeskScreen({ user, onLogout }: Props) {
         onSearch={(q) => {
           setMenuOpen(false);
           void handleCommand(`busca ${q}`);
+        }}
+        canales={canales}
+        onTaller={(cmd) => {
+          setMenuOpen(false);
+          void handleCommand(cmd);
         }}
         onLogout={onLogout}
       />

@@ -231,3 +231,13 @@ export async function describeImage(base64Jpeg: string, prompt: string): Promise
     return '';
   }
 }
+
+export type CanalTaller = { id: string; nombre: string; listo: boolean; falta?: string };
+
+export async function tallerCatalogo() {
+  try {
+    return await api<{ canales: CanalTaller[] }>('/api/taller', undefined, 8_000);
+  } catch {
+    return { canales: [] as CanalTaller[] };
+  }
+}

@@ -26,6 +26,10 @@ import { completarTurnoCodigo, extraerRespuestaQwen } from './lib/agente';
 import { criticaActiva } from './lib/critico';
 import { ejecutarCodigo, ejecutorActivo } from './lib/ejecutor';
 import { construirMensajes } from './lib/qwen';
+import { leerPdf } from './lib/canales';
+import { catalogoCanales, fotoSistema } from './lib/sistema';
+import { despacharTaller, hechosCatalogo } from './lib/taller';
+import { listarTareas } from './lib/tareas';
 
 const app = express();
 const httpServer = http.createServer(app);
@@ -985,6 +989,7 @@ async function prepararTurno(body: any) {
   const hechos: string[] = [];
   const foto: string | null = null;
   const tools: string[] = [];
+  let decirTaller: string | undefined;
 
   try {
     if (/\b(oro|gold|xau|onza)\b/.test(q)) {
@@ -1045,19 +1050,30 @@ async function prepararTurno(body: any) {
     hechos.push(`Tool falló: ${String(e?.message || e).slice(0, 160)}. Si no hay cifra, dilo.`);
   }
 
+  try {
+    const taller = await despacharTaller(message, { usuario: nombre });
+    hechos.push(...taller.hechos);
+    tools.push(...taller.tools);
+    decirTaller = taller.decir;
+  } catch (e: any) {
+    hechos.push(`Taller falló: ${String(e?.message || e).slice(0, 160)}.`);
+  }
+
   const soloDato =
     /precio|spot|oro|plata|gold|silver|xau|xag|lempira|hnl|tipo de cambio|cu[aá]nto/.test(q) &&
     !/por qu[eé]|explica|an[aá]lisis|busca|investiga/.test(q) &&
     !tools.includes('web');
-  const directo = soloDato && hechos.length ? hechos.map((h) => h.replace(/ No inventes otro número\./g, '')).join(' ') : null;
+  const directo =
+    decirTaller ||
+    (soloDato && hechos.length ? hechos.map((h) => h.replace(/ No inventes otro número\./g, '')).join(' ') : null);
 
   const personalidad = `${buildPersonality({ nombre: nombre || undefined })}
 No finjas recuerdos de otras noches: solo LARGO PLAZO y ULTIMOS TURNOS.
 Modo de mesa pedido: ${mode}.
-HECHOS:\n${hechos.join('\n') || '(ninguno)'}\nLARGO PLAZO:\n${larga.join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h: any) => `${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
+HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\nLARGO PLAZO:\n${larga.join('\n') || '(nada)'}\nULTIMOS TURNOS:\n${historial.map((h: any) => `${h.rol}: ${h.texto}`).join('\n') || '(nada)'}`;
 
   const { messages, meta } = construirMensajes({ personalidad, user: message });
-  return { t0, message, mode, hechos, tools, foto, directo, system: messages[0].content, messages, meta, personalidad };
+  return { t0, message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system: messages[0].content, messages, meta, personalidad };
 }
 
 app.post('/api/turno', async (req, res) => {
@@ -1066,7 +1082,17 @@ app.post('/api/turno', async (req, res) => {
   const { t0, mode, hechos, tools, foto, message } = p;
 
   if (p.directo) {
-    return res.json({ reply: p.directo, modelo: 'tools', via: 'gold-api/er-api', mode, ms: Date.now() - t0, tools: tools.length, foto, honesto: true });
+    return res.json({
+      reply: p.directo,
+      modelo: 'tools',
+      via: p.directoVia === 'taller' ? 'taller' : 'gold-api/er-api',
+      mode,
+      ms: Date.now() - t0,
+      tools: tools.length,
+      herramientas: tools,
+      foto,
+      honesto: true,
+    });
   }
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     if (hechos.length) return res.json({ reply: hechos.join('\n'), modelo: 'tools-only', via: 'tools', mode, ms: Date.now() - t0, foto, honesto: true });
@@ -1140,7 +1166,7 @@ app.post('/api/turno/stream', async (req, res) => {
   send('tools', { tools });
   if (p.directo) {
     send('delta', { text: p.directo });
-    send('done', { reply: p.directo, ms: Date.now() - t0, via: 'tools' });
+    send('done', { reply: p.directo, ms: Date.now() - t0, via: p.directoVia === 'taller' ? 'taller' : 'tools' });
     return res.end();
   }
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
@@ -1243,6 +1269,27 @@ app.post('/api/turno/stream', async (req, res) => {
     send('error', { error: 'Qwen caído', message: String(err?.message || err).slice(0, 200) });
     res.end();
   }
+});
+
+app.get('/api/taller', (_req, res) => {
+  res.json({ honesto: true, canales: catalogoCanales() });
+});
+
+app.get('/api/sistema', async (_req, res) => {
+  const foto = await fotoSistema();
+  res.json({ honesto: true, ...foto });
+});
+
+app.get('/api/tareas', (_req, res) => {
+  res.json({ honesto: true, tareas: listarTareas() });
+});
+
+app.get('/api/taller/archivo/:id', (req, res) => {
+  const buf = leerPdf(String(req.params.id || ''));
+  if (!buf) return res.status(404).json({ error: 'PDF no encontrado', honesto: true });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${path.basename(String(req.params.id))}"`);
+  return res.send(buf);
 });
 
 app.post('/api/ejecutar', async (req, res) => {
