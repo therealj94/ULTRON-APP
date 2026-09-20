@@ -101,6 +101,45 @@ Lo que dice al terminar de leer un archivo, textual, corriendo contra los fixtur
 **Probado** (`tests/gis.test.ts`, 23 casos) contra cuadrados exactos en UTM 16N generados por
 `scripts/gis/fixture-concesiones.py`: verdades conocidas, no números copiados de la salida.
 
+## Los datos: PostGIS — **hecho y verificado**
+
+Esquema en `scripts/electrum/esquema.sql`, instalador en `scripts/electrum/instalar-postgis.sh`,
+acceso en `server/electrum/db.ts`.
+
+Tablas: `capa` (cada archivo subido), `concesion`, `entidad_geo` (bocaminas, ríos, poblados, áreas
+protegidas), `documento` y `fragmento` (expedientes troceados **con su página**, porque una cita sin
+página no se puede comprobar y entonces no es una cita), y `traslape` (calculado y guardado: en un
+padrón nacional recalcularlo en cada pregunta cuesta minutos).
+
+Decisiones que conviene entender:
+
+- **Todo en WGS84.** La reproyección se hace una sola vez, al entrar. Guardar cada capa en su propia
+  proyección es cómodo el primer día e infernal al mes siguiente, cuando hay que cruzar dos capas.
+- **`MULTIPOLYGON`, no `POLYGON`.** Una concesión puede venir partida en varios recintos.
+- **El área se guarda dos veces**: la medida sobre el elipsoide y la que declaraba el archivo. Poder
+  mostrar la diferencia es la comprobación que más pleitos evita.
+- **Los atributos del `.dbf` van completos en JSONB.** Un catastro real trae columnas que nadie
+  previó y tirarlas es perder el expediente.
+- **Búsqueda que perdona.** Dos fallos distintos: escribir mal («Quebrda Seca» → trigramas) y
+  escribir solo un pedazo («Andina» dentro de «Compañía Demo Andina Ltda.» → subcadena, porque la
+  similitud ahí da 0,27 y el umbral es 0,3). Las dos, con `unaccent` para que «Danlí» y «Danli» sean
+  lo mismo.
+
+Consultas listas: buscar, por vencer, traslapes, qué concesión cubre este punto, qué hay a menos de
+X kilómetros (medido sobre el elipsoide), la geometría con su centro y encuadre para volar el mapa,
+la capa entera como GeoJSON, y búsqueda en expedientes con página.
+
+**La verificación que importa**: se levantó un PostgreSQL 16 con PostGIS 3 de verdad, se cargó el
+shapefile de prueba y se comprobó que **PostGIS y el motor de TypeScript dan el mismo número**. Son
+dos implementaciones independientes del área geodésica —`ST_Area` sobre `geography` por un lado, la
+esfera autálica de Snyder por el otro— y coinciden dentro de 0,01 ha. Si un día alguien rompe una,
+la otra lo delata. 13 casos, todos en verde.
+
+El instalador es idempotente, genera la clave si no se la dan, aplica el esquema y **se comprueba a
+sí mismo**: mide un cuadrado conocido y falla si la cuenta no es geodésica. No abre el puerto a
+internet a propósito: un catastro completo expuesto en 5432 con una clave es, tarde o temprano,
+regalarlo.
+
 ## El mapa: los dos, con interruptor
 
 - **MapLibre** para el trabajo: teselas vectoriales, aguanta miles de polígonos, capas, medición.
@@ -128,7 +167,7 @@ PEDIR_HERRAMIENTA: informe <generar PDF>
 |---|---|
 | Motor GIS: ingesta, reproyección, área elipsoidal, traslapes | **hecho y probado** |
 | Fixtures de catastro en UTM 16N | **hecho** |
-| Esquema PostGIS + script de instalación en el nodo | pendiente |
+| Esquema PostGIS, instalador y capa de acceso | **hecho y probado contra una base real** |
 | Panel de especialistas + conocimiento Electrum | pendiente |
 | Manos nuevas en el harness | pendiente |
 | App: mapa doble, cara que cede el paso, expedientes, informes | pendiente |
