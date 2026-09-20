@@ -6,7 +6,6 @@ import { createServer as createViteServer } from 'vite';
 import { fetchNodo, saludNodo, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz } from './server/voz';
-import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica } from './server/seguridad';
 import { leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
@@ -23,7 +22,10 @@ import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio } from './lib/oido';
 import { esTareaDeCodigo } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
-import { hechoCerebroOG } from './lib/cerebro-og';
+import { hechoCerebro } from './lib/cerebro';
+import { herramientaActiva, perfilActivo } from './lib/perfiles';
+import { resolverCalculoMina } from './lib/minas/calculos';
+import { responderConcesion } from './lib/minas/concesiones';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
   cargarMemoria,
@@ -162,6 +164,26 @@ app.get('/api/nodo/listo', async (_req, res) => {
 });
 
 /** Catálogo de capacidades: la única lista de lo que ULTRON puede hacer, con estado real. */
+/**
+ * Qué plataforma es esta. El front se marca con esto (arranque, cabecera, ajustes) en vez de llevar
+ * «ULTRON FP» escrito a mano: así el mismo binario se presenta como Genesis Core o como Cerebro de
+ * Minas según ULTRON_PERFIL, sin dos copias de la interfaz.
+ */
+app.get('/api/perfil', limitar(60), (_req, res) => {
+  const p = perfilActivo();
+  res.json({
+    id: p.id,
+    cerebro: p.cerebro,
+    plataforma: p.plataforma,
+    proposito: p.proposito,
+    acento: p.acento,
+    demo: p.demo,
+    modos: p.modos,
+    herramientas: p.herramientas,
+    honesto: true,
+  });
+});
+
 app.get('/api/capacidades', limitar(30), async (_req, res) => {
   const s = await medirSalud();
   const canales = catalogoCanales();
@@ -393,6 +415,18 @@ async function cached(key: string, ttlMs: number, fn: () => Promise<any>) {
   return data;
 }
 
+/**
+ * Qué contesta ULTRON cuando el cerebro no responde.
+ *
+ * Antes volcaba HECHOS en crudo, con sus etiquetas internas y todo («CEREBRO DE MINAS (esto lo sabés
+ * de verdad…)»). Eso no es una respuesta: es enseñar el prompt. Se dice lo que sí se sabe en frases
+ * de persona (los `datos`, que ya vienen redactados) y se admite que el cerebro está caído.
+ */
+function sinCerebro(datos: string[]): string {
+  if (datos.length) return `${datos.join(' ')} Eso sí lo tengo a mano; el cerebro grande no me responde ahora, así que no te voy a elaborar más.`;
+  return 'Ahora mismo no alcanzo mi cerebro. No te voy a inventar una respuesta: dame un momento y volvé a preguntarme.';
+}
+
 async function spotMetal(sym: 'XAU' | 'XAG') {
   return cached(`metal:${sym}`, 30000, async () => {
     const r = await fetch(`https://api.gold-api.com/price/${sym}`, { signal: AbortSignal.timeout(8000) });
@@ -604,13 +638,15 @@ async function prepararTurno(body: any) {
   const foto: string | null = null;
   const tools: string[] = [];
   let decirTaller: string | undefined;
+  /** Un cálculo de mina se dice tal cual: parafrasear un número es arruinarlo. */
+  let calculoMina: string | null = null;
 
   // Hechos de Orden Global pegados a la pregunta: el cerebro completo va en el system, pero el
   // dato concreto (1 ORIGEN = 1/55 g, Besu/QBFT, CIADI…) rinde más al lado de lo que preguntaron.
-  const og = hechoCerebroOG(message);
-  if (og) {
-    hechos.push(og);
-    tools.push('cerebro-og');
+  const delCerebro = hechoCerebro(message);
+  if (delCerebro) {
+    hechos.push(delCerebro);
+    tools.push(`cerebro-${perfilActivo().id}`);
   }
 
   // Contexto interno: el 27B lo usa para decidir, no para recitarlo. Los fallos de infraestructura
@@ -636,6 +672,31 @@ async function prepararTurno(body: any) {
       hechos.push(`SPOT XAG/USD = ${s.usd} USD/oz (fuente ${s.fuente}). No inventes otro número.`);
       datos.push(`La plata está en ${s.usd.toFixed(2)} dólares la onza, según ${s.fuente}.`);
       tools.push('plata');
+    }
+    // --- Cerebro de Minas: las cuentas las hace la plataforma, no el modelo de cabeza.
+    if (herramientaActiva('calculos-mina')) {
+      let precioOnza: number | undefined;
+      // El spot solo se pide si la frase habla de dinero: una conversión de onzas no necesita red.
+      if (/\b(vale|valor|d[oó]lares|usd|precio|cuánto|cuanto|corte|cutoff)\b/.test(q)) {
+        precioOnza = await spotMetal('XAU').then((s) => Number(s.usd)).catch(() => undefined);
+      }
+      const calc = resolverCalculoMina(message, { precioOnza });
+      if (calc) {
+        hechos.push(
+          `CÁLCULO DE MINA (${calc.tipo}) — lo hizo la plataforma, este número es el bueno, no lo recalcules:\n${calc.texto}\nFórmula: ${calc.formula}`
+        );
+        datos.push(calc.texto);
+        calculoMina = calc.texto;
+        tools.push('calculo-mina');
+      }
+    }
+    if (herramientaActiva('concesiones')) {
+      const ficha = responderConcesion(message);
+      if (ficha) {
+        hechos.push(`PADRÓN DE CONCESIONES (datos de demostración, dilo al darlos):\n${ficha}`);
+        datos.push(ficha);
+        tools.push('concesiones');
+      }
     }
     if (/\b(lempira|hnl|d[oó]lar a lempira|usd a hnl|tipo de cambio)\b/.test(q)) {
       const fx = await usdHnl();
@@ -790,12 +851,14 @@ async function prepararTurno(body: any) {
     !/por qu[eé]|explica|an[aá]lisis|busca|investiga|opin|crees|pens[aá]s/.test(q) &&
     !tools.includes('web') &&
     datos.length > 0;
-  const directo = decirTaller || (soloDato ? datos.join(' ') : null);
+  // Un cálculo sale palabra por palabra como lo armó la plataforma, salvo que pidan explicación.
+  const soloCalculo = calculoMina && !/por qu[eé]|explic|c[oó]mo se (calcula|saca)|f[oó]rmula|analiz|opin/.test(q) ? calculoMina : null;
+  const directo = decirTaller || soloCalculo || (soloDato ? datos.join(' ') : null);
 
   const personalidad = `${buildPersonality({ nombre: (quien ? nombreDe(quien) : nombre) || undefined, canal, modo: String(mode), mando })}
 
-CEREBRO ORDEN GLOBAL:
-${CONOCIMIENTO_OG}
+${perfilActivo().tituloConocimiento}:
+${perfilActivo().conocimiento}
 
 No finjas recuerdos: solo la memoria de ${quien ? nombreDe(quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.
 Modo de mesa pedido: ${mode}.
@@ -807,7 +870,7 @@ HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemor
   if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
 
-  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, tools, foto, directo, directoVia: decirTaller ? 'taller' : directo ? 'market' : null, system, quien, mando, canal, hilo };
+  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, datos, tools, foto, directo, directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null, system, quien, mando, canal, hilo };
 }
 
 
@@ -936,17 +999,15 @@ async function correrTurno(body: any): Promise<SalidaTurno> {
     return final;
   };
   if (p.directo) {
-    return guardar({ ...base, reply: p.directo, via: p.directoVia === 'taller' ? 'taller' : 'gold-api/er-api', mode, ms: Date.now() - t0, herramientas: tools });
+    const via = p.directoVia === 'taller' ? 'taller' : p.directoVia === 'calculo-mina' ? 'calculo-mina' : 'gold-api/er-api';
+    return guardar({ ...base, reply: p.directo, via, mode, ms: Date.now() - t0, herramientas: tools });
   }
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
-    const reply = hechos.join('\n');
-    if (reply) return guardar({ ...base, reply, via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools });
-    return { ...base, reply: '', emocion: 'preocupado', via: 'none', mode, ms: Date.now() - t0, herramientas: tools, error: 'Qwen no configurado' };
+    return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools });
   }
   const q1 = await preguntarQwen(system, message, hechos, hilo);
   if (!q1.ok) {
-    if (hechos.length) return guardar({ ...base, reply: hechos.join('\n'), emocion: 'preocupado', via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools });
-    return { ...base, reply: '', emocion: 'preocupado', via: 'qwen', mode, ms: Date.now() - t0, herramientas: tools, error: q1.error };
+    return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-fallback', mode, ms: Date.now() - t0, herramientas: tools, error: q1.error });
   }
   const h = await bucleHarness({ reply: q1.reply, system, message, hechos, hilo, tools, mando });
   let reply = h.reply;
@@ -1037,14 +1098,10 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
     return terminar(emo.texto, p.directoVia === 'taller' ? 'taller' : 'tools', emo.emocion);
   }
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
-    const reply = hechos.join('\n') || '';
-    if (!reply) {
-      send('error', { error: 'Qwen no configurado' });
-      return res.end();
-    }
-    send('emocion', { emocion: 'neutral' });
+    const reply = sinCerebro(p.datos);
+    send('emocion', { emocion: 'preocupado' });
     send('delta', { text: reply });
-    return terminar(reply, 'tools-only', 'neutral');
+    return terminar(reply, 'tools-only', 'preocupado');
   }
   try {
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
@@ -1055,7 +1112,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
     });
     if (!r.ok || !r.body) {
       const raw = await r.text().catch(() => '');
-      const reply = hechos.join('\n');
+      const reply = sinCerebro(p.datos);
       if (reply) {
         send('emocion', { emocion: 'preocupado' });
         send('delta', { text: reply });
@@ -1139,7 +1196,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
         enviado = reply.length;
       }
     }
-    if (!reply && hechos.length) reply = hechos.join('\n');
+    if (!reply) reply = sinCerebro(p.datos);
     if (reply.length > enviado) send('delta', { text: reply.slice(enviado) });
     return terminar(reply, via, emocion);
   } catch (err: any) {

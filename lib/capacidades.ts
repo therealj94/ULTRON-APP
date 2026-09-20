@@ -6,6 +6,7 @@
  */
 
 import { EMOCIONES, EMOCION_INFO, type Emocion } from './emocion';
+import { perfilActivo, type Herramienta } from './perfiles';
 
 export type GrupoCapacidad = 'herramientas' | 'voz' | 'personalidad' | 'gestos' | 'canales' | 'memoria';
 
@@ -21,6 +22,12 @@ export type Capacidad = {
   falta?: string;
   /** Solo web / solo APK / ambas. */
   donde: 'web' | 'apk' | 'ambas';
+  /**
+   * Herramienta del perfil que esta tarjeta necesita. Si el perfil no la tiene, la tarjeta no se
+   * muestra: el catálogo promete lo que la plataforma hace de verdad, y el Cerebro de Minas no
+   * redespliega nada ni canta.
+   */
+  requiere?: Herramienta;
 };
 
 export type EstadoNodos = {
@@ -146,6 +153,7 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
     },
     {
       id: 'sistema',
+      requiere: 'taller',
       grupo: 'herramientas',
       titulo: 'Estado de los nodos',
       detalle: 'Sondea Qwen, ojo, voz y memoria. Avisa por Telegram si algo cae.',
@@ -155,6 +163,7 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
     },
     {
       id: 'ejecutor',
+      requiere: 'taller',
       grupo: 'herramientas',
       titulo: 'Ejecutar Python',
       detalle: 'Corre código en sandbox. Solo José y Medardo con sesión.',
@@ -197,6 +206,7 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
     },
     {
       id: 'canto',
+      requiere: 'canto',
       grupo: 'voz',
       titulo: 'Cantar',
       detalle: `Canta a capela con su propia voz. Repertorio: ${CANCIONES.map((c) => c.titulo).join(', ')}. Pedile letra y la canta.`,
@@ -207,6 +217,7 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
     },
     {
       id: 'oracion',
+      requiere: 'canto',
       grupo: 'voz',
       titulo: 'Orar por el día',
       detalle: 'Una oración a Jesús por la junta, por Orden Global y por Honduras. Cierra los ojos y ora en voz baja, unos tres minutos.',
@@ -263,6 +274,7 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
   const canales: Capacidad[] = [
     {
       id: 'telegram',
+      requiere: 'telegram',
       grupo: 'canales',
       titulo: 'Telegram de la junta',
       detalle: 'Responde en privado a José, Medardo, Carlos y Mayra. Manda fotos, PDF y notas de voz. Avisa urgencias.',
@@ -273,6 +285,7 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
     },
     {
       id: 'redeploy',
+      requiere: 'taller',
       grupo: 'canales',
       titulo: 'Redesplegar la mesa en Render',
       detalle: 'Solo mando (José, Medardo) con sesión.',
@@ -294,17 +307,43 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
       donde: 'ambas',
     },
     {
-      id: 'genesis',
+      id: 'cerebro',
       grupo: 'memoria',
-      titulo: 'Cerebro Genesis Core',
-      detalle: 'Hechos de Orden Global: junta, minas, cadena 5550, tokens, Próspera. Se actualiza con «actualiza el cerebro».',
-      ejemplos: ['¿qué es ORIGEN?', 'actualiza el cerebro'],
+      titulo: `Cerebro ${perfilActivo().cerebro}`,
+      detalle: perfilActivo().proposito,
+      ejemplos: perfilActivo().id === 'minas' ? ['¿qué es un pórfido?', 'diferencia entre recurso y reserva'] : ['¿qué es ORIGEN?', 'actualiza el cerebro'],
       vivo: true,
       donde: 'ambas',
     },
   ];
 
-  return [...her, ...voz, ...personalidad, ...gestos, ...canales, ...memoria];
+  // Solo las herramientas propias de esta plataforma: el catálogo no promete lo que no hay.
+  const minas: Capacidad[] = [
+    {
+      id: 'calculos-mina',
+      grupo: 'herramientas',
+      titulo: 'Cálculos de minería',
+      detalle:
+        'Onzas contenidas, recuperables y su valor; ley de corte; relación de descapote; dilución; conversiones entre g/t, ppm, porcentaje y onzas por tonelada corta. Las cuentas las hace la plataforma con la fórmula a la vista, no el modelo de cabeza.',
+      ejemplos: ['250.000 toneladas a 3,4 g/t, ¿cuántas onzas?', 'ley de corte con 25 dólares por tonelada y 90% de recuperación', 'strip ratio de 3 millones de estéril y 1 millón de mineral'],
+      vivo: true,
+      donde: 'ambas',
+      requiere: 'calculos-mina',
+    },
+    {
+      id: 'concesiones',
+      grupo: 'herramientas',
+      titulo: 'Fichas de concesiones y permisos',
+      detalle: 'Padrón consultable por voz: expediente, titular, área, tipo, estado ambiental, obligaciones y vencimientos. Avisa de lo que vence pronto y de lo que se contradice. Datos de demostración.',
+      ejemplos: ['¿cómo va Cerro Partido?', '¿qué concesiones vencen pronto?', '¿qué concesiones hay?'],
+      vivo: true,
+      donde: 'ambas',
+      requiere: 'concesiones',
+    },
+  ];
+
+  const tiene = new Set(perfilActivo().herramientas);
+  return [...her, ...minas, ...voz, ...personalidad, ...gestos, ...canales, ...memoria].filter((c) => !c.requiere || tiene.has(c.requiere));
 }
 
 export const GRUPOS: Record<GrupoCapacidad, string> = {

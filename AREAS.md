@@ -15,7 +15,9 @@ Cada área tiene un dueño de archivo claro. Cambiar una no obliga a tocar otra:
 | 02 | Cara web | `src/02-cara/{FaceCanvas,dibujo,funPack,emocion,gestos}.ts(x)` | 19 estados, capa de expresión por emoción, mapa táctil humano, fun pack tras `funMode` |
 | 03 | Voz web | `src/03-voz/{hablar,banco,player,speech,useOido}.ts` | clips → `/api/tts` → navegador; barge-in |
 | 04 | Cerebro (cliente) | `src/04-cerebro/{turno,intenciones,grabFrame}.ts` | stream SSE con `emocion`; tabla de intenciones locales con límites de palabra |
-| 05 | Cerebro OG | `src/05-cerebro-og/conocimiento.ts` | única fuente de hechos de Orden Global |
+| 05 | Cerebro OG | `src/05-cerebro-og/conocimiento.ts` | única fuente de hechos de Orden Global (perfil `genesis`) |
+| 05b | Cerebro de Minas | `src/08-cerebro-minas/conocimiento.ts`, `lib/minas/*` | minería general + cálculos y padrón de concesiones (perfil `minas`, demo) |
+| 05c | Perfiles | `lib/perfiles/*`, `lib/cerebro.ts` | qué cerebro carga el binario según `ULTRON_PERFIL`; mismo cuerpo, otra plataforma |
 | 06 | Manos | `src/06-manos/web.ts` | búsqueda y lectura web (la usa el servidor) |
 | 07 | Pantallas | `src/07-pantallas/*` | Arranque, Ajustes + Capacidades, Dock, Acceso, Bóveda, Cámara, Fotos, VisionOverlay |
 | 08 | Servidor | `server.ts`, `server/{voz,desk,seguridad,habla}.ts`, `lib/*` | turno JSON y SSE con harness, voz, canto, capacidades, memoria, Telegram, taller |

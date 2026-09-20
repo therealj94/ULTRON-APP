@@ -1,0 +1,75 @@
+[
+  {
+    "id": "EXP-2021-0442",
+    "nombre": "Quebrada Seca",
+    "titular": "Minera Demo del Norte S.A.",
+    "ubicacion": "Santa Bárbara, Santa Bárbara",
+    "areaHa": 1200,
+    "tipo": "exploración",
+    "mineral": "oro y plata",
+    "estado": "vigente",
+    "otorgada": "2021-03-15",
+    "vence": "2027-03-15",
+    "ambiental": "categoría 2, licencia en trámite",
+    "obligaciones": [
+      "canon anual al día",
+      "informe semestral de labores pendiente desde junio"
+    ],
+    "nota": "Objetivo epitermal de baja sulfuración. Sondeos: catorce diamantinos."
+  },
+  {
+    "id": "EXP-2019-0118",
+    "nombre": "Cerro Partido",
+    "titular": "Compañía Demo Andina Ltda.",
+    "ubicacion": "El Corpus, Choluteca",
+    "areaHa": 640,
+    "tipo": "explotación",
+    "mineral": "oro",
+    "estado": "vigente",
+    "otorgada": "2019-08-01",
+    "vence": "2026-11-15",
+    "ambiental": "licencia vigente, número 0517-2019",
+    "obligaciones": [
+      "canon anual al día",
+      "garantía de cierre al día",
+      "plan de labores del próximo año pendiente"
+    ],
+    "nota": "Mina subterránea de veta angosta, corte y relleno."
+  },
+  {
+    "id": "EXP-2023-0907",
+    "nombre": "Las Lajas",
+    "titular": "Exploraciones Demo Centroamérica S. de R.L.",
+    "ubicacion": "Danlí, El Paraíso",
+    "areaHa": 2400,
+    "tipo": "exploración",
+    "mineral": "cobre y molibdeno",
+    "estado": "en trámite",
+    "otorgada": "2023-11-20",
+    "vence": "2029-11-20",
+    "ambiental": "sin licencia, no puede perforar",
+    "obligaciones": [
+      "subsanar observaciones de la solicitud",
+      "presentar estudio de impacto ambiental"
+    ],
+    "nota": "Blanco tipo pórfido. Solo geoquímica y magnetometría por ahora."
+  },
+  {
+    "id": "EXP-2016-0075",
+    "nombre": "Río Blanco",
+    "titular": "Minera Demo del Norte S.A.",
+    "ubicacion": "Yoro, Yoro",
+    "areaHa": 300,
+    "tipo": "explotación",
+    "mineral": "oro aluvial",
+    "estado": "suspendida",
+    "otorgada": "2016-05-10",
+    "vence": "2028-05-10",
+    "ambiental": "licencia suspendida por incumplimiento",
+    "obligaciones": [
+      "remediar cauce intervenido",
+      "canon con dos años de atraso"
+    ],
+    "nota": "Suspendida por la autoridad ambiental. No opera."
+  }
+]

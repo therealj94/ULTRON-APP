@@ -41,3 +41,13 @@ APK: `cd mobile && npm ci && npx expo run:android`, o bajar el artefacto de la a
 Reglas: la voz es una (Gabriela, ElevenLabs v3). El nodo Qwen no se toca. Nada que cambie estado pasa sin sesión firmada. Si una herramienta no respondió, ULTRON lo dice.
 
 Detalle de qué se hizo y por qué: `docs/ENTREGA-4.0.md`.
+
+## Dos plataformas, un cuerpo
+
+El mismo binario sirve a dos plataformas según `ULTRON_PERFIL`:
+
+- sin variable → **Genesis Core**, el asistente de la junta de Orden Global (lo de siempre).
+- `ULTRON_PERFIL=minas` → **Cerebro de Minas**, asistente de minería para demostración, con cálculos
+  de mina y padrón de concesiones, y sin un solo dato de Orden Global.
+
+Cara, voz, emociones, ojos y oído son los mismos para las dos. Ver `docs/CEREBRO-MINAS.md`.

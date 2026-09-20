@@ -5,6 +5,7 @@
  * de bucles por partícula: las motas van con un sprite pre-renderizado.
  */
 import type { Mode, FaceState, AnimationEngineState, TouchRipple } from '../types';
+import { perfil } from '../perfil';
 
 export interface Theme {
   primary: string;
@@ -14,8 +15,36 @@ export interface Theme {
   dark: string;
 }
 
-/** Paleta OLED por modo. GUARDIAN es la marca: negro + cian #05E1FF. */
+/** Mezcla un hex hacia el blanco (t>0) o hacia el negro (t<0). Para derivar brillo y sombra de un acento. */
+function mezclar(hex: string, t: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return hex;
+  const n = parseInt(m[1], 16);
+  const canal = (c: number) => Math.round(t >= 0 ? c + (255 - c) * t : c * (1 + t));
+  const r = canal((n >> 16) & 255);
+  const g = canal((n >> 8) & 255);
+  const b = canal(n & 255);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0').toUpperCase()}`;
+}
+
+/**
+ * Paleta derivada del acento de la plataforma. El Cerebro de Minas tiene que verse distinto de
+ * Genesis de un vistazo: si solo cambia el rótulo, es la misma app con otro nombre. El `accent`
+ * secundario de cada modo se respeta, que es lo que da variedad dentro de una misma plataforma.
+ */
+function paletaDeAcento(base: string, secundario: string): Theme {
+  return { primary: base, glow: mezclar(base, 0.35), core: mezclar(base, 0.85), accent: secundario, dark: mezclar(base, -0.85) };
+}
+
+/** Paleta OLED por modo. En Genesis la marca es negro + cian #05E1FF; otra plataforma, otro acento. */
 export function getThemeColors(m: Mode): Theme {
+  const p = perfil();
+  // GOLD es oro a propósito en cualquier plataforma: es el modo del metal, no de la marca.
+  if (p.id !== 'genesis' && m !== 'GOLD') return paletaDeAcento(p.acento, baseDelModo(m).accent);
+  return baseDelModo(m);
+}
+
+function baseDelModo(m: Mode): Theme {
   switch (m) {
     case 'GOLD':
       return { primary: '#F5C542', glow: '#FFE17D', core: '#FFF4C2', accent: '#FFB800', dark: '#3D2800' };

@@ -1,3 +1,4 @@
+import { perfil as perfilActual } from '../perfil';
 import React, { useState } from 'react';
 import { X, Volume2, Sparkles, Shield, ShieldCheck, Fingerprint, Camera, Wand2, BookOpen, Smile, Trash2 } from 'lucide-react';
 import type { Mode, FaceState } from '../types';
@@ -58,7 +59,9 @@ export const SettingsSheet: React.FC<Props> = (p) => {
         <div className="flex items-center justify-between border-b border-[#05E1FF]/20 pb-2.5">
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-[#05E1FF] animate-pulse" />
-            <h2 className="font-display font-bold tracking-[0.25em] text-[#05E1FF] text-base">AJUSTES · ULTRON FP</h2>
+            <h2 className="font-display font-bold tracking-[0.25em] text-base" style={{ color: 'var(--acento, #05E1FF)' }}>
+              AJUSTES · {perfilActual().plataforma}
+            </h2>
           </div>
           <button type="button" onClick={p.onClose} className="p-1 rounded text-[#8FA3B0] hover:text-[#05E1FF] cursor-pointer" aria-label="Cerrar ajustes">
             <X className="w-5 h-5" />

@@ -15,6 +15,7 @@ import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame } from './04-cerebro/grabFrame';
 import { guardarHecho, olvidarTodo } from './09-estado/memoria';
 import { headersMesa } from './10-infra/sesionCliente';
+import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
 import { Maximize2, Minimize2, SlidersHorizontal, Fingerprint, Camera, ShieldCheck, Settings2 } from 'lucide-react';
 
@@ -65,6 +66,15 @@ export default function App() {
   // ---- UI
   const [dockOpen, setDockOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Nombre de la plataforma: lo dice el servidor (Genesis Core o Cerebro de Minas), no está escrito aquí.
+  const [perfilPlataforma, setPerfilPlataforma] = useState(perfilActual().plataforma);
+  useEffect(() => {
+    let vivo = true;
+    void cargarPerfil().then((p) => vivo && setPerfilPlataforma(p.plataforma));
+    return () => {
+      vivo = false;
+    };
+  }, []);
   const [accesoOpen, setAccesoOpen] = useState(false);
   const [vaultOpen, setVaultOpen] = useState(false);
   const [photosOpen, setPhotosOpen] = useState(false);
@@ -599,7 +609,9 @@ export default function App() {
         <div className="absolute top-4 left-5 right-5 z-20 flex items-center justify-between pointer-events-none">
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 border border-[#05E1FF]/30 backdrop-blur-md shadow-[0_0_15px_rgba(5,225,255,0.15)] pointer-events-auto">
             <span className={`w-2 h-2 rounded-full ${cerebroListo === 'listo' ? 'bg-[#05E1FF] animate-pulse' : cerebroListo === 'calentando' ? 'bg-amber-400 animate-pulse' : 'bg-red-500'}`} />
-            <span className="font-display font-bold tracking-[0.2em] text-[#05E1FF] text-xs">ULTRON FP</span>
+            <span className="font-display font-bold tracking-[0.2em] text-xs" style={{ color: 'var(--acento, #05E1FF)' }}>
+              {perfilPlataforma}
+            </span>
             <span className="font-mono text-[9px] tracking-[0.2em] text-[#6B8A90] hidden sm:inline">· {chipEstado}</span>
           </div>
           <div className="flex items-center gap-2 pointer-events-auto">
