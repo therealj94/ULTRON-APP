@@ -3,7 +3,7 @@
 set -euxo pipefail
 exec > >(tee /var/log/ccpocket-bootstrap.log) 2>&1
 
-dnf install -y git tar unzip openssl
+dnf install -y git tar unzip openssl bubblewrap
 curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
 dnf install -y nodejs
 curl -fsSL https://tailscale.com/install.sh | sh
@@ -41,14 +41,11 @@ JSON
 chown ec2-user:ec2-user /home/ec2-user/.claude/settings.json
 
 cat > /home/ec2-user/.codex/config.toml <<'TOML'
-model = "openai.gpt-5.6-sol"
+model = "openai.gpt-6-astra"
 model_provider = "amazon-bedrock"
 
 [model_providers.amazon-bedrock]
-name = "Amazon Bedrock"
-
-[model_providers.amazon-bedrock.aws]
-region = "us-east-1"
+aws_region = "us-east-1"
 TOML
 chown ec2-user:ec2-user /home/ec2-user/.codex/config.toml
 
