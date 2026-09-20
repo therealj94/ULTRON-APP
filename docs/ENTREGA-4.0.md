@@ -153,3 +153,42 @@ decía. Apareció en la primera hoja de capturas. Cada clip del banco lleva ahor
 APK publicado como Release con enlace de descarga directo y permanente:
 `https://github.com/therealj94/ULTRON-APP/releases/latest`. Cada push a `main` que toque `mobile/`
 compila y actualiza el Release.
+
+---
+
+# 4.1.1 — La APK se cerraba al entrar
+
+José reportó: «me log in y se crash y regresa, y volví y sigue cayéndose».
+
+## Qué pasaba
+Los logs de Render descartaron el servidor: los turnos respondían bien y no había un solo error
+de aplicación. El proceso moría en el teléfono, y moría justo donde se monta la mesa: al entrar a
+`DeskScreen` se cargaba el motor de visión nativo, y `react-native-worklets-core` instala su
+runtime por JSI de una forma que la arquitectura nueva de React Native 0.81 (`newArchEnabled=true`)
+no soporta. Ese tipo de fallo mata el proceso sin excepción de JavaScript: la app desaparece y el
+teléfono vuelve al lanzador, que es exactamente lo que se veía.
+
+## Qué se hizo
+- **Fuera el motor nativo**: `react-native-vision-camera`, el face-detector y `worklets-core`, con
+  su plugin de `app.json`, el de babel y el código del frame processor. Apagarlo con una bandera no
+  bastaba: entraban al APK por autolinking con solo estar en `package.json`, y Metro resuelve los
+  `require()` aunque el código sea inalcanzable. Queda en el historial de git para volver a
+  encenderlo el día que se valide worklets en un teléfono real (o se migre a
+  `react-native-worklets`, el de Software Mansion, que es el que VisionCamera recomienda desde
+  RN 0.78).
+- **La cámara sigue viendo** con el motor por servidor, el que venía funcionando: una foto cada 12 s
+  (30 s con la cara dormida) a `/api/vision/analyze`, y las etiquetas se convierten en la misma
+  `Escena` que usa la web. Pierde el seguimiento de mirada a 10 fps; conserva saber que hay alguien,
+  qué hay en la mesa y contestar «¿qué ves?».
+- **Diagnóstico de campo** (`mobile/src/lib/reporte.ts` + `POST /api/diag`): la app deja migas de
+  paso guardadas en disco (arranque, login, permisos, mesa montada), captura los errores de JS no
+  atrapados y, al reabrir después de un crash nativo, manda la última miga alcanzada. Si vuelve a
+  caerse, el punto exacto aparece en los logs de Render sin necesidad de cable ni de adb.
+
+## Verificado, no supuesto
+- `tsc` limpio en web y móvil; 124/124 pruebas en verde.
+- Metro empaqueta el bundle de Android completo (2,25 MB de Hermes) sin módulos sin resolver.
+- `expo prebuild` regenera el proyecto Android sin rastro de vision-camera.
+- `POST /api/diag` probado contra el servidor real: el crash de ejemplo salió impreso en el log.
+- El APK publicado se descargó y se abrió: **no contiene `libVisionCamera`, ni `libworklets`, ni el
+  face-detector**. Lo de ML Kit que sí queda dentro es el lector de códigos de `expo-camera`.
