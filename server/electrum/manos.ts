@@ -12,7 +12,7 @@
  * Todas fallan hacia afuera: si el catastro no está conectado, lo dicen en una frase que el modelo
  * puede repetir sin inventar. Ninguna lanza una excepción que el usuario tenga que ver.
  */
-import { resolverCalculoMina } from '../../lib/minas/calculos';
+import { COMPARTIDAS } from '../../lib/manos/compartidas';
 import type { Herramienta } from '../../lib/agente/tipos';
 import { areaHectareas, distanciaKm, encuadre, perimetroKm } from './gis';
 import {
@@ -41,6 +41,7 @@ const catastro_buscar: Herramienta = {
     properties: { texto: { type: 'string', description: 'Nombre, titular, expediente o municipio. Tolera errores de tecleo.' } },
     required: ['texto'],
   },
+  plataformas: ['electrum'],
   async ejecutar({ texto }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const filas = await buscarConcesiones(String(texto), 10);
@@ -58,6 +59,7 @@ const catastro_vencimientos: Herramienta = {
   nombre: 'catastro_vencimientos',
   descripcion: 'Lista las concesiones que vencen dentro de los próximos N días, de la más urgente a la menos. Para «qué se me vence» o revisiones de cartera.',
   esquema: { type: 'object', properties: { dias: { type: 'integer', description: 'Ventana en días', default: 365 } } },
+  plataformas: ['electrum'],
   async ejecutar({ dias }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const filas = await porVencer(Number(dias) || 365, 25);
@@ -85,6 +87,7 @@ const catastro_en_punto: Herramienta = {
     },
     required: ['lon', 'lat'],
   },
+  plataformas: ['electrum'],
   async ejecutar({ lon, lat, radio_km }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const dentro = await concesionEnPunto(Number(lon), Number(lat));
@@ -105,6 +108,7 @@ const gis_traslapes: Herramienta = {
   descripcion:
     'Lista las concesiones que se pisan entre sí, en hectáreas. Es la revisión más importante de un catastro y la que nadie hace hasta que hay pleito.',
   esquema: { type: 'object', properties: {} },
+  plataformas: ['electrum'],
   async ejecutar() {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const t = await traslapes(20);
@@ -130,6 +134,7 @@ const gis_medir: Herramienta = {
       hasta: { type: 'string', description: 'Punto «lon,lat» de destino' },
     },
   },
+  plataformas: ['electrum'],
   async ejecutar({ concesion_id, desde, hasta }) {
     if (desde && hasta) {
       const a = String(desde).split(',').map(Number);
@@ -167,6 +172,7 @@ const mapa_volar: Herramienta = {
       nombre: { type: 'string', description: 'Si no tenés el id, el nombre; se busca sola' },
     },
   },
+  plataformas: ['electrum'],
   async ejecutar({ concesion_id, nombre }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     let id = concesion_id != null ? Number(concesion_id) : null;
@@ -193,6 +199,7 @@ const mapa_capa: Herramienta = {
   nombre: 'mapa_capa',
   descripcion: 'Pinta en el mapa una capa entera de las que se subieron, con todas sus concesiones.',
   esquema: { type: 'object', properties: { capa_id: { type: 'integer', description: 'Id de la capa' } }, required: ['capa_id'] },
+  plataformas: ['electrum'],
   async ejecutar({ capa_id }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const fc = await capaGeojson(Number(capa_id));
@@ -216,6 +223,7 @@ const expediente_buscar: Herramienta = {
     properties: { texto: { type: 'string', description: 'Qué buscar, en palabras normales' } },
     required: ['texto'],
   },
+  plataformas: ['electrum'],
   async ejecutar({ texto }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const hits = await buscarEnExpedientes(String(texto), 5);
@@ -225,49 +233,6 @@ const expediente_buscar: Herramienta = {
       .map((h) => `${h.documento}${h.pagina ? `, página ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 220)}»`)
       .join(' | ');
     return { ok: true, texto: `${cita}. Citá el documento y la página al contestar.`, ui: { hits } };
-  },
-};
-
-/* ------------------------------------------------------------------ cálculo y mercado */
-
-const calculo_mina: Herramienta = {
-  nombre: 'calculo_mina',
-  descripcion:
-    'Hace las cuentas de mina: onzas contenidas y recuperables, ley de corte, relación de descapote, dilución y conversiones. Usala SIEMPRE que haya un número que calcular: vos no calculás de cabeza.',
-  esquema: {
-    type: 'object',
-    properties: {
-      enunciado: { type: 'string', description: 'La cuenta en palabras, por ejemplo «250.000 toneladas a 3,4 g/t con 90% de recuperación»' },
-      precio_onza: { type: 'number', description: 'Precio del oro por onza, si hace falta para el valor' },
-    },
-    required: ['enunciado'],
-  },
-  async ejecutar({ enunciado, precio_onza }) {
-    const c = resolverCalculoMina(String(enunciado), { precioOnza: precio_onza != null ? Number(precio_onza) : undefined });
-    if (!c) return { ok: false, texto: `De «${enunciado}» no saco una cuenta. Necesito tonelaje y ley, o los datos de la ley de corte.` };
-    return { ok: true, texto: `${c.texto} (fórmula: ${c.formula})`, ui: { tipo: c.tipo, valores: c.valores, formula: c.formula } };
-  },
-};
-
-const metales_spot: Herramienta = {
-  nombre: 'metales_spot',
-  descripcion: 'Precio del oro o la plata ahora mismo, en dólares por onza, con su fuente.',
-  esquema: {
-    type: 'object',
-    properties: { metal: { type: 'string', description: 'oro o plata', enum: ['oro', 'plata'], default: 'oro' } },
-  },
-  msMaximo: 10_000,
-  async ejecutar({ metal }) {
-    const sym = String(metal) === 'plata' ? 'XAG' : 'XAU';
-    try {
-      const r = await fetch(`https://api.gold-api.com/price/${sym}`, { signal: AbortSignal.timeout(8000) });
-      const j: any = await r.json();
-      const usd = Number(j.price || j.bid || j.ask);
-      if (!isFinite(usd)) throw new Error('sin precio');
-      return { ok: true, texto: `El ${metal} está en ${nf(usd, 2)} dólares la onza, según gold-api.com.`, ui: { metal, usd, fuente: 'gold-api.com' } };
-    } catch (e: any) {
-      return { ok: false, texto: `No pude traer el precio del ${metal} ahora mismo. No inventes uno.` };
-    }
   },
 };
 
@@ -283,8 +248,9 @@ export const MANOS: Record<string, Herramienta> = {
   mapa_volar,
   mapa_capa,
   expediente_buscar,
-  calculo_mina,
-  metales_spot,
+  // Estas dos no son de Electrum: viven en lib/manos/compartidas.ts porque ULTRON hace las mismas
+  // cuentas y pregunta el mismo precio. Se montan acá, no se copian.
+  ...COMPARTIDAS,
 };
 
 /**
@@ -293,8 +259,14 @@ export const MANOS: Record<string, Herramienta> = {
  */
 export function manosDe(nombres: string[]): Herramienta[] {
   const s = new Set(nombres);
-  return Object.values(MANOS).filter((h) => s.has(h.nombre));
+  return TODAS.filter((h) => s.has(h.nombre));
 }
 
-/** Todas, para cuando no hay panel convocado. */
-export const TODAS = Object.values(MANOS);
+/**
+ * Todas las que Dr Electrum puede usar, para cuando no hay panel convocado.
+ *
+ * El filtro por plataforma no es ceremonia: es la garantía estructural de que una mano de ULTRON
+ * —el taller, la bóveda, el ejecutor— no termine en el panel de Electrum porque alguien la agregó
+ * al registro equivocado. Si no declara `electrum`, no existe acá.
+ */
+export const TODAS = Object.values(MANOS).filter((h) => h.plataformas.includes('electrum'));

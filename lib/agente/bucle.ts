@@ -15,7 +15,7 @@
  * red, que es la única forma de saber que el presupuesto y los reintentos hacen lo que dicen.
  */
 import { herramientasNativas, instruccionHermes, leerLlamadas, limpiarTexto, validar } from './protocolo';
-import type { Contexto, Herramienta, Llamada, Respuesta } from './tipos';
+import { ctxEscribe, type Contexto, type Herramienta, type Llamada, type Respuesta } from './tipos';
 
 export type Mensaje =
   | { role: 'system' | 'user' | 'assistant'; content: string; tool_calls?: unknown[] }
@@ -136,7 +136,7 @@ export async function correrAgente(opts: {
       const inicio = Date.now();
       let resultado;
 
-      if (h.escribe && !opts.ctx.mando) {
+      if (h.escribe && !ctxEscribe(opts.ctx)) {
         resultado = { ok: false, texto: `«${h.nombre}» cambia cosas y quien pregunta tiene acceso de consulta. No la ejecuté. Decilo claro y ofrecé la alternativa de solo lectura.` };
       } else {
         const v = validar(h.esquema, l.argumentos);

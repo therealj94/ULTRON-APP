@@ -17,6 +17,7 @@ import { manosDe, TODAS } from './manos';
 import { CONOCIMIENTO_MINAS } from '../../src/08-cerebro-minas/conocimiento';
 import { hechosCerebro } from '../../lib/cerebro';
 import { PERFILES } from '../../lib/perfiles';
+import { fraseDeAcceso, personaPorId } from '../../lib/acceso';
 
 export type RespuestaTurno = {
   texto: string;
@@ -65,6 +66,12 @@ async function pensarConQwen(mensajes: Mensaje[], herramientas: unknown[]) {
   return { texto: String(mensaje.content || ''), mensaje };
 }
 
+/** El nombre con el que la saluda. Sin padrón detrás, no se inventa uno. */
+function nombreVisible(ctx: Contexto): string {
+  if (!ctx.quien) return 'quien tenés enfrente';
+  return personaPorId(ctx.quien)?.nombre || 'quien tenés enfrente';
+}
+
 export async function turnoElectrum(mensaje: string, ctx: Contexto): Promise<RespuestaTurno> {
   const panel = convocar(mensaje);
   const herramientas = panel.length ? manosDe(herramientasDe(panel)) : TODAS;
@@ -73,7 +80,10 @@ export async function turnoElectrum(mensaje: string, ctx: Contexto): Promise<Res
   const delCerebro = hechosCerebro(mensaje, 12, PERFILES.minas);
 
   const system = [
-    identidad(ctx.quien || 'quien tenés enfrente'),
+    identidad(nombreVisible(ctx)),
+    // Que el modelo sepa el nivel de quien tiene enfrente evita la peor forma de decir que no:
+    // ofrecerle a alguien que suba un expediente y rebotarlo después con un error de permisos.
+    fraseDeAcceso(ctx.nivel, 'electrum'),
     '',
     promptPanel(panel),
     '',

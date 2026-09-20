@@ -26,7 +26,17 @@ import { hechoCerebro } from './lib/cerebro';
 import { herramientaActiva, perfilActivo } from './lib/perfiles';
 import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
+import { spotMetal } from './lib/mercado';
 import { turnoElectrum } from './server/electrum/turno';
+import {
+  electrumBotListo,
+  electrumWebhookSecretOk,
+  genteDeElectrum,
+  procesarElectrumTelegram,
+  registrarWebhookElectrum,
+} from './server/electrum/telegram';
+import { identidadDe, exigirPlataforma } from './server/seguridad';
+import { nivelDe } from './lib/acceso';
 import { consulta as consultaElectrum, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
@@ -174,14 +184,18 @@ app.get('/api/nodo/listo', async (_req, res) => {
 /* ------------------------------------------------------------------ Dr Electrum FP */
 
 /** El turno de Electrum: panel de especialistas + harness con manos + órdenes para el mapa. */
-app.post('/api/electrum/turno', limitar(30), async (req, res) => {
+app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
   const mensaje = String(req.body?.mensaje || '').slice(0, 4000).trim();
   if (!mensaje) return res.status(400).json({ error: 'Falta el mensaje.', honesto: true });
   try {
-    const quien = quienVerificado(req);
+    // Antes esto era `quienVerificado(req)`, con la PETICIÓN donde va el CUERPO: leía
+    // `req.telegramUserId`, que no existe, así que Dr Electrum nunca supo con quién hablaba y el
+    // nivel salía siempre nulo. Fallaba hacia el lado seguro, pero fallaba.
+    const id = identidadDe(req);
     const salida = await turnoElectrum(mensaje, {
-      quien,
-      mando: !!quien && puedeCambiarSistema(quien),
+      quien: id?.persona.id || null,
+      nivel: nivelDe(id, 'electrum'),
+      plataforma: 'electrum',
       canal: 'mesa',
       mensaje,
     });
@@ -193,7 +207,7 @@ app.post('/api/electrum/turno', limitar(30), async (req, res) => {
 });
 
 /** Qué hay cargado: capas del mapa y expedientes indexados. */
-app.get('/api/electrum/expedientes', limitar(60), async (_req, res) => {
+app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), async (_req, res) => {
   if (!hayBaseElectrum()) return res.json({ capas: [], documentos: [], catastro: false, honesto: true });
   try {
     const capas = await consultaElectrum(
@@ -209,8 +223,33 @@ app.get('/api/electrum/expedientes', limitar(60), async (_req, res) => {
 });
 
 /** Estado del catastro, para el panel de sistema. */
-app.get('/api/electrum/salud', limitar(60), async (_req, res) => {
-  res.json({ ...(await saludElectrum()), honesto: true });
+app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  const id = identidadDe(req);
+  res.json({
+    ...(await saludElectrum()),
+    quien: id?.persona.nombre || null,
+    nivel: nivelDe(id, 'electrum'),
+    bot: electrumBotListo(),
+    padron: genteDeElectrum(),
+    honesto: true,
+  });
+});
+
+/**
+ * El bot Dr Electrum FP. Puerta propia, secreto propio: un update firmado con el secreto de ULTRON
+ * rebota aquí, y al revés. Que los dos bots vivan en el mismo proceso no los hace el mismo bot.
+ */
+app.post(['/api/electrum/telegram/webhook', '/api/electrum/telegram/webhook/'], limitar(40), async (req, res) => {
+  if (!electrumWebhookSecretOk(req.headers['x-telegram-bot-api-secret-token'])) {
+    return res.status(401).json({ ok: false, honesto: true });
+  }
+  res.json({ ok: true, honesto: true });
+  try {
+    const r = await procesarElectrumTelegram(req.body);
+    if (r.estado === 'rechazado') console.warn('[electrum] telegram', r.estado, r.chatId);
+  } catch (e: any) {
+    console.warn('[electrum] telegram', String(e?.message || e).slice(0, 180));
+  }
 });
 
 app.get('/api/perfil', limitar(60), (_req, res) => {
@@ -471,15 +510,7 @@ function sinCerebro(datos: string[]): string {
   return 'Ahora mismo no alcanzo mi cerebro. No te voy a inventar una respuesta: dame un momento y volvé a preguntarme.';
 }
 
-async function spotMetal(sym: 'XAU' | 'XAG') {
-  return cached(`metal:${sym}`, 30000, async () => {
-    const r = await fetch(`https://api.gold-api.com/price/${sym}`, { signal: AbortSignal.timeout(8000) });
-    const j: any = await r.json();
-    const price = j.price || j.bid || j.ask;
-    if (!price) throw new Error('gold-api sin price');
-    return { sym, usd: Number(price), fuente: 'gold-api.com', updatedAt: j.updatedAt || null };
-  });
-}
+
 
 async function usdHnl() {
   return cached('hnl', 60000, async () => {
@@ -1377,6 +1408,13 @@ async function startServer() {
     registrarWebhookTelegram()
       .then((r) => console.log('[ULTRON] telegram webhook', r.detalle))
       .catch((e) => console.warn('[ULTRON] telegram webhook', String(e?.message || e).slice(0, 160)));
+    if (electrumBotListo()) {
+      registrarWebhookElectrum()
+        .then((r) => console.log('[electrum] telegram webhook', r.detalle))
+        .catch((e) => console.warn('[electrum] telegram webhook', String(e?.message || e).slice(0, 160)));
+    } else {
+      console.log('[electrum] bot apagado: falta ELECTRUM_BOT_TOKEN o ELECTRUM_WEBHOOK_SECRET.');
+    }
     iniciarCentinela(180_000);
     cargarMemoria()
       .then(() => console.log('[ULTRON] memoria', estadoMemoria().detalle))

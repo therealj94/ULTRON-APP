@@ -290,11 +290,16 @@ Ninguno se veía leyendo el código:
 | Las manos (diez herramientas) | **hechas y probadas** |
 | Aprender de lo que se sube (GIS y documentos con página) | **hecho** |
 | App: mapa doble, cara que cede el paso, panel y expedientes | **hecha y mirada** |
-| Informes en PDF | pendiente |
-
-| Generador de informes en PDF | base mínima ya existe (`lib/pdf.ts`) |
+| Padrón y puerta propia, separada de ULTRON | **hecho y probado contra el servidor compilado** |
+| Bot de Telegram Dr Electrum FP | **hecho** (falta darle de alta el bot en BotFather) |
+| Generador de informes en PDF | pendiente — base mínima ya existe (`lib/pdf.ts`) |
 | Voz con el API nuevo | adaptador pendiente, a la espera del API |
-| Bot de Telegram Dr Electrum FP | pendiente |
+
+## Quién entra
+
+Dr Electrum **no hereda la gente de ULTRON**. Está en [`ACCESOS.md`](./ACCESOS.md): padrón propio,
+llave propia, bot propio y secreto propio. Estar en la junta de Orden Global no te abre la demo
+minera, y al revés.
 
 ## Decisiones tomadas
 

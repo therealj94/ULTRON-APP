@@ -11,6 +11,7 @@ import { ESPECIALISTAS, convocar, herramientasDe, promptPanel } from '../server/
 import { MANOS, TODAS, manosDe } from '../server/electrum/manos';
 import { trocear } from '../server/electrum/aprender';
 import { validar } from '../lib/agente/protocolo';
+import type { Contexto } from '../lib/agente/tipos';
 
 const ids = (m: string) => convocar(m).map((e) => e.id);
 
@@ -117,14 +118,14 @@ test('las manos', async (t) => {
   });
 
   await t.test('el cálculo de mina no lo hace el modelo de cabeza', async () => {
-    const r = await MANOS.calculo_mina.ejecutar({ enunciado: '250.000 toneladas a 3,4 g/t' }, { quien: null, mando: false, canal: 'mesa', mensaje: '' });
+    const r = await MANOS.calculo_mina.ejecutar({ enunciado: '250.000 toneladas a 3,4 g/t' }, { quien: null, nivel: 'lee', plataforma: 'electrum', canal: 'mesa', mensaje: '' });
     assert.equal(r.ok, true);
     assert.match(r.texto, /27\.328/);
     assert.match(r.texto, /fórmula/);
   });
 
   await t.test('un enunciado que no es una cuenta lo dice, no inventa', async () => {
-    const r = await MANOS.calculo_mina.ejecutar({ enunciado: 'hola qué tal' }, { quien: null, mando: false, canal: 'mesa', mensaje: '' });
+    const r = await MANOS.calculo_mina.ejecutar({ enunciado: 'hola qué tal' }, { quien: null, nivel: 'lee', plataforma: 'electrum', canal: 'mesa', mensaje: '' });
     assert.equal(r.ok, false);
     assert.match(r.texto, /no saco una cuenta/);
   });
@@ -132,7 +133,7 @@ test('las manos', async (t) => {
   await t.test('sin catastro conectado, las de base lo dicen en vez de fallar', async () => {
     const antes = process.env.ELECTRUM_DB_URL;
     delete process.env.ELECTRUM_DB_URL;
-    const ctx = { quien: null, mando: false, canal: 'mesa' as const, mensaje: '' };
+    const ctx: Contexto = { quien: null, nivel: 'lee', plataforma: 'electrum', canal: 'mesa', mensaje: '' };
     for (const n of ['catastro_buscar', 'gis_traslapes', 'expediente_buscar']) {
       const r = await MANOS[n].ejecutar({ texto: 'x' }, ctx);
       assert.equal(r.ok, false, n);
@@ -142,13 +143,13 @@ test('las manos', async (t) => {
   });
 
   await t.test('gis_medir pide qué medir en vez de adivinar', async () => {
-    const r = await MANOS.gis_medir.ejecutar({}, { quien: null, mando: false, canal: 'mesa', mensaje: '' });
+    const r = await MANOS.gis_medir.ejecutar({}, { quien: null, nivel: 'lee', plataforma: 'electrum', canal: 'mesa', mensaje: '' });
     assert.equal(r.ok, false);
     assert.match(r.texto, /Decime qué medir/);
   });
 
   await t.test('gis_medir mide distancia entre dos puntos sin tocar la base', async () => {
-    const r = await MANOS.gis_medir.ejecutar({ desde: '-86.58,14.03', hasta: '-86.57,14.04' }, { quien: null, mando: false, canal: 'mesa', mensaje: '' });
+    const r = await MANOS.gis_medir.ejecutar({ desde: '-86.58,14.03', hasta: '-86.57,14.04' }, { quien: null, nivel: 'lee', plataforma: 'electrum', canal: 'mesa', mensaje: '' });
     assert.equal(r.ok, true);
     assert.match(r.texto, /1,5\d kilómetros/);
   });

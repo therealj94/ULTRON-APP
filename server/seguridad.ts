@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
+import { identificar, nivelDe, type Identificacion, type Plataforma } from '../lib/acceso';
 import dns from 'dns/promises';
 import net from 'net';
 
@@ -131,7 +132,16 @@ export function mesaAutorizada(req: Request): boolean {
  * quedar muda si el token murió en un redespliegue, así que pasan con rate limit por IP.
  * Todo lo que cambia estado (memoria, bóveda, ejecutor, redeploy) exige sesión real.
  */
-const RUTAS_CONVERSACION = ['/api/turno', '/api/tts', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/orar', '/api/voz', '/api/diag', '/api/electrum'];
+/**
+ * La excepción de la APK (decisión de la junta, 19-sep): estas rutas pasan sin sesión, con límite
+ * por IP, para que el teléfono no se quede mudo si el token murió en un redespliegue.
+ *
+ * `/api/electrum` ESTABA en esta lista y no debía: Dr Electrum no viaja en ninguna APK, no tiene
+ * token que se le muera, y va a guardar el catastro de un país. Tenerlo aquí lo dejaba abierto a
+ * cualquiera que diera con la URL —consultas al catastro y turnos de Qwen gratis, en el nodo de
+ * José—. Se gobierna aparte, con `exigirPlataforma('electrum')`.
+ */
+const RUTAS_CONVERSACION = ['/api/turno', '/api/tts', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/orar', '/api/voz', '/api/diag'];
 
 function rutaConversacion(path: string) {
   const p = String(path || '').split('?')[0];
@@ -219,4 +229,69 @@ export async function urlPublica(raw: string): Promise<{ ok: true; url: string }
     return { ok: false, error: 'DNS falló' };
   }
   return { ok: true, url: u.toString() };
+}
+
+
+/* ------------------------------------------------------- acceso por plataforma */
+
+/**
+ * Quién viene en esta petición, según el padrón. La prueba sale de la SESIÓN FIRMADA, nunca del
+ * cuerpo: el correo de una sesión `u1.` lo emitió este servidor con su HMAC, así que vale.
+ */
+export function identidadDe(req: Request): Identificacion | null {
+  const s = sesionDe(req);
+  if (!s) return null;
+  const id = identificar({ correo: s.correo, nombre: s.nombre });
+  // Una sesión viva de alguien a quien sacaron del padrón ya no identifica a nadie.
+  return id && id.prueba === 'sesion' ? id : null;
+}
+
+let avisadoHueco = false;
+
+/**
+ * La llave de demostración de una plataforma. Permite enseñar Dr Electrum sin crearle sesión a
+ * nadie, que es como se va a enseñar a un cliente. Igual que `ULTRON_MESA_CLAVE`, pero por
+ * plataforma, para que la llave de la demo minera no abra la mesa de la junta.
+ */
+function claveDemo(plataforma: Plataforma): string {
+  if (plataforma === 'electrum') return String(process.env.ELECTRUM_CLAVE || '').trim();
+  return String(process.env.ULTRON_MESA_CLAVE || '').trim();
+}
+
+export function plataformaAutorizada(req: Request, plataforma: Plataforma): boolean {
+  if (nivelDe(identidadDe(req), plataforma)) return true;
+
+  const clave = claveDemo(plataforma);
+  const got = String(req.headers['x-ultron-llave'] || req.headers[plataforma === 'electrum' ? 'x-electrum-llave' : 'x-ultron-mesa'] || '');
+  if (clave && got && secretosIguales(clave, got)) return true;
+
+  // Fuera de producción y sin llave puesta, se abre: es lo que deja correr las pruebas y el QA de
+  // Playwright. En producción no hay hueco, con llave o sin ella.
+  if (process.env.NODE_ENV !== 'production' && !clave) {
+    if (!avisadoHueco) {
+      avisadoHueco = true;
+      console.warn('[ULTRON] sin NODE_ENV=production y sin llave: las plataformas quedan abiertas. Solo desarrollo.');
+    }
+    return true;
+  }
+  return false;
+}
+
+/** Puerta de una plataforma. Se niega por omisión y dice cuál es la puerta, no por qué se cerró. */
+export function exigirPlataforma(plataforma: Plataforma) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (plataformaAutorizada(req, plataforma)) {
+      (req as any).identidad = identidadDe(req);
+      return next();
+    }
+    return res.status(401).json({
+      error:
+        plataforma === 'electrum'
+          ? 'Dr Electrum FP es privado. Entrá con tu sesión o con la llave de la demostración.'
+          : 'ULTRON es privado. Entra con sesión de junta.',
+      code: 'sesion_requerida',
+      plataforma,
+      honesto: true,
+    });
+  };
 }

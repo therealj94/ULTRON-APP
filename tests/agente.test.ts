@@ -12,13 +12,14 @@ import { correrAgente, type Mensaje, type Pensar } from '../lib/agente/bucle';
 import { deHermes, deLegado, deNativo, herramientasNativas, instruccionHermes, leerLlamadas, limpiarTexto, validar } from '../lib/agente/protocolo';
 import type { Contexto, Herramienta } from '../lib/agente/tipos';
 
-const CTX: Contexto = { quien: 'jose', mando: true, canal: 'mesa', mensaje: 'prueba' };
-const CONSULTA: Contexto = { ...CTX, mando: false };
+const CTX: Contexto = { quien: 'jose', nivel: 'mando', plataforma: 'electrum', canal: 'mesa', mensaje: 'prueba' };
+const CONSULTA: Contexto = { ...CTX, nivel: 'lee' };
 
 const clima: Herramienta = {
   nombre: 'clima',
   descripcion: 'Dice el clima de una ciudad. Usala solo si preguntan por el tiempo.',
   esquema: { type: 'object', properties: { ciudad: { type: 'string', description: 'Ciudad' } }, required: ['ciudad'] },
+  plataformas: ['electrum'],
   async ejecutar(a) {
     return { ok: true, texto: `En ${a.ciudad} hay 24 grados.`, ui: { ciudad: a.ciudad } };
   },
@@ -32,6 +33,7 @@ const sumar: Herramienta = {
     properties: { a: { type: 'number', description: 'primero' }, b: { type: 'number', description: 'segundo' } },
     required: ['a', 'b'],
   },
+  plataformas: ['electrum'],
   async ejecutar(x) {
     return { ok: true, texto: `Son ${(x.a as number) + (x.b as number)}.` };
   },
@@ -42,6 +44,7 @@ const borrar: Herramienta = {
   descripcion: 'Borra la base. Peligrosa.',
   escribe: true,
   esquema: { type: 'object', properties: {} },
+  plataformas: ['electrum'],
   async ejecutar() {
     return { ok: true, texto: 'Borrado.' };
   },
@@ -50,6 +53,7 @@ const borrar: Herramienta = {
 const lenta: Herramienta = {
   nombre: 'lenta',
   descripcion: 'Tarda demasiado.',
+  plataformas: ['electrum'],
   msMaximo: 60,
   esquema: { type: 'object', properties: {} },
   async ejecutar() {
