@@ -65,8 +65,11 @@ export function afinarParaBoca(text: string): string {
       .replace(/#+\s?/g, '')
       .replace(/`+/g, '')
       .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
-      .replace(/\s*—\s*/g, '. ')
-      .replace(/:\s+/g, '. ')
+      // Coma y no punto. Un punto exige entonación de cierre y mayúscula detrás, y esto dejaba
+      // «Vamos por partes. primero el derecho minero»: v3 lee ahí un fin de frase que la gramática
+      // no tiene, y suena a alguien que se corta a media idea. La coma da la misma pausa sin mentir.
+      .replace(/\s*—\s*/g, ', ')
+      .replace(/:\s+/g, ', ')
       .replace(/\bjaja+\b/gi, 'je je')
       .replace(/\blol\b/gi, 'je')
       .replace(/\s+/g, ' ')

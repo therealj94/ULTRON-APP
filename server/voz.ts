@@ -79,19 +79,38 @@ export function expresar(texto: string, emocion: Emocion = 'neutral', performanc
   const base = afinarParaBoca(texto);
   if (!base) return '';
   if (/\[[a-z ]+\]/i.test(texto)) return String(texto).trim();
+  /**
+   * Las sustituciones se comen la puntuación que traen pegada. Sin eso salía «mmm....» y
+   * «déjame ver....», porque el reemplazo añade sus tres puntos y el punto original se quedaba;
+   * y «[laughs] , qué bueno», con la coma de «Je je,» colgando al principio de la frase.
+   * Cuatro puntos y una coma huérfana no son una errata de texto: v3 los LEE, y se nota.
+   */
   let t = base
-    .replace(/\b(je\s?){2,}\b\.?/gi, '[laughs] ')
-    .replace(/\bje\b\.?/gi, '[chuckles] ')
-    .replace(/\b(mmm+|hmm+)\b/gi, '[thoughtful] mmm...')
-    .replace(/\bd[eé]jame ver\b/gi, 'déjame ver...')
-    .replace(/\bun segundo\b/gi, 'un segundo...')
+    .replace(/\b(je\s?){2,}\b\s*[.,;!]*\s*/gi, '[laughs] ')
+    .replace(/\bje\b\s*[.,;!]*\s*/gi, '[chuckles] ')
+    .replace(/\b(mmm+|hmm+)\b\s*[.,;!]*/gi, '[thoughtful] mmm...')
+    // Se conserva la mayúscula original: «Un segundo» al empezar una frase se volvía «un
+    // segundo», y a v3 una minúscula tras un punto le cambia la entonación.
+    .replace(/\bd([eé])jame ver\b\s*[.,;!]*/gi, (m) => `${m.trimEnd().replace(/[.,;!]+$/, '')}...`)
+    .replace(/\bun segundo\b\s*[.,;!]*/gi, (m) => `${m.trimEnd().replace(/[.,;!]+$/, '')}...`)
     .replace(/\s{2,}/g, ' ')
     .trim();
+
   if (performance === 'sing') return `[singing] ${t}`;
+
   const tag = TAG_EMOCION[normalizarEmocion(emocion)] || '';
   // Respiración humana: una pausa breve entre frases largas.
   t = t.replace(/([.!?])\s+(?=[A-ZÁÉÍÓÚÑ¿¡])/g, '$1 ');
-  return tag ? `${tag} ${t}` : t;
+  if (!tag) return t;
+  /*
+   * Sin esto salía «[thoughtful] [thoughtful] mmm...»: la emoción «pensando» pone su etiqueta y el
+   * «mmm» del propio texto pone la suya. v3 no ignora la repetida — la interpreta, y exagera.
+   *
+   * Se quitan una a una las que ya estén, no la etiqueta entera: «cariño» son dos ([softly] y
+   * [warmly]) y si el texto ya trae una, la otra sigue haciendo falta.
+   */
+  const faltan = tag.split(' ').filter((x) => x && !t.includes(x));
+  return faltan.length ? `${faltan.join(' ')} ${t}` : t;
 }
 
 /* ---------------- Caché LRU en memoria ---------------- */

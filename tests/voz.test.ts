@@ -62,3 +62,44 @@ describe('cada plataforma con su voz', () => {
     conVoz('', () => assert.equal(vozDe('electrum'), 'onwK4e9ZLuTAKqWW03F9'));
   });
 });
+
+describe('el guion que recibe v3', () => {
+  // Estos cuatro salieron imprimiendo lo que se le manda de verdad a `text-to-dialogue`. Ninguno
+  // se ve leyendo el código y ninguno da error: v3 LEE la puntuación y las etiquetas, así que un
+  // punto de más o una etiqueta repetida se oyen.
+  it('no repite la etiqueta de emoción cuando el texto ya la trae', () => {
+    const t = expresar('Mmm. Déjame ver.', 'pensando');
+    assert.equal(t.match(/\[thoughtful\]/g)?.length, 1, t);
+  });
+
+  it('pone las que faltan de una emoción de dos etiquetas', () => {
+    const t = expresar('Suave y con calma.', 'carino');
+    assert.ok(t.startsWith('[softly] [warmly]'), t);
+  });
+
+  it('no deja cuatro puntos donde van tres', () => {
+    for (const t of [expresar('Mmm. Ya veo.', 'neutral'), expresar('Déjame ver.', 'neutral'), expresar('Un segundo.', 'neutral')]) {
+      assert.ok(!/\.{4,}/.test(t), t);
+      assert.ok(/\.\.\./.test(t), t);
+    }
+  });
+
+  it('no deja una coma huérfana al principio', () => {
+    const t = expresar('Je je, qué bueno.', 'feliz');
+    assert.ok(!/\]\s*,/.test(t), t);
+  });
+
+  it('respeta la mayúscula de una frase que empieza con la muletilla', () => {
+    assert.match(expresar('Un segundo.', 'neutral'), /Un segundo\.\.\./);
+    assert.match(expresar('Déjame ver.', 'neutral'), /Déjame ver\.\.\./);
+  });
+
+  it('los dos puntos y la raya dan pausa sin partir la frase', () => {
+    // Antes esto era un punto, y dejaba «Vamos por partes. primero el derecho»: v3 lee ahí un fin
+    // de frase que la gramática no tiene y suena a alguien que se corta a media idea.
+    const t = expresar('Vamos por partes: primero el derecho.', 'neutral');
+    assert.match(t, /partes, primero/, t);
+    assert.ok(!/\.\s+[a-záéíóúñ]/.test(t), `punto seguido de minúscula: ${t}`);
+    assert.match(expresar('Bien —muy bien— seguimos.', 'neutral'), /Bien, muy bien, seguimos\./);
+  });
+});
