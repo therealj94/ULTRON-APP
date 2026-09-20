@@ -11,10 +11,15 @@ concurrency:
   group: apk-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   apk:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -57,9 +62,11 @@ jobs:
           ./gradlew assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
 
       - name: Rename APK
+        id: version
         working-directory: mobile
         run: |
           VERSION=$(node -p "require('./app.json').expo.version")
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           mkdir -p out
           cp android/app/build/outputs/apk/release/app-release.apk "out/ULTRON-FP-${VERSION}.apk"
           ls -la out
@@ -71,3 +78,17 @@ jobs:
           path: mobile/out/*.apk
           if-no-files-found: error
           retention-days: 30
+
+      # En main, el APK se publica como Release para tener un enlace de descarga directo y permanente:
+      #   https://github.com/<owner>/<repo>/releases/latest/download/ULTRON-FP-<version>.apk
+      - name: Publicar Release (solo main)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: ULTRON FP ${{ steps.version.outputs.version }}
+          body: |
+            APK de ULTRON FP ${{ steps.version.outputs.version }} compilado por GitHub Actions desde `${{ github.sha }}`.
+            Instalación: abrir el .apk en el teléfono y permitir «instalar apps desconocidas». Si había una versión de EAS, desinstalarla primero (firma distinta).
+          files: mobile/out/*.apk
+          make_latest: true
