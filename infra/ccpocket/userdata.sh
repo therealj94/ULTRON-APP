@@ -41,7 +41,7 @@ JSON
 chown ec2-user:ec2-user /home/ec2-user/.claude/settings.json
 
 cat > /home/ec2-user/.codex/config.toml <<'TOML'
-model = "openai.gpt-6-astra"
+model = "openai.gpt-5.6-sol"
 model_provider = "amazon-bedrock"
 
 [model_providers.amazon-bedrock]
