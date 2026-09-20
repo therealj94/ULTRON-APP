@@ -3,6 +3,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as SystemUI from 'expo-system-ui';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { iniciarReporte, miga } from './src/lib/reporte';
 import { Animated, AppState, Easing, PermissionsAndroid, Platform, StyleSheet, Text, View, type AppStateStatus } from 'react-native';
 import { APP_VERSION, type FaceState, type SessionUser } from './src/config';
 import { UltronFace } from './src/components/UltronFace';
@@ -112,21 +113,31 @@ export default function App() {
   const splashOp = useRef(new Animated.Value(1)).current;
 
   const enterDesk = useCallback(async (u: SessionUser) => {
+    miga('login ok, entrando a la mesa');
     setUser(u);
     await requestDeskPermissions();
+    miga('permisos pedidos');
     await lockOrientation('landscape');
+    miga('orientación horizontal');
     setPhase('desk');
+    miga('fase desk');
   }, []);
 
   const boot = useCallback(async () => {
+    await iniciarReporte();
     const minSplash = new Promise((r) => setTimeout(r, SPLASH_MS));
     await hideSystemBars();
+    miga('barras ocultas');
     // Con sesión guardada la mesa arranca ya en horizontal (manifest); solo el login gira a vertical.
     const session = await loadSession();
+    miga(session ? 'sesión guardada' : 'sin sesión');
     if (!session) await lockOrientation('portrait');
     await minSplash;
     if (session) await enterDesk(session);
-    else setPhase('login');
+    else {
+      setPhase('login');
+      miga('fase login');
+    }
   }, [enterDesk]);
 
   // La pantalla siguiente ya está montada debajo: el splash se funde con suavidad.

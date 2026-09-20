@@ -2,7 +2,7 @@ module.exports = function (api) {
   api.cache(true);
   return {
     presets: ['babel-preset-expo'],
-    // Frame processors de react-native-vision-camera: transforma las funciones marcadas con 'worklet'.
-    plugins: [['react-native-worklets-core/plugin']],
+    // Sin plugin de worklets: la detección facial nativa está desactivada (ver CamaraVision.tsx).
+    // Si se reactiva, vuelve aquí ['react-native-worklets-core/plugin'] (o el de react-native-worklets).
   };
 };

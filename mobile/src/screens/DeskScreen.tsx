@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { miga, reportarEstado, cierreLimpio } from '../lib/reporte';
 import { Alert, Animated, PanResponder, StyleSheet, Text, View } from 'react-native';
 import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -76,6 +77,16 @@ const haptic = (kind: 'light' | 'medium' = 'light') =>
   Haptics.impactAsync(kind === 'light' ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
 export function DeskScreen({ user, onLogout }: Props) {
+  // Diagnóstico de campo: si la app muere aquí, el servidor sabrá hasta dónde llegó.
+  useEffect(() => {
+    miga('DeskScreen montado');
+    const t = setTimeout(() => {
+      reportarEstado('mesa estable');
+      cierreLimpio();
+    }, 8000);
+    return () => clearTimeout(t);
+  }, []);
+
   const [face, setFace] = useState<FaceState>('IDLE');
   const [mode, setMode] = useState<Mode>('GUARDIAN');
   const [presence, setPresence] = useState<DeskPresence>('stay');

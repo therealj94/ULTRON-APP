@@ -500,6 +500,27 @@ app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
   return res.send(out.audio);
 });
 
+/**
+ * Diagnóstico de campo de la APK: migas de arranque y crashes. Sale por consola para verlo en los
+ * logs de Render. Sin sesión (una app que se está cayendo no puede autenticarse) y con rate limit.
+ */
+app.post('/api/diag', limitar(40), (req, res) => {
+  const b = req.body || {};
+  const cab = `[APK ${String(b.version || '?')} ${String(b.plataforma || '?')} ${String(b.dispositivo || '?')} ses=${String(b.sesion || '?')}]`;
+  const tipo = String(b.tipo || 'estado');
+  if (tipo === 'crash-previo') {
+    console.error(`${cab} CRASH. Murió en: ${String(b.murio_en || '?')}`);
+  } else if (tipo === 'error-js') {
+    console.error(`${cab} ERROR JS${b.fatal ? ' FATAL' : ''}: ${String(b.error || '').slice(0, 300)}`);
+    if (b.stack) console.error(`${cab} stack: ${String(b.stack).slice(0, 900)}`);
+  } else {
+    console.log(`${cab} ${String(b.nota || 'estado')}`);
+  }
+  const migas = Array.isArray(b.migas) ? b.migas.slice(-40) : [];
+  if (migas.length) console.log(`${cab} migas: ${migas.map(String).join(' | ').slice(0, 1800)}`);
+  res.json({ ok: true, honesto: true });
+});
+
 app.get('/api/cantar', (_req, res) => {
   res.json({ honesto: true, canciones: repertorio() });
 });

@@ -131,7 +131,7 @@ export function mesaAutorizada(req: Request): boolean {
  * quedar muda si el token murió en un redespliegue, así que pasan con rate limit por IP.
  * Todo lo que cambia estado (memoria, bóveda, ejecutor, redeploy) exige sesión real.
  */
-const RUTAS_CONVERSACION = ['/api/turno', '/api/tts', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/orar', '/api/voz'];
+const RUTAS_CONVERSACION = ['/api/turno', '/api/tts', '/api/stt', '/api/vision/analyze', '/api/cantar', '/api/orar', '/api/voz', '/api/diag'];
 
 function rutaConversacion(path: string) {
   const p = String(path || '').split('?')[0];
