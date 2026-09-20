@@ -668,13 +668,20 @@ async function prepararTurno(body: any) {
       }
       hechos.push('Responde con lo que dicen las fuentes y el hilo. Si el usuario dijo «esto», es el tema o la URL anterior. No pidas otra vez el enlace. Si las fuentes no contestan, dilo.');
     }
+    // Escena que la cámara local ya interpretó (MediaPipe en la web, ML Kit en la APK): quién está y qué hace.
+    const escena = String(body?.escena || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    const preguntaPorVer = /\b(qu[eé] ves|qu[eé] hay aqu[ií]|qui[eé]n (est[aá]|hay|anda)( aqu[ií]| ah[ií]| conmigo)?|me ves|c[oó]mo me ves|estoy solo|cu[aá]ntos somos|qu[eé] cara tengo|me veo)\b/.test(q);
+    if (escena) {
+      hechos.push(`ESCENA (tu cámara, ahora mismo): ${escena}${preguntaPorVer ? '' : ' (úsalo solo si viene al caso; no lo recites sin motivo).'}`);
+      tools.push('escena');
+    }
     const image = body?.image;
     if (image) {
       const vista = await verImagen(String(image));
       hechos.push(`VISION (${vista.via}): ${vista.texto}`);
       tools.push('vision');
-    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !quiereCaptura && !body?.documento && !body?.pdf) {
-      hechos.push('VISION: no llegó frame. Di que no viste.');
+    } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !quiereCaptura && !body?.documento && !body?.pdf && !escena) {
+      hechos.push('VISION: no llegó frame ni escena. Di que ahora mismo no ves (cámara apagada) y ofrece encenderla.');
     }
     const doc = body?.documento || body?.pdf;
     if (doc) {

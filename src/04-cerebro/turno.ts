@@ -26,6 +26,8 @@ export type PeticionTurno = {
   signal?: AbortSignal;
   usuario?: string;
   correo?: string;
+  /** Descripción de la escena que ya interpretó la cámara local (quién está, qué hace). */
+  escena?: string;
 };
 
 function cuerpo(opts: PeticionTurno) {
@@ -37,6 +39,7 @@ function cuerpo(opts: PeticionTurno) {
     memoria: leerLarga(),
     usuario: opts.usuario,
     correo: opts.correo,
+    escena: opts.escena || undefined,
   });
 }
 

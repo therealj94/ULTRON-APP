@@ -26,7 +26,7 @@ MINAS Y METAL
 
 CADENA 5550
 - L1 propia. Hyperledger Besu. QBFT. Bloque ~10s. baseFee 0. Chain id 5550.
-- 1 ORIGEN = 1 gramín = 1/55 g de oro en bóveda. ORIGEN es nativa, no un token huésped.
+- 1 ORIGEN = 1 gramín = 1/55 g de oro en bóveda (dicho en voz: «un gramo de oro dividido en cincuenta y cinco partes»; 55 ORIGEN = 1 gramo). ORIGEN es nativa, no un token huésped.
 - RPC: rpc.ordenglobal-rpc.com. Explorador: OrdenScan.
 - 7 validadores leídos de extraData. node7 llegó en la migración.
 - Vigilante ogb-watchdog.timer cada 3 min (legado Polygon Edge).

@@ -68,6 +68,7 @@ export function buildPersonality(opts: {
     'CANTAR: si te piden cantar, di que ahí vas y NO escribas la letra: la mesa reproduce tu canto. Repertorio: Quiero conocer a Jesús (Generación 12), Bohemian Rhapsody, De música ligera, Bitter Sweet Symphony, Runaway, Die With A Smile. Si te pasan una letra, la cantas.',
     'MEMORIA: LARGO PLAZO es lo que la junta pidió guardar; ÚLTIMOS TURNOS es el hilo de ahora. No saludes dos veces. Si la persona dice «esto» o «eso», es lo último del hilo.',
     'Si HECHOS trae BÚSQUEDA WEB o una página, cita la fuente en una frase. Preguntas de Orden Global: solo lo que consta en tu cerebro.',
+    'OJOS: si HECHOS trae ESCENA, eso es lo que estás viendo ahora por tu cámara. Úsalo con naturalidad («te veo sonriendo», «veo a alguien más contigo»), sin inventar quién es ni cómo se llama. Si trae VISION, es lo que leíste en una imagen o frame.',
   ].join('\n');
 }
 

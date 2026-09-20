@@ -93,6 +93,7 @@ export default function App() {
     };
   }, []);
   useEffect(() => setVozActiva(speakerEnabled), [speakerEnabled]);
+
   useEffect(() => guarda('ultron_modo', mode), [mode]);
   useEffect(() => guarda('ultron_fun', funMode ? '1' : '0'), [funMode]);
   useEffect(() => guarda('ultron_vision', visionEnabled ? '1' : '0'), [visionEnabled]);
@@ -135,6 +136,25 @@ export default function App() {
     },
     [showBubble]
   );
+
+  // Gancho de QA/demo: con ?qa=1 en la URL, window.__ultron permite fijar cara, emoción, boca y modo
+  // desde la consola o desde Playwright (scripts/qa/capturas.mjs). No hace nada en uso normal.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !/[?&]qa=1/.test(window.location.search)) return;
+    (window as any).__ultron = {
+      setFace: (f: FaceState) => setFace(f),
+      setEmocion: (e: Emocion) => setEmocion(e),
+      setLip: (n: number) => setLipLevel(Math.max(0, Math.min(1, Number(n) || 0))),
+      setMode: (m: Mode) => setMode(m),
+      setFunMode: (v: boolean) => setFunMode(!!v),
+      setGaze: (x: number, y: number, active = true) => setCameraGaze({ x, y, active }),
+      boot: (v: boolean) => setIsBooting(v),
+      decir: (t: string, e?: Emocion) => decir(t, { emocion: e }),
+    };
+    return () => {
+      delete (window as any).__ultron;
+    };
+  }, [decir]);
 
   const callarTodo = useCallback(() => {
     callar();
