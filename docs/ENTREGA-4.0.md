@@ -101,3 +101,55 @@ Web: `Arranque.tsx` (ojos que despiertan detrás del wordmark «ULTRON FP · pow
 
 ## Nodo T4
 No pude entrar a verlo (SSM bloqueado en esta sesión). Propuesta y script listos en `docs/NODO-T4.md` y `scripts/nodo-t4/instalar-oido.sh`: convertirlo en el oído local de ULTRON con faster-whisper large-v3 (0,3 s, sin costo por minuto); el servidor ya lo usa si `ULTRON_STT_URL` está definido. Si no se va a usar, apagarlo.
+
+
+---
+
+# Ronda 3 (20-sep-2026): front-end completo — ver, mirar y mostrarlo en la cara
+
+## Cómo se trabajó
+Tres áreas en paralelo (cámara web, cara web, móvil), cada una con un revisor adversarial que
+verificaba por su cuenta (compilar, tests, y en la cara **mirar las capturas**) y rondas de
+corrección hasta cerrar los hallazgos. Herramienta nueva: `scripts/qa/capturas.mjs` levanta la app
+en Chromium con `?qa=1`, recorre los 30 estados y gestos, y arma una hoja de contactos. Así cada
+estado se revisó con la vista, no de memoria.
+
+## ULTRON ve de verdad
+Antes la «visión» era una heurística de luminancia por cuadrantes que **inventaba** presencia:
+con la cámara tapada seguía diciendo que había alguien. Ahora:
+
+- **MediaPipe FaceLandmarker** en el navegador (blendshapes + matriz facial) a 15-20 fps, con
+  respaldo al tracker óptico si el modelo no carga en 6 s. El óptico ya no inventa: exige textura
+  y movimiento sostenido, así que una pared o un póster dan cero personas.
+- **ML Kit** en la APK con react-native-vision-camera, en el dispositivo, sin mandar fotos al
+  servidor para saber si hay alguien.
+- Contrato compartido `Escena`: cuántas personas hay, dónde está la principal (x espejado para
+  que los ojos miren al lado correcto), si mira a la pantalla, si sonríe, si tiene los ojos
+  cerrados, hacia dónde apunta la cabeza; eventos con histéresis (llegó, se fue, sonríe, dos
+  personas, cerca, lejos) y una frase en primera persona: «Veo a una persona cerca, a mi
+  izquierda, sonriendo y mirando la pantalla.»
+- Esa frase viaja al cerebro como hecho cuando es fresca, así que preguntarle «¿me ves?» o
+  «¿quién está conmigo?» tiene respuesta real. Al apagar la cámara avisa «La cámara está
+  apagada.» para que no quede una escena vieja como verdad.
+
+## La cara lo muestra
+- **Boca**: era una lente pequeña que no leía. Ahora tiene forma por emoción (sonrisa con
+  comisuras, «o» de sorpresa, mueca de tristeza, risa abierta con interior oscuro, labio apretado
+  de molestia, boca serena en oración) y tres visemas al hablar siguiendo el audio, con mandíbula
+  que baja. Se ve que habla desde lejos.
+- **Estados que antes se confundían**: SURPRISED ya no parece SPEAKING; CONCERNED ya no parece
+  LISTENING; PRAY (párpados serenos curvados, halo cálido) ya no parece SLEEPING (líneas planas).
+- **Tacto**: respuesta inmediata por zona. Ojo → guiño y squash; frente → cejas arriba y «uy»;
+  mejilla → ronroneo; barbilla → risa; toques repetidos → molestia juguetona y luego risa.
+  Las pupilas saltan al punto de contacto y la onda se disuelve en medio segundo.
+- **Mirada**: los ojos siguen a la persona y la cara se ilumina y gira un poco cuando la cámara
+  la ve; al perderla vuelve despacio.
+
+## Un bug que solo se ve mirando
+La burbuja mostraba el identificador interno del clip («uy2», «risa1») en vez de lo que ULTRON
+decía. Apareció en la primera hoja de capturas. Cada clip del banco lleva ahora su texto humano.
+
+## Entrega
+APK publicado como Release con enlace de descarga directo y permanente:
+`https://github.com/therealj94/ULTRON-APP/releases/latest`. Cada push a `main` que toque `mobile/`
+compila y actualiza el Release.
