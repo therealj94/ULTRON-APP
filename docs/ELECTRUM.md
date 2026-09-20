@@ -153,7 +153,38 @@ sí mismo**: mide un cuadrado conocido y falla si la cuenta no es geodésica. No
 internet a propósito: un catastro completo expuesto en 5432 con una clave es, tarde o temprano,
 regalarlo.
 
-## El mapa: los dos, con interruptor
+## La app — **hecha y mirada**
+
+`src-electrum/`, servida en `/electrum.html`. Vive junto a ULTRON FP en el mismo despliegue: dos
+entradas de Vite, un solo servidor.
+
+**La cara que cede el paso.** Arranca como ULTRON: cara completa, centrada, ámbar. En cuanto hay algo
+que mirar se encoge a una esquina con su marco y le deja el escenario al mapa, pero sigue ahí,
+reaccionando. Es el mismo nodo del DOM moviéndose entre dos sitios, no dos caras que se turnan: por
+eso se lee como que ELLA se aparta. En teléfono se va arriba, sobre el mapa, porque abajo tapaba el
+campo de escribir.
+
+**El panel** va al costado en pantalla ancha y se vuelve lámina de abajo en teléfono. Muestra la
+**traza de herramientas** bajo cada respuesta: qué consultó, qué midió, qué encontró. No es
+depuración, es lo que un ingeniero exige para creerle.
+
+### Cuatro fallos que solo se vieron mirando
+
+Ninguno daba error; todos se veían en una captura:
+
+1. **La cara se dimensionaba a la ventana**, no a su caja. Con ULTRON a pantalla completa da igual;
+   encogida en un recuadro de 132 px seguía dibujando a tamaño de ventana y tapaba media interfaz.
+   Ahora se mide por su contenedor, con un observador de tamaño.
+2. **El servidor compilado no arrancaba.** `shpjs` está escrito para el navegador y toca `self` al
+   cargarse, que en Node no existe: importarlo arriba tumbaba el proceso al arrancar aunque nadie
+   subiera jamás un shapefile. Ahora se carga a demanda. Con `tsx` no se ve; con el bundle, sí.
+3. **El mapa salía negro** con las teselas cargadas y los píxeles pintados. MapLibre le pone al
+   contenedor su clase `.maplibregl-map`, que trae `position: relative`, y como su hoja se carga
+   después le ganaba al `absolute` de Tailwind: la caja perdía la posición, `inset-0` dejaba de
+   significar nada y la altura colapsaba a cero. Se dibujaba dentro de una caja de 0 px con recorte.
+   La posición va en línea, que gana siempre.
+4. **MapLibre mide su caja una sola vez**, al construirse, y después solo escucha a la ventana. Aquí
+   la caja cambia sin que la ventana se mueva. Lleva su propio observador.
 
 - **MapLibre** para el trabajo: teselas vectoriales, aguanta miles de polígonos, capas, medición.
 - **Google Maps** como fondo alternativo para presentar, detrás de su clave y su facturación.
@@ -258,7 +289,8 @@ Ninguno se veía leyendo el código:
 | Panel de ocho especialistas con enrutado | **hecho y probado** |
 | Las manos (diez herramientas) | **hechas y probadas** |
 | Aprender de lo que se sube (GIS y documentos con página) | **hecho** |
-| App: mapa doble, cara que cede el paso, expedientes, informes | pendiente |
+| App: mapa doble, cara que cede el paso, panel y expedientes | **hecha y mirada** |
+| Informes en PDF | pendiente |
 
 | Generador de informes en PDF | base mínima ya existe (`lib/pdf.ts`) |
 | Voz con el API nuevo | adaptador pendiente, a la espera del API |

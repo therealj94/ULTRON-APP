@@ -37,6 +37,19 @@ export function perfil(): PerfilPublico {
   return cache;
 }
 
+/**
+ * Fija el perfil sin preguntarle al servidor.
+ *
+ * Electrum es una aplicación propia: su identidad no depende de con qué ULTRON_PERFIL arrancó el
+ * servidor, y esperar a `/api/perfil` para saber de qué color es la cara haría que parpadeara en
+ * cian antes de ponerse ámbar.
+ */
+export function fijarPerfilLocal(p: Partial<PerfilPublico>) {
+  cache = { ...cache, ...p };
+  pedido = Promise.resolve(cache);
+  aplicar(cache);
+}
+
 /** Pide el perfil una sola vez y aplica el acento como variable CSS y el título de la pestaña. */
 export function cargarPerfil(): Promise<PerfilPublico> {
   if (pedido) return pedido;

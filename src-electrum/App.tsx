@@ -1,0 +1,179 @@
+/**
+ * DR ELECTRUM FP — la estación de trabajo.
+ *
+ * El movimiento central de la interfaz es **la cara que cede el paso**:
+ *
+ *  - Arranca como ULTRON: cara completa, centrada, sin nada más. Es quien te recibe.
+ *  - En cuanto hay algo que mirar —un mapa, un expediente— la cara se encoge a la esquina y le deja
+ *    el escenario al trabajo, pero sigue ahí, mirando y reaccionando.
+ *  - Si el trabajo se cierra, vuelve a ocupar el centro.
+ *
+ * No es adorno. Una cara a pantalla completa mientras alguien intenta leer un lindero es un estorbo;
+ * un mapa sin cara es una herramienta más, sin nadie del otro lado. La transición entre los dos
+ * estados es lo que hace que se sienta que hay alguien trabajando con vos.
+ *
+ * El mapa lo mueven las herramientas, no el usuario: cada respuesta del cerebro puede traer órdenes
+ * en `ui` (volar a una concesión, pintar una capa) y la escena obedece mientras él habla.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { FaceCanvas } from '../src/02-cara';
+import type { FaceState, Mode } from '../src/types';
+import type { Emocion } from '../lib/emocion';
+import { Mapa, type Fondo, type Motor, type OrdenMapa } from './mapa/Mapa';
+import { Panel } from './panel/Panel';
+import { Barra } from './panel/Barra';
+
+/** Dónde está la atención: en quien habla, o en lo que hay que mirar. */
+export type Escenario = 'cara' | 'trabajo';
+
+export default function App() {
+  const [escenario, setEscenario] = useState<Escenario>('cara');
+  const [face, setFace] = useState<FaceState>('IDLE');
+  const [emocion, setEmocion] = useState<Emocion>('neutral');
+  const [mode, setMode] = useState<Mode>('MINING');
+  const [motor, setMotor] = useState<Motor>('maplibre');
+  const [fondo, setFondo] = useState<Fondo>('satelite');
+  const [orden, setOrden] = useState<OrdenMapa | null>(null);
+  const [panel, setPanel] = useState<'chat' | 'expedientes'>('chat');
+  const claveGoogle = (import.meta as any).env?.VITE_GOOGLE_MAPS_KEY || '';
+
+  /**
+   * En teléfono el panel ocupa la mitad de abajo, así que la cara no puede ir en esa esquina: tapaba
+   * el campo de escribir. Se va arriba del mapa, donde no estorba a nada.
+   */
+  const [ancho, setAncho] = useState(typeof window === 'undefined' ? true : window.matchMedia('(min-width: 768px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 768px)');
+    const alCambiar = (e: MediaQueryListEvent) => setAncho(e.matches);
+    mq.addEventListener('change', alCambiar);
+    return () => mq.removeEventListener('change', alCambiar);
+  }, []);
+
+  /**
+   * La cara cede el paso sola. La primera orden del mapa es la que abre el escenario de trabajo:
+   * nadie tiene que tocar un botón para que la interfaz haga lo evidente.
+   */
+  const alTrabajo = useCallback(() => setEscenario('trabajo'), []);
+  useEffect(() => {
+    if (orden) alTrabajo();
+  }, [orden, alTrabajo]);
+
+  /** Las herramientas devuelven `ui`; aquí se traduce a órdenes para el mapa. */
+  const alUi = useCallback((datos: Array<Record<string, unknown>>) => {
+    for (const d of datos) {
+      if (d.accion === 'volar' && d.geojson) {
+        setOrden({ accion: 'volar', geojson: d.geojson as any, encuadre: d.encuadre as any, centro: d.centro as any });
+      } else if (d.accion === 'capa' && d.geojson) {
+        setOrden({ accion: 'capa', geojson: d.geojson as any, encuadre: d.encuadre as any });
+      } else if (Array.isArray(d.punto)) {
+        setOrden({ accion: 'punto', punto: d.punto as [number, number] });
+      }
+    }
+  }, []);
+
+  // Con la cara en la esquina no hay sitio para los juguetes: se apagan solos.
+  const cara = useMemo(
+    () => (
+      <FaceCanvas
+        face={face}
+        mode={mode}
+        energy={escenario === 'cara' ? 1 : 0.7}
+        soundFxEnabled={false}
+        emocion={emocion}
+        funMode={false}
+        onFaceChange={(f) => setFace(f)}
+        onModeChange={(m) => setMode(m)}
+      />
+    ),
+    [face, mode, emocion, escenario]
+  );
+
+  const enTrabajo = escenario === 'trabajo';
+
+  return (
+    <div className="fixed inset-0 bg-black text-[#E7EEF2] overflow-hidden select-none">
+      <Barra
+        escenario={escenario}
+        motor={motor}
+        fondo={fondo}
+        panel={panel}
+        hayGoogle={!!claveGoogle}
+        onEscenario={setEscenario}
+        onMotor={setMotor}
+        onFondo={setFondo}
+        onPanel={setPanel}
+      />
+
+      {/* El trabajo: ocupa todo el escenario y se desvanece cuando la cara vuelve al centro. */}
+      <div
+        className="absolute inset-0 transition-opacity duration-500"
+        style={{ opacity: enTrabajo ? 1 : 0, pointerEvents: enTrabajo ? 'auto' : 'none' }}
+        aria-hidden={!enTrabajo}
+      >
+        {/*
+          Posición explícita, no `inset-0` con relleno y `h-full` dentro: esa cadena de alturas al
+          cien por cien resolvía a CERO y MapLibre nacía con un lienzo de 300 px sobre una caja
+          vacía, o sea mapa negro. Con los cuatro lados fijados no hay nada que resolver.
+        */}
+        <div className="absolute top-[52px] left-0 right-0 bottom-[52%] md:bottom-0 md:right-[380px]">
+          <Mapa orden={orden} motor={motor} fondo={fondo} claveGoogle={claveGoogle} />
+        </div>
+        <Panel
+          abierto={enTrabajo}
+          vista={panel}
+          onFace={setFace}
+          onEmocion={setEmocion}
+          onUi={alUi}
+          onTrabajo={alTrabajo}
+        />
+      </div>
+
+      {/*
+        La cara. Un solo elemento que se mueve entre dos sitios: centro del escenario, o esquina.
+        Mover el mismo nodo en vez de montar dos caras distintas es lo que hace que la transición
+        se lea como que ELLA se aparta, y no como que una desaparece y otra aparece.
+      */}
+      <div
+        className="absolute transition-all duration-[650ms] ease-[cubic-bezier(.22,.61,.36,1)]"
+        style={
+          enTrabajo
+            ? ancho
+              ? { left: 16, bottom: 16, width: 132, height: 132, zIndex: 30 }
+              : { left: 12, top: 60, width: 96, height: 96, zIndex: 30 }
+            : { left: '50%', top: '50%', width: 'min(76vmin, 560px)', height: 'min(76vmin, 560px)', transform: 'translate(-50%,-50%)', zIndex: 30 }
+        }
+      >
+        <button
+          type="button"
+          onClick={() => setEscenario(enTrabajo ? 'cara' : 'trabajo')}
+          className="absolute inset-0 w-full h-full cursor-pointer rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#FFAE3B]"
+          aria-label={enTrabajo ? 'Traer la cara al centro' : 'Ir al mapa'}
+        >
+          <span className="sr-only">{enTrabajo ? 'Traer la cara al centro' : 'Ir al mapa'}</span>
+        </button>
+        {/* Encogida sobre el mapa, la cara necesita marco: si no, es un rectángulo negro pegado. */}
+        <div
+          className="w-full h-full pointer-events-none overflow-hidden transition-all duration-500"
+          style={
+            enTrabajo
+              ? { borderRadius: 18, border: '1px solid rgba(255,174,59,.28)', boxShadow: '0 8px 30px rgba(0,0,0,.55)' }
+              : { borderRadius: 0, border: '1px solid transparent' }
+          }
+        >
+          {cara}
+        </div>
+      </div>
+
+      {/* Presentación, solo mientras la cara manda. */}
+      <div
+        className="absolute left-0 right-0 bottom-10 text-center transition-opacity duration-500 px-6"
+        style={{ opacity: enTrabajo ? 0 : 1, pointerEvents: 'none' }}
+      >
+        <div className="font-display font-bold tracking-[0.34em] text-[#FFAE3B] text-lg">DR ELECTRUM FP</div>
+        <div className="mt-1 font-mono text-[11px] tracking-[0.22em] uppercase text-[#FFAE3B]/50">
+          geología · minas · civil · metalurgia · gis · ambiental · legal · economía
+        </div>
+      </div>
+    </div>
+  );
+}

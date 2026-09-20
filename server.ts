@@ -26,6 +26,8 @@ import { hechoCerebro } from './lib/cerebro';
 import { herramientaActiva, perfilActivo } from './lib/perfiles';
 import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
+import { turnoElectrum } from './server/electrum/turno';
+import { consulta as consultaElectrum, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
   cargarMemoria,
@@ -169,6 +171,48 @@ app.get('/api/nodo/listo', async (_req, res) => {
  * «ULTRON FP» escrito a mano: así el mismo binario se presenta como Genesis Core o como Cerebro de
  * Minas según ULTRON_PERFIL, sin dos copias de la interfaz.
  */
+/* ------------------------------------------------------------------ Dr Electrum FP */
+
+/** El turno de Electrum: panel de especialistas + harness con manos + órdenes para el mapa. */
+app.post('/api/electrum/turno', limitar(30), async (req, res) => {
+  const mensaje = String(req.body?.mensaje || '').slice(0, 4000).trim();
+  if (!mensaje) return res.status(400).json({ error: 'Falta el mensaje.', honesto: true });
+  try {
+    const quien = quienVerificado(req);
+    const salida = await turnoElectrum(mensaje, {
+      quien,
+      mando: !!quien && puedeCambiarSistema(quien),
+      canal: 'mesa',
+      mensaje,
+    });
+    res.json({ ...salida, honesto: true });
+  } catch (e: any) {
+    console.error('[electrum] turno falló:', String(e?.message || e).slice(0, 200));
+    res.status(500).json({ error: 'Se me cayó el turno. Volvé a preguntarme.', honesto: true });
+  }
+});
+
+/** Qué hay cargado: capas del mapa y expedientes indexados. */
+app.get('/api/electrum/expedientes', limitar(60), async (_req, res) => {
+  if (!hayBaseElectrum()) return res.json({ capas: [], documentos: [], catastro: false, honesto: true });
+  try {
+    const capas = await consultaElectrum(
+      `SELECT id, nombre, formato, origen_crs, entidades FROM capa ORDER BY subido DESC LIMIT 40`
+    );
+    const documentos = await consultaElectrum(
+      `SELECT id, nombre, tipo, paginas FROM documento ORDER BY subido DESC LIMIT 60`
+    );
+    res.json({ capas, documentos, catastro: true, honesto: true });
+  } catch (e: any) {
+    res.status(503).json({ error: String(e?.message || e).slice(0, 160), honesto: true });
+  }
+});
+
+/** Estado del catastro, para el panel de sistema. */
+app.get('/api/electrum/salud', limitar(60), async (_req, res) => {
+  res.json({ ...(await saludElectrum()), honesto: true });
+});
+
 app.get('/api/perfil', limitar(60), (_req, res) => {
   const p = perfilActivo();
   res.json({

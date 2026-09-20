@@ -16,7 +16,6 @@
  * Formatos que entran: shapefile (.zip con .shp/.dbf/.shx/.prj, o los sueltos), GeoJSON, KML, KMZ y
  * CSV con columnas de coordenadas. Todo sale como la misma `Capa`.
  */
-import shp from 'shpjs';
 import proj4 from 'proj4';
 import JSZip from 'jszip';
 import { kml as kmlAGeojson } from '@tmcw/togeojson';
@@ -302,6 +301,20 @@ export async function ingerir(nombreArchivo: string, datos: Buffer): Promise<Ing
   }
 }
 
+/**
+ * `shpjs` está escrito para el navegador y toca `self` al cargarse, que en Node no existe: importarlo
+ * arriba tumba el servidor al ARRANCAR, aunque nadie suba nunca un shapefile. Se carga a demanda y
+ * con `self` puesto justo antes. Lo cazó el arranque del servidor compilado; con tsx no se ve.
+ */
+let shpCargado: any = null;
+async function cargarShp() {
+  if (shpCargado) return shpCargado;
+  const g = globalThis as any;
+  if (typeof g.self === 'undefined') g.self = g;
+  shpCargado = (await import('shpjs')).default;
+  return shpCargado;
+}
+
 async function ingerirShapefile(nombre: string, datos: Buffer, avisos: Aviso[]): Promise<Ingesta> {
   // shpjs reproyecta solo si encuentra el .prj; si no está, devuelve las coordenadas crudas.
   let prj = '';
@@ -313,6 +326,7 @@ async function ingerirShapefile(nombre: string, datos: Buffer, avisos: Aviso[]):
     /* no era zip: un .shp suelto */
   }
 
+  const shp = await cargarShp();
   const crudo: any = await shp(datos as any);
   const colecciones: FeatureCollection[] = Array.isArray(crudo) ? crudo : [crudo];
   const features = colecciones.flatMap((c) => c?.features || []);
