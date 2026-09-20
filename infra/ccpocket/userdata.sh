@@ -12,7 +12,7 @@ systemctl enable --now tailscaled
 npm install -g @anthropic-ai/claude-code @ccpocket/bridge
 
 install -d -o ec2-user -g ec2-user /home/ec2-user/ultron /home/ec2-user/.ccpocket /home/ec2-user/.claude /home/ec2-user/.codex /home/ec2-user/.local/bin
-sudo -u ec2-user git clone --depth 1 https://github.com/therealj94/ULTRON-APP.git /home/ec2-user/ultron/ULTRON-APP
+sudo -u ec2-user git clone --depth 1 https://github.com/therealj94/ULTRON-APP.git /home/ec2-user/ultron
 
 sudo -u ec2-user bash -lc 'curl -fsSL https://chatgpt.com/codex/install.sh | sh' || true
 
