@@ -23,6 +23,7 @@ import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio } from './lib/oido';
 import { esTareaDeCodigo } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
+import { hechoCerebroOG } from './lib/cerebro-og';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
   cargarMemoria,
@@ -581,6 +582,14 @@ async function prepararTurno(body: any) {
   const foto: string | null = null;
   const tools: string[] = [];
   let decirTaller: string | undefined;
+
+  // Hechos de Orden Global pegados a la pregunta: el cerebro completo va en el system, pero el
+  // dato concreto (1 ORIGEN = 1/55 g, Besu/QBFT, CIADI…) rinde más al lado de lo que preguntaron.
+  const og = hechoCerebroOG(message);
+  if (og) {
+    hechos.push(og);
+    tools.push('cerebro-og');
+  }
 
   // Contexto interno: el 27B lo usa para decidir, no para recitarlo. Los fallos de infraestructura
   // no se le cuentan a la junta en un saludo; solo si preguntan por el sistema (taller lo responde).

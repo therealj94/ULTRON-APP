@@ -6,7 +6,7 @@
 
 import { FEW_SHOT_HONESTO } from './prompts/few-shot';
 import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './prompts/cot';
-import { SYSTEM_PROMPT_HONESTO, TEXTO_TELEGRAM, VOZ_ESCRITORIO } from './prompts/honestidad';
+import { HONESTIDAD_CONVERSACION, SYSTEM_PROMPT_HONESTO, TEXTO_TELEGRAM, VOZ_ESCRITORIO } from './prompts/honestidad';
 import { INSTRUCCION_HARNESS } from './harness';
 import { buscarSnippets } from './rag';
 import { esSaludoCorto, type MsgHilo } from './conversacion';
@@ -40,7 +40,9 @@ export function construirMensajes(opts: {
   const telegram = opts.canal === 'telegram';
   const harness = opts.harness ?? (telegram || codigo || !esSaludoCorto(user));
 
-  const parts: string[] = [SYSTEM_PROMPT_HONESTO];
+  // Código: el prompt largo de honestidad (4 bloques, trazas). Conversación: la versión corta,
+  // para que el 27B no arrastre reglas de tests y complejidad a una charla de mesa.
+  const parts: string[] = [codigo ? SYSTEM_PROMPT_HONESTO : HONESTIDAD_CONVERSACION];
   if (!codigo) parts.push(telegram ? TEXTO_TELEGRAM : VOZ_ESCRITORIO);
   parts.push(String(opts.personalidad || '').trim());
   if (harness) parts.push(INSTRUCCION_HARNESS);
