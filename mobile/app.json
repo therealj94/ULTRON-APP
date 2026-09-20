@@ -35,6 +35,14 @@
     "owner": "vetawallet",
     "plugins": [
       [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/splash-icon.png",
