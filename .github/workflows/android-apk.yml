@@ -18,6 +18,14 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # A nivel de TRABAJO, no de paso. `expo-constants` instala una tarea de Gradle que REGENERA
+    # `assets/app.config` en cada compilación, o sea que `app.config.js` se evalúa DOS veces: una
+    # en el prebuild y otra dentro de `assembleRelease`. Con la variable solo en el prebuild, la
+    # APK del doctor salía con el paquete, el icono y el nombre correctos —y con la configuración
+    # de ULTRON dentro—, así que al abrirla arrancaba la mesa de la junta. Compilaba, instalaba y
+    # estaba mal, que es la peor forma de estar mal.
+    env:
+      ULTRON_APP: ${{ matrix.variante }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     # Dos aplicaciones del mismo proyecto. Una matriz y no dos ficheros: así no se desincronizan,
@@ -62,7 +70,6 @@ jobs:
         env:
           CI: "1"
           EXPO_NO_TELEMETRY: "1"
-          ULTRON_APP: ${{ matrix.variante }}
         # Sin `--clean` y sin condicionales: `mobile/android` está en .gitignore, así que en un
         # checkout limpio no existe y el prebuild lo genera entero de cero para la variante que
         # toque. Llegué a escribir aquí una rama con `--clean` «porque el android ya generado no
@@ -89,6 +96,14 @@ jobs:
           mkdir -p out
           cp android/app/build/outputs/apk/release/app-release.apk "out/${{ matrix.marca }}-${VERSION}.apk"
           ls -la out
+
+      # Comprobar el APK por dentro, no confiar en que salió bien.
+      #
+      # Un APK que compila puede llevar la configuración de la otra app: pasó exactamente eso, y
+      # ni el typecheck ni Gradle ni el tamaño del fichero lo delataron. Esto lo abre y mira.
+      - name: Comprobar el APK
+        working-directory: mobile
+        run: node ../scripts/qa/comprobar-apk.mjs "out/${{ matrix.marca }}-${{ steps.version.outputs.version }}.apk" "${{ matrix.variante }}"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
