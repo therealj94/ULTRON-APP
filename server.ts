@@ -3,9 +3,9 @@ import express from 'express';
 import http from 'http';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { fetchNodo, saludNodo, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
+import { fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
-import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz } from './server/voz';
+import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, vozDe } from './server/voz';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica } from './server/seguridad';
 import { leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
@@ -28,6 +28,7 @@ import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
 import { spotMetal } from './lib/mercado';
 import { turnoElectrum } from './server/electrum/turno';
+import { TODAS as TODAS_ELECTRUM } from './server/electrum/manos';
 import { guardarInforme, informeCartera, informeConcesion, tomarInforme } from './server/electrum/informe';
 import { aprender as aprenderElectrum } from './server/electrum/aprender';
 import {
@@ -226,10 +227,34 @@ app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), 
 });
 
 /** Estado del catastro, para el panel de sistema. */
+/**
+ * ¿Funciona Dr Electrum?
+ *
+ * Informaba solo del catastro. Con eso, la única forma de saber si el cerebro contesta o si la voz
+ * tiene llave era preguntarle algo y ver qué pasaba — y cuando algo falla, lo que se ve es al
+ * doctor diciendo que no alcanza su cerebro, sin decir cuál de las cuatro cosas está caída.
+ *
+ * Ahora cada pieza se declara por separado, y `listo` es la conjunción de las que hacen falta para
+ * trabajar. El catastro NO entra en `listo`: sin él Dr Electrum sigue sabiendo minería y haciendo
+ * cuentas; lo que no puede es hablar de una concesión concreta, y eso ya lo dice él solo.
+ */
 app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
   const id = identidadDe(req);
+  const catastro = await saludElectrum();
+  const voz = estadoVoz();
+  const nodo = nodoConfigurado();
+
+  // Se pregunta al nodo de verdad; sin esto «configurado» y «vivo» se confunden, que es
+  // precisamente la diferencia que importa a las once de la noche.
+  const cerebro = nodo ? await saludNodo(4000).then((r) => r.ok).catch(() => false) : false;
+
   res.json({
-    ...(await saludElectrum()),
+    ...catastro,
+    listo: cerebro,
+    cerebro: { configurado: nodo, vivo: cerebro, modelo: ULTRON_NODO_MODELO },
+    voz: { llave: voz.elevenlabs, vozId: vozDe('electrum') },
+    catastro: { viva: catastro.viva, motivo: catastro.motivo || null, concesiones: catastro.concesiones ?? null },
+    herramientas: TODAS_ELECTRUM.length,
     quien: id?.persona.nombre || null,
     nivel: nivelDe(id, 'electrum'),
     bot: electrumBotListo(),

@@ -477,6 +477,57 @@ function Cargador({ alCargar }: { alCargar: () => void }) {
 }
 
 /** Lo que se ha subido y quedó indexado. Sin nada cargado, dice cómo cargarlo. */
+/**
+ * El estado, en una línea por pieza.
+ *
+ * Cuando algo falla, lo que se ve es al doctor diciendo que no alcanza su cerebro — y eso no
+ * distingue entre el nodo caído, la llave de voz sin poner y el catastro desconectado. Aquí cada
+ * pieza responde por sí misma.
+ */
+function Estado() {
+  const [s, setS] = useState<any>(null);
+  useEffect(() => {
+    fetch('/api/electrum/salud', { headers: headersElectrum() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setS)
+      .catch(() => setS(null));
+  }, []);
+  if (!s) return null;
+
+  const filas: Array<[string, boolean, string]> = [
+    ['Cerebro', !!s.cerebro?.vivo, s.cerebro?.vivo ? String(s.cerebro.modelo).split('/').pop() : s.cerebro?.configurado ? 'no responde' : 'sin configurar'],
+    ['Voz', !!s.voz?.llave, s.voz?.llave ? 'ElevenLabs' : 'sin llave'],
+    ['Catastro', !!s.catastro?.viva, s.catastro?.viva ? `${s.catastro.concesiones} concesiones` : s.catastro?.motivo || 'fuera de línea'],
+    ['Telegram', !!s.bot, s.bot ? 'escuchando' : 'apagado'],
+  ];
+
+  return (
+    <section>
+      <h3 className="font-mono text-[10px] tracking-[0.18em] uppercase mb-2" style={{ color: AMBAR }}>
+        Estado
+      </h3>
+      <ul className="space-y-1">
+        {filas.map(([que, ok, detalle]) => (
+          <li key={que} className="flex items-baseline gap-2 text-[12px]">
+            <span className="font-mono" style={{ color: ok ? AMBAR : '#6C7F89' }}>
+              {ok ? '·' : '×'}
+            </span>
+            <span className="w-[68px] shrink-0 text-[#B9C7CE]">{que}</span>
+            <span className="font-mono text-[11px] text-[#6C7F89] truncate">{detalle}</span>
+          </li>
+        ))}
+        <li className="flex items-baseline gap-2 text-[12px] pt-1">
+          <span className="font-mono text-[#6C7F89]">·</span>
+          <span className="w-[68px] shrink-0 text-[#B9C7CE]">Vos</span>
+          <span className="font-mono text-[11px] text-[#6C7F89]">
+            {s.quien || 'invitado'} · {s.nivel === 'mando' ? 'mando' : s.nivel === 'escribe' ? 'trabajo' : 'consulta'} · {s.herramientas} herramientas
+          </span>
+        </li>
+      </ul>
+    </section>
+  );
+}
+
 function Expedientes() {
   const [datos, setDatos] = useState<{ capas: any[]; documentos: any[] } | null>(null);
   const [fallo, setFallo] = useState<'' | 'puerta' | 'base'>('');
@@ -504,8 +555,11 @@ function Expedientes() {
   const vacio = !datos.capas.length && !datos.documentos.length;
   if (vacio) {
     return (
-      <div className="flex-1 overflow-y-auto">
-        <div className="p-4 pb-2 space-y-2 text-sm text-[#8FA3B0] leading-relaxed">
+      <div className="flex-1 overflow-y-auto w-full max-w-4xl mx-auto">
+        <div className="p-4 pb-1">
+          <Estado />
+        </div>
+        <div className="p-4 pt-2 pb-2 space-y-2 text-sm text-[#8FA3B0] leading-relaxed">
           <p>Todavía no hay nada cargado.</p>
           <p>Lo geográfico se vuelve mapa, medido sobre el elipsoide. Los documentos quedan citables con su página.</p>
         </div>
@@ -516,6 +570,7 @@ function Expedientes() {
 
   return (
     <div className="flex-1 overflow-y-auto p-4 pt-4 space-y-5 w-full max-w-4xl mx-auto">
+      <Estado />
       {datos.capas.length > 0 && (
         <section>
           <h3 className="font-mono text-[10px] tracking-[0.18em] uppercase mb-2" style={{ color: AMBAR }}>
