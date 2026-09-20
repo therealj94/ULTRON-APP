@@ -4,6 +4,7 @@ import { FaceCanvas, caraDeEmocion } from './02-cara';
 import type { Gesto } from './02-cara/gestos';
 import { caraDeTexto } from './02-cara/emocion';
 import { DockDrawer, SettingsSheet, Arranque, AccesoModal, UltronVaultModal, VisionOverlay, PhotoCaptureModal, CameraCountdownModal } from './07-pantallas';
+import type { Escena } from './02-cara/vision/escena';
 import { playSfx } from './03-voz/audio';
 import { hablar, cantar, callar, setVozActiva, type Dicho } from './03-voz/hablar';
 import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
@@ -124,7 +125,9 @@ export default function App() {
       d.inicio.then(() => {
         if (hablando.current !== d) return;
         setFace(caraHabla);
-        if (!o.sinBurbuja) showBubble(t, Math.max(3200, Math.min(12000, t.length * 60)));
+        // La burbuja muestra lo que se OYE: si fue un clip del banco, su texto humano, nunca el id interno.
+        const visible = d.clip?.texto || (d.clip ? '' : t);
+        if (!o.sinBurbuja && visible) showBubble(visible, Math.max(3200, Math.min(12000, visible.length * 60)));
       });
       d.fin.then(() => {
         if (hablando.current !== d) return;
@@ -236,6 +239,10 @@ export default function App() {
   const lastSeen = useRef(0);
   const sawOnce = useRef(false);
   const sleptByAbsence = useRef(false);
+  /** Lo último que ULTRON ve por su cámara: viaja al cerebro como hecho en cada turno. */
+  const escenaRef = useRef<{ texto: string; ts: number }>({ texto: '', ts: 0 });
+  const ultimaInteraccion = useRef(0);
+  const dosPersonasDicho = useRef(false);
   const despertar = useCallback(() => {
     setFace('IDLE');
     playSfx('wake', soundFxEnabled);
@@ -261,12 +268,54 @@ export default function App() {
       if (isBooting || dockOpen || settingsOpen || !sawOnce.current) return;
       if (['SPEAKING', 'THINKING', 'LISTENING', 'SING', 'LAUGH', 'PRAY'].includes(face)) return;
       if (!cameraGaze.active && lastSeen.current && Date.now() - lastSeen.current > 45000 && face !== 'SLEEPING') {
+        // lastSeen lo actualizan tanto el gaze como la escena: si la cámara ve a alguien, no se duerme.
         sleptByAbsence.current = true;
         setFace('SLEEPING');
       }
     }, 2000);
     return () => clearInterval(id);
   }, [cameraGaze.active, face, isBooting, dockOpen, settingsOpen]);
+
+  /**
+   * Lo que ULTRON ve. La descripción se guarda como hecho para el turno; los eventos mueven la cara
+   * y, muy de vez en cuando, le hacen decir algo. Nunca interrumpe si está hablando o pensando.
+   */
+  const alVerEscena = useCallback(
+    (e: Escena) => {
+      escenaRef.current = { texto: e.descripcion, ts: Date.now() };
+      if (e.personas > 0) {
+        sawOnce.current = true;
+        lastSeen.current = Date.now();
+      }
+      if (!e.eventos.length) return;
+      const ocupado = !!hablando.current || colaRef.current.length > 0 || face === 'THINKING' || face === 'PRAY' || face === 'SING';
+      const durmiendo = face === 'SLEEPING';
+      for (const ev of e.eventos) {
+        if (ev === 'llego') {
+          if (durmiendo) {
+            sleptByAbsence.current = false;
+            despertar();
+          } else if (!ocupado && Date.now() - ultimaInteraccion.current > 60000) {
+            ultimaInteraccion.current = Date.now();
+            decir(Math.random() < 0.5 ? 'hola' : 'aqui', { emocion: 'feliz' });
+          }
+        } else if (ev === 'sonrie' && !ocupado && !durmiendo) {
+          setEmocion('feliz');
+          cara('HAPPY', 2200);
+        } else if (ev === 'dos_personas' && !ocupado && !durmiendo && !dosPersonasDicho.current) {
+          dosPersonasDicho.current = true;
+          setEmocion('curioso');
+          cara('CURIOSITY', 2600);
+        } else if (ev === 'saluda' && !ocupado && !durmiendo) {
+          setEmocion('feliz');
+          cara('HAPPY', 1800);
+        } else if (ev === 'se_fue') {
+          dosPersonasDicho.current = false;
+        }
+      }
+    },
+    [face, decir, despertar, cara]
+  );
 
   // ---- CEREBRO: un turno en stream. Emoción antes del texto; frases a la cola de voz.
   const turnoEnCurso = useRef<AbortController | null>(null);
@@ -296,7 +345,16 @@ export default function App() {
       };
       try {
         const data = await pedirTurnoStream(
-          { message: cmd, mode, historial: historialRef.current, image, usuario: usuario.name || undefined, signal: ac.signal },
+          {
+            message: cmd,
+            mode,
+            historial: historialRef.current,
+            image,
+            usuario: usuario.name || undefined,
+            // Solo si es reciente: una escena vieja como hecho es peor que ninguna.
+            escena: Date.now() - escenaRef.current.ts < 12000 ? escenaRef.current.texto : undefined,
+            signal: ac.signal,
+          },
           {
             onEmocion: (e) => {
               emo = e;
@@ -352,6 +410,7 @@ export default function App() {
     (raw: string) => {
       const cmd = raw.trim();
       if (!cmd) return;
+      ultimaInteraccion.current = Date.now();
       const it = detectarIntencion(cmd);
       switch (it.tipo) {
         case 'callar':
@@ -596,7 +655,7 @@ export default function App() {
           <div className="w-10 h-1 rounded-full bg-[#05E1FF]/50" />
         </div>
 
-        <VisionOverlay isActive={visionEnabled} stealth onClose={() => setVisionEnabled(false)} onGazeUpdate={setCameraGaze} />
+        <VisionOverlay isActive={visionEnabled} stealth onClose={() => setVisionEnabled(false)} onGazeUpdate={setCameraGaze} onEscena={alVerEscena} />
 
         <DockDrawer
           isOpen={dockOpen}

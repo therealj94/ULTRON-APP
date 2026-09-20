@@ -22,6 +22,7 @@ import {
   drawShockwaves,
   drawLivingEye,
   drawCyberMouth,
+  mixHex,
 } from './dibujo';
 import {
   type CombatState,
@@ -158,6 +159,11 @@ interface MetasVida {
   gazeY: number;
   breathRate: number;
   blinkSpeed: number;
+  browWorry: number; // interiores de ceja arriba y juntos
+  mouthRound: number; // boca en «o»
+  mouthPress: number; // labio apretado
+  mouthWidth: number; // ancho relativo de la boca
+  mouthSkew: number; // boca ladeada (pensar / travieso)
 }
 
 function metasDeCara(f: FaceState, t: number, age: number): MetasVida {
@@ -172,6 +178,11 @@ function metasDeCara(f: FaceState, t: number, age: number): MetasVida {
     gazeY: 0,
     breathRate: 1,
     blinkSpeed: 1,
+    browWorry: 0,
+    mouthRound: 0,
+    mouthPress: 0,
+    mouthWidth: 1,
+    mouthSkew: 0,
   };
   switch (f) {
     case 'THINKING':
@@ -180,20 +191,27 @@ function metasDeCara(f: FaceState, t: number, age: number): MetasVida {
       M.browAsym = 0.35;
       M.browLift = 0.12;
       M.tilt = -0.035;
+      M.mouthRound = 0.3; // boca fruncida a un lado
+      M.mouthWidth = 0.72;
+      M.mouthSkew = 0.45;
       break;
     case 'CURIOSITY':
       M.tilt = 0.11;
       M.browAsym = 0.55;
       M.browLift = 0.3;
+      M.mouthWidth = 0.9;
       break;
     case 'SURPRISED':
-      M.wide = age < 0.6 ? 1.12 : 1.03;
-      M.browLift = age < 0.7 ? 1 : 0.55;
+      M.wide = age < 1.4 ? 1.12 : 1.06;
+      M.browLift = age < 1.2 ? 1.05 : 0.8;
       M.blinkSpeed = 1.3;
+      M.mouthRound = 1;
+      M.mouthWidth = 0.86;
       break;
     case 'STARTLE':
       M.wide = 1.08;
-      M.browLift = 0.8;
+      M.browLift = 0.9;
+      M.mouthRound = 0.8;
       break;
     case 'SAD':
       M.lid = 0.62;
@@ -202,6 +220,8 @@ function metasDeCara(f: FaceState, t: number, age: number): MetasVida {
       M.breathRate = 0.6;
       M.blinkSpeed = 0.75;
       M.tilt = 0.03;
+      M.browWorry = 0.55;
+      M.mouthWidth = 0.82;
       break;
     case 'TIRED':
       M.lid = 0.55;
@@ -209,33 +229,54 @@ function metasDeCara(f: FaceState, t: number, age: number): MetasVida {
       M.tilt = 0.025 * Math.sin(t * 0.5);
       M.breathRate = 0.7;
       M.blinkSpeed = 0.55;
+      M.mouthWidth = 0.88;
       break;
     case 'SLEEPING':
       M.breathRate = 0.5;
       M.lift = -0.02;
+      M.mouthWidth = 0.7;
       break;
     case 'PRAY':
-      // Ojos cerrados los pone `cierre`; aquí sólo quietud y respiración muy lenta.
+      // Ojos cerrados los pone `cierre`; aquí quietud, respiración lenta, cejas serenas y boca chica.
       M.breathRate = 0.45;
       M.gazeX = 0;
       M.gazeY = 0;
       M.tilt = 0;
+      M.browWorry = 0.3;
+      M.browLift = 0.08;
+      M.mouthWidth = 0.62;
       break;
     case 'LAUGH':
-      M.browLift = 0.2;
+      M.browLift = 0.25;
       break;
     case 'SING':
       M.tilt = Math.sin(t * 1.7) * 0.05;
+      M.mouthRound = 0.25;
       break;
     case 'PURR':
       M.tilt = 0.06 * Math.sin(t * 1.3);
       break;
     case 'CONCERNED':
-      M.lid = 0.92;
+      // Interiores de ceja arriba y juntos, párpados algo entrecerrados, comisuras abajo.
+      M.lid = 0.86;
+      M.browWorry = 0.7; // interiores arriba y juntos…
+      M.mouthWidth = 0.92;
       break;
     case 'ANGRY':
+      M.lid = 0.8;
+      M.mouthPress = 0.9;
+      M.mouthWidth = 1.08;
+      break;
     case 'FURY':
-      M.lid = 0.86;
+      M.lid = 0.78;
+      M.mouthPress = 0.55;
+      M.mouthWidth = 1.1;
+      break;
+    case 'LISTENING':
+      M.browLift = 0.12;
+      break;
+    case 'IDLE':
+      M.mouthWidth = 0.95;
       break;
     default:
       break;
@@ -569,11 +610,11 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   function getTargetsFor(f: FaceState): FaceTargets {
     switch (f) {
       case 'LISTENING':
-        return { dilate: 0.46, brow: 0.2, mouth: 0.12, smile: 0.1, bounce: 0.04 };
+        return { dilate: 0.46, brow: 0.04, mouth: 0.1, smile: 0.14, bounce: 0.04 };
       case 'THINKING':
         return { dilate: 0.25, brow: 0.42, mouth: 0.04, smile: 0, bounce: 0 };
       case 'SPEAKING':
-        return { dilate: 0.4, brow: 0.12, mouth: 0.65, smile: 0.2, bounce: 0.05 };
+        return { dilate: 0.4, brow: 0.06, mouth: 0.3, smile: 0.22, bounce: 0.05 };
       case 'HAPPY':
         return { dilate: 0.38, brow: -0.28, mouth: 0.24, smile: 1, bounce: 0.15 };
       case 'PURR':
@@ -581,9 +622,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       case 'WINK':
         return { dilate: 0.36, brow: -0.15, mouth: 0.2, smile: 0.8, bounce: 0.1 };
       case 'CONCERNED':
-        return { dilate: 0.32, brow: 0.5, mouth: 0.12, smile: -0.6, bounce: 0 };
+        return { dilate: 0.32, brow: 0.28, mouth: 0.08, smile: -0.6, bounce: 0 }; // …con un leve ceño (SAD no lo tiene)
       case 'ANGRY':
-        return { dilate: 0.22, brow: 0.88, mouth: 0.14, smile: -0.9, bounce: 0 };
+        return { dilate: 0.22, brow: 0.88, mouth: 0.06, smile: -0.7, bounce: 0 };
       case 'FURY':
         return { dilate: 0.18, brow: 1.05, mouth: 0.2, smile: -1.0, bounce: 0.08 };
       case 'SLEEPING':
@@ -597,15 +638,15 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       case 'LAUGH':
         return { dilate: 0.34, brow: -0.2, mouth: 0.2, smile: 1.1, bounce: 0.15 };
       case 'SURPRISED':
-        return { dilate: 0.62, brow: 0.1, mouth: 0.42, smile: 0.05, bounce: 0.1 };
+        return { dilate: 0.2, brow: 0.02, mouth: 0.62, smile: 0.05, bounce: 0.1 };
       case 'SAD':
-        return { dilate: 0.3, brow: -0.6, mouth: 0.05, smile: -0.5, bounce: 0 };
+        return { dilate: 0.3, brow: -0.5, mouth: 0.05, smile: -0.7, bounce: 0 };
       case 'TIRED':
         return { dilate: 0.28, brow: -0.15, mouth: 0.06, smile: -0.05, bounce: 0 };
       case 'SING':
         return { dilate: 0.4, brow: -0.2, mouth: 0.3, smile: 0.7, bounce: 0.1 };
       case 'PRAY':
-        return { dilate: 0.3, brow: -0.18, mouth: 0.05, smile: 0.3, bounce: 0 };
+        return { dilate: 0.3, brow: -0.1, mouth: 0.05, smile: 0.32, bounce: 0 };
       case 'IDLE':
       default:
         return { dilate: 0.36, brow: 0, mouth: 0.08, smile: 0.15, bounce: 0 };
@@ -646,7 +687,10 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
           break;
         case 'SURPRISED':
           V.freeze = 0.35;
-          A.dilate = Math.max(A.dilate, 0.55); // dilatación casi instantánea
+          A.dilate = Math.min(A.dilate, 0.24); // pupila se cierra de golpe: ojos enormes y claros
+          V.wide = Math.max(V.wide, 1.08);
+          V.browLift = Math.max(V.browLift, 1.0);
+          V.mouthRound = 1;
           A.bounce = 0.12;
           A.blinking = false;
           A.wink = 0;
@@ -774,7 +818,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   }, []);
 
   const addShockwave = (x: number, y: number, color: string) => {
-    animRef.current.shockwaves.push({ id: Math.random(), x, y, radius: 6, maxRadius: 220, alpha: 1, color });
+    animRef.current.shockwaves.push({ id: Math.random(), x, y, radius: 4, maxRadius: 120, alpha: 1, color });
     if (animRef.current.shockwaves.length > 5) animRef.current.shockwaves.shift();
   };
 
@@ -870,13 +914,63 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       V.gazeYT = M.gazeY;
       V.breathRate = M.breathRate;
       V.blinkSpeed = M.blinkSpeed;
+      V.browWorryT = M.browWorry;
+      V.mouthRoundT = M.mouthRound;
+      V.mouthPressT = M.mouthPress;
+      V.mouthWidthT = M.mouthWidth;
+      V.mouthSkewT = M.mouthSkew;
       V.mouthExtra = 0;
       V.browExtra = 0;
       V.smileExtra = 0;
       V.dilateExtra = 0;
-      V.mouthSkewT = 0;
       V.swayX = 0;
       V.jolt = 0;
+
+      // ── vida en reposo: tic de ceja de 1 px y deriva lenta de pupila ──
+      const enReposo = S.face === 'IDLE' || S.face === 'LISTENING' || S.face === 'THINKING' || S.face === 'SPEAKING';
+      if (enReposo && awake) {
+        V.browTwitchIn -= dt;
+        if (V.browTwitchIn <= 0) {
+          V.browTwitch = 1;
+          V.browTwitchSide = Math.random() < 0.5 ? -1 : 1;
+          V.browTwitchIn = 2.5 + Math.random() * 4.5;
+        }
+      }
+      V.browTwitch = V.browTwitch > 0.01 ? V.browTwitch * (1 - dt * 5.5) : 0;
+      V.pupilDrift = 0.045 * Math.sin(S.t * 0.33) + 0.02 * Math.sin(S.t * 0.91 + 1.3);
+      if (S.face !== 'SLEEPING' && S.face !== 'SURPRISED') V.dilateExtra += V.pupilDrift;
+
+      // ── reacciones táctiles inmediatas (envolventes que decaen) ──
+      if (V.touchOh > 0.01) {
+        V.mouthRoundT += V.touchOh;
+        V.mouthExtra += 0.42 * V.touchOh;
+        V.browLiftT += 0.35 * V.touchOh;
+        V.touchOh *= 1 - dt * 2.8;
+      } else V.touchOh = 0;
+      if (V.touchSmile > 0.01) {
+        V.smileExtra += 0.7 * V.touchSmile;
+        V.mouthExtra += 0.08 * V.touchSmile;
+        V.mouthSkewT += V.touchSmileSide * 0.5 * V.touchSmile; // ladeada hacia el dedo toda la sonrisa, sin tirón
+        V.touchSmile *= 1 - dt * 1.8;
+      } else V.touchSmile = 0;
+      if (V.annoy > 0.01) {
+        V.browExtra += 0.75 * V.annoy;
+        V.lidT *= 1 - 0.28 * V.annoy;
+        V.mouthPressT += 0.8 * V.annoy;
+        V.smileExtra -= 0.4 * V.annoy;
+        V.annoy *= 1 - dt * 1.3;
+      } else V.annoy = 0;
+      V.squashL = V.squashL > 0.01 ? V.squashL * (1 - dt * 6.5) : 0;
+      V.squashR = V.squashR > 0.01 ? V.squashR * (1 - dt * 6.5) : 0;
+      // Arrastre: la boca se estira levemente hacia el lado del dedo.
+      const arrastrando = touchState.current.downTime > 0 && touchState.current.movedDistance > 12 && V.lastTouch;
+      V.mouthStretchT = arrastrando && V.lastTouch ? clamp(V.lastTouch.x * 2.2, -1, 1) * 0.7 : 0;
+
+      // ── atención a la persona (cámara): brillo +8 %, giro sutil; al perderla vuelve despacio ──
+      const camNow = cameraGazeRef.current;
+      V.atencionT = camNow && camNow.active ? 1 : 0;
+      V.atencion = approach(V.atencion, V.atencionT, V.atencionT > V.atencion ? 2.6 : 0.7, dt);
+      if (camNow && camNow.active) V.camX = approach(V.camX, clamp(camNow.x, -1, 1), 2.5, dt);
       let energiaT = (ENERGIA[S.face] ?? 0.45) * (0.55 + 0.45 * clamp(S.energy / 100, 0, 1));
       let mouthGain = S.face === 'SING' ? 1.0 : 0.78;
       let ringOn = S.face === 'SPEAKING' || S.face === 'SING' || S.face === 'PRAY';
@@ -956,13 +1050,14 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
             energiaT += 0.4 * w;
             break;
           case 'sorpresa':
-            V.browLiftT += 1.0 * w;
+            V.browLiftT += 1.1 * w;
             V.wideT += 0.1 * w;
-            V.dilateExtra += 0.18 * w;
-            V.mouthExtra += 0.2 * w;
+            V.dilateExtra -= 0.14 * w;
+            V.mouthExtra += 0.32 * w;
+            V.mouthRoundT += 0.9 * w;
             break;
           case 'curioso':
-            V.tiltT += 0.12 * w;
+            V.tiltT += (S.face === 'CURIOSITY' ? 0.03 : 0.12) * w;
             V.browAsymT += 0.6 * w;
             V.browLiftT += 0.25 * w;
             V.dilateExtra += 0.08 * w;
@@ -973,12 +1068,14 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
             V.browAsymT += 0.3 * w;
             break;
           case 'preocupado':
-            V.browExtra += 0.45 * w;
-            V.smileExtra -= 0.35 * w;
-            V.lidT *= 1 - 0.1 * w;
+            V.browWorryT += 0.9 * w;
+            V.smileExtra -= 0.5 * w;
+            V.lidT *= 1 - 0.15 * w;
+            V.mouthPressT += 0.25 * w;
             break;
           case 'triste':
-            V.browExtra -= 0.55 * w;
+            V.browExtra -= 0.45 * w;
+            V.browWorryT += 0.5 * w;
             V.lidT *= 1 - 0.3 * w;
             V.gazeYT += 0.3 * w;
             V.smileExtra -= 0.5 * w;
@@ -989,7 +1086,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
             V.browExtra += 0.7 * w;
             V.dilateExtra -= 0.12 * w;
             V.smileExtra -= 0.55 * w;
-            V.lidT *= 1 - 0.12 * w;
+            V.lidT *= 1 - 0.15 * w;
+            V.mouthPressT += 0.8 * w;
             break;
           case 'cansado':
             V.lidT *= 1 - 0.4 * w;
@@ -1028,8 +1126,10 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
             // respiración muy lenta, motas lentas, halo cálido y estable.
             V.cierreT = Math.max(V.cierreT, w);
             V.serenidadT = Math.max(V.serenidadT, w);
-            V.browExtra -= 0.15 * w;
+            V.browExtra -= 0.1 * w;
+            V.browWorryT += 0.3 * w;
             V.smileExtra += 0.2 * w;
+            V.mouthWidthT = Math.min(V.mouthWidthT, 1 - 0.35 * w);
             V.breathRate = Math.min(V.breathRate, 1 - 0.55 * w);
             energiaT = Math.min(energiaT, 0.3 + 0.7 * (1 - w) * energiaT);
             mouthGain = Math.min(mouthGain, 0.7);
@@ -1050,6 +1150,11 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       V.gazeX = approach(V.gazeX, V.gazeXT, 2.8, dt);
       V.gazeY = approach(V.gazeY, V.gazeYT, 2.8, dt);
       V.mouthSkew = approach(V.mouthSkew, V.mouthSkewT, 5, dt);
+      V.browWorry = approach(V.browWorry, V.browWorryT, 5, dt);
+      V.mouthRound = approach(V.mouthRound, clamp(V.mouthRoundT, 0, 1), V.mouthRoundT > V.mouthRound ? 14 : 6, dt);
+      V.mouthPress = approach(V.mouthPress, clamp(V.mouthPressT, 0, 1), 6, dt);
+      V.mouthWidth = approach(V.mouthWidth, V.mouthWidthT, 5, dt);
+      V.mouthStretch = approach(V.mouthStretch, V.mouthStretchT, 7, dt);
       V.energia = approach(V.energia, clamp(energiaT, 0, 1), 1.5, dt);
       if (V.freeze > 0) V.freeze -= dt;
       V.serenidad = approach(V.serenidad, clamp(V.serenidadT, 0, 1), 2.5, dt);
@@ -1090,7 +1195,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       }
       if (A.blinking) {
         const hold = V.longBlink && !A.double && A.phase > 1.3 && A.phase < 1.85 ? 0.35 : 1;
-        A.phase += dt * (A.double ? 5.2 : 3.8) * V.blinkSpeed * hold;
+        A.phase += dt * (A.double ? 6.6 : 5.2) * V.blinkSpeed * hold;
         let b = 1;
         if (A.phase < Math.PI) {
           b = Math.max(0.04, Math.cos(A.phase));
@@ -1137,8 +1242,20 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
           }
         }
       }
-      A.lx = approach(A.lx, clamp(A.tx + V.gazeX, -1, 1), 3.4, dt);
-      A.ly = approach(A.ly, clamp(A.ty + V.gazeY, -1, 1), 3.4, dt);
+      if (pointerDown) {
+        // Muelle sub-amortiguado: los ojos persiguen el dedo con un pelo de rebote.
+        const kx = clamp(A.tx + V.gazeX, -1, 1);
+        const ky = clamp(A.ty + V.gazeY, -1, 1);
+        V.lookVX += ((kx - A.lx) * 55 - V.lookVX * 10) * dt;
+        V.lookVY += ((ky - A.ly) * 55 - V.lookVY * 10) * dt;
+        A.lx = clamp(A.lx + V.lookVX * dt, -1.1, 1.1);
+        A.ly = clamp(A.ly + V.lookVY * dt, -1.1, 1.1);
+      } else {
+        V.lookVX = V.lookVY = 0;
+        const gRate = camActive ? 4.5 : 3.4;
+        A.lx = approach(A.lx, clamp(A.tx + V.gazeX, -1, 1), gRate, dt);
+        A.ly = approach(A.ly, clamp(A.ty + V.gazeY, -1, 1), gRate, dt);
+      }
 
       // ── parámetros faciales ──
       const dilRate = S.face === 'SURPRISED' && age < 0.5 ? 16 : 4.2;
@@ -1151,19 +1268,52 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const sinSenal = hablando && S.t - S.lipSeenAt > 1.5;
       let mouthWant: number;
       let jawT = 0;
+      /** Elige un visema nuevo: redondo («o/u»), ancho («e/i») o neutro («a»), con asimetría propia. */
+      const nuevoVisema = () => {
+        const r = Math.random();
+        if (r < 0.38) {
+          V.visRoundT = 0.65 + Math.random() * 0.35;
+          V.visWideT = 0;
+        } else if (r < 0.72) {
+          V.visRoundT = 0;
+          V.visWideT = 0.6 + Math.random() * 0.4;
+        } else {
+          V.visRoundT = 0;
+          V.visWideT = 0;
+        }
+        V.visAsymT = (Math.random() - 0.5) * 0.6;
+        V.visHold = 0.1 + Math.random() * 0.1;
+      };
       if (hablaConLabio) {
-        mouthWant = 0.1 + lip * mouthGain;
+        // Ataque (la señal sube de golpe) → nueva forma; una vocal sostenida cambia sola cada ~0.4 s.
+        const rise = lip - V.visLast;
+        V.visHold -= dt;
+        if ((rise > 0.1 && V.visHold <= 0) || V.visHold < -0.32) nuevoVisema();
+        V.visLast = approach(V.visLast, lip, 22, dt);
+        mouthWant = 0.1 + lip * mouthGain * (1 + 0.2 * V.visRound);
         jawT = lip;
       } else if (sinSenal) {
         const vis = Math.abs(Math.sin(S.t * 11)) * (0.6 + 0.4 * Math.sin(S.t * 3.1));
-        mouthWant = 0.12 + 0.3 * mouthGain * vis;
+        V.visHold -= dt;
+        if (V.visHold <= 0) {
+          nuevoVisema();
+          V.visHold = 0.18 + Math.random() * 0.14;
+        }
+        mouthWant = 0.12 + 0.34 * mouthGain * vis;
         jawT = 0.6 * vis;
       } else {
+        V.visRoundT = 0;
+        V.visWideT = 0;
+        V.visAsymT = 0;
+        V.visLast = approach(V.visLast, 0, 6, dt);
         mouthWant = A.mouthT + (S.face === 'IDLE' ? 0.04 * Math.sin(S.t * 1.3) : 0);
       }
-      const mouthRate = hablando ? (mouthWant > A.mouth ? 18 : 11) : 9;
+      const mouthRate = hablando ? (mouthWant > A.mouth ? 20 : 11) : 9;
       A.mouth = approach(A.mouth, mouthWant, mouthRate, dt);
       V.jaw = approach(V.jaw, clamp(jawT, 0, 1), jawT > V.jaw ? 18 : 8, dt);
+      V.visRound = approach(V.visRound, V.visRoundT, V.visRoundT > V.visRound ? 24 : 12, dt);
+      V.visWide = approach(V.visWide, V.visWideT, V.visWideT > V.visWide ? 24 : 12, dt);
+      V.visAsym = approach(V.visAsym, V.visAsymT, 10, dt);
       A.smile = approach(A.smile, A.smileT, 4.2, dt);
       A.brow = approach(A.brow, A.browT, 3.2, dt);
 
@@ -1191,8 +1341,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       actualizarChispas(V.sparkles, dt);
       for (let i = A.shockwaves.length - 1; i >= 0; i--) {
         const sw = A.shockwaves[i];
-        sw.radius += dt * 72;
-        sw.alpha = Math.max(0, 1 - sw.radius / sw.maxRadius);
+        const kk = sw.radius / sw.maxRadius;
+        sw.radius += dt * (420 * (1 - kk * 0.7) + 40);
+        sw.alpha = Math.max(0, 1 - kk);
         if (sw.alpha <= 0) A.shockwaves.splice(i, 1);
       }
 
@@ -1315,7 +1466,13 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   ) {
     const W = canvas.width;
     const H = canvas.height;
-    const theme = getThemeColors(S.mode);
+    const base = getThemeColors(S.mode);
+    // Atención a la persona: la cara se ilumina hasta un 8 %.
+    const at = clamp(V.atencion, 0, 1);
+    const theme =
+      at > 0.01
+        ? { ...base, primary: mixHex(base.primary, '#ffffff', 0.08 * at), glow: mixHex(base.glow, '#ffffff', 0.1 * at) }
+        : base;
     const fun = S.funMode;
     const E: Escena = { face: S.face, mode: S.mode, t: S.t, lip, funMode: fun };
 
@@ -1325,14 +1482,16 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
 
     const baseR = Math.min(W * 0.115, H * 0.22);
     const eyeSpacing = baseR * 1.58;
-    const cx = W / 2;
     const quieto = 1 - 0.85 * V.serenidad; // en oración la cabeza casi no se mece
+    // Giro sutil hacia la persona detectada: traslación 1.5 % del ancho + inclinación ~1.5°.
+    const camShift = V.camX * at;
+    const cx = W / 2 + camShift * W * 0.015;
     const cy = H / 2 + Math.sin(S.t * 1.15) * (baseR * 0.018) * quieto - (A.bounce + V.lift + V.jolt) * baseR;
 
     // Halo exterior que respira (en oración: cálido, más presente y estable)
     const breathK = (A.breath - 1) / 0.02; // −1..1
     const haloI =
-      (0.45 + 0.22 * breathK * quieto + V.energia * 0.35 + V.ring * 0.4 * quieto + 0.2 * V.serenidad) *
+      (0.45 + 0.22 * breathK * quieto + V.energia * 0.35 + V.ring * 0.4 * quieto + 0.2 * V.serenidad + 0.12 * at) *
       clamp(V.wake, 0, 1);
     drawHalo(ctx, cx, cy, baseR, theme, haloI, V.serenidad);
 
@@ -1344,10 +1503,12 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     const shakeX = A.shake * (Math.sin(S.t * 37.1) * 0.7 + Math.sin(S.t * 19.3) * 0.3) * 10;
     const shakeY = A.shake * (Math.sin(S.t * 29.7) * 0.6 + Math.cos(S.t * 13.1) * 0.4) * 7;
 
+    // Respiración visible: toda la cara escala ±1.5 % (menos en oración).
+    const breathScale = 1 + breathK * 0.015 * (0.4 + 0.6 * quieto);
     ctx.save();
     ctx.translate(cx + shakeX + V.swayX * baseR, cy + shakeY);
-    ctx.rotate(V.tilt);
-    ctx.scale(A.squashX, A.squashY);
+    ctx.rotate(V.tilt + camShift * 0.028);
+    ctx.scale(A.squashX * breathScale, A.squashY * breathScale);
 
     if (fun && S.showHud) {
       drawModeCrown(ctx, 0, -baseR * 1.45, baseR, S.mode, theme, S.t);
@@ -1362,7 +1523,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     }
 
     // Boca
-    drawCyberMouth(ctx, 0, baseR * 1.25, baseR, theme, E, A, V);
+    drawCyberMouth(ctx, 0, baseR * 1.28, baseR, theme, E, A, V);
 
     // Chispas de canto (suben desde la boca)
     drawChispas(ctx, V.sparkles, theme, S.t);
@@ -1398,7 +1559,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   }
 
   // ───────────────────────── mapa táctil ─────────────────────────
-  type Zona = 'ojoIzq' | 'ojoDer' | 'frente' | 'barbilla' | 'mejilla' | 'fuera';
+  type Zona = 'ojoIzq' | 'ojoDer' | 'centro' | 'frente' | 'barbilla' | 'mejilla' | 'fuera';
 
   const zonaDe = (clientX: number, clientY: number): Zona => {
     const canvas = canvasRef.current;
@@ -1410,6 +1571,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     const eyeSpacing = baseR * 1.58;
     if (Math.hypot(x + eyeSpacing, y) < baseR * 1.1) return 'ojoIzq';
     if (Math.hypot(x - eyeSpacing, y) < baseR * 1.1) return 'ojoDer';
+    if (Math.abs(x) < baseR * 0.5 && Math.abs(y) < baseR * 0.6) return 'centro'; // entre los ojos; debajo (y > 0.6R) manda 'barbilla'
     if (y < -baseR * 1.2 && Math.abs(x) < eyeSpacing + baseR * 1.4) return 'frente';
     if (y > baseR * 0.6 && y < baseR * 2.7 && Math.abs(x) < baseR * 1.9) return 'barbilla';
     if (y > -baseR * 0.6 && y < baseR * 2.2 && Math.abs(x) < eyeSpacing + baseR * 2.2) return 'mejilla';
@@ -1442,6 +1604,13 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     ts.dragReported = false;
     ts.strokePoints = [{ x: e.clientX, y: e.clientY, time: now }];
     stateRef.current.lastInteraction = now;
+    // Captura del puntero: si el dedo/ratón se suelta sobre un overlay (barra, panel, burbuja),
+    // el pointerup igual llega aquí y el arrastre no queda pegado (boca estirada, mirada clavada).
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      /* algunos WebViews no lo soportan; la red de seguridad es soltarPuntero() */
+    }
 
     const rect = e.currentTarget.getBoundingClientRect();
     vidaRef.current.lastTouch = {
@@ -1458,13 +1627,37 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
 
     if (stateRef.current.face === 'SLEEPING') return; // el despertar se decide al soltar
 
+    // Respuesta inmediata (<50 ms): las pupilas saltan al punto de contacto y la zona tocada reacciona.
+    const A = animRef.current;
+    const V = vidaRef.current;
+    const lt = vidaRef.current.lastTouch!;
+    A.tx = lt.x * 1.4;
+    A.ty = lt.y * 0.9;
+    A.lx = clamp(A.tx, -1, 1) * 0.9;
+    A.ly = clamp(A.ty, -1, 1) * 0.9;
+    V.lookVX = V.lookVY = 0;
+
     const z = zonaDe(e.clientX, e.clientY);
     if (z === 'ojoIzq') {
+      V.squashL = 1;
       guinar(-1);
       ts.tapHandled = true;
     } else if (z === 'ojoDer') {
+      V.squashR = 1;
       guinar(1);
       ts.tapHandled = true;
+    } else if (z === 'centro') {
+      V.squashL = V.squashR = 0.85;
+      V.touchOh = 0.6;
+    } else if (z === 'barbilla') {
+      V.touchOh = 1; // «oh» corto
+      V.browLift = Math.max(V.browLift, 0.5);
+    } else if (z === 'mejilla') {
+      V.touchSmile = 1;
+      V.touchSmileSide = clamp(lt.x * 3, -1, 1); // la sonrisa tira hacia el lado tocado (vía mouthSkewT)
+    } else if (z === 'frente') {
+      V.browLift = Math.max(V.browLift, 1);
+      V.wide = Math.max(V.wide, 1.05);
     }
   };
 
@@ -1505,8 +1698,20 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     }
   };
 
+  /** Red de seguridad: termina el contacto sin gesto (cancel, pérdida de captura, salida del canvas). */
+  const soltarPuntero = () => {
+    const ts = touchState.current;
+    if (ts.downTime === 0) return;
+    ts.downTime = 0;
+    ts.movedDistance = 0;
+    const V = vidaRef.current;
+    V.mouthStretchT = 0;
+    V.lookVX = V.lookVY = 0;
+  };
+
   const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const ts = touchState.current;
+    if (ts.downTime === 0) return; // ya se soltó por cancel / pérdida de captura
     const holdDuration = performance.now() - ts.downTime;
     const deltaX = e.clientX - ts.startX;
     const deltaY = e.clientY - ts.startY;
@@ -1584,6 +1789,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
 
     A.jiggle = Math.max(A.jiggle, 0.4);
     A.bounce = Math.max(A.bounce, 0.15);
+    // Segundo toque seguido: ya frunce un poco (cejas) antes del «ya, ya».
+    if (!S.funMode && S.poke === 2) V.annoy = Math.max(V.annoy, 0.55);
 
     // ── escalada de juguete (sólo funMode) ──
     if (S.funMode) {
@@ -1611,19 +1818,28 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       // "Ya, ya": molestia de juego 1.2 s y luego risa
       if (!S.burstActive) {
         S.burstActive = true;
+        V.annoy = 1; // cejas juntas, párpados bajos, labio apretado… y luego risa
+        V.touchSmile = 0;
+        A.smileT = -0.2;
+        A.smile = Math.min(A.smile, 0.3);
+        A.blinking = false;
+        A.wink = 0;
+        A.blinkL = A.blinkR = 1;
         onFaceChange('ANGRY', 1200);
         A.shake = 0.8;
         playSfx('deny', soundFxEnabled);
         gesto('molestoJuego');
-        if (!S.burstSpoken) {
-          S.burstSpoken = true;
-          onSpeak('Ya, ya. Je.');
-        }
         later(() => {
+          V.annoy = 0;
           onFaceChangeRef.current('LAUGH', 1800);
           V.laughAmp = 1;
           V.laughPhase = 0;
           gesto('risa');
+          // Se dice al reír, no antes: la cara de habla que pone App no debe tapar la fase de molestia.
+          if (!S.burstSpoken) {
+            S.burstSpoken = true;
+            onSpeakRef.current('Ya, ya. Je.');
+          }
         }, 1200);
         later(() => {
           S.burstActive = false;
@@ -1655,8 +1871,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       gesto('risa');
       return;
     }
-    // Mejilla u otro sitio: guiño suave y media sonrisa
-    A.smileT = Math.min(1.0, A.smileT + 0.3);
+    // Mejilla u otro sitio: guiño suave; la sonrisa ya la puso `touchSmile` al bajar el dedo.
+    // Sólo SUBE la meta (tope 0.6): una cara que ya sonríe más (HAPPY 1.0, PURR, LAUGH…) no se apaga por tocarla.
+    if (A.smileT < 0.6) A.smileT = Math.min(0.6, A.smileT + 0.15);
     scheduleBlink(Math.random() < 0.5 ? 'wink' : 'double');
     playSfx('wink', soundFxEnabled);
     gesto('tapMejilla');
@@ -1670,9 +1887,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
-      onPointerCancel={() => {
-        touchState.current.downTime = 0;
-      }}
+      onPointerCancel={soltarPuntero}
+      onLostPointerCapture={soltarPuntero}
+      onPointerLeave={soltarPuntero}
     />
   );
 };

@@ -13,7 +13,7 @@
     "test": "tsx --test --test-concurrency=1 server/seguridad.test.ts tests/*.test.ts"
   },
   "dependencies": {
-    "@mediapipe/tasks-vision": "^1.0.1",
+    "@mediapipe/tasks-vision": "1.0.1",
     "@tailwindcss/vite": "^4.1.14",
     "@vitejs/plugin-react": "^5.0.4",
     "dotenv": "^17.2.3",

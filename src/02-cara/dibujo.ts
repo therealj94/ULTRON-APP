@@ -132,6 +132,43 @@ export interface Vida {
   motes: Mote[];
   sparkles: Sparkle[];
   lastTouch: { x: number; y: number; t: number } | null; // x,y en −0.5..0.5; t = performance.now()
+  // ── boca: formas por emoción y visemas ──
+  mouthRound: number; // 0..1 boca en «o» (sorpresa, «oh» táctil, visema redondo)
+  mouthRoundT: number;
+  mouthPress: number; // 0..1 labio apretado (molestia): fino, ancho, línea central
+  mouthPressT: number;
+  mouthWidth: number; // multiplicador de ancho (0.6 oración … 1.1 molestia)
+  mouthWidthT: number;
+  mouthStretch: number; // −1..1 estirada hacia un lado (arrastre)
+  mouthStretchT: number;
+  visRound: number; // visema actual: redondo («o/u»)
+  visRoundT: number;
+  visWide: number; // visema actual: ancho («e/i»)
+  visWideT: number;
+  visAsym: number; // −1..1 asimetría orgánica del labio inferior
+  visAsymT: number;
+  visLast: number; // lipLevel suavizado del frame anterior (detecta ataques)
+  visHold: number; // segundos que se sostiene el visema actual
+  // ── cejas ──
+  browWorry: number; // 0..1 interior arriba y juntas (preocupación / súplica)
+  browWorryT: number;
+  browTwitch: number; // envolvente del tic de ceja en reposo (1 px)
+  browTwitchSide: number; // −1 izquierda, 1 derecha
+  browTwitchIn: number; // temporizador hasta el próximo tic
+  pupilDrift: number; // deriva lenta de pupila en reposo
+  // ── tacto ──
+  squashL: number; // 0..1 aplastamiento del ojo izquierdo al tocarlo (decae)
+  squashR: number;
+  touchOh: number; // «oh» corto al tocar la barbilla (decae)
+  touchSmile: number; // sonrisa al tocar la mejilla (decae)
+  touchSmileSide: number; // -1..1 lado hacia el que tira esa sonrisa (se ladea vía mouthSkewT mientras dura)
+  annoy: number; // molestia juguetona por toques repetidos (cejas + labio apretado)
+  lookVX: number; // velocidad del muelle de mirada al arrastrar
+  lookVY: number;
+  // ── atención a la persona (cameraGaze) ──
+  atencion: number; // 0..1 brillo + giro sutil hacia la persona
+  atencionT: number;
+  camX: number; // −1..1 lado de la persona, suavizado
 }
 
 export function crearVida(nMotas: number): Vida {
@@ -188,6 +225,39 @@ export function crearVida(nMotas: number): Vida {
     motes: crearMotas(nMotas),
     sparkles: [],
     lastTouch: null,
+    mouthRound: 0,
+    mouthRoundT: 0,
+    mouthPress: 0,
+    mouthPressT: 0,
+    mouthWidth: 1,
+    mouthWidthT: 1,
+    mouthStretch: 0,
+    mouthStretchT: 0,
+    visRound: 0,
+    visRoundT: 0,
+    visWide: 0,
+    visWideT: 0,
+    visAsym: 0,
+    visAsymT: 0,
+    visLast: 0,
+    visHold: 0,
+    browWorry: 0,
+    browWorryT: 0,
+    browTwitch: 0,
+    browTwitchSide: 1,
+    browTwitchIn: 3,
+    pupilDrift: 0,
+    squashL: 0,
+    squashR: 0,
+    touchOh: 0,
+    touchSmile: 0,
+    touchSmileSide: 0,
+    annoy: 0,
+    lookVX: 0,
+    lookVY: 0,
+    atencion: 0,
+    atencionT: 0,
+    camX: 0,
   };
 }
 
@@ -347,9 +417,10 @@ export function drawHalo(
   ctx.scale(1.45, 1);
   const g = ctx.createRadialGradient(0, 0, baseR * 0.4, 0, 0, R);
   const a = clamp(intensity, 0, 1);
-  const col = warm > 0.01 ? mixHex(theme.primary, theme.core, clamp(warm, 0, 1) * 0.45) : theme.primary;
-  g.addColorStop(0, col + alphaHex(0.16 * a));
-  g.addColorStop(0.45, col + alphaHex(0.07 * a));
+  const wk = clamp(warm, 0, 1);
+  const col = wk > 0.01 ? mixHex(theme.primary, theme.core, wk * 0.55) : theme.primary;
+  g.addColorStop(0, col + alphaHex((0.16 + 0.1 * wk) * a));
+  g.addColorStop(0.45, col + alphaHex((0.07 + 0.05 * wk) * a));
   g.addColorStop(1, col + '00');
   ctx.fillStyle = g;
   ctx.beginPath();
@@ -390,22 +461,37 @@ export function drawVoiceRing(
   ctx.restore();
 }
 
+/** Onda de toque: anillo fino que se expande desacelerando y se disuelve, más un eco interior. */
 export function drawShockwaves(ctx: CanvasRenderingContext2D, list: TouchRipple[]) {
   if (!list.length) return;
   ctx.save();
+  ctx.lineCap = 'round';
   for (const sw of list) {
+    const k = clamp(sw.radius / sw.maxRadius, 0, 1);
+    const fade = (1 - k) * (1 - k);
     ctx.strokeStyle = sw.color;
-    ctx.globalAlpha = sw.alpha * 0.7;
-    ctx.lineWidth = 2.5;
+    // Un solo shadowBlur por onda (máximo 5 vivas): barato y evita que el anillo se vea como un contorno gris.
+    ctx.shadowColor = sw.color;
+    ctx.shadowBlur = 14 * fade;
+    ctx.globalAlpha = fade * 0.9;
+    ctx.lineWidth = Math.max(1, 3 * (1 - k * 0.5));
     ctx.beginPath();
     ctx.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2);
     ctx.stroke();
-    if (sw.radius > 20) {
-      ctx.globalAlpha = sw.alpha * 0.28;
-      ctx.lineWidth = 1.2;
+    // Eco interior más tenue, un poco rezagado.
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = fade * 0.3;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(sw.x, sw.y, sw.radius * 0.62, 0, Math.PI * 2);
+    ctx.stroke();
+    // Punto de contacto que se apaga rápido.
+    if (k < 0.35) {
+      ctx.globalAlpha = (1 - k / 0.35) * 0.6;
+      ctx.fillStyle = sw.color;
       ctx.beginPath();
-      ctx.arc(sw.x, sw.y, sw.radius * 0.7, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.arc(sw.x, sw.y, 4 * (1 - k / 0.35), 0, Math.PI * 2);
+      ctx.fill();
     }
   }
   ctx.restore();
@@ -441,10 +527,39 @@ export function aperturaOjo(A: AnimationEngineState, V: Vida, side: number) {
   return base * (1 - k) + k * (0.05 + V.flutter);
 }
 
+/** Trazo neón: cuerpo con resplandor + filamento claro. Sólo para piezas únicas (cejas, párpados), nunca por partícula. */
+function strokeNeon(
+  ctx: CanvasRenderingContext2D,
+  path: Path2D,
+  color: string,
+  core: string,
+  w: number,
+  alpha: number,
+  blur = 14
+) {
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = w;
+  if (blur > 0) {
+    ctx.shadowColor = color;
+    ctx.shadowBlur = blur;
+  }
+  ctx.stroke(path);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = core;
+  ctx.globalAlpha = alpha * 0.5;
+  ctx.lineWidth = w * 0.36;
+  ctx.stroke(path);
+  ctx.globalAlpha = 1;
+}
+
 /**
  * Ojo OLED volumétrico (marca LOOI): disco con gradiente, brillo especular,
  * borde neón y ceja. Sonrisa alta → arco feliz. `dilate` mueve el núcleo
- * brillante (pupila visible sin pintar un punto negro).
+ * brillante (pupila visible sin pintar un punto negro). Con `cierre` alto
+ * (oración) el ojo es un párpado sereno en arco, distinto de la raya de dormir.
  */
 export function drawLivingEye(
   ctx: CanvasRenderingContext2D,
@@ -460,8 +575,9 @@ export function drawLivingEye(
   const open = aperturaOjo(A, V, side);
   const isHappy =
     E.face === 'HAPPY' || E.face === 'PURR' || E.face === 'LAUGH' || A.smile > 0.75;
-  const rx = R;
-  const ry = Math.max(2, R * open);
+  const sq = clamp(side < 0 ? V.squashL : V.squashR, 0, 1);
+  const rx = R * (1 + 0.16 * sq);
+  const ry = Math.max(2, R * open * (1 - 0.45 * sq));
   const dil = clamp(A.dilate + V.dilateExtra, 0.12, 0.75);
 
   ctx.save();
@@ -469,6 +585,25 @@ export function drawLivingEye(
 
   if (E.face === 'THINKING') {
     ctx.rotate(side * 0.12 * Math.sin(E.t * 2));
+  }
+
+  // Párpado sereno (oración): arco suave hacia abajo, con brillo, nada de raya plana.
+  const k = smoothstep(V.cierre);
+  if (k > 0.6 && E.face !== 'SLEEPING') {
+    const a = clamp((k - 0.6) / 0.3, 0, 1);
+    const bulge = R * (0.34 - V.flutter * 1.6);
+    const p = new Path2D();
+    p.moveTo(-R * 0.92, -R * 0.02);
+    p.quadraticCurveTo(0, bulge, R * 0.92, -R * 0.02);
+    strokeNeon(ctx, p, theme.primary, theme.core, R * 0.15, a);
+    // Pestaña exterior: un trazo corto que da dirección al párpado.
+    const l = new Path2D();
+    l.moveTo(side * R * 0.9, -R * 0.01);
+    l.quadraticCurveTo(side * R * 1.0, R * 0.04, side * R * 1.02, R * 0.12);
+    strokeNeon(ctx, l, theme.primary, theme.core, R * 0.06, a * 0.6);
+    drawBrow(ctx, R, 0.78, theme, A, V, side);
+    ctx.restore();
+    return;
   }
 
   // Arcos felices (sonrisa, mimos, risa)
@@ -535,7 +670,7 @@ export function drawLivingEye(
     // Anillo de iris tenue: da profundidad y hace visible la dilatación.
     const irisR = rx * (0.26 + dil * 0.55);
     ctx.strokeStyle = theme.dark;
-    ctx.globalAlpha = 0.2;
+    ctx.globalAlpha = 0.2 + 0.18 * (1 - dil); // pupila chica (sorpresa) → anillo más marcado
     ctx.lineWidth = rx * 0.06;
     ctx.beginPath();
     ctx.ellipse(A.lx * rx * 0.28, A.ly * ry * 0.28, irisR, irisR * Math.min(1, ry / rx + 0.15), 0, 0, Math.PI * 2);
@@ -574,9 +709,12 @@ export function drawLivingEye(
 }
 
 /**
- * Ceja ciber. `A.brow` > 0 inclina hacia el centro (enojo), < 0 levanta el
- * interior (tristeza/súplica). `V.browLift` sube ambas en paralelo (sorpresa) y
- * `V.browAsym` sube sólo una (curioso / pensando).
+ * Ceja ciber en arco. Siempre presente (tenue en reposo, plena al expresar).
+ * `A.brow` > 0 baja el extremo medial (junto a la nariz: V de enojo), < 0 lo levanta
+ * (tristeza). `V.browWorry` levanta y junta los extremos mediales (preocupación).
+ * Ojo: con side = -1 el ojo está en x negativa, así que el lateral es `side*R` y el medial `-side*R`.
+ * `V.browLift` sube ambas y las arquea (sorpresa); `V.browAsym` sube sólo una
+ * (curioso / pensando). `V.browTwitch` es el tic de 1 px en reposo.
  */
 function drawBrow(
   ctx: CanvasRenderingContext2D,
@@ -587,34 +725,48 @@ function drawBrow(
   V: Vida,
   side: number
 ) {
-  const brow = A.brow + V.browExtra;
-  const lift = V.browLift + Math.max(0, side * V.browAsym) * 0.7;
-  const strength = Math.max(Math.abs(brow), lift);
-  if (strength < 0.08) return;
+  const brow = clamp(A.brow + V.browExtra, -1.2, 1.3);
+  const worry = clamp(V.browWorry, 0, 1);
+  const lift = clamp(V.browLift + Math.max(0, side * V.browAsym) * 0.7, 0, 1.6);
+  const strength = Math.max(Math.abs(brow), lift, worry);
+  const alpha = (0.42 + 0.58 * clamp(strength / 0.3, 0, 1)) * clamp(V.wake, 0, 1);
   const by = R * Math.max(0.55, Math.min(open, 1)); // anclaje estable durante el parpadeo
-  const alpha = clamp((strength - 0.08) / 0.22, 0, 1);
+  const twitch = V.browTwitchSide === side ? V.browTwitch * R * 0.02 : 0;
 
+  const browY = -by * (1.18 + Math.max(0, brow) * 0.22) - lift * R * 0.42 - Math.max(0, -brow) * R * 0.06 - twitch;
+  // El ojo izquierdo (side = -1) está en x negativa: su extremo LATERAL (sien) es `side * R`
+  // y el MEDIAL (hacia la nariz) es `-side * R * …`. Con worry/enojo el medial se acerca al centro.
+  const outerX = side * R * 1.0;
+  const innerX = -side * R * (0.68 + worry * 0.2 + Math.max(0, brow) * 0.08);
+  // Extremo lateral (sien): sube con enojo, baja con tristeza/preocupación.
+  const outerY = browY - brow * R * 0.16 + worry * R * 0.1;
+  // Extremo medial (nariz): baja con enojo (V), sube con tristeza y preocupación (/ \).
+  const innerY = browY + Math.max(0, brow) * R * 0.3 - Math.max(0, -brow) * R * 0.22 - worry * R * 0.3;
+  // Arco: relajado siempre un poco; más con sorpresa y felicidad, casi recto al enojarse.
+  const arch = R * (0.1 + lift * 0.22 + Math.max(0, -brow) * 0.04 - Math.max(0, brow) * 0.07 + worry * 0.06);
+  const midX = (outerX + innerX) * 0.5 - side * R * 0.05;
+  const midY = (outerY + innerY) * 0.5 - arch;
+
+  const p = new Path2D();
+  p.moveTo(outerX, outerY);
+  p.quadraticCurveTo(midX, midY, innerX, innerY);
   ctx.save();
-  ctx.strokeStyle = theme.primary;
-  ctx.globalAlpha = alpha;
-  ctx.lineWidth = R * 0.07;
-  ctx.lineCap = 'round';
-  ctx.shadowColor = theme.glow;
-  ctx.shadowBlur = 12;
-  const browY = -by * (1.15 + Math.max(0, brow) * 0.28) - lift * R * 0.38 - Math.max(0, -brow) * R * 0.08;
-  const outerX = -side * R * 0.95;
-  const innerX = side * R * 0.65;
-  ctx.beginPath();
-  ctx.moveTo(outerX, browY - brow * R * 0.2);
-  ctx.lineTo(innerX, browY + brow * R * 0.22);
-  ctx.stroke();
+  // Coste por frame: en reposo (strength < 0.1) la ceja va SIN shadowBlur (sólo trazo + filamento);
+  // el resplandor entra gradualmente (0 → 14) sólo cuando la ceja expresa algo.
+  const blur = strength < 0.1 ? 0 : 6 + 8 * clamp((strength - 0.1) / 0.25, 0, 1);
+  strokeNeon(ctx, p, theme.primary, theme.core, R * (0.085 + 0.02 * Math.max(0, brow)), alpha, blur);
   ctx.restore();
 }
 
 // ───────────────────────── boca ─────────────────────────
 /**
- * Boca ciber paramétrica: `A.mouth` abre (0 línea, 1 muy abierta), `A.smile`
- * curva las comisuras (+ sonrisa, − mueca) y `V.mouthSkew` la ladea (travieso).
+ * Boca paramétrica con jerarquía real: dos labios en Bézier cúbica, interior
+ * oscuro con profundidad y comisuras.
+ *  - `A.mouth` + `V.mouthExtra` abre (0 cerrada, 1 muy abierta); `V.jaw` baja la mandíbula.
+ *  - `A.smile` + `V.smileExtra` sube (+) o baja (−) las comisuras.
+ *  - `V.mouthRound` / `V.visRound` redondean («o»); `V.visWide` ensancha («e»).
+ *  - `V.mouthPress` aprieta el labio (molestia); `V.mouthWidth` escala el ancho.
+ *  - `V.mouthSkew` ladea (travieso); `V.mouthStretch` estira hacia el dedo; `V.visAsym` desnivela el labio inferior.
  * Con funMode, CREATIVE y EXPLORER conservan sus bocas de tablet.
  */
 export function drawCyberMouth(
@@ -628,24 +780,26 @@ export function drawCyberMouth(
   V: Vida
 ) {
   const color = theme.primary;
+  const R = baseR;
   ctx.save();
   // Mandíbula: al hablar la boca baja un poco además de abrirse; se lee de lejos.
-  ctx.translate(cx, cy + baseR * 0.14 * V.jaw);
+  ctx.translate(cx + V.mouthStretch * R * 0.26, cy + R * 0.14 * V.jaw);
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
-  ctx.lineWidth = baseR * 0.06;
+  ctx.lineWidth = R * 0.06;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.shadowColor = color;
-  ctx.shadowBlur = 16;
-  ctx.globalAlpha = clamp(V.wake * 1.3, 0, 1);
+  const wakeA = clamp(V.wake * 1.3, 0, 1);
+  ctx.globalAlpha = wakeA;
 
-  const mw = baseR * 0.85;
+  const mw = R * 0.85;
 
   if (E.funMode && E.mode === 'CREATIVE') {
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 16;
     ctx.beginPath();
     for (let x = -mw * 0.5; x <= mw * 0.5; x += 4) {
-      const wave = Math.sin(x * 0.12 + E.t * 6) * (baseR * 0.12);
+      const wave = Math.sin(x * 0.12 + E.t * 6) * (R * 0.12);
       if (x === -mw * 0.5) ctx.moveTo(x, wave);
       else ctx.lineTo(x, wave);
     }
@@ -654,45 +808,130 @@ export function drawCyberMouth(
     return;
   }
   if (E.funMode && E.mode === 'EXPLORER') {
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 16;
     ctx.beginPath();
-    ctx.arc(0, baseR * 0.45, mw * 0.5, Math.PI * 1.25, Math.PI * 1.75);
+    ctx.arc(0, R * 0.45, mw * 0.5, Math.PI * 1.25, Math.PI * 1.75);
     ctx.stroke();
     ctx.restore();
     return;
   }
 
-  const mouth = clamp(A.mouth + V.mouthExtra, 0, 1.15);
-  const smile = clamp(A.smile + V.smileExtra, -1.2, 1.3);
+  const mouth = clamp(A.mouth + V.mouthExtra, 0, 1.2);
+  const smile = clamp(A.smile + V.smileExtra, -1.2, 1.4);
+  const round = clamp(V.mouthRound + V.visRound, 0, 1);
+  const wide = clamp(V.visWide, 0, 1) * (1 - round);
+  const press = clamp(V.mouthPress, 0, 1);
   const skew = V.mouthSkew;
-  const w = mw * 0.45 * (1 + 0.1 * smile + 0.08 * mouth - 0.06 * V.jaw);
-  const h = baseR * (0.028 + 0.46 * mouth + 0.09 * V.jaw);
-  const curv = smile * baseR * 0.2;
-  const cornerL = -curv + skew * baseR * 0.07;
-  const cornerR = -curv - skew * baseR * 0.07;
+  const stretch = clamp(V.mouthStretch, -1, 1);
+  const asym = clamp(V.visAsym, -1, 1) * clamp(mouth * 2, 0, 1);
+  const jaw = clamp(V.jaw, 0, 1);
 
-  ctx.rotate(skew * 0.1);
-  ctx.beginPath();
-  ctx.moveTo(-w, cornerL);
-  ctx.quadraticCurveTo(0, curv * 0.9 - h, w, cornerR);
-  ctx.quadraticCurveTo(0, curv * 0.9 + h, -w, cornerL);
-  ctx.closePath();
-  ctx.fill();
-  ctx.stroke();
+  // Ancho: la sonrisa y el visema ancho lo abren; la «o» lo cierra.
+  const w =
+    R *
+    0.6 *
+    V.mouthWidth *
+    (1 + 0.3 * Math.max(0, smile) + 0.16 * wide + 0.14 * press - 0.3 * round - 0.08 * mouth * round - 0.12 * Math.min(0, smile));
+  // Alto: la apertura manda; el labio apretado la aplasta; la «o» la estira.
+  const open = mouth * (1 - 0.6 * press);
+  const h = R * (0.03 + 0.5 * open + 0.08 * jaw) * (1 + 0.35 * round);
+  const curv = (smile > 0 ? smile * R * 0.24 : smile * R * 0.17) * (1 - 0.5 * round) * (1 - 0.55 * press);
+  const pout = Math.max(0, -smile) * R * 0.04; // labio inferior hacia afuera en tristeza
+  const wL = w * (1 - 0.22 * stretch);
+  const wR = w * (1 + 0.22 * stretch);
+  const cornerL = -curv + skew * R * 0.08;
+  const cornerR = -curv - skew * R * 0.08;
+  const kx = 0.52 + 0.1 * round - 0.12 * wide; // redondez de las curvas (0.55 ≈ elipse)
+  const yU = curv * 0.5 - h * (0.4 + 0.15 * round);
+  const yL = curv * 0.5 + h * (0.6 + 0.2 * round) + jaw * R * 0.05 + pout;
+  const ax = asym * w * 0.3;
 
-  // Interior oscuro cuando la boca se abre: profundidad sin perder el neón.
-  if (mouth > 0.22) {
-    const k = clamp((mouth - 0.22) / 0.5, 0, 1);
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = theme.dark;
-    ctx.globalAlpha = 0.55 * k * clamp(V.wake, 0, 1);
-    const iw = w * 0.62;
-    const ih = h * 0.55;
+  ctx.rotate(skew * 0.08 + stretch * 0.07);
+
+  const labios = new Path2D();
+  labios.moveTo(-wL, cornerL);
+  labios.bezierCurveTo(-wL * kx, yU, wR * kx, yU, wR, cornerR);
+  labios.bezierCurveTo(wR * kx + ax, yL, -wL * kx + ax, yL, -wL, cornerL);
+  labios.closePath();
+
+  // Volumen del labio: gradiente vertical claro arriba → primario abajo.
+  const top = Math.min(cornerL, cornerR, yU);
+  const bot = Math.max(cornerL, cornerR, yL);
+  const g = ctx.createLinearGradient(0, top, 0, bot);
+  g.addColorStop(0, theme.glow);
+  g.addColorStop(0.55, color);
+  g.addColorStop(1, mixHex(color, theme.dark, 0.25));
+  ctx.fillStyle = g;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12; // antes 20: mismo halo perceptible, menos coste con dpr 2
+  ctx.fill(labios);
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = R * 0.05;
+  ctx.stroke(labios);
+
+  // Interior oscuro cuando la boca se abre: cavidad con profundidad, sin perder el neón.
+  if (open > 0.14) {
+    const k = clamp((open - 0.14) / 0.4, 0, 1);
+    const lipT = R * (0.055 + 0.03 * open); // grosor del labio
+    const iwL = Math.max(1, wL - lipT * 1.4);
+    const iwR = Math.max(1, wR - lipT * 1.4);
+    const iyU = yU + lipT;
+    const iyL = yL - lipT * 0.9;
+    const cav = new Path2D();
+    cav.moveTo(-iwL, cornerL * 0.85 + lipT * 0.2);
+    cav.bezierCurveTo(-iwL * kx, iyU, iwR * kx, iyU, iwR, cornerR * 0.85 + lipT * 0.2);
+    cav.bezierCurveTo(iwR * kx + ax, iyL, -iwL * kx + ax, iyL, -iwL, cornerL * 0.85 + lipT * 0.2);
+    cav.closePath();
+    const cg = ctx.createRadialGradient(0, (iyU + iyL) * 0.5, 0, 0, (iyU + iyL) * 0.5, Math.max(iwL, iwR));
+    cg.addColorStop(0, '#000000');
+    cg.addColorStop(0.7, theme.dark);
+    cg.addColorStop(1, mixHex(theme.dark, color, 0.2));
+    ctx.fillStyle = cg;
+    ctx.globalAlpha = wakeA * (0.55 + 0.4 * k);
+    ctx.fill(cav);
+    // Lengua / fondo iluminado: elipse tenue abajo, hace la boca 3D.
+    if (k > 0.35) {
+      ctx.globalAlpha = wakeA * 0.28 * (k - 0.35) * (1 - round * 0.5);
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.ellipse(ax * 0.5, iyL - (iyL - iyU) * 0.22, Math.max(1, Math.min(iwL, iwR) * 0.55), Math.max(1, (iyL - iyU) * 0.18), 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = wakeA;
+  }
+
+  // Labio apretado: línea central oscura entre los labios.
+  if (press > 0.25 && open < 0.2) {
+    ctx.globalAlpha = wakeA * clamp((press - 0.25) / 0.5, 0, 1) * 0.7;
+    ctx.strokeStyle = theme.dark;
+    ctx.lineWidth = R * 0.028;
     ctx.beginPath();
-    ctx.moveTo(-iw, curv * 0.5);
-    ctx.quadraticCurveTo(0, curv * 0.9 - ih, iw, curv * 0.5);
-    ctx.quadraticCurveTo(0, curv * 0.9 + ih, -iw, curv * 0.5);
-    ctx.closePath();
-    ctx.fill();
+    ctx.moveTo(-w * 0.8, curv * 0.35 + cornerL * 0.4);
+    ctx.quadraticCurveTo(0, curv * 0.55, w * 0.8, curv * 0.35 + cornerR * 0.4);
+    ctx.stroke();
+    ctx.globalAlpha = wakeA;
+  }
+
+  // Comisuras: puntos de brillo que rematan la sonrisa amplia, pegados al extremo del labio
+  // (centrados sobre la comisura, no separados) y con halo cian para que no floten como puntos grises sueltos.
+  const ca = clamp((smile - 0.55) / 0.7, 0, 1);
+  if (ca > 0.01) {
+    const dy = -R * 0.02;
+    const r = R * (0.024 + 0.02 * ca);
+    const dot = new Path2D();
+    dot.arc(-wL - R * 0.005, cornerL + dy, r, 0, Math.PI * 2);
+    dot.arc(wR + R * 0.005, cornerR + dy, r, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 6;
+    ctx.globalAlpha = wakeA * ca * 0.9;
+    ctx.fill(dot);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = theme.core;
+    ctx.globalAlpha = wakeA * ca * 0.7;
+    ctx.fill(dot);
   }
 
   ctx.restore();

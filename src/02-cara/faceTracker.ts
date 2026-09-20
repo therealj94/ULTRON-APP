@@ -1,11 +1,24 @@
-// Real-Time Optical Face & Presence Tracker for ULTRON Desk Kiosk
-// Automatically tracks user's head & body spatial position and recognizes objects/gestures.
+/**
+ * Tracker óptico de RESPALDO (sin modelo): centroide de luminancia + movimiento sobre un cuadro
+ * de 64×48. Solo se usa cuando MediaPipe no carga (offline, CDN caído, WebGL roto). No sabe
+ * distinguir una cara de una lámpara: por eso el motor real es `vision/mediapipe.ts`.
+ *
+ * Presencia honesta: `detected` exige ENERGÍA real (textura + movimiento sostenido, ver
+ * `vision/optico.ts`). Una sala vacía, una pared lisa o la cámara tapada dan `detected: false`
+ * siempre, aunque el cuadro sea claro: el respaldo no inventa un «llego» mientras carga el modelo.
+ *
+ * Se puede usar de dos maneras:
+ *  - `start(cb)` / `stop()`: bucle propio limitado a ~16 fps (compatibilidad).
+ *  - `paso(ts)`: un solo cuadro, para que `vision/motor.ts` lo llame desde su propio bucle.
+ */
 import { DetectedObject } from '../types';
+import type { Observacion } from './vision/escena';
+import { analizarCuadro, MemoriaMovimiento, tieneEnergia } from './vision/optico';
 
 export interface FaceTrackResult {
   detected: boolean;
-  x: number; // -1 (left) to +1 (right)
-  y: number; // -1 (top) to +1 (bottom)
+  x: number; // -1 (izquierda) .. +1 (derecha), ya espejado
+  y: number; // -1 (arriba) .. +1 (abajo)
   confidence: number;
   faceWidth: number;
   fps: number;
@@ -13,8 +26,13 @@ export interface FaceTrackResult {
   distance: 'NEAR' | 'OPTIMAL' | 'FAR';
   objects: DetectedObject[];
   isWaving: boolean;
+  /** Ya no se estima (era una heurística inventada); se conserva por compatibilidad. */
   hasDrink: boolean;
 }
+
+const W = 64;
+const H = 48;
+const FPS_OBJETIVO = 16;
 
 export class OpticalFaceTracker {
   private video: HTMLVideoElement | null = null;
@@ -28,17 +46,19 @@ export class OpticalFaceTracker {
   private smoothY = 0;
   private prevFrameData: Uint8ClampedArray | null = null;
   private frameCount = 0;
-  private lastFpsTime = performance.now();
-  private currentFps = 60;
+  private lastFpsTime = 0;
+  private lastStep = 0;
+  private currentFps = 0;
 
-  // Gesture analysis state
   private waveMotionHistory: number[] = [];
-  private drinkDetectedFrames = 0;
+  private ultimo: FaceTrackResult | null = null;
+  private readonly movimiento = new MemoriaMovimiento();
+  private tsActual = 0;
 
   constructor() {
     this.canvas = document.createElement('canvas');
-    this.canvas.width = 64;
-    this.canvas.height = 48;
+    this.canvas.width = W;
+    this.canvas.height = H;
     this.ctx = this.canvas.getContext('2d', { willReadFrequently: true });
   }
 
@@ -58,210 +78,154 @@ export class OpticalFaceTracker {
       cancelAnimationFrame(this.animId);
       this.animId = null;
     }
+    this.prevFrameData = null;
+    this.waveMotionHistory = [];
+    this.movimiento.reiniciar();
+  }
+
+  public get fps() {
+    return this.currentFps;
   }
 
   private loop = () => {
     if (!this.isRunning) return;
-
-    this.frameCount++;
     const now = performance.now();
-    if (now - this.lastFpsTime >= 1000) {
-      this.currentFps = Math.round((this.frameCount * 1000) / (now - this.lastFpsTime));
-      this.frameCount = 0;
-      this.lastFpsTime = now;
+    if (now - this.lastStep >= 1000 / FPS_OBJETIVO) {
+      const r = this.paso(now);
+      if (r && this.onTrackCallback) this.onTrackCallback(r);
     }
-
-    if (this.video && this.video.readyState >= 2 && this.ctx) {
-      this.processVideoFrame();
-    }
-
     this.animId = requestAnimationFrame(this.loop);
   };
 
-  private processVideoFrame() {
-    if (!this.video || !this.ctx) return;
-    const w = this.canvas.width;
-    const h = this.canvas.height;
-
-    // Draw downsampled video frame
-    this.ctx.drawImage(this.video, 0, 0, w, h);
-
-    try {
-      const imgData = this.ctx.getImageData(0, 0, w, h);
-      const data = imgData.data;
-
-      let totalWeight = 0;
-      let sumX = 0;
-      let sumY = 0;
-
-      // Quadrant motion trackers for gestures & object detection
-      let upperMotion = 0;
-      let lowerCenterObjectEnergy = 0;
-
-      const prev = this.prevFrameData;
-      const hasPrev = prev && prev.length === data.length;
-
-      for (let y = 4; y < h - 4; y += 2) {
-        for (let x = 4; x < w - 4; x += 2) {
-          const idx = (y * w + x) * 4;
-          const r = data[idx];
-          const g = data[idx + 1];
-          const b = data[idx + 2];
-
-          // Face/skin luminance bias (warmer/higher luminance foreground)
-          const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-          let weight = lum > 65 && lum < 240 ? lum * 0.45 : 10;
-
-          // Motion weighting
-          let diff = 0;
-          if (hasPrev) {
-            diff = Math.abs(r - prev[idx]) + Math.abs(g - prev[idx + 1]) + Math.abs(b - prev[idx + 2]);
-            if (diff > 25) {
-              weight += diff * 1.8;
-            }
-
-            // Upper quadrants motion (raising/waving hand)
-            if (y < h * 0.5 && (x < w * 0.35 || x > w * 0.65)) {
-              upperMotion += diff;
-            }
-          }
-
-          // Drink / Cup detection bias in lower-center area (high saturation or distinct contrast object)
-          if (y > h * 0.45 && y < h * 0.85 && x > w * 0.25 && x < w * 0.75) {
-            const sat = Math.max(r, g, b) - Math.min(r, g, b);
-            if (sat > 40 || lum > 190) {
-              lowerCenterObjectEnergy += sat + lum * 0.2;
-            }
-          }
-
-          // Center bias so empty background doesn't jerk
-          const dx = (x - w / 2) / (w / 2);
-          const dy = (y - h / 2) / (h / 2);
-          const centerFactor = Math.max(0.2, 1 - (dx * dx + dy * dy) * 0.35);
-
-          const finalWeight = weight * centerFactor;
-          totalWeight += finalWeight;
-          sumX += x * finalWeight;
-          sumY += y * finalWeight;
-        }
-      }
-
-      // Save for next frame differencing
-      if (!this.prevFrameData || this.prevFrameData.length !== data.length) {
-        this.prevFrameData = new Uint8ClampedArray(data);
-      } else {
-        this.prevFrameData.set(data);
-      }
-
-      // Waving hand calculation
-      this.waveMotionHistory.push(upperMotion);
-      if (this.waveMotionHistory.length > 10) this.waveMotionHistory.shift();
-      const avgWaveMotion = this.waveMotionHistory.reduce((a, b) => a + b, 0) / this.waveMotionHistory.length;
-      const isWaving = avgWaveMotion > 280;
-
-      // Drink / beverage detection
-      const hasDrink = lowerCenterObjectEnergy > 3800;
-      if (hasDrink) this.drinkDetectedFrames++;
-      else this.drinkDetectedFrames = Math.max(0, this.drinkDetectedFrames - 1);
-
-      if (totalWeight > 450) {
-        const rawCentroidX = sumX / totalWeight;
-        const rawCentroidY = sumY / totalWeight;
-
-        // Invert X because user webcam is mirrored
-        const normX = -((rawCentroidX / w) * 2 - 1);
-        const normY = (rawCentroidY / h) * 2 - 1;
-
-        // Smooth with exponential filter for buttery organic look
-        this.smoothX += (normX - this.smoothX) * 0.16;
-        this.smoothY += (normY - this.smoothY) * 0.16;
-
-        // Spatial presence determination
-        const spatialZone: 'LEFT' | 'CENTER' | 'RIGHT' =
-          this.smoothX < -0.25 ? 'LEFT' : this.smoothX > 0.25 ? 'RIGHT' : 'CENTER';
-
-        const rawWidth = Math.min(1, totalWeight / (w * h * 45));
-        const distance: 'NEAR' | 'OPTIMAL' | 'FAR' =
-          rawWidth > 0.45 ? 'NEAR' : rawWidth < 0.18 ? 'FAR' : 'OPTIMAL';
-
-        // Detect objects list for the HUD
-        const detectedObjects: DetectedObject[] = [
-          {
-            id: 'obj_person',
-            label: 'PERSON',
-            confidence: Math.min(99.2, 88 + (totalWeight / (w * h * 40)) * 10),
-            bbox: {
-              x: Math.max(0, (1 - normX) / 2 - 0.2),
-              y: Math.max(0, (normY + 1) / 2 - 0.25),
-              width: 0.4,
-              height: 0.5,
-            },
-            spatialZone,
-            distance,
-          },
-        ];
-
-        if (isWaving) {
-          detectedObjects.push({
-            id: 'obj_wave',
-            label: 'WAVING_HAND',
-            confidence: 94.8,
-            bbox: { x: normX > 0 ? 0.7 : 0.1, y: 0.2, width: 0.2, height: 0.25 },
-            spatialZone: normX > 0 ? 'RIGHT' : 'LEFT',
-            distance: 'OPTIMAL',
-          });
-        }
-
-        if (this.drinkDetectedFrames > 3) {
-          detectedObjects.push({
-            id: 'obj_drink',
-            label: 'DRINK_CUP',
-            confidence: 89.6,
-            bbox: { x: 0.4, y: 0.55, width: 0.2, height: 0.3 },
-            spatialZone: 'CENTER',
-            distance: 'NEAR',
-          });
-        }
-
-        if (this.onTrackCallback) {
-          this.onTrackCallback({
-            detected: true,
-            x: Math.max(-1, Math.min(1, this.smoothX * 1.6)),
-            y: Math.max(-1, Math.min(1, this.smoothY * 1.3)),
-            confidence: Math.min(99.4, 88 + (totalWeight / (w * h * 50)) * 10),
-            faceWidth: rawWidth,
-            fps: this.currentFps,
-            spatialZone,
-            distance,
-            objects: detectedObjects,
-            isWaving,
-            hasDrink: this.drinkDetectedFrames > 3,
-          });
-        }
-      } else {
-        // Return to center slowly
-        this.smoothX += (0 - this.smoothX) * 0.05;
-        this.smoothY += (0 - this.smoothY) * 0.05;
-
-        if (this.onTrackCallback) {
-          this.onTrackCallback({
-            detected: false,
-            x: this.smoothX,
-            y: this.smoothY,
-            confidence: 0,
-            faceWidth: 0,
-            fps: this.currentFps,
-            spatialZone: 'CENTER',
-            distance: 'FAR',
-            objects: [],
-            isWaving: false,
-            hasDrink: false,
-          });
-        }
-      }
-    } catch {
-      // Security or cross-origin edge cases
+  /** Procesa un cuadro. Devuelve null si el video aún no tiene datos. */
+  public paso(ts: number = performance.now()): FaceTrackResult | null {
+    if (!this.video || this.video.readyState < 2 || !this.ctx) return null;
+    this.lastStep = ts;
+    this.tsActual = ts;
+    this.frameCount++;
+    if (ts - this.lastFpsTime >= 1000) {
+      this.currentFps = this.lastFpsTime ? Math.round((this.frameCount * 1000) / (ts - this.lastFpsTime)) : this.frameCount;
+      this.frameCount = 0;
+      this.lastFpsTime = ts;
     }
+    try {
+      this.ultimo = this.procesar();
+    } catch {
+      // seguridad / cross-origin
+      this.ultimo = null;
+    }
+    return this.ultimo;
+  }
+
+  /** Último resultado traducido al contrato de `vision/escena.ts`. */
+  public observacion(ts: number): Observacion {
+    const r = this.ultimo;
+    if (!r || !r.detected) return { ts, motor: 'optico', personas: 0, cara: null, saludo: r?.isWaving ?? false };
+    return {
+      ts,
+      motor: 'optico',
+      personas: 1,
+      cara: {
+        // r.x ya está espejado; deshacemos el espejo para entregar coordenadas de video 0..1
+        cx: (1 - r.x) / 2,
+        cy: (r.y + 1) / 2,
+        tam: Math.min(1, r.faceWidth * 1.2),
+        yaw: 0,
+        pitch: 0,
+        sonrisa: 0,
+        sorpresa: 0,
+        bocaAbierta: 0,
+        parpadeo: 0,
+      },
+      saludo: r.isWaving,
+    };
+  }
+
+  private procesar(): FaceTrackResult {
+    const ctx = this.ctx!;
+    const video = this.video!;
+    ctx.drawImage(video, 0, 0, W, H);
+    const data = ctx.getImageData(0, 0, W, H).data;
+
+    const e = analizarCuadro(data, this.prevFrameData, W, H);
+    const { totalWeight, sumX, sumY, upperMotion } = e;
+    // Movimiento sostenido (varios cuadros con cambio real en los últimos 3 s): sin él no hay nadie.
+    const movimientoSostenido = this.movimiento.registrar(this.tsActual, e.conPrevio ? e.pixelesMovidos : 0);
+
+    if (!this.prevFrameData || this.prevFrameData.length !== data.length) this.prevFrameData = new Uint8ClampedArray(data);
+    else this.prevFrameData.set(data);
+
+    // Saludo: movimiento lateral alto sostenido y repetido (ventana de 10 cuadros ≈ 0.6 s)
+    this.waveMotionHistory.push(upperMotion);
+    if (this.waveMotionHistory.length > 10) this.waveMotionHistory.shift();
+    const avgWave = this.waveMotionHistory.reduce((a, b) => a + b, 0) / this.waveMotionHistory.length;
+    const picos = this.waveMotionHistory.filter((v) => v > 200).length;
+    const isWaving = avgWave > 280 && picos >= 4;
+
+    if (tieneEnergia(e, movimientoSostenido)) {
+      const rawCentroidX = sumX / totalWeight;
+      const rawCentroidY = sumY / totalWeight;
+      // Espejo: la cámara frontal se ve como espejo
+      const normX = -((rawCentroidX / W) * 2 - 1);
+      const normY = (rawCentroidY / H) * 2 - 1;
+      this.smoothX += (normX - this.smoothX) * 0.16;
+      this.smoothY += (normY - this.smoothY) * 0.16;
+
+      const spatialZone: FaceTrackResult['spatialZone'] = this.smoothX < -0.25 ? 'LEFT' : this.smoothX > 0.25 ? 'RIGHT' : 'CENTER';
+      const rawWidth = Math.min(1, totalWeight / (W * H * 45));
+      const distance: FaceTrackResult['distance'] = rawWidth > 0.45 ? 'NEAR' : rawWidth < 0.18 ? 'FAR' : 'OPTIMAL';
+      const confidence = Math.min(80, 55 + (totalWeight / (W * H * 50)) * 10); // heurístico: nunca se vende como certeza
+
+      const objects: DetectedObject[] = [
+        {
+          id: 'obj_person',
+          label: 'PERSON',
+          confidence,
+          bbox: { x: Math.max(0, (1 - normX) / 2 - 0.2), y: Math.max(0, (normY + 1) / 2 - 0.25), width: 0.4, height: 0.5 },
+          spatialZone,
+          distance,
+        },
+      ];
+      if (isWaving) {
+        objects.push({
+          id: 'obj_wave',
+          label: 'WAVING_HAND',
+          confidence: 60,
+          bbox: { x: normX > 0 ? 0.7 : 0.1, y: 0.2, width: 0.2, height: 0.25 },
+          spatialZone: normX > 0 ? 'RIGHT' : 'LEFT',
+          distance: 'OPTIMAL',
+        });
+      }
+
+      return {
+        detected: true,
+        x: Math.max(-1, Math.min(1, this.smoothX * 1.6)),
+        y: Math.max(-1, Math.min(1, this.smoothY * 1.3)),
+        confidence,
+        faceWidth: rawWidth,
+        fps: this.currentFps,
+        spatialZone,
+        distance,
+        objects,
+        isWaving,
+        hasDrink: false,
+      };
+    }
+
+    this.smoothX += (0 - this.smoothX) * 0.05;
+    this.smoothY += (0 - this.smoothY) * 0.05;
+    return {
+      detected: false,
+      x: this.smoothX,
+      y: this.smoothY,
+      confidence: 0,
+      faceWidth: 0,
+      fps: this.currentFps,
+      spatialZone: 'CENTER',
+      distance: 'FAR',
+      objects: [],
+      isWaving: false,
+      hasDrink: false,
+    };
   }
 }
-
