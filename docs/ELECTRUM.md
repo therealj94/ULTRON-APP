@@ -44,8 +44,21 @@ sintetiza. La respuesta puede decir de quién viene, que es lo que un cliente t�
 | Legal minero | concesiones, vigencias, obligaciones, marco del país |
 | Economista minero | costos, AISC, VAN y TIR, ley de corte, valuación |
 
-El enrutador es determinista (tabla de disparo por tema) y además el modelo puede pedir a uno por su
-nombre. Eso lo hace predecible y probable con pruebas.
+El enrutador es determinista (tabla de disparo por tema) y además se puede pedir a uno por su nombre
+(«dr, póngame al geólogo»), que manda sobre la tabla. Convoca **como mucho dos**: con tres o más, el
+system se llena de reglas que se contradicen y la respuesta sale a comité.
+
+Cada especialista lleva, además de sus reglas, **el error clásico de su oficio** que tiene que
+corregir cuando lo ve: el geólogo vigila que nadie llame reserva a un recurso inferido; el civil, que
+nadie diseñe una presa de relaves «provisional»; el economista, que no se presente un valor in situ
+como si fuera el valor del proyecto.
+
+Una trampa que encontró una prueba, no el diseño: los nombres de las concesiones están llenos de
+accidentes geográficos. «Quebrada Seca» convocaba al ambiental por la palabra «quebrada». Los
+disparadores llevan términos del oficio, no del paisaje.
+
+A cada panel se le ofrecen **solo sus herramientas**. Un modelo con veinte delante elige peor que uno
+con seis.
 
 ## Los datos: PostGIS en el nodo AWS
 
@@ -148,18 +161,67 @@ regalarlo.
 El mapa no es decorado: **se mueve solo cuando Dr Electrum habla**. Nombra una concesión y el mapa
 vuela hacia ella; explica un traslape y lo resalta. Eso es lo que separa una demo de una herramienta.
 
-## Las manos
+## El harness — **hecho y probado**
 
-El harness ya existe (`PEDIR_HERRAMIENTA:`) con `web`, `leer`, `sistema` y `ejecutor`. Se extiende:
+Se investigó antes de escribir, y dos hallazgos cambiaron el diseño:
 
-```
-PEDIR_HERRAMIENTA: mapa <volar a … | mostrar capa … | medir …>
-PEDIR_HERRAMIENTA: catastro <consulta por nombre, titular, municipio o mineral>
-PEDIR_HERRAMIENTA: gis <traslapes | área | distancia | punto dentro>
-PEDIR_HERRAMIENTA: calculo <cuenta de mina>      (ya existe, de lib/minas)
-PEDIR_HERRAMIENTA: expediente <buscar en los documentos subidos>
-PEDIR_HERRAMIENTA: informe <generar PDF>
-```
+- **Qwen3 ya habla Hermes de fábrica.** El formato `<tool_call>{…}</tool_call>` está en su propia
+  plantilla de chat: el modelo fue entrenado con él. El `PEDIR_HERRAMIENTA:` que teníamos era una
+  línea inventada por nosotros, y un modelo que emite el formato con el que fue entrenado se
+  equivoca muchísimo menos en los argumentos.
+- **Ollama acepta `tools` nativo** y devuelve `message.tool_calls` en array: varias herramientas a
+  la vez. El harness viejo hacía una por turno.
+
+`lib/agente/` habla los tres, en orden: nativo, Hermes, y el viejo por los nodos que quedaron atrás.
+Todo sale normalizado; el bucle no sabe de dónde vino.
+
+El bucle trae lo que separa un agente útil de uno que da vueltas:
+
+- **Presupuesto** de rondas, llamadas y tiempo. Sin tope, un agente reintenta hasta que alguien lo
+  mata, y la espera la paga el usuario frente a una pantalla quieta.
+- **El error vuelve al modelo** con su motivo («falta el campo b»), así corrige en la ronda
+  siguiente. Un fallo mudo se convierte siempre en una respuesta inventada.
+- **Nada de repetir**: la misma llamada no se ejecuta dos veces; se le devuelve lo de antes.
+- Una herramienta colgada no cuelga el turno; las que escriben no corren con acceso de consulta.
+
+Probado con 31 casos y un modelo de mentira, porque el presupuesto agotado y la llamada repetida con
+un modelo de verdad no se disparan cuando uno quiere.
+
+## Las manos — **hechas**
+
+`server/electrum/manos.ts`. Cada resultado lleva **dos cosas**: `texto` corto para el modelo y `ui`
+para la pantalla. Por eso el mapa vuela a una concesión sin que el modelo escriba una coordenada.
+
+| Mano | Qué hace |
+|---|---|
+| `catastro_buscar` | concesiones por nombre, titular, expediente o municipio |
+| `catastro_vencimientos` | lo que vence y en cuántos días |
+| `catastro_en_punto` | qué concesión cubre unas coordenadas y qué hay cerca |
+| `gis_traslapes` | qué se pisa con qué, en hectáreas |
+| `gis_medir` | área y perímetro sobre el elipsoide, distancia entre puntos |
+| `mapa_volar` | mueve el mapa a una concesión y la resalta |
+| `mapa_capa` | pinta una capa entera |
+| `expediente_buscar` | busca en los documentos y devuelve el texto **con su página** |
+| `calculo_mina` | las cuentas, en código y con la fórmula a la vista |
+| `metales_spot` | precio del oro y la plata ahora |
+
+## Aprender de lo que se sube — **hecho**
+
+`server/electrum/aprender.ts`. Un archivo entra y sale convertido en algo consultable y citable.
+
+- **Geográfico** (.shp, .zip, .kml, .kmz, .geojson, .csv) → motor GIS → PostGIS, y recalcula
+  traslapes. Queda buscable, medible y el mapa puede volar a ello.
+- **Documento** (.pdf, .txt, .md) → texto → troceado **sin cruzar de página** → índice de texto
+  completo en español.
+
+El troceado decide la calidad de todo lo que venga después. Se corta por párrafos respetando el
+límite de página, con un solapamiento pequeño para que una frase partida siga encontrándose, y las
+tablas largas se parten por frases: cortar a ciegas cada N caracteres parte números por la mitad,
+que en un informe minero es lo único que no se puede partir. Un trozo nunca cruza de página, porque
+si cruza, la cita miente.
+
+Un PDF escaneado sin capa de texto se rechaza diciéndolo: «es un escaneo, necesito una versión con
+texto o pasarlo por reconocimiento óptico». No se finge que se leyó.
 
 ## Estado
 
@@ -168,10 +230,12 @@ PEDIR_HERRAMIENTA: informe <generar PDF>
 | Motor GIS: ingesta, reproyección, área elipsoidal, traslapes | **hecho y probado** |
 | Fixtures de catastro en UTM 16N | **hecho** |
 | Esquema PostGIS, instalador y capa de acceso | **hecho y probado contra una base real** |
-| Panel de especialistas + conocimiento Electrum | pendiente |
-| Manos nuevas en el harness | pendiente |
+| Harness agéntico (nativo + Hermes + legado, con presupuesto) | **hecho y probado** |
+| Panel de ocho especialistas con enrutado | **hecho y probado** |
+| Las manos (diez herramientas) | **hechas y probadas** |
+| Aprender de lo que se sube (GIS y documentos con página) | **hecho** |
 | App: mapa doble, cara que cede el paso, expedientes, informes | pendiente |
-| Indexado de documentos con cita a página | pendiente |
+
 | Generador de informes en PDF | base mínima ya existe (`lib/pdf.ts`) |
 | Voz con el API nuevo | adaptador pendiente, a la espera del API |
 | Bot de Telegram Dr Electrum FP | pendiente |
