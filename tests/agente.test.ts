@@ -299,3 +299,52 @@ test('el bucle', async (t) => {
     assert.equal((vistos[0][0] as any).content, 'Sos Electrum.');
   });
 });
+
+test('el harness avisa EN VIVO, no al final', async (t) => {
+  /*
+   * El gancho `alVivo` existía desde el principio, con un comentario que prometía que «el mapa no
+   * espera al final» — y nadie lo consumía, así que el mapa sí esperaba. Esta prueba fija la
+   * promesa: cada herramienta avisa cuando TERMINA ELLA, no cuando termina el turno.
+   */
+  const lento: Herramienta = {
+    nombre: 'lento',
+    descripcion: 'tarda a propósito',
+    esquema: { type: 'object', properties: {} },
+    plataformas: ['electrum'],
+    async ejecutar() {
+      await new Promise((r) => setTimeout(r, 60));
+      return { ok: true, texto: 'listo', ui: { accion: 'volar', geojson: {} } };
+    },
+  };
+
+  let ronda = 0;
+  const pensar = async () => {
+    ronda += 1;
+    if (ronda === 1) return { texto: '<tool_call>{"name":"lento","arguments":{}}</tool_call>' };
+    await new Promise((r) => setTimeout(r, 120)); // el modelo redactando la respuesta final
+    return { texto: 'Ya está.' };
+  };
+
+  const t0 = Date.now();
+  const avisos: Array<{ ms: number; ui: boolean }> = [];
+  const r = await correrAgente({
+    mensajes: [{ role: 'user', content: 'x' }],
+    herramientas: [lento],
+    ctx: CTX,
+    pensar,
+    alVivo: (_t, ui) => avisos.push({ ms: Date.now() - t0, ui: !!ui }),
+  });
+  const total = Date.now() - t0;
+
+  await t.test('avisó una vez, con los datos para el mapa', () => {
+    assert.equal(avisos.length, 1);
+    assert.equal(avisos[0].ui, true, 'el aviso trae la ui: es lo que mueve el mapa');
+  });
+
+  await t.test('avisó bastante antes de terminar el turno', () => {
+    // La herramienta tarda 60 ms y el modelo 120 ms más en redactar. El aviso tiene que llegar en
+    // ese hueco, no al final: si llegara al final, esta diferencia sería casi cero.
+    assert.ok(avisos[0].ms < total - 80, `avisó a +${avisos[0].ms}ms de un turno de ${total}ms`);
+    assert.match(r.texto, /Ya está/);
+  });
+});

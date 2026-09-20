@@ -264,6 +264,53 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
 });
 
 /**
+ * El turno, en vivo.
+ *
+ * El mapa de Dr Electrum se mueve cuando una herramienta le pasa geometría, y hasta ahora eso
+ * ocurría cuando el turno ENTERO terminaba: el catastro contestaba a los ocho segundos y la
+ * pantalla se enteraba a los cincuenta. La premisa de la plataforma es que el mapa se mueve
+ * mientras él habla, y sin esto era mentira.
+ *
+ * SSE y no WebSocket porque esto es un flujo de ida: el servidor cuenta, el navegador escucha.
+ * Un WebSocket añadiría una conexión bidireccional que nadie usa y que Render tendría que sostener.
+ */
+app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+  const mensaje = String(req.body?.mensaje || '').slice(0, 4000).trim();
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store');
+  // Sin esto, el proxy de Render acumula el flujo y lo entrega junto al final: SSE sin efecto.
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const enviar = (evento: string, datos: unknown) => {
+    if (!res.writableEnded) res.write(`event: ${evento}\ndata: ${JSON.stringify(datos)}\n\n`);
+  };
+
+  if (!mensaje) {
+    enviar('error', { error: 'Falta el mensaje.' });
+    return res.end();
+  }
+
+  try {
+    const id = identidadDe(req);
+    const salida = await turnoElectrum(
+      mensaje,
+      { quien: id?.persona.id || null, nivel: nivelDe(id, 'electrum'), plataforma: 'electrum', canal: 'mesa', mensaje },
+      (e) => {
+        if (e.panel) enviar('panel', { panel: e.panel });
+        if (e.herramienta) enviar('herramienta', e.herramienta);
+        if (e.ui) enviar('ui', e.ui);
+      }
+    );
+    enviar('fin', { texto: salida.texto, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin });
+  } catch (e: any) {
+    console.error('[electrum] turno en vivo falló:', String(e?.message || e).slice(0, 200));
+    enviar('error', { error: 'Se me cayó el turno. Volvé a preguntarme.' });
+  }
+  res.end();
+});
+
+/**
  * SUBIRLE ALGO AL CEREBRO desde la pantalla.
  *
  * Este hueco era el más grande que le quedaba a Dr Electrum: hasta ahora solo se le podía cargar el

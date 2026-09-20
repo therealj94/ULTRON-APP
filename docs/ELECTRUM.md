@@ -450,3 +450,35 @@ aun así es un cambio en una cara ya aprobada y en manos de la junta.
 `scripts/qa/electrum-movil.mjs` monta las pantallas con react-native-web y las fotografía. Un APK
 se construye en CI y tarda; revisar el diseño no puede depender de eso. Los módulos nativos se
 sustituyen por dobles (GPS, almacén seguro, audio) porque lo que se revisa es el diseño, no el GPS.
+
+
+## Lo que se mira mientras trabaja
+
+El turno va por SSE (`/api/electrum/turno/stream`). No es un adorno: **la premisa de la plataforma
+es que el mapa se mueve mientras él habla**, y sin esto era mentira. El catastro contestaba a los
+ocho segundos y la pantalla se enteraba a los cincuenta, cuando el turno entero terminaba.
+
+El gancho `alVivo` del harness existía desde el principio, con un comentario que decía «el mapa no
+espera al final» — y nadie lo consumía. Ahora sí: el panel de especialistas sale primero, cada
+herramienta se anuncia cuando termina ELLA, y la orden del mapa viaja en ese momento. Hay una
+prueba que lo fija: si el aviso empezara a llegar al final, falla.
+
+SSE y no WebSocket porque es un flujo de ida. Y el navegador lee el flujo a mano en vez de usar
+`EventSource`, porque `EventSource` solo hace GET y la pregunta va en el cuerpo: en la URL quedaría
+en los registros del servidor y en el historial.
+
+## Las normas, con su fecha
+
+Un asistente cuyo trabajo es corregir a la gente no puede corregirla con normas viejas. Lo que se
+actualizó tras revisarlo contra las fuentes:
+
+- **JORC**: la edición vigente es la de **2024**, que deroga todas las anteriores —incluida la de
+  2012, que es la que todavía cita medio mundo— y se alinea con la Plantilla Internacional de
+  CRIRSCO revisada en junio de 2024.
+- **NI 43-101 está en reemplazo**: en junio de 2025 los reguladores canadienses publicaron para
+  comentarios la derogación y sustitución completa de la norma; el plazo cerró en octubre de 2025 y
+  todavía no está adoptada. «Scoping study» sustituye a la PEA, «relevancia» sustituye a
+  «materialidad», y se exige declarar acuerdos con Pueblos Indígenas.
+- **Los plazos del GISTM ya vencieron** (agosto 2023 los depósitos de consecuencia extrema o muy
+  alta, agosto 2025 el resto). Eso cambia la pregunta: ya no es «¿piensan cumplirlo?» sino
+  «¿declararon conformidad, y si no, qué brechas y con qué plazo?».

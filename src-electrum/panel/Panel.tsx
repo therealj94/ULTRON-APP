@@ -142,6 +142,8 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
   const [vozActiva, setVozActiva] = useState(false);
   const [oyendo, setOyendo] = useState<'grabando' | 'oyendo' | ''>('');
   const pararGrabacion = useRef<(() => void) | null>(null);
+  /** Lo que está pasando AHORA. Se vacía al terminar, cuando pasa a ser parte del turno. */
+  const [enVivo, setEnVivo] = useState<{ panel: string; traza: Array<{ herramienta: string; ok: boolean; resumen: string }> }>({ panel: '', traza: [] });
   const hilo = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -154,12 +156,18 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
       if (!q || pensando) return;
       setTexto('');
       setTurnos((t) => [...t, { de: 'persona', texto: q }]);
+      setEnVivo({ panel: '', traza: [] });
       setPensando(true);
       onFace('THINKING');
       onTrabajo();
 
       try {
-        const r = await fetch('/api/electrum/turno', {
+        /*
+         * Se lee el flujo a mano en vez de usar EventSource porque EventSource solo hace GET, y la
+         * pregunta va en el cuerpo de un POST — meterla en la URL la dejaría en los registros del
+         * servidor y en el historial del navegador.
+         */
+        const r = await fetch('/api/electrum/turno/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...headersElectrum() },
           body: JSON.stringify({ mensaje: q }),
@@ -169,18 +177,50 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
           setTurnos((t) => [...t, { de: 'electrum', texto: SIN_PUERTA }]);
           return;
         }
-        const j = await r.json();
-        if (Array.isArray(j.ui) && j.ui.length) onUi(j.ui);
-        if (j.emocion) onEmocion(j.emocion);
-        onFace('SPEAKING');
-        if (vozActiva && j.texto) void decirEnVoz(j.texto, j.emocion, headersElectrum());
-        const conInforme = (Array.isArray(j.ui) ? j.ui : []).find((d: any) => d?.informe)?.informe;
-        setTurnos((t) => [...t, { de: 'electrum', texto: j.texto || j.error || 'No pude contestar.', panel: j.panel, traza: j.traza, informe: conInforme }]);
+        if (!r.body) throw new Error('sin flujo');
+
+        const lector = r.body.getReader();
+        const dec = new TextDecoder();
+        let resto = '';
+        let evento = '';
+        let terminado = false;
+
+        while (!terminado) {
+          const { done, value } = await lector.read();
+          if (done) break;
+          resto += dec.decode(value, { stream: true });
+          // SSE separa los mensajes con una línea en blanco; lo que quede a medias espera.
+          const trozos = resto.split('\n\n');
+          resto = trozos.pop() || '';
+          for (const trozo of trozos) {
+            for (const linea of trozo.split('\n')) {
+              if (linea.startsWith('event: ')) evento = linea.slice(7).trim();
+              else if (linea.startsWith('data: ')) {
+                const d = JSON.parse(linea.slice(6));
+                if (evento === 'panel') setEnVivo((v) => ({ ...v, panel: d.panel }));
+                else if (evento === 'herramienta') setEnVivo((v) => ({ ...v, traza: [...v.traza, d] }));
+                else if (evento === 'ui') onUi([d]); // el mapa se mueve YA, no al final
+                else if (evento === 'error') {
+                  setTurnos((t) => [...t, { de: 'electrum', texto: d.error }]);
+                  onFace('CONCERNED');
+                  terminado = true;
+                } else if (evento === 'fin') {
+                  onFace('SPEAKING');
+                  if (d.emocion) onEmocion(d.emocion);
+                  if (vozActiva && d.texto) void decirEnVoz(d.texto, d.emocion, headersElectrum());
+                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza }]);
+                  terminado = true;
+                }
+              }
+            }
+          }
+        }
       } catch {
         onFace('CONCERNED');
         setTurnos((t) => [...t, { de: 'electrum', texto: 'No alcancé el servidor. Revisá la conexión y volvé a preguntarme.' }]);
       } finally {
         setPensando(false);
+        setEnVivo({ panel: '', traza: [] });
         setTimeout(() => onFace('IDLE'), 1200);
       }
     },
@@ -293,7 +333,26 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
 
             {oyendo === 'grabando' && <div className="font-mono text-[11px] text-[#D9705A]">te escucho… tocá «Parar» cuando termines</div>}
             {oyendo === 'oyendo' && <div className="font-mono text-[11px] text-[#6C7F89]">pasando a texto…</div>}
-            {pensando && <div className="font-mono text-[11px] text-[#6C7F89]">pensando…</div>}
+            {pensando && (
+              <div className="space-y-1">
+                {enVivo.panel && (
+                  <div className="font-mono text-[10px] tracking-[0.16em] uppercase" style={{ color: AMBAR }}>
+                    {enVivo.panel}
+                  </div>
+                )}
+                {enVivo.traza.map((h, i) => (
+                  <div key={i} className="font-mono text-[10px] text-[#6C7F89] flex gap-1.5">
+                    <span style={{ color: h.ok ? AMBAR : '#D9705A' }}>{h.ok ? '·' : '×'}</span>
+                    <span className="truncate">
+                      {h.herramienta} — {h.resumen}
+                    </span>
+                  </div>
+                ))}
+                <div className="font-mono text-[11px] text-[#6C7F89]">
+                  {enVivo.traza.length ? 'redactando…' : 'pensando…'}
+                </div>
+              </div>
+            )}
           </div>
 
           <form

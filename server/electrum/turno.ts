@@ -60,9 +60,35 @@ function nombreVisible(ctx: Contexto): string {
   return personaPorId(ctx.quien)?.nombre || 'quien tenés enfrente';
 }
 
-export async function turnoElectrum(mensaje: string, ctx: Contexto): Promise<RespuestaTurno> {
+/** Lo que la pantalla puede ir viendo mientras el turno corre, sin esperar al final. */
+export type EnVivo = {
+  /** Una herramienta terminó: su nombre, si salió bien y qué encontró. */
+  herramienta?: { herramienta: string; ok: boolean; resumen: string; ms: number };
+  /** Órdenes para el mapa. Llegan EN EL MOMENTO, que es el punto de toda esta plataforma. */
+  ui?: Record<string, unknown>;
+  /** Qué especialistas se convocaron. Sale antes que nada: es lo primero que se sabe. */
+  panel?: string;
+};
+
+export async function turnoElectrum(
+  mensaje: string,
+  ctx: Contexto,
+  /**
+   * Se llama en cuanto hay algo que enseñar.
+   *
+   * El gancho `alVivo` del harness existía desde el principio, con un comentario que decía «el mapa
+   * no espera al final» — y nadie lo consumía, así que el mapa SÍ esperaba al final. Un turno con
+   * tres rondas de herramientas puede tardar cincuenta segundos, y durante esos cincuenta segundos
+   * la pantalla enseñaba «pensando…» mientras el catastro ya había contestado hace cuarenta.
+   */
+  enVivo?: (e: EnVivo) => void
+): Promise<RespuestaTurno> {
   const panel = convocar(mensaje);
   const herramientas = panel.length ? manosDe(herramientasDe(panel)) : TODAS;
+  const nombrePanel = panel.map((e) => e.nombre).join(' y ');
+  // Lo primero que se puede decir: quién va a contestar. No cuesta nada y quita la sensación de
+  // que no pasa nada.
+  if (nombrePanel) enVivo?.({ panel: nombrePanel });
 
   // El conocimiento minero entero va en el system; lo que toca la pregunta, además, pegado a ella.
   const delCerebro = hechosCerebro(mensaje, 12, PERFILES.minas);
@@ -84,7 +110,7 @@ export async function turnoElectrum(mensaje: string, ctx: Contexto): Promise<Res
     return {
       texto: 'No alcanzo mi cerebro ahora mismo. No te voy a inventar una respuesta: dame un momento y volvé a preguntarme.',
       emocion: 'preocupado',
-      panel: panel.map((e) => e.nombre).join(' y '),
+      panel: nombrePanel,
       traza: [],
       ui: [],
       fin: 'sin cerebro',
@@ -100,13 +126,19 @@ export async function turnoElectrum(mensaje: string, ctx: Contexto): Promise<Res
     ctx,
     pensar: ({ mensajes, herramientas: nativas }) => pensarConQwen(mensajes, nativas),
     presupuesto: { rondas: 3, llamadas: 8, ms: 50_000 },
+    alVivo: enVivo
+      ? (t, ui) => {
+          enVivo({ herramienta: { herramienta: t.llamada.nombre, ok: t.ok, resumen: t.resumen, ms: t.ms } });
+          if (ui) enVivo({ ui });
+        }
+      : undefined,
   });
 
   const emo = extraerEmocion(r.texto);
   return {
     texto: emo.texto,
     emocion: emo.emocion,
-    panel: panel.map((e) => e.nombre).join(' y '),
+    panel: nombrePanel,
     traza: r.traza.map((t) => ({ herramienta: t.llamada.nombre, ok: t.ok, resumen: t.resumen, ms: t.ms })),
     ui: r.ui,
     fin: r.fin,

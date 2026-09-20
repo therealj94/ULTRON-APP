@@ -57,8 +57,11 @@ RECURSOS Y RESERVAS
 - Un recurso Inferido NO se convierte en reserva. Es la regla que más se viola en la publicidad minera.
 - Recursos y reservas no se suman: la reserva ya está contenida en el recurso. Sumarlas es doble conteo.
 - NI 43-101: norma canadiense. Exige una Persona Calificada (QP) que firma. Es la que citan las empresas listadas en Toronto.
-- JORC: norma australasiática, firma una Persona Competente. SAMREC: Sudáfrica. S-K 1300: Estados Unidos, vigente desde 2021. Todas cuelgan de CRIRSCO y son equivalentes en espíritu.
-- Escalera de estudios: PEA o evaluación económica preliminar (puede usar Inferido, no sirve para decidir inversión), Prefactibilidad (PFS, ya exige reservas), Factibilidad (FS, precisión de mas menos 15%).
+- NI 43-101 ESTÁ EN REEMPLAZO. En junio de 2025 los reguladores canadienses (CSA) publicaron para comentarios la derogación y sustitución completa de la norma, del formulario 43-101F1 y de su política de acompañamiento; el plazo de comentarios cerró el 10 de octubre de 2025. Es la mayor revisión en más de una década y todavía NO está adoptada. Si alguien te pregunta por la norma vigente, la vigente sigue siendo la actual; si te preguntan por lo que viene, es esto.
+- Qué cambia en esa propuesta: el umbral de «materialidad» pasa a uno más amplio de «relevancia» (lo que un inversor razonable consideraría importante); «scoping study» sustituye a «evaluación económica preliminar» (PEA) y «exploration target» a «target for further exploration»; se define «life of mine plan»; y se exige declarar permisos, acuerdos o negociaciones con Pueblos Indígenas, titulares de derechos y comunidades.
+- JORC: norma australasiática, firma una Persona Competente. LA EDICIÓN VIGENTE ES LA DE 2024, que deroga todas las anteriores (incluida la de 2012, que es la que todavía cita medio mundo) y alinea sus definiciones con la Plantilla Internacional de CRIRSCO revisada en junio de 2024. Si alguien te enseña un informe «JORC 2012», no está mal por sí solo —depende de cuándo se emitió— pero conviene preguntar la fecha.
+- SAMREC: Sudáfrica. S-K 1300: Estados Unidos, obligatoria desde el primer ejercicio que empezara en o después del 1 de enero de 2021; sustituyó a la vieja Industry Guide 7 y también cuelga de CRIRSCO. Todas son equivalentes en espíritu.
+- Escalera de estudios: PEA o evaluación económica preliminar (puede usar Inferido, NO sirve para decidir una inversión), Prefactibilidad (PFS, ya exige reservas), Factibilidad (FS, precisión de mas menos 15%). Ojo con el nombre: la propuesta canadiense de 2025 rebautiza la PEA como «scoping study», pero la trampa es la misma de siempre — un estudio que usa Inferido no respalda una decisión de inversión, se llame como se llame.
 - Estimación: modelo de bloques con kriging ordinario o inverso de la distancia; se acotan los valores extremos (top cut) para que una muestra excepcional no infle todo el bloque.
 - Ley de corte (cutoff): la ley mínima a la que un bloque paga su propio procesamiento. Todo lo que está por debajo es estéril aunque tenga metal.
 
@@ -107,6 +110,8 @@ ECONOMÍA MINERA
 SEGURIDAD Y AMBIENTE
 - Depósito de relaves (TSF) es el mayor riesgo de una mina. Tipos de crecimiento: aguas arriba (el más barato y el que falla), línea central, aguas abajo (el más seguro).
 - Mariana 2015 y Brumadinho 2019 en Brasil fueron fallas de presas aguas arriba con cientos de muertos. De ahí salió el GISTM, el estándar global de gestión de relaves de 2020.
+- LOS PLAZOS DEL GISTM YA VENCIERON, y eso cambia la pregunta. Los miembros del ICMM se comprometieron a que sus depósitos de consecuencia «extrema» o «muy alta» estuvieran conformes al 5 de agosto de 2023, y TODOS los demás que no estén en cierre seguro, al 5 de agosto de 2025. O sea que hoy ya no se pregunta «¿piensan cumplir el GISTM?», se pregunta «¿declararon conformidad, y si no, qué brechas y con qué plazo?». Los miembros del ICMM publican esas declaraciones depósito por depósito.
+- El GISTM obliga a nombrar un Ingeniero de Registro (EoR) y una persona responsable en la empresa. Si nadie sabe decirte quién es el EoR de una presa, eso ya es una respuesta.
 - Drenaje ácido de roca (DAR o AMD): la pirita expuesta al aire y al agua genera ácido sulfúrico y moviliza metales. Es un pasivo que dura siglos y se previene, no se cura.
 - Código Internacional de Manejo de Cianuro (ICMI): certificación voluntaria de transporte, uso y destrucción del cianuro.
 - ICMM: consejo internacional de minería y metales; sus principios son el piso de conducta que exige la banca.
