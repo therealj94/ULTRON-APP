@@ -3,6 +3,7 @@
  */
 
 import crypto from 'node:crypto';
+import { nivelDe, padron } from './acceso';
 import { dataUrlDeImagen, esImagenNombre, esPdfNombre } from './leer-pdf';
 import { esAudioNombre, mimeDeAudio } from './oido';
 
@@ -24,47 +25,56 @@ function listaIds(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
+/**
+ * Quién puede escribirle al bot de ULTRON.
+ *
+ * Sale del PADRÓN, no de una lista de cuatro nombres clavada en el archivo. Si José le da acceso a
+ * alguien en `ULTRON_PADRON` con su id de Telegram, esa persona puede escribirle al bot; antes el
+ * padrón decía que sí y el bot seguía diciendo que no, que es peor que no tener padrón.
+ *
+ * Los `TELEGRAM_ALLOWED_CHAT_IDS` y el `TELEGRAM_CHAT_ID` de siempre se respetan: son los chats de
+ * grupo, que no son personas y por eso no viven en el padrón.
+ */
 export function chatsPermitidos(): string[] {
-  const extra = listaIds(process.env.TELEGRAM_ALLOWED_CHAT_IDS);
+  const grupos = [...listaIds(process.env.TELEGRAM_ALLOWED_CHAT_IDS)];
   const uno = String(process.env.TELEGRAM_CHAT_ID || '').trim();
-  const jose = [
-    ...listaIds(process.env.TELEGRAM_JOSE_CHAT_ID),
-    ...listaIds(process.env.TELEGRAM_JOSE_USER_ID),
-    ...listaIds(process.env.TELEGRAM_JOSE_USER_IDS),
-  ];
-  const medardo = [
-    ...listaIds(process.env.TELEGRAM_MEDARDO_CHAT_ID),
-    ...listaIds(process.env.TELEGRAM_MEDARDO_USER_ID),
-    ...listaIds(process.env.TELEGRAM_MEDARDO_USER_IDS),
-  ];
-  const carlos = [
-    ...listaIds(process.env.TELEGRAM_CARLOS_CHAT_ID),
-    ...listaIds(process.env.TELEGRAM_CARLOS_USER_ID),
-    ...listaIds(process.env.TELEGRAM_CARLOS_USER_IDS),
-  ];
-  const mayra = [
-    ...listaIds(process.env.TELEGRAM_MAYRA_CHAT_ID),
-    ...listaIds(process.env.TELEGRAM_MAYRA_USER_ID),
-    ...listaIds(process.env.TELEGRAM_MAYRA_USER_IDS),
-  ];
-  return [...new Set([...extra, ...(uno ? [uno] : []), ...jose, ...medardo, ...carlos, ...mayra])];
+  if (uno) grupos.push(uno);
+  const gente = padron()
+    .filter((p) => nivelDe(p, 'ultron'))
+    .flatMap((p) => p.telegram);
+  return [...new Set([...grupos, ...gente])];
 }
 
 export function usuariosPermitidos(): string[] {
   return listaIds(process.env.TELEGRAM_ALLOWED_USER_IDS);
 }
 
+/**
+ * Si este update se atiende o se tira.
+ *
+ * El matiz de los GRUPOS. Telegram numera los chats de grupo, supergrupo y canal en negativo, y los
+ * privados con el mismo número que el usuario. Un id de persona en la lista autorizaba antes a esa
+ * persona ESCRIBIENDO DESDE CUALQUIER CHAT: si alguien mete el bot en un grupo suyo e invita a
+ * José, el turno se ejecutaba entero —herramientas y memoria incluidas— y solo al final fallaba al
+ * responder, porque `telegramResponder` sí comprueba el chat. O sea que un tercero podía meterle
+ * hechos a la memoria privada de José desde su propio grupo.
+ *
+ * Ahora un grupo tiene que estar en la lista por su propio id. El chat privado sigue funcionando
+ * igual, porque ahí el id del chat ES el de la persona.
+ */
 export function telegramAutorizado(chatId: string | number, userId?: string | number): boolean {
   const chats = chatsPermitidos();
   if (!chats.length) return false;
   const cid = String(chatId);
   const uid = String(userId || '');
-  if (chats.includes(cid) || (uid && chats.includes(uid))) {
-    const users = usuariosPermitidos();
-    if (!users.length) return true;
-    return users.includes(uid);
-  }
-  return false;
+
+  const esGrupo = cid.startsWith('-');
+  const entra = esGrupo ? chats.includes(cid) : chats.includes(cid) || (!!uid && chats.includes(uid));
+  if (!entra) return false;
+
+  const users = usuariosPermitidos();
+  if (!users.length) return true;
+  return users.includes(uid);
 }
 
 export function telegramWebhookSecretOk(header: unknown): boolean {
@@ -81,6 +91,15 @@ export function telegramPublicBase(): string {
   return (process.env.PUBLIC_BASE || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
 }
 
+/** Quién manda y quién consulta, según el padrón de hoy. */
+function lineaDeAccesos(): string {
+  const gente = padron().filter((p) => nivelDe(p, 'ultron'));
+  const mandan = gente.filter((p) => nivelDe(p, 'ultron') === 'mando').map((p) => p.nombre);
+  const resto = gente.filter((p) => nivelDe(p, 'ultron') !== 'mando').map((p) => p.nombre);
+  if (!resto.length) return `Mando: ${mandan.join(' y ') || 'nadie'}. Nadie más cambia el sistema.`;
+  return `${resto.join(' y ')}: consulta. Pueden usar el taller; no cambian el sistema (sin redespliegue, sin mantenimiento, sin ejecutor). Eso es de ${mandan.join(' y ') || 'nadie'}.`;
+}
+
 export function ayudaTelegram(): string {
   return [
     'ULTRON privado. Solo este chat de la junta.',
@@ -88,8 +107,8 @@ export function ayudaTelegram(): string {
     'Si me subes una foto o un PDF, los leo. No invento lo que no está en el archivo. Imagen como archivo también vale.',
     'Si me mandas una nota de voz, la oigo, la transcribo y te contesto por escrito. Audio de vuelta solo si lo pides (`/audio`).',
     'Urgente: «avísame urgente…» o «llámanos por telegram». Suena el teléfono y, si hay voz, te mando nota. El bot no hace llamada de teléfono; eso es Twilio (aún sin clave).',
-    'Memoria: una para José, otra para Medardo, otra para Carlos y otra para Mayra, en S3. Corto, mediano y largo por persona. No mezclo las conversaciones. «esto» es lo último que hablamos. Si no está en el cerebro, busco en internet sin que me lo pidas.',
-    'Carlos y Mayra: consulta. Pueden usar el taller; no cambian el sistema (sin redespliegue, sin mantenimiento, sin ejecutor).',
+    'Memoria: una por persona, en S3. Corto, mediano y largo. No mezclo las conversaciones. «esto» es lo último que hablamos. Si no está en el cerebro, busco en internet sin que me lo pidas.',
+    lineaDeAccesos(),
     'Ejemplos: «cómo está el sistema», «mándame audio del sistema», «busca noticias de oro», «anota que mañana hay junta», «haz un pdf del resumen».',
   ].join('\n');
 }
@@ -105,7 +124,8 @@ export function recordarTelegram(chatId: string, user: string, ultron: string) {
   hilos.set(String(chatId), [...prev, { rol: 'user', texto: user }, { rol: 'ultron', texto: ultron }].slice(-24));
 }
 
-async function archivoTelegram(token: string, fileId: string): Promise<Buffer | null> {
+/** Baja un archivo de Telegram con el token del bot que lo recibió. Los dos bots la usan. */
+export async function archivoTelegram(token: string, fileId: string): Promise<Buffer | null> {
   const r = await fetch(`https://api.telegram.org/bot${token}/getFile?file_id=${encodeURIComponent(fileId)}`, {
     signal: AbortSignal.timeout(12000),
   });
@@ -117,7 +137,11 @@ async function archivoTelegram(token: string, fileId: string): Promise<Buffer | 
   return Buffer.from(await f.arrayBuffer());
 }
 
-export async function parsearUpdateTelegram(update: any): Promise<TgParsed | null> {
+/**
+ * Lee un update de Telegram. El token se puede pasar aparte porque ahora hay DOS bots —ULTRON FP y
+ * Dr Electrum FP— y los archivos de cada uno solo se bajan con el token de su propio bot.
+ */
+export async function parsearUpdateTelegram(update: any, tokenBot?: string): Promise<TgParsed | null> {
   const msg = update?.message || update?.edited_message;
   if (!msg) return null;
   const chatId = String(msg.chat?.id ?? '');
@@ -126,7 +150,7 @@ export async function parsearUpdateTelegram(update: any): Promise<TgParsed | nul
   const nombre = String(msg.from?.first_name || msg.from?.username || 'jefe').slice(0, 40);
   const texto = String(msg.text || msg.caption || '').trim();
   const comando = texto.startsWith('/') ? texto.split(/\s+/)[0].split('@')[0].toLowerCase() : undefined;
-  const token = process.env.TELEGRAM_BOT_TOKEN || '';
+  const token = (tokenBot ?? process.env.TELEGRAM_BOT_TOKEN ?? '').trim();
   let imageDataUrl: string | undefined;
   let audio: TgParsed['audio'];
   let documento: TgParsed['documento'];

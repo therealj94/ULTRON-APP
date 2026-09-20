@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { esHechoLargo, semillaLarga } from '../server/hechos';
-import { MIEMBROS, nombreDe, puedeCambiarSistema, quienEs, type MiembroId } from './junta';
+import { miembrosUltron, nombreDe, puedeCambiarSistema, quienEs, type MiembroId } from './junta';
 import { bucketMemoria, s3GetJson, s3Listo, s3PutJson } from './s3';
 import { capasHilo } from './conversacion';
 
@@ -38,14 +38,11 @@ let lastS3: string = 'aún no sincronizado';
 let writing: Promise<void> = Promise.resolve();
 
 function vacio(): Almacen {
+  const perfiles: Record<MiembroId, PerfilMem> = {};
+  for (const id of Object.keys(miembrosUltron())) perfiles[id] = { corta: [], larga: [] };
   return {
     version: 1,
-    perfiles: {
-      jose: { corta: [], larga: [] },
-      medardo: { corta: [], larga: [] },
-      carlos: { corta: [], larga: [] },
-      mayra: { corta: [], larga: [] },
-    },
+    perfiles,
     junta: {
       larga: semillaLarga().map((x) => ({ hecho: x.hecho, t: x.t, quien: 'junta' as const, canal: 'sistema' as const })),
     },
@@ -58,7 +55,7 @@ function migrar(raw: any): Almacen {
   if (!raw || typeof raw !== 'object') return base;
   if (raw.version === 1 && raw.perfiles?.jose && raw.perfiles?.medardo) {
     const a = raw as Almacen;
-    for (const id of Object.keys(MIEMBROS) as MiembroId[]) {
+    for (const id of Object.keys(miembrosUltron())) {
       if (!a.perfiles[id]) a.perfiles[id] = { corta: [], larga: [] };
     }
     if (!Array.isArray(a.junta?.larga) || !a.junta.larga.length) a.junta = base.junta;
@@ -166,8 +163,14 @@ export function estadoMemoria(): { durable: boolean; via: 's3' | 'disco'; detall
   };
 }
 
+/**
+ * El perfil de alguien. Se crea al vuelo si no existía: el padrón se amplía desde el entorno, así
+ * que puede llegar un turno de una persona que todavía no tiene cajón. Antes eso devolvía
+ * `undefined` y el turno moría en el primer `.corta`.
+ */
 export function perfilDe(quien: MiembroId, store?: Almacen): PerfilMem {
   const a = store || cache || leerDisco();
+  if (!a.perfiles[quien]) a.perfiles[quien] = { corta: [], larga: [] };
   return a.perfiles[quien];
 }
 
@@ -181,7 +184,7 @@ export function promptMemoria(quien: MiembroId | null): string {
   const a = cache || leerDisco();
   const id = quien;
   const nombre = nombreDe(id);
-  const privada = id ? a.perfiles[id] : { corta: [], larga: [] };
+  const privada = (id && a.perfiles[id]) || { corta: [], larga: [] };
   const capas = capasHilo(privada.corta);
   const hechosYo = privada.larga.map((h) => `- ${h.hecho}`).join('\n');
   const hechosJunta = a.junta.larga.map((h) => `- ${h.hecho}`).join('\n');
@@ -266,7 +269,7 @@ export async function guardarHechoQuien(opts: {
     const juntaItem: HechoMem = { ...item, quien: 'junta' };
     a.junta.larga = [juntaItem, ...a.junta.larga.filter((x) => x.hecho !== hecho)].slice(0, MAX_LARGA);
   } else {
-    const p = a.perfiles[item.quien];
+    const p = a.perfiles[item.quien] || (a.perfiles[item.quien] = { corta: [], larga: [] });
     p.larga = [item, ...p.larga.filter((x) => x.hecho !== hecho)].slice(0, MAX_LARGA);
   }
   cache = a;
@@ -289,13 +292,13 @@ export function fotoMemoria(quien: MiembroId | null) {
     honesto: true as const,
     quien: id,
     nombre: nombreDe(id),
-    miembros: Object.values(MIEMBROS).map((m) => m.nombre),
+    miembros: Object.values(miembrosUltron()).map((m) => m.nombre),
     durable: st.durable,
     via: st.via,
     detalle: st.detalle,
     bucket: st.bucket ? bucketMemoria() : null,
     privada: id
-      ? { corta: a.perfiles[id].corta.slice(-40), larga: a.perfiles[id].larga }
+      ? { corta: (a.perfiles[id]?.corta || []).slice(-40), larga: a.perfiles[id]?.larga || [] }
       : { corta: [], larga: [] },
     junta: a.junta.larga,
     cambios: a.cambios.slice(-24),

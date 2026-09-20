@@ -6,6 +6,15 @@ import {defineConfig} from 'vite';
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    build: {
+      rollupOptions: {
+        // Dos aplicaciones, un despliegue: ULTRON FP en la raíz y Dr Electrum en /electrum.html.
+        input: {
+          main: path.resolve(__dirname, 'index.html'),
+          electrum: path.resolve(__dirname, 'electrum.html'),
+        },
+      },
+    },
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),

@@ -27,6 +27,17 @@ export type TouchZone = 'eyeL' | 'eyeR' | 'forehead' | 'mouth' | 'chin' | 'cheek
 type Props = {
   face: FaceState;
   mode?: Mode;
+  /**
+   * Color de la cara. Cian es ULTRON; Dr Electrum es ámbar.
+   *
+   * Sin esto, la app del doctor enseñaba la cara de ULTRON con otro nombre encima, que es
+   * exactamente lo que el resto del sistema se cuida de no hacer: dos cerebros con la misma firma
+   * visual son la misma cosa con dos rótulos. Por omisión cian, para que ULTRON no cambie.
+   *
+   * No manda siempre: el rojo del enojo, el sable y el modo GOLD siguen ganando, porque esos son
+   * estados del CUERPO y le pasan igual a las dos plataformas.
+   */
+  acento?: string;
   gazeX?: number;
   gazeY?: number;
   /** 0..1 nivel del micrófono → pulso al escuchar */
@@ -68,6 +79,24 @@ const MOUTH_DARK = '#02151B';
 /** Núcleo claro del ojo y su borde: dan el volumen del ojo lleno (la web lo hace con un degradado radial). */
 const IRIS_CLARO = '#D6F8FF';
 const IRIS_BORDE = 'rgba(3,58,76,0.55)';
+
+/**
+ * El brillo del iris, derivado del color de la cara.
+ *
+ * Era una constante pálida de cian (`#D6F8FF`). Sobre el iris ámbar de Dr Electrum dejaba de ser un
+ * reflejo y pasaba a ser un disco gris verdoso en mitad del ojo, como una catarata. Un reflejo es
+ * el MISMO color con más luz, no otro color: por eso se calcula mezclando el acento con blanco.
+ */
+function aclarar(hex: string, cuanto: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return IRIS_CLARO;
+  const n = parseInt(m[1], 16);
+  const mezcla = (c: number) => Math.round(c + (255 - c) * cuanto);
+  const r = mezcla((n >> 16) & 255);
+  const g = mezcla((n >> 8) & 255);
+  const b = mezcla(n & 255);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
 const TEETH = '#D9FBFF';
 const EDGE_PX = 44;
 
@@ -163,6 +192,7 @@ function visema(level01: number): { open: number; round: number } {
 export function UltronFace({
   face,
   mode = 'GUARDIAN',
+  acento,
   gazeX = 0,
   gazeY = 0,
   level = 0,
@@ -189,7 +219,13 @@ export function UltronFace({
   const gap = D * 0.55;
   const firing = attack === 'blaster';
   const saberOn = attack === 'saber';
-  const accent = face === 'ANGRY' || firing ? RED : saberOn ? SABER : mode === 'GOLD' ? GOLD : CYAN;
+  const accent = face === 'ANGRY' || firing ? RED : saberOn ? SABER : mode === 'GOLD' ? GOLD : acento || CYAN;
+  /*
+   * Con el cian se usa la constante de siempre, no la derivada. La calculada da #B8F8FF y la de
+   * ULTRON es #D6F8FF: la diferencia es mínima y aun así es un cambio en una cara que ya está
+   * aprobada y en manos de la junta. El cálculo entra solo donde no había nada.
+   */
+  const irisClaro = useMemo(() => (accent === CYAN ? IRIS_CLARO : aclarar(accent, 0.72)), [accent]);
   const dim = face === 'SLEEPING';
   const lids = LIDS[face] || NEUTRAL;
   const lidsRef = useRef(lids);
@@ -891,7 +927,7 @@ export function UltronFace({
           <View style={[styles.iris, { width: D, height: D, borderRadius: D / 2, backgroundColor: accent, opacity: dim ? 0.18 : 0.9 }]} />
           <View style={[styles.ring, { width: D, height: D, borderRadius: D / 2, borderWidth: Math.max(2, ring * 0.32), borderColor: IRIS_BORDE, opacity: dim ? 0.3 : 0.5 }]} />
           {/* respiración de luz al hablar/escuchar */}
-          <Animated.View pointerEvents="none" style={[styles.innerGlow, { width: D * 0.9, height: D * 0.9, borderRadius: D * 0.45, backgroundColor: IRIS_CLARO, opacity: eyeGlowOp }]} />
+          <Animated.View pointerEvents="none" style={[styles.innerGlow, { width: D * 0.9, height: D * 0.9, borderRadius: D * 0.45, backgroundColor: irisClaro, opacity: eyeGlowOp }]} />
           {/* lo que se mueve con la mirada: núcleo claro, anillo interior y los dos destellos */}
           <Animated.View
             pointerEvents="none"
@@ -900,8 +936,8 @@ export function UltronFace({
               { width: D, height: D, transform: [{ translateX: pupilTx }, { translateY: pupilTy }, { scale: pupilScaleTotal }] },
             ]}
           >
-            <View style={[styles.innerGlow, { width: D * 0.62, height: D * 0.62, borderRadius: D * 0.31, backgroundColor: IRIS_CLARO, opacity: dim ? 0.05 : 0.42 }]} />
-            <View style={[styles.innerGlow, { width: D * 0.34, height: D * 0.34, borderRadius: D * 0.17, backgroundColor: IRIS_CLARO, opacity: dim ? 0.05 : 0.5 }]} />
+            <View style={[styles.innerGlow, { width: D * 0.62, height: D * 0.62, borderRadius: D * 0.31, backgroundColor: irisClaro, opacity: dim ? 0.05 : 0.42 }]} />
+            <View style={[styles.innerGlow, { width: D * 0.34, height: D * 0.34, borderRadius: D * 0.17, backgroundColor: irisClaro, opacity: dim ? 0.05 : 0.5 }]} />
             <View style={[styles.ring, { width: D * 0.56, height: D * 0.56, borderRadius: D * 0.28, borderWidth: Math.max(2, D * 0.014), borderColor: IRIS_BORDE, opacity: dim ? 0.15 : 0.4 }]} />
             <View style={[styles.glint, { width: D * 0.2, height: D * 0.2, borderRadius: D * 0.1, left: D * 0.2, top: D * 0.2, opacity: dim ? 0.2 : 0.95 }]} />
             <View style={[styles.glint, { width: D * 0.085, height: D * 0.085, borderRadius: D * 0.043, left: D * 0.58, top: D * 0.56, opacity: dim ? 0.15 : 0.8 }]} />

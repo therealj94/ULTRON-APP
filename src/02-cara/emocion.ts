@@ -23,6 +23,14 @@ export const CARA_POR_EMOCION: Record<Emocion, FaceState> = {
   travieso: 'WINK',
   canto: 'SING',
   oracion: 'PRAY',
+  escepticismo: 'CURIOSITY',
+  alarma: 'CONCERNED',
+  // La cara no tiene un estado para «firme» y no se lo voy a inventar mapeándolo a ANGRY: el
+  // doctor se pasaría el día pareciendo molesto cada vez que sostiene un límite del oficio, que
+  // es varias veces por conversación. Queda serena y la firmeza la lleva la voz, que es donde de
+  // verdad se oye.
+  firme: 'IDLE',
+  seco: 'IDLE',
 };
 
 export function caraDeEmocion(e: Emocion): FaceState {

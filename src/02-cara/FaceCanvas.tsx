@@ -96,10 +96,21 @@ const EXPRESION_DUR: Record<Emocion, number> = {
   travieso: 2.2,
   canto: 4.0,
   oracion: 5.0, // y se sostiene mientras la cara base sea PRAY
+  escepticismo: 2.6,
+  alarma: 2.4,
+  firme: 2.2,
+  seco: 0, // sin capa: la sequedad es la ausencia de gesto, no un gesto más
 };
 
 const GESTO_POR_EMOCION: Record<Emocion, Gesto | null> = {
   neutral: null,
+  // Las cuatro nuevas reusan gestos que la cara ya sabe hacer. Dr Electrum comparte CUERPO con
+  // ULTRON: inventarle cejas propias sería duplicar el motor de la cara para ganar un matiz que
+  // la voz ya lleva mucho mejor.
+  escepticismo: 'curioso', // la ceja que se levanta
+  alarma: 'preocupado',
+  firme: 'molesto', // la mandíbula que se aprieta, sin llegar a enojo
+  seco: null,
   feliz: 'feliz',
   risa: 'risa',
   sorpresa: 'sorpresa',
@@ -834,16 +845,40 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     let lastTime = performance.now();
     let running = false;
 
+    /*
+     * La cara se dimensiona a SU CAJA, no a la ventana.
+     *
+     * Medía `window.innerWidth/innerHeight`, lo cual funciona mientras la cara ocupe la pantalla
+     * entera —que es el caso en ULTRON FP— y se rompe en cuanto se la mete en un recuadro: en
+     * Electrum, con la cara encogida en una esquina de 132 px, seguía dibujando a tamaño de ventana
+     * y tapaba media interfaz. Con la caja como referencia, los dos casos salen bien: a pantalla
+     * completa la caja ES la ventana.
+     */
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const w = window.innerWidth;
-      const h = window.innerHeight;
+      /*
+       * Se mide el LIENZO, no su caja.
+       *
+       * Antes se medía el padre y además se le escribía el tamaño en `style`, pisando el `w-full
+       * h-full` de la clase. Con la cara encogida sobre el mapa eso dejaba un lienzo de 130 px
+       * colocado en la esquina de una caja de 132: la cara salía desplazada un píxel arriba y a la
+       * izquierda del marco ámbar, con un filo negro fuera del borde redondeado. A pantalla
+       * completa no se veía; en 132 px, sí.
+       *
+       * Midiendo el propio lienzo, el CSS decide la forma y esto solo ajusta la resolución del
+       * búfer. Una sola fuente de verdad en vez de dos peleándose.
+       */
+      const r = canvas.getBoundingClientRect();
+      const w = Math.max(1, Math.round(r.width || canvas.parentElement?.clientWidth || window.innerWidth));
+      const h = Math.max(1, Math.round(r.height || canvas.parentElement?.clientHeight || window.innerHeight));
+      if (canvas.width === Math.round(w * dpr) && canvas.height === Math.round(h * dpr)) return;
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
     };
     window.addEventListener('resize', resize);
+    // La caja puede cambiar sin que cambie la ventana (la cara que cede el paso hace exactamente eso).
+    const observador = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null;
+    if (observador) observador.observe(canvas);
     resize();
 
     /** Sacudida de risa compartida por la cara LAUGH y la expresión 'risa'. */
@@ -1451,6 +1486,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       document.removeEventListener('visibilitychange', onVis);
       stop();
       window.removeEventListener('resize', resize);
+      observador?.disconnect();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

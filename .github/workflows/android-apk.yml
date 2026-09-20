@@ -18,8 +18,29 @@ jobs:
   apk:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # A nivel de TRABAJO, no de paso. `expo-constants` instala una tarea de Gradle que REGENERA
+    # `assets/app.config` en cada compilación, o sea que `app.config.js` se evalúa DOS veces: una
+    # en el prebuild y otra dentro de `assembleRelease`. Con la variable solo en el prebuild, la
+    # APK del doctor salía con el paquete, el icono y el nombre correctos —y con la configuración
+    # de ULTRON dentro—, así que al abrirla arrancaba la mesa de la junta. Compilaba, instalaba y
+    # estaba mal, que es la peor forma de estar mal.
+    env:
+      ULTRON_APP: ${{ matrix.variante }}
     outputs:
       version: ${{ steps.version.outputs.version }}
+    # Dos aplicaciones del mismo proyecto. Una matriz y no dos ficheros: así no se desincronizan,
+    # que es lo que pasa siempre con dos flujos copiados. Cada variante corre en su propio runner
+    # con su propio checkout, de modo que el `android/` que genera una no toca el de la otra.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variante: ultron
+            marca: ULTRON-FP
+            titulo: ULTRON FP
+          - variante: electrum
+            marca: DR-ELECTRUM-FP
+            titulo: Dr Electrum FP
     steps:
       - uses: actions/checkout@v4
 
@@ -49,6 +70,11 @@ jobs:
         env:
           CI: "1"
           EXPO_NO_TELEMETRY: "1"
+        # Sin `--clean` y sin condicionales: `mobile/android` está en .gitignore, así que en un
+        # checkout limpio no existe y el prebuild lo genera entero de cero para la variante que
+        # toque. Llegué a escribir aquí una rama con `--clean` «porque el android ya generado no
+        # cambia de paquete» — cierto en local, falso en CI, y una condición con una explicación
+        # equivocada es peor que ninguna condición.
         run: npx expo prebuild -p android --no-install
 
       # Release = JS empaquetado + Hermes. Firmado con la keystore debug del template
@@ -68,27 +94,58 @@ jobs:
           VERSION=$(node -p "require('./app.json').expo.version")
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           mkdir -p out
-          cp android/app/build/outputs/apk/release/app-release.apk "out/ULTRON-FP-${VERSION}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "out/${{ matrix.marca }}-${VERSION}.apk"
           ls -la out
+
+      # Comprobar el APK por dentro, no confiar en que salió bien.
+      #
+      # Un APK que compila puede llevar la configuración de la otra app: pasó exactamente eso, y
+      # ni el typecheck ni Gradle ni el tamaño del fichero lo delataron. Esto lo abre y mira.
+      - name: Comprobar el APK
+        working-directory: mobile
+        run: node ../scripts/qa/comprobar-apk.mjs "out/${{ matrix.marca }}-${{ steps.version.outputs.version }}.apk" "${{ matrix.variante }}"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: ULTRON-FP-apk
+          name: ${{ matrix.marca }}-apk
           path: mobile/out/*.apk
           if-no-files-found: error
           retention-days: 30
 
-      # En main, el APK se publica como Release para tener un enlace de descarga directo y permanente:
+  # El Release va aparte, después de las dos. Dentro de la matriz, en main los dos trabajos
+  # intentaban crear la MISMA etiqueta a la vez; aquí se juntan los dos APK y se publica una sola
+  # vez, que además es lo que quiere quien descarga: las dos apps en el mismo sitio.
+  publicar:
+    needs: apk
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: apks
+          merge-multiple: true
+
+      - name: Ver qué llegó
+        run: ls -la apks
+
+      # Enlace de descarga directo y permanente:
       #   https://github.com/<owner>/<repo>/releases/latest/download/ULTRON-FP-<version>.apk
-      - name: Publicar Release (solo main)
-        if: github.ref == 'refs/heads/main'
+      - name: Publicar Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: ULTRON FP ${{ steps.version.outputs.version }}
+          tag_name: v${{ needs.apk.outputs.version }}
+          name: ULTRON FP y Dr Electrum FP ${{ needs.apk.outputs.version }}
           body: |
-            APK de ULTRON FP ${{ steps.version.outputs.version }} compilado por GitHub Actions desde `${{ github.sha }}`.
-            Instalación: abrir el .apk en el teléfono y permitir «instalar apps desconocidas». Si había una versión de EAS, desinstalarla primero (firma distinta).
-          files: mobile/out/*.apk
+            APKs compilados por GitHub Actions desde `${{ github.sha }}`.
+
+            **ULTRON FP** es la mesa de la junta. **Dr Electrum FP** es la estación minera. Son
+            paquetes distintos, así que se pueden instalar las dos a la vez sin que una desinstale
+            a la otra.
+
+            Instalación: abrir el .apk en el teléfono y permitir «instalar apps desconocidas». Si
+            había una versión de EAS, desinstalarla primero (firma distinta).
+          files: apks/*.apk
           make_latest: true

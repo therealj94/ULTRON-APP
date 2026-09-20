@@ -31,8 +31,15 @@ describe('Telegram inbound privado', () => {
     process.env.TELEGRAM_CHAT_ID = '5673842734';
     process.env.TELEGRAM_MAYRA_USER_ID = '1997178235';
     assert.equal(telegramAutorizado('1997178235', '1997178235'), true);
-    assert.equal(telegramAutorizado('-100grupo', '1997178235'), true);
+    // CAMBIO DE CONDUCTA (ver lib/telegram-in.ts): un grupo ya NO pasa por llevar dentro a alguien
+    // de la junta. Tiene que estar listado por su propio id en TELEGRAM_ALLOWED_CHAT_IDS. Antes el
+    // turno se ejecutaba entero en un grupo ajeno —y le escribía en la memoria privada de la
+    // persona— para después no poder responder, porque telegramResponder sí miraba el chat.
+    assert.equal(telegramAutorizado('-100grupo', '1997178235'), false);
     assert.equal(telegramAutorizado('999', '999'), false);
+    // Un grupo listado a propósito sí pasa: para eso existe la variable.
+    process.env.TELEGRAM_ALLOWED_CHAT_IDS = '-100grupo';
+    assert.equal(telegramAutorizado('-100grupo', '1997178235'), true);
     for (const [k, v] of Object.entries(prev)) {
       if (v !== undefined) process.env[k] = v;
       else delete process.env[k];
@@ -66,7 +73,8 @@ describe('Telegram inbound privado', () => {
     process.env.TELEGRAM_CHAT_ID = '5673842734';
     process.env.TELEGRAM_CARLOS_USER_ID = '1017697215';
     assert.equal(telegramAutorizado('1017697215', '1017697215'), true);
-    assert.equal(telegramAutorizado('-100grupo', '1017697215'), true);
+    // Mismo caso: el grupo no está listado, así que no entra.
+    assert.equal(telegramAutorizado('-100grupo', '1017697215'), false);
     assert.equal(telegramAutorizado('999', '999'), false);
     for (const [k, v] of Object.entries(prev)) {
       if (v !== undefined) process.env[k] = v;
@@ -81,7 +89,8 @@ describe('Telegram inbound privado', () => {
     process.env.TELEGRAM_CHAT_ID = '5673842734';
     process.env.TELEGRAM_MEDARDO_USER_ID = '5273354540';
     assert.equal(telegramAutorizado('5273354540', '5273354540'), true);
-    assert.equal(telegramAutorizado('-100grupo', '5273354540'), true);
+    // Mismo caso: el grupo no está listado, así que no entra.
+    assert.equal(telegramAutorizado('-100grupo', '5273354540'), false);
     assert.equal(telegramAutorizado('999', '999'), false);
     for (const [k, v] of Object.entries(prev)) {
       if (v !== undefined) process.env[k] = v;

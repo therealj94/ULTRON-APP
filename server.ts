@@ -26,6 +26,21 @@ import { hechoCerebro } from './lib/cerebro';
 import { herramientaActiva, perfilActivo } from './lib/perfiles';
 import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
+import { spotMetal } from './lib/mercado';
+import { turnoElectrum } from './server/electrum/turno';
+import { guardarInforme, informeCartera, informeConcesion, tomarInforme } from './server/electrum/informe';
+import { aprender as aprenderElectrum } from './server/electrum/aprender';
+import {
+  electrumBotListo,
+  electrumWebhookSecretOk,
+  genteDeElectrum,
+  procesarElectrumTelegram,
+  registrarWebhookElectrum,
+} from './server/electrum/telegram';
+import { identidadDe, exigirPlataforma } from './server/seguridad';
+import { puedeEscribir } from './lib/acceso';
+import { nivelDe } from './lib/acceso';
+import { consulta as consultaElectrum, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
   cargarMemoria,
@@ -169,6 +184,213 @@ app.get('/api/nodo/listo', async (_req, res) => {
  * «ULTRON FP» escrito a mano: así el mismo binario se presenta como Genesis Core o como Cerebro de
  * Minas según ULTRON_PERFIL, sin dos copias de la interfaz.
  */
+/* ------------------------------------------------------------------ Dr Electrum FP */
+
+/** El turno de Electrum: panel de especialistas + harness con manos + órdenes para el mapa. */
+app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+  const mensaje = String(req.body?.mensaje || '').slice(0, 4000).trim();
+  if (!mensaje) return res.status(400).json({ error: 'Falta el mensaje.', honesto: true });
+  try {
+    // Antes esto era `quienVerificado(req)`, con la PETICIÓN donde va el CUERPO: leía
+    // `req.telegramUserId`, que no existe, así que Dr Electrum nunca supo con quién hablaba y el
+    // nivel salía siempre nulo. Fallaba hacia el lado seguro, pero fallaba.
+    const id = identidadDe(req);
+    const salida = await turnoElectrum(mensaje, {
+      quien: id?.persona.id || null,
+      nivel: nivelDe(id, 'electrum'),
+      plataforma: 'electrum',
+      canal: 'mesa',
+      mensaje,
+    });
+    res.json({ ...salida, honesto: true });
+  } catch (e: any) {
+    console.error('[electrum] turno falló:', String(e?.message || e).slice(0, 200));
+    res.status(500).json({ error: 'Se me cayó el turno. Volvé a preguntarme.', honesto: true });
+  }
+});
+
+/** Qué hay cargado: capas del mapa y expedientes indexados. */
+app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), async (_req, res) => {
+  if (!hayBaseElectrum()) return res.json({ capas: [], documentos: [], catastro: false, honesto: true });
+  try {
+    const capas = await consultaElectrum(
+      `SELECT id, nombre, formato, origen_crs, entidades FROM capa ORDER BY subido DESC LIMIT 40`
+    );
+    const documentos = await consultaElectrum(
+      `SELECT id, nombre, tipo, paginas FROM documento ORDER BY subido DESC LIMIT 60`
+    );
+    res.json({ capas, documentos, catastro: true, honesto: true });
+  } catch (e: any) {
+    res.status(503).json({ error: String(e?.message || e).slice(0, 160), honesto: true });
+  }
+});
+
+/** Estado del catastro, para el panel de sistema. */
+app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  const id = identidadDe(req);
+  res.json({
+    ...(await saludElectrum()),
+    quien: id?.persona.nombre || null,
+    nivel: nivelDe(id, 'electrum'),
+    bot: electrumBotListo(),
+    padron: genteDeElectrum(),
+    honesto: true,
+  });
+});
+
+/**
+ * SUBIRLE ALGO AL CEREBRO desde la pantalla.
+ *
+ * Este hueco era el más grande que le quedaba a Dr Electrum: hasta ahora solo se le podía cargar el
+ * catastro por Telegram o por línea de comandos. O sea que la plataforma que existe para enseñar un
+ * catastro no tenía forma de recibir uno por su propia pantalla.
+ *
+ * El archivo llega como cuerpo crudo, no como JSON con base64: un shapefile comprimido de un
+ * departamento entero pasa de los veinte megas, y en base64 crece un tercio más. Tampoco se usa
+ * multipart —ni la dependencia que haría falta— porque acá sube UN archivo, no un formulario.
+ *
+ * Exige nivel de ESCRITURA. Es lo que separa mirar de alimentar: quien consulta puede ver todo el
+ * catastro y no puede cambiarlo.
+ */
+app.post(
+  '/api/electrum/subir',
+  exigirPlataforma('electrum'),
+  limitar(20),
+  express.raw({ type: () => true, limit: '64mb' }),
+  async (req, res) => {
+    const id = identidadDe(req);
+    if (!puedeEscribir(id, 'electrum')) {
+      return res.status(403).json({
+        error: 'Tu acceso es de consulta: podés mirarlo todo, pero no cargar al cerebro. Pedile a José nivel de trabajo.',
+        code: 'nivel_insuficiente',
+        honesto: true,
+      });
+    }
+    const nombre = String(req.query.nombre || req.headers['x-archivo'] || '').trim().slice(0, 200);
+    if (!nombre) return res.status(400).json({ error: 'Falta el nombre del archivo.', honesto: true });
+    const datos = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (datos.length < 80) return res.status(400).json({ error: 'El archivo llegó vacío.', honesto: true });
+
+    try {
+      const r = await aprenderElectrum(nombre, datos, { subidoPor: id?.persona.nombre });
+      return res.json({
+        clase: r.clase,
+        dicho: r.dicho,
+        avisos: r.avisos,
+        capaId: (r as any).capaId ?? null,
+        honesto: true,
+      });
+    } catch (e: any) {
+      console.error('[electrum] subir falló:', String(e?.message || e).slice(0, 200));
+      return res.status(500).json({ error: `Se me cayó leyendo «${nombre}». Volvé a mandarlo.`, honesto: true });
+    }
+  }
+);
+
+/**
+ * Oírle. Ruta propia por lo mismo que la voz: `/api/stt` está en la lista abierta de la APK, y un
+ * transcriptor abierto es otra factura con la puerta quitada.
+ */
+app.post('/api/electrum/oir', exigirPlataforma('electrum'), limitar(40), async (req, res) => {
+  const audio = bufferDeCualquier(req.body?.audio);
+  if (!audio || audio.length < 400) return res.status(400).json({ error: 'No me llegó audio.', honesto: true });
+  try {
+    const oido = await transcribirAudio({ audio, mime: String(req.body?.mime || 'audio/webm'), language: 'es' });
+    if (!oido.texto) return res.status(200).json({ texto: '', detalle: oido.detalle, via: oido.via, honesto: true });
+    return res.json({ texto: oido.texto, via: oido.via, honesto: true });
+  } catch (e: any) {
+    return res.status(502).json({ error: String(e?.message || e).slice(0, 160), honesto: true });
+  }
+});
+
+/**
+ * Pedir un informe desde la pantalla, con el mapa dentro.
+ *
+ * La captura del lienzo de MapLibre viaja en el cuerpo porque el servidor no tiene el mapa: el
+ * encuadre, las capas encendidas y el zoom son de quien está mirando. Por eso el lienzo se creó con
+ * `preserveDrawingBuffer`, que sin esto no sirve para nada.
+ */
+app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), async (req, res) => {
+  const id = identidadDe(req);
+  const quien = id?.persona.nombre || null;
+  const tipo = String(req.body?.tipo || 'concesion');
+
+  let mapa: Buffer | undefined;
+  const crudo = String(req.body?.mapa || '');
+  if (crudo.startsWith('data:image/jpeg;base64,')) {
+    const b = Buffer.from(crudo.slice(crudo.indexOf(',') + 1), 'base64');
+    // Más de seis megas no es un mapa: es alguien probando qué pasa.
+    if (b.length > 80 && b.length < 6 * 1024 * 1024) mapa = b;
+  }
+
+  try {
+    const opts = { quien, lectura: req.body?.lectura ? String(req.body.lectura) : undefined, mapa };
+    const r =
+      tipo === 'cartera'
+        ? await informeCartera(opts)
+        : await informeConcesion(
+            { id: req.body?.concesion_id != null ? Number(req.body.concesion_id) : undefined, nombre: req.body?.nombre ? String(req.body.nombre) : undefined },
+            opts
+          );
+    if ('error' in r) return res.status(404).json({ error: r.error, honesto: true });
+    const guardado = guardarInforme(r, quien);
+    return res.json({ id: guardado, nombre: r.nombre, url: `/api/electrum/informe/${guardado}`, bytes: r.pdf.length, dicho: r.dicho, honesto: true });
+  } catch (e: any) {
+    console.error('[electrum] informe falló:', String(e?.message || e).slice(0, 200));
+    return res.status(500).json({ error: 'Se me cayó armando el informe. Volvé a pedírmelo.', honesto: true });
+  }
+});
+
+/**
+ * La voz de Dr Electrum. Ruta propia, no la de ULTRON: no por capricho de simetría, sino porque
+ * `/api/tts` está en la lista de rutas abiertas de la APK y un sintetizador abierto es una factura
+ * de ElevenLabs con la puerta quitada.
+ */
+app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+  const texto = String(req.body?.texto || '').slice(0, 1200).trim();
+  if (!texto) return res.status(400).json({ error: 'Falta el texto.', honesto: true });
+  try {
+    const out = await hablar({ texto, emocion: req.body?.emocion, plataforma: 'electrum' });
+    if (!out) return res.status(503).json({ error: 'No tengo voz ahora mismo.', honesto: true });
+    res.setHeader('Content-Type', out.contentType);
+    res.setHeader('Cache-Control', 'private, max-age=600');
+    res.setHeader('X-Motor', out.motor);
+    return res.end(out.audio);
+  } catch (e: any) {
+    console.warn('[electrum] voz', String(e?.message || e).slice(0, 160));
+    return res.status(502).json({ error: 'Se me trabó la voz.', honesto: true });
+  }
+});
+
+/** Recoger un informe ya armado. Vive media hora: describe el catastro de este momento. */
+app.get('/api/electrum/informe/:id', exigirPlataforma('electrum'), limitar(60), (req, res) => {
+  const r = tomarInforme(String(req.params.id));
+  if (!r) {
+    return res.status(404).json({ error: 'Ese informe ya no está. Se guardan media hora porque describen el catastro del momento; pedime otro.', honesto: true });
+  }
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${r.nombre}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.end(r.pdf);
+});
+
+/**
+ * El bot Dr Electrum FP. Puerta propia, secreto propio: un update firmado con el secreto de ULTRON
+ * rebota aquí, y al revés. Que los dos bots vivan en el mismo proceso no los hace el mismo bot.
+ */
+app.post(['/api/electrum/telegram/webhook', '/api/electrum/telegram/webhook/'], limitar(40), async (req, res) => {
+  if (!electrumWebhookSecretOk(req.headers['x-telegram-bot-api-secret-token'])) {
+    return res.status(401).json({ ok: false, honesto: true });
+  }
+  res.json({ ok: true, honesto: true });
+  try {
+    const r = await procesarElectrumTelegram(req.body);
+    if (r.estado === 'rechazado') console.warn('[electrum] telegram', r.estado, r.chatId);
+  } catch (e: any) {
+    console.warn('[electrum] telegram', String(e?.message || e).slice(0, 180));
+  }
+});
+
 app.get('/api/perfil', limitar(60), (_req, res) => {
   const p = perfilActivo();
   res.json({
@@ -427,15 +649,7 @@ function sinCerebro(datos: string[]): string {
   return 'Ahora mismo no alcanzo mi cerebro. No te voy a inventar una respuesta: dame un momento y volvé a preguntarme.';
 }
 
-async function spotMetal(sym: 'XAU' | 'XAG') {
-  return cached(`metal:${sym}`, 30000, async () => {
-    const r = await fetch(`https://api.gold-api.com/price/${sym}`, { signal: AbortSignal.timeout(8000) });
-    const j: any = await r.json();
-    const price = j.price || j.bid || j.ask;
-    if (!price) throw new Error('gold-api sin price');
-    return { sym, usd: Number(price), fuente: 'gold-api.com', updatedAt: j.updatedAt || null };
-  });
-}
+
 
 async function usdHnl() {
   return cached('hnl', 60000, async () => {
@@ -1333,6 +1547,13 @@ async function startServer() {
     registrarWebhookTelegram()
       .then((r) => console.log('[ULTRON] telegram webhook', r.detalle))
       .catch((e) => console.warn('[ULTRON] telegram webhook', String(e?.message || e).slice(0, 160)));
+    if (electrumBotListo()) {
+      registrarWebhookElectrum()
+        .then((r) => console.log('[electrum] telegram webhook', r.detalle))
+        .catch((e) => console.warn('[electrum] telegram webhook', String(e?.message || e).slice(0, 160)));
+    } else {
+      console.log('[electrum] bot apagado: falta ELECTRUM_BOT_TOKEN o ELECTRUM_WEBHOOK_SECRET.');
+    }
     iniciarCentinela(180_000);
     cargarMemoria()
       .then(() => console.log('[ULTRON] memoria', estadoMemoria().detalle))
