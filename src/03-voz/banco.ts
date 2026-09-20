@@ -3,11 +3,13 @@
  * Se graban con `scripts/grabar-banco.mjs`. Las canciones largas se grabaron en tomas únicas.
  */
 
-export type Clip = { id: string; file: string; keys: RegExp; cara?: 'HAPPY' | 'LAUGH' | 'SING' | 'SAD' | 'TIRED' | 'SURPRISED' | 'ANGRY' | 'PURR' };
+export type Clip = { id: string; file: string; keys: RegExp; cara?: 'HAPPY' | 'LAUGH' | 'SING' | 'SAD' | 'TIRED' | 'SURPRISED' | 'ANGRY' | 'PURR' | 'PRAY' };
 
 export const BANCO: Clip[] = [
   // Canciones (tomas únicas: habla + canto + risa + comentario)
   { id: 'jesus', file: '/voz/jesus.mp3', keys: /jes[uú]s|generaci[oó]n (12|doce)|conocer a jes/i, cara: 'SING' },
+  { id: 'waymaker', file: '/voz/waymaker.mp3', keys: /way ?maker|sinach/i, cara: 'SING' },
+  { id: 'oracion', file: '/voz/oracion.mp3', keys: /^oracion$|^oraci[oó]n$/i, cara: 'PRAY' },
   { id: 'bruno', file: '/voz/bruno.mp3', keys: /bruno|die with a smile|si el mundo|canta\s*5/i, cara: 'SING' },
   { id: 'bohemian', file: '/voz/bohemian.mp3', keys: /bohemian|rhapsody|queen|\bcanta\s*1\b/i, cara: 'SING' },
   { id: 'ligera', file: '/voz/ligera.mp3', keys: /m[uú]sica ligera|soda|cerati|\bcanta\s*2\b/i, cara: 'SING' },

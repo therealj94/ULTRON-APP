@@ -42,9 +42,11 @@ export type ClipId =
   | 'carino'
   | 'molesto'
   | 'orgullo'
-  | 'sorpresa';
+  | 'sorpresa'
+  | 'oracion'
+  | 'waymaker';
 
-export const CLIP_IDS: readonly ClipId[] = ['mmm', 'je', 'uy', 'vale', 'entendido', 'dias', 'tardes', 'noches', 'calenta', 'listos', 'quien', 'puedo', 'discurso', 'chiste1', 'chiste2', 'chiste3', 'chiste4', 'chiste5', 'bruno', 'bohemian', 'ligera', 'bittersweet', 'runaway', 'jesus', 'risa1', 'risa2', 'mmm2', 'uy2', 'aqui', 'listo', 'yaya', 'gracias', 'hola', 'despertar', 'bienvenida', 'triste', 'cansado', 'carino', 'molesto', 'orgullo', 'sorpresa'];
+export const CLIP_IDS: readonly ClipId[] = ['mmm', 'je', 'uy', 'vale', 'entendido', 'dias', 'tardes', 'noches', 'calenta', 'listos', 'quien', 'puedo', 'discurso', 'chiste1', 'chiste2', 'chiste3', 'chiste4', 'chiste5', 'bruno', 'bohemian', 'ligera', 'bittersweet', 'runaway', 'jesus', 'risa1', 'risa2', 'mmm2', 'uy2', 'aqui', 'listo', 'yaya', 'gracias', 'hola', 'despertar', 'bienvenida', 'triste', 'cansado', 'carino', 'molesto', 'orgullo', 'sorpresa', 'oracion', 'waymaker'];
 
 export function bankKey(t: string): string {
   return String(t)
@@ -111,6 +113,8 @@ export const REMOTE_CLIPS: Record<ClipId, string> = {
   molesto: '/voz/molesto.mp3',
   orgullo: '/voz/orgullo.mp3',
   sorpresa: '/voz/sorpresa.mp3',
+  oracion: '/voz/oracion.mp3',
+  waymaker: '/voz/waymaker.mp3',
 };
 
 /** Qué dice cada clip (burbuja y fallback a TTS si el clip no responde audio). */
@@ -156,6 +160,8 @@ export const CLIP_TEXT: Record<ClipId, string> = {
   molesto: "Oye…",
   orgullo: "Eso se nota.",
   sorpresa: "¡Uy!",
+  oracion: "Oración por el día.",
+  waymaker: "Way Maker — Sinach.",
 };
 
 /** Frase exacta (bankKey) → clip, para que speak() use el clip en vez de pedir TTS. */

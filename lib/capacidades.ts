@@ -57,6 +57,7 @@ export const VOZ_OFICIAL = {
 
 export const CANCIONES = [
   { id: 'jesus', titulo: 'Quiero conocer a Jesús', artista: 'Generación 12', pedir: 'canta quiero conocer a Jesús' },
+  { id: 'waymaker', titulo: 'Way Maker', artista: 'Sinach', pedir: 'canta way maker' },
   { id: 'bohemian', titulo: 'Bohemian Rhapsody', artista: 'Queen', pedir: 'canta 1' },
   { id: 'ligera', titulo: 'De música ligera', artista: 'Soda Stereo', pedir: 'canta 2' },
   { id: 'bittersweet', titulo: 'Bitter Sweet Symphony', artista: 'The Verve', pedir: 'canta 3' },
@@ -188,7 +189,7 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
       id: 'oido',
       grupo: 'voz',
       titulo: 'Oír y transcribir',
-      detalle: 'Escucha continua; podés interrumpirlo hablando. Notas de voz por Telegram también.',
+      detalle: 'Escucha continua; podés interrumpirlo hablando. Notas de voz por Telegram también. Oído local en el nodo T4 si está configurado; si no, Scribe.',
       ejemplos: ['(hablá cuando la luz esté cian)'],
       vivo: n.oido,
       falta: n.oido ? undefined : 'ELEVENLABS_API_KEY o GEMINI_API_KEY',
@@ -202,6 +203,15 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
       ejemplos: CANCIONES.slice(0, 3).map((c) => c.pedir),
       vivo: n.elevenlabs,
       falta: n.elevenlabs ? undefined : 'ELEVENLABS_API_KEY',
+      donde: 'ambas',
+    },
+    {
+      id: 'oracion',
+      grupo: 'voz',
+      titulo: 'Orar por el día',
+      detalle: 'Una oración a Jesús por la junta, por Orden Global y por Honduras. Cierra los ojos y ora en voz baja, unos tres minutos.',
+      ejemplos: ['orá por el día', 'hacé una oración', 'bendice nuestro día'],
+      vivo: true,
       donde: 'ambas',
     },
     {

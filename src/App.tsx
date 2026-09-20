@@ -6,7 +6,7 @@ import { caraDeTexto } from './02-cara/emocion';
 import { DockDrawer, SettingsSheet, Arranque, AccesoModal, UltronVaultModal, VisionOverlay, PhotoCaptureModal, CameraCountdownModal } from './07-pantallas';
 import { playSfx } from './03-voz/audio';
 import { hablar, cantar, callar, setVozActiva, type Dicho } from './03-voz/hablar';
-import { onLip } from './03-voz/player';
+import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
 import { clipDeEmocion, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
 import { pedirTurnoStream } from './04-cerebro/turno';
@@ -59,6 +59,7 @@ export default function App() {
   const [usuario, setUsuario] = useState({ name: '', role: 'Junta Directiva · Orden Global', authenticated: false });
   const historialRef = useRef<{ rol: string; texto: string }[]>([]);
   const pendienteGenesis = useRef('');
+  const pendienteGesto = useRef<(() => void) | null>(null);
 
   // ---- UI
   const [dockOpen, setDockOpen] = useState(false);
@@ -73,7 +74,23 @@ export default function App() {
 
   useEffect(() => {
     onLip(setLipLevel);
-    return () => onLip(null);
+    // El navegador solo deja sonar audio tras un gesto: al primer toque se desbloquean los contextos.
+    const desbloquear = () => {
+      desbloquearAudio();
+      window.removeEventListener('pointerdown', desbloquear);
+      window.removeEventListener('keydown', desbloquear);
+      // Lo que quedó pendiente de decir antes del primer toque (el saludo) se dice ahora.
+      const p = pendienteGesto.current;
+      pendienteGesto.current = null;
+      if (p) setTimeout(p, 120);
+    };
+    window.addEventListener('pointerdown', desbloquear);
+    window.addEventListener('keydown', desbloquear);
+    return () => {
+      onLip(null);
+      window.removeEventListener('pointerdown', desbloquear);
+      window.removeEventListener('keydown', desbloquear);
+    };
   }, []);
   useEffect(() => setVozActiva(speakerEnabled), [speakerEnabled]);
   useEffect(() => guarda('ultron_modo', mode), [mode]);
@@ -102,7 +119,7 @@ export default function App() {
       if (e !== 'neutral') setEmocion(e);
       const d = hablar(t, { emocion: e });
       hablando.current = d;
-      const caraHabla: FaceState = d.clip?.cara || (e === 'canto' ? 'SING' : e === 'risa' ? 'LAUGH' : 'SPEAKING');
+      const caraHabla: FaceState = d.clip?.cara || (e === 'canto' ? 'SING' : e === 'oracion' ? 'PRAY' : e === 'risa' ? 'LAUGH' : 'SPEAKING');
       d.inicio.then(() => {
         if (hablando.current !== d) return;
         setFace(caraHabla);
@@ -179,7 +196,11 @@ export default function App() {
           if (!vivo) return;
           if (d?.listo) {
             setCerebroListo('listo');
-            decir(saludoHora().id, { emocion: 'feliz' });
+            if (audioDesbloqueado()) decir(saludoHora().id, { emocion: 'feliz' });
+            else {
+              pendienteGesto.current = () => decir(saludoHora().id, { emocion: 'feliz' });
+              showBubble('Tocame para escucharme.', 6000);
+            }
           } else setCerebroListo((s) => (s === 'listo' ? s : 'calentando'));
         })
         .catch(() => vivo && setCerebroListo((s) => (s === 'listo' ? s : 'frio')));
@@ -218,7 +239,7 @@ export default function App() {
   useEffect(() => {
     const id = setInterval(() => {
       if (isBooting || dockOpen || settingsOpen || !sawOnce.current) return;
-      if (['SPEAKING', 'THINKING', 'LISTENING', 'SING', 'LAUGH'].includes(face)) return;
+      if (['SPEAKING', 'THINKING', 'LISTENING', 'SING', 'LAUGH', 'PRAY'].includes(face)) return;
       if (!cameraGaze.active && lastSeen.current && Date.now() - lastSeen.current > 45000 && face !== 'SLEEPING') {
         sleptByAbsence.current = true;
         setFace('SLEEPING');
@@ -341,6 +362,21 @@ export default function App() {
             hablando.current = null;
             setFace('HAPPY');
             setTimeout(() => setFace((c) => (c === 'HAPPY' ? 'IDLE' : c)), 2000);
+          });
+          return;
+        }
+        case 'orar': {
+          callarTodo();
+          setEmocion('oracion');
+          setFace('PRAY');
+          const d = hablar('oracion', { emocion: 'oracion' });
+          hablando.current = d;
+          d.inicio.then(() => hablando.current === d && setFace('PRAY'));
+          d.fin.then(() => {
+            if (hablando.current !== d) return;
+            hablando.current = null;
+            setEmocion('carino');
+            setFace('IDLE');
           });
           return;
         }

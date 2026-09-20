@@ -22,6 +22,7 @@ export const CARA_POR_EMOCION: Record<Emocion, FaceState> = {
   orgullo: 'HAPPY',
   travieso: 'WINK',
   canto: 'SING',
+  oracion: 'PRAY',
 };
 
 export function caraDeEmocion(e: Emocion): FaceState {
@@ -35,6 +36,7 @@ export function caraDeTexto(texto: string): FaceState {
   if (/\b(jedi|sable)\b/.test(t)) return 'JEDI';
   if (/\b(furia|furioso)\b/.test(t)) return 'FURY';
   if (/\b(enoj|molesto|carajo|mierda|odio)\b/.test(t)) return 'ANGRY';
+  if (/\b(oremos|reza|rezar|rezá|oración|oracion|padrenuestro|padre nuestro|amén|amen)\b/.test(t)) return 'PRAY';
   if (/\b(canta|canción|favorita)\b/.test(t)) return 'SING';
   if (/\b(jaj|jeje|jiji)/.test(t)) return 'LAUGH';
   if (/\b(precio|oro|plata|hnl|dólar|cuánto)\b/.test(t)) return 'THINKING';

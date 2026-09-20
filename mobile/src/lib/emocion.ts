@@ -20,6 +20,7 @@ export const EMOCIONES = [
   'orgullo',
   'travieso',
   'canto',
+  'oracion',
 ] as const;
 
 export type Emocion = (typeof EMOCIONES)[number];
@@ -117,6 +118,8 @@ export function faceForEmocion(e: Emocion | null | undefined): FaceState {
       return 'WINK';
     case 'canto':
       return 'SING';
+    case 'oracion':
+      return 'PRAY';
     default:
       return 'SPEAKING';
   }
@@ -137,4 +140,5 @@ export const EMOCION_ETIQUETA: Record<Emocion, string> = {
   orgullo: 'Orgulloso',
   travieso: 'Travieso',
   canto: 'Cantando',
+  oracion: 'Orando',
 };

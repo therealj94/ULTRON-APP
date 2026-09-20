@@ -10,7 +10,8 @@ export type GrupoCapacidad = 'herramientas' | 'voz' | 'personalidad' | 'gestos' 
 
 export type Capacidad = {
   id: string;
-  grupo: GrupoCapacidad;
+  /** Grupo conocido, o uno nuevo que el servidor añada (se pinta igual). */
+  grupo: GrupoCapacidad | (string & {});
   titulo: string;
   detalle: string;
   /** Frases de ejemplo que la disparan (voz o texto). */
@@ -82,6 +83,15 @@ export async function fetchCapacidades(): Promise<{ payload: CapacidadesPayload;
   }
 }
 
-export function agrupar(caps: Capacidad[]): Array<{ grupo: GrupoCapacidad; titulo: string; items: Capacidad[] }> {
-  return GRUPO_ORDEN.map((grupo) => ({ grupo, titulo: GRUPOS[grupo], items: caps.filter((c) => c.grupo === grupo && c.donde !== 'web') })).filter((g) => g.items.length);
+/** Agrupa en el orden conocido; un grupo nuevo del servidor se añade al final con su id como título. */
+export function agrupar(caps: Capacidad[]): Array<{ grupo: string; titulo: string; items: Capacidad[] }> {
+  const orden: string[] = [...GRUPO_ORDEN];
+  for (const c of caps) if (!orden.includes(c.grupo)) orden.push(c.grupo);
+  return orden
+    .map((grupo) => ({
+      grupo,
+      titulo: (GRUPOS as Record<string, string>)[grupo] || grupo.charAt(0).toUpperCase() + grupo.slice(1),
+      items: caps.filter((c) => c.grupo === grupo && c.donde !== 'web'),
+    }))
+    .filter((g) => g.items.length);
 }

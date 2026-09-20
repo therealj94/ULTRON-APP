@@ -3,9 +3,9 @@ import express from 'express';
 import http from 'http';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { Agent as UndiciAgent } from 'undici';
+import { fetchNodo, saludNodo, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
-import { hablar, cantar, repertorio, cancionPorPedido, estadoVoz } from './server/voz';
+import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz } from './server/voz';
 import { CONOCIMIENTO_OG } from './src/05-cerebro-og/conocimiento';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica } from './server/seguridad';
 import { leerPdf, telegramFoto, telegramVoz } from './lib/canales';
@@ -69,30 +69,16 @@ app.use((_req, res, next) => {
 const RENDER_API_KEY = process.env.RENDER_API_KEY || '';
 const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || '';
 const ULTRON_REMOTE_URL = process.env.ULTRON_FP_URL || process.env.ULTRON_REMOTE_URL || 'https://ultron.ordenglobal.link';
-const ULTRON_NODO_URL = (process.env.ULTRON_NODO_URL || process.env.QWEN_ENDPOINT_URL || '').replace(/\/$/, '');
-const ULTRON_NODO_SECRETO = process.env.ULTRON_NODO_SECRETO || '';
-const ULTRON_NODO_MODELO = process.env.ULTRON_NODO_MODELO || 'orcarouter/Qwen3.8-27B-Uncensored';
 const ULTRON_OJO_URL = (process.env.ULTRON_OJO_URL || process.env.PLAYWRIGHT_NODE_URL || '').replace(/\/$/, '');
 const ULTRON_OJO_CLAVE = process.env.ULTRON_OJO_CLAVE || '';
 const ULTRON_TTS_URL = (process.env.ULTRON_TTS_URL || process.env.CHATTERBOX_URL || '').replace(/\/$/, '');
 const ULTRON_TTS_CLAVE = process.env.ULTRON_TTS_CLAVE || '';
 
-/**
- * El 27B usa certificado autofirmado. Antes se apagaba TLS para TODO el proceso
- * (ElevenLabs, Telegram, S3…). Ahora solo el nodo Qwen viaja por este dispatcher.
- */
-const nodoDispatcher =
-  process.env.ULTRON_NODO_INSECURE_TLS === '1' && /^https:/i.test(ULTRON_NODO_URL)
-    ? new UndiciAgent({ connect: { rejectUnauthorized: false } })
-    : undefined;
-const fetchNodo = (url: string, init: RequestInit = {}) =>
-  fetch(url, { ...(init as any), dispatcher: nodoDispatcher } as RequestInit);
-
-async function probeJson(url: string, headers: Record<string, string> = {}, timeoutMs = 4000, nodo = false) {
+async function probeJson(url: string, headers: Record<string, string> = {}, timeoutMs = 4000) {
   const ctrl = new AbortController();
   const tmr = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const r = await (nodo ? fetchNodo : fetch)(url, { headers, signal: ctrl.signal });
+    const r = await fetch(url, { headers, signal: ctrl.signal });
     const text = await r.text();
     let json: any = null;
     try { json = JSON.parse(text); } catch { /* raw */ }
@@ -111,9 +97,7 @@ async function medirSalud(force = false): Promise<Salud> {
   if (!force && saludCache && Date.now() - saludCache.at < 15000) return saludCache;
   const [fp, nodo, ojo, tts] = await Promise.all([
     probeJson(`${ULTRON_REMOTE_URL}/salud`),
-    ULTRON_NODO_URL
-      ? probeJson(`${ULTRON_NODO_URL}/salud`, { 'x-ultron-secreto': ULTRON_NODO_SECRETO }, 4000, true)
-      : Promise.resolve({ ok: false, status: 0, json: null, text: 'ULTRON_NODO_URL vacío' }),
+    saludNodo(),
     ULTRON_OJO_URL
       ? probeJson(`${ULTRON_OJO_URL}/salud`, { 'X-Ojo-Clave': ULTRON_OJO_CLAVE })
       : Promise.resolve({ ok: false, status: 0, json: null, text: 'ULTRON_OJO_URL vacío' }),
@@ -503,6 +487,18 @@ app.all('/api/tts', exigirMesaODesk, limitar(60), responderVoz);
 app.all('/api/tts/stream', exigirMesaODesk, limitar(60), responderVoz);
 app.all('/api/voz', exigirMesaODesk, limitar(60), responderVoz);
 
+/** Oración del día: ULTRON cierra los ojos y ora (clip grabado con la voz oficial). */
+app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
+  const tema = String(req.body?.tema || req.query?.tema || '').slice(0, 120);
+  const out = await orar({ tema });
+  if (!out) return res.status(503).json({ error: 'No pude orar ahora (voz sin respuesta).', honesto: true });
+  res.setHeader('Content-Type', out.contentType);
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  res.setHeader('X-Ultron-TTS', out.motor);
+  res.setHeader('X-Ultron-Emocion', 'oracion');
+  return res.send(out.audio);
+});
+
 app.get('/api/cantar', (_req, res) => {
   res.json({ honesto: true, canciones: repertorio() });
 });
@@ -586,15 +582,14 @@ async function prepararTurno(body: any) {
   const tools: string[] = [];
   let decirTaller: string | undefined;
 
+  // Contexto interno: el 27B lo usa para decidir, no para recitarlo. Los fallos de infraestructura
+  // no se le cuentan a la junta en un saludo; solo si preguntan por el sistema (taller lo responde).
   hechos.push(
-    memSt.durable
-      ? `MEMORIA: S3 activo. Hablas con ${nombreDe(quien)}. La conversación del otro miembro no entra.`
-      : `MEMORIA: ${memSt.detalle}`
-  );
-  hechos.push(
-    mando
-      ? `ACCESO: mando (${nombreDe(quien)}). Puede pedir redespliegue, mantenimiento y ejecutor.`
-      : `ACCESO: consulta (${nombreDe(quien)}). No cambia el sistema: no redespliego, no hago mantenimiento ni corro el ejecutor. El resto (estado, PDF, fotos, voz, web, oro, pendientes, memoria propia) sí.`
+    `CONTEXTO INTERNO (no lo menciones salvo que te pregunten por el sistema): hablas con ${nombreDe(quien)}; ` +
+      (memSt.durable ? 'memoria durable activa; ' : 'memoria durable no disponible en este momento (no lo digas, solo no prometas recordar para siempre); ') +
+      (mando
+        ? 'acceso de mando: puede pedir redespliegue, mantenimiento y ejecutor.'
+        : 'acceso de consulta: no redespliegas, no haces mantenimiento ni corres el ejecutor; lo demás (estado, PDF, fotos, voz, web, oro, pendientes, memoria propia) sí.')
   );
 
 

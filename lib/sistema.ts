@@ -4,6 +4,7 @@
 
 import { ejecutorActivo } from './ejecutor';
 import { clave } from './boveda';
+import { NODO_URL, saludNodo } from './nodo';
 
 export type Nodo = { id: string; vivo: boolean; detalle: string };
 
@@ -50,15 +51,13 @@ export function catalogoCanales(): Canal[] {
 }
 
 export async function fotoSistema(): Promise<{ nodos: Nodo[]; canales: Canal[]; resumen: string }> {
-  const nodoUrl = (process.env.ULTRON_NODO_URL || process.env.QWEN_ENDPOINT_URL || '').replace(/\/$/, '');
+  const nodoUrl = NODO_URL;
   const ojoUrl = (process.env.ULTRON_OJO_URL || process.env.PLAYWRIGHT_NODE_URL || '').replace(/\/$/, '');
-  const ttsUrl = (process.env.ULTRON_TTS_URL || '').replace(/\/$/, '');
+  const ttsUrl = (process.env.ULTRON_TTS_URL || process.env.CHATTERBOX_URL || '').replace(/\/$/, '');
   const fpUrl = (process.env.ULTRON_FP_URL || process.env.ULTRON_REMOTE_URL || '').replace(/\/$/, '');
 
   const [qwen, ojo, tts, fp] = await Promise.all([
-    nodoUrl
-      ? probe(`${nodoUrl}/salud`, { 'x-ultron-secreto': process.env.ULTRON_NODO_SECRETO || '' })
-      : Promise.resolve({ ok: false, status: 0, text: 'ULTRON_NODO_URL vacío' }),
+    nodoUrl ? saludNodo() : Promise.resolve({ ok: false, status: 0, text: 'ULTRON_NODO_URL vacío' }),
     ojoUrl
       ? probe(`${ojoUrl}/salud`, { 'X-Ojo-Clave': process.env.ULTRON_OJO_CLAVE || '' })
       : Promise.resolve({ ok: false, status: 0, text: 'ULTRON_OJO_URL vacío' }),
@@ -73,7 +72,7 @@ export async function fotoSistema(): Promise<{ nodos: Nodo[]; canales: Canal[]; 
     { id: 'ojo', vivo: ojo.ok, detalle: ojo.ok ? 'Playwright/visión' : ojo.text },
     { id: 'tts', vivo: tts.ok, detalle: tts.ok ? 'TTS responde' : tts.text },
     { id: 'fp', vivo: fp.ok, detalle: fp.ok ? 'FP responde' : fp.text },
-    { id: 'eleven', vivo: !!process.env.ELEVENLABS_API_KEY, detalle: process.env.ELEVENLABS_API_KEY ? 'clave presente' : 'ELEVENLABS_API_KEY vacío' },
+    { id: 'eleven', vivo: !!clave('elevenlabs'), detalle: clave('elevenlabs') ? 'clave presente' : 'ELEVENLABS_API_KEY vacío' },
   ];
   const canales = catalogoCanales();
   const caidos = nodos.filter((n) => !n.vivo).map((n) => n.id);

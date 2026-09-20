@@ -118,6 +118,14 @@ export interface Vida {
   breathPhase: number; // fase acumulada de respiración (evita saltos al cambiar el ritmo)
   jolt: number; // brinco instantáneo en unidades de R (risa, hmm); no se suaviza
   sparkAcc: number; // acumulador de emisión de chispas
+  cierre: number; // 0 ojos abiertos → 1 cerrados suave (oración); rampa lineal, no parpadeo
+  cierreT: number;
+  flutter: number; // apertura extra de micro-aleteo con ojos cerrados (0..~0.12)
+  flutterIn: number; // temporizador hasta el próximo aleteo
+  flutterPhase: number; // −1 inactivo; ≥0 segundos dentro del aleteo
+  jaw: number; // 0..1 mandíbula: sigue lipLevel con ataque rápido (altura + empuje abajo de la boca)
+  serenidad: number; // 0..1 quietud: apaga vaivén de cabeza, respiración del halo y sacadas
+  serenidadT: number;
   ring: number; // anillo de voz suavizado
   ring2: number;
   energia: number; // 0..1 energía ambiental suavizada
@@ -166,6 +174,14 @@ export function crearVida(nMotas: number): Vida {
     breathPhase: 0,
     jolt: 0,
     sparkAcc: 0,
+    cierre: 0,
+    cierreT: 0,
+    flutter: 0,
+    flutterIn: 3,
+    flutterPhase: -1,
+    jaw: 0,
+    serenidad: 0,
+    serenidadT: 0,
     ring: 0,
     ring2: 0,
     energia: 0.4,
@@ -322,7 +338,8 @@ export function drawHalo(
   cy: number,
   baseR: number,
   theme: Theme,
-  intensity: number
+  intensity: number,
+  warm = 0 // 0 cian de marca → 1 tono más claro y cálido (oración)
 ) {
   const R = baseR * 3.6;
   ctx.save();
@@ -330,9 +347,10 @@ export function drawHalo(
   ctx.scale(1.45, 1);
   const g = ctx.createRadialGradient(0, 0, baseR * 0.4, 0, 0, R);
   const a = clamp(intensity, 0, 1);
-  g.addColorStop(0, theme.primary + alphaHex(0.16 * a));
-  g.addColorStop(0.45, theme.primary + alphaHex(0.07 * a));
-  g.addColorStop(1, theme.primary + '00');
+  const col = warm > 0.01 ? mixHex(theme.primary, theme.core, clamp(warm, 0, 1) * 0.45) : theme.primary;
+  g.addColorStop(0, col + alphaHex(0.16 * a));
+  g.addColorStop(0.45, col + alphaHex(0.07 * a));
+  g.addColorStop(1, col + '00');
   ctx.fillStyle = g;
   ctx.beginPath();
   ctx.arc(0, 0, R, 0, Math.PI * 2);
@@ -398,10 +416,29 @@ function alphaHex(a: number) {
   return (v < 16 ? '0' : '') + v.toString(16);
 }
 
+/** Mezcla dos colores #rrggbb (k = 0 → a, 1 → b). */
+export function mixHex(a: string, b: string, k: number): string {
+  const pa = parseInt(a.slice(1, 7), 16);
+  const pb = parseInt(b.slice(1, 7), 16);
+  if (Number.isNaN(pa) || Number.isNaN(pb)) return a;
+  const t = clamp(k, 0, 1);
+  let out = '#';
+  for (let s = 16; s >= 0; s -= 8) {
+    const ca = (pa >> s) & 255;
+    const cb = (pb >> s) & 255;
+    const v = Math.round(ca + (cb - ca) * t);
+    out += (v < 16 ? '0' : '') + v.toString(16);
+  }
+  return out;
+}
+
 // ───────────────────────── ojo vivo ─────────────────────────
 export function aperturaOjo(A: AnimationEngineState, V: Vida, side: number) {
   const blink = side < 0 ? A.blinkL : A.blinkR;
-  return blink * V.lid * V.wake * V.wide;
+  const base = blink * V.lid * V.wake * V.wide;
+  // Cierre suave (oración): funde la apertura normal hacia una rendija serena con micro-aleteo.
+  const k = smoothstep(V.cierre);
+  return base * (1 - k) + k * (0.05 + V.flutter);
 }
 
 /**
@@ -592,7 +629,8 @@ export function drawCyberMouth(
 ) {
   const color = theme.primary;
   ctx.save();
-  ctx.translate(cx, cy);
+  // Mandíbula: al hablar la boca baja un poco además de abrirse; se lee de lejos.
+  ctx.translate(cx, cy + baseR * 0.14 * V.jaw);
   ctx.strokeStyle = color;
   ctx.fillStyle = color;
   ctx.lineWidth = baseR * 0.06;
@@ -626,8 +664,8 @@ export function drawCyberMouth(
   const mouth = clamp(A.mouth + V.mouthExtra, 0, 1.15);
   const smile = clamp(A.smile + V.smileExtra, -1.2, 1.3);
   const skew = V.mouthSkew;
-  const w = mw * 0.45 * (1 + 0.1 * smile + 0.08 * mouth);
-  const h = baseR * (0.028 + 0.46 * mouth);
+  const w = mw * 0.45 * (1 + 0.1 * smile + 0.08 * mouth - 0.06 * V.jaw);
+  const h = baseR * (0.028 + 0.46 * mouth + 0.09 * V.jaw);
   const curv = smile * baseR * 0.2;
   const cornerL = -curv + skew * baseR * 0.07;
   const cornerR = -curv - skew * baseR * 0.07;

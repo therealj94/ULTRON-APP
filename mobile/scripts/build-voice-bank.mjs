@@ -76,6 +76,8 @@ const CLIPS = [
   { id: 'molesto', text: 'Oye…', bundle: false, phrases: [] },
   { id: 'orgullo', text: 'Eso se nota.', bundle: false, phrases: [] },
   { id: 'sorpresa', text: '¡Uy!', bundle: false, phrases: [] },
+  { id: 'oracion', text: 'Oración por el día.', bundle: false, phrases: [] },
+  { id: 'waymaker', text: 'Way Maker — Sinach.', bundle: false, phrases: [] },
 ];
 
 const bankKey = (t) =>

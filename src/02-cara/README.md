@@ -31,7 +31,7 @@ Paleta: negro + cian `#05E1FF` (tokens en `src/01-diseno/tokens.ts`).
 | `isCameraFlashing?` | `boolean` | Visor de cámara + flash + `onSnapshotReady(dataUrl)`. |
 | `isCombatBlasterActive?` | `boolean` | Sólo con `funMode`; sin él se responde `onBlasterCombatEnd()` de inmediato. |
 | `resetTrigger?` | `number` | Cualquier incremento desarma todo y vuelve a `IDLE`. |
-| `lipLevel?` | `number` 0–1 | Nivel de labios (voz). Mueve la boca en `SPEAKING`/`SING` y el anillo de voz. Si en `SPEAKING` no llega señal >1.5 s, la boca usa un visema sintético. |
+| `lipLevel?` | `number` 0–1 | Nivel de labios (voz). En `SPEAKING`/`SING`/`PRAY` (y expresiones `canto`/`oracion`) la boca lo sigue con ataque rápido (rate 18 subiendo, 11 bajando) y una "mandíbula" (`V.jaw`: más alto + empuje hacia abajo 0.14·R) para que se lea de lejos; mueve también el anillo de voz. Si la señal se queda en 0 más de 1.5 s, entra un visema sintético. |
 | `showHud?` | `boolean` | Con `funMode`: corona y ambiente de modo. |
 | `onFaceChange(face, ms?)` | callback | La cara pide cambios (guiño, ronroneo, risa, curiosidad…). |
 | `onModeChange`, `onSwipeUp`, `onSwipeDown`, `onWake`, `onSleep`, `onCloseOverlays`, `onSpeak`, `onTriggerVoice`, `onToggleVisor?` | callbacks | Sin cambios. |
@@ -42,7 +42,7 @@ Helpers exportados: `caraDeEmocion`, `CARA_POR_EMOCION`, `caraDeTexto`, `GESTOS`
 
 ## FaceStates
 
-`IDLE · LISTENING · THINKING · SPEAKING · HAPPY · CONCERNED · ANGRY · FURY · SLEEPING · STARTLE · PURR · WINK · CURIOSITY · JEDI` (existentes) + **`LAUGH · SURPRISED · SAD · TIRED · SING`** (nuevos).
+`IDLE · LISTENING · THINKING · SPEAKING · HAPPY · CONCERNED · ANGRY · FURY · SLEEPING · STARTLE · PURR · WINK · CURIOSITY · JEDI` (existentes) + **`LAUGH · SURPRISED · SAD · TIRED · SING · PRAY`** (nuevos).
 
 | Cara | Micro-expresión |
 | --- | --- |
@@ -51,6 +51,7 @@ Helpers exportados: `caraDeEmocion`, `CARA_POR_EMOCION`, `caraDeTexto`, `GESTOS`
 | `SAD` | Cejas con interior arriba, párpados al 62 %, mirada abajo, respiración lenta, mueca leve. |
 | `TIRED` | Párpados al 55 %, parpadeos lentos con alguno largo, deriva hacia abajo, un bostezo al entrar. |
 | `SING` | Como HAPPY con ojos abiertos; boca sigue `lipLevel` con ganancia 1.0, balanceo suave, chispas suben desde la boca, anillo de voz. |
+| `PRAY` | Ora en voz alta: párpados se cierran en ~0.8 s (rampa `cierre`, sin Z ni caída de sueño), micro-aleteo cada 3–7 s, cabeza quieta (sin vaivén ni sacadas), respiración ×0.45, sonrisa mínima, cejas relajadas con interior arriba, boca sigue `lipLevel` (ganancia 0.7) + anillo de voz, halo cálido y estable, motas lentas. Sin parpadeos programados. Al salir los ojos abren en ~0.6 s. |
 | `THINKING` | Mirada arriba-izquierda, una ceja más alta, pulso "hmm" cada 2.6–4.8 s (ceja + brinco leve + dilatación). |
 | `LISTENING` | Mirada se centra tras 1.2 s sin interacción, pupila un poco más dilatada con pulso lento. |
 
@@ -79,7 +80,7 @@ con envolvente (0.3 s entra, 0.7 s sale). Se dispara al **cambiar** la prop.
 | `travieso` | WINK | guiño (ojo derecho), media sonrisa ladeada, ceja | 2.2 s |
 | `canto` | SING | balanceo, chispas, boca sigue `lipLevel`, anillo de voz | 4.0 s |
 
-Cada disparo también llama `onGesto` con `feliz | risa | sorpresa | curioso | pensar | preocupado | tristeza | molesto | cansado | carino | orgullo | travieso | canto`.
+Cada disparo también llama `onGesto` con `feliz | risa | sorpresa | curioso | pensar | preocupado | tristeza | molesto | cansado | carino | orgullo | travieso | canto | orar`.
 
 ## Mapa táctil (por defecto, humano)
 
@@ -107,7 +108,7 @@ Con `funMode` la ráfaga de taps vuelve a la escalada vieja: guiño → `ANGRY` 
   velocidad y brillo según energía: casi quietas en `SLEEPING`/`TIRED`, vivas en `HAPPY`/`LAUGH`/`SING`.
   Se expanden/contraen con la respiración de la cara.
 - **Halo**: un gradiente radial ancho que respira con `A.breath` y crece con la energía y la voz.
-- **Anillo de voz**: elipse fina alrededor de la cara que se expande con `lipLevel` en `SPEAKING`/`SING`/`canto`,
+- **Anillo de voz**: elipse fina alrededor de la cara que se expande con `lipLevel` en `SPEAKING`/`SING`/`PRAY`/`canto`/`oracion`,
   con un eco rezagado.
 - **Despertar (`wake`)**: al montar, párpados de 0 → 1 con rebote (`backOut`) en 1.5 s; sin parpadeos
   autónomos hasta terminar; boca y halo aparecen con el mismo fundido. Sirve para el paso splash → cara.
@@ -130,3 +131,5 @@ Con `funMode` la ráfaga de taps vuelve a la escalada vieja: guiño → `ANGRY` 
 - Cantidad o brillo de motas → `N_MOTAS`, `crearMotas`, `drawMotes`.
 - Paleta por modo → `getThemeColors` en `dibujo.ts` (respetar `01-diseno/tokens.ts`).
 - Nuevo `FaceState` → `src/types.ts` (unión), `getTargetsFor`, `metasDeCara`, `ENERGIA`, y si aplica `entrarCara`.
+- Nueva emoción en `lib/emocion.ts` → `CARA_POR_EMOCION` (emocion.ts), `EXPRESION_DUR` y `GESTO_POR_EMOCION` (FaceCanvas.tsx; son `Record<Emocion,…>`, tsc avisa), un `case` en el `switch (X.tipo)` y un nombre en `gestos.ts`.
+- Cierre de ojos sereno / mandíbula → `V.cierre`, `V.flutter`, `V.jaw` en `dibujo.ts` (`aperturaOjo`, `drawCyberMouth`), rampas en el bucle de `FaceCanvas.tsx`.

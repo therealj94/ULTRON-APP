@@ -36,8 +36,7 @@ export const GUIONES = {
   molesto: '[annoyed] Ya. Basta. [short pause] Hablemos en serio.',
   despertar: '[sleepy] [yawns] Mmm... ya, ya desperté. [warmly] ¿Qué necesitás?',
   bienvenida: '[warmly] ULTRON, en línea. [short pause] Orden Global, buenos días.',
-  jesus:
-    '[softly] Esta es de Generación doce. Ahí voy. [singing] Quiero conocer a Jesús... quiero conocer a Jesús... más que a nadie en este mundo, quiero conocerte a ti. [singing] Quiero conocer a Jesús... [warmly] Esa me llega, de verdad.',
+  // jesus, waymaker y oracion: sus guiones viven en server/voz.ts (LETRAS y ORACION_DEL_DIA) para no duplicarlos.
 };
 
 const force = process.argv.includes('--force');

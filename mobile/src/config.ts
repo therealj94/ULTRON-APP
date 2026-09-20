@@ -70,7 +70,8 @@ export type FaceState =
   | 'TIRED'
   | 'SING'
   | 'CURIOUS'
-  | 'PROUD';
+  | 'PROUD'
+  | 'PRAY';
 
 export type Mode =
   | 'GUARDIAN'

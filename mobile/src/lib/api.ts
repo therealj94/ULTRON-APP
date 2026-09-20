@@ -1,7 +1,7 @@
 /**
  * Cliente del backend (Render, rama main).
  *   POST /api/turno, /api/turno/stream (SSE) · GET|POST /api/tts · POST /api/stt · POST /api/vision/analyze
- *   POST /api/memoria (requiere sesión) · GET|POST /api/cantar · GET /api/capacidades · GET /api/health
+ *   POST /api/memoria (requiere sesión) · GET|POST /api/cantar · POST /api/orar · GET /api/capacidades · GET /api/health
  * Toda llamada pasa por api(): manda la cabecera de sesión y, si el servidor responde 401, renueva el
  * token con las credenciales guardadas y reintenta una vez.
  */
@@ -299,6 +299,7 @@ export function ttsUrl(text: string, performance: 'speak' | 'sing', emocion: Emo
 
 export const TTS_ENDPOINT = `${API_BASE}/api/tts`;
 export const CANTAR_ENDPOINT = `${API_BASE}/api/cantar`;
+export const ORAR_ENDPOINT = `${API_BASE}/api/orar`;
 
 export type Cancion = { id: string; titulo: string; artista: string; pedir: string };
 
@@ -310,6 +311,7 @@ export const CANCIONES_LOCAL: Cancion[] = [
   { id: 'bittersweet', titulo: 'Bitter Sweet Symphony', artista: 'The Verve', pedir: 'canta 3' },
   { id: 'runaway', titulo: 'Runaway', artista: 'Kanye West', pedir: 'canta 4' },
   { id: 'bruno', titulo: 'Die With A Smile', artista: 'Bruno Mars', pedir: 'canta 5' },
+  { id: 'waymaker', titulo: 'Way Maker', artista: 'Sinach', pedir: 'canta way maker' },
 ];
 
 export async function listCanciones(): Promise<Cancion[]> {

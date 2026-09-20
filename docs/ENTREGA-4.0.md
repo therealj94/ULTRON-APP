@@ -76,3 +76,28 @@ Web: `Arranque.tsx` (ojos que despiertan detrás del wordmark «ULTRON FP · pow
 3. La instancia T4 (`35.175.175.203`, g4dn) sigue encendida con etiqueta «APAGADA»; si Chatterbox/Qwen-TTS ya no se usan, apagarla ahorra unos 380 USD al mes.
 4. Escuchar los clips de voz entregados y decir si Gabriela sigue siendo la voz o se cambia el `ELEVENLABS_VOZ` (el resto del sistema no cambia).
 5. Dar permiso `music_generation` a la key de ElevenLabs si se quiere canto con acompañamiento (Eleven Music) además del canto a capela.
+
+
+---
+
+# Ronda 2 (20-sep-2026): producción real, oración, Way Maker, canto, oído local
+
+## Qué se encontró al probar contra Qwen en Render
+1. **Un saludo disparaba una búsqueda web.** `esPreguntaExterna` mandaba a internet cualquier pregunta de más de 18 caracteres. Ahora los saludos, las preguntas sobre ULTRON («¿cómo amaneciste?») y los temas que ya viven en el cerebro de Orden Global (5550, ORIGEN, Próspera, junta…) no se buscan; el 27B pide web por el harness solo si le falta.
+2. **El 27B le contaba a la junta problemas de infraestructura** («la clave de AWS sigue rechazada») en vez de contestar como persona. Las líneas MEMORIA/ACCESO pasaron a «contexto interno: no lo menciones»; la persona ganó dos reglas: «cómo estás» se contesta en una frase humana, y lo que está en el cerebro OG se cuenta con soltura, sin «no tengo acceso».
+3. **La memoria S3 está caída en producción.** Render tiene una clave AWS (`AKIAX7LQ…F5N`) que ya no existe en IAM; el objeto `ultron/memoria-junta.json` no se escribe desde el 19-sep 19:19 UTC. Intenté actualizar las variables en Render y la sesión no tiene permiso para escribir secretos. **Pendiente de José** (dos minutos): en Render → `ultron-looi-desk` → Environment, poner `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` de una clave activa (`…NKETY5QP` o la que se generó ayer) y añadir `ULTRON_SESION_SECRETO` (cualquier cadena larga aleatoria).
+4. **`cómo está el sistema` decía «qwen no responde»** aunque respondía: la sonda del taller y del centinela usaban `fetch` global, y al acotar el TLS inseguro al nodo se quedaron sin el certificado. Ahora todo acceso al nodo pasa por `lib/nodo.ts` (`fetchNodo`, `saludNodo`).
+5. Emociones en el turno real: `sorpresa`, `pensando`, `preocupado`, `neutral` llegaron bien; latencia 2,8–6,4 s con harness, 0,3 s en dato directo.
+
+## Voz
+- **«Quiero conocer a Jesús» regrabada** con instrucciones de canto (balada lenta, vocales alargadas, dos pasadas y un susurro final): 41 s, 17 tramos de nota sostenida frente a 7 de la toma anterior, transcripción de vuelta exacta.
+- **«Way Maker» (Sinach)** en inglés, misma receta, 44 s. `canta way maker`, `cantá algo en inglés`.
+- **Oración del día** (texto propio de ULTRON, 2 min 50 s, termina en Amén): bendice el día, la junta por nombre, Orden Global, Honduras, los mineros; pide cambiar vidas y hablar de Jesús. `POST /api/orar` la sirve como clip; con `{ tema }` genera una oración corta por ese tema (caché por hash). Emoción nueva `oracion` en el contrato.
+- El oído prueba primero un **nodo local** (`ULTRON_STT_URL`, API Whisper compatible) y cae a Scribe.
+
+## Cara
+- **Web:** estado `PRAY`: párpados que se cierran en 0,8 s con micro-temblor, cejas relajadas, sonrisa serena, respiración lenta, halo cálido, la boca sigue el audio mientras ora, los ojos se abren despacio al terminar. Lip-sync endurecido: ataque rápido, mandíbula que baja con el volumen, viseme sintético solo si el audio no trae señal en 1,5 s. El audio se desbloquea al primer toque y el saludo de arranque espera a ese toque («Tocame para escucharme»).
+- **APK:** `PRAY` con párpados suaves, cabeza levemente inclinada, respiración lenta. Lip-sync real por envolvente silábica sincronizada a la posición del audio (expo-av no expone medidor en reproducción): frases, clips, canciones y oración; nunca habla con la boca cerrada. Sección «Orar» en el menú, Way Maker en el repertorio.
+
+## Nodo T4
+No pude entrar a verlo (SSM bloqueado en esta sesión). Propuesta y script listos en `docs/NODO-T4.md` y `scripts/nodo-t4/instalar-oido.sh`: convertirlo en el oído local de ULTRON con faster-whisper large-v3 (0,3 s, sin costo por minuto); el servidor ya lo usa si `ULTRON_STT_URL` está definido. Si no se va a usar, apagarlo.

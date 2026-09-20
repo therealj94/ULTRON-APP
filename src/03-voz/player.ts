@@ -11,6 +11,23 @@ export function onLip(cb: ((n: number) => void) | null) {
   lipCb = cb;
 }
 
+let desbloqueado = false;
+/** true después del primer gesto del usuario (los navegadores no dejan sonar nada antes). */
+export function audioDesbloqueado() {
+  return desbloqueado;
+}
+
+/** Llamar dentro de un gesto del usuario: crea/reanuda el AudioContext para que el lip-sync y el audio suenen. */
+export function desbloquearAudio() {
+  desbloqueado = true;
+  try {
+    if (!ctx) ctx = new AudioContext();
+    if (ctx.state === 'suspended') void ctx.resume();
+  } catch {
+    /* sin WebAudio: el audio igual suena por el <audio> */
+  }
+}
+
 export function stopVoice() {
   abortCtl?.abort();
   abortCtl = null;
