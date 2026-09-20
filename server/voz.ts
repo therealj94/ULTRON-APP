@@ -24,17 +24,21 @@ export type Performance = 'speak' | 'sing';
 export const VOZ_ID = process.env.ELEVENLABS_VOZ || 'hHjbwzYZW17oh0p05AKv';
 
 /**
- * La voz de Dr Electrum.
+ * La voz de Dr Electrum: Daniel, grave y de edad.
  *
- * Dos cerebros con la misma voz son la misma cosa con dos nombres. La cara ya cambia de color
- * según la plataforma; la voz tiene que cambiar igual, o al segundo de audio se deshace la
- * separación que el resto del sistema sostiene.
+ * Dos cerebros con la misma voz son la misma cosa con dos nombres. La cara ya cambia de color según
+ * la plataforma; la voz tiene que cambiar igual, o al segundo de audio se deshace la separación que
+ * el resto del sistema sostiene. Por eso el respaldo NO es la voz de ULTRON: si `ELECTRUM_VOZ` se
+ * queda vacía por un descuido, es mejor que el Doctor siga sonando a él que descubrir el error
+ * cuando ya está hablando con la voz de la otra plataforma delante de un cliente.
  *
- * Mientras no haya una elegida, habla con la de ULTRON: preferible a callarse. José la fija con
- * `ELECTRUM_VOZ` cuando escuche las muestras y diga cuál.
+ * La edad es parte del personaje: a quien te va a decir que un recurso inferido no es una reserva
+ * se le cree más si suena a haberlo visto. Se cambia con `ELECTRUM_VOZ`.
  */
+const VOZ_ELECTRUM = 'onwK4e9ZLuTAKqWW03F9'; // Daniel
+
 export function vozDe(plataforma: 'ultron' | 'electrum'): string {
-  if (plataforma === 'electrum') return String(process.env.ELECTRUM_VOZ || '').trim() || VOZ_ID;
+  if (plataforma === 'electrum') return String(process.env.ELECTRUM_VOZ || '').trim() || VOZ_ELECTRUM;
   return VOZ_ID;
 }
 

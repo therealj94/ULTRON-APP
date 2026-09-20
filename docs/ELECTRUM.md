@@ -295,7 +295,7 @@ Ninguno se veía leyendo el código:
 | Padrón y puerta propia, separada de ULTRON | **hecho y probado contra el servidor compilado** |
 | Bot de Telegram Dr Electrum FP | **hecho** (falta darle de alta el bot en BotFather) |
 | Generador de informes en PDF | **hecho y mirado** — ficha de concesión y estado de cartera, con el mapa dentro |
-| Voz propia con ElevenLabs | **hecha** — falta que José elija el timbre (`ELECTRUM_VOZ`) |
+| Voz propia con ElevenLabs | **hecha** — Daniel, grave y de edad |
 
 ## Quién entra
 
@@ -348,8 +348,15 @@ mapa y un «Hay 1 traslapes»— no daban ningún error: salían en la hoja.
 
 ## La voz
 
-Dr Electrum tiene voz propia (`ELECTRUM_VOZ`), separada de la de ULTRON y con ruta propia
-(`/api/electrum/voz`). La ruta es aparte por una razón concreta: `/api/tts` está en la lista de
+Dr Electrum habla con **Daniel**: grave y de edad. La edad es parte del personaje — a quien te va a
+decir que un recurso inferido no es una reserva se le cree más si suena a haberlo visto. Se cambia
+con `ELECTRUM_VOZ`.
+
+El respaldo **no** es la voz de ULTRON, y eso es deliberado: si la variable se queda vacía por un
+descuido, más vale que el Doctor siga sonando a él que descubrir el error cuando ya está hablando
+con la voz de la otra plataforma delante de un cliente. Hay una prueba que lo vigila.
+
+La ruta también es propia (`/api/electrum/voz`). La ruta es aparte por una razón concreta: `/api/tts` está en la lista de
 rutas abiertas de la APK, y un sintetizador abierto es una factura de ElevenLabs con la puerta
 quitada.
 
