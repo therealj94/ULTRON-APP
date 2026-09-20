@@ -348,9 +348,9 @@ mapa y un «Hay 1 traslapes»— no daban ningún error: salían en la hoja.
 
 ## La voz
 
-Dr Electrum habla con **Daniel**: grave y de edad. La edad es parte del personaje — a quien te va a
-decir que un recurso inferido no es una reserva se le cree más si suena a haberlo visto. Se cambia
-con `ELECTRUM_VOZ`.
+Dr Electrum habla con **Bill**, la más veterana de las que probamos. La edad es parte del personaje
+— a quien te va a decir que un recurso inferido no es una reserva se le cree más si suena a haberlo
+visto. Se cambia con `ELECTRUM_VOZ`.
 
 El respaldo **no** es la voz de ULTRON, y eso es deliberado: si la variable se queda vacía por un
 descuido, más vale que el Doctor siga sonando a él que descubrir el error cuando ya está hablando
@@ -366,3 +366,47 @@ su timbre guardado y el otro contestaría con la voz ajena.
 En la pantalla la voz **arranca apagada**: los navegadores no dejan sonar nada hasta que alguien
 toca algo, y una demostración que empieza hablando sola en una sala de reunión es peor que una que
 espera a que se lo pidan.
+
+
+## Quién es Dr Electrum
+
+Hasta ahora era ocho líneas dentro de `turno.ts`, y se le notaba: contestaba correcto y no era
+nadie. Un asistente sin carácter es un buscador con modales, y a un buscador con modales no se le
+discute un número — que es exactamente lo que esta plataforma necesita que pase.
+
+El personaje no es adorno; es el mecanismo de honestidad del sistema. **La mentira que arruina
+gente en minería casi nunca es un número inventado.** Es un número verdadero presentado como otra
+cosa:
+
+- un recurso **inferido** enseñado como reserva,
+- una ley de **testigo** enseñada como ley de mina,
+- un **valor in situ** enseñado como riqueza.
+
+Un modelo amable deja pasar las tres, porque corregirlas suena a llevar la contraria. Un viejo del
+oficio no las deja pasar, porque para él corregirlas **es** el trabajo. La personalidad
+(`server/electrum/personalidad.ts`) está escrita para que decir «eso no es lo que ese número
+significa» le salga natural y quedarse callado le resulte incómodo.
+
+## Las emociones: más en el sistema, menos por cerebro
+
+Suena al revés y es a propósito. Agregar emociones al **sistema** mejora; ofrecerle más al
+**modelo** empeora: un 27B con quince opciones delante elige peor que uno con once. Y las que
+sobran no son inocentes — si `travieso` está en la lista, tarde o temprano el doctor guiña mientras
+te explica un traslape.
+
+Así que **Dr Electrum tiene once emociones y ULTRON quince.** Se le quitan cantar, orar, la
+travesura y la tristeza de la junta, y se le dan cuatro que ULTRON no necesita:
+
+| Emoción | Cuándo | Voz | Cara |
+|---|---|---|---|
+| `escepticismo` | un número que no cuadra, un recurso vendido como reserva | `[skeptical]` | ceja levantada |
+| `alarma` | riesgo real e inmediato: una presa, un talud, cianuro sin plan | `[urgently]` | preocupada |
+| `firme` | un límite del oficio que no se negocia | `[firmly]` | serena |
+| `seco` | dato operativo, medida, sin adorno | *(ninguna)* | serena |
+
+`seco` no lleva etiqueta de audio a propósito: la sequedad se oye en lo que **no** se pone, y un
+`[flatly]` delante de una medida suena a desgana, no a oficio. Y `firme` deja la cara serena en vez
+de mapearla a enfado: el doctor sostiene un límite varias veces por conversación, y no puede
+parecer molesto cada vez.
+
+La paleta es del **cerebro**; la cara y la voz, que son **cuerpo**, saben expresarlas todas.

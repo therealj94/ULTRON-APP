@@ -96,10 +96,21 @@ const EXPRESION_DUR: Record<Emocion, number> = {
   travieso: 2.2,
   canto: 4.0,
   oracion: 5.0, // y se sostiene mientras la cara base sea PRAY
+  escepticismo: 2.6,
+  alarma: 2.4,
+  firme: 2.2,
+  seco: 0, // sin capa: la sequedad es la ausencia de gesto, no un gesto más
 };
 
 const GESTO_POR_EMOCION: Record<Emocion, Gesto | null> = {
   neutral: null,
+  // Las cuatro nuevas reusan gestos que la cara ya sabe hacer. Dr Electrum comparte CUERPO con
+  // ULTRON: inventarle cejas propias sería duplicar el motor de la cara para ganar un matiz que
+  // la voz ya lleva mucho mejor.
+  escepticismo: 'curioso', // la ceja que se levanta
+  alarma: 'preocupado',
+  firme: 'molesto', // la mandíbula que se aprieta, sin llegar a enojo
+  seco: null,
   feliz: 'feliz',
   risa: 'risa',
   sorpresa: 'sorpresa',

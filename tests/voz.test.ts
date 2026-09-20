@@ -1,6 +1,8 @@
 import { describe, it, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { expresar, cancionPorPedido, vozDe } from '../server/voz';
+import { PALETA, EMOCION_INFO, instruccionEmocion, normalizarEmocion } from '../lib/emocion';
+import { CARA_POR_EMOCION } from '../src/02-cara/emocion';
 
 test('expresar añade la etiqueta de la emoción y convierte risas escritas en risa real', () => {
   const t = expresar('Je je, el oro subió 5000 dólares.', 'feliz');
@@ -46,20 +48,20 @@ describe('cada plataforma con su voz', () => {
     // cosa con dos nombres, y descubrirlo delante de un cliente es tarde.
     conVoz(undefined, () => {
       assert.notEqual(vozDe('electrum'), vozDe('ultron'));
-      assert.equal(vozDe('electrum'), 'onwK4e9ZLuTAKqWW03F9', 'Daniel: grave y de edad, como corresponde a un doctor');
+      assert.equal(vozDe('electrum'), 'pqHfZKP75CvOlQylNhV4', 'Bill: la más veterana, como corresponde a un doctor');
     });
   });
 
   it('ELECTRUM_VOZ manda sobre el respaldo', () => {
-    conVoz('pqHfZKP75CvOlQylNhV4', () => {
-      assert.equal(vozDe('electrum'), 'pqHfZKP75CvOlQylNhV4');
-      assert.notEqual(vozDe('ultron'), 'pqHfZKP75CvOlQylNhV4', 'cambiar la del Doctor no toca la de ULTRON');
+    conVoz('onwK4e9ZLuTAKqWW03F9', () => {
+      assert.equal(vozDe('electrum'), 'onwK4e9ZLuTAKqWW03F9');
+      assert.notEqual(vozDe('ultron'), 'onwK4e9ZLuTAKqWW03F9', 'cambiar la del Doctor no toca la de ULTRON');
     });
   });
 
   it('una variable en blanco o con espacios no deja mudo al Doctor', () => {
-    conVoz('   ', () => assert.equal(vozDe('electrum'), 'onwK4e9ZLuTAKqWW03F9'));
-    conVoz('', () => assert.equal(vozDe('electrum'), 'onwK4e9ZLuTAKqWW03F9'));
+    conVoz('   ', () => assert.equal(vozDe('electrum'), 'pqHfZKP75CvOlQylNhV4'));
+    conVoz('', () => assert.equal(vozDe('electrum'), 'pqHfZKP75CvOlQylNhV4'));
   });
 });
 
@@ -101,5 +103,55 @@ describe('el guion que recibe v3', () => {
     assert.match(t, /partes, primero/, t);
     assert.ok(!/\.\s+[a-záéíóúñ]/.test(t), `punto seguido de minúscula: ${t}`);
     assert.match(expresar('Bien —muy bien— seguimos.', 'neutral'), /Bien, muy bien, seguimos\./);
+  });
+});
+
+describe('cada cerebro con su paleta de emociones', () => {
+  it('Dr Electrum tiene MENOS emociones que ULTRON, no más', () => {
+    // Es la parte contraintuitiva y es a propósito: un 27B con quince opciones delante elige peor
+    // que uno con once. Si esta prueba empieza a fallar porque alguien le sumó emociones al
+    // doctor «para que tenga más», el que pierde es el doctor.
+    assert.ok(PALETA.electrum.length < PALETA.ultron.length);
+  });
+
+  it('al doctor no se le ofrece cantar, orar ni hacer travesuras', () => {
+    for (const e of ['canto', 'oracion', 'travieso'] as const) {
+      assert.ok(!PALETA.electrum.includes(e), `${e} no le toca a Dr Electrum`);
+    }
+  });
+
+  it('ULTRON no cambió: sigue con las quince de siempre', () => {
+    assert.equal(PALETA.ultron.length, 15);
+    for (const e of ['canto', 'oracion', 'travieso', 'triste'] as const) assert.ok(PALETA.ultron.includes(e));
+  });
+
+  it('las cuatro del oficio existen, y la cara y la voz saben expresarlas', () => {
+    for (const e of ['escepticismo', 'alarma', 'firme', 'seco'] as const) {
+      assert.ok(PALETA.electrum.includes(e), `${e} le falta al doctor`);
+      assert.ok(EMOCION_INFO[e].cuando.length > 10, `${e} sin descripción de cuándo usarla`);
+      assert.ok(CARA_POR_EMOCION[e], `${e} sin cara`);
+    }
+  });
+
+  it('el prompt de cada uno lleva su lista y sus ejemplos, no los del otro', () => {
+    const e = instruccionEmocion('electrum');
+    const u = instruccionEmocion('ultron');
+    assert.match(e, /escepticismo/);
+    assert.ok(!/oracion|travieso/.test(e), 'al doctor no se le nombran emociones que no tiene');
+    assert.match(e, /inferido no es una reserva/, 'los ejemplos enseñan el registro, no solo la sintaxis');
+    assert.match(u, /oracion/);
+    assert.ok(!/escepticismo/.test(u), 'ULTRON no cambió');
+  });
+
+  it('el modelo puede escribirlas de varias formas y se entienden igual', () => {
+    for (const [dicho, esperado] of [
+      ['esceptico', 'escepticismo'],
+      ['SKEPTICAL', 'escepticismo'],
+      ['peligro', 'alarma'],
+      ['tajante', 'firme'],
+      ['sobrio', 'seco'],
+    ] as const) {
+      assert.equal(normalizarEmocion(dicho), esperado, dicho);
+    }
   });
 });

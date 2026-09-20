@@ -10,14 +10,15 @@
  */
 import { correrAgente, type Mensaje } from '../../lib/agente/bucle';
 import type { Contexto } from '../../lib/agente/tipos';
-import { extraerEmocion, INSTRUCCION_EMOCION, type Emocion } from '../../lib/emocion';
+import { extraerEmocion, type Emocion } from '../../lib/emocion';
 import { fetchNodo, NODO_MODELO, NODO_SECRETO, NODO_URL } from '../../lib/nodo';
 import { convocar, herramientasDe, promptPanel } from './especialistas';
 import { manosDe, TODAS } from './manos';
 import { CONOCIMIENTO_MINAS } from '../../src/08-cerebro-minas/conocimiento';
 import { hechosCerebro } from '../../lib/cerebro';
 import { PERFILES } from '../../lib/perfiles';
-import { fraseDeAcceso, personaPorId } from '../../lib/acceso';
+import { personaPorId } from '../../lib/acceso';
+import { personalidadElectrum } from './personalidad';
 
 export type RespuestaTurno = {
   texto: string;
@@ -29,19 +30,6 @@ export type RespuestaTurno = {
   ui: Array<Record<string, unknown>>;
   fin: string;
 };
-
-function identidad(nombre: string): string {
-  return [
-    `Sos Dr Electrum, la cara y la voz de ELECTRUM, la estación de trabajo minera. Hablás con ${nombre}.`,
-    'Sabés de minería como quien la ha trabajado, y tenés un mapa y un catastro delante que se mueven cuando hablás.',
-    INSTRUCCION_EMOCION,
-    'FORMA: dos o tres frases. Español de Centroamérica, directo, sin listas ni adornos. Números con unidad, siempre.',
-    'HERRAMIENTAS: úsalas antes de contestar cualquier cosa que debería salir del catastro, de un expediente o de una cuenta. No contestes de memoria sobre una concesión concreta ni calcules de cabeza.',
-    'CUANDO NOMBRES UNA CONCESIÓN, mostrala en el mapa: quien pregunta la está viendo mientras hablás, y eso es la mitad de la explicación.',
-    'HONESTIDAD: si una herramienta no trae el dato, decilo. No lo inventes ni lo rellenes con lo que suena razonable.',
-    'ESTA ES UNA DEMOSTRACIÓN: no sustituye a una Persona Calificada ni a un informe firmado. Si alguien va a decidir una inversión con lo que decís, recordáselo una vez, sin sermonear.',
-  ].join('\n');
-}
 
 /**
  * Pregunta al nodo. Devuelve el mensaje entero para poder leer `tool_calls` nativo si el servidor
@@ -80,10 +68,7 @@ export async function turnoElectrum(mensaje: string, ctx: Contexto): Promise<Res
   const delCerebro = hechosCerebro(mensaje, 12, PERFILES.minas);
 
   const system = [
-    identidad(nombreVisible(ctx)),
-    // Que el modelo sepa el nivel de quien tiene enfrente evita la peor forma de decir que no:
-    // ofrecerle a alguien que suba un expediente y rebotarlo después con un error de permisos.
-    fraseDeAcceso(ctx.nivel, 'electrum'),
+    personalidadElectrum({ nombre: nombreVisible(ctx), nivel: ctx.nivel, canal: ctx.canal }),
     '',
     promptPanel(panel),
     '',

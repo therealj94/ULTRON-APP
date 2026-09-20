@@ -24,7 +24,7 @@ export type Performance = 'speak' | 'sing';
 export const VOZ_ID = process.env.ELEVENLABS_VOZ || 'hHjbwzYZW17oh0p05AKv';
 
 /**
- * La voz de Dr Electrum: Daniel, grave y de edad.
+ * La voz de Dr Electrum: Bill, la más veterana de las que probamos.
  *
  * Dos cerebros con la misma voz son la misma cosa con dos nombres. La cara ya cambia de color según
  * la plataforma; la voz tiene que cambiar igual, o al segundo de audio se deshace la separación que
@@ -35,7 +35,7 @@ export const VOZ_ID = process.env.ELEVENLABS_VOZ || 'hHjbwzYZW17oh0p05AKv';
  * La edad es parte del personaje: a quien te va a decir que un recurso inferido no es una reserva
  * se le cree más si suena a haberlo visto. Se cambia con `ELECTRUM_VOZ`.
  */
-const VOZ_ELECTRUM = 'onwK4e9ZLuTAKqWW03F9'; // Daniel
+const VOZ_ELECTRUM = 'pqHfZKP75CvOlQylNhV4'; // Bill
 
 export function vozDe(plataforma: 'ultron' | 'electrum'): string {
   if (plataforma === 'electrum') return String(process.env.ELECTRUM_VOZ || '').trim() || VOZ_ELECTRUM;
@@ -68,6 +68,12 @@ const TAG_EMOCION: Record<Emocion, string> = {
   travieso: '[mischievously]',
   canto: '[singing]',
   oracion: '[reverent] [softly]',
+  // Las cuatro de Dr Electrum. «seco» no lleva etiqueta de sentimiento a propósito: la sequedad se
+  // oye en lo que NO se pone, y un [flatly] delante de una medida suena a desgana, no a oficio.
+  escepticismo: '[skeptical]',
+  alarma: '[urgently]',
+  firme: '[firmly]',
+  seco: '',
 };
 
 /**
