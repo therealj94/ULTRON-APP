@@ -57,5 +57,20 @@ Way Maker (`waymaker`) en el repertorio; lip-sync real por envolvente silábica 
 emoción del servidor → cara → `/api/tts?emocion=`; `expo-haptics` en toques; iconos y splash regenerados con Pillow
 (`scripts/make-assets.py`).
 
+## 4.1 — ojos de verdad y boca protagonista
+
+| Hallazgo | Decisión |
+| --- | --- |
+| `GazeCamera` mandaba una foto cada 12 s al servidor (≈ 10 s por respuesta) solo para saber si había alguien; la «mirada» era un `sin()`. | `CamaraVision.tsx`: react-native-vision-camera 4.7.3 + ML Kit (face-detector 1.10.2) en un frame processor a 10 fps (`fast`, sin landmarks, con sonrisa/ojos). La misma `Escena` que la web (`src/lib/escena.ts`, con x espejado) alimenta la mirada real, la atención y eventos con histéresis (`llego`, `se_fue`, `sonrie`, `dos_personas`, `mira`…). El servidor sigue solo para «qué ves» (frame bajo demanda) y un escaneo de mesa cada 60 s con alguien delante. |
+| Si el módulo nativo falla, la app no podía ver nada. | Respaldo automático al modo anterior (`motor: 'servidor'`) por límite de errores + watchdog de 9 s sin cuadros; los errores `session/*` (cámara ocupada) también caen al respaldo, porque dormido el watchdog está desarmado; `DETECCION_NATIVA=false` lo fuerza en runtime. Ojo: no evita compilar lo nativo (autolinking); si Gradle fallara, la contingencia es quitar las tres dependencias, el plugin de `app.json` y el de babel. |
+| El yaw absoluto de ML Kit castigaba a quien mira la pantalla desde un borde (|yaw|≈22° > 20°), y la frase decía «a tu derecha» al propio usuario. | yaw/pitch relativos a la cámara (`anguloEsperado` con el `fieldOfView` del formato) y frase en primera persona (`ladoDesdeUltron`), como la web. |
+| La referencia de rotación del frame processor queda fijada al crear la cámara (VisionCamera no asigna `targetRotation` al `ImageAnalysis`): girar 180° o montar antes del lock invertía los ejes. | Al cambiar la orientación de pantalla se remonta `<Camera>` (`key`) y toma la actual como referencia. |
+| El cerebro no sabía quién estaba salvo mandándole una imagen. | Cada turno lleva `escena` (string); el servidor lo usa como hecho «ESCENA (cámara local): …». |
+| Boca: un arco pequeño; al hablar, un rectángulo que subía y bajaba. | Boca de cuatro capas (arco, interior oscuro con mandíbula, labio apretado, dientes) con forma por emoción y visemas cerrada/media/abierta redonda con ataque rápido. |
+| Las reacciones táctiles pasaban por `setState` del padre (un render después) y la mirada al dedo iba sin inercia. | Reacciones locales en `onPanResponderGrant` (Animated, < 1 frame): squash del ojo, pupilas al punto, «oh», sonrisa, cejas, onda; arrastre con retardo elástico. |
+| Batería: cámara siempre igual. | Detector pausado en background; en SLEEPING la cámara solo se enciende 2,5 s cada 12 s (`isActive` alternado, ML Kit a 2 fps en la ventana, `procesar(obs, { inmediato })`). Lip-sync por suscripción (`speechLevelSource`) y nodos Animated de la cara memoizados: cero renders por muestra de voz. |
+
+DeskBot sigue sin visión; aquí la referencia fue la web de ULTRON (MediaPipe) y se replicó el contrato en el teléfono con ML Kit.
+
 ## Latencias de referencia (servidor local con env de producción, 3.x)
 STT nativo ~0,3 s tras callar · primer delta de Qwen ~0,6 s · TTS 0,3 s en caché / 1,3 s primera vez · clips del banco 0 ms.

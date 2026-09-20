@@ -165,9 +165,12 @@ type TurnoOpts = {
   historial: Turn[];
   memoria?: string[];
   image?: string;
+  /** Descripción de la escena que ya interpretó la cámara local (quién está, qué hace). El servidor la usa como hecho «ESCENA (cámara local): …». */
+  escena?: string;
 };
 
 function turnoBody(opts: TurnoOpts) {
+  const escena = String(opts.escena || '').replace(/\s+/g, ' ').trim().slice(0, 300);
   return JSON.stringify({
     message: opts.message,
     mode: opts.mode,
@@ -176,6 +179,7 @@ function turnoBody(opts: TurnoOpts) {
     historial: opts.historial.slice(-10),
     memoria: opts.memoria || [],
     ...(opts.image ? { image: opts.image } : {}),
+    ...(escena ? { escena } : {}),
   });
 }
 

@@ -1,12 +1,24 @@
 /**
- * Cara ULTRON — estilo LOOI / DeskBot: dos anillos luminosos sobre negro,
- * párpados para emociones, cejas, boca en arco y glifos por modo.
- * Solo RN Animated (native driver) — sin Skia/Reanimated (EAS-safe).
+ * Cara ULTRON — estilo LOOI / DeskBot: dos anillos luminosos sobre negro, párpados para emociones,
+ * cejas, boca paramétrica y glifos por modo. Solo RN Animated (native driver) — sin Skia/Reanimated.
  *
- * Tacto: la cara clasifica la zona tocada (ojo, frente, mejilla, boca, barbilla) y avisa al padre;
- * arrastrar el dedo mueve la mirada; frotar la mejilla y mantener pulsado tienen sus callbacks.
+ * Boca (4.1): protagonista secundaria. Cuatro capas animadas solo con transforms/opacity:
+ *  - arco (curva -1..1 = triste..sonrisa, ancho, inclinación para muecas),
+ *  - interior oscuro con borde (apertura 0..1, redondez 0.5..1.2, mandíbula que baja),
+ *  - barra de labio apretado (molestia),
+ *  - dientes (risa abierta).
+ * Cada estado define una forma (sonrisa amplia, «o» de sorpresa, mueca triste, risa abierta, labio
+ * apretado, boca pequeña serena en PRAY…) y al hablar los visemas siguen `speechLevel`
+ * (cerrada / media ancha / abierta redonda) con ataque rápido (35 ms) y cierre más lento (90 ms).
+ *
+ * Tacto: la cara reacciona sola y de inmediato en onPanResponderGrant (< 1 frame, sin setState):
+ * squash del ojo tocado, pupilas que saltan al punto, boca «oh» en barbilla, sonrisa en mejilla,
+ * cejas arriba en frente, onda fina en el punto tocado, squash leve general. Al arrastrar, los ojos
+ * siguen el dedo con retardo elástico (spring blando). El padre recibe onTap/onDragGaze/… igual que antes.
+ *
+ * Atención (`attention` 0..1): con alguien mirando, halo y pupilas se iluminan un poco.
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Easing, PanResponder, StyleSheet, Text, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
 import type { FaceState, Mode } from '../config';
 
@@ -19,8 +31,16 @@ type Props = {
   gazeY?: number;
   /** 0..1 nivel del micrófono → pulso al escuchar */
   level?: number;
-  /** 0..1 nivel de la voz de ULTRON (lip-sync, desde tts.setSpeechLevelListener) → apertura de boca */
+  /** 0..1 nivel de la voz de ULTRON (lip-sync) → visemas. Cada cambio re-renderiza: preferí `speechLevelSource`. */
   speechLevel?: number;
+  /**
+   * Fuente del nivel de voz sin pasar por el estado del padre: la cara se suscribe una vez y mueve la
+   * boca con Animated a 20 Hz sin ningún setState ni re-render (DeskScreen pasa tts.setSpeechLevelListener).
+   * Devuelve la función para desuscribirse.
+   */
+  speechLevelSource?: (cb: (level01: number) => void) => (() => void) | void;
+  /** 0..1 alguien delante mirando (cámara): la cara se ilumina un poco. */
+  attention?: number;
   attack?: 'blaster' | 'saber' | null;
   /** 0..1 enojo acumulado por toques */
   irritation?: number;
@@ -28,7 +48,7 @@ type Props = {
   winkSide?: 'L' | 'R';
   onTap?: (zone: TouchZone, x01: number, y01: number) => void;
   onLongPress?: () => void;
-  /** El dedo arrastra: mirada relativa al centro de la cara (-1..1). */
+  /** El dedo arrastra: mirada relativa al centro de la cara (-1..1). La cara ya sigue el dedo sola. */
   onDragGaze?: (x: number, y: number) => void;
   onDragEnd?: () => void;
   /** Frotó la mejilla (ida y vuelta corta dentro de la zona). */
@@ -44,6 +64,8 @@ const CYAN = '#00E5FF';
 const GOLD = '#FFD166';
 const RED = '#FF3B5C';
 const SABER = '#39FF14';
+const MOUTH_DARK = '#02151B';
+const TEETH = '#D9FBFF';
 const EDGE_PX = 44;
 
 const MODE_GLYPHS: Record<Mode, [string, string]> = {
@@ -66,41 +88,57 @@ type Lids = {
   browOpacity: number;
   browAsym: number; // 0..1 ceja izquierda más arriba (curioso)
   pupil: number; // escala pupila
-  mouth: number; // -1 triste .. 1 sonrisa
-  mouthW: number; // escala ancho
+  mouth: number; // -1 triste .. 1 sonrisa (curva del arco)
+  mouthW: number; // escala ancho del arco
   headTilt: number; // grados de inclinación de la cabeza
+  // --- boca 4.1
+  open: number; // 0..1 apertura en reposo (interior oscuro visible)
+  round: number; // 0.5 «o» cerrada .. 1.2 ancha
+  press: number; // 0..1 labio apretado (barra plana en vez de arco)
+  mouthTilt: number; // grados: mueca / sonrisa ladeada
+  jaw: number; // 0..1 mandíbula baja
+  teeth: number; // 0..1 dientes visibles (risa)
 };
 
-const NEUTRAL: Lids = { top: 0, bottom: 0, tilt: 0, browY: 0, browTilt: 0, browOpacity: 0, browAsym: 0, pupil: 1, mouth: 0.15, mouthW: 1, headTilt: 0 };
+const NEUTRAL: Lids = {
+  top: 0, bottom: 0, tilt: 0, browY: 0, browTilt: 0, browOpacity: 0, browAsym: 0, pupil: 1, mouth: 0.15, mouthW: 1, headTilt: 0,
+  open: 0, round: 0.95, press: 0, mouthTilt: 0, jaw: 0, teeth: 0,
+};
 
 const LIDS: Record<FaceState, Lids> = {
   IDLE: NEUTRAL,
-  LISTENING: { ...NEUTRAL, pupil: 1.15, mouth: 0.2 },
-  THINKING: { ...NEUTRAL, top: 0.18, pupil: 0.85, mouth: 0.05, browOpacity: 0.5, browY: -0.5 },
+  LISTENING: { ...NEUTRAL, pupil: 1.15, mouth: 0.2, open: 0.05, round: 1 },
+  THINKING: { ...NEUTRAL, top: 0.18, pupil: 0.85, mouth: 0.05, mouthW: 0.85, browOpacity: 0.5, browY: -0.5, mouthTilt: 7 },
   SPEAKING: { ...NEUTRAL, mouth: 0.3 },
-  HAPPY: { ...NEUTRAL, bottom: 0.42, mouth: 1, mouthW: 1.25, pupil: 1.1 },
-  WINK: { ...NEUTRAL, bottom: 0.3, mouth: 0.8, mouthW: 1.15 },
-  CONCERNED: { ...NEUTRAL, top: 0.2, browOpacity: 0.9, browY: -0.6, browTilt: -14, mouth: -0.6, mouthW: 0.7 },
-  ANGRY: { ...NEUTRAL, top: 0.42, tilt: 22, browOpacity: 1, browY: 0.6, browTilt: 22, mouth: -0.4, mouthW: 0.8, pupil: 0.7 },
-  SLEEPING: { ...NEUTRAL, top: 0.94, mouth: 0.1, mouthW: 0.5, pupil: 0.6 },
-  STARTLE: { ...NEUTRAL, pupil: 0.55, mouth: -0.2, mouthW: 0.5, browOpacity: 0.8, browY: -1 },
-  CONFUSED: { ...NEUTRAL, top: 0.12, browOpacity: 0.8, browY: -0.4, browTilt: 10, mouth: -0.1, mouthW: 0.6, headTilt: 5 },
-  MUSIC: { ...NEUTRAL, bottom: 0.35, mouth: 0.9, mouthW: 0.8 },
-  SCAN: { ...NEUTRAL, top: 0.26, pupil: 0.8, mouth: 0.1 },
-  YAWNING: { ...NEUTRAL, top: 0.7, mouth: -0.9, mouthW: 0.6 },
+  // sonrisa amplia con un interior fino (profundidad)
+  HAPPY: { ...NEUTRAL, bottom: 0.42, mouth: 1, mouthW: 1.25, pupil: 1.1, open: 0.16, round: 1.2 },
+  WINK: { ...NEUTRAL, bottom: 0.3, mouth: 0.8, mouthW: 1.15, mouthTilt: 6 },
+  CONCERNED: { ...NEUTRAL, top: 0.2, browOpacity: 0.9, browY: -0.6, browTilt: -14, mouth: -0.6, mouthW: 0.7, open: 0.08, round: 0.6 },
+  // labio apretado: barra plana, sin arco
+  ANGRY: { ...NEUTRAL, top: 0.42, tilt: 22, browOpacity: 1, browY: 0.6, browTilt: 22, mouth: -0.4, mouthW: 0.8, pupil: 0.7, press: 1 },
+  SLEEPING: { ...NEUTRAL, top: 0.94, mouth: 0.1, mouthW: 0.5, pupil: 0.6, open: 0.07, round: 0.55 },
+  // «o» de susto
+  STARTLE: { ...NEUTRAL, pupil: 0.55, mouth: -0.2, mouthW: 0.5, browOpacity: 0.8, browY: -1, open: 0.62, round: 0.6, jaw: 0.45 },
+  CONFUSED: { ...NEUTRAL, top: 0.12, browOpacity: 0.8, browY: -0.4, browTilt: 10, mouth: -0.1, mouthW: 0.6, headTilt: 5, mouthTilt: -8 },
+  MUSIC: { ...NEUTRAL, bottom: 0.35, mouth: 0.9, mouthW: 0.8, round: 0.8 },
+  SCAN: { ...NEUTRAL, top: 0.26, pupil: 0.8, mouth: 0.1, press: 0.35 },
+  YAWNING: { ...NEUTRAL, top: 0.7, mouth: -0.9, mouthW: 0.6, open: 1, round: 0.75, jaw: 1 },
   // --- 4.0 ---
-  LAUGH: { ...NEUTRAL, bottom: 0.55, mouth: 1, mouthW: 1.2, pupil: 1.05 },
-  SURPRISED: { ...NEUTRAL, pupil: 0.6, mouth: -0.35, mouthW: 0.5, browOpacity: 0.95, browY: -1 },
-  SAD: { ...NEUTRAL, top: 0.38, browOpacity: 0.9, browY: -0.35, browTilt: -22, mouth: -0.75, mouthW: 0.7, pupil: 0.9 },
-  TIRED: { ...NEUTRAL, top: 0.62, browOpacity: 0.4, browY: 0.3, mouth: -0.1, mouthW: 0.6, pupil: 0.8 },
-  SING: { ...NEUTRAL, bottom: 0.3, mouth: 0.9, mouthW: 0.85, headTilt: -3 },
-  CURIOUS: { ...NEUTRAL, top: 0.05, pupil: 1.1, mouth: 0.35, mouthW: 0.8, browOpacity: 0.85, browY: -0.2, browAsym: 1, headTilt: -7 },
+  // risa abierta con interior oscuro y dientes
+  LAUGH: { ...NEUTRAL, bottom: 0.55, mouth: 1, mouthW: 1.2, pupil: 1.05, open: 0.8, round: 1.15, jaw: 0.6, teeth: 1 },
+  // «o» de sorpresa
+  SURPRISED: { ...NEUTRAL, pupil: 0.6, mouth: -0.35, mouthW: 0.5, browOpacity: 0.95, browY: -1, open: 0.72, round: 0.62, jaw: 0.5 },
+  // mueca de tristeza: arco caído, ladeado
+  SAD: { ...NEUTRAL, top: 0.38, browOpacity: 0.9, browY: -0.35, browTilt: -22, mouth: -0.75, mouthW: 0.7, pupil: 0.9, mouthTilt: -6 },
+  TIRED: { ...NEUTRAL, top: 0.62, browOpacity: 0.4, browY: 0.3, mouth: -0.1, mouthW: 0.6, pupil: 0.8, open: 0.14, round: 0.6 },
+  SING: { ...NEUTRAL, bottom: 0.3, mouth: 0.9, mouthW: 0.85, headTilt: -3, round: 0.8 },
+  CURIOUS: { ...NEUTRAL, top: 0.05, pupil: 1.1, mouth: 0.35, mouthW: 0.8, browOpacity: 0.85, browY: -0.2, browAsym: 1, headTilt: -7, open: 0.12, round: 0.7, mouthTilt: 4 },
   PROUD: { ...NEUTRAL, top: 0.12, bottom: 0.25, mouth: 0.85, mouthW: 1.1, browOpacity: 0.6, browY: -0.3, pupil: 0.95 },
-  // ojos cerrados con suavidad (no es sueño), cejas relajadas, sonrisa mínima serena
-  PRAY: { ...NEUTRAL, top: 0.97, browOpacity: 0.3, browY: -0.05, mouth: 0.4, mouthW: 0.7, pupil: 0.9, headTilt: 0 },
+  // ojos cerrados con suavidad (no es sueño), cejas relajadas, boca pequeña serena
+  PRAY: { ...NEUTRAL, top: 0.97, browOpacity: 0.3, browY: -0.05, mouth: 0.35, mouthW: 0.55, pupil: 0.9, headTilt: 0, round: 0.7 },
 };
 
-/** Estados en los que la boca sigue el audio (lip-sync). */
+/** Estados en los que la boca sigue el audio (visemas). */
 const MOUTH_LOOP: ReadonlySet<FaceState> = new Set(['SPEAKING', 'MUSIC', 'SING', 'LAUGH', 'PRAY']);
 /** Párpados lentos al entrar/salir de estos estados (los ojos se abren despacio al terminar de orar). */
 const SLOW_LIDS: ReadonlySet<FaceState> = new Set(['PRAY', 'SLEEPING']);
@@ -111,6 +149,14 @@ function useAnim(v: number) {
 
 const clamp = (v: number, a = -1, b = 1) => Math.max(a, Math.min(b, v));
 
+/** Visema a partir del nivel de voz: cerrada / media ancha / abierta redonda. */
+function visema(level01: number): { open: number; round: number } {
+  const l = clamp(level01, 0, 1);
+  if (l < 0.12) return { open: 0, round: 0.95 };
+  if (l < 0.55) return { open: l * 1.05, round: 1.02 };
+  return { open: l, round: 0.72 + (1 - l) * 0.25 };
+}
+
 export function UltronFace({
   face,
   mode = 'GUARDIAN',
@@ -118,6 +164,8 @@ export function UltronFace({
   gazeY = 0,
   level = 0,
   speechLevel = 0,
+  speechLevelSource,
+  attention = 0,
   attack = null,
   irritation = 0,
   winkSide = 'L',
@@ -141,6 +189,8 @@ export function UltronFace({
   const accent = face === 'ANGRY' || firing ? RED : saberOn ? SABER : mode === 'GOLD' ? GOLD : CYAN;
   const dim = face === 'SLEEPING';
   const lids = LIDS[face] || NEUTRAL;
+  const lidsRef = useRef(lids);
+  lidsRef.current = lids;
   const [gL, gR] = MODE_GLYPHS[mode] || MODE_GLYPHS.GUARDIAN;
   const [stageW, setStageW] = useState(width);
 
@@ -157,7 +207,14 @@ export function UltronFace({
   const pupilScale = useAnim(lids.pupil);
   const mouthCurve = useAnim(lids.mouth);
   const mouthW = useAnim(lids.mouthW);
-  const mouthOpen = useAnim(0);
+  const mouthOpenBase = useAnim(lids.open);
+  const mouthOpen = useAnim(0); // visemas
+  const mouthRound = useAnim(lids.round);
+  const press = useAnim(lids.press);
+  const mouthTilt = useAnim(lids.mouthTilt);
+  const jaw = useAnim(lids.jaw);
+  const jawSpeech = useAnim(0);
+  const teeth = useAnim(lids.teeth);
   const px = useAnim(0);
   const py = useAnim(0);
   const pulse = useAnim(0);
@@ -170,6 +227,22 @@ export function UltronFace({
   const flash = useAnim(0);
   const saber = useAnim(0);
   const thinkDots = useAnim(0);
+  const attn = useAnim(0);
+  // --- reacciones táctiles (locales, sin setState)
+  const tx = useAnim(0);
+  const ty = useAnim(0);
+  const touchOpen = useAnim(0);
+  const touchSmile = useAnim(0);
+  const touchBrow = useAnim(0);
+  const tapSquash = useAnim(1);
+  const eyeSquashL = useAnim(1);
+  const eyeSquashR = useAnim(1);
+  const eyeStretchL = useAnim(1);
+  const eyeStretchR = useAnim(1);
+  const ripples = useRef(
+    [0, 1].map(() => ({ x: new Animated.Value(0), y: new Animated.Value(0), s: new Animated.Value(0), o: new Animated.Value(0) }))
+  ).current;
+  const rippleIdx = useRef(0);
 
   // respiración (muy lenta al orar) + glifos flotando
   const praying = face === 'PRAY';
@@ -224,6 +297,7 @@ export function UltronFace({
     const dur = 260;
     const slowLids = SLOW_LIDS.has(face) || SLOW_LIDS.has(prevFace.current);
     prevFace.current = face;
+    const loop = MOUTH_LOOP.has(face);
     Animated.parallel([
       Animated.timing(topLid, { toValue: lids.top, duration: slowLids ? (face === 'PRAY' ? 700 : 900) : dur, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }),
       Animated.timing(bottomLid, { toValue: lids.bottom, duration: dur, easing: ease, useNativeDriver: true }),
@@ -236,6 +310,13 @@ export function UltronFace({
       Animated.spring(pupilScale, { toValue: lids.pupil, friction: 6, useNativeDriver: true }),
       Animated.timing(mouthCurve, { toValue: lids.mouth, duration: dur, easing: ease, useNativeDriver: true }),
       Animated.timing(mouthW, { toValue: lids.mouthW, duration: dur, easing: ease, useNativeDriver: true }),
+      // la boca en reposo del estado (al hablar, los visemas van sobre esta base)
+      Animated.timing(mouthOpenBase, { toValue: loop ? Math.min(lids.open, 0.35) : lids.open, duration: face === 'SURPRISED' || face === 'STARTLE' ? 90 : 220, easing: ease, useNativeDriver: true }),
+      Animated.timing(press, { toValue: lids.press, duration: dur, useNativeDriver: true }),
+      Animated.timing(mouthTilt, { toValue: lids.mouthTilt, duration: dur, easing: ease, useNativeDriver: true }),
+      Animated.timing(jaw, { toValue: lids.jaw, duration: 220, easing: ease, useNativeDriver: true }),
+      Animated.timing(teeth, { toValue: lids.teeth, duration: 200, useNativeDriver: true }),
+      ...(loop ? [] : [Animated.timing(mouthRound, { toValue: lids.round, duration: dur, easing: ease, useNativeDriver: true })]),
     ]).start();
 
     const running: Animated.CompositeAnimation[] = [];
@@ -244,7 +325,10 @@ export function UltronFace({
       a.start();
     };
 
-    if (!MOUTH_LOOP.has(face)) Animated.timing(mouthOpen, { toValue: 0, duration: 160, useNativeDriver: true }).start();
+    if (!loop) {
+      Animated.timing(mouthOpen, { toValue: 0, duration: 160, useNativeDriver: true }).start();
+      Animated.timing(jawSpeech, { toValue: 0, duration: 160, useNativeDriver: true }).start();
+    }
 
     if (face === 'THINKING') {
       run(
@@ -339,31 +423,68 @@ export function UltronFace({
     }
 
     return () => running.forEach((a) => a.stop());
-  }, [face, lids, topLid, bottomLid, tilt, browY, browTilt, browOp, browAsym, headTilt, pupilScale, mouthCurve, mouthW, mouthOpen, shake, thinkDots, bounce, squash, sway]);
+  }, [face, lids, topLid, bottomLid, tilt, browY, browTilt, browOp, browAsym, headTilt, pupilScale, mouthCurve, mouthW, mouthOpenBase, mouthOpen, mouthRound, press, mouthTilt, jaw, jawSpeech, teeth, shake, thinkDots, bounce, squash, sway]);
 
-  // mirada
+  // mirada (cámara / errante / pensando); el dedo se suma aparte (tx, ty)
   useEffect(() => {
     const think = face === 'THINKING';
     const sad = face === 'SAD';
-    const tx = (think ? 0.55 : clamp(gazeX)) * D * 0.18;
-    const ty = (think ? -0.6 : sad ? 0.75 : clamp(gazeY)) * D * 0.14;
-    Animated.spring(px, { toValue: tx, friction: 7, tension: 50, useNativeDriver: true }).start();
-    Animated.spring(py, { toValue: ty, friction: 7, tension: 50, useNativeDriver: true }).start();
+    const gx = (think ? 0.55 : clamp(gazeX)) * D * 0.18;
+    const gy = (think ? -0.6 : sad ? 0.75 : clamp(gazeY)) * D * 0.14;
+    Animated.spring(px, { toValue: gx, friction: 7, tension: 50, useNativeDriver: true }).start();
+    Animated.spring(py, { toValue: gy, friction: 7, tension: 50, useNativeDriver: true }).start();
   }, [gazeX, gazeY, face, D, px, py]);
+
+  // atención: alguien delante mirando → halo y pupilas un poco más vivos
+  useEffect(() => {
+    Animated.timing(attn, { toValue: clamp(attention, 0, 1), duration: 650, easing: Easing.out(Easing.quad), useNativeDriver: true }).start();
+  }, [attention, attn]);
 
   // pulso por nivel de mic al escuchar
   useEffect(() => {
     Animated.timing(pulse, { toValue: face === 'LISTENING' ? level : 0, duration: 90, useNativeDriver: true }).start();
   }, [level, face, pulse]);
 
-  // Lip-sync: la boca sigue el nivel de la voz (tts.ts lo emite a 20 Hz sincronizado a positionMillis).
+  // Lip-sync: visemas por nivel (tts.ts lo emite a 20 Hz sincronizado a positionMillis). Todo va por
+  // Animated: con `speechLevelSource` no hay setState ni re-render por muestra.
   const lastLevelAt = useRef(0);
+  const lastOpen = useRef(0);
+  const faceRef = useRef<FaceState>(face);
+  faceRef.current = face;
+  const aplicarVisema = useCallback(
+    (nivel: number) => {
+      const f = faceRef.current;
+      lastLevelAt.current = Date.now();
+      const gain = f === 'PRAY' ? 0.7 : f === 'LAUGH' ? 1.1 : f === 'SING' || f === 'MUSIC' ? 1.15 : 1;
+      const v = visema(nivel * gain);
+      const rising = v.open > lastOpen.current;
+      lastOpen.current = v.open;
+      const dur = rising ? 35 : 90;
+      // al cantar/orar la boca es más redonda; en risa más ancha
+      const round = f === 'LAUGH' ? Math.max(v.round, 1.1) : f === 'SING' || f === 'MUSIC' || f === 'PRAY' ? Math.min(v.round, 0.85) : v.round;
+      Animated.parallel([
+        Animated.timing(mouthOpen, { toValue: v.open, duration: dur, useNativeDriver: true }),
+        Animated.timing(mouthRound, { toValue: round, duration: Math.max(dur, 60), useNativeDriver: true }),
+        Animated.timing(jawSpeech, { toValue: v.open * 0.85, duration: dur + 15, useNativeDriver: true }),
+      ]).start();
+    },
+    [mouthOpen, mouthRound, jawSpeech]
+  );
+  // vía prop (LoginScreen / usos simples): un render por muestra
   useEffect(() => {
     if (!MOUTH_LOOP.has(face)) return;
-    lastLevelAt.current = Date.now();
-    const gain = face === 'PRAY' ? 0.7 : face === 'LAUGH' ? 1.1 : face === 'SING' || face === 'MUSIC' ? 1.15 : 1;
-    Animated.timing(mouthOpen, { toValue: Math.min(1, speechLevel * gain), duration: 45, useNativeDriver: true }).start();
-  }, [speechLevel, face, mouthOpen]);
+    aplicarVisema(speechLevel);
+  }, [speechLevel, face, aplicarVisema]);
+  // vía suscripción (DeskScreen): cero renders
+  useEffect(() => {
+    if (!speechLevelSource) return;
+    const off = speechLevelSource((v) => {
+      if (MOUTH_LOOP.has(faceRef.current)) aplicarVisema(v);
+    });
+    return () => {
+      off?.();
+    };
+  }, [speechLevelSource, aplicarVisema]);
 
   // Respaldo: si estamos "hablando" pero no llega nivel (audio ajeno a tts.ts), la boca se mueve sola.
   useEffect(() => {
@@ -375,10 +496,19 @@ export function UltronFace({
       if (stale && !loop) {
         loop = Animated.loop(
           Animated.sequence([
-            Animated.timing(mouthOpen, { toValue: 0.9, duration: fast ? 90 : 130, useNativeDriver: true }),
-            Animated.timing(mouthOpen, { toValue: 0.2, duration: fast ? 90 : 150, useNativeDriver: true }),
+            Animated.parallel([
+              Animated.timing(mouthOpen, { toValue: 0.9, duration: fast ? 90 : 130, useNativeDriver: true }),
+              Animated.timing(jawSpeech, { toValue: 0.7, duration: fast ? 90 : 130, useNativeDriver: true }),
+            ]),
+            Animated.parallel([
+              Animated.timing(mouthOpen, { toValue: 0.2, duration: fast ? 90 : 150, useNativeDriver: true }),
+              Animated.timing(jawSpeech, { toValue: 0.15, duration: fast ? 90 : 150, useNativeDriver: true }),
+            ]),
             Animated.timing(mouthOpen, { toValue: 0.65, duration: 110, useNativeDriver: true }),
-            Animated.timing(mouthOpen, { toValue: 0.1, duration: fast ? 100 : 170, useNativeDriver: true }),
+            Animated.parallel([
+              Animated.timing(mouthOpen, { toValue: 0.1, duration: fast ? 100 : 170, useNativeDriver: true }),
+              Animated.timing(jawSpeech, { toValue: 0.05, duration: fast ? 100 : 170, useNativeDriver: true }),
+            ]),
           ])
         );
         loop.start();
@@ -391,7 +521,7 @@ export function UltronFace({
       clearInterval(id);
       loop?.stop();
     };
-  }, [face, mouthOpen]);
+  }, [face, mouthOpen, jawSpeech]);
 
   useEffect(() => {
     if (!firing) {
@@ -474,6 +604,82 @@ export function UltronFace({
     return { gx: clamp((x - w / 2) / (d * 1.3)), gy: clamp((y - (top + d / 2)) / (d * 0.9)) };
   };
 
+  /** Onda fina en el punto tocado (dos ranuras alternas para toques seguidos). */
+  const ripple = (x: number, y: number) => {
+    const r = ripples[rippleIdx.current];
+    rippleIdx.current = (rippleIdx.current + 1) % ripples.length;
+    const R = geo.current.D * 0.25;
+    r.x.setValue(x - R);
+    r.y.setValue(y - R);
+    r.s.setValue(0.25);
+    r.o.setValue(0.7);
+    Animated.parallel([
+      Animated.timing(r.s, { toValue: 1, duration: 460, easing: Easing.out(Easing.cubic), useNativeDriver: true }),
+      Animated.timing(r.o, { toValue: 0, duration: 460, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+    ]).start();
+  };
+
+  /** Reacción inmediata al contacto (antes de que el padre decida nada). */
+  const reaccionToque = (zone: TouchZone, x: number, y: number) => {
+    const d = geo.current.D;
+    const { gx, gy } = gazeFromPoint(x, y);
+    // pupilas saltan al punto de contacto
+    tx.stopAnimation();
+    ty.stopAnimation();
+    tx.setValue(gx * d * 0.18);
+    ty.setValue(gy * d * 0.14);
+    ripple(x, y);
+    Animated.sequence([
+      Animated.timing(tapSquash, { toValue: 0.965, duration: 45, useNativeDriver: true }),
+      Animated.spring(tapSquash, { toValue: 1, friction: 4, tension: 140, useNativeDriver: true }),
+    ]).start();
+    const hold = (v: Animated.Value, to: number, holdMs: number, back = 0, upMs = 60, downMs = 320) =>
+      Animated.sequence([
+        Animated.timing(v, { toValue: to, duration: upMs, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+        Animated.delay(holdMs),
+        Animated.timing(v, { toValue: back, duration: downMs, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+      ]).start();
+    switch (zone) {
+      case 'eyeL':
+      case 'eyeR': {
+        const sq = zone === 'eyeL' ? eyeSquashL : eyeSquashR;
+        const st = zone === 'eyeL' ? eyeStretchL : eyeStretchR;
+        Animated.sequence([
+          Animated.parallel([
+            Animated.timing(sq, { toValue: 0.42, duration: 45, useNativeDriver: true }),
+            Animated.timing(st, { toValue: 1.12, duration: 45, useNativeDriver: true }),
+          ]),
+          Animated.parallel([
+            Animated.spring(sq, { toValue: 1, friction: 4, tension: 150, useNativeDriver: true }),
+            Animated.spring(st, { toValue: 1, friction: 4, tension: 150, useNativeDriver: true }),
+          ]),
+        ]).start();
+        break;
+      }
+      case 'chin':
+        // «oh» redondo
+        hold(touchOpen, 0.75, 260, 0, 50, 240);
+        Animated.sequence([
+          Animated.timing(mouthRound, { toValue: 0.62, duration: 50, useNativeDriver: true }),
+          Animated.delay(260),
+          Animated.timing(mouthRound, { toValue: lidsRef.current.round, duration: 240, useNativeDriver: true }),
+        ]).start();
+        break;
+      case 'mouth':
+        hold(touchOpen, 0.4, 180, 0, 45, 220);
+        hold(touchSmile, 0.5, 400, 0, 60, 380);
+        break;
+      case 'cheek':
+        hold(touchSmile, 0.75, 520, 0, 60, 420);
+        break;
+      case 'forehead':
+        hold(touchBrow, 1, 520, 0, 55, 300);
+        break;
+      default:
+        break;
+    }
+  };
+
   const pan = useRef(
     (() => {
       const s = {
@@ -488,11 +694,21 @@ export function UltronFace({
         lx: 0,
         ly: 0,
         timer: null as ReturnType<typeof setTimeout> | null,
+        release: null as ReturnType<typeof setTimeout> | null,
       };
       const local = (pageX: number, pageY: number) => ({ x: pageX - origin.current.x, y: pageY - origin.current.y });
       const clear = () => {
         if (s.timer) clearTimeout(s.timer);
         s.timer = null;
+      };
+      /** Al soltar, las pupilas vuelven al centro con un poco de retardo elástico. */
+      const soltarMirada = (delay: number) => {
+        if (s.release) clearTimeout(s.release);
+        s.release = setTimeout(() => {
+          s.release = null;
+          Animated.spring(tx, { toValue: 0, friction: 6, tension: 40, useNativeDriver: true }).start();
+          Animated.spring(ty, { toValue: 0, friction: 6, tension: 40, useNativeDriver: true }).start();
+        }, delay);
       };
       return PanResponder.create({
         onStartShouldSetPanResponder: (e) => {
@@ -503,6 +719,8 @@ export function UltronFace({
         onPanResponderTerminationRequest: () => false,
         onPanResponderGrant: (e) => {
           const { x, y } = local(e.nativeEvent.pageX, e.nativeEvent.pageY);
+          if (s.release) clearTimeout(s.release);
+          s.release = null;
           s.x0 = x;
           s.y0 = y;
           s.lx = x;
@@ -514,6 +732,7 @@ export function UltronFace({
           s.rubbed = false;
           s.path = 0;
           clear();
+          reaccionToque(s.zone, x, y);
           s.timer = setTimeout(() => {
             if (s.dragged) return;
             s.longFired = true;
@@ -531,6 +750,10 @@ export function UltronFace({
           s.lx = x;
           s.ly = y;
           const { gx, gy } = gazeFromPoint(x, y);
+          // los ojos siguen el dedo con retardo elástico
+          const d = geo.current.D;
+          Animated.spring(tx, { toValue: gx * d * 0.18, friction: 5, tension: 38, useNativeDriver: true }).start();
+          Animated.spring(ty, { toValue: gy * d * 0.14, friction: 5, tension: 38, useNativeDriver: true }).start();
           cbs.current.onDragGaze?.(gx, gy);
           if (!s.rubbed && s.zone === 'cheek' && zoneAt(x, y) === 'cheek' && s.path > geo.current.D * 0.6) {
             s.rubbed = true;
@@ -541,16 +764,19 @@ export function UltronFace({
           clear();
           const dt = Date.now() - s.t0;
           if (s.dragged) {
+            soltarMirada(650);
             cbs.current.onDragEnd?.();
             if (Math.abs(g.dx) > 140 && Math.abs(g.dy) < 80 && dt < 420) cbs.current.onSwipe?.(g.dx < 0 ? 'left' : 'right');
             return;
           }
+          soltarMirada(1300);
           if (s.longFired) return;
           const { stageW: w, stageH: h } = geo.current;
           cbs.current.onTap?.(s.zone, clamp((s.x0 / w) * 2 - 1), clamp((s.y0 / h) * 2 - 1));
         },
         onPanResponderTerminate: () => {
           clear();
+          soltarMirada(400);
           if (s.dragged) cbs.current.onDragEnd?.();
         },
       });
@@ -558,45 +784,79 @@ export function UltronFace({
   ).current;
 
   // ---------------------------------------------------------------- interpolaciones
-  const lidH = D * 1.1;
-  const topLidY = topLid.interpolate({ inputRange: [0, 1], outputRange: [-lidH, -lidH + D * 1.02] });
-  const bottomLidY = bottomLid.interpolate({ inputRange: [0, 1], outputRange: [lidH, lidH - D * 1.0] });
-  const tiltL = tilt.interpolate({ inputRange: [-45, 45], outputRange: ['-45deg', '45deg'] });
-  const tiltR = tilt.interpolate({ inputRange: [-45, 45], outputRange: ['45deg', '-45deg'] });
-  const browTiltL = browTilt.interpolate({ inputRange: [-45, 45], outputRange: ['-45deg', '45deg'] });
-  const browTiltR = browTilt.interpolate({ inputRange: [-45, 45], outputRange: ['45deg', '-45deg'] });
-  const browTy = browY.interpolate({ inputRange: [-1, 1], outputRange: [-D * 0.12, D * 0.14] });
-  const browAsymL = browAsym.interpolate({ inputRange: [0, 1], outputRange: [0, -D * 0.1] });
-  const browAsymR = browAsym.interpolate({ inputRange: [0, 1], outputRange: [0, D * 0.03] });
-  const headRot = headTilt.interpolate({ inputRange: [-45, 45], outputRange: ['-45deg', '45deg'] });
-  const shakeX = shake.interpolate({ inputRange: [-1, 1], outputRange: [-8, 8] });
-  const bounceTy = bounce.interpolate({ inputRange: [-1, 0, 1.5], outputRange: [D * 0.05, 0, -D * 0.09] });
-  const swayX = sway.interpolate({ inputRange: [-1, 1], outputRange: [-D * 0.06, D * 0.06] });
-  const swayRot = sway.interpolate({ inputRange: [-1, 1], outputRange: ['-3deg', '3deg'] });
-  const glyphTy = glyphBob.interpolate({ inputRange: [0, 1], outputRange: [0, -8] });
-  const pulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.22] });
-  const pulseOp = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.5] });
+  // Todos los nodos derivados (interpolate/add/multiply) se crean UNA vez por tamaño: los Animated.Value
+  // son refs estables y así un re-render (emoción, mirada, atención…) no recrea ~45 nodos nativos.
+  const A = useMemo(() => {
+    const lidH = D * 1.1;
+    const topLidY = topLid.interpolate({ inputRange: [0, 1], outputRange: [-lidH, -lidH + D * 1.02] });
+    const bottomLidY = bottomLid.interpolate({ inputRange: [0, 1], outputRange: [lidH, lidH - D * 1.0] });
+    const tiltL = tilt.interpolate({ inputRange: [-45, 45], outputRange: ['-45deg', '45deg'] });
+    const tiltR = tilt.interpolate({ inputRange: [-45, 45], outputRange: ['45deg', '-45deg'] });
+    const browTiltL = browTilt.interpolate({ inputRange: [-45, 45], outputRange: ['-45deg', '45deg'] });
+    const browTiltR = browTilt.interpolate({ inputRange: [-45, 45], outputRange: ['45deg', '-45deg'] });
+    const browTy = browY.interpolate({ inputRange: [-1, 1], outputRange: [-D * 0.12, D * 0.14] });
+    const browTouchTy = touchBrow.interpolate({ inputRange: [0, 1], outputRange: [0, -D * 0.11] });
+    const browOpacity = Animated.add(browOp, touchBrow.interpolate({ inputRange: [0, 1], outputRange: [0, 0.9] })).interpolate({ inputRange: [0, 1], outputRange: [0, 1], extrapolate: 'clamp' });
+    const browAsymL = browAsym.interpolate({ inputRange: [0, 1], outputRange: [0, -D * 0.1] });
+    const browAsymR = browAsym.interpolate({ inputRange: [0, 1], outputRange: [0, D * 0.03] });
+    const headRot = headTilt.interpolate({ inputRange: [-45, 45], outputRange: ['-45deg', '45deg'] });
+    const shakeX = shake.interpolate({ inputRange: [-1, 1], outputRange: [-8, 8] });
+    const bounceTy = bounce.interpolate({ inputRange: [-1, 0, 1.5], outputRange: [D * 0.05, 0, -D * 0.09] });
+    const swayX = sway.interpolate({ inputRange: [-1, 1], outputRange: [-D * 0.06, D * 0.06] });
+    const swayRot = sway.interpolate({ inputRange: [-1, 1], outputRange: ['-3deg', '3deg'] });
+    const glyphTy = glyphBob.interpolate({ inputRange: [0, 1], outputRange: [0, -8] });
+    const pulseScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.22] });
+    const pulseOp = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.12, 0.5] });
+    const attnHaloOp = attn.interpolate({ inputRange: [0, 1], outputRange: [0, 0.34] });
+    const attnPupil = attn.interpolate({ inputRange: [0, 1], outputRange: [1, 1.1] });
+    const pupilTx = Animated.add(px, tx);
+    const pupilTy = Animated.add(py, ty);
+    const pupilScaleTotal = Animated.multiply(pupilScale, attnPupil);
 
-  const mouthWpx = D * 0.62;
-  const mouthArcH = D * 0.26;
-  const mouthScaleY = mouthCurve.interpolate({ inputRange: [-1, 0, 1], outputRange: [-1, 0.08, 1] });
-  const mouthOpenScale = mouthOpen.interpolate({ inputRange: [0, 1], outputRange: [0.01, 1], extrapolate: 'clamp' });
-  const beamH = stageH * 0.95;
-  const beamScale = beam.interpolate({ inputRange: [0, 1], outputRange: [0.01, 1] });
-  const beamTy = beam.interpolate({ inputRange: [0, 1], outputRange: [-beamH / 2, 0] });
-  const saberH = stageH * 0.85;
-  const saberScale = saber.interpolate({ inputRange: [0, 1], outputRange: [0.02, 1] });
-  const saberRotL = saber.interpolate({ inputRange: [0, 1], outputRange: ['-8deg', '-28deg'] });
-  const saberRotR = saber.interpolate({ inputRange: [0, 1], outputRange: ['8deg', '28deg'] });
+    // --- boca
+    const mouthWpx = D * 0.62;
+    const mouthArcH = D * 0.26;
+    const openW = mouthWpx * 0.56;
+    const openH = mouthArcH * 0.92;
+    const mouthCurveTotal = Animated.add(mouthCurve, touchSmile).interpolate({ inputRange: [-1, 0, 1], outputRange: [-1, 0.08, 1], extrapolate: 'clamp' });
+    const openTotal = Animated.add(Animated.add(mouthOpenBase, mouthOpen), touchOpen);
+    const mouthOpenScale = openTotal.interpolate({ inputRange: [0, 1], outputRange: [0.03, 1], extrapolate: 'clamp' });
+    const mouthRoundScale = mouthRound.interpolate({ inputRange: [0.5, 1.2], outputRange: [0.5, 1.2], extrapolate: 'clamp' });
+    // el arco se atenúa cuando la boca se abre mucho (el interior manda) y desaparece con el labio apretado
+    const arcOpByOpen = openTotal.interpolate({ inputRange: [0, 0.35, 0.8], outputRange: [1, 0.55, 0.12], extrapolate: 'clamp' });
+    const arcOpByPress = press.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
+    const mouthRot = mouthTilt.interpolate({ inputRange: [-45, 45], outputRange: ['-45deg', '45deg'] });
+    const jawTy = Animated.add(jaw, jawSpeech).interpolate({ inputRange: [0, 1], outputRange: [0, D * 0.075], extrapolate: 'clamp' });
+    const teethOp = Animated.multiply(teeth, openTotal.interpolate({ inputRange: [0, 0.25, 0.6], outputRange: [0, 0.2, 1], extrapolate: 'clamp' }));
+    const pressBarScaleX = press.interpolate({ inputRange: [0, 1], outputRange: [0.2, 1] });
+
+    const beamH = stageH * 0.95;
+    const beamScale = beam.interpolate({ inputRange: [0, 1], outputRange: [0.01, 1] });
+    const beamTy = beam.interpolate({ inputRange: [0, 1], outputRange: [-beamH / 2, 0] });
+    const saberH = stageH * 0.85;
+    const saberScale = saber.interpolate({ inputRange: [0, 1], outputRange: [0.02, 1] });
+    const saberRotL = saber.interpolate({ inputRange: [0, 1], outputRange: ['-8deg', '-28deg'] });
+    const saberRotR = saber.interpolate({ inputRange: [0, 1], outputRange: ['8deg', '28deg'] });
+
+    // compuestos que antes se creaban en el JSX / por ojo en cada render
+    const rowTx = Animated.add(shakeX, swayX);
+    const glyphTyNeg = Animated.multiply(glyphTy, -1);
+    const eyeGlowOp = attn.interpolate({ inputRange: [0, 1], outputRange: [0, 0.09] });
+    const eyeScaleYL = Animated.multiply(blink, eyeSquashL);
+    const eyeScaleYR = Animated.multiply(blink, eyeSquashR);
+    return { lidH, topLidY, bottomLidY, tiltL, tiltR, browTiltL, browTiltR, browTy, browTouchTy, browOpacity, browAsymL, browAsymR, headRot, shakeX, bounceTy, swayX, swayRot, glyphTy, pulseScale, pulseOp, attnHaloOp, attnPupil, pupilTx, pupilTy, pupilScaleTotal, mouthWpx, mouthArcH, openW, openH, mouthCurveTotal, openTotal, mouthOpenScale, mouthRoundScale, arcOpByOpen, arcOpByPress, mouthRot, jawTy, teethOp, pressBarScaleX, beamH, beamScale, beamTy, saberH, saberScale, saberRotL, saberRotR, rowTx, glyphTyNeg, eyeGlowOp, eyeScaleYL, eyeScaleYR };
+  }, [D, stageH]);
+  const { lidH, topLidY, bottomLidY, tiltL, tiltR, browTiltL, browTiltR, browTy, browTouchTy, browOpacity, browAsymL, browAsymR, headRot, shakeX, bounceTy, swayX, swayRot, glyphTy, pulseScale, pulseOp, attnHaloOp, attnPupil, pupilTx, pupilTy, pupilScaleTotal, mouthWpx, mouthArcH, openW, openH, mouthCurveTotal, openTotal, mouthOpenScale, mouthRoundScale, arcOpByOpen, arcOpByPress, mouthRot, jawTy, teethOp, pressBarScaleX, beamH, beamScale, beamTy, saberH, saberScale, saberRotL, saberRotR, rowTx, glyphTyNeg, eyeGlowOp, eyeScaleYL, eyeScaleYR } = A;
 
   const glyphStyle = useMemo(() => ({ color: accent, opacity: dim ? 0.15 : 0.42, fontSize: D * 0.22 }), [accent, dim, D]);
-  const mouthLoop = MOUTH_LOOP.has(face);
+  const mouthDim = dim ? 0.3 : face === 'PRAY' ? 0.6 : 1;
 
   const renderEye = (side: 'L' | 'R') => {
     const wink = face === 'WINK' && side === winkSide;
-    const scaleY = wink ? 0.06 : blink;
+    const stretchEye = side === 'L' ? eyeStretchL : eyeStretchR;
+    const scaleY = wink ? 0.06 : side === 'L' ? eyeScaleYL : eyeScaleYR;
     return (
-      <Animated.View key={side} style={[styles.eyeWrap, { width: D, height: D, transform: [{ scaleY }] }]}>
+      <Animated.View key={side} style={[styles.eyeWrap, { width: D, height: D, transform: [{ scaleY }, { scaleX: stretchEye }] }]}>
         <Animated.View
           pointerEvents="none"
           style={[
@@ -611,10 +871,13 @@ export function UltronFace({
             },
           ]}
         />
+        {/* halo de atención (alguien mirando) */}
+        <Animated.View pointerEvents="none" style={[styles.attnHalo, { width: D * 1.3, height: D * 1.3, borderRadius: D * 0.65, borderColor: accent, opacity: attnHaloOp }]} />
         <View style={[styles.glow, { width: D * 1.06, height: D * 1.06, borderRadius: D * 0.53, borderColor: accent, opacity: dim ? 0.08 : 0.28 }]} />
         <View style={[styles.eye, { width: D, height: D, borderRadius: D / 2, overflow: 'hidden' }]}>
           <View style={[styles.ring, { width: D, height: D, borderRadius: D / 2, borderWidth: ring, borderColor: accent, opacity: dim ? 0.35 : 1 }]} />
           <View style={[styles.innerGlow, { width: D * 0.78, height: D * 0.78, borderRadius: D * 0.39, backgroundColor: accent, opacity: dim ? 0.03 : 0.08 }]} />
+          <Animated.View pointerEvents="none" style={[styles.innerGlow, { width: D * 0.78, height: D * 0.78, borderRadius: D * 0.39, backgroundColor: accent, opacity: eyeGlowOp }]} />
           <Animated.View
             style={[
               styles.pupil,
@@ -624,7 +887,7 @@ export function UltronFace({
                 borderRadius: D * 0.12,
                 backgroundColor: accent,
                 opacity: dim ? 0.35 : 1,
-                transform: [{ translateX: px }, { translateY: py }, { scale: pupilScale }],
+                transform: [{ translateX: pupilTx }, { translateY: pupilTy }, { scale: pupilScaleTotal }],
               },
             ]}
           >
@@ -655,8 +918,8 @@ export function UltronFace({
               borderRadius: ring,
               backgroundColor: accent,
               top: -D * 0.16,
-              opacity: browOp,
-              transform: [{ translateY: browTy }, { translateY: side === 'L' ? browAsymL : browAsymR }, { rotate: side === 'L' ? browTiltL : browTiltR }],
+              opacity: browOpacity,
+              transform: [{ translateY: browTy }, { translateY: browTouchTy }, { translateY: side === 'L' ? browAsymL : browAsymR }, { rotate: side === 'L' ? browTiltL : browTiltR }],
             },
           ]}
         />
@@ -700,57 +963,106 @@ export function UltronFace({
 
   return (
     <View ref={stageRef} style={[styles.stage, { height: stageH }]} onLayout={onStageLayout} {...(compact ? {} : pan.panHandlers)}>
-      <Animated.View
-        style={[
-          styles.faceRow,
-          { gap, transform: [{ scale: breath }, { translateX: Animated.add(shakeX, swayX) }, { translateY: bounceTy }, { scaleY: squash }, { rotate: headRot }, { rotate: swayRot }] },
-        ]}
-      >
-        {!compact && <Animated.Text style={[styles.glyph, glyphStyle, { transform: [{ translateY: glyphTy }] }]}>{gL}</Animated.Text>}
-        {renderEye('L')}
-        {renderEye('R')}
-        {!compact && <Animated.Text style={[styles.glyph, glyphStyle, { transform: [{ translateY: Animated.multiply(glyphTy, -1) }] }]}>{gR}</Animated.Text>}
-      </Animated.View>
-
-      {/* boca */}
-      <Animated.View style={[styles.mouthWrap, { height: mouthArcH * 1.3, marginTop: D * 0.16, transform: [{ translateY: bounceTy }, { translateX: swayX }] }]}>
+      <Animated.View style={[styles.column, { transform: [{ scaleY: tapSquash }] }]}>
         <Animated.View
           style={[
-            styles.mouthArc,
-            {
-              width: mouthWpx,
-              height: mouthArcH,
-              borderBottomWidth: Math.max(4, ring * 0.75),
-              borderColor: accent,
-              borderBottomLeftRadius: mouthWpx / 2,
-              borderBottomRightRadius: mouthWpx / 2,
-              opacity: dim ? 0.3 : face === 'PRAY' ? 0.55 : mouthLoop ? 0 : 1,
-              transform: [{ scaleX: mouthW }, { scaleY: mouthScaleY }],
-            },
+            styles.faceRow,
+            { gap, transform: [{ scale: breath }, { translateX: rowTx }, { translateY: bounceTy }, { scaleY: squash }, { rotate: headRot }, { rotate: swayRot }] },
           ]}
-        />
-        {mouthLoop && (
+        >
+          {!compact && <Animated.Text style={[styles.glyph, glyphStyle, { transform: [{ translateY: glyphTy }] }]}>{gL}</Animated.Text>}
+          {renderEye('L')}
+          {renderEye('R')}
+          {!compact && <Animated.Text style={[styles.glyph, glyphStyle, { transform: [{ translateY: glyphTyNeg }] }]}>{gR}</Animated.Text>}
+        </Animated.View>
+
+        {/* boca: arco + interior oscuro (visemas / «o» / risa) + labio apretado + dientes */}
+        <Animated.View
+          style={[
+            styles.mouthWrap,
+            { height: mouthArcH * 1.5, marginTop: D * 0.14, opacity: mouthDim, transform: [{ translateY: bounceTy }, { translateX: swayX }, { translateY: jawTy }, { rotate: mouthRot }] },
+          ]}
+        >
+          <Animated.View style={[styles.mouthLayer, { opacity: arcOpByPress }]}>
+            <Animated.View
+              style={[
+                styles.mouthArc,
+                {
+                  width: mouthWpx,
+                  height: mouthArcH,
+                  borderBottomWidth: Math.max(4, ring * 0.75),
+                  borderColor: accent,
+                  borderBottomLeftRadius: mouthWpx / 2,
+                  borderBottomRightRadius: mouthWpx / 2,
+                  opacity: arcOpByOpen,
+                  transform: [{ scaleX: mouthW }, { scaleY: mouthCurveTotal }],
+                },
+              ]}
+            />
+          </Animated.View>
+          {/* labio apretado (molestia / concentración) */}
           <Animated.View
+            pointerEvents="none"
             style={[
-              styles.mouthOpen,
+              styles.pressBar,
               {
-                width: mouthWpx * (face === 'LAUGH' ? 0.62 : face === 'PRAY' ? 0.4 : 0.55),
-                height: mouthArcH * 0.9,
-                borderRadius: mouthWpx * 0.3,
+                width: mouthWpx * 0.55,
+                height: Math.max(4, ring * 0.7),
+                borderRadius: ring,
                 backgroundColor: accent,
-                transform: [{ scaleY: mouthOpenScale }],
+                opacity: press,
+                transform: [{ scaleX: pressBarScaleX }],
               },
             ]}
           />
-        )}
-        {face === 'THINKING' && (
-          <Animated.View style={[styles.dots, { opacity: thinkDots }]}>
-            {[0, 1, 2].map((i) => (
-              <View key={i} style={[styles.dot, { backgroundColor: accent, opacity: 0.4 + i * 0.3 }]} />
-            ))}
+          {/* interior oscuro con borde: apertura (scaleY) y redondez (scaleX) */}
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.mouthOpen,
+              {
+                width: openW,
+                height: openH,
+                borderRadius: openW * 0.5,
+                borderWidth: Math.max(3, ring * 0.5),
+                borderColor: accent,
+                backgroundColor: MOUTH_DARK,
+                transform: [{ scaleX: mouthRoundScale }, { scaleY: mouthOpenScale }],
+              },
+            ]}
+          >
+            <Animated.View style={[styles.teeth, { height: openH * 0.24, backgroundColor: TEETH, opacity: teethOp }]} />
+            <View style={[styles.tongue, { width: openW * 0.5, height: openH * 0.34, borderRadius: openW * 0.25, backgroundColor: accent }]} />
           </Animated.View>
-        )}
+          {face === 'THINKING' && (
+            <Animated.View style={[styles.dots, { opacity: thinkDots }]}>
+              {[0, 1, 2].map((i) => (
+                <View key={i} style={[styles.dot, { backgroundColor: accent, opacity: 0.4 + i * 0.3 }]} />
+              ))}
+            </Animated.View>
+          )}
+        </Animated.View>
       </Animated.View>
+
+      {/* ondas de toque */}
+      {!compact &&
+        ripples.map((r, i) => (
+          <Animated.View
+            key={i}
+            pointerEvents="none"
+            style={[
+              styles.ripple,
+              {
+                width: D * 0.5,
+                height: D * 0.5,
+                borderRadius: D * 0.25,
+                borderColor: accent,
+                opacity: r.o,
+                transform: [{ translateX: r.x }, { translateY: r.y }, { scale: r.s }],
+              },
+            ]}
+          />
+        ))}
 
       {face === 'SLEEPING' && (
         <Animated.Text style={[styles.zzz, { color: CYAN, right: width * 0.28, transform: [{ translateY: glyphTy }] }]}>z z</Animated.Text>
@@ -773,9 +1085,11 @@ export function UltronFace({
 
 const styles = StyleSheet.create({
   stage: { width: '100%', alignItems: 'center', justifyContent: 'center' },
+  column: { alignItems: 'center', justifyContent: 'center' },
   faceRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   eyeWrap: { alignItems: 'center', justifyContent: 'center' },
   pulseRing: { position: 'absolute', borderWidth: 2 },
+  attnHalo: { position: 'absolute', borderWidth: 10 },
   glow: { position: 'absolute', borderWidth: 6 },
   eye: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
   ring: { position: 'absolute' },
@@ -787,10 +1101,15 @@ const styles = StyleSheet.create({
   beam: { position: 'absolute', borderRadius: 2 },
   glyph: { marginHorizontal: 8, textAlign: 'center', includeFontPadding: false },
   mouthWrap: { alignItems: 'center', justifyContent: 'center' },
+  mouthLayer: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   mouthArc: { position: 'absolute' },
-  mouthOpen: { position: 'absolute' },
+  pressBar: { position: 'absolute' },
+  mouthOpen: { position: 'absolute', overflow: 'hidden', alignItems: 'center', justifyContent: 'space-between' },
+  teeth: { width: '86%', borderBottomLeftRadius: 6, borderBottomRightRadius: 6, marginTop: 2 },
+  tongue: { opacity: 0.22, marginBottom: -2 },
   dots: { flexDirection: 'row', gap: 8, position: 'absolute' },
   dot: { width: 8, height: 8, borderRadius: 4 },
+  ripple: { position: 'absolute', left: 0, top: 0, borderWidth: 1.5 },
   zzz: { position: 'absolute', top: 0, fontSize: 22, letterSpacing: 4, opacity: 0.6 },
   irrBar: { position: 'absolute', bottom: 4, height: 3, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.08)', overflow: 'hidden' },
   irrFill: { height: '100%', borderRadius: 2 },

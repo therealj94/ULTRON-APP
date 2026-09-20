@@ -4,8 +4,9 @@ import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { Accelerometer } from 'expo-sensors';
 import { UltronFace, type TouchZone } from '../components/UltronFace';
-import { GazeCamera, type FrameGrabber } from '../components/GazeCamera';
+import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS, type FrameGrabber } from '../components/CamaraVision';
 import { DeskMenu } from '../components/DeskMenu';
+import type { Escena, MotorVision } from '../lib/escena';
 import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
 import { CANCIONES_LOCAL, healthCheck, listCanciones, rememberFact, turno, turnoStream, type Cancion, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
@@ -83,7 +84,6 @@ export function DeskScreen({ user, onLogout }: Props) {
   const [draft, setDraft] = useState('');
   const [listening, setListening] = useState(false);
   const [level, setLevel] = useState(0);
-  const [speechLevel, setSpeechLevel] = useState(0);
   const [micMuted, setMicMuted] = useState(false);
   const [visionOn, setVisionOn] = useState(true);
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
@@ -99,6 +99,10 @@ export function DeskScreen({ user, onLogout }: Props) {
   const [canciones, setCanciones] = useState<Cancion[]>(CANCIONES_LOCAL);
   const [settings, setSettings] = useState<Pick<AppSettings, 'sttEngine' | 'proactive' | 'sfx'>>({ sttEngine: 'native', proactive: true, sfx: true });
   const [camPerm, requestCam] = useCameraPermissions();
+  /** 0 nadie · 0.5 alguien delante · 1 alguien mirando la pantalla (la cara se ilumina). */
+  const [atencion, setAtencion] = useState(0);
+  const [verPersona, setVerPersona] = useState(false);
+  const [visionMotor, setVisionMotor] = useState<MotorVision>('ninguno');
 
   const speakingRef = useRef(false);
   const handling = useRef(false);
@@ -125,20 +129,55 @@ export function DeskScreen({ user, onLogout }: Props) {
   const proactiveRef = useRef(true);
   const grabFrame = useRef<FrameGrabber | null>(null);
   const bubbleOp = useRef(new Animated.Value(0)).current;
+  /** Última escena de la cámara local (descripción en español para el cerebro). */
+  const escenaRef = useRef<Escena | null>(null);
+  const lastGreetAt = useRef(0);
+  const lastSonrisaAt = useRef(0);
+  const acompanaDicho = useRef(false);
+  const gazeCamAt = useRef(0);
+  const gazeCamLast = useRef({ x: 0, y: 0 });
+  const sonrisaTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => void (presenceRef.current = presence), [presence]);
   useEffect(() => void (modeRef.current = mode), [mode]);
   useEffect(() => void (objectsRef.current = objects), [objects]);
   useEffect(() => void (micMutedRef.current = micMuted), [micMuted]);
 
-  // Lip-sync: nivel de la voz (0..1, 20 Hz) → boca de la cara.
-  useEffect(() => {
-    setSpeechLevelListener(setSpeechLevel);
+  // Lip-sync: la cara se suscribe directamente al nivel de la voz (0..1, 20 Hz) y mueve la boca con
+  // Animated; nada de setState aquí (antes cada muestra re-renderizaba DeskScreen y UltronFace).
+  const suscribirNivelVoz = useCallback((cb: (level01: number) => void) => {
+    setSpeechLevelListener(cb);
     return () => setSpeechLevelListener(null);
   }, []);
 
   const restFace = useCallback((): FaceState => (presenceRef.current === 'sleep' ? 'SLEEPING' : 'IDLE'), []);
   const idleStatus = useCallback(() => setStatus(micMutedRef.current ? 'muted' : 'listening'), []);
+
+  /**
+   * ¿La escena sigue valiendo como hecho? La ventana depende del MOTOR y del MODO, porque cada
+   * combinación tiene su propia cadencia (las constantes salen de `CamaraVision`, no se copian):
+   *  - ML Kit despierto: ≥ 2 emisiones/s → 12 s de margen de sobra.
+   *  - ML Kit dormido: la cámara solo se enciende 2,5 s cada DORMIDO_PERIODO_MS (12 s), así que entre
+   *    escena y escena pueden pasar ~12 s; se aceptan 2× el periodo (24 s).
+   *  - Servidor: una foto cada SERVIDOR_CADA_MS (30 s dormido) → 2,5× su cadencia.
+   */
+  const escenaFresca = useCallback((e: Escena | null): e is Escena => {
+    if (!e || e.motor === 'ninguno') return false;
+    const durmiendo = presenceRef.current === 'sleep';
+    const ventana =
+      e.motor === 'servidor'
+        ? 2.5 * (durmiendo ? SERVIDOR_DORMIDO_MS : SERVIDOR_CADA_MS)
+        : durmiendo
+        ? 2 * DORMIDO_PERIODO_MS
+        : 12_000;
+    return Date.now() - e.ts <= ventana;
+  }, []);
+
+  /** Descripción de la escena si es reciente y viene de un motor real; va en el body del turno. */
+  const escenaReciente = useCallback((): string | undefined => {
+    const e = escenaRef.current;
+    return escenaFresca(e) ? e.descripcion : undefined;
+  }, [escenaFresca]);
 
   const showBubble = useCallback(
     (text: string) => {
@@ -320,7 +359,16 @@ export function DeskScreen({ user, onLogout }: Props) {
       setFace('THINKING');
       setStatus('thinking');
       setToolHint('');
-      const base = { message: cmd, mode: modeRef.current, userName: user.name, correo: user.correo, historial: historial.current, memoria: longMemory.current, image: opts?.image };
+      const base = {
+        message: cmd,
+        mode: modeRef.current,
+        userName: user.name,
+        correo: user.correo,
+        historial: historial.current,
+        memoria: longMemory.current,
+        image: opts?.image,
+        escena: escenaReciente(),
+      };
       let emocion: Emocion = 'neutral';
       let reacted = false;
       // Un solo relleno, local y sin red: «mmm» del banco si el cerebro tarda (inmediato con imagen).
@@ -423,7 +471,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         }
       }
     },
-    [idleStatus, logUltron, onAudio, say, settle, showBubble, user.correo, user.name]
+    [escenaReciente, idleStatus, logUltron, onAudio, say, settle, showBubble, user.correo, user.name]
   );
 
   const whatDoYouSee = useCallback(async () => {
@@ -432,9 +480,16 @@ export function DeskScreen({ user, onLogout }: Props) {
       await askBrain('Mira la cámara y dime en dos frases qué ves: quién está, qué hace y qué objetos hay.', { image: `data:image/jpeg;base64,${frame}` });
       return;
     }
+    // Sin frame: lo que la detección local ya sabe (persona, lado, gesto) y las etiquetas del servidor.
+    const e = escenaRef.current;
     const objs = objectsRef.current;
+    if (escenaFresca(e)) {
+      const mesa = objs.filter((l) => !/persona|rostro|cara|hombre|mujer|niñ|gente|face|person/.test(l));
+      await say(`${e.descripcion}${mesa.length ? ` En la mesa: ${mesa.join(', ')}.` : ''}`, 'SCAN');
+      return;
+    }
     await say(objs.length ? `Veo: ${objs.join(', ')}.` : 'Aún no identifico nada. Dame un momento con la cámara.', 'SCAN');
-  }, [askBrain, say]);
+  }, [askBrain, escenaFresca, say]);
 
   const runGag = useCallback(
     async (gag: Gag) => {
@@ -610,12 +665,11 @@ export function DeskScreen({ user, onLogout }: Props) {
   );
 
   // ---------- Tacto ----------
-  const glanceAt = useCallback((x: number, y: number, ms = 1500) => {
-    setGaze({ x: x * 0.8, y: y * 0.6 });
+  /** La cara ya mira al dedo por su cuenta (UltronFace); aquí solo se pausa la mirada errante/cámara. */
+  const pausarMirada = useCallback((ms = 1500) => {
     if (touchGazeTimer.current) clearTimeout(touchGazeTimer.current);
     touchGazeTimer.current = setTimeout(() => {
       touchGazeTimer.current = null;
-      setGaze({ x: 0, y: 0 });
     }, ms);
   }, []);
 
@@ -651,8 +705,8 @@ export function DeskScreen({ user, onLogout }: Props) {
   }, [onAudio, settle, showBubble]);
 
   const onTap = useCallback(
-    (zone: TouchZone, x: number, y: number) => {
-      glanceAt(x, y);
+    (zone: TouchZone, _x: number, _y: number) => {
+      pausarMirada();
       lastUserAt.current = Date.now();
       const now = Date.now();
       const sinceLast = now - lastTapAt.current;
@@ -726,7 +780,7 @@ export function DeskScreen({ user, onLogout }: Props) {
           else setTimeout(() => setFace(restFace()), 700);
       }
     },
-    [fireBlaster, glanceAt, playClip, restFace, say, wakeUp, yaYa]
+    [fireBlaster, pausarMirada, playClip, restFace, say, wakeUp, yaYa]
   );
 
   /** Frotar la mejilla: ronroneo, baja el enojo. */
@@ -750,18 +804,16 @@ export function DeskScreen({ user, onLogout }: Props) {
     void say('Descanso un momento. Háblame o tócame para despertar.', 'SLEEPING', { emocion: 'cansado' });
   }, [say, wakeUp]);
 
-  const onDragGaze = useCallback((x: number, y: number) => {
+  // Al arrastrar, los ojos siguen el dedo dentro de UltronFace (retardo elástico); aquí solo se pausa lo demás.
+  const onDragGaze = useCallback(() => {
     dragging.current = true;
+    lastUserAt.current = Date.now();
     if (touchGazeTimer.current) clearTimeout(touchGazeTimer.current);
-    setGaze({ x, y });
   }, []);
   const onDragEnd = useCallback(() => {
     dragging.current = false;
-    touchGazeTimer.current = setTimeout(() => {
-      touchGazeTimer.current = null;
-      setGaze({ x: 0, y: 0 });
-    }, 800);
-  }, []);
+    pausarMirada(800);
+  }, [pausarMirada]);
   const onSwipe = useCallback((dir: 'left' | 'right') => setMenuOpen(dir === 'left'), []);
 
   useEffect(() => {
@@ -926,12 +978,74 @@ export function DeskScreen({ user, onLogout }: Props) {
     [handleCommand, say, user.correo, user.name]
   );
 
-  const onPresence = useCallback((present: boolean) => {
-    if (present) {
-      personSeenAt.current = Date.now();
-      if (!dragging.current) setGaze({ x: 0, y: 0 });
-    }
+  /**
+   * Escena de la cámara local (≤ 2/s, inmediata con eventos). Reacciones:
+   *  llego → saludo con clip local si hubo > 60 s sin interacción (o despierta si dormía);
+   *  sonrie → sonrisa breve; dos_personas → CURIOUS + «¿y quién te acompaña?» una vez por sesión;
+   *  mira / aparta_mirada → atención (la cara se ilumina); se_fue → nada inmediato.
+   */
+  const onEscena = useCallback(
+    (e: Escena) => {
+      escenaRef.current = e;
+      const now = Date.now();
+      if (e.personas > 0) personSeenAt.current = now;
+      const hay = e.personas > 0;
+      setVerPersona((v) => (v === hay ? v : hay));
+      const att = !hay ? 0 : e.principal?.mirando ? 1 : 0.5;
+      setAtencion((a) => (a === att ? a : att));
+      if (!e.eventos.length) return;
+      const calm = !handling.current && !speakingRef.current;
+      for (const ev of e.eventos) {
+        if (ev === 'llego') {
+          const quieto = now - lastUserAt.current > 60_000 && now - lastGreetAt.current > 60_000;
+          if (!quieto) continue;
+          lastGreetAt.current = now;
+          if (presenceRef.current === 'sleep') {
+            wakeUp();
+          } else if (calm) {
+            void playClip(pick(['hola', 'aqui'] as const), 'HAPPY', { fallbackText: `Hola, ${user.name}.`, emocion: 'feliz' });
+          }
+        } else if (ev === 'sonrie') {
+          if (!calm || presenceRef.current === 'sleep' || now - lastSonrisaAt.current < 8_000) continue;
+          lastSonrisaAt.current = now;
+          setFace('HAPPY');
+          if (sonrisaTimer.current) clearTimeout(sonrisaTimer.current);
+          sonrisaTimer.current = setTimeout(() => {
+            sonrisaTimer.current = null;
+            if (!handling.current && !speakingRef.current) setFace(restFace());
+          }, 1600);
+        } else if (ev === 'dos_personas') {
+          if (acompanaDicho.current || presenceRef.current === 'sleep') continue;
+          acompanaDicho.current = true;
+          if (!calm) continue;
+          setFace('CURIOUS');
+          void say('¿Y quién te acompaña?', 'CURIOUS', { emocion: 'curioso' });
+        }
+      }
+    },
+    [playClip, restFace, say, user.name, wakeUp]
+  );
+
+  /** Mirada suavizada hacia la persona: ≤ 4 cambios/s y solo si se movió, para no re-renderizar a 10 Hz. */
+  const onGazeCam = useCallback((x: number, y: number, activa: boolean) => {
+    if (dragging.current || touchGazeTimer.current) return;
+    if (!activa) return; // la mirada errante retoma sola 5 s después de perder a la persona
+    const now = Date.now();
+    const nx = x * 0.9;
+    const ny = y * 0.7;
+    const moved = Math.abs(nx - gazeCamLast.current.x) > 0.04 || Math.abs(ny - gazeCamLast.current.y) > 0.04;
+    if (now - gazeCamAt.current < 250 || !moved) return;
+    gazeCamAt.current = now;
+    gazeCamLast.current = { x: nx, y: ny };
+    setGaze({ x: nx, y: ny });
   }, []);
+
+  useEffect(
+    () => () => {
+      if (sonrisaTimer.current) clearTimeout(sonrisaTimer.current);
+    },
+    []
+  );
 
   const toggleMute = async () => {
     if (!micMutedRef.current) {
@@ -1052,14 +1166,24 @@ export function DeskScreen({ user, onLogout }: Props) {
 
   return (
     <View style={styles.root}>
-      <GazeCamera enabled={visionOn && !!camPerm?.granted} grabRef={grabFrame} onObjects={onObjectsStable} onScene={onScene} onPresence={onPresence} />
+      <CamaraVision
+        enabled={visionOn && !!camPerm?.granted}
+        dormido={presence === 'sleep'}
+        grabRef={grabFrame}
+        onEscena={onEscena}
+        onGaze={onGazeCam}
+        onObjects={onObjectsStable}
+        onScene={onScene}
+        onMotor={setVisionMotor}
+      />
       <UltronFace
         face={face}
         mode={mode}
         gazeX={gaze.x}
         gazeY={gaze.y}
         level={level}
-        speechLevel={speechLevel}
+        speechLevelSource={suscribirNivelVoz}
+        attention={atencion}
         attack={attack}
         irritation={irritation}
         winkSide={winkSide}
@@ -1075,6 +1199,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
         <Text style={styles.hudText}>
           {statusLabel} · {mode.toLowerCase()}
+          {verPersona ? (visionMotor === 'mlkit' ? ' · te veo' : ' · alguien') : ''}
           {!online ? ' · sin cerebro' : ''}
         </Text>
       </View>
