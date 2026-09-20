@@ -21,7 +21,8 @@ desinstálala primero. Versión: `app.json` `expo.version` = `package.json` `ver
 | `POST /api/turno` | Un turno con el cerebro. Manda `usuario`, `correo`, `historial`, `memoria[]` e `image` opcional. Responde `reply`, `emocion`, `mode`. |
 | `POST /api/turno/stream` | Igual, por SSE (XHR). Eventos: `emocion` (antes del primer delta → la cara reacciona antes que la voz), `delta`, `tools`, `done` (trae `emocion`), `error`. |
 | `GET/POST /api/tts` | Voz. `text`, `emocion`, `performance=speak\|sing`. Devuelve `audio/mpeg` + cabecera `X-Ultron-TTS`. Sin parámetro `engine`: una sola voz. |
-| `POST /api/cantar` | `{ id }` (jesus, bohemian, ligera, bittersweet, runaway, bruno) o `{ letra, titulo? }` → mp3 de ULTRON cantando (hasta ~40 s la primera vez). `GET` devuelve el repertorio. |
+| `POST /api/cantar` | `{ id }` (jesus, bohemian, ligera, bittersweet, runaway, bruno, waymaker) o `{ letra, titulo? }` → mp3 de ULTRON cantando (hasta ~40 s la primera vez). `GET` devuelve el repertorio. |
+| `POST /api/orar` | `{}` o `{ tema }` → mp3 de la oración del día (~3 min, cacheado). Sin tema se usa el estático `/voz/oracion.mp3` si existe. Cara PRAY, HUD «orando». |
 | `GET /api/capacidades` | Catálogo real (`Capacidad[]` agrupadas, `vivo` según salud de nodos, voz oficial, canciones, gestos). Se cachea en AsyncStorage para verlo sin red. |
 | `POST /api/stt` | Oído en la nube (ElevenLabs Scribe), solo si se elige «Nube» en Ajustes; por defecto el reconocimiento es el del teléfono. |
 | `POST /api/vision/analyze` | Nodo de visión: etiquetas de la mesa cada ~12 s y frames bajo demanda. |
@@ -30,7 +31,8 @@ desinstálala primero. Versión: `app.json` `expo.version` = `package.json` `ver
 | `GET /voz/<id>.mp3` | Clips grabados con la voz oficial (ver banco). |
 
 Contrato de emoción (`src/lib/emocion.ts`, copia de `lib/emocion.ts` del servidor): `neutral, feliz, risa, sorpresa, curioso,
-pensando, preocupado, triste, molesto, cansado, carino, orgullo, travieso, canto` → `FaceState` (`faceForEmocion`). El
+pensando, preocupado, triste, molesto, cansado, carino, orgullo, travieso, canto, oracion` → `FaceState` (`faceForEmocion`;
+`oracion` → `PRAY`). El
 servidor ya quita la etiqueta `[EMO:x]`; el cliente la pela igual por si acaso.
 
 ## Banco de voz (offline)
@@ -39,7 +41,7 @@ servidor ya quita la etiqueta `[EMO:x]`; el cliente la pela igual por si acaso.
 genera `src/lib/voiceBank.ts`:
 
 - **Empaquetados en el APK** (0 ms, sin red; 464 KB): `mmm, je, uy, vale, entendido, dias, tardes, noches, calenta, listos`.
-- **Remotos** (canciones, chistes, discurso y clips nuevos): `bruno, bohemian, ligera, bittersweet, runaway, jesus, discurso,
+- **Remotos** (canciones, chistes, discurso y clips nuevos): `bruno, bohemian, ligera, bittersweet, runaway, jesus, waymaker, oracion, discurso,
   quien, puedo, chiste1..5, risa1, risa2, mmm2, uy2, aqui, listo, yaya, gracias, hola, despertar, bienvenida, triste, cansado,
   carino, molesto, orgullo, sorpresa`. Antes de sonar se comprueba con `HEAD` que el servidor devuelve audio (los que aún no
   existen devuelven la SPA con 200); si no, se cae a TTS con el texto del clip o no se dice nada (muletillas).
@@ -69,6 +71,15 @@ La entrevista «Conocer» es **opcional**: solo arranca desde el menú o con «q
   menú. Vibración ligera (`expo-haptics`).
 - **Pensando**: cara THINKING y un solo «mmm» del banco (local) si el cerebro tarda > 0,7 s. Sin rellenos de red.
 - **Cantar**: `/api/cantar`, cara SING, mic pausado, sin rellenos. Géneros con letra propia (`GENEROS`) también se cantan.
+- **Orar**: «ora», «oración», «hacé una oración», «orá por el día», «bendice el día», «reza», «oremos», «ora por <tema>» →
+  `/api/orar`, cara **PRAY** (ojos cerrados suaves, cejas relajadas, sonrisa mínima, respiración muy lenta, la boca sigue
+  el audio; los ojos se abren despacio al terminar), mic pausado, HUD «orando». Botón «Orar por el día» en el menú.
+- **Lip-sync** (`src/lib/lipsync.ts`): expo-av no expone metering en reproducción (ni Android ni iOS; `metering` solo
+  existe al grabar), así que la boca se mueve con una envolvente sincronizada a `positionMillis` (estado cada 50 ms,
+  interpolado a 20 Hz en JS): con texto conocido (frases TTS, clips del banco) sílabas reales repartidas sobre la duración
+  real, con pausas en la puntuación; sin texto o si el ritmo no cuadra (canciones, oración, clips largos) pulsos
+  deterministas con silencios (≈ 3,2–4,5/s). `tts.ts` emite el nivel (`setSpeechLevelListener`), `DeskScreen` lo pasa como
+  `speechLevel` y `UltronFace` abre la boca en SPEAKING/SING/LAUGH/PRAY; si no llega nivel en 0,7 s hay un bucle de respaldo.
 
 ## Menú (deslizar desde el borde derecho)
 

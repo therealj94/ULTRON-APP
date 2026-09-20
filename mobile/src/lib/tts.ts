@@ -7,15 +7,19 @@
  *  - Resto: GET /api/tts?text&emocion&performance descargado a disco, por oraciones, con la siguiente
  *    oración precargada mientras suena la actual.
  *  - Canto real: POST /api/cantar {id} | {letra,titulo} → mp3 (hasta ~40 s la primera vez).
+ *  - Oración del día: POST /api/orar {tema?} → mp3 (~3 min, cacheado), o el estático /voz/oracion.mp3.
+ *  - Lip-sync: cada reproducción emite un nivel 0..1 a 20 Hz (setSpeechLevelListener) calculado con
+ *    lipsync.ts sobre positionMillis (expo-av no da metering al reproducir).
  *
  * Todo lo que suena pasa por playPrepared() y comparte la generación `gen`: stopSpeaking() corta
  * cualquier cosa, y cada función avisa onStart/onAudioStart/onEnd para que la mesa pause el mic.
  */
 import { Audio, type AVPlaybackSource } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
-import { CANTAR_ENDPOINT, TTS_ENDPOINT, sessionHeaders, ttsUrl } from './api';
+import { CANTAR_ENDPOINT, ORAR_ENDPOINT, TTS_ENDPOINT, sessionHeaders, ttsUrl } from './api';
 import { API_BASE } from '../config';
 import type { Emocion } from './emocion';
+import { envolventeDeTexto, envolventeLibre, type EnvelopeKind } from './lipsync';
 import { CLIP_TEXT, PHRASE_TO_CLIP, REMOTE_CLIPS, VOICE_BANK, bankKey, type ClipId } from './voiceBank';
 
 type Perf = 'speak' | 'sing';
@@ -35,6 +39,21 @@ const fileCache = new Map<string, string>();
 /** Última locución en curso: el StreamSpeaker espera a que termine (no corta un clip a la mitad). */
 let lastSpeak: Promise<unknown> = Promise.resolve();
 let releaseLastSpeak: (() => void) | null = null;
+
+// ---------------------------------------------------------------- lip-sync
+let levelListener: ((level01: number) => void) | null = null;
+let lastLevel = -1;
+/** La cara se suscribe aquí: 0..1 a ~20 Hz mientras suena algo, 0 al terminar. */
+export function setSpeechLevelListener(cb: ((level01: number) => void) | null) {
+  levelListener = cb;
+  lastLevel = -1;
+}
+function emitLevel(v: number) {
+  const q = Math.round(Math.max(0, Math.min(1, v)) * 50) / 50;
+  if (q === lastLevel) return;
+  lastLevel = q;
+  levelListener?.(q);
+}
 
 export function cleanForSpeech(text: string) {
   return String(text || '')
@@ -229,20 +248,39 @@ async function downloadPost(url: string, body: Record<string, unknown>, timeoutM
 
 async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
   try {
-    const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: false, progressUpdateIntervalMillis: 200 });
+    const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: false, progressUpdateIntervalMillis: 50 });
     return sound;
   } catch {
     return null;
   }
 }
 
-function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000): Promise<void> {
+type PlayMeta = { text?: string | null; kind?: EnvelopeKind };
+
+/**
+ * Reproduce y, mientras suena, emite el nivel de boca: envolvente por sílabas del texto (si se conoce y
+ * cuadra con la duración real) o libre. La posición se interpola entre actualizaciones de estado para
+ * mantener 20 Hz aunque Android reporte más lento.
+ */
+function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: PlayMeta = {}): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
     let guard: ReturnType<typeof setTimeout> | null = null;
+    let env: ((posMs: number) => number) | null = null;
+    let playing = false;
+    let lastPos = 0;
+    let lastAt = Date.now();
+    const kind: EnvelopeKind = meta.kind || 'speak';
+    const tick = setInterval(() => {
+      if (!playing) return emitLevel(0);
+      const pos = lastPos + (Date.now() - lastAt);
+      emitLevel((env || (env = envolventeLibre(kind)))(pos));
+    }, 50);
     const end = () => {
       if (done) return;
       done = true;
+      clearInterval(tick);
+      emitLevel(0);
       if (guard) clearTimeout(guard);
       if (current === sound) current = null;
       void sound.unloadAsync().catch(() => {});
@@ -255,7 +293,13 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000): Promise<v
         if ((st as any).error) end();
         return;
       }
-      if (st.durationMillis && !guard) guard = setTimeout(end, st.durationMillis + 1500);
+      playing = st.isPlaying;
+      lastPos = st.positionMillis || 0;
+      lastAt = Date.now();
+      if (st.durationMillis && !guard) {
+        guard = setTimeout(end, st.durationMillis + 1500);
+        env = envolventeDeTexto(meta.text, st.durationMillis, kind);
+      }
       if (st.didJustFinish) end();
     });
     sound.playAsync().catch(end);
@@ -287,7 +331,7 @@ function endSpeak() {
 }
 
 /** Reproduce una fuente ya resuelta con el protocolo de callbacks. */
-async function playSource(source: AVPlaybackSource | null, my: number, cb: SpeakCallbacks | undefined, maxMs: number): Promise<boolean> {
+async function playSource(source: AVPlaybackSource | null, my: number, cb: SpeakCallbacks | undefined, maxMs: number, meta: PlayMeta = {}): Promise<boolean> {
   if (!source || my !== gen) return false;
   const sound = await prepare(source);
   if (!sound || my !== gen) {
@@ -295,7 +339,7 @@ async function playSource(source: AVPlaybackSource | null, my: number, cb: Speak
     return false;
   }
   cb?.onAudioStart?.();
-  await playPrepared(sound, my, maxMs);
+  await playPrepared(sound, my, maxMs, meta);
   return true;
 }
 
@@ -310,12 +354,12 @@ export async function speakClip(id: ClipId, opts?: SpeakCallbacks & { fallback?:
   await ensureAudioMode();
   beginSpeak();
   try {
-    const src = await clipSource(id);
-    if (src) return await playSource(src, my, opts, 120_000);
-    if (opts?.fallback === false || my !== gen) return false;
     const text = CLIP_TEXT[id];
+    const src = await clipSource(id);
+    if (src) return await playSource(src, my, opts, 120_000, { text });
+    if (opts?.fallback === false || my !== gen) return false;
     const tts = await fetchSource(text, 'speak', opts?.emocion || 'neutral');
-    return await playSource(tts, my, opts, 25_000);
+    return await playSource(tts, my, opts, 25_000, { text });
   } finally {
     endSpeak();
     if (my === gen) opts?.onEnd?.();
@@ -355,8 +399,9 @@ export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPr
   try {
     const key = 'id' in req ? `id:${req.id}` : `letra:${req.titulo || ''}|${req.letra}`;
     let uri = songCache.get(key) || null;
+    const meta: PlayMeta = { kind: 'sing', text: 'letra' in req ? req.letra : null };
     if (!uri && 'id' in req && (req.id as ClipId) in REMOTE_CLIPS && (await remoteClipAvailable(req.id as ClipId))) {
-      return await playSource({ uri: `${API_BASE}${REMOTE_CLIPS[req.id as ClipId]}` }, my, opts, 180_000);
+      return await playSource({ uri: `${API_BASE}${REMOTE_CLIPS[req.id as ClipId]}` }, my, opts, 180_000, meta);
     }
     if (!uri) {
       opts?.onPreparing?.();
@@ -364,7 +409,40 @@ export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPr
       if (uri) songCache.set(key, uri);
     }
     if (my !== gen) return false;
-    return await playSource(uri ? { uri } : null, my, opts, 180_000);
+    return await playSource(uri ? { uri } : null, my, opts, 180_000, meta);
+  } finally {
+    endSpeak();
+    if (my === gen) opts?.onEnd?.();
+  }
+}
+
+const prayerCache = new Map<string, string>();
+
+/**
+ * Oración del día: POST /api/orar {} | {tema} → mp3 (~3 min; el servidor lo cachea). Sin tema, si el
+ * estático /voz/oracion.mp3 existe se usa directo. Cara PRAY, mic pausado y boca con envolvente 'pray'.
+ */
+export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPreparing?: () => void }): Promise<boolean> {
+  await stopSpeaking();
+  const my = gen;
+  opts?.onStart?.();
+  await ensureAudioMode();
+  beginSpeak();
+  try {
+    const tema = (opts?.tema || '').trim();
+    const meta: PlayMeta = { kind: 'pray' };
+    const key = `tema:${tema}`;
+    let uri = prayerCache.get(key) || null;
+    if (!uri && !tema && (await remoteClipAvailable('oracion'))) {
+      return await playSource({ uri: `${API_BASE}${REMOTE_CLIPS.oracion}` }, my, opts, 300_000, meta);
+    }
+    if (!uri) {
+      opts?.onPreparing?.();
+      uri = await downloadPost(ORAR_ENDPOINT, tema ? { tema } : {}, 90_000);
+      if (uri) prayerCache.set(key, uri);
+    }
+    if (my !== gen) return false;
+    return await playSource(uri ? { uri } : null, my, opts, 300_000, meta);
   } finally {
     endSpeak();
     if (my === gen) opts?.onEnd?.();
@@ -438,7 +516,7 @@ export async function speak(
         spoke = true;
         opts?.onAudioStart?.();
       }
-      await playPrepared(sound, my, perf === 'sing' ? 120_000 : 25_000);
+      await playPrepared(sound, my, perf === 'sing' ? 120_000 : 25_000, { text: sentences[i], kind: perf === 'sing' ? 'sing' : emocion === 'oracion' ? 'pray' : 'speak' });
     }
     return spoke;
   } finally {
@@ -563,7 +641,7 @@ export class StreamSpeaker {
           this.opts.onAudioStart?.();
         }
         this.opts.onSentence?.(sentence);
-        await playPrepared(sound, this.my);
+        await playPrepared(sound, this.my, 25_000, { text: sentence, kind: this.opts.emocion === 'oracion' ? 'pray' : 'speak' });
       }
     } finally {
       this.pumping = false;

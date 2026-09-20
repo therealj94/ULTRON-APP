@@ -7,6 +7,7 @@
 export type Intencion =
   | { tipo: 'callar' }
   | { tipo: 'cantar'; pedido: string }
+  | { tipo: 'orar' }
   | { tipo: 'chiste' }
   | { tipo: 'clip'; id: 'quien' | 'puedo' | 'discurso' }
   | { tipo: 'emocion'; emocion: string; dicho: string }
@@ -61,7 +62,15 @@ export function detectarIntencion(texto: string): Intencion {
 
   if (/^(si )?(actualiza|actualizar) (el )?cerebro$|^guardalo en genesis$|^aprende eso$|^metelo al cerebro$/.test(q)) return { tipo: 'genesis' };
 
-  if (/^(canta|cantame|cantate|cantas)( .*)?$/.test(q) || /^(una|otra) cancion( .*)?$/.test(q)) return { tipo: 'cantar', pedido: texto };
+  if (/^(canta|cantame|cantate|cantas)( .*)?$/.test(q) || /^(una|otra) cancion( .*)?$/.test(q) || /^way ?maker$/.test(q)) return { tipo: 'cantar', pedido: texto };
+  if (
+    /^(ora|orá|oremos|reza|rezá|rezemos)( .*)?$/.test(q) ||
+    /^(hace|hacé|haz|hazme|haceme|dime|decime|hagamos|podes hacer|puedes hacer) (una )?oraci[oó]n( .*)?$/.test(q) ||
+    /\b(oracion|oración) (del|por el|para el|de hoy|del dia|por hoy)\b/.test(q) ||
+    /^(bendice|bendici|bendecí|bendiga|bendecinos|bendicion para) (el|nuestro|este|mi) ?dia( .*)?$/.test(q) ||
+    /^(ora|orá|reza|rezá) por (el dia|hoy|nosotros|la junta|orden global)$/.test(q)
+  )
+    return { tipo: 'orar' };
 
   if (corto && /^(cuenta|contame|cuentame|dime|decime)( otro)? (un )?chiste$|^(otro )?chiste$|^hazme reir$|^haceme reir$/.test(q)) return { tipo: 'chiste' };
 

@@ -48,6 +48,10 @@ openWakeWord, bus de eventos asyncio, LLM OpenAI/Ollama. Hardware detrás de pro
 | Código muerto (voiceActs `who`, `SONG_HINT`, FAQ inalcanzable, `getTtsEngine/lastTtsEngine/isSpeaking`, `loadChatLog`, estilo `logo`, `ultron-logo.jpg`, `eas-cli`, dos generadores de mirada errante). | Eliminado. Un solo generador de mirada en `DeskScreen` (se pausa con dedo, toque o persona en cámara). |
 | Versiones 3.1.0/31 vs 3.0.0. | 4.0.0 / versionCode 40 en ambos. |
 
+**4.0.1**: emoción `oracion` → cara `PRAY`; `POST /api/orar` («Orar por el día» en el menú, HUD «orando»);
+Way Maker (`waymaker`) en el repertorio; lip-sync real por envolvente silábica sincronizada a `positionMillis`
+(`lipsync.ts`; expo-av no da metering al reproducir) para TTS, clips, canciones y oración; el catálogo pinta grupos nuevos.
+
 **Nuevo en 4.0**: splash nativo → splash JS con marca y cara despertando → fundido; catálogo «Qué puede hacer ULTRON»
 (`/api/capacidades`, caché offline, ejemplos tocables); caras LAUGH, SURPRISED, SAD, TIRED, SING, CURIOUS, PROUD;
 emoción del servidor → cara → `/api/tts?emocion=`; `expo-haptics` en toques; iconos y splash regenerados con Pillow

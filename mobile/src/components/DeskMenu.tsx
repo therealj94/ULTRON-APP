@@ -43,6 +43,7 @@ type Props = {
   onSaber: () => void;
   onSingSong: (id: string) => void;
   onSingGenre: (genreId: string) => void;
+  onOrar: () => void;
   onWhatDoYouSee: () => void;
   onRemember: (fact: string) => void;
   /** Un ejemplo del catálogo o cualquier texto: se manda como orden. */
@@ -279,6 +280,12 @@ export function DeskMenu(p: Props) {
             ))}
           </View>
 
+          <Text style={styles.section}>Orar</Text>
+          <Pressable onPress={p.onOrar} style={styles.orarBtn}>
+            <Text style={styles.orarText}>Orar por el día</Text>
+            <Text style={styles.orarSub}>La oración diaria con su voz (~3 min). También: «ora», «oremos», «bendice el día».</Text>
+          </Pressable>
+
           <Text style={styles.section}>Recordar un hecho</Text>
           <View style={styles.composer}>
             <TextInput
@@ -401,6 +408,9 @@ const styles = StyleSheet.create({
   logout: { alignItems: 'center', paddingVertical: 12, marginTop: 6 },
   logoutText: { color: '#FF7A8A', fontSize: 13 },
   version: { color: '#3A4A5A', fontSize: 10, textAlign: 'center' },
+  orarBtn: { borderWidth: 1, borderColor: 'rgba(0,229,255,0.35)', borderRadius: 14, padding: 12, gap: 4, backgroundColor: 'rgba(0,229,255,0.06)' },
+  orarText: { color: '#E8FBFF', fontSize: 15, fontWeight: '700' },
+  orarSub: { color: '#6A7A8A', fontSize: 11 },
   // catálogo
   catHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderTopWidth: 1, borderTopColor: 'rgba(0,229,255,0.12)', marginTop: 4 },
   chev: { color: '#00E5FF', fontSize: 16 },

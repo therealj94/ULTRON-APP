@@ -39,7 +39,7 @@ import {
   type SttEngine,
 } from '../lib/storage';
 import { playSfx, preloadSfx, setSfxEnabled } from '../lib/sfx';
-import { StreamSpeaker, speak, speakClip, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
+import { StreamSpeaker, setSpeechLevelListener, speak, speakClip, speakPrayer, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
 import { CLIP_TEXT, type ClipId } from '../lib/voiceBank';
 
 type Props = {
@@ -79,10 +79,11 @@ export function DeskScreen({ user, onLogout }: Props) {
   const [mode, setMode] = useState<Mode>('GUARDIAN');
   const [presence, setPresence] = useState<DeskPresence>('stay');
   const [bubble, setBubble] = useState('');
-  const [status, setStatus] = useState<'boot' | 'listening' | 'muted' | 'thinking' | 'speaking' | 'reconnect' | 'offline'>('boot');
+  const [status, setStatus] = useState<'boot' | 'listening' | 'muted' | 'thinking' | 'speaking' | 'orando' | 'reconnect' | 'offline'>('boot');
   const [draft, setDraft] = useState('');
   const [listening, setListening] = useState(false);
   const [level, setLevel] = useState(0);
+  const [speechLevel, setSpeechLevel] = useState(0);
   const [micMuted, setMicMuted] = useState(false);
   const [visionOn, setVisionOn] = useState(true);
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
@@ -129,6 +130,12 @@ export function DeskScreen({ user, onLogout }: Props) {
   useEffect(() => void (modeRef.current = mode), [mode]);
   useEffect(() => void (objectsRef.current = objects), [objects]);
   useEffect(() => void (micMutedRef.current = micMuted), [micMuted]);
+
+  // Lip-sync: nivel de la voz (0..1, 20 Hz) → boca de la cara.
+  useEffect(() => {
+    setSpeechLevelListener(setSpeechLevel);
+    return () => setSpeechLevelListener(null);
+  }, []);
 
   const restFace = useCallback((): FaceState => (presenceRef.current === 'sleep' ? 'SLEEPING' : 'IDLE'), []);
   const idleStatus = useCallback(() => setStatus(micMutedRef.current ? 'muted' : 'listening'), []);
@@ -224,6 +231,33 @@ export function DeskScreen({ user, onLogout }: Props) {
       if (!ok) await say('No pude cantar esa ahora. Prueba con «canta 1» o «canta salsa».', 'CONCERNED', { emocion: 'preocupado' });
     },
     [logUltron, onAudio, say, settle, showBubble]
+  );
+
+  /** Oración del día: POST /api/orar. Cara PRAY, mic pausado, sin rellenos, HUD «orando». */
+  const pray = useCallback(
+    async (tema?: string) => {
+      showBubble(tema ? `Oración por ${tema}` : 'Oración por el día');
+      logUltron(tema ? `(ora por ${tema})` : '(ora por el día)');
+      speakingRef.current = true;
+      setFace('PRAY');
+      setStatus('orando');
+      setToolHint('');
+      const ok = await speakPrayer({
+        tema,
+        onPreparing: () => setToolHint('preparando la oración'),
+        onAudioStart: () => {
+          setToolHint('');
+          pauseMicForTts(true);
+          speakingRef.current = true;
+          setStatus('orando');
+          setFace('PRAY');
+        },
+        onEnd: settle,
+      });
+      setToolHint('');
+      if (!ok) await say('No pude traer la oración ahora. Inténtalo en un momento.', 'CONCERNED', { emocion: 'preocupado' });
+    },
+    [logUltron, say, settle, showBubble]
   );
 
   const startConocer = useCallback(
@@ -530,6 +564,8 @@ export function DeskScreen({ user, onLogout }: Props) {
             const g = (intent.genero && generoPorId(intent.genero)) || pick(GENEROS);
             return void (await sing({ letra: g.letra, titulo: g.titulo }, `${g.titulo} (${g.etiqueta})`));
           }
+          case 'orar':
+            return void (await pray(intent.tema));
           case 'chiste': {
             chisteIdx.current = (chisteIdx.current % 5) + 1;
             const ok = await playClip(`chiste${chisteIdx.current}` as ClipId, 'HAPPY', { fallbackText: null });
@@ -570,7 +606,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [answerConocer, askBrain, camPerm?.granted, canciones, exitConocer, fireBlaster, fireSaber, idleStatus, onLogout, playClip, requestCam, runGag, say, settle, sing, startConocer, user, whatDoYouSee]
+    [answerConocer, askBrain, camPerm?.granted, canciones, exitConocer, fireBlaster, fireSaber, idleStatus, onLogout, playClip, pray, requestCam, runGag, say, settle, sing, startConocer, user, whatDoYouSee]
   );
 
   // ---------- Tacto ----------
@@ -1006,6 +1042,8 @@ export function DeskScreen({ user, onLogout }: Props) {
           ? 'pensando'
           : status === 'speaking'
             ? face === 'SING' ? 'cantando' : 'hablando'
+            : status === 'orando'
+              ? 'orando'
             : status === 'reconnect'
               ? 'reconectando mic'
               : status === 'offline'
@@ -1021,6 +1059,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         gazeX={gaze.x}
         gazeY={gaze.y}
         level={level}
+        speechLevel={speechLevel}
         attack={attack}
         irritation={irritation}
         winkSide={winkSide}
@@ -1106,6 +1145,10 @@ export function DeskScreen({ user, onLogout }: Props) {
         onSingGenre={(g) => {
           setMenuOpen(false);
           void handleCommand(`canta ${g}`);
+        }}
+        onOrar={() => {
+          setMenuOpen(false);
+          void handleCommand('ora por el día');
         }}
         onWhatDoYouSee={() => {
           setMenuOpen(false);

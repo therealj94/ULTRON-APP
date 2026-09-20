@@ -17,8 +17,10 @@ type Props = {
   mode?: Mode;
   gazeX?: number;
   gazeY?: number;
-  /** 0..1 nivel de audio → pulso al escuchar, boca al cantar */
+  /** 0..1 nivel del micrófono → pulso al escuchar */
   level?: number;
+  /** 0..1 nivel de la voz de ULTRON (lip-sync, desde tts.setSpeechLevelListener) → apertura de boca */
+  speechLevel?: number;
   attack?: 'blaster' | 'saber' | null;
   /** 0..1 enojo acumulado por toques */
   irritation?: number;
@@ -94,9 +96,14 @@ const LIDS: Record<FaceState, Lids> = {
   SING: { ...NEUTRAL, bottom: 0.3, mouth: 0.9, mouthW: 0.85, headTilt: -3 },
   CURIOUS: { ...NEUTRAL, top: 0.05, pupil: 1.1, mouth: 0.35, mouthW: 0.8, browOpacity: 0.85, browY: -0.2, browAsym: 1, headTilt: -7 },
   PROUD: { ...NEUTRAL, top: 0.12, bottom: 0.25, mouth: 0.85, mouthW: 1.1, browOpacity: 0.6, browY: -0.3, pupil: 0.95 },
+  // ojos cerrados con suavidad (no es sueño), cejas relajadas, sonrisa mínima serena
+  PRAY: { ...NEUTRAL, top: 0.97, browOpacity: 0.3, browY: -0.05, mouth: 0.4, mouthW: 0.7, pupil: 0.9, headTilt: 0 },
 };
 
-const MOUTH_LOOP: ReadonlySet<FaceState> = new Set(['SPEAKING', 'MUSIC', 'SING', 'LAUGH']);
+/** Estados en los que la boca sigue el audio (lip-sync). */
+const MOUTH_LOOP: ReadonlySet<FaceState> = new Set(['SPEAKING', 'MUSIC', 'SING', 'LAUGH', 'PRAY']);
+/** Párpados lentos al entrar/salir de estos estados (los ojos se abren despacio al terminar de orar). */
+const SLOW_LIDS: ReadonlySet<FaceState> = new Set(['PRAY', 'SLEEPING']);
 
 function useAnim(v: number) {
   return useRef(new Animated.Value(v)).current;
@@ -110,6 +117,7 @@ export function UltronFace({
   gazeX = 0,
   gazeY = 0,
   level = 0,
+  speechLevel = 0,
   attack = null,
   irritation = 0,
   winkSide = 'L',
@@ -150,7 +158,6 @@ export function UltronFace({
   const mouthCurve = useAnim(lids.mouth);
   const mouthW = useAnim(lids.mouthW);
   const mouthOpen = useAnim(0);
-  const singBoost = useAnim(0);
   const px = useAnim(0);
   const py = useAnim(0);
   const pulse = useAnim(0);
@@ -164,12 +171,14 @@ export function UltronFace({
   const saber = useAnim(0);
   const thinkDots = useAnim(0);
 
-  // respiración + glifos flotando
+  // respiración (muy lenta al orar) + glifos flotando
+  const praying = face === 'PRAY';
   useEffect(() => {
+    const dur = praying ? 4600 : 2400;
     const b = Animated.loop(
       Animated.sequence([
-        Animated.timing(breath, { toValue: 1.02, duration: 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(breath, { toValue: 1, duration: 2400, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(breath, { toValue: praying ? 1.015 : 1.02, duration: dur, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
+        Animated.timing(breath, { toValue: 1, duration: dur, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
       ])
     );
     const g = Animated.loop(
@@ -184,7 +193,7 @@ export function UltronFace({
       b.stop();
       g.stop();
     };
-  }, [breath, glyphBob]);
+  }, [breath, glyphBob, praying]);
 
   // parpadeo natural (lento y pesado si está cansado)
   useEffect(() => {
@@ -193,7 +202,7 @@ export function UltronFace({
     const slow = face === 'TIRED' ? 2.4 : 1;
     const doBlink = () => {
       if (!alive) return;
-      if (face !== 'SLEEPING') {
+      if (face !== 'SLEEPING' && face !== 'PRAY') {
         Animated.sequence([
           Animated.timing(blink, { toValue: 0.05, duration: 70 * slow, useNativeDriver: true }),
           Animated.timing(blink, { toValue: 1, duration: 130 * slow, easing: Easing.out(Easing.quad), useNativeDriver: true }),
@@ -209,11 +218,14 @@ export function UltronFace({
   }, [blink, face]);
 
   // transición de emoción
+  const prevFace = useRef<FaceState>(face);
   useEffect(() => {
     const ease = Easing.out(Easing.cubic);
     const dur = 260;
+    const slowLids = SLOW_LIDS.has(face) || SLOW_LIDS.has(prevFace.current);
+    prevFace.current = face;
     Animated.parallel([
-      Animated.timing(topLid, { toValue: lids.top, duration: dur, easing: ease, useNativeDriver: true }),
+      Animated.timing(topLid, { toValue: lids.top, duration: slowLids ? (face === 'PRAY' ? 700 : 900) : dur, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }),
       Animated.timing(bottomLid, { toValue: lids.bottom, duration: dur, easing: ease, useNativeDriver: true }),
       Animated.timing(tilt, { toValue: lids.tilt, duration: dur, easing: ease, useNativeDriver: true }),
       Animated.timing(browY, { toValue: lids.browY, duration: dur, easing: ease, useNativeDriver: true }),
@@ -232,21 +244,7 @@ export function UltronFace({
       a.start();
     };
 
-    if (MOUTH_LOOP.has(face)) {
-      const fast = face === 'LAUGH';
-      run(
-        Animated.loop(
-          Animated.sequence([
-            Animated.timing(mouthOpen, { toValue: 1, duration: (fast ? 90 : 120) + Math.random() * 80, useNativeDriver: true }),
-            Animated.timing(mouthOpen, { toValue: fast ? 0.35 : 0.25, duration: (fast ? 90 : 140) + Math.random() * 90, useNativeDriver: true }),
-            Animated.timing(mouthOpen, { toValue: 0.7, duration: 110, useNativeDriver: true }),
-            Animated.timing(mouthOpen, { toValue: 0.1, duration: fast ? 100 : 160, useNativeDriver: true }),
-          ])
-        )
-      );
-    } else {
-      Animated.timing(mouthOpen, { toValue: 0, duration: 160, useNativeDriver: true }).start();
-    }
+    if (!MOUTH_LOOP.has(face)) Animated.timing(mouthOpen, { toValue: 0, duration: 160, useNativeDriver: true }).start();
 
     if (face === 'THINKING') {
       run(
@@ -316,6 +314,9 @@ export function UltronFace({
           ])
         )
       );
+    } else if (face === 'PRAY') {
+      // cabeza ligeramente inclinada hacia abajo, quieta
+      run(Animated.timing(bounce, { toValue: -0.45, duration: 900, easing: Easing.inOut(Easing.cubic), useNativeDriver: true }));
     } else {
       Animated.parallel([
         Animated.spring(bounce, { toValue: 0, friction: 6, useNativeDriver: true }),
@@ -350,11 +351,47 @@ export function UltronFace({
     Animated.spring(py, { toValue: ty, friction: 7, tension: 50, useNativeDriver: true }).start();
   }, [gazeX, gazeY, face, D, px, py]);
 
-  // pulso por nivel de mic; al cantar la boca sigue el volumen
+  // pulso por nivel de mic al escuchar
   useEffect(() => {
     Animated.timing(pulse, { toValue: face === 'LISTENING' ? level : 0, duration: 90, useNativeDriver: true }).start();
-    Animated.timing(singBoost, { toValue: face === 'SING' || face === 'MUSIC' ? level * 0.9 : 0, duration: 60, useNativeDriver: true }).start();
-  }, [level, face, pulse, singBoost]);
+  }, [level, face, pulse]);
+
+  // Lip-sync: la boca sigue el nivel de la voz (tts.ts lo emite a 20 Hz sincronizado a positionMillis).
+  const lastLevelAt = useRef(0);
+  useEffect(() => {
+    if (!MOUTH_LOOP.has(face)) return;
+    lastLevelAt.current = Date.now();
+    const gain = face === 'PRAY' ? 0.7 : face === 'LAUGH' ? 1.1 : face === 'SING' || face === 'MUSIC' ? 1.15 : 1;
+    Animated.timing(mouthOpen, { toValue: Math.min(1, speechLevel * gain), duration: 45, useNativeDriver: true }).start();
+  }, [speechLevel, face, mouthOpen]);
+
+  // Respaldo: si estamos "hablando" pero no llega nivel (audio ajeno a tts.ts), la boca se mueve sola.
+  useEffect(() => {
+    if (!MOUTH_LOOP.has(face)) return;
+    let loop: Animated.CompositeAnimation | null = null;
+    const fast = face === 'LAUGH';
+    const id = setInterval(() => {
+      const stale = Date.now() - lastLevelAt.current > 700;
+      if (stale && !loop) {
+        loop = Animated.loop(
+          Animated.sequence([
+            Animated.timing(mouthOpen, { toValue: 0.9, duration: fast ? 90 : 130, useNativeDriver: true }),
+            Animated.timing(mouthOpen, { toValue: 0.2, duration: fast ? 90 : 150, useNativeDriver: true }),
+            Animated.timing(mouthOpen, { toValue: 0.65, duration: 110, useNativeDriver: true }),
+            Animated.timing(mouthOpen, { toValue: 0.1, duration: fast ? 100 : 170, useNativeDriver: true }),
+          ])
+        );
+        loop.start();
+      } else if (!stale && loop) {
+        loop.stop();
+        loop = null;
+      }
+    }, 200);
+    return () => {
+      clearInterval(id);
+      loop?.stop();
+    };
+  }, [face, mouthOpen]);
 
   useEffect(() => {
     if (!firing) {
@@ -543,7 +580,7 @@ export function UltronFace({
   const mouthWpx = D * 0.62;
   const mouthArcH = D * 0.26;
   const mouthScaleY = mouthCurve.interpolate({ inputRange: [-1, 0, 1], outputRange: [-1, 0.08, 1] });
-  const mouthOpenScale = Animated.add(mouthOpen, singBoost).interpolate({ inputRange: [0, 1, 1.6], outputRange: [0.01, 1, 1.35], extrapolate: 'clamp' });
+  const mouthOpenScale = mouthOpen.interpolate({ inputRange: [0, 1], outputRange: [0.01, 1], extrapolate: 'clamp' });
   const beamH = stageH * 0.95;
   const beamScale = beam.interpolate({ inputRange: [0, 1], outputRange: [0.01, 1] });
   const beamTy = beam.interpolate({ inputRange: [0, 1], outputRange: [-beamH / 2, 0] });
@@ -687,7 +724,7 @@ export function UltronFace({
               borderColor: accent,
               borderBottomLeftRadius: mouthWpx / 2,
               borderBottomRightRadius: mouthWpx / 2,
-              opacity: dim ? 0.3 : mouthLoop ? 0 : 1,
+              opacity: dim ? 0.3 : face === 'PRAY' ? 0.55 : mouthLoop ? 0 : 1,
               transform: [{ scaleX: mouthW }, { scaleY: mouthScaleY }],
             },
           ]}
@@ -697,7 +734,7 @@ export function UltronFace({
             style={[
               styles.mouthOpen,
               {
-                width: mouthWpx * (face === 'LAUGH' ? 0.62 : 0.55),
+                width: mouthWpx * (face === 'LAUGH' ? 0.62 : face === 'PRAY' ? 0.4 : 0.55),
                 height: mouthArcH * 0.9,
                 borderRadius: mouthWpx * 0.3,
                 backgroundColor: accent,

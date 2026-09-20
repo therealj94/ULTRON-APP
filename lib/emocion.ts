@@ -24,6 +24,7 @@ export const EMOCIONES = [
   'orgullo',
   'travieso',
   'canto',
+  'oracion',
 ] as const;
 
 export type Emocion = (typeof EMOCIONES)[number];
@@ -44,6 +45,7 @@ export const EMOCION_INFO: Record<Emocion, { etiqueta: string; cuando: string }>
   orgullo: { etiqueta: 'Orgulloso', cuando: 'logro de la junta, tarea cumplida' },
   travieso: { etiqueta: 'Travieso', cuando: 'guiño, broma cómplice, gag' },
   canto: { etiqueta: 'Cantando', cuando: 'solo cuando canta' },
+  oracion: { etiqueta: 'Orando', cuando: 'solo cuando ora: ojos cerrados, voz baja y reverente' },
 };
 
 const RE_EMO = /^\s*\[\s*EMO\s*:\s*([a-záéíóúñ_ -]+?)\s*\]\s*/i;
@@ -90,6 +92,10 @@ const ALIAS: Record<string, Emocion> = {
   orgulloso: 'orgullo',
   cantando: 'canto',
   singing: 'canto',
+  orando: 'oracion',
+  rezando: 'oracion',
+  oracion: 'oracion',
+  prayer: 'oracion',
 };
 
 function fold(s: string) {

@@ -20,6 +20,9 @@ test('gags cortos sí se resuelven en local', () => {
   assert.equal(detectarIntencion('para').tipo, 'callar');
   assert.equal(detectarIntencion('contame un chiste').tipo, 'chiste');
   assert.equal(detectarIntencion('canta quiero conocer a Jesús').tipo, 'cantar');
+  assert.equal(detectarIntencion('cantá way maker').tipo, 'cantar');
+  for (const f of ['orá por el día', 'hacé una oración', 'oremos', 'bendice nuestro día', 'una oración por hoy']) assert.equal(detectarIntencion(f).tipo, 'orar', f);
+  assert.equal(detectarIntencion('la oración de la escritura dice que…').tipo, 'cerebro');
   assert.equal(detectarIntencion('¿quién sos?').tipo, 'clip');
   assert.equal(detectarIntencion('qué podés hacer').tipo, 'capacidades');
   assert.equal(detectarIntencion('modo oro').tipo, 'modo');

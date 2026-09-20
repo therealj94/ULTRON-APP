@@ -15,6 +15,6 @@ export const GESTOS = [
   'swipeArriba', 'swipeAbajo', 'swipeLado',
   // Capa de expresión (una por emoción del contrato lib/emocion.ts)
   'risa', 'sorpresa', 'curioso', 'pensar', 'preocupado', 'tristeza',
-  'molesto', 'cansado', 'carino', 'orgullo', 'travieso', 'canto', 'feliz',
+  'molesto', 'cansado', 'carino', 'orgullo', 'travieso', 'canto', 'feliz', 'orar',
 ] as const;
 export type Gesto = (typeof GESTOS)[number];

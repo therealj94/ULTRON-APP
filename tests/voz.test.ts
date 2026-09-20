@@ -22,6 +22,8 @@ test('el repertorio se reconoce en lenguaje natural', () => {
   assert.equal(cancionPorPedido('canta quiero conocer a Jesús')?.id, 'jesus');
   assert.equal(cancionPorPedido('cantame la de Generación 12')?.id, 'jesus');
   assert.equal(cancionPorPedido('canta 1')?.id, 'bohemian');
+  assert.equal(cancionPorPedido('cantá way maker')?.id, 'waymaker');
+  assert.equal(cancionPorPedido('cantame algo en inglés')?.id, 'waymaker');
   assert.equal(cancionPorPedido('canta la de Medardo')?.id, 'bittersweet');
   assert.equal(cancionPorPedido('canta algo de salsa'), null);
 });

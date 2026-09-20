@@ -30,6 +30,7 @@ export type Intencion =
   | { tipo: 'blaster' }
   | { tipo: 'sable' }
   | { tipo: 'cantar'; cancion?: string; genero?: string }
+  | { tipo: 'orar'; tema?: string }
   | { tipo: 'chiste' }
   | { tipo: 'clip'; id: 'quien' | 'puedo' | 'discurso' }
   | { tipo: 'saludo' }
@@ -76,6 +77,7 @@ const MODOS: Array<[RegExp, Mode, string]> = [
 
 /** Repertorio grabado del servidor (POST /api/cantar {id} o /voz/<id>.mp3). */
 const REPERTORIO: Array<[RegExp, string]> = [
+  [/way ?maker|sinach/, 'waymaker'],
   [/\bjesus\b|conocer a jes|generacion 12/, 'jesus'],
   [/bohemian|rhapsody|queen|\b(1|uno)\b/, 'bohemian'],
   [/ligera|soda|cerati|\b(2|dos)\b/, 'ligera'],
@@ -362,6 +364,21 @@ const REGLAS: Regla[] = [
     max: 10,
     re: /^(canta|cantame|cantanos|cantate|cantas|entona|karaoke|(puedes|podes|podrias|querés|quieres) cantar)\b/,
     build: (_m, q) => ({ tipo: 'cantar', ...cancionDe(q) }),
+  },
+  {
+    id: 'waymaker',
+    max: 3,
+    re: /^(way ?maker|la de way ?maker|way ?maker por favor)$/,
+    build: () => ({ tipo: 'cantar', cancion: 'waymaker' }),
+  },
+  {
+    id: 'orar',
+    max: 7,
+    re: /^((ora|reza|oremos|oracion|una oracion|la oracion|la oracion del dia|oracion del dia|oracion diaria)|((hace|haz|hazme|haceme|hagamos|di|decime|dime|vamos a hacer) (una |la )?oracion)|((ora|reza) por (el dia|hoy|mi|nosotros|la junta|mi dia|este dia))|((bendice|bendeci|bendiga|bendecí) (el|mi|este|nuestro) dia)|((ora|reza|oracion|una oracion) por (?<tema>.+)))$/,
+    build: (m) => {
+      const tema = (m.groups?.tema || '').trim();
+      return tema ? { tipo: 'orar', tema } : { tipo: 'orar' };
+    },
   },
   {
     id: 'saludo',

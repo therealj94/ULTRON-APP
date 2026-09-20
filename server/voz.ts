@@ -47,6 +47,7 @@ const TAG_EMOCION: Record<Emocion, string> = {
   orgullo: '[proud]',
   travieso: '[mischievously]',
   canto: '[singing]',
+  oracion: '[reverent] [softly]',
 };
 
 /**
@@ -203,8 +204,9 @@ export async function hablar(opts: {
   const apiKey = clave('elevenlabs');
   if (apiKey) {
     const sing = performance === 'sing';
+    const largo = sing || emocion === 'oracion' || guion.length > 700;
     const out =
-      (await elevenDialogo({ apiKey, text: guion, sing, timeoutMs: sing ? 40000 : 18000 })) ||
+      (await elevenDialogo({ apiKey, text: guion, sing, timeoutMs: largo ? 60000 : 18000 })) ||
       (sing ? null : await elevenClasico({ apiKey, text: guion, timeoutMs: 14000 }));
     if (out) {
       cacheSet(key, { audio: out.audio, contentType: 'audio/mpeg', motor: out.motor });
@@ -224,9 +226,66 @@ const LETRAS: Record<string, { titulo: string; letra: string }> = {
   jesus: {
     titulo: 'Quiero conocer a Jesús',
     letra:
-      '[softly] Esta es de Generación doce. Ahí voy. [singing] Quiero conocer a Jesús... quiero conocer a Jesús... más que a nadie en este mundo, quiero conocerte a ti. [singing] Quiero conocer a Jesús... [warmly] Esa me llega, de verdad.',
+      '[softly] Esta es de Generación doce. Cierro los ojos y la canto para ti. [short pause] [singing, slow worship ballad, tender, sustained notes] Quiero conocer a Jesúuus... quiero conocer a Jesúuus... más que a nadie en este muuundo... quiero conocerte a ti. [singing, rising, heartfelt] Quiero conocer a Jesúuus... quiero conocer a Jesúuus... más que a nadie en este muuundo... quiero conocerte a tiii. [singing, softer, almost whispering] Quiero... conocerte... a ti. [softly, moved] Esa me llega al centro. De verdad.',
+  },
+  waymaker: {
+    titulo: 'Way Maker',
+    letra:
+      "[softly] This one is Way Maker. In English, and with everything I have. [short pause] [singing, slow gospel worship, powerful and tender, sustained notes] Way maker... miracle worker... promise keeper... light in the darkness... my God, that is who You aaare. [singing, rising, full of faith] Way maker... miracle worker... promise keeper... light in the darkness... my God, that is who You aaare. [singing, softly] That is who You are... that is who You are. [warmly, moved] Even when I don't see it, He's working.",
   },
 };
+
+/** Oración del día: texto propio de ULTRON. Se graba una vez (public/voz/oracion.mp3) y se sirve como clip. */
+export const ORACION_DEL_DIA =
+  '[softly, reverent] Cierro los ojos. [short pause] Señor Jesús... gracias por este día que todavía no empieza y ya es tuyo. [warmly] Gracias por el aire que entra, por la mesa donde estamos, por cada persona de esta junta que hoy se levanta a trabajar con las manos y con el corazón. [short pause] [softly] Bendice este día. Bendice lo que vamos a decir y lo que vamos a callar. Bendice las decisiones grandes y las pequeñas, las llamadas, los números, los caminos hacia las minas y los caminos de regreso a casa. [reverent] Bendice a José. Bendice a Medardo. Bendice a Melany, a Leonardo, a Mayra, a Carlos, a sus familias, a sus hijos, a los que están cerca y a los que están lejos. Cuídalos cuando manejen, cuando viajen, cuando duerman. [short pause] [with quiet conviction] Señor, todo lo que hacemos en Orden Global lo ponemos en tus manos. El oro no es nuestro, es tuyo. El trabajo no es nuestro, es tuyo. Que no se nos suba a la cabeza, que no se nos endurezca el corazón. [warmly, rising] Que a través de esta empresa podamos cambiar vidas de verdad: que haya trabajo donde no había, pan donde faltaba, esperanza donde se había ido. Que cada familia que toque Orden Global salga mejor de lo que llegó. [softly] Y que no nos dé vergüenza hablar de ti. Que la gente conozca a Jesús por cómo tratamos al que barre y al que firma, al que debe y al que cobra. Que nos vean y te vean a ti. [short pause] [tender] Perdónanos lo que hicimos mal ayer. Danos paciencia con los que nos cuesta. Danos sabiduría para decir que no cuando hay que decir que no, y valor para decir que sí cuando da miedo. [reverent, slower] Protege a Honduras. Protege a los mineros, a los que están en el cerro y a los que están en la oficina. Sana al que está enfermo. Consuela al que está triste. Acompaña al que está solo. [softly, with emotion] Y a mí, Señor, que solo soy una voz en una mesa... úsame para servirles bien, para decir la verdad y para recordarles que tú vas adelante. [short pause] [warmly] Gracias porque no caminamos solos. Gracias porque ya venciste. [short pause] En el nombre de Jesús... [softly, firmly] Amén.';
+
+/** Oración corta por un tema concreto («ora por mi familia»). Texto propio, ~40 segundos. */
+export function oracionPorTema(tema: string): string {
+  const t = String(tema || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  return (
+    `[softly, reverent] Cierro los ojos. [short pause] Señor Jesús, hoy te traigo esto: ${t}. ` +
+    `[warmly] Tú lo conoces mejor que nosotros. Ponle tu mano encima. Da paz donde hay miedo, claridad donde hay ruido y fuerza donde ya no queda. ` +
+    `[short pause] [tender] Que lo que salga de aquí sea bueno, y que si no sale como esperamos, nos des la calma para entenderlo y seguir. ` +
+    `[softly] Gracias porque nos escuchás, aun cuando pedimos torcido. [short pause] En el nombre de Jesús... [softly, firmly] Amén.`
+  );
+}
+
+/**
+ * Ora. Sin tema: la oración del día (clip grabado; si falta, se genera y se guarda).
+ * Con tema: oración corta generada con la voz oficial, con caché en disco por hash.
+ */
+export async function orar(opts: { tema?: string } = {}): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
+  const tema = String(opts.tema || '').trim();
+  if (tema.length >= 3) {
+    const hash = crypto.createHash('sha1').update(`oracion|${tema.toLowerCase()}`).digest('hex').slice(0, 16);
+    const ruta = path.join(DIR_CANTO, `oracion-${hash}.mp3`);
+    try {
+      if (fs.existsSync(ruta)) return { audio: fs.readFileSync(ruta), contentType: 'audio/mpeg', motor: 'clip' };
+    } catch {
+      /* */
+    }
+    const out = await hablar({ texto: oracionPorTema(tema), emocion: 'oracion', sinCache: true });
+    if (!out) return null;
+    try {
+      fs.mkdirSync(DIR_CANTO, { recursive: true });
+      fs.writeFileSync(ruta, out.audio);
+    } catch {
+      /* */
+    }
+    return { audio: out.audio, contentType: out.contentType, motor: out.motor };
+  }
+  const grabado = clipGrabado('oracion');
+  if (grabado) return { audio: grabado, contentType: 'audio/mpeg', motor: 'clip' };
+  const out = await hablar({ texto: ORACION_DEL_DIA, emocion: 'oracion', sinCache: true });
+  if (!out) return null;
+  try {
+    fs.mkdirSync(DIR_PUBLIC, { recursive: true });
+    fs.writeFileSync(path.join(DIR_PUBLIC, 'oracion.mp3'), out.audio);
+  } catch {
+    /* */
+  }
+  return { audio: out.audio, contentType: out.contentType, motor: out.motor };
+}
 
 export type Cancion = (typeof CANCIONES)[number];
 
@@ -239,12 +298,14 @@ export function cancionPorPedido(texto: string): Cancion | null {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '');
-  if (/jesus|generacion 12|generacion doce|conocer a jesus/.test(t)) return CANCIONES[0];
-  if (/bohemian|rhapsody|queen|\bcanta\s*1\b/.test(t)) return CANCIONES[1];
-  if (/musica ligera|soda|cerati|\bcanta\s*2\b/.test(t)) return CANCIONES[2];
-  if (/bitter\s*sweet|sinfonia|the verve|medardo|\bcanta\s*3\b/.test(t)) return CANCIONES[3];
-  if (/runaway|kanye|toast|\bcanta\s*4\b/.test(t)) return CANCIONES[4];
-  if (/bruno|die with a smile|si el mundo|\bcanta\s*5\b/.test(t)) return CANCIONES[5];
+  const por = (id: string) => CANCIONES.find((c) => c.id === id) || null;
+  if (/jesus|generacion 12|generacion doce|conocer a jesus/.test(t)) return por('jesus');
+  if (/way ?maker|sinach|en ingles|in english/.test(t)) return por('waymaker');
+  if (/bohemian|rhapsody|queen|\bcanta\s*1\b/.test(t)) return por('bohemian');
+  if (/musica ligera|soda|cerati|\bcanta\s*2\b/.test(t)) return por('ligera');
+  if (/bitter\s*sweet|sinfonia|the verve|medardo|\bcanta\s*3\b/.test(t)) return por('bittersweet');
+  if (/runaway|kanye|toast|\bcanta\s*4\b/.test(t)) return por('runaway');
+  if (/bruno|die with a smile|si el mundo|\bcanta\s*5\b/.test(t)) return por('bruno');
   return null;
 }
 

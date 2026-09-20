@@ -81,9 +81,26 @@ export function esContinuacion(message: string): boolean {
   );
 }
 
+/** Preguntas a ULTRON sobre sí mismo o sobre la relación: se contestan como persona, sin internet. */
+export function esSobreUltron(message: string): boolean {
+  const q = fold(message);
+  return (
+    /\b(como (estas|andas|amaneciste|te sentis|te va|dormiste|vas)|que (sentis|opinas de mi|te parece que|tal (estas|andas))|estas (bien|cansad|triste|content|enojad)|te (gusta|cae|molesta|aburr)|quien (eres|sos)|que (eres|sos)|tu (nombre|voz|cara|dia)|sos (humano|robot|real)|me (queres|extranaste)|tenes (miedo|sentimientos|hambre|sueno))\b/.test(q) ||
+    /\b(ultron|vos|tu|te|contigo)\b/.test(q) && /\b(como|que|por que)\b/.test(q) && q.length < 70 && !/\b(precio|noticia|busca|quien es|que es)\b/.test(q)
+  );
+}
+
+/** Temas que ya viven en el cerebro de Orden Global: primero se contesta con lo que consta; el 27B pide web si le falta. */
+export function esTemaOG(message: string): boolean {
+  const q = fold(message);
+  return /\b(5550|origen|auka|agka|ondk|mnka|orden ?global|genesis|veta|ordenex|aucorp|au corp|prospera|medardo|melany|paguada|mayra|junta|bo?veda|gramin|besu|qbft|ordenscan|mytokenpay|pulse2chat|kiri|danli|choluteca|inhgeomin)\b/.test(q);
+}
+
 export function esPreguntaExterna(message: string): boolean {
   if (esInterno(message)) return false;
+  if (esSobreUltron(message)) return false;
   const q = fold(message);
+  if (esTemaOG(message) && !consultaWeb(message)) return false;
   if (/\b(precio|spot).*\b(oro|plata|xau|xag|lempira|hnl)\b|\b(oro|plata|lempira|hnl).*\b(precio|spot|tipo de cambio)\b/.test(q)) {
     return false;
   }

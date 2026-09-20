@@ -1,5 +1,5 @@
 /**
- * Oído: transcribe audio de verdad. ElevenLabs Scribe primero, Gemini de reserva.
+ * Oído: transcribe audio de verdad. Nodo local (ULTRON_STT_URL) si existe, luego ElevenLabs Scribe, Gemini de reserva.
  * Si no hay clave o no se entiende, se dice. No se inventa lo hablado.
  */
 
@@ -59,6 +59,38 @@ async function transcribirGemini(audio: Buffer, mime: string, language: string):
   return { texto: texto.slice(0, 4000), via: `gemini:${model}`, detalle: `Oí ${texto.length} caracteres.` };
 }
 
+/**
+ * Oído local (nodo T4): servidor compatible con la API de OpenAI `/v1/audio/transcriptions`
+ * (faster-whisper-server, speaches, whisper.cpp server). Sin costo por minuto, latencia baja.
+ * Se usa primero si ULTRON_STT_URL está definido; si falla, Scribe.
+ */
+async function transcribirLocal(audio: Buffer, mime: string, language: string): Promise<Oido | null> {
+  const base = (process.env.ULTRON_STT_URL || '').replace(/\/$/, '');
+  if (!base) return null;
+  const ext = /wav/.test(mime) ? 'wav' : /webm/.test(mime) ? 'webm' : /ogg/.test(mime) ? 'ogg' : /mp3|mpeg/.test(mime) ? 'mp3' : 'm4a';
+  const form = new FormData();
+  form.append('model', process.env.ULTRON_STT_MODELO || 'Systran/faster-whisper-large-v3');
+  form.append('language', language);
+  form.append('response_format', 'json');
+  form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `voz.${ext}`);
+  const headers: Record<string, string> = {};
+  if (process.env.ULTRON_STT_CLAVE) headers.Authorization = `Bearer ${process.env.ULTRON_STT_CLAVE}`;
+  try {
+    const r = await fetch(`${base}/v1/audio/transcriptions`, { method: 'POST', headers, body: form, signal: AbortSignal.timeout(12000) });
+    if (!r.ok) {
+      console.warn('[stt local]', r.status, (await r.text()).slice(0, 120));
+      return null;
+    }
+    const j: any = await r.json().catch(() => ({}));
+    const texto = String(j.text || '').trim();
+    if (texto.length < 2) return null;
+    return { texto: texto.slice(0, 4000), via: 'stt-local', detalle: `Oí ${texto.length} caracteres.` };
+  } catch (e: any) {
+    console.warn('[stt local]', String(e?.message || e).slice(0, 120));
+    return null;
+  }
+}
+
 export async function transcribirAudio(opts: {
   audio: Buffer;
   mime?: string;
@@ -73,6 +105,8 @@ export async function transcribirAudio(opts: {
   if (buf.length > MAX_BYTES) {
     return { texto: '', via: 'grande', detalle: `Audio de ${buf.length} bytes. Máximo 8 MB. No lo oí.` };
   }
+  const local = await transcribirLocal(buf, mime, language);
+  if (local) return local;
   const el = clave('elevenlabs') || process.env.ELEVENLABS_API_KEY || '';
   if (el) {
     const out = await elevenTranscribe({ apiKey: el, audio: buf, mime, language });

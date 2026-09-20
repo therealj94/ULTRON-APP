@@ -29,7 +29,8 @@ export type FaceState =
   | 'SURPRISED'
   | 'SAD'
   | 'TIRED'
-  | 'SING';
+  | 'SING'
+  | 'PRAY';
 
 export interface FaceTargets {
   dilate: number;
