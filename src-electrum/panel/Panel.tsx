@@ -12,6 +12,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FaceState } from '../../src/types';
 import type { Emocion } from '../../lib/emocion';
+import { capturaDelMapa } from '../mapa/Mapa';
+import { headersElectrum, SIN_PUERTA } from '../acceso';
 
 type Props = {
   abierto: boolean;
@@ -27,9 +29,65 @@ type Turno = {
   texto: string;
   panel?: string;
   traza?: Array<{ herramienta: string; ok: boolean; resumen: string }>;
+  /** Si el turno produjo un informe, queda a mano para bajarlo. */
+  informe?: { nombre: string; url: string; bytes: number };
 };
 
 const AMBAR = '#FFAE3B';
+
+/**
+ * Que el Doctor se escuche.
+ *
+ * Un solo elemento de audio, reusado: crear uno por respuesta deja al navegador con una pila de
+ * reproductores y, si alguien pregunta dos veces seguidas, las dos voces se pisan. Al pedir una
+ * nueva se corta la anterior, que es lo que hace una persona cuando la interrumpen.
+ */
+let sonando: HTMLAudioElement | null = null;
+
+async function decirEnVoz(texto: string, emocion: string | undefined, headers: Record<string, string>) {
+  try {
+    sonando?.pause();
+    const r = await fetch('/api/electrum/voz', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ texto: texto.slice(0, 1200), emocion }),
+    });
+    if (!r.ok) return;
+    const url = URL.createObjectURL(await r.blob());
+    const a = new Audio(url);
+    sonando = a;
+    a.onended = () => URL.revokeObjectURL(url);
+    await a.play().catch(() => URL.revokeObjectURL(url));
+  } catch {
+    /* sin voz se sigue leyendo; no es motivo para romper el turno */
+  }
+}
+
+/**
+ * Bajar el PDF.
+ *
+ * Un `<a download>` no lleva cabeceras, y la ruta del informe exige credencial como todo lo demás
+ * de esta plataforma. Así que se pide por fetch con la cabecera puesta y el navegador recibe un
+ * blob. La alternativa —una URL firmada que valga por sí sola— sería un enlace compartible a un
+ * documento del catastro, y eso es justo lo que no queremos que exista.
+ */
+async function bajarInforme(informe: { nombre: string; url: string }) {
+  try {
+    const r = await fetch(informe.url, { headers: headersElectrum() });
+    if (!r.ok) return;
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = informe.nombre;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  } catch {
+    /* el navegador dirá lo suyo */
+  }
+}
 
 const EJEMPLOS = [
   '¿se traslapa algo en el catastro?',
@@ -42,6 +100,9 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
   const [turnos, setTurnos] = useState<Turno[]>([]);
   const [texto, setTexto] = useState('');
   const [pensando, setPensando] = useState(false);
+  // Arranca apagada: un navegador no deja sonar nada hasta que alguien toca algo, y una demo que
+  // empieza hablando sola en una sala de reunión es peor que una que espera a que se lo pidan.
+  const [vozActiva, setVozActiva] = useState(false);
   const hilo = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -61,14 +122,21 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
       try {
         const r = await fetch('/api/electrum/turno', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...headersElectrum() },
           body: JSON.stringify({ mensaje: q }),
         });
+        if (r.status === 401) {
+          onFace('CONCERNED');
+          setTurnos((t) => [...t, { de: 'electrum', texto: SIN_PUERTA }]);
+          return;
+        }
         const j = await r.json();
         if (Array.isArray(j.ui) && j.ui.length) onUi(j.ui);
         if (j.emocion) onEmocion(j.emocion);
         onFace('SPEAKING');
-        setTurnos((t) => [...t, { de: 'electrum', texto: j.texto || j.error || 'No pude contestar.', panel: j.panel, traza: j.traza }]);
+        if (vozActiva && j.texto) void decirEnVoz(j.texto, j.emocion, headersElectrum());
+        const conInforme = (Array.isArray(j.ui) ? j.ui : []).find((d: any) => d?.informe)?.informe;
+        setTurnos((t) => [...t, { de: 'electrum', texto: j.texto || j.error || 'No pude contestar.', panel: j.panel, traza: j.traza, informe: conInforme }]);
       } catch {
         onFace('CONCERNED');
         setTurnos((t) => [...t, { de: 'electrum', texto: 'No alcancé el servidor. Revisá la conexión y volvé a preguntarme.' }]);
@@ -79,6 +147,36 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
     },
     [pensando, onFace, onEmocion, onUi, onTrabajo]
   );
+
+  /**
+   * Pedir el informe de la cartera desde la pantalla, con el mapa tal como se está viendo. Va por
+   * su propia ruta y no por el turno: no hace falta molestar al modelo para armar un documento cuyo
+   * contenido sale entero del catastro.
+   */
+  const pedirInforme = useCallback(async () => {
+    if (pensando) return;
+    setPensando(true);
+    onFace('THINKING');
+    onTrabajo();
+    try {
+      const r = await fetch('/api/electrum/informe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headersElectrum() },
+        body: JSON.stringify({ tipo: 'cartera', mapa: capturaDelMapa() }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        setTurnos((t) => [...t, { de: 'electrum', texto: j.error || 'No pude armar el informe.' }]);
+      } else {
+        setTurnos((t) => [...t, { de: 'electrum', texto: j.dicho, informe: { nombre: j.nombre, url: j.url, bytes: j.bytes } }]);
+      }
+    } catch {
+      setTurnos((t) => [...t, { de: 'electrum', texto: 'No alcancé el servidor para armar el informe.' }]);
+    } finally {
+      setPensando(false);
+      setTimeout(() => onFace('IDLE'), 900);
+    }
+  }, [pensando, onFace, onTrabajo]);
 
   return (
     <aside
@@ -124,6 +222,22 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
                 >
                   {t.texto}
                 </div>
+                {t.informe && (
+                  <button
+                    type="button"
+                    onClick={() => bajarInforme(t.informe!)}
+                    className="mt-2 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-white/[0.06] cursor-pointer"
+                    style={{ borderColor: 'rgba(255,174,59,.35)' }}
+                  >
+                    <span className="font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
+                      PDF
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13px] text-[#E7EEF2]">{t.informe.nombre}</span>
+                      <span className="block font-mono text-[10px] text-[#6C7F89]">{Math.round(t.informe.bytes / 1024)} KB · se guarda media hora</span>
+                    </span>
+                  </button>
+                )}
                 {t.traza?.length ? (
                   <ul className="mt-1.5 space-y-0.5">
                     {t.traza.map((h, j) => (
@@ -157,6 +271,29 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
               className="flex-1 min-w-0 bg-white/[0.06] border border-white/12 rounded-lg px-3 py-2 text-sm text-[#E7EEF2] placeholder:text-[#5E7078] focus:outline-none focus:border-[#FFAE3B]/60"
             />
             <button
+              type="button"
+              onClick={() => setVozActiva((v) => !v)}
+              title={vozActiva ? 'Silenciar a Dr Electrum' : 'Que Dr Electrum hable'}
+              aria-pressed={vozActiva}
+              className="shrink-0 rounded-lg border px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer"
+              style={
+                vozActiva
+                  ? { borderColor: AMBAR, color: AMBAR }
+                  : { borderColor: 'rgba(255,255,255,.12)', color: '#9FB0B8' }
+              }
+            >
+              Voz
+            </button>
+            <button
+              type="button"
+              onClick={pedirInforme}
+              disabled={pensando}
+              title="Informe de la cartera en PDF, con el mapa como se está viendo"
+              className="shrink-0 rounded-lg border border-white/12 px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase text-[#9FB0B8] transition-colors hover:border-white/25 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+            >
+              PDF
+            </button>
+            <button
               type="submit"
               disabled={pensando || !texto.trim()}
               className="px-3.5 rounded-lg text-black text-[12px] font-semibold disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
@@ -176,15 +313,16 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
 /** Lo que se ha subido y quedó indexado. Sin nada cargado, dice cómo cargarlo. */
 function Expedientes() {
   const [datos, setDatos] = useState<{ capas: any[]; documentos: any[] } | null>(null);
-  const [fallo, setFallo] = useState(false);
+  const [fallo, setFallo] = useState<'' | 'puerta' | 'base'>('');
 
   useEffect(() => {
-    fetch('/api/electrum/expedientes')
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
+    fetch('/api/electrum/expedientes', { headers: headersElectrum() })
+      .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setDatos)
-      .catch(() => setFallo(true));
+      .catch((e) => setFallo(e === 401 ? 'puerta' : 'base'));
   }, []);
 
+  if (fallo === 'puerta') return <div className="p-4 text-sm text-[#8FA3B0] leading-relaxed">{SIN_PUERTA}</div>;
   if (fallo) {
     return (
       <div className="p-4 text-sm text-[#8FA3B0] leading-relaxed">

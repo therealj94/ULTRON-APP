@@ -28,6 +28,7 @@ import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
 import { spotMetal } from './lib/mercado';
 import { turnoElectrum } from './server/electrum/turno';
+import { guardarInforme, informeCartera, informeConcesion, tomarInforme } from './server/electrum/informe';
 import {
   electrumBotListo,
   electrumWebhookSecretOk,
@@ -233,6 +234,77 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
     padron: genteDeElectrum(),
     honesto: true,
   });
+});
+
+/**
+ * Pedir un informe desde la pantalla, con el mapa dentro.
+ *
+ * La captura del lienzo de MapLibre viaja en el cuerpo porque el servidor no tiene el mapa: el
+ * encuadre, las capas encendidas y el zoom son de quien está mirando. Por eso el lienzo se creó con
+ * `preserveDrawingBuffer`, que sin esto no sirve para nada.
+ */
+app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), async (req, res) => {
+  const id = identidadDe(req);
+  const quien = id?.persona.nombre || null;
+  const tipo = String(req.body?.tipo || 'concesion');
+
+  let mapa: Buffer | undefined;
+  const crudo = String(req.body?.mapa || '');
+  if (crudo.startsWith('data:image/jpeg;base64,')) {
+    const b = Buffer.from(crudo.slice(crudo.indexOf(',') + 1), 'base64');
+    // Más de seis megas no es un mapa: es alguien probando qué pasa.
+    if (b.length > 80 && b.length < 6 * 1024 * 1024) mapa = b;
+  }
+
+  try {
+    const opts = { quien, lectura: req.body?.lectura ? String(req.body.lectura) : undefined, mapa };
+    const r =
+      tipo === 'cartera'
+        ? await informeCartera(opts)
+        : await informeConcesion(
+            { id: req.body?.concesion_id != null ? Number(req.body.concesion_id) : undefined, nombre: req.body?.nombre ? String(req.body.nombre) : undefined },
+            opts
+          );
+    if ('error' in r) return res.status(404).json({ error: r.error, honesto: true });
+    const guardado = guardarInforme(r, quien);
+    return res.json({ id: guardado, nombre: r.nombre, url: `/api/electrum/informe/${guardado}`, bytes: r.pdf.length, dicho: r.dicho, honesto: true });
+  } catch (e: any) {
+    console.error('[electrum] informe falló:', String(e?.message || e).slice(0, 200));
+    return res.status(500).json({ error: 'Se me cayó armando el informe. Volvé a pedírmelo.', honesto: true });
+  }
+});
+
+/**
+ * La voz de Dr Electrum. Ruta propia, no la de ULTRON: no por capricho de simetría, sino porque
+ * `/api/tts` está en la lista de rutas abiertas de la APK y un sintetizador abierto es una factura
+ * de ElevenLabs con la puerta quitada.
+ */
+app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+  const texto = String(req.body?.texto || '').slice(0, 1200).trim();
+  if (!texto) return res.status(400).json({ error: 'Falta el texto.', honesto: true });
+  try {
+    const out = await hablar({ texto, emocion: req.body?.emocion, plataforma: 'electrum' });
+    if (!out) return res.status(503).json({ error: 'No tengo voz ahora mismo.', honesto: true });
+    res.setHeader('Content-Type', out.contentType);
+    res.setHeader('Cache-Control', 'private, max-age=600');
+    res.setHeader('X-Motor', out.motor);
+    return res.end(out.audio);
+  } catch (e: any) {
+    console.warn('[electrum] voz', String(e?.message || e).slice(0, 160));
+    return res.status(502).json({ error: 'Se me trabó la voz.', honesto: true });
+  }
+});
+
+/** Recoger un informe ya armado. Vive media hora: describe el catastro de este momento. */
+app.get('/api/electrum/informe/:id', exigirPlataforma('electrum'), limitar(60), (req, res) => {
+  const r = tomarInforme(String(req.params.id));
+  if (!r) {
+    return res.status(404).json({ error: 'Ese informe ya no está. Se guardan media hora porque describen el catastro del momento; pedime otro.', honesto: true });
+  }
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="${r.nombre}"`);
+  res.setHeader('Cache-Control', 'private, no-store');
+  return res.end(r.pdf);
 });
 
 /**

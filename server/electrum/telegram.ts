@@ -23,6 +23,7 @@ import { identificar, nivelDe, padron, type Identificacion, type Nivel } from '.
 import { extraerPdf } from '../../lib/leer-pdf';
 import { aprender } from './aprender';
 import { turnoElectrum } from './turno';
+import { tomarInforme } from './informe';
 
 const ES_GEO = /\.(zip|kml|kmz|geojson|json|csv|shp)$/i;
 const MAX_ARCHIVO = 40 * 1024 * 1024;
@@ -146,6 +147,31 @@ export async function responderElectrum(chatId: string, texto: string): Promise<
     return { ok: true, detalle: `Respondí a chat ${chatId}.` };
   } catch (e: any) {
     return { ok: false, detalle: String(e?.message || e).slice(0, 160) };
+  }
+}
+
+/**
+ * Manda un informe como archivo. Por Telegram un PDF se manda, no se enlaza: un enlace a
+ * /api/electrum/informe exige sesión, y quien está en el chat no la tiene.
+ */
+export async function enviarInformeElectrum(chatId: string, id: string, pieDeFoto: string): Promise<boolean> {
+  const token = electrumBotToken();
+  const r = tomarInforme(id);
+  if (!token || !r) return false;
+  try {
+    const cuerpo = new FormData();
+    cuerpo.append('chat_id', chatId);
+    cuerpo.append('caption', pieDeFoto.slice(0, 900));
+    cuerpo.append('document', new Blob([new Uint8Array(r.pdf)], { type: 'application/pdf' }), r.nombre);
+    const resp = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+      method: 'POST',
+      body: cuerpo,
+      signal: AbortSignal.timeout(30_000),
+    });
+    const j: any = await resp.json().catch(() => ({}));
+    return !!j?.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -294,5 +320,12 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
   const texto = [archivo?.dicho, salida.texto].filter(Boolean).join('\n\n') || 'No pude contestar eso ahora mismo.';
   await responderElectrum(parsed.chatId, texto);
   recordarElectrum(parsed.chatId, mensaje, salida.texto);
+
+  const informe = salida.ui.map((d: any) => d?.informe).find(Boolean);
+  if (informe?.id) {
+    const ok = await enviarInformeElectrum(parsed.chatId, String(informe.id), String(informe.nombre || 'informe.pdf'));
+    if (!ok) await responderElectrum(parsed.chatId, 'Armé el informe pero no pude mandártelo por acá. Pedímelo desde la pantalla.');
+    return { estado: ok ? 'informe' : 'informe falló', chatId: parsed.chatId };
+  }
   return { estado: 'contestado', chatId: parsed.chatId };
 }

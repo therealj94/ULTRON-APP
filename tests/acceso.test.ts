@@ -20,6 +20,7 @@ import { quienEs, puedeCambiarSistema } from '../lib/junta';
 import { autorizarElectrum, electrumWebhookSecretOk } from '../server/electrum/telegram';
 import { telegramWebhookSecretOk } from '../lib/telegram-in';
 import { MANOS, TODAS } from '../server/electrum/manos';
+import { ESPECIALISTAS } from '../server/electrum/especialistas';
 
 /** Corre `fn` con esas variables de entorno puestas y las deja como estaban. */
 function conEntorno(vars: Record<string, string | undefined>, fn: () => void) {
@@ -200,12 +201,31 @@ test('las herramientas no se prestan entre cerebros', async (t) => {
     for (const h of TODAS) assert.ok(h.plataformas.includes('electrum'), `${h.nombre} no es de Electrum`);
   });
 
-  await t.test('las compartidas son exactamente dos, y están en las dos', () => {
+  await t.test('las compartidas son las cuatro que pasan la prueba, y ninguna más', () => {
+    // La prueba para compartir una mano: ¿es literalmente el mismo hecho del mundo para los dos
+    // cerebros? El oro es el mismo oro, la aritmética de mina no cambia según quién pregunte, e
+    // internet es internet. El catastro no. Esta lista es corta a propósito: si crece, alguien
+    // está deshaciendo la separación y este test se lo dice.
     const compartidas = Object.values(MANOS)
       .filter((h) => h.plataformas.includes('ultron') && h.plataformas.includes('electrum'))
       .map((h) => h.nombre)
       .sort();
-    assert.deepEqual(compartidas, ['calculo_mina', 'metales_spot']);
+    assert.deepEqual(compartidas, ['calculo_mina', 'metales_spot', 'web_buscar', 'web_leer']);
+  });
+
+  await t.test('el informe es de Electrum y no se presta', () => {
+    assert.deepEqual(MANOS.informe_pdf.plataformas, ['electrum']);
+  });
+
+  await t.test('todo lo que un especialista pide de verdad existe', () => {
+    // Cinco de los ocho declaraban `web_buscar` y `web_leer` cuando no estaban escritas. `manosDe`
+    // las filtraba en silencio, así que el prompt le prometía al modelo una herramienta que no
+    // tenía. Un modelo al que se le promete una herramienta que no existe no se calla: la inventa.
+    for (const e of ESPECIALISTAS) {
+      for (const h of e.herramientas) {
+        assert.ok(MANOS[h], `${e.nombre} pide «${h}» y esa mano no existe`);
+      }
+    }
   });
 
   await t.test('el catastro y el mapa NO se comparten', () => {

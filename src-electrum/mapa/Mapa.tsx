@@ -212,3 +212,27 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
     </div>
   );
 }
+
+/**
+ * El mapa tal como se está viendo, en JPEG, para meterlo en el informe.
+ *
+ * El servidor no puede hacer esta captura: el encuadre, el zoom y las capas encendidas son de quien
+ * está mirando, no del servidor. Por eso el lienzo se crea con `preserveDrawingBuffer` — sin eso,
+ * WebGL descarta el búfer tras pintar y `toDataURL` devuelve un rectángulo negro. Esa bandera
+ * existía ya «por si acaso»; este es el caso.
+ *
+ * JPEG y no PNG porque el PDF incrusta los datos de un JPEG tal cual, sin recodificar nada.
+ */
+export function capturaDelMapa(): string | null {
+  const m = (window as any).__mapa;
+  const lienzo: HTMLCanvasElement | undefined = m?.getCanvas?.();
+  if (!lienzo || !lienzo.width || !lienzo.height) return null;
+  try {
+    // Repintar antes de leer: si el último cuadro es viejo, se captura lo que ya no se ve.
+    m.triggerRepaint?.();
+    const url = lienzo.toDataURL('image/jpeg', 0.82);
+    return url.startsWith('data:image/jpeg') && url.length > 2000 ? url : null;
+  } catch {
+    return null;
+  }
+}

@@ -1,4 +1,5 @@
 /** Entrada de Dr Electrum FP. La app vive en /electrum; ULTRON FP sigue en la raíz. */
+import { recogerLlaveDelEnlace } from './acceso';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
@@ -15,6 +16,8 @@ fijarPerfilLocal({
   acento: '#FFAE3B',
   demo: true,
 });
+
+recogerLlaveDelEnlace();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

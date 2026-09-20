@@ -13,6 +13,7 @@
  * puede repetir sin inventar. Ninguna lanza una excepción que el usuario tenga que ver.
  */
 import { COMPARTIDAS } from '../../lib/manos/compartidas';
+import { guardarInforme, informeCartera, informeConcesion } from './informe';
 import type { Herramienta } from '../../lib/agente/tipos';
 import { areaHectareas, distanciaKm, encuadre, perimetroKm } from './gis';
 import {
@@ -236,6 +237,59 @@ const expediente_buscar: Herramienta = {
   },
 };
 
+
+/* ------------------------------------------------------------------ informes */
+
+/**
+ * El informe en PDF.
+ *
+ * Fijate en lo que NO recibe: cifras. El modelo elige QUÉ informe y puede aportar un párrafo de
+ * lectura; los números salen del catastro y de la geometría, acá adentro. Un PDF se imprime y se
+ * lleva a una reunión, así que una cifra inventada con membrete no es una respuesta desafortunada:
+ * es un documento falso.
+ */
+const informe_pdf: Herramienta = {
+  nombre: 'informe_pdf',
+  descripcion:
+    'Arma un informe en PDF descargable: la ficha completa de una concesión (con área medida, traslapes y citas de expediente) o el estado de toda la cartera cargada. Usala cuando pidan «un informe», «un PDF», «algo para imprimir» o «para llevar a la reunión».',
+  esquema: {
+    type: 'object',
+    properties: {
+      tipo: { type: 'string', description: 'concesion para una ficha, cartera para el estado de todo', enum: ['concesion', 'cartera'], default: 'concesion' },
+      nombre: { type: 'string', description: 'Nombre o expediente de la concesión, si el informe es de una' },
+      concesion_id: { type: 'integer', description: 'Id de la concesión, si ya lo tenés de una búsqueda anterior' },
+      lectura: {
+        type: 'string',
+        description:
+          'Tu lectura del caso en dos o tres frases, si tenés algo que aportar. Va en una sección aparte rotulada como interpretación. NO pongas cifras acá: las cifras las pone el catastro.',
+      },
+    },
+  },
+  plataformas: ['electrum'],
+  msMaximo: 25_000,
+  async ejecutar({ tipo, nombre, concesion_id, lectura }, ctx) {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    const quien = ctx.quien;
+    const opts = { quien, lectura: lectura ? String(lectura) : undefined };
+
+    const r =
+      String(tipo || 'concesion') === 'cartera'
+        ? await informeCartera(opts)
+        : await informeConcesion(
+            { id: concesion_id != null ? Number(concesion_id) : undefined, nombre: nombre ? String(nombre) : undefined },
+            opts
+          );
+
+    if ('error' in r) return { ok: false, texto: r.error };
+    const id = guardarInforme(r, quien);
+    return {
+      ok: true,
+      texto: `${r.dicho} Ya está listo para descargar; decíselo y no repitas los números uno por uno, que están en el documento.`,
+      ui: { informe: { id, nombre: r.nombre, url: `/api/electrum/informe/${id}`, bytes: r.pdf.length } },
+    };
+  },
+};
+
 /* ------------------------------------------------------------------ registro */
 
 /** Las manos de Electrum, por nombre. El panel de especialistas decide cuáles se le ofrecen. */
@@ -248,6 +302,7 @@ export const MANOS: Record<string, Herramienta> = {
   mapa_volar,
   mapa_capa,
   expediente_buscar,
+  informe_pdf,
   // Estas dos no son de Electrum: viven en lib/manos/compartidas.ts porque ULTRON hace las mismas
   // cuentas y pregunta el mismo precio. Se montan acá, no se copian.
   ...COMPARTIDAS,

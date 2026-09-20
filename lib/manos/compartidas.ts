@@ -19,6 +19,8 @@
  */
 import { resolverCalculoMina } from '../minas/calculos';
 import { simboloDe, spotMetal } from '../mercado';
+import { buscarWeb, leerPagina } from '../../src/06-manos/web';
+import { urlPublica } from '../../server/seguridad';
 import type { Herramienta } from '../agente/tipos';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
@@ -66,4 +68,60 @@ const metales_spot: Herramienta = {
   },
 };
 
-export const COMPARTIDAS: Record<string, Herramienta> = { calculo_mina, metales_spot };
+/*
+ * Internet. Estas dos existen ahora porque NO existían: cinco de los ocho especialistas de Dr
+ * Electrum declaraban `web_buscar` y `web_leer` en su lista de herramientas, y ninguna de las dos
+ * estaba escrita. `manosDe` las filtraba en silencio, así que el modelo leía en su prompt que podía
+ * buscar en internet y no podía. Un modelo al que se le promete una herramienta que no tiene no se
+ * queda callado: se la inventa.
+ *
+ * Se comparten porque internet es internet. Lo que no se comparte es el criterio de qué buscar, y
+ * eso vive en el cerebro de cada plataforma.
+ */
+const web_buscar: Herramienta = {
+  nombre: 'web_buscar',
+  descripcion:
+    'Busca en internet y devuelve títulos, enlaces y un extracto. Usala para cualquier cosa de fuera de tu cerebro y del catastro: normativa reciente, precios, noticias, datos de una empresa. Si contestás con esto, citá la fuente.',
+  esquema: {
+    type: 'object',
+    properties: { consulta: { type: 'string', description: 'Qué buscar, en palabras normales' } },
+    required: ['consulta'],
+  },
+  plataformas: ['ultron', 'electrum'],
+  msMaximo: 15_000,
+  async ejecutar({ consulta }) {
+    const q = String(consulta || '').trim();
+    if (!q) return { ok: false, texto: 'Consulta vacía. No busqué nada.' };
+    const hits = await buscarWeb(q, 5).catch(() => []);
+    if (!hits.length) return { ok: false, texto: `No saqué resultados de «${q}». Decilo; no te inventes una fuente.` };
+    const texto = hits
+      .slice(0, 4)
+      .map((h) => `${h.title} (${h.url}): ${h.snippet.replace(/\s+/g, ' ').slice(0, 220)}`)
+      .join(' | ');
+    return { ok: true, texto, ui: { hits } };
+  },
+};
+
+const web_leer: Herramienta = {
+  nombre: 'web_leer',
+  descripcion: 'Abre una página y te devuelve su texto. Usala cuando te pasen un enlace, o después de buscar, para leer la fuente antes de citarla.',
+  esquema: {
+    type: 'object',
+    properties: { url: { type: 'string', description: 'La dirección completa, con https://' } },
+    required: ['url'],
+  },
+  plataformas: ['ultron', 'electrum'],
+  msMaximo: 15_000,
+  async ejecutar({ url }) {
+    // La misma comprobación que usa ULTRON: sin esto, una URL en un expediente puede hacer que el
+    // servidor se pida a sí mismo, o al metadata de AWS. Una herramienta que abre lo que le digan
+    // es una puerta al interior de la red.
+    const pub = await urlPublica(String(url || ''));
+    if (pub.ok === false) return { ok: false, texto: `No abrí esa dirección: ${pub.error}.` };
+    const texto = await leerPagina(pub.url, 2200).catch(() => '');
+    if (!texto) return { ok: false, texto: `Abrí ${pub.url} pero no saqué texto. Puede que no sea HTML. No inventes su contenido.` };
+    return { ok: true, texto: `De ${pub.url}: ${texto}`, ui: { url: pub.url } };
+  },
+};
+
+export const COMPARTIDAS: Record<string, Herramienta> = { calculo_mina, metales_spot, web_buscar, web_leer };

@@ -20,7 +20,23 @@ import { CANCIONES, VOZ_OFICIAL } from '../lib/capacidades';
 
 export type Performance = 'speak' | 'sing';
 
-export const VOZ_ID = process.env.ELEVENLABS_VOZ || 'hHjbwzYZW17oh0p05AKv'; // Gabriela · español latino
+/** La voz de ULTRON FP: Gabriela, español latino. */
+export const VOZ_ID = process.env.ELEVENLABS_VOZ || 'hHjbwzYZW17oh0p05AKv';
+
+/**
+ * La voz de Dr Electrum.
+ *
+ * Dos cerebros con la misma voz son la misma cosa con dos nombres. La cara ya cambia de color
+ * según la plataforma; la voz tiene que cambiar igual, o al segundo de audio se deshace la
+ * separación que el resto del sistema sostiene.
+ *
+ * Mientras no haya una elegida, habla con la de ULTRON: preferible a callarse. José la fija con
+ * `ELECTRUM_VOZ` cuando escuche las muestras y diga cuál.
+ */
+export function vozDe(plataforma: 'ultron' | 'electrum'): string {
+  if (plataforma === 'electrum') return String(process.env.ELECTRUM_VOZ || '').trim() || VOZ_ID;
+  return VOZ_ID;
+}
 
 const TTS_LOCAL_URL = (process.env.ULTRON_TTS_URL || process.env.CHATTERBOX_URL || '').replace(/\/$/, '');
 const TTS_LOCAL_CLAVE = process.env.ULTRON_TTS_CLAVE || '';
@@ -111,6 +127,7 @@ async function elevenDialogo(opts: {
   text: string;
   sing: boolean;
   timeoutMs: number;
+  voz?: string;
 }): Promise<{ audio: Buffer; motor: string } | null> {
   for (const model of ['eleven_v3_conversational', 'eleven_v3'] as const) {
     try {
@@ -121,7 +138,7 @@ async function elevenDialogo(opts: {
           model_id: model,
           // En canto NO se fija idioma: con language_code v3 lee la letra en vez de cantarla.
           language_code: opts.sing ? undefined : 'es',
-          inputs: [{ text: opts.text, voice_id: VOZ_ID }],
+          inputs: [{ text: opts.text, voice_id: opts.voz || VOZ_ID }],
         }),
         signal: AbortSignal.timeout(opts.timeoutMs),
       });
@@ -134,9 +151,9 @@ async function elevenDialogo(opts: {
   return null;
 }
 
-async function elevenClasico(opts: { apiKey: string; text: string; timeoutMs: number }): Promise<{ audio: Buffer; motor: string } | null> {
+async function elevenClasico(opts: { apiKey: string; text: string; timeoutMs: number; voz?: string }): Promise<{ audio: Buffer; motor: string } | null> {
   try {
-    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${VOZ_ID}?output_format=mp3_44100_128`, {
+    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${opts.voz || VOZ_ID}?output_format=mp3_44100_128`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'xi-api-key': opts.apiKey, Accept: 'audio/mpeg' },
       body: JSON.stringify({
@@ -190,13 +207,18 @@ export async function hablar(opts: {
   emocion?: Emocion | string;
   performance?: Performance;
   sinCache?: boolean;
+  /** Qué plataforma habla. Decide la voz; por omisión, ULTRON. */
+  plataforma?: 'ultron' | 'electrum';
 }): Promise<Habla | null> {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
   const emocion = normalizarEmocion(opts.emocion);
   const guion = expresar(String(opts.texto || '').slice(0, 2400), emocion, performance);
   if (!guion) return null;
-  const key = crypto.createHash('sha1').update(`${performance}|${emocion}|${guion}`).digest('hex');
+  const voz = vozDe(opts.plataforma === 'electrum' ? 'electrum' : 'ultron');
+  // La voz entra en la clave de caché: si no, el primero que hable deja su timbre guardado y el
+  // otro cerebro contesta con la voz ajena.
+  const key = crypto.createHash('sha1').update(`${voz}|${performance}|${emocion}|${guion}`).digest('hex');
   if (!opts.sinCache) {
     const hit = cacheGet(key);
     if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
@@ -206,8 +228,8 @@ export async function hablar(opts: {
     const sing = performance === 'sing';
     const largo = sing || emocion === 'oracion' || guion.length > 700;
     const out =
-      (await elevenDialogo({ apiKey, text: guion, sing, timeoutMs: largo ? 60000 : 18000 })) ||
-      (sing ? null : await elevenClasico({ apiKey, text: guion, timeoutMs: 14000 }));
+      (await elevenDialogo({ apiKey, text: guion, sing, timeoutMs: largo ? 60000 : 18000, voz })) ||
+      (sing ? null : await elevenClasico({ apiKey, text: guion, timeoutMs: 14000, voz }));
     if (out) {
       cacheSet(key, { audio: out.audio, contentType: 'audio/mpeg', motor: out.motor });
       return { audio: out.audio, contentType: 'audio/mpeg', motor: out.motor, cache: false, ms: Date.now() - t0 };

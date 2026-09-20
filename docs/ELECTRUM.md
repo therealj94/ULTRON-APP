@@ -235,6 +235,8 @@ para la pantalla. Por eso el mapa vuela a una concesión sin que el modelo escri
 | `expediente_buscar` | busca en los documentos y devuelve el texto **con su página** |
 | `calculo_mina` | las cuentas, en código y con la fórmula a la vista |
 | `metales_spot` | precio del oro y la plata ahora |
+| `web_buscar` / `web_leer` | busca en internet y abre páginas |
+| `informe_pdf` | arma la ficha o la cartera en PDF, descargable |
 
 ## Aprender de lo que se sube — **hecho**
 
@@ -292,8 +294,8 @@ Ninguno se veía leyendo el código:
 | App: mapa doble, cara que cede el paso, panel y expedientes | **hecha y mirada** |
 | Padrón y puerta propia, separada de ULTRON | **hecho y probado contra el servidor compilado** |
 | Bot de Telegram Dr Electrum FP | **hecho** (falta darle de alta el bot en BotFather) |
-| Generador de informes en PDF | pendiente — base mínima ya existe (`lib/pdf.ts`) |
-| Voz con el API nuevo | adaptador pendiente, a la espera del API |
+| Generador de informes en PDF | **hecho y mirado** — ficha de concesión y estado de cartera, con el mapa dentro |
+| Voz propia con ElevenLabs | **hecha** — falta que José elija el timbre (`ELECTRUM_VOZ`) |
 
 ## Quién entra
 
@@ -306,3 +308,54 @@ minera, y al revés.
 - Mapa: MapLibre y Google, con interruptor.
 - Datos: PostGIS propio en el nodo AWS.
 - Cara: completa al arrancar, se encoge a un lado cuando se abre un mapa o un expediente.
+
+
+## Los informes
+
+Dos, y los dos se arman **del catastro**, no de lo que escriba el modelo:
+
+- **Ficha de concesión** — identificación, geometría medida sobre el elipsoide, el mapa como se
+  estaba viendo, traslapes que le tocan y lo que digan los expedientes **citado con su página**.
+- **Estado de la cartera** — cuánto hay, cuánto tiene geometría, qué vence dentro del año y qué se
+  pisa con qué.
+
+### Por qué el modelo no escribe el informe
+
+Es la decisión de diseño de esta pieza, y no es de estilo. **Un PDF se imprime y se lleva a una
+reunión.** El día que una cifra inventada sale con membrete deja de ser una respuesta desafortunada
+y pasa a ser un documento falso.
+
+Así que el reparto es estricto: los datos salen del catastro y de las medidas; el modelo elige
+*qué* informe y puede aportar un párrafo, que va en una sección rotulada **«Lectura de Dr
+Electrum»** con una nota debajo diciendo que eso es interpretación y no medida. El esquema de la
+herramienta ni siquiera acepta números, y hay una prueba que lo vigila.
+
+Los avisos —vigencia contradictoria, vencimiento cercano, área que no cuadra con el plano, titular
+en blanco— se buscan a propósito y van arriba. Nadie abre un PDF de cuarenta concesiones a
+comprobar fechas a mano.
+
+### El escritor de PDF
+
+`lib/pdf.ts` se rehízo entero. El anterior era una página suelta cortada a noventa y dos
+**caracteres**, y Helvetica es proporcional: una línea de emes se salía del papel y una de íes
+dejaba medio folio vacío. El nuevo trae las métricas reales de Adobe, páginas que se derraman,
+tablas que repiten cabecera al cambiar de folio, títulos que no se quedan huérfanos al pie, e
+imágenes JPEG incrustadas con `/DCTDecode`.
+
+Sin dependencias, y se verifica mirándolo: `scripts/qa/ver-pdf.mjs` lo renderiza en Chromium y saca
+una captura por página. Tres de los fallos que tiene arreglados —el título huérfano, la cartera sin
+mapa y un «Hay 1 traslapes»— no daban ningún error: salían en la hoja.
+
+## La voz
+
+Dr Electrum tiene voz propia (`ELECTRUM_VOZ`), separada de la de ULTRON y con ruta propia
+(`/api/electrum/voz`). La ruta es aparte por una razón concreta: `/api/tts` está en la lista de
+rutas abiertas de la APK, y un sintetizador abierto es una factura de ElevenLabs con la puerta
+quitada.
+
+El id de voz entra en la clave de la caché de audio. Sin eso, el primer cerebro que hablara dejaría
+su timbre guardado y el otro contestaría con la voz ajena.
+
+En la pantalla la voz **arranca apagada**: los navegadores no dejan sonar nada hasta que alguien
+toca algo, y una demostración que empieza hablando sola en una sala de reunión es peor que una que
+espera a que se lo pidan.
