@@ -410,3 +410,43 @@ de mapearla a enfado: el doctor sostiene un límite varias veces por conversaci�
 parecer molesto cada vez.
 
 La paleta es del **cerebro**; la cara y la voz, que son **cuerpo**, saben expresarlas todas.
+
+## La app
+
+Dr Electrum FP tiene su propia app Android. **Un solo proyecto Expo, dos aplicaciones**:
+`ULTRON_APP=electrum` cambia identidad, paquete, color, orientación y textos de permiso;
+`mobile/app.json` no se toca, porque es la configuración de la APK que ya funciona. Paquetes
+distintos (`link.ordenglobal.drelectrumfp`), así que las dos se instalan a la vez sin que una
+desinstale a la otra. El CI las construye en una matriz, no en dos ficheros copiados.
+
+### Qué hace la app que la web no
+
+La app no es la web metida en un icono. Es la app de **campo**, y todo lo que hace es lo que un
+navegador hace mal o no hace:
+
+- **«¿Dónde estoy y de quién es esto?»** Parado sobre el terreno, el GPS da el punto y el catastro
+  contesta. Es *la* pregunta del campo. La coordenada va dentro de la pregunta, con sus decimales,
+  para que llegue a `catastro_en_punto` como argumento y la traza muestre qué se consultó: un dato
+  que el modelo no ve es un dato que el modelo puede contradecir.
+- **Hablarle con las manos sucias.** En un cerro nadie escribe en un teclado de vidrio.
+- **Que suene aunque el teléfono esté en silencio**, porque en el campo el timbre va apagado.
+
+El mapa grande, los informes y cargar el catastro siguen en la web, donde hay pantalla. Meterlo
+todo en la app sería hacer una web peor dentro de una app.
+
+### La cara ya sabe de quién es
+
+`UltronFace` tenía el cian escrito a fuego. La primera captura de la app del doctor salió con la
+cara de ULTRON y otro rótulo encima — exactamente lo que el resto del sistema se cuida de no hacer.
+Ahora la cara acepta `acento`, y el brillo del iris se **deriva** del color en vez de ser una
+constante pálida de cian: un reflejo es el mismo color con más luz, no otro color, y sobre el iris
+ámbar aquella constante parecía una catarata gris.
+
+Con cian se sigue usando la constante exacta de siempre. La diferencia calculada sería mínima, y
+aun así es un cambio en una cara ya aprobada y en manos de la junta.
+
+### Cómo se mira sin un teléfono
+
+`scripts/qa/electrum-movil.mjs` monta las pantallas con react-native-web y las fotografía. Un APK
+se construye en CI y tarda; revisar el diseño no puede depender de eso. Los módulos nativos se
+sustituyen por dobles (GPS, almacén seguro, audio) porque lo que se revisa es el diseño, no el GPS.

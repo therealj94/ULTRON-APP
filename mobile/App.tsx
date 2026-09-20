@@ -11,6 +11,8 @@ import { logoutRemote } from './src/lib/api';
 import { loadSession, saveSession } from './src/lib/storage';
 import { DeskScreen } from './src/screens/DeskScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
+import { ES_ELECTRUM } from './src/variante';
+import ElectrumApp from './src/electrum/ElectrumApp';
 
 type Phase = 'splash' | 'login' | 'desk';
 
@@ -104,7 +106,24 @@ function JsSplash({ opacity }: { opacity: Animated.Value }) {
   );
 }
 
+/**
+ * Un binario, dos aplicaciones.
+ *
+ * La bifurcación va arriba del todo y es total: la app del doctor no atraviesa nada del arranque de
+ * ULTRON. Ese arranque bloquea en horizontal, pide cámara al entrar a la mesa y esconde las barras
+ * del sistema — tres decisiones correctas para la mesa de la junta y equivocadas para una app que
+ * se usa de pie en un cerro.
+ *
+ * Que sea una constante del manifiesto y no una prop permite que Metro y el motor descarten el
+ * camino muerto, y sobre todo garantiza que ULTRON siga arrancando exactamente igual que antes:
+ * con la variante por omisión, todo lo que sigue es el mismo código de siempre, sin una rama nueva.
+ */
 export default function App() {
+  if (ES_ELECTRUM) return <ElectrumApp />;
+  return <AppUltron />;
+}
+
+function AppUltron() {
   const [phase, setPhase] = useState<Phase>('splash');
   const [splashShown, setSplashShown] = useState(true);
   const [user, setUser] = useState<SessionUser | null>(null);
