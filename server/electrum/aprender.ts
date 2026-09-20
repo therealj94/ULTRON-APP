@@ -16,6 +16,7 @@
  * trozos siga encontrándose. Cortar a ciegas cada N caracteres parte tablas y números por la mitad,
  * que en un informe minero es exactamente lo que no se puede partir.
  */
+import crypto from 'node:crypto';
 import { extraerPdf } from '../../lib/leer-pdf';
 import { consulta, guardarCapa, hayBase, recalcularTraslapes } from './db';
 import { ingerir, resumenCapa, resumenTraslapes, type Aviso } from './gis';
@@ -27,6 +28,15 @@ export type Aprendido = {
   avisos: Aviso[];
   /** Para la interfaz: qué pintar, qué abrir. */
   ui?: Record<string, unknown>;
+};
+
+/** Lo que se sabe de un documento sin escribir nada: sirve para el ensayo previo de una carga grande. */
+export type Inspeccion = {
+  veredicto: 'indexable' | 'escaneo' | 'corto';
+  paginas: number;
+  fragmentos: number;
+  caracteres: number;
+  dicho: string;
 };
 
 const ES_GEO = /\.(zip|shp|kml|kmz|geojson|json|csv|gpkg|dxf)$/i;
@@ -89,6 +99,72 @@ function paginasDePdf(texto: string, paginasDeclaradas: number): Array<{ pagina:
   return [{ pagina: 1, texto }];
 }
 
+/** Huella del contenido, no del nombre: el mismo expediente llega con veinte nombres distintos. */
+export function huellaDe(datos: Buffer): string {
+  return crypto.createHash('md5').update(datos).digest('hex');
+}
+
+type Leido =
+  | { ok: true; texto: string; paginas: Array<{ pagina: number; texto: string }>; trozos: ReturnType<typeof trocear>; avisos: Aviso[] }
+  | { ok: false; motivo: 'escaneo' | 'corto'; dicho: string; avisos: Aviso[] };
+
+/**
+ * Lee un documento hasta dejarlo troceado, sin tocar la base.
+ *
+ * Está separado de `aprender` para que el ensayo previo (`--seco`) pase por exactamente el mismo
+ * código que la carga real. Antes el ensayo se limitaba a decir el tamaño en KB —«se indexaría como
+ * documento»— y eso, en una carga de mil expedientes, esconde justo lo que hay que saber antes de
+ * empezar: cuántos son escaneos sin texto y no van a entrar. Un ensayo que no puede contradecir a la
+ * carga real no sirve para decidir nada.
+ */
+function leerDocumento(nombre: string, datos: Buffer): Leido {
+  const avisos: Aviso[] = [];
+  let texto = '';
+  let nPaginas = 1;
+
+  // Por la extensión, no por un mime inventado: pasarle 'application/pdf' a esPdfNombre hacía
+  // que TODO pareciera PDF, y un .txt terminaba rechazado como «escaneo sin texto».
+  if (/\.pdf$/i.test(nombre)) {
+    const leido = extraerPdf(datos);
+    texto = leido.texto || '';
+    nPaginas = Math.max(1, Number((leido as any).paginas) || 1);
+    if (!texto.trim()) {
+      return {
+        ok: false,
+        motivo: 'escaneo',
+        dicho: 'Ese PDF no trae texto: es un escaneo de imágenes. Para poder citarlo necesito una versión con texto, o pasarlo por reconocimiento óptico. Dilo así.',
+        avisos: [{ nivel: 'error', texto: 'PDF sin capa de texto' }],
+      };
+    }
+  } else {
+    texto = datos.toString('utf8');
+  }
+
+  const paginas = paginasDePdf(texto, nPaginas);
+  if (paginas.length === 1 && nPaginas > 1) {
+    avisos.push({ nivel: 'ojo', texto: 'El PDF no trae marcas de página, así que las páginas de las citas son aproximadas.' });
+  }
+
+  const trozos = trocear(paginas);
+  if (!trozos.length) {
+    return { ok: false, motivo: 'corto', dicho: 'El archivo tiene texto pero demasiado corto para indexarlo.', avisos };
+  }
+  return { ok: true, texto, paginas, trozos, avisos };
+}
+
+/** Qué pasaría con este documento si se cargara, sin cargarlo. */
+export function inspeccionar(nombre: string, datos: Buffer): Inspeccion {
+  const leido = leerDocumento(nombre, datos);
+  if (leido.ok === false) return { veredicto: leido.motivo, paginas: 0, fragmentos: 0, caracteres: 0, dicho: leido.dicho };
+  return {
+    veredicto: 'indexable',
+    paginas: leido.paginas.length,
+    fragmentos: leido.trozos.length,
+    caracteres: leido.trozos.reduce((n, t) => n + t.texto.length, 0),
+    dicho: `${leido.paginas.length} ${leido.paginas.length === 1 ? 'página' : 'páginas'}, ${leido.trozos.length} fragmentos`,
+  };
+}
+
 /**
  * Aprende un archivo. Nunca lanza: los problemas salen como avisos, porque quien sube un archivo
  * necesita saber qué pasó con él.
@@ -148,42 +224,68 @@ export async function aprender(
 
   // ---------------------------------------------------------------- documento
   if (ES_DOC.test(nombre)) {
-    const avisos: Aviso[] = [];
-    let texto = '';
-    let nPaginas = 1;
-
-    // Por la extensión, no por un mime inventado: pasarle 'application/pdf' a esPdfNombre hacía
-    // que TODO pareciera PDF, y un .txt terminaba rechazado como «escaneo sin texto».
-    if (/\.pdf$/i.test(nombre)) {
-      const leido = extraerPdf(datos);
-      texto = leido.texto || '';
-      nPaginas = Math.max(1, Number((leido as any).paginas) || 1);
-      if (!texto.trim()) {
-        return {
-          clase: 'nada',
-          dicho: 'Ese PDF no trae texto: es un escaneo de imágenes. Para poder citarlo necesito una versión con texto, o pasarlo por reconocimiento óptico. Dilo así.',
-          avisos: [{ nivel: 'error', texto: 'PDF sin capa de texto' }],
-        };
-      }
-    } else {
-      texto = datos.toString('utf8');
+    // La huella se mira ANTES de extraer el texto, y es lo que hace reanudable una carga grande:
+    // al relanzar una carpeta de miles de expedientes, los ya cargados se saltan en un md5 en vez
+    // de volver a parsear el PDF entero para acabar descubriendo que ya estaba.
+    const huella = huellaDe(datos);
+    const [ya] = await consulta<{ id: number; paginas: number | null }>(
+      `SELECT id, paginas FROM documento
+        WHERE huella = $1 AND COALESCE(concesion_id, -1) = COALESCE($2::bigint, -1) LIMIT 1`,
+      [huella, opts.concesionId ?? null]
+    );
+    if (ya) {
+      return {
+        clase: 'documento',
+        dicho: `«${nombre}» ya estaba en el cerebro, con el mismo contenido: no lo dupliqué.`,
+        avisos: [],
+        ui: { accion: 'documento', documento_id: ya.id, nombre, paginas: ya.paginas ?? 0, fragmentos: 0, repetido: true },
+      };
     }
 
-    const paginas = paginasDePdf(texto, nPaginas);
-    if (paginas.length === 1 && nPaginas > 1) {
-      avisos.push({ nivel: 'ojo', texto: 'El PDF no trae marcas de página, así que las páginas de las citas son aproximadas.' });
-    }
+    const leido = leerDocumento(nombre, datos);
+    if (leido.ok === false) return { clase: 'nada', dicho: leido.dicho, avisos: leido.avisos };
+    const { paginas, trozos, avisos } = leido;
 
-    const trozos = trocear(paginas);
-    if (!trozos.length) {
-      return { clase: 'nada', dicho: 'El archivo tiene texto pero demasiado corto para indexarlo.', avisos };
+    // Lo cargado ANTES de que existiera la huella tiene la columna vacía, así que la consulta de
+    // arriba no lo encuentra y la primera recarga lo duplicaría entero. Se adopta aquí: mismo
+    // nombre, mismas páginas y —lo que decide— mismo primer fragmento palabra por palabra. El
+    // nombre y el número de páginas solos no bastan: dos resoluciones distintas se llaman igual y
+    // tienen una página. Comparar el texto es lo que distingue «es el mismo papel» de «se llama
+    // igual». Adoptada una fila, queda con huella y ya no vuelve a pasar por aquí.
+    const [viejo] = await consulta<{ id: number; texto: string }>(
+      `SELECT d.id, f.texto FROM documento d
+         JOIN fragmento f ON f.documento_id = d.id AND f.orden = 0 AND f.pagina = $3
+        WHERE d.huella IS NULL AND d.nombre = $1 AND d.paginas = $2
+          AND COALESCE(d.concesion_id, -1) = COALESCE($4::bigint, -1)
+        LIMIT 1`,
+      [nombre, paginas.length, trozos[0].pagina, opts.concesionId ?? null]
+    );
+    if (viejo && viejo.texto === trozos[0].texto) {
+      await consulta(`UPDATE documento SET huella = $1 WHERE id = $2 AND huella IS NULL`, [huella, viejo.id]);
+      return {
+        clase: 'documento',
+        dicho: `«${nombre}» ya estaba cargado de antes: le puse la huella y no lo dupliqué.`,
+        avisos,
+        ui: { accion: 'documento', documento_id: viejo.id, nombre, paginas: paginas.length, fragmentos: 0, repetido: true },
+      };
     }
 
     const [doc] = await consulta<{ id: number }>(
-      `INSERT INTO documento (nombre, tipo, concesion_id, paginas, subido_por)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [nombre, opts.tipoDoc || clasificarDoc(nombre, texto), opts.concesionId ?? null, paginas.length, opts.subidoPor || null]
+      `INSERT INTO documento (nombre, tipo, concesion_id, paginas, subido_por, huella)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       ON CONFLICT DO NOTHING RETURNING id`,
+      [nombre, opts.tipoDoc || clasificarDoc(nombre, leido.texto), opts.concesionId ?? null, paginas.length, opts.subidoPor || null, huella]
     );
+    // Sin fila devuelta, otra carga en paralelo lo metió entre el SELECT y el INSERT. No es un
+    // error: es justo lo que el índice único tiene que impedir, y aquí se nota en vez de reventar.
+    if (!doc) {
+      return {
+        clase: 'documento',
+        dicho: `«${nombre}» acaba de entrar por otra carga que iba en paralelo: no lo dupliqué.`,
+        avisos,
+        ui: { accion: 'documento', nombre, paginas: paginas.length, fragmentos: 0, repetido: true },
+      };
+    }
 
     // Inserción en bloque: un informe de 43-101 son miles de trozos y uno por uno tarda minutos.
     const valores: unknown[] = [];

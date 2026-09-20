@@ -192,3 +192,31 @@ CREATE INDEX IF NOT EXISTS concesion_huella_idx ON concesion (huella);
 INSERT INTO esquema_version (version, nota)
 VALUES (2, 'huella de geometría para no duplicar el catastro')
 ON CONFLICT (version) DO NOTHING;
+
+-- ---------------------------------------------------------------- versión 3
+--
+-- Huella del documento, para poder reanudar una carga grande.
+--
+-- El catastro ya no se duplicaba, pero los expedientes sí: cargar la misma carpeta dos veces metía
+-- cada informe otra vez, y una búsqueda devolvía la misma cita dos y tres veces, con páginas
+-- idénticas, como si dos peritos hubieran escrito lo mismo. Con 1,2 GB de expedientes la carga se
+-- corta seguro alguna vez —una caída de red, un Ctrl-C—, y sin esto relanzarla ensucia la base en
+-- lugar de continuarla.
+--
+-- La huella es del CONTENIDO, no del nombre: el mismo expediente llega con veinte nombres distintos
+-- («informe.pdf», «informe (1).pdf», «Informe_final_v2.pdf») y son el mismo papel. Al revés también:
+-- un nombre repetido con contenido distinto es una versión corregida y debe entrar.
+--
+-- El índice va sobre (huella, concesión) y no sobre la huella sola porque el mismo documento puede
+-- estar legítimamente atado a dos concesiones distintas. COALESCE porque en SQL dos NULL no son
+-- iguales, y sin él los documentos sin concesión —que son la mayoría— no quedarían protegidos.
+
+ALTER TABLE documento ADD COLUMN IF NOT EXISTS huella text;
+
+CREATE UNIQUE INDEX IF NOT EXISTS documento_huella_idx
+  ON documento (huella, COALESCE(concesion_id, -1))
+  WHERE huella IS NOT NULL;
+
+INSERT INTO esquema_version (version, nota)
+VALUES (3, 'huella de documento para reanudar cargas grandes sin duplicar')
+ON CONFLICT (version) DO NOTHING;

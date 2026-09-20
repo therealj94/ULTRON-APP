@@ -16,6 +16,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { aprender } from '../server/electrum/aprender';
 import { areaHectareas, ingerir, traslapesEnCapa } from '../server/electrum/gis';
 import {
   buscarConcesiones,
@@ -154,7 +155,81 @@ test('catastro en PostGIS', { skip: HAY ? false : 'sin ELECTRUM_DB_URL: no hay b
     assert.equal(await recalcularTraslapes(), 1, 'sigue habiendo un solo traslape, no cuatro');
   });
 
+  // ── Reanudar una carga grande ───────────────────────────────────────────────────────────────
+  //
+  // 1,2 GB de expedientes no entran de una sentada: se corta la red, se cae la sesión, alguien hace
+  // Ctrl-C. Relanzar tiene que continuar, no volver a meterlo todo. Sin esto, una búsqueda devolvía
+  // la misma cita dos y tres veces con páginas idénticas.
+  await t.test('el mismo documento no entra dos veces', async () => {
+    const datos = Buffer.from(
+      'Informe de reanudacion. La veta principal buza sesenta y ocho grados al noreste y se reconoce ' +
+        'en superficie a lo largo de mil cuatrocientos metros de corrida continua, con clavos ' +
+        'mineralizados de ley variable entre dos y siete gramos por tonelada de oro.'
+    );
+    const a = await aprender('reanudar.txt', datos);
+    assert.equal(a.clase, 'documento');
+    assert.ok(!(a.ui as any)?.repetido, 'la primera vez tiene que entrar');
+
+    const b = await aprender('reanudar.txt', datos);
+    assert.equal((b.ui as any)?.repetido, true, 'la segunda vez tiene que saltarse');
+
+    const [n] = await consulta<{ n: string }>(`SELECT count(*)::text AS n FROM documento WHERE nombre = 'reanudar.txt'`);
+    assert.equal(n.n, '1');
+  });
+
+  await t.test('el mismo contenido con otro nombre tampoco entra dos veces', async () => {
+    const datos = Buffer.from(
+      'Padron de patentes. El titular mantiene al dia el pago correspondiente al periodo en curso y ' +
+        'acredita el cumplimiento de las obligaciones de amparo sobre la totalidad de las pertenencias.'
+    );
+    await aprender('patentes.txt', datos);
+    const otra = await aprender('patentes (1).txt', datos);
+    assert.equal((otra.ui as any)?.repetido, true, 'el papel es el mismo aunque el archivo se llame distinto');
+  });
+
+  await t.test('lo cargado antes de que existiera la huella se adopta, no se duplica', async () => {
+    const datos = Buffer.from(
+      'Resolucion antigua. Se autoriza el plan de labores presentado por el titular para la vigencia ' +
+        'solicitada, sujeto a las condiciones de seguridad minera que se detallan en el anexo tecnico.'
+    );
+    await aprender('antigua.txt', datos);
+    // Así se ve una fila cargada por la versión anterior del cargador: sin huella.
+    await consulta(`UPDATE documento SET huella = NULL WHERE nombre = 'antigua.txt'`);
+
+    const otra = await aprender('antigua.txt', datos);
+    assert.equal((otra.ui as any)?.repetido, true);
+    const [f] = await consulta<{ n: string; conH: string }>(
+      `SELECT count(*)::text AS n, count(huella)::text AS "conH" FROM documento WHERE nombre = 'antigua.txt'`
+    );
+    assert.equal(f.n, '1', 'no se duplicó');
+    assert.equal(f.conH, '1', 'y quedó con huella, para no volver a pasar por aquí');
+  });
+
+  await t.test('un documento distinto que se llama igual NO se adopta', async () => {
+    // El punto flojo de adoptar por nombre: dos resoluciones distintas se llaman igual y tienen una
+    // página. Si esto se rompiera, un expediente real se perdería en silencio, que es peor que
+    // duplicarlo.
+    const uno = Buffer.from(
+      'Se aprueba la solicitud de la concesion Rio Claro por encontrarse acreditado el pago integro ' +
+        'de la patente correspondiente al periodo, segun consta en el registro regional respectivo.'
+    );
+    const otro = Buffer.from(
+      'Se rechaza la solicitud de la concesion Rio Claro por no acreditar el pago de la patente ' +
+        'correspondiente al periodo, segun consta en el expediente administrativo del registro.'
+    );
+    await aprender('homonima.txt', uno);
+    await consulta(`UPDATE documento SET huella = NULL WHERE nombre = 'homonima.txt'`);
+
+    const r = await aprender('homonima.txt', otro);
+    assert.ok(!(r.ui as any)?.repetido, 'no es el mismo papel: tiene que entrar');
+    const [f] = await consulta<{ n: string }>(`SELECT count(*)::text AS n FROM documento WHERE nombre = 'homonima.txt'`);
+    assert.equal(f.n, '2');
+  });
+
   t.after(async () => {
+    await consulta(
+      `DELETE FROM documento WHERE nombre IN ('reanudar.txt','patentes.txt','patentes (1).txt','antigua.txt','homonima.txt')`
+    );
     await cerrarBase();
   });
 });
@@ -197,7 +272,81 @@ test('búsqueda en expedientes', { skip: HAY ? false : 'sin ELECTRUM_DB_URL' }, 
     assert.deepEqual(await buscarEnExpedientes('uranio en Marte'), []);
   });
 
+  // ── Reanudar una carga grande ───────────────────────────────────────────────────────────────
+  //
+  // 1,2 GB de expedientes no entran de una sentada: se corta la red, se cae la sesión, alguien hace
+  // Ctrl-C. Relanzar tiene que continuar, no volver a meterlo todo. Sin esto, una búsqueda devolvía
+  // la misma cita dos y tres veces con páginas idénticas.
+  await t.test('el mismo documento no entra dos veces', async () => {
+    const datos = Buffer.from(
+      'Informe de reanudacion. La veta principal buza sesenta y ocho grados al noreste y se reconoce ' +
+        'en superficie a lo largo de mil cuatrocientos metros de corrida continua, con clavos ' +
+        'mineralizados de ley variable entre dos y siete gramos por tonelada de oro.'
+    );
+    const a = await aprender('reanudar.txt', datos);
+    assert.equal(a.clase, 'documento');
+    assert.ok(!(a.ui as any)?.repetido, 'la primera vez tiene que entrar');
+
+    const b = await aprender('reanudar.txt', datos);
+    assert.equal((b.ui as any)?.repetido, true, 'la segunda vez tiene que saltarse');
+
+    const [n] = await consulta<{ n: string }>(`SELECT count(*)::text AS n FROM documento WHERE nombre = 'reanudar.txt'`);
+    assert.equal(n.n, '1');
+  });
+
+  await t.test('el mismo contenido con otro nombre tampoco entra dos veces', async () => {
+    const datos = Buffer.from(
+      'Padron de patentes. El titular mantiene al dia el pago correspondiente al periodo en curso y ' +
+        'acredita el cumplimiento de las obligaciones de amparo sobre la totalidad de las pertenencias.'
+    );
+    await aprender('patentes.txt', datos);
+    const otra = await aprender('patentes (1).txt', datos);
+    assert.equal((otra.ui as any)?.repetido, true, 'el papel es el mismo aunque el archivo se llame distinto');
+  });
+
+  await t.test('lo cargado antes de que existiera la huella se adopta, no se duplica', async () => {
+    const datos = Buffer.from(
+      'Resolucion antigua. Se autoriza el plan de labores presentado por el titular para la vigencia ' +
+        'solicitada, sujeto a las condiciones de seguridad minera que se detallan en el anexo tecnico.'
+    );
+    await aprender('antigua.txt', datos);
+    // Así se ve una fila cargada por la versión anterior del cargador: sin huella.
+    await consulta(`UPDATE documento SET huella = NULL WHERE nombre = 'antigua.txt'`);
+
+    const otra = await aprender('antigua.txt', datos);
+    assert.equal((otra.ui as any)?.repetido, true);
+    const [f] = await consulta<{ n: string; conH: string }>(
+      `SELECT count(*)::text AS n, count(huella)::text AS "conH" FROM documento WHERE nombre = 'antigua.txt'`
+    );
+    assert.equal(f.n, '1', 'no se duplicó');
+    assert.equal(f.conH, '1', 'y quedó con huella, para no volver a pasar por aquí');
+  });
+
+  await t.test('un documento distinto que se llama igual NO se adopta', async () => {
+    // El punto flojo de adoptar por nombre: dos resoluciones distintas se llaman igual y tienen una
+    // página. Si esto se rompiera, un expediente real se perdería en silencio, que es peor que
+    // duplicarlo.
+    const uno = Buffer.from(
+      'Se aprueba la solicitud de la concesion Rio Claro por encontrarse acreditado el pago integro ' +
+        'de la patente correspondiente al periodo, segun consta en el registro regional respectivo.'
+    );
+    const otro = Buffer.from(
+      'Se rechaza la solicitud de la concesion Rio Claro por no acreditar el pago de la patente ' +
+        'correspondiente al periodo, segun consta en el expediente administrativo del registro.'
+    );
+    await aprender('homonima.txt', uno);
+    await consulta(`UPDATE documento SET huella = NULL WHERE nombre = 'homonima.txt'`);
+
+    const r = await aprender('homonima.txt', otro);
+    assert.ok(!(r.ui as any)?.repetido, 'no es el mismo papel: tiene que entrar');
+    const [f] = await consulta<{ n: string }>(`SELECT count(*)::text AS n FROM documento WHERE nombre = 'homonima.txt'`);
+    assert.equal(f.n, '2');
+  });
+
   t.after(async () => {
+    await consulta(
+      `DELETE FROM documento WHERE nombre IN ('reanudar.txt','patentes.txt','patentes (1).txt','antigua.txt','homonima.txt')`
+    );
     await cerrarBase();
   });
 });

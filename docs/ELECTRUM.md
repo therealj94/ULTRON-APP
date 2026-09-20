@@ -263,6 +263,50 @@ shapefiles, KML, PDF, texto. Acepta carpetas enteras y no se para por un archivo
 alguien manda cincuenta, uno malo no puede detener la carga. Con `--seco` dice qué haría sin
 escribir nada.
 
+### Cargas grandes: gigabytes de expedientes
+
+Lo primero que hay que entender es que **el cerebro no guarda el archivo, guarda el texto**. Un PDF
+entra, se le extrae el texto, se trocea con su página y el binario se descarta: en la base quedan
+`documento` y `fragmento`, y ni una columna con el PDF. Por eso una carpeta de gigabytes se
+convierte en decenas de megabytes de base, y por eso **el archivo no tiene por qué viajar a ningún
+sitio**. El cargador se corre en la máquina donde están los papeles, contra la base; por el cable
+sale texto extraído, no documentos.
+
+Lo que **no** hay que hacer es mandarlos por `/api/electrum/subir`. Esa puerta es para lo que se
+arrastra a la web de a uno: pasa por Render y el cuerpo entero se sostiene en memoria, con un tope
+de 64 MB. Un lote de gigabytes por ahí no es lento, es imposible.
+
+El orden de una carga grande es:
+
+```bash
+export ELECTRUM_DB_URL='postgres://electrum:clave@host:5432/electrum'
+
+# 1. Ensayo. No escribe nada.
+npx tsx scripts/electrum/aprender.ts --seco /ruta/a/los/expedientes
+
+# 2. La carga de verdad.
+npx tsx scripts/electrum/aprender.ts --quien jose /ruta/a/los/expedientes
+```
+
+El ensayo no cuenta archivos, cuenta **lo que va a quedar**: cuántos entran con sus páginas y
+fragmentos, cuánto texto ocupará, y —lo que importa— cuántos son escaneos sin capa de texto que no
+van a entrar. Con expedientes mineros esa proporción suele ser alta, y descubrirla al final es
+perder la carga entera. Los que necesitan OCR quedan listados en `para-ocr.txt` para poder pasarlos
+aparte. El ensayo pasa por exactamente el mismo código que la carga real (`leerDocumento`), a
+propósito: un ensayo que puede contradecir a la carga no sirve para decidir nada.
+
+La carga real **se puede cortar y relanzar**. Cada documento lleva la huella `md5` de su contenido
+(esquema v3) y lo ya cargado se salta comparando el hash, sin volver a abrir el PDF, así que
+reanudar es casi instantáneo. La huella es del contenido y no del nombre porque el mismo expediente
+llega como `informe.pdf`, `informe (1).pdf` y `Informe_final_v2.pdf` y es el mismo papel; al revés,
+un nombre repetido con contenido distinto es una versión corregida y tiene que entrar.
+
+Lo cargado **antes** de que existiera la huella tiene la columna vacía, y esas filas se adoptan la
+primera vez que se vuelven a encontrar: mismo nombre, mismas páginas y mismo primer fragmento
+palabra por palabra. El texto es lo que decide, no el nombre — dos resoluciones distintas se llaman
+igual y tienen una página, y adoptar la equivocada perdería un expediente real en silencio, que es
+peor que duplicarlo. Hay una prueba que carga una homónima con otro contenido y exige que entre.
+
 ### Tres fallos que solo aparecieron cargando de verdad
 
 Ninguno se veía leyendo el código:

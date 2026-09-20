@@ -16,10 +16,18 @@
  *
  * Acepta carpetas: entra en ellas y carga lo que reconoce. No falla por un archivo malo, lo dice y
  * sigue con los demás: cuando alguien manda cincuenta archivos, uno roto no puede parar la carga.
+ *
+ * Para una carga grande —cientos de expedientes, gigabytes— el orden es este:
+ *
+ *   1. `--seco` sobre la carpeta. No escribe nada y dice cuántos entran de verdad, cuántos son
+ *      escaneos sin texto que hay que pasar por OCR antes, y cuánto texto va a ocupar en la base.
+ *      Lo que se guarda es el TEXTO, no el archivo: una carpeta de gigabytes son decenas de MB.
+ *   2. La carga de verdad. Se puede cortar y relanzar las veces que haga falta: cada documento
+ *      lleva la huella de su contenido y lo ya cargado se salta en un md5, sin volver a leerlo.
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { aprender } from '../../server/electrum/aprender';
+import { aprender, inspeccionar } from '../../server/electrum/aprender';
 import { ingerir, resumenCapa } from '../../server/electrum/gis';
 import { cerrarBase, hayBase, saludBase } from '../../server/electrum/db';
 
@@ -34,6 +42,8 @@ const AYUDA = `Cargador de Electrum.
   --concesion <id>    ata el documento a una concesión del catastro
   --tipo <texto>      fuerza el tipo del documento en vez de deducirlo
   --seco              lee y dice qué haría, sin escribir nada
+
+Se puede cortar y relanzar: lo ya cargado se salta por la huella de su contenido.
 
 Entran: shapefile (.zip/.shp), KML, KMZ, GeoJSON, CSV, PDF, texto y Markdown.`;
 
@@ -101,20 +111,41 @@ if (!opts.seco) {
 
 let bien = 0;
 let mal = 0;
+let repetidos = 0;
+const arranque = Date.now();
 
-for (const ruta of archivos) {
+// El ensayo no cuenta archivos: cuenta lo que de verdad va a quedar en el cerebro. Un montón de
+// expedientes mineros son escaneos sin capa de texto, y en una carpeta grande esa proporción es el
+// único número que importa antes de empezar, porque decide si hay que pasar medio lote por OCR.
+const censo = { indexables: 0, escaneos: 0, cortos: 0, paginas: 0, fragmentos: 0, caracteres: 0, bytes: 0 };
+const paraOcr: string[] = [];
+
+for (const [i, ruta] of archivos.entries()) {
   const nombre = path.basename(ruta);
-  process.stdout.write(`▸ ${nombre} … `);
+  process.stdout.write(`▸ [${i + 1}/${archivos.length}] ${nombre} … `);
   try {
     const datos = fs.readFileSync(ruta);
+    censo.bytes += datos.length;
 
     if (opts.seco) {
-      // En seco solo se lee lo geográfico: un documento no se puede resumir sin indexarlo.
       if (/\.(zip|shp|kml|kmz|geojson|json|csv)$/i.test(nombre)) {
         const { capa, avisos } = await ingerir(nombre, datos);
         console.log(capa ? `\n   ${resumenCapa(capa, avisos)}` : `\n   ${avisos.map((a) => a.texto).join(' ')}`);
+        if (capa) censo.indexables++;
       } else {
-        console.log(`\n   ${(datos.length / 1024).toFixed(0)} KB, se indexaría como documento.`);
+        const ins = inspeccionar(nombre, datos);
+        console.log(`\n   ${ins.dicho}`);
+        if (ins.veredicto === 'indexable') {
+          censo.indexables++;
+          censo.paginas += ins.paginas;
+          censo.fragmentos += ins.fragmentos;
+          censo.caracteres += ins.caracteres;
+        } else if (ins.veredicto === 'escaneo') {
+          censo.escaneos++;
+          paraOcr.push(ruta);
+        } else {
+          censo.cortos++;
+        }
       }
       bien++;
       continue;
@@ -126,10 +157,13 @@ for (const ruta of archivos) {
       tipoDoc: opts.tipo ?? undefined,
     });
 
-    console.log(r.clase === 'nada' ? 'no entró' : r.clase);
+    const repetido = Boolean((r.ui as any)?.repetido);
+    console.log(r.clase === 'nada' ? 'no entró' : repetido ? 'ya estaba' : r.clase);
     console.log(`   ${r.dicho}`);
     for (const a of r.avisos) if (a.nivel !== 'info') console.log(`   [${a.nivel}] ${a.texto}`);
-    r.clase === 'nada' ? mal++ : bien++;
+    if (r.clase === 'nada') mal++;
+    else if (repetido) repetidos++;
+    else bien++;
   } catch (e: any) {
     console.log('falló');
     console.log(`   ${String(e?.message || e).slice(0, 200)}`);
@@ -137,10 +171,46 @@ for (const ruta of archivos) {
   }
 }
 
-console.log(`\n${bien} ${bien === 1 ? 'archivo' : 'archivos'} en el cerebro${mal ? `, ${mal} sin cargar` : ''}.`);
-if (!opts.seco) {
+const minutos = (Date.now() - arranque) / 60000;
+
+if (opts.seco) {
+  // Un lote de prueba son kilobytes y el real son gigabytes: una sola unidad deja «0.0 MB» en uno
+  // o un número de doce cifras en el otro, y ninguno de los dos se puede leer.
+  const peso = (n: number) =>
+    n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GB` : n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${(n / 1024).toFixed(0)} KB`;
+  console.log(`\n── Lo que entraría ──────────────────────────────`);
+  console.log(`${archivos.length} archivos, ${peso(censo.bytes)} en disco.`);
+  console.log(`${censo.indexables} ${censo.indexables === 1 ? 'entra' : 'entran'}: ${censo.paginas} páginas, ${censo.fragmentos} fragmentos, ${peso(censo.caracteres)} de texto.`);
+  if (censo.escaneos) {
+    console.log(
+      censo.escaneos === 1
+        ? '1 es un escaneo sin texto y NO entra: hay que pasarlo por OCR antes.'
+        : `${censo.escaneos} son escaneos sin texto y NO entran: hay que pasarlos por OCR antes.`
+    );
+  }
+  if (censo.cortos) {
+    console.log(
+      censo.cortos === 1
+        ? '1 tiene texto pero demasiado corto para indexarlo.'
+        : `${censo.cortos} tienen texto pero demasiado corto para indexarlos.`
+    );
+  }
+  // Lo que se guarda es el texto, no el archivo: por eso 1,2 GB de PDF caben en unas decenas de MB.
+  if (censo.bytes > 0 && censo.caracteres > 0) {
+    console.log(`El cerebro guarda el texto, no el PDF: ${peso(censo.bytes)} de archivos son ${peso(censo.caracteres)} de base.`);
+  }
+  if (paraOcr.length) {
+    const lista = path.join(process.cwd(), 'para-ocr.txt');
+    fs.writeFileSync(lista, paraOcr.join('\n') + '\n');
+    console.log(`La lista de los que necesitan OCR quedó en ${lista}.`);
+  }
+} else {
+  const partes = [`${bien} ${bien === 1 ? 'archivo nuevo' : 'archivos nuevos'} en el cerebro`];
+  if (repetidos) partes.push(`${repetidos} ya estaban y se saltaron`);
+  if (mal) partes.push(`${mal} sin cargar`);
+  console.log(`\n${partes.join(', ')}. ${minutos.toFixed(1)} min.`);
   const s = await saludBase();
   console.log(`El catastro tiene ahora ${s.concesiones} concesiones.`);
   await cerrarBase();
 }
-process.exit(mal && !bien ? 1 : 0);
+process.exit(mal && !bien && !repetidos ? 1 : 0);
