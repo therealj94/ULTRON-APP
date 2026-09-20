@@ -16,7 +16,7 @@
  * trozos siga encontrándose. Cortar a ciegas cada N caracteres parte tablas y números por la mitad,
  * que en un informe minero es exactamente lo que no se puede partir.
  */
-import { extraerPdf, esPdfNombre } from '../../lib/leer-pdf';
+import { extraerPdf } from '../../lib/leer-pdf';
 import { consulta, guardarCapa, hayBase, recalcularTraslapes } from './db';
 import { ingerir, resumenCapa, resumenTraslapes, type Aviso } from './gis';
 
@@ -118,14 +118,19 @@ export async function aprender(
 
     const partes = [resumenCapa(capa, avisos)];
     if (guardado.concesiones) partes.push(`Quedaron ${guardado.concesiones} en el catastro, ya buscables y medibles.`);
+    if (guardado.repetidas) {
+      partes.push(
+        `${guardado.repetidas} ${guardado.repetidas === 1 ? 'ya estaba cargada y la salté' : 'ya estaban cargadas y las salté'}: la misma geometría no entra dos veces.`
+      );
+    }
     if (guardado.entidades) partes.push(`Y ${guardado.entidades} entidades geográficas más.`);
-    if (traslapesNuevos > 0) partes.push(resumenTraslapes(capa));
+    if (traslapesNuevos > 0 && guardado.concesiones) partes.push(resumenTraslapes(capa));
 
     return {
       clase: 'catastro',
       dicho: partes.join(' '),
       avisos,
-      ui: { accion: 'capa', capa_id: guardado.capaId, concesiones: guardado.concesiones, traslapes: traslapesNuevos },
+      ui: { accion: 'capa', capa_id: guardado.capaId, concesiones: guardado.concesiones, repetidas: guardado.repetidas, traslapes: traslapesNuevos },
     };
   }
 
@@ -135,7 +140,9 @@ export async function aprender(
     let texto = '';
     let nPaginas = 1;
 
-    if (esPdfNombre(nombre, 'application/pdf')) {
+    // Por la extensión, no por un mime inventado: pasarle 'application/pdf' a esPdfNombre hacía
+    // que TODO pareciera PDF, y un .txt terminaba rechazado como «escaneo sin texto».
+    if (/\.pdf$/i.test(nombre)) {
       const leido = extraerPdf(datos);
       texto = leido.texto || '';
       nPaginas = Math.max(1, Number((leido as any).paginas) || 1);

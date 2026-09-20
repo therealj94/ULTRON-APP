@@ -223,6 +223,30 @@ si cruza, la cita miente.
 Un PDF escaneado sin capa de texto se rechaza diciéndolo: «es un escaneo, necesito una versión con
 texto o pasarlo por reconocimiento óptico». No se finge que se leyó.
 
+### El cargador
+
+`npx tsx scripts/electrum/aprender.ts <archivo|carpeta>...` mete cualquier cosa en el cerebro:
+shapefiles, KML, PDF, texto. Acepta carpetas enteras y no se para por un archivo roto — cuando
+alguien manda cincuenta, uno malo no puede detener la carga. Con `--seco` dice qué haría sin
+escribir nada.
+
+### Tres fallos que solo aparecieron cargando de verdad
+
+Ninguno se veía leyendo el código:
+
+1. **Todo parecía un PDF.** Se le pasaba a mano el tipo `application/pdf`, así que un `.txt` se
+   rechazaba como «escaneo sin texto».
+2. **Cargar dos veces el mismo archivo duplicaba el catastro** — y peor: cada concesión aparecía
+   traslapada al 100 % con su propia copia, de modo que un padrón sano parecía un desastre de
+   superposiciones. Ahora cada geometría lleva una huella (`md5` de su forma normalizada) y la misma
+   no entra dos veces.
+3. **Preguntar en forma de pregunta no encontraba nada.** `websearch_to_tsquery` une todos los
+   términos con Y, y «cuál» no está en las palabras vacías del español: «¿cuál es la ley media?»
+   exigía que el documento dijera literalmente «cuál». Ahora se limpian los interrogativos y, si la
+   búsqueda exacta no da nada, se repite pidiendo cualquiera de los términos. Y la cita sale
+   centrada en la coincidencia (`ts_headline`), no en el principio del trozo: citar el encabezado
+   del informe es técnicamente la misma fuente y no le sirve a nadie.
+
 ## Estado
 
 | Pieza | Estado |

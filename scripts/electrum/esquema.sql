@@ -172,3 +172,23 @@ $$ LANGUAGE plpgsql;
 INSERT INTO esquema_version (version, nota)
 VALUES (1, 'catastro, entidades, expedientes con cita a página, traslapes')
 ON CONFLICT (version) DO NOTHING;
+
+-- ---------------------------------------------------------------- versión 2
+--
+-- Huella de la geometría, para no cargar dos veces lo mismo.
+--
+-- Cargar el mismo shapefile dos veces no solo duplica filas: hace que cada concesión aparezca
+-- traslapada al 100 % con su propia copia, y el padrón entero parece un desastre de superposiciones
+-- que no existe. Pasó en la primera prueba de carga y por eso está aquí.
+--
+-- ST_Normalize pone los anillos en un orden canónico, así que dos archivos con los vértices escritos
+-- al revés dan la misma huella, que es lo que uno quiere.
+
+ALTER TABLE concesion ADD COLUMN IF NOT EXISTS huella text
+  GENERATED ALWAYS AS (md5(ST_AsBinary(ST_Normalize(geom)))) STORED;
+
+CREATE INDEX IF NOT EXISTS concesion_huella_idx ON concesion (huella);
+
+INSERT INTO esquema_version (version, nota)
+VALUES (2, 'huella de geometría para no duplicar el catastro')
+ON CONFLICT (version) DO NOTHING;

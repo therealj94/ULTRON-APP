@@ -19,6 +19,7 @@ import path from 'node:path';
 import { areaHectareas, ingerir, traslapesEnCapa } from '../server/electrum/gis';
 import {
   buscarConcesiones,
+  buscarEnExpedientes,
   capaGeojson,
   cerrarBase,
   cercaDe,
@@ -140,6 +141,60 @@ test('catastro en PostGIS', { skip: HAY ? false : 'sin ELECTRUM_DB_URL: no hay b
     const [o, s, e, n] = g!.encuadre;
     assert.ok(o < e && s < n);
     cerca(s, 14.02, 0.05);
+  });
+
+  await t.test('cargar el MISMO archivo dos veces no duplica el catastro', async () => {
+    // Pasó de verdad en la primera carga: 4 concesiones y «Quebrada Seca se traslapa con Quebrada
+    // Seca» al 100 %. Con eso, un padrón entero parece un desastre de superposiciones que no existe.
+    const otra = await guardarCapa(capa!, { avisos, subidoPor: 'pruebas' });
+    assert.equal(otra.concesiones, 0, 'no debió entrar ninguna');
+    assert.equal(otra.repetidas, 2, 'debió reconocer las dos como ya cargadas');
+    const [{ n }] = await consulta<{ n: string }>('SELECT count(*)::text AS n FROM concesion');
+    assert.equal(n, '2');
+    assert.equal(await recalcularTraslapes(), 1, 'sigue habiendo un solo traslape, no cuatro');
+  });
+
+  t.after(async () => {
+    await cerrarBase();
+  });
+});
+
+test('búsqueda en expedientes', { skip: HAY ? false : 'sin ELECTRUM_DB_URL' }, async (t) => {
+  await consulta('TRUNCATE documento, fragmento RESTART IDENTITY CASCADE');
+  const [doc] = await consulta<{ id: number }>(
+    `INSERT INTO documento (nombre, tipo, paginas) VALUES ('informe.txt','43-101',2) RETURNING id`
+  );
+  await consulta(
+    `INSERT INTO fragmento (documento_id, pagina, orden, texto) VALUES ($1,1,0,$2), ($1,2,1,$3)`,
+    [
+      doc.id,
+      'Se ejecutaron catorce sondajes diamantinos. La ley media ponderada del recurso inferido es de 3,4 gramos por tonelada de oro.',
+      'El recurso permanece en categoría inferida. No se ha declarado reserva alguna y no existe estudio de prefactibilidad.',
+    ]
+  );
+
+  await t.test('una PREGUNTA encuentra, no solo palabras sueltas', async () => {
+    // websearch_to_tsquery une todo con Y, y «cuál» no es palabra vacía en español: preguntar
+    // «¿cuál es la ley media?» exigía que el documento dijera literalmente «cuál». No encontraba nada.
+    const r = await buscarEnExpedientes('¿cuál es la ley media del recurso?');
+    assert.ok(r.length, 'una pregunta normal debe encontrar algo');
+    assert.match(r[0].texto, /ley media ponderada/);
+  });
+
+  await t.test('la cita sale centrada en la coincidencia, no en el principio del trozo', async () => {
+    const r = await buscarEnExpedientes('reserva declarada');
+    assert.ok(r.length);
+    assert.match(r[0].texto, /reserva/);
+  });
+
+  await t.test('la cita trae la página, que es lo que la hace comprobable', async () => {
+    const r = await buscarEnExpedientes('prefactibilidad');
+    assert.equal(r[0].pagina, 2);
+    assert.equal(r[0].documento, 'informe.txt');
+  });
+
+  await t.test('lo que no está, no se inventa', async () => {
+    assert.deepEqual(await buscarEnExpedientes('uranio en Marte'), []);
   });
 
   t.after(async () => {

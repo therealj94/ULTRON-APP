@@ -48,7 +48,7 @@ const catastro_buscar: Herramienta = {
     const uno = filas[0];
     const cabeza =
       filas.length === 1
-        ? `${uno.nombre}, expediente ${uno.expediente || 'sin número'}. Titular ${uno.titular || 'no declarado'}. ${uno.tipo || 'concesión'} de ${uno.mineral || 'mineral no declarado'}, ${uno.hectareas != null ? `${nf(uno.hectareas)} hectáreas medidas` : 'sin área'}, estado ${uno.estado || 'no declarado'}${uno.vence ? `, vence el ${uno.vence}` : ''}.`
+        ? `${uno.nombre}, expediente ${uno.expediente || 'sin número'}. Titular ${(uno.titular || 'no declarado').replace(/\.$/, '')}. ${uno.tipo ? `Concesión de ${uno.tipo}` : 'Concesión'}${uno.mineral ? ` para ${uno.mineral}` : ''}, ${uno.hectareas != null ? `${nf(uno.hectareas)} hectáreas medidas` : 'sin área'}, estado ${uno.estado || 'no declarado'}${uno.vence ? `, vence el ${uno.vence}` : ''}.`
         : `Coinciden ${filas.length}: ${filas.slice(0, 6).map((f) => f.nombre).join(', ')}. Pedí una por su nombre para la ficha.`;
     return { ok: true, texto: cabeza, ui: { filas, id: filas.length === 1 ? uno.id : null } };
   },

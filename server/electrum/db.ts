@@ -106,7 +106,7 @@ function comoMulti(g: Geometry): Geometry | null {
 export async function guardarCapa(
   capa: Capa,
   opts: { archivo?: string; subidoPor?: string; avisos?: unknown[]; comoConcesiones?: boolean } = {}
-): Promise<{ capaId: number; concesiones: number; entidades: number }> {
+): Promise<{ capaId: number; concesiones: number; entidades: number; repetidas: number }> {
   const cliente: PoolClient = await conexion().connect();
   try {
     await cliente.query('BEGIN');
@@ -119,6 +119,7 @@ export async function guardarCapa(
 
     let nConc = 0;
     let nEnt = 0;
+    let nRep = 0;
     const comoConcesiones = opts.comoConcesiones !== false;
 
     for (let i = 0; i < capa.geojson.features.length; i++) {
@@ -128,6 +129,22 @@ export async function guardarCapa(
       const multi = comoMulti(f.geometry);
 
       if (comoConcesiones && multi) {
+        /*
+         * Una geometría idéntica ya cargada NO entra otra vez. Cargar el mismo shapefile dos veces
+         * no solo duplica filas: hace que cada concesión aparezca traslapada al 100 % con su propia
+         * copia, y el padrón entero parece un desastre de superposiciones que no existe. Pasó en la
+         * primera prueba de carga de verdad.
+         */
+        const yaEsta = await cliente.query(
+          `SELECT id FROM concesion
+           WHERE huella = md5(ST_AsBinary(ST_Normalize(ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)))))
+           LIMIT 1`,
+          [JSON.stringify(f.geometry)]
+        );
+        if (yaEsta.rows.length) {
+          nRep++;
+          continue;
+        }
         const declarada = Number(delDbf(props, 'hectareas'));
         await cliente.query(
           `INSERT INTO concesion
@@ -166,7 +183,7 @@ export async function guardarCapa(
     }
 
     await cliente.query('COMMIT');
-    return { capaId, concesiones: nConc, entidades: nEnt };
+    return { capaId, concesiones: nConc, entidades: nEnt, repetidas: nRep };
   } catch (e) {
     await cliente.query('ROLLBACK');
     throw e;
@@ -321,23 +338,66 @@ export async function capaGeojson(capaId: number): Promise<FeatureCollection> {
 /* ------------------------------------------------------------------ expedientes */
 
 /**
+ * Palabras con las que empieza una pregunta y que NO son vacías para Postgres.
+ *
+ * Esto costó un fallo real: `websearch_to_tsquery` une todos los términos con Y, y «cuál» no está
+ * en la lista de palabras vacías del español. Así que preguntar «¿cuál es la ley media?» exigía que
+ * el documento contuviera literalmente «cuál», y no encontraba nada. La gente pregunta en preguntas.
+ */
+const INTERROGATIVAS =
+  /\b(qu[eé]|cu[aá]l(es)?|c[oó]mo|cu[aá]nt[oa]s?|d[oó]nde|cu[aá]ndo|qui[eé]n(es)?|por qu[eé]|para qu[eé]|dime|decime|dame|mostrame|busca|buscame|hay|existe|tiene|es|son|est[aá]n?)\b/gi;
+
+function terminosDeBusqueda(texto: string): string {
+  return String(texto || '')
+    .replace(/[¿?¡!.,;:]/g, ' ')
+    .replace(INTERROGATIVAS, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Busca en los documentos subidos y devuelve el fragmento con su página, para poder citarlo.
  * Una cita sin página no sirve: nadie puede ir a comprobarla, que es para lo que existe una cita.
+ *
+ * Dos pasadas: primero exigiendo todos los términos (preciso), y si eso no da nada, pidiendo
+ * cualquiera de ellos y ordenando por relevancia. Un buscador que devuelve cero ante una pregunta
+ * bien formulada no sirve, aunque sea técnicamente correcto.
  */
 export async function buscarEnExpedientes(
   texto: string,
   limite = 8
 ): Promise<Array<{ documento: string; pagina: number | null; texto: string; puntaje: number }>> {
-  const q = String(texto || '').trim();
-  if (!q) return [];
-  return consulta(
-    `SELECT d.nombre AS documento, f.pagina, f.texto,
-            ts_rank(f.tsv, websearch_to_tsquery('spanish', $1))::float8 AS puntaje
-     FROM fragmento f
-     JOIN documento d ON d.id = f.documento_id
-     WHERE f.tsv @@ websearch_to_tsquery('spanish', $1)
-     ORDER BY puntaje DESC
-     LIMIT $2`,
-    [q, limite]
-  );
+  const limpio = terminosDeBusqueda(texto);
+  if (!limpio) return [];
+
+  /*
+   * `ts_headline` recorta el trozo ALREDEDOR de lo que coincidió, en vez de devolver el principio
+   * del fragmento. Es la diferencia entre citar «la ley media ponderada es de 3,4 g/t» y citar el
+   * encabezado del informe: lo segundo es técnicamente la misma fuente y no le sirve a nadie.
+   */
+  const SQL = (op: string) => `
+    WITH q AS (SELECT ${op} AS tq)
+    SELECT d.nombre AS documento, f.pagina,
+           ts_headline('spanish', f.texto, q.tq,
+             'MaxWords=55, MinWords=25, ShortWord=3, MaxFragments=2, FragmentDelimiter=" … ", StartSel="", StopSel=""') AS texto,
+           ts_rank(f.tsv, q.tq)::float8 AS puntaje
+    FROM fragmento f
+    JOIN documento d ON d.id = f.documento_id, q
+    WHERE f.tsv @@ q.tq
+    ORDER BY puntaje DESC
+    LIMIT $2`;
+
+  const exacto = await consulta<any>(SQL("websearch_to_tsquery('spanish', $1)"), [limpio, limite]);
+  if (exacto.length) return exacto;
+
+  // Segunda pasada: cualquiera de los términos, que es lo que un humano espera de un buscador.
+  const sueltos = limpio
+    .split(/\s+/)
+    .filter((w) => w.length >= 3)
+    .slice(0, 8)
+    .map((w) => w.replace(/['\\:&|!()<>]/g, ''))
+    .filter(Boolean)
+    .join(' | ');
+  if (!sueltos) return [];
+  return consulta(SQL("to_tsquery('spanish', $1)"), [sueltos, limite]);
 }
