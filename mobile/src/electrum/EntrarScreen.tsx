@@ -56,12 +56,17 @@ export function EntrarScreen({ onDentro }: { onDentro: () => void }) {
 
   return (
     <KeyboardAvoidingView style={s.raiz} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-      <View style={s.cara}>
-        <UltronFace face="IDLE" acento={ACENTO} size={76} stageHeight={200} />
+      {/* Dos columnas: quién te recibe a un lado, lo que tenés que hacer al otro. Apilado en
+          horizontal, el teclado al abrirse tapaba el formulario entero. */}
+      <View style={s.presentacion}>
+        <View style={s.cara}>
+          <UltronFace face="IDLE" acento={ACENTO} size={70} stageHeight={170} />
+        </View>
+        <Text style={s.marca}>DR ELECTRUM FP</Text>
+        <Text style={s.lema}>ESTACIÓN DE TRABAJO MINERA</Text>
       </View>
-      <Text style={s.marca}>DR ELECTRUM FP</Text>
-      <Text style={s.lema}>ESTACIÓN DE TRABAJO MINERA</Text>
 
+      <View style={s.formulario}>
       <View style={s.pestanas}>
         {(['correo', 'llave'] as Modo[]).map((m) => (
           <Pressable key={m} onPress={() => { setModo(m); setFallo(''); }} style={[s.pestana, modo === m && s.pestanaOn]}>
@@ -104,6 +109,7 @@ export function EntrarScreen({ onDentro }: { onDentro: () => void }) {
           {yendo ? <ActivityIndicator color="#000" /> : <Text style={s.botonTexto}>ENTRAR</Text>}
         </Pressable>
       </View>
+      </View>
 
       <Text style={s.pie}>Demostración. No sustituye a una Persona Calificada ni a un informe firmado.</Text>
     </KeyboardAvoidingView>
@@ -111,19 +117,21 @@ export function EntrarScreen({ onDentro }: { onDentro: () => void }) {
 }
 
 const s = StyleSheet.create({
-  raiz: { flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', padding: 24, gap: 6 },
-  cara: { height: 200, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
-  marca: { color: ACENTO, fontSize: 20, fontWeight: '700', letterSpacing: 5 },
-  lema: { color: 'rgba(255,174,59,0.5)', fontSize: 9, letterSpacing: 2.4, fontWeight: '600', marginTop: 4, marginBottom: 22 },
-  pestanas: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  raiz: { flex: 1, flexDirection: 'row', backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 18, gap: 28 },
+  presentacion: { flex: 1, alignItems: 'center' },
+  formulario: { flex: 1, maxWidth: 400 },
+  cara: { height: 170, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  marca: { color: ACENTO, fontSize: 19, fontWeight: '700', letterSpacing: 4.5 },
+  lema: { color: 'rgba(255,174,59,0.5)', fontSize: 9, letterSpacing: 2.4, fontWeight: '600', marginTop: 4 },
+  pestanas: { flexDirection: 'row', gap: 8, marginBottom: 12 },
   pestana: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7 },
   pestanaOn: { backgroundColor: ACENTO, borderColor: ACENTO },
   pestanaTexto: { color: '#9FB0B8', fontSize: 10, letterSpacing: 1.4, fontWeight: '700' },
-  campos: { width: '100%', maxWidth: 380, gap: 10 },
+  campos: { width: '100%', gap: 9 },
   campo: { backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: '#E7EEF2', fontSize: 15 },
   aviso: { color: '#8FA3B0', fontSize: 12, lineHeight: 18 },
   fallo: { color: '#D9705A', fontSize: 13, lineHeight: 19 },
   boton: { backgroundColor: ACENTO, borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 4 },
   botonTexto: { color: '#000', fontWeight: '700', fontSize: 14, letterSpacing: 2 },
-  pie: { position: 'absolute', bottom: 22, color: '#3A4A5A', fontSize: 10, textAlign: 'center', paddingHorizontal: 30 },
+  pie: { position: 'absolute', bottom: 8, left: 0, right: 0, color: '#3A4A5A', fontSize: 10, textAlign: 'center', paddingHorizontal: 30 },
 });

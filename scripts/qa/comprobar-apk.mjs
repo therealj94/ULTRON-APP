@@ -23,7 +23,7 @@ const variante = (process.argv[3] || 'ultron').toLowerCase();
 
 const ESPERADO = {
   ultron: { paquete: 'link.ordenglobal.ultronfp', nombre: 'ULTRON FP', orientacion: 'landscape', ubicacion: false },
-  electrum: { paquete: 'link.ordenglobal.drelectrumfp', nombre: 'Dr Electrum FP', orientacion: 'portrait', ubicacion: true },
+  electrum: { paquete: 'link.ordenglobal.drelectrumfp', nombre: 'Dr Electrum FP', orientacion: 'landscape', ubicacion: true },
 };
 
 const quiero = ESPERADO[variante];

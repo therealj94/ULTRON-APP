@@ -220,13 +220,12 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
   return (
     <aside
       className="absolute z-20 flex flex-col border-white/10 bg-[#0A0C0E]/92 backdrop-blur-xl
-                 inset-x-0 bottom-0 h-[52%] border-t
-                 md:inset-y-0 md:left-auto md:right-0 md:w-[380px] md:h-auto md:border-t-0 md:border-l md:pt-[52px]"
+                 inset-x-0 bottom-0 h-[42%] border-t"
       style={{ transition: 'transform .4s ease', transform: abierto ? 'none' : 'translateY(100%)' }}
     >
       {vista === 'chat' ? (
         <>
-          <div ref={hilo} className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+          <div ref={hilo} className="flex-1 overflow-y-auto px-4 py-4 space-y-4 w-full max-w-4xl mx-auto">
             {!turnos.length && (
               <div className="space-y-3">
                 <p className="text-sm text-[#8FA3B0] leading-relaxed">
@@ -302,7 +301,7 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
               e.preventDefault();
               preguntar(texto);
             }}
-            className="flex gap-2 p-3 border-t border-white/10"
+            className="flex gap-2 p-3 border-t border-white/10 w-full max-w-4xl mx-auto"
           >
             <input
               id="electrum-pregunta"
@@ -516,7 +515,7 @@ function Expedientes() {
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 pt-4 space-y-5">
+    <div className="flex-1 overflow-y-auto p-4 pt-4 space-y-5 w-full max-w-4xl mx-auto">
       {datos.capas.length > 0 && (
         <section>
           <h3 className="font-mono text-[10px] tracking-[0.18em] uppercase mb-2" style={{ color: AMBAR }}>

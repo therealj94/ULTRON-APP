@@ -18,9 +18,10 @@ const ELECTRUM = {
   scheme: 'drelectrumfp',
   // Paquete distinto: si fuera el mismo, instalar una desinstalaría la otra.
   paquete: 'link.ordenglobal.drelectrumfp',
-  acento: '#FFAE3B',
-  // El campo se sostiene en la mano, en vertical. La mesa de ULTRON es horizontal; esto no.
-  orientacion: 'portrait',
+    // Horizontal, igual que ULTRON: las dos son estaciones de trabajo y se sostienen con las
+    // dos manos. Lo vertical es de la web. Lo tuve al revés un rato — el campo parecía pedir
+    // vertical, pero una app que enseña un mapa y una ficha a la vez quiere ancho.
+  orientacion: 'landscape',
 };
 
 module.exports = ({ config }) => {
@@ -101,7 +102,7 @@ module.exports = ({ config }) => {
           },
         ];
       }
-      if (nombre === 'expo-screen-orientation') return [nombre, { initialOrientation: 'PORTRAIT' }];
+      if (nombre === 'expo-screen-orientation') return [nombre, { initialOrientation: 'LANDSCAPE' }];
       return p;
     }),
     extra: { ...expo.extra, variante: 'electrum', acento: ELECTRUM.acento },

@@ -115,7 +115,15 @@ export default function App() {
           cien por cien resolvía a CERO y MapLibre nacía con un lienzo de 300 px sobre una caja
           vacía, o sea mapa negro. Con los cuatro lados fijados no hay nada que resolver.
         */}
-        <div className="absolute top-[52px] left-0 right-0 bottom-[52%] md:bottom-0 md:right-[380px]">
+        {/*
+          VERTICAL, y en toda pantalla. La web se apila —mapa arriba, conversación debajo— y la app
+          se reparte en columnas. Son dos formas distintas a propósito: la web se lee de arriba
+          abajo como un expediente, la app se sostiene con las dos manos como una herramienta.
+
+          El mapa se lleva el 58 %: menos y una concesión no se distingue; más y la conversación
+          queda en una rendija.
+        */}
+        <div className="absolute top-[52px] left-0 right-0 bottom-[42%]">
           <Mapa orden={orden} motor={motor} fondo={fondo} claveGoogle={claveGoogle} />
         </div>
         <Panel
@@ -137,8 +145,16 @@ export default function App() {
         className="absolute transition-all duration-[650ms] ease-[cubic-bezier(.22,.61,.36,1)]"
         style={
           enTrabajo
-            ? ancho
-              ? { left: 16, bottom: 16, width: 132, height: 132, zIndex: 30 }
+            ? /*
+               * Arriba a la izquierda, SOBRE EL MAPA — no abajo.
+               *
+               * Con el reparto en columnas, abajo a la izquierda caía sobre el mapa y quedaba
+               * bien. Al apilar la web en vertical, ese mismo sitio pasó a ser la conversación:
+               * la cara se plantaba encima del hilo y de los ejemplos. La cara vive sobre el
+               * escenario que cede, y desde que la web es vertical ese escenario está arriba.
+               */
+              ancho
+              ? { left: 16, top: 64, width: 132, height: 132, zIndex: 30 }
               : { left: 12, top: 60, width: 96, height: 96, zIndex: 30 }
             : { left: '50%', top: '50%', width: 'min(76vmin, 560px)', height: 'min(76vmin, 560px)', transform: 'translate(-50%,-50%)', zIndex: 30 }
         }

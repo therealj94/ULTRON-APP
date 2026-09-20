@@ -125,6 +125,14 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
       ? `catastro fuera de línea${estado.motivo ? ` · ${estado.motivo}` : ''}`
       : 'comprobando…';
 
+  /*
+   * HORIZONTAL, en dos columnas.
+   *
+   * La versión vertical apilaba cara, hilo y botones, y en un teléfono tumbado eso deja la
+   * conversación en una rendija de cuatro renglones. Con dos columnas la cara y lo que se toca
+   * viven a la izquierda —donde caen los pulgares al sostenerlo— y el hilo ocupa todo el alto de
+   * la derecha, que es lo único que de verdad necesita altura.
+   */
   return (
     <View style={s.raiz}>
       <View style={s.barra}>
@@ -143,10 +151,17 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
         </Pressable>
       </View>
 
-      <View style={s.caraCaja}>
-        <UltronFace face={cara} acento={ACENTO} size={64} stageHeight={170} />
-      </View>
+      <View style={s.cuerpo}>
+        <View style={s.izquierda}>
+          <View style={s.caraCaja}>
+            <UltronFace face={cara} acento={ACENTO} size={56} stageHeight={150} />
+          </View>
+          <Pressable onPress={() => void dondeEstoy()} disabled={pensando} style={[s.donde, pensando && { opacity: 0.4 }]}>
+            <Text style={s.dondeTexto}>¿DÓNDE ESTOY?</Text>
+          </Pressable>
+        </View>
 
+        <View style={s.derecha}>
       <ScrollView
         ref={hilo}
         style={s.hilo}
@@ -180,10 +195,6 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
         {pensando && <Text style={s.pensando}>pensando…</Text>}
       </ScrollView>
 
-      <Pressable onPress={() => void dondeEstoy()} disabled={pensando} style={[s.donde, pensando && { opacity: 0.4 }]}>
-        <Text style={s.dondeTexto}>¿DÓNDE ESTOY?</Text>
-      </Pressable>
-
       <View style={s.entrada}>
         <TextInput
           value={texto}
@@ -197,6 +208,8 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
         <Pressable onPress={() => void mandar(texto)} disabled={pensando || !texto.trim()} style={[s.ir, (pensando || !texto.trim()) && { opacity: 0.3 }]}>
           {pensando ? <ActivityIndicator color="#000" size="small" /> : <Text style={s.irTexto}>Ir</Text>}
         </Pressable>
+          </View>
+        </View>
       </View>
     </View>
   );
@@ -212,7 +225,18 @@ const s = StyleSheet.create({
   chipTexto: { color: GRIS, fontSize: 9, letterSpacing: 1.6, fontWeight: '600' },
   // `overflow` recorta a propósito: los anillos del halo miden 4,3 veces el iris y desbordaban
   // la caja, pisando el texto de abajo. Recortados quedan como una banda, que es lo que se busca.
-  caraCaja: { height: 170, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  cuerpo: { flex: 1, flexDirection: 'row' },
+  // Ancho fijo: la cara no crece con la pantalla, y lo que gana el teléfono se lo lleva el hilo.
+  izquierda: { width: 240, paddingLeft: 14, paddingBottom: 14, justifyContent: 'space-between' },
+  derecha: { flex: 1, borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.08)' },
+  /*
+   * La CAJA es más alta que el ESCENARIO de la cara (210 contra 150), y esa diferencia es el
+   * arreglo. Subir las dos a la vez no servía de nada: la cara se centra en su escenario y dibuja
+   * la boca por DEBAJO de él, así que con caja y escenario iguales la boca cae siempre justo en el
+   * borde y `overflow: hidden` se la come. Recortar el halo está bien; recortarle la boca la deja
+   * sin la mitad de la expresión.
+   */
+  caraCaja: { height: 210, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   hilo: { flex: 1 },
   intro: { color: GRIS, fontSize: 14, lineHeight: 21 },
   ejemplo: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7, alignSelf: 'flex-start' },
@@ -224,9 +248,9 @@ const s = StyleSheet.create({
   panel: { color: ACENTO, fontSize: 9, letterSpacing: 1.6, marginBottom: 4, fontWeight: '700' },
   traza: { color: TENUE, fontSize: 10, fontFamily: 'monospace', marginTop: 3, marginLeft: 4 },
   pensando: { color: TENUE, fontSize: 11, fontFamily: 'monospace' },
-  donde: { marginHorizontal: 14, marginBottom: 8, borderWidth: 1, borderColor: ACENTO, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  donde: { marginRight: 14, borderWidth: 1, borderColor: ACENTO, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
   dondeTexto: { color: ACENTO, fontSize: 12, fontWeight: '700', letterSpacing: 2 },
-  entrada: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingBottom: 16, paddingTop: 4 },
+  entrada: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingBottom: 14, paddingTop: 6 },
   campo: { flex: 1, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, color: '#E7EEF2', fontSize: 14 },
   ir: { backgroundColor: ACENTO, borderRadius: 12, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center', minWidth: 56 },
   irTexto: { color: '#000', fontWeight: '700', fontSize: 13 },

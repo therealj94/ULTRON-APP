@@ -39,8 +39,8 @@ function Arranque({ opacidad }: { opacidad: Animated.Value }) {
   const ty = sube.interpolate({ inputRange: [0, 1], outputRange: [10, 0] });
   return (
     <Animated.View pointerEvents="none" style={[s.arranque, { opacity: opacidad }]}>
-      <View style={{ width: 300, alignItems: 'center' }}>
-        <UltronFace face={cara} acento={ACENTO} size={76} stageHeight={210} />
+      <View style={{ width: 280, height: 176, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' }}>
+        <UltronFace face={cara} acento={ACENTO} size={68} stageHeight={176} />
       </View>
       <Animated.View style={{ alignItems: 'center', opacity: sube, transform: [{ translateY: ty }] }}>
         <Text style={s.marca}>DR ELECTRUM FP</Text>

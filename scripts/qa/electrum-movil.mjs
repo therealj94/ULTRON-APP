@@ -32,7 +32,8 @@ await new Promise((r) => srv.listen(4599, r));
 
 const nav = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH, args: ['--use-gl=swiftshader'] });
 for (const [nombre, q, espera] of [['1-arranque', '', 900], ['2-entrar', '?p=entrar', 1400], ['3-campo', '?p=campo', 1600], ['4-arranque-tarde', '', 3200]]) {
-  const p = await nav.newPage({ viewport: { width: 400, height: 860 }, deviceScaleFactor: 2 });
+  // Horizontal: es la orientación de la app. Mirarla en vertical sería mirar otra cosa.
+  const p = await nav.newPage({ viewport: { width: 880, height: 420 }, deviceScaleFactor: 2 });
   p.on('pageerror', (e) => console.log(`ERROR en ${nombre}:`, String((e && e.stack) || e).slice(0, 300)));
   await p.goto(`http://127.0.0.1:4599/${q}`, { waitUntil: 'load' });
   await p.waitForTimeout(espera);
