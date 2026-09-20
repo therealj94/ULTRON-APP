@@ -62,17 +62,13 @@ jobs:
         env:
           CI: "1"
           EXPO_NO_TELEMETRY: "1"
-        env:
           ULTRON_APP: ${{ matrix.variante }}
-        # `--clean` solo en la variante del doctor: cambia el nombre de paquete, y sobre un
-        # `android/` ya generado para `link.ordenglobal.ultronfp` el prebuild no lo reescribe
-        # entero. ULTRON se queda sin `--clean` para no perder nada de su nativo ya probado.
-        run: |
-          if [ "${{ matrix.variante }}" = "electrum" ]; then
-            npx expo prebuild -p android --no-install --clean
-          else
-            npx expo prebuild -p android --no-install
-          fi
+        # Sin `--clean` y sin condicionales: `mobile/android` está en .gitignore, así que en un
+        # checkout limpio no existe y el prebuild lo genera entero de cero para la variante que
+        # toque. Llegué a escribir aquí una rama con `--clean` «porque el android ya generado no
+        # cambia de paquete» — cierto en local, falso en CI, y una condición con una explicación
+        # equivocada es peor que ninguna condición.
+        run: npx expo prebuild -p android --no-install
 
       # Release = JS empaquetado + Hermes. Firmado con la keystore debug del template
       # para instalar directo; para Play Store se cambia la firma.
@@ -102,18 +98,39 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      # En main, el APK se publica como Release para tener un enlace de descarga directo y permanente:
+  # El Release va aparte, después de las dos. Dentro de la matriz, en main los dos trabajos
+  # intentaban crear la MISMA etiqueta a la vez; aquí se juntan los dos APK y se publica una sola
+  # vez, que además es lo que quiere quien descarga: las dos apps en el mismo sitio.
+  publicar:
+    needs: apk
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: apks
+          merge-multiple: true
+
+      - name: Ver qué llegó
+        run: ls -la apks
+
+      # Enlace de descarga directo y permanente:
       #   https://github.com/<owner>/<repo>/releases/latest/download/ULTRON-FP-<version>.apk
-      - name: Publicar Release (solo main)
-        if: github.ref == 'refs/heads/main'
+      - name: Publicar Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.version.outputs.version }}
-          name: ULTRON FP ${{ steps.version.outputs.version }}
+          tag_name: v${{ needs.apk.outputs.version }}
+          name: ULTRON FP y Dr Electrum FP ${{ needs.apk.outputs.version }}
           body: |
             APKs compilados por GitHub Actions desde `${{ github.sha }}`.
-            ULTRON FP es la mesa de la junta; Dr Electrum FP es la estación minera. Son paquetes
-            distintos, así que se pueden instalar las dos a la vez sin que una desinstale a la otra.
-            Instalación: abrir el .apk en el teléfono y permitir «instalar apps desconocidas». Si había una versión de EAS, desinstalarla primero (firma distinta).
-          files: mobile/out/*.apk
+
+            **ULTRON FP** es la mesa de la junta. **Dr Electrum FP** es la estación minera. Son
+            paquetes distintos, así que se pueden instalar las dos a la vez sin que una desinstale
+            a la otra.
+
+            Instalación: abrir el .apk en el teléfono y permitir «instalar apps desconocidas». Si
+            había una versión de EAS, desinstalarla primero (firma distinta).
+          files: apks/*.apk
           make_latest: true

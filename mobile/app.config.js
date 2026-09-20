@@ -28,7 +28,32 @@ module.exports = ({ config }) => {
   const expo = { ...base.expo, ...(config || {}) };
 
   if (variante !== 'electrum') {
-    return { ...expo, extra: { ...expo.extra, variante: 'ultron' } };
+    return {
+      ...expo,
+      android: {
+        ...expo.android,
+        /*
+         * ULTRON no pide la ubicación, y hay que decirlo explícitamente.
+         *
+         * `expo-location` se instaló para la app del doctor, pero declara sus permisos en SU
+         * propio AndroidManifest, y el fusionador de Android los mete en cualquier app que tenga
+         * el paquete presente — diga lo que diga esta configuración. Sin este bloqueo, la app de
+         * la junta empezaba a pedir la ubicación sin usarla jamás: una regresión de privacidad
+         * introducida por una dependencia de la OTRA app, y de las que Play Store señala.
+         *
+         * Se vio regenerando el nativo y contando los permisos del manifiesto, no leyendo código.
+         */
+        blockedPermissions: [
+          ...new Set([
+            ...(expo.android?.blockedPermissions || []),
+            'android.permission.ACCESS_FINE_LOCATION',
+            'android.permission.ACCESS_COARSE_LOCATION',
+            'android.permission.ACCESS_BACKGROUND_LOCATION',
+          ]),
+        ],
+      },
+      extra: { ...expo.extra, variante: 'ultron' },
+    };
   }
 
   return {

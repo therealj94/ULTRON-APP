@@ -25,6 +25,10 @@ jobs:
           node-version: "20"
           cache: npm
       - run: npm ci
+      # Antes que nada: si un flujo no arranca, el resto de la comprobación no se entera.
+      # Una clave repetida hace que GitHub rechace el fichero entero, sin un trabajo ni un log.
+      - run: node scripts/qa/revisar-workflows.mjs
+
       - run: npm test
       - run: npx tsc --noEmit
       - run: npm run build
