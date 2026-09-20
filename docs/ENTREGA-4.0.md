@@ -192,3 +192,53 @@ teléfono vuelve al lanzador, que es exactamente lo que se veía.
 - `POST /api/diag` probado contra el servidor real: el crash de ejemplo salió impreso en el log.
 - El APK publicado se descargó y se abrió: **no contiene `libVisionCamera`, ni `libworklets`, ni el
   face-detector**. Lo de ML Kit que sí queda dentro es el lector de códigos de `expo-camera`.
+
+---
+
+# 4.1.2 — La cara del móvil y la cámara
+
+José, con la 4.1.1 en la mano: «la cara se ve fea, no quedó como se estaba trabajando, y la cámara no
+funciona». Las dos cosas eran ciertas y eran dos problemas distintos.
+
+## La cara: se arregló lo que se podía ver
+El rediseño de la ronda 3 se hizo sobre la cara de la WEB (`src/02-cara/FaceCanvas.tsx`). La del
+teléfono es otro componente (`mobile/src/components/UltronFace.tsx`) y se quedó con el diseño viejo.
+Para poder juzgarla sin un teléfono delante se montó un banco de pruebas: `scripts/qa/cara-movil/`
+levanta la cara de React Native en un navegador con `react-native-web`, y
+`scripts/qa/capturas-movil.mjs` la fotografía estado por estado. Las capturas enseñaron cuatro cosas
+que el código no delataba:
+
+- **`browOpacity: 0` en el estado neutro**: las cejas no se veían NUNCA salvo al enfadarse o pensar.
+  Sin cejas, dos círculos sobre negro no son una cara. Ahora están a 0,5 en reposo.
+- **El ojo era un anillo hueco**, no el ojo lleno de la web. Ahora es un disco de luz con núcleo claro,
+  anillo interior y dos destellos, y todo eso se mueve con la mirada.
+- **El párpado inferior era una barra recta** que partía el ojo por la mitad con una línea dura: al
+  sonreír parecía un error de dibujo. Ahora es un círculo grande que sube desde abajo, así que su borde
+  es convexo y da el ojo sonriente de verdad.
+- **Al orar y al dormir el ojo quedaba en negro**, como apagado en vez de cerrado. Ahora se dibuja la
+  línea del párpado con un halo suave: se ve un ojo cerrado, sereno.
+
+Además: boca un 50 % más ancha y más marcada (era un hilo en reposo), más cerca de los ojos; contorno
+de la cara en dos óvalos tenues para que los rasgos no floten sueltos; y los glifos de modo, que
+colgaban de los bordes de la pantalla, recogidos junto a la cara.
+
+## La cámara: la foto era de un píxel
+ULTRON contestaba «la cámara me está mostrando un error técnico». Esa frase salía de él mismo: cuando
+la visión falla, el servidor le pasaba el mensaje de error crudo como hecho y él lo parafraseaba.
+
+El nodo de visión estaba bien — se le mandó una foto de 4000×3000 y respondió en 3,5 s. El problema
+estaba en el teléfono: **la cámara se renderizaba en una superficie de 1×1 píxel**. Con un preview así,
+`takePictureAsync` en Android devuelve una imagen rota, y el nodo no puede ver nada. Ahora la superficie
+mide 96×72 (sigue casi invisible, al 2 % de opacidad), no se salta el procesado de la imagen, y cada
+foto se valida antes de mandarla: si sale más corta de lo que puede ser una foto, se descarta en vez de
+enviar basura.
+
+Y cuando la visión falle de verdad, ULTRON ya no repite jerga: se le indica que lo diga como una
+persona («ahora mismo no me está entrando imagen, dame un segundo»). El fallo queda en los logs de
+Render, con el tamaño de la imagen, para poder verlo desde aquí.
+
+## Verificado
+- `tsc` limpio en web y móvil; 124/124 pruebas; bundle de Android empaquetado.
+- Los ocho estados de la cara fotografiados y revisados uno por uno, antes y después.
+- El crash de la 4.1.1 quedó confirmado como resuelto por el propio teléfono de José: el Samsung
+  reportó `mesa estable` con todas las migas del arranque.

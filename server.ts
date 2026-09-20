@@ -377,6 +377,7 @@ app.post('/api/vision/analyze', exigirMesaODesk, async (req, res) => {
   }
   const vista = await verImagen(String(base64Data), prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos. No inventes.');
   if (vista.via === 'ninguno' || vista.via === 'error') {
+    console.error(`[ULTRON] /vision/analyze falló (${vista.via}) con ${String(base64Data).length} car.: ${vista.texto.slice(0, 160)}`);
     return res.status(503).json({ error: vista.texto, honesto: true });
   }
   return res.json({ success: true, summary: vista.texto, via: vista.via, honesto: true });
@@ -699,7 +700,15 @@ async function prepararTurno(body: any) {
     const image = body?.image;
     if (image) {
       const vista = await verImagen(String(image));
-      hechos.push(`VISION (${vista.via}): ${vista.texto}`);
+      // Un fallo de visión NO se le pasa crudo al modelo: lo parafraseaba como «la cámara me muestra un
+      // error técnico», que no le dice nada a nadie. Se le da la frase que tiene que decir.
+      if (vista.via === 'error' || vista.via === 'ninguno') {
+        console.error(`[ULTRON] vision falló (${vista.via}) con ${String(image).length} car.: ${vista.texto.slice(0, 160)}`);
+        hechos.push('VISION: la cámara no devolvió imagen esta vez. Dilo simple y humano («ahora mismo no me está entrando imagen, dame un segundo»); no hables de errores técnicos ni de nodos.');
+      } else {
+        console.log(`[ULTRON] vision ok (${String(image).length} car.) → ${vista.texto.slice(0, 120)}`);
+        hechos.push(`VISION (${vista.via}): ${vista.texto}`);
+      }
       tools.push('vision');
     } else if (/\b(qu[eé] ves|qu[eé] hay aqu[ií]|le[eé] (la |esta )?imagen|foto)\b/.test(q) && !quiereCaptura && !body?.documento && !body?.pdf && !escena) {
       hechos.push('VISION: no llegó frame ni escena. Di que ahora mismo no ves (cámara apagada) y ofrece encenderla.');

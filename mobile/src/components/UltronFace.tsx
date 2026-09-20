@@ -65,6 +65,9 @@ const GOLD = '#FFD166';
 const RED = '#FF3B5C';
 const SABER = '#39FF14';
 const MOUTH_DARK = '#02151B';
+/** Núcleo claro del ojo y su borde: dan el volumen del ojo lleno (la web lo hace con un degradado radial). */
+const IRIS_CLARO = '#D6F8FF';
+const IRIS_BORDE = 'rgba(3,58,76,0.55)';
 const TEETH = '#D9FBFF';
 const EDGE_PX = 44;
 
@@ -101,7 +104,7 @@ type Lids = {
 };
 
 const NEUTRAL: Lids = {
-  top: 0, bottom: 0, tilt: 0, browY: 0, browTilt: 0, browOpacity: 0, browAsym: 0, pupil: 1, mouth: 0.15, mouthW: 1, headTilt: 0,
+  top: 0, bottom: 0, tilt: 0, browY: 0, browTilt: 0, browOpacity: 0.5, browAsym: 0, pupil: 1, mouth: 0.32, mouthW: 1, headTilt: 0,
   open: 0, round: 0.95, press: 0, mouthTilt: 0, jaw: 0, teeth: 0,
 };
 
@@ -109,7 +112,7 @@ const LIDS: Record<FaceState, Lids> = {
   IDLE: NEUTRAL,
   LISTENING: { ...NEUTRAL, pupil: 1.15, mouth: 0.2, open: 0.05, round: 1 },
   THINKING: { ...NEUTRAL, top: 0.18, pupil: 0.85, mouth: 0.05, mouthW: 0.85, browOpacity: 0.5, browY: -0.5, mouthTilt: 7 },
-  SPEAKING: { ...NEUTRAL, mouth: 0.3 },
+  SPEAKING: { ...NEUTRAL, mouth: 0.42 },
   // sonrisa amplia con un interior fino (profundidad)
   HAPPY: { ...NEUTRAL, bottom: 0.42, mouth: 1, mouthW: 1.25, pupil: 1.1, open: 0.16, round: 1.2 },
   WINK: { ...NEUTRAL, bottom: 0.3, mouth: 0.8, mouthW: 1.15, mouthTilt: 6 },
@@ -789,7 +792,13 @@ export function UltronFace({
   const A = useMemo(() => {
     const lidH = D * 1.1;
     const topLidY = topLid.interpolate({ inputRange: [0, 1], outputRange: [-lidH, -lidH + D * 1.02] });
-    const bottomLidY = bottomLid.interpolate({ inputRange: [0, 1], outputRange: [lidH, lidH - D * 1.0] });
+    /**
+     * El párpado inferior es un CÍRCULO grande que sube desde abajo, no una barra: su borde superior
+     * es convexo, que es lo que hace el «ojo sonriente». Con una barra recta el ojo quedaba cortado
+     * por la mitad con una línea dura, y HAPPY parecía un error de dibujo.
+     */
+    const lidRadio = D * 1.1;
+    const bottomLidY = bottomLid.interpolate({ inputRange: [0, 1], outputRange: [D, D * 0.08] });
     const tiltL = tilt.interpolate({ inputRange: [-45, 45], outputRange: ['-45deg', '45deg'] });
     const tiltR = tilt.interpolate({ inputRange: [-45, 45], outputRange: ['45deg', '-45deg'] });
     const browTiltL = browTilt.interpolate({ inputRange: [-45, 45], outputRange: ['-45deg', '45deg'] });
@@ -814,9 +823,11 @@ export function UltronFace({
     const pupilScaleTotal = Animated.multiply(pupilScale, attnPupil);
 
     // --- boca
-    const mouthWpx = D * 0.62;
-    const mouthArcH = D * 0.26;
-    const openW = mouthWpx * 0.56;
+    // La boca de la web mide ~0,7 del ojo y está a ~0,68 D por debajo; la del móvil era la mitad de
+    // ancha y estaba más lejos, y por eso no se leía como cara.
+    const mouthWpx = D * 0.95;
+    const mouthArcH = D * 0.34;
+    const openW = mouthWpx * 0.62;
     const openH = mouthArcH * 0.92;
     const mouthCurveTotal = Animated.add(mouthCurve, touchSmile).interpolate({ inputRange: [-1, 0, 1], outputRange: [-1, 0.08, 1], extrapolate: 'clamp' });
     const openTotal = Animated.add(Animated.add(mouthOpenBase, mouthOpen), touchOpen);
@@ -842,13 +853,14 @@ export function UltronFace({
     const rowTx = Animated.add(shakeX, swayX);
     const glyphTyNeg = Animated.multiply(glyphTy, -1);
     const eyeGlowOp = attn.interpolate({ inputRange: [0, 1], outputRange: [0, 0.09] });
+    const lineaParpado = topLid.interpolate({ inputRange: [0, 0.82, 0.96], outputRange: [0, 0, 0.85], extrapolate: 'clamp' });
     const eyeScaleYL = Animated.multiply(blink, eyeSquashL);
     const eyeScaleYR = Animated.multiply(blink, eyeSquashR);
-    return { lidH, topLidY, bottomLidY, tiltL, tiltR, browTiltL, browTiltR, browTy, browTouchTy, browOpacity, browAsymL, browAsymR, headRot, shakeX, bounceTy, swayX, swayRot, glyphTy, pulseScale, pulseOp, attnHaloOp, attnPupil, pupilTx, pupilTy, pupilScaleTotal, mouthWpx, mouthArcH, openW, openH, mouthCurveTotal, openTotal, mouthOpenScale, mouthRoundScale, arcOpByOpen, arcOpByPress, mouthRot, jawTy, teethOp, pressBarScaleX, beamH, beamScale, beamTy, saberH, saberScale, saberRotL, saberRotR, rowTx, glyphTyNeg, eyeGlowOp, eyeScaleYL, eyeScaleYR };
+    return { lidH, topLidY, bottomLidY, tiltL, tiltR, browTiltL, browTiltR, browTy, browTouchTy, browOpacity, browAsymL, browAsymR, headRot, shakeX, bounceTy, swayX, swayRot, glyphTy, pulseScale, pulseOp, attnHaloOp, attnPupil, pupilTx, pupilTy, pupilScaleTotal, mouthWpx, mouthArcH, openW, openH, mouthCurveTotal, openTotal, mouthOpenScale, mouthRoundScale, arcOpByOpen, arcOpByPress, mouthRot, jawTy, teethOp, pressBarScaleX, beamH, beamScale, beamTy, saberH, saberScale, saberRotL, saberRotR, rowTx, glyphTyNeg, eyeGlowOp, eyeScaleYL, eyeScaleYR, lidRadio, lineaParpado };
   }, [D, stageH]);
-  const { lidH, topLidY, bottomLidY, tiltL, tiltR, browTiltL, browTiltR, browTy, browTouchTy, browOpacity, browAsymL, browAsymR, headRot, shakeX, bounceTy, swayX, swayRot, glyphTy, pulseScale, pulseOp, attnHaloOp, attnPupil, pupilTx, pupilTy, pupilScaleTotal, mouthWpx, mouthArcH, openW, openH, mouthCurveTotal, openTotal, mouthOpenScale, mouthRoundScale, arcOpByOpen, arcOpByPress, mouthRot, jawTy, teethOp, pressBarScaleX, beamH, beamScale, beamTy, saberH, saberScale, saberRotL, saberRotR, rowTx, glyphTyNeg, eyeGlowOp, eyeScaleYL, eyeScaleYR } = A;
+  const { lidH, topLidY, bottomLidY, tiltL, tiltR, browTiltL, browTiltR, browTy, browTouchTy, browOpacity, browAsymL, browAsymR, headRot, shakeX, bounceTy, swayX, swayRot, glyphTy, pulseScale, pulseOp, attnHaloOp, attnPupil, pupilTx, pupilTy, pupilScaleTotal, mouthWpx, mouthArcH, openW, openH, mouthCurveTotal, openTotal, mouthOpenScale, mouthRoundScale, arcOpByOpen, arcOpByPress, mouthRot, jawTy, teethOp, pressBarScaleX, beamH, beamScale, beamTy, saberH, saberScale, saberRotL, saberRotR, rowTx, glyphTyNeg, eyeGlowOp, eyeScaleYL, eyeScaleYR, lidRadio, lineaParpado } = A;
 
-  const glyphStyle = useMemo(() => ({ color: accent, opacity: dim ? 0.15 : 0.42, fontSize: D * 0.22 }), [accent, dim, D]);
+  const glyphStyle = useMemo(() => ({ color: accent, opacity: dim ? 0.12 : 0.3, fontSize: D * 0.15 }), [accent, dim, D]);
   const mouthDim = dim ? 0.3 : face === 'PRAY' ? 0.6 : 1;
 
   const renderEye = (side: 'L' | 'R') => {
@@ -875,23 +887,24 @@ export function UltronFace({
         <Animated.View pointerEvents="none" style={[styles.attnHalo, { width: D * 1.3, height: D * 1.3, borderRadius: D * 0.65, borderColor: accent, opacity: attnHaloOp }]} />
         <View style={[styles.glow, { width: D * 1.06, height: D * 1.06, borderRadius: D * 0.53, borderColor: accent, opacity: dim ? 0.08 : 0.28 }]} />
         <View style={[styles.eye, { width: D, height: D, borderRadius: D / 2, overflow: 'hidden' }]}>
-          <View style={[styles.ring, { width: D, height: D, borderRadius: D / 2, borderWidth: ring, borderColor: accent, opacity: dim ? 0.35 : 1 }]} />
-          <View style={[styles.innerGlow, { width: D * 0.78, height: D * 0.78, borderRadius: D * 0.39, backgroundColor: accent, opacity: dim ? 0.03 : 0.08 }]} />
-          <Animated.View pointerEvents="none" style={[styles.innerGlow, { width: D * 0.78, height: D * 0.78, borderRadius: D * 0.39, backgroundColor: accent, opacity: eyeGlowOp }]} />
+          {/* iris lleno: el ojo es un disco de luz, no un anillo hueco */}
+          <View style={[styles.iris, { width: D, height: D, borderRadius: D / 2, backgroundColor: accent, opacity: dim ? 0.18 : 0.9 }]} />
+          <View style={[styles.ring, { width: D, height: D, borderRadius: D / 2, borderWidth: Math.max(2, ring * 0.32), borderColor: IRIS_BORDE, opacity: dim ? 0.3 : 0.5 }]} />
+          {/* respiración de luz al hablar/escuchar */}
+          <Animated.View pointerEvents="none" style={[styles.innerGlow, { width: D * 0.9, height: D * 0.9, borderRadius: D * 0.45, backgroundColor: IRIS_CLARO, opacity: eyeGlowOp }]} />
+          {/* lo que se mueve con la mirada: núcleo claro, anillo interior y los dos destellos */}
           <Animated.View
+            pointerEvents="none"
             style={[
-              styles.pupil,
-              {
-                width: D * 0.24,
-                height: D * 0.24,
-                borderRadius: D * 0.12,
-                backgroundColor: accent,
-                opacity: dim ? 0.35 : 1,
-                transform: [{ translateX: pupilTx }, { translateY: pupilTy }, { scale: pupilScaleTotal }],
-              },
+              styles.mirada,
+              { width: D, height: D, transform: [{ translateX: pupilTx }, { translateY: pupilTy }, { scale: pupilScaleTotal }] },
             ]}
           >
-            <View style={[styles.glint, { width: D * 0.06, height: D * 0.06, borderRadius: D * 0.03 }]} />
+            <View style={[styles.innerGlow, { width: D * 0.62, height: D * 0.62, borderRadius: D * 0.31, backgroundColor: IRIS_CLARO, opacity: dim ? 0.05 : 0.42 }]} />
+            <View style={[styles.innerGlow, { width: D * 0.34, height: D * 0.34, borderRadius: D * 0.17, backgroundColor: IRIS_CLARO, opacity: dim ? 0.05 : 0.5 }]} />
+            <View style={[styles.ring, { width: D * 0.56, height: D * 0.56, borderRadius: D * 0.28, borderWidth: Math.max(2, D * 0.014), borderColor: IRIS_BORDE, opacity: dim ? 0.15 : 0.4 }]} />
+            <View style={[styles.glint, { width: D * 0.2, height: D * 0.2, borderRadius: D * 0.1, left: D * 0.2, top: D * 0.2, opacity: dim ? 0.2 : 0.95 }]} />
+            <View style={[styles.glint, { width: D * 0.085, height: D * 0.085, borderRadius: D * 0.043, left: D * 0.58, top: D * 0.56, opacity: dim ? 0.15 : 0.8 }]} />
           </Animated.View>
           {/* párpado superior (con inclinación para ceño) */}
           <Animated.View
@@ -906,18 +919,52 @@ export function UltronFace({
             ]}
           />
           {/* párpado inferior (ojos sonrientes) */}
-          <Animated.View style={[styles.lid, { width: D * 1.6, height: lidH, left: -D * 0.3, borderRadius: D * 0.6, transform: [{ translateY: bottomLidY }] }]} />
+            <Animated.View style={[styles.lid, { width: lidRadio * 2, height: lidRadio * 2, left: D / 2 - lidRadio, borderRadius: lidRadio, transform: [{ translateY: bottomLidY }] }]} />
+          {/*
+            Ojo cerrado (oración, sueño): sin esto el párpado negro dejaba un agujero y parecía
+            apagado, no dormido. Se dibuja la línea del párpado cuando el ojo ya está casi cerrado.
+          */}
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.parpadoLinea,
+              {
+                width: D * 0.94,
+                height: D * 0.4,
+                borderBottomWidth: Math.max(8, D * 0.06),
+                borderColor: accent,
+                borderBottomLeftRadius: D * 0.47,
+                borderBottomRightRadius: D * 0.47,
+                opacity: Animated.multiply(lineaParpado, 0.16),
+              },
+            ]}
+          />
+          <Animated.View
+            pointerEvents="none"
+            style={[
+              styles.parpadoLinea,
+              {
+                width: D * 0.86,
+                height: D * 0.34,
+                borderBottomWidth: Math.max(3, D * 0.022),
+                borderColor: accent,
+                borderBottomLeftRadius: D * 0.43,
+                borderBottomRightRadius: D * 0.43,
+                opacity: lineaParpado,
+              },
+            ]}
+          />
         </View>
         {/* ceja */}
         <Animated.View
           style={[
             styles.brow,
             {
-              width: D * 0.72,
-              height: Math.max(4, ring * 0.8),
+              width: D * 0.78,
+              height: Math.max(5, ring * 0.62),
               borderRadius: ring,
               backgroundColor: accent,
-              top: -D * 0.16,
+              top: -D * 0.115,
               opacity: browOpacity,
               transform: [{ translateY: browTy }, { translateY: browTouchTy }, { translateY: side === 'L' ? browAsymL : browAsymR }, { rotate: side === 'L' ? browTiltL : browTiltR }],
             },
@@ -963,6 +1010,17 @@ export function UltronFace({
 
   return (
     <View ref={stageRef} style={[styles.stage, { height: stageH }]} onLayout={onStageLayout} {...(compact ? {} : pan.panHandlers)}>
+      {/*
+        Contorno de la cara: dos óvalos tenuísimos detrás de todo. Sin ellos los ojos y la boca flotan
+        sueltos en el negro y no se leen como una cara (es lo que hace la versión de la web).
+        RN no dibuja elipses, así que son círculos aplastados con scaleY.
+      */}
+      {!compact && (
+        <>
+          <View pointerEvents="none" style={[styles.contorno, { width: D * 3.5, height: D * 3.5, borderRadius: D * 1.75, borderColor: accent, opacity: dim ? 0.05 : 0.14, transform: [{ scaleY: 0.66 }] }]} />
+          <View pointerEvents="none" style={[styles.contorno, { width: D * 4.3, height: D * 4.3, borderRadius: D * 2.15, borderColor: accent, opacity: dim ? 0.03 : 0.08, transform: [{ scaleY: 0.6 }] }]} />
+        </>
+      )}
       <Animated.View style={[styles.column, { transform: [{ scaleY: tapSquash }] }]}>
         <Animated.View
           style={[
@@ -980,7 +1038,7 @@ export function UltronFace({
         <Animated.View
           style={[
             styles.mouthWrap,
-            { height: mouthArcH * 1.5, marginTop: D * 0.14, opacity: mouthDim, transform: [{ translateY: bounceTy }, { translateX: swayX }, { translateY: jawTy }, { rotate: mouthRot }] },
+            { height: mouthArcH * 1.5, marginTop: D * 0.06, opacity: mouthDim, transform: [{ translateY: bounceTy }, { translateX: swayX }, { translateY: jawTy }, { rotate: mouthRot }] },
           ]}
         >
           <Animated.View style={[styles.mouthLayer, { opacity: arcOpByPress }]}>
@@ -990,7 +1048,7 @@ export function UltronFace({
                 {
                   width: mouthWpx,
                   height: mouthArcH,
-                  borderBottomWidth: Math.max(4, ring * 0.75),
+                  borderBottomWidth: Math.max(5, ring * 1.05),
                   borderColor: accent,
                   borderBottomLeftRadius: mouthWpx / 2,
                   borderBottomRightRadius: mouthWpx / 2,
@@ -1085,6 +1143,7 @@ export function UltronFace({
 
 const styles = StyleSheet.create({
   stage: { width: '100%', alignItems: 'center', justifyContent: 'center' },
+  contorno: { position: 'absolute', borderWidth: 1 },
   column: { alignItems: 'center', justifyContent: 'center' },
   faceRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
   eyeWrap: { alignItems: 'center', justifyContent: 'center' },
@@ -1092,14 +1151,16 @@ const styles = StyleSheet.create({
   attnHalo: { position: 'absolute', borderWidth: 10 },
   glow: { position: 'absolute', borderWidth: 6 },
   eye: { alignItems: 'center', justifyContent: 'center', backgroundColor: '#000' },
+  iris: { position: 'absolute' },
+  mirada: { position: 'absolute', alignItems: 'center', justifyContent: 'center' },
   ring: { position: 'absolute' },
   innerGlow: { position: 'absolute' },
-  pupil: { alignItems: 'flex-start', justifyContent: 'flex-start', padding: 3 },
-  glint: { backgroundColor: '#FFFFFF', opacity: 0.9 },
+  glint: { position: 'absolute', backgroundColor: '#FFFFFF' },
   lid: { position: 'absolute', top: 0, backgroundColor: '#000' },
+  parpadoLinea: { position: 'absolute', borderColor: 'transparent', borderWidth: 0 },
   brow: { position: 'absolute' },
   beam: { position: 'absolute', borderRadius: 2 },
-  glyph: { marginHorizontal: 8, textAlign: 'center', includeFontPadding: false },
+  glyph: { marginHorizontal: -6, textAlign: 'center', includeFontPadding: false },
   mouthWrap: { alignItems: 'center', justifyContent: 'center' },
   mouthLayer: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
   mouthArc: { position: 'absolute' },

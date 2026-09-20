@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, StyleSheet, View, type AppStateStatus } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { describeImage } from '../lib/api';
+import { reportarEstado } from '../lib/reporte';
 import {
   MaquinaEscena,
   escenaApagada,
@@ -44,7 +45,23 @@ export const DORMIDO_PERIODO_MS = 12_000;
 const ESCENA_CADA_MS = 500;
 /** Respaldo por servidor: foto cada 12 s (30 s si la cara duerme). DeskScreen los usa para la frescura. */
 export const SERVIDOR_CADA_MS = 12_000;
+/** Menos base64 que esto no es una foto: es la cámara todavía sin imagen. */
+const MINIMO_FOTO = 4_000;
 export const SERVIDOR_DORMIDO_MS = 30_000;
+
+/** Se avisa una vez por arranque para no inundar los logs: la primera foto buena y la primera pobre. */
+let avisadaPobre = false;
+let avisadaBuena = false;
+function avisarFotoPobre(largo: number) {
+  if (avisadaPobre) return;
+  avisadaPobre = true;
+  reportarEstado(`cámara: foto inservible (${largo} car. base64), la descarto`);
+}
+function fotoBuena(largo: number) {
+  if (avisadaBuena) return;
+  avisadaBuena = true;
+  reportarEstado(`cámara: primera foto buena (${largo} car. base64)`);
+}
 
 export type FrameGrabber = () => Promise<string | null>;
 
@@ -104,11 +121,23 @@ function CamaraServidor({ activa, dormido, grabRef, onEtiquetas }: ServidorProps
   const cb = useRef(onEtiquetas);
   cb.current = onEtiquetas;
 
+  /**
+   * Una foto de verdad pesa decenas de miles de caracteres en base64. Si sale mucho más corta es que
+   * la cámara todavía no entrega imagen (superficie sin preparar, permiso recién dado, sensor ocupado):
+   * se descarta en vez de mandar basura al nodo de visión, que respondería con un error y ULTRON lo
+   * repetiría como si no viera.
+   */
   const grab = useCallback(async (quality = 0.25): Promise<string | null> => {
     if (!ref.current || !readyRef.current) return null;
     try {
-      const photo = await ref.current.takePictureAsync({ quality, base64: true, shutterSound: false, skipProcessing: true });
-      return photo?.base64 || null;
+      const photo = await ref.current.takePictureAsync({ quality, base64: true, shutterSound: false });
+      const b64 = photo?.base64 || null;
+      if (!b64 || b64.length < MINIMO_FOTO) {
+        if (b64) avisarFotoPobre(b64.length);
+        return null;
+      }
+      fotoBuena(b64.length);
+      return b64;
     } catch {
       return null;
     }
@@ -226,5 +255,11 @@ export function CamaraVision({ enabled, dormido = false, grabRef, onEscena, onGa
 }
 
 const styles = StyleSheet.create({
-  box: { position: 'absolute', width: 1, height: 1, opacity: 0.02, overflow: 'hidden' },
+  /**
+   * El preview NO puede ser de 1×1 px. Con una superficie así de pequeña, `takePictureAsync` en
+   * Android devuelve una imagen rota o de un píxel: el nodo de visión no ve nada y ULTRON acababa
+   * diciendo «la cámara me está mostrando un error técnico». Necesita una superficie real; queda
+   * casi invisible (2% de opacidad, 96×72 en una esquina) sobre el negro de la mesa.
+   */
+  box: { position: 'absolute', left: 0, bottom: 0, width: 96, height: 72, opacity: 0.02, overflow: 'hidden' },
 });

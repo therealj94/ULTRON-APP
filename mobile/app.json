@@ -2,13 +2,13 @@
   "expo": {
     "name": "ULTRON FP",
     "slug": "ultron-fp",
-    "version": "4.1.1",
+    "version": "4.1.2",
     "orientation": "landscape",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "android": {
       "package": "link.ordenglobal.ultronfp",
-      "versionCode": 42,
+      "versionCode": 43,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
