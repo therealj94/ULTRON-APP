@@ -6,6 +6,9 @@ import App from './App';
 import { fijarPerfilLocal } from '../src/perfil';
 import '../src/index.css';
 import 'maplibre-gl/dist/maplibre-gl.css';
+// Después de la hoja de MapLibre a propósito: la nuestra la sobrescribe, y el orden lo decide el
+// orden de estos imports. Es la misma lección que nos costó el mapa negro: quien carga último manda.
+import './mapa/mapa.css';
 
 // Ámbar de mineral desde el primer fotograma: la cara es de Electrum, no de Genesis.
 fijarPerfilLocal({

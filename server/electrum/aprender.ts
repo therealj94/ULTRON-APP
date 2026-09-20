@@ -116,6 +116,18 @@ export async function aprender(
     const guardado = await guardarCapa(capa, { subidoPor: opts.subidoPor, avisos });
     const traslapesNuevos = await recalcularTraslapes();
 
+    // Un archivo entero repetido merece una frase clara, no el resumen de siempre seguido de un
+    // «las salté». Quien vuelve a subir algo casi siempre es porque duda de si lo subió.
+    const nadaNuevo = !guardado.concesiones && !guardado.entidades && guardado.repetidas > 0;
+    if (nadaNuevo) {
+      return {
+        clase: 'catastro',
+        dicho: `Ese catastro ya estaba cargado: las ${guardado.repetidas} geometrías son las mismas que ya tengo, así que no metí nada y no dupliqué la capa.`,
+        avisos,
+        ui: { accion: 'capa', capa_id: null, concesiones: 0, repetidas: guardado.repetidas, traslapes: 0 },
+      };
+    }
+
     const partes = [resumenCapa(capa, avisos)];
     if (guardado.concesiones) partes.push(`Quedaron ${guardado.concesiones} en el catastro, ya buscables y medibles.`);
     if (guardado.repetidas) {

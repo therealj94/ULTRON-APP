@@ -152,8 +152,13 @@ export default function App() {
           <span className="sr-only">{enTrabajo ? 'Traer la cara al centro' : 'Ir al mapa'}</span>
         </button>
         {/* Encogida sobre el mapa, la cara necesita marco: si no, es un rectángulo negro pegado. */}
+        {/*
+          `relative` no es decorativo: el lienzo de la cara es `absolute inset-0` y sin esto se
+          posicionaba contra el div de FUERA, que no tiene el borde. La cara quedaba un píxel
+          arriba y a la izquierda de su propio marco.
+        */}
         <div
-          className="w-full h-full pointer-events-none overflow-hidden transition-all duration-500"
+          className="relative w-full h-full pointer-events-none overflow-hidden transition-all duration-500"
           style={
             enTrabajo
               ? { borderRadius: 18, border: '1px solid rgba(255,174,59,.28)', boxShadow: '0 8px 30px rgba(0,0,0,.55)' }

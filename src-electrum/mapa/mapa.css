@@ -1,0 +1,59 @@
+/*
+ * Los controles de MapLibre, vestidos para esta interfaz.
+ *
+ * Vienen en blanco por defecto, que sobre imagen satelital de noche es un parche luminoso en una
+ * esquina. La barra de escala además nacía abajo a la izquierda —debajo de la cara encogida— y
+ * asomaba por detrás como un recorte de papel. Se mudó a la derecha y se vistió de oscuro.
+ *
+ * La escala se queda: en un mapa de catastro, saber cuánto mide lo que estás viendo no es adorno.
+ */
+
+.maplibregl-ctrl-group {
+  background: rgba(10, 12, 14, 0.82) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  border-radius: 10px !important;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45) !important;
+  backdrop-filter: blur(8px);
+  overflow: hidden;
+}
+
+.maplibregl-ctrl-group button + button {
+  border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+}
+
+.maplibregl-ctrl-group button:hover {
+  background: rgba(255, 174, 59, 0.14) !important;
+}
+
+/* Los iconos son SVG negros: se invierten en vez de reemplazarlos uno a uno. */
+.maplibregl-ctrl-group button .maplibregl-ctrl-icon {
+  filter: invert(1) brightness(0.86);
+}
+
+.maplibregl-ctrl-scale {
+  background: rgba(10, 12, 14, 0.78) !important;
+  border: 1px solid rgba(255, 255, 255, 0.16) !important;
+  border-top: none !important;
+  color: #cfdae0 !important;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace !important;
+  font-size: 10px !important;
+  letter-spacing: 0.04em;
+  padding: 2px 6px !important;
+  border-radius: 0 0 6px 6px;
+}
+
+/* La atribución es obligatoria por licencia de las teselas: se atenúa, nunca se esconde. */
+.maplibregl-ctrl-attrib {
+  background: rgba(10, 12, 14, 0.7) !important;
+  border-radius: 8px;
+}
+
+.maplibregl-ctrl-attrib,
+.maplibregl-ctrl-attrib a {
+  color: #7e8f99 !important;
+  font-size: 10px !important;
+}
+
+.maplibregl-ctrl-attrib-button {
+  filter: invert(1) brightness(0.8);
+}

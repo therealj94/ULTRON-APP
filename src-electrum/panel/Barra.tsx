@@ -62,18 +62,19 @@ export function Barra({ escenario, motor, fondo, panel, hayGoogle, onEscenario, 
       <button
         type="button"
         onClick={() => onEscenario(enTrabajo ? 'cara' : 'trabajo')}
-        className="pointer-events-auto flex items-center gap-2 px-3 py-1.5 rounded-full border border-white/12 bg-black/55 backdrop-blur-md cursor-pointer"
+        className="pointer-events-auto flex shrink-0 items-center gap-2 whitespace-nowrap px-3 py-1.5 rounded-full border border-white/12 bg-black/55 backdrop-blur-md cursor-pointer"
         title={enTrabajo ? 'Volver a la cara' : 'Abrir el mapa'}
       >
         <span className="w-1.5 h-1.5 rounded-full" style={{ background: AMBAR }} />
         <span className="font-display font-bold tracking-[0.2em] text-[11px]" style={{ color: AMBAR }}>
-          DR ELECTRUM
+          <span className="hidden sm:inline">DR ELECTRUM</span>
+          <span className="sm:hidden">DR E</span>
         </span>
       </button>
 
       {/* A 400 px los tres grupos no caben: se arrastran en vez de cortarse. */}
       <div
-        className="flex items-center gap-2 transition-opacity duration-300 overflow-x-auto max-w-[calc(100vw-9rem)] md:max-w-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex items-center gap-2 transition-opacity duration-300 overflow-x-auto max-w-[calc(100vw-7rem)] md:max-w-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ opacity: enTrabajo ? 1 : 0, pointerEvents: enTrabajo ? 'auto' : 'none' }}
       >
         <Grupo>

@@ -44,6 +44,43 @@ const AMBAR = '#FFAE3B';
  */
 let sonando: HTMLAudioElement | null = null;
 
+/**
+ * Hablarle. El navegador graba en webm/opus, que es lo que da `MediaRecorder` en Chrome y Firefox;
+ * Safari da mp4. Se manda el mime tal cual en vez de suponerlo: el transcriptor lo necesita para
+ * saber qué está abriendo, y adivinarlo mal devuelve una transcripción vacía sin decir por qué.
+ */
+async function grabar(alTexto: (t: string) => void, alEstado: (s: 'grabando' | 'oyendo' | '') => void): Promise<() => void> {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  const trozos: BlobPart[] = [];
+  rec.ondataavailable = (e) => e.data.size && trozos.push(e.data);
+  rec.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    alEstado('oyendo');
+    try {
+      const blob = new Blob(trozos, { type: mime || 'audio/webm' });
+      const base64 = await new Promise<string>((res) => {
+        const fr = new FileReader();
+        fr.onload = () => res(String(fr.result));
+        fr.readAsDataURL(blob);
+      });
+      const r = await fetch('/api/electrum/oir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headersElectrum() },
+        body: JSON.stringify({ audio: base64, mime: blob.type }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (j.texto) alTexto(j.texto);
+    } finally {
+      alEstado('');
+    }
+  };
+  rec.start();
+  alEstado('grabando');
+  return () => rec.state !== 'inactive' && rec.stop();
+}
+
 async function decirEnVoz(texto: string, emocion: string | undefined, headers: Record<string, string>) {
   try {
     sonando?.pause();
@@ -103,6 +140,8 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
   // Arranca apagada: un navegador no deja sonar nada hasta que alguien toca algo, y una demo que
   // empieza hablando sola en una sala de reunión es peor que una que espera a que se lo pidan.
   const [vozActiva, setVozActiva] = useState(false);
+  const [oyendo, setOyendo] = useState<'grabando' | 'oyendo' | ''>('');
+  const pararGrabacion = useRef<(() => void) | null>(null);
   const hilo = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -253,6 +292,8 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
               </div>
             ))}
 
+            {oyendo === 'grabando' && <div className="font-mono text-[11px] text-[#D9705A]">te escucho… tocá «Parar» cuando termines</div>}
+            {oyendo === 'oyendo' && <div className="font-mono text-[11px] text-[#6C7F89]">pasando a texto…</div>}
             {pensando && <div className="font-mono text-[11px] text-[#6C7F89]">pensando…</div>}
           </div>
 
@@ -270,6 +311,32 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
               placeholder="Preguntale a Dr Electrum…"
               className="flex-1 min-w-0 bg-white/[0.06] border border-white/12 rounded-lg px-3 py-2 text-sm text-[#E7EEF2] placeholder:text-[#5E7078] focus:outline-none focus:border-[#FFAE3B]/60"
             />
+            <button
+              type="button"
+              onClick={async () => {
+                if (pararGrabacion.current) {
+                  pararGrabacion.current();
+                  pararGrabacion.current = null;
+                  return;
+                }
+                try {
+                  pararGrabacion.current = await grabar((t) => void preguntar(t), setOyendo);
+                } catch {
+                  setOyendo('');
+                  setTurnos((t) => [...t, { de: 'electrum', texto: 'No me dejaron usar el micrófono. Revisá el permiso del navegador.' }]);
+                }
+              }}
+              disabled={pensando || oyendo === 'oyendo'}
+              title={oyendo === 'grabando' ? 'Parar y mandarme lo que dijiste' : 'Hablarme'}
+              className="shrink-0 rounded-lg border px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+              style={
+                oyendo === 'grabando'
+                  ? { borderColor: '#D9705A', color: '#D9705A' }
+                  : { borderColor: 'rgba(255,255,255,.12)', color: '#9FB0B8' }
+              }
+            >
+              {oyendo === 'grabando' ? 'Parar' : oyendo === 'oyendo' ? '…' : 'Decir'}
+            </button>
             <button
               type="button"
               onClick={() => setVozActiva((v) => !v)}
@@ -310,17 +377,120 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
   );
 }
 
+/**
+ * El cargador: arrastrar aquí, o elegir.
+ *
+ * Se sube de uno en uno y en serie, no todos a la vez. Un shapefile de un departamento tarda, y
+ * lanzar seis en paralelo contra el mismo PostGIS hace que el recálculo de traslapes se pise
+ * consigo mismo. En serie tarda lo mismo y se ve qué está pasando.
+ */
+function Cargador({ alCargar }: { alCargar: () => void }) {
+  const [encima, setEncima] = useState(false);
+  const [cola, setCola] = useState<Array<{ nombre: string; estado: 'espera' | 'subiendo' | 'ok' | 'falló'; dicho?: string }>>([]);
+  const entrada = useRef<HTMLInputElement>(null);
+  const ocupado = useRef(false);
+
+  const subir = useCallback(
+    async (archivos: File[]) => {
+      if (!archivos.length) return;
+      setCola((c) => [...c, ...archivos.map((f) => ({ nombre: f.name, estado: 'espera' as const }))]);
+      if (ocupado.current) return;
+      ocupado.current = true;
+      try {
+        for (const f of archivos) {
+          const marcar = (estado: 'subiendo' | 'ok' | 'falló', dicho?: string) =>
+            setCola((c) => c.map((x) => (x.nombre === f.name && x.estado !== 'ok' && x.estado !== 'falló' ? { ...x, estado, dicho } : x)));
+          marcar('subiendo');
+          try {
+            const r = await fetch(`/api/electrum/subir?nombre=${encodeURIComponent(f.name)}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/octet-stream', ...headersElectrum() },
+              body: f,
+            });
+            const j = await r.json().catch(() => ({}));
+            if (!r.ok) marcar('falló', j.error || `Error ${r.status}`);
+            else {
+              marcar('ok', j.dicho);
+              alCargar();
+            }
+          } catch {
+            marcar('falló', 'No alcancé el servidor.');
+          }
+        }
+      } finally {
+        ocupado.current = false;
+      }
+    },
+    [alCargar]
+  );
+
+  return (
+    <div className="px-4 pb-3">
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          setEncima(true);
+        }}
+        onDragLeave={() => setEncima(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setEncima(false);
+          void subir([...e.dataTransfer.files]);
+        }}
+        onClick={() => entrada.current?.click()}
+        className="rounded-xl border border-dashed px-3 py-4 text-center cursor-pointer transition-colors"
+        style={{ borderColor: encima ? AMBAR : 'rgba(255,255,255,.16)', background: encima ? 'rgba(255,174,59,.07)' : 'transparent' }}
+      >
+        <div className="text-[13px] text-[#B9C7CE]">Arrastrá acá el catastro o un expediente</div>
+        <div className="mt-0.5 font-mono text-[10px] text-[#6C7F89]">.zip de shapefile · KML · KMZ · GeoJSON · CSV · PDF</div>
+        <input
+          ref={entrada}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            void subir([...(e.target.files || [])]);
+            e.target.value = '';
+          }}
+        />
+      </div>
+
+      {cola.length > 0 && (
+        <ul className="mt-2 space-y-1.5">
+          {cola.map((x, i) => (
+            <li key={`${x.nombre}-${i}`} className="text-[12px] leading-snug">
+              <div className="flex items-center gap-1.5">
+                <span
+                  className="font-mono text-[10px]"
+                  style={{ color: x.estado === 'ok' ? AMBAR : x.estado === 'falló' ? '#D9705A' : '#6C7F89' }}
+                >
+                  {x.estado === 'ok' ? '·' : x.estado === 'falló' ? '×' : '…'}
+                </span>
+                <span className="truncate text-[#DDE7EC]">{x.nombre}</span>
+              </div>
+              {x.dicho && <div className="pl-4 text-[11px] text-[#8FA3B0]">{x.dicho}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 /** Lo que se ha subido y quedó indexado. Sin nada cargado, dice cómo cargarlo. */
 function Expedientes() {
   const [datos, setDatos] = useState<{ capas: any[]; documentos: any[] } | null>(null);
   const [fallo, setFallo] = useState<'' | 'puerta' | 'base'>('');
+  const [vuelta, setVuelta] = useState(0);
 
   useEffect(() => {
     fetch('/api/electrum/expedientes', { headers: headersElectrum() })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setDatos)
       .catch((e) => setFallo(e === 401 ? 'puerta' : 'base'));
-  }, []);
+  }, [vuelta]);
+
+  const recargar = useCallback(() => setVuelta((v) => v + 1), []);
 
   if (fallo === 'puerta') return <div className="p-4 text-sm text-[#8FA3B0] leading-relaxed">{SIN_PUERTA}</div>;
   if (fallo) {
@@ -335,18 +505,18 @@ function Expedientes() {
   const vacio = !datos.capas.length && !datos.documentos.length;
   if (vacio) {
     return (
-      <div className="p-4 space-y-2 text-sm text-[#8FA3B0] leading-relaxed">
-        <p>Todavía no hay nada cargado.</p>
-        <p>
-          Mandame shapefiles del catastro (<span className="font-mono text-xs">.zip</span>), KML, GeoJSON o CSV, y los informes en PDF. Lo
-          geográfico se vuelve mapa y los documentos quedan citables con su página.
-        </p>
+      <div className="flex-1 overflow-y-auto">
+        <div className="p-4 pb-2 space-y-2 text-sm text-[#8FA3B0] leading-relaxed">
+          <p>Todavía no hay nada cargado.</p>
+          <p>Lo geográfico se vuelve mapa, medido sobre el elipsoide. Los documentos quedan citables con su página.</p>
+        </div>
+        <Cargador alCargar={recargar} />
       </div>
     );
   }
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 space-y-5">
+    <div className="flex-1 overflow-y-auto p-4 pt-4 space-y-5">
       {datos.capas.length > 0 && (
         <section>
           <h3 className="font-mono text-[10px] tracking-[0.18em] uppercase mb-2" style={{ color: AMBAR }}>
@@ -381,6 +551,7 @@ function Expedientes() {
           </ul>
         </section>
       )}
+      <Cargador alCargar={recargar} />
     </div>
   );
 }

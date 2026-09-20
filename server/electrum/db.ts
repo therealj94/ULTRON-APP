@@ -182,8 +182,22 @@ export async function guardarCapa(
       }
     }
 
+    /*
+     * Una capa que no aportó nada no es una capa.
+     *
+     * La deduplicación por huella impedía que se repitieran las CONCESIONES, pero la fila de `capa`
+     * se creaba igual. Subir el mismo catastro tres veces dejaba tres «catastro · 2 entidades» en
+     * la lista, todas mintiendo: las dos últimas no metieron ni una geometría. Quien lo mira cuenta
+     * seis concesiones donde hay dos.
+     *
+     * Se borra solo en ese caso exacto —capa de concesiones, todo repetido, nada nuevo—, para que
+     * una capa legítimamente vacía o una de entidades geográficas siga registrándose.
+     */
+    const noAporto = comoConcesiones && nConc === 0 && nEnt === 0 && nRep > 0;
+    if (noAporto) await cliente.query('DELETE FROM capa WHERE id = $1', [capaId]);
+
     await cliente.query('COMMIT');
-    return { capaId, concesiones: nConc, entidades: nEnt, repetidas: nRep };
+    return { capaId: noAporto ? 0 : capaId, concesiones: nConc, entidades: nEnt, repetidas: nRep };
   } catch (e) {
     await cliente.query('ROLLBACK');
     throw e;

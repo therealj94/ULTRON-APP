@@ -856,19 +856,29 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
      */
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const caja = canvas.parentElement;
-      const w = Math.max(1, Math.round(caja?.clientWidth || window.innerWidth));
-      const h = Math.max(1, Math.round(caja?.clientHeight || window.innerHeight));
+      /*
+       * Se mide el LIENZO, no su caja.
+       *
+       * Antes se medía el padre y además se le escribía el tamaño en `style`, pisando el `w-full
+       * h-full` de la clase. Con la cara encogida sobre el mapa eso dejaba un lienzo de 130 px
+       * colocado en la esquina de una caja de 132: la cara salía desplazada un píxel arriba y a la
+       * izquierda del marco ámbar, con un filo negro fuera del borde redondeado. A pantalla
+       * completa no se veía; en 132 px, sí.
+       *
+       * Midiendo el propio lienzo, el CSS decide la forma y esto solo ajusta la resolución del
+       * búfer. Una sola fuente de verdad en vez de dos peleándose.
+       */
+      const r = canvas.getBoundingClientRect();
+      const w = Math.max(1, Math.round(r.width || canvas.parentElement?.clientWidth || window.innerWidth));
+      const h = Math.max(1, Math.round(r.height || canvas.parentElement?.clientHeight || window.innerHeight));
       if (canvas.width === Math.round(w * dpr) && canvas.height === Math.round(h * dpr)) return;
       canvas.width = Math.round(w * dpr);
       canvas.height = Math.round(h * dpr);
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
     };
     window.addEventListener('resize', resize);
     // La caja puede cambiar sin que cambie la ventana (la cara que cede el paso hace exactamente eso).
     const observador = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(resize) : null;
-    if (observador && canvas.parentElement) observador.observe(canvas.parentElement);
+    if (observador) observador.observe(canvas);
     resize();
 
     /** Sacudida de risa compartida por la cara LAUGH y la expresión 'risa'. */

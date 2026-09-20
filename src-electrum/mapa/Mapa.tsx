@@ -63,7 +63,9 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       canvasContextAttributes: { preserveDrawingBuffer: true },
     });
     m.addControl(new maplibregl.NavigationControl({ visualizePitch: false }), 'top-right');
-    m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-left');
+    // A la derecha, no a la izquierda: abajo a la izquierda vive la cara cuando cede el paso, y la
+    // escala le asomaba por detrás como un recorte de papel blanco.
+    m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
     m.on('load', () => {
       // Las fuentes nacen vacías: el contenido llega cuando una herramienta lo manda.
       m.addSource('concesiones', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });

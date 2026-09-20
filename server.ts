@@ -29,6 +29,7 @@ import { responderConcesion } from './lib/minas/concesiones';
 import { spotMetal } from './lib/mercado';
 import { turnoElectrum } from './server/electrum/turno';
 import { guardarInforme, informeCartera, informeConcesion, tomarInforme } from './server/electrum/informe';
+import { aprender as aprenderElectrum } from './server/electrum/aprender';
 import {
   electrumBotListo,
   electrumWebhookSecretOk,
@@ -37,6 +38,7 @@ import {
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
 import { identidadDe, exigirPlataforma } from './server/seguridad';
+import { puedeEscribir } from './lib/acceso';
 import { nivelDe } from './lib/acceso';
 import { consulta as consultaElectrum, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
@@ -234,6 +236,71 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
     padron: genteDeElectrum(),
     honesto: true,
   });
+});
+
+/**
+ * SUBIRLE ALGO AL CEREBRO desde la pantalla.
+ *
+ * Este hueco era el más grande que le quedaba a Dr Electrum: hasta ahora solo se le podía cargar el
+ * catastro por Telegram o por línea de comandos. O sea que la plataforma que existe para enseñar un
+ * catastro no tenía forma de recibir uno por su propia pantalla.
+ *
+ * El archivo llega como cuerpo crudo, no como JSON con base64: un shapefile comprimido de un
+ * departamento entero pasa de los veinte megas, y en base64 crece un tercio más. Tampoco se usa
+ * multipart —ni la dependencia que haría falta— porque acá sube UN archivo, no un formulario.
+ *
+ * Exige nivel de ESCRITURA. Es lo que separa mirar de alimentar: quien consulta puede ver todo el
+ * catastro y no puede cambiarlo.
+ */
+app.post(
+  '/api/electrum/subir',
+  exigirPlataforma('electrum'),
+  limitar(20),
+  express.raw({ type: () => true, limit: '64mb' }),
+  async (req, res) => {
+    const id = identidadDe(req);
+    if (!puedeEscribir(id, 'electrum')) {
+      return res.status(403).json({
+        error: 'Tu acceso es de consulta: podés mirarlo todo, pero no cargar al cerebro. Pedile a José nivel de trabajo.',
+        code: 'nivel_insuficiente',
+        honesto: true,
+      });
+    }
+    const nombre = String(req.query.nombre || req.headers['x-archivo'] || '').trim().slice(0, 200);
+    if (!nombre) return res.status(400).json({ error: 'Falta el nombre del archivo.', honesto: true });
+    const datos = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (datos.length < 80) return res.status(400).json({ error: 'El archivo llegó vacío.', honesto: true });
+
+    try {
+      const r = await aprenderElectrum(nombre, datos, { subidoPor: id?.persona.nombre });
+      return res.json({
+        clase: r.clase,
+        dicho: r.dicho,
+        avisos: r.avisos,
+        capaId: (r as any).capaId ?? null,
+        honesto: true,
+      });
+    } catch (e: any) {
+      console.error('[electrum] subir falló:', String(e?.message || e).slice(0, 200));
+      return res.status(500).json({ error: `Se me cayó leyendo «${nombre}». Volvé a mandarlo.`, honesto: true });
+    }
+  }
+);
+
+/**
+ * Oírle. Ruta propia por lo mismo que la voz: `/api/stt` está en la lista abierta de la APK, y un
+ * transcriptor abierto es otra factura con la puerta quitada.
+ */
+app.post('/api/electrum/oir', exigirPlataforma('electrum'), limitar(40), async (req, res) => {
+  const audio = bufferDeCualquier(req.body?.audio);
+  if (!audio || audio.length < 400) return res.status(400).json({ error: 'No me llegó audio.', honesto: true });
+  try {
+    const oido = await transcribirAudio({ audio, mime: String(req.body?.mime || 'audio/webm'), language: 'es' });
+    if (!oido.texto) return res.status(200).json({ texto: '', detalle: oido.detalle, via: oido.via, honesto: true });
+    return res.json({ texto: oido.texto, via: oido.via, honesto: true });
+  } catch (e: any) {
+    return res.status(502).json({ error: String(e?.message || e).slice(0, 160), honesto: true });
+  }
 });
 
 /**
