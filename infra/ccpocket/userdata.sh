@@ -59,7 +59,7 @@ Wants=network-online.target
 Type=simple
 User=ec2-user
 Group=ec2-user
-WorkingDirectory=/home/ec2-user/ultron/ULTRON-APP
+WorkingDirectory=/home/ec2-user/ultron
 Environment=HOME=/home/ec2-user
 Environment=CLAUDE_CODE_USE_BEDROCK=1
 Environment=AWS_REGION=us-east-1
