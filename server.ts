@@ -569,7 +569,11 @@ app.get('/api/ultron/salud', async (_req, res) => {
 });
 
 app.post('/api/ultron/entrar', limitar(12), async (req, res) => {
-  const claveEntrada = req.body?.clave;
+  // `clave` o `password`: la web manda lo primero y la app de Dr Electrum lo segundo. Leer solo
+  // `clave` hacía que la pantalla de entrada de la APK contestara siempre «Correo y clave
+  // requeridos» con las credenciales correctas — nunca llegó a funcionar. Se acepta lo que manden
+  // los dos para que la APK que ya está publicada quede arreglada sin recompilarla.
+  const claveEntrada = req.body?.clave || req.body?.password;
   const correo = normalizarCorreo(req.body?.correo);
   if (!correo || !claveEntrada) {
     return res.status(400).json({ error: 'Correo y clave requeridos.' });

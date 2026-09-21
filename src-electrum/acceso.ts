@@ -54,3 +54,38 @@ export function headersElectrum(): Record<string, string> {
 /** Lo que se le dice a alguien al que el servidor no le abre. Sin jerga y sin culparlo. */
 export const SIN_PUERTA =
   'Dr Electrum FP es privado y esta sesión no tiene acceso. Si sos de la junta, entrá primero en ULTRON con tu correo; si venís a ver la demostración, pedile a José el enlace con llave.';
+
+/** Guarda el token de sesión que devuelve ULTRON al entrar. Lo comparten las dos plataformas. */
+export function guardarSesion(token: string) {
+  try {
+    localStorage.setItem('ultron_sesion_token', token);
+  } catch {
+    try {
+      sessionStorage.setItem('ultron_sesion_token', token);
+    } catch {
+      /* modo privado: la sesión durará lo que dure la pestaña */
+    }
+  }
+}
+
+/** ¿Llevamos encima algo con lo que llamar a la puerta? No dice si vale: eso lo dice el servidor. */
+export function hayCredencial(): boolean {
+  return Boolean(guardado('ultron_sesion_token') || guardado(LLAVE));
+}
+
+/**
+ * Pregunta al servidor si esta credencial abre Electrum.
+ *
+ * Se pregunta de verdad en vez de mirar solo si hay un token guardado: un token caducado, o el de
+ * alguien que entró a ULTRON pero no está en el padrón de Electrum, se ve igual desde el navegador
+ * y solo el servidor sabe la diferencia. Antes se descubría al primer mensaje, con la pantalla ya
+ * montada y la conversación contestando que no hay acceso.
+ */
+export async function puertaAbierta(): Promise<boolean> {
+  try {
+    const r = await fetch('/api/electrum/salud', { headers: headersElectrum() });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}

@@ -22,11 +22,34 @@ import type { Emocion } from '../lib/emocion';
 import { Mapa, type Fondo, type Motor, type OrdenMapa } from './mapa/Mapa';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
+import { Entrar } from './Entrar';
+import { hayCredencial, puertaAbierta } from './acceso';
 
 /** Dónde está la atención: en quien habla, o en lo que hay que mirar. */
 export type Escenario = 'cara' | 'trabajo';
 
 export default function App() {
+  /**
+   * La puerta se comprueba ANTES de montar la estación.
+   *
+   * Antes no se comprobaba: se montaba todo y el primer mensaje contestaba que no había acceso, con
+   * el mapa y los ocho especialistas ya delante. Eso es peor que una puerta cerrada, porque parece
+   * que entraste. Y se pregunta al servidor en vez de mirar si hay un token guardado: un token
+   * caducado, o el de alguien que entró a ULTRON pero no está en el padrón de Electrum, se ve igual
+   * desde aquí.
+   */
+  const [puerta, setPuerta] = useState<'probando' | 'cerrada' | 'abierta'>(() =>
+    hayCredencial() ? 'probando' : 'cerrada'
+  );
+  useEffect(() => {
+    if (puerta !== 'probando') return;
+    let vivo = true;
+    puertaAbierta().then((ok) => vivo && setPuerta(ok ? 'abierta' : 'cerrada'));
+    return () => {
+      vivo = false;
+    };
+  }, [puerta]);
+
   const [escenario, setEscenario] = useState<Escenario>('cara');
   const [face, setFace] = useState<FaceState>('IDLE');
   const [emocion, setEmocion] = useState<Emocion>('neutral');
@@ -89,6 +112,15 @@ export default function App() {
   );
 
   const enTrabajo = escenario === 'trabajo';
+
+  if (puerta === 'probando') {
+    return (
+      <div className="fixed inset-0 bg-black flex items-center justify-center">
+        <div className="font-mono text-[11px] tracking-[0.22em] uppercase text-[#FFAE3B]/50">comprobando acceso…</div>
+      </div>
+    );
+  }
+  if (puerta === 'cerrada') return <Entrar onAbierta={() => setPuerta('abierta')} />;
 
   return (
     <div className="fixed inset-0 bg-black text-[#E7EEF2] overflow-hidden select-none">

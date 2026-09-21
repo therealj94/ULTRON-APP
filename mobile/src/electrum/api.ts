@@ -128,7 +128,7 @@ export async function entrar(correo: string, clave: string): Promise<string> {
   const r = await fetch(`${API_BASE}/api/ultron/entrar`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ correo, password: clave }),
+    body: JSON.stringify({ correo, clave }),
     signal: AbortSignal.timeout(20_000),
   });
   const j = (await r.json().catch(() => ({}))) as any;
