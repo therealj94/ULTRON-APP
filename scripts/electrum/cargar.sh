@@ -3,6 +3,7 @@
 # ELECTRUM — mete una carpeta de expedientes en el cerebro, de un solo comando.
 #
 #   ./cargar.sh /ruta/a/los/expedientes
+#   ./cargar.sh s3://electrum-expedientes-548380372606/entrada/
 #
 # Los documentos NO salen de tu máquina. El cerebro no guarda el PDF: le saca el texto, lo trocea
 # con su página y tira el binario. Por el cable va texto extraído, no expedientes, y por eso una
@@ -32,7 +33,30 @@ rojo()  { printf '\033[31m%s\033[0m\n' "$*"; }
 verde() { printf '\033[32m%s\033[0m\n' "$*"; }
 paso()  { printf '\n\033[36m== %s\033[0m\n' "$*"; }
 
-[ -n "$CARPETA" ] || { rojo "Falta la carpeta."; echo "  $0 /ruta/a/los/expedientes"; exit 1; }
+[ -n "$CARPETA" ] || {
+  rojo "Falta la carpeta."
+  echo "  $0 /ruta/a/los/expedientes"
+  echo "  $0 s3://electrum-expedientes-548380372606/entrada/"
+  exit 1
+}
+
+# Un prefijo de S3 vale igual que una carpeta: se baja primero a un directorio de trabajo y a
+# partir de ahí es el mismo camino. Se usa `sync` para que relanzarlo continúe en vez de volver a
+# bajarlo todo, que con gigabytes es la diferencia entre minutos y una tarde.
+BAJADO=""
+case "$CARPETA" in
+  s3://*)
+    BAJADO="${DESTINO:-$HOME/electrum-expedientes}"
+    paso "Bajando de S3 a ${BAJADO}"
+    mkdir -p "$BAJADO"
+    aws s3 sync "$CARPETA" "$BAJADO" --only-show-errors
+    CARPETA="$BAJADO"
+    N=$(find "$CARPETA" -type f | wc -l)
+    [ "$N" -gt 0 ] || { rojo "No bajó ningún archivo. ¿Está vacío el prefijo?"; exit 1; }
+    echo "  ${N} archivos, $(du -sh "$CARPETA" | cut -f1)"
+    ;;
+esac
+
 [ -d "$CARPETA" ] || { rojo "No existe la carpeta: $CARPETA"; exit 1; }
 command -v aws >/dev/null || { rojo "Falta la CLI de AWS."; exit 1; }
 command -v session-manager-plugin >/dev/null || {

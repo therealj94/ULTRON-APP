@@ -322,7 +322,13 @@ De un solo comando, desde la máquina donde están los papeles:
 
 ```bash
 ./scripts/electrum/cargar.sh /ruta/a/los/expedientes
+./scripts/electrum/cargar.sh s3://electrum-expedientes-548380372606/entrada/
 ```
+
+Acepta una carpeta o un prefijo de S3. Con S3 lo baja antes con `sync`, así que relanzarlo continúa
+en vez de volver a bajarlo todo. Cómo se suben ahí los expedientes está en
+[SUBIR-EXPEDIENTES.md](SUBIR-EXPEDIENTES.md), escrito para poder dárselo a alguien que no siguió
+nada de esto.
 
 Abre el túnel a la base del nodo por SSM —sin abrir ningún puerto a internet—, ensaya sin escribir
 nada, te enseña qué entraría de verdad, pregunta, y carga. El túnel se cierra pase lo que pase,
