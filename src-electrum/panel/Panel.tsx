@@ -45,6 +45,30 @@ const AMBAR = '#FFAE3B';
  */
 let sonando: HTMLAudioElement | null = null;
 
+/*
+ * Cada petición de voz nace con un número. Silenciar sube el número y con eso invalida todo lo que
+ * venía en camino.
+ *
+ * Silenciar solo cambiaba un booleano: no paraba lo que ya sonaba, y una petición lanzada un
+ * segundo antes llegaba después y se reproducía igual. Quien silencia en una reunión lo hace
+ * porque quiere silencio AHORA, no a partir del siguiente turno.
+ */
+let generacionVoz = 0;
+
+/** Corta lo que suena e invalida lo que viene. Se puede llamar siempre, incluso sin nada sonando. */
+export function callar() {
+  generacionVoz++;
+  if (sonando) {
+    try {
+      sonando.pause();
+      sonando.currentTime = 0;
+    } catch {
+      /* el navegador ya lo había soltado */
+    }
+    sonando = null;
+  }
+}
+
 /**
  * Hablarle. El navegador graba en webm/opus, que es lo que da `MediaRecorder` en Chrome y Firefox;
  * Safari da mp4. Se manda el mime tal cual en vez de suponerlo: el transcriptor lo necesita para
@@ -83,6 +107,7 @@ async function grabar(alTexto: (t: string) => void, alEstado: (s: 'grabando' | '
 }
 
 async function decirEnVoz(texto: string, emocion: string | undefined, headers: Record<string, string>) {
+  const mia = ++generacionVoz;
   try {
     sonando?.pause();
     const r = await fetch('/api/electrum/voz', {
@@ -91,10 +116,17 @@ async function decirEnVoz(texto: string, emocion: string | undefined, headers: R
       body: JSON.stringify({ texto: texto.slice(0, 1200), emocion }),
     });
     if (!r.ok) return;
-    const url = URL.createObjectURL(await r.blob());
+    const blob = await r.blob();
+    // Si silenciaron mientras esto venía, no suena: ni se crea el reproductor.
+    if (mia !== generacionVoz) return;
+    const url = URL.createObjectURL(blob);
     const a = new Audio(url);
     sonando = a;
     a.onended = () => URL.revokeObjectURL(url);
+    if (mia !== generacionVoz) {
+      URL.revokeObjectURL(url);
+      return;
+    }
     await a.play().catch(() => URL.revokeObjectURL(url));
   } catch {
     /* sin voz se sigue leyendo; no es motivo para romper el turno */
@@ -141,6 +173,16 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
   // Arranca apagada: un navegador no deja sonar nada hasta que alguien toca algo, y una demo que
   // empieza hablando sola en una sala de reunión es peor que una que espera a que se lo pidan.
   const [vozActiva, setVozActiva] = useState(false);
+  /*
+   * `preguntar` usaba `vozActiva` sin declararlo en sus dependencias, así que podía quedarse con la
+   * preferencia de hace dos turnos: silenciabas y la respuesta siguiente hablaba igual. Una ref
+   * siempre tiene el valor de ahora, y así no hay que rehacer `preguntar` en cada cambio.
+   */
+  const vozActivaRef = useRef(vozActiva);
+  vozActivaRef.current = vozActiva;
+
+  // Al desmontar, silencio: un panel que se va no puede dejar una voz sonando detrás.
+  useEffect(() => () => callar(), []);
   const [oyendo, setOyendo] = useState<'grabando' | 'oyendo' | ''>('');
   const pararGrabacion = useRef<(() => void) | null>(null);
   /** Lo que está pasando AHORA. Se vacía al terminar, cuando pasa a ser parte del turno. */
@@ -208,7 +250,7 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
                 } else if (evento === 'fin') {
                   onFace('SPEAKING');
                   if (d.emocion) onEmocion(d.emocion);
-                  if (vozActiva && d.texto) void decirEnVoz(d.texto, d.emocion, headersElectrum());
+                  if (vozActivaRef.current && d.texto) void decirEnVoz(d.texto, d.emocion, headersElectrum());
                   setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza }]);
                   terminado = true;
                 }
@@ -427,7 +469,13 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
             </button>
             <button
               type="button"
-              onClick={() => setVozActiva((v) => !v)}
+              onClick={() =>
+                setVozActiva((v) => {
+                  // Al silenciar se corta lo que suena y se invalida lo que viene; no basta el booleano.
+                  if (v) callar();
+                  return !v;
+                })
+              }
               title={vozActiva ? 'Silenciar a Dr Electrum' : 'Que Dr Electrum hable'}
               aria-pressed={vozActiva}
               className="shrink-0 rounded-lg border px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer"
@@ -474,42 +522,69 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
  */
 function Cargador({ alCargar }: { alCargar: () => void }) {
   const [encima, setEncima] = useState(false);
-  const [cola, setCola] = useState<Array<{ nombre: string; estado: 'espera' | 'subiendo' | 'ok' | 'falló'; dicho?: string }>>([]);
+  const [cola, setCola] = useState<Array<{ id: number; nombre: string; estado: 'espera' | 'subiendo' | 'ok' | 'falló'; dicho?: string }>>([]);
   const entrada = useRef<HTMLInputElement>(null);
+
+  /*
+   * Una cola de verdad, con un solo consumidor.
+   *
+   * Antes el segundo lote se añadía a la lista visible y después la función se iba porque ya había
+   * una carga en marcha; el bucle activo solo recorría SU propio argumento, así que esos archivos
+   * se quedaban en «espera» para siempre. Quien suelta una carpeta, ve que tarda y suelta otra
+   * —que es lo normal— perdía la segunda sin un solo aviso.
+   *
+   * Y el estado se casaba por NOMBRE: dos archivos distintos llamados igual —«Area Principal.kml»
+   * en dos carpetas de proyecto, que es justo lo que trae un catastro— se pisaban el resultado.
+   * Ahora cada trabajo lleva su identificador.
+   */
+  const pendientes = useRef<Array<{ id: number; archivo: File }>>([]);
   const ocupado = useRef(false);
+  const siguienteId = useRef(1);
+
+  const marcar = useCallback((id: number, estado: 'subiendo' | 'ok' | 'falló', dicho?: string) => {
+    setCola((c) => c.map((x) => (x.id === id ? { ...x, estado, dicho } : x)));
+  }, []);
+
+  const consumir = useCallback(async () => {
+    if (ocupado.current) return;
+    ocupado.current = true;
+    try {
+      // Mientras queden: lo que entre a mitad de la carga se recoge en la misma vuelta.
+      for (;;) {
+        const trabajo = pendientes.current.shift();
+        if (!trabajo) break;
+        const { id, archivo } = trabajo;
+        marcar(id, 'subiendo');
+        try {
+          const r = await fetch(`/api/electrum/subir?nombre=${encodeURIComponent(archivo.name)}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream', ...headersElectrum() },
+            body: archivo,
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok) marcar(id, 'falló', j.error || `Error ${r.status}`);
+          else {
+            marcar(id, 'ok', j.dicho);
+            alCargar();
+          }
+        } catch {
+          marcar(id, 'falló', 'No alcancé el servidor.');
+        }
+      }
+    } finally {
+      ocupado.current = false;
+    }
+  }, [alCargar, marcar]);
 
   const subir = useCallback(
     async (archivos: File[]) => {
       if (!archivos.length) return;
-      setCola((c) => [...c, ...archivos.map((f) => ({ nombre: f.name, estado: 'espera' as const }))]);
-      if (ocupado.current) return;
-      ocupado.current = true;
-      try {
-        for (const f of archivos) {
-          const marcar = (estado: 'subiendo' | 'ok' | 'falló', dicho?: string) =>
-            setCola((c) => c.map((x) => (x.nombre === f.name && x.estado !== 'ok' && x.estado !== 'falló' ? { ...x, estado, dicho } : x)));
-          marcar('subiendo');
-          try {
-            const r = await fetch(`/api/electrum/subir?nombre=${encodeURIComponent(f.name)}`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/octet-stream', ...headersElectrum() },
-              body: f,
-            });
-            const j = await r.json().catch(() => ({}));
-            if (!r.ok) marcar('falló', j.error || `Error ${r.status}`);
-            else {
-              marcar('ok', j.dicho);
-              alCargar();
-            }
-          } catch {
-            marcar('falló', 'No alcancé el servidor.');
-          }
-        }
-      } finally {
-        ocupado.current = false;
-      }
+      const trabajos = archivos.map((archivo) => ({ id: siguienteId.current++, archivo }));
+      pendientes.current.push(...trabajos);
+      setCola((c) => [...c, ...trabajos.map((t) => ({ id: t.id, nombre: t.archivo.name, estado: 'espera' as const }))]);
+      await consumir();
     },
-    [alCargar]
+    [consumir]
   );
 
   return (
@@ -546,7 +621,7 @@ function Cargador({ alCargar }: { alCargar: () => void }) {
       {cola.length > 0 && (
         <ul className="mt-2 space-y-1.5">
           {cola.map((x, i) => (
-            <li key={`${x.nombre}-${i}`} className="text-[12px] leading-snug">
+            <li key={x.id} className="text-[12px] leading-snug">
               <div className="flex items-center gap-1.5">
                 <span
                   className="font-mono text-[10px]"

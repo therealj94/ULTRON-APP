@@ -12,6 +12,16 @@
  * esfera autálica de Snyder por el otro—; si coinciden hasta el centésimo de hectárea, las dos están
  * bien. Si un día alguien rompe una, la otra lo delata.
  */
+/*
+ * AVISO: estas pruebas VACÍAN la base a la que apuntes.
+ *
+ * Cargan su propio catastro de dos concesiones y truncan lo que haya. Apuntarlas a una base con
+ * datos de verdad los borra sin preguntar. Cuesta una tarde descubrirlo por el camino torcido:
+ * levantar la web contra esa base, ver el mapa con dos polígonos donde había mil, y dedicarse a
+ * buscar un fallo de dibujo que no existía —el mapa pintaba correctamente lo poco que le quedaba—.
+ *
+ * Para trabajar con datos reales y probar a la vez, usa DOS bases distintas.
+ */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
