@@ -23,6 +23,7 @@ import { identificar, nivelDe, padron, type Identificacion, type Nivel } from '.
 import { extraerPdf } from '../../lib/leer-pdf';
 import { aprender } from './aprender';
 import { turnoElectrum } from './turno';
+import { verImagen } from '../../lib/vision';
 import { claveHilo, fusionarHiloElectrum, hiloDe, olvidarHilo, recordarHilo, type TurnoHilo } from './hilo';
 import { tomarInforme } from './informe';
 
@@ -107,6 +108,13 @@ export function ayudaElectrum(nivel: Nivel): string {
   lineas.push('Esto es una demostración. No sustituye a una Persona Calificada ni a un informe firmado.');
   return lineas.join('\n');
 }
+
+/** Lo mismo que se le pide al ojo en `aprender`, para el camino de quien solo consulta. */
+const OJO_MINERO_TG = [
+  'Es la foto de un documento minero de Honduras.',
+  'Transcribí lo que se lee —encabezado, números de resolución y expediente, fechas, titulares, coordenadas, hectáreas y el texto de cada sello— en vez de resumirlo.',
+  'Lo que esté borroso o cortado decilo como «ilegible». No adivines un número ni un nombre.',
+].join('\n');
 
 /* ------------------------------------------------------------------ el hilo */
 
@@ -251,6 +259,34 @@ async function atenderArchivo(
     return { dicho: [r.dicho, ...avisos.map((a) => a.texto)].filter(Boolean).join(' ') };
   }
 
+  /*
+   * UNA FOTO. Es la forma más común de mandar un papel desde el campo: se le saca la foto al plano
+   * o a la resolución que está sobre la mesa y se manda por Telegram, que es lo que ya tiene todo
+   * el mundo abierto.
+   *
+   * Antes esto acababa en «¿qué ves en esta imagen?» dirigido a un modelo de texto, o sea en nada.
+   * Ahora entra por la misma puerta que un PDF: se transcribe y queda en el expediente. Quien solo
+   * tiene consulta la ve leída pero no guardada, igual que con un documento.
+   */
+  if (parsed.imageDataUrl) {
+    const b64 = parsed.imageDataUrl.replace(/^data:[^;]+;base64,/, '');
+    const datos = Buffer.from(b64, 'base64');
+    if (datos.length > 80) {
+      const nombre = `foto-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.jpg`;
+      if (puedeCargar) {
+        const r = await aprender(nombre, datos, { subidoPor: quien.nombre, mime: 'image/jpeg' });
+        return { dicho: r.dicho };
+      }
+      const visto = await verImagen(parsed.imageDataUrl, OJO_MINERO_TG);
+      if (!visto.texto || visto.via === 'ninguno' || visto.via === 'error') {
+        return { dicho: 'Me llegó la foto pero no pude leerla. No te voy a inventar lo que dice.' };
+      }
+      return {
+        contexto: `FOTO QUE ACABAN DE MANDARTE, ya transcrita. No queda guardada: tu interlocutor tiene acceso de consulta. Contestá SOLO con lo que diga este texto.\n\n${visto.texto}`,
+      };
+    }
+  }
+
   if (parsed.documento && parsed.documento.buffer.length > 80) {
     const { filename, buffer } = parsed.documento;
     if (puedeCargar) {
@@ -308,7 +344,9 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
   }
 
   let mensaje = parsed.texto;
-  if (!mensaje && parsed.imageDataUrl) mensaje = '¿qué ves en esta imagen?';
+  // La foto ya viene transcrita en el contexto: pedir «¿qué ves?» a un modelo de texto no tenía
+  // sentido y aquí ya no hace falta.
+  if (!mensaje && parsed.imageDataUrl) mensaje = 'Decime qué dice este papel y qué es, sin inventar nada.';
   if (!mensaje && archivo?.contexto) mensaje = 'Resumime lo que dice este expediente, sin inventar nada.';
   if (!mensaje) return { estado: 'sin pregunta', chatId: parsed.chatId };
 

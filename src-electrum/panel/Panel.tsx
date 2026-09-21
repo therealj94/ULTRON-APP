@@ -630,7 +630,9 @@ function Cargador({ alCargar }: { alCargar: () => void }) {
         try {
           const r = await fetch(`/api/electrum/subir?nombre=${encodeURIComponent(archivo.name)}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/octet-stream', ...headersElectrum() },
+            // El tipo del navegador si lo sabe: una foto arrastrada desde el móvil puede llegar sin
+            // extensión, y por el nombre solo se perdería que era una imagen que hay que leer.
+            headers: { 'Content-Type': archivo.type || 'application/octet-stream', ...headersElectrum() },
             body: archivo,
           });
           const j = await r.json().catch(() => ({}));
@@ -676,8 +678,8 @@ function Cargador({ alCargar }: { alCargar: () => void }) {
         className="rounded-xl border border-dashed px-3 py-4 text-center cursor-pointer transition-colors"
         style={{ borderColor: encima ? AMBAR : 'rgba(255,255,255,.16)', background: encima ? 'rgba(255,174,59,.07)' : 'transparent' }}
       >
-        <div className="text-[13px] text-[#B9C7CE]">Arrastrá acá el catastro o un expediente</div>
-        <div className="mt-0.5 font-mono text-[10px] text-[#6C7F89]">.zip de shapefile · KML · KMZ · GeoJSON · CSV · PDF</div>
+        <div className="text-[13px] text-[#B9C7CE]">Arrastrá acá el catastro, un expediente o la foto de un papel</div>
+        <div className="mt-0.5 font-mono text-[10px] text-[#6C7F89]">.zip de shapefile · KML · KMZ · GeoJSON · CSV · PDF · JPG · PNG</div>
         <input
           ref={entrada}
           type="file"

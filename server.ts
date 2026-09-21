@@ -401,11 +401,17 @@ app.post(
     if (datos.length < 80) return res.status(400).json({ error: 'El archivo llegó vacío.', honesto: true });
 
     try {
-      const r = await aprenderElectrum(nombre, datos, { subidoPor: id?.persona.nombre });
+      // El tipo va también: un teléfono manda la foto con `image/jpeg` y a veces con un nombre sin
+      // extensión, y por el nombre solo se perdería que era una imagen.
+      const r = await aprenderElectrum(nombre, datos, {
+        subidoPor: id?.persona.nombre,
+        mime: String(req.headers['content-type'] || ''),
+      });
       return res.json({
         clase: r.clase,
         dicho: r.dicho,
         avisos: r.avisos,
+        ui: r.ui ?? null,
         capaId: (r as any).capaId ?? null,
         honesto: true,
       });

@@ -4,12 +4,16 @@
  * «Listo para aprender todo luego de subir la información»: esto es esa pieza. Un archivo entra por
  * un lado y sale convertido en algo que Dr Electrum puede consultar y citar.
  *
- * Dos caminos, según lo que sea:
+ * Tres caminos, según lo que sea:
  *
  *  - **Geográfico** (.shp, .zip, .kml, .kmz, .geojson, .csv) → motor GIS → PostGIS. Las concesiones
  *    quedan buscables, medibles y cruzables, y el mapa puede volar a ellas.
  *  - **Documento** (.pdf, .txt, .md) → texto → troceado **con su página** → índice de texto completo.
  *    La página no es un adorno: una cita que no se puede ir a comprobar no es una cita.
+ *  - **Imagen** (.jpg, .png, .heic) → modelo de visión → el mismo índice. Es la foto que se saca en
+ *    la oficina de INHGEOMIN o parado en el lindero: un plano con sellos, una resolución en papel.
+ *    Sale por la misma puerta que un PDF a propósito, con su huella y su dedup, porque lo que
+ *    importa no es cómo entró sino que después se pueda citar.
  *
  * El troceado es lo que más decide la calidad de las respuestas después. Aquí se corta por párrafos
  * y se respeta el límite de página, con un solapamiento pequeño para que una frase partida entre dos
@@ -21,6 +25,7 @@ import JSZip from 'jszip';
 import { extraerPdf } from '../../lib/leer-pdf';
 import { consulta, guardarCapa, hayBase, recalcularTraslapes } from './db';
 import { ingerir, resumenCapa, resumenTraslapes, type Aviso } from './gis';
+import { verImagen } from '../../lib/vision';
 
 export type Aprendido = {
   clase: 'catastro' | 'documento' | 'nada';
@@ -42,6 +47,42 @@ export type Inspeccion = {
 
 const ES_GEO = /\.(zip|shp|kml|kmz|geojson|json|csv|gpkg|dxf)$/i;
 const ES_DOC = /\.(pdf|docx|txt|md|markdown)$/i;
+const ES_IMAGEN = /\.(jpe?g|png|webp|heic|heif|bmp|tiff?)$/i;
+
+/** Tipos que un navegador o un teléfono mandan para una foto, por si el nombre no lleva extensión. */
+const MIME_IMAGEN: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/jpg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+  'image/heic': 'heic',
+  'image/heif': 'heif',
+};
+
+/**
+ * Lo que se le pide al modelo de visión ante la foto de un papel minero.
+ *
+ * Está escrito para un expediente hondureño, no para «describe la imagen». La diferencia entre un
+ * pie de foto y algo que sirve en el cerebro es que lo segundo **transcribe** —número de
+ * resolución, expediente, fechas, titular, coordenadas, lo que diga el sello— en vez de resumir.
+ * Un resumen no se puede citar y no se puede buscar; una transcripción sí.
+ *
+ * Y la última línea es la que más pesa: lo que no se lee se dice que no se lee. Un número de
+ * expediente inventado en un registro oficial es peor que una foto sin leer.
+ */
+const OJO_MINERO = [
+  'Es la foto de un documento minero de Honduras: un plano, una resolución, un sello, una ficha de campo o una tabla.',
+  'TRANSCRIBÍ lo que se lee, no lo resumas. En este orden y solo lo que aparezca:',
+  '1) Título o encabezado, palabra por palabra.',
+  '2) Números de resolución, de expediente y de acuerdo, con su formato exacto.',
+  '3) Fechas, tal como están escritas.',
+  '4) Nombres de concesión, titulares, empresas y personas.',
+  '5) Coordenadas, vértices, rumbos, distancias y hectáreas, con sus unidades y su datum si aparece.',
+  '6) El texto de CADA sello, firma o timbre, incluso si está girado o encima de otra cosa.',
+  '7) Cualquier tabla, fila por fila.',
+  'Después, una línea que diga qué clase de documento es.',
+  'Lo que esté borroso, cortado o ilegible lo decís así —«ilegible»— y no lo completás. No adivines un número ni un nombre: en un registro oficial un dato inventado es peor que un dato que falta.',
+].join('\n');
 
 /** Trozos de ~900 caracteres cortados por párrafo, sin cruzar de página. */
 const OBJETIVO = 900;
@@ -256,7 +297,7 @@ export async function inspeccionar(nombre: string, datos: Buffer): Promise<Inspe
 export async function aprender(
   nombreArchivo: string,
   datos: Buffer,
-  opts: { subidoPor?: string; concesionId?: number; tipoDoc?: string; sinTraslapes?: boolean } = {}
+  opts: { subidoPor?: string; concesionId?: number; tipoDoc?: string; sinTraslapes?: boolean; mime?: string } = {}
 ): Promise<Aprendido> {
   const nombre = String(nombreArchivo || 'archivo');
 
@@ -315,8 +356,15 @@ export async function aprender(
     };
   }
 
-  // ---------------------------------------------------------------- documento
-  if (ES_DOC.test(nombre)) {
+  // ------------------------------------------------------- documento y foto de documento
+  /*
+   * Una foto entra por aquí y no por una ruta propia. Tiene que quedar con su huella, su dedup y su
+   * fragmento citable igual que un PDF: para quien después pregunta «¿qué dice la resolución de
+   * Quebrada Seca?», que el papel haya llegado escaneado o fotografiado con el teléfono no es una
+   * diferencia que le importe.
+   */
+  const imagen = ES_IMAGEN.test(nombre) || !!MIME_IMAGEN[String(opts.mime || '').split(';')[0].trim()];
+  if (ES_DOC.test(nombre) || imagen) {
     // La huella se mira ANTES de extraer el texto, y es lo que hace reanudable una carga grande:
     // al relanzar una carpeta de miles de expedientes, los ya cargados se saltan en un md5 en vez
     // de volver a parsear el PDF entero para acabar descubriendo que ya estaba.
@@ -335,9 +383,40 @@ export async function aprender(
       };
     }
 
-    const leido = await leerDocumento(nombre, datos);
-    if (leido.ok === false) return { clase: 'nada', dicho: leido.dicho, avisos: leido.avisos };
-    const { paginas, trozos, avisos } = leido;
+    let paginas: Array<{ pagina: number; texto: string }>;
+    let trozos: Array<{ pagina: number; orden: number; texto: string }>;
+    let avisos: Aviso[];
+    let tipoPorDefecto: string;
+
+    if (imagen) {
+      const ext = ES_IMAGEN.test(nombre)
+        ? nombre.split('.').pop()!.toLowerCase()
+        : MIME_IMAGEN[String(opts.mime || '').split(';')[0].trim()] || 'jpg';
+      const visto = await verImagen(`data:image/${ext === 'jpg' ? 'jpeg' : ext};base64,${datos.toString('base64')}`, OJO_MINERO);
+
+      // Sin ojo configurado no se guarda un documento vacío que después parezca cargado: se dice.
+      if (visto.via === 'ninguno' || visto.via === 'error' || visto.texto.length < 20) {
+        return {
+          clase: 'nada',
+          dicho: visto.texto.startsWith('VISION')
+            ? `No pude leer esa foto: ${visto.texto.replace(/^VISION:\s*/, '')}`
+            : 'Miré la foto y no saqué texto de ella. Si es un plano, acercate al recuadro con los datos y volvé a mandármela.',
+          avisos: [{ nivel: 'error', texto: `visión: ${visto.via}` }],
+        };
+      }
+
+      paginas = [{ pagina: 1, texto: visto.texto }];
+      trozos = trocear(paginas);
+      avisos = [{ nivel: 'ojo', texto: `Leído con ${visto.via}. Es una transcripción de una foto, no el documento original.` }];
+      tipoPorDefecto = clasificarDoc(nombre, visto.texto);
+    } else {
+      const leido = await leerDocumento(nombre, datos);
+      if (leido.ok === false) return { clase: 'nada', dicho: leido.dicho, avisos: leido.avisos };
+      paginas = leido.paginas;
+      trozos = leido.trozos;
+      avisos = leido.avisos;
+      tipoPorDefecto = clasificarDoc(nombre, leido.texto);
+    }
 
     // Lo cargado ANTES de que existiera la huella tiene la columna vacía, así que la consulta de
     // arriba no lo encuentra y la primera recarga lo duplicaría entero. Se adopta aquí: mismo
@@ -345,7 +424,11 @@ export async function aprender(
     // nombre y el número de páginas solos no bastan: dos resoluciones distintas se llaman igual y
     // tienen una página. Comparar el texto es lo que distingue «es el mismo papel» de «se llama
     // igual». Adoptada una fila, queda con huella y ya no vuelve a pasar por aquí.
-    const [viejo] = await consulta<{ id: number; texto: string }>(
+    // La adopción de filas antiguas es cosa de documentos: las fotos son todas posteriores a la
+    // huella, así que no hay nada viejo que adoptar y buscarlo solo costaría una consulta.
+    const [viejo] = imagen
+      ? []
+      : await consulta<{ id: number; texto: string }>(
       `SELECT d.id, f.texto FROM documento d
          JOIN fragmento f ON f.documento_id = d.id AND f.orden = 0 AND f.pagina = $3
         WHERE d.huella IS NULL AND d.nombre = $1 AND d.paginas = $2
@@ -367,7 +450,7 @@ export async function aprender(
       `INSERT INTO documento (nombre, tipo, concesion_id, paginas, subido_por, huella)
        VALUES ($1,$2,$3,$4,$5,$6)
        ON CONFLICT DO NOTHING RETURNING id`,
-      [nombre, opts.tipoDoc || clasificarDoc(nombre, leido.texto), opts.concesionId ?? null, paginas.length, opts.subidoPor || null, huella]
+      [nombre, opts.tipoDoc || tipoPorDefecto, opts.concesionId ?? null, paginas.length, opts.subidoPor || null, huella]
     );
     // Sin fila devuelta, otra carga en paralelo lo metió entre el SELECT y el INSERT. No es un
     // error: es justo lo que el índice único tiene que impedir, y aquí se nota en vez de reventar.
@@ -395,15 +478,17 @@ export async function aprender(
 
     return {
       clase: 'documento',
-      dicho: `Leí ${nombre}: ${paginas.length} ${paginas.length === 1 ? 'página' : 'páginas'}, ${trozos.length} fragmentos indexados. Ya lo puedo citar con página.`,
+      dicho: imagen
+        ? `Leí la foto y saqué ${paginas[0].texto.length} caracteres: ${trozos.length} ${trozos.length === 1 ? 'fragmento indexado' : 'fragmentos indexados'} y ya queda en el expediente, buscable. Es lo que se lee en la imagen; lo que salía borroso lo dejé marcado como ilegible en vez de completarlo.`
+        : `Leí ${nombre}: ${paginas.length} ${paginas.length === 1 ? 'página' : 'páginas'}, ${trozos.length} fragmentos indexados. Ya lo puedo citar con página.`,
       avisos,
-      ui: { accion: 'documento', documento_id: doc.id, nombre, paginas: paginas.length, fragmentos: trozos.length },
+      ui: { accion: 'documento', documento_id: doc.id, nombre, paginas: paginas.length, fragmentos: trozos.length, foto: imagen || undefined },
     };
   }
 
   return {
     clase: 'nada',
-    dicho: `No sé qué hacer con «${nombre}». Mandame shapefile, KML, KMZ, GeoJSON o CSV para el mapa, o PDF y texto para los expedientes.`,
+    dicho: `No sé qué hacer con «${nombre}». Mandame shapefile, KML, KMZ, GeoJSON o CSV para el mapa; PDF o texto para los expedientes; o la foto de un papel, que también la leo.`,
     avisos: [{ nivel: 'error', texto: 'formato no reconocido' }],
   };
 }

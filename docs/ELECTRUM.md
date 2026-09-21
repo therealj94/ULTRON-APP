@@ -475,6 +475,60 @@ concesión de explotación devuelve la Guía de Participación Ciudadana, págin
 territorial, el Reglamento de la Ley General de Minería, página 2; por el plan de cierre, la Ley
 General de Minería, página 7.
 
+## La foto de un papel — **hecha y verificada**
+
+En Honduras el expediente está en papel y sobre una mesa. Lo que se hace de verdad es sacarle una
+foto con el teléfono; lo que no se hace es escanearlo, subirlo a una carpeta y volver a la oficina.
+
+Una foto entra ahora **por la misma puerta que un PDF**: `aprender()` la manda a un modelo de
+visión, guarda la transcripción como documento con su huella, y queda troceada, indexada y
+citable. La misma implementación sirve a las tres puertas —la pantalla, el teléfono y Telegram—
+porque lo que importa no es cómo entró el papel sino que después se pueda encontrar.
+
+Lo que decide la calidad es el encargo que se le da al ojo. No es «describí la imagen»: un pie de
+foto no se busca ni se cita. Se le pide **transcribir** —encabezado, número de resolución, número de
+expediente, fechas, titulares, coordenadas, hectáreas y el texto de cada sello, fila por fila— y se
+le prohíbe completar lo que no se lee: «ilegible» es una respuesta aceptable, un número inventado en
+un registro oficial no lo es.
+
+Tres decisiones alrededor:
+
+- **Sin ojo configurado no se guarda nada.** Antes de esto la tentación era dejar la fila vacía; una
+  fila vacía en el índice miente en la lista de expedientes, que es peor que no tenerla. Se dice que
+  no se pudo leer y no entra.
+- **Se deduplica por huella**, igual que un PDF: la misma foto mandada dos veces desde dos sitios no
+  se convierte en dos expedientes.
+- **Queda anotado que es una transcripción**, no el original. Quien la cite tiene que saber que está
+  citando lo que una máquina leyó de una foto.
+
+**Verificado**: 12 pruebas con un ojo de mentira —qué se le pide, qué se guarda, qué pasa sin ojo, la
+foto repetida, la foto sin extensión— y después el camino entero por el navegador contra el servidor
+compilado, entrando con una identidad de nivel de trabajo: la foto quedó como documento tipo
+«resolución», con un fragmento, y se encuentra buscando su número de resolución. De paso apareció un
+detalle que solo se ve mirando la pantalla: con la llave de demostración el cargador **rechaza** la
+foto, porque esa llave abre la puerta pero no da nivel de escritura.
+
+## Hablarle en el campo — **hecha, sin probar en un teléfono**
+
+Dictado de un solo tiro: se toca el micrófono, se habla, se suelta, y el texto cae en la caja **sin
+mandarse**. Que no se mande solo es a propósito: el reconocedor confunde nombres de concesión, y
+discutir con la respuesta a una pregunta que no se hizo cuesta más que mirar el renglón. El
+reconocimiento lo hace el propio teléfono, así que el audio no sube a ningún servidor nuestro — con
+nombres de concesionarios de por medio, eso no es un detalle.
+
+Los términos del oficio van en `contextualStrings` («INHGEOMIN», «traslape», «mojón», «Danlí»):
+sin eso el reconocedor no los acierta nunca. Y si el aparato no trae reconocimiento, el botón no
+aparece: uno que no hace nada se lee en el campo como «se colgó».
+
+La pantalla ahora se acomoda a cómo esté el teléfono. La versión anterior era horizontal a secas,
+con una razón buena —apilar cara, hilo y botones deja la conversación en cuatro renglones cuando el
+teléfono está tumbado—, pero en el campo casi nunca está tumbado: se saca del bolsillo con una mano.
+En vertical lo que se toca queda abajo, al alcance del pulgar.
+
+**Honestamente**: esto compila y pasa el typecheck, y nada más. No hay teléfono ni emulador en este
+entorno, así que el dictado y la cámara **no están probados contra un aparato de verdad**. Lo que
+sí está probado del lado del servidor es lo que recibe la foto.
+
 ## El hilo: que una pregunta de seguimiento signifique algo — **hecho y verificado**
 
 Hasta acá el Doctor empezaba de cero en cada turno: los mensajes que salían al modelo eran

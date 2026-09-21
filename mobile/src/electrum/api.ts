@@ -101,6 +101,32 @@ export function preguntar(mensaje: string, hilo: TurnoHilo[] = []): Promise<Turn
   });
 }
 
+/** Lo que contesta el cerebro tras tragarse un archivo. */
+export type Aprendido = {
+  clase: 'catastro' | 'documento' | 'nada';
+  dicho: string;
+  avisos: Array<{ nivel: string; texto: string }>;
+};
+
+/**
+ * La foto de un papel, al expediente.
+ *
+ * Va como cuerpo crudo y no como multipart: una foto de teléfono son tres o cuatro megas, y en
+ * base64 crecen un tercio más para nada. El nombre viaja en la URL y el tipo en la cabecera, que es
+ * lo que el servidor necesita para saber que esto es una imagen y mandarla a leer.
+ *
+ * Nota de campo: el timeout es largo a propósito. Leer una foto de un plano tarda más que contestar
+ * una pregunta, y en el campo la señal es la que es.
+ */
+export async function subirFoto(uri: string, nombre: string, mime = 'image/jpeg'): Promise<Aprendido> {
+  const datos = await fetch(uri).then((r) => r.blob());
+  return pedir<Aprendido>(
+    `/api/electrum/subir?nombre=${encodeURIComponent(nombre)}`,
+    { method: 'POST', headers: { 'Content-Type': mime }, body: datos as any },
+    90_000
+  );
+}
+
 export type Salud = {
   viva: boolean;
   motivo?: string;
