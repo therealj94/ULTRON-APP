@@ -529,6 +529,49 @@ En vertical lo que se toca queda abajo, al alcance del pulgar.
 entorno, así que el dictado y la cámara **no están probados contra un aparato de verdad**. Lo que
 sí está probado del lado del servidor es lo que recibe la foto.
 
+## Repartir la pantalla, y apartar la cara — **hecho y verificado**
+
+El panel era un 42 % fijo, igual en un monitor de veintisiete pulgadas que en un teléfono. Y los dos
+usos de esta pantalla piden repartos opuestos: mirar dónde cae una concesión quiere mapa, leer los
+noventa y seis traslapes quiere texto. Un número fijo hace las dos cosas a medias.
+
+Ahora hay un asa en el borde del panel, con las tres maneras de usarla en un solo elemento:
+
+- **Arrastrar**, con ratón o con el dedo: reparto libre entre el 12 % y el 86 %.
+- **Tocar** sin arrastrar: rueda entre los tres repartos —mapa, dividido, lectura—. En un teléfono
+  nadie arrastra con precisión, y tocar es lo primero que se intenta.
+- **Teclado**: con foco, las flechas mueven de cinco en cinco e Inicio/Fin van a los extremos. Es un
+  `separator` con `aria-valuenow`, que es lo que un lector de pantalla sabe leer.
+
+Tocar se distingue de arrastrar por **distancia recorrida, no por tiempo**: un dedo sobre vidrio
+siempre se mueve un par de píxeles, y medirlo por tiempo convertiría cualquier toque lento en un
+arrastre de cero píxeles que no cambia nada y parece que el control no responde. El reparto se
+recuerda entre sesiones: una preferencia que hay que volver a poner cada vez no es una preferencia.
+
+**El compositor, en pantalla estrecha.** En un teléfono de 390 px había cinco controles en fila y el
+campo de escribir quedaba en una rendija: la pregunta, que es a lo que se viene, competía por el
+ancho con un botón de informe que se usa una vez cada tanto. Escribir, dictar y enviar se quedan
+siempre; voz e informe pasan a un menú. **Dictar no se esconde**: es la razón de que alguien use
+esto con las manos sucias.
+
+**La cara se pliega.** Ocupa 132 px de esquina sobre el mapa, y es identidad, no adorno — una
+herramienta sin nadie del otro lado es otra cosa. Pero cuando alguien compara linderos, 132 px de
+mapa tapados son 132 px de mapa tapados. Plegada deja una insignia que sigue diciendo que hay
+alguien y qué está haciendo —«pensando», «hablando», «algo falló»— en una línea en vez de en un
+cuadrado, y se despliega con un toque. Que se pueda apartar no le quita identidad a la plataforma;
+se la quitaría no poder.
+
+Y encoge sola cuando el mapa se queda en una franja: con el panel en lectura le quedan al mapa un
+par de centímetros de alto, y una cara de 132 px se come la mitad de lo poco que hay. No se pliega
+sola —eso sería pelearse con lo que el usuario pidió— pero ocupa lo que corresponde.
+
+**Verificado en el navegador**, a 1280 px y a 390 px: tocar el asa lleva de 42 % a 76 %, la flecha
+abajo la deja en 71 %, recargar la devuelve en 71 %, arrastrar con el dedo va de 42 % a 66 %; en el
+teléfono se ven «Decir · ⋯ · Ir» y el menú añade «Voz · PDF»; y la cara plegada deja el mapa entero,
+sobrevive a recargar y vuelve con un toque. De paso apareció el mismo fallo de accesibilidad que ya
+había arreglado en el panel: el botón de plegar seguía siendo enfocable con la cara invisible, así
+que le faltaba `inert`.
+
 ## Lo que pasa cuando algo sale mal — **hecho y verificado**
 
 Una plataforma se juzga por lo que hace el día que falla. Esta tanda es casi toda eso.

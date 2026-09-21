@@ -24,6 +24,15 @@ import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
 import { hayCredencial, headersElectrum, porQueNoAbre, puertaAbierta, salir, type Puerta } from './acceso';
+import {
+  ALTO_MAX,
+  ALTO_MIN,
+  ALTURAS,
+  guardarPreferencia,
+  leerPreferencia,
+  repartoDe,
+  siguienteReparto,
+} from './preferencias';
 
 /** Dónde está la atención: en quien habla, o en lo que hay que mirar. */
 export type Escenario = 'cara' | 'trabajo';
@@ -64,6 +73,39 @@ export default function App() {
   }, [puerta]);
 
   const [escenario, setEscenario] = useState<Escenario>('cara');
+
+  /*
+   * CUÁNTO SE LLEVA CADA COSA.
+   *
+   * Era un 42 % fijo, igual en un monitor de veintisiete pulgadas que en un teléfono. Y los dos
+   * usos de esta pantalla piden repartos opuestos: mirar dónde cae una concesión quiere mapa, y
+   * leer los noventa y seis traslapes quiere texto. Un número fijo hace las dos cosas a medias.
+   *
+   * Se recuerda entre sesiones: una preferencia que hay que volver a poner cada vez no es una
+   * preferencia.
+   */
+  const [alto, setAlto] = useState(() =>
+    leerPreferencia('alto', ALTURAS.dividido, (v) => typeof v === 'number' && v >= ALTO_MIN && v <= ALTO_MAX)
+  );
+  const cambiarAlto = useCallback((v: number) => {
+    const a = Math.min(ALTO_MAX, Math.max(ALTO_MIN, v));
+    setAlto(a);
+    guardarPreferencia('alto', a);
+  }, []);
+
+  /*
+   * LA CARA, PLEGABLE.
+   *
+   * Ocupa 132 px de esquina sobre el mapa. Es identidad, no adorno —una herramienta sin nadie del
+   * otro lado es otra cosa— pero cuando alguien está comparando linderos, 132 px de mapa tapados
+   * son 132 px de mapa tapados. Que se pueda apartar no le quita identidad a la plataforma; se la
+   * quitaría no poder.
+   */
+  const [caraPlegada, setCaraPlegada] = useState(() => leerPreferencia('caraPlegada', false, (v) => typeof v === 'boolean'));
+  const plegarCara = useCallback((v: boolean) => {
+    setCaraPlegada(v);
+    guardarPreferencia('caraPlegada', v);
+  }, []);
   const [face, setFace] = useState<FaceState>('IDLE');
   const [emocion, setEmocion] = useState<Emocion>('neutral');
   const [mode, setMode] = useState<Mode>('MINING');
@@ -252,13 +294,18 @@ export default function App() {
           El mapa se lleva el 58 %: menos y una concesión no se distingue; más y la conversación
           queda en una rendija.
         */}
-        <div className="absolute top-[52px] left-0 right-0 bottom-[42%] sin-seleccion">
+        <div
+          className="absolute top-[52px] left-0 right-0 sin-seleccion"
+          style={{ bottom: `${alto * 100}%` }}
+        >
           <Mapa orden={orden} motor={motor} fondo={fondo} claveGoogle={claveGoogle} />
         </div>
         <Panel
           abierto={enTrabajo}
           onVista={elegirPanel}
           vista={panel}
+          alto={alto}
+          onAlto={cambiarAlto}
           onFace={setFace}
           onEmocion={setEmocion}
           onUi={alUi}
@@ -271,16 +318,45 @@ export default function App() {
         Mover el mismo nodo en vez de montar dos caras distintas es lo que hace que la transición
         se lea como que ELLA se aparta, y no como que una desaparece y otra aparece.
       */}
+      {/*
+        Plegada: una insignia con el estado, en el mismo sitio donde estaba la cara. Sigue diciendo
+        que hay alguien del otro lado —y qué está haciendo— en una línea en vez de en un cuadrado.
+      */}
+      {enTrabajo && caraPlegada && panel !== 'expedientes' && (
+        <button
+          type="button"
+          onClick={() => plegarCara(false)}
+          className="absolute z-30 flex items-center gap-2 rounded-full border border-white/12 bg-black/70 px-3 py-1.5 backdrop-blur-md cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#FFAE3B]"
+          style={ancho ? { left: 16, top: 64 } : { left: 12, top: 60 }}
+          aria-label="Volver a enseñar la cara de Dr Electrum"
+          title="Volver a enseñar la cara"
+        >
+          <span
+            className="h-2 w-2 rounded-full transition-colors"
+            style={{ background: face === 'THINKING' ? '#8FA3B0' : face === 'CONCERNED' ? '#D9705A' : '#FFAE3B' }}
+          />
+          <span className="font-mono text-[10px] tracking-[0.14em] uppercase text-[#9FB0B8]">
+            {face === 'THINKING' ? 'pensando' : face === 'SPEAKING' ? 'hablando' : face === 'CONCERNED' ? 'algo falló' : 'Dr Electrum'}
+          </span>
+        </button>
+      )}
+
       <div
         className="absolute transition-all duration-[650ms] ease-[cubic-bezier(.22,.61,.36,1)]"
+        /*
+         * Invisible es invisible también para el tabulador. Con la cara apagada —plegada o en
+         * Expedientes— su botón de plegar seguía siendo enfocable: quien navega con teclado se
+         * topaba con un control de algo que no está en pantalla. Mismo caso que el panel oculto.
+         */
+        inert={enTrabajo && (panel === 'expedientes' || caraPlegada)}
         style={{
           /*
             En Expedientes el panel ocupa toda la altura y la cara se quedaba encima de la pestaña
             «Consulta», tapando justo el botón para volver. La cara se apoya en el mapa; cuando no
             hay mapa a la vista, no tiene dónde apoyarse y sobra. Se aparta en lugar de estorbar.
           */
-          opacity: enTrabajo && panel === 'expedientes' ? 0 : 1,
-          pointerEvents: enTrabajo && panel === 'expedientes' ? 'none' : 'auto',
+          opacity: enTrabajo && (panel === 'expedientes' || caraPlegada) ? 0 : 1,
+          pointerEvents: enTrabajo && (panel === 'expedientes' || caraPlegada) ? 'none' : 'auto',
           ...(enTrabajo
             ? /*
                * Arriba a la izquierda, SOBRE EL MAPA — no abajo.
@@ -290,7 +366,13 @@ export default function App() {
                * la cara se plantaba encima del hilo y de los ejemplos. La cara vive sobre el
                * escenario que cede, y desde que la web es vertical ese escenario está arriba.
                */
-              ancho
+              /*
+               * Encoge cuando el mapa se queda en una franja. Con el panel en lectura, al mapa le
+               * quedan un par de centímetros de alto y una cara de 132 px se come la mitad de lo
+               * poco que hay. No se pliega sola —eso sería pelearse con lo que el usuario pidió—
+               * pero ocupa lo que corresponde a lo que queda.
+               */
+              ancho && alto <= 0.6
               ? { left: 16, top: 64, width: 132, height: 132, zIndex: 30 }
               : { left: 12, top: 60, width: 96, height: 96, zIndex: 30 }
             : { left: '50%', top: '50%', width: 'min(76vmin, 560px)', height: 'min(76vmin, 560px)', transform: 'translate(-50%,-50%)', zIndex: 30 }),
@@ -304,6 +386,18 @@ export default function App() {
         >
           <span className="sr-only">{enTrabajo ? 'Traer la cara al centro' : 'Ir al mapa'}</span>
         </button>
+        {/* Apartarla. Solo sobre el mapa: en el centro ella ES la pantalla y no hay nada que tapar. */}
+        {enTrabajo && (
+          <button
+            type="button"
+            onClick={() => plegarCara(true)}
+            className="absolute -right-1.5 -top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-full border border-white/15 bg-black/80 text-[11px] leading-none text-[#9FB0B8] backdrop-blur-md transition-colors hover:text-white cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#FFAE3B]"
+            aria-label="Plegar la cara y dejar el mapa libre"
+            title="Plegar la cara"
+          >
+            −
+          </button>
+        )}
         {/* Encogida sobre el mapa, la cara necesita marco: si no, es un rectángulo negro pegado. */}
         {/*
           `relative` no es decorativo: el lienzo de la cara es `absolute inset-0` y sin esto se

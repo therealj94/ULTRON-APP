@@ -9,11 +9,22 @@
  * a exigir para creerle. «Consultó el catastro, midió sobre el elipsoide, encontró el traslape» vale
  * más que la respuesta sola.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  // Con alias: `PointerEvent` a secas taparía el del navegador, y el oyente que se cuelga de
+  // `window` recibe el nativo, no el sintético de React. Dos tipos con el mismo nombre y distinta
+  // forma es justo el enredo que se arregla nombrándolos.
+  type KeyboardEvent as TeclaReact,
+  type PointerEvent as PunteroReact,
+} from 'react';
 import type { FaceState } from '../../src/types';
 import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/Mapa';
 import { sinMovimiento } from '../movimiento';
+import { ALTURAS, repartoDe, siguienteReparto } from '../preferencias';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 
 type Props = {
@@ -24,6 +35,9 @@ type Props = {
   onUi: (datos: Array<Record<string, unknown>>) => void;
   onTrabajo: () => void;
   onVista: (v: 'chat' | 'expedientes') => void;
+  /** Fracción de la pantalla que ocupa el panel. */
+  alto: number;
+  onAlto: (v: number) => void;
 };
 
 type Turno = {
@@ -227,7 +241,7 @@ function hiloGuardado(): Turno[] {
   }
 }
 
-export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVista }: Props) {
+export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, onTrabajo, onVista }: Props) {
   const [turnos, setTurnos] = useState<Turno[]>(hiloGuardado);
   /*
    * `preguntar` no puede depender de `turnos` —se reharía en cada mensaje y con él todo lo que
@@ -237,6 +251,10 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
   turnosRef.current = turnos;
   /** El turno en vuelo, para poder pararlo desde el botón o al irse de la pantalla. */
   const abortoRef = useRef<AbortController | null>(null);
+  /** Mientras se arrastra el asa, la altura no se anima: la transición la haría ir a rastras. */
+  const [arrastrando, setArrastrando] = useState(false);
+  /** El menú de «⋯» en pantalla estrecha. */
+  const [masAbierto, setMasAbierto] = useState(false);
 
   useEffect(() => {
     try {
@@ -576,10 +594,17 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
   return (
     <aside
       className={`absolute z-20 flex flex-col border-white/10 bg-[#0A0C0E]/92 backdrop-blur-xl inset-x-0 bottom-0 border-t ${
-        completo ? 'top-[52px]' : 'h-[42%]'
+        completo ? 'top-[52px]' : ''
       }`}
-      style={{ transition: 'transform .4s ease', transform: abierto ? 'none' : 'translateY(100%)' }}
+      style={{
+        // En Expedientes manda la clase (toda la altura); en Consulta manda la preferencia.
+        height: completo ? undefined : `${alto * 100}%`,
+        transition: `transform .4s ease${arrastrando ? '' : ', height .25s ease'}`,
+        transform: abierto ? 'none' : 'translateY(100%)',
+      }}
     >
+      {/* El asa de repartir. En Expedientes no: ahí el panel se lleva la pantalla entera. */}
+      {!completo && <Asa alto={alto} onAlto={onAlto} onArrastrar={setArrastrando} />}
       {/* La cabecera: siempre visible, nunca fuera de pantalla, y dice por dónde se sube. */}
       <div className="flex items-center gap-1 px-3 pt-2.5 pb-2 border-b border-white/[0.07] shrink-0">
         {(['chat', 'expedientes'] as const).map((v) => (
@@ -810,35 +835,40 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
             >
               {oyendo === 'grabando' ? 'Parar' : oyendo === 'oyendo' ? '…' : 'Decir'}
             </button>
-            <button
-              type="button"
-              onClick={() =>
-                setVozActiva((v) => {
-                  // Al silenciar se corta lo que suena y se invalida lo que viene; no basta el booleano.
-                  if (v) callar();
-                  return !v;
-                })
-              }
-              title={vozActiva ? 'Silenciar a Dr Electrum' : 'Que Dr Electrum hable'}
-              aria-pressed={vozActiva}
-              className="shrink-0 rounded-lg border px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer"
-              style={
-                vozActiva
-                  ? { borderColor: AMBAR, color: AMBAR }
-                  : { borderColor: 'rgba(255,255,255,.12)', color: '#9FB0B8' }
-              }
-            >
-              Voz
-            </button>
-            <button
-              type="button"
-              onClick={pedirInforme}
-              disabled={pensando}
-              title="Informe de la cartera en PDF, con el mapa como se está viendo"
-              className="shrink-0 rounded-lg border border-white/12 px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase text-[#9FB0B8] transition-colors hover:border-white/25 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-            >
-              PDF
-            </button>
+            {/*
+              * VOZ y PDF se esconden en un menú cuando no hay ancho.
+              *
+              * En un teléfono de 390 px, cinco controles en fila dejaban el campo de escribir en
+              * una rendija: la pregunta, que es lo que se viene a hacer, competía por el ancho con
+              * un botón de informe que se usa una vez cada tanto. Escribir, dictar y enviar se
+              * quedan siempre; lo demás está a un toque.
+              *
+              * Dictar NO se esconde: es la razón de que alguien use esto con las manos sucias.
+              */}
+            <div className="hidden sm:contents">
+              <BotonVoz vozActiva={vozActiva} setVozActiva={setVozActiva} />
+              <BotonPdf pedirInforme={pedirInforme} pensando={pensando} />
+            </div>
+            <div className="relative shrink-0 sm:hidden">
+              <button
+                type="button"
+                onClick={() => setMasAbierto((v) => !v)}
+                aria-expanded={masAbierto}
+                aria-label="Más opciones: voz e informe"
+                className="h-full rounded-lg border border-white/12 px-2.5 font-mono text-[13px] leading-none text-[#9FB0B8] transition-colors hover:border-white/25 hover:text-white cursor-pointer"
+              >
+                ⋯
+              </button>
+              {masAbierto && (
+                <div
+                  className="absolute bottom-[calc(100%+6px)] right-0 z-40 flex flex-col gap-1.5 rounded-lg border border-white/12 bg-[#0A0C0E] p-1.5 shadow-lg"
+                  onClick={() => setMasAbierto(false)}
+                >
+                  <BotonVoz vozActiva={vozActiva} setVozActiva={setVozActiva} />
+                  <BotonPdf pedirInforme={pedirInforme} pensando={pensando} />
+                </div>
+              )}
+            </div>
             <button
               type="submit"
               disabled={pensando || !texto.trim()}
@@ -1255,6 +1285,133 @@ function Expedientes() {
           {trayendo ? 'trayendo…' : 'Ver más'}
         </button>
       )}
+    </div>
+  );
+}
+
+/** Silenciar o dejar hablar. Vive suelto para poder estar en la fila o dentro del menú. */
+function BotonVoz({ vozActiva, setVozActiva }: { vozActiva: boolean; setVozActiva: (f: (v: boolean) => boolean) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        setVozActiva((v) => {
+          // Al silenciar se corta lo que suena y se invalida lo que viene; no basta el booleano.
+          if (v) callar();
+          return !v;
+        })
+      }
+      title={vozActiva ? 'Silenciar a Dr Electrum' : 'Que Dr Electrum hable'}
+      aria-pressed={vozActiva}
+      className="shrink-0 rounded-lg border px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer"
+      style={vozActiva ? { borderColor: AMBAR, color: AMBAR } : { borderColor: 'rgba(255,255,255,.12)', color: '#9FB0B8' }}
+    >
+      Voz
+    </button>
+  );
+}
+
+function BotonPdf({ pedirInforme, pensando }: { pedirInforme: () => void; pensando: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={pedirInforme}
+      disabled={pensando}
+      title="Informe de la cartera en PDF, con el mapa como se está viendo"
+      className="shrink-0 rounded-lg border border-white/12 px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] uppercase text-[#9FB0B8] transition-colors hover:border-white/25 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+    >
+      PDF
+    </button>
+  );
+}
+
+/**
+ * EL ASA DE REPARTIR LA PANTALLA.
+ *
+ * Un solo elemento para las tres maneras de usarlo, que es lo que hace que no haya que explicarlo:
+ *
+ *  · **Arrastrar** con ratón o con el dedo: reparto libre, del 12 % al 86 %.
+ *  · **Tocar** sin arrastrar: rueda entre los tres repartos —mapa, dividido, lectura—. En un
+ *    teléfono nadie arrastra con precisión, y tocar es lo que se intenta primero.
+ *  · **Teclado**: con foco, las flechas mueven de cinco en cinco e Inicio/Fin van a los extremos.
+ *    Es un `separator` con `aria-valuenow`, que es lo que un lector de pantalla sabe leer.
+ *
+ * Se distingue tocar de arrastrar por distancia recorrida, no por tiempo: un dedo sobre vidrio
+ * siempre se mueve un par de píxeles, y medir por tiempo convertiría cualquier toque lento en un
+ * arrastre de cero píxeles que no cambia nada y parece que el botón no responde.
+ */
+function Asa({
+  alto,
+  onAlto,
+  onArrastrar,
+}: {
+  alto: number;
+  onAlto: (v: number) => void;
+  onArrastrar: (v: boolean) => void;
+}) {
+  const movido = useRef(0);
+
+  const alBajar = useCallback(
+    (e: PunteroReact<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      el.setPointerCapture(e.pointerId);
+      movido.current = 0;
+      onArrastrar(true);
+
+      const mover = (ev: PointerEvent) => {
+        movido.current = Math.max(movido.current, Math.abs(ev.clientY - e.clientY));
+        // El panel crece hacia ARRIBA: cuanto más alto el puntero, mayor la fracción.
+        onAlto(1 - ev.clientY / Math.max(1, window.innerHeight));
+      };
+      const soltar = () => {
+        el.releasePointerCapture?.(e.pointerId);
+        window.removeEventListener('pointermove', mover);
+        window.removeEventListener('pointerup', soltar);
+        onArrastrar(false);
+        // Menos de cuatro píxeles es un toque, no un arrastre.
+        if (movido.current < 4) onAlto(siguienteReparto(alto));
+      };
+      window.addEventListener('pointermove', mover);
+      window.addEventListener('pointerup', soltar);
+    },
+    [alto, onAlto, onArrastrar]
+  );
+
+  const alTeclado = useCallback(
+    (e: TeclaReact) => {
+      const paso = 0.05;
+      if (e.key === 'ArrowUp') onAlto(alto + paso);
+      else if (e.key === 'ArrowDown') onAlto(alto - paso);
+      else if (e.key === 'Home') onAlto(ALTURAS.lectura);
+      else if (e.key === 'End') onAlto(ALTURAS.mapa);
+      else if (e.key === 'Enter' || e.key === ' ') onAlto(siguienteReparto(alto));
+      else return;
+      e.preventDefault();
+    },
+    [alto, onAlto]
+  );
+
+  const donde = repartoDe(alto);
+  const comoSeLlama = donde === 'mapa' ? 'mapa grande' : donde === 'lectura' ? 'lectura' : 'dividido';
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label={`Repartir la pantalla entre mapa y conversación — ahora en ${comoSeLlama}`}
+      aria-valuenow={Math.round(alto * 100)}
+      aria-valuemin={12}
+      aria-valuemax={86}
+      tabIndex={0}
+      onPointerDown={alBajar}
+      onKeyDown={alTeclado}
+      title={`${comoSeLlama} · arrastrá para repartir, tocá para cambiar`}
+      className="group absolute inset-x-0 -top-2 z-30 flex h-4 cursor-ns-resize touch-none items-center justify-center focus:outline-none"
+    >
+      <span
+        className="h-1 w-12 rounded-full bg-white/20 transition-colors group-hover:bg-white/40 group-focus-visible:bg-[#FFAE3B]"
+        aria-hidden="true"
+      />
     </div>
   );
 }
