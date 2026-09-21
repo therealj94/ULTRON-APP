@@ -75,6 +75,7 @@ const HECHOS = 'electrum_subidos_' + D.prefijo;
 const yaHechos = () => { try { return new Set(JSON.parse(localStorage.getItem(HECHOS) || '[]')); } catch { return new Set(); } };
 const marcar = (s) => { try { localStorage.setItem(HECHOS, JSON.stringify([...s])); } catch {} };
 
+const tiempo = (s) => s > 3600 ? Math.round(s/3600)+' h' : s > 90 ? Math.round(s/60)+' min' : Math.round(s)+' s';
 const peso = (n) => n >= 1024**3 ? (n/1024**3).toFixed(2)+' GB' : n >= 1024**2 ? (n/1024**2).toFixed(1)+' MB' : (n/1024).toFixed(0)+' KB';
 
 // Arrastrar una CARPETA no da archivos en dataTransfer.files: hay que recorrer las entradas a mano.
@@ -115,6 +116,41 @@ const A_LA_VEZ = 6;
 
 let enMarcha = false;
 
+// Cuánto lleva subido cada archivo que está en vuelo ahora mismo, para poder sumarlo al total.
+const enVuelo = new Map();
+
+/**
+ * Envía un archivo con XMLHttpRequest y no con fetch.
+ *
+ * `fetch` no informa del progreso de SUBIDA: solo se sabe que terminó. Con archivos pequeños da
+ * igual, pero con uno de dos gigas la pantalla se queda clavada durante media hora sin una sola
+ * cifra que se mueva, y no hay manera de distinguir «va lento» de «está muerto». Eso fue
+ * exactamente lo que pasó. XHR sí avisa byte a byte.
+ */
+function enviar(f, clave) {
+  return new Promise((ok, mal) => {
+    const form = new FormData();
+    form.append('key', clave);
+    for (const [k, v] of Object.entries(D.campos)) form.append(k, v);
+    form.append('Content-Type', f.type || 'application/octet-stream');
+    form.append('file', f);
+
+    const x = new XMLHttpRequest();
+    x.open('POST', D.url, true);
+    x.upload.onprogress = (e) => { enVuelo.set(clave, e.loaded); pintar(); };
+    x.onload = () => {
+      enVuelo.delete(clave);
+      if (x.status === 204 || (x.status >= 200 && x.status < 300)) ok();
+      else mal(new Error('S3 ' + x.status + ' ' + String(x.responseText || '').replace(/<[^>]+>/g, ' ').trim().slice(0, 70)));
+    };
+    x.onerror = () => { enVuelo.delete(clave); mal(new Error('se cortó la conexión')); };
+    x.onabort = () => { enVuelo.delete(clave); mal(new Error('cancelado')); };
+    x.send(form);
+  });
+}
+
+let pintar = () => {};
+
 async function subir(archivos) {
   if (enMarcha) return;
   archivos = archivos.filter((f) => f.size > 0 && !BASURA.test(f._ruta || f.webkitRelativePath || f.name));
@@ -134,6 +170,17 @@ async function subir(archivos) {
     else pendientes.push({ f, clave });
   }
 
+  // Un archivo muy grande va en una sola petición y no tiene reanudación por dentro: si se corta
+  // al 90 %, se pierde entero y hay que repetirlo desde cero. Conviene saberlo ANTES, no a la hora.
+  const enormes = pendientes.filter(({ f }) => f.size > 500 * 1024 ** 2);
+  if (enormes.length) {
+    const lista = enormes.map(({ f, clave }) => clave.replace(D.prefijo, '') + ' (' + peso(f.size) + ')').join(', ');
+    $('resultado').innerHTML =
+      '<div class="aviso mal"><b>Ojo con ' + (enormes.length === 1 ? 'este archivo' : 'estos archivos') + ':</b> ' + lista +
+      '.<br>Va en una sola pieza y no se puede reanudar por dentro: si se corta, hay que repetirlo entero. ' +
+      'Con algo así, mejor una conexión estable y un ordenador, no el teléfono.</div>';
+  }
+
   enMarcha = true;
   // Avisar antes de cerrar: se perdió una subida entera por refrescar sin saber que se cortaba.
   const alSalir = (e) => { e.preventDefault(); e.returnValue = ''; };
@@ -143,13 +190,28 @@ async function subir(archivos) {
   let n = saltados, bytes = bytesHechos;
   const fallos = [];
   $('marcha').classList.remove('oculto');
-  $('resultado').innerHTML = '';
 
-  const pintar = (clave) => {
-    $('cuenta').textContent = n + ' de ' + total;
-    $('peso').textContent = peso(bytes) + ' de ' + peso(bytesTotal);
-    $('relleno').style.width = (bytesTotal ? bytes / bytesTotal * 100 : 100) + '%';
-    if (clave) $('actual').textContent = clave.replace(D.prefijo, '');
+  const arranque = Date.now();
+  let enCurso = '';
+  pintar = () => {
+    // Los bytes en vuelo cuentan: si no, un archivo de dos gigas deja la barra inmóvil hasta que
+    // termina, que es justo cuando ya no hace falta mirarla.
+    let vivos = 0;
+    for (const v of enVuelo.values()) vivos += v;
+    const hechosBytes = bytes + vivos;
+    const seg = (Date.now() - arranque) / 1000;
+    const vel = seg > 1 ? (hechosBytes - bytesHechos) / seg : 0;
+    const faltan = bytesTotal - hechosBytes;
+    $('cuenta').textContent = n + ' de ' + total + (fallos.length ? ' · ' + fallos.length + ' fallaron' : '');
+    $('peso').textContent =
+      peso(hechosBytes) + ' de ' + peso(bytesTotal) +
+      (vel > 1024 ? '  ·  ' + peso(vel) + '/s' + (faltan > 0 ? '  ·  faltan ' + tiempo(faltan / vel) : '') : '');
+    $('relleno').style.width = (bytesTotal ? hechosBytes / bytesTotal * 100 : 100) + '%';
+    if (enCurso) $('actual').textContent = enCurso;
+  };
+  const marcarActual = (clave, tam) => {
+    enCurso = clave.replace(D.prefijo, '') + '  (' + peso(tam) + ')';
+    pintar();
   };
   pintar();
 
@@ -159,29 +221,24 @@ async function subir(archivos) {
       const i = siguiente++;
       if (i >= pendientes.length) return;
       const { f, clave } = pendientes[i];
-      pintar(clave);
+      marcarActual(clave, f.size);
 
       let bien = false;
       for (let intento = 1; intento <= 3 && !bien; intento++) {
         try {
-          const form = new FormData();
-          form.append('key', clave);
-          for (const [k, v] of Object.entries(D.campos)) form.append(k, v);
-          form.append('Content-Type', f.type || 'application/octet-stream');
-          form.append('file', f);
-          const r = await fetch(D.url, { method: 'POST', body: form });
-          if (r.ok || r.status === 204) bien = true;
-          else if (intento === 3) fallos.push(clave.replace(D.prefijo, '') + ' — ' + r.status);
-          else await new Promise((ok) => setTimeout(ok, 800 * intento));
+          await enviar(f, clave);
+          bien = true;
         } catch (e) {
-          if (intento === 3) fallos.push(clave.replace(D.prefijo, '') + ' — ' + String(e.message || e).slice(0, 80));
+          enVuelo.delete(clave);
+          if (intento === 3) fallos.push(clave.replace(D.prefijo, '') + ' — ' + String(e.message || e).slice(0, 90));
           else await new Promise((ok) => setTimeout(ok, 800 * intento));
         }
       }
       // Se apunta EN CUANTO termina cada uno, no al final: si se corta la luz a mitad, lo ya
       // subido sigue contando y al volver se reanuda en vez de empezar de cero.
       if (bien) { hechos.add(clave); marcar(hechos); }
-      n++; bytes += f.size;
+      n++;
+      if (bien) bytes += f.size;
       pintar();
     }
   }
