@@ -380,6 +380,45 @@ Ninguno se veía leyendo el código:
    centrada en la coincidencia (`ts_headline`), no en el principio del trozo: citar el encabezado
    del informe es técnicamente la misma fuente y no le sirve a nadie.
 
+## Lo que enseñó el catastro nacional de Honduras
+
+La primera carga de verdad —2,5 GB, 93 shapefiles, 125 capas, el padrón minero del país a junio de
+2026— destapó cuatro cosas que con dos polígonos de prueba no se ven. Ninguna daba error.
+
+**Todo entraba como concesión.** Aldeas, municipios, microcuencas y buffers de carretera acabaron en
+la tabla de derechos mineros: 9732 «concesiones» donde los derechos eran 1080, y 43158 «traslapes»
+que en su mayoría eran un municipio solapando lo que contiene. Eso no es un número inflado, es un
+padrón inservible: el traslape de verdad queda enterrado y preguntar cuántas concesiones hay
+devuelve una mentira. Lo que distingue un derecho de un accidente geográfico es que **tiene dueño**,
+y ahora se decide así, por capa y por mayoría de la muestra.
+
+**El titular no se leía.** La expresión buscaba `^concesionari`; el formato DBF corta los nombres de
+columna a **diez caracteres**, así que la columna real, `concesiona`, no casaba con nada. Mil
+concesiones cargadas sin dueño y sin un solo aviso. Las columnas recortadas son la norma en
+shapefiles, no la excepción.
+
+**Una inserción por geometría y un cruce de traslapes por archivo.** Dos viajes a la base por rasgo
+—con la base al otro lado de un túnel, una capa de treinta mil aldeas son sesenta mil idas y
+vueltas— y un cruce cuadrático repetido cien veces sobre un padrón que crecía. Ahora se inserta de
+cien en cien y los traslapes se cruzan **una vez al final**. La carga pasó de no terminar a 30 s.
+
+**Un shapefile de 2,28 GB.** Las curvas de nivel de 20 m del país entero se parsean en memoria y
+tumban el proceso, llevándose los cien archivos que ya iban bien. Hay un tope de 300 MB que lo salta
+diciéndolo. El relieve, además, se sirve como teselas, no como filas de una base de consulta.
+
+### Lo que salió de los datos, no del código
+
+- **1079 concesiones** de las 1080 que declara el archivo, todas con titular.
+- **96 traslapes**, de los cuales **67 son entre titulares distintos** —esos son los conflictos
+  reales— y 29 son el mismo derecho en otra etapa administrativa (otorgada para explotar, en
+  solicitud de explotar, en solicitud de explorar sobre el mismo terreno).
+- **2511 hectáreas de diferencia** entre lo que el archivo declara (161.105 ha) y lo medido sobre el
+  elipsoide (163.616 ha) en la capa nacional.
+- **177 concesiones y 232 titulares traen `?` donde iba una tilde.** Eso ya viene así en el archivo
+  de origen: quien exportó el shapefile lo guardó con una página de códigos que no representaba las
+  vocales acentuadas. No se corrige adivinando letras en un registro oficial; hay que pedir una
+  exportación buena.
+
 ## Estado
 
 | Pieza | Estado |
