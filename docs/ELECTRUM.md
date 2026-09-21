@@ -123,6 +123,30 @@ El instalador corre una vez en el nodo, con sudo, y es idempotente. **No abre el
 propósito: un catastro completo es información sensible y abrir 5432 a internet es, tarde o
 temprano, regalarlo. Al terminar imprime el `ELECTRUM_DB_URL` que hay que poner en Render.
 
+### Instalarlo sin llave SSH
+
+El nodo del cerebro **no tiene el 22 abierto**, así que no se entra por `ssh` ni se le copian
+archivos con `scp`. Se entra por SSM, que va por la API de AWS y no necesita ningún puerto abierto.
+`scripts/electrum/instalar-en-nodo.sh` hace el viaje entero desde tu máquina:
+
+```bash
+./scripts/electrum/instalar-en-nodo.sh i-06530893af0dd0638
+```
+
+Empaqueta el instalador y el esquema en base64 —así ni las comillas ni los acentos del SQL se rompen
+por el camino—, comprueba que el agente esté en línea antes de mandar nada, ejecuta y te trae la
+salida.
+
+**La clave no viaja ni se imprime.** La salida de un comando de SSM queda guardada en el historial
+de AWS y cualquiera con `ssm:GetCommandInvocation` la puede leer meses después, así que el
+instalador, llamado con `SILENCIO=1`, escribe la cadena de conexión en `/root/electrum-db-url` con
+permisos 600 y dice dónde la dejó. Se recoge entrando a la máquina:
+
+```bash
+aws ssm start-session --target i-06530893af0dd0638
+sudo cat /root/electrum-db-url
+```
+
 ### El fallo de la propiedad, que solo aparece conectándose como la aplicación
 
 El esquema lo aplica `postgres` porque `CREATE EXTENSION` exige superusuario. Consecuencia: todas

@@ -150,12 +150,27 @@ fi
 verde "
 Listo."
 echo
-echo "Poné esto en el servicio de Render de Electrum:"
-echo
-echo "  ELECTRUM_DB_URL=postgres://${USUARIO}:${CLAVE}@<ip-o-dns-del-nodo>:${PUERTO}/${BASE}"
-echo
-if [ "${GENERADA:-0}" = "1" ]; then
-  rojo "La clave se generó sola y es la de arriba. Guardala ahora: no se vuelve a mostrar."
+
+# Con SILENCIO=1 la clave NO se imprime. Es para cuando esto se lanza por SSM: la salida de un
+# comando de SSM queda guardada en el historial de AWS, y cualquiera con ssm:GetCommandInvocation
+# la puede leer después. La contraseña de la base no puede vivir ahí. Se deja en un archivo que solo
+# root puede abrir y se recoge entrando a la máquina.
+DESTINO=/root/electrum-db-url
+if [ "${SILENCIO:-0}" = "1" ]; then
+  umask 077
+  printf 'ELECTRUM_DB_URL=postgres://%s:%s@<ip-o-dns-del-nodo>:%s/%s\n' "${USUARIO}" "${CLAVE}" "${PUERTO}" "${BASE}" > "${DESTINO}"
+  chmod 600 "${DESTINO}"
+  echo "La cadena de conexión quedó en ${DESTINO}, solo legible por root."
+  echo "No la imprimo aquí: la salida de SSM se guarda en el historial de AWS."
+  echo "Recogela con:  sudo cat ${DESTINO}"
+else
+  echo "Poné esto en el servicio de Render de Electrum:"
+  echo
+  echo "  ELECTRUM_DB_URL=postgres://${USUARIO}:${CLAVE}@<ip-o-dns-del-nodo>:${PUERTO}/${BASE}"
+  echo
+  if [ "${GENERADA:-0}" = "1" ]; then
+    rojo "La clave se generó sola y es la de arriba. Guardala ahora: no se vuelve a mostrar."
+  fi
 fi
 cat <<'FIN'
 
