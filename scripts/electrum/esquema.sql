@@ -220,3 +220,46 @@ CREATE UNIQUE INDEX IF NOT EXISTS documento_huella_idx
 INSERT INTO esquema_version (version, nota)
 VALUES (3, 'huella de documento para reanudar cargas grandes sin duplicar')
 ON CONFLICT (version) DO NOTHING;
+
+-- ---------------------------------------------------------------- versión 4
+--
+-- El cruce de traslapes calculaba lo mismo tres veces.
+--
+-- La versión anterior invocaba `ST_Intersection` en el SELECT —dos veces, una para el área y otra
+-- para la geometría— y una tercera en el WHERE, más `ha_elipsoide` dos veces. Intersecar dos
+-- polígonos es de lo más caro que hay en PostGIS, y se hacía el triple de veces de las necesarias.
+--
+-- Con dos polígonos de prueba da igual. Con el padrón nacional de Honduras —siete mil concesiones
+-- una vez cruzadas las capas de derechos mineros, áreas protegidas y microcuencas— la diferencia
+-- es de minutos, y se nota cada vez que alguien sube una capa por la web.
+--
+-- Ahora se interseca una sola vez en una CTE, se mide una sola vez sobre esa intersección, y el
+-- filtro usa la medida ya calculada. El resultado es idéntico; lo único que cambia es el trabajo.
+
+CREATE OR REPLACE FUNCTION recalcular_traslapes(minimo_ha numeric DEFAULT 0.01)
+RETURNS integer AS $$
+DECLARE n integer;
+BEGIN
+  DELETE FROM traslape;
+  INSERT INTO traslape (a_id, b_id, hectareas, geom)
+  WITH pares AS (
+    -- `&&` usa el índice espacial para descartar de golpe los pares que ni se acercan; sin eso,
+    -- esto no termina nunca con miles de polígonos.
+    SELECT a.id AS a_id, b.id AS b_id, ST_Intersection(a.geom, b.geom) AS corte
+      FROM concesion a
+      JOIN concesion b ON a.id < b.id AND a.geom && b.geom AND ST_Intersects(a.geom, b.geom)
+  ),
+  medidos AS (
+    SELECT a_id, b_id, corte, ha_elipsoide(corte) AS ha FROM pares
+  )
+  SELECT a_id, b_id, ha, ST_Multi(ST_CollectionExtract(corte, 3))
+    FROM medidos
+   WHERE ha >= minimo_ha;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END;
+$$ LANGUAGE plpgsql;
+
+INSERT INTO esquema_version (version, nota)
+VALUES (4, 'el cruce de traslapes interseca una vez en vez de tres')
+ON CONFLICT (version) DO NOTHING;

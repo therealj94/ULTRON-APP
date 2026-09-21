@@ -172,7 +172,7 @@ export function inspeccionar(nombre: string, datos: Buffer): Inspeccion {
 export async function aprender(
   nombreArchivo: string,
   datos: Buffer,
-  opts: { subidoPor?: string; concesionId?: number; tipoDoc?: string } = {}
+  opts: { subidoPor?: string; concesionId?: number; tipoDoc?: string; sinTraslapes?: boolean } = {}
 ): Promise<Aprendido> {
   const nombre = String(nombreArchivo || 'archivo');
 
@@ -190,7 +190,15 @@ export async function aprender(
     if (!capa) return { clase: 'nada', dicho: avisos.map((a) => a.texto).join(' ') || 'No pude leer ese archivo.', avisos };
 
     const guardado = await guardarCapa(capa, { subidoPor: opts.subidoPor, avisos });
-    const traslapesNuevos = await recalcularTraslapes();
+
+    /*
+     * Los traslapes se recalculan cruzando TODAS las concesiones contra todas. Hacerlo después de
+     * cada archivo está bien cuando alguien sube uno por la web; en una carga de cien capas es
+     * cuadrático y no termina: medido en una carga real, a la séptima capa y cuatro mil concesiones
+     * ya tardaba más de un minuto por archivo, y quedaban noventa y siete. El cargador lo pide una
+     * sola vez al final, cuando ya está todo dentro; el resultado es idéntico y el coste, uno.
+     */
+    const traslapesNuevos = opts.sinTraslapes ? 0 : await recalcularTraslapes();
 
     // Un archivo entero repetido merece una frase clara, no el resumen de siempre seguido de un
     // «las salté». Quien vuelve a subir algo casi siempre es porque duda de si lo subió.
@@ -213,6 +221,7 @@ export async function aprender(
     }
     if (guardado.entidades) partes.push(`Y ${guardado.entidades} entidades geográficas más.`);
     if (traslapesNuevos > 0 && guardado.concesiones) partes.push(resumenTraslapes(capa));
+    if (opts.sinTraslapes && guardado.concesiones) partes.push('Los traslapes se calculan al final, de una vez.');
 
     return {
       clase: 'catastro',

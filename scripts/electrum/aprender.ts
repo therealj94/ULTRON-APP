@@ -31,9 +31,12 @@ import path from 'node:path';
 import JSZip from 'jszip';
 import { aprender, inspeccionar } from '../../server/electrum/aprender';
 import { ingerir, resumenCapa } from '../../server/electrum/gis';
-import { cerrarBase, hayBase, saludBase } from '../../server/electrum/db';
+import { cerrarBase, hayBase, recalcularTraslapes, saludBase } from '../../server/electrum/db';
 
-const RECONOCIDO = /\.(zip|shp|dbf|shx|prj|cpg|sbn|sbx|qpj|kml|kmz|geojson|json|csv|gpkg|dxf|pdf|txt|md|markdown)$/i;
+/** Por encima de esto, un shapefile no se lee de una pieza: se queda sin memoria y tumba la carga. */
+const TOPE_SHP = 300 * 1024 ** 2;
+
+const RECONOCIDO = /\.(zip|shp|dbf|shx|prj|cpg|sbn|sbx|qpj|qmd|kml|kmz|geojson|json|csv|gpkg|dxf|pdf|txt|md|markdown)$/i;
 
 const AYUDA = `Cargador de Electrum.
 
@@ -107,7 +110,7 @@ async function juntarShapefiles(lista: string[]): Promise<string[]> {
   const porBase = new Map<string, string[]>();
   const sueltos: string[] = [];
   for (const f of lista) {
-    if (/\.(shp|dbf|shx|prj|cpg|sbn|sbx|qpj)$/i.test(f)) {
+    if (/\.(shp|dbf|shx|prj|cpg|sbn|sbx|qpj|qmd|shp\.xml)$/i.test(f)) {
       const base = f.replace(/\.[^.]+$/, '');
       if (!porBase.has(base)) porBase.set(base, []);
       porBase.get(base)!.push(f);
@@ -131,6 +134,22 @@ async function juntarShapefiles(lista: string[]): Promise<string[]> {
       );
       continue;
     }
+    // Un shapefile enorme se parsea ENTERO en memoria antes de tocar la base, así que uno de dos
+    // gigas no va lento: tumba el proceso por falta de memoria y se lleva por delante la carga
+    // entera, incluidos los cientos de archivos que ya iban bien. Más vale saltarlo diciéndolo.
+    //
+    // El caso real fueron las curvas de nivel de 20 m de un país entero: millones de líneas que
+    // además no son catastro sino relieve, y que en una base de consulta no pintan nada. Eso se
+    // sirve como teselas, no como filas.
+    const tam = fs.statSync(shp).size;
+    if (tam > TOPE_SHP) {
+      console.error(
+        `  ✗ ${path.basename(shp)}: ${(tam / 1024 ** 3).toFixed(2)} GB, demasiado para leerlo de una pieza ` +
+          `(el tope son ${(TOPE_SHP / 1024 ** 2).toFixed(0)} MB). Hay que partirlo o simplificarlo antes.`
+      );
+      continue;
+    }
+
     const zip = new JSZip();
     for (const f of piezas) zip.file(path.basename(f), fs.readFileSync(f));
     // El nombre del zip lleva el del shapefile: es lo que se va a ver luego en la lista de capas.
@@ -208,6 +227,9 @@ for (const [i, ruta] of archivos.entries()) {
       subidoPor: opts.quien || 'cargador',
       concesionId: opts.concesion ?? undefined,
       tipoDoc: opts.tipo ?? undefined,
+      // Una sola vez al final, no después de cada archivo: cruzar todas las concesiones contra
+      // todas cien veces seguidas no termina nunca, y el resultado es el mismo.
+      sinTraslapes: true,
     });
 
     const repetido = Boolean((r.ui as any)?.repetido);
@@ -262,6 +284,11 @@ if (opts.seco) {
   if (repetidos) partes.push(`${repetidos} ya estaban y se saltaron`);
   if (mal) partes.push(`${mal} sin cargar`);
   console.log(`\n${partes.join(', ')}. ${minutos.toFixed(1)} min.`);
+  if (bien) {
+    process.stdout.write('\nCruzando el padrón entero para buscar traslapes… ');
+    const t = await recalcularTraslapes();
+    console.log(t === 1 ? '1 traslape.' : `${t} traslapes.`);
+  }
   const s = await saludBase();
   console.log(`El catastro tiene ahora ${s.concesiones} concesiones.`);
   await cerrarBase();

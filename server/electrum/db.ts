@@ -67,7 +67,11 @@ export async function saludBase(): Promise<{ viva: boolean; postgis?: string; co
 /** Campos del .dbf que suelen traer cada cosa, en el orden en que hay que probarlos. */
 const CAMPOS: Record<string, RegExp[]> = {
   expediente: [/^(expediente|exp|no_exp|num_exp|codigo|clave)/i],
-  titular: [/^(titular|concesionari|empresa|propietari|solicitante)/i],
+  // `concesiona`, no `concesionari`: el formato DBF corta los nombres de columna a DIEZ caracteres,
+  // así que «concesionario» llega recortado y la expresión larga no casaba con nada. El catastro
+  // nacional de Honduras entero se cargó sin titular por esto, y no dio ningún error: simplemente
+  // quedaron mil concesiones sin dueño. Las columnas recortadas son la norma, no la excepción.
+  titular: [/^(titular|concesiona|empresa|propietari|solicitante|benefici)/i],
   departamento: [/^(departament|depto|dpto)/i],
   municipio: [/^(municipio|munic|mpio)/i],
   tipo: [/^(tipo|categoria|clase|modalidad)/i],
@@ -75,6 +79,20 @@ const CAMPOS: Record<string, RegExp[]> = {
   estado: [/^(estado|situacion|status|vigencia)/i],
   hectareas: [/^(hectarea|hectárea|has?$|area|área|superficie)/i],
 };
+
+/**
+ * ¿Los rasgos de esta capa parecen derechos mineros?
+ *
+ * El criterio es el titular. `entidad_geo` existe justamente para lo otro —bocaminas, ríos,
+ * poblados, áreas protegidas— y meterlo todo en `concesion` hace que el cruce de traslapes
+ * devuelva ruido en vez de conflictos de derechos.
+ */
+function pareceCatastro(rasgos: Feature[]): boolean {
+  const muestra = rasgos.filter((f) => f && f.properties).slice(0, 50);
+  if (!muestra.length) return false;
+  const con = muestra.filter((f) => delDbf(f.properties as Record<string, unknown>, 'titular')).length;
+  return con > muestra.length / 2;
+}
 
 function delDbf(props: Record<string, unknown>, campo: string): string | null {
   for (const re of CAMPOS[campo] || []) {
@@ -120,65 +138,119 @@ export async function guardarCapa(
     let nConc = 0;
     let nEnt = 0;
     let nRep = 0;
-    const comoConcesiones = opts.comoConcesiones !== false;
+    /*
+     * ¿Esta capa es catastro o es geografía?
+     *
+     * Antes TODO entraba como concesión. Con dos capas de prueba no se nota; con un catastro
+     * nacional de verdad, las aldeas, los municipios, las microcuencas y los buffers de carretera
+     * acabaron en la tabla de concesiones: 9732 «concesiones» donde los derechos mineros eran 1080,
+     * y 43158 «traslapes» que en su mayoría eran un municipio solapando lo que contiene. Eso no es
+     * un número inflado, es un padrón inservible: el traslape de verdad —dos derechos pisándose—
+     * queda enterrado bajo el ruido, y preguntarle al cerebro cuántas concesiones hay devuelve una
+     * mentira.
+     *
+     * Lo que distingue a un derecho minero de un accidente geográfico es que TIENE DUEÑO. Un
+     * municipio no tiene concesionario. Se mira una muestra de la capa y se decide por mayoría,
+     * no rasgo a rasgo: una capa es de una cosa o de la otra, y decidir por rasgo deja la mitad de
+     * un shapefile en cada tabla.
+     */
+    const comoConcesiones = opts.comoConcesiones ?? pareceCatastro(capa.geojson.features as Feature[]);
 
-    for (let i = 0; i < capa.geojson.features.length; i++) {
-      const f = capa.geojson.features[i] as Feature;
-      if (!f.geometry) continue;
-      const props = (f.properties || {}) as Record<string, unknown>;
-      const multi = comoMulti(f.geometry);
+    /*
+     * En bloques, no de una en una.
+     *
+     * Antes cada entidad costaba un viaje a la base —y cada concesión dos, porque la comprobación
+     * de huella iba aparte—. Con la base al otro lado de un túnel eso no es lento, es inviable: una
+     * capa de treinta mil aldeas son sesenta mil idas y vueltas, y el catastro nacional entero no
+     * terminaba nunca. Agrupando de cien en cien, el mismo trabajo son unos cientos de viajes.
+     *
+     * El tamaño del bloque lo limita el número de parámetros de PostgreSQL (65535): con quince
+     * columnas por concesión, cien filas son mil quinientos, de sobra dentro.
+     */
+    const BLOQUE = 100;
+    const rasgos = (capa.geojson.features as Feature[]).filter((f) => f && f.geometry);
 
-      if (comoConcesiones && multi) {
+    for (let inicio = 0; inicio < rasgos.length; inicio += BLOQUE) {
+      const tramo = rasgos.slice(inicio, inicio + BLOQUE);
+      const concesiones: Array<{ f: Feature; i: number }> = [];
+      const entidades: Array<{ f: Feature; i: number }> = [];
+
+      tramo.forEach((f, k) => {
+        const destino = comoConcesiones && comoMulti(f.geometry!) ? concesiones : entidades;
+        destino.push({ f, i: inicio + k });
+      });
+
+      if (concesiones.length) {
         /*
          * Una geometría idéntica ya cargada NO entra otra vez. Cargar el mismo shapefile dos veces
          * no solo duplica filas: hace que cada concesión aparezca traslapada al 100 % con su propia
          * copia, y el padrón entero parece un desastre de superposiciones que no existe. Pasó en la
          * primera prueba de carga de verdad.
+         *
+         * Se pregunta por las cien de golpe en vez de una por una: misma comprobación, un viaje.
          */
-        const yaEsta = await cliente.query(
-          `SELECT id FROM concesion
-           WHERE huella = md5(ST_AsBinary(ST_Normalize(ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326)))))
-           LIMIT 1`,
-          [JSON.stringify(f.geometry)]
+        const geoms = concesiones.map(({ f }) => JSON.stringify(f.geometry));
+        const repetidas = await cliente.query<{ pos: string }>(
+          `SELECT t.pos::text AS pos
+             FROM unnest($1::text[]) WITH ORDINALITY AS t(g, pos)
+            WHERE EXISTS (
+              SELECT 1 FROM concesion c
+               WHERE c.huella = md5(ST_AsBinary(ST_Normalize(ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(t.g), 4326)))))
+            )`,
+          [geoms]
         );
-        if (yaEsta.rows.length) {
-          nRep++;
-          continue;
+        const yaEstan = new Set(repetidas.rows.map((r) => Number(r.pos)));
+        nRep += yaEstan.size;
+
+        const nuevas = concesiones.filter((_, k) => !yaEstan.has(k + 1));
+        if (nuevas.length) {
+          const valores: unknown[] = [];
+          const marcas = nuevas.map(({ f, i }) => {
+            const props = (f.properties || {}) as Record<string, unknown>;
+            const declarada = Number(delDbf(props, 'hectareas'));
+            const b = valores.length;
+            valores.push(
+              capaId,
+              delDbf(props, 'expediente'),
+              etiqueta(f, i),
+              delDbf(props, 'titular'),
+              delDbf(props, 'departamento'),
+              delDbf(props, 'municipio'),
+              delDbf(props, 'tipo'),
+              delDbf(props, 'mineral'),
+              delDbf(props, 'estado'),
+              fecha(props, /^(otorgad|inicio|desde|fecha_ini)/i),
+              fecha(props, /^(vence|vencim|caduc|hasta|fecha_fin)/i),
+              // El área buena la mide el motor GIS sobre el elipsoide, no el .dbf.
+              areaHectareas(f).toFixed(4),
+              isFinite(declarada) && declarada > 0 ? declarada : null,
+              JSON.stringify(props),
+              JSON.stringify(f.geometry)
+            );
+            const n = (k: number) => `$${b + k}`;
+            return `(${n(1)},${n(2)},${n(3)},${n(4)},${n(5)},${n(6)},${n(7)},${n(8)},${n(9)},${n(10)},${n(11)},${n(12)},${n(13)},${n(14)},ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${n(15)}), 4326)))`;
+          });
+          await cliente.query(
+            `INSERT INTO concesion
+               (capa_id, expediente, nombre, titular, departamento, municipio, tipo, mineral, estado,
+                otorgada, vence, hectareas, hectareas_dec, atributos, geom)
+             VALUES ${marcas.join(',')}`,
+            valores
+          );
+          nConc += nuevas.length;
         }
-        const declarada = Number(delDbf(props, 'hectareas'));
-        await cliente.query(
-          `INSERT INTO concesion
-             (capa_id, expediente, nombre, titular, departamento, municipio, tipo, mineral, estado,
-              otorgada, vence, hectareas, hectareas_dec, atributos, geom)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-                   ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON($15), 4326)))`,
-          [
-            capaId,
-            delDbf(props, 'expediente'),
-            etiqueta(f, i),
-            delDbf(props, 'titular'),
-            delDbf(props, 'departamento'),
-            delDbf(props, 'municipio'),
-            delDbf(props, 'tipo'),
-            delDbf(props, 'mineral'),
-            delDbf(props, 'estado'),
-            fecha(props, /^(otorgad|inicio|desde|fecha_ini)/i),
-            fecha(props, /^(vence|vencim|caduc|hasta|fecha_fin)/i),
-            // El área buena la mide el motor GIS sobre el elipsoide, no el .dbf.
-            areaHectareas(f).toFixed(4),
-            isFinite(declarada) && declarada > 0 ? declarada : null,
-            JSON.stringify(props),
-            JSON.stringify(f.geometry),
-          ]
-        );
-        nConc++;
-      } else {
-        await cliente.query(
-          `INSERT INTO entidad_geo (capa_id, nombre, clase, atributos, geom)
-           VALUES ($1,$2,$3,$4, ST_SetSRID(ST_GeomFromGeoJSON($5), 4326))`,
-          [capaId, etiqueta(f, i), String(props.clase || props.tipo || 'otro'), JSON.stringify(props), JSON.stringify(f.geometry)]
-        );
-        nEnt++;
+      }
+
+      if (entidades.length) {
+        const valores: unknown[] = [];
+        const marcas = entidades.map(({ f, i }) => {
+          const props = (f.properties || {}) as Record<string, unknown>;
+          const b = valores.length;
+          valores.push(capaId, etiqueta(f, i), String(props.clase || props.tipo || 'otro'), JSON.stringify(props), JSON.stringify(f.geometry));
+          return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},ST_SetSRID(ST_GeomFromGeoJSON($${b + 5}), 4326))`;
+        });
+        await cliente.query(`INSERT INTO entidad_geo (capa_id, nombre, clase, atributos, geom) VALUES ${marcas.join(',')}`, valores);
+        nEnt += entidades.length;
       }
     }
 
