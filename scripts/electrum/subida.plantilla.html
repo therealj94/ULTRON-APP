@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Subir expedientes</title>
+<style>
+  :root{--ambar:#FFAE3B;--fondo:#0A0C0E;--texto:#E7EEF2;--suave:#8FA3B0;--linea:rgba(255,255,255,.12)}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--fondo);color:var(--texto);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;min-height:100vh}
+  .caja{max-width:720px;margin:0 auto;padding:40px 16px 64px}
+  h1{font-size:19px;letter-spacing:.18em;color:var(--ambar);margin:0 0 4px;text-transform:uppercase}
+  .sub{color:var(--suave);font-size:13px;margin:0 0 28px}
+  .zona{border:1.5px dashed var(--linea);border-radius:14px;padding:38px 20px;text-align:center;transition:.15s;cursor:pointer}
+  .zona.encima{border-color:var(--ambar);background:rgba(255,174,59,.06)}
+  .zona b{display:block;font-size:16px;margin-bottom:6px}
+  .zona span{color:var(--suave);font-size:13px}
+  .btns{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap}
+  button{flex:1;min-width:140px;border:0;border-radius:10px;padding:11px 16px;font-size:14px;font-weight:600;cursor:pointer;background:var(--ambar);color:#000}
+  button.gris{background:rgba(255,255,255,.08);color:var(--texto)}
+  button:disabled{opacity:.35;cursor:default}
+  .barra{height:7px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin:22px 0 10px}
+  .barra i{display:block;height:100%;background:var(--ambar);width:0;transition:width .25s}
+  .cifras{display:flex;justify-content:space-between;font:12px ui-monospace,monospace;color:var(--suave)}
+  .actual{margin-top:8px;font:12px ui-monospace,monospace;color:var(--suave);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .aviso{margin-top:22px;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5}
+  .mal{background:rgba(255,120,90,.08);border:1px solid rgba(255,120,90,.3);color:#FFB0A0}
+  .bien{background:rgba(120,255,170,.06);border:1px solid rgba(120,255,170,.25);color:#A8F0C8}
+  ul{margin:8px 0 0;padding-left:18px;font:12px ui-monospace,monospace}
+  .pie{margin-top:34px;color:var(--suave);font-size:12px;line-height:1.6;border-top:1px solid var(--linea);padding-top:16px}
+  .oculto{display:none}
+</style>
+</head>
+<body>
+<div class="caja">
+  <h1>Subir expedientes</h1>
+  <p class="sub">Dr Electrum FP · van directo al bucket, no pasan por ningún servidor intermedio.</p>
+
+  <div class="zona" id="zona">
+    <b>Arrastrá acá la carpeta</b>
+    <span>o usá los botones de abajo · PDF, shapefile .zip, KML, KMZ, GeoJSON, CSV</span>
+  </div>
+
+  <div class="btns">
+    <button id="bCarpeta">Elegir carpeta</button>
+    <button id="bArchivos" class="gris">Elegir archivos sueltos</button>
+  </div>
+  <input type="file" id="fCarpeta" webkitdirectory directory multiple class="oculto">
+  <input type="file" id="fArchivos" multiple class="oculto">
+
+  <div id="marcha" class="oculto">
+    <div class="barra"><i id="relleno"></i></div>
+    <div class="cifras"><span id="cuenta"></span><span id="peso"></span></div>
+    <div class="actual" id="actual"></div>
+  </div>
+
+  <div id="resultado"></div>
+
+  <div class="pie">
+    Se puede cerrar y volver a abrir: lo ya subido se salta, así que si se corta no hay que empezar
+    de cero. Subir el mismo documento dos veces tampoco duplica nada — al indexarlo se reconoce por
+    su contenido, aunque llegue con otro nombre.
+    <br><br>
+    Este archivo lleva un permiso firmado que <b>solo</b> sirve para dejar archivos en este bucket y
+    caduca el <span id="caduca"></span>. No contiene ninguna contraseña.
+  </div>
+</div>
+
+<script>
+const D = /*DATOS*/null;
+const $ = (id) => document.getElementById(id);
+$('caduca').textContent = new Date(D.caduca).toLocaleString('es');
+
+const HECHOS = 'electrum_subidos_' + D.prefijo;
+const yaHechos = () => { try { return new Set(JSON.parse(localStorage.getItem(HECHOS) || '[]')); } catch { return new Set(); } };
+const marcar = (s) => { try { localStorage.setItem(HECHOS, JSON.stringify([...s])); } catch {} };
+
+const peso = (n) => n >= 1024**3 ? (n/1024**3).toFixed(2)+' GB' : n >= 1024**2 ? (n/1024**2).toFixed(1)+' MB' : (n/1024).toFixed(0)+' KB';
+
+// Arrastrar una CARPETA no da archivos en dataTransfer.files: hay que recorrer las entradas a mano.
+// Sin esto, soltar una carpeta no hace absolutamente nada y parece que la página está rota.
+async function deEntrada(entrada, ruta = '') {
+  if (entrada.isFile) {
+    const f = await new Promise((ok, mal) => entrada.file(ok, mal));
+    f._ruta = ruta + f.name;
+    return [f];
+  }
+  const lector = entrada.createReader();
+  const hijos = [];
+  for (;;) {
+    const lote = await new Promise((ok) => lector.readEntries(ok, () => ok([])));
+    if (!lote.length) break;
+    hijos.push(...lote);
+  }
+  const salida = [];
+  for (const h of hijos) salida.push(...await deEntrada(h, ruta + entrada.name + '/'));
+  return salida;
+}
+
+const VALE = /\.(pdf|txt|md|markdown|zip|shp|kml|kmz|geojson|json|csv|gpkg|dxf)$/i;
+
+async function subir(archivos) {
+  archivos = archivos.filter((f) => VALE.test(f.name) && f.size > 0);
+  if (!archivos.length) {
+    $('resultado').innerHTML = '<div class="aviso mal">No reconocí ningún archivo de los que entran. Se aceptan PDF, texto, shapefile .zip, KML, KMZ, GeoJSON y CSV.</div>';
+    return;
+  }
+
+  const hechos = yaHechos();
+  const total = archivos.length;
+  const bytesTotal = archivos.reduce((n, f) => n + f.size, 0);
+  let n = 0, bytes = 0, saltados = 0;
+  const fallos = [];
+
+  $('marcha').classList.remove('oculto');
+  $('resultado').innerHTML = '';
+
+  for (const f of archivos) {
+    const clave = D.prefijo + (f._ruta || f.webkitRelativePath || f.name);
+    n++;
+    $('actual').textContent = clave;
+    $('cuenta').textContent = n + ' de ' + total;
+
+    if (hechos.has(clave)) {
+      saltados++; bytes += f.size;
+      $('relleno').style.width = (bytes / bytesTotal * 100) + '%';
+      $('peso').textContent = peso(bytes) + ' de ' + peso(bytesTotal);
+      continue;
+    }
+
+    let bien = false;
+    for (let intento = 1; intento <= 3 && !bien; intento++) {
+      try {
+        const form = new FormData();
+        form.append('key', clave);
+        for (const [k, v] of Object.entries(D.campos)) form.append(k, v);
+        form.append('Content-Type', f.type || 'application/octet-stream');
+        form.append('file', f);
+        const r = await fetch(D.url, { method: 'POST', body: form });
+        if (r.ok || r.status === 204) bien = true;
+        else if (intento === 3) fallos.push(clave + ' — ' + r.status + ' ' + (await r.text()).slice(0, 120));
+      } catch (e) {
+        if (intento === 3) fallos.push(clave + ' — ' + String(e.message || e).slice(0, 120));
+        else await new Promise((ok) => setTimeout(ok, 1000 * intento));
+      }
+    }
+    if (bien) { hechos.add(clave); marcar(hechos); }
+
+    bytes += f.size;
+    $('relleno').style.width = (bytes / bytesTotal * 100) + '%';
+    $('peso').textContent = peso(bytes) + ' de ' + peso(bytesTotal);
+  }
+
+  $('actual').textContent = '';
+  const subidos = total - saltados - fallos.length;
+  let h = '<div class="aviso ' + (fallos.length ? 'mal' : 'bien') + '">';
+  h += '<b>' + subidos + (subidos === 1 ? ' archivo subido' : ' archivos subidos') + '</b>';
+  if (saltados) h += ' · ' + saltados + ' ya estaban de antes';
+  if (fallos.length) {
+    h += ' · <b>' + fallos.length + ' fallaron</b><ul>' + fallos.slice(0, 12).map((x) => '<li>' + x + '</li>').join('') + '</ul>';
+    h += '<br>Volvé a soltar la misma carpeta: los que ya subieron se saltan y se reintentan solo estos.';
+  } else {
+    h += '.<br>Ya está. Avisale a Claude para que los meta en el cerebro.';
+  }
+  $('resultado').innerHTML = h + '</div>';
+}
+
+$('bCarpeta').onclick = () => $('fCarpeta').click();
+$('bArchivos').onclick = () => $('fArchivos').click();
+// Se vacía el input después de leerlo: si no, volver a elegir LA MISMA carpeta no dispara
+// `change` y no pasa nada al pulsar. Es justo lo que uno hace cuando una subida se cortó.
+const alElegir = async (e) => {
+  const fs = [...e.target.files];
+  e.target.value = '';
+  await subir(fs);
+};
+$('fCarpeta').onchange = alElegir;
+$('fArchivos').onchange = alElegir;
+
+const z = $('zona');
+z.onclick = () => $('fCarpeta').click();
+z.ondragover = (e) => { e.preventDefault(); z.classList.add('encima'); };
+z.ondragleave = () => z.classList.remove('encima');
+z.ondrop = async (e) => {
+  e.preventDefault();
+  z.classList.remove('encima');
+  const entradas = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if (entradas.length) {
+    $('actual').textContent = 'leyendo la carpeta…';
+    $('marcha').classList.remove('oculto');
+    const todos = [];
+    for (const en of entradas) todos.push(...await deEntrada(en));
+    await subir(todos);
+  } else {
+    await subir([...e.dataTransfer.files]);
+  }
+};
+</script>
+</body>
+</html>
