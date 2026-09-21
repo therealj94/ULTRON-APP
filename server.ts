@@ -37,7 +37,7 @@ import {
   recordarHilo,
 } from './server/electrum/hilo';
 import { TODAS as TODAS_ELECTRUM } from './server/electrum/manos';
-import { guardarInforme, informeCartera, informeConcesion, tomarInforme } from './server/electrum/informe';
+import { compartirInforme, guardarInforme, informeCartera, informeConcesion, tomarInforme } from './server/electrum/informe';
 import { aprender as aprenderElectrum } from './server/electrum/aprender';
 import {
   electrumBotListo,
@@ -250,12 +250,21 @@ app.delete('/api/electrum/hilo', exigirPlataforma('electrum'), limitar(30), (req
  * igual en un registro.
  */
 app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  /*
+   * El nivel va con la lista, no solo en `salud`.
+   *
+   * `salud` le pregunta antes al nodo —hasta cuatro segundos, más si está dormido— y la pantalla
+   * necesita saber si esta persona puede cargar archivos para decidir si le ofrece el cargador.
+   * Sacarlo de una ruta lenta hacía que el cargador tardara en aparecer para quien sí puede subir.
+   */
+  const nivelAqui = nivelDe(identidadDe(req), 'electrum');
   if (!hayBaseElectrum()) {
     return res.json({
       capas: [],
       documentos: [],
       totales: { capas: 0, documentos: 0 },
       existentes: { capas: 0, documentos: 0 },
+      nivel: nivelAqui,
       catastro: false,
       honesto: true,
     });
@@ -295,6 +304,7 @@ app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), 
       existentes: { capas: Number(ec?.n || 0), documentos: Number(ed?.n || 0) },
       desde,
       limite,
+      nivel: nivelAqui,
       catastro: true,
       honesto: true,
     });
@@ -352,7 +362,15 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
     quien: id?.persona.nombre || null,
     nivel: nivelDe(id, 'electrum'),
     bot: electrumBotListo(),
-    padron: genteDeElectrum(),
+    /*
+     * EL PADRÓN, SOLO A QUIEN MANDA.
+     *
+     * Esto se le devolvía a cualquiera que pasara la puerta, incluida la llave de demostración: una
+     * persona a la que se le enseña la plataforma diez minutos se llevaba la lista de quién está en
+     * la junta y con qué nivel. Que la ruta pida credencial no significa que todas las credenciales
+     * merezcan lo mismo.
+     */
+    padron: nivelDe(id, 'electrum') === 'mando' ? genteDeElectrum() : undefined,
     honesto: true,
   });
 });
@@ -560,14 +578,37 @@ app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(30), async (
 
 /** Recoger un informe ya armado. Vive media hora: describe el catastro de este momento. */
 app.get('/api/electrum/informe/:id', exigirPlataforma('electrum'), limitar(60), (req, res) => {
-  const r = tomarInforme(String(req.params.id));
-  if (!r) {
+  const id = identidadDe(req);
+  const r = tomarInforme(String(req.params.id), id?.persona.id || null);
+  if (r.estado !== 'ok') {
+    if (r.estado === 'ajeno') {
+      return res.status(403).json({
+        error: 'Ese informe lo pidió otra persona y no lo compartió. Pedime uno a mí y te lo armo con los datos de ahora.',
+        honesto: true,
+      });
+    }
     return res.status(404).json({ error: 'Ese informe ya no está. Se guardan media hora porque describen el catastro del momento; pedime otro.', honesto: true });
   }
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${r.nombre}"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${r.informe.nombre}"`);
   res.setHeader('Cache-Control', 'private, no-store');
-  return res.end(r.pdf);
+  return res.end(r.informe.pdf);
+});
+
+/**
+ * Compartirlo con la junta.
+ *
+ * Un informe nace privado de quien lo pidió —lleva nombres de concesionarios y hectáreas— y se
+ * comparte a propósito, con un botón, no por descuido del sistema.
+ */
+app.post('/api/electrum/informe/:id/compartir', exigirPlataforma('electrum'), limitar(30), (req, res) => {
+  const id = identidadDe(req);
+  const r = compartirInforme(String(req.params.id), id?.persona.id || null);
+  if (r === 'hecho') return res.json({ ok: true, honesto: true });
+  if (r === 'ajeno') {
+    return res.status(403).json({ error: 'Ese informe no es tuyo, así que no sos vos quien puede compartirlo.', honesto: true });
+  }
+  return res.status(404).json({ error: 'Ese informe ya no está. Se guardan media hora; pedime otro.', honesto: true });
 });
 
 /**

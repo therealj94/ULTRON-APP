@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { Map as MapaLibre } from 'maplibre-gl';
 import type { FeatureCollection, Geometry } from 'geojson';
+import { duracion } from '../movimiento';
 import { AMBAR, RESALTE, ESTILO_SATELITE, ESTILO_CALLES, capasDeConcesiones, capasDeResaltado } from './capas';
 
 export type Motor = 'maplibre' | 'google';
@@ -279,13 +280,13 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
     if (m && listo) {
       if (o.accion === 'volar') {
         pintar(m, 'resaltada', { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: o.geojson, properties: {} }] });
-        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 80, duration: 1400, maxZoom: 15 });
-        else if (o.centro) m.flyTo({ center: o.centro, zoom: 13, duration: 1400 });
+        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 80, duration: duracion(1400), maxZoom: 15 });
+        else if (o.centro) m.flyTo({ center: o.centro, zoom: 13, duration: duracion(1400) });
       } else if (o.accion === 'capa') {
         pintar(m, 'concesiones', o.geojson);
-        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 60, duration: 1400 });
+        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 60, duration: duracion(1400) });
       } else if (o.accion === 'punto') {
-        m.flyTo({ center: o.punto, zoom: 14, duration: 1200 });
+        m.flyTo({ center: o.punto, zoom: 14, duration: duracion(1200) });
       }
     }
     const g = google.current;

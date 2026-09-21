@@ -23,7 +23,7 @@ import { Mapa, type Fondo, type Motor, type OrdenMapa } from './mapa/Mapa';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
-import { hayCredencial, headersElectrum, porQueNoAbre, puertaAbierta, type Puerta } from './acceso';
+import { hayCredencial, headersElectrum, porQueNoAbre, puertaAbierta, salir, type Puerta } from './acceso';
 
 /** Dónde está la atención: en quien habla, o en lo que hay que mirar. */
 export type Escenario = 'cara' | 'trabajo';
@@ -202,7 +202,7 @@ export default function App() {
   if (puerta === 'cerrada') return <Entrar onAbierta={() => setPuerta('abierta')} />;
 
   return (
-    <div className="fixed inset-0 bg-black text-[#E7EEF2] overflow-hidden select-none">
+    <div className="fixed inset-0 bg-black text-[#E7EEF2] overflow-hidden">
       <Barra
         escenario={escenario}
         motor={motor}
@@ -211,6 +211,19 @@ export default function App() {
         onEscenario={setEscenario}
         onMotor={setMotor}
         onFondo={setFondo}
+        onSalir={() => {
+          // El hilo también se va: en una computadora compartida, salir tiene que llevarse lo que
+          // se habló, no solo la credencial.
+          try {
+            sessionStorage.removeItem('electrum.hilo');
+          } catch {
+            /* sin almacenamiento no hay nada que quitar */
+          }
+          void fetch('/api/electrum/hilo', { method: 'DELETE', headers: headersElectrum() }).catch(() => {});
+          salir();
+          setPuerta('cerrada');
+          setEscenario('cara');
+        }}
       />
 
       {/* El trabajo: ocupa todo el escenario y se desvanece cuando la cara vuelve al centro. */}
@@ -218,6 +231,13 @@ export default function App() {
         className="absolute inset-0 transition-opacity duration-500"
         style={{ opacity: enTrabajo ? 1 : 0, pointerEvents: enTrabajo ? 'auto' : 'none' }}
         aria-hidden={!enTrabajo}
+        /*
+         * `inert` además de `aria-hidden`. Son cosas distintas y hace falta la segunda: `aria-hidden`
+         * lo esconde del lector de pantalla pero NO saca a sus hijos del recorrido del tabulador, y
+         * `pointer-events: none` solo detiene el ratón. Sin `inert`, quien navega con teclado caía
+         * dentro de un panel invisible y se quedaba pulsando botones que no veía.
+         */
+        inert={!enTrabajo}
       >
         {/*
           Posición explícita, no `inset-0` con relleno y `h-full` dentro: esa cadena de alturas al
@@ -232,7 +252,7 @@ export default function App() {
           El mapa se lleva el 58 %: menos y una concesión no se distingue; más y la conversación
           queda en una rendija.
         */}
-        <div className="absolute top-[52px] left-0 right-0 bottom-[42%]">
+        <div className="absolute top-[52px] left-0 right-0 bottom-[42%] sin-seleccion">
           <Mapa orden={orden} motor={motor} fondo={fondo} claveGoogle={claveGoogle} />
         </div>
         <Panel
@@ -291,7 +311,7 @@ export default function App() {
           arriba y a la izquierda de su propio marco.
         */}
         <div
-          className="relative w-full h-full pointer-events-none overflow-hidden transition-all duration-500"
+          className="relative w-full h-full pointer-events-none overflow-hidden transition-all duration-500 sin-seleccion"
           style={
             enTrabajo
               ? { borderRadius: 18, border: '1px solid rgba(255,174,59,.28)', boxShadow: '0 8px 30px rgba(0,0,0,.55)' }

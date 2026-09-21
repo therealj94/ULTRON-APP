@@ -394,11 +394,11 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
  * redesplegó, el informe viejo ya no describe el catastro de ahora y vale más rehacerlo.
  */
 const VIDA_MS = 30 * 60 * 1000;
-const guardados = new Map<string, { informe: Informe; at: number; quien: string | null }>();
+const guardados = new Map<string, { informe: Informe; at: number; quien: string | null; compartido: boolean }>();
 
 export function guardarInforme(informe: Informe, quien: string | null): string {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-  guardados.set(id, { informe, at: Date.now(), quien });
+  guardados.set(id, { informe, at: Date.now(), quien, compartido: false });
   const limite = Date.now() - VIDA_MS;
   for (const [k, v] of guardados) if (v.at < limite) guardados.delete(k);
   // Un tope duro además del tiempo: si alguien pide informes en bucle, no se come la memoria.
@@ -406,14 +406,49 @@ export function guardarInforme(informe: Informe, quien: string | null): string {
   return id;
 }
 
-export function tomarInforme(id: string): Informe | null {
+/**
+ * Lo que puede pasar al recoger un informe.
+ *
+ * `no-esta` cubre a la vez «no existe» y «ya caducó», a propósito: contestarlos distinto le
+ * confirmaría a quien prueba identificadores cuáles existen.
+ */
+export type TomaInforme = { estado: 'ok'; informe: Informe } | { estado: 'no-esta' } | { estado: 'ajeno' };
+
+/**
+ * Recoger un informe.
+ *
+ * **Privado por defecto.** El `quien` se guardaba desde el principio y no se comparaba con nadie:
+ * cualquiera con acceso a Electrum y el identificador podía bajarse el informe de otro. Los
+ * identificadores no se adivinan fácil, pero «difícil de adivinar» no es un permiso — y un informe
+ * de cartera lleva nombres de concesionarios y hectáreas.
+ *
+ * Quien lo pidió puede compartirlo con la junta a propósito. Eso es una decisión suya, no un
+ * descuido nuestro.
+ */
+export function tomarInforme(id: string, quien: string | null = null): TomaInforme {
   const g = guardados.get(String(id));
-  if (!g) return null;
+  if (!g) return { estado: 'no-esta' };
   if (Date.now() - g.at > VIDA_MS) {
     guardados.delete(String(id));
-    return null;
+    return { estado: 'no-esta' };
   }
-  return g.informe;
+  // Sin autor conocido —un informe pedido por Telegram sin identificar— no hay a quién reservárselo.
+  if (g.quien && !g.compartido && g.quien !== quien) return { estado: 'ajeno' };
+  return { estado: 'ok', informe: g.informe };
+}
+
+/** Compartirlo con la junta. Solo quien lo pidió puede hacerlo. */
+export function compartirInforme(id: string, quien: string | null): 'hecho' | 'no-esta' | 'ajeno' {
+  const g = guardados.get(String(id));
+  if (!g || Date.now() - g.at > VIDA_MS) return 'no-esta';
+  if (g.quien && g.quien !== quien) return 'ajeno';
+  g.compartido = true;
+  return 'hecho';
+}
+
+/** ¿Ya está compartido? Para que la pantalla no ofrezca compartir lo que ya está compartido. */
+export function informeCompartido(id: string): boolean {
+  return !!guardados.get(String(id))?.compartido;
 }
 
 export function olvidarInformes() {

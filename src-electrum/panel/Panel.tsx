@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { FaceState } from '../../src/types';
 import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/Mapa';
+import { sinMovimiento } from '../movimiento';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 
 type Props = {
@@ -31,7 +32,7 @@ type Turno = {
   panel?: string;
   traza?: Array<{ herramienta: string; ok: boolean; resumen: string }>;
   /** Si el turno produjo un informe, queda a mano para bajarlo. */
-  informe?: { nombre: string; url: string; bytes: number };
+  informe?: { nombre: string; url: string; bytes: number; compartido?: boolean };
   /**
    * La pregunta que habría que repetir. Solo la llevan los turnos que NO terminaron bien: un corte
    * o un fallo. Guardarla es lo que separa «se rompió» de «se rompió y aquí está el botón».
@@ -202,6 +203,7 @@ const EJEMPLOS = [
  */
 const CAJON_HILO = 'electrum.hilo';
 
+
 /*
  * Por qué los cortes llevan motivo.
  *
@@ -280,9 +282,37 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
   const [enVivo, setEnVivo] = useState<{ panel: string; traza: Array<{ herramienta: string; ok: boolean; resumen: string }> }>({ panel: '', traza: [] });
   const hilo = useRef<HTMLDivElement>(null);
 
+  /**
+   * SEGUIR EL FINAL, PERO SOLO SI YA ESTABAS ALLÍ.
+   *
+   * Antes bajaba al final en cada cambio, sin mirar. Quien estaba releyendo una respuesta de hace
+   * tres turnos —comprobando un número de expediente, que es exactamente lo que se hace con esto—
+   * salía disparado al fondo en cuanto llegaba una línea nueva. Ahora, si te has apartado del
+   * final, te quedas donde estás y aparece un aviso de que hay algo nuevo.
+   */
+  const [hayNuevo, setHayNuevo] = useState(false);
+  const alFinal = useRef(true);
+
+  const mirarPosicion = useCallback(() => {
+    const el = hilo.current;
+    if (!el) return;
+    // 40 px de margen: nadie deja el desplazamiento clavado al píxel.
+    alFinal.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (alFinal.current) setHayNuevo(false);
+  }, []);
+
+  const bajarDeltodo = useCallback(() => {
+    const el = hilo.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: sinMovimiento() ? 'auto' : 'smooth' });
+    alFinal.current = true;
+    setHayNuevo(false);
+  }, []);
+
   useEffect(() => {
-    hilo.current?.scrollTo({ top: hilo.current.scrollHeight, behavior: 'smooth' });
-  }, [turnos, pensando]);
+    if (alFinal.current) bajarDeltodo();
+    else if (turnos.length) setHayNuevo(true);
+  }, [turnos, pensando, bajarDeltodo]);
 
   /**
    * Un aviso de la pantalla, no una frase del Doctor.
@@ -464,6 +494,26 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
     [pensando, onFace, onEmocion, onUi, onTrabajo, avisar]
   );
 
+  /** Abrir un informe a la junta. Solo puede hacerlo quien lo pidió; el servidor lo comprueba. */
+  const compartir = useCallback(
+    async (indice: number, informe: { url: string }) => {
+      try {
+        const r = await fetch(`${informe.url}/compartir`, { method: 'POST', headers: headersElectrum() });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}) as any);
+          avisar(j?.error || `No pude compartirlo: el servidor contestó ${r.status}.`);
+          return;
+        }
+        setTurnos((t) =>
+          t.map((x, j) => (j === indice && x.informe ? { ...x, informe: { ...x.informe, compartido: true } } : x))
+        );
+      } catch {
+        avisar('No alcancé el servidor para compartir el informe.');
+      }
+    },
+    [avisar]
+  );
+
   /** Borra el hilo de las dos puntas. Si el servidor no contesta, al menos la pantalla queda limpia. */
   const olvidar = useCallback(() => {
     setTurnos([]);
@@ -567,7 +617,11 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
 
       {vista === 'chat' ? (
         <>
-          <div ref={hilo} className="flex-1 overflow-y-auto px-4 py-4 space-y-4 w-full max-w-4xl mx-auto">
+          <div
+            ref={hilo}
+            onScroll={mirarPosicion}
+            className="relative flex-1 overflow-y-auto px-4 py-4 space-y-4 w-full max-w-4xl mx-auto"
+          >
             {!turnos.length && (
               <div className="space-y-3">
                 <p className="text-sm text-[#8FA3B0] leading-relaxed">
@@ -631,8 +685,24 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] text-[#E7EEF2]">{t.informe.nombre}</span>
-                      <span className="block font-mono text-[10px] text-[#6C7F89]">{Math.round(t.informe.bytes / 1024)} KB · se guarda media hora</span>
+                      <span className="block font-mono text-[10px] text-[#6C7F89]">
+                        {Math.round(t.informe.bytes / 1024)} KB · se guarda media hora · {t.informe.compartido ? 'lo ve la junta' : 'solo vos'}
+                      </span>
                     </span>
+                  </button>
+                )}
+                {/*
+                  * Compartirlo es un ACTO, no el estado por defecto. Un informe de cartera lleva
+                  * nombres de concesionarios y hectáreas, así que nace privado de quien lo pidió y
+                  * sale de ahí solo si él decide que salga.
+                  */}
+                {t.informe && !t.informe.compartido && (
+                  <button
+                    type="button"
+                    onClick={() => void compartir(i, t.informe!)}
+                    className="mt-1.5 rounded-lg border border-white/15 px-2.5 py-1 font-mono text-[10px] tracking-[0.14em] uppercase text-[#9FB0B8] transition-colors hover:border-white/30 hover:text-white cursor-pointer"
+                  >
+                    Compartir con la junta
                   </button>
                 )}
                 {t.traza?.length ? (
@@ -688,6 +758,20 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
               </div>
             )}
           </div>
+
+          {/* Hay algo nuevo y no estás mirando el final: se avisa, no se te arrastra. */}
+          {hayNuevo && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-[68px] flex justify-center">
+              <button
+                type="button"
+                onClick={bajarDeltodo}
+                className="pointer-events-auto rounded-full border px-3 py-1 font-mono text-[10px] tracking-[0.14em] uppercase text-black cursor-pointer"
+                style={{ background: AMBAR, borderColor: AMBAR }}
+              >
+                ↓ Hay respuesta nueva
+              </button>
+            </div>
+          )}
 
           <form
             onSubmit={(e) => {
@@ -782,7 +866,23 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
  * lanzar seis en paralelo contra el mismo PostGIS hace que el recálculo de traslapes se pise
  * consigo mismo. En serie tarda lo mismo y se ve qué está pasando.
  */
-function Cargador({ alCargar }: { alCargar: () => void }) {
+function Cargador({ alCargar, nivel }: { alCargar: () => void; nivel: string | null | undefined }) {
+  /*
+   * El servidor ya rechaza las cargas sin permiso —esa es la defensa de verdad y se queda— pero la
+   * pantalla ofrecía igualmente arrastrar archivos a quien tiene acceso de consulta. Soltar una
+   * carpeta de expedientes, ver cómo suben y que cada uno conteste «tu acceso es de consulta» es
+   * una pérdida de tiempo que la interfaz podía haberle ahorrado.
+   */
+  /*
+   * Mientras no se sepa el nivel, se OFRECE.
+   *
+   * `salud` tarda en contestar porque antes le pregunta al nodo —hasta cuatro segundos, más si el
+   * nodo está dormido— y esconder el cargador durante esa espera se lo quita a quien sí puede
+   * subir. El error barato es enseñárselo un segundo a quien no puede y que el servidor lo
+   * rechace con una frase clara; el caro es que quien viene a cargar el catastro no encuentre
+   * dónde hacerlo.
+   */
+  const puedeCargar = nivel === undefined || nivel === 'escribe' || nivel === 'mando';
   const [encima, setEncima] = useState(false);
   const [cola, setCola] = useState<Array<{ id: number; nombre: string; estado: 'espera' | 'subiendo' | 'ok' | 'falló'; dicho?: string }>>([]);
   const entrada = useRef<HTMLInputElement>(null);
@@ -851,9 +951,34 @@ function Cargador({ alCargar }: { alCargar: () => void }) {
     [consumir]
   );
 
+  if (!puedeCargar) {
+    return (
+      <div className="px-4 pb-3">
+        <div
+          className="rounded-xl border border-dashed px-3 py-3 text-center"
+          style={{ borderColor: 'rgba(255,255,255,.10)' }}
+        >
+          <span className="block text-[12px] leading-relaxed text-[#8FA3B0]">
+            Tu acceso es de consulta: podés mirarlo todo y preguntar lo que quieras, pero no cargarle
+            nada al cerebro. Pedile a José nivel de trabajo.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="px-4 pb-3">
-      <div
+      {/*
+        * Un BOTÓN de verdad, no un div clicable.
+        *
+        * Era un `div` con un `onClick` y un `input` escondido: con el ratón funcionaba y con el
+        * teclado no existía — no recibe foco, no se activa con Intro ni con espacio, y un lector de
+        * pantalla no tiene forma de anunciar que ahí se suben archivos. Arrastrar y soltar sigue
+        * funcionando igual; lo que cambia es que ahora también hay una manera de usarlo sin ratón.
+        */}
+      <button
+        type="button"
         onDragOver={(e) => {
           e.preventDefault();
           setEncima(true);
@@ -865,22 +990,27 @@ function Cargador({ alCargar }: { alCargar: () => void }) {
           void subir([...e.dataTransfer.files]);
         }}
         onClick={() => entrada.current?.click()}
-        className="rounded-xl border border-dashed px-3 py-4 text-center cursor-pointer transition-colors"
+        aria-label="Subir archivos al cerebro: catastro, expedientes o la foto de un papel"
+        className="w-full rounded-xl border border-dashed px-3 py-4 text-center cursor-pointer transition-colors focus:outline-none focus-visible:border-[#FFAE3B] focus-visible:ring-2 focus-visible:ring-[#FFAE3B]/40"
         style={{ borderColor: encima ? AMBAR : 'rgba(255,255,255,.16)', background: encima ? 'rgba(255,174,59,.07)' : 'transparent' }}
       >
-        <div className="text-[13px] text-[#B9C7CE]">Arrastrá acá el catastro, un expediente o la foto de un papel</div>
-        <div className="mt-0.5 font-mono text-[10px] text-[#6C7F89]">.zip de shapefile · KML · KMZ · GeoJSON · CSV · PDF · JPG · PNG</div>
-        <input
-          ref={entrada}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            void subir([...(e.target.files || [])]);
-            e.target.value = '';
-          }}
-        />
-      </div>
+        <span className="block text-[13px] text-[#B9C7CE]">Arrastrá acá el catastro, un expediente o la foto de un papel</span>
+        <span className="mt-0.5 block font-mono text-[10px] text-[#6C7F89]">
+          .zip de shapefile · KML · KMZ · GeoJSON · CSV · PDF · JPG · PNG
+        </span>
+      </button>
+      {/* Fuera del botón: un control dentro de otro control no es HTML válido y los clics chocan. */}
+      <input
+        ref={entrada}
+        type="file"
+        multiple
+        className="hidden"
+        tabIndex={-1}
+        onChange={(e) => {
+          void subir([...(e.target.files || [])]);
+          e.target.value = '';
+        }}
+      />
 
       {cola.length > 0 && (
         <ul className="mt-2 space-y-1.5">
@@ -965,6 +1095,8 @@ type Indice = {
   totales: { capas: number; documentos: number };
   /** Cuántos hay en total, al margen de la búsqueda. */
   existentes: { capas: number; documentos: number };
+  /** Qué puede hacer aquí quien pregunta. Viene con la lista porque `salud` tarda. */
+  nivel: string | null;
 };
 
 function Expedientes() {
@@ -976,6 +1108,12 @@ function Expedientes() {
   /** Lo que se escribe, antes de que pare de escribir. */
   const [escrito, setEscrito] = useState('');
   const [trayendo, setTrayendo] = useState(false);
+  /*
+   * Tres estados, no dos. `undefined` es «todavía no lo sé» y `null` es «ya pregunté y no tiene
+   * nivel» —una llave de demostración—. Colapsarlos en un solo null hacía que el cargador se le
+   * ofreciera para siempre a quien solo puede consultar, porque su nivel es null de verdad.
+   */
+  const [nivel, setNivel] = useState<string | null | undefined>(undefined);
 
   // No una consulta por tecla: se espera a que termine de escribir.
   useEffect(() => {
@@ -987,7 +1125,10 @@ function Expedientes() {
     const q = busca ? `&q=${encodeURIComponent(busca)}` : '';
     fetch(`/api/electrum/expedientes?limite=${PAGINA}${q}`, { headers: headersElectrum() })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then(setDatos)
+      .then((j: Indice) => {
+        setDatos(j);
+        setNivel(j.nivel ?? null);
+      })
       .catch((e) => setFallo(e === 401 ? 'puerta' : 'base'));
   }, [vuelta, busca]);
 
@@ -1053,7 +1194,7 @@ function Expedientes() {
           <p>Todavía no hay nada cargado.</p>
           <p>Lo geográfico se vuelve mapa, medido sobre el elipsoide. Los documentos quedan citables con su página.</p>
         </div>
-        <Cargador alCargar={recargar} />
+        <Cargador alCargar={recargar} nivel={nivel} />
       </div>
     );
   }
@@ -1067,7 +1208,7 @@ function Expedientes() {
         encontrarlo. Quien abre esta pestaña casi siempre viene a añadir algo, no a leer el índice:
         lo primero que se ve tiene que ser por dónde se mete.
       */}
-      <Cargador alCargar={recargar} />
+      <Cargador alCargar={recargar} nivel={nivel} />
       <Buscador escrito={escrito} setEscrito={setEscrito} />
       {datos.capas.length > 0 && (
         <section>

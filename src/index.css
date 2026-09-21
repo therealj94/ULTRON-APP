@@ -6,14 +6,31 @@
     --font-mono: 'IBM Plex Mono', monospace;
   }
   
+  /*
+   * `user-select: none` y `touch-action: none` en el body venían de ULTRON, que es una cara con la
+   * que se habla: ahí evitan que arrastrar sobre el rostro seleccione medio interfaz.
+   *
+   * En Dr Electrum eso es un estorbo grave. Esto es una herramienta DOCUMENTAL: quien lee una
+   * resolución necesita copiar el número de expediente, el nombre del titular, unas coordenadas.
+   * Con la selección desactivada en el body, no podía. Y `touch-action: none` le quita al navegador
+   * el desplazamiento y el pellizco para ampliar — justo lo que hace falta para leer un párrafo
+   * pequeño en un teléfono.
+   *
+   * Así que se invierte la regla: se puede seleccionar y desplazar por defecto, y se desactiva solo
+   * donde arrastrar significa otra cosa (la cara, el mapa), con la clase `sin-seleccion`.
+   */
   body {
     font-family: var(--font-mono);
     background-color: #000000;
     color: #05E1FF;
-    user-select: none;
-    -webkit-user-select: none;
-    touch-action: none;
+    touch-action: manipulation;
   }
+}
+
+/** Para las superficies donde arrastrar es un gesto, no una selección: la cara y el mapa. */
+.sin-seleccion {
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .font-display {

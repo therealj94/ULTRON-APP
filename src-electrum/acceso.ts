@@ -130,6 +130,29 @@ export function guardarLlave(llave: string): Donde {
   return guardar(LLAVE, llave);
 }
 
+/**
+ * Cerrar la sesión en este navegador.
+ *
+ * Borra las dos credenciales de los tres sitios donde pueden estar. **Cierra también la de ULTRON**,
+ * porque es la misma: el token se comparte entre las dos plataformas y fingir que son dos sesiones
+ * sería dejar una abierta creyendo que se cerró.
+ */
+export function salir() {
+  for (const k of [SESION, LLAVE]) {
+    try {
+      localStorage.removeItem(k);
+    } catch {
+      /* sigue */
+    }
+    try {
+      sessionStorage.removeItem(k);
+    } catch {
+      /* sigue */
+    }
+    enMemoria.delete(k);
+  }
+}
+
 /** ¿Llevamos encima algo con lo que llamar a la puerta? No dice si vale: eso lo dice el servidor. */
 export function hayCredencial(): boolean {
   return Boolean(guardado(SESION) || guardado(LLAVE));

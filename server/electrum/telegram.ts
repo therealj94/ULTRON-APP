@@ -173,7 +173,8 @@ export async function responderElectrum(chatId: string, texto: string): Promise<
  */
 export async function enviarInformeElectrum(chatId: string, id: string, pieDeFoto: string): Promise<boolean> {
   const token = electrumBotToken();
-  const r = tomarInforme(id);
+  const t = tomarInforme(id);
+  const r = t.estado === 'ok' ? t.informe : null;
   if (!token || !r) return false;
   try {
     const cuerpo = new FormData();
