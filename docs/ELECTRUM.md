@@ -318,15 +318,23 @@ Lo que **no** hay que hacer es mandarlos por `/api/electrum/subir`. Esa puerta e
 arrastra a la web de a uno: pasa por Render y el cuerpo entero se sostiene en memoria, con un tope
 de 64 MB. Un lote de gigabytes por ahí no es lento, es imposible.
 
-El orden de una carga grande es:
+De un solo comando, desde la máquina donde están los papeles:
 
 ```bash
-export ELECTRUM_DB_URL='postgres://electrum:clave@host:5432/electrum'
+./scripts/electrum/cargar.sh /ruta/a/los/expedientes
+```
 
-# 1. Ensayo. No escribe nada.
+Abre el túnel a la base del nodo por SSM —sin abrir ningún puerto a internet—, ensaya sin escribir
+nada, te enseña qué entraría de verdad, pregunta, y carga. El túnel se cierra pase lo que pase,
+incluso con un Ctrl-C a mitad. La clave se pide por teclado sin eco y no se guarda en ningún sitio:
+pasarla por SSM la dejaría en el historial de AWS para siempre.
+
+A mano, si preferís los pasos sueltos:
+
+```bash
+./scripts/electrum/tunel.sh i-06530893af0dd0638      # en una terminal
+export ELECTRUM_DB_URL='postgres://electrum:clave@127.0.0.1:55432/electrum'
 npx tsx scripts/electrum/aprender.ts --seco /ruta/a/los/expedientes
-
-# 2. La carga de verdad.
 npx tsx scripts/electrum/aprender.ts --quien jose /ruta/a/los/expedientes
 ```
 
