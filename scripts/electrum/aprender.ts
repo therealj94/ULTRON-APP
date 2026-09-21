@@ -152,6 +152,33 @@ async function juntarShapefiles(lista: string[]): Promise<string[]> {
 
     const zip = new JSZip();
     for (const f of piezas) zip.file(path.basename(f), fs.readFileSync(f));
+
+    /*
+     * Si el .dbf no es UTF-8 válido y nadie declaró la codificación, se declara Latin-1.
+     *
+     * El formato DBF guarda la página de códigos en un byte que los exportadores dejan en cero muy
+     * a menudo, y entonces el lector supone UTF-8. Cuando los bytes son Latin-1 —lo que sale por
+     * defecto de ArcGIS— cada vocal acentuada se convierte en un carácter de reemplazo: «R?o
+     * Medina» en vez de «Río Medina». No falla, no avisa; solo deja los nombres rotos, y con ellos
+     * la búsqueda, porque nadie escribe «R<reemplazo>o» en un buscador.
+     *
+     * La prueba es objetiva, no una corazonada: si los bytes decodifican como UTF-8, se dejan en
+     * paz; si no decodifican, son Latin-1. En el catastro de Honduras esto recupera 139 nombres.
+     * Los que ya venían con un signo de interrogación literal no tienen arreglo aquí: esos se
+     * perdieron al exportarlos y hay que pedir el archivo otra vez.
+     */
+    if (!piezas.some((f) => /\.cpg$/i.test(f))) {
+      const dbf = piezas.find((f) => /\.dbf$/i.test(f));
+      if (dbf) {
+        let esUtf8 = true;
+        try {
+          new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(dbf));
+        } catch {
+          esUtf8 = false;
+        }
+        if (!esUtf8) zip.file(`${path.basename(base)}.cpg`, 'ISO-8859-1');
+      }
+    }
     // El nombre del zip lleva el del shapefile: es lo que se va a ver luego en la lista de capas.
     const destino = path.join(os.tmpdir(), `${path.basename(base)}.zip`);
     fs.writeFileSync(destino, await zip.generateAsync({ type: 'nodebuffer' }));
