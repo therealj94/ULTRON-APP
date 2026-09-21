@@ -419,6 +419,50 @@ diciéndolo. El relieve, además, se sirve como teselas, no como filas de una ba
   vocales acentuadas. No se corrige adivinando letras en un registro oficial; hay que pedir una
   exportación buena.
 
+## Los expedientes: dónde estaban y por qué no se leían
+
+Los documentos no habían llegado con el catastro. Ochenta de los archivos del lote eran **atajos de
+Windows** de cien bytes apuntando a Google Drive: reglamentos, formularios, las leyes. Copiar la
+carpeta no copia lo que importa. `scripts/electrum/bajar-enlaces.mjs` los sigue y los trae, y
+comprueba lo que llega —un PDF empieza por `%PDF`— porque Drive responde 200 con una página de
+error cuando el archivo es privado, y guardar eso como si fuera un expediente es peor que no
+tenerlo. La extensión la decide el contenido y no el nombre del atajo: un atajo a un documento de
+Google se llama `Formulario.docx` y lo que baja es la exportación en PDF.
+
+Después, ocho documentos tenían capa de texto y **aun así eran ilegibles**, y eran los más
+importantes: la Ley General de Minería, su Reglamento, la Ley de Procedimiento Administrativo, el
+Reglamento MAPE. Salían como `e x p l o t a c i ó n` —al 80 % de fichas de un solo carácter— o con
+una codificación de fuente propia: `IUDJPHQWDGRV` por `FRAGMENTADOS`.
+
+Eso no da error: entra, se indexa y se cita. **Una cita inventada de la ley minera es peor que no
+tener la ley.** Ahora se mide si lo extraído parece prosa —la proporción de palabras funcionales,
+que en español ronda el 20 % y ahí no llegaba al 8 %— y lo que no lo parece se rechaza diciéndolo.
+
+`scripts/electrum/ocr.sh` cierra el círculo: rasteriza, reconoce en español y guarda **texto** con
+las páginas separadas por salto de página. No un PDF con capa invisible: esa capa usa una
+codificación que nuestro lector tampoco interpreta y el archivo volvía a salir «sin texto». El salto
+de página importa porque es la marca por la que se reparten los fragmentos; sin él, una ley de cien
+páginas se cita entera como «página 1» y la cita deja de poder comprobarse.
+
+Resultado: **70 documentos, 896 páginas, 2474 fragmentos citables**. Preguntar por el plazo de una
+concesión de explotación devuelve la Guía de Participación Ciudadana, página 16; por el canon
+territorial, el Reglamento de la Ley General de Minería, página 2; por el plan de cierre, la Ley
+General de Minería, página 7.
+
+## El mapa: lo que falta
+
+`/api/electrum/catastro.geojson` sirve las 1079 concesiones con su nombre, titular, estado y
+hectáreas, más el rectángulo que las abarca —546 KB, 67 ms medidos—, y la web lo pide al abrir el
+mapa. **Pero el mapa todavía no las pinta.**
+
+Hay una causa encontrada y arreglada: una capa de MapLibre se ata al objeto fuente que existía
+cuando se la añadió, así que tras una recarga de estilo `getLayer` la encuentra y parece sana, pero
+apunta a una fuente muerta y no dibuja nada. No bastó: la fuente vuelve a desaparecer.
+
+No se pudo terminar de aislar porque en el entorno de desarrollo las teselas del satélite fallan sin
+parar y esos fallos recargan el estilo solos: no hay forma de separar el fallo propio del ruido.
+Queda pendiente, y hay que retomarlo con red que funcione.
+
 ## Estado
 
 | Pieza | Estado |
