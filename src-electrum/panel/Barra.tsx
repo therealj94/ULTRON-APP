@@ -12,12 +12,10 @@ type Props = {
   escenario: Escenario;
   motor: Motor;
   fondo: Fondo;
-  panel: 'chat' | 'expedientes';
   hayGoogle: boolean;
   onEscenario: (e: Escenario) => void;
   onMotor: (m: Motor) => void;
   onFondo: (f: Fondo) => void;
-  onPanel: (p: 'chat' | 'expedientes') => void;
 };
 
 const AMBAR = '#FFAE3B';
@@ -55,7 +53,7 @@ function Opcion({
   );
 }
 
-export function Barra({ escenario, motor, fondo, panel, hayGoogle, onEscenario, onMotor, onFondo, onPanel }: Props) {
+export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor, onFondo }: Props) {
   const enTrabajo = escenario === 'trabajo';
   return (
     <div className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between gap-3 px-3 py-2.5 pointer-events-none">
@@ -100,14 +98,13 @@ export function Barra({ escenario, motor, fondo, panel, hayGoogle, onEscenario, 
           </Opcion>
         </Grupo>
 
-        <Grupo>
-          <Opcion activa={panel === 'chat'} onClick={() => onPanel('chat')}>
-            Consulta
-          </Opcion>
-          <Opcion activa={panel === 'expedientes'} onClick={() => onPanel('expedientes')}>
-            Expedientes
-          </Opcion>
-        </Grupo>
+        {/*
+          Consulta y Expedientes ya no están aquí. Vivían en esta misma tira, que se desplaza en
+          horizontal y está invisible y muerta mientras la cara ocupa el centro: en un teléfono de
+          430 px «Expedientes» caía en x=527, fuera de pantalla, detrás de un scroll sin barra. Para
+          subir un archivo había que adivinar cuatro pasos. Son navegación del panel, no ajustes del
+          mapa, así que ahora están en el panel, donde siempre se ven.
+        */}
       </div>
     </div>
   );

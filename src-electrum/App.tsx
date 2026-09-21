@@ -77,6 +77,19 @@ export default function App() {
    * nadie tiene que tocar un botón para que la interfaz haga lo evidente.
    */
   const alTrabajo = useCallback(() => setEscenario('trabajo'), []);
+
+  /**
+   * Elegir pestaña también abre el panel.
+   *
+   * Antes solo cambiaba cuál de las dos vistas estaba puesta, y el panel sigue fuera de pantalla
+   * mientras la cara está en el centro: desde la pantalla de inicio se tocaba EXPEDIENTES y no
+   * pasaba absolutamente nada. Un botón que no hace nada visible es un botón roto, y este era el
+   * que llevaba a subir archivos.
+   */
+  const elegirPanel = useCallback((p: 'chat' | 'expedientes') => {
+    setPanel(p);
+    setEscenario('trabajo');
+  }, []);
   useEffect(() => {
     if (orden) alTrabajo();
   }, [orden, alTrabajo]);
@@ -128,12 +141,10 @@ export default function App() {
         escenario={escenario}
         motor={motor}
         fondo={fondo}
-        panel={panel}
         hayGoogle={!!claveGoogle}
         onEscenario={setEscenario}
         onMotor={setMotor}
         onFondo={setFondo}
-        onPanel={setPanel}
       />
 
       {/* El trabajo: ocupa todo el escenario y se desvanece cuando la cara vuelve al centro. */}
@@ -160,6 +171,7 @@ export default function App() {
         </div>
         <Panel
           abierto={enTrabajo}
+          onVista={elegirPanel}
           vista={panel}
           onFace={setFace}
           onEmocion={setEmocion}
@@ -175,8 +187,15 @@ export default function App() {
       */}
       <div
         className="absolute transition-all duration-[650ms] ease-[cubic-bezier(.22,.61,.36,1)]"
-        style={
-          enTrabajo
+        style={{
+          /*
+            En Expedientes el panel ocupa toda la altura y la cara se quedaba encima de la pestaña
+            «Consulta», tapando justo el botón para volver. La cara se apoya en el mapa; cuando no
+            hay mapa a la vista, no tiene dónde apoyarse y sobra. Se aparta en lugar de estorbar.
+          */
+          opacity: enTrabajo && panel === 'expedientes' ? 0 : 1,
+          pointerEvents: enTrabajo && panel === 'expedientes' ? 'none' : 'auto',
+          ...(enTrabajo
             ? /*
                * Arriba a la izquierda, SOBRE EL MAPA — no abajo.
                *
@@ -188,8 +207,8 @@ export default function App() {
               ancho
               ? { left: 16, top: 64, width: 132, height: 132, zIndex: 30 }
               : { left: 12, top: 60, width: 96, height: 96, zIndex: 30 }
-            : { left: '50%', top: '50%', width: 'min(76vmin, 560px)', height: 'min(76vmin, 560px)', transform: 'translate(-50%,-50%)', zIndex: 30 }
-        }
+            : { left: '50%', top: '50%', width: 'min(76vmin, 560px)', height: 'min(76vmin, 560px)', transform: 'translate(-50%,-50%)', zIndex: 30 }),
+        }}
       >
         <button
           type="button"

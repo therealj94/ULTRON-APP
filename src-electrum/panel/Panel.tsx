@@ -22,6 +22,7 @@ type Props = {
   onEmocion: (e: Emocion) => void;
   onUi: (datos: Array<Record<string, unknown>>) => void;
   onTrabajo: () => void;
+  onVista: (v: 'chat' | 'expedientes') => void;
 };
 
 type Turno = {
@@ -133,7 +134,7 @@ const EJEMPLOS = [
   '¿qué concesiones vencen este año?',
 ];
 
-export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Props) {
+export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVista }: Props) {
   const [turnos, setTurnos] = useState<Turno[]>([]);
   const [texto, setTexto] = useState('');
   const [pensando, setPensando] = useState(false);
@@ -257,12 +258,41 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo }: Pr
     }
   }, [pensando, onFace, onTrabajo]);
 
+  /*
+    La conversación comparte la pantalla con el mapa —42 % abajo— porque las dos cosas se miran a la
+    vez: preguntás y el mapa se mueve. Los expedientes no: ahí se viene a meter archivos y a leer el
+    índice, y el mapa no pinta nada. En 42 % de una pantalla vertical la zona de subida quedaba
+    reducida a una franja donde no cabe ni la lista de lo que se está subiendo. Esa pestaña toma
+    toda la altura.
+  */
+  const completo = vista === 'expedientes';
+
   return (
     <aside
-      className="absolute z-20 flex flex-col border-white/10 bg-[#0A0C0E]/92 backdrop-blur-xl
-                 inset-x-0 bottom-0 h-[42%] border-t"
+      className={`absolute z-20 flex flex-col border-white/10 bg-[#0A0C0E]/92 backdrop-blur-xl inset-x-0 bottom-0 border-t ${
+        completo ? 'top-[52px]' : 'h-[42%]'
+      }`}
       style={{ transition: 'transform .4s ease', transform: abierto ? 'none' : 'translateY(100%)' }}
     >
+      {/* La cabecera: siempre visible, nunca fuera de pantalla, y dice por dónde se sube. */}
+      <div className="flex items-center gap-1 px-3 pt-2.5 pb-2 border-b border-white/[0.07] shrink-0">
+        {(['chat', 'expedientes'] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => onVista(v)}
+            className="px-3 py-1.5 rounded-lg font-mono text-[11px] tracking-[0.14em] uppercase transition-colors cursor-pointer"
+            style={
+              vista === v
+                ? { background: 'rgba(255,174,59,0.14)', color: AMBAR }
+                : { color: '#8FA3B0' }
+            }
+          >
+            {v === 'chat' ? 'Consulta' : 'Expedientes'}
+          </button>
+        ))}
+      </div>
+
       {vista === 'chat' ? (
         <>
           <div ref={hilo} className="flex-1 overflow-y-auto px-4 py-4 space-y-4 w-full max-w-4xl mx-auto">
@@ -630,6 +660,13 @@ function Expedientes() {
   return (
     <div className="flex-1 overflow-y-auto p-4 pt-4 space-y-5 w-full max-w-4xl mx-auto">
       <Estado />
+      {/*
+        El cargador va ARRIBA, no al final. Estaba debajo de las dos listas, y en la web vertical
+        —donde el panel es el 42 % de la pantalla— eso significa bajar hasta el fondo para
+        encontrarlo. Quien abre esta pestaña casi siempre viene a añadir algo, no a leer el índice:
+        lo primero que se ve tiene que ser por dónde se mete.
+      */}
+      <Cargador alCargar={recargar} />
       {datos.capas.length > 0 && (
         <section>
           <h3 className="font-mono text-[10px] tracking-[0.18em] uppercase mb-2" style={{ color: AMBAR }}>
@@ -664,7 +701,6 @@ function Expedientes() {
           </ul>
         </section>
       )}
-      <Cargador alCargar={recargar} />
     </div>
   );
 }
