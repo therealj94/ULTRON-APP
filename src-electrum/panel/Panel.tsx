@@ -32,6 +32,19 @@ type Turno = {
   traza?: Array<{ herramienta: string; ok: boolean; resumen: string }>;
   /** Si el turno produjo un informe, queda a mano para bajarlo. */
   informe?: { nombre: string; url: string; bytes: number };
+  /**
+   * La pregunta que habría que repetir. Solo la llevan los turnos que NO terminaron bien: un corte
+   * o un fallo. Guardarla es lo que separa «se rompió» de «se rompió y aquí está el botón».
+   */
+  reintentar?: string;
+  /**
+   * Es un aviso de la pantalla, no algo que dijo el Doctor.
+   *
+   * «Lo dejé ahí, como pediste» o «se me cortó la respuesta» se ven en el hilo porque el usuario
+   * necesita verlos, pero NO son turnos de la conversación: mandárselos al modelo como respuestas
+   * suyas le enseña un pasado que no ocurrió, y la pregunta siguiente se contesta sobre eso.
+   */
+  local?: boolean;
 };
 
 const AMBAR = '#FFAE3B';
@@ -174,6 +187,17 @@ const EJEMPLOS = [
  */
 const CAJON_HILO = 'electrum.hilo';
 
+/*
+ * Por qué los cortes llevan motivo.
+ *
+ * `abort()` a secas deja en `signal.reason` un DOMException genérico, indistinguible del que pone
+ * el navegador cuando se cae la red. Sin motivo propio, pararlo a mano se le contaba al usuario
+ * como «no alcancé el servidor» — acusar a la conexión de algo que hizo él.
+ */
+const MOTIVO_PARADO = new Error('parado por quien pregunta');
+const MOTIVO_TARDE = new Error('tardó demasiado');
+const MOTIVO_IRSE = new Error('se cerró la pantalla');
+
 function hiloGuardado(): Turno[] {
   try {
     const crudo = sessionStorage.getItem(CAJON_HILO);
@@ -194,13 +218,20 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
    */
   const turnosRef = useRef<Turno[]>(turnos);
   turnosRef.current = turnos;
+  /** El turno en vuelo, para poder pararlo desde el botón o al irse de la pantalla. */
+  const abortoRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     try {
       // Solo el texto y de quién es: la traza y los enlaces de informe no son contexto y ocupan.
       sessionStorage.setItem(
         CAJON_HILO,
-        JSON.stringify(turnos.slice(-24).map((t) => ({ de: t.de, texto: t.texto })))
+        JSON.stringify(
+          turnos
+            .filter((t) => !t.local)
+            .slice(-24)
+            .map((t) => ({ de: t.de, texto: t.texto }))
+        )
       );
     } catch {
       /* si no deja guardar, el hilo vive solo en memoria y ya está */
@@ -219,8 +250,15 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
   const vozActivaRef = useRef(vozActiva);
   vozActivaRef.current = vozActiva;
 
-  // Al desmontar, silencio: un panel que se va no puede dejar una voz sonando detrás.
-  useEffect(() => () => callar(), []);
+  // Al desmontar, silencio y corte: un panel que se va no puede dejar una voz sonando detrás ni
+  // un turno leyendo un flujo contra un componente que ya no existe.
+  useEffect(
+    () => () => {
+      callar();
+      abortoRef.current?.abort(MOTIVO_IRSE);
+    },
+    []
+  );
   const [oyendo, setOyendo] = useState<'grabando' | 'oyendo' | ''>('');
   const pararGrabacion = useRef<(() => void) | null>(null);
   /** Lo que está pasando AHORA. Se vacía al terminar, cuando pasa a ser parte del turno. */
@@ -230,6 +268,26 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
   useEffect(() => {
     hilo.current?.scrollTo({ top: hilo.current.scrollHeight, behavior: 'smooth' });
   }, [turnos, pensando]);
+
+  /**
+   * Un aviso de la pantalla, no una frase del Doctor.
+   *
+   * Marca también la pregunta que se quedó sin contestar. Si no, el hilo que sale hacia el modelo
+   * queda con dos mensajes de usuario seguidos y una pregunta colgando sin respuesta: «¿y la
+   * segunda?» se contestaría sobre una lista que nunca llegó a existir.
+   */
+  const avisar = useCallback((texto: string, reintentar?: string) => {
+    setTurnos((t) => {
+      const copia = [...t];
+      for (let i = copia.length - 1; i >= 0; i--) {
+        if (copia[i].de === 'persona') {
+          copia[i] = { ...copia[i], local: true };
+          break;
+        }
+      }
+      return [...copia, { de: 'electrum', texto, reintentar, local: true }];
+    });
+  }, []);
 
   const preguntar = useCallback(
     async (pregunta: string) => {
@@ -242,6 +300,20 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
       onFace('THINKING');
       onTrabajo();
 
+      /*
+       * Un turno se puede cortar por fuera: se va la señal, Render recicla el proceso, el usuario
+       * toca «parar». El navegador necesita poder abandonar la lectura, y el corte de tiempo tiene
+       * que ser MAYOR que el presupuesto del turno en el servidor (50 s) para no abandonar una
+       * respuesta que venía en camino.
+       */
+      const abortar = new AbortController();
+      abortoRef.current = abortar;
+      const reloj = setTimeout(() => abortar.abort(MOTIVO_TARDE), 75_000);
+      /** ¿Llegó a cerrar el servidor? Si no, esto NO se puede presentar como una respuesta. */
+      let cerrado = false;
+      /** ¿Llegamos a leer algo del flujo? Separa «no conecté» de «conecté y se cayó a la mitad». */
+      let empezado = false;
+
       try {
         /*
          * Se lee el flujo a mano en vez de usar EventSource porque EventSource solo hace GET, y la
@@ -251,18 +323,43 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
         const r = await fetch('/api/electrum/turno/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...headersElectrum() },
+          signal: abortar.signal,
           /*
            * El hilo viaja con la pregunta. El servidor guarda el suyo y prefiere ése, pero Render
            * reinicia el proceso cuando quiere y ahí la única copia que queda es la de esta pantalla.
            */
           body: JSON.stringify({
             mensaje: q,
-            hilo: turnosRef.current.slice(-24).map((t) => ({ rol: t.de, texto: t.texto })),
+            hilo: turnosRef.current
+              .filter((t) => !t.local)
+              .slice(-24)
+              .map((t) => ({ rol: t.de, texto: t.texto })),
           }),
         });
         if (r.status === 401) {
+          cerrado = true;
           onFace('CONCERNED');
-          setTurnos((t) => [...t, { de: 'electrum', texto: SIN_PUERTA }]);
+          avisar(SIN_PUERTA);
+          return;
+        }
+        /*
+         * Antes solo se miraba el 401 y todo lo demás entraba al lector como si fuera un flujo.
+         * Un 500 o un 503 —que es lo que devuelve Render mientras redespliega— trae una página de
+         * error, no eventos: el lector no encontraba ninguno, salía en silencio y la pantalla se
+         * quedaba como si el Doctor hubiera decidido no contestar.
+         */
+        if (!r.ok) {
+          cerrado = true;
+          const detalle = await r.text().catch(() => '');
+          let dicho = `El servidor contestó ${r.status}.`;
+          try {
+            const j = JSON.parse(detalle);
+            if (j?.error) dicho = String(j.error);
+          } catch {
+            /* no era JSON: se queda el código, que ya dice algo */
+          }
+          onFace('CONCERNED');
+          avisar(dicho, q);
           return;
         }
         if (!r.body) throw new Error('sin flujo');
@@ -276,6 +373,7 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
         while (!terminado) {
           const { done, value } = await lector.read();
           if (done) break;
+          empezado = true;
           resto += dec.decode(value, { stream: true });
           // SSE separa los mensajes con una línea en blanco; lo que quede a medias espera.
           const trozos = resto.split('\n\n');
@@ -289,10 +387,12 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
                 else if (evento === 'herramienta') setEnVivo((v) => ({ ...v, traza: [...v.traza, d] }));
                 else if (evento === 'ui') onUi([d]); // el mapa se mueve YA, no al final
                 else if (evento === 'error') {
-                  setTurnos((t) => [...t, { de: 'electrum', texto: d.error }]);
+                  cerrado = true;
+                  avisar(d.error, q);
                   onFace('CONCERNED');
                   terminado = true;
                 } else if (evento === 'fin') {
+                  cerrado = true;
                   onFace('SPEAKING');
                   if (d.emocion) onEmocion(d.emocion);
                   if (vozActivaRef.current && d.texto) void decirEnVoz(d.texto, d.emocion, headersElectrum());
@@ -304,15 +404,49 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
           }
         }
       } catch {
-        onFace('CONCERNED');
-        setTurnos((t) => [...t, { de: 'electrum', texto: 'No alcancé el servidor. Revisá la conexión y volvé a preguntarme.' }]);
+        cerrado = true;
+        const motivo = abortar.signal.reason;
+        // Irse de la pantalla no es un fallo que contarle a nadie: ya no hay nadie mirando.
+        if (motivo !== MOTIVO_IRSE) {
+          onFace('CONCERNED');
+          const parado = motivo === MOTIVO_PARADO;
+          const tarde = motivo === MOTIVO_TARDE;
+          avisar(
+            parado
+              ? 'Lo dejé ahí, como pediste.'
+              : tarde
+                ? 'Pasé de los setenta y cinco segundos sin cerrar la respuesta y corté. Puede ser el cerebro tardando o la conexión. Volvé a pedírmelo.'
+                : empezado
+                  ? 'Se cayó la conexión con la respuesta a medio venir. Alcancé a empezar pero no a terminar, así que no te enseño un pedazo como si fuera la respuesta.'
+                  : 'No alcancé el servidor. Revisá la conexión y volvé a preguntarme.',
+            parado ? undefined : q
+          );
+        }
       } finally {
+        clearTimeout(reloj);
+        abortoRef.current = null;
+        /*
+         * EL PUNTO DE F05. El lector sale cuando el flujo termina, y eso pasa también cuando el
+         * flujo se CORTA: se fue la red, Render recicló el proceso, un proxy cerró la conexión. Sin
+         * esta comprobación la pantalla se limpiaba y quedaba como si el Doctor hubiera decidido no
+         * contestar — indistinguible de una respuesta vacía, y sin nada que tocar para reintentar.
+         *
+         * Un turno solo cuenta como terminado si el servidor mandó su `fin` o su `error`. Cualquier
+         * otra salida es un corte, y se dice que lo es.
+         */
+        if (!cerrado) {
+          onFace('CONCERNED');
+          avisar(
+            'Se me cortó la respuesta a la mitad. No sé si alcancé a terminar de pensarla, así que no te voy a enseñar un pedazo como si fuera la respuesta.',
+            q
+          );
+        }
         setPensando(false);
         setEnVivo({ panel: '', traza: [] });
         setTimeout(() => onFace('IDLE'), 1200);
       }
     },
-    [pensando, onFace, onEmocion, onUi, onTrabajo]
+    [pensando, onFace, onEmocion, onUi, onTrabajo, avisar]
   );
 
   /** Borra el hilo de las dos puntas. Si el servidor no contesta, al menos la pantalla queda limpia. */
@@ -444,6 +578,23 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
                 >
                   {t.texto}
                 </div>
+                {/*
+                  * Un turno que se cortó lleva su pregunta encima, y el botón la repite tal cual.
+                  * Sin esto, recuperarse de un corte obliga a volver a escribirla — y si era larga,
+                  * a reconstruirla de memoria.
+                  */}
+                {t.reintentar && (
+                  <div className="mt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => preguntar(t.reintentar!)}
+                      disabled={pensando}
+                      className="rounded-lg border border-white/15 px-2.5 py-1 font-mono text-[10px] tracking-[0.14em] uppercase text-[#9FB0B8] transition-colors hover:border-white/30 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Volver a preguntar
+                    </button>
+                  </div>
+                )}
                 {t.informe && (
                   <button
                     type="button"
@@ -492,8 +643,23 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
                     </span>
                   </div>
                 ))}
-                <div className="font-mono text-[11px] text-[#6C7F89]">
-                  {enVivo.traza.length ? 'redactando…' : 'pensando…'}
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-[11px] text-[#6C7F89]">
+                    {enVivo.traza.length ? 'redactando…' : 'pensando…'}
+                  </span>
+                  {/*
+                    * Poder pararlo. Un turno con tres rondas de herramientas puede tardar cincuenta
+                    * segundos, y a veces a los cinco ya se sabe que la pregunta estaba mal hecha.
+                    * Quedarse mirando «pensando…» sin poder hacer nada es lo que hace que una
+                    * pantalla se sienta rota aunque esté trabajando.
+                    */}
+                  <button
+                    type="button"
+                    onClick={() => abortoRef.current?.abort(MOTIVO_PARADO)}
+                    className="rounded-lg border border-white/15 px-2 py-0.5 font-mono text-[10px] tracking-[0.14em] uppercase text-[#9FB0B8] transition-colors hover:border-white/30 hover:text-white cursor-pointer"
+                  >
+                    Parar
+                  </button>
                 </div>
               </div>
             )}

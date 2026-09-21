@@ -348,3 +348,119 @@ test('el harness avisa EN VIVO, no al final', async (t) => {
     assert.match(r.texto, /Ya está/);
   });
 });
+
+/* ------------------------------------------------- el reloj del turno (F05/F06) */
+
+test('el presupuesto de tiempo manda de verdad', async (t) => {
+  await t.test('la llamada al modelo sabe cuánto le queda al turno', async () => {
+    // Antes `restante` se calculaba en el bucle y NO se usaba: el modelo corría con su propio tope
+    // de sesenta segundos, así que un turno con presupuesto de cincuenta podía tardar ciento diez,
+    // y el cliente —que esperaba cuarenta y cinco— ya se había ido.
+    const vistos: number[] = [];
+    const pensar: Pensar = async ({ msRestante }) => {
+      vistos.push(msRestante);
+      await new Promise((r) => setTimeout(r, 40));
+      return vistos.length === 1
+        ? { texto: '<tool_call>{"name":"clima","arguments":{"ciudad":"Danlí"}}</tool_call>' }
+        : { texto: 'Listo.' };
+    };
+    await correrAgente({
+      mensajes: [{ role: 'user', content: 'x' }],
+      herramientas: HS,
+      ctx: CTX,
+      pensar,
+      presupuesto: { ms: 5_000 },
+    });
+    assert.equal(vistos.length, 2);
+    assert.ok(vistos[0] <= 5_000, 'nunca puede prometer más de lo que queda');
+    assert.ok(vistos[1] < vistos[0], `la segunda ronda tiene menos tiempo: ${vistos[1]} vs ${vistos[0]}`);
+  });
+
+  await t.test('si la llamada se corta por tiempo, el turno NO se cae: entrega lo que averiguó', async () => {
+    let n = 0;
+    const pensar: Pensar = async () => {
+      n++;
+      if (n === 1) return { texto: '<tool_call>{"name":"clima","arguments":{"ciudad":"Danlí"}}</tool_call>' };
+      const e = new Error('The operation was aborted due to timeout');
+      e.name = 'TimeoutError';
+      throw e;
+    };
+    const r = await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: HS, ctx: CTX, pensar });
+    assert.equal(r.fin, 'sin tiempo');
+    // Lo que importa: la consulta del clima ya estaba hecha y no se tira a la basura.
+    assert.ok(r.traza.some((x) => x.ok), 'la traza de lo que sí funcionó se conserva');
+    assert.match(r.texto, /tiempo/i);
+  });
+
+  await t.test('si el cerebro se cae, se dice que se cayó y no se inventa nada', async () => {
+    let n = 0;
+    const pensar: Pensar = async () => {
+      n++;
+      if (n === 1) return { texto: '<tool_call>{"name":"clima","arguments":{"ciudad":"Danlí"}}</tool_call>' };
+      throw new Error('ECONNREFUSED 10.0.0.9:11434');
+    };
+    const r = await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: HS, ctx: CTX, pensar });
+    assert.equal(r.fin, 'cerebro caído');
+    assert.ok(r.traza.some((x) => x.ok));
+    assert.match(r.texto, /ECONNREFUSED/);
+    assert.ok(!/no sé|quizás/i.test(r.texto), 'no rellena el hueco con una respuesta inventada');
+  });
+
+  await t.test('el turno no se pasa de su presupuesto', async () => {
+    // Un modelo que siempre tarda más de lo que queda. Sin acotar la llamada con `msRestante`,
+    // esto se iría muy por encima del presupuesto.
+    const pensar: Pensar = async ({ msRestante }) => {
+      await new Promise((r) => setTimeout(r, Math.min(msRestante, 300)));
+      return { texto: '<tool_call>{"name":"clima","arguments":{"ciudad":"Danlí"}}</tool_call>' };
+    };
+    const t0 = Date.now();
+    const r = await correrAgente({
+      mensajes: [{ role: 'user', content: 'x' }],
+      herramientas: HS,
+      ctx: CTX,
+      pensar,
+      presupuesto: { ms: 600, rondas: 20, llamadas: 40 },
+    });
+    const total = Date.now() - t0;
+    assert.ok(total < 1_500, `el turno tardó ${total}ms con presupuesto de 600ms`);
+    assert.ok(r.fin === 'sin tiempo' || r.fin === 'sin rondas' || r.fin === 'sin llamadas', `terminó por ${r.fin}`);
+  });
+});
+
+test('si quien preguntaba se fue, el turno deja de gastar', async (t) => {
+  await t.test('no empieza una ronda nueva', async () => {
+    let rondas = 0;
+    let fuera = false;
+    const pensar: Pensar = async () => {
+      rondas++;
+      fuera = true; // se va justo después de la primera vuelta
+      return { texto: '<tool_call>{"name":"clima","arguments":{"ciudad":"Danlí"}}</tool_call>' };
+    };
+    const r = await correrAgente({
+      mensajes: [{ role: 'user', content: 'x' }],
+      herramientas: HS,
+      ctx: CTX,
+      pensar,
+      abandonado: () => fuera,
+      presupuesto: { rondas: 5, llamadas: 20, ms: 10_000 },
+    });
+    assert.equal(r.fin, 'abandonado');
+    assert.equal(rondas, 1, 'no vuelve a pensar para nadie');
+  });
+
+  await t.test('no arranca una herramienta nueva', async () => {
+    let fuera = true;
+    const pensar: Pensar = async () => ({
+      texto: '<tool_call>{"name":"clima","arguments":{"ciudad":"Danlí"}}</tool_call>',
+    });
+    const r = await correrAgente({
+      mensajes: [{ role: 'user', content: 'x' }],
+      herramientas: HS,
+      ctx: CTX,
+      pensar,
+      abandonado: () => fuera,
+    });
+    assert.equal(r.fin, 'abandonado');
+    assert.equal(r.traza.length, 0, 'ni una herramienta corrió');
+  });
+});

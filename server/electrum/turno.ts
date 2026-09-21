@@ -33,10 +33,34 @@ export type RespuestaTurno = {
 };
 
 /**
+ * EL CONTRATO DE TIEMPO, en un solo sitio.
+ *
+ * Antes había tres relojes que no se hablaban: el cliente móvil cortaba a los 45 s, el turno
+ * declaraba un presupuesto de 50 s y la llamada al modelo tenía su propio tope de 60 s. Esa
+ * combinación permite lo peor de los dos mundos — que la app abandone una petición que el servidor
+ * todavía está atendiendo, y que el servidor siga gastando el nodo para nadie.
+ *
+ * Ahora son tres números en orden y con holgura entre ellos:
+ *
+ *   llamada al modelo  ≤  lo que queda del TURNO  <  lo que espera el CLIENTE
+ *
+ * El primero ya no es fijo: se lo da el bucle, que sabe cuánto del presupuesto se consumió en las
+ * rondas anteriores. Así el turno no puede pasarse de su propio presupuesto, que es lo que hacía
+ * que el contrato fuera papel mojado.
+ */
+export const PRESUPUESTO_TURNO_MS = 50_000;
+/** Lo que esperan la pantalla y el teléfono. Tiene que ser MAYOR que el presupuesto del turno. */
+export const ESPERA_CLIENTE_MS = 75_000;
+/** Ni una llamada eterna ni una que no alcanza a pensar. */
+const MIN_LLAMADA_MS = 8_000;
+const MAX_LLAMADA_MS = 60_000;
+
+/**
  * Pregunta al nodo. Devuelve el mensaje entero para poder leer `tool_calls` nativo si el servidor
  * lo trae; si no, el harness lo saca del texto en formato Hermes.
  */
-async function pensarConQwen(mensajes: Mensaje[], herramientas: unknown[]) {
+async function pensarConQwen(mensajes: Mensaje[], herramientas: unknown[], msRestante: number) {
+  const tope = Math.min(MAX_LLAMADA_MS, Math.max(MIN_LLAMADA_MS, msRestante));
   const r = await fetchNodo(`${NODO_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': NODO_SECRETO },
@@ -48,7 +72,7 @@ async function pensarConQwen(mensajes: Mensaje[], herramientas: unknown[]) {
       tools: herramientas,
       options: { temperature: 0.4 },
     }),
-    signal: AbortSignal.timeout(60_000),
+    signal: AbortSignal.timeout(tope),
   });
   const j: any = await r.json().catch(() => ({}));
   const mensaje = j?.message || {};
@@ -91,6 +115,8 @@ export type OpcionesTurno = {
    * la pantalla enseñaba «pensando…» mientras el catastro ya había contestado hace cuarenta.
    */
   enVivo?: (e: EnVivo) => void;
+  /** ¿Se fue quien preguntaba? El turno deja de empezar cosas nuevas. */
+  abandonado?: () => boolean;
 };
 
 export async function turnoElectrum(
@@ -98,7 +124,7 @@ export async function turnoElectrum(
   ctx: Contexto,
   opciones: OpcionesTurno = {}
 ): Promise<RespuestaTurno> {
-  const { historial = [], enVivo } = opciones;
+  const { historial = [], enVivo, abandonado } = opciones;
   const panel = convocar(mensaje);
   const herramientas = panel.length ? manosDe(herramientasDe(panel)) : TODAS;
   const nombrePanel = panel.map((e) => e.nombre).join(' y ');
@@ -150,8 +176,9 @@ export async function turnoElectrum(
     ],
     herramientas,
     ctx,
-    pensar: ({ mensajes, herramientas: nativas }) => pensarConQwen(mensajes, nativas),
-    presupuesto: { rondas: 3, llamadas: 8, ms: 50_000 },
+    pensar: ({ mensajes, herramientas: nativas, msRestante }) => pensarConQwen(mensajes, nativas, msRestante),
+    presupuesto: { rondas: 3, llamadas: 8, ms: PRESUPUESTO_TURNO_MS },
+    abandonado,
     alVivo: enVivo
       ? (t, ui) => {
           enVivo({ herramienta: { herramienta: t.llamada.nombre, ok: t.ok, resumen: t.resumen, ms: t.ms } });

@@ -60,7 +60,17 @@ export class SinPuerta extends Error {
   }
 }
 
-async function pedir<T>(ruta: string, init: RequestInit = {}, msIntento = 45_000): Promise<T> {
+/**
+ * Lo que espera el teléfono. **Tiene que ser mayor que el presupuesto del turno en el servidor**
+ * (50 s, en server/electrum/turno.ts).
+ *
+ * Estaba en 45 s, o sea por DEBAJO del presupuesto del servidor: la app abandonaba peticiones que
+ * el servidor seguía atendiendo, y el usuario veía un fallo de red donde había una respuesta en
+ * camino. Los dos números están ahora en el mismo orden, con holgura para la red del campo.
+ */
+const ESPERA_MS = 75_000;
+
+async function pedir<T>(ruta: string, init: RequestInit = {}, msIntento = ESPERA_MS): Promise<T> {
   const r = await fetch(`${API_BASE}${ruta}`, {
     ...init,
     headers: cabeceras((init.headers as Record<string, string>) || {}),

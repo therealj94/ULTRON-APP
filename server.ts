@@ -338,6 +338,19 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
     return res.end();
   }
 
+  /*
+   * ¿SE FUE QUIEN PREGUNTABA?
+   *
+   * Pasa más de lo que parece: se toca «Parar», se cierra la pestaña, se va la señal en el campo.
+   * Dos cosas dependen de saberlo. Una, no seguir gastando el nodo en un turno que nadie va a leer.
+   * Y dos —la que se ve— no guardar en el hilo una respuesta que el usuario nunca vio: si se
+   * guardara, la pregunta siguiente se contestaría sobre algo que para él no existe.
+   */
+  let seFue = false;
+  res.on('close', () => {
+    if (!res.writableEnded) seFue = true;
+  });
+
   try {
     const id = identidadDe(req);
     const clave = claveHilo(id?.persona.id || null, 'mesa');
@@ -351,6 +364,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
       { quien: id?.persona.id || null, nivel: nivelDe(id, 'electrum'), plataforma: 'electrum', canal: 'mesa', mensaje },
       {
         historial,
+        abandonado: () => seFue,
         enVivo: (e) => {
           if (e.panel) enviar('panel', { panel: e.panel });
           if (e.herramienta) enviar('herramienta', e.herramienta);
@@ -358,7 +372,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
         },
       }
     );
-    recordarHilo(clave, mensaje, salida.texto);
+    if (!seFue) recordarHilo(clave, mensaje, salida.texto);
     enviar('fin', { texto: salida.texto, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin });
   } catch (e: any) {
     console.error('[electrum] turno en vivo falló:', String(e?.message || e).slice(0, 200));

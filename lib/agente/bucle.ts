@@ -26,6 +26,17 @@ export type Pensar = (opts: {
   mensajes: Mensaje[];
   /** Las herramientas en formato nativo, por si el servidor las acepta. */
   herramientas: ReturnType<typeof herramientasNativas>;
+  /**
+   * Milisegundos que le quedan al TURNO, no a esta llamada.
+   *
+   * Existe porque sin esto el presupuesto era decorativo: el bucle comprobaba el tiempo *antes* de
+   * llamar al modelo y después lo dejaba correr con su propio tope de sesenta segundos, así que un
+   * turno con presupuesto de cincuenta podía tardar ciento diez. El cliente, que esperaba
+   * cuarenta y cinco, ya se había ido — y el servidor seguía trabajando para nadie.
+   *
+   * Quien implemente `pensar` tiene que acotar su petición con esto.
+   */
+  msRestante: number;
 }) => Promise<{ texto: string; mensaje?: any }>;
 
 export type Presupuesto = {
@@ -55,7 +66,7 @@ export type Resultado = {
   /** Datos para la interfaz que dejaron las herramientas (mapa, tablas, archivos). */
   ui: Record<string, unknown>[];
   /** Por qué terminó. */
-  fin: 'contestó' | 'sin rondas' | 'sin llamadas' | 'sin tiempo';
+  fin: 'contestó' | 'sin rondas' | 'sin llamadas' | 'sin tiempo' | 'cerebro caído' | 'abandonado';
   rondas: number;
 };
 
@@ -73,6 +84,15 @@ export async function correrAgente(opts: {
   ctx: Contexto;
   pensar: Pensar;
   presupuesto?: Partial<Presupuesto>;
+  /**
+   * ¿Se fue quien preguntaba? Se consulta entre rondas y antes de cada herramienta.
+   *
+   * Un turno con tres rondas puede tardar cincuenta segundos, y si el navegador cerró la conexión
+   * en el segundo dos, los cuarenta y ocho restantes son nodo gastado para nadie. No corta a mitad
+   * de una herramienta que ya está corriendo —eso dejaría trabajo a medias en la base— pero no
+   * empieza nada nuevo.
+   */
+  abandonado?: () => boolean;
   /** true cuando se sabe que el servidor acepta `tools`; si no, se instruye por prompt. */
   nativo?: boolean;
   /** Se llama en cuanto una herramienta deja algo para la interfaz (el mapa no espera al final). */
@@ -101,8 +121,29 @@ export async function correrAgente(opts: {
   for (let ronda = 1; ronda <= p.rondas + 1; ronda++) {
     const restante = p.ms - (Date.now() - t0);
     if (restante <= 0) return { texto: limpiarTexto(texto) || sinTiempo(traza), traza, ui, fin: 'sin tiempo', rondas: ronda - 1 };
+    if (opts.abandonado?.()) return { texto: limpiarTexto(texto), traza, ui, fin: 'abandonado', rondas: ronda - 1 };
 
-    const salida = await opts.pensar({ mensajes, herramientas: nativas });
+    /*
+     * Si la llamada al modelo se cae o se pasa de tiempo, el turno NO se cae con ella.
+     *
+     * Antes esto no tenía red: una excepción acá subía hasta la ruta y el usuario recibía «se me
+     * cayó el turno», perdiendo de paso todo lo que las herramientas ya habían averiguado en las
+     * rondas anteriores. Habiendo catastro consultado y traslapes medidos, tirarlo porque la
+     * última vuelta tardó de más es el peor final posible.
+     */
+    let salida: { texto: string; mensaje?: any };
+    try {
+      salida = await opts.pensar({ mensajes, herramientas: nativas, msRestante: restante });
+    } catch (e: any) {
+      const corte = /abort|timeout|tiempo/i.test(String(e?.name || '') + String(e?.message || ''));
+      return {
+        texto: limpiarTexto(texto) || (corte ? sinTiempo(traza) : seCayo(traza, e)),
+        traza,
+        ui,
+        fin: corte ? 'sin tiempo' : 'cerebro caído',
+        rondas: ronda - 1,
+      };
+    }
     texto = salida.texto || '';
     const llamadas = leerLlamadas(salida.mensaje, texto, opts.herramientas);
 
@@ -123,6 +164,7 @@ export async function correrAgente(opts: {
         break;
       }
       if (Date.now() - t0 >= p.ms) break;
+      if (opts.abandonado?.()) break;
 
       const huella = `${l.nombre}:${JSON.stringify(l.argumentos)}`;
       const previa = hechas.get(huella);
@@ -181,6 +223,18 @@ function cierreForzado(traza: Traza[]): string {
   const buenas = traza.filter((t) => t.ok);
   if (!buenas.length) return 'Lo intenté por varios lados y no saqué nada en limpio. Decime de otra forma qué necesitás.';
   return `${buenas.map((t) => t.resumen).join(' ')} Me quedé sin vueltas para seguir; si querés que profundice, decímelo.`;
+}
+
+/**
+ * El cerebro no contestó. Se dice lo que sí se averiguó antes de que se cayera: quien preguntó por
+ * un traslape y recibió «no pude» prefiere «medí esto y después se me cayó» a un silencio.
+ */
+function seCayo(traza: Traza[], e: any): string {
+  const buenas = traza.filter((t) => t.ok);
+  const porque = String(e?.message || e || '').slice(0, 100);
+  return buenas.length
+    ? `${buenas.map((t) => t.resumen).join(' ')} Después se me cortó el cerebro${porque ? ` (${porque})` : ''} y no llegué a redactarlo. Volvé a pedírmelo.`
+    : `No alcancé mi cerebro${porque ? ` (${porque})` : ''}. No te voy a inventar una respuesta: volvé a preguntarme.`;
 }
 
 function sinTiempo(traza: Traza[]): string {
