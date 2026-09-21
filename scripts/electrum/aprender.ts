@@ -26,12 +26,14 @@
  *      lleva la huella de su contenido y lo ya cargado se salta en un md5, sin volver a leerlo.
  */
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import JSZip from 'jszip';
 import { aprender, inspeccionar } from '../../server/electrum/aprender';
 import { ingerir, resumenCapa } from '../../server/electrum/gis';
 import { cerrarBase, hayBase, saludBase } from '../../server/electrum/db';
 
-const RECONOCIDO = /\.(zip|shp|kml|kmz|geojson|json|csv|gpkg|dxf|pdf|txt|md|markdown)$/i;
+const RECONOCIDO = /\.(zip|shp|dbf|shx|prj|cpg|sbn|sbx|qpj|kml|kmz|geojson|json|csv|gpkg|dxf|pdf|txt|md|markdown)$/i;
 
 const AYUDA = `Cargador de Electrum.
 
@@ -90,7 +92,58 @@ function expandir(entradas: string[]): string[] {
   return salida;
 }
 
-const archivos = expandir(rutas);
+/**
+ * Junta las piezas sueltas de un shapefile en un zip antes de cargarlo.
+ *
+ * Un shapefile no es un archivo, son cuatro: el `.shp` lleva la geometría, el `.dbf` los nombres y
+ * atributos, el `.shx` el índice y el `.prj` el sistema de coordenadas. Pasarle el `.shp` solo al
+ * motor le da polígonos mudos y, sin el `.prj`, además mal situados: las coordenadas se leen como
+ * grados cuando venían en UTM. Eso no falla, que es lo peor: entra un catastro entero equivocado.
+ *
+ * Quien sube una carpeta los manda sueltos, porque así están en su disco. Aquí se vuelven a juntar
+ * por nombre base y se le entrega al motor el zip que sí sabe leer entero.
+ */
+async function juntarShapefiles(lista: string[]): Promise<string[]> {
+  const porBase = new Map<string, string[]>();
+  const sueltos: string[] = [];
+  for (const f of lista) {
+    if (/\.(shp|dbf|shx|prj|cpg|sbn|sbx|qpj)$/i.test(f)) {
+      const base = f.replace(/\.[^.]+$/, '');
+      if (!porBase.has(base)) porBase.set(base, []);
+      porBase.get(base)!.push(f);
+    } else sueltos.push(f);
+  }
+
+  const salida = [...sueltos];
+  for (const [base, piezas] of porBase) {
+    const shp = piezas.find((f) => /\.shp$/i.test(f));
+    if (!shp) {
+      // Piezas sin su .shp: sobran, y decirlo evita que alguien las busque luego.
+      console.error(`  – ${path.basename(base)}: hay ${piezas.length} piezas de shapefile sin el .shp, las salto`);
+      continue;
+    }
+    if (piezas.length === 1) {
+      // Un .shp solo ni siquiera se abre: el motor intenta descomprimirlo y devuelve «but-unzip~2»,
+      // que no le dice nada a nadie. Mejor decir qué falta y cómo se arregla.
+      console.error(
+        `  ✗ ${path.basename(shp)}: falta el resto del shapefile (.dbf, .shx, .prj). ` +
+          `Subí la carpeta entera, no solo el .shp.`
+      );
+      continue;
+    }
+    const zip = new JSZip();
+    for (const f of piezas) zip.file(path.basename(f), fs.readFileSync(f));
+    // El nombre del zip lleva el del shapefile: es lo que se va a ver luego en la lista de capas.
+    const destino = path.join(os.tmpdir(), `${path.basename(base)}.zip`);
+    fs.writeFileSync(destino, await zip.generateAsync({ type: 'nodebuffer' }));
+    temporales.push(destino);
+    salida.push(destino);
+  }
+  return salida.sort();
+}
+
+const temporales: string[] = [];
+const archivos = await juntarShapefiles(expandir(rutas));
 if (!archivos.length) {
   console.error('No hay nada que cargar.');
   process.exit(1);
@@ -213,4 +266,13 @@ if (opts.seco) {
   console.log(`El catastro tiene ahora ${s.concesiones} concesiones.`);
   await cerrarBase();
 }
+// Los zip que se armaron para juntar las piezas de los shapefiles son de usar y tirar.
+for (const t of temporales) {
+  try {
+    fs.unlinkSync(t);
+  } catch {
+    /* ya no estaba */
+  }
+}
+
 process.exit(mal && !bien && !repetidos ? 1 : 0);

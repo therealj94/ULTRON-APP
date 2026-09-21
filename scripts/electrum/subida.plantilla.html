@@ -97,62 +97,102 @@ async function deEntrada(entrada, ruta = '') {
   return salida;
 }
 
-const VALE = /\.(pdf|txt|md|markdown|zip|shp|kml|kmz|geojson|json|csv|gpkg|dxf)$/i;
+// Sube TODO menos la basura que ponen los sistemas operativos.
+//
+// Antes había una lista de extensiones permitidas y dejaba fuera el .dbf, el .shx y el .prj. Un
+// .shp sin su .dbf no tiene los nombres de las concesiones, y sin su .prj se lee en el sistema de
+// coordenadas equivocado: llega mudo o, peor, mintiendo. Un shapefile son cuatro archivos, no uno.
+// Lo que el cerebro no reconozca ya lo dirá al indexar; descartarlo aquí, en silencio, es peor.
+const BASURA = /(^|\/)(\.DS_Store|Thumbs\.db|desktop\.ini|\._.*)$/i;
+
+// Seis a la vez, no de uno en uno.
+//
+// En serie, cada archivo espera a que termine el anterior, y el tiempo que manda no es el ancho de
+// banda sino la ida y vuelta hasta S3 multiplicada por el número de archivos. Con cientos de
+// archivos pequeños —y un catastro son cientos— eso es la diferencia entre minutos y horas. Seis
+// es donde deja de notarse la mejora en una conexión doméstica y todavía no se atraganta.
+const A_LA_VEZ = 6;
+
+let enMarcha = false;
 
 async function subir(archivos) {
-  archivos = archivos.filter((f) => VALE.test(f.name) && f.size > 0);
+  if (enMarcha) return;
+  archivos = archivos.filter((f) => f.size > 0 && !BASURA.test(f._ruta || f.webkitRelativePath || f.name));
   if (!archivos.length) {
-    $('resultado').innerHTML = '<div class="aviso mal">No reconocí ningún archivo de los que entran. Se aceptan PDF, texto, shapefile .zip, KML, KMZ, GeoJSON y CSV.</div>';
+    $('resultado').innerHTML = '<div class="aviso mal">No había ningún archivo que subir en eso.</div>';
     return;
   }
 
   const hechos = yaHechos();
-  const total = archivos.length;
+  const pendientes = [];
+  let saltados = 0, bytesHechos = 0;
   const bytesTotal = archivos.reduce((n, f) => n + f.size, 0);
-  let n = 0, bytes = 0, saltados = 0;
-  const fallos = [];
-
-  $('marcha').classList.remove('oculto');
-  $('resultado').innerHTML = '';
 
   for (const f of archivos) {
     const clave = D.prefijo + (f._ruta || f.webkitRelativePath || f.name);
-    n++;
-    $('actual').textContent = clave;
-    $('cuenta').textContent = n + ' de ' + total;
-
-    if (hechos.has(clave)) {
-      saltados++; bytes += f.size;
-      $('relleno').style.width = (bytes / bytesTotal * 100) + '%';
-      $('peso').textContent = peso(bytes) + ' de ' + peso(bytesTotal);
-      continue;
-    }
-
-    let bien = false;
-    for (let intento = 1; intento <= 3 && !bien; intento++) {
-      try {
-        const form = new FormData();
-        form.append('key', clave);
-        for (const [k, v] of Object.entries(D.campos)) form.append(k, v);
-        form.append('Content-Type', f.type || 'application/octet-stream');
-        form.append('file', f);
-        const r = await fetch(D.url, { method: 'POST', body: form });
-        if (r.ok || r.status === 204) bien = true;
-        else if (intento === 3) fallos.push(clave + ' — ' + r.status + ' ' + (await r.text()).slice(0, 120));
-      } catch (e) {
-        if (intento === 3) fallos.push(clave + ' — ' + String(e.message || e).slice(0, 120));
-        else await new Promise((ok) => setTimeout(ok, 1000 * intento));
-      }
-    }
-    if (bien) { hechos.add(clave); marcar(hechos); }
-
-    bytes += f.size;
-    $('relleno').style.width = (bytes / bytesTotal * 100) + '%';
-    $('peso').textContent = peso(bytes) + ' de ' + peso(bytesTotal);
+    if (hechos.has(clave)) { saltados++; bytesHechos += f.size; }
+    else pendientes.push({ f, clave });
   }
 
+  enMarcha = true;
+  // Avisar antes de cerrar: se perdió una subida entera por refrescar sin saber que se cortaba.
+  const alSalir = (e) => { e.preventDefault(); e.returnValue = ''; };
+  window.addEventListener('beforeunload', alSalir);
+
+  const total = archivos.length;
+  let n = saltados, bytes = bytesHechos;
+  const fallos = [];
+  $('marcha').classList.remove('oculto');
+  $('resultado').innerHTML = '';
+
+  const pintar = (clave) => {
+    $('cuenta').textContent = n + ' de ' + total;
+    $('peso').textContent = peso(bytes) + ' de ' + peso(bytesTotal);
+    $('relleno').style.width = (bytesTotal ? bytes / bytesTotal * 100 : 100) + '%';
+    if (clave) $('actual').textContent = clave.replace(D.prefijo, '');
+  };
+  pintar();
+
+  let siguiente = 0;
+  async function obrero() {
+    for (;;) {
+      const i = siguiente++;
+      if (i >= pendientes.length) return;
+      const { f, clave } = pendientes[i];
+      pintar(clave);
+
+      let bien = false;
+      for (let intento = 1; intento <= 3 && !bien; intento++) {
+        try {
+          const form = new FormData();
+          form.append('key', clave);
+          for (const [k, v] of Object.entries(D.campos)) form.append(k, v);
+          form.append('Content-Type', f.type || 'application/octet-stream');
+          form.append('file', f);
+          const r = await fetch(D.url, { method: 'POST', body: form });
+          if (r.ok || r.status === 204) bien = true;
+          else if (intento === 3) fallos.push(clave.replace(D.prefijo, '') + ' — ' + r.status);
+          else await new Promise((ok) => setTimeout(ok, 800 * intento));
+        } catch (e) {
+          if (intento === 3) fallos.push(clave.replace(D.prefijo, '') + ' — ' + String(e.message || e).slice(0, 80));
+          else await new Promise((ok) => setTimeout(ok, 800 * intento));
+        }
+      }
+      // Se apunta EN CUANTO termina cada uno, no al final: si se corta la luz a mitad, lo ya
+      // subido sigue contando y al volver se reanuda en vez de empezar de cero.
+      if (bien) { hechos.add(clave); marcar(hechos); }
+      n++; bytes += f.size;
+      pintar();
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(A_LA_VEZ, pendientes.length || 1) }, obrero));
+
+  window.removeEventListener('beforeunload', alSalir);
+  enMarcha = false;
   $('actual').textContent = '';
-  const subidos = total - saltados - fallos.length;
+
+  const subidos = pendientes.length - fallos.length;
   let h = '<div class="aviso ' + (fallos.length ? 'mal' : 'bien') + '">';
   h += '<b>' + subidos + (subidos === 1 ? ' archivo subido' : ' archivos subidos') + '</b>';
   if (saltados) h += ' · ' + saltados + ' ya estaban de antes';
@@ -164,6 +204,16 @@ async function subir(archivos) {
   }
   $('resultado').innerHTML = h + '</div>';
 }
+
+// Al abrir, decir lo que ya hay. Refrescar a mitad de una subida dejaba la pantalla en blanco,
+// como si no se hubiera subido nada, cuando en realidad estaba casi todo hecho.
+(function alAbrir() {
+  const n = yaHechos().size;
+  if (!n) return;
+  $('resultado').innerHTML =
+    '<div class="aviso bien"><b>' + n + (n === 1 ? ' archivo ya subido' : ' archivos ya subidos') +
+    ' de antes.</b><br>Volvé a soltar la misma carpeta: se saltan solos y sigue por donde iba.</div>';
+})();
 
 $('bCarpeta').onclick = () => $('fCarpeta').click();
 $('bArchivos').onclick = () => $('fArchivos').click();
