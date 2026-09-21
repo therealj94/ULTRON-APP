@@ -36,7 +36,7 @@ import { cerrarBase, hayBase, recalcularTraslapes, saludBase } from '../../serve
 /** Por encima de esto, un shapefile no se lee de una pieza: se queda sin memoria y tumba la carga. */
 const TOPE_SHP = 300 * 1024 ** 2;
 
-const RECONOCIDO = /\.(zip|shp|dbf|shx|prj|cpg|sbn|sbx|qpj|qmd|kml|kmz|geojson|json|csv|gpkg|dxf|pdf|txt|md|markdown)$/i;
+const RECONOCIDO = /\.(zip|shp|dbf|shx|prj|cpg|sbn|sbx|qpj|qmd|kml|kmz|geojson|json|csv|gpkg|dxf|pdf|docx|txt|md|markdown)$/i;
 
 const AYUDA = `Cargador de Electrum.
 
@@ -50,7 +50,7 @@ const AYUDA = `Cargador de Electrum.
 
 Se puede cortar y relanzar: lo ya cargado se salta por la huella de su contenido.
 
-Entran: shapefile (.zip/.shp), KML, KMZ, GeoJSON, CSV, PDF, texto y Markdown.`;
+Entran: shapefile (.zip/.shp), KML, KMZ, GeoJSON, CSV, PDF, Word, texto y Markdown.`;
 
 const args = process.argv.slice(2);
 const opts: { quien: string | null; concesion: number | null; tipo: string | null; seco: boolean } =
@@ -232,7 +232,7 @@ for (const [i, ruta] of archivos.entries()) {
         console.log(capa ? `\n   ${resumenCapa(capa, avisos)}` : `\n   ${avisos.map((a) => a.texto).join(' ')}`);
         if (capa) censo.indexables++;
       } else {
-        const ins = inspeccionar(nombre, datos);
+        const ins = await inspeccionar(nombre, datos);
         console.log(`\n   ${ins.dicho}`);
         if (ins.veredicto === 'indexable') {
           censo.indexables++;

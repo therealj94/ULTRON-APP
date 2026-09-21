@@ -63,18 +63,18 @@ test('quién puede alimentar el cerebro de Dr Electrum', async (t) => {
  * carga real justamente para que no pueda contradecirla.
  */
 test('el ensayo dice la verdad sobre lo que entraría', async (t) => {
-  await t.test('un documento con texto se cuenta con sus páginas y fragmentos', () => {
+  await t.test('un documento con texto se cuenta con sus páginas y fragmentos', async () => {
     const texto =
       'La concesion Los Andes presenta una ley media ponderada de tres coma cuatro gramos por tonelada ' +
       'de oro sobre una potencia media de cuatro coma dos metros, medida en veinte sondajes diamantinos.';
-    const i = inspeccionar('informe.txt', Buffer.from(texto));
+    const i = await inspeccionar('informe.txt', Buffer.from(texto));
     assert.equal(i.veredicto, 'indexable');
     assert.equal(i.paginas, 1);
     assert.ok(i.fragmentos >= 1);
     assert.ok(i.caracteres > 100);
   });
 
-  await t.test('un escaneo sin texto se marca como escaneo, no como archivo cargado', () => {
+  await t.test('un escaneo sin texto se marca como escaneo, no como archivo cargado', async () => {
     // Un PDF de una página con un rectángulo pintado y ni un operador de texto: un escaneo, en esencia.
     const flujo = Buffer.from('0.5 0.5 0.5 rg 50 50 500 700 re f');
     const objs = [
@@ -94,14 +94,14 @@ test('el ensayo dice la verdad sobre lo que entraría', async (t) => {
     for (const o of offs) xref += `${String(o).padStart(10, '0')} 00000 n \n`;
     pdf = Buffer.concat([pdf, Buffer.from(`${xref}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${x}\n%%EOF\n`)]);
 
-    const i = inspeccionar('escaneo.pdf', pdf);
+    const i = await inspeccionar('escaneo.pdf', pdf);
     assert.equal(i.veredicto, 'escaneo');
     assert.equal(i.fragmentos, 0);
     assert.match(i.dicho, /escaneo/i);
   });
 
-  await t.test('lo demasiado corto no se cuenta como si fuera a entrar', () => {
-    assert.equal(inspeccionar('nota.txt', Buffer.from('Ver anexo.\n')).veredicto, 'corto');
+  await t.test('lo demasiado corto no se cuenta como si fuera a entrar', async () => {
+    assert.equal((await inspeccionar('nota.txt', Buffer.from('Ver anexo.\n'))).veredicto, 'corto');
   });
 
   await t.test('la huella es del contenido, no del nombre', () => {

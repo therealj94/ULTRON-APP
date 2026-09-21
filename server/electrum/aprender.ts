@@ -17,6 +17,7 @@
  * que en un informe minero es exactamente lo que no se puede partir.
  */
 import crypto from 'node:crypto';
+import JSZip from 'jszip';
 import { extraerPdf } from '../../lib/leer-pdf';
 import { consulta, guardarCapa, hayBase, recalcularTraslapes } from './db';
 import { ingerir, resumenCapa, resumenTraslapes, type Aviso } from './gis';
@@ -40,7 +41,7 @@ export type Inspeccion = {
 };
 
 const ES_GEO = /\.(zip|shp|kml|kmz|geojson|json|csv|gpkg|dxf)$/i;
-const ES_DOC = /\.(pdf|txt|md|markdown)$/i;
+const ES_DOC = /\.(pdf|docx|txt|md|markdown)$/i;
 
 /** Trozos de ~900 caracteres cortados por párrafo, sin cruzar de página. */
 const OBJETIVO = 900;
@@ -117,7 +118,68 @@ type Leido =
  * empezar: cuántos son escaneos sin texto y no van a entrar. Un ensayo que no puede contradecir a la
  * carga real no sirve para decidir nada.
  */
-function leerDocumento(nombre: string, datos: Buffer): Leido {
+/**
+ * Saca el texto de un .docx.
+ *
+ * Un .docx es un zip con `word/document.xml` dentro, y el texto vive en las etiquetas `w:t`. Se
+ * extrae a mano en vez de traer una biblioteca entera: son veinte líneas y ahorra una dependencia
+ * con su propia superficie de fallos para leer, al final, un XML.
+ *
+ * El párrafo importa: sin respetar `w:p`, un formulario de veinte campos sale como una sola línea
+ * corrida y el troceado —que corta por párrafos— se queda sin por dónde cortar. Los saltos de línea
+ * (`w:br`) y las celdas de tabla también separan, por lo mismo.
+ */
+async function textoDeDocx(datos: Buffer): Promise<string> {
+  const zip = await JSZip.loadAsync(datos);
+  const doc = zip.file('word/document.xml');
+  if (!doc) return '';
+  const xml = await doc.async('text');
+  return xml
+    .replace(/<w:p[ >]/g, '\n<w:p ')
+    .replace(/<w:br\b[^>]*\/?>/g, '\n')
+    .replace(/<\/w:tc>/g, '\t')
+    .replace(/<[^>]+>/g, (t) => (t.startsWith('<w:t') || t.startsWith('</w:t') ? '' : ' '))
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * ¿Lo que se extrajo parece prosa, o es ruido con forma de texto?
+ *
+ * Un PDF puede tener capa de texto y aun así no poder leerse. Dos casos aparecieron en las leyes
+ * mineras de Honduras:
+ *
+ *  · **Letras sueltas.** El extractor devuelve «e x p l o t a c i ó n»: se lee con el ojo, pero
+ *    buscar «explotación» no encuentra nada, porque en el índice no existe esa palabra. Tres de
+ *    los documentos más importantes —la Ley General de Minería, su Reglamento y la Ley de
+ *    Procedimiento Administrativo— salen así, al 80 % de fichas de un solo carácter.
+ *  · **Codificación propia.** La fuente no trae tabla a Unicode y sale desplazado:
+ *    «IUDJPHQWDGRV» por «FRAGMENTADOS».
+ *
+ * Reconstruirlo exigiría adivinar dónde acaba cada palabra, y adivinar dentro de un texto legal es
+ * justo lo que no se puede hacer: una cita inventada de la ley minera es peor que no tener la ley.
+ * Se detecta, se dice, y se manda a reconocimiento óptico como a un escaneo cualquiera.
+ *
+ * La medida es la proporción de palabras funcionales —de, la, el, en, que…—. La prosa española
+ * ronda el 20 %; por debajo del 8 % no es prosa. Se exige un mínimo de palabras para no juzgar un
+ * formulario de tres líneas, que legítimamente no tiene ninguna.
+ */
+const COMUNES_ES = /(^|[^\p{L}])(de|la|el|en|que|los|las|por|con|para|del|se|un|una|al|es|no|su|sus)($|[^\p{L}])/giu;
+
+export function pareceProsa(texto: string): boolean {
+  const palabras = texto.match(/\p{L}{2,}/gu) || [];
+  if (palabras.length < 150) return true; // demasiado corto para juzgarlo
+  const comunes = (texto.match(COMUNES_ES) || []).length;
+  return comunes / palabras.length >= 0.08;
+}
+
+async function leerDocumento(nombre: string, datos: Buffer): Promise<Leido> {
   const avisos: Aviso[] = [];
   let texto = '';
   let nPaginas = 1;
@@ -136,8 +198,30 @@ function leerDocumento(nombre: string, datos: Buffer): Leido {
         avisos: [{ nivel: 'error', texto: 'PDF sin capa de texto' }],
       };
     }
+  } else if (/\.docx$/i.test(nombre)) {
+    texto = await textoDeDocx(datos);
+    if (!texto.trim()) {
+      return {
+        ok: false,
+        motivo: 'corto',
+        dicho: 'Ese .docx no tiene texto dentro: puede ser solo imágenes o un archivo en blanco.',
+        avisos: [{ nivel: 'error', texto: 'docx sin texto' }],
+      };
+    }
   } else {
     texto = datos.toString('utf8');
+  }
+
+  if (!pareceProsa(texto)) {
+    return {
+      ok: false,
+      motivo: 'escaneo',
+      dicho:
+        'Ese archivo tiene capa de texto, pero lo que sale no se puede usar: las letras vienen ' +
+        'sueltas o con una codificación propia, así que buscar una palabra dentro no encontraría ' +
+        'nada. Hay que pasarlo por reconocimiento óptico, igual que un escaneo. Dilo así.',
+      avisos: [{ nivel: 'error', texto: 'texto ilegible: letras sueltas o codificación propia' }],
+    };
   }
 
   const paginas = paginasDePdf(texto, nPaginas);
@@ -153,8 +237,8 @@ function leerDocumento(nombre: string, datos: Buffer): Leido {
 }
 
 /** Qué pasaría con este documento si se cargara, sin cargarlo. */
-export function inspeccionar(nombre: string, datos: Buffer): Inspeccion {
-  const leido = leerDocumento(nombre, datos);
+export async function inspeccionar(nombre: string, datos: Buffer): Promise<Inspeccion> {
+  const leido = await leerDocumento(nombre, datos);
   if (leido.ok === false) return { veredicto: leido.motivo, paginas: 0, fragmentos: 0, caracteres: 0, dicho: leido.dicho };
   return {
     veredicto: 'indexable',
@@ -251,7 +335,7 @@ export async function aprender(
       };
     }
 
-    const leido = leerDocumento(nombre, datos);
+    const leido = await leerDocumento(nombre, datos);
     if (leido.ok === false) return { clase: 'nada', dicho: leido.dicho, avisos: leido.avisos };
     const { paginas, trozos, avisos } = leido;
 
