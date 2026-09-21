@@ -50,7 +50,7 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
   const [texto, setTexto] = useState('');
   const [pensando, setPensando] = useState(false);
   const [cara, setCara] = useState<FaceState>('IDLE');
-  const [estado, setEstado] = useState<Salud | null>(null);
+  const [estado, setEstado] = useState<Salud | 'fallo' | null>(null);
   const [vozActiva, setVozActiva] = useState(true);
   const hilo = useRef<ScrollView>(null);
   const sonido = useRef<Audio.Sound | null>(null);
@@ -77,8 +77,22 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
   const lente = useRef<CameraView | null>(null);
   const [tomando, setTomando] = useState(false);
 
+  /**
+   * Preguntar cómo está el catastro. Un fallo dejaba `estado` en null, y la barra lo pinta como
+   * «comprobando…»: una espera sin salida y sin explicación. Ahora se marca que falló, se dice, y
+   * la propia línea sirve para volver a intentarlo.
+   */
+  const comprobar = useCallback(async () => {
+    setEstado(null);
+    try {
+      setEstado(await salud());
+    } catch {
+      setEstado('fallo');
+    }
+  }, []);
+
   useEffect(() => {
-    salud().then(setEstado).catch(() => setEstado(null));
+    void comprobar();
     // Que el audio suene aunque el teléfono esté en silencio: en el campo el timbre va apagado.
     Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false }).catch(() => {});
     return () => {
@@ -241,22 +255,29 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
     }
   }, [mandar]);
 
-  const nivel = estado?.nivel;
-  const catastro = estado?.viva
-    ? `catastro conectado${estado.concesiones != null ? ` · ${estado.concesiones} concesiones` : ''}`
-    : estado
-      ? `catastro fuera de línea${estado.motivo ? ` · ${estado.motivo}` : ''}`
-      : 'comprobando…';
+  const vivo = estado && estado !== 'fallo' ? estado : null;
+  const nivel = vivo?.nivel;
+  const catastro =
+    estado === 'fallo'
+      ? 'no alcancé el servidor · tocá para reintentar'
+      : vivo?.viva
+        ? `catastro conectado${vivo.concesiones != null ? ` · ${vivo.concesiones} concesiones` : ''}`
+        : vivo
+          ? `catastro fuera de línea${vivo.motivo ? ` · ${vivo.motivo}` : ''}`
+          : 'comprobando…';
 
   return (
     <View style={s.raiz}>
       <View style={s.barra}>
         <View style={{ flex: 1 }}>
           <Text style={s.marca}>DR ELECTRUM FP</Text>
-          <Text style={s.estado} numberOfLines={1}>
-            {catastro}
-            {nivel ? ` · ${nivel === 'lee' ? 'consulta' : nivel === 'escribe' ? 'trabajo' : 'mando'}` : ''}
-          </Text>
+          {/* Si falló, la línea de estado es el botón de reintentar: no hay que buscar otro sitio. */}
+          <Pressable onPress={() => estado === 'fallo' && comprobar()} disabled={estado !== 'fallo'} hitSlop={6}>
+            <Text style={[s.estado, estado === 'fallo' && { color: '#D9705A' }]} numberOfLines={1}>
+              {catastro}
+              {nivel ? ` · ${nivel === 'lee' ? 'consulta' : nivel === 'escribe' ? 'trabajo' : 'mando'}` : ''}
+            </Text>
+          </Pressable>
         </View>
         <Pressable onPress={() => setVozActiva((v) => !v)} hitSlop={10} style={[s.chip, vozActiva && s.chipOn]}>
           <Text style={[s.chipTexto, vozActiva && { color: ACENTO }]}>VOZ</Text>

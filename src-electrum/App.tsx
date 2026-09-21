@@ -23,7 +23,7 @@ import { Mapa, type Fondo, type Motor, type OrdenMapa } from './mapa/Mapa';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
-import { hayCredencial, headersElectrum, puertaAbierta } from './acceso';
+import { hayCredencial, headersElectrum, porQueNoAbre, puertaAbierta, type Puerta } from './acceso';
 
 /** Dónde está la atención: en quien habla, o en lo que hay que mirar. */
 export type Escenario = 'cara' | 'trabajo';
@@ -38,13 +38,26 @@ export default function App() {
    * caducado, o el de alguien que entró a ULTRON pero no está en el padrón de Electrum, se ve igual
    * desde aquí.
    */
-  const [puerta, setPuerta] = useState<'probando' | 'cerrada' | 'abierta'>(() =>
+  const [puerta, setPuerta] = useState<'probando' | 'cerrada' | 'abierta' | 'plataforma'>(() =>
     hayCredencial() ? 'probando' : 'cerrada'
   );
+  /** El porqué exacto, cuando el problema NO es la credencial. */
+  const [porque, setPorque] = useState('');
   useEffect(() => {
     if (puerta !== 'probando') return;
     let vivo = true;
-    puertaAbierta().then((ok) => vivo && setPuerta(ok ? 'abierta' : 'cerrada'));
+    puertaAbierta().then((p: Puerta) => {
+      if (!vivo) return;
+      if (p.estado === 'abierta') return setPuerta('abierta');
+      /*
+       * Solo `sin-permiso` manda a la pantalla de entrada. Las otras tres —sin red, servicio caído,
+       * tardó demasiado— no se arreglan volviendo a escribir la credencial, y enseñar el formulario
+       * ahí es mandar a la persona a pelearse con su contraseña por culpa del wifi.
+       */
+      if (p.estado === 'sin-permiso') return setPuerta('cerrada');
+      setPorque(porQueNoAbre(p, 'sesion'));
+      setPuerta('plataforma');
+    });
     return () => {
       vivo = false;
     };
@@ -153,6 +166,36 @@ export default function App() {
     return (
       <div className="fixed inset-0 bg-black flex items-center justify-center">
         <div className="font-mono text-[11px] tracking-[0.22em] uppercase text-[#FFAE3B]/50">comprobando acceso…</div>
+      </div>
+    );
+  }
+  if (puerta === 'plataforma') {
+    return (
+      <div className="fixed inset-0 bg-black flex items-center justify-center px-6">
+        <div className="max-w-[360px] text-center">
+          <div className="font-display font-bold tracking-[0.34em] text-lg" style={{ color: '#FFAE3B' }}>
+            DR ELECTRUM FP
+          </div>
+          <p className="mt-4 text-[13px] leading-relaxed text-[#B9C7CE]">{porque}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setPorque('');
+              setPuerta('probando');
+            }}
+            className="mt-5 rounded-lg px-4 py-2 text-[14px] font-semibold text-black"
+            style={{ background: '#FFAE3B' }}
+          >
+            Reintentar
+          </button>
+          <button
+            type="button"
+            onClick={() => setPuerta('cerrada')}
+            className="mt-3 block w-full text-[12px] text-[#8FA3B0] hover:text-[#E7EEF2] transition-colors"
+          >
+            Entrar con otra credencial
+          </button>
+        </div>
       </div>
     );
   }

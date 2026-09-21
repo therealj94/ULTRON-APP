@@ -137,6 +137,52 @@ export async function subirFoto(uri: string, nombre: string, mime = 'image/jpeg'
   );
 }
 
+/**
+ * Lo que puede contestar la puerta. Son cinco cosas y antes eran «entró / no entró».
+ *
+ * La distinción importa sobre todo en el campo: **solo `sin-permiso` significa que la credencial
+ * no vale**. Las otras cuatro son la red o la plataforma, y tratarlas como falta de acceso echaba
+ * al usuario a la pantalla de entrada cada vez que se quedaba sin señal — justo cuando menos puede
+ * ponerse a escribir una clave.
+ */
+export type Puerta =
+  | { estado: 'abierta' }
+  | { estado: 'sin-permiso' }
+  | { estado: 'servicio-caido'; codigo: number }
+  | { estado: 'sin-red' }
+  | { estado: 'lento' };
+
+export async function probarPuerta(): Promise<Puerta> {
+  const corte = new AbortController();
+  const reloj = setTimeout(() => corte.abort(), 12_000);
+  try {
+    const r = await fetch(`${API_BASE}/api/electrum/salud`, { headers: cabeceras(), signal: corte.signal });
+    if (r.ok) return { estado: 'abierta' };
+    if (r.status === 401 || r.status === 403) return { estado: 'sin-permiso' };
+    return { estado: 'servicio-caido', codigo: r.status };
+  } catch (e: any) {
+    return e?.name === 'AbortError' ? { estado: 'lento' } : { estado: 'sin-red' };
+  } finally {
+    clearTimeout(reloj);
+  }
+}
+
+/** Lo que se le dice a la persona. Sin jerga y sin acusar a su credencial de lo que hizo el wifi. */
+export function porQueNoAbre(p: Puerta): string {
+  switch (p.estado) {
+    case 'sin-permiso':
+      return 'Esa credencial es buena pero no tiene acceso a Dr Electrum. Pedile a José que te agregue al padrón.';
+    case 'servicio-caido':
+      return `El servidor contestó ${p.codigo}. No es tu credencial: es la plataforma. Probá en un momento.`;
+    case 'lento':
+      return 'El servidor tardó más de doce segundos. Puede ser la señal de donde estás. Volvé a intentarlo.';
+    case 'sin-red':
+      return 'No alcancé el servidor. Revisá la señal y volvé a intentarlo — tu credencial no tiene nada que ver.';
+    default:
+      return '';
+  }
+}
+
 export type Salud = {
   viva: boolean;
   motivo?: string;

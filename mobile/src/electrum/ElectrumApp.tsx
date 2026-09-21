@@ -17,7 +17,7 @@ import { useRef } from 'react';
 import { UltronFace } from '../components/UltronFace';
 import { APP_VERSION, type FaceState } from '../config';
 import { ACENTO } from '../variante';
-import { cargarCredenciales, guardarLlave, guardarSesion, hayCredencial, salud } from './api';
+import { cargarCredenciales, guardarLlave, guardarSesion, hayCredencial, probarPuerta } from './api';
 import { EntrarScreen } from './EntrarScreen';
 import { CampoScreen } from './CampoScreen';
 
@@ -62,9 +62,18 @@ export default function ElectrumApp() {
     await cargarCredenciales();
     let dentro = false;
     if (hayCredencial()) {
-      // Tener una credencial guardada no es tener acceso: el padrón pudo cambiar desde la última
-      // vez. Se comprueba contra el servidor antes de enseñar la pantalla de trabajo.
-      dentro = await salud().then(() => true).catch(() => false);
+      /*
+       * Tener una credencial guardada no es tener acceso: el padrón pudo cambiar desde la última
+       * vez. Pero **solo se echa a la pantalla de entrada si el servidor dice que NO**.
+       *
+       * Antes cualquier fallo de `salud` mandaba al login, o sea que quedarse sin señal —en el
+       * campo, que es donde se usa esto— parecía una sesión caducada y obligaba a escribir la clave
+       * con una raya de cobertura. Si el problema es la red, se entra igual: la pantalla ya dice
+       * «catastro fuera de línea», y si la credencial de verdad no vale, la primera petición lo
+       * descubre y saca al usuario.
+       */
+      const p = await probarPuerta();
+      dentro = p.estado !== 'sin-permiso';
     }
     await minimo;
     setFase(dentro ? 'campo' : 'entrar');

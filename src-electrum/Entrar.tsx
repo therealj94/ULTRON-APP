@@ -16,7 +16,7 @@
  * guarda la credencial y se vuelve a llamar a la puerta.
  */
 import { useState, type FormEvent } from 'react';
-import { guardarSesion, puertaAbierta } from './acceso';
+import { almacenamientoFragil, guardarLlave, guardarSesion, porQueNoAbre, puertaAbierta, type Donde } from './acceso';
 
 const ACENTO = '#FFAE3B';
 
@@ -27,6 +27,8 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
   const [modo, setModo] = useState<'correo' | 'llave'>('correo');
   const [yendo, setYendo] = useState(false);
   const [fallo, setFallo] = useState('');
+  /** Si la credencial no pudo guardarse en disco, se entra igual pero se dice que no durará. */
+  const [fragil, setFragil] = useState(() => almacenamientoFragil());
 
   async function entrarConCorreo(e: FormEvent) {
     e.preventDefault();
@@ -44,11 +46,12 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
         setFallo(j?.error || j?.message || 'Ese correo y esa clave no abren.');
         return;
       }
-      guardarSesion(String(j.token));
+      avisarSiEsFragil(guardarSesion(String(j.token)));
       // Entrar en ULTRON no es entrar en Electrum: el padrón puede dejarte en uno y no en el otro,
       // y decirlo aquí es mejor que dejar pasar a una estación que no va a contestar.
-      if (await puertaAbierta()) onAbierta();
-      else setFallo('Entraste en ULTRON, pero tu cuenta no tiene acceso a Dr Electrum FP. Pedíselo a José.');
+      const p = await puertaAbierta();
+      if (p.estado === 'abierta') onAbierta();
+      else setFallo(porQueNoAbre(p, 'sesion'));
     } catch (err: any) {
       setFallo(String(err?.message || err).slice(0, 140) || 'No pude contactar con el servidor.');
     } finally {
@@ -56,19 +59,41 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
     }
   }
 
+  /**
+   * La credencial se guardó, pero puede que solo en memoria.
+   *
+   * No se bloquea por eso: quien está en una ventana privada tiene el mismo derecho a entrar. Lo
+   * que se hace es decirle la verdad — que si recarga tendrá que volver a poner la llave.
+   */
+  function avisarSiEsFragil(donde: Donde) {
+    setFragil(donde === 'memoria');
+  }
+
   async function entrarConLlave(e: FormEvent) {
     e.preventDefault();
     if (!llave.trim()) return;
     setYendo(true);
     setFallo('');
+    /*
+     * ESTE ERA EL PUNTO DE F09.
+     *
+     * El `sessionStorage.setItem` de reserva estaba dentro del `catch` del primero y **sin
+     * proteger**. Cuando los dos almacenes fallaban —ventana privada con almacenamiento bloqueado,
+     * política de empresa— la excepción salía disparada antes del `setYendo(false)` que estaba
+     * al final sin `finally`, y el formulario quedaba en «Probando…» con todo deshabilitado para
+     * siempre. Ni entraba ni decía por qué. Ahora guardar no puede fallar: si no hay disco, queda
+     * en memoria y se avisa.
+     */
     try {
-      localStorage.setItem('electrum_llave', llave.trim());
-    } catch {
-      sessionStorage.setItem('electrum_llave', llave.trim());
+      avisarSiEsFragil(guardarLlave(llave.trim()));
+      const p = await puertaAbierta();
+      if (p.estado === 'abierta') onAbierta();
+      else setFallo(porQueNoAbre(p, 'llave'));
+    } catch (err: any) {
+      setFallo(String(err?.message || err).slice(0, 140) || 'No pude comprobar la llave.');
+    } finally {
+      setYendo(false);
     }
-    if (await puertaAbierta()) onAbierta();
-    else setFallo('Esa llave no abre. Pedile a José la vigente.');
-    setYendo(false);
   }
 
   const campo =
@@ -145,6 +170,21 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
               role="alert"
             >
               {fallo}
+            </div>
+          )}
+
+          {/*
+            * Guardado solo en memoria. No es un error —se entró— pero callarlo haría que la sesión
+            * se «perdiera sola» al recargar, sin explicación.
+            */}
+          {fragil && (
+            <div
+              className="mt-4 rounded-lg border px-3 py-2.5 text-[13px] leading-relaxed"
+              style={{ borderColor: 'rgba(255,174,59,0.3)', background: 'rgba(255,174,59,0.07)', color: '#FFD08A' }}
+              role="status"
+            >
+              Este navegador no me deja guardar nada, así que la credencial vale solo mientras no
+              recargues la página. Suele pasar en ventana privada.
             </div>
           )}
 

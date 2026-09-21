@@ -12,7 +12,7 @@ import { useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { UltronFace } from '../components/UltronFace';
 import { ACENTO } from '../variante';
-import { entrar, guardarLlave, guardarSesion, salud } from './api';
+import { entrar, guardarLlave, guardarSesion, porQueNoAbre, probarPuerta } from './api';
 
 type Modo = 'correo' | 'llave';
 
@@ -37,16 +37,23 @@ export function EntrarScreen({ onDentro }: { onDentro: () => void }) {
       }
       // No basta con guardar la credencial: hay que comprobar que ESTA plataforma la acepta. Estar
       // en la junta no es estar en Dr Electrum, y descubrirlo en la primera pregunta es peor.
-      await salud();
-      onDentro();
+      const p = await probarPuerta();
+      if (p.estado === 'abierta') {
+        onDentro();
+        return;
+      }
+      /*
+       * La credencial solo se borra si el servidor dijo que no vale. Si el problema fue la señal,
+       * borrarla obligaría a volver a escribirla cuando vuelva la cobertura, por un fallo que no
+       * tuvo nada que ver con ella.
+       */
+      if (p.estado === 'sin-permiso') {
+        if (modo === 'llave') await guardarLlave(null);
+        else await guardarSesion(null);
+      }
+      setFallo(porQueNoAbre(p));
     } catch (e: any) {
-      if (modo === 'llave') await guardarLlave(null);
-      else await guardarSesion(null);
-      setFallo(
-        String(e?.message || e).includes('privado')
-          ? 'Esa credencial es buena pero no tiene acceso a Dr Electrum. Pedile a José que te agregue al padrón.'
-          : String(e?.message || e).slice(0, 140)
-      );
+      setFallo(String(e?.message || e).slice(0, 140));
     } finally {
       setYendo(false);
     }
