@@ -240,17 +240,64 @@ app.delete('/api/electrum/hilo', exigirPlataforma('electrum'), limitar(30), (req
   res.json({ ok: true, honesto: true });
 });
 
-/** Qué hay cargado: capas del mapa y expedientes indexados. */
-app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), async (_req, res) => {
-  if (!hayBaseElectrum()) return res.json({ capas: [], documentos: [], catastro: false, honesto: true });
+/**
+ * Qué hay cargado: capas del mapa y expedientes indexados.
+ *
+ * Devuelve los TOTALES además de la página. Antes cortaba en 40 capas y 60 documentos sin decirlo,
+ * y eso hace algo peor que quedarse corto: con un catastro nacional de 125 capas, la lista parecía
+ * completa y faltaban 85. Quien no encontraba un expediente concluía que no estaba cargado, cuando
+ * lo que pasaba es que no estaba en esa página. «No existe» y «no está aquí» no se pueden ver
+ * igual en un registro.
+ */
+app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  if (!hayBaseElectrum()) {
+    return res.json({
+      capas: [],
+      documentos: [],
+      totales: { capas: 0, documentos: 0 },
+      existentes: { capas: 0, documentos: 0 },
+      catastro: false,
+      honesto: true,
+    });
+  }
+  const q = String(req.query.q || '').trim().slice(0, 120);
+  const desde = Math.max(0, Math.min(10_000, Number(req.query.desde) || 0));
+  const limite = Math.max(1, Math.min(200, Number(req.query.limite) || 60));
   try {
+    // `unaccent` para que «Danlí» y «Danli» encuentren lo mismo, como en el resto de la plataforma.
+    const filtro = q ? `WHERE unaccent(lower(nombre)) LIKE unaccent(lower($1))` : '';
+    const args = q ? [`%${q}%`] : [];
+
+    const [tc] = await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM capa ${filtro}`, args);
+    const [td] = await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM documento ${filtro}`, args);
+    /*
+     * Cuántos hay EN TOTAL, al margen de la búsqueda. Sin esto, una búsqueda sin resultados decía
+     * «hay 0 capas y 0 expedientes cargados» —el total filtrado, o sea cero— y eso le cuenta a
+     * quien busca que el catastro está vacío cuando lo que pasa es que su palabra no aparece.
+     */
+    const [ec] = q ? await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM capa`) : [tc];
+    const [ed] = q ? await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM documento`) : [td];
+
     const capas = await consultaElectrum(
-      `SELECT id, nombre, formato, origen_crs, entidades FROM capa ORDER BY subido DESC LIMIT 40`
+      `SELECT id, nombre, formato, origen_crs, entidades, subido FROM capa ${filtro}
+        ORDER BY subido DESC LIMIT ${limite} OFFSET ${desde}`,
+      args
     );
     const documentos = await consultaElectrum(
-      `SELECT id, nombre, tipo, paginas FROM documento ORDER BY subido DESC LIMIT 60`
+      `SELECT id, nombre, tipo, paginas, subido, subido_por FROM documento ${filtro}
+        ORDER BY subido DESC LIMIT ${limite} OFFSET ${desde}`,
+      args
     );
-    res.json({ capas, documentos, catastro: true, honesto: true });
+    res.json({
+      capas,
+      documentos,
+      totales: { capas: Number(tc?.n || 0), documentos: Number(td?.n || 0) },
+      existentes: { capas: Number(ec?.n || 0), documentos: Number(ed?.n || 0) },
+      desde,
+      limite,
+      catastro: true,
+      honesto: true,
+    });
   } catch (e: any) {
     res.status(503).json({ error: String(e?.message || e).slice(0, 160), honesto: true });
   }

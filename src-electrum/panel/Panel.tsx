@@ -154,10 +154,24 @@ async function decirEnVoz(texto: string, emocion: string | undefined, headers: R
  * blob. La alternativa —una URL firmada que valga por sí sola— sería un enlace compartible a un
  * documento del catastro, y eso es justo lo que no queremos que exista.
  */
-async function bajarInforme(informe: { nombre: string; url: string }) {
+/**
+ * Bajar el informe. Devuelve el motivo si no se pudo — antes devolvía nada.
+ *
+ * El servidor guarda los informes **media hora**, porque describen el catastro de ese momento.
+ * Pasado ese rato el botón seguía ahí y al tocarlo no ocurría absolutamente nada: ni descarga, ni
+ * mensaje. El `if (!r.ok) return` se tragaba la explicación que el servidor sí manda, y el `catch`
+ * vacío llevaba escrito «el navegador dirá lo suyo», que es justo lo que el navegador no hace.
+ */
+async function bajarInforme(informe: { nombre: string; url: string }): Promise<string | null> {
   try {
     const r = await fetch(informe.url, { headers: headersElectrum() });
-    if (!r.ok) return;
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}) as any);
+      if (j?.error) return String(j.error);
+      return r.status === 404
+        ? 'Ese informe ya caducó. Se guardan media hora porque describen el catastro del momento; pedime otro.'
+        : `No pude bajarlo: el servidor contestó ${r.status}.`;
+    }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -167,8 +181,9 @@ async function bajarInforme(informe: { nombre: string; url: string }) {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
-  } catch {
-    /* el navegador dirá lo suyo */
+    return null;
+  } catch (e: any) {
+    return `No alcancé el servidor para bajar el informe (${String(e?.message || e).slice(0, 80)}).`;
   }
 }
 
@@ -471,16 +486,25 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
     onFace('THINKING');
     onTrabajo();
     try {
+      /*
+       * La foto se espera. `capturaDelMapa` ahora aguarda a que el mapa termine de dibujar: antes
+       * leía el cuadro anterior, así que un informe pedido justo después de volar a una concesión
+       * se llevaba la vista de antes — y nadie lo notaba hasta abrir el PDF.
+       */
+      const foto = await capturaDelMapa();
       const r = await fetch('/api/electrum/informe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headersElectrum() },
-        body: JSON.stringify({ tipo: 'cartera', mapa: capturaDelMapa() }),
+        body: JSON.stringify({ tipo: 'cartera', mapa: 'imagen' in foto ? foto.imagen : null }),
       });
       const j = await r.json();
       if (!r.ok) {
         setTurnos((t) => [...t, { de: 'electrum', texto: j.error || 'No pude armar el informe.' }]);
       } else {
-        setTurnos((t) => [...t, { de: 'electrum', texto: j.dicho, informe: { nombre: j.nombre, url: j.url, bytes: j.bytes } }]);
+        // Si el mapa no entró, se dice EN la misma respuesta. Un informe sin mapa y sin explicación
+        // parece roto; uno que dice por qué es un informe honesto.
+        const texto = 'falta' in foto ? `${j.dicho}\n\nVa sin mapa: ${foto.falta}` : j.dicho;
+        setTurnos((t) => [...t, { de: 'electrum', texto, informe: { nombre: j.nombre, url: j.url, bytes: j.bytes } }]);
       }
     } catch {
       setTurnos((t) => [...t, { de: 'electrum', texto: 'No alcancé el servidor para armar el informe.' }]);
@@ -598,7 +622,7 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
                 {t.informe && (
                   <button
                     type="button"
-                    onClick={() => bajarInforme(t.informe!)}
+                    onClick={() => void bajarInforme(t.informe!).then((m) => m && avisar(m))}
                     className="mt-2 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-white/[0.06] cursor-pointer"
                     style={{ borderColor: 'rgba(255,174,59,.35)' }}
                   >
@@ -932,19 +956,64 @@ function Estado() {
   );
 }
 
+/** Cuántos se piden por página. No es un tope escondido: la pantalla dice cuántos hay en total. */
+const PAGINA = 60;
+
+type Indice = {
+  capas: Array<{ id: number; nombre: string; formato: string; origen_crs: string; entidades: number; subido?: string }>;
+  documentos: Array<{ id: number; nombre: string; tipo: string; paginas: number; subido?: string; subido_por?: string }>;
+  totales: { capas: number; documentos: number };
+  /** Cuántos hay en total, al margen de la búsqueda. */
+  existentes: { capas: number; documentos: number };
+};
+
 function Expedientes() {
-  const [datos, setDatos] = useState<{ capas: any[]; documentos: any[] } | null>(null);
+  const [datos, setDatos] = useState<Indice | null>(null);
   const [fallo, setFallo] = useState<'' | 'puerta' | 'base'>('');
   const [vuelta, setVuelta] = useState(0);
+  /** Lo que se está buscando. Vacío es «todo». */
+  const [busca, setBusca] = useState('');
+  /** Lo que se escribe, antes de que pare de escribir. */
+  const [escrito, setEscrito] = useState('');
+  const [trayendo, setTrayendo] = useState(false);
+
+  // No una consulta por tecla: se espera a que termine de escribir.
+  useEffect(() => {
+    const t = setTimeout(() => setBusca(escrito.trim()), 300);
+    return () => clearTimeout(t);
+  }, [escrito]);
 
   useEffect(() => {
-    fetch('/api/electrum/expedientes', { headers: headersElectrum() })
+    const q = busca ? `&q=${encodeURIComponent(busca)}` : '';
+    fetch(`/api/electrum/expedientes?limite=${PAGINA}${q}`, { headers: headersElectrum() })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(setDatos)
       .catch((e) => setFallo(e === 401 ? 'puerta' : 'base'));
-  }, [vuelta]);
+  }, [vuelta, busca]);
 
   const recargar = useCallback(() => setVuelta((v) => v + 1), []);
+
+  /** Traer la página siguiente y pegarla a lo que ya hay. */
+  const traerMas = useCallback(async () => {
+    if (!datos || trayendo) return;
+    setTrayendo(true);
+    try {
+      const desde = Math.max(datos.capas.length, datos.documentos.length);
+      const q = busca ? `&q=${encodeURIComponent(busca)}` : '';
+      const r = await fetch(`/api/electrum/expedientes?limite=${PAGINA}&desde=${desde}${q}`, {
+        headers: headersElectrum(),
+      });
+      if (!r.ok) return;
+      const j: Indice = await r.json();
+      setDatos((d) =>
+        d
+          ? { ...j, capas: [...d.capas, ...j.capas], documentos: [...d.documentos, ...j.documentos] }
+          : j
+      );
+    } finally {
+      setTrayendo(false);
+    }
+  }, [datos, busca, trayendo]);
 
   if (fallo === 'puerta') return <div className="p-4 text-sm text-[#8FA3B0] leading-relaxed">{SIN_PUERTA}</div>;
   if (fallo) {
@@ -957,6 +1026,23 @@ function Expedientes() {
   if (!datos) return <div className="p-4 font-mono text-[11px] text-[#6C7F89]">cargando…</div>;
 
   const vacio = !datos.capas.length && !datos.documentos.length;
+  const total = (datos.totales?.capas || 0) + (datos.totales?.documentos || 0);
+  /*
+   * «No existe» y «no está en esta búsqueda» no se pueden ver igual en un registro: quien busca
+   * «Quebrada Seca» y ve la pantalla de «todavía no hay nada cargado» concluye que el catastro está
+   * vacío. Con una búsqueda en curso, el vacío se cuenta como lo que es.
+   */
+  if (vacio && busca) {
+    return (
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 w-full max-w-4xl mx-auto">
+        <Buscador escrito={escrito} setEscrito={setEscrito} />
+        <p className="text-sm text-[#8FA3B0] leading-relaxed">
+          Nada que se llame «{busca}». Hay {datos.existentes?.capas ?? 0} capas y{' '}
+          {datos.existentes?.documentos ?? 0} expedientes cargados en total; borrá la búsqueda para verlos.
+        </p>
+      </div>
+    );
+  }
   if (vacio) {
     return (
       <div className="flex-1 overflow-y-auto w-full max-w-4xl mx-auto">
@@ -982,10 +1068,11 @@ function Expedientes() {
         lo primero que se ve tiene que ser por dónde se mete.
       */}
       <Cargador alCargar={recargar} />
+      <Buscador escrito={escrito} setEscrito={setEscrito} />
       {datos.capas.length > 0 && (
         <section>
           <h3 className="font-mono text-[10px] tracking-[0.18em] uppercase mb-2" style={{ color: AMBAR }}>
-            Capas del mapa
+            Capas del mapa <Cuenta hay={datos.capas.length} de={datos.totales?.capas} />
           </h3>
           <ul className="space-y-1.5">
             {datos.capas.map((c) => (
@@ -993,6 +1080,7 @@ function Expedientes() {
                 <div className="text-[#E7EEF2]">{c.nombre}</div>
                 <div className="font-mono text-[11px] text-[#6C7F89]">
                   {c.entidades} entidades · {c.formato} · {c.origen_crs}
+                  {c.subido ? ` · ${fecha(c.subido)}` : ''}
                 </div>
               </li>
             ))}
@@ -1002,7 +1090,7 @@ function Expedientes() {
       {datos.documentos.length > 0 && (
         <section>
           <h3 className="font-mono text-[10px] tracking-[0.18em] uppercase mb-2" style={{ color: AMBAR }}>
-            Expedientes
+            Expedientes <Cuenta hay={datos.documentos.length} de={datos.totales?.documentos} />
           </h3>
           <ul className="space-y-1.5">
             {datos.documentos.map((d) => (
@@ -1010,12 +1098,59 @@ function Expedientes() {
                 <div className="text-[#E7EEF2]">{d.nombre}</div>
                 <div className="font-mono text-[11px] text-[#6C7F89]">
                   {d.tipo} · {d.paginas} {d.paginas === 1 ? 'página' : 'páginas'}
+                  {d.subido ? ` · ${fecha(d.subido)}` : ''}
+                  {d.subido_por ? ` · ${d.subido_por}` : ''}
                 </div>
               </li>
             ))}
           </ul>
         </section>
       )}
+      {(datos.capas.length < (datos.totales?.capas ?? 0) ||
+        datos.documentos.length < (datos.totales?.documentos ?? 0)) && (
+        <button
+          type="button"
+          onClick={() => void traerMas()}
+          disabled={trayendo}
+          className="w-full rounded-lg border border-white/12 py-2 font-mono text-[11px] tracking-[0.14em] uppercase text-[#9FB0B8] transition-colors hover:border-white/25 hover:text-white disabled:opacity-40 cursor-pointer"
+        >
+          {trayendo ? 'trayendo…' : 'Ver más'}
+        </button>
+      )}
     </div>
+  );
+}
+
+/**
+ * Cuándo entró. Es de las cosas que más se preguntan de un registro —«¿esto es el padrón de junio o
+ * el de antes?»— y no se veía por ningún lado.
+ */
+function fecha(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('es-HN', { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch {
+    return '';
+  }
+}
+
+/** «12 de 125». Sin esto, una lista truncada parece una lista completa. */
+function Cuenta({ hay, de }: { hay: number; de?: number }) {
+  if (de == null || de <= hay) return <span className="text-[#6C7F89] normal-case tracking-normal">· {hay}</span>;
+  return (
+    <span className="text-[#6C7F89] normal-case tracking-normal">
+      · {hay} de {de}
+    </span>
+  );
+}
+
+function Buscador({ escrito, setEscrito }: { escrito: string; setEscrito: (v: string) => void }) {
+  return (
+    <input
+      value={escrito}
+      onChange={(e) => setEscrito(e.target.value)}
+      placeholder="Buscar por nombre en capas y expedientes…"
+      aria-label="Buscar en capas y expedientes"
+      className="w-full rounded-lg bg-white/[0.06] border border-white/12 px-3 py-2 text-sm text-[#E7EEF2] placeholder:text-[#5E7078] focus:outline-none focus:border-[#FFAE3B]/60"
+    />
   );
 }

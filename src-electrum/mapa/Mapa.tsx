@@ -128,7 +128,16 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       setListo(true);
     });
     mapa.current = m;
-    // Asa para las capturas de QA (scripts/qa/electrum.mjs). No lo usa la aplicación.
+    /*
+     * El mapa vivo, para la captura del informe.
+     *
+     * Antes esto era SOLO `window.__mapa`, con un comentario que decía «no lo usa la aplicación» —
+     * y la aplicación sí lo usaba: es de donde `capturaDelMapa` saca el lienzo. Peor: no se
+     * limpiaba al destruir el mapa, así que tras cambiar de motor la referencia seguía apuntando a
+     * una instancia muerta y el informe se llevaba una foto vieja o vacía sin decir nada.
+     */
+    vivo = { m, motor: 'maplibre' };
+    // Asa para las capturas de QA (scripts/qa/electrum.mjs).
     (window as any).__mapa = m;
 
     /*
@@ -144,6 +153,8 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       observador?.disconnect();
       m.remove();
       mapa.current = null;
+      if (vivo?.m === m) vivo = null;
+      if ((window as any).__mapa === m) delete (window as any).__mapa;
       setListo(false);
     };
   }, [motor, fondo]);
@@ -179,6 +190,9 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
     const yaEsta = (window as any).google?.maps;
     const arrancar = () => {
       if (!cajaGoogle.current) return;
+      // Que la captura sepa que el mapa de la pantalla es el de Google, para poder explicar por qué
+      // no entra en el informe en vez de armarlo sin mapa y en silencio.
+      vivo = { m: null, motor: 'google' };
       google.current = new (window as any).google.maps.Map(cajaGoogle.current, {
         center: { lat: 14.75, lng: -86.25 },
         zoom: 7,
@@ -265,16 +279,60 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
  *
  * JPEG y no PNG porque el PDF incrusta los datos de un JPEG tal cual, sin recodificar nada.
  */
-export function capturaDelMapa(): string | null {
-  const m = (window as any).__mapa;
-  const lienzo: HTMLCanvasElement | undefined = m?.getCanvas?.();
-  if (!lienzo || !lienzo.width || !lienzo.height) return null;
-  try {
-    // Repintar antes de leer: si el último cuadro es viejo, se captura lo que ya no se ve.
+/** El mapa que está en pantalla ahora mismo, y con qué motor. Null cuando no hay ninguno montado. */
+let vivo: { m: MapaLibre | null; motor: Motor } | null = null;
+
+export type Captura = { imagen: string } | { falta: string };
+
+/**
+ * La foto del mapa para el informe.
+ *
+ * Es asíncrona, y no por capricho. Antes se llamaba a `triggerRepaint()` y se leía el lienzo **en
+ * la línea siguiente**: `triggerRepaint` solo PIDE un cuadro nuevo, no lo dibuja, así que lo que se
+ * leía era el cuadro anterior. Con el mapa quieto no se nota; justo después de volar a una
+ * concesión —que es cuando alguien pide el informe— se llevaba la vista de antes. Ahora se espera
+ * a que el mapa diga que terminó (`idle`), con un tope por si las teselas no paran de reintentar.
+ *
+ * Y cuando no se puede, se dice cuál es el motivo en vez de devolver un hueco. Un informe sin mapa
+ * y sin explicación parece un informe roto; uno que dice «el mapa no entró porque estás en Google»
+ * es un informe honesto.
+ */
+export async function capturaDelMapa(): Promise<Captura> {
+  if (!vivo) return { falta: 'No había mapa montado cuando pedí la foto.' };
+  if (vivo.motor !== 'maplibre') {
+    /*
+     * Google Maps se compone en el DOM con teselas de otro dominio: su lienzo no se puede leer
+     * desde la página, y forzarlo daría una imagen en blanco o una excepción de seguridad. No hay
+     * arreglo desde aquí, así que se dice — antes, simplemente, salía el informe sin mapa.
+     */
+    return { falta: 'Con el mapa de Google no puedo sacar la foto: sus teselas vienen de otro dominio y el navegador no me deja leer el lienzo. Cambiá a MapLibre y te lo armo con mapa.' };
+  }
+  const m = vivo.m;
+  const lienzo = m?.getCanvas?.();
+  if (!lienzo || !lienzo.width || !lienzo.height) return { falta: 'El mapa todavía no tenía nada dibujado.' };
+
+  // Esperar un cuadro DE VERDAD. `idle` llega cuando no queda nada por cargar ni por pintar.
+  await new Promise<void>((resolver) => {
+    let hecho = false;
+    if (!m) return resolver();
+    const fin = () => {
+      if (hecho) return;
+      hecho = true;
+      resolver();
+    };
+    m.once('idle', fin);
     m.triggerRepaint?.();
+    // Si una tesela falla y se reintenta sola, `idle` puede no llegar nunca.
+    setTimeout(fin, 1500);
+  });
+
+  try {
     const url = lienzo.toDataURL('image/jpeg', 0.82);
-    return url.startsWith('data:image/jpeg') && url.length > 2000 ? url : null;
-  } catch {
-    return null;
+    if (!url.startsWith('data:image/jpeg') || url.length < 2000) {
+      return { falta: 'La foto del mapa salió vacía. Probá otra vez cuando termine de cargar.' };
+    }
+    return { imagen: url };
+  } catch (e: any) {
+    return { falta: `No pude leer el lienzo del mapa (${String(e?.message || e).slice(0, 80)}).` };
   }
 }
