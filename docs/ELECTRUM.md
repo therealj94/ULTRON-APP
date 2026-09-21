@@ -119,6 +119,24 @@ Lo que dice al terminar de leer un archivo, textual, corriendo contra los fixtur
 Esquema en `scripts/electrum/esquema.sql`, instalador en `scripts/electrum/instalar-postgis.sh`,
 acceso en `server/electrum/db.ts`.
 
+El instalador corre una vez en el nodo, con sudo, y es idempotente. **No abre el puerto solo**, a
+propósito: un catastro completo es información sensible y abrir 5432 a internet es, tarde o
+temprano, regalarlo. Al terminar imprime el `ELECTRUM_DB_URL` que hay que poner en Render.
+
+### El fallo de la propiedad, que solo aparece conectándose como la aplicación
+
+El esquema lo aplica `postgres` porque `CREATE EXTENSION` exige superusuario. Consecuencia: todas
+las tablas quedaban siendo **propiedad de postgres** y el usuario `electrum` solo tenía permisos
+prestados. `GRANT ALL` deja insertar y borrar, pero no deja *ser dueño*, y sin eso fallan
+`TRUNCATE ... RESTART IDENTITY` —«must be owner of sequence»— y cualquier `ALTER TABLE`, que es
+justo lo que necesita la siguiente migración del esquema.
+
+No se veía leyendo el código ni corriendo las pruebas como superusuario, donde pasaban las 379.
+Apareció al correrlas conectado como `electrum`, que es como se conecta la aplicación de verdad.
+Ahora el instalador traspasa la propiedad de lo nuestro —y solo de lo nuestro: `spatial_ref_sys` y
+las vistas de PostGIS se dejan en paz porque son de la extensión—, saltando las secuencias de
+`bigserial`, que cuelgan de su columna y heredan el dueño de la tabla.
+
 Tablas: `capa` (cada archivo subido), `concesion`, `entidad_geo` (bocaminas, ríos, poblados, áreas
 protegidas), `documento` y `fragmento` (expedientes troceados **con su página**, porque una cita sin
 página no se puede comprobar y entonces no es una cita), y `traslape` (calculado y guardado: en un

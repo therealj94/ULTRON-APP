@@ -88,8 +88,47 @@ fi
 # Las extensiones las tiene que crear un superusuario; el resto del esquema lo puede el dueño.
 su - postgres -c "psql -d ${BASE} -v ON_ERROR_STOP=1 -f ${AQUI}/esquema.sql"
 su - postgres -c "psql -d ${BASE} -c 'GRANT ALL ON SCHEMA public TO ${USUARIO}'"
-su - postgres -c "psql -d ${BASE} -c 'GRANT ALL ON ALL TABLES IN SCHEMA public TO ${USUARIO}'"
-su - postgres -c "psql -d ${BASE} -c 'GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO ${USUARIO}'"
+
+# El esquema lo aplica postgres porque CREATE EXTENSION exige superusuario, así que todo queda
+# siendo PROPIEDAD de postgres y el usuario de la aplicación solo tiene permisos prestados. No es lo
+# mismo: con GRANT ALL se puede insertar y borrar, pero no ser dueño, y sin ser dueño fallan
+# TRUNCATE ... RESTART IDENTITY («must be owner of sequence») y cualquier ALTER TABLE, que es
+# exactamente lo que necesita la próxima migración del esquema. Se descubrió corriendo las pruebas
+# conectado como `electrum` en vez de como superusuario; como superusuario pasaban todas.
+#
+# Se traspasa la propiedad de lo NUESTRO y solo de lo nuestro: lo que pertenece a una extensión
+# —spatial_ref_sys y las vistas de PostGIS— se deja en paz, porque es de la extensión y cambiarlo
+# es pelearse con su desinstalador.
+paso "Traspasando la propiedad al usuario de la aplicación"
+su - postgres -c "psql -d ${BASE} -v ON_ERROR_STOP=1 -c \"
+DO \\\$\\\$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT c.oid::regclass AS nombre, c.relkind
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public'
+       AND c.relkind IN ('r','S','v','m','p')
+       AND NOT EXISTS (
+             SELECT 1 FROM pg_depend d
+              WHERE d.objid = c.oid AND d.deptype = 'e')
+       -- Las secuencias de un bigserial cuelgan de su columna: heredan el dueño de la tabla y
+       -- cambiarlo suelto lo rechaza el propio Postgres («cannot change owner of sequence»).
+       AND NOT (c.relkind = 'S' AND EXISTS (
+             SELECT 1 FROM pg_depend d
+              WHERE d.objid = c.oid AND d.deptype = 'a'))
+  LOOP
+    IF r.relkind = 'S' THEN
+      EXECUTE format('ALTER SEQUENCE %s OWNER TO %I', r.nombre, '${USUARIO}');
+    ELSIF r.relkind IN ('v','m') THEN
+      EXECUTE format('ALTER VIEW %s OWNER TO %I', r.nombre, '${USUARIO}');
+    ELSE
+      EXECUTE format('ALTER TABLE %s OWNER TO %I', r.nombre, '${USUARIO}');
+    END IF;
+  END LOOP;
+END
+\\\$\\\$;\""
 
 paso "Comprobando que quedó bien"
 VER_PG=$(su - postgres -c "psql -tAc 'SELECT version()'" | head -1)
