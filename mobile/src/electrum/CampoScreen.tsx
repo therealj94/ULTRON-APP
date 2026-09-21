@@ -76,6 +76,8 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
   const [permisoCamara, pedirPermisoCamara] = useCameraPermissions();
   const lente = useRef<CameraView | null>(null);
   const [tomando, setTomando] = useState(false);
+  /** Fijando el GPS. Es una fase propia: puede tardar quince segundos y el botón tiene que decirlo. */
+  const [ubicando, setUbicando] = useState(false);
 
   /**
    * Preguntar cómo está el catastro. Un fallo dejaba `estado` en null, y la barra lo pinta como
@@ -235,25 +237,54 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
    * qué se consultó. Un dato que el modelo no ve es un dato que el modelo puede contradecir.
    */
   const dondeEstoy = useCallback(async () => {
+    /*
+     * Ocupado DESDE EL PRINCIPIO.
+     *
+     * Antes el botón solo se bloqueaba cuando ya había pregunta en vuelo, y fijar el GPS bajo
+     * árboles o en un cañón tarda diez o quince segundos. En ese hueco el botón seguía vivo, y lo
+     * normal —tocarlo otra vez porque «no hizo nada»— disparaba una segunda petición de posición
+     * encima de la primera.
+     */
+    if (ubicando || pensando) return;
+    setUbicando(true);
     setCara('THINKING');
     try {
-      const permiso = await Location.requestForegroundPermissionsAsync();
-      if (permiso.status !== 'granted') {
-        Alert.alert('Sin ubicación', 'Sin permiso de ubicación no puedo decirte sobre qué concesión estás parado.');
-        setCara('IDLE');
-        return;
+      const previo = await Location.getForegroundPermissionsAsync();
+      if (previo.status !== 'granted') {
+        // Para qué se pide, ANTES de que salga el diálogo del sistema. Quien entiende para qué es
+        // lo concede; quien ve el diálogo a secas, no.
+        Alert.alert(
+          'Necesito tu ubicación',
+          'Para decirte qué dice el catastro del punto donde estás parado. La coordenada se manda con la pregunta y no queda guardada como historial de recorrido.'
+        );
+        const permiso = await Location.requestForegroundPermissionsAsync();
+        if (permiso.status !== 'granted') {
+          Alert.alert('Sin ubicación', 'Sin permiso de ubicación no puedo mirar el catastro de donde estás. Podés pedírmelo por nombre de concesión.');
+          return;
+        }
       }
       const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
       const { longitude: lon, latitude: lat, accuracy } = pos.coords;
-      const precision = accuracy ? ` (precisión ${Math.round(accuracy)} m)` : '';
+      const precision = accuracy ? `, con precisión de ${Math.round(accuracy)} m` : '';
+      const hora = new Date(pos.timestamp || Date.now()).toLocaleTimeString('es-HN', { hour: '2-digit', minute: '2-digit' });
+      /*
+       * «Qué DICE el padrón», no «de quién es».
+       *
+       * La diferencia no es de estilo. El padrón dice quién figura inscrito; de quién es el derecho
+       * lo dice un expediente y, si hay conflicto, un juez. Una app que contesta «esto es de fulano»
+       * está emitiendo una conclusión jurídica que no le toca, y con un GPS de ±8 m encima.
+       */
       await mandar(
-        `Estoy parado en ${lon.toFixed(6)}, ${lat.toFixed(6)}${precision}. ¿Sobre qué concesión estoy y qué hay cerca?`
+        `Estoy parado en ${lon.toFixed(6)}, ${lat.toFixed(6)}${precision}, tomado a las ${hora}. ` +
+          `¿Qué dice el catastro de este punto y qué hay cerca? Tené en cuenta el margen del GPS si caigo junto a un lindero.`
       );
     } catch (e: any) {
       Alert.alert('Ubicación', `No pude fijar la posición: ${String(e?.message || e).slice(0, 120)}`);
+    } finally {
+      setUbicando(false);
       setCara('IDLE');
     }
-  }, [mandar]);
+  }, [mandar, ubicando, pensando]);
 
   const vivo = estado && estado !== 'fallo' ? estado : null;
   const nivel = vivo?.nivel;
@@ -292,8 +323,15 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
           <View style={[s.caraCaja, !apaisado && { height: 120 }]}>
             <UltronFace face={cara} acento={ACENTO} size={apaisado ? 56 : 40} stageHeight={apaisado ? 150 : 110} />
           </View>
-          <Pressable onPress={() => void dondeEstoy()} disabled={pensando} style={[s.donde, pensando && { opacity: 0.4 }]}>
-            <Text style={s.dondeTexto}>¿DÓNDE ESTOY?</Text>
+          <Pressable
+            onPress={() => void dondeEstoy()}
+            disabled={pensando || ubicando}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: pensando || ubicando, busy: ubicando }}
+            accessibilityLabel="Consultar el catastro del punto donde estoy"
+            style={[s.donde, (pensando || ubicando) && { opacity: 0.4 }]}
+          >
+            <Text style={s.dondeTexto}>{ubicando ? 'FIJANDO GPS…' : '¿DÓNDE ESTOY?'}</Text>
           </Pressable>
         </View>
 

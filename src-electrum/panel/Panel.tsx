@@ -30,7 +30,7 @@ type Turno = {
   de: 'persona' | 'electrum';
   texto: string;
   panel?: string;
-  traza?: Array<{ herramienta: string; ok: boolean; resumen: string }>;
+  traza?: Array<{ herramienta: string; ok: boolean; resumen: string; ms?: number }>;
   /** Si el turno produjo un informe, queda a mano para bajarlo. */
   informe?: { nombre: string; url: string; bytes: number; compartido?: boolean };
   /**
@@ -708,11 +708,8 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
                 {t.traza?.length ? (
                   <ul className="mt-1.5 space-y-0.5">
                     {t.traza.map((h, j) => (
-                      <li key={j} className="font-mono text-[10px] text-[#6C7F89] flex gap-1.5">
-                        <span style={{ color: h.ok ? AMBAR : '#D9705A' }}>{h.ok ? '·' : '×'}</span>
-                        <span className="truncate">
-                          {h.herramienta} — {h.resumen}
-                        </span>
+                      <li key={j} className="font-mono text-[10px] text-[#6C7F89]">
+                        <Rastro h={h} />
                       </li>
                     ))}
                   </ul>
@@ -1259,6 +1256,44 @@ function Expedientes() {
         </button>
       )}
     </div>
+  );
+}
+
+/**
+ * UNA LÍNEA DE LA TRAZA, QUE SE PUEDE ABRIR.
+ *
+ * La traza es lo que separa esto de un chatbot que suena convincente: «consultó el catastro, midió
+ * sobre el elipsoide, encontró el traslape» vale más que la respuesta sola. Pero estaba recortada a
+ * una línea con puntos suspensivos, y un resumen cortado no es evidencia — justo donde decía cuántas
+ * concesiones encontró o qué área midió, la frase se acababa.
+ *
+ * Ahora se abre. Y al abrirse enseña también cuánto tardó, que es lo que contesta «¿esto lo
+ * consultó de verdad o se lo inventó?»: una herramienta que tarda ochenta milisegundos fue a la
+ * base, una que tarda cero no hizo nada.
+ */
+function Rastro({ h }: { h: { herramienta: string; ok: boolean; resumen: string; ms?: number } }) {
+  const [abierto, setAbierto] = useState(false);
+  const largo = h.resumen.length > 64;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => largo && setAbierto((v) => !v)}
+        aria-expanded={largo ? abierto : undefined}
+        className={`flex w-full gap-1.5 text-left ${largo ? 'cursor-pointer hover:text-[#9FB0B8]' : 'cursor-default'}`}
+      >
+        <span style={{ color: h.ok ? AMBAR : '#D9705A' }}>{h.ok ? '·' : '×'}</span>
+        <span className={abierto ? 'flex-1 whitespace-pre-wrap break-words' : 'flex-1 truncate'}>
+          {h.herramienta} — {h.resumen}
+        </span>
+        {largo && <span className="shrink-0 opacity-60">{abierto ? '▴' : '▾'}</span>}
+      </button>
+      {abierto && h.ms != null && (
+        <div className="pl-[14px] pt-0.5 opacity-70">
+          tardó {h.ms} ms{h.ms < 2 ? ' · tan rápido que salió de algo ya cargado, no de una consulta nueva' : ''}
+        </div>
+      )}
+    </>
   );
 }
 

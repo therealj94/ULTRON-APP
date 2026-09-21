@@ -529,6 +529,86 @@ En vertical lo que se toca queda abajo, al alcance del pulgar.
 entorno, así que el dictado y la cámara **no están probados contra un aparato de verdad**. Lo que
 sí está probado del lado del servidor es lo que recibe la foto.
 
+## Lo que pasa cuando algo sale mal — **hecho y verificado**
+
+Una plataforma se juzga por lo que hace el día que falla. Esta tanda es casi toda eso.
+
+**Un turno cortado se ve cortado.** El lector del flujo salía cuando el flujo terminaba, y eso pasa
+también cuando el flujo **se corta**: se va la red, Render recicla el proceso, un proxy cierra la
+conexión. La pantalla se limpiaba y quedaba exactamente igual que si el Doctor hubiera decidido no
+contestar. Ahora un turno solo cuenta como terminado si el servidor mandó su `fin` o su `error`;
+cualquier otra salida se dice que fue un corte y lleva un botón que repite la pregunta. Se comprobó
+con un proxy que corta el cable a la mitad, en sus dos formas —destruir el zócalo y terminar la
+respuesta limpiamente—, que son dos caminos distintos en el lector.
+
+**Los tres relojes por fin se hablan.** El bucle calculaba el tiempo restante del turno y **no lo
+usaba**: comprobaba el presupuesto antes de llamar al modelo y después dejaba correr la llamada con
+su propio tope de sesenta segundos, así que un turno de cincuenta podía tardar ciento diez — y el
+cliente, que esperaba cuarenta y cinco, ya se había ido. Ahora la llamada se acota con lo que queda,
+y el orden es: modelo ≤ turno (50 s) < cliente (75 s).
+
+**Y si alguien se va, se deja de trabajar para nadie.** Un turno parado se seguía computando, y peor:
+su respuesta se guardaba en el hilo, así que la pregunta siguiente se contestaba sobre algo que el
+usuario nunca vio. Ahora el servidor detecta que se cerró la conexión, no guarda y no empieza rondas
+nuevas. Los avisos de la pantalla —«lo dejé ahí», «se me cortó»— tampoco entran al hilo: no son
+frases del Doctor, y la pregunta que quedó sin contestar tampoco es conversación.
+
+**Dejar de acusar a la credencial de lo que hizo el wifi.** `puertaAbierta` devolvía un booleano y
+convertía cualquier fallo de red en «esa llave no abre» o «tu cuenta no tiene acceso». Un túnel, un
+wifi de hotel o un 503 de Render redesplegando se le contaban a la persona como un problema de
+permisos, y la reacción natural —pedir otra llave— no arreglaba nada. Son cinco estados y solo uno
+se le puede reprochar a la credencial. En el teléfono era peor: cualquier caída de `salud` al
+arrancar mandaba al login, o sea que quedarse sin señal **en el campo** parecía sesión caducada.
+
+**Y entrar con el almacenamiento bloqueado.** El `sessionStorage` de reserva estaba dentro del
+`catch` del primero y sin proteger: con los dos almacenes bloqueados la excepción salía disparada y
+el formulario quedaba en «Probando…» para siempre. Hay un tercer almacén —la memoria— y se avisa de
+que no sobrevivirá a un F5. Escribiendo la prueba apareció otro fallo en el código nuevo: encadenar
+los dos almacenes en un `||` dentro de un solo `try` significa que si el primero **lanza**, el
+segundo no se llega a leer.
+
+## El informe, la lista y el mapa — **hecho y verificado**
+
+**La foto del mapa era la de antes.** `capturaDelMapa` pedía un repintado y leía el lienzo en la
+línea siguiente: `triggerRepaint` solo *pide* un cuadro. Con el mapa quieto no se nota; justo
+después de volar a una concesión —que es cuando alguien pide el informe— se llevaba la vista
+anterior. Ahora espera a que el mapa diga que terminó. Con Google no hay captura posible (teselas de
+otro dominio, lienzo que el navegador no deja leer) y el informe **lo dice** en vez de salir sin mapa
+y en silencio.
+
+**Un informe caducado explicaba nada.** Se guardan media hora; pasado ese rato el botón seguía ahí y
+al tocarlo no ocurría absolutamente nada, porque el cliente se tragaba con un `return` la
+explicación que el servidor sí mandaba.
+
+**La lista parecía completa.** Cortaba en 40 capas y 60 documentos sin decirlo, con 64 y 74
+cargados. Ahora dice «60 de 64», busca sin acentos, trae «Ver más» y enseña la fecha y el autor de
+cada carga. «No existe» y «no está en esta página» no se pueden ver igual en un registro.
+
+**El mapa se rehacía entero al cambiar de fondo**, perdiendo la cámara y las concesiones pintadas —y
+dejando sin ejecutarse nunca el efecto escrito justo debajo para conservarlas. Verificado: 1079
+concesiones y la posición sobreviven a ir a calles y volver. Y buscando eso apareció algo mayor: **en
+el motor de Google las concesiones no se dibujaban**. Volaba al sitio correcto y allí no había nada.
+
+## Que se pueda usar, y que sea de quien es — **hecho y verificado**
+
+`user-select: none` y `touch-action: none` venían de ULTRON, que es una cara con la que se habla. En
+una herramienta documental impiden copiar un número de expediente y ampliar con los dedos para leer.
+El cargador era un `div` con `onClick`: con ratón funcionaba y con teclado no existía. El panel
+oculto llevaba `aria-hidden` y `pointer-events: none`, que no sacan del recorrido del tabulador —
+faltaba `inert`. El hilo bajaba al final en cada cambio, sacando de su sitio a quien releía una
+respuesta anterior.
+
+Y tres cosas de confianza:
+
+- **Salir.** La web no tenía forma de cerrar sesión. En una computadora compartida, el siguiente que
+  se sienta entra como vos.
+- **El padrón.** `salud` devolvía la lista de la junta con su nivel a cualquiera que pasara la
+  puerta, incluida la llave de demostración que se le da a un visitante por diez minutos.
+- **Los informes son privados de quien los pidió.** El autor se guardaba desde el principio y no se
+  comparaba con nadie: cualquiera con el identificador se bajaba el informe de otro. «Difícil de
+  adivinar» no es un permiso, y un informe de cartera lleva nombres de concesionarios y hectáreas.
+  Compartirlo con la junta es un botón, no el estado por defecto.
+
 ## El hilo: que una pregunta de seguimiento signifique algo — **hecho y verificado**
 
 Hasta acá el Doctor empezaba de cero en cada turno: los mensajes que salían al modelo eran
