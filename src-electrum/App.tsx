@@ -23,7 +23,7 @@ import { Mapa, type Fondo, type Motor, type OrdenMapa } from './mapa/Mapa';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
-import { hayCredencial, puertaAbierta } from './acceso';
+import { hayCredencial, headersElectrum, puertaAbierta } from './acceso';
 
 /** Dónde está la atención: en quien habla, o en lo que hay que mirar. */
 export type Escenario = 'cara' | 'trabajo';
@@ -125,6 +125,29 @@ export default function App() {
   );
 
   const enTrabajo = escenario === 'trabajo';
+
+  /*
+   * Al abrir el mapa, pintar lo que hay cargado.
+   *
+   * Antes el mapa salía vacío con mil concesiones dentro y solo aparecía algo cuando alguien
+   * nombraba una. Un catastro que no se ve no sirve para lo que sirve un catastro, que es mirar
+   * dónde está cada cosa respecto de las demás. Se pide una sola vez, la primera vez que se entra.
+   */
+  const pedido = useRef(false);
+  useEffect(() => {
+    if (!enTrabajo || pedido.current || puerta !== 'abierta') return;
+    pedido.current = true;
+    (async () => {
+      try {
+        const r = await fetch('/api/electrum/catastro.geojson', { headers: headersElectrum() });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (j?.geojson?.features?.length) setOrden({ accion: 'capa', geojson: j.geojson, encuadre: j.encuadre || undefined });
+      } catch {
+        /* sin catastro que pintar: el mapa se queda con su fondo, que es la verdad */
+      }
+    })();
+  }, [enTrabajo, puerta]);
 
   if (puerta === 'probando') {
     return (

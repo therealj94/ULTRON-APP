@@ -37,6 +37,60 @@ type Props = {
 /** Honduras entera, que es donde se abre si nadie ha pedido nada todavía. */
 const HONDURAS: [number, number, number, number] = [-89.4, 12.9, -83.1, 16.6];
 
+/**
+ * Pone las fuentes y las capas si no están, y no hace nada si ya están.
+ *
+ * Antes se añadían una sola vez, al evento `load`. Bastaba que el estilo se recargara después
+ * —cambiar de fondo, un estilo que termina de llegar tarde— para que se las llevara por delante, y
+ * a partir de ahí `setData` escribía en una fuente que ya no existía: sin error, sin aviso, y con
+ * el catastro entero invisible. El mapa respondía al encuadre, así que parecía que funcionaba.
+ *
+ * Llamarla es barato y se puede hacer siempre: antes de pintar, al cargar y cada vez que el estilo
+ * cambia. Una operación idempotente elimina la clase entera de fallo en vez de tapar un caso.
+ */
+/**
+ * Lo último que se mandó pintar. Vive fuera del ciclo de React a propósito.
+ *
+ * MapLibre borra fuentes y capas cuando recarga el estilo, y aquí el estilo se recarga solo: al
+ * cambiar de fondo, y también cuando las teselas del satélite fallan y la librería reintenta. Si
+ * los datos solo viven dentro del mapa, cada una de esas recargas los tira y el catastro
+ * desaparece sin un solo error: `setData` sigue existiendo, `getLayer` sigue encontrando la capa, y
+ * la pantalla se queda en blanco con mil polígonos cargados.
+ *
+ * Guardarlos aparte y reponerlos al recrear convierte eso en un no-problema, en vez de perseguir
+ * cuál de los caminos fue el que borró.
+ */
+const pintado: { concesiones: unknown; resaltada: unknown } = { concesiones: null, resaltada: null };
+
+/** Pone fuentes y capas si faltan, y les devuelve los datos que tenían. Idempotente y barata. */
+function asegurarCapas(m: maplibregl.Map) {
+  for (const [nombre, capas] of [
+    ['concesiones', capasDeConcesiones()],
+    ['resaltada', capasDeResaltado()],
+  ] as const) {
+    if (!m.getSource(nombre)) {
+      /*
+       * Si hubo que rehacer la fuente, hay que rehacer TAMBIÉN sus capas: una capa se ata al objeto
+       * fuente que existía cuando se añadió, y si la fuente se recrea, la capa sigue en el estilo
+       * —`getLayer` la encuentra, parece sana— pero apunta a la vieja y no dibuja nada.
+       */
+      for (const c of capas) if (m.getLayer((c as any).id)) m.removeLayer((c as any).id);
+      m.addSource(nombre, {
+        type: 'geojson',
+        data: (pintado[nombre] as any) || { type: 'FeatureCollection', features: [] },
+      });
+    }
+    for (const c of capas) if (!m.getLayer((c as any).id)) m.addLayer(c as any);
+  }
+}
+
+/** Pinta y recuerda: lo que se recuerda es lo que se repone si el estilo se recarga. */
+function pintar(m: maplibregl.Map, cual: 'concesiones' | 'resaltada', datos: unknown) {
+  pintado[cual] = datos;
+  asegurarCapas(m);
+  (m.getSource(cual) as any)?.setData(datos);
+}
+
 export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
   const caja = useRef<HTMLDivElement>(null);
   const mapa = useRef<MapaLibre | null>(null);
@@ -68,10 +122,9 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
     m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
     m.on('load', () => {
       // Las fuentes nacen vacías: el contenido llega cuando una herramienta lo manda.
-      m.addSource('concesiones', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-      m.addSource('resaltada', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
-      for (const c of capasDeConcesiones()) m.addLayer(c as any);
-      for (const c of capasDeResaltado()) m.addLayer(c as any);
+      asegurarCapas(m);
+      // Cada vez que el estilo cambia, no solo la primera: las teselas que fallan lo recargan solas.
+      m.on('styledata', () => asegurarCapas(m));
       setListo(true);
     });
     mapa.current = m;
@@ -110,17 +163,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
     }
     if (fondoPuesto.current === fondo) return;
     fondoPuesto.current = fondo;
-    const datos = {
-      concesiones: (m.getSource('concesiones') as any)?._data,
-      resaltada: (m.getSource('resaltada') as any)?._data,
-    };
-    m.once('styledata', () => {
-      if (m.getSource('concesiones')) return;
-      m.addSource('concesiones', { type: 'geojson', data: datos.concesiones || { type: 'FeatureCollection', features: [] } });
-      m.addSource('resaltada', { type: 'geojson', data: datos.resaltada || { type: 'FeatureCollection', features: [] } });
-      for (const c of capasDeConcesiones()) m.addLayer(c as any);
-      for (const c of capasDeResaltado()) m.addLayer(c as any);
-    });
+    m.once('styledata', () => asegurarCapas(m));
     m.setStyle(fondo === 'satelite' ? ESTILO_SATELITE : ESTILO_CALLES);
   }, [fondo, listo]);
 
@@ -165,14 +208,11 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
     const m = mapa.current;
     if (m && listo) {
       if (o.accion === 'volar') {
-        (m.getSource('resaltada') as any)?.setData({
-          type: 'FeatureCollection',
-          features: [{ type: 'Feature', geometry: o.geojson, properties: {} }],
-        });
+        pintar(m, 'resaltada', { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: o.geojson, properties: {} }] });
         if (o.encuadre) m.fitBounds(o.encuadre, { padding: 80, duration: 1400, maxZoom: 15 });
         else if (o.centro) m.flyTo({ center: o.centro, zoom: 13, duration: 1400 });
       } else if (o.accion === 'capa') {
-        (m.getSource('concesiones') as any)?.setData(o.geojson);
+        pintar(m, 'concesiones', o.geojson);
         if (o.encuadre) m.fitBounds(o.encuadre, { padding: 60, duration: 1400 });
       } else if (o.accion === 'punto') {
         m.flyTo({ center: o.punto, zoom: 14, duration: 1200 });

@@ -41,7 +41,7 @@ import {
 import { identidadDe, exigirPlataforma } from './server/seguridad';
 import { puedeEscribir } from './lib/acceso';
 import { nivelDe } from './lib/acceso';
-import { consulta as consultaElectrum, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
+import { catastroGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
   cargarMemoria,
@@ -238,6 +238,23 @@ app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), 
  * trabajar. El catastro NO entra en `listo`: sin él Dr Electrum sigue sabiendo minería y haciendo
  * cuentas; lo que no puede es hablar de una concesión concreta, y eso ya lo dice él solo.
  */
+/**
+ * El catastro entero para pintarlo. Se sirve al abrir el mapa, no al preguntar.
+ *
+ * Con mil concesiones cargadas el mapa salía vacío hasta que alguien nombraba una: los datos
+ * estaban y no se veían. La geometría va simplificada porque es para mirarla; lo que se usa para
+ * medir hectáreas sigue siendo la de la base, entera.
+ */
+app.get('/api/electrum/catastro.geojson', exigirPlataforma('electrum'), limitar(30), async (_req, res) => {
+  try {
+    const [fc, encuadre] = await Promise.all([catastroGeojson(), encuadreCatastro()]);
+    res.setHeader('Cache-Control', 'private, max-age=60');
+    return res.json({ geojson: fc, encuadre, honesto: true });
+  } catch (e: any) {
+    return res.status(503).json({ error: 'No pude leer el catastro.', detalle: String(e?.message || e).slice(0, 160), honesto: true });
+  }
+});
+
 app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
   const id = identidadDe(req);
   const catastro = await saludElectrum();

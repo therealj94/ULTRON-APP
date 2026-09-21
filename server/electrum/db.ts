@@ -366,6 +366,48 @@ export async function coberturaDeFechas(): Promise<{ conVence: number; total: nu
   return { conVence: Number(r?.con || 0), total: Number(r?.total || 0) };
 }
 
+/**
+ * Todo el catastro como GeoJSON, para pintarlo en el mapa de una vez.
+ *
+ * Con mil concesiones cargadas, el mapa salía vacío hasta que alguien preguntaba por una: los datos
+ * estaban y no se veían. Un catastro que no se ve no sirve para lo que sirve un catastro, que es
+ * mirar dónde está cada cosa respecto de las demás.
+ *
+ * La geometría va simplificada. A la escala de un país, los vértices que distinguen dos polígonos
+ * están muy por debajo de un píxel, y mandarlos todos multiplica el peso sin cambiar un solo punto
+ * de la pantalla. `ST_SimplifyPreserveTopology` no rompe los polígonos —no deja huecos ni cruces—,
+ * y lo que se usa para MEDIR sigue siendo la geometría entera de la base: esto es para verlo, no
+ * para contar hectáreas.
+ */
+export async function catastroGeojson(limite = 4000, toleranciaGrados = 0.0001): Promise<FeatureCollection> {
+  const filas = await consulta<{ g: string; id: number; nombre: string; titular: string | null; estado: string | null; ha: number | null }>(
+    `SELECT ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, $2))::text AS g,
+            id, nombre, titular, estado, hectareas::float8 AS ha
+       FROM concesion
+      WHERE geom IS NOT NULL
+      ORDER BY hectareas DESC NULLS LAST
+      LIMIT $1`,
+    [limite, toleranciaGrados]
+  );
+  return {
+    type: 'FeatureCollection',
+    features: filas.map((f) => ({
+      type: 'Feature',
+      geometry: JSON.parse(f.g) as Geometry,
+      properties: { id: f.id, nombre: f.nombre, titular: f.titular, estado: f.estado, hectareas: f.ha },
+    })),
+  } as FeatureCollection;
+}
+
+/** El rectángulo que abarca todo el catastro, para encuadrar el mapa al abrirlo. */
+export async function encuadreCatastro(): Promise<[number, number, number, number] | null> {
+  const [r] = await consulta<{ x1: number; y1: number; x2: number; y2: number }>(
+    `SELECT ST_XMin(e) x1, ST_YMin(e) y1, ST_XMax(e) x2, ST_YMax(e) y2
+       FROM (SELECT ST_Extent(geom) e FROM concesion) t WHERE e IS NOT NULL`
+  );
+  return r ? [Number(r.x1), Number(r.y1), Number(r.x2), Number(r.y2)] : null;
+}
+
 /** Traslapes guardados, del más grande al más chico, con los nombres de las dos partes. */
 export async function traslapes(limite = 50): Promise<Array<{ a: string; b: string; hectareas: number; a_id: number; b_id: number }>> {
   return consulta(
