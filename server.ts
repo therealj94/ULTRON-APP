@@ -28,6 +28,14 @@ import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
 import { spotMetal } from './lib/mercado';
 import { turnoElectrum } from './server/electrum/turno';
+import {
+  claveHilo,
+  fusionarHiloElectrum,
+  hiloDe as hiloElectrumDe,
+  hiloDelCliente,
+  olvidarHilo,
+  recordarHilo,
+} from './server/electrum/hilo';
 import { TODAS as TODAS_ELECTRUM } from './server/electrum/manos';
 import { guardarInforme, informeCartera, informeConcesion, tomarInforme } from './server/electrum/informe';
 import { aprender as aprenderElectrum } from './server/electrum/aprender';
@@ -196,18 +204,40 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
     // `req.telegramUserId`, que no existe, así que Dr Electrum nunca supo con quién hablaba y el
     // nivel salía siempre nulo. Fallaba hacia el lado seguro, pero fallaba.
     const id = identidadDe(req);
-    const salida = await turnoElectrum(mensaje, {
-      quien: id?.persona.id || null,
-      nivel: nivelDe(id, 'electrum'),
-      plataforma: 'electrum',
-      canal: 'mesa',
+    const clave = claveHilo(id?.persona.id || null, 'mesa');
+    const historial = fusionarHiloElectrum({
+      servidor: hiloElectrumDe(clave),
+      cliente: hiloDelCliente(req.body?.hilo),
       mensaje,
     });
+    const salida = await turnoElectrum(
+      mensaje,
+      {
+        quien: id?.persona.id || null,
+        nivel: nivelDe(id, 'electrum'),
+        plataforma: 'electrum',
+        canal: 'mesa',
+        mensaje,
+      },
+      { historial }
+    );
+    recordarHilo(clave, mensaje, salida.texto);
     res.json({ ...salida, honesto: true });
   } catch (e: any) {
     console.error('[electrum] turno falló:', String(e?.message || e).slice(0, 200));
     res.status(500).json({ error: 'Se me cayó el turno. Volvé a preguntarme.', honesto: true });
   }
+});
+
+/**
+ * «Borrá lo que hablamos.» Desde que el hilo sobrevive a recargar la página, poder vaciarlo deja de
+ * ser un lujo: quien consultó el expediente de un concesionario necesita dejar la pantalla limpia
+ * antes de que se siente otro.
+ */
+app.delete('/api/electrum/hilo', exigirPlataforma('electrum'), limitar(30), (req, res) => {
+  const id = identidadDe(req);
+  olvidarHilo(claveHilo(id?.persona.id || null, 'mesa'));
+  res.json({ ok: true, honesto: true });
 });
 
 /** Qué hay cargado: capas del mapa y expedientes indexados. */
@@ -310,15 +340,25 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
 
   try {
     const id = identidadDe(req);
+    const clave = claveHilo(id?.persona.id || null, 'mesa');
+    const historial = fusionarHiloElectrum({
+      servidor: hiloElectrumDe(clave),
+      cliente: hiloDelCliente(req.body?.hilo),
+      mensaje,
+    });
     const salida = await turnoElectrum(
       mensaje,
       { quien: id?.persona.id || null, nivel: nivelDe(id, 'electrum'), plataforma: 'electrum', canal: 'mesa', mensaje },
-      (e) => {
-        if (e.panel) enviar('panel', { panel: e.panel });
-        if (e.herramienta) enviar('herramienta', e.herramienta);
-        if (e.ui) enviar('ui', e.ui);
+      {
+        historial,
+        enVivo: (e) => {
+          if (e.panel) enviar('panel', { panel: e.panel });
+          if (e.herramienta) enviar('herramienta', e.herramienta);
+          if (e.ui) enviar('ui', e.ui);
+        },
       }
     );
+    recordarHilo(clave, mensaje, salida.texto);
     enviar('fin', { texto: salida.texto, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin });
   } catch (e: any) {
     console.error('[electrum] turno en vivo falló:', String(e?.message || e).slice(0, 200));

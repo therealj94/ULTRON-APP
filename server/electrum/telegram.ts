@@ -23,6 +23,7 @@ import { identificar, nivelDe, padron, type Identificacion, type Nivel } from '.
 import { extraerPdf } from '../../lib/leer-pdf';
 import { aprender } from './aprender';
 import { turnoElectrum } from './turno';
+import { claveHilo, fusionarHiloElectrum, hiloDe, olvidarHilo, recordarHilo, type TurnoHilo } from './hilo';
 import { tomarInforme } from './informe';
 
 const ES_GEO = /\.(zip|kml|kmz|geojson|json|csv|shp)$/i;
@@ -109,20 +110,28 @@ export function ayudaElectrum(nivel: Nivel): string {
 
 /* ------------------------------------------------------------------ el hilo */
 
-const hilos = new Map<string, Array<{ rol: string; texto: string }>>();
+/**
+ * El hilo vive en `hilo.ts`, junto al de la pantalla. Acá quedan solo los nombres de siempre para
+ * no tocar a quien los llama.
+ *
+ * La llave es el chat, no la persona: en Telegram un mismo humano puede escribir desde un grupo y
+ * desde el privado, y ésas son dos conversaciones. Además puede llegar alguien sin identificar.
+ */
+function claveTelegram(chatId: string) {
+  return claveHilo(`tg:${String(chatId)}`, 'telegram');
+}
 
-export function hiloElectrum(chatId: string): Array<{ rol: string; texto: string }> {
-  return hilos.get(String(chatId)) || [];
+export function hiloElectrum(chatId: string): TurnoHilo[] {
+  return hiloDe(claveTelegram(chatId));
 }
 
 export function recordarElectrum(chatId: string, persona: string, doctor: string) {
-  const prev = hiloElectrum(chatId);
-  hilos.set(String(chatId), [...prev, { rol: 'user', texto: persona }, { rol: 'electrum', texto: doctor }].slice(-24));
+  recordarHilo(claveTelegram(chatId), persona, doctor);
 }
 
 /** Pruebas: deja el hilo en blanco. */
 export function olvidarHilosElectrum() {
-  hilos.clear();
+  olvidarHilo();
 }
 
 /* ------------------------------------------------------------------ hablar */
@@ -303,19 +312,33 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
   if (!mensaje && archivo?.contexto) mensaje = 'Resumime lo que dice este expediente, sin inventar nada.';
   if (!mensaje) return { estado: 'sin pregunta', chatId: parsed.chatId };
 
-  const hilo = hiloElectrum(parsed.chatId);
-  const previo = hilo.length
-    ? `LO QUE VENÍAN HABLANDO:\n${hilo.map((t) => `${t.rol === 'user' ? quien.nombre : 'vos'}: ${t.texto}`).join('\n')}\n\n`
-    : '';
-  const conArchivo = archivo?.contexto ? `${archivo.contexto}\n\n` : '';
-
-  const salida = await turnoElectrum(`${previo}${conArchivo}${mensaje}`, {
-    quien: quien.id?.persona.id || null,
-    nivel: quien.nivel,
-    plataforma: 'electrum',
-    canal: 'telegram',
+  /*
+   * El hilo va COMO MENSAJES, no pegado adentro de la pregunta.
+   *
+   * Pegarlo —que es lo que se hacía acá— rompía el panel de especialistas en silencio: `convocar`
+   * cuenta palabras del oficio sobre el texto que recibe, así que seis líneas hablando de un
+   * pórfido hacían que «¿y cuándo vence?» convocara al Geólogo y al Ingeniero de Minas y dejara al
+   * Legal Minero fuera, sin sus herramientas de catastro. Hay una prueba que lo fija.
+   *
+   * El archivo sí va pegado, y con razón: es contexto de ESTA pregunta, no de las anteriores.
+   */
+  const historial = fusionarHiloElectrum({
+    servidor: hiloElectrum(parsed.chatId),
     mensaje,
   });
+  const conArchivo = archivo?.contexto ? `${archivo.contexto}\n\n` : '';
+
+  const salida = await turnoElectrum(
+    `${conArchivo}${mensaje}`,
+    {
+      quien: quien.id?.persona.id || null,
+      nivel: quien.nivel,
+      plataforma: 'electrum',
+      canal: 'telegram',
+      mensaje,
+    },
+    { historial }
+  );
 
   const texto = [archivo?.dicho, salida.texto].filter(Boolean).join('\n\n') || 'No pude contestar eso ahora mismo.';
   await responderElectrum(parsed.chatId, texto);

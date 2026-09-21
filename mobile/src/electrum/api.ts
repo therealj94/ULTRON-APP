@@ -82,11 +82,22 @@ export type Turno = {
   ui: Array<Record<string, unknown>>;
 };
 
-export function preguntar(mensaje: string): Promise<Turno> {
+/** Lo que se venía hablando, como lo guarda la pantalla del campo. */
+export type TurnoHilo = { de: 'persona' | 'doctor'; texto: string };
+
+/**
+ * El hilo viaja con la pregunta. El servidor guarda el suyo y lo prefiere, pero Render reinicia el
+ * proceso cuando quiere, y en el campo eso es justo lo que no se puede notar: el teléfono lleva su
+ * propia copia para que «¿y el segundo?» siga significando algo.
+ */
+export function preguntar(mensaje: string, hilo: TurnoHilo[] = []): Promise<Turno> {
   return pedir<Turno>('/api/electrum/turno', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mensaje }),
+    body: JSON.stringify({
+      mensaje,
+      hilo: hilo.slice(-24).map((t) => ({ rol: t.de === 'doctor' ? 'electrum' : 'persona', texto: t.texto })),
+    }),
   });
 }
 

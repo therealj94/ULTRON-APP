@@ -28,6 +28,12 @@ const TENUE = '#6C7F89';
 
 export function CampoScreen({ onSalir }: { onSalir: () => void }) {
   const [turnos, setTurnos] = useState<Turno[]>([]);
+  /*
+   * `mandar` no puede depender de `turnos` sin reharse en cada mensaje; una ref siempre tiene el
+   * hilo de ahora, que es el que hay que mandar.
+   */
+  const turnosRef = useRef<Turno[]>(turnos);
+  turnosRef.current = turnos;
   const [texto, setTexto] = useState('');
   const [pensando, setPensando] = useState(false);
   const [cara, setCara] = useState<FaceState>('IDLE');
@@ -70,7 +76,7 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
       setPensando(true);
       setCara('THINKING');
       try {
-        const r = await preguntar(q);
+        const r = await preguntar(q, turnosRef.current.map((t) => ({ de: t.de, texto: t.texto })));
         setTurnos((t) => [...t, { de: 'doctor', texto: r.texto, panel: r.panel, traza: r.traza }]);
         setCara('SPEAKING');
         void decir(r.texto, r.emocion);

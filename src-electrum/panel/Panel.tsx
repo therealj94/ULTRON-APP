@@ -166,8 +166,46 @@ const EJEMPLOS = [
   '¿qué concesiones vencen este año?',
 ];
 
+/**
+ * La conversación sobrevive a un F5.
+ *
+ * Va en `sessionStorage` y no en `localStorage` a propósito: acá se nombran concesionarios reales,
+ * y una pestaña cerrada tiene que llevarse el rastro. Sobrevive a recargar, no a irse.
+ */
+const CAJON_HILO = 'electrum.hilo';
+
+function hiloGuardado(): Turno[] {
+  try {
+    const crudo = sessionStorage.getItem(CAJON_HILO);
+    if (!crudo) return [];
+    const v = JSON.parse(crudo);
+    return Array.isArray(v) ? v.filter((t) => t && typeof t.texto === 'string') : [];
+  } catch {
+    // Navegación privada, almacenamiento bloqueado, JSON de otra versión: se arranca en blanco.
+    return [];
+  }
+}
+
 export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVista }: Props) {
-  const [turnos, setTurnos] = useState<Turno[]>([]);
+  const [turnos, setTurnos] = useState<Turno[]>(hiloGuardado);
+  /*
+   * `preguntar` no puede depender de `turnos` —se reharía en cada mensaje y con él todo lo que
+   * cuelga— pero necesita el hilo del momento para mandarlo. Una ref siempre tiene el de ahora.
+   */
+  const turnosRef = useRef<Turno[]>(turnos);
+  turnosRef.current = turnos;
+
+  useEffect(() => {
+    try {
+      // Solo el texto y de quién es: la traza y los enlaces de informe no son contexto y ocupan.
+      sessionStorage.setItem(
+        CAJON_HILO,
+        JSON.stringify(turnos.slice(-24).map((t) => ({ de: t.de, texto: t.texto })))
+      );
+    } catch {
+      /* si no deja guardar, el hilo vive solo en memoria y ya está */
+    }
+  }, [turnos]);
   const [texto, setTexto] = useState('');
   const [pensando, setPensando] = useState(false);
   // Arranca apagada: un navegador no deja sonar nada hasta que alguien toca algo, y una demo que
@@ -213,7 +251,14 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
         const r = await fetch('/api/electrum/turno/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...headersElectrum() },
-          body: JSON.stringify({ mensaje: q }),
+          /*
+           * El hilo viaja con la pregunta. El servidor guarda el suyo y prefiere ése, pero Render
+           * reinicia el proceso cuando quiere y ahí la única copia que queda es la de esta pantalla.
+           */
+          body: JSON.stringify({
+            mensaje: q,
+            hilo: turnosRef.current.slice(-24).map((t) => ({ rol: t.de, texto: t.texto })),
+          }),
         });
         if (r.status === 401) {
           onFace('CONCERNED');
@@ -269,6 +314,17 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
     },
     [pensando, onFace, onEmocion, onUi, onTrabajo]
   );
+
+  /** Borra el hilo de las dos puntas. Si el servidor no contesta, al menos la pantalla queda limpia. */
+  const olvidar = useCallback(() => {
+    setTurnos([]);
+    try {
+      sessionStorage.removeItem(CAJON_HILO);
+    } catch {
+      /* sin almacenamiento no hay nada que quitar */
+    }
+    void fetch('/api/electrum/hilo', { method: 'DELETE', headers: headersElectrum() }).catch(() => {});
+  }, []);
 
   /**
    * Pedir el informe de la cartera desde la pantalla, con el mapa tal como se está viendo. Va por
@@ -333,6 +389,22 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
             {v === 'chat' ? 'Consulta' : 'Expedientes'}
           </button>
         ))}
+        {/*
+         * Borrar la conversación. Hace falta desde que el hilo sobrevive a recargar: quien acaba de
+         * consultar el expediente de un concesionario tiene que poder dejar la pantalla limpia antes
+         * de que se siente otro. Borra las dos copias, la de la pantalla y la del servidor.
+         */}
+        {vista === 'chat' && turnos.length > 0 && (
+          <button
+            type="button"
+            onClick={olvidar}
+            disabled={pensando}
+            className="ml-auto px-2.5 py-1.5 rounded-lg font-mono text-[11px] tracking-[0.14em] uppercase text-[#8FA3B0] hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Borrar esta conversación, acá y en el servidor"
+          >
+            Borrar
+          </button>
+        )}
       </div>
 
       {vista === 'chat' ? (

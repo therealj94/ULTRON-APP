@@ -419,6 +419,32 @@ diciéndolo. El relieve, además, se sirve como teselas, no como filas de una ba
   vocales acentuadas. No se corrige adivinando letras en un registro oficial; hay que pedir una
   exportación buena.
 
+### El datum: la sospecha que se midió y se descartó
+
+Una auditoría externa levantó una alarma seria: **58 de los 93 `.qmd` declaran NAD27** mientras el
+`.prj` dice WGS84. Si parte del padrón estuviera en NAD27 leído como WGS84, todos esos linderos
+estarían corridos entre 100 y 200 metros, y alguno de los 96 traslapes sería falso — o faltaría uno
+real. No es un detalle de metadatos: decide si un conflicto entre dos titulares existe o no.
+
+Se midió en vez de opinar, con tres pruebas sobre los datos cargados:
+
+1. **La forma de los traslapes.** Un desfase de datum deja astillas delgadas de ancho parecido
+   pegadas a linderos compartidos; un traslape real es un polígono gordo. Los 96 dan grosores de
+   0,1 m a 2876 m, con desviación de 390 m: dispersión, no un ancho característico.
+2. **De dónde vienen las astillas.** **45 de las 75 astillas están entre concesiones de la MISMA
+   capa** — el mismo archivo, el mismo datum. Un desfase entre datums no puede producir eso.
+3. **La prueba que zanja.** Si hubiera mezcla, el corrimiento entre la misma concesión presente en
+   dos capas sería un **vector constante**, y la magnitud de la media vectorial daría casi lo mismo
+   que la media de las magnitudes: coherencia ≈ 1. Sobre los 29 pares que de verdad son la misma
+   concesión (los otros 76 son homónimos a más de 100 km), la media de magnitudes es 609 m y la
+   magnitud de la media vectorial es 36,9 m. **Coherencia 0,061**: los corrimientos se cancelan,
+   apuntan a cualquier lado. Son versiones distintas de un mismo lindero, no un datum equivocado.
+
+Queda dicho lo que esto **no** prueba: descarta una *mezcla*, no un error *uniforme*. Si las 93
+capas estuvieran todas mal igual, serían coherentes entre sí y las tres pruebas darían lo mismo. Eso
+solo lo resuelve un punto de control en el terreno — una lectura de GPS parada en un mojón conocido,
+que es exactamente lo que hace el «¿dónde estoy?» de la app.
+
 ## Los expedientes: dónde estaban y por qué no se leían
 
 Los documentos no habían llegado con el catastro. Ochenta de los archivos del lote eran **atajos de
@@ -448,6 +474,47 @@ Resultado: **70 documentos, 896 páginas, 2474 fragmentos citables**. Preguntar 
 concesión de explotación devuelve la Guía de Participación Ciudadana, página 16; por el canon
 territorial, el Reglamento de la Ley General de Minería, página 2; por el plan de cierre, la Ley
 General de Minería, página 7.
+
+## El hilo: que una pregunta de seguimiento signifique algo — **hecho y verificado**
+
+Hasta acá el Doctor empezaba de cero en cada turno: los mensajes que salían al modelo eran
+`[system, user]` y nada más. Preguntarle «¿y el segundo documento?» era preguntárselo a alguien que
+acaba de entrar en la sala. Eso, más que ningún fallo de cálculo, es lo que delata a una máquina.
+
+**El defecto que había debajo.** Telegram sí guardaba algo, pero de la peor manera: pegaba el hilo
+entero **dentro del mensaje del usuario**. Parece lo mismo y no lo es. El panel de especialistas se
+elige contando palabras del oficio sobre el texto que llega (`convocar`), y los hechos del cerebro
+se buscan sobre ese mismo texto. Medido: con un hilo realista de seis líneas hablando de un pórfido,
+la pregunta **«¿y cuándo vence?» convocaba al Ingeniero de Minas y al Geólogo, y dejaba al Legal
+Minero fuera** — sin sus herramientas de catastro y sin su regla de no afirmar vigencias sin el
+expediente delante. La memoria mal puesta no es memoria de menos: es criterio de menos.
+
+Ahora el historial viaja como **mensajes con su rol**, que es la forma que el modelo entiende como
+conversación, y la pregunta de ahora llega sola a `convocar`. El archivo adjunto sí sigue yendo
+pegado, y con razón: es contexto de *esta* pregunta, no de las anteriores.
+
+Tres decisiones (`server/electrum/hilo.ts`):
+
+- **Por persona y por canal.** El hilo de la mesa no es el de Telegram aunque sea la misma persona,
+  y el de José nunca es el de Medardo. Mezclarlos hace que el Doctor conteste en la pantalla algo
+  que se dijo en el teléfono.
+- **Caduca a las seis horas.** Un hilo de anteayer no es contexto, es ruido — y encima ruido con
+  nombres de concesionarios adentro.
+- **Dos copias que se fusionan.** El servidor guarda la suya y se prefiere; el navegador manda la
+  que está mostrando. Render reinicia el proceso cuando quiere, y ésa es justo la vez en que no se
+  puede notar. En la pantalla va en `sessionStorage`, no en `localStorage`: sobrevive a recargar,
+  no a cerrar la pestaña, porque acá se nombran concesionarios reales.
+
+Y como el hilo ahora sobrevive a un F5, hay un botón **Borrar** que lo vacía de las dos puntas:
+quien acaba de consultar el expediente de un concesionario tiene que poder dejar la pantalla limpia
+antes de que se siente otro.
+
+**La verificación que importa.** Las pruebas levantan un nodo de mentira y miran los mensajes de
+verdad que saldrían hacia el modelo — comprobar la función que arma el historial no alcanzaría. Y
+además se condujo un navegador real contra el servidor compilado, con un nodo que contesta diciendo
+cuántos mensajes recibió: turno 1 `[system, user]`; turno 2 `[system, user, assistant, user]` con el
+intercambio anterior dentro; **tras recargar la página**, el siguiente turno llegó con diez
+mensajes; y después de pulsar Borrar, volvió a `[system, user]` sin nada previo.
 
 ## El mapa: lo que falta
 

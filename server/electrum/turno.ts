@@ -9,6 +9,7 @@
  * de un chatbot que suena convincente.
  */
 import { correrAgente, type Mensaje } from '../../lib/agente/bucle';
+import type { MsgHilo } from './hilo';
 import type { Contexto } from '../../lib/agente/tipos';
 import { extraerEmocion, type Emocion } from '../../lib/emocion';
 import { fetchNodo, NODO_MODELO, NODO_SECRETO, NODO_URL } from '../../lib/nodo';
@@ -70,9 +71,17 @@ export type EnVivo = {
   panel?: string;
 };
 
-export async function turnoElectrum(
-  mensaje: string,
-  ctx: Contexto,
+export type OpcionesTurno = {
+  /**
+   * Lo que se venía hablando, con su rol. **Va aparte del mensaje a propósito.**
+   *
+   * Pegarlo dentro del mensaje —como hacía Telegram— parece lo mismo y no lo es: el panel de
+   * especialistas se elige contando palabras del oficio sobre el texto que llega, así que un hilo
+   * de geología hacía que una pregunta legal convocara al geólogo y dejara al legal fuera. La
+   * pregunta de ahora tiene que llegar sola a `convocar`; el pasado va donde el modelo espera
+   * encontrarlo, que es en los mensajes anteriores.
+   */
+  historial?: MsgHilo[];
   /**
    * Se llama en cuanto hay algo que enseñar.
    *
@@ -81,8 +90,15 @@ export async function turnoElectrum(
    * tres rondas de herramientas puede tardar cincuenta segundos, y durante esos cincuenta segundos
    * la pantalla enseñaba «pensando…» mientras el catastro ya había contestado hace cuarenta.
    */
-  enVivo?: (e: EnVivo) => void
+  enVivo?: (e: EnVivo) => void;
+};
+
+export async function turnoElectrum(
+  mensaje: string,
+  ctx: Contexto,
+  opciones: OpcionesTurno = {}
 ): Promise<RespuestaTurno> {
+  const { historial = [], enVivo } = opciones;
   const panel = convocar(mensaje);
   const herramientas = panel.length ? manosDe(herramientasDe(panel)) : TODAS;
   const nombrePanel = panel.map((e) => e.nombre).join(' y ');
@@ -97,6 +113,15 @@ export async function turnoElectrum(
     personalidadElectrum({ nombre: nombreVisible(ctx), nivel: ctx.nivel, canal: ctx.canal }),
     '',
     promptPanel(panel),
+    // Sin esta línea el modelo trata cada mensaje como si fuera el primero aunque le llegue el
+    // historial: contesta bien, pero vuelve a presentar lo que ya dijo y pide otra vez el nombre de
+    // la concesión. Con ella, «¿y el segundo?» se resuelve contra lo que él mismo acaba de listar.
+    ...(historial.length
+      ? [
+          '',
+          'ESTO VIENE DE ANTES: los mensajes previos son esta misma conversación. «eso», «el segundo», «la otra» se refieren a lo que ya se dijo — resolvelo vos y no lo preguntes de nuevo. Si de verdad quedó ambiguo, decí entre cuáles dudás.',
+        ]
+      : []),
     '',
     'CEREBRO DE MINAS:',
     CONOCIMIENTO_MINAS,
@@ -120,6 +145,7 @@ export async function turnoElectrum(
   const r = await correrAgente({
     mensajes: [
       { role: 'system', content: system },
+      ...(historial as Mensaje[]),
       { role: 'user', content: usuario },
     ],
     herramientas,
