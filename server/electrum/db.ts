@@ -350,6 +350,22 @@ export async function porVencer(dias = 365, limite = 50): Promise<Array<FilaConc
   );
 }
 
+/**
+ * Cuántas concesiones traen fecha de vencimiento, y cuántas hay en total.
+ *
+ * Hace falta para no mentir. Un padrón sin fechas y un padrón donde de verdad no vence nada este
+ * año dan la misma respuesta vacía, y no son lo mismo ni de lejos: lo primero es que falta un dato,
+ * lo segundo es una noticia tranquilizadora. El catastro nacional de Honduras no trae ni una sola
+ * fecha —ni de otorgamiento ni de vencimiento— en sus 1079 concesiones, así que preguntar qué
+ * vence este año contestaba «ninguna» con toda tranquilidad.
+ */
+export async function coberturaDeFechas(): Promise<{ conVence: number; total: number }> {
+  const [r] = await consulta<{ con: string; total: string }>(
+    `SELECT count(*) FILTER (WHERE vence IS NOT NULL)::text AS con, count(*)::text AS total FROM concesion`
+  );
+  return { conVence: Number(r?.con || 0), total: Number(r?.total || 0) };
+}
+
 /** Traslapes guardados, del más grande al más chico, con los nombres de las dos partes. */
 export async function traslapes(limite = 50): Promise<Array<{ a: string; b: string; hectareas: number; a_id: number; b_id: number }>> {
   return consulta(

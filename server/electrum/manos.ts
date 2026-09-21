@@ -24,6 +24,7 @@ import {
   concesionEnPunto,
   geometriaDe,
   hayBase,
+  coberturaDeFechas,
   porVencer,
   traslapes,
 } from './db';
@@ -64,7 +65,21 @@ const catastro_vencimientos: Herramienta = {
   async ejecutar({ dias }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const filas = await porVencer(Number(dias) || 365, 25);
-    if (!filas.length) return { ok: true, texto: `Ninguna concesión vence en los próximos ${dias} días.`, ui: { filas: [] } };
+    if (!filas.length) {
+      // Distinguir «no vence ninguna» de «no hay fechas cargadas»: son respuestas opuestas y la
+      // vacía las confundía. El catastro nacional de Honduras no trae ni una fecha.
+      const { conVence, total } = await coberturaDeFechas();
+      if (total && !conVence) {
+        return {
+          ok: true,
+          texto:
+            `No puedo decirlo: de las ${total} concesiones cargadas, ninguna trae fecha de vencimiento. ` +
+            `El padrón que se subió no incluye esa columna. Con una exportación que la traiga, esto se contesta solo.`,
+          ui: { filas: [], sinFechas: true },
+        };
+      }
+      return { ok: true, texto: `Ninguna concesión vence en los próximos ${dias} días.`, ui: { filas: [] } };
+    }
     const lista = filas.slice(0, 6).map((f) => `${f.nombre} en ${f.dias} días (${f.vence})`);
     const vencidas = filas.filter((f) => f.dias < 0).length;
     return {

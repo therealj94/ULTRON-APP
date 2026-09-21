@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { aprender } from '../server/electrum/aprender';
+import { manosDe } from '../server/electrum/manos';
 import { areaHectareas, ingerir, traslapesEnCapa } from '../server/electrum/gis';
 import {
   buscarConcesiones,
@@ -224,6 +225,26 @@ test('catastro en PostGIS', { skip: HAY ? false : 'sin ELECTRUM_DB_URL: no hay b
     assert.ok(!(r.ui as any)?.repetido, 'no es el mismo papel: tiene que entrar');
     const [f] = await consulta<{ n: string }>(`SELECT count(*)::text AS n FROM documento WHERE nombre = 'homonima.txt'`);
     assert.equal(f.n, '2');
+  });
+
+  // ── Un padrón sin fechas no es un padrón tranquilo ──────────────────────────────────────────
+  //
+  // El catastro nacional de Honduras no trae ni una fecha de vencimiento en sus 1079 concesiones, y
+  // la herramienta contestaba «ninguna concesión vence en los próximos 365 días» con toda calma.
+  // Es la misma respuesta vacía para dos cosas opuestas: «no vence nada» tranquiliza, «no hay
+  // fechas» avisa de que falta un dato. Decir la primera cuando pasa la segunda es mentir.
+  await t.test('sin fechas cargadas, no dice que no vence nada: dice que no se sabe', async () => {
+    const [n] = await consulta<{ n: string }>(`SELECT count(*)::text AS n FROM concesion WHERE vence IS NOT NULL`);
+    if (Number(n.n) > 0) return; // hay fechas: este caso no aplica en esta base
+
+    const [hay] = await consulta<{ n: string }>(`SELECT count(*)::text AS n FROM concesion`);
+    if (!Number(hay.n)) return; // sin concesiones tampoco aplica
+
+    const herramienta = manosDe(['catastro_vencimientos'])[0];
+    assert.ok(herramienta, 'la herramienta tiene que existir');
+    const r = await herramienta.ejecutar({ dias: 365 }, {} as never);
+    assert.match(r.texto, /no traen? fecha|no puedo decirlo/i, `contestó: ${r.texto}`);
+    assert.doesNotMatch(r.texto, /^Ninguna concesión vence/, 'eso sería tranquilizar sin saber');
   });
 
   t.after(async () => {

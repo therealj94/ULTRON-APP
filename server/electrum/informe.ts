@@ -24,6 +24,7 @@ import {
   consulta,
   geometriaDe,
   hayBase,
+  coberturaDeFechas,
   porVencer,
   traslapes,
   type FilaConcesion,
@@ -250,6 +251,7 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   if (!resumen || !resumen.total) return { error: 'No hay ninguna concesión cargada todavía. Súbanme el catastro y lo armo.' };
 
   const vencen = await porVencer(365, 60);
+  const cobertura = await coberturaDeFechas();
   const pisadas = await traslapes(60);
   const porEstado = await consulta<{ estado: string | null; n: number; ha: number }>(
     `SELECT estado, count(*)::int AS n, coalesce(sum(hectareas),0)::float8 AS ha
@@ -300,7 +302,20 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   }
 
   bloques.push({ tipo: 'seccion', texto: 'Vencimientos en los próximos 365 días' });
-  if (!vencen.length) {
+  if (!vencen.length && !cobertura.conVence && cobertura.total) {
+    /*
+     * Un padrón sin fechas y un padrón donde de verdad no vence nada dan la misma lista vacía, y
+     * son noticias opuestas: la primera dice que falta un dato, la segunda tranquiliza. Firmar un
+     * informe diciendo «nada vence dentro del año» cuando en realidad no se sabe es exactamente la
+     * clase de frase por la que después nadie vuelve a creerse el informe entero.
+     */
+    bloques.push({
+      tipo: 'aviso',
+      texto:
+        `No se puede decir: ninguna de las ${cobertura.total} concesiones del padrón trae fecha de vencimiento. ` +
+        `El archivo cargado no incluye esa columna, así que esta sección no es «no vence nada», es «no se sabe».`,
+    });
+  } else if (!vencen.length) {
     bloques.push({ tipo: 'parrafo', texto: 'Nada vence dentro del año. Esto sale de la fecha del padrón; si una fecha está mal cargada, acá no se ve.' });
   } else {
     bloques.push(
@@ -361,7 +376,7 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   return {
     pdf,
     nombre: `cartera-${new Date().toISOString().slice(0, 10)}.pdf`,
-    dicho: `Armé el informe de cartera: ${resumen.total} concesiones, ${nf(resumen.hectareas)} hectáreas, ${vencen.length} por vencer y ${pisadas.length} traslapes.`,
+    dicho: `Armé el informe de cartera: ${resumen.total} concesiones, ${nf(resumen.hectareas)} hectáreas, ${cobertura.total && !cobertura.conVence ? 'sin fechas de vencimiento en el padrón' : `${vencen.length} por vencer`} y ${pisadas.length} traslapes.`,
   };
 }
 
