@@ -21,6 +21,18 @@ Hay un usuario de IAM, `electrum-subida`, que **solo puede escribir en ese bucke
 lo que hay dentro, ni tocar otro bucket, ni nada más en la cuenta. Si esa credencial se filtra, lo
 peor que puede hacer quien la tenga es dejar basura en un bucket que caduca solo.
 
+Comprobado con el simulador de políticas de IAM, no de palabra:
+
+| acción | sobre el bucket de trasvase | sobre otro bucket |
+|---|---|---|
+| `s3:ListBucket` | permitida | — |
+| `s3:PutObject` | permitida | **denegada** |
+| `s3:AbortMultipartUpload` | permitida | — |
+| `s3:GetObject` | **denegada** | **denegada** |
+| `s3:DeleteObject` | **denegada** | — |
+
+Escribir sí, leer no, borrar no. Es todo lo que `aws s3 sync` necesita para subir.
+
 Usar esa y no las claves de administrador de la cuenta. La clave se genera una vez:
 
 ```bash
