@@ -30,7 +30,7 @@ const GRUPOS: Record<string, string> = {
 
 const KEY = 'ultron_capacidades_cache';
 
-/** «Qué puede hacer ULTRON»: una tarjeta por capacidad real, con estado vivo/caído. */
+/** «Qué puede hacer AU-RA»: una tarjeta por capacidad real, con estado vivo/caído. */
 export const Capacidades: React.FC<{ onEjemplo: (cmd: string) => void; onProbarVoz: () => void }> = ({ onEjemplo, onProbarVoz }) => {
   const [cat, setCat] = useState<Catalogo | null>(() => {
     try {

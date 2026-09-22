@@ -69,6 +69,9 @@ export function afinarParaBoca(text: string): string {
       .replace(/:\s+/g, '. ')
       .replace(/\bjaja+\b/gi, 'je je')
       .replace(/\blol\b/gi, 'je')
+      /* El nombre se escribe AU-RA, pero se dice «Aura». Sin esto la voz lo deletrea. */
+      .replace(/\bAU-RA FP\b/g, 'Aura efe pe')
+      .replace(/\bAU-RA\b/gi, 'Aura')
       .replace(/\s+/g, ' ')
       .trim()
       .slice(0, 1200)

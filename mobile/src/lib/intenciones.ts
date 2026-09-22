@@ -53,7 +53,7 @@ export function normalizar(raw: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/^[\s¡¿"'«»]+|[\s.!?¡¿,;:…"'«»]+$/g, '')
     .replace(/^(oye|hey|ey|che)[,\s]+/, '')
-    .replace(/^ultron[,:\s]+/, '')
+    .replace(/^(ultron|aura)[,:\s]+/, '')
     .replace(/[,;:]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -88,7 +88,7 @@ const REPERTORIO: Array<[RegExp, string]> = [
 
 export type Genero = { id: string; etiqueta: string; titulo: string; letra: string };
 
-/** Letras propias por género: se mandan a POST /api/cantar {letra, titulo} y ULTRON las canta con su voz. */
+/** Letras propias por género: se mandan a POST /api/cantar {letra, titulo} y AU-RA las canta con su voz. */
 export const GENEROS: Genero[] = [
   {
     id: 'balada',
@@ -130,7 +130,7 @@ export const GENEROS: Genero[] = [
     id: 'corrido',
     etiqueta: 'corrido',
     titulo: 'Corrido de Orden Global',
-    letra: 'Voy a contarles la historia del escritorio leal. José y Medardo al mando, ULTRON en el umbral. No se vende la junta, no se rinde el metal. Corrido de Orden Global, pa que quede en el jornal.',
+    letra: 'Voy a contarles la historia del escritorio leal. José y Medardo al mando, AU-RA en el umbral. No se vende la junta, no se rinde el metal. Corrido de Orden Global, pa que quede en el jornal.',
   },
   {
     id: 'jazz',
@@ -230,7 +230,7 @@ const REGLAS: Regla[] = [
     id: 'despertar',
     max: 3,
     cuando: (c) => !!c.dormido,
-    re: /^(despierta|despiertate|despertate|wake up|levantate|hola|buenos dias|buenas tardes|buenas noches|buenas|ultron)$/,
+    re: /^(despierta|despiertate|despertate|wake up|levantate|hola|buenos dias|buenas tardes|buenas noches|buenas|ultron|aura)$/,
     build: () => ({ tipo: 'despertar' }),
   },
   {
@@ -283,7 +283,7 @@ const REGLAS: Regla[] = [
     id: 'recordar',
     re: /^(recuerda|recorda|memoriza) que (.{3,})$/,
     build: (m, _q, raw) => {
-      const hecho = raw.replace(/^[\s¡¿"'«»]*(oye|hey|ey)?[,\s]*(ultron[,:\s]+)?/i, '').replace(/^(recuerda|recordá|recorda|memoriza|memorizá)\s+que\s+/i, '').trim();
+      const hecho = raw.replace(/^[\s¡¿"'«»]*(oye|hey|ey)?[,\s]*((?:ultron|aura)[,:\s]+)?/i, '').replace(/^(recuerda|recordá|recorda|memoriza|memorizá)\s+que\s+/i, '').trim();
       return { tipo: 'recordar', hecho: hecho || m[2] };
     },
   },
@@ -332,7 +332,7 @@ const REGLAS: Regla[] = [
   {
     id: 'quien',
     max: 4,
-    re: /^(quien eres|quien sos|que eres|que sos|que es ultron|presentate|quien eres tu|quien es ultron)$/,
+    re: /^(quien eres|quien sos|que eres|que sos|que es ultron|que es aura|presentate|quien eres tu|quien es ultron|quien es aura)$/,
     build: () => ({ tipo: 'clip', id: 'quien' }),
   },
   {
@@ -383,13 +383,13 @@ const REGLAS: Regla[] = [
   {
     id: 'saludo',
     max: 3,
-    re: /^(hola|hola ultron|buenas|buenos dias|buenas tardes|buenas noches|hey|ey|que tal|hola de nuevo)$/,
+    re: /^(hola|hola ultron|hola aura|buenas|buenos dias|buenas tardes|buenas noches|hey|ey|que tal|hola de nuevo)$/,
     build: () => ({ tipo: 'saludo' }),
   },
   {
     id: 'gracias',
     max: 4,
-    re: /^(gracias|muchas gracias|gracias ultron|mil gracias|te lo agradezco)$/,
+    re: /^(gracias|muchas gracias|gracias ultron|gracias aura|mil gracias|te lo agradezco)$/,
     build: () => ({ tipo: 'gracias' }),
   },
   {

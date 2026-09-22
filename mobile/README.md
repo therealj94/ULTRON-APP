@@ -1,14 +1,14 @@
-# ULTRON FP · app nativa Android (4.0)
+# AU-RA FP · app nativa Android (4.0)
 
-Cara a pantalla completa, escucha continua sin palabra clave, **una sola voz** — *ULTRON (Gabriela · ElevenLabs v3)* —,
+Cara a pantalla completa, escucha continua sin palabra clave, **una sola voz** — *AU-RA (Gabriela · ElevenLabs v3)* —,
 cámara que identifica lo que hay en la mesa y cerebro Qwen 27B vía el backend de Render. Producto para la junta de
 Orden Global (paleta negro + cian `#05E1FF`, UI en español).
 
 ## Cómo se construye
 
 GitHub Actions (`.github/workflows/android-apk.yml`) hace `npm ci` → `npm run typecheck` → `expo prebuild` →
-`gradlew assembleRelease` (arm64-v8a + armeabi-v7a, Hermes, JS empaquetado) y publica el artefacto `ULTRON-FP-apk`
-(`out/ULTRON-FP-<versión>.apk`). Se dispara con cada push a `main` o `cursor/**` que toque `mobile/`, `src/`, `server*`,
+`gradlew assembleRelease` (arm64-v8a + armeabi-v7a, Hermes, JS empaquetado) y publica el artefacto `AU-RA-FP-apk`
+(`out/AU-RA-FP-<versión>.apk`). Se dispara con cada push a `main` o `cursor/**` que toque `mobile/`, `src/`, `server*`,
 o a mano con *Run workflow*. No hay OTA (`expo-updates` se retiró): cada cambio es un APK nuevo.
 
 Instalación: el APK va firmado con la keystore debug del template; si había una versión anterior firmada distinto,
@@ -21,7 +21,7 @@ desinstálala primero. Versión: `app.json` `expo.version` = `package.json` `ver
 | `POST /api/turno` | Un turno con el cerebro. Manda `usuario`, `correo`, `historial`, `memoria[]`, `image` opcional y `escena` (string: lo que la cámara local ya interpretó; el servidor lo usa como hecho «ESCENA (cámara local): …» cuando preguntan qué ve o quién está). Responde `reply`, `emocion`, `mode`. |
 | `POST /api/turno/stream` | Igual, por SSE (XHR). Eventos: `emocion` (antes del primer delta → la cara reacciona antes que la voz), `delta`, `tools`, `done` (trae `emocion`), `error`. |
 | `GET/POST /api/tts` | Voz. `text`, `emocion`, `performance=speak\|sing`. Devuelve `audio/mpeg` + cabecera `X-Ultron-TTS`. Sin parámetro `engine`: una sola voz. |
-| `POST /api/cantar` | `{ id }` (jesus, bohemian, ligera, bittersweet, runaway, bruno, waymaker) o `{ letra, titulo? }` → mp3 de ULTRON cantando (hasta ~40 s la primera vez). `GET` devuelve el repertorio. |
+| `POST /api/cantar` | `{ id }` (jesus, bohemian, ligera, bittersweet, runaway, bruno, waymaker) o `{ letra, titulo? }` → mp3 de AU-RA cantando (hasta ~40 s la primera vez). `GET` devuelve el repertorio. |
 | `POST /api/orar` | `{}` o `{ tema }` → mp3 de la oración del día (~3 min, cacheado). Sin tema se usa el estático `/voz/oracion.mp3` si existe. Cara PRAY, HUD «orando». |
 | `GET /api/capacidades` | Catálogo real (`Capacidad[]` agrupadas, `vivo` según salud de nodos, voz oficial, canciones, gestos). Se cachea en AsyncStorage para verlo sin red. |
 | `POST /api/stt` | Oído en la nube (ElevenLabs Scribe), solo si se elige «Nube» en Ajustes; por defecto el reconocimiento es el del teléfono. |
@@ -62,7 +62,7 @@ La entrevista «Conocer» es **opcional**: solo arranca desde el menú o con «q
 
 ## Arranque, cara y tacto
 
-- **Splash**: nativo (logo, `expo-splash-screen`, fade) → splash JS ~1,8 s (marca «ULTRON FP», «powered by ORDEN GLOBAL»,
+- **Splash**: nativo (logo, `expo-splash-screen`, fade) → splash JS ~1,8 s (marca «AU-RA FP», «powered by ORDEN GLOBAL»,
   cara compacta despertando) → fundido sobre login/escritorio, sin cortes.
 - **Cara** (`UltronFace.tsx`, solo RN `Animated`): IDLE, LISTENING, THINKING, SPEAKING, HAPPY, WINK, CONCERNED, ANGRY,
   SLEEPING, STARTLE, CONFUSED, SCAN, YAWNING + **LAUGH, SURPRISED, SAD, TIRED, SING, CURIOUS, PROUD**.
@@ -92,7 +92,7 @@ La entrevista «Conocer» es **opcional**: solo arranca desde el menú o con «q
 
 ## Cámara y visión (4.1)
 
-ULTRON ve de verdad a la persona **en el teléfono**, sin mandar video a ningún lado:
+AU-RA ve de verdad a la persona **en el teléfono**, sin mandar video a ningún lado:
 
 ```
 react-native-vision-camera (frontal, 640×480, yuv, sin preview)
@@ -116,7 +116,7 @@ observacionMlkit() ─► MaquinaEscena (histéresis) ─► Escena ─► onEsc
   frente, que es hacia donde se desplazan las pupilas con `translateX` positivo. **yaw/pitch son relativos a la
   cámara**: `observacionMlkit` descuenta el ángulo con que la cámara ve ese punto del cuadro (`anguloEsperado`, con el
   `fieldOfView` del formato; diagonal en Android), así quien mira la pantalla desde un borde de la mesa cuenta como
-  `mira` (con el yaw absoluto |≈22°| nunca disparaba). La **frase va en primera persona** (ULTRON habla): x>0 →
+  `mira` (con el yaw absoluto |≈22°| nunca disparaba). La **frase va en primera persona** (AU-RA habla): x>0 →
   «a mi izquierda», x<0 → «a mi derecha», «frente a mí» — igual que la web, para no sugerirle al único presente que hay
   alguien a SU lado. ML Kit no da sorpresa ni boca abierta sin landmarks: quedan en 0. `npm run check:escena` prueba
   todo esto sin cámara (espejado, ángulo esperado, histéresis, frases).
@@ -167,7 +167,7 @@ observacionMlkit() ─► MaquinaEscena (histéresis) ─► Escena ─► onEsc
 
 ## Menú (deslizar desde el borde derecho)
 
-Escuchar/Ver, **Qué puede hacer ULTRON** (catálogo agrupado con punto verde/gris por `vivo`, ejemplos que se mandan como
+Escuchar/Ver, **Qué puede hacer AU-RA** (catálogo agrupado con punto verde/gris por `vivo`, ejemplos que se mandan como
 orden al tocarlos, nombre de la voz y «Probar voz»), presencia, modo, acciones, búsqueda, cantar (repertorio + géneros),
 recordar, escribir una orden, ajustes (oído, comentarios de cámara, SFX, memoria), cerrar sesión.
 

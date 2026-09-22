@@ -146,7 +146,7 @@ export function mesaDeskAutorizada(req: Request): boolean {
 export function exigirMesa(req: Request, res: Response, next: NextFunction) {
   if (mesaAutorizada(req)) return next();
   return res.status(401).json({
-    error: 'ULTRON es privado. Entra con sesión de junta.',
+    error: 'AU-RA es privado. Entra con sesión de junta.',
     code: 'sesion_requerida',
     honesto: true,
   });
@@ -155,7 +155,7 @@ export function exigirMesa(req: Request, res: Response, next: NextFunction) {
 export function exigirMesaODesk(req: Request, res: Response, next: NextFunction) {
   if (mesaDeskAutorizada(req)) return next();
   return res.status(401).json({
-    error: 'ULTRON es privado. Entra con sesión de junta.',
+    error: 'AU-RA es privado. Entra con sesión de junta.',
     code: 'sesion_requerida',
     honesto: true,
   });

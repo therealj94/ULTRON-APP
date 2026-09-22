@@ -81,7 +81,7 @@ export function esContinuacion(message: string): boolean {
   );
 }
 
-/** Preguntas a ULTRON sobre sí mismo o sobre la relación: se contestan como persona, sin internet. */
+/** Preguntas a AU-RA sobre sí mismo o sobre la relación: se contestan como persona, sin internet. */
 export function esSobreUltron(message: string): boolean {
   const q = fold(message);
   return (
@@ -183,7 +183,7 @@ export function capasHilo(corta: TurnoHilo[]): { corto: string; mediano: string 
   const items = (corta || []).filter((t) => String(t.texto || '').trim());
   const cortoItems = items.slice(-8);
   const medianoItems = items.slice(-40, -8);
-  const linea = (t: TurnoHilo) => `${t.rol === 'ultron' || t.rol === 'assistant' ? 'ULTRON' : 'Junta'}: ${String(t.texto).replace(/\s+/g, ' ').slice(0, 400)}`;
+  const linea = (t: TurnoHilo) => `${t.rol === 'ultron' || t.rol === 'assistant' ? 'AU-RA' : 'Junta'}: ${String(t.texto).replace(/\s+/g, ' ').slice(0, 400)}`;
   return {
     corto: cortoItems.map(linea).join('\n'),
     mediano: medianoItems.map(linea).join('\n'),

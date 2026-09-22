@@ -21,7 +21,7 @@ export type PerfilPublico = {
 export const PERFIL_POR_DEFECTO: PerfilPublico = {
   id: 'genesis',
   cerebro: 'Genesis Core',
-  plataforma: 'ULTRON FP',
+  plataforma: 'AU-RA FP',
   proposito: 'Asistente privado de la junta directiva de Orden Global.',
   acento: '#05E1FF',
   demo: false,

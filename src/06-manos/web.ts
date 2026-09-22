@@ -108,7 +108,7 @@ export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
 export async function leerPagina(url: string, maxChars = 1800): Promise<string> {
   try {
     const r = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) ULTRON-FP/3.0', Accept: 'text/html,*/*' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AURA-FP/3.0', Accept: 'text/html,*/*' },
       signal: AbortSignal.timeout(7000),
       redirect: 'follow',
     });

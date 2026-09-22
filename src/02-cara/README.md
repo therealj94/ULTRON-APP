@@ -1,6 +1,6 @@
 # 02 — Cara
 
-La cara viva de ULTRON FP: dos ojos cian OLED, boca ciber, halo que respira, motas
+La cara viva de AU-RA FP: dos ojos cian OLED, boca ciber, halo que respira, motas
 y anillo de voz. Canvas 2D a 60 fps, pensada para tablet/teléfono en la mesa de la junta.
 Paleta: negro + cian `#05E1FF` (tokens en `src/01-diseno/tokens.ts`).
 
@@ -201,7 +201,7 @@ parpadeo propio del tap puede salir a medias.
 
 ## Cámara (visión real)
 
-ULTRON ve a la persona con **MediaPipe Tasks Vision** (`@mediapipe/tasks-vision`, FaceLandmarker con
+AU-RA ve a la persona con **MediaPipe Tasks Vision** (`@mediapipe/tasks-vision`, FaceLandmarker con
 blendshapes y matriz facial) corriendo en el navegador. Lo orquesta `07-pantallas/VisionOverlay.tsx`
 (abre la cámara frontal, `<video>` oculto en modo `stealth`) con `02-cara/vision/motor.ts`.
 
@@ -249,7 +249,7 @@ getUserMedia (frontal 640×480) ─► <video> (window.__ultronVideo, lo usa 04-
 type Escena = {
   personas: number;
   principal: null | {
-    x: number; y: number;      // -1..1. x>0 = a SU derecha (ESPEJADO respecto al video frontal) = a la IZQUIERDA de ULTRON
+    x: number; y: number;      // -1..1. x>0 = a SU derecha (ESPEJADO respecto al video frontal) = a la IZQUIERDA de AU-RA
     tam: number;               // alto de la cara / alto del cuadro (0..1)
     mirando: boolean;          // la cabeza apunta a la pantalla, descontada su posición en el cuadro (|yaw|<20°, |pitch|<15°, histéresis 28°/22°)
     sonrisa: number;           // (mouthSmileLeft+Right)/2
@@ -259,7 +259,7 @@ type Escena = {
     cabeza: 'centro'|'izquierda'|'derecha'|'arriba'|'abajo';
   };
   eventos: Array<'llego'|'se_fue'|'sonrie'|'deja_de_sonreir'|'saluda'|'dos_personas'|'mira'|'aparta_mirada'|'cerca'|'lejos'>;
-  descripcion: string;         // «Veo a una persona cerca, a mi izquierda, sonriendo y mirando la pantalla.» (ULTRON en primera persona)
+  descripcion: string;         // «Veo a una persona cerca, a mi izquierda, sonriendo y mirando la pantalla.» (AU-RA en primera persona)
   motor: 'mediapipe'|'optico'|'ninguno';
   ts: number;
 };
@@ -284,9 +284,9 @@ cara uno o varios cuadros (< 2 s), `principal` sigue publicado con la última po
 óptico a MediaPipe con alguien presente (`MaquinaEscena.cambiarMotor()`), no se repite `llego` y la última cara
 sigue publicada hasta el primer cuadro del motor nuevo (nunca `personas: 1` con `principal: null`).
 
-`describirEscena` habla siempre desde ULTRON en primera persona («a mi izquierda» / «a mi derecha» /
+`describirEscena` habla siempre desde AU-RA en primera persona («a mi izquierda» / «a mi derecha» /
 «frente a mí»; nunca «a tu…», que le sugeriría al único presente una segunda persona) y coherente con el
-espejo: `x > 0` (persona a SU derecha) es la izquierda de ULTRON. Nunca inventa edad, género ni identidad.
+espejo: `x > 0` (persona a SU derecha) es la izquierda de AU-RA. Nunca inventa edad, género ni identidad.
 Con motor `'optico'` la frase es honesta («Creo que hay alguien frente a mí, pero el sensor básico no
 distingue detalles.»).
 

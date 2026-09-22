@@ -33,7 +33,9 @@ export const BANCO: Clip[] = [
   { id: 'chiste4', file: '/voz/chiste4.mp3', keys: /^chiste\s*4$/i, cara: 'LAUGH', texto: 'Un chiste.' },
   { id: 'chiste5', file: '/voz/chiste5.mp3', keys: /^chiste\s*5$/i, cara: 'LAUGH', texto: 'Un chiste.' },
   // Saludos y arranque
-  { id: 'bienvenida', file: '/voz/bienvenida.mp3', keys: /^bienvenida$/i, cara: 'HAPPY', texto: 'ULTRON, en línea. Orden Global.' },
+  /* bienvenida: FUERA hasta regrabarla. public/voz/bienvenida.mp3 dice el nombre viejo, y cambiar
+     este texto no cambia el audio. Se regraba con `scripts/grabar-banco.mjs bienvenida --force` (ya trae el texto nuevo);
+     la APK la descarga del servidor, así que regrabar este archivo arregla las dos. */
   { id: 'dias', file: '/voz/dias.mp3', keys: /^buenos d[ií]as/i, cara: 'HAPPY', texto: 'Buenos días.' },
   { id: 'tardes', file: '/voz/tardes.mp3', keys: /^buenas tardes/i, cara: 'HAPPY', texto: 'Buenas tardes.' },
   { id: 'noches', file: '/voz/noches.mp3', keys: /^buenas noches/i, cara: 'HAPPY', texto: 'Buenas noches.' },

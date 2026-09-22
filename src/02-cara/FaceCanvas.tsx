@@ -599,7 +599,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const timer = setTimeout(() => {
         waveRef.current.isActive = false;
         onWaveComplete?.();
-        onSpeak('¡Hola! Saludos cordiales de Ultron.');
+        onSpeak('¡Hola! Saludos cordiales de AU-RA.');
       }, 2800);
       return () => clearTimeout(timer);
     } else {

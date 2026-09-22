@@ -171,7 +171,7 @@ async function start() {
       continuous: true,
       requiresOnDeviceRecognition: false,
       addsPunctuation: false,
-      contextualStrings: ['Ultron', 'Orden Global', 'Genesis Core', 'Veta Wallet', 'Genesis ID', 'Medardo', 'José', 'lempira', 'oro', 'plata'],
+      contextualStrings: ['Aura', 'AU-RA', 'Ultron', 'Orden Global', 'Genesis Core', 'Veta Wallet', 'Genesis ID', 'Medardo', 'José', 'lempira', 'oro', 'plata'],
       androidIntentOptions: {
         EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 700,
         EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 700,

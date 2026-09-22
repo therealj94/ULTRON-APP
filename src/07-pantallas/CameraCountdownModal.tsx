@@ -134,7 +134,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
 
       ctx.fillStyle = '#05E1FF';
       ctx.font = 'bold 14px monospace';
-      ctx.fillText(`ULTRON FP · LOOI CAM [${new Date().toLocaleTimeString()}]`, 36, height - 37);
+      ctx.fillText(`AU-RA FP · LOOI CAM [${new Date().toLocaleTimeString()}]`, 36, height - 37);
 
       const dataUrl = canvas.toDataURL('image/png', 0.95);
       setCapturedImage(dataUrl);

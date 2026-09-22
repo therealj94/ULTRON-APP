@@ -133,7 +133,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
     setError('');
     try {
       const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: 'Desbloquear ULTRON FP',
+        promptMessage: 'Desbloquear AU-RA FP',
         cancelLabel: 'Usar clave',
         disableDeviceFallback: false,
         biometricsSecurityLevel: 'weak',
@@ -255,7 +255,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
         <View pointerEvents="none" style={{ opacity: logoReady ? 1 : 0 }}>
           <UltronFace face={faceState} size={eye} stageHeight={eye * 2.3} gazeX={0} gazeY={focus === 'none' ? 0 : 0.6} />
         </View>
-        <Text style={styles.title}>ULTRON FP</Text>
+        <Text style={styles.title}>AU-RA FP</Text>
         <Text style={styles.sub}>Junta Directiva · Orden Global</Text>
         <View style={styles.card}>
 

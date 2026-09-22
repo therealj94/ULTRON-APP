@@ -1294,7 +1294,7 @@ async function procesarTelegram(update: any) {
   const quiereVoz = parsed.comando === '/audio' || pideNotaDeVoz(texto);
   if (quiereVoz && !yaMandóVoz) {
     const audio = await notaDeVoz(reply.slice(0, 400));
-    if (audio) await telegramVoz({ buf: audio, caption: 'ULTRON', chatId: parsed.chatId });
+    if (audio) await telegramVoz({ buf: audio, caption: 'AU-RA', chatId: parsed.chatId });
   }
 }
 

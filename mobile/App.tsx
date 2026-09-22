@@ -70,7 +70,7 @@ async function requestDeskPermissions() {
 }
 
 /**
- * Splash JS: marca «ULTRON FP», «powered by ORDEN GLOBAL» y la cara compacta despertando
+ * Splash JS: marca «AU-RA FP», «powered by ORDEN GLOBAL» y la cara compacta despertando
  * (ojos cerrados → abiertos) mientras se carga la sesión. Se desvanece encima de la pantalla siguiente.
  */
 function JsSplash({ opacity }: { opacity: Animated.Value }) {
@@ -96,7 +96,7 @@ function JsSplash({ opacity }: { opacity: Animated.Value }) {
         <UltronFace face={face} size={92} stageHeight={210} />
       </View>
       <Animated.View style={{ alignItems: 'center', opacity: rise, transform: [{ translateY: ty }] }}>
-        <Text style={styles.wordmark}>ULTRON FP</Text>
+        <Text style={styles.wordmark}>AU-RA FP</Text>
         <Text style={styles.powered}>POWERED BY ORDEN GLOBAL</Text>
       </Animated.View>
       <Text style={styles.meta}>v{APP_VERSION}</Text>

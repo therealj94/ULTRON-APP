@@ -35,7 +35,7 @@ export const GUIONES = {
   triste: '[sad] Lo siento. [softly] De verdad lo siento.',
   molesto: '[annoyed] Ya. Basta. [short pause] Hablemos en serio.',
   despertar: '[sleepy] [yawns] Mmm... ya, ya desperté. [warmly] ¿Qué necesitás?',
-  bienvenida: '[warmly] ULTRON, en línea. [short pause] Orden Global, buenos días.',
+  bienvenida: '[warmly] AU-RA, en línea. [short pause] Orden Global, buenos días.',
   // jesus, waymaker y oracion: sus guiones viven en server/voz.ts (LETRAS y ORACION_DEL_DIA) para no duplicarlos.
 };
 

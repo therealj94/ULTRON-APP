@@ -6,7 +6,7 @@ export const API_BASE = (extra.ultronUrl || 'https://ultron-looi-desk.onrender.c
 export const APP_VERSION = Constants.expoConfig?.version || '4.0.0';
 
 /** Nombre público de la única voz de ULTRON (servidor: ElevenLabs v3, timbre Gabriela). */
-export const VOICE_NAME = 'ULTRON (Gabriela · ElevenLabs v3)';
+export const VOICE_NAME = 'AU-RA (Gabriela · ElevenLabs v3)';
 
 export type DeskUser = {
   id: 'jose' | 'medardo' | 'otro';

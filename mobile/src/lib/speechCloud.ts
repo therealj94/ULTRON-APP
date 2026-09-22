@@ -77,7 +77,7 @@ export async function ensureSpeechPermissions(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
   try {
     const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO, {
-      title: 'Micrófono ULTRON FP',
+      title: 'Micrófono AU-RA FP',
       message: 'Te escucho de forma continua para conversar con fluidez. El botón Mic solo silencia.',
       buttonPositive: 'Permitir',
       buttonNegative: 'Denegar',

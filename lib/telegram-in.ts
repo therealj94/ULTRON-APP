@@ -83,7 +83,7 @@ export function telegramPublicBase(): string {
 
 export function ayudaTelegram(): string {
   return [
-    'ULTRON privado. Solo este chat de la junta.',
+    'AU-RA privado. Solo este chat de la junta.',
     'Puedo: estado del sistema, nota de voz (`/audio`), bóveda, pendientes, PDF, buscar en internet, leer una página, código, oro/plata/HNL.',
     'Si me subes una foto o un PDF, los leo. No invento lo que no está en el archivo. Imagen como archivo también vale.',
     'Si me mandas una nota de voz, la oigo, la transcribo y te contesto por escrito. Audio de vuelta solo si lo pides (`/audio`).',

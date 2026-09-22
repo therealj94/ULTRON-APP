@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Banco de voz offline de ULTRON.
+ * Banco de voz offline de AU-RA.
  *
  * Descarga los clips cortos grabados con la voz oficial (Render sirve `GET /voz/<id>.mp3`) a
  * `assets/voice/<id>.mp3` y genera `src/lib/voiceBank.ts` con:
@@ -43,9 +43,9 @@ const CLIPS = [
   { id: 'calenta', text: 'Espera. Estamos calentando el motor de veintisiete B.', bundle: true, phrases: ['Espera. Estamos calentando el motor de veintisiete B.'] },
   { id: 'listos', text: 'Estamos listos.', bundle: true, phrases: ['Estamos listos.'] },
   // --- largos: solo remotos ---
-  { id: 'quien', text: 'Soy ULTRON, la mesa de Orden Global.', bundle: false, phrases: [] },
+  { id: 'quien', text: 'Soy AU-RA, la mesa de Orden Global.', bundle: false, phrases: [] },
   { id: 'puedo', text: 'Esto es lo que puedo hacer.', bundle: false, phrases: [] },
-  { id: 'discurso', text: 'El discurso de ULTRON.', bundle: false, phrases: [] },
+  { id: 'discurso', text: 'El discurso de AU-RA.', bundle: false, phrases: [] },
   { id: 'chiste1', text: 'Chiste uno.', bundle: false, phrases: [] },
   { id: 'chiste2', text: 'Chiste dos.', bundle: false, phrases: [] },
   { id: 'chiste3', text: 'Chiste tres.', bundle: false, phrases: [] },

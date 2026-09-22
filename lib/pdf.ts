@@ -52,8 +52,8 @@ function wrap(text: string, width = 92): string[] {
 }
 
 export function textoAPdf(opts: { titulo: string; cuerpo: string; pie?: string }): Buffer {
-  const titulo = String(opts.titulo || 'ULTRON').slice(0, 80);
-  const pie = String(opts.pie || `ULTRON FP · ${new Date().toISOString().slice(0, 16)} UTC`);
+  const titulo = String(opts.titulo || 'AU-RA').slice(0, 80);
+  const pie = String(opts.pie || `AU-RA FP · ${new Date().toISOString().slice(0, 16)} UTC`);
   const body = wrap(String(opts.cuerpo || '').slice(0, 4000));
   const content: string[] = ['BT', '/F1 16 Tf', '50 780 Td', `(${winAnsi(titulo)}) Tj`, '/F1 11 Tf', '0 -28 Td'];
   for (const line of body) {

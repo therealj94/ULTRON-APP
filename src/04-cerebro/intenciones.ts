@@ -57,7 +57,7 @@ export function detectarIntencion(texto: string): Intencion {
 
   if (/^(para|calla|callate|silencio|basta|shh|ya)$/.test(q)) return { tipo: 'callar' };
 
-  const rec = texto.match(/^\s*(?:ultron[,\s]+)?(?:recuerda|record[aá]|acordate|guarda|anot[aá])(?: que)?\s+(.{6,})$/i);
+  const rec = texto.match(/^\s*(?:(?:ultron|aura)[,\s]+)?(?:recuerda|record[aá]|acordate|guarda|anot[aá])(?: que)?\s+(.{6,})$/i);
   if (rec) return { tipo: 'recordar', hecho: rec[1].trim() };
 
   if (/^(si )?(actualiza|actualizar) (el )?cerebro$|^guardalo en genesis$|^aprende eso$|^metelo al cerebro$/.test(q)) return { tipo: 'genesis' };
@@ -74,7 +74,7 @@ export function detectarIntencion(texto: string): Intencion {
 
   if (corto && /^(cuenta|contame|cuentame|dime|decime)( otro)? (un )?chiste$|^(otro )?chiste$|^hazme reir$|^haceme reir$/.test(q)) return { tipo: 'chiste' };
 
-  if (corto && /^(quien|que) (eres|sos)$|^que es ultron$|^presentate$/.test(q)) return { tipo: 'clip', id: 'quien' };
+  if (corto && /^(quien|que) (eres|sos)$|^que es (ultron|aura)$|^presentate$/.test(q)) return { tipo: 'clip', id: 'quien' };
   if (corto && /^que (puedes|podes|sabes|haces|hace[s]?) ?(hacer)?( por mi)?$|^capacidades$|^que ofreces$/.test(q)) return { tipo: 'capacidades' };
   if (corto && /^(tu )?discurso$|^vendete$|^tu mision$/.test(q)) return { tipo: 'clip', id: 'discurso' };
 
@@ -82,7 +82,7 @@ export function detectarIntencion(texto: string): Intencion {
   for (const m of MODOS) if (m.re.test(q)) return { tipo: 'modo', modo: m.modo, dicho: m.dicho };
 
   if (corto && /^(dormi|dormite|duermete|a dormir|reposo|descansa)$/.test(q)) return { tipo: 'dormir' };
-  if (corto && /^(desperta|despertate|despierta|arriba|buenos dias ultron)$/.test(q)) return { tipo: 'despertar' };
+  if (corto && /^(desperta|despertate|despierta|arriba|buenos dias ultron|buenos dias aura)$/.test(q)) return { tipo: 'despertar' };
   if (corto && /^(toma|tomame|sacame|saca) (una )?(foto|selfie)$|^foto$|^selfie$/.test(q)) return { tipo: 'foto' };
 
   return { tipo: 'cerebro', texto };

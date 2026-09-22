@@ -151,7 +151,7 @@ export function DeskMenu(p: Props) {
         <ScrollView ref={scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.head}>
             <View>
-              <Text style={styles.kicker}>ULTRON FP</Text>
+              <Text style={styles.kicker}>AU-RA FP</Text>
               <Text style={styles.user}>{p.userName}</Text>
             </View>
             <Pressable onPress={p.onClose} style={styles.close} hitSlop={10}>
@@ -185,7 +185,7 @@ export function DeskMenu(p: Props) {
           <View onLayout={(e) => (catY.current = e.nativeEvent.layout.y)}>
             <Pressable onPress={() => setCatOpen((o) => !o)} style={styles.catHead}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.section}>Qué puede hacer ULTRON</Text>
+                <Text style={styles.section}>Qué puede hacer AU-RA</Text>
                 <Text style={styles.sub}>
                   {cat.status === 'loading'
                     ? 'consultando…'
@@ -273,7 +273,7 @@ export function DeskMenu(p: Props) {
               <Chip key={c.id} label={c.titulo} sub={c.artista} onPress={() => p.onSingSong(c.id)} />
             ))}
           </View>
-          <Text style={styles.sub}>Letras propias por género: ULTRON las canta en vivo.</Text>
+          <Text style={styles.sub}>Letras propias por género: AU-RA las canta en vivo.</Text>
           <View style={styles.chips}>
             {GENEROS.map((g) => (
               <Chip key={g.id} label={g.etiqueta} onPress={() => p.onSingGenre(g.id)} />
@@ -307,7 +307,7 @@ export function DeskMenu(p: Props) {
             <TextInput
               value={p.draft}
               onChangeText={p.onChangeDraft}
-              placeholder="Orden para ULTRON…"
+              placeholder="Orden para AU-RA…"
               placeholderTextColor="#4A5A6A"
               style={styles.input}
               onSubmitEditing={p.onSendDraft}
