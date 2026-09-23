@@ -16,6 +16,11 @@ function entradas() {
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    /*
+     * Los workers salen como módulos ES: MapLibre 6 crea el suyo con `{ type: 'module' }`, y un
+     * worker en formato iife no carga así. Ver `src-electrum/mapa/Mapa.tsx`.
+     */
+    worker: { format: 'es' as const },
     build: {
       rollupOptions: {
         /*

@@ -16,6 +16,20 @@ import type { Map as MapaLibre } from 'maplibre-gl';
 import type { FeatureCollection, Geometry } from 'geojson';
 import { duracion } from '../movimiento';
 import { AMBAR, RESALTE, ESTILO_SATELITE, ESTILO_CALLES, capasDeConcesiones, capasDeResaltado } from './capas';
+import urlDelWorker from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+
+/*
+ * EL WORKER DE MAPLIBRE, DECLARADO.
+ *
+ * MapLibre 6 busca su worker en un archivo aparte, `maplibre-gl-worker.mjs`, al lado de su propio
+ * módulo. Empaquetado por Vite ese «al lado» es `/assets/maplibre-gl-worker.mjs`, que la
+ * compilación nunca emitía: el servidor contestaba con la página HTML, el worker moría en silencio
+ * y toda fuente GeoJSON quedaba sin procesar. El satélite se veía —las teselas raster no pasan por
+ * el worker— y encima de él no se dibujaba NADA: ni las 1079 concesiones, ni la resaltada, ni el
+ * encuadre. Sin un solo error en consola. Importarlo con `?worker&url` hace que Vite lo compile y
+ * lo emita, y `setWorkerUrl` le dice a MapLibre dónde quedó.
+ */
+maplibregl.setWorkerUrl(urlDelWorker);
 
 export type Motor = 'maplibre' | 'google';
 export type Fondo = 'satelite' | 'calles';
