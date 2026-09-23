@@ -9,6 +9,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  citaDe,
   compartirInforme,
   contradicciones,
   guardarInforme,
@@ -143,4 +144,16 @@ test('un informe es de quien lo pidió', async (t) => {
   await t.test('compartir algo que ya caducó no inventa un informe', () => {
     assert.equal(compartirInforme('inventado', 'jose'), 'no-esta');
   });
+});
+
+test('la ficha solo cita lo que nombra a la concesión', () => {
+  // Lo que se coló en la ficha de San José de las Palmas: las tres palabras, dispersas, en un
+  // reglamento que habla de otra cosa.
+  const reglamento =
+    'Ulúa El Progreso Yoro 05 Instituto "Jesús De Nazaret" … 2 Instituto "José Trinidad Reyes" San Pedro Sula Cortés … las palmas del patio';
+  assert.equal(citaDe(reglamento, 'San José de las Palmas'), false);
+  // Con el nombre tal cual, entra; sin importar tildes, mayúsculas ni espacios de más.
+  assert.equal(citaDe('La concesión SAN JOSE DE LAS  PALMAS solicitó prórroga.', 'San José de las Palmas'), true);
+  // Un nombre vacío o de dos letras no autoriza nada.
+  assert.equal(citaDe('lo que sea', ''), false);
 });

@@ -117,6 +117,24 @@ function fichaCampos(c: FilaConcesion): Array<[string, string]> {
 
 export type Informe = { pdf: Buffer; nombre: string; dicho: string };
 
+/** Minúsculas, sin tildes y con los espacios juntos: para comparar nombres como los escribe la gente. */
+function normal(t: string): string {
+  return t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * ¿Este trozo habla de ESTA concesión?
+ *
+ * La búsqueda en expedientes es de palabras: para «San José de las Palmas» encuentra también un
+ * reglamento con «San Pedro Sula», «José Trinidad Reyes» y unas palmas tres renglones más abajo. En
+ * el chat eso es una pista; en una ficha que se imprime y se firma, es una cita falsa con membrete.
+ * En la ficha solo entra lo que nombra a la concesión tal cual.
+ */
+export function citaDe(texto: string, nombre: string): boolean {
+  const n = normal(nombre);
+  return n.length >= 3 && normal(texto).includes(n);
+}
+
 export async function informeConcesion(
   ref: { id?: number; nombre?: string },
   opts: OpcionesInforme = {}
@@ -191,7 +209,10 @@ export async function informeConcesion(
   }
 
   /* --- lo que digan los expedientes, citado con página --- */
-  const hits = await buscarEnExpedientes(fila.nombre, 4).catch(() => []);
+  // Se piden más de los que caben y se quedan solo los que nombran a la concesión: ver `citaDe`.
+  const hits = (await buscarEnExpedientes(fila.nombre, 12).catch(() => []))
+    .filter((h) => citaDe(h.texto, fila!.nombre))
+    .slice(0, 4);
   if (hits.length) {
     bloques.push({ tipo: 'seccion', texto: 'En los expedientes' });
     for (const h of hits) {
@@ -435,7 +456,7 @@ export type TomaInforme = { estado: 'ok'; informe: Informe } | { estado: 'no-est
  * identificadores no se adivinan fácil, pero «difícil de adivinar» no es un permiso — y un informe
  * de cartera lleva nombres de concesionarios y hectáreas.
  *
- * Quien lo pidió puede compartirlo con la junta a propósito. Eso es una decisión suya, no un
+ * Quien lo pidió puede compartirlo con el equipo a propósito. Eso es una decisión suya, no un
  * descuido nuestro.
  */
 export function tomarInforme(id: string, quien: string | null = null): TomaInforme {
@@ -450,7 +471,7 @@ export function tomarInforme(id: string, quien: string | null = null): TomaInfor
   return { estado: 'ok', informe: g.informe };
 }
 
-/** Compartirlo con la junta. Solo quien lo pidió puede hacerlo. */
+/** Compartirlo con el equipo. Solo quien lo pidió puede hacerlo. */
 export function compartirInforme(id: string, quien: string | null): 'hecho' | 'no-esta' | 'ajeno' {
   const g = guardados.get(String(id));
   if (!g || Date.now() - g.at > VIDA_MS) return 'no-esta';

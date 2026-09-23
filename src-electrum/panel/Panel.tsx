@@ -523,7 +523,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
     [pensando, onFace, onEmocion, onUi, onTrabajo, avisar]
   );
 
-  /** Abrir un informe a la junta. Solo puede hacerlo quien lo pidió; el servidor lo comprueba. */
+  /** Abrir un informe al resto del equipo. Solo puede hacerlo quien lo pidió; el servidor lo comprueba. */
   const compartir = useCallback(
     async (indice: number, informe: { url: string }) => {
       try {
@@ -727,7 +727,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] text-[#E7EEF2]">{t.informe.nombre}</span>
                       <span className="block font-mono text-[10px] text-[#6C7F89]">
-                        {Math.round(t.informe.bytes / 1024)} KB · se guarda media hora · {t.informe.compartido ? 'lo ve la junta' : 'solo vos'}
+                        {Math.round(t.informe.bytes / 1024)} KB · se guarda media hora · {t.informe.compartido ? 'compartido con el equipo' : 'solo vos'}
                       </span>
                     </span>
                   </button>
@@ -743,7 +743,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                     onClick={() => void compartir(i, t.informe!)}
                     className="mt-1.5 rounded-lg border border-white/15 px-2.5 py-1 font-mono text-[10px] tracking-[0.14em] uppercase text-[#9FB0B8] transition-colors hover:border-white/30 hover:text-white cursor-pointer"
                   >
-                    Compartir con la junta
+                    Compartir con el equipo
                   </button>
                 )}
                 {t.traza?.length ? (
