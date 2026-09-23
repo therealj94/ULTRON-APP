@@ -25,7 +25,9 @@ import {
   geometriaDe,
   hayBase,
   coberturaDeFechas,
+  contarPorVencer,
   porVencer,
+  resumenTraslapes,
   traslapes,
 } from './db';
 
@@ -64,7 +66,8 @@ const catastro_vencimientos: Herramienta = {
   plataformas: ['electrum'],
   async ejecutar({ dias }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
-    const filas = await porVencer(Number(dias) || 365, 25);
+    const ventana = Number(dias) || 365;
+    const filas = await porVencer(ventana, 25);
     if (!filas.length) {
       // Distinguir «no vence ninguna» de «no hay fechas cargadas»: son respuestas opuestas y la
       // vacía las confundía. El catastro nacional de Honduras no trae ni una fecha.
@@ -78,13 +81,15 @@ const catastro_vencimientos: Herramienta = {
           ui: { filas: [], sinFechas: true },
         };
       }
-      return { ok: true, texto: `Ninguna concesión vence en los próximos ${dias} días.`, ui: { filas: [] } };
+      return { ok: true, texto: `Ninguna concesión vence en los próximos ${ventana} días.`, ui: { filas: [] } };
     }
     const lista = filas.slice(0, 6).map((f) => `${f.nombre} en ${f.dias} días (${f.vence})`);
-    const vencidas = filas.filter((f) => f.dias < 0).length;
+    // Igual que con los traslapes: la lista son las 25 más urgentes, la cifra es el total.
+    const total = await contarPorVencer(ventana);
+    const vencidas = await contarPorVencer(-1); // hasta ayer: ya vencidas
     return {
       ok: true,
-      texto: `${filas.length} por vencer: ${lista.join('; ')}${filas.length > 6 ? ', y más' : ''}.${vencidas ? ` ${vencidas} ya están vencidas.` : ''}`,
+      texto: `${total} por vencer: ${lista.join('; ')}${total > lista.length ? ', y más' : ''}.${vencidas ? ` ${vencidas} ${vencidas === 1 ? 'ya está vencida' : 'ya están vencidas'}.` : ''}`,
       ui: { filas },
     };
   },
@@ -128,12 +133,17 @@ const gis_traslapes: Herramienta = {
   async ejecutar() {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const t = await traslapes(20);
+    // El total se cuenta aparte: la lista trae los 20 mayores y «hay 20» sería falso con 96 cargados.
+    const { total, hectareas, ajenos } = await resumenTraslapes();
     if (!t.length) return { ok: true, texto: 'No hay traslapes en el catastro cargado: ninguna concesión se pisa con otra.', ui: { filas: [] } };
     const lista = t.slice(0, 5).map((x) => `${x.a} con ${x.b}, ${nf(x.hectareas)} ha`);
     return {
       ok: true,
-      texto: `Hay ${t.length} ${t.length === 1 ? 'traslape' : 'traslapes'}: ${lista.join('; ')}${t.length > 5 ? ', y más' : ''}. Se resuelven por prelación de la solicitud.`,
-      ui: { filas: t },
+      texto:
+        `Hay ${total} ${total === 1 ? 'traslape' : 'traslapes'}, ${nf(hectareas)} ha en común` +
+        `${ajenos ? ` (${ajenos} entre titulares distintos)` : ''}. ` +
+        `${total > 5 ? 'Los mayores' : 'Son'}: ${lista.join('; ')}. Se resuelven por prelación de la solicitud.`,
+      ui: { filas: t, total },
     };
   },
 };

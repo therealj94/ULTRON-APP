@@ -350,6 +350,16 @@ export async function porVencer(dias = 365, limite = 50): Promise<Array<FilaConc
   );
 }
 
+/** Cuántas vencen dentro de la ventana, sin límite: la cifra que se afirma, no el largo de la lista. */
+export async function contarPorVencer(dias = 365): Promise<number> {
+  const [r] = await consulta<{ n: number }>(
+    `SELECT count(*)::int AS n FROM concesion
+     WHERE vence IS NOT NULL AND vence <= CURRENT_DATE + ($1 || ' days')::interval`,
+    [String(dias)]
+  );
+  return Number(r?.n || 0);
+}
+
 /**
  * Cuántas concesiones traen fecha de vencimiento, y cuántas hay en total.
  *
@@ -418,6 +428,37 @@ export async function traslapes(limite = 50): Promise<Array<{ a: string; b: stri
      ORDER BY t.hectareas DESC
      LIMIT $1`,
     [limite]
+  );
+}
+
+/**
+ * Cuántos traslapes hay y cuánta superficie pisan, contando TODOS.
+ *
+ * `traslapes()` trae los mayores con un límite, que está bien para una tabla pero no para una cifra:
+ * con 96 traslapes cargados, «hay 60» salía de contar la lista recortada. El total se pide aparte.
+ */
+export async function resumenTraslapes(): Promise<{ total: number; hectareas: number; ajenos: number }> {
+  const [r] = await consulta<{ total: number; hectareas: number; ajenos: number }>(
+    `SELECT count(*)::int AS total,
+            coalesce(sum(t.hectareas), 0)::float8 AS hectareas,
+            count(*) FILTER (WHERE coalesce(ca.titular, '') <> coalesce(cb.titular, ''))::int AS ajenos
+     FROM traslape t
+     JOIN concesion ca ON ca.id = t.a_id
+     JOIN concesion cb ON cb.id = t.b_id`
+  );
+  return { total: Number(r?.total || 0), hectareas: Number(r?.hectareas || 0), ajenos: Number(r?.ajenos || 0) };
+}
+
+/** Los traslapes de UNA concesión, todos: no los que entren entre los mayores del país. */
+export async function traslapesDe(id: number): Promise<Array<{ a: string; b: string; hectareas: number; a_id: number; b_id: number }>> {
+  return consulta(
+    `SELECT ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS hectareas, t.a_id, t.b_id
+     FROM traslape t
+     JOIN concesion ca ON ca.id = t.a_id
+     JOIN concesion cb ON cb.id = t.b_id
+     WHERE t.a_id = $1 OR t.b_id = $1
+     ORDER BY t.hectareas DESC`,
+    [id]
   );
 }
 

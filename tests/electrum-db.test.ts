@@ -37,13 +37,16 @@ import {
   cercaDe,
   concesionEnPunto,
   consulta,
+  contarPorVencer,
   geometriaDe,
   guardarCapa,
   hayBase,
   recalcularTraslapes,
   saludBase,
   traslapes,
+  traslapesDe,
 } from '../server/electrum/db';
+import { informeCartera } from '../server/electrum/informe';
 
 const HAY = hayBase();
 const cerca = (a: number, b: number, tol: number) => assert.ok(Math.abs(a - b) <= tol, `${a} no está cerca de ${b} (±${tol})`);
@@ -255,6 +258,62 @@ test('catastro en PostGIS', { skip: HAY ? false : 'sin ELECTRUM_DB_URL: no hay b
     const r = await herramienta.ejecutar({ dias: 365 }, {} as never);
     assert.match(r.texto, /no traen? fecha|no puedo decirlo/i, `contestó: ${r.texto}`);
     assert.doesNotMatch(r.texto, /^Ninguna concesión vence/, 'eso sería tranquilizar sin saber');
+  });
+
+  // ── La cifra es el total, no el largo de la lista ───────────────────────────────────────────
+  //
+  // Con el catastro nacional cargado (96 traslapes) el informe de cartera decía «Hay 60 traslapes»
+  // y la herramienta «Hay 20»: contaban la lista recortada. Una cifra falsa con membrete.
+  await t.test('los traslapes se cuentan todos aunque la lista traiga los mayores', async () => {
+    const [{ id: base }] = await consulta<{ id: number }>(`SELECT min(id)::int AS id FROM concesion`);
+    const nuevas = await consulta<{ id: number }>(
+      `INSERT INTO concesion (nombre, titular, geom)
+       SELECT 'Sintética ' || g, 'Otro titular ' || g,
+              ST_Multi(ST_MakeEnvelope(-87 + g * 0.001, 14, -87 + g * 0.001 + 0.0005, 14.0005, 4326))
+       FROM generate_series(1, 25) g
+       RETURNING id::int AS id`
+    );
+    try {
+      for (const { id } of nuevas) {
+        await consulta(`INSERT INTO traslape (a_id, b_id, hectareas) VALUES ($1, $2, 1)`, [base, id]);
+      }
+      const [{ n }] = await consulta<{ n: number }>(`SELECT count(*)::int AS n FROM traslape`);
+      assert.ok(n > 20, `hacen falta más de 20 para la prueba, hay ${n}`);
+
+      const r = await manosDe(['gis_traslapes'])[0].ejecutar({}, {} as never);
+      assert.match(r.texto, new RegExp(`^Hay ${n} traslapes`), `contestó: ${r.texto}`);
+
+      const informe = await informeCartera({ quien: 'pruebas' });
+      assert.ok(!('error' in informe));
+      const dicho = (informe as { dicho: string }).dicho;
+      assert.match(dicho, new RegExp(`y ${n} traslapes\\.$`), dicho);
+
+      // Y la ficha de UNA concesión trae todos los suyos, no los que entren entre los mayores.
+      const [{ suyos }] = await consulta<{ suyos: number }>(
+        `SELECT count(*)::int AS suyos FROM traslape WHERE a_id = $1 OR b_id = $1`,
+        [base]
+      );
+      assert.ok(suyos >= 25);
+      assert.equal((await traslapesDe(base)).length, suyos);
+      assert.equal((await traslapesDe(nuevas[24].id)).length, 1);
+    } finally {
+      await consulta(`DELETE FROM concesion WHERE id = ANY($1::bigint[])`, [nuevas.map((x) => x.id)]);
+    }
+  });
+
+  await t.test('lo que vence se cuenta todo, y lo vencido también', async () => {
+    const ids = (await consulta<{ id: number }>(`SELECT id::int AS id FROM concesion ORDER BY id`)).map((x) => x.id);
+    try {
+      await consulta(`UPDATE concesion SET vence = CURRENT_DATE - 10 WHERE id = $1`, [ids[0]]);
+      await consulta(`UPDATE concesion SET vence = CURRENT_DATE + 30 WHERE id <> $1`, [ids[0]]);
+      assert.equal(await contarPorVencer(365), ids.length);
+      assert.equal(await contarPorVencer(-1), 1, 'solo una está vencida');
+      const r = await manosDe(['catastro_vencimientos'])[0].ejecutar({ dias: 365 }, {} as never);
+      assert.match(r.texto, new RegExp(`^${ids.length} por vencer`), r.texto);
+      assert.match(r.texto, / 1 ya está vencida\./, r.texto);
+    } finally {
+      await consulta(`UPDATE concesion SET vence = NULL`);
+    }
   });
 
   t.after(async () => {

@@ -25,8 +25,11 @@ import {
   geometriaDe,
   hayBase,
   coberturaDeFechas,
+  contarPorVencer,
   porVencer,
+  resumenTraslapes,
   traslapes,
+  traslapesDe,
   type FilaConcesion,
 } from './db';
 import { documentoPdf, medirJpeg, type Bloque } from '../../lib/pdf';
@@ -174,8 +177,7 @@ export async function informeConcesion(
   }
 
   /* --- traslapes que le toquen --- */
-  const todos = await traslapes(200);
-  const suyos = todos.filter((t) => t.a_id === fila!.id || t.b_id === fila!.id);
+  const suyos = await traslapesDe(fila.id);
   bloques.push({ tipo: 'seccion', texto: 'Traslapes' });
   if (!suyos.length) {
     bloques.push({ tipo: 'parrafo', texto: 'No se pisa con ninguna otra concesión de las cargadas. Esto vale para lo que hay en el catastro, no para lo que no se ha subido.' });
@@ -250,9 +252,12 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   );
   if (!resumen || !resumen.total) return { error: 'No hay ninguna concesión cargada todavía. Súbanme el catastro y lo armo.' };
 
+  // La tabla lleva los primeros; las cifras que se afirman salen de contar todo, no del largo de la tabla.
   const vencen = await porVencer(365, 60);
+  const totalVencen = await contarPorVencer(365);
   const cobertura = await coberturaDeFechas();
   const pisadas = await traslapes(60);
+  const pisan = await resumenTraslapes();
   const porEstado = await consulta<{ estado: string | null; n: number; ha: number }>(
     `SELECT estado, count(*)::int AS n, coalesce(sum(hectareas),0)::float8 AS ha
      FROM concesion GROUP BY estado ORDER BY n DESC`
@@ -319,7 +324,12 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
     bloques.push({ tipo: 'parrafo', texto: 'Nada vence dentro del año. Esto sale de la fecha del padrón; si una fecha está mal cargada, acá no se ve.' });
   } else {
     bloques.push(
-      { tipo: 'aviso', texto: `${vencen.length} ${vencen.length === 1 ? 'concesión vence' : 'concesiones vencen'} dentro del año.` },
+      {
+        tipo: 'aviso',
+        texto:
+          `${totalVencen} ${totalVencen === 1 ? 'concesión vence' : 'concesiones vencen'} dentro del año.` +
+          (totalVencen > vencen.length ? ` La tabla trae las ${vencen.length} más urgentes.` : ''),
+      },
       {
         tipo: 'tabla',
         cabecera: ['Concesión', 'Titular', 'Vence', 'Días', 'Hectáreas'],
@@ -333,11 +343,14 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   if (!pisadas.length) {
     bloques.push({ tipo: 'parrafo', texto: 'Ninguna concesión cargada se pisa con otra.' });
   } else {
-    const ha = pisadas.reduce((a, t) => a + t.hectareas, 0);
     bloques.push(
       {
         tipo: 'aviso',
-        texto: `Hay ${pisadas.length} ${pisadas.length === 1 ? 'traslape' : 'traslapes'}, ${nf(ha)} hectáreas en común. Un traslape es un conflicto de derechos hasta que alguien demuestre prelación.`,
+        texto:
+          `Hay ${pisan.total} ${pisan.total === 1 ? 'traslape' : 'traslapes'}, ${nf(pisan.hectareas)} hectáreas en común` +
+          `${pisan.ajenos ? `; ${pisan.ajenos} entre titulares distintos` : ''}. ` +
+          `Un traslape es un conflicto de derechos hasta que alguien demuestre prelación.` +
+          (pisan.total > pisadas.length ? ` La tabla trae los ${pisadas.length} mayores.` : ''),
       },
       {
         tipo: 'tabla',
@@ -376,7 +389,7 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   return {
     pdf,
     nombre: `cartera-${new Date().toISOString().slice(0, 10)}.pdf`,
-    dicho: `Armé el informe de cartera: ${resumen.total} concesiones, ${nf(resumen.hectareas)} hectáreas, ${cobertura.total && !cobertura.conVence ? 'sin fechas de vencimiento en el padrón' : `${vencen.length} por vencer`} y ${pisadas.length} traslapes.`,
+    dicho: `Armé el informe de cartera: ${resumen.total} concesiones, ${nf(resumen.hectareas)} hectáreas, ${cobertura.total && !cobertura.conVence ? 'sin fechas de vencimiento en el padrón' : `${totalVencen} por vencer`} y ${pisan.total} ${pisan.total === 1 ? 'traslape' : 'traslapes'}.`,
   };
 }
 
