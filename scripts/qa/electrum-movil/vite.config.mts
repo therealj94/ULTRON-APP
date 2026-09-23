@@ -25,6 +25,8 @@ export default defineConfig({
       'expo-status-bar': path.resolve(simulado, 'expo-status-bar.ts'),
       'expo-location': path.resolve(simulado, 'expo-location.ts'),
       'expo-av': path.resolve(simulado, 'expo-av.ts'),
+      'expo-camera': path.resolve(simulado, 'expo-camera.tsx'),
+      'expo-speech-recognition': path.resolve(simulado, 'expo-speech-recognition.ts'),
       'react-native': path.resolve(raiz, 'node_modules/react-native-web'),
       react: path.resolve(raiz, 'node_modules/react'),
       'react-dom': path.resolve(raiz, 'node_modules/react-dom'),

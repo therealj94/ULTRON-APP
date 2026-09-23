@@ -127,7 +127,9 @@ const s = StyleSheet.create({
   raiz: { flex: 1, flexDirection: 'row', backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 18, gap: 28 },
   presentacion: { flex: 1, alignItems: 'center' },
   formulario: { flex: 1, maxWidth: 400 },
-  cara: { height: 170, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  // `alignSelf: 'stretch'`: la columna centra a sus hijos, así que sin esto la caja se encogía al
+  // ancho de los dos ojos y `overflow: hidden` les cortaba el brillo por los costados.
+  cara: { alignSelf: 'stretch', height: 170, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   marca: { color: ACENTO, fontSize: 19, fontWeight: '700', letterSpacing: 4.5 },
   lema: { color: 'rgba(255,174,59,0.5)', fontSize: 9, letterSpacing: 2.4, fontWeight: '600', marginTop: 4 },
   pestanas: { flexDirection: 'row', gap: 8, marginBottom: 12 },

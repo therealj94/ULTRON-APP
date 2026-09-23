@@ -4,7 +4,7 @@
  * Es la razón de que esta app exista en vez de ser la web guardada en la pantalla de inicio. Todo
  * lo que hace aquí es lo que un navegador hace mal o no hace:
  *
- *  · **«¿Dónde estoy y de quién es esto?»** Parado sobre el terreno, el GPS da el punto y el
+ *  · **«¿Dónde estoy y qué dice el catastro de esto?»** Parado sobre el terreno, el GPS da el punto y el
  *    catastro contesta. Es LA pregunta del campo, y la única respuesta que no se puede fingir.
  *  · **Hablarle con las manos sucias.** En un cerro nadie escribe en un teclado de vidrio.
  *  · **Enseñarle lo que estás viendo.** Un afloramiento, un testigo, la hoja de un expediente.
@@ -230,7 +230,7 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
   }, [tomando, decir, onSalir]);
 
   /**
-   * La pregunta del campo. El GPS da el punto; el catastro dice de quién es.
+   * La pregunta del campo. El GPS da el punto; el catastro dice quién figura inscrito ahí.
    *
    * Se manda la coordenada DENTRO de la pregunta, con sus decimales, en vez de por un campo
    * aparte: así la herramienta `catastro_en_punto` la recibe como argumento y la traza muestra
@@ -345,7 +345,7 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
         {!turnos.length && (
           <View style={{ gap: 10 }}>
             <Text style={s.intro}>
-              Preguntame de minería o del catastro. Si estás parado sobre el terreno, tocá «¿Dónde estoy?» y te digo de quién es.
+              Preguntame de minería o del catastro. Si estás parado sobre el terreno, tocá «¿Dónde estoy?» y te digo qué dice el catastro de ese punto.
             </Text>
             {['¿se traslapa algo en el catastro?', '250.000 toneladas a 3,4 g/t, ¿cuántas onzas?', '¿qué concesiones vencen este año?'].map((e) => (
               <Pressable key={e} onPress={() => void mandar(e)} style={s.ejemplo}>
