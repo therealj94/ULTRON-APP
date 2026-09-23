@@ -104,6 +104,12 @@ test('el informe es de quien lo pidió', { skip: hay ? false : 'hace falta `npm 
     assert.equal((await fetch(`${BASE}/api/electrum/informe/${id}/compartir`, { method: 'POST', headers: beto })).status, 403);
   });
 
+  await t.test('el nombre del modelo no se le enseña a quien no manda', async () => {
+    const salud = (await (await fetch(`${BASE}/api/electrum/salud`, { headers: ana })).json()) as any;
+    assert.equal(salud.cerebro?.modelo, undefined, 'es un detalle interno, como el padrón');
+    assert.equal(salud.padron, undefined);
+  });
+
   await t.test('compartido por su dueño, ya lo baja cualquiera con sesión', async () => {
     const c = await fetch(`${BASE}/api/electrum/informe/${id}/compartir`, { method: 'POST', headers: ana });
     assert.equal(c.status, 200, await c.clone().text());

@@ -375,7 +375,9 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
   res.json({
     ...catastro,
     listo: cerebro,
-    cerebro: { configurado: nodo, vivo: cerebro, modelo: ULTRON_NODO_MODELO },
+    // El nombre del modelo es un detalle interno, como el padrón: solo a quien manda. A un cliente
+    // se le enseña que el cerebro está en línea, no con qué pesos está hecho.
+    cerebro: { configurado: nodo, vivo: cerebro, modelo: nivelDe(id, 'electrum') === 'mando' ? ULTRON_NODO_MODELO : undefined },
     voz: { llave: voz.elevenlabs, vozId: vozDe('electrum') },
     catastro: { viva: catastro.viva, motivo: catastro.motivo || null, concesiones: catastro.concesiones ?? null },
     herramientas: TODAS_ELECTRUM.length,
