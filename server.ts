@@ -546,7 +546,11 @@ app.post('/api/electrum/oir', exigirPlataforma('electrum'), limitar(40), async (
  */
 app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), async (req, res) => {
   const id = identidadDe(req);
+  // El nombre va impreso en el documento; el DUEÑO se guarda por id, que es con lo que se compara
+  // al recogerlo y al compartirlo. Guardarlo por nombre hacía que nadie pudiera bajar su propio
+  // informe: «Ing. Prueba» nunca es igual a «prueba», y la respuesta era «lo pidió otra persona».
   const quien = id?.persona.nombre || null;
+  const duenio = id?.persona.id || null;
   const tipo = String(req.body?.tipo || 'concesion');
 
   let mapa: Buffer | undefined;
@@ -567,7 +571,7 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
             opts
           );
     if ('error' in r) return res.status(404).json({ error: r.error, honesto: true });
-    const guardado = guardarInforme(r, quien);
+    const guardado = guardarInforme(r, duenio);
     return res.json({ id: guardado, nombre: r.nombre, url: `/api/electrum/informe/${guardado}`, bytes: r.pdf.length, dicho: r.dicho, honesto: true });
   } catch (e: any) {
     console.error('[electrum] informe falló:', String(e?.message || e).slice(0, 200));

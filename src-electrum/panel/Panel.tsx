@@ -249,6 +249,14 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
    */
   const turnosRef = useRef<Turno[]>(turnos);
   turnosRef.current = turnos;
+  /*
+   * La concesión que se está mirando: la última a la que voló el mapa por una herramienta.
+   *
+   * Sin esto el botón PDF armaba siempre el informe de la cartera entera, aunque la conversación
+   * fuera sobre una concesión y Dr Electrum acabara de ofrecer «¿te armo la ficha en PDF?». Tocar
+   * PDF en ese momento tiene que dar la ficha de ESA concesión.
+   */
+  const [enFoco, setEnFoco] = useState<number | null>(null);
   /** El turno en vuelo, para poder pararlo desde el botón o al irse de la pantalla. */
   const abortoRef = useRef<AbortController | null>(null);
   /** Mientras se arrastra el asa, la altura no se anima: la transición la haría ir a rastras. */
@@ -448,7 +456,10 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                 const d = JSON.parse(linea.slice(6));
                 if (evento === 'panel') setEnVivo((v) => ({ ...v, panel: d.panel }));
                 else if (evento === 'herramienta') setEnVivo((v) => ({ ...v, traza: [...v.traza, d] }));
-                else if (evento === 'ui') onUi([d]); // el mapa se mueve YA, no al final
+                else if (evento === 'ui') {
+                  onUi([d]); // el mapa se mueve YA, no al final
+                  if (d?.accion === 'volar' && Number.isFinite(Number(d.concesion_id))) setEnFoco(Number(d.concesion_id));
+                }
                 else if (evento === 'error') {
                   cerrado = true;
                   avisar(d.error, q);
@@ -535,6 +546,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
   /** Borra el hilo de las dos puntas. Si el servidor no contesta, al menos la pantalla queda limpia. */
   const olvidar = useCallback(() => {
     setTurnos([]);
+    setEnFoco(null);
     try {
       sessionStorage.removeItem(CAJON_HILO);
     } catch {
@@ -563,7 +575,11 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       const r = await fetch('/api/electrum/informe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headersElectrum() },
-        body: JSON.stringify({ tipo: 'cartera', mapa: 'imagen' in foto ? foto.imagen : null }),
+        body: JSON.stringify(
+          enFoco != null
+            ? { tipo: 'concesion', concesion_id: enFoco, mapa: 'imagen' in foto ? foto.imagen : null }
+            : { tipo: 'cartera', mapa: 'imagen' in foto ? foto.imagen : null }
+        ),
       });
       const j = await r.json();
       if (!r.ok) {
@@ -580,7 +596,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       setPensando(false);
       setTimeout(() => onFace('IDLE'), 900);
     }
-  }, [pensando, onFace, onTrabajo]);
+  }, [pensando, onFace, onTrabajo, enFoco]);
 
   /*
     La conversación comparte la pantalla con el mapa —42 % abajo— porque las dos cosas se miran a la
@@ -675,7 +691,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   </div>
                 )}
                 <div
-                  className={`inline-block max-w-[92%] rounded-xl px-3 py-2 text-sm leading-relaxed text-left ${
+                  className={`inline-block max-w-[92%] rounded-xl px-3 py-2 text-sm leading-relaxed text-left whitespace-pre-line break-words ${
                     t.de === 'persona' ? 'bg-white/10 text-[#E7EEF2]' : 'bg-white/[0.045] text-[#DDE7EC]'
                   }`}
                 >
@@ -847,7 +863,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               */}
             <div className="hidden sm:contents">
               <BotonVoz vozActiva={vozActiva} setVozActiva={setVozActiva} />
-              <BotonPdf pedirInforme={pedirInforme} pensando={pensando} />
+              <BotonPdf pedirInforme={pedirInforme} pensando={pensando} ficha={enFoco != null} />
             </div>
             <div className="relative shrink-0 sm:hidden">
               <button
@@ -865,7 +881,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   onClick={() => setMasAbierto(false)}
                 >
                   <BotonVoz vozActiva={vozActiva} setVozActiva={setVozActiva} />
-                  <BotonPdf pedirInforme={pedirInforme} pensando={pensando} />
+                  <BotonPdf pedirInforme={pedirInforme} pensando={pensando} ficha={enFoco != null} />
                 </div>
               )}
             </div>
@@ -1311,13 +1327,13 @@ function BotonVoz({ vozActiva, setVozActiva }: { vozActiva: boolean; setVozActiv
   );
 }
 
-function BotonPdf({ pedirInforme, pensando }: { pedirInforme: () => void; pensando: boolean }) {
+function BotonPdf({ pedirInforme, pensando, ficha }: { pedirInforme: () => void; pensando: boolean; ficha: boolean }) {
   return (
     <button
       type="button"
       onClick={pedirInforme}
       disabled={pensando}
-      title="Informe de la cartera en PDF, con el mapa como se está viendo"
+      title={ficha ? 'Ficha en PDF de la concesión que estás mirando, con el mapa' : 'Informe de la cartera en PDF, con el mapa como se está viendo'}
       className="shrink-0 rounded-lg border border-white/12 px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] uppercase text-[#9FB0B8] transition-colors hover:border-white/25 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
     >
       PDF
