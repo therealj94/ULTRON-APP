@@ -118,7 +118,7 @@ export function headersElectrum(): Record<string, string> {
 
 /** Lo que se le dice a alguien al que el servidor no le abre. Sin jerga y sin culparlo. */
 export const SIN_PUERTA =
-  'Dr Electrum FP es privado y esta sesión no tiene acceso. Si sos de la junta, entrá primero en ULTRON con tu correo; si venís a ver la demostración, pedile a José el enlace con llave.';
+  'Dr Electrum FP es privado y esta sesión no tiene acceso. Entrá con tu correo, o pedí el enlace con llave si venís a ver la demostración.';
 
 /** Guarda el token de sesión que devuelve ULTRON al entrar. Lo comparten las dos plataformas. */
 export function guardarSesion(token: string): Donde {
@@ -218,7 +218,7 @@ export function porQueNoAbre(p: Puerta, cual: 'sesion' | 'llave'): string {
     case 'sin-permiso':
       return cual === 'llave'
         ? 'Esa llave no abre. Pedile a José la vigente.'
-        : 'Entraste en ULTRON, pero tu cuenta no tiene acceso a Dr Electrum FP. Pedíselo a José.';
+        : 'Tu credencial es buena, pero tu cuenta no tiene acceso a Dr Electrum FP. Pedíselo a José.';
     case 'servicio-caido':
       return `El servidor contestó ${p.codigo}. No es tu credencial: es la plataforma. Probá de nuevo en un momento.`;
     case 'lento':

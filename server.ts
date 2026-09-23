@@ -28,6 +28,7 @@ import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
 import { spotMetal } from './lib/mercado';
 import { turnoElectrum } from './server/electrum/turno';
+import { ES_ELECTRUM, ES_ULTRON, PAGINA_RAIZ, PLATAFORMA, rutaPermitida } from './lib/plataforma';
 import {
   claveHilo,
   fusionarHiloElectrum,
@@ -90,6 +91,25 @@ app.use((_req, res, next) => {
   res.setHeader('Referrer-Policy', 'no-referrer');
   res.setHeader('X-Frame-Options', 'DENY');
   next();
+});
+
+/*
+ * UN DESPLIEGUE, UN PRODUCTO.
+ *
+ * Esto va ANTES que cualquier ruta, a propósito: es una lista de permitidos y lo que no está en
+ * ella no llega ni a existir. En un despliegue de Dr Electrum eso deja fuera `/api/ejecutar` —el
+ * ejecutor de código de ULTRON—, `/api/render/deploy`, `/api/taller` y `/api/vault/*`. Todas
+ * estaban ya detrás de permisos; pero la mejor defensa de una ruta peligrosa es que no esté en ese
+ * servidor, y la segunda mejor es que el día que alguien añada otra no entre sola por ser nueva.
+ *
+ * Contesta 404 y no 403 porque desde fuera es la verdad: en este servidor esa ruta no existe.
+ */
+app.use('/api', (req, res, next) => {
+  if (rutaPermitida(`/api${req.path}`)) return next();
+  res.status(404).json({
+    error: `Esto es ${PLATAFORMA === 'electrum' ? 'Dr Electrum FP' : 'ULTRON FP'}. Esa ruta es de la otra plataforma.`,
+    honesto: true,
+  });
 });
 
 // Nodos. Nada hardcodeado que no sea el modelo por defecto.
@@ -733,7 +753,18 @@ app.get('/api/ultron/salud', async (_req, res) => {
   return res.json({ ...(remoto.json || {}), connected: true, remoteUrl: ULTRON_REMOTE_URL });
 });
 
-app.post('/api/ultron/entrar', limitar(12), async (req, res) => {
+/*
+ * LA PUERTA.
+ *
+ * Dos direcciones para la misma puerta, y no por indecisión: `/api/electrum/entrar` es la que
+ * corresponde al producto, y `/api/ultron/entrar` se queda porque **la APK ya publicada la usa**.
+ * Quitarla dejaría sin entrar a los teléfonos que ya están instalados, que no se actualizan porque
+ * nosotros cambiemos de opinión sobre los nombres.
+ *
+ * La sesión es UNA entre las dos plataformas; a cuál te deja entrar lo decide el padrón del
+ * servidor, no la dirección por la que llamaste.
+ */
+app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req, res) => {
   // `clave` o `password`: la web manda lo primero y la app de Dr Electrum lo segundo. Leer solo
   // `clave` hacía que la pantalla de entrada de la APK contestara siempre «Correo y clave
   // requeridos» con las credenciales correctas — nunca llegó a funcionar. Se acepta lo que manden
@@ -1774,25 +1805,53 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
+
+    /*
+     * LA RAÍZ ES EL PRODUCTO.
+     *
+     * Antes `/` servía siempre `index.html` —ULTRON FP— y Dr Electrum vivía escondido en
+     * `/electrum.html`. Quien recibía «el enlace de Dr Electrum» aterrizaba en otra plataforma, con
+     * otro nombre y otro color, y concluía razonablemente que le habían mandado el enlace
+     * equivocado. Ahora la raíz es la página de quien sea este despliegue.
+     */
+    /*
+     * Las redirecciones van ANTES de `express.static`, o no se ejecutan: el estático encuentra el
+     * archivo y lo sirve sin dejar pasar la petición. Se descubrió probando: `/electrum.html`
+     * devolvía 200 en vez de la redirección, y la página quedaba con dos direcciones.
+     */
+    const ajena = ES_ELECTRUM ? '/index.html' : '/electrum.html';
+    // La página de la OTRA plataforma no se sirve: que exista el archivo no la hace parte de esto.
+    app.get(ajena, (_req, res) => res.redirect(302, '/'));
+    // Y la propia, por su nombre, también lleva a la raíz: una sola dirección por producto.
+    app.get(`/${PAGINA_RAIZ}`, (_req, res) => res.redirect(302, '/'));
+
+    app.use(express.static(distPath, { index: false }));
+
     app.get('*', (req, res) => {
       if (String(req.path || '').startsWith('/api/')) {
         return res.status(404).json({ error: 'no está', honesto: true });
       }
-      res.sendFile(path.join(distPath, 'index.html'));
+      res.sendFile(path.join(distPath, PAGINA_RAIZ));
     });
   }
 
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`[ULTRON] :${PORT} v4 — turno/voz/canto/capacidades/telegram`);
-    registrarWebhookTelegram()
-      .then((r) => console.log('[ULTRON] telegram webhook', r.detalle))
-      .catch((e) => console.warn('[ULTRON] telegram webhook', String(e?.message || e).slice(0, 160)));
-    if (electrumBotListo()) {
+    console.log(
+      `[${PLATAFORMA === 'electrum' ? 'Dr Electrum FP' : 'ULTRON FP'}] :${PORT} — sirviendo ${PAGINA_RAIZ}` +
+        `${ES_ELECTRUM ? ' · API de ULTRON cerrada' : ''}`
+    );
+    // Cada plataforma registra SU bot. Los dos desde el mismo proceso era la costura más fácil de
+    // olvidar: un despliegue de Dr Electrum se quedaba con el webhook del bot de la junta.
+    if (ES_ULTRON) {
+      registrarWebhookTelegram()
+        .then((r) => console.log('[ULTRON] telegram webhook', r.detalle))
+        .catch((e) => console.warn('[ULTRON] telegram webhook', String(e?.message || e).slice(0, 160)));
+    }
+    if (ES_ELECTRUM && electrumBotListo()) {
       registrarWebhookElectrum()
         .then((r) => console.log('[electrum] telegram webhook', r.detalle))
         .catch((e) => console.warn('[electrum] telegram webhook', String(e?.message || e).slice(0, 160)));
-    } else {
+    } else if (ES_ELECTRUM) {
       console.log('[electrum] bot apagado: falta ELECTRUM_BOT_TOKEN o ELECTRUM_WEBHOOK_SECRET.');
     }
     iniciarCentinela(180_000);

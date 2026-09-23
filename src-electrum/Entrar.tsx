@@ -1,14 +1,15 @@
 /**
  * La puerta de Dr Electrum FP.
  *
- * Antes no existía: la web daba por hecho que ya habías entrado en ULTRON en ESE mismo navegador, y
+ * Antes no existía: la web daba por hecho que ya habías entrado en la otra plataforma en ESE mismo
+ * navegador, y
  * si no, te encontrabas la estación montada y una línea en la conversación diciendo que no tenías
  * acceso. Una puerta cerrada sin manija. La app móvil sí tenía su pantalla de entrada; la web no, y
  * eso es justo lo que hizo que el enlace «no diera acceso».
  *
  * Dos maneras de entrar, las mismas que reconoce el servidor:
  *
- *  · **Correo y clave.** Va contra `/api/ultron/entrar`, que es la puerta de la casa: la sesión es
+ *  · **Correo y clave.** Va contra `/api/electrum/entrar`: la sesión es
  *    una sola para las dos plataformas y a cuál te deja entrar lo decide el padrón del servidor.
  *  · **Llave de demostración.** Para enseñarle esto a alguien sin crearle sesión.
  *
@@ -36,7 +37,7 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
     setYendo(true);
     setFallo('');
     try {
-      const r = await fetch('/api/ultron/entrar', {
+      const r = await fetch('/api/electrum/entrar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ correo: correo.trim(), clave }),
@@ -47,7 +48,7 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
         return;
       }
       avisarSiEsFragil(guardarSesion(String(j.token)));
-      // Entrar en ULTRON no es entrar en Electrum: el padrón puede dejarte en uno y no en el otro,
+      // Tener credencial no es tener acceso AQUÍ: el padrón puede dejarte en una plataforma y no en
       // y decirlo aquí es mejor que dejar pasar a una estación que no va a contestar.
       const p = await puertaAbierta();
       if (p.estado === 'abierta') onAbierta();
@@ -200,8 +201,8 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
           </button>
 
           <p className="mt-8 text-center text-[11px] leading-relaxed text-[#8FA3B0]/60">
-            Dr Electrum FP es privado. La sesión es la misma que la de ULTRON: si ya entraste ahí en
-            este navegador, no hace falta repetirlo.
+            Dr Electrum FP es privado: catastro minero y expedientes de Honduras. Si tu correo está en
+            el padrón, entrás con él; si venís a ver la demostración, pedí el enlace con llave.
           </p>
         </div>
       </div>

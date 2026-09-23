@@ -218,7 +218,9 @@ export async function voz(texto: string, emocion?: string): Promise<string | nul
 
 /** Entrar con el correo de la junta. La misma sesión que abre ULTRON, si el padrón la deja pasar. */
 export async function entrar(correo: string, clave: string): Promise<string> {
-  const r = await fetch(`${API_BASE}/api/ultron/entrar`, {
+  // La puerta de Dr Electrum. El servidor mantiene `/api/ultron/entrar` como alias para las
+  // APK que ya están instaladas; las nuevas llaman a la suya.
+  const r = await fetch(`${API_BASE}/api/electrum/entrar`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ correo, clave }),
