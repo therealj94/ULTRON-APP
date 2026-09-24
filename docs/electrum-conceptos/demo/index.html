@@ -1,0 +1,314 @@
+<title>Oficina del Dr Electrum</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@500;600;700&family=Alegreya+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --ground:#EFE9DB;          /* papel topográfico */
+  --surface:#FBF8F1;         /* cuarzo */
+  --ink:#24211C;             /* grafito */
+  --muted:#6B6456;
+  --line:#D8CFBB;
+  --gold:#A87E1A;            /* oro mineral, legible sobre claro */
+  --gold-soft:#F1E3B8;
+  --khaki:#8C7F5C;
+  --ok:#3F6B3A; --ok-soft:#DDEAD6;
+  --warn:#A9481F; --warn-soft:#F5DCCF;
+  --bubble-me:#2E2A23; --bubble-me-ink:#F6F0E2;
+  --shadow:0 1px 0 rgba(36,33,28,.06),0 8px 24px -12px rgba(36,33,28,.25);
+  --display:"Zilla Slab",Rockwell,"Roboto Slab",Georgia,serif;
+  --body:"Alegreya Sans","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --ground:#171512; --surface:#211E19; --ink:#EDE6D5; --muted:#A99F8B; --line:#3A352C;
+    --gold:#D9AE45; --gold-soft:#3A3120; --khaki:#B3A47C;
+    --ok:#8DBB7F; --ok-soft:#24301F; --warn:#E08A62; --warn-soft:#3A2519;
+    --bubble-me:#EDE6D5; --bubble-me-ink:#1B1915;
+    --shadow:0 8px 24px -12px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --ground:#171512; --surface:#211E19; --ink:#EDE6D5; --muted:#A99F8B; --line:#3A352C;
+  --gold:#D9AE45; --gold-soft:#3A3120; --khaki:#B3A47C;
+  --ok:#8DBB7F; --ok-soft:#24301F; --warn:#E08A62; --warn-soft:#3A2519;
+  --bubble-me:#EDE6D5; --bubble-me-ink:#1B1915;
+  --shadow:0 8px 24px -12px rgba(0,0,0,.6);
+}
+*{box-sizing:border-box}
+body{background:var(--ground);color:var(--ink);font:17px/1.5 var(--body);padding-inline:16px;padding-block:20px 40px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:18px}
+header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+header img{width:56px;height:56px;border-radius:50%;object-fit:cover;object-position:50% 22%;border:2px solid var(--gold)}
+header h1{font:700 1.7rem/1.1 var(--display);margin:0;text-wrap:balance}
+header p{margin:0;color:var(--muted);font-size:.9rem;letter-spacing:.02em}
+.tag{margin-left:auto;font:500 .72rem var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--khaki);border:1px solid var(--line);padding:4px 8px;border-radius:4px}
+
+.main{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(0,1fr);gap:18px;align-items:start}
+@media (max-width:880px){.main{grid-template-columns:1fr}}
+
+/* Escenario */
+.stage{position:relative;aspect-ratio:16/9;max-width:100%;border-radius:10px;overflow:hidden;background:#000;box-shadow:var(--shadow)}
+.stage img,.stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.stage video{opacity:0;transition:opacity .12s linear}
+.stage video.on{opacity:1}
+.caption{position:absolute;left:12px;right:12px;bottom:12px;background:rgba(24,22,18,.78);color:#F6F0E2;padding:10px 14px;border-radius:8px;font-size:1rem;line-height:1.4;backdrop-filter:blur(4px)}
+.caption b{font-family:var(--display);color:#E8C465;font-weight:600;margin-right:6px}
+.caption[hidden],.gate[hidden]{display:none}
+.powered{position:absolute;top:10px;right:12px;font:500 .7rem var(--mono);letter-spacing:.08em;color:#F6F0E2;background:rgba(24,22,18,.55);padding:3px 8px;border-radius:4px}
+.gate{position:absolute;inset:0;display:grid;place-items:center;background:linear-gradient(180deg,rgba(20,18,14,.15),rgba(20,18,14,.55))}
+.gate button{font:600 1.25rem var(--display);padding:14px 26px;border-radius:999px;border:0;background:var(--gold-soft);color:#2A2415;cursor:pointer;box-shadow:0 10px 30px -10px rgba(0,0,0,.6)}
+:root[data-theme="dark"] .gate button{color:#F1E3B8;background:#3A3120}
+.gate button:focus-visible,.chip:focus-visible,.clip:focus-visible,.icon:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+.stage-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;color:var(--muted);font-size:.9rem}
+.icon{border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:6px;padding:6px 10px;font:500 .85rem var(--body);cursor:pointer}
+.now{font:500 .78rem var(--mono);letter-spacing:.04em}
+.now span{color:var(--gold)}
+
+/* Conversación */
+.chat{background:var(--surface);border:1px solid var(--line);border-radius:10px;display:flex;flex-direction:column;min-height:0;box-shadow:var(--shadow)}
+.chat h2{font:600 1.05rem var(--display);margin:0;padding:12px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.chat h2 small{font:400 .72rem var(--mono);color:var(--khaki);letter-spacing:.06em;text-transform:uppercase}
+.log{padding:14px 16px;display:flex;flex-direction:column;gap:10px;height:380px;overflow-y:auto}
+@media (max-width:880px){.log{height:300px}}
+.msg{max-width:88%;padding:9px 13px;border-radius:12px;line-height:1.42}
+.msg.me{align-self:flex-end;background:var(--bubble-me);color:var(--bubble-me-ink);border-bottom-right-radius:4px}
+.msg.dr{align-self:flex-start;background:var(--ground);border:1px solid var(--line);border-bottom-left-radius:4px}
+.card{margin-top:8px;border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:8px 10px;font-size:.88rem;display:grid;gap:3px}
+.card .k{font:500 .7rem var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.card .v{font-family:var(--mono);font-size:.82rem;font-variant-numeric:tabular-nums}
+.pill{justify-self:start;font:600 .75rem var(--body);padding:2px 9px;border-radius:999px}
+.pill.ok{background:var(--ok-soft);color:var(--ok)}
+.pill.warn{background:var(--warn-soft);color:var(--warn)}
+.pill.info{background:var(--gold-soft);color:var(--gold)}
+.chips{display:flex;flex-wrap:wrap;gap:8px;padding:12px 16px;border-top:1px solid var(--line)}
+.chip{border:1px solid var(--line);background:var(--ground);color:var(--ink);border-radius:999px;padding:7px 13px;font:500 .92rem var(--body);cursor:pointer;text-align:left}
+.chip:hover{border-color:var(--gold)}
+.chip:disabled{opacity:.45;cursor:default}
+.note{padding:0 16px 12px;color:var(--muted);font-size:.8rem}
+
+/* Todas las animaciones */
+section.all h2{font:600 1.25rem var(--display);margin:6px 0 4px}
+section.all p{margin:0 0 12px;color:var(--muted);max-width:65ch}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+.clip{display:grid;gap:6px;background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:8px;cursor:pointer;text-align:left;color:var(--ink);font:inherit}
+.clip:hover{border-color:var(--gold)}
+.clip video{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:5px;background:#000;pointer-events:none}
+.clip b{font:600 .98rem var(--display)}
+.clip span{font-size:.82rem;color:var(--muted);line-height:1.35}
+footer{color:var(--muted);font-size:.82rem;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-wrap:wrap;gap:6px 16px;justify-content:space-between}
+@media (prefers-reduced-motion:reduce){.stage video{transition:none}}
+</style>
+
+<div class="wrap">
+  <header>
+    <img src="media/logo.png" alt="Emblema del Dr Electrum">
+    <div>
+      <h1>Oficina del Dr Electrum</h1>
+      <p>Tu geólogo de campo · Powered by Orden Global</p>
+    </div>
+    <span class="tag">Prototipo · datos de ejemplo</span>
+  </header>
+
+  <div class="main">
+    <div>
+      <div class="stage" id="stage">
+        <img id="still" src="media/oficina.jpg" alt="La oficina del Dr Electrum">
+        <video id="vid" playsinline muted preload="auto"></video>
+        <span class="powered">POWERED BY ORDEN GLOBAL</span>
+        <div class="caption" id="cap" hidden></div>
+        <div class="gate" id="gate"><button id="enter" type="button">▶ Entrar a la oficina</button></div>
+      </div>
+      <div class="stage-bar">
+        <button class="icon" id="sound" type="button" aria-pressed="true">🔊 Voz activada</button>
+        <button class="icon" id="replay" type="button">↺ Repetir entrada</button>
+        <span class="now" id="now">Animación: <span>—</span></span>
+      </div>
+    </div>
+
+    <div class="chat">
+      <h2>Conversación <small>Toca una pregunta</small></h2>
+      <div class="log" id="log" aria-live="polite"><div class="msg dr">La oficina está vacía. Toca <b>Entrar a la oficina</b> y el Dr Electrum llega caminando.</div></div>
+      <div class="chips" id="chips"></div>
+      <div class="note">Si no tocas nada en 15 s, él se entretiene solo.</div>
+    </div>
+  </div>
+
+  <section class="all">
+    <h2>Las 11 animaciones</h2>
+    <p>Todas empiezan y terminan en la misma pose. Por eso se encadenan sin cortes: la app elige cuál poner según lo que se está hablando. Toca una para verla en la oficina.</p>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <footer>
+    <span>Concepto de ElectrumApp · 24-sep-2026 · no publicado</span>
+    <span>Las concesiones, coordenadas y resultados de esta demo son inventados.</span>
+  </footer>
+</div>
+
+<script>
+const CLIPS = {
+  entrada:     {t:"Entra a la oficina",  d:"Llega caminando desde fuera de cámara y saluda.", ends:"base"},
+  saludo:      {t:"Saluda",              d:"Cuando el usuario vuelve.", ends:"base"},
+  pensando:    {t:"Piensa",              d:"Mientras busca en el catastro o recuerda la zona.", ends:"base"},
+  computadora: {t:"Señala el mapa",      d:"Al mostrar concesiones en la computadora.", ends:"base"},
+  lupa:        {t:"Saca la lupa",        d:"Al revisar la foto de una roca.", ends:"base"},
+  buena:       {t:"Buena noticia",       d:"Sin traslapes, todo en orden.", ends:"base"},
+  advertencia: {t:"Advierte",            d:"Traslape, plazo vencido o dato dudoso.", ends:"base"},
+  explica:     {t:"Explica",             d:"Lecciones cortas y dudas generales.", ends:"base"},
+  espera:      {t:"Espera",              d:"Cuando el usuario no toca nada.", ends:"base"},
+  despedida:   {t:"Se despide",          d:"Al cerrar la sesión.", ends:"base"},
+  campo:       {t:"Sale al campo",       d:"Abre el modo campo (cámara y GPS).", ends:"empty"},
+};
+const LINES = {
+  entrada:"¡Buenas tardes! Soy el Doctor Electrum, geólogo de campo. Pase adelante… ¿qué terreno vemos hoy?",
+  saludo:"¡Qué gusto verle de nuevo! Tengo el café listo y los mapas abiertos.",
+  pensando:"Mmm… déjeme pensar. Esa zona la conozco. Ahí el río cambió de curso hace unos años.",
+  computadora:"Mire aquí, en la pantalla. Este polígono amarillo es la concesión, y su punto cae justo afuera, en el borde norte.",
+  lupa:"A ver esa roca de cerca… Tiene brillo metálico y vetas de cuarzo. Interesante. Pero eso solo lo confirma un laboratorio.",
+  buena:"¡Buenas noticias! Su polígono no choca con ninguna concesión, ni con áreas protegidas.",
+  advertencia:"Ojo aquí. Esta parte se traslapa con una zona de reserva. Antes de dar cualquier paso, conviene revisarlo con un abogado.",
+  explica:"Una concesión es un permiso del Estado para explorar o explotar minerales en un área definida. Ojo: no es lo mismo que ser dueño del terreno.",
+  espera:"Tómese su tiempo. Yo aquí reviso unos mapas mientras tanto.",
+  despedida:"Fue un gusto. Le guardé todo en su expediente. ¡Que le vaya bien!",
+  campo:"¡Vamos al campo! Encienda el GPS y lleve la cámara. Yo le acompaño desde el teléfono.",
+};
+// Cada pregunta: lo que dice el usuario, qué animación va, y la tarjeta de resultado (ejemplo).
+const TOPICS = [
+  {q:"¿De quién es este terreno?", sub:"14.3712, -87.6425", clip:"computadora",
+   card:[["pill info","Fuera de concesión"],["k","Punto consultado"],["v","14.3712 N · 87.6425 O"],["k","Más cercana"],["v","«El Carrizal» (ejemplo) · 180 m al sur"],["k","Fuente"],["v","Catastro minero · corte de ejemplo"]]},
+  {q:"Dibujé mi polígono, ¿choca con algo?", clip:"buena",
+   card:[["pill ok","Sin traslapes"],["k","Área"],["v","38,6 ha"],["k","Concesiones que toca"],["v","0"],["k","Áreas protegidas"],["v","0"]]},
+  {q:"¿Y este otro polígono?", clip:"advertencia",
+   card:[["pill warn","Traslape"],["k","Con"],["v","Zona de reserva (ejemplo)"],["k","Superficie traslapada"],["v","2,4 ha · 6 %"],["k","Siguiente paso"],["v","Revisión legal antes de tramitar"]]},
+  {q:"Le mando foto de una roca", clip:"lupa",
+   card:[["pill info","Orientativo"],["k","Parece"],["v","Cuarzo con sulfuros"],["k","Recomendación"],["v","Análisis de laboratorio (ensayo al fuego)"]]},
+  {q:"¿Qué es una concesión?", clip:"explica", card:null},
+  {q:"¿Qué ha pasado en esta zona?", clip:"pensando",
+   card:[["k","Historial"],["v","Cauce del río desplazado ~40 m (imágenes 2019 → 2024)"]]},
+  {q:"Hola de nuevo", clip:"saludo", card:null},
+  {q:"Voy para el terreno", clip:"campo",
+   card:[["pill info","Modo campo"],["k","Se activa"],["v","Cámara · GPS · notas de voz sin señal"]]},
+  {q:"Gracias, hasta luego", clip:"despedida", card:null},
+];
+
+const $ = s => document.querySelector(s);
+const vid = $("#vid"), still = $("#still"), cap = $("#cap"), log = $("#log");
+const STILL = {base:"media/base.jpg", empty:"media/oficina.jpg"};
+let voice = true, busy = false, idleTimer = null, audio = new Audio(), outside = false;
+
+function setStill(k){ still.src = STILL[k]; }
+function showCaption(text){ cap.innerHTML = "<b>Dr Electrum</b>" + text; cap.hidden = false; }
+
+function play(key, {speak=true} = {}){
+  return new Promise(res=>{
+    clearTimeout(idleTimer);
+    busy = true; toggleChips(true);
+    $("#now").innerHTML = 'Animación: <span>' + CLIPS[key].t + '</span>';
+    vid.src = "media/" + key + ".mp4";
+    vid.currentTime = 0;
+    const go = () => {
+      vid.classList.add("on");
+      vid.play().catch(()=>{});
+      if (speak) {
+        showCaption(LINES[key]);
+        if (voice) { audio.src = "media/voz-" + key + ".mp3"; audio.currentTime = 0; audio.play().catch(()=>{}); }
+      }
+    };
+    vid.oncanplay = () => { vid.oncanplay = null; go(); };
+    vid.onended = () => {
+      // si la voz sigue, él sigue hablando con la animación de explicar (misma pose de inicio y fin)
+      const left = audio.duration - audio.currentTime;
+      if (voice && !audio.paused && left > 1.2 && CLIPS[key].ends === "base") {
+        vid.src = "media/explica.mp4"; vid.currentTime = 0; vid.play().catch(()=>{});
+        return;
+      }
+      setStill(CLIPS[key].ends);
+      outside = CLIPS[key].ends === "empty";
+      // el fotograma final ya es igual a la imagen fija: se retira el video sin salto
+      requestAnimationFrame(()=>vid.classList.remove("on"));
+      busy = false; toggleChips(false); armIdle(); res();
+    };
+  });
+}
+
+function toggleChips(dis){ document.querySelectorAll(".chip").forEach(c=>c.disabled = dis); }
+function armIdle(){
+  clearTimeout(idleTimer);
+  if (outside) return;
+  idleTimer = setTimeout(()=>{ if(!busy){ play("espera",{speak:false}); } }, 15000);
+}
+
+function add(who, html){
+  const el = document.createElement("div");
+  el.className = "msg " + who; el.innerHTML = html;
+  log.appendChild(el); log.scrollTop = log.scrollHeight; return el;
+}
+function cardHTML(rows){
+  if(!rows) return "";
+  return '<div class="card">' + rows.map(([c,t]) =>
+    c.startsWith("pill") ? `<span class="${c}">${t}</span>` : `<span class="${c}">${t}</span>`).join("") + "</div>";
+}
+
+async function ask(t){
+  if (busy) return;
+  add("me", t.q + (t.sub ? ` <span style="font-family:var(--mono);font-size:.8rem;opacity:.75">${t.sub}</span>` : ""));
+  if (outside && t.clip !== "campo") { await play("entrada",{speak:false}); }
+  add("dr", LINES[t.clip] + cardHTML(t.card));
+  await play(t.clip);
+  if (t.clip === "campo") {
+    add("dr", '<span class="pill info">Fuera de la oficina</span> Toca cualquier pregunta y vuelve a entrar.');
+  }
+}
+
+function buildChips(){
+  const box = $("#chips");
+  TOPICS.forEach(t=>{
+    const b = document.createElement("button");
+    b.type="button"; b.className="chip"; b.textContent=t.q; b.disabled=true;
+    b.onclick = () => ask(t);
+    box.appendChild(b);
+  });
+}
+function buildGrid(){
+  const g = $("#grid");
+  Object.entries(CLIPS).forEach(([k,c])=>{
+    const b = document.createElement("button");
+    b.type="button"; b.className="clip";
+    b.innerHTML = `<video src="media/${k}.mp4#t=2" muted playsinline preload="metadata"></video><b>${c.t}</b><span>${c.d}</span>`;
+    const v = b.querySelector("video");
+    b.onmouseenter = () => { v.currentTime=0; v.play().catch(()=>{}); };
+    b.onmouseleave = () => { v.pause(); };
+    b.onclick = async () => {
+      if (busy || $("#gate").hidden === false) return;
+      $("#stage").scrollIntoView({behavior:"smooth",block:"center"});
+      if (outside && k !== "entrada") await play("entrada",{speak:false});
+      play(k);
+    };
+    g.appendChild(b);
+  });
+}
+
+$("#enter").onclick = async () => {
+  $("#gate").hidden = true;
+  add("dr", "…");
+  log.lastChild.remove();
+  await play("entrada");
+  add("dr", LINES.entrada);
+};
+$("#replay").onclick = async () => {
+  if (busy || !$("#gate").hidden) return;
+  setStill("empty"); outside = true;
+  await play("entrada");
+};
+$("#sound").onclick = e => {
+  voice = !voice; audio.pause();
+  e.currentTarget.textContent = voice ? "🔊 Voz activada" : "🔈 Voz apagada";
+  e.currentTarget.setAttribute("aria-pressed", voice);
+};
+
+buildChips(); buildGrid();
+</script>
