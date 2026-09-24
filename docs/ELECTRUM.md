@@ -693,19 +693,25 @@ cuántos mensajes recibió: turno 1 `[system, user]`; turno 2 `[system, user, as
 intercambio anterior dentro; **tras recargar la página**, el siguiente turno llegó con diez
 mensajes; y después de pulsar Borrar, volvió a `[system, user]` sin nada previo.
 
-## El mapa: lo que falta
+## El mapa pinta el catastro — **hecho y mirado**
 
 `/api/electrum/catastro.geojson` sirve las 1079 concesiones con su nombre, titular, estado y
 hectáreas, más el rectángulo que las abarca —546 KB, 67 ms medidos—, y la web lo pide al abrir el
-mapa. **Pero el mapa todavía no las pinta.**
+mapa.
 
-Hay una causa encontrada y arreglada: una capa de MapLibre se ata al objeto fuente que existía
-cuando se la añadió, así que tras una recarga de estilo `getLayer` la encuentra y parece sana, pero
-apunta a una fuente muerta y no dibuja nada. No bastó: la fuente vuelve a desaparecer.
+No las pintaba por dos causas encadenadas:
 
-No se pudo terminar de aislar porque en el entorno de desarrollo las teselas del satélite fallan sin
-parar y esos fallos recargan el estilo solos: no hay forma de separar el fallo propio del ruido.
-Queda pendiente, y hay que retomarlo con red que funcione.
+1. Una capa de MapLibre se ata al objeto fuente que existía cuando se la añadió; tras una recarga
+   de estilo `getLayer` la encontraba y parecía sana, pero apuntaba a una fuente muerta. Arreglado.
+2. La de verdad: **el worker de MapLibre no se emitía en el build**. MapLibre 6 carga el GeoJSON
+   dentro de un worker; sin el archivo, el servidor contestaba con el `index.html` del fallback y
+   el worker moría sin avisar. Ahora `src-electrum/mapa/Mapa.tsx` importa el worker con
+   `?worker&url` y lo fija con `maplibregl.setWorkerUrl`, y `vite.config.ts` lo emite como módulo
+   (`worker.format: 'es'`). Mirado en un navegador contra el build: las concesiones salen pintadas.
+
+Queda aparte la capa «Calles»: las teselas públicas de OpenStreetMap contestan 403 fuera de un
+navegador con su política de uso. Se resuelve con las teselas propias servidas desde el nodo
+(Protomaps), que está pendiente junto con la puerta TLS del nodo.
 
 ## Estado
 
