@@ -1,0 +1,333 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Dr Electrum</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@600;700&family=Alegreya+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/* Diseño de un solo mundo: la oficina ocupa toda la pantalla y la interfaz flota encima. */
+:root{
+  color-scheme:dark;
+  --glass:rgba(22,19,15,.62);
+  --glass-strong:rgba(22,19,15,.82);
+  --line:rgba(241,227,184,.18);
+  --paper:#F6F0E2;
+  --muted:#CFC4AA;
+  --gold:#E2B84E;
+  --gold-deep:#A87E1A;
+  --live:#7FC17A;
+  --rec:#E0764F;
+  --display:"Zilla Slab",Rockwell,"Roboto Slab",Georgia,serif;
+  --body:"Alegreya Sans","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+html,body{height:100%}
+body{margin:0;background:#15120E;color:var(--paper);font:17px/1.45 var(--body);overflow:hidden;-webkit-tap-highlight-color:transparent}
+#scene{position:fixed;inset:0;width:100%;height:100%;display:block;background:#15120E}
+video.src{display:none}
+
+/* barra superior */
+.top{position:fixed;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 0;display:flex;align-items:center;gap:10px;pointer-events:none}
+.brand{display:flex;align-items:center;gap:10px;background:var(--glass);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--line);padding:6px 14px 6px 6px;border-radius:999px;pointer-events:auto}
+.brand img{width:38px;height:38px;border-radius:50%;object-fit:cover;object-position:50% 22%;border:1.5px solid var(--gold)}
+.brand b{display:block;font:700 1.05rem/1.1 var(--display);letter-spacing:.01em}
+.brand small{display:block;font:500 .62rem var(--mono);letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
+.pill{white-space:nowrap;margin-left:auto;display:flex;align-items:center;gap:7px;background:var(--glass);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--line);padding:7px 12px;border-radius:999px;font:500 .72rem var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);pointer-events:auto}
+.pill i{width:8px;height:8px;border-radius:50%;background:#8A8170}
+.pill.live i{background:var(--live);box-shadow:0 0 0 3px rgba(127,193,122,.25)}
+.pill.demo i{background:var(--gold)}
+
+/* parte de abajo */
+.bottom{position:fixed;left:0;right:0;bottom:0;padding:0 16px calc(env(safe-area-inset-bottom,0px) + 16px);display:grid;justify-items:center;gap:12px;pointer-events:none}
+.sub{max-width:min(720px,100%);background:var(--glass-strong);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid var(--line);border-radius:14px;padding:12px 16px;font-size:1.08rem;line-height:1.42;text-wrap:pretty;pointer-events:auto}
+.sub .who{display:block;font:600 .9rem var(--display);color:var(--gold);margin-bottom:2px}
+.sub.you .who{color:var(--muted)}
+.sub[hidden]{display:none}
+.chips{display:flex;gap:8px;overflow-x:auto;max-width:100%;padding:2px 2px 4px;scrollbar-width:none;pointer-events:auto}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border:1px solid var(--line);background:var(--glass);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:var(--paper);border-radius:999px;padding:8px 14px;font:500 .95rem var(--body);cursor:pointer;white-space:nowrap}
+.chip:hover{border-color:var(--gold)}
+.chip:disabled{opacity:.45;cursor:default}
+.controls{display:flex;align-items:center;gap:14px;pointer-events:auto}
+.mic{position:relative;width:74px;height:74px;border-radius:50%;border:0;cursor:pointer;background:var(--gold);color:#221C10;display:grid;place-items:center;box-shadow:0 10px 30px -8px rgba(0,0,0,.7)}
+.mic svg{width:30px;height:30px}
+.mic .ring{position:absolute;inset:-8px;border-radius:50%;border:3px solid var(--gold);opacity:0;transform:scale(1);transition:opacity .2s}
+.mic.on{background:var(--rec);color:#fff}
+.mic.on .ring{opacity:.7;border-color:var(--rec)}
+.hint{font:500 .78rem var(--mono);letter-spacing:.05em;color:var(--muted);text-align:center;min-height:1.2em;text-shadow:0 1px 6px rgba(0,0,0,.8)}
+.small{border:1px solid var(--line);background:var(--glass);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);color:var(--paper);border-radius:999px;width:46px;height:46px;display:grid;place-items:center;cursor:pointer}
+.small svg{width:20px;height:20px}
+button:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
+
+/* entrada */
+.gate{position:fixed;inset:0;display:grid;place-items:center;align-content:center;gap:18px;background:linear-gradient(180deg,rgba(15,13,10,.1),rgba(15,13,10,.6));text-align:center;padding-inline:16px}
+.gate[hidden]{display:none}
+html.gated .bottom,html.gated .top .pill{visibility:hidden}
+.gate h1{margin:0;font:700 clamp(2rem,6vw,3.4rem)/1 var(--display);text-shadow:0 2px 18px rgba(0,0,0,.6)}
+.gate p{margin:0;color:var(--muted);max-width:40ch;text-shadow:0 1px 8px rgba(0,0,0,.8)}
+.gate button{font:700 1.2rem var(--display);padding:14px 30px;border-radius:999px;border:0;background:var(--gold);color:#221C10;cursor:pointer;box-shadow:0 12px 34px -10px rgba(0,0,0,.8)}
+.gate .pw{font:500 .7rem var(--mono);letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
+.toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 70px);transform:translateX(-50%);max-width:min(560px,calc(100% - 32px));background:var(--glass-strong);border:1px solid var(--line);border-radius:12px;padding:10px 14px;font-size:.92rem;backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.toast[hidden]{display:none}
+@media (max-height:520px){.chips{display:none}.sub{font-size:.98rem;padding:8px 12px}}
+</style>
+
+<script>document.documentElement.classList.add("gated")</script>
+<canvas id="scene" aria-label="La oficina del Dr Electrum"></canvas>
+<video class="src" id="v" muted playsinline preload="auto"></video>
+
+<div class="top">
+  <div class="brand"><img src="media/logo.png" alt=""><div><b>Dr Electrum</b><small>Powered by Orden Global</small></div></div>
+  <div class="pill" id="pill"><i></i><span id="pillTxt">Sin conectar</span></div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<div class="bottom">
+  <div class="sub" id="sub" hidden><span class="who" id="who">Dr Electrum</span><span id="subTxt"></span></div>
+  <div class="chips" id="chips"></div>
+  <div class="controls">
+    <button class="small" id="mute" type="button" aria-label="Silenciar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 5 6 9H3v6h3l5 4z"/><path id="wave" d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/></svg>
+    </button>
+    <button class="mic" id="mic" type="button" aria-label="Hablar con el Dr Electrum">
+      <span class="ring" id="ring"></span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+    </button>
+    <button class="small" id="field" type="button" aria-label="Salir al campo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>
+    </button>
+  </div>
+  <div class="hint" id="hint">Toca el micrófono y háblale</div>
+</div>
+
+<div class="gate" id="gate">
+  <h1>Dr Electrum</h1>
+  <p>Tu geólogo de campo. Toca para entrar a su oficina.</p>
+  <button id="enter" type="button">Entrar</button>
+  <span class="pw">Powered by Orden Global</span>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@elevenlabs/client@1.25.0/dist/lib.iife.js"></script>
+<script>
+const AGENT_ID = "agent_3501m3awayy5efhsqhkjkn7kacy8";
+const IMG_W = 1280, IMG_H = 720;
+// Parche de la boca en coordenadas de la imagen base (medido al alinear las bocas).
+const MOUTH = {x:317, y:202, w:118, h:88};
+// Punto que la cámara nunca recorta: la cara del Dr Electrum.
+const FOCUS = {x:372, y:300};
+
+const LINES = {
+  entrada:"¡Buenas tardes! Soy el Doctor Electrum, geólogo de campo. Pase adelante… ¿qué terreno vemos hoy?",
+  saludo:"¡Qué gusto verle de nuevo! Tengo el café listo y los mapas abiertos.",
+  pensando:"Mmm… déjeme pensar. Esa zona la conozco. Ahí el río cambió de curso hace unos años.",
+  computadora:"Mire aquí, en la pantalla. Este polígono amarillo es la concesión, y su punto cae justo afuera, en el borde norte.",
+  lupa:"A ver esa roca de cerca… Tiene brillo metálico y vetas de cuarzo. Interesante. Pero eso solo lo confirma un laboratorio.",
+  buena:"¡Buenas noticias! Su polígono no choca con ninguna concesión, ni con áreas protegidas.",
+  advertencia:"Ojo aquí. Esta parte se traslapa con una zona de reserva. Antes de dar cualquier paso, conviene revisarlo con un abogado.",
+  explica:"Una concesión es un permiso del Estado para explorar o explotar minerales en un área definida. Ojo: no es lo mismo que ser dueño del terreno.",
+  despedida:"Fue un gusto. Le guardé todo en su expediente. ¡Que le vaya bien!",
+  campo:"¡Vamos al campo! Encienda el GPS y lleve la cámara. Yo le acompaño desde el teléfono.",
+};
+const CHIPS = [
+  ["¿Qué es una concesión?","explica"],
+  ["¿De quién es este terreno?","computadora"],
+  ["¿Mi polígono choca con algo?","buena"],
+  ["¿Y este otro polígono?","advertencia"],
+  ["Le describo una roca","lupa"],
+  ["¿Qué pasó en esta zona?","pensando"],
+  ["Hola de nuevo","saludo"],
+  ["Gracias, hasta luego","despedida"],
+];
+
+const $ = s => document.querySelector(s);
+const cv = $("#scene"), ctx = cv.getContext("2d"), vid = $("#v");
+const load = src => new Promise(r => { const i = new Image(); i.onload = () => r(i); i.src = src; });
+let IM = {}, still = "empty", playingVideo = false, muted = false;
+let viseme = "rest", lastSwitch = 0, silentSince = 0, peak = 0.02;
+
+/* ---------- audio: una sola fuente a la vez, de ella sale la boca ---------- */
+let actx, analyser, freq, voiceEl = new Audio(), voiceSrc, source = null; // "clip" | "agent" | null
+let convo = null, agentMode = "listening";
+
+function ensureAudio(){
+  if (actx) return;
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = actx.createAnalyser(); analyser.fftSize = 1024; analyser.smoothingTimeConstant = 0.25;
+  voiceSrc = actx.createMediaElementSource(voiceEl);
+  voiceSrc.connect(analyser); analyser.connect(actx.destination);
+  freq = new Uint8Array(analyser.frequencyBinCount);
+}
+
+// Lee el espectro de lo que está sonando AHORA MISMO y decide la forma de la boca.
+function readSpectrum(){
+  if (source === "clip" && !voiceEl.paused) { analyser.getByteFrequencyData(freq); return freq; }
+  if (source === "agent" && convo && agentMode === "speaking") {
+    try { return convo.getOutputByteFrequencyData(); } catch(e) { return null; }
+  }
+  return null;
+}
+function band(a, f0, f1){ // fracciones del espectro
+  const i0 = Math.floor(a.length*f0), i1 = Math.max(i0+1, Math.floor(a.length*f1));
+  let s = 0; for (let i=i0;i<i1;i++) s += a[i]; return s/((i1-i0)*255);
+}
+function pickViseme(now){
+  const a = readSpectrum();
+  if (!a) { viseme = "rest"; return; }
+  const low = band(a, .006, .045), mid = band(a, .045, .12), high = band(a, .12, .32);
+  const e = low*.45 + mid*.4 + high*.15;
+  peak = Math.max(e, peak*0.995, 0.06);
+  const lvl = e/peak;
+  let next;
+  if (e < 0.035) {                       // silencio real: boca cerrada
+    if (!silentSince) silentSince = now;
+    next = (now - silentSince > 220) ? "rest" : "m";
+  } else {
+    silentSince = 0;
+    const bright = high/(low+0.01);
+    if (lvl > 0.72) next = "a";
+    else if (lvl > 0.42) next = bright > 0.55 ? "e" : "o";
+    else if (lvl > 0.2) next = "e";
+    else next = "m";
+  }
+  if (next !== viseme && now - lastSwitch > 55) { viseme = next; lastSwitch = now; }
+}
+
+/* ---------- dibujo a pantalla completa ---------- */
+let view = {s:1, ox:0, oy:0};
+function layout(){
+  const dpr = Math.min(window.devicePixelRatio||1, 2);
+  cv.width = Math.round(innerWidth*dpr); cv.height = Math.round(innerHeight*dpr);
+  const s = Math.max(cv.width/IMG_W, cv.height/IMG_H);
+  const clamp = (v,lo,hi)=>Math.min(hi,Math.max(lo,v));
+  // en vertical, la cara queda algo por encima del centro para dejar sitio a los controles
+  const tx = cv.width/2, ty = cv.height*(cv.height>cv.width ? .42 : .5);
+  view = {s, ox:clamp(tx - FOCUS.x*s, cv.width - IMG_W*s, 0), oy:clamp(ty - FOCUS.y*s, cv.height - IMG_H*s, 0)};
+}
+function draw(now){
+  if (!playingVideo) pickViseme(now);
+  const {s,ox,oy} = view;
+  ctx.imageSmoothingQuality = "high";
+  if (playingVideo && vid.readyState >= 2) ctx.drawImage(vid, ox, oy, IMG_W*s, IMG_H*s);
+  else {
+    ctx.drawImage(still === "base" ? IM.base : IM.empty, ox, oy, IMG_W*s, IMG_H*s);
+    if (still === "base" && viseme !== "rest")
+      ctx.drawImage(IM[viseme], ox + MOUTH.x*s, oy + MOUTH.y*s, MOUTH.w*s, MOUTH.h*s);
+  }
+  // anillo del micrófono: sigue tu voz mientras él escucha
+  if (convo && agentMode === "listening") {
+    let v = 0; try { v = convo.getInputVolume(); } catch(e) {}
+    $("#ring").style.transform = `scale(${1 + Math.min(v*2.2,.45)})`;
+  } else $("#ring").style.transform = "scale(1)";
+  requestAnimationFrame(draw);
+}
+
+/* ---------- interfaz ---------- */
+let subTimer;
+function say(text, who="Dr Electrum", you=false){
+  const el = $("#sub"); el.hidden = false; el.classList.toggle("you", you);
+  $("#who").textContent = who; $("#subTxt").textContent = text;
+  clearTimeout(subTimer);
+}
+function toast(t, ms=6000){ const el=$("#toast"); el.textContent=t; el.hidden=false; clearTimeout(el._t); el._t=setTimeout(()=>el.hidden=true, ms); }
+function hint(t){ $("#hint").textContent = t; }
+function setPill(kind, txt){ const p=$("#pill"); p.className = "pill " + kind; $("#pillTxt").textContent = txt; }
+function chipsDisabled(d){ document.querySelectorAll(".chip").forEach(c=>c.disabled=d); }
+
+function playVideo(name){
+  return new Promise(res=>{
+    vid.src = "media/" + name + ".mp4"; vid.currentTime = 0;
+    vid.oncanplay = () => { vid.oncanplay = null; playingVideo = true; vid.play().catch(()=>{}); };
+    const done = () => { vid.onended = vid.onerror = null; clearTimeout(guard); playingVideo = false; res(); };
+    vid.onended = done; vid.onerror = done;
+    const guard = setTimeout(() => { if (!playingVideo) done(); }, 4000); // si el video no carga, se sigue sin él
+  });
+}
+// Una línea grabada: la boca se mueve solo mientras suena, leyendo este mismo audio.
+function speakClip(key){
+  return new Promise(res=>{
+    ensureAudio(); if (actx.state === "suspended") actx.resume();
+    source = "clip"; chipsDisabled(true);
+    say(LINES[key]);
+    voiceEl.src = "media/voz-" + key + ".mp3"; voiceEl.muted = muted;
+    voiceEl.onended = () => { source = null; chipsDisabled(false); res(); };
+    voiceEl.play().catch(()=>{ source = null; chipsDisabled(false); res(); });
+  });
+}
+
+async function enter(){
+  $("#gate").hidden = true; document.documentElement.classList.remove("gated");
+  ensureAudio(); actx.resume();
+  await playVideo("entrada");       // entra caminando, sin hablar
+  still = "base";
+  await speakClip("entrada");        // y solo entonces habla
+  hint("Toca el micrófono y háblale");
+}
+
+async function startLive(){
+  if (!window.ElevenLabsClient) { toast("No se pudo cargar la conexión de voz."); return; }
+  hint("Conectando…"); setPill("", "Conectando");
+  try {
+    convo = await ElevenLabsClient.Conversation.startSession({
+      agentId: AGENT_ID,
+      onConnect: () => { setPill("live","En vivo"); $("#mic").classList.add("on"); hint("Te escucho. Háblale con calma."); chipsDisabled(true); },
+      onDisconnect: () => { endLive(true); },
+      onModeChange: ({mode}) => {
+        agentMode = mode; source = mode === "speaking" ? "agent" : null;
+        hint(mode === "speaking" ? "Está hablando…" : "Te escucho");
+      },
+      onMessage: ({message, source:src, role}) => {
+        const mine = (role || src) === "user";
+        say(message, mine ? "Usted" : "Dr Electrum", mine);
+      },
+      onError: (e) => { console.warn(e); },
+    });
+    try { convo.setVolume({volume: muted ? 0 : 1}); } catch(e) {}
+  } catch (e) {
+    convo = null; setPill("demo","Demostración");
+    hint("Toca una pregunta de abajo");
+    toast("Aquí no se puede usar el micrófono: esta vista bloquea micrófono y conexión. En la app publicada sí conversa en vivo. Mientras tanto, toca una pregunta y le verá hablar con su voz.", 9000);
+  }
+}
+async function endLive(fromServer){
+  const c = convo; convo = null; agentMode = "listening"; source = null;
+  $("#mic").classList.remove("on"); chipsDisabled(false);
+  setPill("", "Sin conectar"); hint("Toca el micrófono y háblale");
+  if (c && !fromServer) { try { await c.endSession(); } catch(e) {} }
+}
+
+$("#enter").onclick = enter;
+$("#mic").onclick = () => { if (!$("#gate").hidden) return; convo ? endLive(false) : startLive(); };
+$("#mute").onclick = () => {
+  muted = !muted; voiceEl.muted = muted;
+  if (convo) { try { convo.setVolume({volume: muted ? 0 : 1}); } catch(e) {} }
+  $("#wave").style.display = muted ? "none" : "";
+  $("#mute").setAttribute("aria-label", muted ? "Activar sonido" : "Silenciar");
+};
+$("#field").onclick = async () => {
+  if (source || convo || still !== "base") return;
+  chipsDisabled(true);
+  await speakClip("campo");
+  await playVideo("campo"); still = "empty";
+  say("Salió al campo. Toca la oficina para que vuelva.");
+  cv.onclick = async () => { cv.onclick = null; await playVideo("entrada"); still = "base"; await speakClip("saludo"); };
+};
+CHIPS.forEach(([q, key]) => {
+  const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.textContent = q;
+  b.onclick = async () => {
+    if (source || convo || still !== "base") return;
+    say(q, "Usted", true);
+    await new Promise(r => setTimeout(r, 700));
+    speakClip(key);
+  };
+  $("#chips").appendChild(b);
+});
+
+(async () => {
+  const [base, empty, m, e, a, o] = await Promise.all(["base.jpg","oficina.jpg","boca-m.png","boca-e.png","boca-a.png","boca-o.png"].map(f => load("media/" + f)));
+  IM = {base, empty, m, e, a, o};
+  layout(); addEventListener("resize", layout);
+  setPill("", "Sin conectar");
+  requestAnimationFrame(draw);
+})();
+</script>
