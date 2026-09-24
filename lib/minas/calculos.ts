@@ -17,7 +17,7 @@ export const KG_POR_TONELADA_CORTA = 907.18474;
 export const LIBRAS_POR_TONELADA = 2204.62262;
 
 export type Calculo = {
-  /** Qué se calculó, para que ULTRON lo nombre. */
+  /** Qué se calculó, para que AU-RA lo nombre. */
   tipo: string;
   /** El resultado ya redactado, en español y con unidades. Esto es lo que se dice en voz alta. */
   texto: string;

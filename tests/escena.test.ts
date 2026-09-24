@@ -56,10 +56,10 @@ test('describe cámara apagada', () => {
   assert.equal(describirEscena({ personas: 0, principal: null, motor: 'ninguno' }), 'La cámara está apagada.');
 });
 
-test('describe 1 persona cerca, sonriendo y mirando; el lado se dice desde ULTRON (x<0 = a mi derecha)', () => {
+test('describe 1 persona cerca, sonriendo y mirando; el lado se dice desde AU-RA (x<0 = a mi derecha)', () => {
   const d = describirEscena({ personas: 1, principal: principalBase({ x: -0.6, tam: 0.5, sonrisa: 0.8, mirando: true }), motor: 'mediapipe' });
   assert.equal(d, 'Veo a una persona cerca, a mi derecha, sonriendo y mirando la pantalla.');
-  assert.doesNotMatch(d, /\btu\b/, 'nunca «tu»: ULTRON habla en primera persona');
+  assert.doesNotMatch(d, /\btu\b/, 'nunca «tu»: AU-RA habla en primera persona');
 });
 
 test('describe 1 persona frente, sin gestos; y lejos a mi izquierda (x>0, espejado) mirando a otro lado', () => {
@@ -68,11 +68,11 @@ test('describe 1 persona frente, sin gestos; y lejos a mi izquierda (x>0, espeja
   assert.equal(d, 'Veo a una persona lejos, a mi izquierda, mirando hacia otro lado.');
 });
 
-test('ladoDesdeUltron: x>0 (derecha de la persona) es la izquierda de ULTRON', () => {
+test('ladoDesdeUltron: x>0 (derecha de la persona) es la izquierda de AU-RA', () => {
   assert.equal(ladoDesdeUltron(0.5), 'a mi izquierda');
   assert.equal(ladoDesdeUltron(-0.5), 'a mi derecha');
   assert.equal(ladoDesdeUltron(0.1), 'frente a mí');
-  // Cara en la izquierda del cuadro sin espejar (cx 0.2) → x espejado > 0 → está a la izquierda de la cámara/ULTRON
+  // Cara en la izquierda del cuadro sin espejar (cx 0.2) → x espejado > 0 → está a la izquierda de la cámara/AU-RA
   assert.equal(ladoDesdeUltron(espejarX(0.2)), 'a mi izquierda');
 });
 

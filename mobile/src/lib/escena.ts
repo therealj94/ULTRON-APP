@@ -1,5 +1,5 @@
 /**
- * Escena: lo que ULTRON entiende de lo que ve la cámara (móvil).
+ * Escena: lo que AU-RA entiende de lo que ve la cámara (móvil).
  *
  * Mismo contrato que la web (`src/02-cara/vision/escena.ts`), con tres motores:
  *  - 'mlkit'    → detección facial nativa en el teléfono (react-native-vision-camera + ML Kit), ~10 fps.
@@ -12,8 +12,8 @@
  * Convención de ejes (igual que la web):
  *  - x, y en -1..1. x positivo = la persona está hacia la DERECHA de la pantalla vista de frente
  *    (ESPEJADO respecto al cuadro crudo de la cámara frontal), así las pupilas (translateX positivo)
- *    apuntan hacia donde está la persona. y positivo = abajo. Visto desde ULTRON, x>0 es «a mi
- *    izquierda»: la frase va siempre en primera persona (ULTRON habla) para no sugerirle al único
+ *    apuntan hacia donde está la persona. y positivo = abajo. Visto desde AU-RA, x>0 es «a mi
+ *    izquierda»: la frase va siempre en primera persona (AU-RA habla) para no sugerirle al único
  *    presente que hay alguien más a SU lado.
  *  - tam = alto de la cara relativo al alto del cuadro (0..1).
  *  - yaw/pitch de `Observacion` son RELATIVOS a la línea persona→cámara (0 = mira a la pantalla aunque
@@ -158,8 +158,8 @@ function palabraNumero(n: number): string {
 }
 
 /**
- * Lado desde el punto de vista de ULTRON (quien habla). x>0 = la persona está a SU derecha
- * (espejado), o sea a la IZQUIERDA de ULTRON/cámara. Igual que la web.
+ * Lado desde el punto de vista de AU-RA (quien habla). x>0 = la persona está a SU derecha
+ * (espejado), o sea a la IZQUIERDA de AU-RA/cámara. Igual que la web.
  */
 export function ladoDesdeUltron(x: number): 'a mi izquierda' | 'a mi derecha' | 'frente a mí' {
   if (x > UMBRALES.ladoX) return 'a mi izquierda';
@@ -175,8 +175,8 @@ export interface EstadoDescribible {
 }
 
 /**
- * Frase en español que ULTRON puede usar como hecho, siempre en primera persona (ULTRON habla,
- * «mi» es ULTRON). Nunca inventa edad, género ni identidad.
+ * Frase en español que AU-RA puede usar como hecho, siempre en primera persona (AU-RA habla,
+ * «mi» es AU-RA). Nunca inventa edad, género ni identidad.
  *  «Veo a una persona cerca, a mi izquierda, sonriendo y mirando la pantalla.»
  *  «No veo a nadie ahora.» · «Veo a dos personas.» · «La cámara está apagada.»
  */

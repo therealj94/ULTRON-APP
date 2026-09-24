@@ -13,7 +13,7 @@ import {
 import { parsearUpdateTelegram } from '../lib/telegram-in';
 
 describe('Leer PDF e imágenes subidas', () => {
-  it('extrae el texto de un PDF generado por ULTRON', () => {
+  it('extrae el texto de un PDF generado por AU-RA', () => {
     const buf = textoAPdf({ titulo: 'Junta', cuerpo: 'Precio del oro pendiente.\nCafé de la mesa.' });
     const r = extraerPdf(buf);
     assert.match(r.texto, /Junta/);

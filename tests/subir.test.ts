@@ -24,7 +24,7 @@ test('quién puede alimentar el cerebro de Dr Electrum', async (t) => {
     assert.equal(puedeEscribir(identificar({ nombre: 'José' }), 'electrum'), false);
   });
 
-  await t.test('quien solo tiene ULTRON no carga el cerebro del otro', () => {
+  await t.test('quien solo tiene AU-RA no carga el cerebro del otro', () => {
     const antes = process.env.ULTRON_PADRON;
     process.env.ULTRON_PADRON = 'ana | Ana | ana@ordenglobal.org | | ultron=mando';
     reiniciarPadron();

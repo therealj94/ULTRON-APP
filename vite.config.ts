@@ -26,7 +26,7 @@ export default defineConfig(() => {
         /*
          * UN DESPLIEGUE, UNA APLICACIÓN.
          *
-         * Antes se compilaban las dos siempre y se servía ULTRON FP en la raíz, con Dr Electrum
+         * Antes se compilaban las dos siempre y se servía AU-RA FP en la raíz, con Dr Electrum
          * escondido en `/electrum.html`. Ahora `PLATAFORMA` decide cuál se compila: no tiene
          * sentido mandar a Render el paquete de la otra plataforma, y no mandarlo es la forma más
          * barata de que no se sirva por accidente.

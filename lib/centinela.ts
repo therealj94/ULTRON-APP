@@ -53,7 +53,7 @@ export function iniciarCentinela(ms = 180_000) {
   if (timer) return;
   previa = null;
   const correr = () => {
-    tickCentinela().catch((e) => console.warn('[ULTRON] centinela', String(e?.message || e).slice(0, 160)));
+    tickCentinela().catch((e) => console.warn('[AU-RA] centinela', String(e?.message || e).slice(0, 160)));
   };
   void correr();
   timer = setInterval(correr, Math.max(60_000, ms));

@@ -1,7 +1,7 @@
 /**
  * EL PADRÓN — quién es quién, y en cuál de las dos plataformas.
  *
- * ULTRON FP y Dr Electrum FP comparten un cuerpo (cara, voz, oído, ojos, harness) y hasta el mismo
+ * AU-RA FP y Dr Electrum FP comparten un cuerpo (cara, voz, oído, ojos, harness) y hasta el mismo
  * Qwen en el mismo nodo. No comparten NADA más: ni cerebro, ni memoria, ni herramientas, ni gente.
  * Entrar a una no es entrar a la otra. Este archivo es el único sitio donde eso se decide.
  *
@@ -54,7 +54,7 @@ export type Identificacion = { persona: Persona; prueba: Prueba };
 const ORDEN: Record<Nivel, number> = { lee: 1, escribe: 2, mando: 3 };
 
 /**
- * El padrón de arranque. José y Medardo mandan en las dos; Carlos y Mayra consultan ULTRON y no
+ * El padrón de arranque. José y Medardo mandan en las dos; Carlos y Mayra consultan AU-RA y no
  * existen en Electrum. Electrum es una demostración: su puerta empieza cerrada para todo el mundo
  * menos para quien la está construyendo.
  */
@@ -145,7 +145,7 @@ function delEntorno(): Persona[] {
       if (!Array.isArray(arr)) return [];
       return arr.map(normalizar).filter((p): p is Persona => !!p);
     } catch {
-      console.warn('[ULTRON] ULTRON_PADRON parece JSON pero no se pudo leer. Lo ignoro entero.');
+      console.warn('[AU-RA] ULTRON_PADRON parece JSON pero no se pudo leer. Lo ignoro entero.');
       return [];
     }
   }
@@ -348,7 +348,7 @@ export function puedeMandar(quien: Identificacion | null | undefined, plataforma
 
 /** La frase que se le mete al modelo para que sepa qué NO puede ofrecerle a quien tiene enfrente. */
 export function fraseDeAcceso(nivel: Nivel | null, plataforma: Plataforma): string {
-  const donde = plataforma === 'electrum' ? 'Dr Electrum' : 'ULTRON';
+  const donde = plataforma === 'electrum' ? 'Dr Electrum' : 'AU-RA';
   if (!nivel) return `ACCESO: ninguno. Quien pregunta no está en el padrón de ${donde}. No le des nada.`;
   if (nivel === 'mando') return 'ACCESO: mando. Puede pedir redespliegue, mantenimiento, ejecutor y cargar información al cerebro.';
   if (nivel === 'escribe')

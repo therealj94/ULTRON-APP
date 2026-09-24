@@ -1,13 +1,13 @@
 /**
  * QUÉ PRODUCTO ES ESTE DESPLIEGUE.
  *
- * Hasta ahora el mismo proceso servía las dos cosas: ULTRON FP en `/` y Dr Electrum en
+ * Hasta ahora el mismo proceso servía las dos cosas: AU-RA FP en `/` y Dr Electrum en
  * `/electrum.html`. Cómodo para desarrollar y equivocado para vender. Son dos productos, con dos
  * públicos y dos puertas, y compartían tres cosas que no deberían:
  *
- *  1. **La dirección.** Quien abría el enlace de Dr Electrum aterrizaba en ULTRON FP.
+ *  1. **La dirección.** Quien abría el enlace de Dr Electrum aterrizaba en AU-RA FP.
  *  2. **La superficie de la API.** Un despliegue de Dr Electrum exponía `/api/ejecutar` —el ejecutor
- *     de código de ULTRON—, `/api/render/deploy`, `/api/taller` y `/api/vault/*`. Están detrás de
+ *     de código de AU-RA—, `/api/render/deploy`, `/api/taller` y `/api/vault/*`. Están detrás de
  *     permisos, sí; pero la mejor defensa de una ruta peligrosa es que no esté en ese servidor.
  *  3. **Los dos bots de Telegram** registrados desde el mismo proceso.
  *
@@ -15,7 +15,7 @@
  * de visión, el de voz. Son tuberías, no producto.
  *
  * Por defecto es **electrum**. No es una preferencia estética: el servicio que existe hoy en Render
- * es el de Dr Electrum, y un valor por defecto que hay que recordar poner acaba no puesto. ULTRON FP
+ * es el de Dr Electrum, y un valor por defecto que hay que recordar poner acaba no puesto. AU-RA FP
  * pide su variable a propósito — es el que se mueve de casa.
  */
 export type Plataforma = 'electrum' | 'ultron';
@@ -51,10 +51,10 @@ const PERMITIDO_EN_ELECTRUM = [
 ];
 
 /**
- * Y al revés: un despliegue de ULTRON FP tampoco sirve el catastro.
+ * Y al revés: un despliegue de AU-RA FP tampoco sirve el catastro.
  *
  * La simetría no es simetría por elegancia. Si «son separados» solo valiera en una dirección,
- * ULTRON FP seguiría cargando las rutas de los expedientes mineros y su base de datos, y en el
+ * AU-RA FP seguiría cargando las rutas de los expedientes mineros y su base de datos, y en el
  * primer susto habría que explicar por qué la plataforma de la junta tiene dentro el padrón de
  * concesiones.
  */

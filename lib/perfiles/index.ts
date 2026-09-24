@@ -23,7 +23,7 @@ export function perfilActivo(): PerfilCerebro {
   if (elegido) return elegido;
   const pedido = String(process.env.ULTRON_PERFIL || '').trim().toLowerCase();
   if (pedido && !PERFILES[pedido]) {
-    console.warn(`[ULTRON] perfil «${pedido}» no existe. Perfiles: ${Object.keys(PERFILES).join(', ')}. Uso genesis.`);
+    console.warn(`[AU-RA] perfil «${pedido}» no existe. Perfiles: ${Object.keys(PERFILES).join(', ')}. Uso genesis.`);
   }
   elegido = PERFILES[pedido] || GENESIS;
   return elegido;

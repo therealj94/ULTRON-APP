@@ -5,7 +5,7 @@
  * - No sube audio a ningún servidor: el reconocimiento lo hace el sistema (Google) en el teléfono.
  * - Se reinicia solo ante `end`, `no-speech`, `network`, etc. Si el servicio no existe
  *   (`service-not-allowed` / `language-not-supported`) avisa con onUnavailable para caer a la nube.
- * - Se pausa mientras ULTRON habla (evita que se escuche a sí mismo).
+ * - Se pausa mientras AU-RA habla (evita que se escuche a sí mismo).
  */
 import { Platform } from 'react-native';
 import {
@@ -171,7 +171,7 @@ async function start() {
       continuous: true,
       requiresOnDeviceRecognition: false,
       addsPunctuation: false,
-      contextualStrings: ['Ultron', 'Orden Global', 'Genesis Core', 'Veta Wallet', 'Genesis ID', 'Medardo', 'José', 'lempira', 'oro', 'plata'],
+      contextualStrings: ['Aura', 'AU-RA', 'Orden Global', 'Genesis Core', 'Veta Wallet', 'Genesis ID', 'Medardo', 'José', 'lempira', 'oro', 'plata'],
       androidIntentOptions: {
         EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS: 700,
         EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS: 700,

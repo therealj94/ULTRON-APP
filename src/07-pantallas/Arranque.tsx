@@ -10,7 +10,7 @@ function rgba(hex: string, a: number) {
 }
 
 /**
- * Pantalla de inicio. El nombre y el color los pone el perfil del servidor: «ULTRON FP · powered by
+ * Pantalla de inicio. El nombre y el color los pone el perfil del servidor: «AU-RA FP · powered by
  * ORDEN GLOBAL» en Genesis, «CEREBRO DE MINAS» en la plataforma de minería. Negro siempre.
  * Los ojos despiertan detrás del wordmark; se desvanece sola.
  */

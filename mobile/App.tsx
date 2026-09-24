@@ -72,7 +72,7 @@ async function requestDeskPermissions() {
 }
 
 /**
- * Splash JS: marca «ULTRON FP», «powered by ORDEN GLOBAL» y la cara compacta despertando
+ * Splash JS: marca «AU-RA FP», «powered by ORDEN GLOBAL» y la cara compacta despertando
  * (ojos cerrados → abiertos) mientras se carga la sesión. Se desvanece encima de la pantalla siguiente.
  */
 function JsSplash({ opacity }: { opacity: Animated.Value }) {
@@ -98,7 +98,7 @@ function JsSplash({ opacity }: { opacity: Animated.Value }) {
         <UltronFace face={face} size={92} stageHeight={210} />
       </View>
       <Animated.View style={{ alignItems: 'center', opacity: rise, transform: [{ translateY: ty }] }}>
-        <Text style={styles.wordmark}>ULTRON FP</Text>
+        <Text style={styles.wordmark}>AU-RA FP</Text>
         <Text style={styles.powered}>POWERED BY ORDEN GLOBAL</Text>
       </Animated.View>
       <Text style={styles.meta}>v{APP_VERSION}</Text>
@@ -110,12 +110,12 @@ function JsSplash({ opacity }: { opacity: Animated.Value }) {
  * Un binario, dos aplicaciones.
  *
  * La bifurcación va arriba del todo y es total: la app del doctor no atraviesa nada del arranque de
- * ULTRON. Ese arranque bloquea en horizontal, pide cámara al entrar a la mesa y esconde las barras
+ * AU-RA. Ese arranque bloquea en horizontal, pide cámara al entrar a la mesa y esconde las barras
  * del sistema — tres decisiones correctas para la mesa de la junta y equivocadas para una app que
  * se usa de pie en un cerro.
  *
  * Que sea una constante del manifiesto y no una prop permite que Metro y el motor descarten el
- * camino muerto, y sobre todo garantiza que ULTRON siga arrancando exactamente igual que antes:
+ * camino muerto, y sobre todo garantiza que AU-RA siga arrancando exactamente igual que antes:
  * con la variante por omisión, todo lo que sigue es el mismo código de siempre, sin una rama nueva.
  */
 export default function App() {

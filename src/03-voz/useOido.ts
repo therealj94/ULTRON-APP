@@ -1,6 +1,6 @@
 /**
  * Oído continuo con barge-in. Envuelve initSpeechRecognizer en un hook estable.
- * Cuando el jefe empieza a hablar, corta la voz de ULTRON (fade) y avisa.
+ * Cuando el jefe empieza a hablar, corta la voz de AU-RA (fade) y avisa.
  */
 import { useEffect, useRef } from 'react';
 import { initSpeechRecognizer, type SpeechRecognizerHandle } from './speech';

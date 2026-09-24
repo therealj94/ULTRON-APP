@@ -98,7 +98,7 @@ app.use((_req, res, next) => {
  *
  * Esto va ANTES que cualquier ruta, a propósito: es una lista de permitidos y lo que no está en
  * ella no llega ni a existir. En un despliegue de Dr Electrum eso deja fuera `/api/ejecutar` —el
- * ejecutor de código de ULTRON—, `/api/render/deploy`, `/api/taller` y `/api/vault/*`. Todas
+ * ejecutor de código de AU-RA—, `/api/render/deploy`, `/api/taller` y `/api/vault/*`. Todas
  * estaban ya detrás de permisos; pero la mejor defensa de una ruta peligrosa es que no esté en ese
  * servidor, y la segunda mejor es que el día que alguien añada otra no entre sola por ser nueva.
  *
@@ -107,7 +107,7 @@ app.use((_req, res, next) => {
 app.use('/api', (req, res, next) => {
   if (rutaPermitida(`/api${req.path}`)) return next();
   res.status(404).json({
-    error: `Esto es ${PLATAFORMA === 'electrum' ? 'Dr Electrum FP' : 'ULTRON FP'}. Esa ruta es de la otra plataforma.`,
+    error: `Esto es ${PLATAFORMA === 'electrum' ? 'Dr Electrum FP' : 'AU-RA FP'}. Esa ruta es de la otra plataforma.`,
     honesto: true,
   });
 });
@@ -207,10 +207,10 @@ app.get('/api/nodo/listo', async (_req, res) => {
   }
 });
 
-/** Catálogo de capacidades: la única lista de lo que ULTRON puede hacer, con estado real. */
+/** Catálogo de capacidades: la única lista de lo que AU-RA puede hacer, con estado real. */
 /**
  * Qué plataforma es esta. El front se marca con esto (arranque, cabecera, ajustes) en vez de llevar
- * «ULTRON FP» escrito a mano: así el mismo binario se presenta como Genesis Core o como Cerebro de
+ * «AU-RA FP» escrito a mano: así el mismo binario se presenta como Genesis Core o como Cerebro de
  * Minas según ULTRON_PERFIL, sin dos copias de la interfaz.
  */
 /* ------------------------------------------------------------------ Dr Electrum FP */
@@ -582,7 +582,7 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
 });
 
 /**
- * La voz de Dr Electrum. Ruta propia, no la de ULTRON: no por capricho de simetría, sino porque
+ * La voz de Dr Electrum. Ruta propia, no la de AU-RA: no por capricho de simetría, sino porque
  * `/api/tts` está en la lista de rutas abiertas de la APK y un sintetizador abierto es una factura
  * de ElevenLabs con la puerta quitada.
  */
@@ -638,7 +638,7 @@ app.post('/api/electrum/informe/:id/compartir', exigirPlataforma('electrum'), li
 });
 
 /**
- * El bot Dr Electrum FP. Puerta propia, secreto propio: un update firmado con el secreto de ULTRON
+ * El bot Dr Electrum FP. Puerta propia, secreto propio: un update firmado con el secreto de AU-RA
  * rebota aquí, y al revés. Que los dos bots vivan en el mismo proceso no los hace el mismo bot.
  */
 app.post(['/api/electrum/telegram/webhook', '/api/electrum/telegram/webhook/'], limitar(40), async (req, res) => {
@@ -794,7 +794,7 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
     const nombre = data.miembro?.nombre || JUNTA[correo]?.nombre || correo.split('@')[0];
     const rol = JUNTA[correo]?.rol || 'Junta Directiva · Orden Global';
     const s = emitirSesion({ correo, nombre, rol });
-    return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a ULTRON FP, ${nombre}`, remoteUrl: ULTRON_REMOTE_URL });
+    return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a AU-RA FP, ${nombre}`, remoteUrl: ULTRON_REMOTE_URL });
   } catch (err: any) {
     return res.status(500).json({ error: 'Fallo al contactar el cerebro remoto', message: String(err?.message || err).slice(0, 160) });
   }
@@ -899,7 +899,7 @@ app.post('/api/vision/analyze', exigirMesaODesk, async (req, res) => {
   }
   const vista = await verImagen(String(base64Data), prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos. No inventes.');
   if (vista.via === 'ninguno' || vista.via === 'error') {
-    console.error(`[ULTRON] /vision/analyze falló (${vista.via}) con ${String(base64Data).length} car.: ${vista.texto.slice(0, 160)}`);
+    console.error(`[AU-RA] /vision/analyze falló (${vista.via}) con ${String(base64Data).length} car.: ${vista.texto.slice(0, 160)}`);
     return res.status(503).json({ error: vista.texto, honesto: true });
   }
   return res.json({ success: true, summary: vista.texto, via: vista.via, honesto: true });
@@ -916,7 +916,7 @@ async function cached(key: string, ttlMs: number, fn: () => Promise<any>) {
 }
 
 /**
- * Qué contesta ULTRON cuando el cerebro no responde.
+ * Qué contesta AU-RA cuando el cerebro no responde.
  *
  * Antes volcaba HECHOS en crudo, con sus etiquetas internas y todo («CEREBRO DE MINAS (esto lo sabés
  * de verdad…)»). Eso no es una respuesta: es enseñar el prompt. Se dice lo que sí se sabe en frases
@@ -1015,7 +1015,7 @@ app.all('/api/tts', exigirMesaODesk, limitar(60), responderVoz);
 app.all('/api/tts/stream', exigirMesaODesk, limitar(60), responderVoz);
 app.all('/api/voz', exigirMesaODesk, limitar(60), responderVoz);
 
-/** Oración del día: ULTRON cierra los ojos y ora (clip grabado con la voz oficial). */
+/** Oración del día: AU-RA cierra los ojos y ora (clip grabado con la voz oficial). */
 app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
   const tema = String(req.body?.tema || req.query?.tema || '').slice(0, 120);
   const out = await orar({ tema });
@@ -1256,10 +1256,10 @@ async function prepararTurno(body: any) {
       // Un fallo de visión NO se le pasa crudo al modelo: lo parafraseaba como «la cámara me muestra un
       // error técnico», que no le dice nada a nadie. Se le da la frase que tiene que decir.
       if (vista.via === 'error' || vista.via === 'ninguno') {
-        console.error(`[ULTRON] vision falló (${vista.via}) con ${String(image).length} car.: ${vista.texto.slice(0, 160)}`);
+        console.error(`[AU-RA] vision falló (${vista.via}) con ${String(image).length} car.: ${vista.texto.slice(0, 160)}`);
         hechos.push('VISION: la cámara no devolvió imagen esta vez. Dilo simple y humano («ahora mismo no me está entrando imagen, dame un segundo»); no hables de errores técnicos ni de nodos.');
       } else {
-        console.log(`[ULTRON] vision ok (${String(image).length} car.) → ${vista.texto.slice(0, 120)}`);
+        console.log(`[AU-RA] vision ok (${String(image).length} car.) → ${vista.texto.slice(0, 120)}`);
         hechos.push(`VISION (${vista.via}): ${vista.texto}`);
       }
       tools.push('vision');
@@ -1737,7 +1737,7 @@ async function procesarTelegram(update: any) {
   const parsed = await parsearUpdateTelegram(update);
   if (!parsed) return;
   if (!telegramAutorizado(parsed.chatId, parsed.userId)) {
-    console.warn('[ULTRON] telegram rechazado', parsed.chatId, parsed.userId, parsed.nombre);
+    console.warn('[AU-RA] telegram rechazado', parsed.chatId, parsed.userId, parsed.nombre);
     return;
   }
   if (parsed.comando === '/start') {
@@ -1786,7 +1786,7 @@ async function procesarTelegram(update: any) {
   const quiereVoz = parsed.comando === '/audio' || pideNotaDeVoz(texto);
   if (quiereVoz && !yaMandóVoz) {
     const audio = await notaDeVoz(reply.slice(0, 400));
-    if (audio) await telegramVoz({ buf: audio, caption: 'ULTRON', chatId: parsed.chatId });
+    if (audio) await telegramVoz({ buf: audio, caption: 'AU-RA', chatId: parsed.chatId });
   }
 }
 
@@ -1798,7 +1798,7 @@ app.post(['/api/telegram/webhook', '/api/telegram/webhook/'], limitar(40), async
   try {
     await procesarTelegram(req.body);
   } catch (e: any) {
-    console.warn('[ULTRON] telegram inbound', String(e?.message || e).slice(0, 180));
+    console.warn('[AU-RA] telegram inbound', String(e?.message || e).slice(0, 180));
   }
 });
 
@@ -1815,7 +1815,7 @@ async function startServer() {
     /*
      * LA RAÍZ ES EL PRODUCTO.
      *
-     * Antes `/` servía siempre `index.html` —ULTRON FP— y Dr Electrum vivía escondido en
+     * Antes `/` servía siempre `index.html` —AU-RA FP— y Dr Electrum vivía escondido en
      * `/electrum.html`. Quien recibía «el enlace de Dr Electrum» aterrizaba en otra plataforma, con
      * otro nombre y otro color, y concluía razonablemente que le habían mandado el enlace
      * equivocado. Ahora la raíz es la página de quien sea este despliegue.
@@ -1843,15 +1843,15 @@ async function startServer() {
 
   httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(
-      `[${PLATAFORMA === 'electrum' ? 'Dr Electrum FP' : 'ULTRON FP'}] :${PORT} — sirviendo ${PAGINA_RAIZ}` +
-        `${ES_ELECTRUM ? ' · API de ULTRON cerrada' : ''}`
+      `[${PLATAFORMA === 'electrum' ? 'Dr Electrum FP' : 'AU-RA FP'}] :${PORT} — sirviendo ${PAGINA_RAIZ}` +
+        `${ES_ELECTRUM ? ' · API de AU-RA cerrada' : ''}`
     );
     // Cada plataforma registra SU bot. Los dos desde el mismo proceso era la costura más fácil de
     // olvidar: un despliegue de Dr Electrum se quedaba con el webhook del bot de la junta.
     if (ES_ULTRON) {
       registrarWebhookTelegram()
-        .then((r) => console.log('[ULTRON] telegram webhook', r.detalle))
-        .catch((e) => console.warn('[ULTRON] telegram webhook', String(e?.message || e).slice(0, 160)));
+        .then((r) => console.log('[AU-RA] telegram webhook', r.detalle))
+        .catch((e) => console.warn('[AU-RA] telegram webhook', String(e?.message || e).slice(0, 160)));
     }
     if (ES_ELECTRUM && electrumBotListo()) {
       registrarWebhookElectrum()
@@ -1862,8 +1862,8 @@ async function startServer() {
     }
     iniciarCentinela(180_000);
     cargarMemoria()
-      .then(() => console.log('[ULTRON] memoria', estadoMemoria().detalle))
-      .catch((e) => console.warn('[ULTRON] memoria', String(e?.message || e).slice(0, 160)));
+      .then(() => console.log('[AU-RA] memoria', estadoMemoria().detalle))
+      .catch((e) => console.warn('[AU-RA] memoria', String(e?.message || e).slice(0, 160)));
   });
 }
 

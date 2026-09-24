@@ -1,5 +1,5 @@
 /**
- * Cara ULTRON — estilo LOOI / DeskBot: dos anillos luminosos sobre negro, párpados para emociones,
+ * Cara AU-RA — estilo LOOI / DeskBot: dos anillos luminosos sobre negro, párpados para emociones,
  * cejas, boca paramétrica y glifos por modo. Solo RN Animated (native driver) — sin Skia/Reanimated.
  *
  * Boca (4.1): protagonista secundaria. Cuatro capas animadas solo con transforms/opacity:
@@ -28,11 +28,11 @@ type Props = {
   face: FaceState;
   mode?: Mode;
   /**
-   * Color de la cara. Cian es ULTRON; Dr Electrum es ámbar.
+   * Color de la cara. Cian es AU-RA; Dr Electrum es ámbar.
    *
-   * Sin esto, la app del doctor enseñaba la cara de ULTRON con otro nombre encima, que es
+   * Sin esto, la app del doctor enseñaba la cara de AU-RA con otro nombre encima, que es
    * exactamente lo que el resto del sistema se cuida de no hacer: dos cerebros con la misma firma
-   * visual son la misma cosa con dos rótulos. Por omisión cian, para que ULTRON no cambie.
+   * visual son la misma cosa con dos rótulos. Por omisión cian, para que AU-RA no cambie.
    *
    * No manda siempre: el rojo del enojo, el sable y el modo GOLD siguen ganando, porque esos son
    * estados del CUERPO y le pasan igual a las dos plataformas.
@@ -42,7 +42,7 @@ type Props = {
   gazeY?: number;
   /** 0..1 nivel del micrófono → pulso al escuchar */
   level?: number;
-  /** 0..1 nivel de la voz de ULTRON (lip-sync) → visemas. Cada cambio re-renderiza: preferí `speechLevelSource`. */
+  /** 0..1 nivel de la voz de AU-RA (lip-sync) → visemas. Cada cambio re-renderiza: preferí `speechLevelSource`. */
   speechLevel?: number;
   /**
    * Fuente del nivel de voz sin pasar por el estado del padre: la cara se suscribe una vez y mueve la
@@ -222,7 +222,7 @@ export function UltronFace({
   const accent = face === 'ANGRY' || firing ? RED : saberOn ? SABER : mode === 'GOLD' ? GOLD : acento || CYAN;
   /*
    * Con el cian se usa la constante de siempre, no la derivada. La calculada da #B8F8FF y la de
-   * ULTRON es #D6F8FF: la diferencia es mínima y aun así es un cambio en una cara que ya está
+   * AU-RA es #D6F8FF: la diferencia es mínima y aun así es un cambio en una cara que ya está
    * aprobada y en manos de la junta. El cálculo entra solo donde no había nada.
    */
   const irisClaro = useMemo(() => (accent === CYAN ? IRIS_CLARO : aclarar(accent, 0.72)), [accent]);

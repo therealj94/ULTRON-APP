@@ -4,11 +4,11 @@ Estación de trabajo minera. Mapa, expedientes, especialistas y un doctor que lo
 
 ## Qué es y qué no es
 
-ULTRON FP es una cara que conversa. Electrum es otra cosa: **un mapa con expedientes al lado y un
+AU-RA FP es una cara que conversa. Electrum es otra cosa: **un mapa con expedientes al lado y un
 especialista que los interpreta**. Comparte el motor —nodo Qwen, sesiones, oído, visión, harness,
 memoria— y cambia todo lo que está encima.
 
-No es un tercer perfil de ULTRON. Un perfil cambia el cerebro; Electrum cambia además la piel, los
+No es un tercer perfil de AU-RA. Un perfil cambia el cerebro; Electrum cambia además la piel, los
 datos y las manos. Lo que sí se reusa, se reusa: duplicar la voz o la cara sería condenarse a
 arreglar cada cosa dos veces.
 
@@ -16,7 +16,7 @@ arreglar cada cosa dos veces.
 
 ```
 PIEL        app nueva: mapa al centro, chat al lado, expedientes e informes.
-            La cara de ULTRON arranca completa y cede el paso cuando se abre un mapa.
+            La cara de AU-RA arranca completa y cede el paso cuando se abre un mapa.
 MANOS       harness extendido: mapa, catastro, gis, calculo, expediente, informe, web, leer.
 DATOS       PostGIS en el nodo AWS: catastro espacial + documentos indexados con cita a página.
 CEREBRO     conocimiento minero + panel de especialistas.
@@ -197,10 +197,10 @@ regalarlo.
 
 ## La app — **hecha y mirada**
 
-`src-electrum/`, servida en `/electrum.html`. Vive junto a ULTRON FP en el mismo despliegue: dos
+`src-electrum/`, servida en `/electrum.html`. Vive junto a AU-RA FP en el mismo despliegue: dos
 entradas de Vite, un solo servidor.
 
-**La cara que cede el paso.** Arranca como ULTRON: cara completa, centrada, ámbar. En cuanto hay algo
+**La cara que cede el paso.** Arranca como AU-RA: cara completa, centrada, ámbar. En cuanto hay algo
 que mirar se encoge a una esquina con su marco y le deja el escenario al mapa, pero sigue ahí,
 reaccionando. Es el mismo nodo del DOM moviéndose entre dos sitios, no dos caras que se turnan: por
 eso se lee como que ELLA se aparta. En teléfono se va arriba, sobre el mapa, porque abajo tapaba el
@@ -214,7 +214,7 @@ depuración, es lo que un ingeniero exige para creerle.
 
 Ninguno daba error; todos se veían en una captura:
 
-1. **La cara se dimensionaba a la ventana**, no a su caja. Con ULTRON a pantalla completa da igual;
+1. **La cara se dimensionaba a la ventana**, no a su caja. Con AU-RA a pantalla completa da igual;
    encogida en un recuadro de 132 px seguía dibujando a tamaño de ventana y tapaba media interfaz.
    Ahora se mide por su contenedor, con un observador de tamaño.
 2. **El servidor compilado no arrancaba.** `shpjs` está escrito para el navegador y toca `self` al
@@ -634,7 +634,7 @@ el motor de Google las concesiones no se dibujaban**. Volaba al sitio correcto y
 
 ## Que se pueda usar, y que sea de quien es — **hecho y verificado**
 
-`user-select: none` y `touch-action: none` venían de ULTRON, que es una cara con la que se habla. En
+`user-select: none` y `touch-action: none` venían de AU-RA, que es una cara con la que se habla. En
 una herramienta documental impiden copiar un número de expediente y ampliar con los dedos para leer.
 El cargador era un `div` con `onClick`: con ratón funcionaba y con teclado no existía. El panel
 oculto llevaba `aria-hidden` y `pointer-events: none`, que no sacan del recorrido del tabulador —
@@ -725,14 +725,14 @@ navegador con su política de uso. Se resuelve con las teselas propias servidas 
 | Las manos (diez herramientas) | **hechas y probadas** |
 | Aprender de lo que se sube (GIS y documentos con página) | **hecho** |
 | App: mapa doble, cara que cede el paso, panel y expedientes | **hecha y mirada** |
-| Padrón y puerta propia, separada de ULTRON | **hecho y probado contra el servidor compilado** |
+| Padrón y puerta propia, separada de AU-RA | **hecho y probado contra el servidor compilado** |
 | Bot de Telegram Dr Electrum FP | **hecho** (falta darle de alta el bot en BotFather) |
 | Generador de informes en PDF | **hecho y mirado** — ficha de concesión y estado de cartera, con el mapa dentro |
 | Voz propia con ElevenLabs | **hecha** — Daniel, grave y de edad |
 
 ## Quién entra
 
-Dr Electrum **no hereda la gente de ULTRON**. Está en [`ACCESOS.md`](./ACCESOS.md): padrón propio,
+Dr Electrum **no hereda la gente de AU-RA**. Está en [`ACCESOS.md`](./ACCESOS.md): padrón propio,
 llave propia, bot propio y secreto propio. Estar en la junta de Orden Global no te abre la demo
 minera, y al revés.
 
@@ -785,7 +785,7 @@ Dr Electrum habla con **Bill**, la más veterana de las que probamos. La edad es
 — a quien te va a decir que un recurso inferido no es una reserva se le cree más si suena a haberlo
 visto. Se cambia con `ELECTRUM_VOZ`.
 
-El respaldo **no** es la voz de ULTRON, y eso es deliberado: si la variable se queda vacía por un
+El respaldo **no** es la voz de AU-RA, y eso es deliberado: si la variable se queda vacía por un
 descuido, más vale que el Doctor siga sonando a él que descubrir el error cuando ya está hablando
 con la voz de la otra plataforma delante de un cliente. Hay una prueba que lo vigila.
 
@@ -827,8 +827,8 @@ Suena al revés y es a propósito. Agregar emociones al **sistema** mejora; ofre
 sobran no son inocentes — si `travieso` está en la lista, tarde o temprano el doctor guiña mientras
 te explica un traslape.
 
-Así que **Dr Electrum tiene once emociones y ULTRON quince.** Se le quitan cantar, orar, la
-travesura y la tristeza de la junta, y se le dan cuatro que ULTRON no necesita:
+Así que **Dr Electrum tiene once emociones y AU-RA quince.** Se le quitan cantar, orar, la
+travesura y la tristeza de la junta, y se le dan cuatro que AU-RA no necesita:
 
 | Emoción | Cuándo | Voz | Cara |
 |---|---|---|---|
@@ -870,7 +870,7 @@ todo en la app sería hacer una web peor dentro de una app.
 ### La cara ya sabe de quién es
 
 `UltronFace` tenía el cian escrito a fuego. La primera captura de la app del doctor salió con la
-cara de ULTRON y otro rótulo encima — exactamente lo que el resto del sistema se cuida de no hacer.
+cara de AU-RA y otro rótulo encima — exactamente lo que el resto del sistema se cuida de no hacer.
 Ahora la cara acepta `acento`, y el brillo del iris se **deriva** del color en vez de ser una
 constante pálida de cian: un reflejo es el mismo color con más luz, no otro color, y sobre el iris
 ámbar aquella constante parecía una catarata gris.

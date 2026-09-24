@@ -1,5 +1,5 @@
 /**
- * Taller de ULTRON: despacha tareas reales (sistema, PDF, canales, pendientes).
+ * Taller de AU-RA: despacha tareas reales (sistema, PDF, canales, pendientes).
  * Si el canal no está configurado, el HECHO dice que falta la clave. No se finge el envío.
  */
 
@@ -128,14 +128,14 @@ export async function despacharTaller(
       hechos.push(`TELEGRAM TEXTO: ${r.detalle}`);
       return out(r.ok ? `${dicho} Mandé el estado por texto. Sin audio.` : r.detalle);
     }
-    const r = await canales.telegramVoz({ buf: voz, caption: 'ULTRON · estado del sistema' });
+    const r = await canales.telegramVoz({ buf: voz, caption: 'AU-RA · estado del sistema' });
     hechos.push(`VOZ TELEGRAM: ${r.detalle}`);
     return out(r.ok ? dicho : r.detalle);
   }
 
   if (p.accion === 'urgente') {
     tools.push('urgente');
-    const dicho = extraerCuerpo(p.texto) || 'ULTRON te necesita. Es urgente.';
+    const dicho = extraerCuerpo(p.texto) || 'AU-RA te necesita. Es urgente.';
     const voz = await notaDeVoz(dicho);
     const r = await canales.telegramUrgente(dicho, voz);
     hechos.push(`URGENTE TELEGRAM: ${r.detalle}`);
@@ -175,7 +175,7 @@ export async function despacharTaller(
 
   if (p.accion === 'llamar') {
     tools.push('llamada');
-    const dicho = extraerCuerpo(p.texto) || 'Hola, te llama ULTRON.';
+    const dicho = extraerCuerpo(p.texto) || 'Hola, te llama AU-RA.';
     const r = await canales.llamada(dicho);
     hechos.push(`LLAMADA: ${r.detalle}`);
     if (!r.ok) {
@@ -188,11 +188,11 @@ export async function despacharTaller(
   }
 
   const quierePdf = /\bpdf\b/i.test(message) || p.accion === 'pdf';
-  const cuerpo = extraerCuerpo(p.texto) || `Nota de ULTRON · ${new Date().toISOString()}`;
+  const cuerpo = extraerCuerpo(p.texto) || `Nota de AU-RA · ${new Date().toISOString()}`;
   let pdf: { id: string; buf: Buffer; filename: string } | undefined;
   if (quierePdf || p.accion === 'pdf') {
     tools.push('pdf');
-    const made = hacerPdf('ULTRON', cuerpo);
+    const made = hacerPdf('AU-RA', cuerpo);
     const buf = leerPdf(made.id);
     if (buf) pdf = { id: made.id, buf, filename: made.id };
     hechos.push(`PDF generado (${made.bytes} bytes, id ${made.id}).`);
@@ -220,7 +220,7 @@ export async function despacharTaller(
       return out(r.detalle);
     }
     const r = await canales.correo({
-      asunto: quierePdf ? 'PDF de ULTRON' : cuerpo.slice(0, 80),
+      asunto: quierePdf ? 'PDF de AU-RA' : cuerpo.slice(0, 80),
       texto: cuerpo,
       pdf: pdf ? { filename: pdf.filename, buf: pdf.buf } : undefined,
     });

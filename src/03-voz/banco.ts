@@ -23,8 +23,6 @@ export const BANCO: Clip[] = [
   { id: 'bittersweet', file: '/voz/bittersweet.mp3', keys: /bitter\s*sweet|sinfon[ií]a|the verve|favorita de medardo|\bcanta\s*3\b/i, cara: 'SING', texto: 'Bitter Sweet Symphony · The Verve' },
   { id: 'runaway', file: '/voz/runaway.mp3', keys: /runaway|kanye|toast|favorita de jos[eé]|\bcanta\s*4\b/i, cara: 'SING', texto: 'Runaway · Kanye West' },
   // Quién es y qué hace
-  { id: 'discurso', file: '/voz/discurso.mp3', keys: /^discurso$|v[eé]ndete|qui[eé]n eres de verdad|tu misi[oó]n/i, texto: 'Quién soy y para qué estoy.' },
-  { id: 'quien', file: '/voz/quien.mp3', keys: /^quien$|^qui[eé]n (eres|sos)\??$|^qu[eé] (eres|es ultron)\??$/i, texto: '¿Quién soy? Te cuento.' },
   { id: 'puedo', file: '/voz/puedo.mp3', keys: /^puedo$|^qu[eé] (puedes|pod[eé]s|hac[eé]s|sabes hacer)\??$|^capacidades$/i, texto: 'Esto es lo que puedo hacer.' },
   // Chistes
   { id: 'chiste1', file: '/voz/chiste1.mp3', keys: /^chiste\s*1$/i, cara: 'LAUGH', texto: 'Un chiste.' },
@@ -33,7 +31,6 @@ export const BANCO: Clip[] = [
   { id: 'chiste4', file: '/voz/chiste4.mp3', keys: /^chiste\s*4$/i, cara: 'LAUGH', texto: 'Un chiste.' },
   { id: 'chiste5', file: '/voz/chiste5.mp3', keys: /^chiste\s*5$/i, cara: 'LAUGH', texto: 'Un chiste.' },
   // Saludos y arranque
-  { id: 'bienvenida', file: '/voz/bienvenida.mp3', keys: /^bienvenida$/i, cara: 'HAPPY', texto: 'ULTRON, en línea. Orden Global.' },
   { id: 'dias', file: '/voz/dias.mp3', keys: /^buenos d[ií]as/i, cara: 'HAPPY', texto: 'Buenos días.' },
   { id: 'tardes', file: '/voz/tardes.mp3', keys: /^buenas tardes/i, cara: 'HAPPY', texto: 'Buenas tardes.' },
   { id: 'noches', file: '/voz/noches.mp3', keys: /^buenas noches/i, cara: 'HAPPY', texto: 'Buenas noches.' },

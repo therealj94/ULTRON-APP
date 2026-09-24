@@ -70,6 +70,8 @@ export function afinarParaBoca(text: string): string {
       // no tiene, y suena a alguien que se corta a media idea. La coma da la misma pausa sin mentir.
       .replace(/\s*—\s*/g, ', ')
       .replace(/:\s+/g, ', ')
+      // «AU-RA» se escribe con guion y mayúsculas, y v3 lo deletrea («a, u, erre, a»). Se dice «Aura».
+      .replace(/\bAU-?RA\b/g, 'Aura')
       .replace(/\bjaja+\b/gi, 'je je')
       .replace(/\blol\b/gi, 'je')
       .replace(/\s+/g, ' ')

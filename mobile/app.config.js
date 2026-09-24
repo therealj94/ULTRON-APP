@@ -1,11 +1,11 @@
 /**
  * DOS APLICACIONES, UN PROYECTO.
  *
- * ULTRON FP y Dr Electrum FP comparten el cuerpo también en el teléfono: la misma cara, el mismo
+ * AU-RA FP y Dr Electrum FP comparten el cuerpo también en el teléfono: la misma cara, el mismo
  * cliente de voz, el mismo lector de audio. Lo que cambia es el cerebro, y eso no justifica dos
  * proyectos Expo con dos copias de todo que se desincronizan a la tercera semana.
  *
- * `ULTRON_APP=electrum` cambia identidad, paquete, color e icono; sin ella sale ULTRON, exactamente
+ * `ULTRON_APP=electrum` cambia identidad, paquete, color e icono; sin ella sale AU-RA, exactamente
  * como salía antes. `app.json` NO se toca: es la configuración de la APK que ya funciona y se lee
  * tal cual. Acá solo se describen las DIFERENCIAS, de modo que un despiste en esta variante no
  * puede romper la app de la junta.
@@ -18,7 +18,7 @@ const ELECTRUM = {
   scheme: 'drelectrumfp',
   // Paquete distinto: si fuera el mismo, instalar una desinstalaría la otra.
   paquete: 'link.ordenglobal.drelectrumfp',
-    // Horizontal, igual que ULTRON: las dos son estaciones de trabajo y se sostienen con las
+    // Horizontal, igual que AU-RA: las dos son estaciones de trabajo y se sostienen con las
     // dos manos. Lo vertical es de la web. Lo tuve al revés un rato — el campo parecía pedir
     // vertical, pero una app que enseña un mapa y una ficha a la vez quiere ancho.
   orientacion: 'landscape',
@@ -34,7 +34,7 @@ module.exports = ({ config }) => {
       android: {
         ...expo.android,
         /*
-         * ULTRON no pide la ubicación, y hay que decirlo explícitamente.
+         * AU-RA no pide la ubicación, y hay que decirlo explícitamente.
          *
          * `expo-location` se instaló para la app del doctor, pero declara sus permisos en SU
          * propio AndroidManifest, y el fusionador de Android los mete en cualquier app que tenga
@@ -80,7 +80,7 @@ module.exports = ({ config }) => {
     plugins: (expo.plugins || []).map((p) => {
       if (!Array.isArray(p)) return p;
       const [nombre, opts] = p;
-      // Los textos de permiso los lee la persona en el diálogo del sistema. Que digan ULTRON en la
+      // Los textos de permiso los lee la persona en el diálogo del sistema. Que digan AU-RA en la
       // app del doctor es de las cosas que delatan que una app es otra app disfrazada.
       if (nombre === 'expo-camera') {
         return [

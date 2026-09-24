@@ -3,7 +3,7 @@
 # ELECTRUM — instala PostgreSQL + PostGIS en el nodo y deja el catastro listo.
 #
 # Pensado para correrse UNA vez en la máquina de AWS, como root o con sudo. Es idempotente: si algo
-# ya está puesto, lo respeta y sigue. No toca nada de ULTRON ni de Genesis.
+# ya está puesto, lo respeta y sigue. No toca nada de AU-RA ni de Genesis.
 #
 #   sudo bash instalar-postgis.sh
 #   sudo CLAVE='una-clave-larga-de-verdad' bash instalar-postgis.sh

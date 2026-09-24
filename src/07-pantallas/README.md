@@ -2,7 +2,7 @@
 
 | Archivo | Qué |
 |---|---|
-| `Arranque.tsx` | Splash: ULTRON FP · powered by ORDEN GLOBAL, ojos que despiertan |
+| `Arranque.tsx` | Splash: AU-RA FP · powered by ORDEN GLOBAL, ojos que despiertan |
 | `SettingsSheet.tsx` | Ajustes: **Qué puede hacer** (catálogo), Personalidad (modos, expresiones, modo diversión), Sistema |
 | `Capacidades.tsx` | Tarjetas de `GET /api/capacidades` con estado vivo/caído y ejemplos clicables |
 | `DockDrawer.tsx` | Mic, voz, cámara, foto, reposo, marco; campo de texto y siete chips |

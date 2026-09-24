@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Genera los assets gráficos de ULTRON FP a partir del logo rasterizado (los anillos cian):
+Genera los assets gráficos de AU-RA FP a partir del logo rasterizado (los anillos cian):
 
   assets/icon.png          1024×1024  logo sobre negro (icono clásico / iOS)
   assets/adaptive-icon.png 1024×1024  capa foreground transparente, logo dentro de la zona segura (66 %)
   assets/splash-icon.png    512×512   logo transparente para el splash nativo (expo-splash-screen)
-  assets/splash.png        1284×2778  arte completo: logo + «ULTRON FP» + «powered by ORDEN GLOBAL»
+  assets/splash.png        1284×2778  arte completo: logo + «AU-RA FP» + «powered by ORDEN GLOBAL»
 
 El logo se extrae de assets/logo-source.png (o del icon.png anterior) quitando el fondo negro:
 alpha = luminancia (un brillo aditivo sobre negro se ve idéntico compuesto sobre negro).
@@ -126,7 +126,7 @@ def make_splash(logo: Image.Image) -> None:
     c.alpha_composite(l, pos)
     d = ImageDraw.Draw(c)
     y = pos[1] + size + 90
-    text_spaced(d, (W // 2, y), "ULTRON FP", font(96), (232, 251, 255, 255), 26)
+    text_spaced(d, (W // 2, y), "AU-RA FP", font(96), (232, 251, 255, 255), 26)
     text_spaced(d, (W // 2, y + 150), "POWERED BY ORDEN GLOBAL", font(34), CYAN + (153,), 10)
     # línea fina cian bajo la marca
     d.rounded_rectangle((W // 2 - 120, y + 125, W // 2 + 120, y + 129), 2, fill=CYAN + (110,))

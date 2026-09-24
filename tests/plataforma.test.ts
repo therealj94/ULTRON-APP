@@ -1,12 +1,12 @@
 /**
  * UN DESPLIEGUE, UN PRODUCTO.
  *
- * El mismo proceso servía ULTRON FP en `/` y Dr Electrum escondido en `/electrum.html`. Cómodo para
+ * El mismo proceso servía AU-RA FP en `/` y Dr Electrum escondido en `/electrum.html`. Cómodo para
  * desarrollar y equivocado para vender: quien recibía «el enlace de Dr Electrum» aterrizaba en otra
  * plataforma, con otro nombre y otro color.
  *
  * Pero lo que de verdad fija esta prueba no es la marca. Un despliegue de Dr Electrum montaba
- * `/api/ejecutar` —el ejecutor de código de ULTRON—, `/api/render/deploy`, `/api/taller` y
+ * `/api/ejecutar` —el ejecutor de código de AU-RA—, `/api/render/deploy`, `/api/taller` y
  * `/api/vault/*`. Estaban detrás de permisos; la mejor defensa de una ruta peligrosa es que no esté
  * en ese servidor.
  *
@@ -30,7 +30,7 @@ test('qué deja pasar cada plataforma', async (t) => {
     delete process.env.PLATAFORMA;
   });
 
-  await t.test('Dr Electrum cierra la API de ULTRON', async () => {
+  await t.test('Dr Electrum cierra la API de AU-RA', async () => {
     const p = await comoSi('electrum');
     for (const r of [
       '/api/ejecutar',
@@ -72,7 +72,7 @@ test('qué deja pasar cada plataforma', async (t) => {
     for (const r of ['/api/ultron/entrar', '/api/ultron/salir', '/api/ultron/sesion', '/api/ultron/biometric-login']) {
       assert.equal(p.rutaPermitida(r), true, `${r} hace falta para entrar`);
     }
-    assert.equal(p.rutaPermitida('/api/ultron/salud'), false, 'lo demás de ULTRON, no');
+    assert.equal(p.rutaPermitida('/api/ultron/salud'), false, 'lo demás de AU-RA, no');
   });
 
   await t.test('es una lista de permitidos: lo que se invente mañana no entra solo', async () => {
@@ -80,7 +80,7 @@ test('qué deja pasar cada plataforma', async (t) => {
     assert.equal(p.rutaPermitida('/api/ruta-que-alguien-agregue-el-mes-que-viene'), false);
   });
 
-  await t.test('y al revés: ULTRON FP no sirve el catastro', async () => {
+  await t.test('y al revés: AU-RA FP no sirve el catastro', async () => {
     const p = await comoSi('ultron');
     assert.equal(p.rutaPermitida('/api/electrum/turno'), false);
     assert.equal(p.rutaPermitida('/api/electrum/salud'), false);
@@ -126,7 +126,7 @@ test(
     });
     assert.ok(await esperar(), 'el servidor no levantó');
 
-    await t.test('el ejecutor de código de ULTRON no existe acá', async () => {
+    await t.test('el ejecutor de código de AU-RA no existe acá', async () => {
       const r = await fetch(`${BASE}/api/ejecutar`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

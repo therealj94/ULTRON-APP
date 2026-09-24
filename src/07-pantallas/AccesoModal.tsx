@@ -97,7 +97,7 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, usuario, soundFxEnabled, 
             <span className={`w-1.5 h-1.5 rounded-full ${remoto === 'ok' ? 'bg-emerald-400 animate-pulse' : remoto === 'off' ? 'bg-red-400' : 'bg-amber-400'}`} />
           </div>
           <h2 className="font-display font-bold text-xl text-[#05E1FF] tracking-wider">ACCESO DE JUNTA</h2>
-          <p className="text-[11px] text-[#8FA3B0] mt-0.5">Con sesión: memoria propia, bóveda, redespliegue. Sin sesión, ULTRON igual conversa.</p>
+          <p className="text-[11px] text-[#8FA3B0] mt-0.5">Con sesión: memoria propia, bóveda, redespliegue. Sin sesión, AU-RA igual conversa.</p>
         </div>
 
         {usuario.authenticated ? (

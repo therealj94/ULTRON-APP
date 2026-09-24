@@ -1,7 +1,7 @@
 /**
  * DICTADO DE CAMPO — apretar, hablar, soltar.
  *
- * No es el oído continuo de ULTRON. Ahí la máquina escucha todo el rato porque está en una mesa y
+ * No es el oído continuo de AU-RA. Ahí la máquina escucha todo el rato porque está en una mesa y
  * la conversación es el modo normal; acá el teléfono va en el bolsillo, al sol, con la batería
  * contada, y alrededor hay gente hablando de otra cosa. Un micrófono siempre abierto en el campo es
  * batería que se va y frases ajenas que entran.
@@ -92,7 +92,7 @@ export async function escuchar(cb: {
     return null;
   }
 
-  // ULTRON puede tener su oído continuo encendido: dos reconocedores a la vez se pisan y ninguno
+  // AU-RA puede tener su oído continuo encendido: dos reconocedores a la vez se pisan y ninguno
   // entiende nada. Se le pide que se calle mientras dure esto, y se le devuelve al terminar.
   nativePause(true);
   enMarcha = true;

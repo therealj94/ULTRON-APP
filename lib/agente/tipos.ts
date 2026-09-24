@@ -72,7 +72,7 @@ export type Herramienta = {
   escribe?: boolean;
   /**
    * En qué cerebros existe esta herramienta. Es lo que impide que se presten entre plataformas por
-   * descuido: el catastro y el mapa son de Dr Electrum, el taller y la bóveda son de ULTRON, y solo
+   * descuido: el catastro y el mapa son de Dr Electrum, el taller y la bóveda son de AU-RA, y solo
    * un puñado —el precio del metal, las cuentas de mina— viven en las dos.
    */
   plataformas: Plataforma[];

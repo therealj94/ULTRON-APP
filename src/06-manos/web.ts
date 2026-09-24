@@ -108,7 +108,7 @@ export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
 export async function leerPagina(url: string, maxChars = 1800): Promise<string> {
   try {
     const r = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) ULTRON-FP/3.0', Accept: 'text/html,*/*' },
+      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AU-RA-FP/3.0', Accept: 'text/html,*/*' },
       signal: AbortSignal.timeout(7000),
       redirect: 'follow',
     });
@@ -125,7 +125,7 @@ export async function leerPagina(url: string, maxChars = 1800): Promise<string> 
 export function consultaWeb(message: string): string | null {
   const q = message.trim();
   const m = q.match(
-    /^(?:ultron[,\s]+)?(?:busca(?:me)?|investiga|googlea|averigua|consulta en internet|busca en internet|qu[eé] dice internet (?:de|sobre)|noticias (?:de|sobre)|qu[eé] hay de nuevo (?:de|sobre)|dame informaci[oó]n (?:de|sobre))\s+(.+)$/i
+    /^(?:(?:ultron|aura|au-ra|au ra)[,\s]+)?(?:busca(?:me)?|investiga|googlea|averigua|consulta en internet|busca en internet|qu[eé] dice internet (?:de|sobre)|noticias (?:de|sobre)|qu[eé] hay de nuevo (?:de|sobre)|dame informaci[oó]n (?:de|sobre))\s+(.+)$/i
   );
   if (m) return m[1].replace(/[?¿.!]+$/g, '').trim();
   if (/\b(noticias|[uú]ltimas noticias|qu[eé] pas[oó] hoy|hoy en el mundo)\b/i.test(q)) return q.replace(/[?¿.!]+$/g, '');

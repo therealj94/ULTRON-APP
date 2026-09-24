@@ -23,7 +23,9 @@ test('gags cortos sí se resuelven en local', () => {
   assert.equal(detectarIntencion('cantá way maker').tipo, 'cantar');
   for (const f of ['orá por el día', 'hacé una oración', 'oremos', 'bendice nuestro día', 'una oración por hoy']) assert.equal(detectarIntencion(f).tipo, 'orar', f);
   assert.equal(detectarIntencion('la oración de la escritura dice que…').tipo, 'cerebro');
-  assert.equal(detectarIntencion('¿quién sos?').tipo, 'clip');
+  // «¿Quién sos?» ya no toca un clip: el grabado decía el nombre viejo. Lo contesta ella en vivo.
+  assert.equal(detectarIntencion('¿quién sos?').tipo, 'cerebro');
+  assert.equal(detectarIntencion('qué es aura').tipo, 'cerebro');
   assert.equal(detectarIntencion('qué podés hacer').tipo, 'capacidades');
   assert.equal(detectarIntencion('modo oro').tipo, 'modo');
   assert.equal(detectarIntencion('recordá que la villa va al setenta por ciento').tipo, 'recordar');

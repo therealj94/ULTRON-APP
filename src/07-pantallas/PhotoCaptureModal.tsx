@@ -47,7 +47,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
                 GALERÍA ÓPTICA · CAPTURAS CYBER
               </span>
               <h2 className="font-display font-bold text-lg text-[#05E1FF] tracking-wider">
-                FOTOS & INSTANTÁNEAS ULTRON
+                FOTOS & INSTANTÁNEAS AU-RA
               </h2>
             </div>
           </div>
@@ -66,7 +66,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
             <div className="relative w-full md:w-1/2 aspect-video bg-black rounded-lg overflow-hidden border border-[#05E1FF]/20 group">
               <img
                 src={latestPhoto.dataUrl}
-                alt="Ultron Snapshot"
+                alt="AU-RA Snapshot"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
               />
@@ -85,7 +85,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
                   <span>ÚLTIMA FOTO CAPTURADA</span>
                 </div>
                 <h3 className="font-display font-semibold text-white text-sm">
-                  {latestPhoto.caption || 'Instantánea del Asistente Ultron'}
+                  {latestPhoto.caption || 'Instantánea del Asistente AU-RA'}
                 </h3>
                 <p className="text-xs text-[#8FA3B0] font-mono leading-relaxed">
                   Resolución procesada con marco cibernético, firma de junta directiva y balance óptico adaptativo.
@@ -116,7 +116,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
           <div className="py-8 text-center flex flex-col items-center gap-2 border border-dashed border-[#05E1FF]/20 rounded-xl bg-black/40">
             <ImageIcon className="w-10 h-10 text-[#8FA3B0]/40" />
             <p className="text-sm font-mono text-[#8FA3B0]">No hay fotos capturadas aún.</p>
-            <p className="text-xs text-[#8FA3B0]/60">Dile a Ultron: "Toma una foto" o presiona el botón inferior.</p>
+            <p className="text-xs text-[#8FA3B0]/60">Dile a AU-RA: "Toma una foto" o presiona el botón inferior.</p>
           </div>
         )}
 
@@ -134,7 +134,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
                 >
                   <img
                     src={p.dataUrl}
-                    alt="Ultron Gallery"
+                    alt="AU-RA Gallery"
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
                   />

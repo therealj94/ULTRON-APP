@@ -3,7 +3,7 @@
  *
  * Dos maneras, porque hay dos formas de llegar:
  *
- *  · **Sesión.** Quien ya entró a ULTRON con su correo lleva el token en el almacenamiento del
+ *  · **Sesión.** Quien ya entró a AU-RA con su correo lleva el token en el almacenamiento del
  *    navegador. Se reusa tal cual: la sesión es una sola, lo que cambia es a qué plataforma te
  *    deja entrar, y eso lo decide el padrón del servidor, no esta pantalla.
  *
@@ -120,7 +120,7 @@ export function headersElectrum(): Record<string, string> {
 export const SIN_PUERTA =
   'Dr Electrum FP es privado y esta sesión no tiene acceso. Entrá con tu correo, o pedí el enlace con llave si venís a ver la demostración.';
 
-/** Guarda el token de sesión que devuelve ULTRON al entrar. Lo comparten las dos plataformas. */
+/** Guarda el token de sesión que devuelve AU-RA al entrar. Lo comparten las dos plataformas. */
 export function guardarSesion(token: string): Donde {
   return guardar(SESION, token);
 }
@@ -133,7 +133,7 @@ export function guardarLlave(llave: string): Donde {
 /**
  * Cerrar la sesión en este navegador.
  *
- * Borra las dos credenciales de los tres sitios donde pueden estar. **Cierra también la de ULTRON**,
+ * Borra las dos credenciales de los tres sitios donde pueden estar. **Cierra también la de AU-RA**,
  * porque es la misma: el token se comparte entre las dos plataformas y fingir que son dos sesiones
  * sería dejar una abierta creyendo que se cerró.
  */
@@ -182,7 +182,7 @@ export type Puerta =
  * Pregunta al servidor si esta credencial abre Electrum.
  *
  * Se pregunta de verdad en vez de mirar solo si hay un token guardado: un token caducado, o el de
- * alguien que entró a ULTRON pero no está en el padrón de Electrum, se ve igual desde el navegador
+ * alguien que entró a AU-RA pero no está en el padrón de Electrum, se ve igual desde el navegador
  * y solo el servidor sabe la diferencia. Antes se descubría al primer mensaje, con la pantalla ya
  * montada y la conversación contestando que no hay acceso.
  */

@@ -328,7 +328,7 @@ export const MANOS: Record<string, Herramienta> = {
   mapa_capa,
   expediente_buscar,
   informe_pdf,
-  // Estas dos no son de Electrum: viven en lib/manos/compartidas.ts porque ULTRON hace las mismas
+  // Estas dos no son de Electrum: viven en lib/manos/compartidas.ts porque AU-RA hace las mismas
   // cuentas y pregunta el mismo precio. Se montan acá, no se copian.
   ...COMPARTIDAS,
 };
@@ -345,7 +345,7 @@ export function manosDe(nombres: string[]): Herramienta[] {
 /**
  * Todas las que Dr Electrum puede usar, para cuando no hay panel convocado.
  *
- * El filtro por plataforma no es ceremonia: es la garantía estructural de que una mano de ULTRON
+ * El filtro por plataforma no es ceremonia: es la garantía estructural de que una mano de AU-RA
  * —el taller, la bóveda, el ejecutor— no termine en el panel de Electrum porque alguien la agregó
  * al registro equivocado. Si no declara `electrum`, no existe acá.
  */

@@ -66,7 +66,7 @@ check('cántame una ranchera', (o) => o.tipo === 'cantar' && o.genero === 'ranch
 check('canta 1', (o) => o.tipo === 'cantar' && o.cancion === 'bohemian');
 check('canta quiero conocer a Jesús', (o) => o.tipo === 'cantar' && o.cancion === 'jesus');
 check('cántame la de Bruno Mars', (o) => o.tipo === 'cantar' && o.cancion === 'bruno');
-check('ULTRON, canta 3', (o) => o.tipo === 'cantar' && o.cancion === 'bittersweet');
+check('AU-RA, canta 3', (o) => o.tipo === 'cantar' && o.cancion === 'bittersweet');
 check('canta way maker', (o) => o.tipo === 'cantar' && o.cancion === 'waymaker');
 check('cantá way maker', (o) => o.tipo === 'cantar' && o.cancion === 'waymaker');
 check('canta waymaker', (o) => o.tipo === 'cantar' && o.cancion === 'waymaker');
@@ -79,7 +79,7 @@ check('orá por el día', (o) => o.tipo === 'orar' && !o.tema);
 check('bendice el día', (o) => o.tipo === 'orar' && !o.tema);
 check('reza', (o) => o.tipo === 'orar' && !o.tema);
 check('oremos', (o) => o.tipo === 'orar' && !o.tema);
-check('ULTRON, ora por mi familia', (o) => o.tipo === 'orar' && o.tema === 'mi familia');
+check('AU-RA, ora por mi familia', (o) => o.tipo === 'orar' && o.tema === 'mi familia');
 check('reza por la junta', (o) => o.tipo === 'orar' && !o.tema);
 check('ríete', (o) => o.tipo === 'gag' && o.gag.id === 'laugh');
 check('ponte triste', (o) => o.tipo === 'gag' && o.gag.id === 'sad');
@@ -94,7 +94,7 @@ check('menú', 'menu');
 check('abre el menú', 'menu');
 check('catálogo', 'catalogo');
 check('qué puedes hacer', (o) => o.tipo === 'clip' && o.id === 'puedo');
-check('quién eres', (o) => o.tipo === 'clip' && o.id === 'quien');
+check('quién eres', 'cerebro'); // se contesta en vivo: el clip grabado decía el nombre viejo
 check('cuéntame un chiste', 'chiste');
 check('hazme reír', 'chiste');
 check('activa la cámara', 'vision_on');

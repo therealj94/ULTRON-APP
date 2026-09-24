@@ -1,15 +1,15 @@
 /**
  * DR ELECTRUM FP EN TELEGRAM — el segundo bot, no una sucursal del primero.
  *
- * Comparte el cuerpo con ULTRON (el mismo Qwen, el mismo harness, el mismo lector de PDF) y no
+ * Comparte el cuerpo con AU-RA (el mismo Qwen, el mismo harness, el mismo lector de PDF) y no
  * comparte NADA de lo que importa:
  *
  *   · Otro token de bot          → es otra cuenta de Telegram, otro @usuario, otra conversación.
- *   · Otro secreto de webhook    → un update firmado para ULTRON no entra por esta puerta.
+ *   · Otro secreto de webhook    → un update firmado para AU-RA no entra por esta puerta.
  *   · Otro padrón                → estar en la junta no te mete a la demo minera, y al revés.
  *   · Otro hilo                  → lo que se habla acá no aparece en el chat de la junta.
  *
- * Esa última línea es la que hace falta escribir para que sea verdad: el hilo de ULTRON vive en un
+ * Esa última línea es la que hace falta escribir para que sea verdad: el hilo de AU-RA vive en un
  * Map dentro de lib/telegram-in.ts, y si reusáramos ese Map, dos chats con el mismo id numérico
  * —cosa que pasa, porque el id es del CHAT, no del bot— se verían los mensajes del otro.
  *
@@ -223,7 +223,7 @@ export async function registrarWebhookElectrum(): Promise<{ ok: boolean; detalle
 /* ------------------------------------------------------------------ archivos */
 
 /**
- * Los documentos que le importan a Electrum no son los de ULTRON. `parsearUpdateTelegram` se queda
+ * Los documentos que le importan a Electrum no son los de AU-RA. `parsearUpdateTelegram` se queda
  * con PDF, imagen y audio; un shapefile comprimido lo descarta. Así que el .zip, el KML y el CSV se
  * recogen acá, directamente del update.
  */

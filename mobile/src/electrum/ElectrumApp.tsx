@@ -1,8 +1,8 @@
 /**
  * Dr Electrum FP en el teléfono: arranque, puerta y campo.
  *
- * Vive aparte del `App.tsx` de ULTRON a propósito. Podrían compartir el esqueleto —splash, sesión,
- * pantalla— y no lo hacen porque ese esqueleto está lleno de decisiones de ULTRON: bloquea en
+ * Vive aparte del `App.tsx` de AU-RA a propósito. Podrían compartir el esqueleto —splash, sesión,
+ * pantalla— y no lo hacen porque ese esqueleto está lleno de decisiones de AU-RA: bloquea en
  * horizontal, pide cámara al entrar a la mesa, esconde las barras del sistema. Cada una de esas es
  * correcta para la mesa de la junta y equivocada para una app que se usa de pie en un cerro.
  *

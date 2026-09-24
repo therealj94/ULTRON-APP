@@ -10,7 +10,7 @@
  *  - corte corto: un cuadro perdido no deja `principal` en null ni dice «No veo a nadie ahora.»;
  *  - alisado (EMA) del giro de cabeza antes de la histéresis de `mirando`/`cabeza`;
  *  - modo «inmediato» (cara dormida) y respaldo por etiquetas del servidor;
- *  - frases en español, en primera persona (ULTRON habla), sin inventar identidad.
+ *  - frases en español, en primera persona (AU-RA habla), sin inventar identidad.
  *
  *   node scripts/check-escena.mjs
  */
@@ -93,12 +93,12 @@ console.log('\n— Ángulo esperado (mirada relativa a la cámara) —');
   const m = new MaquinaEscena();
   let ultima;
   for (let t = 0; t <= 1200; t += 100) ultima = m.procesar(observacionMlkit(borde, 640, 480, 'portrait', t));
-  // cx 0,15 del cuadro crudo → espejado x>0 (derecha de la pantalla) → para ULTRON «a mi izquierda».
+  // cx 0,15 del cuadro crudo → espejado x>0 (derecha de la pantalla) → para AU-RA «a mi izquierda».
   check('…y la máquina la da por mirando la pantalla (a mi izquierda)', ultima.principal.mirando === true && /a mi izquierda, mirando la pantalla/.test(ultima.descripcion), ultima.descripcion);
   const centroGirado = [{ ...borde[0], bounds: { x: 256, y: 160, width: 128, height: 160 } }];
   const oc = observacionMlkit(centroGirado, 640, 480, 'portrait', 0);
   check('misma cabeza girada 22° pero en el centro → no mira (yaw ≈ -22)', Math.abs(oc.cara.yaw + 22) < 1e-9 && Math.abs(oc.cara.yaw) > UMBRALES.miraYawOn);
-  // Y el mismo caso al otro lado del cuadro (cx ≈ 0,85 → para ULTRON «a mi derecha»).
+  // Y el mismo caso al otro lado del cuadro (cx ≈ 0,85 → para AU-RA «a mi derecha»).
   const bordeDer = [{ ...borde[0], bounds: { x: 480, y: 160, width: 128, height: 160 }, yawAngle: -22 }];
   const md = new MaquinaEscena();
   let ud;

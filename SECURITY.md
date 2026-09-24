@@ -1,4 +1,4 @@
-# Modelo de amenazas — ULTRON FP
+# Modelo de amenazas — AU-RA FP
 
 **Público:** `/api/health`, `/api/capacidades`, `GET /api/cantar`, `/api/ultron/salud` (sin datos de usuario), `/api/nodo/listo`.
 

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "ULTRON FP",
+    "name": "AU-RA FP",
     "slug": "ultron-fp",
     "version": "4.1.2",
     "orientation": "landscape",
@@ -63,8 +63,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "ULTRON FP usa la cámara para mirarte e identificar lo que hay en la mesa.",
-          "microphonePermission": "ULTRON FP te escucha de forma continua para conversar sin palabra clave.",
+          "cameraPermission": "AU-RA FP usa la cámara para mirarte e identificar lo que hay en la mesa.",
+          "microphonePermission": "AU-RA FP te escucha de forma continua para conversar sin palabra clave.",
           "recordAudioAndroid": true
         }
       ],
@@ -72,8 +72,8 @@
       [
         "expo-speech-recognition",
         {
-          "microphonePermission": "ULTRON FP te escucha de forma continua para conversar sin palabra clave.",
-          "speechRecognitionPermission": "ULTRON FP convierte tu voz en texto en el teléfono.",
+          "microphonePermission": "AU-RA FP te escucha de forma continua para conversar sin palabra clave.",
+          "speechRecognitionPermission": "AU-RA FP convierte tu voz en texto en el teléfono.",
           "androidSpeechServicePackages": [
             "com.google.android.googlequicksearchbox",
             "com.google.android.tts",

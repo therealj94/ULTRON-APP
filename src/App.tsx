@@ -249,7 +249,7 @@ export default function App() {
   const lastSeen = useRef(0);
   const sawOnce = useRef(false);
   const sleptByAbsence = useRef(false);
-  /** Lo último que ULTRON ve por su cámara: viaja al cerebro como hecho en cada turno. */
+  /** Lo último que AU-RA ve por su cámara: viaja al cerebro como hecho en cada turno. */
   const escenaRef = useRef<{ texto: string; ts: number }>({ texto: '', ts: 0 });
   const ultimaInteraccion = useRef(0);
   const dosPersonasDicho = useRef(false);
@@ -287,7 +287,7 @@ export default function App() {
   }, [cameraGaze.active, face, isBooting, dockOpen, settingsOpen]);
 
   /**
-   * Lo que ULTRON ve. La descripción se guarda como hecho para el turno; los eventos mueven la cara
+   * Lo que AU-RA ve. La descripción se guarda como hecho para el turno; los eventos mueven la cara
    * y, muy de vez en cuando, le hacen decir algo. Nunca interrumpe si está hablando o pensando.
    */
   const alVerEscena = useCallback(
@@ -340,7 +340,7 @@ export default function App() {
       playSfx('think', soundFxEnabled);
       const quiereVer = /qu[eé] ves|qu[eé] hay aqu[ií]|imagen|c[aá]mara|le[eé] (esto|la foto|la etiqueta)/i.test(cmd);
       const image = quiereVer && visionEnabled ? grabFrame() : null;
-      // Si el 27B tarda, ULTRON piensa en voz alta con un clip (sin red).
+      // Si el 27B tarda, AU-RA piensa en voz alta con un clip (sin red).
       const relleno = setTimeout(() => {
         if (turnoEnCurso.current === ac && colaRef.current.length === 0 && !hablando.current) decir(Math.random() < 0.5 ? 'mmm' : 'mmm2', { emocion: 'pensando', sinBurbuja: true });
       }, 1400);
@@ -471,9 +471,6 @@ export default function App() {
         }
         case 'chiste':
           decir(siguienteChiste().id, { emocion: 'risa' });
-          return;
-        case 'clip':
-          decir(it.id, { emocion: it.id === 'discurso' ? 'orgullo' : 'feliz' });
           return;
         case 'capacidades':
           setSettingsOpen(true);
@@ -722,7 +719,7 @@ export default function App() {
           onOpenAcceso={() => setAccesoOpen(true)}
           onOpenVault={() => setVaultOpen(true)}
           onOpenPhotos={() => setPhotosOpen(true)}
-          onProbarVoz={() => decir('Hola. Soy ULTRON. Esta es mi voz, y así me río: je je. ¿Seguimos?', { emocion: 'feliz' })}
+          onProbarVoz={() => decir('Hola. Soy AU-RA. Esta es mi voz, y así me río: je je. ¿Seguimos?', { emocion: 'feliz' })}
           onEjemplo={(c) => comando(c)}
           onOlvidar={() => {
             historialRef.current = [];

@@ -54,9 +54,9 @@ describe('Junta: José, Medardo, Carlos y Mayra', () => {
     else delete process.env.TELEGRAM_MAYRA_USER_ID;
   });
 
-  it('la bienvenida vende ULTRON FP sin palabras prohibidas', () => {
+  it('la bienvenida vende AU-RA FP sin palabras prohibidas', () => {
     const m = mensajeBienvenidaUltron({ nombre: 'Mayra', quien: 'mayra' });
-    assert.match(m, /ULTRON FP/);
+    assert.match(m, /AU-RA FP/);
     assert.match(m, /Mayra/);
     assert.match(m, /no cambian el sistema/);
     assert.match(m, /Qwen/);

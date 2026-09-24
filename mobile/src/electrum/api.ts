@@ -2,7 +2,7 @@
  * El cliente de Dr Electrum en el teléfono.
  *
  * Habla con las rutas `/api/electrum/*`, que están cerradas: cada petición lleva la sesión o la
- * llave de demostración. No reusa el cliente de ULTRON a propósito — son dos cerebros y dos
+ * llave de demostración. No reusa el cliente de AU-RA a propósito — son dos cerebros y dos
  * puertas, y un cliente que sirva para los dos acaba mandando la credencial equivocada.
  */
 import * as SecureStore from 'expo-secure-store';
@@ -216,7 +216,7 @@ export async function voz(texto: string, emocion?: string): Promise<string | nul
   }
 }
 
-/** Entrar con el correo de la junta. La misma sesión que abre ULTRON, si el padrón la deja pasar. */
+/** Entrar con el correo de la junta. La misma sesión que abre AU-RA, si el padrón la deja pasar. */
 export async function entrar(correo: string, clave: string): Promise<string> {
   // La puerta de Dr Electrum. El servidor mantiene `/api/ultron/entrar` como alias para las
   // APK que ya están instaladas; las nuevas llaman a la suya.

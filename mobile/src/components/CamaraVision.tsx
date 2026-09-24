@@ -1,5 +1,5 @@
 /**
- * CamaraVision — los ojos de ULTRON en el teléfono.
+ * CamaraVision — los ojos de AU-RA en el teléfono.
  *
  * Motor 'servidor': expo-camera en 1×1 px toma una foto cada 12 s (30 s con la cara dormida) y la manda
  * a /api/vision/analyze; las etiquetas pasan por `escenaDesdeEtiquetas` (src/lib/escena.ts) y salen como
@@ -124,7 +124,7 @@ function CamaraServidor({ activa, dormido, grabRef, onEtiquetas }: ServidorProps
   /**
    * Una foto de verdad pesa decenas de miles de caracteres en base64. Si sale mucho más corta es que
    * la cámara todavía no entrega imagen (superficie sin preparar, permiso recién dado, sensor ocupado):
-   * se descarta en vez de mandar basura al nodo de visión, que respondería con un error y ULTRON lo
+   * se descarta en vez de mandar basura al nodo de visión, que respondería con un error y AU-RA lo
    * repetiría como si no viera.
    */
   const grab = useCallback(async (quality = 0.25): Promise<string | null> => {
@@ -257,7 +257,7 @@ export function CamaraVision({ enabled, dormido = false, grabRef, onEscena, onGa
 const styles = StyleSheet.create({
   /**
    * El preview NO puede ser de 1×1 px. Con una superficie así de pequeña, `takePictureAsync` en
-   * Android devuelve una imagen rota o de un píxel: el nodo de visión no ve nada y ULTRON acababa
+   * Android devuelve una imagen rota o de un píxel: el nodo de visión no ve nada y AU-RA acababa
    * diciendo «la cámara me está mostrando un error técnico». Necesita una superficie real; queda
    * casi invisible (2% de opacidad, 96×72 en una esquina) sobre el negro de la mesa.
    */

@@ -3,7 +3,7 @@
  *
  * El movimiento central de la interfaz es **la cara que cede el paso**:
  *
- *  - Arranca como ULTRON: cara completa, centrada, sin nada más. Es quien te recibe.
+ *  - Arranca como AU-RA: cara completa, centrada, sin nada más. Es quien te recibe.
  *  - En cuanto hay algo que mirar —un mapa, un expediente— la cara se encoge a la esquina y le deja
  *    el escenario al trabajo, pero sigue ahí, mirando y reaccionando.
  *  - Si el trabajo se cierra, vuelve a ocupar el centro.
@@ -44,7 +44,7 @@ export default function App() {
    * Antes no se comprobaba: se montaba todo y el primer mensaje contestaba que no había acceso, con
    * el mapa y los ocho especialistas ya delante. Eso es peor que una puerta cerrada, porque parece
    * que entraste. Y se pregunta al servidor en vez de mirar si hay un token guardado: un token
-   * caducado, o el de alguien que entró a ULTRON pero no está en el padrón de Electrum, se ve igual
+   * caducado, o el de alguien que entró a AU-RA pero no está en el padrón de Electrum, se ve igual
    * desde aquí.
    */
   const [puerta, setPuerta] = useState<'probando' | 'cerrada' | 'abierta' | 'plataforma'>(() =>

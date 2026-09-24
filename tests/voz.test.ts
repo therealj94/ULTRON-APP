@@ -43,8 +43,8 @@ describe('cada plataforma con su voz', () => {
     }
   }
 
-  it('Dr Electrum no habla con la voz de ULTRON, ni siquiera por descuido', () => {
-    // El respaldo NO es la voz de ULTRON a propósito: dos cerebros con la misma voz son la misma
+  it('Dr Electrum no habla con la voz de AU-RA, ni siquiera por descuido', () => {
+    // El respaldo NO es la voz de AU-RA a propósito: dos cerebros con la misma voz son la misma
     // cosa con dos nombres, y descubrirlo delante de un cliente es tarde.
     conVoz(undefined, () => {
       assert.notEqual(vozDe('electrum'), vozDe('ultron'));
@@ -55,7 +55,7 @@ describe('cada plataforma con su voz', () => {
   it('ELECTRUM_VOZ manda sobre el respaldo', () => {
     conVoz('onwK4e9ZLuTAKqWW03F9', () => {
       assert.equal(vozDe('electrum'), 'onwK4e9ZLuTAKqWW03F9');
-      assert.notEqual(vozDe('ultron'), 'onwK4e9ZLuTAKqWW03F9', 'cambiar la del Doctor no toca la de ULTRON');
+      assert.notEqual(vozDe('ultron'), 'onwK4e9ZLuTAKqWW03F9', 'cambiar la del Doctor no toca la de AU-RA');
     });
   });
 
@@ -107,7 +107,7 @@ describe('el guion que recibe v3', () => {
 });
 
 describe('cada cerebro con su paleta de emociones', () => {
-  it('Dr Electrum tiene MENOS emociones que ULTRON, no más', () => {
+  it('Dr Electrum tiene MENOS emociones que AU-RA, no más', () => {
     // Es la parte contraintuitiva y es a propósito: un 27B con quince opciones delante elige peor
     // que uno con once. Si esta prueba empieza a fallar porque alguien le sumó emociones al
     // doctor «para que tenga más», el que pierde es el doctor.
@@ -120,7 +120,7 @@ describe('cada cerebro con su paleta de emociones', () => {
     }
   });
 
-  it('ULTRON no cambió: sigue con las quince de siempre', () => {
+  it('AU-RA no cambió: sigue con las quince de siempre', () => {
     assert.equal(PALETA.ultron.length, 15);
     for (const e of ['canto', 'oracion', 'travieso', 'triste'] as const) assert.ok(PALETA.ultron.includes(e));
   });
@@ -140,7 +140,7 @@ describe('cada cerebro con su paleta de emociones', () => {
     assert.ok(!/oracion|travieso/.test(e), 'al doctor no se le nombran emociones que no tiene');
     assert.match(e, /inferido no es una reserva/, 'los ejemplos enseñan el registro, no solo la sintaxis');
     assert.match(u, /oracion/);
-    assert.ok(!/escepticismo/.test(u), 'ULTRON no cambió');
+    assert.ok(!/escepticismo/.test(u), 'AU-RA no cambió');
   });
 
   it('el modelo puede escribirlas de varias formas y se entienden igual', () => {
@@ -154,4 +154,10 @@ describe('cada cerebro con su paleta de emociones', () => {
       assert.equal(normalizarEmocion(dicho), esperado, dicho);
     }
   });
+});
+
+test('«AU-RA» se dice «Aura»: la voz no deletrea el nombre', () => {
+  const t = expresar('Soy AU-RA, de AU-RA FP.', 'feliz');
+  assert.ok(!/AU-RA/.test(t), t);
+  assert.equal((t.match(/Aura/g) || []).length, 2, t);
 });

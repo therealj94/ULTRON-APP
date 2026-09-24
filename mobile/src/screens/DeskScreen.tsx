@@ -260,7 +260,7 @@ export function DeskScreen({ user, onLogout }: Props) {
     [onAudio, say, settle, showBubble]
   );
 
-  /** ULTRON canta: POST /api/cantar. Cara SING, mic pausado, sin rellenos. */
+  /** AU-RA canta: POST /api/cantar. Cara SING, mic pausado, sin rellenos. */
   const sing = useCallback(
     async (req: SongRequest, titulo: string) => {
       showBubble(`♪ ${titulo}`);
@@ -643,7 +643,7 @@ export function DeskScreen({ user, onLogout }: Props) {
               setMenuOpen(true);
               setCatalogRequest((n) => n + 1);
             }
-            const ok = await playClip(intent.id, intent.id === 'discurso' ? 'PROUD' : 'HAPPY', { fallbackText: null });
+            const ok = await playClip(intent.id, 'HAPPY', { fallbackText: null });
             if (!ok) await askBrain(cmd);
             return;
           }

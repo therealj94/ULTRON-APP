@@ -156,7 +156,7 @@ export function mesaDeskAutorizada(req: Request): boolean {
 export function exigirMesa(req: Request, res: Response, next: NextFunction) {
   if (mesaAutorizada(req)) return next();
   return res.status(401).json({
-    error: 'ULTRON es privado. Entra con sesión de junta.',
+    error: 'AU-RA es privado. Entra con sesión de junta.',
     code: 'sesion_requerida',
     honesto: true,
   });
@@ -165,7 +165,7 @@ export function exigirMesa(req: Request, res: Response, next: NextFunction) {
 export function exigirMesaODesk(req: Request, res: Response, next: NextFunction) {
   if (mesaDeskAutorizada(req)) return next();
   return res.status(401).json({
-    error: 'ULTRON es privado. Entra con sesión de junta.',
+    error: 'AU-RA es privado. Entra con sesión de junta.',
     code: 'sesion_requerida',
     honesto: true,
   });
@@ -270,7 +270,7 @@ export function plataformaAutorizada(req: Request, plataforma: Plataforma): bool
   if (process.env.NODE_ENV !== 'production' && !clave) {
     if (!avisadoHueco) {
       avisadoHueco = true;
-      console.warn('[ULTRON] sin NODE_ENV=production y sin llave: las plataformas quedan abiertas. Solo desarrollo.');
+      console.warn('[AU-RA] sin NODE_ENV=production y sin llave: las plataformas quedan abiertas. Solo desarrollo.');
     }
     return true;
   }
@@ -288,7 +288,7 @@ export function exigirPlataforma(plataforma: Plataforma) {
       error:
         plataforma === 'electrum'
           ? 'Dr Electrum FP es privado. Entrá con tu sesión o con la llave de la demostración.'
-          : 'ULTRON es privado. Entra con sesión de junta.',
+          : 'AU-RA es privado. Entra con sesión de junta.',
       code: 'sesion_requerida',
       plataforma,
       honesto: true,
