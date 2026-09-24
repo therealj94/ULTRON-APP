@@ -241,7 +241,7 @@ async function pedirVoz(texto, emocion){
   if (!r.ok) throw new Error('voz ' + r.status);
   return URL.createObjectURL(await r.blob());
 }
-let cortar = false;
+let cortar = false, terminarVoz = null;
 async function hablar(texto, emocion){
   audioListo(); if (actx.state === 'suspended') await actx.resume().catch(()=>{});
   const partes = trozos(texto); cortar = false;
@@ -252,14 +252,17 @@ async function hablar(texto, emocion){
     siguiente = i + 1 < partes.length ? pedirVoz(partes[i+1], emocion).catch(() => null) : null;
     if (!url) { pista('No tengo voz ahora mismo; le dejo el texto.'); break; }
     await new Promise(res => {
+      // `pause()` no dispara `ended`: por eso callar() cierra la promesa con esta misma función.
+      let hecho = false;
+      terminarVoz = () => { if (hecho) return; hecho = true; terminarVoz = null; sonando = false; URL.revokeObjectURL(url); res(); };
       voz.src = url; sonando = true;
-      voz.onended = voz.onerror = () => { sonando = false; URL.revokeObjectURL(url); res(); };
-      voz.play().catch(() => { sonando = false; res(); });
+      voz.onended = voz.onerror = terminarVoz;
+      voz.play().catch(terminarVoz);
     });
   }
   sonando = false;
 }
-function callar(){ cortar = true; try { voz.pause(); } catch {} sonando = false; }
+function callar(){ cortar = true; try { voz.pause(); } catch {} sonando = false; if (terminarVoz) terminarVoz(); }
 
 /* ------------------------------------------------------------ pensar: /api/electrum/turno/stream */
 async function preguntar(mensaje, img){
