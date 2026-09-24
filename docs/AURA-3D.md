@@ -12,6 +12,32 @@ el mismo motor.
   (`server/habla.ts`, con prueba en `tests/voz.test.ts`).
 - **Tacto, mirada y cámara**: los mismos eventos que mueven la cara de hoy.
 
+## Elegido (24-sep)
+
+- **Personaje**: `docs/aura-concepto/v2/p2.jpg` — frijol color crema de vinilo suave, neutral,
+  bufanda verde salvia, anillo de luz dorada que gira a la altura de la cintura. Su sala: ventana
+  en arco, plantas y un sillón huevo mostaza.
+- **Logo**: `docs/aura-concepto/v2/logo-aura.png` (el 1, sin el corazón) e `icono-aura.png`.
+  Falta redibujarlo en vector para la versión final.
+- **Prototipo en movimiento**: `docs/aura-concepto/v2/prototipo-sala.html`.
+
+## Interacciones con objetos
+
+Cada herramienta de AU-RA tiene su gesto, para que se vea qué está haciendo:
+
+| Herramienta | Lo que se ve |
+|---|---|
+| Buscar en internet | camina al escritorio, se sienta en el puf, abre la computadora y teclea |
+| Enviar (Telegram, correo) | dobla un avión de papel y lo lanza por la ventana |
+| Anotar, recordatorios | saca una libreta y escribe |
+| Oro y metales | levanta una tarjeta con la gráfica |
+| Leer un PDF | sostiene la hoja y la recorre con la vista |
+| Contestar | de pie en el centro o sentada en su sillón, según la preferencia, gesticulando |
+
+En la app de verdad, esto se engancha a las herramientas que el cerebro ya usa: cuando el turno
+llama a `web`, `telegram`, `memoria`, `metales` o `pdf`, la pantalla recibe el evento y el
+personaje hace el gesto que le toca.
+
 ## Concepto (fase 1)
 
 Cuatro propuestas en `docs/aura-concepto/` (`aura-conceptos-4.jpg` las reúne). Rasgos comunes:
