@@ -1,0 +1,111 @@
+/*
+ * El tema de AU-RA: cálido, redondo y amable. Solo vale dentro de `.aura` (la raíz de la app de
+ * AU-RA), así que Dr Electrum, que comparte el CSS base, no se entera.
+ */
+.aura {
+  --aura-crema: #FEF9F3;
+  --aura-miel: #E2A83E;
+  --aura-miel-osc: #A8701A;
+  --aura-salvia: #8FAF93;
+  --aura-salvia-osc: #4E6E54;
+  --aura-salvia-claro: #E7F0E6;
+  --aura-barro: #D9825F;
+  --aura-tinta: #3A322C;
+  --aura-tinta-2: #6B6056;
+  --aura-borde: #EDE0CC;
+  font-family: 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--aura-tinta);
+}
+.aura .font-mono { font-family: 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif; }
+.aura .font-display { font-family: 'Fredoka', 'Figtree', system-ui, sans-serif; letter-spacing: 0.01em; }
+.aura ::-webkit-scrollbar-track { background: transparent; }
+.aura ::-webkit-scrollbar-thumb { background: rgba(168, 112, 26, 0.25); border-radius: 4px; }
+.aura ::-webkit-scrollbar-thumb:hover { background: rgba(168, 112, 26, 0.45); }
+.aura button:focus-visible,
+.aura input:focus-visible { outline: 3px solid var(--aura-salvia-osc); outline-offset: 2px; }
+
+.aura-fondo { background: linear-gradient(180deg, #F6ECDF 0%, #EFE1CE 100%); }
+.aura-sombra { box-shadow: 0 6px 18px rgba(90, 60, 25, 0.12); }
+
+/* La burbuja le sale de la cabeza: la sala publica dónde está (--aura-x/--aura-y) cada cuadro. */
+.aura-burbuja {
+  position: absolute;
+  z-index: 15;
+  left: clamp(150px, var(--aura-x, 50%), calc(100% - 150px));
+  top: max(118px, var(--aura-y, 30%));
+  transform: translate(-50%, calc(-100% - 8px)) scale(0.96);
+  max-width: min(340px, 78vw);
+  background: #FFFFFF;
+  color: var(--aura-tinta);
+  border-radius: 18px;
+  padding: 10px 15px;
+  font-size: 15px;
+  line-height: 1.38;
+  text-align: left;
+  box-shadow: 0 10px 28px rgba(90, 60, 25, 0.16);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  text-wrap: pretty;
+}
+.aura-burbuja.visible { opacity: 1; transform: translate(-50%, calc(-100% - 8px)) scale(1); }
+.aura-burbuja::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  width: 14px;
+  height: 14px;
+  background: #FFFFFF;
+  border-radius: 3px;
+  transform: translateX(-50%) rotate(45deg);
+}
+.aura-burbuja.abajo { left: 50%; top: auto; bottom: 120px; transform: translate(-50%, 0) scale(0.96); text-align: center; }
+.aura-burbuja.abajo.visible { transform: translate(-50%, 0) scale(1); }
+.aura-burbuja.abajo::after { display: none; }
+
+.aura-mic {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  background: #FFFFFF;
+  color: var(--aura-tinta-2);
+  box-shadow: 0 10px 24px rgba(90, 60, 25, 0.18);
+  transition: transform 0.15s ease, background 0.2s ease;
+  position: relative;
+}
+.aura-mic.abierto { background: var(--aura-miel); color: #FFFFFF; box-shadow: 0 10px 24px rgba(168, 112, 26, 0.35); }
+.aura-mic:active { transform: scale(0.95); }
+.aura-mic.escuchando::before {
+  content: '';
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  border: 3px solid var(--aura-salvia);
+  animation: aura-escucha 1.3s ease-out infinite;
+}
+@keyframes aura-escucha {
+  from { transform: scale(0.92); opacity: 0.9; }
+  to { transform: scale(1.25); opacity: 0; }
+}
+
+.aura-segmento { display: inline-flex; background: var(--aura-salvia-claro); border-radius: 999px; padding: 3px; }
+.aura-segmento button {
+  border: none;
+  background: transparent;
+  color: var(--aura-salvia-osc);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font: 600 13px 'Figtree', system-ui, sans-serif;
+  cursor: pointer;
+}
+.aura-segmento button[aria-pressed='true'] { background: #FFFFFF; color: var(--aura-tinta); box-shadow: 0 1px 4px rgba(60, 40, 20, 0.12); }
+
+@media (prefers-reduced-motion: reduce) {
+  .aura-mic.escuchando::before { animation: none; opacity: 0.8; }
+  .aura-burbuja { transition: none; }
+}

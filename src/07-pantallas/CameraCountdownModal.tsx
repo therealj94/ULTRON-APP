@@ -128,11 +128,11 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
       // Cyber LOOI Watermark Stamp in bottom corner
       ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
       ctx.fillRect(24, height - 60, 360, 36);
-      ctx.strokeStyle = '#05E1FF';
+      ctx.strokeStyle = '#E2A83E';
       ctx.lineWidth = 1.5;
       ctx.strokeRect(24, height - 60, 360, 36);
 
-      ctx.fillStyle = '#05E1FF';
+      ctx.fillStyle = '#E2A83E';
       ctx.font = 'bold 14px monospace';
       ctx.fillText(`AU-RA FP · LOOI CAM [${new Date().toLocaleTimeString()}]`, 36, height - 37);
 
@@ -214,28 +214,28 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
   return (
     <div
       id="camera-countdown-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[#3A322C]/40 backdrop-blur-md p-4 animate-in fade-in duration-200"
     >
       {/* Blinding Flash Overlay */}
       {isFlashing && (
         <div className="fixed inset-0 z-50 bg-white pointer-events-none transition-opacity duration-200 opacity-100" />
       )}
 
-      <div className="relative w-full max-w-3xl bg-[#0b1017] border border-[#05E1FF]/40 rounded-2xl overflow-hidden shadow-2xl shadow-[#05E1FF]/20 flex flex-col max-h-[92vh]">
+      <div className="relative w-full max-w-3xl bg-[#0b1017] border border-[#EDE0CC] rounded-2xl overflow-hidden shadow-2xl shadow-[rgba(90,60,25,0.12)] flex flex-col max-h-[92vh]">
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-[#060a0f]/90">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#EDE0CC] bg-[#060a0f]/90">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[#05E1FF]/15 border border-[#05E1FF]/40 flex items-center justify-center text-[#05E1FF]">
+            <div className="w-9 h-9 rounded-lg bg-[#E2A83E]/15 border border-[#EDE0CC] flex items-center justify-center text-[#A8701A]">
               <Camera className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-white font-mono font-bold text-base tracking-wide flex items-center gap-2">
+              <h3 className="text-[#3A322C] font-mono font-bold text-base tracking-wide flex items-center gap-2">
                 LOOI OPTICAL SHUTTER · CÁMARA EN VIVO
-                <span className="text-[10px] uppercase px-2 py-0.5 rounded-full bg-[#05E1FF]/20 text-[#05E1FF] border border-[#05E1FF]/40">
+                <span className="text-[12px] uppercase px-2 py-0.5 rounded-full bg-[#E2A83E]/20 text-[#A8701A] border border-[#EDE0CC]">
                   FHD 1080P
                 </span>
               </h3>
-              <p className="text-xs text-white/50 font-mono">
+              <p className="text-xs text-[#6B6056] font-mono">
                 {capturedImage ? 'Fotografía capturada · Lista para guardar' : 'Alinea tu rostro dentro del retículo cibernético'}
               </p>
             </div>
@@ -243,23 +243,23 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
 
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-white/70 hover:text-white transition-colors"
+            className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 border border-[#EDE0CC] flex items-center justify-center text-[#6B6056] hover:text-[#3A322C] transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Video / Snapshot Viewport */}
-        <div className="relative flex-1 bg-black overflow-hidden flex items-center justify-center min-h-[380px] max-h-[520px]">
+        <div className="relative flex-1 bg-[#FEF9F3] overflow-hidden flex items-center justify-center min-h-[380px] max-h-[520px]">
           {cameraError ? (
             <div className="text-center p-8 max-w-md">
-              <div className="w-14 h-14 rounded-full bg-red-500/20 border border-red-500/40 text-red-400 flex items-center justify-center mx-auto mb-4">
+              <div className="w-14 h-14 rounded-full bg-red-500/20 border border-red-500/40 text-[#B3413D] flex items-center justify-center mx-auto mb-4">
                 <Camera className="w-7 h-7" />
               </div>
-              <p className="text-red-300 font-mono text-sm mb-4">{cameraError}</p>
+              <p className="text-[#8F2F2B] font-mono text-sm mb-4">{cameraError}</p>
               <button
                 onClick={startCamera}
-                className="px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-white font-mono text-xs transition-colors"
+                className="px-4 py-2 bg-white/10 hover:bg-white/20 border border-[#EDE0CC] rounded-lg text-[#3A322C] font-mono text-xs transition-colors"
               >
                 Reintentar Conexión
               </button>
@@ -272,7 +272,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                 alt="Captured Snapshot"
                 className="max-h-[500px] w-auto object-contain rounded-lg shadow-lg"
               />
-              <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-md border border-[#00FFA3]/40 text-[#00FFA3] font-mono text-xs flex items-center gap-2">
+              <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-md border border-[#C9DCC8] text-[#4E6E54] font-mono text-xs flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4" />
                 <span>CAPTURA COMPLETADA</span>
               </div>
@@ -291,30 +291,30 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
               {/* Cyber HUD Reticle & Corner Brackets */}
               <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
                 {/* Center target box */}
-                <div className="relative w-64 h-64 border border-[#05E1FF]/30 rounded-2xl flex items-center justify-center">
-                  <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-[#05E1FF]" />
-                  <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-[#05E1FF]" />
-                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-[#05E1FF]" />
-                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-[#05E1FF]" />
+                <div className="relative w-64 h-64 border border-[#EDE0CC] rounded-2xl flex items-center justify-center">
+                  <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-[#E2A83E]" />
+                  <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-[#E2A83E]" />
+                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-[#E2A83E]" />
+                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-[#E2A83E]" />
 
                   {/* Crosshair */}
-                  <div className="w-3 h-3 rounded-full bg-[#05E1FF]/40 animate-ping" />
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#05E1FF]" />
+                  <div className="w-3 h-3 rounded-full bg-[#E2A83E]/40 animate-ping" />
+                  <div className="w-1.5 h-1.5 rounded-full bg-[#E2A83E]" />
 
                   {/* Face Guide Label */}
-                  <span className="absolute -top-7 text-[10px] font-mono tracking-widest text-[#05E1FF]/80 uppercase bg-black/60 px-2 py-0.5 rounded border border-[#05E1FF]/20">
+                  <span className="absolute -top-7 text-[12px] font-mono tracking-widest text-[#A8701A] uppercase bg-white/90 px-2 py-0.5 rounded border border-[#EDE0CC]">
                     TARGET: ENCUADRE ROSTRO
                   </span>
                 </div>
 
                 {/* Outer Framing Telemetry */}
-                <div className="absolute top-4 left-4 flex flex-col gap-1 font-mono text-[10px] text-[#05E1FF]/70 bg-black/60 backdrop-blur-sm p-2 rounded border border-white/10">
+                <div className="absolute top-4 left-4 flex flex-col gap-1 font-mono text-[12px] text-[#A8701A] bg-white/90 backdrop-blur-sm p-2 rounded border border-[#EDE0CC]">
                   <span>SENSOR: SONY STARVIS CMOS</span>
                   <span>OPTICS: AUTO-FOCUS ULTRA-LOW NOISE</span>
                   <span>FPS: 60 LOCKED</span>
                 </div>
 
-                <div className="absolute bottom-4 left-4 flex items-center gap-2 font-mono text-[11px] text-white/70 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-full border border-white/10">
+                <div className="absolute bottom-4 left-4 flex items-center gap-2 font-mono text-[13px] text-[#6B6056] bg-white/90 backdrop-blur-sm px-3 py-1.5 rounded-full border border-[#EDE0CC]">
                   <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                   <span>EN VIVO · ÓPTICA ACTIVA</span>
                 </div>
@@ -322,14 +322,14 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
 
               {/* Glowing Countdown Center Overlay */}
               {countdown !== null && (
-                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xs animate-in zoom-in duration-200">
+                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-white/90 backdrop-blur-xs animate-in zoom-in duration-200">
                   <div className="relative flex items-center justify-center">
-                    <div className="w-32 h-32 rounded-full border-4 border-[#05E1FF] animate-spin border-t-transparent" />
-                    <span className="absolute font-mono font-black text-7xl text-[#05E1FF] drop-shadow-[0_0_25px_rgba(5,225,255,0.9)] animate-pulse">
+                    <div className="w-32 h-32 rounded-full border-4 border-[#E2A83E] animate-spin border-t-transparent" />
+                    <span className="absolute font-mono font-black text-7xl text-[#A8701A] drop-shadow-[0_8px_24px_rgba(90,60,25,0.14)] animate-pulse">
                       {countdown}
                     </span>
                   </div>
-                  <span className="mt-4 text-white font-mono text-sm tracking-widest uppercase bg-black/70 px-4 py-1.5 rounded-full border border-[#05E1FF]/40">
+                  <span className="mt-4 text-[#3A322C] font-mono text-sm tracking-widest uppercase bg-white/90 px-4 py-1.5 rounded-full border border-[#EDE0CC]">
                     ¡SONRÍE AL ROBOT LOOI!
                   </span>
                 </div>
@@ -339,13 +339,13 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
         </div>
 
         {/* Modal Controls Footer */}
-        <div className="p-4 bg-[#060a0f] border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
+        <div className="p-4 bg-[#060a0f] border-t border-[#EDE0CC] flex flex-wrap items-center justify-between gap-3">
           {capturedImage ? (
             /* Actions for Captured Photo */
             <div className="w-full flex flex-wrap items-center justify-between gap-3">
               <button
                 onClick={handleRetake}
-                className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-white/80 hover:text-white font-mono text-xs flex items-center gap-2 transition-all"
+                className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-[#EDE0CC] text-[#6B6056] hover:text-[#3A322C] font-mono text-xs flex items-center gap-2 transition-all"
               >
                 <RotateCcw className="w-4 h-4" />
                 <span>Tomar Otra Foto</span>
@@ -358,7 +358,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                       onAnalyzePhoto(capturedImage);
                       onClose();
                     }}
-                    className="px-4 py-2.5 rounded-xl bg-[#05E1FF]/15 hover:bg-[#05E1FF]/25 border border-[#05E1FF]/40 text-[#05E1FF] font-mono text-xs font-bold flex items-center gap-2 transition-all shadow-sm shadow-[#05E1FF]/20"
+                    className="px-4 py-2.5 rounded-xl bg-[#E2A83E]/15 hover:bg-[#E2A83E]/25 border border-[#EDE0CC] text-[#A8701A] font-mono text-xs font-bold flex items-center gap-2 transition-all shadow-sm shadow-[rgba(90,60,25,0.12)]"
                   >
                     <Eye className="w-4 h-4" />
                     <span>Analizar con Visión IA</span>
@@ -367,7 +367,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
 
                 <button
                   onClick={handleDownload}
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#00FFA3] to-[#05E1FF] text-black font-mono font-bold text-xs flex items-center gap-2 shadow-lg shadow-[#00FFA3]/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#8FAF93] to-[#E2A83E] text-black font-mono font-bold text-xs flex items-center gap-2 shadow-lg shadow-[rgba(78,110,84,0.15)] hover:scale-[1.02] active:scale-[0.98] transition-all"
                 >
                   <Download className="w-4 h-4" />
                   <span>{downloadSuccess ? '¡Guardada en Descargas!' : 'Guardar / Descargar Foto'}</span>
@@ -379,7 +379,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
             <div className="w-full flex items-center justify-between">
               <button
                 onClick={() => setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'))}
-                className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white font-mono text-xs flex items-center gap-2 transition-colors"
+                className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-[#EDE0CC] text-[#6B6056] hover:text-[#3A322C] font-mono text-xs flex items-center gap-2 transition-colors"
                 title="Cambiar orientación de cámara"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
@@ -391,9 +391,9 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                 <button
                   onClick={takeSnapshot}
                   disabled={Boolean(countdown !== null)}
-                  className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-mono text-xs flex items-center gap-2 transition-all disabled:opacity-50"
+                  className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-[#EDE0CC] text-[#3A322C] font-mono text-xs flex items-center gap-2 transition-all disabled:opacity-50"
                 >
-                  <Zap className="w-4 h-4 text-amber-400" />
+                  <Zap className="w-4 h-4 text-[#B35E3D]" />
                   <span>Captura Instantánea</span>
                 </button>
 
@@ -401,7 +401,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                 <button
                   onClick={startCountdown}
                   disabled={Boolean(countdown !== null)}
-                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#05E1FF] to-[#00FFA3] text-black font-mono font-black text-sm flex items-center gap-2 shadow-lg shadow-[#05E1FF]/30 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
+                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#E2A83E] to-[#8FAF93] text-black font-mono font-black text-sm flex items-center gap-2 shadow-lg shadow-[rgba(90,60,25,0.12)] hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
                 >
                   <Camera className="w-4 h-4" />
                   <span>{countdown !== null ? `Contando (${countdown})...` : 'Tomar Foto (Contador 3s)'}</span>

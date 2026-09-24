@@ -33,20 +33,20 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
   return (
     <div
       id="ultron-photo-modal"
-      className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in duration-200"
+      className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-[#3A322C]/40 backdrop-blur-md animate-in fade-in duration-200"
     >
-      <div className="w-full max-w-2xl bg-[#05080c] border border-[#05E1FF]/40 rounded-2xl p-6 shadow-[0_0_35px_rgba(5,225,255,0.25)] flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
+      <div className="w-full max-w-2xl bg-white border border-[#EDE0CC] rounded-2xl p-6 shadow-[0_8px_24px_rgba(90,60,25,0.14)] flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-[#05E1FF]/20 pb-3">
+        <div className="flex items-center justify-between border-b border-[#EDE0CC] pb-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-[#05E1FF]/10 border border-[#05E1FF]/30 flex items-center justify-center text-[#05E1FF]">
+            <div className="w-10 h-10 rounded-full bg-[#E2A83E]/10 border border-[#EDE0CC] flex items-center justify-center text-[#A8701A]">
               <Camera className="w-5 h-5 animate-pulse" />
             </div>
             <div>
-              <span className="text-[10px] font-mono tracking-[0.25em] text-[#8FA3B0] block uppercase">
+              <span className="text-[12px] font-mono tracking-normal text-[#6B6056] block uppercase">
                 GALERÍA ÓPTICA · CAPTURAS CYBER
               </span>
-              <h2 className="font-display font-bold text-lg text-[#05E1FF] tracking-wider">
+              <h2 className="font-display font-bold text-lg text-[#A8701A] tracking-wider">
                 FOTOS & INSTANTÁNEAS AU-RA
               </h2>
             </div>
@@ -54,7 +54,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded text-[#8FA3B0] hover:text-[#05E1FF] transition-colors"
+            className="p-1.5 rounded text-[#6B6056] hover:text-[#3A322C] transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -62,32 +62,32 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
 
         {/* Latest Snapshot Hero Card */}
         {latestPhoto ? (
-          <div className="flex flex-col md:flex-row gap-4 p-4 rounded-xl bg-black/60 border border-[#05E1FF]/30">
-            <div className="relative w-full md:w-1/2 aspect-video bg-black rounded-lg overflow-hidden border border-[#05E1FF]/20 group">
+          <div className="flex flex-col md:flex-row gap-4 p-4 rounded-xl bg-white/90 border border-[#EDE0CC]">
+            <div className="relative w-full md:w-1/2 aspect-video bg-[#FEF9F3] rounded-lg overflow-hidden border border-[#EDE0CC] group">
               <img
                 src={latestPhoto.dataUrl}
                 alt="AU-RA Snapshot"
                 className="w-full h-full object-cover"
                 referrerPolicy="no-referrer"
               />
-              <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/70 border border-[#05E1FF]/40 text-[9px] font-mono text-[#05E1FF]">
+              <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-white/90 border border-[#EDE0CC] text-[13px] font-mono text-[#A8701A]">
                 MODO: {latestPhoto.mode}
               </div>
-              <div className="absolute bottom-2 right-2 text-[9px] font-mono text-white/70 bg-black/60 px-1.5 rounded">
+              <div className="absolute bottom-2 right-2 text-[13px] font-mono text-[#6B6056] bg-white/90 px-1.5 rounded">
                 {latestPhoto.timestamp}
               </div>
             </div>
 
             <div className="flex-1 flex flex-col justify-between">
               <div className="flex flex-col gap-1.5">
-                <div className="text-xs font-mono text-[#8FA3B0] flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-[#05E1FF]" />
+                <div className="text-xs font-mono text-[#6B6056] flex items-center gap-1.5">
+                  <Sparkles className="w-3.5 h-3.5 text-[#A8701A]" />
                   <span>ÚLTIMA FOTO CAPTURADA</span>
                 </div>
-                <h3 className="font-display font-semibold text-white text-sm">
+                <h3 className="font-display font-semibold text-[#3A322C] text-sm">
                   {latestPhoto.caption || 'Instantánea del Asistente AU-RA'}
                 </h3>
-                <p className="text-xs text-[#8FA3B0] font-mono leading-relaxed">
+                <p className="text-xs text-[#6B6056] font-mono leading-relaxed">
                   Resolución procesada con marco cibernético, firma de junta directiva y balance óptico adaptativo.
                 </p>
               </div>
@@ -96,7 +96,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
                 <button
                   type="button"
                   onClick={() => handleDownload(latestPhoto)}
-                  className="flex-1 py-2 px-3 rounded-lg bg-[#05E1FF]/20 border border-[#05E1FF]/50 text-[#05E1FF] hover:bg-[#05E1FF]/30 font-display font-semibold text-xs tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="flex-1 py-2 px-3 rounded-lg bg-[#E2A83E]/20 border border-[#EDE0CC] text-[#A8701A] hover:bg-[#E2A83E]/30 font-display font-semibold text-xs tracking-wider transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5" />
                   DESCARGAR FOTO
@@ -105,7 +105,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
                   type="button"
                   onClick={() => onDeletePhoto(latestPhoto.id)}
                   title="Eliminar foto"
-                  className="p-2 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition-all cursor-pointer"
+                  className="p-2 rounded-lg bg-red-500/10 border border-red-500/30 text-[#B3413D] hover:bg-red-500/20 transition-all cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -113,24 +113,24 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
             </div>
           </div>
         ) : (
-          <div className="py-8 text-center flex flex-col items-center gap-2 border border-dashed border-[#05E1FF]/20 rounded-xl bg-black/40">
-            <ImageIcon className="w-10 h-10 text-[#8FA3B0]/40" />
-            <p className="text-sm font-mono text-[#8FA3B0]">No hay fotos capturadas aún.</p>
-            <p className="text-xs text-[#8FA3B0]/60">Dile a AU-RA: "Toma una foto" o presiona el botón inferior.</p>
+          <div className="py-8 text-center flex flex-col items-center gap-2 border border-dashed border-[#EDE0CC] rounded-xl bg-white/90">
+            <ImageIcon className="w-10 h-10 text-[#6B6056]" />
+            <p className="text-sm font-mono text-[#6B6056]">No hay fotos capturadas aún.</p>
+            <p className="text-xs text-[#6B6056]">Dile a AU-RA: "Toma una foto" o presiona el botón inferior.</p>
           </div>
         )}
 
         {/* Gallery Thumbnails List */}
         {photos.length > 1 && (
           <div className="flex flex-col gap-2">
-            <span className="text-xs font-mono text-[#8FA3B0] tracking-wider uppercase">
+            <span className="text-xs font-mono text-[#6B6056] tracking-wider uppercase">
               HISTORIAL DE INSTANTÁNEAS ({photos.length})
             </span>
             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
               {photos.map((p) => (
                 <div
                   key={p.id}
-                  className="relative aspect-video rounded-lg overflow-hidden border border-[#05E1FF]/20 bg-black group hover:border-[#05E1FF]/60 transition-all"
+                  className="relative aspect-video rounded-lg overflow-hidden border border-[#EDE0CC] bg-[#FEF9F3] group hover:border-[#EDE0CC] transition-all"
                 >
                   <img
                     src={p.dataUrl}
@@ -138,18 +138,18 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
                     className="w-full h-full object-cover"
                     referrerPolicy="no-referrer"
                   />
-                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                  <div className="absolute inset-0 bg-white/90 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                     <button
                       type="button"
                       onClick={() => handleDownload(p)}
-                      className="p-1.5 rounded-full bg-[#05E1FF] text-black hover:scale-110 transition-transform"
+                      className="p-1.5 rounded-full bg-[#E2A83E] text-white hover:scale-110 transition-transform"
                     >
                       <Download className="w-3 h-3" />
                     </button>
                     <button
                       type="button"
                       onClick={() => onDeletePhoto(p.id)}
-                      className="p-1.5 rounded-full bg-red-500 text-white hover:scale-110 transition-transform"
+                      className="p-1.5 rounded-full bg-[#C4523E] text-white hover:scale-110 transition-transform"
                     >
                       <Trash2 className="w-3 h-3" />
                     </button>
@@ -161,8 +161,8 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
         )}
 
         {/* Bottom Actions */}
-        <div className="flex items-center justify-between pt-2 border-t border-[#05E1FF]/20">
-          <span className="text-[11px] font-mono text-[#8FA3B0]">
+        <div className="flex items-center justify-between pt-2 border-t border-[#EDE0CC]">
+          <span className="text-[13px] font-mono text-[#6B6056]">
             Obturador óptico con flash de alta velocidad
           </span>
           <button
@@ -171,7 +171,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
               onClose();
               onTriggerNewPhoto();
             }}
-            className="py-2 px-4 rounded-lg bg-[#05E1FF]/20 border border-[#05E1FF]/50 text-[#05E1FF] hover:bg-[#05E1FF]/30 font-display font-semibold text-xs tracking-wider transition-all flex items-center gap-1.5 cursor-pointer"
+            className="py-2 px-4 rounded-lg bg-[#E2A83E]/20 border border-[#EDE0CC] text-[#A8701A] hover:bg-[#E2A83E]/30 font-display font-semibold text-xs tracking-wider transition-all flex items-center gap-1.5 cursor-pointer"
           >
             <Camera className="w-4 h-4" />
             TOMAR NUEVA FOTO AHORA

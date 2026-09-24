@@ -39,6 +39,13 @@ const MODOS: Array<{ id: Mode; label: string; desc: string }> = [
 
 const CARAS: FaceState[] = ['IDLE', 'HAPPY', 'LAUGH', 'SURPRISED', 'CURIOSITY', 'THINKING', 'CONCERNED', 'SAD', 'ANGRY', 'TIRED', 'PURR', 'WINK', 'SING', 'SLEEPING'];
 
+/** Cómo se llama cada expresión para quien la prueba: en español, no el nombre interno. */
+const NOMBRE_CARA: Partial<Record<FaceState, string>> = {
+  IDLE: 'Serena', HAPPY: 'Feliz', LAUGH: 'Risa', SURPRISED: 'Sorpresa', CURIOSITY: 'Curiosa', THINKING: 'Pensando',
+  CONCERNED: 'Preocupada', SAD: 'Triste', ANGRY: 'Molesta', TIRED: 'Cansada', PURR: 'Cariño', WINK: 'Traviesa',
+  SING: 'Cantando', SLEEPING: 'Dormida', SPEAKING: 'Hablando', LISTENING: 'Escuchando',
+};
+
 type Tab = 'capacidades' | 'personalidad' | 'sistema';
 
 export const SettingsSheet: React.FC<Props> = (p) => {
@@ -51,31 +58,27 @@ export const SettingsSheet: React.FC<Props> = (p) => {
   return (
     <div
       id="ultron-settings-sheet"
-      className={`absolute left-0 right-0 top-0 z-30 transition-transform duration-300 ease-out px-4 pt-4 pb-6 bg-gradient-to-b from-black via-black/97 to-black/80 border-b border-[#05E1FF]/20 max-h-[88vh] overflow-y-auto ${
+      className={`absolute left-0 right-0 top-0 z-30 transition-transform duration-300 ease-out px-3 pt-3 ${
         p.isOpen ? 'translate-y-0' : '-translate-y-[115%] pointer-events-none'
       }`}
     >
-      <div className="max-w-3xl mx-auto flex flex-col gap-4">
-        <div className="flex items-center justify-between border-b border-[#05E1FF]/20 pb-2.5">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-[#05E1FF] animate-pulse" />
-            <h2 className="font-display font-bold tracking-[0.25em] text-base" style={{ color: 'var(--acento, #05E1FF)' }}>
-              AJUSTES · {perfilActual().plataforma}
-            </h2>
-          </div>
-          <button type="button" onClick={p.onClose} className="p-1 rounded text-[#8FA3B0] hover:text-[#05E1FF] cursor-pointer" aria-label="Cerrar ajustes">
+      <div className="max-w-3xl mx-auto flex flex-col gap-4 bg-[#FEF9F3] rounded-[28px] p-4 sm:p-5 shadow-[0_12px_40px_rgba(90,60,25,0.2)] max-h-[86vh] overflow-y-auto">
+        <div className="flex items-center justify-between">
+          <h2 className="font-display font-semibold text-xl text-[#3A322C]">Ajustes · {perfilActual().plataforma}</h2>
+          <button type="button" onClick={p.onClose} className="w-9 h-9 rounded-full bg-[#F6EFE4] text-[#6B6056] hover:bg-[#FBEBC9] flex items-center justify-center cursor-pointer" aria-label="Cerrar ajustes">
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="flex gap-1 rounded-lg bg-black/50 p-1 border border-[#05E1FF]/20 text-xs font-mono">
+        <div className="flex gap-1 rounded-full bg-[#F1E8DA] p-1 text-[13px] font-medium">
           {Tabs.map((t) => (
             <button
               key={t.id}
               type="button"
               onClick={() => setTab(t.id)}
-              className={`flex-1 py-1.5 rounded-md flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                tab === t.id ? 'bg-[#05E1FF]/20 text-[#05E1FF] border border-[#05E1FF]/40' : 'text-[#8FA3B0] hover:text-white'
+              aria-pressed={tab === t.id}
+              className={`flex-1 py-2 rounded-full flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                tab === t.id ? 'bg-white text-[#3A322C] shadow-[0_1px_4px_rgba(60,40,20,0.12)]' : 'text-[#6B6056] hover:text-[#3A322C]'
               }`}
             >
               {t.icon}
@@ -90,8 +93,8 @@ export const SettingsSheet: React.FC<Props> = (p) => {
           <div className="flex flex-col gap-4">
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-display tracking-[0.2em] text-[#8FA3B0]">MODO DE PERSONALIDAD</span>
-                <span className="text-[10px] text-[#8FA3B0]/70 font-mono">activo: {p.currentMode}</span>
+                <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#6B6056]">Modo de personalidad</span>
+                <span className="text-[12px] text-[#8B7E72]">activo: {MODOS.find((m) => m.id === p.currentMode)?.label || p.currentMode}</span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {MODOS.map((m) => {
@@ -101,12 +104,13 @@ export const SettingsSheet: React.FC<Props> = (p) => {
                       key={m.id}
                       type="button"
                       onClick={() => { playSfx('mode', p.soundFxEnabled); p.onSelectMode(m.id); }}
-                      className={`p-2.5 rounded-xl border text-left flex flex-col gap-0.5 transition-all cursor-pointer ${
-                        on ? 'border-[#05E1FF] bg-[#05E1FF]/15 text-[#05E1FF] shadow-[0_0_10px_rgba(5,225,255,0.2)]' : 'border-white/10 bg-black/40 text-[#8FA3B0] hover:text-[#05E1FF] hover:border-[#05E1FF]/50'
+                      aria-pressed={on}
+                      className={`p-3 rounded-2xl border text-left flex flex-col gap-0.5 transition-all cursor-pointer ${
+                        on ? 'border-[#E2A83E] bg-[#FBEBC9] text-[#3A322C]' : 'border-[#EDE0CC] bg-white text-[#3A322C] hover:border-[#E2A83E]'
                       }`}
                     >
-                      <span className="font-display font-bold text-xs tracking-wider">{m.label}</span>
-                      <span className="text-[10px] text-[#8FA3B0]">{m.desc}</span>
+                      <span className="font-semibold text-[14px]">{m.label}</span>
+                      <span className="text-[12px] text-[#6B6056]">{m.desc}</span>
                     </button>
                   );
                 })}
@@ -114,8 +118,8 @@ export const SettingsSheet: React.FC<Props> = (p) => {
             </div>
             <div>
               <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-display tracking-[0.2em] text-[#8FA3B0]">EXPRESIONES (probar)</span>
-                <span className="text-[10px] text-[#8FA3B0]/70 font-mono">{p.currentFace}</span>
+                <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#6B6056]">Expresiones (probar)</span>
+                <span className="text-[12px] text-[#8B7E72]">{NOMBRE_CARA[p.currentFace] || p.currentFace}</span>
               </div>
               <div className="flex flex-wrap gap-1.5">
                 {CARAS.map((c) => (
@@ -123,20 +127,21 @@ export const SettingsSheet: React.FC<Props> = (p) => {
                     key={c}
                     type="button"
                     onClick={() => { playSfx('tap', p.soundFxEnabled); p.onSelectFace(c); }}
-                    className={`px-2.5 py-1.5 rounded-lg text-[11px] font-mono border transition-all cursor-pointer ${
-                      p.currentFace === c ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF]' : 'border-white/10 bg-black/40 text-[#8FA3B0] hover:text-[#05E1FF]'
+                    aria-pressed={p.currentFace === c}
+                    className={`px-3 py-1.5 rounded-full text-[13px] font-medium border transition-all cursor-pointer ${
+                      p.currentFace === c ? 'border-[#E2A83E] bg-[#FBEBC9] text-[#3A322C]' : 'border-[#EDE0CC] bg-white text-[#3A322C] hover:border-[#E2A83E]'
                     }`}
                   >
-                    {c}
+                    {NOMBRE_CARA[c] || c}
                   </button>
                 ))}
               </div>
             </div>
-            <label className="flex items-center justify-between p-3 rounded-xl border border-white/10 bg-black/40 cursor-pointer">
-              <span className="flex items-center gap-2 text-xs font-mono text-[#dff8ff]">
-                <Wand2 className="w-4 h-4 text-[#05E1FF]" /> Modo diversión (blasters, sable, visor, coronas de modo)
+            <label className="flex items-center justify-between p-3 rounded-2xl border border-[#EDE0CC] bg-white cursor-pointer">
+              <span className="flex items-center gap-2 text-[14px] text-[#3A322C]">
+                <Wand2 className="w-4 h-4 text-[#A8701A]" /> Modo diversión (solo en la cara clásica)
               </span>
-              <input type="checkbox" checked={p.funMode} onChange={p.onToggleFunMode} className="accent-[#05E1FF]" />
+              <input type="checkbox" checked={p.funMode} onChange={p.onToggleFunMode} className="accent-[#E2A83E] w-4 h-4" />
             </label>
           </div>
         )}
@@ -144,27 +149,27 @@ export const SettingsSheet: React.FC<Props> = (p) => {
         {tab === 'sistema' && (
           <div className="flex flex-col gap-3">
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              <button type="button" onClick={() => { p.onClose(); p.onOpenAcceso(); }} className={`p-3 rounded-xl border flex items-center gap-2 text-xs font-mono cursor-pointer ${p.usuario.authenticated ? 'border-[#00FF88]/40 bg-[#00FF88]/10 text-[#00FF88]' : 'border-[#05E1FF]/40 bg-[#05E1FF]/10 text-[#05E1FF]'}`}>
+              <button type="button" onClick={() => { p.onClose(); p.onOpenAcceso(); }} className={`p-3 rounded-2xl border flex items-center gap-2 text-[14px] font-medium cursor-pointer ${p.usuario.authenticated ? 'border-[#C9DCC8] bg-[#E7F0E6] text-[#4E6E54]' : 'border-[#E2A83E] bg-[#FBEBC9] text-[#3A322C]'}`}>
                 {p.usuario.authenticated ? <ShieldCheck className="w-4 h-4" /> : <Fingerprint className="w-4 h-4" />}
                 <span>{p.usuario.authenticated ? `Sesión: ${p.usuario.name}` : 'Entrar a la junta'}</span>
               </button>
-              <button type="button" onClick={() => { p.onClose(); p.onOpenVault(); }} className="p-3 rounded-xl border border-[#05E1FF]/30 bg-black/60 text-[#dff8ff] hover:border-[#05E1FF] flex items-center gap-2 text-xs font-mono cursor-pointer">
-                <ShieldCheck className="w-4 h-4 text-[#05E1FF]" /> Bóveda de claves
+              <button type="button" onClick={() => { p.onClose(); p.onOpenVault(); }} className="p-3 rounded-2xl border border-[#EDE0CC] bg-white text-[#3A322C] hover:border-[#E2A83E] flex items-center gap-2 text-[14px] font-medium cursor-pointer">
+                <ShieldCheck className="w-4 h-4 text-[#A8701A]" /> Bóveda de claves
               </button>
-              <button type="button" onClick={() => { p.onClose(); p.onOpenPhotos(); }} className="p-3 rounded-xl border border-[#05E1FF]/30 bg-black/60 text-[#dff8ff] hover:border-[#05E1FF] flex items-center gap-2 text-xs font-mono cursor-pointer">
-                <Camera className="w-4 h-4 text-[#05E1FF]" /> Fotos
+              <button type="button" onClick={() => { p.onClose(); p.onOpenPhotos(); }} className="p-3 rounded-2xl border border-[#EDE0CC] bg-white text-[#3A322C] hover:border-[#E2A83E] flex items-center gap-2 text-[14px] font-medium cursor-pointer">
+                <Camera className="w-4 h-4 text-[#A8701A]" /> Fotos
               </button>
             </div>
-            <div className="flex items-center gap-5 pt-2 border-t border-[#05E1FF]/15 text-xs text-[#8FA3B0]">
+            <div className="flex flex-wrap items-center gap-5 pt-3 border-t border-[#EDE0CC] text-[14px] text-[#3A322C]">
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={p.soundFxEnabled} onChange={p.onToggleSoundFx} className="accent-[#05E1FF]" />
-                <span className="flex items-center gap-1 font-mono text-[11px]"><Volume2 className="w-3.5 h-3.5" /> Efectos</span>
+                <input type="checkbox" checked={p.soundFxEnabled} onChange={p.onToggleSoundFx} className="accent-[#E2A83E] w-4 h-4" />
+                <span className="flex items-center gap-1.5"><Volume2 className="w-4 h-4 text-[#A8701A]" /> Efectos</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={p.speakerEnabled} onChange={p.onToggleSpeaker} className="accent-[#05E1FF]" />
-                <span className="flex items-center gap-1 font-mono text-[11px]"><Sparkles className="w-3.5 h-3.5" /> Voz</span>
+                <input type="checkbox" checked={p.speakerEnabled} onChange={p.onToggleSpeaker} className="accent-[#E2A83E] w-4 h-4" />
+                <span className="flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-[#A8701A]" /> Voz</span>
               </label>
-              <button type="button" onClick={p.onOlvidar} className="ml-auto flex items-center gap-1 font-mono text-[11px] text-amber-400 hover:text-amber-300 cursor-pointer">
+              <button type="button" onClick={p.onOlvidar} className="ml-auto flex items-center gap-1.5 text-[13px] font-medium text-[#B35E3D] hover:text-[#8F4526] cursor-pointer">
                 <Trash2 className="w-3.5 h-3.5" /> Borrar conversación y memoria local
               </button>
             </div>

@@ -17,6 +17,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@tmcw/togeojson": "^7.1.2",
     "@turf/turf": "^7.4.0",
+    "@types/three": "^0.186.0",
     "@vitejs/plugin-react": "^5.0.4",
     "@xmldom/xmldom": "^0.9.12",
     "dotenv": "^17.2.3",
@@ -30,6 +31,7 @@
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
     "shpjs": "^6.2.0",
+    "three": "^0.186.1",
     "undici": "^7.29.1"
   },
   "devDependencies": {

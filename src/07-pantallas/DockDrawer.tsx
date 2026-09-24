@@ -44,12 +44,13 @@ export const DockDrawer: React.FC<Props> = (p) => {
       onClick={onClick}
       title={title}
       aria-label={title}
-      className={`w-11 h-11 rounded-full flex items-center justify-center border transition-all duration-200 cursor-pointer ${
+      aria-pressed={on}
+      className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-200 cursor-pointer ${
         on
           ? warm
-            ? 'border-[#FFB648] bg-[#FFB648]/20 text-[#FFB648]'
-            : 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF] shadow-[0_0_12px_rgba(5,225,255,0.4)]'
-          : 'border-[#05E1FF]/30 bg-black/60 text-[#8FA3B0] hover:text-[#05E1FF]'
+            ? 'bg-[#D9825F] text-white shadow-[0_6px_16px_rgba(217,130,95,0.35)]'
+            : 'bg-[#E2A83E] text-white shadow-[0_6px_16px_rgba(168,112,26,0.3)]'
+          : 'bg-[#F6EFE4] text-[#6B6056] hover:bg-[#FBEBC9]'
       }`}
     >
       {children}
@@ -58,11 +59,12 @@ export const DockDrawer: React.FC<Props> = (p) => {
   return (
     <div
       id="ultron-dock-drawer"
-      className={`absolute left-0 right-0 bottom-0 z-30 transition-transform duration-300 ease-out px-4 pb-5 pt-3 bg-gradient-to-t from-black via-black/95 to-transparent ${
+      className={`absolute left-0 right-0 bottom-0 z-30 transition-transform duration-300 ease-out px-3 pb-4 ${
         p.isOpen ? 'translate-y-0' : 'translate-y-[115%] pointer-events-none'
       }`}
     >
-      <div className="max-w-2xl mx-auto flex flex-col gap-3">
+      <div className="max-w-2xl mx-auto flex flex-col gap-3 bg-[#FEF9F3] rounded-[28px] p-4 shadow-[0_-8px_40px_rgba(90,60,25,0.18)]">
+        <div className="mx-auto w-10 h-1.5 rounded-full bg-[#E3D5C0]" aria-hidden="true" />
         <div className="flex items-center justify-center gap-3">
           <Btn on={p.micEnabled} title={p.micEnabled ? 'Micrófono activo' : 'Micrófono apagado'} onClick={p.onToggleMic}>{p.micEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}</Btn>
           <Btn on={p.speakerEnabled} title={p.speakerEnabled ? 'Voz activa' : 'Voz silenciada'} onClick={p.onToggleSpeaker}>{p.speakerEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}</Btn>
@@ -73,13 +75,13 @@ export const DockDrawer: React.FC<Props> = (p) => {
         </div>
         <div className="flex items-center justify-center gap-2 flex-wrap">
           {CHIPS.map((c) => (
-            <button key={c.label} type="button" onClick={() => { playSfx('tap', p.soundFxEnabled); p.onSubmitCommand(c.cmd); }} className="text-xs px-3 py-1 rounded-md border border-[#05E1FF]/25 bg-black/50 text-[#8FA3B0] hover:text-[#05E1FF] hover:border-[#05E1FF] hover:bg-[#05E1FF]/10 transition-colors flex items-center gap-1.5 cursor-pointer font-mono">
-              <Sparkles className="w-3 h-3 text-[#05E1FF]" />
+            <button key={c.label} type="button" onClick={() => { playSfx('tap', p.soundFxEnabled); p.onSubmitCommand(c.cmd); }} className="text-[13px] font-medium px-3.5 py-2 rounded-full border border-[#EDE0CC] bg-white text-[#3A322C] hover:border-[#E2A83E] transition-colors flex items-center gap-1.5 cursor-pointer">
+              <Sparkles className="w-3.5 h-3.5 text-[#A8701A]" />
               <span>{c.label}</span>
             </button>
           ))}
-          <button type="button" onClick={() => { playSfx('tap', p.soundFxEnabled); p.onSubmitCommand('canta quiero conocer a Jesús'); }} className="text-xs px-3 py-1 rounded-md border border-[#05E1FF]/25 bg-black/50 text-[#8FA3B0] hover:text-[#05E1FF] hover:border-[#05E1FF] hover:bg-[#05E1FF]/10 transition-colors flex items-center gap-1.5 cursor-pointer font-mono">
-            <Music2 className="w-3 h-3 text-[#05E1FF]" />
+          <button type="button" onClick={() => { playSfx('tap', p.soundFxEnabled); p.onSubmitCommand('canta quiero conocer a Jesús'); }} className="text-[13px] font-medium px-3.5 py-2 rounded-full border border-[#EDE0CC] bg-white text-[#3A322C] hover:border-[#E2A83E] transition-colors flex items-center gap-1.5 cursor-pointer">
+            <Music2 className="w-3.5 h-3.5 text-[#A8701A]" />
             <span>Canta</span>
           </button>
         </div>
@@ -89,12 +91,13 @@ export const DockDrawer: React.FC<Props> = (p) => {
             type="text"
             value={valor}
             onChange={(e) => setValor(e.target.value)}
-            placeholder="Escribí o dictá: precio del oro, abrí bch.hn, recordá que…, canta…"
+            placeholder="Escríbele: precio del oro, abre bch.hn, recuerda que…, canta…"
             autoComplete="off"
-            className="flex-1 bg-[#05080c] border border-[#05E1FF]/30 text-[#dff8ff] placeholder-[#8FA3B0]/50 text-sm font-mono px-4 py-2.5 rounded-lg focus:outline-none focus:border-[#05E1FF] focus:shadow-[0_0_12px_rgba(5,225,255,0.25)] transition-all"
+            aria-label="Escribirle a Aura"
+            className="flex-1 min-w-0 bg-white border border-[#EDE0CC] text-[#3A322C] placeholder-[#8B7E72] text-[15px] px-4 py-3 rounded-full focus:outline-none focus:border-[#E2A83E] transition-all"
           />
-          <button type="submit" className="bg-[#05E1FF] text-[#001418] font-display font-bold text-xs tracking-wider px-5 py-2.5 rounded-lg hover:bg-[#05E1FF]/90 active:scale-95 shadow-[0_0_15px_rgba(5,225,255,0.3)] flex items-center gap-1.5 cursor-pointer uppercase">
-            <Send className="w-3.5 h-3.5" />
+          <button type="submit" className="bg-[#E2A83E] text-white font-semibold text-[14px] px-5 py-3 rounded-full hover:bg-[#D69A2E] active:scale-95 shadow-[0_6px_16px_rgba(168,112,26,0.3)] flex items-center gap-1.5 cursor-pointer">
+            <Send className="w-4 h-4" />
             <span>Enviar</span>
           </button>
         </form>

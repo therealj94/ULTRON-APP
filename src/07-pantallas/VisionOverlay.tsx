@@ -195,13 +195,13 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({ isActive, stealth 
   return (
     <div id="ultron-vision-overlay" className="absolute inset-0 z-20 pointer-events-none flex flex-col justify-between p-4">
       <div className="flex items-center justify-between pointer-events-auto">
-        <div className="flex items-center gap-2 px-3 py-1 bg-black/60 border border-[#05E1FF]/30 rounded-full text-[11px] font-mono text-[#05E1FF] backdrop-blur-md shadow-[0_0_12px_rgba(5,225,255,0.15)]">
-          <span className={`w-2 h-2 rounded-full ${detected ? 'bg-emerald-400 animate-pulse' : 'bg-[#05E1FF]/40'}`} />
+        <div className="flex items-center gap-2 px-3 py-1 bg-white/90 border border-[#EDE0CC] rounded-full text-[11px] font-mono text-[#A8701A] backdrop-blur-md shadow-[0_8px_24px_rgba(90,60,25,0.14)]">
+          <span className={`w-2 h-2 rounded-full ${detected ? 'bg-emerald-400 animate-pulse' : 'bg-[#E2A83E]/40'}`} />
           <span>{escena ? escena.descripcion : 'Sensor calibrando'}</span>
-          <span className="text-[#8FA3B0]">·</span>
-          <span className="text-[#8FA3B0] text-[10px]">{etiquetaMotor}</span>
-          <span className="text-[#8FA3B0]">·</span>
-          <span className="text-[#8FA3B0] text-[10px]">{estado.fps} FPS</span>
+          <span className="text-[#6B6056]">·</span>
+          <span className="text-[#6B6056] text-[10px]">{etiquetaMotor}</span>
+          <span className="text-[#6B6056]">·</span>
+          <span className="text-[#6B6056] text-[10px]">{estado.fps} FPS</span>
         </div>
 
         <div className="flex items-center gap-1.5">
@@ -209,7 +209,7 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({ isActive, stealth 
             type="button"
             onClick={toggleRealCamera}
             title={streamActive ? 'Pausar transmisión de cámara' : 'Activar transmisión de cámara'}
-            className="px-2.5 py-1 bg-black/60 border border-[#05E1FF]/40 rounded-lg text-[11px] font-mono text-[#05E1FF] hover:bg-[#05E1FF]/15 transition-all flex items-center gap-1 backdrop-blur-md cursor-pointer"
+            className="px-2.5 py-1 bg-white/90 border border-[#EDE0CC] rounded-lg text-[11px] font-mono text-[#A8701A] hover:bg-[#E2A83E]/15 transition-all flex items-center gap-1 backdrop-blur-md cursor-pointer"
           >
             {streamActive ? <CameraOff className="w-3.5 h-3.5" /> : <Camera className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline">{streamActive ? 'Pausar' : 'Cámara'}</span>
@@ -218,7 +218,7 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({ isActive, stealth 
             type="button"
             onClick={onClose}
             title="Cerrar seguimiento"
-            className="p-1.5 bg-black/60 border border-[#8FA3B0]/30 rounded-lg text-[#8FA3B0] hover:text-[#05E1FF] hover:border-[#05E1FF]/40 transition-all backdrop-blur-md cursor-pointer"
+            className="p-1.5 bg-white/90 border border-[#EDE0CC] rounded-lg text-[#6B6056] hover:text-[#3A322C] hover:border-[#EDE0CC] transition-all backdrop-blur-md cursor-pointer"
           >
             <CameraOff className="w-3.5 h-3.5" />
           </button>
@@ -232,12 +232,12 @@ export const VisionOverlay: React.FC<VisionOverlayProps> = ({ isActive, stealth 
             playsInline
             muted
             autoPlay
-            className={`w-36 h-26 object-cover rounded-xl border border-[#05E1FF]/40 shadow-[0_0_20px_rgba(5,225,255,0.2)] scale-x-[-1] transition-all duration-300 ${
+            className={`w-36 h-26 object-cover rounded-xl border border-[#EDE0CC] shadow-[0_8px_24px_rgba(90,60,25,0.14)] scale-x-[-1] transition-all duration-300 ${
               streamActive ? 'block opacity-90 hover:opacity-100' : 'hidden'
             }`}
           />
           {streamActive && detected && (
-            <div className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-black/75 border border-emerald-400/40 text-[9px] font-mono text-emerald-400">
+            <div className="absolute top-1.5 left-1.5 flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/90 border border-emerald-400/40 text-[9px] font-mono text-emerald-400">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>{escena?.principal?.mirando ? 'TE MIRA' : 'ENFOCADO'}</span>
             </div>

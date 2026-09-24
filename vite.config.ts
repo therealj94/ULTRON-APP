@@ -7,10 +7,12 @@ import {defineConfig} from 'vite';
 function entradas() {
   const main = path.resolve(__dirname, 'index.html');
   const electrum = path.resolve(__dirname, 'electrum.html');
+  // La sala sola: la carga la app de AU-RA en el teléfono (react-native-webview).
+  const sala = path.resolve(__dirname, 'sala.html');
   const p = String(process.env.PLATAFORMA || '').trim().toLowerCase();
-  if (p === 'ultron' || p === 'ultron-fp' || p === 'genesis') return { main };
+  if (p === 'ultron' || p === 'ultron-fp' || p === 'genesis') return { main, sala };
   if (p === 'electrum') return { electrum };
-  return { main, electrum };
+  return { main, electrum, sala };
 }
 
 export default defineConfig(() => {
