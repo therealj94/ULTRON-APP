@@ -13,3 +13,4 @@ data/memoria-junta.json
 data/canto/
 para-ocr.txt
 subir-expedientes.html
+__pycache__/
