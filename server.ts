@@ -393,6 +393,33 @@ app.post('/api/electrum/oir', exigirPlataforma('electrum'), limitar(40), async (
 });
 
 /**
+ * Verle algo. El mismo ojo que usa ULTRON (`verImagen`: nodo de visión y, de reserva, Gemini),
+ * con ruta propia por lo mismo que la voz y el oído: `/api/vision/analyze` es de la mesa, y un ojo
+ * abierto es otra factura con la puerta quitada.
+ *
+ * Devuelve lo que se ve; no lo interpreta. La lectura de geólogo la hace el turno, con su panel,
+ * para que una foto de una roca pase por las mismas reglas que una pregunta escrita.
+ */
+app.post('/api/electrum/ver', exigirPlataforma('electrum'), limitar(12), async (req, res) => {
+  const imagen = String(req.body?.imagen || '');
+  if (!/^data:image\/(jpeg|png|webp);base64,/.test(imagen) || imagen.length < 800) {
+    return res.status(400).json({ error: 'No me llegó una foto.', honesto: true });
+  }
+  if (imagen.length > 9_000_000) return res.status(413).json({ error: 'La foto es muy pesada. Mandame una más chica.', honesto: true });
+  const vista = await verImagen(
+    imagen,
+    'Describí solo lo visible, como un geólogo de campo: si es una roca o muestra, color, brillo, textura, ' +
+      'granos, vetas, cristales, alteración y tamaño aproximado; si es un paisaje, relieve, agua, vegetación, ' +
+      'caminos y cortes; si es un documento o un mapa, copiá el texto y los números. No identifiques el mineral con certeza. No inventes.'
+  );
+  if (vista.via === 'ninguno' || vista.via === 'error') {
+    console.warn(`[electrum] ver falló (${vista.via}): ${vista.texto.slice(0, 160)}`);
+    return res.status(503).json({ error: 'No pude ver la foto ahora mismo.', honesto: true });
+  }
+  return res.json({ texto: vista.texto, via: vista.via, honesto: true });
+});
+
+/**
  * Pedir un informe desde la pantalla, con el mapa dentro.
  *
  * La captura del lienzo de MapLibre viaja en el cuerpo porque el servidor no tiene el mapa: el

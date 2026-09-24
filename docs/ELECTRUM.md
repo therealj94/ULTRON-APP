@@ -665,3 +665,23 @@ actualizó tras revisarlo contra las fuentes:
 - **Los plazos del GISTM ya vencieron** (agosto 2023 los depósitos de consecuencia extrema o muy
   alta, agosto 2025 el resto). Eso cambia la pregunta: ya no es «¿piensan cumplirlo?» sino
   «¿declararon conformidad, y si no, qué brechas y con qué plazo?».
+
+## La oficina — pantalla completa, por voz
+
+`public/electrum-oficina/` → `/electrum-oficina/`. La misma puerta que `/electrum.html` (sesión o
+llave de demostración) y la misma cadena que la app: **oír** (`/api/electrum/oir`) → **turno** con
+panel y manos (`/api/electrum/turno/stream`) → **voz** (`/api/electrum/voz`). Nada nuevo en el
+cerebro: lo que cambia es la piel.
+
+- **Solo se mueve cuando habla.** La boca son cuatro parches alineados al píxel sobre el fotograma
+  base, y en cada cuadro se elige leyendo el espectro del audio que está sonando. Sin sonido, boca en
+  reposo: no hay reloj ni animación de relleno que la mueva. Entra caminando al abrir, callado.
+- **Micrófono con detector de voz**: corta tras 1,2 s de silencio. El piso de ruido baja rápido y
+  sube despacio, porque medirlo al principio confundía con ruido a quien empieza a hablar en el mismo
+  instante en que toca el botón.
+- **El audio va en base64 limpio**, sin el prefijo `data:`: el de `MediaRecorder` trae
+  `;codecs=opus` y `bufferDeCualquier` no lo reconoce, así que llegaba vacío.
+- **Ojo** (`/api/electrum/ver`): el mismo `verImagen` de ULTRON (nodo de visión, Gemini de reserva),
+  con ruta propia bajo la puerta de Electrum. Describe; la lectura de geólogo la hace el turno.
+- Las manos de administración de ULTRON (sistema, ejecutor, taller, bóveda) y su memoria **no** pasan
+  a Electrum: el filtro por plataforma de `manos.ts` lo garantiza.
