@@ -99,3 +99,12 @@ ya dicen «Estoy lista» en el texto, pero el audio empaquetado se grabó en mas
 regenerarlos con `mobile/scripts/build-voice-bank.mjs`. Nada de lo interno cambió de nombre: las
 variables `ULTRON_*`, las rutas `/api/ultron/*`, el paquete Android `link.ordenglobal.ultronfp` y
 el servicio de Render. Cambiarlos cortaría la app instalada y la configuración de producción.
+
+## Forma y color: opciones (25-sep)
+
+José pidió algo más neutral: el frijol con rubor, bufanda y mostaza se siente de niño. La sala
+ahora acepta un estilo (`src/11-sala/estilos.ts`): tres formas (Frijol, Serena, Orbe) y cuatro
+paletas (Miel, Piedra, Arena, Grafito). Sin elegir, sale el aspecto de siempre (Miel · Frijol).
+Las opciones renderizadas con el motor real están en `aura-concepto/v3/opciones-forma-color.png`.
+Para verlas en vivo: `sala.html?paleta=piedra&forma=serena`. Pendiente: que José elija y se fije
+como estilo de la web y del teléfono, con los colores de los botones y pantallas a juego.

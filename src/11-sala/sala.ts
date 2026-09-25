@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import type { FaceState } from '../types';
 import type { Emocion } from '../../lib/emocion';
 import { animoDe, HABLA, poseDe, type Pose, type Postura, type Tarea } from './tareas';
+import { COLORES, CUERPOS, estiloDe, type Estilo } from './estilos';
 
 export type ZonaToque = 'cuerpo' | 'cabeza';
 export type OpcionesSala = {
@@ -22,6 +23,8 @@ export type OpcionesSala = {
   postura?: Postura;
   onTocar?: (zona: ZonaToque) => void;
   onDeslizar?: (dir: 'arriba' | 'abajo') => void;
+  /** Paleta y forma (estilos.ts); sin esto, el aspecto de siempre. */
+  estilo?: Partial<Estilo>;
 };
 export type SalaControl = {
   estado: (face: FaceState, emocion: Emocion) => void;
@@ -55,8 +58,6 @@ type Gesto =
   | 'sostener-doc'
   | 'mirar';
 
-const R = 0.56;
-const ALTO = 1.25;
 const BASE_Y = 0.12;
 const ESC = 1.22;
 const SILLON = { x: 2.0, z: -0.35, asiento: 0.52 };
@@ -76,6 +77,13 @@ export function hayWebGL(): boolean {
 export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl {
   if (!hayWebGL()) throw new Error('sin WebGL');
   const reducido = !!op.reducido;
+  const estilo = estiloDe(op.estilo);
+  const C = COLORES[estilo.paleta];
+  const F = CUERPOS[estilo.forma];
+  const { R, ALTO } = F;
+  /** Las alturas de la cara y los brazos se midieron en el frijol (alto 1,25): se escalan con ella. */
+  const fy = ALTO / 1.25;
+  host.style.background = C.fondoCss;
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'low-power' });
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
@@ -104,8 +112,8 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     return m;
   };
 
-  scene.add(new THREE.HemisphereLight('#FFFFFF', '#CDB89C', 2.5));
-  const sol = new THREE.DirectionalLight('#FFF0DC', 3.0);
+  scene.add(new THREE.HemisphereLight(C.cieloLuz, C.sueloLuz, C.luzHemi));
+  const sol = new THREE.DirectionalLight(C.sol, C.luzSol);
   sol.position.set(-3.2, 5.5, 3.2);
   sol.castShadow = true;
   sol.shadow.mapSize.set(1024, 1024);
@@ -136,12 +144,12 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
   }
 
   /* ------------------------------------------------------------------ la sala */
-  const piso = new THREE.Mesh(new THREE.PlaneGeometry(24, 12), std('#E2CFB6', 0.95));
+  const piso = new THREE.Mesh(new THREE.PlaneGeometry(24, 12), std(C.piso, 0.95));
   piso.rotation.x = -Math.PI / 2;
   piso.receiveShadow = true;
   scene.add(piso);
-  scene.add(en(new THREE.Mesh(new THREE.PlaneGeometry(24, 9), std('#F4E9DC', 1)), 0, 4.5, -2.6));
-  scene.add(en(new THREE.Mesh(new THREE.BoxGeometry(24, 0.18, 0.06), std('#EBDCC8', 0.9)), 0, 0.09, -2.56));
+  scene.add(en(new THREE.Mesh(new THREE.PlaneGeometry(24, 9), std(C.pared, 1)), 0, 4.5, -2.6));
+  scene.add(en(new THREE.Mesh(new THREE.BoxGeometry(24, 0.18, 0.06), std(C.zocalo, 0.9)), 0, 0.09, -2.56));
 
   const ventanaTex = lienzo(512, 704, (g, w, h) => {
     const arco = () => {
@@ -156,17 +164,17 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     arco();
     g.clip();
     const cielo = g.createLinearGradient(0, 0, 0, h);
-    cielo.addColorStop(0, '#FFE1B0');
-    cielo.addColorStop(0.6, '#FFF1DA');
-    cielo.addColorStop(1, '#FBE7CC');
+    cielo.addColorStop(0, C.ventanaCielo[0]);
+    cielo.addColorStop(0.6, C.ventanaCielo[1]);
+    cielo.addColorStop(1, C.ventanaCielo[2]);
     g.fillStyle = cielo;
     g.fillRect(0, 0, w, h);
     const brillo = g.createRadialGradient(w * 0.35, h * 0.45, 10, w * 0.35, h * 0.45, 190);
-    brillo.addColorStop(0, 'rgba(255,208,130,0.95)');
-    brillo.addColorStop(1, 'rgba(255,208,130,0)');
+    brillo.addColorStop(0, `rgba(${C.ventanaSol},0.95)`);
+    brillo.addColorStop(1, `rgba(${C.ventanaSol},0)`);
     g.fillStyle = brillo;
     g.fillRect(0, 0, w, h);
-    g.fillStyle = '#B9C79C';
+    g.fillStyle = C.ventanaColinas;
     for (let i = 0; i < 7; i++) {
       g.beginPath();
       g.arc(60 + i * 70, h * 0.78, 55 + (i % 3) * 14, 0, Math.PI * 2);
@@ -174,7 +182,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     }
     g.restore();
     g.lineWidth = 22;
-    g.strokeStyle = '#FFFDF8';
+    g.strokeStyle = C.ventanaMarco;
     arco();
     g.stroke();
   });
@@ -182,8 +190,8 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
 
   const luz = lienzo(256, 256, (g, w, h) => {
     const r = g.createRadialGradient(w / 2, h / 2, 5, w / 2, h / 2, w / 2);
-    r.addColorStop(0, 'rgba(255,240,214,0.55)');
-    r.addColorStop(1, 'rgba(255,240,214,0)');
+    r.addColorStop(0, `rgba(${C.luzPiso},0.55)`);
+    r.addColorStop(1, `rgba(${C.luzPiso},0)`);
     g.fillStyle = r;
     g.fillRect(0, 0, w, h);
   });
@@ -191,19 +199,19 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
   luzPiso.rotation.set(-Math.PI / 2, 0, 0.5);
   scene.add(en(luzPiso, 0, 0.004, -0.6));
 
-  const alfombra = new THREE.Mesh(new THREE.CircleGeometry(1.6, 64), std('#E9DFD0', 1));
+  const alfombra = new THREE.Mesh(new THREE.CircleGeometry(1.6, 64), std(C.alfombra, 1));
   alfombra.rotation.x = -Math.PI / 2;
   alfombra.receiveShadow = true;
   scene.add(en(alfombra, 0.2, 0.006, 0.5));
 
-  scene.add(en(new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.9), std('#EADCC9', 1)), 1.1, 2.55, -2.585));
-  const jarron = sombra(new THREE.Mesh(new THREE.SphereGeometry(0.13, 20, 14), std('#E8D8C2', 0.6)));
+  scene.add(en(new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.9), std(C.cuadro, 1)), 1.1, 2.55, -2.585));
+  const jarron = sombra(new THREE.Mesh(new THREE.SphereGeometry(0.13, 20, 14), std(C.jarron, 0.6)));
   jarron.scale.set(1, 1.35, 1);
   scene.add(en(jarron, 1.1, 2.3, -2.5));
 
   const planta = new THREE.Group();
-  planta.add(sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.23, 0.55, 32), std('#D9825F', 0.85)), 0, 0.275, 0)));
-  const tonosHoja = ['#7FA384', '#8FAF93', '#6C9272'];
+  planta.add(sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.23, 0.55, 32), std(C.maceta, 0.85)), 0, 0.275, 0)));
+  const tonosHoja = C.hojas;
   for (let i = 0; i < 9; i++) {
     const hoja = sombra(new THREE.Mesh(new THREE.SphereGeometry(0.5, 20, 12), std(tonosHoja[i % 3], 0.9)));
     hoja.scale.set(0.16, 0.5, 0.05);
@@ -216,12 +224,12 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
 
   // el sillón huevo
   const sillon = new THREE.Group();
-  const mostaza = std('#D6A04A', 0.97);
-  const mostazaClara = std('#E4B866', 0.97);
+  const mostaza = std(C.sillon, 0.97);
+  const mostazaClara = std(C.sillonClaro, 0.97);
   const concha = sombra(
     new THREE.Mesh(
       new THREE.SphereGeometry(0.95, 48, 32, Math.PI / 2 + 0.66, Math.PI * 2 - 1.32, 0, Math.PI * 0.72),
-      new THREE.MeshStandardMaterial({ color: '#D6A04A', roughness: 0.97, side: THREE.DoubleSide })
+      new THREE.MeshStandardMaterial({ color: C.sillon, roughness: 0.97, side: THREE.DoubleSide })
     )
   );
   concha.scale.set(1, 0.9, 0.95);
@@ -233,15 +241,15 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.76, 0.68, 0.2, 48), mostazaClara), 0, 0.42, 0)),
     en(cojinAtras, 0, 0.86, -0.5),
     sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.3, 0.36, 32), mostaza), 0, 0.2, 0)),
-    sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.62, 0.05, 48), std('#C8A15C', 0.35, { metalness: 0.4 })), 0, 0.025, 0))
+    sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.58, 0.62, 0.05, 48), std(C.sillonBase, 0.35, { metalness: 0.4 })), 0, 0.025, 0))
   );
   scene.add(en(sillon, SILLON.x, 0, SILLON.z));
 
   // escritorio, puf y computadora
   const adelante = new THREE.Vector3(Math.sin(ANG_ESCRITORIO), 0, Math.cos(ANG_ESCRITORIO));
   const puf = new THREE.Group();
-  puf.add(sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.3, 40), std('#9DB89F', 0.95)), 0, 0.15, 0)));
-  const tapaPuf = sombra(new THREE.Mesh(new THREE.SphereGeometry(0.34, 40, 16, 0, Math.PI * 2, 0, Math.PI / 2), std('#A9C2AB', 0.95)));
+  puf.add(sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.3, 40), std(C.puf, 0.95)), 0, 0.15, 0)));
+  const tapaPuf = sombra(new THREE.Mesh(new THREE.SphereGeometry(0.34, 40, 16, 0, Math.PI * 2, 0, Math.PI / 2), std(C.pufTapa, 0.95)));
   tapaPuf.scale.y = 0.24;
   puf.add(en(tapaPuf, 0, 0.3, 0));
   scene.add(en(puf, PUF.x, 0, PUF.z));
@@ -249,9 +257,9 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
   const centroEscritorio = new THREE.Vector3(PUF.x, 0, PUF.z).addScaledVector(adelante, 0.78);
   const escritorio = new THREE.Group();
   escritorio.add(
-    sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.05, 48), std('#D8B48A', 0.7)), 0, 0.8, 0)),
-    sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 0.78, 16), std('#B98E62', 0.7)), 0, 0.39, 0)),
-    sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.3, 0.04, 32), std('#B98E62', 0.7)), 0, 0.02, 0))
+    sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.05, 48), std(C.mesa, 0.7)), 0, 0.8, 0)),
+    sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, 0.78, 16), std(C.mesaPata, 0.7)), 0, 0.39, 0)),
+    sombra(en(new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.3, 0.04, 32), std(C.mesaPata, 0.7)), 0, 0.02, 0))
   );
   escritorio.position.copy(centroEscritorio);
   scene.add(escritorio);
@@ -313,7 +321,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
   /* ------------------------------------------------------------------ AU-RA */
   const radio = (y: number) => {
     const t = Math.min(1, Math.max(0, y / ALTO));
-    return R * Math.pow(1 - Math.pow(Math.abs(2 * t - 1), 2.4), 1 / 2.4) * (1 - 0.1 * t);
+    return R * Math.pow(1 - Math.pow(Math.abs(2 * t - 1), 2.4), 1 / 2.4) * (1 - F.afina * t);
   };
   const enSuperficie = (x: number, y: number, dentro = 0) => {
     const r = radio(y);
@@ -327,34 +335,69 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
 
   const aura = new THREE.Group();
   const cuerpo = new THREE.Group();
-  cuerpo.position.y = BASE_Y;
+  cuerpo.position.y = BASE_Y + F.flota;
   aura.add(cuerpo);
-  const matPiel = std('#F3E6CD', 0.5);
+  const matPiel = std(C.piel, 0.5);
   const piel = sombra(new THREE.Mesh(new THREE.LatheGeometry(perfil, 64), matPiel));
   cuerpo.add(piel);
 
-  const tinta = std('#2F2924', 0.3);
+  const OJO_Y = 0.84 * fy;
+  const BOCA_Y = F.ojosLuz ? OJO_Y - 0.12 : 0.71 * fy;
+  // Con ojos de luz la cara es un visor oscuro y los ojos brillan dentro; si no, van pintados.
+  const LUZ = '#F7EBD0';
+  const ojoFuera = F.ojosLuz ? -0.014 : 0.02;
+  if (F.ojosLuz) {
+    // Un trozo del mismo torno, apenas por fuera de la piel: la pantalla sigue la curva de la cabeza.
+    // Lo que dibuja la textura (una píldora oscura con reflejo) es lo único que se ve de ella.
+    const y0 = BOCA_Y - 0.09;
+    const y1 = OJO_Y + 0.11;
+    const tramo: THREE.Vector2[] = [];
+    for (let i = 0; i <= 16; i++) {
+      const y = y0 + ((y1 - y0) * i) / 16;
+      tramo.push(new THREE.Vector2(radio(y) + 0.006, y));
+    }
+    const visorTex = lienzo(512, 256, (g, w, h) => {
+      g.clearRect(0, 0, w, h);
+      const fondo = g.createLinearGradient(0, 0, 0, h);
+      fondo.addColorStop(0, C.ojos);
+      fondo.addColorStop(1, '#3A3835');
+      g.fillStyle = fondo;
+      redondo(g, 24, 16, w - 48, h - 32, (h - 32) / 2);
+      g.fill();
+      g.fillStyle = 'rgba(255,255,255,0.08)';
+      redondo(g, 70, 26, w - 140, 34, 17);
+      g.fill();
+    });
+    const visor = new THREE.Mesh(
+      new THREE.LatheGeometry(tramo, 32, -0.62, 1.24),
+      new THREE.MeshStandardMaterial({ map: visorTex.t, transparent: true, alphaTest: 0.05, roughness: 0.3 })
+    );
+    cuerpo.add(visor);
+  }
+  const tinta = F.ojosLuz ? basica(LUZ) : std(C.ojos, 0.3);
   const ojo = (x: number) => {
     const g = new THREE.Group();
-    g.position.copy(enSuperficie(x, 0.84, 0.02));
-    const globo = new THREE.Mesh(new THREE.SphereGeometry(0.072, 24, 16), tinta);
-    globo.scale.z = 0.7;
-    g.add(globo, en(new THREE.Mesh(new THREE.SphereGeometry(0.022, 12, 8), basica('#FFFFFF')), 0.024, 0.028, 0.047));
+    g.position.copy(enSuperficie(x, OJO_Y, ojoFuera));
+    const globo = new THREE.Mesh(new THREE.SphereGeometry(F.ojo, 24, 16), tinta);
+    globo.scale.set(1, F.ojoAlto, 0.7);
+    g.add(globo);
+    if (F.brillo) g.add(en(new THREE.Mesh(new THREE.SphereGeometry(0.022, 12, 8), basica('#FFFFFF')), 0.024, 0.028, 0.047));
     cuerpo.add(g);
     return g;
   };
-  const ojoI = ojo(-0.17);
-  const ojoD = ojo(0.17);
+  const ojoI = ojo(-F.ojoSep);
+  const ojoD = ojo(F.ojoSep);
   const mejillas = [-0.29, 0.29].map((x) => {
-    const m = new THREE.Mesh(new THREE.CircleGeometry(0.06, 24), basica('#F2A48B', { transparent: true, opacity: 0.5 }));
-    const p = enSuperficie(x, 0.74, -0.004);
+    const m = new THREE.Mesh(new THREE.CircleGeometry(0.06, 24), basica(C.mejilla, { transparent: true, opacity: 0.5 }));
+    const p = enSuperficie(x * (R / 0.56), 0.74 * fy, -0.004);
     m.position.copy(p);
     m.lookAt(p.clone().add(new THREE.Vector3(p.x, 0, p.z)));
+    m.visible = F.mejillas;
     cuerpo.add(m);
     return m;
   });
 
-  const matBoca = std('#4A2A26', 0.5);
+  const matBoca = F.ojosLuz ? basica(LUZ) : std(C.boca, 0.5);
   const bocaSonrisa = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 8, 24, Math.PI), matBoca);
   bocaSonrisa.rotation.z = Math.PI;
   const bocaTriste = en(new THREE.Mesh(new THREE.TorusGeometry(0.045, 0.012, 8, 24, Math.PI), matBoca), 0, -0.03, 0);
@@ -363,19 +406,22 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
   const bocaLinea = new THREE.Mesh(new THREE.CapsuleGeometry(0.011, 0.07, 4, 8), matBoca);
   bocaLinea.rotation.z = Math.PI / 2;
   const boca = new THREE.Group();
-  boca.position.copy(enSuperficie(0, 0.71, -0.005));
+  boca.position.copy(enSuperficie(0, BOCA_Y, F.ojosLuz ? -0.012 : -0.005));
+  boca.scale.setScalar(F.boca);
   boca.add(bocaSonrisa, bocaTriste, bocaAbierta, bocaO, bocaLinea);
   cuerpo.add(boca);
 
-  const verde = std('#9DBC9A', 0.95);
-  const bufanda = sombra(new THREE.Mesh(new THREE.TorusGeometry(radio(0.52) + 0.005, 0.07, 14, 56), verde));
+  const verde = std(C.bufanda, 0.95);
+  const bufanda = sombra(new THREE.Mesh(new THREE.TorusGeometry(radio(0.52 * fy) + 0.005, 0.07, 14, 56), verde));
   bufanda.rotation.x = Math.PI / 2;
-  bufanda.position.y = 0.52;
+  bufanda.position.y = 0.52 * fy;
+  bufanda.visible = F.bufanda;
   cuerpo.add(bufanda);
   const colaBufanda = new THREE.Group();
-  colaBufanda.position.set(0.2, 0.47, radio(0.47) - 0.02);
+  colaBufanda.position.set(0.2, 0.47 * fy, radio(0.47 * fy) - 0.02);
+  colaBufanda.visible = F.bufanda;
   for (let i = 0; i < 2; i++) {
-    const tira = sombra(new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.26, 0.04), i ? std('#8AAE89', 0.95) : verde));
+    const tira = sombra(new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.26, 0.04), i ? std(C.bufanda2, 0.95) : verde));
     tira.position.set(i * 0.05, -0.12 - i * 0.04, 0.02 + i * 0.01);
     tira.rotation.z = 0.12 + i * 0.1;
     colaBufanda.add(tira);
@@ -384,9 +430,9 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
 
   const brazo = (lado: number) => {
     const pivote = new THREE.Group();
-    pivote.position.set(lado * 0.5, 0.56, 0);
+    pivote.position.set(lado * (R - 0.06), 0.56 * fy, 0);
     const m = sombra(new THREE.Mesh(new THREE.SphereGeometry(0.5, 20, 14), matPiel));
-    m.scale.set(0.11, 0.2, 0.11);
+    m.scale.set(0.11 * F.brazos, 0.2 * F.brazos, 0.11 * F.brazos);
     m.position.set(lado * 0.04, -0.16, 0);
     pivote.add(m);
     cuerpo.add(pivote);
@@ -396,23 +442,25 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
   const brazoD = brazo(1);
   const pieI = sombra(new THREE.Mesh(new THREE.SphereGeometry(0.15, 20, 14), matPiel));
   const pieD = sombra(new THREE.Mesh(new THREE.SphereGeometry(0.15, 20, 14), matPiel));
-  pieI.scale.set(1, 0.55, 1.3);
-  pieD.scale.set(1, 0.55, 1.3);
+  for (const p of [pieI, pieD]) {
+    p.scale.set(F.pies, 0.55 * F.pies, 1.3 * F.pies);
+    p.visible = F.pies > 0;
+  }
   aura.add(pieI, pieD);
 
   const anilloEje = new THREE.Group();
-  anilloEje.position.y = BASE_Y + 0.5;
+  anilloEje.position.y = BASE_Y + F.flota + 0.5 * fy;
   anilloEje.rotation.set(0.32, 0, -0.16);
   const anilloGiro = new THREE.Group();
-  const matAnillo = basica('#F2BE4E', { transparent: true });
-  const matHalo = basica('#FFD27A', { transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false });
-  const anillo = new THREE.Mesh(new THREE.TorusGeometry(0.86, 0.013, 12, 160), matAnillo);
+  const matAnillo = basica(C.anillo, { transparent: true });
+  const matHalo = basica(C.halo, { transparent: true, opacity: C.haloOp, blending: THREE.AdditiveBlending, depthWrite: false });
+  const anillo = new THREE.Mesh(new THREE.TorusGeometry(0.86, F.anilloGrosor, 12, 160), matAnillo);
   const halo = new THREE.Mesh(new THREE.TorusGeometry(0.86, 0.05, 12, 160), matHalo);
   anillo.rotation.x = halo.rotation.x = Math.PI / 2;
   anilloGiro.add(anillo, halo);
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2;
-    anilloGiro.add(en(new THREE.Mesh(new THREE.SphereGeometry(0.026, 12, 8), basica('#FFF0C2')), Math.cos(a) * 0.86, 0, Math.sin(a) * 0.86));
+    anilloGiro.add(en(new THREE.Mesh(new THREE.SphereGeometry(0.026, 12, 8), basica(C.anilloPuntos)), Math.cos(a) * 0.86, 0, Math.sin(a) * 0.86));
   }
   anilloEje.add(anilloGiro);
   aura.add(anilloEje);
@@ -455,7 +503,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     }
   });
   const libreta = hoja(0.24, 0.3, libretaTex.t, '#E2A83E');
-  libreta.position.set(-0.08, 0.36, 0.64);
+  libreta.position.set(-0.08, 0.36 * fy, R + 0.08);
   libreta.rotation.x = -0.55;
   const lapiz = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 10), std('#E28E6A', 0.6));
   lapiz.visible = false;
@@ -489,7 +537,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     g.fill();
   });
   const tarjetaOro = hoja(0.5, 0.33, oroTex.t, '#F3DDB0');
-  tarjetaOro.position.set(0, 1.48, 0.28);
+  tarjetaOro.position.set(0, 1.48 * fy, 0.28);
   tarjetaOro.rotation.x = 0.08;
 
   const docTex = lienzo(300, 390, (g, w, h) => {
@@ -511,7 +559,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     g.fillText('PDF', w - 70, 45);
   });
   const documento = hoja(0.3, 0.39, docTex.t, '#EFE6D8');
-  documento.position.set(0, 0.46, 0.66);
+  documento.position.set(0, 0.46 * fy, R + 0.1);
   documento.rotation.x = -0.35;
 
   const geoAvion = new THREE.BufferGeometry();
@@ -911,7 +959,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     if (!golpe) return;
     const local = cuerpo.worldToLocal(golpe.point.clone());
     st.apreton = 0.3;
-    op.onTocar?.(local.y > 0.95 ? 'cabeza' : 'cuerpo');
+    op.onTocar?.(local.y > 0.95 * fy ? 'cabeza' : 'cuerpo');
   };
   lienzoGL.addEventListener('pointermove', alMover);
   lienzoGL.addEventListener('pointerleave', alSalir);
@@ -1046,13 +1094,14 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     st.rotY = angLerp(st.rotY, st.rotObj + (libre ? st.mirarX * 0.35 : 0), 1 - Math.pow(0.0005, dt));
     if (st.caminando) st.fase += dt * 9.5;
     const brinco = o.brinco && !reducido && !st.caminando && !st.gesto && !habla ? Math.abs(Math.sin(t * 7)) * 0.08 : 0;
-    const bote = st.caminando ? Math.abs(Math.sin(st.fase)) * 0.05 : 0;
+    const bote = st.caminando && F.pies > 0 ? Math.abs(Math.sin(st.fase)) * 0.05 : 0; // sin pies no hay pasos: se desliza
     aura.position.set(st.x, st.y + brinco + bote, st.z);
     aura.rotation.y = st.rotY;
 
     const aprieta = st.apreton > 0 ? 1 - Math.sin((st.apreton / 0.3) * Math.PI) * 0.06 : 1;
     const resp = (1 + Math.sin(t * 2.2) * 0.015) * P.escY * aprieta;
     cuerpo.scale.set(1 / Math.sqrt(resp), resp, 1 / Math.sqrt(resp));
+    if (F.flota) cuerpo.position.y = BASE_Y + F.flota + (reducido ? 0 : Math.sin(t * 1.6) * 0.025);
     cuerpo.rotation.x = P.inclX - (libre ? st.mirarY * 0.08 : 0);
     cuerpo.rotation.z = P.inclZ + (st.caminando ? Math.sin(st.fase) * 0.06 : 0);
     brazoI.rotation.set(P.bIx, 0, P.bIz);
@@ -1061,9 +1110,9 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     const mx = st.mirarX * 0.02 + st.leer * 0.03;
     ojoI.scale.set(P.ojoS, P.ojoS * P.ojoY * cierre * P.guino, P.ojoS);
     ojoD.scale.set(P.ojoS, P.ojoS * P.ojoY * cierre, P.ojoS);
-    ojoI.position.copy(enSuperficie(-0.17 + mx, 0.84 + P.ojoMY + st.mirarY * 0.015, 0.02));
-    ojoD.position.copy(enSuperficie(0.17 + mx, 0.84 + P.ojoMY + st.mirarY * 0.015, 0.02));
-    for (const m of mejillas) (m.material as THREE.MeshBasicMaterial).opacity = P.mej;
+    ojoI.position.copy(enSuperficie(-F.ojoSep + mx, OJO_Y + P.ojoMY + st.mirarY * 0.015, ojoFuera));
+    ojoD.position.copy(enSuperficie(F.ojoSep + mx, OJO_Y + P.ojoMY + st.mirarY * 0.015, ojoFuera));
+    if (F.mejillas) for (const m of mejillas) (m.material as THREE.MeshBasicMaterial).opacity = P.mej;
 
     bocaSonrisa.visible = o.boca === 'sonrisa';
     bocaTriste.visible = o.boca === 'triste';
@@ -1110,22 +1159,22 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
 
     anilloGiro.rotation.y += dt * P.anilloV;
     matAnillo.opacity = P.anilloOp;
-    matHalo.opacity = 0.22 * P.anilloOp * (0.8 + Math.sin(t * 2) * 0.2);
+    matHalo.opacity = C.haloOp * P.anilloOp * (0.8 + Math.sin(t * 2) * 0.2);
 
     tapaAbierta = lerp(tapaAbierta, tapaObj, 1 - Math.pow(0.01, dt));
     bisagra.rotation.x = -Math.PI / 2 + tapaAbierta * (Math.PI / 2 - 0.3);
     matPantalla.color.setScalar(0.25 + tapaAbierta * 0.75);
 
     if (o.zetas && st.dormido && t > st.proxZeta) {
-      soltarTexto('z', '#8B7E72', cabeza(1.3).add(new THREE.Vector3(0.3, 0, 0)), new THREE.Vector3(0.15, 0.35, 0), 2.6, 0.26);
+      soltarTexto('z', C.texto, cabeza(1.3).add(new THREE.Vector3(0.3, 0, 0)), new THREE.Vector3(0.15, 0.35, 0), 2.6, 0.26);
       st.proxZeta = t + 1.1;
     }
     if (o.notas && t > st.proxNota) {
-      soltarTexto(Math.random() < 0.5 ? '♪' : '♫', '#C98A1C', cabeza(1.2).add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0, 0.2)), new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.5, 0), 2, 0.3);
+      soltarTexto(Math.random() < 0.5 ? '♪' : '♫', C.anillo, cabeza(1.2).add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0, 0.2)), new THREE.Vector3((Math.random() - 0.5) * 0.3, 0.5, 0), 2, 0.3);
       st.proxNota = t + 0.45;
     }
     if (o.puntos && !st.gesto && t > st.proxNota) {
-      soltarTexto('…', '#6B6056', cabeza(1.35).add(new THREE.Vector3(0.35, 0, 0)), new THREE.Vector3(0.05, 0.12, 0), 1.2, 0.32);
+      soltarTexto('…', C.texto, cabeza(1.35).add(new THREE.Vector3(0.35, 0, 0)), new THREE.Vector3(0.05, 0.12, 0), 1.2, 0.32);
       st.proxNota = t + 1.2;
     }
     for (let i = particulas.length - 1; i >= 0; i--) {
