@@ -215,9 +215,48 @@ sus registros. La puerta (401 sin token, prefijos, 404) se probó con Caddy real
    y luego rellenar vectores con `indexar-vectores.ts`.
 5. En la pestaña Control → Servicios se ve si cada pieza responde y cuánto tarda.
 
-Presupuesto de memoria de la T4 (16 GB), estimado: Whisper ~2 GB, BGE-M3 ~2 GB, Qwen3-4B Q4 con
-8k de contexto ~4 GB, Docling ~3 GB, Laya ~1.5 GB. Cabe; `probar.sh` imprime lo que de verdad usa.
-Si el nodo también corre voz (Chatterbox), medir antes de sumar el modelo chico.
+Presupuesto de memoria de la T4 (16 GB), estimado: Whisper 2–4.5 GB, BGE-M3 ~2.5 GB, Qwen3-4B Q4
+con 4k de contexto ~3.5 GB, Docling 2–5 GB en pico, Laya ~1.1 GB. Justo: `probar.sh` imprime lo que
+de verdad usa; mirar `nvidia-smi` después de pasar un escaneo por Docling. Si Laya se queda sin
+memoria pasa sola a CPU y deja de llegar a tiempo (el cortacircuitos la salta). Si el nodo también
+corre voz (Chatterbox), medir antes de sumar el modelo chico.
+
+El token nunca va en argumentos de proceso (se ven con `ps`) ni en los logs: TEI no lleva
+`--api-key` (imprime sus argumentos al arrancar; la puerta es Caddy), llama.cpp lo lee de
+`LLAMA_API_KEY`, Caddy pone la `X-Api-Key` de Docling y la borra del log. `instalar.sh` no imprime
+el token salvo con `SILENCIO=0`: la salida de SSM queda guardada.
+
+## Ronda de crítica (hecha)
+
+Tres revisiones adversariales (seguridad, integración, infraestructura) sobre lo de arriba. Lo que
+encontraron y quedó corregido, cada cosa con su prueba:
+
+- **Un lote MCP malformado (`[1]`) tumbaba el proceso** (rechazo sin atrapar). Validación por
+  elemento, lote de 20 como máximo, tope por minuto antes de abrir la traza, y el proceso registra
+  y sigue ante cualquier rechazo sin atrapar.
+- **`web_leer` podía llegar a la red interna** por IPv6 mapeada en hexadecimal, por redirección o
+  por DNS rebinding. Ahora conecta a la IP comprobada y revalida cada salto (`lib/red-publica.ts`).
+- **Con la T4 colgada, cada turno esperaba ~21 s.** Cortacircuitos por servicio (60 s), consulta de
+  embeddings con tope de 1.5 s, modelo chico 5 s, Laya en sombra sin esperar, y sin búsqueda por
+  significado en los saludos.
+- **Acciones de rutina iban a la cola de aprobación** («recuérdame el pago de la luz» daba riesgo
+  90). Riesgo alto solo para mover valor con monto o activo, emitir con verbo, o tocar el sistema.
+- **El clasificador se evadía** en inglés, con un salto de línea o con caracteres invisibles.
+- **El modelo chico recibía el prompt entero** (10 700 caracteres, con instrucciones de herramientas
+  que no tiene). Ahora prompt propio de ~450, últimos 4 turnos, sin herramientas ni adjuntos, y si
+  duda contesta PASO y sigue Qwen. Verificado de punta a punta con el servidor.
+- **Fichas**: «Mario» aparecía en «sumario»; sin tope de tamaño; marcadas como «lo que se sabe con
+  certeza». Ahora palabra entera, topes, rotuladas como dato y con aviso si traen órdenes.
+- **Un fragmento que TEI rechaza frenaba el índice entero.** Cursor y reintento de a uno.
+- **Tablas de Docling** quedaban en un trozo de 7 000 caracteres: ahora por filas con encabezado.
+- **Motor de reglas**: un nombre escrito daba cupo de identificado; sin solicitante verificado no
+  había cuatro ojos (ahora hacen falta dos); al ejecutar lo aprobado solo `permitir` pasa y los
+  hechos se vuelven a traer si hay fuente registrada.
+- **`redactar`** no tapaba claves en JSON, «la clave es…», Stripe, JWT, Bearer ni Google.
+- **Infra**: torch 2.14.0 no existe en el índice cu128 (el build de Laya fallaba): cu126. Docling
+  `/ready` en vez de `/health`, tiempos alineados (620 s), pgvector en Ubuntu 22.04 vía PGDG.
+- De paso, uno viejo: «¿a cómo está el oro?» contestaba el estado del sistema.
+
 
 ## Variables nuevas
 
@@ -230,6 +269,8 @@ Si el nodo también corre voz (Chatterbox), medir antes de sumar el modelo chico
 | `CLASIFICADOR_MODO` | `reglas`, `sombra` o `laya` | `reglas` |
 | `LAYA_URL`, `LAYA_API_KEY`, `LAYA_MODELO`, `LAYA_TIMEOUT_MS` | Clasificador rápido | Sin Laya; `multilingual`; 800 ms |
 | `EMBED_URL`, `EMBED_API_KEY`, `EMBED_DIM`, `EMBED_UMBRAL`, `EMBED_UMBRAL_CEREBRO` | Búsqueda por significado | Solo palabras; 1024; 0.35; 0.5 |
-| `MODELO_CHICO_URL`, `MODELO_CHICO_API_KEY`, `MODELO_CHICO_NOMBRE`, `MODELO_CHICO_MODO` | Modelo chico | Apagado (`MODELO_CHICO_MODO=activo` lo enciende) |
+| `MODELO_CHICO_URL`, `MODELO_CHICO_API_KEY`, `MODELO_CHICO_NOMBRE`, `MODELO_CHICO_MODO`, `MODELO_CHICO_TIMEOUT_MS` | Modelo chico | Apagado (`MODELO_CHICO_MODO=activo` lo enciende); 5 s |
 | `DOCLING_URL`, `DOCLING_API_KEY`, `DOCLING_TIMEOUT_MS` | OCR de escaneos | Los escaneos se rechazan diciendo por qué; 180 s |
 | `MCP_TOKEN`, `MCP_QUIEN`, `MCP_ORIGENES`, `MCP_TOPE_MINUTO` | Servidor MCP | `/mcp` no existe; —; sin navegadores; 60 |
+| `INTERRUPTOR_MS` | Cuánto se salta un servicio de la T4 tras un fallo | 60 000 |
+| `EMBED_CONSULTA_MS` | Tope de la consulta de embeddings en un turno | 1 500 |

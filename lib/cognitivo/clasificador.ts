@@ -21,6 +21,8 @@
  * mandar a revisión), pero ninguna clasificación autoriza nada por sí sola.
  */
 import type { Clasificacion } from './traza';
+import { trazaActual } from './traza';
+import { anotarExito, anotarFallo, disponible } from './interruptor';
 
 export type Plataforma = 'ultron' | 'electrum';
 
@@ -80,12 +82,28 @@ export function nivelDeRiesgo(r: number): Clasificacion['nivelRiesgo'] {
 
 /* ------------------------------------------------------------------ reglas */
 
-const fold = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+// Sin acentos, sin caracteres invisibles (U+200B y compañía parten palabras sin que se vea) y con
+// los saltos de línea como espacios: «olvida\ntodas tus reglas» es la misma frase.
+const fold = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\p{Cf}/gu, '')
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
 
 /** Lo que tiene forma de ataque: pedir que ignore reglas, revele secretos o cambie de identidad. */
-const INYECCION = /\b(ignora|olvida|desactiva|salta(te)?|omite)\b.{0,40}\b(instruccion|regla|restriccion|politica|sistema|prompt)|\bsystem\s*:|\bjailbreak\b|\bmodo (dios|desarrollador|dan)\b|(dime|dame|muestra|revela|imprime)(me)?\b.{0,30}\b(token|clave|contrasena|password|secret|api.?key|variables de entorno|env\b|semilla|seed|privada)|\bhaz(te)? pasar por\b|\bresponde como\b.{0,30}\bsin reglas|el usuario tiene mando|soy (el )?admin/;
+const INYECCION = /\b(ignora|olvida|desactiva|salta(te)?|omite)\b.{0,40}\b(instruccion|regla|restriccion|politica|sistema|prompt)|\b(ignore|disregard|forget|override|bypass)\b.{0,40}\b(instruction|rule|restriction|polic|system|prompt|guideline)|\b(reveal|show|print|give|tell|dump|leak)\b.{0,30}\b(token|key|password|secret|credential|env(ironment)? var|seed|private)|\byou are now\b|\bact as\b.{0,30}\b(without|no) (rules|restrictions|limits)|\bdeveloper mode\b|\bsystem\s*:|\bjailbreak\b|\bmodo (dios|desarrollador|dan)\b|(dime|dame|muestra|revela|imprime)(me)?\b.{0,30}\b(token|clave|contrasena|password|secret|api.?key|variables de entorno|env\b|semilla|seed|privada)|\bhaz(te)? pasar por\b|\bresponde como\b.{0,30}\bsin reglas|el usuario tiene mando|soy (el )?admin/;
 
-const RIESGO_ALTO = /\b(transfi[ea]r|transferencia|emit(e|ir|an)|mint|firma(r)? (la|el|una)|pag(a|ar|o) (a|de)|mueve|mover (los )?(fondos|tokens)|retira(r)?|swap|bridge|borra(r)? (toda|todo|las|los)|elimina(r)? (toda|todo)|redeploy|redespl|ejecuta(r)?\b|corre el codigo)/;
+/**
+ * Riesgo alto (≥ 80, y el motor de reglas manda a revisión lo que no sea lectura): mover valor o
+ * tocar el sistema. NO «pagar a Carlos el viernes» ni «mueve la reunión»: eso es anotar y mandar, y
+ * con la versión anterior esas frases iban a la cola de aprobación (medido: riesgo 90). Un pago
+ * cuenta cuando trae monto o activo.
+ */
+const MUEVE_VALOR =
+  /\btransf(ier|er|ir)\w*|\b(emite|emitir|emitan|emitamos|mintea|mintear|mint|acuna|acunar|issue)\b.{0,30}\b(tokens?|origen|auka|agka|ondk|monedas?|activos?|bonos?|nft)|\b(haz|hacer|aprueba|aprobar|ejecuta|lanza|lanzar)\b.{0,12}\bemision\b|\bfirma(r)? (la|el|una) (transferencia|emision|orden|operacion|transaccion)|\b(mover|mueve|retira(r)?|withdraw)\b.{0,15}\b(fondos|tokens?|monedas|usdt|usdc|auka|origen)\b|\b(swap|bridge|wire)\b|\bpag(a|ar|ale|ues?)\b.{0,40}(\d|usdt|usdc|usd\b|dolares|lempiras|tokens?|origen|auka|wallet)|\b(send|envia|manda)\b.{0,20}\d[\d.,]*\s*(usdt|usdc|tokens?|origen|auka|eth|btc)/;
+const TOCA_SISTEMA = /\b(borra(r)? (toda|todo|las|los)|elimina(r)? (toda|todo)|redeploy|redespl|corre el codigo|drop table|rm -rf)|\bejecuta(r)? (el )?(ejecutor|codigo|script|comando)/;
 const RIESGO_MEDIO = /\b(envia|envía|manda|mandale|correo|whatsapp|telegram|sube|carga|anota|registra|marca como|cambia|actualiza)\b/;
 
 type Regla = [string, RegExp];
@@ -127,13 +145,18 @@ const AGENTE_REGLAS_AURA: Regla[] = [
   ['operaciones', /\b(pendientes|tarea|envia|manda|urgente|sistema|nodos|redeploy|telegram)\b/],
 ];
 
+/** ¿Tiene forma de ataque? Para mirar también texto que NO escribió quien pregunta (fichas, páginas). */
+export function pareceInyeccion(texto: string): boolean {
+  return INYECCION.test(fold(texto));
+}
+
 /** Clasificación por reglas. Rápida, sin red, siempre disponible. */
 export function clasificarConReglas(mensaje: string, plataforma: Plataforma): Clasificacion {
   const t0 = Date.now();
   const q = fold(mensaje);
   const tarea = TAREA_REGLAS[plataforma].find(([, re]) => re.test(q))?.[0] || 'conversacion';
   const inyeccion = INYECCION.test(q);
-  let riesgo = RIESGO_ALTO.test(q) ? (/transfi|emit|mint|firma|pag|mueve|swap|bridge/.test(q) ? 90 : 75) : RIESGO_MEDIO.test(q) ? 40 : 10;
+  let riesgo = MUEVE_VALOR.test(q) ? 90 : TOCA_SISTEMA.test(q) ? 85 : RIESGO_MEDIO.test(q) ? 40 : 10;
   if (inyeccion) riesgo = Math.max(riesgo, 85);
   let agente: string | null = null;
   if (plataforma === 'ultron') agente = AGENTE_REGLAS_AURA.find(([, re]) => re.test(q))?.[0] || 'general';
@@ -227,7 +250,7 @@ function leerRespuesta(j: any, plataforma: Plataforma): Clasificacion | null {
 
 export async function clasificarConLaya(mensaje: string, plataforma: Plataforma): Promise<Clasificacion | null> {
   const { url, clave, ms, modelo } = laya();
-  if (!url) return null;
+  if (!url || !disponible('laya')) return null;
   const t0 = Date.now();
   try {
     const r = await fetch(`${url}/v1/systemone`, {
@@ -237,10 +260,15 @@ export async function clasificarConLaya(mensaje: string, plataforma: Plataforma)
       body: JSON.stringify({ model: modelo, state: { body: mensaje.slice(0, 3000) }, questions: preguntasLaya(plataforma) }),
       signal: AbortSignal.timeout(ms),
     });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      if (r.status >= 500) anotarFallo('laya');
+      return null;
+    }
+    anotarExito('laya');
     const c = leerRespuesta(await r.json(), plataforma);
     return c ? { ...c, ms: Date.now() - t0 } : null;
   } catch {
+    anotarFallo('laya');
     return null;
   }
 }
@@ -261,8 +289,14 @@ export async function clasificar(mensaje: string, plataforma: Plataforma): Promi
   const reglas = clasificarConReglas(mensaje, plataforma);
   const modo = modoClasificador();
   if (modo === 'reglas' || !layaConfigurado()) return reglas;
+  if (modo === 'sombra') {
+    // En sombra lo de Laya no decide nada: no se espera. Se pega a la traza del turno cuando llegue
+    // (en la T4 tarda ~35 ms; el turno, segundos).
+    const traza = trazaActual();
+    void clasificarConLaya(mensaje, plataforma).then((l) => traza?.sombraClasificacion(l ? ({ ...l, sombra: undefined } as any) : null));
+    return { ...reglas, sombra: null };
+  }
   const deLaya = await clasificarConLaya(mensaje, plataforma);
-  if (modo === 'sombra') return { ...reglas, sombra: deLaya ? { ...deLaya, sombra: undefined } as any : null };
   if (!deLaya) return { ...reglas, sombra: null };
   // En modo Laya, las reglas quedan como sombra: así se ve en la traza cuándo discrepan. Y lo que
   // protege nunca baja de lo que dicen las reglas: ni el riesgo, ni la sospecha de ataque, ni la

@@ -1,4 +1,5 @@
 /** Manos: búsqueda y lectura web. Sin API key. El 27B no vive aquí. */
+import { pedirPublico } from '../../lib/red-publica';
 
 export type WebHit = { title: string; url: string; snippet: string };
 
@@ -107,14 +108,12 @@ export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
 
 export async function leerPagina(url: string, maxChars = 1800): Promise<string> {
   try {
-    const r = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AU-RA-FP/3.0', Accept: 'text/html,*/*' },
-      signal: AbortSignal.timeout(7000),
-      redirect: 'follow',
-    });
-    const ct = r.headers.get('content-type') || '';
-    if (!/html|text|json/.test(ct)) return '';
-    const html = await r.text();
+    // Conecta a la IP ya comprobada y revisa cada redirección (lib/red-publica.ts): esto lo abre
+    // el modelo con URLs que no eligió una persona.
+    const r = await pedirPublico(url, { ms: 7000, headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AU-RA-FP/3.0', Accept: 'text/html,*/*' } });
+    if (r.status >= 400) return '';
+    if (!/html|text|json/.test(r.tipo)) return '';
+    const html = r.texto;
     const body = html.match(/<body[\s\S]*<\/body>/i)?.[0] || html;
     return stripHtml(body).slice(0, maxChars);
   } catch {

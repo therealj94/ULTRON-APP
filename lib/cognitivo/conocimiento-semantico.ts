@@ -13,7 +13,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { coseno, embeddingsConfigurados, vectorDe, vectorizar } from './embeddings';
+import { coseno, DIMENSION, embeddingsConfigurados, vectorDe, vectorizar } from './embeddings';
 import { dirArchivos } from './base';
 
 type Indice = { lineas: string[]; vectores: number[][] };
@@ -22,13 +22,17 @@ const indices = new Map<string, Promise<Indice | null>>();
 const huella = (s: string) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 16);
 
 async function construir(id: string, lineas: string[]): Promise<Indice | null> {
-  const archivo = path.join(dirArchivos(), `vectores-${id}.json`);
+  // El archivo lleva el servicio y la dimensión en el nombre: vectores de otro modelo no se mezclan
+  // (el coseno entre vectores de modelos distintos da un número, pero no significa nada).
+  const modelo = huella(`${process.env.EMBED_URL || ''}|${process.env.EMBED_MODELO || 'bge-m3'}|${DIMENSION}`).slice(0, 8);
+  const archivo = path.join(dirArchivos(), `vectores-${id}-${modelo}.json`);
   let guardados: Record<string, number[]> = {};
   try {
     guardados = JSON.parse(fs.readFileSync(archivo, 'utf8'));
   } catch {
     /* primera vez */
   }
+  for (const [k, v] of Object.entries(guardados)) if (!Array.isArray(v) || v.length !== DIMENSION) delete guardados[k];
   const faltan = lineas.filter((l) => !guardados[huella(l)]);
   if (faltan.length) {
     const vs = await vectorizar(faltan);

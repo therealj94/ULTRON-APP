@@ -173,6 +173,12 @@ export class RegistroTurno {
     if (c.agente && !this.t.agente) this.t.agente = c.agente;
   }
 
+  /** Lo que dijo el clasificador en sombra, que llega después (no se le espera). */
+  sombraClasificacion(s: Clasificacion | null) {
+    if (this.cerrado || !this.t.clasificacion) return;
+    this.t.clasificacion = { ...this.t.clasificacion, sombra: s } as Clasificacion;
+  }
+
   agente(nombre: string | null) {
     this.t.agente = nombre;
   }

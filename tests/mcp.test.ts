@@ -144,3 +144,27 @@ test('sin configurar, /mcp no existe', () =>
       await s.cerrar();
     }
   }));
+
+test('un lote malformado no tumba el servidor, y un lote enorme se rechaza', () =>
+  conEntorno({ ...archivos(), MCP_TOKEN: TOKEN, MCP_QUIEN: 'jose', MCP_ORIGENES: undefined }, async () => {
+    const s = await levantar('electrum');
+    const h = { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` };
+    let rechazo: unknown = null;
+    const escucha = (e: unknown) => (rechazo = e);
+    process.on('unhandledRejection', escucha);
+    try {
+      const r = await fetch(s.url, { method: 'POST', headers: h, body: JSON.stringify([1, 'x', null, [], { jsonrpc: '2.0', id: 7, method: 'ping' }]) });
+      assert.equal(r.status, 200);
+      const j = (await r.json()) as any[];
+      assert.equal(j.filter((x) => x.error?.code === -32600).length, 4);
+      assert.deepEqual(j.find((x) => x.id === 7)?.result, {});
+      const grande = Array.from({ length: 21 }, (_, i) => ({ jsonrpc: '2.0', id: i, method: 'ping' }));
+      assert.equal((await fetch(s.url, { method: 'POST', headers: h, body: JSON.stringify(grande) })).status, 413);
+      assert.equal((await fetch(s.url, { method: 'POST', headers: h, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) })).status, 200, 'sigue vivo');
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(rechazo, null, 'ningún rechazo sin atrapar');
+    } finally {
+      process.off('unhandledRejection', escucha);
+      await s.cerrar();
+    }
+  }));

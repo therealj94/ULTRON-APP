@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { evaluar, autorizar, resetRitmoTest, TOPE_EXTERNOS_HORA, type Accion, type Regla } from '../lib/cognitivo/politica';
-import { comandoDeAprobacion, firmar, listarAprobaciones, registrarEjecutor, aprobacionPorId } from '../lib/cognitivo/aprobaciones';
+import { comandoDeAprobacion, firmar, listarAprobaciones, registrarEjecutor, registrarFuenteDeHechos, aprobacionPorId } from '../lib/cognitivo/aprobaciones';
 import { verificarCadena } from '../lib/cognitivo/auditoria';
 import { cerrar, sql } from '../lib/cognitivo/base';
 import { correrAgente, type Pensar } from '../lib/agente/bucle';
@@ -215,3 +215,43 @@ test('aprobaciones en Postgres', { skip: !conBase && 'sin base de pruebas' }, as
   await sql('TRUNCATE cognitivo.aprobacion, cognitivo.auditoria');
   await cerrar();
 });
+
+test('un nombre escrito no da cupo de identificado: rotando nombres no se multiplican los envíos', () =>
+  conArchivos(async () => {
+    resetRitmoTest();
+    const nombres = ['jose', 'medardo', 'melany', 'carlos', 'leonardo', 'pedro'];
+    const decisiones = [];
+    for (const n of nombres) decisiones.push((await autorizar(con({ efecto: 'externo', destino: 'junta', quien: n, nivel: 'escribe', prueba: 'nombre', plataforma: 'ultron' }))).veredicto);
+    assert.deepEqual(decisiones.slice(0, TOPE_EXTERNOS_HORA.anonimo), Array(TOPE_EXTERNOS_HORA.anonimo).fill('permitir'));
+    assert.equal(decisiones[TOPE_EXTERNOS_HORA.anonimo], 'bloquear', 'el sexto «nombre» ya no pasa');
+    resetRitmoTest();
+  }));
+
+test('sin solicitante verificado hacen falta dos personas distintas', () =>
+  conArchivos(async () => {
+    let corrio = false;
+    registrarEjecutor('mandar_a_tercero', async () => ((corrio = true), { ok: true, texto: 'mandado' }));
+    const d = await autorizar(con({ efecto: 'externo', destino: 'tercero', herramienta: 'mandar_a_tercero', args: { a: 'proveedor' }, quien: null, nivel: null, prueba: null, plataforma: 'electrum' }));
+    assert.equal(d.veredicto, 'revision');
+    const r1 = await firmar({ id: d.aprobacionId!, quien: 'jose', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    assert.equal(r1.aprobacion?.estado, 'pendiente', 'una sola firma no basta: podría ser quien lo pidió');
+    assert.equal(corrio, false);
+    const r2 = await firmar({ id: d.aprobacionId!, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    assert.equal(r2.aprobacion?.estado, 'ejecutada', r2.motivo);
+  }));
+
+test('al ejecutar se miran los hechos de nuevo: un KYC revocado después de pedir frena la ejecución', () =>
+  conArchivos(async () => {
+    let kyc = 'aprobado';
+    let corrio = false;
+    registrarEjecutor('transferir_fresco', async () => ((corrio = true), { ok: true, texto: 'hecho' }));
+    registrarFuenteDeHechos('transferir_fresco', async () => ({ kyc }));
+    const d = await autorizar(con({ efecto: 'critico', herramienta: 'transferir_fresco', args: { a: 'w', monto: 1 }, quien: 'jose', hechos: { kyc: 'aprobado' } }));
+    assert.equal(d.veredicto, 'revision');
+    kyc = 'revocado';
+    await firmar({ id: d.aprobacionId!, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    const r = await firmar({ id: d.aprobacionId!, quien: 'melany', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    assert.equal(corrio, false);
+    assert.equal(r.aprobacion?.estado, 'fallida');
+    assert.match(r.motivo, /KYC/);
+  }));

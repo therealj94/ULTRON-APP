@@ -109,11 +109,34 @@ export function trocear(paginas: Array<{ pagina: number; texto: string }>): Arra
     };
 
     for (const parrafo of parrafos) {
-      // Un párrafo enorme (una tabla, normalmente) se parte por frases, no a ciegas.
+      // Una tabla leída por Docling («[TABLA]» + una fila por línea) se parte POR FILAS, y cada trozo
+      // repite el encabezado: una fila de «DDH-07 | 3,2 | 12» sin sus columnas no dice nada. Antes
+      // una tabla de 200 filas quedaba en un solo trozo de 7 000 caracteres.
+      if (parrafo.startsWith('[TABLA]') && parrafo.length > OBJETIVO) {
+        // Lo que venía antes se suelta si ya es un trozo; si es corto (un título), sigue esperando.
+        if (buffer.trim().length >= 40) soltar();
+        const [, encabezado = '', ...filas] = parrafo.split('\n');
+        let trozo = '';
+        for (const fila of filas) {
+          if (trozo && trozo.length + fila.length > OBJETIVO) {
+            salida.push({ pagina: p.pagina, orden: orden++, texto: `[TABLA] ${encabezado}\n${trozo}` });
+            trozo = '';
+          }
+          trozo += (trozo ? '\n' : '') + fila.slice(0, OBJETIVO);
+        }
+        if (trozo) salida.push({ pagina: p.pagina, orden: orden++, texto: `[TABLA] ${encabezado}\n${trozo}` });
+        continue;
+      }
+      // Un párrafo enorme se parte por frases, no a ciegas; y una «frase» sin puntos (una lista
+      // pegada, un OCR sin puntuación) se corta a tope fijo para no dejar un trozo gigante.
       if (parrafo.length > OBJETIVO * 2) {
         for (const frase of parrafo.split(/(?<=[.;:])\s+/)) {
-          if (buffer.length + frase.length > OBJETIVO) soltar();
-          buffer += (buffer ? ' ' : '') + frase;
+          const paso = OBJETIVO - SOLAPE;
+          for (let i = 0; i < frase.length; i += paso) {
+            const pedazo = frase.slice(i, i + paso);
+            if (buffer.length + pedazo.length > OBJETIVO) soltar();
+            buffer += (buffer ? ' ' : '') + pedazo;
+          }
         }
         continue;
       }

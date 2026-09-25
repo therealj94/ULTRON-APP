@@ -47,12 +47,20 @@ function teiFalso(): Promise<{ url: string; cerrar: () => void; llamadas: number
     req.on('end', () => {
       const { inputs } = JSON.parse(b || '{}');
       llamadas.push(inputs.length);
+      // Como TEI con una entrada que no acepta: rechaza el lote entero con 422.
+      if (inputs.some((t: string) => t.includes('RECHAZAR'))) {
+        res.statusCode = 422;
+        return res.end('{"error":"entrada inválida"}');
+      }
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify(inputs.map(vectorFalso)));
     });
   });
   return new Promise((ok) => srv.listen(0, '127.0.0.1', () => ok({ url: `http://127.0.0.1:${(srv.address() as AddressInfo).port}`, cerrar: () => srv.close(), llamadas })));
 }
+
+import { resetInterruptoresTest } from '../lib/cognitivo/interruptor';
+test.beforeEach(() => resetInterruptoresTest());
 
 test('fusión por rango: lo que sale arriba en las dos listas gana, y nada se pierde', () => {
   const r = fundirPorRango([['a', 'b', 'c'], ['c', 'a', 'd']], (x) => x);
@@ -119,12 +127,14 @@ test('expedientes: búsqueda híbrida contra pgvector de verdad', { skip: !conBa
       `INSERT INTO fragmento (documento_id, pagina, orden, texto) VALUES
         ($1, 3, 1, 'El titular de la concesión Cerro Azul es Minera del Sur S.A., inscrita en el registro minero.'),
         ($1, 4, 2, 'El expediente 123-2019 fue presentado ante INHGEOMIN el 4 de marzo.'),
-        ($1, 5, 3, 'La ley media ponderada de las muestras de canal es de 3,4 g/t de oro.')`,
+        ($1, 4, 3, 'RECHAZAR: un fragmento que el servicio no acepta no puede frenar al resto.'),
+        ($1, 5, 4, 'La ley media ponderada de las muestras de canal es de 3,4 g/t de oro.')`,
       [doc.id]
     );
+    // Un fragmento rechazado en medio del lote: los otros tres entran igual.
     assert.equal(await indexarPendientes({ documentoId: doc.id }), 3);
-    const [{ n }] = await consulta<{ n: string }>(`SELECT count(*)::text AS n FROM fragmento WHERE documento_id = $1 AND embedding IS NULL`, [doc.id]);
-    assert.equal(n, '0');
+    const sinVector = await consulta<{ texto: string }>(`SELECT texto FROM fragmento WHERE documento_id = $1 AND embedding IS NULL`, [doc.id]);
+    assert.deepEqual(sinVector.map((f) => f.texto.slice(0, 9)), ['RECHAZAR:']);
 
     // Ninguna palabra en común con el fragmento: solo el significado lo encuentra.
     const porSignificado = await buscarEnExpedientes('¿quién es el dueño del permiso del cerro?', 3);

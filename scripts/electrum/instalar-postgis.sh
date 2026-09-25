@@ -68,7 +68,14 @@ paso "pgvector (búsqueda por significado)"
 PGVER=$(su - postgres -c "psql -tAc 'SHOW server_version_num'" | cut -c1-2)
 case "$ID" in
   ubuntu|debian)
-    apt-get install -y --no-install-recommends "postgresql-${PGVER}-pgvector" || SIN_VECTOR=1 ;;
+    # Ubuntu 24.04 lo trae; 22.04 (la base de muchas AMI) no. Ahí se agrega el repositorio oficial
+    # de PostgreSQL (PGDG), que publica pgvector para cada versión.
+    if ! apt-get install -y --no-install-recommends "postgresql-${PGVER}-pgvector" 2>/dev/null; then
+      apt-get install -y --no-install-recommends postgresql-common ca-certificates \
+        && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
+        && apt-get install -y --no-install-recommends "postgresql-${PGVER}-pgvector" \
+        || SIN_VECTOR=1
+    fi ;;
   amzn|rhel|centos|rocky|almalinux)
     dnf install -y "pgvector_${PGVER}" 2>/dev/null || dnf install -y pgvector 2>/dev/null || SIN_VECTOR=1 ;;
 esac

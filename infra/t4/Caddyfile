@@ -25,9 +25,12 @@
 			request_body {
 				max_size 200MB
 			}
+			# docling-serve pide X-Api-Key, no portador: la pone Caddy, así el cliente no la manda.
+			# Un poco más que DOCLING_SERVE_MAX_SYNC_WAIT (600 s), para que conteste docling y no Caddy.
 			reverse_proxy docling:5001 {
+				header_up X-Api-Key {$T4_TOKEN}
 				transport http {
-					response_header_timeout 10m
+					response_header_timeout 11m
 				}
 			}
 		}
@@ -35,8 +38,12 @@
 			respond "no existe" 404
 		}
 	}
+	# Caddy ya tapa Authorization; X-Api-Key no, y un cliente viejo podría mandarla.
 	log {
 		output stdout
-		format console
+		format filter {
+			request>headers>X-Api-Key delete
+			wrap console
+		}
 	}
 }

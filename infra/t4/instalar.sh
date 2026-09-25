@@ -3,7 +3,8 @@
 # Levanta el Sistema 1 en la T4: Laya, BGE-M3, el modelo chico, Docling y la puerta con TLS.
 #
 #   sudo bash instalar.sh              # la primera vez y cada vez que se cambie algo (idempotente)
-#   sudo SILENCIO=1 bash instalar.sh   # por SSM: no imprime el token (la salida de SSM queda guardada)
+#   sudo SILENCIO=0 bash instalar.sh   # imprime también las variables para Render (NO por SSM:
+#                                      # la salida de SSM queda guardada con el token dentro)
 #
 # Requisitos: driver NVIDIA ya instalado (la AMI de Deep Learning lo trae). Docker y el toolkit de
 # contenedores de NVIDIA se instalan si faltan (Ubuntu/Debian).
@@ -83,8 +84,10 @@ docker compose ps
 paso "Esperando a que carguen los modelos"
 for i in $(seq 1 120); do
   listos=0
-  for s in laya:8000 embed:80 chico:8080 docling:5001; do
-    docker compose exec -T caddy wget -q -O /dev/null --header "Authorization: Bearer ${T4_TOKEN}" "http://${s}/health" 2>/dev/null && listos=$((listos+1))
+  for s in laya:8000/health embed:80/health chico:8080/health docling:5001/ready; do
+    # Sin token: /health de Laya, TEI y llama.cpp es público dentro de la red, y así el token no
+    # aparece en la lista de procesos. De docling se mira /ready, que espera a los modelos.
+    docker compose exec -T caddy wget -q -O /dev/null "http://${s}" 2>/dev/null && listos=$((listos+1))
   done
   [ "$listos" -eq 4 ] && break
   printf '  %s/4 listos…\r' "$listos"
@@ -112,11 +115,12 @@ MODELO_CHICO_NOMBRE=chico
 MODELO_CHICO_MODO=activo
 DOCLING_URL=https://${T4_DOMINIO}/docling
 DOCLING_API_KEY=${T4_TOKEN}
+DOCLING_TIMEOUT_MS=620000
 FIN
 chmod 600 "$DESTINO"
 verde "
 Listo."
-if [ "${SILENCIO:-0}" = "1" ]; then
+if [ "${SILENCIO:-1}" = "1" ]; then
   echo "Las variables para Render quedaron en ${DESTINO} (solo root). Recogelas con: sudo cat ${DESTINO}"
 else
   echo "Poné esto en Render (también quedó en ${DESTINO}):"; echo; cat "$DESTINO"

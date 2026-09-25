@@ -31,6 +31,23 @@ test('las claves pegadas en el chat se tapan antes de guardar', () => {
   assert.match(t, /SECRETO TAPADO/);
 });
 
+test('también las formas que se escapaban: JSON, «la clave es», Stripe, JWT, Bearer, Google', () => {
+  const stripe = 'sk_' + 'live_' + 'abcdefghijklmnop1234';
+  const jwt = 'eyJ' + 'hbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.abcdefghijklmnop';
+  const google = 'AIza' + 'SyA1234567890abcdefghijklmnopqrstuv';
+  const casos = [
+    [`{"password":"Tr0pic4l!x"}`, /Tr0pic4l/],
+    [`la clave es Ornitorrinco77`, /Ornitorrinco77/],
+    [`mi contraseña es Pajaro-Azul-9`, /Pajaro-Azul/],
+    [`cobra con ${stripe}`, /live_abcdef/],
+    [`Authorization: Bearer abcdefghijklmnopqrstuvwx`, /abcdefghijklmnopqrstuvwx/],
+    [`token ${jwt}`, /hbGciOiJ/],
+    [`maps ${google}`, /SyA1234567890/],
+  ] as const;
+  for (const [entrada, prohibido] of casos) assert.doesNotMatch(redactar(entrada), prohibido, entrada);
+  assert.equal(redactar('el precio del oro subió'), 'el precio del oro subió');
+});
+
 test('un hash de commit no es un secreto: no se tapa', () => {
   const sha = 'a1464e8dc46b36b08cf2005a5d5a9add0ed5cbf0';
   assert.equal(redactar(`commit ${sha}`), `commit ${sha}`);

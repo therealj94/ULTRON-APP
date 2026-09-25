@@ -10,6 +10,7 @@
 import type { Plataforma } from '../acceso';
 import { modoClasificador } from './clasificador';
 import { modeloChicoConfigurado } from './modelos';
+import { circuitosAbiertos } from './interruptor';
 
 export type Sonda = {
   servicio: 'laya' | 'embeddings' | 'modelo_chico' | 'docling';
@@ -17,6 +18,8 @@ export type Sonda = {
   ok: boolean;
   ms: number | null;
   detalle: string;
+  /** Si el cortacircuitos lo está saltando en los turnos (tras un fallo), hasta cuándo. */
+  saltadoHasta?: string | null;
 };
 
 export type EstadoCognitivo = {
@@ -65,6 +68,8 @@ export async function estadoCognitivo(
     Promise.all(FUENTES.map(sondear)),
     extra.vectores ? extra.vectores().catch(() => null) : Promise.resolve(null),
   ]);
+  const abiertos = new Map(circuitosAbiertos().map((c) => [c.servicio as string, c.hasta]));
+  for (const s of servicios) s.saltadoHasta = abiertos.get(s.servicio) ?? null;
   const m = extra.mcp?.();
   const valor: EstadoCognitivo = {
     t: new Date().toISOString(),

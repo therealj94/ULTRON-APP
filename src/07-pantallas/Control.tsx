@@ -44,7 +44,7 @@ type Traza = {
   politica: Array<{ herramienta: string; veredicto: string; regla: string }>;
   feedback: number | null;
 };
-type Sonda = { servicio: string; configurado: boolean; ok: boolean; ms: number | null; detalle: string };
+type Sonda = { servicio: string; configurado: boolean; ok: boolean; ms: number | null; detalle: string; saltadoHasta?: string | null };
 type EstadoCog = {
   clasificador: { modo: string };
   servicios: Sonda[];
@@ -255,7 +255,10 @@ export const Control: React.FC = () => {
                   <div key={sv.servicio} className={`${tarjeta} flex items-center justify-between gap-2`}>
                     <div className="min-w-0">
                       <div className="text-[14px] text-[#ECE8E2]">{NOMBRE_SERVICIO[sv.servicio] || sv.servicio}</div>
-                      <div className="text-[12px] text-[#8A847C]">{sv.configurado ? sv.detalle : 'sin configurar: se usa lo de siempre'}</div>
+                      <div className="text-[12px] text-[#8A847C]">
+                        {sv.configurado ? sv.detalle : 'sin configurar: se usa lo de siempre'}
+                        {sv.saltadoHasta ? ` · los turnos lo saltan hasta las ${hora(sv.saltadoHasta)} por un fallo reciente` : ''}
+                      </div>
                     </div>
                     <span
                       className={`px-2 py-0.5 rounded-full text-[11px] shrink-0 ${

@@ -13,6 +13,7 @@
  */
 import type { Clasificacion } from './traza';
 import { trazaActual } from './traza';
+import { anotarExito, anotarFallo, disponible } from './interruptor';
 
 function conf() {
   return {
@@ -20,7 +21,7 @@ function conf() {
     clave: String(process.env.MODELO_CHICO_API_KEY || ''),
     nombre: String(process.env.MODELO_CHICO_NOMBRE || 'chico'),
     modo: String(process.env.MODELO_CHICO_MODO || 'apagado').toLowerCase(),
-    ms: Number(process.env.MODELO_CHICO_TIMEOUT_MS || 12000),
+    ms: Number(process.env.MODELO_CHICO_TIMEOUT_MS || 5000),
   };
 }
 
@@ -42,7 +43,7 @@ export type MensajeChat = { role: 'system' | 'user' | 'assistant'; content: stri
 /** Una respuesta del modelo chico, o null si no está o falla (y entonces contesta Qwen). */
 export async function preguntarModeloChico(mensajes: MensajeChat[]): Promise<{ texto: string } | null> {
   const c = conf();
-  if (!c.url) return null;
+  if (!c.url || !disponible('modelo_chico')) return null;
   try {
     const r = await fetch(`${c.url}/v1/chat/completions`, {
       method: 'POST',
@@ -52,7 +53,11 @@ export async function preguntarModeloChico(mensajes: MensajeChat[]): Promise<{ t
       body: JSON.stringify({ model: c.nombre, messages: mensajes, temperature: 0.6, max_tokens: 300, chat_template_kwargs: { enable_thinking: false } }),
       signal: AbortSignal.timeout(c.ms),
     });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      if (r.status >= 500) anotarFallo('modelo_chico');
+      return null;
+    }
+    anotarExito('modelo_chico');
     const j: any = await r.json();
     // Si aun así vino un bloque de pensamiento, no se le lee a nadie.
     const texto = String(j?.choices?.[0]?.message?.content || '')
@@ -63,6 +68,7 @@ export async function preguntarModeloChico(mensajes: MensajeChat[]): Promise<{ t
     trazaActual()?.modelo(c.nombre, 'modelo-chico');
     return { texto };
   } catch {
+    anotarFallo('modelo_chico');
     return null;
   }
 }

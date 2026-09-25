@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { paginasDeDocling } from '../lib/cognitivo/documentos';
-import { inspeccionar } from '../server/electrum/aprender';
+import { inspeccionar, trocear } from '../server/electrum/aprender';
 
 function pdfSinTexto(): Buffer {
   const flujo = Buffer.from('0.5 0.5 0.5 rg 50 50 500 700 re f');
@@ -134,4 +134,23 @@ test('si Docling falla, no está o no saca nada, el escaneo se rechaza como ante
     mal.cerrar();
     vacio.cerrar();
   }
+});
+
+test('una tabla larga se trocea por filas y cada trozo lleva su encabezado', () => {
+  const filas = Array.from({ length: 200 }, (_, i) => `DDH-${String(i).padStart(3, '0')} | ${(i % 7) + 0.5} | ${10 + (i % 30)}`);
+  const trozos = trocear([{ pagina: 4, texto: `Resultados del muestreo.\n\n[TABLA]\nSondeo | Au g/t | Metros\n${filas.join('\n')}` }]);
+  const deTabla = trozos.filter((t) => t.texto.startsWith('[TABLA]'));
+  assert.ok(deTabla.length >= 4, `${deTabla.length} trozos`);
+  for (const t of deTabla) {
+    assert.match(t.texto, /^\[TABLA\] Sondeo \| Au g\/t \| Metros\n/);
+    assert.ok(t.texto.length <= 1000, `trozo de ${t.texto.length}`);
+    assert.equal(t.pagina, 4);
+  }
+  const todas = deTabla.flatMap((t) => t.texto.split('\n').slice(1));
+  assert.deepEqual(todas, filas, 'ninguna fila se pierde ni se parte');
+});
+
+test('un párrafo largo sin puntuación no queda como un trozo gigante', () => {
+  const trozos = trocear([{ pagina: 1, texto: 'palabra '.repeat(1000) }]);
+  assert.ok(trozos.every((t) => t.texto.length <= 1000), trozos.map((t) => t.texto.length).join(','));
 });

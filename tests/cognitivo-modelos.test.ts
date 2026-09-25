@@ -7,6 +7,9 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { preguntarModeloChico, usarModeloChico, modeloChicoConfigurado } from '../lib/cognitivo/modelos';
 import type { Clasificacion } from '../lib/cognitivo/traza';
+import { disponible, resetInterruptoresTest } from '../lib/cognitivo/interruptor';
+
+test.beforeEach(() => resetInterruptoresTest());
 
 async function conEntorno<T>(vars: Record<string, string | undefined>, fn: () => Promise<T> | T): Promise<T> {
   const antes: Record<string, string | undefined> = {};
@@ -69,9 +72,15 @@ test('pide sin pensamiento, limpia el que venga, y devuelve null si falla', asyn
       assert.equal((await preguntarModeloChico([{ role: 'user', content: 'hola' }]))?.texto, '¡Hola, José!');
       modo = 'mal';
       assert.equal(await preguntarModeloChico([{ role: 'user', content: 'hola' }]), null);
+      assert.equal(disponible('modelo_chico'), false, 'un 500 abre el circuito');
+      const antes = pedidos.length;
+      assert.equal(await preguntarModeloChico([{ role: 'user', content: 'hola' }]), null);
+      assert.equal(pedidos.length, antes, 'con el circuito abierto no se le pide');
+      resetInterruptoresTest();
       modo = 'vacio';
       assert.equal(await preguntarModeloChico([{ role: 'user', content: 'hola' }]), null);
     });
+    resetInterruptoresTest();
     await conEntorno({ MODELO_CHICO_URL: 'http://127.0.0.1:9' }, async () => {
       assert.equal(await preguntarModeloChico([{ role: 'user', content: 'hola' }]), null, 'caído');
     });

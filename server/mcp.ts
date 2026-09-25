@@ -35,6 +35,7 @@ import { TODAS as MANOS_ELECTRUM } from './electrum/manos';
 export const VERSIONES_MCP = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const SOLO_PANTALLA = new Set(['mapa_volar', 'mapa_capa', 'informe_pdf']);
 const TOPE_POR_MINUTO = Number(process.env.MCP_TOPE_MINUTO || 60);
+const MAX_LOTE = 20;
 
 /** Lo que se ofrece por MCP en esta plataforma: lectura, y nada que solo sirva para pintar. */
 export function herramientasMcp(plataforma: Plataforma): Herramienta[] {
@@ -96,6 +97,9 @@ function conTope<T>(p: Promise<T>, ms: number): Promise<T> {
 async function llamar(c: Config, hs: Map<string, Herramienta>, nombre: string, args: Record<string, unknown>) {
   const h = hs.get(nombre);
   if (!h) return null;
+  // El tope va ANTES de abrir la traza: lo rechazado no escribe nada (un lote de miles de
+  // llamadas no puede llenar la base de trazas).
+  if (!dentroDelTope()) return { content: [{ type: 'text', text: `Demasiadas llamadas: el tope es ${TOPE_POR_MINUTO} por minuto. Espera un momento.` }], isError: true };
   const traza = iniciarTraza({ plataforma: c.plataforma, canal: 'mcp', quien: c.quien, nivel: c.nivel, pregunta: `${nombre} ${JSON.stringify(args)}` });
   return enTurno(traza, async () => {
     const t0 = Date.now();
@@ -104,8 +108,6 @@ async function llamar(c: Config, hs: Map<string, Herramienta>, nombre: string, a
     const v = validar(h.esquema, args);
     if (v.ok === false) {
       texto = v.error;
-    } else if (!dentroDelTope()) {
-      texto = `Demasiadas llamadas: el tope es ${TOPE_POR_MINUTO} por minuto. Espera un momento.`;
     } else {
       const ctx = { quien: c.quien, nivel: c.nivel, plataforma: c.plataforma, canal: 'mesa' as const, mensaje: `${nombre} ${JSON.stringify(v.args)}`, prueba: null, riesgo: null };
       const dec = await autorizar({ herramienta: h.nombre, efecto: efectoDe(h), plataforma: c.plataforma, args: v.args, quien: c.quien, nivel: c.nivel, prueba: null, canal: 'mesa', riesgo: null, destino: null });
@@ -128,9 +130,12 @@ async function llamar(c: Config, hs: Map<string, Herramienta>, nombre: string, a
 }
 
 async function atender(c: Config, hs: Map<string, Herramienta>, m: Pedido): Promise<object | null> {
-  if (!m || m.jsonrpc !== '2.0' || typeof m.method !== 'string') {
+  // Un elemento de lote puede ser cualquier cosa (`[1]`, `["x"]`, `[null]`): `'id' in 1` lanza, y un
+  // rechazo sin atrapar en Express 4 tumba el proceso entero. Se filtra antes de tocarlo.
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return fallo(null, -32600, 'Pedido JSON-RPC inválido');
+  if (m.jsonrpc !== '2.0' || typeof m.method !== 'string') {
     // Una respuesta del cliente (no hay pedidos del servidor al cliente) o basura.
-    return m && 'id' in m && !('result' in m || 'error' in m) ? fallo(m.id, -32600, 'Pedido JSON-RPC inválido') : null;
+    return 'id' in m && !('result' in m || 'error' in m) ? fallo(m.id, -32600, 'Pedido JSON-RPC inválido') : null;
   }
   const esNotificacion = !('id' in m) || m.id === undefined;
   if (esNotificacion) return null;
@@ -195,9 +200,20 @@ export function montarMcp(app: express.Express, plataforma: Plataforma = PLATAFO
     const lote = Array.isArray(cuerpo);
     const mensajes: Pedido[] = lote ? cuerpo : [cuerpo];
     if (!mensajes.length) return res.status(400).json(fallo(null, -32600, 'Lote vacío'));
-    const respuestas = (await Promise.all(mensajes.map((m) => atender(c, hs, m)))).filter(Boolean);
-    if (!respuestas.length) return res.status(202).end();
-    res.json(lote ? respuestas : respuestas[0]);
+    if (mensajes.length > MAX_LOTE) return res.status(413).json(fallo(null, -32600, `Lote demasiado grande (máximo ${MAX_LOTE})`));
+    try {
+      // En serie: el tope por minuto se cuenta de verdad y una llamada lenta no multiplica la carga.
+      const respuestas: object[] = [];
+      for (const m of mensajes) {
+        const r = await atender(c, hs, m);
+        if (r) respuestas.push(r);
+      }
+      if (!respuestas.length) return res.status(202).end();
+      res.json(lote ? respuestas : respuestas[0]);
+    } catch (e: any) {
+      console.error('[mcp] fallo atendiendo:', String(e?.message || e).slice(0, 200));
+      if (!res.headersSent) res.status(500).json(fallo(null, -32603, 'Error interno'));
+    }
   });
   console.log(`[mcp] /mcp activo para ${plataforma}: ${hs.size} herramientas de lectura, a nombre de ${c.quien}`);
   return true;

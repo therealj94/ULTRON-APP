@@ -44,7 +44,9 @@ services:
     build:
       context: https://github.com/NandhaKishorM/laya.git#${LAYA_REF:-970dc8c5f63d7b886a68409493f37d569424f933}
       args:
-        TORCH_INDEX: ${LAYA_TORCH_INDEX:-cu128}
+        # cu126: el Dockerfile de Laya fija torch 2.14.0, que en el índice cu128 no existe (llega a
+        # 2.11). cu126 trae sm_75 (la T4) y anda con drivers 525 o más nuevos.
+        TORCH_INDEX: ${LAYA_TORCH_INDEX:-cu126}
     command: ["laya-serve"]
     restart: unless-stopped
     init: true
@@ -64,7 +66,9 @@ services:
     <<: *gpu
     # La variante «turing» es la que corre en la T4 (sm_75).
     image: ghcr.io/huggingface/text-embeddings-inference:turing-1.9.4
-    command: ["--model-id", "BAAI/bge-m3", "--api-key", "${T4_TOKEN}", "--max-client-batch-size", "64", "--max-batch-tokens", "16384"]
+    # Sin --api-key a propósito: TEI imprime todos sus argumentos al arrancar (el token acabaría en
+    # `docker compose logs`). No publica puertos; la puerta es Caddy.
+    command: ["--model-id", "BAAI/bge-m3", "--max-client-batch-size", "64", "--max-batch-tokens", "8192"]
     restart: unless-stopped
     volumes:
       - hf-cache:/data
@@ -80,18 +84,20 @@ services:
       - "--jinja"
       - "-ngl"
       - "99"
+      # Contexto corto: al modelo chico se le manda un prompt reducido y los últimos turnos, nada más.
+      # 4k de contexto dejan ~1 GB de VRAM para los demás.
       - "-c"
-      - "8192"
+      - "4096"
       - "-np"
-      - "2"
+      - "1"
       - "--host"
       - "0.0.0.0"
       - "--port"
       - "8080"
-      - "--api-key"
-      - "${T4_TOKEN}"
     environment:
       LLAMA_CACHE: /modelos
+      # Por variable y no por argumento: los argumentos los ve cualquiera con `ps`.
+      LLAMA_API_KEY: ${T4_TOKEN}
     restart: unless-stopped
     volumes:
       - chico-modelos:/modelos

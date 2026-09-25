@@ -37,7 +37,8 @@ export function parsePedido(raw: string): {
   if (/\b(redeploy|redespleg|reinicia(r)? la mesa|nuevo deploy)\b/.test(l)) return { accion: 'redeploy', canal, texto: q };
   if (pideNotaDeVoz(q)) return { accion: 'voz', canal: canal || 'telegram', texto: q };
   if (/\b(mantenimiento|repara|arregla|diagnostico|diagnóstico)\b/.test(l)) return { accion: 'mantenimiento', canal, texto: q };
-  if (/\b(como esta|cómo está|estado del sistema|los nodos|salud del sistema|que nodos)\b/.test(l) || /^(status|salud)\b/.test(l)) {
+  // «¿cómo está el oro?» o «¿cómo está Pedro?» no preguntan por el sistema: solo cuenta si dice de qué.
+  if (/\b(como esta|cómo está)\s+(el |la |los )?(sistema|mesa|servidor|plataforma|cerebro|nodos?|todo)\b|\b(estado del sistema|los nodos|salud del sistema|que nodos)\b/.test(l) || /^(status|salud)\b/.test(l)) {
     return { accion: 'sistema', canal, texto: q };
   }
   // Envío gana a "llamada": el cuerpo de un PDF/Telegram puede listar canales pendientes.

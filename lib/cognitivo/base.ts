@@ -149,6 +149,10 @@ export function reescribir(coleccion: string, filas: unknown[]) {
 const PATRONES_SECRETOS: RegExp[] = [
   /\b(AKIA|ASIA)[0-9A-Z]{16}\b/g, // AWS
   /\bsk_[A-Za-z0-9]{20,}\b/g, // ElevenLabs y similares
+  /\b[rsp]k_(live|test)_[A-Za-z0-9]{10,}\b/g, // Stripe
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, // JWT
+  /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/g,
+  /\bAIza[0-9A-Za-z_-]{35}\b/g, // Google
   /\bsk-[A-Za-z0-9_-]{20,}\b/g, // OpenAI y similares
   /\brnd_[A-Za-z0-9]{16,}\b/g, // Render
   /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g,
@@ -165,8 +169,13 @@ const PATRONES_SECRETOS: RegExp[] = [
 export function redactar(texto: string): string {
   let s = String(texto ?? '');
   for (const re of PATRONES_SECRETOS) s = s.replace(re, '[SECRETO TAPADO]');
-  // «clave: xxx», «password=xxx», «token xxx»
-  s = s.replace(/\b(clave|contrase[ñn]a|password|passwd|secret[oa]?|token|api[_ -]?key)(\s*[:=]\s*|\s+)(\S{6,})/gi, '$1$2[SECRETO TAPADO]');
+  // {"password":"xxx"}, 'api_key': 'xxx'
+  s = s.replace(
+    /(["'](?:clave|contrase[ñn]a|password|passwd|pass|secret[oa]?|token|api[_-]?key|access[_-]?key|private[_-]?key)["']\s*:\s*["'])([^"']{4,})(["'])/gi,
+    '$1[SECRETO TAPADO]$3'
+  );
+  // «clave: xxx», «password=xxx», «la clave es xxx», «mi contraseña es xxx», «token xxx»
+  s = s.replace(/\b(clave|contrase[ñn]a|password|passwd|secret[oa]?|token|api[_ -]?key)(\s*[:=]\s*|\s+(?:es|is|era)\s+|\s+)([^\s"',}]{6,})/gi, '$1$2[SECRETO TAPADO]');
   return s;
 }
 

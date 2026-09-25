@@ -27,22 +27,22 @@ r=$(curl -s -w '\n%{time_total}' -H "$AUTH" -H 'Content-Type: application/json' 
     "riesgo":{"type":"score","instructions":"How risky is it to act on this without a human?","criteria":["ninguno","bajo","medio","alto","crítico"]},
     "tarea":{"type":"choice","instructions":"What kind of request is this?","criteria":{"conversacion":"greeting or chat","accion":"asks to do something","consulta":"asks for information"}}
   }}')
-t=$(echo "$r" | tail -1); j=$(echo "$r" | head -n -1)
+t=$(echo "$r" | tail -1); j=$(echo "$r" | sed '$d')
 if echo "$j" | python3 -c "import sys,json; a=json.load(sys.stdin)['answers']; print('riesgo', a['riesgo']['score'], 'tarea', a['tarea']['choice'])" 2>/dev/null; then
   bien "laya en $(ms "$t") ms (red incluida)"
 else mal "laya: ${j:0:200}"; fi
 
 r=$(curl -s -w '\n%{time_total}' -H "$AUTH" -H 'Content-Type: application/json' "$B/embed/embed" -d '{"inputs":["concesión minera en El Paraíso","título de explotación de oro"]}')
-t=$(echo "$r" | tail -1); j=$(echo "$r" | head -n -1)
+t=$(echo "$r" | tail -1); j=$(echo "$r" | sed '$d')
 d=$(echo "$j" | python3 -c "import sys,json; v=json.load(sys.stdin); print(len(v), len(v[0]))" 2>/dev/null)
 [ "$d" = "2 1024" ] && bien "embed: 2 vectores de 1024 en $(ms "$t") ms" || mal "embed: ${j:0:200}"
 
 r=$(curl -s -w '\n%{time_total}' -H "$AUTH" -H 'Content-Type: application/json' "$B/chico/v1/chat/completions" -d '{"model":"chico","messages":[{"role":"user","content":"Hola, ¿cómo estás? Contesta en una frase."}],"max_tokens":60,"chat_template_kwargs":{"enable_thinking":false}}')
-t=$(echo "$r" | tail -1); j=$(echo "$r" | head -n -1)
+t=$(echo "$r" | tail -1); j=$(echo "$r" | sed '$d')
 txt=$(echo "$j" | python3 -c "import sys,json; print(json.load(sys.stdin)['choices'][0]['message']['content'].strip()[:120])" 2>/dev/null)
 [ -n "$txt" ] && bien "chico en $(ms "$t") ms: «${txt}»" || mal "chico: ${j:0:200}"
 
-PDF=$(mktemp --suffix=.pdf)
+PDF=$(mktemp "${TMPDIR:-/tmp}/probar.XXXXXX")
 python3 - "$PDF" <<'PY'
 import sys
 flujo = b"BT /F1 18 Tf 72 720 Td (Concesion El Porvenir - titular Minera del Sur) Tj ET"
@@ -58,8 +58,8 @@ out += b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1) + b"".join(b"%010d
 out += b"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, x)
 open(sys.argv[1], "wb").write(out)
 PY
-r=$(curl -s -w '\n%{time_total}' -H "$AUTH" -H "X-Api-Key: ${T4_TOKEN}" "$B/docling/v1/convert/file" -F "files=@${PDF};filename=prueba.pdf" -F to_formats=json -F do_ocr=true -F ocr_lang=es)
-t=$(echo "$r" | tail -1); j=$(echo "$r" | head -n -1)
+r=$(curl -s -w '\n%{time_total}' -H "$AUTH" "$B/docling/v1/convert/file" -F "files=@${PDF};filename=prueba.pdf" -F to_formats=json -F do_ocr=true -F ocr_lang=es)
+t=$(echo "$r" | tail -1); j=$(echo "$r" | sed '$d')
 rm -f "$PDF"
 if echo "$j" | python3 -c "import sys,json; d=json.load(sys.stdin)['document']['json_content']; assert any('Porvenir' in x.get('text','') for x in d['texts'])" 2>/dev/null; then
   bien "docling leyó el PDF en $(ms "$t") ms"

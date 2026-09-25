@@ -55,6 +55,16 @@ const ejecutores = new Map<string, Ejecutor>();
 export function registrarEjecutor(herramienta: string, fn: Ejecutor) {
   ejecutores.set(herramienta, fn);
 }
+/**
+ * Quien sabe traer los hechos FRESCOS de una acción (KYC, firmas de la junta) al momento de
+ * ejecutarla. Sin fuente registrada se usan los que se guardaron al pedirla, y eso se dice.
+ */
+type FuenteHechos = (args: Record<string, unknown>) => Promise<unknown>;
+const fuentesHechos = new Map<string, FuenteHechos>();
+export function registrarFuenteDeHechos(herramienta: string, fn: FuenteHechos) {
+  fuentesHechos.set(herramienta, fn);
+}
+
 export function hayEjecutor(herramienta: string) {
   return ejecutores.has(herramienta);
 }
@@ -155,7 +165,9 @@ export async function crearAprobacion(o: {
     regla: o.regla,
     motivo: o.motivo,
     riesgo: o.riesgo,
-    necesarias: Math.max(1, Math.min(5, o.necesarias || 1)),
+    // Sin solicitante verificado no hay «cuatro ojos» posible: quien la pidió escribiendo un nombre
+    // podría firmarla él mismo con su sesión. Entonces hacen falta dos personas distintas.
+    necesarias: Math.max(o.pedidaPor ? 1 : 2, Math.min(5, o.necesarias || 1)),
     estado: 'pendiente',
     firmas: [],
     resultado: null,
@@ -284,6 +296,15 @@ async function ejecutarAprobada(ap: Aprobacion): Promise<Aprobacion> {
     return terminar(ap, false, 'Los argumentos no coinciden con lo que se aprobó (la huella cambió). No ejecuto.');
   }
   const { evaluar } = await import('./politica');
+  const fuente = fuentesHechos.get(ap.herramienta);
+  let hechosFrescos: unknown = null;
+  if (fuente) {
+    try {
+      hechosFrescos = await fuente(ap.argumentos);
+    } catch (e: any) {
+      return terminar(ap, false, `No pude comprobar los datos al momento de ejecutar (${String(e?.message || e).slice(0, 120)}). No ejecuto a ciegas.`);
+    }
+  }
   const firmantes = ap.firmas.filter((f) => f.decision === 'aprobar').map((f) => f.quien);
   const { personaPorId, nivelDe } = await import('../acceso');
   const persona = personaPorId(ap.pedida_por);
@@ -297,10 +318,12 @@ async function ejecutarAprobada(ap: Aprobacion): Promise<Aprobacion> {
     prueba: 'sesion',
     riesgo: ap.riesgo,
     destino: (ap.contexto?.destino as any) ?? null,
-    hechos: (ap.contexto?.hechos as any) ?? undefined,
+    hechos: (hechosFrescos ?? ap.contexto?.hechos ?? undefined) as any,
     aprobada: { id: ap.id, firmas: firmantes },
   });
-  if (d.veredicto === 'bloquear') return terminar(ap, false, `Aprobada, pero ahora una regla lo impide (${d.regla}): ${d.motivo}`);
+  // Solo `permitir` ejecuta. Si una regla todavía pide revisión (faltan firmas de junta, por
+  // ejemplo), aprobar esta solicitud no alcanza.
+  if (d.veredicto !== 'permitir') return terminar(ap, false, `Aprobada, pero ahora una regla lo impide (${d.regla}): ${d.motivo}`);
   const fn = ejecutores.get(ap.herramienta);
   if (!fn) return terminar(ap, false, `No hay quien ejecute «${ap.herramienta}» en este servidor.`);
   try {

@@ -27,14 +27,19 @@ export function embeddingsConfigurados(): boolean {
   return !!conf().url;
 }
 
-/** Caché corta para consultas repetidas (la misma pregunta en dos turnos seguidos). */
+import { anotarExito, anotarFallo, disponible } from './interruptor';
+
+/** Caché corta para consultas repetidas (la misma pregunta en dos turnos seguidos). Al usarla, la
+ * entrada pasa al final: se descarta la menos usada, no la más vieja. */
 const cache = new Map<string, number[]>();
 const MAX_CACHE = 500;
 
 /** Vectores de varios textos, en lotes. Null si el servicio no está o falla: quien llama cae a texto. */
-export async function vectorizar(textos: string[], opts: { lote?: number } = {}): Promise<number[][] | null> {
-  const { url, clave, ms } = conf();
+export async function vectorizar(textos: string[], opts: { lote?: number; ms?: number } = {}): Promise<number[][] | null> {
+  const { url, clave } = conf();
+  const ms = opts.ms ?? conf().ms;
   if (!url || !textos.length) return url ? [] : null;
+  if (!disponible('embeddings')) return null;
   const lote = Math.max(1, Math.min(64, opts.lote || 32));
   const out: number[][] = [];
   try {
@@ -46,14 +51,19 @@ export async function vectorizar(textos: string[], opts: { lote?: number } = {})
         body: JSON.stringify({ inputs: trozo, normalize: true, truncate: true }),
         signal: AbortSignal.timeout(ms),
       });
-      if (!r.ok) return null;
+      if (!r.ok) {
+        if (r.status >= 500) anotarFallo('embeddings');
+        return null;
+      }
       const j = await r.json();
       const vs: number[][] = Array.isArray(j) ? j : j?.embeddings || j?.data?.map((d: any) => d.embedding);
       if (!Array.isArray(vs) || vs.length !== trozo.length || vs.some((v) => !Array.isArray(v) || v.length !== DIMENSION)) return null;
       out.push(...vs);
     }
+    anotarExito('embeddings');
     return out;
   } catch {
+    anotarFallo('embeddings');
     return null;
   }
 }
@@ -62,8 +72,14 @@ export async function vectorizar(textos: string[], opts: { lote?: number } = {})
 export async function vectorDe(texto: string): Promise<number[] | null> {
   const k = texto.trim().toLowerCase();
   const ya = cache.get(k);
-  if (ya) return ya;
-  const vs = await vectorizar([texto]);
+  if (ya) {
+    cache.delete(k);
+    cache.set(k, ya);
+    return ya;
+  }
+  // Esto va en la ruta de cada turno: una consulta corta no tarda más de un segundo y medio en la
+  // T4; si tarda más, el turno no la espera (EMBED_CONSULTA_MS).
+  const vs = await vectorizar([texto], { ms: Number(process.env.EMBED_CONSULTA_MS || 1500) });
   const v = vs?.[0] || null;
   if (v) {
     if (cache.size >= MAX_CACHE) cache.delete(cache.keys().next().value as string);

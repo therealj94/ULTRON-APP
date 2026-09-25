@@ -12,6 +12,7 @@
  */
 import { consulta, hayBase } from './db';
 import { embeddingsConfigurados, literalPg, vectorDe, vectorizar } from '../../lib/cognitivo/embeddings';
+import { disponible } from '../../lib/cognitivo/interruptor';
 
 let columna: { valor: boolean; t: number } | null = null;
 
@@ -33,29 +34,54 @@ export async function vectoresListos(): Promise<boolean> {
 }
 
 /**
- * Rellena vectores que faltan, de a `lote`. Devuelve cuántos puso. Si el servicio falla a mitad,
- * se detiene sin error: lo que falte se rellena en la próxima pasada.
+ * Rellena vectores que faltan, de a `lote`. Devuelve cuántos puso.
+ *
+ * Avanza con cursor (`id > último`), no con «los primeros N sin vector»: si un lote falla por un
+ * fragmento que el servicio rechaza (4xx), se reintenta de a uno, se salta el que no entra y se
+ * sigue. Antes, un solo fragmento malo dejaba sin vector a su lote y a todo lo que venía detrás,
+ * para siempre. Si el servicio está caído (circuito abierto), se para: lo que falte se rellena en
+ * la próxima pasada.
  */
 export async function indexarPendientes(opts: { documentoId?: number; maximo?: number; lote?: number } = {}): Promise<number> {
   if (!(await vectoresListos())) return 0;
   const maximo = opts.maximo ?? 5000;
   const lote = opts.lote ?? 32;
   let hechos = 0;
-  while (hechos < maximo) {
-    const filas = await consulta<{ id: number; texto: string }>(
-      `SELECT id, texto FROM fragmento WHERE embedding IS NULL ${opts.documentoId ? 'AND documento_id = $2' : ''} ORDER BY id LIMIT $1`,
-      opts.documentoId ? [lote, opts.documentoId] : [lote]
-    );
-    if (!filas.length) break;
-    const vs = await vectorizar(filas.map((f) => f.texto), { lote });
-    if (!vs) break;
-    await consulta(
+  let vistos = 0;
+  let ultimo = 0;
+  const guardar = (ids: number[], vs: number[][]) =>
+    consulta(
       `UPDATE fragmento AS f SET embedding = v.e::vector
          FROM (SELECT unnest($1::bigint[]) AS id, unnest($2::text[]) AS e) AS v
         WHERE f.id = v.id`,
-      [filas.map((f) => f.id), vs.map(literalPg)]
+      [ids, vs.map(literalPg)]
     );
-    hechos += filas.length;
+  while (vistos < maximo) {
+    const filas = await consulta<{ id: number; texto: string }>(
+      `SELECT id, texto FROM fragmento WHERE embedding IS NULL AND id > $2 ${opts.documentoId ? 'AND documento_id = $3' : ''} ORDER BY id LIMIT $1`,
+      opts.documentoId ? [lote, ultimo, opts.documentoId] : [lote, ultimo]
+    );
+    if (!filas.length) break;
+    vistos += filas.length;
+    ultimo = Number(filas[filas.length - 1].id);
+    const vs = await vectorizar(filas.map((f) => f.texto), { lote });
+    if (vs) {
+      await guardar(filas.map((f) => f.id), vs);
+      hechos += filas.length;
+      continue;
+    }
+    if (!disponible('embeddings')) break;
+    for (const f of filas) {
+      const v = await vectorizar([f.texto]);
+      if (v?.[0]) {
+        await guardar([f.id], v);
+        hechos++;
+      } else if (!disponible('embeddings')) {
+        return hechos;
+      } else {
+        console.warn(`[vectores] el fragmento ${f.id} no entró al índice (el servicio lo rechazó); se sigue con el resto`);
+      }
+    }
   }
   return hechos;
 }

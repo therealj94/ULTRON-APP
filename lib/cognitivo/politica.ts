@@ -188,8 +188,11 @@ export const REGLAS: Regla[] = [
     descripcion: `Tope de envíos por hora (${TOPE_EXTERNOS_HORA.identificado} identificado, ${TOPE_EXTERNOS_HORA.anonimo} sin sesión). Un agente que se desboca no inunda a la junta.`,
     decidir: (a) => {
       if (a.efecto !== 'externo') return null;
-      const clave = `${a.plataforma}:${a.quien || 'anonimo'}`;
-      const tope = a.quien ? TOPE_EXTERNOS_HORA.identificado : TOPE_EXTERNOS_HORA.anonimo;
+      // Un nombre escrito en el chat no da el cupo de identificado: si no, rotando nombres del
+      // padrón se multiplica el cupo. Cuenta como anónimo, y en el mismo saco.
+      const identificado = !!a.quien && (a.prueba === 'sesion' || a.prueba === 'telegram');
+      const clave = `${a.plataforma}:${identificado ? a.quien : 'anonimo'}`;
+      const tope = identificado ? TOPE_EXTERNOS_HORA.identificado : TOPE_EXTERNOS_HORA.anonimo;
       return contarEnvio(clave) >= tope
         ? { veredicto: 'bloquear', regla: 'ritmo-de-envios', motivo: `Ya van ${tope} envíos en la última hora. Paro aquí para no inundar a nadie.` }
         : null;
@@ -251,7 +254,10 @@ export async function autorizar(a: Accion, opts: { trazaId?: string | null } = {
   if (d.veredicto === 'bloquear') {
     await auditar({ tipo: 'politica.bloqueo', plataforma: a.plataforma, quien: a.quien, datos: { herramienta: a.herramienta, efecto: a.efecto, regla: d.regla, motivo: d.motivo } });
   }
-  if (d.veredicto === 'permitir' && a.efecto === 'externo') anotarEnvio(`${a.plataforma}:${a.quien || 'anonimo'}`);
+  if (d.veredicto === 'permitir' && a.efecto === 'externo') {
+    const identificado = !!a.quien && (a.prueba === 'sesion' || a.prueba === 'telegram');
+    anotarEnvio(`${a.plataforma}:${identificado ? a.quien : 'anonimo'}`);
+  }
   trazaActual()?.politica({ herramienta: a.herramienta, veredicto: d.veredicto, regla: d.regla, motivo: d.motivo, aprobacion: out.aprobacionId });
   return out;
 }
