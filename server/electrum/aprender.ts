@@ -20,6 +20,8 @@
  * trozos siga encontrándose. Cortar a ciegas cada N caracteres parte tablas y números por la mitad,
  * que en un informe minero es exactamente lo que no se puede partir.
  */
+import { leerConDocling } from '../../lib/cognitivo/documentos';
+import { indexarPendientes } from './vectores';
 import crypto from 'node:crypto';
 import JSZip from 'jszip';
 import { extraerPdf } from '../../lib/leer-pdf';
@@ -220,6 +222,24 @@ export function pareceProsa(texto: string): boolean {
   return comunes / palabras.length >= 0.08;
 }
 
+/**
+ * El PDF que no se pudo leer como texto, por reconocimiento óptico (Docling en la T4). Null si no
+ * hay servicio o no salió nada: quien llama lo rechaza diciendo por qué, como siempre.
+ */
+async function conOcr(nombre: string, datos: Buffer): Promise<Leido | null> {
+  const r = await leerConDocling(nombre, datos);
+  if (!r) return null;
+  const trozos = trocear(r.paginas);
+  if (!trozos.length) return null;
+  return {
+    ok: true,
+    texto: r.paginas.map((p) => p.texto).join('\n\n'),
+    paginas: r.paginas,
+    trozos,
+    avisos: [{ nivel: 'ojo', texto: 'Leído con reconocimiento óptico (Docling). Las cifras de un escaneo pueden tener errores de lectura: compruébalas contra el original antes de citarlas en un informe.' }],
+  };
+}
+
 async function leerDocumento(nombre: string, datos: Buffer): Promise<Leido> {
   const avisos: Aviso[] = [];
   let texto = '';
@@ -232,6 +252,8 @@ async function leerDocumento(nombre: string, datos: Buffer): Promise<Leido> {
     texto = leido.texto || '';
     nPaginas = Math.max(1, Number((leido as any).paginas) || 1);
     if (!texto.trim()) {
+      const ocr = await conOcr(nombre, datos);
+      if (ocr) return ocr;
       return {
         ok: false,
         motivo: 'escaneo',
@@ -254,6 +276,10 @@ async function leerDocumento(nombre: string, datos: Buffer): Promise<Leido> {
   }
 
   if (!pareceProsa(texto)) {
+    if (/\.pdf$/i.test(nombre)) {
+      const ocr = await conOcr(nombre, datos);
+      if (ocr) return ocr;
+    }
     return {
       ok: false,
       motivo: 'escaneo',
@@ -475,6 +501,12 @@ export async function aprender(
       const renumerado = tramo.map((_, j) => `($${j * 4 + 1},$${j * 4 + 2},$${j * 4 + 3},$${j * 4 + 4})`).join(',');
       await consulta(`INSERT INTO fragmento (documento_id, pagina, orden, texto) VALUES ${renumerado}`, args);
     }
+
+    // Los vectores (búsqueda por significado) se calculan después, sin hacer esperar a quien subió
+    // el documento: el texto completo ya lo hace buscable desde este momento.
+    void indexarPendientes({ documentoId: doc.id })
+      .then((n) => n && console.log(`[electrum] ${n} fragmentos de «${nombre}» con vector`))
+      .catch((e) => console.error('[electrum] no pude vectorizar', nombre, String(e?.message || e).slice(0, 120)));
 
     return {
       clase: 'documento',

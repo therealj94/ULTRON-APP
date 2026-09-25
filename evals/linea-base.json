@@ -18,5 +18,10 @@
       "especialistas": 1,
       "seguridad": 1
     }
+  },
+  "clasificador": {
+    "nota": "Reglas del clasificador contra `clasificacion` de cada caso. Ajustadas sobre estos mismos casos: Laya se valida además con casos nuevos sacados de las trazas.",
+    "ultron": 1.0,
+    "electrum": 1.0
   }
 }

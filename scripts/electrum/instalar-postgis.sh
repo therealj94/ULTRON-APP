@@ -61,6 +61,23 @@ systemctl enable --now postgresql
 sleep 2
 systemctl is-active --quiet postgresql || { rojo "PostgreSQL no arrancó. Mirá: journalctl -u postgresql -n 50"; exit 1; }
 
+# pgvector: la búsqueda por significado (BGE-M3, 1024 dimensiones) sobre los fragmentos de los
+# expedientes. Es opcional a propósito: si no se puede instalar, el esquema salta ese bloque y la
+# búsqueda sigue siendo por palabras, como antes. Nada se rompe; solo se avisa.
+paso "pgvector (búsqueda por significado)"
+PGVER=$(su - postgres -c "psql -tAc 'SHOW server_version_num'" | cut -c1-2)
+case "$ID" in
+  ubuntu|debian)
+    apt-get install -y --no-install-recommends "postgresql-${PGVER}-pgvector" || SIN_VECTOR=1 ;;
+  amzn|rhel|centos|rocky|almalinux)
+    dnf install -y "pgvector_${PGVER}" 2>/dev/null || dnf install -y pgvector 2>/dev/null || SIN_VECTOR=1 ;;
+esac
+if [ "${SIN_VECTOR:-0}" = "1" ]; then
+  rojo "  no pude instalar pgvector: la búsqueda por significado queda apagada (la de palabras sigue)."
+else
+  echo "  pgvector instalado para PostgreSQL ${PGVER}"
+fi
+
 paso "Creando usuario y base"
 # `psql -tAc` devuelve vacío si no existe: así no se intenta crear dos veces.
 existe_rol=$(su - postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname='${USUARIO}'\"" || true)
@@ -137,6 +154,12 @@ TABLAS=$(su - postgres -c "psql -d ${BASE} -tAc \"SELECT count(*) FROM informati
 echo "  ${VER_PG}"
 echo "  PostGIS ${VER_GIS}"
 echo "  ${TABLAS} tablas en el esquema"
+VER_VECTOR=$(su - postgres -c "psql -d ${BASE} -tAc \"SELECT extversion FROM pg_extension WHERE extname='vector'\"")
+if [ -n "${VER_VECTOR}" ]; then
+  echo "  pgvector ${VER_VECTOR}: búsqueda por significado disponible (falta EMBED_URL en el servicio)"
+else
+  echo "  sin pgvector: búsqueda solo por palabras"
+fi
 
 # Una prueba de verdad: mide un cuadrado conocido y comprueba que la cuenta es geodésica.
 AREA=$(su - postgres -c "psql -d ${BASE} -tAc \"SELECT round(ha_elipsoide(ST_GeomFromText('POLYGON((-86.6 14.0,-86.6 14.01,-86.59 14.01,-86.59 14.0,-86.6 14.0))',4326)))\"")

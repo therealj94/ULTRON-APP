@@ -24,9 +24,15 @@ import { esTareaDeCodigo } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
 import { enTurno, iniciarTraza, trazaActual } from './lib/cognitivo/traza';
 import { montarRutasCognitivas } from './server/cognitivo';
+import { montarMcp } from './server/mcp';
 import { autorizar, textoDeDecision } from './lib/cognitivo/politica';
+import { clasificar } from './lib/cognitivo/clasificador';
+import { AVISO_INYECCION, nombreAgente, promptAgente } from './lib/cognitivo/agentes';
+import { fichaEnTexto, fichasMencionadas } from './lib/cognitivo/entidades';
+import { preguntarModeloChico, usarModeloChico } from './lib/cognitivo/modelos';
 import { alAvisar, comandoDeAprobacion, resumenParaAviso } from './lib/cognitivo/aprobaciones';
-import { hechoCerebro } from './lib/cerebro';
+import { hechoCerebro, lineas as lineasCerebro } from './lib/cerebro';
+import { lineasPorSignificado } from './lib/cognitivo/conocimiento-semantico';
 import { herramientaActiva, perfilActivo } from './lib/perfiles';
 import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
@@ -171,6 +177,10 @@ async function medirSalud(force = false): Promise<Salud> {
 
 // Trazas, auditoría, reglas y aprobaciones (server/cognitivo.ts). Cada despliegue ve solo lo suyo.
 montarRutasCognitivas(app);
+
+// Las herramientas de lectura de este cerebro para otros agentes, por MCP (server/mcp.ts). Sin
+// MCP_TOKEN y MCP_QUIEN no existe.
+montarMcp(app);
 
 /*
  * Quién se entera de una solicitud nueva. AU-RA: el grupo de la junta (TELEGRAM_CHAT_ID).
@@ -1194,8 +1204,19 @@ async function prepararTurno(body: any) {
     if (h.trim().length > 8) await guardarHechoQuien({ quien, hecho: h.trim().slice(0, 400), canal: 'mesa' });
   }
 
+  // La decisión rápida: tipo de tarea, riesgo, agente, si es un intento de torcer al sistema.
+  const clas = await clasificar(message, 'ultron');
+  trazaActual()?.clasificacion(clas);
+  trazaActual()?.agente(nombreAgente(clas.agente));
+
   const q = message.toLowerCase();
   const hechos: string[] = [];
+  if (clas.inyeccion) hechos.push(AVISO_INYECCION);
+  // Fichas de la memoria estructurada de lo que se nombra (empresas, personas, proyectos).
+  for (const f of await fichasMencionadas('ultron', message).catch(() => [])) {
+    hechos.push(`MEMORIA ESTRUCTURADA (lo que se sabe con certeza):\n${fichaEnTexto(f)}`);
+    trazaActual()?.documento({ fuente: `ficha #${f.id} ${f.nombre}` });
+  }
   const datos: string[] = [];
   const foto: string | null = null;
   const tools: string[] = [];
@@ -1209,6 +1230,13 @@ async function prepararTurno(body: any) {
   if (delCerebro) {
     hechos.push(delCerebro);
     tools.push(`cerebro-${perfilActivo().id}`);
+  } else {
+    // Sin coincidencia de palabras, se busca por significado (si hay servicio de embeddings).
+    const cercanas = await lineasPorSignificado(perfilActivo().id, lineasCerebro(perfilActivo()), message);
+    if (cercanas.length) {
+      hechos.push(`${perfilActivo().tituloConocimiento} (por significado; úsalo si responde a la pregunta):\n${cercanas.join('\n')}`);
+      tools.push(`cerebro-${perfilActivo().id}`);
+    }
   }
 
   // Contexto interno: el 27B lo usa para decidir, no para recitarlo. Los fallos de infraestructura
@@ -1375,6 +1403,7 @@ async function prepararTurno(body: any) {
       nivel: nivelTurno,
       prueba,
       canal,
+      riesgo: clas.riesgo,
     });
     hechos.push(...taller.hechos);
     tools.push(...taller.tools);
@@ -1432,6 +1461,8 @@ async function prepararTurno(body: any) {
 ${perfilActivo().tituloConocimiento}:
 ${perfilActivo().conocimiento}
 
+${promptAgente(clas.agente)}
+
 No finjas recuerdos: solo la memoria de ${quien ? nombreDe(quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.
 Modo de mesa pedido: ${mode}.
 HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemoria(quien)}`;
@@ -1442,7 +1473,7 @@ HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemor
   if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
 
-  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, datos, tools, foto, directo, directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null, system, quien, mando, prueba, canal, hilo };
+  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, datos, tools, foto, directo, directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null, system, quien, mando, prueba, canal, hilo, clas };
 }
 
 
@@ -1622,6 +1653,11 @@ async function correrTurnoInterno(body: any): Promise<SalidaTurno> {
     const via = p.directoVia === 'taller' ? 'taller' : p.directoVia === 'calculo-mina' ? 'calculo-mina' : 'gold-api/er-api';
     return guardar({ ...base, reply: p.directo, via, mode, ms: Date.now() - t0, herramientas: tools });
   }
+  // Lo simple y sin riesgo lo contesta el modelo chico de la T4 (si está activo); si falla, Qwen.
+  if (usarModeloChico(p.clas)) {
+    const chico = await preguntarModeloChico(mensajesQwen(system, message, hechos, hilo) as any);
+    if (chico) return guardar({ ...base, reply: chico.texto, via: 'modelo-chico', mode, ms: Date.now() - t0, herramientas: tools });
+  }
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     return guardar({ ...base, reply: sinCerebro(p.datos), emocion: 'preocupado', via: 'tools-only', mode, ms: Date.now() - t0, herramientas: tools });
   }
@@ -1736,6 +1772,15 @@ async function turnoEnVivo(req: express.Request, res: express.Response) {
     send('emocion', { emocion: emo.emocion });
     send('delta', { text: emo.texto });
     return terminar(emo.texto, p.directoVia === 'taller' ? 'taller' : 'tools', emo.emocion);
+  }
+  if (usarModeloChico(p.clas)) {
+    const chico = await preguntarModeloChico(mensajesQwen(system, message, hechos, hilo) as any);
+    if (chico) {
+      const emo = extraerEmocion(chico.texto);
+      send('emocion', { emocion: emo.emocion });
+      send('delta', { text: emo.texto });
+      return terminar(emo.texto, 'modelo-chico', emo.emocion);
+    }
   }
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     const reply = sinCerebro(p.datos);

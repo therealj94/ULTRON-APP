@@ -15,6 +15,9 @@
 import { Pool, type PoolClient } from 'pg';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import { areaHectareas, etiqueta, type Capa } from './gis';
+import { buscarPorSignificado } from './vectores';
+import { fundirPorRango } from '../../lib/cognitivo/embeddings';
+import { trazaActual } from '../../lib/cognitivo/traza';
 
 let pool: Pool | null = null;
 
@@ -548,10 +551,10 @@ function terminosDeBusqueda(texto: string): string {
  * cualquiera de ellos y ordenando por relevancia. Un buscador que devuelve cero ante una pregunta
  * bien formulada no sirve, aunque sea técnicamente correcto.
  */
-export async function buscarEnExpedientes(
+export async function buscarPorTexto(
   texto: string,
   limite = 8
-): Promise<Array<{ documento: string; pagina: number | null; texto: string; puntaje: number }>> {
+): Promise<Array<{ id: number; documento: string; pagina: number | null; texto: string; puntaje: number }>> {
   const limpio = terminosDeBusqueda(texto);
   if (!limpio) return [];
 
@@ -562,7 +565,7 @@ export async function buscarEnExpedientes(
    */
   const SQL = (op: string) => `
     WITH q AS (SELECT ${op} AS tq)
-    SELECT d.nombre AS documento, f.pagina,
+    SELECT f.id, d.nombre AS documento, f.pagina,
            ts_headline('spanish', f.texto, q.tq,
              'MaxWords=55, MinWords=25, ShortWord=3, MaxFragments=2, FragmentDelimiter=" … ", StartSel="", StopSel=""') AS texto,
            ts_rank(f.tsv, q.tq)::float8 AS puntaje
@@ -585,4 +588,33 @@ export async function buscarEnExpedientes(
     .join(' | ');
   if (!sueltos) return [];
   return consulta(SQL("to_tsquery('spanish', $1)"), [sueltos, limite]);
+}
+
+export type HitExpediente = { documento: string; pagina: number | null; texto: string; puntaje: number; via?: 'texto' | 'significado' | 'ambos' };
+
+/**
+ * La búsqueda de expedientes que usa Dr Electrum: HÍBRIDA si hay vectores (texto completo +
+ * significado, fundidos por rango), y solo por texto si no. Lo que sale queda anotado en la traza
+ * del turno como documento consultado.
+ */
+export async function buscarEnExpedientes(texto: string, limite = 8): Promise<HitExpediente[]> {
+  const [porTexto, porSignificado] = await Promise.all([
+    buscarPorTexto(texto, Math.max(limite, 20)),
+    buscarPorSignificado(texto, Math.max(limite, 20)).catch(() => []),
+  ]);
+  let hits: HitExpediente[];
+  if (!porSignificado.length) {
+    hits = porTexto.slice(0, limite).map(({ id: _id, ...h }) => ({ ...h, via: 'texto' as const }));
+  } else {
+    const fundidos = fundirPorRango<{ id: number; documento: string; pagina: number | null; texto: string }>([porTexto, porSignificado], (x) => String(x.id));
+    hits = fundidos.slice(0, limite).map(({ item, puntaje, de }) => ({
+      documento: item.documento,
+      pagina: item.pagina,
+      texto: item.texto,
+      puntaje: Math.round(puntaje * 10000) / 10000,
+      via: de.length > 1 ? ('ambos' as const) : de[0] === 0 ? ('texto' as const) : ('significado' as const),
+    }));
+  }
+  for (const h of hits) trazaActual()?.documento({ fuente: h.documento, ref: h.pagina ? `p. ${h.pagina}` : undefined, puntaje: h.puntaje });
+  return hits;
 }

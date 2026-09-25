@@ -11,6 +11,7 @@ import { headersMesa } from '../10-infra/sesionCliente';
  *  · La semana en números: turnos, errores, bloqueos, latencia, lo que la gente marcó como útil.
  *  · Los últimos turnos con su traza: qué herramientas corrieron, qué reglas intervinieron.
  *  · Si la cadena de auditoría sigue íntegra.
+ *  · Qué servicios de la T4 responden ahora mismo, y cuánto tardan.
  *  · Las reglas vigentes, en castellano.
  *
  * Sin mando, el servidor contesta 403 y aquí se dice eso, sin enseñar nada.
@@ -43,6 +44,25 @@ type Traza = {
   politica: Array<{ herramienta: string; veredicto: string; regla: string }>;
   feedback: number | null;
 };
+type Sonda = { servicio: string; configurado: boolean; ok: boolean; ms: number | null; detalle: string };
+type EstadoCog = {
+  clasificador: { modo: string };
+  servicios: Sonda[];
+  vectores: { columna: boolean; con: number; sin: number } | null;
+  mcp: { activo: boolean; motivo: string | null };
+};
+const NOMBRE_SERVICIO: Record<string, string> = {
+  laya: 'Clasificador rápido (Laya)',
+  embeddings: 'Búsqueda por significado (BGE-M3)',
+  modelo_chico: 'Modelo chico',
+  docling: 'Lectura de escaneos (Docling)',
+};
+const MODO_CLASIFICADOR: Record<string, string> = {
+  reglas: 'reglas (sin Laya)',
+  sombra: 'Laya en sombra: decide con reglas y compara',
+  laya: 'Laya decide; las reglas vigilan el riesgo',
+};
+
 type Resumen = {
   turnos: number;
   errores: number;
@@ -74,18 +94,20 @@ export const Control: React.FC = () => {
   const [trazas, setTrazas] = useState<Traza[]>([]);
   const [cadena, setCadena] = useState<{ ok: boolean; revisados: number; roto?: { seq: number; motivo: string } } | null>(null);
   const [reglas, setReglas] = useState<Array<{ id: string; descripcion: string }>>([]);
+  const [cog, setCog] = useState<EstadoCog | null>(null);
   const [aviso, setAviso] = useState('');
   const [abierta, setAbierta] = useState<string | null>(null);
   const [firmando, setFirmando] = useState<string | null>(null);
 
   const cargar = useCallback(async () => {
     setEstado('cargando');
-    const [r, s, t, c, g] = await Promise.all([
+    const [r, s, t, c, g, e] = await Promise.all([
       pedir<{ resumen: Resumen }>('/api/cognitivo/resumen'),
       pedir<{ aprobaciones: Aprobacion[] }>('/api/cognitivo/aprobaciones?estado=pendiente'),
       pedir<{ trazas: Traza[] }>('/api/cognitivo/trazas?limite=25'),
       pedir<{ ok: boolean; revisados: number; roto?: { seq: number; motivo: string } }>('/api/cognitivo/auditoria/verificar'),
       pedir<{ reglas: Array<{ id: string; descripcion: string }> }>('/api/cognitivo/reglas'),
+      pedir<EstadoCog>('/api/cognitivo/estado'),
     ]);
     setReglas(g.ok && Array.isArray(g.json?.reglas) ? g.json!.reglas : []);
     if (r.status === 403 || r.status === 401) return setEstado('sin-mando');
@@ -94,6 +116,7 @@ export const Control: React.FC = () => {
     setSolicitudes(s.ok && Array.isArray(s.json?.aprobaciones) ? s.json!.aprobaciones : []);
     setTrazas(t.ok && Array.isArray(t.json?.trazas) ? t.json!.trazas.map((x) => ({ ...x, pasos: x.pasos || [], politica: x.politica || [] })) : []);
     setCadena(c.ok && c.json ? c.json : null);
+    setCog(e.ok && e.json && Array.isArray(e.json.servicios) ? e.json : null);
     setEstado('listo');
   }, []);
 
@@ -219,6 +242,42 @@ export const Control: React.FC = () => {
                   ? `Cadena de auditoría íntegra: ${cadena.revisados} registros verificados.`
                   : `La cadena de auditoría está rota en el registro ${cadena.roto?.seq}: ${cadena.roto?.motivo}.`}
               </span>
+            </section>
+          )}
+
+          {cog && (
+            <section>
+              <div className={titulo}>
+                <span>Servicios</span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {cog.servicios.map((sv) => (
+                  <div key={sv.servicio} className={`${tarjeta} flex items-center justify-between gap-2`}>
+                    <div className="min-w-0">
+                      <div className="text-[14px] text-[#ECE8E2]">{NOMBRE_SERVICIO[sv.servicio] || sv.servicio}</div>
+                      <div className="text-[12px] text-[#8A847C]">{sv.configurado ? sv.detalle : 'sin configurar: se usa lo de siempre'}</div>
+                    </div>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[11px] shrink-0 ${
+                        !sv.configurado ? 'bg-[#3A3C40] text-[#8A847C]' : sv.ok ? 'bg-[#2F3A30] text-[#A9C3A4]' : 'bg-[#3F2E28] text-[#E39A7A]'
+                      }`}
+                    >
+                      {!sv.configurado ? 'apagado' : sv.ok ? `${sv.ms} ms` : 'caído'}
+                    </span>
+                  </div>
+                ))}
+                <div className={`${tarjeta} text-[13px] text-[#B9B2A8] flex flex-col gap-0.5`}>
+                  <span>Clasificador: {MODO_CLASIFICADOR[cog.clasificador.modo] || cog.clasificador.modo}</span>
+                  {cog.vectores && (
+                    <span>
+                      {cog.vectores.columna
+                        ? `Fragmentos con vector: ${cog.vectores.con}${cog.vectores.sin ? ` · faltan ${cog.vectores.sin}` : ''}`
+                        : 'La base no tiene pgvector: los expedientes se buscan solo por palabras.'}
+                    </span>
+                  )}
+                  <span>MCP: {cog.mcp.activo ? 'activo en /mcp (solo lectura)' : `apagado${cog.mcp.motivo ? ` (${cog.mcp.motivo})` : ''}`}</span>
+                </div>
+              </div>
             </section>
           )}
 

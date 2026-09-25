@@ -46,6 +46,8 @@ export type Clasificacion = {
   confianza: number;
   fuente: 'laya' | 'reglas';
   ms?: number;
+  /** El mensaje parece un intento de torcer al sistema (ignorar reglas, sacar secretos, suplantar). */
+  inyeccion?: boolean;
   /** En modo sombra: lo que decidió el otro clasificador, para comparar sin actuar. */
   sombra?: Omit<Clasificacion, 'sombra'> | null;
 };

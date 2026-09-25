@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pasadaSinModelo, ARCHIVOS } from '../scripts/evals/sin-modelo';
+import { pasadaSinModelo, pasadaClasificador, ARCHIVOS } from '../scripts/evals/sin-modelo';
 import { cargarCasos, comparar, revisarRespuesta } from '../lib/cognitivo/evaluacion';
 
 const base = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'evals/linea-base.json'), 'utf8'));
@@ -24,6 +24,14 @@ for (const p of ['ultron', 'electrum'] as const) {
     for (const [area, prec] of Object.entries(base[p].porArea as Record<string, number>)) {
       assert.ok((inf.porArea[area]?.precision ?? 0) >= prec, `${area} bajó de ${prec}\n${fallos.join('\n')}`);
     }
+  });
+}
+
+for (const p of ['ultron', 'electrum'] as const) {
+  test(`${p}: el clasificador por reglas no baja de la línea base`, async () => {
+    const inf = (await pasadaClasificador(p, 'reglas'))!;
+    const fallos = inf.resultados.filter((r) => !r.ok).map((r) => `${r.id}: ${r.fallos.join('; ')}`);
+    assert.ok(inf.precision >= base.clasificador[p], `precisión ${inf.precision} < ${base.clasificador[p]}\n${fallos.join('\n')}`);
   });
 }
 

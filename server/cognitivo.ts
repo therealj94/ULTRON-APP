@@ -19,6 +19,7 @@ import { leerAuditoria, verificarCadena } from '../lib/cognitivo/auditoria';
 import { tipo as tipoAlmacen } from '../lib/cognitivo/base';
 import { firmar, listarAprobaciones, type EstadoAprobacion } from '../lib/cognitivo/aprobaciones';
 import { evaluar, listarReglas, type Efecto } from '../lib/cognitivo/politica';
+import { estadoCognitivo } from '../lib/cognitivo/estado';
 
 export function nivelEnEsta(req: Request): { quien: string | null; nivel: Nivel | null } {
   const id = identidadDe(req);
@@ -146,6 +147,25 @@ export function montarRutasCognitivas(app: Express) {
       hechos: typeof b.hechos === 'object' && b.hechos ? b.hechos : undefined,
     });
     res.json({ decision, honesto: true });
+  });
+
+  // Qué está conectado de verdad (T4, pgvector, MCP), medido en el momento. Solo mando: dice qué
+  // servicios hay y dónde fallan, y eso no es para cualquiera.
+  app.get('/api/cognitivo/estado', exigirMandoAqui, limitar(20), async (_req, res) => {
+    try {
+      const { configMcp } = await import('./mcp');
+      const vectores =
+        PLATAFORMA === 'electrum'
+          ? async () => {
+              const { coberturaVectores } = await import('./electrum/vectores');
+              return coberturaVectores();
+            }
+          : undefined;
+      const estado = await estadoCognitivo(PLATAFORMA, { vectores, mcp: () => { const c = configMcp(PLATAFORMA); return c.ok ? { ok: true } : { ok: false, motivo: (c as { motivo: string }).motivo }; } });
+      res.json({ ...estado, honesto: true });
+    } catch (e: any) {
+      res.status(503).json({ error: `No pude medir el estado: ${String(e?.message || e).slice(0, 120)}`, honesto: true });
+    }
   });
 
   app.get('/api/cognitivo/auditoria/verificar', exigirMandoAqui, limitar(10), async (_req, res) => {

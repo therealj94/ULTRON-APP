@@ -9,6 +9,10 @@
  * de un chatbot que suena convincente.
  */
 import { enTurno, iniciarTraza, trazaActual } from '../../lib/cognitivo/traza';
+import { clasificar } from '../../lib/cognitivo/clasificador';
+import { AVISO_INYECCION } from '../../lib/cognitivo/agentes';
+import { MEMORIA_ESTRUCTURADA } from '../../lib/manos/memoria';
+import { fichaEnTexto, fichasMencionadas } from '../../lib/cognitivo/entidades';
 import { correrAgente, type Mensaje } from '../../lib/agente/bucle';
 import type { MsgHilo } from './hilo';
 import type { Contexto } from '../../lib/agente/tipos';
@@ -17,7 +21,8 @@ import { fetchNodo, NODO_MODELO, NODO_SECRETO, NODO_URL } from '../../lib/nodo';
 import { convocar, herramientasDe, promptPanel } from './especialistas';
 import { manosDe, TODAS } from './manos';
 import { CONOCIMIENTO_MINAS } from '../../src/08-cerebro-minas/conocimiento';
-import { hechosCerebro } from '../../lib/cerebro';
+import { hechosCerebro, lineas as lineasCerebro } from '../../lib/cerebro';
+import { lineasPorSignificado } from '../../lib/cognitivo/conocimiento-semantico';
 import { PERFILES } from '../../lib/perfiles';
 import { personaPorId } from '../../lib/acceso';
 import { personalidadElectrum } from './personalidad';
@@ -142,15 +147,23 @@ export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: Op
 
 async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: OpcionesTurno): Promise<RespuestaTurno> {
   const { historial = [], enVivo, abandonado } = opciones;
+  // La decisión rápida del turno. El panel lo sigue eligiendo `convocar` (es lo medido en las
+  // evaluaciones); de la clasificación se usa el riesgo, que va a las reglas, y la alerta de ataque.
+  const clas = await clasificar(mensaje, 'electrum');
+  trazaActual()?.clasificacion(clas);
+  ctx = { ...ctx, riesgo: clas.riesgo };
   const panel = convocar(mensaje);
-  const herramientas = panel.length ? manosDe(herramientasDe(panel)) : TODAS;
+  // Las de su oficio y, para todos, la memoria estructurada (fichas de empresas, concesiones, personas).
+  const herramientas = [...(panel.length ? manosDe(herramientasDe(panel)) : TODAS), ...MEMORIA_ESTRUCTURADA];
   const nombrePanel = panel.map((e) => e.nombre).join(' y ');
   // Lo primero que se puede decir: quién va a contestar. No cuesta nada y quita la sensación de
   // que no pasa nada.
   if (nombrePanel) enVivo?.({ panel: nombrePanel });
 
   // El conocimiento minero entero va en el system; lo que toca la pregunta, además, pegado a ella.
-  const delCerebro = hechosCerebro(mensaje, 12, PERFILES.minas);
+  let delCerebro = hechosCerebro(mensaje, 12, PERFILES.minas);
+  // Sin coincidencia de palabras, por significado (si hay servicio de embeddings).
+  if (!delCerebro.length) delCerebro = await lineasPorSignificado(PERFILES.minas.id, lineasCerebro(PERFILES.minas), mensaje);
 
   const system = [
     personalidadElectrum({ nombre: nombreVisible(ctx), nivel: ctx.nivel, canal: ctx.canal }),
@@ -166,9 +179,15 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
         ]
       : []),
     '',
+    ...(clas.inyeccion ? ['', AVISO_INYECCION] : []),
+    '',
     'CEREBRO DE MINAS:',
     CONOCIMIENTO_MINAS,
   ].join('\n');
+
+  // Las fichas de lo que se nombra en la pregunta van pegadas a ella: lo que se sabe con certeza.
+  const fichas = await fichasMencionadas('electrum', mensaje).catch(() => []);
+  if (fichas.length) delCerebro = [...delCerebro, ...fichas.map(fichaEnTexto)];
 
   const usuario = delCerebro.length
     ? `DE TU CEREBRO, sobre lo que preguntan (esto lo sabés de verdad):\n${delCerebro.join('\n')}\n\n${mensaje}`

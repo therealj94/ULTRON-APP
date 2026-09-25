@@ -5,12 +5,17 @@
  *  · `taller`   → qué acción reconoce el taller de AU-RA (lib/taller.ts).
  *  · `decision` → qué decide el motor de reglas (lib/cognitivo/politica.ts).
  *
+ * Y aparte, el CLASIFICADOR contra `clasificacion` de cada caso: con reglas siempre, y con Laya si
+ * se pide (`--laya`, con LAYA_URL puesta). Es la medida que dice si Laya decide mejor que las reglas
+ * antes de pasar CLASIFICADOR_MODO de `sombra` a `laya`.
+ *
  * Lo usa la prueba tests/evals.test.ts, que falla si la precisión baja de evals/linea-base.json, y
- * se puede correr suelto: `npx tsx scripts/evals/sin-modelo.ts` imprime el informe.
+ * se puede correr suelto: `npx tsx scripts/evals/sin-modelo.ts [--laya]` imprime el informe.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cargarCasos, informe, type Caso, type Informe, type Resultado } from '../../lib/cognitivo/evaluacion';
+import { cargarCasos, informe, revisarClasificacion, type Caso, type Informe, type Resultado } from '../../lib/cognitivo/evaluacion';
+import { clasificarConLaya, clasificarConReglas } from '../../lib/cognitivo/clasificador';
 import { convocar } from '../../server/electrum/especialistas';
 import { parsePedido } from '../../lib/taller';
 import { evaluar } from '../../lib/cognitivo/politica';
@@ -58,11 +63,34 @@ export function pasadaSinModelo(plataforma: 'ultron' | 'electrum'): Informe {
   return informe(plataforma, 'sin-modelo', rs);
 }
 
+/** El clasificador contra lo que espera cada caso. `laya` necesita LAYA_URL; sin ella devuelve null. */
+export async function pasadaClasificador(plataforma: 'ultron' | 'electrum', motor: 'reglas' | 'laya'): Promise<Informe | null> {
+  const casos = cargarCasos(ARCHIVOS[plataforma]).filter((c) => c.clasificacion);
+  const rs: Resultado[] = [];
+  for (const c of casos) {
+    const t0 = Date.now();
+    const cl = motor === 'reglas' ? clasificarConReglas(c.pregunta, plataforma) : await clasificarConLaya(c.pregunta, plataforma);
+    if (!cl) return null;
+    const f = revisarClasificacion(c.clasificacion!, cl as any);
+    rs.push({ id: c.id, area: c.area, ok: f.length === 0, fallos: f, ms: Date.now() - t0 });
+  }
+  return informe(plataforma, 'sin-modelo', rs);
+}
+
+function imprimir(titulo: string, inf: Informe) {
+  console.log(`\n${titulo}: ${inf.aciertos}/${inf.total} (${(inf.precision * 100).toFixed(1)} %)`);
+  for (const [a, x] of Object.entries(inf.porArea)) console.log(`  ${a.padEnd(14)} ${x.aciertos}/${x.total}`);
+  for (const r of inf.resultados.filter((x) => !x.ok)) console.log(`  ✗ ${r.id}: ${r.fallos.join('; ')}`);
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   for (const p of ['ultron', 'electrum'] as const) {
-    const inf = pasadaSinModelo(p);
-    console.log(`\n${p}: ${inf.aciertos}/${inf.total} (${(inf.precision * 100).toFixed(1)} %)`);
-    for (const [a, x] of Object.entries(inf.porArea)) console.log(`  ${a.padEnd(14)} ${x.aciertos}/${x.total}`);
-    for (const r of inf.resultados.filter((x) => !x.ok)) console.log(`  ✗ ${r.id}: ${r.fallos.join('; ')}`);
+    imprimir(`${p} · enrutado, taller y reglas`, pasadaSinModelo(p));
+    imprimir(`${p} · clasificador (reglas)`, (await pasadaClasificador(p, 'reglas'))!);
+    if (process.argv.includes('--laya')) {
+      const l = await pasadaClasificador(p, 'laya');
+      if (l) imprimir(`${p} · clasificador (Laya)`, l);
+      else console.log(`\n${p} · clasificador (Laya): sin respuesta (¿LAYA_URL?)`);
+    }
   }
 }

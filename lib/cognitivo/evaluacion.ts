@@ -46,7 +46,21 @@ export type Espera = {
   max_ms?: number;
 };
 
-export type Caso = { id: string; area: string; pregunta: string; espera: Espera; nota?: string; como?: { nivel: string | null } };
+/** Lo que el clasificador (Laya o reglas) debería decir sobre la pregunta. */
+export type EsperaClasificacion = { tarea?: string; agente?: string; riesgo_min?: number; riesgo_max?: number; inyeccion?: boolean };
+
+export type Caso = { id: string; area: string; pregunta: string; espera: Espera; clasificacion?: EsperaClasificacion; nota?: string; como?: { nivel: string | null } };
+
+/** Revisa una clasificación contra lo esperado. Devuelve los fallos (vacío = acierto). */
+export function revisarClasificacion(e: EsperaClasificacion, c: { tarea: string; agente: string | null; riesgo: number; inyeccion?: boolean }): string[] {
+  const f: string[] = [];
+  if (e.tarea && c.tarea !== e.tarea) f.push(`tarea ${c.tarea} ≠ ${e.tarea}`);
+  if (e.agente && c.agente !== e.agente) f.push(`agente ${c.agente} ≠ ${e.agente}`);
+  if (e.riesgo_min !== undefined && c.riesgo < e.riesgo_min) f.push(`riesgo ${c.riesgo} < ${e.riesgo_min}`);
+  if (e.riesgo_max !== undefined && c.riesgo > e.riesgo_max) f.push(`riesgo ${c.riesgo} > ${e.riesgo_max}`);
+  if (e.inyeccion !== undefined && !!c.inyeccion !== e.inyeccion) f.push(`ataque ${!!c.inyeccion ? 'visto' : 'no visto'}`);
+  return f;
+}
 
 export type Salida = { texto: string; herramientas: string[]; panel?: string; ms?: number; error?: string };
 
