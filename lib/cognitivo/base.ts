@@ -96,18 +96,59 @@ export function dirArchivos(): string {
 }
 
 /** Tope por archivo: al pasarlo se rota y se conserva el anterior (.1). */
-const TOPE_BYTES = 20 * 1024 * 1024;
+const topeBytes = () => Number(process.env.COGNITIVO_TOPE_BYTES || 20 * 1024 * 1024);
 
-export function anexar(coleccion: string, fila: unknown) {
+/**
+ * Anexa una fila. Al pasar el tope, el archivo actual pasa a `.1`.
+ *
+ * Con `historia: true` (la auditoría) el `.1` anterior NO se pisa: se archiva como
+ * `.gen-<fecha>`. Una cadena de hashes que pierde su principio ya no se puede verificar —el primer
+ * registro que queda apunta a uno que no existe— y parecería alterada sin que nadie la tocara.
+ */
+export function anexar(coleccion: string, fila: unknown, opts: { historia?: boolean } = {}) {
   const dir = dirArchivos();
   fs.mkdirSync(dir, { recursive: true });
   const f = path.join(dir, `${coleccion}.jsonl`);
   try {
-    if (fs.existsSync(f) && fs.statSync(f).size > TOPE_BYTES) fs.renameSync(f, `${f}.1`);
+    if (fs.existsSync(f) && fs.statSync(f).size > topeBytes()) {
+      if (opts.historia && fs.existsSync(`${f}.1`)) {
+        fs.renameSync(`${f}.1`, `${f}.gen-${new Date().toISOString().replace(/[:.]/g, '-')}-${process.hrtime.bigint()}`);
+      }
+      fs.renameSync(f, `${f}.1`);
+    }
   } catch {
     /* si no se pudo rotar, se sigue anexando */
   }
   fs.appendFileSync(f, `${JSON.stringify(fila)}\n`);
+}
+
+function leerArchivoJsonl<T>(p: string, out: T[]) {
+  if (!fs.existsSync(p)) return;
+  for (const linea of fs.readFileSync(p, 'utf8').split('\n')) {
+    if (!linea.trim()) continue;
+    try {
+      out.push(JSON.parse(linea));
+    } catch {
+      /* línea cortada por un apagón: se salta */
+    }
+  }
+}
+
+/** La colección entera, con las generaciones archivadas, de la más vieja a la más nueva. */
+export function leerHistoria<T = any>(coleccion: string): T[] {
+  const dir = dirArchivos();
+  const base = `${coleccion}.jsonl`;
+  const archivadas = fs.existsSync(dir)
+    ? fs
+        .readdirSync(dir)
+        .filter((n) => n.startsWith(`${base}.gen-`))
+        .sort()
+    : [];
+  const out: T[] = [];
+  for (const n of archivadas) leerArchivoJsonl(path.join(dir, n), out);
+  leerArchivoJsonl(path.join(dir, `${base}.1`), out);
+  leerArchivoJsonl(path.join(dir, base), out);
+  return out;
 }
 
 /** Todas las filas de una colección (actual + rotada), de la más vieja a la más nueva. */

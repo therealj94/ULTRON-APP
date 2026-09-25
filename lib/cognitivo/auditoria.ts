@@ -15,7 +15,7 @@
  * viva en la misma base.
  */
 import crypto from 'node:crypto';
-import { anexar, enTransaccion, leerTodas, sql, tipo } from './base';
+import { anexar, enTransaccion, leerHistoria, leerTodas, sql, tipo } from './base';
 
 export type TipoAuditoria =
   | 'politica.bloqueo'
@@ -94,7 +94,7 @@ export async function auditar(e: { tipo: TipoAuditoria; plataforma?: string | nu
       const ult = todas[todas.length - 1];
       const prev = ult?.hash || GENESIS;
       const r: RegistroAuditoria = { seq: (ult?.seq || 0) + 1, ...base, hash_prev: prev, hash: firmar(prev, base) };
-      anexar('auditoria', r);
+      anexar('auditoria', r, { historia: true });
       return r;
     });
     colaArchivo = hecho.catch(() => {});
@@ -123,7 +123,8 @@ export async function leerAuditoria(opts: { limite?: number; tipo?: string } = {
 
 /**
  * Recorre la cadena entera desde el principio. Devuelve cuántos eslabones cuadran y, si alguno no,
- * cuál fue el primero roto. Con la cadena de archivo, lo rotado (.1) cuenta como parte de ella.
+ * cuál fue el primero roto. Con la cadena de archivo, lo rotado (.1 y las generaciones archivadas)
+ * cuenta como parte de ella.
  */
 export async function verificarCadena(): Promise<{ ok: boolean; revisados: number; roto?: { seq: number; motivo: string } }> {
   let filas: RegistroAuditoria[];
@@ -134,7 +135,8 @@ export async function verificarCadena(): Promise<{ ok: boolean; revisados: numbe
       t: new Date(f.t as any).toISOString(),
     }));
   } else {
-    filas = leerTodas<RegistroAuditoria>('auditoria');
+    // Con las generaciones archivadas: la cadena se verifica desde su primer eslabón.
+    filas = leerHistoria<RegistroAuditoria>('auditoria');
   }
   let prev = GENESIS;
   for (let i = 0; i < filas.length; i++) {

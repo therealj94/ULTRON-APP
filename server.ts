@@ -2056,6 +2056,16 @@ async function startServer() {
       server: { middlewareMode: true },
       appType: 'spa',
     });
+    // En desarrollo la raíz también es la página de ESTA plataforma. Sin esto, `npm run dev` sin
+    // PLATAFORMA servía AU-RA (index.html de Vite) con la API de Dr Electrum, y cada llamada de
+    // AU-RA daba 404. Se reescribe la ruta y Vite sirve la página correcta con su recarga en vivo.
+    const ajenaDev = ES_ELECTRUM ? '/index.html' : '/electrum.html';
+    app.use((req, _res, next) => {
+      const ruta = req.path;
+      const esNavegacion = req.method === 'GET' && !ruta.startsWith('/api/') && !/\.[a-z0-9]+$/i.test(ruta) && !ruta.startsWith('/@') && !ruta.startsWith('/node_modules/');
+      if (ruta === ajenaDev || esNavegacion) req.url = `/${PAGINA_RAIZ}${req.url.slice(req.path.length)}`;
+      next();
+    });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');

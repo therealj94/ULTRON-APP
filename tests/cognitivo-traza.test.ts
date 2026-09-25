@@ -123,6 +123,23 @@ test('auditoría en archivos: la cadena cuadra y un cambio se detecta', () =>
     assert.equal(v.roto?.seq, 2);
   }));
 
+test('auditoría: la cadena sigue verificable después de varias rotaciones del archivo', () =>
+  conArchivos(async () => {
+    const antes = process.env.COGNITIVO_TOPE_BYTES;
+    process.env.COGNITIVO_TOPE_BYTES = '2000';
+    try {
+      for (let i = 0; i < 60; i++) await auditar({ tipo: 'entidad.cambio', plataforma: 'ultron', quien: 'jose', datos: { i, relleno: 'x'.repeat(40) } });
+      const archivos = fs.readdirSync(process.env.COGNITIVO_DIR!).filter((n) => n.startsWith('auditoria.jsonl'));
+      assert.ok(archivos.filter((n) => n.includes('.gen-')).length >= 2, `rotó varias veces: ${archivos.join(', ')}`);
+      const v = await verificarCadena();
+      assert.equal(v.ok, true, JSON.stringify(v));
+      assert.equal(v.revisados, 60, 'ningún eslabón se perdió');
+    } finally {
+      if (antes === undefined) delete process.env.COGNITIVO_TOPE_BYTES;
+      else process.env.COGNITIVO_TOPE_BYTES = antes;
+    }
+  }));
+
 test('auditoría: escrituras simultáneas no rompen la cadena', () =>
   conArchivos(async () => {
     await Promise.all(Array.from({ length: 12 }, (_, i) => auditar({ tipo: 'sistema.cambio', datos: { i } })));

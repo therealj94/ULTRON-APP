@@ -43,8 +43,10 @@ export function SalaAura({ face, emocion, postura, pedido, speechLevelSource, mi
   const lista = useRef(false);
   const caida = useRef(false);
   // Lo último de cada cosa, para mandarlo en cuanto la sala diga «listo» (antes no hay a quién).
-  const ultimo = useRef({ face, emocion, postura });
-  ultimo.current = { face, emocion, postura };
+  const ultimo = useRef({ face, emocion, postura, mirada });
+  ultimo.current = { face, emocion, postura, mirada };
+  // Un gesto pedido mientras la sala todavía carga no se pierde: se guarda y sale tras «listo».
+  const pedidoPendiente = useRef<PedidoTarea | null>(null);
   const cb = useRef({ onTocar, onDeslizar, onFallo });
   cb.current = { onTocar, onDeslizar, onFallo };
 
@@ -67,7 +69,9 @@ export function SalaAura({ face, emocion, postura, pedido, speechLevelSource, mi
   useEffect(() => enviar({ tipo: 'estado', face, emocion }), [enviar, face, emocion]);
   useEffect(() => enviar({ tipo: 'postura', p: postura }), [enviar, postura]);
   useEffect(() => {
-    if (pedido) enviar({ tipo: 'tarea', tarea: pedido.tarea });
+    if (!pedido) return;
+    if (lista.current) enviar({ tipo: 'tarea', tarea: pedido.tarea });
+    else pedidoPendiente.current = pedido;
   }, [enviar, pedido]);
   useEffect(() => enviar({ tipo: 'mirar', x: mirada.x, y: mirada.y, activa: mirada.activa }), [enviar, mirada.x, mirada.y, mirada.activa]);
 
@@ -100,6 +104,11 @@ export function SalaAura({ face, emocion, postura, pedido, speechLevelSource, mi
           enviar({ tipo: 'estado', face: u.face, emocion: u.emocion });
           enviar({ tipo: 'postura', p: u.postura });
           enviar({ tipo: 'entrar' });
+          enviar({ tipo: 'mirar', x: u.mirada.x, y: u.mirada.y, activa: u.mirada.activa });
+          if (pedidoPendiente.current) {
+            enviar({ tipo: 'tarea', tarea: pedidoPendiente.current.tarea });
+            pedidoPendiente.current = null;
+          }
           return;
         }
         case 'tocar':
