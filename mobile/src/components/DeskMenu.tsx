@@ -124,7 +124,7 @@ export function DeskMenu(p: Props) {
   );
 
   const Dot = ({ vivo }: { vivo: boolean | null }) =>
-    vivo === null ? null : <View style={[styles.capDot, { backgroundColor: vivo ? T.salvia : T.borde }]} />;
+    vivo === null ? null : <View style={[styles.capDot, { backgroundColor: vivo ? T.activo : T.borde }]} />;
 
   const Card = ({ c }: { c: Capacidad }) => (
     <View style={styles.card}>
@@ -167,7 +167,7 @@ export function DeskMenu(p: Props) {
           </View>
 
           <View style={styles.statusRow}>
-            <View style={[styles.dot, { backgroundColor: p.online ? T.salvia : T.barro }]} />
+            <View style={[styles.dot, { backgroundColor: p.online ? T.activo : T.aviso }]} />
             <Text style={styles.statusText}>{p.online ? 'Conectada' : 'Sin cerebro · modo local'}</Text>
           </View>
 
@@ -176,7 +176,7 @@ export function DeskMenu(p: Props) {
               <Text style={styles.label}>Escuchar</Text>
               <Text style={styles.sub}>{p.micMuted ? 'silenciado' : p.listening ? 'oyendo · sin palabra clave' : 'conectando…'}</Text>
             </View>
-            <Switch value={!p.micMuted} onValueChange={p.onToggleMic} trackColor={{ true: T.salvia, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={!p.micMuted} onValueChange={p.onToggleMic} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
@@ -185,7 +185,7 @@ export function DeskMenu(p: Props) {
                 {p.visionOn ? (p.objects.length ? p.objects.join(' · ') : 'cámara activa') : 'cámara apagada'}
               </Text>
             </View>
-            <Switch value={p.visionOn} onValueChange={p.onToggleVision} trackColor={{ true: T.salvia, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={p.visionOn} onValueChange={p.onToggleVision} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
 
           {/* ---------------- catálogo ---------------- */}
@@ -217,7 +217,7 @@ export function DeskMenu(p: Props) {
                   <Text style={styles.voiceBtnText}>Probar voz</Text>
                 </Pressable>
               </View>
-              {cat.status === 'loading' && !cat.payload && <ActivityIndicator color={T.miel} />}
+              {cat.status === 'loading' && !cat.payload && <ActivityIndicator color={T.principal} />}
               {cat.status === 'fail' && !cat.payload && (
                 <Text style={styles.hint}>No pude bajar el catálogo. Cuando haya red se guarda una copia para verlo sin conexión.</Text>
               )}
@@ -268,7 +268,7 @@ export function DeskMenu(p: Props) {
               value={query}
               onChangeText={setQuery}
               placeholder="Ej.: precio del café hoy en Honduras"
-              placeholderTextColor={T.tinta3}
+              placeholderTextColor={T.texto3}
               style={styles.input}
               returnKeyType="search"
               onSubmitEditing={() => {
@@ -305,7 +305,7 @@ export function DeskMenu(p: Props) {
               value={fact}
               onChangeText={setFact}
               placeholder="Ej.: la reunión de junta es los lunes"
-              placeholderTextColor={T.tinta3}
+              placeholderTextColor={T.texto3}
               style={styles.input}
               returnKeyType="done"
               onSubmitEditing={() => {
@@ -321,7 +321,7 @@ export function DeskMenu(p: Props) {
               value={p.draft}
               onChangeText={p.onChangeDraft}
               placeholder="Orden para AU-RA…"
-              placeholderTextColor={T.tinta3}
+              placeholderTextColor={T.texto3}
               style={styles.input}
               onSubmitEditing={p.onSendDraft}
               returnKeyType="send"
@@ -357,14 +357,14 @@ export function DeskMenu(p: Props) {
               <Text style={styles.label}>Comenta lo que ve</Text>
               <Text style={styles.sub}>Observaciones espontáneas de la cámara</Text>
             </View>
-            <Switch value={p.settings.proactive} onValueChange={p.onToggleProactive} trackColor={{ true: T.salvia, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={p.settings.proactive} onValueChange={p.onToggleProactive} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
               <Text style={styles.label}>Efectos de sonido</Text>
               <Text style={styles.sub}>Toques, blaster, sable</Text>
             </View>
-            <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} trackColor={{ true: T.salvia, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
@@ -390,60 +390,60 @@ export function DeskMenu(p: Props) {
 
 const styles = StyleSheet.create({
   wrap: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', justifyContent: 'flex-end' },
-  dim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(58,50,44,0.28)' },
+  dim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)' },
   panel: {
     height: '100%',
-    backgroundColor: T.crema,
+    backgroundColor: T.fondo,
     borderTopLeftRadius: 28,
     borderBottomLeftRadius: 28,
     ...SOMBRA,
   },
   content: { padding: 20, gap: 12, paddingBottom: 32 },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  kicker: { color: T.mielOsc, letterSpacing: 1.5, fontWeight: '700', fontSize: 12 },
-  user: { color: T.tinta, fontSize: 22, fontWeight: '700', marginTop: 2 },
+  kicker: { color: T.principalTexto, letterSpacing: 1.5, fontWeight: '700', fontSize: 12 },
+  user: { color: T.texto, fontSize: 22, fontWeight: '700', marginTop: 2 },
   close: { width: 36, height: 36, borderRadius: 18, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center' },
-  closeText: { color: T.tinta2, fontSize: 15 },
+  closeText: { color: T.texto2, fontSize: 15 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 8, height: 8, borderRadius: 4 },
-  statusText: { color: T.tinta2, fontSize: 13 },
+  statusText: { color: T.texto2, fontSize: 13 },
   row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 14, backgroundColor: T.panel, borderRadius: 16 },
-  label: { color: T.tinta, fontSize: 15, fontWeight: '600' },
-  sub: { color: T.tinta3, fontSize: 12, marginTop: 2, maxWidth: 300 },
-  section: { color: T.tinta2, fontSize: 13, fontWeight: '700', marginTop: 8 },
+  label: { color: T.texto, fontSize: 15, fontWeight: '600' },
+  sub: { color: T.texto3, fontSize: 12, marginTop: 2, maxWidth: 300 },
+  section: { color: T.texto2, fontSize: 13, fontWeight: '700', marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999, backgroundColor: T.panel, borderWidth: 1, borderColor: T.borde, alignItems: 'center', maxWidth: 260 },
-  chipOn: { borderColor: T.salvia, backgroundColor: T.salviaClaro },
-  chipEx: { borderColor: T.borde, backgroundColor: T.mielClaro, paddingVertical: 7 },
-  chipText: { color: T.tinta, fontSize: 13, fontWeight: '600' },
-  chipExText: { color: T.mielOsc, fontWeight: '500', fontStyle: 'italic' },
-  chipSub: { color: T.tinta3, fontSize: 10, marginTop: 1 },
-  chipTextOn: { color: T.salviaOsc },
+  chipOn: { borderColor: T.activo, backgroundColor: T.activoFondo },
+  chipEx: { borderColor: T.borde, backgroundColor: T.principalFondo, paddingVertical: 7 },
+  chipText: { color: T.texto, fontSize: 13, fontWeight: '600' },
+  chipExText: { color: T.principalTexto, fontWeight: '500', fontStyle: 'italic' },
+  chipSub: { color: T.texto3, fontSize: 10, marginTop: 1 },
+  chipTextOn: { color: T.activoTexto },
   composer: { flexDirection: 'row', gap: 8 },
-  input: { flex: 1, borderWidth: 1, borderColor: T.borde, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10, color: T.tinta, fontSize: 15, backgroundColor: T.panel },
-  send: { backgroundColor: T.miel, borderRadius: 999, paddingHorizontal: 18, justifyContent: 'center' },
-  sendText: { color: '#FFFFFF', fontWeight: '700' },
-  hint: { color: T.tinta3, fontSize: 12, lineHeight: 17, marginTop: 4 },
-  smallBtn: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: '#FBE9E1' },
-  smallBtnText: { color: T.barroOsc, fontSize: 13, fontWeight: '600' },
+  input: { flex: 1, borderWidth: 1, borderColor: T.borde, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10, color: T.texto, fontSize: 15, backgroundColor: T.panel },
+  send: { backgroundColor: T.principal, borderRadius: 999, paddingHorizontal: 18, justifyContent: 'center' },
+  sendText: { color: T.sobrePrincipal, fontWeight: '700' },
+  hint: { color: T.texto3, fontSize: 12, lineHeight: 17, marginTop: 4 },
+  smallBtn: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: T.avisoFondo },
+  smallBtnText: { color: T.avisoTexto, fontSize: 13, fontWeight: '600' },
   logout: { alignItems: 'center', paddingVertical: 12, marginTop: 6 },
-  logoutText: { color: T.barroOsc, fontSize: 14, fontWeight: '600' },
-  version: { color: T.tinta3, fontSize: 11, textAlign: 'center' },
+  logoutText: { color: T.avisoTexto, fontSize: 14, fontWeight: '600' },
+  version: { color: T.texto3, fontSize: 11, textAlign: 'center' },
   orarBtn: { borderRadius: 18, padding: 14, gap: 4, backgroundColor: T.panel, borderWidth: 1, borderColor: T.borde },
-  orarText: { color: T.tinta, fontSize: 15, fontWeight: '700' },
-  orarSub: { color: T.tinta3, fontSize: 12 },
+  orarText: { color: T.texto, fontSize: 15, fontWeight: '700' },
+  orarSub: { color: T.texto3, fontSize: 12 },
   // catálogo
   catHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderTopWidth: 1, borderTopColor: T.borde, marginTop: 4 },
-  chev: { color: T.mielOsc, fontSize: 16 },
+  chev: { color: T.principalTexto, fontSize: 16 },
   voiceBox: { borderRadius: 18, padding: 14, gap: 6, backgroundColor: T.panel },
-  voiceName: { color: T.tinta, fontSize: 14, fontWeight: '700' },
-  voiceBtn: { alignSelf: 'flex-start', backgroundColor: T.miel, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8, marginTop: 4 },
-  voiceBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
-  groupTitle: { color: T.tinta2, fontSize: 13, fontWeight: '700', marginTop: 4 },
+  voiceName: { color: T.texto, fontSize: 14, fontWeight: '700' },
+  voiceBtn: { alignSelf: 'flex-start', backgroundColor: T.principal, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8, marginTop: 4 },
+  voiceBtnText: { color: T.sobrePrincipal, fontWeight: '700', fontSize: 13 },
+  groupTitle: { color: T.texto2, fontSize: 13, fontWeight: '700', marginTop: 4 },
   card: { borderRadius: 18, padding: 14, gap: 6, backgroundColor: T.panel },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   capDot: { width: 8, height: 8, borderRadius: 4 },
-  cardTitle: { color: T.tinta, fontSize: 14, fontWeight: '700', flex: 1 },
-  cardDetail: { color: T.tinta2, fontSize: 12, lineHeight: 17 },
-  cardFalta: { color: T.barroOsc, fontSize: 12 },
+  cardTitle: { color: T.texto, fontSize: 14, fontWeight: '700', flex: 1 },
+  cardDetail: { color: T.texto2, fontSize: 12, lineHeight: 17 },
+  cardFalta: { color: T.avisoTexto, fontSize: 12 },
 });

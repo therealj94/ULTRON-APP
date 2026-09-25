@@ -44,8 +44,8 @@ function pagina(js) {
   return (
     '<!doctype html><html lang="es"><head><meta charset="UTF-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">' +
-    '<style>html,body{margin:0;height:100%;overflow:hidden;background:#F3E7D8}' +
-    '#sala{position:fixed;inset:0;background:linear-gradient(180deg,#F6ECDF 0%,#EFE1CE 100%);-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}</style>' +
+    '<style>html,body{margin:0;height:100%;overflow:hidden;background:#232528}' +
+    '#sala{position:fixed;inset:0;background:linear-gradient(180deg,#2C2E32 0%,#232528 100%);-webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}</style>' +
     '</head><body><div id="sala"></div><script>' +
     seguro +
     '</script></body></html>'

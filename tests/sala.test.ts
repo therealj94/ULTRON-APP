@@ -60,10 +60,10 @@ test('habla cuando la mesa está diciendo algo, cantando u orando', () => {
   for (const f of ['IDLE', 'THINKING', 'LISTENING', 'SLEEPING'] as const) assert.ok(!HABLA.has(f));
 });
 
-test('los estilos: sin elegir nada sale el aspecto de siempre, y lo desconocido no rompe', async () => {
+test('los estilos: sin elegir nada sale el elegido (grafito · orbe), y lo desconocido no rompe', async () => {
   const { estiloDe, COLORES, CUERPOS, PALETAS, FORMAS } = await import('../src/11-sala/estilos');
-  assert.deepEqual(estiloDe(undefined), { paleta: 'miel', forma: 'frijol' });
-  assert.deepEqual(estiloDe({ paleta: 'neon' as any, forma: 'orbe' }), { paleta: 'miel', forma: 'orbe' });
+  assert.deepEqual(estiloDe(undefined), { paleta: 'grafito', forma: 'orbe' });
+  assert.deepEqual(estiloDe({ paleta: 'neon' as any, forma: 'frijol' }), { paleta: 'grafito', forma: 'frijol' });
   for (const p of PALETAS) for (const v of Object.values(COLORES[p])) if (typeof v === 'string' && v.startsWith('#')) assert.match(v, /^#[0-9A-F]{6}$/i, p);
   for (const f of FORMAS) assert.ok(CUERPOS[f].R > 0 && CUERPOS[f].ALTO > 1, f);
   assert.equal(CUERPOS.frijol.R, 0.56);

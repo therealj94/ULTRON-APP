@@ -45,10 +45,10 @@ async function lockOrientation(kind: 'portrait' | 'landscape') {
   }
 }
 
-/** Fondo crema del sistema y barra de navegación oculta (lo único que edge-to-edge permite ajustar). */
+/** Fondo grafito del sistema y barra de navegación oculta (lo único que edge-to-edge permite ajustar). */
 async function hideSystemBars() {
   try {
-    await SystemUI.setBackgroundColorAsync(T.crema);
+    await SystemUI.setBackgroundColorAsync(T.fondo);
   } catch {
     /* */
   }
@@ -72,7 +72,7 @@ async function requestDeskPermissions() {
 }
 
 /**
- * Splash JS de AU-RA: el logo sobre crema y tres puntos miel que respiran mientras se carga la
+ * Splash JS de AU-RA: el logo sobre grafito y tres puntos dorados que respiran mientras se carga la
  * sesión. Se funde encima de la pantalla siguiente (la sala, donde ella ya viene entrando).
  */
 function JsSplash({ opacity }: { opacity: Animated.Value }) {
@@ -191,7 +191,7 @@ function AppUltron() {
 
   return (
     <View style={styles.root}>
-      <StatusBar style="dark" hidden />
+      <StatusBar style="light" hidden />
       {phase === 'login' && <LoginScreen onAuthenticated={(u) => void enterDesk(u)} />}
       {phase === 'desk' && user && (
         <DeskScreen
@@ -211,10 +211,10 @@ function AppUltron() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: T.crema },
-  splash: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: 18, backgroundColor: T.crema },
+  root: { flex: 1, backgroundColor: T.fondo },
+  splash: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: 18, backgroundColor: T.fondo },
   logo: { width: 340, height: 128 },
   puntos: { flexDirection: 'row', gap: 8, height: 20, alignItems: 'flex-end' },
-  punto: { width: 10, height: 10, borderRadius: 5, backgroundColor: T.miel },
-  meta: { position: 'absolute', bottom: 24, color: T.tinta3, fontSize: 11 },
+  punto: { width: 10, height: 10, borderRadius: 5, backgroundColor: T.principal },
+  meta: { position: 'absolute', bottom: 24, color: T.texto3, fontSize: 11 },
 });

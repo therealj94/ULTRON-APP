@@ -258,7 +258,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
                 disabled={loading}
               >
                 {loading ? (
-                  <ActivityIndicator color="#FFFFFF" />
+                  <ActivityIndicator color={T.sobrePrincipal} />
                 ) : (
                   <Text style={styles.primaryText}>Entrar con huella</Text>
                 )}
@@ -285,8 +285,8 @@ export function LoginScreen({ onAuthenticated }: Props) {
                 </Pressable>
               ))}
               <Pressable onPress={() => pickUser(OTRO_TEMPLATE)} style={styles.userBtn}>
-                <View style={[styles.avatar, { backgroundColor: T.arena }]}>
-                  <Text style={[styles.avatarText, { color: T.tinta2 }]}>+</Text>
+                <View style={[styles.avatar, { backgroundColor: T.fondo2 }]}>
+                  <Text style={[styles.avatarText, { color: T.texto2 }]}>+</Text>
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.userName}>Otro miembro</Text>
@@ -304,7 +304,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
                   value={customCorreo}
                   onChangeText={setCustomCorreo}
                   placeholder="correo@ordenglobal.org"
-                  placeholderTextColor={T.tinta3}
+                  placeholderTextColor={T.texto3}
                   autoCapitalize="none"
                   keyboardType="email-address"
                   style={styles.input}
@@ -317,7 +317,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
                 value={clave}
                 onChangeText={setClave}
                 placeholder="Clave de ultron.ordenglobal.link"
-                placeholderTextColor={T.tinta3}
+                placeholderTextColor={T.texto3}
                 secureTextEntry
                 style={styles.input}
                 autoCapitalize="none"
@@ -328,7 +328,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
                 <Switch
                   value={remember}
                   onValueChange={setRemember}
-                  trackColor={{ true: T.salvia, false: T.borde }}
+                  trackColor={{ true: T.activo, false: T.borde }}
                   thumbColor={T.panel}
                 />
               </View>
@@ -338,7 +338,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
                   <Switch
                     value={useFingerprint}
                     onValueChange={setUseFingerprint}
-                    trackColor={{ true: T.salvia, false: T.borde }}
+                    trackColor={{ true: T.activo, false: T.borde }}
                   thumbColor={T.panel}
                   />
                 </View>
@@ -350,7 +350,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
                 disabled={loading}
               >
                 {loading ? (
-                  <ActivityIndicator color="#FFFFFF" />
+                  <ActivityIndicator color={T.sobrePrincipal} />
                 ) : (
                   <Text style={styles.primaryText}>Entrar</Text>
                 )}
@@ -380,7 +380,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: T.crema },
+  root: { flex: 1, backgroundColor: T.fondo },
   scroll: { flex: 1, width: '100%' },
   scrollContent: {
     flexGrow: 1,
@@ -400,16 +400,16 @@ const styles = StyleSheet.create({
     gap: 10,
     ...SOMBRA,
   },
-  sub: { color: T.tinta2, fontSize: 14, marginTop: 2, marginBottom: 16 },
-  hint: { color: T.tinta2, fontSize: 15, fontWeight: '600', marginBottom: 4 },
-  welcome: { color: T.tinta, fontSize: 20, fontWeight: '700', marginBottom: 8 },
+  sub: { color: T.texto2, fontSize: 14, marginTop: 2, marginBottom: 16 },
+  hint: { color: T.texto2, fontSize: 15, fontWeight: '600', marginBottom: 4 },
+  welcome: { color: T.texto, fontSize: 20, fontWeight: '700', marginBottom: 8 },
   userBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
     padding: 14,
     borderRadius: 18,
-    backgroundColor: T.crema,
+    backgroundColor: T.fondo,
     borderWidth: 1,
     borderColor: T.borde,
   },
@@ -417,15 +417,15 @@ const styles = StyleSheet.create({
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: T.mielClaro,
+    backgroundColor: T.principalFondo,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  avatarText: { color: T.mielOsc, fontWeight: '700', fontSize: 17 },
-  userName: { color: T.tinta, fontSize: 16, fontWeight: '700' },
-  userMail: { color: T.tinta3, fontSize: 12 },
-  userMailCenter: { color: T.tinta2, fontSize: 13, textAlign: 'center' },
-  back: { color: T.mielOsc, fontSize: 15, fontWeight: '600', marginBottom: 4 },
+  avatarText: { color: T.principalTexto, fontWeight: '700', fontSize: 17 },
+  userName: { color: T.texto, fontSize: 16, fontWeight: '700' },
+  userMail: { color: T.texto3, fontSize: 12 },
+  userMailCenter: { color: T.texto2, fontSize: 13, textAlign: 'center' },
+  back: { color: T.principalTexto, fontSize: 15, fontWeight: '600', marginBottom: 4 },
   input: {
     borderWidth: 1,
     borderColor: T.borde,
@@ -433,27 +433,27 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 12,
     fontSize: 15,
-    color: T.tinta,
-    backgroundColor: T.crema,
+    color: T.texto,
+    backgroundColor: T.fondo,
   },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  rowLabel: { color: T.tinta, fontSize: 14 },
-  error: { color: T.barroOsc, fontSize: 13 },
+  rowLabel: { color: T.texto, fontSize: 14 },
+  error: { color: T.avisoTexto, fontSize: 13 },
   primary: {
-    backgroundColor: T.miel,
+    backgroundColor: T.principal,
     borderRadius: 999,
     paddingVertical: 14,
     alignItems: 'center',
     width: '100%',
   },
-  primaryText: { color: '#FFFFFF', fontWeight: '700', fontSize: 16 },
+  primaryText: { color: T.sobrePrincipal, fontWeight: '700', fontSize: 16 },
   secondary: {
     borderRadius: 999,
     paddingVertical: 12,
     alignItems: 'center',
-    backgroundColor: T.salviaClaro,
+    backgroundColor: T.activoFondo,
     width: '100%',
   },
-  secondaryText: { color: T.salviaOsc, fontSize: 14, fontWeight: '600' },
-  link: { color: T.tinta3, fontSize: 13, textDecorationLine: 'underline' },
+  secondaryText: { color: T.activoTexto, fontSize: 14, fontWeight: '600' },
+  link: { color: T.texto3, fontSize: 13, textDecorationLine: 'underline' },
 });

@@ -2,7 +2,8 @@
  * Los estilos de la sala: la paleta (colores de la habitación y de ella) y la forma del cuerpo.
  *
  * Existen para elegir con imágenes reales y no con descripciones: la misma sala, el mismo motor,
- * solo cambian estos datos. `miel` + `frijol` es el aspecto con el que salió AU-RA.
+ * solo cambian estos datos. `miel` + `frijol` es el aspecto con el que salió AU-RA; José eligió
+ * `grafito` + `orbe` (25-sep) por neutral y adulto, y ese es el de siempre desde entonces.
  */
 export type Paleta = 'miel' | 'piedra' | 'arena' | 'grafito';
 export type Forma = 'frijol' | 'serena' | 'orbe';
@@ -10,7 +11,7 @@ export type Estilo = { paleta: Paleta; forma: Forma };
 
 export const PALETAS: readonly Paleta[] = ['miel', 'piedra', 'arena', 'grafito'];
 export const FORMAS: readonly Forma[] = ['frijol', 'serena', 'orbe'];
-export const ESTILO_BASE: Estilo = { paleta: 'miel', forma: 'frijol' };
+export const ESTILO_BASE: Estilo = { paleta: 'grafito', forma: 'orbe' };
 
 export type Colores = {
   nombre: string;

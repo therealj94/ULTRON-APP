@@ -1,31 +1,33 @@
 /*
- * El tema de AU-RA: cálido, redondo y amable. Solo vale dentro de `.aura` (la raíz de la app de
- * AU-RA), así que Dr Electrum, que comparte el CSS base, no se entera.
+ * El tema de AU-RA: Grafito (elegido el 25-sep). Grafito y nogal, texto claro, el dorado del anillo
+ * como único acento. Redondo y tranquilo, sin ser de niño. Solo vale dentro de `.aura` (la raíz de
+ * la app de AU-RA), así que Dr Electrum, que comparte el CSS base, no se entera.
  */
 .aura {
-  --aura-crema: #FEF9F3;
-  --aura-miel: #E2A83E;
-  --aura-miel-osc: #A8701A;
-  --aura-salvia: #8FAF93;
-  --aura-salvia-osc: #4E6E54;
-  --aura-salvia-claro: #E7F0E6;
+  --aura-fondo: #232528;
+  --aura-panel: #34363A;
+  --aura-oro: #D6B56C;
+  --aura-oro-texto: #E0C27F;
+  --aura-salvia: #8FA58A;
+  --aura-salvia-texto: #A9C3A4;
+  --aura-salvia-fondo: #2F3A30;
   --aura-barro: #D9825F;
-  --aura-tinta: #3A322C;
-  --aura-tinta-2: #6B6056;
-  --aura-borde: #EDE0CC;
+  --aura-tinta: #ECE8E2;
+  --aura-tinta-2: #B9B2A8;
+  --aura-borde: #46484D;
   font-family: 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif;
   color: var(--aura-tinta);
 }
 .aura .font-mono { font-family: 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif; }
 .aura .font-display { font-family: 'Fredoka', 'Figtree', system-ui, sans-serif; letter-spacing: 0.01em; }
 .aura ::-webkit-scrollbar-track { background: transparent; }
-.aura ::-webkit-scrollbar-thumb { background: rgba(168, 112, 26, 0.25); border-radius: 4px; }
-.aura ::-webkit-scrollbar-thumb:hover { background: rgba(168, 112, 26, 0.45); }
+.aura ::-webkit-scrollbar-thumb { background: rgba(214, 181, 108, 0.25); border-radius: 4px; }
+.aura ::-webkit-scrollbar-thumb:hover { background: rgba(214, 181, 108, 0.45); }
 .aura button:focus-visible,
-.aura input:focus-visible { outline: 3px solid var(--aura-salvia-osc); outline-offset: 2px; }
+.aura input:focus-visible { outline: 3px solid var(--aura-oro); outline-offset: 2px; }
 
-.aura-fondo { background: linear-gradient(180deg, #F6ECDF 0%, #EFE1CE 100%); }
-.aura-sombra { box-shadow: 0 6px 18px rgba(90, 60, 25, 0.12); }
+.aura-fondo { background: linear-gradient(180deg, #2C2E32 0%, #232528 100%); }
+.aura-sombra { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3); }
 
 /* La burbuja le sale de la cabeza: la sala publica dónde está (--aura-x/--aura-y) cada cuadro. */
 .aura-burbuja {
@@ -35,14 +37,15 @@
   top: max(118px, var(--aura-y, 30%));
   transform: translate(-50%, calc(-100% - 8px)) scale(0.96);
   max-width: min(340px, 78vw);
-  background: #FFFFFF;
+  background: var(--aura-panel);
   color: var(--aura-tinta);
+  border: 1px solid var(--aura-borde);
   border-radius: 18px;
   padding: 10px 15px;
   font-size: 15px;
   line-height: 1.38;
   text-align: left;
-  box-shadow: 0 10px 28px rgba(90, 60, 25, 0.16);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s ease, transform 0.2s ease;
@@ -56,7 +59,9 @@
   bottom: -6px;
   width: 14px;
   height: 14px;
-  background: #FFFFFF;
+  background: var(--aura-panel);
+  border-right: 1px solid var(--aura-borde);
+  border-bottom: 1px solid var(--aura-borde);
   border-radius: 3px;
   transform: translateX(-50%) rotate(45deg);
 }
@@ -72,13 +77,13 @@
   cursor: pointer;
   display: grid;
   place-items: center;
-  background: #FFFFFF;
+  background: var(--aura-panel);
   color: var(--aura-tinta-2);
-  box-shadow: 0 10px 24px rgba(90, 60, 25, 0.18);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
   transition: transform 0.15s ease, background 0.2s ease;
   position: relative;
 }
-.aura-mic.abierto { background: var(--aura-miel); color: #FFFFFF; box-shadow: 0 10px 24px rgba(168, 112, 26, 0.35); }
+.aura-mic.abierto { background: var(--aura-oro); color: var(--aura-fondo); box-shadow: 0 10px 24px rgba(214, 181, 108, 0.3); }
 .aura-mic:active { transform: scale(0.95); }
 .aura-mic.escuchando::before {
   content: '';
@@ -93,17 +98,17 @@
   to { transform: scale(1.25); opacity: 0; }
 }
 
-.aura-segmento { display: inline-flex; background: var(--aura-salvia-claro); border-radius: 999px; padding: 3px; }
+.aura-segmento { display: inline-flex; background: var(--aura-panel); border: 1px solid var(--aura-borde); border-radius: 999px; padding: 3px; }
 .aura-segmento button {
   border: none;
   background: transparent;
-  color: var(--aura-salvia-osc);
+  color: var(--aura-tinta-2);
   border-radius: 999px;
   padding: 8px 14px;
   font: 600 13px 'Figtree', system-ui, sans-serif;
   cursor: pointer;
 }
-.aura-segmento button[aria-pressed='true'] { background: #FFFFFF; color: var(--aura-tinta); box-shadow: 0 1px 4px rgba(60, 40, 20, 0.12); }
+.aura-segmento button[aria-pressed='true'] { background: var(--aura-oro); color: var(--aura-fondo); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
 
 @media (prefers-reduced-motion: reduce) {
   .aura-mic.escuchando::before { animation: none; opacity: 0.8; }

@@ -480,7 +480,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
   const libretaTex = lienzo(256, 320, (g) => {
     g.fillStyle = '#FFFBF1';
     g.fillRect(0, 0, 256, 320);
-    g.fillStyle = '#E2A83E';
+    g.fillStyle = C.anillo;
     g.fillRect(0, 0, 256, 26);
     g.strokeStyle = '#EADFCB';
     g.lineWidth = 2;
@@ -502,7 +502,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
       g.stroke();
     }
   });
-  const libreta = hoja(0.24, 0.3, libretaTex.t, '#E2A83E');
+  const libreta = hoja(0.24, 0.3, libretaTex.t, C.anillo);
   libreta.position.set(-0.08, 0.36 * fy, R + 0.08);
   libreta.rotation.x = -0.55;
   const lapiz = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 10), std('#E28E6A', 0.6));
@@ -1108,8 +1108,10 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     brazoD.rotation.set(P.bDx, 0, P.bDz);
 
     const mx = st.mirarX * 0.02 + st.leer * 0.03;
-    ojoI.scale.set(P.ojoS, P.ojoS * P.ojoY * cierre * P.guino, P.ojoS);
-    ojoD.scale.set(P.ojoS, P.ojoS * P.ojoY * cierre, P.ojoS);
+    // Los ojos de luz son altos: medio cerrados todavía parecen abiertos, así que cierran más.
+    const cierraLuz = F.ojosLuz ? Math.min(1, P.ojoY * cierre * 1.25) : 1;
+    ojoI.scale.set(P.ojoS, P.ojoS * P.ojoY * cierre * P.guino * cierraLuz, P.ojoS);
+    ojoD.scale.set(P.ojoS, P.ojoS * P.ojoY * cierre * cierraLuz, P.ojoS);
     ojoI.position.copy(enSuperficie(-F.ojoSep + mx, OJO_Y + P.ojoMY + st.mirarY * 0.015, ojoFuera));
     ojoD.position.copy(enSuperficie(F.ojoSep + mx, OJO_Y + P.ojoMY + st.mirarY * 0.015, ojoFuera));
     if (F.mejillas) for (const m of mejillas) (m.material as THREE.MeshBasicMaterial).opacity = P.mej;

@@ -106,5 +106,10 @@ José pidió algo más neutral: el frijol con rubor, bufanda y mostaza se siente
 ahora acepta un estilo (`src/11-sala/estilos.ts`): tres formas (Frijol, Serena, Orbe) y cuatro
 paletas (Miel, Piedra, Arena, Grafito). Sin elegir, sale el aspecto de siempre (Miel · Frijol).
 Las opciones renderizadas con el motor real están en `aura-concepto/v3/opciones-forma-color.png`.
-Para verlas en vivo: `sala.html?paleta=piedra&forma=serena`. Pendiente: que José elija y se fije
-como estilo de la web y del teléfono, con los colores de los botones y pantallas a juego.
+Para verlas en vivo: `sala.html?paleta=piedra&forma=serena`.
+
+**Elegido: Grafito · Orbe** (25-sep). Es el estilo por omisión de la sala (`ESTILO_BASE`), y la web
+(`tema.css` y las pantallas de `src/07-pantallas`), el teléfono (`mobile/src/tema.ts`), el logo para
+fondo oscuro (`public/marca/logo-aura-oscuro.png`, `mobile/assets/marca/logo-aura.png`) y los
+íconos (`mobile/scripts/marca-aura.py`) van a juego: grafito y nogal, texto claro y el dorado del
+anillo como único acento. El logo claro original se conserva en `public/marca/logo-aura.png`.

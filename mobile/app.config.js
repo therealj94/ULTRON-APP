@@ -29,9 +29,11 @@ const ELECTRUM = {
   arranque: './assets/electrum/splash-icon.png',
 };
 
-// AU-RA es clara y cálida (crema, miel y salvia): el sistema, el ícono adaptable y el arranque
-// tienen que ir con ella, o el teléfono enseña un fondo negro antes de abrirse a una sala crema.
-const AURA_CREMA = '#FEF9F3';
+// AU-RA es Grafito (elegida el 25-sep): el sistema, el ícono adaptable y el arranque van en el
+// mismo gris oscuro que la sala, o el teléfono enseña otro color antes de abrirse.
+const AURA_FONDO = '#232528';
+// El fondo del ícono, el mismo gris con el que se dibujó assets/icon.png (scripts/marca-aura.py).
+const AURA_ICONO = '#2C2E32';
 
 /** Cambia las opciones de un plugin de la lista sin tocar el resto. */
 function conPlugin(plugins, nombre, cambiar) {
@@ -48,11 +50,11 @@ module.exports = ({ config }) => {
   if (variante !== 'electrum') {
     return {
       ...expo,
-      userInterfaceStyle: 'light',
-      plugins: conPlugin(expo.plugins, 'expo-splash-screen', (o) => ({ ...o, backgroundColor: AURA_CREMA })),
+      userInterfaceStyle: 'dark',
+      plugins: conPlugin(expo.plugins, 'expo-splash-screen', (o) => ({ ...o, backgroundColor: AURA_FONDO })),
       android: {
         ...expo.android,
-        adaptiveIcon: { ...expo.android?.adaptiveIcon, backgroundColor: AURA_CREMA },
+        adaptiveIcon: { ...expo.android?.adaptiveIcon, backgroundColor: AURA_ICONO },
         /*
          * AU-RA no pide la ubicación, y hay que decirlo explícitamente.
          *

@@ -1185,7 +1185,7 @@ export function DeskScreen({ user, onLogout }: Props) {
   ).current;
 
   const dotColor =
-    status === 'muted' ? T.barro : status === 'reconnect' || status === 'thinking' ? T.miel : status === 'offline' ? T.tinta3 : T.salvia;
+    status === 'muted' ? T.aviso : status === 'reconnect' || status === 'thinking' ? T.principal : status === 'offline' ? T.texto3 : T.activo;
   const statusLabel =
     toolHint ? toolHint :
     status === 'listening'
@@ -1285,7 +1285,7 @@ export function DeskScreen({ user, onLogout }: Props) {
           accessibilityLabel={micMuted ? 'Activar el micrófono' : 'Silenciar el micrófono'}
           style={[styles.mic, !micMuted && styles.micAbierto, listening && !micMuted && styles.micOyendo]}
         >
-          <Text style={[styles.micIcono, !micMuted && { color: '#FFFFFF' }]}>{micMuted ? '🔇' : '🎙'}</Text>
+          <Text style={[styles.micIcono, !micMuted && { color: T.sobrePrincipal }]}>{micMuted ? '🔇' : '🎙'}</Text>
         </Pressable>
         <Pressable onPress={() => setMenuOpen(true)} accessibilityRole="button" accessibilityLabel="Escribir y ajustes" style={styles.escribir}>
           <Text style={styles.escribirTexto}>Escribir</Text>
@@ -1378,7 +1378,7 @@ export function DeskScreen({ user, onLogout }: Props) {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: T.arena },
+  root: { flex: 1, backgroundColor: T.fondo2 },
   // la cara de respaldo se dibuja sobre negro, como siempre
   rootCara: { backgroundColor: '#000' },
   hud: {
@@ -1395,21 +1395,21 @@ const styles = StyleSheet.create({
     ...SOMBRA,
   },
   hudDot: { width: 8, height: 8, borderRadius: 4 },
-  hudText: { color: T.tinta2, fontSize: 13, fontWeight: '600' },
+  hudText: { color: T.texto2, fontSize: 13, fontWeight: '600' },
   bubbleFloat: { position: 'absolute', left: 90, right: 90, alignItems: 'center' },
   bubbleArriba: { top: 14 },
   bubbleAbajo: { bottom: 88 },
   bubbleCard: { backgroundColor: T.panel, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, maxWidth: 520, ...SOMBRA },
-  bubbleText: { color: T.tinta, fontSize: 16, lineHeight: 22, textAlign: 'center' },
+  bubbleText: { color: T.texto, fontSize: 16, lineHeight: 22, textAlign: 'center' },
   partialWrap: { position: 'absolute', left: 120, right: 120, bottom: 24, alignItems: 'center' },
-  partialText: { color: T.tinta2, fontSize: 14, fontStyle: 'italic', textAlign: 'center', backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4, overflow: 'hidden' },
+  partialText: { color: T.texto2, fontSize: 14, fontStyle: 'italic', textAlign: 'center', backgroundColor: 'rgba(52,54,58,0.9)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4, overflow: 'hidden' },
   controles: { position: 'absolute', right: 56, bottom: 16, flexDirection: 'row', alignItems: 'center', gap: 10 },
   mic: { width: 56, height: 56, borderRadius: 28, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center', ...SOMBRA },
-  micAbierto: { backgroundColor: T.miel },
-  micOyendo: { borderWidth: 3, borderColor: T.salvia },
-  micIcono: { fontSize: 22, color: T.tinta2 },
+  micAbierto: { backgroundColor: T.principal },
+  micOyendo: { borderWidth: 3, borderColor: T.activo },
+  micIcono: { fontSize: 22, color: T.texto2 },
   escribir: { height: 44, borderRadius: 22, paddingHorizontal: 18, backgroundColor: T.panel, justifyContent: 'center', ...SOMBRA },
-  escribirTexto: { color: T.tinta, fontSize: 15, fontWeight: '600' },
+  escribirTexto: { color: T.texto, fontSize: 15, fontWeight: '600' },
   edgeZone: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 44, justifyContent: 'center', alignItems: 'flex-end' },
-  edgeHint: { width: 5, height: 84, borderTopLeftRadius: 4, borderBottomLeftRadius: 4, backgroundColor: 'rgba(168,112,26,0.35)' },
+  edgeHint: { width: 5, height: 84, borderTopLeftRadius: 4, borderBottomLeftRadius: 4, backgroundColor: 'rgba(214,181,108,0.35)' },
 });

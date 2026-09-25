@@ -36,7 +36,7 @@ const ESPERA_LISTO_MS = 12_000;
 /** La boca no necesita más de ~15 cuadros por segundo, y cada envío cruza el puente. */
 const BOCA_CADA_MS = 66;
 
-const FONDO = '#F3E7D8';
+const FONDO = '#232528';
 
 export function SalaAura({ face, emocion, postura, pedido, speechLevelSource, mirada, onTocar, onDeslizar, onFallo }: Props) {
   const web = useRef<WebView>(null);

@@ -1,26 +1,31 @@
 /**
- * La paleta de AU-RA en el teléfono: la misma de la web (src/11-sala/tema.css), cálida y clara.
- * Crema de fondo, miel para lo principal, salvia para lo que está activo y terracota para avisar.
+ * La paleta de AU-RA en el teléfono: Grafito (elegida el 25-sep), la misma de la web
+ * (src/11-sala/tema.css) y de la sala. Grafito y nogal, texto claro y el dorado del anillo como
+ * único acento; salvia apagada para lo que está activo y terracota para avisar.
  * Solo la usan las pantallas de AU-RA; Dr Electrum sigue con la suya.
  */
 export const T = {
-  crema: '#FEF9F3',
-  arena: '#F3E7D8',
-  panel: '#FFFFFF',
-  borde: '#EDE0CC',
-  miel: '#E2A83E',
-  mielOsc: '#A8701A',
-  mielClaro: '#FBF0DB',
-  salvia: '#8FAF93',
-  salviaOsc: '#4E6E54',
-  salviaClaro: '#E7F0E6',
-  barro: '#D9825F',
-  barroOsc: '#B45E3C',
-  tinta: '#3A322C',
-  tinta2: '#6B6056',
-  tinta3: '#8B7E72',
-  sombra: 'rgba(90,60,25,0.16)',
+  fondo: '#232528',
+  fondo2: '#2C2E32',
+  panel: '#34363A',
+  panel2: '#3A3C41',
+  borde: '#46484D',
+  principal: '#D6B56C',
+  /** Texto dorado sobre fondo oscuro (más claro que el botón, para que se lea). */
+  principalTexto: '#E0C27F',
+  principalFondo: '#3D3829',
+  /** Lo que va escrito encima de un botón dorado. */
+  sobrePrincipal: '#232528',
+  activo: '#8FA58A',
+  activoTexto: '#A9C3A4',
+  activoFondo: '#2F3A30',
+  aviso: '#D9825F',
+  avisoTexto: '#E39A7A',
+  avisoFondo: '#3F2E28',
+  texto: '#ECE8E2',
+  texto2: '#B9B2A8',
+  texto3: '#8A847C',
 } as const;
 
-/** Sombra suave para tarjetas y botones flotantes (Android usa elevation). */
-export const SOMBRA = { shadowColor: '#5A3C19', shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 5 } as const;
+/** Sombra para tarjetas y botones flotantes (Android usa elevation). */
+export const SOMBRA = { shadowColor: '#000000', shadowOpacity: 0.35, shadowRadius: 12, shadowOffset: { width: 0, height: 6 }, elevation: 6 } as const;

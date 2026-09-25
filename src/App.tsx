@@ -584,11 +584,11 @@ export default function App() {
   );
 
   return (
-    <div id="ultron-app-root" className="aura relative w-screen h-screen overflow-hidden bg-[#FEF9F3] flex items-center justify-center select-none">
+    <div id="ultron-app-root" className="aura relative w-screen h-screen overflow-hidden bg-[#232528] flex items-center justify-center select-none">
       <div
         id="ultron-stand-container"
         className={`relative overflow-hidden transition-all duration-300 flex items-center justify-center ${
-          isKioskFrame ? 'w-full max-w-[96vw] max-h-[88vh] aspect-[16/10] rounded-[32px] border-[10px] border-[#E9DCC8] shadow-[0_24px_60px_rgba(90,60,25,0.25)]' : 'w-full h-full'
+          isKioskFrame ? 'w-full max-w-[96vw] max-h-[88vh] aspect-[16/10] rounded-[32px] border-[10px] border-[#46484D] shadow-[0_24px_60px_rgba(0,0,0,0.60)]' : 'w-full h-full'
         }`}
       >
         {conSala ? (
@@ -669,11 +669,11 @@ export default function App() {
         {/* Barra de arriba: su nombre, cómo está, y lo tuyo */}
         <div className="absolute top-3 left-3 right-3 sm:top-4 sm:left-5 sm:right-5 z-20 flex items-start justify-between gap-2 pointer-events-none">
           <div className="flex items-center gap-2 pointer-events-auto min-w-0">
-            <div className="h-11 px-2 rounded-full bg-[#FEF9F3] aura-sombra flex items-center">
-              <img src="/marca/logo-aura.png" alt="AU-RA by Orden Global" className="h-9 w-auto" draggable={false} />
+            <div className="h-11 px-2 rounded-full bg-[#232528] aura-sombra flex items-center">
+              <img src="/marca/logo-aura-oscuro.png" alt="AU-RA by Orden Global" className="h-9 w-auto" draggable={false} />
             </div>
-            <div className="h-9 px-3 rounded-full bg-white/90 aura-sombra hidden sm:flex items-center gap-2 text-[13px] font-medium text-[#6B6056]" title={estadoArranque}>
-              <span className={`w-2 h-2 rounded-full ${cerebroListo === 'listo' ? 'bg-[#8FAF93]' : cerebroListo === 'calentando' ? 'bg-[#E2A83E] animate-pulse' : 'bg-[#D9825F]'}`} />
+            <div className="h-9 px-3 rounded-full bg-[#34363A]/90 aura-sombra hidden sm:flex items-center gap-2 text-[13px] font-medium text-[#B9B2A8]" title={estadoArranque}>
+              <span className={`w-2 h-2 rounded-full ${cerebroListo === 'listo' ? 'bg-[#8FA58A]' : cerebroListo === 'calentando' ? 'bg-[#D6B56C] animate-pulse' : 'bg-[#D9825F]'}`} />
               {estadoCerebro}
             </div>
           </div>
@@ -683,7 +683,7 @@ export default function App() {
               onClick={() => setAccesoOpen(true)}
               title={usuario.authenticated ? `Sesión: ${usuario.name}` : 'Entrar a la junta'}
               className={`h-10 px-3.5 rounded-full aura-sombra flex items-center gap-2 text-[13px] font-semibold transition-colors cursor-pointer ${
-                usuario.authenticated ? 'bg-[#E7F0E6] text-[#4E6E54]' : 'bg-white text-[#3A322C] hover:bg-[#FBEBC9]'
+                usuario.authenticated ? 'bg-[#2F3A30] text-[#A9C3A4]' : 'bg-[#34363A] text-[#ECE8E2] hover:bg-[#3D3829]'
               }`}
             >
               {usuario.authenticated ? <ShieldCheck className="w-4 h-4" /> : <Fingerprint className="w-4 h-4" />}
@@ -698,14 +698,14 @@ export default function App() {
               title={visionEnabled ? 'Te está mirando por la cámara' : 'Que te vea por la cámara'}
               aria-label="Cámara"
               aria-pressed={visionEnabled}
-              className={`w-10 h-10 rounded-full aura-sombra flex items-center justify-center transition-colors cursor-pointer ${visionEnabled ? 'bg-[#E2A83E] text-white' : 'bg-white text-[#6B6056] hover:bg-[#FBEBC9]'}`}
+              className={`w-10 h-10 rounded-full aura-sombra flex items-center justify-center transition-colors cursor-pointer ${visionEnabled ? 'bg-[#D6B56C] text-[#232528]' : 'bg-[#34363A] text-[#B9B2A8] hover:bg-[#3D3829]'}`}
             >
               <Camera className="w-4 h-4" />
             </button>
-            <button type="button" onClick={() => setSettingsOpen((v) => !v)} title="Ajustes y qué puede hacer" aria-label="Ajustes" className="w-10 h-10 rounded-full bg-white text-[#6B6056] hover:bg-[#FBEBC9] aura-sombra flex items-center justify-center cursor-pointer">
+            <button type="button" onClick={() => setSettingsOpen((v) => !v)} title="Ajustes y qué puede hacer" aria-label="Ajustes" className="w-10 h-10 rounded-full bg-[#34363A] text-[#B9B2A8] hover:bg-[#3D3829] aura-sombra flex items-center justify-center cursor-pointer">
               <Settings2 className="w-4 h-4" />
             </button>
-            <button type="button" onClick={toggleFullscreen} title="Pantalla completa" aria-label="Pantalla completa" className="w-10 h-10 rounded-full bg-white text-[#6B6056] hover:bg-[#FBEBC9] aura-sombra hidden sm:flex items-center justify-center cursor-pointer">
+            <button type="button" onClick={toggleFullscreen} title="Pantalla completa" aria-label="Pantalla completa" className="w-10 h-10 rounded-full bg-[#34363A] text-[#B9B2A8] hover:bg-[#3D3829] aura-sombra hidden sm:flex items-center justify-center cursor-pointer">
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
           </div>
@@ -714,7 +714,7 @@ export default function App() {
         {/* Abajo: cómo te contesta, el micrófono y escribir */}
         <div className={`absolute bottom-4 left-3 right-3 sm:left-5 sm:right-5 z-20 flex items-end justify-between gap-2 pointer-events-none transition-opacity ${dockOpen || settingsOpen ? 'opacity-0' : 'opacity-100'}`}>
           <div className="pointer-events-auto flex flex-col gap-1">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#6B6056] pl-2 hidden sm:block">Te contesta</span>
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#B9B2A8] pl-2 hidden sm:block">Te contesta</span>
             <div className="aura-segmento aura-sombra" role="group" aria-label="Cómo te contesta">
               <button type="button" aria-pressed={postura === 'pie'} onClick={() => setPostura('pie')}>De pie</button>
               <button type="button" aria-pressed={postura === 'sentada'} onClick={() => setPostura('sentada')}>Sentada</button>
@@ -735,7 +735,7 @@ export default function App() {
             >
               {micEnabled ? <Mic className="w-7 h-7" /> : <MicOff className="w-7 h-7" />}
             </button>
-            <span className="hidden sm:block text-[12px] font-medium text-[#6B6056] bg-[#FEF9F3]/85 px-2 py-0.5 rounded-full">
+            <span className="hidden sm:block text-[12px] font-medium text-[#B9B2A8] bg-[#232528]/85 px-2 py-0.5 rounded-full">
               {!micEnabled ? 'Micrófono apagado' : escuchando ? 'Te escucho…' : 'Háblale'}
             </span>
           </div>
@@ -743,9 +743,10 @@ export default function App() {
           <button
             type="button"
             onClick={() => setDockOpen(true)}
-            className="pointer-events-auto h-12 px-4 rounded-full bg-white text-[#3A322C] hover:bg-[#FBEBC9] aura-sombra flex items-center gap-2 text-[14px] font-semibold cursor-pointer"
+            aria-label="Escribir"
+            className="pointer-events-auto h-12 px-4 rounded-full bg-[#34363A] text-[#ECE8E2] hover:bg-[#3D3829] aura-sombra flex items-center gap-2 text-[14px] font-semibold cursor-pointer"
           >
-            <Keyboard className="w-4 h-4 text-[#A8701A]" />
+            <Keyboard className="w-4 h-4 text-[#E0C27F]" />
             <span className="hidden sm:inline">Escribir</span>
           </button>
         </div>
@@ -756,7 +757,7 @@ export default function App() {
           <button
             type="button"
             aria-label="Cerrar"
-            className="absolute inset-0 z-[25] bg-[#3A322C]/15 cursor-default"
+            className="absolute inset-0 z-[25] bg-[#ECE8E2]/15 cursor-default"
             onClick={() => {
               setDockOpen(false);
               setSettingsOpen(false);

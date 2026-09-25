@@ -49,8 +49,8 @@ export const DockDrawer: React.FC<Props> = (p) => {
         on
           ? warm
             ? 'bg-[#D9825F] text-white shadow-[0_6px_16px_rgba(217,130,95,0.35)]'
-            : 'bg-[#E2A83E] text-white shadow-[0_6px_16px_rgba(168,112,26,0.3)]'
-          : 'bg-[#F6EFE4] text-[#6B6056] hover:bg-[#FBEBC9]'
+            : 'bg-[#D6B56C] text-[#232528] shadow-[0_6px_16px_rgba(214,181,108,0.3)]'
+          : 'bg-[#3A3C41] text-[#B9B2A8] hover:bg-[#3D3829]'
       }`}
     >
       {children}
@@ -63,8 +63,8 @@ export const DockDrawer: React.FC<Props> = (p) => {
         p.isOpen ? 'translate-y-0' : 'translate-y-[115%] pointer-events-none'
       }`}
     >
-      <div className="max-w-2xl mx-auto flex flex-col gap-3 bg-[#FEF9F3] rounded-[28px] p-4 shadow-[0_-8px_40px_rgba(90,60,25,0.18)]">
-        <div className="mx-auto w-10 h-1.5 rounded-full bg-[#E3D5C0]" aria-hidden="true" />
+      <div className="max-w-2xl mx-auto flex flex-col gap-3 bg-[#232528] rounded-[28px] p-4 shadow-[0_-8px_40px_rgba(0,0,0,0.43)]">
+        <div className="mx-auto w-10 h-1.5 rounded-full bg-[#4A4C51]" aria-hidden="true" />
         <div className="flex items-center justify-center gap-3">
           <Btn on={p.micEnabled} title={p.micEnabled ? 'Micrófono activo' : 'Micrófono apagado'} onClick={p.onToggleMic}>{p.micEnabled ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}</Btn>
           <Btn on={p.speakerEnabled} title={p.speakerEnabled ? 'Voz activa' : 'Voz silenciada'} onClick={p.onToggleSpeaker}>{p.speakerEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5" />}</Btn>
@@ -75,13 +75,13 @@ export const DockDrawer: React.FC<Props> = (p) => {
         </div>
         <div className="flex items-center justify-center gap-2 flex-wrap">
           {CHIPS.map((c) => (
-            <button key={c.label} type="button" onClick={() => { playSfx('tap', p.soundFxEnabled); p.onSubmitCommand(c.cmd); }} className="text-[13px] font-medium px-3.5 py-2 rounded-full border border-[#EDE0CC] bg-white text-[#3A322C] hover:border-[#E2A83E] transition-colors flex items-center gap-1.5 cursor-pointer">
-              <Sparkles className="w-3.5 h-3.5 text-[#A8701A]" />
+            <button key={c.label} type="button" onClick={() => { playSfx('tap', p.soundFxEnabled); p.onSubmitCommand(c.cmd); }} className="text-[13px] font-medium px-3.5 py-2 rounded-full border border-[#46484D] bg-[#34363A] text-[#ECE8E2] hover:border-[#D6B56C] transition-colors flex items-center gap-1.5 cursor-pointer">
+              <Sparkles className="w-3.5 h-3.5 text-[#E0C27F]" />
               <span>{c.label}</span>
             </button>
           ))}
-          <button type="button" onClick={() => { playSfx('tap', p.soundFxEnabled); p.onSubmitCommand('canta quiero conocer a Jesús'); }} className="text-[13px] font-medium px-3.5 py-2 rounded-full border border-[#EDE0CC] bg-white text-[#3A322C] hover:border-[#E2A83E] transition-colors flex items-center gap-1.5 cursor-pointer">
-            <Music2 className="w-3.5 h-3.5 text-[#A8701A]" />
+          <button type="button" onClick={() => { playSfx('tap', p.soundFxEnabled); p.onSubmitCommand('canta quiero conocer a Jesús'); }} className="text-[13px] font-medium px-3.5 py-2 rounded-full border border-[#46484D] bg-[#34363A] text-[#ECE8E2] hover:border-[#D6B56C] transition-colors flex items-center gap-1.5 cursor-pointer">
+            <Music2 className="w-3.5 h-3.5 text-[#E0C27F]" />
             <span>Canta</span>
           </button>
         </div>
@@ -94,9 +94,9 @@ export const DockDrawer: React.FC<Props> = (p) => {
             placeholder="Escríbele: precio del oro, abre bch.hn, recuerda que…, canta…"
             autoComplete="off"
             aria-label="Escribirle a Aura"
-            className="flex-1 min-w-0 bg-white border border-[#EDE0CC] text-[#3A322C] placeholder-[#8B7E72] text-[15px] px-4 py-3 rounded-full focus:outline-none focus:border-[#E2A83E] transition-all"
+            className="flex-1 min-w-0 bg-[#34363A] border border-[#46484D] text-[#ECE8E2] placeholder-[#8A847C] text-[15px] px-4 py-3 rounded-full focus:outline-none focus:border-[#D6B56C] transition-all"
           />
-          <button type="submit" className="bg-[#E2A83E] text-white font-semibold text-[14px] px-5 py-3 rounded-full hover:bg-[#D69A2E] active:scale-95 shadow-[0_6px_16px_rgba(168,112,26,0.3)] flex items-center gap-1.5 cursor-pointer">
+          <button type="submit" className="bg-[#D6B56C] text-[#232528] font-semibold text-[14px] px-5 py-3 rounded-full hover:bg-[#C9A55A] active:scale-95 shadow-[0_6px_16px_rgba(214,181,108,0.3)] flex items-center gap-1.5 cursor-pointer">
             <Send className="w-4 h-4" />
             <span>Enviar</span>
           </button>
