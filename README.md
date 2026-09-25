@@ -2,7 +2,7 @@
 
 Asistente con cuerpo digital para la junta directiva de **Orden Global**. Una cara viva, una voz humana y un cerebro propio. No es un chatbot: piensa, siente, reacciona y trabaja.
 
-- **Web (mesa):** React + Vite + canvas 2D, servida por el mismo servidor Express. Producción en Render (`ultron-looi-desk`).
+- **Web (mesa):** React + Vite + canvas 2D, servida por el mismo servidor Express. Producción en Render: un servicio por producto — AU-RA FP en `aura-fp` (`PLATAFORMA=ultron`) y Dr Electrum FP en `ultron-looi-desk` (sin `PLATAFORMA`).
 - **APK (Expo / React Native):** `mobile/`. Se compila sola en GitHub Actions.
 - **Servidor:** `server.ts` + `server/` + `lib/`. Cerebro Qwen 3.8 27B en nodo AWS propio, ojo Playwright/visión en otro nodo, voz ElevenLabs v3, memoria en S3, Telegram de ida y vuelta.
 
