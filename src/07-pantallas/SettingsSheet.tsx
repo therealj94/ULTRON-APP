@@ -4,6 +4,7 @@ import { X, Volume2, Sparkles, Shield, ShieldCheck, Fingerprint, Camera, Wand2, 
 import type { Mode, FaceState } from '../types';
 import { playSfx } from '../03-voz/audio';
 import { Capacidades } from './Capacidades';
+import { Control } from './Control';
 
 interface Props {
   isOpen: boolean;
@@ -46,14 +47,15 @@ const NOMBRE_CARA: Partial<Record<FaceState, string>> = {
   SING: 'Cantando', SLEEPING: 'Dormida', SPEAKING: 'Hablando', LISTENING: 'Escuchando',
 };
 
-type Tab = 'capacidades' | 'personalidad' | 'sistema';
+type Tab = 'capacidades' | 'personalidad' | 'sistema' | 'control';
 
 export const SettingsSheet: React.FC<Props> = (p) => {
   const [tab, setTab] = useState<Tab>('capacidades');
   const Tabs: Array<{ id: Tab; label: string; icon: React.ReactNode }> = [
-    { id: 'capacidades', label: 'Qué puede hacer', icon: <BookOpen className="w-3.5 h-3.5" /> },
+    { id: 'capacidades', label: 'Qué hace', icon: <BookOpen className="w-3.5 h-3.5" /> },
     { id: 'personalidad', label: 'Personalidad', icon: <Smile className="w-3.5 h-3.5" /> },
     { id: 'sistema', label: 'Sistema', icon: <Shield className="w-3.5 h-3.5" /> },
+    { id: 'control', label: 'Control', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
   ];
   return (
     <div
@@ -86,6 +88,8 @@ export const SettingsSheet: React.FC<Props> = (p) => {
             </button>
           ))}
         </div>
+
+        {tab === 'control' && p.isOpen && <Control />}
 
         {tab === 'capacidades' && <Capacidades onEjemplo={(c) => { p.onClose(); p.onEjemplo(c); }} onProbarVoz={p.onProbarVoz} />}
 

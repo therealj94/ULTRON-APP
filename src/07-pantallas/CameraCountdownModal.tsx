@@ -214,7 +214,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
   return (
     <div
       id="camera-countdown-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-[#ECE8E2]/40 backdrop-blur-md p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-md p-4 animate-in fade-in duration-200"
     >
       {/* Blinding Flash Overlay */}
       {isFlashing && (

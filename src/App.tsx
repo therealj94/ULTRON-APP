@@ -10,7 +10,7 @@ import { hablar, cantar, callar, setVozActiva, type Dicho } from './03-voz/habla
 import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
 import { clipDeEmocion, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
-import { pedirTurnoStream } from './04-cerebro/turno';
+import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame } from './04-cerebro/grabFrame';
 import { guardarHecho, olvidarTodo } from './09-estado/memoria';
@@ -96,6 +96,13 @@ export default function App() {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
   const [bubble, setBubble] = useState({ texto: '', visible: false });
+  /** «¿Te sirvió?» sobre la última respuesta del cerebro: su traza y en qué quedó la pregunta. */
+  const [opinion, setOpinion] = useState<{ id: string; estado: 'preguntar' | 'gracias' } | null>(null);
+  useEffect(() => {
+    if (!opinion) return;
+    const t = setTimeout(() => setOpinion(null), opinion.estado === 'gracias' ? 2500 : 25000);
+    return () => clearTimeout(t);
+  }, [opinion]);
   const bubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -423,6 +430,7 @@ export default function App() {
         }
         if (data.emocion) emo = data.emocion;
         soltar(true);
+        if (data.trazaId) setOpinion({ id: data.trazaId, estado: 'preguntar' });
         historialRef.current = [...historialRef.current, { rol: 'user', texto: cmd }, { rol: 'ultron', texto }].slice(-12);
         if (pendienteGenesis.current && /orden global|junta|mina|prospera|aucorp|token|concesi/i.test(cmd)) {
           colaRef.current.push({ texto: '¿Lo actualizo en el cerebro Genesis Core?', emocion: 'curioso' });
@@ -722,6 +730,31 @@ export default function App() {
           </div>
 
           <div className="pointer-events-auto flex flex-col items-center gap-1.5 absolute left-1/2 -translate-x-1/2 bottom-0">
+            {opinion && (
+              <div className="pointer-events-auto flex items-center gap-1 bg-[#34363A] aura-sombra rounded-full px-2 py-1 text-[12px] text-[#B9B2A8]" role="group" aria-label="¿Te sirvió la respuesta?">
+                {opinion.estado === 'gracias' ? (
+                  <span className="px-1">Gracias, lo anoto.</span>
+                ) : (
+                  <>
+                    <span className="px-1">¿Te sirvió?</span>
+                    {([1, -1] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        aria-label={v === 1 ? 'Sí me sirvió' : 'No me sirvió'}
+                        onClick={() => {
+                          void opinarTurno(opinion.id, v);
+                          setOpinion({ id: opinion.id, estado: 'gracias' });
+                        }}
+                        className="w-7 h-7 rounded-full hover:bg-[#3D3829] cursor-pointer"
+                      >
+                        {v === 1 ? '👍' : '👎'}
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
             <button
               type="button"
               onClick={() => {
@@ -757,7 +790,7 @@ export default function App() {
           <button
             type="button"
             aria-label="Cerrar"
-            className="absolute inset-0 z-[25] bg-[#ECE8E2]/15 cursor-default"
+            className="absolute inset-0 z-[25] bg-black/40 cursor-default"
             onClick={() => {
               setDockOpen(false);
               setSettingsOpen(false);

@@ -8,6 +8,7 @@
  * sobre el elipsoide, encontró el traslape» vale más que la respuesta sola, y es lo que separa esto
  * de un chatbot que suena convincente.
  */
+import { enTurno, iniciarTraza, trazaActual } from '../../lib/cognitivo/traza';
 import { correrAgente, type Mensaje } from '../../lib/agente/bucle';
 import type { MsgHilo } from './hilo';
 import type { Contexto } from '../../lib/agente/tipos';
@@ -30,6 +31,8 @@ export type RespuestaTurno = {
   /** Órdenes para el mapa y los paneles. */
   ui: Array<Record<string, unknown>>;
   fin: string;
+  /** Para dejar la opinión («sirvió / no sirvió») sobre esta respuesta y para auditarla. */
+  trazaId?: string;
 };
 
 /**
@@ -76,6 +79,8 @@ async function pensarConQwen(mensajes: Mensaje[], herramientas: unknown[], msRes
   });
   const j: any = await r.json().catch(() => ({}));
   const mensaje = j?.message || {};
+  trazaActual()?.tokens(j?.prompt_eval_count, j?.eval_count);
+  trazaActual()?.modelo(NODO_MODELO);
   return { texto: String(mensaje.content || ''), mensaje };
 }
 
@@ -119,11 +124,23 @@ export type OpcionesTurno = {
   abandonado?: () => boolean;
 };
 
-export async function turnoElectrum(
-  mensaje: string,
-  ctx: Contexto,
-  opciones: OpcionesTurno = {}
-): Promise<RespuestaTurno> {
+export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: OpcionesTurno = {}): Promise<RespuestaTurno> {
+  // Cada turno deja su traza; todo lo que pasa adentro (herramientas, reglas, tokens) anota ahí.
+  const reg = iniciarTraza({ plataforma: 'electrum', canal: ctx.canal, quien: ctx.quien, nivel: ctx.nivel, pregunta: mensaje });
+  return enTurno(reg, async () => {
+    try {
+      const r = await turnoElectrumInterno(mensaje, ctx, opciones);
+      if (r.panel) reg.agente(r.panel);
+      reg.cerrar({ respuesta: r.texto, emocion: r.emocion, via: r.fin });
+      return { ...r, trazaId: reg.id };
+    } catch (e) {
+      reg.cerrar({ error: e });
+      throw e;
+    }
+  });
+}
+
+async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: OpcionesTurno): Promise<RespuestaTurno> {
   const { historial = [], enVivo, abandonado } = opciones;
   const panel = convocar(mensaje);
   const herramientas = panel.length ? manosDe(herramientasDe(panel)) : TODAS;

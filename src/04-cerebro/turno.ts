@@ -16,6 +16,8 @@ export type Turno = {
   herramientas?: string[];
   foto?: string | null;
   honesto?: boolean;
+  /** La traza de este turno en el servidor: para decir «me sirvió / no me sirvió». */
+  trazaId?: string;
 };
 
 export type PeticionTurno = {
@@ -103,7 +105,7 @@ export async function pedirTurnoStream(opts: PeticionTurno, ev: EventosTurno = {
       texto = String(data?.text || '');
       ev.onReplace?.(texto);
     } else if (evento === 'done') {
-      done = { reply: String(data?.reply ?? texto), emocion: data?.emocion || emocion, ms: data?.ms, via: data?.via, honesto: true };
+      done = { reply: String(data?.reply ?? texto), emocion: data?.emocion || emocion, ms: data?.ms, via: data?.via, trazaId: data?.trazaId, honesto: true };
     } else if (evento === 'error') {
       error = String(data?.error || data?.message || 'error');
     }
@@ -132,4 +134,18 @@ export async function pedirTurnoStream(opts: PeticionTurno, ev: EventosTurno = {
   if (done) return done;
   if (texto) return { reply: texto, emocion, honesto: true };
   return { reply: '', emocion, error: error || 'sin respuesta', honesto: true };
+}
+
+/** «Me sirvió» (1) o «no me sirvió» (-1) sobre una respuesta. Si falla, no pasa nada: es opcional. */
+export async function opinarTurno(trazaId: string, valor: 1 | -1): Promise<boolean> {
+  try {
+    const r = await fetch(`/api/cognitivo/trazas/${encodeURIComponent(trazaId)}/opinion`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headersMesa() },
+      body: JSON.stringify({ valor }),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
 }

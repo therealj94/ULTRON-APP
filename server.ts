@@ -7,7 +7,7 @@ import { fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NOD
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, vozDe } from './server/voz';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica } from './server/seguridad';
-import { leerPdf, telegramFoto, telegramVoz } from './lib/canales';
+import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, hechosCatalogo } from './lib/taller';
 import { listarTareas } from './lib/tareas';
@@ -22,6 +22,10 @@ import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio } from './lib/oido';
 import { esTareaDeCodigo } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
+import { enTurno, iniciarTraza, trazaActual } from './lib/cognitivo/traza';
+import { montarRutasCognitivas } from './server/cognitivo';
+import { autorizar, textoDeDecision } from './lib/cognitivo/politica';
+import { alAvisar, comandoDeAprobacion, resumenParaAviso } from './lib/cognitivo/aprobaciones';
 import { hechoCerebro } from './lib/cerebro';
 import { herramientaActiva, perfilActivo } from './lib/perfiles';
 import { resolverCalculoMina } from './lib/minas/calculos';
@@ -43,13 +47,14 @@ import { aprender as aprenderElectrum } from './server/electrum/aprender';
 import {
   electrumBotListo,
   electrumWebhookSecretOk,
+  responderElectrum,
   genteDeElectrum,
   procesarElectrumTelegram,
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
 import { identidadDe, exigirPlataforma } from './server/seguridad';
 import { puedeEscribir } from './lib/acceso';
-import { nivelDe } from './lib/acceso';
+import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
 import { catastroGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
@@ -164,6 +169,26 @@ async function medirSalud(force = false): Promise<Salud> {
   return saludCache;
 }
 
+// Trazas, auditoría, reglas y aprobaciones (server/cognitivo.ts). Cada despliegue ve solo lo suyo.
+montarRutasCognitivas(app);
+
+/*
+ * Quién se entera de una solicitud nueva. AU-RA: el grupo de la junta (TELEGRAM_CHAT_ID).
+ * Dr Electrum: el Telegram de cada persona con mando en Electrum, por su bot. Un aviso que no sale
+ * no frena la solicitud: sigue en la cola y se ve en el panel.
+ */
+alAvisar(async (ap, que) => {
+  if (que === 'aprobada') return; // «aprobada» va seguida de inmediato por «ejecutada» o «fallida»
+  const texto = resumenParaAviso(ap, que);
+  if (ap.plataforma === 'ultron' && ES_ULTRON) {
+    await canales.telegram({ texto });
+  } else if (ap.plataforma === 'electrum' && ES_ELECTRUM) {
+    for (const p of padron().filter((x) => x.acceso.electrum === 'mando')) {
+      for (const tg of p.telegram.slice(0, 1)) await responderElectrum(String(tg), texto);
+    }
+  }
+});
+
 app.get('/api/health', async (_req, res) => {
   const s = await medirSalud(true);
   const raw = s.raw || {};
@@ -238,6 +263,7 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
         plataforma: 'electrum',
         canal: 'mesa',
         mensaje,
+        prueba: id ? 'sesion' : null,
       },
       { historial }
     );
@@ -448,7 +474,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
     });
     const salida = await turnoElectrum(
       mensaje,
-      { quien: id?.persona.id || null, nivel: nivelDe(id, 'electrum'), plataforma: 'electrum', canal: 'mesa', mensaje },
+      { quien: id?.persona.id || null, nivel: nivelDe(id, 'electrum'), plataforma: 'electrum', canal: 'mesa', mensaje, prueba: id ? 'sesion' : null },
       {
         historial,
         abandonado: () => seFue,
@@ -460,7 +486,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
       }
     );
     if (!seFue) recordarHilo(clave, mensaje, salida.texto);
-    enviar('fin', { texto: salida.texto, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin });
+    enviar('fin', { texto: salida.texto, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin, trazaId: salida.trazaId });
   } catch (e: any) {
     console.error('[electrum] turno en vivo falló:', String(e?.message || e).slice(0, 200));
     enviar('error', { error: 'Se me cayó el turno. Volvé a preguntarme.' });
@@ -731,6 +757,8 @@ app.post('/api/render/deploy', exigirSesion, limitar(5), async (req, res) => {
   if (!puedeCambiarSistema(quien)) {
     return res.status(403).json({ error: 'ACCESO: consulta. No redespliego.', honesto: true });
   }
+  const no = await permisoDeSistema('redeploy', { quien, mando: true, prueba: 'sesion', args: { clearCache: !!req.body?.clearCache } });
+  if (no) return res.status(403).json({ error: no, honesto: true });
   if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
     return res.status(400).json({ error: 'Falta RENDER_API_KEY o RENDER_SERVICE_ID.', honesto: true });
   }
@@ -940,6 +968,42 @@ async function usdHnl() {
 }
 
 
+/** Tokens de entrada y salida que reporta Ollama en la última línea (`done: true`). */
+function tokensOllama(raw: string): { entrada: number | null; salida: number | null } {
+  let entrada: number | null = null;
+  let salida: number | null = null;
+  for (const line of String(raw || '').split('\n')) {
+    const s = line.trim();
+    if (!s || !s.includes('eval_count')) continue;
+    try {
+      const j = JSON.parse(s);
+      if (Number.isFinite(j.prompt_eval_count)) entrada = Number(j.prompt_eval_count);
+      if (Number.isFinite(j.eval_count)) salida = Number(j.eval_count);
+    } catch {
+      /* línea parcial */
+    }
+  }
+  return { entrada, salida };
+}
+
+/**
+ * Lo que cambia el sistema de AU-RA (ejecutor, redespliegue) pasa por el motor de reglas aunque ya
+ * se haya comprobado el mando: así queda en la auditoría y la regla exige identidad verificada.
+ * Devuelve null si se permite, o el texto de por qué no.
+ */
+async function permisoDeSistema(herramienta: string, o: { quien: string | null; mando: boolean; prueba: 'sesion' | 'telegram' | 'nombre' | null; args?: Record<string, unknown> }) {
+  const d = await autorizar({
+    herramienta,
+    efecto: 'sistema',
+    plataforma: 'ultron',
+    args: o.args || {},
+    quien: o.quien,
+    nivel: o.mando ? 'mando' : o.quien ? 'lee' : null,
+    prueba: o.prueba,
+  });
+  return d.veredicto === 'permitir' ? null : textoDeDecision({ herramienta }, d);
+}
+
 function juntarOllama(raw: string) {
   let acc = '';
   for (const line of raw.split('\n')) {
@@ -1100,7 +1164,13 @@ async function prepararTurno(body: any) {
   await cargarMemoria();
   const quien = resolverQuien(body, body?.sesion || null);
   // Mando solo con identidad verificada (sesión firmada o Telegram). El body no escala.
-  const mando = puedeCambiarSistema(quienVerificado(body, body?.sesion || null));
+  const verificado = quienVerificado(body, body?.sesion || null);
+  const mando = puedeCambiarSistema(verificado);
+  // Cómo se sabe quién es: sesión firmada, Telegram comprobado, o solo el nombre que escribió.
+  const prueba: 'sesion' | 'telegram' | 'nombre' | null = verificado ? (body?.sesion ? 'sesion' : 'telegram') : quien ? 'nombre' : null;
+  const personaTurno = verificado ? personaPorId(verificado) : null;
+  const nivelTurno = personaTurno ? nivelDe(personaTurno, 'ultron') : null;
+  trazaActual()?.identidad(quien || null, nivelTurno);
   const memSt = estadoMemoria();
   if (message) {
     await recordarTurno({ quien, rol: 'user', texto: message, canal });
@@ -1190,7 +1260,7 @@ async function prepararTurno(body: any) {
         tools.push('concesiones');
       }
     }
-    if (/\b(lempira|hnl|d[oó]lar a lempira|usd a hnl|tipo de cambio)\b/.test(q)) {
+    if (/\b(lempiras?|hnl|d[oó]lar(es)? a lempiras?|usd a hnl|tipo de cambio)\b/.test(q)) {
       const fx = await usdHnl();
       hechos.push(`USD/HNL = ${fx.usdHnl} (fuente ${fx.fuente}).`);
       datos.push(`El dólar está a ${fx.usdHnl.toFixed(2)} lempiras, según ${fx.fuente}.`);
@@ -1299,7 +1369,13 @@ async function prepararTurno(body: any) {
   }
 
   try {
-    const taller = await despacharTaller(message, { usuario: nombre, quien: mando ? quien : quien === 'jose' || quien === 'medardo' ? null : quien });
+    const taller = await despacharTaller(message, {
+      usuario: nombre,
+      quien: mando ? quien : quien === 'jose' || quien === 'medardo' ? null : quien,
+      nivel: nivelTurno,
+      prueba,
+      canal,
+    });
     hechos.push(...taller.hechos);
     tools.push(...taller.tools);
     decirTaller = taller.decir;
@@ -1320,7 +1396,11 @@ async function prepararTurno(body: any) {
         hechos.push('ACCESO: consulta. No corro el ejecutor. José o Medardo sí pueden.');
       } else {
         const py = extraerPython(message);
-        if (py) {
+        const no = py ? await permisoDeSistema('ejecutor', { quien, mando, prueba, args: { codigo: py } }) : null;
+        if (no) {
+          tools.push('ejecutor');
+          hechos.push(no);
+        } else if (py) {
           tools.push('ejecutor');
           const r = await ejecutarCodigo(py);
           hechos.push(
@@ -1362,7 +1442,7 @@ HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemor
   if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
 
-  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, datos, tools, foto, directo, directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null, system, quien, mando, canal, hilo };
+  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, datos, tools, foto, directo, directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null, system, quien, mando, prueba, canal, hilo };
 }
 
 
@@ -1392,6 +1472,9 @@ async function preguntarQwen(
     });
     const raw = await r.text();
     const reply = String(juntarOllama(raw) || '').trim();
+    const tk = tokensOllama(raw);
+    trazaActual()?.tokens(tk.entrada, tk.salida);
+    trazaActual()?.modelo(ULTRON_NODO_MODELO);
     if (!r.ok || !reply) return { ok: false, reply: '', error: 'Qwen no contestó' };
     return { ok: true, reply };
   } catch (err: any) {
@@ -1428,6 +1511,8 @@ async function correrHerramientaPedida(ped: ReturnType<typeof extraerPedidoHerra
       },
       ejecutor: async (codigo) => {
         if (!mando) return 'ACCESO: consulta. No ejecuto código ni cambio el sistema. José o Medardo con sesión sí pueden.';
+        const no = await permisoDeSistema('ejecutor', { quien: trazaActual()?.t.quien ?? null, mando, prueba: 'sesion', args: { codigo } });
+        if (no) return no;
         const r = await ejecutarCodigo(codigo);
         return `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
       },
@@ -1452,7 +1537,15 @@ async function bucleHarness(o: {
     const ped = extraerPedidoHerramienta(reply);
     if (!ped) break;
     o.tools.push(ped.herramienta);
+    const tH = Date.now();
     const extra = await correrHerramientaPedida(ped, reply, o.mando);
+    trazaActual()?.paso({
+      herramienta: ped.herramienta,
+      ok: !/fall[oó]|no abr[ií]|sin resultados|ACCESO: consulta|pedido vac[ií]o/i.test(extra),
+      ms: Date.now() - tH,
+      resumen: extra,
+      ronda: i + 1,
+    });
     o.hechos.push(extra);
     const qn = await preguntarQwen(o.system, o.message, o.hechos, o.hilo);
     if (!qn.ok) {
@@ -1478,7 +1571,42 @@ type SalidaTurno = {
   error?: string;
 };
 
-async function correrTurno(body: any): Promise<SalidaTurno> {
+/**
+ * Lo que AU-RA marca en `tools` no es todo herramienta: `harness` y `cot` son rasgos del prompt,
+ * y `rag`/`cerebro-*` son conocimiento consultado (va a documentos). Solo lo demás cuenta como paso.
+ */
+function anotarHerramientasAura(reg: ReturnType<typeof iniciarTraza>, tools: string[]) {
+  for (const t of new Set(tools)) {
+    if (t === 'harness' || t === 'cot') continue;
+    if (t === 'rag' || t.startsWith('cerebro-')) reg.documento({ fuente: t });
+    else reg.herramientas([t]);
+  }
+}
+
+/**
+ * Un turno de AU-RA con su traza: la abre, corre el turno dentro de ella (todo lo que pase adentro
+ * anota ahí) y la cierra con la respuesta. Lo usan /api/turno y Telegram.
+ */
+async function correrTurno(body: any): Promise<SalidaTurno & { trazaId: string }> {
+  const reg = iniciarTraza({
+    plataforma: 'ultron',
+    canal: body?.canal === 'telegram' ? 'telegram' : 'mesa',
+    pregunta: String(body?.message || body?.text || ''),
+  });
+  return enTurno(reg, async () => {
+    try {
+      const out = await correrTurnoInterno(body);
+      anotarHerramientasAura(reg, out.herramientas);
+      reg.cerrar({ respuesta: out.reply, emocion: out.emocion, via: out.via, error: out.error });
+      return { ...out, trazaId: reg.id };
+    } catch (e) {
+      reg.cerrar({ error: e });
+      throw e;
+    }
+  });
+}
+
+async function correrTurnoInterno(body: any): Promise<SalidaTurno> {
   const p = await prepararTurno(body);
   const base = { mode: p.mode, foto: null as string | null, honesto: true as const };
   if (!p.message) return { ...base, reply: '', emocion: 'neutral', via: 'none', ms: Date.now() - p.t0, herramientas: [], error: 'message vacío' };
@@ -1507,7 +1635,12 @@ async function correrTurno(body: any): Promise<SalidaTurno> {
 
   // Código que escribió el modelo solo se ejecuta si lo pidió alguien con mando y lo pidió explícitamente.
   const py = extraerPython(reply);
-  if (py && mando && ejecutorActivo() && !tools.includes('ejecutor') && /\b(ejecuta|corre el c[oó]digo|run this)\b/i.test(message) && esTareaDeCodigo(message)) {
+  const noEjecutor =
+    py && mando && ejecutorActivo() && !tools.includes('ejecutor') && /\b(ejecuta|corre el c[oó]digo|run this)\b/i.test(message) && esTareaDeCodigo(message)
+      ? await permisoDeSistema('ejecutor', { quien, mando, prueba: p.prueba, args: { codigo: py } })
+      : 'no aplica';
+  if (noEjecutor && noEjecutor !== 'no aplica') hechos.push(noEjecutor);
+  if (py && !noEjecutor) {
     tools.push('ejecutor');
     const r = await ejecutarCodigo(py);
     const hecho = `EJECUTOR (${r.via}): exit ${r.exit_code}. stdout: ${String(r.stdout || '').slice(0, 800) || '(vacío)'} stderr: ${String(r.stderr || r.error || '').slice(0, 400) || '(vacío)'}.`;
@@ -1546,6 +1679,7 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), async (req, res) => {
     tools: out.herramientas.length,
     herramientas: out.herramientas,
     foto: out.foto,
+    trazaId: out.trazaId,
     honesto: true,
   });
 });
@@ -1557,7 +1691,18 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), async (req, res) => {
  * Aplica el mismo harness que /api/turno: si el 27B pide una herramienta, se corre y se
  * vuelve a preguntar; el usuario nunca oye «PEDIR_HERRAMIENTA».
  */
-app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => {
+app.post('/api/turno/stream', exigirMesaODesk, limitar(60), (req, res) => {
+  const reg = iniciarTraza({ plataforma: 'ultron', canal: 'mesa', pregunta: String(req.body?.message || req.body?.text || '') });
+  return enTurno(reg, () =>
+    turnoEnVivo(req, res).catch((e) => {
+      reg.cerrar({ error: e });
+      throw e;
+    })
+  );
+});
+
+async function turnoEnVivo(req: express.Request, res: express.Response) {
+  const reg = trazaActual()!;
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Accel-Buffering', 'no');
@@ -1573,12 +1718,15 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
   });
   if (!p.message) {
     send('error', { error: 'message vacío' });
+    reg.cerrar({ error: 'message vacío' });
     return res.end();
   }
   const { t0, tools, system, message, quien, canal, hilo, mando } = p;
   const hechos = [...p.hechos];
   const terminar = async (texto: string, via: string, emocion: Emocion) => {
-    send('done', { reply: texto, emocion, ms: Date.now() - t0, via });
+    anotarHerramientasAura(reg, tools);
+    reg.cerrar({ respuesta: texto, emocion, via });
+    send('done', { reply: texto, emocion, ms: Date.now() - t0, via, trazaId: reg.id });
     if (texto) await recordarTurno({ quien, rol: 'ultron', texto, canal });
     res.end();
   };
@@ -1611,8 +1759,10 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
         return terminar(reply, 'tools-fallback', 'preocupado');
       }
       send('error', { error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 200) });
+      reg.cerrar({ error: `Qwen no contestó (${r.status})` });
       return res.end();
     }
+    reg.modelo(ULTRON_NODO_MODELO);
     const reader = (r.body as any).getReader();
     const dec = new TextDecoder();
     let buf = '';
@@ -1656,6 +1806,7 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
           const j = JSON.parse(l);
           const piece = j.message?.content || j.response || '';
           if (piece) procesar(piece);
+          if (j.done) reg.tokens(j.prompt_eval_count, j.eval_count);
         } catch {
           /* línea parcial */
         }
@@ -1693,9 +1844,10 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), async (req, res) => 
     return terminar(reply, via, emocion);
   } catch (err: any) {
     send('error', { error: 'Qwen caído', message: String(err?.message || err).slice(0, 200) });
+    reg.cerrar({ error: err });
     res.end();
   }
-});
+}
 
 
 app.get('/api/taller', exigirMesa, limitar(30), (_req, res) => {
@@ -1727,6 +1879,8 @@ app.post('/api/ejecutar', exigirSesion, limitar(10), async (req, res) => {
   }
   if (!ejecutorActivo()) return res.status(503).json({ error: 'Ejecutor desactivado', honesto: true, ok: false });
   const codigo = String(req.body?.codigo || extraerPython(String(req.body?.texto || '')) || '');
+  const no = await permisoDeSistema('ejecutor', { quien, mando: true, prueba: 'sesion', args: { codigo } });
+  if (no) return res.status(403).json({ error: no, honesto: true, ok: false });
   const r = await ejecutarCodigo(codigo);
   await registrarCambio({ quien, canal: 'mesa', que: `ejecutor (${r.via}) exit ${r.exit_code}` });
   return res.json({ ...r, honesto: true });
@@ -1755,6 +1909,22 @@ async function procesarTelegram(update: any) {
   if (parsed.comando === '/ayuda' || parsed.comando === '/help') {
     await telegramResponder(parsed.chatId, ayudaTelegram());
     return;
+  }
+  // Firmar solicitudes de la cola desde el Telegram de la junta: /aprobar, /rechazar, /solicitudes.
+  {
+    const idTg = identificar({ telegramUserId: parsed.userId, telegramChatId: parsed.chatId });
+    const verificadoTg = idTg && idTg.prueba === 'telegram' ? idTg : null;
+    const respuesta = await comandoDeAprobacion({
+      comando: parsed.comando,
+      texto: parsed.texto,
+      quien: verificadoTg?.persona.id || null,
+      nivel: nivelDe(verificadoTg, 'ultron'),
+      plataforma: 'ultron',
+    });
+    if (respuesta) {
+      await telegramResponder(parsed.chatId, respuesta);
+      return;
+    }
   }
   let texto = parsed.texto;
   if (parsed.comando === '/audio') texto = 'mándame audio del sistema';

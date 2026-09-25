@@ -33,7 +33,7 @@ export const PhotoCaptureModal: React.FC<PhotoCaptureModalProps> = ({
   return (
     <div
       id="ultron-photo-modal"
-      className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-[#ECE8E2]/40 backdrop-blur-md animate-in fade-in duration-200"
+      className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-md animate-in fade-in duration-200"
     >
       <div className="w-full max-w-2xl bg-[#34363A] border border-[#46484D] rounded-2xl p-6 shadow-[0_8px_24px_rgba(0,0,0,0.34)] flex flex-col gap-5 max-h-[90vh] overflow-y-auto">
         {/* Header */}

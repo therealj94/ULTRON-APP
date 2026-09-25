@@ -1,0 +1,22 @@
+{
+  "nota": "Precisión mínima de la pasada sin modelo. Subirla cuando mejore; nunca bajarla para que pase una prueba.",
+  "ultron": {
+    "precision": 1,
+    "total": 22,
+    "porArea": {
+      "taller": 1,
+      "seguridad": 1
+    }
+  },
+  "electrum": {
+    "precision": 1,
+    "total": 54,
+    "porArea": {
+      "legal": 1,
+      "geologia": 1,
+      "gis": 1,
+      "especialistas": 1,
+      "seguridad": 1
+    }
+  }
+}

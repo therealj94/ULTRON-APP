@@ -52,7 +52,7 @@ export const UltronVaultModal: React.FC<Props> = ({ isOpen, onClose, onSpeak }) 
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-[#ECE8E2]/40 backdrop-blur-md">
+    <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-md">
       <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto bg-[#34363A] border border-[#46484D] rounded-2xl p-5 shadow-[0_8px_24px_rgba(0,0,0,0.34)] flex flex-col gap-3 relative">
         <button type="button" onClick={onClose} className="absolute top-4 right-4 p-1.5 rounded text-[#B9B2A8] hover:text-[#ECE8E2] cursor-pointer" aria-label="Cerrar">
           <X className="w-5 h-5" />

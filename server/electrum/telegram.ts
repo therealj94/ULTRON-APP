@@ -17,6 +17,7 @@
  * shapefile o un expediente y ENTRA AL CEREBRO; quien tiene `lee` recibe el archivo leído para ese
  * turno y nada se guarda. Es la diferencia entre enseñarle algo y prestárselo un momento.
  */
+import { comandoDeAprobacion } from '../../lib/cognitivo/aprobaciones';
 import crypto from 'node:crypto';
 import { archivoTelegram, parsearUpdateTelegram, type TgParsed } from '../../lib/telegram-in';
 import { identificar, nivelDe, padron, type Identificacion, type Nivel } from '../../lib/acceso';
@@ -331,6 +332,20 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
     return { estado: 'ayuda', chatId: parsed.chatId };
   }
 
+  // Firmar solicitudes de la cola desde el teléfono. Solo cuenta el Telegram comprobado del padrón:
+  // en un chat de demostración nadie tiene mando.
+  const firma = await comandoDeAprobacion({
+    comando: parsed.comando,
+    texto: parsed.texto,
+    quien: quien.id?.persona.id || null,
+    nivel: quien.id ? quien.nivel : null,
+    plataforma: 'electrum',
+  });
+  if (firma) {
+    await responderElectrum(parsed.chatId, firma);
+    return { estado: 'aprobacion', chatId: parsed.chatId };
+  }
+
   const geo = await archivoGeo(update, token).catch(() => null);
   const archivo: Atendido | null = await atenderArchivo(parsed, geo, quien).catch((e: any) => ({
     dicho: `Se me cayó leyendo el archivo: ${String(e?.message || e).slice(0, 140)}`,
@@ -375,6 +390,7 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
       plataforma: 'electrum',
       canal: 'telegram',
       mensaje,
+      prueba: quien.id?.prueba ?? null,
     },
     { historial }
   );

@@ -85,7 +85,7 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, usuario, soundFxEnabled, 
   };
 
   return (
-    <div id="ultron-acceso" className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-[#ECE8E2]/40 backdrop-blur-md">
+    <div id="ultron-acceso" className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-md">
       <div className="w-full max-w-md bg-[#232528] rounded-[28px] p-6 shadow-[0_16px_48px_rgba(0,0,0,0.53)] flex flex-col gap-4 relative overflow-hidden">
         <button type="button" onClick={onClose} className="absolute top-4 right-4 w-9 h-9 rounded-full bg-[#3A3C41] text-[#B9B2A8] hover:bg-[#3D3829] flex items-center justify-center cursor-pointer" aria-label="Cerrar">
           <X className="w-5 h-5" />

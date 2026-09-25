@@ -43,11 +43,14 @@ export const PAGINA_RAIZ = ES_ELECTRUM ? 'electrum.html' : 'index.html';
  *  · `/api/health`     — para que Render sepa si está vivo.
  *  · La puerta         — entrar, salir y mirar la sesión. La sesión es una sola entre las dos
  *                        plataformas; a cuál te deja entrar lo decide el padrón del servidor.
+ *  · `/api/cognitivo/*` — trazas, auditoría, reglas y aprobaciones. Cada despliegue sirve solo las
+ *                        de su propia plataforma (server/cognitivo.ts).
  */
 const PERMITIDO_EN_ELECTRUM = [
   /^\/api\/electrum(\/|$)/,
   /^\/api\/health(\/|$)/,
   /^\/api\/ultron\/(entrar|salir|sesion|biometric-login)(\/|$)/,
+  /^\/api\/cognitivo(\/|$)/,
 ];
 
 /**

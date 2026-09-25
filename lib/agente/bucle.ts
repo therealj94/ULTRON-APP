@@ -14,8 +14,10 @@
  * El bucle no sabe hablar con ningún modelo: recibe una función `pensar`. Así se prueba entero sin
  * red, que es la única forma de saber que el presupuesto y los reintentos hacen lo que dicen.
  */
+import { trazaActual } from '../cognitivo/traza';
+import { autorizar, textoDeDecision } from '../cognitivo/politica';
 import { herramientasNativas, instruccionHermes, leerLlamadas, limpiarTexto, validar } from './protocolo';
-import { ctxEscribe, type Contexto, type Herramienta, type Llamada, type Respuesta } from './tipos';
+import { efectoDe, type Contexto, type Herramienta, type Llamada, type Respuesta } from './tipos';
 
 export type Mensaje =
   | { role: 'system' | 'user' | 'assistant'; content: string; tool_calls?: unknown[] }
@@ -178,13 +180,33 @@ export async function correrAgente(opts: {
       const inicio = Date.now();
       let resultado;
 
-      if (h.escribe && !ctxEscribe(opts.ctx)) {
-        resultado = { ok: false, texto: `«${h.nombre}» cambia cosas y quien pregunta tiene acceso de consulta. No la ejecuté. Decilo claro y ofrecé la alternativa de solo lectura.` };
+      const v = validar(h.esquema, l.argumentos);
+      if (v.ok === false) {
+        // El error vuelve al modelo con el motivo: así corrige en la ronda siguiente.
+        resultado = { ok: false, texto: v.error };
       } else {
-        const v = validar(h.esquema, l.argumentos);
-        if (v.ok === false) {
-          // El error vuelve al modelo con el motivo: así corrige en la ronda siguiente.
-          resultado = { ok: false, texto: v.error };
+        /*
+         * El motor de reglas decide si corre, FUERA del modelo. Con los argumentos ya validados:
+         * si va a revisión, lo que se congela en la cola es exactamente lo que se ejecutaría.
+         */
+        const efecto = efectoDe(h);
+        const dec =
+          efecto === 'lectura'
+            ? null
+            : await autorizar({
+                herramienta: h.nombre,
+                efecto,
+                plataforma: opts.ctx.plataforma,
+                args: v.args,
+                quien: opts.ctx.quien,
+                nivel: opts.ctx.nivel,
+                prueba: opts.ctx.prueba ?? null,
+                canal: opts.ctx.canal,
+                riesgo: opts.ctx.riesgo ?? null,
+                destino: h.destino ? h.destino(v.args) : null,
+              });
+        if (dec && dec.veredicto !== 'permitir') {
+          resultado = { ok: false, texto: textoDeDecision({ herramienta: h.nombre }, dec) };
         } else {
           try {
             resultado = await conTope(h.ejecutar(v.args, opts.ctx), h.msMaximo ?? 20_000, h.nombre);
@@ -203,6 +225,7 @@ export async function correrAgente(opts: {
         ui.push({ herramienta: l.nombre, ...resultado.ui });
       }
       opts.alVivo?.(t, resultado.ui);
+      trazaActual()?.paso({ herramienta: l.nombre, ok: resultado.ok, ms, resumen: resultado.texto, args: l.argumentos, ronda });
 
       mensajes.push({ role: 'tool', tool_name: l.nombre, tool_call_id: l.id, content: resultado.texto });
     }
