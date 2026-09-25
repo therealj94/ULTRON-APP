@@ -1,0 +1,52 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "BedrockClaudeAndCodex",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock:InvokeModel",
+        "bedrock:InvokeModelWithResponseStream",
+        "bedrock:ListFoundationModels"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "BedrockMantleCodex",
+      "Effect": "Allow",
+      "Action": [
+        "bedrock-mantle:Get*",
+        "bedrock-mantle:List*",
+        "bedrock-mantle:CreateInference",
+        "bedrock-mantle:CountTokens"
+      ],
+      "Resource": "arn:aws:bedrock-mantle:us-east-1:548380372606:project/*"
+    },
+    {
+      "Sid": "BedrockMantleBearer",
+      "Effect": "Allow",
+      "Action": ["bedrock-mantle:CallWithBearerToken"],
+      "Resource": "*"
+    },
+    {
+      "Sid": "MarketplaceViaMantle",
+      "Effect": "Allow",
+      "Action": [
+        "aws-marketplace:Subscribe",
+        "aws-marketplace:ViewSubscriptions"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:CalledViaLast": "bedrock-mantle.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "BridgeApiKeyParam",
+      "Effect": "Allow",
+      "Action": ["ssm:PutParameter", "ssm:AddTagsToResource"],
+      "Resource": "arn:aws:ssm:us-east-1:548380372606:parameter/ultron/ccpocket/*"
+    }
+  ]
+}
