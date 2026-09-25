@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Dr Electrum · Oficina</title>
+<meta name="theme-color" content="#15120E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zilla+Slab:wght@600;700&family=Alegreya+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+/*
+ * La oficina de Dr Electrum a pantalla completa. Un solo mundo (la oficina) y la interfaz flotando
+ * encima. Regla del personaje: SOLO se mueve cuando habla, y la boca la decide el audio que está
+ * sonando en ese instante, no un reloj.
+ */
+:root{
+  color-scheme:dark;
+  --glass:rgba(22,19,15,.62);
+  --glass-strong:rgba(22,19,15,.84);
+  --line:rgba(241,227,184,.18);
+  --paper:#F6F0E2;
+  --muted:#CFC4AA;
+  --gold:#E2B84E;
+  --live:#7FC17A;
+  --rec:#E0764F;
+  --display:"Zilla Slab",Rockwell,"Roboto Slab",Georgia,serif;
+  --body:"Alegreya Sans","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:#15120E;color:var(--paper);font:17px/1.45 var(--body);overflow:hidden;-webkit-tap-highlight-color:transparent}
+#scene{position:fixed;inset:0;width:100%;height:100%;display:block}
+video.src{display:none}
+[hidden]{display:none!important}
+.glass{background:var(--glass);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--line)}
+
+.top{position:fixed;left:0;right:0;top:0;padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 0;display:flex;align-items:flex-start;gap:10px;pointer-events:none}
+.brand{display:flex;align-items:center;gap:10px;padding:6px 14px 6px 6px;border-radius:999px;pointer-events:auto;text-decoration:none;color:inherit}
+.brand img{width:38px;height:38px;border-radius:50%;object-fit:cover;object-position:50% 22%;border:1.5px solid var(--gold)}
+.brand b{display:block;font:700 1.05rem/1.1 var(--display)}
+.brand small{display:block;font:500 .62rem var(--mono);letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
+.pill{margin-left:auto;display:flex;align-items:center;gap:7px;padding:7px 12px;border-radius:999px;font:500 .72rem var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap;pointer-events:auto}
+.pill i{width:8px;height:8px;border-radius:50%;background:#8A8170}
+.pill.ok i{background:var(--live);box-shadow:0 0 0 3px rgba(127,193,122,.25)}
+.pill.rec i{background:var(--rec);box-shadow:0 0 0 3px rgba(224,118,79,.3)}
+.pill.busy i{background:var(--gold)}
+
+/* traza: qué especialistas y qué herramientas usó */
+.traza{position:fixed;top:calc(env(safe-area-inset-top,0px) + 66px);left:16px;right:16px;display:flex;flex-wrap:wrap;gap:6px;pointer-events:none}
+.traza span{font:500 .72rem var(--mono);letter-spacing:.03em;padding:5px 9px;border-radius:8px;color:var(--paper)}
+.traza span.p{color:var(--gold)}
+.traza span.bad{color:#F2A488}
+
+.bottom{position:fixed;left:0;right:0;bottom:0;padding:0 16px calc(env(safe-area-inset-bottom,0px) + 14px);display:grid;justify-items:center;gap:10px;pointer-events:none}
+.sub{width:min(720px,100%);max-height:32vh;overflow-y:auto;background:var(--glass-strong);border-radius:14px;padding:12px 16px;font-size:1.06rem;line-height:1.42;pointer-events:auto}
+.sub .who{display:block;font:600 .9rem var(--display);color:var(--gold);margin-bottom:2px}
+.sub.you .who{color:var(--muted)}
+.sub img{display:block;max-height:90px;border-radius:8px;margin-bottom:6px}
+.sub a{color:var(--gold)}
+.chips{display:flex;gap:8px;overflow-x:auto;max-width:100%;padding:2px;scrollbar-width:none;pointer-events:auto}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border-radius:999px;padding:8px 14px;font:500 .95rem var(--body);cursor:pointer;white-space:nowrap;color:var(--paper)}
+.chip:disabled{opacity:.4;cursor:default}
+form.texto{display:flex;gap:8px;width:min(720px,100%);pointer-events:auto}
+form.texto input{flex:1;min-width:0;border-radius:12px;padding:12px 14px;font:inherit;color:var(--paper);background:var(--glass-strong);border:1px solid var(--line)}
+form.texto button{border-radius:12px;padding:0 16px;font:600 1rem var(--display);border:0;background:var(--gold);color:#221C10;cursor:pointer}
+.controls{display:flex;align-items:center;gap:14px;pointer-events:auto}
+.mic{position:relative;width:76px;height:76px;border-radius:50%;border:0;cursor:pointer;background:var(--gold);color:#221C10;display:grid;place-items:center;box-shadow:0 10px 30px -8px rgba(0,0,0,.7)}
+.mic svg{width:30px;height:30px}
+.mic .ring{position:absolute;inset:-8px;border-radius:50%;border:3px solid var(--rec);opacity:0;transition:opacity .2s}
+.mic.rec{background:var(--rec);color:#fff}
+.mic.rec .ring{opacity:.75}
+.mic.busy{background:#6d6450;color:#EDE6D5}
+.small{border-radius:999px;width:48px;height:48px;display:grid;place-items:center;cursor:pointer;color:var(--paper)}
+.small svg{width:21px;height:21px}
+.hint{font:500 .78rem var(--mono);letter-spacing:.04em;color:var(--muted);text-align:center;min-height:1.2em;text-shadow:0 1px 6px rgba(0,0,0,.9)}
+button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--gold);outline-offset:3px}
+
+.gate{position:fixed;inset:0;display:grid;place-items:center;align-content:center;gap:16px;background:linear-gradient(180deg,rgba(15,13,10,.15),rgba(15,13,10,.65));text-align:center;padding-inline:20px}
+.gate h1{margin:0;font:700 clamp(2.1rem,7vw,3.4rem)/1 var(--display);text-shadow:0 2px 18px rgba(0,0,0,.6)}
+.gate p{margin:0;color:var(--muted);max-width:40ch;text-shadow:0 1px 8px rgba(0,0,0,.8)}
+.gate .go{font:700 1.2rem var(--display);padding:14px 30px;border-radius:999px;border:0;background:var(--gold);color:#221C10;cursor:pointer;text-decoration:none;box-shadow:0 12px 34px -10px rgba(0,0,0,.8)}
+.gate .pw{font:500 .7rem var(--mono);letter-spacing:.12em;color:var(--muted);text-transform:uppercase}
+html.gated .bottom,html.gated .top .pill,html.gated .traza{visibility:hidden}
+@media (max-height:540px){.chips{display:none}.sub{max-height:24vh;font-size:.98rem}}
+@media (prefers-reduced-motion:reduce){.mic .ring{transition:none}}
+</style>
+</head>
+<body>
+<canvas id="scene" aria-label="La oficina del Dr Electrum"></canvas>
+<video class="src" id="v" muted playsinline preload="auto"></video>
+
+<div class="top">
+  <a class="brand glass" href="/electrum.html" title="Abrir el mapa y los expedientes"><img src="media/logo.png" alt=""><div><b>Dr Electrum</b><small>Powered by Orden Global</small></div></a>
+  <div class="pill glass" id="pill"><i></i><span id="pillTxt">Conectando</span></div>
+</div>
+<div class="traza" id="traza"></div>
+
+<div class="bottom">
+  <div class="sub" id="sub" hidden><span class="who" id="who"></span><span id="subBody"></span></div>
+  <div class="chips" id="chips"></div>
+  <form class="texto" id="form" hidden><input id="txt" autocomplete="off" placeholder="Escríbale al Dr Electrum…" aria-label="Pregunta escrita"><button type="submit">Enviar</button></form>
+  <div class="controls">
+    <button class="small glass" id="teclado" type="button" aria-label="Escribir en vez de hablar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
+    </button>
+    <button class="mic" id="mic" type="button" aria-label="Hablarle">
+      <span class="ring" id="ring"></span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
+    </button>
+    <button class="small glass" id="foto" type="button" aria-label="Mostrarle una foto">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+    </button>
+  </div>
+  <div class="hint" id="hint"></div>
+  <input type="file" id="fotoIn" accept="image/*" capture="environment" hidden>
+</div>
+
+<div class="gate" id="gate">
+  <h1>Dr Electrum</h1>
+  <p id="gateTxt">Tu geólogo de campo. Entre a su oficina y háblele.</p>
+  <button class="go" id="enter" type="button" disabled>Entrar</button>
+  <span class="pw">Powered by Orden Global</span>
+</div>
+
+<script>
+document.documentElement.classList.add('gated');
+
+/* ------------------------------------------------------------ acceso (el mismo de /electrum.html) */
+(function recogerLlave(){
+  try {
+    const u = new URL(location.href), k = u.searchParams.get('llave');
+    if (!k) return;
+    try { localStorage.setItem('electrum_llave', k); } catch { sessionStorage.setItem('electrum_llave', k); }
+    u.searchParams.delete('llave'); history.replaceState({}, '', u.toString());
+  } catch {}
+})();
+function guardado(k){ try { return localStorage.getItem(k) || sessionStorage.getItem(k) || ''; } catch { return ''; } }
+function cabeceras(extra){
+  const h = Object.assign({}, extra || {});
+  const s = guardado('ultron_sesion_token'); if (s) h['x-ultron-sesion'] = s;
+  const l = guardado('electrum_llave'); if (l) h['x-electrum-llave'] = l;
+  return h;
+}
+
+/* ------------------------------------------------------------ escena */
+const IMG_W = 1280, IMG_H = 720;
+const MOUTH = {x:317, y:202, w:118, h:88};   // parche de la boca, medido al alinear las cuatro bocas
+const FOCUS = {x:372, y:300};                 // la cara: lo único que la cámara nunca recorta
+const $ = s => document.querySelector(s);
+const cv = $('#scene'), g = cv.getContext('2d'), vid = $('#v');
+const cargar = src => new Promise(r => { const i = new Image(); i.onload = () => r(i); i.onerror = () => r(null); i.src = src; });
+let IM = {}, still = 'empty', enVideo = false, view = {s:1, ox:0, oy:0};
+
+function encuadrar(){
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = Math.round(innerWidth*dpr); cv.height = Math.round(innerHeight*dpr);
+  const s = Math.max(cv.width/IMG_W, cv.height/IMG_H);
+  const c = (v,a,b) => Math.min(b, Math.max(a, v));
+  const ty = cv.height*(cv.height > cv.width ? .40 : .5);
+  view = {s, ox:c(cv.width/2 - FOCUS.x*s, cv.width - IMG_W*s, 0), oy:c(ty - FOCUS.y*s, cv.height - IMG_H*s, 0)};
+}
+
+/* ------------------------------------------------------------ audio y boca */
+let actx, an, spec, voz = new Audio(), vozSrc, sonando = false;
+let boca = 'rest', ultimoCambio = 0, calladoDesde = 0, pico = .06;
+function audioListo(){
+  if (actx) return;
+  actx = new (window.AudioContext || window.webkitAudioContext)();
+  an = actx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = .25;
+  vozSrc = actx.createMediaElementSource(voz); vozSrc.connect(an); an.connect(actx.destination);
+  spec = new Uint8Array(an.frequencyBinCount);
+}
+function banda(a, f0, f1){ const i0 = Math.floor(a.length*f0), i1 = Math.max(i0+1, Math.floor(a.length*f1)); let s = 0; for (let i=i0;i<i1;i++) s += a[i]; return s/((i1-i0)*255); }
+// La boca sale del espectro de lo que suena AHORA. Sin sonido, boca en reposo: no hay otra fuente.
+function elegirBoca(t){
+  if (!sonando || voz.paused) { boca = 'rest'; return; }
+  an.getByteFrequencyData(spec);
+  const lo = banda(spec,.006,.045), mi = banda(spec,.045,.12), hi = banda(spec,.12,.32);
+  const e = lo*.45 + mi*.4 + hi*.15;
+  pico = Math.max(e, pico*.995, .06);
+  const n = e/pico; let b;
+  if (e < .035) { if (!calladoDesde) calladoDesde = t; b = t - calladoDesde > 220 ? 'rest' : 'm'; }
+  else { calladoDesde = 0; const br = hi/(lo+.01); b = n > .72 ? 'a' : n > .42 ? (br > .55 ? 'e' : 'o') : n > .2 ? 'e' : 'm'; }
+  if (b !== boca && t - ultimoCambio > 55) { boca = b; ultimoCambio = t; }
+}
+function dibujar(t){
+  const {s, ox, oy} = view;
+  if (enVideo && vid.readyState >= 2) g.drawImage(vid, ox, oy, IMG_W*s, IMG_H*s);
+  else if (IM.base) {
+    elegirBoca(t);
+    g.drawImage(still === 'base' ? IM.base : IM.empty, ox, oy, IMG_W*s, IMG_H*s);
+    if (still === 'base' && boca !== 'rest' && IM[boca]) g.drawImage(IM[boca], ox + MOUTH.x*s, oy + MOUTH.y*s, MOUTH.w*s, MOUTH.h*s);
+  }
+  if (grabando && micAn) { micAn.getFloatTimeDomainData(micBuf); $('#ring').style.transform = `scale(${1 + Math.min(rms(micBuf)*9, .45)})`; }
+  requestAnimationFrame(dibujar);
+}
+function video(nombre){
+  return new Promise(res => {
+    vid.src = 'media/' + nombre + '.mp4'; vid.currentTime = 0;
+    const fin = () => { vid.onended = vid.onerror = null; clearTimeout(tope); enVideo = false; res(); };
+    vid.oncanplay = () => { vid.oncanplay = null; enVideo = true; vid.play().catch(fin); };
+    vid.onended = fin; vid.onerror = fin;
+    const tope = setTimeout(() => { if (!enVideo) fin(); }, 5000);
+  });
+}
+
+/* ------------------------------------------------------------ interfaz */
+function pill(clase, txt){ $('#pill').className = 'pill glass ' + clase; $('#pillTxt').textContent = txt; }
+function pista(t){ $('#hint').textContent = t; }
+function decir(texto, quien, tuyo, img){
+  const el = $('#sub'); el.hidden = false; el.classList.toggle('you', !!tuyo);
+  $('#who').textContent = quien;
+  const body = $('#subBody'); body.textContent = '';
+  if (img) { const i = document.createElement('img'); i.src = img; i.alt = 'Foto enviada'; body.appendChild(i); }
+  body.appendChild(document.createTextNode(texto));
+  el.scrollTop = 0;
+}
+function traza(items){ const t = $('#traza'); t.textContent = ''; items.forEach(([txt, cls]) => { const s = document.createElement('span'); s.className = 'glass ' + (cls || ''); s.textContent = txt; t.appendChild(s); }); }
+const NOMBRES = {
+  catastro_buscar:'buscó en el catastro', catastro_vencimientos:'revisó vencimientos', catastro_en_punto:'consultó el punto',
+  gis_traslapes:'midió traslapes', gis_medir:'midió', mapa_volar:'preparó el mapa', mapa_capa:'preparó una capa',
+  expediente_buscar:'leyó expedientes', informe_pdf:'armó el informe', calculo_mina:'hizo las cuentas',
+  metales_spot:'miró el precio del metal', web_buscar:'buscó en internet', web_leer:'leyó una página',
+};
+let ocupado = false;
+function bloquear(b){ ocupado = b; document.querySelectorAll('.chip,#form button').forEach(x => x.disabled = b); $('#mic').classList.toggle('busy', b && !grabando); }
+
+/* ------------------------------------------------------------ hablar: /api/electrum/voz */
+function trozos(texto){
+  const frases = String(texto).replace(/\s+/g,' ').match(/[^.!?¡¿…]+[.!?…]+["»”)]*\s*|[^.!?…]+$/g) || [texto];
+  const out = []; let cur = '';
+  for (const f of frases) { if ((cur + f).length > 360 && cur) { out.push(cur.trim()); cur = ''; } cur += f; }
+  if (cur.trim()) out.push(cur.trim());
+  return out.map(t => t.slice(0, 1100));
+}
+async function pedirVoz(texto, emocion){
+  const r = await fetch('/api/electrum/voz', {method:'POST', headers:cabeceras({'Content-Type':'application/json'}), body:JSON.stringify({texto, emocion})});
+  if (!r.ok) throw new Error('voz ' + r.status);
+  return URL.createObjectURL(await r.blob());
+}
+let cortar = false, terminarVoz = null;
+async function hablar(texto, emocion){
+  audioListo(); if (actx.state === 'suspended') await actx.resume().catch(()=>{});
+  const partes = trozos(texto); cortar = false;
+  let siguiente = pedirVoz(partes[0], emocion).catch(() => null);
+  pill('ok', 'Hablando'); pista('Toque el micrófono para interrumpirlo');
+  for (let i = 0; i < partes.length && !cortar; i++) {
+    const url = await siguiente;
+    siguiente = i + 1 < partes.length ? pedirVoz(partes[i+1], emocion).catch(() => null) : null;
+    if (!url) { pista('No tengo voz ahora mismo; le dejo el texto.'); break; }
+    await new Promise(res => {
+      // `pause()` no dispara `ended`: por eso callar() cierra la promesa con esta misma función.
+      let hecho = false;
+      terminarVoz = () => { if (hecho) return; hecho = true; terminarVoz = null; sonando = false; URL.revokeObjectURL(url); res(); };
+      voz.src = url; sonando = true;
+      voz.onended = voz.onerror = terminarVoz;
+      voz.play().catch(terminarVoz);
+    });
+  }
+  sonando = false;
+}
+function callar(){ cortar = true; try { voz.pause(); } catch {} sonando = false; if (terminarVoz) terminarVoz(); }
+
+/* ------------------------------------------------------------ pensar: /api/electrum/turno/stream */
+async function preguntar(mensaje, img){
+  if (ocupado) return;
+  bloquear(true); pill('busy', 'Pensando'); pista('Consultando…');
+  decir(mensaje, 'Usted', true, img);
+  const vistos = [];
+  let fin = null, error = null, hayMapa = false;
+  try {
+    const r = await fetch('/api/electrum/turno/stream', {method:'POST', headers:cabeceras({'Content-Type':'application/json'}), body:JSON.stringify({mensaje})});
+    if (r.status === 401 || r.status === 403) throw new Error('puerta');
+    const lector = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+    for (;;) {
+      const {value, done} = await lector.read(); if (done) break;
+      buf += dec.decode(value, {stream:true});
+      let k;
+      while ((k = buf.indexOf('\n\n')) >= 0) {
+        const bloque = buf.slice(0, k); buf = buf.slice(k + 2);
+        const ev = (bloque.match(/^event: (.*)$/m) || [])[1], dat = (bloque.match(/^data: (.*)$/m) || [])[1];
+        if (!ev || !dat) continue;
+        let d; try { d = JSON.parse(dat); } catch { continue; }
+        if (ev === 'panel' && d.panel) { vistos.unshift([d.panel, 'p']); traza(vistos); pista('Le pregunta al ' + d.panel.toLowerCase() + '…'); }
+        if (ev === 'herramienta') { vistos.push([(d.ok ? '✓ ' : '✗ ') + (NOMBRES[d.herramienta] || d.herramienta), d.ok ? '' : 'bad']); traza(vistos); pista((NOMBRES[d.herramienta] || d.herramienta) + '…'); }
+        if (ev === 'ui') hayMapa = true;
+        if (ev === 'fin') fin = d;
+        if (ev === 'error') error = d.error;
+      }
+    }
+  } catch (e) { error = String(e.message) === 'puerta' ? 'puerta' : 'No me llegó la respuesta. Revise la conexión y vuelva a preguntarme.'; }
+  if (error === 'puerta') { bloquear(false); return cerrarPuerta(); }
+  const texto = fin?.texto || error || 'Se me cayó el turno. Vuelva a preguntarme.';
+  decir(texto, 'Dr Electrum' + (fin?.panel ? ' · ' + fin.panel : ''));
+  if (hayMapa) { const a = document.createElement('a'); a.href = '/electrum.html'; a.textContent = ' Ver en el mapa →'; $('#subBody').appendChild(a); }
+  await hablar(texto, fin?.emocion);
+  bloquear(false); pill('ok', 'Conectado');
+  if (conversando) escuchar(); else pista('Toque el micrófono y háblele');
+}
+
+/* ------------------------------------------------------------ oír: micrófono → /api/electrum/oir */
+let grabando = false, conversando = false, micStream, micAn, micBuf, rec, trozosRec = [];
+function rms(b){ let s = 0; for (let i=0;i<b.length;i++) s += b[i]*b[i]; return Math.sqrt(s/b.length); }
+function tipoGrabacion(){
+  for (const t of ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus']) if (window.MediaRecorder && MediaRecorder.isTypeSupported(t)) return t;
+  return '';
+}
+async function escuchar(){
+  if (ocupado || grabando) return;
+  audioListo(); if (actx.state === 'suspended') await actx.resume().catch(()=>{});
+  try {
+    micStream = micStream || await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true, noiseSuppression:true, autoGainControl:true}});
+  } catch (e) {
+    conversando = false;
+    pista('Sin permiso de micrófono. Actívelo en el candado de la barra de direcciones, o use el teclado.');
+    return;
+  }
+  const src = actx.createMediaStreamSource(micStream);
+  micAn = actx.createAnalyser(); micAn.fftSize = 2048; src.connect(micAn); micBuf = new Float32Array(micAn.fftSize);
+  const tipo = tipoGrabacion();
+  rec = new MediaRecorder(micStream, tipo ? {mimeType:tipo} : undefined); trozosRec = [];
+  rec.ondataavailable = e => { if (e.data.size) trozosRec.push(e.data); };
+  grabando = true; conversando = true;
+  $('#mic').classList.add('rec'); $('#mic').classList.remove('busy'); pill('rec', 'Escuchando'); pista('Le escucho… (toque para terminar)');
+  rec.start(250);
+  // Detector de voz. El piso de ruido baja rápido y sube despacio, así que se queda con el ruido del
+  // cuarto aunque la persona empiece a hablar en el mismo instante en que toca el botón (medirlo al
+  // principio confundía la voz con ruido). Corta tras 1,2 s de silencio después de hablar.
+  const t0 = performance.now(); let piso = .02, habló = false, ultimaVoz = t0;
+  await new Promise(res => {
+    const tic = () => {
+      if (!grabando) return res();
+      micAn.getFloatTimeDomainData(micBuf); const v = rms(micBuf), t = performance.now();
+      piso = v < piso ? piso*.7 + v*.3 : piso*1.004;
+      if (v > Math.max(piso*3, .015)) { habló = true; ultimaVoz = t; }
+      if ((habló && t - ultimaVoz > 1200) || (!habló && t - t0 > 9000) || t - t0 > 30000) return res();
+      setTimeout(tic, 60);
+    };
+    tic();
+  });
+  const huboVoz = habló;
+  await detener();
+  if (!huboVoz) { conversando = false; pill('ok', 'Conectado'); pista('No le escuché. Toque el micrófono y háblele.'); return; }
+  await transcribir();
+}
+function detener(){
+  return new Promise(res => {
+    grabando = false; $('#mic').classList.remove('rec'); $('#ring').style.transform = '';
+    if (!rec || rec.state === 'inactive') return res();
+    rec.onstop = () => res(); rec.stop();
+  });
+}
+async function transcribir(){
+  bloquear(true); pill('busy', 'Oyendo'); pista('Entendiendo lo que dijo…');
+  const blob = new Blob(trozosRec, {type: rec.mimeType || 'audio/webm'});
+  const audio = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+  let texto = '';
+  try {
+    const r = await fetch('/api/electrum/oir', {method:'POST', headers:cabeceras({'Content-Type':'application/json'}), body:JSON.stringify({audio: String(audio).slice(String(audio).indexOf('base64,') + 7), mime: (blob.type || 'audio/webm').split(';')[0]})});
+    if (r.status === 401 || r.status === 403) { bloquear(false); return cerrarPuerta(); }
+    texto = ((await r.json()).texto || '').trim();
+  } catch {}
+  bloquear(false);
+  if (!texto) { conversando = false; pill('ok', 'Conectado'); pista('No le entendí. Toque el micrófono y repítamelo.'); return; }
+  preguntar(texto);
+}
+
+/* ------------------------------------------------------------ ver: foto → /api/electrum/ver → turno */
+async function reducir(file){
+  const img = await new Promise((r, x) => { const i = new Image(); i.onload = () => r(i); i.onerror = x; i.src = URL.createObjectURL(file); });
+  const k = Math.min(1, 1400/Math.max(img.width, img.height));
+  const c = document.createElement('canvas'); c.width = Math.round(img.width*k); c.height = Math.round(img.height*k);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', .85);
+}
+$('#foto').onclick = () => { if (!ocupado && !grabando) $('#fotoIn').click(); };
+$('#fotoIn').onchange = async (e) => {
+  const f = e.target.files && e.target.files[0]; e.target.value = ''; if (!f) return;
+  let imagen; try { imagen = await reducir(f); } catch { pista('No pude abrir esa foto.'); return; }
+  bloquear(true); pill('busy', 'Mirando'); decir('Le muestro esta foto.', 'Usted', true, imagen); pista('Mirando la foto…');
+  let vista = '';
+  try {
+    const r = await fetch('/api/electrum/ver', {method:'POST', headers:cabeceras({'Content-Type':'application/json'}), body:JSON.stringify({imagen})});
+    if (r.status === 401 || r.status === 403) { bloquear(false); return cerrarPuerta(); }
+    vista = r.ok ? ((await r.json()).texto || '') : '';
+  } catch {}
+  bloquear(false);
+  if (!vista) { pista('No pude ver la foto ahora mismo. Pruebe otra vez en un momento.'); pill('ok', 'Conectado'); return; }
+  preguntar('Le muestro una foto. Lo que se ve en ella: ' + vista + '\n¿Qué me puede decir, como geólogo? Recuérdeme que la confirmación es de laboratorio.', imagen);
+};
+
+/* ------------------------------------------------------------ controles */
+$('#mic').onclick = async () => {
+  if ($('#gate').hidden === false) return;
+  if (sonando) { callar(); conversando = true; return; } // interrumpirlo: al callarse, le escucha
+  if (grabando) { grabando = false; return; }         // terminar de hablar ya
+  if (ocupado) return;
+  escuchar();
+};
+$('#teclado').onclick = () => { const f = $('#form'); f.hidden = !f.hidden; if (!f.hidden) $('#txt').focus(); };
+$('#form').onsubmit = (e) => { e.preventDefault(); const t = $('#txt').value.trim(); if (!t || ocupado) return; $('#txt').value = ''; conversando = false; preguntar(t); };
+[
+  '¿Qué es una concesión minera?',
+  '¿Qué concesiones vencen en los próximos 90 días?',
+  '¿Cuánto está el oro hoy?',
+  '¿Qué traslapes hay en el catastro?',
+  '¿Cómo se toma una muestra de canal?',
+].forEach(q => { const b = document.createElement('button'); b.type = 'button'; b.className = 'chip glass'; b.textContent = q; b.onclick = () => { conversando = false; preguntar(q); }; $('#chips').appendChild(b); });
+
+/* ------------------------------------------------------------ puerta */
+function cerrarPuerta(){
+  document.documentElement.classList.add('gated');
+  $('#gate').hidden = false;
+  $('#gateTxt').textContent = 'Esta oficina es privada y esta sesión no tiene acceso. Entre primero en Dr Electrum con su correo, o use el enlace con llave que le dio José.';
+  const b = $('#enter'); b.outerHTML = '<a class="go" href="/electrum.html">Ir a Dr Electrum</a>';
+}
+async function probarPuerta(){
+  try {
+    const r = await fetch('/api/electrum/salud', {headers: cabeceras()});
+    if (r.status === 401 || r.status === 403) return false;
+    return r.ok;
+  } catch { return null; }
+}
+$('#enter').onclick = async () => {
+  $('#gate').hidden = true; document.documentElement.classList.remove('gated');
+  audioListo(); actx.resume().catch(()=>{});
+  pill('ok', 'Conectado'); pista('');
+  await video('entrada');                       // llega caminando, callado
+  still = 'base';
+  const hora = new Date().getHours();
+  const saludo = (hora < 12 ? '¡Buenos días!' : hora < 19 ? '¡Buenas tardes!' : '¡Buenas noches!') + ' Soy el Doctor Electrum, geólogo de campo. Pase adelante… ¿qué terreno vemos hoy?';
+  decir(saludo, 'Dr Electrum');
+  await hablar(saludo, 'feliz').catch(()=>{});
+  pill('ok', 'Conectado'); pista('Toque el micrófono y háblele');
+  if (conversando) escuchar();
+};
+
+(async () => {
+  encuadrar(); addEventListener('resize', encuadrar);
+  const [base, empty, m, e, a, o] = await Promise.all(['base.jpg','oficina.jpg','boca-m.png','boca-e.png','boca-a.png','boca-o.png'].map(f => cargar('media/' + f)));
+  IM = {base, empty, m, e, a, o};
+  requestAnimationFrame(dibujar);
+  const abierta = await probarPuerta();
+  if (abierta === false) return cerrarPuerta();
+  if (abierta === null) $('#gateTxt').textContent = 'No alcanzo el servidor ahora mismo. Puede entrar igual; si no contesta, recargue en un momento.';
+  $('#enter').disabled = false;
+})();
+</script>
+</body>
+</html>
