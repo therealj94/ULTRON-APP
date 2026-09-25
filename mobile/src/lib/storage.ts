@@ -33,6 +33,8 @@ export type AppSettings = {
   proactive: boolean;
   /** Efectos de sonido al tocar. */
   sfx: boolean;
+  /** Cómo contesta AU-RA en la sala: de pie en el centro o sentada en su sillón. */
+  postura: 'pie' | 'sentada';
 };
 export type ConocerProgress = {
   correo: string;
@@ -48,6 +50,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   sttEngine: 'native',
   proactive: true,
   sfx: true,
+  postura: 'pie',
 };
 
 export async function saveSession(user: SessionUser | null) {

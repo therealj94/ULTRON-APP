@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { miga, reportarEstado, cierreLimpio } from '../lib/reporte';
-import { Alert, Animated, PanResponder, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { Accelerometer } from 'expo-sensors';
 import { UltronFace, type TouchZone } from '../components/UltronFace';
+import { SalaAura, type PedidoTarea } from '../components/SalaAura';
+import { TAREA_TEXTO, tareaDeHerramientas, type Postura, type Tarea } from '../lib/tareas';
+import { T, SOMBRA } from '../tema';
 import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS, type FrameGrabber } from '../components/CamaraVision';
 import { DeskMenu } from '../components/DeskMenu';
 import type { Escena, MotorVision } from '../lib/escena';
@@ -88,6 +91,13 @@ export function DeskScreen({ user, onLogout }: Props) {
   }, []);
 
   const [face, setFace] = useState<FaceState>('IDLE');
+  /** La emoción que abrió la respuesta: la sala la muestra con el cuerpo (la cara de respaldo no la usa). */
+  const [emocion, setEmocion] = useState<Emocion>('neutral');
+  /** AU-RA de cuerpo entero; si la WebView no puede con la sala, vuelve la cara de siempre. */
+  const [conSala, setConSala] = useState(true);
+  /** De pie o sentada al contestar; null hasta leer el ajuste guardado (la sala nace ya en su sitio). */
+  const [postura, setPostura] = useState<Postura | null>(null);
+  const [pedido, setPedido] = useState<PedidoTarea | null>(null);
   const [mode, setMode] = useState<Mode>('GUARDIAN');
   const [presence, setPresence] = useState<DeskPresence>('stay');
   const [bubble, setBubble] = useState('');
@@ -198,6 +208,9 @@ export function DeskScreen({ user, onLogout }: Props) {
     [bubbleOp]
   );
 
+  /** Que se le vea hacer la tarea: la sala camina al escritorio, al sillón o saca la libreta. */
+  const hacerTarea = useCallback((tarea: Tarea) => setPedido({ tarea, n: Date.now() }), []);
+
   useEffect(() => {
     if (!bubble) return;
     const t = setTimeout(() => Animated.timing(bubbleOp, { toValue: 0, duration: 500, useNativeDriver: true }).start(), 9000);
@@ -228,6 +241,7 @@ export function DeskScreen({ user, onLogout }: Props) {
     async (text: string, nextFace?: FaceState, opts?: { performance?: 'speak' | 'sing'; emocion?: Emocion }) => {
       const emocion = opts?.emocion || 'neutral';
       const performance = opts?.performance || 'speak';
+      if (emocion !== 'neutral') setEmocion(emocion);
       const f = nextFace || (performance === 'sing' ? 'SING' : faceForEmocion(emocion));
       showBubble(text);
       logUltron(text);
@@ -401,6 +415,7 @@ export function DeskScreen({ user, onLogout }: Props) {
               onEmocion: (e) => {
                 emocion = e;
                 reacted = true;
+                setEmocion(e);
                 cancelMmm();
                 setFace(faceForEmocion(e));
                 speaker?.setEmocion(e);
@@ -418,9 +433,11 @@ export function DeskScreen({ user, onLogout }: Props) {
                 speaker.push(piece);
               },
               onTools: (tools) => {
-                if (tools.includes('web')) setToolHint('investigando en internet');
-                else if (tools.includes('oro') || tools.includes('plata') || tools.includes('hnl')) setToolHint('consultando precio');
-                else if (tools.includes('pagina')) setToolHint('leyendo la página');
+                const t = tareaDeHerramientas(tools);
+                if (t) {
+                  hacerTarea(t);
+                  setToolHint(TAREA_TEXTO[t]);
+                }
               },
             });
             const result = await st.promise;
@@ -482,7 +499,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         }
       }
     },
-    [escenaReciente, idleStatus, logUltron, onAudio, say, settle, showBubble, user.correo, user.name]
+    [escenaReciente, hacerTarea, idleStatus, logUltron, onAudio, say, settle, showBubble, user.correo, user.name]
   );
 
   const whatDoYouSee = useCallback(async () => {
@@ -591,6 +608,7 @@ export function DeskScreen({ user, onLogout }: Props) {
             await say('Hasta pronto.', 'IDLE', { emocion: 'carino' });
             return onLogout();
           case 'recordar': {
+            hacerTarea('anotar');
             const line = `${user.name}: ${intent.hecho}`;
             if (longMemory.current.includes(line)) return void (await say('Eso ya lo tenía en memoria.', 'HAPPY'));
             const remoto = rememberFact(line, user.name);
@@ -672,7 +690,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [answerConocer, askBrain, camPerm?.granted, canciones, exitConocer, fireBlaster, fireSaber, idleStatus, onLogout, playClip, pray, requestCam, runGag, say, settle, sing, startConocer, user, whatDoYouSee]
+    [answerConocer, askBrain, camPerm?.granted, canciones, exitConocer, fireBlaster, fireSaber, hacerTarea, idleStatus, onLogout, playClip, pray, requestCam, runGag, say, settle, sing, startConocer, user, whatDoYouSee]
   );
 
   // ---------- Tacto ----------
@@ -827,6 +845,18 @@ export function DeskScreen({ user, onLogout }: Props) {
   }, [pausarMirada]);
   const onSwipe = useCallback((dir: 'left' | 'right') => setMenuOpen(dir === 'left'), []);
 
+  // La sala solo distingue cabeza y cuerpo: la cabeza es la frente (curiosa) y el cuerpo, cosquillas.
+  const onTocarSala = useCallback((zona: 'cuerpo' | 'cabeza') => onTap(zona === 'cabeza' ? 'forehead' : 'chin', 0, 0), [onTap]);
+  const onDeslizarSala = useCallback((dir: 'arriba' | 'abajo') => setMenuOpen(dir === 'arriba'), []);
+  const onFalloSala = useCallback((motivo: string) => {
+    miga(`sala 3D no disponible: ${motivo}`);
+    setConSala(false);
+  }, []);
+  const cambiarPostura = useCallback((p: Postura) => {
+    setPostura(p);
+    void saveSettings({ postura: p });
+  }, []);
+
   useEffect(() => {
     const id = setInterval(() => {
       if (irritationRef.current > 0) {
@@ -895,6 +925,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       setMicMuted(s.micMuted);
       setVisionOn(s.visionEnabled);
       setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx });
+      setPostura(s.postura === 'sentada' ? 'sentada' : 'pie');
       setSfxEnabled(s.sfx);
       proactiveRef.current = s.proactive;
       if (s.sttEngine !== currentSttEngine()) await setSttEngine(s.sttEngine);
@@ -1154,7 +1185,7 @@ export function DeskScreen({ user, onLogout }: Props) {
   ).current;
 
   const dotColor =
-    status === 'muted' ? '#FF7A8A' : status === 'reconnect' ? '#FFD166' : status === 'thinking' ? '#FFD166' : status === 'offline' ? '#666' : '#00E5FF';
+    status === 'muted' ? T.barro : status === 'reconnect' || status === 'thinking' ? T.miel : status === 'offline' ? T.tinta3 : T.salvia;
   const statusLabel =
     toolHint ? toolHint :
     status === 'listening'
@@ -1176,7 +1207,7 @@ export function DeskScreen({ user, onLogout }: Props) {
                 : 'iniciando';
 
   return (
-    <View style={styles.root}>
+    <View style={[styles.root, !conSala && styles.rootCara]}>
       <CamaraVision
         enabled={visionOn && !!camPerm?.granted}
         dormido={presence === 'sleep'}
@@ -1187,29 +1218,43 @@ export function DeskScreen({ user, onLogout }: Props) {
         onScene={onScene}
         onMotor={setVisionMotor}
       />
-      <UltronFace
-        face={face}
-        mode={mode}
-        gazeX={gaze.x}
-        gazeY={gaze.y}
-        level={level}
-        speechLevelSource={suscribirNivelVoz}
-        attention={atencion}
-        attack={attack}
-        irritation={irritation}
-        winkSide={winkSide}
-        onTap={onTap}
-        onLongPress={onLongPress}
-        onDragGaze={onDragGaze}
-        onDragEnd={onDragEnd}
-        onRub={onRub}
-        onSwipe={onSwipe}
-      />
+      {conSala && postura ? (
+        <SalaAura
+          face={face}
+          emocion={emocion}
+          postura={postura}
+          pedido={pedido}
+          speechLevelSource={suscribirNivelVoz}
+          mirada={{ x: gaze.x, y: gaze.y, activa: verPersona }}
+          onTocar={onTocarSala}
+          onDeslizar={onDeslizarSala}
+          onFallo={onFalloSala}
+        />
+      ) : !conSala ? (
+        <UltronFace
+          face={face}
+          mode={mode}
+          gazeX={gaze.x}
+          gazeY={gaze.y}
+          level={level}
+          speechLevelSource={suscribirNivelVoz}
+          attention={atencion}
+          attack={attack}
+          irritation={irritation}
+          winkSide={winkSide}
+          onTap={onTap}
+          onLongPress={onLongPress}
+          onDragGaze={onDragGaze}
+          onDragEnd={onDragEnd}
+          onRub={onRub}
+          onSwipe={onSwipe}
+        />
+      ) : null}
 
       <View pointerEvents="none" style={styles.hud}>
         <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
         <Text style={styles.hudText}>
-          {statusLabel} · {mode.toLowerCase()}
+          {statusLabel}
           {verPersona ? (visionMotor === 'mlkit' ? ' · te veo' : ' · alguien') : ''}
           {!online ? ' · sin cerebro' : ''}
         </Text>
@@ -1224,12 +1269,29 @@ export function DeskScreen({ user, onLogout }: Props) {
       )}
 
       {!!bubble && (
-        <Animated.View pointerEvents="none" style={[styles.bubbleFloat, { opacity: bubbleOp }]}>
-          <Text numberOfLines={3} style={styles.bubbleText}>
-            {bubble}
-          </Text>
+        <Animated.View pointerEvents="none" style={[styles.bubbleFloat, conSala ? styles.bubbleArriba : styles.bubbleAbajo, { opacity: bubbleOp }]}>
+          <View style={styles.bubbleCard}>
+            <Text numberOfLines={3} style={styles.bubbleText}>
+              {bubble}
+            </Text>
+          </View>
         </Animated.View>
       )}
+
+      <View style={styles.controles} pointerEvents="box-none">
+        <Pressable
+          onPress={() => void toggleMute()}
+          accessibilityRole="button"
+          accessibilityLabel={micMuted ? 'Activar el micrófono' : 'Silenciar el micrófono'}
+          style={[styles.mic, !micMuted && styles.micAbierto, listening && !micMuted && styles.micOyendo]}
+        >
+          <Text style={[styles.micIcono, !micMuted && { color: '#FFFFFF' }]}>{micMuted ? '🔇' : '🎙'}</Text>
+        </Pressable>
+        <Pressable onPress={() => setMenuOpen(true)} accessibilityRole="button" accessibilityLabel="Escribir y ajustes" style={styles.escribir}>
+          <Text style={styles.escribirTexto}>Escribir</Text>
+        </Pressable>
+      </View>
+
       <View style={styles.edgeZone} {...edgePan.panHandlers}>
         <View pointerEvents="none" style={styles.edgeHint} />
       </View>
@@ -1307,20 +1369,47 @@ export function DeskScreen({ user, onLogout }: Props) {
           void handleCommand(`busca ${q}`);
         }}
         onLogout={onLogout}
+        conSala={conSala}
+        postura={postura || 'pie'}
+        onSetPostura={cambiarPostura}
       />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#000' },
-  hud: { position: 'absolute', top: 12, left: 16, flexDirection: 'row', alignItems: 'center', gap: 7 },
-  hudDot: { width: 6, height: 6, borderRadius: 3 },
-  hudText: { color: 'rgba(200,212,222,0.55)', fontSize: 11, letterSpacing: 1 },
-  bubbleFloat: { position: 'absolute', left: 32, right: 32, bottom: 16, alignItems: 'center' },
-  partialWrap: { position: 'absolute', left: 40, right: 40, top: 34, alignItems: 'center' },
-  partialText: { color: 'rgba(0,229,255,0.55)', fontSize: 13, fontStyle: 'italic', textAlign: 'center' },
-  bubbleText: { color: 'rgba(232,251,255,0.9)', fontSize: 15, lineHeight: 21, textAlign: 'center' },
+  root: { flex: 1, backgroundColor: T.arena },
+  // la cara de respaldo se dibuja sobre negro, como siempre
+  rootCara: { backgroundColor: '#000' },
+  hud: {
+    position: 'absolute',
+    top: 12,
+    left: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: T.panel,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    ...SOMBRA,
+  },
+  hudDot: { width: 8, height: 8, borderRadius: 4 },
+  hudText: { color: T.tinta2, fontSize: 13, fontWeight: '600' },
+  bubbleFloat: { position: 'absolute', left: 90, right: 90, alignItems: 'center' },
+  bubbleArriba: { top: 14 },
+  bubbleAbajo: { bottom: 88 },
+  bubbleCard: { backgroundColor: T.panel, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, maxWidth: 520, ...SOMBRA },
+  bubbleText: { color: T.tinta, fontSize: 16, lineHeight: 22, textAlign: 'center' },
+  partialWrap: { position: 'absolute', left: 120, right: 120, bottom: 24, alignItems: 'center' },
+  partialText: { color: T.tinta2, fontSize: 14, fontStyle: 'italic', textAlign: 'center', backgroundColor: 'rgba(255,255,255,0.8)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4, overflow: 'hidden' },
+  controles: { position: 'absolute', right: 56, bottom: 16, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  mic: { width: 56, height: 56, borderRadius: 28, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center', ...SOMBRA },
+  micAbierto: { backgroundColor: T.miel },
+  micOyendo: { borderWidth: 3, borderColor: T.salvia },
+  micIcono: { fontSize: 22, color: T.tinta2 },
+  escribir: { height: 44, borderRadius: 22, paddingHorizontal: 18, backgroundColor: T.panel, justifyContent: 'center', ...SOMBRA },
+  escribirTexto: { color: T.tinta, fontSize: 15, fontWeight: '600' },
   edgeZone: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 44, justifyContent: 'center', alignItems: 'flex-end' },
-  edgeHint: { width: 4, height: 84, borderTopLeftRadius: 4, borderBottomLeftRadius: 4, backgroundColor: 'rgba(0,229,255,0.3)' },
+  edgeHint: { width: 5, height: 84, borderTopLeftRadius: 4, borderBottomLeftRadius: 4, backgroundColor: 'rgba(168,112,26,0.35)' },
 });

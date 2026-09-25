@@ -920,6 +920,9 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
 
   /* ------------------------------------------------------------------ cámara y tamaño */
   let angosto = false;
+  // Pantalla baja y ancha (un teléfono en horizontal): la sala entera cabe de sobra a lo ancho y
+  // ella quedaba chiquita; la cámara se acerca y la acompaña un poco al moverse.
+  let bajo = false;
   const mira = new THREE.Vector3(0.15, 1.0, 0);
   const medir = () => {
     const w = host.clientWidth || 1;
@@ -927,7 +930,8 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
     angosto = camera.aspect < 1.1;
-    camera.fov = angosto ? 46 : 38;
+    bajo = !angosto && h < 520 && camera.aspect > 1.6;
+    camera.fov = angosto ? 46 : bajo ? 34 : 38;
     camera.updateProjectionMatrix();
   };
   const ro = new ResizeObserver(medir);
@@ -1139,10 +1143,10 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
       }
     }
 
-    const objX = angosto ? Math.max(-1.7, Math.min(SILLON.x, st.x)) : 0.15;
+    const objX = angosto ? Math.max(-1.7, Math.min(SILLON.x, st.x)) : bajo ? Math.max(-0.8, Math.min(1.0, st.x * 0.5)) : 0.15;
     mira.x = lerp(mira.x, objX, 1 - Math.pow(0.02, dt));
-    mira.y = 1.0;
-    camera.position.set(mira.x, angosto ? 1.9 : 1.7, angosto ? 7.4 : 6.6);
+    mira.y = bajo ? 0.9 : 1.0;
+    camera.position.set(mira.x, angosto ? 1.9 : bajo ? 1.5 : 1.7, angosto ? 7.4 : bajo ? 5.3 : 6.6);
     camera.lookAt(mira);
 
     // dónde está su cabeza en pantalla, para que la burbuja le salga de ahí

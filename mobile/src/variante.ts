@@ -16,8 +16,8 @@ const extra = (Constants.expoConfig?.extra || {}) as { variante?: string; acento
 export const VARIANTE: Variante = extra.variante === 'electrum' ? 'electrum' : 'ultron';
 export const ES_ELECTRUM = VARIANTE === 'electrum';
 
-/** Acento de la plataforma. Cian para la junta, ámbar de mineral para la mina. */
-export const ACENTO = ES_ELECTRUM ? extra.acento || '#FFAE3B' : '#05E1FF';
+/** Acento de la plataforma. Miel para AU-RA, ámbar de mineral para la mina. */
+export const ACENTO = ES_ELECTRUM ? extra.acento || '#FFAE3B' : '#E2A83E';
 
 export const MARCA = ES_ELECTRUM ? 'DR ELECTRUM FP' : 'AU-RA FP';
 export const LEMA = ES_ELECTRUM ? 'ESTACIÓN DE TRABAJO MINERA' : 'POWERED BY ORDEN GLOBAL';

@@ -5,13 +5,13 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { iniciarReporte, miga } from './src/lib/reporte';
 import { Animated, AppState, Easing, PermissionsAndroid, Platform, StyleSheet, Text, View, type AppStateStatus } from 'react-native';
-import { APP_VERSION, type FaceState, type SessionUser } from './src/config';
-import { UltronFace } from './src/components/UltronFace';
+import { APP_VERSION, type SessionUser } from './src/config';
 import { logoutRemote } from './src/lib/api';
 import { loadSession, saveSession } from './src/lib/storage';
 import { DeskScreen } from './src/screens/DeskScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { ES_ELECTRUM } from './src/variante';
+import { T } from './src/tema';
 import ElectrumApp from './src/electrum/ElectrumApp';
 
 type Phase = 'splash' | 'login' | 'desk';
@@ -45,10 +45,10 @@ async function lockOrientation(kind: 'portrait' | 'landscape') {
   }
 }
 
-/** Fondo negro del sistema y barra de navegación oculta (lo único que edge-to-edge permite ajustar). */
+/** Fondo crema del sistema y barra de navegación oculta (lo único que edge-to-edge permite ajustar). */
 async function hideSystemBars() {
   try {
-    await SystemUI.setBackgroundColorAsync('#000000');
+    await SystemUI.setBackgroundColorAsync(T.crema);
   } catch {
     /* */
   }
@@ -72,35 +72,46 @@ async function requestDeskPermissions() {
 }
 
 /**
- * Splash JS: marca «AU-RA FP», «powered by ORDEN GLOBAL» y la cara compacta despertando
- * (ojos cerrados → abiertos) mientras se carga la sesión. Se desvanece encima de la pantalla siguiente.
+ * Splash JS de AU-RA: el logo sobre crema y tres puntos miel que respiran mientras se carga la
+ * sesión. Se funde encima de la pantalla siguiente (la sala, donde ella ya viene entrando).
  */
 function JsSplash({ opacity }: { opacity: Animated.Value }) {
-  const [face, setFace] = useState<FaceState>('SLEEPING');
   const rise = useRef(new Animated.Value(0)).current;
+  const puntos = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
 
   useEffect(() => {
     // el nativo se oculta cuando este ya está pintado: la transición la hace el fade nativo
     void SplashScreen.hideAsync().catch(() => {});
-    Animated.timing(rise, { toValue: 1, duration: 900, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-    const t1 = setTimeout(() => setFace('IDLE'), 520);
-    const t2 = setTimeout(() => setFace('HAPPY'), 1350);
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-    };
-  }, [rise]);
+    Animated.timing(rise, { toValue: 1, duration: 800, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
+    const ola = Animated.loop(
+      Animated.stagger(
+        150,
+        puntos.map((v) =>
+          Animated.sequence([
+            Animated.timing(v, { toValue: 1, duration: 320, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+            Animated.timing(v, { toValue: 0, duration: 320, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+          ])
+        )
+      )
+    );
+    ola.start();
+    return () => ola.stop();
+  }, [rise, puntos]);
 
-  const ty = rise.interpolate({ inputRange: [0, 1], outputRange: [10, 0] });
+  const ty = rise.interpolate({ inputRange: [0, 1], outputRange: [12, 0] });
   return (
     <Animated.View pointerEvents="none" style={[styles.splash, { opacity }]}>
-      <View style={styles.splashFace}>
-        <UltronFace face={face} size={92} stageHeight={210} />
+      <Animated.Image
+        source={require('./assets/marca/logo-aura.png')}
+        resizeMode="contain"
+        accessibilityLabel="AU-RA by Orden Global"
+        style={[styles.logo, { opacity: rise, transform: [{ translateY: ty }] }]}
+      />
+      <View style={styles.puntos}>
+        {puntos.map((v, i) => (
+          <Animated.View key={i} style={[styles.punto, { transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) }] }]} />
+        ))}
       </View>
-      <Animated.View style={{ alignItems: 'center', opacity: rise, transform: [{ translateY: ty }] }}>
-        <Text style={styles.wordmark}>AU-RA FP</Text>
-        <Text style={styles.powered}>POWERED BY ORDEN GLOBAL</Text>
-      </Animated.View>
       <Text style={styles.meta}>v{APP_VERSION}</Text>
     </Animated.View>
   );
@@ -180,7 +191,7 @@ function AppUltron() {
 
   return (
     <View style={styles.root}>
-      <StatusBar style="light" hidden />
+      <StatusBar style="dark" hidden />
       {phase === 'login' && <LoginScreen onAuthenticated={(u) => void enterDesk(u)} />}
       {phase === 'desk' && user && (
         <DeskScreen
@@ -200,10 +211,10 @@ function AppUltron() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#000' },
-  splash: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: 4, backgroundColor: '#000' },
-  splashFace: { width: 320, alignItems: 'center' },
-  wordmark: { color: '#E8FBFF', fontSize: 26, letterSpacing: 6, fontWeight: '700', marginTop: -6 },
-  powered: { color: 'rgba(5,225,255,0.6)', fontSize: 10, letterSpacing: 2.5, fontWeight: '600', marginTop: 8 },
-  meta: { position: 'absolute', bottom: 24, color: '#3A4A5A', fontSize: 11, fontFamily: Platform.OS === 'android' ? 'monospace' : 'Courier' },
+  root: { flex: 1, backgroundColor: T.crema },
+  splash: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: 18, backgroundColor: T.crema },
+  logo: { width: 340, height: 128 },
+  puntos: { flexDirection: 'row', gap: 8, height: 20, alignItems: 'flex-end' },
+  punto: { width: 10, height: 10, borderRadius: 5, backgroundColor: T.miel },
+  meta: { position: 'absolute', bottom: 24, color: T.tinta3, fontSize: 11 },
 });

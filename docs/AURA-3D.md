@@ -60,12 +60,36 @@ expresiones), que es lo que recibe quien modele.
 
 ## Fases
 
-1. Concepto: **en curso**.
+1. Concepto: **hecho** (personaje 2, logo sin corazón).
 2. Modelo 3D con esqueleto: artista 3D, o IA de imagen a 3D más limpieza a mano.
 3. Motor del personaje: en paralelo con la 2, sobre un muñeco de prueba.
 4. Voz a boca.
 5. Pruebas en un teléfono de gama media: 60 cuadros por segundo de objetivo, 30 de mínimo.
-6. Salida en web y APK.
+6. Salida en web y APK: **hecha en la rama**, sin publicar hasta el merge a main.
+
+## En el teléfono (APK de AU-RA)
+
+La sala del teléfono es la misma de la web, no una copia. `scripts/sala-movil.mjs` empaqueta
+`src/11-sala/embed.ts` con three.js en una sola página y la escribe en `mobile/src/sala/salaHtml.ts`,
+que va dentro de la APK. Así ella aparece al instante y también sin red, y no depende de qué sirva
+Render. `tests/sala-movil.test.ts` vuelve a empaquetar y falla si alguien cambió la sala sin
+regenerarla.
+
+- `mobile/src/components/SalaAura.tsx`: la WebView con el puente. Manda estado, emoción, boca (con
+  la voz real, ~15 veces por segundo), mirada de la cámara, tarea y postura; recibe toques
+  (cabeza → curiosa, cuerpo → cosquillas) y deslizar (arriba abre el menú).
+- Si la WebView no tiene WebGL, se cae o no dice «listo» en 12 s, vuelve la cara 2D de siempre.
+- `mobile/src/lib/tareas.ts`: el reparto herramienta → gesto, comprobado contra el de la web.
+- «Te contesta: de pie / sentada» está en el menú y se guarda en los ajustes.
+- Íconos: `mobile/scripts/marca-aura.py` dibuja el planeta del logo. Dr Electrum conserva los suyos
+  en `mobile/assets/electrum/`.
+- Pantallas de AU-RA en crema, miel y salvia (`mobile/src/tema.ts`): arranque con el logo, entrada,
+  menú y mesa. Dr Electrum no cambia.
+- Prueba sin teléfono: `node scripts/qa/sala-movil-qa.mjs <carpeta>` carga la página empaquetada en
+  Chromium con el mismo puente, en horizontal, de pie y sentada, y falla con cualquier error.
+
+En pantallas bajas y anchas (un teléfono en horizontal) la cámara se acerca y la acompaña, porque
+con el encuadre de escritorio quedaba chiquita.
 
 ## Lo que el cambio de nombre dejó pendiente
 

@@ -7,6 +7,9 @@
  *   entra:  {tipo:'estado', face, emocion} · {tipo:'boca', n} · {tipo:'mirar', x, y, activa}
  *           {tipo:'tarea', tarea, texto?} · {tipo:'postura', p} · {tipo:'entrar'}
  *   sale:   {tipo:'listo'} · {tipo:'tocar', zona} · {tipo:'deslizar', dir} · {tipo:'fallo', motivo}
+ *
+ * La postura con la que arranca llega por `?postura=sentada` o, cuando la página va empaquetada en
+ * la APK (sin URL), por `window.__auraPostura`, que el teléfono pone antes de que cargue.
  */
 import { crearSala, type SalaControl } from './sala';
 import type { Postura, Tarea } from './tareas';
@@ -27,7 +30,7 @@ let ctl: SalaControl | null = null;
 try {
   ctl = crearSala(host, {
     reducido: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
-    postura: params.get('postura') === 'sentada' ? 'sentada' : 'pie',
+    postura: (params.get('postura') || (window as any).__auraPostura) === 'sentada' ? 'sentada' : 'pie',
     onTocar: (zona) => alTelefono({ tipo: 'tocar', zona }),
     onDeslizar: (dir) => alTelefono({ tipo: 'deslizar', dir }),
   });

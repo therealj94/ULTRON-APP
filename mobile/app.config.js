@@ -22,7 +22,24 @@ const ELECTRUM = {
     // dos manos. Lo vertical es de la web. Lo tuve al revés un rato — el campo parecía pedir
     // vertical, pero una app que enseña un mapa y una ficha a la vez quiere ancho.
   orientacion: 'landscape',
+  // Los íconos de siempre del doctor. Los de `assets/` pasaron a ser los de AU-RA (el planeta crema
+  // del logo), así que Electrum lee su copia y no hereda la marca de la otra app.
+  icono: './assets/electrum/icon.png',
+  iconoAdaptable: './assets/electrum/adaptive-icon.png',
+  arranque: './assets/electrum/splash-icon.png',
 };
+
+// AU-RA es clara y cálida (crema, miel y salvia): el sistema, el ícono adaptable y el arranque
+// tienen que ir con ella, o el teléfono enseña un fondo negro antes de abrirse a una sala crema.
+const AURA_CREMA = '#FEF9F3';
+
+/** Cambia las opciones de un plugin de la lista sin tocar el resto. */
+function conPlugin(plugins, nombre, cambiar) {
+  return (plugins || []).map((p) => {
+    const [n, opts] = Array.isArray(p) ? p : [p, undefined];
+    return n === nombre ? [n, cambiar(opts || {})] : p;
+  });
+}
 
 module.exports = ({ config }) => {
   const variante = String(process.env.ULTRON_APP || 'ultron').toLowerCase();
@@ -31,8 +48,11 @@ module.exports = ({ config }) => {
   if (variante !== 'electrum') {
     return {
       ...expo,
+      userInterfaceStyle: 'light',
+      plugins: conPlugin(expo.plugins, 'expo-splash-screen', (o) => ({ ...o, backgroundColor: AURA_CREMA })),
       android: {
         ...expo.android,
+        adaptiveIcon: { ...expo.android?.adaptiveIcon, backgroundColor: AURA_CREMA },
         /*
          * AU-RA no pide la ubicación, y hay que decirlo explícitamente.
          *
@@ -63,6 +83,7 @@ module.exports = ({ config }) => {
     slug: ELECTRUM.slug,
     scheme: ELECTRUM.scheme,
     orientation: ELECTRUM.orientacion,
+    icon: ELECTRUM.icono,
     android: {
       ...expo.android,
       package: ELECTRUM.paquete,
@@ -75,7 +96,7 @@ module.exports = ({ config }) => {
           'android.permission.ACCESS_COARSE_LOCATION',
         ]),
       ],
-      adaptiveIcon: { ...expo.android?.adaptiveIcon, backgroundColor: '#000000' },
+      adaptiveIcon: { ...expo.android?.adaptiveIcon, foregroundImage: ELECTRUM.iconoAdaptable, backgroundColor: '#000000' },
     },
     plugins: (expo.plugins || []).map((p) => {
       if (!Array.isArray(p)) return p;
@@ -103,6 +124,7 @@ module.exports = ({ config }) => {
         ];
       }
       if (nombre === 'expo-screen-orientation') return [nombre, { initialOrientation: 'LANDSCAPE' }];
+      if (nombre === 'expo-splash-screen') return [nombre, { ...opts, image: ELECTRUM.arranque }];
       return p;
     }),
     extra: { ...expo.extra, variante: 'electrum', acento: ELECTRUM.acento },

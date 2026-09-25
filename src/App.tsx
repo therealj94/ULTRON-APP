@@ -20,11 +20,11 @@ import type { Emocion } from '../lib/emocion';
 import { Maximize2, Minimize2, Fingerprint, Camera, ShieldCheck, Settings2, Mic, MicOff, Keyboard } from 'lucide-react';
 import { hayWebGL } from './11-sala/sala';
 import { tareaDeHerramientas, type Postura, type Tarea } from './11-sala/tareas';
-import type { PedidoTarea } from './11-sala/Sala';
+import type { PedidoTarea } from './11-sala/VistaSala';
 import './11-sala/tema.css';
 
 // La sala trae three.js (medio mega): se baja aparte, sin frenar el arranque.
-const Sala = lazy(() => import('./11-sala/Sala'));
+const Sala = lazy(() => import('./11-sala/VistaSala'));
 
 const lee = (k: string, d: string) => {
   try {
