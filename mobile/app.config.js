@@ -75,7 +75,9 @@ module.exports = ({ config }) => {
           ]),
         ],
       },
-      extra: { ...expo.extra, variante: 'ultron' },
+      // Cada app habla con SU servicio: desde que un despliegue sirve un solo producto, AU-RA vive
+      // en aura-fp y Dr Electrum en ultron-looi-desk. Apuntar las dos al mismo deja a una en 404.
+      extra: { ...expo.extra, variante: 'ultron', ultronUrl: 'https://aura-fp.onrender.com' },
     };
   }
 
@@ -129,6 +131,6 @@ module.exports = ({ config }) => {
       if (nombre === 'expo-splash-screen') return [nombre, { ...opts, image: ELECTRUM.arranque }];
       return p;
     }),
-    extra: { ...expo.extra, variante: 'electrum', acento: ELECTRUM.acento },
+    extra: { ...expo.extra, variante: 'electrum', acento: ELECTRUM.acento, ultronUrl: 'https://ultron-looi-desk.onrender.com' },
   };
 };
