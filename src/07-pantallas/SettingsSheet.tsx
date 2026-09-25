@@ -28,7 +28,7 @@ interface Props {
   onOlvidar: () => void;
 }
 
-const MODOS: Array<{ id: Mode; label: string; desc: string }> = [
+export const MODOS: Array<{ id: Mode; label: string; desc: string }> = [
   { id: 'GUARDIAN', label: 'Guardián', desc: 'Firme, protege a la junta' },
   { id: 'EXPLORER', label: 'Explorador', desc: 'Curioso, pregunta más' },
   { id: 'GOLD', label: 'Oro', desc: 'Cálido, metal y bóveda' },
@@ -37,6 +37,9 @@ const MODOS: Array<{ id: Mode; label: string; desc: string }> = [
   { id: 'STRATEGIC', label: 'Estratégico', desc: 'Bajo, piensa a largo' },
   { id: 'CREATIVE', label: 'Creativo', desc: 'Juguetón, propone' },
 ];
+
+/** El nombre del modo para decirlo o mostrarlo: en español, no el id interno. */
+export const nombreModo = (m: Mode) => MODOS.find((x) => x.id === m)?.label || m;
 
 const CARAS: FaceState[] = ['IDLE', 'HAPPY', 'LAUGH', 'SURPRISED', 'CURIOSITY', 'THINKING', 'CONCERNED', 'SAD', 'ANGRY', 'TIRED', 'PURR', 'WINK', 'SING', 'SLEEPING'];
 

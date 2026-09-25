@@ -3,7 +3,7 @@ import type { Mode, FaceState, CapturedPhoto } from './types';
 import { FaceCanvas, caraDeEmocion } from './02-cara';
 import type { Gesto } from './02-cara/gestos';
 import { caraDeTexto } from './02-cara/emocion';
-import { DockDrawer, SettingsSheet, Arranque, AccesoModal, UltronVaultModal, VisionOverlay, PhotoCaptureModal, CameraCountdownModal } from './07-pantallas';
+import { DockDrawer, SettingsSheet, nombreModo, Arranque, AccesoModal, UltronVaultModal, VisionOverlay, PhotoCaptureModal, CameraCountdownModal } from './07-pantallas';
 import type { Escena } from './02-cara/vision/escena';
 import { playSfx } from './03-voz/audio';
 import { hablar, cantar, callar, setVozActiva, type Dicho } from './03-voz/hablar';
@@ -12,19 +12,46 @@ import { clipDeEmocion, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
 import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
-import { grabFrame } from './04-cerebro/grabFrame';
+import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
 import { guardarHecho, olvidarTodo } from './09-estado/memoria';
 import { headersMesa } from './10-infra/sesionCliente';
 import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
 import { Maximize2, Minimize2, Fingerprint, Camera, ShieldCheck, Settings2, Mic, MicOff, Keyboard } from 'lucide-react';
-import { hayWebGL } from './11-sala/sala';
+import { hayWebGL } from './11-sala/webgl';
 import { tareaDeHerramientas, type Postura, type Tarea } from './11-sala/tareas';
 import type { PedidoTarea } from './11-sala/VistaSala';
 import './11-sala/tema.css';
 
 // La sala trae three.js (medio mega): se baja aparte, sin frenar el arranque.
 const Sala = lazy(() => import('./11-sala/VistaSala'));
+
+/**
+ * Si el trozo de la sala no baja (red cortada, despliegue nuevo) o revienta al montarse, React
+ * desmontaría toda la app: pantalla en blanco. Aquí se ataja y se vuelve a la cara 2D.
+ */
+type PropsSalaSegura = { onFallo: (motivo: string) => void; children: React.ReactNode };
+class SalaSegura extends React.Component<PropsSalaSegura, { roto: boolean }> {
+  // El proyecto no trae @types/react: se declara a mano lo que usa esta clase.
+  declare readonly props: PropsSalaSegura;
+  state = { roto: false };
+  static getDerivedStateFromError() {
+    return { roto: true };
+  }
+  componentDidCatch(e: unknown) {
+    console.error('[sala] falló; vuelvo a la cara 2D:', e);
+    this.props.onFallo(String((e as any)?.message || e));
+  }
+  render() {
+    return this.state.roto ? null : this.props.children;
+  }
+}
+
+/** Lo que se dice cuando el turno no llegó: humano, sin el error técnico (ese va a la consola). */
+const fraseSinCerebro = () =>
+  typeof navigator !== 'undefined' && navigator.onLine === false
+    ? 'Me quedé sin internet. Revisá la conexión y probá de nuevo.'
+    : 'No alcancé el cerebro. Probá de nuevo en un momento.';
 
 const lee = (k: string, d: string) => {
   try {
@@ -355,7 +382,7 @@ export default function App() {
   // ---- CEREBRO: un turno en stream. Emoción antes del texto; frases a la cola de voz.
   const turnoEnCurso = useRef<AbortController | null>(null);
   const pensar = useCallback(
-    async (cmd: string) => {
+    async (cmd: string, o: { imagen?: string } = {}) => {
       turnoEnCurso.current?.abort();
       const ac = new AbortController();
       turnoEnCurso.current = ac;
@@ -364,7 +391,8 @@ export default function App() {
       setEmocion('pensando');
       playSfx('think', soundFxEnabled);
       const quiereVer = /qu[eé] ves|qu[eé] hay aqu[ií]|imagen|c[aá]mara|le[eé] (esto|la foto|la etiqueta)/i.test(cmd);
-      const image = quiereVer && visionEnabled ? grabFrame() : null;
+      // Una foto ya tomada («¿Qué ves en la foto?») manda esa foto, no un cuadro en vivo.
+      const image = o.imagen || (quiereVer && visionEnabled ? grabFrame() : null);
       // Si el 27B tarda, AU-RA piensa en voz alta con un clip (sin red).
       const relleno = setTimeout(() => {
         if (turnoEnCurso.current === ac && colaRef.current.length === 0 && !hablando.current) decir(Math.random() < 0.5 ? 'mmm' : 'mmm2', { emocion: 'pensando', sinBurbuja: true });
@@ -425,7 +453,8 @@ export default function App() {
         }
         const texto = String(data.reply || '').trim();
         if (!texto) {
-          decir(`No alcancé el cerebro. ${String(data.error || '').slice(0, 80)}`.trim(), { emocion: 'preocupado' });
+          console.warn('[cerebro] turno sin respuesta:', data.error);
+          decir(fraseSinCerebro(), { emocion: 'preocupado' });
           return;
         }
         if (data.emocion) emo = data.emocion;
@@ -439,11 +468,20 @@ export default function App() {
       } catch (e: any) {
         clearTimeout(relleno);
         if (e?.name === 'AbortError') return;
-        decir(`Sin cerebro ahora mismo. ${String(e?.message || e).slice(0, 80)}`, { emocion: 'preocupado' });
+        console.error('[cerebro] turno falló:', e);
+        decir(fraseSinCerebro(), { emocion: 'preocupado' });
       }
     },
     [mode, usuario.name, visionEnabled, soundFxEnabled, decir, bombear, callarTodo, hacerTarea]
   );
+
+  /** Si el cerebro todavía no está, lo avisa y devuelve true (el turno no sale). */
+  const cerebroNoListo = useCallback(() => {
+    if (cerebroListoRef.current === 'listo') return false;
+    showBubble(cerebroListoRef.current === 'calentando' ? 'Calentando el 27B… un momento.' : 'Sin cerebro. Reviso el nodo.');
+    decir('calentando el motor', { emocion: 'pensando' });
+    return true;
+  }, [showBubble, decir]);
 
   // ---- Despachador: gags locales; datos, siempre al cerebro.
   const comando = useCallback(
@@ -526,16 +564,12 @@ export default function App() {
           setCameraOpen(true);
           return;
         default:
-          if (cerebroListoRef.current !== 'listo') {
-            showBubble(cerebroListoRef.current === 'calentando' ? 'Calentando el 27B… un momento.' : 'Sin cerebro. Reviso el nodo.');
-            decir('calentando el motor', { emocion: 'pensando' });
-            return;
-          }
+          if (cerebroNoListo()) return;
           setFace(caraDeTexto(cmd) === 'LISTENING' ? 'THINKING' : caraDeTexto(cmd));
           void pensar(cmd);
       }
     },
-    [usuario.name, soundFxEnabled, decir, pensar, dormir, despertar, callarTodo, showBubble, hacerTarea]
+    [usuario.name, soundFxEnabled, decir, pensar, dormir, despertar, callarTodo, cerebroNoListo, hacerTarea]
   );
 
   // ---- OÍDO continuo con barge-in.
@@ -554,7 +588,13 @@ export default function App() {
       showBubble('Permití el micrófono en el navegador para hablarme.');
       setMicEnabled(false);
     },
-    onNoSoportado: () => showBubble('Este navegador no oye voz. Usá Chrome o escribí abajo.'),
+    onNoSoportado: () => {
+      // Sin reconocimiento de voz (Firefox): apagar el micrófono y abrir el teclado para no quedar trabado.
+      setMicEnabled(false);
+      setSettingsOpen(false);
+      setDockOpen(true);
+      showBubble('Este navegador no me oye. Escribime acá abajo, o abrime en Chrome para hablarme.', 10000);
+    },
   });
 
   // ---- Gestos de la cara → reacciones baratas (clips, sin red)
@@ -592,7 +632,7 @@ export default function App() {
   );
 
   return (
-    <div id="ultron-app-root" className="aura relative w-screen h-screen overflow-hidden bg-[#232528] flex items-center justify-center select-none">
+    <div id="ultron-app-root" className="aura relative w-screen h-screen supports-[height:100dvh]:h-dvh overflow-hidden bg-[#232528] flex items-center justify-center select-none">
       <div
         id="ultron-stand-container"
         className={`relative overflow-hidden transition-all duration-300 flex items-center justify-center ${
@@ -601,30 +641,32 @@ export default function App() {
       >
         {conSala ? (
           <div className="absolute inset-0 aura-fondo">
-            <Suspense fallback={null}>
-              <Sala
-                face={face}
-                emocion={emocion}
-                lipLevel={lipLevel}
-                cameraGaze={cameraGaze}
-                postura={postura}
-                pedido={pedido}
-                entrada={entrada}
-                onTocar={tocarSala}
-                onDeslizar={(d) => {
-                  if (d === 'arriba') {
-                    setDockOpen(true);
-                    setSettingsOpen(false);
-                  } else {
-                    setSettingsOpen(true);
-                    setDockOpen(false);
-                  }
-                }}
-                onFallo={() => setConSala(false)}
-              >
-                {burbujaTexto}
-              </Sala>
-            </Suspense>
+            <SalaSegura onFallo={() => setConSala(false)}>
+              <Suspense fallback={null}>
+                <Sala
+                  face={face}
+                  emocion={emocion}
+                  lipLevel={lipLevel}
+                  cameraGaze={cameraGaze}
+                  postura={postura}
+                  pedido={pedido}
+                  entrada={entrada}
+                  onTocar={tocarSala}
+                  onDeslizar={(d) => {
+                    if (d === 'arriba') {
+                      setDockOpen(true);
+                      setSettingsOpen(false);
+                    } else {
+                      setSettingsOpen(true);
+                      setDockOpen(false);
+                    }
+                  }}
+                  onFallo={() => setConSala(false)}
+                >
+                  {burbujaTexto}
+                </Sala>
+              </Suspense>
+            </SalaSegura>
           </div>
         ) : (
           <>
@@ -720,7 +762,7 @@ export default function App() {
         </div>
 
         {/* Abajo: cómo te contesta, el micrófono y escribir */}
-        <div className={`absolute bottom-4 left-3 right-3 sm:left-5 sm:right-5 z-20 flex items-end justify-between gap-2 pointer-events-none transition-opacity ${dockOpen || settingsOpen ? 'opacity-0' : 'opacity-100'}`}>
+        <div className={`absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-3 right-3 sm:left-5 sm:right-5 z-20 flex items-end justify-between gap-2 pointer-events-none transition-opacity ${dockOpen || settingsOpen ? 'opacity-0' : 'opacity-100'}`}>
           <div className="pointer-events-auto flex flex-col gap-1">
             <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#B9B2A8] pl-2 hidden sm:block">Te contesta</span>
             <div className="aura-segmento aura-sombra" role="group" aria-label="Cómo te contesta">
@@ -839,7 +881,7 @@ export default function App() {
           onSelectMode={(m) => {
             setMode(m);
             setSettingsOpen(false);
-            decir(`Modo ${m.toLowerCase()}.`, { emocion: 'neutral' });
+            decir(`Modo ${nombreModo(m).toLowerCase()}.`, { emocion: 'neutral' });
           }}
           onSelectFace={(f) => {
             setSettingsOpen(false);
@@ -872,6 +914,11 @@ export default function App() {
           }}
           onLogout={() => {
             setUsuario({ name: '', role: 'Junta Directiva · Orden Global', authenticated: false });
+            // Tableta compartida: quien entre después no hereda la conversación ni las fotos.
+            historialRef.current = [];
+            pendienteGenesis.current = '';
+            setPhotos([]);
+            setOpinion(null);
             decir('Sesión cerrada.', { emocion: 'neutral' });
           }}
         />
@@ -892,8 +939,13 @@ export default function App() {
           }}
           onAnalyzePhoto={(dataUrl) => {
             setCameraOpen(false);
-            void pensar('qué ves en esta foto');
-            void dataUrl;
+            if (cerebroNoListo()) return;
+            setFace('THINKING');
+            // La foto tomada, achicada a JPEG de 640 px (no un cuadro en vivo de la cámara).
+            void achicarFoto(dataUrl).then((imagen) => {
+              if (!imagen) return void decir('No pude leer la foto. Probá tomarla de nuevo.', { emocion: 'preocupado' });
+              void pensar('qué ves en esta foto', { imagen });
+            });
           }}
         />
 

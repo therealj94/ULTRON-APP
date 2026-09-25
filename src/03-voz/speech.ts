@@ -77,6 +77,12 @@ export function initSpeechRecognizer(
       }
     };
 
+    // Suelta el micrófono: sin esto el navegador deja encendido el indicador de grabación y los tracks se acumulan.
+    const soltarMic = () => {
+      micStream?.getTracks().forEach((t) => t.stop());
+      micStream = null;
+    };
+
     const pick = (item: any): { text: string; conf: number } => {
       let best = { text: String(item?.[0]?.transcript || ''), conf: Number(item?.[0]?.confidence || 0) };
       const n = item?.length || 0;
@@ -174,7 +180,11 @@ export function initSpeechRecognizer(
         isManuallyStopped = false;
         if (restartTimer) clearTimeout(restartTimer);
         void ensureMic().then((ok) => {
-          if (isManuallyStopped) return;
+          if (isManuallyStopped) {
+            // Lo pararon mientras se pedía el micrófono: no dejarlo abierto.
+            soltarMic();
+            return;
+          }
           if (!ok) {
             onError?.(new Error('mic-denied'));
             return;
@@ -192,6 +202,7 @@ export function initSpeechRecognizer(
         try {
           recognition.stop();
         } catch {}
+        soltarMic();
       },
       abort: () => {
         isManuallyStopped = true;
@@ -199,6 +210,7 @@ export function initSpeechRecognizer(
         try {
           recognition.abort();
         } catch {}
+        soltarMic();
       },
     };
   } catch {

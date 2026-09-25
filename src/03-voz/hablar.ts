@@ -110,6 +110,12 @@ export function hablar(texto: string, opts: { emocion?: Emocion | string; perfor
       const blob = await r.blob();
       if (ac.signal.aborted) throw new DOMException('abort', 'AbortError');
       await playWavBlob(blob, () => resFin(), () => {
+        // Si la cortaron (callar o frase nueva), no se repite con la voz del navegador: solo termina.
+        if (ac.signal.aborted) {
+          resInicio();
+          resFin();
+          return;
+        }
         const nav = hablarNavegador(t);
         nav.inicio.then(resInicio);
         nav.fin.then(resFin);

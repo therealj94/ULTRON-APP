@@ -2,7 +2,7 @@
  * La sala como componente de React. Recibe el estado de la mesa como props y se lo pasa al motor;
  * el motor no re-renderiza nada de React (la boca va a 60 Hz y no puede pasar por setState).
  *
- * Si el aparato no tiene WebGL, llama a `onFallo` y quien la usa vuelve a la cara 2D.
+ * Si el aparato no tiene WebGL (o lo pierde después), llama a `onFallo` y quien la usa vuelve a la cara 2D.
  */
 import React, { useEffect, useRef } from 'react';
 import type { FaceState } from '../types';
@@ -41,6 +41,7 @@ export default function Sala(p: SalaProps) {
         postura: cb.current.postura,
         onTocar: (z) => cb.current.onTocar?.(z),
         onDeslizar: (d) => cb.current.onDeslizar?.(d),
+        onFallo: (m) => cb.current.onFallo(m),
       });
       ctl.current.estado(cb.current.face, cb.current.emocion);
     } catch (e: any) {
@@ -54,7 +55,9 @@ export default function Sala(p: SalaProps) {
 
   useEffect(() => ctl.current?.estado(p.face, p.emocion), [p.face, p.emocion]);
   useEffect(() => ctl.current?.boca(p.lipLevel), [p.lipLevel]);
-  useEffect(() => ctl.current?.mirar(p.cameraGaze.x, p.cameraGaze.y, p.cameraGaze.active), [p.cameraGaze.x, p.cameraGaze.y, p.cameraGaze.active]);
+  // La visión (y la cara 2D) usan y positiva = abajo, como la pantalla; la sala usa y positiva =
+  // arriba, como three.js. Se invierte aquí, en la frontera, para que no mire al revés.
+  useEffect(() => ctl.current?.mirar(p.cameraGaze.x, -p.cameraGaze.y, p.cameraGaze.active), [p.cameraGaze.x, p.cameraGaze.y, p.cameraGaze.active]);
   useEffect(() => ctl.current?.postura(p.postura), [p.postura]);
   useEffect(() => {
     if (p.pedido) ctl.current?.tarea(p.pedido.tarea, p.pedido.texto);
