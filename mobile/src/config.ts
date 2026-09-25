@@ -49,29 +49,7 @@ export function findDeskUserByEmail(correo: string): DeskUser | undefined {
   return DESK_USERS.find((u) => u.correo === n);
 }
 
-export type FaceState =
-  | 'IDLE'
-  | 'LISTENING'
-  | 'THINKING'
-  | 'SPEAKING'
-  | 'HAPPY'
-  | 'CONCERNED'
-  | 'ANGRY'
-  | 'SLEEPING'
-  | 'STARTLE'
-  | 'WINK'
-  | 'CONFUSED'
-  | 'MUSIC'
-  | 'SCAN'
-  | 'YAWNING'
-  | 'LAUGH'
-  | 'SURPRISED'
-  | 'SAD'
-  | 'TIRED'
-  | 'SING'
-  | 'CURIOUS'
-  | 'PROUD'
-  | 'PRAY';
+export type { FaceState } from './caraTipos';
 
 export type Mode =
   | 'GUARDIAN'

@@ -62,6 +62,16 @@ La entrevista «Conocer» es **opcional**: solo arranca desde el menú o con «q
 
 ## Arranque, cara y tacto
 
+- **Cara de anillos (Skia, la de AU-RA desde el 25-sep)** · `src/cara/`: los anillos de siempre dibujados en la GPU
+  (`@shopify/react-native-skia` 2.2.12) y movidos en el hilo de la interfaz (`react-native-reanimated` ~4.1 + `react-native-worklets`
+  0.5.1, las versiones que fija Expo SDK 54). Diez estados de trabajo, no emociones (`estados.ts`): en espera, escucha,
+  piensa, lee, trabaja (el anillo es barra de avance), habla (la voz mueve la boca sin pasar por React), listo (los ojos
+  sonríen), te necesita (punto ámbar), sin red (se apaga el color) y dormida. Las 22 caras viejas caen en esos diez.
+  Parpadeo al azar, sacadas, respiración y **profundidad al inclinar el teléfono** (giroscopio: cada capa del ojo se
+  mueve distinto). Con «menos movimiento» del sistema solo queda el parpadeo. Mismos gestos y llamadas que `UltronFace`.
+  `pintar.ts` es el dibujo: el mismo código corre en el teléfono y en `scripts/qa/cara-skia.ts` (CanvasKit en Node).
+  `CaraSegura.tsx` la carga con `require` en un `try`: si Skia no carga o el dibujo lanza, vuelve `UltronFace` sola.
+  En el menú, **Su cara**: Anillos (por omisión) o Habitación 3D (la sala de antes).
 - **Splash**: nativo (logo, `expo-splash-screen`, fade) → splash JS ~1,8 s (marca «AU-RA FP», «powered by ORDEN GLOBAL»,
   cara compacta despertando) → fundido sobre login/escritorio, sin cortes.
 - **Cara** (`UltronFace.tsx`, solo RN `Animated`): IDLE, LISTENING, THINKING, SPEAKING, HAPPY, WINK, CONCERNED, ANGRY,
@@ -176,6 +186,8 @@ recordar, escribir una orden, ajustes (oído, comentarios de cámara, SFX, memor
 - `App.tsx` — splash nativo → splash JS → login (vertical) → escritorio (horizontal); permisos.
 - `src/screens/LoginScreen.tsx` — huella, clave remota; «Entrar solo al escritorio» funciona sin servidor (modo local).
 - `src/screens/DeskScreen.tsx` — orquesta órdenes, voz, emoción, tacto, sacudida, visión, menú.
+- `src/cara/` — la cara de anillos en Skia: `estados.ts` (puro, probado en `tests/cara-skia.test.ts`), `pintar.ts`,
+  `CaraSkia.tsx`, `CaraSegura.tsx`.
 - `src/components/UltronFace.tsx` · `DeskMenu.tsx` · `CamaraVision.tsx` (detección facial nativa + respaldo servidor).
 - `src/lib/api.ts` (cliente + renovación de sesión) · `tts.ts` (banco → clips → TTS → canto) · `emocion.ts` · `escena.ts`
   (contrato de visión, puro) · `intenciones.ts` · `capacidades.ts` · `knowledge.ts` · `speech.ts` (+ `speechNative.ts`,
@@ -188,6 +200,8 @@ recordar, escribir una orden, ajustes (oído, comentarios de cámara, SFX, memor
 ```bash
 npm ci
 npm run typecheck
+# la cara de anillos pintada con Skia de verdad (CanvasKit), con comprobación de píxeles; desde la raíz:
+#   npx tsx scripts/qa/cara-skia.ts [dirSalida]
 npm run check:intenciones
 npm run check:escena          # contrato de visión (espejado, histéresis, frases)
 npm run voice-bank            # solo si cambian los clips

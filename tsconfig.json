@@ -23,5 +23,5 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "exclude": ["mobile", "scripts/qa/cara-movil", "scripts/qa/electrum-movil", "dist", "node_modules", "android", "ios"]
+  "exclude": ["mobile", "scripts/qa/cara-movil", "scripts/qa/electrum-movil", "scripts/qa/cara-skia.ts", "dist", "node_modules", "android", "ios"]
 }

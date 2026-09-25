@@ -59,8 +59,13 @@ type Props = {
   onForget: () => void;
   onSearch: (q: string) => void;
   onLogout: () => void;
-  /** Si AU-RA está de cuerpo entero (la sala) o con la cara de respaldo. */
+  /** Si AU-RA está de cuerpo entero (la sala) o con una cara (anillos o la de respaldo). */
   conSala: boolean;
+  /** Qué cara eligió: los anillos (Skia) o la habitación 3D. */
+  cara: 'anillos' | 'sala';
+  onSetCara: (c: 'anillos' | 'sala') => void;
+  /** Se ve la cara clásica (respaldo): solo ella sabe dibujar el blaster y el sable. */
+  caraClasica: boolean;
   /** Cómo contesta: de pie en el centro o sentada en su sillón. */
   postura: Postura;
   onSetPostura: (p: Postura) => void;
@@ -233,11 +238,21 @@ export function DeskMenu(p: Props) {
             </View>
           )}
 
-          <Text style={styles.section}>Te contesta</Text>
+          <Text style={styles.section}>Su cara</Text>
           <View style={styles.chips}>
-            <Chip on={p.postura === 'pie'} label="De pie" sub="en el centro" onPress={() => p.onSetPostura('pie')} />
-            <Chip on={p.postura === 'sentada'} label="Sentada" sub="en su sillón" onPress={() => p.onSetPostura('sentada')} />
+            <Chip on={p.cara === 'anillos'} label="Anillos" sub="sus ojos de luz" onPress={() => p.onSetCara('anillos')} />
+            <Chip on={p.cara === 'sala'} label="Habitación 3D" sub="de cuerpo entero" onPress={() => p.onSetCara('sala')} />
           </View>
+
+          {p.cara === 'sala' ? (
+            <>
+              <Text style={styles.section}>Te contesta</Text>
+              <View style={styles.chips}>
+                <Chip on={p.postura === 'pie'} label="De pie" sub="en el centro" onPress={() => p.onSetPostura('pie')} />
+                <Chip on={p.postura === 'sentada'} label="Sentada" sub="en su sillón" onPress={() => p.onSetPostura('sentada')} />
+              </View>
+            </>
+          ) : null}
 
           <Text style={styles.section}>Presencia</Text>
           <View style={styles.chips}>
@@ -258,8 +273,12 @@ export function DeskMenu(p: Props) {
             <Chip label="¿qué ves?" onPress={p.onWhatDoYouSee} />
             <Chip label="conocerme" sub="entrevista opcional" onPress={p.onConocer} />
             <Chip label="chiste" onPress={() => p.onCommand('cuéntame un chiste')} />
-            <Chip label="blaster" onPress={p.onBlaster} />
-            <Chip label="sable jedi" onPress={p.onSaber} />
+            {p.caraClasica ? (
+              <>
+                <Chip label="blaster" onPress={p.onBlaster} />
+                <Chip label="sable jedi" onPress={p.onSaber} />
+              </>
+            ) : null}
           </View>
 
           <Text style={styles.section}>Investigar en internet</Text>
@@ -335,6 +354,11 @@ export function DeskMenu(p: Props) {
             <Text style={styles.hint}>
               Tócale la cabeza y se pone curiosa; el cuerpo le da cosquillas. Toques seguidos: «ya, ya». Desliza hacia arriba sobre ella para abrir este
               menú. Cuando busca en internet se sienta en su escritorio; si envía algo, lanza un avión de papel. Sacude el teléfono: se asusta.
+            </Text>
+          ) : !p.caraClasica ? (
+            <Text style={styles.hint}>
+              Tócale un ojo y parpadea; tócala y te contesta. Arrastra el dedo y te sigue con la mirada. Mantén pulsado: duerme o despierta. Inclina
+              el teléfono: sus ojos tienen profundidad. Desliza rápido hacia la izquierda para abrir este menú.
             </Text>
           ) : (
             <Text style={styles.hint}>

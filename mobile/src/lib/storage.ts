@@ -35,6 +35,8 @@ export type AppSettings = {
   sfx: boolean;
   /** Cómo contesta AU-RA en la sala: de pie en el centro o sentada en su sillón. */
   postura: 'pie' | 'sentada';
+  /** Su cara: los anillos (Skia, la de siempre desde el 25-sep) o la habitación 3D. */
+  cara: 'anillos' | 'sala';
 };
 export type ConocerProgress = {
   correo: string;
@@ -51,6 +53,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   proactive: true,
   sfx: true,
   postura: 'pie',
+  cara: 'anillos',
 };
 
 export async function saveSession(user: SessionUser | null) {

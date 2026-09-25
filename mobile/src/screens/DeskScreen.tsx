@@ -6,6 +6,7 @@ import * as Haptics from 'expo-haptics';
 import { Accelerometer } from 'expo-sensors';
 import { UltronFace, type TouchZone } from '../components/UltronFace';
 import { SalaAura, type PedidoTarea } from '../components/SalaAura';
+import { CaraSegura } from '../cara/CaraSegura';
 import { TAREA_TEXTO, tareaDeHerramientas, type Postura, type Tarea } from '../lib/tareas';
 import { T, SOMBRA } from '../tema';
 import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS, type FrameGrabber } from '../components/CamaraVision';
@@ -95,6 +96,10 @@ export function DeskScreen({ user, onLogout }: Props) {
   const [emocion, setEmocion] = useState<Emocion>('neutral');
   /** AU-RA de cuerpo entero; si la WebView no puede con la sala, vuelve la cara de siempre. */
   const [conSala, setConSala] = useState(true);
+  /** Su cara: los anillos (Skia) o la habitación 3D. null hasta leer los ajustes, para no parpadear entre las dos. */
+  const [cara, setCara] = useState<'anillos' | 'sala' | null>(null);
+  /** Skia no cargó o no pudo dibujar: se queda la cara de siempre. */
+  const [skiaFallo, setSkiaFallo] = useState(false);
   /** De pie o sentada al contestar; null hasta leer el ajuste guardado (la sala nace ya en su sitio). */
   const [postura, setPostura] = useState<Postura | null>(null);
   const [pedido, setPedido] = useState<PedidoTarea | null>(null);
@@ -856,6 +861,16 @@ export function DeskScreen({ user, onLogout }: Props) {
     setPostura(p);
     void saveSettings({ postura: p });
   }, []);
+  const onFalloSkia = useCallback((motivo: string) => {
+    miga(`cara Skia no disponible: ${motivo}`);
+    setSkiaFallo(true);
+  }, []);
+  const cambiarCara = useCallback((c: 'anillos' | 'sala') => {
+    setCara(c);
+    // Volver a elegir la sala es darle otra oportunidad si antes falló.
+    if (c === 'sala') setConSala(true);
+    void saveSettings({ cara: c });
+  }, []);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -926,6 +941,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       setVisionOn(s.visionEnabled);
       setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx });
       setPostura(s.postura === 'sentada' ? 'sentada' : 'pie');
+      setCara(s.cara === 'sala' ? 'sala' : 'anillos');
       setSfxEnabled(s.sfx);
       proactiveRef.current = s.proactive;
       if (s.sttEngine !== currentSttEngine()) await setSttEngine(s.sttEngine);
@@ -1206,8 +1222,13 @@ export function DeskScreen({ user, onLogout }: Props) {
                 ? 'sin mic'
                 : 'iniciando';
 
+  // Qué cara se ve: los anillos (Skia), la sala 3D o, si lo elegido falló, la cara de siempre.
+  const vista: 'anillos' | 'sala' | 'clasica' | null =
+    cara === null ? null : cara === 'anillos' ? (skiaFallo ? 'clasica' : 'anillos') : conSala ? 'sala' : 'clasica';
+  const enSala = vista === 'sala';
+
   return (
-    <View style={[styles.root, !conSala && styles.rootCara]}>
+    <View style={[styles.root, !enSala && styles.rootCara]}>
       <CamaraVision
         enabled={visionOn && !!camPerm?.granted}
         dormido={presence === 'sleep'}
@@ -1218,7 +1239,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         onScene={onScene}
         onMotor={setVisionMotor}
       />
-      {conSala && postura ? (
+      {vista === 'sala' && postura ? (
         <SalaAura
           face={face}
           emocion={emocion}
@@ -1230,7 +1251,24 @@ export function DeskScreen({ user, onLogout }: Props) {
           onDeslizar={onDeslizarSala}
           onFallo={onFalloSala}
         />
-      ) : !conSala ? (
+      ) : vista === 'anillos' ? (
+        <CaraSegura
+          face={face}
+          acento={mode === 'GOLD' ? '#FFD166' : undefined}
+          gazeX={gaze.x}
+          gazeY={gaze.y}
+          speechLevelSource={suscribirNivelVoz}
+          online={online}
+          pedido={pedido}
+          onTap={onTap}
+          onLongPress={onLongPress}
+          onDragGaze={onDragGaze}
+          onDragEnd={onDragEnd}
+          onRub={onRub}
+          onSwipe={onSwipe}
+          onFallo={onFalloSkia}
+        />
+      ) : vista === 'clasica' ? (
         <UltronFace
           face={face}
           mode={mode}
@@ -1269,7 +1307,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       )}
 
       {!!bubble && (
-        <Animated.View pointerEvents="none" style={[styles.bubbleFloat, conSala ? styles.bubbleArriba : styles.bubbleAbajo, { opacity: bubbleOp }]}>
+        <Animated.View pointerEvents="none" style={[styles.bubbleFloat, enSala ? styles.bubbleArriba : styles.bubbleAbajo, { opacity: bubbleOp }]}>
           <View style={styles.bubbleCard}>
             <Text numberOfLines={3} style={styles.bubbleText}>
               {bubble}
@@ -1369,7 +1407,10 @@ export function DeskScreen({ user, onLogout }: Props) {
           void handleCommand(`busca ${q}`);
         }}
         onLogout={onLogout}
-        conSala={conSala}
+        conSala={enSala}
+        cara={cara ?? 'anillos'}
+        onSetCara={cambiarCara}
+        caraClasica={vista === 'clasica'}
         postura={postura || 'pie'}
         onSetPostura={cambiarPostura}
       />
