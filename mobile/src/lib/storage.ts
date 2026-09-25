@@ -175,7 +175,13 @@ export async function loadConocerProgress(correo: string): Promise<ConocerProgre
 
 export async function saveConocerProgress(progress: ConocerProgress) {
   const raw = await AsyncStorage.getItem(KEYS.conocerProgress);
-  const all = raw ? (JSON.parse(raw) as ConocerProgress[]) : [];
+  let all: ConocerProgress[] = [];
+  try {
+    const leido = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(leido)) all = leido as ConocerProgress[];
+  } catch {
+    /* guardado roto: se empieza de nuevo en vez de lanzar en medio de la entrevista */
+  }
   const idx = all.findIndex((p) => p.correo === progress.correo);
   if (idx >= 0) all[idx] = progress;
   else all.push(progress);

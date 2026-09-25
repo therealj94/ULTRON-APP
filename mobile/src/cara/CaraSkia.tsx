@@ -25,6 +25,7 @@ import {
   useReducedMotion,
   useSharedValue,
   withRepeat,
+  type SharedValue,
   withSequence,
   withSpring,
   withTiming,
@@ -138,14 +139,15 @@ export function CaraSkia(props: CaraSkiaProps) {
     };
   }, [parpadeo]);
 
-  // Sacadas, respiración, latido, lectura y giro: el resto de la vida. Fuera con «menos movimiento».
+  // Sacadas, respiración y latido: la vida en reposo. Fuera con «menos movimiento» y dormida (dormida
+  // no se mueve nada salvo el parpadeo, y así la GPU no dibuja 60 cuadros por segundo para nadie).
+  const quieta = reducido || estado === 'duerme';
   useEffect(() => {
-    if (reducido) {
-      sacadaX.value = 0;
-      sacadaY.value = 0;
-      respira.value = 0;
+    if (quieta) {
+      sacadaX.value = withTiming(0, { duration: 300 });
+      sacadaY.value = withTiming(0, { duration: 300 });
+      respira.value = withTiming(0, { duration: 600 });
       latido.value = 0.5;
-      fase.value = 0;
       return;
     }
     let vivo = true;
@@ -161,42 +163,36 @@ export function CaraSkia(props: CaraSkiaProps) {
     saltar();
     respira.value = withRepeat(withTiming(1, { duration: 2100, easing: Easing.inOut(Easing.sin) }), -1, true);
     latido.value = withRepeat(withTiming(1, { duration: 1100, easing: Easing.inOut(Easing.sin) }), -1, true);
-    fase.value = -1;
-    fase.value = withRepeat(withTiming(1, { duration: 800, easing: Easing.inOut(Easing.sin) }), -1, true);
-    giro.value = 0;
-    giro.value = withRepeat(withTiming(360, { duration: 1400, easing: Easing.linear }), -1, false);
     return () => {
       vivo = false;
       clearTimeout(timer);
       cancelAnimation(respira);
       cancelAnimation(latido);
-      cancelAnimation(fase);
-      cancelAnimation(giro);
     };
-  }, [reducido, sacadaX, sacadaY, respira, latido, fase, giro]);
+  }, [quieta, sacadaX, sacadaY, respira, latido]);
 
-  // Profundidad: al inclinar el teléfono. La base se recentra sola, así cuenta el movimiento y no la
-  // postura en la que esté apoyado.
-  const sensor = useAnimatedSensor(SensorType.ROTATION, { interval: 'auto' });
-  const baseRoll = useSharedValue<number | null>(null);
-  const basePitch = useSharedValue(0);
-  useAnimatedReaction(
-    () => sensor.sensor.value,
-    (s) => {
-      if (reducido || !s) return;
-      if (baseRoll.value === null) {
-        baseRoll.value = s.roll;
-        basePitch.value = s.pitch;
-      }
-      baseRoll.value += (s.roll - baseRoll.value) * 0.02;
-      basePitch.value += (s.pitch - basePitch.value) * 0.02;
-      const x = (s.roll - baseRoll.value) / 0.3;
-      const y = (s.pitch - basePitch.value) / 0.3;
-      inclinX.value = x < -1 ? -1 : x > 1 ? 1 : x;
-      inclinY.value = y < -1 ? -1 : y > 1 ? 1 : y;
-    },
-    [reducido],
-  );
+  // La lectura (de lado a lado) solo corre leyendo, y el arco que gira solo trabajando.
+  const leyendo = estado === 'lee' && !reducido;
+  useEffect(() => {
+    if (!leyendo) {
+      cancelAnimation(fase);
+      fase.value = 0;
+      return;
+    }
+    fase.value = -1;
+    fase.value = withRepeat(withTiming(1, { duration: 800, easing: Easing.inOut(Easing.sin) }), -1, true);
+    return () => cancelAnimation(fase);
+  }, [leyendo, fase]);
+  const girando = estado === 'trabaja';
+  useEffect(() => {
+    if (!girando) {
+      cancelAnimation(giro);
+      return;
+    }
+    giro.value = 0;
+    giro.value = withRepeat(withTiming(360, { duration: reducido ? 4000 : 1400, easing: Easing.linear }), -1, false);
+    return () => cancelAnimation(giro);
+  }, [girando, reducido, giro]);
 
   // Voz: la boca sigue su volumen sin pasar por React.
   useEffect(() => {
@@ -336,6 +332,7 @@ export function CaraSkia(props: CaraSkiaProps) {
 
   return (
     <View style={styles.raiz} onLayout={medir} {...responder.panHandlers} accessibilityLabel="Cara de AU-RA" accessibilityRole="image">
+      {!quieta ? <Inclinacion x={inclinX} y={inclinY} /> : null}
       {tam.w > 0 ? (
         <View style={StyleSheet.absoluteFill} pointerEvents="none">
           <Canvas style={StyleSheet.absoluteFill}>
@@ -345,6 +342,42 @@ export function CaraSkia(props: CaraSkiaProps) {
       ) : null}
     </View>
   );
+}
+
+/**
+ * Profundidad al inclinar el teléfono. Va en un componente aparte para poder NO montarlo: el sensor
+ * solo se escucha cuando hace falta (ni con «menos movimiento» ni dormida). La base se recentra sola,
+ * así cuenta el movimiento y no la postura en la que esté apoyado. Al desmontarse, la cara vuelve al
+ * centro.
+ */
+function Inclinacion({ x, y }: { x: SharedValue<number>; y: SharedValue<number> }) {
+  const sensor = useAnimatedSensor(SensorType.ROTATION, { interval: 'auto' });
+  const baseRoll = useSharedValue<number | null>(null);
+  const basePitch = useSharedValue(0);
+  useAnimatedReaction(
+    () => sensor.sensor.value,
+    (s) => {
+      if (!s) return;
+      if (baseRoll.value === null) {
+        baseRoll.value = s.roll;
+        basePitch.value = s.pitch;
+      }
+      baseRoll.value += (s.roll - baseRoll.value) * 0.02;
+      basePitch.value += (s.pitch - basePitch.value) * 0.02;
+      const nx = (s.roll - baseRoll.value) / 0.3;
+      const ny = (s.pitch - basePitch.value) / 0.3;
+      x.value = nx < -1 ? -1 : nx > 1 ? 1 : nx;
+      y.value = ny < -1 ? -1 : ny > 1 ? 1 : ny;
+    },
+  );
+  useEffect(
+    () => () => {
+      x.value = withTiming(0, { duration: 400 });
+      y.value = withTiming(0, { duration: 400 });
+    },
+    [x, y],
+  );
+  return null;
 }
 
 const styles = StyleSheet.create({

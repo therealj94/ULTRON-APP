@@ -1,0 +1,44 @@
+diff --git a/node_modules/@react-native-ml-kit/face-detection/android/src/main/java/com/rnmlkit/facedetection/FaceDetectionModule.java b/node_modules/@react-native-ml-kit/face-detection/android/src/main/java/com/rnmlkit/facedetection/FaceDetectionModule.java
+index 3c6f7cf..381a143 100644
+--- a/node_modules/@react-native-ml-kit/face-detection/android/src/main/java/com/rnmlkit/facedetection/FaceDetectionModule.java
++++ b/node_modules/@react-native-ml-kit/face-detection/android/src/main/java/com/rnmlkit/facedetection/FaceDetectionModule.java
+@@ -290,13 +290,37 @@ public class FaceDetectionModule extends ReactContextBaseJavaModule {
+         return map;
+     }
+ 
++    // AU-RA: un solo detector mientras no cambien las opciones. El original creaba uno por llamada y no
++    // lo cerraba nunca; la mesa detecta varias veces por segundo, así que se acumulaban por miles.
++    private FaceDetector detector;
++    private String detectorKey;
++
++    private synchronized FaceDetector detectorPara(ReadableMap optionsMap) {
++        String key = optionsMap.toHashMap().toString();
++        if (detector == null || !key.equals(detectorKey)) {
++            if (detector != null) detector.close();
++            detector = FaceDetection.getClient(getOptions(optionsMap));
++            detectorKey = key;
++        }
++        return detector;
++    }
++
++    @Override
++    public void invalidate() {
++        synchronized (this) {
++            if (detector != null) detector.close();
++            detector = null;
++            detectorKey = null;
++        }
++        super.invalidate();
++    }
++
+     @ReactMethod
+     public void detect(String url, final ReadableMap optionsMap, final Promise promise) {
+         InputImage image;
+         try {
+             image = getInputImage(this.reactContext, url);
+-            FaceDetectorOptions options = getOptions(optionsMap);
+-            FaceDetector detector = FaceDetection.getClient(options);
++            FaceDetector detector = detectorPara(optionsMap);
+             detector.process(image)
+                     .addOnSuccessListener(
+                             new OnSuccessListener<List<Face>>() {

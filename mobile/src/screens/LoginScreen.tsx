@@ -46,6 +46,8 @@ export function LoginScreen({ onAuthenticated }: Props) {
   const [customCorreo, setCustomCorreo] = useState('');
   const [phase, setPhase] = useState<'pick' | 'clave' | 'quick'>('pick');
   const [clave, setClave] = useState('');
+  /** Hay una clave guardada en este teléfono (no se muestra; la usan la huella y la renovación). */
+  const [claveGuardada, setClaveGuardada] = useState(false);
   const [remember, setRemember] = useState(true);
   const [useFingerprint, setUseFingerprint] = useState(true);
   const [fingerprintAvailable, setFingerprintAvailable] = useState(false);
@@ -82,7 +84,9 @@ export function LoginScreen({ onAuthenticated }: Props) {
         const match = findDeskUserByEmail(correo);
         if (match) {
           setSelected(match);
-          setClave(creds.clave || '');
+          // La clave guardada NO se escribe en el campo: con ella a la vista, cualquiera con el teléfono
+          // tocaba «Usar clave» y entraba. Se sigue usando por detrás (huella, renovar la sesión).
+          setClaveGuardada(!!creds.clave);
           setSavedName(match.name);
           setRemember(true);
           if (creds.correo !== match.correo && creds.clave) {
@@ -97,7 +101,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
         } else {
           setSelected(OTRO_TEMPLATE);
           setCustomCorreo(correo);
-          setClave(creds.clave || '');
+          setClaveGuardada(!!creds.clave);
           setSavedName(creds.name || correo);
           setPhase('clave');
         }
@@ -168,17 +172,52 @@ export function LoginScreen({ onAuthenticated }: Props) {
       await finish({ name: data.user?.nombre || user.name, role: data.user?.rol || user.role, correo: user.correo }, persist);
     } catch (e: any) {
       const status = e?.status;
-      const creds = await loadCreds();
-      const known = !!creds && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(user.correo);
-      if (!status || status >= 500 || known) {
-        // sin servidor, o miembro ya validado antes en este teléfono → escritorio local
+      if (!status || status >= 500) {
+        // Sin servidor: escritorio local (quien llega aquí ya confirmó que es el dueño del teléfono).
         await finish({ name: user.name, role: user.role, correo: user.correo }, persist);
         return;
       }
-      setError(status === 401 || status === 403 ? 'La huella y el acceso directo solo abren si ya entraste con clave en este teléfono.' : e?.message || 'No pude abrir el escritorio.');
+      // El servidor dijo que no: con la clave guardada se intenta entrar de verdad; sin ella, no se pasa.
+      // (Antes bastaba con que el correo se hubiera usado alguna vez en este teléfono.)
+      if ((status === 401 || status === 403) && persist?.clave) {
+        try {
+          const data = await loginClave(normalizeDeskEmail(user.correo), persist.clave);
+          await finish({ name: data.miembro?.nombre || user.name, role: data.miembro?.rol || user.role, correo: user.correo }, persist);
+          return;
+        } catch {
+          /* la clave guardada ya no sirve: se pide escribirla */
+        }
+      }
+      setError(status === 401 || status === 403 ? 'Tu sesión no se pudo renovar. Escribe tu clave para entrar.' : 'No pude abrir el escritorio. Intenta en un momento.');
+      setPhase('clave');
     } finally {
       setLoading(false);
     }
+  };
+
+  /**
+   * «Entrar solo al escritorio» abre la mesa sin escribir la clave, así que primero se confirma que quien
+   * lo toca es el dueño del teléfono (huella, cara o PIN del sistema). Un teléfono sin ningún bloqueo no
+   * tiene con qué confirmar: ahí pasa, como pasaría cualquiera que lo desbloquee.
+   */
+  const entrarEscritorio = async () => {
+    setError('');
+    try {
+      const nivel = await LocalAuthentication.getEnrolledLevelAsync();
+      if (nivel !== LocalAuthentication.SecurityLevel.NONE) {
+        const r = await LocalAuthentication.authenticateAsync({ promptMessage: 'Confirma que eres tú', disableDeviceFallback: false });
+        if (!r.success) {
+          setError('Necesito confirmar que eres tú para abrir la mesa.');
+          return;
+        }
+      }
+    } catch {
+      setError('No pude confirmar que eres tú. Escribe tu clave.');
+      return;
+    }
+    const creds = await loadCreds();
+    const guardada = creds && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(activeUser.correo) ? creds.clave : undefined;
+    await enterBiometric(activeUser, clave || guardada || undefined);
   };
 
   const enterWithClave = async () => {
@@ -356,13 +395,13 @@ export function LoginScreen({ onAuthenticated }: Props) {
                 )}
               </Pressable>
               <Pressable
-                onPress={() => void enterBiometric(activeUser, clave || undefined)}
+                onPress={() => void entrarEscritorio()}
                 style={styles.secondary}
                 disabled={loading}
               >
                 <Text style={styles.secondaryText}>Entrar solo al escritorio</Text>
               </Pressable>
-              {fingerprintAvailable && remember && !!clave && (
+              {fingerprintAvailable && remember && claveGuardada && (
                 <Pressable
                   onPress={() => void enterWithFingerprint()}
                   style={styles.secondary}

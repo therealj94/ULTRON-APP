@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { miga, reportarEstado, cierreLimpio } from '../lib/reporte';
-import { Alert, Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { Accelerometer } from 'expo-sensors';
@@ -54,6 +55,14 @@ type Props = {
 };
 
 const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)];
+
+/** Un permiso negado: Android ya no vuelve a preguntar, así que se ofrece ir a los ajustes. */
+function pedirEnAjustes(titulo: string, texto: string) {
+  Alert.alert(titulo, texto, [
+    { text: 'Ahora no', style: 'cancel' },
+    { text: 'Abrir ajustes', onPress: () => void Linking.openSettings().catch(() => {}) },
+  ]);
+}
 
 function greetingFor(name: string) {
   const h = new Date().getHours();
@@ -110,11 +119,24 @@ export function DeskScreen({ user, onLogout }: Props) {
   const [draft, setDraft] = useState('');
   const [listening, setListening] = useState(false);
   const [level, setLevel] = useState(0);
+  /** El volumen del micrófono solo lo dibuja la cara clásica: con las otras no se re-renderiza por él. */
+  const nivelVisible = useRef(false);
   const [micMuted, setMicMuted] = useState(false);
   const [visionOn, setVisionOn] = useState(true);
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
   const [objects, setObjects] = useState<string[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  // La mesa no se apaga sola: si la pantalla se bloquea, deja de escuchar y de verte.
+  useKeepAwake('mesa');
+  // Botón atrás de Android: cierra el menú; con el menú cerrado hace lo de siempre.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!menuOpen) return false;
+      setMenuOpen(false);
+      return true;
+    });
+    return () => sub.remove();
+  }, [menuOpen]);
   const [catalogRequest, setCatalogRequest] = useState(0);
   const [attack, setAttack] = useState<'blaster' | 'saber' | null>(null);
   const [irritation, setIrritation] = useState(0);
@@ -154,6 +176,9 @@ export function DeskScreen({ user, onLogout }: Props) {
   const recentTaps = useRef<number[]>([]);
   const proactiveRef = useRef(true);
   const grabFrame = useRef<FrameGrabber | null>(null);
+  /** Cortar el turno en curso (el stream) y marcar que se canceló: «callar» no espera al cerebro. */
+  const abortTurno = useRef<(() => void) | null>(null);
+  const turnoCancelado = useRef(false);
   const bubbleOp = useRef(new Animated.Value(0)).current;
   /** Última escena de la cámara local (descripción en español para el cerebro). */
   const escenaRef = useRef<Escena | null>(null);
@@ -411,6 +436,8 @@ export function DeskScreen({ user, onLogout }: Props) {
       const applyMode = (m?: Mode) => {
         if (m && m !== 'CONOCER' && m !== modeRef.current) setMode(m);
       };
+      turnoCancelado.current = false;
+      const t0Turno = Date.now();
       try {
         // 1) Streaming: la cara reacciona con `emocion` antes del primer delta y habla por oraciones.
         if (!opts?.image) {
@@ -445,8 +472,15 @@ export function DeskScreen({ user, onLogout }: Props) {
                 }
               },
             });
-            const result = await st.promise;
+            abortTurno.current = st.abort;
+            const result = await st.promise.finally(() => {
+              abortTurno.current = null;
+            });
             cancelMmm();
+            if (turnoCancelado.current) {
+              if (speaker) (speaker as StreamSpeaker).cancel();
+              return;
+            }
             if (speaker) {
               (speaker as StreamSpeaker).end();
               await (speaker as StreamSpeaker).done;
@@ -468,6 +502,15 @@ export function DeskScreen({ user, onLogout }: Props) {
             }
           } catch {
             if (speaker) (speaker as StreamSpeaker).cancel();
+            cancelMmm();
+            if (turnoCancelado.current) return;
+            // Si el stream ya se comió más de 20 s, el servidor sí tiene stream y está lento: repetir la
+            // misma espera con JSON (70 s, y otro intento) dejaba a la mesa «pensando» unos 3 minutos.
+            if (Date.now() - t0Turno > 20_000) {
+              setToolHint('');
+              await say('Se me fue el hilo pensando eso. ¿Me lo repites?', 'CONFUSED', { emocion: 'preocupado' });
+              return;
+            }
             /* el servidor no tiene stream → JSON clásico */
           }
         }
@@ -476,10 +519,12 @@ export function DeskScreen({ user, onLogout }: Props) {
         if (!reacted) setFace('THINKING');
         let out = await turno(base);
         cancelMmm();
+        if (turnoCancelado.current) return;
         const failed = (r: { error?: string; reply?: string }) => !!(r.error || !r.reply);
-        if (failed(out)) {
+        if (failed(out) && Date.now() - t0Turno < 30_000) {
           await new Promise((r) => setTimeout(r, 800));
           out = await turno(base);
+          if (turnoCancelado.current) return;
         }
         setToolHint('');
         if (failed(out)) {
@@ -487,6 +532,10 @@ export function DeskScreen({ user, onLogout }: Props) {
           if (auth) {
             setOnline(true);
             await say('Se me cerró la sesión de la mesa. Entra de nuevo y te oigo.', 'CONCERNED', { emocion: 'preocupado' });
+            Alert.alert('Sesión cerrada', 'Tu sesión de la mesa se cerró. Entra de nuevo para seguir.', [
+              { text: 'Luego', style: 'cancel' },
+              { text: 'Entrar', onPress: onLogout },
+            ]);
             return;
           }
           setOnline(false);
@@ -562,6 +611,15 @@ export function DeskScreen({ user, onLogout }: Props) {
       const cmd = raw.trim();
       if (!cmd) return;
       if (handling.current) {
+        // «Callar» no se encola: corta lo que esté pensando o diciendo, ya.
+        if (interpretar(cmd, { dormido: false, enConocer: false }).tipo === 'callar') {
+          turnoCancelado.current = true;
+          abortTurno.current?.();
+          pending.current = null;
+          await stopSpeaking();
+          setToolHint('');
+          return;
+        }
         pending.current = cmd;
         return;
       }
@@ -915,7 +973,9 @@ export function DeskScreen({ user, onLogout }: Props) {
           setPartial(t);
         }
       },
-      onLevel: setLevel,
+      onLevel: (l) => {
+        if (nivelVisible.current) setLevel(l);
+      },
       onFinal: (t) => {
         setPartial('');
         onSpeechFinal(t);
@@ -1115,7 +1175,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       await say('Micrófono en silencio.', 'IDLE');
     } else {
       const ok = await ensureSpeechPermissions();
-      if (!ok) return Alert.alert('Micrófono', 'Necesito permiso de micrófono para escucharte.');
+      if (!ok) return pedirEnAjustes('Micrófono', 'Para escucharte necesito el micrófono. Actívalo en los ajustes del teléfono.');
       await unmuteMic();
       micMutedRef.current = false;
       setMicMuted(false);
@@ -1129,7 +1189,10 @@ export function DeskScreen({ user, onLogout }: Props) {
     if (!visionOn) {
       if (!camPerm?.granted) {
         const r = await requestCam();
-        if (!r.granted) return;
+        if (!r.granted) {
+          pedirEnAjustes('Cámara', 'Para verte necesito la cámara. Actívala en los ajustes del teléfono.');
+          return;
+        }
       }
       setVisionOn(true);
       await saveSettings({ visionEnabled: true });
@@ -1146,7 +1209,7 @@ export function DeskScreen({ user, onLogout }: Props) {
     if (p === 'sleep') void say('Descanso un momento. Háblame o tócame para despertar.', 'SLEEPING', { emocion: 'cansado' });
     else if (p === 'explore') {
       setMode('EXPLORER');
-      void say('Explore. Listo para investigar.', 'SCAN', { emocion: 'curioso' });
+      void say('Modo explorador: listo para investigar.', 'SCAN', { emocion: 'curioso' });
     } else void playClip('aqui', 'IDLE', { fallbackText: 'Aquí estoy.' });
   };
 
@@ -1226,6 +1289,7 @@ export function DeskScreen({ user, onLogout }: Props) {
   const vista: 'anillos' | 'sala' | 'clasica' | null =
     cara === null ? null : cara === 'anillos' ? (skiaFallo ? 'clasica' : 'anillos') : conSala ? 'sala' : 'clasica';
   const enSala = vista === 'sala';
+  nivelVisible.current = vista === 'clasica';
 
   return (
     <View style={[styles.root, !enSala && styles.rootCara]}>

@@ -8,15 +8,15 @@ import type { SttEngine } from '../lib/storage';
 import type { Postura } from '../lib/tareas';
 import { T, SOMBRA } from '../tema';
 
-const MODES: Array<{ id: Mode; hint: string }> = [
-  { id: 'GUARDIAN', hint: 'vigila' },
-  { id: 'MINING', hint: 'señales' },
-  { id: 'GOLD', hint: 'alto valor' },
-  { id: 'CREATIVE', hint: 'ideas' },
-  { id: 'ANALYTICAL', hint: 'frío' },
-  { id: 'STRATEGIC', hint: 'junta' },
-  { id: 'EXPLORER', hint: 'investiga' },
-  { id: 'CONOCER', hint: 'entrevista' },
+const MODES: Array<{ id: Mode; label: string; hint: string }> = [
+  { id: 'GUARDIAN', label: 'Guardián', hint: 'vigila' },
+  { id: 'MINING', label: 'Minería', hint: 'señales' },
+  { id: 'GOLD', label: 'Oro', hint: 'alto valor' },
+  { id: 'CREATIVE', label: 'Creativo', hint: 'ideas' },
+  { id: 'ANALYTICAL', label: 'Analítico', hint: 'frío' },
+  { id: 'STRATEGIC', label: 'Estratégico', hint: 'junta' },
+  { id: 'EXPLORER', label: 'Explorador', hint: 'investiga' },
+  { id: 'CONOCER', label: 'Conocerte', hint: 'entrevista' },
 ];
 
 type Props = {
@@ -73,6 +73,40 @@ type Props = {
 
 type CatState = { status: 'idle' | 'loading' | 'ok' | 'fail'; payload: CapacidadesPayload | null; offline: boolean; at: string };
 
+
+// Fuera del componente a propósito: definidos dentro del render eran un TIPO nuevo en cada render
+// (DeskScreen re-renderiza a menudo), así que React desmontaba y montaba cada chip y el toque que
+// empezaba en uno se perdía antes de soltar.
+const Chip = ({ on, label, sub, onPress, tone }: { on?: boolean; label: string; sub?: string; onPress: () => void; tone?: 'ex' }) => (
+  <Pressable onPress={onPress} style={[styles.chip, on && styles.chipOn, tone === 'ex' && styles.chipEx]}>
+    <Text style={[styles.chipText, on && styles.chipTextOn, tone === 'ex' && styles.chipExText]} numberOfLines={2}>
+      {tone === 'ex' ? `«${label}»` : label}
+    </Text>
+    {!!sub && <Text style={[styles.chipSub, on && styles.chipTextOn]}>{sub}</Text>}
+  </Pressable>
+);
+
+const Dot = ({ vivo }: { vivo: boolean | null }) =>
+  vivo === null ? null : <View style={[styles.capDot, { backgroundColor: vivo ? T.activo : T.borde }]} />;
+
+const Card = ({ c, onCommand }: { c: Capacidad; onCommand: (text: string) => void }) => (
+  <View style={styles.card}>
+    <View style={styles.cardHead}>
+      <Dot vivo={c.vivo} />
+      <Text style={styles.cardTitle}>{c.titulo}</Text>
+    </View>
+    <Text style={styles.cardDetail}>{c.detalle}</Text>
+    {c.vivo === false && !!c.falta && <Text style={styles.cardFalta}>falta: {c.falta}</Text>}
+    {c.ejemplos.length > 0 && (
+      <View style={styles.chips}>
+        {c.ejemplos.map((e) => (
+          <Chip key={e} label={e} tone="ex" onPress={() => onCommand(e)} />
+        ))}
+      </View>
+    )}
+  </View>
+);
+
 export function DeskMenu(p: Props) {
   const { width } = useWindowDimensions();
   const panelW = Math.min(460, width * 0.64);
@@ -118,36 +152,6 @@ export function DeskMenu(p: Props) {
   }, [p.catalogRequest]);
 
   if (!mounted) return null;
-
-  const Chip = ({ on, label, sub, onPress, tone }: { on?: boolean; label: string; sub?: string; onPress: () => void; tone?: 'ex' }) => (
-    <Pressable onPress={onPress} style={[styles.chip, on && styles.chipOn, tone === 'ex' && styles.chipEx]}>
-      <Text style={[styles.chipText, on && styles.chipTextOn, tone === 'ex' && styles.chipExText]} numberOfLines={2}>
-        {tone === 'ex' ? `«${label}»` : label}
-      </Text>
-      {!!sub && <Text style={[styles.chipSub, on && styles.chipTextOn]}>{sub}</Text>}
-    </Pressable>
-  );
-
-  const Dot = ({ vivo }: { vivo: boolean | null }) =>
-    vivo === null ? null : <View style={[styles.capDot, { backgroundColor: vivo ? T.activo : T.borde }]} />;
-
-  const Card = ({ c }: { c: Capacidad }) => (
-    <View style={styles.card}>
-      <View style={styles.cardHead}>
-        <Dot vivo={c.vivo} />
-        <Text style={styles.cardTitle}>{c.titulo}</Text>
-      </View>
-      <Text style={styles.cardDetail}>{c.detalle}</Text>
-      {c.vivo === false && !!c.falta && <Text style={styles.cardFalta}>falta: {c.falta}</Text>}
-      {c.ejemplos.length > 0 && (
-        <View style={styles.chips}>
-          {c.ejemplos.map((e) => (
-            <Chip key={e} label={e} tone="ex" onPress={() => p.onCommand(e)} />
-          ))}
-        </View>
-      )}
-    </View>
-  );
 
   const grupos = cat.payload ? agrupar(cat.payload.capacidades) : [];
   const vivos = cat.payload ? cat.payload.capacidades.filter((c) => c.vivo === true).length : 0;
@@ -230,7 +234,7 @@ export function DeskMenu(p: Props) {
                 <View key={g.grupo} style={{ gap: 8 }}>
                   <Text style={styles.groupTitle}>{g.titulo}</Text>
                   {g.items.map((c) => (
-                    <Card key={c.id} c={c} />
+                    <Card key={c.id} c={c} onCommand={p.onCommand} />
                   ))}
                 </View>
               ))}
@@ -264,7 +268,7 @@ export function DeskMenu(p: Props) {
           <Text style={styles.section}>Modo</Text>
           <View style={styles.chips}>
             {MODES.map((m) => (
-              <Chip key={m.id} on={p.mode === m.id} label={m.id.toLowerCase()} sub={m.hint} onPress={() => p.onSetMode(m.id)} />
+              <Chip key={m.id} on={p.mode === m.id} label={m.label} sub={m.hint} onPress={() => p.onSetMode(m.id)} />
             ))}
           </View>
 
@@ -374,7 +378,7 @@ export function DeskMenu(p: Props) {
           <Text style={styles.sub}>Cómo convierte tu voz en texto.</Text>
           <View style={styles.chips}>
             <Chip on={p.settings.sttEngine === 'native'} label="Teléfono" sub="Google · en vivo" onPress={() => p.onSetSttEngine('native')} />
-            <Chip on={p.settings.sttEngine === 'cloud'} label="Nube" sub="Scribe · ElevenLabs" onPress={() => p.onSetSttEngine('cloud')} />
+            <Chip on={p.settings.sttEngine === 'cloud'} label="Nube" sub="en el servidor" onPress={() => p.onSetSttEngine('cloud')} />
           </View>
           <View style={styles.row}>
             <View>
@@ -404,7 +408,7 @@ export function DeskMenu(p: Props) {
             <Text style={styles.logoutText}>Cerrar sesión</Text>
           </Pressable>
           <Text style={styles.version}>
-            v{APP_VERSION} · {VOICE_NAME} · cerebro Qwen 27B
+            v{APP_VERSION} · {VOICE_NAME}
           </Text>
         </ScrollView>
       </Animated.View>

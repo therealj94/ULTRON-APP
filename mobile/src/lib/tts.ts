@@ -36,6 +36,21 @@ export type SpeakCallbacks = {
 let current: Audio.Sound | null = null;
 let gen = 0;
 const fileCache = new Map<string, string>();
+/**
+ * Tope de la caché de audios: antes solo crecía (un mp3 por frase distinta, para siempre en la sesión y
+ * en disco). Al pasar el tope se borra el más viejo, del mapa y del disco. Map conserva el orden de
+ * inserción, así que el primero es el más antiguo.
+ */
+const CACHE_MAX = 40;
+function guardarEnCache(key: string, uri: string) {
+  fileCache.delete(key);
+  fileCache.set(key, uri);
+  while (fileCache.size > CACHE_MAX) {
+    const [viejo, ruta] = fileCache.entries().next().value as [string, string];
+    fileCache.delete(viejo);
+    void FileSystem.deleteAsync(ruta, { idempotent: true }).catch(() => {});
+  }
+}
 /** Última locución en curso: el StreamSpeaker espera a que termine (no corta un clip a la mitad). */
 let lastSpeak: Promise<unknown> = Promise.resolve();
 let releaseLastSpeak: (() => void) | null = null;
@@ -158,7 +173,33 @@ export function clipForPhrase(text: string): ClipId | null {
 
 // ---------------------------------------------------------------- descarga TTS
 
+/**
+ * Los audios de sesiones anteriores se quedaban en la caché del teléfono para siempre. La primera vez
+ * que se pide voz en esta sesión se borran los `ultron-*` que haya (los de esta sesión aún no existen).
+ */
+let limpiezaHecha = false;
+/** Solo se borra lo creado ANTES de arrancar: el nombre lleva la hora (base 36) y lo de ahora se queda. */
+const INICIO_SESION = Date.now();
+function limpiarAudiosViejos() {
+  if (limpiezaHecha || !FileSystem.cacheDirectory) return;
+  limpiezaHecha = true;
+  const dir = FileSystem.cacheDirectory;
+  void FileSystem.readDirectoryAsync(dir)
+    .then((nombres) =>
+      Promise.all(
+        nombres
+          .filter((n) => {
+            const m = /^ultron(?:-p)?-([a-z0-9]+)-[a-z0-9]+\.(?:mp3|wav)$/.exec(n);
+            return !!m && parseInt(m[1], 36) < INICIO_SESION;
+          })
+          .map((n) => FileSystem.deleteAsync(dir + n, { idempotent: true }).catch(() => {}))
+      )
+    )
+    .catch(() => {});
+}
+
 function tmpPath(prefix: string, ext = 'mp3') {
+  limpiarAudiosViejos();
   return `${FileSystem.cacheDirectory}${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
 }
 
@@ -181,14 +222,14 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<
       const ct = String((r.headers as any)?.['Content-Type'] || (r.headers as any)?.['content-type'] || '');
       const info = await FileSystem.getInfoAsync(path);
       if (r.status === 200 && info.exists && (info.size || 0) > 64 && (!ct || /audio|octet/.test(ct))) {
-        fileCache.set(key, path);
+        guardarEnCache(key, path);
         return { uri: path };
       }
       await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
       if (r.status === 200 && ct && !/audio|octet/.test(ct)) {
         // servidor sin GET /api/tts: devolvió HTML. Usar POST.
         const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion }, 40_000);
-        if (uri) fileCache.set(key, uri);
+        if (uri) guardarEnCache(key, uri);
         return uri ? { uri } : null;
       }
     } catch {

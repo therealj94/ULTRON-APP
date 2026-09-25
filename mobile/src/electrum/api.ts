@@ -70,16 +70,33 @@ export class SinPuerta extends Error {
  */
 const ESPERA_MS = 75_000;
 
+/**
+ * Un `AbortSignal` que se dispara a los `ms`. `AbortSignal.timeout()` NO existe en React Native: su
+ * AbortSignal es el del paquete `abort-controller` (Libraries/Core/setUpXHR.js), que no lo trae, así
+ * que la llamada lanzaba «undefined is not a function» antes de salir a la red. `soltar` limpia el
+ * temporizador cuando la petición terminó antes.
+ */
+function conTope(ms: number): { signal: AbortSignal; soltar: () => void } {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms);
+  return { signal: c.signal, soltar: () => clearTimeout(t) };
+}
+
 async function pedir<T>(ruta: string, init: RequestInit = {}, msIntento = ESPERA_MS): Promise<T> {
-  const r = await fetch(`${API_BASE}${ruta}`, {
-    ...init,
-    headers: cabeceras((init.headers as Record<string, string>) || {}),
-    signal: AbortSignal.timeout(msIntento),
-  });
-  if (r.status === 401) throw new SinPuerta();
-  const j = (await r.json().catch(() => ({}))) as any;
-  if (!r.ok) throw new Error(j?.error || `Error ${r.status}`);
-  return j as T;
+  const tope = conTope(msIntento);
+  try {
+    const r = await fetch(`${API_BASE}${ruta}`, {
+      ...init,
+      headers: cabeceras((init.headers as Record<string, string>) || {}),
+      signal: tope.signal,
+    });
+    if (r.status === 401) throw new SinPuerta();
+    const j = (await r.json().catch(() => ({}))) as any;
+    if (!r.ok) throw new Error(j?.error || `Error ${r.status}`);
+    return j as T;
+  } finally {
+    tope.soltar();
+  }
 }
 
 export type Traza = { herramienta: string; ok: boolean; resumen: string };
@@ -197,12 +214,13 @@ export function salud(): Promise<Salud> {
 
 /** La voz del doctor, en MP3. Se pide aparte porque no devuelve JSON. */
 export async function voz(texto: string, emocion?: string): Promise<string | null> {
+  const tope = conTope(30_000);
   try {
     const r = await fetch(`${API_BASE}/api/electrum/voz`, {
       method: 'POST',
       headers: cabeceras({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ texto: texto.slice(0, 1200), emocion }),
-      signal: AbortSignal.timeout(30_000),
+      signal: tope.signal,
     });
     if (!r.ok) return null;
     const buf = await r.arrayBuffer();
@@ -213,6 +231,8 @@ export async function voz(texto: string, emocion?: string): Promise<string | nul
     return `data:audio/mpeg;base64,${btoa(bin)}`;
   } catch {
     return null;
+  } finally {
+    tope.soltar();
   }
 }
 
@@ -220,12 +240,20 @@ export async function voz(texto: string, emocion?: string): Promise<string | nul
 export async function entrar(correo: string, clave: string): Promise<string> {
   // La puerta de Dr Electrum. El servidor mantiene `/api/ultron/entrar` como alias para las
   // APK que ya están instaladas; las nuevas llaman a la suya.
-  const r = await fetch(`${API_BASE}/api/electrum/entrar`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ correo, clave }),
-    signal: AbortSignal.timeout(20_000),
-  });
+  const tope = conTope(20_000);
+  let r: Response;
+  try {
+    r = await fetch(`${API_BASE}/api/electrum/entrar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ correo, clave }),
+      signal: tope.signal,
+    });
+  } catch {
+    tope.soltar();
+    throw new Error('No alcancé el servidor. Revisá la señal y probá de nuevo.');
+  }
+  tope.soltar();
   const j = (await r.json().catch(() => ({}))) as any;
   if (!r.ok || !j?.token) throw new Error(j?.error || 'No pude entrar con eso.');
   return String(j.token);

@@ -172,12 +172,16 @@ export function exigirMesaODesk(req: Request, res: Response, next: NextFunction)
   });
 }
 
-export function limitar(max: number, ventanaMs = 60_000) {
+/**
+ * Límite por IP. `grupo` junta varias rutas en un solo cupo: sin él, cada ruta tenía el suyo y las tres
+ * de voz (`/api/tts`, `/api/tts/stream`, `/api/voz`) sumaban el triple de lo pensado.
+ */
+export function limitar(max: number, ventanaMs = 60_000, grupo?: string) {
   return (req: Request, res: Response, next: NextFunction) => {
     // req.ip ya respeta `trust proxy` (Render pone la IP real). El body no entra en la clave:
     // rotar `usuario` no puede regalar más cupo.
     const ip = String(req.ip || req.socket.remoteAddress || 'x');
-    const k = `${ip}:${req.path}`;
+    const k = `${ip}:${grupo || req.path}`;
     const now = Date.now();
     const arr = (hits.get(k) || []).filter((t) => now - t < ventanaMs);
     if (arr.length >= max) {
@@ -279,4 +283,15 @@ export function exigirPlataforma(plataforma: Plataforma) {
       honesto: true,
     });
   };
+}
+
+/**
+ * El cuerpo de un turno que llega por HTTP, sin lo que solo puede poner el servidor: la identidad de
+ * Telegram (la pone el webhook, que sí la comprobó), el canal y la sesión (sale del token). Sin esto,
+ * cualquiera sin sesión mandaba el id de Telegram de José en `/api/turno` y hablaba con mando.
+ */
+export function cuerpoHttp(body: unknown): Record<string, unknown> {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return {};
+  const { telegramUserId: _u, telegramChatId: _c, canal: _canal, sesion: _s, ...resto } = body as Record<string, unknown>;
+  return resto;
 }

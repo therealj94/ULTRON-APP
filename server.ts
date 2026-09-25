@@ -6,7 +6,7 @@ import { createServer as createViteServer } from 'vite';
 import { fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, vozDe } from './server/voz';
-import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica } from './server/seguridad';
+import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, hechosCatalogo } from './lib/taller';
@@ -104,6 +104,12 @@ const httpServer = http.createServer(app);
 const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '12mb' }));
+// Cuerpo roto o demasiado grande: una respuesta JSON clara en vez de la página HTML de Express.
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'Lo que mandaste es demasiado grande.', honesto: true });
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'No entendí lo que mandaste (JSON mal formado).', honesto: true });
+  return next(err);
+});
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -206,9 +212,25 @@ alAvisar(async (ap, que) => {
   }
 });
 
-app.get('/api/health', async (_req, res) => {
-  const s = await medirSalud(true);
+app.get('/api/health', async (req, res) => {
+  // Sin sesión: solo lo que usan los clientes (vivo o no) y con la caché de 15 s. Las direcciones de
+  // los nodos y los sondeos forzados son para quien tiene sesión de mesa.
+  const autorizado = mesaAutorizada(req);
+  const s = await medirSalud(autorizado);
   const raw = s.raw || {};
+  if (!autorizado) {
+    return res.json({
+      ok: true,
+      version: '4.0',
+      qwen: { vivo: s.qwen },
+      fp: { vivo: s.fp },
+      ojo: { vivo: s.ojo, playwright: s.ojo, vision: !!raw.ojo?.json?.vision },
+      tts: { vivo: s.ttsLocal },
+      elevenlabs: !!clave('elevenlabs'),
+      voz: VOZ_OFICIAL.nombre,
+      geminiFallback: !!clave('gemini'),
+    });
+  }
   res.json({
     ok: true,
     version: '4.0',
@@ -947,10 +969,20 @@ app.post('/api/playwright/scrape', exigirSesion, limitar(10), async (req, res) =
 });
 
 
-app.post('/api/vision/analyze', exigirMesaODesk, async (req, res) => {
-  const { mediaType, fileName, base64Data, prompt } = req.body || {};
+/** Una foto de la mesa a 640 px pesa ~60 KB en base64; 3 MB deja sitio a un PDF corto y corta el abuso. */
+const VISION_MAX_CAR = 3_000_000;
+
+app.post('/api/vision/analyze', exigirMesaODesk, limitar(20), async (req, res) => {
+  const { mediaType, fileName, base64Data } = req.body || {};
+  // El prompt libre es de quien tiene sesión; sin ella, cualquiera usaría la clave de visión como
+  // servicio gratis con sus propias instrucciones. Sin sesión se admite uno corto (la APK pide
+  // etiquetas de la mesa con una frase fija).
+  const prompt = typeof req.body?.prompt === 'string' ? (sesionDe(req) ? req.body.prompt.slice(0, 2000) : req.body.prompt.slice(0, 300)) : '';
   if (!base64Data) {
     return res.status(400).json({ error: 'Falta la imagen', honesto: true });
+  }
+  if (String(base64Data).length > VISION_MAX_CAR) {
+    return res.status(413).json({ error: 'La imagen es demasiado grande. Mándala más pequeña.', honesto: true });
   }
   const isVideo = String(mediaType || fileName || '').startsWith('video') || /\.(mp4|webm|mov)$/i.test(fileName || '');
   if (isVideo) {
@@ -1119,9 +1151,9 @@ async function responderVoz(req: express.Request, res: express.Response) {
   return res.send(out.audio);
 }
 
-app.all('/api/tts', exigirMesaODesk, limitar(60), responderVoz);
-app.all('/api/tts/stream', exigirMesaODesk, limitar(60), responderVoz);
-app.all('/api/voz', exigirMesaODesk, limitar(60), responderVoz);
+app.all('/api/tts', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
+app.all('/api/tts/stream', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
+app.all('/api/voz', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
 
 /** Oración del día: AU-RA cierra los ojos y ora (clip grabado con la voz oficial). */
 app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
@@ -1141,15 +1173,18 @@ app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
  */
 app.post('/api/diag', limitar(40), (req, res) => {
   const b = req.body || {};
-  const cab = `[APK ${String(b.version || '?')} ${String(b.plataforma || '?')} ${String(b.dispositivo || '?')} ses=${String(b.sesion || '?')}]`;
+  // Todo lo que llega aquí es de un cliente sin sesión: corto y en una sola línea, para que nadie pueda
+  // inflar los logs ni escribir líneas falsas con saltos de línea.
+  const una = (v: unknown, n: number) => String(v ?? '?').replace(/[\r\n]+/g, ' ').slice(0, n);
+  const cab = `[APK ${una(b.version, 24)} ${una(b.plataforma, 16)} ${una(b.dispositivo, 60)} ses=${una(b.sesion, 40)}]`;
   const tipo = String(b.tipo || 'estado');
   if (tipo === 'crash-previo') {
-    console.error(`${cab} CRASH. Murió en: ${String(b.murio_en || '?')}`);
+    console.error(`${cab} CRASH. Murió en: ${una(b.murio_en, 120)}`);
   } else if (tipo === 'error-js') {
-    console.error(`${cab} ERROR JS${b.fatal ? ' FATAL' : ''}: ${String(b.error || '').slice(0, 300)}`);
+    console.error(`${cab} ERROR JS${b.fatal ? ' FATAL' : ''}: ${una(b.error, 300)}`);
     if (b.stack) console.error(`${cab} stack: ${String(b.stack).slice(0, 900)}`);
   } else {
-    console.log(`${cab} ${String(b.nota || 'estado')}`);
+    console.log(`${cab} ${una(b.nota || 'estado', 300)}`);
   }
   const migas = Array.isArray(b.migas) ? b.migas.slice(-40) : [];
   if (migas.length) console.log(`${cab} migas: ${migas.map(String).join(' | ').slice(0, 1800)}`);
@@ -1210,6 +1245,9 @@ async function prepararTurno(body: any) {
   // Mando solo con identidad verificada (sesión firmada o Telegram). El body no escala.
   const verificado = quienVerificado(body, body?.sesion || null);
   const mando = puedeCambiarSistema(verificado);
+  // La memoria privada (hilo, hechos, lo que se guarda de cada turno) es de identidades verificadas.
+  // Un nombre escrito sirve para saludar, no para leer ni escribir la memoria de nadie.
+  const quienMem = verificado;
   // Cómo se sabe quién es: sesión firmada, Telegram comprobado, o solo el nombre que escribió.
   const prueba: 'sesion' | 'telegram' | 'nombre' | null = verificado ? (body?.sesion ? 'sesion' : 'telegram') : quien ? 'nombre' : null;
   const personaTurno = verificado ? personaPorId(verificado) : null;
@@ -1217,7 +1255,7 @@ async function prepararTurno(body: any) {
   trazaActual()?.identidad(quien || null, nivelTurno);
   const memSt = estadoMemoria();
   if (message) {
-    await recordarTurno({ quien, rol: 'user', texto: message, canal });
+    await recordarTurno({ quien: quienMem, rol: 'user', texto: message, canal });
   }
   const clienteHilo = Array.isArray(body?.historial)
     ? (body.historial as any[]).map((x) => ({
@@ -1225,7 +1263,7 @@ async function prepararTurno(body: any) {
         texto: String(x?.texto || x?.content || ''),
       }))
     : [];
-  const durable = hiloDe(quien).map((t) => ({ rol: t.rol, texto: t.texto }));
+  const durable = hiloDe(quienMem).map((t) => ({ rol: t.rol, texto: t.texto }));
   const hiloTodo = durable.length >= 2 ? durable : [...clienteHilo, ...durable];
   const hiloPrevio = hiloTodo.filter(
     (t, i) => !(i === hiloTodo.length - 1 && t.rol === 'user' && t.texto === message)
@@ -1235,7 +1273,7 @@ async function prepararTurno(body: any) {
   // Hechos que manda el cliente solo entran con sesión firmada (si no, cualquiera envenena la memoria).
   const largaApp: string[] = body?.sesion && Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
   for (const h of largaApp) {
-    if (h.trim().length > 8) await guardarHechoQuien({ quien, hecho: h.trim().slice(0, 400), canal: 'mesa' });
+    if (h.trim().length > 8) await guardarHechoQuien({ quien: quienMem, hecho: h.trim().slice(0, 400), canal: 'mesa' });
   }
 
   // La decisión rápida: tipo de tarea, riesgo, agente, si es un intento de torcer al sistema.
@@ -1342,7 +1380,9 @@ async function prepararTurno(body: any) {
         tools.push('pagina');
         if (page.foto) {
           tools.push('foto');
-          if (body?.canal === 'telegram' || /telegram|captura|screenshot|m[aá]ndame (la )?foto/.test(q)) {
+          // Al grupo de la junta solo manda quien tiene mando (o se contesta al chat de Telegram que preguntó):
+          // si no, cualquiera sin sesión publicaba en el grupo la captura de la página que quisiera.
+          if (canal === 'telegram' || (mando && /telegram|captura|screenshot|m[aá]ndame (la )?foto/.test(q))) {
             const envio = await telegramFoto({ buf: page.foto, caption: page.titulo || page.url, chatId: body?.telegramChatId });
             hechos.push(`FOTO TELEGRAM: ${envio.detalle}`);
           }
@@ -1392,7 +1432,7 @@ async function prepararTurno(body: any) {
         console.error(`[AU-RA] vision falló (${vista.via}) con ${String(image).length} car.: ${vista.texto.slice(0, 160)}`);
         hechos.push('VISION: la cámara no devolvió imagen esta vez. Dilo simple y humano («ahora mismo no me está entrando imagen, dame un segundo»); no hables de errores técnicos ni de nodos.');
       } else {
-        console.log(`[AU-RA] vision ok (${String(image).length} car.) → ${vista.texto.slice(0, 120)}`);
+        console.log(`[AU-RA] vision ok (${String(image).length} car., ${vista.via})`);
         hechos.push(`VISION (${vista.via}): ${vista.texto}`);
       }
       tools.push('vision');
@@ -1500,7 +1540,7 @@ ${promptAgente(clas.agente)}
 
 No finjas recuerdos: solo la memoria de ${quien ? nombreDe(quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.
 Modo de mesa pedido: ${mode}.
-HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemoria(quien)}`;
+HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemoria(quienMem)}`;
 
   const compuesto = construirMensajes({ personalidad, user: mensajeHilo || message, canal, historial: hilo });
   if (compuesto.meta.rag) tools.push('rag');
@@ -1508,7 +1548,7 @@ HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemor
   if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
 
-  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, datos, tools, foto, directo, directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null, system, quien, mando, prueba, canal, hilo, clas };
+  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, datos, tools, foto, directo, directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null, system, quien, quienMem, mando, prueba, canal, hilo, clas };
 }
 
 
@@ -1703,12 +1743,12 @@ async function correrTurnoInterno(body: any): Promise<SalidaTurno> {
   const p = await prepararTurno(body);
   const base = { mode: p.mode, foto: null as string | null, honesto: true as const };
   if (!p.message) return { ...base, reply: '', emocion: 'neutral', via: 'none', ms: Date.now() - p.t0, herramientas: [], error: 'message vacío' };
-  const { t0, mode, tools, system, message, quien, canal, hilo, mando } = p;
+  const { t0, mode, tools, system, message, quien, quienMem, canal, hilo, mando } = p;
   const hechos = [...p.hechos];
   const guardar = async (out: Omit<SalidaTurno, 'emocion'> & { emocion?: Emocion }): Promise<SalidaTurno> => {
     const e = extraerEmocion(out.reply);
     const final: SalidaTurno = { ...out, reply: e.texto, emocion: out.emocion || e.emocion };
-    if (final.reply) await recordarTurno({ quien, rol: 'ultron', texto: final.reply, canal });
+    if (final.reply) await recordarTurno({ quien: quienMem, rol: 'ultron', texto: final.reply, canal });
     return final;
   };
   if (p.directo) {
@@ -1755,12 +1795,19 @@ async function correrTurnoInterno(body: any): Promise<SalidaTurno> {
 
 app.post('/api/turno', exigirMesaODesk, limitar(60), async (req, res) => {
   const s = sesionDe(req);
-  const out = await correrTurno({
-    ...req.body,
-    correo: req.body?.correo || s?.correo,
-    usuario: req.body?.usuario || req.body?.userName || s?.nombre,
-    sesion: s,
-  });
+  let out: Awaited<ReturnType<typeof correrTurno>>;
+  try {
+    out = await correrTurno({
+      ...cuerpoHttp(req.body),
+      correo: req.body?.correo || s?.correo,
+      usuario: req.body?.usuario || req.body?.userName || s?.nombre,
+      sesion: s,
+    });
+  } catch (e: any) {
+    // Sin esto la petición quedaba colgada: Express 4 no atrapa rechazos de handlers async.
+    console.error('[AU-RA] turno falló:', String(e?.message || e).slice(0, 300));
+    return res.status(500).json({ error: 'Se me cayó el hilo de lo que pensaba. ¿Me lo repites?', honesto: true });
+  }
   if (out.error && !out.reply) {
     const code = out.error === 'message vacío' ? 400 : out.error.includes('configurado') ? 503 : 502;
     return res.status(code).json({ error: out.error, emocion: out.emocion, honesto: true });
@@ -1792,7 +1839,16 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), (req, res) => {
   return enTurno(reg, () =>
     turnoEnVivo(req, res).catch((e) => {
       reg.cerrar({ error: e });
-      throw e;
+      // Las cabeceras del stream ya salieron: se avisa con un evento y se cierra, en vez de colgar.
+      console.error('[AU-RA] turno en vivo falló:', String(e?.message || e).slice(0, 300));
+      if (!res.writableEnded) {
+        try {
+          res.write(`event: error\ndata: ${JSON.stringify({ error: 'Se me cayó el hilo de lo que pensaba. ¿Me lo repites?' })}\n\n`);
+          res.end();
+        } catch {
+          /* el cliente ya se fue */
+        }
+      }
     })
   );
 });
@@ -1803,11 +1859,17 @@ async function turnoEnVivo(req: express.Request, res: express.Response) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
-  const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  let seFue = false;
+  res.on('close', () => {
+    if (!res.writableEnded) seFue = true;
+  });
+  const send = (event: string, data: unknown) => {
+    if (!seFue && !res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
 
   const s = sesionDe(req);
   const p = await prepararTurno({
-    ...req.body,
+    ...cuerpoHttp(req.body),
     correo: req.body?.correo || s?.correo,
     usuario: req.body?.usuario || req.body?.userName || s?.nombre,
     sesion: s,
@@ -1817,13 +1879,13 @@ async function turnoEnVivo(req: express.Request, res: express.Response) {
     reg.cerrar({ error: 'message vacío' });
     return res.end();
   }
-  const { t0, tools, system, message, quien, canal, hilo, mando } = p;
+  const { t0, tools, system, message, quien, quienMem, canal, hilo, mando } = p;
   const hechos = [...p.hechos];
   const terminar = async (texto: string, via: string, emocion: Emocion) => {
     anotarHerramientasAura(reg, tools);
     reg.cerrar({ respuesta: texto, emocion, via });
     send('done', { reply: texto, emocion, ms: Date.now() - t0, via, trazaId: reg.id });
-    if (texto) await recordarTurno({ quien, rol: 'ultron', texto, canal });
+    if (texto && !seFue) await recordarTurno({ quien: quienMem, rol: 'ultron', texto, canal });
     res.end();
   };
   send('tools', { tools });
