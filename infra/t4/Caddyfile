@@ -1,0 +1,49 @@
+# La puerta de la T4. Una sola dirección con TLS y un portador; cada servicio en su prefijo.
+#
+#   https://{T4_DOMINIO}/laya/v1/systemone    → Laya
+#   https://{T4_DOMINIO}/embed/embed          → BGE-M3 (TEI)
+#   https://{T4_DOMINIO}/chico/v1/chat/completions → modelo chico (llama.cpp)
+#   https://{T4_DOMINIO}/docling/v1/convert/file   → Docling
+#
+# `route` obliga a evaluar en el orden escrito: sin él, Caddy ordena `respond` DESPUÉS de `handle`
+# y el control del token no se aplicaría nunca. Let's Encrypt no exige correo, así que no se pide.
+{$T4_DOMINIO} {
+	route {
+		@sin_token not header Authorization "Bearer {$T4_TOKEN}"
+		respond @sin_token "no autorizado" 401
+
+		handle_path /laya/* {
+			reverse_proxy laya:8000
+		}
+		handle_path /embed/* {
+			reverse_proxy embed:80
+		}
+		handle_path /chico/* {
+			reverse_proxy chico:8080
+		}
+		handle_path /docling/* {
+			request_body {
+				max_size 200MB
+			}
+			# docling-serve pide X-Api-Key, no portador: la pone Caddy, así el cliente no la manda.
+			# Un poco más que DOCLING_SERVE_MAX_SYNC_WAIT (600 s), para que conteste docling y no Caddy.
+			reverse_proxy docling:5001 {
+				header_up X-Api-Key {$T4_TOKEN}
+				transport http {
+					response_header_timeout 11m
+				}
+			}
+		}
+		handle {
+			respond "no existe" 404
+		}
+	}
+	# Caddy ya tapa Authorization; X-Api-Key no, y un cliente viejo podría mandarla.
+	log {
+		output stdout
+		format filter {
+			request>headers>X-Api-Key delete
+			wrap console
+		}
+	}
+}

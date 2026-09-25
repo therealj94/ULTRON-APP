@@ -1,8 +1,8 @@
 /**
- * La junta de Orden Global, vista desde ULTRON FP.
+ * La junta de Orden Global, vista desde AU-RA FP.
  *
  * Esto ya no es un padrón: es una VENTANA al padrón (lib/acceso.ts) recortada a la plataforma
- * ULTRON. Quien no tiene acceso a `ultron` no existe aquí, aunque exista en Dr Electrum. Los dos
+ * AU-RA. Quien no tiene acceso a `ultron` no existe aquí, aunque exista en Dr Electrum. Los dos
  * cerebros son independientes y su gente también, que es justo lo que se pidió.
  *
  * La firma de este archivo no cambió a propósito: media docena de módulos (memoria, taller,
@@ -16,7 +16,7 @@ export type MiembroId = string;
 
 export type Miembro = { id: MiembroId; nombre: string; correo: string };
 
-/** Los que entran a ULTRON. Se recalcula con el padrón, así que agregar gente no exige despliegue. */
+/** Los que entran a AU-RA. Se recalcula con el padrón, así que agregar gente no exige despliegue. */
 export function miembrosUltron(): Record<MiembroId, Miembro> {
   const out: Record<MiembroId, Miembro> = {};
   for (const p of padron()) {
@@ -32,7 +32,7 @@ export function nombreDe(id: MiembroId | null | undefined): string {
 }
 
 /**
- * Mando = nivel `mando` en ULTRON. Se sigue tomando el id ya verificado río arriba
+ * Mando = nivel `mando` en AU-RA. Se sigue tomando el id ya verificado río arriba
  * (`quienVerificado`, que solo mira sesión firmada y Telegram comprobado), así que un nombre
  * escrito en el cuerpo de la petición nunca llega hasta acá.
  */
@@ -40,15 +40,15 @@ export function puedeCambiarSistema(id: MiembroId | null | undefined): boolean {
   return nivelDe(personaPorId(id), 'ultron') === 'mando';
 }
 
-/** Puede alimentar el cerebro de ULTRON: hechos de junta, documentos. */
+/** Puede alimentar el cerebro de AU-RA: hechos de junta, documentos. */
 export function puedeAlimentarUltron(id: MiembroId | null | undefined): boolean {
   const n = nivelDe(personaPorId(id), 'ultron');
   return n === 'mando' || n === 'escribe';
 }
 
 /**
- * Quién es, recortado a ULTRON. Devuelve null para quien no entra a esta plataforma: un usuario de
- * Dr Electrum que escriba a ULTRON es un desconocido, y así debe ser.
+ * Quién es, recortado a AU-RA. Devuelve null para quien no entra a esta plataforma: un usuario de
+ * Dr Electrum que escriba a AU-RA es un desconocido, y así debe ser.
  */
 export function quienEs(opts: {
   nombre?: string;

@@ -846,7 +846,7 @@ export function drawHolographicDrinkCup(
     ctx.fill();
   }
 
-  // Glowing Neon Straw curving directly toward Ultron's mouth
+  // Glowing Neon Straw curving directly toward AU-RA's mouth
   ctx.strokeStyle = '#FF3BB0';
   ctx.lineWidth = 4;
   ctx.shadowColor = '#FF3BB0';

@@ -1,5 +1,5 @@
 /**
- * Escena: lo que ULTRON entiende de lo que ve la cámara.
+ * Escena: lo que AU-RA entiende de lo que ve la cámara.
  *
  * Módulo PURO (sin DOM, sin MediaPipe): recibe observaciones por cuadro ya medidas
  * (posición, tamaño, gestos crudos) y produce el estado + eventos con histéresis y
@@ -7,8 +7,8 @@
  *
  * Convención de ejes (ver README, sección Cámara):
  *  - x, y en -1..1. x positivo = la persona está a SU derecha (espejo del video frontal),
- *    así los ojos de la cara miran hacia donde está la persona. Visto desde ULTRON, x>0 es
- *    «a mi izquierda»: la frase se escribe siempre en primera persona (ULTRON) para no
+ *    así los ojos de la cara miran hacia donde está la persona. Visto desde AU-RA, x>0 es
+ *    «a mi izquierda»: la frase se escribe siempre en primera persona (AU-RA) para no
  *    sugerir una segunda persona al único presente.
  *  - tam = alto de la cara relativo al alto del cuadro (0..1).
  */
@@ -146,8 +146,8 @@ export interface EstadoDescribible {
 }
 
 /**
- * Lado desde el punto de vista de ULTRON (quien habla). x>0 = la persona está a SU derecha
- * (espejado), o sea a la IZQUIERDA de ULTRON/cámara.
+ * Lado desde el punto de vista de AU-RA (quien habla). x>0 = la persona está a SU derecha
+ * (espejado), o sea a la IZQUIERDA de AU-RA/cámara.
  */
 export function ladoDesdeUltron(x: number): 'a mi izquierda' | 'a mi derecha' | 'frente a mí' {
   if (x > UMBRALES.ladoX) return 'a mi izquierda';
@@ -156,8 +156,8 @@ export function ladoDesdeUltron(x: number): 'a mi izquierda' | 'a mi derecha' | 
 }
 
 /**
- * Frase en español que ULTRON puede usar como hecho, siempre en primera persona (ULTRON habla,
- * «mi» es ULTRON). Nunca inventa edad, género ni identidad.
+ * Frase en español que AU-RA puede usar como hecho, siempre en primera persona (AU-RA habla,
+ * «mi» es AU-RA). Nunca inventa edad, género ni identidad.
  *  «Veo a una persona cerca, a mi izquierda, sonriendo y mirando la pantalla.»
  *  «No veo a nadie ahora.» · «Veo a dos personas.» · «La cámara está apagada.»
  */

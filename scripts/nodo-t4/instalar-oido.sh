@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Oído local de ULTRON en el nodo T4 (g4dn.xlarge, 35.175.175.203).
+# Oído local de AU-RA en el nodo T4 (g4dn.xlarge, 35.175.175.203).
 # Levanta faster-whisper (large-v3, int8_float16) con API compatible OpenAI en :8791.
 # Requisitos: driver NVIDIA + docker + nvidia-container-toolkit (ya presentes si el nodo corrió Chatterbox/Qwen-TTS).
 # Uso en el nodo:  bash instalar-oido.sh   (idempotente)

@@ -8,7 +8,15 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { contradicciones, guardarInforme, olvidarInformes, tomarInforme } from '../server/electrum/informe';
+import {
+  citaDe,
+  compartirInforme,
+  contradicciones,
+  guardarInforme,
+  informeCompartido,
+  olvidarInformes,
+  tomarInforme,
+} from '../server/electrum/informe';
 import { MANOS } from '../server/electrum/manos';
 import type { FilaConcesion } from '../server/electrum/db';
 
@@ -80,20 +88,72 @@ test('la mano del informe no acepta cifras del modelo', async (t) => {
   });
 });
 
+/** El nombre del PDF si se pudo recoger; si no, el motivo. Para leer las pruebas de un vistazo. */
+const recoger = (id: string, quien: string | null = null) => {
+  const r = tomarInforme(id, quien);
+  return r.estado === 'ok' ? r.informe.nombre : r.estado;
+};
+
 test('la entrega del informe', async (t) => {
   await t.test('se guarda, se recoge una vez y se puede volver a recoger', () => {
     olvidarInformes();
     const id = guardarInforme({ pdf: Buffer.from('%PDF-'), nombre: 'x.pdf', dicho: 'listo' }, 'jose');
-    assert.equal(tomarInforme(id)?.nombre, 'x.pdf');
-    assert.equal(tomarInforme(id)?.nombre, 'x.pdf', 'recogerlo no lo consume: bajarlo dos veces es normal');
-    assert.equal(tomarInforme('inventado'), null);
+    assert.equal(recoger(id, 'jose'), 'x.pdf');
+    assert.equal(recoger(id, 'jose'), 'x.pdf', 'recogerlo no lo consume: bajarlo dos veces es normal');
+    assert.equal(recoger('inventado', 'jose'), 'no-esta');
   });
 
   await t.test('no se acumulan sin fin', () => {
     olvidarInformes();
     const ids: string[] = [];
     for (let i = 0; i < 60; i += 1) ids.push(guardarInforme({ pdf: Buffer.alloc(8), nombre: `${i}.pdf`, dicho: '' }, null));
-    assert.equal(tomarInforme(ids[59])?.nombre, '59.pdf', 'el último sigue ahí');
-    assert.equal(tomarInforme(ids[0]), null, 'los primeros se soltaron');
+    assert.equal(recoger(ids[59]), '59.pdf', 'el último sigue ahí');
+    assert.equal(recoger(ids[0]), 'no-esta', 'los primeros se soltaron');
   });
+});
+
+/* ------------------------------------------------- de quién es un informe */
+
+test('un informe es de quien lo pidió', async (t) => {
+  t.beforeEach(() => olvidarInformes());
+
+  await t.test('otro miembro de la junta no se lo puede bajar', () => {
+    // El autor se guardaba desde el principio y no se comparaba con nadie: cualquiera con acceso a
+    // Electrum y el identificador se bajaba el informe de otro. Un informe de cartera lleva nombres
+    // de concesionarios y hectáreas; «difícil de adivinar» no es un permiso.
+    const id = guardarInforme({ pdf: Buffer.from('%PDF-'), nombre: 'cartera.pdf', dicho: '' }, 'jose');
+    assert.equal(recoger(id, 'medardo'), 'ajeno');
+    assert.equal(recoger(id, null), 'ajeno', 'sin identificar tampoco');
+    assert.equal(recoger(id, 'jose'), 'cartera.pdf', 'el suyo sí');
+  });
+
+  await t.test('compartirlo con la junta lo abre, y solo puede hacerlo su autor', () => {
+    const id = guardarInforme({ pdf: Buffer.from('%PDF-'), nombre: 'cartera.pdf', dicho: '' }, 'jose');
+    assert.equal(compartirInforme(id, 'medardo'), 'ajeno', 'no es suyo: no le toca compartirlo');
+    assert.equal(recoger(id, 'medardo'), 'ajeno');
+    assert.equal(compartirInforme(id, 'jose'), 'hecho');
+    assert.equal(recoger(id, 'medardo'), 'cartera.pdf', 'compartido a propósito, ya se puede');
+    assert.equal(informeCompartido(id), true);
+  });
+
+  await t.test('un informe sin autor —de Telegram sin identificar— no se le reserva a nadie', () => {
+    const id = guardarInforme({ pdf: Buffer.from('%PDF-'), nombre: 'suelto.pdf', dicho: '' }, null);
+    assert.equal(recoger(id, 'medardo'), 'suelto.pdf');
+  });
+
+  await t.test('compartir algo que ya caducó no inventa un informe', () => {
+    assert.equal(compartirInforme('inventado', 'jose'), 'no-esta');
+  });
+});
+
+test('la ficha solo cita lo que nombra a la concesión', () => {
+  // Lo que se coló en la ficha de San José de las Palmas: las tres palabras, dispersas, en un
+  // reglamento que habla de otra cosa.
+  const reglamento =
+    'Ulúa El Progreso Yoro 05 Instituto "Jesús De Nazaret" … 2 Instituto "José Trinidad Reyes" San Pedro Sula Cortés … las palmas del patio';
+  assert.equal(citaDe(reglamento, 'San José de las Palmas'), false);
+  // Con el nombre tal cual, entra; sin importar tildes, mayúsculas ni espacios de más.
+  assert.equal(citaDe('La concesión SAN JOSE DE LAS  PALMAS solicitó prórroga.', 'San José de las Palmas'), true);
+  // Un nombre vacío o de dos letras no autoriza nada.
+  assert.equal(citaDe('lo que sea', ''), false);
 });

@@ -17,7 +17,7 @@ const fold = (s: string) =>
 /** Las líneas de hecho de cada perfil, calculadas una sola vez. */
 const lineasPorPerfil = new Map<string, string[]>();
 
-function lineas(perfil: PerfilCerebro): string[] {
+export function lineas(perfil: PerfilCerebro): string[] {
   const cache = lineasPorPerfil.get(perfil.id);
   if (cache) return cache;
   const ls = perfil.conocimiento

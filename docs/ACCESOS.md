@@ -1,6 +1,6 @@
 # El padrón: quién entra, a qué, y con qué permiso
 
-ULTRON FP y Dr Electrum FP usan el mismo Qwen 3.8 27B, en el mismo nodo, con el mismo cuerpo —cara,
+AU-RA FP y Dr Electrum FP usan el mismo Qwen 3.8 27B, en el mismo nodo, con el mismo cuerpo —cara,
 voz, oído, ojos, harness—. **No comparten nada más.** Cerebros distintos, memorias distintas,
 herramientas casi todas distintas y **gente distinta**. Entrar a una no es entrar a la otra.
 
@@ -20,7 +20,7 @@ público y no hay hueco de desarrollo encendido en producción.
 
 ## Cómo está hoy
 
-| Persona | ULTRON FP | Dr Electrum FP |
+| Persona | AU-RA FP | Dr Electrum FP |
 |---|---|---|
 | José | mando | mando |
 | Medardo | mando | mando |
@@ -66,7 +66,7 @@ plataformas.
 
 ## Las dos puertas
 
-| | ULTRON FP | Dr Electrum FP |
+| | AU-RA FP | Dr Electrum FP |
 |---|---|---|
 | Sesión | `/api/ultron/entrar` (correo de la junta) | la misma, si la persona tiene `electrum` |
 | Llave de demo | `ULTRON_MESA_CLAVE` → `x-ultron-mesa` | `ELECTRUM_CLAVE` → `x-electrum-llave` |
@@ -74,18 +74,18 @@ plataformas.
 | Secreto del webhook | `TELEGRAM_WEBHOOK_SECRET` | `ELECTRUM_WEBHOOK_SECRET` |
 | Ruta del webhook | `/api/telegram/webhook` | `/api/electrum/telegram/webhook` |
 
-**La llave de ULTRON no abre Dr Electrum, y al revés.** Está probado, no supuesto.
+**La llave de AU-RA no abre Dr Electrum, y al revés.** Está probado, no supuesto.
 
 ## Las herramientas
 
 Casi ninguna se comparte, y es a propósito:
 
-| Solo ULTRON | Solo Dr Electrum | Las dos |
+| Solo AU-RA | Solo Dr Electrum | Las dos |
 |---|---|---|
 | taller, bóveda, ejecutor, memoria de junta, canto | catastro, GIS, mapa, expedientes | `calculo_mina`, `metales_spot` |
 
 Cada mano declara en qué plataformas vive (`plataformas: [...]`), el compilador lo exige, y el panel
-de Electrum filtra por ese campo. Si alguien agrega una mano de ULTRON al registro equivocado, no
+de Electrum filtra por ese campo. Si alguien agrega una mano de AU-RA al registro equivocado, no
 llega al modelo.
 
 Las dos compartidas pasan una prueba concreta: **¿es literalmente el mismo hecho del mundo para los

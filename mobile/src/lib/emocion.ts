@@ -1,5 +1,5 @@
 /**
- * Emoción de ULTRON — copia cliente del contrato del servidor (lib/emocion.ts).
+ * Emoción de AU-RA — copia cliente del contrato del servidor (lib/emocion.ts).
  * El servidor manda `emocion` en /api/turno (JSON) y como evento SSE `emocion` en /api/turno/stream;
  * la cara la traduce a un FaceState y la voz la recibe en /api/tts?emocion=.
  */

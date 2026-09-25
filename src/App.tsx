@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import type { Mode, FaceState, CapturedPhoto } from './types';
 import { FaceCanvas, caraDeEmocion } from './02-cara';
 import type { Gesto } from './02-cara/gestos';
@@ -10,14 +10,21 @@ import { hablar, cantar, callar, setVozActiva, type Dicho } from './03-voz/habla
 import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
 import { clipDeEmocion, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
-import { pedirTurnoStream } from './04-cerebro/turno';
+import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame } from './04-cerebro/grabFrame';
 import { guardarHecho, olvidarTodo } from './09-estado/memoria';
 import { headersMesa } from './10-infra/sesionCliente';
 import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
-import { Maximize2, Minimize2, SlidersHorizontal, Fingerprint, Camera, ShieldCheck, Settings2 } from 'lucide-react';
+import { Maximize2, Minimize2, Fingerprint, Camera, ShieldCheck, Settings2, Mic, MicOff, Keyboard } from 'lucide-react';
+import { hayWebGL } from './11-sala/sala';
+import { tareaDeHerramientas, type Postura, type Tarea } from './11-sala/tareas';
+import type { PedidoTarea } from './11-sala/VistaSala';
+import './11-sala/tema.css';
+
+// La sala trae three.js (medio mega): se baja aparte, sin frenar el arranque.
+const Sala = lazy(() => import('./11-sala/VistaSala'));
 
 const lee = (k: string, d: string) => {
   try {
@@ -63,6 +70,14 @@ export default function App() {
   const pendienteGenesis = useRef('');
   const pendienteGesto = useRef<(() => void) | null>(null);
 
+  // ---- El cuerpo: la sala 3D si el aparato puede, la cara 2D si no.
+  const [conSala, setConSala] = useState(() => hayWebGL());
+  const [postura, setPostura] = useState<Postura>(() => (lee('aura_postura', 'pie') === 'sentada' ? 'sentada' : 'pie'));
+  const [entrada, setEntrada] = useState(0);
+  const [pedido, setPedido] = useState<PedidoTarea | null>(null);
+  const hacerTarea = useCallback((tarea: Tarea, texto?: string) => setPedido({ tarea, texto, n: Date.now() }), []);
+  useEffect(() => guarda('aura_postura', postura), [postura]);
+
   // ---- UI
   const [dockOpen, setDockOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -81,6 +96,13 @@ export default function App() {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [photos, setPhotos] = useState<CapturedPhoto[]>([]);
   const [bubble, setBubble] = useState({ texto: '', visible: false });
+  /** «¿Te sirvió?» sobre la última respuesta del cerebro: su traza y en qué quedó la pregunta. */
+  const [opinion, setOpinion] = useState<{ id: string; estado: 'preguntar' | 'gracias' } | null>(null);
+  useEffect(() => {
+    if (!opinion) return;
+    const t = setTimeout(() => setOpinion(null), opinion.estado === 'gracias' ? 2500 : 25000);
+    return () => clearTimeout(t);
+  }, [opinion]);
   const bubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -163,11 +185,13 @@ export default function App() {
       setGaze: (x: number, y: number, active = true) => setCameraGaze({ x, y, active }),
       boot: (v: boolean) => setIsBooting(v),
       decir: (t: string, e?: Emocion) => decir(t, { emocion: e }),
+      tarea: (t: Tarea, texto?: string) => hacerTarea(t, texto),
+      postura: (p: Postura) => setPostura(p),
     };
     return () => {
       delete (window as any).__ultron;
     };
-  }, [decir]);
+  }, [decir, hacerTarea]);
 
   const callarTodo = useCallback(() => {
     callar();
@@ -208,6 +232,7 @@ export default function App() {
       setTimeout(() => {
         if (!vivo) return;
         setIsBooting(false);
+        setEntrada((n) => n + 1);
         playSfx('boot', true);
         setCerebroListo(h?.qwen?.vivo ? 'calentando' : 'frio');
         setMicEnabled(true);
@@ -249,7 +274,7 @@ export default function App() {
   const lastSeen = useRef(0);
   const sawOnce = useRef(false);
   const sleptByAbsence = useRef(false);
-  /** Lo último que ULTRON ve por su cámara: viaja al cerebro como hecho en cada turno. */
+  /** Lo último que AU-RA ve por su cámara: viaja al cerebro como hecho en cada turno. */
   const escenaRef = useRef<{ texto: string; ts: number }>({ texto: '', ts: 0 });
   const ultimaInteraccion = useRef(0);
   const dosPersonasDicho = useRef(false);
@@ -287,7 +312,7 @@ export default function App() {
   }, [cameraGaze.active, face, isBooting, dockOpen, settingsOpen]);
 
   /**
-   * Lo que ULTRON ve. La descripción se guarda como hecho para el turno; los eventos mueven la cara
+   * Lo que AU-RA ve. La descripción se guarda como hecho para el turno; los eventos mueven la cara
    * y, muy de vez en cuando, le hacen decir algo. Nunca interrumpe si está hablando o pensando.
    */
   const alVerEscena = useCallback(
@@ -340,7 +365,7 @@ export default function App() {
       playSfx('think', soundFxEnabled);
       const quiereVer = /qu[eé] ves|qu[eé] hay aqu[ií]|imagen|c[aá]mara|le[eé] (esto|la foto|la etiqueta)/i.test(cmd);
       const image = quiereVer && visionEnabled ? grabFrame() : null;
-      // Si el 27B tarda, ULTRON piensa en voz alta con un clip (sin red).
+      // Si el 27B tarda, AU-RA piensa en voz alta con un clip (sin red).
       const relleno = setTimeout(() => {
         if (turnoEnCurso.current === ac && colaRef.current.length === 0 && !hablando.current) decir(Math.random() < 0.5 ? 'mmm' : 'mmm2', { emocion: 'pensando', sinBurbuja: true });
       }, 1400);
@@ -366,6 +391,10 @@ export default function App() {
             signal: ac.signal,
           },
           {
+            onTools: (tools) => {
+              const t = tareaDeHerramientas(tools);
+              if (t) hacerTarea(t, cmd);
+            },
             onEmocion: (e) => {
               emo = e;
               setEmocion(e);
@@ -401,6 +430,7 @@ export default function App() {
         }
         if (data.emocion) emo = data.emocion;
         soltar(true);
+        if (data.trazaId) setOpinion({ id: data.trazaId, estado: 'preguntar' });
         historialRef.current = [...historialRef.current, { rol: 'user', texto: cmd }, { rol: 'ultron', texto }].slice(-12);
         if (pendienteGenesis.current && /orden global|junta|mina|prospera|aucorp|token|concesi/i.test(cmd)) {
           colaRef.current.push({ texto: '¿Lo actualizo en el cerebro Genesis Core?', emocion: 'curioso' });
@@ -412,7 +442,7 @@ export default function App() {
         decir(`Sin cerebro ahora mismo. ${String(e?.message || e).slice(0, 80)}`, { emocion: 'preocupado' });
       }
     },
-    [mode, usuario.name, visionEnabled, soundFxEnabled, decir, bombear, callarTodo]
+    [mode, usuario.name, visionEnabled, soundFxEnabled, decir, bombear, callarTodo, hacerTarea]
   );
 
   // ---- Despachador: gags locales; datos, siempre al cerebro.
@@ -427,6 +457,7 @@ export default function App() {
           callarTodo();
           return;
         case 'recordar':
+          hacerTarea('anotar');
           guardarHecho(it.hecho, { usuario: usuario.name });
           pendienteGenesis.current = it.hecho;
           decir('Anotado. Si es de la junta, decime «actualiza el cerebro» y queda en Genesis Core.', { emocion: 'orgullo' });
@@ -434,6 +465,7 @@ export default function App() {
         case 'genesis': {
           const hecho = pendienteGenesis.current || historialRef.current.filter((h) => h.rol === 'user').slice(-1)[0]?.texto || '';
           if (!hecho) return void decir('Decime el hecho primero y después «actualiza el cerebro».', { emocion: 'curioso' });
+          hacerTarea('anotar');
           guardarHecho(`[Genesis] ${hecho}`, { usuario: usuario.name, junta: true });
           pendienteGenesis.current = '';
           decir('Quedó en Genesis Core. La próxima pregunta ya lo usa.', { emocion: 'orgullo' });
@@ -472,9 +504,6 @@ export default function App() {
         case 'chiste':
           decir(siguienteChiste().id, { emocion: 'risa' });
           return;
-        case 'clip':
-          decir(it.id, { emocion: it.id === 'discurso' ? 'orgullo' : 'feliz' });
-          return;
         case 'capacidades':
           setSettingsOpen(true);
           decir('puedo', { emocion: 'orgullo' });
@@ -506,7 +535,7 @@ export default function App() {
           void pensar(cmd);
       }
     },
-    [usuario.name, soundFxEnabled, decir, pensar, dormir, despertar, callarTodo, showBubble]
+    [usuario.name, soundFxEnabled, decir, pensar, dormir, despertar, callarTodo, showBubble, hacerTarea]
   );
 
   // ---- OÍDO continuo con barge-in.
@@ -550,84 +579,123 @@ export default function App() {
     }
   };
 
-  const chipEstado = cerebroListo === 'listo' ? 'LISTO' : cerebroListo === 'calentando' ? 'CALIENTA' : 'FRÍO';
+  const estadoCerebro = cerebroListo === 'listo' ? 'Lista' : cerebroListo === 'calentando' ? 'Despertando' : 'Sin cerebro';
+  const escuchando = face === 'LISTENING';
+  const tocarSala = (zona: 'cuerpo' | 'cabeza') => {
+    if (face === 'SLEEPING') return despertar();
+    gesto(zona === 'cabeza' ? 'tapFrente' : 'tapBarbilla');
+  };
+  const burbujaTexto = (
+    <div id="ultron-speech-bubble" role="status" aria-live="polite" className={`aura-burbuja ${conSala ? '' : 'abajo'} ${bubble.visible && bubble.texto ? 'visible' : ''}`}>
+      {bubble.texto}
+    </div>
+  );
 
   return (
-    <div id="ultron-app-root" className="relative w-screen h-screen overflow-hidden bg-black flex items-center justify-center select-none">
+    <div id="ultron-app-root" className="aura relative w-screen h-screen overflow-hidden bg-[#232528] flex items-center justify-center select-none">
       <div
         id="ultron-stand-container"
         className={`relative overflow-hidden transition-all duration-300 flex items-center justify-center ${
-          isKioskFrame
-            ? 'w-full max-w-[96vw] max-h-[88vh] aspect-[16/10] rounded-[28px] border-[10px] border-[#15191e] shadow-[0_20px_60px_rgba(0,0,0,0.9),0_0_20px_rgba(5,225,255,0.15)] ring-1 ring-white/10'
-            : 'w-full h-full'
+          isKioskFrame ? 'w-full max-w-[96vw] max-h-[88vh] aspect-[16/10] rounded-[32px] border-[10px] border-[#46484D] shadow-[0_24px_60px_rgba(0,0,0,0.60)]' : 'w-full h-full'
         }`}
       >
-        <FaceCanvas
-          face={face}
-          emocion={emocion}
-          funMode={funMode}
-          mode={mode}
-          energy={cerebroListo === 'listo' ? 90 : 60}
-          soundFxEnabled={soundFxEnabled}
-          cameraGaze={cameraGaze}
-          isCameraFlashing={isCameraFlashing}
-          lipLevel={lipLevel}
-          showHud={false}
-          onFaceChange={cara}
-          onModeChange={(m) => {
-            setMode(m);
-            playSfx(m === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
-          }}
-          onSwipeUp={() => {
-            setDockOpen(true);
-            setSettingsOpen(false);
-          }}
-          onSwipeDown={() => {
-            setSettingsOpen(true);
-            setDockOpen(false);
-          }}
-          onTriggerVoice={() => {
-            if (!micEnabled) {
-              setMicEnabled(true);
-              decir('aqui', { emocion: 'feliz' });
-            } else {
-              setFace('LISTENING');
-              showBubble('Te escucho');
-            }
-          }}
-          onSpeak={(t) => decir(t, { emocion: 'travieso' })}
-          onWake={despertar}
-          onSleep={dormir}
-          onGesto={gesto}
-          onCloseOverlays={() => {
-            setDockOpen(false);
-            setSettingsOpen(false);
-          }}
-        />
+        {conSala ? (
+          <div className="absolute inset-0 aura-fondo">
+            <Suspense fallback={null}>
+              <Sala
+                face={face}
+                emocion={emocion}
+                lipLevel={lipLevel}
+                cameraGaze={cameraGaze}
+                postura={postura}
+                pedido={pedido}
+                entrada={entrada}
+                onTocar={tocarSala}
+                onDeslizar={(d) => {
+                  if (d === 'arriba') {
+                    setDockOpen(true);
+                    setSettingsOpen(false);
+                  } else {
+                    setSettingsOpen(true);
+                    setDockOpen(false);
+                  }
+                }}
+                onFallo={() => setConSala(false)}
+              >
+                {burbujaTexto}
+              </Sala>
+            </Suspense>
+          </div>
+        ) : (
+          <>
+            <FaceCanvas
+              face={face}
+              emocion={emocion}
+              funMode={funMode}
+              mode={mode}
+              energy={cerebroListo === 'listo' ? 90 : 60}
+              soundFxEnabled={soundFxEnabled}
+              cameraGaze={cameraGaze}
+              isCameraFlashing={isCameraFlashing}
+              lipLevel={lipLevel}
+              showHud={false}
+              onFaceChange={cara}
+              onModeChange={(m) => {
+                setMode(m);
+                playSfx(m === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
+              }}
+              onSwipeUp={() => {
+                setDockOpen(true);
+                setSettingsOpen(false);
+              }}
+              onSwipeDown={() => {
+                setSettingsOpen(true);
+                setDockOpen(false);
+              }}
+              onTriggerVoice={() => {
+                if (!micEnabled) {
+                  setMicEnabled(true);
+                  decir('aqui', { emocion: 'feliz' });
+                } else {
+                  setFace('LISTENING');
+                  showBubble('Te escucho');
+                }
+              }}
+              onSpeak={(t) => decir(t, { emocion: 'travieso' })}
+              onWake={despertar}
+              onSleep={dormir}
+              onGesto={gesto}
+              onCloseOverlays={() => {
+                setDockOpen(false);
+                setSettingsOpen(false);
+              }}
+            />
+            {burbujaTexto}
+          </>
+        )}
 
-        {/* Barra superior mínima */}
-        <div className="absolute top-4 left-5 right-5 z-20 flex items-center justify-between pointer-events-none">
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-black/60 border border-[#05E1FF]/30 backdrop-blur-md shadow-[0_0_15px_rgba(5,225,255,0.15)] pointer-events-auto">
-            <span className={`w-2 h-2 rounded-full ${cerebroListo === 'listo' ? 'bg-[#05E1FF] animate-pulse' : cerebroListo === 'calentando' ? 'bg-amber-400 animate-pulse' : 'bg-red-500'}`} />
-            <span className="font-display font-bold tracking-[0.2em] text-xs" style={{ color: 'var(--acento, #05E1FF)' }}>
-              {perfilPlataforma}
-            </span>
-            <span className="font-mono text-[9px] tracking-[0.2em] text-[#6B8A90] hidden sm:inline">· {chipEstado}</span>
+        {/* Barra de arriba: su nombre, cómo está, y lo tuyo */}
+        <div className="absolute top-3 left-3 right-3 sm:top-4 sm:left-5 sm:right-5 z-20 flex items-start justify-between gap-2 pointer-events-none">
+          <div className="flex items-center gap-2 pointer-events-auto min-w-0">
+            <div className="h-11 px-2 rounded-full bg-[#232528] aura-sombra flex items-center">
+              <img src="/marca/logo-aura-oscuro.png" alt="AU-RA by Orden Global" className="h-9 w-auto" draggable={false} />
+            </div>
+            <div className="h-9 px-3 rounded-full bg-[#34363A]/90 aura-sombra hidden sm:flex items-center gap-2 text-[13px] font-medium text-[#B9B2A8]" title={estadoArranque}>
+              <span className={`w-2 h-2 rounded-full ${cerebroListo === 'listo' ? 'bg-[#8FA58A]' : cerebroListo === 'calentando' ? 'bg-[#D6B56C] animate-pulse' : 'bg-[#D9825F]'}`} />
+              {estadoCerebro}
+            </div>
           </div>
           <div className="flex items-center gap-2 pointer-events-auto">
-            {face === 'LISTENING' && (
-              <div className="font-display font-bold tracking-[0.25em] text-[#05E1FF] text-[10px] hidden md:block px-2.5 py-1 rounded-full bg-[#05E1FF]/10 border border-[#05E1FF]/30 animate-pulse">ESCUCHANDO</div>
-            )}
             <button
               type="button"
               onClick={() => setAccesoOpen(true)}
               title={usuario.authenticated ? `Sesión: ${usuario.name}` : 'Entrar a la junta'}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-mono transition-all cursor-pointer ${
-                usuario.authenticated ? 'bg-[#00FF88]/15 border border-[#00FF88]/50 text-[#00FF88]' : 'bg-black/60 border border-[#05E1FF]/40 text-[#05E1FF] hover:bg-[#05E1FF]/15'
+              className={`h-10 px-3.5 rounded-full aura-sombra flex items-center gap-2 text-[13px] font-semibold transition-colors cursor-pointer ${
+                usuario.authenticated ? 'bg-[#2F3A30] text-[#A9C3A4]' : 'bg-[#34363A] text-[#ECE8E2] hover:bg-[#3D3829]'
               }`}
             >
-              {usuario.authenticated ? <ShieldCheck className="w-3.5 h-3.5" /> : <Fingerprint className="w-3.5 h-3.5" />}
-              <span className="font-bold">{usuario.authenticated ? usuario.name.toUpperCase() : 'ACCESO'}</span>
+              {usuario.authenticated ? <ShieldCheck className="w-4 h-4" /> : <Fingerprint className="w-4 h-4" />}
+              <span className="hidden sm:inline">{usuario.authenticated ? usuario.name : 'Entrar'}</span>
             </button>
             <button
               type="button"
@@ -635,39 +703,100 @@ export default function App() {
                 setVisionEnabled((v) => !v);
                 playSfx('tap', soundFxEnabled);
               }}
-              title={visionEnabled ? 'Cámara siguiéndote' : 'Activar cámara'}
-              className={`p-2 rounded-full border transition-all cursor-pointer ${visionEnabled ? 'border-[#05E1FF] bg-[#05E1FF]/20 text-[#05E1FF]' : 'border-[#8FA3B0]/30 bg-black/60 text-[#8FA3B0] hover:text-[#05E1FF]'}`}
+              title={visionEnabled ? 'Te está mirando por la cámara' : 'Que te vea por la cámara'}
+              aria-label="Cámara"
+              aria-pressed={visionEnabled}
+              className={`w-10 h-10 rounded-full aura-sombra flex items-center justify-center transition-colors cursor-pointer ${visionEnabled ? 'bg-[#D6B56C] text-[#232528]' : 'bg-[#34363A] text-[#B9B2A8] hover:bg-[#3D3829]'}`}
             >
-              <Camera className="w-3.5 h-3.5" />
+              <Camera className="w-4 h-4" />
             </button>
-            <button type="button" onClick={() => setSettingsOpen((v) => !v)} title="Ajustes y qué puede hacer" className="p-2 rounded-full border border-[#05E1FF]/40 bg-black/60 text-[#05E1FF] hover:bg-[#05E1FF]/15 cursor-pointer">
-              <Settings2 className="w-3.5 h-3.5" />
+            <button type="button" onClick={() => setSettingsOpen((v) => !v)} title="Ajustes y qué puede hacer" aria-label="Ajustes" className="w-10 h-10 rounded-full bg-[#34363A] text-[#B9B2A8] hover:bg-[#3D3829] aura-sombra flex items-center justify-center cursor-pointer">
+              <Settings2 className="w-4 h-4" />
             </button>
-            <button type="button" onClick={() => setDockOpen((v) => !v)} title="Panel" className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#05E1FF]/40 bg-[#05E1FF]/10 text-[#05E1FF] hover:bg-[#05E1FF]/25 text-xs font-display font-bold tracking-wider cursor-pointer">
-              <SlidersHorizontal className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">PANEL</span>
-            </button>
-            <button type="button" onClick={toggleFullscreen} title="Pantalla completa" className="p-2 rounded-full text-[#8FA3B0] hover:text-[#05E1FF] bg-black/40 border border-white/10 cursor-pointer">
-              {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+            <button type="button" onClick={toggleFullscreen} title="Pantalla completa" aria-label="Pantalla completa" className="w-10 h-10 rounded-full bg-[#34363A] text-[#B9B2A8] hover:bg-[#3D3829] aura-sombra hidden sm:flex items-center justify-center cursor-pointer">
+              {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </button>
           </div>
         </div>
 
-        {/* Burbuja */}
-        <div
-          id="ultron-speech-bubble"
-          className={`absolute left-1/2 bottom-[15%] -translate-x-1/2 z-20 max-w-[85vw] sm:max-w-xl text-center px-4 py-2 rounded-2xl border border-[#05E1FF]/30 bg-black/75 backdrop-blur-sm text-sm font-mono text-[#dff8ff] transition-all duration-300 pointer-events-none shadow-[0_0_20px_rgba(5,225,255,0.2)] ${
-            bubble.visible ? 'opacity-100 scale-100' : 'opacity-0 scale-95'
-          }`}
-        >
-          {bubble.texto}
-        </div>
+        {/* Abajo: cómo te contesta, el micrófono y escribir */}
+        <div className={`absolute bottom-4 left-3 right-3 sm:left-5 sm:right-5 z-20 flex items-end justify-between gap-2 pointer-events-none transition-opacity ${dockOpen || settingsOpen ? 'opacity-0' : 'opacity-100'}`}>
+          <div className="pointer-events-auto flex flex-col gap-1">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#B9B2A8] pl-2 hidden sm:block">Te contesta</span>
+            <div className="aura-segmento aura-sombra" role="group" aria-label="Cómo te contesta">
+              <button type="button" aria-pressed={postura === 'pie'} onClick={() => setPostura('pie')}>De pie</button>
+              <button type="button" aria-pressed={postura === 'sentada'} onClick={() => setPostura('sentada')}>Sentada</button>
+            </div>
+          </div>
 
-        <div className={`absolute bottom-2 left-1/2 -translate-x-1/2 z-10 opacity-40 hover:opacity-100 cursor-pointer ${dockOpen || settingsOpen ? 'hidden' : 'block'}`} onClick={() => setDockOpen(true)} title="Deslizá hacia arriba">
-          <div className="w-10 h-1 rounded-full bg-[#05E1FF]/50" />
+          <div className="pointer-events-auto flex flex-col items-center gap-1.5 absolute left-1/2 -translate-x-1/2 bottom-0">
+            {opinion && (
+              <div className="pointer-events-auto flex items-center gap-1 bg-[#34363A] aura-sombra rounded-full px-2 py-1 text-[12px] text-[#B9B2A8]" role="group" aria-label="¿Te sirvió la respuesta?">
+                {opinion.estado === 'gracias' ? (
+                  <span className="px-1">Gracias, lo anoto.</span>
+                ) : (
+                  <>
+                    <span className="px-1">¿Te sirvió?</span>
+                    {([1, -1] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        aria-label={v === 1 ? 'Sí me sirvió' : 'No me sirvió'}
+                        onClick={() => {
+                          void opinarTurno(opinion.id, v);
+                          setOpinion({ id: opinion.id, estado: 'gracias' });
+                        }}
+                        className="w-7 h-7 rounded-full hover:bg-[#3D3829] cursor-pointer"
+                      >
+                        {v === 1 ? '👍' : '👎'}
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (face === 'SLEEPING') despertar();
+                setMicEnabled((v) => !v);
+                playSfx('tap', soundFxEnabled);
+              }}
+              aria-pressed={micEnabled}
+              aria-label={micEnabled ? 'Micrófono abierto: te está escuchando' : 'Micrófono apagado'}
+              className={`aura-mic ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}
+            >
+              {micEnabled ? <Mic className="w-7 h-7" /> : <MicOff className="w-7 h-7" />}
+            </button>
+            <span className="hidden sm:block text-[12px] font-medium text-[#B9B2A8] bg-[#232528]/85 px-2 py-0.5 rounded-full">
+              {!micEnabled ? 'Micrófono apagado' : escuchando ? 'Te escucho…' : 'Háblale'}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setDockOpen(true)}
+            aria-label="Escribir"
+            className="pointer-events-auto h-12 px-4 rounded-full bg-[#34363A] text-[#ECE8E2] hover:bg-[#3D3829] aura-sombra flex items-center gap-2 text-[14px] font-semibold cursor-pointer"
+          >
+            <Keyboard className="w-4 h-4 text-[#E0C27F]" />
+            <span className="hidden sm:inline">Escribir</span>
+          </button>
         </div>
 
         <VisionOverlay isActive={visionEnabled} stealth onClose={() => setVisionEnabled(false)} onGazeUpdate={setCameraGaze} onEscena={alVerEscena} />
+
+        {(dockOpen || settingsOpen) && (
+          <button
+            type="button"
+            aria-label="Cerrar"
+            className="absolute inset-0 z-[25] bg-black/40 cursor-default"
+            onClick={() => {
+              setDockOpen(false);
+              setSettingsOpen(false);
+            }}
+          />
+        )}
 
         <DockDrawer
           isOpen={dockOpen}
@@ -722,7 +851,7 @@ export default function App() {
           onOpenAcceso={() => setAccesoOpen(true)}
           onOpenVault={() => setVaultOpen(true)}
           onOpenPhotos={() => setPhotosOpen(true)}
-          onProbarVoz={() => decir('Hola. Soy ULTRON. Esta es mi voz, y así me río: je je. ¿Seguimos?', { emocion: 'feliz' })}
+          onProbarVoz={() => decir('Hola. Soy AU-RA. Esta es mi voz, y así me río: je je. ¿Seguimos?', { emocion: 'feliz' })}
           onEjemplo={(c) => comando(c)}
           onOlvidar={() => {
             historialRef.current = [];

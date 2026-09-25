@@ -12,7 +12,7 @@ import { useState } from 'react';
 import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { UltronFace } from '../components/UltronFace';
 import { ACENTO } from '../variante';
-import { entrar, guardarLlave, guardarSesion, salud } from './api';
+import { entrar, guardarLlave, guardarSesion, porQueNoAbre, probarPuerta } from './api';
 
 type Modo = 'correo' | 'llave';
 
@@ -37,16 +37,23 @@ export function EntrarScreen({ onDentro }: { onDentro: () => void }) {
       }
       // No basta con guardar la credencial: hay que comprobar que ESTA plataforma la acepta. Estar
       // en la junta no es estar en Dr Electrum, y descubrirlo en la primera pregunta es peor.
-      await salud();
-      onDentro();
+      const p = await probarPuerta();
+      if (p.estado === 'abierta') {
+        onDentro();
+        return;
+      }
+      /*
+       * La credencial solo se borra si el servidor dijo que no vale. Si el problema fue la señal,
+       * borrarla obligaría a volver a escribirla cuando vuelva la cobertura, por un fallo que no
+       * tuvo nada que ver con ella.
+       */
+      if (p.estado === 'sin-permiso') {
+        if (modo === 'llave') await guardarLlave(null);
+        else await guardarSesion(null);
+      }
+      setFallo(porQueNoAbre(p));
     } catch (e: any) {
-      if (modo === 'llave') await guardarLlave(null);
-      else await guardarSesion(null);
-      setFallo(
-        String(e?.message || e).includes('privado')
-          ? 'Esa credencial es buena pero no tiene acceso a Dr Electrum. Pedile a José que te agregue al padrón.'
-          : String(e?.message || e).slice(0, 140)
-      );
+      setFallo(String(e?.message || e).slice(0, 140));
     } finally {
       setYendo(false);
     }
@@ -120,7 +127,9 @@ const s = StyleSheet.create({
   raiz: { flex: 1, flexDirection: 'row', backgroundColor: '#000', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 28, paddingVertical: 18, gap: 28 },
   presentacion: { flex: 1, alignItems: 'center' },
   formulario: { flex: 1, maxWidth: 400 },
-  cara: { height: 170, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  // `alignSelf: 'stretch'`: la columna centra a sus hijos, así que sin esto la caja se encogía al
+  // ancho de los dos ojos y `overflow: hidden` les cortaba el brillo por los costados.
+  cara: { alignSelf: 'stretch', height: 170, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
   marca: { color: ACENTO, fontSize: 19, fontWeight: '700', letterSpacing: 4.5 },
   lema: { color: 'rgba(255,174,59,0.5)', fontSize: 9, letterSpacing: 2.4, fontWeight: '600', marginTop: 4 },
   pestanas: { flexDirection: 'row', gap: 8, marginBottom: 12 },

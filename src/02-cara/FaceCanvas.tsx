@@ -105,7 +105,7 @@ const EXPRESION_DUR: Record<Emocion, number> = {
 const GESTO_POR_EMOCION: Record<Emocion, Gesto | null> = {
   neutral: null,
   // Las cuatro nuevas reusan gestos que la cara ya sabe hacer. Dr Electrum comparte CUERPO con
-  // ULTRON: inventarle cejas propias sería duplicar el motor de la cara para ganar un matiz que
+  // AU-RA: inventarle cejas propias sería duplicar el motor de la cara para ganar un matiz que
   // la voz ya lleva mucho mejor.
   escepticismo: 'curioso', // la ceja que se levanta
   alarma: 'preocupado',
@@ -610,7 +610,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const timer = setTimeout(() => {
         waveRef.current.isActive = false;
         onWaveComplete?.();
-        onSpeak('¡Hola! Saludos cordiales de Ultron.');
+        onSpeak('¡Hola! Saludos cordiales de AU-RA.');
       }, 2800);
       return () => clearTimeout(timer);
     } else {
@@ -849,7 +849,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
      * La cara se dimensiona a SU CAJA, no a la ventana.
      *
      * Medía `window.innerWidth/innerHeight`, lo cual funciona mientras la cara ocupe la pantalla
-     * entera —que es el caso en ULTRON FP— y se rompe en cuanto se la mete en un recuadro: en
+     * entera —que es el caso en AU-RA FP— y se rompe en cuanto se la mete en un recuadro: en
      * Electrum, con la cara encogida en una esquina de 132 px, seguía dibujando a tamaño de ventana
      * y tapaba media interfaz. Con la caja como referencia, los dos casos salen bien: a pantalla
      * completa la caja ES la ventana.

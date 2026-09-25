@@ -1,5 +1,5 @@
 /**
- * Voz de ULTRON — una sola voz (ElevenLabs v3, timbre Gabriela), nunca la robótica del sistema.
+ * Voz de AU-RA — una sola voz (ElevenLabs v3, timbre Gabriela), nunca la robótica del sistema.
  *
  *  - Banco offline (assets/voice, generado por scripts/build-voice-bank.mjs): 0 ms, sin red.
  *  - Clips remotos (/voz/<id>.mp3): canciones grabadas, chistes, discurso y los clips nuevos; si el
@@ -387,7 +387,7 @@ export type SongRequest = { id: string } | { letra: string; titulo?: string };
 const songCache = new Map<string, string>();
 
 /**
- * ULTRON canta de verdad: POST /api/cantar → mp3 (la primera vez puede tardar ~40 s; el servidor lo
+ * AU-RA canta de verdad: POST /api/cantar → mp3 (la primera vez puede tardar ~40 s; el servidor lo
  * cachea). Para ids del repertorio, si el clip estático /voz/<id>.mp3 existe se usa directo (más rápido).
  */
 export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPreparing?: () => void }): Promise<boolean> {

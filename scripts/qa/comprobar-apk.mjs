@@ -3,7 +3,7 @@
  * Abre un APK y comprueba que es la app que dice ser.
  *
  * Existe por un fallo concreto y silencioso: la APK de Dr Electrum salió con su paquete, su icono
- * y su nombre correctos, y con la configuración de ULTRON embebida dentro. Al abrirla habría
+ * y su nombre correctos, y con la configuración de AU-RA embebida dentro. Al abrirla habría
  * arrancado la mesa de la junta. Compilaba, instalaba y estaba mal.
  *
  * La causa: `expo-constants` instala una tarea de Gradle que REGENERA `assets/app.config` en cada
@@ -22,7 +22,7 @@ const apk = process.argv[2];
 const variante = (process.argv[3] || 'ultron').toLowerCase();
 
 const ESPERADO = {
-  ultron: { paquete: 'link.ordenglobal.ultronfp', nombre: 'ULTRON FP', orientacion: 'landscape', ubicacion: false },
+  ultron: { paquete: 'link.ordenglobal.ultronfp', nombre: 'AU-RA FP', orientacion: 'landscape', ubicacion: false },
   electrum: { paquete: 'link.ordenglobal.drelectrumfp', nombre: 'Dr Electrum FP', orientacion: 'landscape', ubicacion: true },
 };
 

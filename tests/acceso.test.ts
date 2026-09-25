@@ -50,7 +50,7 @@ test('el padrón de arranque', async (t) => {
     assert.equal(nivelDe(personaPorId('medardo'), 'electrum'), 'mando');
   });
 
-  await t.test('Carlos y Mayra consultan ULTRON y NO existen en Dr Electrum', () => {
+  await t.test('Carlos y Mayra consultan AU-RA y NO existen en Dr Electrum', () => {
     reiniciarPadron();
     assert.equal(nivelDe(personaPorId('carlos'), 'ultron'), 'lee');
     assert.equal(nivelDe(personaPorId('carlos'), 'electrum'), null);
@@ -105,7 +105,7 @@ test('ULTRON_PADRON amplía sin desplegar', async (t) => {
       assert.equal(nivelDe(p, 'electrum'), 'escribe');
       assert.equal(nivelDe(p, 'ultron'), null);
 
-      // Y ESTO es la separación: para ULTRON, Pérez no existe.
+      // Y ESTO es la separación: para AU-RA, Pérez no existe.
       assert.equal(quienEs({ correo: 'perez@mina.hn' }), null);
       assert.equal(puedeCambiarSistema('perez'), false);
 
@@ -151,7 +151,7 @@ test('la puerta de Dr Electrum en Telegram', async (t) => {
 
   await t.test('estar en la junta NO es estar en Electrum', () => {
     conEntorno({ TELEGRAM_CARLOS_USER_ID: '1017697215', ELECTRUM_TELEGRAM_CHATS: '-100777' }, () => {
-      // Carlos entra a ULTRON pero no tiene Electrum. Ni siquiera dentro de la sala de demostración:
+      // Carlos entra a AU-RA pero no tiene Electrum. Ni siquiera dentro de la sala de demostración:
       // a él se le dijo que no explícitamente, y eso pesa más que una sala abierta.
       assert.equal(autorizarElectrum('-100777', '1017697215', 'Carlos'), null);
     });

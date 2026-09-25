@@ -1,10 +1,10 @@
-# ULTRON FP 4.0 — qué se hizo y por qué
+# AU-RA FP 4.0 — qué se hizo y por qué
 
 Fecha: 19 de septiembre de 2026. Rama: `claude/ultron-fp-premium-s46jxx`.
 
 ## Resumen
 
-ULTRON pasó de una cara buena con muchas pantallas de utilería a un asistente con **una voz humana, catorce emociones que se ven y se oyen, un catálogo real de lo que sabe hacer y una superficie de ataque cerrada**. Se borraron 2.900 líneas de teatro y se añadieron contratos compartidos (emoción, capacidades, voz) para que web, APK y servidor evolucionen sin romperse entre sí.
+AU-RA pasó de una cara buena con muchas pantallas de utilería a un asistente con **una voz humana, catorce emociones que se ven y se oyen, un catálogo real de lo que sabe hacer y una superficie de ataque cerrada**. Se borraron 2.900 líneas de teatro y se añadieron contratos compartidos (emoción, capacidades, voz) para que web, APK y servidor evolucionen sin romperse entre sí.
 
 ## 1. Seguridad (primero, porque una demo con un agujero no es demo)
 
@@ -32,7 +32,7 @@ Decisión respetada: `/api/turno`, `/api/tts`, `/api/stt`, `/api/vision/analyze`
 
 ## 3. Personalidad
 
-`buildPersonality()` reescrita: doce reglas, no sesenta. ULTRON es alguien, no algo. Piensa antes de hablar, se ríe, se sorprende, se frustra con honestidad, cuida. Abre cada respuesta con `[EMO:x]` (contrato `lib/emocion.ts`); el servidor la extrae y la devuelve en `emocion` (JSON y SSE, evento `emocion` antes del primer texto). Reloj de Honduras, tono por modo, acceso mando/consulta explícito. Una sola fuente de hechos de Orden Global (`src/05-cerebro-og/conocimiento.ts`); se borraron las otras dos que se contradecían.
+`buildPersonality()` reescrita: doce reglas, no sesenta. AU-RA es alguien, no algo. Piensa antes de hablar, se ríe, se sorprende, se frustra con honestidad, cuida. Abre cada respuesta con `[EMO:x]` (contrato `lib/emocion.ts`); el servidor la extrae y la devuelve en `emocion` (JSON y SSE, evento `emocion` antes del primer texto). Reloj de Honduras, tono por modo, acceso mando/consulta explícito. Una sola fuente de hechos de Orden Global (`src/05-cerebro-og/conocimiento.ts`); se borraron las otras dos que se contradecían.
 
 El **harness** ahora corre también en el stream (antes la APK podía leer «PEDIR_HERRAMIENTA» en voz alta): el servidor retiene la última frase, corre la herramienta, vuelve a preguntar y manda `replace` si hace falta.
 
@@ -48,7 +48,7 @@ El **harness** ahora corre también en el stream (antes la APK podía leer «PED
 
 ## 6. Pantalla de inicio
 
-Web: `Arranque.tsx` (ojos que despiertan detrás del wordmark «ULTRON FP · powered by ORDEN GLOBAL», estado del cerebro, mínimo 1,9 s, fundido). APK: splash nativo regenerado (logo, wordmark, «POWERED BY ORDEN GLOBAL» en cian) más splash JS con la cara despertando, icono adaptativo con zona segura.
+Web: `Arranque.tsx` (ojos que despiertan detrás del wordmark «AU-RA FP · powered by ORDEN GLOBAL», estado del cerebro, mínimo 1,9 s, fundido). APK: splash nativo regenerado (logo, wordmark, «POWERED BY ORDEN GLOBAL» en cian) más splash JS con la cara despertando, icono adaptativo con zona segura.
 
 ## 7. Arquitectura
 
@@ -83,7 +83,7 @@ Web: `Arranque.tsx` (ojos que despiertan detrás del wordmark «ULTRON FP · pow
 # Ronda 2 (20-sep-2026): producción real, oración, Way Maker, canto, oído local
 
 ## Qué se encontró al probar contra Qwen en Render
-1. **Un saludo disparaba una búsqueda web.** `esPreguntaExterna` mandaba a internet cualquier pregunta de más de 18 caracteres. Ahora los saludos, las preguntas sobre ULTRON («¿cómo amaneciste?») y los temas que ya viven en el cerebro de Orden Global (5550, ORIGEN, Próspera, junta…) no se buscan; el 27B pide web por el harness solo si le falta.
+1. **Un saludo disparaba una búsqueda web.** `esPreguntaExterna` mandaba a internet cualquier pregunta de más de 18 caracteres. Ahora los saludos, las preguntas sobre AU-RA («¿cómo amaneciste?») y los temas que ya viven en el cerebro de Orden Global (5550, ORIGEN, Próspera, junta…) no se buscan; el 27B pide web por el harness solo si le falta.
 2. **El 27B le contaba a la junta problemas de infraestructura** («la clave de AWS sigue rechazada») en vez de contestar como persona. Las líneas MEMORIA/ACCESO pasaron a «contexto interno: no lo menciones»; la persona ganó dos reglas: «cómo estás» se contesta en una frase humana, y lo que está en el cerebro OG se cuenta con soltura, sin «no tengo acceso».
 3. **La memoria S3 está caída en producción.** Render tiene una clave AWS (`AKIAX7LQ…F5N`) que ya no existe en IAM; el objeto `ultron/memoria-junta.json` no se escribe desde el 19-sep 19:19 UTC. Intenté actualizar las variables en Render y la sesión no tiene permiso para escribir secretos. **Pendiente de José** (dos minutos): en Render → `ultron-looi-desk` → Environment, poner `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` de una clave activa (`…NKETY5QP` o la que se generó ayer) y añadir `ULTRON_SESION_SECRETO` (cualquier cadena larga aleatoria).
 4. **`cómo está el sistema` decía «qwen no responde»** aunque respondía: la sonda del taller y del centinela usaban `fetch` global, y al acotar el TLS inseguro al nodo se quedaron sin el certificado. Ahora todo acceso al nodo pasa por `lib/nodo.ts` (`fetchNodo`, `saludNodo`).
@@ -92,7 +92,7 @@ Web: `Arranque.tsx` (ojos que despiertan detrás del wordmark «ULTRON FP · pow
 ## Voz
 - **«Quiero conocer a Jesús» regrabada** con instrucciones de canto (balada lenta, vocales alargadas, dos pasadas y un susurro final): 41 s, 17 tramos de nota sostenida frente a 7 de la toma anterior, transcripción de vuelta exacta.
 - **«Way Maker» (Sinach)** en inglés, misma receta, 44 s. `canta way maker`, `cantá algo en inglés`.
-- **Oración del día** (texto propio de ULTRON, 2 min 50 s, termina en Amén): bendice el día, la junta por nombre, Orden Global, Honduras, los mineros; pide cambiar vidas y hablar de Jesús. `POST /api/orar` la sirve como clip; con `{ tema }` genera una oración corta por ese tema (caché por hash). Emoción nueva `oracion` en el contrato.
+- **Oración del día** (texto propio de AU-RA, 2 min 50 s, termina en Amén): bendice el día, la junta por nombre, Orden Global, Honduras, los mineros; pide cambiar vidas y hablar de Jesús. `POST /api/orar` la sirve como clip; con `{ tema }` genera una oración corta por ese tema (caché por hash). Emoción nueva `oracion` en el contrato.
 - El oído prueba primero un **nodo local** (`ULTRON_STT_URL`, API Whisper compatible) y cae a Scribe.
 
 ## Cara
@@ -100,7 +100,7 @@ Web: `Arranque.tsx` (ojos que despiertan detrás del wordmark «ULTRON FP · pow
 - **APK:** `PRAY` con párpados suaves, cabeza levemente inclinada, respiración lenta. Lip-sync real por envolvente silábica sincronizada a la posición del audio (expo-av no expone medidor en reproducción): frases, clips, canciones y oración; nunca habla con la boca cerrada. Sección «Orar» en el menú, Way Maker en el repertorio.
 
 ## Nodo T4
-No pude entrar a verlo (SSM bloqueado en esta sesión). Propuesta y script listos en `docs/NODO-T4.md` y `scripts/nodo-t4/instalar-oido.sh`: convertirlo en el oído local de ULTRON con faster-whisper large-v3 (0,3 s, sin costo por minuto); el servidor ya lo usa si `ULTRON_STT_URL` está definido. Si no se va a usar, apagarlo.
+No pude entrar a verlo (SSM bloqueado en esta sesión). Propuesta y script listos en `docs/NODO-T4.md` y `scripts/nodo-t4/instalar-oido.sh`: convertirlo en el oído local de AU-RA con faster-whisper large-v3 (0,3 s, sin costo por minuto); el servidor ya lo usa si `ULTRON_STT_URL` está definido. Si no se va a usar, apagarlo.
 
 
 ---
@@ -114,7 +114,7 @@ corrección hasta cerrar los hallazgos. Herramienta nueva: `scripts/qa/capturas.
 en Chromium con `?qa=1`, recorre los 30 estados y gestos, y arma una hoja de contactos. Así cada
 estado se revisó con la vista, no de memoria.
 
-## ULTRON ve de verdad
+## AU-RA ve de verdad
 Antes la «visión» era una heurística de luminancia por cuadrantes que **inventaba** presencia:
 con la cámara tapada seguía diciendo que había alguien. Ahora:
 
@@ -146,7 +146,7 @@ con la cámara tapada seguía diciendo que había alguien. Ahora:
   la ve; al perderla vuelve despacio.
 
 ## Un bug que solo se ve mirando
-La burbuja mostraba el identificador interno del clip («uy2», «risa1») en vez de lo que ULTRON
+La burbuja mostraba el identificador interno del clip («uy2», «risa1») en vez de lo que AU-RA
 decía. Apareció en la primera hoja de capturas. Cada clip del banco lleva ahora su texto humano.
 
 ## Entrega
@@ -223,7 +223,7 @@ de la cara en dos óvalos tenues para que los rasgos no floten sueltos; y los gl
 colgaban de los bordes de la pantalla, recogidos junto a la cara.
 
 ## La cámara: la foto era de un píxel
-ULTRON contestaba «la cámara me está mostrando un error técnico». Esa frase salía de él mismo: cuando
+AU-RA contestaba «la cámara me está mostrando un error técnico». Esa frase salía de él mismo: cuando
 la visión falla, el servidor le pasaba el mensaje de error crudo como hecho y él lo parafraseaba.
 
 El nodo de visión estaba bien — se le mandó una foto de 4000×3000 y respondió en 3,5 s. El problema
@@ -233,7 +233,7 @@ mide 96×72 (sigue casi invisible, al 2 % de opacidad), no se salta el procesado
 foto se valida antes de mandarla: si sale más corta de lo que puede ser una foto, se descarta en vez de
 enviar basura.
 
-Y cuando la visión falle de verdad, ULTRON ya no repite jerga: se le indica que lo diga como una
+Y cuando la visión falle de verdad, AU-RA ya no repite jerga: se le indica que lo diga como una
 persona («ahora mismo no me está entrando imagen, dame un segundo»). El fallo queda en los logs de
 Render, con el tamaño de la imagen, para poder verlo desde aquí.
 

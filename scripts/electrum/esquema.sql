@@ -263,3 +263,24 @@ $$ LANGUAGE plpgsql;
 INSERT INTO esquema_version (version, nota)
 VALUES (4, 'el cruce de traslapes interseca una vez en vez de tres')
 ON CONFLICT (version) DO NOTHING;
+
+-- ---------------------------------------------------------------- 5 · búsqueda por significado
+
+-- BGE-M3 da vectores de 1024 dimensiones. La columna y su índice solo se crean si pgvector está
+-- instalado en el servidor (apt install postgresql-<versión>-pgvector): sin él, este bloque avisa y
+-- sigue, y la búsqueda de expedientes se queda en texto completo, como siempre. Nada falla.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'vector') THEN
+    CREATE EXTENSION IF NOT EXISTS vector;
+    EXECUTE 'ALTER TABLE fragmento ADD COLUMN IF NOT EXISTS embedding vector(1024)';
+    -- HNSW con coseno: los vectores de BGE-M3 vienen normalizados.
+    EXECUTE 'CREATE INDEX IF NOT EXISTS fragmento_embedding_idx ON fragmento USING hnsw (embedding vector_cosine_ops)';
+  ELSE
+    RAISE NOTICE 'pgvector no está instalado: la búsqueda de expedientes sigue siendo por texto completo.';
+  END IF;
+END $$;
+
+INSERT INTO esquema_version (version, nota)
+VALUES (5, 'búsqueda por significado: fragmento.embedding (pgvector, si está)')
+ON CONFLICT (version) DO NOTHING;

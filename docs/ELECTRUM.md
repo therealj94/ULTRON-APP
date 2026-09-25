@@ -4,11 +4,11 @@ Estación de trabajo minera. Mapa, expedientes, especialistas y un doctor que lo
 
 ## Qué es y qué no es
 
-ULTRON FP es una cara que conversa. Electrum es otra cosa: **un mapa con expedientes al lado y un
+AU-RA FP es una cara que conversa. Electrum es otra cosa: **un mapa con expedientes al lado y un
 especialista que los interpreta**. Comparte el motor —nodo Qwen, sesiones, oído, visión, harness,
 memoria— y cambia todo lo que está encima.
 
-No es un tercer perfil de ULTRON. Un perfil cambia el cerebro; Electrum cambia además la piel, los
+No es un tercer perfil de AU-RA. Un perfil cambia el cerebro; Electrum cambia además la piel, los
 datos y las manos. Lo que sí se reusa, se reusa: duplicar la voz o la cara sería condenarse a
 arreglar cada cosa dos veces.
 
@@ -16,7 +16,7 @@ arreglar cada cosa dos veces.
 
 ```
 PIEL        app nueva: mapa al centro, chat al lado, expedientes e informes.
-            La cara de ULTRON arranca completa y cede el paso cuando se abre un mapa.
+            La cara de AU-RA arranca completa y cede el paso cuando se abre un mapa.
 MANOS       harness extendido: mapa, catastro, gis, calculo, expediente, informe, web, leer.
 DATOS       PostGIS en el nodo AWS: catastro espacial + documentos indexados con cita a página.
 CEREBRO     conocimiento minero + panel de especialistas.
@@ -197,10 +197,10 @@ regalarlo.
 
 ## La app — **hecha y mirada**
 
-`src-electrum/`, servida en `/electrum.html`. Vive junto a ULTRON FP en el mismo despliegue: dos
+`src-electrum/`, servida en `/electrum.html`. Vive junto a AU-RA FP en el mismo despliegue: dos
 entradas de Vite, un solo servidor.
 
-**La cara que cede el paso.** Arranca como ULTRON: cara completa, centrada, ámbar. En cuanto hay algo
+**La cara que cede el paso.** Arranca como AU-RA: cara completa, centrada, ámbar. En cuanto hay algo
 que mirar se encoge a una esquina con su marco y le deja el escenario al mapa, pero sigue ahí,
 reaccionando. Es el mismo nodo del DOM moviéndose entre dos sitios, no dos caras que se turnan: por
 eso se lee como que ELLA se aparta. En teléfono se va arriba, sobre el mapa, porque abajo tapaba el
@@ -214,7 +214,7 @@ depuración, es lo que un ingeniero exige para creerle.
 
 Ninguno daba error; todos se veían en una captura:
 
-1. **La cara se dimensionaba a la ventana**, no a su caja. Con ULTRON a pantalla completa da igual;
+1. **La cara se dimensionaba a la ventana**, no a su caja. Con AU-RA a pantalla completa da igual;
    encogida en un recuadro de 132 px seguía dibujando a tamaño de ventana y tapaba media interfaz.
    Ahora se mide por su contenedor, con un observador de tamaño.
 2. **El servidor compilado no arrancaba.** `shpjs` está escrito para el navegador y toca `self` al
@@ -419,6 +419,32 @@ diciéndolo. El relieve, además, se sirve como teselas, no como filas de una ba
   vocales acentuadas. No se corrige adivinando letras en un registro oficial; hay que pedir una
   exportación buena.
 
+### El datum: la sospecha que se midió y se descartó
+
+Una auditoría externa levantó una alarma seria: **58 de los 93 `.qmd` declaran NAD27** mientras el
+`.prj` dice WGS84. Si parte del padrón estuviera en NAD27 leído como WGS84, todos esos linderos
+estarían corridos entre 100 y 200 metros, y alguno de los 96 traslapes sería falso — o faltaría uno
+real. No es un detalle de metadatos: decide si un conflicto entre dos titulares existe o no.
+
+Se midió en vez de opinar, con tres pruebas sobre los datos cargados:
+
+1. **La forma de los traslapes.** Un desfase de datum deja astillas delgadas de ancho parecido
+   pegadas a linderos compartidos; un traslape real es un polígono gordo. Los 96 dan grosores de
+   0,1 m a 2876 m, con desviación de 390 m: dispersión, no un ancho característico.
+2. **De dónde vienen las astillas.** **45 de las 75 astillas están entre concesiones de la MISMA
+   capa** — el mismo archivo, el mismo datum. Un desfase entre datums no puede producir eso.
+3. **La prueba que zanja.** Si hubiera mezcla, el corrimiento entre la misma concesión presente en
+   dos capas sería un **vector constante**, y la magnitud de la media vectorial daría casi lo mismo
+   que la media de las magnitudes: coherencia ≈ 1. Sobre los 29 pares que de verdad son la misma
+   concesión (los otros 76 son homónimos a más de 100 km), la media de magnitudes es 609 m y la
+   magnitud de la media vectorial es 36,9 m. **Coherencia 0,061**: los corrimientos se cancelan,
+   apuntan a cualquier lado. Son versiones distintas de un mismo lindero, no un datum equivocado.
+
+Queda dicho lo que esto **no** prueba: descarta una *mezcla*, no un error *uniforme*. Si las 93
+capas estuvieran todas mal igual, serían coherentes entre sí y las tres pruebas darían lo mismo. Eso
+solo lo resuelve un punto de control en el terreno — una lectura de GPS parada en un mojón conocido,
+que es exactamente lo que hace el «¿dónde estoy?» de la app.
+
 ## Los expedientes: dónde estaban y por qué no se leían
 
 Los documentos no habían llegado con el catastro. Ochenta de los archivos del lote eran **atajos de
@@ -449,19 +475,243 @@ concesión de explotación devuelve la Guía de Participación Ciudadana, págin
 territorial, el Reglamento de la Ley General de Minería, página 2; por el plan de cierre, la Ley
 General de Minería, página 7.
 
-## El mapa: lo que falta
+## La foto de un papel — **hecha y verificada**
+
+En Honduras el expediente está en papel y sobre una mesa. Lo que se hace de verdad es sacarle una
+foto con el teléfono; lo que no se hace es escanearlo, subirlo a una carpeta y volver a la oficina.
+
+Una foto entra ahora **por la misma puerta que un PDF**: `aprender()` la manda a un modelo de
+visión, guarda la transcripción como documento con su huella, y queda troceada, indexada y
+citable. La misma implementación sirve a las tres puertas —la pantalla, el teléfono y Telegram—
+porque lo que importa no es cómo entró el papel sino que después se pueda encontrar.
+
+Lo que decide la calidad es el encargo que se le da al ojo. No es «describí la imagen»: un pie de
+foto no se busca ni se cita. Se le pide **transcribir** —encabezado, número de resolución, número de
+expediente, fechas, titulares, coordenadas, hectáreas y el texto de cada sello, fila por fila— y se
+le prohíbe completar lo que no se lee: «ilegible» es una respuesta aceptable, un número inventado en
+un registro oficial no lo es.
+
+Tres decisiones alrededor:
+
+- **Sin ojo configurado no se guarda nada.** Antes de esto la tentación era dejar la fila vacía; una
+  fila vacía en el índice miente en la lista de expedientes, que es peor que no tenerla. Se dice que
+  no se pudo leer y no entra.
+- **Se deduplica por huella**, igual que un PDF: la misma foto mandada dos veces desde dos sitios no
+  se convierte en dos expedientes.
+- **Queda anotado que es una transcripción**, no el original. Quien la cite tiene que saber que está
+  citando lo que una máquina leyó de una foto.
+
+**Verificado**: 12 pruebas con un ojo de mentira —qué se le pide, qué se guarda, qué pasa sin ojo, la
+foto repetida, la foto sin extensión— y después el camino entero por el navegador contra el servidor
+compilado, entrando con una identidad de nivel de trabajo: la foto quedó como documento tipo
+«resolución», con un fragmento, y se encuentra buscando su número de resolución. De paso apareció un
+detalle que solo se ve mirando la pantalla: con la llave de demostración el cargador **rechaza** la
+foto, porque esa llave abre la puerta pero no da nivel de escritura.
+
+## Hablarle en el campo — **hecha, sin probar en un teléfono**
+
+Dictado de un solo tiro: se toca el micrófono, se habla, se suelta, y el texto cae en la caja **sin
+mandarse**. Que no se mande solo es a propósito: el reconocedor confunde nombres de concesión, y
+discutir con la respuesta a una pregunta que no se hizo cuesta más que mirar el renglón. El
+reconocimiento lo hace el propio teléfono, así que el audio no sube a ningún servidor nuestro — con
+nombres de concesionarios de por medio, eso no es un detalle.
+
+Los términos del oficio van en `contextualStrings` («INHGEOMIN», «traslape», «mojón», «Danlí»):
+sin eso el reconocedor no los acierta nunca. Y si el aparato no trae reconocimiento, el botón no
+aparece: uno que no hace nada se lee en el campo como «se colgó».
+
+La pantalla ahora se acomoda a cómo esté el teléfono. La versión anterior era horizontal a secas,
+con una razón buena —apilar cara, hilo y botones deja la conversación en cuatro renglones cuando el
+teléfono está tumbado—, pero en el campo casi nunca está tumbado: se saca del bolsillo con una mano.
+En vertical lo que se toca queda abajo, al alcance del pulgar.
+
+**Honestamente**: esto compila y pasa el typecheck, y nada más. No hay teléfono ni emulador en este
+entorno, así que el dictado y la cámara **no están probados contra un aparato de verdad**. Lo que
+sí está probado del lado del servidor es lo que recibe la foto.
+
+## Repartir la pantalla, y apartar la cara — **hecho y verificado**
+
+El panel era un 42 % fijo, igual en un monitor de veintisiete pulgadas que en un teléfono. Y los dos
+usos de esta pantalla piden repartos opuestos: mirar dónde cae una concesión quiere mapa, leer los
+noventa y seis traslapes quiere texto. Un número fijo hace las dos cosas a medias.
+
+Ahora hay un asa en el borde del panel, con las tres maneras de usarla en un solo elemento:
+
+- **Arrastrar**, con ratón o con el dedo: reparto libre entre el 12 % y el 86 %.
+- **Tocar** sin arrastrar: rueda entre los tres repartos —mapa, dividido, lectura—. En un teléfono
+  nadie arrastra con precisión, y tocar es lo primero que se intenta.
+- **Teclado**: con foco, las flechas mueven de cinco en cinco e Inicio/Fin van a los extremos. Es un
+  `separator` con `aria-valuenow`, que es lo que un lector de pantalla sabe leer.
+
+Tocar se distingue de arrastrar por **distancia recorrida, no por tiempo**: un dedo sobre vidrio
+siempre se mueve un par de píxeles, y medirlo por tiempo convertiría cualquier toque lento en un
+arrastre de cero píxeles que no cambia nada y parece que el control no responde. El reparto se
+recuerda entre sesiones: una preferencia que hay que volver a poner cada vez no es una preferencia.
+
+**El compositor, en pantalla estrecha.** En un teléfono de 390 px había cinco controles en fila y el
+campo de escribir quedaba en una rendija: la pregunta, que es a lo que se viene, competía por el
+ancho con un botón de informe que se usa una vez cada tanto. Escribir, dictar y enviar se quedan
+siempre; voz e informe pasan a un menú. **Dictar no se esconde**: es la razón de que alguien use
+esto con las manos sucias.
+
+**La cara se pliega.** Ocupa 132 px de esquina sobre el mapa, y es identidad, no adorno — una
+herramienta sin nadie del otro lado es otra cosa. Pero cuando alguien compara linderos, 132 px de
+mapa tapados son 132 px de mapa tapados. Plegada deja una insignia que sigue diciendo que hay
+alguien y qué está haciendo —«pensando», «hablando», «algo falló»— en una línea en vez de en un
+cuadrado, y se despliega con un toque. Que se pueda apartar no le quita identidad a la plataforma;
+se la quitaría no poder.
+
+Y encoge sola cuando el mapa se queda en una franja: con el panel en lectura le quedan al mapa un
+par de centímetros de alto, y una cara de 132 px se come la mitad de lo poco que hay. No se pliega
+sola —eso sería pelearse con lo que el usuario pidió— pero ocupa lo que corresponde.
+
+**Verificado en el navegador**, a 1280 px y a 390 px: tocar el asa lleva de 42 % a 76 %, la flecha
+abajo la deja en 71 %, recargar la devuelve en 71 %, arrastrar con el dedo va de 42 % a 66 %; en el
+teléfono se ven «Decir · ⋯ · Ir» y el menú añade «Voz · PDF»; y la cara plegada deja el mapa entero,
+sobrevive a recargar y vuelve con un toque. De paso apareció el mismo fallo de accesibilidad que ya
+había arreglado en el panel: el botón de plegar seguía siendo enfocable con la cara invisible, así
+que le faltaba `inert`.
+
+## Lo que pasa cuando algo sale mal — **hecho y verificado**
+
+Una plataforma se juzga por lo que hace el día que falla. Esta tanda es casi toda eso.
+
+**Un turno cortado se ve cortado.** El lector del flujo salía cuando el flujo terminaba, y eso pasa
+también cuando el flujo **se corta**: se va la red, Render recicla el proceso, un proxy cierra la
+conexión. La pantalla se limpiaba y quedaba exactamente igual que si el Doctor hubiera decidido no
+contestar. Ahora un turno solo cuenta como terminado si el servidor mandó su `fin` o su `error`;
+cualquier otra salida se dice que fue un corte y lleva un botón que repite la pregunta. Se comprobó
+con un proxy que corta el cable a la mitad, en sus dos formas —destruir el zócalo y terminar la
+respuesta limpiamente—, que son dos caminos distintos en el lector.
+
+**Los tres relojes por fin se hablan.** El bucle calculaba el tiempo restante del turno y **no lo
+usaba**: comprobaba el presupuesto antes de llamar al modelo y después dejaba correr la llamada con
+su propio tope de sesenta segundos, así que un turno de cincuenta podía tardar ciento diez — y el
+cliente, que esperaba cuarenta y cinco, ya se había ido. Ahora la llamada se acota con lo que queda,
+y el orden es: modelo ≤ turno (50 s) < cliente (75 s).
+
+**Y si alguien se va, se deja de trabajar para nadie.** Un turno parado se seguía computando, y peor:
+su respuesta se guardaba en el hilo, así que la pregunta siguiente se contestaba sobre algo que el
+usuario nunca vio. Ahora el servidor detecta que se cerró la conexión, no guarda y no empieza rondas
+nuevas. Los avisos de la pantalla —«lo dejé ahí», «se me cortó»— tampoco entran al hilo: no son
+frases del Doctor, y la pregunta que quedó sin contestar tampoco es conversación.
+
+**Dejar de acusar a la credencial de lo que hizo el wifi.** `puertaAbierta` devolvía un booleano y
+convertía cualquier fallo de red en «esa llave no abre» o «tu cuenta no tiene acceso». Un túnel, un
+wifi de hotel o un 503 de Render redesplegando se le contaban a la persona como un problema de
+permisos, y la reacción natural —pedir otra llave— no arreglaba nada. Son cinco estados y solo uno
+se le puede reprochar a la credencial. En el teléfono era peor: cualquier caída de `salud` al
+arrancar mandaba al login, o sea que quedarse sin señal **en el campo** parecía sesión caducada.
+
+**Y entrar con el almacenamiento bloqueado.** El `sessionStorage` de reserva estaba dentro del
+`catch` del primero y sin proteger: con los dos almacenes bloqueados la excepción salía disparada y
+el formulario quedaba en «Probando…» para siempre. Hay un tercer almacén —la memoria— y se avisa de
+que no sobrevivirá a un F5. Escribiendo la prueba apareció otro fallo en el código nuevo: encadenar
+los dos almacenes en un `||` dentro de un solo `try` significa que si el primero **lanza**, el
+segundo no se llega a leer.
+
+## El informe, la lista y el mapa — **hecho y verificado**
+
+**La foto del mapa era la de antes.** `capturaDelMapa` pedía un repintado y leía el lienzo en la
+línea siguiente: `triggerRepaint` solo *pide* un cuadro. Con el mapa quieto no se nota; justo
+después de volar a una concesión —que es cuando alguien pide el informe— se llevaba la vista
+anterior. Ahora espera a que el mapa diga que terminó. Con Google no hay captura posible (teselas de
+otro dominio, lienzo que el navegador no deja leer) y el informe **lo dice** en vez de salir sin mapa
+y en silencio.
+
+**Un informe caducado explicaba nada.** Se guardan media hora; pasado ese rato el botón seguía ahí y
+al tocarlo no ocurría absolutamente nada, porque el cliente se tragaba con un `return` la
+explicación que el servidor sí mandaba.
+
+**La lista parecía completa.** Cortaba en 40 capas y 60 documentos sin decirlo, con 64 y 74
+cargados. Ahora dice «60 de 64», busca sin acentos, trae «Ver más» y enseña la fecha y el autor de
+cada carga. «No existe» y «no está en esta página» no se pueden ver igual en un registro.
+
+**El mapa se rehacía entero al cambiar de fondo**, perdiendo la cámara y las concesiones pintadas —y
+dejando sin ejecutarse nunca el efecto escrito justo debajo para conservarlas. Verificado: 1079
+concesiones y la posición sobreviven a ir a calles y volver. Y buscando eso apareció algo mayor: **en
+el motor de Google las concesiones no se dibujaban**. Volaba al sitio correcto y allí no había nada.
+
+## Que se pueda usar, y que sea de quien es — **hecho y verificado**
+
+`user-select: none` y `touch-action: none` venían de AU-RA, que es una cara con la que se habla. En
+una herramienta documental impiden copiar un número de expediente y ampliar con los dedos para leer.
+El cargador era un `div` con `onClick`: con ratón funcionaba y con teclado no existía. El panel
+oculto llevaba `aria-hidden` y `pointer-events: none`, que no sacan del recorrido del tabulador —
+faltaba `inert`. El hilo bajaba al final en cada cambio, sacando de su sitio a quien releía una
+respuesta anterior.
+
+Y tres cosas de confianza:
+
+- **Salir.** La web no tenía forma de cerrar sesión. En una computadora compartida, el siguiente que
+  se sienta entra como vos.
+- **El padrón.** `salud` devolvía la lista de la junta con su nivel a cualquiera que pasara la
+  puerta, incluida la llave de demostración que se le da a un visitante por diez minutos.
+- **Los informes son privados de quien los pidió.** El autor se guardaba desde el principio y no se
+  comparaba con nadie: cualquiera con el identificador se bajaba el informe de otro. «Difícil de
+  adivinar» no es un permiso, y un informe de cartera lleva nombres de concesionarios y hectáreas.
+  Compartirlo con la junta es un botón, no el estado por defecto.
+
+## El hilo: que una pregunta de seguimiento signifique algo — **hecho y verificado**
+
+Hasta acá el Doctor empezaba de cero en cada turno: los mensajes que salían al modelo eran
+`[system, user]` y nada más. Preguntarle «¿y el segundo documento?» era preguntárselo a alguien que
+acaba de entrar en la sala. Eso, más que ningún fallo de cálculo, es lo que delata a una máquina.
+
+**El defecto que había debajo.** Telegram sí guardaba algo, pero de la peor manera: pegaba el hilo
+entero **dentro del mensaje del usuario**. Parece lo mismo y no lo es. El panel de especialistas se
+elige contando palabras del oficio sobre el texto que llega (`convocar`), y los hechos del cerebro
+se buscan sobre ese mismo texto. Medido: con un hilo realista de seis líneas hablando de un pórfido,
+la pregunta **«¿y cuándo vence?» convocaba al Ingeniero de Minas y al Geólogo, y dejaba al Legal
+Minero fuera** — sin sus herramientas de catastro y sin su regla de no afirmar vigencias sin el
+expediente delante. La memoria mal puesta no es memoria de menos: es criterio de menos.
+
+Ahora el historial viaja como **mensajes con su rol**, que es la forma que el modelo entiende como
+conversación, y la pregunta de ahora llega sola a `convocar`. El archivo adjunto sí sigue yendo
+pegado, y con razón: es contexto de *esta* pregunta, no de las anteriores.
+
+Tres decisiones (`server/electrum/hilo.ts`):
+
+- **Por persona y por canal.** El hilo de la mesa no es el de Telegram aunque sea la misma persona,
+  y el de José nunca es el de Medardo. Mezclarlos hace que el Doctor conteste en la pantalla algo
+  que se dijo en el teléfono.
+- **Caduca a las seis horas.** Un hilo de anteayer no es contexto, es ruido — y encima ruido con
+  nombres de concesionarios adentro.
+- **Dos copias que se fusionan.** El servidor guarda la suya y se prefiere; el navegador manda la
+  que está mostrando. Render reinicia el proceso cuando quiere, y ésa es justo la vez en que no se
+  puede notar. En la pantalla va en `sessionStorage`, no en `localStorage`: sobrevive a recargar,
+  no a cerrar la pestaña, porque acá se nombran concesionarios reales.
+
+Y como el hilo ahora sobrevive a un F5, hay un botón **Borrar** que lo vacía de las dos puntas:
+quien acaba de consultar el expediente de un concesionario tiene que poder dejar la pantalla limpia
+antes de que se siente otro.
+
+**La verificación que importa.** Las pruebas levantan un nodo de mentira y miran los mensajes de
+verdad que saldrían hacia el modelo — comprobar la función que arma el historial no alcanzaría. Y
+además se condujo un navegador real contra el servidor compilado, con un nodo que contesta diciendo
+cuántos mensajes recibió: turno 1 `[system, user]`; turno 2 `[system, user, assistant, user]` con el
+intercambio anterior dentro; **tras recargar la página**, el siguiente turno llegó con diez
+mensajes; y después de pulsar Borrar, volvió a `[system, user]` sin nada previo.
+
+## El mapa pinta el catastro — **hecho y mirado**
 
 `/api/electrum/catastro.geojson` sirve las 1079 concesiones con su nombre, titular, estado y
 hectáreas, más el rectángulo que las abarca —546 KB, 67 ms medidos—, y la web lo pide al abrir el
-mapa. **Pero el mapa todavía no las pinta.**
+mapa.
 
-Hay una causa encontrada y arreglada: una capa de MapLibre se ata al objeto fuente que existía
-cuando se la añadió, así que tras una recarga de estilo `getLayer` la encuentra y parece sana, pero
-apunta a una fuente muerta y no dibuja nada. No bastó: la fuente vuelve a desaparecer.
+No las pintaba por dos causas encadenadas:
 
-No se pudo terminar de aislar porque en el entorno de desarrollo las teselas del satélite fallan sin
-parar y esos fallos recargan el estilo solos: no hay forma de separar el fallo propio del ruido.
-Queda pendiente, y hay que retomarlo con red que funcione.
+1. Una capa de MapLibre se ata al objeto fuente que existía cuando se la añadió; tras una recarga
+   de estilo `getLayer` la encontraba y parecía sana, pero apuntaba a una fuente muerta. Arreglado.
+2. La de verdad: **el worker de MapLibre no se emitía en el build**. MapLibre 6 carga el GeoJSON
+   dentro de un worker; sin el archivo, el servidor contestaba con el `index.html` del fallback y
+   el worker moría sin avisar. Ahora `src-electrum/mapa/Mapa.tsx` importa el worker con
+   `?worker&url` y lo fija con `maplibregl.setWorkerUrl`, y `vite.config.ts` lo emite como módulo
+   (`worker.format: 'es'`). Mirado en un navegador contra el build: las concesiones salen pintadas.
+
+Queda aparte la capa «Calles»: las teselas públicas de OpenStreetMap contestan 403 fuera de un
+navegador con su política de uso. Se resuelve con las teselas propias servidas desde el nodo
+(Protomaps), que está pendiente junto con la puerta TLS del nodo.
 
 ## Estado
 
@@ -475,14 +725,14 @@ Queda pendiente, y hay que retomarlo con red que funcione.
 | Las manos (diez herramientas) | **hechas y probadas** |
 | Aprender de lo que se sube (GIS y documentos con página) | **hecho** |
 | App: mapa doble, cara que cede el paso, panel y expedientes | **hecha y mirada** |
-| Padrón y puerta propia, separada de ULTRON | **hecho y probado contra el servidor compilado** |
+| Padrón y puerta propia, separada de AU-RA | **hecho y probado contra el servidor compilado** |
 | Bot de Telegram Dr Electrum FP | **hecho** (falta darle de alta el bot en BotFather) |
 | Generador de informes en PDF | **hecho y mirado** — ficha de concesión y estado de cartera, con el mapa dentro |
 | Voz propia con ElevenLabs | **hecha** — Daniel, grave y de edad |
 
 ## Quién entra
 
-Dr Electrum **no hereda la gente de ULTRON**. Está en [`ACCESOS.md`](./ACCESOS.md): padrón propio,
+Dr Electrum **no hereda la gente de AU-RA**. Está en [`ACCESOS.md`](./ACCESOS.md): padrón propio,
 llave propia, bot propio y secreto propio. Estar en la junta de Orden Global no te abre la demo
 minera, y al revés.
 
@@ -535,7 +785,7 @@ Dr Electrum habla con **Bill**, la más veterana de las que probamos. La edad es
 — a quien te va a decir que un recurso inferido no es una reserva se le cree más si suena a haberlo
 visto. Se cambia con `ELECTRUM_VOZ`.
 
-El respaldo **no** es la voz de ULTRON, y eso es deliberado: si la variable se queda vacía por un
+El respaldo **no** es la voz de AU-RA, y eso es deliberado: si la variable se queda vacía por un
 descuido, más vale que el Doctor siga sonando a él que descubrir el error cuando ya está hablando
 con la voz de la otra plataforma delante de un cliente. Hay una prueba que lo vigila.
 
@@ -577,8 +827,8 @@ Suena al revés y es a propósito. Agregar emociones al **sistema** mejora; ofre
 sobran no son inocentes — si `travieso` está en la lista, tarde o temprano el doctor guiña mientras
 te explica un traslape.
 
-Así que **Dr Electrum tiene once emociones y ULTRON quince.** Se le quitan cantar, orar, la
-travesura y la tristeza de la junta, y se le dan cuatro que ULTRON no necesita:
+Así que **Dr Electrum tiene once emociones y AU-RA quince.** Se le quitan cantar, orar, la
+travesura y la tristeza de la junta, y se le dan cuatro que AU-RA no necesita:
 
 | Emoción | Cuándo | Voz | Cara |
 |---|---|---|---|
@@ -620,7 +870,7 @@ todo en la app sería hacer una web peor dentro de una app.
 ### La cara ya sabe de quién es
 
 `UltronFace` tenía el cian escrito a fuego. La primera captura de la app del doctor salió con la
-cara de ULTRON y otro rótulo encima — exactamente lo que el resto del sistema se cuida de no hacer.
+cara de AU-RA y otro rótulo encima — exactamente lo que el resto del sistema se cuida de no hacer.
 Ahora la cara acepta `acento`, y el brillo del iris se **deriva** del color en vez de ser una
 constante pálida de cian: un reflejo es el mismo color con más luz, no otro color, y sobre el iris
 ámbar aquella constante parecía una catarata gris.

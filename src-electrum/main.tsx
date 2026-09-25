@@ -1,4 +1,4 @@
-/** Entrada de Dr Electrum FP. La app vive en /electrum; ULTRON FP sigue en la raíz. */
+/** Entrada de Dr Electrum FP. Es la raíz de su propio despliegue: ver lib/plataforma.ts. */
 import { recogerLlaveDelEnlace } from './acceso';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';

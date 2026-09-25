@@ -1,5 +1,5 @@
 /**
- * Catálogo de capacidades — la única lista de "qué puede hacer ULTRON".
+ * Catálogo de capacidades — la única lista de "qué puede hacer AU-RA".
  * La sirve GET /api/capacidades y la pintan Ajustes (web) y el menú (APK).
  * Cada tarjeta corresponde a algo que de verdad ejecuta el servidor o la app.
  * `vivo` sale de la salud real; nunca se marca vivo lo que no respondió.
@@ -55,7 +55,7 @@ export const MODOS = [
 
 export const VOZ_OFICIAL = {
   id: 'ultron',
-  nombre: 'ULTRON',
+  nombre: 'AU-RA',
   motor: 'ElevenLabs v3 (diálogo expresivo)',
   timbre: 'Gabriela · español latino, cálida, cercana',
   respaldo: 'nodo TTS local si ElevenLabs cae; voz del navegador solo como último recurso',

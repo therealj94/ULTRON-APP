@@ -1,4 +1,4 @@
-// Web Audio API Synthesizer for ULTRON FP
+// Web Audio API Synthesizer for AU-RA FP
 // Generates native cybernetic SFX dynamically without requiring external assets
 
 let audioCtx: AudioContext | null = null;

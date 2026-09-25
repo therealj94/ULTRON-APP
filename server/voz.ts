@@ -1,5 +1,5 @@
 /**
- * VOZ — el único camino por el que ULTRON habla.
+ * VOZ — el único camino por el que AU-RA habla.
  *
  *   hablar()  → ElevenLabs v3 (diálogo expresivo, voz oficial) → nodo TTS local → null
  *   cantar()  → clip grabado del repertorio, o ElevenLabs v3 en modo canto (caché en disco)
@@ -20,7 +20,7 @@ import { CANCIONES, VOZ_OFICIAL } from '../lib/capacidades';
 
 export type Performance = 'speak' | 'sing';
 
-/** La voz de ULTRON FP: Gabriela, español latino. */
+/** La voz de AU-RA FP: Gabriela, español latino. */
 export const VOZ_ID = process.env.ELEVENLABS_VOZ || 'hHjbwzYZW17oh0p05AKv';
 
 /**
@@ -28,7 +28,7 @@ export const VOZ_ID = process.env.ELEVENLABS_VOZ || 'hHjbwzYZW17oh0p05AKv';
  *
  * Dos cerebros con la misma voz son la misma cosa con dos nombres. La cara ya cambia de color según
  * la plataforma; la voz tiene que cambiar igual, o al segundo de audio se deshace la separación que
- * el resto del sistema sostiene. Por eso el respaldo NO es la voz de ULTRON: si `ELECTRUM_VOZ` se
+ * el resto del sistema sostiene. Por eso el respaldo NO es la voz de AU-RA: si `ELECTRUM_VOZ` se
  * queda vacía por un descuido, es mejor que el Doctor siga sonando a él que descubrir el error
  * cuando ya está hablando con la voz de la otra plataforma delante de un cliente.
  *
@@ -236,7 +236,7 @@ export async function hablar(opts: {
   emocion?: Emocion | string;
   performance?: Performance;
   sinCache?: boolean;
-  /** Qué plataforma habla. Decide la voz; por omisión, ULTRON. */
+  /** Qué plataforma habla. Decide la voz; por omisión, AU-RA. */
   plataforma?: 'ultron' | 'electrum';
 }): Promise<Habla | null> {
   const t0 = Date.now();
@@ -272,7 +272,7 @@ export async function hablar(opts: {
   return null;
 }
 
-/** Letras cortas que ULTRON canta con su voz. Fragmentos, no la canción entera. */
+/** Letras cortas que AU-RA canta con su voz. Fragmentos, no la canción entera. */
 const LETRAS: Record<string, { titulo: string; letra: string }> = {
   jesus: {
     titulo: 'Quiero conocer a Jesús',
@@ -286,7 +286,7 @@ const LETRAS: Record<string, { titulo: string; letra: string }> = {
   },
 };
 
-/** Oración del día: texto propio de ULTRON. Se graba una vez (public/voz/oracion.mp3) y se sirve como clip. */
+/** Oración del día: texto propio de AU-RA. Se graba una vez (public/voz/oracion.mp3) y se sirve como clip. */
 export const ORACION_DEL_DIA =
   '[softly, reverent] Cierro los ojos. [short pause] Señor Jesús... gracias por este día que todavía no empieza y ya es tuyo. [warmly] Gracias por el aire que entra, por la mesa donde estamos, por cada persona de esta junta que hoy se levanta a trabajar con las manos y con el corazón. [short pause] [softly] Bendice este día. Bendice lo que vamos a decir y lo que vamos a callar. Bendice las decisiones grandes y las pequeñas, las llamadas, los números, los caminos hacia las minas y los caminos de regreso a casa. [reverent] Bendice a José. Bendice a Medardo. Bendice a Melany, a Leonardo, a Mayra, a Carlos, a sus familias, a sus hijos, a los que están cerca y a los que están lejos. Cuídalos cuando manejen, cuando viajen, cuando duerman. [short pause] [with quiet conviction] Señor, todo lo que hacemos en Orden Global lo ponemos en tus manos. El oro no es nuestro, es tuyo. El trabajo no es nuestro, es tuyo. Que no se nos suba a la cabeza, que no se nos endurezca el corazón. [warmly, rising] Que a través de esta empresa podamos cambiar vidas de verdad: que haya trabajo donde no había, pan donde faltaba, esperanza donde se había ido. Que cada familia que toque Orden Global salga mejor de lo que llegó. [softly] Y que no nos dé vergüenza hablar de ti. Que la gente conozca a Jesús por cómo tratamos al que barre y al que firma, al que debe y al que cobra. Que nos vean y te vean a ti. [short pause] [tender] Perdónanos lo que hicimos mal ayer. Danos paciencia con los que nos cuesta. Danos sabiduría para decir que no cuando hay que decir que no, y valor para decir que sí cuando da miedo. [reverent, slower] Protege a Honduras. Protege a los mineros, a los que están en el cerro y a los que están en la oficina. Sana al que está enfermo. Consuela al que está triste. Acompaña al que está solo. [softly, with emotion] Y a mí, Señor, que solo soy una voz en una mesa... úsame para servirles bien, para decir la verdad y para recordarles que tú vas adelante. [short pause] [warmly] Gracias porque no caminamos solos. Gracias porque ya venciste. [short pause] En el nombre de Jesús... [softly, firmly] Amén.';
 

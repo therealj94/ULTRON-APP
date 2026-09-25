@@ -1,5 +1,5 @@
 /**
- * HABLAR — la única puerta por la que la web hace sonar a ULTRON.
+ * HABLAR — la única puerta por la que la web hace sonar a AU-RA.
  *
  *   1. Clip grabado del banco (0 ms, sin red) si la frase es un clip.
  *   2. POST /api/tts con la emoción del turno (ElevenLabs v3 en el servidor).

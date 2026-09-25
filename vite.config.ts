@@ -3,16 +3,40 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 
+/** Qué páginas se compilan, según qué producto sea este despliegue. */
+function entradas() {
+  const main = path.resolve(__dirname, 'index.html');
+  const electrum = path.resolve(__dirname, 'electrum.html');
+  // La sala sola: la carga la app de AU-RA en el teléfono (react-native-webview).
+  const sala = path.resolve(__dirname, 'sala.html');
+  const p = String(process.env.PLATAFORMA || '').trim().toLowerCase();
+  if (p === 'ultron' || p === 'ultron-fp' || p === 'genesis') return { main, sala };
+  if (p === 'electrum') return { electrum };
+  return { main, electrum, sala };
+}
+
 export default defineConfig(() => {
   return {
     plugins: [react(), tailwindcss()],
+    /*
+     * Los workers salen como módulos ES: MapLibre 6 crea el suyo con `{ type: 'module' }`, y un
+     * worker en formato iife no carga así. Ver `src-electrum/mapa/Mapa.tsx`.
+     */
+    worker: { format: 'es' as const },
     build: {
       rollupOptions: {
-        // Dos aplicaciones, un despliegue: ULTRON FP en la raíz y Dr Electrum en /electrum.html.
-        input: {
-          main: path.resolve(__dirname, 'index.html'),
-          electrum: path.resolve(__dirname, 'electrum.html'),
-        },
+        /*
+         * UN DESPLIEGUE, UNA APLICACIÓN.
+         *
+         * Antes se compilaban las dos siempre y se servía AU-RA FP en la raíz, con Dr Electrum
+         * escondido en `/electrum.html`. Ahora `PLATAFORMA` decide cuál se compila: no tiene
+         * sentido mandar a Render el paquete de la otra plataforma, y no mandarlo es la forma más
+         * barata de que no se sirva por accidente.
+         *
+         * En desarrollo, sin la variable, se compilan las dos: quien trabaja en esto quiere ver las
+         * dos sin tener que reiniciar con otra variable.
+         */
+        input: entradas(),
       },
     },
     resolve: {

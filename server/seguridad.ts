@@ -3,6 +3,7 @@ import crypto from 'crypto';
 import { identificar, nivelDe, type Identificacion, type Plataforma } from '../lib/acceso';
 import dns from 'dns/promises';
 import net from 'net';
+import { ipPrivada } from '../lib/red-publica';
 
 export type Sesion = {
   token: string;
@@ -156,7 +157,7 @@ export function mesaDeskAutorizada(req: Request): boolean {
 export function exigirMesa(req: Request, res: Response, next: NextFunction) {
   if (mesaAutorizada(req)) return next();
   return res.status(401).json({
-    error: 'ULTRON es privado. Entra con sesión de junta.',
+    error: 'AU-RA es privado. Entra con sesión de junta.',
     code: 'sesion_requerida',
     honesto: true,
   });
@@ -165,7 +166,7 @@ export function exigirMesa(req: Request, res: Response, next: NextFunction) {
 export function exigirMesaODesk(req: Request, res: Response, next: NextFunction) {
   if (mesaDeskAutorizada(req)) return next();
   return res.status(401).json({
-    error: 'ULTRON es privado. Entra con sesión de junta.',
+    error: 'AU-RA es privado. Entra con sesión de junta.',
     code: 'sesion_requerida',
     honesto: true,
   });
@@ -191,22 +192,6 @@ export function limitar(max: number, ventanaMs = 60_000) {
   };
 }
 
-function ipPrivada(ip: string) {
-  if (!net.isIP(ip)) return true;
-  let n = ip.toLowerCase();
-  // IPv4 mapeada en IPv6 (::ffff:127.0.0.1)
-  const mapped = n.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped) n = mapped[1];
-  if (n === '::' || n === '::1') return true;
-  if (/^(fc|fd)[0-9a-f]{2}:/.test(n) || n.startsWith('fe80:')) return true; // ULA y link-local v6
-  if (n.startsWith('127.') || n.startsWith('10.') || n.startsWith('192.168.') || n.startsWith('169.254.') || n.startsWith('0.')) return true;
-  const m = n.match(/^172\.(\d+)\./);
-  if (m && Number(m[1]) >= 16 && Number(m[1]) <= 31) return true;
-  const cg = n.match(/^100\.(\d+)\./);
-  if (cg && Number(cg[1]) >= 64 && Number(cg[1]) <= 127) return true; // CGNAT
-  return false;
-}
-
 export async function urlPublica(raw: string): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   let u: URL;
   try {
@@ -216,7 +201,7 @@ export async function urlPublica(raw: string): Promise<{ ok: true; url: string }
   }
   if (u.protocol !== 'https:' && u.protocol !== 'http:') return { ok: false, error: 'solo http(s)' };
   const host = u.hostname.replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host.endsWith('.local')) {
+  if (host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) {
     return { ok: false, error: 'host privado bloqueado' };
   }
   if (net.isIP(host) && ipPrivada(host)) {
@@ -270,7 +255,7 @@ export function plataformaAutorizada(req: Request, plataforma: Plataforma): bool
   if (process.env.NODE_ENV !== 'production' && !clave) {
     if (!avisadoHueco) {
       avisadoHueco = true;
-      console.warn('[ULTRON] sin NODE_ENV=production y sin llave: las plataformas quedan abiertas. Solo desarrollo.');
+      console.warn('[AU-RA] sin NODE_ENV=production y sin llave: las plataformas quedan abiertas. Solo desarrollo.');
     }
     return true;
   }
@@ -288,7 +273,7 @@ export function exigirPlataforma(plataforma: Plataforma) {
       error:
         plataforma === 'electrum'
           ? 'Dr Electrum FP es privado. Entrá con tu sesión o con la llave de la demostración.'
-          : 'ULTRON es privado. Entra con sesión de junta.',
+          : 'AU-RA es privado. Entra con sesión de junta.',
       code: 'sesion_requerida',
       plataforma,
       honesto: true,

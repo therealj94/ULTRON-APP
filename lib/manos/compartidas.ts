@@ -1,9 +1,9 @@
 /**
  * LAS MANOS QUE SÍ SE COMPARTEN.
  *
- * ULTRON FP y Dr Electrum FP tienen cerebros independientes y casi nada en común de lo que hacen:
+ * AU-RA FP y Dr Electrum FP tienen cerebros independientes y casi nada en común de lo que hacen:
  * el catastro, el mapa y los expedientes son de Electrum; el taller, la bóveda, la memoria de la
- * junta y el ejecutor son de ULTRON. Prestarse esas sería deshacer la separación que se pidió.
+ * junta y el ejecutor son de AU-RA. Prestarse esas sería deshacer la separación que se pidió.
  *
  * Estas dos son la excepción, y por una razón concreta en cada caso:
  *
@@ -113,7 +113,7 @@ const web_leer: Herramienta = {
   plataformas: ['ultron', 'electrum'],
   msMaximo: 15_000,
   async ejecutar({ url }) {
-    // La misma comprobación que usa ULTRON: sin esto, una URL en un expediente puede hacer que el
+    // La misma comprobación que usa AU-RA: sin esto, una URL en un expediente puede hacer que el
     // servidor se pida a sí mismo, o al metadata de AWS. Una herramienta que abre lo que le digan
     // es una puerta al interior de la red.
     const pub = await urlPublica(String(url || ''));

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Banco de voz offline de ULTRON.
+ * Banco de voz offline de AU-RA.
  *
  * Descarga los clips cortos grabados con la voz oficial (Render sirve `GET /voz/<id>.mp3`) a
  * `assets/voice/<id>.mp3` y genera `src/lib/voiceBank.ts` con:
@@ -37,15 +37,13 @@ const CLIPS = [
   { id: 'uy', text: 'Uy.', bundle: true, phrases: ['Uy.'] },
   { id: 'vale', text: 'Vale, jefe.', bundle: true, phrases: ['Vale, jefe.', 'Vale.'] },
   { id: 'entendido', text: 'Entendido.', bundle: true, phrases: ['Entendido.'] },
-  { id: 'dias', text: 'Buenos días, José. Estoy listo. ¿En qué te ayudo?', bundle: true, phrases: ['Buenos días, José. Estoy listo. ¿En qué te ayudo?'] },
-  { id: 'tardes', text: 'Buenas tardes, José. Estoy listo. ¿En qué te ayudo?', bundle: true, phrases: ['Buenas tardes, José. Estoy listo. ¿En qué te ayudo?'] },
-  { id: 'noches', text: 'Buenas noches, José. Estoy listo. ¿En qué te ayudo?', bundle: true, phrases: ['Buenas noches, José. Estoy listo. ¿En qué te ayudo?'] },
+  { id: 'dias', text: 'Buenos días, José. Estoy lista. ¿En qué te ayudo?', bundle: true, phrases: ['Buenos días, José. Estoy lista. ¿En qué te ayudo?'] },
+  { id: 'tardes', text: 'Buenas tardes, José. Estoy lista. ¿En qué te ayudo?', bundle: true, phrases: ['Buenas tardes, José. Estoy lista. ¿En qué te ayudo?'] },
+  { id: 'noches', text: 'Buenas noches, José. Estoy lista. ¿En qué te ayudo?', bundle: true, phrases: ['Buenas noches, José. Estoy lista. ¿En qué te ayudo?'] },
   { id: 'calenta', text: 'Espera. Estamos calentando el motor de veintisiete B.', bundle: true, phrases: ['Espera. Estamos calentando el motor de veintisiete B.'] },
   { id: 'listos', text: 'Estamos listos.', bundle: true, phrases: ['Estamos listos.'] },
   // --- largos: solo remotos ---
-  { id: 'quien', text: 'Soy ULTRON, la mesa de Orden Global.', bundle: false, phrases: [] },
   { id: 'puedo', text: 'Esto es lo que puedo hacer.', bundle: false, phrases: [] },
-  { id: 'discurso', text: 'El discurso de ULTRON.', bundle: false, phrases: [] },
   { id: 'chiste1', text: 'Chiste uno.', bundle: false, phrases: [] },
   { id: 'chiste2', text: 'Chiste dos.', bundle: false, phrases: [] },
   { id: 'chiste3', text: 'Chiste tres.', bundle: false, phrases: [] },
@@ -69,7 +67,6 @@ const CLIPS = [
   { id: 'hola', text: 'Hola.', bundle: false, phrases: ['Hola.'] },
   // --- nuevos de emoción (también los sube el servidor; se usan sin fallback a TTS) ---
   { id: 'despertar', text: 'Ya despierto.', bundle: false, phrases: [] },
-  { id: 'bienvenida', text: 'Bienvenido a la mesa.', bundle: false, phrases: [] },
   { id: 'triste', text: 'Ay…', bundle: false, phrases: [] },
   { id: 'cansado', text: 'Aaah…', bundle: false, phrases: [] },
   { id: 'carino', text: 'Mmm… gracias.', bundle: false, phrases: [] },

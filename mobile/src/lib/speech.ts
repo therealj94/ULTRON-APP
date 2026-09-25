@@ -1,5 +1,5 @@
 /**
- * Oído de ULTRON: fachada sobre dos motores, elegible en Ajustes.
+ * Oído de AU-RA: fachada sobre dos motores, elegible en Ajustes.
  *  - 'native' (default): reconocimiento del sistema (Google) en el teléfono. Parciales en vivo,
  *    final ~0.3 s tras callar, sin subir audio. Cae solo a la nube si el servicio no existe.
  *  - 'cloud': grabación con VAD por energía + ElevenLabs Scribe en el servidor (más lento, ~1.5 s,
@@ -113,7 +113,7 @@ export async function unmuteMic() {
   return engine === 'native' ? native.nativeUnmute() : cloud.unmuteMic();
 }
 
-/** Pausa la captura mientras ULTRON habla. */
+/** Pausa la captura mientras AU-RA habla. */
 export function pauseMicForTts(pause: boolean) {
   if (engine === 'native') native.nativePause(pause);
   else cloud.pauseMicForTts(pause);

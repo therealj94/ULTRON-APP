@@ -1,7 +1,7 @@
 /**
  * PERFIL DE CEREBRO — qué cambia entre una plataforma y otra.
  *
- * ULTRON es un cuerpo: cara, voz, emociones, oído, ojos, harness, memoria. Eso no se duplica nunca.
+ * AU-RA es un cuerpo: cara, voz, emociones, oído, ojos, harness, memoria. Eso no se duplica nunca.
  * Lo que cambia de una plataforma a otra es el CEREBRO: quién dice ser, qué sabe de verdad, con qué
  * palabras se le busca ese saber, qué reglas extra obedece y qué herramientas tiene a mano.
  *
@@ -28,7 +28,7 @@ export type Herramienta =
 export type PerfilCerebro = {
   /** Identificador corto, el valor de ULTRON_PERFIL. */
   id: string;
-  /** Nombre del cerebro, el que ULTRON dice ser parte de. */
+  /** Nombre del cerebro, el que AU-RA dice ser parte de. */
   cerebro: string;
   /** Nombre de la plataforma, el que se ve en la pantalla de arranque. */
   plataforma: string;

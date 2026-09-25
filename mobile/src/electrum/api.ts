@@ -2,7 +2,7 @@
  * El cliente de Dr Electrum en el teléfono.
  *
  * Habla con las rutas `/api/electrum/*`, que están cerradas: cada petición lleva la sesión o la
- * llave de demostración. No reusa el cliente de ULTRON a propósito — son dos cerebros y dos
+ * llave de demostración. No reusa el cliente de AU-RA a propósito — son dos cerebros y dos
  * puertas, y un cliente que sirva para los dos acaba mandando la credencial equivocada.
  */
 import * as SecureStore from 'expo-secure-store';
@@ -60,7 +60,17 @@ export class SinPuerta extends Error {
   }
 }
 
-async function pedir<T>(ruta: string, init: RequestInit = {}, msIntento = 45_000): Promise<T> {
+/**
+ * Lo que espera el teléfono. **Tiene que ser mayor que el presupuesto del turno en el servidor**
+ * (50 s, en server/electrum/turno.ts).
+ *
+ * Estaba en 45 s, o sea por DEBAJO del presupuesto del servidor: la app abandonaba peticiones que
+ * el servidor seguía atendiendo, y el usuario veía un fallo de red donde había una respuesta en
+ * camino. Los dos números están ahora en el mismo orden, con holgura para la red del campo.
+ */
+const ESPERA_MS = 75_000;
+
+async function pedir<T>(ruta: string, init: RequestInit = {}, msIntento = ESPERA_MS): Promise<T> {
   const r = await fetch(`${API_BASE}${ruta}`, {
     ...init,
     headers: cabeceras((init.headers as Record<string, string>) || {}),
@@ -82,12 +92,95 @@ export type Turno = {
   ui: Array<Record<string, unknown>>;
 };
 
-export function preguntar(mensaje: string): Promise<Turno> {
+/** Lo que se venía hablando, como lo guarda la pantalla del campo. */
+export type TurnoHilo = { de: 'persona' | 'doctor'; texto: string };
+
+/**
+ * El hilo viaja con la pregunta. El servidor guarda el suyo y lo prefiere, pero Render reinicia el
+ * proceso cuando quiere, y en el campo eso es justo lo que no se puede notar: el teléfono lleva su
+ * propia copia para que «¿y el segundo?» siga significando algo.
+ */
+export function preguntar(mensaje: string, hilo: TurnoHilo[] = []): Promise<Turno> {
   return pedir<Turno>('/api/electrum/turno', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mensaje }),
+    body: JSON.stringify({
+      mensaje,
+      hilo: hilo.slice(-24).map((t) => ({ rol: t.de === 'doctor' ? 'electrum' : 'persona', texto: t.texto })),
+    }),
   });
+}
+
+/** Lo que contesta el cerebro tras tragarse un archivo. */
+export type Aprendido = {
+  clase: 'catastro' | 'documento' | 'nada';
+  dicho: string;
+  avisos: Array<{ nivel: string; texto: string }>;
+};
+
+/**
+ * La foto de un papel, al expediente.
+ *
+ * Va como cuerpo crudo y no como multipart: una foto de teléfono son tres o cuatro megas, y en
+ * base64 crecen un tercio más para nada. El nombre viaja en la URL y el tipo en la cabecera, que es
+ * lo que el servidor necesita para saber que esto es una imagen y mandarla a leer.
+ *
+ * Nota de campo: el timeout es largo a propósito. Leer una foto de un plano tarda más que contestar
+ * una pregunta, y en el campo la señal es la que es.
+ */
+export async function subirFoto(uri: string, nombre: string, mime = 'image/jpeg'): Promise<Aprendido> {
+  const datos = await fetch(uri).then((r) => r.blob());
+  return pedir<Aprendido>(
+    `/api/electrum/subir?nombre=${encodeURIComponent(nombre)}`,
+    { method: 'POST', headers: { 'Content-Type': mime }, body: datos as any },
+    90_000
+  );
+}
+
+/**
+ * Lo que puede contestar la puerta. Son cinco cosas y antes eran «entró / no entró».
+ *
+ * La distinción importa sobre todo en el campo: **solo `sin-permiso` significa que la credencial
+ * no vale**. Las otras cuatro son la red o la plataforma, y tratarlas como falta de acceso echaba
+ * al usuario a la pantalla de entrada cada vez que se quedaba sin señal — justo cuando menos puede
+ * ponerse a escribir una clave.
+ */
+export type Puerta =
+  | { estado: 'abierta' }
+  | { estado: 'sin-permiso' }
+  | { estado: 'servicio-caido'; codigo: number }
+  | { estado: 'sin-red' }
+  | { estado: 'lento' };
+
+export async function probarPuerta(): Promise<Puerta> {
+  const corte = new AbortController();
+  const reloj = setTimeout(() => corte.abort(), 12_000);
+  try {
+    const r = await fetch(`${API_BASE}/api/electrum/salud`, { headers: cabeceras(), signal: corte.signal });
+    if (r.ok) return { estado: 'abierta' };
+    if (r.status === 401 || r.status === 403) return { estado: 'sin-permiso' };
+    return { estado: 'servicio-caido', codigo: r.status };
+  } catch (e: any) {
+    return e?.name === 'AbortError' ? { estado: 'lento' } : { estado: 'sin-red' };
+  } finally {
+    clearTimeout(reloj);
+  }
+}
+
+/** Lo que se le dice a la persona. Sin jerga y sin acusar a su credencial de lo que hizo el wifi. */
+export function porQueNoAbre(p: Puerta): string {
+  switch (p.estado) {
+    case 'sin-permiso':
+      return 'Esa credencial es buena pero no tiene acceso a Dr Electrum. Pedile a José que te agregue al padrón.';
+    case 'servicio-caido':
+      return `El servidor contestó ${p.codigo}. No es tu credencial: es la plataforma. Probá en un momento.`;
+    case 'lento':
+      return 'El servidor tardó más de doce segundos. Puede ser la señal de donde estás. Volvé a intentarlo.';
+    case 'sin-red':
+      return 'No alcancé el servidor. Revisá la señal y volvé a intentarlo — tu credencial no tiene nada que ver.';
+    default:
+      return '';
+  }
 }
 
 export type Salud = {
@@ -123,9 +216,11 @@ export async function voz(texto: string, emocion?: string): Promise<string | nul
   }
 }
 
-/** Entrar con el correo de la junta. La misma sesión que abre ULTRON, si el padrón la deja pasar. */
+/** Entrar con el correo de la junta. La misma sesión que abre AU-RA, si el padrón la deja pasar. */
 export async function entrar(correo: string, clave: string): Promise<string> {
-  const r = await fetch(`${API_BASE}/api/ultron/entrar`, {
+  // La puerta de Dr Electrum. El servidor mantiene `/api/ultron/entrar` como alias para las
+  // APK que ya están instaladas; las nuevas llaman a la suya.
+  const r = await fetch(`${API_BASE}/api/electrum/entrar`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ correo, clave }),

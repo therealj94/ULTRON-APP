@@ -5,6 +5,8 @@ import type { Cancion } from '../lib/api';
 import { agrupar, fetchCapacidades, type Capacidad, type CapacidadesPayload } from '../lib/capacidades';
 import { GENEROS } from '../lib/intenciones';
 import type { SttEngine } from '../lib/storage';
+import type { Postura } from '../lib/tareas';
+import { T, SOMBRA } from '../tema';
 
 const MODES: Array<{ id: Mode; hint: string }> = [
   { id: 'GUARDIAN', hint: 'vigila' },
@@ -57,6 +59,11 @@ type Props = {
   onForget: () => void;
   onSearch: (q: string) => void;
   onLogout: () => void;
+  /** Si AU-RA está de cuerpo entero (la sala) o con la cara de respaldo. */
+  conSala: boolean;
+  /** Cómo contesta: de pie en el centro o sentada en su sillón. */
+  postura: Postura;
+  onSetPostura: (p: Postura) => void;
 };
 
 type CatState = { status: 'idle' | 'loading' | 'ok' | 'fail'; payload: CapacidadesPayload | null; offline: boolean; at: string };
@@ -117,7 +124,7 @@ export function DeskMenu(p: Props) {
   );
 
   const Dot = ({ vivo }: { vivo: boolean | null }) =>
-    vivo === null ? null : <View style={[styles.capDot, { backgroundColor: vivo ? '#39FF14' : '#55657A' }]} />;
+    vivo === null ? null : <View style={[styles.capDot, { backgroundColor: vivo ? T.activo : T.borde }]} />;
 
   const Card = ({ c }: { c: Capacidad }) => (
     <View style={styles.card}>
@@ -151,7 +158,7 @@ export function DeskMenu(p: Props) {
         <ScrollView ref={scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.head}>
             <View>
-              <Text style={styles.kicker}>ULTRON FP</Text>
+              <Text style={styles.kicker}>AU-RA FP</Text>
               <Text style={styles.user}>{p.userName}</Text>
             </View>
             <Pressable onPress={p.onClose} style={styles.close} hitSlop={10}>
@@ -160,8 +167,8 @@ export function DeskMenu(p: Props) {
           </View>
 
           <View style={styles.statusRow}>
-            <View style={[styles.dot, { backgroundColor: p.online ? '#39FF14' : '#FF7A8A' }]} />
-            <Text style={styles.statusText}>{p.online ? 'cerebro en línea' : 'sin cerebro · modo local'}</Text>
+            <View style={[styles.dot, { backgroundColor: p.online ? T.activo : T.aviso }]} />
+            <Text style={styles.statusText}>{p.online ? 'Conectada' : 'Sin cerebro · modo local'}</Text>
           </View>
 
           <View style={styles.row}>
@@ -169,7 +176,7 @@ export function DeskMenu(p: Props) {
               <Text style={styles.label}>Escuchar</Text>
               <Text style={styles.sub}>{p.micMuted ? 'silenciado' : p.listening ? 'oyendo · sin palabra clave' : 'conectando…'}</Text>
             </View>
-            <Switch value={!p.micMuted} onValueChange={p.onToggleMic} trackColor={{ true: '#00E5FF', false: '#333' }} thumbColor="#E8FBFF" />
+            <Switch value={!p.micMuted} onValueChange={p.onToggleMic} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
@@ -178,14 +185,14 @@ export function DeskMenu(p: Props) {
                 {p.visionOn ? (p.objects.length ? p.objects.join(' · ') : 'cámara activa') : 'cámara apagada'}
               </Text>
             </View>
-            <Switch value={p.visionOn} onValueChange={p.onToggleVision} trackColor={{ true: '#00E5FF', false: '#333' }} thumbColor="#E8FBFF" />
+            <Switch value={p.visionOn} onValueChange={p.onToggleVision} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
 
           {/* ---------------- catálogo ---------------- */}
           <View onLayout={(e) => (catY.current = e.nativeEvent.layout.y)}>
             <Pressable onPress={() => setCatOpen((o) => !o)} style={styles.catHead}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.section}>Qué puede hacer ULTRON</Text>
+                <Text style={styles.section}>Qué puede hacer AU-RA</Text>
                 <Text style={styles.sub}>
                   {cat.status === 'loading'
                     ? 'consultando…'
@@ -210,7 +217,7 @@ export function DeskMenu(p: Props) {
                   <Text style={styles.voiceBtnText}>Probar voz</Text>
                 </Pressable>
               </View>
-              {cat.status === 'loading' && !cat.payload && <ActivityIndicator color="#00E5FF" />}
+              {cat.status === 'loading' && !cat.payload && <ActivityIndicator color={T.principal} />}
               {cat.status === 'fail' && !cat.payload && (
                 <Text style={styles.hint}>No pude bajar el catálogo. Cuando haya red se guarda una copia para verlo sin conexión.</Text>
               )}
@@ -225,6 +232,12 @@ export function DeskMenu(p: Props) {
               {catAt && <Text style={styles.hint}>catálogo {cat.offline ? 'guardado' : 'actualizado'} {catAt.toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</Text>}
             </View>
           )}
+
+          <Text style={styles.section}>Te contesta</Text>
+          <View style={styles.chips}>
+            <Chip on={p.postura === 'pie'} label="De pie" sub="en el centro" onPress={() => p.onSetPostura('pie')} />
+            <Chip on={p.postura === 'sentada'} label="Sentada" sub="en su sillón" onPress={() => p.onSetPostura('sentada')} />
+          </View>
 
           <Text style={styles.section}>Presencia</Text>
           <View style={styles.chips}>
@@ -255,7 +268,7 @@ export function DeskMenu(p: Props) {
               value={query}
               onChangeText={setQuery}
               placeholder="Ej.: precio del café hoy en Honduras"
-              placeholderTextColor="#4A5A6A"
+              placeholderTextColor={T.texto3}
               style={styles.input}
               returnKeyType="search"
               onSubmitEditing={() => {
@@ -273,7 +286,7 @@ export function DeskMenu(p: Props) {
               <Chip key={c.id} label={c.titulo} sub={c.artista} onPress={() => p.onSingSong(c.id)} />
             ))}
           </View>
-          <Text style={styles.sub}>Letras propias por género: ULTRON las canta en vivo.</Text>
+          <Text style={styles.sub}>Letras propias por género: AU-RA las canta en vivo.</Text>
           <View style={styles.chips}>
             {GENEROS.map((g) => (
               <Chip key={g.id} label={g.etiqueta} onPress={() => p.onSingGenre(g.id)} />
@@ -292,7 +305,7 @@ export function DeskMenu(p: Props) {
               value={fact}
               onChangeText={setFact}
               placeholder="Ej.: la reunión de junta es los lunes"
-              placeholderTextColor="#4A5A6A"
+              placeholderTextColor={T.texto3}
               style={styles.input}
               returnKeyType="done"
               onSubmitEditing={() => {
@@ -307,8 +320,8 @@ export function DeskMenu(p: Props) {
             <TextInput
               value={p.draft}
               onChangeText={p.onChangeDraft}
-              placeholder="Orden para ULTRON…"
-              placeholderTextColor="#4A5A6A"
+              placeholder="Orden para AU-RA…"
+              placeholderTextColor={T.texto3}
               style={styles.input}
               onSubmitEditing={p.onSendDraft}
               returnKeyType="send"
@@ -318,10 +331,17 @@ export function DeskMenu(p: Props) {
             </Pressable>
           </View>
 
-          <Text style={styles.hint}>
-            Tócalo: un ojo guiña, la frente le da curiosidad, la barbilla le hace cosquillas, frotar la mejilla lo calma. Arrastra el dedo y te sigue con
-            la mirada. Toques seguidos: «ya, ya». Mantén pulsado: duerme o despierta. Sacude el teléfono: se asusta.
-          </Text>
+          {p.conSala ? (
+            <Text style={styles.hint}>
+              Tócale la cabeza y se pone curiosa; el cuerpo le da cosquillas. Toques seguidos: «ya, ya». Desliza hacia arriba sobre ella para abrir este
+              menú. Cuando busca en internet se sienta en su escritorio; si envía algo, lanza un avión de papel. Sacude el teléfono: se asusta.
+            </Text>
+          ) : (
+            <Text style={styles.hint}>
+              Tócala: un ojo guiña, la frente le da curiosidad, la barbilla le hace cosquillas, frotar la mejilla la calma. Arrastra el dedo y te sigue
+              con la mirada. Toques seguidos: «ya, ya». Mantén pulsado: duerme o despierta. Sacude el teléfono: se asusta.
+            </Text>
+          )}
 
           <Text style={styles.section}>Ajustes</Text>
           <Text style={styles.label}>Voz</Text>
@@ -337,14 +357,14 @@ export function DeskMenu(p: Props) {
               <Text style={styles.label}>Comenta lo que ve</Text>
               <Text style={styles.sub}>Observaciones espontáneas de la cámara</Text>
             </View>
-            <Switch value={p.settings.proactive} onValueChange={p.onToggleProactive} trackColor={{ true: '#00E5FF', false: '#333' }} thumbColor="#E8FBFF" />
+            <Switch value={p.settings.proactive} onValueChange={p.onToggleProactive} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
               <Text style={styles.label}>Efectos de sonido</Text>
               <Text style={styles.sub}>Toques, blaster, sable</Text>
             </View>
-            <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} trackColor={{ true: '#00E5FF', false: '#333' }} thumbColor="#E8FBFF" />
+            <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
@@ -370,59 +390,60 @@ export function DeskMenu(p: Props) {
 
 const styles = StyleSheet.create({
   wrap: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', justifyContent: 'flex-end' },
-  dim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
+  dim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)' },
   panel: {
     height: '100%',
-    backgroundColor: 'rgba(5,9,14,0.985)',
-    borderLeftWidth: 1,
-    borderLeftColor: 'rgba(0,229,255,0.28)',
+    backgroundColor: T.fondo,
+    borderTopLeftRadius: 28,
+    borderBottomLeftRadius: 28,
+    ...SOMBRA,
   },
-  content: { padding: 18, gap: 12, paddingBottom: 32 },
+  content: { padding: 20, gap: 12, paddingBottom: 32 },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  kicker: { color: '#00E5FF', letterSpacing: 3, fontWeight: '800', fontSize: 11 },
-  user: { color: '#E8FBFF', fontSize: 20, fontWeight: '700', marginTop: 2 },
-  close: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
-  closeText: { color: '#C8D4DE', fontSize: 14 },
+  kicker: { color: T.principalTexto, letterSpacing: 1.5, fontWeight: '700', fontSize: 12 },
+  user: { color: T.texto, fontSize: 22, fontWeight: '700', marginTop: 2 },
+  close: { width: 36, height: 36, borderRadius: 18, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center' },
+  closeText: { color: T.texto2, fontSize: 15 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dot: { width: 7, height: 7, borderRadius: 4 },
-  statusText: { color: '#7A8B9C', fontSize: 12 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
-  label: { color: '#E8FBFF', fontSize: 15, fontWeight: '600' },
-  sub: { color: '#6A7A8A', fontSize: 11, marginTop: 2, maxWidth: 300 },
-  section: { color: '#00E5FF', fontSize: 11, letterSpacing: 2, fontWeight: '700', marginTop: 6 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  statusText: { color: T.texto2, fontSize: 13 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 14, backgroundColor: T.panel, borderRadius: 16 },
+  label: { color: T.texto, fontSize: 15, fontWeight: '600' },
+  sub: { color: T.texto3, fontSize: 12, marginTop: 2, maxWidth: 300 },
+  section: { color: T.texto2, fontSize: 13, fontWeight: '700', marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', maxWidth: 260 },
-  chipOn: { borderColor: '#00E5FF', backgroundColor: 'rgba(0,229,255,0.12)' },
-  chipEx: { borderColor: 'rgba(0,229,255,0.28)', backgroundColor: 'rgba(0,229,255,0.05)', paddingVertical: 6 },
-  chipText: { color: '#9AAABA', fontSize: 12, fontWeight: '600' },
-  chipExText: { color: '#BFEFF7', fontWeight: '500', fontStyle: 'italic' },
-  chipSub: { color: '#55657A', fontSize: 9, marginTop: 1 },
-  chipTextOn: { color: '#00E5FF' },
+  chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999, backgroundColor: T.panel, borderWidth: 1, borderColor: T.borde, alignItems: 'center', maxWidth: 260 },
+  chipOn: { borderColor: T.activo, backgroundColor: T.activoFondo },
+  chipEx: { borderColor: T.borde, backgroundColor: T.principalFondo, paddingVertical: 7 },
+  chipText: { color: T.texto, fontSize: 13, fontWeight: '600' },
+  chipExText: { color: T.principalTexto, fontWeight: '500', fontStyle: 'italic' },
+  chipSub: { color: T.texto3, fontSize: 10, marginTop: 1 },
+  chipTextOn: { color: T.activoTexto },
   composer: { flexDirection: 'row', gap: 8 },
-  input: { flex: 1, borderWidth: 1, borderColor: 'rgba(0,229,255,0.22)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, color: '#E8FBFF' },
-  send: { backgroundColor: '#00E5FF', borderRadius: 12, paddingHorizontal: 14, justifyContent: 'center' },
-  sendText: { color: '#001018', fontWeight: '800' },
-  hint: { color: '#4A5A6A', fontSize: 11, lineHeight: 16, marginTop: 4 },
-  smallBtn: { borderWidth: 1, borderColor: 'rgba(255,122,138,0.5)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6 },
-  smallBtnText: { color: '#FF7A8A', fontSize: 12, fontWeight: '600' },
+  input: { flex: 1, borderWidth: 1, borderColor: T.borde, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10, color: T.texto, fontSize: 15, backgroundColor: T.panel },
+  send: { backgroundColor: T.principal, borderRadius: 999, paddingHorizontal: 18, justifyContent: 'center' },
+  sendText: { color: T.sobrePrincipal, fontWeight: '700' },
+  hint: { color: T.texto3, fontSize: 12, lineHeight: 17, marginTop: 4 },
+  smallBtn: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: T.avisoFondo },
+  smallBtnText: { color: T.avisoTexto, fontSize: 13, fontWeight: '600' },
   logout: { alignItems: 'center', paddingVertical: 12, marginTop: 6 },
-  logoutText: { color: '#FF7A8A', fontSize: 13 },
-  version: { color: '#3A4A5A', fontSize: 10, textAlign: 'center' },
-  orarBtn: { borderWidth: 1, borderColor: 'rgba(0,229,255,0.35)', borderRadius: 14, padding: 12, gap: 4, backgroundColor: 'rgba(0,229,255,0.06)' },
-  orarText: { color: '#E8FBFF', fontSize: 15, fontWeight: '700' },
-  orarSub: { color: '#6A7A8A', fontSize: 11 },
+  logoutText: { color: T.avisoTexto, fontSize: 14, fontWeight: '600' },
+  version: { color: T.texto3, fontSize: 11, textAlign: 'center' },
+  orarBtn: { borderRadius: 18, padding: 14, gap: 4, backgroundColor: T.panel, borderWidth: 1, borderColor: T.borde },
+  orarText: { color: T.texto, fontSize: 15, fontWeight: '700' },
+  orarSub: { color: T.texto3, fontSize: 12 },
   // catálogo
-  catHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderTopWidth: 1, borderTopColor: 'rgba(0,229,255,0.12)', marginTop: 4 },
-  chev: { color: '#00E5FF', fontSize: 16 },
-  voiceBox: { borderWidth: 1, borderColor: 'rgba(0,229,255,0.3)', borderRadius: 14, padding: 12, gap: 6, backgroundColor: 'rgba(0,229,255,0.05)' },
-  voiceName: { color: '#E8FBFF', fontSize: 14, fontWeight: '700' },
-  voiceBtn: { alignSelf: 'flex-start', backgroundColor: '#00E5FF', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 7, marginTop: 4 },
-  voiceBtnText: { color: '#001018', fontWeight: '800', fontSize: 12 },
-  groupTitle: { color: '#9AAABA', fontSize: 12, letterSpacing: 1.5, fontWeight: '700', textTransform: 'uppercase', marginTop: 4 },
-  card: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', borderRadius: 14, padding: 12, gap: 6, backgroundColor: 'rgba(255,255,255,0.02)' },
+  catHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderTopWidth: 1, borderTopColor: T.borde, marginTop: 4 },
+  chev: { color: T.principalTexto, fontSize: 16 },
+  voiceBox: { borderRadius: 18, padding: 14, gap: 6, backgroundColor: T.panel },
+  voiceName: { color: T.texto, fontSize: 14, fontWeight: '700' },
+  voiceBtn: { alignSelf: 'flex-start', backgroundColor: T.principal, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8, marginTop: 4 },
+  voiceBtnText: { color: T.sobrePrincipal, fontWeight: '700', fontSize: 13 },
+  groupTitle: { color: T.texto2, fontSize: 13, fontWeight: '700', marginTop: 4 },
+  card: { borderRadius: 18, padding: 14, gap: 6, backgroundColor: T.panel },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   capDot: { width: 8, height: 8, borderRadius: 4 },
-  cardTitle: { color: '#E8FBFF', fontSize: 14, fontWeight: '700', flex: 1 },
-  cardDetail: { color: '#8B9AAB', fontSize: 12, lineHeight: 17 },
-  cardFalta: { color: '#FFB86B', fontSize: 11 },
+  cardTitle: { color: T.texto, fontSize: 14, fontWeight: '700', flex: 1 },
+  cardDetail: { color: T.texto2, fontSize: 12, lineHeight: 17 },
+  cardFalta: { color: T.avisoTexto, fontSize: 12 },
 });
