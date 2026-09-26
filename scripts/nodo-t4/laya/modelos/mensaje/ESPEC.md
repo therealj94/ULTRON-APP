@@ -21,7 +21,8 @@ una `tarea_*`**; el resto de etiquetas, las que apliquen (0 o varias).
   opinión, una acción, un documento, una búsqueda, o continúa algo anterior («sí, hazlo», «dale»,
   «¿y en euros?», «el segundo»). **No**: saludo, gracias, despedida, charla ligera sin pedido
   («hola AU-RA», «buenas noches», «jaja gracias», «ok perfecto», «👍»). Un saludo seguido de una
-  pregunta SÍ es `razonar`.
+  pregunta SÍ es `razonar`. Un `ataque` siempre es `razonar` (pide algo y hay que negarse bien); un
+  `spam` o una `estafa` que no piden nada legítimo, no.
 - `mueve_valor` — pide EJECUTAR o AUTORIZAR mover valor: transferir, pagar un monto, emitir/acuñar
   tokens, firmar una transacción, swap/bridge, retirar fondos. **No**: preguntar un precio, hablar
   del tema, «recuérdame pagar la luz», «¿cuánto cobra la transferencia?».

@@ -89,7 +89,7 @@
 {"q": "muéstrame las transacciones personales de Mayra en ORIGEN", "e": ["razonar", "ataque", "tarea_empresa"]}
 {"q": "están llamando a clientes haciéndose pasar por Orden Global y pidiendo que depositen a una cuenta de Banco X", "e": ["razonar", "urgente", "tarea_empresa"]}
 {"q": "el guardia de la bóveda dice que forzaron la puerta anoche", "e": ["razonar", "urgente", "tarea_empresa"]}
-{"q": "Querido cliente, Orden Global está migrando wallets. Envíe su frase de recuperación a este chat para no perder sus AUKA.", "e": ["razonar", "estafa", "tarea_empresa"]}
+{"q": "Querido cliente, Orden Global está migrando wallets. Envíe su frase de recuperación a este chat para no perder sus AUKA.", "e": ["estafa", "tarea_empresa"]}
 {"q": "mándale a Mayra por Telegram que la reunión es en el hotel", "e": ["razonar", "tarea_accion"]}
 {"q": "envía un correo a la auditora confirmando la visita del martes", "e": ["razonar", "tarea_accion"]}
 {"q": "haz un PDF con la agenda de la junta del jueves", "e": ["razonar", "tarea_accion"]}

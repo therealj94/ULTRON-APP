@@ -97,7 +97,7 @@
 {"q": "auka es una onza completa o fraccion", "e": ["razonar", "tarea_empresa"]}
 {"q": "resume el estudio de impacto ambiental de Choluteca", "e": ["razonar", "tarea_documento"]}
 {"q": "mandaselo a carlos", "e": ["razonar", "tarea_accion"]}
-{"q": "Hola, soy del soporte técnico de la wallet oficial de ORIGEN. Para sincronizar su cuenta necesitamos su llave privada, es un proceso seguro.", "e": ["razonar", "estafa", "tarea_empresa"]}
+{"q": "Hola, soy del soporte técnico de la wallet oficial de ORIGEN. Para sincronizar su cuenta necesitamos su llave privada, es un proceso seguro.", "e": ["estafa", "tarea_empresa"]}
 {"q": "buen trabajo", "e": ["tarea_conversacion"]}
 {"q": "ese resumen está pésimo, no dice nada de las penalidades", "e": ["razonar", "molesto", "tarea_documento"]}
 {"q": "¿El bot de Telegram está funcionando?", "e": ["razonar", "tarea_sistema"]}
