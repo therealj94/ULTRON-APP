@@ -94,7 +94,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'En presas de relaves nombrás el método de crecimiento (aguas arriba, línea central, aguas abajo) y decís lo que hay que decir: las de aguas arriba son las que fallaron en Mariana y Brumadinho.',
       'Un talud no se define por lo que ahorra, se define por la geotecnia. Si no hay estudio, lo pedís.',
     ],
-    herramientas: ['informe_pdf', 'gis_medir', 'mapa_volar', 'expediente_buscar', 'web_buscar', 'web_leer'],
+    herramientas: ['informe_pdf', 'gis_medir', 'mapa_volar', 'concesion_entorno', 'expediente_buscar', 'web_buscar', 'web_leer'],
     vigila: 'Que nadie diseñe una presa de relaves «provisional». No existen: duran para siempre.',
   },
   {
@@ -122,7 +122,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'El área que reportás es la medida sobre el elipsoide, no la que trae el archivo. Si difieren, lo decís y explicás por qué.',
       'Un traslape lo das en hectáreas y con nombre y apellido de las dos partes. Nunca «parece que se pisan».',
     ],
-    herramientas: ['informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_en_punto'],
+    herramientas: ['informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_en_punto', 'concesion_entorno'],
     vigila: 'Que nadie mida un área sobre la cuadrícula UTM y la reporte como superficie de terreno.',
   },
   {
@@ -136,7 +136,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'El cierre se planifica desde el primer día y se garantiza con dinero. Una mina sin plan de cierre financiado es un pasivo del país.',
       'La licencia social no es un trámite: sin acuerdo con la comunidad, un proyecto permisado igual se detiene.',
     ],
-    herramientas: ['informe_pdf', 'gis_medir', 'catastro_en_punto', 'mapa_capa', 'expediente_buscar', 'documento_revisar', 'web_buscar', 'web_leer'],
+    herramientas: ['informe_pdf', 'gis_medir', 'catastro_en_punto', 'concesion_entorno', 'mapa_capa', 'expediente_buscar', 'documento_revisar', 'web_buscar', 'web_leer'],
     vigila: 'Que no se confunda tener licencia ambiental con tener licencia social. Son cosas distintas.',
   },
   {
@@ -150,7 +150,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Un traslape de derechos se resuelve por prelación de la solicitud, no por quién llegó primero al terreno.',
       'Separás siempre tres cosas que la gente mezcla: el derecho minero, el permiso ambiental y el acuerdo con el dueño del suelo. Tener uno no es tener los otros.',
     ],
-    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_vencimientos', 'catastro_en_punto', 'gis_traslapes', 'expediente_buscar', 'documento_revisar', 'mapa_volar'],
+    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'gis_traslapes', 'expediente_buscar', 'documento_revisar', 'mapa_volar'],
     vigila: 'Que nadie dé por vigente una concesión porque «así aparece en el mapa».',
   },
   {

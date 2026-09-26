@@ -35,6 +35,7 @@ import {
 } from './db';
 import { personaPorId } from '../../lib/acceso';
 import { clasificarDocumento, lecturaEnTexto, type LecturaDocumento } from './documentos-laya';
+import { entornoDe, entornoEnTexto } from './entorno';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -134,6 +135,43 @@ const catastro_en_punto: Herramienta = {
       : ['Ese punto no cae dentro de ninguna concesión del catastro cargado.'];
     if (fuera.length) partes.push(`A menos de ${nf(radio, radio % 1 ? 1 : 0)} kilómetros: ${fuera.slice(0, 4).map((c) => `${c.nombre} a ${nf(c.km, 1)} km`).join(', ')}.`);
     return { ok: true, texto: partes.join(' '), ui: { punto: [Number(lon), Number(lat)], dentro, cerca: fuera } };
+  },
+};
+
+/**
+ * Lo que una concesión tiene alrededor: municipio, áreas protegidas, microcuencas, ríos, caseríos,
+ * carretera, minería informal, ocurrencias y traslapes. Todo cruzado en PostGIS (entorno.ts): el
+ * modelo recibe las cifras y las alertas ya redactadas para citarlas, no para calcularlas. Y recibe
+ * también qué capas NO están cargadas, para que no se le ocurra decir «no pisa ningún área
+ * protegida» cuando lo que pasa es que no hay capa de áreas protegidas.
+ */
+const concesion_entorno: Herramienta = {
+  nombre: 'concesion_entorno',
+  descripcion:
+    'Cruza una concesión con las capas cargadas: municipio, áreas protegidas y microcuencas que pisa (ha y %), ríos dentro, caseríos y aldeas cerca, carretera, minería informal, ocurrencias y traslapes. Usala antes de opinar sobre dónde está una concesión o qué riesgos tiene; citá sus cifras tal cual.',
+  esquema: {
+    type: 'object',
+    properties: {
+      concesion_id: { type: 'integer', description: 'Id de la concesión (de catastro_buscar)' },
+      nombre: { type: 'string', description: 'Si no tenés el id, el nombre o expediente' },
+    },
+  },
+  plataformas: ['electrum'],
+  msMaximo: 15_000,
+  async ejecutar({ concesion_id, nombre }) {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    let id = concesion_id != null ? Number(concesion_id) : null;
+    if (id == null && nombre) {
+      const filas = await buscarConcesiones(String(nombre), 6);
+      if (!filas.length) return { ok: false, texto: `No encuentro «${nombre}» en el catastro.` };
+      const elegida = filas.length === 1 ? filas[0] : unicaExacta(filas, String(nombre));
+      if (!elegida) return { ok: false, texto: `«${nombre}» coincide con varias: ${filas.map(distinguir).join('; ')}. Pedime el entorno de una por su id.` };
+      id = elegida.id;
+    }
+    if (id == null) return { ok: false, texto: 'Decime de qué concesión: por id o por nombre.' };
+    const e = await entornoDe(id);
+    if (!e) return { ok: false, texto: `La concesión ${id} no está en el catastro o no tiene geometría, así que no hay entorno que cruzar.` };
+    return { ok: true, texto: entornoEnTexto(e), ui: { entorno: e } };
   },
 };
 
@@ -390,6 +428,7 @@ export const MANOS: Record<string, Herramienta> = {
   catastro_buscar,
   catastro_vencimientos,
   catastro_en_punto,
+  concesion_entorno,
   gis_traslapes,
   gis_medir,
   mapa_volar,

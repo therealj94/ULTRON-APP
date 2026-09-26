@@ -168,7 +168,11 @@ export type Bloque =
   | { tipo: 'nota'; texto: string }
   | { tipo: 'regla' }
   | { tipo: 'espacio'; alto?: number }
-  | { tipo: 'imagen'; jpeg: Buffer; ancho: number; alto: number; pie?: string }
+  /**
+   * `altoMax` levanta el tope de alto para una imagen que lo merece: un plano técnico con leyenda y
+   * cuadrícula no se lee a trescientos puntos. Sin él, el tope de siempre.
+   */
+  | { tipo: 'imagen'; jpeg: Buffer; ancho: number; alto: number; pie?: string; altoMax?: number }
   | { tipo: 'pagina' };
 
 export type Documento = {
@@ -189,8 +193,10 @@ const BASE_LINEA = 0; // y del pie
 const ALTO_IMAGEN = 300;
 
 /** Cuánto mide una imagen ya encajada: nunca más ancha que la caja ni más alta que el tope. */
-function encajar(ancho: number, alto: number): { w: number; h: number } {
-  const escala = Math.min(1, ANCHO / ancho, ALTO_IMAGEN / alto);
+function encajar(ancho: number, alto: number, altoMax = ALTO_IMAGEN): { w: number; h: number } {
+  // Nunca más alta que un folio útil, pida lo que pida.
+  const tope = Math.min(altoMax, ALTO_PAG - MARGEN * 2 - 60);
+  const escala = Math.min(1, ANCHO / ancho, tope / alto);
   return { w: ancho * escala, h: alto * escala };
 }
 
@@ -304,7 +310,7 @@ function altoPrimeraUnidad(b: Bloque | undefined): number {
   switch (b.tipo) {
     case 'imagen':
       // Una imagen no se parte nunca, así que su primera unidad es toda ella.
-      return encajar(b.ancho, b.alto).h + (b.pie ? 14 : 0) + 8;
+      return encajar(b.ancho, b.alto, b.altoMax).h + (b.pie ? 14 : 0) + 8;
     case 'tabla':
       return 20 + 16; // la cabecera y una fila
     case 'campos':
@@ -435,7 +441,7 @@ function maquetar(doc: Documento, L: Lienzo) {
         break;
 
       case 'imagen': {
-        const { w, h } = encajar(b.ancho, b.alto);
+        const { w, h } = encajar(b.ancho, b.alto, b.altoMax);
         const altoPie = b.pie ? 14 : 0;
         const y = L.sitio(h + altoPie + 8);
         const img: Imagen = { jpeg: b.jpeg, ancho: b.ancho, alto: b.alto, nombre: `Im${L.imagenes.length + 1}` };

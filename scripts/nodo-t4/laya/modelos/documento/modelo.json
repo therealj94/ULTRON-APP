@@ -1,0 +1,21 @@
+{
+ "nombre": "documento",
+ "descripcion": "Qué es un fragmento de expediente minero (un doc_*) y qué trae (req_*), ESPEC.md.",
+ "ids": [
+  "doc_resolucion", "doc_contrato", "doc_ambiental", "doc_tecnico",
+  "doc_plano", "doc_financiero", "doc_solicitud", "doc_otro",
+  "req_firma_autoridad", "req_coordenadas", "req_agua", "req_comunidad", "req_cierre", "req_plazo"
+ ],
+ "grupos": {
+  "tipo": [
+   "doc_resolucion", "doc_contrato", "doc_ambiental", "doc_tecnico",
+   "doc_plano", "doc_financiero", "doc_solicitud", "doc_otro"
+  ]
+ },
+ "recorte": {"cabeza": 450, "cola": 450},
+ "datos": {
+  "train": ["datos/train_*.jsonl"],
+  "test": ["datos/test.jsonl"],
+  "bordes": ["datos/bordes.jsonl"]
+ }
+}
