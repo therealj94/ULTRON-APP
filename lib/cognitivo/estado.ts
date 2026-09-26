@@ -30,8 +30,9 @@ export type EstadoCognitivo = {
   mcp: { activo: boolean; motivo: string | null };
 };
 
-const FUENTES: Array<{ servicio: Sonda['servicio']; url: string; clave: string; activo?: () => boolean }> = [
-  { servicio: 'laya', url: 'LAYA_URL', clave: 'LAYA_API_KEY' },
+const FUENTES: Array<{ servicio: Sonda['servicio']; url: string; clave: string; activo?: () => boolean; ruta?: string }> = [
+  // El Laya que corre de verdad: el servicio de scripts/nodo-t4/laya, con su /salud pública.
+  { servicio: 'laya', url: 'ULTRON_LAYA_URL', clave: 'ULTRON_LAYA_CLAVE', ruta: '/salud' },
   { servicio: 'embeddings', url: 'EMBED_URL', clave: 'EMBED_API_KEY' },
   { servicio: 'modelo_chico', url: 'MODELO_CHICO_URL', clave: 'MODELO_CHICO_API_KEY', activo: modeloChicoConfigurado },
   { servicio: 'docling', url: 'DOCLING_URL', clave: 'DOCLING_API_KEY' },
@@ -43,7 +44,7 @@ async function sondear(f: (typeof FUENTES)[number]): Promise<Sonda> {
   const clave = String(process.env[f.clave] || '');
   const t0 = Date.now();
   try {
-    const r = await fetch(`${url}/health`, {
+    const r = await fetch(`${url}${f.ruta || '/health'}`, {
       headers: clave ? { Authorization: `Bearer ${clave}`, 'X-Api-Key': clave } : {},
       signal: AbortSignal.timeout(4000),
     });

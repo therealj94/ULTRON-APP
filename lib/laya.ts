@@ -2,9 +2,10 @@
  * Cliente de Laya, el modelo de decisiones que corre en el nodo T4 (scripts/nodo-t4/laya).
  *
  * Laya no escribe: contesta preguntas cerradas con una probabilidad calibrada, en decenas de
- * milisegundos. Hoy decide qué especialistas convoca Dr Electrum. Si el nodo no está configurado,
- * tarda o falla, esto devuelve null y quien llama sigue con su regla de siempre: Laya nunca es el
- * motivo de que un turno se caiga.
+ * milisegundos. Decide qué especialistas convoca Dr Electrum (`/decidir`), qué se hace con cada
+ * mensaje de AU-RA (`/v1/mensaje`) y qué es cada documento de un expediente (`/v1/documento`). Si el
+ * nodo no está configurado, tarda o falla, esto devuelve null y quien llama sigue con su regla de
+ * siempre: Laya nunca es el motivo de que un turno se caiga.
  */
 import { Agent as UndiciAgent } from 'undici';
 
@@ -48,12 +49,12 @@ export const CABEZA = 200;
 export const COLA = 500;
 /** Un sustituto UTF-16 sin su pareja (String#toWellFormed, que el target ES2022 no trae). */
 const SUELTO = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
-export function recortarParaLaya(texto: string): string {
+export function recortarParaLaya(texto: string, cabeza = CABEZA, cola = COLA): string {
   // Por puntos de código, no por unidades UTF-16: partir un emoji por la mitad deja un sustituto
   // suelto que el tokenizador del nodo no acepta (medido: 502 y un turno en pausa).
   const s = [...String(texto || '').replace(SUELTO, '\uFFFD').trim()];
-  if (s.length <= CABEZA + COLA) return s.join('');
-  return `${s.slice(0, CABEZA).join('').trimEnd()} … ${s.slice(-COLA).join('').trimStart()}`;
+  if (s.length <= cabeza + cola) return s.join('');
+  return `${s.slice(0, cabeza).join('').trimEnd()} … ${s.slice(-cola).join('').trimStart()}`;
 }
 
 /**
@@ -68,28 +69,50 @@ export type DecisionLaya = { panel: string[]; p: Record<string, number>; umbral:
 export type MotivoLaya = 'ok' | 'sin configurar' | 'sin texto' | 'en pausa' | 'tiempo agotado' | 'red' | 'respuesta rara' | `http ${number}`;
 export type ConsultaLaya = { decision: DecisionLaya | null; motivo: MotivoLaya; /** Ida y vuelta desde aquí, en ms. */ ms: number };
 
-const estado = {
-  fallosSeguidos: 0,
-  pausadoHasta: 0,
-  ok: 0,
-  fallos: 0,
-  ultimoOk: 0,
-  ultimoFallo: 0,
-  ultimoMotivo: null as MotivoLaya | null,
-  /** Últimas idas y vueltas correctas, para la mediana que se enseña en salud. */
-  tiempos: [] as number[],
-};
+function nuevoEstado() {
+  return {
+    fallosSeguidos: 0,
+    pausadoHasta: 0,
+    ok: 0,
+    fallos: 0,
+    ultimoOk: 0,
+    ultimoFallo: 0,
+    ultimoMotivo: null as MotivoLaya | null,
+    /** Últimas idas y vueltas correctas, para la mediana que se enseña en salud. */
+    tiempos: [] as number[],
+  };
+}
+type Estado = ReturnType<typeof nuevoEstado>;
+
+/**
+ * Una pausa por ruta: si el modelo de documentos no cargó en el nodo y contesta 404, eso no puede
+ * dejar a Dr Electrum sin su panel (`/decidir`) ni a AU-RA sin su clasificador.
+ */
+const estado = nuevoEstado();
+const estadosModelo = new Map<string, Estado>();
+function estadoDe(ruta: string): Estado {
+  if (ruta === 'decidir') return estado;
+  if (!estadosModelo.has(ruta)) estadosModelo.set(ruta, nuevoEstado());
+  return estadosModelo.get(ruta)!;
+}
 
 export function layaConfigurado() {
   return !!url();
 }
 
-function fallar(motivo: MotivoLaya) {
-  estado.fallos++;
-  estado.fallosSeguidos++;
-  estado.ultimoFallo = Date.now();
-  estado.ultimoMotivo = motivo;
-  estado.pausadoHasta = Date.now() + Math.min(PAUSA_MAX_MS, PAUSA_MIN_MS * 2 ** (estado.fallosSeguidos - 1));
+function fallar(motivo: MotivoLaya, e: Estado = estado) {
+  e.fallos++;
+  e.fallosSeguidos++;
+  e.ultimoFallo = Date.now();
+  e.ultimoMotivo = motivo;
+  e.pausadoHasta = Date.now() + Math.min(PAUSA_MAX_MS, PAUSA_MIN_MS * 2 ** (e.fallosSeguidos - 1));
+}
+
+function acertar(ms: number, e: Estado = estado) {
+  e.ok++;
+  e.fallosSeguidos = 0;
+  e.ultimoOk = Date.now();
+  e.tiempos = [...e.tiempos.slice(-49), ms];
 }
 
 /** Pregunta a Laya y dice por qué no contestó cuando no contesta. Nunca lanza. */
@@ -121,10 +144,7 @@ export async function consultarLaya(texto: string, esperaMs = espera()): Promise
       return { decision: null, motivo: 'respuesta rara', ms: Date.now() - t0 };
     }
     const ms = Date.now() - t0;
-    estado.ok++;
-    estado.fallosSeguidos = 0;
-    estado.ultimoOk = Date.now();
-    estado.tiempos = [...estado.tiempos.slice(-49), ms];
+    acertar(ms);
     return { decision: j!, motivo: 'ok', ms };
   } catch {
     const motivo: MotivoLaya = ctrl.signal.aborted ? 'tiempo agotado' : 'red';
@@ -144,22 +164,30 @@ export async function decidirLaya(texto: string, esperaMs = espera()): Promise<D
  * Cómo le va a Laya desde este proceso, para salud: sin URL ni clave. `vivo` es «contestó bien la
  * última vez que se le preguntó»; para saberlo ahora mismo, saludLaya().
  */
-export function estadoLaya() {
-  const ts = [...estado.tiempos].sort((a, b) => a - b);
+function resumen(e: Estado) {
+  const ts = [...e.tiempos].sort((a, b) => a - b);
   const iso = (n: number) => (n ? new Date(n).toISOString() : null);
   return {
-    configurado: layaConfigurado(),
-    vivo: estado.ultimoOk > estado.ultimoFallo,
-    esperaMs: espera(),
-    decisiones: estado.ok,
-    fallos: estado.fallos,
-    fallosSeguidos: estado.fallosSeguidos,
-    ultimoOk: iso(estado.ultimoOk),
-    ultimoFallo: iso(estado.ultimoFallo),
-    ultimoMotivo: estado.ultimoMotivo,
-    enPausaHasta: estado.pausadoHasta > Date.now() ? iso(estado.pausadoHasta) : null,
+    vivo: e.ultimoOk > e.ultimoFallo,
+    decisiones: e.ok,
+    fallos: e.fallos,
+    fallosSeguidos: e.fallosSeguidos,
+    ultimoOk: iso(e.ultimoOk),
+    ultimoFallo: iso(e.ultimoFallo),
+    ultimoMotivo: e.ultimoMotivo,
+    enPausaHasta: e.pausadoHasta > Date.now() ? iso(e.pausadoHasta) : null,
     msMediana: ts.length ? ts[Math.floor(ts.length / 2)] : null,
     msMax: ts.length ? ts[ts.length - 1] : null,
+  };
+}
+
+export function estadoLaya() {
+  return {
+    configurado: layaConfigurado(),
+    esperaMs: espera(),
+    ...resumen(estado),
+    /** Los modelos de /v1 (mensaje, documento) que este proceso ya consultó. */
+    modelos: Object.fromEntries([...estadosModelo].map(([k, e]) => [k, resumen(e)])),
   };
 }
 
@@ -184,7 +212,124 @@ export async function saludLaya(esperaMs = 2000): Promise<{ ok: boolean; status:
   }
 }
 
+/* ------------------------------------------------------------ modelos /v1 */
+
+/**
+ * Los otros modelos del mismo servicio (scripts/nodo-t4/laya/modelos): `mensaje` decide sobre cada
+ * mensaje que llega a AU-RA o a PULSE2CHAT (¿hace falta el modelo grande?, riesgo, ataque, urgencia,
+ * moderación, ánimo, tipo de tarea); `documento` dice qué es un expediente y qué trae.
+ *
+ * El recorte es el mismo que aplica el nodo a cada modelo: así lo que viaja cabe en el cuerpo (16 KB
+ * uno, 64 KB un lote) y lo medido allá es lo que se manda desde aquí.
+ */
+export type ModeloLaya = 'mensaje' | 'documento';
+export const RECORTE_MODELO: Record<ModeloLaya, [number, number]> = { mensaje: [CABEZA, COLA], documento: [CABEZA, COLA] };
+/** Lo que devuelve el nodo por cada texto. */
+export type RespuestaModelo = {
+  /** P(sí) calibrada de cada pregunta. */
+  p: Record<string, number>;
+  /** Las que pasan su propio umbral, fuera de los grupos exclusivos. */
+  etiquetas: string[];
+  /** El ganador de cada grupo exclusivo (`tarea` en mensaje, `tipo` en documento). */
+  grupos: Record<string, string>;
+  umbrales?: Record<string, number>;
+  ms: number;
+};
+export type ConsultaModelo = { resultado: RespuestaModelo | null; motivo: MotivoLaya; ms: number };
+export type ConsultaLote = { resultados: RespuestaModelo[] | null; motivo: MotivoLaya; ms: number };
+
+function esRespuestaModelo(x: any): x is RespuestaModelo {
+  return (
+    !!x &&
+    typeof x.p === 'object' &&
+    x.p !== null &&
+    Object.values(x.p).every((v) => typeof v === 'number' && Number.isFinite(v)) &&
+    Array.isArray(x.etiquetas) &&
+    x.etiquetas.every((e: unknown) => typeof e === 'string') &&
+    typeof x.grupos === 'object' &&
+    x.grupos !== null
+  );
+}
+
+/** Lo común a una consulta y a un lote: pausa por ruta, tope de tiempo, conexión reutilizada. */
+async function postModelo(modelo: ModeloLaya, cuerpo: Record<string, unknown>, esperaMs: number, validar: (j: any) => boolean) {
+  const base = url();
+  const e = estadoDe(modelo);
+  if (!base) return { j: null, motivo: 'sin configurar' as MotivoLaya, ms: 0 };
+  if (Date.now() < e.pausadoHasta) return { j: null, motivo: 'en pausa' as MotivoLaya, ms: 0 };
+  const t0 = Date.now();
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), esperaMs);
+  try {
+    const r = await fetch(`${base}/v1/${modelo}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(clave() ? { authorization: `Bearer ${clave()}` } : {}) },
+      body: JSON.stringify(cuerpo),
+      signal: ctrl.signal,
+      dispatcher: conexion,
+    } as RequestInit);
+    if (!r.ok) {
+      await r.body?.cancel().catch(() => {});
+      const motivo: MotivoLaya = `http ${r.status}`;
+      fallar(motivo, e);
+      return { j: null, motivo, ms: Date.now() - t0 };
+    }
+    const j = await r.json().catch(() => null);
+    if (!validar(j)) {
+      fallar('respuesta rara', e);
+      return { j: null, motivo: 'respuesta rara' as MotivoLaya, ms: Date.now() - t0 };
+    }
+    const ms = Date.now() - t0;
+    acertar(ms, e);
+    return { j, motivo: 'ok' as MotivoLaya, ms };
+  } catch {
+    const motivo: MotivoLaya = ctrl.signal.aborted ? 'tiempo agotado' : 'red';
+    fallar(motivo, e);
+    return { j: null, motivo, ms: Date.now() - t0 };
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+/**
+ * Una decisión sobre un texto. `preguntas` pide solo algunas (menos cómputo en el nodo). Nunca
+ * lanza: sin Laya, lenta o rota, `resultado` es null y quien llama sigue con sus reglas.
+ */
+export async function consultarModelo(
+  modelo: ModeloLaya,
+  texto: string,
+  opts: { esperaMs?: number; preguntas?: string[] } = {},
+): Promise<ConsultaModelo> {
+  const recortado = recortarParaLaya(texto, ...RECORTE_MODELO[modelo]);
+  if (!recortado) return { resultado: null, motivo: 'sin texto', ms: 0 };
+  const { j, motivo, ms } = await postModelo(
+    modelo,
+    { texto: recortado, ...(opts.preguntas?.length ? { preguntas: opts.preguntas } : {}) },
+    opts.esperaMs ?? espera(),
+    esRespuestaModelo,
+  );
+  return { resultado: j, motivo, ms };
+}
+
+/** Hasta 32 textos en una sola ida y vuelta (los fragmentos de un expediente, por ejemplo). */
+export async function consultarModeloLote(
+  modelo: ModeloLaya,
+  textos: string[],
+  opts: { esperaMs?: number; preguntas?: string[] } = {},
+): Promise<ConsultaLote> {
+  const recortados = textos.slice(0, 32).map((t) => recortarParaLaya(t, ...RECORTE_MODELO[modelo])).filter(Boolean);
+  if (!recortados.length) return { resultados: null, motivo: 'sin texto', ms: 0 };
+  const { j, motivo, ms } = await postModelo(
+    modelo,
+    { textos: recortados, ...(opts.preguntas?.length ? { preguntas: opts.preguntas } : {}) },
+    opts.esperaMs ?? espera(),
+    (x) => Array.isArray(x?.resultados) && x.resultados.length === recortados.length && x.resultados.every(esRespuestaModelo),
+  );
+  return { resultados: j ? j.resultados : null, motivo, ms };
+}
+
 /** Solo para las pruebas. */
 export function _reiniciarLaya() {
-  Object.assign(estado, { fallosSeguidos: 0, pausadoHasta: 0, ok: 0, fallos: 0, ultimoOk: 0, ultimoFallo: 0, ultimoMotivo: null, tiempos: [] });
+  Object.assign(estado, nuevoEstado());
+  estadosModelo.clear();
 }

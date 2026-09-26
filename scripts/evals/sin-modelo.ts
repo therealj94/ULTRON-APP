@@ -6,7 +6,8 @@
  *  · `decision` → qué decide el motor de reglas (lib/cognitivo/politica.ts).
  *
  * Y aparte, el CLASIFICADOR contra `clasificacion` de cada caso: con reglas siempre, y con Laya si
- * se pide (`--laya`, con LAYA_URL puesta). Es la medida que dice si Laya decide mejor que las reglas
+ * se pide (`--laya`, con ULTRON_LAYA_URL/ULTRON_LAYA_CLAVE puestas: el modelo `mensaje` del nodo T4).
+ * Es la medida que dice si Laya decide mejor que las reglas
  * antes de pasar CLASIFICADOR_MODO de `sombra` a `laya`.
  *
  * Con `--laya-panel` (y ULTRON_LAYA_URL/ULTRON_LAYA_CLAVE puestas) repite el enrutado de Electrum con lo
@@ -67,7 +68,7 @@ export function pasadaSinModelo(plataforma: 'ultron' | 'electrum'): Informe {
   return informe(plataforma, 'sin-modelo', rs);
 }
 
-/** El clasificador contra lo que espera cada caso. `laya` necesita LAYA_URL; sin ella devuelve null. */
+/** El clasificador contra lo que espera cada caso. `laya` necesita ULTRON_LAYA_URL; sin ella devuelve null. */
 export async function pasadaClasificador(plataforma: 'ultron' | 'electrum', motor: 'reglas' | 'laya'): Promise<Informe | null> {
   const casos = cargarCasos(ARCHIVOS[plataforma]).filter((c) => c.clasificacion);
   const rs: Resultado[] = [];
@@ -117,7 +118,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (process.argv.includes('--laya')) {
       const l = await pasadaClasificador(p, 'laya');
       if (l) imprimir(`${p} · clasificador (Laya)`, l);
-      else console.log(`\n${p} · clasificador (Laya): sin respuesta (¿LAYA_URL?)`);
+      else console.log(`\n${p} · clasificador (Laya): sin respuesta (¿ULTRON_LAYA_URL?)`);
     }
   }
   if (process.argv.includes('--laya-panel')) {

@@ -48,6 +48,14 @@ export type Clasificacion = {
   ms?: number;
   /** El mensaje parece un intento de torcer al sistema (ignorar reglas, sacar secretos, suplantar). */
   inyeccion?: boolean;
+  /** Laya: necesita una persona pronto (emergencia, fondos que no llegan, fraude en curso). */
+  urgente?: boolean;
+  /** Laya: spam, abuso, estafa o crisis (riesgo para la vida). */
+  moderacion?: Array<'spam' | 'abuso' | 'estafa' | 'crisis'>;
+  /** Laya: cómo parece estar quien escribe, si se nota. */
+  animo?: 'molesto' | 'triste';
+  /** Laya: P(hace falta el modelo grande). */
+  razonar?: number;
   /** En modo sombra: lo que decidió el otro clasificador, para comparar sin actuar. */
   sombra?: Omit<Clasificacion, 'sombra'> | null;
 };

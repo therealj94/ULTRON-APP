@@ -10,7 +10,7 @@
  */
 import { enTurno, iniciarTraza, trazaActual } from '../../lib/cognitivo/traza';
 import { clasificar } from '../../lib/cognitivo/clasificador';
-import { AVISO_INYECCION } from '../../lib/cognitivo/agentes';
+import { AVISO_INYECCION, guiasDeClasificacion } from '../../lib/cognitivo/agentes';
 import { MEMORIA_ESTRUCTURADA } from '../../lib/manos/memoria';
 import { fichaEnTexto, fichasMencionadas } from '../../lib/cognitivo/entidades';
 import { correrAgente, type Mensaje } from '../../lib/agente/bucle';
@@ -195,6 +195,8 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
       : []),
     '',
     ...(clas.inyeccion ? ['', AVISO_INYECCION] : []),
+    // Ánimo, urgencia, estafa o alguien en riesgo, si Laya lo vio.
+    ...guiasDeClasificacion(clas).flatMap((g) => ['', g]),
     '',
     'CEREBRO DE MINAS:',
     CONOCIMIENTO_MINAS,

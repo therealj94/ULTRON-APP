@@ -8,7 +8,8 @@
  * Solo se usa si TODO esto se cumple:
  *  · `MODELO_CHICO_URL` está puesta y `MODELO_CHICO_MODO=activo` (por omisión, apagado);
  *  · el clasificador dice que no hace falta razonar (`requiereQwen` falso) y la tarea es conversación;
- *  · el riesgo es bajo y no hay sospecha de ataque.
+ *  · el riesgo es bajo y no hay sospecha de ataque;
+ *  · Laya no vio urgencia, moderación ni un ánimo que cuidar: un «hola» triste lo contesta Qwen.
  * Si el modelo chico falla o tarda, contesta Qwen como siempre: nadie se queda sin respuesta.
  */
 import type { Clasificacion } from './traza';
@@ -35,7 +36,7 @@ const TAREAS_CHICAS = new Set(['conversacion']);
 
 export function usarModeloChico(c: Clasificacion | null | undefined): boolean {
   if (!c || !modeloChicoConfigurado()) return false;
-  return !c.requiereQwen && TAREAS_CHICAS.has(c.tarea) && c.riesgo < 40 && !c.inyeccion;
+  return !c.requiereQwen && TAREAS_CHICAS.has(c.tarea) && c.riesgo < 40 && !c.inyeccion && !c.urgente && !c.moderacion?.length && !c.animo;
 }
 
 export type MensajeChat = { role: 'system' | 'user' | 'assistant'; content: string };
