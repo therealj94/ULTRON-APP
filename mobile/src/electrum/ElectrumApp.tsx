@@ -90,6 +90,11 @@ export default function ElectrumApp() {
     );
   }, [fase, opacidad]);
 
+  /*
+   * Cerrar la sesión, sin preguntar. Preguntar es cosa del botón SALIR (CampoScreen), que es donde
+   * la persona decide; aquí también se llega cuando el servidor ya dijo que la credencial no vale,
+   * y ahí no hay nada que confirmar: la sesión ya no abre.
+   */
   const salir = useCallback(async () => {
     await cerrarSesion();
     setFase('entrar');
@@ -110,5 +115,6 @@ const s = StyleSheet.create({
   arranque: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', backgroundColor: '#000', gap: 4 },
   marca: { color: ACENTO, fontSize: 24, fontWeight: '700', letterSpacing: 6, marginTop: -4 },
   lema: { color: 'rgba(255,174,59,0.55)', fontSize: 9, letterSpacing: 2.6, fontWeight: '600', marginTop: 8 },
-  version: { position: 'absolute', bottom: 24, color: '#3A4A5A', fontSize: 11, fontFamily: 'monospace' },
+  // #3A4A5A daba 2,3:1 sobre negro; #6C7F89 da 5:1, por encima del 4,5:1 que pide un texto chico.
+  version: { position: 'absolute', bottom: 24, color: '#6C7F89', fontSize: 12, fontFamily: 'monospace' },
 });

@@ -252,3 +252,11 @@ export function grabar(Sk: SkiaApi, g: Geometria, t: Tema) {
   return rec.finishRecordingAsPicture();
 }
 
+/** Un cuadro vacío: lo que se muestra si el dibujo falló, mientras la pantalla cambia a la cara de siempre. */
+export function grabarVacio(Sk: SkiaApi) {
+  'worklet';
+  const rec = Sk.PictureRecorder();
+  rec.beginRecording(Sk.XYWHRect(0, 0, 1, 1));
+  return rec.finishRecordingAsPicture();
+}
+

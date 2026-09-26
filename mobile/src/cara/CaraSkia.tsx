@@ -12,7 +12,7 @@
  *
  * El dibujo es pintar.ts (el mismo que revisa scripts/qa/cara-skia.ts en la computadora).
  */
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { PanResponder, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import { Canvas, Picture, Skia } from '@shopify/react-native-skia';
 import {
@@ -30,10 +30,11 @@ import {
   withSpring,
   withTiming,
 } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 import type { FaceState } from '../config';
 import type { Tarea } from '../lib/tareas';
 import { OBJETIVOS, disposicion, estadoDe, geometria, mezclar, temaDeAcento, zonaDe, type EstadoCara, type Parametros, type Zona } from './estados';
-import { grabar } from './pintar';
+import { grabar, grabarVacio } from './pintar';
 
 export type PedidoCara = { tarea: Tarea; n: number };
 
@@ -59,6 +60,11 @@ export type CaraSkiaProps = {
   onSwipe?: (dir: 'left' | 'right') => void;
   /** Avisa qué estado muestra (para la línea de estado de arriba). */
   onEstado?: (e: EstadoCara) => void;
+  /**
+   * El dibujo lanzó en el hilo de la interfaz. Ese error no llega al ErrorBoundary de React (no pasa
+   * por el render), así que el worklet lo atrapa y lo avisa por aquí: CaraSegura vuelve a UltronFace.
+   */
+  onFalloDibujo?: (motivo: string) => void;
 };
 
 /** El borde derecho queda libre para el gesto de menú de DeskScreen (igual que UltronFace). */
@@ -216,28 +222,43 @@ export function CaraSkia(props: CaraSkiaProps) {
   }, [gazeX, gazeY, pesoFuera, fueraX, fueraY, fuera]);
 
   // ---- el cuadro
+  // Un error dentro del worklet no pasa por React: se atrapa aquí, se avisa UNA vez al hilo de JS
+  // (scheduleOnRN) y desde ahí se pintan cuadros vacíos hasta que DeskScreen cambie de cara.
+  const falloDibujo = useSharedValue(false);
+  const cbFallo = useRef(props.onFalloDibujo);
+  cbFallo.current = props.onFalloDibujo;
+  const avisarFallo = useCallback((motivo: string) => cbFallo.current?.(motivo), []);
   const cuadro = useDerivedValue(() => {
-    const p = mezclar(desde.value, hacia.value, t.value);
-    const g = geometria(
-      p,
-      {
-        parpadeo: parpadeo.value,
-        sacadaX: sacadaX.value,
-        sacadaY: sacadaY.value,
-        fase: fase.value,
-        latido: latido.value,
-        giro: giro.value,
-        respira: respira.value,
-        inclinX: inclinX.value,
-        inclinY: inclinY.value,
-        voz: voz.value,
-        fueraX: fueraX.value,
-        fueraY: fueraY.value,
-        fuera: fuera.value,
-      },
-      L,
-    );
-    return grabar(Skia, g, tema);
+    if (!falloDibujo.value) {
+      try {
+        const p = mezclar(desde.value, hacia.value, t.value);
+        const g = geometria(
+          p,
+          {
+            parpadeo: parpadeo.value,
+            sacadaX: sacadaX.value,
+            sacadaY: sacadaY.value,
+            fase: fase.value,
+            latido: latido.value,
+            giro: giro.value,
+            respira: respira.value,
+            inclinX: inclinX.value,
+            inclinY: inclinY.value,
+            voz: voz.value,
+            fueraX: fueraX.value,
+            fueraY: fueraY.value,
+            fuera: fuera.value,
+          },
+          L,
+        );
+        return grabar(Skia, g, tema);
+      } catch (e) {
+        falloDibujo.value = true;
+        const motivo = e && typeof e === 'object' && 'message' in e ? String((e as { message: unknown }).message) : String(e);
+        scheduleOnRN(avisarFallo, `dibujo: ${motivo}`);
+      }
+    }
+    return grabarVacio(Skia);
   }, [L, tema]);
 
   // ---- tacto: las mismas zonas y llamadas que UltronFace

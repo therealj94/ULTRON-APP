@@ -1,9 +1,11 @@
 /**
- * Ver imágenes de verdad: ojo Playwright primero, Gemini de reserva. Si no hay clave, se dice.
+ * Ver imágenes de verdad: ojo Playwright primero, Gemini de reserva. Si no hay clave, se dice —
+ * en el registro, con el nombre de la variable; a quien mandó la foto, con una frase que entienda.
  */
 
 import { clave } from './boveda';
 import { destinoPublico } from './red-publica';
+import { presupuesto, type Presupuesto } from './presupuesto';
 
 export type Vista = { texto: string; via: string; foto?: Buffer };
 
@@ -35,7 +37,17 @@ function bufferDeCualquierFoto(j: any): Buffer | undefined {
   return undefined;
 }
 
-async function verConOjo(imagen: string, prompt: string): Promise<Vista | null> {
+/**
+ * La frase para quien mandó la foto cuando no se pudo ver. Fija y sin nombres de variables: antes
+ * una cuota agotada de Gemini (429) terminaba diciéndole «Falta GEMINI_API_KEY» —mentira, la llave
+ * estaba— y encima le enseñaba cómo se llaman las piezas del servidor. El detalle va al registro.
+ */
+export const NO_PUDE_VER = 'No pude ver la imagen ahora mismo.';
+
+/** Sin cliente esperando (Telegram, cargas): lo que sumaban los dos topes de siempre. */
+const PRESUPUESTO_SIN_APURO_MS = 56_000;
+
+async function verConOjo(imagen: string, prompt: string, reloj: Presupuesto): Promise<Vista | null> {
   const url = clave('ojo_url').replace(/\/$/, '');
   const claveOjo = clave('ojo_clave');
   if (!url || !claveOjo) return null;
@@ -43,15 +55,19 @@ async function verConOjo(imagen: string, prompt: string): Promise<Vista | null> 
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Ojo-Clave': claveOjo },
     body: JSON.stringify({ imagen, prompt }),
-    signal: AbortSignal.timeout(28000),
+    signal: reloj.senal(28000),
   });
+  if (!r.ok) {
+    console.warn('[vision ojo]', r.status, (await r.text().catch(() => '')).slice(0, 160));
+    return null;
+  }
   const j: any = await r.json().catch(() => ({}));
   const texto = String(j.texto || j.descripcion || j.summary || '').trim();
   if (!texto) return null;
   return { texto: texto.slice(0, 2200), via: `${url}/ver` };
 }
 
-async function verConGemini(imagen: string, prompt: string): Promise<Vista | null> {
+async function verConGemini(imagen: string, prompt: string, reloj: Presupuesto): Promise<Vista | null> {
   const key = clave('gemini');
   if (!key) return null;
   const { mime, b64 } = dataUrlAPartes(imagen);
@@ -69,39 +85,59 @@ async function verConGemini(imagen: string, prompt: string): Promise<Vista | nul
           },
         ],
       }),
-      signal: AbortSignal.timeout(28000),
+      signal: reloj.senal(28000),
     }
   );
+  // Cuota (429), llave vencida (403), modelo retirado (404): se registra el código que dio Gemini,
+  // que es lo único que dice qué arreglar. Antes esto se tragaba y parecía «falta configuración».
+  if (!r.ok) {
+    console.warn('[vision gemini]', model, r.status, (await r.text().catch(() => '')).slice(0, 160));
+    return null;
+  }
   const j: any = await r.json().catch(() => ({}));
   const texto = String(j?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') || '').trim();
-  if (!texto) return null;
+  if (!texto) {
+    console.warn('[vision gemini]', model, 'contestó sin texto', String(j?.promptFeedback?.blockReason || j?.candidates?.[0]?.finishReason || '').slice(0, 60));
+    return null;
+  }
   return { texto: texto.slice(0, 2200), via: `gemini:${model}` };
 }
 
-export async function verImagen(imagen: string, prompt?: string): Promise<Vista> {
+/**
+ * `via` es `ninguno` si no hay ningún ojo configurado, `tiempo` si el cliente ya no esperaba, y
+ * `error` si los que había fallaron. En los tres casos `texto` es `NO_PUDE_VER`.
+ */
+export function vistaFallida(v: Vista): boolean {
+  return v.via === 'ninguno' || v.via === 'error' || v.via === 'tiempo';
+}
+
+export async function verImagen(imagen: string, prompt?: string, opts: { presupuesto?: Presupuesto } = {}): Promise<Vista> {
   const p = prompt || 'Describe solo lo visible: personas, gestos, objetos, texto y números. No inventes.';
-  try {
-    const ojo = await verConOjo(imagen, p);
-    if (ojo) return ojo;
-  } catch (e: any) {
-    /* reserva */
+  const reloj = opts.presupuesto || presupuesto(PRESUPUESTO_SIN_APURO_MS);
+  const ojoListo = !!(clave('ojo_url') && clave('ojo_clave'));
+  const geminiListo = !!clave('gemini');
+  if (!ojoListo && !geminiListo) {
+    console.warn('[vision] sin ojo: falta ULTRON_OJO_URL+ULTRON_OJO_CLAVE o GEMINI_API_KEY');
+    return { texto: NO_PUDE_VER, via: 'ninguno' };
   }
-  try {
-    const gem = await verConGemini(imagen, p);
-    if (gem) return gem;
-  } catch (e: any) {
-    return {
-      texto: `VISION: falló (${String(e?.message || e).slice(0, 120)}). No vi la imagen.`,
-      via: 'error',
-    };
+  const intentos: [string, boolean, typeof verConOjo][] = [
+    ['ojo', ojoListo, verConOjo],
+    ['gemini', geminiListo, verConGemini],
+  ];
+  for (const [nombre, listo, ver] of intentos) {
+    if (!listo) continue;
+    if (!reloj.alcanza()) {
+      console.warn(`[vision] sin tiempo para ${nombre}: el cliente ya no espera esta respuesta`);
+      return { texto: NO_PUDE_VER, via: 'tiempo' };
+    }
+    try {
+      const vista = await ver(imagen, p, reloj);
+      if (vista) return vista;
+    } catch (e: any) {
+      console.warn(`[vision] ${nombre} falló:`, String(e?.message || e).slice(0, 120));
+    }
   }
-  const falta = [];
-  if (!clave('ojo_url') || !clave('ojo_clave')) falta.push('ULTRON_OJO_URL+CLAVE');
-  if (!clave('gemini')) falta.push('GEMINI_API_KEY');
-  return {
-    texto: `VISION: no pude leer la imagen. Falta ${falta.join(' o ') || 'el nodo de visión'}.`,
-    via: 'ninguno',
-  };
+  return { texto: NO_PUDE_VER, via: reloj.alcanza() ? 'error' : 'tiempo' };
 }
 
 export async function capturaPagina(url: string): Promise<{ url: string; texto: string; titulo?: string; foto?: Buffer }> {

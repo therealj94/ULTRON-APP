@@ -46,6 +46,81 @@ const TTS_LOCAL_URL = (process.env.ULTRON_TTS_URL || process.env.CHATTERBOX_URL 
 const TTS_LOCAL_CLAVE = process.env.ULTRON_TTS_CLAVE || '';
 
 const DIR_CANTO = path.join(process.cwd(), 'data', 'canto');
+
+/* ---------------- Tope del canto generado ---------------- */
+
+/**
+ * Cuántas oraciones por tema y canciones de letra libre se guardan en disco.
+ *
+ * Cada texto distinto dejaba su mp3 en `data/canto` y nadie borraba nada: «ora por mi mamá», «ora
+ * por mi mamá que está enferma», «ora por la reunión del martes»... un archivo por pedido, para
+ * siempre, en un disco que en Render es pequeño. Se quedan los más recientes (leer uno cuenta
+ * como usarlo) y se van los demás.
+ */
+export const MAX_CANTO_GENERADO = 80;
+
+/**
+ * Solo se poda lo que genera este módulo: `<hash>.mp3` y `oracion-<hash>.mp3`. Cualquier otro
+ * archivo de la carpeta —un clip del repertorio que alguien deje ahí a mano, un `.gitkeep`— no
+ * encaja en el patrón y no se toca nunca.
+ */
+const CANTO_GENERADO = /^(oracion-)?[0-9a-f]{16}\.mp3$/;
+
+export function podarCanto(dir = DIR_CANTO, max = MAX_CANTO_GENERADO): string[] {
+  let nombres: string[];
+  try {
+    nombres = fs.readdirSync(dir).filter((n) => CANTO_GENERADO.test(n));
+  } catch {
+    return [];
+  }
+  if (nombres.length <= max) return [];
+  const conFecha = nombres
+    .map((n) => {
+      try {
+        return { n, t: fs.statSync(path.join(dir, n)).mtimeMs };
+      } catch {
+        return { n, t: 0 };
+      }
+    })
+    .sort((a, b) => b.t - a.t);
+  const borrados: string[] = [];
+  for (const { n } of conFecha.slice(max)) {
+    try {
+      fs.unlinkSync(path.join(dir, n));
+      borrados.push(n);
+    } catch {
+      /* ya no estaba, o disco de solo lectura */
+    }
+  }
+  return borrados;
+}
+
+/** Leer un clip guardado lo marca como usado, para que la poda se lleve primero lo que nadie pide. */
+function leerCanto(ruta: string): Buffer | null {
+  try {
+    if (!fs.existsSync(ruta)) return null;
+    const audio = fs.readFileSync(ruta);
+    try {
+      const ahora = new Date();
+      fs.utimesSync(ruta, ahora, ahora);
+    } catch {
+      /* disco de solo lectura: se sirve igual */
+    }
+    return audio;
+  } catch {
+    return null;
+  }
+}
+
+function guardarCanto(ruta: string, audio: Buffer) {
+  try {
+    fs.mkdirSync(path.dirname(ruta), { recursive: true });
+    fs.writeFileSync(ruta, audio);
+    podarCanto(path.dirname(ruta));
+  } catch {
+    /* disco de solo lectura: se sirve desde memoria */
+  }
+}
 const DIR_PUBLIC = fs.existsSync(path.join(process.cwd(), 'dist', 'voz'))
   ? path.join(process.cwd(), 'dist', 'voz')
   : path.join(process.cwd(), 'public', 'voz');
@@ -310,19 +385,11 @@ export async function orar(opts: { tema?: string } = {}): Promise<{ audio: Buffe
   if (tema.length >= 3) {
     const hash = crypto.createHash('sha1').update(`oracion|${tema.toLowerCase()}`).digest('hex').slice(0, 16);
     const ruta = path.join(DIR_CANTO, `oracion-${hash}.mp3`);
-    try {
-      if (fs.existsSync(ruta)) return { audio: fs.readFileSync(ruta), contentType: 'audio/mpeg', motor: 'clip' };
-    } catch {
-      /* */
-    }
+    const guardado = leerCanto(ruta);
+    if (guardado) return { audio: guardado, contentType: 'audio/mpeg', motor: 'clip' };
     const out = await hablar({ texto: oracionPorTema(tema), emocion: 'oracion', sinCache: true });
     if (!out) return null;
-    try {
-      fs.mkdirSync(DIR_CANTO, { recursive: true });
-      fs.writeFileSync(ruta, out.audio);
-    } catch {
-      /* */
-    }
+    guardarCanto(ruta, out.audio);
     return { audio: out.audio, contentType: out.contentType, motor: out.motor };
   }
   const grabado = clipGrabado('oracion');
@@ -396,19 +463,11 @@ export async function cantar(opts: { id?: string; letra?: string; titulo?: strin
   if (letra.length < 8) return null;
   const hash = crypto.createHash('sha1').update(letra).digest('hex').slice(0, 16);
   const ruta = path.join(DIR_CANTO, `${hash}.mp3`);
-  try {
-    if (fs.existsSync(ruta)) return { audio: fs.readFileSync(ruta), contentType: 'audio/mpeg', motor: 'clip', titulo: opts.titulo || 'canción' };
-  } catch {
-    /* */
-  }
+  const guardado = leerCanto(ruta);
+  if (guardado) return { audio: guardado, contentType: 'audio/mpeg', motor: 'clip', titulo: opts.titulo || 'canción' };
   const out = await hablar({ texto: `[singing] ${letra}`, performance: 'sing', emocion: 'canto', sinCache: true });
   if (!out) return null;
-  try {
-    fs.mkdirSync(DIR_CANTO, { recursive: true });
-    fs.writeFileSync(ruta, out.audio);
-  } catch {
-    /* */
-  }
+  guardarCanto(ruta, out.audio);
   return { audio: out.audio, contentType: out.contentType, motor: out.motor, titulo: opts.titulo || 'canción' };
 }
 

@@ -5,11 +5,14 @@
  * lanza), AU-RA no se puede quedar sin cara ni cerrarse: se avisa con `onFallo` y DeskScreen vuelve a
  * la cara de siempre (UltronFace). Por eso CaraSkia se carga con require dentro de un try y no con un
  * import arriba: un import que falla tumba el módulo entero, y con él la pantalla.
+ *
+ * Un error dentro del worklet de dibujo (hilo de la interfaz) no pasa por React y el Limite no lo ve:
+ * CaraSkia lo atrapa allí y lo avisa con `onFalloDibujo`, que termina en el mismo `onFallo`.
  */
 import { Component, useEffect, type ReactNode } from 'react';
 import type { CaraSkiaProps } from './CaraSkia';
 
-type Props = CaraSkiaProps & { onFallo: (motivo: string) => void };
+type Props = Omit<CaraSkiaProps, 'onFalloDibujo'> & { onFallo: (motivo: string) => void };
 
 let modulo: typeof import('./CaraSkia') | null = null;
 let errorCarga: string | null = null;
@@ -46,7 +49,8 @@ export function CaraSegura({ onFallo, ...props }: Props) {
   const Cara = modulo.CaraSkia;
   return (
     <Limite onFallo={onFallo}>
-      <Cara {...props} />
+      {/* Lo que se rompe en el hilo de la interfaz (el worklet del dibujo) no llega al Limite: llega por aquí. */}
+      <Cara {...props} onFalloDibujo={onFallo} />
     </Limite>
   );
 }

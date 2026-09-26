@@ -5,8 +5,27 @@
 
 import { clave } from './boveda';
 import { elevenTranscribe } from '../server/desk';
+import { presupuesto, type Presupuesto } from './presupuesto';
 
 export type Oido = { texto: string; via: string; detalle: string };
+
+/**
+ * Lo que contesta un proveedor. `null`: no está configurado o se cayó, que pruebe el siguiente.
+ * Un `texto` vacío es que contestó bien y no había voz: eso ES una respuesta. Antes se trataba
+ * igual que un fallo y el mismo silencio se le mandaba a Scribe v2, a Scribe v1 y a Gemini — tres
+ * facturas por un bolsillo que rozó el micrófono.
+ */
+export type Escucha = { texto: string; via: string } | null;
+
+export type ProveedorOido = {
+  nombre: string;
+  /** ¿Tiene lo que necesita para intentarlo? Sin esto no se cuenta como intento. */
+  listo: () => boolean;
+  oir: (audio: Buffer, mime: string, language: string, reloj: Presupuesto) => Promise<Escucha>;
+};
+
+/** Sin cliente esperando (Telegram): lo que sumaban los topes de siempre de cada proveedor. */
+const PRESUPUESTO_SIN_APURO_MS = 72_000;
 
 const MAX_BYTES = 8 * 1024 * 1024;
 
@@ -28,7 +47,7 @@ export function mimeDeAudio(nombre: string, mime: string, vozTelegram = false): 
   return vozTelegram ? 'audio/ogg' : 'audio/mpeg';
 }
 
-async function transcribirGemini(audio: Buffer, mime: string, language: string): Promise<Oido | null> {
+async function transcribirGemini(audio: Buffer, mime: string, language: string, reloj: Presupuesto): Promise<Escucha> {
   const key = clave('gemini');
   if (!key) return null;
   const model = process.env.GEMINI_STT_MODEL || 'gemini-2.0-flash';
@@ -50,13 +69,18 @@ async function transcribirGemini(audio: Buffer, mime: string, language: string):
           },
         ],
       }),
-      signal: AbortSignal.timeout(20000),
+      signal: reloj.senal(20000),
     }
   );
+  // Una cuota agotada (429) o una llave vencida no son silencio: son un fallo, y se registran.
+  if (!r.ok) {
+    console.warn('[stt gemini]', model, r.status, (await r.text().catch(() => '')).slice(0, 160));
+    return null;
+  }
   const j: any = await r.json().catch(() => ({}));
   const texto = String(j?.candidates?.[0]?.content?.parts?.map((p: any) => p.text).join('') || '').trim();
-  if (!texto || /^VACIO$/i.test(texto)) return null;
-  return { texto: texto.slice(0, 4000), via: `gemini:${model}`, detalle: `Oí ${texto.length} caracteres.` };
+  if (!texto || /^VACIO$/i.test(texto)) return { texto: '', via: `gemini:${model}` };
+  return { texto: texto.slice(0, 4000), via: `gemini:${model}` };
 }
 
 /**
@@ -64,7 +88,7 @@ async function transcribirGemini(audio: Buffer, mime: string, language: string):
  * (faster-whisper-server, speaches, whisper.cpp server). Sin costo por minuto, latencia baja.
  * Se usa primero si ULTRON_STT_URL está definido; si falla, Scribe.
  */
-async function transcribirLocal(audio: Buffer, mime: string, language: string): Promise<Oido | null> {
+async function transcribirLocal(audio: Buffer, mime: string, language: string, reloj: Presupuesto): Promise<Escucha> {
   const base = (process.env.ULTRON_STT_URL || '').replace(/\/$/, '');
   if (!base) return null;
   const ext = /wav/.test(mime) ? 'wav' : /webm/.test(mime) ? 'webm' : /ogg/.test(mime) ? 'ogg' : /mp3|mpeg/.test(mime) ? 'mp3' : 'm4a';
@@ -75,26 +99,72 @@ async function transcribirLocal(audio: Buffer, mime: string, language: string): 
   form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `voz.${ext}`);
   const headers: Record<string, string> = {};
   if (process.env.ULTRON_STT_CLAVE) headers.Authorization = `Bearer ${process.env.ULTRON_STT_CLAVE}`;
-  try {
-    const r = await fetch(`${base}/v1/audio/transcriptions`, { method: 'POST', headers, body: form, signal: AbortSignal.timeout(12000) });
-    if (!r.ok) {
-      console.warn('[stt local]', r.status, (await r.text()).slice(0, 120));
-      return null;
-    }
-    const j: any = await r.json().catch(() => ({}));
-    const texto = String(j.text || '').trim();
-    if (texto.length < 2) return null;
-    return { texto: texto.slice(0, 4000), via: 'stt-local', detalle: `Oí ${texto.length} caracteres.` };
-  } catch (e: any) {
-    console.warn('[stt local]', String(e?.message || e).slice(0, 120));
+  const r = await fetch(`${base}/v1/audio/transcriptions`, { method: 'POST', headers, body: form, signal: reloj.senal(12000) });
+  if (!r.ok) {
+    console.warn('[stt local]', r.status, (await r.text()).slice(0, 120));
     return null;
   }
+  const j: any = await r.json().catch(() => ({}));
+  const texto = String(j.text || '').trim();
+  if (texto.length < 2) return { texto: '', via: 'stt-local' };
+  return { texto: texto.slice(0, 4000), via: 'stt-local' };
+}
+
+function llaveEleven() {
+  return clave('elevenlabs') || process.env.ELEVENLABS_API_KEY || '';
+}
+
+async function transcribirEleven(audio: Buffer, mime: string, language: string, reloj: Presupuesto): Promise<Escucha> {
+  const out = await elevenTranscribe({ apiKey: llaveEleven(), audio, mime, language, presupuesto: reloj });
+  if (out.model === 'error' || out.model === 'sin-clave') return null;
+  return { texto: out.text.slice(0, 4000), via: `elevenlabs:${out.model}` };
+}
+
+/** El orden de siempre: el nodo propio (gratis), Scribe, y Gemini de reserva. */
+export const PROVEEDORES_OIDO: ProveedorOido[] = [
+  { nombre: 'stt-local', listo: () => !!process.env.ULTRON_STT_URL, oir: transcribirLocal },
+  { nombre: 'elevenlabs', listo: () => !!llaveEleven(), oir: transcribirEleven },
+  { nombre: 'gemini', listo: () => !!clave('gemini'), oir: transcribirGemini },
+];
+
+/**
+ * Recorre los proveedores hasta que uno conteste — con texto o con silencio — o se acabe el tiempo.
+ * `motivo` dice por qué terminó sin respuesta, para que quien llama elija la frase.
+ */
+export async function oirEnCadena(
+  proveedores: ProveedorOido[],
+  audio: Buffer,
+  mime: string,
+  language: string,
+  reloj: Presupuesto
+): Promise<{ escucha: Escucha; intentados: string[]; motivo: 'respondio' | 'tiempo' | 'fallo' | 'ninguno' }> {
+  const intentados: string[] = [];
+  for (const p of proveedores) {
+    if (!p.listo()) continue;
+    if (!reloj.alcanza()) {
+      console.warn(`[oido] sin tiempo para ${p.nombre}: el cliente ya no espera (probados: ${intentados.join(', ') || 'ninguno'})`);
+      return { escucha: null, intentados, motivo: 'tiempo' };
+    }
+    intentados.push(p.nombre);
+    try {
+      const escucha = await p.oir(audio, mime, language, reloj);
+      if (escucha) return { escucha, intentados, motivo: 'respondio' };
+    } catch (e: any) {
+      console.warn(`[oido] ${p.nombre} falló:`, String(e?.message || e).slice(0, 120));
+    }
+  }
+  if (!intentados.length) return { escucha: null, intentados, motivo: 'ninguno' };
+  return { escucha: null, intentados, motivo: reloj.alcanza() ? 'fallo' : 'tiempo' };
 }
 
 export async function transcribirAudio(opts: {
   audio: Buffer;
   mime?: string;
   language?: string;
+  /** Lo que el cliente está dispuesto a esperar. Sin él, los topes de siempre (Telegram no tiene apuro). */
+  presupuesto?: Presupuesto;
+  /** Pruebas: otra cadena de proveedores. */
+  proveedores?: ProveedorOido[];
 }): Promise<Oido> {
   const buf = opts.audio?.length ? opts.audio : Buffer.alloc(0);
   const mime = String(opts.mime || 'audio/ogg').split(';')[0].trim() || 'audio/ogg';
@@ -105,33 +175,22 @@ export async function transcribirAudio(opts: {
   if (buf.length > MAX_BYTES) {
     return { texto: '', via: 'grande', detalle: `Audio de ${buf.length} bytes. Máximo 8 MB. No lo oí.` };
   }
-  const local = await transcribirLocal(buf, mime, language);
-  if (local) return local;
-  const el = clave('elevenlabs') || process.env.ELEVENLABS_API_KEY || '';
-  if (el) {
-    const out = await elevenTranscribe({ apiKey: el, audio: buf, mime, language });
-    if (out.text) {
-      return { texto: out.text.slice(0, 4000), via: `elevenlabs:${out.model}`, detalle: `Oí ${out.text.length} caracteres.` };
-    }
+  const reloj = opts.presupuesto || presupuesto(PRESUPUESTO_SIN_APURO_MS);
+  const { escucha, intentados, motivo } = await oirEnCadena(opts.proveedores || PROVEEDORES_OIDO, buf, mime, language, reloj);
+  if (escucha?.texto) {
+    return { texto: escucha.texto, via: escucha.via, detalle: `Oí ${escucha.texto.length} caracteres.` };
   }
-  try {
-    const gem = await transcribirGemini(buf, mime, language);
-    if (gem) return gem;
-  } catch (e: any) {
-    return {
-      texto: '',
-      via: 'error',
-      detalle: `Oído falló (${String(e?.message || e).slice(0, 120)}). Escríbeme.`,
-    };
+  if (escucha) {
+    return { texto: '', via: escucha.via, detalle: 'Oí el archivo pero no había voz. Escríbeme o vuelve a hablar.' };
   }
-  const falta = [];
-  if (!el) falta.push('ELEVENLABS_API_KEY');
-  if (!clave('gemini')) falta.push('GEMINI_API_KEY');
-  return {
-    texto: '',
-    via: el ? 'error' : 'ninguno',
-    detalle: el
-      ? 'Oí el archivo pero no saqué texto. Escríbeme.'
-      : `No pude oír el audio. Falta ${falta.join(' o ')}. Escríbeme.`,
-  };
+  if (motivo === 'tiempo') {
+    return { texto: '', via: 'tiempo', detalle: 'Tardé demasiado en oírte. Vuelve a intentarlo o escríbeme.' };
+  }
+  if (motivo === 'ninguno') {
+    // Los nombres de las variables van al registro, no a quien habla: a él no le sirven de nada.
+    console.warn('[oido] sin proveedor de oído: falta ULTRON_STT_URL, ELEVENLABS_API_KEY o GEMINI_API_KEY');
+    return { texto: '', via: 'ninguno', detalle: 'Ahora mismo no puedo oír audios. Escríbeme.' };
+  }
+  console.warn(`[oido] ningún proveedor contestó (probados: ${intentados.join(', ')})`);
+  return { texto: '', via: 'error', detalle: 'No pude oír el audio ahora mismo. Escríbeme o vuelve a intentarlo.' };
 }

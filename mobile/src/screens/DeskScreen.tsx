@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { miga, reportarEstado, cierreLimpio } from '../lib/reporte';
+import { miga, reportarEstado } from '../lib/reporte';
 import { Alert, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
@@ -34,14 +34,13 @@ import {
 } from '../lib/speech';
 import {
   addLongFact,
-  appendChatLog,
+  borrarRastrosViejos,
   clearLongMemory,
   loadConocerProgress,
   loadLongMemory,
   loadSettings,
   saveConocerProgress,
   saveSettings,
-  upsertPersonFact,
   type AppSettings,
   type SttEngine,
 } from '../lib/storage';
@@ -93,10 +92,8 @@ export function DeskScreen({ user, onLogout }: Props) {
   // Diagnóstico de campo: si la app muere aquí, el servidor sabrá hasta dónde llegó.
   useEffect(() => {
     miga('DeskScreen montado');
-    const t = setTimeout(() => {
-      reportarEstado('mesa estable');
-      cierreLimpio();
-    }, 8000);
+    // Solo avisa que llegó bien; si luego muere en primer plano, se reporta al reabrir (ver reporte.ts).
+    const t = setTimeout(() => reportarEstado('mesa estable'), 8000);
     return () => clearTimeout(t);
   }, []);
 
@@ -248,7 +245,6 @@ export function DeskScreen({ user, onLogout }: Props) {
   }, [bubble, bubbleOp]);
 
   const logUltron = useCallback((text: string) => {
-    void appendChatLog({ role: 'ultron', text });
     historial.current = [...historial.current, { rol: 'ultron' as const, texto: text }].slice(-12);
   }, []);
 
@@ -303,6 +299,26 @@ export function DeskScreen({ user, onLogout }: Props) {
     },
     [onAudio, say, settle, showBubble]
   );
+
+  /**
+   * «Olvidar» (menú o voz): borra la memoria de largo plazo de quien está en la mesa, no la de los
+   * demás. Es irreversible, así que antes se pregunta.
+   */
+  const confirmarOlvido = useCallback(() => {
+    Alert.alert('¿Olvidar lo que recuerdo de ti?', `Se borran los hechos que guardé en este teléfono para ${user.name}. No se puede deshacer.`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Olvidar',
+        style: 'destructive',
+        onPress: () =>
+          void (async () => {
+            await clearLongMemory(user);
+            longMemory.current = [];
+            await say('Memoria de largo plazo borrada.', 'CONCERNED', { emocion: 'preocupado' });
+          })(),
+      },
+    ]);
+  }, [say, user]);
 
   /** AU-RA canta: POST /api/cantar. Cara SING, mic pausado, sin rellenos. */
   const sing = useCallback(
@@ -591,7 +607,6 @@ export function DeskScreen({ user, onLogout }: Props) {
     async (cmd: string) => {
       const ci = conocerIdxRef.current;
       const qq = CONOCER_QUESTIONS[ci];
-      await upsertPersonFact({ nombre: user.name, correo: user.correo, rol: user.role, key: qq.memoryKey, value: cmd });
       void rememberFact(`${user.name} · ${qq.memoryKey}: ${cmd}`, user.name);
       const progress = await loadConocerProgress(user.correo);
       const answeredIds = Array.from(new Set([...progress.answeredIds, qq.id]));
@@ -626,7 +641,6 @@ export function DeskScreen({ user, onLogout }: Props) {
       handling.current = true;
       lastUserAt.current = Date.now();
       await stopSpeaking();
-      void appendChatLog({ role: 'user', text: cmd });
       historial.current = [...historial.current, { rol: 'usuario' as const, texto: cmd }].slice(-12);
 
       const enConocer = modeRef.current === 'CONOCER' && conocerIdxRef.current >= 0 && conocerIdxRef.current < CONOCER_QUESTIONS.length;
@@ -675,15 +689,14 @@ export function DeskScreen({ user, onLogout }: Props) {
             const line = `${user.name}: ${intent.hecho}`;
             if (longMemory.current.includes(line)) return void (await say('Eso ya lo tenía en memoria.', 'HAPPY'));
             const remoto = rememberFact(line, user.name);
-            longMemory.current = (await addLongFact(line)).map((f) => f.hecho);
-            await upsertPersonFact({ nombre: user.name, correo: user.correo, rol: user.role, key: `nota_${Date.now().toString(36)}`, value: intent.hecho });
+            longMemory.current = (await addLongFact(user, line)).map((f) => f.hecho);
             const ok = await remoto;
             return void (await say(ok ? 'Anotado. Lo recuerdo.' : 'Anotado aquí en la mesa; al servidor se lo paso cuando haya sesión.', 'HAPPY', { emocion: 'feliz' }));
           }
           case 'olvidar':
-            await clearLongMemory();
-            longMemory.current = [];
-            return void (await say('Memoria de largo plazo borrada.', 'CONCERNED', { emocion: 'preocupado' }));
+            // Borrar es irreversible y la voz se puede oír mal: se confirma en la pantalla.
+            confirmarOlvido();
+            return void (await say('Para borrar lo que recuerdo de ti, confírmalo en la pantalla.', 'CONCERNED', { emocion: 'preocupado' }));
           case 'que_recuerdas': {
             const mine = longMemory.current.filter((f) => f.startsWith(user.name)).slice(0, 4).map((f) => f.replace(/^[^:]+:\s*/, ''));
             if (mine.length) return void (await say(`Recuerdo: ${mine.join('. ')}.`, 'HAPPY', { emocion: 'feliz' }));
@@ -753,7 +766,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [answerConocer, askBrain, camPerm?.granted, canciones, exitConocer, fireBlaster, fireSaber, hacerTarea, idleStatus, onLogout, playClip, pray, requestCam, runGag, say, settle, sing, startConocer, user, whatDoYouSee]
+    [answerConocer, askBrain, camPerm?.granted, canciones, confirmarOlvido, exitConocer, fireBlaster, fireSaber, hacerTarea, idleStatus, onLogout, playClip, pray, requestCam, runGag, say, settle, sing, startConocer, user, whatDoYouSee]
   );
 
   // ---------- Tacto ----------
@@ -1005,7 +1018,9 @@ export function DeskScreen({ user, onLogout }: Props) {
       setSfxEnabled(s.sfx);
       proactiveRef.current = s.proactive;
       if (s.sttEngine !== currentSttEngine()) await setSttEngine(s.sttEngine);
-      longMemory.current = (await loadLongMemory()).map((f) => f.hecho);
+      // Solo la memoria de quien entró: es la que viaja al cerebro en cada turno.
+      longMemory.current = (await loadLongMemory(user)).map((f) => f.hecho);
+      void borrarRastrosViejos();
       void preloadSfx();
       void healthCheck().then((h) => setOnline(!!h.ok)).catch(() => setOnline(false));
       void listCanciones().then((c) => alive && setCanciones(c));
@@ -1232,11 +1247,6 @@ export function DeskScreen({ user, onLogout }: Props) {
     setSettings((p) => ({ ...p, sfx: next }));
     await saveSettings({ sfx: next });
     if (next) playSfx('tap');
-  };
-  const forgetAll = async () => {
-    await clearLongMemory();
-    longMemory.current = [];
-    await say('Memoria de largo plazo borrada.', 'CONCERNED', { emocion: 'preocupado' });
   };
   const probarVoz = () => {
     setMenuOpen(false);
@@ -1465,7 +1475,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         onSetSttEngine={(e) => void changeStt(e)}
         onToggleProactive={() => void toggleProactive()}
         onToggleSfx={() => void toggleSfx()}
-        onForget={() => void forgetAll()}
+        onForget={confirmarOlvido}
         onSearch={(q) => {
           setMenuOpen(false);
           void handleCommand(`busca ${q}`);

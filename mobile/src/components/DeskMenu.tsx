@@ -78,7 +78,13 @@ type CatState = { status: 'idle' | 'loading' | 'ok' | 'fail'; payload: Capacidad
 // (DeskScreen re-renderiza a menudo), así que React desmontaba y montaba cada chip y el toque que
 // empezaba en uno se perdía antes de soltar.
 const Chip = ({ on, label, sub, onPress, tone }: { on?: boolean; label: string; sub?: string; onPress: () => void; tone?: 'ex' }) => (
-  <Pressable onPress={onPress} style={[styles.chip, on && styles.chipOn, tone === 'ex' && styles.chipEx]}>
+  <Pressable
+    onPress={onPress}
+    style={[styles.chip, on && styles.chipOn, tone === 'ex' && styles.chipEx]}
+    accessibilityRole="button"
+    accessibilityLabel={sub ? `${label}, ${sub}` : label}
+    accessibilityState={on === undefined ? undefined : { selected: on }}
+  >
     <Text style={[styles.chipText, on && styles.chipTextOn, tone === 'ex' && styles.chipExText]} numberOfLines={2}>
       {tone === 'ex' ? `«${label}»` : label}
     </Text>
@@ -170,7 +176,7 @@ export function DeskMenu(p: Props) {
               <Text style={styles.kicker}>AU-RA FP</Text>
               <Text style={styles.user}>{p.userName}</Text>
             </View>
-            <Pressable onPress={p.onClose} style={styles.close} hitSlop={10}>
+            <Pressable onPress={p.onClose} style={styles.close} hitSlop={10} accessibilityRole="button" accessibilityLabel="Cerrar el menú">
               <Text style={styles.closeText}>✕</Text>
             </Pressable>
           </View>
@@ -185,7 +191,7 @@ export function DeskMenu(p: Props) {
               <Text style={styles.label}>Escuchar</Text>
               <Text style={styles.sub}>{p.micMuted ? 'silenciado' : p.listening ? 'oyendo · sin palabra clave' : 'conectando…'}</Text>
             </View>
-            <Switch value={!p.micMuted} onValueChange={p.onToggleMic} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={!p.micMuted} onValueChange={p.onToggleMic} accessibilityLabel="Escuchar" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
@@ -194,12 +200,18 @@ export function DeskMenu(p: Props) {
                 {p.visionOn ? (p.objects.length ? p.objects.join(' · ') : 'cámara activa') : 'cámara apagada'}
               </Text>
             </View>
-            <Switch value={p.visionOn} onValueChange={p.onToggleVision} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={p.visionOn} onValueChange={p.onToggleVision} accessibilityLabel="Ver con la cámara" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
 
           {/* ---------------- catálogo ---------------- */}
           <View onLayout={(e) => (catY.current = e.nativeEvent.layout.y)}>
-            <Pressable onPress={() => setCatOpen((o) => !o)} style={styles.catHead}>
+            <Pressable
+              onPress={() => setCatOpen((o) => !o)}
+              style={styles.catHead}
+              accessibilityRole="button"
+              accessibilityLabel="Qué puede hacer AU-RA"
+              accessibilityState={{ expanded: catOpen }}
+            >
               <View style={{ flex: 1 }}>
                 <Text style={styles.section}>Qué puede hacer AU-RA</Text>
                 <Text style={styles.sub}>
@@ -222,7 +234,7 @@ export function DeskMenu(p: Props) {
                 <Text style={styles.sub}>
                   {cat.payload?.voz?.motor || 'ElevenLabs v3 (diálogo expresivo)'} · {cat.payload?.voz?.timbre || 'español latino, cálida, cercana'}
                 </Text>
-                <Pressable onPress={p.onProbarVoz} style={styles.voiceBtn}>
+                <Pressable onPress={p.onProbarVoz} style={styles.voiceBtn} accessibilityRole="button">
                   <Text style={styles.voiceBtnText}>Probar voz</Text>
                 </Pressable>
               </View>
@@ -317,7 +329,7 @@ export function DeskMenu(p: Props) {
           </View>
 
           <Text style={styles.section}>Orar</Text>
-          <Pressable onPress={p.onOrar} style={styles.orarBtn}>
+          <Pressable onPress={p.onOrar} style={styles.orarBtn} accessibilityRole="button" accessibilityLabel="Orar por el día">
             <Text style={styles.orarText}>Orar por el día</Text>
             <Text style={styles.orarSub}>La oración diaria con su voz (~3 min). También: «ora», «oremos», «bendice el día».</Text>
           </Pressable>
@@ -349,7 +361,7 @@ export function DeskMenu(p: Props) {
               onSubmitEditing={p.onSendDraft}
               returnKeyType="send"
             />
-            <Pressable onPress={p.onSendDraft} style={styles.send}>
+            <Pressable onPress={p.onSendDraft} style={styles.send} accessibilityRole="button" accessibilityLabel="Enviar la orden">
               <Text style={styles.sendText}>OK</Text>
             </Pressable>
           </View>
@@ -385,26 +397,26 @@ export function DeskMenu(p: Props) {
               <Text style={styles.label}>Comenta lo que ve</Text>
               <Text style={styles.sub}>Observaciones espontáneas de la cámara</Text>
             </View>
-            <Switch value={p.settings.proactive} onValueChange={p.onToggleProactive} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={p.settings.proactive} onValueChange={p.onToggleProactive} accessibilityLabel="Comenta lo que ve" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
               <Text style={styles.label}>Efectos de sonido</Text>
               <Text style={styles.sub}>Toques, blaster, sable</Text>
             </View>
-            <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} accessibilityLabel="Efectos de sonido" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
               <Text style={styles.label}>Memoria de largo plazo</Text>
               <Text style={styles.sub}>{p.memoryCount ? `${p.memoryCount} hechos guardados` : 'nada guardado aún'}</Text>
             </View>
-            <Pressable onPress={p.onForget} style={styles.smallBtn}>
+            <Pressable onPress={p.onForget} style={styles.smallBtn} accessibilityRole="button" accessibilityLabel="Olvidar la memoria de largo plazo">
               <Text style={styles.smallBtnText}>Olvidar</Text>
             </Pressable>
           </View>
 
-          <Pressable onPress={p.onLogout} style={styles.logout}>
+          <Pressable onPress={p.onLogout} style={styles.logout} accessibilityRole="button">
             <Text style={styles.logoutText}>Cerrar sesión</Text>
           </Pressable>
           <Text style={styles.version}>
@@ -430,7 +442,7 @@ const styles = StyleSheet.create({
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   kicker: { color: T.principalTexto, letterSpacing: 1.5, fontWeight: '700', fontSize: 12 },
   user: { color: T.texto, fontSize: 22, fontWeight: '700', marginTop: 2 },
-  close: { width: 36, height: 36, borderRadius: 18, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center' },
+  close: { width: 44, height: 44, borderRadius: 22, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center' },
   closeText: { color: T.texto2, fontSize: 15 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   dot: { width: 8, height: 8, borderRadius: 4 },
@@ -440,7 +452,8 @@ const styles = StyleSheet.create({
   sub: { color: T.texto3, fontSize: 12, marginTop: 2, maxWidth: 300 },
   section: { color: T.texto2, fontSize: 13, fontWeight: '700', marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999, backgroundColor: T.panel, borderWidth: 1, borderColor: T.borde, alignItems: 'center', maxWidth: 260 },
+  // minHeight 44: el mínimo cómodo para un dedo (antes quedaban en ~36 px).
+  chip: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999, backgroundColor: T.panel, borderWidth: 1, borderColor: T.borde, alignItems: 'center', maxWidth: 260 },
   chipOn: { borderColor: T.activo, backgroundColor: T.activoFondo },
   chipEx: { borderColor: T.borde, backgroundColor: T.principalFondo, paddingVertical: 7 },
   chipText: { color: T.texto, fontSize: 13, fontWeight: '600' },
@@ -449,10 +462,10 @@ const styles = StyleSheet.create({
   chipTextOn: { color: T.activoTexto },
   composer: { flexDirection: 'row', gap: 8 },
   input: { flex: 1, borderWidth: 1, borderColor: T.borde, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10, color: T.texto, fontSize: 15, backgroundColor: T.panel },
-  send: { backgroundColor: T.principal, borderRadius: 999, paddingHorizontal: 18, justifyContent: 'center' },
+  send: { minHeight: 44, minWidth: 44, backgroundColor: T.principal, borderRadius: 999, paddingHorizontal: 18, justifyContent: 'center', alignItems: 'center' },
   sendText: { color: T.sobrePrincipal, fontWeight: '700' },
   hint: { color: T.texto3, fontSize: 12, lineHeight: 17, marginTop: 4 },
-  smallBtn: { borderRadius: 999, paddingHorizontal: 14, paddingVertical: 7, backgroundColor: T.avisoFondo },
+  smallBtn: { minHeight: 44, justifyContent: 'center', borderRadius: 999, paddingHorizontal: 16, paddingVertical: 7, backgroundColor: T.avisoFondo },
   smallBtnText: { color: T.avisoTexto, fontSize: 13, fontWeight: '600' },
   logout: { alignItems: 'center', paddingVertical: 12, marginTop: 6 },
   logoutText: { color: T.avisoTexto, fontSize: 14, fontWeight: '600' },
@@ -465,7 +478,7 @@ const styles = StyleSheet.create({
   chev: { color: T.principalTexto, fontSize: 16 },
   voiceBox: { borderRadius: 18, padding: 14, gap: 6, backgroundColor: T.panel },
   voiceName: { color: T.texto, fontSize: 14, fontWeight: '700' },
-  voiceBtn: { alignSelf: 'flex-start', backgroundColor: T.principal, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8, marginTop: 4 },
+  voiceBtn: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', backgroundColor: T.principal, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8, marginTop: 4 },
   voiceBtnText: { color: T.sobrePrincipal, fontWeight: '700', fontSize: 13 },
   groupTitle: { color: T.texto2, fontSize: 13, fontWeight: '700', marginTop: 4 },
   card: { borderRadius: 18, padding: 14, gap: 6, backgroundColor: T.panel },

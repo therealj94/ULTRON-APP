@@ -17,7 +17,8 @@ import { extraerPedidoHerramienta, quitarLineaPedido, resolverPedido } from './l
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
-import { capturaPagina, verImagen } from './lib/vision';
+import { capturaPagina, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
+import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from './lib/presupuesto';
 import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio } from './lib/oido';
@@ -42,7 +43,7 @@ import { spotMetal } from './lib/mercado';
 import { turnoElectrum } from './server/electrum/turno';
 import { ES_ELECTRUM, ES_ULTRON, PAGINA_RAIZ, PLATAFORMA, rutaPermitida } from './lib/plataforma';
 import {
-  claveHilo,
+  claveHiloDe,
   fusionarHiloElectrum,
   hiloDe as hiloElectrumDe,
   hiloDelCliente,
@@ -289,7 +290,7 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
     // `req.telegramUserId`, que no existe, así que Dr Electrum nunca supo con quién hablaba y el
     // nivel salía siempre nulo. Fallaba hacia el lado seguro, pero fallaba.
     const id = identidadDe(req);
-    const clave = claveHilo(id?.persona.id || null, 'mesa');
+    const clave = claveHiloDe(id?.persona.id, req, 'mesa');
     const historial = fusionarHiloElectrum({
       servidor: hiloElectrumDe(clave),
       cliente: hiloDelCliente(req.body?.hilo),
@@ -321,8 +322,9 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
  * antes de que se siente otro.
  */
 app.delete('/api/electrum/hilo', exigirPlataforma('electrum'), limitar(30), (req, res) => {
+  // Solo el hilo de quien lo pide: el suyo si tiene sesión, el de su navegador si entró con la llave.
   const id = identidadDe(req);
-  olvidarHilo(claveHilo(id?.persona.id || null, 'mesa'));
+  olvidarHilo(claveHiloDe(id?.persona.id, req, 'mesa'));
   res.json({ ok: true, honesto: true });
 });
 
@@ -506,7 +508,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
 
   try {
     const id = identidadDe(req);
-    const clave = claveHilo(id?.persona.id || null, 'mesa');
+    const clave = claveHiloDe(id?.persona.id, req, 'mesa');
     const historial = fusionarHiloElectrum({
       servidor: hiloElectrumDe(clave),
       cliente: hiloDelCliente(req.body?.hilo),
@@ -625,8 +627,8 @@ app.post('/api/electrum/ver', exigirPlataforma('electrum'), limitar(12), async (
       'granos, vetas, cristales, alteración y tamaño aproximado; si es un paisaje, relieve, agua, vegetación, ' +
       'caminos y cortes; si es un documento o un mapa, copiá el texto y los números. No identifiques el mineral con certeza. No inventes.'
   );
-  if (vista.via === 'ninguno' || vista.via === 'error') {
-    console.warn(`[electrum] ver falló (${vista.via}): ${vista.texto.slice(0, 160)}`);
+  if (vistaFallida(vista)) {
+    console.warn(`[electrum] ver falló (${vista.via})`);
     return res.status(503).json({ error: 'No pude ver la foto ahora mismo.', honesto: true });
   }
   return res.json({ texto: vista.texto, via: vista.via, honesto: true });
@@ -994,6 +996,8 @@ app.post('/api/playwright/scrape', exigirSesion, limitar(10), async (req, res) =
 const VISION_MAX_CAR = 3_000_000;
 
 app.post('/api/vision/analyze', exigirMesaODesk, limitar(20), async (req, res) => {
+  // El teléfono corta a los 35 s (describeImage): lo que el ojo tarde de más no lo ve nadie.
+  const reloj = presupuesto(PRESUPUESTO_VISION_MS);
   const { mediaType, fileName, base64Data } = req.body || {};
   // El prompt libre es de quien tiene sesión; sin ella, cualquiera usaría la clave de visión como
   // servicio gratis con sus propias instrucciones. Sin sesión se admite uno corto (la APK pide
@@ -1015,17 +1019,26 @@ app.post('/api/vision/analyze', exigirMesaODesk, limitar(20), async (req, res) =
     if (!buf) return res.status(400).json({ error: 'PDF vacío. No lo leí.', honesto: true });
     const leido = extraerPdf(buf);
     const visiones: string[] = [];
+    let vistas = 0;
     for (const img of leido.imagenes.slice(0, leido.texto.length < 240 ? 3 : 1)) {
-      const vista = await verImagen(dataUrlDeImagen(img), prompt || 'Lee el documento. Copia texto y números. No inventes.');
+      // Las páginas comparten el mismo reloj: tres páginas no pueden esperar tres veces 33 s. Si el
+      // ojo falla en una, las siguientes fallarían igual y solo gastarían lo que queda.
+      const vista = await verImagen(dataUrlDeImagen(img), prompt || 'Lee el documento. Copia texto y números. No inventes.', { presupuesto: reloj });
+      if (vistaFallida(vista)) {
+        visiones.push(NO_PUDE_VER);
+        break;
+      }
+      vistas += 1;
       visiones.push(vista.texto);
     }
     const summary = [leido.texto, ...visiones].filter(Boolean).join('\n\n') || leido.detalle;
-    return res.json({ success: !!leido.texto || visiones.length > 0, summary, detalle: leido.detalle, via: 'pdf-leer', honesto: true });
+    return res.json({ success: !!leido.texto || vistas > 0, summary, detalle: leido.detalle, via: 'pdf-leer', honesto: true });
   }
-  const vista = await verImagen(String(base64Data), prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos. No inventes.');
-  if (vista.via === 'ninguno' || vista.via === 'error') {
-    console.error(`[AU-RA] /vision/analyze falló (${vista.via}) con ${String(base64Data).length} car.: ${vista.texto.slice(0, 160)}`);
-    return res.status(503).json({ error: vista.texto, honesto: true });
+  const vista = await verImagen(String(base64Data), prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos. No inventes.', { presupuesto: reloj });
+  if (vistaFallida(vista)) {
+    // El porqué (cuota, llave, nodo dormido) ya quedó en el registro; al teléfono, una frase humana.
+    console.error(`[AU-RA] /vision/analyze falló (${vista.via}) con ${String(base64Data).length} car.`);
+    return res.status(503).json({ error: `${NO_PUDE_VER} Inténtalo de nuevo en un momento.`, via: vista.via, honesto: true });
   }
   return res.json({ success: true, summary: vista.texto, via: vista.via, honesto: true });
 });
@@ -1241,11 +1254,13 @@ app.post('/api/cantar', exigirMesaODesk, limitar(12), async (req, res) => {
 
 app.post('/api/stt', exigirMesaODesk, limitar(60), async (req, res) => {
   const t0 = Date.now();
+  // El teléfono corta a los 16 s (transcribe): pasado eso, cada proveedor más es una factura sin oyente.
+  const reloj = presupuesto(PRESUPUESTO_OIDO_MS);
   const raw = String(req.body?.audioBase64 || req.body?.audio || '');
   if (!raw || raw.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
   const { mime, buffer } = decodeDataUrl(raw, String(req.body?.mimeType || req.body?.mime || 'audio/m4a'));
   if (buffer.length < 1200) return res.json({ text: '', model: 'vacio', ms: Date.now() - t0, honesto: true });
-  const oido = await transcribirAudio({ audio: buffer, mime, language: String(req.body?.language || 'es') });
+  const oido = await transcribirAudio({ audio: buffer, mime, language: String(req.body?.language || 'es'), presupuesto: reloj });
   if (oido.texto) {
     return res.json({ text: oido.texto, via: oido.via, ms: Date.now() - t0, bytes: buffer.length, honesto: true });
   }
@@ -1456,8 +1471,8 @@ async function prepararTurno(body: any) {
       const vista = await verImagen(String(image));
       // Un fallo de visión NO se le pasa crudo al modelo: lo parafraseaba como «la cámara me muestra un
       // error técnico», que no le dice nada a nadie. Se le da la frase que tiene que decir.
-      if (vista.via === 'error' || vista.via === 'ninguno') {
-        console.error(`[AU-RA] vision falló (${vista.via}) con ${String(image).length} car.: ${vista.texto.slice(0, 160)}`);
+      if (vistaFallida(vista)) {
+        console.error(`[AU-RA] vision falló (${vista.via}) con ${String(image).length} car.`);
         hechos.push('VISION: la cámara no devolvió imagen esta vez. Dilo simple y humano («ahora mismo no me está entrando imagen, dame un segundo»); no hables de errores técnicos ni de nodos.');
       } else {
         console.log(`[AU-RA] vision ok (${String(image).length} car., ${vista.via})`);

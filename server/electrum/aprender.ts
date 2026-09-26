@@ -27,7 +27,7 @@ import JSZip from 'jszip';
 import { extraerPdf } from '../../lib/leer-pdf';
 import { consulta, guardarCapa, hayBase, recalcularTraslapes } from './db';
 import { ingerir, resumenCapa, resumenTraslapes, type Aviso } from './gis';
-import { verImagen } from '../../lib/vision';
+import { verImagen, vistaFallida } from '../../lib/vision';
 
 export type Aprendido = {
   clase: 'catastro' | 'documento' | 'nada';
@@ -444,11 +444,12 @@ export async function aprender(
       const visto = await verImagen(`data:image/${ext === 'jpg' ? 'jpeg' : ext};base64,${datos.toString('base64')}`, OJO_MINERO);
 
       // Sin ojo configurado no se guarda un documento vacío que después parezca cargado: se dice.
-      if (visto.via === 'ninguno' || visto.via === 'error' || visto.texto.length < 20) {
+      if (vistaFallida(visto) || visto.texto.length < 20) {
         return {
           clase: 'nada',
-          dicho: visto.texto.startsWith('VISION')
-            ? `No pude leer esa foto: ${visto.texto.replace(/^VISION:\s*/, '')}`
+          // Qué pieza falló (y con qué variable se arregla) queda en el registro de `verImagen`.
+          dicho: vistaFallida(visto)
+            ? 'No pude leer esa foto ahora mismo. Volvé a mandármela en un rato.'
             : 'Miré la foto y no saqué texto de ella. Si es un plano, acercate al recuadro con los datos y volvé a mandármela.',
           avisos: [{ nivel: 'error', texto: `visión: ${visto.via}` }],
         };

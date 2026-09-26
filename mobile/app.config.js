@@ -18,10 +18,20 @@ const ELECTRUM = {
   scheme: 'drelectrumfp',
   // Paquete distinto: si fuera el mismo, instalar una desinstalaría la otra.
   paquete: 'link.ordenglobal.drelectrumfp',
-    // Horizontal, igual que AU-RA: las dos son estaciones de trabajo y se sostienen con las
-    // dos manos. Lo vertical es de la web. Lo tuve al revés un rato — el campo parecía pedir
-    // vertical, pero una app que enseña un mapa y una ficha a la vez quiere ancho.
-  orientacion: 'landscape',
+  /*
+   * Libre: gira con el teléfono. AU-RA sigue en horizontal; esta no.
+   *
+   * Estuvo bloqueada en horizontal «igual que AU-RA» (20-sep), y al día siguiente la pantalla del
+   * campo se rehízo para las DOS formas —dos columnas con ancho, una sola con el pulgar abajo en
+   * vertical— porque en el campo el teléfono se saca con una mano y la otra va ocupada (ver el
+   * comentario de `apaisado` en src/electrum/CampoScreen.tsx). Con el bloqueo, ese diseño vertical
+   * no se veía nunca. Las pantallas de Electrum miden la ventana y se acomodan; nada en su código
+   * bloquea la orientación (el `lockOrientation` de App.tsx es solo de AU-RA).
+   *
+   * 'default' en Expo = `screenOrientation="unspecified"` en el manifiesto de Android: sigue al
+   * sensor y respeta el bloqueo de rotación del teléfono.
+   */
+  orientacion: 'default',
   // Los íconos de siempre del doctor. Los de `assets/` pasaron a ser los de AU-RA (el planeta crema
   // del logo), así que Electrum lee su copia y no hereda la marca de la otra app.
   icono: './assets/electrum/icon.png',
@@ -127,7 +137,8 @@ module.exports = ({ config }) => {
           },
         ];
       }
-      if (nombre === 'expo-screen-orientation') return [nombre, { initialOrientation: 'LANDSCAPE' }];
+      // Sin máscara horizontal en iOS: DEFAULT = todas menos boca abajo, igual que el manifiesto.
+      if (nombre === 'expo-screen-orientation') return [nombre, { initialOrientation: 'DEFAULT' }];
       if (nombre === 'expo-splash-screen') return [nombre, { ...opts, image: ELECTRUM.arranque }];
       return p;
     }),

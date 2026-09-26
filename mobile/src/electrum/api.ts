@@ -7,6 +7,11 @@
  */
 import * as SecureStore from 'expo-secure-store';
 import { API_BASE } from '../config';
+import { ErrorHttp, SinPuerta, type Puerta } from './frases';
+
+// Las clases de error, la puerta y sus frases viven en `frases.ts` (sin React Native, para poder
+// probarlas con node:test). Se reexportan para que las pantallas sigan importando de aquí.
+export { ErrorHttp, SinPuerta, porQueNoAbre, type Puerta } from './frases';
 
 const K_SESION = 'ultron_sesion_token';
 const K_LLAVE = 'electrum_llave';
@@ -70,11 +75,6 @@ function cabeceras(extra: Record<string, string> = {}): Record<string, string> {
   return h;
 }
 
-export class SinPuerta extends Error {
-  constructor() {
-    super('Dr Electrum FP es privado y esta sesión no tiene acceso.');
-  }
-}
 
 /**
  * Lo que espera el teléfono. **Tiene que ser mayor que el presupuesto del turno en el servidor**
@@ -108,7 +108,8 @@ async function pedir<T>(ruta: string, init: RequestInit = {}, msIntento = ESPERA
     });
     if (r.status === 401) throw new SinPuerta();
     const j = (await r.json().catch(() => ({}))) as any;
-    if (!r.ok) throw new Error(j?.error || `Error ${r.status}`);
+    // Tipado, no un `Error` con «Error 502» dentro: la pantalla distingue «caído» de «no te deja».
+    if (!r.ok) throw new ErrorHttp(r.status, typeof j?.error === 'string' ? j.error : '');
     return j as T;
   } finally {
     tope.soltar();
@@ -170,21 +171,6 @@ export async function subirFoto(uri: string, nombre: string, mime = 'image/jpeg'
   );
 }
 
-/**
- * Lo que puede contestar la puerta. Son cinco cosas y antes eran «entró / no entró».
- *
- * La distinción importa sobre todo en el campo: **solo `sin-permiso` significa que la credencial
- * no vale**. Las otras cuatro son la red o la plataforma, y tratarlas como falta de acceso echaba
- * al usuario a la pantalla de entrada cada vez que se quedaba sin señal — justo cuando menos puede
- * ponerse a escribir una clave.
- */
-export type Puerta =
-  | { estado: 'abierta' }
-  | { estado: 'sin-permiso' }
-  | { estado: 'servicio-caido'; codigo: number }
-  | { estado: 'sin-red' }
-  | { estado: 'lento' };
-
 export async function probarPuerta(): Promise<Puerta> {
   const corte = new AbortController();
   const reloj = setTimeout(() => corte.abort(), 12_000);
@@ -197,22 +183,6 @@ export async function probarPuerta(): Promise<Puerta> {
     return e?.name === 'AbortError' ? { estado: 'lento' } : { estado: 'sin-red' };
   } finally {
     clearTimeout(reloj);
-  }
-}
-
-/** Lo que se le dice a la persona. Sin jerga y sin acusar a su credencial de lo que hizo el wifi. */
-export function porQueNoAbre(p: Puerta): string {
-  switch (p.estado) {
-    case 'sin-permiso':
-      return 'Esa credencial es buena pero no tiene acceso a Dr Electrum. Pedile a José que te agregue al padrón.';
-    case 'servicio-caido':
-      return `El servidor contestó ${p.codigo}. No es tu credencial: es la plataforma. Probá en un momento.`;
-    case 'lento':
-      return 'El servidor tardó más de doce segundos. Puede ser la señal de donde estás. Volvé a intentarlo.';
-    case 'sin-red':
-      return 'No alcancé el servidor. Revisá la señal y volvé a intentarlo — tu credencial no tiene nada que ver.';
-    default:
-      return '';
   }
 }
 
@@ -265,12 +235,14 @@ export async function entrar(correo: string, clave: string): Promise<string> {
       body: JSON.stringify({ correo, clave }),
       signal: tope.signal,
     });
-  } catch {
+  } catch (e) {
+    // Sin red o sin respuesta a tiempo: se deja pasar el error tal cual, y `fraseDeError` lo traduce.
     tope.soltar();
-    throw new Error('No alcancé el servidor. Revisá la señal y probá de nuevo.');
+    throw e;
   }
   tope.soltar();
   const j = (await r.json().catch(() => ({}))) as any;
-  if (!r.ok || !j?.token) throw new Error(j?.error || 'No pude entrar con eso.');
+  if (!r.ok) throw new ErrorHttp(r.status, typeof j?.error === 'string' ? j.error : '');
+  if (!j?.token) throw new ErrorHttp(500); // contestó «ok» sin sesión: es del servidor
   return String(j.token);
 }

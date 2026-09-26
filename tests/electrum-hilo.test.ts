@@ -11,12 +11,17 @@
  * hacia el modelo. Comprobar la función que arma el historial no alcanzaría: lo que importa es que
  * el turno los mande con su rol y que la pregunta llegue sola a `convocar`.
  */
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { spawn, type ChildProcess } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   claveHilo,
+  claveHiloDe,
+  quienDelHilo,
   fusionarHiloElectrum,
   hiloDe,
   hiloDelCliente,
@@ -73,6 +78,50 @@ test('guardar y recuperar el hilo', async (t) => {
     assert.equal(hiloDe(k).length, 2);
     t0 += 6 * 60 * 60 * 1000 + 1;
     assert.deepEqual(hiloDe(k), [], 'un hilo de anteayer no es contexto, y lleva nombres adentro');
+  });
+});
+
+/* ------------------------------------------------------------------ visitantes de la demo */
+
+/**
+ * Quien entra con la llave de la demostración no tiene sesión, así que no tiene nombre. Antes eso
+ * los metía a todos en `anonimo·mesa`: un cliente veía como «lo que venían hablando» lo que otro
+ * había consultado, y el «Borrá lo que hablamos» de uno le borraba la conversación al resto.
+ */
+test('cada visitante sin sesión lleva su propio hilo', async (t) => {
+  t.afterEach(() => olvidarHilo());
+  const visita = (ip: string, agente: string) => ({ ip, headers: { 'user-agent': agente } });
+  const a = visita('190.5.1.10', 'Mozilla/5.0 (iPhone) Safari');
+  const b = visita('190.5.1.11', 'Mozilla/5.0 (Windows) Chrome');
+
+  await t.test('dos visitantes, dos hilos', () => {
+    recordarHilo(claveHiloDe(null, a, 'mesa'), 'el expediente de Quebrada Seca', 'es de Minera Demo S.A.');
+    assert.deepEqual(hiloDe(claveHiloDe(null, b, 'mesa')), [], 'el segundo no ve lo que consultó el primero');
+    assert.equal(hiloDe(claveHiloDe(null, a, 'mesa')).length, 2, 'y el primero sigue con lo suyo');
+  });
+
+  await t.test('la misma IP con otro navegador es otro visitante', () => {
+    const mismoIpOtroNavegador = visita('190.5.1.10', 'Mozilla/5.0 (Android) Firefox');
+    assert.notEqual(claveHiloDe(null, a, 'mesa'), claveHiloDe(null, mismoIpOtroNavegador, 'mesa'));
+  });
+
+  await t.test('la huella es estable dentro del proceso y no lleva la IP en claro', () => {
+    assert.equal(quienDelHilo(null, a), quienDelHilo(null, visita('190.5.1.10', 'Mozilla/5.0 (iPhone) Safari')));
+    assert.match(quienDelHilo(null, a), /^visita:[0-9a-f]{24}$/);
+    assert.ok(!claveHiloDe(null, a, 'mesa').includes('190.5.1.10'));
+  });
+
+  await t.test('borrar el hilo de uno no toca el del otro', () => {
+    recordarHilo(claveHiloDe(null, a, 'mesa'), 'lo de A', 'contestado a A');
+    recordarHilo(claveHiloDe(null, b, 'mesa'), 'lo de B', 'contestado a B');
+    olvidarHilo(claveHiloDe(null, a, 'mesa'));
+    assert.deepEqual(hiloDe(claveHiloDe(null, a, 'mesa')), []);
+    assert.equal(hiloDe(claveHiloDe(null, b, 'mesa'))[0].texto, 'lo de B');
+  });
+
+  await t.test('con sesión manda la persona, venga del aparato que venga', () => {
+    assert.equal(claveHiloDe('jose', a, 'mesa'), claveHilo('jose', 'mesa'));
+    assert.equal(claveHiloDe('jose', b, 'mesa'), claveHilo('jose', 'mesa'));
   });
 });
 
@@ -190,6 +239,8 @@ await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
 process.env.ULTRON_NODO_URL = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
 process.env.ULTRON_NODO_SECRETO = 'prueba';
 const { turnoElectrum } = await import('../server/electrum/turno');
+// El nodo de mentira sirve también a la prueba contra el binario; se cierra cuando termina todo.
+after(() => srv.close());
 
 test('el turno manda el historial con su rol y la pregunta sola', async (t) => {
   NODO.length = 0;
@@ -252,5 +303,84 @@ test('sin historial el system no habla de conversación previa', async () => {
     ['system', 'user']
   );
   assert.ok(!/ESTO VIENE DE ANTES/.test(mensajes[0].content));
-  srv.close();
+});
+
+/* ------------------------------------------------------------------ contra el servidor compilado */
+
+const SERVIDOR = path.join(process.cwd(), 'dist', 'server.cjs');
+const HAY_BINARIO = fs.existsSync(SERVIDOR);
+
+/**
+ * Lo mismo, de punta a punta: dos visitantes con la llave de la demo contra el binario, y el nodo de
+ * mentira de arriba mirando qué historial le llega al modelo en cada turno. Es la única forma de
+ * saber que TODAS las rutas (turno, turno en vivo y el borrado) usan la misma llave de hilo.
+ */
+test('servidor: los visitantes de la demo no se ven entre sí', { skip: HAY_BINARIO ? false : 'sin dist/server.cjs: correr `npm run build` antes' }, async (t) => {
+  const puerto = 7840 + Math.floor(Math.random() * 40);
+  const base = `http://127.0.0.1:${puerto}`;
+  const proc: ChildProcess = spawn('node', [SERVIDOR], {
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      PORT: String(puerto),
+      PLATAFORMA: 'electrum',
+      ELECTRUM_CLAVE: 'llave-de-la-demo',
+      ULTRON_SESION_SECRETO: 'llave-de-sesion-de-la-prueba-0123456789',
+      ULTRON_NODO_URL: process.env.ULTRON_NODO_URL,
+      ULTRON_NODO_SECRETO: 'prueba',
+      ELECTRUM_DB_URL: '',
+      ELECTRUM_BOT_TOKEN: '',
+      TELEGRAM_BOT_TOKEN: '',
+      ULTRON_MEMORIA_BUCKET: '',
+      AWS_ACCESS_KEY_ID: '',
+      AWS_SECRET_ACCESS_KEY: '',
+    },
+    stdio: 'ignore',
+    detached: true,
+  });
+  t.after(() => {
+    try {
+      process.kill(-proc.pid!);
+    } catch {
+      /* ya se fue */
+    }
+  });
+  let listo = false;
+  for (let i = 0; i < 60 && !listo; i++) {
+    try {
+      listo = (await fetch(`${base}/api/health`)).ok;
+    } catch {
+      await new Promise((r) => setTimeout(r, 250));
+    }
+  }
+  assert.ok(listo, 'el servidor no levantó');
+
+  const cabeceras = (agente: string) => ({ 'Content-Type': 'application/json', 'x-electrum-llave': 'llave-de-la-demo', 'User-Agent': agente });
+  const ANA = 'Mozilla/5.0 (iPhone) visitante-ana';
+  const BETO = 'Mozilla/5.0 (Windows) visitante-beto';
+  /** Un turno y lo que el modelo recibió en él (todo lo que le llegó al nodo, junto). */
+  const turno = async (agente: string, mensaje: string, ruta = '/api/electrum/turno') => {
+    NODO.length = 0;
+    const r = await fetch(`${base}${ruta}`, { method: 'POST', headers: cabeceras(agente), body: JSON.stringify({ mensaje }) });
+    assert.equal(r.status, 200, `${ruta} contestó ${r.status}`);
+    await r.text();
+    return JSON.stringify(NODO);
+  };
+
+  await t.test('lo que pregunta Ana no le llega como contexto a Beto', async () => {
+    await turno(ANA, 'soy Ana y miro el expediente Quebrada Seca');
+    const vioBeto = await turno(BETO, '¿qué concesiones hay en Danlí?');
+    assert.ok(!vioBeto.includes('Quebrada Seca'), 'el modelo de Beto no recibió la conversación de Ana');
+    const vioAna = await turno(ANA, '¿y cuándo vence?', '/api/electrum/turno/stream');
+    assert.ok(vioAna.includes('Quebrada Seca'), 'el turno en vivo de Ana sí trae su propio hilo');
+  });
+
+  await t.test('el borrado de Ana solo borra lo de Ana', async () => {
+    const r = await fetch(`${base}/api/electrum/hilo`, { method: 'DELETE', headers: cabeceras(ANA) });
+    assert.equal(r.status, 200);
+    const vioAna = await turno(ANA, '¿de qué hablábamos?');
+    assert.ok(!vioAna.includes('Quebrada Seca'), 'el hilo de Ana quedó limpio');
+    const vioBeto = await turno(BETO, '¿y la segunda?');
+    assert.ok(vioBeto.includes('Danlí'), 'el de Beto sigue entero');
+  });
 });
