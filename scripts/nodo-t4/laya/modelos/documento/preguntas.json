@@ -1,0 +1,114 @@
+{
+ "doc_resolucion": {
+  "type": "noul",
+  "instructions": "¿Este fragmento es de un documento que emite una autoridad (resolución, auto, dictamen, providencia, constancia, certificación oficial, licencia otorgada, notificación)?",
+  "criteria": {
+   "true": "sí: lo emite la autoridad (INHGEOMIN, MiAmbiente/SERNA, municipalidad, Procuraduría, Registro, juzgado): resuelve, dictamina, hace constar, certifica, otorga, requiere o notifica",
+   "false": "no: lo presenta una parte, lo firman partes entre sí o es técnico, ambiental, plano, financiero u otro; citar una resolución no lo vuelve resolución"
+  }
+ },
+ "doc_contrato": {
+  "type": "noul",
+  "instructions": "¿Este fragmento es de un contrato o acuerdo entre partes (contrato, convenio, cesión de derechos, arrendamiento, servidumbre, poder, escritura, acta de acuerdo)?",
+  "criteria": {
+   "true": "sí: dos o más partes pactan u otorgan algo: comparecientes, cláusulas, precio o renta, cesión, servidumbre, poder, escritura pública o acta de acuerdos firmada por las partes",
+   "false": "no: lo emite una autoridad, lo pide una parte sola o es de otro tipo; mencionar un contrato no lo vuelve contrato"
+  }
+ },
+ "doc_ambiental": {
+  "type": "noul",
+  "instructions": "¿Este fragmento es de un documento ambiental (estudio de impacto, diagnóstico ambiental, plan de gestión, monitoreo de agua, aire o ruido, plan de cierre como documento propio)?",
+  "criteria": {
+   "true": "sí: estudio o diagnóstico ambiental, plan de gestión o de manejo, informe de monitoreo, línea base, medidas de mitigación o plan de cierre redactado como documento",
+   "false": "no: es otro tipo aunque toque lo ambiental; una licencia ambiental otorgada es resolución y la solicitud de licencia es solicitud"
+  }
+ },
+ "doc_tecnico": {
+  "type": "noul",
+  "instructions": "¿Este fragmento es de un documento técnico minero (informe geológico, de exploración o de sondajes, estimación de recursos NI 43-101 o JORC, estudio metalúrgico, plan de minado, estudio geotécnico, informe de producción)?",
+  "criteria": {
+   "true": "sí: geología, muestreo, sondajes, ensayes y leyes, recursos y reservas, pruebas metalúrgicas, diseño o plan de minado, geotecnia, producción, redactado como informe técnico",
+   "false": "no: es otro tipo aunque cite datos técnicos; un dictamen técnico de la autoridad es resolución"
+  }
+ },
+ "doc_plano": {
+  "type": "noul",
+  "instructions": "¿Este fragmento es de un plano o mapa (plano, mapa, levantamiento topográfico, tabla de coordenadas o vértices, croquis)?",
+  "criteria": {
+   "true": "sí: cajetín o leyenda de plano o mapa (escala, datum, lámina, dibujó), levantamiento topográfico, croquis o una tabla de coordenadas o vértices sola",
+   "false": "no: es otro tipo aunque traiga coordenadas dentro del texto (resolución, contrato, solicitud o estudio)"
+  }
+ },
+ "doc_financiero": {
+  "type": "noul",
+  "instructions": "¿Este fragmento es de un documento financiero (factura, recibo, pago de canon o tasas, estado financiero, presupuesto, flujo de caja, cotización comercial)?",
+  "criteria": {
+   "true": "sí: factura, recibo, comprobante o boleta de pago, canon o tasas liquidadas, balance o estado de resultados, presupuesto, flujo de caja o cotización",
+   "false": "no: es otro tipo aunque mencione montos, precios o regalías"
+  }
+ },
+ "doc_solicitud": {
+  "type": "noul",
+  "instructions": "¿Este fragmento es de algo que presenta una parte ante una autoridad (solicitud, escrito, memorial, oficio de parte, denuncia, recurso, carta a una autoridad)?",
+  "criteria": {
+   "true": "sí: una persona, empresa, comunidad o su apoderado pide, presenta, expone, denuncia o recurre ante la autoridad, aunque cite resoluciones anteriores",
+   "false": "no: lo emite la autoridad, lo pactan partes entre sí o es de otro tipo"
+  }
+ },
+ "doc_otro": {
+  "type": "noul",
+  "instructions": "¿Este fragmento es de un documento que no es resolución, contrato, ambiental, técnico, plano, financiero ni solicitud (correo informal, nota de prensa, currículum, manual, índice, lista)?",
+  "criteria": {
+   "true": "sí: correo o mensaje informal, nota de prensa, currículum, manual o instructivo, hoja de seguridad, índice o carátula, lista de asistencia, presentación u otra cosa fuera de los siete tipos",
+   "false": "no: encaja en alguno de los siete tipos, aunque venga sucio o sin encabezado"
+  }
+ },
+ "req_firma_autoridad": {
+  "type": "noul",
+  "instructions": "¿El fragmento trae la firma, el sello o el número de resolución de una autoridad competente?",
+  "criteria": {
+   "true": "sí: el documento de la autoridad trae su propio número oficial (resolución, licencia, dictamen, oficio, permiso), la firma o el sello de un funcionario (Director(a) Ejecutivo(a), Secretario(a) General, alcalde, registrador, «[Firma y sello]») o «Comuníquese»/«Notifíquese»",
+   "false": "no: citar o transcribir una resolución en un escrito o contrato, un número de expediente, el sello de recibido, la firma de una parte, de un notario, de un consultor o el sello de un colegio profesional no cuentan"
+  }
+ },
+ "req_coordenadas": {
+  "type": "noul",
+  "instructions": "¿El fragmento trae coordenadas, vértices, linderos o rumbos que delimitan un área?",
+  "criteria": {
+   "true": "sí: vértices o coordenadas de un polígono, linderos o colindancias, rumbos y distancias que delimitan un área",
+   "false": "no: un punto suelto (un sondaje, una estación de muestreo, la ubicación de una planta), solo la superficie en hectáreas o «ver coordenadas en anexo» no delimitan un área"
+  }
+ },
+ "req_agua": {
+  "type": "noul",
+  "instructions": "¿El fragmento trata de fuentes de agua (ríos, quebradas, nacientes, microcuencas, uso o permiso de agua, calidad del agua)?",
+  "criteria": {
+   "true": "sí: nombra un cuerpo de agua real en o junto al área (también como lindero), o trata de uso, permiso, protección, caudal o calidad del agua",
+   "false": "no: el agua potable como servicio o recibo, el agua de laboratorio o de proceso sin fuente nombrada, «cursos de agua» genéricos en un manual, o un nombre de concesión, aldea o empresa que diga río, quebrada o agua no cuentan"
+  }
+ },
+ "req_comunidad": {
+  "type": "noul",
+  "instructions": "¿El fragmento trata de comunidades (consulta o socialización, pueblos indígenas o afrohondureños, patronatos, acuerdos o conflictos con vecinos)?",
+  "criteria": {
+   "true": "sí: consulta, socialización, línea base social, pueblos indígenas o afrohondureños, patronatos, juntas de agua, acuerdos, quejas, denuncias o conflictos con vecinos",
+   "false": "no: una aldea o caserío nombrado solo como dirección o ubicación no cuenta"
+  }
+ },
+ "req_cierre": {
+  "type": "noul",
+  "instructions": "¿El fragmento trata del cierre de mina (plan de cierre, rehabilitación, abandono, garantía o fianza de cierre)?",
+  "criteria": {
+   "true": "sí: plan de cierre, cierre progresivo o final, rehabilitación o revegetación de áreas minadas, abandono de labores, garantía o fianza de cierre",
+   "false": "no: el cierre contable o del ejercicio, el cierre o archivo de un expediente, una solicitud tenida por abandonada, el precio de cierre del oro o rehabilitar un camino no cuentan"
+  }
+ },
+ "req_plazo": {
+  "type": "noul",
+  "instructions": "¿El fragmento trae plazos o fechas que obligan (vigencia, vencimiento, término para cumplir, fecha límite, prórroga)?",
+  "criteria": {
+   "true": "sí: vigencia o duración, fecha de vencimiento, término en días o meses para cumplir, fecha límite de pago o presentación, prórroga",
+   "false": "no: la fecha de emisión o de firma, las fechas de muestreo o de campaña, la fecha efectiva de un informe, la «fecha límite de emisión» de una factura y un cronograma descriptivo no obligan"
+  }
+ }
+}
