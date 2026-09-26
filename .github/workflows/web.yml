@@ -54,9 +54,20 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: |
-          docker exec ${{ job.services.postgres.id }} bash -c \
-            "apt-get update -qq && apt-get install -y -qq postgresql-16-pgvector" \
-            || echo "sin pgvector: la búsqueda de expedientes se prueba solo por texto"
+          # Instalar pgvector arrastra una versión menor nueva de postgresql-16: el servidor que ya
+          # corre sigue siendo el viejo y no carga las extensiones nuevas (pg_trgm), así que se
+          # reinicia el contenedor para que arranque con los binarios instalados.
+          if docker exec ${{ job.services.postgres.id }} bash -c \
+            "apt-get update -qq && apt-get install -y -qq postgresql-16-pgvector"; then
+            docker restart ${{ job.services.postgres.id }}
+          else
+            echo "sin pgvector: la búsqueda de expedientes se prueba solo por texto"
+          fi
+          for i in $(seq 1 30); do
+            pg_isready -h 127.0.0.1 -U postgres -q && break
+            sleep 2
+          done
+          pg_isready -h 127.0.0.1 -U postgres
           psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE electrum LOGIN PASSWORD 'electrum-ci'"
           psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE electrum_pruebas OWNER electrum"
           psql -h 127.0.0.1 -U postgres -d electrum_pruebas -v ON_ERROR_STOP=1 -q -f scripts/electrum/esquema.sql
