@@ -76,10 +76,13 @@ AUDITORÍA 26-SEP-2026 (Documento 8 de junta). Lo que NO se puede afirmar y por 
   corregir el texto y revisar el cifrado.
 - Privacidad: la política nombra a Veriff (0 líneas de código) y NO lista a Genesis ID, que es quien recibe
   documento, MRZ, rostro, correo y dirección. Está al revés.
-- Directorio de comercios de MyTokenPay: GET /api/companies y /api/companies/:id no exigen sesión y devuelven
-  el objeto completo, con documentos de identidad del KYB. Cerrar antes que nada.
-- cerebro-datos.js se sirve público sin autenticación y lleva las IP de 6 de los 7 nodos. Quitarlas.
-- Emisión: AUKA 55.000.000 son más de 1.700 toneladas de oro implícitas. La emisión ya está completa y no hay
+- Directorio de comercios de MyTokenPay: GET /api/companies y /api/companies/:id no exigen sesión y devolverían
+  el objeto completo, con documentos de identidad del KYB. Hoy está vacío (en memoria, sin documentos), pero la
+  puerta está abierta: cerrarla antes del primer comercio real.
+- Las IP de los nodos están expuestas en tres sitios: cerebro-datos.js (público, sin autenticación),
+  infra/nodos/README.md (versionado) y el .env.example de ULTRON (con verificación TLS apagada). Quitarlas.
+- Emisión: AUKA 55.000.000 y ONDK 555.000.000 comprobados en cadena; AGKA 500.000.000 solo según el mapa.
+  AUKA 55.000.000 son más de 1.700 toneladas de oro implícitas. La emisión ya está completa y no hay
   mecanismo de emisión contra metal. Solo se afirma la definición de UN ORIGEN, nunca el agregado.
 - Cadena 5550: alrededor de un mes de vida, no más. Génesis, extraData, llaves de validadores e inventario de
   máquinas NO están en control de versiones: perder AWS es perder la cadena.
@@ -96,7 +99,7 @@ AUDITORÍA 26-SEP-2026 (Documento 8 de junta). Lo que NO se puede afirmar y por 
 - AuCorp sigue sin servicio en el código: no hay rampa de dinero de curso legal a ORIGEN.
 - ONDK no gobierna: cero código de gobernanza. Gobierna la junta.
 - Los 30 comercios del directorio son inventados y 24 están marcados «verificados». No mostrarlos ni contarlos.
-- Seis de los nueve documentos de junta describen la cadena vieja 8532. Solo el 8 y el 9 hablan de la 5550.
+- Seis de los siete documentos de junta anteriores describen la cadena vieja 8532. Nombran la 5550 el 07 y el 08.
 
 PASADA ÚNICA
 Mina -> bóveda -> cadena 5550 ancla ORIGEN -> AUKA/AGKA onza -> ONDK gobierna -> Veta+Genesis ID+MyTokenPay personas -> Ordenex cambia -> AuCorp entra/sale -> ULTRON asiste a la junta.
