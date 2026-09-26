@@ -32,11 +32,11 @@ if [ ! -f "$MODELO/model.safetensors" ] || [ "${REENTRENAR:-0}" = 1 ]; then
   rm -rf "$MODELO" && mv "$MODELO.nuevo" "$MODELO"
 fi
 
-if ! sudo test -f "$ENTORNO"; then
-  CLAVE="${LAYA_CLAVE:-$(openssl rand -hex 24)}"
-  printf 'LAYA_CLAVE=%s\nLAYA_PUERTO=%s\nLAYA_MODELO=%s\n' "$CLAVE" "$PUERTO" "$MODELO" | sudo tee "$ENTORNO" >/dev/null
-  sudo chmod 600 "$ENTORNO"
-fi
+# Se reescribe en cada corrida con el puerto y el modelo de esta; la clave se conserva salvo que se pase LAYA_CLAVE.
+CLAVE="${LAYA_CLAVE:-$(sudo sed -n 's/^LAYA_CLAVE=//p' "$ENTORNO" 2>/dev/null || true)}"
+CLAVE="${CLAVE:-$(openssl rand -hex 24)}"
+printf 'LAYA_CLAVE=%s\nLAYA_PUERTO=%s\nLAYA_MODELO=%s\n' "$CLAVE" "$PUERTO" "$MODELO" | sudo tee "$ENTORNO" >/dev/null
+sudo chmod 600 "$ENTORNO"
 
 sudo tee /etc/systemd/system/laya-electrum.service >/dev/null <<UNIT
 [Unit]
