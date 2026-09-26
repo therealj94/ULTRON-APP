@@ -45,8 +45,9 @@ import {
   type SttEngine,
 } from '../lib/storage';
 import { playSfx, preloadSfx, setSfxEnabled } from '../lib/sfx';
-import { StreamSpeaker, setSpeechLevelListener, speak, speakClip, speakPrayer, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
-import { CLIP_TEXT, type ClipId } from '../lib/voiceBank';
+import { StreamSpeaker, setSpeechLevelListener, speak, speakClip, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
+import { CLIP_IDS, CLIP_TEXT, bankKey, type ClipId } from '../lib/voiceBank';
+import { quitarExpresiones } from '../lib/expresiones';
 
 type Props = {
   user: SessionUser;
@@ -63,10 +64,14 @@ function pedirEnAjustes(titulo: string, texto: string) {
   ]);
 }
 
+/**
+ * Saludo al entrar: «Qué bueno verte, José.» grabado con su voz para quien está en la junta (José y
+ * Medardo van en el APK y suenan sin red); a los demás, la bienvenida grabada. `say()` lo reconoce
+ * por la frase exacta (PHRASE_TO_CLIP) y toca el clip en vez de pedir voz.
+ */
 function greetingFor(name: string) {
-  const h = new Date().getHours();
-  const part = h < 12 ? LINES.greetingParts[0] : h < 19 ? LINES.greetingParts[1] : LINES.greetingParts[2];
-  return LINES.greetingTemplate.replace('{part}', part).replace('{name}', name);
+  const id = `verte${bankKey(String(name || '').trim().split(/\s+/)[0] || '')}`;
+  return (CLIP_IDS as readonly string[]).includes(id) ? CLIP_TEXT[id as ClipId] : CLIP_TEXT.bienvenido;
 }
 
 const GAG_EMOCION: Record<string, Emocion> = {
@@ -83,7 +88,7 @@ const GAG_EMOCION: Record<string, Emocion> = {
 };
 
 /** Gag → clip corto de emoción del servidor (se toca antes de las líneas, sin fallback a TTS). */
-const GAG_CLIP: Record<string, ClipId> = { sad: 'triste', angry: 'molesto', startle: 'sorpresa', yawn: 'cansado', proud: 'orgullo', laugh: 'risa1' };
+const GAG_CLIP: Record<string, ClipId> = { sad: 'triste', angry: 'molesto', startle: 'sorpresa', yawn: 'bostezo', proud: 'orgullo', laugh: 'risacorta' };
 
 const haptic = (kind: 'light' | 'medium' = 'light') =>
   Haptics.impactAsync(kind === 'light' ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -227,9 +232,10 @@ export function DeskScreen({ user, onLogout }: Props) {
     return escenaFresca(e) ? e.descripcion : undefined;
   }, [escenaFresca]);
 
+  // La burbuja y el hilo son para LEER: las expresiones de voz ([risa]…) se oyen, no se enseñan.
   const showBubble = useCallback(
     (text: string) => {
-      setBubble(text);
+      setBubble(quitarExpresiones(text).trim());
       Animated.timing(bubbleOp, { toValue: 1, duration: 180, useNativeDriver: true }).start();
     },
     [bubbleOp]
@@ -245,7 +251,7 @@ export function DeskScreen({ user, onLogout }: Props) {
   }, [bubble, bubbleOp]);
 
   const logUltron = useCallback((text: string) => {
-    historial.current = [...historial.current, { rol: 'ultron' as const, texto: text }].slice(-12);
+    historial.current = [...historial.current, { rol: 'ultron' as const, texto: quitarExpresiones(text).trim() }].slice(-12);
   }, []);
 
   /** Fin de cualquier audio: mic de vuelta, cara en reposo, HUD según mute real (ref, no closure). */
@@ -274,8 +280,8 @@ export function DeskScreen({ user, onLogout }: Props) {
       speakingRef.current = true;
       setFace(f);
       setStatus('speaking');
-      // risa: una carcajada corta del banco antes del texto (si el clip no está, se sigue sin ella)
-      if (emocion === 'risa') await speakClip(pick(['risa1', 'risa2'] as const), { fallback: false, onAudioStart: () => onAudio('LAUGH') });
+      // risa: una risa corta grabada antes del texto (si no hay ninguna, se sigue sin ella)
+      if (emocion === 'risa') await speakReaccion('risa', { onAudioStart: () => onAudio('LAUGH') });
       await speak(text, {
         performance,
         emocion,
@@ -443,7 +449,8 @@ export function DeskScreen({ user, onLogout }: Props) {
       let emocion: Emocion = 'neutral';
       let reacted = false;
       // Un solo relleno, local y sin red: «mmm» del banco si el cerebro tarda (inmediato con imagen).
-      const mmm = () => void speakClip('mmm', { fallback: false, onAudioStart: () => pauseMicForTts(true), onEnd: () => !speakingRef.current && pauseMicForTts(false) });
+      const mmm = () =>
+        void speakClip(pick(['mmm', 'unmomento'] as const), { fallback: false, onAudioStart: () => pauseMicForTts(true), onEnd: () => !speakingRef.current && pauseMicForTts(false) });
       let mmmTimer: ReturnType<typeof setTimeout> | null = opts?.image ? (mmm(), null) : setTimeout(mmm, 700);
       const cancelMmm = () => {
         if (mmmTimer) clearTimeout(mmmTimer);
@@ -467,7 +474,7 @@ export function DeskScreen({ user, onLogout }: Props) {
                 cancelMmm();
                 setFace(faceForEmocion(e));
                 speaker?.setEmocion(e);
-                if (e === 'risa') void speakClip(pick(['risa1', 'risa2'] as const), { fallback: false, onAudioStart: () => onAudio('LAUGH') });
+                if (e === 'risa') void speakReaccion('risa', { onAudioStart: () => onAudio('LAUGH') });
               },
               onDelta: (piece) => {
                 cancelMmm();
@@ -506,7 +513,7 @@ export function DeskScreen({ user, onLogout }: Props) {
               setOnline(true);
               logUltron(result.reply);
               const spoke = (speaker as StreamSpeaker | null)?.hasSpoken;
-              if (!spoke) await say(result.reply, faceForEmocion(result.emocion), { emocion: result.emocion });
+              if (!spoke) await say(result.voz || result.reply, faceForEmocion(result.emocion), { emocion: result.emocion });
               else settle();
               applyMode(result.mode);
               return;
@@ -555,12 +562,14 @@ export function DeskScreen({ user, onLogout }: Props) {
             return;
           }
           setOnline(false);
-          await say('No alcanzo al cerebro remoto ahora. Sigo contigo con lo básico.', 'CONFUSED', { emocion: 'preocupado' });
+          // Sin red de verdad (el teléfono no llega a nada): la frase grabada, que va en el APK y suena sin red.
+          const sinRed = /network|red\b|conexi[oó]n|timeout|abort/i.test(String(out.error || ''));
+          await say(sinRed ? 'Estoy sin conexión ahora mismo.' : 'No alcanzo al cerebro remoto ahora. Sigo contigo con lo básico.', 'CONFUSED', { emocion: 'preocupado' });
           return;
         }
         setOnline(true);
         applyMode(out.mode);
-        await say(out.reply, faceForEmocion(out.emocion), { emocion: out.emocion });
+        await say(out.voz || out.reply, faceForEmocion(out.emocion), { emocion: out.emocion });
       } finally {
         cancelMmm();
         if (!speakingRef.current) {
@@ -682,7 +691,7 @@ export function DeskScreen({ user, onLogout }: Props) {
           case 'conocer_salir':
             return void (await exitConocer());
           case 'logout':
-            await say('Hasta pronto.', 'IDLE', { emocion: 'carino' });
+            await say('Hasta luego.', 'IDLE', { emocion: 'carino' });
             return onLogout();
           case 'recordar': {
             hacerTarea('anotar');
@@ -743,8 +752,10 @@ export function DeskScreen({ user, onLogout }: Props) {
           }
           case 'saludo':
             return void (await playClip('hola', 'HAPPY', { fallbackText: `Hola, ${user.name}. Aquí estoy.`, emocion: 'feliz' }));
-          case 'gracias':
-            return void (await say(`De nada, ${user.name}.`, 'HAPPY', { emocion: 'carino' }));
+          case 'gracias': {
+            const id = pick(['denada', 'cuandoquieras'] as const);
+            return void (await playClip(id, 'HAPPY', { fallbackText: CLIP_TEXT[id], emocion: 'carino' }));
+          }
           case 'gag':
             return void (await runGag(intent.gag));
           case 'hora':
@@ -801,7 +812,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       clearTimeout(t);
       setFace('LAUGH');
       playSfx('giggle');
-      await speakClip(pick(['risa1', 'risa2'] as const), { fallback: false });
+      await speakReaccion('risa');
       await new Promise((r) => setTimeout(r, 500));
     } finally {
       settle();
@@ -896,8 +907,12 @@ export function DeskScreen({ user, onLogout }: Props) {
     void haptic('light');
     setFace('HAPPY');
     if (speakingRef.current || handling.current) return;
-    void say(pick(LINES.love), 'HAPPY', { emocion: 'carino' });
-  }, [say]);
+    void (async () => {
+      // Primero el «aww» grabado, después la frase.
+      await speakReaccion('carino', { onAudioStart: () => onAudio('HAPPY') });
+      await say(pick(LINES.love), 'HAPPY', { emocion: 'carino' });
+    })();
+  }, [onAudio, say]);
 
   /** Mantener pulsado: duerme / despierta. */
   const onLongPress = useCallback(() => {
@@ -906,8 +921,12 @@ export function DeskScreen({ user, onLogout }: Props) {
     if (speakingRef.current || handling.current) return;
     setPresence('sleep');
     presenceRef.current = 'sleep';
-    void say('Descanso un momento. Háblame o tócame para despertar.', 'SLEEPING', { emocion: 'cansado' });
-  }, [say, wakeUp]);
+    void (async () => {
+      // Se duerme bostezando.
+      await speakReaccion('cansado', { onAudioStart: () => onAudio('SLEEPING') });
+      await say('Descanso un momento. Háblame o tócame para despertar.', 'SLEEPING', { emocion: 'cansado' });
+    })();
+  }, [onAudio, say, wakeUp]);
 
   // Al arrastrar, los ojos siguen el dedo dentro de UltronFace (retardo elástico); aquí solo se pausa lo demás.
   const onDragGaze = useCallback(() => {
@@ -1136,7 +1155,8 @@ export function DeskScreen({ user, onLogout }: Props) {
           if (presenceRef.current === 'sleep') {
             wakeUp();
           } else if (calm) {
-            void playClip(pick(['hola', 'aqui'] as const), 'HAPPY', { fallbackText: `Hola, ${user.name}.`, emocion: 'feliz' });
+            const id = pick(['hola', 'aqui', 'holadenuevo', 'mealegra'] as const);
+            void playClip(id, 'HAPPY', { fallbackText: CLIP_TEXT[id], emocion: 'feliz' });
           }
         } else if (ev === 'sonrie') {
           if (!calm || presenceRef.current === 'sleep' || now - lastSonrisaAt.current < 8_000) continue;

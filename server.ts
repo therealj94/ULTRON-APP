@@ -6,6 +6,7 @@ import { createServer as createViteServer } from 'vite';
 import { fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe } from './server/voz';
+import { quitarExpresiones } from './lib/expresiones';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
@@ -1732,7 +1733,10 @@ async function bucleHarness(o: {
 }
 
 type SalidaTurno = {
+  /** Lo que se LEE: sin expresiones de voz. Es lo que va a la burbuja, al hilo, a la memoria y a Telegram. */
   reply: string;
+  /** Lo que se DICE: el mismo texto con sus [risa], [suspiro]… para /api/tts y las notas de voz. */
+  voz: string;
   emocion: Emocion;
   via: string;
   mode: string;
@@ -1781,12 +1785,12 @@ async function correrTurno(body: any): Promise<SalidaTurno & { trazaId: string }
 async function correrTurnoInterno(body: any): Promise<SalidaTurno> {
   const p = await prepararTurno(body);
   const base = { mode: p.mode, foto: null as string | null, honesto: true as const };
-  if (!p.message) return { ...base, reply: '', emocion: 'neutral', via: 'none', ms: Date.now() - p.t0, herramientas: [], error: 'message vacío' };
+  if (!p.message) return { ...base, reply: '', voz: '', emocion: 'neutral', via: 'none', ms: Date.now() - p.t0, herramientas: [], error: 'message vacío' };
   const { t0, mode, tools, system, message, quien, quienMem, canal, hilo, mando } = p;
   const hechos = [...p.hechos];
-  const guardar = async (out: Omit<SalidaTurno, 'emocion'> & { emocion?: Emocion }): Promise<SalidaTurno> => {
+  const guardar = async (out: Omit<SalidaTurno, 'emocion' | 'voz'> & { emocion?: Emocion }): Promise<SalidaTurno> => {
     const e = extraerEmocion(out.reply);
-    const final: SalidaTurno = { ...out, reply: e.texto, emocion: out.emocion || e.emocion };
+    const final: SalidaTurno = { ...out, reply: quitarExpresiones(e.texto).trim(), voz: e.texto, emocion: out.emocion || e.emocion };
     if (final.reply) await recordarTurno({ quien: quienMem, rol: 'ultron', texto: final.reply, canal });
     return final;
   };
@@ -1853,6 +1857,7 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), async (req, res) => {
   }
   return res.json({
     reply: out.reply,
+    voz: out.voz,
     emocion: out.emocion,
     modelo: out.via === 'modelo-chico' ? process.env.MODELO_CHICO_NOMBRE || 'chico' : out.via === 'taller' || out.via.includes('gold') ? 'tools' : ULTRON_NODO_MODELO,
     via: out.via,
@@ -1905,6 +1910,9 @@ async function turnoEnVivo(req: express.Request, res: express.Response) {
   const send = (event: string, data: unknown) => {
     if (!seFue && !res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
+  // Cada trozo sale dos veces: `text` para leer (sin expresiones; es lo único que entienden las APK
+  // viejas) y `voz` con sus [risa]… para la voz. Los clientes nuevos hablan `voz` y enseñan `text`.
+  const soltar = (evento: 'delta' | 'replace', texto: string) => send(evento, { text: quitarExpresiones(texto), voz: texto });
 
   const s = sesionDe(req);
   const p = await prepararTurno({
@@ -1922,16 +1930,17 @@ async function turnoEnVivo(req: express.Request, res: express.Response) {
   const hechos = [...p.hechos];
   const terminar = async (texto: string, via: string, emocion: Emocion) => {
     anotarHerramientasAura(reg, tools);
-    reg.cerrar({ respuesta: texto, emocion, via });
-    send('done', { reply: texto, emocion, ms: Date.now() - t0, via, trazaId: reg.id });
-    if (texto && !seFue) await recordarTurno({ quien: quienMem, rol: 'ultron', texto, canal });
+    const leido = quitarExpresiones(texto).trim();
+    reg.cerrar({ respuesta: leido, emocion, via });
+    send('done', { reply: leido, voz: texto, emocion, ms: Date.now() - t0, via, trazaId: reg.id });
+    if (leido && !seFue) await recordarTurno({ quien: quienMem, rol: 'ultron', texto: leido, canal });
     res.end();
   };
   send('tools', { tools });
   if (p.directo) {
     const emo = extraerEmocion(p.directo);
     send('emocion', { emocion: emo.emocion });
-    send('delta', { text: emo.texto });
+    soltar('delta', emo.texto);
     return terminar(emo.texto, p.directoVia === 'taller' ? 'taller' : 'tools', emo.emocion);
   }
   {
@@ -1939,14 +1948,14 @@ async function turnoEnVivo(req: express.Request, res: express.Response) {
     if (chica) {
       const emo = extraerEmocion(chica);
       send('emocion', { emocion: emo.emocion });
-      send('delta', { text: emo.texto });
+      soltar('delta', emo.texto);
       return terminar(emo.texto, 'modelo-chico', emo.emocion);
     }
   }
   if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
     const reply = sinCerebro(p.datos);
     send('emocion', { emocion: 'preocupado' });
-    send('delta', { text: reply });
+    soltar('delta', reply);
     return terminar(reply, 'tools-only', 'preocupado');
   }
   try {
@@ -1961,7 +1970,7 @@ async function turnoEnVivo(req: express.Request, res: express.Response) {
       const reply = sinCerebro(p.datos);
       if (reply) {
         send('emocion', { emocion: 'preocupado' });
-        send('delta', { text: reply });
+        soltar('delta', reply);
         return terminar(reply, 'tools-fallback', 'preocupado');
       }
       send('error', { error: 'Qwen no contestó', status: r.status, raw: raw.slice(0, 200) });
@@ -1994,7 +2003,7 @@ async function turnoEnVivo(req: express.Request, res: express.Response) {
       // Soltar solo hasta la última frase cerrada; lo que queda puede ser una línea de pedido.
       const corte = Math.max(cuerpo.lastIndexOf('. '), cuerpo.lastIndexOf('? '), cuerpo.lastIndexOf('! '), cuerpo.lastIndexOf('\n'));
       if (corte > enviado) {
-        send('delta', { text: cuerpo.slice(enviado, corte + 1) });
+        soltar('delta', cuerpo.slice(enviado, corte + 1));
         enviado = corte + 1;
       }
     };
@@ -2041,12 +2050,12 @@ async function turnoEnVivo(req: express.Request, res: express.Response) {
       reply = e.texto;
       via = h.via;
       if (enviado > 0 && !reply.startsWith(cuerpo.slice(0, enviado))) {
-        send('replace', { text: reply });
+        soltar('replace', reply);
         enviado = reply.length;
       }
     }
     if (!reply) reply = sinCerebro(p.datos);
-    if (reply.length > enviado) send('delta', { text: reply.slice(enviado) });
+    if (reply.length > enviado) soltar('delta', reply.slice(enviado));
     return terminar(reply, via, emocion);
   } catch (err: any) {
     send('error', { error: 'Qwen caído', message: String(err?.message || err).slice(0, 200) });
@@ -2161,7 +2170,8 @@ async function procesarTelegram(update: any) {
   const yaMandóVoz = out.herramientas.includes('voz') || out.herramientas.includes('urgente');
   const quiereVoz = parsed.comando === '/audio' || pideNotaDeVoz(texto);
   if (quiereVoz && !yaMandóVoz) {
-    const audio = await notaDeVoz(reply.slice(0, 400));
+    // La nota lleva las expresiones (se oyen); el mensaje de texto, no (se leerían).
+    const audio = await notaDeVoz((out.voz || reply).slice(0, 400));
     if (audio) await telegramVoz({ buf: audio, caption: 'AU-RA', chatId: parsed.chatId });
   }
 }

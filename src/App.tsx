@@ -8,7 +8,7 @@ import type { Escena } from './02-cara/vision/escena';
 import { playSfx } from './03-voz/audio';
 import { hablar, cantar, callar, setVozActiva, type Dicho } from './03-voz/hablar';
 import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
-import { clipDeEmocion, saludoHora, siguienteChiste } from './03-voz/banco';
+import { clipDeEmocion, saludoDe, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
 import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
@@ -17,6 +17,7 @@ import { guardarHecho, olvidarTodo } from './09-estado/memoria';
 import { headersMesa } from './10-infra/sesionCliente';
 import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
+import { quitarExpresiones } from '../lib/expresiones';
 import { Maximize2, Minimize2, Fingerprint, Camera, ShieldCheck, Settings2, Mic, MicOff, Keyboard } from 'lucide-react';
 import { hayWebGL } from './11-sala/webgl';
 import { tareaDeHerramientas, type Postura, type Tarea } from './11-sala/tareas';
@@ -52,6 +53,9 @@ const fraseSinCerebro = () =>
   typeof navigator !== 'undefined' && navigator.onLine === false
     ? 'Me quedé sin internet. Revisá la conexión y probá de nuevo.'
     : 'No alcancé el cerebro. Probá de nuevo en un momento.';
+
+/** Uno al azar: los clips de un mismo momento («hola», «aquí estoy»…) se turnan. */
+const alAzar = <T,>(xs: readonly T[]): T => xs[Math.floor(Math.random() * xs.length)];
 
 const lee = (k: string, d: string) => {
   try {
@@ -184,8 +188,9 @@ export default function App() {
       d.inicio.then(() => {
         if (hablando.current !== d) return;
         setFace(caraHabla);
-        // La burbuja muestra lo que se OYE: si fue un clip del banco, su texto humano, nunca el id interno.
-        const visible = d.clip?.texto || (d.clip ? '' : t);
+        // La burbuja muestra lo que se OYE: si fue un clip del banco, su texto humano, nunca el id interno;
+        // si fue la voz, el texto sin sus expresiones ([risa] se oye, no se lee).
+        const visible = d.clip?.texto || (d.clip ? '' : quitarExpresiones(t).trim());
         if (!o.sinBurbuja && visible) showBubble(visible, Math.max(3200, Math.min(12000, visible.length * 60)));
       });
       d.fin.then(() => {
@@ -359,7 +364,7 @@ export default function App() {
             despertar();
           } else if (!ocupado && Date.now() - ultimaInteraccion.current > 60000) {
             ultimaInteraccion.current = Date.now();
-            decir(Math.random() < 0.5 ? 'hola' : 'aqui', { emocion: 'feliz' });
+            decir(alAzar(['hola', 'aqui', 'holadenuevo', 'mealegra']), { emocion: 'feliz' });
           }
         } else if (ev === 'sonrie' && !ocupado && !durmiendo) {
           setEmocion('feliz');
@@ -395,9 +400,11 @@ export default function App() {
       const image = o.imagen || (quiereVer && visionEnabled ? grabFrame() : null);
       // Si el 27B tarda, AU-RA piensa en voz alta con un clip (sin red).
       const relleno = setTimeout(() => {
-        if (turnoEnCurso.current === ac && colaRef.current.length === 0 && !hablando.current) decir(Math.random() < 0.5 ? 'mmm' : 'mmm2', { emocion: 'pensando', sinBurbuja: true });
+        if (turnoEnCurso.current === ac && colaRef.current.length === 0 && !hablando.current) decir(alAzar(['mmm', 'mmm2', 'unmomento']), { emocion: 'pensando', sinBurbuja: true });
       }, 1400);
+      // Lo que llega es el texto de DECIR (con sus [risa]…): la burbuja se los quita en `decir`.
       let pendiente = '';
+      let huboTexto = false;
       let emo: Emocion = 'neutral';
       const soltar = (final = false) => {
         const partes = pendiente.split(/(?<=[.!?…])\s+/);
@@ -433,12 +440,14 @@ export default function App() {
             },
             onDelta: (t) => {
               clearTimeout(relleno);
+              huboTexto = true;
               pendiente += t;
               soltar(false);
             },
             onReplace: (t) => {
               colaRef.current = [];
               callar();
+              huboTexto = true;
               pendiente = t;
               soltar(true);
             },
@@ -458,6 +467,8 @@ export default function App() {
           return;
         }
         if (data.emocion) emo = data.emocion;
+        // Sin stream (el servidor contestó en JSON) no llegó ningún trozo: se dice la respuesta entera.
+        if (!huboTexto) pendiente = String(data.voz || texto);
         soltar(true);
         if (data.trazaId) setOpinion({ id: data.trazaId, estado: 'preguntar' });
         historialRef.current = [...historialRef.current, { rol: 'user', texto: cmd }, { rol: 'ultron', texto }].slice(-12);
@@ -600,10 +611,15 @@ export default function App() {
   // ---- Gestos de la cara → reacciones baratas (clips, sin red)
   const gesto = useCallback(
     (g: Gesto) => {
-      if (g === 'tapBarbilla') decir(Math.random() < 0.5 ? 'risa1' : 'risa2', { emocion: 'risa' });
-      else if (g === 'tapFrente') decir('uy2', { emocion: 'curioso' });
-      else if (g === 'frotarMejilla') decir('carino', { emocion: 'carino' });
-      else if (g === 'dormir') dormir();
+      if (g === 'tapBarbilla') decir(clipDeEmocion('risa')?.id || 'risa1', { emocion: 'risa' });
+      else if (g === 'tapFrente') decir(clipDeEmocion('sorpresa')?.id || 'uy2', { emocion: 'curioso' });
+      else if (g === 'frotarMejilla') decir(clipDeEmocion('carino')?.id || 'carino', { emocion: 'carino' });
+      else if (g === 'dormir') {
+        dormir();
+        // Se duerme bostezando: el bostezo suena sin mover la cara, que ya está dormida.
+        const bostezo = clipDeEmocion('cansado');
+        if (bostezo) hablar(bostezo.id);
+      }
       else if (g === 'despertar') despertar();
     },
     [decir, dormir, despertar]
@@ -910,7 +926,7 @@ export default function App() {
           onClose={() => setAccesoOpen(false)}
           onAuthSuccess={(name, role) => {
             setUsuario({ name, role, authenticated: true });
-            decir(`Bienvenido, ${name}. Ya estoy contigo.`, { emocion: 'feliz' });
+            decir(saludoDe(name).id, { emocion: 'feliz' });
           }}
           onLogout={() => {
             setUsuario({ name: '', role: 'Junta Directiva · Orden Global', authenticated: false });
@@ -919,7 +935,7 @@ export default function App() {
             pendienteGenesis.current = '';
             setPhotos([]);
             setOpinion(null);
-            decir('Sesión cerrada.', { emocion: 'neutral' });
+            decir('hastaluego', { emocion: 'carino' });
           }}
         />
 

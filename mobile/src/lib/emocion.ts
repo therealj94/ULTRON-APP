@@ -4,6 +4,7 @@
  * la cara la traduce a un FaceState y la voz la recibe en /api/tts?emocion=.
  */
 import type { FaceState } from '../config';
+import { expresionDe } from './expresiones';
 
 export const EMOCIONES = [
   'neutral',
@@ -86,7 +87,8 @@ export function pelarEtiqueta(texto: string): { texto: string; emocion: Emocion 
   const m = t.match(RE_EMO);
   if (m) return { texto: t.slice(m[0].length), emocion: normalizarEmocion(m[1]) };
   const legacy = t.match(RE_TAG);
-  if (legacy) return { texto: t.slice(legacy[0].length), emocion: null };
+  // Una expresión de voz al principio («[risa] Ay, no») no es una etiqueta vieja: se queda para que suene.
+  if (legacy && !expresionDe(legacy[0].trim().slice(1, -1))) return { texto: t.slice(legacy[0].length), emocion: null };
   return { texto: t, emocion: null };
 }
 

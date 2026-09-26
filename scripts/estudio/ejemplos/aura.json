@@ -1,0 +1,1186 @@
+{
+ "criterios_canto": {
+  "wer_max": 0.35
+ },
+ "sim_min": 0.6,
+ "canciones": [
+  {
+   "id": "cancion-quiero-conocer-a-jesus",
+   "estilo": "gentle Spanish worship ballad, solo female vocal, soft warm soprano, legato singing with long sustained notes, heartfelt and intimate, acoustic piano, soft strings pad, slow tempo, reverent, clear diction",
+   "letra": "[Verse]\nQuiero conocer a Jesús\nQuiero conocer a Jesús\nMás que a nadie en este mundo\nQuiero conocerte a ti\n\n[Chorus]\nQuiero conocer a Jesús\nQuiero conocer a Jesús\nMás que a nadie en este mundo\nQuiero conocerte a ti",
+   "bpm": 72,
+   "duracion": 55,
+   "tonalidad": "D major",
+   "compas": "4",
+   "idioma": "es",
+   "semillas": [
+    1234,
+    777,
+    4242
+   ],
+   "candidatos": 3,
+   "voz_db": 0,
+   "inst_db": -1,
+   "reverb": true
+  },
+  {
+   "id": "cancion-way-maker",
+   "estilo": "gospel worship, soulful female lead vocal, powerful sustained notes, warm piano, organ, soft choir pad, slow build, uplifting, clear English diction",
+   "letra": "[Verse]\nWay maker, miracle worker\nPromise keeper, light in the darkness\nMy God, that is who You are\n\n[Chorus]\nWay maker, miracle worker\nPromise keeper, light in the darkness\nMy God, that is who You are",
+   "bpm": 68,
+   "duracion": 42,
+   "tonalidad": "E major",
+   "compas": "4",
+   "idioma": "en",
+   "semillas": [
+    2026,
+    99,
+    31337
+   ],
+   "candidatos": 3,
+   "voz_db": 0,
+   "inst_db": -1,
+   "reverb": true
+  },
+  {
+   "id": "cancion-bienvenida",
+   "estilo": "upbeat warm pop jingle, cheerful female vocal, bright and friendly, acoustic guitar, handclaps, glockenspiel, catchy melody, clear Spanish diction",
+   "letra": "[Verse]\nBienvenidos a Aura, qué alegría tenerte aquí\nOrden Global te abre la puerta, este es tu lugar\n\n[Chorus]\nBienvenidos, bienvenidos, juntos vamos a crecer\nCon Aura a tu lado, hoy empieza lo mejor",
+   "bpm": 116,
+   "duracion": 27,
+   "tonalidad": "C major",
+   "compas": "4",
+   "idioma": "es",
+   "semillas": [
+    42,
+    2024,
+    808,
+    555,
+    6789,
+    1001
+   ],
+   "candidatos": 6,
+   "voz_db": 0,
+   "inst_db": -1,
+   "reverb": true
+  },
+  {
+   "id": "cancion-feliz-dia",
+   "estilo": "joyful celebratory pop, happy female vocal, bright ukulele, handclaps, bells, festive and warm, singalong melody, clear Spanish diction",
+   "letra": "[Verse]\nHoy es un día especial, celebramos tu vida\nQue la alegría te acompañe, esta canción es para ti\n\n[Chorus]\nFeliz, feliz día para ti, que se cumplan tus sueños\nMuchas bendiciones hoy, que brille siempre tu luz",
+   "bpm": 118,
+   "duracion": 22,
+   "tonalidad": "G major",
+   "compas": "4",
+   "idioma": "es",
+   "semillas": [
+    7,
+    1717,
+    90210
+   ],
+   "candidatos": 3,
+   "voz_db": 0,
+   "inst_db": -1,
+   "reverb": true
+  },
+  {
+   "id": "cancion-bendicion",
+   "estilo": "calm sacred hymn, soft female vocal, gentle legato singing with sustained notes, soft piano, warm string pad, peaceful, prayerful, slow, clear Spanish diction",
+   "letra": "[Verse]\nQue la paz del Señor te acompañe\nQue su luz ilumine tu camino\n\n[Chorus]\nBendito seas hoy y siempre\nEn sus manos descansa tu corazón",
+   "bpm": 72,
+   "duracion": 42,
+   "tonalidad": "F major",
+   "compas": "4",
+   "idioma": "es",
+   "semillas": [
+    11,
+    333,
+    5150,
+    2718,
+    1618,
+    4669
+   ],
+   "candidatos": 6,
+   "voz_db": 0,
+   "inst_db": -1,
+   "reverb": true
+  },
+  {
+   "id": "cancion-cuna-buenas-noches",
+   "estilo": "soft lullaby, tender gentle female vocal, sustained soothing notes, music box, soft harp, very calm, slow, dreamy, clear Spanish diction",
+   "letra": "[Verse]\nDuerme, duerme, ya llegó la noche\nLas estrellas cuidan tu soñar\n\n[Chorus]\nBuenas noches, descansa en calma\nMañana el sol te volverá a despertar",
+   "bpm": 84,
+   "duracion": 36,
+   "tonalidad": "A major",
+   "compas": "3",
+   "idioma": "es",
+   "semillas": [
+    3,
+    404,
+    6060,
+    1111,
+    2222,
+    3333
+   ],
+   "candidatos": 6,
+   "voz_db": 0,
+   "inst_db": -1,
+   "reverb": true
+  }
+ ],
+ "expresiones": [
+  {
+   "id": "risa-corta",
+   "motor": "chatterbox",
+   "texto": "[laugh]",
+   "n": 4,
+   "semilla": 100,
+   "clases": [
+    "Laughter",
+    "Giggle",
+    "Chuckle, chortle",
+    "Snicker",
+    "Belly laugh"
+   ],
+   "dur": [
+    0.4,
+    3.0
+   ],
+   "esperado": [
+    "ha",
+    "haha",
+    "jaja",
+    "ja"
+   ]
+  },
+  {
+   "id": "risa-corta",
+   "motor": "dia",
+   "texto": "[S1] (laughs)",
+   "n": 3,
+   "semilla": 100,
+   "max_tokens": 260
+  },
+  {
+   "id": "risa-corta",
+   "motor": "dia-libre",
+   "texto": "[S1] (laughs)",
+   "n": 2,
+   "semilla": 5000,
+   "max_tokens": 260
+  },
+  {
+   "id": "risita",
+   "motor": "chatterbox",
+   "texto": "[chuckle]",
+   "n": 4,
+   "semilla": 200,
+   "clases": [
+    "Giggle",
+    "Chuckle, chortle",
+    "Snicker",
+    "Laughter"
+   ],
+   "dur": [
+    0.3,
+    2.5
+   ]
+  },
+  {
+   "id": "risita",
+   "motor": "dia",
+   "texto": "[S1] (chuckle)",
+   "n": 3,
+   "semilla": 200,
+   "max_tokens": 220
+  },
+  {
+   "id": "risita",
+   "motor": "dia-libre",
+   "texto": "[S1] (chuckle)",
+   "n": 2,
+   "semilla": 5100,
+   "max_tokens": 220
+  },
+  {
+   "id": "carcajada",
+   "motor": "dia",
+   "texto": "[S1] (laughs) Ha ha ha ha! (laughs)",
+   "n": 3,
+   "semilla": 300,
+   "max_tokens": 380,
+   "clases": [
+    "Belly laugh",
+    "Laughter"
+   ],
+   "dur": [
+    1.0,
+    4.0
+   ]
+  },
+  {
+   "id": "carcajada",
+   "motor": "chatterbox",
+   "texto": "[laugh] Ha ha ha ha ha! [laugh]",
+   "n": 4,
+   "semilla": 300
+  },
+  {
+   "id": "carcajada",
+   "motor": "dia-libre",
+   "texto": "[S1] (laughs) Ha ha ha ha! (laughs)",
+   "n": 2,
+   "semilla": 5200,
+   "max_tokens": 340
+  },
+  {
+   "id": "risa-nerviosa",
+   "motor": "chatterbox",
+   "texto": "Heh... [chuckle] heh, heh.",
+   "n": 4,
+   "semilla": 400,
+   "clases": [
+    "Giggle",
+    "Chuckle, chortle",
+    "Snicker",
+    "Laughter"
+   ],
+   "dur": [
+    0.5,
+    3.0
+   ]
+  },
+  {
+   "id": "risa-nerviosa",
+   "motor": "dia",
+   "texto": "[S1] Heh... (chuckle) heh...",
+   "n": 3,
+   "semilla": 400,
+   "max_tokens": 280
+  },
+  {
+   "id": "risa-nerviosa",
+   "motor": "dia-libre",
+   "texto": "[S1] Heh... (chuckle) heh...",
+   "n": 2,
+   "semilla": 5300,
+   "max_tokens": 260
+  },
+  {
+   "id": "risa-tierna",
+   "motor": "chatterbox",
+   "texto": "Aww... [chuckle]",
+   "n": 4,
+   "semilla": 450,
+   "clases": [
+    "Giggle",
+    "Chuckle, chortle",
+    "Laughter",
+    "Snicker"
+   ],
+   "dur": [
+    0.4,
+    3.0
+   ]
+  },
+  {
+   "id": "risa-tierna",
+   "motor": "dia",
+   "texto": "[S1] Aww. (laughs)",
+   "n": 3,
+   "semilla": 450,
+   "max_tokens": 260
+  },
+  {
+   "id": "suspiro-cansado",
+   "motor": "chatterbox",
+   "texto": "[sigh]",
+   "n": 4,
+   "semilla": 500,
+   "clases": [
+    "Sigh",
+    "Breathing"
+   ],
+   "dur": [
+    0.5,
+    3.0
+   ],
+   "ganancia_rel_db": -3
+  },
+  {
+   "id": "suspiro-cansado",
+   "motor": "dia",
+   "texto": "[S1] (sighs)",
+   "n": 3,
+   "semilla": 500,
+   "max_tokens": 240
+  },
+  {
+   "id": "suspiro-cansado",
+   "motor": "dia-libre",
+   "texto": "[S1] (sighs)",
+   "n": 2,
+   "semilla": 5400,
+   "max_tokens": 220
+  },
+  {
+   "id": "suspiro-aliviado",
+   "motor": "chatterbox",
+   "texto": "[sigh] Phew.",
+   "n": 4,
+   "semilla": 600,
+   "clases": [
+    "Sigh",
+    "Breathing"
+   ],
+   "dur": [
+    0.5,
+    3.0
+   ],
+   "ganancia_rel_db": -2
+  },
+  {
+   "id": "suspiro-aliviado",
+   "motor": "dia",
+   "texto": "[S1] (exhales) Phew...",
+   "n": 3,
+   "semilla": 600,
+   "max_tokens": 240
+  },
+  {
+   "id": "suspiro-sonador",
+   "motor": "chatterbox",
+   "texto": "Mmm... [sigh]",
+   "n": 4,
+   "semilla": 650,
+   "clases": [
+    "Sigh",
+    "Breathing",
+    "Humming"
+   ],
+   "dur": [
+    0.6,
+    3.5
+   ],
+   "ganancia_rel_db": -2
+  },
+  {
+   "id": "suspiro-sonador",
+   "motor": "dia",
+   "texto": "[S1] (sighs) Mmm...",
+   "n": 3,
+   "semilla": 650,
+   "max_tokens": 280
+  },
+  {
+   "id": "sorpresa-oh",
+   "motor": "kokoro",
+   "texto": [
+    "¡Oh!",
+    "¡Oh...!"
+   ],
+   "filtro": [
+    "asetrate=25440,aresample=24000,atempo=0.94",
+    "asetrate=24720,aresample=24000,atempo=0.85"
+   ],
+   "esperado": [
+    "oh",
+    "o",
+    "ooh"
+   ],
+   "dur": [
+    0.2,
+    2.0
+   ]
+  },
+  {
+   "id": "sorpresa-oh",
+   "motor": "chatterbox",
+   "texto": "Oh!",
+   "n": 3,
+   "semilla": 700
+  },
+  {
+   "id": "asombro-gasp",
+   "motor": "chatterbox",
+   "texto": "[gasp]",
+   "n": 4,
+   "semilla": 800,
+   "clases": [
+    "Gasp",
+    "Breathing",
+    "Pant"
+   ],
+   "dur": [
+    0.3,
+    2.0
+   ],
+   "sim_min": 0,
+   "nota": "sonido sordo (sin voz): la similitud de hablante no es aplicable; se verifica con AST"
+  },
+  {
+   "id": "asombro-gasp",
+   "motor": "dia",
+   "texto": "[S1] (gasps)",
+   "n": 3,
+   "semilla": 800,
+   "max_tokens": 200
+  },
+  {
+   "id": "asombro-gasp",
+   "motor": "dia-libre",
+   "texto": "[S1] (gasps)",
+   "n": 2,
+   "semilla": 5500,
+   "max_tokens": 180
+  },
+  {
+   "id": "bostezo",
+   "motor": "dia",
+   "texto": "[S1] (yawns) Aaaahhh...",
+   "n": 3,
+   "semilla": 900,
+   "max_tokens": 340,
+   "clases": [
+    "Sigh",
+    "Breathing",
+    "Groan",
+    "Wail, moan"
+   ],
+   "dur": [
+    1.0,
+    4.0
+   ],
+   "ganancia_rel_db": -2
+  },
+  {
+   "id": "bostezo",
+   "motor": "chatterbox",
+   "texto": "Aaaaahhh... [sigh]",
+   "n": 3,
+   "semilla": 900
+  },
+  {
+   "id": "bostezo",
+   "motor": "dia-libre",
+   "texto": "[S1] (yawns) Aaaahhh...",
+   "n": 2,
+   "semilla": 6200,
+   "max_tokens": 320
+  },
+  {
+   "id": "carraspeo",
+   "motor": "chatterbox",
+   "texto": "[clear throat]",
+   "n": 4,
+   "semilla": 1000,
+   "clases": [
+    "Throat clearing",
+    "Cough"
+   ],
+   "dur": [
+    0.3,
+    2.0
+   ],
+   "esperado": [
+    "ejem",
+    "ehem",
+    "ahem"
+   ]
+  },
+  {
+   "id": "carraspeo",
+   "motor": "dia",
+   "texto": "[S1] (clears throat)",
+   "n": 3,
+   "semilla": 1000,
+   "max_tokens": 220
+  },
+  {
+   "id": "carraspeo",
+   "motor": "dia-libre",
+   "texto": "[S1] (clears throat)",
+   "n": 2,
+   "semilla": 5600,
+   "max_tokens": 200
+  },
+  {
+   "id": "carraspeo",
+   "motor": "kokoro",
+   "texto": [
+    "¡Ejem!",
+    "Ejem, ejem."
+   ],
+   "filtro": [
+    null,
+    null
+   ],
+   "esperado": [
+    "ejem",
+    "ehem",
+    "ahem"
+   ],
+   "nota": "variante con palabra (¡ejem!) de Kokoro/Dora; la variante no verbal se verifica con AST 'Throat clearing'"
+  },
+  {
+   "id": "mmm-pensando",
+   "motor": "kokoro",
+   "texto": [
+    "Mmm...",
+    "Hmmm..."
+   ],
+   "filtro": [
+    "atempo=0.8",
+    "atempo=0.75"
+   ],
+   "clases": [
+    "Humming"
+   ],
+   "esperado": [
+    "mmm",
+    "hmm",
+    "mm",
+    "hm"
+   ],
+   "dur": [
+    0.4,
+    3.0
+   ]
+  },
+  {
+   "id": "mmm-pensando",
+   "motor": "chatterbox",
+   "texto": "Hmmm...",
+   "n": 3,
+   "semilla": 1100
+  },
+  {
+   "id": "mmm-rico",
+   "motor": "kokoro",
+   "texto": [
+    "¡Mmmm!",
+    "Mmm, mmm."
+   ],
+   "filtro": [
+    "asetrate=24960,aresample=24000,atempo=0.85",
+    "atempo=0.9"
+   ],
+   "clases": [
+    "Humming"
+   ],
+   "esperado": [
+    "mmm",
+    "mm",
+    "hmm",
+    "hm"
+   ],
+   "dur": [
+    0.4,
+    3.0
+   ]
+  },
+  {
+   "id": "mmm-rico",
+   "motor": "chatterbox",
+   "texto": "Mmm! Mmm!",
+   "n": 3,
+   "semilla": 1150
+  },
+  {
+   "id": "hmm-dudando",
+   "motor": "kokoro",
+   "texto": [
+    "¿Hmm?",
+    "Hmm... ¿hmm?",
+    "Hum...",
+    "Mmm, no sé."
+   ],
+   "filtro": [
+    "atempo=0.85",
+    "atempo=0.9",
+    "atempo=0.85",
+    null
+   ],
+   "clases": [
+    "Humming"
+   ],
+   "esperado": [
+    "hmm",
+    "mm",
+    "hm",
+    "mmm",
+    "hum",
+    "um"
+   ],
+   "dur": [
+    0.3,
+    3.0
+   ]
+  },
+  {
+   "id": "hmm-dudando",
+   "motor": "chatterbox",
+   "texto": "Hmm?",
+   "n": 3,
+   "semilla": 1180
+  },
+  {
+   "id": "aja",
+   "motor": "kokoro",
+   "texto": [
+    "¡Ajá!",
+    "Ajá."
+   ],
+   "filtro": [
+    null,
+    "atempo=0.92"
+   ],
+   "esperado": [
+    "aja",
+    "aha",
+    "ajah"
+   ],
+   "dur": [
+    0.2,
+    2.0
+   ]
+  },
+  {
+   "id": "uy-preocupada",
+   "motor": "kokoro",
+   "texto": [
+    "Uy...",
+    "¡Uy, uy!",
+    "¡Uy!",
+    "Uuuy..."
+   ],
+   "filtro": [
+    "asetrate=23280,aresample=24000,atempo=0.9",
+    "asetrate=23520,aresample=24000",
+    null,
+    "atempo=0.9"
+   ],
+   "esperado": [
+    "uy",
+    "ui",
+    "huy",
+    "uyuy"
+   ],
+   "dur": [
+    0.2,
+    2.0
+   ]
+  },
+  {
+   "id": "ay-ternura",
+   "motor": "kokoro",
+   "texto": [
+    "Aaay...",
+    "Ay...",
+    "¡Aaay, qué tierno!",
+    "Aay."
+   ],
+   "filtro": [
+    "atempo=0.82,lowpass=f=7000",
+    "atempo=0.85,asetrate=24720,aresample=24000,lowpass=f=7000",
+    null,
+    "atempo=0.85"
+   ],
+   "esperado": [
+    "ay",
+    "ai",
+    "hay",
+    "aay",
+    "aaay"
+   ],
+   "dur": [
+    0.2,
+    2.5
+   ]
+  },
+  {
+   "id": "ay-dolor",
+   "motor": "kokoro",
+   "texto": [
+    "¡Ay!",
+    "¡Ay, ay!",
+    "¡Ay!",
+    "¡Auch!"
+   ],
+   "filtro": [
+    "asetrate=25200,aresample=24000",
+    "asetrate=24960,aresample=24000,atempo=1.05",
+    null,
+    null
+   ],
+   "esperado": [
+    "ay",
+    "ai",
+    "hay",
+    "ayay",
+    "auch",
+    "ouch"
+   ],
+   "dur": [
+    0.2,
+    2.0
+   ]
+  },
+  {
+   "id": "tarareo-alegre",
+   "motor": "dia",
+   "texto": "[S1] (humming)",
+   "n": 4,
+   "semilla": 1500,
+   "max_tokens": 430,
+   "temperatura": 1.2,
+   "clases": [
+    "Humming",
+    "Singing",
+    "Female singing"
+   ],
+   "dur": [
+    2.0,
+    5.0
+   ],
+   "vc_canto": true,
+   "palabras_ok": 1
+  },
+  {
+   "id": "tarareo-alegre",
+   "motor": "chatterbox",
+   "texto": "Hm hm hmm, hm hm hmm, hm hm hmm hmm!",
+   "n": 3,
+   "semilla": 1500
+  },
+  {
+   "id": "tarareo-alegre",
+   "motor": "dia-libre",
+   "texto": "[S1] (humming)",
+   "n": 2,
+   "semilla": 5700,
+   "max_tokens": 400
+  },
+  {
+   "id": "tarareo-pensativo",
+   "motor": "dia",
+   "texto": "[S1] Hmm... (humming)",
+   "n": 4,
+   "semilla": 1600,
+   "max_tokens": 430,
+   "temperatura": 1.1,
+   "clases": [
+    "Humming",
+    "Singing",
+    "Female singing"
+   ],
+   "dur": [
+    2.0,
+    5.0
+   ],
+   "vc_canto": true,
+   "palabras_ok": 1
+  },
+  {
+   "id": "tarareo-pensativo",
+   "motor": "chatterbox",
+   "texto": "Mmm hmm... hmm hmm hmmm...",
+   "n": 3,
+   "semilla": 1600
+  },
+  {
+   "id": "tarareo-pensativo",
+   "motor": "dia-libre",
+   "texto": "[S1] Hmm... (humming)",
+   "n": 2,
+   "semilla": 5800,
+   "max_tokens": 400
+  },
+  {
+   "id": "risa-celebracion",
+   "motor": "dia",
+   "texto": "[S1] Woo! (laughs)",
+   "n": 3,
+   "semilla": 1700,
+   "max_tokens": 340,
+   "clases": [
+    "Laughter",
+    "Belly laugh",
+    "Cheering",
+    "Giggle"
+   ],
+   "dur": [
+    0.8,
+    4.0
+   ]
+  },
+  {
+   "id": "risa-celebracion",
+   "motor": "chatterbox",
+   "texto": "Woo-hoo! [laugh]",
+   "n": 4,
+   "semilla": 1700
+  },
+  {
+   "id": "respiro-antes-de-hablar",
+   "motor": "dia",
+   "texto": "[S1] (inhales)",
+   "n": 3,
+   "semilla": 1800,
+   "max_tokens": 180,
+   "clases": [
+    "Breathing",
+    "Gasp",
+    "Sigh"
+   ],
+   "dur": [
+    0.3,
+    1.8
+   ],
+   "ganancia_rel_db": -4,
+   "sim_min": 0,
+   "nota": "sonido sordo (sin voz): la similitud de hablante no es aplicable; se verifica con AST"
+  },
+  {
+   "id": "respiro-antes-de-hablar",
+   "motor": "chatterbox",
+   "texto": "[gasp]",
+   "n": 2,
+   "semilla": 1850
+  },
+  {
+   "id": "respiro-antes-de-hablar",
+   "motor": "dia-libre",
+   "texto": "[S1] (inhales)",
+   "n": 2,
+   "semilla": 6300,
+   "max_tokens": 160
+  },
+  {
+   "id": "je-picara",
+   "motor": "kokoro",
+   "texto": [
+    "Je, je.",
+    "Jeje."
+   ],
+   "filtro": [
+    "asetrate=25200,aresample=24000",
+    "asetrate=24960,aresample=24000,atempo=0.95"
+   ],
+   "clases": [
+    "Giggle",
+    "Chuckle, chortle",
+    "Snicker",
+    "Laughter"
+   ],
+   "esperado": [
+    "je",
+    "jeje",
+    "heh",
+    "hehe",
+    "jaja"
+   ],
+   "dur": [
+    0.2,
+    2.0
+   ]
+  },
+  {
+   "id": "je-picara",
+   "motor": "chatterbox",
+   "texto": "Heh heh. [chuckle]",
+   "n": 3,
+   "semilla": 1900
+  },
+  {
+   "id": "sollozo-corto",
+   "motor": "dia",
+   "texto": "[S1] (sniffs) (sniffs)",
+   "n": 3,
+   "semilla": 2000,
+   "max_tokens": 280,
+   "clases": [
+    "Crying, sobbing",
+    "Sniff",
+    "Whimper"
+   ],
+   "dur": [
+    0.5,
+    3.0
+   ],
+   "ganancia_rel_db": -2
+  },
+  {
+   "id": "sollozo-corto",
+   "motor": "chatterbox",
+   "texto": "[sniff] [sniff] [sigh]",
+   "n": 4,
+   "semilla": 2000
+  },
+  {
+   "id": "sollozo-corto",
+   "motor": "dia-libre",
+   "texto": "[S1] (sniffs) (sniffs)",
+   "n": 2,
+   "semilla": 6100,
+   "max_tokens": 260
+  },
+  {
+   "id": "bufido-fastidio",
+   "motor": "chatterbox",
+   "texto": "[groan]",
+   "n": 4,
+   "semilla": 2100,
+   "clases": [
+    "Groan",
+    "Snort",
+    "Sigh",
+    "Grunt"
+   ],
+   "dur": [
+    0.3,
+    2.0
+   ]
+  },
+  {
+   "id": "bufido-fastidio",
+   "motor": "dia",
+   "texto": "[S1] (groans)",
+   "n": 3,
+   "semilla": 2100,
+   "max_tokens": 220
+  },
+  {
+   "id": "shh",
+   "motor": "chatterbox",
+   "texto": "[shush]",
+   "n": 4,
+   "semilla": 2200,
+   "clases": [
+    "Hiss",
+    "Whispering",
+    "Breathing"
+   ],
+   "esperado": [
+    "sh",
+    "shh",
+    "shhh",
+    "chs",
+    "psst"
+   ],
+   "dur": [
+    0.3,
+    2.0
+   ],
+   "ganancia_rel_db": -3,
+   "sim_min": 0,
+   "nota": "sonido sordo (sin voz): la similitud de hablante no es aplicable"
+  },
+  {
+   "id": "shh",
+   "motor": "kokoro",
+   "texto": [
+    "Shhh.",
+    "Chsss..."
+   ],
+   "filtro": [
+    null,
+    "atempo=0.8"
+   ]
+  },
+  {
+   "id": "ups",
+   "motor": "kokoro",
+   "texto": [
+    "¡Ups!",
+    "¡Uups!"
+   ],
+   "filtro": [
+    "asetrate=24720,aresample=24000",
+    null
+   ],
+   "esperado": [
+    "ups",
+    "oops",
+    "ops",
+    "uops",
+    "uups"
+   ],
+   "dur": [
+    0.2,
+    2.0
+   ]
+  },
+  {
+   "id": "ups",
+   "motor": "chatterbox",
+   "texto": "Oops!",
+   "n": 3,
+   "semilla": 2300
+  },
+  {
+   "id": "beso-mua",
+   "motor": "kokoro",
+   "texto": [
+    "¡Muá!",
+    "Mua, mua."
+   ],
+   "filtro": [
+    null,
+    "atempo=0.95"
+   ],
+   "esperado": [
+    "mua",
+    "muah",
+    "mwah",
+    "muac",
+    "mua mua",
+    "mwa"
+   ],
+   "dur": [
+    0.2,
+    2.0
+   ]
+  },
+  {
+   "id": "beso-mua",
+   "motor": "chatterbox",
+   "texto": "Mwah!",
+   "n": 3,
+   "semilla": 2400
+  },
+  {
+   "id": "silbido-corto",
+   "motor": "dia",
+   "texto": "[S1] (whistles)",
+   "n": 4,
+   "semilla": 2500,
+   "max_tokens": 300,
+   "clases": [
+    "Whistling",
+    "Whistle"
+   ],
+   "dur": [
+    0.4,
+    3.0
+   ],
+   "sim_min": 0,
+   "palabras_ok": 1
+  },
+  {
+   "id": "silbido-corto",
+   "motor": "dia-libre",
+   "texto": "[S1] (whistles)",
+   "n": 2,
+   "semilla": 5900,
+   "max_tokens": 260
+  },
+  {
+   "id": "aplauso-con-risa",
+   "motor": "dia",
+   "texto": "[S1] (claps) (laughs) (claps)",
+   "n": 4,
+   "semilla": 2600,
+   "max_tokens": 360,
+   "clases": [
+    "Clapping",
+    "Applause"
+   ],
+   "dur": [
+    1.0,
+    4.0
+   ],
+   "sim_min": 0.5,
+   "palabras_ok": 1
+  },
+  {
+   "id": "aplauso-con-risa",
+   "motor": "dia-libre",
+   "texto": "[S1] (claps) (laughs) (claps)",
+   "n": 2,
+   "semilla": 6000,
+   "max_tokens": 320
+  },
+  {
+   "id": "ooh-admiracion",
+   "motor": "kokoro",
+   "texto": [
+    "¡Oooh!",
+    "Oooh..."
+   ],
+   "filtro": [
+    "asetrate=25200,aresample=24000,atempo=0.8",
+    "atempo=0.75"
+   ],
+   "esperado": [
+    "oh",
+    "ooh",
+    "oooh",
+    "o",
+    "uh"
+   ],
+   "dur": [
+    0.3,
+    2.5
+   ]
+  },
+  {
+   "id": "ooh-admiracion",
+   "motor": "chatterbox",
+   "texto": "Ooooh!",
+   "n": 3,
+   "semilla": 2700
+  },
+  {
+   "id": "aww-ternura",
+   "motor": "chatterbox",
+   "texto": "Awww...",
+   "n": 4,
+   "semilla": 2800,
+   "esperado": [
+    "aw",
+    "aww",
+    "awww",
+    "oh",
+    "ao",
+    "au"
+   ],
+   "dur": [
+    0.3,
+    2.5
+   ],
+   "sim_min": 0.6
+  },
+  {
+   "id": "aww-ternura",
+   "motor": "kokoro",
+   "texto": [
+    "Aaau...",
+    "Oooh, aaau."
+   ],
+   "filtro": [
+    "atempo=0.8",
+    "atempo=0.85"
+   ]
+  },
+  {
+   "id": "eso",
+   "motor": "kokoro",
+   "texto": [
+    "¡Eso!",
+    "¡Eso es!"
+   ],
+   "filtro": [
+    null,
+    "asetrate=24720,aresample=24000"
+   ],
+   "esperado": [
+    "eso"
+   ],
+   "dur": [
+    0.2,
+    2.0
+   ]
+  }
+ ]
+}

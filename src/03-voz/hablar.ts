@@ -11,7 +11,7 @@
  */
 
 import { playFile, playWavBlob, stopVoice, newTtsAbort } from './player';
-import { clipDeTexto, clipPorId, type Clip } from './banco';
+import { cancionDeTexto, clipDeTexto, clipPorId, type Clip } from './banco';
 import { headersMesa } from '../10-infra/sesionCliente';
 import type { Emocion } from '../../lib/emocion';
 
@@ -44,6 +44,14 @@ function reproducirClip(clip: Clip): Dicho {
     clip.file,
     () => resFin(),
     () => {
+      // Un clip nuevo que este despliegue no trae: suena el de siempre en su lugar.
+      const respaldo = clip.respaldo ? clipPorId(clip.respaldo) : null;
+      if (respaldo) {
+        const otro = reproducirClip(respaldo);
+        void otro.inicio.then(resInicio);
+        void otro.fin.then(resFin);
+        return;
+      }
       resInicio();
       resFin();
     },
@@ -104,10 +112,9 @@ export function hablar(texto: string, opts: { emocion?: Emocion | string; perfor
 export function cantar(opts: { id?: string; pedido?: string; letra?: string; titulo?: string }): Dicho {
   const nada: Dicho = { motor: 'silencio', inicio: Promise.resolve(), fin: Promise.resolve() };
   if (!activo) return nada;
-  if (opts.id) {
-    const clip = clipPorId(opts.id);
-    if (clip) return reproducirClip(clip);
-  }
+  // Del repertorio grabado aquí, sin ir al servidor: por id o por el pedido («cantame la de cuna»).
+  const clip = opts.id ? clipPorId(opts.id) : opts.pedido ? cancionDeTexto(opts.pedido) : null;
+  if (clip) return reproducirClip(clip);
   let resInicio!: () => void;
   let resFin!: () => void;
   const inicio = new Promise<void>((r) => (resInicio = r));

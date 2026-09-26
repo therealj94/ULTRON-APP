@@ -9,6 +9,7 @@ import { API_BASE } from '../config';
 import type { Mode, SessionUser } from '../config';
 import { normalizarEmocion, pelarEtiqueta, type Emocion } from './emocion';
 import { loadCreds, loadMesaToken, saveMesaToken } from './storage';
+import { quitarExpresiones } from './expresiones';
 
 let refreshing: Promise<boolean> | null = null;
 
@@ -150,7 +151,10 @@ export async function rememberFact(hecho: string, usuario: string): Promise<bool
 export type Turn = { rol: 'usuario' | 'ultron'; texto: string };
 
 export type ChatResult = {
+  /** Para leer (burbuja, hilo): sin expresiones de voz. */
   reply: string;
+  /** Para decir: con sus [risa], [suspiro]… Un servidor viejo no lo manda y vale `reply`. */
+  voz?: string;
   emocion: Emocion;
   mode?: Mode;
   ms?: number;
@@ -190,7 +194,8 @@ export async function turno(opts: TurnoOpts): Promise<ChatResult> {
     const data = await api<any>('/api/turno', { method: 'POST', body: turnoBody(opts) }, 70_000);
     const pelado = pelarEtiqueta(String(data.reply || ''));
     const emocion = data.emocion ? normalizarEmocion(data.emocion) : pelado.emocion || 'neutral';
-    return { reply: pelado.texto.trim(), emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error };
+    const voz = data.voz ? pelarEtiqueta(String(data.voz)).texto.trim() : undefined;
+    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error };
   } catch (e: any) {
     return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro' };
   }
@@ -199,6 +204,7 @@ export async function turno(opts: TurnoOpts): Promise<ChatResult> {
 export type StreamHandlers = {
   /** Emoción del turno: llega ANTES del primer delta (la cara reacciona antes que la voz). */
   onEmocion?: (e: Emocion) => void;
+  /** Trozo para DECIR (con expresiones): quien lo enseñe, que se las quite. */
   onDelta: (piece: string) => void;
   onTools?: (tools: string[]) => void;
 };
@@ -252,8 +258,8 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
           continue;
         }
         if (ev === 'emocion') setEmocion(data.emocion);
-        else if (ev === 'delta' && data.text) {
-          let piece = String(data.text);
+        else if (ev === 'delta' && (data.voz || data.text)) {
+          let piece = String(data.voz || data.text);
           if (firstDelta) {
             // defensa: servidor viejo que no quitó la etiqueta inicial
             const pelado = pelarEtiqueta(piece);
@@ -267,8 +273,14 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
         } else if (ev === 'tools' && Array.isArray(data.tools)) h.onTools?.(data.tools);
         else if (ev === 'done') {
           if (data.emocion) setEmocion(data.emocion);
-          done = { reply: pelarEtiqueta(String(data.reply || full)).texto, emocion: emocion || 'neutral', ms: data.ms, via: data.via };
-        } else if (ev === 'error') done = { reply: full, emocion: emocion || 'neutral', error: String(data.error || 'error') };
+          done = {
+            reply: quitarExpresiones(pelarEtiqueta(String(data.reply || full)).texto),
+            voz: pelarEtiqueta(String(data.voz || data.reply || full)).texto,
+            emocion: emocion || 'neutral',
+            ms: data.ms,
+            via: data.via,
+          };
+        } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error') };
       }
     };
     xhr.open('POST', `${API_BASE}/api/turno/stream`);
@@ -281,14 +293,15 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
       if (xhr.status === 429) return fail(new Error('HTTP 429'));
       if (xhr.status < 200 || xhr.status >= 300) return fail(new Error(`HTTP ${xhr.status}`));
       consume();
-      const reply = String((done && done.reply) || full).trim();
-      if (!reply) return fail(new Error('stream vacío'));
-      finish(done ? { ...done, reply, emocion: emocion || done.emocion } : { reply, emocion: emocion || 'neutral' });
+      const reply = String((done && done.reply) || quitarExpresiones(full)).trim();
+      const voz = String((done && done.voz) || full).trim() || reply;
+      if (!reply && !voz) return fail(new Error('stream vacío'));
+      finish(done ? { ...done, reply, voz, emocion: emocion || done.emocion } : { reply, voz, emocion: emocion || 'neutral' });
     };
     xhr.onerror = () => fail(new Error('red'));
     // Cancelar (el usuario dijo «callar») rechaza ya, sin depender de cómo cierre el XHR al abortarlo.
     cancelar = () => fail(new Error('cancelado'));
-    xhr.ontimeout = () => (full ? finish({ reply: full.trim(), emocion: emocion || 'neutral', error: 'timeout' }) : fail(new Error('timeout')));
+    xhr.ontimeout = () => (full ? finish({ reply: quitarExpresiones(full).trim(), voz: full.trim(), emocion: emocion || 'neutral', error: 'timeout' }) : fail(new Error('timeout')));
     const payload = turnoBody(opts);
     void loadMesaToken().then((t) => {
       if (settled) return;
@@ -323,13 +336,17 @@ export type Cancion = { id: string; titulo: string; artista: string; pedir: stri
 
 /** Repertorio fijo (mismo que lib/capacidades del servidor) por si GET /api/cantar no responde. */
 export const CANCIONES_LOCAL: Cancion[] = [
-  { id: 'jesus', titulo: 'Quiero conocer a Jesús', artista: 'Generación 12', pedir: 'canta quiero conocer a Jesús' },
+  { id: 'jesus', titulo: 'Quiero conocer a Jesús', artista: 'Generación 12 (versión de AU-RA)', pedir: 'canta quiero conocer a Jesús' },
+  { id: 'waymaker', titulo: 'Way Maker', artista: 'Sinach (versión de AU-RA)', pedir: 'canta way maker' },
+  { id: 'bienvenida', titulo: 'Bienvenidos a AU-RA', artista: 'AU-RA', pedir: 'canta la de bienvenida' },
+  { id: 'felizdia', titulo: 'Feliz día', artista: 'AU-RA', pedir: 'cantame feliz día' },
+  { id: 'bendicion', titulo: 'Bendición', artista: 'AU-RA', pedir: 'canta una bendición' },
+  { id: 'cuna', titulo: 'Duerme, duerme (canción de cuna)', artista: 'AU-RA', pedir: 'cantame una canción de cuna' },
   { id: 'bohemian', titulo: 'Bohemian Rhapsody', artista: 'Queen', pedir: 'canta 1' },
   { id: 'ligera', titulo: 'De música ligera', artista: 'Soda Stereo', pedir: 'canta 2' },
   { id: 'bittersweet', titulo: 'Bitter Sweet Symphony', artista: 'The Verve', pedir: 'canta 3' },
   { id: 'runaway', titulo: 'Runaway', artista: 'Kanye West', pedir: 'canta 4' },
   { id: 'bruno', titulo: 'Die With A Smile', artista: 'Bruno Mars', pedir: 'canta 5' },
-  { id: 'waymaker', titulo: 'Way Maker', artista: 'Sinach', pedir: 'canta way maker' },
 ];
 
 export async function listCanciones(): Promise<Cancion[]> {

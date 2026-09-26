@@ -5,9 +5,13 @@
 import { leerLarga } from '../09-estado/memoria';
 import { headersMesa } from '../10-infra/sesionCliente';
 import type { Emocion } from '../../lib/emocion';
+import { quitarExpresiones } from '../../lib/expresiones';
 
 export type Turno = {
+  /** Para leer: sin expresiones de voz. */
   reply?: string;
+  /** Para decir: el mismo texto con sus [risa], [suspiro]… (servidores viejos no lo mandan). */
+  voz?: string;
   emocion?: Emocion;
   error?: string;
   modelo?: string;
@@ -59,6 +63,7 @@ export async function pedirTurno(opts: PeticionTurno): Promise<Turno> {
   return data;
 }
 
+/** Los textos de `onDelta`/`onReplace` son los de DECIR (con expresiones): quien los enseñe, que las quite. */
 export type EventosTurno = {
   onTools?: (tools: string[]) => void;
   onEmocion?: (e: Emocion) => void;
@@ -98,14 +103,22 @@ export async function pedirTurnoStream(opts: PeticionTurno, ev: EventosTurno = {
       emocion = data?.emocion;
       if (emocion) ev.onEmocion?.(emocion);
     } else if (evento === 'delta') {
-      const t = String(data?.text || '');
+      const t = String(data?.voz ?? data?.text ?? '');
       texto += t;
       ev.onDelta?.(t);
     } else if (evento === 'replace') {
-      texto = String(data?.text || '');
+      texto = String(data?.voz ?? data?.text ?? '');
       ev.onReplace?.(texto);
     } else if (evento === 'done') {
-      done = { reply: String(data?.reply ?? texto), emocion: data?.emocion || emocion, ms: data?.ms, via: data?.via, trazaId: data?.trazaId, honesto: true };
+      done = {
+        reply: String(data?.reply ?? quitarExpresiones(texto).trim()),
+        voz: String(data?.voz ?? data?.reply ?? texto),
+        emocion: data?.emocion || emocion,
+        ms: data?.ms,
+        via: data?.via,
+        trazaId: data?.trazaId,
+        honesto: true,
+      };
     } else if (evento === 'error') {
       error = String(data?.error || data?.message || 'error');
     }
@@ -132,7 +145,7 @@ export async function pedirTurnoStream(opts: PeticionTurno, ev: EventosTurno = {
     }
   }
   if (done) return done;
-  if (texto) return { reply: texto, emocion, honesto: true };
+  if (texto) return { reply: quitarExpresiones(texto).trim(), voz: texto, emocion, honesto: true };
   return { reply: '', emocion, error: error || 'sin respuesta', honesto: true };
 }
 

@@ -178,7 +178,7 @@ export function extraerEmocion(texto: string): { emocion: Emocion; texto: string
 export function inferirEmocion(texto: string): Emocion {
   const t = fold(texto);
   if (!t) return 'neutral';
-  if (/\bje ?je\b|\bja ?ja\b|\[laughs?\]|\[chuckles?\]/.test(t)) return 'risa';
+  if (/\bje ?je\b|\bja ?ja\b|\[laughs?\]|\[chuckles?\]|\[(risa|risita|je)\]/.test(t)) return 'risa';
   if (/\bcay[oó]\b|\bno responde\b|\briesgo\b|\bcuidado\b|\bproblema\b|\bno pude\b/.test(t)) return 'preocupado';
   if (/\blo siento\b|\blamento\b|\bp[eé]same\b/.test(t)) return 'triste';
   if (/^(mmm|d[eé]jame ver|un segundo|a ver)/.test(t)) return 'pensando';

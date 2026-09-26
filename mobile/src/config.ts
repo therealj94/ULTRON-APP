@@ -3,7 +3,7 @@ import Constants from 'expo-constants';
 const extra = (Constants.expoConfig?.extra || {}) as { ultronUrl?: string };
 
 export const API_BASE = (extra.ultronUrl || 'https://ultron-looi-desk.onrender.com').replace(/\/+$/, '');
-export const APP_VERSION = Constants.expoConfig?.version || '4.0.0';
+export const APP_VERSION = Constants.expoConfig?.version || '4.4.0';
 
 /** Nombre público de la única voz de AU-RA (servidor propio: Voicebox, perfil Kokoro Dora). */
 export const VOICE_NAME = 'AU-RA (Dora · servidor propio)';

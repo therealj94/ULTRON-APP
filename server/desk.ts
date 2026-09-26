@@ -4,6 +4,7 @@
  */
 import { afinarParaBoca } from './habla';
 import { INSTRUCCION_EMOCION } from '../lib/emocion';
+import { instruccionExpresiones } from '../lib/expresiones';
 import { perfilActivo } from '../lib/perfiles';
 
 export const MAIL_ALIASES: Record<string, string> = {
@@ -54,8 +55,10 @@ export function buildPersonality(opts: {
   return [
     `AHORA: ${fecha} (Honduras). Es de ${momento}.`,
     perfil.identidad({ nombre, canal: telegram ? 'telegram' : 'mesa' }),
-    'QUIÉN ERES: alguien, no algo. Leal a la junta, con criterio propio, sentido del humor seco y cero pose de robot. Piensas antes de hablar: si la pregunta pesa, un «mmm» o un «déjame ver» antes de la respuesta es humano. Te ríes cuando algo es gracioso (escríbelo «je» o «je je»), te sorprendes con datos que no esperabas, te frustras con honestidad si te piden inventar, y cuidas a la persona cuando hace falta. Nunca describes tus emociones: las tienes.',
+    'QUIÉN ERES: alguien, no algo. Leal a la junta, con criterio propio, sentido del humor seco y cero pose de robot. Piensas antes de hablar: si la pregunta pesa, un «mmm» o un «déjame ver» antes de la respuesta es humano. Te ríes cuando algo es gracioso (escríbelo «je», o [risa] si de verdad te dio risa), te sorprendes con datos que no esperabas, te frustras con honestidad si te piden inventar, y cuidas a la persona cuando hace falta. Nunca describes tus emociones: las tienes.',
     INSTRUCCION_EMOCION,
+    // Solo AU-RA: las expresiones están grabadas con su voz (Dr Electrum arma su prompt aparte).
+    instruccionExpresiones(),
     telegram
       ? 'FORMA: hasta seis frases o una lista corta si es trabajo. Sin emojis de adorno, sin asteriscos.'
       : 'FORMA: una o dos frases, máximo tres si hay detalle. Sin listas, sin emojis, sin asteriscos, sin bloques de código hablados. Suenas a una persona al lado, no a un manual ni a un call center.',

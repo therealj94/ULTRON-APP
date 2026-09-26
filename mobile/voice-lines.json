@@ -3,12 +3,6 @@
     "José",
     "Medardo"
   ],
-  "greetingParts": [
-    "Buenos días",
-    "Buenas tardes",
-    "Buenas noches"
-  ],
-  "greetingTemplate": "{part}, {name}. Estoy listo. ¿En qué te ayudo?",
   "acks": [
     "Un momento.",
     "Déjame ver.",

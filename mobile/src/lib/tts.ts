@@ -9,6 +9,9 @@
  *    siguiente oración precargada mientras suena la actual.
  *  - Canciones: POST /api/cantar {id} → mp3 grabado; {letra,titulo} → WAV (Kokoro la dice, no la canta).
  *  - Oración del día: el estático /voz/oracion.mp3, o POST /api/orar {tema?} → WAV (cacheado).
+ *  - Expresiones ([risa], [suspiro]…, src/lib/expresiones.ts): viajan dentro del texto a /api/tts y
+ *    el servidor pega la toma grabada; las demás etiquetas se quitan antes de pedir voz.
+ *  - Reacciones sin palabras (speakReaccion): tomas del estudio al azar, con el clip viejo de respaldo.
  *  - Lip-sync: cada reproducción emite un nivel 0..1 a 20 Hz (setSpeechLevelListener) calculado con
  *    lipsync.ts sobre positionMillis (expo-av no da metering al reproducir).
  *
@@ -22,6 +25,7 @@ import { API_BASE } from '../config';
 import type { Emocion } from './emocion';
 import { envolventeDeTexto, envolventeLibre, type EnvelopeKind } from './lipsync';
 import { CLIP_TEXT, PHRASE_TO_CLIP, REMOTE_CLIPS, VOICE_BANK, bankKey, type ClipId } from './voiceBank';
+import { soloExpresiones } from './expresiones';
 
 type Perf = 'speak' | 'sing';
 
@@ -71,9 +75,9 @@ function emitLevel(v: number) {
   levelListener?.(q);
 }
 
+/** Texto para pedir voz: sin markdown ni emojis. Las expresiones conocidas se quedan (suenan); el resto de corchetes, no. */
 export function cleanForSpeech(text: string) {
-  return String(text || '')
-    .replace(/\[[^\]]+\]/g, '')
+  return soloExpresiones(String(text || ''))
     .replace(/\*+/g, '')
     .replace(/#+\s?/g, '')
     .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
@@ -420,6 +424,44 @@ export async function speakClip(id: ClipId, opts?: SpeakCallbacks & { fallback?:
     if (opts?.fallback === false || my !== gen) return false;
     const tts = await fetchSource(text, 'speak', opts?.emocion || 'neutral');
     return await playSource(tts, my, opts, 25_000, { text });
+  } finally {
+    endSpeak();
+    if (my === gen) opts?.onEnd?.();
+  }
+}
+
+/**
+ * Reacción sin palabras por emoción: primero una toma del estudio al azar (las del tacto van en el
+ * APK), luego las otras tomas y, si ninguna está, el clip de siempre. Sin TTS: una risa leída no es una risa.
+ */
+const REACCIONES: Record<string, { tomas: ClipId[]; respaldo: ClipId[] }> = {
+  risa: { tomas: ['risacorta', 'risatierna', 'jepicara'], respaldo: ['risa1', 'risa2'] },
+  sorpresa: { tomas: ['sorpresaoh', 'asombro'], respaldo: ['uy2'] },
+  pensando: { tomas: ['mmmpensando', 'hmm'], respaldo: ['mmm2'] },
+  carino: { tomas: ['aww'], respaldo: ['carino'] },
+  cansado: { tomas: ['bostezo'], respaldo: ['cansado'] },
+};
+
+export async function speakReaccion(emocion: string, opts?: SpeakCallbacks): Promise<boolean> {
+  const r = REACCIONES[emocion === 'ternura' ? 'carino' : emocion === 'sueno' ? 'cansado' : emocion];
+  if (!r) return false;
+  await stopSpeaking();
+  const my = gen;
+  opts?.onStart?.();
+  await ensureAudioMode();
+  beginSpeak();
+  try {
+    // Al azar entre las que suenan ya (en el APK, o el servidor ya dijo que las tiene): un toque no
+    // espera seis segundos a que conteste un HEAD. Las demás se consultan de fondo para la próxima.
+    const listas = r.tomas.filter((t) => isBundled(t) || remoteOk.get(t)?.ok === true);
+    for (const t of r.tomas) if (!listas.includes(t)) void remoteClipAvailable(t);
+    const primera = listas[Math.floor(Math.random() * listas.length)];
+    for (const id of [...listas.filter((t) => t === primera), ...listas.filter((t) => t !== primera), ...r.respaldo]) {
+      if (my !== gen) return false;
+      const src = await clipSource(id);
+      if (src) return await playSource(src, my, opts, 10_000, { text: CLIP_TEXT[id] });
+    }
+    return false;
   } finally {
     endSpeak();
     if (my === gen) opts?.onEnd?.();
