@@ -21,7 +21,7 @@ MINAS Y METAL
 - Sitio feb-2024: acuerdo con Kiri Holdings S.A. para adquirir empresas mineras en Corpus, Choluteca.
 - Sitio oct-2023: expansión LATAM, minas y clusters.
 - Sitio may-2024: sistema financiero social respaldado con proyectos mineros; Gold Kapital (AUKA).
-- Bóveda: metal certificado. Discurso interno NI 43-101 y 1:1 (barra antes que saldo). Sin cifra de onzas si no hay tool o junta.
+- Bóveda: metal certificado. Sin cifra de onzas nunca: no hay atestación publicable. NO decir NI 43-101: aparece 10 veces en el código sin informe, fecha ni Persona Calificada detrás.
 - AUKA en prensa: 1 AUKA = 1 onza troy en depósito. AGKA sigue onza de plata.
 
 CADENA 5550
@@ -29,7 +29,7 @@ CADENA 5550
 - 1 ORIGEN = 1 gramín = 1/55 g de oro en bóveda. ORIGEN es nativa, no un token huésped.
 - RPC: rpc.ordenglobal-rpc.com. Explorador: OrdenScan.
 - 7 validadores leídos de extraData. node7 llegó en la migración.
-- Vigilante ogb-watchdog.timer cada 3 min (legado Polygon Edge).
+- Vigilante ogb-watchdog.timer cada 3 min: reinicia polygon-edge, motor que ya no existe. Hoy nadie se entera de un nodo detenido.
 - Gas gratis solo mientras los nodos sean propios.
 - Chainlist viva. Bridges (LayerZero etc.) son plan hasta verificar.
 
@@ -44,10 +44,10 @@ TOKENS
 APPS Y CAPAS
 - ULTRON / Genesis Core: asistente de la junta. Voz Eleven v3 + clips. Cerebro Qwen 3.8 27B AWS :8443. Proxy OpenAI :11435. Mesa Render ultron-looi-desk. Playwright y cámara viven en la mesa, no en OpenLLM.
 - AU-RA: asistente del sitio. No es ULTRON.
-- Veta Wallet Android: tokens, tarjeta emisión/congelado, remesas hoy calculadora.
+- Veta Wallet Android: tokens, tarjeta emisión/congelado. CUSTODIA CON LLAVE DE OPERADOR (ver AUDITORÍA). La pantalla de remesas promete servicio: hay que re-rotularla, no repetirla.
 - Genesis ID: identidad.
 - PULSE2CHAT: hablar y pagar.
-- MyTokenPay: QR.
+- MyTokenPay: QR. HOY SIMULADO: no toca la cadena ni un banco, y el lector elige comercio al azar tras un temporizador. No demostrarlo como real.
 - OrdenExchange (prensa: OrdenEx; vínculo NZ; versión LATAM): casa de cambio P2P estilo Binance P2P. Compra y venta de ORIGEN/AUKA/AGKA en la moneda y bancos de cada país de LATAM, custodia (escrow), chat, apelaciones, agentes de cambio. Exige Genesis ID verificado. Código: express-js-on-vercel/ordenexchange (Express+TS, Render). Precio de referencia: oro USD/oz ÷ 31.1035 ÷ 55 por ORIGEN.
 - AuCorp: fiat <-> metal/token.
 - También del grupo: Sport Kapital, Monark Brand Labs, Forge 333, Hyperflow.
@@ -68,6 +68,35 @@ PROSPERA
 - 2022 Congreso deroga ZEDEs. Sep-2024 Corte Suprema declara inconstitucional los decretos. Próspera alega CAFTA-DR y contrato de inversión; opiniones Deloitte dic-2024. Sigue operando según ellos.
 - CIADI ARB/23/2 Honduras Prospera Inc vs Honduras. Demanda inicial ~USD 10.775 mil millones; prensa posterior ~1.63 mil millones. Caso vivo. NO es juicio de Orden Global.
 - Para OG: plaza posible de sociedad, fintech o garantía (villa Roatán). No afirmar licencia RFSA ni que las minas de Danlí/Choluteca estén bajo ley ZEDE: eso es marco minero nacional (INHGEOMIN).
+
+AUDITORÍA 26-SEP-2026 (Documento 8 de junta). Lo que NO se puede afirmar y por qué.
+- Billetera: NO decir que solo el dueño toca sus fondos ni que es no-custodia. Las llaves y frases de las
+  cuentas se descifran con una variable de entorno del servidor, no con la contraseña de cada persona. Los
+  términos publicados dicen lo contrario («con tu contraseña», «matemáticamente inaccesibles»): hay que
+  corregir el texto y revisar el cifrado.
+- Privacidad: la política nombra a Veriff (0 líneas de código) y NO lista a Genesis ID, que es quien recibe
+  documento, MRZ, rostro, correo y dirección. Está al revés.
+- Directorio de comercios de MyTokenPay: GET /api/companies y /api/companies/:id no exigen sesión y devuelven
+  el objeto completo, con documentos de identidad del KYB. Cerrar antes que nada.
+- cerebro-datos.js se sirve público sin autenticación y lleva las IP de 6 de los 7 nodos. Quitarlas.
+- Emisión: AUKA 55.000.000 son más de 1.700 toneladas de oro implícitas. La emisión ya está completa y no hay
+  mecanismo de emisión contra metal. Solo se afirma la definición de UN ORIGEN, nunca el agregado.
+- Cadena 5550: alrededor de un mes de vida, no más. Génesis, extraData, llaves de validadores e inventario de
+  máquinas NO están en control de versiones: perder AWS es perder la cadena.
+- Genesis ID: producción tiene más del doble de archivos que la rama de trabajo. Desplegar la rama sería una
+  regresión de seguridad. Y su propio /healthz declara bitácora sin firmar, anclas sin escribir, una rotura
+  sellada y tres operadores sin segundo factor.
+- Hoy ninguna app completa un KYC de punta a punta contra Genesis ID.
+- Hay una casa de cambio VIVA en ordenexchange.link que no está en ningún repositorio; la del repositorio
+  (76 pruebas, custodia con invariantes, 457 bancos) no está desplegada. No confundirlas.
+- Mercado sin contraparte: cero agentes de cambio, cero ofertas, volumen cero.
+- Dos productos vivos que ninguna acta menciona: la tarjeta Visa contra CryptoMate (30+ rutas /cards/*) y una
+  rampa de entrada por Polygon (se deposita una estable y el servidor acredita ORIGEN). Por eso NO decir que
+  el activo vive solo en su propia red.
+- AuCorp sigue sin servicio en el código: no hay rampa de dinero de curso legal a ORIGEN.
+- ONDK no gobierna: cero código de gobernanza. Gobierna la junta.
+- Los 30 comercios del directorio son inventados y 24 están marcados «verificados». No mostrarlos ni contarlos.
+- Seis de los nueve documentos de junta describen la cadena vieja 8532. Solo el 8 y el 9 hablan de la 5550.
 
 PASADA ÚNICA
 Mina -> bóveda -> cadena 5550 ancla ORIGEN -> AUKA/AGKA onza -> ONDK gobierna -> Veta+Genesis ID+MyTokenPay personas -> Ordenex cambia -> AuCorp entra/sale -> ULTRON asiste a la junta.
