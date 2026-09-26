@@ -18,7 +18,7 @@ import type { MsgHilo } from './hilo';
 import type { Contexto } from '../../lib/agente/tipos';
 import { extraerEmocion, type Emocion } from '../../lib/emocion';
 import { fetchNodo, NODO_MODELO, NODO_SECRETO, NODO_URL } from '../../lib/nodo';
-import { convocar, herramientasDe, promptPanel } from './especialistas';
+import { decidirPanel, herramientasDe, promptPanel } from './especialistas';
 import { manosDe, TODAS } from './manos';
 import { CONOCIMIENTO_MINAS } from '../../src/08-cerebro-minas/conocimiento';
 import { hechosCerebro, lineas as lineasCerebro } from '../../lib/cerebro';
@@ -152,7 +152,7 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   const clas = await clasificar(mensaje, 'electrum');
   trazaActual()?.clasificacion(clas);
   ctx = { ...ctx, riesgo: clas.riesgo };
-  const panel = convocar(mensaje);
+  const { panel } = await decidirPanel(mensaje);
   // Las de su oficio y, para todos, la memoria estructurada (fichas de empresas, concesiones, personas).
   const herramientas = [...(panel.length ? manosDe(herramientasDe(panel)) : TODAS), ...MEMORIA_ESTRUCTURADA];
   const nombrePanel = panel.map((e) => e.nombre).join(' y ');

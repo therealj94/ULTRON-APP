@@ -18,6 +18,7 @@
  * vigencia de una concesión dice que eso es del legal minero y lo pasa. Esa disciplina es lo que
  * hace que el panel valga más que un solo prompt grande.
  */
+import { decidirLaya } from '../../lib/laya';
 
 export type EspecialistaId =
   | 'geologo'
@@ -192,6 +193,13 @@ const A_MANO: Array<[RegExp, EspecialistaId]> = [
 /** Las formas con las que de verdad se pide a alguien, ya sin tildes. */
 const PEDIDO_EXPLICITO = /\b(pon[a-z]*me|pong[a-z]+|pasame|que hable|que venga|llama|llame|activa|active|consulta|consulte|dame|quiero|trae|traeme|traiga|necesito)\b/;
 
+/** A quién nombró el usuario al pedirlo («pásame al geólogo»), en el orden de la tabla. */
+export function pedidosExplicitos(mensaje: string): EspecialistaId[] {
+  const q = fold(mensaje);
+  if (!PEDIDO_EXPLICITO.test(q)) return [];
+  return A_MANO.filter(([re]) => re.test(q)).map(([, id]) => id);
+}
+
 /**
  * A quién le toca esta pregunta.
  *
@@ -207,10 +215,7 @@ export function convocar(mensaje: string, maximo = 2): Especialista[] {
   if (!q.trim()) return [];
 
   // 1) Pedido explícito: si el usuario nombró a alguien, ese va sí o sí y va primero.
-  const explicitos: EspecialistaId[] = [];
-  if (PEDIDO_EXPLICITO.test(q)) {
-    for (const [re, id] of A_MANO) if (re.test(q)) explicitos.push(id);
-  }
+  const explicitos = pedidosExplicitos(mensaje);
 
   // 2) Por tema, ordenados por CUÁNTO texto de su campo aparece, no solo cuántas veces.
   //
@@ -236,6 +241,28 @@ export function convocar(mensaje: string, maximo = 2): Especialista[] {
     if (!salida.includes(e)) salida.push(e);
   }
   return salida.slice(0, maximo);
+}
+
+/**
+ * Lo mismo que convocar(), pero decidido por Laya en el nodo T4 cuando está disponible.
+ *
+ * Los que el usuario nombró siguen yendo primero (eso no se adivina, se obedece); el resto lo pone
+ * Laya, que entiende la pregunta en vez de contar palabras: «Quebrada Seca» es un nombre de
+ * concesión, no un tema ambiental. Si Laya no contesta a tiempo, la tabla de siempre.
+ */
+export async function decidirPanel(
+  mensaje: string,
+  maximo = 2
+): Promise<{ panel: Especialista[]; fuente: 'laya' | 'tabla' }> {
+  const d = await decidirLaya(mensaje);
+  if (!d) return { panel: convocar(mensaje, maximo), fuente: 'tabla' };
+  const ids = [...pedidosExplicitos(mensaje), ...d.panel];
+  const panel: Especialista[] = [];
+  for (const id of ids) {
+    const e = POR_ID.get(id as EspecialistaId);
+    if (e && !panel.includes(e)) panel.push(e);
+  }
+  return { panel: panel.slice(0, maximo), fuente: 'laya' };
 }
 
 /** Las herramientas que el panel convocado puede usar. Sin repetir. */

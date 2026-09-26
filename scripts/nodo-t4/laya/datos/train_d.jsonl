@@ -1,0 +1,220 @@
+{"q": "En Quebrada Seca, ¿cuánto nos sale sacar cada onza con los costos de este trimestre?", "e": ["economista"]}
+{"q": "La concesión Río Blanco se vence el otro año, ¿qué tengo que presentar para renovarla?", "e": ["legal"]}
+{"q": "¿En Las Presas está bien elegido el método subterráneo o nos conviene pasar a cielo abierto?", "e": ["minas"]}
+{"q": "En Tajo Nuevo los testigos del DDH-14 muestran alteración argílica fuerte, ¿qué significa eso para la mineralización?", "e": ["geologo"]}
+{"q": "Veta Grande: la recuperación de planta bajó de 88 a 74% esta semana, ¿qué revisamos primero?", "e": ["metalurgista"]}
+{"q": "Clavo Rico necesita un acceso nuevo de 6 km, ¿qué pendiente máxima le damos y qué alcantarillas lleva?", "e": ["civil"]}
+{"q": "Agua Caliente: pasame el polígono a WGS84, lo tengo en NAD27", "e": ["geomatica"]}
+{"q": "En El Carbón hay una quebrada que baja con agua color naranja, ¿puede ser drenaje ácido?", "e": ["ambiental"]}
+{"q": "Puente Alto — ¿a cuántas toneladas diarias llegamos con dos cargadores y cuatro volquetas?", "e": ["minas"]}
+{"q": "La Planta es el nombre de la concesión, todavía no hay planta. ¿Quién aparece como titular registrado?", "e": ["legal"]}
+{"q": "Concesión El Mapa: ¿el testigo que te mandé es de un pórfido o de un epitermal?", "e": ["geologo"]}
+{"q": "Mina Costosa: ¿qué ley de oro dieron los canales que muestreamos en el nivel 3?", "e": ["geologo"]}
+{"q": "Cerro Partido: el botadero norte se está agrietando en la corona, ¿hay peligro de que se deslice?", "e": ["civil"]}
+{"q": "En San Andrés queremos ampliar, ¿la licencia ambiental cubre eso o toca hacer otro EIA?", "e": ["ambiental"]}
+{"q": "La Esperanza: ¿a qué tamaño tenemos que moler para liberar el oro si viene en granos de 75 micras?", "e": ["metalurgista"]}
+{"q": "Minas de Oro — ¿cómo calculo las hectáreas del lote que nos están ofreciendo?", "e": ["geomatica"]}
+{"q": "Concesión Las Presas: ¿cuánta dilución estamos metiendo en los rebajes?", "e": ["minas"]}
+{"q": "Río Blanco: la aldea pide una reunión antes de que arranquemos, ¿cómo la manejamos para no perder la licencia social?", "e": ["ambiental"]}
+{"q": "Quebrada Seca: ¿el payback mejora si alquilamos la flota en vez de comprarla?", "e": ["economista"]}
+{"q": "El Carbón — con la ley que tenemos, ¿alcanza para declarar reservas o solo son recursos inferidos?", "e": ["geologo"]}
+{"q": "Proyecto Agua Caliente, ¿cuánto hay que pagar de canon territorial este año?", "e": ["legal"]}
+{"q": "Laguna Verde: el concentrado sale con mucho arsénico, ¿se puede bajar desde la flotación?", "e": ["metalurgista"]}
+{"q": "En Tajo Nuevo no hay tajo, es subterránea: ¿qué potencia mínima de veta se puede trabajar con corte y relleno?", "e": ["minas"]}
+{"q": "Veta Grande: tengo los vértices en grados decimales y los necesito en UTM zona 16, ¿cómo los convierto?", "e": ["geomatica"]}
+{"q": "Clavo Rico: el vecino alega que su solicitud entró antes que la nuestra, ¿quién tiene prelación?", "e": ["legal"]}
+{"q": "Puente Alto: ¿qué cimentación lleva el tanque elevado de agua del campamento?", "e": ["civil"]}
+{"q": "La Planta: los análisis de sedimentos junto a la quebrada salieron con mercurio alto, ¿qué hacemos?", "e": ["ambiental"]}
+{"q": "Cerro Partido: hay una falla que corta la veta en el nivel 2, ¿hacia dónde se habrá corrido el bloque?", "e": ["geologo"]}
+{"q": "Agua Caliente — ¿cuánto carbón activado estamos perdiendo por abrasión en los tanques CIL?", "e": ["metalurgista"]}
+{"q": "El Carbón (la concesión, no el mineral): ¿cuánto nos cuesta por tonelada mover el estéril?", "e": ["economista"]}
+{"q": "Las Presas no tiene ninguna presa; lo que pregunto es si el contrato con el dueño del suelo vale si solo firmó uno de los herederos", "e": ["legal"]}
+{"q": "Quebrada Seca: ¿por qué el agua que sale de la bocamina tiene pH 3?", "e": ["ambiental"]}
+{"q": "Río Blanco — necesito medir el perímetro del polígono en el shapefile que subí", "e": ["geomatica"]}
+{"q": "La Esperanza: ¿se puede hacer lixiviación en pilas con un mineral tan arcilloso?", "e": ["metalurgista"]}
+{"q": "Minas de Oro: ¿aguanta el puente de madera una volqueta cargada de 20 toneladas?", "e": ["civil"]}
+{"q": "Laguna Verde: ¿cuántos bancos de 6 metros caben hasta el fondo del pit final?", "e": ["minas"]}
+{"q": "Tajo Nuevo: el expediente lleva ocho meses parado en INHGEOMIN, ¿qué recurso puedo interponer?", "e": ["legal"]}
+{"q": "Veta Grande: la anomalía de oro en suelos sigue abierta hacia el sur, ¿vale la pena perforar ahí?", "e": ["geologo"]}
+{"q": "Clavo Rico cae en la zona de amortiguamiento, eso ya lo confirmamos. ¿Qué restricciones nos pone eso para operar?", "e": ["ambiental"]}
+{"q": "San Andrés: ¿cuánto vale hoy el proyecto con una tasa de descuento del 8%?", "e": ["economista"]}
+{"q": "Puente Alto: ¿el factor de carga que estamos usando en la voladura está muy alto?", "e": ["minas"]}
+{"q": "Agua Caliente: el dron voló ayer, ¿cómo saco curvas de nivel a cada metro?", "e": ["geomatica"]}
+{"q": "La Planta: la presa de relaves va por el tercer recrecimiento aguas arriba, ¿es seguro seguir con ese método?", "e": ["civil"]}
+{"q": "El Mapa: el geólogo anterior dejó el logueo a medias, ¿qué quiere decir 'sil-ser' en la columna de alteración?", "e": ["geologo"]}
+{"q": "Cerro Partido: nos pusieron una multa por no entregar el informe semestral, ¿se puede apelar?", "e": ["legal"]}
+{"q": "Mina Costosa, ¿los colectores que usamos son los adecuados para un mineral de cobre-oro?", "e": ["metalurgista"]}
+{"q": "Río Blanco: aguas abajo ya no hay peces, ¿qué monitoreo nos van a exigir?", "e": ["ambiental"]}
+{"q": "Quebrada Seca — ¿una relación estéril-mineral de 7 a 1 es normal para un tajo de ese tamaño?", "e": ["minas"]}
+{"q": "Las Presas: ¿qué proyección usa el catastro minero? Mis capas no calzan con las de ellos", "e": ["geomatica"]}
+{"q": "El montón de tierra que tiramos al lado del camino, ¿aguanta si llueve fuerte tres días seguidos?", "e": ["civil"]}
+{"q": "¿Cuánto me queda al final después de pagar todo?", "e": ["economista"]}
+{"q": "¿De quién es este terreno en el papel?", "e": ["legal"]}
+{"q": "Me lo dieron en 2016 por diez años, ¿todavía es mío o ya se me fue?", "e": ["legal"]}
+{"q": "¿Las piedras que salen del hoyo tienen algo que valga la pena o es pura ilusión?", "e": ["geologo"]}
+{"q": "¿Cuántos viajes al día puedo sacar con los carros que tengo?", "e": ["minas"]}
+{"q": "Si compro ese lugar, ¿en cuántos años recupero lo que meta?", "e": ["economista"]}
+{"q": "La gente del pueblo está molesta porque el agua les llega turbia, ¿qué hago?", "e": ["ambiental"]}
+{"q": "¿Cómo le hago para que el polvito amarillo se quede y no se me vaya con el agua?", "e": ["metalurgista"]}
+{"q": "¿Cuánto mide de verdad el terreno? El vendedor jura que son 200 manzanas", "e": ["geomatica"]}
+{"q": "El señor que vive arriba ya no me deja pasar por su finca, ¿puede hacer eso?", "e": ["legal"]}
+{"q": "¿Qué tan hondo tengo que ir para encontrar lo bueno?", "e": ["geologo"]}
+{"q": "Se está bajando la orilla donde echamos lo que sobra del molino, ¿qué hacemos antes de que se venga?", "e": ["civil"]}
+{"q": "¿Por qué del mismo material antes sacaba más y ahora saco menos, si hago todo igual?", "e": ["metalurgista"]}
+{"q": "¿Sigo o cierro? Cada mes pierdo un poquito más", "e": ["economista"]}
+{"q": "¿Dónde estoy parado exactamente? El aparatito me marca unos números raros", "e": ["geomatica"]}
+{"q": "Cuando nos vayamos de aquí, ¿qué tenemos que dejar hecho para que el lugar quede bien?", "e": ["ambiental"]}
+{"q": "¿Cómo seguimos para abajo sin que se nos venga el techo y sin dejar tanto atrás?", "e": ["minas"]}
+{"q": "Los animales ya no bajan a tomar al arroyo, ¿será por nosotros?", "e": ["ambiental"]}
+{"q": "¿Cuánta plata necesito para arrancar de verdad, con todo?", "e": ["economista"]}
+{"q": "Me llegó una carta del gobierno diciendo que ya no tengo derechos sobre el lugar, ¿qué hago?", "e": ["legal"]}
+{"q": "¿Hay forma de saber qué hay abajo sin hacer hoyos por todos lados?", "e": ["geologo"]}
+{"q": "¿Cómo paso lo que dibujé en papel a la compu para que quede en su lugar exacto?", "e": ["geomatica"]}
+{"q": "Queremos que los carros pesados suban hasta arriba en invierno, ¿qué hay que hacerle a la subida?", "e": ["civil"]}
+{"q": "Lo que sale del molino viene muy grueso todavía, ¿cómo lo dejo más fino?", "e": ["metalurgista"]}
+{"q": "Los vecinos dicen que les secamos el pozo, ¿cómo demuestro que no fuimos nosotros?", "e": ["ambiental"]}
+{"q": "Firmé con un socio hace años y ahora quiere la mitad de todo, ¿tiene razón?", "e": ["legal"]}
+{"q": "¿Por dónde empiezo a sacar para no tener que mover tanto material inútil?", "e": ["minas"]}
+{"q": "Las rocas de este lado son blanditas y se deshacen, las del otro son duras, ¿eso me dice algo de dónde buscar?", "e": ["geologo"]}
+{"q": "¿Cuánto terreno se va a comer lo que vamos a construir? Necesito el número exacto", "e": ["geomatica"]}
+{"q": "Donde van las casitas de los trabajadores el suelo es muy suave, ¿qué hacemos para que no se hundan?", "e": ["civil"]}
+{"q": "Está saliendo una espuma rara en los tanques y lo bueno no sube, ¿qué le pongo?", "e": ["metalurgista"]}
+{"q": "¿Me alcanza para pagarle a la gente hasta diciembre si seguimos al ritmo de ahora?", "e": ["economista"]}
+{"q": "Alguien metió papeles pidiendo lo mismo que yo pedí primero, ¿a quién se lo dan?", "e": ["legal"]}
+{"q": "Estas fotos que tomé desde el aire, ¿cómo las junto en una sola imagen que se pueda medir?", "e": ["geomatica"]}
+{"q": "Si seguimos así, ¿cuántos años más da esto?", "e": ["economista"]}
+{"q": "Las paredes del hoyo grande, ¿qué tan paradas las puedo dejar en el plan?", "e": ["minas"]}
+{"q": "¿Qué pasa si se revienta lo que hicimos para guardar el lodo y todo se va al río?", "e": ["civil", "ambiental"]}
+{"q": "¿Hay algún animal o árbol por aquí que nos pueda parar todo?", "e": ["ambiental"]}
+{"q": "¿La ley de corte de 0.8 g/t nos obliga a rediseñar el tajo?", "e": ["economista", "minas"]}
+{"q": "¿Nuestra concesión se traslapa con la de Minerales del Norte y quién tiene prelación?", "e": ["legal", "geomatica"]}
+{"q": "Quiero calcular el área exacta del traslape y después ver si eso afecta nuestra titularidad", "e": ["geomatica", "legal"]}
+{"q": "La presa de relaves filtra: ¿es un problema de estabilidad? ¿Y qué hacemos con el agua que llega al río?", "e": ["civil", "ambiental"]}
+{"q": "Se derramó solución cianurada hacia la quebrada: primero cómo remediamos, y después qué cambiamos en el circuito para que no vuelva a pasar", "e": ["ambiental", "metalurgista"]}
+{"q": "¿Cuál es el costo por onza si la recuperación de planta queda en 82% en vez de 90%?", "e": ["economista", "metalurgista"]}
+{"q": "Las pruebas de botella dan 65% de recuperación; ¿qué más probamos para subirla y desde cuánto se vuelve rentable?", "e": ["metalurgista", "economista"]}
+{"q": "Los sondajes cortaron 12 m a 4 g/t; ¿eso da para una subterránea o hay que pensar en tajo?", "e": ["minas", "geologo"]}
+{"q": "¿Qué tipo de depósito es este y cómo cambia eso la forma de explotarlo?", "e": ["geologo", "minas"]}
+{"q": "El talud del tajo lo diseñamos a 55°, pero el botadero de al lado tiene grietas; revisen las dos cosas", "e": ["minas", "civil"]}
+{"q": "El botadero de estéril está encima de una quebrada: ¿es estable y qué pasa con el agua?", "e": ["civil", "ambiental"]}
+{"q": "¿La licencia ambiental se vence antes que la concesión? Necesito las dos fechas", "e": ["ambiental", "legal"]}
+{"q": "Queremos pasar la planta de 200 a 500 tpd: ¿cuánto capex implica y qué molino hace falta?", "e": ["economista", "metalurgista"]}
+{"q": "¿Qué molino hace falta para llegar a 500 tpd y cuánto nos va a costar?", "e": ["metalurgista", "economista"]}
+{"q": "Tengo el mapa de alteraciones en papel: georreferéncienlo y díganme luego dónde está la zona más prometedora para perforar", "e": ["geomatica", "geologo"]}
+{"q": "¿Dónde ponemos los próximos 10 pozos de exploración y cómo los replanteo en campo con GPS?", "e": ["geologo", "geomatica"]}
+{"q": "El camino de acceso cruza el área protegida: ¿qué drenaje necesita y qué permiso ambiental nos piden?", "e": ["civil", "ambiental"]}
+{"q": "¿La regalía del 6% hace inviable el proyecto?", "e": ["economista", "legal"]}
+{"q": "¿Qué dice la Ley General de Minería sobre las regalías y cuánto nos va a costar al año?", "e": ["legal", "economista"]}
+{"q": "Las voladuras están rajando las casas de la aldea: ¿qué cambiamos en el diseño del disparo y cómo manejamos a la comunidad?", "e": ["minas", "ambiental"]}
+{"q": "La comunidad exige consulta previa y su abogado dice que nuestra concesión es nula, ¿qué hacemos?", "e": ["legal", "ambiental"]}
+{"q": "El drenaje ácido del tajo viejo, ¿cómo lo tratamos y cuánto nos va a costar el cierre?", "e": ["ambiental", "economista"]}
+{"q": "Tenemos 400 mil onzas indicadas: ¿cuánto valen de verdad y se pueden pasar a reservas?", "e": ["economista", "geologo"]}
+{"q": "Las muestras salieron con oro encapsulado en arsenopirita; ¿qué dice eso del yacimiento y qué proceso sirve?", "e": ["geologo", "metalurgista"]}
+{"q": "La dilución en los rebajes anda en 30%; ¿cuánta plata perdemos por eso al mes?", "e": ["economista", "minas"]}
+{"q": "Necesito bajar la dilución: ¿qué cambio en el método de minado y cuánto me ahorro?", "e": ["minas", "economista"]}
+{"q": "La ortofoto del dron muestra que el botadero se salió del límite de la concesión; ¿cuánto se salió y qué problema legal tenemos?", "e": ["geomatica", "legal"]}
+{"q": "¿Es legal construir el puente en el terreno del vecino sin servidumbre, y qué tipo de puente conviene?", "e": ["legal", "civil"]}
+{"q": "¿Qué tipo de puente conviene para cruzar el río, y necesito servidumbre con el vecino?", "e": ["civil", "legal"]}
+{"q": "Queremos meter una planta CIL; ¿qué nos va a pedir el EIA sobre el manejo del cianuro?", "e": ["ambiental", "metalurgista"]}
+{"q": "El relave todavía sale con 0.4 g/t; ¿se puede recuperar más en planta y vale la pena reprocesarlo?", "e": ["metalurgista", "economista"]}
+{"q": "Las curvas de nivel del levantamiento no coinciden con las del diseño del tajo; ¿cuáles están mal y cómo afecta eso a los bancos?", "e": ["geomatica", "minas"]}
+{"q": "Subió el oro; ¿cuánto baja la ley de corte y cuánto mineral nuevo entra al modelo?", "e": ["economista", "geologo"]}
+{"q": "Muestreo de canales en la galería: ¿cada cuántos metros muestreamos y cuánto nos va a costar el laboratorio?", "e": ["geologo", "economista"]}
+{"q": "¿Qué trámite pide INHGEOMIN para subir la producción, y cómo reorganizamos la flota para llegar a 1,500 t/día?", "e": ["legal", "minas"]}
+{"q": "Hay un humedal al pie de donde iba el botadero: ¿lo movemos de lugar o pedimos compensación ambiental?", "e": ["civil", "ambiental"]}
+{"q": "¿Cuánto mineral queda en los pilares y conviene recuperarlo?", "e": ["minas", "economista"]}
+{"q": "pasame al abogado", "e": ["legal"]}
+{"q": "quiero hablar con el que sabe de plantas, las de proceso, no las del monte", "e": ["metalurgista"]}
+{"q": "que me conteste el de números", "e": ["economista"]}
+{"q": "dr, llámeme al topógrafo", "e": ["geomatica"]}
+{"q": "Póngame al geólogo, quiero saber si esta brecha está mineralizada", "e": ["geologo"]}
+{"q": "Que hable el ingeniero civil sobre el vado del río", "e": ["civil"]}
+{"q": "Necesito al ambientalista, y de paso que el abogado vea si la multa procede", "e": ["ambiental", "legal"]}
+{"q": "Pasame con el de las leyes... no, la ley del mineral, el que sabe de rocas", "e": ["geologo"]}
+{"q": "que me atienda el minero, el de planeamiento", "e": ["minas"]}
+{"q": "dr, el metalurgista por favor: ¿por qué subió tanto el consumo de cal?", "e": ["metalurgista"]}
+{"q": "Quiero la opinión del economista sobre el contrato de venta del concentrado", "e": ["economista", "legal"]}
+{"q": "Me urge el de mapas", "e": ["geomatica"]}
+{"q": "Llamá al de medio ambiente que el río amaneció café", "e": ["ambiental"]}
+{"q": "Que venga el de caminos y puentes", "e": ["civil"]}
+{"q": "Tengo una consulta para el experto en voladuras", "e": ["minas"]}
+{"q": "El de finanzas, porfa, y que el geólogo me confirme qué recursos usó", "e": ["economista", "geologo"]}
+{"q": "Quiero hablar con el químico de la planta", "e": ["metalurgista"]}
+{"q": "Que el abogado me revise esto y después el topógrafo mida el área", "e": ["legal", "geomatica"]}
+{"q": "Dr, derive esto al experto en presas: ¿cuánto más podemos subir el dique?", "e": ["civil"]}
+{"q": "Dame al geólogo pero que me explique cuánto cuesta perforar 2,000 metros", "e": ["geologo", "economista"]}
+{"q": "Necesito al de SIG", "e": ["geomatica"]}
+{"q": "Deme con el ingeniero de minas, tengo dudas con la secuencia del próximo trimestre", "e": ["minas"]}
+{"q": "Pásele al del ambiente y al de la plata", "e": ["ambiental", "economista"]}
+{"q": "Que me responda el licenciado, no la máquina", "e": ["legal"]}
+{"q": "Quiero que el ingeniero de planta vea por qué se tapan los filtros prensa", "e": ["metalurgista"]}
+{"q": "Conécteme con el de catastro... bueno, el que maneja las coordenadas", "e": ["geomatica"]}
+{"q": "Doc, que me hable el de números sobre el precio del oro para fin de año", "e": ["economista"]}
+{"q": "Póngame con el civil y con el ambiental por lo del relave que se fugó", "e": ["civil", "ambiental"]}
+{"q": "El de rocas, porfa. Y si se puede, el de la mina también", "e": ["geologo", "minas"]}
+{"q": "Necesito que el experto en impacto ambiental me prepare algo para la reunión con la alcaldía", "e": ["ambiental"]}
+{"q": "gracias doc", "e": []}
+{"q": "¿cómo subo un archivo?", "e": []}
+{"q": "¿qué hora es en Tegucigalpa?", "e": []}
+{"q": "contame un chiste de mineros", "e": []}
+{"q": "¿quién ganó el clásico?", "e": []}
+{"q": "Buenos días, Dr Electrum", "e": []}
+{"q": "¿Qué opinás del proyecto?", "e": []}
+{"q": "Resumime el expediente que te mandé", "e": []}
+{"q": "¿Me podés guardar esta conversación sobre Veta Grande?", "e": []}
+{"q": "Mañana subo a la mina, ¿me recordás a las 5 de la mañana?", "e": []}
+{"q": "¿Cómo cambio el idioma de la aplicación?", "e": []}
+{"q": "¿En qué me pueden ayudar ustedes?", "e": []}
+{"q": "¿Cuál es la historia de la minería en Honduras?", "e": []}
+{"q": "Estoy molido, fue un día largo en el tajo", "e": []}
+{"q": "¿Cómo se dice concesión en inglés?", "e": []}
+{"q": "Perfecto, eso era todo", "e": []}
+{"q": "Mandame el PDF del informe que hicimos ayer", "e": []}
+{"q": "¿Me traducís al inglés este correo del inversionista?", "e": []}
+{"q": "Hacé un resumen de lo que hablamos hoy", "e": []}
+{"q": "¿Va a llover mañana en Siguatepeque?", "e": []}
+{"q": "¿Por qué se pone negra la pantalla cuando subo el shapefile?", "e": []}
+{"q": "¿Cuántos usuarios puede tener mi cuenta?", "e": []}
+{"q": "Ok, entendido, seguimos mañana", "e": []}
+{"q": "Feliz cumpleaños al ingeniero Martínez, escribile algo bonito", "e": []}
+{"q": "¿Me ayudás con un mensaje para felicitar al equipo de la mina por el récord del mes?", "e": []}
+{"q": "¿Dónde está el botón del tajo en la interfaz? No lo encuentro", "e": []}
+{"q": "Tengo reunión con los de Río Blanco a las 3, ¿me la agendás?", "e": []}
+{"q": "Hacé una lista de las personas que vinieron a la visita de campo", "e": []}
+{"q": "¿Qué es Dr Electrum?", "e": []}
+{"q": "Jaja no, el geólogo es mi primo, no hace falta que me lo pases", "e": []}
+{"q": "¿Cómo exporto el chat a Word?", "e": []}
+{"q": "Buenas tardes, soy nuevo por aquí", "e": []}
+{"q": "¿Me explicás qué hace cada botón del panel?", "e": []}
+{"q": "eh este o sea cuánto cuánto me sale la onza puesta en el puerto con el flete y todo", "e": ["economista"]}
+{"q": "la la sonda je del pozo cuatro llegó a ciento veinte metros y no ha cortado nada eh seguimos o paramos", "e": ["geologo"]}
+{"q": "este el sianuro en la planta se está gastando el doble o sea qué qué le pasa", "e": ["metalurgista"]}
+{"q": "tras lape con la concesión del vecino eh cómo lo mido en el mapa", "e": ["geomatica"]}
+{"q": "o sea el vecino dice que el tras lape es de él eh quién tiene prelación", "e": ["legal"]}
+{"q": "o sea el botadero el botadero de acá arriba está está eh se está hundiendo por un lado", "e": ["civil"]}
+{"q": "eh doc el stripping ratio está en ocho a uno eso eso está bien o no", "e": ["minas"]}
+{"q": "necesito el ene pe ve eh el NPV con el gold price a dos mil dos mil quinientos", "e": ["economista"]}
+{"q": "este la presa de de relaves eh está filtrando por el por el pie", "e": ["civil"]}
+{"q": "el agua de la de la quebrada sale sale roja eh abajo del tajo o sea es ácido", "e": ["ambiental"]}
+{"q": "eh cómo se llama la licencia ambiental ya ya se venció o sea puedo seguir trabajando", "e": ["ambiental", "legal"]}
+{"q": "doc eh la recovery de la planta está en sesenta o sea el leach no está jalando", "e": ["metalurgista"]}
+{"q": "este cuántas cuántas hectáreas son eh el polígono que te que te mandé", "e": ["geomatica"]}
+{"q": "o sea el assay dio dio tres punto dos gramos por por tonelada eso es bueno para una veta", "e": ["geologo"]}
+{"q": "el hole ere ce eh el RC cuarenta y dos cortó cuarzo con con pirita a los ochenta metros qué significa", "e": ["geologo"]}
+{"q": "eh la voladura de ayer dejó dejó bolones grandes grandes eh qué cambio en la malla", "e": ["minas"]}
+{"q": "este el el ingeniero dijo que el ca pe ex es de de doce millones eso incluye la planta o no", "e": ["economista"]}
+{"q": "este eh el shape file no no me abre en el Q G I S qué proyección tiene", "e": ["geomatica"]}
+{"q": "doc o sea la comunidad la comunidad de abajo quiere bloquear el camino eh qué hacemos", "e": ["ambiental"]}
+{"q": "la the concession eh la concesión del del señor Reyes vence vence en marzo cómo cómo se la compramos", "e": ["legal"]}
+{"q": "este el camino se se nos lavó con la lluvia eh qué alcantarilla alcantarilla pongo", "e": ["civil"]}
+{"q": "eh mira el carbón el carbón activado está saliendo con poco oro eh será el pH", "e": ["metalurgista"]}
+{"q": "o sea cuánto cuánto es el all in sustaining eh el a i s c con los números de agosto", "e": ["economista"]}
+{"q": "la la mina bajo tierra eh el room and pillar cuánto cuánto pilar hay que dejar", "e": ["minas"]}
+{"q": "este eh el mercurio mercurio de los güiriseros de río arriba nos lo están achacando a nosotros cómo demostramos", "e": ["ambiental"]}
+{"q": "eh la ley la ley de la veta eh no la ley del congreso la otra la de gramos cuánto dio", "e": ["geologo"]}
+{"q": "doc pasame con el con el topógrafo eh el dron el dron no georreferenció las fotos", "e": ["geomatica"]}
+{"q": "eh el tailings el relave sale con mucho oro todavía o sea se nos pierde en la flotación", "e": ["metalurgista"]}
+{"q": "o sea el INHGEOMIN INHGEOMIN me pidió me pidió un plan de minado eh qué le pongo", "e": ["legal", "minas"]}
+{"q": "este eh eh bueno nada gracias gracias doc", "e": []}
+{"q": "eh los de la cooperativa dicen que el precio del oro va a bajar eh vendo ya o espero", "e": ["economista"]}
+{"q": "eh sonda je diamantina o o RC cuál me conviene para el pórfido", "e": ["geologo"]}

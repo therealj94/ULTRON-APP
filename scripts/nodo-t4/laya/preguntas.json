@@ -1,0 +1,66 @@
+{
+ "geologo": {
+  "type": "noul",
+  "instructions": "¿Esta consulta necesita al Geólogo de Dr Electrum?",
+  "criteria": {
+   "true": "sí: pide algo de su oficio (yacimientos, tipo de depósito, estructura, fallas, alteración, mineralización, sondajes, testigos, muestreo, ensayes, ley del mineral, recursos y reservas), o lo piden por nombre",
+   "false": "no: no pide nada de su oficio; un nombre de concesión, río o cerro no cuenta"
+  }
+ },
+ "minas": {
+  "type": "noul",
+  "instructions": "¿Esta consulta necesita al Ingeniero de Minas de Dr Electrum?",
+  "criteria": {
+   "true": "sí: pide algo de su oficio (método de explotación, diseño de tajo o mina subterránea, rampas y bancos, planeamiento, secuencia, dilución, voladura, producción, carguío y acarreo), o lo piden por nombre",
+   "false": "no: no pide nada de su oficio; un nombre de concesión, río o cerro no cuenta"
+  }
+ },
+ "civil": {
+  "type": "noul",
+  "instructions": "¿Esta consulta necesita al Ingeniero Civil de Dr Electrum?",
+  "criteria": {
+   "true": "sí: pide algo de su oficio (caminos de acceso, puentes, botaderos, presas de relaves, geotecnia y estabilidad de taludes de obras, drenaje, cimentaciones, campamento, movimiento de tierra), o lo piden por nombre",
+   "false": "no: no pide nada de su oficio; un nombre de concesión, río o cerro no cuenta"
+  }
+ },
+ "metalurgista": {
+  "type": "noul",
+  "instructions": "¿Esta consulta necesita al Metalurgista de Dr Electrum?",
+  "criteria": {
+   "true": "sí: pide algo de su oficio (pruebas metalúrgicas, recuperación de planta, chancado, molienda, flotación, cianuración, CIL o CIP, lixiviación en pilas, carbón activado, oro refractario, concentrados), o lo piden por nombre",
+   "false": "no: no pide nada de su oficio; un nombre de concesión, río o cerro no cuenta"
+  }
+ },
+ "geomatica": {
+  "type": "noul",
+  "instructions": "¿Esta consulta necesita al Geomática de Dr Electrum?",
+  "criteria": {
+   "true": "sí: pide algo de su oficio (mapas y capas, shapefile, KML, proyecciones y datums, coordenadas, medir áreas y perímetros, polígonos, superposición de capas, topografía, GPS, drones), o lo piden por nombre",
+   "false": "no: no pide nada de su oficio; un nombre de concesión, río o cerro no cuenta"
+  }
+ },
+ "ambiental": {
+  "type": "noul",
+  "instructions": "¿Esta consulta necesita al Ambiental de Dr Electrum?",
+  "criteria": {
+   "true": "sí: pide algo de su oficio (licencia ambiental, estudio de impacto, agua y cuencas, drenaje ácido, contaminación, mercurio o cianuro en el ambiente, cierre y remediación, monitoreo, comunidades, licencia social), o lo piden por nombre",
+   "false": "no: no pide nada de su oficio; un nombre de concesión, río o cerro no cuenta"
+  }
+ },
+ "legal": {
+  "type": "noul",
+  "instructions": "¿Esta consulta necesita al Legal Minero de Dr Electrum?",
+  "criteria": {
+   "true": "sí: pide algo de su oficio (concesiones, titularidad, vigencia y vencimiento, prelación, expedientes, permisos y trámites ante la autoridad minera, canon, regalías como obligación, ley de minería, contratos, servidumbres), o lo piden por nombre",
+   "false": "no: no pide nada de su oficio; un nombre de concesión, río o cerro no cuenta"
+  }
+ },
+ "economista": {
+  "type": "noul",
+  "instructions": "¿Esta consulta necesita al Economista Minero de Dr Electrum?",
+  "criteria": {
+   "true": "sí: pide algo de su oficio (costos por tonelada u onza, AISC, capex y opex, VAN y TIR, flujo de caja, ley de corte, precio de los metales, valuación del proyecto, vida de mina, financiamiento), o lo piden por nombre",
+   "false": "no: no pide nada de su oficio; un nombre de concesión, río o cerro no cuenta"
+  }
+ }
+}

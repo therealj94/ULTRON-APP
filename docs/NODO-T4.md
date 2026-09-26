@@ -15,6 +15,29 @@ Lo que más se usa por minuto en AU-RA es el oído (cada frase que decís pasa p
 
 Opcional en el mismo nodo (cabe en 16 GB): **respaldo de voz** con Kokoro o Chatterbox en `:8790` compatible con `POST /decir|/tts|/synthesize {texto}` (el servidor ya intenta esas tres rutas si ElevenLabs cae). Solo vale la pena si ElevenLabs falla seguido; hoy no.
 
+## Laya: quién contesta en Dr Electrum (`:8792`)
+
+[Laya](https://huggingface.co/convaiinnovations/laya) (Convai, Apache 2.0) no escribe: contesta preguntas cerradas con una probabilidad calibrada, en decenas de milisegundos. Aquí decide **qué especialistas convoca Dr Electrum** (0, 1 o 2 de los ocho), que hasta ahora salía de contar palabras (`convocar()`): «¿cuándo vence la concesión Quebrada Seca?» traía al ambiental por la palabra *quebrada*.
+
+1. En el nodo, desde un clon del repo: `bash scripts/nodo-t4/instalar-laya.sh`. Crea un venv en `/opt/laya`, **entrena en la GPU** con `scripts/nodo-t4/laya/datos` (unos minutos; no hay pesos que copiar), genera la clave en `/etc/laya-electrum.env` y deja el servicio `laya-electrum` en `:8792`.
+2. TLS: el `:8792` no se abre en el security group. Laya sale por el Caddy de Voicebox (`443`, `/opt/voicebox/caddy/Caddyfile`), con `handle_path /laya/* { reverse_proxy 127.0.0.1:8792 }` antes de `@autorizado`. `/laya/decidir` exige la clave; `/laya/salud` es público.
+3. En Render: `ULTRON_LAYA_URL=https://35-175-175-203.sslip.io/laya` y `ULTRON_LAYA_CLAVE=` (la de `/etc/laya-electrum.env`). `lib/laya.ts` ignora cualquier URL `http://` que no sea local: el texto del usuario y la clave no viajan sin cifrar.
+4. `turnoElectrum` llama a `decidirPanel()`: los especialistas que el usuario nombra («pásame al geólogo») van primero, el resto lo decide Laya. Si Laya no está configurado, tarda más de 800 ms o falla, se usa la tabla de siempre y no se reintenta durante 60 s.
+
+**Resultado sobre la prueba apartada** (260 consultas escritas aparte, ninguna vista al entrenar):
+
+| | exacto | principal | F1 | precisión | recall | «nadie» bien |
+|---|---|---|---|---|---|---|
+| tabla de palabras (`convocar`) | 57,3 % | 66,5 % | 0,745 | 0,744 | 0,747 | 89,4 % |
+| Laya solo | 73,1 % | 72,7 % | 0,863 | 0,862 | 0,865 | 87,2 % |
+| **Laya + nombrados primero (lo que corre)** | **74,2 %** | **73,1 %** | **0,869** | 0,863 | 0,875 | 87,2 % |
+
+*Exacto*: el panel entero coincide con el etiquetado. *Principal*: acierta al primero. *«Nadie» bien*: de las consultas que no necesitan especialista (saludos, uso de la app), cuántas deja sin panel. Entrenado 4 épocas sobre 733 consultas (81 de validación para calibrar la temperatura, 2,69, y el umbral, 0,40). Donde más falla todavía: consultas en inglés técnico mezclado («haul road cycle time», «tailings dam freeboard») y drones/fotogrametría, que confunde con minas; son lo primero a reforzar en los datos. Al reentrenar en el nodo los números pueden moverse un punto (la GPU no es determinista); `evaluar.py` lo comprueba.
+
+**Reentrenar** tras añadir o corregir consultas en `datos/train_*.jsonl` (formato `{"q": "...", "e": ["legal"]}`, reglas en `datos/ESPEC.md`): `REENTRENAR=1 bash scripts/nodo-t4/instalar-laya.sh`. La prueba (`test.jsonl`) no se toca para entrenar; `entrenar.py` descarta cualquier consulta de entrenamiento que esté en ella.
+
+**Siguiente:** las mismas piezas sirven para las compuertas de AU-RA (¿esto pide acción o solo conversación?, ¿necesita buscar en la web?) con otro `preguntas.json` y sus datos.
+
 ## Si no se va a usar
 
 Apagarla (`stop`, no `terminate`, el disco se conserva). Quitar `ULTRON_TTS_URL`/`CHATTERBOX_URL` de Render para que `/api/health` no la sondee.
