@@ -39,6 +39,16 @@ export function usarModeloChico(c: Clasificacion | null | undefined): boolean {
   return !c.requiereQwen && TAREAS_CHICAS.has(c.tarea) && c.riesgo < 40 && !c.inyeccion && !c.urgente && !c.moderacion?.length && !c.animo;
 }
 
+/**
+ * ¿Las «herramientas» del turno son solo marcas de contexto? `harness`, `cot` y `rag` dicen cómo se
+ * armó el prompt y `cerebro-*` que se pegó un hecho del cerebro («hola AU-RA» trae el de Genesis):
+ * nada de eso es un dato que el modelo chico tenga que usar. Antes se exigía una lista vacía, y como
+ * `harness` va siempre, el modelo chico no contestó nunca en producción.
+ */
+export function soloMarcasDeContexto(herramientas: string[]): boolean {
+  return herramientas.every((t) => t === 'harness' || t === 'cot' || t === 'rag' || t.startsWith('cerebro-'));
+}
+
 export type MensajeChat = { role: 'system' | 'user' | 'assistant'; content: string };
 
 /** Una respuesta del modelo chico, o null si no está o falla (y entonces contesta Qwen). */

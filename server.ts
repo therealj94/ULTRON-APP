@@ -34,7 +34,7 @@ import { autorizar, textoDeDecision } from './lib/cognitivo/politica';
 import { clasificar } from './lib/cognitivo/clasificador';
 import { AVISO_INYECCION, guiasDeClasificacion, nombreAgente, promptAgente } from './lib/cognitivo/agentes';
 import { fichaEnTexto, fichasMencionadas } from './lib/cognitivo/entidades';
-import { preguntarModeloChico, usarModeloChico } from './lib/cognitivo/modelos';
+import { preguntarModeloChico, soloMarcasDeContexto, usarModeloChico } from './lib/cognitivo/modelos';
 import type { Clasificacion } from './lib/cognitivo/traza';
 import { alAvisar, comandoDeAprobacion, resumenParaAviso } from './lib/cognitivo/aprobaciones';
 import { hechoCerebro, lineas as lineasCerebro } from './lib/cerebro';
@@ -1706,7 +1706,7 @@ HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemor
  * eso ya es trabajo del modelo grande.
  */
 async function respuestaChica(p: { clas: Clasificacion; tools: string[]; foto?: unknown; quien: string | null; hilo: MsgHilo[]; crudo?: string; message: string }): Promise<string | null> {
-  if (!usarModeloChico(p.clas) || p.tools.length || p.foto) return null;
+  if (!usarModeloChico(p.clas) || !soloMarcasDeContexto(p.tools) || p.foto) return null;
   const nombre = p.quien ? nombreDe(p.quien) : null;
   const system = `Eres AU-RA, la asistente de la junta de Orden Global. Hablas español, cálida y breve: una o dos frases, sin listas ni markdown.${nombre ? ` Te habla ${nombre}.` : ''}
 Solo atiendes saludos, agradecimientos, despedidas y charla ligera.

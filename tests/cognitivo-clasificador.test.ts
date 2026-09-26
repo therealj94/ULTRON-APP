@@ -288,3 +288,12 @@ test('el modelo chico no contesta si Laya vio urgencia, moderación o un ánimo 
     assert.equal(usarModeloChico({ ...hola, moderacion: ['spam'] }), false);
   });
 });
+
+test('el modelo chico contesta aunque el turno traiga marcas de contexto, no con herramientas de verdad', async () => {
+  const { soloMarcasDeContexto } = await import('../lib/cognitivo/modelos');
+  // Lo que traía «hola AU-RA, buenas tardes» en producción: nunca llegaba al modelo chico.
+  assert.equal(soloMarcasDeContexto(['cerebro-genesis', 'harness']), true);
+  assert.equal(soloMarcasDeContexto([]), true);
+  assert.equal(soloMarcasDeContexto(['harness', 'oro']), false);
+  assert.equal(soloMarcasDeContexto(['web']), false);
+});
