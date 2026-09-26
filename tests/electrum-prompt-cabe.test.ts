@@ -5,9 +5,9 @@
  * caracteres. El de Dr Electrum pasa de 27.000: el modelo se quedaba con la personalidad y perdía
  * el oficio, el conocimiento minero y —al final— la instrucción de herramientas. Contestaba de
  * memoria: «no tengo el padrón delante» con el catastro vivo, y una ley de corte de 24 g/t donde la
- * cuenta daba 0,56. Ahora el proxy deja pasar 42.000 caracteres (llama-server con --ctx-size 20480);
- * esto avisa si el prompt crece hasta no dejar sitio a la pregunta y a lo que devuelven las
- * herramientas.
+ * cuenta daba 0,56. Ahora el proxy deja pasar 60.000 caracteres (llama-server con --ctx-size 24576);
+ * esto avisa si el prompt crece hasta no dejar sitio a la pregunta, a un extracto de documento y a lo
+ * que devuelven las herramientas.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -21,8 +21,11 @@ import { MEMORIA_ESTRUCTURADA } from '../lib/manos/memoria';
 
 const PROXY = fs.readFileSync('scripts/nodo-a10g/ollama-proxy-ndjson.py', 'utf8');
 const MAX_PROXY = Number(PROXY.match(/PROXY_MAX_CHARS", "(\d+)"/)?.[1]);
-/** Lo que se deja libre para la pregunta, las líneas del cerebro, las fichas y las herramientas. */
-const HOLGURA = 8000;
+/**
+ * Lo que se deja libre: un extracto de documento de Telegram (hasta 12.000 caracteres, ver
+ * server/electrum/telegram.ts), la pregunta, las líneas del cerebro y las fichas.
+ */
+const HOLGURA = 20000;
 
 test('el system de Dr Electrum cabe entero en el proxy del nodo, con cualquier panel', () => {
   assert.ok(MAX_PROXY >= 30000, `el proxy recorta a ${MAX_PROXY}`);

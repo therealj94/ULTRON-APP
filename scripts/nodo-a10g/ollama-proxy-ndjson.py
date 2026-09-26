@@ -3,11 +3,12 @@ import requests, json, os, time
 app = Flask(__name__)
 LLAMA = "http://127.0.0.1:8080"
 MODEL = "/opt/models/orcarouter_Qwen3.8-27B-Uncensored-Q4_K_M.gguf"
-# Lo que cabe en el contexto de llama-server (--ctx-size), en caracteres, dejando sitio a la
-# respuesta. Antes el system se cortaba a 4500 caracteres: Dr Electrum perdia su oficio, el
+# Lo que cabe en el contexto de llama-server (--ctx-size 24576), en caracteres, dejando sitio a la
+# respuesta: medido con /tokenize, el system de Dr Electrum da 3,7 caracteres por token, y un texto
+# denso en cifras baja a ~2,9; 60.000 / 2,9 + 1.536 de respuesta sigue cabiendo. Antes el system se cortaba a 4500 caracteres: Dr Electrum perdia su oficio, el
 # conocimiento minero y la instruccion de herramientas (que va al final), y contestaba de memoria
 # sin consultar nunca el catastro. El system va entero; lo que se recorta es la conversacion vieja.
-MAX_CHARS = int(os.environ.get("PROXY_MAX_CHARS", "42000"))
+MAX_CHARS = int(os.environ.get("PROXY_MAX_CHARS", "60000"))
 
 def linea(content, done, extra=None, tools=None):
     msg = {"role": "assistant", "content": content or ""}

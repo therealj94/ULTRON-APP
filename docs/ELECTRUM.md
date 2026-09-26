@@ -264,7 +264,7 @@ un modelo de verdad no se disparan cuando uno quiere.
 
 ```
 Render ─► ultron-motor :8443 (secreto + TLS) ─► ollama-proxy :11434 ─► llama-server :8080
-                                                 /opt/ollama-proxy-ndjson.py   --ctx-size 20480
+                                                 /opt/ollama-proxy-ndjson.py   --ctx-size 24576
 ```
 
 El proxy (copia en `scripts/nodo-a10g/ollama-proxy-ndjson.py`) traduce el `/api/chat` de Ollama al
@@ -275,12 +275,14 @@ modelo veía la personalidad y nada más. En producción ninguna herramienta se 
 catastro vivo contestaba «no tengo el padrón delante», y calculó una ley de corte de 24,3 g/t donde
 `calculo_mina` da 0,560.
 
-Ahora el system pasa entero (hasta `PROXY_MAX_CHARS`, 42.000) y lo que se recorta es la conversación
-vieja, nunca la pregunta ni las llamadas del turno. llama-server tiene 20.480 tokens, que cuestan
-unos 440 MiB más de GPU. Las herramientas **no** se mandan a llama: van descritas en el system y el
+Ahora el system pasa entero (hasta `PROXY_MAX_CHARS`, 60.000) y lo que se recorta es la conversación
+vieja, nunca la pregunta ni las llamadas del turno. llama-server tiene 24.576 tokens, que cuestan
+unos 600 MiB más de GPU (19,6 de 23 GB). Medido con `/tokenize`: el system da 3,7 caracteres por
+token, y un extracto de documento lleno de cifras, 2,8. El peor caso (panel de tres, 12.000
+caracteres de PDF por Telegram) dio 45.629 caracteres y 16.272 tokens, y el modelo contestó. Las herramientas **no** se mandan a llama: van descritas en el system y el
 harness lee las `<tool_call>` del texto. `tests/electrum-prompt-cabe.test.ts` falla si el prompt
 crece hasta no caber con cualquier panel. Respaldos en el nodo: `/opt/ollama-proxy-ndjson.py.antes-herramientas`
-y `/root/llama-ultron.service.antes-ctx`.
+y `/root/llama-ultron.service.antes-ctx` (8.192) y `/root/llama-ultron.service.20480`.
 
 ## Las manos — **hechas**
 
