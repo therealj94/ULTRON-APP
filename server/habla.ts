@@ -47,6 +47,10 @@ export function numeroEnPalabras(n: number): string {
  * te» y «km» letra por letra. Solo detrás de una cifra, que es donde son unidades y no palabras.
  */
 const UNIDADES_HABLADAS: Array<[RegExp, string]> = [
+  // Los precios primero: «USD/oz» leído por partes sonaba «u ese de barra onzas».
+  [/(\d)\s*(?:USD|US\$)\s*\/\s*oz(?![\p{L}\d])/giu, '$1 dólares la onza'],
+  [/(\d)\s*(?:USD|US\$)\s*\/\s*t(?![\p{L}\d])/giu, '$1 dólares por tonelada'],
+  [/(\d)\s*(?:USD|US\$)(?![\p{L}\d])/giu, '$1 dólares'],
   [/(\d)\s*g\/t\b/gi, '$1 gramos por tonelada'],
   [/(\d)\s*(?:km²|km2)(?![\p{L}\d])/giu, '$1 kilómetros cuadrados'],
   [/(\d)\s*km(?![\p{L}\d])/giu, '$1 kilómetros'],

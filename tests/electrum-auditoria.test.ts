@@ -172,6 +172,13 @@ test('la voz dice las cifras como están escritas en esta plataforma', async (t)
     assert.match(t1, /noventa y uno por ciento/);
     assert.doesNotMatch(t1, /\bha\b|g\/t|\bkm\b/);
   });
+  await t.test('los precios en dólares se dicen como precio', () => {
+    const t2 = expresar('Oro a 2.400 USD/oz, costo de 40 USD/t y 1.500 USD de flete.');
+    assert.match(t2, /dos mil cuatrocientos dólares la onza/);
+    assert.match(t2, /cuarenta dólares por tonelada/);
+    assert.match(t2, /mil quinientos dólares de flete/);
+    assert.doesNotMatch(t2, /USD|\/oz|\/t\b/);
+  });
   await t.test('un código con cero delante se dice cifra por cifra', () => {
     assert.match(cifrasAVoz('EXP-2021-0442'), /cero cuatro cuatro dos/);
   });
