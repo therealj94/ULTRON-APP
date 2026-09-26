@@ -72,6 +72,12 @@ check('cantá way maker', (o) => o.tipo === 'cantar' && o.cancion === 'waymaker'
 check('canta waymaker', (o) => o.tipo === 'cantar' && o.cancion === 'waymaker');
 check('way maker', (o) => o.tipo === 'cantar' && o.cancion === 'waymaker');
 check('cántame la de Sinach', (o) => o.tipo === 'cantar' && o.cancion === 'waymaker');
+check('canta la de bienvenida', (o) => o.tipo === 'cantar' && o.cancion === 'bienvenida');
+check('cántame feliz cumpleaños', (o) => o.tipo === 'cantar' && o.cancion === 'felizdia');
+check('cantame feliz día', (o) => o.tipo === 'cantar' && o.cancion === 'felizdia');
+check('canta una bendición', (o) => o.tipo === 'cantar' && o.cancion === 'bendicion');
+check('cántame una canción de cuna', (o) => o.tipo === 'cantar' && o.cancion === 'cuna');
+check('canta una nana', (o) => o.tipo === 'cantar' && o.cancion === 'cuna');
 check('ora', (o) => o.tipo === 'orar' && !o.tema);
 check('oración', (o) => o.tipo === 'orar' && !o.tema);
 check('hacé una oración', (o) => o.tipo === 'orar' && !o.tema);

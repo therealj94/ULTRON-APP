@@ -17,6 +17,7 @@ import { correrAgente, type Mensaje } from '../../lib/agente/bucle';
 import type { MsgHilo } from './hilo';
 import type { Contexto } from '../../lib/agente/tipos';
 import { extraerEmocion, type Emocion } from '../../lib/emocion';
+import { quitarExpresiones } from '../../lib/expresiones';
 import { fetchNodo, NODO_MODELO, NODO_SECRETO, NODO_URL } from '../../lib/nodo';
 import { convocar, herramientasDe, promptPanel } from './especialistas';
 import { manosDe, TODAS } from './manos';
@@ -225,7 +226,10 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
 
   const emo = extraerEmocion(r.texto);
   return {
-    texto: emo.texto,
+    // Las expresiones de voz ([risa], [suspiro]…) son de AU-RA y suenan con la voz de Dora. Si el
+    // modelo del doctor escribe una, no se enseña ni se oye: su voz las quita (server/voz.ts) y aquí
+    // salen del texto que llega a la pantalla, al hilo y a Telegram.
+    texto: quitarExpresiones(emo.texto).trim(),
     emocion: emo.emocion,
     panel: nombrePanel,
     traza: r.traza.map((t) => ({ herramienta: t.llamada.nombre, ok: t.ok, resumen: t.resumen, ms: t.ms })),

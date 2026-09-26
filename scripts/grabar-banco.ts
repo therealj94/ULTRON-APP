@@ -1,7 +1,9 @@
 #!/usr/bin/env -S npx tsx
 /**
  * Graba los clips HABLADOS de AU-RA con su voz de Voicebox (perfil «AU-RA · Kokoro Dora») en
- * public/voz/<id>.mp3, y en mobile/assets/voice/<id>.mp3 si el clip va empaquetado en el APK.
+ * public/voz/<id>.mp3, y en mobile/assets/voice/<id>.mp3 si el clip va empaquetado en el APK (ya
+ * estaba ahí, o está en EN_EL_APK). Después de grabar uno nuevo del APK, `npm run voice-bank` en
+ * mobile/ lo registra en src/lib/voiceBank.ts.
  *
  *   VOICEBOX_URL=https://… VOICEBOX_CLAVE=… npx tsx scripts/grabar-banco.ts [ids…] [--force] [--oir]
  *
@@ -13,8 +15,10 @@
  * mismo codificador en JS que usan las notas de voz (lib/mp3.ts), sin ffmpeg.
  *
  * Lo que NO se graba aquí:
- *  - Las canciones (repertorio de lib/capacidades.ts): Kokoro no canta. Se quedan las grabaciones.
- *  - Las risas y exclamaciones sin palabras (NO_HABLADOS): Kokoro las lee como sílabas sueltas.
+ *  - Las canciones (repertorio de lib/capacidades.ts): Kokoro no canta. Se quedan las grabaciones
+ *    (las nuevas salen del estudio, scripts/estudio).
+ *  - Las risas y exclamaciones sin palabras (NO_HABLADOS y public/voz/expresiones): Kokoro las lee
+ *    como sílabas sueltas. Las expresiones también salen del estudio.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -60,7 +64,35 @@ export const GUIONES: Record<string, string> = {
   chiste5: 'Le pedí a Kanye un consejo de negocios. Me dijo: «Runaway». Yo entendí: «corre hacia la bóveda».',
   // Su guion vive en server/voz.ts para no duplicarlo; hablar() le quita las etiquetas.
   oracion: ORACION_DEL_DIA,
+  // Bienvenida y saludo por nombre (los de la junta en lib/acceso.ts)
+  bienvenido: 'Bienvenido a AU-RA. ¿En qué te ayudo?',
+  vertejose: 'Qué bueno verte, José.',
+  vertemedardo: 'Qué bueno verte, Medardo.',
+  vertecarlos: 'Qué bueno verte, Carlos.',
+  vertemayra: 'Qué bueno verte, Mayra.',
+  holadenuevo: 'Hola de nuevo.',
+  mealegra: 'Me alegra verte.',
+  // Respuestas de todos los días: si la respuesta del cerebro es exactamente una de estas, suena el clip
+  unmomento: 'Un momento.',
+  dameunsegundo: 'Dame un segundo, lo busco.',
+  claroquesi: 'Claro que sí.',
+  congusto: 'Con gusto.',
+  perfecto: 'Perfecto.',
+  yaesta: 'Ya está.',
+  aquilotenes: 'Aquí lo tenés.',
+  noentendi: 'No te entendí bien, ¿me lo repetís?',
+  sinconexion: 'Estoy sin conexión ahora mismo.',
+  denada: 'De nada.',
+  cuandoquieras: 'Cuando quieras.',
+  hastaluego: 'Hasta luego.',
+  quedescanses: 'Que descanses.',
 };
+
+/**
+ * Los que van en el APK aunque todavía no estén en mobile/assets/voice. Tienen que ser los mismos
+ * que `bundle: true` en mobile/scripts/build-voice-bank.mjs.
+ */
+export const EN_EL_APK = ['bienvenido', 'vertejose', 'vertemedardo', 'holadenuevo', 'unmomento', 'sinconexion', 'hastaluego', 'denada'];
 
 /** Risas y exclamaciones sin palabras: se quedan como están. */
 export const NO_HABLADOS = ['je', 'risa1', 'uy'];
@@ -136,7 +168,7 @@ async function main() {
     fs.mkdirSync(PUBLICO, { recursive: true });
     fs.writeFileSync(ruta, mp3);
     const movil = path.join(MOVIL, `${id}.mp3`);
-    const empaquetado = fs.existsSync(movil);
+    const empaquetado = fs.existsSync(movil) || EN_EL_APK.includes(id);
     if (empaquetado) fs.writeFileSync(movil, mp3);
     let linea = `✓ ${id}: ${segundos.toFixed(2)} s, ${Math.round(mp3.length / 1024)} KB${empaquetado ? ' (+ APK)' : ''}, ${Date.now() - t0} ms`;
     if (conOido) linea += `\n    oído: «${await oir(mp3)}»`;

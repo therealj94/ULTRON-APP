@@ -63,8 +63,14 @@ export const VOZ_OFICIAL = {
 };
 
 export const CANCIONES = [
-  { id: 'jesus', titulo: 'Quiero conocer a Jesús', artista: 'Generación 12', pedir: 'canta quiero conocer a Jesús' },
-  { id: 'waymaker', titulo: 'Way Maker', artista: 'Sinach', pedir: 'canta way maker' },
+  // Versiones de AU-RA: cantadas con la voz de Dora en el estudio (scripts/estudio), no las grabaciones de sus autores.
+  { id: 'jesus', titulo: 'Quiero conocer a Jesús', artista: 'Generación 12 (versión de AU-RA)', pedir: 'canta quiero conocer a Jesús' },
+  { id: 'waymaker', titulo: 'Way Maker', artista: 'Sinach (versión de AU-RA)', pedir: 'canta way maker' },
+  // Propias de AU-RA, letra y música del estudio.
+  { id: 'bienvenida', titulo: 'Bienvenidos a AU-RA', artista: 'AU-RA', pedir: 'canta la de bienvenida' },
+  { id: 'felizdia', titulo: 'Feliz día', artista: 'AU-RA', pedir: 'cantame feliz día' },
+  { id: 'bendicion', titulo: 'Bendición', artista: 'AU-RA', pedir: 'canta una bendición' },
+  { id: 'cuna', titulo: 'Duerme, duerme (canción de cuna)', artista: 'AU-RA', pedir: 'cantame una canción de cuna' },
   { id: 'bohemian', titulo: 'Bohemian Rhapsody', artista: 'Queen', pedir: 'canta 1' },
   { id: 'ligera', titulo: 'De música ligera', artista: 'Soda Stereo', pedir: 'canta 2' },
   { id: 'bittersweet', titulo: 'Bitter Sweet Symphony', artista: 'The Verve', pedir: 'canta 3' },
@@ -209,7 +215,7 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
       requiere: 'canto',
       grupo: 'voz',
       titulo: 'Cantar',
-      detalle: `Canta a capela las canciones grabadas: ${CANCIONES.map((c) => c.titulo).join(', ')}. Una letra nueva la dice, no la canta.`,
+      detalle: `Canta las canciones grabadas con su voz: ${CANCIONES.map((c) => c.titulo).join(', ')}. Una letra nueva la dice, no la canta.`,
       ejemplos: CANCIONES.slice(0, 3).map((c) => c.pedir),
       vivo: true,
       donde: 'ambas',

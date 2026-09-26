@@ -1,7 +1,8 @@
 /**
  * VOZ — el único camino por el que AU-RA habla.
  *
- *   hablar()  → Voicebox (Kokoro, en el servidor propio de AU-RA) → null
+ *   hablar()  → Voicebox (Kokoro, en el servidor propio de AU-RA) → null. Con [risa], [suspiro]…
+ *               (lib/expresiones.ts) AU-RA pega la toma grabada entre los trozos hablados.
  *   cantar()  → clip grabado del repertorio; una letra libre se DICE (Kokoro no canta)
  *   expresar()→ deja el texto listo para la boca: sin etiquetas de audio, cifras en palabras
  *
@@ -17,7 +18,9 @@ import { clave } from '../lib/boveda';
 import { afinarParaBoca } from './habla';
 import { normalizarEmocion, type Emocion } from '../lib/emocion';
 import { CANCIONES, VOZ_OFICIAL } from '../lib/capacidades';
-import { wavAMp3 } from '../lib/mp3';
+import { leerWav, wavAMp3, type Pcm } from '../lib/mp3';
+import { trocearExpresiones } from '../lib/expresiones';
+import { adaptarPcm, empalmar, escribirWav, tomaDeExpresion } from './empalme';
 import type { Presupuesto } from '../lib/presupuesto';
 
 export type Performance = 'speak' | 'sing';
@@ -273,6 +276,86 @@ export async function saludVoz(timeoutMs = 4000): Promise<{ ok: boolean; status:
 
 export type Habla = { audio: Buffer; contentType: string; motor: string; cache: boolean; ms: number };
 
+/** Lo que se va a decir, ya partido: trozos para Voicebox y expresiones grabadas, en orden. */
+type Parte = { tipo: 'habla'; texto: string } | { tipo: 'expresion'; etiqueta: string };
+
+/**
+ * La clave de caché de una locución. Lleva la voz (si no, el primero que hable deja su timbre
+ * guardado y el otro cerebro contesta con la voz ajena) y las expresiones en su sitio: «hola [risa]»
+ * y «hola» no son el mismo audio. La emoción no: el mismo texto suena igual con cualquiera.
+ */
+export function claveVoz(perfil: string, partes: Parte[]): string {
+  const guion = partes.map((p) => (p.tipo === 'habla' ? p.texto : `[${p.etiqueta}]`)).join('|');
+  return crypto.createHash('sha1').update(`${perfil}|${guion}`).digest('hex');
+}
+
+/**
+ * Las partes de una locución. Las expresiones solo son de AU-RA: están grabadas con la voz de Dora.
+ * En Dr Electrum el texto va entero y `expresar()` quita las marcas sin que suenen.
+ */
+function partesDe(texto: string, plataforma: 'ultron' | 'electrum', emocion: Emocion, performance: Performance): Parte[] {
+  const piezas = plataforma === 'ultron' && performance === 'speak' ? trocearExpresiones(texto) : [{ tipo: 'habla' as const, texto }];
+  const partes: Parte[] = [];
+  for (const p of piezas) {
+    if (p.tipo === 'expresion') partes.push(p);
+    else {
+      const dicho = expresar(p.texto, emocion, performance);
+      // Un trozo sin letras («¡» delante de una sorpresa) no se le pide a Voicebox: devolvería nada y callaría todo.
+      if (/[\p{L}\p{N}]/u.test(dicho)) partes.push({ tipo: 'habla', texto: dicho });
+    }
+  }
+  return partes;
+}
+
+/**
+ * Habla con expresiones: cada trozo hablado es una llamada a Voicebox (en orden) y entre ellas va
+ * la toma grabada. Si falta un trozo hablado, callar (null), como siempre: una frase
+ * con palabras de menos no se dice. Si una expresión no se puede leer o convertir, se salta. Si
+ * Voicebox devolviera algo que no es PCM de 16 bits no hay cómo empalmar: se dice el texto de una
+ * vez, sin expresiones.
+ */
+async function hablarConExpresiones(partes: Parte[], perfil: string, reloj?: Presupuesto): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
+  // Una detrás de otra: Voicebox contesta 500 a pedidos simultáneos (medido: dos de tres a la vez fallaron).
+  const hablados: Array<{ audio: Buffer; contentType: string } | null> = [];
+  for (const p of partes) {
+    if (p.tipo !== 'habla') {
+      hablados.push(null);
+      continue;
+    }
+    const h = await voicebox({ texto: p.texto, perfil, timeoutMs: p.texto.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj });
+    if (!h) return null;
+    hablados.push(h);
+  }
+  const pcms = hablados.map((h) => (h ? leerWav(h.audio) : null));
+  if (partes.some((p, i) => p.tipo === 'habla' && !pcms[i])) {
+    console.warn('[voz expresiones] Voicebox no dio PCM de 16 bits: digo el texto sin expresiones');
+    const guion = partes
+      .filter((p): p is Extract<Parte, { tipo: 'habla' }> => p.tipo === 'habla')
+      .map((p) => p.texto)
+      .join(' ');
+    return voicebox({ texto: guion, perfil, timeoutMs: guion.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj }).then((o) => (o ? { ...o, motor: 'voicebox:kokoro' } : null));
+  }
+  // El formato manda la voz: el de su primer trozo (o 24 kHz mono, el de las grabaciones, si solo hay expresiones).
+  const base = pcms.find(Boolean) || { hz: 24000, canales: 1 };
+  const piezas: Pcm[] = [];
+  partes.forEach((p, i) => {
+    if (p.tipo === 'habla') {
+      const pcm = pcms[i]!;
+      piezas.push(pcm.hz === base.hz && pcm.canales === base.canales ? pcm : adaptarPcm(pcm, base.hz, base.canales));
+      return;
+    }
+    const t = tomaDeExpresion(p.etiqueta);
+    if (!t) return;
+    try {
+      piezas.push(t.pcm.hz === base.hz && t.pcm.canales === base.canales ? t.pcm : adaptarPcm(t.pcm, base.hz, base.canales));
+    } catch (e: any) {
+      console.warn('[voz expresiones] salto', t.toma, String(e?.message || e).slice(0, 80));
+    }
+  });
+  if (!piezas.length) return null;
+  return { audio: escribirWav(empalmar(piezas)), contentType: 'audio/wav', motor: 'voicebox:kokoro+expresiones' };
+}
+
 export async function hablar(opts: {
   texto: string;
   /** Se acepta y se normaliza por compatibilidad; ya no cambia la voz. */
@@ -288,21 +371,25 @@ export async function hablar(opts: {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
   const emocion = normalizarEmocion(opts.emocion);
-  const guion = expresar(String(opts.texto || '').slice(0, MAX_GUION), emocion, performance);
-  if (!guion) return null;
-  const perfil = vozDe(opts.plataforma === 'electrum' ? 'electrum' : 'ultron');
-  // La voz entra en la clave de caché: si no, el primero que hable deja su timbre guardado y el
-  // otro cerebro contesta con la voz ajena. La emoción ya no: el mismo texto suena igual con cualquiera.
-  const key = crypto.createHash('sha1').update(`${perfil}|${guion}`).digest('hex');
+  const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
+  const partes = partesDe(String(opts.texto || '').slice(0, MAX_GUION), plataforma, emocion, performance);
+  if (!partes.length) return null;
+  const perfil = vozDe(plataforma);
+  const key = claveVoz(perfil, partes);
   if (!opts.sinCache) {
     const hit = cacheGet(key);
     if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
   }
-  const out = await voicebox({ texto: guion, perfil, timeoutMs: guion.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj: opts.presupuesto });
+  let out: { audio: Buffer; contentType: string; motor: string } | null;
+  if (partes.some((p) => p.tipo === 'expresion')) out = await hablarConExpresiones(partes, perfil, opts.presupuesto);
+  else {
+    const guion = partes.map((p) => (p.tipo === 'habla' ? p.texto : '')).join(' ');
+    const v = await voicebox({ texto: guion, perfil, timeoutMs: guion.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj: opts.presupuesto });
+    out = v ? { ...v, motor: 'voicebox:kokoro' } : null;
+  }
   if (!out) return null;
-  const motor = 'voicebox:kokoro';
-  cacheSet(key, { audio: out.audio, contentType: out.contentType, motor });
-  return { audio: out.audio, contentType: out.contentType, motor, cache: false, ms: Date.now() - t0 };
+  cacheSet(key, out);
+  return { ...out, cache: false, ms: Date.now() - t0 };
 }
 
 /** Oración del día: texto propio de AU-RA. Se graba una vez (public/voz/oracion.mp3) y se sirve como clip. */
@@ -364,6 +451,10 @@ export function cancionPorPedido(texto: string): Cancion | null {
   const por = (id: string) => CANCIONES.find((c) => c.id === id) || null;
   if (/jesus|generacion 12|generacion doce|conocer a jesus/.test(t)) return por('jesus');
   if (/way ?maker|sinach|en ingles|in english/.test(t)) return por('waymaker');
+  if (/bienvenid/.test(t)) return por('bienvenida');
+  if (/cumple|feliz dia|felicidades/.test(t)) return por('felizdia');
+  if (/bendicion|bendeci|bendice/.test(t)) return por('bendicion');
+  if (/\bcuna\b|arrull|\bnana\b|para dormir|buenas noches/.test(t)) return por('cuna');
   if (/bohemian|rhapsody|queen|\bcanta\s*1\b/.test(t)) return por('bohemian');
   if (/musica ligera|soda|cerati|\bcanta\s*2\b/.test(t)) return por('ligera');
   if (/bitter\s*sweet|sinfonia|the verve|medardo|\bcanta\s*3\b/.test(t)) return por('bittersweet');
@@ -430,7 +521,8 @@ export function estadoVoz() {
  * acepta WAV (lo manda como archivo suelto), y Render no tiene ffmpeg para hacer OGG/Opus.
  */
 export async function notaDeVozBuffer(texto: string, emocion: Emocion = 'neutral'): Promise<Buffer | undefined> {
-  const dicho = String(texto || '').replace(/\s+/g, ' ').trim().slice(0, 420);
+  // El corte a 420 puede partir una expresión («[ris»): lo que quedó sin cerrar no se lee.
+  const dicho = String(texto || '').replace(/\s+/g, ' ').trim().slice(0, 420).replace(/\[[^\]]*$/, '').trim();
   if (dicho.length < 8) return undefined;
   const out = await hablar({ texto: dicho, emocion });
   if (!out || out.audio.length <= 80) return undefined;

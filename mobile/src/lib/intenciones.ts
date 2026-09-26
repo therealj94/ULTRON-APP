@@ -79,6 +79,10 @@ const MODOS: Array<[RegExp, Mode, string]> = [
 const REPERTORIO: Array<[RegExp, string]> = [
   [/way ?maker|sinach/, 'waymaker'],
   [/\bjesus\b|conocer a jes|generacion 12/, 'jesus'],
+  [/bienvenid/, 'bienvenida'],
+  [/cumple|feliz dia|felicidades/, 'felizdia'],
+  [/bendicion|bendeci|bendice/, 'bendicion'],
+  [/\bcuna\b|arrull|\bnana\b|para dormir|buenas noches/, 'cuna'],
   [/bohemian|rhapsody|queen|\b(1|uno)\b/, 'bohemian'],
   [/ligera|soda|cerati|\b(2|dos)\b/, 'ligera'],
   [/bitter|sweet|symphony|sinfonia|verve|medardo|\b(3|tres)\b/, 'bittersweet'],
