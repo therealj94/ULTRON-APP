@@ -15,11 +15,11 @@
  * El mapa lo mueven las herramientas, no el usuario: cada respuesta del cerebro puede traer órdenes
  * en `ui` (volar a una concesión, pintar una capa) y la escena obedece mientras él habla.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { FaceCanvas } from '../src/02-cara';
 import type { FaceState, Mode } from '../src/types';
 import type { Emocion } from '../lib/emocion';
-import { Mapa, type Fondo, type Motor, type OrdenMapa } from './mapa/Mapa';
+import type { Fondo, Motor, OrdenMapa } from './mapa/captura';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
@@ -33,6 +33,47 @@ import {
   repartoDe,
   siguienteReparto,
 } from './preferencias';
+
+/*
+ * EL MAPA, EN SU PROPIO TROZO.
+ *
+ * MapLibre son tres cuartas partes del JavaScript de Electrum. Cargado con todo lo demás, la
+ * pantalla de entrada y la cara esperaban a que bajara el motor de mapas entero antes de enseñarse.
+ * Ahora se pide cuando se monta la estación, en paralelo con la cara, y la pantalla de entrada ni
+ * lo toca. La foto para el informe y los tipos viven en `mapa/captura.ts` para no arrastrarlo.
+ */
+const Mapa = lazy(() => import('./mapa/Mapa').then((m) => ({ default: m.Mapa })));
+
+/**
+ * Si el trozo del mapa no baja —el wifi se cae justo al entrar, o un redespliegue cambió los nombres
+ * de los archivos mientras la pestaña estaba abierta—, `lazy` lanza y, sin esto, React desmonta la
+ * estación entera: pantalla negra. Se queda sin mapa, lo dice, y la conversación sigue funcionando.
+ */
+class SinMapa extends React.Component<{ children: ReactNode }, { fallo: boolean }> {
+  // El proyecto no trae @types/react (igual que la sala de AU-RA): se declara a mano lo que se usa.
+  declare readonly props: { children: ReactNode };
+  state = { fallo: false };
+  static getDerivedStateFromError() {
+    return { fallo: true };
+  }
+  render() {
+    if (!this.state.fallo) return this.props.children;
+    return (
+      <div className="absolute inset-0 grid place-items-center bg-[#0B0D0F] p-6 text-center" role="alert">
+        <div className="max-w-sm space-y-3">
+          <p className="text-sm leading-relaxed text-[#8FA3B0]">No pude cargar el mapa. La conversación sigue funcionando; para el mapa, recargá la página.</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="rounded-lg border border-white/15 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] uppercase text-[#9FB0B8] hover:border-white/30 hover:text-white cursor-pointer"
+          >
+            Recargar
+          </button>
+        </div>
+      </div>
+    );
+  }
+}
 
 /** Dónde está la atención: en quien habla, o en lo que hay que mirar. */
 export type Escenario = 'cara' | 'trabajo';
@@ -298,7 +339,17 @@ export default function App() {
           className="absolute top-[52px] left-0 right-0 sin-seleccion"
           style={{ bottom: `${alto * 100}%` }}
         >
-          <Mapa orden={orden} motor={motor} fondo={fondo} claveGoogle={claveGoogle} />
+          <SinMapa>
+          <Suspense
+            fallback={
+              <div className="absolute inset-0 grid place-items-center bg-[#0B0D0F]" role="status">
+                <span className="font-mono text-[11px] tracking-[0.18em] uppercase text-[#6C7F89]">cargando el mapa…</span>
+              </div>
+            }
+          >
+            <Mapa orden={orden} motor={motor} fondo={fondo} claveGoogle={claveGoogle} />
+          </Suspense>
+          </SinMapa>
         </div>
         <Panel
           abierto={enTrabajo}

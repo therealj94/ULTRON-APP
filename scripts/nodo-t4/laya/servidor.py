@@ -5,14 +5,18 @@ Dr Electrum convocar, con la probabilidad calibrada de cada uno.
 
     LAYA_CLAVE=... python servidor.py --modelo /opt/laya/modelo-electrum [--puerto 8792]
 
-    GET  /salud                         → {"ok": true, "modelo": ..., "device": ...}
+    GET  /salud                         → {"ok": true, "modelo": ..., "device": ..., "entrenado": ...}
     POST /decidir  {"texto": "..."}     → {"panel": ["legal"], "p": {"legal": 0.97, ...},
                                            "umbral": 0.5, "ms": 41}
          (Authorization: Bearer $LAYA_CLAVE)
 
 Solo biblioteca estándar para el HTTP: no hay nada que mantener aparte de torch y laya.
+
+Un error con un mensaje raro no tumba nada: se contesta 400/413/500 con JSON y el servicio sigue.
+Los mensajes de los usuarios no se escriben en el log, ni en los errores.
 """
 import argparse
+import datetime
 import json
 import os
 import threading
@@ -23,7 +27,19 @@ import torch
 import laya
 from laya.common import collate_items
 
-MAX_TEXTO = 2000
+# El principio y el final del mensaje, como lib/laya.ts (recortarParaLaya): el modelo se ajustó con
+# consultas cortas y su tiempo crece con el largo (67 ms con 20 caracteres, 394 ms con 2000 en la T4).
+# En un mensaje dictado o pegado la pregunta suele ir al final; cortar por la cabeza la perdía.
+CABEZA, COLA = 200, 500
+MAX_CUERPO = 16384
+
+
+def recortar(texto):
+    """Sin sustitutos sueltos (el tokenizador los rechaza) y, si es largo, cabeza + … + cola."""
+    t = str(texto or '').encode('utf-8', 'replace').decode('utf-8').strip()
+    if len(t) <= CABEZA + COLA:
+        return t
+    return t[:CABEZA].rstrip() + ' … ' + t[-COLA:].lstrip()
 
 
 class Decisor:
@@ -43,13 +59,16 @@ class Decisor:
         self.internas = {k: self.agente._to_internal(preguntas[k]) for k in self.ids}
         self.modelo = self.agente.model.eval()
         self.cerrojo = threading.Lock()
+        pesos = os.path.join(directorio, 'model.safetensors')
+        self.entrenado = datetime.datetime.fromtimestamp(os.path.getmtime(pesos), datetime.timezone.utc) \
+            .strftime('%Y-%m-%dT%H:%M:%SZ') if os.path.exists(pesos) else None
 
     @torch.no_grad()
     def probabilidades(self, textos):
         """Lista de textos → lista de {id: P(sí)}."""
         items = []
         for t in textos:
-            items.extend(self.agente._encode_state(t[:MAX_TEXTO], self.ids, self.internas))
+            items.extend(self.agente._encode_state(recortar(t), self.ids, self.internas))
         salida = []
         with self.cerrojo:
             for k in range(0, len(items), 64):
@@ -74,6 +93,8 @@ class Decisor:
 
 def servir(decisor, puerto, clave):
     class Manejador(BaseHTTPRequestHandler):
+        timeout = 10  # un cliente que anuncia un cuerpo y no lo manda no retiene el hilo para siempre
+
         def _json(self, codigo, cuerpo):
             datos = json.dumps(cuerpo, ensure_ascii=False).encode('utf-8')
             self.send_response(codigo)
@@ -85,7 +106,8 @@ def servir(decisor, puerto, clave):
         def do_GET(self):
             if self.path == '/salud':
                 return self._json(200, {'ok': True, 'modelo': 'laya-electrum', 'device': decisor.device,
-                                        'especialistas': decisor.ids, 'umbral': decisor.umbral})
+                                        'especialistas': decisor.ids, 'umbral': decisor.umbral,
+                                        'entrenado': decisor.entrenado, 'recorte': [CABEZA, COLA]})
             self._json(404, {'error': 'no existe'})
 
         def do_POST(self):
@@ -93,19 +115,35 @@ def servir(decisor, puerto, clave):
                 return self._json(404, {'error': 'no existe'})
             if clave and self.headers.get('Authorization', '') != f'Bearer {clave}':
                 return self._json(401, {'error': 'clave'})
-            largo = int(self.headers.get('Content-Length') or 0)
-            if not 0 < largo <= 16384:
+            try:
+                largo = int(self.headers.get('Content-Length') or 0)
+            except ValueError:
+                return self._json(400, {'error': 'content-length'})
+            if not 0 < largo <= MAX_CUERPO:
                 return self._json(413, {'error': 'cuerpo vacío o demasiado grande'})
             try:
-                texto = str(json.loads(self.rfile.read(largo)).get('texto') or '').strip()
-            except (ValueError, AttributeError):
+                texto = recortar(json.loads(self.rfile.read(largo)).get('texto'))
+            except (ValueError, AttributeError, UnicodeDecodeError):
                 return self._json(400, {'error': 'json'})
+            except OSError:
+                return  # el cliente se fue o no mandó el cuerpo a tiempo: no hay a quién contestar
             if not texto:
                 return self._json(200, {'panel': [], 'p': {}, 'umbral': decisor.umbral, 'ms': 0})
-            self._json(200, decisor.decidir(texto))
+            try:
+                decision = decisor.decidir(texto)
+            except Exception as e:  # noqa: BLE001 — cualquier fallo del modelo es un 500, no un hilo muerto
+                print(f'error al decidir: {type(e).__name__}', flush=True)  # sin el texto del usuario
+                return self._json(500, {'error': 'interno'})
+            self._json(200, decision)
 
         def log_message(self, formato, *args):
             pass  # los mensajes de los usuarios no se escriben en el log
+
+        def handle_one_request(self):
+            try:
+                super().handle_one_request()
+            except (ConnectionError, TimeoutError):
+                self.close_connection = True
 
     sv = ThreadingHTTPServer(('0.0.0.0', puerto), Manejador)
     print(f'laya-electrum en :{puerto} · {decisor.device} · umbral {decisor.umbral}', flush=True)

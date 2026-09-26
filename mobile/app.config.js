@@ -18,6 +18,9 @@ const ELECTRUM = {
   scheme: 'drelectrumfp',
   // Paquete distinto: si fuera el mismo, instalar una desinstalaría la otra.
   paquete: 'link.ordenglobal.drelectrumfp',
+  // Ámbar de mineral. Se lee en src/variante.ts (`extra.acento`); faltaba aquí y el manifiesto
+  // salía con `acento: undefined` — funcionaba solo porque variante.ts repite el color de reserva.
+  acento: '#FFAE3B',
   /*
    * Libre: gira con el teléfono. AU-RA sigue en horizontal; esta no.
    *

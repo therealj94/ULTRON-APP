@@ -104,6 +104,18 @@ export function aisc(costoTotalUsd: number, onzasVendidas: number): number {
 const nf = (n: number, dec = 0) =>
   new Intl.NumberFormat('es-ES', { minimumFractionDigits: dec, maximumFractionDigits: dec }).format(n);
 
+/**
+ * Cuántos decimales tiene de verdad un dato de entrada, para escribirlo tal cual en la fórmula.
+ *
+ * Las fórmulas mezclaban las dos notaciones: «250000 t x 3.400 g/t / 31,1035 = 27328.1 oz». En esta
+ * plataforma el punto es de miles, así que «3.400 g/t» se leía tres mil cuatrocientos gramos, mil
+ * veces la ley real, justo en la línea que existe para auditar la cuenta.
+ */
+function dec(n: number): number {
+  if (!isFinite(n) || Number.isInteger(n)) return 0;
+  return Math.min(4, (String(n).split('.')[1] || '').length);
+}
+
 /** Número redondeado con criterio: mucho es entero, poco lleva decimales. */
 function bonito(n: number): string {
   if (!isFinite(n)) return 'sin dato';
@@ -210,7 +222,7 @@ export function resolverCalculoMina(mensaje: string, opts?: { precioOnza?: numbe
     return {
       tipo: 'ley-de-corte',
       texto: `Con un costo de ${bonito(costo)} dólares por tonelada, el oro a ${bonito(precio)} la onza y ${bonito(rec)} por ciento de recuperación, la ley de corte es de ${bonito(corte)} gramos por tonelada. Por debajo de eso la tonelada no paga su propio proceso.`,
-      formula: `${costo} / ((${precio} / ${GRAMOS_POR_ONZA_TROY}) x ${rec / 100}) = ${corte.toFixed(3)} g/t`,
+      formula: `${nf(costo, dec(costo))} / ((${nf(precio, dec(precio))} / ${nf(GRAMOS_POR_ONZA_TROY, 4)}) x ${nf(rec / 100, 2)}) = ${nf(corte, 3)} g/t`,
       valores: { costoPorTonelada: costo, precioPorOnza: precio, recuperacion: rec, leyDeCorte: corte },
     };
   }
@@ -225,7 +237,7 @@ export function resolverCalculoMina(mensaje: string, opts?: { precioOnza?: numbe
       return {
         tipo: 'strip-ratio',
         texto: `La relación de descapote es de ${bonito(r)} a uno: ${bonito(r)} toneladas de estéril por cada tonelada de mineral. ${r > 8 ? 'Es alta; solo aguanta con ley buena.' : r > 3 ? 'A ese nivel el estéril ya manda en el costo.' : 'Es una relación cómoda.'}`,
-        formula: `${esteril} / ${mineral} = ${r.toFixed(2)}`,
+        formula: `${nf(esteril, dec(esteril))} t / ${nf(mineral, dec(mineral))} t = ${nf(r, 2)}`,
         valores: { esteril, mineral, stripRatio: r },
       };
     }
@@ -239,7 +251,7 @@ export function resolverCalculoMina(mensaje: string, opts?: { precioOnza?: numbe
     return {
       tipo: 'conversion',
       texto: `${bonito(oz)} onzas por tonelada corta son ${bonito(gt)} gramos por tonelada.`,
-      formula: `${oz} x 31,1035 x 1000 / 907,185 = ${gt.toFixed(3)} g/t`,
+      formula: `${nf(oz, dec(oz))} oz/st x 31,1035 x 1000 / 907,185 = ${nf(gt, 3)} g/t`,
       valores: { ozPorToneladaCorta: oz, gramosPorTonelada: gt },
     };
   }
@@ -277,7 +289,7 @@ export function resolverCalculoMina(mensaje: string, opts?: { precioOnza?: numbe
     return {
       tipo: 'contenido-metalico',
       texto: partes.join(' '),
-      formula: `${toneladas} t x ${leyUsada.toFixed(3)} g/t / 31,1035 = ${onzas.toFixed(1)} oz`,
+      formula: `${nf(toneladas, dec(toneladas))} t x ${nf(leyUsada, 3)} g/t / 31,1035 = ${nf(onzas, 1)} oz`,
       valores,
     };
   }

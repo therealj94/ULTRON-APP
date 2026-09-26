@@ -219,6 +219,51 @@ export function etiqueta(f: Feature, i = 0): string {
 
 const RE_EPSG = /\bEPSG[":\s]*(\d{4,6})/i;
 
+/*
+ * EL DATUM VIEJO: NAD27.
+ *
+ * Buena parte del catastro hondureño antiguo está en NAD27 / UTM 16N. proj4 reconoce el .prj, pero
+ * para pasar de NAD27 a WGS84 busca las rejillas de corrimiento de Estados Unidos (NADCON), que no
+ * vienen con la librería y que además no cubren Centroamérica: sin ellas NO aplica ningún
+ * corrimiento y deja el datum igual. Medido sobre el cuadrado de prueba de Danlí: la concesión
+ * quedaba unos 107 m al sur de donde está. Eso es media concesión chica, y basta para inventar un
+ * traslape con la vecina cargada en WGS84 —o para esconder uno que existe—.
+ *
+ * El corrimiento que corresponde es el publicado para NAD27 en Centroamérica (Belice, Costa Rica,
+ * El Salvador, Guatemala, Honduras, Nicaragua): ΔX = 0, ΔY = +125, ΔZ = +194 m (NIMA TR8350.2,
+ * «North American 1927 — Central America»). Se inyecta como TOWGS84 en el .prj solo si el archivo
+ * no trae uno propio: el que declara el archivo manda.
+ */
+const TOWGS84_NAD27_CA = 'TOWGS84[0,125,194,0,0,0,0]';
+const AVISO_NAD27 =
+  'El archivo está en NAD27: lo pasé a WGS84 con el corrimiento de NAD27 para Centroamérica (0, 125, 194 m). Sin él quedaba unos 100 m corrido al sur.';
+
+export function conCorrimientoNad27(prj: string): string {
+  const t = String(prj || '');
+  if (!/North_American_1927|NAD[ _]?27|North American Datum 1927/i.test(t) || /TOWGS84/i.test(t)) return t;
+  // Dentro del DATUM, justo después del SPHEROID[...] — que no tiene corchetes anidados.
+  // El SPHEROID puede traer su propio AUTHORITY[...] dentro (WKT de OGC): se salta entero.
+  return t.replace(/(DATUM\[[^\[]*SPHEROID\[[^\[\]]*(?:\[[^\]]*\][^\[\]]*)*\])/i, `$1,${TOWGS84_NAD27_CA}`);
+}
+
+/**
+ * Los EPSG que proj4 no trae de fábrica y que aparecen en un catastro de Honduras (zonas UTM 16 y
+ * 17, que es donde cae el país): NAD27 y NAD83 en UTM, y NAD27 geográfico. WGS84 / UTM (326xx) sí
+ * los conoce proj4. Sin esto, un GeoJSON que declaraba «EPSG:26716» se quedaba sin reproyectar y
+ * entraba en metros.
+ */
+function definirEpsg(epsg: number): boolean {
+  const clave = `EPSG:${epsg}`;
+  if (proj4.defs(clave)) return true;
+  let def = '';
+  if (epsg >= 26701 && epsg <= 26722) def = `+proj=utm +zone=${epsg - 26700} +ellps=clrk66 +towgs84=0,125,194,0,0,0,0 +units=m +no_defs`;
+  else if (epsg >= 26901 && epsg <= 26923) def = `+proj=utm +zone=${epsg - 26900} +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs`;
+  else if (epsg === 4267) def = '+proj=longlat +ellps=clrk66 +towgs84=0,125,194,0,0,0,0 +no_defs';
+  if (!def) return false;
+  proj4.defs(clave, def);
+  return true;
+}
+
 /** Lee el nombre y el código del sistema de coordenadas de un .prj, para poder decirlo en voz alta. */
 export function leerPrj(prj: string): { nombre: string; epsg: number | null } {
   const texto = String(prj || '').trim();
@@ -262,6 +307,24 @@ function limpiar(fc: FeatureCollection): { fc: FeatureCollection; descartadas: n
   return { fc: { type: 'FeatureCollection', features: buenas }, descartadas: fc.features.length - buenas.length };
 }
 
+/**
+ * Un zip que se infla hasta ocupar la memoria del servidor no entra.
+ *
+ * El cargador acepta 64 MB comprimidos, y un zip bien armado de ese tamaño se descomprime en
+ * gigabytes: `shpjs` y `JSZip` lo abren entero en memoria y Render mata el proceso —Dr Electrum
+ * entero, para todos—. Se mira lo que declara cada entrada ANTES de descomprimir nada.
+ */
+const MAX_DESCOMPRIMIDO = 512 * 1024 * 1024;
+const MAX_ENTRADAS = 5000;
+export function revisarZip(zip: JSZip): void {
+  const archivos = Object.values(zip.files);
+  if (archivos.length > MAX_ENTRADAS) throw new Error(`el zip trae ${archivos.length} archivos; más de ${MAX_ENTRADAS} no es una capa`);
+  const total = archivos.reduce((n, f: any) => n + (Number(f?._data?.uncompressedSize) || 0), 0);
+  if (total > MAX_DESCOMPRIMIDO) {
+    throw new Error(`descomprimido ocuparía ${Math.round(total / 1048576)} MB, más de lo que se puede abrir de una vez; partilo en varios`);
+  }
+}
+
 const baseNombre = (n: string) => String(n || 'capa').replace(/\.[a-z0-9]+$/i, '').replace(/[\\/]/g, '_');
 
 /**
@@ -269,6 +332,35 @@ const baseNombre = (n: string) => String(n || 'capa').replace(/\.[a-z0-9]+$/i, '
  * Nunca lanza: los problemas salen como avisos, porque el que sube un archivo necesita saber qué pasó.
  */
 export async function ingerir(nombreArchivo: string, datos: Buffer): Promise<Ingesta> {
+  return soloGrados(await ingerirCrudo(nombreArchivo, datos));
+}
+
+/**
+ * Lo que no está en grados NO entra.
+ *
+ * Cada lector ya avisaba cuando las coordenadas venían en metros —un shapefile sin .prj, un CSV en
+ * UTM—, pero devolvía la capa igual y quien llamaba la guardaba: «545000, 1551000» metido en una
+ * columna de grados. Con un polígono eso reventaba la carga («numeric field overflow» al guardar un
+ * área de millones de hectáreas); con puntos entraba sin error y quedaba a medio mundo de Honduras,
+ * estirando el encuadre del mapa hasta dejar el catastro entero reducido a un punto. Un aviso que
+ * no impide el daño no es una protección: la capa se rechaza y se dice por qué.
+ */
+function soloGrados(ing: Ingesta): Ingesta {
+  const fc = ing.capa?.geojson;
+  if (!fc || !fc.features.length || pareceGrados(fc)) return ing;
+  const avisos = ing.avisos.some((a) => /no son grados/i.test(a.texto))
+    ? ing.avisos
+    : [...ing.avisos, { nivel: 'error' as const, texto: 'Las coordenadas no son grados: el archivo está proyectado y no dice en qué sistema.' }];
+  avisos.push({
+    nivel: 'error',
+    texto:
+      'No lo guardé: meter metros donde van grados deja las concesiones fuera del mapa y las áreas sin sentido. ' +
+      'Mandámelo con su .prj, o exportado a WGS84 (EPSG:4326).',
+  });
+  return { capa: null, avisos };
+}
+
+async function ingerirCrudo(nombreArchivo: string, datos: Buffer): Promise<Ingesta> {
   const avisos: Aviso[] = [];
   const ext = (/\.([a-z0-9]+)$/i.exec(nombreArchivo)?.[1] || '').toLowerCase();
   const nombre = baseNombre(nombreArchivo);
@@ -318,16 +410,28 @@ async function cargarShp() {
 async function ingerirShapefile(nombre: string, datos: Buffer, avisos: Aviso[]): Promise<Ingesta> {
   // shpjs reproyecta solo si encuentra el .prj; si no está, devuelve las coordenadas crudas.
   let prj = '';
+  let paraLeer = datos;
   try {
     const zip = await JSZip.loadAsync(datos);
+    revisarZip(zip);
     const archivoPrj = Object.keys(zip.files).find((f) => /\.prj$/i.test(f));
-    if (archivoPrj) prj = await zip.files[archivoPrj].async('text');
-  } catch {
-    /* no era zip: un .shp suelto */
+    if (archivoPrj) {
+      prj = await zip.files[archivoPrj].async('text');
+      const corregido = conCorrimientoNad27(prj);
+      if (corregido !== prj) {
+        // El .prj corregido va DENTRO del zip que lee shpjs: es él quien reproyecta.
+        zip.file(archivoPrj, corregido);
+        paraLeer = await zip.generateAsync({ type: 'nodebuffer' });
+        avisos.push({ nivel: 'ojo', texto: AVISO_NAD27 });
+      }
+    }
+  } catch (e: any) {
+    // Un zip demasiado grande se rechaza; lo que no es zip es un .shp suelto y sigue.
+    if (/descomprimido ocuparía|el zip trae/.test(String(e?.message))) throw e;
   }
 
   const shp = await cargarShp();
-  const crudo: any = await shp(datos as any);
+  const crudo: any = await shp(paraLeer as any);
   const colecciones: FeatureCollection[] = Array.isArray(crudo) ? crudo : [crudo];
   const features = colecciones.flatMap((c) => c?.features || []);
   const { fc, descartadas } = limpiar({ type: 'FeatureCollection', features });
@@ -363,6 +467,7 @@ async function ingerirShapefile(nombre: string, datos: Buffer, avisos: Aviso[]):
 
 async function ingerirKmz(nombre: string, datos: Buffer, avisos: Aviso[]): Promise<Ingesta> {
   const zip = await JSZip.loadAsync(datos);
+  revisarZip(zip);
   const archivo = Object.keys(zip.files).find((f) => /\.kml$/i.test(f));
   if (!archivo) {
     avisos.push({ nivel: 'error', texto: 'El KMZ no trae ningún .kml adentro.' });
@@ -395,6 +500,7 @@ function ingerirGeojson(nombre: string, texto: string, avisos: Aviso[]): Ingesta
   let origen = 'WGS84';
   if (epsg && epsg !== 4326) {
     try {
+      definirEpsg(epsg);
       fc = reproyectar(fc, `EPSG:${epsg}`);
       origen = crs;
       avisos.push({ nivel: 'info', texto: `El GeoJSON declaraba ${crs}; lo reproyecté a WGS84.` });
@@ -496,8 +602,17 @@ export function resumenCapa(capa: Capa, avisos: Aviso[] = []): string {
     // Media hectárea ya es discutible en un lindero; el 0,05 % atrapa las diferencias sistemáticas
     // en padrones grandes. Callar una diferencia de área es lo que después se vuelve un pleito.
     if (dif >= 0.1 || dif / total > 0.0005) {
+      /*
+       * La cuadrícula UTM explica décimas de por ciento, no más: su factor de escala se mueve entre
+       * 0,9996 en el meridiano central y poco más de 1,001 en el borde de la zona. Se decía «es lo
+       * normal» para CUALQUIER diferencia, y un 7 % —un lindero corrido, un polígono de otra
+       * concesión— salía tranquilizado con la misma frase que un 0,07 %.
+       */
+      const rel = dif / Math.max(total, sumaDec);
       partes.push(
-        `El archivo declara ${nf(sumaDec)} hectáreas: ${nf(dif)} de diferencia con lo medido. Es lo normal cuando el área se calculó sobre la cuadrícula UTM y no sobre el terreno; la buena es la medida.`
+        rel <= 0.003
+          ? `El archivo declara ${nf(sumaDec)} hectáreas: ${nf(dif)} de diferencia con lo medido. Es lo normal cuando el área se calculó sobre la cuadrícula UTM y no sobre el terreno; la buena es la medida.`
+          : `El archivo declara ${nf(sumaDec)} hectáreas: ${nf(dif)} de diferencia con lo medido (${nf(rel * 100, 1)} %). Eso ya no lo explica la cuadrícula UTM, que da décimas de por ciento: hay linderos que no cuadran con lo declarado y hay que mirar los planos.`
       );
     }
   }
@@ -511,7 +626,11 @@ export function resumenCapa(capa: Capa, avisos: Aviso[] = []): string {
 /** Lo que dice al encontrar concesiones que se pisan. */
 export function resumenTraslapes(capa: Capa): string {
   const t = traslapesEnCapa(capa);
-  if (!t.length) return `Revisé los ${capa.entidades} polígonos de ${capa.nombre} y no se pisa ninguno.`;
+  if (!t.length) {
+    return capa.entidades === 1
+      ? `${capa.nombre} trae un solo polígono, así que dentro de la capa no hay nada con qué pisarse.`
+      : `Revisé los ${capa.entidades} polígonos de ${capa.nombre} y no se pisa ninguno.`;
+  }
   const lista = t.slice(0, 5).map((x) => `${x.nombreA} con ${x.nombreB}, ${nf(x.hectareas)} hectáreas`);
   return `Encontré ${t.length} ${t.length === 1 ? 'traslape' : 'traslapes'} en ${capa.nombre}: ${lista.join('; ')}${t.length > 5 ? ', y más' : ''}. Eso es superposición de derechos y se resuelve por prelación de la solicitud, no en el mapa.`;
 }

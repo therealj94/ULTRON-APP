@@ -7,6 +7,7 @@
  */
 import * as SecureStore from 'expo-secure-store';
 import { API_BASE } from '../config';
+import type { Traza, TurnoHilo } from './campo';
 import { ErrorHttp, SinPuerta, type Puerta } from './frases';
 
 // Las clases de error, la puerta y sus frases viven en `frases.ts` (sin React Native, para poder
@@ -48,18 +49,33 @@ export async function guardarLlave(v: string | null) {
   }
 }
 
-/** Cierra la sesión en el servidor (el token deja de valer en cualquier copia) y la borra de aquí. */
-export async function cerrarSesion() {
-  if (sesion) {
-    const corte = conTope(6_000);
-    try {
-      await fetch(`${API_BASE}/api/ultron/salir`, { method: 'POST', headers: { 'x-ultron-sesion': sesion }, signal: corte.signal });
-    } catch {
-      /* sin red: se borra igual */
-    } finally {
-      corte.soltar();
-    }
-  }
+/**
+ * Cierra la sesión: la borra de aquí y avisa al servidor para que el token deje de valer en
+ * cualquier copia.
+ *
+ * El orden importa. Antes se esperaba al servidor (hasta seis segundos) ANTES de borrar y de
+ * cambiar de pantalla: en el campo, sin señal, tocar «Salir» dejaba la pantalla quieta seis
+ * segundos, y lo normal ahí es volver a tocar. Ahora se borra primero —la promesa vuelve en cuanto
+ * el teléfono ya no tiene la credencial— y el aviso al servidor sale detrás, con el token que había.
+ */
+export async function cerrarSesion(): Promise<void> {
+  const token = sesion;
+  await guardarSesion(null);
+  await guardarLlave(null);
+  if (!token) return;
+  const corte = conTope(6_000);
+  void fetch(`${API_BASE}/api/ultron/salir`, { method: 'POST', headers: { 'x-ultron-sesion': token }, signal: corte.signal })
+    .catch(() => {
+      /* sin red: en el teléfono ya no está; en el servidor caduca sola */
+    })
+    .finally(() => corte.soltar());
+}
+
+/**
+ * Borra las credenciales de aquí sin avisar al servidor. Es para cuando el SERVIDOR ya dijo que no
+ * valen (401 al arrancar): no hay nada que cerrar allá.
+ */
+export async function olvidarCredenciales(): Promise<void> {
   await guardarSesion(null);
   await guardarLlave(null);
 }
@@ -116,8 +132,10 @@ async function pedir<T>(ruta: string, init: RequestInit = {}, msIntento = ESPERA
   }
 }
 
-export type Traza = { herramienta: string; ok: boolean; resumen: string };
+// Los tipos del hilo viven en `campo.ts`, que no importa nada nativo y se prueba sin teléfono.
+export type { Traza, TurnoHilo } from './campo';
 
+/** La respuesta de `/api/electrum/turno` (`RespuestaTurno` en server/electrum/turno.ts). */
 export type Turno = {
   texto: string;
   emocion: string;
@@ -125,9 +143,6 @@ export type Turno = {
   traza: Traza[];
   ui: Array<Record<string, unknown>>;
 };
-
-/** Lo que se venía hablando, como lo guarda la pantalla del campo. */
-export type TurnoHilo = { de: 'persona' | 'doctor'; texto: string };
 
 /**
  * El hilo viaja con la pregunta. El servidor guarda el suyo y lo prefiere, pero Render reinicia el
@@ -210,15 +225,41 @@ export async function voz(texto: string, emocion?: string): Promise<string | nul
     });
     if (!r.ok) return null;
     const buf = await r.arrayBuffer();
-    let bin = '';
-    const bytes = new Uint8Array(buf);
-    // En trozos: un apply sobre 200 000 bytes revienta la pila de argumentos en Hermes.
-    for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
     // El tipo real del servidor, no uno supuesto: el reproductor elige el decodificador por él.
     const tipo = (r.headers.get('content-type') || 'audio/wav').split(';')[0].trim();
-    return `data:${tipo};base64,${btoa(bin)}`;
+    return `data:${tipo};base64,${base64De(buf)}`;
   } catch {
     return null;
+  } finally {
+    tope.soltar();
+  }
+}
+
+function base64De(buf: ArrayBuffer): string {
+  let bin = '';
+  const bytes = new Uint8Array(buf);
+  // En trozos: un apply sobre 200 000 bytes revienta la pila de argumentos en Hermes.
+  for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  return btoa(bin);
+}
+
+/**
+ * Bajar un informe PDF que armó el doctor, en base64 (lo que `expo-file-system` sabe escribir).
+ *
+ * Pide la credencial en la cabecera, igual que el resto de `/api/electrum/*`: por eso no se puede
+ * abrir la URL en el navegador del teléfono, que llegaría sin ella y rebotaría con 401. La ruta la
+ * valida `rutaDeInforme` (campo.ts) antes de llegar aquí.
+ */
+export async function descargarInforme(ruta: string): Promise<string> {
+  const tope = conTope(60_000);
+  try {
+    const r = await fetch(`${API_BASE}${ruta}`, { headers: cabeceras(), signal: tope.signal });
+    if (r.status === 401) throw new SinPuerta();
+    if (!r.ok) {
+      const j = (await r.json().catch(() => ({}))) as any;
+      throw new ErrorHttp(r.status, typeof j?.error === 'string' ? j.error : '');
+    }
+    return base64De(await r.arrayBuffer());
   } finally {
     tope.soltar();
   }

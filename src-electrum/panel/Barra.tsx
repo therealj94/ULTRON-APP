@@ -6,7 +6,7 @@
  */
 import type { ReactNode } from 'react';
 import type { Escenario } from '../App';
-import type { Fondo, Motor } from '../mapa/Mapa';
+import type { Fondo, Motor } from '../mapa/captura';
 
 type Props = {
   escenario: Escenario;
@@ -31,12 +31,15 @@ function Opcion({
   children,
   titulo,
   desactivada,
+  alterna = true,
 }: {
   activa: boolean;
   onClick: () => void;
   children: ReactNode;
   titulo?: string;
   desactivada?: boolean;
+  /** Es un interruptor (fondo, motor) y no una acción suelta (Salir): el lector de pantalla dice cuál está puesto. */
+  alterna?: boolean;
 }) {
   return (
     <button
@@ -44,6 +47,7 @@ function Opcion({
       onClick={onClick}
       disabled={desactivada}
       title={titulo}
+      aria-pressed={alterna ? activa : undefined}
       className={`px-3 py-1.5 text-[11px] font-mono tracking-[0.12em] uppercase transition-colors cursor-pointer disabled:cursor-not-allowed disabled:opacity-35 ${
         activa ? 'text-black' : 'text-[#9FB0B8] hover:text-white'
       }`}
@@ -75,6 +79,13 @@ export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor
       <div
         className="flex items-center gap-2 transition-opacity duration-300 overflow-x-auto max-w-[calc(100vw-7rem)] md:max-w-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ opacity: enTrabajo ? 1 : 0, pointerEvents: enTrabajo ? 'auto' : 'none' }}
+        /*
+         * Invisible también para el teclado. Con la cara en el centro estos botones tienen opacidad
+         * cero, pero el tabulador seguía pasando por Satélite, Calles, MapLibre y Salir sin que se
+         * viera nada: quien navega con teclado pulsaba controles que no estaban en pantalla.
+         */
+        inert={!enTrabajo}
+        aria-hidden={!enTrabajo}
       >
         <Grupo>
           <Opcion activa={fondo === 'satelite'} onClick={() => onFondo('satelite')}>
@@ -113,7 +124,7 @@ export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor
           INHGEOMIN— eso significa que el siguiente que se siente entra como vos.
         */}
         <Grupo>
-          <Opcion activa={false} onClick={onSalir} titulo="Cerrar la sesión en este navegador">
+          <Opcion activa={false} alterna={false} onClick={onSalir} titulo="Cerrar la sesión en este navegador">
             Salir
           </Opcion>
         </Grupo>

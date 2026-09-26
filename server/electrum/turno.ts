@@ -83,6 +83,15 @@ async function pensarConQwen(mensajes: Mensaje[], herramientas: unknown[], msRes
     }),
     signal: AbortSignal.timeout(tope),
   });
+  /*
+   * Un nodo que contesta 502 o 500 NO contestó.
+   *
+   * Antes se leía el cuerpo igual, salía `{}`, y el bucle lo tomaba por una respuesta vacía del
+   * modelo: el turno terminaba «contestó» con texto en blanco. La pantalla ponía «No pude
+   * contestar» sin decir por qué y Telegram mandaba un mensaje vacío. Lanzando, el bucle hace lo
+   * que ya sabe hacer con un cerebro caído: decir que no lo alcanzó y lo que alcanzó a averiguar.
+   */
+  if (!r.ok) throw new Error(`el nodo contestó ${r.status}`);
   const j: any = await r.json().catch(() => ({}));
   const mensaje = j?.message || {};
   trazaActual()?.tokens(j?.prompt_eval_count, j?.eval_count);
@@ -148,12 +157,17 @@ export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: Op
 
 async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: OpcionesTurno): Promise<RespuestaTurno> {
   const { historial = [], enVivo, abandonado } = opciones;
-  // La decisión rápida del turno. El panel lo sigue eligiendo `convocar` (es lo medido en las
-  // evaluaciones); de la clasificación se usa el riesgo, que va a las reglas, y la alerta de ataque.
+  // Quién del panel contesta (Laya) se pide YA, en paralelo con la clasificación: son dos consultas
+  // independientes y en serie sumaban sus tiempos. Corre dentro de `enTurno`, así que su paso
+  // queda en la traza de este turno igual que antes.
+  const panelP = decidirPanel(mensaje);
+  panelP.catch(() => undefined); // si la clasificación falla antes, que esto no quede como rechazo sin atender
+  // La decisión rápida del turno. De la clasificación se usa el riesgo, que va a las reglas, y la
+  // alerta de ataque.
   const clas = await clasificar(mensaje, 'electrum');
   trazaActual()?.clasificacion(clas);
   ctx = { ...ctx, riesgo: clas.riesgo };
-  const { panel } = await decidirPanel(mensaje);
+  const { panel } = await panelP;
   // Las de su oficio y, para todos, la memoria estructurada (fichas de empresas, concesiones, personas).
   const herramientas = [...(panel.length ? manosDe(herramientasDe(panel)) : TODAS), ...MEMORIA_ESTRUCTURADA];
   const nombrePanel = panel.map((e) => e.nombre).join(' y ');
@@ -225,11 +239,23 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   });
 
   const emo = extraerEmocion(r.texto);
+  // Las expresiones de voz ([risa], [suspiro]…) son de AU-RA y suenan con la voz de Dora. Si el
+  // modelo del doctor escribe una, no se enseña ni se oye: su voz las quita (server/voz.ts) y aquí
+  // salen del texto que llega a la pantalla, al hilo y a Telegram.
+  const limpio = quitarExpresiones(emo.texto).trim();
+  /*
+   * Un turno no termina en blanco. Si el modelo cerró sin una palabra —pasa con un nodo que
+   * devuelve 200 y el mensaje vacío—, lo que se enseña es lo que dijeron las herramientas, o que no
+   * salió nada. Un globo vacío en la pantalla y un mensaje vacío en Telegram no le dicen nada a nadie.
+   */
+  const buenas = r.traza.filter((t) => t.ok);
+  const texto =
+    limpio ||
+    (buenas.length
+      ? `${buenas.map((t) => t.resumen).join(' ')} No alcancé a redactarlo mejor; si querés, volvé a preguntármelo.`
+      : 'No me salió ninguna respuesta esta vez. No te voy a inventar una: volvé a preguntármelo.');
   return {
-    // Las expresiones de voz ([risa], [suspiro]…) son de AU-RA y suenan con la voz de Dora. Si el
-    // modelo del doctor escribe una, no se enseña ni se oye: su voz las quita (server/voz.ts) y aquí
-    // salen del texto que llega a la pantalla, al hilo y a Telegram.
-    texto: quitarExpresiones(emo.texto).trim(),
+    texto,
     emocion: emo.emocion,
     panel: nombrePanel,
     traza: r.traza.map((t) => ({ herramienta: t.llamada.nombre, ok: t.ok, resumen: t.resumen, ms: t.ms })),

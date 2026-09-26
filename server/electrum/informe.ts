@@ -30,6 +30,8 @@ import {
   resumenTraslapes,
   traslapes,
   traslapesDe,
+  distinguir,
+  unicaExacta,
   type FilaConcesion,
 } from './db';
 import { documentoPdf, medirJpeg, type Bloque } from '../../lib/pdf';
@@ -48,12 +50,21 @@ function pie(quien: string | null): string {
   return `Dr Electrum FP · ${fecha()}${q} · documento de demostración`;
 }
 
+const dias = (n: number) => `${n} ${n === 1 ? 'día' : 'días'}`;
+
 /** Días hasta la fecha. Negativo = ya pasó. */
 function diasHasta(iso: string | null): number | null {
   if (!iso) return null;
   const t = Date.parse(`${iso}T00:00:00Z`);
   if (!isFinite(t)) return null;
-  return Math.round((t - Date.now()) / 86_400_000);
+  /*
+   * Días de CALENDARIO en Honduras, no horas partidas por veinticuatro. Antes se restaba la hora de
+   * ahora a la medianoche UTC del vencimiento y se redondeaba: por la tarde la ficha decía «pasó
+   * hace 969 días» mientras la herramienta del chat, que cuenta en la base, decía 968. Dos cifras
+   * distintas para la misma fecha, en el mismo turno.
+   */
+  const hoy = Date.parse(`${new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Tegucigalpa' }).format(new Date())}T00:00:00Z`);
+  return Math.round((t - hoy) / 86_400_000);
 }
 
 /**
@@ -67,11 +78,11 @@ export function contradicciones(c: FilaConcesion): string[] {
 
   if (d !== null && d < 0 && /vigent/.test(estado)) {
     avisos.push(
-      `El padrón la da por VIGENTE pero la fecha de vencimiento (${c.vence}) pasó hace ${Math.abs(d)} días. Una de las dos cosas está mal: no afirmar la vigencia sin el expediente delante.`
+      `El padrón la da por VIGENTE pero la fecha de vencimiento (${c.vence}) pasó hace ${dias(Math.abs(d))}. Una de las dos cosas está mal: no afirmar la vigencia sin el expediente delante.`
     );
   }
   if (d !== null && d >= 0 && d <= 180 && /vigent/.test(estado)) {
-    avisos.push(`Vence el ${c.vence}, dentro de ${d} días. Si hay que renovar, el trámite se empieza ahora, no en la última semana.`);
+    avisos.push(`Vence el ${c.vence}, dentro de ${dias(d)}. Si hay que renovar, el trámite se empieza ahora, no en la última semana.`);
   }
   if (c.hectareas != null && c.hectareas_dec != null) {
     const dif = Math.abs(c.hectareas - c.hectareas_dec);
@@ -110,7 +121,7 @@ function fichaCampos(c: FilaConcesion): Array<[string, string]> {
   if (c.otorgada) filas.push(['Otorgada', c.otorgada]);
   if (c.vence) {
     const d = diasHasta(c.vence);
-    filas.push(['Vence', d === null ? c.vence : d < 0 ? `${c.vence} (hace ${Math.abs(d)} días)` : `${c.vence} (en ${d} días)`]);
+    filas.push(['Vence', d === null ? c.vence : d < 0 ? `${c.vence} (venció hace ${dias(-d)})` : d === 0 ? `${c.vence} (hoy)` : `${c.vence} (en ${dias(d)})`]);
   }
   return filas;
 }
@@ -139,7 +150,7 @@ export async function informeConcesion(
   ref: { id?: number; nombre?: string },
   opts: OpcionesInforme = {}
 ): Promise<Informe | { error: string }> {
-  if (!hayBase()) return { error: 'El catastro no está conectado, así que no puedo armar el informe. Decilo tal cual.' };
+  if (!hayBase()) return { error: 'El catastro no está conectado, así que no puedo armar el informe.' };
 
   let fila: FilaConcesion | undefined;
   if (ref.id != null) {
@@ -151,11 +162,13 @@ export async function informeConcesion(
       [ref.id]
     );
   } else if (ref.nombre) {
-    const hits = await buscarConcesiones(ref.nombre, 4);
-    if (hits.length > 1) {
-      return { error: `Coinciden ${hits.length}: ${hits.map((h) => h.nombre).join(', ')}. Pedí una por su nombre exacto para el informe.` };
+    const hits = await buscarConcesiones(ref.nombre, 6);
+    // La que se nombró tal cual gana; si hay varias que se llaman igual, se dice cuál es cuál.
+    const elegida = hits.length === 1 ? hits[0] : unicaExacta(hits, ref.nombre);
+    if (!elegida && hits.length > 1) {
+      return { error: `Coinciden ${hits.length}: ${hits.map(distinguir).join('; ')}. Pedí la ficha por su id o su expediente.` };
     }
-    fila = hits[0];
+    fila = elegida || undefined;
   }
   if (!fila) return { error: `No encontré esa concesión en el catastro. No voy a armar un informe de algo que no tengo.` };
 
@@ -177,7 +190,8 @@ export async function informeConcesion(
         filas: [
           ['Área', `${nf(ha)} hectáreas`],
           ['Perímetro', `${nf(km)} km`],
-          ['Centro', `${geo.centro[0].toFixed(5)}, ${geo.centro[1].toFixed(5)} (lon, lat)`],
+          // Con el sistema dicho: una coordenada sin datum es la mitad de una coordenada.
+          ['Punto interior', `${geo.centro[0].toFixed(5)}, ${geo.centro[1].toFixed(5)} (lon, lat · WGS84, EPSG:4326)`],
         ],
       },
       {
@@ -262,7 +276,7 @@ export async function informeConcesion(
 
 /** El estado de todo lo cargado: cuánto hay, qué vence y qué se pisa. */
 export async function informeCartera(opts: OpcionesInforme = {}): Promise<Informe | { error: string }> {
-  if (!hayBase()) return { error: 'El catastro no está conectado, así que no hay cartera que informar. Decilo tal cual.' };
+  if (!hayBase()) return { error: 'El catastro no está conectado, así que no hay cartera que informar.' };
 
   const [resumen] = await consulta<{ total: number; con_geom: number; hectareas: number; titulares: number }>(
     `SELECT count(*)::int AS total,
@@ -276,6 +290,13 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   // La tabla lleva los primeros; las cifras que se afirman salen de contar todo, no del largo de la tabla.
   const vencen = await porVencer(365, 60);
   const totalVencen = await contarPorVencer(365);
+  /*
+   * `porVencer` trae también las YA vencidas —de hace un mes o de hace diez años—, que es lo que
+   * hay que mirar primero. Pero contarlas como «vencen dentro del año» era falso: una concesión
+   * caducada en 2019 no vence este año. Se cuentan aparte y se dicen aparte.
+   */
+  const yaVencidas = await contarPorVencer(-1);
+  const vencenEnElAnio = totalVencen - yaVencidas;
   const cobertura = await coberturaDeFechas();
   const pisadas = await traslapes(60);
   const pisan = await resumenTraslapes();
@@ -327,7 +348,7 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
     }
   }
 
-  bloques.push({ tipo: 'seccion', texto: 'Vencimientos en los próximos 365 días' });
+  bloques.push({ tipo: 'seccion', texto: 'Vencidas y por vencer en los próximos 365 días' });
   if (!vencen.length && !cobertura.conVence && cobertura.total) {
     /*
      * Un padrón sin fechas y un padrón donde de verdad no vence nada dan la misma lista vacía, y
@@ -348,7 +369,9 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
       {
         tipo: 'aviso',
         texto:
-          `${totalVencen} ${totalVencen === 1 ? 'concesión vence' : 'concesiones vencen'} dentro del año.` +
+          `${vencenEnElAnio} ${vencenEnElAnio === 1 ? 'concesión vence' : 'concesiones vencen'} dentro del año` +
+          (yaVencidas ? ` y ${yaVencidas} ${yaVencidas === 1 ? 'ya está vencida' : 'ya están vencidas'} (van primero, con los días en negativo)` : '') +
+          '.' +
           (totalVencen > vencen.length ? ` La tabla trae las ${vencen.length} más urgentes.` : ''),
       },
       {
@@ -410,7 +433,7 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   return {
     pdf,
     nombre: `cartera-${new Date().toISOString().slice(0, 10)}.pdf`,
-    dicho: `Armé el informe de cartera: ${resumen.total} concesiones, ${nf(resumen.hectareas)} hectáreas, ${cobertura.total && !cobertura.conVence ? 'sin fechas de vencimiento en el padrón' : `${totalVencen} por vencer`} y ${pisan.total} ${pisan.total === 1 ? 'traslape' : 'traslapes'}.`,
+    dicho: `Armé el informe de cartera: ${resumen.total} concesiones, ${nf(resumen.hectareas)} hectáreas, ${cobertura.total && !cobertura.conVence ? 'sin fechas de vencimiento en el padrón' : `${vencenEnElAnio} por vencer${yaVencidas ? ` (más ${yaVencidas} ya ${yaVencidas === 1 ? 'vencida' : 'vencidas'})` : ''}`} y ${pisan.total} ${pisan.total === 1 ? 'traslape' : 'traslapes'}.`,
   };
 }
 

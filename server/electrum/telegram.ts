@@ -172,9 +172,14 @@ export async function responderElectrum(chatId: string, texto: string): Promise<
  * Manda un informe como archivo. Por Telegram un PDF se manda, no se enlaza: un enlace a
  * /api/electrum/informe exige sesión, y quien está en el chat no la tiene.
  */
-export async function enviarInformeElectrum(chatId: string, id: string, pieDeFoto: string): Promise<boolean> {
+export async function enviarInformeElectrum(chatId: string, id: string, pieDeFoto: string, duenio: string | null = null): Promise<boolean> {
   const token = electrumBotToken();
-  const t = tomarInforme(id);
+  /*
+   * Con su dueño. El informe que arma un turno de Telegram queda a nombre de quien lo pidió
+   * (`informe_pdf` lo guarda con `ctx.quien`), y recogerlo sin decir quién era lo daba por AJENO:
+   * a toda persona identificada del padrón le llegaba «armé el informe pero no pude mandártelo».
+   */
+  const t = tomarInforme(id, duenio);
   const r = t.estado === 'ok' ? t.informe : null;
   if (!token || !r) return false;
   try {
@@ -234,7 +239,8 @@ async function archivoGeo(update: any, token: string): Promise<{ nombre: string;
   if (!doc?.file_id || !nombre || !ES_GEO.test(nombre)) return null;
   if (Number(doc.file_size || 0) > MAX_ARCHIVO) return null;
   const datos = await archivoTelegram(token, doc.file_id);
-  return datos && datos.length > 80 ? { nombre, datos } : null;
+  // Un KML de un polígono o un CSV de dos puntos pesan menos de 80 bytes y son archivos buenos.
+  return datos && datos.length > 0 ? { nombre, datos } : null;
 }
 
 /**
@@ -347,9 +353,11 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
   }
 
   const geo = await archivoGeo(update, token).catch(() => null);
-  const archivo: Atendido | null = await atenderArchivo(parsed, geo, quien).catch((e: any) => ({
-    dicho: `Se me cayó leyendo el archivo: ${String(e?.message || e).slice(0, 140)}`,
-  }));
+  const archivo: Atendido | null = await atenderArchivo(parsed, geo, quien).catch((e: any) => {
+    // El motivo técnico (a veces con la dirección de la base) va al registro, no al chat.
+    console.warn('[electrum] telegram archivo', String(e?.message || e).slice(0, 180));
+    return { dicho: 'Se me cayó leyendo el archivo. Volvé a mandármelo; si se repite, avisale a José.' };
+  });
 
   // Un archivo cargado se contesta solo: el modelo no tiene nada que agregarle a «quedaron 143
   // concesiones en el catastro», y hacerlo pasar por Qwen solo le daría ocasión de adornarlo.
@@ -401,7 +409,7 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
 
   const informe = salida.ui.map((d: any) => d?.informe).find(Boolean);
   if (informe?.id) {
-    const ok = await enviarInformeElectrum(parsed.chatId, String(informe.id), String(informe.nombre || 'informe.pdf'));
+    const ok = await enviarInformeElectrum(parsed.chatId, String(informe.id), String(informe.nombre || 'informe.pdf'), quien.id?.persona.id || null);
     if (!ok) await responderElectrum(parsed.chatId, 'Armé el informe pero no pude mandártelo por acá. Pedímelo desde la pantalla.');
     return { estado: ok ? 'informe' : 'informe falló', chatId: parsed.chatId };
   }
