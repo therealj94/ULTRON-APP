@@ -26,7 +26,13 @@ Opcional en el mismo nodo (cabe en 16 GB): **respaldo de voz** con Kokoro o Chat
 
 **Resultado sobre la prueba apartada** (260 consultas escritas aparte, ninguna vista al entrenar):
 
-_Pendiente: el entrenamiento de referencia está corriendo; aquí van la tabla actual, Laya solo y el híbrido cuando termine. La tabla actual da 57 % exacto, 67 % principal, F1 0,75._
+| | exacto | principal | F1 | precisión | recall | «nadie» bien |
+|---|---|---|---|---|---|---|
+| tabla de palabras (`convocar`) | 57,3 % | 66,5 % | 0,745 | 0,744 | 0,747 | 89,4 % |
+| Laya solo | 73,1 % | 72,7 % | 0,863 | 0,862 | 0,865 | 87,2 % |
+| **Laya + nombrados primero (lo que corre)** | **74,2 %** | **73,1 %** | **0,869** | 0,863 | 0,875 | 87,2 % |
+
+*Exacto*: el panel entero coincide con el etiquetado. *Principal*: acierta al primero. *«Nadie» bien*: de las consultas que no necesitan especialista (saludos, uso de la app), cuántas deja sin panel. Entrenado 4 épocas sobre 733 consultas (81 de validación para calibrar la temperatura, 2,69, y el umbral, 0,40). Donde más falla todavía: consultas en inglés técnico mezclado («haul road cycle time», «tailings dam freeboard») y drones/fotogrametría, que confunde con minas; son lo primero a reforzar en los datos. Al reentrenar en el nodo los números pueden moverse un punto (la GPU no es determinista); `evaluar.py` lo comprueba.
 
 **Reentrenar** tras añadir o corregir consultas en `datos/train_*.jsonl` (formato `{"q": "...", "e": ["legal"]}`, reglas en `datos/ESPEC.md`): `REENTRENAR=1 bash scripts/nodo-t4/instalar-laya.sh`. La prueba (`test.jsonl`) no se toca para entrenar; `entrenar.py` descarta cualquier consulta de entrenamiento que esté en ella.
 

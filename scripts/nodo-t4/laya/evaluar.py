@@ -1,6 +1,6 @@
 """Compara, sobre la prueba apartada, la tabla de palabras actual con Laya y con el híbrido.
 
-    node --experimental-strip-types tabla.mjs ../../../server/electrum/especialistas.ts datos/test.jsonl > datos/test-tabla.jsonl
+    npx tsx tabla.mjs ../../../server/electrum/especialistas.ts datos/test.jsonl > datos/test-tabla.jsonl
     python evaluar.py --modelo modelo-electrum --tabla datos/test-tabla.jsonl [--errores 30]
 
 test-tabla.jsonl trae, por consulta, la etiqueta (e), lo que decide la tabla (tabla) y a quién nombró
