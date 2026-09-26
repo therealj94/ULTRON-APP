@@ -12,7 +12,7 @@ import { correrAgente, type Mensaje } from '../../lib/agente/bucle';
 import type { Contexto } from '../../lib/agente/tipos';
 import { extraerEmocion, type Emocion } from '../../lib/emocion';
 import { fetchNodo, NODO_MODELO, NODO_SECRETO, NODO_URL } from '../../lib/nodo';
-import { convocar, herramientasDe, promptPanel } from './especialistas';
+import { decidirPanel, herramientasDe, promptPanel } from './especialistas';
 import { manosDe, TODAS } from './manos';
 import { CONOCIMIENTO_MINAS } from '../../src/08-cerebro-minas/conocimiento';
 import { hechosCerebro } from '../../lib/cerebro';
@@ -83,7 +83,7 @@ export async function turnoElectrum(
    */
   enVivo?: (e: EnVivo) => void
 ): Promise<RespuestaTurno> {
-  const panel = convocar(mensaje);
+  const { panel } = await decidirPanel(mensaje);
   const herramientas = panel.length ? manosDe(herramientasDe(panel)) : TODAS;
   const nombrePanel = panel.map((e) => e.nombre).join(' y ');
   // Lo primero que se puede decir: quién va a contestar. No cuesta nada y quita la sensación de
