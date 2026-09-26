@@ -77,7 +77,9 @@ test('el informe levanta lo que el padrón esconde', async (t) => {
 test('la mano del informe no acepta cifras del modelo', async (t) => {
   await t.test('su esquema solo deja elegir QUÉ informe y aportar una lectura', () => {
     const props = Object.keys(MANOS.informe_pdf.esquema.properties).sort();
-    assert.deepEqual(props, ['concesion_id', 'lectura', 'nombre', 'tipo']);
+    assert.deepEqual(props, ['concesion_id', 'lectura', 'nombre', 'tipo', 'titulo']);
+    // El título del informe de conversación es texto corto, no un lugar para meter números.
+    assert.equal(MANOS.informe_pdf.esquema.properties.titulo.type, 'string');
     // Si algún día aparece acá un campo de números, el reparto se rompió.
     assert.match(MANOS.informe_pdf.esquema.properties.lectura.description, /NO pongas cifras/);
   });

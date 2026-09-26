@@ -136,7 +136,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'El cierre se planifica desde el primer día y se garantiza con dinero. Una mina sin plan de cierre financiado es un pasivo del país.',
       'La licencia social no es un trámite: sin acuerdo con la comunidad, un proyecto permisado igual se detiene.',
     ],
-    herramientas: ['informe_pdf', 'gis_medir', 'catastro_en_punto', 'mapa_capa', 'expediente_buscar', 'web_buscar', 'web_leer'],
+    herramientas: ['informe_pdf', 'gis_medir', 'catastro_en_punto', 'mapa_capa', 'expediente_buscar', 'documento_revisar', 'web_buscar', 'web_leer'],
     vigila: 'Que no se confunda tener licencia ambiental con tener licencia social. Son cosas distintas.',
   },
   {
@@ -150,7 +150,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Un traslape de derechos se resuelve por prelación de la solicitud, no por quién llegó primero al terreno.',
       'Separás siempre tres cosas que la gente mezcla: el derecho minero, el permiso ambiental y el acuerdo con el dueño del suelo. Tener uno no es tener los otros.',
     ],
-    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_vencimientos', 'catastro_en_punto', 'gis_traslapes', 'expediente_buscar', 'mapa_volar'],
+    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_vencimientos', 'catastro_en_punto', 'gis_traslapes', 'expediente_buscar', 'documento_revisar', 'mapa_volar'],
     vigila: 'Que nadie dé por vigente una concesión porque «así aparece en el mapa».',
   },
   {

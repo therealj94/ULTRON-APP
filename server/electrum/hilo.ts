@@ -28,6 +28,7 @@
  */
 
 import crypto from 'crypto';
+import { redactar, sql, tipo } from '../../lib/cognitivo/base';
 
 export type TurnoHilo = { rol: 'persona' | 'electrum'; texto: string };
 export type MsgHilo = { role: 'user' | 'assistant'; content: string };
@@ -110,6 +111,63 @@ export function hiloDe(clave: string): TurnoHilo[] {
   return hilos.get(clave)?.turnos || [];
 }
 
+/**
+ * Los hilos de Telegram se guardan también en la base (cognitivo.hilo). En la pantalla el cliente
+ * manda su copia en cada turno y un redespliegue no pierde nada; en Telegram no hay cliente, y cada
+ * despliegue de Render dejaba al Doctor sin saber de qué se venía hablando.
+ */
+const persistente = (clave: string) => clave.endsWith('·telegram') && tipo() === 'postgres';
+
+/** Trae de la base el hilo que no está en memoria (tras un redespliegue). Nunca falla. */
+export async function cargarHilo(clave: string): Promise<TurnoHilo[]> {
+  limpiar();
+  const vivo = hilos.get(clave);
+  if (vivo || !persistente(clave)) return vivo?.turnos || [];
+  try {
+    const [f] = await sql<{ turnos: TurnoHilo[]; tocado: Date }>(`SELECT turnos, tocado FROM cognitivo.hilo WHERE clave = $1`, [clave]);
+    const tocado = f ? new Date(f.tocado).getTime() : 0;
+    if (!f) return [];
+    if (ahora() - tocado > CADUCA_MS || !Array.isArray(f.turnos)) {
+      // Caducado: se borra de la base igual que se olvida en memoria (seis horas), no se guarda para siempre.
+      void sql(`DELETE FROM cognitivo.hilo WHERE clave = $1`, [clave]).catch(() => {});
+      return [];
+    }
+    const turnos = hiloDelCliente(f.turnos);
+    hilos.set(clave, { turnos, tocado });
+    return turnos;
+  } catch (e: any) {
+    console.warn('[hilo] no pude leer', String(e?.message || e).slice(0, 120));
+    return [];
+  }
+}
+
+/** La última vez que se barrieron los hilos caducados de la base. */
+let barrido = 0;
+
+function guardarEnBase(clave: string) {
+  if (!persistente(clave)) return;
+  const g = hilos.get(clave);
+  /*
+   * A la base va con los secretos tapados (lib/cognitivo/base.ts, redactar): si alguien pega una
+   * clave o una URL con contraseña en Telegram, en memoria vive seis horas; en la base y sus
+   * respaldos viviría para siempre. En memoria se queda tal cual, que es lo que el modelo necesita
+   * para contestar en este mismo rato.
+   */
+  const q = g
+    ? sql(
+        `INSERT INTO cognitivo.hilo (clave, turnos, tocado) VALUES ($1, $2::jsonb, to_timestamp($3 / 1000.0))
+         ON CONFLICT (clave) DO UPDATE SET turnos = EXCLUDED.turnos, tocado = EXCLUDED.tocado`,
+        [clave, JSON.stringify(g.turnos.map((t) => ({ ...t, texto: redactar(t.texto) }))), g.tocado],
+      )
+    : sql(`DELETE FROM cognitivo.hilo WHERE clave = $1`, [clave]);
+  void q.catch((e: any) => console.warn('[hilo] no pude guardar', String(e?.message || e).slice(0, 120)));
+  // Las conversaciones de quien no volvió también caducan en la base: un barrido cada hora como mucho.
+  if (ahora() - barrido > 60 * 60 * 1000) {
+    barrido = ahora();
+    void sql(`DELETE FROM cognitivo.hilo WHERE tocado < to_timestamp($1 / 1000.0)`, [ahora() - CADUCA_MS]).catch(() => {});
+  }
+}
+
 /** Guarda la ida y la vuelta juntas: un turno a medias no le sirve de contexto a nadie. */
 export function recordarHilo(clave: string, persona: string, doctor: string) {
   const p = String(persona || '').trim().slice(0, TOPE_TEXTO);
@@ -121,12 +179,15 @@ export function recordarHilo(clave: string, persona: string, doctor: string) {
   if (d) turnos.push({ rol: 'electrum', texto: d });
   hilos.set(clave, { turnos: turnos.slice(-MAX_TURNOS), tocado: ahora() });
   limpiar();
+  guardarEnBase(clave);
 }
 
 /** Pruebas y «borrá lo que hablamos». Sin clave, se olvida todo. */
 export function olvidarHilo(clave?: string) {
-  if (clave) hilos.delete(clave);
-  else hilos.clear();
+  if (clave) {
+    hilos.delete(clave);
+    guardarEnBase(clave);
+  } else hilos.clear();
 }
 
 /** Lo que trae la pantalla, ya saneado: no se confía en la forma de lo que manda un navegador. */

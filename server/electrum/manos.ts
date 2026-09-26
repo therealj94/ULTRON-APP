@@ -13,7 +13,7 @@
  * puede repetir sin inventar. Ninguna lanza una excepción que el usuario tenga que ver.
  */
 import { COMPARTIDAS } from '../../lib/manos/compartidas';
-import { guardarInforme, informeCartera, informeConcesion } from './informe';
+import { guardarInforme, informeCartera, informeConcesion, informeConversacion } from './informe';
 import type { Herramienta } from '../../lib/agente/tipos';
 import { areaHectareas, distanciaKm, encuadre, perimetroKm } from './gis';
 import {
@@ -25,6 +25,7 @@ import {
   geometriaDe,
   hayBase,
   coberturaDeFechas,
+  consulta,
   contarPorVencer,
   porVencer,
   resumenTraslapes,
@@ -33,6 +34,7 @@ import {
   unicaExacta,
 } from './db';
 import { personaPorId } from '../../lib/acceso';
+import { clasificarDocumento, lecturaEnTexto, type LecturaDocumento } from './documentos-laya';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -282,6 +284,43 @@ const expediente_buscar: Herramienta = {
 };
 
 
+/**
+ * Qué es un documento y qué trae (Laya, modelo `documento`): tipo, y si hay coordenadas, fuentes de
+ * agua, comunidades, plan de cierre, plazos o firma de autoridad, con la página donde lo vio. Usa la
+ * lectura guardada al subirlo; si no la hay (documentos anteriores), la hace ahora y la guarda.
+ */
+const documento_revisar: Herramienta = {
+  nombre: 'documento_revisar',
+  descripcion:
+    'Revisa un documento del expediente y dice de qué tipo es (resolución, contrato, ambiental, informe técnico, plano, financiero, solicitud) y si trae firma de autoridad, coordenadas, fuentes de agua, comunidades, plan de cierre o plazos, con la página. Usala cuando pregunten qué es un documento o si le falta algo.',
+  esquema: {
+    type: 'object',
+    properties: { documento: { type: 'string', description: 'El nombre del archivo (o parte) o su número' } },
+    required: ['documento'],
+  },
+  plataformas: ['electrum'],
+  async ejecutar({ documento }) {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    const ref = String(documento || '').trim();
+    if (!ref) return { ok: false, texto: 'Decime qué documento: el nombre del archivo o su número.' };
+    const porId = /^\d+$/.test(ref);
+    const docs = await consulta<{ id: number; nombre: string; meta: any }>(
+      porId
+        ? `SELECT id, nombre, meta FROM documento WHERE id = $1`
+        : `SELECT id, nombre, meta FROM documento WHERE nombre ILIKE $1 ORDER BY subido DESC LIMIT 5`,
+      [porId ? Number(ref) : `%${ref.replace(/[\\%_]/g, (c) => `\\${c}`)}%`],
+    );
+    if (!docs.length) return { ok: true, texto: `No encontré ningún documento que se llame como «${ref}».` };
+    if (docs.length > 1 && !docs.some((d) => d.nombre.toLowerCase() === ref.toLowerCase())) {
+      return { ok: true, texto: `Hay varios parecidos: ${docs.map((d) => `«${d.nombre}» (#${d.id})`).join(', ')}. ¿Cuál?` };
+    }
+    const d = docs.find((x) => x.nombre.toLowerCase() === ref.toLowerCase()) || docs[0];
+    const lectura: LecturaDocumento | null = d.meta?.laya?.requisitos ? d.meta.laya : await clasificarDocumento(d.id);
+    if (!lectura) return { ok: false, texto: `No pude revisar «${d.nombre}» ahora (el lector de documentos no contestó). El documento sigue buscable con expediente_buscar.` };
+    return { ok: true, texto: lecturaEnTexto(d.nombre, lectura), ui: { documento_id: d.id, lectura } };
+  },
+};
+
 /* ------------------------------------------------------------------ informes */
 
 /**
@@ -295,11 +334,17 @@ const expediente_buscar: Herramienta = {
 const informe_pdf: Herramienta = {
   nombre: 'informe_pdf',
   descripcion:
-    'Arma un informe en PDF descargable: la ficha completa de una concesión (con área medida, traslapes y citas de expediente) o el estado de toda la cartera cargada. Usala cuando pidan «un informe», «un PDF», «algo para imprimir» o «para llevar a la reunión».',
+    'Arma un informe en PDF descargable: la ficha completa de una concesión (con área medida, traslapes y citas de expediente), el estado de toda la cartera cargada, o lo que se viene conversando (tipo conversacion: una investigación o un análisis, con sus fuentes). Usala cuando pidan «un informe», «un PDF», «algo para imprimir» o «para llevar a la reunión».',
   esquema: {
     type: 'object',
     properties: {
-      tipo: { type: 'string', description: 'concesion para una ficha, cartera para el estado de todo', enum: ['concesion', 'cartera'], default: 'concesion' },
+      tipo: {
+        type: 'string',
+        description: 'concesion para una ficha, cartera para el estado de todo, conversacion para poner en PDF lo que se viene hablando (una investigación, un análisis)',
+        enum: ['concesion', 'cartera', 'conversacion'],
+        default: 'concesion',
+      },
+      titulo: { type: 'string', description: 'Solo para conversacion: de qué trata, en pocas palabras (p. ej. «Caliza coralina en Honduras»)' },
       nombre: { type: 'string', description: 'Nombre o expediente de la concesión, si el informe es de una' },
       concesion_id: { type: 'integer', description: 'Id de la concesión, si ya lo tenés de una búsqueda anterior' },
       lectura: {
@@ -311,15 +356,17 @@ const informe_pdf: Herramienta = {
   },
   plataformas: ['electrum'],
   msMaximo: 25_000,
-  async ejecutar({ tipo, nombre, concesion_id, lectura }, ctx) {
-    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+  async ejecutar({ tipo, nombre, concesion_id, lectura, titulo }, ctx) {
+    const conversacion = String(tipo || '') === 'conversacion';
+    if (!conversacion && !hayBase()) return { ok: false, texto: SIN_BASE };
     // El pie del PDF lleva el NOMBRE de quien lo pidió; la propiedad del informe, su id. Antes el
     // pie decía «a petición de jose»: el identificador interno del padrón, impreso con membrete.
     const quien = ctx.quien;
     const opts = { quien: quien ? personaPorId(quien)?.nombre || null : null, lectura: lectura ? String(lectura) : undefined };
 
-    const r =
-      String(tipo || 'concesion') === 'cartera'
+    const r = conversacion
+      ? informeConversacion({ ...opts, titulo: titulo ? String(titulo) : undefined, historial: ctx.historial || [] })
+      : String(tipo || 'concesion') === 'cartera'
         ? await informeCartera(opts)
         : await informeConcesion(
             { id: concesion_id != null ? Number(concesion_id) : undefined, nombre: nombre ? String(nombre) : undefined },
@@ -348,6 +395,7 @@ export const MANOS: Record<string, Herramienta> = {
   mapa_volar,
   mapa_capa,
   expediente_buscar,
+  documento_revisar,
   informe_pdf,
   // Estas dos no son de Electrum: viven en lib/manos/compartidas.ts porque AU-RA hace las mismas
   // cuentas y pregunta el mismo precio. Se montan acá, no se copian.

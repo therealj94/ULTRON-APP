@@ -118,4 +118,12 @@ CREATE TABLE IF NOT EXISTS cognitivo.evento (
   quien      text
 );
 CREATE INDEX IF NOT EXISTS evento_entidad ON cognitivo.evento (entidad, t DESC);
+
+-- La conversación de Telegram con Dr Electrum. En la pantalla el cliente guarda su propia copia; en
+-- Telegram no hay cliente, y cada redespliegue se llevaba lo que se venía hablando.
+CREATE TABLE IF NOT EXISTS cognitivo.hilo (
+  clave      text PRIMARY KEY,
+  turnos     jsonb NOT NULL DEFAULT '[]',
+  tocado     timestamptz NOT NULL DEFAULT now()
+);
 `;

@@ -130,6 +130,36 @@ export function leerLlamadas(mensaje: any, texto: string, herramientas: Herramie
   return salida;
 }
 
+/**
+ * Lo que el modelo intentó pedir y no se pudo usar: una herramienta que no tiene delante, una
+ * llamada sin nombre o una etiqueta con JSON roto.
+ *
+ * Antes se descartaba en silencio y la etiqueta se borraba del texto: el turno terminaba vacío
+ * («No me salió ninguna respuesta») sin que nadie supiera por qué. Pasó en producción al pedir un
+ * PDF por Telegram. Ahora el motivo vuelve al modelo, que corrige o dice que no puede.
+ */
+export function pedidosRechazados(mensaje: any, texto: string, herramientas: Herramienta[]): string[] {
+  const nombres = new Set(herramientas.map((h) => h.nombre));
+  const motivos: string[] = [];
+  for (const l of deNativo(mensaje)) if (!nombres.has(l.nombre)) motivos.push(`«${l.nombre}» no es una de tus herramientas`);
+  for (const m of String(texto || '').matchAll(RE_HERMES)) {
+    const cuerpo = m[1]?.trim();
+    if (!cuerpo) {
+      motivos.push('una etiqueta <tool_call> vacía');
+      continue;
+    }
+    try {
+      const j = JSON.parse(cuerpo);
+      const nombre = String(j?.name || j?.tool || '').trim();
+      if (!nombre) motivos.push('una llamada sin nombre de herramienta');
+      else if (!nombres.has(nombre)) motivos.push(`«${nombre}» no es una de tus herramientas`);
+    } catch {
+      motivos.push('una llamada cuyo JSON no se puede leer');
+    }
+  }
+  return [...new Set(motivos)];
+}
+
 /** Quita las etiquetas de llamada del texto, para que no se lean en voz alta. */
 export function limpiarTexto(texto: string): string {
   return String(texto || '')

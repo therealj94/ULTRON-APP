@@ -21,6 +21,7 @@
  * que en un informe minero es exactamente lo que no se puede partir.
  */
 import { leerConDocling } from '../../lib/cognitivo/documentos';
+import { clasificarDocumento } from './documentos-laya';
 import { indexarPendientes } from './vectores';
 import crypto from 'node:crypto';
 import JSZip from 'jszip';
@@ -587,6 +588,11 @@ export async function aprender(
     void indexarPendientes({ documentoId: doc.id })
       .then((n) => n && console.log(`[electrum] ${n} fragmentos de «${nombre}» con vector`))
       .catch((e) => console.error('[electrum] no pude vectorizar', nombre, String(e?.message || e).slice(0, 120)));
+    // Qué es y qué trae (Laya), también sin hacer esperar: si el lector no está, el documento ya
+    // quedó guardado y buscable, y documento_revisar lo lee cuando se lo pidan.
+    void clasificarDocumento(doc.id, { tipoFijado: !!opts.tipoDoc })
+      .then((l) => l && console.log(`[electrum] «${nombre}»: ${l.tipo} (${Math.round(l.pTipo * 100)} %)`))
+      .catch((e) => console.error('[electrum] no pude clasificar', nombre, String(e?.message || e).slice(0, 120)));
 
     return {
       clase: 'documento',

@@ -1,0 +1,216 @@
+--- a/asistente.py
++++ b/asistente.py
+@@ -108,6 +108,18 @@
+ from oido import NoSePudoOir, oir_nota
+ from concurrent.futures import ThreadPoolExecutor
+ 
++# Laya, el clasificador que mira cada mensaje antes del modelo (ver
++# politica.py). Va con red debajo: si el archivo no esta o no importa, AU-RA
++# arranca igual y atiende como antes. Un clasificador no puede ser la razon de
++# que no conteste nadie — ya estuvo muda cuatro horas y media el 1-sep por una
++# linea que reventaba antes de contestar.
++try:
++    import politica
++except Exception as _e:
++    politica = None
++    print(time.strftime('%H:%M:%S'), 'Laya no se pudo cargar:',
++          type(_e).__name__, str(_e)[:80], flush=True)
++
+ RELEVO = os.environ.get('AURA_RELEVO', 'https://cerebro.ordenscan.com/mensajes').rstrip('/')
+ CORREO = os.environ.get('AURA_CORREO', 'aura@ordenglobal.org').lower()
+ # Alias para que se lea igual desde oido.py, que habla de «el asistente».
+@@ -1403,14 +1415,7 @@
+     lo note, y esta se quedo vieja del todo.
+     """
+     registro.anotar('equipo', motivo=(p.get('motivo') or '')[:40])
+-    a_quien = []
+-    for persona in escalafon.admins():
+-        for donde in escalafon.formas_de(persona):
+-            if donde.isdigit():
+-                a_quien.append(donde)
+-                break         # un aviso por persona, no por buzón
+-    if not a_quien:
+-        a_quien = [j for j in vistazo.JEFES if j.isdigit()]
++    a_quien = _telefonos_del_equipo()
+     if not a_quien:
+         # Que nadie lo reciba no puede volver a pasar en silencio: es una
+         # persona interesada que se pierde.
+@@ -1423,6 +1428,114 @@
+             log('el aviso al equipo no salio:', type(e).__name__, str(e)[:70])
+ 
+ 
++def _telefonos_del_equipo():
++    """A que telefonos llega un aviso para el equipo: uno por admin del
++    escalafon, y `AURA_PARTE_PARA` de respaldo. Salio de `_derivar_al_equipo`
++    para que Laya avise a los MISMOS: dos listas para la misma pregunta es
++    como una de las dos se queda vieja sin que nadie lo note."""
++    a_quien = []
++    for persona in escalafon.admins():
++        for donde in escalafon.formas_de(persona):
++            if donde.isdigit():
++                a_quien.append(donde)
++                break         # un aviso por persona, no por buzón
++    if not a_quien:
++        a_quien = [j for j in vistazo.JEFES if j.isdigit()]
++    return a_quien
++
++
++# ── LAYA: QUE ES ESTE MENSAJE, ANTES DE CONTESTARLO ─────────────────────────
++#
++# AU-RA esta abierta a todo el mundo, y ahi escribe cualquiera: spam, insultos,
++# estafadores que se hacen pasar por soporte, gente intentando que revele su
++# prompt, y a veces alguien en crisis. Hasta hoy todo eso llegaba al modelo
++# igual que «¿cuánto vale ORIGEN?», y el modelo improvisaba.
++#
++# Laya (en la T4) dice en milisegundos que es cada mensaje, y politica.py
++# decide que hacer: un mensaje de cuidado escrito por nosotros ante una crisis,
++# una negativa firme ante una estafa, una linea de tono en el prompt ante
++# alguien molesto, un aviso al equipo cuando hace falta una persona. Lo que no
++# hace nunca es bloquear a nadie ni borrar nada: eso lo decide una persona.
++#
++# Y si Laya esta caida, lenta o sin configurar, la decision vuelve vacia y
++# todo sigue exactamente como antes. Ver laya_cliente.py.
++
++_WA_AVISOS = []                     # la boca de WhatsApp para avisar desde otro canal
++_CANDADO_WA_AVISOS = threading.Lock()
++
++
++def _canal_de(rel):
++    if isinstance(rel, wa.RelevoWhatsApp):
++        return 'whatsapp'
++    if type(rel).__name__ == 'Recado':      # portal.py: la burbuja de la web
++        return 'web'
++    return 'chat'
++
++
++def _contacto(canal, de):
++    """Lo que ve el equipo para poder escribirle. Solo viaja en el aviso."""
++    if canal == 'whatsapp':
++        return f'+{de}'
++    if canal == 'web':
++        return 'visitante de la web (sin forma de contacto)'
++    return str(de)
++
++
++def _avisar_al_equipo_laya(rel, texto):
++    """El aviso de Laya, a los telefonos del equipo, por WhatsApp.
++
++    Por WhatsApp SIEMPRE, venga el mensaje de donde venga. Con `rel` a secas
++    no sirve: el relevo de la casa no sabe escribirle a un telefono, y el
++    `Recado` de la web ignora el destinatario y PEGA el texto en la respuesta
++    al visitante — el aviso al equipo le llegaria a la persona equivocada.
++
++    En su propio hilo: el WhatsApp va con freno (ZERNIO_HUECO) y reintentos, y
++    la persona que escribio no puede esperar a que salga un aviso interno.
++    """
++    def mandar():
++        boca = rel if isinstance(rel, wa.RelevoWhatsApp) else None
++        if boca is None and wa.encendido():
++            with _CANDADO_WA_AVISOS:
++                if not _WA_AVISOS:
++                    _WA_AVISOS.append(wa.RelevoWhatsApp(registrar=log))
++                boca = _WA_AVISOS[0]
++        a_quien = _telefonos_del_equipo()
++        if boca is None or not a_quien:
++            log('NADIE recibe el aviso de Laya: revisá AURA_ESCALAFON y WhatsApp')
++            return
++        for jefe in a_quien:
++            try:
++                boca.enviar(jefe, texto)
++            except Exception as e:
++                log('el aviso de Laya al equipo no salio:',
++                    type(e).__name__, str(e)[:70])
++    threading.Thread(target=mandar, daemon=True).start()
++
++
++def _laya_mira(rel, p, de, dicho, idi):
++    """Pregunta a Laya por UN mensaje y hace lo que la politica decida antes
++    del modelo. Devuelve la decision, o None si Laya no esta instalada.
++
++    Si la politica trae respuesta propia (crisis, estafa, abuso, spam) se
++    manda aqui y queda en la memoria de la charla, como lo del guion. Si
++    enviar falla, lanza igual que cualquier otro envio: `atender_charla` no
++    avanza el tope y el mensaje se vuelve a atender.
++    """
++    if politica is None:
++        return None
++    canal = _canal_de(rel)
++    d = politica.mirar(dicho, de, canal, idi, contacto=_contacto(canal, de))
++    if d.aviso_equipo:
++        _avisar_al_equipo_laya(rel, d.aviso_equipo)
++    if d.respuesta:
++        rel.enviar(de, d.respuesta)
++        _recordar(p, dicho, d.respuesta)
++    if d.contesta:
++        p['visto'] = int(time.time())
++        log(f'Laya ({d.accion()}) atendió a …{str(de)[-4:]} sin el modelo')
++    return d
++
++
+ def _idi(p):
+     """El idioma de esa persona, con el espanol de respaldo.
+ 
+@@ -1805,6 +1918,20 @@
+         p['idioma'] = idi
+         log(f'…{str(de)[-4:]} escribió en {idi}: se le cambia el idioma')
+ 
++    # ── LAYA MIRA EL MENSAJE ANTES QUE NADIE ──────────────────────────────
++    #
++    # Antes que el guion, que la puerta del idioma y que el freno de rafaga. No
++    # por importancia sino por lo que se pierde si va despues: quien escribe
++    # por primera vez «ya no quiero vivir» recibiria la puerta del idioma con
++    # sus dos botones; a mitad del embudo, su mensaje se guardaria como su
++    # oficio; y si escribe siete seguidos, «vas muy rápido».
++    #
++    # Un boton tocado no se mira —es una opcion nuestra, no algo que escribio—
++    # y una nota de voz se mira mas abajo, cuando ya se oyo.
++    laya = _laya_mira(rel, p, de, dicho, idi) if (dicho and not toco) else None
++    if laya is not None and laya.contesta:
++        return
++
+     # ── EL GUION VA ANTES QUE EL MOTOR ────────────────────────────────────
+     #
+     # Si lo que llega es un boton tocado, o algo que lleva derecho a un nodo
+@@ -2295,6 +2422,12 @@
+         rel.enviar(de, guion.frase('solo-texto-y-voz', _idi(p)))
+         return
+ 
++    # La nota de voz recien oida: arriba todavia no era texto que mirar.
++    if laya is None and not toco:
++        laya = _laya_mira(rel, p, de, dicho, idi)
++        if laya is not None and laya.contesta:
++            return
++
+     # Cambiar de modo es de la casa, no del modelo: se detecta aqui, en seco.
+     bajo = _sin_tildes(dicho)
+     # ── EL MODO PENSADOR SE RETIRO, Y NO POR SIMPLIFICAR ──────────────────
+@@ -2419,10 +2552,18 @@
+     # Y el freno de golpe. Va DESPUES del techo diario y ANTES del motor: no
+     # gasta GPU y se contesta al instante, que es justo lo que hace falta
+     # cuando alguien esta disparando preguntas mas rapido de lo que se leen.
+-    if hay_rafaga(de):
++    # Salvo a quien Laya ve en riesgo: a esa persona no se le pide paciencia.
++    if hay_rafaga(de) and not (laya is not None and laya.cuidado):
+         rel.enviar(de, guion.frase('vas-muy-rapido', _idi(p)))
+         return
+ 
++    # Las lineas de Laya —cuidado, alerta de estafa, aviso de inyeccion, tono—
++    # van al FINAL del sistema: lo de antes sigue coincidiendo byte a byte y
++    # Ollama lo sigue sacando de su cache. Las repreguntas de abajo usan este
++    # mismo `sistema`, asi que tambien las llevan.
++    if laya is not None:
++        sistema = laya.sistema(sistema)
++
+     try:
+         contexto = quien_es(rel, de, p, dicho)
+     except Exception:
+@@ -3220,6 +3361,9 @@
+     dejar_huella(rel)
+     _quienes = probadores()
+     _avisar_del_modelo()
++    log('Laya', ('encendida · modo ' + politica.modo())
++        if (politica is not None and os.environ.get('LAYA_URL'))
++        else 'apagada (sin LAYA_URL o sin politica.py): se atiende sin ella')
+     log(f'AU-RA de pie · {len(saber)} fichas · {MODELO_RAPIDA} · '
+         + ('ABIERTA a todos' if _quienes is None else f'{len(_quienes)} probadores'))
+     # WhatsApp, si esta configurado. Sin clave no existe y no se avisa como

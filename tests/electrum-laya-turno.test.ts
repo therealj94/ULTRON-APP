@@ -1,7 +1,7 @@
 /**
  * Laya en el turno y en la salud de Dr Electrum.
  *
- *  · El panel (Laya, `/decidir`) y la clasificación (`/v1/systemone`) son dos consultas que no
+ *  · El panel (Laya, `/decidir`) y la clasificación (`/v1/mensaje`) son dos consultas que no
  *    dependen una de la otra, y el turno las hacía en serie: el tiempo de una se sumaba al de la
  *    otra antes de pensar nada. Ahora el panel se pide antes de esperar a la clasificación.
  *  · `/api/electrum/salud` dice si Laya está y si contesta; el detalle —tiempos, fallos, la sonda—
@@ -16,7 +16,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { spawn, type ChildProcess } from 'node:child_process';
 
-const llegadas: Record<string, number[]> = { decidir: [], systemone: [] };
+const llegadas: Record<string, number[]> = { decidir: [], mensaje: [] };
 const RETRASO_CLASIFICACION_MS = 500;
 
 const laya = http.createServer((req, res) => {
@@ -29,10 +29,13 @@ const laya = http.createServer((req, res) => {
       llegadas.decidir.push(Date.now());
       return res.end(JSON.stringify({ panel: ['geologo'], p: { geologo: 0.9 }, umbral: 0.42, ms: 4 }));
     }
-    if (ruta === '/v1/systemone') {
-      llegadas.systemone.push(Date.now());
+    if (ruta === '/v1/mensaje') {
+      llegadas.mensaje.push(Date.now());
       // La clasificación tarda: si el panel espera a que termine, llega medio segundo tarde.
-      return setTimeout(() => res.end(JSON.stringify({})), RETRASO_CLASIFICACION_MS);
+      return setTimeout(
+        () => res.end(JSON.stringify({ p: { razonar: 0.9, tarea_conversacion: 0.8 }, etiquetas: ['razonar'], grupos: { tarea: 'tarea_conversacion' }, ms: 5 })),
+        RETRASO_CLASIFICACION_MS,
+      );
     }
     res.statusCode = 404;
     res.end('{}');
@@ -53,8 +56,6 @@ const URL_NODO = `http://127.0.0.1:${(nodo.address() as AddressInfo).port}`;
 Object.assign(process.env, {
   ULTRON_LAYA_URL: URL_LAYA,
   ULTRON_LAYA_TIMEOUT_MS: '3000',
-  LAYA_URL: URL_LAYA,
-  LAYA_TIMEOUT_MS: '3000',
   CLASIFICADOR_MODO: 'laya',
   ULTRON_NODO_URL: URL_NODO,
   ULTRON_NODO_SECRETO: 'prueba',
@@ -67,7 +68,7 @@ after(() => {
 test('el panel se pide a Laya sin esperar a que termine la clasificación', async () => {
   const { turnoElectrum } = await import('../server/electrum/turno');
   llegadas.decidir.length = 0;
-  llegadas.systemone.length = 0;
+  llegadas.mensaje.length = 0;
   const r = await turnoElectrum('¿qué ley media tiene la veta?', {
     quien: null,
     nivel: 'lee',
@@ -77,8 +78,8 @@ test('el panel se pide a Laya sin esperar a que termine la clasificación', asyn
   });
   assert.ok(r.texto, 'el turno contesta');
   assert.equal(llegadas.decidir.length, 1, 'se consultó el panel');
-  assert.equal(llegadas.systemone.length, 1, 'se consultó la clasificación');
-  const desfase = llegadas.decidir[0] - llegadas.systemone[0];
+  assert.equal(llegadas.mensaje.length, 1, 'se consultó la clasificación');
+  const desfase = llegadas.decidir[0] - llegadas.mensaje[0];
   assert.ok(
     desfase < RETRASO_CLASIFICACION_MS - 100,
     `el panel llegó ${desfase} ms después de empezar la clasificación: en serie serían más de ${RETRASO_CLASIFICACION_MS}`

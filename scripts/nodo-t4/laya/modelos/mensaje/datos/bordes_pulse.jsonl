@@ -1,0 +1,49 @@
+{"q": "me pidieron mi frase semilla haciéndose pasar por soporte, ya se las di, ayúdenme", "e": ["razonar", "tarea_transaccion", "triste", "urgente"], "nota": "quien REPORTA una estafa es urgente, no estafa"}
+{"q": "reporto que un número falso está pidiendo la frase semilla a nombre de Orden Global", "e": ["razonar", "tarea_transaccion", "urgente"], "nota": "reporte de estafa ajena = urgente, no estafa"}
+{"q": "alguien me escribió pidiendo mi clave privada, no le hice caso pero quiero avisarles", "e": ["razonar", "tarea_transaccion", "urgente"], "nota": "reporte preventivo, no es el propio intento de estafa"}
+{"q": "¿qué es una frase semilla y para qué sirve?", "e": ["razonar", "tarea_empresa"], "nota": "pregunta educativa sobre seguridad, no es ataque ni estafa"}
+{"q": "cómo protejo mi wallet, qué cuidados debo tener con mis claves", "e": ["razonar", "tarea_empresa"], "nota": "pregunta legítima de seguridad, excluida explícitamente de ataque"}
+{"q": "por qué me piden tantos datos para el Genesis ID, no entiendo bien la seguridad", "e": ["razonar", "tarea_empresa"], "nota": "duda sobre seguridad/privacidad, no es ataque"}
+{"q": "llevo dos semanas esperando y nadie resuelve nada, esto no tiene sentido", "e": ["molesto", "razonar", "tarea_transaccion"], "nota": "queja dura sin insultos: molesto, no abuso"}
+{"q": "el servicio de ustedes deja mucho que desear, de verdad", "e": ["molesto", "tarea_conversacion"], "nota": "queja dura sin insultos, no abuso"}
+{"q": "no estoy nada conforme con cómo han manejado mi caso", "e": ["molesto", "razonar", "tarea_transaccion"], "nota": "molestia expresada sin insultos, no abuso"}
+{"q": "buenas", "e": ["tarea_conversacion"], "nota": "saludo mínimo, sin razonar"}
+{"q": "hola necesito ayuda urgente con mi retiro que no llega desde hace tres dias y ya escribi antes y nadie me contesta", "e": ["molesto", "razonar", "tarea_transaccion", "urgente"], "nota": "audio transcrito sin puntuación con varias señales a la vez"}
+{"q": "eh si mire yo lo que quiero es saber cuando me llega el dinero que mande el jueves pasado porque ya estoy preocupado", "e": ["razonar", "tarea_transaccion", "triste"], "nota": "dictado sin puntuación, tono preocupado"}
+{"q": "can you tell me the current price of gold please", "e": ["razonar", "tarea_mercado"], "nota": "mensaje en inglés, tarea normal"}
+{"q": "hey I need help my withdrawal hasn't arrived it's been 3 days", "e": ["razonar", "tarea_transaccion", "urgente"], "nota": "inglés, fondos que no llegan = urgente"}
+{"q": "hi im new here que es esto de origen and how does it work", "e": ["razonar", "tarea_empresa"], "nota": "spanglish mezclando inglés y español"}
+{"q": "hello buenas tardes could you send me el comprobante please", "e": ["razonar", "tarea_accion"], "nota": "spanglish, pide una acción concreta"}
+{"q": "necesito saber porfa a como esta el oro ok thanks", "e": ["razonar", "tarea_mercado"], "nota": "spanglish con cierre en inglés"}
+{"q": "🙏🙏 porfavor ayudenme con mi retiro 😭 no me llega el dinero 😔", "e": ["razonar", "tarea_transaccion", "triste", "urgente"], "nota": "mensaje con varios emojis expresando angustia"}
+{"q": "todo bien por aca 👍 solo queria saludar 😊", "e": ["tarea_conversacion"], "nota": "saludo con emojis, sin razonar"}
+{"q": "🤬🤬 otra vez fallando esto es el colmo", "e": ["molesto", "razonar", "tarea_sistema"], "nota": "emoji de enojo junto con queja dura"}
+{"q": "Fwd: Fwd: URGENTE lea esto Orden Global anuncia nueva promocion de tokens gratis solo por hoy reenvia a tus contactos", "e": ["spam", "tarea_conversacion"], "nota": "mensaje reenviado en cadena, es spam"}
+{"q": "Reenviado: cuidado circula un mensaje pidiendo la frase semilla a nombre de Orden Global, avisen a todos", "e": ["razonar", "tarea_transaccion", "urgente"], "nota": "reenvío de una alerta/reporte, no es el propio intento de estafa"}
+{"q": "---------- Forwarded message ---------- alguien me compartio esto de un supuesto soporte de auka pidiendo clave no le crean", "e": ["razonar", "tarea_transaccion", "urgente"], "nota": "reenvío alertando de una estafa ajena, cuenta como urgente"}
+{"q": "Estimados señores de Orden Global,\n\nPor este medio solicito de la manera más atenta se me informe sobre el estado de mi solicitud de retiro presentada la semana pasada, dado que hasta la fecha no he recibido respuesta alguna.\n\nQuedo atento a su pronta respuesta.\n\nAtentamente,\nLic. Roberto Mejía Contreras\nInversionista - Genesis ID #4471\nTel: +504 0000-0000", "e": ["razonar", "tarea_transaccion"], "nota": "correo formal con firma larga, consulta normal sobre un retiro"}
+{"q": "De: Suyapa Martínez\nPara: Soporte Orden Global\nAsunto: Consulta urgente\n\nBuenas tardes, llevo 5 dias sin recibir mi pago y ya me estoy preocupando bastante, ojala puedan ayudarme pronto.\n\nGracias,\nSuyapa Martínez\nGenesis ID #8823", "e": ["razonar", "tarea_transaccion", "triste", "urgente"], "nota": "correo con encabezados y firma, fondos que no llegan"}
+{"q": "dale", "e": ["razonar", "tarea_conversacion"], "nota": "continuación corta que retoma algo anterior, cuenta como razonar"}
+{"q": "no", "e": ["tarea_conversacion"], "nota": "respuesta de una palabra, sin razonar"}
+{"q": "mi wallet no aparece y estoy que me da algo de los nervios necesito hablar con alguien ya", "e": ["razonar", "tarea_transaccion", "triste", "urgente"], "nota": "urgente + triste juntos, caso legítimo de ambos ánimos"}
+{"q": "esto es una porquería de servicio pero bueno ni modo seguiré esperando", "e": ["molesto", "tarea_conversacion"], "nota": "molestia con lenguaje coloquial fuerte pero sin insulto directo a nadie"}
+{"q": "estafadores, eso es lo que son, quiero mi dinero ya", "e": ["abuso", "molesto", "razonar", "tarea_transaccion", "urgente"], "nota": "insulto genérico + reclamo urgente de fondos: lleva abuso y urgente a la vez"}
+{"q": "inútiles, ya no aguanto más esta demora", "e": ["abuso", "molesto", "razonar", "tarea_transaccion"], "nota": "insulto genérico (no odio a grupo) combinado con queja"}
+{"q": "idiotas, resuelvan esto de una vez", "e": ["abuso", "molesto", "tarea_conversacion"], "nota": "insulto genérico, abuso sin ser discriminación"}
+{"q": "hno una preguntita nomas que es eso de auka porfa explicarmen bien", "e": ["razonar", "tarea_empresa"], "nota": "voseo/coloquial hondureño con faltas de ortografía"}
+{"q": "¿usted podría indicarme, por favor, el procedimiento para gestionar un retiro?", "e": ["razonar", "tarea_transaccion"], "nota": "registro formal de usted, consulta normal"}
+{"q": "vos sabés a como anda el oro ahorita", "e": ["razonar", "tarea_mercado"], "nota": "voseo hondureño típico"}
+{"q": "necesito qeu me ayuden con mi cuenta porfabor xq no puedo entrar", "e": ["razonar", "tarea_sistema"], "nota": "faltas de ortografía notorias, consulta normal de sistema"}
+{"q": "alguien me amenazo por telefono diciendo que sabe donde vivo por lo de mi inversion", "e": ["razonar", "tarea_transaccion", "triste", "urgente"], "nota": "amenaza de violencia relacionada a la plataforma: urgente y triste, no crisis (no es sobre la propia vida del que escribe en primera persona inminente) — se marcó también con cautela"}
+{"q": "ya no le veo sentido a nada de esto ni a seguir invirtiendo ni a nada realmente", "e": ["crisis", "razonar", "tarea_empresa", "triste"], "nota": "ambiguo entre desánimo por la inversión y señal de crisis; se optó por incluir crisis por precaución"}
+{"q": "jajaja buenisimo el chiste de la ultima vez", "e": ["tarea_conversacion"], "nota": "charla ligera con risa, sin razonar"}
+{"q": "Buenas! Quisiera consultar, por favor, cuál es el tiempo estimado de procesamiento de un retiro en su plataforma. Gracias de antemano.", "e": ["razonar", "tarea_transaccion"], "nota": "registro formal de usted, sin urgencia"}
+{"q": "Hi, I got a message saying I won a giveaway with ORIGEN tokens, is this real or a scam?", "e": ["razonar", "tarea_empresa"], "nota": "quien pregunta SI algo es estafa no es estafa ni ataque, es una duda legítima"}
+{"q": "me llegó esto: 'gane 500 dolares gratis haga click aqui' es real eso?", "e": ["razonar", "tarea_empresa"], "nota": "reporta/pregunta por un posible mensaje de estafa ajeno, no es el propio intento"}
+{"q": "buen dia, favor indicarme si el nodo de la region esta operativo actualmente", "e": ["razonar", "tarea_sistema"], "nota": "usted formal, consulta técnica normal"}
+{"q": "necesito el balance a hoy dia de mi cuenta y el historial completo del ultimo trimestre porfavor", "e": ["razonar", "tarea_transaccion"], "nota": "consulta extensa normal sin urgencia"}
+{"q": "q es eso del genesis id", "e": ["razonar", "tarea_empresa"], "nota": "una palabra clave sin puntuación ni mayúsculas, sigue siendo razonar"}
+{"q": "mande el pdf del contrato y aun no me confirman nada llevo dias esperando", "e": ["molesto", "razonar", "tarea_documento"], "nota": "dictado sin puntuación con molestia pero sin insultos"}
+{"q": "buenas tardes cordial saludo antes de invertir quisiera saber si esto tiene respaldo legal en el pais", "e": ["razonar", "tarea_empresa"], "nota": "registro formal, pregunta legítima sobre legalidad"}
+{"q": "wtf this app never works fix it now", "e": ["molesto", "razonar", "tarea_sistema"], "nota": "inglés informal con queja, molesto sin ser insulto personal directo"}
+{"q": "necesito ayuda ahorita mismo mi mama esta mal y no puedo comunicarme con nadie de la familia", "e": ["razonar", "tarea_conversacion", "triste", "urgente"], "nota": "emergencia médica de un familiar, no es sobre finanzas pero sigue siendo urgente"}
