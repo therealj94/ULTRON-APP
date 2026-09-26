@@ -21,6 +21,7 @@
  */
 import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
 import { nativePause } from '../lib/speechNative';
+import { fraseDeDictado } from './frases';
 
 export type Escucha = {
   /** Corta y devuelve lo último que se entendió. Llamarlo dos veces no hace daño. */
@@ -129,8 +130,12 @@ export async function escuchar(cb: {
   subs.push(
     M.addListener('error', (e: any) => {
       const code = String(e?.error || 'unknown');
-      // «no-speech» es soltar el botón sin haber dicho nada: eso no es un fallo que avisar.
-      if (code !== 'aborted' && code !== 'no-speech') cb.onError?.(code);
+      // A la persona, una frase; el código y el mensaje del sistema, al registro. `fraseDeDictado`
+      // devuelve null para «aborted» y «no-speech» (soltar el botón sin haber dicho nada), que no
+      // son fallos que avisar.
+      console.warn('[electrum] dictado:', code, e?.message ?? '');
+      const frase = fraseDeDictado(code);
+      if (frase) cb.onError?.(frase);
       cerrar();
     })
   );
@@ -153,7 +158,8 @@ export async function escuchar(cb: {
       contextualStrings: DEL_OFICIO,
     });
   } catch (e: any) {
-    cb.onError?.(String(e?.message || e).slice(0, 120));
+    console.warn('[electrum] dictado no arrancó:', e?.message || e);
+    cb.onError?.(fraseDeDictado('unknown') as string);
     cerrar();
     return null;
   }

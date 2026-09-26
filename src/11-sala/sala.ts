@@ -16,6 +16,7 @@ import type { FaceState } from '../types';
 import type { Emocion } from '../../lib/emocion';
 import { animoDe, HABLA, poseDe, type Pose, type Postura, type Tarea } from './tareas';
 import { COLORES, CUERPOS, estiloDe, type Estilo } from './estilos';
+import { hayWebGL } from './webgl';
 
 export type ZonaToque = 'cuerpo' | 'cabeza';
 export type OpcionesSala = {
@@ -23,6 +24,8 @@ export type OpcionesSala = {
   postura?: Postura;
   onTocar?: (zona: ZonaToque) => void;
   onDeslizar?: (dir: 'arriba' | 'abajo') => void;
+  /** Se perdió el contexto WebGL (GPU reiniciada, memoria): quien la usa debe volver a la cara 2D. */
+  onFallo?: (motivo: string) => void;
   /** Paleta y forma (estilos.ts); sin esto, el aspecto de siempre. */
   estilo?: Partial<Estilo>;
 };
@@ -65,14 +68,8 @@ const PUF = { x: -1.75, z: 0.25, asiento: 0.38 };
 const ANG_ESCRITORIO = -1.45;
 const VENTANA = new THREE.Vector3(-0.55, 2.3, -2.58);
 
-export function hayWebGL(): boolean {
-  try {
-    const c = document.createElement('canvas');
-    return !!(c.getContext('webgl2') || c.getContext('webgl'));
-  } catch {
-    return false;
-  }
-}
+// hayWebGL vive en webgl.ts (sin three) para que la app lo pueda preguntar sin bajarse la sala.
+export { hayWebGL };
 
 export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl {
   if (!hayWebGL()) throw new Error('sin WebGL');
@@ -1217,6 +1214,14 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
   }
   raf = requestAnimationFrame(cuadro);
 
+  // Si el navegador le quita la GPU, la sala quedaría negra para siempre: se para y avisa.
+  const alPerderContexto = (e: Event) => {
+    e.preventDefault();
+    cancelAnimationFrame(raf);
+    op.onFallo?.('se perdió el contexto WebGL');
+  };
+  lienzoGL.addEventListener('webglcontextlost', alPerderContexto);
+
   return {
     estado,
     boca(n) {
@@ -1234,6 +1239,7 @@ export function crearSala(host: HTMLElement, op: OpcionesSala = {}): SalaControl
     destruir() {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      lienzoGL.removeEventListener('webglcontextlost', alPerderContexto);
       lienzoGL.removeEventListener('pointermove', alMover);
       lienzoGL.removeEventListener('pointerleave', alSalir);
       lienzoGL.removeEventListener('pointerdown', alBajar);

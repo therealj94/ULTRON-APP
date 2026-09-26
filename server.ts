@@ -5,8 +5,8 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
-import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, vozDe } from './server/voz';
-import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica } from './server/seguridad';
+import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe } from './server/voz';
+import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, hechosCatalogo } from './lib/taller';
@@ -17,7 +17,9 @@ import { extraerPedidoHerramienta, quitarLineaPedido, resolverPedido } from './l
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
-import { capturaPagina, verImagen } from './lib/vision';
+import { capturaPagina, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
+import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from './lib/presupuesto';
+import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio } from './lib/oido';
 import { esTareaDeCodigo } from './lib/prompts/cot';
@@ -41,7 +43,7 @@ import { spotMetal } from './lib/mercado';
 import { turnoElectrum } from './server/electrum/turno';
 import { ES_ELECTRUM, ES_ULTRON, PAGINA_RAIZ, PLATAFORMA, rutaPermitida } from './lib/plataforma';
 import {
-  claveHilo,
+  claveHiloDe,
   fusionarHiloElectrum,
   hiloDe as hiloElectrumDe,
   hiloDelCliente,
@@ -104,6 +106,12 @@ const httpServer = http.createServer(app);
 const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json({ limit: '12mb' }));
+// Cuerpo roto o demasiado grande: una respuesta JSON clara en vez de la página HTML de Express.
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'Lo que mandaste es demasiado grande.', honesto: true });
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'No entendí lo que mandaste (JSON mal formado).', honesto: true });
+  return next(err);
+});
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -136,8 +144,6 @@ const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || '';
 const ULTRON_REMOTE_URL = process.env.ULTRON_FP_URL || process.env.ULTRON_REMOTE_URL || 'https://ultron.ordenglobal.link';
 const ULTRON_OJO_URL = (process.env.ULTRON_OJO_URL || process.env.PLAYWRIGHT_NODE_URL || '').replace(/\/$/, '');
 const ULTRON_OJO_CLAVE = process.env.ULTRON_OJO_CLAVE || '';
-const ULTRON_TTS_URL = (process.env.ULTRON_TTS_URL || process.env.CHATTERBOX_URL || '').replace(/\/$/, '');
-const ULTRON_TTS_CLAVE = process.env.ULTRON_TTS_CLAVE || '';
 
 async function probeJson(url: string, headers: Record<string, string> = {}, timeoutMs = 4000) {
   const ctrl = new AbortController();
@@ -155,29 +161,27 @@ async function probeJson(url: string, headers: Record<string, string> = {}, time
   }
 }
 
-type Salud = { qwen: boolean; ojo: boolean; vision: boolean; ttsLocal: boolean; fp: boolean; at: number; raw?: any };
+type Salud = { qwen: boolean; ojo: boolean; vision: boolean; voz: boolean; fp: boolean; at: number; raw?: any };
 let saludCache: Salud | null = null;
 
 async function medirSalud(force = false): Promise<Salud> {
   if (!force && saludCache && Date.now() - saludCache.at < 15000) return saludCache;
-  const [fp, nodo, ojo, tts] = await Promise.all([
+  const [fp, nodo, ojo, voz] = await Promise.all([
     probeJson(`${ULTRON_REMOTE_URL}/salud`),
     saludNodo(),
     ULTRON_OJO_URL
       ? probeJson(`${ULTRON_OJO_URL}/salud`, { 'X-Ojo-Clave': ULTRON_OJO_CLAVE })
       : Promise.resolve({ ok: false, status: 0, json: null, text: 'ULTRON_OJO_URL vacío' }),
-    ULTRON_TTS_URL
-      ? probeJson(`${ULTRON_TTS_URL}/salud`, { 'x-ultron-tts-clave': ULTRON_TTS_CLAVE })
-      : Promise.resolve({ ok: false, status: 0, json: null, text: 'ULTRON_TTS_URL vacío' }),
+    saludVoz(),
   ]);
   saludCache = {
     qwen: !!(nodo.ok && nodo.json),
     ojo: !!(ojo.ok && ojo.json?.playwright),
     vision: !!(ojo.ok && ojo.json?.vision) || !!clave('gemini'),
-    ttsLocal: tts.status === 200 || tts.status === 401,
+    voz: voz.ok,
     fp: !!fp.ok,
     at: Date.now(),
-    raw: { fp, nodo, ojo, tts },
+    raw: { fp, nodo, ojo, voz },
   };
   return saludCache;
 }
@@ -206,9 +210,25 @@ alAvisar(async (ap, que) => {
   }
 });
 
-app.get('/api/health', async (_req, res) => {
-  const s = await medirSalud(true);
+app.get('/api/health', async (req, res) => {
+  // Sin sesión: solo lo que usan los clientes (vivo o no) y con la caché de 15 s. Las direcciones de
+  // los nodos y los sondeos forzados son para quien tiene sesión de mesa.
+  const autorizado = mesaAutorizada(req);
+  const s = await medirSalud(autorizado);
   const raw = s.raw || {};
+  if (!autorizado) {
+    return res.json({
+      ok: true,
+      version: '4.0',
+      qwen: { vivo: s.qwen },
+      fp: { vivo: s.fp },
+      ojo: { vivo: s.ojo, playwright: s.ojo, vision: !!raw.ojo?.json?.vision },
+      tts: { vivo: s.voz },
+      voicebox: estadoVoz().voicebox,
+      voz: VOZ_OFICIAL.nombre,
+      geminiFallback: !!clave('gemini'),
+    });
+  }
   res.json({
     ok: true,
     version: '4.0',
@@ -217,8 +237,8 @@ app.get('/api/health', async (_req, res) => {
     qwen: { url: ULTRON_NODO_URL || null, vivo: s.qwen, modelo: raw.nodo?.json?.modelo || null, rutaChat: '/api/chat' },
     fp: { url: ULTRON_REMOTE_URL, vivo: s.fp, modelo: raw.fp?.json?.modelo || null },
     ojo: { url: ULTRON_OJO_URL || null, vivo: s.ojo, playwright: s.ojo, vision: !!raw.ojo?.json?.vision },
-    tts: { url: ULTRON_TTS_URL || null, status: raw.tts?.status ?? 0, vivo: s.ttsLocal },
-    elevenlabs: !!clave('elevenlabs'),
+    tts: { servidor: estadoVoz().servidor, status: raw.voz?.status ?? 0, vivo: s.voz, detalle: raw.voz?.detalle || null },
+    voicebox: estadoVoz().voicebox,
     voz: VOZ_OFICIAL.nombre,
     geminiFallback: !!clave('gemini'),
   });
@@ -266,7 +286,7 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
     // `req.telegramUserId`, que no existe, así que Dr Electrum nunca supo con quién hablaba y el
     // nivel salía siempre nulo. Fallaba hacia el lado seguro, pero fallaba.
     const id = identidadDe(req);
-    const clave = claveHilo(id?.persona.id || null, 'mesa');
+    const clave = claveHiloDe(id?.persona.id, req, 'mesa');
     const historial = fusionarHiloElectrum({
       servidor: hiloElectrumDe(clave),
       cliente: hiloDelCliente(req.body?.hilo),
@@ -298,8 +318,9 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
  * antes de que se siente otro.
  */
 app.delete('/api/electrum/hilo', exigirPlataforma('electrum'), limitar(30), (req, res) => {
+  // Solo el hilo de quien lo pide: el suyo si tiene sesión, el de su navegador si entró con la llave.
   const id = identidadDe(req);
-  olvidarHilo(claveHilo(id?.persona.id || null, 'mesa'));
+  olvidarHilo(claveHiloDe(id?.persona.id, req, 'mesa'));
   res.json({ ok: true, honesto: true });
 });
 
@@ -421,7 +442,7 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
     // El nombre del modelo es un detalle interno, como el padrón: solo a quien manda. A un cliente
     // se le enseña que el cerebro está en línea, no con qué pesos está hecho.
     cerebro: { configurado: nodo, vivo: cerebro, modelo: nivelDe(id, 'electrum') === 'mando' ? ULTRON_NODO_MODELO : undefined },
-    voz: { llave: voz.elevenlabs, vozId: vozDe('electrum') },
+    voz: { llave: voz.voicebox, perfil: vozDe('electrum') },
     catastro: { viva: catastro.viva, motivo: catastro.motivo || null, concesiones: catastro.concesiones ?? null },
     herramientas: TODAS_ELECTRUM.length,
     quien: id?.persona.nombre || null,
@@ -483,7 +504,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
 
   try {
     const id = identidadDe(req);
-    const clave = claveHilo(id?.persona.id || null, 'mesa');
+    const clave = claveHiloDe(id?.persona.id, req, 'mesa');
     const historial = fusionarHiloElectrum({
       servidor: hiloElectrumDe(clave),
       cliente: hiloDelCliente(req.body?.hilo),
@@ -602,8 +623,8 @@ app.post('/api/electrum/ver', exigirPlataforma('electrum'), limitar(12), async (
       'granos, vetas, cristales, alteración y tamaño aproximado; si es un paisaje, relieve, agua, vegetación, ' +
       'caminos y cortes; si es un documento o un mapa, copiá el texto y los números. No identifiques el mineral con certeza. No inventes.'
   );
-  if (vista.via === 'ninguno' || vista.via === 'error') {
-    console.warn(`[electrum] ver falló (${vista.via}): ${vista.texto.slice(0, 160)}`);
+  if (vistaFallida(vista)) {
+    console.warn(`[electrum] ver falló (${vista.via})`);
     return res.status(503).json({ error: 'No pude ver la foto ahora mismo.', honesto: true });
   }
   return res.json({ texto: vista.texto, via: vista.via, honesto: true });
@@ -653,8 +674,8 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
 
 /**
  * La voz de Dr Electrum. Ruta propia, no la de AU-RA: no por capricho de simetría, sino porque
- * `/api/tts` está en la lista de rutas abiertas de la APK y un sintetizador abierto es una factura
- * de ElevenLabs con la puerta quitada.
+ * `/api/tts` está en la lista de rutas abiertas de la APK y un sintetizador abierto es la GPU de
+ * Voicebox trabajando para cualquiera. Devuelve WAV (audio/wav) con la voz de Alex.
  */
 app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
   const texto = String(req.body?.texto || '').slice(0, 1200).trim();
@@ -746,8 +767,7 @@ app.get('/api/capacidades', limitar(30), async (_req, res) => {
   const capacidades = catalogoCapacidades({
     qwen: s.qwen,
     ojo: s.ojo,
-    elevenlabs: !!clave('elevenlabs'),
-    ttsLocal: s.ttsLocal,
+    voz: s.voz,
     memoriaS3: listo('memoria'),
     telegram: listo('telegram'),
     telegramIn: listo('telegram-in'),
@@ -779,20 +799,18 @@ app.get('/api/vault/status', exigirMesa, async (_req, res) => {
   });
 });
 
-// BÓVEDA: ElevenLabs Key Update Endpoint
-
-// BÓVEDA: ElevenLabs Key Update Endpoint (solo mando con sesión firmada)
-app.post('/api/vault/elevenlabs', exigirSesion, (req, res) => {
+// BÓVEDA: la llave de Voicebox (voz y oído), solo mando con sesión firmada
+app.post('/api/vault/voicebox', exigirSesion, (req, res) => {
   const quien = quienVerificado(req.body, sesionDe(req));
   if (!puedeCambiarSistema(quien)) {
     return res.status(403).json({ error: 'ACCESO: consulta. Solo José o Medardo con sesión escriben la bóveda.', honesto: true });
   }
   const { apiKey } = req.body;
   if (!apiKey || typeof apiKey !== 'string') {
-    return res.status(400).json({ error: 'La API Key de ElevenLabs es requerida.' });
+    return res.status(400).json({ error: 'La llave de Voicebox es requerida.' });
   }
-  guardarCaja('elevenlabs', apiKey.trim());
-  return res.json({ success: true, message: 'API Key de ElevenLabs archivada en la bóveda hasta el próximo redespliegue.', configured: true });
+  guardarCaja('voicebox_clave', apiKey.trim());
+  return res.json({ success: true, message: 'Llave de Voicebox archivada en la bóveda hasta el próximo redespliegue.', configured: true });
 });
 
 // Render: redesplegar la mesa (solo mando con sesión firmada)
@@ -852,6 +870,19 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
   if (!correo || !claveEntrada) {
     return res.status(400).json({ error: 'Correo y clave requeridos.' });
   }
+  // Freno por cuenta (además del de IP): probar claves de una cuenta desde muchas IPs también se frena.
+  const ipEntrada = String(req.ip || req.socket.remoteAddress || 'x');
+  const espera = esperaEntrada(correo, ipEntrada);
+  if (espera > 0) {
+    const min = Math.max(1, Math.ceil(espera / 60_000));
+    res.setHeader('Retry-After', String(Math.ceil(espera / 1000)));
+    return res.status(429).json({
+      error: `Demasiados intentos con esta cuenta. Probá de nuevo en ${min} ${min === 1 ? 'minuto' : 'minutos'}.`,
+      code: 'demasiados_intentos',
+      reintentarEnS: Math.ceil(espera / 1000),
+      honesto: true,
+    });
+  }
   try {
     const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/entrar`, {
       method: 'POST',
@@ -861,8 +892,11 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
     });
     const data: any = await remoteRes.json().catch(() => ({}));
     if (!remoteRes.ok) {
+      // Solo cuenta como intento fallido una clave rechazada, no un cerebro caído.
+      if (remoteRes.status === 401 || remoteRes.status === 403) anotarFalloEntrada(correo, ipEntrada);
       return res.status(remoteRes.status).json(data);
     }
+    anotarExitoEntrada(correo, ipEntrada);
     const nombre = data.miembro?.nombre || JUNTA[correo]?.nombre || correo.split('@')[0];
     const rol = JUNTA[correo]?.rol || 'Junta Directiva · Orden Global';
     const s = emitirSesion({ correo, nombre, rol });
@@ -893,9 +927,10 @@ app.get('/api/ultron/sesion', async (req, res) => {
   res.json({ authenticated: false, user: null, remoteUrl: ULTRON_REMOTE_URL, honesto: true });
 });
 
-app.post('/api/ultron/salir', async (req, res) => {
-  borrarSesion(tokenDe(req));
-  res.json({ ok: true, message: 'Sesión cerrada.' });
+app.post('/api/ultron/salir', limitar(30), async (req, res) => {
+  // El token deja de valer en el servidor, no solo en este aparato.
+  const cerrada = await borrarSesion(tokenDe(req)).catch(() => false);
+  res.json({ ok: true, cerrada, message: 'Sesión cerrada.' });
 });
 
 
@@ -908,10 +943,13 @@ app.post('/api/playwright/scrape', exigirSesion, limitar(10), async (req, res) =
   if (!/^https?:\/\//i.test(formattedUrl)) formattedUrl = `https://${formattedUrl}`;
   const gate = await urlPublica(formattedUrl);
   if (gate.ok === false) return res.status(400).json({ error: gate.error, honesto: true });
-  formattedUrl = gate.url;
   if (!ULTRON_OJO_URL) {
     return res.status(503).json({ error: 'ULTRON_OJO_URL no configurada', honesto: true });
   }
+  // Las redirecciones se siguen aquí, comprobando cada salto; al ojo le llega el destino final.
+  const destino = await destinoPublico(gate.url);
+  if (destino.ok === false) return res.status(400).json({ error: destino.error, honesto: true });
+  formattedUrl = destino.url;
   try {
     const headers = { 'Content-Type': 'application/json', 'X-Ojo-Clave': ULTRON_OJO_CLAVE };
     const mirar = await fetch(`${ULTRON_OJO_URL}/mirar`, {
@@ -947,10 +985,22 @@ app.post('/api/playwright/scrape', exigirSesion, limitar(10), async (req, res) =
 });
 
 
-app.post('/api/vision/analyze', exigirMesaODesk, async (req, res) => {
-  const { mediaType, fileName, base64Data, prompt } = req.body || {};
+/** Una foto de la mesa a 640 px pesa ~60 KB en base64; 3 MB deja sitio a un PDF corto y corta el abuso. */
+const VISION_MAX_CAR = 3_000_000;
+
+app.post('/api/vision/analyze', exigirMesaODesk, limitar(20), async (req, res) => {
+  // El teléfono corta a los 35 s (describeImage): lo que el ojo tarde de más no lo ve nadie.
+  const reloj = presupuesto(PRESUPUESTO_VISION_MS);
+  const { mediaType, fileName, base64Data } = req.body || {};
+  // El prompt libre es de quien tiene sesión; sin ella, cualquiera usaría la clave de visión como
+  // servicio gratis con sus propias instrucciones. Sin sesión se admite uno corto (la APK pide
+  // etiquetas de la mesa con una frase fija).
+  const prompt = typeof req.body?.prompt === 'string' ? (sesionDe(req) ? req.body.prompt.slice(0, 2000) : req.body.prompt.slice(0, 300)) : '';
   if (!base64Data) {
     return res.status(400).json({ error: 'Falta la imagen', honesto: true });
+  }
+  if (String(base64Data).length > VISION_MAX_CAR) {
+    return res.status(413).json({ error: 'La imagen es demasiado grande. Mándala más pequeña.', honesto: true });
   }
   const isVideo = String(mediaType || fileName || '').startsWith('video') || /\.(mp4|webm|mov)$/i.test(fileName || '');
   if (isVideo) {
@@ -962,17 +1012,26 @@ app.post('/api/vision/analyze', exigirMesaODesk, async (req, res) => {
     if (!buf) return res.status(400).json({ error: 'PDF vacío. No lo leí.', honesto: true });
     const leido = extraerPdf(buf);
     const visiones: string[] = [];
+    let vistas = 0;
     for (const img of leido.imagenes.slice(0, leido.texto.length < 240 ? 3 : 1)) {
-      const vista = await verImagen(dataUrlDeImagen(img), prompt || 'Lee el documento. Copia texto y números. No inventes.');
+      // Las páginas comparten el mismo reloj: tres páginas no pueden esperar tres veces 33 s. Si el
+      // ojo falla en una, las siguientes fallarían igual y solo gastarían lo que queda.
+      const vista = await verImagen(dataUrlDeImagen(img), prompt || 'Lee el documento. Copia texto y números. No inventes.', { presupuesto: reloj });
+      if (vistaFallida(vista)) {
+        visiones.push(NO_PUDE_VER);
+        break;
+      }
+      vistas += 1;
       visiones.push(vista.texto);
     }
     const summary = [leido.texto, ...visiones].filter(Boolean).join('\n\n') || leido.detalle;
-    return res.json({ success: !!leido.texto || visiones.length > 0, summary, detalle: leido.detalle, via: 'pdf-leer', honesto: true });
+    return res.json({ success: !!leido.texto || vistas > 0, summary, detalle: leido.detalle, via: 'pdf-leer', honesto: true });
   }
-  const vista = await verImagen(String(base64Data), prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos. No inventes.');
-  if (vista.via === 'ninguno' || vista.via === 'error') {
-    console.error(`[AU-RA] /vision/analyze falló (${vista.via}) con ${String(base64Data).length} car.: ${vista.texto.slice(0, 160)}`);
-    return res.status(503).json({ error: vista.texto, honesto: true });
+  const vista = await verImagen(String(base64Data), prompt || 'Describe con precisión lo que se ve. Si hay precios o números, cópialos. No inventes.', { presupuesto: reloj });
+  if (vistaFallida(vista)) {
+    // El porqué (cuota, llave, nodo dormido) ya quedó en el registro; al teléfono, una frase humana.
+    console.error(`[AU-RA] /vision/analyze falló (${vista.via}) con ${String(base64Data).length} car.`);
+    return res.status(503).json({ error: `${NO_PUDE_VER} Inténtalo de nuevo en un momento.`, via: vista.via, honesto: true });
   }
   return res.json({ success: true, summary: vista.texto, via: vista.via, honesto: true });
 });
@@ -1110,7 +1169,7 @@ async function responderVoz(req: express.Request, res: express.Response) {
   const p = leerPeticionVoz(req);
   if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
   const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance });
-  if (!out) return res.status(503).json({ error: 'Voz no disponible (ElevenLabs y nodo TTS sin respuesta)', honesto: true });
+  if (!out) return res.status(503).json({ error: 'Voz no disponible (Voicebox sin respuesta)', honesto: true });
   res.setHeader('Content-Type', out.contentType);
   res.setHeader('Cache-Control', out.cache ? 'private, max-age=3600' : 'no-store');
   res.setHeader('X-Ultron-TTS', out.motor);
@@ -1119,9 +1178,9 @@ async function responderVoz(req: express.Request, res: express.Response) {
   return res.send(out.audio);
 }
 
-app.all('/api/tts', exigirMesaODesk, limitar(60), responderVoz);
-app.all('/api/tts/stream', exigirMesaODesk, limitar(60), responderVoz);
-app.all('/api/voz', exigirMesaODesk, limitar(60), responderVoz);
+app.all('/api/tts', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
+app.all('/api/tts/stream', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
+app.all('/api/voz', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
 
 /** Oración del día: AU-RA cierra los ojos y ora (clip grabado con la voz oficial). */
 app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
@@ -1141,15 +1200,18 @@ app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
  */
 app.post('/api/diag', limitar(40), (req, res) => {
   const b = req.body || {};
-  const cab = `[APK ${String(b.version || '?')} ${String(b.plataforma || '?')} ${String(b.dispositivo || '?')} ses=${String(b.sesion || '?')}]`;
+  // Todo lo que llega aquí es de un cliente sin sesión: corto y en una sola línea, para que nadie pueda
+  // inflar los logs ni escribir líneas falsas con saltos de línea.
+  const una = (v: unknown, n: number) => String(v ?? '?').replace(/[\r\n]+/g, ' ').slice(0, n);
+  const cab = `[APK ${una(b.version, 24)} ${una(b.plataforma, 16)} ${una(b.dispositivo, 60)} ses=${una(b.sesion, 40)}]`;
   const tipo = String(b.tipo || 'estado');
   if (tipo === 'crash-previo') {
-    console.error(`${cab} CRASH. Murió en: ${String(b.murio_en || '?')}`);
+    console.error(`${cab} CRASH. Murió en: ${una(b.murio_en, 120)}`);
   } else if (tipo === 'error-js') {
-    console.error(`${cab} ERROR JS${b.fatal ? ' FATAL' : ''}: ${String(b.error || '').slice(0, 300)}`);
+    console.error(`${cab} ERROR JS${b.fatal ? ' FATAL' : ''}: ${una(b.error, 300)}`);
     if (b.stack) console.error(`${cab} stack: ${String(b.stack).slice(0, 900)}`);
   } else {
-    console.log(`${cab} ${String(b.nota || 'estado')}`);
+    console.log(`${cab} ${una(b.nota || 'estado', 300)}`);
   }
   const migas = Array.isArray(b.migas) ? b.migas.slice(-40) : [];
   if (migas.length) console.log(`${cab} migas: ${migas.map(String).join(' | ').slice(0, 1800)}`);
@@ -1160,7 +1222,10 @@ app.get('/api/cantar', (_req, res) => {
   res.json({ honesto: true, canciones: repertorio() });
 });
 
-/** Canta: `{ id }` del repertorio, `{ pedido }` en lenguaje natural o `{ letra, titulo }` libre. Devuelve audio/mpeg. */
+/**
+ * Canta: `{ id }` del repertorio (clip grabado, audio/mpeg), `{ pedido }` en lenguaje natural o
+ * `{ letra, titulo }` libre, que Kokoro dice en vez de cantar (audio/wav).
+ */
 app.post('/api/cantar', exigirMesaODesk, limitar(12), async (req, res) => {
   const id = String(req.body?.id || '').trim();
   const letra = String(req.body?.letra || '').trim();
@@ -1185,11 +1250,13 @@ app.post('/api/cantar', exigirMesaODesk, limitar(12), async (req, res) => {
 
 app.post('/api/stt', exigirMesaODesk, limitar(60), async (req, res) => {
   const t0 = Date.now();
+  // El teléfono corta a los 16 s (transcribe): pasado eso, cada proveedor más es una factura sin oyente.
+  const reloj = presupuesto(PRESUPUESTO_OIDO_MS);
   const raw = String(req.body?.audioBase64 || req.body?.audio || '');
   if (!raw || raw.length < 80) return res.status(400).json({ error: 'audio vacío', honesto: true });
   const { mime, buffer } = decodeDataUrl(raw, String(req.body?.mimeType || req.body?.mime || 'audio/m4a'));
   if (buffer.length < 1200) return res.json({ text: '', model: 'vacio', ms: Date.now() - t0, honesto: true });
-  const oido = await transcribirAudio({ audio: buffer, mime, language: String(req.body?.language || 'es') });
+  const oido = await transcribirAudio({ audio: buffer, mime, language: String(req.body?.language || 'es'), presupuesto: reloj });
   if (oido.texto) {
     return res.json({ text: oido.texto, via: oido.via, ms: Date.now() - t0, bytes: buffer.length, honesto: true });
   }
@@ -1210,6 +1277,9 @@ async function prepararTurno(body: any) {
   // Mando solo con identidad verificada (sesión firmada o Telegram). El body no escala.
   const verificado = quienVerificado(body, body?.sesion || null);
   const mando = puedeCambiarSistema(verificado);
+  // La memoria privada (hilo, hechos, lo que se guarda de cada turno) es de identidades verificadas.
+  // Un nombre escrito sirve para saludar, no para leer ni escribir la memoria de nadie.
+  const quienMem = verificado;
   // Cómo se sabe quién es: sesión firmada, Telegram comprobado, o solo el nombre que escribió.
   const prueba: 'sesion' | 'telegram' | 'nombre' | null = verificado ? (body?.sesion ? 'sesion' : 'telegram') : quien ? 'nombre' : null;
   const personaTurno = verificado ? personaPorId(verificado) : null;
@@ -1217,7 +1287,7 @@ async function prepararTurno(body: any) {
   trazaActual()?.identidad(quien || null, nivelTurno);
   const memSt = estadoMemoria();
   if (message) {
-    await recordarTurno({ quien, rol: 'user', texto: message, canal });
+    await recordarTurno({ quien: quienMem, rol: 'user', texto: message, canal });
   }
   const clienteHilo = Array.isArray(body?.historial)
     ? (body.historial as any[]).map((x) => ({
@@ -1225,7 +1295,7 @@ async function prepararTurno(body: any) {
         texto: String(x?.texto || x?.content || ''),
       }))
     : [];
-  const durable = hiloDe(quien).map((t) => ({ rol: t.rol, texto: t.texto }));
+  const durable = hiloDe(quienMem).map((t) => ({ rol: t.rol, texto: t.texto }));
   const hiloTodo = durable.length >= 2 ? durable : [...clienteHilo, ...durable];
   const hiloPrevio = hiloTodo.filter(
     (t, i) => !(i === hiloTodo.length - 1 && t.rol === 'user' && t.texto === message)
@@ -1235,7 +1305,7 @@ async function prepararTurno(body: any) {
   // Hechos que manda el cliente solo entran con sesión firmada (si no, cualquiera envenena la memoria).
   const largaApp: string[] = body?.sesion && Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
   for (const h of largaApp) {
-    if (h.trim().length > 8) await guardarHechoQuien({ quien, hecho: h.trim().slice(0, 400), canal: 'mesa' });
+    if (h.trim().length > 8) await guardarHechoQuien({ quien: quienMem, hecho: h.trim().slice(0, 400), canal: 'mesa' });
   }
 
   // La decisión rápida: tipo de tarea, riesgo, agente, si es un intento de torcer al sistema.
@@ -1336,13 +1406,22 @@ async function prepararTurno(body: any) {
       const gate = await urlPublica(url);
       if (gate.ok === false) {
         hechos.push(`Página ${url}: no la abro (${gate.error}).`);
+      } else if (!verificado) {
+        // Sin identidad verificada no se usa el ojo (un navegador de verdad en el nodo de AWS): una
+        // página puede redirigir o saltar con JavaScript a la red interna del nodo. Aquí se lee el texto
+        // desde este servidor, que conecta a la IP ya comprobada y revisa cada redirección.
+        const texto = await leerPagina(gate.url, 1200);
+        hechos.push(`Página ${gate.url}: ${texto || 'sin texto (no la pude leer)'}`);
+        tools.push('pagina');
       } else {
         const page = await capturaPagina(gate.url);
         hechos.push(`Página ${page.url}: ${page.texto.slice(0, 1200) || 'sin texto'}`);
         tools.push('pagina');
         if (page.foto) {
           tools.push('foto');
-          if (body?.canal === 'telegram' || /telegram|captura|screenshot|m[aá]ndame (la )?foto/.test(q)) {
+          // Al grupo de la junta solo manda quien tiene mando (o se contesta al chat de Telegram que preguntó):
+          // si no, cualquiera sin sesión publicaba en el grupo la captura de la página que quisiera.
+          if (canal === 'telegram' || (mando && /telegram|captura|screenshot|m[aá]ndame (la )?foto/.test(q))) {
             const envio = await telegramFoto({ buf: page.foto, caption: page.titulo || page.url, chatId: body?.telegramChatId });
             hechos.push(`FOTO TELEGRAM: ${envio.detalle}`);
           }
@@ -1388,11 +1467,11 @@ async function prepararTurno(body: any) {
       const vista = await verImagen(String(image));
       // Un fallo de visión NO se le pasa crudo al modelo: lo parafraseaba como «la cámara me muestra un
       // error técnico», que no le dice nada a nadie. Se le da la frase que tiene que decir.
-      if (vista.via === 'error' || vista.via === 'ninguno') {
-        console.error(`[AU-RA] vision falló (${vista.via}) con ${String(image).length} car.: ${vista.texto.slice(0, 160)}`);
+      if (vistaFallida(vista)) {
+        console.error(`[AU-RA] vision falló (${vista.via}) con ${String(image).length} car.`);
         hechos.push('VISION: la cámara no devolvió imagen esta vez. Dilo simple y humano («ahora mismo no me está entrando imagen, dame un segundo»); no hables de errores técnicos ni de nodos.');
       } else {
-        console.log(`[AU-RA] vision ok (${String(image).length} car.) → ${vista.texto.slice(0, 120)}`);
+        console.log(`[AU-RA] vision ok (${String(image).length} car., ${vista.via})`);
         hechos.push(`VISION (${vista.via}): ${vista.texto}`);
       }
       tools.push('vision');
@@ -1500,7 +1579,7 @@ ${promptAgente(clas.agente)}
 
 No finjas recuerdos: solo la memoria de ${quien ? nombreDe(quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.
 Modo de mesa pedido: ${mode}.
-HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemoria(quien)}`;
+HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemoria(quienMem)}`;
 
   const compuesto = construirMensajes({ personalidad, user: mensajeHilo || message, canal, historial: hilo });
   if (compuesto.meta.rag) tools.push('rag');
@@ -1508,7 +1587,7 @@ HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemor
   if (compuesto.meta.harness) tools.push('harness');
   const system = compuesto.messages[0].content;
 
-  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, datos, tools, foto, directo, directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null, system, quien, mando, prueba, canal, hilo, clas };
+  return { t0, message: mensajeHilo || message, crudo: message, mode, hechos, datos, tools, foto, directo, directoVia: decirTaller ? 'taller' : soloCalculo ? 'calculo-mina' : directo ? 'market' : null, system, quien, quienMem, mando, prueba, canal, hilo, clas };
 }
 
 
@@ -1703,12 +1782,12 @@ async function correrTurnoInterno(body: any): Promise<SalidaTurno> {
   const p = await prepararTurno(body);
   const base = { mode: p.mode, foto: null as string | null, honesto: true as const };
   if (!p.message) return { ...base, reply: '', emocion: 'neutral', via: 'none', ms: Date.now() - p.t0, herramientas: [], error: 'message vacío' };
-  const { t0, mode, tools, system, message, quien, canal, hilo, mando } = p;
+  const { t0, mode, tools, system, message, quien, quienMem, canal, hilo, mando } = p;
   const hechos = [...p.hechos];
   const guardar = async (out: Omit<SalidaTurno, 'emocion'> & { emocion?: Emocion }): Promise<SalidaTurno> => {
     const e = extraerEmocion(out.reply);
     const final: SalidaTurno = { ...out, reply: e.texto, emocion: out.emocion || e.emocion };
-    if (final.reply) await recordarTurno({ quien, rol: 'ultron', texto: final.reply, canal });
+    if (final.reply) await recordarTurno({ quien: quienMem, rol: 'ultron', texto: final.reply, canal });
     return final;
   };
   if (p.directo) {
@@ -1755,12 +1834,19 @@ async function correrTurnoInterno(body: any): Promise<SalidaTurno> {
 
 app.post('/api/turno', exigirMesaODesk, limitar(60), async (req, res) => {
   const s = sesionDe(req);
-  const out = await correrTurno({
-    ...req.body,
-    correo: req.body?.correo || s?.correo,
-    usuario: req.body?.usuario || req.body?.userName || s?.nombre,
-    sesion: s,
-  });
+  let out: Awaited<ReturnType<typeof correrTurno>>;
+  try {
+    out = await correrTurno({
+      ...cuerpoHttp(req.body),
+      correo: req.body?.correo || s?.correo,
+      usuario: req.body?.usuario || req.body?.userName || s?.nombre,
+      sesion: s,
+    });
+  } catch (e: any) {
+    // Sin esto la petición quedaba colgada: Express 4 no atrapa rechazos de handlers async.
+    console.error('[AU-RA] turno falló:', String(e?.message || e).slice(0, 300));
+    return res.status(500).json({ error: 'Se me cayó el hilo de lo que pensaba. ¿Me lo repites?', honesto: true });
+  }
   if (out.error && !out.reply) {
     const code = out.error === 'message vacío' ? 400 : out.error.includes('configurado') ? 503 : 502;
     return res.status(code).json({ error: out.error, emocion: out.emocion, honesto: true });
@@ -1792,7 +1878,16 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), (req, res) => {
   return enTurno(reg, () =>
     turnoEnVivo(req, res).catch((e) => {
       reg.cerrar({ error: e });
-      throw e;
+      // Las cabeceras del stream ya salieron: se avisa con un evento y se cierra, en vez de colgar.
+      console.error('[AU-RA] turno en vivo falló:', String(e?.message || e).slice(0, 300));
+      if (!res.writableEnded) {
+        try {
+          res.write(`event: error\ndata: ${JSON.stringify({ error: 'Se me cayó el hilo de lo que pensaba. ¿Me lo repites?' })}\n\n`);
+          res.end();
+        } catch {
+          /* el cliente ya se fue */
+        }
+      }
     })
   );
 });
@@ -1803,11 +1898,17 @@ async function turnoEnVivo(req: express.Request, res: express.Response) {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
-  const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  let seFue = false;
+  res.on('close', () => {
+    if (!res.writableEnded) seFue = true;
+  });
+  const send = (event: string, data: unknown) => {
+    if (!seFue && !res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
 
   const s = sesionDe(req);
   const p = await prepararTurno({
-    ...req.body,
+    ...cuerpoHttp(req.body),
     correo: req.body?.correo || s?.correo,
     usuario: req.body?.usuario || req.body?.userName || s?.nombre,
     sesion: s,
@@ -1817,13 +1918,13 @@ async function turnoEnVivo(req: express.Request, res: express.Response) {
     reg.cerrar({ error: 'message vacío' });
     return res.end();
   }
-  const { t0, tools, system, message, quien, canal, hilo, mando } = p;
+  const { t0, tools, system, message, quien, quienMem, canal, hilo, mando } = p;
   const hechos = [...p.hechos];
   const terminar = async (texto: string, via: string, emocion: Emocion) => {
     anotarHerramientasAura(reg, tools);
     reg.cerrar({ respuesta: texto, emocion, via });
     send('done', { reply: texto, emocion, ms: Date.now() - t0, via, trazaId: reg.id });
-    if (texto) await recordarTurno({ quien, rol: 'ultron', texto, canal });
+    if (texto && !seFue) await recordarTurno({ quien: quienMem, rol: 'ultron', texto, canal });
     res.end();
   };
   send('tools', { tools });
@@ -2146,6 +2247,9 @@ async function startServer() {
       console.log('[electrum] bot apagado: falta ELECTRUM_BOT_TOKEN o ELECTRUM_WEBHOOK_SECRET.');
     }
     iniciarCentinela(180_000);
+    cargarSesionesCerradas()
+      .then((d) => console.log('[AU-RA] sesiones', d))
+      .catch((e) => console.warn('[AU-RA] sesiones', String(e?.message || e).slice(0, 160)));
     cargarMemoria()
       .then(() => console.log('[AU-RA] memoria', estadoMemoria().detalle))
       .catch((e) => console.warn('[AU-RA] memoria', String(e?.message || e).slice(0, 160)));

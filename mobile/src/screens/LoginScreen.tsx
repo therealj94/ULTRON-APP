@@ -22,6 +22,7 @@ import {
   type SessionUser,
 } from '../config';
 import { loginBiometric, loginClave } from '../lib/api';
+import { miga } from '../lib/reporte';
 import {
   getFingerprintUnlock,
   loadCreds,
@@ -46,6 +47,8 @@ export function LoginScreen({ onAuthenticated }: Props) {
   const [customCorreo, setCustomCorreo] = useState('');
   const [phase, setPhase] = useState<'pick' | 'clave' | 'quick'>('pick');
   const [clave, setClave] = useState('');
+  /** Hay una clave guardada en este teléfono (no se muestra; la usan la huella y la renovación). */
+  const [claveGuardada, setClaveGuardada] = useState(false);
   const [remember, setRemember] = useState(true);
   const [useFingerprint, setUseFingerprint] = useState(true);
   const [fingerprintAvailable, setFingerprintAvailable] = useState(false);
@@ -70,54 +73,84 @@ export function LoginScreen({ onAuthenticated }: Props) {
 
   useEffect(() => {
     const t = setTimeout(() => setLogoReady(true), 60);
+    let vivo = true;
     void (async () => {
-      const hw = await LocalAuthentication.hasHardwareAsync();
-      const enrolled = hw ? await LocalAuthentication.isEnrolledAsync() : false;
+      // Un sensor que no responde no puede dejar la entrada colgada: sin huella, se entra con clave.
+      let hw = false;
+      let enrolled = false;
+      try {
+        hw = await LocalAuthentication.hasHardwareAsync();
+        enrolled = hw ? await LocalAuthentication.isEnrolledAsync() : false;
+      } catch {
+        hw = false;
+        enrolled = false;
+      }
+      if (!vivo) return;
       setFingerprintAvailable(hw && enrolled);
 
-      const fp = await getFingerprintUnlock();
-      const creds = await loadCreds();
-      if (creds?.correo) {
+      try {
+        const fp = await getFingerprintUnlock();
+        const creds = await loadCreds();
+        if (!vivo || !creds?.correo) return;
         const correo = normalizeDeskEmail(creds.correo);
+        // La huella quedó activada para ESTE correo (o por una versión que no lo anotaba).
+        const huellaActiva = !!fp?.enabled && (!fp.correo || normalizeDeskEmail(fp.correo) === correo);
+        // El interruptor muestra lo que quedó guardado: si se apagó, sigue apagado.
+        setUseFingerprint(huellaActiva);
         const match = findDeskUserByEmail(correo);
         if (match) {
           setSelected(match);
-          setClave(creds.clave || '');
+          // La clave guardada NO se escribe en el campo: con ella a la vista, cualquiera con el teléfono
+          // tocaba «Usar clave» y entraba. Se sigue usando por detrás (huella, renovar la sesión).
+          setClaveGuardada(!!creds.clave);
           setSavedName(match.name);
           setRemember(true);
           if (creds.correo !== match.correo && creds.clave) {
             await saveCreds({ ...creds, correo: match.correo, name: match.name });
           }
-          if (fp?.enabled && hw && enrolled) {
-            setPhase('quick');
-            setUseFingerprint(true);
-          } else {
-            setPhase('clave');
-          }
+          if (!vivo) return;
+          setPhase(huellaActiva && hw && enrolled ? 'quick' : 'clave');
         } else {
           setSelected(OTRO_TEMPLATE);
           setCustomCorreo(correo);
-          setClave(creds.clave || '');
+          setClaveGuardada(!!creds.clave);
           setSavedName(creds.name || correo);
           setPhase('clave');
         }
+      } catch {
+        // Lo guardado no se pudo leer o actualizar: se entra con la clave escrita (el aviso sale en esa fase;
+        // «←» deja elegir otro usuario).
+        if (!vivo) return;
+        setPhase('clave');
+        setError('No pude leer tus datos guardados. Escribe tu clave para entrar.');
       }
     })();
-    return () => clearTimeout(t);
+    return () => {
+      vivo = false;
+      clearTimeout(t);
+    };
   }, []);
 
   const finish = async (user: SessionUser, persist?: { clave: string }) => {
     const correo = normalizeDeskEmail(user.correo);
     const session = { ...user, correo };
-    await saveSession(session);
-    if (remember && persist?.clave) {
-      await saveCreds({ correo, clave: persist.clave, name: session.name });
-      if (useFingerprint && fingerprintAvailable) {
+    try {
+      await saveSession(session);
+      if (remember && persist?.clave) {
+        await saveCreds({ correo, clave: persist.clave, name: session.name });
+      } else if (!remember) {
+        await saveCreds(null);
+      }
+      // Huella: se enciende solo con la clave guardada (la usa para entrar); apagar el interruptor, o no
+      // guardar la contraseña, la apaga de verdad (antes se quedaba activa y seguía pidiendo la huella).
+      if (!remember || (fingerprintAvailable && !useFingerprint)) {
+        await setFingerprintUnlock(false);
+      } else if (persist?.clave && useFingerprint && fingerprintAvailable) {
         await setFingerprintUnlock(true, correo);
       }
-    } else if (!remember) {
-      await saveCreds(null);
-      await setFingerprintUnlock(false);
+    } catch (e) {
+      // Ya se verificó quién es: si el teléfono no deja guardar, entra igual (la próxima vez pedirá la clave).
+      miga(`entrada: no se pudo guardar (${e instanceof Error ? e.message : String(e)})`);
     }
     onAuthenticated(session);
   };
@@ -168,17 +201,52 @@ export function LoginScreen({ onAuthenticated }: Props) {
       await finish({ name: data.user?.nombre || user.name, role: data.user?.rol || user.role, correo: user.correo }, persist);
     } catch (e: any) {
       const status = e?.status;
-      const creds = await loadCreds();
-      const known = !!creds && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(user.correo);
-      if (!status || status >= 500 || known) {
-        // sin servidor, o miembro ya validado antes en este teléfono → escritorio local
+      if (!status || status >= 500) {
+        // Sin servidor: escritorio local (quien llega aquí ya confirmó que es el dueño del teléfono).
         await finish({ name: user.name, role: user.role, correo: user.correo }, persist);
         return;
       }
-      setError(status === 401 || status === 403 ? 'La huella y el acceso directo solo abren si ya entraste con clave en este teléfono.' : e?.message || 'No pude abrir el escritorio.');
+      // El servidor dijo que no: con la clave guardada se intenta entrar de verdad; sin ella, no se pasa.
+      // (Antes bastaba con que el correo se hubiera usado alguna vez en este teléfono.)
+      if ((status === 401 || status === 403) && persist?.clave) {
+        try {
+          const data = await loginClave(normalizeDeskEmail(user.correo), persist.clave);
+          await finish({ name: data.miembro?.nombre || user.name, role: data.miembro?.rol || user.role, correo: user.correo }, persist);
+          return;
+        } catch {
+          /* la clave guardada ya no sirve: se pide escribirla */
+        }
+      }
+      setError(status === 401 || status === 403 ? 'Tu sesión no se pudo renovar. Escribe tu clave para entrar.' : 'No pude abrir el escritorio. Intenta en un momento.');
+      setPhase('clave');
     } finally {
       setLoading(false);
     }
+  };
+
+  /**
+   * «Entrar solo al escritorio» abre la mesa sin escribir la clave, así que primero se confirma que quien
+   * lo toca es el dueño del teléfono (huella, cara o PIN del sistema). Un teléfono sin ningún bloqueo no
+   * tiene con qué confirmar: ahí pasa, como pasaría cualquiera que lo desbloquee.
+   */
+  const entrarEscritorio = async () => {
+    setError('');
+    try {
+      const nivel = await LocalAuthentication.getEnrolledLevelAsync();
+      if (nivel !== LocalAuthentication.SecurityLevel.NONE) {
+        const r = await LocalAuthentication.authenticateAsync({ promptMessage: 'Confirma que eres tú', disableDeviceFallback: false });
+        if (!r.success) {
+          setError('Necesito confirmar que eres tú para abrir la mesa.');
+          return;
+        }
+      }
+    } catch {
+      setError('No pude confirmar que eres tú. Escribe tu clave.');
+      return;
+    }
+    const creds = await loadCreds();
+    const guardada = creds && normalizeDeskEmail(creds.correo) === normalizeDeskEmail(activeUser.correo) ? creds.clave : undefined;
+    await enterBiometric(activeUser, clave || guardada || undefined);
   };
 
   const enterWithClave = async () => {
@@ -256,6 +324,9 @@ export function LoginScreen({ onAuthenticated }: Props) {
                 onPress={() => void enterWithFingerprint()}
                 style={styles.primary}
                 disabled={loading}
+                accessibilityRole="button"
+                accessibilityLabel="Entrar con huella"
+                accessibilityState={{ busy: loading, disabled: loading }}
               >
                 {loading ? (
                   <ActivityIndicator color={T.sobrePrincipal} />
@@ -263,10 +334,10 @@ export function LoginScreen({ onAuthenticated }: Props) {
                   <Text style={styles.primaryText}>Entrar con huella</Text>
                 )}
               </Pressable>
-              <Pressable onPress={() => setPhase('clave')} style={styles.secondary}>
+              <Pressable onPress={() => setPhase('clave')} style={styles.secondary} accessibilityRole="button">
                 <Text style={styles.secondaryText}>Usar clave</Text>
               </Pressable>
-              <Pressable onPress={() => setPhase('pick')}>
+              <Pressable onPress={() => setPhase('pick')} style={styles.linkBtn} accessibilityRole="button">
                 <Text style={styles.link}>Cambiar usuario</Text>
               </Pressable>
             </View>
@@ -274,7 +345,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
             <View style={{ gap: 10, width: '100%' }}>
               <Text style={styles.hint}>¿Quién está en la mesa?</Text>
               {DESK_USERS.map((u) => (
-                <Pressable key={u.id} onPress={() => pickUser(u)} style={styles.userBtn}>
+                <Pressable key={u.id} onPress={() => pickUser(u)} style={styles.userBtn} accessibilityRole="button" accessibilityLabel={`${u.name}, ${u.correo}`}>
                   <View style={styles.avatar}>
                     <Text style={styles.avatarText}>{u.name[0]}</Text>
                   </View>
@@ -284,7 +355,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
                   </View>
                 </Pressable>
               ))}
-              <Pressable onPress={() => pickUser(OTRO_TEMPLATE)} style={styles.userBtn}>
+              <Pressable onPress={() => pickUser(OTRO_TEMPLATE)} style={styles.userBtn} accessibilityRole="button" accessibilityLabel="Otro miembro: escribir correo">
                 <View style={[styles.avatar, { backgroundColor: T.fondo2 }]}>
                   <Text style={[styles.avatarText, { color: T.texto2 }]}>+</Text>
                 </View>
@@ -296,7 +367,12 @@ export function LoginScreen({ onAuthenticated }: Props) {
             </View>
           ) : (
             <View style={{ gap: 12, width: '100%' }}>
-              <Pressable onPress={() => setPhase('pick')}>
+              <Pressable
+                onPress={() => setPhase('pick')}
+                style={styles.linkBtn}
+                accessibilityRole="button"
+                accessibilityLabel={`Cambiar usuario (ahora: ${activeUser.name || selected.name})`}
+              >
                 <Text style={styles.back}>← {activeUser.name || selected.name}</Text>
               </Pressable>
               {selected.id === 'otro' && (
@@ -328,6 +404,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
                 <Switch
                   value={remember}
                   onValueChange={setRemember}
+                  accessibilityLabel="Guardar contraseña"
                   trackColor={{ true: T.activo, false: T.borde }}
                   thumbColor={T.panel}
                 />
@@ -338,6 +415,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
                   <Switch
                     value={useFingerprint}
                     onValueChange={setUseFingerprint}
+                    accessibilityLabel="Desbloqueo con huella"
                     trackColor={{ true: T.activo, false: T.borde }}
                   thumbColor={T.panel}
                   />
@@ -348,6 +426,9 @@ export function LoginScreen({ onAuthenticated }: Props) {
                 onPress={() => void enterWithClave()}
                 style={styles.primary}
                 disabled={loading}
+                accessibilityRole="button"
+                accessibilityLabel="Entrar"
+                accessibilityState={{ busy: loading, disabled: loading }}
               >
                 {loading ? (
                   <ActivityIndicator color={T.sobrePrincipal} />
@@ -356,17 +437,19 @@ export function LoginScreen({ onAuthenticated }: Props) {
                 )}
               </Pressable>
               <Pressable
-                onPress={() => void enterBiometric(activeUser, clave || undefined)}
+                onPress={() => void entrarEscritorio()}
                 style={styles.secondary}
                 disabled={loading}
+                accessibilityRole="button"
               >
                 <Text style={styles.secondaryText}>Entrar solo al escritorio</Text>
               </Pressable>
-              {fingerprintAvailable && remember && !!clave && (
+              {fingerprintAvailable && remember && useFingerprint && claveGuardada && (
                 <Pressable
                   onPress={() => void enterWithFingerprint()}
                   style={styles.secondary}
                   disabled={loading}
+                  accessibilityRole="button"
                 >
                   <Text style={styles.secondaryText}>Probar huella ahora</Text>
                 </Pressable>
@@ -456,4 +539,6 @@ const styles = StyleSheet.create({
   },
   secondaryText: { color: T.activoTexto, fontSize: 14, fontWeight: '600' },
   link: { color: T.texto3, fontSize: 13, textDecorationLine: 'underline' },
+  // Enlaces de solo texto: el área de toque llega a 44 px aunque la letra sea chica.
+  linkBtn: { minHeight: 44, justifyContent: 'center' },
 });

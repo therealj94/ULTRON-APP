@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { miga, reportarEstado, cierreLimpio } from '../lib/reporte';
-import { Alert, Animated, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { miga, reportarEstado } from '../lib/reporte';
+import { Alert, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
 import { Accelerometer } from 'expo-sensors';
 import { UltronFace, type TouchZone } from '../components/UltronFace';
 import { SalaAura, type PedidoTarea } from '../components/SalaAura';
+import { CaraSegura } from '../cara/CaraSegura';
 import { TAREA_TEXTO, tareaDeHerramientas, type Postura, type Tarea } from '../lib/tareas';
 import { T, SOMBRA } from '../tema';
 import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS, type FrameGrabber } from '../components/CamaraVision';
@@ -32,14 +34,13 @@ import {
 } from '../lib/speech';
 import {
   addLongFact,
-  appendChatLog,
+  borrarRastrosViejos,
   clearLongMemory,
   loadConocerProgress,
   loadLongMemory,
   loadSettings,
   saveConocerProgress,
   saveSettings,
-  upsertPersonFact,
   type AppSettings,
   type SttEngine,
 } from '../lib/storage';
@@ -53,6 +54,14 @@ type Props = {
 };
 
 const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)];
+
+/** Un permiso negado: Android ya no vuelve a preguntar, así que se ofrece ir a los ajustes. */
+function pedirEnAjustes(titulo: string, texto: string) {
+  Alert.alert(titulo, texto, [
+    { text: 'Ahora no', style: 'cancel' },
+    { text: 'Abrir ajustes', onPress: () => void Linking.openSettings().catch(() => {}) },
+  ]);
+}
 
 function greetingFor(name: string) {
   const h = new Date().getHours();
@@ -83,10 +92,8 @@ export function DeskScreen({ user, onLogout }: Props) {
   // Diagnóstico de campo: si la app muere aquí, el servidor sabrá hasta dónde llegó.
   useEffect(() => {
     miga('DeskScreen montado');
-    const t = setTimeout(() => {
-      reportarEstado('mesa estable');
-      cierreLimpio();
-    }, 8000);
+    // Solo avisa que llegó bien; si luego muere en primer plano, se reporta al reabrir (ver reporte.ts).
+    const t = setTimeout(() => reportarEstado('mesa estable'), 8000);
     return () => clearTimeout(t);
   }, []);
 
@@ -95,6 +102,10 @@ export function DeskScreen({ user, onLogout }: Props) {
   const [emocion, setEmocion] = useState<Emocion>('neutral');
   /** AU-RA de cuerpo entero; si la WebView no puede con la sala, vuelve la cara de siempre. */
   const [conSala, setConSala] = useState(true);
+  /** Su cara: los anillos (Skia) o la habitación 3D. null hasta leer los ajustes, para no parpadear entre las dos. */
+  const [cara, setCara] = useState<'anillos' | 'sala' | null>(null);
+  /** Skia no cargó o no pudo dibujar: se queda la cara de siempre. */
+  const [skiaFallo, setSkiaFallo] = useState(false);
   /** De pie o sentada al contestar; null hasta leer el ajuste guardado (la sala nace ya en su sitio). */
   const [postura, setPostura] = useState<Postura | null>(null);
   const [pedido, setPedido] = useState<PedidoTarea | null>(null);
@@ -105,11 +116,24 @@ export function DeskScreen({ user, onLogout }: Props) {
   const [draft, setDraft] = useState('');
   const [listening, setListening] = useState(false);
   const [level, setLevel] = useState(0);
+  /** El volumen del micrófono solo lo dibuja la cara clásica: con las otras no se re-renderiza por él. */
+  const nivelVisible = useRef(false);
   const [micMuted, setMicMuted] = useState(false);
   const [visionOn, setVisionOn] = useState(true);
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
   const [objects, setObjects] = useState<string[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  // La mesa no se apaga sola: si la pantalla se bloquea, deja de escuchar y de verte.
+  useKeepAwake('mesa');
+  // Botón atrás de Android: cierra el menú; con el menú cerrado hace lo de siempre.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!menuOpen) return false;
+      setMenuOpen(false);
+      return true;
+    });
+    return () => sub.remove();
+  }, [menuOpen]);
   const [catalogRequest, setCatalogRequest] = useState(0);
   const [attack, setAttack] = useState<'blaster' | 'saber' | null>(null);
   const [irritation, setIrritation] = useState(0);
@@ -149,6 +173,9 @@ export function DeskScreen({ user, onLogout }: Props) {
   const recentTaps = useRef<number[]>([]);
   const proactiveRef = useRef(true);
   const grabFrame = useRef<FrameGrabber | null>(null);
+  /** Cortar el turno en curso (el stream) y marcar que se canceló: «callar» no espera al cerebro. */
+  const abortTurno = useRef<(() => void) | null>(null);
+  const turnoCancelado = useRef(false);
   const bubbleOp = useRef(new Animated.Value(0)).current;
   /** Última escena de la cámara local (descripción en español para el cerebro). */
   const escenaRef = useRef<Escena | null>(null);
@@ -218,7 +245,6 @@ export function DeskScreen({ user, onLogout }: Props) {
   }, [bubble, bubbleOp]);
 
   const logUltron = useCallback((text: string) => {
-    void appendChatLog({ role: 'ultron', text });
     historial.current = [...historial.current, { rol: 'ultron' as const, texto: text }].slice(-12);
   }, []);
 
@@ -273,6 +299,26 @@ export function DeskScreen({ user, onLogout }: Props) {
     },
     [onAudio, say, settle, showBubble]
   );
+
+  /**
+   * «Olvidar» (menú o voz): borra la memoria de largo plazo de quien está en la mesa, no la de los
+   * demás. Es irreversible, así que antes se pregunta.
+   */
+  const confirmarOlvido = useCallback(() => {
+    Alert.alert('¿Olvidar lo que recuerdo de ti?', `Se borran los hechos que guardé en este teléfono para ${user.name}. No se puede deshacer.`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Olvidar',
+        style: 'destructive',
+        onPress: () =>
+          void (async () => {
+            await clearLongMemory(user);
+            longMemory.current = [];
+            await say('Memoria de largo plazo borrada.', 'CONCERNED', { emocion: 'preocupado' });
+          })(),
+      },
+    ]);
+  }, [say, user]);
 
   /** AU-RA canta: POST /api/cantar. Cara SING, mic pausado, sin rellenos. */
   const sing = useCallback(
@@ -406,6 +452,8 @@ export function DeskScreen({ user, onLogout }: Props) {
       const applyMode = (m?: Mode) => {
         if (m && m !== 'CONOCER' && m !== modeRef.current) setMode(m);
       };
+      turnoCancelado.current = false;
+      const t0Turno = Date.now();
       try {
         // 1) Streaming: la cara reacciona con `emocion` antes del primer delta y habla por oraciones.
         if (!opts?.image) {
@@ -440,8 +488,15 @@ export function DeskScreen({ user, onLogout }: Props) {
                 }
               },
             });
-            const result = await st.promise;
+            abortTurno.current = st.abort;
+            const result = await st.promise.finally(() => {
+              abortTurno.current = null;
+            });
             cancelMmm();
+            if (turnoCancelado.current) {
+              if (speaker) (speaker as StreamSpeaker).cancel();
+              return;
+            }
             if (speaker) {
               (speaker as StreamSpeaker).end();
               await (speaker as StreamSpeaker).done;
@@ -463,6 +518,15 @@ export function DeskScreen({ user, onLogout }: Props) {
             }
           } catch {
             if (speaker) (speaker as StreamSpeaker).cancel();
+            cancelMmm();
+            if (turnoCancelado.current) return;
+            // Si el stream ya se comió más de 20 s, el servidor sí tiene stream y está lento: repetir la
+            // misma espera con JSON (70 s, y otro intento) dejaba a la mesa «pensando» unos 3 minutos.
+            if (Date.now() - t0Turno > 20_000) {
+              setToolHint('');
+              await say('Se me fue el hilo pensando eso. ¿Me lo repites?', 'CONFUSED', { emocion: 'preocupado' });
+              return;
+            }
             /* el servidor no tiene stream → JSON clásico */
           }
         }
@@ -471,10 +535,12 @@ export function DeskScreen({ user, onLogout }: Props) {
         if (!reacted) setFace('THINKING');
         let out = await turno(base);
         cancelMmm();
+        if (turnoCancelado.current) return;
         const failed = (r: { error?: string; reply?: string }) => !!(r.error || !r.reply);
-        if (failed(out)) {
+        if (failed(out) && Date.now() - t0Turno < 30_000) {
           await new Promise((r) => setTimeout(r, 800));
           out = await turno(base);
+          if (turnoCancelado.current) return;
         }
         setToolHint('');
         if (failed(out)) {
@@ -482,6 +548,10 @@ export function DeskScreen({ user, onLogout }: Props) {
           if (auth) {
             setOnline(true);
             await say('Se me cerró la sesión de la mesa. Entra de nuevo y te oigo.', 'CONCERNED', { emocion: 'preocupado' });
+            Alert.alert('Sesión cerrada', 'Tu sesión de la mesa se cerró. Entra de nuevo para seguir.', [
+              { text: 'Luego', style: 'cancel' },
+              { text: 'Entrar', onPress: onLogout },
+            ]);
             return;
           }
           setOnline(false);
@@ -537,7 +607,6 @@ export function DeskScreen({ user, onLogout }: Props) {
     async (cmd: string) => {
       const ci = conocerIdxRef.current;
       const qq = CONOCER_QUESTIONS[ci];
-      await upsertPersonFact({ nombre: user.name, correo: user.correo, rol: user.role, key: qq.memoryKey, value: cmd });
       void rememberFact(`${user.name} · ${qq.memoryKey}: ${cmd}`, user.name);
       const progress = await loadConocerProgress(user.correo);
       const answeredIds = Array.from(new Set([...progress.answeredIds, qq.id]));
@@ -557,13 +626,21 @@ export function DeskScreen({ user, onLogout }: Props) {
       const cmd = raw.trim();
       if (!cmd) return;
       if (handling.current) {
+        // «Callar» no se encola: corta lo que esté pensando o diciendo, ya.
+        if (interpretar(cmd, { dormido: false, enConocer: false }).tipo === 'callar') {
+          turnoCancelado.current = true;
+          abortTurno.current?.();
+          pending.current = null;
+          await stopSpeaking();
+          setToolHint('');
+          return;
+        }
         pending.current = cmd;
         return;
       }
       handling.current = true;
       lastUserAt.current = Date.now();
       await stopSpeaking();
-      void appendChatLog({ role: 'user', text: cmd });
       historial.current = [...historial.current, { rol: 'usuario' as const, texto: cmd }].slice(-12);
 
       const enConocer = modeRef.current === 'CONOCER' && conocerIdxRef.current >= 0 && conocerIdxRef.current < CONOCER_QUESTIONS.length;
@@ -612,15 +689,14 @@ export function DeskScreen({ user, onLogout }: Props) {
             const line = `${user.name}: ${intent.hecho}`;
             if (longMemory.current.includes(line)) return void (await say('Eso ya lo tenía en memoria.', 'HAPPY'));
             const remoto = rememberFact(line, user.name);
-            longMemory.current = (await addLongFact(line)).map((f) => f.hecho);
-            await upsertPersonFact({ nombre: user.name, correo: user.correo, rol: user.role, key: `nota_${Date.now().toString(36)}`, value: intent.hecho });
+            longMemory.current = (await addLongFact(user, line)).map((f) => f.hecho);
             const ok = await remoto;
             return void (await say(ok ? 'Anotado. Lo recuerdo.' : 'Anotado aquí en la mesa; al servidor se lo paso cuando haya sesión.', 'HAPPY', { emocion: 'feliz' }));
           }
           case 'olvidar':
-            await clearLongMemory();
-            longMemory.current = [];
-            return void (await say('Memoria de largo plazo borrada.', 'CONCERNED', { emocion: 'preocupado' }));
+            // Borrar es irreversible y la voz se puede oír mal: se confirma en la pantalla.
+            confirmarOlvido();
+            return void (await say('Para borrar lo que recuerdo de ti, confírmalo en la pantalla.', 'CONCERNED', { emocion: 'preocupado' }));
           case 'que_recuerdas': {
             const mine = longMemory.current.filter((f) => f.startsWith(user.name)).slice(0, 4).map((f) => f.replace(/^[^:]+:\s*/, ''));
             if (mine.length) return void (await say(`Recuerdo: ${mine.join('. ')}.`, 'HAPPY', { emocion: 'feliz' }));
@@ -690,7 +766,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [answerConocer, askBrain, camPerm?.granted, canciones, exitConocer, fireBlaster, fireSaber, hacerTarea, idleStatus, onLogout, playClip, pray, requestCam, runGag, say, settle, sing, startConocer, user, whatDoYouSee]
+    [answerConocer, askBrain, camPerm?.granted, canciones, confirmarOlvido, exitConocer, fireBlaster, fireSaber, hacerTarea, idleStatus, onLogout, playClip, pray, requestCam, runGag, say, settle, sing, startConocer, user, whatDoYouSee]
   );
 
   // ---------- Tacto ----------
@@ -856,6 +932,16 @@ export function DeskScreen({ user, onLogout }: Props) {
     setPostura(p);
     void saveSettings({ postura: p });
   }, []);
+  const onFalloSkia = useCallback((motivo: string) => {
+    miga(`cara Skia no disponible: ${motivo}`);
+    setSkiaFallo(true);
+  }, []);
+  const cambiarCara = useCallback((c: 'anillos' | 'sala') => {
+    setCara(c);
+    // Volver a elegir la sala es darle otra oportunidad si antes falló.
+    if (c === 'sala') setConSala(true);
+    void saveSettings({ cara: c });
+  }, []);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -900,7 +986,9 @@ export function DeskScreen({ user, onLogout }: Props) {
           setPartial(t);
         }
       },
-      onLevel: setLevel,
+      onLevel: (l) => {
+        if (nivelVisible.current) setLevel(l);
+      },
       onFinal: (t) => {
         setPartial('');
         onSpeechFinal(t);
@@ -926,10 +1014,13 @@ export function DeskScreen({ user, onLogout }: Props) {
       setVisionOn(s.visionEnabled);
       setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx });
       setPostura(s.postura === 'sentada' ? 'sentada' : 'pie');
+      setCara(s.cara === 'sala' ? 'sala' : 'anillos');
       setSfxEnabled(s.sfx);
       proactiveRef.current = s.proactive;
       if (s.sttEngine !== currentSttEngine()) await setSttEngine(s.sttEngine);
-      longMemory.current = (await loadLongMemory()).map((f) => f.hecho);
+      // Solo la memoria de quien entró: es la que viaja al cerebro en cada turno.
+      longMemory.current = (await loadLongMemory(user)).map((f) => f.hecho);
+      void borrarRastrosViejos();
       void preloadSfx();
       void healthCheck().then((h) => setOnline(!!h.ok)).catch(() => setOnline(false));
       void listCanciones().then((c) => alive && setCanciones(c));
@@ -1099,7 +1190,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       await say('Micrófono en silencio.', 'IDLE');
     } else {
       const ok = await ensureSpeechPermissions();
-      if (!ok) return Alert.alert('Micrófono', 'Necesito permiso de micrófono para escucharte.');
+      if (!ok) return pedirEnAjustes('Micrófono', 'Para escucharte necesito el micrófono. Actívalo en los ajustes del teléfono.');
       await unmuteMic();
       micMutedRef.current = false;
       setMicMuted(false);
@@ -1113,7 +1204,10 @@ export function DeskScreen({ user, onLogout }: Props) {
     if (!visionOn) {
       if (!camPerm?.granted) {
         const r = await requestCam();
-        if (!r.granted) return;
+        if (!r.granted) {
+          pedirEnAjustes('Cámara', 'Para verte necesito la cámara. Actívala en los ajustes del teléfono.');
+          return;
+        }
       }
       setVisionOn(true);
       await saveSettings({ visionEnabled: true });
@@ -1130,7 +1224,7 @@ export function DeskScreen({ user, onLogout }: Props) {
     if (p === 'sleep') void say('Descanso un momento. Háblame o tócame para despertar.', 'SLEEPING', { emocion: 'cansado' });
     else if (p === 'explore') {
       setMode('EXPLORER');
-      void say('Explore. Listo para investigar.', 'SCAN', { emocion: 'curioso' });
+      void say('Modo explorador: listo para investigar.', 'SCAN', { emocion: 'curioso' });
     } else void playClip('aqui', 'IDLE', { fallbackText: 'Aquí estoy.' });
   };
 
@@ -1154,14 +1248,9 @@ export function DeskScreen({ user, onLogout }: Props) {
     await saveSettings({ sfx: next });
     if (next) playSfx('tap');
   };
-  const forgetAll = async () => {
-    await clearLongMemory();
-    longMemory.current = [];
-    await say('Memoria de largo plazo borrada.', 'CONCERNED', { emocion: 'preocupado' });
-  };
   const probarVoz = () => {
     setMenuOpen(false);
-    void say(`Así sueno, ${user.name}. Una sola voz: Gabriela, en ElevenLabs v3. Puedo reír, cantar o contarte un chiste; tú dime.`, 'HAPPY', { emocion: 'feliz' });
+    void say(`Así sueno, ${user.name}. Una sola voz: la mía, en mi propio servidor. Puedo contarte un chiste o cantarte una de las mías; tú dime.`, 'HAPPY', { emocion: 'feliz' });
   };
 
   const sendDraft = () => {
@@ -1206,8 +1295,14 @@ export function DeskScreen({ user, onLogout }: Props) {
                 ? 'sin mic'
                 : 'iniciando';
 
+  // Qué cara se ve: los anillos (Skia), la sala 3D o, si lo elegido falló, la cara de siempre.
+  const vista: 'anillos' | 'sala' | 'clasica' | null =
+    cara === null ? null : cara === 'anillos' ? (skiaFallo ? 'clasica' : 'anillos') : conSala ? 'sala' : 'clasica';
+  const enSala = vista === 'sala';
+  nivelVisible.current = vista === 'clasica';
+
   return (
-    <View style={[styles.root, !conSala && styles.rootCara]}>
+    <View style={[styles.root, !enSala && styles.rootCara]}>
       <CamaraVision
         enabled={visionOn && !!camPerm?.granted}
         dormido={presence === 'sleep'}
@@ -1218,7 +1313,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         onScene={onScene}
         onMotor={setVisionMotor}
       />
-      {conSala && postura ? (
+      {vista === 'sala' && postura ? (
         <SalaAura
           face={face}
           emocion={emocion}
@@ -1230,7 +1325,24 @@ export function DeskScreen({ user, onLogout }: Props) {
           onDeslizar={onDeslizarSala}
           onFallo={onFalloSala}
         />
-      ) : !conSala ? (
+      ) : vista === 'anillos' ? (
+        <CaraSegura
+          face={face}
+          acento={mode === 'GOLD' ? '#FFD166' : undefined}
+          gazeX={gaze.x}
+          gazeY={gaze.y}
+          speechLevelSource={suscribirNivelVoz}
+          online={online}
+          pedido={pedido}
+          onTap={onTap}
+          onLongPress={onLongPress}
+          onDragGaze={onDragGaze}
+          onDragEnd={onDragEnd}
+          onRub={onRub}
+          onSwipe={onSwipe}
+          onFallo={onFalloSkia}
+        />
+      ) : vista === 'clasica' ? (
         <UltronFace
           face={face}
           mode={mode}
@@ -1269,7 +1381,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       )}
 
       {!!bubble && (
-        <Animated.View pointerEvents="none" style={[styles.bubbleFloat, conSala ? styles.bubbleArriba : styles.bubbleAbajo, { opacity: bubbleOp }]}>
+        <Animated.View pointerEvents="none" style={[styles.bubbleFloat, enSala ? styles.bubbleArriba : styles.bubbleAbajo, { opacity: bubbleOp }]}>
           <View style={styles.bubbleCard}>
             <Text numberOfLines={3} style={styles.bubbleText}>
               {bubble}
@@ -1363,13 +1475,16 @@ export function DeskScreen({ user, onLogout }: Props) {
         onSetSttEngine={(e) => void changeStt(e)}
         onToggleProactive={() => void toggleProactive()}
         onToggleSfx={() => void toggleSfx()}
-        onForget={() => void forgetAll()}
+        onForget={confirmarOlvido}
         onSearch={(q) => {
           setMenuOpen(false);
           void handleCommand(`busca ${q}`);
         }}
         onLogout={onLogout}
-        conSala={conSala}
+        conSala={enSala}
+        cara={cara ?? 'anillos'}
+        onSetCara={cambiarCara}
+        caraClasica={vista === 'clasica'}
         postura={postura || 'pie'}
         onSetPostura={cambiarPostura}
       />

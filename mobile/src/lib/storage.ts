@@ -1,33 +1,41 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import type { SessionUser } from '../config';
+import {
+  CLAVE_MEMORIA_COMPARTIDA,
+  agregarHecho,
+  claveMemoria,
+  hechosValidos,
+  migrarCompartida,
+  type DuenoMemoria,
+  type LongFact,
+} from './memoriaUsuario';
+
+export type { LongFact };
 
 const KEYS = {
   session: 'ultron_fp_session_v2',
   creds: 'ultron_fp_creds_v2',
-  memory: 'ultron_fp_person_memory_v2',
   conocerProgress: 'ultron_fp_conocer_progress_v2',
   settings: 'ultron_fp_settings_v2',
-  chatLog: 'ultron_fp_chat_log_v2',
   fingerprint: 'ultron_fp_fingerprint_v2',
   mesaToken: 'ultron_fp_mesa_token_v2',
 } as const;
 
+/**
+ * Lo que se escribía y nadie leía: el historial del chat (todos los usuarios juntos) y una ficha por
+ * persona. Ya no se escriben; estas claves solo se nombran para borrar lo que quedó en el teléfono.
+ */
+const RASTROS_VIEJOS = ['ultron_fp_chat_log_v2', 'ultron_fp_person_memory_v2'];
+
 export type SavedCreds = { correo: string; clave: string; name?: string };
-export type PersonFact = { key: string; value: string; at: string };
-export type LocalPerson = {
-  nombre: string;
-  correo?: string;
-  rol?: string;
-  hechos: PersonFact[];
-};
 export type SttEngine = 'native' | 'cloud';
 export type AppSettings = {
   voiceId: string;
   micMuted: boolean;
   visionEnabled: boolean;
   gazeEnabled: boolean;
-  /** Oído: reconocimiento del sistema en el teléfono o grabación + Scribe en el servidor. */
+  /** Oído: reconocimiento del sistema en el teléfono o grabación + Whisper en el servidor propio. */
   sttEngine: SttEngine;
   /** Comentarios espontáneos de lo que ve la cámara. */
   proactive: boolean;
@@ -35,6 +43,8 @@ export type AppSettings = {
   sfx: boolean;
   /** Cómo contesta AU-RA en la sala: de pie en el centro o sentada en su sillón. */
   postura: 'pie' | 'sentada';
+  /** Su cara: los anillos (Skia, la de siempre desde el 25-sep) o la habitación 3D. */
+  cara: 'anillos' | 'sala';
 };
 export type ConocerProgress = {
   correo: string;
@@ -51,6 +61,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   proactive: true,
   sfx: true,
   postura: 'pie',
+  cara: 'anillos',
 };
 
 export async function saveSession(user: SessionUser | null) {
@@ -120,40 +131,6 @@ export async function saveSettings(s: Partial<AppSettings>) {
   await AsyncStorage.setItem(KEYS.settings, JSON.stringify({ ...cur, ...s }));
 }
 
-export async function loadLocalMemory(): Promise<LocalPerson[]> {
-  try {
-    const raw = await AsyncStorage.getItem(KEYS.memory);
-    return raw ? (JSON.parse(raw) as LocalPerson[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-export async function upsertPersonFact(opts: {
-  nombre: string;
-  correo?: string;
-  rol?: string;
-  key: string;
-  value: string;
-}) {
-  const all = await loadLocalMemory();
-  let person = all.find(
-    (p) =>
-      p.nombre.toLowerCase() === opts.nombre.toLowerCase() ||
-      (opts.correo && p.correo === opts.correo)
-  );
-  if (!person) {
-    person = { nombre: opts.nombre, correo: opts.correo, rol: opts.rol, hechos: [] };
-    all.push(person);
-  }
-  person.hechos = person.hechos.filter((h) => h.key !== opts.key);
-  person.hechos.push({ key: opts.key, value: opts.value, at: new Date().toISOString() });
-  if (opts.correo) person.correo = opts.correo;
-  if (opts.rol) person.rol = opts.rol;
-  await AsyncStorage.setItem(KEYS.memory, JSON.stringify(all));
-  return person;
-}
-
 export async function loadConocerProgress(correo: string): Promise<ConocerProgress> {
   try {
     const raw = await AsyncStorage.getItem(KEYS.conocerProgress);
@@ -172,48 +149,74 @@ export async function loadConocerProgress(correo: string): Promise<ConocerProgre
 
 export async function saveConocerProgress(progress: ConocerProgress) {
   const raw = await AsyncStorage.getItem(KEYS.conocerProgress);
-  const all = raw ? (JSON.parse(raw) as ConocerProgress[]) : [];
+  let all: ConocerProgress[] = [];
+  try {
+    const leido = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(leido)) all = leido as ConocerProgress[];
+  } catch {
+    /* guardado roto: se empieza de nuevo en vez de lanzar en medio de la entrevista */
+  }
   const idx = all.findIndex((p) => p.correo === progress.correo);
   if (idx >= 0) all[idx] = progress;
   else all.push(progress);
   await AsyncStorage.setItem(KEYS.conocerProgress, JSON.stringify(all));
 }
 
-export async function appendChatLog(entry: { role: 'user' | 'ultron'; text: string }) {
+/** Borra del teléfono las conversaciones viejas que se guardaban sin usarse (al entrar y al cerrar sesión). */
+export async function borrarRastrosViejos() {
   try {
-    const raw = await AsyncStorage.getItem(KEYS.chatLog);
-    const list = raw ? (JSON.parse(raw) as Array<{ role: string; text: string; at: string }>) : [];
-    list.push({ ...entry, at: new Date().toISOString() });
-    await AsyncStorage.setItem(KEYS.chatLog, JSON.stringify(list.slice(-200)));
+    await AsyncStorage.multiRemove(RASTROS_VIEJOS);
   } catch {
-    /* ignore */
+    /* se reintenta la próxima vez */
   }
 }
 
-const LONG_MEMORY_KEY = 'ultron_fp_long_memory_v1';
-export type LongFact = { hecho: string; at: string };
-
-/** Memoria de largo plazo local (además de la del servidor): sobrevive a redeploys de Render. */
-export async function loadLongMemory(): Promise<LongFact[]> {
+function leerJson(raw: string | null): unknown {
+  if (!raw) return null;
   try {
-    const raw = await AsyncStorage.getItem(LONG_MEMORY_KEY);
-    return raw ? (JSON.parse(raw) as LongFact[]) : [];
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * La lista compartida de antes (una para todos) se reparte una sola vez: quien entra se queda con los
+ * hechos firmados con su nombre y el resto se descarta (ver memoriaUsuario.ts). Luego la clave se borra.
+ */
+async function migrarMemoriaCompartida(u: DuenoMemoria) {
+  const vieja = await AsyncStorage.getItem(CLAVE_MEMORIA_COMPARTIDA);
+  if (vieja === null) return;
+  const clave = claveMemoria(u);
+  const propia = leerJson(await AsyncStorage.getItem(clave));
+  await AsyncStorage.setItem(clave, JSON.stringify(migrarCompartida(leerJson(vieja), propia, u.name)));
+  await AsyncStorage.removeItem(CLAVE_MEMORIA_COMPARTIDA);
+}
+
+/**
+ * Memoria de largo plazo local (además de la del servidor): sobrevive a redeploys de Render.
+ * Es de UNA persona: el teléfono lo comparte la junta y a cada quien le llega solo lo suyo.
+ */
+export async function loadLongMemory(u: DuenoMemoria): Promise<LongFact[]> {
+  try {
+    await migrarMemoriaCompartida(u);
+    return hechosValidos(leerJson(await AsyncStorage.getItem(claveMemoria(u))));
   } catch {
     return [];
   }
 }
 
-export async function addLongFact(hecho: string) {
-  const list = await loadLongMemory();
-  const clean = hecho.trim();
-  if (!clean) return list;
-  const next = [{ hecho: clean, at: new Date().toISOString() }, ...list.filter((f) => f.hecho !== clean)].slice(0, 60);
-  await AsyncStorage.setItem(LONG_MEMORY_KEY, JSON.stringify(next));
+export async function addLongFact(u: DuenoMemoria, hecho: string) {
+  const list = await loadLongMemory(u);
+  const next = agregarHecho(list, hecho, new Date().toISOString());
+  if (next === list) return list;
+  await AsyncStorage.setItem(claveMemoria(u), JSON.stringify(next));
   return next;
 }
 
-export async function clearLongMemory() {
-  await AsyncStorage.removeItem(LONG_MEMORY_KEY);
+/** «Olvidar»: borra solo la memoria de esta persona; la de los demás miembros no se toca. */
+export async function clearLongMemory(u: DuenoMemoria) {
+  await AsyncStorage.removeItem(claveMemoria(u));
 }
 
 export async function saveMesaToken(token: string | null) {

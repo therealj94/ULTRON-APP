@@ -158,6 +158,10 @@ export async function telegramFoto(opts: { buf: Buffer; caption?: string; filena
   }
 }
 
+/**
+ * Nota de voz a Telegram. `buf` es MP3 (server/voz.ts `notaDeVozBuffer` lo codifica desde el WAV de
+ * Voicebox): `sendVoice` lo acepta como nota de voz y, si lo rechaza, `sendAudio` lo manda como audio.
+ */
 export async function telegramVoz(opts: { buf: Buffer; caption?: string; chatId?: string | number }): Promise<Envio> {
   const token = clave('telegram_token');
   const chat = String(opts.chatId || clave('telegram_chat'));

@@ -2,8 +2,8 @@
  * Oído de AU-RA: fachada sobre dos motores, elegible en Ajustes.
  *  - 'native' (default): reconocimiento del sistema (Google) en el teléfono. Parciales en vivo,
  *    final ~0.3 s tras callar, sin subir audio. Cae solo a la nube si el servicio no existe.
- *  - 'cloud': grabación con VAD por energía + ElevenLabs Scribe en el servidor (más lento, ~1.5 s,
- *    pero funciona en teléfonos sin servicios de Google).
+ *  - 'cloud': grabación con VAD por energía + Whisper en el servidor propio de AU-RA (más lento,
+ *    ~1.5 s, pero funciona en teléfonos sin servicios de Google).
  */
 import * as cloud from './speechCloud';
 import * as native from './speechNative';

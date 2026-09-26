@@ -1097,7 +1097,7 @@ function Estado() {
 
   const filas: Array<[string, boolean, string]> = [
     ['Cerebro', !!s.cerebro?.vivo, s.cerebro?.vivo ? (s.cerebro.modelo ? String(s.cerebro.modelo).split('/').pop() : 'en línea') : s.cerebro?.configurado ? 'no responde' : 'sin configurar'],
-    ['Voz', !!s.voz?.llave, s.voz?.llave ? 'ElevenLabs' : 'sin llave'],
+    ['Voz', !!s.voz?.llave, s.voz?.llave ? 'servidor propio' : 'sin llave'],
     ['Catastro', !!s.catastro?.viva, s.catastro?.viva ? `${s.catastro.concesiones} concesiones` : s.catastro?.motivo || 'fuera de línea'],
     ['Telegram', !!s.bot, s.bot ? 'escuchando' : 'apagado'],
   ];

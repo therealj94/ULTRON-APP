@@ -128,6 +128,22 @@ export const UMBRALES = {
   huecoMuestreoMs: 700,
 } as const;
 
+export type Umbrales = { [K in keyof typeof UMBRALES]: number };
+
+/**
+ * Umbrales para el motor de FOTOS (ML Kit sobre fotos, 4.3). Los de arriba son para un flujo de cuadros
+ * (~10 por segundo): con fotos cada 330 ms más lo que tarda ML Kit, casi todos los intervalos pasan de
+ * 450-700 ms, y la máquina los tomaba como cortes de cara y huecos de cámara apagada. Resultado: nunca
+ * llegaba a «llego» ni a «se_fue». Aquí el corte de cara tolera más de dos fotos perdidas y el hueco de
+ * muestreo empieza por encima de la cadencia más lenta (una foto cada 2,5 s dormida).
+ */
+export const UMBRALES_FOTOS: Umbrales = {
+  ...UMBRALES,
+  toleranciaCorteMs: 1500,
+  seFueMs: 3000,
+  huecoMuestreoMs: 4000,
+};
+
 // ---- Helpers puros ----------------------------------------------------------------------
 
 export const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
@@ -403,7 +419,7 @@ export class MaquinaEscena {
   private ultimoPrincipal: Principal | null = null;
   private ultimaEscena: Escena | null = null;
 
-  constructor(private readonly u = UMBRALES, private readonly alisado = 0.35) {}
+  constructor(private readonly u: Umbrales = UMBRALES, private readonly alisado = 0.35) {}
 
   reiniciar() {
     this.presente = false;
@@ -607,4 +623,50 @@ export class MaquinaEscena {
     this.ultimaEscena = escena;
     return escena;
   }
+}
+
+// ---- Fotos con ML Kit (@react-native-ml-kit/face-detection) ------------------------------------
+
+/** Lado corto mínimo de la foto: ML Kit pide caras de ≥100 px y el servidor tiene que poder leer algo. */
+export const LADO_CORTO_MIN = 720;
+
+/** La cara tal como la devuelve `FaceDetection.detect` (solo lo que usamos). */
+export interface CaraFoto {
+  frame: { left: number; top: number; width: number; height: number };
+  rotationX: number;
+  rotationY: number;
+  rotationZ: number;
+  smilingProbability?: number;
+  leftEyeOpenProbability?: number;
+  rightEyeOpenProbability?: number;
+}
+
+/**
+ * El tamaño de foto más chico con al menos LADO_CORTO_MIN de lado corto ("1280x720"). Si el teléfono
+ * no ofrece ninguno así de grande, el más grande que haya. Sin lista, null (se queda el de fábrica).
+ */
+export function elegirTamano(tamanos: string[]): string | null {
+  const validos = tamanos
+    .map((t) => {
+      const m = /^(\d+)x(\d+)$/.exec(String(t).trim());
+      return m ? { t, w: Number(m[1]), h: Number(m[2]) } : null;
+    })
+    .filter((x): x is { t: string; w: number; h: number } => !!x && x.w > 0 && x.h > 0);
+  if (!validos.length) return null;
+  const grandes = validos.filter((x) => Math.min(x.w, x.h) >= LADO_CORTO_MIN).sort((a, b) => a.w * a.h - b.w * b.h);
+  if (grandes.length) return grandes[0].t;
+  return validos.sort((a, b) => b.w * b.h - a.w * a.h)[0].t;
+}
+
+/** Cara de ML Kit (paquete de fotos) → la forma que entiende `observacionMlkit`. */
+export function caraDeMlkit(f: CaraFoto): CaraMlkit {
+  return {
+    bounds: { x: f.frame.left, y: f.frame.top, width: f.frame.width, height: f.frame.height },
+    yawAngle: Number.isFinite(f.rotationY) ? f.rotationY : 0,
+    pitchAngle: Number.isFinite(f.rotationX) ? f.rotationX : 0,
+    rollAngle: Number.isFinite(f.rotationZ) ? f.rotationZ : 0,
+    smilingProbability: typeof f.smilingProbability === 'number' ? f.smilingProbability : -1,
+    leftEyeOpenProbability: typeof f.leftEyeOpenProbability === 'number' ? f.leftEyeOpenProbability : -1,
+    rightEyeOpenProbability: typeof f.rightEyeOpenProbability === 'number' ? f.rightEyeOpenProbability : -1,
+  };
 }

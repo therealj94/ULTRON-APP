@@ -16,6 +16,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   Modal,
   Pressable,
   ScrollView,
@@ -32,12 +33,17 @@ import { UltronFace } from '../components/UltronFace';
 import { ACENTO } from '../variante';
 import { preguntar, salud, subirFoto, voz, SinPuerta, type Salud, type Traza } from './api';
 import { dictadoDisponible, escuchar, type Escucha } from './dictado';
+import { fraseDeError } from './frases';
 import type { FaceState } from '../config';
 
 type Turno = { de: 'persona' | 'doctor'; texto: string; panel?: string; traza?: Traza[] };
 
 const GRIS = '#8FA3B0';
 const TENUE = '#6C7F89';
+
+/** La guía de la cámara. Una sola frase para las dos orientaciones, que la colocan distinto. */
+const GUIA_CAMARA =
+  'Encuadrá el recuadro con los números y el sello. Lo que salga borroso lo voy a marcar como ilegible, no lo voy a adivinar.';
 
 export function CampoScreen({ onSalir }: { onSalir: () => void }) {
   const [turnos, setTurnos] = useState<Turno[]>([]);
@@ -88,7 +94,8 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
     setEstado(null);
     try {
       setEstado(await salud());
-    } catch {
+    } catch (e: any) {
+      console.warn('[electrum] salud:', e?.name, e?.status ?? '', e?.message || e);
       setEstado('fallo');
     }
   }, []);
@@ -131,11 +138,10 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
         setTurnos((t) => [...t, { de: 'doctor', texto: r.texto, panel: r.panel, traza: r.traza }]);
         setCara('SPEAKING');
         void decir(r.texto, r.emocion);
-      } catch (e) {
-        const msg =
-          e instanceof SinPuerta
-            ? 'Esta sesión ya no tiene acceso. Volvé a entrar.'
-            : `No pude contestar: ${String((e as Error)?.message || e).slice(0, 120)}`;
+      } catch (e: any) {
+        // El detalle técnico, al registro; en el hilo, qué pasó y qué hacer (ver frases.ts).
+        console.warn('[electrum] turno:', e?.name, e?.status ?? '', e?.message || e);
+        const msg = fraseDeError(e, 'contestar');
         setTurnos((t) => [...t, { de: 'doctor', texto: msg }]);
         setCara('CONCERNED');
         if (e instanceof SinPuerta) onSalir();
@@ -169,6 +175,7 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
         setOyendo(false);
         setCara('IDLE');
       },
+      // `motivo` ya viene como frase (dictado.ts lo traduce con `fraseDeDictado`), nunca como código.
       onError: (motivo) => Alert.alert('Micrófono', motivo),
     });
     if (e) {
@@ -214,11 +221,9 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
       setTurnos((t) => [...t, { de: 'doctor', texto: r.dicho }]);
       setCara(r.clase === 'nada' ? 'CONCERNED' : 'SPEAKING');
       void decir(r.dicho);
-    } catch (e) {
-      const msg =
-        e instanceof SinPuerta
-          ? 'Esta sesión ya no tiene acceso. Volvé a entrar.'
-          : `No pude subir la foto: ${String((e as Error)?.message || e).slice(0, 120)}`;
+    } catch (e: any) {
+      console.warn('[electrum] foto:', e?.name, e?.status ?? '', e?.message || e);
+      const msg = fraseDeError(e, 'foto');
       setTurnos((t) => [...t, { de: 'doctor', texto: msg }]);
       setCara('CONCERNED');
       if (e instanceof SinPuerta) onSalir();
@@ -279,12 +284,70 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
           `¿Qué dice el catastro de este punto y qué hay cerca? Tené en cuenta el margen del GPS si caigo junto a un lindero.`
       );
     } catch (e: any) {
-      Alert.alert('Ubicación', `No pude fijar la posición: ${String(e?.message || e).slice(0, 120)}`);
+      console.warn('[electrum] ubicación:', e?.code ?? '', e?.message || e);
+      Alert.alert('Ubicación', fraseDeError(e, 'ubicacion'));
     } finally {
       setUbicando(false);
       setCara('IDLE');
     }
   }, [mandar, ubicando, pensando]);
+
+  /* --------------------------------------------------------------- salir */
+
+  /**
+   * SALIR borra la credencial del teléfono y cierra la sesión en el servidor. Estaba a un toque sin
+   * preguntar, en la esquina donde cae el pulgar: rozarlo sacando el teléfono del bolsillo obligaba
+   * a escribir la clave de nuevo en el campo. Ahora se confirma. (Cuando es el SERVIDOR el que dice
+   * que la sesión no vale —`SinPuerta`— se sale sin preguntar: ahí no hay nada que decidir.)
+   */
+  const pedirSalir = useCallback(() => {
+    Alert.alert(
+      '¿Cerrar la sesión?',
+      'Se borra tu credencial de este teléfono. Para volver vas a tener que entrar otra vez con tu correo o tu llave.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Salir', style: 'destructive', onPress: onSalir },
+      ],
+      { cancelable: true }
+    );
+  }, [onSalir]);
+
+  /*
+   * El botón ATRÁS de Android.
+   *
+   * Sin esto, atrás mandaba la app al fondo pasara lo que pasara (la MainActivity de Expo hace
+   * `moveTaskToBack`), con el micrófono abierto o a mitad de una pregunta. Ahora va por capas, como
+   * se espera de atrás: primero cierra lo que esté abierto encima —la cámara, el dictado— y solo
+   * después sale. Y si hay conversación en pantalla pregunta antes, porque un borde de pantalla
+   * rozado con el pulgar es atrás, y el hilo vive solo en la memoria de la app: si el teléfono
+   * necesita memoria y la cierra estando al fondo, lo hablado no vuelve. Con la pantalla vacía no
+   * hay nada que perder y atrás hace lo de siempre.
+   */
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      // Con el Modal abierto Android le entrega atrás a su `onRequestClose`; esto cubre el resto.
+      if (camara) {
+        setCamara(false);
+        return true;
+      }
+      if (escucha.current) {
+        escucha.current.parar();
+        return true;
+      }
+      if (!turnosRef.current.length && !pensando && !ubicando) return false;
+      Alert.alert(
+        '¿Salir de Dr Electrum?',
+        'La app queda en segundo plano. Si el teléfono necesita memoria la puede cerrar, y esta conversación no se guarda en el teléfono.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Salir', onPress: () => BackHandler.exitApp() },
+        ],
+        { cancelable: true }
+      );
+      return true;
+    });
+    return () => sub.remove();
+  }, [camara, pensando, ubicando]);
 
   const vivo = estado && estado !== 'fallo' ? estado : null;
   const nivel = vivo?.nivel;
@@ -303,24 +366,45 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
         <View style={{ flex: 1 }}>
           <Text style={s.marca}>DR ELECTRUM FP</Text>
           {/* Si falló, la línea de estado es el botón de reintentar: no hay que buscar otro sitio. */}
-          <Pressable onPress={() => estado === 'fallo' && comprobar()} disabled={estado !== 'fallo'} hitSlop={6}>
-            <Text style={[s.estado, estado === 'fallo' && { color: '#D9705A' }]} numberOfLines={1}>
+          <Pressable
+            onPress={() => estado === 'fallo' && comprobar()}
+            disabled={estado !== 'fallo'}
+            hitSlop={15}
+            accessibilityRole={estado === 'fallo' ? 'button' : 'text'}
+            accessibilityHint={estado === 'fallo' ? 'Vuelve a comprobar la conexión con el catastro' : undefined}
+          >
+            {/* En vertical, dos renglones: en uno solo se cortaba justo «tocá para reintentar». */}
+            <Text style={[s.estado, estado === 'fallo' && { color: '#D9705A' }]} numberOfLines={apaisado ? 1 : 2}>
               {catastro}
               {nivel ? ` · ${nivel === 'lee' ? 'consulta' : nivel === 'escribe' ? 'trabajo' : 'mando'}` : ''}
             </Text>
           </Pressable>
         </View>
-        <Pressable onPress={() => setVozActiva((v) => !v)} hitSlop={10} style={[s.chip, vozActiva && s.chipOn]}>
+        <Pressable
+          onPress={() => setVozActiva((v) => !v)}
+          hitSlop={6}
+          accessibilityRole="switch"
+          accessibilityLabel="Voz del doctor"
+          accessibilityHint="Lee las respuestas en voz alta"
+          accessibilityState={{ checked: vozActiva }}
+          style={[s.chip, vozActiva && s.chipOn]}
+        >
           <Text style={[s.chipTexto, vozActiva && { color: ACENTO }]}>VOZ</Text>
         </Pressable>
-        <Pressable onPress={onSalir} hitSlop={10} style={s.chip}>
+        <Pressable
+          onPress={pedirSalir}
+          hitSlop={6}
+          accessibilityRole="button"
+          accessibilityLabel="Salir y cerrar la sesión"
+          style={s.chip}
+        >
           <Text style={s.chipTexto}>SALIR</Text>
         </Pressable>
       </View>
 
       <View style={[s.cuerpo, !apaisado && { flexDirection: 'column' }]}>
         <View style={[s.izquierda, !apaisado && s.izquierdaVertical]}>
-          <View style={[s.caraCaja, !apaisado && { height: 120 }]}>
+          <View style={[s.caraCaja, !apaisado && s.caraCajaVertical]}>
             <UltronFace face={cara} acento={ACENTO} size={apaisado ? 56 : 40} stageHeight={apaisado ? 150 : 110} />
           </View>
           <Pressable
@@ -329,7 +413,7 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
             accessibilityRole="button"
             accessibilityState={{ disabled: pensando || ubicando, busy: ubicando }}
             accessibilityLabel="Consultar el catastro del punto donde estoy"
-            style={[s.donde, (pensando || ubicando) && { opacity: 0.4 }]}
+            style={[s.donde, !apaisado && s.dondeVertical, (pensando || ubicando) && { opacity: 0.4 }]}
           >
             <Text style={s.dondeTexto}>{ubicando ? 'FIJANDO GPS…' : '¿DÓNDE ESTOY?'}</Text>
           </Pressable>
@@ -348,7 +432,7 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
               Preguntame de minería o del catastro. Si estás parado sobre el terreno, tocá «¿Dónde estoy?» y te digo qué dice el catastro de ese punto.
             </Text>
             {['¿se traslapa algo en el catastro?', '250.000 toneladas a 3,4 g/t, ¿cuántas onzas?', '¿qué concesiones vencen este año?'].map((e) => (
-              <Pressable key={e} onPress={() => void mandar(e)} style={s.ejemplo}>
+              <Pressable key={e} onPress={() => void mandar(e)} accessibilityRole="button" accessibilityHint="Manda esta pregunta" style={s.ejemplo}>
                 <Text style={s.ejemploTexto}>{e}</Text>
               </Pressable>
             ))}
@@ -374,7 +458,8 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
           value={texto}
           onChangeText={setTexto}
           placeholder={oyendo ? 'te escucho…' : 'Preguntale a Dr Electrum…'}
-          placeholderTextColor={oyendo ? ACENTO : '#5E7078'}
+          placeholderTextColor={oyendo ? ACENTO : TENUE}
+          accessibilityLabel="Pregunta para Dr Electrum"
           style={s.campo}
           onSubmitEditing={() => void mandar(texto)}
           returnKeyType="send"
@@ -405,7 +490,14 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
         >
           <Text style={s.redondoTexto}>📷</Text>
         </Pressable>
-        <Pressable onPress={() => void mandar(texto)} disabled={pensando || !texto.trim()} style={[s.ir, (pensando || !texto.trim()) && { opacity: 0.3 }]}>
+        <Pressable
+          onPress={() => void mandar(texto)}
+          disabled={pensando || !texto.trim()}
+          accessibilityRole="button"
+          accessibilityLabel="Mandar la pregunta"
+          accessibilityState={{ disabled: pensando || !texto.trim(), busy: pensando }}
+          style={[s.ir, (pensando || !texto.trim()) && { opacity: 0.3 }]}
+        >
           {pensando ? <ActivityIndicator color="#000" size="small" /> : <Text style={s.irTexto}>Ir</Text>}
         </Pressable>
           </View>
@@ -419,14 +511,26 @@ export function CampoScreen({ onSalir }: { onSalir: () => void }) {
       <Modal visible={camara} animationType="slide" onRequestClose={() => setCamara(false)}>
         <View style={s.camaraRaiz}>
           <CameraView ref={lente} style={{ flex: 1 }} facing="back" />
-          <View style={s.camaraPie}>
-            <Pressable onPress={() => setCamara(false)} hitSlop={10} style={s.chip}>
+          {/* En vertical la guía va en su renglón: entre los dos botones, en 360 px, quedaban dos
+              renglones de ocho letras cortados a la mitad. */}
+          {!apaisado && <Text style={[s.camaraGuia, s.camaraGuiaVertical]}>{GUIA_CAMARA}</Text>}
+          <View style={[s.camaraPie, !apaisado && { justifyContent: 'space-between' }]}>
+            <Pressable onPress={() => setCamara(false)} hitSlop={6} accessibilityRole="button" accessibilityLabel="Cancelar la foto" style={s.chip}>
               <Text style={s.chipTexto}>CANCELAR</Text>
             </Pressable>
-            <Text style={s.camaraGuia} numberOfLines={2}>
-              Encuadrá el recuadro con los números y el sello. Lo que salga borroso lo voy a marcar como ilegible, no lo voy a adivinar.
-            </Text>
-            <Pressable onPress={() => void tomarFoto()} disabled={tomando} style={[s.disparo, tomando && { opacity: 0.4 }]}>
+            {apaisado && (
+              <Text style={s.camaraGuia} numberOfLines={2}>
+                {GUIA_CAMARA}
+              </Text>
+            )}
+            <Pressable
+              onPress={() => void tomarFoto()}
+              disabled={tomando}
+              accessibilityRole="button"
+              accessibilityLabel="Tomar la foto y leerla"
+              accessibilityState={{ disabled: tomando, busy: tomando }}
+              style={[s.disparo, tomando && { opacity: 0.4 }]}
+            >
               {tomando ? <ActivityIndicator color="#000" size="small" /> : <Text style={s.irTexto}>Leer</Text>}
             </Pressable>
           </View>
@@ -440,10 +544,14 @@ const s = StyleSheet.create({
   raiz: { flex: 1, backgroundColor: '#000' },
   barra: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingTop: 12, paddingBottom: 8 },
   marca: { color: ACENTO, fontSize: 12, fontWeight: '700', letterSpacing: 2.4 },
-  estado: { color: TENUE, fontSize: 10, marginTop: 2, fontFamily: 'monospace' },
-  chip: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5 },
+  estado: { color: TENUE, fontSize: 11, marginTop: 2, fontFamily: 'monospace' },
+  /*
+   * VOZ y SALIR iban a 9 pt en una píldora de 20 px de alto: ilegibles al sol y difíciles de
+   * acertar. 13 pt y 44 px de alto, lo mínimo que se acierta con el pulgar sin mirar.
+   */
+  chip: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.14)', borderRadius: 999, paddingHorizontal: 14, minHeight: 44, justifyContent: 'center' },
   chipOn: { borderColor: ACENTO },
-  chipTexto: { color: GRIS, fontSize: 9, letterSpacing: 1.6, fontWeight: '600' },
+  chipTexto: { color: GRIS, fontSize: 13, letterSpacing: 1.2, fontWeight: '600' },
   // `overflow` recorta a propósito: los anillos del halo miden 4,3 veces el iris y desbordaban
   // la caja, pisando el texto de abajo. Recortados quedan como una banda, que es lo que se busca.
   cuerpo: { flex: 1, flexDirection: 'row' },
@@ -453,9 +561,9 @@ const s = StyleSheet.create({
   derecha: { flex: 1, borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.08)' },
   derechaVertical: { borderLeftWidth: 0, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' },
   redondo: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.16)',
     alignItems: 'center',
@@ -465,8 +573,9 @@ const s = StyleSheet.create({
   redondoTexto: { fontSize: 17, color: '#E7EEF2' },
   camaraRaiz: { flex: 1, backgroundColor: '#000' },
   camaraPie: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, backgroundColor: '#000' },
-  camaraGuia: { flex: 1, color: '#8FA3B0', fontSize: 11, lineHeight: 15 },
-  disparo: { backgroundColor: ACENTO, borderRadius: 999, paddingHorizontal: 20, paddingVertical: 12 },
+  camaraGuia: { flex: 1, color: '#8FA3B0', fontSize: 12, lineHeight: 16 },
+  camaraGuiaVertical: { flex: 0, paddingHorizontal: 16, paddingTop: 12, backgroundColor: '#000' },
+  disparo: { backgroundColor: ACENTO, borderRadius: 999, paddingHorizontal: 20, minHeight: 44, justifyContent: 'center' },
   /*
    * La CAJA es más alta que el ESCENARIO de la cara (210 contra 150), y esa diferencia es el
    * arreglo. Subir las dos a la vez no servía de nada: la cara se centra en su escenario y dibuja
@@ -475,21 +584,27 @@ const s = StyleSheet.create({
    * sin la mitad de la expresión.
    */
   caraCaja: { height: 210, overflow: 'hidden', alignItems: 'center', justifyContent: 'center' },
+  // En vertical la cara va en la fila del botón: ancho fijo para que el escenario (100 %) tenga de
+  // qué medirse, y el botón se lleva el resto.
+  caraCajaVertical: { height: 120, width: 150 },
   hilo: { flex: 1 },
   intro: { color: GRIS, fontSize: 14, lineHeight: 21 },
-  ejemplo: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7, alignSelf: 'flex-start' },
-  ejemploTexto: { color: '#9FB0B8', fontSize: 12 },
+  ejemplo: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', borderRadius: 999, paddingHorizontal: 14, minHeight: 44, justifyContent: 'center', alignSelf: 'flex-start' },
+  ejemploTexto: { color: '#9FB0B8', fontSize: 13 },
   mio: { alignSelf: 'flex-end', maxWidth: '88%', backgroundColor: 'rgba(255,255,255,0.10)', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 9 },
   mioTexto: { color: '#E7EEF2', fontSize: 14, lineHeight: 20 },
   suyo: { alignSelf: 'flex-start', maxWidth: '92%' },
   suyoTexto: { color: '#DDE7EC', fontSize: 14, lineHeight: 21, backgroundColor: 'rgba(255,255,255,0.045)', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 9 },
-  panel: { color: ACENTO, fontSize: 9, letterSpacing: 1.6, marginBottom: 4, fontWeight: '700' },
-  traza: { color: TENUE, fontSize: 10, fontFamily: 'monospace', marginTop: 3, marginLeft: 4 },
+  panel: { color: ACENTO, fontSize: 11, letterSpacing: 1.6, marginBottom: 4, fontWeight: '700' },
+  traza: { color: TENUE, fontSize: 11, fontFamily: 'monospace', marginTop: 3, marginLeft: 4 },
   pensando: { color: TENUE, fontSize: 11, fontFamily: 'monospace' },
-  donde: { marginRight: 14, borderWidth: 1, borderColor: ACENTO, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  donde: { marginRight: 14, borderWidth: 1, borderColor: ACENTO, borderRadius: 12, paddingVertical: 12, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+  // En vertical el margen derecho ya lo pone la fila (paddingHorizontal): con los dos, quedaba doble.
+  dondeVertical: { flex: 1, marginRight: 0 },
   dondeTexto: { color: ACENTO, fontSize: 12, fontWeight: '700', letterSpacing: 2 },
   entrada: { flexDirection: 'row', gap: 8, paddingHorizontal: 14, paddingBottom: 14, paddingTop: 6 },
-  campo: { flex: 1, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, color: '#E7EEF2', fontSize: 14 },
-  ir: { backgroundColor: ACENTO, borderRadius: 12, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center', minWidth: 56 },
+  // `minWidth: 0`: sin eso la caja no cede su ancho natural y en vertical empujaba «Ir» fuera de la pantalla.
+  campo: { flex: 1, minWidth: 0, minHeight: 44, backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, color: '#E7EEF2', fontSize: 14 },
+  ir: { backgroundColor: ACENTO, borderRadius: 12, paddingHorizontal: 18, alignItems: 'center', justifyContent: 'center', minWidth: 56, minHeight: 44 },
   irTexto: { color: '#000', fontWeight: '700', fontSize: 13 },
 });

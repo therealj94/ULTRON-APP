@@ -42,7 +42,7 @@ TOKENS
 - Precio: solo tools.
 
 APPS Y CAPAS
-- AU-RA FP / Genesis Core (antes ULTRON FP): asistente de la junta. Es ella quien habla. Voz Eleven v3 + clips. Cerebro Qwen 3.8 27B AWS :8443. Proxy OpenAI :11435. Mesa Render ultron-looi-desk. Playwright y cámara viven en la mesa, no en OpenLLM.
+- AU-RA FP / Genesis Core (antes ULTRON FP): asistente de la junta. Es ella quien habla. Voz propia en Voicebox (Kokoro) + clips; oído con Whisper en el mismo servidor. Cerebro Qwen 3.8 27B AWS :8443. Proxy OpenAI :11435. Mesa Render ultron-looi-desk. Playwright y cámara viven en la mesa, no en OpenLLM.
 - AU-RA del sitio y de WhatsApp: la misma marca, pero corre aparte, en el nodo, con su propio modelo y su propia memoria.
 - Veta Wallet Android: tokens, tarjeta emisión/congelado, remesas hoy calculadora.
 - Genesis ID: identidad.

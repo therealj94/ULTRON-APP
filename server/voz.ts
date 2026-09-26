@@ -1,13 +1,13 @@
 /**
  * VOZ — el único camino por el que AU-RA habla.
  *
- *   hablar()  → ElevenLabs v3 (diálogo expresivo, voz oficial) → nodo TTS local → null
- *   cantar()  → clip grabado del repertorio, o ElevenLabs v3 en modo canto (caché en disco)
- *   expresar()→ traduce la emoción del turno a etiquetas de audio que v3 entiende
+ *   hablar()  → Voicebox (Kokoro, en el servidor propio de AU-RA) → null
+ *   cantar()  → clip grabado del repertorio; una letra libre se DICE (Kokoro no canta)
+ *   expresar()→ deja el texto listo para la boca: sin etiquetas de audio, cifras en palabras
  *
- * Aquí no hay selector de motor: hay UNA voz y una política. Si ElevenLabs cae,
- * el nodo local responde con la misma frase; si no hay nada, se devuelve null y
- * el cliente usa la voz del navegador (nunca en silencio, nunca fingiendo).
+ * Aquí no hay selector de motor: hay UNA voz por plataforma y una política. Si Voicebox no
+ * contesta, se devuelve null y quien llama se queda en silencio con el texto a la vista: nunca una
+ * voz robótica de respaldo, nunca fingiendo.
  */
 
 import crypto from 'crypto';
@@ -17,106 +17,170 @@ import { clave } from '../lib/boveda';
 import { afinarParaBoca } from './habla';
 import { normalizarEmocion, type Emocion } from '../lib/emocion';
 import { CANCIONES, VOZ_OFICIAL } from '../lib/capacidades';
+import { wavAMp3 } from '../lib/mp3';
+import type { Presupuesto } from '../lib/presupuesto';
 
 export type Performance = 'speak' | 'sing';
 
-/** La voz de AU-RA FP: Gabriela, español latino. */
-export const VOZ_ID = process.env.ELEVENLABS_VOZ || 'hHjbwzYZW17oh0p05AKv';
+/** AU-RA: el perfil «AU-RA · Kokoro Dora» de Voicebox (mujer, español). Se cambia con VOICEBOX_PERFIL_AURA. */
+export const PERFIL_AURA = '0014442b-51e6-44f5-9a35-f0e1ed296da5';
 
 /**
- * La voz de Dr Electrum: Bill, la más veterana de las que probamos.
+ * Dr Electrum: el perfil «Electrum · Kokoro Alex» (hombre, español).
  *
  * Dos cerebros con la misma voz son la misma cosa con dos nombres. La cara ya cambia de color según
  * la plataforma; la voz tiene que cambiar igual, o al segundo de audio se deshace la separación que
- * el resto del sistema sostiene. Por eso el respaldo NO es la voz de AU-RA: si `ELECTRUM_VOZ` se
- * queda vacía por un descuido, es mejor que el Doctor siga sonando a él que descubrir el error
- * cuando ya está hablando con la voz de la otra plataforma delante de un cliente.
- *
- * La edad es parte del personaje: a quien te va a decir que un recurso inferido no es una reserva
- * se le cree más si suena a haberlo visto. Se cambia con `ELECTRUM_VOZ`.
+ * el resto del sistema sostiene. Por eso el respaldo NO es la voz de AU-RA: si
+ * `VOICEBOX_PERFIL_ELECTRUM` se queda vacía por un descuido, es mejor que el Doctor siga sonando a
+ * él que descubrir el error cuando ya está hablando con la voz de la otra plataforma delante de un
+ * cliente.
  */
-const VOZ_ELECTRUM = 'pqHfZKP75CvOlQylNhV4'; // Bill
+export const PERFIL_ELECTRUM = 'c4259ed3-f15c-4fe7-a20c-6c59c877cf5c';
 
 export function vozDe(plataforma: 'ultron' | 'electrum'): string {
-  if (plataforma === 'electrum') return String(process.env.ELECTRUM_VOZ || '').trim() || VOZ_ELECTRUM;
-  return VOZ_ID;
+  if (plataforma === 'electrum') return String(process.env.VOICEBOX_PERFIL_ELECTRUM || '').trim() || PERFIL_ELECTRUM;
+  return String(process.env.VOICEBOX_PERFIL_AURA || '').trim() || PERFIL_AURA;
 }
 
-const TTS_LOCAL_URL = (process.env.ULTRON_TTS_URL || process.env.CHATTERBOX_URL || '').replace(/\/$/, '');
-const TTS_LOCAL_CLAVE = process.env.ULTRON_TTS_CLAVE || '';
+/** Dónde está Voicebox y con qué llave. Se lee en cada llamada: la bóveda puede cambiarla en caliente. */
+function configVoicebox() {
+  return { url: clave('voicebox_url').replace(/\/+$/, ''), llave: clave('voicebox_clave') };
+}
+
+/** Sin URL o sin llave no hay voz: Voicebox contesta 403 a todo lo que llega sin `X-Voz-Clave`. */
+export function vozConfigurada(): boolean {
+  const { url, llave } = configVoicebox();
+  return !!(url && llave);
+}
 
 const DIR_CANTO = path.join(process.cwd(), 'data', 'canto');
+
+/* ---------------- Tope del canto generado ---------------- */
+
+/**
+ * Cuántas oraciones por tema y canciones de letra libre se guardan en disco.
+ *
+ * Cada texto distinto dejaba su audio en `data/canto` y nadie borraba nada: «ora por mi mamá», «ora
+ * por mi mamá que está enferma», «ora por la reunión del martes»... un archivo por pedido, para
+ * siempre, en un disco que en Render es pequeño. Se quedan los más recientes (leer uno cuenta
+ * como usarlo) y se van los demás.
+ */
+export const MAX_CANTO_GENERADO = 80;
+
+/**
+ * Solo se poda lo que genera este módulo: `<hash>.wav` y `oracion-<hash>.wav` (y los `.mp3` que
+ * dejó la voz anterior, que ya no se sirven y se van con la poda). Cualquier otro archivo de la
+ * carpeta —un clip del repertorio que alguien deje ahí a mano, un `.gitkeep`— no encaja en el
+ * patrón y no se toca nunca.
+ */
+const CANTO_GENERADO = /^(oracion-)?[0-9a-f]{16}\.(wav|mp3)$/;
+
+export function podarCanto(dir = DIR_CANTO, max = MAX_CANTO_GENERADO): string[] {
+  let nombres: string[];
+  try {
+    nombres = fs.readdirSync(dir).filter((n) => CANTO_GENERADO.test(n));
+  } catch {
+    return [];
+  }
+  if (nombres.length <= max) return [];
+  const conFecha = nombres
+    .map((n) => {
+      try {
+        return { n, t: fs.statSync(path.join(dir, n)).mtimeMs };
+      } catch {
+        return { n, t: 0 };
+      }
+    })
+    .sort((a, b) => b.t - a.t);
+  const borrados: string[] = [];
+  for (const { n } of conFecha.slice(max)) {
+    try {
+      fs.unlinkSync(path.join(dir, n));
+      borrados.push(n);
+    } catch {
+      /* ya no estaba, o disco de solo lectura */
+    }
+  }
+  return borrados;
+}
+
+/** Leer un clip guardado lo marca como usado, para que la poda se lleve primero lo que nadie pide. */
+function leerCanto(ruta: string): Buffer | null {
+  try {
+    if (!fs.existsSync(ruta)) return null;
+    const audio = fs.readFileSync(ruta);
+    try {
+      const ahora = new Date();
+      fs.utimesSync(ruta, ahora, ahora);
+    } catch {
+      /* disco de solo lectura: se sirve igual */
+    }
+    return audio;
+  } catch {
+    return null;
+  }
+}
+
+function guardarCanto(ruta: string, audio: Buffer) {
+  try {
+    fs.mkdirSync(path.dirname(ruta), { recursive: true });
+    fs.writeFileSync(ruta, audio);
+    podarCanto(path.dirname(ruta));
+  } catch {
+    /* disco de solo lectura: se sirve desde memoria */
+  }
+}
 const DIR_PUBLIC = fs.existsSync(path.join(process.cwd(), 'dist', 'voz'))
   ? path.join(process.cwd(), 'dist', 'voz')
   : path.join(process.cwd(), 'public', 'voz');
 
-/* ---------------- Expresividad ---------------- */
+/* ---------------- Texto para la boca ---------------- */
 
-const TAG_EMOCION: Record<Emocion, string> = {
-  neutral: '',
-  feliz: '[warmly]',
-  risa: '[laughs]',
-  sorpresa: '[surprised]',
-  curioso: '[curious]',
-  pensando: '[thoughtful]',
-  preocupado: '[concerned]',
-  triste: '[sad]',
-  molesto: '[annoyed]',
-  cansado: '[tired] [sighs]',
-  carino: '[softly] [warmly]',
-  orgullo: '[proud]',
-  travieso: '[mischievously]',
-  canto: '[singing]',
-  oracion: '[reverent] [softly]',
-  // Las cuatro de Dr Electrum. «seco» no lleva etiqueta de sentimiento a propósito: la sequedad se
-  // oye en lo que NO se pone, y un [flatly] delante de una medida suena a desgana, no a oficio.
-  escepticismo: '[skeptical]',
-  alarma: '[urgently]',
-  firme: '[firmly]',
-  seco: '',
-};
+/** Etiquetas de audio de los guiones viejos: `[softly]`, `[singing, slow worship ballad]`, `[short pause]`. */
+const ETIQUETA_AUDIO = /\[[^\]\n]{1,80}\]/g;
 
 /**
- * Texto listo para v3: limpia markdown y cifras, y añade las etiquetas de audio.
- * Risas escritas («je je», «jaja») se vuelven risa real. «mmm» se vuelve pausa de pensar.
- * Si el texto ya trae etiquetas (clips guionados), se respeta.
+ * Quita las etiquetas de audio. Eran instrucciones para la voz anterior; Kokoro no las entiende y las
+ * LEE en voz alta («softly, hola»). Se llevan también el espacio que dejan delante de la puntuación.
  */
-export function expresar(texto: string, emocion: Emocion = 'neutral', performance: Performance = 'speak'): string {
-  const base = afinarParaBoca(texto);
-  if (!base) return '';
-  if (/\[[a-z ]+\]/i.test(texto)) return String(texto).trim();
-  /**
-   * Las sustituciones se comen la puntuación que traen pegada. Sin eso salía «mmm....» y
-   * «déjame ver....», porque el reemplazo añade sus tres puntos y el punto original se quedaba;
-   * y «[laughs] , qué bueno», con la coma de «Je je,» colgando al principio de la frase.
-   * Cuatro puntos y una coma huérfana no son una errata de texto: v3 los LEE, y se nota.
-   */
-  let t = base
-    .replace(/\b(je\s?){2,}\b\s*[.,;!]*\s*/gi, '[laughs] ')
-    .replace(/\bje\b\s*[.,;!]*\s*/gi, '[chuckles] ')
-    .replace(/\b(mmm+|hmm+)\b\s*[.,;!]*/gi, '[thoughtful] mmm...')
-    // Se conserva la mayúscula original: «Un segundo» al empezar una frase se volvía «un
-    // segundo», y a v3 una minúscula tras un punto le cambia la entonación.
-    .replace(/\bd([eé])jame ver\b\s*[.,;!]*/gi, (m) => `${m.trimEnd().replace(/[.,;!]+$/, '')}...`)
-    .replace(/\bun segundo\b\s*[.,;!]*/gi, (m) => `${m.trimEnd().replace(/[.,;!]+$/, '')}...`)
+export function sinEtiquetas(texto: string): string {
+  return String(texto || '')
+    .replace(ETIQUETA_AUDIO, ' ')
+    .replace(/\s+([,.;:!?…])/g, '$1')
+    .replace(/([¿¡])\s+/g, '$1')
     .replace(/\s{2,}/g, ' ')
     .trim();
+}
 
-  if (performance === 'sing') return `[singing] ${t}`;
+/** Un guion con etiquetas (oración, clips) es largo a propósito: no se recorta a lo de una respuesta. */
+const MAX_GUION = 4000;
 
-  const tag = TAG_EMOCION[normalizarEmocion(emocion)] || '';
-  // Respiración humana: una pausa breve entre frases largas.
-  t = t.replace(/([.!?])\s+(?=[A-ZÁÉÍÓÚÑ¿¡])/g, '$1 ');
-  if (!tag) return t;
+/**
+ * Texto listo para decir: limpia markdown y cifras, quita etiquetas de audio y deja las muletillas
+ * con su pausa («mmm...», «déjame ver...»).
+ *
+ * La emoción y el canto ya no cambian el audio —Kokoro tiene un solo registro por perfil y no
+ * canta—, pero se siguen aceptando para no romper a quien llama: la cara y el cerebro las usan.
+ */
+export function expresar(texto: string, _emocion: Emocion = 'neutral', _performance: Performance = 'speak'): string {
+  const crudo = String(texto || '');
+  ETIQUETA_AUDIO.lastIndex = 0;
+  if (ETIQUETA_AUDIO.test(crudo)) return afinarParaBoca(sinEtiquetas(crudo), MAX_GUION);
+  const base = afinarParaBoca(crudo);
+  if (!base) return '';
   /*
-   * Sin esto salía «[thoughtful] [thoughtful] mmm...»: la emoción «pensando» pone su etiqueta y el
-   * «mmm» del propio texto pone la suya. v3 no ignora la repetida — la interpreta, y exagera.
-   *
-   * Se quitan una a una las que ya estén, no la etiqueta entera: «cariño» son dos ([softly] y
-   * [warmly]) y si el texto ya trae una, la otra sigue haciendo falta.
+   * Las sustituciones se comen la puntuación que traen pegada. Sin eso salía «mmm....» y
+   * «déjame ver....», porque el reemplazo añade sus tres puntos y el punto original se quedaba.
    */
-  const faltan = tag.split(' ').filter((x) => x && !t.includes(x));
-  return faltan.length ? `${faltan.join(' ')} ${t}` : t;
+  return (
+    base
+      .replace(/\b(mmm+|hmm+)\b\s*[.,;!]*/gi, 'mmm...')
+      // Se conserva la mayúscula original: «Un segundo» al empezar una frase se volvía «un segundo».
+      .replace(/\bd([eé])jame ver\b\s*[.,;!]*/gi, (m) => `${m.trimEnd().replace(/[.,;!]+$/, '')}...`)
+      .replace(/\bun segundo\b\s*[.,;!]*/gi, (m) => `${m.trimEnd().replace(/[.,;!]+$/, '')}...`)
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+  );
 }
 
 /* ---------------- Caché LRU en memoria ---------------- */
@@ -149,82 +213,60 @@ function cacheSet(key: string, hit: Omit<AudioHit, 'at'>) {
   }
 }
 
-/* ---------------- ElevenLabs v3 ---------------- */
+/* ---------------- Voicebox ---------------- */
 
-async function elevenDialogo(opts: {
-  apiKey: string;
-  text: string;
-  sing: boolean;
-  timeoutMs: number;
-  voz?: string;
-}): Promise<{ audio: Buffer; motor: string } | null> {
-  for (const model of ['eleven_v3_conversational', 'eleven_v3'] as const) {
-    try {
-      const r = await fetch('https://api.elevenlabs.io/v1/text-to-dialogue?output_format=mp3_44100_128', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'xi-api-key': opts.apiKey, Accept: 'audio/mpeg' },
-        body: JSON.stringify({
-          model_id: model,
-          // En canto NO se fija idioma: con language_code v3 lee la letra en vez de cantarla.
-          language_code: opts.sing ? undefined : 'es',
-          inputs: [{ text: opts.text, voice_id: opts.voz || VOZ_ID }],
-        }),
-        signal: AbortSignal.timeout(opts.timeoutMs),
-      });
-      if (r.ok) return { audio: Buffer.from(await r.arrayBuffer()), motor: model };
-      console.warn('[voz eleven dialogue]', model, r.status, (await r.text()).slice(0, 160));
-    } catch (e: any) {
-      console.warn('[voz eleven dialogue]', model, String(e?.message || e).slice(0, 120));
-    }
+/** Kokoro genera ~7 s de audio en 0,2 s: 20 s es de sobra para una respuesta. Un guion largo se trocea en el servidor. */
+const TOPE_MS = 20_000;
+const TOPE_LARGO_MS = 45_000;
+
+async function voicebox(opts: { texto: string; perfil: string; timeoutMs: number; reloj?: Presupuesto }): Promise<{ audio: Buffer; contentType: string } | null> {
+  const { url, llave } = configVoicebox();
+  if (!url || !llave) return null;
+  if (opts.reloj && !opts.reloj.alcanza()) {
+    console.warn('[voz voicebox] sin tiempo: el cliente ya no espera esta respuesta');
+    return null;
   }
-  return null;
-}
-
-async function elevenClasico(opts: { apiKey: string; text: string; timeoutMs: number; voz?: string }): Promise<{ audio: Buffer; motor: string } | null> {
   try {
-    const r = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${opts.voz || VOZ_ID}?output_format=mp3_44100_128`, {
+    const r = await fetch(`${url}/generate/stream`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'xi-api-key': opts.apiKey, Accept: 'audio/mpeg' },
-      body: JSON.stringify({
-        text: opts.text.replace(/\[[a-z ]+\]\s*/gi, ''),
-        model_id: 'eleven_multilingual_v2',
-        language_code: 'es',
-        voice_settings: { stability: 0.3, similarity_boost: 0.8, style: 0.45, use_speaker_boost: true },
-      }),
-      signal: AbortSignal.timeout(opts.timeoutMs),
+      headers: { 'Content-Type': 'application/json', Accept: 'audio/wav', 'X-Voz-Clave': llave },
+      body: JSON.stringify({ profile_id: opts.perfil, text: opts.texto, language: 'es', engine: 'kokoro' }),
+      signal: opts.reloj ? opts.reloj.senal(opts.timeoutMs) : AbortSignal.timeout(opts.timeoutMs),
     });
-    if (r.ok) return { audio: Buffer.from(await r.arrayBuffer()), motor: 'eleven_multilingual_v2' };
-    console.warn('[voz eleven tts]', r.status, (await r.text()).slice(0, 160));
+    if (!r.ok) {
+      console.warn('[voz voicebox]', r.status, (await r.text().catch(() => '')).slice(0, 160));
+      return null;
+    }
+    const audio = Buffer.from(await r.arrayBuffer());
+    if (audio.length < 200) {
+      console.warn('[voz voicebox] audio vacío:', audio.length, 'bytes');
+      return null;
+    }
+    const tipo = String(r.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+    // Un 200 con JSON o HTML (un proxy delante que contesta por su cuenta) no es audio: sonaría a ruido.
+    if (tipo && !/^audio\//.test(tipo) && tipo !== 'application/octet-stream') {
+      console.warn('[voz voicebox] no devolvió audio:', tipo);
+      return null;
+    }
+    return { audio, contentType: !tipo || /wav|octet/.test(tipo) ? 'audio/wav' : tipo };
   } catch (e: any) {
-    console.warn('[voz eleven tts]', String(e?.message || e).slice(0, 120));
+    console.warn('[voz voicebox]', String(e?.message || e).slice(0, 120));
+    return null;
   }
-  return null;
 }
 
-/* ---------------- Nodo TTS local (respaldo) ---------------- */
-
-async function nodoLocal(text: string, timeoutMs = 25000): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
-  if (!TTS_LOCAL_URL) return null;
-  const headers: Record<string, string> = { 'Content-Type': 'application/json', Accept: 'audio/wav,audio/mpeg,*/*' };
-  if (TTS_LOCAL_CLAVE) headers['x-ultron-tts-clave'] = TTS_LOCAL_CLAVE;
-  const limpio = text.replace(/\[[a-z ]+\]\s*/gi, '');
-  for (const ruta of ['/decir', '/tts', '/synthesize']) {
-    try {
-      const r = await fetch(`${TTS_LOCAL_URL}${ruta}`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ texto: limpio, text: limpio, voz: 'calida', idioma: 'es', llave: TTS_LOCAL_CLAVE }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
-      if (!r.ok) continue;
-      const buf = Buffer.from(await r.arrayBuffer());
-      if (buf.length < 200) continue;
-      return { audio: buf, contentType: r.headers.get('content-type') || 'audio/wav', motor: 'tts-local' };
-    } catch {
-      /* siguiente ruta */
-    }
+/** ¿Contesta Voicebox? Para la salud del sistema. Un 403 no cuenta como vivo: sin llave buena no hay voz. */
+export async function saludVoz(timeoutMs = 4000): Promise<{ ok: boolean; status: number; detalle: string }> {
+  const { url, llave } = configVoicebox();
+  if (!url) return { ok: false, status: 0, detalle: 'VOICEBOX_URL vacío' };
+  try {
+    const r = await fetch(`${url}/health`, { headers: llave ? { 'X-Voz-Clave': llave } : {}, signal: AbortSignal.timeout(timeoutMs) });
+    await r.arrayBuffer().catch(() => null);
+    if (r.ok) return { ok: true, status: r.status, detalle: 'Voicebox responde' };
+    return { ok: false, status: r.status, detalle: r.status === 403 ? 'Voicebox rechaza la llave (VOICEBOX_CLAVE)' : `Voicebox ${r.status}` };
+  } catch (e: any) {
+    return { ok: false, status: 0, detalle: String(e?.message || e).slice(0, 160) };
   }
-  return null;
 }
 
 /* ---------------- API pública ---------------- */
@@ -233,58 +275,35 @@ export type Habla = { audio: Buffer; contentType: string; motor: string; cache: 
 
 export async function hablar(opts: {
   texto: string;
+  /** Se acepta y se normaliza por compatibilidad; ya no cambia la voz. */
   emocion?: Emocion | string;
+  /** Kokoro no canta: `sing` se dice igual que `speak`. */
   performance?: Performance;
   sinCache?: boolean;
   /** Qué plataforma habla. Decide la voz; por omisión, AU-RA. */
   plataforma?: 'ultron' | 'electrum';
+  /** Si la ruta tiene reloj (lib/presupuesto), la voz no se pasa de lo que el cliente espera. */
+  presupuesto?: Presupuesto;
 }): Promise<Habla | null> {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
   const emocion = normalizarEmocion(opts.emocion);
-  const guion = expresar(String(opts.texto || '').slice(0, 2400), emocion, performance);
+  const guion = expresar(String(opts.texto || '').slice(0, MAX_GUION), emocion, performance);
   if (!guion) return null;
-  const voz = vozDe(opts.plataforma === 'electrum' ? 'electrum' : 'ultron');
+  const perfil = vozDe(opts.plataforma === 'electrum' ? 'electrum' : 'ultron');
   // La voz entra en la clave de caché: si no, el primero que hable deja su timbre guardado y el
-  // otro cerebro contesta con la voz ajena.
-  const key = crypto.createHash('sha1').update(`${voz}|${performance}|${emocion}|${guion}`).digest('hex');
+  // otro cerebro contesta con la voz ajena. La emoción ya no: el mismo texto suena igual con cualquiera.
+  const key = crypto.createHash('sha1').update(`${perfil}|${guion}`).digest('hex');
   if (!opts.sinCache) {
     const hit = cacheGet(key);
     if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
   }
-  const apiKey = clave('elevenlabs');
-  if (apiKey) {
-    const sing = performance === 'sing';
-    const largo = sing || emocion === 'oracion' || guion.length > 700;
-    const out =
-      (await elevenDialogo({ apiKey, text: guion, sing, timeoutMs: largo ? 60000 : 18000, voz })) ||
-      (sing ? null : await elevenClasico({ apiKey, text: guion, timeoutMs: 14000, voz }));
-    if (out) {
-      cacheSet(key, { audio: out.audio, contentType: 'audio/mpeg', motor: out.motor });
-      return { audio: out.audio, contentType: 'audio/mpeg', motor: out.motor, cache: false, ms: Date.now() - t0 };
-    }
-  }
-  const local = await nodoLocal(guion);
-  if (local) {
-    cacheSet(key, local);
-    return { ...local, cache: false, ms: Date.now() - t0 };
-  }
-  return null;
+  const out = await voicebox({ texto: guion, perfil, timeoutMs: guion.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj: opts.presupuesto });
+  if (!out) return null;
+  const motor = 'voicebox:kokoro';
+  cacheSet(key, { audio: out.audio, contentType: out.contentType, motor });
+  return { audio: out.audio, contentType: out.contentType, motor, cache: false, ms: Date.now() - t0 };
 }
-
-/** Letras cortas que AU-RA canta con su voz. Fragmentos, no la canción entera. */
-const LETRAS: Record<string, { titulo: string; letra: string }> = {
-  jesus: {
-    titulo: 'Quiero conocer a Jesús',
-    letra:
-      '[softly] Esta es de Generación doce. Cierro los ojos y la canto para ti. [short pause] [singing, slow worship ballad, tender, sustained notes] Quiero conocer a Jesúuus... quiero conocer a Jesúuus... más que a nadie en este muuundo... quiero conocerte a ti. [singing, rising, heartfelt] Quiero conocer a Jesúuus... quiero conocer a Jesúuus... más que a nadie en este muuundo... quiero conocerte a tiii. [singing, softer, almost whispering] Quiero... conocerte... a ti. [softly, moved] Esa me llega al centro. De verdad.',
-  },
-  waymaker: {
-    titulo: 'Way Maker',
-    letra:
-      "[softly] This one is Way Maker. In English, and with everything I have. [short pause] [singing, slow gospel worship, powerful and tender, sustained notes] Way maker... miracle worker... promise keeper... light in the darkness... my God, that is who You aaare. [singing, rising, full of faith] Way maker... miracle worker... promise keeper... light in the darkness... my God, that is who You aaare. [singing, softly] That is who You are... that is who You are. [warmly, moved] Even when I don't see it, He's working.",
-  },
-};
 
 /** Oración del día: texto propio de AU-RA. Se graba una vez (public/voz/oracion.mp3) y se sirve como clip. */
 export const ORACION_DEL_DIA =
@@ -302,39 +321,32 @@ export function oracionPorTema(tema: string): string {
 }
 
 /**
- * Ora. Sin tema: la oración del día (clip grabado; si falta, se genera y se guarda).
+ * Ora. Sin tema: la oración del día (clip grabado; si falta, se genera una vez y se guarda).
  * Con tema: oración corta generada con la voz oficial, con caché en disco por hash.
+ *
+ * Lo generado es WAV y se guarda como `.wav`: guardarlo como `.mp3` hacía que se sirviera luego con
+ * `audio/mpeg` y un teléfono que se fía del tipo no lo abre.
  */
 export async function orar(opts: { tema?: string } = {}): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
   const tema = String(opts.tema || '').trim();
   if (tema.length >= 3) {
     const hash = crypto.createHash('sha1').update(`oracion|${tema.toLowerCase()}`).digest('hex').slice(0, 16);
-    const ruta = path.join(DIR_CANTO, `oracion-${hash}.mp3`);
-    try {
-      if (fs.existsSync(ruta)) return { audio: fs.readFileSync(ruta), contentType: 'audio/mpeg', motor: 'clip' };
-    } catch {
-      /* */
-    }
+    const ruta = path.join(DIR_CANTO, `oracion-${hash}.wav`);
+    const guardado = leerCanto(ruta);
+    if (guardado) return { audio: guardado, contentType: 'audio/wav', motor: 'clip' };
     const out = await hablar({ texto: oracionPorTema(tema), emocion: 'oracion', sinCache: true });
     if (!out) return null;
-    try {
-      fs.mkdirSync(DIR_CANTO, { recursive: true });
-      fs.writeFileSync(ruta, out.audio);
-    } catch {
-      /* */
-    }
+    guardarCanto(ruta, out.audio);
     return { audio: out.audio, contentType: out.contentType, motor: out.motor };
   }
   const grabado = clipGrabado('oracion');
   if (grabado) return { audio: grabado, contentType: 'audio/mpeg', motor: 'clip' };
+  const ruta = path.join(DIR_CANTO, 'oracion-del-dia.wav');
+  const guardado = leerCanto(ruta);
+  if (guardado) return { audio: guardado, contentType: 'audio/wav', motor: 'clip' };
   const out = await hablar({ texto: ORACION_DEL_DIA, emocion: 'oracion', sinCache: true });
   if (!out) return null;
-  try {
-    fs.mkdirSync(DIR_PUBLIC, { recursive: true });
-    fs.writeFileSync(path.join(DIR_PUBLIC, 'oracion.mp3'), out.audio);
-  } catch {
-    /* */
-  }
+  guardarCanto(ruta, out.audio);
   return { audio: out.audio, contentType: out.contentType, motor: out.motor };
 }
 
@@ -371,8 +383,10 @@ function clipGrabado(id: string): Buffer | null {
 }
 
 /**
- * Canta. `id` del repertorio → clip grabado si existe, si no lo genera y lo guarda.
- * `letra` libre → genera (máx 600 caracteres) con caché en disco por hash.
+ * Canta. `id` del repertorio → el clip grabado. Sin la grabación no hay canción: Kokoro no canta, y
+ * leer la letra de un tema del repertorio no es cantarlo.
+ * `letra` libre → Kokoro no canta, así que la DICE con la voz oficial (máx 600 caracteres), con
+ * caché en disco por hash.
  */
 export async function cantar(opts: { id?: string; letra?: string; titulo?: string }): Promise<{ audio: Buffer; contentType: string; motor: string; titulo: string } | null> {
   const id = String(opts.id || '').trim().toLowerCase();
@@ -380,51 +394,50 @@ export async function cantar(opts: { id?: string; letra?: string; titulo?: strin
     const grabado = clipGrabado(id);
     const meta = CANCIONES.find((c) => c.id === id);
     if (grabado) return { audio: grabado, contentType: 'audio/mpeg', motor: 'clip', titulo: meta?.titulo || id };
-    const letra = LETRAS[id];
-    if (!letra) return null;
-    const out = await hablar({ texto: letra.letra, performance: 'sing', emocion: 'canto' });
-    if (!out) return null;
-    try {
-      fs.mkdirSync(DIR_PUBLIC, { recursive: true });
-      fs.writeFileSync(path.join(DIR_PUBLIC, `${id}.mp3`), out.audio);
-    } catch {
-      /* disco de solo lectura: se sirve desde memoria */
-    }
-    return { audio: out.audio, contentType: out.contentType, motor: out.motor, titulo: letra.titulo };
+    return null;
   }
-  const letra = String(opts.letra || '').replace(/\s+/g, ' ').trim().slice(0, 600);
+  const letra = sinEtiquetas(String(opts.letra || '')).replace(/\s+/g, ' ').trim().slice(0, 600);
   if (letra.length < 8) return null;
   const hash = crypto.createHash('sha1').update(letra).digest('hex').slice(0, 16);
-  const ruta = path.join(DIR_CANTO, `${hash}.mp3`);
-  try {
-    if (fs.existsSync(ruta)) return { audio: fs.readFileSync(ruta), contentType: 'audio/mpeg', motor: 'clip', titulo: opts.titulo || 'canción' };
-  } catch {
-    /* */
-  }
-  const out = await hablar({ texto: `[singing] ${letra}`, performance: 'sing', emocion: 'canto', sinCache: true });
+  const ruta = path.join(DIR_CANTO, `${hash}.wav`);
+  const guardado = leerCanto(ruta);
+  if (guardado) return { audio: guardado, contentType: 'audio/wav', motor: 'clip', titulo: opts.titulo || 'canción' };
+  const out = await hablar({ texto: letra, performance: 'sing', emocion: 'canto', sinCache: true });
   if (!out) return null;
-  try {
-    fs.mkdirSync(DIR_CANTO, { recursive: true });
-    fs.writeFileSync(ruta, out.audio);
-  } catch {
-    /* */
-  }
+  guardarCanto(ruta, out.audio);
   return { audio: out.audio, contentType: out.contentType, motor: out.motor, titulo: opts.titulo || 'canción' };
 }
 
 export function estadoVoz() {
+  const { url } = configVoicebox();
+  let servidor: string | null = null;
+  try {
+    servidor = url ? new URL(url).host : null;
+  } catch {
+    servidor = null;
+  }
   return {
     oficial: VOZ_OFICIAL,
-    elevenlabs: !!clave('elevenlabs'),
-    ttsLocal: TTS_LOCAL_URL || null,
-    voiceId: VOZ_ID,
+    voicebox: vozConfigurada(),
+    servidor,
+    perfil: vozDe('ultron'),
+    perfilElectrum: vozDe('electrum'),
   };
 }
 
-/** Nota de voz para Telegram u otros canales. Misma voz, misma política. */
+/**
+ * Nota de voz para Telegram u otros canales. Misma voz, misma política, en MP3: `sendVoice` no
+ * acepta WAV (lo manda como archivo suelto), y Render no tiene ffmpeg para hacer OGG/Opus.
+ */
 export async function notaDeVozBuffer(texto: string, emocion: Emocion = 'neutral'): Promise<Buffer | undefined> {
   const dicho = String(texto || '').replace(/\s+/g, ' ').trim().slice(0, 420);
   if (dicho.length < 8) return undefined;
   const out = await hablar({ texto: dicho, emocion });
-  return out && out.audio.length > 80 ? out.audio : undefined;
+  if (!out || out.audio.length <= 80) return undefined;
+  if (!/wav/.test(out.contentType)) return out.audio;
+  const mp3 = await wavAMp3(out.audio).catch((e: any) => {
+    console.warn('[voz] no pude pasar la nota a MP3:', String(e?.message || e).slice(0, 120));
+    return null;
+  });
+  return mp3 || undefined;
 }

@@ -7,7 +7,7 @@ import { iniciarReporte, miga } from './src/lib/reporte';
 import { Animated, AppState, Easing, PermissionsAndroid, Platform, StyleSheet, Text, View, type AppStateStatus } from 'react-native';
 import { APP_VERSION, type SessionUser } from './src/config';
 import { logoutRemote } from './src/lib/api';
-import { loadSession, saveSession } from './src/lib/storage';
+import { borrarRastrosViejos, loadSession, saveSession } from './src/lib/storage';
 import { DeskScreen } from './src/screens/DeskScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { ES_ELECTRUM } from './src/variante';
@@ -197,8 +197,11 @@ function AppUltron() {
         <DeskScreen
           user={user}
           onLogout={() => {
+            // El historial del turno vive en la mesa y se va con ella; la memoria de largo plazo es por
+            // persona (el siguiente no la ve). Las credenciales guardadas se quedan: las usa la entrada.
             void saveSession(null);
             void logoutRemote();
+            void borrarRastrosViejos();
             setUser(null);
             setPhase('login');
             void lockOrientation('portrait');

@@ -24,7 +24,7 @@ import { identificar, nivelDe, padron, type Identificacion, type Nivel } from '.
 import { extraerPdf } from '../../lib/leer-pdf';
 import { aprender } from './aprender';
 import { turnoElectrum } from './turno';
-import { verImagen } from '../../lib/vision';
+import { verImagen, vistaFallida } from '../../lib/vision';
 import { claveHilo, fusionarHiloElectrum, hiloDe, olvidarHilo, recordarHilo, type TurnoHilo } from './hilo';
 import { tomarInforme } from './informe';
 
@@ -280,7 +280,7 @@ async function atenderArchivo(
         return { dicho: r.dicho };
       }
       const visto = await verImagen(parsed.imageDataUrl, OJO_MINERO_TG);
-      if (!visto.texto || visto.via === 'ninguno' || visto.via === 'error') {
+      if (!visto.texto || vistaFallida(visto)) {
         return { dicho: 'Me llegó la foto pero no pude leerla. No te voy a inventar lo que dice.' };
       }
       return {

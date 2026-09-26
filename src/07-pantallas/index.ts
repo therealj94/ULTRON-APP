@@ -1,5 +1,5 @@
 export { DockDrawer } from './DockDrawer';
-export { SettingsSheet } from './SettingsSheet';
+export { SettingsSheet, nombreModo } from './SettingsSheet';
 export { Capacidades } from './Capacidades';
 export { Arranque } from './Arranque';
 export { AccesoModal } from './AccesoModal';

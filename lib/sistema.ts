@@ -5,6 +5,7 @@
 import { ejecutorActivo } from './ejecutor';
 import { clave } from './boveda';
 import { NODO_URL, saludNodo } from './nodo';
+import { saludVoz } from '../server/voz';
 
 export type Nodo = { id: string; vivo: boolean; detalle: string };
 
@@ -32,6 +33,7 @@ export function catalogoCanales(): Canal[] {
   const wa = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_WHATSAPP_FROM && process.env.JEFE_WHATSAPP);
   const mail = !!(process.env.RESEND_API_KEY && process.env.MAIL_FROM);
   const call = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_VOICE_FROM && process.env.JEFE_TELEFONO);
+  const oido = !!(clave('voicebox_url') && clave('voicebox_clave')) || !!clave('gemini');
   return [
     { id: 'sistema', nombre: 'Estado de nodos', listo: true },
     { id: 'tareas', nombre: 'Pendientes', listo: true },
@@ -42,7 +44,7 @@ export function catalogoCanales(): Canal[] {
     { id: 'vision', nombre: 'Ver imágenes', listo: !!(clave('ojo_url') && clave('ojo_clave')) || !!clave('gemini'), falta: !!(clave('ojo_url') && clave('ojo_clave')) || !!clave('gemini') ? undefined : 'ULTRON_OJO_* o GEMINI_API_KEY' },
     { id: 'telegram', nombre: 'Telegram (enviar)', listo: tg, falta: tg ? undefined : 'TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID' },
     { id: 'telegram-in', nombre: 'Telegram (responder)', listo: tgIn, falta: tgIn ? undefined : 'TELEGRAM_WEBHOOK_SECRET + chat de junta' },
-    { id: 'oido', nombre: 'Oír nota de voz', listo: !!clave('elevenlabs') || !!clave('gemini'), falta: !!clave('elevenlabs') || !!clave('gemini') ? undefined : 'ELEVENLABS_API_KEY o GEMINI_API_KEY' },
+    { id: 'oido', nombre: 'Oír nota de voz', listo: oido, falta: oido ? undefined : 'VOICEBOX_URL + VOICEBOX_CLAVE o GEMINI_API_KEY' },
     { id: 'memoria', nombre: 'Memoria durable José/Medardo/Carlos/Mayra', listo: !!(process.env.ULTRON_MEMORIA_BUCKET && process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY), falta: process.env.ULTRON_MEMORIA_BUCKET ? undefined : 'ULTRON_MEMORIA_BUCKET + AWS_*' },
     { id: 'whatsapp', nombre: 'WhatsApp', listo: wa, falta: wa ? undefined : 'TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM, JEFE_WHATSAPP' },
     { id: 'correo', nombre: 'Correo', listo: mail, falta: mail ? undefined : 'RESEND_API_KEY + MAIL_FROM' },
@@ -53,26 +55,22 @@ export function catalogoCanales(): Canal[] {
 export async function fotoSistema(): Promise<{ nodos: Nodo[]; canales: Canal[]; resumen: string }> {
   const nodoUrl = NODO_URL;
   const ojoUrl = (process.env.ULTRON_OJO_URL || process.env.PLAYWRIGHT_NODE_URL || '').replace(/\/$/, '');
-  const ttsUrl = (process.env.ULTRON_TTS_URL || process.env.CHATTERBOX_URL || '').replace(/\/$/, '');
   const fpUrl = (process.env.ULTRON_FP_URL || process.env.ULTRON_REMOTE_URL || '').replace(/\/$/, '');
 
-  const [qwen, ojo, tts, fp] = await Promise.all([
+  const [qwen, ojo, voz, fp] = await Promise.all([
     nodoUrl ? saludNodo() : Promise.resolve({ ok: false, status: 0, text: 'ULTRON_NODO_URL vacío' }),
     ojoUrl
       ? probe(`${ojoUrl}/salud`, { 'X-Ojo-Clave': process.env.ULTRON_OJO_CLAVE || '' })
       : Promise.resolve({ ok: false, status: 0, text: 'ULTRON_OJO_URL vacío' }),
-    ttsUrl
-      ? probe(`${ttsUrl}/salud`, { 'x-ultron-tts-clave': process.env.ULTRON_TTS_CLAVE || '' })
-      : Promise.resolve({ ok: false, status: 0, text: 'ULTRON_TTS_URL vacío' }),
+    saludVoz(),
     fpUrl ? probe(`${fpUrl}/salud`) : Promise.resolve({ ok: false, status: 0, text: 'ULTRON_FP_URL vacío' }),
   ]);
 
   const nodos: Nodo[] = [
     { id: 'qwen', vivo: qwen.ok, detalle: qwen.ok ? 'cerebro responde' : qwen.text },
     { id: 'ojo', vivo: ojo.ok, detalle: ojo.ok ? 'Playwright/visión' : ojo.text },
-    { id: 'tts', vivo: tts.ok, detalle: tts.ok ? 'TTS responde' : tts.text },
+    { id: 'voz', vivo: voz.ok, detalle: voz.detalle },
     { id: 'fp', vivo: fp.ok, detalle: fp.ok ? 'FP responde' : fp.text },
-    { id: 'eleven', vivo: !!clave('elevenlabs'), detalle: clave('elevenlabs') ? 'clave presente' : 'ELEVENLABS_API_KEY vacío' },
   ];
   const canales = catalogoCanales();
   const caidos = nodos.filter((n) => !n.vivo).map((n) => n.id);

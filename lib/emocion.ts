@@ -2,10 +2,10 @@
  * Emoción de AU-RA — contrato único para cerebro, voz, cara web y cara móvil.
  *
  * El 27B abre cada respuesta con una etiqueta `[EMO:<emocion>]`. El servidor la
- * extrae, la devuelve en `emocion` (JSON y SSE) y la usa para dar expresividad a
- * la voz (etiquetas de audio de ElevenLabs v3). La cara la traduce a gestos.
+ * extrae y la devuelve en `emocion` (JSON y SSE). La cara la traduce a gestos; la
+ * voz (Voicebox, Kokoro) tiene un solo registro por perfil y la acepta sin cambiar el audio.
  *
- * Cambiar la lista aquí obliga a revisar: server/voz.ts (tags de audio),
+ * Cambiar la lista aquí obliga a revisar: server/voz.ts (normalización de la emoción),
  * src/02-cara/emocion.ts (cara web) y mobile/src/config.ts (cara móvil).
  */
 

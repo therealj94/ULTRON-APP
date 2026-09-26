@@ -7,6 +7,11 @@
  */
 import * as SecureStore from 'expo-secure-store';
 import { API_BASE } from '../config';
+import { ErrorHttp, SinPuerta, type Puerta } from './frases';
+
+// Las clases de error, la puerta y sus frases viven en `frases.ts` (sin React Native, para poder
+// probarlas con node:test). Se reexportan para que las pantallas sigan importando de aquí.
+export { ErrorHttp, SinPuerta, porQueNoAbre, type Puerta } from './frases';
 
 const K_SESION = 'ultron_sesion_token';
 const K_LLAVE = 'electrum_llave';
@@ -43,6 +48,22 @@ export async function guardarLlave(v: string | null) {
   }
 }
 
+/** Cierra la sesión en el servidor (el token deja de valer en cualquier copia) y la borra de aquí. */
+export async function cerrarSesion() {
+  if (sesion) {
+    const corte = conTope(6_000);
+    try {
+      await fetch(`${API_BASE}/api/ultron/salir`, { method: 'POST', headers: { 'x-ultron-sesion': sesion }, signal: corte.signal });
+    } catch {
+      /* sin red: se borra igual */
+    } finally {
+      corte.soltar();
+    }
+  }
+  await guardarSesion(null);
+  await guardarLlave(null);
+}
+
 export function hayCredencial(): boolean {
   return !!sesion || !!llave;
 }
@@ -54,11 +75,6 @@ function cabeceras(extra: Record<string, string> = {}): Record<string, string> {
   return h;
 }
 
-export class SinPuerta extends Error {
-  constructor() {
-    super('Dr Electrum FP es privado y esta sesión no tiene acceso.');
-  }
-}
 
 /**
  * Lo que espera el teléfono. **Tiene que ser mayor que el presupuesto del turno en el servidor**
@@ -70,16 +86,34 @@ export class SinPuerta extends Error {
  */
 const ESPERA_MS = 75_000;
 
+/**
+ * Un `AbortSignal` que se dispara a los `ms`. `AbortSignal.timeout()` NO existe en React Native: su
+ * AbortSignal es el del paquete `abort-controller` (Libraries/Core/setUpXHR.js), que no lo trae, así
+ * que la llamada lanzaba «undefined is not a function» antes de salir a la red. `soltar` limpia el
+ * temporizador cuando la petición terminó antes.
+ */
+function conTope(ms: number): { signal: AbortSignal; soltar: () => void } {
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), ms);
+  return { signal: c.signal, soltar: () => clearTimeout(t) };
+}
+
 async function pedir<T>(ruta: string, init: RequestInit = {}, msIntento = ESPERA_MS): Promise<T> {
-  const r = await fetch(`${API_BASE}${ruta}`, {
-    ...init,
-    headers: cabeceras((init.headers as Record<string, string>) || {}),
-    signal: AbortSignal.timeout(msIntento),
-  });
-  if (r.status === 401) throw new SinPuerta();
-  const j = (await r.json().catch(() => ({}))) as any;
-  if (!r.ok) throw new Error(j?.error || `Error ${r.status}`);
-  return j as T;
+  const tope = conTope(msIntento);
+  try {
+    const r = await fetch(`${API_BASE}${ruta}`, {
+      ...init,
+      headers: cabeceras((init.headers as Record<string, string>) || {}),
+      signal: tope.signal,
+    });
+    if (r.status === 401) throw new SinPuerta();
+    const j = (await r.json().catch(() => ({}))) as any;
+    // Tipado, no un `Error` con «Error 502» dentro: la pantalla distingue «caído» de «no te deja».
+    if (!r.ok) throw new ErrorHttp(r.status, typeof j?.error === 'string' ? j.error : '');
+    return j as T;
+  } finally {
+    tope.soltar();
+  }
 }
 
 export type Traza = { herramienta: string; ok: boolean; resumen: string };
@@ -137,21 +171,6 @@ export async function subirFoto(uri: string, nombre: string, mime = 'image/jpeg'
   );
 }
 
-/**
- * Lo que puede contestar la puerta. Son cinco cosas y antes eran «entró / no entró».
- *
- * La distinción importa sobre todo en el campo: **solo `sin-permiso` significa que la credencial
- * no vale**. Las otras cuatro son la red o la plataforma, y tratarlas como falta de acceso echaba
- * al usuario a la pantalla de entrada cada vez que se quedaba sin señal — justo cuando menos puede
- * ponerse a escribir una clave.
- */
-export type Puerta =
-  | { estado: 'abierta' }
-  | { estado: 'sin-permiso' }
-  | { estado: 'servicio-caido'; codigo: number }
-  | { estado: 'sin-red' }
-  | { estado: 'lento' };
-
 export async function probarPuerta(): Promise<Puerta> {
   const corte = new AbortController();
   const reloj = setTimeout(() => corte.abort(), 12_000);
@@ -167,22 +186,6 @@ export async function probarPuerta(): Promise<Puerta> {
   }
 }
 
-/** Lo que se le dice a la persona. Sin jerga y sin acusar a su credencial de lo que hizo el wifi. */
-export function porQueNoAbre(p: Puerta): string {
-  switch (p.estado) {
-    case 'sin-permiso':
-      return 'Esa credencial es buena pero no tiene acceso a Dr Electrum. Pedile a José que te agregue al padrón.';
-    case 'servicio-caido':
-      return `El servidor contestó ${p.codigo}. No es tu credencial: es la plataforma. Probá en un momento.`;
-    case 'lento':
-      return 'El servidor tardó más de doce segundos. Puede ser la señal de donde estás. Volvé a intentarlo.';
-    case 'sin-red':
-      return 'No alcancé el servidor. Revisá la señal y volvé a intentarlo — tu credencial no tiene nada que ver.';
-    default:
-      return '';
-  }
-}
-
 export type Salud = {
   viva: boolean;
   motivo?: string;
@@ -195,14 +198,15 @@ export function salud(): Promise<Salud> {
   return pedir<Salud>('/api/electrum/salud', {}, 12_000);
 }
 
-/** La voz del doctor, en MP3. Se pide aparte porque no devuelve JSON. */
+/** La voz del doctor (WAV de Voicebox, perfil Alex). Se pide aparte porque no devuelve JSON. */
 export async function voz(texto: string, emocion?: string): Promise<string | null> {
+  const tope = conTope(30_000);
   try {
     const r = await fetch(`${API_BASE}/api/electrum/voz`, {
       method: 'POST',
       headers: cabeceras({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ texto: texto.slice(0, 1200), emocion }),
-      signal: AbortSignal.timeout(30_000),
+      signal: tope.signal,
     });
     if (!r.ok) return null;
     const buf = await r.arrayBuffer();
@@ -210,9 +214,13 @@ export async function voz(texto: string, emocion?: string): Promise<string | nul
     const bytes = new Uint8Array(buf);
     // En trozos: un apply sobre 200 000 bytes revienta la pila de argumentos en Hermes.
     for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    return `data:audio/mpeg;base64,${btoa(bin)}`;
+    // El tipo real del servidor, no uno supuesto: el reproductor elige el decodificador por él.
+    const tipo = (r.headers.get('content-type') || 'audio/wav').split(';')[0].trim();
+    return `data:${tipo};base64,${btoa(bin)}`;
   } catch {
     return null;
+  } finally {
+    tope.soltar();
   }
 }
 
@@ -220,13 +228,23 @@ export async function voz(texto: string, emocion?: string): Promise<string | nul
 export async function entrar(correo: string, clave: string): Promise<string> {
   // La puerta de Dr Electrum. El servidor mantiene `/api/ultron/entrar` como alias para las
   // APK que ya están instaladas; las nuevas llaman a la suya.
-  const r = await fetch(`${API_BASE}/api/electrum/entrar`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ correo, clave }),
-    signal: AbortSignal.timeout(20_000),
-  });
+  const tope = conTope(20_000);
+  let r: Response;
+  try {
+    r = await fetch(`${API_BASE}/api/electrum/entrar`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ correo, clave }),
+      signal: tope.signal,
+    });
+  } catch (e) {
+    // Sin red o sin respuesta a tiempo: se deja pasar el error tal cual, y `fraseDeError` lo traduce.
+    tope.soltar();
+    throw e;
+  }
+  tope.soltar();
   const j = (await r.json().catch(() => ({}))) as any;
-  if (!r.ok || !j?.token) throw new Error(j?.error || 'No pude entrar con eso.');
+  if (!r.ok) throw new ErrorHttp(r.status, typeof j?.error === 'string' ? j.error : '');
+  if (!j?.token) throw new ErrorHttp(500); // contestó «ok» sin sesión: es del servidor
   return String(j.token);
 }

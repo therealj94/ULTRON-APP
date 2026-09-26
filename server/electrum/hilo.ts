@@ -27,6 +27,8 @@
  *    del servidor cuando existe, porque es el que no depende de que nadie haya recargado.
  */
 
+import crypto from 'crypto';
+
 export type TurnoHilo = { rol: 'persona' | 'electrum'; texto: string };
 export type MsgHilo = { role: 'user' | 'assistant'; content: string };
 
@@ -52,11 +54,45 @@ export function relojDeHilo(f: () => number) {
 /**
  * La llave. Persona **y** canal: la misma persona hablando por Telegram y en la mesa lleva dos
  * conversaciones, y mezclarlas hace que el Doctor conteste en la pantalla algo que se dijo en el
- * teléfono. Sin persona identificada se cae al canal solo, que es lo más honesto que hay: es un
- * hilo anónimo y se comporta como tal.
+ * teléfono. Sin persona identificada, quien llama desde HTTP pasa por `claveHiloDe`, que pone la
+ * huella del visitante en lugar del nombre; `anonimo` queda solo para quien llame sin petición.
  */
 export function claveHilo(quien: string | null, canal: string): string {
   return `${quien || 'anonimo'}·${canal}`;
+}
+
+/**
+ * Sal de este arranque para la huella del visitante. No es un secreto ni hace falta que lo sea:
+ * esto reparte conversaciones, no abre puertas. Que cambie en cada despliegue no pierde nada — los
+ * hilos viven en memoria y se van con el proceso de todos modos.
+ */
+const SAL_VISITANTE = crypto.randomBytes(16).toString('hex');
+
+/** Lo mínimo de una petición que hace falta para saber de quién es el hilo. */
+export type PeticionHilo = { ip?: string | null; headers?: Record<string, unknown> };
+
+/**
+ * ¿De quién es este hilo? De la persona, si la sesión la identifica. Si no —la llave de la
+ * demostración, o el hueco de desarrollo— de ESTE visitante: una huella de su IP y su navegador.
+ *
+ * Antes todos los que entraban con la llave de la demo caían en el mismo `anonimo·mesa`: el cliente
+ * que miraba la plataforma a las diez veía, como «lo que venían hablando», los expedientes que otro
+ * había consultado a las nueve; y el «Borrá lo que hablamos» de uno borraba la conversación de todos.
+ *
+ * No es identidad: dos personas detrás de la misma IP con el mismo navegador comparten hilo, y eso
+ * ya pasaba antes con todo el mundo. Es separar lo que se puede separar sin pedirle nada al cliente.
+ */
+export function quienDelHilo(persona: string | null | undefined, req: PeticionHilo): string {
+  if (persona) return persona;
+  const ip = String(req.ip || '');
+  const agente = String(req.headers?.['user-agent'] || '').slice(0, 400);
+  const huella = crypto.createHash('sha256').update(`${SAL_VISITANTE}|${ip}|${agente}`).digest('hex').slice(0, 24);
+  return `visita:${huella}`;
+}
+
+/** La llave del hilo de una petición HTTP: persona o visitante, y canal. */
+export function claveHiloDe(persona: string | null | undefined, req: PeticionHilo, canal: string): string {
+  return claveHilo(quienDelHilo(persona, req), canal);
 }
 
 function limpiar() {

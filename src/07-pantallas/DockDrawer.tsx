@@ -59,7 +59,7 @@ export const DockDrawer: React.FC<Props> = (p) => {
   return (
     <div
       id="ultron-dock-drawer"
-      className={`absolute left-0 right-0 bottom-0 z-30 transition-transform duration-300 ease-out px-3 pb-4 ${
+      className={`absolute left-0 right-0 bottom-0 z-30 transition-transform duration-300 ease-out px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] ${
         p.isOpen ? 'translate-y-0' : 'translate-y-[115%] pointer-events-none'
       }`}
     >

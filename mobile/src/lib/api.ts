@@ -87,7 +87,8 @@ export type Health = {
   qwen?: { vivo?: boolean; modelo?: string | null };
   tts?: { vivo?: boolean };
   ojo?: { vivo?: boolean; vision?: boolean };
-  elevenlabs?: boolean;
+  /** Voicebox configurado en el servidor (voz y oído propios). */
+  voicebox?: boolean;
 };
 
 export async function healthCheck() {
@@ -215,6 +216,7 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
   let firstDelta = true;
   let done: ChatResult | null = null;
   let settled = false;
+  let cancelar: (() => void) | null = null;
   const promise = new Promise<ChatResult>((resolve, reject) => {
     const finish = (r: ChatResult) => {
       if (settled) return;
@@ -284,6 +286,8 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
       finish(done ? { ...done, reply, emocion: emocion || done.emocion } : { reply, emocion: emocion || 'neutral' });
     };
     xhr.onerror = () => fail(new Error('red'));
+    // Cancelar (el usuario dijo «callar») rechaza ya, sin depender de cómo cierre el XHR al abortarlo.
+    cancelar = () => fail(new Error('cancelado'));
     xhr.ontimeout = () => (full ? finish({ reply: full.trim(), emocion: emocion || 'neutral', error: 'timeout' }) : fail(new Error('timeout')));
     const payload = turnoBody(opts);
     void loadMesaToken().then((t) => {
@@ -292,10 +296,20 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
       xhr.send(payload);
     });
   });
-  return { promise, abort: () => xhr.abort() };
+  return {
+    promise,
+    abort: () => {
+      cancelar?.();
+      try {
+        xhr.abort();
+      } catch {
+        /* todavía no se había enviado */
+      }
+    },
+  };
 }
 
-/** GET /api/tts?text=&emocion=&performance= → audio/mpeg (cabecera X-Ultron-TTS con el motor). Sin `engine`. */
+/** GET /api/tts?text=&emocion=&performance= → audio/wav de Voicebox (cabecera X-Ultron-TTS con el motor). Sin `engine`. */
 export function ttsUrl(text: string, performance: 'speak' | 'sing', emocion: Emocion = 'neutral') {
   const q = new URLSearchParams({ text, performance, emocion });
   return `${API_BASE}/api/tts?${q.toString()}`;

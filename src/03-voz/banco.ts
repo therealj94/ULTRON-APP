@@ -1,6 +1,7 @@
 /**
  * Banco de clips grabados con la voz oficial (public/voz). Cero red al reproducir.
- * Se graban con `scripts/grabar-banco.mjs`. Las canciones largas se grabaron en tomas únicas.
+ * Los hablados se graban con `scripts/grabar-banco.ts` (Voicebox). Las canciones largas son tomas
+ * únicas de la voz anterior y se quedan: Kokoro no canta.
  */
 
 export type Clip = {
@@ -44,7 +45,7 @@ export const BANCO: Clip[] = [
   { id: 'gracias', file: '/voz/gracias.mp3', keys: /^gracias\.?$/i, cara: 'HAPPY', texto: 'Gracias. De verdad.' },
   { id: 'yaya', file: '/voz/yaya.mp3', keys: /^ya,? ya\b/i, cara: 'LAUGH', texto: 'Ya, ya. Te vi.' },
   { id: 'risa1', file: '/voz/risa1.mp3', keys: /^risa1$|^risa$/i, cara: 'LAUGH', texto: 'Ay, no. Je je.' },
-  { id: 'risa2', file: '/voz/risa2.mp3', keys: /^risa2$/i, cara: 'LAUGH', texto: 'Je. Esa estuvo buena.' },
+  { id: 'risa2', file: '/voz/risa2.mp3', keys: /^risa2$/i, cara: 'LAUGH', texto: 'Esa estuvo buena.' },
   { id: 'mmm', file: '/voz/mmm.mp3', keys: /^mmm$|^d[eé]jame ver\.?$/i, texto: 'Mmm… déjame ver.' },
   { id: 'mmm2', file: '/voz/mmm2.mp3', keys: /^mmm2$/i, texto: 'Mmm… déjame pensarlo un segundo.' },
   { id: 'je', file: '/voz/je.mp3', keys: /^je je\.?$|^je\.?$/i, cara: 'LAUGH', texto: 'Je je.' },

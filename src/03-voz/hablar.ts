@@ -2,10 +2,12 @@
  * HABLAR — la única puerta por la que la web hace sonar a AU-RA.
  *
  *   1. Clip grabado del banco (0 ms, sin red) si la frase es un clip.
- *   2. POST /api/tts con la emoción del turno (ElevenLabs v3 en el servidor).
- *   3. Voz del navegador como último recurso, avisando en consola.
+ *   2. POST /api/tts con la emoción del turno (Voicebox en el servidor, devuelve WAV).
+ *   3. Si el servidor no da voz, silencio: el texto ya está en la burbuja. Nunca la voz robótica
+ *      del navegador, que no es AU-RA.
  *
- * Devuelve promesas que resuelven al TERMINAR de sonar, para que la cara sepa cuándo volver a reposo.
+ * Devuelve promesas que resuelven al TERMINAR de sonar (o de inmediato si no sonó nada), para que
+ * la cara sepa cuándo volver a reposo y la cola de frases no se quede esperando.
  */
 
 import { playFile, playWavBlob, stopVoice, newTtsAbort } from './player';
@@ -13,7 +15,7 @@ import { clipDeTexto, clipPorId, type Clip } from './banco';
 import { headersMesa } from '../10-infra/sesionCliente';
 import type { Emocion } from '../../lib/emocion';
 
-export type Motor = 'clip' | 'servidor' | 'navegador' | 'silencio';
+export type Motor = 'clip' | 'servidor' | 'silencio';
 
 export type Dicho = {
   motor: Motor;
@@ -31,35 +33,6 @@ export function setVozActiva(v: boolean) {
 }
 export function vozActiva() {
   return activo;
-}
-
-function hablarNavegador(texto: string): Dicho {
-  let resInicio!: () => void;
-  let resFin!: () => void;
-  const inicio = new Promise<void>((r) => (resInicio = r));
-  const fin = new Promise<void>((r) => (resFin = r));
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-    resInicio();
-    resFin();
-    return { motor: 'silencio', inicio, fin };
-  }
-  window.speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(texto);
-  u.lang = 'es-MX';
-  u.rate = 0.98;
-  u.pitch = 1.0;
-  const voces = window.speechSynthesis.getVoices();
-  const es = voces.find((v) => v.lang.startsWith('es') && /Google|Natural|Microsoft|Paulina|Monica|Sabina/i.test(v.name)) || voces.find((v) => v.lang.startsWith('es'));
-  if (es) u.voice = es;
-  u.onstart = () => resInicio();
-  u.onend = () => resFin();
-  u.onerror = () => {
-    resInicio();
-    resFin();
-  };
-  console.warn('[voz] servidor sin voz; usando la del navegador');
-  window.speechSynthesis.speak(u);
-  return { motor: 'navegador', inicio, fin };
 }
 
 function reproducirClip(clip: Clip): Dicho {
@@ -110,21 +83,19 @@ export function hablar(texto: string, opts: { emocion?: Emocion | string; perfor
       const blob = await r.blob();
       if (ac.signal.aborted) throw new DOMException('abort', 'AbortError');
       await playWavBlob(blob, () => resFin(), () => {
-        const nav = hablarNavegador(t);
-        nav.inicio.then(resInicio);
-        nav.fin.then(resFin);
+        // No se pudo reproducir (o la cortaron): termina sin sonar, para que nada quede esperando.
+        if (!ac.signal.aborted) console.warn('[voz] el audio del servidor no se pudo reproducir; queda el texto');
+        resInicio();
+        resFin();
       }, () => resInicio());
     })
     .catch((err: any) => {
-      if (err?.name === 'AbortError') {
-        resInicio();
-        resFin();
-        return;
+      if (err?.name !== 'AbortError') {
+        console.warn('[voz] servidor sin voz; queda el texto', String(err?.message || err));
+        salida.motor = 'silencio';
       }
-      const nav = hablarNavegador(t);
-      salida.motor = nav.motor;
-      nav.inicio.then(resInicio);
-      nav.fin.then(resFin);
+      resInicio();
+      resFin();
     });
   return salida;
 }
@@ -165,5 +136,4 @@ export function cantar(opts: { id?: string; pedido?: string; letra?: string; tit
 
 export function callar() {
   stopVoice();
-  if (typeof window !== 'undefined' && 'speechSynthesis' in window) window.speechSynthesis.cancel();
 }

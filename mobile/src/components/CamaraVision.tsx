@@ -1,42 +1,49 @@
 /**
  * CamaraVision — los ojos de AU-RA en el teléfono.
  *
- * Motor 'servidor': expo-camera en 1×1 px toma una foto cada 12 s (30 s con la cara dormida) y la manda
- * a /api/vision/analyze; las etiquetas pasan por `escenaDesdeEtiquetas` (src/lib/escena.ts) y salen como
- * la misma `Escena` que usa la web. Presencia aproximada, sin coordenadas de cara.
+ * Motor 'mlkit' (4.3): expo-camera toma fotos PEQUEÑAS (el tamaño más chico con al menos 720 px de lado
+ * corto, no la resolución del sensor) y ML Kit busca caras en el propio teléfono. Así sabe DÓNDE estás
+ * y los ojos te siguen. Ritmo según haga falta: ~3 fotos/s con alguien delante, 1/s sin nadie, una
+ * cada 2,5 s dormida. Cada foto se borra al terminar.
  *
- * Batería: la cámara solo trabaja con la app en primer plano (AppState) y espacia las fotos mientras la
- * cara duerme. onEscena sale como máximo cada 500 ms y de inmediato cuando trae eventos.
+ * El servidor (lo que hay en la mesa, comentarios) recibe esa MISMA foto chica, y no a cada rato:
+ * cada 20 s con alguien delante, cada 60 s sin nadie, nunca dormida.
  *
- * `grabRef` deja un frame bajo demanda en base64 jpeg (lo usa «qué ves» en DeskScreen).
+ * Motor 'servidor' (respaldo): si ML Kit no está o falla 3 veces seguidas, se vuelve al de antes
+ * —una foto cada 12 s (30 s dormida) al servidor—, pero ya con la foto chica.
  *
- * MOTOR NATIVO (ML Kit a 10 fps con vision-camera) — RETIRADO EN 4.1.1, ver DETECCION_NATIVA abajo.
+ * Antes (hasta 4.3) la cámara tomaba la foto a la resolución completa del sensor cada 12 s y la
+ * mandaba entera en base64: el teléfono se calentaba, gastaba datos y el servidor pagaba por
+ * analizar fotos enormes. Y como el servidor solo dice «hay una persona», los ojos miraban al centro.
+ *
+ * Batería: la cámara solo trabaja con la app en primer plano (AppState). `grabRef` deja un frame bajo
+ * demanda en base64 jpeg (lo usa «qué ves» en DeskScreen).
+ *
+ * El detector nativo de 4.1.0 (vision-camera + worklets-core) sigue retirado: cerraba la app al
+ * entrar a la mesa (ver 0602318). ML Kit aquí es un módulo clásico del puente, sin runtime de
+ * worklets, y analiza fotos, no un flujo de cuadros.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, StyleSheet, View, type AppStateStatus } from 'react-native';
 import { CameraView } from 'expo-camera';
+import * as FileSystem from 'expo-file-system/legacy';
+import FaceDetection from '@react-native-ml-kit/face-detection';
 import { describeImage } from '../lib/api';
 import { reportarEstado } from '../lib/reporte';
 import {
   MaquinaEscena,
+  UMBRALES_FOTOS,
+  caraDeMlkit,
+  elegirTamano,
   escenaApagada,
   escenaDesdeEtiquetas,
+  observacionMlkit,
+  type CaraMlkit,
   type Escena,
   type MotorVision,
 } from '../lib/escena';
 
-/**
- * RETIRADO EN 4.1.1. En el teléfono de la junta la app se cerraba sola justo al entrar a la mesa: el
- * crash caía donde se cargaba lo nativo — `react-native-worklets-core` instala su runtime por JSI y con
- * la arquitectura nueva de React Native 0.81 mata el proceso, que es exactamente el síntoma («entro y se
- * sale»). Quitar la bandera no bastaba: vision-camera, el face-detector y worklets-core entraban al APK
- * por autolinking con solo estar en package.json, y Metro resuelve sus `require()` aunque el código sea
- * inalcanzable. Así que se fueron las tres dependencias, el plugin de app.json, el de babel y el motor
- * nativo entero (queda en git: `git show HEAD~1:mobile/src/components/CamaraVision.tsx`).
- *
- * Para reactivarlo hay que validar worklets en un teléfono real, o migrar a `react-native-worklets` (el
- * de Software Mansion), que es el que VisionCamera recomienda desde RN 0.78.
- */
+/** El motor de vision-camera de 4.1.0 sigue fuera; ML Kit entra por fotos (ver arriba). */
 export const DETECCION_NATIVA = false;
 
 /** Ritmo de referencia con la cara dormida; DeskScreen lo usa para juzgar si una escena sigue fresca. */
@@ -45,22 +52,40 @@ export const DORMIDO_PERIODO_MS = 12_000;
 const ESCENA_CADA_MS = 500;
 /** Respaldo por servidor: foto cada 12 s (30 s si la cara duerme). DeskScreen los usa para la frescura. */
 export const SERVIDOR_CADA_MS = 12_000;
+export const SERVIDOR_DORMIDO_MS = 30_000;
+/** Con ML Kit: cada cuánto se busca cara, según haya alguien, no haya nadie o esté dormida. */
+const LOCAL_CON_PERSONA_MS = 330;
+const LOCAL_SIN_PERSONA_MS = 1000;
+const LOCAL_DORMIDA_MS = 2500;
+/** Con ML Kit: cada cuánto se le pregunta al servidor qué hay en la mesa. */
+const SERVIDOR_CON_PERSONA_MS = 20_000;
+const SERVIDOR_SIN_PERSONA_MS = 60_000;
+/** Fallos seguidos de ML Kit antes de pasarse al servidor. */
+const FALLOS_ML_MAX = 3;
 /** Menos base64 que esto no es una foto: es la cámara todavía sin imagen. */
 const MINIMO_FOTO = 4_000;
-export const SERVIDOR_DORMIDO_MS = 30_000;
 
-/** Se avisa una vez por arranque para no inundar los logs: la primera foto buena y la primera pobre. */
-let avisadaPobre = false;
-let avisadaBuena = false;
-function avisarFotoPobre(largo: number) {
-  if (avisadaPobre) return;
-  avisadaPobre = true;
-  reportarEstado(`cámara: foto inservible (${largo} car. base64), la descarto`);
+const OPCIONES_ML = {
+  performanceMode: 'fast',
+  landmarkMode: 'none',
+  contourMode: 'none',
+  classificationMode: 'all',
+  minFaceSize: 0.12,
+  trackingEnabled: false,
+} as const;
+
+/** Se avisa una vez por arranque para no inundar los logs. */
+const avisado = new Set<string>();
+function avisarUnaVez(clave: string, texto: string) {
+  if (avisado.has(clave)) return;
+  avisado.add(clave);
+  reportarEstado(texto);
 }
-function fotoBuena(largo: number) {
-  if (avisadaBuena) return;
-  avisadaBuena = true;
-  reportarEstado(`cámara: primera foto buena (${largo} car. base64)`);
+
+const dormir = (ms: number) => new Promise<void>((r) => setTimeout(r, Math.max(0, ms)));
+
+function borrar(uri?: string | null) {
+  if (uri) void FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
 }
 
 export type FrameGrabber = () => Promise<string | null>;
@@ -105,73 +130,161 @@ function useAppActiva() {
   return activa;
 }
 
-// ---------------------------------------------------------------- motor servidor
+// ---------------------------------------------------------------- el motor
 
-type ServidorProps = {
+type Foto = { uri: string; width: number; height: number };
+
+type MotorProps = {
   activa: boolean;
   dormido: boolean;
   grabRef?: React.MutableRefObject<FrameGrabber | null>;
+  /** Caras de una foto (ML Kit). Devuelve cuántas personas cuenta la escena. */
+  onCaras: (caras: CaraMlkit[], w: number, h: number) => number;
+  /** ML Kit no está o dejó de responder: a partir de aquí solo el servidor. */
+  onSinDetector: () => void;
   onEtiquetas: (summary: string, labels: string[]) => void;
 };
 
-function CamaraServidor({ activa, dormido, grabRef, onEtiquetas }: ServidorProps) {
+function CamaraMotor({ activa, dormido, grabRef, onCaras, onSinDetector, onEtiquetas }: MotorProps) {
   const ref = useRef<CameraView>(null);
-  const busy = useRef(false);
-  const readyRef = useRef(false);
-  const cb = useRef(onEtiquetas);
-  cb.current = onEtiquetas;
+  const listaRef = useRef(false);
+  const [tamano, setTamano] = useState<string | undefined>(undefined);
+  /** Una sola foto a la vez: el bucle y «qué ves» no pueden disparar juntos. */
+  const ocupada = useRef(false);
+  const mlOk = useRef(true);
+  const dormidoRef = useRef(dormido);
+  dormidoRef.current = dormido;
+  const cb = useRef({ onCaras, onSinDetector, onEtiquetas });
+  cb.current = { onCaras, onSinDetector, onEtiquetas };
 
-  /**
-   * Una foto de verdad pesa decenas de miles de caracteres en base64. Si sale mucho más corta es que
-   * la cámara todavía no entrega imagen (superficie sin preparar, permiso recién dado, sensor ocupado):
-   * se descarta en vez de mandar basura al nodo de visión, que respondería con un error y AU-RA lo
-   * repetiría como si no viera.
-   */
-  const grab = useCallback(async (quality = 0.25): Promise<string | null> => {
-    if (!ref.current || !readyRef.current) return null;
+  const tomar = useCallback(async (opciones: { base64: boolean; quality: number }): Promise<(Foto & { base64?: string }) | null> => {
+    if (!ref.current || !listaRef.current) return null;
     try {
-      const photo = await ref.current.takePictureAsync({ quality, base64: true, shutterSound: false });
-      const b64 = photo?.base64 || null;
-      if (!b64 || b64.length < MINIMO_FOTO) {
-        if (b64) avisarFotoPobre(b64.length);
-        return null;
-      }
-      fotoBuena(b64.length);
-      return b64;
+      const f = await ref.current.takePictureAsync({ quality: opciones.quality, base64: opciones.base64, shutterSound: false });
+      if (!f?.uri) return null;
+      return { uri: f.uri, width: f.width, height: f.height, base64: f.base64 };
     } catch {
       return null;
     }
   }, []);
 
+  /** Espera a que el bucle suelte la cámara (máx. ~2 s) y la toma. */
+  const conCamara = useCallback(async <T,>(fn: () => Promise<T>): Promise<T | null> => {
+    for (let i = 0; ocupada.current && i < 40; i++) await dormir(50);
+    if (ocupada.current) return null;
+    ocupada.current = true;
+    try {
+      return await fn();
+    } finally {
+      ocupada.current = false;
+    }
+  }, []);
+
+  // «Qué ves»: una foto con base64 (la chica: basta para describir y leer una etiqueta cercana).
   useEffect(() => {
     if (!grabRef) return;
-    grabRef.current = activa ? () => grab(0.35) : null;
+    grabRef.current = activa
+      ? async () => {
+          const f = await conCamara(() => tomar({ base64: true, quality: 0.6 }));
+          if (!f) return null;
+          borrar(f.uri);
+          const b64 = f.base64 || null;
+          if (!b64 || b64.length < MINIMO_FOTO) {
+            if (b64) avisarUnaVez('pobre', `cámara: foto inservible (${b64.length} car. base64), la descarto`);
+            return null;
+          }
+          return b64;
+        }
+      : null;
     return () => {
       grabRef.current = null;
     };
-  }, [activa, grab, grabRef]);
+  }, [activa, conCamara, grabRef, tomar]);
 
+  // El bucle: foto chica → ML Kit (si está) → a veces el servidor → borrar → esperar según haga falta.
   useEffect(() => {
-    if (!activa) return;
-    const id = setInterval(() => {
-      void (async () => {
-        if (busy.current) return;
-        busy.current = true;
-        try {
-          const b64 = await grab(0.2);
-          if (!b64) return;
-          const text = await describeImage(b64, LABEL_PROMPT);
-          if (!text) return;
-          cb.current(text, parseLabels(text));
-        } catch {
-          /* red / cámara */
-        } finally {
-          busy.current = false;
+    if (!activa) {
+      // La cámara se desmonta: la próxima tiene que volver a avisar que está lista.
+      listaRef.current = false;
+      return;
+    }
+    let vivo = true;
+    let fallos = 0;
+    let ultimoServidor = 0;
+    let conPersona = false;
+    const servidor = async (uri: string) => {
+      try {
+        const b64 = await FileSystem.readAsStringAsync(uri, { encoding: FileSystem.EncodingType.Base64 });
+        borrar(uri);
+        if (!b64 || b64.length < MINIMO_FOTO) return;
+        avisarUnaVez('buena', `cámara: primera foto al servidor (${b64.length} car. base64)`);
+        const text = await describeImage(b64, LABEL_PROMPT);
+        if (vivo && text) cb.current.onEtiquetas(text, parseLabels(text));
+      } catch {
+        borrar(uri);
+      }
+    };
+    void (async () => {
+      await dormir(600); // que la superficie tenga imagen
+      while (vivo) {
+        const t0 = Date.now();
+        let espera = LOCAL_SIN_PERSONA_MS;
+        const foto = await conCamara(() => tomar({ base64: false, quality: 0.5 }));
+        if (!vivo) {
+          borrar(foto?.uri);
+          break;
         }
-      })();
-    }, dormido ? SERVIDOR_DORMIDO_MS : SERVIDOR_CADA_MS);
-    return () => clearInterval(id);
-  }, [activa, dormido, grab]);
+        if (foto) {
+          if (mlOk.current) {
+            try {
+              const caras = await FaceDetection.detect(foto.uri, OPCIONES_ML);
+              fallos = 0;
+              conPersona = cb.current.onCaras(caras.map(caraDeMlkit), foto.width, foto.height) > 0;
+            } catch (e) {
+              fallos += 1;
+              if (fallos >= FALLOS_ML_MAX) {
+                mlOk.current = false;
+                avisarUnaVez('sinml', `cámara: ML Kit no responde (${String((e as Error)?.message || e).slice(0, 80)}), paso al servidor`);
+                cb.current.onSinDetector();
+              }
+            }
+          }
+          const dormida = dormidoRef.current;
+          const cadaServidor = mlOk.current
+            ? dormida
+              ? Infinity
+              : conPersona
+                ? SERVIDOR_CON_PERSONA_MS
+                : SERVIDOR_SIN_PERSONA_MS
+            : dormida
+              ? SERVIDOR_DORMIDO_MS
+              : SERVIDOR_CADA_MS;
+          if (Date.now() - ultimoServidor >= cadaServidor) {
+            ultimoServidor = Date.now();
+            void servidor(foto.uri); // lee la foto y la borra él
+          } else {
+            borrar(foto.uri);
+          }
+          espera = mlOk.current ? (dormida ? LOCAL_DORMIDA_MS : conPersona ? LOCAL_CON_PERSONA_MS : LOCAL_SIN_PERSONA_MS) : cadaServidor;
+        }
+        await dormir(espera - (Date.now() - t0));
+      }
+    })();
+    return () => {
+      vivo = false;
+    };
+  }, [activa, conCamara, tomar]);
+
+  const lista = useCallback(async () => {
+    listaRef.current = true;
+    if (tamano !== undefined || !ref.current) return;
+    try {
+      const t = elegirTamano(await ref.current.getAvailablePictureSizesAsync());
+      setTamano(t ?? '');
+    } catch {
+      setTamano('');
+    }
+  }, [tamano]);
 
   if (!activa) return null;
   return (
@@ -181,9 +294,8 @@ function CamaraServidor({ activa, dormido, grabRef, onEtiquetas }: ServidorProps
         style={StyleSheet.absoluteFill}
         facing="front"
         animateShutter={false}
-        onCameraReady={() => {
-          readyRef.current = true;
-        }}
+        pictureSize={tamano || undefined}
+        onCameraReady={() => void lista()}
       />
     </View>
   );
@@ -195,7 +307,7 @@ export function CamaraVision({ enabled, dormido = false, grabRef, onEscena, onGa
   const cb = useRef({ onEscena, onGaze, onObjects, onScene, onMotor });
   cb.current = { onEscena, onGaze, onObjects, onScene, onMotor };
   const appActiva = useAppActiva();
-  const maquina = useRef(new MaquinaEscena()).current;
+  const maquina = useRef(new MaquinaEscena(UMBRALES_FOTOS)).current;
   const ultimaEscena = useRef<Escena | null>(null);
   const ultimaEmision = useRef(0);
   const gaze = useRef({ x: 0, y: 0, activa: false });
@@ -233,12 +345,44 @@ export function CamaraVision({ enabled, dormido = false, grabRef, onEscena, onGa
     }
   }, [enabled, anunciarMotor, maquina]);
 
-  // etiquetas del nodo de visión → escena aproximada
+  const conDetector = useRef(true);
+
+  // ML Kit: caras de una foto → escena → mirada suavizada hacia la persona.
+  const onCaras = useCallback(
+    (caras: CaraMlkit[], w: number, h: number) => {
+      anunciarMotor('mlkit');
+      const ts = Date.now();
+      const obs = observacionMlkit(caras, w, h, 'portrait', ts);
+      const e = maquina.procesar(obs, { inmediato: dormidoRef.current });
+      const g = gaze.current;
+      if (e.principal) {
+        const a = g.activa ? 0.5 : 1;
+        g.x += (e.principal.x - g.x) * a;
+        g.y += (e.principal.y - g.y) * a;
+        g.activa = true;
+        cb.current.onGaze?.(g.x, g.y, true);
+      } else if (g.activa && e.personas === 0) {
+        g.activa = false;
+        cb.current.onGaze?.(g.x, g.y, false);
+      }
+      emitir(e);
+      return e.personas;
+    },
+    [anunciarMotor, emitir, maquina]
+  );
+
+  const onSinDetector = useCallback(() => {
+    conDetector.current = false;
+  }, []);
+
+  // Etiquetas del nodo de visión: objetos y comentarios siempre; la presencia solo si no hay ML Kit
+  // (con ML Kit, quién está delante lo sabe el teléfono, y mejor).
   const onEtiquetas = useCallback(
     (summary: string, labels: string[]) => {
-      anunciarMotor('servidor');
       if (labels.length) cb.current.onObjects?.(labels);
       cb.current.onScene?.(summary, labels);
+      if (conDetector.current) return;
+      anunciarMotor('servidor');
       const e = escenaDesdeEtiquetas(labels, Date.now(), ultimaEscena.current);
       const hay = e.personas > 0;
       if (hay !== gaze.current.activa) {
@@ -251,7 +395,7 @@ export function CamaraVision({ enabled, dormido = false, grabRef, onEscena, onGa
   );
 
   if (!enabled) return null;
-  return <CamaraServidor activa={activa} dormido={dormido} grabRef={grabRef} onEtiquetas={onEtiquetas} />;
+  return <CamaraMotor activa={activa} dormido={dormido} grabRef={grabRef} onCaras={onCaras} onSinDetector={onSinDetector} onEtiquetas={onEtiquetas} />;
 }
 
 const styles = StyleSheet.create({

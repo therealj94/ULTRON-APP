@@ -10,7 +10,7 @@ interface Props {
   onSpeak: (t: string) => void;
 }
 
-/** Bóveda: qué claves hay (solo booleanos) y dónde poner la de ElevenLabs si falta. Nunca muestra valores. */
+/** Bóveda: qué claves hay (solo booleanos) y dónde poner la de la voz (Voicebox) si falta. Nunca muestra valores. */
 export const UltronVaultModal: React.FC<Props> = ({ isOpen, onClose, onSpeak }) => {
   const [cajas, setCajas] = useState<Caja[]>([]);
   const [resumen, setResumen] = useState('');
@@ -18,9 +18,7 @@ export const UltronVaultModal: React.FC<Props> = ({ isOpen, onClose, onSpeak }) 
   const [key, setKey] = useState('');
   const [guardando, setGuardando] = useState(false);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    setError('');
+  const cargar = () =>
     fetch('/api/vault/status', { headers: headersMesa() })
       .then(async (r) => {
         const j = await r.json().catch(() => ({}));
@@ -30,6 +28,11 @@ export const UltronVaultModal: React.FC<Props> = ({ isOpen, onClose, onSpeak }) 
         setResumen(j.resumen || '');
       })
       .catch((e) => setError(String(e.message || e)));
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setError('');
+    void cargar();
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -38,12 +41,13 @@ export const UltronVaultModal: React.FC<Props> = ({ isOpen, onClose, onSpeak }) 
     if (key.trim().length < 10) return;
     setGuardando(true);
     try {
-      const r = await fetch('/api/vault/elevenlabs', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headersMesa() }, body: JSON.stringify({ apiKey: key.trim() }) });
+      const r = await fetch('/api/vault/voicebox', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headersMesa() }, body: JSON.stringify({ apiKey: key.trim() }) });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || 'No se guardó.');
       setKey('');
       onSpeak('Clave de voz archivada. Hasta el próximo redespliegue.');
-      setCajas((c) => c.map((x) => (x.id === 'elevenlabs' ? { ...x, configured: true } : x)));
+      // La voz queda lista solo si además hay VOICEBOX_URL: se vuelve a leer la bóveda en vez de suponerlo.
+      await cargar();
     } catch (e: any) {
       setError(String(e.message || e));
     } finally {
@@ -75,7 +79,7 @@ export const UltronVaultModal: React.FC<Props> = ({ isOpen, onClose, onSpeak }) 
           ))}
         </div>
         <div className="mt-1 p-3 rounded-xl border border-[#46484D] bg-[#34363A]/90 flex flex-col gap-2">
-          <div className="text-[12px] font-display tracking-normal text-[#B9B2A8]">CLAVE DE VOZ (ELEVENLABS) · solo mando con sesión</div>
+          <div className="text-[12px] font-display tracking-normal text-[#B9B2A8]">LLAVE DE VOZ (VOICEBOX) · solo mando con sesión</div>
           <div className="flex gap-2">
             <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="pegar clave" className="flex-1 px-3 py-2 bg-[#34363A]/90 border border-[#46484D] rounded-lg text-xs font-mono text-[#ECE8E2] focus:border-[#D6B56C] focus:outline-none" />
             <button type="button" onClick={guardar} disabled={guardando || key.trim().length < 10} className="px-3 py-2 rounded-lg border border-[#46484D] text-[#E0C27F] text-xs font-display tracking-wider hover:bg-[#D6B56C]/15 disabled:opacity-40 flex items-center gap-1.5 cursor-pointer">

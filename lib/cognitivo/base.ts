@@ -189,7 +189,7 @@ export function reescribir(coleccion: string, filas: unknown[]) {
  */
 const PATRONES_SECRETOS: RegExp[] = [
   /\b(AKIA|ASIA)[0-9A-Z]{16}\b/g, // AWS
-  /\bsk_[A-Za-z0-9]{20,}\b/g, // ElevenLabs y similares
+  /\bsk_[A-Za-z0-9]{20,}\b/g, // claves «sk_» de varios proveedores
   /\b[rsp]k_(live|test)_[A-Za-z0-9]{10,}\b/g, // Stripe
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, // JWT
   /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}/g,

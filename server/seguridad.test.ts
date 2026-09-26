@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { urlPublica, mesaAutorizada, mesaDeskAutorizada, emitirSesion, sesionDe, borrarSesion } from './seguridad';
+import { urlPublica, mesaAutorizada, mesaDeskAutorizada, emitirSesion, sesionDe, _olvidarCacheSesiones } from './seguridad';
 import { limpiarParaVoz } from './desk';
 
 test('bloquea metadata AWS y localhost', async () => {
@@ -38,18 +38,19 @@ test('mesa en producción no deja pasar sin sesión ni clave', () => {
 });
 
 test('sesión firmada sobrevive sin el Map en memoria', () => {
-  const prev = process.env.ULTRON_NODO_SECRETO;
-  process.env.ULTRON_NODO_SECRETO = 'secreto-de-prueba-para-hmac-sesion';
+  const prev = process.env.ULTRON_SESION_SECRETO;
+  process.env.ULTRON_SESION_SECRETO = 'secreto-de-prueba-para-hmac-sesion';
   const s = emitirSesion({ correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' });
   assert.match(s.token, /^u1\./);
-  borrarSesion(s.token);
+  // Como tras un redespliegue: el Map se vacía, el token firmado sigue valiendo.
+  _olvidarCacheSesiones();
   const viva = sesionDe({ headers: { 'x-ultron-sesion': s.token } } as any);
   assert.equal(viva?.correo, 'j.ordonez@ordenglobal.org');
   assert.equal(viva?.nombre, 'José');
   const fake = sesionDe({ headers: { 'x-ultron-sesion': s.token.slice(0, -2) + 'xx' } } as any);
   assert.equal(fake, null);
-  if (prev === undefined) delete process.env.ULTRON_NODO_SECRETO;
-  else process.env.ULTRON_NODO_SECRETO = prev;
+  if (prev === undefined) delete process.env.ULTRON_SESION_SECRETO;
+  else process.env.ULTRON_SESION_SECRETO = prev;
 });
 
 test('conversación abierta con rate limit; nada que cambie estado pasa sin sesión', () => {
