@@ -28,7 +28,7 @@
  */
 
 import crypto from 'crypto';
-import { sql, tipo } from '../../lib/cognitivo/base';
+import { redactar, sql, tipo } from '../../lib/cognitivo/base';
 
 export type TurnoHilo = { rol: 'persona' | 'electrum'; texto: string };
 export type MsgHilo = { role: 'user' | 'assistant'; content: string };
@@ -126,7 +126,12 @@ export async function cargarHilo(clave: string): Promise<TurnoHilo[]> {
   try {
     const [f] = await sql<{ turnos: TurnoHilo[]; tocado: Date }>(`SELECT turnos, tocado FROM cognitivo.hilo WHERE clave = $1`, [clave]);
     const tocado = f ? new Date(f.tocado).getTime() : 0;
-    if (!f || ahora() - tocado > CADUCA_MS || !Array.isArray(f.turnos)) return [];
+    if (!f) return [];
+    if (ahora() - tocado > CADUCA_MS || !Array.isArray(f.turnos)) {
+      // Caducado: se borra de la base igual que se olvida en memoria (seis horas), no se guarda para siempre.
+      void sql(`DELETE FROM cognitivo.hilo WHERE clave = $1`, [clave]).catch(() => {});
+      return [];
+    }
     const turnos = hiloDelCliente(f.turnos);
     hilos.set(clave, { turnos, tocado });
     return turnos;
@@ -136,17 +141,31 @@ export async function cargarHilo(clave: string): Promise<TurnoHilo[]> {
   }
 }
 
+/** La última vez que se barrieron los hilos caducados de la base. */
+let barrido = 0;
+
 function guardarEnBase(clave: string) {
   if (!persistente(clave)) return;
   const g = hilos.get(clave);
+  /*
+   * A la base va con los secretos tapados (lib/cognitivo/base.ts, redactar): si alguien pega una
+   * clave o una URL con contraseña en Telegram, en memoria vive seis horas; en la base y sus
+   * respaldos viviría para siempre. En memoria se queda tal cual, que es lo que el modelo necesita
+   * para contestar en este mismo rato.
+   */
   const q = g
     ? sql(
         `INSERT INTO cognitivo.hilo (clave, turnos, tocado) VALUES ($1, $2::jsonb, to_timestamp($3 / 1000.0))
          ON CONFLICT (clave) DO UPDATE SET turnos = EXCLUDED.turnos, tocado = EXCLUDED.tocado`,
-        [clave, JSON.stringify(g.turnos), g.tocado],
+        [clave, JSON.stringify(g.turnos.map((t) => ({ ...t, texto: redactar(t.texto) }))), g.tocado],
       )
     : sql(`DELETE FROM cognitivo.hilo WHERE clave = $1`, [clave]);
   void q.catch((e: any) => console.warn('[hilo] no pude guardar', String(e?.message || e).slice(0, 120)));
+  // Las conversaciones de quien no volvió también caducan en la base: un barrido cada hora como mucho.
+  if (ahora() - barrido > 60 * 60 * 1000) {
+    barrido = ahora();
+    void sql(`DELETE FROM cognitivo.hilo WHERE tocado < to_timestamp($1 / 1000.0)`, [ahora() - CADUCA_MS]).catch(() => {});
+  }
 }
 
 /** Guarda la ida y la vuelta juntas: un turno a medias no le sirve de contexto a nadie. */

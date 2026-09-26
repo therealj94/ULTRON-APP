@@ -11,7 +11,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { informeConversacion } from '../server/electrum/informe';
 import { manosDe } from '../server/electrum/manos';
-import { cargarHilo, claveHilo, hiloDe, olvidarHilo, recordarHilo } from '../server/electrum/hilo';
+import { cargarHilo, claveHilo, hiloDe, olvidarHilo, recordarHilo, relojDeHilo } from '../server/electrum/hilo';
 import { hayBase } from '../server/electrum/db';
 import { sql } from '../lib/cognitivo/base';
 
@@ -80,4 +80,30 @@ test('los hilos de la pantalla no van a la base: el cliente ya lleva su copia', 
   const [f] = await sql(`SELECT 1 FROM cognitivo.hilo WHERE clave = $1`, [clave]);
   assert.equal(f, undefined);
   olvidarHilo(clave);
+});
+
+test('en la base el hilo va con los secretos tapados, y el caducado se borra', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async () => {
+  const clave = claveHilo(`tg:secreto-${Date.now()}`, 'telegram');
+  const esperar = async (cond: () => Promise<boolean>) => {
+    for (let i = 0; i < 50 && !(await cond()); i++) await new Promise((r) => setTimeout(r, 20));
+  };
+  try {
+    recordarHilo(clave, 'mi clave es Sup3rSecreta-2026 y la base postgres://yo:pwd123@db.example/x', 'No la guardo.');
+    await esperar(async () => !!(await sql(`SELECT 1 FROM cognitivo.hilo WHERE clave = $1`, [clave]))[0]);
+    const [f] = await sql<{ turnos: any }>(`SELECT turnos FROM cognitivo.hilo WHERE clave = $1`, [clave]);
+    const guardado = JSON.stringify(f.turnos);
+    assert.doesNotMatch(guardado, /Sup3rSecreta-2026/);
+    assert.doesNotMatch(guardado, /pwd123/);
+    assert.match(hiloDe(clave)[0].texto, /Sup3rSecreta-2026/, 'en memoria sigue entero para este rato');
+    // Siete horas después: caducado, se devuelve vacío y se borra de la base.
+    olvidarHilo();
+    const real = Date.now();
+    relojDeHilo(() => real + 7 * 60 * 60 * 1000);
+    assert.deepEqual(await cargarHilo(clave), []);
+    await esperar(async () => !(await sql(`SELECT 1 FROM cognitivo.hilo WHERE clave = $1`, [clave]))[0]);
+    assert.equal((await sql(`SELECT 1 FROM cognitivo.hilo WHERE clave = $1`, [clave]))[0], undefined);
+  } finally {
+    relojDeHilo(() => Date.now());
+    await sql(`DELETE FROM cognitivo.hilo WHERE clave = $1`, [clave]).catch(() => {});
+  }
 });
