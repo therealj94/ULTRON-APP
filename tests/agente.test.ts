@@ -464,3 +464,40 @@ test('si quien preguntaba se fue, el turno deja de gastar', async (t) => {
     assert.equal(r.traza.length, 0, 'ni una herramienta corrió');
   });
 });
+
+test('lo que el modelo pide y no se puede usar vuelve al modelo en vez de perderse', async (t) => {
+  await t.test('una herramienta que no tiene: se le dice cuáles tiene y contesta en texto', async () => {
+    // Caso real (Telegram, 26-sep): pidió un PDF con una herramienta inexistente y el turno quedó vacío.
+    const { pensar, vistos } = modelo('<tool_call>{"name":"crear_pdf","arguments":{"tema":"caliza"}}</tool_call>', 'Ese PDF no lo puedo armar con lo que tengo.');
+    const r = await correrAgente({ mensajes: [{ role: 'user', content: 'hazme un pdf' }], herramientas: HS, ctx: CTX, pensar });
+    assert.equal(r.fin, 'contestó');
+    assert.equal(r.texto, 'Ese PDF no lo puedo armar con lo que tengo.');
+    const aviso = vistos[1].at(-1)!;
+    assert.equal(aviso.role, 'user');
+    assert.match(String((aviso as any).content), /«crear_pdf» no es una de tus herramientas/);
+    assert.match(String((aviso as any).content), /clima, sumar/);
+  });
+  await t.test('JSON roto dentro de la etiqueta y respuesta vacía también se devuelven', async () => {
+    const { pensar, vistos } = modelo('<tool_call>{"name": "clima", "arguments": {ciudad: Tegus}}</tool_call>', '', 'Listo.');
+    const r = await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: HS, ctx: CTX, pensar });
+    assert.equal(r.texto, 'Listo.');
+    assert.match(String((vistos[1].at(-1) as any).content), /JSON no se puede leer/);
+    assert.match(String((vistos[2].at(-1) as any).content), /llegó vacía/);
+  });
+  await t.test('no insiste para siempre: tras dos correcciones sale lo que haya', async () => {
+    const { pensar } = modelo('<tool_call>{"name":"nada"}</tool_call>');
+    const r = await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: HS, ctx: CTX, pensar });
+    assert.equal(r.fin, 'contestó');
+    assert.equal(r.rondas, 3);
+  });
+});
+
+test('al acabarse las rondas, redacta con lo que averiguó en vez de pegar resultados crudos', async () => {
+  let n = 0;
+  const pensar: Pensar = async ({ herramientas }) =>
+    herramientas.length ? { texto: `<tool_call>{"name":"clima","arguments":{"ciudad":"C${n++}"}}</tool_call>` } : { texto: 'En resumen: llueve en las tres ciudades.' };
+  const r = await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: HS, ctx: CTX, pensar, presupuesto: { rondas: 2 } });
+  assert.equal(r.fin, 'sin rondas');
+  assert.equal(r.texto, 'En resumen: llueve en las tres ciudades.');
+  assert.doesNotMatch(r.texto, /Me quedé sin vueltas/);
+});

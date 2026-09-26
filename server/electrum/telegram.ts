@@ -25,7 +25,7 @@ import { extraerPdf } from '../../lib/leer-pdf';
 import { aprender } from './aprender';
 import { turnoElectrum } from './turno';
 import { verImagen, vistaFallida } from '../../lib/vision';
-import { claveHilo, fusionarHiloElectrum, hiloDe, olvidarHilo, recordarHilo, type TurnoHilo } from './hilo';
+import { cargarHilo, claveHilo, fusionarHiloElectrum, hiloDe, olvidarHilo, recordarHilo, type TurnoHilo } from './hilo';
 import { tomarInforme } from './informe';
 
 const ES_GEO = /\.(zip|kml|kmz|geojson|json|csv|shp)$/i;
@@ -385,7 +385,8 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
    * El archivo sí va pegado, y con razón: es contexto de ESTA pregunta, no de las anteriores.
    */
   const historial = fusionarHiloElectrum({
-    servidor: hiloElectrum(parsed.chatId),
+    // Tras un redespliegue el hilo ya no está en memoria: se trae de la base.
+    servidor: await cargarHilo(claveTelegram(parsed.chatId)),
     mensaje,
   });
   const conArchivo = archivo?.contexto ? `${archivo.contexto}\n\n` : '';

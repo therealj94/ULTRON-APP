@@ -166,7 +166,7 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   // alerta de ataque.
   const clas = await clasificar(mensaje, 'electrum');
   trazaActual()?.clasificacion(clas);
-  ctx = { ...ctx, riesgo: clas.riesgo };
+  ctx = { ...ctx, riesgo: clas.riesgo, historial: historial.map((m) => ({ role: m.role, content: m.content })) };
   const { panel } = await panelP;
   // Las de su oficio y, para todos, la memoria estructurada (fichas de empresas, concesiones, personas).
   const herramientas = [...(panel.length ? manosDe(herramientasDe(panel)) : TODAS), ...MEMORIA_ESTRUCTURADA];

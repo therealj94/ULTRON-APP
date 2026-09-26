@@ -13,7 +13,7 @@
  * puede repetir sin inventar. Ninguna lanza una excepción que el usuario tenga que ver.
  */
 import { COMPARTIDAS } from '../../lib/manos/compartidas';
-import { guardarInforme, informeCartera, informeConcesion } from './informe';
+import { guardarInforme, informeCartera, informeConcesion, informeConversacion } from './informe';
 import type { Herramienta } from '../../lib/agente/tipos';
 import { areaHectareas, distanciaKm, encuadre, perimetroKm } from './gis';
 import {
@@ -334,11 +334,17 @@ const documento_revisar: Herramienta = {
 const informe_pdf: Herramienta = {
   nombre: 'informe_pdf',
   descripcion:
-    'Arma un informe en PDF descargable: la ficha completa de una concesión (con área medida, traslapes y citas de expediente) o el estado de toda la cartera cargada. Usala cuando pidan «un informe», «un PDF», «algo para imprimir» o «para llevar a la reunión».',
+    'Arma un informe en PDF descargable: la ficha completa de una concesión (con área medida, traslapes y citas de expediente), el estado de toda la cartera cargada, o lo que se viene conversando (tipo conversacion: una investigación o un análisis, con sus fuentes). Usala cuando pidan «un informe», «un PDF», «algo para imprimir» o «para llevar a la reunión».',
   esquema: {
     type: 'object',
     properties: {
-      tipo: { type: 'string', description: 'concesion para una ficha, cartera para el estado de todo', enum: ['concesion', 'cartera'], default: 'concesion' },
+      tipo: {
+        type: 'string',
+        description: 'concesion para una ficha, cartera para el estado de todo, conversacion para poner en PDF lo que se viene hablando (una investigación, un análisis)',
+        enum: ['concesion', 'cartera', 'conversacion'],
+        default: 'concesion',
+      },
+      titulo: { type: 'string', description: 'Solo para conversacion: de qué trata, en pocas palabras (p. ej. «Caliza coralina en Honduras»)' },
       nombre: { type: 'string', description: 'Nombre o expediente de la concesión, si el informe es de una' },
       concesion_id: { type: 'integer', description: 'Id de la concesión, si ya lo tenés de una búsqueda anterior' },
       lectura: {
@@ -350,15 +356,17 @@ const informe_pdf: Herramienta = {
   },
   plataformas: ['electrum'],
   msMaximo: 25_000,
-  async ejecutar({ tipo, nombre, concesion_id, lectura }, ctx) {
-    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+  async ejecutar({ tipo, nombre, concesion_id, lectura, titulo }, ctx) {
+    const conversacion = String(tipo || '') === 'conversacion';
+    if (!conversacion && !hayBase()) return { ok: false, texto: SIN_BASE };
     // El pie del PDF lleva el NOMBRE de quien lo pidió; la propiedad del informe, su id. Antes el
     // pie decía «a petición de jose»: el identificador interno del padrón, impreso con membrete.
     const quien = ctx.quien;
     const opts = { quien: quien ? personaPorId(quien)?.nombre || null : null, lectura: lectura ? String(lectura) : undefined };
 
-    const r =
-      String(tipo || 'concesion') === 'cartera'
+    const r = conversacion
+      ? informeConversacion({ ...opts, titulo: titulo ? String(titulo) : undefined, historial: ctx.historial || [] })
+      : String(tipo || 'concesion') === 'cartera'
         ? await informeCartera(opts)
         : await informeConcesion(
             { id: concesion_id != null ? Number(concesion_id) : undefined, nombre: nombre ? String(nombre) : undefined },

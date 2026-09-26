@@ -437,6 +437,83 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   };
 }
 
+/* ------------------------------------------------------------------ conversación */
+
+type MsgConversacion = { role: 'user' | 'assistant'; content: string };
+
+const URL = /https?:\/\/[^\s)>\]»"']+/g;
+
+/**
+ * El informe de una conversación: lo que Dr Electrum YA respondió, puesto en un PDF.
+ *
+ * Nació de un pedido real por Telegram: después de investigar dónde hay caliza coralina, «hacerme
+ * un pdf». La herramienta solo sabía armar la ficha de una concesión o la cartera, y el turno
+ * terminó sin respuesta. Esto no rompe el reparto de arriba: el modelo no escribe el documento. Se
+ * copian tal cual las respuestas que ya se dieron (ya las leyó quien pregunta), con su pregunta al
+ * lado, y las direcciones que se citaron. Lo único del modelo es, si quiere, la lectura rotulada.
+ */
+export function informeConversacion(
+  opts: OpcionesInforme & { titulo?: string; historial: MsgConversacion[] }
+): Informe | { error: string } {
+  const hist = (opts.historial || []).filter((m) => String(m.content || '').trim());
+  const pares: Array<{ pregunta: string; respuesta: string }> = [];
+  for (let i = 0; i < hist.length; i++) {
+    if (hist[i].role !== 'assistant') continue;
+    const previa = hist[i - 1]?.role === 'user' ? hist[i - 1].content : '';
+    pares.push({ pregunta: previa.trim(), respuesta: hist[i].content.trim() });
+  }
+  if (!pares.length) return { error: 'Todavía no hay nada conversado que poner en un PDF. Preguntame primero y después te lo armo.' };
+  const ultimos = pares.slice(-12);
+
+  const fuentes = [...new Set(hist.flatMap((m) => m.content.match(URL) || []).map((u) => u.replace(/[.,;:]+$/, '')))].slice(0, 30);
+
+  const bloques: Bloque[] = [{ tipo: 'seccion', texto: 'Lo conversado' }];
+  for (const p of ultimos) {
+    if (p.pregunta) bloques.push({ tipo: 'nota', texto: `Pregunta: ${p.pregunta.slice(0, 600)}` });
+    bloques.push({ tipo: 'parrafo', texto: p.respuesta });
+  }
+  if (fuentes.length) {
+    bloques.push({ tipo: 'seccion', texto: 'Fuentes citadas' }, { tipo: 'tabla', cabecera: ['Dirección'], filas: fuentes.map((u) => [u]) });
+  }
+  if (opts.lectura?.trim()) {
+    bloques.push(
+      { tipo: 'seccion', texto: 'Lectura de Dr Electrum' },
+      { tipo: 'parrafo', texto: opts.lectura.trim().slice(0, 1800) },
+      { tipo: 'nota', texto: 'Esta sección es interpretación, escrita para este documento.' }
+    );
+  }
+  bloques.push(
+    { tipo: 'regla' },
+    {
+      tipo: 'nota',
+      texto:
+        'Recopila, tal cual, lo que Dr Electrum respondió en esta conversación: no agrega cifras. Lo que viene de internet va con su dirección y no está verificado contra el catastro; lo que no se subió a la plataforma no aparece.',
+    }
+  );
+
+  const titulo = String(opts.titulo || '').trim().slice(0, 90) || 'Conversación con Dr Electrum';
+  const n = ultimos.length;
+  const pdf = documentoPdf({
+    titulo,
+    subtitulo: `${n} ${n === 1 ? 'respuesta' : 'respuestas'}${fuentes.length ? ` · ${fuentes.length} ${fuentes.length === 1 ? 'fuente citada' : 'fuentes citadas'}` : ''} · ${fecha()}`,
+    bloques,
+    pie: pie(opts.quien || null),
+    acento: AMBAR,
+  });
+  const archivo = titulo
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 50);
+  return {
+    pdf,
+    nombre: `${archivo || 'conversacion'}-${new Date().toISOString().slice(0, 10)}.pdf`,
+    dicho: `Armé el PDF con lo que venimos conversando: ${n} ${n === 1 ? 'respuesta' : 'respuestas'}${fuentes.length ? ` y ${fuentes.length} ${fuentes.length === 1 ? 'fuente citada' : 'fuentes citadas'}` : ''}.`,
+  };
+}
+
 /* ------------------------------------------------------------------ entrega */
 
 /**

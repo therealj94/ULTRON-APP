@@ -16,7 +16,7 @@
  */
 import { trazaActual } from '../cognitivo/traza';
 import { autorizar, textoDeDecision } from '../cognitivo/politica';
-import { herramientasNativas, instruccionHermes, leerLlamadas, limpiarTexto, validar } from './protocolo';
+import { herramientasNativas, instruccionHermes, leerLlamadas, limpiarTexto, pedidosRechazados, validar } from './protocolo';
 import { efectoDe, type Contexto, type Herramienta, type Llamada, type Respuesta } from './tipos';
 
 export type Mensaje =
@@ -115,6 +115,18 @@ export async function correrAgente(opts: {
 
   const traza: Traza[] = [];
   const ui: Record<string, unknown>[] = [];
+  /** Cuántas veces se le devolvió al modelo un pedido que no se pudo usar. */
+  let correcciones = 0;
+  const redactarFinal = async (): Promise<string | null> => {
+    const restante = p.ms - (Date.now() - t0);
+    if (restante < 5_000 || opts.abandonado?.() || !traza.some((t) => t.ok)) return null;
+    try {
+      const s = await opts.pensar({ mensajes: [...mensajes, { role: 'user', content: CIERRE }], herramientas: [], msRestante: restante });
+      return limpiarTexto(s.texto || '') || null;
+    } catch {
+      return null;
+    }
+  };
   /** Huella de cada llamada ya hecha en este turno, con su respuesta. */
   const hechas = new Map<string, Respuesta>();
   let usadas = 0;
@@ -149,12 +161,31 @@ export async function correrAgente(opts: {
     texto = salida.texto || '';
     const llamadas = leerLlamadas(salida.mensaje, texto, opts.herramientas);
 
-    // Sin llamadas: el modelo ya está contestando. Es la salida normal del bucle.
-    if (!llamadas.length) return { texto: limpiarTexto(texto), traza, ui, fin: 'contestó', rondas: ronda };
+    if (!llamadas.length) {
+      /*
+       * Sin llamadas válidas. Si el modelo pidió algo que no se puede usar, o contestó vacío, se le
+       * dice por qué y se le deja corregir (hasta dos veces). Antes eso terminaba en silencio.
+       */
+      const rechazos = pedidosRechazados(salida.mensaje, texto, opts.herramientas);
+      if ((rechazos.length || !limpiarTexto(texto)) && ronda <= p.rondas && correcciones < 2) {
+        correcciones++;
+        trazaActual()?.paso({ herramienta: 'pedido_rechazado', ok: false, ms: 0, resumen: rechazos.join('; ') || 'respuesta vacía', ronda });
+        mensajes.push({ role: 'assistant', content: texto || '(sin texto)' });
+        mensajes.push({
+          role: 'user',
+          content: rechazos.length
+            ? `(Sistema) No se pudo usar lo que pediste: ${rechazos.join('; ')}. Tus herramientas son: ${[...porNombre.keys()].join(', ')}. Si ninguna sirve para esto, contestá en texto qué podés hacer y qué no.`
+            : '(Sistema) Tu respuesta llegó vacía. Contestá en texto a lo que te preguntaron.',
+        });
+        continue;
+      }
+      // El modelo ya está contestando. Es la salida normal del bucle.
+      return { texto: limpiarTexto(texto), traza, ui, fin: 'contestó', rondas: ronda };
+    }
 
-    // Última ronda: no se ejecuta nada más, se le pide que cierre con lo que tiene.
+    // Última ronda y sigue pidiendo herramientas: que redacte con lo que ya averiguó.
     if (ronda > p.rondas) {
-      return { texto: limpiarTexto(texto) || cierreForzado(traza), traza, ui, fin: 'sin rondas', rondas: ronda };
+      return { texto: (await redactarFinal()) || limpiarTexto(texto) || cierreForzado(traza), traza, ui, fin: 'sin rondas', rondas: ronda };
     }
 
     // El turno del asistente queda en el hilo: el modelo tiene que ver qué pidió.
@@ -231,8 +262,17 @@ export async function correrAgente(opts: {
     }
   }
 
-  return { texto: limpiarTexto(texto) || cierreForzado(traza), traza, ui, fin: 'sin rondas', rondas: p.rondas };
+  return { texto: (await redactarFinal()) || limpiarTexto(texto) || cierreForzado(traza), traza, ui, fin: 'sin rondas', rondas: p.rondas };
 }
+
+/**
+ * Al acabarse las rondas con herramientas pedidas, antes se pegaban los resúmenes crudos de lo que
+ * devolvieron («Geoportal - ICF (http://…): Las metas de GeoNetwork son…») y un «me quedé sin
+ * vueltas». Pasó en producción investigando caliza por Telegram. Ahora se le pide al modelo, sin
+ * herramientas, que redacte la respuesta con lo que ya tiene; lo crudo queda solo si no hay tiempo.
+ */
+const CIERRE =
+  '(Sistema) Se acabaron las herramientas de este turno. Con lo que ya averiguaste, redactá ahora la respuesta final para quien pregunta, sin pedir más herramientas. Si algo quedó sin averiguar, decilo y ofrecé seguir.';
 
 /** Una herramienta colgada no puede colgar el turno entero. */
 function conTope<T>(promesa: Promise<T>, ms: number, nombre: string): Promise<T> {

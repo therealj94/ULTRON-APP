@@ -57,6 +57,11 @@ export type Contexto = {
   prueba?: 'sesion' | 'telegram' | 'nombre' | null;
   /** Riesgo del turno según el clasificador (0–100). Las reglas lo usan para mandar a revisión. */
   riesgo?: number | null;
+  /**
+   * Lo que se venía hablando en esta conversación (los turnos anteriores, con su rol). Lo usa el
+   * informe de conversación para poner en un PDF lo que ya se dijo, sin que el modelo lo reescriba.
+   */
+  historial?: Array<{ role: 'user' | 'assistant'; content: string }>;
 };
 
 export function efectoDe(h: Pick<Herramienta, 'efecto' | 'escribe'>): Efecto {
