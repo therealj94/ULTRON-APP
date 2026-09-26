@@ -1250,7 +1250,7 @@ export function DeskScreen({ user, onLogout }: Props) {
   };
   const probarVoz = () => {
     setMenuOpen(false);
-    void say(`Así sueno, ${user.name}. Una sola voz: Gabriela, en ElevenLabs v3. Puedo reír, cantar o contarte un chiste; tú dime.`, 'HAPPY', { emocion: 'feliz' });
+    void say(`Así sueno, ${user.name}. Una sola voz: la mía, en mi propio servidor. Puedo contarte un chiste o cantarte una de las mías; tú dime.`, 'HAPPY', { emocion: 'feliz' });
   };
 
   const sendDraft = () => {

@@ -13,7 +13,7 @@ type Capacidad = {
 };
 
 type Catalogo = {
-  voz?: { oficial?: { nombre: string; motor: string; timbre: string; expresividad: string[] }; elevenlabs?: boolean; ttsLocal?: string | null };
+  voz?: { oficial?: { nombre: string; motor: string; timbre: string; expresividad: string[] }; voicebox?: boolean; servidor?: string | null };
   modos?: Array<{ id: string; etiqueta: string; tono: string }>;
   canciones?: Array<{ id: string; titulo: string; artista: string; pedir: string }>;
   capacidades?: Capacidad[];
@@ -74,8 +74,8 @@ export const Capacidades: React.FC<{ onEjemplo: (cmd: string) => void; onProbarV
             </div>
             <div className="text-[13px] text-[#B9B2A8] mt-0.5">{cat.voz.oficial.motor}. Sabe: {cat.voz.oficial.expresividad.join(', ')}.</div>
             <div className="text-[12px] mt-1 font-mono">
-              <span className={cat.voz.elevenlabs ? 'text-emerald-400' : 'text-[#E39A7A]'}>{cat.voz.elevenlabs ? '● ElevenLabs conectado' : '○ ElevenLabs sin clave'}</span>
-              {cat.voz.ttsLocal && <span className="text-[#8A847C]"> · respaldo local configurado</span>}
+              <span className={cat.voz.voicebox ? 'text-emerald-400' : 'text-[#E39A7A]'}>{cat.voz.voicebox ? '● Voz en el servidor propio (Voicebox)' : '○ Voicebox sin configurar'}</span>
+              {cat.voz.voicebox && cat.voz.servidor && <span className="text-[#8A847C]"> · {cat.voz.servidor}</span>}
             </div>
           </div>
           <button type="button" onClick={onProbarVoz} className="shrink-0 px-3 py-1.5 rounded-lg border border-[#46484D] text-[#E0C27F] text-xs font-display tracking-wider hover:bg-[#D6B56C]/15 flex items-center gap-1.5">

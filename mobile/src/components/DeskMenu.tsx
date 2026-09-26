@@ -232,7 +232,7 @@ export function DeskMenu(p: Props) {
               <View style={styles.voiceBox}>
                 <Text style={styles.voiceName}>{VOICE_NAME}</Text>
                 <Text style={styles.sub}>
-                  {cat.payload?.voz?.motor || 'ElevenLabs v3 (diálogo expresivo)'} · {cat.payload?.voz?.timbre || 'español latino, cálida, cercana'}
+                  {cat.payload?.voz?.motor || 'Voicebox · Kokoro, en el servidor propio de AU-RA'} · {cat.payload?.voz?.timbre || 'Dora · español, cálida, cercana'}
                 </Text>
                 <Pressable onPress={p.onProbarVoz} style={styles.voiceBtn} accessibilityRole="button">
                   <Text style={styles.voiceBtnText}>Probar voz</Text>

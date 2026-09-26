@@ -37,7 +37,7 @@ test('qué deja pasar cada plataforma', async (t) => {
       '/api/render/deploy',
       '/api/taller',
       '/api/vault/status',
-      '/api/vault/elevenlabs',
+      '/api/vault/voicebox',
       '/api/turno',
       '/api/turno/stream',
       '/api/memoria',

@@ -1,10 +1,9 @@
 /**
- * Oído: transcribe audio de verdad. Nodo local (ULTRON_STT_URL) si existe, luego ElevenLabs Scribe, Gemini de reserva.
+ * Oído: transcribe audio de verdad. Whisper en el servidor propio de AU-RA (Voicebox), Gemini de reserva.
  * Si no hay clave o no se entiende, se dice. No se inventa lo hablado.
  */
 
 import { clave } from './boveda';
-import { elevenTranscribe } from '../server/desk';
 import { presupuesto, type Presupuesto } from './presupuesto';
 
 export type Oido = { texto: string; via: string; detalle: string };
@@ -12,8 +11,8 @@ export type Oido = { texto: string; via: string; detalle: string };
 /**
  * Lo que contesta un proveedor. `null`: no está configurado o se cayó, que pruebe el siguiente.
  * Un `texto` vacío es que contestó bien y no había voz: eso ES una respuesta. Antes se trataba
- * igual que un fallo y el mismo silencio se le mandaba a Scribe v2, a Scribe v1 y a Gemini — tres
- * facturas por un bolsillo que rozó el micrófono.
+ * igual que un fallo y el mismo silencio se le mandaba a cada proveedor de la cadena — una factura
+ * por proveedor por un bolsillo que rozó el micrófono.
  */
 export type Escucha = { texto: string; via: string } | null;
 
@@ -84,46 +83,46 @@ async function transcribirGemini(audio: Buffer, mime: string, language: string, 
 }
 
 /**
- * Oído local (nodo T4): servidor compatible con la API de OpenAI `/v1/audio/transcriptions`
- * (faster-whisper-server, speaches, whisper.cpp server). Sin costo por minuto, latencia baja.
- * Se usa primero si ULTRON_STT_URL está definido; si falla, Scribe.
+ * Lo que Whisper «oye» en el silencio: créditos de subtítulos con los que se entrenó, o una
+ * etiqueta entre corchetes. No es voz de nadie, y contestarle sería inventar lo hablado.
  */
-async function transcribirLocal(audio: Buffer, mime: string, language: string, reloj: Presupuesto): Promise<Escucha> {
-  const base = (process.env.ULTRON_STT_URL || '').replace(/\/$/, '');
-  if (!base) return null;
-  const ext = /wav/.test(mime) ? 'wav' : /webm/.test(mime) ? 'webm' : /ogg/.test(mime) ? 'ogg' : /mp3|mpeg/.test(mime) ? 'mp3' : 'm4a';
+const STT_BASURA = /^(subt[ií]tulos.*|gracias por ver.*|suscr[ií]bete.*|\.+|…|music|\[.*\]|\(.*\))$/i;
+
+function extensionDe(mime: string) {
+  return /wav/.test(mime) ? 'wav' : /webm/.test(mime) ? 'webm' : /ogg/.test(mime) ? 'ogg' : /mp3|mpeg/.test(mime) ? 'mp3' : 'm4a';
+}
+
+/**
+ * Whisper (modelo `turbo`) en Voicebox, el mismo servidor que da la voz. Sin costo por minuto:
+ * unos 0,8 s para 7 s de audio. Pide su corte al presupuesto de la petición: 12 s o lo que quede.
+ */
+async function transcribirVoicebox(audio: Buffer, mime: string, language: string, reloj: Presupuesto): Promise<Escucha> {
+  const base = clave('voicebox_url').replace(/\/+$/, '');
+  const llave = clave('voicebox_clave');
+  if (!base || !llave) return null;
   const form = new FormData();
-  form.append('model', process.env.ULTRON_STT_MODELO || 'Systran/faster-whisper-large-v3');
+  form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `voz.${extensionDe(mime)}`);
   form.append('language', language);
-  form.append('response_format', 'json');
-  form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `voz.${ext}`);
-  const headers: Record<string, string> = {};
-  if (process.env.ULTRON_STT_CLAVE) headers.Authorization = `Bearer ${process.env.ULTRON_STT_CLAVE}`;
-  const r = await fetch(`${base}/v1/audio/transcriptions`, { method: 'POST', headers, body: form, signal: reloj.senal(12000) });
+  form.append('model', 'turbo');
+  const r = await fetch(`${base}/transcribe`, { method: 'POST', headers: { 'X-Voz-Clave': llave }, body: form, signal: reloj.senal(12000) });
   if (!r.ok) {
-    console.warn('[stt local]', r.status, (await r.text()).slice(0, 120));
+    console.warn('[stt voicebox]', r.status, (await r.text().catch(() => '')).slice(0, 160));
     return null;
   }
-  const j: any = await r.json().catch(() => ({}));
-  const texto = String(j.text || '').trim();
-  if (texto.length < 2) return { texto: '', via: 'stt-local' };
-  return { texto: texto.slice(0, 4000), via: 'stt-local' };
+  const j: any = await r.json().catch(() => null);
+  // Un 200 sin `text` no es silencio: es una respuesta rota, y el siguiente proveedor merece su turno.
+  if (typeof j?.text !== 'string') {
+    console.warn('[stt voicebox] respuesta sin texto');
+    return null;
+  }
+  const texto = j.text.trim();
+  if (texto.length < 2 || STT_BASURA.test(texto)) return { texto: '', via: 'voicebox:whisper' };
+  return { texto: texto.slice(0, 4000), via: 'voicebox:whisper' };
 }
 
-function llaveEleven() {
-  return clave('elevenlabs') || process.env.ELEVENLABS_API_KEY || '';
-}
-
-async function transcribirEleven(audio: Buffer, mime: string, language: string, reloj: Presupuesto): Promise<Escucha> {
-  const out = await elevenTranscribe({ apiKey: llaveEleven(), audio, mime, language, presupuesto: reloj });
-  if (out.model === 'error' || out.model === 'sin-clave') return null;
-  return { texto: out.text.slice(0, 4000), via: `elevenlabs:${out.model}` };
-}
-
-/** El orden de siempre: el nodo propio (gratis), Scribe, y Gemini de reserva. */
+/** El orden: el Whisper propio (gratis), y Gemini de reserva. */
 export const PROVEEDORES_OIDO: ProveedorOido[] = [
-  { nombre: 'stt-local', listo: () => !!process.env.ULTRON_STT_URL, oir: transcribirLocal },
-  { nombre: 'elevenlabs', listo: () => !!llaveEleven(), oir: transcribirEleven },
+  { nombre: 'voicebox', listo: () => !!(clave('voicebox_url') && clave('voicebox_clave')), oir: transcribirVoicebox },
   { nombre: 'gemini', listo: () => !!clave('gemini'), oir: transcribirGemini },
 ];
 
@@ -188,7 +187,7 @@ export async function transcribirAudio(opts: {
   }
   if (motivo === 'ninguno') {
     // Los nombres de las variables van al registro, no a quien habla: a él no le sirven de nada.
-    console.warn('[oido] sin proveedor de oído: falta ULTRON_STT_URL, ELEVENLABS_API_KEY o GEMINI_API_KEY');
+    console.warn('[oido] sin proveedor de oído: falta VOICEBOX_URL + VOICEBOX_CLAVE o GEMINI_API_KEY');
     return { texto: '', via: 'ninguno', detalle: 'Ahora mismo no puedo oír audios. Escríbeme.' };
   }
   console.warn(`[oido] ningún proveedor contestó (probados: ${intentados.join(', ')})`);

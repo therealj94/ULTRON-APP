@@ -87,7 +87,8 @@ export type Health = {
   qwen?: { vivo?: boolean; modelo?: string | null };
   tts?: { vivo?: boolean };
   ojo?: { vivo?: boolean; vision?: boolean };
-  elevenlabs?: boolean;
+  /** Voicebox configurado en el servidor (voz y oído propios). */
+  voicebox?: boolean;
 };
 
 export async function healthCheck() {
@@ -308,7 +309,7 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
   };
 }
 
-/** GET /api/tts?text=&emocion=&performance= → audio/mpeg (cabecera X-Ultron-TTS con el motor). Sin `engine`. */
+/** GET /api/tts?text=&emocion=&performance= → audio/wav de Voicebox (cabecera X-Ultron-TTS con el motor). Sin `engine`. */
 export function ttsUrl(text: string, performance: 'speak' | 'sing', emocion: Emocion = 'neutral') {
   const q = new URLSearchParams({ text, performance, emocion });
   return `${API_BASE}/api/tts?${q.toString()}`;

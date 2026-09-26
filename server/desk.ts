@@ -1,11 +1,10 @@
 /**
- * Identidad de la junta, personalidad de AU-RA y oído (Scribe).
- * La voz vive en server/voz.ts. Los hechos de Orden Global viven en src/05-cerebro-og.
+ * Identidad de la junta y personalidad de AU-RA.
+ * La voz vive en server/voz.ts y el oído en lib/oido.ts. Los hechos de Orden Global viven en src/05-cerebro-og.
  */
 import { afinarParaBoca } from './habla';
 import { INSTRUCCION_EMOCION } from '../lib/emocion';
 import { perfilActivo } from '../lib/perfiles';
-import { presupuesto as armarPresupuesto, type Presupuesto } from '../lib/presupuesto';
 
 export const MAIL_ALIASES: Record<string, string> = {
   'mjoseenamorado1994@gmail.com': 'j.ordonez@ordenglobal.org',
@@ -74,62 +73,10 @@ export function buildPersonality(opts: {
   ].join('\n');
 }
 
-/* ---------------- ElevenLabs STT (Scribe) ---------------- */
+/* ---------------- Texto para la voz ---------------- */
 
 export function limpiarParaVoz(text: string) {
   return afinarParaBoca(text);
-}
-
-const STT_BASURA = /^(subt[ií]tulos.*|gracias por ver.*|suscr[ií]bete.*|\.+|…|music|\[.*\]|\(.*\))$/i;
-
-/**
- * Scribe v2 y, si ese modelo no está, v1. `model: 'error'` es que no contestó ninguno; un `text`
- * vacío con el nombre del modelo es que SÍ contestó y no había voz — eso es una respuesta, y quien
- * llama no debe mandarle el mismo silencio a otro proveedor de pago.
- *
- * Cada intento pide su corte al presupuesto de la petición: 20 s o lo que quede, lo que sea menos.
- */
-export async function elevenTranscribe(opts: {
-  apiKey: string;
-  audio: Buffer;
-  mime: string;
-  language?: string;
-  presupuesto?: Presupuesto;
-}): Promise<{ text: string; model: string }> {
-  if (!opts.apiKey) return { text: '', model: 'sin-clave' };
-  const reloj = opts.presupuesto || armarPresupuesto(40_000);
-  const ext = /wav/.test(opts.mime) ? 'wav' : /webm/.test(opts.mime) ? 'webm' : /ogg/.test(opts.mime) ? 'ogg' : /mp3|mpeg/.test(opts.mime) ? 'mp3' : 'm4a';
-  for (const model of ['scribe_v2', 'scribe_v1']) {
-    if (!reloj.alcanza()) {
-      console.warn('[stt eleven]', model, 'sin tiempo: el cliente ya no espera esta respuesta');
-      break;
-    }
-    try {
-      const form = new FormData();
-      form.append('model_id', model);
-      form.append('language_code', (opts.language || 'es').slice(0, 2));
-      form.append('tag_audio_events', 'false');
-      form.append('file', new Blob([new Uint8Array(opts.audio)], { type: opts.mime }), `voz.${ext}`);
-      const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
-        method: 'POST',
-        headers: { 'xi-api-key': opts.apiKey },
-        body: form,
-        signal: reloj.senal(20000),
-      });
-      if (r.ok) {
-        const j: any = await r.json().catch(() => ({}));
-        let text = String(j.text || j.transcript || '').trim();
-        if (text.length < 2 || STT_BASURA.test(text)) text = '';
-        return { text, model };
-      }
-      const err = await r.text();
-      console.warn('[stt eleven]', model, r.status, err.slice(0, 160));
-      if (r.status !== 400 && r.status !== 404 && r.status !== 422) break;
-    } catch (e: any) {
-      console.warn('[stt eleven]', model, String(e?.message || e).slice(0, 120));
-    }
-  }
-  return { text: '', model: 'error' };
 }
 
 export function decodeDataUrl(input: string, fallbackMime: string) {

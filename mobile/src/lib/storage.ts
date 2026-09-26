@@ -35,7 +35,7 @@ export type AppSettings = {
   micMuted: boolean;
   visionEnabled: boolean;
   gazeEnabled: boolean;
-  /** Oído: reconocimiento del sistema en el teléfono o grabación + Scribe en el servidor. */
+  /** Oído: reconocimiento del sistema en el teléfono o grabación + Whisper en el servidor propio. */
   sttEngine: SttEngine;
   /** Comentarios espontáneos de lo que ve la cámara. */
   proactive: boolean;

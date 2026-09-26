@@ -1,10 +1,10 @@
 /**
  * EL PRESUPUESTO DE TIEMPO DE UNA PETICIÓN.
  *
- * Cada proveedor tenía su propio reloj y nadie miraba el total. El oído probaba el nodo local 12 s,
- * Scribe v2 20 s, Scribe v1 20 s y Gemini 20 s: más de un minuto, cuando el teléfono corta a los
- * 16 s. Todo lo que pasaba después de ese corte era gasto puro — llamadas pagadas cuya respuesta
- * ya no esperaba nadie, y que encima ocupaban el cupo del siguiente audio.
+ * Cada proveedor tenía su propio reloj y nadie miraba el total. El oído llegó a probar cuatro
+ * proveedores de 12 a 20 s cada uno: más de un minuto, cuando el teléfono corta a los 16 s. Todo
+ * lo que pasaba después de ese corte era gasto puro — llamadas cuya respuesta ya no esperaba
+ * nadie, y que encima ocupaban el cupo del siguiente audio.
  *
  * Esto es un reloj por petición: se arma con lo que el cliente está dispuesto a esperar y cada
  * proveedor pide su señal de corte acá, así que ninguno puede pasarse de lo que queda. Cuando lo

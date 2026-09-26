@@ -14,14 +14,13 @@ export type Caja = {
 const overlay = new Map<string, string>();
 
 const ENV: Record<string, string[]> = {
-  elevenlabs: ['ELEVENLABS_API_KEY'],
+  voicebox_url: ['VOICEBOX_URL'],
+  voicebox_clave: ['VOICEBOX_CLAVE'],
   gemini: ['GEMINI_API_KEY'],
   ojo_url: ['ULTRON_OJO_URL', 'PLAYWRIGHT_NODE_URL'],
   ojo_clave: ['ULTRON_OJO_CLAVE'],
   nodo_url: ['ULTRON_NODO_URL', 'QWEN_ENDPOINT_URL'],
   nodo_secreto: ['ULTRON_NODO_SECRETO'],
-  tts_url: ['ULTRON_TTS_URL', 'CHATTERBOX_URL'],
-  tts_clave: ['ULTRON_TTS_CLAVE'],
   telegram_token: ['TELEGRAM_BOT_TOKEN'],
   telegram_chat: ['TELEGRAM_CHAT_ID'],
   telegram_webhook: ['TELEGRAM_WEBHOOK_SECRET'],
@@ -64,12 +63,12 @@ export function cajas(): Caja[] {
   const call = !!(clave('twilio_sid') && clave('twilio_tok') && clave('twilio_voz') && clave('jefe_tel'));
   const mail = !!(clave('resend') && clave('mail_from'));
   const mem = !!(clave('aws_key') && clave('aws_secret') && clave('memoria_bucket'));
+  const voz = !!(clave('voicebox_url') && clave('voicebox_clave'));
   return [
     { id: 'qwen', nombre: 'Cerebro Qwen', listo: !!clave('nodo_url'), falta: clave('nodo_url') ? undefined : 'ULTRON_NODO_URL', usa: 'pensar y contestar' },
     { id: 'ojo', nombre: 'Ojo (visión + páginas)', listo: ojo, falta: ojo ? undefined : 'ULTRON_OJO_URL + ULTRON_OJO_CLAVE', usa: 'ver fotos y capturar pantallas' },
     { id: 'gemini', nombre: 'Visión Gemini (reserva)', listo: !!clave('gemini'), falta: clave('gemini') ? undefined : 'GEMINI_API_KEY', usa: 'leer imagen si el ojo no responde' },
-    { id: 'elevenlabs', nombre: 'Voz ElevenLabs', listo: !!clave('elevenlabs'), falta: clave('elevenlabs') ? undefined : 'ELEVENLABS_API_KEY', usa: 'hablar, oír, nota de voz urgente' },
-    { id: 'tts', nombre: 'Chatterbox TTS', listo: !!clave('tts_url'), falta: clave('tts_url') ? undefined : 'ULTRON_TTS_URL', usa: 'voz de respaldo' },
+    { id: 'voz', nombre: 'Voz y oído (Voicebox)', listo: voz, falta: voz ? undefined : 'VOICEBOX_URL + VOICEBOX_CLAVE', usa: 'hablar, oír notas de voz, nota de voz urgente' },
     { id: 'telegram', nombre: 'Telegram junta', listo: tg, falta: tg ? undefined : 'TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID', usa: 'chat, fotos, aviso urgente' },
     { id: 'telegram-in', nombre: 'Telegram webhook', listo: tg && !!clave('telegram_webhook'), falta: clave('telegram_webhook') ? undefined : 'TELEGRAM_WEBHOOK_SECRET', usa: 'responder desde Telegram' },
     { id: 'memoria', nombre: 'Memoria S3 (José / Medardo / Carlos / Mayra)', listo: mem, falta: mem ? undefined : 'ULTRON_MEMORIA_BUCKET + AWS_*', usa: 'conversaciones y hechos que no se pierden al redesplegar' },
@@ -86,6 +85,6 @@ export function fotoBoveda(): { honesto: true; cajas: Caja[]; listos: string[]; 
   const resumen =
     `BÓVEDA: listos [${listos.join(', ') || 'ninguno'}]. ` +
     `Sin clave: ${faltan.join('; ') || 'ninguna'}. ` +
-    'No recito secretos. Telegram no hace llamada de teléfono; urgente = mensaje que suena + nota de voz si hay ElevenLabs.';
+    'No recito secretos. Telegram no hace llamada de teléfono; urgente = mensaje que suena + nota de voz si Voicebox responde.';
   return { honesto: true, cajas: all, listos, faltan, resumen };
 }

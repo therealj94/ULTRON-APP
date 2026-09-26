@@ -5,7 +5,7 @@ import path from 'path';
 import { createServer as createViteServer } from 'vite';
 import { fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
-import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, vozDe } from './server/voz';
+import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe } from './server/voz';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
@@ -144,8 +144,6 @@ const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || '';
 const ULTRON_REMOTE_URL = process.env.ULTRON_FP_URL || process.env.ULTRON_REMOTE_URL || 'https://ultron.ordenglobal.link';
 const ULTRON_OJO_URL = (process.env.ULTRON_OJO_URL || process.env.PLAYWRIGHT_NODE_URL || '').replace(/\/$/, '');
 const ULTRON_OJO_CLAVE = process.env.ULTRON_OJO_CLAVE || '';
-const ULTRON_TTS_URL = (process.env.ULTRON_TTS_URL || process.env.CHATTERBOX_URL || '').replace(/\/$/, '');
-const ULTRON_TTS_CLAVE = process.env.ULTRON_TTS_CLAVE || '';
 
 async function probeJson(url: string, headers: Record<string, string> = {}, timeoutMs = 4000) {
   const ctrl = new AbortController();
@@ -163,29 +161,27 @@ async function probeJson(url: string, headers: Record<string, string> = {}, time
   }
 }
 
-type Salud = { qwen: boolean; ojo: boolean; vision: boolean; ttsLocal: boolean; fp: boolean; at: number; raw?: any };
+type Salud = { qwen: boolean; ojo: boolean; vision: boolean; voz: boolean; fp: boolean; at: number; raw?: any };
 let saludCache: Salud | null = null;
 
 async function medirSalud(force = false): Promise<Salud> {
   if (!force && saludCache && Date.now() - saludCache.at < 15000) return saludCache;
-  const [fp, nodo, ojo, tts] = await Promise.all([
+  const [fp, nodo, ojo, voz] = await Promise.all([
     probeJson(`${ULTRON_REMOTE_URL}/salud`),
     saludNodo(),
     ULTRON_OJO_URL
       ? probeJson(`${ULTRON_OJO_URL}/salud`, { 'X-Ojo-Clave': ULTRON_OJO_CLAVE })
       : Promise.resolve({ ok: false, status: 0, json: null, text: 'ULTRON_OJO_URL vacío' }),
-    ULTRON_TTS_URL
-      ? probeJson(`${ULTRON_TTS_URL}/salud`, { 'x-ultron-tts-clave': ULTRON_TTS_CLAVE })
-      : Promise.resolve({ ok: false, status: 0, json: null, text: 'ULTRON_TTS_URL vacío' }),
+    saludVoz(),
   ]);
   saludCache = {
     qwen: !!(nodo.ok && nodo.json),
     ojo: !!(ojo.ok && ojo.json?.playwright),
     vision: !!(ojo.ok && ojo.json?.vision) || !!clave('gemini'),
-    ttsLocal: tts.status === 200 || tts.status === 401,
+    voz: voz.ok,
     fp: !!fp.ok,
     at: Date.now(),
-    raw: { fp, nodo, ojo, tts },
+    raw: { fp, nodo, ojo, voz },
   };
   return saludCache;
 }
@@ -227,8 +223,8 @@ app.get('/api/health', async (req, res) => {
       qwen: { vivo: s.qwen },
       fp: { vivo: s.fp },
       ojo: { vivo: s.ojo, playwright: s.ojo, vision: !!raw.ojo?.json?.vision },
-      tts: { vivo: s.ttsLocal },
-      elevenlabs: !!clave('elevenlabs'),
+      tts: { vivo: s.voz },
+      voicebox: estadoVoz().voicebox,
       voz: VOZ_OFICIAL.nombre,
       geminiFallback: !!clave('gemini'),
     });
@@ -241,8 +237,8 @@ app.get('/api/health', async (req, res) => {
     qwen: { url: ULTRON_NODO_URL || null, vivo: s.qwen, modelo: raw.nodo?.json?.modelo || null, rutaChat: '/api/chat' },
     fp: { url: ULTRON_REMOTE_URL, vivo: s.fp, modelo: raw.fp?.json?.modelo || null },
     ojo: { url: ULTRON_OJO_URL || null, vivo: s.ojo, playwright: s.ojo, vision: !!raw.ojo?.json?.vision },
-    tts: { url: ULTRON_TTS_URL || null, status: raw.tts?.status ?? 0, vivo: s.ttsLocal },
-    elevenlabs: !!clave('elevenlabs'),
+    tts: { servidor: estadoVoz().servidor, status: raw.voz?.status ?? 0, vivo: s.voz, detalle: raw.voz?.detalle || null },
+    voicebox: estadoVoz().voicebox,
     voz: VOZ_OFICIAL.nombre,
     geminiFallback: !!clave('gemini'),
   });
@@ -446,7 +442,7 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
     // El nombre del modelo es un detalle interno, como el padrón: solo a quien manda. A un cliente
     // se le enseña que el cerebro está en línea, no con qué pesos está hecho.
     cerebro: { configurado: nodo, vivo: cerebro, modelo: nivelDe(id, 'electrum') === 'mando' ? ULTRON_NODO_MODELO : undefined },
-    voz: { llave: voz.elevenlabs, vozId: vozDe('electrum') },
+    voz: { llave: voz.voicebox, perfil: vozDe('electrum') },
     catastro: { viva: catastro.viva, motivo: catastro.motivo || null, concesiones: catastro.concesiones ?? null },
     herramientas: TODAS_ELECTRUM.length,
     quien: id?.persona.nombre || null,
@@ -678,8 +674,8 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
 
 /**
  * La voz de Dr Electrum. Ruta propia, no la de AU-RA: no por capricho de simetría, sino porque
- * `/api/tts` está en la lista de rutas abiertas de la APK y un sintetizador abierto es una factura
- * de ElevenLabs con la puerta quitada.
+ * `/api/tts` está en la lista de rutas abiertas de la APK y un sintetizador abierto es la GPU de
+ * Voicebox trabajando para cualquiera. Devuelve WAV (audio/wav) con la voz de Alex.
  */
 app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
   const texto = String(req.body?.texto || '').slice(0, 1200).trim();
@@ -771,8 +767,7 @@ app.get('/api/capacidades', limitar(30), async (_req, res) => {
   const capacidades = catalogoCapacidades({
     qwen: s.qwen,
     ojo: s.ojo,
-    elevenlabs: !!clave('elevenlabs'),
-    ttsLocal: s.ttsLocal,
+    voz: s.voz,
     memoriaS3: listo('memoria'),
     telegram: listo('telegram'),
     telegramIn: listo('telegram-in'),
@@ -804,20 +799,18 @@ app.get('/api/vault/status', exigirMesa, async (_req, res) => {
   });
 });
 
-// BÓVEDA: ElevenLabs Key Update Endpoint
-
-// BÓVEDA: ElevenLabs Key Update Endpoint (solo mando con sesión firmada)
-app.post('/api/vault/elevenlabs', exigirSesion, (req, res) => {
+// BÓVEDA: la llave de Voicebox (voz y oído), solo mando con sesión firmada
+app.post('/api/vault/voicebox', exigirSesion, (req, res) => {
   const quien = quienVerificado(req.body, sesionDe(req));
   if (!puedeCambiarSistema(quien)) {
     return res.status(403).json({ error: 'ACCESO: consulta. Solo José o Medardo con sesión escriben la bóveda.', honesto: true });
   }
   const { apiKey } = req.body;
   if (!apiKey || typeof apiKey !== 'string') {
-    return res.status(400).json({ error: 'La API Key de ElevenLabs es requerida.' });
+    return res.status(400).json({ error: 'La llave de Voicebox es requerida.' });
   }
-  guardarCaja('elevenlabs', apiKey.trim());
-  return res.json({ success: true, message: 'API Key de ElevenLabs archivada en la bóveda hasta el próximo redespliegue.', configured: true });
+  guardarCaja('voicebox_clave', apiKey.trim());
+  return res.json({ success: true, message: 'Llave de Voicebox archivada en la bóveda hasta el próximo redespliegue.', configured: true });
 });
 
 // Render: redesplegar la mesa (solo mando con sesión firmada)
@@ -1176,7 +1169,7 @@ async function responderVoz(req: express.Request, res: express.Response) {
   const p = leerPeticionVoz(req);
   if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
   const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance });
-  if (!out) return res.status(503).json({ error: 'Voz no disponible (ElevenLabs y nodo TTS sin respuesta)', honesto: true });
+  if (!out) return res.status(503).json({ error: 'Voz no disponible (Voicebox sin respuesta)', honesto: true });
   res.setHeader('Content-Type', out.contentType);
   res.setHeader('Cache-Control', out.cache ? 'private, max-age=3600' : 'no-store');
   res.setHeader('X-Ultron-TTS', out.motor);
@@ -1229,7 +1222,10 @@ app.get('/api/cantar', (_req, res) => {
   res.json({ honesto: true, canciones: repertorio() });
 });
 
-/** Canta: `{ id }` del repertorio, `{ pedido }` en lenguaje natural o `{ letra, titulo }` libre. Devuelve audio/mpeg. */
+/**
+ * Canta: `{ id }` del repertorio (clip grabado, audio/mpeg), `{ pedido }` en lenguaje natural o
+ * `{ letra, titulo }` libre, que Kokoro dice en vez de cantar (audio/wav).
+ */
 app.post('/api/cantar', exigirMesaODesk, limitar(12), async (req, res) => {
   const id = String(req.body?.id || '').trim();
   const letra = String(req.body?.letra || '').trim();

@@ -1,37 +1,3 @@
-import { stopVoice } from './player';
-
-export function cancelSpeech(): void {
-  stopVoice();
-  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-    window.speechSynthesis.cancel();
-  }
-}
-
-export function speakUtterance(
-  text: string,
-  options?: { enabled?: boolean; onStart?: () => void; onEnd?: () => void }
-): void {
-  if (options?.enabled === false) return;
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
-    options?.onEnd?.();
-    return;
-  }
-  cancelSpeech();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = 'es-MX';
-  utterance.rate = 0.96;
-  utterance.pitch = 0.72;
-  const voices = window.speechSynthesis.getVoices();
-  const spanishVoice =
-    voices.find((v) => v.lang.startsWith('es') && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Microsoft'))) ||
-    voices.find((v) => v.lang.startsWith('es'));
-  if (spanishVoice) utterance.voice = spanishVoice;
-  if (options?.onStart) utterance.onstart = options.onStart;
-  if (options?.onEnd) utterance.onend = options.onEnd;
-  utterance.onerror = () => options?.onEnd?.();
-  window.speechSynthesis.speak(utterance);
-}
-
 export interface SpeechRecognizerHandle {
   start: () => void;
   stop: () => void;

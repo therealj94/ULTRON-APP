@@ -88,7 +88,7 @@ const REPERTORIO: Array<[RegExp, string]> = [
 
 export type Genero = { id: string; etiqueta: string; titulo: string; letra: string };
 
-/** Letras propias por género: se mandan a POST /api/cantar {letra, titulo} y AU-RA las canta con su voz. */
+/** Letras propias por género: se mandan a POST /api/cantar {letra, titulo} y AU-RA las dice con su voz (Kokoro no canta). */
 export const GENEROS: Genero[] = [
   {
     id: 'balada',

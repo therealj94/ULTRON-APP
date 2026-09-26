@@ -198,7 +198,7 @@ export function salud(): Promise<Salud> {
   return pedir<Salud>('/api/electrum/salud', {}, 12_000);
 }
 
-/** La voz del doctor, en MP3. Se pide aparte porque no devuelve JSON. */
+/** La voz del doctor (WAV de Voicebox, perfil Alex). Se pide aparte porque no devuelve JSON. */
 export async function voz(texto: string, emocion?: string): Promise<string | null> {
   const tope = conTope(30_000);
   try {
@@ -214,7 +214,9 @@ export async function voz(texto: string, emocion?: string): Promise<string | nul
     const bytes = new Uint8Array(buf);
     // En trozos: un apply sobre 200 000 bytes revienta la pila de argumentos en Hermes.
     for (let i = 0; i < bytes.length; i += 8192) bin += String.fromCharCode(...bytes.subarray(i, i + 8192));
-    return `data:audio/mpeg;base64,${btoa(bin)}`;
+    // El tipo real del servidor, no uno supuesto: el reproductor elige el decodificador por él.
+    const tipo = (r.headers.get('content-type') || 'audio/wav').split(';')[0].trim();
+    return `data:${tipo};base64,${btoa(bin)}`;
   } catch {
     return null;
   } finally {

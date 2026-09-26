@@ -1,6 +1,6 @@
 # AU-RA FP · app nativa Android (4.0)
 
-Cara a pantalla completa, escucha continua sin palabra clave, **una sola voz** — *AU-RA (Gabriela · ElevenLabs v3)* —,
+Cara a pantalla completa, escucha continua sin palabra clave, **una sola voz** — *AU-RA (Dora · servidor propio)* —,
 cámara que identifica lo que hay en la mesa y cerebro Qwen 27B vía el backend de Render. Producto para la junta de
 Orden Global (paleta negro + cian `#05E1FF`, UI en español).
 
@@ -20,11 +20,11 @@ desinstálala primero. Versión: `app.json` `expo.version` = `package.json` `ver
 | --- | --- |
 | `POST /api/turno` | Un turno con el cerebro. Manda `usuario`, `correo`, `historial`, `memoria[]`, `image` opcional y `escena` (string: lo que la cámara local ya interpretó; el servidor lo usa como hecho «ESCENA (cámara local): …» cuando preguntan qué ve o quién está). Responde `reply`, `emocion`, `mode`. |
 | `POST /api/turno/stream` | Igual, por SSE (XHR). Eventos: `emocion` (antes del primer delta → la cara reacciona antes que la voz), `delta`, `tools`, `done` (trae `emocion`), `error`. |
-| `GET/POST /api/tts` | Voz. `text`, `emocion`, `performance=speak\|sing`. Devuelve `audio/mpeg` + cabecera `X-Ultron-TTS`. Sin parámetro `engine`: una sola voz. |
+| `GET/POST /api/tts` | Voz. `text`, `emocion`, `performance=speak\|sing`. Devuelve `audio/wav` (Voicebox) + cabecera `X-Ultron-TTS`. Sin parámetro `engine`: una sola voz. |
 | `POST /api/cantar` | `{ id }` (jesus, bohemian, ligera, bittersweet, runaway, bruno, waymaker) o `{ letra, titulo? }` → mp3 de AU-RA cantando (hasta ~40 s la primera vez). `GET` devuelve el repertorio. |
 | `POST /api/orar` | `{}` o `{ tema }` → mp3 de la oración del día (~3 min, cacheado). Sin tema se usa el estático `/voz/oracion.mp3` si existe. Cara PRAY, HUD «orando». |
 | `GET /api/capacidades` | Catálogo real (`Capacidad[]` agrupadas, `vivo` según salud de nodos, voz oficial, canciones, gestos). Se cachea en AsyncStorage para verlo sin red. |
-| `POST /api/stt` | Oído en la nube (ElevenLabs Scribe), solo si se elige «Nube» en Ajustes; por defecto el reconocimiento es el del teléfono. |
+| `POST /api/stt` | Oído en el servidor propio (Whisper en Voicebox), solo si se elige «Nube» en Ajustes; por defecto el reconocimiento es el del teléfono. |
 | `POST /api/vision/analyze` | Nodo de visión: frames bajo demanda («qué ves») y etiquetas de la mesa (cada 60 s con alguien delante; cada 12 s solo en el respaldo sin detección nativa). |
 | `POST /api/memoria` | Hechos de largo plazo (`hecho`, `usuario`). **Requiere sesión**: pasa por `api()`, que renueva el token en 401 con las credenciales guardadas. |
 | `POST /api/ultron/entrar` · `biometric-login` · `salir` | Sesión de junta (`j.ordonez@` / `m.ordonez@ordenglobal.org`). Cabecera `x-ultron-sesion`. |
