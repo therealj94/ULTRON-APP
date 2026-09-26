@@ -138,6 +138,16 @@ export function guardarLlave(llave: string): Donde {
  * sería dejar una abierta creyendo que se cerró.
  */
 export function salir() {
+  // El servidor también la cierra: si no, el token seguiría valiendo en cualquier copia. Sin esperar la
+  // respuesta: sin red, igual se borra de aquí.
+  const sesion = guardado(SESION);
+  if (sesion) {
+    try {
+      void fetch('/api/ultron/salir', { method: 'POST', headers: { 'x-ultron-sesion': sesion }, keepalive: true }).catch(() => undefined);
+    } catch {
+      /* sin red: se borra igual */
+    }
+  }
   for (const k of [SESION, LLAVE]) {
     try {
       localStorage.removeItem(k);

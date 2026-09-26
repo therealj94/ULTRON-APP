@@ -6,7 +6,7 @@ import { createServer as createViteServer } from 'vite';
 import { fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, vozDe } from './server/voz';
-import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp } from './server/seguridad';
+import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, hechosCatalogo } from './lib/taller';
@@ -18,6 +18,7 @@ import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verImagen } from './lib/vision';
+import { destinoPublico } from './lib/red-publica';
 import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio } from './lib/oido';
 import { esTareaDeCodigo } from './lib/prompts/cot';
@@ -874,6 +875,19 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
   if (!correo || !claveEntrada) {
     return res.status(400).json({ error: 'Correo y clave requeridos.' });
   }
+  // Freno por cuenta (además del de IP): probar claves de una cuenta desde muchas IPs también se frena.
+  const ipEntrada = String(req.ip || req.socket.remoteAddress || 'x');
+  const espera = esperaEntrada(correo, ipEntrada);
+  if (espera > 0) {
+    const min = Math.max(1, Math.ceil(espera / 60_000));
+    res.setHeader('Retry-After', String(Math.ceil(espera / 1000)));
+    return res.status(429).json({
+      error: `Demasiados intentos con esta cuenta. Probá de nuevo en ${min} ${min === 1 ? 'minuto' : 'minutos'}.`,
+      code: 'demasiados_intentos',
+      reintentarEnS: Math.ceil(espera / 1000),
+      honesto: true,
+    });
+  }
   try {
     const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/entrar`, {
       method: 'POST',
@@ -883,8 +897,11 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
     });
     const data: any = await remoteRes.json().catch(() => ({}));
     if (!remoteRes.ok) {
+      // Solo cuenta como intento fallido una clave rechazada, no un cerebro caído.
+      if (remoteRes.status === 401 || remoteRes.status === 403) anotarFalloEntrada(correo, ipEntrada);
       return res.status(remoteRes.status).json(data);
     }
+    anotarExitoEntrada(correo, ipEntrada);
     const nombre = data.miembro?.nombre || JUNTA[correo]?.nombre || correo.split('@')[0];
     const rol = JUNTA[correo]?.rol || 'Junta Directiva · Orden Global';
     const s = emitirSesion({ correo, nombre, rol });
@@ -915,9 +932,10 @@ app.get('/api/ultron/sesion', async (req, res) => {
   res.json({ authenticated: false, user: null, remoteUrl: ULTRON_REMOTE_URL, honesto: true });
 });
 
-app.post('/api/ultron/salir', async (req, res) => {
-  borrarSesion(tokenDe(req));
-  res.json({ ok: true, message: 'Sesión cerrada.' });
+app.post('/api/ultron/salir', limitar(30), async (req, res) => {
+  // El token deja de valer en el servidor, no solo en este aparato.
+  const cerrada = await borrarSesion(tokenDe(req)).catch(() => false);
+  res.json({ ok: true, cerrada, message: 'Sesión cerrada.' });
 });
 
 
@@ -930,10 +948,13 @@ app.post('/api/playwright/scrape', exigirSesion, limitar(10), async (req, res) =
   if (!/^https?:\/\//i.test(formattedUrl)) formattedUrl = `https://${formattedUrl}`;
   const gate = await urlPublica(formattedUrl);
   if (gate.ok === false) return res.status(400).json({ error: gate.error, honesto: true });
-  formattedUrl = gate.url;
   if (!ULTRON_OJO_URL) {
     return res.status(503).json({ error: 'ULTRON_OJO_URL no configurada', honesto: true });
   }
+  // Las redirecciones se siguen aquí, comprobando cada salto; al ojo le llega el destino final.
+  const destino = await destinoPublico(gate.url);
+  if (destino.ok === false) return res.status(400).json({ error: destino.error, honesto: true });
+  formattedUrl = destino.url;
   try {
     const headers = { 'Content-Type': 'application/json', 'X-Ojo-Clave': ULTRON_OJO_CLAVE };
     const mirar = await fetch(`${ULTRON_OJO_URL}/mirar`, {
@@ -1374,6 +1395,13 @@ async function prepararTurno(body: any) {
       const gate = await urlPublica(url);
       if (gate.ok === false) {
         hechos.push(`Página ${url}: no la abro (${gate.error}).`);
+      } else if (!verificado) {
+        // Sin identidad verificada no se usa el ojo (un navegador de verdad en el nodo de AWS): una
+        // página puede redirigir o saltar con JavaScript a la red interna del nodo. Aquí se lee el texto
+        // desde este servidor, que conecta a la IP ya comprobada y revisa cada redirección.
+        const texto = await leerPagina(gate.url, 1200);
+        hechos.push(`Página ${gate.url}: ${texto || 'sin texto (no la pude leer)'}`);
+        tools.push('pagina');
       } else {
         const page = await capturaPagina(gate.url);
         hechos.push(`Página ${page.url}: ${page.texto.slice(0, 1200) || 'sin texto'}`);
@@ -2208,6 +2236,9 @@ async function startServer() {
       console.log('[electrum] bot apagado: falta ELECTRUM_BOT_TOKEN o ELECTRUM_WEBHOOK_SECRET.');
     }
     iniciarCentinela(180_000);
+    cargarSesionesCerradas()
+      .then((d) => console.log('[AU-RA] sesiones', d))
+      .catch((e) => console.warn('[AU-RA] sesiones', String(e?.message || e).slice(0, 160)));
     cargarMemoria()
       .then(() => console.log('[AU-RA] memoria', estadoMemoria().detalle))
       .catch((e) => console.warn('[AU-RA] memoria', String(e?.message || e).slice(0, 160)));

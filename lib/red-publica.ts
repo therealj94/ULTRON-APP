@@ -113,3 +113,17 @@ export async function pedirPublico(raw: string, o: { ms?: number; maxBytes?: num
   }
   throw new Error('demasiadas redirecciones');
 }
+
+/**
+ * A dónde lleva de verdad una URL pública, siguiendo las redirecciones desde AQUÍ (cada salto
+ * comprobado). Es lo que se le pasa al ojo: su navegador ya no recibe un enlace que rebote a
+ * `169.254.169.254` ni a la red del nodo.
+ */
+export async function destinoPublico(raw: string, ms = 8000): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  try {
+    const r = await pedirPublico(raw, { ms, maxBytes: 64_000, headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AU-RA-FP/3.0', Accept: 'text/html,*/*' } });
+    return { ok: true, url: r.url };
+  } catch (e: any) {
+    return { ok: false, error: `no la abro (${String(e?.message || e).slice(0, 80)})` };
+  }
+}

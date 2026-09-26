@@ -17,7 +17,7 @@ import { useRef } from 'react';
 import { UltronFace } from '../components/UltronFace';
 import { APP_VERSION, type FaceState } from '../config';
 import { ACENTO } from '../variante';
-import { cargarCredenciales, guardarLlave, guardarSesion, hayCredencial, probarPuerta } from './api';
+import { cargarCredenciales, cerrarSesion, hayCredencial, probarPuerta } from './api';
 import { EntrarScreen } from './EntrarScreen';
 import { CampoScreen } from './CampoScreen';
 
@@ -91,8 +91,7 @@ export default function ElectrumApp() {
   }, [fase, opacidad]);
 
   const salir = useCallback(async () => {
-    await guardarSesion(null);
-    await guardarLlave(null);
+    await cerrarSesion();
     setFase('entrar');
   }, []);
 

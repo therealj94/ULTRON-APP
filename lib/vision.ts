@@ -3,6 +3,7 @@
  */
 
 import { clave } from './boveda';
+import { destinoPublico } from './red-publica';
 
 export type Vista = { texto: string; via: string; foto?: Buffer };
 
@@ -107,6 +108,11 @@ export async function capturaPagina(url: string): Promise<{ url: string; texto: 
   const base = clave('ojo_url').replace(/\/$/, '');
   const claveOjo = clave('ojo_clave');
   if (!base || !claveOjo) return { url, texto: 'Falta el ojo (ULTRON_OJO_URL + CLAVE). No abrí la página.' };
+  // Las redirecciones se resuelven aquí, comprobando cada salto: al navegador del nodo le llega el
+  // destino final, no un enlace que rebote al metadata de AWS o a la red interna del nodo.
+  const destino = await destinoPublico(url);
+  if (destino.ok === false) return { url, texto: `No abrí la página: ${destino.error}.` };
+  url = destino.url;
   const headers = { 'Content-Type': 'application/json', 'X-Ojo-Clave': claveOjo };
   let texto = '';
   let titulo: string | undefined;

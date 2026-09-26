@@ -43,6 +43,22 @@ export async function guardarLlave(v: string | null) {
   }
 }
 
+/** Cierra la sesión en el servidor (el token deja de valer en cualquier copia) y la borra de aquí. */
+export async function cerrarSesion() {
+  if (sesion) {
+    const corte = conTope(6_000);
+    try {
+      await fetch(`${API_BASE}/api/ultron/salir`, { method: 'POST', headers: { 'x-ultron-sesion': sesion }, signal: corte.signal });
+    } catch {
+      /* sin red: se borra igual */
+    } finally {
+      corte.soltar();
+    }
+  }
+  await guardarSesion(null);
+  await guardarLlave(null);
+}
+
 export function hayCredencial(): boolean {
   return !!sesion || !!llave;
 }
