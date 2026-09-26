@@ -24,7 +24,11 @@
  * caja de la concesión, ampliada en grados lo justo para la distancia que se pide— y solo sobre lo
  * que sobrevive a ese filtro se mide en metros sobre `geography`. Las consultas corren en paralelo.
  */
-import { baseTieneRol, consulta, hayBase, rolDeCapa, traslapesDe, type RolCapa } from './db';
+import { baseTieneRol, consultaConTope, hayBase, rolDeCapa, traslapesDe, type RolCapa } from './db';
+
+/** Cada consulta del entorno la corta la base a los 8 s: una capa lenta no se queda con el pool. */
+const TOPE_MS = 8000;
+const consulta = <T = any>(sql: string, params: unknown[] = []) => consultaConTope<T>(sql, params, TOPE_MS);
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -182,7 +186,9 @@ async function pisadas(id: number, capas: number[], rol: RolCapa, haConcesion: n
   /*
    * Se une por nombre ANTES de medir: dos rasgos del mismo área protegida que se solapan (pasa con
    * capas digitalizadas por partes) contarían dos veces la misma hectárea y la ficha diría que la
-   * concesión pisa más de lo que mide.
+   * concesión pisa más de lo que mide. Y se mide con TODOS los rasgos que la tocan: un LIMIT antes
+   * de unir dejaba fuera nombres y hectáreas cuando eran muchos (revisión de Codex en #38); lo
+   * único que se limita es la lista que se enseña.
    */
   const filas = await consulta<{ nombre: string | null; ha: number }>(
     `WITH ${C()},
@@ -191,7 +197,6 @@ async function pisadas(id: number, capas: number[], rol: RolCapa, haConcesion: n
          FROM entidad_geo e, c
         WHERE e.capa_id = ANY($2) AND e.geom && c.geom AND ST_Dimension(e.geom) = 2
           AND ST_Intersects(${VALIDA}, c.geom)
-        LIMIT 200
      )
      SELECT t.nombre, (ST_Area(ST_Intersection((SELECT geom FROM c), ST_Union(t.g))::geography) / 10000.0)::float8 AS ha
        FROM t GROUP BY t.nombre
@@ -247,7 +252,6 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
                  FROM entidad_geo e, c
                 WHERE e.capa_id = ANY($2) AND e.geom && c.caja
                   AND ST_DWithin(e.geom::geography, c.gg, ${RADIO_LEJOS_M})
-                LIMIT 200
              ) t GROUP BY nombre ORDER BY km LIMIT 12`,
             [id, de('area_protegida')]
           ),
@@ -278,7 +282,6 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
                FROM entidad_geo e, c
               WHERE e.capa_id = ANY($2) AND e.geom && c.geom AND ST_Dimension(e.geom) = 1
                 AND ST_Intersects(e.geom, c.geom)
-              LIMIT 5000
            ),
            g AS (SELECT nombre, sum(km) AS km FROM t GROUP BY nombre)
            SELECT nombre, km::float8, (sum(km) OVER ())::float8 AS total FROM g ORDER BY km DESC LIMIT 10`,

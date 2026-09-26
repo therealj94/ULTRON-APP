@@ -62,6 +62,29 @@ export async function consulta<T = any>(sql: string, params: unknown[] = []): Pr
   return r.rows as T[];
 }
 
+/**
+ * Una consulta que la BASE corta si tarda más de `ms`, y devuelve la conexión al pool.
+ *
+ * Cortar solo en Node (un Promise.race con un reloj) deja la consulta corriendo en Postgres con su
+ * conexión tomada: unas cuantas fichas contra una capa lenta agotaban las ocho del pool y frenaban
+ * todo el catastro (revisión de Codex en #38). `SET LOCAL` vale solo dentro de esta transacción.
+ */
+export async function consultaConTope<T = any>(sql: string, params: unknown[] = [], ms = 8000): Promise<T[]> {
+  const cliente = await conexion().connect();
+  try {
+    await cliente.query('BEGIN');
+    await cliente.query(`SET LOCAL statement_timeout = ${Math.max(100, Math.floor(ms))}`);
+    const r = await cliente.query(sql, params as any[]);
+    await cliente.query('COMMIT');
+    return r.rows as T[];
+  } catch (e) {
+    await cliente.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    cliente.release();
+  }
+}
+
 /** ¿Está viva y con PostGIS puesto? Es lo que contesta el panel de estado. */
 export async function saludBase(): Promise<{ viva: boolean; postgis?: string; concesiones?: number; motivo?: string }> {
   if (!hayBase()) return { viva: false, motivo: 'sin ELECTRUM_DB_URL' };
