@@ -453,7 +453,9 @@ app.get('/api/electrum/catastro.geojson', exigirPlataforma('electrum'), limitar(
      */
     const cuerpo = Buffer.from(JSON.stringify({ geojson: fc, encuadre, honesto: true }));
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
-    if (/\bgzip\b/.test(String(req.headers['accept-encoding'] || '')) && cuerpo.length > 1024) {
+    // req.acceptsEncodings respeta «gzip;q=0»: quien lo prohíbe recibe el JSON tal cual.
+    // Sin cabecera no se comprime: algunos clientes no la mandan y no saben descomprimir.
+    if (req.headers['accept-encoding'] && req.acceptsEncodings('gzip', 'identity') === 'gzip' && cuerpo.length > 1024) {
       const comprimido = await gzipAsync(cuerpo, { level: 6 });
       res.setHeader('Content-Encoding', 'gzip');
       return res.end(comprimido);

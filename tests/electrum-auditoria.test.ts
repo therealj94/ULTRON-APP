@@ -183,6 +183,9 @@ test('las fórmulas usan una sola notación: miles con punto, decimales con coma
   assert.doesNotMatch(c.formula, /3\.400/, '«3.400 g/t» se lee tres mil cuatrocientos gramos');
   const corte = resolverCalculoMina('ley de corte con costo de 45 dólares por tonelada, oro a 2000 la onza y 90% de recuperación')!;
   assert.match(corte.formula, /= 0,778 g\/t$/);
+  // La recuperación con decimales se escribe entera: con «0,93» la fórmula ya no da su resultado.
+  const fina = resolverCalculoMina('ley de corte con costo de 45 dólares por tonelada, oro a 2000 la onza y 92,5% de recuperación')!;
+  assert.match(fina.formula, /x 0,925\) = 0,757 g\/t$/, fina.formula);
 });
 
 test('el aviso de una foto leída no lleva la dirección del nodo de visión', () => {

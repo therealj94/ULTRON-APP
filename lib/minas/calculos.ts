@@ -222,7 +222,7 @@ export function resolverCalculoMina(mensaje: string, opts?: { precioOnza?: numbe
     return {
       tipo: 'ley-de-corte',
       texto: `Con un costo de ${bonito(costo)} dólares por tonelada, el oro a ${bonito(precio)} la onza y ${bonito(rec)} por ciento de recuperación, la ley de corte es de ${bonito(corte)} gramos por tonelada. Por debajo de eso la tonelada no paga su propio proceso.`,
-      formula: `${nf(costo, dec(costo))} / ((${nf(precio, dec(precio))} / ${nf(GRAMOS_POR_ONZA_TROY, 4)}) x ${nf(rec / 100, 2)}) = ${nf(corte, 3)} g/t`,
+      formula: `${nf(costo, dec(costo))} / ((${nf(precio, dec(precio))} / ${nf(GRAMOS_POR_ONZA_TROY, 4)}) x ${nf(rec / 100, dec(rec) + 2)}) = ${nf(corte, 3)} g/t`,
       valores: { costoPorTonelada: costo, precioPorOnza: precio, recuperacion: rec, leyDeCorte: corte },
     };
   }

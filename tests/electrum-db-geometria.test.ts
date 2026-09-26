@@ -83,6 +83,23 @@ test('geometrías de verdad en PostGIS', { skip: HAY ? false : 'sin ELECTRUM_DB_
     assert.ok(n >= 1, 'el roto se pisa con el moño reparado y tiene que contarse');
   });
 
+  await t.test('un lindero degenerado (todo línea) no tumba el cruce ni se guarda vacío', async () => {
+    // Ida y vuelta por la misma línea: al repararse no queda superficie ninguna.
+    await consulta(
+      `INSERT INTO concesion (nombre, titular, geom)
+       VALUES ('Linea Muerta', 'X', ST_Multi(ST_GeomFromText('POLYGON((-87.62 14.48,-87.56 14.54,-87.62 14.48,-87.56 14.54,-87.62 14.48))', 4326)))`
+    );
+    const n = await recalcularTraslapes();
+    assert.ok(n >= 1);
+    const [{ vacia }] = await consulta<{ vacia: boolean }>(`SELECT ST_IsEmpty(geom) AS vacia FROM concesion WHERE nombre = 'Linea Muerta'`);
+    assert.equal(vacia, false);
+    const [{ metidos }] = await consulta<{ metidos: number }>(
+      `SELECT count(*)::int AS metidos FROM traslape t JOIN concesion c ON c.id IN (t.a_id, t.b_id) WHERE c.nombre = 'Linea Muerta'`
+    );
+    assert.equal(metidos, 0);
+    await consulta(`DELETE FROM concesion WHERE nombre = 'Linea Muerta'`);
+  });
+
   await t.test('al subir una concesión se cuentan sus traslapes con lo que ya estaba', async () => {
     const r = await aprender(
       'vecina.kml',

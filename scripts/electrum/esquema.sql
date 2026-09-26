@@ -296,10 +296,14 @@ ON CONFLICT (version) DO NOTHING;
 -- hubiera antes. La aplicación ya repara al guardar (server/electrum/db.ts, GEOM_VALIDA); esto
 -- repara lo que hubiera entrado antes y deja el cruce a salvo de lo que se cuele por otro camino.
 
+-- Un lindero degenerado (todo línea o punto) repararía a un polígono vacío: se deja como está en
+-- vez de guardarlo vacío, porque sin centro ni encuadre el informe de esa concesión no se arma. Al
+-- cruce no llega: `recalcular_traslapes` lo descarta.
 UPDATE concesion
    SET geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(geom), 3)),
        hectareas = ha_elipsoide(ST_Multi(ST_CollectionExtract(ST_MakeValid(geom), 3)))
- WHERE NOT ST_IsValid(geom);
+ WHERE NOT ST_IsValid(geom)
+   AND NOT ST_IsEmpty(ST_CollectionExtract(ST_MakeValid(geom), 3));
 
 CREATE OR REPLACE FUNCTION recalcular_traslapes(minimo_ha numeric DEFAULT 0.01)
 RETURNS integer AS $$
@@ -309,8 +313,12 @@ BEGIN
   INSERT INTO traslape (a_id, b_id, hectareas, geom)
   WITH validas AS (
     -- Lo que no sea válido se repara aquí, para el cruce, sin tocar la fila.
-    SELECT id, CASE WHEN ST_IsValid(geom) THEN geom ELSE ST_CollectionExtract(ST_MakeValid(geom), 3) END AS geom
-      FROM concesion
+    -- Lo que al repararse queda vacío no tiene superficie con qué traslapar.
+    SELECT id, geom FROM (
+      SELECT id, CASE WHEN ST_IsValid(geom) THEN geom ELSE ST_CollectionExtract(ST_MakeValid(geom), 3) END AS geom
+        FROM concesion
+    ) r
+     WHERE NOT ST_IsEmpty(r.geom)
   ),
   pares AS (
     SELECT a.id AS a_id, b.id AS b_id, ST_Intersection(a.geom, b.geom) AS corte

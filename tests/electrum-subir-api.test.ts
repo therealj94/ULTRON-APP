@@ -149,6 +149,10 @@ test('el cargador de Electrum contra el servidor de verdad', { skip: hay ? false
     const plano = await crudo('/api/electrum/catastro.geojson', h);
     assert.equal(plano.headers['content-encoding'], undefined);
     assert.ok(JSON.parse(plano.cuerpo.toString()).geojson);
+    // «gzip;q=0» prohíbe gzip: mandarlo comprimido lo deja ilegible para ese cliente.
+    const prohibido = await crudo('/api/electrum/catastro.geojson', { ...h, 'Accept-Encoding': 'gzip;q=0, identity' });
+    assert.equal(prohibido.headers['content-encoding'], undefined);
+    assert.ok(JSON.parse(prohibido.cuerpo.toString()).geojson);
   });
 
   await t.test('la voz no contesta «no tengo voz» a un texto sin nada que decir', async () => {
