@@ -284,3 +284,58 @@ END $$;
 INSERT INTO esquema_version (version, nota)
 VALUES (5, 'búsqueda por significado: fragmento.embedding (pgvector, si está)')
 ON CONFLICT (version) DO NOTHING;
+
+-- ---------------------------------------------------------------- versión 6
+--
+-- Un solo polígono roto tumbaba el cruce de traslapes del padrón entero.
+--
+-- Un lindero que se cruza consigo mismo —un «moño», dos vértices digitalizados al revés— es válido
+-- para el .shp y para el mapa, pero `ST_Intersection` se niega a cortarlo: «TopologyException: side
+-- location conflict». Como `recalcular_traslapes` cruza TODO el padrón, una sola concesión así hacía
+-- fallar cada carga posterior de cualquier persona, y los traslapes se quedaban congelados en lo que
+-- hubiera antes. La aplicación ya repara al guardar (server/electrum/db.ts, GEOM_VALIDA); esto
+-- repara lo que hubiera entrado antes y deja el cruce a salvo de lo que se cuele por otro camino.
+
+-- Un lindero degenerado (todo línea o punto) repararía a un polígono vacío: se deja como está en
+-- vez de guardarlo vacío, porque sin centro ni encuadre el informe de esa concesión no se arma. Al
+-- cruce no llega: `recalcular_traslapes` lo descarta.
+UPDATE concesion
+   SET geom = ST_Multi(ST_CollectionExtract(ST_MakeValid(geom), 3)),
+       hectareas = ha_elipsoide(ST_Multi(ST_CollectionExtract(ST_MakeValid(geom), 3)))
+ WHERE NOT ST_IsValid(geom)
+   AND NOT ST_IsEmpty(ST_CollectionExtract(ST_MakeValid(geom), 3));
+
+CREATE OR REPLACE FUNCTION recalcular_traslapes(minimo_ha numeric DEFAULT 0.01)
+RETURNS integer AS $$
+DECLARE n integer;
+BEGIN
+  DELETE FROM traslape;
+  INSERT INTO traslape (a_id, b_id, hectareas, geom)
+  WITH validas AS (
+    -- Lo que no sea válido se repara aquí, para el cruce, sin tocar la fila.
+    -- Lo que al repararse queda vacío no tiene superficie con qué traslapar.
+    SELECT id, geom FROM (
+      SELECT id, CASE WHEN ST_IsValid(geom) THEN geom ELSE ST_CollectionExtract(ST_MakeValid(geom), 3) END AS geom
+        FROM concesion
+    ) r
+     WHERE NOT ST_IsEmpty(r.geom)
+  ),
+  pares AS (
+    SELECT a.id AS a_id, b.id AS b_id, ST_Intersection(a.geom, b.geom) AS corte
+      FROM validas a
+      JOIN validas b ON a.id < b.id AND a.geom && b.geom AND ST_Intersects(a.geom, b.geom)
+  ),
+  medidos AS (
+    SELECT a_id, b_id, corte, ha_elipsoide(corte) AS ha FROM pares
+  )
+  SELECT a_id, b_id, ha, ST_Multi(ST_CollectionExtract(corte, 3))
+    FROM medidos
+   WHERE ha >= minimo_ha;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END;
+$$ LANGUAGE plpgsql;
+
+INSERT INTO esquema_version (version, nota)
+VALUES (6, 'polígonos rotos reparados y cruce de traslapes a prueba de ellos')
+ON CONFLICT (version) DO NOTHING;

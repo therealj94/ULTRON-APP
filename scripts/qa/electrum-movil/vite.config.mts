@@ -6,7 +6,9 @@ import path from 'path';
 import { defineConfig } from 'vite';
 
 const raiz = path.resolve(import.meta.dirname, '../../..');
-const movil = path.resolve(raiz, 'mobile');
+// `QA_MOVIL` apunta a otra copia de mobile/ (por ejemplo la de un commit anterior, sacada con
+// `git archive`) para fotografiar el antes y el después con el mismo banco.
+const movil = process.env.QA_MOVIL ? path.resolve(process.env.QA_MOVIL) : path.resolve(raiz, 'mobile');
 const simulado = path.resolve(import.meta.dirname, 'simulado');
 
 export default defineConfig({
@@ -20,6 +22,7 @@ export default defineConfig({
       // que devolvería el teléfono. Lo que se está revisando es el DISEÑO, no el GPS.
       'expo-constants': path.resolve(simulado, 'expo-constants.ts'),
       'expo-secure-store': path.resolve(simulado, 'expo-secure-store.ts'),
+      'expo-file-system/legacy': path.resolve(simulado, 'expo-file-system-legacy.ts'),
       'expo-splash-screen': path.resolve(simulado, 'expo-splash-screen.ts'),
       'expo-system-ui': path.resolve(simulado, 'expo-system-ui.ts'),
       'expo-status-bar': path.resolve(simulado, 'expo-status-bar.ts'),
@@ -27,7 +30,7 @@ export default defineConfig({
       'expo-av': path.resolve(simulado, 'expo-av.ts'),
       'expo-camera': path.resolve(simulado, 'expo-camera.tsx'),
       'expo-speech-recognition': path.resolve(simulado, 'expo-speech-recognition.ts'),
-      'react-native': path.resolve(raiz, 'node_modules/react-native-web'),
+      'react-native': path.resolve(simulado, 'react-native.ts'),
       react: path.resolve(raiz, 'node_modules/react'),
       'react-dom': path.resolve(raiz, 'node_modules/react-dom'),
       '@movil': movil,

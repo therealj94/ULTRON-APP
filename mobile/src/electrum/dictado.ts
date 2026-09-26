@@ -20,12 +20,18 @@
  * con suerte, e «INHGEOMIN» no sale nunca.
  */
 import { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
-import { nativePause } from '../lib/speechNative';
+import { nativeIsWanted, nativePause } from '../lib/speechNative';
 import { fraseDeDictado } from './frases';
 
 export type Escucha = {
   /** Corta y devuelve lo último que se entendió. Llamarlo dos veces no hace daño. */
   parar: () => void;
+  /**
+   * Corta y TIRA lo que se estaba entendiendo. Es para cuando la pregunta ya se mandó mientras el
+   * micrófono seguía abierto: con `parar`, el reconocedor entregaba su último renglón después y la
+   * caja, recién vaciada, se volvía a llenar con la pregunta que ya se había hecho.
+   */
+  cancelar: () => void;
 };
 
 /** Lo que el reconocedor no acierta si no se le avisa. */
@@ -83,24 +89,39 @@ export async function escuchar(cb: {
   onFin?: () => void;
   onError?: (motivo: string) => void;
 }): Promise<Escucha | null> {
+  // Ocupado desde ANTES de pedir el permiso: dos toques seguidos al micrófono pasaban los dos por
+  // aquí mientras el primero esperaba el diálogo, y arrancaban dos reconocedores.
   if (enMarcha) return null;
+  enMarcha = true;
   if (!dictadoDisponible()) {
+    enMarcha = false;
     cb.onError?.('Este teléfono no trae reconocimiento de voz. Escribime.');
     return null;
   }
   if (!(await pedirPermisoDictado())) {
+    enMarcha = false;
     cb.onError?.('Sin permiso de micrófono no puedo oírte.');
     return null;
   }
 
-  // AU-RA puede tener su oído continuo encendido: dos reconocedores a la vez se pisan y ninguno
-  // entiende nada. Se le pide que se calle mientras dure esto, y se le devuelve al terminar.
-  nativePause(true);
-  enMarcha = true;
+  /*
+   * AU-RA puede tener su oído continuo encendido: dos reconocedores a la vez se pisan y ninguno
+   * entiende nada. Se le pide que se calle mientras dure esto, y se le devuelve al terminar.
+   *
+   * SOLO SI ESTÁ ENCENDIDO. `nativePause(true)` llama a `abort()` del reconocedor, y el módulo
+   * nativo contesta a un `abort()` —aunque no hubiera nada escuchando— con un evento `error`
+   * «aborted» y un `end` que llegan DESPUÉS, cuando este dictado ya tiene sus oyentes puestos. Ese
+   * `end` ajeno lo cerraba en el acto: el botón se encendía y se apagaba solo, y el reconocedor
+   * quedaba abierto sin nadie escuchándolo. En Dr Electrum el oído continuo no existe, así que
+   * ahora no se toca.
+   */
+  const pausado = nativeIsWanted();
+  if (pausado) nativePause(true);
 
   const subs: Array<{ remove: () => void }> = [];
   let ultimo = '';
   let cerrado = false;
+  let descartar = false;
 
   const cerrar = () => {
     if (cerrado) return;
@@ -113,13 +134,14 @@ export async function escuchar(cb: {
         /* */
       }
     }
-    nativePause(false);
+    if (pausado) nativePause(false);
     cb.onFin?.();
   };
 
   const M = ExpoSpeechRecognitionModule;
   subs.push(
     M.addListener('result', (e: any) => {
+      if (descartar) return;
       const texto = String(e?.results?.[0]?.transcript || '').trim();
       if (!texto) return;
       ultimo = texto;
@@ -134,7 +156,7 @@ export async function escuchar(cb: {
       // devuelve null para «aborted» y «no-speech» (soltar el botón sin haber dicho nada), que no
       // son fallos que avisar.
       console.warn('[electrum] dictado:', code, e?.message ?? '');
-      const frase = fraseDeDictado(code);
+      const frase = descartar ? null : fraseDeDictado(code);
       if (frase) cb.onError?.(frase);
       cerrar();
     })
@@ -142,7 +164,7 @@ export async function escuchar(cb: {
   subs.push(
     M.addListener('end', () => {
       // Android a veces cierra sin marcar final: lo último que se entendió vale igual.
-      if (ultimo) cb.onFinal?.(ultimo);
+      if (ultimo && !descartar) cb.onFinal?.(ultimo);
       cerrar();
     })
   );
@@ -169,6 +191,15 @@ export async function escuchar(cb: {
       if (cerrado) return;
       try {
         M.stop(); // `stop` entrega lo último; `abort` lo tiraría.
+      } catch {
+        cerrar();
+      }
+    },
+    cancelar: () => {
+      if (cerrado) return;
+      descartar = true;
+      try {
+        M.abort(); // contesta con `error` «aborted» y `end`, que cierran por la vía de siempre
       } catch {
         cerrar();
       }

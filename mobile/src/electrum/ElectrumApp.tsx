@@ -13,13 +13,15 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as SystemUI from 'expo-system-ui';
 import { StatusBar } from 'expo-status-bar';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaProvider, initialWindowMetrics } from 'react-native-safe-area-context';
 import { useRef } from 'react';
 import { UltronFace } from '../components/UltronFace';
 import { APP_VERSION, type FaceState } from '../config';
 import { ACENTO } from '../variante';
-import { cargarCredenciales, cerrarSesion, hayCredencial, probarPuerta } from './api';
+import { cargarCredenciales, cerrarSesion, hayCredencial, olvidarCredenciales, probarPuerta } from './api';
 import { EntrarScreen } from './EntrarScreen';
 import { CampoScreen } from './CampoScreen';
+import { useBordes } from './useBordes';
 
 type Fase = 'arranque' | 'entrar' | 'campo';
 
@@ -28,6 +30,7 @@ void SplashScreen.preventAutoHideAsync().catch(() => {});
 function Arranque({ opacidad }: { opacidad: Animated.Value }) {
   const [cara, setCara] = useState<FaceState>('SLEEPING');
   const sube = useRef(new Animated.Value(0)).current;
+  const b = useBordes();
 
   useEffect(() => {
     void SplashScreen.hideAsync().catch(() => {});
@@ -46,14 +49,27 @@ function Arranque({ opacidad }: { opacidad: Animated.Value }) {
         <Text style={s.marca}>DR ELECTRUM FP</Text>
         <Text style={s.lema}>ESTACIÓN DE TRABAJO MINERA</Text>
       </Animated.View>
-      <Text style={s.version}>v{APP_VERSION}</Text>
+      <Text style={[s.version, { bottom: 24 + b.abajo }]}>v{APP_VERSION}</Text>
     </Animated.View>
   );
 }
 
+/** Lo que se le dice en la entrada a quien llegó ahí sin pedirlo: el servidor ya no le abre. */
+const SESION_CADUCADA = 'Tu sesión ya no tiene acceso a Dr Electrum. Volvé a entrar.';
+
+/** Los insets reales de la ventana para toda la app del doctor (useBordes los lee). */
 export default function ElectrumApp() {
+  return (
+    <SafeAreaProvider initialMetrics={initialWindowMetrics}>
+      <ElectrumPantallas />
+    </SafeAreaProvider>
+  );
+}
+
+function ElectrumPantallas() {
   const [fase, setFase] = useState<Fase>('arranque');
   const [visible, setVisible] = useState(true);
+  const [motivo, setMotivo] = useState('');
   const opacidad = useRef(new Animated.Value(1)).current;
 
   const arrancar = useCallback(async () => {
@@ -74,6 +90,12 @@ export default function ElectrumApp() {
        */
       const p = await probarPuerta();
       dentro = p.estado !== 'sin-permiso';
+      if (!dentro) {
+        // Se borra y se dice. Antes quedaba guardada —cada arranque la volvía a probar y a
+        // rechazar— y la entrada aparecía vacía, sin explicar por qué no se entró directo.
+        await olvidarCredenciales();
+        setMotivo(SESION_CADUCADA);
+      }
     }
     await minimo;
     setFase(dentro ? 'campo' : 'entrar');
@@ -92,19 +114,37 @@ export default function ElectrumApp() {
 
   /*
    * Cerrar la sesión, sin preguntar. Preguntar es cosa del botón SALIR (CampoScreen), que es donde
-   * la persona decide; aquí también se llega cuando el servidor ya dijo que la credencial no vale,
-   * y ahí no hay nada que confirmar: la sesión ya no abre.
+   * la persona decide; aquí también se llega cuando el servidor ya dijo que la credencial no vale
+   * (`motivo` trae la frase), y ahí no hay nada que confirmar: la sesión ya no abre.
+   *
+   * `cerrarSesion` vuelve en cuanto la credencial está borrada del teléfono; el aviso al servidor
+   * sale detrás. Antes se esperaba al servidor, y sin señal la pantalla se quedaba quieta seis
+   * segundos después de tocar «Salir».
    */
-  const salir = useCallback(async () => {
-    await cerrarSesion();
-    setFase('entrar');
+  const saliendo = useRef(false);
+  const salir = useCallback(async (porque?: string) => {
+    if (saliendo.current) return;
+    saliendo.current = true;
+    try {
+      await cerrarSesion();
+    } finally {
+      saliendo.current = false;
+      setMotivo(porque || '');
+      setFase('entrar');
+    }
+  }, []);
+
+  const alSalir = useCallback((porque?: string) => void salir(porque), [salir]);
+  const alEntrar = useCallback(() => {
+    setMotivo('');
+    setFase('campo');
   }, []);
 
   return (
     <View style={s.raiz}>
       <StatusBar style="light" />
-      {fase === 'entrar' && <EntrarScreen onDentro={() => setFase('campo')} />}
-      {fase === 'campo' && <CampoScreen onSalir={() => void salir()} />}
+      {fase === 'entrar' && <EntrarScreen motivo={motivo} onDentro={alEntrar} />}
+      {fase === 'campo' && <CampoScreen onSalir={alSalir} />}
       {visible && <Arranque opacidad={opacidad} />}
     </View>
   );

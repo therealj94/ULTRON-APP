@@ -162,6 +162,14 @@ las variables de entorno», que las reglas sí ven. Por eso **no se pasa a modo 
 checkpoint `typed-decisions` movió la tarea de 52.8 % a 59.7 %: no alcanza. Lo que sí aporta hoy
 es una segunda opinión que puede subir el riesgo, nunca bajarlo.
 
+**Estado (26-09-2026):** este `laya-serve` no está desplegado en la T4 y Render no tiene `LAYA_URL`,
+así que el clasificador decide con reglas. Lo que sí corre en producción es **otro** uso de Laya,
+ajustado con datos propios: el que elige el panel de especialistas de Dr Electrum
+(`lib/laya.ts` → `decidirPanel()`, servicio `laya-electrum` en la T4, variables `ULTRON_LAYA_*`).
+Sobre su prueba apartada acierta el panel entero el 78,1 % frente al 59,2 % de la tabla de palabras,
+y cada turno deja en la traza de dónde salió el panel (paso `laya_panel`). Detalle, cifras y
+operación en `docs/NODO-T4.md`.
+
 La clasificación entra a la traza, elige el especialista de AU-RA (`lib/cognitivo/agentes.ts`), y
 si huele a ataque se le avisa al modelo en el prompt y el riesgo sube a 85 o más (el motor de
 reglas manda a revisión todo lo que no sea lectura).

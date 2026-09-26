@@ -12,12 +12,29 @@ on:
 jobs:
   web:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    # El catastro de Dr Electrum vive en PostGIS. Sin una base, las pruebas del catastro, de los
+    # expedientes y de los informes se saltaban en CI —diez de ellas, con más de cincuenta casos
+    # dentro— y lo que no se prueba en CI se rompe en producción sin que nadie se entere.
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
       NODE_ENV: test
       ULTRON_MEMORIA_BUCKET: ""
       AWS_ACCESS_KEY_ID: ""
       AWS_SECRET_ACCESS_KEY: ""
+      # «pruebas» en el nombre: las pruebas que VACÍAN tablas solo corren contra una base así.
+      ELECTRUM_DB_URL: postgres://electrum:electrum-ci@127.0.0.1:5432/electrum_pruebas
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -29,6 +46,54 @@ jobs:
       # Una clave repetida hace que GitHub rechace el fichero entero, sin un trabajo ni un log.
       - run: node scripts/qa/revisar-workflows.mjs
 
-      - run: npm test
+      # La base como la deja scripts/electrum/instalar-postgis.sh en el nodo: el esquema lo aplica
+      # el superusuario (CREATE EXTENSION lo exige) y después las tablas pasan a ser del usuario de
+      # la aplicación, que es con el que corren las pruebas. pgvector es opcional, como en el nodo:
+      # si no se puede instalar, el esquema salta ese bloque y la búsqueda queda por texto.
+      - name: Catastro de pruebas (PostGIS)
+        env:
+          PGPASSWORD: postgres
+        run: |
+          # Instalar pgvector arrastra una versión menor nueva de postgresql-16: el servidor que ya
+          # corre sigue siendo el viejo y no carga las extensiones nuevas (pg_trgm), así que se
+          # reinicia el contenedor para que arranque con los binarios instalados.
+          if docker exec ${{ job.services.postgres.id }} bash -c \
+            "apt-get update -qq && apt-get install -y -qq postgresql-16-pgvector"; then
+            docker restart ${{ job.services.postgres.id }}
+          else
+            echo "sin pgvector: la búsqueda de expedientes se prueba solo por texto"
+          fi
+          for i in $(seq 1 30); do
+            pg_isready -h 127.0.0.1 -U postgres -q && break
+            sleep 2
+          done
+          pg_isready -h 127.0.0.1 -U postgres
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "CREATE ROLE electrum LOGIN PASSWORD 'electrum-ci'"
+          psql -h 127.0.0.1 -U postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE electrum_pruebas OWNER electrum"
+          psql -h 127.0.0.1 -U postgres -d electrum_pruebas -v ON_ERROR_STOP=1 -q -f scripts/electrum/esquema.sql
+          psql -h 127.0.0.1 -U postgres -d electrum_pruebas -v ON_ERROR_STOP=1 -q <<'SQL'
+          GRANT ALL ON SCHEMA public TO electrum;
+          DO $$
+          DECLARE r record;
+          BEGIN
+            FOR r IN
+              SELECT c.oid::regclass AS nombre, c.relkind
+                FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'public' AND c.relkind IN ('r','S','v','m','p')
+                 AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = c.oid AND d.deptype = 'e')
+                 AND NOT (c.relkind = 'S' AND EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = c.oid AND d.deptype = 'a'))
+            LOOP
+              IF r.relkind = 'S' THEN EXECUTE format('ALTER SEQUENCE %s OWNER TO electrum', r.nombre);
+              ELSIF r.relkind IN ('v','m') THEN EXECUTE format('ALTER VIEW %s OWNER TO electrum', r.nombre);
+              ELSE EXECUTE format('ALTER TABLE %s OWNER TO electrum', r.nombre);
+              END IF;
+            END LOOP;
+          END $$;
+          SQL
+          psql "$ELECTRUM_DB_URL" -tAc "SELECT 'PostGIS ' || postgis_lib_version() || ', esquema ' || max(version) FROM esquema_version"
+
       - run: npx tsc --noEmit
+      # La compilación va ANTES de las pruebas: las de expedientes, informes y el cargador levantan
+      # el servidor compilado (dist/server.cjs) contra la base, y sin él se saltan.
       - run: npm run build
+      - run: npm test

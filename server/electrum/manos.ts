@@ -29,10 +29,20 @@ import {
   porVencer,
   resumenTraslapes,
   traslapes,
+  distinguir,
+  unicaExacta,
 } from './db';
+import { personaPorId } from '../../lib/acceso';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
+
+/** «hace 12 días» / «en 30 días» / «hoy», para no decir «en -968 días». */
+function cuandoVence(dias: number): string {
+  if (dias === 0) return 'vence hoy';
+  if (dias < 0) return `venció hace ${-dias} ${dias === -1 ? 'día' : 'días'}`;
+  return `vence en ${dias} ${dias === 1 ? 'día' : 'días'}`;
+}
 
 /* ------------------------------------------------------------------ catastro */
 
@@ -50,12 +60,14 @@ const catastro_buscar: Herramienta = {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const filas = await buscarConcesiones(String(texto), 10);
     if (!filas.length) return { ok: true, texto: `No hay ninguna concesión que coincida con «${texto}» en el catastro cargado.`, ui: { filas: [] } };
-    const uno = filas[0];
+    // La que se nombró tal cual gana aunque la búsqueda tolerante traiga parecidas.
+    const exacta = unicaExacta(filas, String(texto));
+    const uno = exacta || filas[0];
     const cabeza =
-      filas.length === 1
-        ? `${uno.nombre}, expediente ${uno.expediente || 'sin número'}. Titular ${(uno.titular || 'no declarado').replace(/\.$/, '')}. ${uno.tipo ? `Concesión de ${uno.tipo}` : 'Concesión'}${uno.mineral ? ` para ${uno.mineral}` : ''}, ${uno.hectareas != null ? `${nf(uno.hectareas)} hectáreas medidas` : 'sin área'}, estado ${uno.estado || 'no declarado'}${uno.vence ? `, vence el ${uno.vence}` : ''}.`
-        : `Coinciden ${filas.length}: ${filas.slice(0, 6).map((f) => f.nombre).join(', ')}. Pedí una por su nombre para la ficha.`;
-    return { ok: true, texto: cabeza, ui: { filas, id: filas.length === 1 ? uno.id : null } };
+      filas.length === 1 || exacta
+        ? `${uno.nombre} (id ${uno.id}), expediente ${uno.expediente || 'sin número'}. Titular ${(uno.titular || 'no declarado').replace(/\.$/, '')}. ${uno.tipo ? `Concesión de ${uno.tipo}` : 'Concesión'}${uno.mineral ? ` para ${uno.mineral}` : ''}, ${uno.hectareas != null ? `${nf(uno.hectareas)} hectáreas medidas` : 'sin área'}, estado ${uno.estado || 'no declarado'}${uno.vence ? `, vence el ${uno.vence}` : ''}.`
+        : `Coinciden ${filas.length}: ${filas.slice(0, 6).map(distinguir).join('; ')}. Pedí una por su id o su expediente para la ficha.`;
+    return { ok: true, texto: cabeza, ui: { filas, id: filas.length === 1 || exacta ? uno.id : null } };
   },
 };
 
@@ -83,7 +95,7 @@ const catastro_vencimientos: Herramienta = {
       }
       return { ok: true, texto: `Ninguna concesión vence en los próximos ${ventana} días.`, ui: { filas: [] } };
     }
-    const lista = filas.slice(0, 6).map((f) => `${f.nombre} en ${f.dias} días (${f.vence})`);
+    const lista = filas.slice(0, 6).map((f) => `${f.nombre} ${cuandoVence(Number(f.dias))} (${f.vence})`);
     // Igual que con los traslapes: la lista son las 25 más urgentes, la cifra es el total.
     const total = await contarPorVencer(ventana);
     const vencidas = await contarPorVencer(-1); // hasta ayer: ya vencidas
@@ -111,13 +123,14 @@ const catastro_en_punto: Herramienta = {
   plataformas: ['electrum'],
   async ejecutar({ lon, lat, radio_km }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    const radio = Number(radio_km) > 0 ? Number(radio_km) : 5;
     const dentro = await concesionEnPunto(Number(lon), Number(lat));
-    const cerca = await cercaDe(Number(lon), Number(lat), Number(radio_km) || 5, 8);
+    const cerca = await cercaDe(Number(lon), Number(lat), radio, 8);
     const fuera = cerca.filter((c) => !dentro.some((d) => d.id === c.id));
     const partes = dentro.length
       ? [`Ese punto cae dentro de ${dentro.map((d) => `${d.nombre} (${d.titular || 'titular no declarado'})`).join(' y ')}.`]
       : ['Ese punto no cae dentro de ninguna concesión del catastro cargado.'];
-    if (fuera.length) partes.push(`A menos de ${radio_km} kilómetros: ${fuera.slice(0, 4).map((c) => `${c.nombre} a ${nf(c.km, 1)} km`).join(', ')}.`);
+    if (fuera.length) partes.push(`A menos de ${nf(radio, radio % 1 ? 1 : 0)} kilómetros: ${fuera.slice(0, 4).map((c) => `${c.nombre} a ${nf(c.km, 1)} km`).join(', ')}.`);
     return { ok: true, texto: partes.join(' '), ui: { punto: [Number(lon), Number(lat)], dentro, cerca: fuera } };
   },
 };
@@ -204,11 +217,17 @@ const mapa_volar: Herramienta = {
     let id = concesion_id != null ? Number(concesion_id) : null;
     let comoSeLlama = String(nombre || '');
     if (id == null && comoSeLlama) {
-      const filas = await buscarConcesiones(comoSeLlama, 2);
+      const filas = await buscarConcesiones(comoSeLlama, 6);
       if (!filas.length) return { ok: false, texto: `No encuentro «${comoSeLlama}» en el catastro, así que no sé a dónde volar.` };
-      if (filas.length > 1) return { ok: false, texto: `«${comoSeLlama}» coincide con varias: ${filas.map((f) => f.nombre).join(', ')}. Decime cuál.` };
-      id = filas[0].id;
-      comoSeLlama = filas[0].nombre;
+      const elegida = filas.length === 1 ? filas[0] : unicaExacta(filas, comoSeLlama);
+      if (!elegida) {
+        return {
+          ok: false,
+          texto: `«${comoSeLlama}» coincide con varias: ${filas.map(distinguir).join('; ')}. Preguntá cuál y volvé a pedírmelo con su id.`,
+        };
+      }
+      id = elegida.id;
+      comoSeLlama = elegida.nombre;
     }
     if (id == null) return { ok: false, texto: 'Decime a qué concesión volar, por id o por nombre.' };
     const g = await geometriaDe(id);
@@ -294,8 +313,10 @@ const informe_pdf: Herramienta = {
   msMaximo: 25_000,
   async ejecutar({ tipo, nombre, concesion_id, lectura }, ctx) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    // El pie del PDF lleva el NOMBRE de quien lo pidió; la propiedad del informe, su id. Antes el
+    // pie decía «a petición de jose»: el identificador interno del padrón, impreso con membrete.
     const quien = ctx.quien;
-    const opts = { quien, lectura: lectura ? String(lectura) : undefined };
+    const opts = { quien: quien ? personaPorId(quien)?.nombre || null : null, lectura: lectura ? String(lectura) : undefined };
 
     const r =
       String(tipo || 'concesion') === 'cartera'

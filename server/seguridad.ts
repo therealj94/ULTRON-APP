@@ -48,7 +48,7 @@ function secretoSesion(): string {
   return secretoDelArranque;
 }
 
-function firmarSesion(user: { correo: string; nombre: string; rol: string; at: number; exp: number }): string {
+function firmarSesion(user: { correo: string; nombre: string; rol: string; at: number; exp: number; n: string }): string {
   const body = Buffer.from(JSON.stringify(user)).toString('base64url');
   const sig = crypto.createHmac('sha256', secretoSesion()).update(body).digest('base64url');
   return `u1.${body}.${sig}`;
@@ -98,6 +98,9 @@ export function emitirSesion(user: { correo: string; nombre: string; rol: string
     rol: user.rol,
     at,
     exp: at + SESION_TTL_MS,
+    // Dos entradas del mismo miembro en el mismo milisegundo (teléfono y web a la vez) daban el mismo
+    // token, y cerrar la de un aparato cerraba la del otro.
+    n: crypto.randomBytes(9).toString('base64url'),
   });
   const s: Sesion = { token, correo: user.correo, nombre: user.nombre, rol: user.rol, at };
   sesiones.set(token, s);

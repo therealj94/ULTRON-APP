@@ -13,8 +13,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { Map as MapaLibre } from 'maplibre-gl';
-import type { FeatureCollection, Geometry } from 'geojson';
 import { duracion } from '../movimiento';
+import { esMapaVivo, fijarMapaVivo, type Fondo, type Motor, type OrdenMapa } from './captura';
 import { AMBAR, RESALTE, ESTILO_SATELITE, ESTILO_CALLES, capasDeConcesiones, capasDeResaltado } from './capas';
 import urlDelWorker from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
@@ -31,13 +31,7 @@ import urlDelWorker from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
  */
 maplibregl.setWorkerUrl(urlDelWorker);
 
-export type Motor = 'maplibre' | 'google';
-export type Fondo = 'satelite' | 'calles';
-
-export type OrdenMapa =
-  | { accion: 'volar'; geojson: Geometry; encuadre?: [number, number, number, number]; centro?: [number, number] }
-  | { accion: 'capa'; geojson: FeatureCollection; encuadre?: [number, number, number, number] }
-  | { accion: 'punto'; punto: [number, number] };
+export type { Fondo, Motor, OrdenMapa } from './captura';
 
 type Props = {
   /** La última orden que dio una herramienta. Cambiarla mueve el mapa. */
@@ -199,7 +193,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
      * limpiaba al destruir el mapa, así que tras cambiar de motor la referencia seguía apuntando a
      * una instancia muerta y el informe se llevaba una foto vieja o vacía sin decir nada.
      */
-    vivo = { m, motor: 'maplibre' };
+    fijarMapaVivo({ m, motor: 'maplibre' });
     // Asa para las capturas de QA (scripts/qa/electrum.mjs).
     (window as any).__mapa = m;
 
@@ -216,7 +210,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       observador?.disconnect();
       m.remove();
       mapa.current = null;
-      if (vivo?.m === m) vivo = null;
+      if (esMapaVivo(m)) fijarMapaVivo(null);
       if ((window as any).__mapa === m) delete (window as any).__mapa;
       setListo(false);
     };
@@ -246,7 +240,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
   useEffect(() => {
     if (motor !== 'google') return;
     if (!claveGoogle) {
-      setFalloGoogle('Falta la clave de Google Maps. Ponela en GOOGLE_MAPS_API_KEY y volvé a desplegar.');
+      setFalloGoogle('Falta la clave de Google Maps. Ponela en VITE_GOOGLE_MAPS_KEY y volvé a compilar: va dentro del paquete de la web.');
       return;
     }
     setFalloGoogle(null);
@@ -255,7 +249,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       if (!cajaGoogle.current) return;
       // Que la captura sepa que el mapa de la pantalla es el de Google, para poder explicar por qué
       // no entra en el informe en vez de armarlo sin mapa y en silencio.
-      vivo = { m: null, motor: 'google' };
+      fijarMapaVivo({ m: null, motor: 'google' });
       google.current = new (window as any).google.maps.Map(cajaGoogle.current, {
         center: { lat: 14.75, lng: -86.25 },
         zoom: 7,
@@ -353,70 +347,5 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
   );
 }
 
-/**
- * El mapa tal como se está viendo, en JPEG, para meterlo en el informe.
- *
- * El servidor no puede hacer esta captura: el encuadre, el zoom y las capas encendidas son de quien
- * está mirando, no del servidor. Por eso el lienzo se crea con `preserveDrawingBuffer` — sin eso,
- * WebGL descarta el búfer tras pintar y `toDataURL` devuelve un rectángulo negro. Esa bandera
- * existía ya «por si acaso»; este es el caso.
- *
- * JPEG y no PNG porque el PDF incrusta los datos de un JPEG tal cual, sin recodificar nada.
- */
-/** El mapa que está en pantalla ahora mismo, y con qué motor. Null cuando no hay ninguno montado. */
-let vivo: { m: MapaLibre | null; motor: Motor } | null = null;
-
-export type Captura = { imagen: string } | { falta: string };
-
-/**
- * La foto del mapa para el informe.
- *
- * Es asíncrona, y no por capricho. Antes se llamaba a `triggerRepaint()` y se leía el lienzo **en
- * la línea siguiente**: `triggerRepaint` solo PIDE un cuadro nuevo, no lo dibuja, así que lo que se
- * leía era el cuadro anterior. Con el mapa quieto no se nota; justo después de volar a una
- * concesión —que es cuando alguien pide el informe— se llevaba la vista de antes. Ahora se espera
- * a que el mapa diga que terminó (`idle`), con un tope por si las teselas no paran de reintentar.
- *
- * Y cuando no se puede, se dice cuál es el motivo en vez de devolver un hueco. Un informe sin mapa
- * y sin explicación parece un informe roto; uno que dice «el mapa no entró porque estás en Google»
- * es un informe honesto.
- */
-export async function capturaDelMapa(): Promise<Captura> {
-  if (!vivo) return { falta: 'No había mapa montado cuando pedí la foto.' };
-  if (vivo.motor !== 'maplibre') {
-    /*
-     * Google Maps se compone en el DOM con teselas de otro dominio: su lienzo no se puede leer
-     * desde la página, y forzarlo daría una imagen en blanco o una excepción de seguridad. No hay
-     * arreglo desde aquí, así que se dice — antes, simplemente, salía el informe sin mapa.
-     */
-    return { falta: 'Con el mapa de Google no puedo sacar la foto: sus teselas vienen de otro dominio y el navegador no me deja leer el lienzo. Cambiá a MapLibre y te lo armo con mapa.' };
-  }
-  const m = vivo.m;
-  const lienzo = m?.getCanvas?.();
-  if (!lienzo || !lienzo.width || !lienzo.height) return { falta: 'El mapa todavía no tenía nada dibujado.' };
-
-  // Esperar un cuadro DE VERDAD. `idle` llega cuando no queda nada por cargar ni por pintar.
-  await new Promise<void>((resolver) => {
-    let hecho = false;
-    if (!m) return resolver();
-    const fin = () => {
-      if (hecho) return;
-      hecho = true;
-      resolver();
-    };
-    m.once('idle', fin);
-    m.triggerRepaint?.();
-    // Si una tesela falla y se reintenta sola, `idle` puede no llegar nunca.
-    setTimeout(fin, 1500);
-  });
-
-  try {
-    const url = lienzo.toDataURL('image/jpeg', 0.82);
-    if (!url.startsWith('data:image/jpeg') || url.length < 2000) {
-      return { falta: 'La foto del mapa salió vacía. Probá otra vez cuando termine de cargar.' };
-    }
-    return { imagen: url };
-  } catch (e: any) {
-    return { falta: `No pude leer el lienzo del mapa (${String(e?.message || e).slice(0, 80)}).` };
-  }
-}
+/** La foto para el informe vive en `captura.ts`, que no carga MapLibre. Se reexporta por compatibilidad. */
+export { capturaDelMapa, type Captura } from './captura';

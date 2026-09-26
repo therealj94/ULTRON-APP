@@ -25,8 +25,24 @@ import { indexarPendientes } from './vectores';
 import crypto from 'node:crypto';
 import JSZip from 'jszip';
 import { extraerPdf } from '../../lib/leer-pdf';
-import { consulta, guardarCapa, hayBase, recalcularTraslapes } from './db';
-import { ingerir, resumenCapa, resumenTraslapes, type Aviso } from './gis';
+import { consulta, guardarCapa, hayBase, recalcularTraslapes, traslapesDeCapa } from './db';
+
+const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
+
+/**
+ * Qué ojo leyó la foto, dicho sin la dirección de la máquina.
+ *
+ * `verImagen` devuelve en `via` la URL del nodo de visión —«http://10.0.3.7:7860/ver»— y eso iba
+ * tal cual al aviso que ve quien subió la foto, llave de demostración incluida. Para creerle a
+ * una transcripción basta saber si fue el ojo propio o el de reserva; la IP no le sirve a nadie.
+ */
+export function ojoQueLeyo(via: string): string {
+  const v = String(via || '');
+  if (/gemini/i.test(v)) return 'el ojo de reserva (Gemini)';
+  if (/^https?:\/\//i.test(v) || /ojo/i.test(v)) return 'el ojo del nodo de visión';
+  return 'el ojo de visión';
+}
+import { ingerir, resumenCapa, resumenTraslapes, revisarZip, type Aviso } from './gis';
 import { verImagen, vistaFallida } from '../../lib/vision';
 
 export type Aprendido = {
@@ -197,6 +213,7 @@ type Leido =
  */
 async function textoDeDocx(datos: Buffer): Promise<string> {
   const zip = await JSZip.loadAsync(datos);
+  revisarZip(zip);
   const doc = zip.file('word/document.xml');
   if (!doc) return '';
   const xml = await doc.async('text');
@@ -280,7 +297,7 @@ async function leerDocumento(nombre: string, datos: Buffer): Promise<Leido> {
       return {
         ok: false,
         motivo: 'escaneo',
-        dicho: 'Ese PDF no trae texto: es un escaneo de imágenes. Para poder citarlo necesito una versión con texto, o pasarlo por reconocimiento óptico. Dilo así.',
+        dicho: 'Ese PDF no trae texto: es un escaneo de imágenes. Para poder citarlo necesito una versión con texto, o pasarlo por reconocimiento óptico.',
         avisos: [{ nivel: 'error', texto: 'PDF sin capa de texto' }],
       };
     }
@@ -309,7 +326,7 @@ async function leerDocumento(nombre: string, datos: Buffer): Promise<Leido> {
       dicho:
         'Ese archivo tiene capa de texto, pero lo que sale no se puede usar: las letras vienen ' +
         'sueltas o con una codificación propia, así que buscar una palabra dentro no encontraría ' +
-        'nada. Hay que pasarlo por reconocimiento óptico, igual que un escaneo. Dilo así.',
+        'nada. Hay que pasarlo por reconocimiento óptico, igual que un escaneo.',
       avisos: [{ nivel: 'error', texto: 'texto ilegible: letras sueltas o codificación propia' }],
     };
   }
@@ -353,7 +370,7 @@ export async function aprender(
   if (!hayBase()) {
     return {
       clase: 'nada',
-      dicho: 'Leí el archivo pero el catastro no está conectado, así que no puedo guardarlo todavía. Decilo tal cual.',
+      dicho: 'Leí el archivo pero el catastro no está conectado, así que no puedo guardarlo todavía.',
       avisos: [{ nivel: 'error', texto: 'sin ELECTRUM_DB_URL' }],
     };
   }
@@ -387,14 +404,53 @@ export async function aprender(
     }
 
     const partes = [resumenCapa(capa, avisos)];
-    if (guardado.concesiones) partes.push(`Quedaron ${guardado.concesiones} en el catastro, ya buscables y medibles.`);
+    if (guardado.concesiones) {
+      partes.push(
+        guardado.concesiones === 1
+          ? 'Quedó 1 concesión en el catastro, ya buscable y medible.'
+          : `Quedaron ${guardado.concesiones} en el catastro, ya buscables y medibles.`
+      );
+    }
     if (guardado.repetidas) {
       partes.push(
         `${guardado.repetidas} ${guardado.repetidas === 1 ? 'ya estaba cargada y la salté' : 'ya estaban cargadas y las salté'}: la misma geometría no entra dos veces.`
       );
     }
-    if (guardado.entidades) partes.push(`Y ${guardado.entidades} entidades geográficas más.`);
-    if (traslapesNuevos > 0 && guardado.concesiones) partes.push(resumenTraslapes(capa));
+    if (guardado.reparadas) {
+      const n = guardado.reparadas;
+      const aviso = `${n} ${n === 1 ? 'polígono venía con el lindero cruzado sobre sí mismo' : 'polígonos venían con el lindero cruzado sobre sí mismo'}: ${n === 1 ? 'lo reparé' : 'los reparé'} al guardar y el área es la de lo reparado. Conviene revisar ese plano.`;
+      avisos.push({ nivel: 'ojo', texto: aviso });
+      partes.push(aviso);
+    }
+    if (guardado.vacias) {
+      const aviso = `${guardado.vacias} ${guardado.vacias === 1 ? 'polígono no tenía superficie' : 'polígonos no tenían superficie'} una vez reparados y no ${guardado.vacias === 1 ? 'entró' : 'entraron'}.`;
+      avisos.push({ nivel: 'ojo', texto: aviso });
+      partes.push(aviso);
+    }
+    if (guardado.entidades) {
+      const n = guardado.entidades;
+      partes.push(
+        guardado.concesiones
+          ? `Y ${n} ${n === 1 ? 'entidad geográfica más' : 'entidades geográficas más'}.`
+          : `${n === 1 ? 'Entró como entidad geográfica' : `Entraron como ${n} entidades geográficas`} (bocaminas, ríos, poblados…), no como concesiones: no traen titular.`
+      );
+    }
+    if (traslapesNuevos > 0 && guardado.concesiones && guardado.capaId) {
+      /*
+       * Los traslapes que se cuentan son los de la BASE, contra todo el padrón: una concesión nueva
+       * no se pisa solo con las de su mismo archivo. Mirar solo dentro de la capa le decía «no se
+       * pisa ninguno» a quien acababa de subir una que se come media de la vecina.
+       */
+      const suyos = await traslapesDeCapa(guardado.capaId).catch(() => null);
+      if (suyos === null) partes.push(resumenTraslapes(capa));
+      else if (!suyos.length) partes.push('No se pisa con nada de lo cargado, ni dentro del archivo ni con el resto del padrón.');
+      else {
+        const lista = suyos.slice(0, 5).map((x) => `${x.a} con ${x.b}, ${nf(x.hectareas)} ha`);
+        partes.push(
+          `${suyos.length === 1 ? 'Encontré 1 traslape' : `Encontré ${suyos.length} traslapes`} contando el resto del padrón: ${lista.join('; ')}${suyos.length > 5 ? ', y más' : ''}. Eso es superposición de derechos y se resuelve por prelación de la solicitud, no en el mapa.`
+        );
+      }
+    }
     if (opts.sinTraslapes && guardado.concesiones) partes.push('Los traslapes se calculan al final, de una vez.');
 
     return {
@@ -451,13 +507,13 @@ export async function aprender(
           dicho: vistaFallida(visto)
             ? 'No pude leer esa foto ahora mismo. Volvé a mandármela en un rato.'
             : 'Miré la foto y no saqué texto de ella. Si es un plano, acercate al recuadro con los datos y volvé a mandármela.',
-          avisos: [{ nivel: 'error', texto: `visión: ${visto.via}` }],
+          avisos: [{ nivel: 'error', texto: vistaFallida(visto) ? 'visión: no respondió' : 'visión: sin texto legible' }],
         };
       }
 
       paginas = [{ pagina: 1, texto: visto.texto }];
       trozos = trocear(paginas);
-      avisos = [{ nivel: 'ojo', texto: `Leído con ${visto.via}. Es una transcripción de una foto, no el documento original.` }];
+      avisos = [{ nivel: 'ojo', texto: `Leído con ${ojoQueLeyo(visto.via)}. Es una transcripción de una foto, no el documento original.` }];
       tipoPorDefecto = clasificarDoc(nombre, visto.texto);
     } else {
       const leido = await leerDocumento(nombre, datos);
@@ -536,7 +592,7 @@ export async function aprender(
       clase: 'documento',
       dicho: imagen
         ? `Leí la foto y saqué ${paginas[0].texto.length} caracteres: ${trozos.length} ${trozos.length === 1 ? 'fragmento indexado' : 'fragmentos indexados'} y ya queda en el expediente, buscable. Es lo que se lee en la imagen; lo que salía borroso lo dejé marcado como ilegible en vez de completarlo.`
-        : `Leí ${nombre}: ${paginas.length} ${paginas.length === 1 ? 'página' : 'páginas'}, ${trozos.length} fragmentos indexados. Ya lo puedo citar con página.`,
+        : `Leí ${nombre}: ${paginas.length} ${paginas.length === 1 ? 'página' : 'páginas'}, ${trozos.length} ${trozos.length === 1 ? 'fragmento indexado' : 'fragmentos indexados'}. Ya lo puedo citar con página.`,
       avisos,
       ui: { accion: 'documento', documento_id: doc.id, nombre, paginas: paginas.length, fragmentos: trozos.length, foto: imagen || undefined },
     };

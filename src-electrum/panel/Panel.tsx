@@ -22,7 +22,7 @@ import {
 } from 'react';
 import type { FaceState } from '../../src/types';
 import type { Emocion } from '../../lib/emocion';
-import { capturaDelMapa } from '../mapa/Mapa';
+import { capturaDelMapa } from '../mapa/captura';
 import { sinMovimiento } from '../movimiento';
 import { ALTURAS, repartoDe, siguienteReparto } from '../preferencias';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
@@ -102,7 +102,11 @@ export function callar() {
  * Safari da mp4. Se manda el mime tal cual en vez de suponerlo: el transcriptor lo necesita para
  * saber qué está abriendo, y adivinarlo mal devuelve una transcripción vacía sin decir por qué.
  */
-async function grabar(alTexto: (t: string) => void, alEstado: (s: 'grabando' | 'oyendo' | '') => void): Promise<() => void> {
+async function grabar(
+  alTexto: (t: string) => void,
+  alEstado: (s: 'grabando' | 'oyendo' | '') => void,
+  alFallo: (motivo: string) => void
+): Promise<() => void> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'].find((m) => MediaRecorder.isTypeSupported(m)) || '';
   const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
@@ -123,8 +127,18 @@ async function grabar(alTexto: (t: string) => void, alEstado: (s: 'grabando' | '
         headers: { 'Content-Type': 'application/json', ...headersElectrum() },
         body: JSON.stringify({ audio: base64, mime: blob.type }),
       });
-      const j = await r.json().catch(() => ({}));
-      if (j.texto) alTexto(j.texto);
+      const j = await r.json().catch(() => ({}) as any);
+      /*
+       * Antes solo se miraba si llegó texto: si el oído fallaba, o si no entendió nada, la pantalla
+       * pasaba de «pasando a texto…» a nada. Quien dictó con las manos sucias no sabía si tenía que
+       * repetirlo o esperar.
+       */
+      if (j?.texto) alTexto(j.texto);
+      else if (r.status === 401) alFallo(SIN_PUERTA);
+      else if (!r.ok) alFallo(j?.error ? `No te pude oír: ${j.error}` : `No te pude oír: el servidor contestó ${r.status}.`);
+      else alFallo('No te entendí nada. Probá otra vez, más cerca del micrófono.');
+    } catch {
+      alFallo('No alcancé el servidor para pasar tu voz a texto. Revisá la conexión y volvé a dictármelo.');
     } finally {
       alEstado('');
     }
@@ -319,9 +333,21 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
   const [hayNuevo, setHayNuevo] = useState(false);
   const alFinal = useRef(true);
 
+  /*
+   * Cuándo empezó el último desplazamiento que hizo la PANTALLA, no la persona.
+   *
+   * El desplazamiento suave dispara `scroll` a mitad de camino, y en cada uno de esos eventos la
+   * posición todavía no está al final: `mirarPosicion` concluía que la persona se había ido hacia
+   * arriba. Resultado medido en el navegador: se hacía una pregunta, la respuesta llegaba debajo
+   * del borde, no se bajaba sola y aparecía «hay respuesta nueva» a alguien que no se había movido.
+   * Mientras dura la animación propia, esos eventos no cuentan como decisión de nadie.
+   */
+  const desplazandoSolo = useRef(0);
+
   const mirarPosicion = useCallback(() => {
     const el = hilo.current;
     if (!el) return;
+    if (Date.now() - desplazandoSolo.current < 900) return;
     // 40 px de margen: nadie deja el desplazamiento clavado al píxel.
     alFinal.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     if (alFinal.current) setHayNuevo(false);
@@ -330,6 +356,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
   const bajarDeltodo = useCallback(() => {
     const el = hilo.current;
     if (!el) return;
+    desplazandoSolo.current = Date.now();
     el.scrollTo({ top: el.scrollHeight, behavior: sinMovimiento() ? 'auto' : 'smooth' });
     alFinal.current = true;
     setHayNuevo(false);
@@ -338,7 +365,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
   useEffect(() => {
     if (alFinal.current) bajarDeltodo();
     else if (turnos.length) setHayNuevo(true);
-  }, [turnos, pensando, bajarDeltodo]);
+  }, [turnos, pensando, enVivo, bajarDeltodo]);
 
   /**
    * Un aviso de la pantalla, no una frase del Doctor.
@@ -358,6 +385,16 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       }
       return [...copia, { de: 'electrum', texto, reintentar, local: true }];
     });
+  }, []);
+
+  /**
+   * Un aviso de la pantalla que NO cuelga de una pregunta: el micrófono sin permiso, un PDF que no
+   * bajó, un informe que no se pudo compartir. `avisar` marca además la última pregunta como no
+   * contestada, y usarlo acá sacaba del hilo una pregunta que sí tuvo su respuesta. Tampoco va al
+   * modelo: es de la pantalla.
+   */
+  const avisoSuelto = useCallback((texto: string) => {
+    setTurnos((t) => [...t, { de: 'electrum', texto, local: true }]);
   }, []);
 
   const preguntar = useCallback(
@@ -384,6 +421,12 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       let cerrado = false;
       /** ¿Llegamos a leer algo del flujo? Separa «no conecté» de «conecté y se cayó a la mitad». */
       let empezado = false;
+      /*
+       * El informe que armó el turno. Llega por `ui` —la herramienta `informe_pdf` deja ahí su
+       * enlace— y hasta ahora se perdía: Dr Electrum decía «ya está listo para descargar» y en la
+       * pantalla no había nada que descargar. Se engancha a la respuesta cuando llega el `fin`.
+       */
+      let informeDelTurno: Turno['informe'] | undefined;
 
       try {
         /*
@@ -441,9 +484,15 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         let evento = '';
         let terminado = false;
 
-        while (!terminado) {
+        /*
+         * Se lee HASTA EL FINAL aunque ya llegó el `fin`: el servidor cierra justo después, y dejar el
+         * flujo a medio leer hacía que el navegador lo diera por abortado (ERR_ABORTED en la consola
+         * en cada pregunta) y que la conexión quedara colgada hasta recargar.
+         */
+        for (;;) {
           const { done, value } = await lector.read();
           if (done) break;
+          if (terminado) continue;
           empezado = true;
           resto += dec.decode(value, { stream: true });
           // SSE separa los mensajes con una línea en blanco; lo que quede a medias espera.
@@ -459,6 +508,9 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                 else if (evento === 'ui') {
                   onUi([d]); // el mapa se mueve YA, no al final
                   if (d?.accion === 'volar' && Number.isFinite(Number(d.concesion_id))) setEnFoco(Number(d.concesion_id));
+                  if (d?.informe?.url) {
+                    informeDelTurno = { nombre: String(d.informe.nombre || 'informe.pdf'), url: String(d.informe.url), bytes: Number(d.informe.bytes) || 0 };
+                  }
                 }
                 else if (evento === 'error') {
                   cerrado = true;
@@ -470,7 +522,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   onFace('SPEAKING');
                   if (d.emocion) onEmocion(d.emocion);
                   if (vozActivaRef.current && d.texto) void decirEnVoz(d.texto, d.emocion, headersElectrum());
-                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza }]);
+                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno }]);
                   terminado = true;
                 }
               }
@@ -530,17 +582,17 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         const r = await fetch(`${informe.url}/compartir`, { method: 'POST', headers: headersElectrum() });
         if (!r.ok) {
           const j = await r.json().catch(() => ({}) as any);
-          avisar(j?.error || `No pude compartirlo: el servidor contestó ${r.status}.`);
+          avisoSuelto(j?.error || `No pude compartirlo: el servidor contestó ${r.status}.`);
           return;
         }
         setTurnos((t) =>
           t.map((x, j) => (j === indice && x.informe ? { ...x, informe: { ...x.informe, compartido: true } } : x))
         );
       } catch {
-        avisar('No alcancé el servidor para compartir el informe.');
+        avisoSuelto('No alcancé el servidor para compartir el informe.');
       }
     },
-    [avisar]
+    [avisoSuelto]
   );
 
   /** Borra el hilo de las dos puntas. Si el servidor no contesta, al menos la pantalla queda limpia. */
@@ -581,9 +633,16 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
             : { tipo: 'cartera', mapa: 'imagen' in foto ? foto.imagen : null }
         ),
       });
-      const j = await r.json();
-      if (!r.ok) {
-        setTurnos((t) => [...t, { de: 'electrum', texto: j.error || 'No pude armar el informe.' }]);
+      /*
+       * Un 502 de Render trae HTML, no JSON: `r.json()` lanzaba y el catch contaba «no alcancé el
+       * servidor» cuando el servidor sí contestó. Y un 401 se enseñaba como un fallo del informe en
+       * vez de como lo que es, la puerta.
+       */
+      const j: any = await r.json().catch(() => null);
+      if (r.status === 401) {
+        avisoSuelto(SIN_PUERTA);
+      } else if (!r.ok || !j?.url) {
+        avisoSuelto(j?.error || `No pude armar el informe: el servidor contestó ${r.status}.`);
       } else {
         // Si el mapa no entró, se dice EN la misma respuesta. Un informe sin mapa y sin explicación
         // parece roto; uno que dice por qué es un informe honesto.
@@ -591,12 +650,12 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         setTurnos((t) => [...t, { de: 'electrum', texto, informe: { nombre: j.nombre, url: j.url, bytes: j.bytes } }]);
       }
     } catch {
-      setTurnos((t) => [...t, { de: 'electrum', texto: 'No alcancé el servidor para armar el informe.' }]);
+      avisoSuelto('No alcancé el servidor para armar el informe. Revisá la conexión y volvé a pedírmelo.');
     } finally {
       setPensando(false);
       setTimeout(() => onFace('IDLE'), 900);
     }
-  }, [pensando, onFace, onTrabajo, enFoco]);
+  }, [pensando, onFace, onTrabajo, enFoco, avisoSuelto]);
 
   /*
     La conversación comparte la pantalla con el mapa —42 % abajo— porque las dos cosas se miran a la
@@ -628,6 +687,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
             key={v}
             type="button"
             onClick={() => onVista(v)}
+            aria-pressed={vista === v}
             className="px-3 py-1.5 rounded-lg font-mono text-[11px] tracking-[0.14em] uppercase transition-colors cursor-pointer"
             style={
               vista === v
@@ -717,7 +777,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                 {t.informe && (
                   <button
                     type="button"
-                    onClick={() => void bajarInforme(t.informe!).then((m) => m && avisar(m))}
+                    onClick={() => void bajarInforme(t.informe!).then((m) => m && avisoSuelto(m))}
                     className="mt-2 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-white/[0.06] cursor-pointer"
                     style={{ borderColor: 'rgba(255,174,59,.35)' }}
                   >
@@ -823,7 +883,9 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               value={texto}
               onChange={(e) => setTexto(e.target.value)}
               placeholder="Preguntale a Dr Electrum…"
-              className="flex-1 min-w-0 bg-white/[0.06] border border-white/12 rounded-lg px-3 py-2 text-sm text-[#E7EEF2] placeholder:text-[#5E7078] focus:outline-none focus:border-[#FFAE3B]/60"
+              aria-label="Tu pregunta para Dr Electrum"
+              autoComplete="off"
+              className="flex-1 min-w-0 bg-white/[0.06] border border-white/12 rounded-lg px-3 py-2 text-sm text-[#E7EEF2] placeholder:text-[#7D909A] focus:outline-none focus:border-[#FFAE3B]/60"
             />
             <button
               type="button"
@@ -834,14 +896,15 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   return;
                 }
                 try {
-                  pararGrabacion.current = await grabar((t) => void preguntar(t), setOyendo);
+                  pararGrabacion.current = await grabar((t) => void preguntar(t), setOyendo, avisoSuelto);
                 } catch {
                   setOyendo('');
-                  setTurnos((t) => [...t, { de: 'electrum', texto: 'No me dejaron usar el micrófono. Revisá el permiso del navegador.' }]);
+                  avisoSuelto('No me dejaron usar el micrófono. Revisá el permiso del navegador.');
                 }
               }}
               disabled={pensando || oyendo === 'oyendo'}
               title={oyendo === 'grabando' ? 'Parar y mandarme lo que dijiste' : 'Hablarme'}
+              aria-label={oyendo === 'grabando' ? 'Parar y mandarme lo que dijiste' : 'Dictarle la pregunta a Dr Electrum'}
               className="shrink-0 rounded-lg border px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
               style={
                 oyendo === 'grabando'
@@ -887,6 +950,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
             </div>
             <button
               type="submit"
+              aria-label="Preguntar"
               disabled={pensando || !texto.trim()}
               className="px-3.5 rounded-lg text-black text-[12px] font-semibold disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
               style={{ background: AMBAR }}
@@ -896,7 +960,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
           </form>
         </>
       ) : (
-        <Expedientes />
+        <Expedientes onUi={onUi} />
       )}
     </aside>
   );
@@ -909,7 +973,16 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
  * lanzar seis en paralelo contra el mismo PostGIS hace que el recálculo de traslapes se pise
  * consigo mismo. En serie tarda lo mismo y se ve qué está pasando.
  */
-function Cargador({ alCargar, nivel }: { alCargar: () => void; nivel: string | null | undefined }) {
+function Cargador({
+  alCargar,
+  alCatastro,
+  nivel,
+}: {
+  alCargar: () => void;
+  /** Entró geometría nueva: el mapa tiene que volver a pintar el catastro. */
+  alCatastro: () => void;
+  nivel: string | null | undefined;
+}) {
   /*
    * El servidor ya rechaza las cargas sin permiso —esa es la defensa de verdad y se queda— pero la
    * pantalla ofrecía igualmente arrastrar archivos a quien tiene acceso de consulta. Soltar una
@@ -968,11 +1041,16 @@ function Cargador({ alCargar, nivel }: { alCargar: () => void; nivel: string | n
             headers: { 'Content-Type': archivo.type || 'application/octet-stream', ...headersElectrum() },
             body: archivo,
           });
-          const j = await r.json().catch(() => ({}));
-          if (!r.ok) marcar(id, 'falló', j.error || `Error ${r.status}`);
+          const j: any = await r.json().catch(() => ({}));
+          if (r.status === 401) marcar(id, 'falló', SIN_PUERTA);
+          else if (!r.ok) marcar(id, 'falló', j.error || `El servidor contestó ${r.status}.`);
+          // `clase: 'nada'` es un 200 que NO guardó nada (formato que no se lee, metros sin .prj):
+          // se marca como fallo para que no parezca cargado.
+          else if (j.clase === 'nada') marcar(id, 'falló', j.dicho || 'No pude leerlo.');
           else {
             marcar(id, 'ok', j.dicho);
             alCargar();
+            if (j.clase === 'catastro' && (j.ui?.concesiones || j.ui?.capa_id)) alCatastro();
           }
         } catch {
           marcar(id, 'falló', 'No alcancé el servidor.');
@@ -981,7 +1059,7 @@ function Cargador({ alCargar, nivel }: { alCargar: () => void; nivel: string | n
     } finally {
       ocupado.current = false;
     }
-  }, [alCargar, marcar]);
+  }, [alCargar, alCatastro, marcar]);
 
   const subir = useCallback(
     async (archivos: File[]) => {
@@ -1142,9 +1220,10 @@ type Indice = {
   nivel: string | null;
 };
 
-function Expedientes() {
+function Expedientes({ onUi }: { onUi: (datos: Array<Record<string, unknown>>) => void }) {
   const [datos, setDatos] = useState<Indice | null>(null);
-  const [fallo, setFallo] = useState<'' | 'puerta' | 'base'>('');
+  /** Por qué no hay lista: la puerta, el servidor (con su código) o la red. */
+  const [fallo, setFallo] = useState<'' | 'puerta' | { codigo: number }>('');
   const [vuelta, setVuelta] = useState(0);
   /** Lo que se está buscando. Vacío es «todo». */
   const [busca, setBusca] = useState('');
@@ -1166,16 +1245,43 @@ function Expedientes() {
 
   useEffect(() => {
     const q = busca ? `&q=${encodeURIComponent(busca)}` : '';
+    let vivo = true;
+    // Cada intento empieza limpio: un fallo viejo no puede quedarse pegado a la búsqueda de ahora.
+    setFallo('');
     fetch(`/api/electrum/expedientes?limite=${PAGINA}${q}`, { headers: headersElectrum() })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
       .then((j: Indice) => {
+        if (!vivo) return;
         setDatos(j);
         setNivel(j.nivel ?? null);
       })
-      .catch((e) => setFallo(e === 401 ? 'puerta' : 'base'));
+      .catch((e) => vivo && setFallo(e === 401 ? 'puerta' : { codigo: typeof e === 'number' ? e : 0 }));
+    return () => {
+      vivo = false;
+    };
   }, [vuelta, busca]);
 
   const recargar = useCallback(() => setVuelta((v) => v + 1), []);
+
+  /**
+   * Volver a pintar el catastro después de una carga.
+   *
+   * El mapa pedía el catastro UNA vez, al abrirse. Quien subía un shapefile veía «quedaron 40 en el
+   * catastro» y el mapa seguía igual hasta recargar la página: parecía que no había entrado. Se pide
+   * sin caché —la ruta se guarda un minuto en el navegador— y se le pasa al mapa como una capa más.
+   */
+  const repintar = useCallback(async () => {
+    try {
+      const r = await fetch('/api/electrum/catastro.geojson', { headers: headersElectrum(), cache: 'no-store' });
+      if (!r.ok) return;
+      const j = await r.json();
+      // Sin encuadre: se repinta donde esté mirando; que el mapa salte a todo el país cada vez que
+      // alguien sube un archivo le haría perder la concesión que estaba revisando.
+      if (j?.geojson?.features?.length) onUi([{ accion: 'capa', geojson: j.geojson }]);
+    } catch {
+      /* el índice ya dice lo que entró; el mapa se pondrá al día al recargar */
+    }
+  }, [onUi]);
 
   /** Traer la página siguiente y pegarla a lo que ya hay. */
   const traerMas = useCallback(async () => {
@@ -1201,13 +1307,41 @@ function Expedientes() {
 
   if (fallo === 'puerta') return <div className="p-4 text-sm text-[#8FA3B0] leading-relaxed">{SIN_PUERTA}</div>;
   if (fallo) {
+    /*
+     * Antes cualquier fallo se contaba como «falta ELECTRUM_DB_URL»: un 503 porque la base se
+     * reinicia, o el wifi del hotel, se le explicaban a quien miraba como una variable sin poner.
+     * Sin catastro conectado la ruta contesta 200 con `catastro: false`, y eso se dice abajo.
+     */
     return (
-      <div className="p-4 text-sm text-[#8FA3B0] leading-relaxed">
-        No alcancé el catastro. Si todavía no está conectado, es normal: falta <code className="font-mono text-xs">ELECTRUM_DB_URL</code>.
+      <div className="p-4 text-sm text-[#8FA3B0] leading-relaxed space-y-3" role="alert">
+        <p>
+          {fallo.codigo
+            ? `No alcancé el catastro: el servidor contestó ${fallo.codigo}. No es tu acceso; probá de nuevo en un momento.`
+            : 'No alcancé el servidor. Revisá la conexión y volvé a intentarlo.'}
+        </p>
+        <button
+          type="button"
+          onClick={recargar}
+          className="rounded-lg border border-white/15 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] uppercase text-[#9FB0B8] hover:border-white/30 hover:text-white cursor-pointer"
+        >
+          Reintentar
+        </button>
       </div>
     );
   }
-  if (!datos) return <div className="p-4 font-mono text-[11px] text-[#6C7F89]">cargando…</div>;
+  if (!datos) return <div className="p-4 font-mono text-[11px] text-[#6C7F89]" role="status">cargando…</div>;
+  if ((datos as any).catastro === false) {
+    return (
+      <div className="flex-1 overflow-y-auto w-full max-w-4xl mx-auto">
+        <div className="p-4 pb-1">
+          <Estado />
+        </div>
+        <p className="p-4 pt-2 text-sm text-[#8FA3B0] leading-relaxed">
+          El catastro no está conectado en este servidor, así que no hay capas ni expedientes que mostrar ni dónde guardar lo que subas.
+        </p>
+      </div>
+    );
+  }
 
   const vacio = !datos.capas.length && !datos.documentos.length;
   const total = (datos.totales?.capas || 0) + (datos.totales?.documentos || 0);
@@ -1237,7 +1371,7 @@ function Expedientes() {
           <p>Todavía no hay nada cargado.</p>
           <p>Lo geográfico se vuelve mapa, medido sobre el elipsoide. Los documentos quedan citables con su página.</p>
         </div>
-        <Cargador alCargar={recargar} nivel={nivel} />
+        <Cargador alCargar={recargar} alCatastro={repintar} nivel={nivel} />
       </div>
     );
   }
@@ -1251,7 +1385,7 @@ function Expedientes() {
         encontrarlo. Quien abre esta pestaña casi siempre viene a añadir algo, no a leer el índice:
         lo primero que se ve tiene que ser por dónde se mete.
       */}
-      <Cargador alCargar={recargar} nivel={nivel} />
+      <Cargador alCargar={recargar} alCatastro={repintar} nivel={nivel} />
       <Buscador escrito={escrito} setEscrito={setEscrito} />
       {datos.capas.length > 0 && (
         <section>
@@ -1499,7 +1633,7 @@ function Buscador({ escrito, setEscrito }: { escrito: string; setEscrito: (v: st
       onChange={(e) => setEscrito(e.target.value)}
       placeholder="Buscar por nombre en capas y expedientes…"
       aria-label="Buscar en capas y expedientes"
-      className="w-full rounded-lg bg-white/[0.06] border border-white/12 px-3 py-2 text-sm text-[#E7EEF2] placeholder:text-[#5E7078] focus:outline-none focus:border-[#FFAE3B]/60"
+      className="w-full rounded-lg bg-white/[0.06] border border-white/12 px-3 py-2 text-sm text-[#E7EEF2] placeholder:text-[#7D909A] focus:outline-none focus:border-[#FFAE3B]/60"
     />
   );
 }

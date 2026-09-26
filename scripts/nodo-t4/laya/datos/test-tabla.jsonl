@@ -13,14 +13,14 @@
 {"q":"la leí del mineral bajo mucho en el nivel tres será que ya se acabó el clavo","e":["geologo"],"tabla":["geologo"],"explicitos":[]}
 {"q":"mi compadre dice que el cuarzo lechoso siempre trae oro, ¿es cierto eso o es cuento?","e":["geologo"],"tabla":["geologo"],"explicitos":[]}
 {"q":"Estimado equipo: solicito criterio técnico sobre el espaciamiento de sondajes adecuado para categorizar como indicado un cuerpo vetiforme de 1.5 km de rumbo.","e":["geologo"],"tabla":["geologo"],"explicitos":[]}
-{"q":"assay de 0.02 g/t en el fire assay y 1.4 en el de cianuro caliente, cual le creo??","e":["geologo"],"tabla":["metalurgista","ambiental"],"explicitos":[]}
+{"q":"assay de 0.02 g/t en el fire assay y 1.4 en el de cianuro caliente, cual le creo??","e":["geologo"],"tabla":["ambiental","metalurgista"],"explicitos":[]}
 {"q":"Oiga y esas piedras verdes con manchas azules que salen en la quebrada del cerro, ¿indican cobre?","e":["geologo"],"tabla":[],"explicitos":[]}
-{"q":"¿Qué tan confiable es un recurso inferido de 450 mil toneladas a 2.1 g/t con solo 6 sondajes? ¿Le sirve a un inversionista para valorar el proyecto?","e":["geologo","economista"],"tabla":["geologo","economista"],"explicitos":[]}
-{"q":"Quiero la interpretación estructural de las vetas de Montaña de la Flor y que me digan si conviene entrarles por socavón o a cielo abierto.","e":["geologo","minas"],"tabla":["geologo","minas"],"explicitos":[]}
+{"q":"¿Qué tan confiable es un recurso inferido de 450 mil toneladas a 2.1 g/t con solo 6 sondajes? ¿Le sirve a un inversionista para valorar el proyecto?","e":["geologo","economista"],"tabla":["economista","geologo"],"explicitos":[]}
+{"q":"Quiero la interpretación estructural de las vetas de Montaña de la Flor y que me digan si conviene entrarles por socavón o a cielo abierto.","e":["geologo","minas"],"tabla":["minas","geologo"],"explicitos":[]}
 {"q":"Voy a hacer el mapa geológico de las vetas, ¿qué datos estructurales levanto en campo y cómo los paso luego a shapefile?","e":["geologo","geomatica"],"tabla":["geologo","geomatica"],"explicitos":[]}
 {"q":"El ensaye dio 6 g/t pero con mucha arsenopirita. ¿Cómo está alojado el oro y eso me va a complicar la recuperación en planta?","e":["geologo","metalurgista"],"tabla":["metalurgista","geologo"],"explicitos":[]}
-{"q":"La veta sigue fuera de nuestro polígono, ¿hacia dónde se proyecta por el rumbo y podemos pedir ampliación de la concesión?","e":["geologo","legal"],"tabla":["geologo","geomatica"],"explicitos":[]}
-{"q":"¿Cómo caracterizo el contenido de sulfuros de las rocas estériles para el estudio de drenaje ácido?","e":["geologo","ambiental"],"tabla":["geologo","civil"],"explicitos":[]}
+{"q":"La veta sigue fuera de nuestro polígono, ¿hacia dónde se proyecta por el rumbo y podemos pedir ampliación de la concesión?","e":["geologo","legal"],"tabla":["geomatica","legal"],"explicitos":[]}
+{"q":"¿Cómo caracterizo el contenido de sulfuros de las rocas estériles para el estudio de drenaje ácido?","e":["geologo","ambiental"],"tabla":["ambiental","civil"],"explicitos":[]}
 {"q":"Quiero hablar con el geólogo y con el economista: con 1.2 g/t en un pórfido chiquito, ¿hay algo ahí?","e":["geologo","economista"],"tabla":["geologo","economista"],"explicitos":["geologo","economista"]}
 {"q":"ponga al geólogo y al de minas porque la veta se nos pierde en el nivel dos y no sabemos si seguir avanzando la galería o cambiar de frente","e":["geologo","minas"],"tabla":["geologo"],"explicitos":["geologo"]}
 {"q":"Necesito saber si la zona de alteración que vimos en la ortofoto coincide con la anomalía de suelos; ¿me superponés las capas y me decís qué significa?","e":["geologo","geomatica"],"tabla":["geologo","geomatica"],"explicitos":[]}
@@ -29,12 +29,12 @@
 {"q":"¿Cuál es la relación estéril/mineral razonable para un tajo chico de oro?","e":["minas"],"tabla":["minas"],"explicitos":[]}
 {"q":"cuántas volquetas de 20 toneladas necesito para mover 1500 toneladas al día con un ciclo de 40 minutos","e":["minas"],"tabla":[],"explicitos":[]}
 {"q":"El Banco: queremos pasar de 80 a 200 toneladas diarias. ¿Qué cambiamos en la secuencia de explotación?","e":["minas"],"tabla":["minas"],"explicitos":[]}
-{"q":"cuanto explosivo x m3 para roca dura en bancos de 5 m","e":["minas"],"tabla":["geologo","minas"],"explicitos":[]}
+{"q":"cuanto explosivo x m3 para roca dura en bancos de 5 m","e":["minas"],"tabla":["minas","geologo"],"explicitos":[]}
 {"q":"Necesito el ancho de rampa para camiones de 25 t en doble vía y la pendiente máxima recomendable.","e":["minas"],"tabla":["minas"],"explicitos":[]}
 {"q":"estamos sacando mucha dilución de los rebajes el mineral sale revuelto con la caja qué hacemos","e":["minas"],"tabla":["minas"],"explicitos":[]}
 {"q":"¿Qué ángulo interrampa le pongo a los bancos del tajo en saprolito?","e":["minas"],"tabla":["minas"],"explicitos":[]}
 {"q":"haul road cycle time y payload por camión, ¿cómo calculo el match factor con la excavadora?","e":["minas"],"tabla":[],"explicitos":[]}
-{"q":"Tres Hectáreas es una concesión chiquita, ¿nos da para un tajo de 40 m de profundidad con bancos de 6 m?","e":["minas"],"tabla":["minas","geomatica"],"explicitos":[]}
+{"q":"Tres Hectáreas es una concesión chiquita, ¿nos da para un tajo de 40 m de profundidad con bancos de 6 m?","e":["minas"],"tabla":["geomatica","legal"],"explicitos":[]}
 {"q":"¿En qué orden explotamos los tres cuerpos para no dejar mineral atrapado debajo del botadero?","e":["minas"],"tabla":["civil"],"explicitos":[]}
 {"q":"sublevel stoping o shrinkage para veta de 1.5 m que buza 80 grados","e":["minas"],"tabla":["minas","geologo"],"explicitos":[]}
 {"q":"Ayudame a armar el plan de producción mensual de los próximos dos años.","e":["minas"],"tabla":[],"explicitos":[]}
@@ -43,14 +43,14 @@
 {"q":"La Ley tiene la veta a 12 metros de la superficie; ¿empezamos con un tajo pequeño o directo con un pique?","e":["minas"],"tabla":["geologo","minas"],"explicitos":[]}
 {"q":"¿Me conviene cielo abierto o subterráneo si el cuerpo está a 60 m de profundidad? Quiero ver costos de las dos opciones.","e":["minas","economista"],"tabla":["minas","economista"],"explicitos":[]}
 {"q":"Vamos a descapotar 1.2 millones de m³, ¿cómo secuencio el descapote y cómo diseño el botadero para que no se deslice?","e":["minas","civil"],"tabla":["minas","civil"],"explicitos":[]}
-{"q":"La voladura está rajando las casas de la aldea y la gente está brava. ¿Cómo ajusto las cargas y cómo manejo a la comunidad?","e":["minas","ambiental"],"tabla":["minas","ambiental"],"explicitos":[]}
+{"q":"La voladura está rajando las casas de la aldea y la gente está brava. ¿Cómo ajusto las cargas y cómo manejo a la comunidad?","e":["minas","ambiental"],"tabla":["ambiental","minas"],"explicitos":[]}
 {"q":"La veta tiene 40 cm de potencia y buza 70°, ¿qué método de explotación le queda? ¿y será que se ensancha en profundidad?","e":["minas","geologo"],"tabla":["minas","geologo"],"explicitos":[]}
 {"q":"El pit lo tenemos con talud de 55° y el botadero está pegado al borde, ¿están bien esos bancos y aguanta el botadero?","e":["minas","civil"],"tabla":["civil","minas"],"explicitos":[]}
 {"q":"Con el vuelo de dron de fin de mes quiero reconciliar lo que sacamos del tajo contra el plan de minado.","e":["minas","geomatica"],"tabla":["minas"],"explicitos":[]}
 {"q":"La planta pide 300 t/d y la mina solo da 180, ¿cómo subo producción? ¿y qué pasa con la recuperación si la alimento con menos?","e":["minas","metalurgista"],"tabla":["metalurgista"],"explicitos":[]}
 {"q":"minas y economista porfa: cuántos equipos compro o alquilo para la flota de acarreo","e":["minas","economista"],"tabla":["minas"],"explicitos":[]}
 {"q":"Diseñame la rampa de acceso al tajo y decime cuántos kilómetros de camino hay que abrir desde la carretera hasta la planta","e":["minas","civil"],"tabla":["civil","minas"],"explicitos":[]}
-{"q":"vamos a cambiar de cielo abierto a subterráneo en Cerro del Agua, ¿cómo planeo la transición y qué trámite hay que hacer ante INHGEOMIN?","e":["minas","legal"],"tabla":["minas","ambiental"],"explicitos":[]}
+{"q":"vamos a cambiar de cielo abierto a subterráneo en Cerro del Agua, ¿cómo planeo la transición y qué trámite hay que hacer ante INHGEOMIN?","e":["minas","legal"],"tabla":["minas","legal"],"explicitos":[]}
 {"q":"¿Qué factor de seguridad mínimo debe tener el talud del botadero en condición sísmica?","e":["civil"],"tabla":["civil","minas"],"explicitos":[]}
 {"q":"Queremos crecer la presa de relaves aguas arriba, ¿es seguro en una zona con sismos?","e":["civil"],"tabla":["civil","ambiental"],"explicitos":[]}
 {"q":"necesito hacer un puente sobre la quebrada para pasar camiones de 30 toneladas que tipo me recomienda","e":["civil"],"tabla":["civil"],"explicitos":[]}
@@ -62,7 +62,7 @@
 {"q":"¿Cuál es la diferencia entre una presa de relaves de línea central y una aguas abajo?","e":["civil"],"tabla":["civil","ambiental"],"explicitos":[]}
 {"q":"tailings dam freeboard, cuánto borde libre dejo para la tormenta de 100 años?","e":["civil"],"tabla":[],"explicitos":[]}
 {"q":"el botadero de estéril se nos está corriendo hacia la quebrada después de las lluvias, cómo lo paro","e":["civil"],"tabla":["civil"],"explicitos":[]}
-{"q":"¿Qué ensayos geotécnicos le hago al suelo donde va a ir el pad de lixiviación?","e":["civil"],"tabla":["geologo","civil"],"explicitos":[]}
+{"q":"¿Qué ensayos geotécnicos le hago al suelo donde va a ir el pad de lixiviación?","e":["civil"],"tabla":["civil","metalurgista"],"explicitos":[]}
 {"q":"En Hoyo Seco vamos a hacer una poza de agua de proceso, ¿qué geomembrana y de qué espesor?","e":["civil"],"tabla":["ambiental"],"explicitos":[]}
 {"q":"El puente de hamaca que usan los mineros para cruzar el río está podrido, ¿cómo lo refuerzo?","e":["civil"],"tabla":["civil"],"explicitos":[]}
 {"q":"oiga ingeniero y la la represa esa del relave cuantos metros más la podemos subir sin que se venga abajo","e":["civil"],"tabla":["civil"],"explicitos":[]}
@@ -70,11 +70,11 @@
 {"q":"¿Espesar el relave antes de mandarlo a la presa ayuda a la estabilidad? ¿y cuánta agua recupero con el espesador para la planta?","e":["civil","metalurgista"],"tabla":["civil","metalurgista"],"explicitos":[]}
 {"q":"Diseñame el trazo del camino de acceso de 4 km y decime cómo saco la topografía con dron para eso.","e":["civil","geomatica"],"tabla":["civil","geomatica"],"explicitos":[]}
 {"q":"El botadero y el tajo están pegados, ¿a qué distancia pongo el pie del botadero del borde del pit para que no se caiga ninguno de los dos?","e":["civil","minas"],"tabla":["civil","minas"],"explicitos":[]}
-{"q":"¿Qué ancho y qué alcantarillas necesita el camino que cruza la finca del vecino? ¿y hay que pedirle servidumbre?","e":["civil","legal"],"tabla":["civil","legal"],"explicitos":[]}
-{"q":"Comparar la presa aguas abajo contra la de línea central: cuál es más estable y cuál sale más barata de capex.","e":["civil","economista"],"tabla":["civil","ambiental"],"explicitos":[]}
+{"q":"¿Qué ancho y qué alcantarillas necesita el camino que cruza la finca del vecino? ¿y hay que pedirle servidumbre?","e":["civil","legal"],"tabla":["legal","civil"],"explicitos":[]}
+{"q":"Comparar la presa aguas abajo contra la de línea central: cuál es más estable y cuál sale más barata de capex.","e":["civil","economista"],"tabla":["civil","economista"],"explicitos":[]}
 {"q":"Necesito dimensionar la presa de relaves para 8 años y saber cuánto va a costar.","e":["civil","economista"],"tabla":["civil"],"explicitos":[]}
 {"q":"el civil y la ambiental por favor: el muro del relave está chorreando cuando llueve fuerte y abajo hay una toma de agua del pueblo","e":["civil","ambiental"],"tabla":["ambiental","civil"],"explicitos":[]}
-{"q":"¿Dónde ubico la presa de relaves? Tengo las curvas de nivel pero no sé qué capa de cuencas usar para ver el área de aporte.","e":["civil","geomatica"],"tabla":["civil","geomatica"],"explicitos":[]}
+{"q":"¿Dónde ubico la presa de relaves? Tengo las curvas de nivel pero no sé qué capa de cuencas usar para ver el área de aporte.","e":["civil","geomatica"],"tabla":["civil","ambiental"],"explicitos":[]}
 {"q":"Se nos cayó un pedazo del corte del camino y tapó la cuneta; ¿cómo estabilizo ese talud y a quién le toca pagar si el camino es de la alcaldía?","e":["civil","legal"],"tabla":["civil","minas"],"explicitos":[]}
 {"q":"La recuperación en la planta de cianuración bajó de 88 a 71% esta semana, ¿qué reviso primero?","e":["metalurgista"],"tabla":["metalurgista"],"explicitos":[]}
 {"q":"¿Cuánto cianuro de sodio por tonelada es normal en un CIL?","e":["metalurgista"],"tabla":["metalurgista","ambiental"],"explicitos":[]}
@@ -88,9 +88,9 @@
 {"q":"Pasame al metalurgista: el concentrado de flotación sale con 18% de cobre y lo quiero en 25.","e":["metalurgista"],"tabla":["metalurgista","minas"],"explicitos":["metalurgista"]}
 {"q":"the ore is refractory, pressure oxidation or roasting for a 500 tpd plant? respondeme en español","e":["metalurgista"],"tabla":[],"explicitos":[]}
 {"q":"¿Cuál es el work index típico de un cuarzo para dimensionar el molino de bolas?","e":["metalurgista"],"tabla":["geologo","metalurgista"],"explicitos":[]}
-{"q":"echamos la broza en el tanque con cianuro y no sube la plata digo el oro no sube que puede ser","e":["metalurgista"],"tabla":["metalurgista","ambiental"],"explicitos":[]}
+{"q":"echamos la broza en el tanque con cianuro y no sube la plata digo el oro no sube que puede ser","e":["metalurgista"],"tabla":["ambiental","metalurgista"],"explicitos":[]}
 {"q":"En El Tránsito tenemos un concentrador Knelson, ¿cada cuánto lo descargo?","e":["metalurgista"],"tabla":["metalurgista"],"explicitos":[]}
-{"q":"¿Cómo destruyo el cianuro del relave antes de mandarlo a la presa, INCO o peróxido?","e":["metalurgista"],"tabla":["civil","metalurgista"],"explicitos":[]}
+{"q":"¿Cómo destruyo el cianuro del relave antes de mandarlo a la presa, INCO o peróxido?","e":["metalurgista"],"tabla":["civil","ambiental"],"explicitos":[]}
 {"q":"Queremos dejar el mercurio y pasar a cianuro en la planta, ¿cómo cambia el proceso y qué implica en permisos ambientales?","e":["metalurgista","ambiental"],"tabla":["ambiental","metalurgista"],"explicitos":[]}
 {"q":"¿Qué recuperación esperaría con CIL versus vender el concentrado gravimétrico, y cuál deja más plata?","e":["metalurgista","economista"],"tabla":["metalurgista"],"explicitos":[]}
 {"q":"Necesitamos una muestra representativa para pruebas metalúrgicas, ¿de qué zonas del cuerpo la saco y cuántos kilos?","e":["metalurgista","geologo"],"tabla":["metalurgista"],"explicitos":[]}
@@ -98,18 +98,18 @@
 {"q":"metalurgista y economista: cuánto me cuesta por tonelada el cianuro y la cal con el consumo que tenemos","e":["metalurgista","economista"],"tabla":["metalurgista","ambiental"],"explicitos":[]}
 {"q":"La flotación sale bien en laboratorio pero en planta perdemos 15 puntos, ¿qué pasa? y si no lo arreglamos, ¿sigue siendo viable el proyecto?","e":["metalurgista","economista"],"tabla":["metalurgista","minas"],"explicitos":[]}
 {"q":"hay que diseñar la planta de chancado y molienda y la plataforma donde va a ir con su cimentación","e":["metalurgista","civil"],"tabla":["metalurgista","civil"],"explicitos":[]}
-{"q":"el mineral del nivel nuevo trae mucho cobre y arcilla y la recuperación se cayó, ¿de qué zona geológica viene eso y cómo lo trato?","e":["metalurgista","geologo"],"tabla":["geologo","metalurgista"],"explicitos":[]}
-{"q":"¿Qué hago con el carbón agotado y los sacos de cianuro vacíos para no contaminar?","e":["ambiental"],"tabla":["metalurgista","ambiental"],"explicitos":[]}
+{"q":"el mineral del nivel nuevo trae mucho cobre y arcilla y la recuperación se cayó, ¿de qué zona geológica viene eso y cómo lo trato?","e":["metalurgista","geologo"],"tabla":["metalurgista","geologo"],"explicitos":[]}
+{"q":"¿Qué hago con el carbón agotado y los sacos de cianuro vacíos para no contaminar?","e":["ambiental"],"tabla":["ambiental","metalurgista"],"explicitos":[]}
 {"q":"Estoy evaluando una planta de 100 t/d con Merrill-Crowe; ¿qué tan realista es 90% de recuperación y cuánto capex supone?","e":["metalurgista","economista"],"tabla":["metalurgista","economista"],"explicitos":[]}
 {"q":"¿Cómo paso coordenadas de NAD27 a WGS84 zona 16 norte?","e":["geomatica"],"tabla":["geomatica"],"explicitos":[]}
 {"q":"Necesito el área exacta del polígono de Los Encuentros en hectáreas, tengo los vértices en un Excel.","e":["geomatica"],"tabla":["geomatica"],"explicitos":[]}
-{"q":"Cargué el KML y la concesión me aparece en el mar frente a África, ¿qué pasó?","e":["geomatica"],"tabla":["geomatica","legal"],"explicitos":[]}
+{"q":"Cargué el KML y la concesión me aparece en el mar frente a África, ¿qué pasó?","e":["geomatica"],"tabla":["legal","geomatica"],"explicitos":[]}
 {"q":"¿Qué tamaño de pixel me da un dron volando a 120 m con cámara de 20 MP?","e":["geomatica"],"tabla":["minas"],"explicitos":[]}
 {"q":"Convertir el DXF del topógrafo a shapefile sin perder la proyección.","e":["geomatica"],"tabla":["geomatica"],"explicitos":[]}
 {"q":"Tres Hectáreas: quiero saber si de verdad mide tres hectáreas, tengo el GPS de los cuatro mojones.","e":["geomatica"],"tabla":["geomatica"],"explicitos":[]}
 {"q":"el gps de mano me da 8 metros de error, sirve para amojonar?","e":["geomatica"],"tabla":["geomatica"],"explicitos":[]}
 {"q":"¿Qué datum usaban los planos viejos del catastro minero de Honduras?","e":["geomatica"],"tabla":["geomatica"],"explicitos":[]}
-{"q":"Superponeme la concesión con la capa de ríos y decime cuántos metros de quebrada caen adentro.","e":["geomatica"],"tabla":["geomatica","legal"],"explicitos":[]}
+{"q":"Superponeme la concesión con la capa de ríos y decime cuántos metros de quebrada caen adentro.","e":["geomatica"],"tabla":["legal","geomatica"],"explicitos":[]}
 {"q":"el shape se abre pero sin atributos, será que le falta el dbf?","e":["geomatica"],"tabla":[],"explicitos":[]}
 {"q":"puntos de control para vuelo de dron, cuántos pongo en 50 ha","e":["geomatica"],"tabla":[],"explicitos":[]}
 {"q":"Quiero georreferenciar un mapa escaneado de 1978 del Instituto Geográfico.","e":["geomatica"],"tabla":["geomatica"],"explicitos":[]}
@@ -117,13 +117,13 @@
 {"q":"14°52'10\" N 87°12'33\" W a UTM porfa","e":["geomatica"],"tabla":["geomatica"],"explicitos":[]}
 {"q":"este mm las coordenadas que me dio el topógrafo están en en ETRS o algo así y no me cuadran con las de Google","e":["geomatica"],"tabla":["geomatica"],"explicitos":[]}
 {"q":"¿Cuántas hectáreas tiene La Represa?","e":["geomatica"],"tabla":["geomatica"],"explicitos":[]}
-{"q":"Dibujame el traslape entre Cerro del Agua y la solicitud nueva del vecino y decime si eso afecta nuestro derecho.","e":["geomatica","legal"],"tabla":["geomatica","ambiental"],"explicitos":[]}
-{"q":"¿Qué porcentaje de la concesión cae dentro del área protegida? Necesito el mapa y saber qué restricciones aplican.","e":["geomatica","ambiental"],"tabla":["geomatica","ambiental"],"explicitos":[]}
-{"q":"Levantamiento topográfico del tajo actual para actualizar el diseño de los bancos.","e":["geomatica","minas"],"tabla":["minas","geomatica"],"explicitos":[]}
+{"q":"Dibujame el traslape entre Cerro del Agua y la solicitud nueva del vecino y decime si eso afecta nuestro derecho.","e":["geomatica","legal"],"tabla":["geomatica","legal"],"explicitos":[]}
+{"q":"¿Qué porcentaje de la concesión cae dentro del área protegida? Necesito el mapa y saber qué restricciones aplican.","e":["geomatica","ambiental"],"tabla":["ambiental","legal"],"explicitos":[]}
+{"q":"Levantamiento topográfico del tajo actual para actualizar el diseño de los bancos.","e":["geomatica","minas"],"tabla":["geomatica","minas"],"explicitos":[]}
 {"q":"Tengo los collares de 30 sondajes en NAD27 y el modelo en WGS84, ¿cómo los junto? Después quiero interpretar las secciones.","e":["geomatica","geologo"],"tabla":["geomatica","geologo"],"explicitos":[]}
 {"q":"Necesito curvas de nivel a 1 m para diseñar el vaso de la presa de relaves.","e":["geomatica","civil"],"tabla":["civil"],"explicitos":[]}
 {"q":"mapa de la microcuenca aguas abajo de la planta con los puntos de monitoreo de agua","e":["geomatica","ambiental"],"tabla":["ambiental","metalurgista"],"explicitos":[]}
-{"q":"Ortofoto del área de El Tránsito y ubicación de los socavones artesanales para ver si caen en nuestra concesión y si se les puede sacar legalmente","e":["geomatica","legal"],"tabla":["minas","geomatica"],"explicitos":[]}
+{"q":"Ortofoto del área de El Tránsito y ubicación de los socavones artesanales para ver si caen en nuestra concesión y si se les puede sacar legalmente","e":["geomatica","legal"],"tabla":["legal","minas"],"explicitos":[]}
 {"q":"pasame al de geomática y al abogado: los mojones que puso INHGEOMIN no coinciden con el polígono del título","e":["geomatica","legal"],"tabla":["geomatica","legal"],"explicitos":["geomatica","legal"]}
 {"q":"proyectá la traza de la veta en superficie a partir de los rumbos que medimos y ponela en el mapa","e":["geomatica","geologo"],"tabla":["geologo","geomatica"],"explicitos":[]}
 {"q":"Quiero el modelo de elevación del cerro para ver dónde entra el botadero y cuánto volumen le cabe","e":["geomatica","civil"],"tabla":["civil"],"explicitos":[]}
@@ -133,28 +133,28 @@
 {"q":"La gente de la aldea no quiere la mina, ¿cómo arrancamos un proceso de diálogo?","e":["ambiental"],"tabla":[],"explicitos":[]}
 {"q":"¿Cómo remedio un suelo contaminado con mercurio de las rastras viejas?","e":["ambiental"],"tabla":["ambiental"],"explicitos":[]}
 {"q":"los del pueblo dicen que la represa de donde toman agua quedó con cianuro, como compruebo si es cierto","e":["ambiental"],"tabla":["ambiental","metalurgista"],"explicitos":[]}
-{"q":"Plan de cierre para una mina artesanal de socavón, ¿qué debe incluir?","e":["ambiental"],"tabla":["minas","ambiental"],"explicitos":[]}
+{"q":"Plan de cierre para una mina artesanal de socavón, ¿qué debe incluir?","e":["ambiental"],"tabla":["ambiental","minas"],"explicitos":[]}
 {"q":"hay monos aulladores en el bosque donde queremos abrir el tajo, qué hacemos","e":["ambiental"],"tabla":["minas"],"explicitos":[]}
 {"q":"¿Qué es la consulta previa libre e informada y aplica a comunidades lencas?","e":["ambiental"],"tabla":["ambiental"],"explicitos":[]}
 {"q":"Cerro del Agua abastece de agua a dos aldeas, ¿qué medidas de protección de la cuenca debo tomar?","e":["ambiental"],"tabla":["ambiental"],"explicitos":[]}
 {"q":"el polvo de las volquetas está tapando los cafetales de los vecinos","e":["ambiental"],"tabla":[],"explicitos":[]}
-{"q":"drenaje acido de roca, como se predice con pruebas ABA","e":["ambiental"],"tabla":["geologo","civil"],"explicitos":[]}
+{"q":"drenaje acido de roca, como se predice con pruebas ABA","e":["ambiental"],"tabla":["ambiental","civil"],"explicitos":[]}
 {"q":"pasame a la ambientalista, necesito saber qué monitoreo de ruido nos van a pedir","e":["ambiental"],"tabla":["ambiental","economista"],"explicitos":["ambiental"]}
 {"q":"Montaña de la Flor queda a la par de un parque nacional, ¿qué tan cerca podemos trabajar?","e":["ambiental"],"tabla":[],"explicitos":[]}
 {"q":"este los patronatos nos piden que les hagamos una escuela a cambio de dejarnos trabajar eh como manejamos eso con la comunidad","e":["ambiental"],"tabla":["ambiental"],"explicitos":[]}
 {"q":"Our ESG consultant says we need a biodiversity baseline, ¿qué incluye eso acá en Honduras?","e":["ambiental"],"tabla":[],"explicitos":[]}
 {"q":"¿Cómo renuevo la licencia ambiental y qué pasa con la concesión si me la niegan?","e":["ambiental","legal"],"tabla":["ambiental","legal"],"explicitos":[]}
 {"q":"El relave llega al río en invierno, ¿cómo lo contengo? ¿y qué tan estable está ese muro?","e":["ambiental","civil"],"tabla":["civil"],"explicitos":[]}
-{"q":"La planta vieja usaba mercurio, ¿cómo limpio el sitio y con qué proceso reemplazo la amalgamación?","e":["ambiental","metalurgista"],"tabla":["metalurgista","ambiental"],"explicitos":[]}
+{"q":"La planta vieja usaba mercurio, ¿cómo limpio el sitio y con qué proceso reemplazo la amalgamación?","e":["ambiental","metalurgista"],"tabla":["ambiental","metalurgista"],"explicitos":[]}
 {"q":"¿Cuánto hay que provisionar para el cierre de mina y cómo me afecta el VAN?","e":["ambiental","economista"],"tabla":["ambiental","economista"],"explicitos":[]}
-{"q":"¿La zona de la planta cae en zona de recarga hídrica? Tengo el shapefile de la microcuenca declarada.","e":["ambiental","geomatica"],"tabla":["metalurgista","geomatica"],"explicitos":[]}
+{"q":"¿La zona de la planta cae en zona de recarga hídrica? Tengo el shapefile de la microcuenca declarada.","e":["ambiental","geomatica"],"tabla":["geomatica","metalurgista"],"explicitos":[]}
 {"q":"La comunidad nos denunció ante la fiscalía del ambiente por contaminar el río, ¿qué hacemos?","e":["ambiental","legal"],"tabla":["ambiental"],"explicitos":[]}
 {"q":"Hubo un derrame de solución cianurada del tanque hacia la quebrada, ¿cómo lo neutralizo y a quién tengo que reportarlo?","e":["ambiental","legal"],"tabla":["metalurgista"],"explicitos":[]}
 {"q":"Plan de cierre de la presa de relaves: cómo dejarla revegetada y estable a largo plazo.","e":["ambiental","civil"],"tabla":["civil","ambiental"],"explicitos":[]}
 {"q":"la ambiental y el geólogo: el estéril del nivel nuevo trae mucha pirita, ¿va a generar agua ácida en el botadero?","e":["ambiental","geologo"],"tabla":["geologo","ambiental"],"explicitos":["geologo"]}
 {"q":"queremos el sello de minería responsable para vender el oro más caro, qué nos piden en agua y comunidades y cuánto nos pagarían de premio","e":["ambiental","economista"],"tabla":["ambiental"],"explicitos":[]}
 {"q":"¿Cuándo vence la concesión Los Encuentros y cómo la prorrogo?","e":["legal"],"tabla":["legal"],"explicitos":[]}
-{"q":"¿Qué dice la Ley General de Minería sobre la minería artesanal?","e":["legal"],"tabla":["geologo","legal"],"explicitos":[]}
+{"q":"¿Qué dice la Ley General de Minería sobre la minería artesanal?","e":["legal"],"tabla":["legal"],"explicitos":[]}
 {"q":"El dueño del terreno no nos deja entrar aunque tenemos la concesión, ¿qué derechos tenemos?","e":["legal"],"tabla":["legal"],"explicitos":[]}
 {"q":"cuánto es el canon superficial por hectárea al año","e":["legal"],"tabla":["geomatica","legal"],"explicitos":[]}
 {"q":"Se nos pasó pagar el canon de El Banco dos años seguidos, ¿nos la pueden caducar?","e":["legal"],"tabla":["legal","minas"],"explicitos":[]}
@@ -169,26 +169,26 @@
 {"q":"Hoyo Seco y La Represa son del mismo titular, ¿se pueden unificar en una sola concesión?","e":["legal"],"tabla":["legal"],"explicitos":[]}
 {"q":"Para la voladura tengo que comprar dinamita, ¿qué permiso piden y ante quién se tramita?","e":["legal"],"tabla":["minas","legal"],"explicitos":[]}
 {"q":"uy es que mire el socio se murió y la concesión estaba a nombre de él que pasa ahora con eso","e":["legal"],"tabla":["legal"],"explicitos":[]}
-{"q":"Tres Hectáreas: ¿el título dice que es de explotación o solo de exploración? No encuentro la resolución.","e":["legal"],"tabla":["minas","geomatica"],"explicitos":[]}
+{"q":"Tres Hectáreas: ¿el título dice que es de explotación o solo de exploración? No encuentro la resolución.","e":["legal"],"tabla":["legal","minas"],"explicitos":[]}
 {"q":"¿Se traslapa El Tránsito con la concesión del vecino y quién tiene prelación?","e":["legal","geomatica"],"tabla":["legal","geomatica"],"explicitos":[]}
 {"q":"¿Puedo empezar a explotar con la concesión mientras sale la licencia ambiental?","e":["legal","ambiental"],"tabla":["ambiental","legal"],"explicitos":[]}
 {"q":"¿Cuánto pago de regalías y canon al año si produzco 400 onzas? Lo quiero meter en el flujo de caja.","e":["legal","economista"],"tabla":["legal","economista"],"explicitos":[]}
-{"q":"¿Necesito servidumbre para el camino que cruza la finca del vecino? ¿y qué ancho debe tener para camiones?","e":["legal","civil"],"tabla":["civil","legal"],"explicitos":[]}
-{"q":"¿Qué informes de exploración tengo que entregar a INHGEOMIN y qué deben incluir de sondajes y ensayes?","e":["legal","geologo"],"tabla":["geologo","legal"],"explicitos":[]}
+{"q":"¿Necesito servidumbre para el camino que cruza la finca del vecino? ¿y qué ancho debe tener para camiones?","e":["legal","civil"],"tabla":["legal","civil"],"explicitos":[]}
+{"q":"¿Qué informes de exploración tengo que entregar a INHGEOMIN y qué deben incluir de sondajes y ensayes?","e":["legal","geologo"],"tabla":["legal","geologo"],"explicitos":[]}
 {"q":"que hable el abogado: la municipalidad nos quiere cerrar por no tener el permiso ambiental","e":["legal","ambiental"],"tabla":["legal","ambiental"],"explicitos":["legal"]}
 {"q":"Me presentaron una solicitud encima de mi concesión, ¿cómo pruebo con coordenadas que se superpone y cómo me opongo?","e":["legal","geomatica"],"tabla":["geomatica","legal"],"explicitos":[]}
-{"q":"Contrato de compra de mineral con los artesanales: qué cláusulas pongo y cómo fijo el precio según la ley del mineral y el precio del oro","e":["legal","economista"],"tabla":["economista","geologo"],"explicitos":[]}
+{"q":"Contrato de compra de mineral con los artesanales: qué cláusulas pongo y cómo fijo el precio según la ley del mineral y el precio del oro","e":["legal","economista"],"tabla":["legal","economista"],"explicitos":[]}
 {"q":"voy a firmar un contrato de arrendamiento de la concesión con una empresa china, ¿qué regalía mínima le pido para que me convenga?","e":["economista","legal"],"tabla":["legal"],"explicitos":[]}
 {"q":"El Consejo de la comunidad garífuna dice que no se hizo consulta previa y que la concesión es nula, ¿tienen razón?","e":["legal","ambiental"],"tabla":["ambiental","legal"],"explicitos":[]}
 {"q":"¿Cuál es el AISC de una operación que gasta 1.8 millones al año y produce 2,500 onzas?","e":["economista"],"tabla":["economista"],"explicitos":[]}
 {"q":"Calculame el VAN al 10% de estos flujos: -2M, 600k, 800k, 900k, 900k.","e":["economista"],"tabla":["economista"],"explicitos":[]}
 {"q":"¿A qué precio del oro deja de ser rentable nuestra operación?","e":["economista"],"tabla":["economista"],"explicitos":[]}
-{"q":"payback de una planta de 1.2 millones que deja 35 mil dólares netos al mes","e":["economista"],"tabla":["metalurgista","economista"],"explicitos":[]}
+{"q":"payback de una planta de 1.2 millones que deja 35 mil dólares netos al mes","e":["economista"],"tabla":["economista","metalurgista"],"explicitos":[]}
 {"q":"Soy inversionista, me ofrecen el 30% de San Juan Arriba por 400 mil dólares, ¿cómo valoro eso?","e":["economista"],"tabla":["economista"],"explicitos":[]}
-{"q":"cuánto me cuesta sacar una onza si pago 14 trabajadores, el diesel y el cianuro","e":["economista"],"tabla":["metalurgista","ambiental"],"explicitos":[]}
-{"q":"¿Qué ley de corte uso si el costo total es 38 dólares por tonelada y el oro está a 2,400?","e":["economista"],"tabla":["economista","geologo"],"explicitos":[]}
+{"q":"cuánto me cuesta sacar una onza si pago 14 trabajadores, el diesel y el cianuro","e":["economista"],"tabla":["ambiental","metalurgista"],"explicitos":[]}
+{"q":"¿Qué ley de corte uso si el costo total es 38 dólares por tonelada y el oro está a 2,400?","e":["economista"],"tabla":["economista"],"explicitos":[]}
 {"q":"¿Cuánto vale un kilo de doré con 70% oro y 25% plata?","e":["economista"],"tabla":["metalurgista"],"explicitos":[]}
-{"q":"¿Conviene financiar la planta con préstamo al 14% o meter un socio?","e":["economista"],"tabla":["metalurgista","economista"],"explicitos":[]}
+{"q":"¿Conviene financiar la planta con préstamo al 14% o meter un socio?","e":["economista"],"tabla":["economista","metalurgista"],"explicitos":[]}
 {"q":"el presupuesto del mes se nos fue en diesel, dónde recorto","e":["economista"],"tabla":["economista"],"explicitos":[]}
 {"q":"Tengo 200 mil onzas en el suelo, ¿eso vale 200 mil por el precio del oro?","e":["economista"],"tabla":["economista"],"explicitos":[]}
 {"q":"vida de mina con 600 mil toneladas a 250 t/d","e":["economista"],"tabla":["economista"],"explicitos":[]}
@@ -196,13 +196,13 @@
 {"q":"La Ley rinde unas 40 onzas al mes, ¿cuánto debería pedir si la vendo?","e":["economista"],"tabla":["geologo"],"explicitos":[]}
 {"q":"eh bueno la pregunta es si con lo que sacamos alcanza para pagar la planilla y el préstamo o estamos perdiendo","e":["economista"],"tabla":[],"explicitos":[]}
 {"q":"La Represa nos deja 3 mil dólares a la semana, ¿en cuánto tiempo recupero lo que invertí en el molino?","e":["economista"],"tabla":[],"explicitos":[]}
-{"q":"Cutoff grade para decidir qué va a botadero y qué va a planta, ¿y cómo me cambia el pit final?","e":["economista","minas"],"tabla":["civil","metalurgista"],"explicitos":[]}
+{"q":"Cutoff grade para decidir qué va a botadero y qué va a planta, ¿y cómo me cambia el pit final?","e":["economista","minas"],"tabla":["civil","economista"],"explicitos":[]}
 {"q":"¿Me paga poner una planta CIL de 100 t/d o sigo vendiendo concentrado?","e":["economista","metalurgista"],"tabla":["metalurgista"],"explicitos":[]}
 {"q":"¿Cuánto valen 450 mil toneladas a 2.1 g/t inferido? ¿y qué tanta confianza le doy a ese inferido?","e":["economista","geologo"],"tabla":[],"explicitos":[]}
 {"q":"¿Cuánto me quitan de regalías e impuestos por onza vendida?","e":["economista","legal"],"tabla":["legal"],"explicitos":[]}
 {"q":"¿Cuánto cuesta el cierre y la garantía ambiental para meterlo al capex?","e":["economista","ambiental"],"tabla":["ambiental","economista"],"explicitos":[]}
 {"q":"¿Cuánto capex se lleva la presa de relaves y el camino de acceso?","e":["economista","civil"],"tabla":["civil","economista"],"explicitos":[]}
-{"q":"El inversionista pide el modelo económico con la ley de corte y el diseño del tajo optimizado.","e":["economista","minas"],"tabla":["economista","geologo"],"explicitos":[]}
+{"q":"El inversionista pide el modelo económico con la ley de corte y el diseño del tajo optimizado.","e":["economista","minas"],"tabla":["economista","minas"],"explicitos":[]}
 {"q":"¿Cuánto debo cobrarle por tonelada a los artesanales para procesar su broza en mi planta, considerando que recupero el 85%?","e":["economista","metalurgista"],"tabla":["metalurgista"],"explicitos":[]}
 {"q":"Si el oro baja a 1,900, ¿qué parte del recurso deja de ser económica y cuántos años de vida me quedan?","e":["economista"],"tabla":[],"explicitos":[]}
 {"q":"Estoy pensando comprar Montaña de la Flor, ¿cuánto vale y el título está limpio?","e":["economista","legal"],"tabla":[],"explicitos":[]}

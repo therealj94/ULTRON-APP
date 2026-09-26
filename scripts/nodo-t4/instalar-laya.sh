@@ -23,7 +23,10 @@ if [ ! -x "$BASE/venv/bin/python" ]; then
   python3 -m venv "$BASE/venv"
 fi
 "$BASE/venv/bin/pip" install -q --upgrade pip
-"$BASE/venv/bin/pip" install -q "torch>=2.4" "laya==0.3.20" "safetensors>=0.4" "numpy"
+# Las versiones que corren en el nodo (pip freeze del 26-09-2026). Sin fijarlas, reinstalar trae otro
+# torch/transformers y el mismo checkpoint puede dar otras probabilidades. torch 2.14.0 de PyPI es cu130.
+"$BASE/venv/bin/pip" install -q "torch==2.14.0" "laya==0.3.20" "transformers==5.17.0" "tokenizers==0.23.2" \
+  "huggingface_hub==1.33.0" "safetensors==0.8.0" "numpy==2.5.3"
 "$BASE/venv/bin/python" -c 'import torch; assert torch.cuda.is_available(), "torch no ve la GPU"; print("GPU:", torch.cuda.get_device_name(0))'
 
 if [ ! -f "$MODELO/model.safetensors" ] || [ "${REENTRENAR:-0}" = 1 ]; then
@@ -67,6 +70,8 @@ CLAVE="$(sudo sed -n 's/^LAYA_CLAVE=//p' "$ENTORNO")"
 curl -fsS -H "Authorization: Bearer ${CLAVE}" -H 'content-type: application/json' \
   -d '{"texto":"¿Cuándo vence la concesión Quebrada Seca?"}' "http://127.0.0.1:${PUERTO}/decidir"; echo
 echo
-echo "En Render: ULTRON_LAYA_URL=http://35.175.175.203:${PUERTO}  ULTRON_LAYA_CLAVE=<LAYA_CLAVE de ${ENTORNO}>"
-echo "Abrir el puerto ${PUERTO} en el security group solo para la IP de salida de Render."
-echo "Evaluar sobre la prueba apartada: cd ${BASE} && venv/bin/python evaluar.py --modelo ${MODELO} --tabla datos/test-tabla.jsonl"
+echo "El :${PUERTO} NO se abre en el security group: Laya sale por el Caddy de Voicebox con TLS."
+echo "  /opt/voicebox/caddy/Caddyfile, antes de @autorizado:  handle_path /laya/* { reverse_proxy 127.0.0.1:${PUERTO} }"
+echo "En Render (aura-fp y ultron-looi-desk): ULTRON_LAYA_URL=https://35-175-175-203.sslip.io/laya"
+echo "  ULTRON_LAYA_CLAVE=<LAYA_CLAVE de ${ENTORNO}>  ULTRON_LAYA_TIMEOUT_MS=1000"
+echo "Evaluar: cd ${BASE} && venv/bin/python evaluar.py --modelo ${MODELO} --tabla datos/test-tabla.jsonl --bordes datos/bordes-tabla.jsonl"

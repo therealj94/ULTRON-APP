@@ -1,7 +1,7 @@
 """Ajusta Laya (multilingüe) para decidir qué especialistas de Dr Electrum convocar.
 
 Una pregunta noul por especialista (preguntas.json): el modelo da P(sí) calibrada para cada uno y
-decidir.py convoca como mucho dos por encima del umbral. Aquí se entrena, se calibra la temperatura
+servidor.py convoca como mucho dos por encima del umbral. Aquí se entrena, se calibra la temperatura
 de las noul sobre validación, se elige el umbral y se guarda un checkpoint que `laya.load(dir)` lee.
 
     python entrenar.py --datos datos/ --salida modelo-electrum/ [--epocas 4]

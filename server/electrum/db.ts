@@ -37,6 +37,13 @@ function conexion(): Pool {
       // El nodo propio usa certificado propio; fuera de eso, TLS normal.
       ssl: /sslmode=require/.test(url) ? { rejectUnauthorized: false } : undefined,
     });
+    /*
+     * Un cliente ocioso que pierde la conexión —la base se reinicia, el túnel se corta, el TLS se
+     * renegocia— hace que el pool emita 'error'. Sin oyente, Node lo trata como una excepción sin
+     * atrapar y TUMBA EL PROCESO: Dr Electrum entero, por una conexión que ni se estaba usando. Con
+     * oyente, el pool descarta ese cliente y la próxima consulta abre uno nuevo.
+     */
+    pool.on('error', (e) => console.error('[electrum] conexión con el catastro perdida:', String(e?.message || e).slice(0, 160)));
   }
   return pool;
 }
@@ -121,13 +128,25 @@ function comoMulti(g: Geometry): Geometry | null {
 }
 
 /**
+ * La geometría de una concesión tal como se guarda, a partir del GeoJSON que llega en `param`.
+ *
+ *  · `ST_Force2D`: un KML de Google Earth trae altura en cada vértice («-86.2,14.6,0») y la columna
+ *    es 2D. Sin esto TODO KML real se caía con «Geometry has Z dimension but column does not».
+ *  · `ST_MakeValid` + `ST_CollectionExtract(…, 3)`: un lindero que se cruza consigo mismo se repara
+ *    y queda solo lo que es superficie. A un polígono ya válido no le cambia nada —PostGIS lo
+ *    devuelve intacto—, así que la huella de lo que ya estaba cargado sigue siendo la misma.
+ */
+const GEOM_VALIDA = (param: string) =>
+  `ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON(${param}), 4326))), 3))`;
+
+/**
  * Guarda una capa leída por el motor GIS. Los polígonos entran como concesiones; lo demás, como
  * entidades geográficas. Todo en una transacción: una carga a medias es peor que ninguna.
  */
 export async function guardarCapa(
   capa: Capa,
   opts: { archivo?: string; subidoPor?: string; avisos?: unknown[]; comoConcesiones?: boolean } = {}
-): Promise<{ capaId: number; concesiones: number; entidades: number; repetidas: number }> {
+): Promise<{ capaId: number; concesiones: number; entidades: number; repetidas: number; reparadas: number; vacias: number }> {
   const cliente: PoolClient = await conexion().connect();
   try {
     await cliente.query('BEGIN');
@@ -141,6 +160,10 @@ export async function guardarCapa(
     let nConc = 0;
     let nEnt = 0;
     let nRep = 0;
+    /** Polígonos que venían rotos y entraron reparados. */
+    let nInv = 0;
+    /** Polígonos tan rotos que al repararlos no quedó superficie: no entran. */
+    let nVac = 0;
     /*
      * ¿Esta capa es catastro o es geografía?
      *
@@ -193,24 +216,38 @@ export async function guardarCapa(
          * Se pregunta por las cien de golpe en vez de una por una: misma comprobación, un viaje.
          */
         const geoms = concesiones.map(({ f }) => JSON.stringify(f.geometry));
-        const repetidas = await cliente.query<{ pos: string }>(
-          `SELECT t.pos::text AS pos
-             FROM unnest($1::text[]) WITH ORDINALITY AS t(g, pos)
-            WHERE EXISTS (
-              SELECT 1 FROM concesion c
-               WHERE c.huella = md5(ST_AsBinary(ST_Normalize(ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(t.g), 4326)))))
-            )`,
+        /*
+         * En el mismo viaje se pregunta si cada polígono es VÁLIDO.
+         *
+         * Un lindero que se cruza consigo mismo (un «moño», dos vértices dibujados al revés) es
+         * más común de lo que parece en un catastro digitalizado a mano. Guardado tal cual, el
+         * primer cruce de traslapes que lo toca revienta con «TopologyException» y, como el cruce
+         * es del padrón entero, a partir de ahí CADA carga de cualquier persona termina en error.
+         * Se repara al entrar (`GEOM_VALIDA`), se mide sobre lo reparado y se avisa de cuántos fueron.
+         */
+        const revision = await cliente.query<{ pos: string; repetida: boolean; invalida: boolean; vacia: boolean }>(
+          `SELECT t.pos::text AS pos,
+                  EXISTS (SELECT 1 FROM concesion c WHERE c.huella = md5(ST_AsBinary(ST_Normalize(${GEOM_VALIDA('t.g')})))) AS repetida,
+                  NOT ST_IsValid(ST_Force2D(ST_GeomFromGeoJSON(t.g))) AS invalida,
+                  ST_IsEmpty(${GEOM_VALIDA('t.g')}) AS vacia
+             FROM unnest($1::text[]) WITH ORDINALITY AS t(g, pos)`,
           [geoms]
         );
-        const yaEstan = new Set(repetidas.rows.map((r) => Number(r.pos)));
+        const estado = new Map(revision.rows.map((r) => [Number(r.pos), r]));
+        const yaEstan = new Set(revision.rows.filter((r) => r.repetida).map((r) => Number(r.pos)));
         nRep += yaEstan.size;
+        const vacias = revision.rows.filter((r) => r.vacia && !r.repetida).length;
+        nVac += vacias;
 
-        const nuevas = concesiones.filter((_, k) => !yaEstan.has(k + 1));
+        const nuevas = concesiones.filter((_, k) => !yaEstan.has(k + 1) && !estado.get(k + 1)?.vacia);
         if (nuevas.length) {
           const valores: unknown[] = [];
           const marcas = nuevas.map(({ f, i }) => {
             const props = (f.properties || {}) as Record<string, unknown>;
             const declarada = Number(delDbf(props, 'hectareas'));
+            const k = concesiones.findIndex((c) => c.f === f) + 1;
+            const invalida = !!estado.get(k)?.invalida;
+            if (invalida) nInv += 1;
             const b = valores.length;
             valores.push(
               capaId,
@@ -224,14 +261,15 @@ export async function guardarCapa(
               delDbf(props, 'estado'),
               fecha(props, /^(otorgad|inicio|desde|fecha_ini)/i),
               fecha(props, /^(vence|vencim|caduc|hasta|fecha_fin)/i),
-              // El área buena la mide el motor GIS sobre el elipsoide, no el .dbf.
-              areaHectareas(f).toFixed(4),
+              // El área buena la mide el motor GIS sobre el elipsoide, no el .dbf. Si el polígono
+              // venía roto, la mide PostGIS sobre el reparado: el área de un «moño» no significa nada.
+              invalida ? null : areaHectareas(f).toFixed(4),
               isFinite(declarada) && declarada > 0 ? declarada : null,
               JSON.stringify(props),
               JSON.stringify(f.geometry)
             );
             const n = (k: number) => `$${b + k}`;
-            return `(${n(1)},${n(2)},${n(3)},${n(4)},${n(5)},${n(6)},${n(7)},${n(8)},${n(9)},${n(10)},${n(11)},${n(12)},${n(13)},${n(14)},ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(${n(15)}), 4326)))`;
+            return `(${n(1)},${n(2)},${n(3)},${n(4)},${n(5)},${n(6)},${n(7)},${n(8)},${n(9)},${n(10)},${n(11)},${n(12)},${n(13)},${n(14)},${GEOM_VALIDA(n(15))})`;
           });
           await cliente.query(
             `INSERT INTO concesion
@@ -250,7 +288,7 @@ export async function guardarCapa(
           const props = (f.properties || {}) as Record<string, unknown>;
           const b = valores.length;
           valores.push(capaId, etiqueta(f, i), String(props.clase || props.tipo || 'otro'), JSON.stringify(props), JSON.stringify(f.geometry));
-          return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},ST_SetSRID(ST_GeomFromGeoJSON($${b + 5}), 4326))`;
+          return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON($${b + 5}), 4326)))`;
         });
         await cliente.query(`INSERT INTO entidad_geo (capa_id, nombre, clase, atributos, geom) VALUES ${marcas.join(',')}`, valores);
         nEnt += entidades.length;
@@ -270,9 +308,11 @@ export async function guardarCapa(
      */
     const noAporto = comoConcesiones && nConc === 0 && nEnt === 0 && nRep > 0;
     if (noAporto) await cliente.query('DELETE FROM capa WHERE id = $1', [capaId]);
+    // Los reparados entraron sin área: se mide sobre la geometría que de verdad quedó guardada.
+    if (nInv) await cliente.query('UPDATE concesion SET hectareas = ha_elipsoide(geom) WHERE capa_id = $1 AND hectareas IS NULL', [capaId]);
 
     await cliente.query('COMMIT');
-    return { capaId: noAporto ? 0 : capaId, concesiones: nConc, entidades: nEnt, repetidas: nRep };
+    return { capaId: noAporto ? 0 : capaId, concesiones: nConc, entidades: nEnt, repetidas: nRep, reparadas: nInv, vacias: nVac };
   } catch (e) {
     await cliente.query('ROLLBACK');
     throw e;
@@ -298,6 +338,34 @@ export type FilaConcesion = {
   hectareas: number | null;
   hectareas_dec: number | null;
 };
+
+/**
+ * Cómo se nombra una concesión cuando hay más de una que se llama igual.
+ *
+ * En un padrón nacional se repiten los nombres —«Cerro Partido» en El Corpus y otro en Danlí, cargados
+ * de dos capas distintas— y la respuesta era «coincide con varias: Cerro Partido, Cerro Partido.
+ * Decime cuál», que nadie puede contestar. Con el expediente, el titular y el municipio al lado, sí.
+ */
+export function distinguir(f: FilaConcesion): string {
+  const extra = [f.expediente, f.titular, f.municipio].filter(Boolean).join(', ');
+  return extra ? `${f.nombre} (${extra}; id ${f.id})` : `${f.nombre} (id ${f.id})`;
+}
+
+const normal = (t: string) =>
+  String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+/**
+ * De lo que devolvió la búsqueda, la que se nombró EXACTAMENTE, si es una sola.
+ *
+ * La búsqueda es tolerante a propósito, así que «Cerro Partido» trae también «Cerro Partido Norte»:
+ * eso no convierte el pedido en ambiguo si solo una de las dos se llama así, o si se dio el
+ * expediente o el id tal cual.
+ */
+export function unicaExacta(filas: FilaConcesion[], pedido: string): FilaConcesion | null {
+  const q = normal(pedido);
+  const exactas = filas.filter((f) => normal(f.nombre) === q || normal(f.expediente || '') === q || String(f.id) === q);
+  return exactas.length === 1 ? exactas[0] : null;
+}
 
 const CAMPOS_SELECT = `id, expediente, nombre, titular, departamento, municipio, tipo, mineral,
   estado, to_char(otorgada,'YYYY-MM-DD') AS otorgada, to_char(vence,'YYYY-MM-DD') AS vence,
@@ -341,12 +409,19 @@ export async function buscarConcesiones(texto: string, limite = 20): Promise<Fil
   );
 }
 
+/**
+ * «Hoy» en Honduras. `CURRENT_DATE` es el día del servidor de base de datos —UTC en el nodo—, y de
+ * las seis de la tarde a medianoche hondureña ya es mañana allí: una concesión que vence hoy salía
+ * como vencida ayer. La fecha de un vencimiento es la del calendario de quien la tiene que renovar.
+ */
+const HOY_HN = `(now() AT TIME ZONE 'America/Tegucigalpa')::date`;
+
 /** Las que vencen dentro de `dias`, de la más urgente a la menos. Las ya vencidas entran primero. */
 export async function porVencer(dias = 365, limite = 50): Promise<Array<FilaConcesion & { dias: number }>> {
   return consulta(
-    `SELECT ${CAMPOS_SELECT}, (vence - CURRENT_DATE) AS dias
+    `SELECT ${CAMPOS_SELECT}, (vence - ${HOY_HN}) AS dias
      FROM concesion
-     WHERE vence IS NOT NULL AND vence <= CURRENT_DATE + ($1 || ' days')::interval
+     WHERE vence IS NOT NULL AND vence <= ${HOY_HN} + ($1 || ' days')::interval
      ORDER BY vence ASC
      LIMIT $2`,
     [String(dias), limite]
@@ -357,7 +432,7 @@ export async function porVencer(dias = 365, limite = 50): Promise<Array<FilaConc
 export async function contarPorVencer(dias = 365): Promise<number> {
   const [r] = await consulta<{ n: number }>(
     `SELECT count(*)::int AS n FROM concesion
-     WHERE vence IS NOT NULL AND vence <= CURRENT_DATE + ($1 || ' days')::interval`,
+     WHERE vence IS NOT NULL AND vence <= ${HOY_HN} + ($1 || ' days')::interval`,
     [String(dias)]
   );
   return Number(r?.n || 0);
@@ -394,7 +469,9 @@ export async function coberturaDeFechas(): Promise<{ conVence: number; total: nu
  */
 export async function catastroGeojson(limite = 4000, toleranciaGrados = 0.0001): Promise<FeatureCollection> {
   const filas = await consulta<{ g: string; id: number; nombre: string; titular: string | null; estado: string | null; ha: number | null }>(
-    `SELECT ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, $2))::text AS g,
+    // Seis decimales son once centímetros: de sobra para pintar, y el cuerpo baja un cuarto frente a
+    // los quince que manda PostGIS por defecto (ruido de coma flotante que nadie ve).
+    `SELECT ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, $2), 6)::text AS g,
             id, nombre, titular, estado, hectareas::float8 AS ha
        FROM concesion
       WHERE geom IS NOT NULL
@@ -462,6 +539,23 @@ export async function traslapesDe(id: number): Promise<Array<{ a: string; b: str
      WHERE t.a_id = $1 OR t.b_id = $1
      ORDER BY t.hectareas DESC`,
     [id]
+  );
+}
+
+/**
+ * Los traslapes que toca una capa recién cargada: entre sus propias concesiones Y contra todo lo que
+ * ya estaba en el padrón. Es lo que hay que decirle a quien acaba de subirla; mirar solo dentro del
+ * archivo le contaba «no se pisa ninguno» a una concesión que se come media de la vecina.
+ */
+export async function traslapesDeCapa(capaId: number): Promise<Array<{ a: string; b: string; hectareas: number }>> {
+  return consulta(
+    `SELECT ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS hectareas
+     FROM traslape t
+     JOIN concesion ca ON ca.id = t.a_id
+     JOIN concesion cb ON cb.id = t.b_id
+     WHERE ca.capa_id = $1 OR cb.capa_id = $1
+     ORDER BY t.hectareas DESC`,
+    [capaId]
   );
 }
 

@@ -18,7 +18,8 @@
  * vigencia de una concesión dice que eso es del legal minero y lo pasa. Esa disciplina es lo que
  * hace que el panel valga más que un solo prompt grande.
  */
-import { decidirLaya } from '../../lib/laya';
+import { consultarLaya, type MotivoLaya } from '../../lib/laya';
+import { trazaActual } from '../../lib/cognitivo/traza';
 
 export type EspecialistaId =
   | 'geologo'
@@ -249,20 +250,56 @@ export function convocar(mensaje: string, maximo = 2): Especialista[] {
  * Los que el usuario nombró siguen yendo primero (eso no se adivina, se obedece); el resto lo pone
  * Laya, que entiende la pregunta en vez de contar palabras: «Quebrada Seca» es un nombre de
  * concesión, no un tema ambiental. Si Laya no contesta a tiempo, la tabla de siempre.
+ *
+ * Cuando Laya no convoca a nadie, decide la tabla. Laya es muy precisa pero se queda corta en
+ * preguntas técnicas breves o con jerga («¿qué es un skarn?», «¿qué EPSG uso para Honduras?»: P < 0,2
+ * para todos). Medido en cuatro conjuntos que no se usaron para elegir la regla: validación 81 (+3
+ * paneles bien, 0 mal), prueba apartada 260 (+6, −3: exacto 76,9 % → 78,1 %), casos difíciles 48
+ * (+3, 0) y evals/electrum.jsonl (+4, 0). Lo que se pierde: tres consultas sin tema técnico que
+ * reciben especialista por una palabra («Resumime el expediente de La Represa» → legal).
+ *
+ * Deja en la traza del turno de dónde salió el panel (paso `laya_panel`: verde si contestó Laya,
+ * rojo con el motivo si no contestó y decidió la tabla). Si Laya no está configurado no anota nada.
  */
 export async function decidirPanel(
   mensaje: string,
   maximo = 2
-): Promise<{ panel: Especialista[]; fuente: 'laya' | 'tabla' }> {
-  const d = await decidirLaya(mensaje);
-  if (!d) return { panel: convocar(mensaje, maximo), fuente: 'tabla' };
-  const ids = [...pedidosExplicitos(mensaje), ...d.panel];
-  const panel: Especialista[] = [];
-  for (const id of ids) {
-    const e = POR_ID.get(id as EspecialistaId);
-    if (e && !panel.includes(e)) panel.push(e);
+): Promise<{ panel: Especialista[]; fuente: 'laya' | 'tabla' | 'laya+tabla'; motivo: MotivoLaya; ms: number }> {
+  const { decision: d, motivo, ms } = await consultarLaya(mensaje);
+  let panel: Especialista[] = [];
+  let fuente: 'laya' | 'tabla' | 'laya+tabla' = d ? 'laya' : 'tabla';
+  if (d) {
+    for (const id of [...pedidosExplicitos(mensaje), ...d.panel]) {
+      const e = POR_ID.get(id as EspecialistaId);
+      if (e && !panel.includes(e)) panel.push(e);
+    }
+    panel = panel.slice(0, maximo);
   }
-  return { panel: panel.slice(0, maximo), fuente: 'laya' };
+  if (!panel.length) {
+    panel = convocar(mensaje, maximo);
+    if (d && panel.length) fuente = 'laya+tabla';
+  }
+  if (motivo !== 'sin configurar' && motivo !== 'sin texto') {
+    const ids = panel.map((e) => e.id).join(', ') || 'nadie';
+    const top = d
+      ? Object.entries(d.p || {})
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 3)
+          .map(([k, v]) => `${k} ${Number(v).toFixed(2)}`)
+          .join(' · ')
+      : '';
+    trazaActual()?.paso({
+      herramienta: 'laya_panel',
+      ok: !!d,
+      ms,
+      resumen: !d
+        ? `tabla → ${ids} (laya: ${motivo})`
+        : fuente === 'laya+tabla'
+          ? `laya → nadie, tabla → ${ids} (${top ? `${top}; ` : ''}modelo ${d.ms} ms)`
+          : `laya → ${ids} (${top ? `${top}; ` : ''}modelo ${d.ms} ms)`,
+    });
+  }
+  return { panel, fuente, motivo, ms };
 }
 
 /** Las herramientas que el panel convocado puede usar. Sin repetir. */

@@ -2,10 +2,12 @@ import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
+import { promisify } from 'util';
+import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
 import { fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
-import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe } from './server/voz';
+import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { quitarExpresiones } from './lib/expresiones';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
@@ -42,6 +44,7 @@ import { resolverCalculoMina } from './lib/minas/calculos';
 import { responderConcesion } from './lib/minas/concesiones';
 import { spotMetal } from './lib/mercado';
 import { turnoElectrum } from './server/electrum/turno';
+import { estadoLaya, saludLaya } from './lib/laya';
 import { ES_ELECTRUM, ES_ULTRON, PAGINA_RAIZ, PLATAFORMA, rutaPermitida } from './lib/plataforma';
 import {
   claveHiloDe,
@@ -53,7 +56,7 @@ import {
 } from './server/electrum/hilo';
 import { TODAS as TODAS_ELECTRUM } from './server/electrum/manos';
 import { compartirInforme, guardarInforme, informeCartera, informeConcesion, tomarInforme } from './server/electrum/informe';
-import { aprender as aprenderElectrum } from './server/electrum/aprender';
+import { aprender as aprenderElectrum, ojoQueLeyo } from './server/electrum/aprender';
 import {
   electrumBotListo,
   electrumWebhookSecretOk,
@@ -101,12 +104,22 @@ process.on('unhandledRejection', (e: any) => {
   console.error('[proceso] promesa rechazada sin atrapar:', String(e?.stack || e?.message || e).slice(0, 600));
 });
 
+const gzipAsync = promisify(zlib.gzip);
+
 const app = express();
 app.set('trust proxy', 1);
 const httpServer = http.createServer(app);
 const PORT = Number(process.env.PORT) || 3000;
 
-app.use(express.json({ limit: '12mb' }));
+/*
+ * El cargador de Electrum recibe el archivo CRUDO y lo lee su propio `express.raw`. Si este
+ * lector de JSON pasa antes, un .json o un .geojson que el navegador manda como
+ * `application/json` se convierte en objeto aquí, `express.raw` ya no lo toca, y la ruta ve un
+ * cuerpo que no es un Buffer: contestaba «El archivo llegó vacío» a un GeoJSON perfectamente bueno
+ * (y a partir de 12 MB, «demasiado grande»).
+ */
+const leerJson = express.json({ limit: '12mb' });
+app.use((req, res, next) => (/^\/api\/electrum\/subir\/?$/i.test(req.path) ? next() : leerJson(req, res, next)));
 // Cuerpo roto o demasiado grande: una respuesta JSON clara en vez de la página HTML de Express.
 app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
   if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'Lo que mandaste es demasiado grande.', honesto: true });
@@ -355,12 +368,17 @@ app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), 
     });
   }
   const q = String(req.query.q || '').trim().slice(0, 120);
-  const desde = Math.max(0, Math.min(10_000, Number(req.query.desde) || 0));
-  const limite = Math.max(1, Math.min(200, Number(req.query.limite) || 60));
+  const entero = (v: unknown, def: number) => {
+    const n = Math.floor(Number(v));
+    return Number.isFinite(n) && n > 0 ? n : def;
+  };
+  const desde = Math.min(10_000, entero(req.query.desde, 0));
+  const limite = Math.min(200, entero(req.query.limite, 60));
   try {
     // `unaccent` para que «Danlí» y «Danli» encuentren lo mismo, como en el resto de la plataforma.
-    const filtro = q ? `WHERE unaccent(lower(nombre)) LIKE unaccent(lower($1))` : '';
-    const args = q ? [`%${q}%`] : [];
+    // `%` y `_` se buscan tal cual: «EXP_2021» no puede volverse un comodín que trae cualquier cosa.
+    const filtro = q ? `WHERE unaccent(lower(nombre)) LIKE unaccent(lower($1)) ESCAPE '\\'` : '';
+    const args = q ? [`%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`] : [];
 
     const [tc] = await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM capa ${filtro}`, args);
     const [td] = await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM documento ${filtro}`, args);
@@ -394,7 +412,13 @@ app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), 
       honesto: true,
     });
   } catch (e: any) {
-    res.status(503).json({ error: String(e?.message || e).slice(0, 160), honesto: true });
+    /*
+     * El motivo va al registro, no a la pantalla. Se devolvía tal cual el error de Postgres
+     * —«connect ECONNREFUSED 10.0.3.7:5432», «password authentication failed for user …»— a
+     * cualquiera con la llave de la demostración: la dirección y el usuario de la base del catastro.
+     */
+    console.error('[electrum] expedientes falló:', String(e?.message || e).slice(0, 200));
+    res.status(503).json({ error: 'No alcancé el catastro en este momento. Probá de nuevo en un rato.', honesto: true });
   }
 });
 
@@ -417,13 +441,30 @@ app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), 
  * estaban y no se veían. La geometría va simplificada porque es para mirarla; lo que se usa para
  * medir hectáreas sigue siendo la de la base, entera.
  */
-app.get('/api/electrum/catastro.geojson', exigirPlataforma('electrum'), limitar(30), async (_req, res) => {
+app.get('/api/electrum/catastro.geojson', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
   try {
     const [fc, encuadre] = await Promise.all([catastroGeojson(), encuadreCatastro()]);
     res.setHeader('Cache-Control', 'private, max-age=60');
-    return res.json({ geojson: fc, encuadre, honesto: true });
+    res.setHeader('Vary', 'Accept-Encoding');
+    /*
+     * Comprimido. Con el catastro nacional son cerca de un mega de JSON, y es lo primero que baja
+     * un teléfono en el campo al abrir el mapa. Coordenadas repetidas comprimen como pocas cosas:
+     * medido con 1007 concesiones, de 908 KB a menos de una cuarta parte.
+     */
+    const cuerpo = Buffer.from(JSON.stringify({ geojson: fc, encuadre, honesto: true }));
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    // req.acceptsEncodings respeta «gzip;q=0»: quien lo prohíbe recibe el JSON tal cual.
+    // Sin cabecera no se comprime: algunos clientes no la mandan y no saben descomprimir.
+    if (req.headers['accept-encoding'] && req.acceptsEncodings('gzip', 'identity') === 'gzip' && cuerpo.length > 1024) {
+      const comprimido = await gzipAsync(cuerpo, { level: 6 });
+      res.setHeader('Content-Encoding', 'gzip');
+      return res.end(comprimido);
+    }
+    return res.end(cuerpo);
   } catch (e: any) {
-    return res.status(503).json({ error: 'No pude leer el catastro.', detalle: String(e?.message || e).slice(0, 160), honesto: true });
+    // Igual que en expedientes: el error de Postgres al registro, no a quien mira el mapa.
+    console.error('[electrum] catastro.geojson falló:', String(e?.message || e).slice(0, 200));
+    return res.status(503).json({ error: 'No pude leer el catastro.', honesto: true });
   }
 });
 
@@ -434,8 +475,13 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
   const nodo = nodoConfigurado();
 
   // Se pregunta al nodo de verdad; sin esto «configurado» y «vivo» se confunden, que es
-  // precisamente la diferencia que importa a las once de la noche.
-  const cerebro = nodo ? await saludNodo(4000).then((r) => r.ok).catch(() => false) : false;
+  // precisamente la diferencia que importa a las once de la noche. Laya (quién del panel contesta)
+  // se sondea A LA VEZ: en serie, su segundo y medio se sumaba a los cuatro del nodo.
+  const layaEst = estadoLaya();
+  const [cerebro, layaSonda] = await Promise.all([
+    nodo ? saludNodo(4000).then((r) => r.ok).catch(() => false) : Promise.resolve(false),
+    layaEst.configurado ? saludLaya(1500).catch(() => null) : Promise.resolve(null),
+  ]);
 
   res.json({
     ...catastro,
@@ -444,6 +490,12 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
     // se le enseña que el cerebro está en línea, no con qué pesos está hecho.
     cerebro: { configurado: nodo, vivo: cerebro, modelo: nivelDe(id, 'electrum') === 'mando' ? ULTRON_NODO_MODELO : undefined },
     voz: { llave: voz.voicebox, perfil: vozDe('electrum') },
+    // A todos, si está y si contesta; el detalle (tiempos, fallos, último motivo) solo a quien manda.
+    laya: {
+      configurado: layaEst.configurado,
+      vivo: !!layaSonda?.ok,
+      ...(nivelDe(id, 'electrum') === 'mando' ? { ...layaEst, vivo: !!layaSonda?.ok, sonda: layaSonda } : {}),
+    },
     catastro: { viva: catastro.viva, motivo: catastro.motivo || null, concesiones: catastro.concesiones ?? null },
     herramientas: TODAS_ELECTRUM.length,
     quien: id?.persona.nombre || null,
@@ -561,10 +613,22 @@ app.post(
         honesto: true,
       });
     }
-    const nombre = String(req.query.nombre || req.headers['x-archivo'] || '').trim().slice(0, 200);
-    if (!nombre) return res.status(400).json({ error: 'Falta el nombre del archivo.', honesto: true });
+    // Solo el nombre, sin carpetas: «../../x.pdf» o «C:\\Users\\…\\x.pdf» quedaba tal cual en la
+    // lista de expedientes. No se escribe a disco con él, pero lo que se enseña es el nombre del papel.
+    const nombre = String(req.query.nombre || req.headers['x-archivo'] || '')
+      .split(/[\\/]/)
+      .pop()!
+      .replace(/[\u0000-\u001f]/g, '')
+      .trim()
+      .slice(0, 200);
+    if (!nombre || /^\.+$/.test(nombre)) return res.status(400).json({ error: 'Falta el nombre del archivo.', honesto: true });
     const datos = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-    if (datos.length < 80) return res.status(400).json({ error: 'El archivo llegó vacío.', honesto: true });
+    /*
+     * Vacío es CERO bytes. Antes el corte estaba en 80, y un CSV de dos bocaminas o un KML de un
+     * solo polígono pesan menos que eso: se contestaba «llegó vacío» a un archivo bueno. Lo que es
+     * demasiado corto para servir lo dice el lector de cada formato, con el motivo de verdad.
+     */
+    if (!datos.length) return res.status(400).json({ error: 'El archivo llegó vacío.', honesto: true });
 
     try {
       // El tipo va también: un teléfono manda la foto con `image/jpeg` y a veces con un nombre sin
@@ -628,7 +692,8 @@ app.post('/api/electrum/ver', exigirPlataforma('electrum'), limitar(12), async (
     console.warn(`[electrum] ver falló (${vista.via})`);
     return res.status(503).json({ error: 'No pude ver la foto ahora mismo.', honesto: true });
   }
-  return res.json({ texto: vista.texto, via: vista.via, honesto: true });
+  // `via` traía la URL interna del nodo de visión; al cliente le basta saber qué ojo fue.
+  return res.json({ texto: vista.texto, via: ojoQueLeyo(vista.via), honesto: true });
 });
 
 /**
@@ -655,15 +720,26 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
     if (b.length > 80 && b.length < 6 * 1024 * 1024) mapa = b;
   }
 
+  /*
+   * Un id que no es un número entero se rechaza aquí. Antes llegaba como NaN hasta la consulta y
+   * Postgres contestaba «invalid input syntax for type bigint»: un 500 con «se me cayó» por lo que
+   * es un pedido mal hecho.
+   */
+  const idCrudo = req.body?.concesion_id;
+  const idConcesion = idCrudo == null || idCrudo === '' ? undefined : Number(idCrudo);
+  if (idConcesion !== undefined && !(Number.isSafeInteger(idConcesion) && idConcesion > 0)) {
+    return res.status(400).json({ error: 'Ese identificador de concesión no es válido.', honesto: true });
+  }
+  if (tipo !== 'cartera' && idConcesion === undefined && !String(req.body?.nombre || '').trim()) {
+    return res.status(400).json({ error: 'Decime de qué concesión es la ficha, o pedime la cartera entera.', honesto: true });
+  }
+
   try {
     const opts = { quien, lectura: req.body?.lectura ? String(req.body.lectura) : undefined, mapa };
     const r =
       tipo === 'cartera'
         ? await informeCartera(opts)
-        : await informeConcesion(
-            { id: req.body?.concesion_id != null ? Number(req.body.concesion_id) : undefined, nombre: req.body?.nombre ? String(req.body.nombre) : undefined },
-            opts
-          );
+        : await informeConcesion({ id: idConcesion, nombre: req.body?.nombre ? String(req.body.nombre).slice(0, 200) : undefined }, opts);
     if ('error' in r) return res.status(404).json({ error: r.error, honesto: true });
     const guardado = guardarInforme(r, duenio);
     return res.json({ id: guardado, nombre: r.nombre, url: `/api/electrum/informe/${guardado}`, bytes: r.pdf.length, dicho: r.dicho, honesto: true });
@@ -681,6 +757,10 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
 app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
   const texto = String(req.body?.texto || '').slice(0, 1200).trim();
   if (!texto) return res.status(400).json({ error: 'Falta el texto.', honesto: true });
+  // Solo marcas ([risa], [suspiro]) y nada que decir: eso no es «no tengo voz», es que no hay texto.
+  if (!/[\p{L}\p{N}]/u.test(sinEtiquetas(quitarExpresiones(texto)))) {
+    return res.status(400).json({ error: 'Ahí no hay nada que decir en voz alta.', honesto: true });
+  }
   try {
     const out = await hablar({ texto, emocion: req.body?.emocion, plataforma: 'electrum' });
     if (!out) return res.status(503).json({ error: 'No tengo voz ahora mismo.', honesto: true });
@@ -899,9 +979,15 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
     }
     anotarExitoEntrada(correo, ipEntrada);
     const nombre = data.miembro?.nombre || JUNTA[correo]?.nombre || correo.split('@')[0];
-    const rol = JUNTA[correo]?.rol || 'Junta Directiva · Orden Global';
+    /*
+     * En Dr Electrum entra gente que no es de la junta —un ingeniero con nivel de trabajo, un
+     * cliente de la demostración— y se le daba la bienvenida a AU-RA FP con el rol «Junta
+     * Directiva · Orden Global». La app de Electrum enseña ese saludo tal cual.
+     */
+    const rol = JUNTA[correo]?.rol || (ES_ELECTRUM ? 'Dr Electrum FP' : 'Junta Directiva · Orden Global');
     const s = emitirSesion({ correo, nombre, rol });
-    return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a AU-RA FP, ${nombre}`, remoteUrl: ULTRON_REMOTE_URL });
+    const producto = ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP';
+    return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a ${producto}, ${nombre}`, remoteUrl: ULTRON_REMOTE_URL });
   } catch (err: any) {
     return res.status(500).json({ error: 'Fallo al contactar el cerebro remoto', message: String(err?.message || err).slice(0, 160) });
   }

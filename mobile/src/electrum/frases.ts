@@ -69,12 +69,24 @@ export function porQueNoAbre(p: Puerta): string {
   }
 }
 
+/**
+ * Una credencial de consulta —la llave de demostración, o alguien con nivel `lee`— no puede
+ * cargarle nada al cerebro (`/api/electrum/subir` contesta 403). Se dice ANTES de abrir la cámara:
+ * descubrirlo después de encuadrar el papel y subir cuatro megas con una raya de señal es peor.
+ */
+export const SIN_NIVEL_PARA_CARGAR =
+  'Con tu acceso de consulta podés preguntarme todo, pero no cargarle fotos al expediente. Si necesitás cargar, pedile a José nivel de trabajo.';
+
 /** Qué se estaba haciendo cuando falló: cambia el arranque de la frase y cómo se lee un 401. */
-export type Intento = 'contestar' | 'foto' | 'ubicacion' | 'entrar';
+export type Intento = 'contestar' | 'foto' | 'camara' | 'informe' | 'ubicacion' | 'entrar';
 
 const ARRANQUE: Record<Intento, string> = {
   contestar: 'No pude contestarte.',
   foto: 'No pude subir la foto.',
+  // Sacar la foto es otra cosa que subirla: si falla la cámara, decir «no pude subir» manda a
+  // revisar la señal cuando el problema está en el teléfono.
+  camara: 'No pude tomar la foto.',
+  informe: 'No pude guardar el informe.',
   ubicacion: 'No pude fijar tu posición.',
   entrar: 'No pude entrar.',
 };

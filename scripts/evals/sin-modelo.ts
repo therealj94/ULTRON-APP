@@ -9,6 +9,10 @@
  * se pide (`--laya`, con LAYA_URL puesta). Es la medida que dice si Laya decide mejor que las reglas
  * antes de pasar CLASIFICADOR_MODO de `sombra` a `laya`.
  *
+ * Con `--laya-panel` (y ULTRON_LAYA_URL/ULTRON_LAYA_CLAVE puestas) repite el enrutado de Electrum con lo
+ * que corre en producción, decidirPanel(): los nombrados primero y el resto lo decide Laya en la T4.
+ * Esa pasada no entra en la línea base: depende de un nodo en red.
+ *
  * Lo usa la prueba tests/evals.test.ts, que falla si la precisión baja de evals/linea-base.json, y
  * se puede correr suelto: `npx tsx scripts/evals/sin-modelo.ts [--laya]` imprime el informe.
  */
@@ -16,7 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { cargarCasos, informe, revisarClasificacion, type Caso, type Informe, type Resultado } from '../../lib/cognitivo/evaluacion';
 import { clasificarConLaya, clasificarConReglas } from '../../lib/cognitivo/clasificador';
-import { convocar } from '../../server/electrum/especialistas';
+import { convocar, decidirPanel } from '../../server/electrum/especialistas';
 import { parsePedido } from '../../lib/taller';
 import { evaluar } from '../../lib/cognitivo/politica';
 
@@ -77,6 +81,29 @@ export async function pasadaClasificador(plataforma: 'ultron' | 'electrum', moto
   return informe(plataforma, 'sin-modelo', rs);
 }
 
+/**
+ * El enrutado de Electrum decidido como en producción (decidirPanel: nombrados, Laya, y la tabla si
+ * Laya no pone a nadie). Si Laya no contesta, el caso cuenta como fallo con el motivo, para que la
+ * cifra no se confunda con la de la tabla sola. Devuelve null si Laya no está configurado.
+ */
+export async function pasadaPanelLaya(): Promise<Informe | null> {
+  const casos = cargarCasos(ARCHIVOS.electrum).filter((c) => c.espera.agente);
+  const rs: Resultado[] = [];
+  for (const c of casos) {
+    const { panel, fuente, motivo, ms } = await decidirPanel(c.pregunta);
+    if (motivo === 'sin configurar') return null;
+    const ids = panel.map((e) => e.id);
+    const f =
+      motivo !== 'ok'
+        ? [`Laya no contestó (${motivo})`]
+        : ids[0] !== c.espera.agente
+          ? [`${fuente} convocó ${ids.join('+') || 'a nadie'} y tocaba ${c.espera.agente} primero`]
+          : [];
+    rs.push({ id: c.id, area: c.area, ok: f.length === 0, fallos: f, ms });
+  }
+  return informe('electrum', 'sin-modelo', rs);
+}
+
 function imprimir(titulo: string, inf: Informe) {
   console.log(`\n${titulo}: ${inf.aciertos}/${inf.total} (${(inf.precision * 100).toFixed(1)} %)`);
   for (const [a, x] of Object.entries(inf.porArea)) console.log(`  ${a.padEnd(14)} ${x.aciertos}/${x.total}`);
@@ -92,5 +119,10 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
       if (l) imprimir(`${p} · clasificador (Laya)`, l);
       else console.log(`\n${p} · clasificador (Laya): sin respuesta (¿LAYA_URL?)`);
     }
+  }
+  if (process.argv.includes('--laya-panel')) {
+    const l = await pasadaPanelLaya();
+    if (l) imprimir('electrum · panel decidido por Laya (producción)', l);
+    else console.log('\nelectrum · panel por Laya: sin ULTRON_LAYA_URL');
   }
 }

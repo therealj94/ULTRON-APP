@@ -53,8 +53,9 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
       const p = await puertaAbierta();
       if (p.estado === 'abierta') onAbierta();
       else setFallo(porQueNoAbre(p, 'sesion'));
-    } catch (err: any) {
-      setFallo(String(err?.message || err).slice(0, 140) || 'No pude contactar con el servidor.');
+    } catch {
+      // «Failed to fetch» es lo que dice el navegador, en inglés y sin decir qué hacer.
+      setFallo('No alcancé el servidor. Revisá la conexión y volvé a intentarlo — tu clave no tiene nada que ver.');
     } finally {
       setYendo(false);
     }
@@ -90,8 +91,8 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
       const p = await puertaAbierta();
       if (p.estado === 'abierta') onAbierta();
       else setFallo(porQueNoAbre(p, 'llave'));
-    } catch (err: any) {
-      setFallo(String(err?.message || err).slice(0, 140) || 'No pude comprobar la llave.');
+    } catch {
+      setFallo('No pude comprobar la llave: no alcancé el servidor. Revisá la conexión y volvé a intentarlo.');
     } finally {
       setYendo(false);
     }
@@ -99,7 +100,7 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
 
   const campo =
     'w-full rounded-lg bg-white/[0.04] border border-white/10 px-3 py-2.5 text-[15px] text-[#E7EEF2] ' +
-    'placeholder:text-[#8FA3B0]/50 outline-none focus:border-[#FFAE3B]/60 transition-colors';
+    'placeholder:text-[#7D909A] outline-none focus:border-[#FFAE3B]/60 transition-colors';
 
   return (
     <div className="fixed inset-0 bg-black text-[#E7EEF2] overflow-y-auto">
@@ -120,6 +121,7 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
                 className={campo}
                 type="email"
                 autoComplete="username"
+                aria-label="Correo"
                 placeholder="tu correo"
                 value={correo}
                 onChange={(e) => setCorreo(e.target.value)}
@@ -129,6 +131,7 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
                 className={campo}
                 type="password"
                 autoComplete="current-password"
+                aria-label="Clave"
                 placeholder="tu clave"
                 value={clave}
                 onChange={(e) => setClave(e.target.value)}
@@ -148,6 +151,8 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
               <input
                 className={campo}
                 type="password"
+                aria-label="Llave de demostración"
+                autoComplete="off"
                 placeholder="llave de demostración"
                 value={llave}
                 onChange={(e) => setLlave(e.target.value)}
@@ -200,7 +205,7 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
             {modo === 'correo' ? 'Tengo una llave de demostración' : 'Entrar con mi correo'}
           </button>
 
-          <p className="mt-8 text-center text-[11px] leading-relaxed text-[#8FA3B0]/60">
+          <p className="mt-8 text-center text-[11px] leading-relaxed text-[#8FA3B0]">
             Dr Electrum FP es privado: catastro minero y expedientes de Honduras. Si tu correo está en
             el padrón, entrás con él; si venís a ver la demostración, pedí el enlace con llave.
           </p>
