@@ -1,0 +1,122 @@
+# LA T4 COMO SISTEMA 1 — lo rápido y barato, para que la A10G (Qwen 27B) solo piense.
+#
+#   laya     decisiones tipadas en ~35 ms: tarea, riesgo, especialista, ¿hace falta razonar?, ¿ataque?
+#   embed    BGE-M3 (1024 dim, multilingüe) para la búsqueda por significado en pgvector
+#   chico    Qwen3-4B (GGUF Q4_K_M, llama.cpp) para saludos y charla trivial
+#   docling  OCR y estructura de PDFs escaneados, con las tablas como tablas
+#   caddy    la única puerta: TLS automático (sslip.io + Let's Encrypt) y portador obligatorio
+#
+# Nada publica puertos salvo Caddy. Cada servicio además exige el mismo token por su cuenta: si un
+# día alguien publica un puerto por error, sigue cerrado.
+#
+# Versiones fijadas y comprobadas en sus registros (sep. 2026). Subirlas es una decisión, no un
+# accidente de `latest`.
+name: aura-t4
+
+x-gpu: &gpu
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: all
+            capabilities: [gpu]
+
+services:
+  caddy:
+    image: caddy:2.11.4
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      T4_DOMINIO: ${T4_DOMINIO:?falta T4_DOMINIO en .env}
+      T4_TOKEN: ${T4_TOKEN:?falta T4_TOKEN en .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-datos:/data
+      - caddy-config:/config
+    depends_on: [laya, embed, chico, docling]
+
+  laya:
+    <<: *gpu
+    # Imagen oficial del repositorio de Laya (Apache 2.0), construida desde un commit fijo.
+    build:
+      context: https://github.com/NandhaKishorM/laya.git#${LAYA_REF:-970dc8c5f63d7b886a68409493f37d569424f933}
+      args:
+        # cu126: el Dockerfile de Laya fija torch 2.14.0, que en el índice cu128 no existe (llega a
+        # 2.11). cu126 trae sm_75 (la T4) y anda con drivers 525 o más nuevos.
+        TORCH_INDEX: ${LAYA_TORCH_INDEX:-cu126}
+    command: ["laya-serve"]
+    restart: unless-stopped
+    init: true
+    environment:
+      LAYA_HOST: 0.0.0.0
+      LAYA_PORT: "8000"
+      LAYA_DEVICE: cuda
+      LAYA_PRELOAD: "1"
+      # El texto es español: el checkpoint multilingüe. El cliente lo pide igual (LAYA_MODELO).
+      LAYA_MODELS: multilingual
+      LAYA_API_KEY: ${T4_TOKEN}
+      LAYA_LOG_LEVEL: warning
+    volumes:
+      - laya-modelos:/home/laya/.cache/huggingface
+
+  embed:
+    <<: *gpu
+    # La variante «turing» es la que corre en la T4 (sm_75).
+    image: ghcr.io/huggingface/text-embeddings-inference:turing-1.9.4
+    # Sin --api-key a propósito: TEI imprime todos sus argumentos al arrancar (el token acabaría en
+    # `docker compose logs`). No publica puertos; la puerta es Caddy.
+    command: ["--model-id", "BAAI/bge-m3", "--max-client-batch-size", "64", "--max-batch-tokens", "8192"]
+    restart: unless-stopped
+    volumes:
+      - hf-cache:/data
+
+  chico:
+    <<: *gpu
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda-b6700
+    command:
+      - "-hf"
+      - "${MODELO_CHICO_HF:-Qwen/Qwen3-4B-GGUF:Q4_K_M}"
+      - "--alias"
+      - "chico"
+      - "--jinja"
+      - "-ngl"
+      - "99"
+      # Contexto corto: al modelo chico se le manda un prompt reducido y los últimos turnos, nada más.
+      # 4k de contexto dejan ~1 GB de VRAM para los demás.
+      - "-c"
+      - "4096"
+      - "-np"
+      - "1"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+    environment:
+      LLAMA_CACHE: /modelos
+      # Por variable y no por argumento: los argumentos los ve cualquiera con `ps`.
+      LLAMA_API_KEY: ${T4_TOKEN}
+    restart: unless-stopped
+    volumes:
+      - chico-modelos:/modelos
+
+  docling:
+    <<: *gpu
+    image: quay.io/docling-project/docling-serve-cu128:v1.35.0
+    restart: unless-stopped
+    environment:
+      DOCLING_SERVE_API_KEY: ${T4_TOKEN}
+      DOCLING_SERVE_ENABLE_UI: "false"
+      # Un expediente escaneado de 200 páginas tarda; el cliente espera hasta DOCLING_TIMEOUT_MS.
+      DOCLING_SERVE_MAX_SYNC_WAIT: "600"
+      # Uno a la vez: la T4 tiene 16 GB y los comparte con todo lo de arriba.
+      DOCLING_SERVE_ENG_LOC_NUM_WORKERS: "1"
+
+volumes:
+  caddy-datos:
+  caddy-config:
+  laya-modelos:
+  hf-cache:
+  chico-modelos:

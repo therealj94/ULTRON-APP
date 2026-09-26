@@ -13,6 +13,7 @@
  */
 
 import type { Nivel, Plataforma } from '../acceso';
+import type { Efecto } from '../cognitivo/politica';
 
 /** Esquema JSON de los argumentos. Es la misma forma que usan OpenAI, Ollama, Hermes y MCP. */
 export type EsquemaJson = {
@@ -52,7 +53,15 @@ export type Contexto = {
   canal: 'mesa' | 'telegram';
   /** Pregunta original del turno, por si la herramienta la necesita entera. */
   mensaje: string;
+  /** Cómo se sabe quién es: una sesión firmada y un Telegram verificado prueban; un nombre, no. */
+  prueba?: 'sesion' | 'telegram' | 'nombre' | null;
+  /** Riesgo del turno según el clasificador (0–100). Las reglas lo usan para mandar a revisión. */
+  riesgo?: number | null;
 };
+
+export function efectoDe(h: Pick<Herramienta, 'efecto' | 'escribe'>): Efecto {
+  return h.efecto ?? (h.escribe ? 'escritura' : 'lectura');
+}
 
 /** Puede cambiar cosas: alimentar el cerebro o tocar el sistema. `lee` no. */
 export function ctxEscribe(ctx: Contexto): boolean {
@@ -71,8 +80,16 @@ export type Herramienta = {
   /** Cambia algo en el mundo. Exige nivel de escritura y no se llama dos veces con los mismos argumentos. */
   escribe?: boolean;
   /**
+   * Qué clase de efecto tiene, para el motor de reglas (lib/cognitivo/politica.ts). Sin declararlo:
+   * `escritura` si `escribe`, `lectura` si no. Lo que sale del sistema (`externo`), lo que lo
+   * cambia (`sistema`) y lo que mueve valor (`critico`) TIENE que declararlo.
+   */
+  efecto?: Efecto;
+  /** A quién va, en herramientas externas: los canales propios de la junta o un tercero. */
+  destino?: (args: Record<string, unknown>) => 'junta' | 'tercero';
+  /**
    * En qué cerebros existe esta herramienta. Es lo que impide que se presten entre plataformas por
-   * descuido: el catastro y el mapa son de Dr Electrum, el taller y la bóveda son de ULTRON, y solo
+   * descuido: el catastro y el mapa son de Dr Electrum, el taller y la bóveda son de AU-RA, y solo
    * un puñado —el precio del metal, las cuentas de mina— viven en las dos.
    */
   plataformas: Plataforma[];

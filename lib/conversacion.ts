@@ -81,12 +81,12 @@ export function esContinuacion(message: string): boolean {
   );
 }
 
-/** Preguntas a ULTRON sobre sí mismo o sobre la relación: se contestan como persona, sin internet. */
+/** Preguntas a AU-RA sobre sí mismo o sobre la relación: se contestan como persona, sin internet. */
 export function esSobreUltron(message: string): boolean {
   const q = fold(message);
   return (
     /\b(como (estas|andas|amaneciste|te sentis|te va|dormiste|vas)|que (sentis|opinas de mi|te parece que|tal (estas|andas))|estas (bien|cansad|triste|content|enojad)|te (gusta|cae|molesta|aburr)|quien (eres|sos)|que (eres|sos)|tu (nombre|voz|cara|dia)|sos (humano|robot|real)|me (queres|extranaste)|tenes (miedo|sentimientos|hambre|sueno))\b/.test(q) ||
-    /\b(ultron|vos|tu|te|contigo)\b/.test(q) && /\b(como|que|por que)\b/.test(q) && q.length < 70 && !/\b(precio|noticia|busca|quien es|que es)\b/.test(q)
+    /\b(ultron|aura|vos|tu|te|contigo)\b/.test(q) && /\b(como|que|por que)\b/.test(q) && q.length < 70 && !/\b(precio|noticia|busca|quien es|que es)\b/.test(q)
   );
 }
 
@@ -183,7 +183,7 @@ export function capasHilo(corta: TurnoHilo[]): { corto: string; mediano: string 
   const items = (corta || []).filter((t) => String(t.texto || '').trim());
   const cortoItems = items.slice(-8);
   const medianoItems = items.slice(-40, -8);
-  const linea = (t: TurnoHilo) => `${t.rol === 'ultron' || t.rol === 'assistant' ? 'ULTRON' : 'Junta'}: ${String(t.texto).replace(/\s+/g, ' ').slice(0, 400)}`;
+  const linea = (t: TurnoHilo) => `${t.rol === 'ultron' || t.rol === 'assistant' ? 'AU-RA' : 'Junta'}: ${String(t.texto).replace(/\s+/g, ' ').slice(0, 400)}`;
   return {
     corto: cortoItems.map(linea).join('\n'),
     mediano: medianoItems.map(linea).join('\n'),

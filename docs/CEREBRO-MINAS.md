@@ -1,6 +1,6 @@
 # Cerebro de Minas
 
-Segunda plataforma de ULTRON. Mismo cuerpo, otro cerebro.
+Segunda plataforma de AU-RA. Mismo cuerpo, otro cerebro.
 
 ## Qué es
 
@@ -10,9 +10,9 @@ cadena 5550, ni AUKA, ni la bóveda, ni la junta. Si le preguntan por eso, manda
 plataforma. Es una demostración y lo dice en voz alta: no está abierta al público y no sustituye a
 una Persona Calificada ni a un informe firmado.
 
-## Por qué no es otro ULTRON
+## Por qué no es otro AU-RA
 
-ULTRON es un cuerpo: cara, voz, emociones, ojos, oído, harness, memoria, sesiones. Duplicar todo eso
+AU-RA es un cuerpo: cara, voz, emociones, ojos, oído, harness, memoria, sesiones. Duplicar todo eso
 para tener otro asistente significa que cada arreglo hay que hacerlo dos veces, y a la tercera
 semana las dos copias ya no se parecen.
 
@@ -108,7 +108,7 @@ Un archivo en `lib/perfiles/` que cumpla `PerfilCerebro`, más su conocimiento, 
 - Las dos plataformas levantadas a la vez en la misma máquina: `/api/perfil` devuelve identidades
   distintas, el prompt del Cerebro de Minas no contiene una sola línea de datos de Orden Global (solo
   la regla que manda a la otra plataforma), y el de Genesis quedó idéntico.
-- Capturas de las dos pantallas de arranque, una al lado de la otra: cian «ULTRON FP» contra ámbar
+- Capturas de las dos pantallas de arranque, una al lado de la otra: cian «AU-RA FP» contra ámbar
   «CEREBRO DE MINAS · demostración».
 - Cálculo de punta a punta contra el servidor: 1.200.000 t a 2,8 g/t con 91% de recuperación →
   108.027 onzas contenidas, 98.304 recuperables. Comprobado a mano.

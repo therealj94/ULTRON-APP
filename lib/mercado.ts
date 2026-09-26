@@ -1,14 +1,14 @@
 /**
  * EL SPOT DE LOS METALES — uno solo, para los dos cerebros.
  *
- * Esto estaba escrito dos veces: una en `server.ts` para ULTRON, con caché de treinta segundos, y
+ * Esto estaba escrito dos veces: una en `server.ts` para AU-RA, con caché de treinta segundos, y
  * otra en las manos de Electrum, sin caché ninguna. Dos copias de la misma llamada no es solo
  * desorden: gold-api.com limita por IP, las dos plataformas salen por la MISMA IP de Render, y la
  * copia sin caché le gastaba el cupo a la que sí la tenía. El precio del oro de la junta se caía
  * por culpa de la demostración minera.
  *
  * Esta es una de las pocas herramientas que de verdad se comparten. La mayoría no: el catastro y el
- * mapa son de Electrum, el taller y la bóveda son de ULTRON, y prestarlas sería juntar lo que se
+ * mapa son de Electrum, el taller y la bóveda son de AU-RA, y prestarlas sería juntar lo que se
  * pidió separar. Se comparte el precio del oro porque el oro es el mismo oro.
  */
 

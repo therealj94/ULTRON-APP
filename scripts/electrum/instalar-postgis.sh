@@ -3,7 +3,7 @@
 # ELECTRUM — instala PostgreSQL + PostGIS en el nodo y deja el catastro listo.
 #
 # Pensado para correrse UNA vez en la máquina de AWS, como root o con sudo. Es idempotente: si algo
-# ya está puesto, lo respeta y sigue. No toca nada de ULTRON ni de Genesis.
+# ya está puesto, lo respeta y sigue. No toca nada de AU-RA ni de Genesis.
 #
 #   sudo bash instalar-postgis.sh
 #   sudo CLAVE='una-clave-larga-de-verdad' bash instalar-postgis.sh
@@ -60,6 +60,30 @@ paso "Arrancando el servicio"
 systemctl enable --now postgresql
 sleep 2
 systemctl is-active --quiet postgresql || { rojo "PostgreSQL no arrancó. Mirá: journalctl -u postgresql -n 50"; exit 1; }
+
+# pgvector: la búsqueda por significado (BGE-M3, 1024 dimensiones) sobre los fragmentos de los
+# expedientes. Es opcional a propósito: si no se puede instalar, el esquema salta ese bloque y la
+# búsqueda sigue siendo por palabras, como antes. Nada se rompe; solo se avisa.
+paso "pgvector (búsqueda por significado)"
+PGVER=$(su - postgres -c "psql -tAc 'SHOW server_version_num'" | cut -c1-2)
+case "$ID" in
+  ubuntu|debian)
+    # Ubuntu 24.04 lo trae; 22.04 (la base de muchas AMI) no. Ahí se agrega el repositorio oficial
+    # de PostgreSQL (PGDG), que publica pgvector para cada versión.
+    if ! apt-get install -y --no-install-recommends "postgresql-${PGVER}-pgvector" 2>/dev/null; then
+      apt-get install -y --no-install-recommends postgresql-common ca-certificates \
+        && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
+        && apt-get install -y --no-install-recommends "postgresql-${PGVER}-pgvector" \
+        || SIN_VECTOR=1
+    fi ;;
+  amzn|rhel|centos|rocky|almalinux)
+    dnf install -y "pgvector_${PGVER}" 2>/dev/null || dnf install -y pgvector 2>/dev/null || SIN_VECTOR=1 ;;
+esac
+if [ "${SIN_VECTOR:-0}" = "1" ]; then
+  rojo "  no pude instalar pgvector: la búsqueda por significado queda apagada (la de palabras sigue)."
+else
+  echo "  pgvector instalado para PostgreSQL ${PGVER}"
+fi
 
 paso "Creando usuario y base"
 # `psql -tAc` devuelve vacío si no existe: así no se intenta crear dos veces.
@@ -137,6 +161,12 @@ TABLAS=$(su - postgres -c "psql -d ${BASE} -tAc \"SELECT count(*) FROM informati
 echo "  ${VER_PG}"
 echo "  PostGIS ${VER_GIS}"
 echo "  ${TABLAS} tablas en el esquema"
+VER_VECTOR=$(su - postgres -c "psql -d ${BASE} -tAc \"SELECT extversion FROM pg_extension WHERE extname='vector'\"")
+if [ -n "${VER_VECTOR}" ]; then
+  echo "  pgvector ${VER_VECTOR}: búsqueda por significado disponible (falta EMBED_URL en el servicio)"
+else
+  echo "  sin pgvector: búsqueda solo por palabras"
+fi
 
 # Una prueba de verdad: mide un cuadrado conocido y comprueba que la cuenta es geodésica.
 AREA=$(su - postgres -c "psql -d ${BASE} -tAc \"SELECT round(ha_elipsoide(ST_GeomFromText('POLYGON((-86.6 14.0,-86.6 14.01,-86.59 14.01,-86.59 14.0,-86.6 14.0))',4326)))\"")

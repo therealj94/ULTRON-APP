@@ -11,6 +11,9 @@ data/tareas.json
 data/telegram-hilo.json
 data/memoria-junta.json
 data/canto/
+data/cognitivo/
 para-ocr.txt
 subir-expedientes.html
 __pycache__/
+data/sesiones-cerradas.json
+voces-prueba/

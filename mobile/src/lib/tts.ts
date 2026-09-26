@@ -1,13 +1,14 @@
 /**
- * Voz de ULTRON — una sola voz (ElevenLabs v3, timbre Gabriela), nunca la robótica del sistema.
+ * Voz de AU-RA — una sola voz (Voicebox en el servidor propio, perfil Kokoro Dora), nunca la robótica
+ * del sistema: si el servidor no da audio, AU-RA calla y el texto queda en pantalla.
  *
  *  - Banco offline (assets/voice, generado por scripts/build-voice-bank.mjs): 0 ms, sin red.
  *  - Clips remotos (/voz/<id>.mp3): canciones grabadas, chistes, discurso y los clips nuevos; si el
  *    servidor no los sirve como audio, se cae a TTS con el texto del clip.
- *  - Resto: GET /api/tts?text&emocion&performance descargado a disco, por oraciones, con la siguiente
- *    oración precargada mientras suena la actual.
- *  - Canto real: POST /api/cantar {id} | {letra,titulo} → mp3 (hasta ~40 s la primera vez).
- *  - Oración del día: POST /api/orar {tema?} → mp3 (~3 min, cacheado), o el estático /voz/oracion.mp3.
+ *  - Resto: GET /api/tts?text&emocion&performance (WAV) descargado a disco, por oraciones, con la
+ *    siguiente oración precargada mientras suena la actual.
+ *  - Canciones: POST /api/cantar {id} → mp3 grabado; {letra,titulo} → WAV (Kokoro la dice, no la canta).
+ *  - Oración del día: el estático /voz/oracion.mp3, o POST /api/orar {tema?} → WAV (cacheado).
  *  - Lip-sync: cada reproducción emite un nivel 0..1 a 20 Hz (setSpeechLevelListener) calculado con
  *    lipsync.ts sobre positionMillis (expo-av no da metering al reproducir).
  *
@@ -36,6 +37,21 @@ export type SpeakCallbacks = {
 let current: Audio.Sound | null = null;
 let gen = 0;
 const fileCache = new Map<string, string>();
+/**
+ * Tope de la caché de audios: antes solo crecía (un mp3 por frase distinta, para siempre en la sesión y
+ * en disco). Al pasar el tope se borra el más viejo, del mapa y del disco. Map conserva el orden de
+ * inserción, así que el primero es el más antiguo.
+ */
+const CACHE_MAX = 40;
+function guardarEnCache(key: string, uri: string) {
+  fileCache.delete(key);
+  fileCache.set(key, uri);
+  while (fileCache.size > CACHE_MAX) {
+    const [viejo, ruta] = fileCache.entries().next().value as [string, string];
+    fileCache.delete(viejo);
+    void FileSystem.deleteAsync(ruta, { idempotent: true }).catch(() => {});
+  }
+}
 /** Última locución en curso: el StreamSpeaker espera a que termine (no corta un clip a la mitad). */
 let lastSpeak: Promise<unknown> = Promise.resolve();
 let releaseLastSpeak: (() => void) | null = null;
@@ -158,8 +174,51 @@ export function clipForPhrase(text: string): ClipId | null {
 
 // ---------------------------------------------------------------- descarga TTS
 
+/**
+ * Los audios de sesiones anteriores se quedaban en la caché del teléfono para siempre. La primera vez
+ * que se pide voz en esta sesión se borran los `ultron-*` que haya (los de esta sesión aún no existen).
+ */
+let limpiezaHecha = false;
+/** Solo se borra lo creado ANTES de arrancar: el nombre lleva la hora (base 36) y lo de ahora se queda. */
+const INICIO_SESION = Date.now();
+function limpiarAudiosViejos() {
+  if (limpiezaHecha || !FileSystem.cacheDirectory) return;
+  limpiezaHecha = true;
+  const dir = FileSystem.cacheDirectory;
+  void FileSystem.readDirectoryAsync(dir)
+    .then((nombres) =>
+      Promise.all(
+        nombres
+          .filter((n) => {
+            const m = /^ultron(?:-p)?-([a-z0-9]+)-[a-z0-9]+\.(?:mp3|wav)$/.exec(n);
+            return !!m && parseInt(m[1], 36) < INICIO_SESION;
+          })
+          .map((n) => FileSystem.deleteAsync(dir + n, { idempotent: true }).catch(() => {}))
+      )
+    )
+    .catch(() => {});
+}
+
 function tmpPath(prefix: string, ext = 'mp3') {
+  limpiarAudiosViejos();
   return `${FileSystem.cacheDirectory}${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}.${ext}`;
+}
+
+/**
+ * `downloadAsync` escribe el archivo antes de saber qué llega. La voz del servidor es WAV (Voicebox)
+ * y los clips son MP3; iOS elige el decodificador por la extensión, y un WAV guardado como `.mp3`
+ * no suena. Se renombra según el content-type que contestó el servidor.
+ */
+async function conExtension(path: string, ct: string): Promise<string> {
+  const ext = /wav/i.test(ct) ? 'wav' : /mpeg|mp3/i.test(ct) ? 'mp3' : null;
+  if (!ext || path.endsWith(`.${ext}`)) return path;
+  const nuevo = path.replace(/\.[a-z0-9]+$/, `.${ext}`);
+  try {
+    await FileSystem.moveAsync({ from: path, to: nuevo });
+    return nuevo;
+  } catch {
+    return path;
+  }
 }
 
 async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<AVPlaybackSource | null> {
@@ -175,20 +234,21 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<
   if (hit) return { uri: hit };
   const headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
   for (let attempt = 0; attempt < 2; attempt++) {
-    const path = tmpPath('ultron');
+    const path = tmpPath('ultron', 'wav');
     try {
       const r = await FileSystem.downloadAsync(ttsUrl(text, perf, emocion), path, { headers });
       const ct = String((r.headers as any)?.['Content-Type'] || (r.headers as any)?.['content-type'] || '');
       const info = await FileSystem.getInfoAsync(path);
       if (r.status === 200 && info.exists && (info.size || 0) > 64 && (!ct || /audio|octet/.test(ct))) {
-        fileCache.set(key, path);
-        return { uri: path };
+        const uri = await conExtension(path, ct);
+        guardarEnCache(key, uri);
+        return { uri };
       }
       await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
       if (r.status === 200 && ct && !/audio|octet/.test(ct)) {
         // servidor sin GET /api/tts: devolvió HTML. Usar POST.
         const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion }, 40_000);
-        if (uri) fileCache.set(key, uri);
+        if (uri) guardarEnCache(key, uri);
         return uri ? { uri } : null;
       }
     } catch {
@@ -228,7 +288,7 @@ async function downloadPost(url: string, body: Record<string, unknown>, timeoutM
             const dataUrl = String(reader.result || '');
             const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
             if (b64.length < 100) return resolve(null);
-            const path = tmpPath('ultron-p', /wav/.test(ct) ? 'wav' : 'mp3');
+            const path = tmpPath('ultron-p', /mpeg|mp3/.test(ct) ? 'mp3' : 'wav');
             await FileSystem.writeAsStringAsync(path, b64, { encoding: FileSystem.EncodingType.Base64 });
             resolve(path);
           } catch {
@@ -387,8 +447,9 @@ export type SongRequest = { id: string } | { letra: string; titulo?: string };
 const songCache = new Map<string, string>();
 
 /**
- * ULTRON canta de verdad: POST /api/cantar → mp3 (la primera vez puede tardar ~40 s; el servidor lo
- * cachea). Para ids del repertorio, si el clip estático /voz/<id>.mp3 existe se usa directo (más rápido).
+ * Canciones: POST /api/cantar → el mp3 grabado del repertorio, o una letra libre dicha en WAV (Kokoro
+ * no canta; el servidor la cachea). Para ids del repertorio, si el clip estático /voz/<id>.mp3 existe
+ * se usa directo (más rápido).
  */
 export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPreparing?: () => void }): Promise<boolean> {
   await stopSpeaking();
@@ -419,7 +480,7 @@ export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPr
 const prayerCache = new Map<string, string>();
 
 /**
- * Oración del día: POST /api/orar {} | {tema} → mp3 (~3 min; el servidor lo cachea). Sin tema, si el
+ * Oración del día: POST /api/orar {} | {tema} → audio (~3 min; el servidor lo cachea). Sin tema, si el
  * estático /voz/oracion.mp3 existe se usa directo. Cara PRAY, mic pausado y boca con envolvente 'pray'.
  */
 export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPreparing?: () => void }): Promise<boolean> {

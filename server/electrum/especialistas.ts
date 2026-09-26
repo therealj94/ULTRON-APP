@@ -59,7 +59,7 @@ export const ESPECIALISTAS: Especialista[] = [
     nombre: 'Geólogo',
     campo: 'Yacimientos, estructura, alteración, sondajes y modelo geológico.',
     disparo:
-      /\b(geolog|yacimiento|dep[oó]sito|p[oó]rfido|epitermal|skarn|vms|iocg|placer|veta|vetas|filon|filón|clavo|alteraci|mineraliza|estructura|falla|sondaj|testigo|barreno|perforaci|core|litolog|estratigraf|roca|cuarzo|pirita|arsenopirita|muestreo|ensayo|ley\b|leyes\b|anomal[ií]a|geoqu[ií]mic|geof[ií]sic)/i,
+      /\b(geolog|yacimiento|dep[oó]sito|p[oó]rfido|epitermal|skarn|vms|iocg|placer|veta|vetas|filon|filón|clavo|alteraci|mineraliza|estructura|falla|sondaj|testigo|barreno|perforaci|core|litolog|estratigraf|roca|cuarzo|pirita|arsenopirita|muestreo|ensayo|ley\b(?! general| de miner| de corte)|leyes\b(?! de)|anomal[ií]a|geoqu[ií]mic|geof[ií]sic)/i,
     reglas: [
       'Hablás como geólogo de campo: primero qué se ve, después qué significa, y al final qué falta para confirmarlo.',
       'Nunca afirmás un modelo geológico con un solo sondaje. Decís cuántos harían falta y por qué.',
@@ -143,7 +143,7 @@ export const ESPECIALISTAS: Especialista[] = [
     nombre: 'Legal Minero',
     campo: 'Concesiones, vigencias, obligaciones y marco regulatorio.',
     disparo:
-      /\b(concesi|expediente|titular|vigencia|vence|caduca|prelaci|derecho|permiso|canon|regal[ií]a|ley general de miner|inhgeomin|reglamento|resoluci[oó]n|contrato|servidumbre|superficiari|obligaci|inscripci|registro|moratoria)/i,
+      /\b(concesi|expediente|titular|vigencia|vence|caduca|caducid|prelaci|derecho|permiso|canon|regal[ií]a|ley general de miner|inhgeomin|reglamento|resoluci[oó]n|contrato|servidumbre|superficiari|obligaci|inscripci|registro|moratoria)/i,
     reglas: [
       'Nunca afirmás el estado de una concesión real sin el expediente delante. Decís lo que dice el padrón y aclarás que el padrón no es el expediente.',
       'Un traslape de derechos se resuelve por prelación de la solicitud, no por quién llegó primero al terreno.',
@@ -207,6 +207,9 @@ export function pedidosExplicitos(mensaje: string): EspecialistaId[] {
  * respuesta sale a comité. Dos es lo que de verdad pasa en una consulta real (el geólogo y el
  * legal; el de minas y el economista).
  */
+/** Palabras del oficio tan comunes que, solas, no deciden quién contesta. */
+const GENERICAS = new Set(['planta', 'precio', 'mercado', 'area', 'área', 'mapa', 'capa', 'obra', 'agua', 'canal', 'banco', 'registro', 'permiso', 'costo', 'flujo', 'roca', 'estructura']);
+
 export function convocar(mensaje: string, maximo = 2): Especialista[] {
   const q = fold(mensaje);
   if (!q.trim()) return [];
@@ -214,13 +217,19 @@ export function convocar(mensaje: string, maximo = 2): Especialista[] {
   // 1) Pedido explícito: si el usuario nombró a alguien, ese va sí o sí y va primero.
   const explicitos = pedidosExplicitos(mensaje);
 
-  // 2) Por tema, ordenados por cuántas palabras de su campo aparecen.
+  // 2) Por tema, ordenados por CUÁNTO texto de su campo aparece, no solo cuántas veces.
+  //
+  // Contar golpes empataba «licencia ambiental» con «planta», y el empate lo resolvía el orden de
+  // la lista: la pregunta por la licencia ambiental de una planta se la llevaba el metalurgista.
+  // Una frase del oficio larga y específica pesa más que una palabra suelta y común.
+  // Las palabras que salen en cualquier conversación minera («planta», «precio», «área») pesan la
+  // mitad: «capex de una planta» es del economista aunque «planta» sea más larga que «capex».
   const puntuados = ESPECIALISTAS.map((e) => {
-    const golpes = q.match(new RegExp(e.disparo.source, 'gi'))?.length || 0;
-    return { e, golpes };
+    const trozos: string[] = q.match(new RegExp(e.disparo.source, 'gi')) || [];
+    return { e, golpes: trozos.length, peso: trozos.reduce((n, t) => n + t.length * (GENERICAS.has(t.toLowerCase()) ? 0.5 : 1), 0) };
   })
     .filter((x) => x.golpes > 0)
-    .sort((a, b) => b.golpes - a.golpes);
+    .sort((a, b) => b.peso - a.peso || b.golpes - a.golpes);
 
   const salida: Especialista[] = [];
   for (const id of explicitos) {

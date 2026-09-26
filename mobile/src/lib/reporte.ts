@@ -6,14 +6,22 @@
  * - Un error de JS no capturado manda TODAS las migas + el error y luego deja que la app siga su curso.
  * - Un crash NATIVO mata el proceso sin avisar: por eso las migas se mandan también al reabrir,
  *   con `previo`, que es lo último que se alcanzó a hacer antes de morir.
+ * - Solo cuenta como crash morir EN PRIMER PLANO. Al pasar a segundo plano (botón de inicio, cerrar
+ *   desde recientes, apagar la pantalla) la sesión se marca cerrada: que Android mate después la app
+ *   dormida es normal y no se reporta. Antes se marcaba «limpio» solo a los 8 s de abrir la mesa, y
+ *   cerrar desde la entrada (o cualquier miga posterior) salía como crash la vez siguiente.
+ * - Las promesas rechazadas sin catch también se reportan (en release; en desarrollo ya las muestra LogBox).
+ * - Del teléfono solo va marca, modelo y sistema: nunca el nombre que le puso su dueño.
  * Nunca bloquea el arranque: todo va en try/catch y sin await en el camino crítico.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Platform } from 'react-native';
+import { AppState, Platform, type AppStateStatus } from 'react-native';
 import Constants from 'expo-constants';
 import { API_BASE } from '../config';
 
 const CLAVE = 'ultron_migas_v1';
+/** '1' mientras la app está en primer plano; '0' al irse a segundo plano. Si al abrir sigue en '1', murió. */
+const CLAVE_VIVA = 'ultron_migas_viva_v1';
 const MAX = 40;
 
 let migas: string[] = [];
@@ -26,6 +34,21 @@ function ahora() {
 
 function guardar() {
   AsyncStorage.setItem(CLAVE, JSON.stringify(migas.slice(-MAX))).catch(() => {});
+}
+
+function marcarViva(viva: boolean) {
+  AsyncStorage.setItem(CLAVE_VIVA, viva ? '1' : '0').catch(() => {});
+}
+
+/** Marca, modelo y sistema. Nada que identifique a la persona (ni el nombre del teléfono, ni el serial). */
+function equipo(): string {
+  try {
+    if (Platform.OS === 'android') return `${Platform.constants.Brand || ''} ${Platform.constants.Model || ''}`.trim() || 'android';
+    if (Platform.OS === 'ios') return Platform.constants.interfaceIdiom || 'ios';
+  } catch {
+    /* */
+  }
+  return '?';
 }
 
 /** Marca de paso. Barato: se guarda en disco para sobrevivir a un crash nativo. */
@@ -46,7 +69,7 @@ function enviar(cuerpo: Record<string, unknown>) {
         sesion: sesionId,
         version: Constants.expoConfig?.version || '?',
         plataforma: `${Platform.OS} ${Platform.Version}`,
-        dispositivo: `${Constants.deviceName || '?'}`,
+        dispositivo: equipo(),
         ...cuerpo,
       }),
     }).catch(() => {});
@@ -55,19 +78,23 @@ function enviar(cuerpo: Record<string, unknown>) {
   }
 }
 
+let iniciado = false;
+
 /**
  * Arranca el reporte. Llamar lo antes posible en App.tsx.
- * Si la vez anterior quedaron migas sin cerrar, es que el proceso murió: se mandan como `crash-previo`.
+ * Si la vez anterior la app murió en primer plano, sus migas se mandan como `crash-previo`.
  */
 export async function iniciarReporte() {
+  if (iniciado) return;
+  iniciado = true;
   arranqueMs = Date.now();
   sesionId = Math.random().toString(36).slice(2, 10);
   try {
-    const previo = await AsyncStorage.getItem(CLAVE);
-    if (previo) {
+    const [previo, viva] = await Promise.all([AsyncStorage.getItem(CLAVE), AsyncStorage.getItem(CLAVE_VIVA)]);
+    // Sin la marca (primera vez con esta versión) no se sabe cómo terminó: no se acusa un crash.
+    if (previo && viva === '1') {
       const lista = JSON.parse(previo) as string[];
-      // Si la sesión anterior no llegó a cerrar limpio, lo último de la lista es donde murió.
-      if (Array.isArray(lista) && lista.length && !lista[lista.length - 1].includes('cierre-limpio')) {
+      if (Array.isArray(lista) && lista.length) {
         enviar({ tipo: 'crash-previo', murio_en: lista[lista.length - 1], migas: lista });
       }
     }
@@ -76,7 +103,23 @@ export async function iniciarReporte() {
   }
   migas = [];
   guardar();
+  marcarViva(AppState.currentState !== 'background');
   miga('arranque');
+
+  // Segundo plano = cierre normal. Al volver, la sesión vuelve a estar abierta.
+  try {
+    AppState.addEventListener('change', (s: AppStateStatus) => {
+      if (s === 'active') {
+        marcarViva(true);
+        miga('primer plano');
+      } else if (s === 'background' || s === 'inactive') {
+        miga('segundo plano');
+        marcarViva(false);
+      }
+    });
+  } catch {
+    /* */
+  }
 
   // Errores de JS no capturados: se reportan y la app sigue su camino normal.
   try {
@@ -91,7 +134,33 @@ export async function iniciarReporte() {
           stack: String(error?.stack || '').slice(0, 1500),
           migas,
         });
+        // Un fatal ya quedó reportado aquí con sus migas: al reabrir no se manda otra vez como crash.
+        if (fatal) marcarViva(false);
         previo?.(error, fatal);
+      });
+    }
+  } catch {
+    /* */
+  }
+
+  // Promesas rechazadas que nadie atrapó. Hermes trae su propio rastreador (el mismo que RN activa
+  // en desarrollo para LogBox, ver react-native/Libraries/Core/polyfillPromise.js). Solo en release:
+  // activarlo en desarrollo reemplazaría el de LogBox.
+  try {
+    const hermes = (global as any).HermesInternal;
+    if (!__DEV__ && hermes?.hasPromise?.() && typeof hermes.enablePromiseRejectionTracker === 'function') {
+      hermes.enablePromiseRejectionTracker({
+        allRejections: true,
+        onUnhandled: (_id: number, razon: any) => {
+          enviar({
+            tipo: 'error-js',
+            fatal: false,
+            error: `promesa sin catch: ${String(razon?.message || razon).slice(0, 380)}`,
+            stack: String(razon?.stack || '').slice(0, 1500),
+            migas,
+          });
+        },
+        onHandled: () => {},
       });
     }
   } catch {
@@ -103,9 +172,4 @@ export async function iniciarReporte() {
 export function reportarEstado(nota: string) {
   miga(nota);
   enviar({ tipo: 'estado', nota, migas });
-}
-
-/** Marca que la app llegó entera a donde tenía que llegar: la próxima vez no se reporta crash. */
-export function cierreLimpio() {
-  miga('cierre-limpio');
 }

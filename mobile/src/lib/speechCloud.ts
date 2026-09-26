@@ -3,7 +3,7 @@
  * - Graba siempre; detecta inicio de voz por energía (dBFS) con umbral adaptativo.
  * - Cierra la frase tras ~700 ms de silencio → una sola transcripción por frase.
  * - Sin wake word: todo lo que dices es un comando.
- * - Se pausa solo mientras ULTRON reproduce audio (evita eco).
+ * - Se pausa solo mientras AU-RA reproduce audio (evita eco).
  * Fallback: si el dispositivo no reporta metering, usa chunks fijos de 3 s.
  */
 import { Audio } from 'expo-av';
@@ -77,7 +77,7 @@ export async function ensureSpeechPermissions(): Promise<boolean> {
   if (Platform.OS !== 'android') return true;
   try {
     const granted = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO, {
-      title: 'Micrófono ULTRON FP',
+      title: 'Micrófono AU-RA FP',
       message: 'Te escucho de forma continua para conversar con fluidez. El botón Mic solo silencia.',
       buttonPositive: 'Permitir',
       buttonNegative: 'Denegar',
@@ -288,7 +288,7 @@ export async function unmuteMic() {
   }
 }
 
-/** Pausar captura mientras ULTRON reproduce audio (evita eco). */
+/** Pausar captura mientras AU-RA reproduce audio (evita eco). */
 export function pauseMicForTts(pause: boolean) {
   paused = pause;
   if (!pause) {

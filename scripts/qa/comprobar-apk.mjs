@@ -3,7 +3,7 @@
  * Abre un APK y comprueba que es la app que dice ser.
  *
  * Existe por un fallo concreto y silencioso: la APK de Dr Electrum salió con su paquete, su icono
- * y su nombre correctos, y con la configuración de ULTRON embebida dentro. Al abrirla habría
+ * y su nombre correctos, y con la configuración de AU-RA embebida dentro. Al abrirla habría
  * arrancado la mesa de la junta. Compilaba, instalaba y estaba mal.
  *
  * La causa: `expo-constants` instala una tarea de Gradle que REGENERA `assets/app.config` en cada
@@ -22,8 +22,10 @@ const apk = process.argv[2];
 const variante = (process.argv[3] || 'ultron').toLowerCase();
 
 const ESPERADO = {
-  ultron: { paquete: 'link.ordenglobal.ultronfp', nombre: 'ULTRON FP', orientacion: 'landscape', ubicacion: false },
-  electrum: { paquete: 'link.ordenglobal.drelectrumfp', nombre: 'Dr Electrum FP', orientacion: 'landscape', ubicacion: true },
+  ultron: { paquete: 'link.ordenglobal.ultronfp', nombre: 'AU-RA FP', orientacion: 'landscape', nativo: 'landscape', ubicacion: false },
+  // Dr Electrum gira libre (se usa de pie, con una mano): el config dice 'default' y el manifiesto
+  // nativo lo escribe como `unspecified` (-1).
+  electrum: { paquete: 'link.ordenglobal.drelectrumfp', nombre: 'Dr Electrum FP', orientacion: 'default', nativo: 'unspecified', ubicacion: true },
 };
 
 const quiero = ESPERADO[variante];
@@ -91,7 +93,7 @@ function orientacionDeManifiesto(buf) {
       }
       if (ID_SCREEN_ORIENTATION in attrs) {
         const v = attrs[ID_SCREEN_ORIENTATION];
-        actividades.push({ nombre: cad[attrs[ID_NAME]] || '?', orientacion: ORIENTACION[v] ?? String(v) });
+        actividades.push({ nombre: cad[attrs[ID_NAME]] || '?', orientacion: v === -1 ? 'unspecified' : ORIENTACION[v] ?? String(v) });
       }
     }
     off += sz;
@@ -122,8 +124,9 @@ comprobar('android.package', cfg?.android?.package, quiero.paquete);
  */
 const actividades = orientacionDeManifiesto(fs.readFileSync(path.join(tmp, 'AndroidManifest.xml')));
 const principal = actividades.find((a) => a.nombre.startsWith(quiero.paquete));
-if (!principal) fallos.push('el manifiesto nativo no declara orientación para la actividad principal');
-else comprobar('MainActivity screenOrientation (nativo)', principal.orientacion, quiero.orientacion);
+// Sin el atributo, Android no fija orientación: equivale a `unspecified`.
+if (!principal && quiero.nativo !== 'unspecified') fallos.push('el manifiesto nativo no declara orientación para la actividad principal');
+else comprobar('MainActivity screenOrientation (nativo)', principal?.orientacion ?? 'unspecified', quiero.nativo);
 
 const tieneUbicacion = /permission\.ACCESS_(FINE|COARSE)_LOCATION/.test(manifiesto);
 if (tieneUbicacion !== quiero.ubicacion) {

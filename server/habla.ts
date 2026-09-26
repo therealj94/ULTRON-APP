@@ -58,7 +58,8 @@ export function rellenoAzar(): string {
   return RELLENOS[Math.floor(Math.random() * RELLENOS.length)];
 }
 
-export function afinarParaBoca(text: string): string {
+/** `max`: una respuesta se corta a 1200 caracteres; un guion largo (la oración) pide más. */
+export function afinarParaBoca(text: string, max = 1200): string {
   return cifrasAVoz(
     String(text || '')
       .replace(/\*+/g, '')
@@ -66,14 +67,16 @@ export function afinarParaBoca(text: string): string {
       .replace(/`+/g, '')
       .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
       // Coma y no punto. Un punto exige entonación de cierre y mayúscula detrás, y esto dejaba
-      // «Vamos por partes. primero el derecho minero»: v3 lee ahí un fin de frase que la gramática
-      // no tiene, y suena a alguien que se corta a media idea. La coma da la misma pausa sin mentir.
+      // «Vamos por partes. primero el derecho minero»: la voz lee ahí un fin de frase que la
+      // gramática no tiene, y suena a alguien que se corta a media idea. La coma da la misma pausa.
       .replace(/\s*—\s*/g, ', ')
       .replace(/:\s+/g, ', ')
+      // «AU-RA» se escribe con guion y mayúsculas, y la voz lo deletrea («a, u, erre, a»). Se dice «Aura».
+      .replace(/\bAU-?RA\b/g, 'Aura')
       .replace(/\bjaja+\b/gi, 'je je')
       .replace(/\blol\b/gi, 'je')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, 1200)
+      .slice(0, max)
   );
 }

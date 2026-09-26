@@ -50,6 +50,6 @@ export function caraDeTexto(texto: string): FaceState {
   if (/\b(precio|oro|plata|hnl|dólar|cuánto)\b/.test(t)) return 'THINKING';
   if (/\b(busca|investiga|web|página)\b/.test(t)) return 'THINKING';
   if (/\b(gracias|bien|bueno)\b/.test(t)) return 'HAPPY';
-  if (/\b(hola|hey|ultron)\b/.test(t)) return 'WINK';
+  if (/\b(hola|hey|ultron|aura)\b/.test(t)) return 'WINK';
   return 'LISTENING';
 }

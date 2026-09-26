@@ -5,16 +5,18 @@ import type { Cancion } from '../lib/api';
 import { agrupar, fetchCapacidades, type Capacidad, type CapacidadesPayload } from '../lib/capacidades';
 import { GENEROS } from '../lib/intenciones';
 import type { SttEngine } from '../lib/storage';
+import type { Postura } from '../lib/tareas';
+import { T, SOMBRA } from '../tema';
 
-const MODES: Array<{ id: Mode; hint: string }> = [
-  { id: 'GUARDIAN', hint: 'vigila' },
-  { id: 'MINING', hint: 'señales' },
-  { id: 'GOLD', hint: 'alto valor' },
-  { id: 'CREATIVE', hint: 'ideas' },
-  { id: 'ANALYTICAL', hint: 'frío' },
-  { id: 'STRATEGIC', hint: 'junta' },
-  { id: 'EXPLORER', hint: 'investiga' },
-  { id: 'CONOCER', hint: 'entrevista' },
+const MODES: Array<{ id: Mode; label: string; hint: string }> = [
+  { id: 'GUARDIAN', label: 'Guardián', hint: 'vigila' },
+  { id: 'MINING', label: 'Minería', hint: 'señales' },
+  { id: 'GOLD', label: 'Oro', hint: 'alto valor' },
+  { id: 'CREATIVE', label: 'Creativo', hint: 'ideas' },
+  { id: 'ANALYTICAL', label: 'Analítico', hint: 'frío' },
+  { id: 'STRATEGIC', label: 'Estratégico', hint: 'junta' },
+  { id: 'EXPLORER', label: 'Explorador', hint: 'investiga' },
+  { id: 'CONOCER', label: 'Conocerte', hint: 'entrevista' },
 ];
 
 type Props = {
@@ -57,9 +59,59 @@ type Props = {
   onForget: () => void;
   onSearch: (q: string) => void;
   onLogout: () => void;
+  /** Si AU-RA está de cuerpo entero (la sala) o con una cara (anillos o la de respaldo). */
+  conSala: boolean;
+  /** Qué cara eligió: los anillos (Skia) o la habitación 3D. */
+  cara: 'anillos' | 'sala';
+  onSetCara: (c: 'anillos' | 'sala') => void;
+  /** Se ve la cara clásica (respaldo): solo ella sabe dibujar el blaster y el sable. */
+  caraClasica: boolean;
+  /** Cómo contesta: de pie en el centro o sentada en su sillón. */
+  postura: Postura;
+  onSetPostura: (p: Postura) => void;
 };
 
 type CatState = { status: 'idle' | 'loading' | 'ok' | 'fail'; payload: CapacidadesPayload | null; offline: boolean; at: string };
+
+
+// Fuera del componente a propósito: definidos dentro del render eran un TIPO nuevo en cada render
+// (DeskScreen re-renderiza a menudo), así que React desmontaba y montaba cada chip y el toque que
+// empezaba en uno se perdía antes de soltar.
+const Chip = ({ on, label, sub, onPress, tone }: { on?: boolean; label: string; sub?: string; onPress: () => void; tone?: 'ex' }) => (
+  <Pressable
+    onPress={onPress}
+    style={[styles.chip, on && styles.chipOn, tone === 'ex' && styles.chipEx]}
+    accessibilityRole="button"
+    accessibilityLabel={sub ? `${label}, ${sub}` : label}
+    accessibilityState={on === undefined ? undefined : { selected: on }}
+  >
+    <Text style={[styles.chipText, on && styles.chipTextOn, tone === 'ex' && styles.chipExText]} numberOfLines={2}>
+      {tone === 'ex' ? `«${label}»` : label}
+    </Text>
+    {!!sub && <Text style={[styles.chipSub, on && styles.chipTextOn]}>{sub}</Text>}
+  </Pressable>
+);
+
+const Dot = ({ vivo }: { vivo: boolean | null }) =>
+  vivo === null ? null : <View style={[styles.capDot, { backgroundColor: vivo ? T.activo : T.borde }]} />;
+
+const Card = ({ c, onCommand }: { c: Capacidad; onCommand: (text: string) => void }) => (
+  <View style={styles.card}>
+    <View style={styles.cardHead}>
+      <Dot vivo={c.vivo} />
+      <Text style={styles.cardTitle}>{c.titulo}</Text>
+    </View>
+    <Text style={styles.cardDetail}>{c.detalle}</Text>
+    {c.vivo === false && !!c.falta && <Text style={styles.cardFalta}>falta: {c.falta}</Text>}
+    {c.ejemplos.length > 0 && (
+      <View style={styles.chips}>
+        {c.ejemplos.map((e) => (
+          <Chip key={e} label={e} tone="ex" onPress={() => onCommand(e)} />
+        ))}
+      </View>
+    )}
+  </View>
+);
 
 export function DeskMenu(p: Props) {
   const { width } = useWindowDimensions();
@@ -107,36 +159,6 @@ export function DeskMenu(p: Props) {
 
   if (!mounted) return null;
 
-  const Chip = ({ on, label, sub, onPress, tone }: { on?: boolean; label: string; sub?: string; onPress: () => void; tone?: 'ex' }) => (
-    <Pressable onPress={onPress} style={[styles.chip, on && styles.chipOn, tone === 'ex' && styles.chipEx]}>
-      <Text style={[styles.chipText, on && styles.chipTextOn, tone === 'ex' && styles.chipExText]} numberOfLines={2}>
-        {tone === 'ex' ? `«${label}»` : label}
-      </Text>
-      {!!sub && <Text style={[styles.chipSub, on && styles.chipTextOn]}>{sub}</Text>}
-    </Pressable>
-  );
-
-  const Dot = ({ vivo }: { vivo: boolean | null }) =>
-    vivo === null ? null : <View style={[styles.capDot, { backgroundColor: vivo ? '#39FF14' : '#55657A' }]} />;
-
-  const Card = ({ c }: { c: Capacidad }) => (
-    <View style={styles.card}>
-      <View style={styles.cardHead}>
-        <Dot vivo={c.vivo} />
-        <Text style={styles.cardTitle}>{c.titulo}</Text>
-      </View>
-      <Text style={styles.cardDetail}>{c.detalle}</Text>
-      {c.vivo === false && !!c.falta && <Text style={styles.cardFalta}>falta: {c.falta}</Text>}
-      {c.ejemplos.length > 0 && (
-        <View style={styles.chips}>
-          {c.ejemplos.map((e) => (
-            <Chip key={e} label={e} tone="ex" onPress={() => p.onCommand(e)} />
-          ))}
-        </View>
-      )}
-    </View>
-  );
-
   const grupos = cat.payload ? agrupar(cat.payload.capacidades) : [];
   const vivos = cat.payload ? cat.payload.capacidades.filter((c) => c.vivo === true).length : 0;
   const caidos = cat.payload ? cat.payload.capacidades.filter((c) => c.vivo === false).length : 0;
@@ -151,17 +173,17 @@ export function DeskMenu(p: Props) {
         <ScrollView ref={scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.head}>
             <View>
-              <Text style={styles.kicker}>ULTRON FP</Text>
+              <Text style={styles.kicker}>AU-RA FP</Text>
               <Text style={styles.user}>{p.userName}</Text>
             </View>
-            <Pressable onPress={p.onClose} style={styles.close} hitSlop={10}>
+            <Pressable onPress={p.onClose} style={styles.close} hitSlop={10} accessibilityRole="button" accessibilityLabel="Cerrar el menú">
               <Text style={styles.closeText}>✕</Text>
             </Pressable>
           </View>
 
           <View style={styles.statusRow}>
-            <View style={[styles.dot, { backgroundColor: p.online ? '#39FF14' : '#FF7A8A' }]} />
-            <Text style={styles.statusText}>{p.online ? 'cerebro en línea' : 'sin cerebro · modo local'}</Text>
+            <View style={[styles.dot, { backgroundColor: p.online ? T.activo : T.aviso }]} />
+            <Text style={styles.statusText}>{p.online ? 'Conectada' : 'Sin cerebro · modo local'}</Text>
           </View>
 
           <View style={styles.row}>
@@ -169,7 +191,7 @@ export function DeskMenu(p: Props) {
               <Text style={styles.label}>Escuchar</Text>
               <Text style={styles.sub}>{p.micMuted ? 'silenciado' : p.listening ? 'oyendo · sin palabra clave' : 'conectando…'}</Text>
             </View>
-            <Switch value={!p.micMuted} onValueChange={p.onToggleMic} trackColor={{ true: '#00E5FF', false: '#333' }} thumbColor="#E8FBFF" />
+            <Switch value={!p.micMuted} onValueChange={p.onToggleMic} accessibilityLabel="Escuchar" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
@@ -178,14 +200,20 @@ export function DeskMenu(p: Props) {
                 {p.visionOn ? (p.objects.length ? p.objects.join(' · ') : 'cámara activa') : 'cámara apagada'}
               </Text>
             </View>
-            <Switch value={p.visionOn} onValueChange={p.onToggleVision} trackColor={{ true: '#00E5FF', false: '#333' }} thumbColor="#E8FBFF" />
+            <Switch value={p.visionOn} onValueChange={p.onToggleVision} accessibilityLabel="Ver con la cámara" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
 
           {/* ---------------- catálogo ---------------- */}
           <View onLayout={(e) => (catY.current = e.nativeEvent.layout.y)}>
-            <Pressable onPress={() => setCatOpen((o) => !o)} style={styles.catHead}>
+            <Pressable
+              onPress={() => setCatOpen((o) => !o)}
+              style={styles.catHead}
+              accessibilityRole="button"
+              accessibilityLabel="Qué puede hacer AU-RA"
+              accessibilityState={{ expanded: catOpen }}
+            >
               <View style={{ flex: 1 }}>
-                <Text style={styles.section}>Qué puede hacer ULTRON</Text>
+                <Text style={styles.section}>Qué puede hacer AU-RA</Text>
                 <Text style={styles.sub}>
                   {cat.status === 'loading'
                     ? 'consultando…'
@@ -204,13 +232,13 @@ export function DeskMenu(p: Props) {
               <View style={styles.voiceBox}>
                 <Text style={styles.voiceName}>{VOICE_NAME}</Text>
                 <Text style={styles.sub}>
-                  {cat.payload?.voz?.motor || 'ElevenLabs v3 (diálogo expresivo)'} · {cat.payload?.voz?.timbre || 'español latino, cálida, cercana'}
+                  {cat.payload?.voz?.motor || 'Voicebox · Kokoro, en el servidor propio de AU-RA'} · {cat.payload?.voz?.timbre || 'Dora · español, cálida, cercana'}
                 </Text>
-                <Pressable onPress={p.onProbarVoz} style={styles.voiceBtn}>
+                <Pressable onPress={p.onProbarVoz} style={styles.voiceBtn} accessibilityRole="button">
                   <Text style={styles.voiceBtnText}>Probar voz</Text>
                 </Pressable>
               </View>
-              {cat.status === 'loading' && !cat.payload && <ActivityIndicator color="#00E5FF" />}
+              {cat.status === 'loading' && !cat.payload && <ActivityIndicator color={T.principal} />}
               {cat.status === 'fail' && !cat.payload && (
                 <Text style={styles.hint}>No pude bajar el catálogo. Cuando haya red se guarda una copia para verlo sin conexión.</Text>
               )}
@@ -218,13 +246,29 @@ export function DeskMenu(p: Props) {
                 <View key={g.grupo} style={{ gap: 8 }}>
                   <Text style={styles.groupTitle}>{g.titulo}</Text>
                   {g.items.map((c) => (
-                    <Card key={c.id} c={c} />
+                    <Card key={c.id} c={c} onCommand={p.onCommand} />
                   ))}
                 </View>
               ))}
               {catAt && <Text style={styles.hint}>catálogo {cat.offline ? 'guardado' : 'actualizado'} {catAt.toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</Text>}
             </View>
           )}
+
+          <Text style={styles.section}>Su cara</Text>
+          <View style={styles.chips}>
+            <Chip on={p.cara === 'anillos'} label="Anillos" sub="sus ojos de luz" onPress={() => p.onSetCara('anillos')} />
+            <Chip on={p.cara === 'sala'} label="Habitación 3D" sub="de cuerpo entero" onPress={() => p.onSetCara('sala')} />
+          </View>
+
+          {p.cara === 'sala' ? (
+            <>
+              <Text style={styles.section}>Te contesta</Text>
+              <View style={styles.chips}>
+                <Chip on={p.postura === 'pie'} label="De pie" sub="en el centro" onPress={() => p.onSetPostura('pie')} />
+                <Chip on={p.postura === 'sentada'} label="Sentada" sub="en su sillón" onPress={() => p.onSetPostura('sentada')} />
+              </View>
+            </>
+          ) : null}
 
           <Text style={styles.section}>Presencia</Text>
           <View style={styles.chips}>
@@ -236,7 +280,7 @@ export function DeskMenu(p: Props) {
           <Text style={styles.section}>Modo</Text>
           <View style={styles.chips}>
             {MODES.map((m) => (
-              <Chip key={m.id} on={p.mode === m.id} label={m.id.toLowerCase()} sub={m.hint} onPress={() => p.onSetMode(m.id)} />
+              <Chip key={m.id} on={p.mode === m.id} label={m.label} sub={m.hint} onPress={() => p.onSetMode(m.id)} />
             ))}
           </View>
 
@@ -245,8 +289,12 @@ export function DeskMenu(p: Props) {
             <Chip label="¿qué ves?" onPress={p.onWhatDoYouSee} />
             <Chip label="conocerme" sub="entrevista opcional" onPress={p.onConocer} />
             <Chip label="chiste" onPress={() => p.onCommand('cuéntame un chiste')} />
-            <Chip label="blaster" onPress={p.onBlaster} />
-            <Chip label="sable jedi" onPress={p.onSaber} />
+            {p.caraClasica ? (
+              <>
+                <Chip label="blaster" onPress={p.onBlaster} />
+                <Chip label="sable jedi" onPress={p.onSaber} />
+              </>
+            ) : null}
           </View>
 
           <Text style={styles.section}>Investigar en internet</Text>
@@ -255,7 +303,7 @@ export function DeskMenu(p: Props) {
               value={query}
               onChangeText={setQuery}
               placeholder="Ej.: precio del café hoy en Honduras"
-              placeholderTextColor="#4A5A6A"
+              placeholderTextColor={T.texto3}
               style={styles.input}
               returnKeyType="search"
               onSubmitEditing={() => {
@@ -273,7 +321,7 @@ export function DeskMenu(p: Props) {
               <Chip key={c.id} label={c.titulo} sub={c.artista} onPress={() => p.onSingSong(c.id)} />
             ))}
           </View>
-          <Text style={styles.sub}>Letras propias por género: ULTRON las canta en vivo.</Text>
+          <Text style={styles.sub}>Letras propias por género: AU-RA las canta en vivo.</Text>
           <View style={styles.chips}>
             {GENEROS.map((g) => (
               <Chip key={g.id} label={g.etiqueta} onPress={() => p.onSingGenre(g.id)} />
@@ -281,7 +329,7 @@ export function DeskMenu(p: Props) {
           </View>
 
           <Text style={styles.section}>Orar</Text>
-          <Pressable onPress={p.onOrar} style={styles.orarBtn}>
+          <Pressable onPress={p.onOrar} style={styles.orarBtn} accessibilityRole="button" accessibilityLabel="Orar por el día">
             <Text style={styles.orarText}>Orar por el día</Text>
             <Text style={styles.orarSub}>La oración diaria con su voz (~3 min). También: «ora», «oremos», «bendice el día».</Text>
           </Pressable>
@@ -292,7 +340,7 @@ export function DeskMenu(p: Props) {
               value={fact}
               onChangeText={setFact}
               placeholder="Ej.: la reunión de junta es los lunes"
-              placeholderTextColor="#4A5A6A"
+              placeholderTextColor={T.texto3}
               style={styles.input}
               returnKeyType="done"
               onSubmitEditing={() => {
@@ -307,21 +355,33 @@ export function DeskMenu(p: Props) {
             <TextInput
               value={p.draft}
               onChangeText={p.onChangeDraft}
-              placeholder="Orden para ULTRON…"
-              placeholderTextColor="#4A5A6A"
+              placeholder="Orden para AU-RA…"
+              placeholderTextColor={T.texto3}
               style={styles.input}
               onSubmitEditing={p.onSendDraft}
               returnKeyType="send"
             />
-            <Pressable onPress={p.onSendDraft} style={styles.send}>
+            <Pressable onPress={p.onSendDraft} style={styles.send} accessibilityRole="button" accessibilityLabel="Enviar la orden">
               <Text style={styles.sendText}>OK</Text>
             </Pressable>
           </View>
 
-          <Text style={styles.hint}>
-            Tócalo: un ojo guiña, la frente le da curiosidad, la barbilla le hace cosquillas, frotar la mejilla lo calma. Arrastra el dedo y te sigue con
-            la mirada. Toques seguidos: «ya, ya». Mantén pulsado: duerme o despierta. Sacude el teléfono: se asusta.
-          </Text>
+          {p.conSala ? (
+            <Text style={styles.hint}>
+              Tócale la cabeza y se pone curiosa; el cuerpo le da cosquillas. Toques seguidos: «ya, ya». Desliza hacia arriba sobre ella para abrir este
+              menú. Cuando busca en internet se sienta en su escritorio; si envía algo, lanza un avión de papel. Sacude el teléfono: se asusta.
+            </Text>
+          ) : !p.caraClasica ? (
+            <Text style={styles.hint}>
+              Tócale un ojo y parpadea; tócala y te contesta. Arrastra el dedo y te sigue con la mirada. Mantén pulsado: duerme o despierta. Inclina
+              el teléfono: sus ojos tienen profundidad. Desliza rápido hacia la izquierda para abrir este menú.
+            </Text>
+          ) : (
+            <Text style={styles.hint}>
+              Tócala: un ojo guiña, la frente le da curiosidad, la barbilla le hace cosquillas, frotar la mejilla la calma. Arrastra el dedo y te sigue
+              con la mirada. Toques seguidos: «ya, ya». Mantén pulsado: duerme o despierta. Sacude el teléfono: se asusta.
+            </Text>
+          )}
 
           <Text style={styles.section}>Ajustes</Text>
           <Text style={styles.label}>Voz</Text>
@@ -330,37 +390,37 @@ export function DeskMenu(p: Props) {
           <Text style={styles.sub}>Cómo convierte tu voz en texto.</Text>
           <View style={styles.chips}>
             <Chip on={p.settings.sttEngine === 'native'} label="Teléfono" sub="Google · en vivo" onPress={() => p.onSetSttEngine('native')} />
-            <Chip on={p.settings.sttEngine === 'cloud'} label="Nube" sub="Scribe · ElevenLabs" onPress={() => p.onSetSttEngine('cloud')} />
+            <Chip on={p.settings.sttEngine === 'cloud'} label="Nube" sub="en el servidor" onPress={() => p.onSetSttEngine('cloud')} />
           </View>
           <View style={styles.row}>
             <View>
               <Text style={styles.label}>Comenta lo que ve</Text>
               <Text style={styles.sub}>Observaciones espontáneas de la cámara</Text>
             </View>
-            <Switch value={p.settings.proactive} onValueChange={p.onToggleProactive} trackColor={{ true: '#00E5FF', false: '#333' }} thumbColor="#E8FBFF" />
+            <Switch value={p.settings.proactive} onValueChange={p.onToggleProactive} accessibilityLabel="Comenta lo que ve" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
               <Text style={styles.label}>Efectos de sonido</Text>
               <Text style={styles.sub}>Toques, blaster, sable</Text>
             </View>
-            <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} trackColor={{ true: '#00E5FF', false: '#333' }} thumbColor="#E8FBFF" />
+            <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} accessibilityLabel="Efectos de sonido" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
               <Text style={styles.label}>Memoria de largo plazo</Text>
               <Text style={styles.sub}>{p.memoryCount ? `${p.memoryCount} hechos guardados` : 'nada guardado aún'}</Text>
             </View>
-            <Pressable onPress={p.onForget} style={styles.smallBtn}>
+            <Pressable onPress={p.onForget} style={styles.smallBtn} accessibilityRole="button" accessibilityLabel="Olvidar la memoria de largo plazo">
               <Text style={styles.smallBtnText}>Olvidar</Text>
             </Pressable>
           </View>
 
-          <Pressable onPress={p.onLogout} style={styles.logout}>
+          <Pressable onPress={p.onLogout} style={styles.logout} accessibilityRole="button">
             <Text style={styles.logoutText}>Cerrar sesión</Text>
           </Pressable>
           <Text style={styles.version}>
-            v{APP_VERSION} · {VOICE_NAME} · cerebro Qwen 27B
+            v{APP_VERSION} · {VOICE_NAME}
           </Text>
         </ScrollView>
       </Animated.View>
@@ -370,59 +430,61 @@ export function DeskMenu(p: Props) {
 
 const styles = StyleSheet.create({
   wrap: { ...StyleSheet.absoluteFillObject, flexDirection: 'row', justifyContent: 'flex-end' },
-  dim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.5)' },
+  dim: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.45)' },
   panel: {
     height: '100%',
-    backgroundColor: 'rgba(5,9,14,0.985)',
-    borderLeftWidth: 1,
-    borderLeftColor: 'rgba(0,229,255,0.28)',
+    backgroundColor: T.fondo,
+    borderTopLeftRadius: 28,
+    borderBottomLeftRadius: 28,
+    ...SOMBRA,
   },
-  content: { padding: 18, gap: 12, paddingBottom: 32 },
+  content: { padding: 20, gap: 12, paddingBottom: 32 },
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  kicker: { color: '#00E5FF', letterSpacing: 3, fontWeight: '800', fontSize: 11 },
-  user: { color: '#E8FBFF', fontSize: 20, fontWeight: '700', marginTop: 2 },
-  close: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
-  closeText: { color: '#C8D4DE', fontSize: 14 },
+  kicker: { color: T.principalTexto, letterSpacing: 1.5, fontWeight: '700', fontSize: 12 },
+  user: { color: T.texto, fontSize: 22, fontWeight: '700', marginTop: 2 },
+  close: { width: 44, height: 44, borderRadius: 22, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center' },
+  closeText: { color: T.texto2, fontSize: 15 },
   statusRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  dot: { width: 7, height: 7, borderRadius: 4 },
-  statusText: { color: '#7A8B9C', fontSize: 12 },
-  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 4 },
-  label: { color: '#E8FBFF', fontSize: 15, fontWeight: '600' },
-  sub: { color: '#6A7A8A', fontSize: 11, marginTop: 2, maxWidth: 300 },
-  section: { color: '#00E5FF', fontSize: 11, letterSpacing: 2, fontWeight: '700', marginTop: 6 },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  statusText: { color: T.texto2, fontSize: 13 },
+  row: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, paddingHorizontal: 14, backgroundColor: T.panel, borderRadius: 16 },
+  label: { color: T.texto, fontSize: 15, fontWeight: '600' },
+  sub: { color: T.texto3, fontSize: 12, marginTop: 2, maxWidth: 300 },
+  section: { color: T.texto2, fontSize: 13, fontWeight: '700', marginTop: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 12, borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', alignItems: 'center', maxWidth: 260 },
-  chipOn: { borderColor: '#00E5FF', backgroundColor: 'rgba(0,229,255,0.12)' },
-  chipEx: { borderColor: 'rgba(0,229,255,0.28)', backgroundColor: 'rgba(0,229,255,0.05)', paddingVertical: 6 },
-  chipText: { color: '#9AAABA', fontSize: 12, fontWeight: '600' },
-  chipExText: { color: '#BFEFF7', fontWeight: '500', fontStyle: 'italic' },
-  chipSub: { color: '#55657A', fontSize: 9, marginTop: 1 },
-  chipTextOn: { color: '#00E5FF' },
+  // minHeight 44: el mínimo cómodo para un dedo (antes quedaban en ~36 px).
+  chip: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999, backgroundColor: T.panel, borderWidth: 1, borderColor: T.borde, alignItems: 'center', maxWidth: 260 },
+  chipOn: { borderColor: T.activo, backgroundColor: T.activoFondo },
+  chipEx: { borderColor: T.borde, backgroundColor: T.principalFondo, paddingVertical: 7 },
+  chipText: { color: T.texto, fontSize: 13, fontWeight: '600' },
+  chipExText: { color: T.principalTexto, fontWeight: '500', fontStyle: 'italic' },
+  chipSub: { color: T.texto3, fontSize: 10, marginTop: 1 },
+  chipTextOn: { color: T.activoTexto },
   composer: { flexDirection: 'row', gap: 8 },
-  input: { flex: 1, borderWidth: 1, borderColor: 'rgba(0,229,255,0.22)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, color: '#E8FBFF' },
-  send: { backgroundColor: '#00E5FF', borderRadius: 12, paddingHorizontal: 14, justifyContent: 'center' },
-  sendText: { color: '#001018', fontWeight: '800' },
-  hint: { color: '#4A5A6A', fontSize: 11, lineHeight: 16, marginTop: 4 },
-  smallBtn: { borderWidth: 1, borderColor: 'rgba(255,122,138,0.5)', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 6 },
-  smallBtnText: { color: '#FF7A8A', fontSize: 12, fontWeight: '600' },
+  input: { flex: 1, borderWidth: 1, borderColor: T.borde, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10, color: T.texto, fontSize: 15, backgroundColor: T.panel },
+  send: { minHeight: 44, minWidth: 44, backgroundColor: T.principal, borderRadius: 999, paddingHorizontal: 18, justifyContent: 'center', alignItems: 'center' },
+  sendText: { color: T.sobrePrincipal, fontWeight: '700' },
+  hint: { color: T.texto3, fontSize: 12, lineHeight: 17, marginTop: 4 },
+  smallBtn: { minHeight: 44, justifyContent: 'center', borderRadius: 999, paddingHorizontal: 16, paddingVertical: 7, backgroundColor: T.avisoFondo },
+  smallBtnText: { color: T.avisoTexto, fontSize: 13, fontWeight: '600' },
   logout: { alignItems: 'center', paddingVertical: 12, marginTop: 6 },
-  logoutText: { color: '#FF7A8A', fontSize: 13 },
-  version: { color: '#3A4A5A', fontSize: 10, textAlign: 'center' },
-  orarBtn: { borderWidth: 1, borderColor: 'rgba(0,229,255,0.35)', borderRadius: 14, padding: 12, gap: 4, backgroundColor: 'rgba(0,229,255,0.06)' },
-  orarText: { color: '#E8FBFF', fontSize: 15, fontWeight: '700' },
-  orarSub: { color: '#6A7A8A', fontSize: 11 },
+  logoutText: { color: T.avisoTexto, fontSize: 14, fontWeight: '600' },
+  version: { color: T.texto3, fontSize: 11, textAlign: 'center' },
+  orarBtn: { borderRadius: 18, padding: 14, gap: 4, backgroundColor: T.panel, borderWidth: 1, borderColor: T.borde },
+  orarText: { color: T.texto, fontSize: 15, fontWeight: '700' },
+  orarSub: { color: T.texto3, fontSize: 12 },
   // catálogo
-  catHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 6, borderTopWidth: 1, borderTopColor: 'rgba(0,229,255,0.12)', marginTop: 4 },
-  chev: { color: '#00E5FF', fontSize: 16 },
-  voiceBox: { borderWidth: 1, borderColor: 'rgba(0,229,255,0.3)', borderRadius: 14, padding: 12, gap: 6, backgroundColor: 'rgba(0,229,255,0.05)' },
-  voiceName: { color: '#E8FBFF', fontSize: 14, fontWeight: '700' },
-  voiceBtn: { alignSelf: 'flex-start', backgroundColor: '#00E5FF', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 7, marginTop: 4 },
-  voiceBtnText: { color: '#001018', fontWeight: '800', fontSize: 12 },
-  groupTitle: { color: '#9AAABA', fontSize: 12, letterSpacing: 1.5, fontWeight: '700', textTransform: 'uppercase', marginTop: 4 },
-  card: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', borderRadius: 14, padding: 12, gap: 6, backgroundColor: 'rgba(255,255,255,0.02)' },
+  catHead: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 8, borderTopWidth: 1, borderTopColor: T.borde, marginTop: 4 },
+  chev: { color: T.principalTexto, fontSize: 16 },
+  voiceBox: { borderRadius: 18, padding: 14, gap: 6, backgroundColor: T.panel },
+  voiceName: { color: T.texto, fontSize: 14, fontWeight: '700' },
+  voiceBtn: { alignSelf: 'flex-start', minHeight: 44, justifyContent: 'center', backgroundColor: T.principal, borderRadius: 999, paddingHorizontal: 16, paddingVertical: 8, marginTop: 4 },
+  voiceBtnText: { color: T.sobrePrincipal, fontWeight: '700', fontSize: 13 },
+  groupTitle: { color: T.texto2, fontSize: 13, fontWeight: '700', marginTop: 4 },
+  card: { borderRadius: 18, padding: 14, gap: 6, backgroundColor: T.panel },
   cardHead: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   capDot: { width: 8, height: 8, borderRadius: 4 },
-  cardTitle: { color: '#E8FBFF', fontSize: 14, fontWeight: '700', flex: 1 },
-  cardDetail: { color: '#8B9AAB', fontSize: 12, lineHeight: 17 },
-  cardFalta: { color: '#FFB86B', fontSize: 11 },
+  cardTitle: { color: T.texto, fontSize: 14, fontWeight: '700', flex: 1 },
+  cardDetail: { color: T.texto2, fontSize: 12, lineHeight: 17 },
+  cardFalta: { color: T.avisoTexto, fontSize: 12 },
 });

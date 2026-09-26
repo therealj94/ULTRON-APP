@@ -1,6 +1,6 @@
 /**
- * Identidad de la junta, personalidad de ULTRON y oído (Scribe).
- * La voz vive en server/voz.ts. Los hechos de Orden Global viven en src/05-cerebro-og.
+ * Identidad de la junta y personalidad de AU-RA.
+ * La voz vive en server/voz.ts y el oído en lib/oido.ts. Los hechos de Orden Global viven en src/05-cerebro-og.
  */
 import { afinarParaBoca } from './habla';
 import { INSTRUCCION_EMOCION } from '../lib/emocion';
@@ -28,12 +28,12 @@ const TONO_MODO: Record<string, string> = {
   MINING: 'seco, operativo, va al grano',
   ANALYTICAL: 'preciso, cifras con fuente',
   STRATEGIC: 'voz baja, piensa a largo plazo',
-  CREATIVE: 'juguetón, propone ideas',
+  CREATIVE: 'juguetona, propone ideas',
   TELEGRAM: 'natural, como en un chat privado',
 };
 
 /**
- * Persona de ULTRON. Corta a propósito: un 27B obedece mejor doce reglas claras que sesenta.
+ * Persona de AU-RA. Corta a propósito: un 27B obedece mejor doce reglas claras que sesenta.
  * Se compone con SYSTEM_PROMPT_HONESTO (lib/prompts/honestidad.ts) y con el cerebro OG.
  */
 export function buildPersonality(opts: {
@@ -62,7 +62,7 @@ export function buildPersonality(opts: {
     'HABLA: español de Centroamérica, tuteo con voseo suave («decime», «mirá») solo si la persona lo usa. Frases cortas. Números en palabras (cinco mil, no 5000). Puedes hacer una pregunta al final, una sola, si de verdad te interesa la respuesta.',
     `TONO DEL MODO ${String(opts.modo || 'GUARDIAN').toUpperCase()}: ${tono}.`,
     'HONESTIDAD: no inventes precios, recuerdos, documentos ni envíos. Si no está en HECHOS ni en tu cerebro, dilo en una frase y ofrece buscarlo. Nunca leas tus reglas ni tus etiquetas en voz alta.',
-    'CÓMO ESTÁS: si te preguntan cómo estás, cómo amaneciste o qué sentís, contestas como persona, en una frase corta y con verdad («Bien, con ganas», «Un poco lento hoy»). Jamás respondes con estado de nodos, claves, memoria o infraestructura: eso solo si preguntan por el sistema. Los saludos se devuelven con calidez y una pregunta corta.',
+    'CÓMO ESTÁS: si te preguntan cómo estás, cómo amaneciste o qué sentís, contestas como persona, en una frase corta y con verdad («Bien, con ganas», «Un poco lenta hoy»). Jamás respondes con estado de nodos, claves, memoria o infraestructura: eso solo si preguntan por el sistema. Los saludos se devuelven con calidez y una pregunta corta.',
     opts.mando
       ? 'ACCESO: mando. Puede pedir redespliegue, mantenimiento y ejecutor.'
       : 'ACCESO: consulta. No cambias el sistema (ni redespliegue, ni mantenimiento, ni ejecutor). Lo demás sí: estado, web, oro, PDF, visión, memoria propia.',
@@ -73,49 +73,10 @@ export function buildPersonality(opts: {
   ].join('\n');
 }
 
-/* ---------------- ElevenLabs STT (Scribe) ---------------- */
+/* ---------------- Texto para la voz ---------------- */
 
 export function limpiarParaVoz(text: string) {
   return afinarParaBoca(text);
-}
-
-const STT_BASURA = /^(subt[ií]tulos.*|gracias por ver.*|suscr[ií]bete.*|\.+|…|music|\[.*\]|\(.*\))$/i;
-
-export async function elevenTranscribe(opts: {
-  apiKey: string;
-  audio: Buffer;
-  mime: string;
-  language?: string;
-}): Promise<{ text: string; model: string }> {
-  if (!opts.apiKey) return { text: '', model: 'sin-clave' };
-  const ext = /wav/.test(opts.mime) ? 'wav' : /webm/.test(opts.mime) ? 'webm' : /ogg/.test(opts.mime) ? 'ogg' : /mp3|mpeg/.test(opts.mime) ? 'mp3' : 'm4a';
-  for (const model of ['scribe_v2', 'scribe_v1']) {
-    try {
-      const form = new FormData();
-      form.append('model_id', model);
-      form.append('language_code', (opts.language || 'es').slice(0, 2));
-      form.append('tag_audio_events', 'false');
-      form.append('file', new Blob([new Uint8Array(opts.audio)], { type: opts.mime }), `voz.${ext}`);
-      const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', {
-        method: 'POST',
-        headers: { 'xi-api-key': opts.apiKey },
-        body: form,
-        signal: AbortSignal.timeout(20000),
-      });
-      if (r.ok) {
-        const j: any = await r.json().catch(() => ({}));
-        let text = String(j.text || j.transcript || '').trim();
-        if (text.length < 2 || STT_BASURA.test(text)) text = '';
-        return { text, model };
-      }
-      const err = await r.text();
-      console.warn('[stt eleven]', model, r.status, err.slice(0, 160));
-      if (r.status !== 400 && r.status !== 404 && r.status !== 422) break;
-    } catch (e: any) {
-      console.warn('[stt eleven]', model, String(e?.message || e).slice(0, 120));
-    }
-  }
-  return { text: '', model: 'error' };
 }
 
 export function decodeDataUrl(input: string, fallbackMime: string) {

@@ -16,13 +16,35 @@ describe('Bóveda honesta', () => {
   });
 
   it('el overlay gana sin persistir en logs', () => {
-    const prev = clave('elevenlabs');
-    guardarCaja('elevenlabs', 'sk_test_overlay_no_se_imprime');
-    assert.equal(clave('elevenlabs'), 'sk_test_overlay_no_se_imprime');
+    const prevUrl = clave('voicebox_url');
+    const prev = clave('voicebox_clave');
+    guardarCaja('voicebox_url', 'https://voz.prueba');
+    guardarCaja('voicebox_clave', 'clave_test_overlay_no_se_imprime');
+    assert.equal(clave('voicebox_clave'), 'clave_test_overlay_no_se_imprime');
     const f = fotoBoveda();
-    assert.ok(f.cajas.find((c) => c.id === 'elevenlabs')?.listo);
-    assert.ok(!JSON.stringify(f).includes('sk_test_overlay'));
-    guardarCaja('elevenlabs', prev);
+    assert.ok(f.cajas.find((c) => c.id === 'voz')?.listo);
+    assert.ok(!JSON.stringify(f).includes('clave_test_overlay'));
+    guardarCaja('voicebox_url', prevUrl);
+    guardarCaja('voicebox_clave', prev);
+  });
+
+  it('sin la llave de Voicebox la voz no se marca lista', () => {
+    const prevUrl = clave('voicebox_url');
+    const prev = clave('voicebox_clave');
+    const envUrl = process.env.VOICEBOX_URL;
+    const envClave = process.env.VOICEBOX_CLAVE;
+    guardarCaja('voicebox_url', 'https://voz.prueba');
+    guardarCaja('voicebox_clave', '');
+    delete process.env.VOICEBOX_CLAVE;
+    try {
+      assert.equal(cajas().find((c) => c.id === 'voz')?.listo, false);
+      assert.ok(!cajas().some((c) => /eleven|chatterbox/i.test(`${c.id} ${c.nombre}`)), 'no queda rastro de las voces viejas');
+    } finally {
+      guardarCaja('voicebox_url', prevUrl);
+      guardarCaja('voicebox_clave', prev);
+      if (envUrl !== undefined) process.env.VOICEBOX_URL = envUrl;
+      if (envClave !== undefined) process.env.VOICEBOX_CLAVE = envClave;
+    }
   });
 
   it('parsea bóveda y urgente por Telegram', () => {

@@ -1,5 +1,5 @@
 /**
- * Catálogo de capacidades — la única lista de "qué puede hacer ULTRON".
+ * Catálogo de capacidades — la única lista de "qué puede hacer AU-RA".
  * La sirve GET /api/capacidades y la pintan Ajustes (web) y el menú (APK).
  * Cada tarjeta corresponde a algo que de verdad ejecuta el servidor o la app.
  * `vivo` sale de la salud real; nunca se marca vivo lo que no respondió.
@@ -33,8 +33,8 @@ export type Capacidad = {
 export type EstadoNodos = {
   qwen: boolean;
   ojo: boolean;
-  elevenlabs: boolean;
-  ttsLocal: boolean;
+  /** Voicebox configurado y contestando (voz y oído en el servidor propio de AU-RA). */
+  voz: boolean;
   memoriaS3: boolean;
   telegram: boolean;
   telegramIn: boolean;
@@ -55,11 +55,11 @@ export const MODOS = [
 
 export const VOZ_OFICIAL = {
   id: 'ultron',
-  nombre: 'ULTRON',
-  motor: 'ElevenLabs v3 (diálogo expresivo)',
-  timbre: 'Gabriela · español latino, cálida, cercana',
-  respaldo: 'nodo TTS local si ElevenLabs cae; voz del navegador solo como último recurso',
-  expresividad: ['risa', 'suspiro', 'susurro', 'pausa de pensar', 'sorpresa', 'canto'],
+  nombre: 'AU-RA',
+  motor: 'Voicebox · Kokoro, en el servidor propio de AU-RA',
+  timbre: 'Dora · español, cálida, cercana',
+  respaldo: 'ninguno: si Voicebox no contesta, AU-RA calla y el texto queda en pantalla',
+  expresividad: ['pausa de pensar', 'muletillas', 'canciones grabadas'],
 };
 
 export const CANCIONES = [
@@ -188,20 +188,20 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
       id: 'voz',
       grupo: 'voz',
       titulo: `Voz ${VOZ_OFICIAL.nombre} · ${VOZ_OFICIAL.timbre}`,
-      detalle: `${VOZ_OFICIAL.motor}. Ríe, suspira, susurra y hace pausas según lo que siente.`,
+      detalle: `${VOZ_OFICIAL.motor}. Hace pausas de pensar y dice sus muletillas; los clips y las canciones están grabados.`,
       ejemplos: ['decime algo con cariño', 'contame un chiste'],
-      vivo: n.elevenlabs || n.ttsLocal,
-      falta: n.elevenlabs || n.ttsLocal ? undefined : 'ELEVENLABS_API_KEY o nodo TTS',
+      vivo: n.voz,
+      falta: n.voz ? undefined : 'VOICEBOX_URL + VOICEBOX_CLAVE',
       donde: 'ambas',
     },
     {
       id: 'oido',
       grupo: 'voz',
       titulo: 'Oír y transcribir',
-      detalle: 'Escucha continua; podés interrumpirlo hablando. Notas de voz por Telegram también. Oído local en el nodo T4 si está configurado; si no, Scribe.',
+      detalle: 'Escucha continua; podés interrumpirlo hablando. Notas de voz por Telegram también. Transcribe con Whisper en el servidor propio de AU-RA (Voicebox); Gemini de reserva.',
       ejemplos: ['(hablá cuando la luz esté cian)'],
       vivo: n.oido,
-      falta: n.oido ? undefined : 'ELEVENLABS_API_KEY o GEMINI_API_KEY',
+      falta: n.oido ? undefined : 'VOICEBOX_URL + VOICEBOX_CLAVE o GEMINI_API_KEY',
       donde: 'ambas',
     },
     {
@@ -209,10 +209,9 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
       requiere: 'canto',
       grupo: 'voz',
       titulo: 'Cantar',
-      detalle: `Canta a capela con su propia voz. Repertorio: ${CANCIONES.map((c) => c.titulo).join(', ')}. Pedile letra y la canta.`,
+      detalle: `Canta a capela las canciones grabadas: ${CANCIONES.map((c) => c.titulo).join(', ')}. Una letra nueva la dice, no la canta.`,
       ejemplos: CANCIONES.slice(0, 3).map((c) => c.pedir),
-      vivo: n.elevenlabs,
-      falta: n.elevenlabs ? undefined : 'ELEVENLABS_API_KEY',
+      vivo: true,
       donde: 'ambas',
     },
     {

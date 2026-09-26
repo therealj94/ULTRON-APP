@@ -5,7 +5,7 @@ import { despacharTaller, parsePedido } from '../lib/taller';
 import { agregarTarea, listarTareas, marcarTarea } from '../lib/tareas';
 import { catalogoCanales } from '../lib/sistema';
 
-describe('Taller ULTRON', () => {
+describe('Taller AU-RA', () => {
   it('parsea pedidos de sistema, envío y pendientes', () => {
     assert.equal(parsePedido('cómo está el sistema').accion, 'sistema');
     assert.equal(parsePedido('mantenimiento').accion, 'mantenimiento');

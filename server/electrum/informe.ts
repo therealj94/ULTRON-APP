@@ -25,8 +25,11 @@ import {
   geometriaDe,
   hayBase,
   coberturaDeFechas,
+  contarPorVencer,
   porVencer,
+  resumenTraslapes,
   traslapes,
+  traslapesDe,
   type FilaConcesion,
 } from './db';
 import { documentoPdf, medirJpeg, type Bloque } from '../../lib/pdf';
@@ -114,6 +117,24 @@ function fichaCampos(c: FilaConcesion): Array<[string, string]> {
 
 export type Informe = { pdf: Buffer; nombre: string; dicho: string };
 
+/** Minúsculas, sin tildes y con los espacios juntos: para comparar nombres como los escribe la gente. */
+function normal(t: string): string {
+  return t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * ¿Este trozo habla de ESTA concesión?
+ *
+ * La búsqueda en expedientes es de palabras: para «San José de las Palmas» encuentra también un
+ * reglamento con «San Pedro Sula», «José Trinidad Reyes» y unas palmas tres renglones más abajo. En
+ * el chat eso es una pista; en una ficha que se imprime y se firma, es una cita falsa con membrete.
+ * En la ficha solo entra lo que nombra a la concesión tal cual.
+ */
+export function citaDe(texto: string, nombre: string): boolean {
+  const n = normal(nombre);
+  return n.length >= 3 && normal(texto).includes(n);
+}
+
 export async function informeConcesion(
   ref: { id?: number; nombre?: string },
   opts: OpcionesInforme = {}
@@ -174,8 +195,7 @@ export async function informeConcesion(
   }
 
   /* --- traslapes que le toquen --- */
-  const todos = await traslapes(200);
-  const suyos = todos.filter((t) => t.a_id === fila!.id || t.b_id === fila!.id);
+  const suyos = await traslapesDe(fila.id);
   bloques.push({ tipo: 'seccion', texto: 'Traslapes' });
   if (!suyos.length) {
     bloques.push({ tipo: 'parrafo', texto: 'No se pisa con ninguna otra concesión de las cargadas. Esto vale para lo que hay en el catastro, no para lo que no se ha subido.' });
@@ -189,7 +209,10 @@ export async function informeConcesion(
   }
 
   /* --- lo que digan los expedientes, citado con página --- */
-  const hits = await buscarEnExpedientes(fila.nombre, 4).catch(() => []);
+  // Se piden más de los que caben y se quedan solo los que nombran a la concesión: ver `citaDe`.
+  const hits = (await buscarEnExpedientes(fila.nombre, 12).catch(() => []))
+    .filter((h) => citaDe(h.texto, fila!.nombre))
+    .slice(0, 4);
   if (hits.length) {
     bloques.push({ tipo: 'seccion', texto: 'En los expedientes' });
     for (const h of hits) {
@@ -250,9 +273,12 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   );
   if (!resumen || !resumen.total) return { error: 'No hay ninguna concesión cargada todavía. Súbanme el catastro y lo armo.' };
 
+  // La tabla lleva los primeros; las cifras que se afirman salen de contar todo, no del largo de la tabla.
   const vencen = await porVencer(365, 60);
+  const totalVencen = await contarPorVencer(365);
   const cobertura = await coberturaDeFechas();
   const pisadas = await traslapes(60);
+  const pisan = await resumenTraslapes();
   const porEstado = await consulta<{ estado: string | null; n: number; ha: number }>(
     `SELECT estado, count(*)::int AS n, coalesce(sum(hectareas),0)::float8 AS ha
      FROM concesion GROUP BY estado ORDER BY n DESC`
@@ -319,7 +345,12 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
     bloques.push({ tipo: 'parrafo', texto: 'Nada vence dentro del año. Esto sale de la fecha del padrón; si una fecha está mal cargada, acá no se ve.' });
   } else {
     bloques.push(
-      { tipo: 'aviso', texto: `${vencen.length} ${vencen.length === 1 ? 'concesión vence' : 'concesiones vencen'} dentro del año.` },
+      {
+        tipo: 'aviso',
+        texto:
+          `${totalVencen} ${totalVencen === 1 ? 'concesión vence' : 'concesiones vencen'} dentro del año.` +
+          (totalVencen > vencen.length ? ` La tabla trae las ${vencen.length} más urgentes.` : ''),
+      },
       {
         tipo: 'tabla',
         cabecera: ['Concesión', 'Titular', 'Vence', 'Días', 'Hectáreas'],
@@ -333,11 +364,14 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   if (!pisadas.length) {
     bloques.push({ tipo: 'parrafo', texto: 'Ninguna concesión cargada se pisa con otra.' });
   } else {
-    const ha = pisadas.reduce((a, t) => a + t.hectareas, 0);
     bloques.push(
       {
         tipo: 'aviso',
-        texto: `Hay ${pisadas.length} ${pisadas.length === 1 ? 'traslape' : 'traslapes'}, ${nf(ha)} hectáreas en común. Un traslape es un conflicto de derechos hasta que alguien demuestre prelación.`,
+        texto:
+          `Hay ${pisan.total} ${pisan.total === 1 ? 'traslape' : 'traslapes'}, ${nf(pisan.hectareas)} hectáreas en común` +
+          `${pisan.ajenos ? `; ${pisan.ajenos} entre titulares distintos` : ''}. ` +
+          `Un traslape es un conflicto de derechos hasta que alguien demuestre prelación.` +
+          (pisan.total > pisadas.length ? ` La tabla trae los ${pisadas.length} mayores.` : ''),
       },
       {
         tipo: 'tabla',
@@ -376,7 +410,7 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
   return {
     pdf,
     nombre: `cartera-${new Date().toISOString().slice(0, 10)}.pdf`,
-    dicho: `Armé el informe de cartera: ${resumen.total} concesiones, ${nf(resumen.hectareas)} hectáreas, ${cobertura.total && !cobertura.conVence ? 'sin fechas de vencimiento en el padrón' : `${vencen.length} por vencer`} y ${pisadas.length} traslapes.`,
+    dicho: `Armé el informe de cartera: ${resumen.total} concesiones, ${nf(resumen.hectareas)} hectáreas, ${cobertura.total && !cobertura.conVence ? 'sin fechas de vencimiento en el padrón' : `${totalVencen} por vencer`} y ${pisan.total} ${pisan.total === 1 ? 'traslape' : 'traslapes'}.`,
   };
 }
 
@@ -394,11 +428,11 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
  * redesplegó, el informe viejo ya no describe el catastro de ahora y vale más rehacerlo.
  */
 const VIDA_MS = 30 * 60 * 1000;
-const guardados = new Map<string, { informe: Informe; at: number; quien: string | null }>();
+const guardados = new Map<string, { informe: Informe; at: number; quien: string | null; compartido: boolean }>();
 
 export function guardarInforme(informe: Informe, quien: string | null): string {
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
-  guardados.set(id, { informe, at: Date.now(), quien });
+  guardados.set(id, { informe, at: Date.now(), quien, compartido: false });
   const limite = Date.now() - VIDA_MS;
   for (const [k, v] of guardados) if (v.at < limite) guardados.delete(k);
   // Un tope duro además del tiempo: si alguien pide informes en bucle, no se come la memoria.
@@ -406,14 +440,49 @@ export function guardarInforme(informe: Informe, quien: string | null): string {
   return id;
 }
 
-export function tomarInforme(id: string): Informe | null {
+/**
+ * Lo que puede pasar al recoger un informe.
+ *
+ * `no-esta` cubre a la vez «no existe» y «ya caducó», a propósito: contestarlos distinto le
+ * confirmaría a quien prueba identificadores cuáles existen.
+ */
+export type TomaInforme = { estado: 'ok'; informe: Informe } | { estado: 'no-esta' } | { estado: 'ajeno' };
+
+/**
+ * Recoger un informe.
+ *
+ * **Privado por defecto.** El `quien` se guardaba desde el principio y no se comparaba con nadie:
+ * cualquiera con acceso a Electrum y el identificador podía bajarse el informe de otro. Los
+ * identificadores no se adivinan fácil, pero «difícil de adivinar» no es un permiso — y un informe
+ * de cartera lleva nombres de concesionarios y hectáreas.
+ *
+ * Quien lo pidió puede compartirlo con el equipo a propósito. Eso es una decisión suya, no un
+ * descuido nuestro.
+ */
+export function tomarInforme(id: string, quien: string | null = null): TomaInforme {
   const g = guardados.get(String(id));
-  if (!g) return null;
+  if (!g) return { estado: 'no-esta' };
   if (Date.now() - g.at > VIDA_MS) {
     guardados.delete(String(id));
-    return null;
+    return { estado: 'no-esta' };
   }
-  return g.informe;
+  // Sin autor conocido —un informe pedido por Telegram sin identificar— no hay a quién reservárselo.
+  if (g.quien && !g.compartido && g.quien !== quien) return { estado: 'ajeno' };
+  return { estado: 'ok', informe: g.informe };
+}
+
+/** Compartirlo con el equipo. Solo quien lo pidió puede hacerlo. */
+export function compartirInforme(id: string, quien: string | null): 'hecho' | 'no-esta' | 'ajeno' {
+  const g = guardados.get(String(id));
+  if (!g || Date.now() - g.at > VIDA_MS) return 'no-esta';
+  if (g.quien && g.quien !== quien) return 'ajeno';
+  g.compartido = true;
+  return 'hecho';
+}
+
+/** ¿Ya está compartido? Para que la pantalla no ofrezca compartir lo que ya está compartido. */
+export function informeCompartido(id: string): boolean {
+  return !!guardados.get(String(id))?.compartido;
 }
 
 export function olvidarInformes() {

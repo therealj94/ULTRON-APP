@@ -1,15 +1,15 @@
 /**
  * DR ELECTRUM FP EN TELEGRAM — el segundo bot, no una sucursal del primero.
  *
- * Comparte el cuerpo con ULTRON (el mismo Qwen, el mismo harness, el mismo lector de PDF) y no
+ * Comparte el cuerpo con AU-RA (el mismo Qwen, el mismo harness, el mismo lector de PDF) y no
  * comparte NADA de lo que importa:
  *
  *   · Otro token de bot          → es otra cuenta de Telegram, otro @usuario, otra conversación.
- *   · Otro secreto de webhook    → un update firmado para ULTRON no entra por esta puerta.
+ *   · Otro secreto de webhook    → un update firmado para AU-RA no entra por esta puerta.
  *   · Otro padrón                → estar en la junta no te mete a la demo minera, y al revés.
  *   · Otro hilo                  → lo que se habla acá no aparece en el chat de la junta.
  *
- * Esa última línea es la que hace falta escribir para que sea verdad: el hilo de ULTRON vive en un
+ * Esa última línea es la que hace falta escribir para que sea verdad: el hilo de AU-RA vive en un
  * Map dentro de lib/telegram-in.ts, y si reusáramos ese Map, dos chats con el mismo id numérico
  * —cosa que pasa, porque el id es del CHAT, no del bot— se verían los mensajes del otro.
  *
@@ -17,12 +17,15 @@
  * shapefile o un expediente y ENTRA AL CEREBRO; quien tiene `lee` recibe el archivo leído para ese
  * turno y nada se guarda. Es la diferencia entre enseñarle algo y prestárselo un momento.
  */
+import { comandoDeAprobacion } from '../../lib/cognitivo/aprobaciones';
 import crypto from 'node:crypto';
 import { archivoTelegram, parsearUpdateTelegram, type TgParsed } from '../../lib/telegram-in';
 import { identificar, nivelDe, padron, type Identificacion, type Nivel } from '../../lib/acceso';
 import { extraerPdf } from '../../lib/leer-pdf';
 import { aprender } from './aprender';
 import { turnoElectrum } from './turno';
+import { verImagen, vistaFallida } from '../../lib/vision';
+import { claveHilo, fusionarHiloElectrum, hiloDe, olvidarHilo, recordarHilo, type TurnoHilo } from './hilo';
 import { tomarInforme } from './informe';
 
 const ES_GEO = /\.(zip|kml|kmz|geojson|json|csv|shp)$/i;
@@ -107,22 +110,37 @@ export function ayudaElectrum(nivel: Nivel): string {
   return lineas.join('\n');
 }
 
+/** Lo mismo que se le pide al ojo en `aprender`, para el camino de quien solo consulta. */
+const OJO_MINERO_TG = [
+  'Es la foto de un documento minero de Honduras.',
+  'Transcribí lo que se lee —encabezado, números de resolución y expediente, fechas, titulares, coordenadas, hectáreas y el texto de cada sello— en vez de resumirlo.',
+  'Lo que esté borroso o cortado decilo como «ilegible». No adivines un número ni un nombre.',
+].join('\n');
+
 /* ------------------------------------------------------------------ el hilo */
 
-const hilos = new Map<string, Array<{ rol: string; texto: string }>>();
+/**
+ * El hilo vive en `hilo.ts`, junto al de la pantalla. Acá quedan solo los nombres de siempre para
+ * no tocar a quien los llama.
+ *
+ * La llave es el chat, no la persona: en Telegram un mismo humano puede escribir desde un grupo y
+ * desde el privado, y ésas son dos conversaciones. Además puede llegar alguien sin identificar.
+ */
+function claveTelegram(chatId: string) {
+  return claveHilo(`tg:${String(chatId)}`, 'telegram');
+}
 
-export function hiloElectrum(chatId: string): Array<{ rol: string; texto: string }> {
-  return hilos.get(String(chatId)) || [];
+export function hiloElectrum(chatId: string): TurnoHilo[] {
+  return hiloDe(claveTelegram(chatId));
 }
 
 export function recordarElectrum(chatId: string, persona: string, doctor: string) {
-  const prev = hiloElectrum(chatId);
-  hilos.set(String(chatId), [...prev, { rol: 'user', texto: persona }, { rol: 'electrum', texto: doctor }].slice(-24));
+  recordarHilo(claveTelegram(chatId), persona, doctor);
 }
 
 /** Pruebas: deja el hilo en blanco. */
 export function olvidarHilosElectrum() {
-  hilos.clear();
+  olvidarHilo();
 }
 
 /* ------------------------------------------------------------------ hablar */
@@ -156,7 +174,8 @@ export async function responderElectrum(chatId: string, texto: string): Promise<
  */
 export async function enviarInformeElectrum(chatId: string, id: string, pieDeFoto: string): Promise<boolean> {
   const token = electrumBotToken();
-  const r = tomarInforme(id);
+  const t = tomarInforme(id);
+  const r = t.estado === 'ok' ? t.informe : null;
   if (!token || !r) return false;
   try {
     const cuerpo = new FormData();
@@ -205,7 +224,7 @@ export async function registrarWebhookElectrum(): Promise<{ ok: boolean; detalle
 /* ------------------------------------------------------------------ archivos */
 
 /**
- * Los documentos que le importan a Electrum no son los de ULTRON. `parsearUpdateTelegram` se queda
+ * Los documentos que le importan a Electrum no son los de AU-RA. `parsearUpdateTelegram` se queda
  * con PDF, imagen y audio; un shapefile comprimido lo descarta. Así que el .zip, el KML y el CSV se
  * recogen acá, directamente del update.
  */
@@ -240,6 +259,34 @@ async function atenderArchivo(
     const r = await aprender(geo.nombre, geo.datos, { subidoPor: quien.nombre });
     const avisos = r.avisos.filter((a) => a.nivel === 'error' || a.nivel === 'ojo');
     return { dicho: [r.dicho, ...avisos.map((a) => a.texto)].filter(Boolean).join(' ') };
+  }
+
+  /*
+   * UNA FOTO. Es la forma más común de mandar un papel desde el campo: se le saca la foto al plano
+   * o a la resolución que está sobre la mesa y se manda por Telegram, que es lo que ya tiene todo
+   * el mundo abierto.
+   *
+   * Antes esto acababa en «¿qué ves en esta imagen?» dirigido a un modelo de texto, o sea en nada.
+   * Ahora entra por la misma puerta que un PDF: se transcribe y queda en el expediente. Quien solo
+   * tiene consulta la ve leída pero no guardada, igual que con un documento.
+   */
+  if (parsed.imageDataUrl) {
+    const b64 = parsed.imageDataUrl.replace(/^data:[^;]+;base64,/, '');
+    const datos = Buffer.from(b64, 'base64');
+    if (datos.length > 80) {
+      const nombre = `foto-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.jpg`;
+      if (puedeCargar) {
+        const r = await aprender(nombre, datos, { subidoPor: quien.nombre, mime: 'image/jpeg' });
+        return { dicho: r.dicho };
+      }
+      const visto = await verImagen(parsed.imageDataUrl, OJO_MINERO_TG);
+      if (!visto.texto || vistaFallida(visto)) {
+        return { dicho: 'Me llegó la foto pero no pude leerla. No te voy a inventar lo que dice.' };
+      }
+      return {
+        contexto: `FOTO QUE ACABAN DE MANDARTE, ya transcrita. No queda guardada: tu interlocutor tiene acceso de consulta. Contestá SOLO con lo que diga este texto.\n\n${visto.texto}`,
+      };
+    }
   }
 
   if (parsed.documento && parsed.documento.buffer.length > 80) {
@@ -285,6 +332,20 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
     return { estado: 'ayuda', chatId: parsed.chatId };
   }
 
+  // Firmar solicitudes de la cola desde el teléfono. Solo cuenta el Telegram comprobado del padrón:
+  // en un chat de demostración nadie tiene mando.
+  const firma = await comandoDeAprobacion({
+    comando: parsed.comando,
+    texto: parsed.texto,
+    quien: quien.id?.persona.id || null,
+    nivel: quien.id ? quien.nivel : null,
+    plataforma: 'electrum',
+  });
+  if (firma) {
+    await responderElectrum(parsed.chatId, firma);
+    return { estado: 'aprobacion', chatId: parsed.chatId };
+  }
+
   const geo = await archivoGeo(update, token).catch(() => null);
   const archivo: Atendido | null = await atenderArchivo(parsed, geo, quien).catch((e: any) => ({
     dicho: `Se me cayó leyendo el archivo: ${String(e?.message || e).slice(0, 140)}`,
@@ -299,23 +360,40 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
   }
 
   let mensaje = parsed.texto;
-  if (!mensaje && parsed.imageDataUrl) mensaje = '¿qué ves en esta imagen?';
+  // La foto ya viene transcrita en el contexto: pedir «¿qué ves?» a un modelo de texto no tenía
+  // sentido y aquí ya no hace falta.
+  if (!mensaje && parsed.imageDataUrl) mensaje = 'Decime qué dice este papel y qué es, sin inventar nada.';
   if (!mensaje && archivo?.contexto) mensaje = 'Resumime lo que dice este expediente, sin inventar nada.';
   if (!mensaje) return { estado: 'sin pregunta', chatId: parsed.chatId };
 
-  const hilo = hiloElectrum(parsed.chatId);
-  const previo = hilo.length
-    ? `LO QUE VENÍAN HABLANDO:\n${hilo.map((t) => `${t.rol === 'user' ? quien.nombre : 'vos'}: ${t.texto}`).join('\n')}\n\n`
-    : '';
-  const conArchivo = archivo?.contexto ? `${archivo.contexto}\n\n` : '';
-
-  const salida = await turnoElectrum(`${previo}${conArchivo}${mensaje}`, {
-    quien: quien.id?.persona.id || null,
-    nivel: quien.nivel,
-    plataforma: 'electrum',
-    canal: 'telegram',
+  /*
+   * El hilo va COMO MENSAJES, no pegado adentro de la pregunta.
+   *
+   * Pegarlo —que es lo que se hacía acá— rompía el panel de especialistas en silencio: `convocar`
+   * cuenta palabras del oficio sobre el texto que recibe, así que seis líneas hablando de un
+   * pórfido hacían que «¿y cuándo vence?» convocara al Geólogo y al Ingeniero de Minas y dejara al
+   * Legal Minero fuera, sin sus herramientas de catastro. Hay una prueba que lo fija.
+   *
+   * El archivo sí va pegado, y con razón: es contexto de ESTA pregunta, no de las anteriores.
+   */
+  const historial = fusionarHiloElectrum({
+    servidor: hiloElectrum(parsed.chatId),
     mensaje,
   });
+  const conArchivo = archivo?.contexto ? `${archivo.contexto}\n\n` : '';
+
+  const salida = await turnoElectrum(
+    `${conArchivo}${mensaje}`,
+    {
+      quien: quien.id?.persona.id || null,
+      nivel: quien.nivel,
+      plataforma: 'electrum',
+      canal: 'telegram',
+      mensaje,
+      prueba: quien.id?.prueba ?? null,
+    },
+    { historial }
+  );
 
   const texto = [archivo?.dicho, salida.texto].filter(Boolean).join('\n\n') || 'No pude contestar eso ahora mismo.';
   await responderElectrum(parsed.chatId, texto);

@@ -1,15 +1,16 @@
 {
-  "name": "Ultron · Orden Global",
-  "short_name": "Ultron",
-  "description": "Mesa de Orden Global",
+  "name": "AU-RA · Orden Global",
+  "short_name": "AU-RA",
+  "description": "AU-RA, tu compañía de Orden Global",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#000000",
-  "theme_color": "#000000",
+  "background_color": "#232528",
+  "theme_color": "#232528",
   "lang": "es-HN",
   "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
   ]
 }

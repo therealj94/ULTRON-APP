@@ -2,11 +2,11 @@ export const CONOCIMIENTO_OG = `ORDEN GLOBAL — cerebro Genesis Core. Hechos pa
 
 PERSONAS
 - Fundador: Medardo José Ordóñez Enamorado (Medardo). Junta. Canción: The Verve — Bitter Sweet Symphony.
-- Cofundador: José Ordóñez (José). Junta. Habla con ULTRON. Canción: Kanye — Runaway (brindis). Extra: Bruno Mars — Die With A Smile.
+- Cofundador: José Ordóñez (José). Junta. Habla con AU-RA. Canción: Kanye — Runaway (brindis). Extra: Bruno Mars — Die With A Smile.
 - Cofundadora: Melany Ordóñez.
 - Cofundador: Carlos Leonardo Paguada (Leonardo Paguada). En prensa 2024: director de operaciones globales de Orden Global Corp. Explicó ORIGEN, AUKA, ONDK y OrdenEx en Tegucigalpa.
-- Junta: Mayra Enamorado. Acceso a ULTRON FP por Telegram. Cerebro propio. Consulta: no cambia el sistema (sin redespliegue, sin mantenimiento, sin ejecutor).
-- Carlos Paguada en ULTRON: mismo acceso consulta que Mayra. Cerebro propio. No se mezcla con José ni Medardo.
+- Junta: Mayra Enamorado. Acceso a AU-RA FP por Telegram. Cerebro propio. Consulta: no cambia el sistema (sin redespliegue, sin mantenimiento, sin ejecutor).
+- Carlos Paguada en AU-RA: mismo acceso consulta que Mayra. Cerebro propio. No se mezcla con José ni Medardo.
 - Prensa ago-2024 también nombra a Jackson Wilson como CEO de Orden Global Corp (lanzamiento NZ). No mezclar: Medardo funda; José, Melany y Leonardo cofundan.
 - Sitio ordenglobal.org. Operación diaria Honduras (Tegucigalpa). Sede comunicada: British Columbia, Canadá.
 
@@ -42,8 +42,8 @@ TOKENS
 - Precio: solo tools.
 
 APPS Y CAPAS
-- ULTRON / Genesis Core: asistente de la junta. Voz Eleven v3 + clips. Cerebro Qwen 3.8 27B AWS :8443. Proxy OpenAI :11435. Mesa Render ultron-looi-desk. Playwright y cámara viven en la mesa, no en OpenLLM.
-- AU-RA: asistente del sitio. No es ULTRON.
+- AU-RA FP / Genesis Core (antes ULTRON FP): asistente de la junta. Es ella quien habla. Voz propia en Voicebox (Kokoro) + clips; oído con Whisper en el mismo servidor. Cerebro Qwen 3.8 27B AWS :8443. Proxy OpenAI :11435. Mesa Render ultron-looi-desk. Playwright y cámara viven en la mesa, no en OpenLLM.
+- AU-RA del sitio y de WhatsApp: la misma marca, pero corre aparte, en el nodo, con su propio modelo y su propia memoria.
 - Veta Wallet Android: tokens, tarjeta emisión/congelado, remesas hoy calculadora.
 - Genesis ID: identidad.
 - PULSE2CHAT: hablar y pagar.
@@ -70,7 +70,7 @@ PROSPERA
 - Para OG: plaza posible de sociedad, fintech o garantía (villa Roatán). No afirmar licencia RFSA ni que las minas de Danlí/Choluteca estén bajo ley ZEDE: eso es marco minero nacional (INHGEOMIN).
 
 PASADA ÚNICA
-Mina -> bóveda -> cadena 5550 ancla ORIGEN -> AUKA/AGKA onza -> ONDK gobierna -> Veta+Genesis ID+MyTokenPay personas -> Ordenex cambia -> AuCorp entra/sale -> ULTRON asiste a la junta.
+Mina -> bóveda -> cadena 5550 ancla ORIGEN -> AUKA/AGKA onza -> ONDK gobierna -> Veta+Genesis ID+MyTokenPay personas -> Ordenex cambia -> AuCorp entra/sale -> AU-RA asiste a la junta.
 
 REGLAS
 - FX y spot: tools.

@@ -1,10 +1,10 @@
-# ULTRON FP
+# AU-RA FP
 
 Asistente con cuerpo digital para la junta directiva de **Orden Global**. Una cara viva, una voz humana y un cerebro propio. No es un chatbot: piensa, siente, reacciona y trabaja.
 
-- **Web (mesa):** React + Vite + canvas 2D, servida por el mismo servidor Express. Producción en Render (`ultron-looi-desk`).
+- **Web (mesa):** React + Vite + canvas 2D, servida por el mismo servidor Express. Producción en Render: un servicio por producto — AU-RA FP en `aura-fp` (`PLATAFORMA=ultron`) y Dr Electrum FP en `ultron-looi-desk` (sin `PLATAFORMA`).
 - **APK (Expo / React Native):** `mobile/`. Se compila sola en GitHub Actions.
-- **Servidor:** `server.ts` + `server/` + `lib/`. Cerebro Qwen 3.8 27B en nodo AWS propio, ojo Playwright/visión en otro nodo, voz ElevenLabs v3, memoria en S3, Telegram de ida y vuelta.
+- **Servidor:** `server.ts` + `server/` + `lib/`. Cerebro Qwen 3.8 27B en nodo AWS propio, ojo Playwright/visión en otro nodo, voz y oído propios en Voicebox (Kokoro + Whisper), memoria en S3, Telegram de ida y vuelta.
 
 ## Correr
 
@@ -22,8 +22,8 @@ APK: `cd mobile && npm ci && npx expo run:android`, o bajar el artefacto de la a
 
 | Dónde | Qué | Tocar para… |
 |---|---|---|
-| `lib/emocion.ts` | Contrato de emoción (14 emociones) | cambiar qué siente ULTRON |
-| `lib/capacidades.ts` | Catálogo único de capacidades | añadir o quitar algo que ULTRON hace |
+| `lib/emocion.ts` | Contrato de emoción (14 emociones) | cambiar qué siente AU-RA |
+| `lib/capacidades.ts` | Catálogo único de capacidades | añadir o quitar algo que AU-RA hace |
 | `server/voz.ts` | La única voz: hablar, cantar, expresividad, caché | timbre, etiquetas de audio, repertorio |
 | `server/desk.ts` | Personalidad e identidad de la junta | cómo habla, tono por modo, oído |
 | `server/seguridad.ts` | Sesión firmada, rate limit, SSRF | quién entra y qué puede tocar |
@@ -34,11 +34,11 @@ APK: `cd mobile && npm ci && npx expo run:android`, o bajar el artefacto de la a
 | `src/04-cerebro/` | Cliente del turno (stream) e intenciones locales | gags locales, qué va al cerebro |
 | `src/07-pantallas/` | Arranque, Ajustes + catálogo, dock, acceso, bóveda, cámara | UI |
 | `src/App.tsx` | Composición (≈ 470 líneas) | flujo de la mesa |
-| `public/voz/` | Clips grabados con la voz oficial (`scripts/grabar-banco.mjs`) | frases sin red, canciones |
+| `public/voz/` | Clips grabados con la voz oficial (`scripts/grabar-banco.ts`) | frases sin red, canciones |
 | `mobile/` | APK | ver `mobile/README.md` |
 | `docs/` | Entrega 4.0 y planes históricos | contexto |
 
-Reglas: la voz es una (Gabriela, ElevenLabs v3). El nodo Qwen no se toca. Nada que cambie estado pasa sin sesión firmada. Si una herramienta no respondió, ULTRON lo dice.
+Reglas: la voz es una (Dora, en Voicebox; Dr Electrum habla con Alex). El nodo Qwen no se toca. Nada que cambie estado pasa sin sesión firmada. Si una herramienta no respondió, AU-RA lo dice.
 
 Detalle de qué se hizo y por qué: `docs/ENTREGA-4.0.md`.
 

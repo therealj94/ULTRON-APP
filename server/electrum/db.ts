@@ -15,6 +15,9 @@
 import { Pool, type PoolClient } from 'pg';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import { areaHectareas, etiqueta, type Capa } from './gis';
+import { buscarPorSignificado } from './vectores';
+import { fundirPorRango } from '../../lib/cognitivo/embeddings';
+import { trazaActual } from '../../lib/cognitivo/traza';
 
 let pool: Pool | null = null;
 
@@ -350,6 +353,16 @@ export async function porVencer(dias = 365, limite = 50): Promise<Array<FilaConc
   );
 }
 
+/** Cuántas vencen dentro de la ventana, sin límite: la cifra que se afirma, no el largo de la lista. */
+export async function contarPorVencer(dias = 365): Promise<number> {
+  const [r] = await consulta<{ n: number }>(
+    `SELECT count(*)::int AS n FROM concesion
+     WHERE vence IS NOT NULL AND vence <= CURRENT_DATE + ($1 || ' days')::interval`,
+    [String(dias)]
+  );
+  return Number(r?.n || 0);
+}
+
 /**
  * Cuántas concesiones traen fecha de vencimiento, y cuántas hay en total.
  *
@@ -418,6 +431,37 @@ export async function traslapes(limite = 50): Promise<Array<{ a: string; b: stri
      ORDER BY t.hectareas DESC
      LIMIT $1`,
     [limite]
+  );
+}
+
+/**
+ * Cuántos traslapes hay y cuánta superficie pisan, contando TODOS.
+ *
+ * `traslapes()` trae los mayores con un límite, que está bien para una tabla pero no para una cifra:
+ * con 96 traslapes cargados, «hay 60» salía de contar la lista recortada. El total se pide aparte.
+ */
+export async function resumenTraslapes(): Promise<{ total: number; hectareas: number; ajenos: number }> {
+  const [r] = await consulta<{ total: number; hectareas: number; ajenos: number }>(
+    `SELECT count(*)::int AS total,
+            coalesce(sum(t.hectareas), 0)::float8 AS hectareas,
+            count(*) FILTER (WHERE coalesce(ca.titular, '') <> coalesce(cb.titular, ''))::int AS ajenos
+     FROM traslape t
+     JOIN concesion ca ON ca.id = t.a_id
+     JOIN concesion cb ON cb.id = t.b_id`
+  );
+  return { total: Number(r?.total || 0), hectareas: Number(r?.hectareas || 0), ajenos: Number(r?.ajenos || 0) };
+}
+
+/** Los traslapes de UNA concesión, todos: no los que entren entre los mayores del país. */
+export async function traslapesDe(id: number): Promise<Array<{ a: string; b: string; hectareas: number; a_id: number; b_id: number }>> {
+  return consulta(
+    `SELECT ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS hectareas, t.a_id, t.b_id
+     FROM traslape t
+     JOIN concesion ca ON ca.id = t.a_id
+     JOIN concesion cb ON cb.id = t.b_id
+     WHERE t.a_id = $1 OR t.b_id = $1
+     ORDER BY t.hectareas DESC`,
+    [id]
   );
 }
 
@@ -507,10 +551,10 @@ function terminosDeBusqueda(texto: string): string {
  * cualquiera de ellos y ordenando por relevancia. Un buscador que devuelve cero ante una pregunta
  * bien formulada no sirve, aunque sea técnicamente correcto.
  */
-export async function buscarEnExpedientes(
+export async function buscarPorTexto(
   texto: string,
   limite = 8
-): Promise<Array<{ documento: string; pagina: number | null; texto: string; puntaje: number }>> {
+): Promise<Array<{ id: number; documento: string; pagina: number | null; texto: string; puntaje: number }>> {
   const limpio = terminosDeBusqueda(texto);
   if (!limpio) return [];
 
@@ -521,7 +565,7 @@ export async function buscarEnExpedientes(
    */
   const SQL = (op: string) => `
     WITH q AS (SELECT ${op} AS tq)
-    SELECT d.nombre AS documento, f.pagina,
+    SELECT f.id, d.nombre AS documento, f.pagina,
            ts_headline('spanish', f.texto, q.tq,
              'MaxWords=55, MinWords=25, ShortWord=3, MaxFragments=2, FragmentDelimiter=" … ", StartSel="", StopSel=""') AS texto,
            ts_rank(f.tsv, q.tq)::float8 AS puntaje
@@ -544,4 +588,33 @@ export async function buscarEnExpedientes(
     .join(' | ');
   if (!sueltos) return [];
   return consulta(SQL("to_tsquery('spanish', $1)"), [sueltos, limite]);
+}
+
+export type HitExpediente = { documento: string; pagina: number | null; texto: string; puntaje: number; via?: 'texto' | 'significado' | 'ambos' };
+
+/**
+ * La búsqueda de expedientes que usa Dr Electrum: HÍBRIDA si hay vectores (texto completo +
+ * significado, fundidos por rango), y solo por texto si no. Lo que sale queda anotado en la traza
+ * del turno como documento consultado.
+ */
+export async function buscarEnExpedientes(texto: string, limite = 8): Promise<HitExpediente[]> {
+  const [porTexto, porSignificado] = await Promise.all([
+    buscarPorTexto(texto, Math.max(limite, 20)),
+    buscarPorSignificado(texto, Math.max(limite, 20)).catch(() => []),
+  ]);
+  let hits: HitExpediente[];
+  if (!porSignificado.length) {
+    hits = porTexto.slice(0, limite).map(({ id: _id, ...h }) => ({ ...h, via: 'texto' as const }));
+  } else {
+    const fundidos = fundirPorRango<{ id: number; documento: string; pagina: number | null; texto: string }>([porTexto, porSignificado], (x) => String(x.id));
+    hits = fundidos.slice(0, limite).map(({ item, puntaje, de }) => ({
+      documento: item.documento,
+      pagina: item.pagina,
+      texto: item.texto,
+      puntaje: Math.round(puntaje * 10000) / 10000,
+      via: de.length > 1 ? ('ambos' as const) : de[0] === 0 ? ('texto' as const) : ('significado' as const),
+    }));
+  }
+  for (const h of hits) trazaActual()?.documento({ fuente: h.documento, ref: h.pagina ? `p. ${h.pagina}` : undefined, puntaje: h.puntaje });
+  return hits;
 }

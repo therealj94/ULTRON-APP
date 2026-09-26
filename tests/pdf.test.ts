@@ -114,8 +114,8 @@ test('escritor de PDF', async (t) => {
     assert.equal(medirJpeg(Buffer.from([1, 2, 3])), null, 'lo que no es JPEG no se mide');
   });
 
-  await t.test('textoAPdf sigue existiendo para ULTRON', () => {
-    const pdf = textoAPdf({ titulo: 'Nota de junta', cuerpo: 'Una línea.', pie: 'ULTRON FP' });
+  await t.test('textoAPdf sigue existiendo para AU-RA', () => {
+    const pdf = textoAPdf({ titulo: 'Nota de junta', cuerpo: 'Una línea.', pie: 'AU-RA FP' });
     assert.equal(pdf.subarray(0, 5).toString('latin1'), '%PDF-');
     assert.ok(pdf.toString('latin1').includes('Nota de junta'));
     assert.ok(xrefCoherente(pdf));

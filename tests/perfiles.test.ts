@@ -15,7 +15,7 @@ const GENESIS = PERFILES.genesis;
 const MINAS = PERFILES.minas;
 
 const NODOS = {
-  qwen: true, ojo: true, elevenlabs: true, ttsLocal: false, memoriaS3: true,
+  qwen: true, ojo: true, voz: true, memoriaS3: true,
   telegram: true, telegramIn: true, ejecutor: false, vision: true, oido: true,
 };
 

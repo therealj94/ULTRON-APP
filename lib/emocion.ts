@@ -1,11 +1,11 @@
 /**
- * Emoción de ULTRON — contrato único para cerebro, voz, cara web y cara móvil.
+ * Emoción de AU-RA — contrato único para cerebro, voz, cara web y cara móvil.
  *
  * El 27B abre cada respuesta con una etiqueta `[EMO:<emocion>]`. El servidor la
- * extrae, la devuelve en `emocion` (JSON y SSE) y la usa para dar expresividad a
- * la voz (etiquetas de audio de ElevenLabs v3). La cara la traduce a gestos.
+ * extrae y la devuelve en `emocion` (JSON y SSE). La cara la traduce a gestos; la
+ * voz (Voicebox, Kokoro) tiene un solo registro por perfil y la acepta sin cambiar el audio.
  *
- * Cambiar la lista aquí obliga a revisar: server/voz.ts (tags de audio),
+ * Cambiar la lista aquí obliga a revisar: server/voz.ts (normalización de la emoción),
  * src/02-cara/emocion.ts (cara web) y mobile/src/config.ts (cara móvil).
  */
 
@@ -66,8 +66,8 @@ export const EMOCION_INFO: Record<Emocion, { etiqueta: string; cuando: string }>
  * inocentes: si «travieso» está en la lista, tarde o temprano el doctor guiña mientras te explica
  * un traslape.
  *
- * Así que Dr Electrum tiene MENOS emociones que ULTRON, no más. Se le quitan las que no le tocan
- * —cantar, orar, la travesura, la tristeza de la junta— y se le dan cuatro que ULTRON no necesita.
+ * Así que Dr Electrum tiene MENOS emociones que AU-RA, no más. Se le quitan las que no le tocan
+ * —cantar, orar, la travesura, la tristeza de la junta— y se le dan cuatro que AU-RA no necesita.
  * La paleta es del cerebro; la cara y la voz, que son cuerpo, saben expresarlas todas.
  */
 export const PALETA: Record<'ultron' | 'electrum', readonly Emocion[]> = {
@@ -192,7 +192,7 @@ export function inferirEmocion(texto: string): Emocion {
  * La instrucción del system, con la paleta de ESA plataforma y sus ejemplos.
  *
  * Los ejemplos importan tanto como la lista: un modelo copia el registro de lo que ve. Poner
- * ejemplos de ULTRON en el prompt de Dr Electrum le enseña a hablar como ULTRON, que es justo lo
+ * ejemplos de AU-RA en el prompt de Dr Electrum le enseña a hablar como AU-RA, que es justo lo
  * que no queremos.
  */
 export function instruccionEmocion(plataforma: 'ultron' | 'electrum' = 'ultron'): string {
@@ -209,5 +209,5 @@ export function instruccionEmocion(plataforma: 'ultron' | 'electrum' = 'ultron')
   ].join(' ');
 }
 
-/** La de ULTRON, que es la que ya usaban media docena de módulos. */
+/** La de AU-RA, que es la que ya usaban media docena de módulos. */
 export const INSTRUCCION_EMOCION = instruccionEmocion('ultron');

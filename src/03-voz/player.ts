@@ -6,6 +6,8 @@ let source: MediaElementAudioSourceNode | null = null;
 let lipTimer: number | null = null;
 let queue: Blob[] = [];
 let lipCb: ((n: number) => void) | null = null;
+/** El «terminé» pendiente del audio que suena: si se corta, se avisa igual para que la cola no se trabe. */
+let alCortar: (() => void) | null = null;
 
 export function onLip(cb: ((n: number) => void) | null) {
   lipCb = cb;
@@ -37,11 +39,31 @@ export function stopVoice() {
     lipTimer = null;
   }
   lipCb?.(0);
-  if (current) {
-    current.pause();
-    current.src = '';
-    current = null;
+  soltarActual();
+}
+
+/**
+ * Corta el audio actual sin disparar sus manejadores: vaciar `src` con onerror puesto hacía que la
+ * frase cortada se dijera con la voz del navegador, o que su `fin` nunca resolviera.
+ */
+function soltarActual() {
+  const a = current;
+  const fin = alCortar;
+  current = null;
+  alCortar = null;
+  if (a) {
+    a.onplaying = null;
+    a.onended = null;
+    a.onerror = null;
+    a.pause();
+    a.removeAttribute('src');
+    try {
+      a.load();
+    } catch {
+      /* */
+    }
   }
+  fin?.();
 }
 
 /** Baja volumen y para. Evita el corte a cuchillo del barge-in. */
@@ -108,6 +130,7 @@ function startLip() {
 function playNext(onAllEnd?: () => void, onError?: () => void, onStart?: () => void) {
   const blob = queue.shift();
   if (!blob) {
+    alCortar = null;
     lipCb?.(0);
     onAllEnd?.();
     return;
@@ -116,6 +139,7 @@ function playNext(onAllEnd?: () => void, onError?: () => void, onStart?: () => v
   const audio = new Audio(url);
   audio.setAttribute('playsinline', 'true');
   current = audio;
+  alCortar = onAllEnd || null;
   ensureAnalyser(audio);
   audio.onplaying = () => {
     startLip();
@@ -128,7 +152,10 @@ function playNext(onAllEnd?: () => void, onError?: () => void, onStart?: () => v
   };
   audio.onerror = () => {
     URL.revokeObjectURL(url);
-    if (current === audio) current = null;
+    if (current === audio) {
+      current = null;
+      alCortar = null;
+    }
     onError?.();
   };
   return audio.play();
@@ -140,18 +167,25 @@ export function playFile(src: string, onEnd?: () => void, onError?: () => void, 
   audio.preload = 'auto';
   audio.setAttribute('playsinline', 'true');
   current = audio;
+  alCortar = onEnd || null;
   try { ensureAnalyser(audio); } catch { /* */ }
   audio.onplaying = () => {
     startLip();
     onStart?.();
   };
   audio.onended = () => {
-    if (current === audio) current = null;
+    if (current === audio) {
+      current = null;
+      alCortar = null;
+    }
     lipCb?.(0);
     onEnd?.();
   };
   audio.onerror = () => {
-    if (current === audio) current = null;
+    if (current === audio) {
+      current = null;
+      alCortar = null;
+    }
     onError?.();
   };
   return audio.play().catch(() => onError?.());
@@ -159,11 +193,7 @@ export function playFile(src: string, onEnd?: () => void, onError?: () => void, 
 
 export function playWavBlob(blob: Blob, onEnd?: () => void, onError?: () => void, onStart?: () => void) {
   queue = [blob];
-  if (current) {
-    current.pause();
-    current.src = '';
-    current = null;
-  }
+  soltarActual();
   return playNext(onEnd, onError, onStart);
 }
 

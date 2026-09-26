@@ -14,7 +14,22 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { Map as MapaLibre } from 'maplibre-gl';
 import type { FeatureCollection, Geometry } from 'geojson';
-import { ESTILO_SATELITE, ESTILO_CALLES, capasDeConcesiones, capasDeResaltado } from './capas';
+import { duracion } from '../movimiento';
+import { AMBAR, RESALTE, ESTILO_SATELITE, ESTILO_CALLES, capasDeConcesiones, capasDeResaltado } from './capas';
+import urlDelWorker from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
+
+/*
+ * EL WORKER DE MAPLIBRE, DECLARADO.
+ *
+ * MapLibre 6 busca su worker en un archivo aparte, `maplibre-gl-worker.mjs`, al lado de su propio
+ * módulo. Empaquetado por Vite ese «al lado» es `/assets/maplibre-gl-worker.mjs`, que la
+ * compilación nunca emitía: el servidor contestaba con la página HTML, el worker moría en silencio
+ * y toda fuente GeoJSON quedaba sin procesar. El satélite se veía —las teselas raster no pasan por
+ * el worker— y encima de él no se dibujaba NADA: ni las 1079 concesiones, ni la resaltada, ni el
+ * encuadre. Sin un solo error en consola. Importarlo con `?worker&url` hace que Vite lo compile y
+ * lo emita, y `setWorkerUrl` le dice a MapLibre dónde quedó.
+ */
+maplibregl.setWorkerUrl(urlDelWorker);
 
 export type Motor = 'maplibre' | 'google';
 export type Fondo = 'satelite' | 'calles';
@@ -84,6 +99,43 @@ function asegurarCapas(m: maplibregl.Map) {
   }
 }
 
+/**
+ * LAS MISMAS CONCESIONES, EN GOOGLE.
+ *
+ * Esto faltaba entero. El motor de Google solo hacía `fitBounds` y `setCenter`: volaba al sitio
+ * correcto y allí no había nada dibujado. O sea que cambiar de MapLibre a Google hacía desaparecer
+ * el catastro —que es lo único que esta plataforma existe para enseñar— y la pantalla no lo decía.
+ * Quien probaba los dos botones concluía, con razón, que uno de los dos estaba roto.
+ *
+ * Se usa `google.maps.Data`, que come GeoJSON tal cual. Una capa por cosa, para poder reemplazar
+ * el resaltado sin tocar el catastro.
+ */
+const capasGoogle: Record<'concesiones' | 'resaltada', any> = { concesiones: null, resaltada: null };
+
+function pintarGoogle(g: any, cual: 'concesiones' | 'resaltada', datos: unknown) {
+  const G = (window as any).google?.maps;
+  if (!G || !g) return;
+  let capa = capasGoogle[cual];
+  if (!capa) {
+    capa = new G.Data();
+    capa.setStyle(
+      cual === 'concesiones'
+        ? { fillColor: AMBAR, fillOpacity: 0.12, strokeColor: AMBAR, strokeWeight: 1.6, strokeOpacity: 0.9 }
+        : { fillColor: RESALTE, fillOpacity: 0.22, strokeColor: RESALTE, strokeWeight: 3, strokeOpacity: 1 }
+    );
+    capasGoogle[cual] = capa;
+  }
+  // Vaciar antes de poner: `addGeoJson` acumula, y sin esto cada vuelo añadiría otro polígono
+  // encima del anterior hasta dejar el mapa lleno de siluetas viejas.
+  capa.forEach((f: any) => capa.remove(f));
+  try {
+    capa.addGeoJson(datos as any);
+  } catch {
+    /* geometría que Google no entiende: mejor sin ella que con el mapa reventado */
+  }
+  capa.setMap(g);
+}
+
 /** Pinta y recuerda: lo que se recuerda es lo que se repone si el estilo se recarga. */
 function pintar(m: maplibregl.Map, cual: 'concesiones' | 'resaltada', datos: unknown) {
   pintado[cual] = datos;
@@ -98,6 +150,17 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
   const cajaGoogle = useRef<HTMLDivElement>(null);
   const google = useRef<any>(null);
   const [falloGoogle, setFalloGoogle] = useState<string | null>(null);
+  /*
+   * El fondo del momento, SIN que construir el mapa dependa de él.
+   *
+   * Tenerlo en las dependencias del efecto que crea el mapa hacía que cambiar de satélite a calles
+   * destruyera el mapa entero y montara uno nuevo: se perdía dónde estabas mirando, el zoom, y las
+   * concesiones pintadas. Y lo irónico es que justo debajo vive un efecto escrito para conservar
+   * las capas al cambiar de estilo —con su `setStyle` y su comentario— que NUNCA llegaba a
+   * ejecutarse, porque para cuando corría el mapa ya era otro y su `fondoPuesto` volvía a empezar.
+   */
+  const fondoRef = useRef(fondo);
+  fondoRef.current = fondo;
 
   /* ---------------------------------------------------------------- MapLibre */
 
@@ -105,7 +168,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
     if (motor !== 'maplibre' || !caja.current || mapa.current) return;
     const m = new maplibregl.Map({
       container: caja.current,
-      style: fondo === 'satelite' ? ESTILO_SATELITE : ESTILO_CALLES,
+      style: fondoRef.current === 'satelite' ? ESTILO_SATELITE : ESTILO_CALLES,
       bounds: HONDURAS,
       fitBoundsOptions: { padding: 40 },
       attributionControl: { compact: true },
@@ -128,7 +191,16 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       setListo(true);
     });
     mapa.current = m;
-    // Asa para las capturas de QA (scripts/qa/electrum.mjs). No lo usa la aplicación.
+    /*
+     * El mapa vivo, para la captura del informe.
+     *
+     * Antes esto era SOLO `window.__mapa`, con un comentario que decía «no lo usa la aplicación» —
+     * y la aplicación sí lo usaba: es de donde `capturaDelMapa` saca el lienzo. Peor: no se
+     * limpiaba al destruir el mapa, así que tras cambiar de motor la referencia seguía apuntando a
+     * una instancia muerta y el informe se llevaba una foto vieja o vacía sin decir nada.
+     */
+    vivo = { m, motor: 'maplibre' };
+    // Asa para las capturas de QA (scripts/qa/electrum.mjs).
     (window as any).__mapa = m;
 
     /*
@@ -144,9 +216,11 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       observador?.disconnect();
       m.remove();
       mapa.current = null;
+      if (vivo?.m === m) vivo = null;
+      if ((window as any).__mapa === m) delete (window as any).__mapa;
       setListo(false);
     };
-  }, [motor, fondo]);
+  }, [motor]);
 
   /*
    * Cambiar de fondo conserva las capas: se vuelven a poner cuando el estilo termina de cargar.
@@ -179,13 +253,23 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
     const yaEsta = (window as any).google?.maps;
     const arrancar = () => {
       if (!cajaGoogle.current) return;
+      // Que la captura sepa que el mapa de la pantalla es el de Google, para poder explicar por qué
+      // no entra en el informe en vez de armarlo sin mapa y en silencio.
+      vivo = { m: null, motor: 'google' };
       google.current = new (window as any).google.maps.Map(cajaGoogle.current, {
         center: { lat: 14.75, lng: -86.25 },
         zoom: 7,
-        mapTypeId: fondo === 'satelite' ? 'hybrid' : 'roadmap',
+        mapTypeId: fondoRef.current === 'satelite' ? 'hybrid' : 'roadmap',
         streetViewControl: true,
         fullscreenControl: false,
       });
+      // Lo que ya se había pintado en MapLibre se repone acá: cambiar de motor no puede vaciar el
+      // catastro de la pantalla.
+      capasGoogle.concesiones = null;
+      capasGoogle.resaltada = null;
+      for (const cual of ['concesiones', 'resaltada'] as const) {
+        if (pintado[cual]) pintarGoogle(google.current, cual, pintado[cual]);
+      }
     };
     if (yaEsta) return arrancar();
     const s = document.createElement('script');
@@ -194,7 +278,8 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
     s.onload = arrancar;
     s.onerror = () => setFalloGoogle('Google Maps no cargó. Revisá que la clave esté habilitada y con facturación activa.');
     document.head.appendChild(s);
-  }, [motor, claveGoogle, fondo]);
+    // `fondo` NO va aquí: cambiarlo recargaría el mapa de Google entero. Lo lleva `setMapTypeId`.
+  }, [motor, claveGoogle]);
 
   useEffect(() => {
     if (motor === 'google' && google.current) {
@@ -209,20 +294,33 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
     if (m && listo) {
       if (o.accion === 'volar') {
         pintar(m, 'resaltada', { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: o.geojson, properties: {} }] });
-        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 80, duration: 1400, maxZoom: 15 });
-        else if (o.centro) m.flyTo({ center: o.centro, zoom: 13, duration: 1400 });
+        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 80, duration: duracion(1400), maxZoom: 15 });
+        else if (o.centro) m.flyTo({ center: o.centro, zoom: 13, duration: duracion(1400) });
       } else if (o.accion === 'capa') {
         pintar(m, 'concesiones', o.geojson);
-        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 60, duration: 1400 });
+        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 60, duration: duracion(1400) });
       } else if (o.accion === 'punto') {
-        m.flyTo({ center: o.punto, zoom: 14, duration: 1200 });
+        m.flyTo({ center: o.punto, zoom: 14, duration: duracion(1200) });
       }
     }
     const g = google.current;
     if (g && motor === 'google') {
       const G = (window as any).google.maps;
-      if (o.accion === 'volar' && o.encuadre) {
-        g.fitBounds(new G.LatLngBounds({ lat: o.encuadre[1], lng: o.encuadre[0] }, { lat: o.encuadre[3], lng: o.encuadre[2] }));
+      if (o.accion === 'volar') {
+        pintado.resaltada = { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: o.geojson, properties: {} }] };
+        pintarGoogle(g, 'resaltada', pintado.resaltada);
+        if (o.encuadre) {
+          g.fitBounds(new G.LatLngBounds({ lat: o.encuadre[1], lng: o.encuadre[0] }, { lat: o.encuadre[3], lng: o.encuadre[2] }));
+        } else if (o.centro) {
+          g.setCenter({ lat: o.centro[1], lng: o.centro[0] });
+          g.setZoom(13);
+        }
+      } else if (o.accion === 'capa') {
+        pintado.concesiones = o.geojson;
+        pintarGoogle(g, 'concesiones', o.geojson);
+        if (o.encuadre) {
+          g.fitBounds(new G.LatLngBounds({ lat: o.encuadre[1], lng: o.encuadre[0] }, { lat: o.encuadre[3], lng: o.encuadre[2] }));
+        }
       } else if (o.accion === 'punto') {
         g.setCenter({ lat: o.punto[1], lng: o.punto[0] });
         g.setZoom(14);
@@ -265,16 +363,60 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
  *
  * JPEG y no PNG porque el PDF incrusta los datos de un JPEG tal cual, sin recodificar nada.
  */
-export function capturaDelMapa(): string | null {
-  const m = (window as any).__mapa;
-  const lienzo: HTMLCanvasElement | undefined = m?.getCanvas?.();
-  if (!lienzo || !lienzo.width || !lienzo.height) return null;
-  try {
-    // Repintar antes de leer: si el último cuadro es viejo, se captura lo que ya no se ve.
+/** El mapa que está en pantalla ahora mismo, y con qué motor. Null cuando no hay ninguno montado. */
+let vivo: { m: MapaLibre | null; motor: Motor } | null = null;
+
+export type Captura = { imagen: string } | { falta: string };
+
+/**
+ * La foto del mapa para el informe.
+ *
+ * Es asíncrona, y no por capricho. Antes se llamaba a `triggerRepaint()` y se leía el lienzo **en
+ * la línea siguiente**: `triggerRepaint` solo PIDE un cuadro nuevo, no lo dibuja, así que lo que se
+ * leía era el cuadro anterior. Con el mapa quieto no se nota; justo después de volar a una
+ * concesión —que es cuando alguien pide el informe— se llevaba la vista de antes. Ahora se espera
+ * a que el mapa diga que terminó (`idle`), con un tope por si las teselas no paran de reintentar.
+ *
+ * Y cuando no se puede, se dice cuál es el motivo en vez de devolver un hueco. Un informe sin mapa
+ * y sin explicación parece un informe roto; uno que dice «el mapa no entró porque estás en Google»
+ * es un informe honesto.
+ */
+export async function capturaDelMapa(): Promise<Captura> {
+  if (!vivo) return { falta: 'No había mapa montado cuando pedí la foto.' };
+  if (vivo.motor !== 'maplibre') {
+    /*
+     * Google Maps se compone en el DOM con teselas de otro dominio: su lienzo no se puede leer
+     * desde la página, y forzarlo daría una imagen en blanco o una excepción de seguridad. No hay
+     * arreglo desde aquí, así que se dice — antes, simplemente, salía el informe sin mapa.
+     */
+    return { falta: 'Con el mapa de Google no puedo sacar la foto: sus teselas vienen de otro dominio y el navegador no me deja leer el lienzo. Cambiá a MapLibre y te lo armo con mapa.' };
+  }
+  const m = vivo.m;
+  const lienzo = m?.getCanvas?.();
+  if (!lienzo || !lienzo.width || !lienzo.height) return { falta: 'El mapa todavía no tenía nada dibujado.' };
+
+  // Esperar un cuadro DE VERDAD. `idle` llega cuando no queda nada por cargar ni por pintar.
+  await new Promise<void>((resolver) => {
+    let hecho = false;
+    if (!m) return resolver();
+    const fin = () => {
+      if (hecho) return;
+      hecho = true;
+      resolver();
+    };
+    m.once('idle', fin);
     m.triggerRepaint?.();
+    // Si una tesela falla y se reintenta sola, `idle` puede no llegar nunca.
+    setTimeout(fin, 1500);
+  });
+
+  try {
     const url = lienzo.toDataURL('image/jpeg', 0.82);
-    return url.startsWith('data:image/jpeg') && url.length > 2000 ? url : null;
-  } catch {
-    return null;
+    if (!url.startsWith('data:image/jpeg') || url.length < 2000) {
+      return { falta: 'La foto del mapa salió vacía. Probá otra vez cuando termine de cargar.' };
+    }
+    return { imagen: url };
+  } catch (e: any) {
+    return { falta: `No pude leer el lienzo del mapa (${String(e?.message || e).slice(0, 80)}).` };
   }
 }

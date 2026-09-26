@@ -9,10 +9,22 @@
  * a exigir para creerle. «Consultó el catastro, midió sobre el elipsoide, encontró el traslape» vale
  * más que la respuesta sola.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  // Con alias: `PointerEvent` a secas taparía el del navegador, y el oyente que se cuelga de
+  // `window` recibe el nativo, no el sintético de React. Dos tipos con el mismo nombre y distinta
+  // forma es justo el enredo que se arregla nombrándolos.
+  type KeyboardEvent as TeclaReact,
+  type PointerEvent as PunteroReact,
+} from 'react';
 import type { FaceState } from '../../src/types';
 import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/Mapa';
+import { sinMovimiento } from '../movimiento';
+import { ALTURAS, repartoDe, siguienteReparto } from '../preferencias';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 
 type Props = {
@@ -23,15 +35,31 @@ type Props = {
   onUi: (datos: Array<Record<string, unknown>>) => void;
   onTrabajo: () => void;
   onVista: (v: 'chat' | 'expedientes') => void;
+  /** Fracción de la pantalla que ocupa el panel. */
+  alto: number;
+  onAlto: (v: number) => void;
 };
 
 type Turno = {
   de: 'persona' | 'electrum';
   texto: string;
   panel?: string;
-  traza?: Array<{ herramienta: string; ok: boolean; resumen: string }>;
+  traza?: Array<{ herramienta: string; ok: boolean; resumen: string; ms?: number }>;
   /** Si el turno produjo un informe, queda a mano para bajarlo. */
-  informe?: { nombre: string; url: string; bytes: number };
+  informe?: { nombre: string; url: string; bytes: number; compartido?: boolean };
+  /**
+   * La pregunta que habría que repetir. Solo la llevan los turnos que NO terminaron bien: un corte
+   * o un fallo. Guardarla es lo que separa «se rompió» de «se rompió y aquí está el botón».
+   */
+  reintentar?: string;
+  /**
+   * Es un aviso de la pantalla, no algo que dijo el Doctor.
+   *
+   * «Lo dejé ahí, como pediste» o «se me cortó la respuesta» se ven en el hilo porque el usuario
+   * necesita verlos, pero NO son turnos de la conversación: mandárselos al modelo como respuestas
+   * suyas le enseña un pasado que no ocurrió, y la pregunta siguiente se contesta sobre eso.
+   */
+  local?: boolean;
 };
 
 const AMBAR = '#FFAE3B';
@@ -141,10 +169,24 @@ async function decirEnVoz(texto: string, emocion: string | undefined, headers: R
  * blob. La alternativa —una URL firmada que valga por sí sola— sería un enlace compartible a un
  * documento del catastro, y eso es justo lo que no queremos que exista.
  */
-async function bajarInforme(informe: { nombre: string; url: string }) {
+/**
+ * Bajar el informe. Devuelve el motivo si no se pudo — antes devolvía nada.
+ *
+ * El servidor guarda los informes **media hora**, porque describen el catastro de ese momento.
+ * Pasado ese rato el botón seguía ahí y al tocarlo no ocurría absolutamente nada: ni descarga, ni
+ * mensaje. El `if (!r.ok) return` se tragaba la explicación que el servidor sí manda, y el `catch`
+ * vacío llevaba escrito «el navegador dirá lo suyo», que es justo lo que el navegador no hace.
+ */
+async function bajarInforme(informe: { nombre: string; url: string }): Promise<string | null> {
   try {
     const r = await fetch(informe.url, { headers: headersElectrum() });
-    if (!r.ok) return;
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}) as any);
+      if (j?.error) return String(j.error);
+      return r.status === 404
+        ? 'Ese informe ya caducó. Se guardan media hora porque describen el catastro del momento; pedime otro.'
+        : `No pude bajarlo: el servidor contestó ${r.status}.`;
+    }
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -154,8 +196,9 @@ async function bajarInforme(informe: { nombre: string; url: string }) {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
-  } catch {
-    /* el navegador dirá lo suyo */
+    return null;
+  } catch (e: any) {
+    return `No alcancé el servidor para bajar el informe (${String(e?.message || e).slice(0, 80)}).`;
   }
 }
 
@@ -166,8 +209,77 @@ const EJEMPLOS = [
   '¿qué concesiones vencen este año?',
 ];
 
-export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVista }: Props) {
-  const [turnos, setTurnos] = useState<Turno[]>([]);
+/**
+ * La conversación sobrevive a un F5.
+ *
+ * Va en `sessionStorage` y no en `localStorage` a propósito: acá se nombran concesionarios reales,
+ * y una pestaña cerrada tiene que llevarse el rastro. Sobrevive a recargar, no a irse.
+ */
+const CAJON_HILO = 'electrum.hilo';
+
+
+/*
+ * Por qué los cortes llevan motivo.
+ *
+ * `abort()` a secas deja en `signal.reason` un DOMException genérico, indistinguible del que pone
+ * el navegador cuando se cae la red. Sin motivo propio, pararlo a mano se le contaba al usuario
+ * como «no alcancé el servidor» — acusar a la conexión de algo que hizo él.
+ */
+const MOTIVO_PARADO = new Error('parado por quien pregunta');
+const MOTIVO_TARDE = new Error('tardó demasiado');
+const MOTIVO_IRSE = new Error('se cerró la pantalla');
+
+function hiloGuardado(): Turno[] {
+  try {
+    const crudo = sessionStorage.getItem(CAJON_HILO);
+    if (!crudo) return [];
+    const v = JSON.parse(crudo);
+    return Array.isArray(v) ? v.filter((t) => t && typeof t.texto === 'string') : [];
+  } catch {
+    // Navegación privada, almacenamiento bloqueado, JSON de otra versión: se arranca en blanco.
+    return [];
+  }
+}
+
+export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, onTrabajo, onVista }: Props) {
+  const [turnos, setTurnos] = useState<Turno[]>(hiloGuardado);
+  /*
+   * `preguntar` no puede depender de `turnos` —se reharía en cada mensaje y con él todo lo que
+   * cuelga— pero necesita el hilo del momento para mandarlo. Una ref siempre tiene el de ahora.
+   */
+  const turnosRef = useRef<Turno[]>(turnos);
+  turnosRef.current = turnos;
+  /*
+   * La concesión que se está mirando: la última a la que voló el mapa por una herramienta.
+   *
+   * Sin esto el botón PDF armaba siempre el informe de la cartera entera, aunque la conversación
+   * fuera sobre una concesión y Dr Electrum acabara de ofrecer «¿te armo la ficha en PDF?». Tocar
+   * PDF en ese momento tiene que dar la ficha de ESA concesión.
+   */
+  const [enFoco, setEnFoco] = useState<number | null>(null);
+  /** El turno en vuelo, para poder pararlo desde el botón o al irse de la pantalla. */
+  const abortoRef = useRef<AbortController | null>(null);
+  /** Mientras se arrastra el asa, la altura no se anima: la transición la haría ir a rastras. */
+  const [arrastrando, setArrastrando] = useState(false);
+  /** El menú de «⋯» en pantalla estrecha. */
+  const [masAbierto, setMasAbierto] = useState(false);
+
+  useEffect(() => {
+    try {
+      // Solo el texto y de quién es: la traza y los enlaces de informe no son contexto y ocupan.
+      sessionStorage.setItem(
+        CAJON_HILO,
+        JSON.stringify(
+          turnos
+            .filter((t) => !t.local)
+            .slice(-24)
+            .map((t) => ({ de: t.de, texto: t.texto }))
+        )
+      );
+    } catch {
+      /* si no deja guardar, el hilo vive solo en memoria y ya está */
+    }
+  }, [turnos]);
   const [texto, setTexto] = useState('');
   const [pensando, setPensando] = useState(false);
   // Arranca apagada: un navegador no deja sonar nada hasta que alguien toca algo, y una demo que
@@ -181,17 +293,72 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
   const vozActivaRef = useRef(vozActiva);
   vozActivaRef.current = vozActiva;
 
-  // Al desmontar, silencio: un panel que se va no puede dejar una voz sonando detrás.
-  useEffect(() => () => callar(), []);
+  // Al desmontar, silencio y corte: un panel que se va no puede dejar una voz sonando detrás ni
+  // un turno leyendo un flujo contra un componente que ya no existe.
+  useEffect(
+    () => () => {
+      callar();
+      abortoRef.current?.abort(MOTIVO_IRSE);
+    },
+    []
+  );
   const [oyendo, setOyendo] = useState<'grabando' | 'oyendo' | ''>('');
   const pararGrabacion = useRef<(() => void) | null>(null);
   /** Lo que está pasando AHORA. Se vacía al terminar, cuando pasa a ser parte del turno. */
   const [enVivo, setEnVivo] = useState<{ panel: string; traza: Array<{ herramienta: string; ok: boolean; resumen: string }> }>({ panel: '', traza: [] });
   const hilo = useRef<HTMLDivElement>(null);
 
+  /**
+   * SEGUIR EL FINAL, PERO SOLO SI YA ESTABAS ALLÍ.
+   *
+   * Antes bajaba al final en cada cambio, sin mirar. Quien estaba releyendo una respuesta de hace
+   * tres turnos —comprobando un número de expediente, que es exactamente lo que se hace con esto—
+   * salía disparado al fondo en cuanto llegaba una línea nueva. Ahora, si te has apartado del
+   * final, te quedas donde estás y aparece un aviso de que hay algo nuevo.
+   */
+  const [hayNuevo, setHayNuevo] = useState(false);
+  const alFinal = useRef(true);
+
+  const mirarPosicion = useCallback(() => {
+    const el = hilo.current;
+    if (!el) return;
+    // 40 px de margen: nadie deja el desplazamiento clavado al píxel.
+    alFinal.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    if (alFinal.current) setHayNuevo(false);
+  }, []);
+
+  const bajarDeltodo = useCallback(() => {
+    const el = hilo.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: sinMovimiento() ? 'auto' : 'smooth' });
+    alFinal.current = true;
+    setHayNuevo(false);
+  }, []);
+
   useEffect(() => {
-    hilo.current?.scrollTo({ top: hilo.current.scrollHeight, behavior: 'smooth' });
-  }, [turnos, pensando]);
+    if (alFinal.current) bajarDeltodo();
+    else if (turnos.length) setHayNuevo(true);
+  }, [turnos, pensando, bajarDeltodo]);
+
+  /**
+   * Un aviso de la pantalla, no una frase del Doctor.
+   *
+   * Marca también la pregunta que se quedó sin contestar. Si no, el hilo que sale hacia el modelo
+   * queda con dos mensajes de usuario seguidos y una pregunta colgando sin respuesta: «¿y la
+   * segunda?» se contestaría sobre una lista que nunca llegó a existir.
+   */
+  const avisar = useCallback((texto: string, reintentar?: string) => {
+    setTurnos((t) => {
+      const copia = [...t];
+      for (let i = copia.length - 1; i >= 0; i--) {
+        if (copia[i].de === 'persona') {
+          copia[i] = { ...copia[i], local: true };
+          break;
+        }
+      }
+      return [...copia, { de: 'electrum', texto, reintentar, local: true }];
+    });
+  }, []);
 
   const preguntar = useCallback(
     async (pregunta: string) => {
@@ -204,6 +371,20 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
       onFace('THINKING');
       onTrabajo();
 
+      /*
+       * Un turno se puede cortar por fuera: se va la señal, Render recicla el proceso, el usuario
+       * toca «parar». El navegador necesita poder abandonar la lectura, y el corte de tiempo tiene
+       * que ser MAYOR que el presupuesto del turno en el servidor (50 s) para no abandonar una
+       * respuesta que venía en camino.
+       */
+      const abortar = new AbortController();
+      abortoRef.current = abortar;
+      const reloj = setTimeout(() => abortar.abort(MOTIVO_TARDE), 75_000);
+      /** ¿Llegó a cerrar el servidor? Si no, esto NO se puede presentar como una respuesta. */
+      let cerrado = false;
+      /** ¿Llegamos a leer algo del flujo? Separa «no conecté» de «conecté y se cayó a la mitad». */
+      let empezado = false;
+
       try {
         /*
          * Se lee el flujo a mano en vez de usar EventSource porque EventSource solo hace GET, y la
@@ -213,11 +394,43 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
         const r = await fetch('/api/electrum/turno/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...headersElectrum() },
-          body: JSON.stringify({ mensaje: q }),
+          signal: abortar.signal,
+          /*
+           * El hilo viaja con la pregunta. El servidor guarda el suyo y prefiere ése, pero Render
+           * reinicia el proceso cuando quiere y ahí la única copia que queda es la de esta pantalla.
+           */
+          body: JSON.stringify({
+            mensaje: q,
+            hilo: turnosRef.current
+              .filter((t) => !t.local)
+              .slice(-24)
+              .map((t) => ({ rol: t.de, texto: t.texto })),
+          }),
         });
         if (r.status === 401) {
+          cerrado = true;
           onFace('CONCERNED');
-          setTurnos((t) => [...t, { de: 'electrum', texto: SIN_PUERTA }]);
+          avisar(SIN_PUERTA);
+          return;
+        }
+        /*
+         * Antes solo se miraba el 401 y todo lo demás entraba al lector como si fuera un flujo.
+         * Un 500 o un 503 —que es lo que devuelve Render mientras redespliega— trae una página de
+         * error, no eventos: el lector no encontraba ninguno, salía en silencio y la pantalla se
+         * quedaba como si el Doctor hubiera decidido no contestar.
+         */
+        if (!r.ok) {
+          cerrado = true;
+          const detalle = await r.text().catch(() => '');
+          let dicho = `El servidor contestó ${r.status}.`;
+          try {
+            const j = JSON.parse(detalle);
+            if (j?.error) dicho = String(j.error);
+          } catch {
+            /* no era JSON: se queda el código, que ya dice algo */
+          }
+          onFace('CONCERNED');
+          avisar(dicho, q);
           return;
         }
         if (!r.body) throw new Error('sin flujo');
@@ -231,6 +444,7 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
         while (!terminado) {
           const { done, value } = await lector.read();
           if (done) break;
+          empezado = true;
           resto += dec.decode(value, { stream: true });
           // SSE separa los mensajes con una línea en blanco; lo que quede a medias espera.
           const trozos = resto.split('\n\n');
@@ -242,12 +456,17 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
                 const d = JSON.parse(linea.slice(6));
                 if (evento === 'panel') setEnVivo((v) => ({ ...v, panel: d.panel }));
                 else if (evento === 'herramienta') setEnVivo((v) => ({ ...v, traza: [...v.traza, d] }));
-                else if (evento === 'ui') onUi([d]); // el mapa se mueve YA, no al final
+                else if (evento === 'ui') {
+                  onUi([d]); // el mapa se mueve YA, no al final
+                  if (d?.accion === 'volar' && Number.isFinite(Number(d.concesion_id))) setEnFoco(Number(d.concesion_id));
+                }
                 else if (evento === 'error') {
-                  setTurnos((t) => [...t, { de: 'electrum', texto: d.error }]);
+                  cerrado = true;
+                  avisar(d.error, q);
                   onFace('CONCERNED');
                   terminado = true;
                 } else if (evento === 'fin') {
+                  cerrado = true;
                   onFace('SPEAKING');
                   if (d.emocion) onEmocion(d.emocion);
                   if (vozActivaRef.current && d.texto) void decirEnVoz(d.texto, d.emocion, headersElectrum());
@@ -259,16 +478,82 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
           }
         }
       } catch {
-        onFace('CONCERNED');
-        setTurnos((t) => [...t, { de: 'electrum', texto: 'No alcancé el servidor. Revisá la conexión y volvé a preguntarme.' }]);
+        cerrado = true;
+        const motivo = abortar.signal.reason;
+        // Irse de la pantalla no es un fallo que contarle a nadie: ya no hay nadie mirando.
+        if (motivo !== MOTIVO_IRSE) {
+          onFace('CONCERNED');
+          const parado = motivo === MOTIVO_PARADO;
+          const tarde = motivo === MOTIVO_TARDE;
+          avisar(
+            parado
+              ? 'Lo dejé ahí, como pediste.'
+              : tarde
+                ? 'Pasé de los setenta y cinco segundos sin cerrar la respuesta y corté. Puede ser el cerebro tardando o la conexión. Volvé a pedírmelo.'
+                : empezado
+                  ? 'Se cayó la conexión con la respuesta a medio venir. Alcancé a empezar pero no a terminar, así que no te enseño un pedazo como si fuera la respuesta.'
+                  : 'No alcancé el servidor. Revisá la conexión y volvé a preguntarme.',
+            parado ? undefined : q
+          );
+        }
       } finally {
+        clearTimeout(reloj);
+        abortoRef.current = null;
+        /*
+         * EL PUNTO DE F05. El lector sale cuando el flujo termina, y eso pasa también cuando el
+         * flujo se CORTA: se fue la red, Render recicló el proceso, un proxy cerró la conexión. Sin
+         * esta comprobación la pantalla se limpiaba y quedaba como si el Doctor hubiera decidido no
+         * contestar — indistinguible de una respuesta vacía, y sin nada que tocar para reintentar.
+         *
+         * Un turno solo cuenta como terminado si el servidor mandó su `fin` o su `error`. Cualquier
+         * otra salida es un corte, y se dice que lo es.
+         */
+        if (!cerrado) {
+          onFace('CONCERNED');
+          avisar(
+            'Se me cortó la respuesta a la mitad. No sé si alcancé a terminar de pensarla, así que no te voy a enseñar un pedazo como si fuera la respuesta.',
+            q
+          );
+        }
         setPensando(false);
         setEnVivo({ panel: '', traza: [] });
         setTimeout(() => onFace('IDLE'), 1200);
       }
     },
-    [pensando, onFace, onEmocion, onUi, onTrabajo]
+    [pensando, onFace, onEmocion, onUi, onTrabajo, avisar]
   );
+
+  /** Abrir un informe al resto del equipo. Solo puede hacerlo quien lo pidió; el servidor lo comprueba. */
+  const compartir = useCallback(
+    async (indice: number, informe: { url: string }) => {
+      try {
+        const r = await fetch(`${informe.url}/compartir`, { method: 'POST', headers: headersElectrum() });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}) as any);
+          avisar(j?.error || `No pude compartirlo: el servidor contestó ${r.status}.`);
+          return;
+        }
+        setTurnos((t) =>
+          t.map((x, j) => (j === indice && x.informe ? { ...x, informe: { ...x.informe, compartido: true } } : x))
+        );
+      } catch {
+        avisar('No alcancé el servidor para compartir el informe.');
+      }
+    },
+    [avisar]
+  );
+
+  /** Borra el hilo de las dos puntas. Si el servidor no contesta, al menos la pantalla queda limpia. */
+  const olvidar = useCallback(() => {
+    setTurnos([]);
+    setEnFoco(null);
+    try {
+      sessionStorage.removeItem(CAJON_HILO);
+    } catch {
+      /* sin almacenamiento no hay nada que quitar */
+    }
+    void fetch('/api/electrum/hilo', { method: 'DELETE', headers: headersElectrum() }).catch(() => {});
+  }, []);
 
   /**
    * Pedir el informe de la cartera desde la pantalla, con el mapa tal como se está viendo. Va por
@@ -281,16 +566,29 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
     onFace('THINKING');
     onTrabajo();
     try {
+      /*
+       * La foto se espera. `capturaDelMapa` ahora aguarda a que el mapa termine de dibujar: antes
+       * leía el cuadro anterior, así que un informe pedido justo después de volar a una concesión
+       * se llevaba la vista de antes — y nadie lo notaba hasta abrir el PDF.
+       */
+      const foto = await capturaDelMapa();
       const r = await fetch('/api/electrum/informe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headersElectrum() },
-        body: JSON.stringify({ tipo: 'cartera', mapa: capturaDelMapa() }),
+        body: JSON.stringify(
+          enFoco != null
+            ? { tipo: 'concesion', concesion_id: enFoco, mapa: 'imagen' in foto ? foto.imagen : null }
+            : { tipo: 'cartera', mapa: 'imagen' in foto ? foto.imagen : null }
+        ),
       });
       const j = await r.json();
       if (!r.ok) {
         setTurnos((t) => [...t, { de: 'electrum', texto: j.error || 'No pude armar el informe.' }]);
       } else {
-        setTurnos((t) => [...t, { de: 'electrum', texto: j.dicho, informe: { nombre: j.nombre, url: j.url, bytes: j.bytes } }]);
+        // Si el mapa no entró, se dice EN la misma respuesta. Un informe sin mapa y sin explicación
+        // parece roto; uno que dice por qué es un informe honesto.
+        const texto = 'falta' in foto ? `${j.dicho}\n\nVa sin mapa: ${foto.falta}` : j.dicho;
+        setTurnos((t) => [...t, { de: 'electrum', texto, informe: { nombre: j.nombre, url: j.url, bytes: j.bytes } }]);
       }
     } catch {
       setTurnos((t) => [...t, { de: 'electrum', texto: 'No alcancé el servidor para armar el informe.' }]);
@@ -298,7 +596,7 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
       setPensando(false);
       setTimeout(() => onFace('IDLE'), 900);
     }
-  }, [pensando, onFace, onTrabajo]);
+  }, [pensando, onFace, onTrabajo, enFoco]);
 
   /*
     La conversación comparte la pantalla con el mapa —42 % abajo— porque las dos cosas se miran a la
@@ -312,10 +610,17 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
   return (
     <aside
       className={`absolute z-20 flex flex-col border-white/10 bg-[#0A0C0E]/92 backdrop-blur-xl inset-x-0 bottom-0 border-t ${
-        completo ? 'top-[52px]' : 'h-[42%]'
+        completo ? 'top-[52px]' : ''
       }`}
-      style={{ transition: 'transform .4s ease', transform: abierto ? 'none' : 'translateY(100%)' }}
+      style={{
+        // En Expedientes manda la clase (toda la altura); en Consulta manda la preferencia.
+        height: completo ? undefined : `${alto * 100}%`,
+        transition: `transform .4s ease${arrastrando ? '' : ', height .25s ease'}`,
+        transform: abierto ? 'none' : 'translateY(100%)',
+      }}
     >
+      {/* El asa de repartir. En Expedientes no: ahí el panel se lleva la pantalla entera. */}
+      {!completo && <Asa alto={alto} onAlto={onAlto} onArrastrar={setArrastrando} />}
       {/* La cabecera: siempre visible, nunca fuera de pantalla, y dice por dónde se sube. */}
       <div className="flex items-center gap-1 px-3 pt-2.5 pb-2 border-b border-white/[0.07] shrink-0">
         {(['chat', 'expedientes'] as const).map((v) => (
@@ -333,11 +638,31 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
             {v === 'chat' ? 'Consulta' : 'Expedientes'}
           </button>
         ))}
+        {/*
+         * Borrar la conversación. Hace falta desde que el hilo sobrevive a recargar: quien acaba de
+         * consultar el expediente de un concesionario tiene que poder dejar la pantalla limpia antes
+         * de que se siente otro. Borra las dos copias, la de la pantalla y la del servidor.
+         */}
+        {vista === 'chat' && turnos.length > 0 && (
+          <button
+            type="button"
+            onClick={olvidar}
+            disabled={pensando}
+            className="ml-auto px-2.5 py-1.5 rounded-lg font-mono text-[11px] tracking-[0.14em] uppercase text-[#8FA3B0] hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Borrar esta conversación, acá y en el servidor"
+          >
+            Borrar
+          </button>
+        )}
       </div>
 
       {vista === 'chat' ? (
         <>
-          <div ref={hilo} className="flex-1 overflow-y-auto px-4 py-4 space-y-4 w-full max-w-4xl mx-auto">
+          <div
+            ref={hilo}
+            onScroll={mirarPosicion}
+            className="relative flex-1 overflow-y-auto px-4 py-4 space-y-4 w-full max-w-4xl mx-auto"
+          >
             {!turnos.length && (
               <div className="space-y-3">
                 <p className="text-sm text-[#8FA3B0] leading-relaxed">
@@ -366,16 +691,33 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
                   </div>
                 )}
                 <div
-                  className={`inline-block max-w-[92%] rounded-xl px-3 py-2 text-sm leading-relaxed text-left ${
+                  className={`inline-block max-w-[92%] rounded-xl px-3 py-2 text-sm leading-relaxed text-left whitespace-pre-line break-words ${
                     t.de === 'persona' ? 'bg-white/10 text-[#E7EEF2]' : 'bg-white/[0.045] text-[#DDE7EC]'
                   }`}
                 >
                   {t.texto}
                 </div>
+                {/*
+                  * Un turno que se cortó lleva su pregunta encima, y el botón la repite tal cual.
+                  * Sin esto, recuperarse de un corte obliga a volver a escribirla — y si era larga,
+                  * a reconstruirla de memoria.
+                  */}
+                {t.reintentar && (
+                  <div className="mt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => preguntar(t.reintentar!)}
+                      disabled={pensando}
+                      className="rounded-lg border border-white/15 px-2.5 py-1 font-mono text-[10px] tracking-[0.14em] uppercase text-[#9FB0B8] transition-colors hover:border-white/30 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Volver a preguntar
+                    </button>
+                  </div>
+                )}
                 {t.informe && (
                   <button
                     type="button"
-                    onClick={() => bajarInforme(t.informe!)}
+                    onClick={() => void bajarInforme(t.informe!).then((m) => m && avisar(m))}
                     className="mt-2 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-white/[0.06] cursor-pointer"
                     style={{ borderColor: 'rgba(255,174,59,.35)' }}
                   >
@@ -384,18 +726,31 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-[13px] text-[#E7EEF2]">{t.informe.nombre}</span>
-                      <span className="block font-mono text-[10px] text-[#6C7F89]">{Math.round(t.informe.bytes / 1024)} KB · se guarda media hora</span>
+                      <span className="block font-mono text-[10px] text-[#6C7F89]">
+                        {Math.round(t.informe.bytes / 1024)} KB · se guarda media hora · {t.informe.compartido ? 'compartido con el equipo' : 'solo vos'}
+                      </span>
                     </span>
+                  </button>
+                )}
+                {/*
+                  * Compartirlo es un ACTO, no el estado por defecto. Un informe de cartera lleva
+                  * nombres de concesionarios y hectáreas, así que nace privado de quien lo pidió y
+                  * sale de ahí solo si él decide que salga.
+                  */}
+                {t.informe && !t.informe.compartido && (
+                  <button
+                    type="button"
+                    onClick={() => void compartir(i, t.informe!)}
+                    className="mt-1.5 rounded-lg border border-white/15 px-2.5 py-1 font-mono text-[10px] tracking-[0.14em] uppercase text-[#9FB0B8] transition-colors hover:border-white/30 hover:text-white cursor-pointer"
+                  >
+                    Compartir con el equipo
                   </button>
                 )}
                 {t.traza?.length ? (
                   <ul className="mt-1.5 space-y-0.5">
                     {t.traza.map((h, j) => (
-                      <li key={j} className="font-mono text-[10px] text-[#6C7F89] flex gap-1.5">
-                        <span style={{ color: h.ok ? AMBAR : '#D9705A' }}>{h.ok ? '·' : '×'}</span>
-                        <span className="truncate">
-                          {h.herramienta} — {h.resumen}
-                        </span>
+                      <li key={j} className="font-mono text-[10px] text-[#6C7F89]">
+                        <Rastro h={h} />
                       </li>
                     ))}
                   </ul>
@@ -420,12 +775,41 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
                     </span>
                   </div>
                 ))}
-                <div className="font-mono text-[11px] text-[#6C7F89]">
-                  {enVivo.traza.length ? 'redactando…' : 'pensando…'}
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-[11px] text-[#6C7F89]">
+                    {enVivo.traza.length ? 'redactando…' : 'pensando…'}
+                  </span>
+                  {/*
+                    * Poder pararlo. Un turno con tres rondas de herramientas puede tardar cincuenta
+                    * segundos, y a veces a los cinco ya se sabe que la pregunta estaba mal hecha.
+                    * Quedarse mirando «pensando…» sin poder hacer nada es lo que hace que una
+                    * pantalla se sienta rota aunque esté trabajando.
+                    */}
+                  <button
+                    type="button"
+                    onClick={() => abortoRef.current?.abort(MOTIVO_PARADO)}
+                    className="rounded-lg border border-white/15 px-2 py-0.5 font-mono text-[10px] tracking-[0.14em] uppercase text-[#9FB0B8] transition-colors hover:border-white/30 hover:text-white cursor-pointer"
+                  >
+                    Parar
+                  </button>
                 </div>
               </div>
             )}
           </div>
+
+          {/* Hay algo nuevo y no estás mirando el final: se avisa, no se te arrastra. */}
+          {hayNuevo && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-[68px] flex justify-center">
+              <button
+                type="button"
+                onClick={bajarDeltodo}
+                className="pointer-events-auto rounded-full border px-3 py-1 font-mono text-[10px] tracking-[0.14em] uppercase text-black cursor-pointer"
+                style={{ background: AMBAR, borderColor: AMBAR }}
+              >
+                ↓ Hay respuesta nueva
+              </button>
+            </div>
+          )}
 
           <form
             onSubmit={(e) => {
@@ -467,35 +851,40 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
             >
               {oyendo === 'grabando' ? 'Parar' : oyendo === 'oyendo' ? '…' : 'Decir'}
             </button>
-            <button
-              type="button"
-              onClick={() =>
-                setVozActiva((v) => {
-                  // Al silenciar se corta lo que suena y se invalida lo que viene; no basta el booleano.
-                  if (v) callar();
-                  return !v;
-                })
-              }
-              title={vozActiva ? 'Silenciar a Dr Electrum' : 'Que Dr Electrum hable'}
-              aria-pressed={vozActiva}
-              className="shrink-0 rounded-lg border px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer"
-              style={
-                vozActiva
-                  ? { borderColor: AMBAR, color: AMBAR }
-                  : { borderColor: 'rgba(255,255,255,.12)', color: '#9FB0B8' }
-              }
-            >
-              Voz
-            </button>
-            <button
-              type="button"
-              onClick={pedirInforme}
-              disabled={pensando}
-              title="Informe de la cartera en PDF, con el mapa como se está viendo"
-              className="shrink-0 rounded-lg border border-white/12 px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase text-[#9FB0B8] transition-colors hover:border-white/25 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
-            >
-              PDF
-            </button>
+            {/*
+              * VOZ y PDF se esconden en un menú cuando no hay ancho.
+              *
+              * En un teléfono de 390 px, cinco controles en fila dejaban el campo de escribir en
+              * una rendija: la pregunta, que es lo que se viene a hacer, competía por el ancho con
+              * un botón de informe que se usa una vez cada tanto. Escribir, dictar y enviar se
+              * quedan siempre; lo demás está a un toque.
+              *
+              * Dictar NO se esconde: es la razón de que alguien use esto con las manos sucias.
+              */}
+            <div className="hidden sm:contents">
+              <BotonVoz vozActiva={vozActiva} setVozActiva={setVozActiva} />
+              <BotonPdf pedirInforme={pedirInforme} pensando={pensando} ficha={enFoco != null} />
+            </div>
+            <div className="relative shrink-0 sm:hidden">
+              <button
+                type="button"
+                onClick={() => setMasAbierto((v) => !v)}
+                aria-expanded={masAbierto}
+                aria-label="Más opciones: voz e informe"
+                className="h-full rounded-lg border border-white/12 px-2.5 font-mono text-[13px] leading-none text-[#9FB0B8] transition-colors hover:border-white/25 hover:text-white cursor-pointer"
+              >
+                ⋯
+              </button>
+              {masAbierto && (
+                <div
+                  className="absolute bottom-[calc(100%+6px)] right-0 z-40 flex flex-col gap-1.5 rounded-lg border border-white/12 bg-[#0A0C0E] p-1.5 shadow-lg"
+                  onClick={() => setMasAbierto(false)}
+                >
+                  <BotonVoz vozActiva={vozActiva} setVozActiva={setVozActiva} />
+                  <BotonPdf pedirInforme={pedirInforme} pensando={pensando} ficha={enFoco != null} />
+                </div>
+              )}
+            </div>
             <button
               type="submit"
               disabled={pensando || !texto.trim()}
@@ -520,7 +909,23 @@ export function Panel({ abierto, vista, onFace, onEmocion, onUi, onTrabajo, onVi
  * lanzar seis en paralelo contra el mismo PostGIS hace que el recálculo de traslapes se pise
  * consigo mismo. En serie tarda lo mismo y se ve qué está pasando.
  */
-function Cargador({ alCargar }: { alCargar: () => void }) {
+function Cargador({ alCargar, nivel }: { alCargar: () => void; nivel: string | null | undefined }) {
+  /*
+   * El servidor ya rechaza las cargas sin permiso —esa es la defensa de verdad y se queda— pero la
+   * pantalla ofrecía igualmente arrastrar archivos a quien tiene acceso de consulta. Soltar una
+   * carpeta de expedientes, ver cómo suben y que cada uno conteste «tu acceso es de consulta» es
+   * una pérdida de tiempo que la interfaz podía haberle ahorrado.
+   */
+  /*
+   * Mientras no se sepa el nivel, se OFRECE.
+   *
+   * `salud` tarda en contestar porque antes le pregunta al nodo —hasta cuatro segundos, más si el
+   * nodo está dormido— y esconder el cargador durante esa espera se lo quita a quien sí puede
+   * subir. El error barato es enseñárselo un segundo a quien no puede y que el servidor lo
+   * rechace con una frase clara; el caro es que quien viene a cargar el catastro no encuentre
+   * dónde hacerlo.
+   */
+  const puedeCargar = nivel === undefined || nivel === 'escribe' || nivel === 'mando';
   const [encima, setEncima] = useState(false);
   const [cola, setCola] = useState<Array<{ id: number; nombre: string; estado: 'espera' | 'subiendo' | 'ok' | 'falló'; dicho?: string }>>([]);
   const entrada = useRef<HTMLInputElement>(null);
@@ -558,7 +963,9 @@ function Cargador({ alCargar }: { alCargar: () => void }) {
         try {
           const r = await fetch(`/api/electrum/subir?nombre=${encodeURIComponent(archivo.name)}`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/octet-stream', ...headersElectrum() },
+            // El tipo del navegador si lo sabe: una foto arrastrada desde el móvil puede llegar sin
+            // extensión, y por el nombre solo se perdería que era una imagen que hay que leer.
+            headers: { 'Content-Type': archivo.type || 'application/octet-stream', ...headersElectrum() },
             body: archivo,
           });
           const j = await r.json().catch(() => ({}));
@@ -587,9 +994,34 @@ function Cargador({ alCargar }: { alCargar: () => void }) {
     [consumir]
   );
 
+  if (!puedeCargar) {
+    return (
+      <div className="px-4 pb-3">
+        <div
+          className="rounded-xl border border-dashed px-3 py-3 text-center"
+          style={{ borderColor: 'rgba(255,255,255,.10)' }}
+        >
+          <span className="block text-[12px] leading-relaxed text-[#8FA3B0]">
+            Tu acceso es de consulta: podés mirarlo todo y preguntar lo que quieras, pero no cargarle
+            nada al cerebro. Pedile a José nivel de trabajo.
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="px-4 pb-3">
-      <div
+      {/*
+        * Un BOTÓN de verdad, no un div clicable.
+        *
+        * Era un `div` con un `onClick` y un `input` escondido: con el ratón funcionaba y con el
+        * teclado no existía — no recibe foco, no se activa con Intro ni con espacio, y un lector de
+        * pantalla no tiene forma de anunciar que ahí se suben archivos. Arrastrar y soltar sigue
+        * funcionando igual; lo que cambia es que ahora también hay una manera de usarlo sin ratón.
+        */}
+      <button
+        type="button"
         onDragOver={(e) => {
           e.preventDefault();
           setEncima(true);
@@ -601,22 +1033,27 @@ function Cargador({ alCargar }: { alCargar: () => void }) {
           void subir([...e.dataTransfer.files]);
         }}
         onClick={() => entrada.current?.click()}
-        className="rounded-xl border border-dashed px-3 py-4 text-center cursor-pointer transition-colors"
+        aria-label="Subir archivos al cerebro: catastro, expedientes o la foto de un papel"
+        className="w-full rounded-xl border border-dashed px-3 py-4 text-center cursor-pointer transition-colors focus:outline-none focus-visible:border-[#FFAE3B] focus-visible:ring-2 focus-visible:ring-[#FFAE3B]/40"
         style={{ borderColor: encima ? AMBAR : 'rgba(255,255,255,.16)', background: encima ? 'rgba(255,174,59,.07)' : 'transparent' }}
       >
-        <div className="text-[13px] text-[#B9C7CE]">Arrastrá acá el catastro o un expediente</div>
-        <div className="mt-0.5 font-mono text-[10px] text-[#6C7F89]">.zip de shapefile · KML · KMZ · GeoJSON · CSV · PDF</div>
-        <input
-          ref={entrada}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            void subir([...(e.target.files || [])]);
-            e.target.value = '';
-          }}
-        />
-      </div>
+        <span className="block text-[13px] text-[#B9C7CE]">Arrastrá acá el catastro, un expediente o la foto de un papel</span>
+        <span className="mt-0.5 block font-mono text-[10px] text-[#6C7F89]">
+          .zip de shapefile · KML · KMZ · GeoJSON · CSV · PDF · JPG · PNG
+        </span>
+      </button>
+      {/* Fuera del botón: un control dentro de otro control no es HTML válido y los clics chocan. */}
+      <input
+        ref={entrada}
+        type="file"
+        multiple
+        className="hidden"
+        tabIndex={-1}
+        onChange={(e) => {
+          void subir([...(e.target.files || [])]);
+          e.target.value = '';
+        }}
+      />
 
       {cola.length > 0 && (
         <ul className="mt-2 space-y-1.5">
@@ -659,8 +1096,8 @@ function Estado() {
   if (!s) return null;
 
   const filas: Array<[string, boolean, string]> = [
-    ['Cerebro', !!s.cerebro?.vivo, s.cerebro?.vivo ? String(s.cerebro.modelo).split('/').pop() : s.cerebro?.configurado ? 'no responde' : 'sin configurar'],
-    ['Voz', !!s.voz?.llave, s.voz?.llave ? 'ElevenLabs' : 'sin llave'],
+    ['Cerebro', !!s.cerebro?.vivo, s.cerebro?.vivo ? (s.cerebro.modelo ? String(s.cerebro.modelo).split('/').pop() : 'en línea') : s.cerebro?.configurado ? 'no responde' : 'sin configurar'],
+    ['Voz', !!s.voz?.llave, s.voz?.llave ? 'servidor propio' : 'sin llave'],
     ['Catastro', !!s.catastro?.viva, s.catastro?.viva ? `${s.catastro.concesiones} concesiones` : s.catastro?.motivo || 'fuera de línea'],
     ['Telegram', !!s.bot, s.bot ? 'escuchando' : 'apagado'],
   ];
@@ -692,19 +1129,75 @@ function Estado() {
   );
 }
 
+/** Cuántos se piden por página. No es un tope escondido: la pantalla dice cuántos hay en total. */
+const PAGINA = 60;
+
+type Indice = {
+  capas: Array<{ id: number; nombre: string; formato: string; origen_crs: string; entidades: number; subido?: string }>;
+  documentos: Array<{ id: number; nombre: string; tipo: string; paginas: number; subido?: string; subido_por?: string }>;
+  totales: { capas: number; documentos: number };
+  /** Cuántos hay en total, al margen de la búsqueda. */
+  existentes: { capas: number; documentos: number };
+  /** Qué puede hacer aquí quien pregunta. Viene con la lista porque `salud` tarda. */
+  nivel: string | null;
+};
+
 function Expedientes() {
-  const [datos, setDatos] = useState<{ capas: any[]; documentos: any[] } | null>(null);
+  const [datos, setDatos] = useState<Indice | null>(null);
   const [fallo, setFallo] = useState<'' | 'puerta' | 'base'>('');
   const [vuelta, setVuelta] = useState(0);
+  /** Lo que se está buscando. Vacío es «todo». */
+  const [busca, setBusca] = useState('');
+  /** Lo que se escribe, antes de que pare de escribir. */
+  const [escrito, setEscrito] = useState('');
+  const [trayendo, setTrayendo] = useState(false);
+  /*
+   * Tres estados, no dos. `undefined` es «todavía no lo sé» y `null` es «ya pregunté y no tiene
+   * nivel» —una llave de demostración—. Colapsarlos en un solo null hacía que el cargador se le
+   * ofreciera para siempre a quien solo puede consultar, porque su nivel es null de verdad.
+   */
+  const [nivel, setNivel] = useState<string | null | undefined>(undefined);
+
+  // No una consulta por tecla: se espera a que termine de escribir.
+  useEffect(() => {
+    const t = setTimeout(() => setBusca(escrito.trim()), 300);
+    return () => clearTimeout(t);
+  }, [escrito]);
 
   useEffect(() => {
-    fetch('/api/electrum/expedientes', { headers: headersElectrum() })
+    const q = busca ? `&q=${encodeURIComponent(busca)}` : '';
+    fetch(`/api/electrum/expedientes?limite=${PAGINA}${q}`, { headers: headersElectrum() })
       .then((r) => (r.ok ? r.json() : Promise.reject(r.status)))
-      .then(setDatos)
+      .then((j: Indice) => {
+        setDatos(j);
+        setNivel(j.nivel ?? null);
+      })
       .catch((e) => setFallo(e === 401 ? 'puerta' : 'base'));
-  }, [vuelta]);
+  }, [vuelta, busca]);
 
   const recargar = useCallback(() => setVuelta((v) => v + 1), []);
+
+  /** Traer la página siguiente y pegarla a lo que ya hay. */
+  const traerMas = useCallback(async () => {
+    if (!datos || trayendo) return;
+    setTrayendo(true);
+    try {
+      const desde = Math.max(datos.capas.length, datos.documentos.length);
+      const q = busca ? `&q=${encodeURIComponent(busca)}` : '';
+      const r = await fetch(`/api/electrum/expedientes?limite=${PAGINA}&desde=${desde}${q}`, {
+        headers: headersElectrum(),
+      });
+      if (!r.ok) return;
+      const j: Indice = await r.json();
+      setDatos((d) =>
+        d
+          ? { ...j, capas: [...d.capas, ...j.capas], documentos: [...d.documentos, ...j.documentos] }
+          : j
+      );
+    } finally {
+      setTrayendo(false);
+    }
+  }, [datos, busca, trayendo]);
 
   if (fallo === 'puerta') return <div className="p-4 text-sm text-[#8FA3B0] leading-relaxed">{SIN_PUERTA}</div>;
   if (fallo) {
@@ -717,6 +1210,23 @@ function Expedientes() {
   if (!datos) return <div className="p-4 font-mono text-[11px] text-[#6C7F89]">cargando…</div>;
 
   const vacio = !datos.capas.length && !datos.documentos.length;
+  const total = (datos.totales?.capas || 0) + (datos.totales?.documentos || 0);
+  /*
+   * «No existe» y «no está en esta búsqueda» no se pueden ver igual en un registro: quien busca
+   * «Quebrada Seca» y ve la pantalla de «todavía no hay nada cargado» concluye que el catastro está
+   * vacío. Con una búsqueda en curso, el vacío se cuenta como lo que es.
+   */
+  if (vacio && busca) {
+    return (
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 w-full max-w-4xl mx-auto">
+        <Buscador escrito={escrito} setEscrito={setEscrito} />
+        <p className="text-sm text-[#8FA3B0] leading-relaxed">
+          Nada que se llame «{busca}». Hay {datos.existentes?.capas ?? 0} capas y{' '}
+          {datos.existentes?.documentos ?? 0} expedientes cargados en total; borrá la búsqueda para verlos.
+        </p>
+      </div>
+    );
+  }
   if (vacio) {
     return (
       <div className="flex-1 overflow-y-auto w-full max-w-4xl mx-auto">
@@ -727,7 +1237,7 @@ function Expedientes() {
           <p>Todavía no hay nada cargado.</p>
           <p>Lo geográfico se vuelve mapa, medido sobre el elipsoide. Los documentos quedan citables con su página.</p>
         </div>
-        <Cargador alCargar={recargar} />
+        <Cargador alCargar={recargar} nivel={nivel} />
       </div>
     );
   }
@@ -741,11 +1251,12 @@ function Expedientes() {
         encontrarlo. Quien abre esta pestaña casi siempre viene a añadir algo, no a leer el índice:
         lo primero que se ve tiene que ser por dónde se mete.
       */}
-      <Cargador alCargar={recargar} />
+      <Cargador alCargar={recargar} nivel={nivel} />
+      <Buscador escrito={escrito} setEscrito={setEscrito} />
       {datos.capas.length > 0 && (
         <section>
           <h3 className="font-mono text-[10px] tracking-[0.18em] uppercase mb-2" style={{ color: AMBAR }}>
-            Capas del mapa
+            Capas del mapa <Cuenta hay={datos.capas.length} de={datos.totales?.capas} />
           </h3>
           <ul className="space-y-1.5">
             {datos.capas.map((c) => (
@@ -753,6 +1264,7 @@ function Expedientes() {
                 <div className="text-[#E7EEF2]">{c.nombre}</div>
                 <div className="font-mono text-[11px] text-[#6C7F89]">
                   {c.entidades} entidades · {c.formato} · {c.origen_crs}
+                  {c.subido ? ` · ${fecha(c.subido)}` : ''}
                 </div>
               </li>
             ))}
@@ -762,7 +1274,7 @@ function Expedientes() {
       {datos.documentos.length > 0 && (
         <section>
           <h3 className="font-mono text-[10px] tracking-[0.18em] uppercase mb-2" style={{ color: AMBAR }}>
-            Expedientes
+            Expedientes <Cuenta hay={datos.documentos.length} de={datos.totales?.documentos} />
           </h3>
           <ul className="space-y-1.5">
             {datos.documentos.map((d) => (
@@ -770,12 +1282,224 @@ function Expedientes() {
                 <div className="text-[#E7EEF2]">{d.nombre}</div>
                 <div className="font-mono text-[11px] text-[#6C7F89]">
                   {d.tipo} · {d.paginas} {d.paginas === 1 ? 'página' : 'páginas'}
+                  {d.subido ? ` · ${fecha(d.subido)}` : ''}
+                  {d.subido_por ? ` · ${d.subido_por}` : ''}
                 </div>
               </li>
             ))}
           </ul>
         </section>
       )}
+      {(datos.capas.length < (datos.totales?.capas ?? 0) ||
+        datos.documentos.length < (datos.totales?.documentos ?? 0)) && (
+        <button
+          type="button"
+          onClick={() => void traerMas()}
+          disabled={trayendo}
+          className="w-full rounded-lg border border-white/12 py-2 font-mono text-[11px] tracking-[0.14em] uppercase text-[#9FB0B8] transition-colors hover:border-white/25 hover:text-white disabled:opacity-40 cursor-pointer"
+        >
+          {trayendo ? 'trayendo…' : 'Ver más'}
+        </button>
+      )}
     </div>
+  );
+}
+
+/** Silenciar o dejar hablar. Vive suelto para poder estar en la fila o dentro del menú. */
+function BotonVoz({ vozActiva, setVozActiva }: { vozActiva: boolean; setVozActiva: (f: (v: boolean) => boolean) => void }) {
+  return (
+    <button
+      type="button"
+      onClick={() =>
+        setVozActiva((v) => {
+          // Al silenciar se corta lo que suena y se invalida lo que viene; no basta el booleano.
+          if (v) callar();
+          return !v;
+        })
+      }
+      title={vozActiva ? 'Silenciar a Dr Electrum' : 'Que Dr Electrum hable'}
+      aria-pressed={vozActiva}
+      className="shrink-0 rounded-lg border px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer"
+      style={vozActiva ? { borderColor: AMBAR, color: AMBAR } : { borderColor: 'rgba(255,255,255,.12)', color: '#9FB0B8' }}
+    >
+      Voz
+    </button>
+  );
+}
+
+function BotonPdf({ pedirInforme, pensando, ficha }: { pedirInforme: () => void; pensando: boolean; ficha: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={pedirInforme}
+      disabled={pensando}
+      title={ficha ? 'Ficha en PDF de la concesión que estás mirando, con el mapa' : 'Informe de la cartera en PDF, con el mapa como se está viendo'}
+      className="shrink-0 rounded-lg border border-white/12 px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] uppercase text-[#9FB0B8] transition-colors hover:border-white/25 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed cursor-pointer"
+    >
+      PDF
+    </button>
+  );
+}
+
+/**
+ * EL ASA DE REPARTIR LA PANTALLA.
+ *
+ * Un solo elemento para las tres maneras de usarlo, que es lo que hace que no haya que explicarlo:
+ *
+ *  · **Arrastrar** con ratón o con el dedo: reparto libre, del 12 % al 86 %.
+ *  · **Tocar** sin arrastrar: rueda entre los tres repartos —mapa, dividido, lectura—. En un
+ *    teléfono nadie arrastra con precisión, y tocar es lo que se intenta primero.
+ *  · **Teclado**: con foco, las flechas mueven de cinco en cinco e Inicio/Fin van a los extremos.
+ *    Es un `separator` con `aria-valuenow`, que es lo que un lector de pantalla sabe leer.
+ *
+ * Se distingue tocar de arrastrar por distancia recorrida, no por tiempo: un dedo sobre vidrio
+ * siempre se mueve un par de píxeles, y medir por tiempo convertiría cualquier toque lento en un
+ * arrastre de cero píxeles que no cambia nada y parece que el botón no responde.
+ */
+function Asa({
+  alto,
+  onAlto,
+  onArrastrar,
+}: {
+  alto: number;
+  onAlto: (v: number) => void;
+  onArrastrar: (v: boolean) => void;
+}) {
+  const movido = useRef(0);
+
+  const alBajar = useCallback(
+    (e: PunteroReact<HTMLDivElement>) => {
+      const el = e.currentTarget;
+      el.setPointerCapture(e.pointerId);
+      movido.current = 0;
+      onArrastrar(true);
+
+      const mover = (ev: PointerEvent) => {
+        movido.current = Math.max(movido.current, Math.abs(ev.clientY - e.clientY));
+        // El panel crece hacia ARRIBA: cuanto más alto el puntero, mayor la fracción.
+        onAlto(1 - ev.clientY / Math.max(1, window.innerHeight));
+      };
+      const soltar = () => {
+        el.releasePointerCapture?.(e.pointerId);
+        window.removeEventListener('pointermove', mover);
+        window.removeEventListener('pointerup', soltar);
+        onArrastrar(false);
+        // Menos de cuatro píxeles es un toque, no un arrastre.
+        if (movido.current < 4) onAlto(siguienteReparto(alto));
+      };
+      window.addEventListener('pointermove', mover);
+      window.addEventListener('pointerup', soltar);
+    },
+    [alto, onAlto, onArrastrar]
+  );
+
+  const alTeclado = useCallback(
+    (e: TeclaReact) => {
+      const paso = 0.05;
+      if (e.key === 'ArrowUp') onAlto(alto + paso);
+      else if (e.key === 'ArrowDown') onAlto(alto - paso);
+      else if (e.key === 'Home') onAlto(ALTURAS.lectura);
+      else if (e.key === 'End') onAlto(ALTURAS.mapa);
+      else if (e.key === 'Enter' || e.key === ' ') onAlto(siguienteReparto(alto));
+      else return;
+      e.preventDefault();
+    },
+    [alto, onAlto]
+  );
+
+  const donde = repartoDe(alto);
+  const comoSeLlama = donde === 'mapa' ? 'mapa grande' : donde === 'lectura' ? 'lectura' : 'dividido';
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label={`Repartir la pantalla entre mapa y conversación — ahora en ${comoSeLlama}`}
+      aria-valuenow={Math.round(alto * 100)}
+      aria-valuemin={12}
+      aria-valuemax={86}
+      tabIndex={0}
+      onPointerDown={alBajar}
+      onKeyDown={alTeclado}
+      title={`${comoSeLlama} · arrastrá para repartir, tocá para cambiar`}
+      className="group absolute inset-x-0 -top-2 z-30 flex h-4 cursor-ns-resize touch-none items-center justify-center focus:outline-none"
+    >
+      <span
+        className="h-1 w-12 rounded-full bg-white/20 transition-colors group-hover:bg-white/40 group-focus-visible:bg-[#FFAE3B]"
+        aria-hidden="true"
+      />
+    </div>
+  );
+}
+
+/**
+ * UNA LÍNEA DE LA TRAZA, QUE SE PUEDE ABRIR.
+ *
+ * La traza es lo que separa esto de un chatbot que suena convincente: «consultó el catastro, midió
+ * sobre el elipsoide, encontró el traslape» vale más que la respuesta sola. Pero estaba recortada a
+ * una línea con puntos suspensivos, y un resumen cortado no es evidencia — justo donde decía cuántas
+ * concesiones encontró o qué área midió, la frase se acababa.
+ *
+ * Ahora se abre. Y al abrirse enseña también cuánto tardó, que es lo que contesta «¿esto lo
+ * consultó de verdad o se lo inventó?»: una herramienta que tarda ochenta milisegundos fue a la
+ * base, una que tarda cero no hizo nada.
+ */
+function Rastro({ h }: { h: { herramienta: string; ok: boolean; resumen: string; ms?: number } }) {
+  const [abierto, setAbierto] = useState(false);
+  const largo = h.resumen.length > 64;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => largo && setAbierto((v) => !v)}
+        aria-expanded={largo ? abierto : undefined}
+        className={`flex w-full gap-1.5 text-left ${largo ? 'cursor-pointer hover:text-[#9FB0B8]' : 'cursor-default'}`}
+      >
+        <span style={{ color: h.ok ? AMBAR : '#D9705A' }}>{h.ok ? '·' : '×'}</span>
+        <span className={abierto ? 'flex-1 whitespace-pre-wrap break-words' : 'flex-1 truncate'}>
+          {h.herramienta} — {h.resumen}
+        </span>
+        {largo && <span className="shrink-0 opacity-60">{abierto ? '▴' : '▾'}</span>}
+      </button>
+      {abierto && h.ms != null && (
+        <div className="pl-[14px] pt-0.5 opacity-70">
+          tardó {h.ms} ms{h.ms < 2 ? ' · tan rápido que salió de algo ya cargado, no de una consulta nueva' : ''}
+        </div>
+      )}
+    </>
+  );
+}
+
+/**
+ * Cuándo entró. Es de las cosas que más se preguntan de un registro —«¿esto es el padrón de junio o
+ * el de antes?»— y no se veía por ningún lado.
+ */
+function fecha(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('es-HN', { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch {
+    return '';
+  }
+}
+
+/** «12 de 125». Sin esto, una lista truncada parece una lista completa. */
+function Cuenta({ hay, de }: { hay: number; de?: number }) {
+  if (de == null || de <= hay) return <span className="text-[#6C7F89] normal-case tracking-normal">· {hay}</span>;
+  return (
+    <span className="text-[#6C7F89] normal-case tracking-normal">
+      · {hay} de {de}
+    </span>
+  );
+}
+
+function Buscador({ escrito, setEscrito }: { escrito: string; setEscrito: (v: string) => void }) {
+  return (
+    <input
+      value={escrito}
+      onChange={(e) => setEscrito(e.target.value)}
+      placeholder="Buscar por nombre en capas y expedientes…"
+      aria-label="Buscar en capas y expedientes"
+      className="w-full rounded-lg bg-white/[0.06] border border-white/12 px-3 py-2 text-sm text-[#E7EEF2] placeholder:text-[#5E7078] focus:outline-none focus:border-[#FFAE3B]/60"
+    />
   );
 }

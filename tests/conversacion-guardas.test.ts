@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { pedidoRed, esSobreUltron, esTemaOG } from '../lib/conversacion';
 
-test('saludos y preguntas sobre ULTRON no van a internet', () => {
-  for (const f of ['hola ULTRON, ¿cómo amaneciste?', '¿cómo estás hoy?', '¿qué sentís cuando cantás?', '¿quién sos vos?', '¿te gusta el oro?']) {
+test('saludos y preguntas sobre AU-RA no van a internet', () => {
+  for (const f of ['hola AU-RA, ¿cómo amaneciste?', '¿cómo estás hoy?', '¿qué sentís cuando cantás?', '¿quién sos vos?', '¿te gusta el oro?']) {
     assert.equal(pedidoRed(f), null, f);
     assert.equal(esSobreUltron(f), true, f);
   }

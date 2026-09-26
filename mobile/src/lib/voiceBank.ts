@@ -12,9 +12,7 @@ export type ClipId =
   | 'noches'
   | 'calenta'
   | 'listos'
-  | 'quien'
   | 'puedo'
-  | 'discurso'
   | 'chiste1'
   | 'chiste2'
   | 'chiste3'
@@ -36,7 +34,6 @@ export type ClipId =
   | 'gracias'
   | 'hola'
   | 'despertar'
-  | 'bienvenida'
   | 'triste'
   | 'cansado'
   | 'carino'
@@ -46,7 +43,7 @@ export type ClipId =
   | 'oracion'
   | 'waymaker';
 
-export const CLIP_IDS: readonly ClipId[] = ['mmm', 'je', 'uy', 'vale', 'entendido', 'dias', 'tardes', 'noches', 'calenta', 'listos', 'quien', 'puedo', 'discurso', 'chiste1', 'chiste2', 'chiste3', 'chiste4', 'chiste5', 'bruno', 'bohemian', 'ligera', 'bittersweet', 'runaway', 'jesus', 'risa1', 'risa2', 'mmm2', 'uy2', 'aqui', 'listo', 'yaya', 'gracias', 'hola', 'despertar', 'bienvenida', 'triste', 'cansado', 'carino', 'molesto', 'orgullo', 'sorpresa', 'oracion', 'waymaker'];
+export const CLIP_IDS: readonly ClipId[] = ['mmm', 'je', 'uy', 'vale', 'entendido', 'dias', 'tardes', 'noches', 'calenta', 'listos', 'puedo', 'chiste1', 'chiste2', 'chiste3', 'chiste4', 'chiste5', 'bruno', 'bohemian', 'ligera', 'bittersweet', 'runaway', 'jesus', 'risa1', 'risa2', 'mmm2', 'uy2', 'aqui', 'listo', 'yaya', 'gracias', 'hola', 'despertar', 'triste', 'cansado', 'carino', 'molesto', 'orgullo', 'sorpresa', 'oracion', 'waymaker'];
 
 export function bankKey(t: string): string {
   return String(t)
@@ -82,9 +79,7 @@ export const REMOTE_CLIPS: Record<ClipId, string> = {
   noches: '/voz/noches.mp3',
   calenta: '/voz/calenta.mp3',
   listos: '/voz/listos.mp3',
-  quien: '/voz/quien.mp3',
   puedo: '/voz/puedo.mp3',
-  discurso: '/voz/discurso.mp3',
   chiste1: '/voz/chiste1.mp3',
   chiste2: '/voz/chiste2.mp3',
   chiste3: '/voz/chiste3.mp3',
@@ -106,7 +101,6 @@ export const REMOTE_CLIPS: Record<ClipId, string> = {
   gracias: '/voz/gracias.mp3',
   hola: '/voz/hola.mp3',
   despertar: '/voz/despertar.mp3',
-  bienvenida: '/voz/bienvenida.mp3',
   triste: '/voz/triste.mp3',
   cansado: '/voz/cansado.mp3',
   carino: '/voz/carino.mp3',
@@ -124,14 +118,12 @@ export const CLIP_TEXT: Record<ClipId, string> = {
   uy: "Uy.",
   vale: "Vale, jefe.",
   entendido: "Entendido.",
-  dias: "Buenos días, José. Estoy listo. ¿En qué te ayudo?",
-  tardes: "Buenas tardes, José. Estoy listo. ¿En qué te ayudo?",
-  noches: "Buenas noches, José. Estoy listo. ¿En qué te ayudo?",
+  dias: "Buenos días, José. Estoy lista. ¿En qué te ayudo?",
+  tardes: "Buenas tardes, José. Estoy lista. ¿En qué te ayudo?",
+  noches: "Buenas noches, José. Estoy lista. ¿En qué te ayudo?",
   calenta: "Espera. Estamos calentando el motor de veintisiete B.",
   listos: "Estamos listos.",
-  quien: "Soy ULTRON, la mesa de Orden Global.",
   puedo: "Esto es lo que puedo hacer.",
-  discurso: "El discurso de ULTRON.",
   chiste1: "Chiste uno.",
   chiste2: "Chiste dos.",
   chiste3: "Chiste tres.",
@@ -153,7 +145,6 @@ export const CLIP_TEXT: Record<ClipId, string> = {
   gracias: "Gracias.",
   hola: "Hola.",
   despertar: "Ya despierto.",
-  bienvenida: "Bienvenido a la mesa.",
   triste: "Ay…",
   cansado: "Aaah…",
   carino: "Mmm… gracias.",
@@ -182,12 +173,12 @@ export const PHRASE_TO_CLIP: Record<string, ClipId> = {
   "vale": 'vale',
   // Entendido.
   "entendido": 'entendido',
-  // Buenos días, José. Estoy listo. ¿En qué te ayudo?
-  "buenosdiasjoseestoylistoenqueteayudo": 'dias',
-  // Buenas tardes, José. Estoy listo. ¿En qué te ayudo?
-  "buenastardesjoseestoylistoenqueteayudo": 'tardes',
-  // Buenas noches, José. Estoy listo. ¿En qué te ayudo?
-  "buenasnochesjoseestoylistoenqueteayudo": 'noches',
+  // Buenos días, José. Estoy lista. ¿En qué te ayudo?
+  "buenosdiasjoseestoylistaenqueteayudo": 'dias',
+  // Buenas tardes, José. Estoy lista. ¿En qué te ayudo?
+  "buenastardesjoseestoylistaenqueteayudo": 'tardes',
+  // Buenas noches, José. Estoy lista. ¿En qué te ayudo?
+  "buenasnochesjoseestoylistaenqueteayudo": 'noches',
   // Espera. Estamos calentando el motor de veintisiete B.
   "esperaestamoscalentandoelmotordeveintisieteb": 'calenta',
   // Estamos listos.

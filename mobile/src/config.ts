@@ -5,8 +5,8 @@ const extra = (Constants.expoConfig?.extra || {}) as { ultronUrl?: string };
 export const API_BASE = (extra.ultronUrl || 'https://ultron-looi-desk.onrender.com').replace(/\/+$/, '');
 export const APP_VERSION = Constants.expoConfig?.version || '4.0.0';
 
-/** Nombre público de la única voz de ULTRON (servidor: ElevenLabs v3, timbre Gabriela). */
-export const VOICE_NAME = 'ULTRON (Gabriela · ElevenLabs v3)';
+/** Nombre público de la única voz de AU-RA (servidor propio: Voicebox, perfil Kokoro Dora). */
+export const VOICE_NAME = 'AU-RA (Dora · servidor propio)';
 
 export type DeskUser = {
   id: 'jose' | 'medardo' | 'otro';
@@ -49,29 +49,7 @@ export function findDeskUserByEmail(correo: string): DeskUser | undefined {
   return DESK_USERS.find((u) => u.correo === n);
 }
 
-export type FaceState =
-  | 'IDLE'
-  | 'LISTENING'
-  | 'THINKING'
-  | 'SPEAKING'
-  | 'HAPPY'
-  | 'CONCERNED'
-  | 'ANGRY'
-  | 'SLEEPING'
-  | 'STARTLE'
-  | 'WINK'
-  | 'CONFUSED'
-  | 'MUSIC'
-  | 'SCAN'
-  | 'YAWNING'
-  | 'LAUGH'
-  | 'SURPRISED'
-  | 'SAD'
-  | 'TIRED'
-  | 'SING'
-  | 'CURIOUS'
-  | 'PROUD'
-  | 'PRAY';
+export type { FaceState } from './caraTipos';
 
 export type Mode =
   | 'GUARDIAN'

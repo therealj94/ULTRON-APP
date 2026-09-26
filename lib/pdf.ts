@@ -544,15 +544,15 @@ export function documentoPdf(doc: Documento): Buffer {
 }
 
 /**
- * Lo de siempre: título, cuerpo y pie en una página. Media docena de sitios de ULTRON la llaman,
+ * Lo de siempre: título, cuerpo y pie en una página. Media docena de sitios de AU-RA la llaman,
  * así que sigue existiendo — ahora sobre el escritor nuevo, o sea que ya parte por ancho real y
  * se derrama a otra página en vez de cortar a las sesenta líneas.
  */
 export function textoAPdf(opts: { titulo: string; cuerpo: string; pie?: string }): Buffer {
   return documentoPdf({
-    titulo: String(opts.titulo || 'ULTRON').slice(0, 90),
+    titulo: String(opts.titulo || 'AU-RA').slice(0, 90),
     bloques: [{ tipo: 'parrafo', texto: String(opts.cuerpo || '') }],
-    pie: String(opts.pie || `ULTRON FP · ${new Date().toISOString().slice(0, 16)} UTC`),
+    pie: String(opts.pie || `AU-RA FP · ${new Date().toISOString().slice(0, 16)} UTC`),
     acento: [0.13, 0.72, 0.85],
   });
 }

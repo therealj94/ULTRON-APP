@@ -1,16 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import {
-  Camera,
-  X,
-  Download,
-  RotateCcw,
-  Sparkles,
-  ShieldCheck,
-  Zap,
-  Volume2,
-  Eye,
-  CheckCircle2,
-} from 'lucide-react';
+import { Camera, X, Download, RotateCcw, Zap, Eye, CheckCircle2 } from 'lucide-react';
 import { playSfx } from '../03-voz/audio';
 
 interface CameraCountdownModalProps {
@@ -39,17 +28,24 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user');
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const countdownIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // El stream vive en un ref: si stopCamera dependiera del estado `stream`, cada setStream
+  // re-disparaba el efecto (getUserMedia otra vez, foto borrada, streams sin cerrar).
+  const streamRef = useRef<MediaStream | null>(null);
+  // Cada pedido de cámara lleva un número: si se cerró mientras getUserMedia esperaba, se descarta.
+  const pedidoRef = useRef(0);
+
+  const soltarStream = () => {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  };
 
   // Initialize camera stream when modal opens
   const startCamera = useCallback(async () => {
     setCameraError(null);
+    const n = ++pedidoRef.current;
+    soltarStream();
     try {
-      if (stream) {
-        stream.getTracks().forEach((track) => track.stop());
-      }
-
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode,
@@ -58,45 +54,52 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
         },
         audio: false,
       });
+      if (n !== pedidoRef.current) {
+        // Llegó tarde (se cerró o se pidió otra): no dejar la cámara prendida.
+        mediaStream.getTracks().forEach((track) => track.stop());
+        return;
+      }
 
+      streamRef.current = mediaStream;
       setStream(mediaStream);
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
     } catch (err: any) {
+      if (n !== pedidoRef.current) return;
       console.error('Camera access error:', err);
-      setCameraError(
-        'No se pudo acceder a la cámara. Verifica los permisos del navegador o selecciona otra cámara.'
-      );
+      setCameraError('No pude abrir la cámara. Revisá los permisos del navegador o probá con la otra cámara.');
     }
   }, [facingMode]);
 
   // Clean up tracks when closing modal
   const stopCamera = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-      setStream(null);
-    }
+    pedidoRef.current++;
+    soltarStream();
+    setStream(null);
     if (countdownIntervalRef.current) {
       clearInterval(countdownIntervalRef.current);
       countdownIntervalRef.current = null;
     }
     setCountdown(null);
     setIsFlashing(false);
-  }, [stream]);
+  }, []);
 
+  // Solo al abrir/cerrar o al cambiar de cámara (startCamera cambia únicamente con facingMode).
   useEffect(() => {
-    if (isOpen) {
-      setCapturedImage(null);
-      setDownloadSuccess(false);
-      startCamera();
-    } else {
-      stopCamera();
-    }
+    if (!isOpen) return;
+    setCapturedImage(null);
+    setDownloadSuccess(false);
+    void startCamera();
     return () => {
       stopCamera();
     };
   }, [isOpen, startCamera, stopCamera]);
+
+  // El <video> se vuelve a montar al volver de la foto o de un error: reengancharle el stream.
+  useEffect(() => {
+    if (videoRef.current && stream && videoRef.current.srcObject !== stream) videoRef.current.srcObject = stream;
+  }, [stream, capturedImage, cameraError]);
 
   // Perform the physical snapshot capture
   const takeSnapshot = useCallback(() => {
@@ -122,19 +125,15 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
       }
       ctx.drawImage(video, 0, 0, width, height);
 
-      // Reset transform for cyber HUD overlay stamp
+      // Sin espejo para la firma
       ctx.setTransform(1, 0, 0, 1, 0, 0);
 
-      // Cyber LOOI Watermark Stamp in bottom corner
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-      ctx.fillRect(24, height - 60, 360, 36);
-      ctx.strokeStyle = '#05E1FF';
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(24, height - 60, 360, 36);
-
-      ctx.fillStyle = '#05E1FF';
-      ctx.font = 'bold 14px monospace';
-      ctx.fillText(`ULTRON FP · LOOI CAM [${new Date().toLocaleTimeString()}]`, 36, height - 37);
+      // Firma discreta abajo: AU-RA y la hora
+      ctx.fillStyle = 'rgba(35, 37, 40, 0.7)';
+      ctx.fillRect(24, height - 60, 220, 36);
+      ctx.fillStyle = '#E0C27F';
+      ctx.font = '600 14px Figtree, system-ui, sans-serif';
+      ctx.fillText(`AU-RA · ${new Date().toLocaleTimeString()}`, 36, height - 37);
 
       const dataUrl = canvas.toDataURL('image/png', 0.95);
       setCapturedImage(dataUrl);
@@ -144,7 +143,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
         id: `photo_${Date.now()}`,
         dataUrl,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-        caption: `Cámara Frontal HD · Captura de Junta Directiva`,
+        caption: facingMode === 'user' ? 'Cámara frontal' : 'Cámara trasera',
       };
       onPhotoSaved(photoObj);
     }
@@ -193,7 +192,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
     if (!capturedImage) return;
     const a = document.createElement('a');
     a.href = capturedImage;
-    a.download = `ultron-looi-camera-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
+    a.download = `aura-foto-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.png`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -214,54 +213,52 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
   return (
     <div
       id="camera-countdown-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md p-4 animate-in fade-in duration-200"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-md p-4 animate-in fade-in duration-200"
     >
-      {/* Blinding Flash Overlay */}
+      {/* Flash de la foto */}
       {isFlashing && (
-        <div className="fixed inset-0 z-50 bg-white pointer-events-none transition-opacity duration-200 opacity-100" />
+        <div className="fixed inset-0 z-50 bg-[#34363A] pointer-events-none transition-opacity duration-200 opacity-100" />
       )}
 
-      <div className="relative w-full max-w-3xl bg-[#0b1017] border border-[#05E1FF]/40 rounded-2xl overflow-hidden shadow-2xl shadow-[#05E1FF]/20 flex flex-col max-h-[92vh]">
+      <div className="relative w-full max-w-3xl bg-[#232528] border border-[#46484D] rounded-2xl overflow-hidden shadow-[0_12px_40px_rgba(0,0,0,0.48)] flex flex-col max-h-[92vh]">
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-[#060a0f]/90">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-[#46484D] bg-[#34363A]">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[#05E1FF]/15 border border-[#05E1FF]/40 flex items-center justify-center text-[#05E1FF]">
+            <div className="w-9 h-9 rounded-full bg-[#3D3829] flex items-center justify-center text-[#E0C27F]">
               <Camera className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-white font-mono font-bold text-base tracking-wide flex items-center gap-2">
-                LOOI OPTICAL SHUTTER · CÁMARA EN VIVO
-                <span className="text-[10px] uppercase px-2 py-0.5 rounded-full bg-[#05E1FF]/20 text-[#05E1FF] border border-[#05E1FF]/40">
-                  FHD 1080P
-                </span>
-              </h3>
-              <p className="text-xs text-white/50 font-mono">
-                {capturedImage ? 'Fotografía capturada · Lista para guardar' : 'Alinea tu rostro dentro del retículo cibernético'}
+              <h3 className="text-[#ECE8E2] font-display font-semibold text-lg">Cámara</h3>
+              <p className="text-[13px] text-[#B9B2A8]">
+                {capturedImage ? 'Foto tomada. Podés guardarla o tomar otra.' : 'Mirá a la cámara y tocá «Tomar foto».'}
               </p>
             </div>
           </div>
 
           <button
+            type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-white/70 hover:text-white transition-colors"
+            aria-label="Cerrar cámara"
+            className="w-9 h-9 rounded-full bg-[#3A3C41] hover:bg-[#3D3829] flex items-center justify-center text-[#B9B2A8] hover:text-[#ECE8E2] transition-colors cursor-pointer"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Video / Snapshot Viewport */}
-        <div className="relative flex-1 bg-black overflow-hidden flex items-center justify-center min-h-[380px] max-h-[520px]">
+        <div className="relative flex-1 bg-[#232528] overflow-hidden flex items-center justify-center min-h-[380px] max-h-[520px]">
           {cameraError ? (
             <div className="text-center p-8 max-w-md">
-              <div className="w-14 h-14 rounded-full bg-red-500/20 border border-red-500/40 text-red-400 flex items-center justify-center mx-auto mb-4">
+              <div className="w-14 h-14 rounded-full bg-[#34363A] border border-[#46484D] text-[#D9825F] flex items-center justify-center mx-auto mb-4">
                 <Camera className="w-7 h-7" />
               </div>
-              <p className="text-red-300 font-mono text-sm mb-4">{cameraError}</p>
+              <p className="text-[#ECE8E2] text-sm mb-4">{cameraError}</p>
               <button
+                type="button"
                 onClick={startCamera}
-                className="px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded-lg text-white font-mono text-xs transition-colors"
+                className="px-4 py-2 bg-[#34363A] hover:bg-[#3D3829] border border-[#46484D] rounded-full text-[#ECE8E2] text-[13px] font-semibold transition-colors cursor-pointer"
               >
-                Reintentar Conexión
+                Reintentar
               </button>
             </div>
           ) : capturedImage ? (
@@ -269,12 +266,12 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
             <div className="relative w-full h-full flex items-center justify-center">
               <img
                 src={capturedImage}
-                alt="Captured Snapshot"
+                alt="Foto tomada"
                 className="max-h-[500px] w-auto object-contain rounded-lg shadow-lg"
               />
-              <div className="absolute top-4 left-4 bg-black/70 backdrop-blur-md px-3 py-1.5 rounded-md border border-[#00FFA3]/40 text-[#00FFA3] font-mono text-xs flex items-center gap-2">
+              <div className="absolute top-4 left-4 bg-[#2F3A30] px-3 py-1.5 rounded-full border border-[#3F4D3F] text-[#A9C3A4] text-[13px] font-semibold flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4" />
-                <span>CAPTURA COMPLETADA</span>
+                <span>Foto tomada</span>
               </div>
             </div>
           ) : (
@@ -288,49 +285,27 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                 className={`w-full h-full object-cover ${facingMode === 'user' ? 'scale-x-[-1]' : ''}`}
               />
 
-              {/* Cyber HUD Reticle & Corner Brackets */}
+              {/* Guía de encuadre */}
               <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                {/* Center target box */}
-                <div className="relative w-64 h-64 border border-[#05E1FF]/30 rounded-2xl flex items-center justify-center">
-                  <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-[#05E1FF]" />
-                  <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-[#05E1FF]" />
-                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-[#05E1FF]" />
-                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-[#05E1FF]" />
+                <div className="relative w-64 h-64 rounded-[32px] border-2 border-[#D6B56C]/60" />
 
-                  {/* Crosshair */}
-                  <div className="w-3 h-3 rounded-full bg-[#05E1FF]/40 animate-ping" />
-                  <div className="w-1.5 h-1.5 rounded-full bg-[#05E1FF]" />
-
-                  {/* Face Guide Label */}
-                  <span className="absolute -top-7 text-[10px] font-mono tracking-widest text-[#05E1FF]/80 uppercase bg-black/60 px-2 py-0.5 rounded border border-[#05E1FF]/20">
-                    TARGET: ENCUADRE ROSTRO
-                  </span>
-                </div>
-
-                {/* Outer Framing Telemetry */}
-                <div className="absolute top-4 left-4 flex flex-col gap-1 font-mono text-[10px] text-[#05E1FF]/70 bg-black/60 backdrop-blur-sm p-2 rounded border border-white/10">
-                  <span>SENSOR: SONY STARVIS CMOS</span>
-                  <span>OPTICS: AUTO-FOCUS ULTRA-LOW NOISE</span>
-                  <span>FPS: 60 LOCKED</span>
-                </div>
-
-                <div className="absolute bottom-4 left-4 flex items-center gap-2 font-mono text-[11px] text-white/70 bg-black/60 backdrop-blur-sm px-3 py-1.5 rounded-full border border-white/10">
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                  <span>EN VIVO · ÓPTICA ACTIVA</span>
+                <div className="absolute bottom-4 left-4 flex items-center gap-2 text-[13px] font-medium text-[#ECE8E2] bg-[#232528]/85 px-3 py-1.5 rounded-full">
+                  <span className="w-2 h-2 rounded-full bg-[#D9825F] animate-pulse" />
+                  <span>En vivo</span>
                 </div>
               </div>
 
               {/* Glowing Countdown Center Overlay */}
               {countdown !== null && (
-                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-black/40 backdrop-blur-xs animate-in zoom-in duration-200">
+                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#232528]/60 animate-in zoom-in duration-200" aria-live="assertive">
                   <div className="relative flex items-center justify-center">
-                    <div className="w-32 h-32 rounded-full border-4 border-[#05E1FF] animate-spin border-t-transparent" />
-                    <span className="absolute font-mono font-black text-7xl text-[#05E1FF] drop-shadow-[0_0_25px_rgba(5,225,255,0.9)] animate-pulse">
+                    <div className="w-32 h-32 rounded-full border-4 border-[#D6B56C] animate-spin border-t-transparent" />
+                    <span className="absolute font-display font-bold text-7xl text-[#E0C27F] drop-shadow-[0_8px_24px_rgba(0,0,0,0.34)]">
                       {countdown}
                     </span>
                   </div>
-                  <span className="mt-4 text-white font-mono text-sm tracking-widest uppercase bg-black/70 px-4 py-1.5 rounded-full border border-[#05E1FF]/40">
-                    ¡SONRÍE AL ROBOT LOOI!
+                  <span className="mt-4 text-[#ECE8E2] text-[15px] font-semibold bg-[#34363A] px-4 py-1.5 rounded-full border border-[#46484D]">
+                    ¡Sonreí!
                   </span>
                 </div>
               )}
@@ -339,38 +314,41 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
         </div>
 
         {/* Modal Controls Footer */}
-        <div className="p-4 bg-[#060a0f] border-t border-white/10 flex flex-wrap items-center justify-between gap-3">
+        <div className="p-4 bg-[#34363A] border-t border-[#46484D] flex flex-wrap items-center justify-between gap-3">
           {capturedImage ? (
             /* Actions for Captured Photo */
             <div className="w-full flex flex-wrap items-center justify-between gap-3">
               <button
+                type="button"
                 onClick={handleRetake}
-                className="px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-white/80 hover:text-white font-mono text-xs flex items-center gap-2 transition-all"
+                className="px-4 py-2.5 rounded-full bg-[#3A3C41] hover:bg-[#3D3829] border border-[#46484D] text-[#ECE8E2] text-[13px] font-semibold flex items-center gap-2 transition-all cursor-pointer"
               >
                 <RotateCcw className="w-4 h-4" />
-                <span>Tomar Otra Foto</span>
+                <span>Tomar otra</span>
               </button>
 
               <div className="flex items-center gap-3">
                 {onAnalyzePhoto && (
                   <button
+                    type="button"
                     onClick={() => {
                       onAnalyzePhoto(capturedImage);
                       onClose();
                     }}
-                    className="px-4 py-2.5 rounded-xl bg-[#05E1FF]/15 hover:bg-[#05E1FF]/25 border border-[#05E1FF]/40 text-[#05E1FF] font-mono text-xs font-bold flex items-center gap-2 transition-all shadow-sm shadow-[#05E1FF]/20"
+                    className="px-4 py-2.5 rounded-full bg-[#3D3829] hover:bg-[#46402E] border border-[#46484D] text-[#E0C27F] text-[13px] font-semibold flex items-center gap-2 transition-all cursor-pointer"
                   >
                     <Eye className="w-4 h-4" />
-                    <span>Analizar con Visión IA</span>
+                    <span>¿Qué ves en la foto?</span>
                   </button>
                 )}
 
                 <button
+                  type="button"
                   onClick={handleDownload}
-                  className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-[#00FFA3] to-[#05E1FF] text-black font-mono font-bold text-xs flex items-center gap-2 shadow-lg shadow-[#00FFA3]/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                  className="px-5 py-2.5 rounded-full bg-[#D6B56C] hover:bg-[#E0C27F] text-[#232528] text-[13px] font-semibold flex items-center gap-2 shadow-[0_6px_18px_rgba(0,0,0,0.3)] active:scale-[0.98] transition-all cursor-pointer"
                 >
                   <Download className="w-4 h-4" />
-                  <span>{downloadSuccess ? '¡Guardada en Descargas!' : 'Guardar / Descargar Foto'}</span>
+                  <span>{downloadSuccess ? 'Guardada en Descargas' : 'Descargar'}</span>
                 </button>
               </div>
             </div>
@@ -378,9 +356,11 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
             /* Live Camera Controls */
             <div className="w-full flex items-center justify-between">
               <button
+                type="button"
                 onClick={() => setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'))}
-                className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 hover:text-white font-mono text-xs flex items-center gap-2 transition-colors"
-                title="Cambiar orientación de cámara"
+                className="px-3.5 py-2 rounded-full bg-[#3A3C41] hover:bg-[#3D3829] border border-[#46484D] text-[#B9B2A8] hover:text-[#ECE8E2] text-[13px] font-medium flex items-center gap-2 transition-colors cursor-pointer"
+                title="Cambiar de cámara"
+                aria-label={facingMode === 'user' ? 'Cámara frontal: cambiar a la trasera' : 'Cámara trasera: cambiar a la frontal'}
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>{facingMode === 'user' ? 'Frontal' : 'Trasera'}</span>
@@ -389,22 +369,24 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
               <div className="flex items-center gap-3">
                 {/* Instant Snapshot */}
                 <button
+                  type="button"
                   onClick={takeSnapshot}
                   disabled={Boolean(countdown !== null)}
-                  className="px-4 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white font-mono text-xs flex items-center gap-2 transition-all disabled:opacity-50"
+                  className="px-4 py-2.5 rounded-full bg-[#3A3C41] hover:bg-[#3D3829] border border-[#46484D] text-[#ECE8E2] text-[13px] font-semibold flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
                 >
-                  <Zap className="w-4 h-4 text-amber-400" />
-                  <span>Captura Instantánea</span>
+                  <Zap className="w-4 h-4 text-[#E0C27F]" />
+                  <span>Ahora</span>
                 </button>
 
                 {/* 3-2-1 Countdown Trigger */}
                 <button
+                  type="button"
                   onClick={startCountdown}
                   disabled={Boolean(countdown !== null)}
-                  className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-[#05E1FF] to-[#00FFA3] text-black font-mono font-black text-sm flex items-center gap-2 shadow-lg shadow-[#05E1FF]/30 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50"
+                  className="px-6 py-2.5 rounded-full bg-[#D6B56C] hover:bg-[#E0C27F] text-[#232528] font-semibold text-sm flex items-center gap-2 shadow-[0_6px_18px_rgba(0,0,0,0.3)] active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
                 >
                   <Camera className="w-4 h-4" />
-                  <span>{countdown !== null ? `Contando (${countdown})...` : 'Tomar Foto (Contador 3s)'}</span>
+                  <span>{countdown !== null ? `En ${countdown}…` : 'Tomar foto'}</span>
                 </button>
               </div>
             </div>
