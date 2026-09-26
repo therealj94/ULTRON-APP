@@ -1,0 +1,24 @@
+{
+ "nombre": "mensaje",
+ "descripcion": "Decisiones sobre cada mensaje de AU-RA FP y PULSE2CHAT (ESPEC.md): pensar, riesgo, moderación, ánimo y tarea.",
+ "ids": [
+  "razonar", "mueve_valor", "toca_sistema", "ataque", "urgente",
+  "spam", "abuso", "estafa", "crisis",
+  "molesto", "triste",
+  "tarea_conversacion", "tarea_mercado", "tarea_empresa", "tarea_accion",
+  "tarea_documento", "tarea_web", "tarea_sistema", "tarea_transaccion"
+ ],
+ "grupos": {
+  "tarea": [
+   "tarea_conversacion", "tarea_mercado", "tarea_empresa", "tarea_accion",
+   "tarea_documento", "tarea_web", "tarea_sistema", "tarea_transaccion"
+  ]
+ },
+ "recorte": {"cabeza": 200, "cola": 500},
+ "datos": {
+  "train": ["datos/train_*.jsonl"],
+  "test": ["datos/test_*.jsonl"],
+  "bordes": ["datos/bordes_*.jsonl"],
+  "evals": ["datos/evals_aura.jsonl"]
+ }
+}

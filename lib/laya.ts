@@ -223,7 +223,9 @@ export async function saludLaya(esperaMs = 2000): Promise<{ ok: boolean; status:
  * uno, 64 KB un lote) y lo medido allá es lo que se manda desde aquí.
  */
 export type ModeloLaya = 'mensaje' | 'documento';
-export const RECORTE_MODELO: Record<ModeloLaya, [number, number]> = { mensaje: [CABEZA, COLA], documento: [CABEZA, COLA] };
+// Documento: hasta 900 caracteres enteros, mitad y mitad (el encabezado dice qué es; el final trae la
+// firma, el sello y los plazos). Es el `recorte` de scripts/nodo-t4/laya/modelos/documento/modelo.json.
+export const RECORTE_MODELO: Record<ModeloLaya, [number, number]> = { mensaje: [CABEZA, COLA], documento: [450, 450] };
 /** Lo que devuelve el nodo por cada texto. */
 export type RespuestaModelo = {
   /** P(sí) calibrada de cada pregunta. */
@@ -233,7 +235,8 @@ export type RespuestaModelo = {
   /** El ganador de cada grupo exclusivo (`tarea` en mensaje, `tipo` en documento). */
   grupos: Record<string, string>;
   umbrales?: Record<string, number>;
-  ms: number;
+  /** Solo en la respuesta de un texto; en un lote va una vez, fuera de `resultados`. */
+  ms?: number;
 };
 export type ConsultaModelo = { resultado: RespuestaModelo | null; motivo: MotivoLaya; ms: number };
 export type ConsultaLote = { resultados: RespuestaModelo[] | null; motivo: MotivoLaya; ms: number };

@@ -19,7 +19,7 @@ Opcional en el mismo nodo (cabe en 16 GB): **respaldo de voz** con Kokoro o Chat
 
 [Laya](https://huggingface.co/convaiinnovations/laya) (Convai, Apache 2.0) no escribe: contesta preguntas cerradas con una probabilidad calibrada, en decenas de milisegundos. Aquí decide **qué especialistas convoca Dr Electrum** (0, 1 o 2 de los ocho), que hasta ahora salía de contar palabras (`convocar()`): «¿cuándo vence la concesión Quebrada Seca?» traía al ambiental por la palabra *quebrada*.
 
-1. En el nodo, desde un clon del repo: `bash scripts/nodo-t4/instalar-laya.sh`. Crea un venv en `/opt/laya` con las versiones fijadas que corren hoy (torch 2.14.0 cu130, transformers 5.17.0, laya 0.3.20), **entrena en la GPU** con `scripts/nodo-t4/laya/datos` si no hay modelo (unos minutos; no hay pesos que copiar), genera la clave en `/etc/laya-electrum.env` (`LAYA_CLAVE`, `LAYA_PUERTO`, `LAYA_MODELO`; root, 600) y deja el servicio systemd `laya-electrum` (usuario `ubuntu`) en `:8792`.
+1. En el nodo, desde un clon del repo: `bash scripts/nodo-t4/instalar-laya.sh`. Crea un venv en `/opt/laya` con las versiones fijadas que corren hoy (torch 2.14.0 cu130, transformers 5.17.0, laya 0.3.20), **entrena en la GPU** con `scripts/nodo-t4/laya/datos` si no hay modelo (unos minutos; no hay pesos que copiar; también `mensaje` y `documento` si tienen datos, ver «Varios modelos» abajo), genera la clave en `/etc/laya-electrum.env` (`LAYA_CLAVE`, `LAYA_PUERTO`, `LAYA_MODELO`; root, 600) y deja el servicio systemd `laya-electrum` (usuario `ubuntu`) en `:8792`.
 2. TLS: el `:8792` no se abre en el security group. Laya sale por el Caddy de Voicebox (`443`, `/opt/voicebox/caddy/Caddyfile`), con `handle_path /laya/* { reverse_proxy 127.0.0.1:8792 }` antes de `@autorizado`. `/laya/decidir` exige la clave; `/laya/salud` es público y dice umbral, fecha de los pesos (`entrenado`) y recorte.
 3. En Render (`aura-fp` y `ultron-looi-desk`): `ULTRON_LAYA_URL=https://35-175-175-203.sslip.io/laya`, `ULTRON_LAYA_CLAVE=` (la de `/etc/laya-electrum.env`) y `ULTRON_LAYA_TIMEOUT_MS=1000`. `lib/laya.ts` ignora cualquier URL `http://` que no sea local: el texto del usuario y la clave no viajan sin cifrar.
 4. `turnoElectrum` llama a `decidirPanel()`: los especialistas que el usuario nombra («pásame al geólogo») van primero, el resto lo decide Laya, y si así no queda nadie decide la tabla. Si Laya no está configurado, tarda más que `ULTRON_LAYA_TIMEOUT_MS` o falla, se usa la tabla de siempre y no se reintenta durante 5 s, que se duplican con cada fallo seguido hasta 2 min (un acierto lo pone en cero).
@@ -56,11 +56,66 @@ Por especialista (precisión / recall / F1), tabla → lo que corre: geólogo 0,
 
 `test-tabla.jsonl` y `bordes-tabla.jsonl` llevan ya lo que decide la tabla; si cambia `convocar()`, regenerarlos desde el repo: `cd scripts/nodo-t4/laya && npx tsx tabla.mjs ../../../server/electrum/especialistas.ts datos/test.jsonl > datos/test-tabla.jsonl` (igual con `bordes`). Imprime las cifras de arriba: exacto, F1, por especialista, calibración, sensibilidad al umbral y los casos difíciles uno por uno. No pasar lotes grandes de textos largos por la GPU compartida: una prueba de 2.000 textos de 3.000 caracteres la tuvo al 100 % y con 12 GB ocupados, junto a Voicebox.
 
-**Reentrenar** tras añadir o corregir consultas en `datos/train_*.jsonl` (formato `{"q": "...", "e": ["legal"]}`, reglas en `datos/ESPEC.md`): `REENTRENAR=1 bash scripts/nodo-t4/instalar-laya.sh`. La prueba (`test.jsonl`) no se toca para entrenar; `entrenar.py` descarta cualquier consulta de entrenamiento que esté en ella. `bordes.jsonl` es diagnóstico: no se entrena con él (comparte «hola» con el entrenamiento, a propósito). Al reentrenar los números pueden moverse un punto (la GPU no es determinista); `evaluar.py` lo comprueba.
+**Reentrenar** tras añadir o corregir consultas en `datos/train_*.jsonl` (formato `{"q": "...", "e": ["legal"]}`, reglas en `datos/ESPEC.md`): `REENTRENAR=electrum bash scripts/nodo-t4/instalar-laya.sh` (`REENTRENAR=1` reentrena también `mensaje` y `documento`). La prueba (`test.jsonl`) no se toca para entrenar; `entrenar.py` descarta cualquier consulta de entrenamiento que esté en ella. `bordes.jsonl` es diagnóstico: no se entrena con él (comparte «hola» con el entrenamiento, a propósito). Al reentrenar los números pueden moverse un punto (la GPU no es determinista); `evaluar.py` lo comprueba.
 
-**No confundir** con el clasificador del turno (`lib/cognitivo/clasificador.ts`, `LAYA_URL`/`LAYA_API_KEY`, `laya-serve` de `infra/t4/`): ese es otro servicio, hoy no desplegado en la T4, y en Render no hay `LAYA_URL`, así que el clasificador decide con reglas.
+### Varios modelos en el mismo servicio (`mensaje`, `documento`)
 
-**Siguiente:** las mismas piezas sirven para las compuertas de AU-RA (¿esto pide acción o solo conversación?, ¿necesita buscar en la web?) con otro `preguntas.json` y sus datos.
+El mismo `laya-electrum` sirve más de un modelo ajustado, cada uno con su juego de preguntas noul. Hoy: `electrum` (el de arriba), `mensaje` (sobre cada mensaje de AU-RA y PULSE2CHAT: si hay que razonar, si mueve valor o toca el sistema, ataque, urgente, spam, abuso, estafa, crisis, ánimo y una `tarea_*`; `modelos/mensaje/ESPEC.md`) y `documento` (qué es un fragmento de expediente —un `doc_*`, grupo `tipo`— y qué trae —`req_*`—; `modelos/documento/ESPEC.md`).
+
+    python servidor.py --modelo electrum=/opt/laya/modelo-electrum \
+        --modelo mensaje=/opt/laya/modelo-mensaje --modelo documento=/opt/laya/modelo-documento
+
+Un `--modelo DIR` a secas sigue siendo electrum, como antes. `instalar-laya.sh` deja el unit con los tres.
+
+**Cada modelo es una carpeta** `scripts/nodo-t4/laya/modelos/<nombre>/` con `preguntas.json` (una noul por id), `datos/*.jsonl` (`{"q": texto, "e": [ids]}`), su `ESPEC.md` y un `modelo.json`:
+
+    {"nombre": "mensaje",
+     "ids": ["razonar", …, "tarea_conversacion", …],      ← orden de las P; = claves de preguntas.json
+     "grupos": {"tarea": ["tarea_conversacion", …]},       ← exclusivos: exactamente uno por texto
+     "recorte": {"cabeza": 200, "cola": 500},              ← caracteres; igual al entrenar y al servir
+     "datos": {"train": ["datos/train_*.jsonl"], "test": ["datos/test_*.jsonl"],
+               "bordes": ["datos/bordes_*.jsonl"], "evals": ["datos/evals_aura.jsonl"]}}
+
+Los globs son relativos a la carpeta. Todo conjunto que no sea `train` queda apartado: `entrenar.py` descarta del entrenamiento cualquier texto que aparezca en él (comparando sin tildes, en minúsculas y con los espacios colapsados). Fuera de los grupos, las etiquetas son libres (0..n). `comun.py` lee y valida todo esto y junta todos los errores de los datos antes de fallar (etiqueta desconocida, un grupo con cero o dos, línea sin texto).
+
+**Recorte.** `mensaje` usa el de electrum (200 + 500). `documento`, **450 + 450** (hasta 900 caracteres pasan enteros): en un documento importan las dos puntas por igual, el encabezado dice qué es («RESOLUCIÓN No.…», «CONTRATO DE…») y el final trae firma, sello y plazos; los fragmentos del ESPEC (≤ ~700) entran sin cortar. Cuesta ~200 ms por fragmento largo en la T4 (medido con electrum: 224 ms con 1000 caracteres), aceptable para documentos, que no van en el camino de la voz. `/salud` publica el recorte de cada modelo para que el cliente recorte igual.
+
+**Rutas nuevas** (misma clave Bearer que `/decidir`):
+
+- `POST /v1/<nombre>` con `{"texto": "…"}` →
+  `{"p": {id: P}, "etiquetas": [ids sueltos ≥ su umbral, de mayor a menor P], "grupos": {grupo: id ganador}, "umbrales": {id: u}, "ms": n}`.
+  Los grupos se deciden por argmax (sin umbral); `umbrales` trae solo los de las etiquetas sueltas. Texto vacío → todo vacío y `ms: 0`.
+- Con `{"textos": [...]}` (hasta 32) → `{"resultados": [{"p", "etiquetas", "grupos"}, …], "umbrales": {…}, "ms": n}`, en el mismo orden.
+- `"preguntas": [ids]` (opcional) calcula solo esas (menos cómputo: una fila por pregunta). Si se pide un miembro de un grupo va el grupo entero, porque el ganador es el argmax de todos.
+- `/v1/electrum` también existe (sin el tope de dos ni la tabla); `/decidir` sigue exactamente igual y es lo que usa `lib/laya.ts`.
+- Errores: los de siempre (401 sin clave, 413 cuerpo vacío o > 16 KB, 400 no JSON, 500 si falla el modelo, sin registrar el texto; corte a los 10 s del cliente que no manda el cuerpo). Un lote puede pesar hasta 64 KB; más de 32 textos → 413. `texto`/`textos`/`preguntas` de otro tipo o ids desconocidos → 400. Modelo que no existe → 404; configurado pero no cargado → 503.
+
+**Si un modelo no carga** (sin checkpoint, checkpoint roto, sin memoria), el servicio arranca con los demás y `GET /salud` lo dice en `modelos.<nombre>` (`{"ok": false, "error": "…"}`). `/salud` es el de siempre para electrum más el campo `modelos` con, por cada uno, `ok`, `ids`, `grupos`, `recorte: [cabeza, cola]`, `umbrales`, `entrenado` y `device`. Si el que falla es electrum, `/salud` da 503 y `/decidir` 503: `lib/laya.ts` cae a la tabla como con cualquier fallo.
+
+**GPU compartida.** Un solo cerrojo para todos los modelos, tomado por pasada (hasta 64 filas texto × pregunta y ~6000 tokens) y por orden de llegada: nunca hay dos pasadas de Laya a la vez en la T4 (memoria acotada, la voz no compite con tres modelos), y un `/decidir` de Electrum espera como mucho la pasada en curso, no un lote de 32 documentos entero. Medido en CPU (la T4 es decenas de veces más rápida): con un lote de 32 fragmentos de 900 caracteres en marcha, un `/decidir` tardó 5,6 s en lugar de esperar los 125 s del lote; con el tope solo de filas eran 17 s. La tabla de embeddings (197M de los 322M parámetros) no se entrena, así que es idéntica en los tres checkpoints y se carga una sola vez: cada modelo más cuesta ~0,5 GB de VRAM en lugar de ~1,3 GB.
+
+**Entrenar y umbrales.** `entrenar.py --modelo-dir modelos/<nombre>` (sin `--modelo-dir`, electrum exactamente como antes). Validación: un 10 % (al menos 40, nunca más de un cuarto) estratificado por el ganador del grupo y la etiqueta suelta más rara de cada texto, reproducible con `--semilla`. Temperatura como electrum. Luego un umbral **por etiqueta**: primero el global que maximiza el F1 micro de las sueltas; después, para cada etiqueta, el que maximiza su F1 en validación, mezclado con el global en proporción a sus positivos, `u = (n·u_propio + 10·u_global) / (n + 10)`, recortado a [0,2; 0,8], y el global a secas con menos de 3 positivos. Así una etiqueta con 40 positivos usa sobre todo el suyo y una con 3 (crisis, ataque…) casi el global: con tan pocos casos el «mejor» umbral es ruido. Se guarda en `cfg['decisor']` del checkpoint (ids, grupos, umbrales, umbral global, recorte, métricas de validación con los dos criterios, detalle de cada umbral); el de electrum sigue en `cfg['electrum']`.
+
+**Reentrenar** tras tocar los datos: `REENTRENAR=mensaje bash scripts/nodo-t4/instalar-laya.sh` (o `documento`, `electrum`, `mensaje,documento`; `REENTRENAR=1` son los tres). Sin `REENTRENAR` se entrena solo lo que no tiene checkpoint y sí tiene `preguntas.json` y `datos/train_*.jsonl`. Si el entrenamiento de un modelo nuevo falla, se avisa, se deja su checkpoint anterior y electrum se instala igual.
+
+**Evaluar** (en el nodo):
+
+    cd /opt/laya && venv/bin/python evaluar.py --modelo modelo-mensaje --modelo-dir modelos/mensaje --errores 30
+
+Imprime, por conjunto (test y evals): «todas bien» (el conjunto entero de etiquetas igual al etiquetado), exactitud de cada grupo, F1 micro y macro de las sueltas, precisión/recall/F1/soporte por etiqueta, lo mismo con un solo umbral global (diagnóstico), calibración (Brier, ECE y tabla de fiabilidad) y, en bordes, cada fallo con las P de lo que difiere y el resumen por tipo (`c`). `--json` guarda todo.
+
+**Contra las reglas de AU-RA** (`mensaje`): `reglas-mensaje.mjs` corre `clasificarConReglas(q, 'ultron')` de `lib/cognitivo/clasificador.ts` y lo traduce a etiquetas: `tarea_*` ← `tarea`, `razonar` ← `requiereQwen`, `mueve_valor` ← riesgo 90 (`MUEVE_VALOR`), `toca_sistema` ← riesgo 85 sin inyección (`TOCA_SISTEMA`; con inyección el 85 es ambiguo y esa fila no cuenta para `toca_sistema`), `ataque` ← `inyeccion`. Spam, abuso, estafa, crisis, urgente, molesto y triste no tienen regla. Desde el repo:
+
+    cd scripts/nodo-t4/laya
+    npx tsx reglas-mensaje.mjs modelos/mensaje/datos/test_*.jsonl > /tmp/test-reglas.jsonl
+    npx tsx reglas-mensaje.mjs modelos/mensaje/datos/evals_aura.jsonl > /tmp/evals-reglas.jsonl
+    python evaluar.py --modelo … --modelo-dir modelos/mensaje --test /tmp/test-reglas.jsonl --evals /tmp/evals-reglas.jsonl
+
+y `evaluar.py` añade la columna de las reglas por etiqueta y «todas bien»/grupo `tarea` de reglas y modelo contados solo en lo que las reglas cubren.
+
+**El clasificador del turno** (`lib/cognitivo/clasificador.ts`) ya no habla con `laya-serve` de `infra/t4/` (`LAYA_URL`): con `CLASIFICADOR_MODO=sombra` o `laya` pregunta a `/v1/mensaje` de este mismo servicio por `lib/laya.ts` (`ULTRON_LAYA_URL`/`ULTRON_LAYA_CLAVE`); por omisión (`reglas`) sigue decidiendo con reglas.
+
+**Siguiente:** entrenar `mensaje` y `documento` en la GPU con los datos completos, medirlos (`evaluar.py`, `mensaje` contra las reglas) y, con esas cifras, decidir si `CLASIFICADOR_MODO` pasa de `reglas` a `sombra`.
 
 ## Si no se va a usar
 
