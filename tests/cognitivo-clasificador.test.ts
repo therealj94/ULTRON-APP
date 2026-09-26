@@ -288,3 +288,23 @@ test('el modelo chico no contesta si Laya vio urgencia, moderación o un ánimo 
     assert.equal(usarModeloChico({ ...hola, moderacion: ['spam'] }), false);
   });
 });
+
+test('el modelo chico contesta aunque el turno traiga marcas de contexto, no con herramientas de verdad', async () => {
+  const { soloMarcasDeContexto } = await import('../lib/cognitivo/modelos');
+  // Lo que traía «hola AU-RA, buenas tardes» en producción: nunca llegaba al modelo chico.
+  assert.equal(soloMarcasDeContexto(['cerebro-genesis', 'harness']), true);
+  assert.equal(soloMarcasDeContexto([]), true);
+  assert.equal(soloMarcasDeContexto(['harness', 'oro']), false);
+  assert.equal(soloMarcasDeContexto(['web']), false);
+});
+
+test('sin Laya, el modelo chico solo ve lo que por su forma es charla', async () => {
+  const { esCharlaTrivial } = await import('../lib/cognitivo/modelos');
+  for (const q of ['hola AU-RA, buenas tardes', 'muchas gracias', 'Buenas noches, nos vemos mañana', '👍', 'jajaja gracias', 'hola, ¿cómo estás?']) {
+    assert.equal(esCharlaTrivial(q), true, q);
+  }
+  // Caso de la revisión: las reglas lo dejan en «conversación» y no es charla.
+  for (const q of ['implementa fizzbuzz', 'dale', 'sí', 'hola, ¿cuánto vale el oro?', 'revisá lo de ayer', '?', 'gracias, ahora mandale el PDF a Carlos']) {
+    assert.equal(esCharlaTrivial(q), false, q);
+  }
+});

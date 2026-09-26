@@ -39,6 +39,42 @@ export function usarModeloChico(c: Clasificacion | null | undefined): boolean {
   return !c.requiereQwen && TAREAS_CHICAS.has(c.tarea) && c.riesgo < 40 && !c.inyeccion && !c.urgente && !c.moderacion?.length && !c.animo;
 }
 
+/**
+ * ¿Las «herramientas» del turno son solo marcas de contexto? `harness`, `cot` y `rag` dicen cómo se
+ * armó el prompt y `cerebro-*` que se pegó un hecho del cerebro («hola AU-RA» trae el de Genesis):
+ * nada de eso es un dato que el modelo chico tenga que usar. Antes se exigía una lista vacía, y como
+ * `harness` va siempre, el modelo chico no contestó nunca en producción.
+ */
+export function soloMarcasDeContexto(herramientas: string[]): boolean {
+  return herramientas.every((t) => t === 'harness' || t === 'cot' || t === 'rag' || t.startsWith('cerebro-'));
+}
+
+/**
+ * ¿Es solo un saludo, un gracias o una despedida? Con las reglas solas, «conversación» es lo que
+ * queda cuando ninguna palabra casa: «implementa fizzbuzz» o «revisá lo de ayer» también caen ahí
+ * (revisión de Codex en #37). Sin Laya, el modelo chico contesta solo lo que es charla por su forma:
+ * todas las palabras son de saludo, gracias o despedida (y el nombre de la asistente). «dale» o «sí»
+ * no: siguen algo anterior y eso lo contesta Qwen.
+ */
+const CHARLA = new Set(
+  (
+    'hola holi buenas buenos buen dia dias tardes noches hey que tal como estas esta estan te va vas saludos ' +
+    'gracias muchas mil agradezco lo la adios chao chau bye hasta luego manana pronto nos vemos ok okay oki ' +
+    'perfecto listo excelente genial bien muy y tu usted igualmente feliz todo amiga querida de nada gusto'
+  ).split(' ')
+);
+const NOMBRES = new Set(['aura', 'au', 'ra', 'ultron']);
+export function esCharlaTrivial(texto: string): boolean {
+  const plano = String(texto || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  const palabras = plano.split(/[^a-zñ]+/).filter(Boolean);
+  if (!palabras.length) return /\p{Extended_Pictographic}/u.test(plano); // «👍»: sí; «?»: no
+  if (palabras.length > 8) return false;
+  return palabras.every((w) => CHARLA.has(w) || NOMBRES.has(w) || /^(ja|je|ji)+$/.test(w));
+}
+
 export type MensajeChat = { role: 'system' | 'user' | 'assistant'; content: string };
 
 /** Una respuesta del modelo chico, o null si no está o falla (y entonces contesta Qwen). */
