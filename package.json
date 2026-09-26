@@ -15,6 +15,7 @@
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
     "@mediapipe/tasks-vision": "1.0.1",
+    "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "^4.1.14",
     "@tmcw/togeojson": "^7.1.2",
     "@turf/turf": "^7.4.0",
@@ -23,6 +24,7 @@
     "@xmldom/xmldom": "^0.9.12",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
+    "jpeg-js": "^0.4.4",
     "jszip": "^3.10.2",
     "lucide-react": "^0.546.0",
     "maplibre-gl": "^6.10.0",

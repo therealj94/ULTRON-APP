@@ -294,6 +294,7 @@ para la pantalla. Por eso el mapa vuela a una concesión sin que el modelo escri
 | `catastro_buscar` | concesiones por nombre, titular, expediente o municipio |
 | `catastro_vencimientos` | lo que vence y en cuántos días |
 | `catastro_en_punto` | qué concesión cubre unas coordenadas y qué hay cerca |
+| `concesion_entorno` | lo que una concesión tiene alrededor (áreas protegidas, ríos, caseríos…), con alertas |
 | `gis_traslapes` | qué se pisa con qué, en hectáreas |
 | `gis_medir` | área y perímetro sobre el elipsoide, distancia entre puntos |
 | `mapa_volar` | mueve el mapa a una concesión y la resalta |
@@ -771,8 +772,10 @@ minera, y al revés.
 
 Dos, y los dos se arman **del catastro**, no de lo que escriba el modelo:
 
-- **Ficha de concesión** — identificación, geometría medida sobre el elipsoide, el mapa como se
-  estaba viendo, traslapes que le tocan y lo que digan los expedientes **citado con su página**.
+- **Ficha de concesión** — identificación, geometría medida sobre el elipsoide, el plano de
+  situación dibujado en el servidor (y el mapa como se estaba viendo, si lo pidió el navegador), el
+  entorno cruzado con las capas cargadas, traslapes que le tocan y lo que digan los expedientes
+  **citado con su página**.
 - **Estado de la cartera** — cuánto hay, cuánto tiene geometría, qué vence dentro del año y qué se
   pisa con qué.
 
@@ -802,6 +805,64 @@ imágenes JPEG incrustadas con `/DCTDecode`.
 Sin dependencias, y se verifica mirándolo: `scripts/qa/ver-pdf.mjs` lo renderiza en Chromium y saca
 una captura por página. Tres de los fallos que tiene arreglados —el título huérfano, la cartera sin
 mapa y un «Hay 1 traslapes»— no daban ningún error: salían en la hoja.
+
+## El entorno y el plano de la ficha — **hecho y probado contra PostGIS**
+
+En el nodo había once capas de geografía cargadas —119 mil líneas de red hídrica, 22 mil caseríos,
+324 áreas protegidas…— y la ficha de una concesión no cruzaba ninguna. Tampoco tenía mapa si se
+pedía por Telegram: el único era la captura del lienzo del navegador.
+
+**El rol de cada capa** (esquema v7, `capa.rol`). El cruce pregunta por lo que una capa *es*, no
+por cómo se llama. Se decide por el nombre normalizado (sin tildes, minúsculas, `_` como espacio) y
+patrones en orden, del más específico al más general; la lista está comentada en
+`scripts/electrum/esquema.sql` (`electrum_rol_capa`) y repetida en `server/electrum/db.ts`
+(`rolDeCapa`, que asigna el rol al subir una capa nueva). Una prueba compara las dos contra la base.
+Lo que no casa queda en NULL y no se cruza; se corrige a mano con un `UPDATE capa SET rol = …`.
+
+**Qué cruza** (`server/electrum/entorno.ts`), todo medido en PostGIS sobre el elipsoide:
+
+| En la ficha | Rol de la capa | En producción |
+|---|---|---|
+| municipio(s) y departamento(s) que toca | `municipio`, `departamento` | MUNICIPIOS, DEPARTAMENTOS |
+| áreas protegidas que pisa (ha y %) y a menos de 5 km | `area_protegida` | Areas Protegidas |
+| microcuencas declaradas que pisa (ha y %) | `microcuenca` | Microcuencas declaradas |
+| patrimonio forestal que pisa | `forestal` | Catalogo Patrimonio Publico Forestal |
+| km de cauce dentro y nombres; si no hay, el más cercano | `rio` | RED HIDRICA HN |
+| caseríos y aldeas dentro y a menos de 2 km, con población si la trae | `poblado` | CASERIOS, ALDEAS |
+| distancia a la carretera | `carretera` | Buffer Carretera HN (es una franja: se dice «al borde de la franja») |
+| zonas informales de oro a menos de 5 km | `zona_informal` | Zonas informales oro HN |
+| yacimientos y ocurrencias a menos de 5 km | `ocurrencia` | Yacimientos y ocurrencias mineras DEFOMIN |
+| traslapes con otros derechos | — | tabla `traslape` |
+
+Devuelve un objeto tipado y las **alertas** ya redactadas («Pisa 12,3 ha del área protegida X (8 %
+de la concesión)», «3 caseríos dentro (…)»), que van arriba en la ficha junto a las contradicciones
+y son lo que la mano `concesion_entorno` le pasa al doctor (paneles legal, ambiental, geomática y
+civil). Las cifras son las de la base; el modelo las cita. Si el padrón dice un municipio y la
+geometría cae en otro, también va arriba.
+
+**Si una capa falta, se dice «no cargada», nunca «no hay».** Son respuestas opuestas: una es que
+falta el dato, la otra tranquiliza. Cada cruce es independiente: si uno falla (un polígono roto, un
+tiempo agotado) esa sección lo dice y las demás salen. El texto para el modelo termina con la lista
+de capas no cargadas y la orden de no afirmar nada de ellas.
+
+**Velocidad.** Cada consulta filtra primero por índice (`&&` contra la caja de la concesión ampliada
+en grados lo justo para la distancia pedida a su latitud) y solo mide en metros lo que sobrevive;
+las diez corren en paralelo. Medido con volumen de producción sintético (156 mil entidades: 117 mil
+ríos cortos y 2 mil de 800 vértices, 25,7 mil poblados, polígonos de hasta 5 mil vértices y 1079
+concesiones), el entorno de **cada una** de las 1079: mediana 27 ms, p99 56 ms, máximo 154 ms.
+
+**El plano** (`server/electrum/plano.ts`) se dibuja en el servidor, sin navegador ni teselas: la
+concesión resaltada, vecinas, traslapes, ríos, áreas protegidas, microcuencas, forestal, caseríos,
+aldeas, carretera, límites municipales, zonas informales y ocurrencias, sobre cuadrícula UTM 16N
+rotulada, con barra de escala, escala numérica al ancho de página, flecha de norte de cuadrícula
+(con la convergencia al norte verdadero), leyenda de lo que de verdad se dibujó y la lista de capas
+no cargadas. La vista cubre al menos los 2 km en que se cuentan caseríos. Se arma como SVG y se
+pasa a JPEG con **@resvg/resvg-js** (binarios precompilados por plataforma, sin compilar en Render,
+tipografía cargada explícita) y **jpeg-js** (JavaScript puro). Se descartó sharp porque dibuja el
+texto con las fuentes del sistema vía fontconfig, y un contenedor sin fuentes deja los rótulos en
+blanco sin dar error. La tipografía es Liberation Sans (OFL, `server/electrum/fuentes/`), con las
+mismas métricas que la Helvetica del PDF. En la ficha va siempre; si además llega la captura del
+navegador, van las dos: la vista y el plano técnico.
 
 ## La voz
 

@@ -93,7 +93,16 @@ test('el informe es de quien lo pidió', { skip: hay ? false : 'hace falta `npm 
     const r = await fetch(`${BASE}${url}`, { headers: ana });
     assert.equal(r.status, 200, await r.clone().text());
     assert.equal(r.headers.get('content-type'), 'application/pdf');
-    assert.equal(Buffer.from(await r.arrayBuffer()).subarray(0, 5).toString(), '%PDF-');
+    const pdf = Buffer.from(await r.arrayBuffer());
+    assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+    /*
+     * Y lleva el plano dibujado en el servidor: esto corre sobre dist/server.cjs, así que prueba que
+     * el bundle deja @resvg/resvg-js fuera (--packages=external) y que su binario carga desde ahí.
+     * Sin navegador y sin captura del mapa, que es como llega un pedido por Telegram.
+     */
+    const texto = pdf.toString('latin1');
+    assert.match(texto, /PLANO DE SITUACI/);
+    assert.match(texto, /\/Filter \/DCTDecode/);
   });
 
   await t.test('otra persona no, mientras no se comparta', async () => {

@@ -53,6 +53,8 @@ export async function cerrarBase() {
     await pool.end();
     pool = null;
   }
+  // La próxima conexión puede ser a otra base (las pruebas lo hacen): que vuelva a preguntar.
+  conRol = null;
 }
 
 export async function consulta<T = any>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -138,6 +140,81 @@ function comoMulti(g: Geometry): Geometry | null {
  */
 const GEOM_VALIDA = (param: string) =>
   `ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON(${param}), 4326))), 3))`;
+
+/* ------------------------------------------------------------------ rol de una capa */
+
+/** Lo que una capa de geografía ES para el cruce de la ficha (esquema v7, `capa.rol`). */
+export type RolCapa =
+  | 'rio'
+  | 'poblado'
+  | 'area_protegida'
+  | 'microcuenca'
+  | 'carretera'
+  | 'municipio'
+  | 'departamento'
+  | 'ocurrencia'
+  | 'zona_informal'
+  | 'forestal';
+
+/**
+ * Los patrones, EN ORDEN: gana el primero que casa, del más específico al más general.
+ *
+ * Es la misma lista que `electrum_rol_capa()` en scripts/electrum/esquema.sql, que es la que
+ * rellenó las capas que ya estaban cargadas; esta es la que decide las que se suban desde ahora.
+ * Dos copias porque la base las necesita para el relleno y la aplicación para no depender de que
+ * la v7 esté aplicada. tests/electrum-entorno.test.ts compara las dos contra PostGIS: si alguien
+ * toca una y no la otra, falla.
+ *
+ * Por qué ese orden: una «microcuenca» no es un río aunque hable de agua; un «Parque Nacional
+ * Bosque Nublado» es un área protegida y no patrimonio forestal; «Aldeas del municipio» son aldeas.
+ * Las palabras cortas van enteras: «aluvial» no es una red vial ni «estructura» una ruta.
+ */
+const ROLES: Array<[RolCapa, RegExp]> = [
+  ['microcuenca', /microcuenca|cuencas? declarada/],
+  ['zona_informal', /informal|artesanal|guiris|pequena mineria|(^| )mape( |$)/],
+  ['ocurrencia', /ocurrencia|yacimiento|defomin|indicio|prospecto/],
+  ['area_protegida', /protegida|sinaph|reserva biologica|parque nacional|refugio de vida/],
+  ['forestal', /forestal|bosque/],
+  ['poblado', /caserio|aldea|poblad|comunidad|localidad|asentamiento|ciudad/],
+  ['carretera', /carretera|(^| )(red vial|vias?|caminos?|rutas?)( |$)/],
+  ['departamento', /departament/],
+  ['municipio', /municipi|municipal/],
+  ['rio', /red hidric|hidrograf|(^| )(rios?|quebradas?|drenajes?|cauces?)( |$)/],
+];
+
+/** El rol que le toca a una capa por su nombre, o null si no casa con ninguno. */
+export function rolDeCapa(nombre: string | null | undefined): RolCapa | null {
+  const n = String(nombre || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  for (const [rol, re] of ROLES) if (re.test(n)) return rol;
+  return null;
+}
+
+/**
+ * ¿La base ya tiene `capa.rol`? Se pregunta una vez por conexión.
+ *
+ * El código llega a Render antes de que alguien aplique la v7 en el nodo, y un INSERT que nombra
+ * una columna inexistente tumbaría TODA carga de capas —también las de concesiones, que no
+ * necesitan rol—. Sin la columna se guarda como siempre y el entorno calcula el rol al vuelo.
+ */
+let conRol: Promise<boolean> | null = null;
+export function baseTieneRol(): Promise<boolean> {
+  if (!conRol) {
+    conRol = consulta<{ si: boolean }>(
+      `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'capa' AND column_name = 'rol') AS si`
+    )
+      .then((r) => !!r[0]?.si)
+      .catch(() => {
+        conRol = null;
+        return false;
+      });
+  }
+  return conRol;
+}
 
 /**
  * Guarda una capa leída por el motor GIS. Los polígonos entran como concesiones; lo demás, como
@@ -308,6 +385,14 @@ export async function guardarCapa(
      */
     const noAporto = comoConcesiones && nConc === 0 && nEnt === 0 && nRep > 0;
     if (noAporto) await cliente.query('DELETE FROM capa WHERE id = $1', [capaId]);
+    /*
+     * El rol, solo para geografía: una capa de derechos mineros que se llame «Concesiones del
+     * municipio de Danlí» no es un municipio, y con rol la ficha la cruzaría como tal.
+     */
+    else if (!comoConcesiones && nEnt > 0 && (await baseTieneRol())) {
+      const rol = rolDeCapa(capa.nombre);
+      if (rol) await cliente.query('UPDATE capa SET rol = $2 WHERE id = $1', [capaId, rol]);
+    }
     // Los reparados entraron sin área: se mide sobre la geometría que de verdad quedó guardada.
     if (nInv) await cliente.query('UPDATE concesion SET hectareas = ha_elipsoide(geom) WHERE capa_id = $1 AND hectareas IS NULL', [capaId]);
 

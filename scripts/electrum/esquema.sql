@@ -339,3 +339,83 @@ $$ LANGUAGE plpgsql;
 INSERT INTO esquema_version (version, nota)
 VALUES (6, 'polígonos rotos reparados y cruce de traslapes a prueba de ellos')
 ON CONFLICT (version) DO NOTHING;
+
+-- ---------------------------------------------------------------- versión 7
+--
+-- El rol de cada capa: qué ES, no cómo se llama.
+--
+-- En el nodo hay once capas de geografía cargadas —ríos, caseríos, áreas protegidas, municipios…—
+-- y todas entraron en `entidad_geo` con clase 'otro'. Estaban ahí y la ficha de una concesión no
+-- cruzaba ninguna: para preguntar «¿pisa un área protegida?» hay que saber cuál de las capas son
+-- las áreas protegidas, y eso solo lo decía el nombre del archivo. El rol lo dice una vez, en una
+-- columna, y el cruce (server/electrum/entorno.ts) pregunta por rol y no por nombre.
+--
+-- Se decide por el NOMBRE de la capa, normalizado —minúsculas, sin tildes, todo lo que no sea
+-- letra o número pasa a espacio, así «RED_HIDRICA_HN» y «Red hídrica HN» son lo mismo— y por
+-- patrones que se prueban EN ORDEN, del más específico al más general:
+--
+--   microcuenca    microcuenca · cuenca(s) declarada          (antes que río: una microcuenca no es un cauce)
+--   zona_informal  informal · artesanal · guiris · pequena mineria · mape
+--   ocurrencia     ocurrencia · yacimiento · defomin · indicio · prospecto
+--   area_protegida protegida · sinaph · reserva biologica · parque nacional · refugio de vida
+--                  (antes que forestal: «Parque Nacional Bosque Nublado» es un área protegida)
+--   forestal       forestal · bosque
+--   poblado        caserio · aldea · poblad · comunidad · localidad · asentamiento · ciudad
+--                  (antes que municipio: «Aldeas del municipio» son aldeas)
+--   carretera      carretera · red vial · via(s) · camino(s) · ruta(s)   (palabras enteras: «aluvial» no es vial)
+--   departamento   departament
+--   municipio      municipi · municipal
+--   rio            red hidric · hidrograf · rio(s) · quebrada(s) · drenaje(s) · cauce(s)   (palabras enteras)
+--
+-- La MISMA lista vive en server/electrum/db.ts (`rolDeCapa`) para las capas que se suban de aquí
+-- en adelante, y tests/electrum-entorno.test.ts comprueba contra esta función que las dos digan lo
+-- mismo. Si se cambia una, se cambia la otra.
+--
+-- Una capa que no casa con nada se queda en NULL y no entra en ningún cruce: vale más una ficha
+-- que diga «no cargada» que una que cruce la concesión con la capa equivocada. El rol se puede
+-- corregir a mano con un UPDATE; por eso el relleno de abajo corre UNA vez (la primera que se
+-- aplica la v7) y no pisa lo que alguien haya decidido después.
+
+ALTER TABLE capa ADD COLUMN IF NOT EXISTS rol text;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'capa_rol_valido') THEN
+    ALTER TABLE capa ADD CONSTRAINT capa_rol_valido CHECK (rol IS NULL OR rol IN (
+      'rio', 'poblado', 'area_protegida', 'microcuenca', 'carretera', 'municipio', 'departamento',
+      'ocurrencia', 'zona_informal', 'forestal'));
+  END IF;
+END $$;
+
+-- STABLE y no IMMUTABLE porque `unaccent` depende de un diccionario que se puede cambiar.
+CREATE OR REPLACE FUNCTION electrum_rol_capa(nombre text) RETURNS text AS $$
+  SELECT CASE
+    WHEN n ~ 'microcuenca|cuencas? declarada' THEN 'microcuenca'
+    WHEN n ~ 'informal|artesanal|guiris|pequena mineria|(^| )mape( |$)' THEN 'zona_informal'
+    WHEN n ~ 'ocurrencia|yacimiento|defomin|indicio|prospecto' THEN 'ocurrencia'
+    WHEN n ~ 'protegida|sinaph|reserva biologica|parque nacional|refugio de vida' THEN 'area_protegida'
+    WHEN n ~ 'forestal|bosque' THEN 'forestal'
+    WHEN n ~ 'caserio|aldea|poblad|comunidad|localidad|asentamiento|ciudad' THEN 'poblado'
+    WHEN n ~ 'carretera|(^| )(red vial|vias?|caminos?|rutas?)( |$)' THEN 'carretera'
+    WHEN n ~ 'departament' THEN 'departamento'
+    WHEN n ~ 'municipi|municipal' THEN 'municipio'
+    WHEN n ~ 'red hidric|hidrograf|(^| )(rios?|quebradas?|drenajes?|cauces?)( |$)' THEN 'rio'
+  END
+  FROM (SELECT trim(regexp_replace(lower(unaccent(coalesce(nombre, ''))), '[^a-z0-9]+', ' ', 'g')) AS n) t;
+$$ LANGUAGE sql STABLE;
+
+-- Solo las capas de geografía (las que tienen filas en entidad_geo): una capa de concesiones que
+-- se llame «Concesiones del municipio de Danlí» no es un municipio.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM esquema_version WHERE version = 7) THEN
+    UPDATE capa c
+       SET rol = electrum_rol_capa(c.nombre)
+     WHERE c.rol IS NULL
+       AND EXISTS (SELECT 1 FROM entidad_geo e WHERE e.capa_id = c.id);
+  END IF;
+END $$;
+
+INSERT INTO esquema_version (version, nota)
+VALUES (7, 'rol de cada capa (río, poblado, área protegida…) para cruzar la ficha con su entorno')
+ON CONFLICT (version) DO NOTHING;
