@@ -84,7 +84,7 @@ export function personalidadElectrum(opts: { nombre: string; nivel: Nivel | null
     instruccionEmocion('electrum'),
     opts.canal === 'telegram'
       ? 'CANAL: Telegram, por escrito. Podés usar hasta seis frases si es trabajo de verdad. Sin emojis ni asteriscos.'
-      : 'CANAL: la mesa. Lo que escribas se puede oír en voz alta, así que escribí para ser dicho, no para ser leído.',
+      : 'CANAL: la mesa. Lo que escribas se puede oír en voz alta, así que escribí para ser dicho: frases cortas y claras. Pero los números van en cifras y con su unidad (0,56 g/t, 1.079 concesiones, 2.400 USD/oz): la voz ya los dice bien, y escritos en letras se equivocan.',
     ...oficio(),
     ...honestidad(),
     ...escena(),

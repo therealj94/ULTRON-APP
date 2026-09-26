@@ -260,6 +260,28 @@ El bucle trae lo que separa un agente útil de uno que da vueltas:
 Probado con 31 casos y un modelo de mentira, porque el presupuesto agotado y la llamada repetida con
 un modelo de verdad no se disparan cuando uno quiere.
 
+### El camino hasta el modelo, y el recorte que lo dejaba sin manos
+
+```
+Render ─► ultron-motor :8443 (secreto + TLS) ─► ollama-proxy :11434 ─► llama-server :8080
+                                                 /opt/ollama-proxy-ndjson.py   --ctx-size 20480
+```
+
+El proxy (copia en `scripts/nodo-a10g/ollama-proxy-ndjson.py`) traduce el `/api/chat` de Ollama al
+`/v1/chat/completions` de llama.cpp. Hasta el 26-sep **cortaba el system a 4.500 caracteres** y el
+contexto era de 8.192 tokens. El system de Dr Electrum tiene entre 27.000 y 31.500 caracteres
+(personalidad, panel, conocimiento minero y, al final, la instrucción Hermes de herramientas). El
+modelo veía la personalidad y nada más. En producción ninguna herramienta se llamaba nunca: con el
+catastro vivo contestaba «no tengo el padrón delante», y calculó una ley de corte de 24,3 g/t donde
+`calculo_mina` da 0,560.
+
+Ahora el system pasa entero (hasta `PROXY_MAX_CHARS`, 42.000) y lo que se recorta es la conversación
+vieja, nunca la pregunta ni las llamadas del turno. llama-server tiene 20.480 tokens, que cuestan
+unos 440 MiB más de GPU. Las herramientas **no** se mandan a llama: van descritas en el system y el
+harness lee las `<tool_call>` del texto. `tests/electrum-prompt-cabe.test.ts` falla si el prompt
+crece hasta no caber con cualquier panel. Respaldos en el nodo: `/opt/ollama-proxy-ndjson.py.antes-herramientas`
+y `/root/llama-ultron.service.antes-ctx`.
+
 ## Las manos — **hechas**
 
 `server/electrum/manos.ts`. Cada resultado lleva **dos cosas**: `texto` corto para el modelo y `ui`
