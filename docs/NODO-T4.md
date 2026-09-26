@@ -20,8 +20,8 @@ Opcional en el mismo nodo (cabe en 16 GB): **respaldo de voz** con Kokoro o Chat
 [Laya](https://huggingface.co/convaiinnovations/laya) (Convai, Apache 2.0) no escribe: contesta preguntas cerradas con una probabilidad calibrada, en decenas de milisegundos. Aquí decide **qué especialistas convoca Dr Electrum** (0, 1 o 2 de los ocho), que hasta ahora salía de contar palabras (`convocar()`): «¿cuándo vence la concesión Quebrada Seca?» traía al ambiental por la palabra *quebrada*.
 
 1. En el nodo, desde un clon del repo: `bash scripts/nodo-t4/instalar-laya.sh`. Crea un venv en `/opt/laya`, **entrena en la GPU** con `scripts/nodo-t4/laya/datos` (unos minutos; no hay pesos que copiar), genera la clave en `/etc/laya-electrum.env` y deja el servicio `laya-electrum` en `:8792`.
-2. Security group: abrir `8792` solo a la IP de salida de Render.
-3. En Render: `ULTRON_LAYA_URL=http://35.175.175.203:8792` y `ULTRON_LAYA_CLAVE=` (la de `/etc/laya-electrum.env`).
+2. TLS: el `:8792` no se abre en el security group. Laya sale por el Caddy de Voicebox (`443`, `/opt/voicebox/caddy/Caddyfile`), con `handle_path /laya/* { reverse_proxy 127.0.0.1:8792 }` antes de `@autorizado`. `/laya/decidir` exige la clave; `/laya/salud` es público.
+3. En Render: `ULTRON_LAYA_URL=https://35-175-175-203.sslip.io/laya` y `ULTRON_LAYA_CLAVE=` (la de `/etc/laya-electrum.env`). `lib/laya.ts` ignora cualquier URL `http://` que no sea local: el texto del usuario y la clave no viajan sin cifrar.
 4. `turnoElectrum` llama a `decidirPanel()`: los especialistas que el usuario nombra («pásame al geólogo») van primero, el resto lo decide Laya. Si Laya no está configurado, tarda más de 800 ms o falla, se usa la tabla de siempre y no se reintenta durante 60 s.
 
 **Resultado sobre la prueba apartada** (260 consultas escritas aparte, ninguna vista al entrenar):

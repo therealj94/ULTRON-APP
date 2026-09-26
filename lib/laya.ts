@@ -6,7 +6,21 @@
  * tarda o falla, esto devuelve null y quien llama sigue con su regla de siempre: Laya nunca es el
  * motivo de que un turno se caiga.
  */
-const url = () => (process.env.ULTRON_LAYA_URL || '').replace(/\/$/, '');
+/**
+ * Solo https: el texto del usuario y la clave cruzan internet. http se acepta únicamente hacia la
+ * propia máquina (pruebas, túnel local); cualquier otra URL http cuenta como «no configurado».
+ */
+export function urlSegura(cruda: string) {
+  const u = cruda.trim().replace(/\/$/, '');
+  if (!u) return '';
+  try {
+    const { protocol, hostname } = new URL(u);
+    if (protocol === 'https:') return u;
+    if (protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(hostname)) return u;
+  } catch {}
+  return '';
+}
+const url = () => urlSegura(process.env.ULTRON_LAYA_URL || '');
 const clave = () => process.env.ULTRON_LAYA_CLAVE || '';
 const espera = () => Number(process.env.ULTRON_LAYA_TIMEOUT_MS) || 800;
 

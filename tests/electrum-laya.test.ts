@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { decidirPanel, convocar } from '../server/electrum/especialistas';
-import { _reiniciarLaya, decidirLaya } from '../lib/laya';
+import { _reiniciarLaya, decidirLaya, urlSegura } from '../lib/laya';
 
 type Respuesta = { status?: number; cuerpo?: unknown; demoraMs?: number };
 let siguiente: Respuesta = {};
@@ -110,4 +110,14 @@ test('panel con Laya', async (t) => {
     assert.deepEqual(ultimo, {});
     process.env.ULTRON_LAYA_URL = antes;
   });
+});
+
+test('Laya solo por https, salvo hacia la propia máquina', () => {
+  assert.equal(urlSegura('https://35-175-175-203.sslip.io/laya/'), 'https://35-175-175-203.sslip.io/laya');
+  assert.equal(urlSegura('http://127.0.0.1:8792'), 'http://127.0.0.1:8792');
+  assert.equal(urlSegura('http://localhost:8792/'), 'http://localhost:8792');
+  assert.equal(urlSegura('http://35.175.175.203:8792'), '');
+  assert.equal(urlSegura('ftp://x'), '');
+  assert.equal(urlSegura('no es url'), '');
+  assert.equal(urlSegura(''), '');
 });
