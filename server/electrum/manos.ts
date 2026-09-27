@@ -466,7 +466,7 @@ const documento_revisar: Herramienta = {
 const informe_pdf: Herramienta = {
   nombre: 'informe_pdf',
   descripcion:
-    'Arma un informe en PDF descargable: la ficha completa de una concesión (con área medida, traslapes y citas de expediente), el estado de toda la cartera cargada, o lo que se viene conversando (tipo conversacion: una investigación o un análisis, con sus fuentes). Usala cuando pidan «un informe», «un PDF», «algo para imprimir» o «para llevar a la reunión».',
+    'Arma un informe en PDF descargable: la ficha completa de una concesión (con área medida, traslapes y citas de expediente), el estado de toda la cartera cargada, o lo que se viene conversando (tipo conversacion: una investigación o un análisis, con sus fuentes). Usala cuando pidan «un informe», «un PDF», «algo para imprimir» o «para llevar a la reunión». Si solo piden MAPAS (geológico, estructural, tectónico), usá mapa_geologico, que los manda como imagen.',
   esquema: {
     type: 'object',
     properties: {

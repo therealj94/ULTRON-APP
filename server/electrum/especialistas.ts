@@ -124,7 +124,9 @@ export const ESPECIALISTAS: Especialista[] = [
       'El área que reportás es la medida sobre el elipsoide, no la que trae el archivo. Si difieren, lo decís y explicás por qué.',
       'Un traslape lo das en hectáreas y con nombre y apellido de las dos partes. Nunca «parece que se pisan».',
     ],
-    herramientas: ['informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_en_punto', 'concesion_entorno'],
+    // Los mapas geológicos también son mapas: cuando Laya convoca a geomática por «mapa», tiene que
+    // poder dibujarlos, no salir del paso con un PDF.
+    herramientas: ['mapa_geologico', 'geologia_zona', 'informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_en_punto', 'concesion_entorno'],
     vigila: 'Que nadie mida un área sobre la cuadrícula UTM y la reporte como superficie de terreno.',
   },
   {
