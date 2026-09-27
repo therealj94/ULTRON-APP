@@ -10,6 +10,7 @@ import type { Feature, Geometry } from 'geojson';
 import { consulta, guardarCapa, hayBase, recalcularTraslapes } from '../server/electrum/db';
 import { claseDeCapa, normalizarClase, olvidarTablero, tablero } from '../server/electrum/tablero';
 import { nombreParaDecir } from '../src-electrum/demo/Recorrido';
+import { partirNombre } from '../src-electrum/mapa/Tablero';
 import type { Capa } from '../server/electrum/gis';
 
 const caja = (o: number, s: number, e: number, n: number): Geometry => ({ type: 'Polygon', coordinates: [[[o, s], [e, s], [e, n], [o, n], [o, s]]] });
@@ -37,6 +38,13 @@ test('la clase del padrón, con las tildes que perdió el .dbf', () => {
 test('el nombre para decir en voz alta, sin notas del padrón', () => {
   assert.equal(nombreParaDecir('El Mochito. (GRAVADO CON PRIMERA HIPOTECA)'), 'El Mochito');
   assert.equal(nombreParaDecir('Macuelizo'), 'Macuelizo');
+});
+
+test('en las listas del tablero, la nota del padrón va aparte del nombre', () => {
+  assert.deepEqual(partirNombre('El Mochito. (GRAVADO CON PRIMERA HIPOTECA)'), { nombre: 'El Mochito', nota: 'gravado con primera hipoteca' });
+  assert.deepEqual(partirNombre('Monte Redondo (Embargo)'), { nombre: 'Monte Redondo', nota: 'embargo' });
+  assert.deepEqual(partirNombre('Macuelizo'), { nombre: 'Macuelizo', nota: null });
+  assert.deepEqual(partirNombre('(sin nombre)'), { nombre: '(sin nombre)', nota: null });
 });
 
 test('tablero nacional, contra PostGIS', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async () => {
