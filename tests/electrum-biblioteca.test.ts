@@ -15,7 +15,7 @@ const llaveAntes = process.env.ELECTRUM_CLAVE;
 process.env.ELECTRUM_CLAVE = 'llave-de-prueba-biblioteca';
 
 const { paginasDePptx, paginasDeRtf, paginasDeXlsx, paginasDeDoc } = await import('../lib/leer-oficina');
-const { planear } = await import('../server/electrum/importar');
+const { planear, planDeTrabajo } = await import('../server/electrum/importar');
 const bib = await import('../server/electrum/biblioteca');
 const { montarRutasBiblioteca } = await import('../server/electrum/biblioteca-rutas');
 const { aprender } = await import('../server/electrum/aprender');
@@ -170,6 +170,23 @@ test('importar: agrupa shapefiles, ordena en carpetas y dice por qué omite cada
   assert.equal(conFotos.unidades[0]?.carpeta, 'Estudio');
 });
 
+test('importar: el plan del trabajo de Render va por su id interno', () => {
+  // Sin la variable del entorno: una máquina configurada con «pro» no puede cambiar el resultado.
+  const antes = process.env.ELECTRUM_IMPORTAR_PLAN;
+  delete process.env.ELECTRUM_IMPORTAR_PLAN;
+  try {
+    assert.equal(planDeTrabajo(), 'plan-srv-008');
+  } finally {
+    if (antes !== undefined) process.env.ELECTRUM_IMPORTAR_PLAN = antes;
+  }
+  assert.equal(planDeTrabajo(''), 'plan-srv-008');
+  assert.equal(planDeTrabajo('standard'), 'plan-srv-008');
+  assert.equal(planDeTrabajo(' Pro '), 'plan-srv-010');
+  assert.equal(planDeTrabajo('pro plus'), 'plan-srv-011');
+  assert.equal(planDeTrabajo('plan-srv-006'), 'plan-srv-006');
+  assert.equal(planDeTrabajo('gigante'), 'plan-srv-008', 'lo desconocido cae al estándar, no a un error de Render');
+});
+
 test('carpetas: se limpian (sin «..», sin vacíos, con tope)', () => {
   assert.equal(bib.normalizarCarpeta(' INDEXSA //  Minas  de Oro/ '), 'INDEXSA/Minas de Oro');
   assert.equal(bib.normalizarCarpeta('../../etc/./x'), 'etc/x');
@@ -312,6 +329,22 @@ test('panel: estados, carpetas, mover, renombrar, borrar y bitácora, con permis
     await consulta(`DELETE FROM documento WHERE lower(nombre) LIKE 'prueba-bib-%'`);
     await consulta(`DELETE FROM capa WHERE nombre LIKE 'prueba-bib-%'`);
   }
+});
+
+test('un PDF escaneado se reconoce en el acto (sin el lector propio) y trae sus páginas', { skip: sinBase }, async () => {
+  const fs = await import('node:fs');
+  const pdf = fs.readFileSync('tests/fixtures/escaneo-3-paginas.pdf');
+  await consulta(`DELETE FROM documento WHERE nombre = 'prueba-bib-escaneo-real.pdf'`);
+  const t0 = Date.now();
+  const r = await aprender('prueba-bib-escaneo-real.pdf', pdf);
+  assert.equal(r.clase, 'nada');
+  assert.equal((r.ui as any)?.escaneo, true);
+  assert.equal((r.ui as any)?.paginas, 3, 'las páginas las cuenta pdf.js');
+  assert.ok(Date.now() - t0 < 5000, `tardó ${Date.now() - t0} ms`);
+  const id = await bib.anotarSinTexto({ nombre: 'prueba-bib-escaneo-real.pdf', datos: pdf, carpeta: 'Escaneos', archivo: 's3://cubo/entrada/e.pdf', motivo: r.dicho, paginas: 3 });
+  const [d] = await consulta<{ paginas: number; tipo: string }>(`SELECT paginas, tipo FROM documento WHERE id = $1`, [id]);
+  assert.deepEqual(d, { paginas: 3, tipo: 'escaneo' });
+  await consulta(`DELETE FROM documento WHERE nombre = 'prueba-bib-escaneo-real.pdf'`);
 });
 
 test('aprender: .rtf, .pptx y .xlsx entran como documentos con su carpeta y su original', { skip: sinBase }, async () => {

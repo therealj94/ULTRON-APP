@@ -141,8 +141,26 @@ function puedeLanzarTrabajo(): boolean {
   return !!(process.env.RENDER_API_KEY && process.env.RENDER_SERVICE_ID) && process.env.ELECTRUM_IMPORTAR_EN_PROCESO !== '1';
 }
 
+/**
+ * La API de trabajos de Render no acepta el nombre del plan («standard»): pide su id interno.
+ * Medidos con trabajos de prueba el 27-09-2026 (límite del cgroup): 006 = starter (512 MB, ½ CPU),
+ * 008 = standard (2 GB, 1 CPU), 010 = pro (4 GB, 2 CPU), 011 = pro plus (8 GB, 4 CPU).
+ */
+const PLANES_RENDER: Record<string, string> = {
+  starter: 'plan-srv-006',
+  standard: 'plan-srv-008',
+  pro: 'plan-srv-010',
+  pro_plus: 'plan-srv-011',
+};
+
+export function planDeTrabajo(valor = process.env.ELECTRUM_IMPORTAR_PLAN): string {
+  const v = String(valor || 'standard').trim().toLowerCase();
+  if (/^plan-srv-\d+$/.test(v)) return v;
+  return PLANES_RENDER[v.replace(/[\s-]+/g, '_')] || PLANES_RENDER.standard;
+}
+
 async function lanzarTrabajo(id: number): Promise<{ ok: boolean; detalle: string }> {
-  const plan = String(process.env.ELECTRUM_IMPORTAR_PLAN || 'standard');
+  const plan = planDeTrabajo();
   try {
     const r = await fetch(`https://api.render.com/v1/services/${process.env.RENDER_SERVICE_ID}/jobs`, {
       method: 'POST',
@@ -302,7 +320,15 @@ async function correr(id: number, prefijo: string, unidades: Unidad[], por: stri
           });
           dicho = a.dicho;
           if (a.clase === 'nada' && (a.ui as any)?.escaneo) {
-            const id2 = await anotarSinTexto({ nombre: b.nombre, datos: b.datos, carpeta: u.carpeta, archivo: `s3://${bucket}/${u.key}`, por, motivo: a.dicho }).catch(() => null);
+            const id2 = await anotarSinTexto({
+              nombre: b.nombre,
+              datos: b.datos,
+              carpeta: u.carpeta,
+              archivo: `s3://${bucket}/${u.key}`,
+              por,
+              motivo: a.dicho,
+              paginas: (a.ui as any)?.paginas ?? null,
+            }).catch(() => null);
             r = 'fallo';
             if (id2) dicho = `Escaneo sin texto: quedó en el panel como «sin texto» para pasarlo por OCR y releerlo.`;
           } else if (a.clase === 'nada') r = 'fallo';
