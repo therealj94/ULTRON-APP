@@ -27,11 +27,12 @@ type Ficha = {
   geologia: Parte;
   documentos: Parte;
 };
+type Lista<T> = { estado: 'ok'; lista: T[] } | { estado: 'error'; motivo: string };
 type Aqui = {
   lon: number;
   lat: number;
-  concesiones: Array<{ id: number; nombre: string; titular: string | null }>;
-  cerca: Array<{ id: number; nombre: string; km: number }>;
+  concesiones: Lista<{ id: number; nombre: string; titular: string | null }>;
+  cerca: Lista<{ id: number; nombre: string; km: number }>;
   geologia: Parte;
 };
 type Rasgo = { id: number; capa: string; rol: string | null; nombre: string; atributos: Array<[string, string]> };
@@ -257,9 +258,11 @@ function AquiVista({ a, onTocar, onPreguntar }: { a: Aqui; onTocar: Props['onToc
         </Boton>
       </div>
       <Seccion titulo="Concesión en este punto">
-        {a.concesiones.length ? (
+        {a.concesiones.estado === 'error' ? (
+          <p className="text-[#E8A08F]">No pude saber quién lo tiene: {a.concesiones.motivo}.</p>
+        ) : a.concesiones.lista.length ? (
           <ul className="space-y-1">
-            {a.concesiones.map((c) => (
+            {a.concesiones.lista.map((c) => (
               <li key={c.id}>
                 <button type="button" className="text-left underline decoration-white/25 underline-offset-2 hover:text-white cursor-pointer" onClick={() => onTocar({ tipo: 'concesion', id: c.id, nombre: c.nombre, lngLat: [a.lon, a.lat] })}>
                   {c.nombre}
@@ -272,10 +275,15 @@ function AquiVista({ a, onTocar, onPreguntar }: { a: Aqui; onTocar: Props['onToc
           <p>Ninguna concesión del catastro cubre este punto.</p>
         )}
       </Seccion>
-      {a.cerca.length > 0 && (
+      {a.cerca.estado === 'error' && (
+        <Seccion titulo="Cerca (3 km)">
+          <p className="text-[#E8A08F]">No pude revisar las cercanas: {a.cerca.motivo}.</p>
+        </Seccion>
+      )}
+      {a.cerca.estado === 'ok' && a.cerca.lista.length > 0 && (
         <Seccion titulo="Cerca (3 km)">
           <ul className="space-y-1">
-            {a.cerca.map((c) => (
+            {a.cerca.lista.map((c) => (
               <li key={c.id}>
                 <button type="button" className="text-left underline decoration-white/25 underline-offset-2 hover:text-white cursor-pointer" onClick={() => onTocar({ tipo: 'concesion', id: c.id, nombre: c.nombre, lngLat: [a.lon, a.lat] })}>
                   {c.nombre}

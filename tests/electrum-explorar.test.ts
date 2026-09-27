@@ -7,7 +7,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Feature, Geometry } from 'geojson';
 import { consulta, guardarCapa, hayBase } from '../server/electrum/db';
-import { capaParaMapa, capasVisibles, datosDe, fichaParaMapa, queHayAqui, rasgoParaMapa } from '../server/electrum/explorar';
+import { capaParaMapa, capasVisibles, datosDe, fichaParaMapa, queHayAqui, rasgoParaMapa, renglonesEntorno } from '../server/electrum/explorar';
 import type { Capa } from '../server/electrum/gis';
 
 const HAY = hayBase();
@@ -39,6 +39,33 @@ test('los datos del catastro, en el orden en que se leen y sin huecos', () => {
   assert.equal(Object.fromEntries(d)['Área medida'], '478,12 ha');
   // El mojibake de los .dbf se repara también aquí.
   assert.equal(Object.fromEntries(d).Departamento, 'Francisco Morazán');
+});
+
+test('una revisión ambiental que falló no se presenta como limpia', () => {
+  const e: any = {
+    concesion: { id: 1, nombre: 'X', hectareas: 10 },
+    capas: {},
+    municipios: { estado: 'ok', lista: [] },
+    departamentos: { estado: 'ok', lista: [] },
+    areasProtegidas: { estado: 'error', motivo: 'timeout' },
+    microcuencas: { estado: 'ok', pisa: [] },
+    forestal: { estado: 'no-cargada' },
+    rios: { estado: 'ok', kmDentro: 0, tramos: [], masCercano: null },
+    poblados: { estado: 'ok', dentro: 0, cerca: 0, lista: [], porTipo: [], poblacionDentro: null },
+    carretera: { estado: 'ok', km: null, franja: false },
+    zonasInformales: { estado: 'ok', lista: [] },
+    ocurrencias: { estado: 'ok', lista: [] },
+    traslapes: [],
+    faltan: ['forestal'],
+    alertas: [],
+    ms: 1,
+  };
+  const r = renglonesEntorno(e);
+  assert.match(r[0], /No se pudo revisar .*áreas protegidas/);
+  assert.ok(!r.some((x) => /^Sin áreas protegidas/.test(x)), r.join(' | '));
+  // Con todo bien y nada alrededor, sí se dice que está limpio.
+  const limpio = renglonesEntorno({ ...e, areasProtegidas: { estado: 'ok', pisa: [], cerca: [] } });
+  assert.ok(limpio.some((x) => /^Sin áreas protegidas/.test(x)), limpio.join(' | '));
 });
 
 const caja = (o: number, s: number, e: number, n: number): Geometry => ({
@@ -95,12 +122,15 @@ test('tocar el mapa, contra PostGIS', { skip: HAY ? false : 'sin ELECTRUM_DB_URL
 
   await t.test('«¿qué hay aquí?» dice quién tiene el punto y qué hay cerca', async () => {
     const a = await queHayAqui(-87.19, 14.81);
-    assert.deepEqual(a.concesiones.map((c) => c.nombre), ['Los Chaguites']);
-    assert.ok(a.cerca.some((c) => c.nombre === 'La Vecina'));
-    assert.ok(!a.cerca.some((c) => c.nombre === 'Los Chaguites'), 'la que lo cubre no se repite como cercana');
+    assert.equal(a.concesiones.estado, 'ok');
+    assert.equal(a.cerca.estado, 'ok');
+    if (a.concesiones.estado !== 'ok' || a.cerca.estado !== 'ok') return;
+    assert.deepEqual(a.concesiones.lista.map((c) => c.nombre), ['Los Chaguites']);
+    assert.ok(a.cerca.lista.some((c) => c.nombre === 'La Vecina'));
+    assert.ok(!a.cerca.lista.some((c) => c.nombre === 'Los Chaguites'), 'la que lo cubre no se repite como cercana');
     assert.equal(a.geologia.estado, 'ok');
     const vacio = await queHayAqui(-86.0, 15.5);
-    assert.equal(vacio.concesiones.length, 0);
+    assert.deepEqual(vacio.concesiones, { estado: 'ok', lista: [] });
   });
 
   await t.test('las capas que se pueden encender, y cada una pintable', async () => {

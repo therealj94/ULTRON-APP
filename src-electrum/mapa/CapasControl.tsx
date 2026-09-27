@@ -14,7 +14,12 @@ import { COLOR_ROCA, ESTILO_ROL, NOMBRE_ROCA } from './capas';
 const AMBAR = '#FFAE3B';
 type Disponible = { id: number; nombre: string; rol: RolVisible; entidades: number };
 
-export function CapasControl({ encendidas, onCambio }: { encendidas: CapaExtra[]; onCambio: (c: CapaExtra[]) => void }) {
+/**
+ * `onCambio` recibe una función sobre la lista del momento, no una lista armada aquí: dos capas
+ * que terminan de bajar casi a la vez armaban cada una su lista con la vieja y la segunda borraba
+ * a la primera (revisión de Codex en #44).
+ */
+export function CapasControl({ encendidas, onCambio }: { encendidas: CapaExtra[]; onCambio: (f: (antes: CapaExtra[]) => CapaExtra[]) => void }) {
   const [abierto, setAbierto] = useState(false);
   const [lista, setLista] = useState<Disponible[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +41,7 @@ export function CapasControl({ encendidas, onCambio }: { encendidas: CapaExtra[]
 
   const alternar = useCallback(
     async (c: Disponible) => {
-      if (encendidas.some((x) => x.id === c.id)) return onCambio(encendidas.filter((x) => x.id !== c.id));
+      if (encendidas.some((x) => x.id === c.id)) return onCambio((antes) => antes.filter((x) => x.id !== c.id));
       let capa = guardadas.current.get(c.id);
       if (!capa) {
         setBajando(c.id);
@@ -57,7 +62,8 @@ export function CapasControl({ encendidas, onCambio }: { encendidas: CapaExtra[]
         }
       }
       setError(null);
-      onCambio([...encendidas, capa]);
+      const nueva = capa;
+      onCambio((antes) => (antes.some((x) => x.id === nueva.id) ? antes : [...antes, nueva]));
     },
     [encendidas, onCambio]
   );

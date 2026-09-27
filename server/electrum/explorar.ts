@@ -16,7 +16,7 @@
  * dice en esa sección.
  */
 import type { FeatureCollection, Geometry } from 'geojson';
-import { buscarEnExpedientes, concesionEnPunto, geometriaDe, concesionPorId, conTextoReparado, consultaConTope, cercaDe, type FilaConcesion, type RolCapa } from './db';
+import { geometriaDe, concesionPorId, conTextoReparado, consultaConTope, type FilaConcesion, type RolCapa } from './db';
 import { alertasDe, capasPorRol, entornoDe, type Entorno } from './entorno';
 import { claseDeRoca, geologiaDe, type Geologia } from './geologia';
 import { repararTexto } from './gis';
@@ -41,11 +41,21 @@ async function conTope<T>(fn: () => Promise<T>, ms: number): Promise<T> {
   }
 }
 
-async function parte(fn: () => Promise<string[]>, ms = 12000): Promise<Parte> {
+/**
+ * El motivo que ve la persona es estable: «tardó demasiado» o «falló la consulta». El error de
+ * Postgres (con su host, usuario o esquema) va al registro del servidor, no a la pantalla.
+ */
+function motivoPublico(e: any, que: string): string {
+  const m = String(e?.message || e);
+  console.error(`[electrum] mapa: ${que} falló:`, m.slice(0, 200));
+  return /tard[oó] m[aá]s de|statement timeout|canceling statement/i.test(m) ? 'la consulta tardó demasiado; volvé a tocar en un momento' : 'falló la consulta a la base';
+}
+
+async function parte(que: string, fn: () => Promise<string[]>, ms = 12000): Promise<Parte> {
   try {
     return { estado: 'ok', renglones: await conTope(fn, ms) };
   } catch (e: any) {
-    return { estado: 'error', motivo: String(e?.message || e).slice(0, 160) };
+    return { estado: 'error', motivo: motivoPublico(e, que) };
   }
 }
 
@@ -78,14 +88,29 @@ function venceEn(vence: string, hoy: Date): string {
 }
 
 /** El entorno en renglones: lo que alerta primero, después dónde queda y lo que no se pudo cruzar. */
+const NOMBRE_SECCION: Array<[keyof Entorno, string]> = [
+  ['areasProtegidas', 'áreas protegidas'],
+  ['microcuencas', 'microcuencas'],
+  ['forestal', 'patrimonio forestal'],
+  ['rios', 'ríos'],
+  ['poblados', 'caseríos y aldeas'],
+  ['carretera', 'carreteras'],
+  ['zonasInformales', 'minería informal'],
+  ['ocurrencias', 'yacimientos'],
+  ['municipios', 'municipios'],
+];
+
 export function renglonesEntorno(e: Entorno): string[] {
   const r = [...alertasDe(e)];
+  // Una revisión que falló no es una revisión limpia: se dice cuál no se pudo hacer.
+  const fallidas = NOMBRE_SECCION.filter(([k]) => (e[k] as any)?.estado === 'error').map(([, n]) => n);
   if (e.municipios.estado === 'ok' && e.municipios.lista.length) {
     r.push(`Municipio: ${e.municipios.lista.map((m) => (m.pct < 99.5 ? `${m.nombre} (${nf(m.pct, 0)} %)` : m.nombre)).join(', ')}.`);
   }
   if (e.carretera.estado === 'ok' && e.carretera.km != null) r.push(`Carretera más cercana a ${km(e.carretera.km)}.`);
   if (e.rios.estado === 'ok' && !e.rios.kmDentro && e.rios.masCercano) r.push(`Sin cauces dentro; el más cercano, ${e.rios.masCercano.nombre}, a ${km(e.rios.masCercano.km)}.`);
-  if (!r.length) r.push('Sin áreas protegidas, caseríos, ríos ni traslapes en las capas cargadas.');
+  if (!r.length && !fallidas.length) r.push('Sin áreas protegidas, caseríos, ríos ni traslapes en las capas cargadas.');
+  if (fallidas.length) r.unshift(`No se pudo revisar (falló la consulta; volvé a tocar): ${fallidas.join(', ')}.`);
   if (e.faltan.length) r.push(`No cruzado (capa no cargada): ${e.faltan.join(', ').replace(/_/g, ' ')}.`);
   return r;
 }
@@ -138,22 +163,30 @@ export async function fichaParaMapa(id: number): Promise<FichaMapa | null> {
   if (!f) return null;
   const [geo, entorno, geologia, documentos] = await Promise.all([
     geometriaDe(id).catch(() => null),
-    parte(async () => {
+    parte('entorno', async () => {
       const e = await entornoDe(id);
       return e ? renglonesEntorno(e) : ['No tiene geometría: no hay entorno que cruzar.'];
     }),
-    parte(async () => {
+    parte('geología', async () => {
       const g = await geologiaDe({ concesion: id });
       if ('error' in g) return [g.error];
       return renglonesGeologia(g);
     }, 14000),
-    parte(async () => {
+    parte('documentos', async () => {
       const propios = await consultaConTope<{ nombre: string; tipo: string | null; paginas: number | null }>(
         `SELECT nombre, tipo, paginas FROM documento WHERE concesion_id = $1 ORDER BY subido DESC LIMIT 8`,
         [id],
         6000
       ).then(conTextoReparado);
-      const nombran = await buscarEnExpedientes(f.nombre, 4).catch(() => []);
+      // Con tope en la base, igual que todo lo de aquí: un toque abandonado no deja la consulta viva.
+      const nombran = await consultaConTope<{ documento: string; pagina: number | null; texto: string }>(
+        `SELECT d.nombre AS documento, f.pagina, left(f.texto, 400) AS texto
+           FROM fragmento f JOIN documento d ON d.id = f.documento_id
+          WHERE f.tsv @@ phraseto_tsquery('spanish', $1)
+          ORDER BY ts_rank(f.tsv, phraseto_tsquery('spanish', $1)) DESC LIMIT 4`,
+        [f.nombre],
+        6000
+      ).then(conTextoReparado);
       const r = [
         ...propios.map((d) => `${d.nombre}${d.tipo ? ` · ${d.tipo}` : ''}${d.paginas ? ` · ${d.paginas} pág.` : ''}`),
         ...nombran
@@ -168,31 +201,63 @@ export async function fichaParaMapa(id: number): Promise<FichaMapa | null> {
 
 /* ------------------------------------------------------------------ un punto */
 
+type Lista<T> = { estado: 'ok'; lista: T[] } | { estado: 'error'; motivo: string };
+
 export type AquiMapa = {
   lon: number;
   lat: number;
-  concesiones: Array<{ id: number; nombre: string; titular: string | null }>;
-  cerca: Array<{ id: number; nombre: string; km: number }>;
+  /** De quién es el punto. Si la consulta falla se dice: un error no es «no hay ninguna». */
+  concesiones: Lista<{ id: number; nombre: string; titular: string | null }>;
+  cerca: Lista<{ id: number; nombre: string; km: number }>;
   geologia: Parte;
 };
 
 /** «¿Qué hay aquí?»: quién tiene el punto, qué hay cerca y sobre qué roca está. */
 export async function queHayAqui(lon: number, lat: number): Promise<AquiMapa> {
+  const punto = `ST_SetSRID(ST_MakePoint($1, $2), 4326)`;
   const [en, cerca, geologia] = await Promise.all([
-    conTope(() => concesionEnPunto(lon, lat), 6000).catch(() => [] as FilaConcesion[]),
-    conTope(() => cercaDe(lon, lat, 3, 6), 6000).catch(() => [] as Array<FilaConcesion & { km: number }>),
-    parte(async () => {
+    consultaConTope<{ id: string; nombre: string; titular: string | null }>(
+      `SELECT id::text, nombre, titular FROM concesion WHERE ST_Intersects(geom, ${punto}) LIMIT 20`,
+      [lon, lat],
+      6000
+    ).then(
+      (f) => ({ estado: 'ok' as const, lista: f }),
+      (e) => ({ estado: 'error' as const, motivo: motivoPublico(e, 'concesión en el punto') })
+    ),
+    consultaConTope<{ id: string; nombre: string; km: number }>(
+      `SELECT id::text, nombre, (ST_Distance(geom::geography, ${punto}::geography) / 1000.0)::float8 AS km
+         FROM concesion WHERE ST_DWithin(geom::geography, ${punto}::geography, 3000)
+        ORDER BY km LIMIT 8`,
+      [lon, lat],
+      6000
+    ).then(
+      (f) => ({ estado: 'ok' as const, lista: f }),
+      (e) => ({ estado: 'error' as const, motivo: motivoPublico(e, 'concesiones cercanas') })
+    ),
+    parte('geología del punto', async () => {
       const g = await geologiaDe({ lon, lat, radioKm: 3 });
       if ('error' in g) return [g.error];
       return renglonesGeologia(g);
     }, 14000),
   ]);
-  const dentro = new Set(en.map((c) => Number(c.id)));
+  const dentro = new Set(en.estado === 'ok' ? en.lista.map((c) => Number(c.id)) : []);
   return {
     lon,
     lat,
-    concesiones: en.map((c) => ({ id: Number(c.id), nombre: repararTexto(c.nombre), titular: c.titular ? repararTexto(c.titular) : null })),
-    cerca: cerca.filter((c) => !dentro.has(Number(c.id))).map((c) => ({ id: Number(c.id), nombre: repararTexto(c.nombre), km: Math.round(c.km * 100) / 100 })),
+    concesiones:
+      en.estado === 'ok'
+        ? { estado: 'ok', lista: en.lista.map((c) => ({ id: Number(c.id), nombre: repararTexto(c.nombre), titular: c.titular ? repararTexto(c.titular) : null })) }
+        : en,
+    cerca:
+      cerca.estado === 'ok'
+        ? {
+            estado: 'ok',
+            lista: cerca.lista
+              .filter((c) => !dentro.has(Number(c.id)))
+              .slice(0, 6)
+              .map((c) => ({ id: Number(c.id), nombre: repararTexto(c.nombre), km: Math.round(c.km * 100) / 100 })),
+          }
+        : cerca,
     geologia,
   };
 }

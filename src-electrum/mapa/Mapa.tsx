@@ -216,6 +216,9 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
   /** El último `onTocar`, para los manejadores que se atan una sola vez al crear el mapa. */
   const tocarRef = useRef(onTocar);
   tocarRef.current = onTocar;
+  /** Las capas encendidas de ahora, para reponerlas cuando Google termina de cargar (asíncrono). */
+  const extrasRef = useRef(extras);
+  extrasRef.current = extras;
   useEffect(() => {
     tocarGoogle = (t) => tocarRef.current?.(t);
     return () => {
@@ -389,6 +392,8 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
       for (const cual of ['concesiones', 'resaltada'] as const) {
         if (pintado[cual]) pintarGoogle(google.current, cual, pintado[cual]);
       }
+      // Y las capas encendidas: el efecto que las pinta corrió antes de que existiera el mapa.
+      pintarExtrasGoogle(google.current, extrasRef.current);
     };
     if (yaEsta) return arrancar();
     const s = document.createElement('script');
