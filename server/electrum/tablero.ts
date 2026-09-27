@@ -119,7 +119,11 @@ async function calcular(): Promise<Tablero> {
       `SELECT estado AS nombre, count(*)::int AS n, coalesce(sum(hectareas), 0)::float8 AS ha FROM concesion GROUP BY 1 ORDER BY 2 DESC`
     ),
     q<{ capa: string | null; clase: string | null; n: number; ha: number }>(
-      `SELECT c.nombre AS capa, k.atributos->>'clasificac' AS clase, count(*)::int AS n, coalesce(sum(k.hectareas), 0)::float8 AS ha
+      // La llave se busca sin distinguir mayúsculas: según cómo se cargó el .dbf llega como
+      // «clasificac» o «CLASIFICAC», y en JSONB son llaves distintas.
+      `SELECT c.nombre AS capa,
+              (SELECT a.valor FROM jsonb_each_text(k.atributos) AS a(llave, valor) WHERE lower(a.llave) = 'clasificac' LIMIT 1) AS clase,
+              count(*)::int AS n, coalesce(sum(k.hectareas), 0)::float8 AS ha
          FROM concesion k LEFT JOIN capa c ON c.id = k.capa_id GROUP BY 1, 2`
     ),
     de('departamento').length

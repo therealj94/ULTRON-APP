@@ -89,6 +89,16 @@ test('tablero nacional, contra PostGIS', { skip: hayBase() ? false : 'sin ELECTR
   await consulta(`DELETE FROM concesion WHERE id = (SELECT max(id) FROM concesion WHERE nombre = 'El Guirisero')`);
   await recalcularTraslapes();
   olvidarTablero();
+  // La columna CLASIFICAC del padrón manda sobre el nombre de la capa, venga la llave en mayúsculas o no.
+  await consulta(`UPDATE concesion SET atributos = jsonb_build_object('CLASIFICAC', 'Peque?a Miner?a Met?lica') WHERE nombre = 'Cerro Azul'`);
+  await consulta(`UPDATE concesion SET atributos = jsonb_build_object('clasificac', 'Banco de Pr?stamo') WHERE nombre = 'La Vecina'`);
+  olvidarTablero();
+  const conClase = await tablero();
+  const clases = new Map(conClase.porClase.map((c) => [c.nombre, c.n]));
+  assert.equal(clases.get('Pequeña Minería Metálica'), 1);
+  assert.equal(clases.get('Banco de Préstamo'), 1);
+  await consulta(`UPDATE concesion SET atributos = '{}'::jsonb WHERE nombre IN ('Cerro Azul', 'La Vecina')`);
+  olvidarTablero();
   // Reserva Azul pisa la mitad este de Cerro Azul (0,01°) y toda La Vecina.
   assert.equal(t.areasProtegidas!.concesiones, 2);
   const vecina = t.areasProtegidas!.lista.find((c) => c.concesion === 'La Vecina')!;
