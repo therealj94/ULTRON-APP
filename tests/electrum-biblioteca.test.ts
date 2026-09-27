@@ -171,7 +171,15 @@ test('importar: agrupa shapefiles, ordena en carpetas y dice por qué omite cada
 });
 
 test('importar: el plan del trabajo de Render va por su id interno', () => {
-  assert.equal(planDeTrabajo(undefined), 'plan-srv-008');
+  // Sin la variable del entorno: una máquina configurada con «pro» no puede cambiar el resultado.
+  const antes = process.env.ELECTRUM_IMPORTAR_PLAN;
+  delete process.env.ELECTRUM_IMPORTAR_PLAN;
+  try {
+    assert.equal(planDeTrabajo(), 'plan-srv-008');
+  } finally {
+    if (antes !== undefined) process.env.ELECTRUM_IMPORTAR_PLAN = antes;
+  }
+  assert.equal(planDeTrabajo(''), 'plan-srv-008');
   assert.equal(planDeTrabajo('standard'), 'plan-srv-008');
   assert.equal(planDeTrabajo(' Pro '), 'plan-srv-010');
   assert.equal(planDeTrabajo('pro plus'), 'plan-srv-011');
