@@ -24,11 +24,14 @@
  * caja de la concesión, ampliada en grados lo justo para la distancia que se pide— y solo sobre lo
  * que sobrevive a ese filtro se mide en metros sobre `geography`. Las consultas corren en paralelo.
  */
-import { baseTieneRol, consultaConTope, hayBase, rolDeCapa, traslapesDe, type RolCapa } from './db';
+import { baseTieneRol, conTextoReparado, consultaConTope, hayBase, rolDeCapa, traslapesDe, type RolCapa } from './db';
 
-/** Cada consulta del entorno la corta la base a los 8 s: una capa lenta no se queda con el pool. */
+/**
+ * Cada consulta del entorno la corta la base a los 8 s: una capa lenta no se queda con el pool. Y
+ * los nombres salen con los acentos reparados («MontaÃ±a Verde» → «Montaña Verde»).
+ */
 const TOPE_MS = 8000;
-const consulta = <T = any>(sql: string, params: unknown[] = []) => consultaConTope<T>(sql, params, TOPE_MS);
+const consulta = <T = any>(sql: string, params: unknown[] = []) => consultaConTope<T>(sql, params, TOPE_MS).then(conTextoReparado);
 
 /* ------------------------------------------------------------------ tipos */
 
@@ -422,17 +425,32 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
 
 /** Zonas o puntos a menos de 5 km, marcando los que caen dentro. */
 async function puntosCerca(id: number, capas: number[], rol: RolCapa): Promise<Punto[]> {
-  const filas = await consulta<{ nombre: string | null; km: number; dentro: boolean; detalle: string | null }>(
+  const filas = await consulta<{ nombre: string | null; km: number; dentro: boolean; detalle: string | null; lugar: string }>(
     `WITH ${C(RADIO_LEJOS_M)}
      SELECT ${nombreDe(rol)} AS nombre, (ST_Distance(e.geom::geography, c.gg) / 1000.0)::float8 AS km,
-            ST_Intersects(e.geom, c.geom) AS dentro, ${DETALLE} AS detalle
+            ST_Intersects(e.geom, c.geom) AS dentro, ${DETALLE} AS detalle,
+            round(ST_X(ST_PointOnSurface(e.geom))::numeric, 4) || ',' || round(ST_Y(ST_PointOnSurface(e.geom))::numeric, 4) AS lugar
        FROM entidad_geo e, c
       WHERE e.capa_id = ANY($2) AND e.geom && c.caja
         AND ST_DWithin(e.geom::geography, c.gg, ${RADIO_LEJOS_M})
-      ORDER BY km LIMIT 20`,
+      ORDER BY km LIMIT 40`,
     [id, capas]
   );
-  return filas.map((f) => ({ nombre: f.nombre || 'sin nombre en la capa', km: f.dentro ? 0 : r2(f.km), dentro: f.dentro, detalle: f.detalle }));
+  /*
+   * El mismo punto en dos capas (los yacimientos de DEFOMIN y los del catálogo general repiten
+   * muchos) salía dos veces, y la alerta contaba 8 donde había 4. Mismo nombre en el mismo lugar
+   * (un punto sobre la geometría, a 4 decimales: unos 11 m) es el mismo punto. Por el lugar y no por
+   * la distancia al lindero: dentro de la concesión esa distancia es 0 para todos, y dos vetas con el
+   * mismo nombre a kilómetros una de otra se fundían en una (revisión de Codex en #39).
+   */
+  const vistos = new Set<string>();
+  const unicos = filas.filter((f) => {
+    const clave = `${rolDeCapaNormal(f.nombre || '')}|${f.lugar}`;
+    if (vistos.has(clave)) return false;
+    vistos.add(clave);
+    return true;
+  });
+  return unicos.slice(0, 20).map((f) => ({ nombre: f.nombre || 'sin nombre en la capa', km: f.dentro ? 0 : r2(f.km), dentro: f.dentro, detalle: f.detalle }));
 }
 
 function rolDeCapaNormal(n: string): string {
@@ -444,7 +462,7 @@ function rolDeCapaNormal(n: string): string {
 const nf = (n: number, d = 1) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 /** Porcentaje como lo dice una persona: «8 %», «0,4 %», «menos del 0,1 %». */
 export const pct = (p: number) => (p >= 10 ? `${Math.round(p)} %` : p >= 0.1 ? `${nf(p, 1)} %` : 'menos del 0,1 %');
-const ha1 = (h: number) => `${nf(h, h >= 100 ? 0 : 1)} ha`;
+const ha1 = (h: number) => (h > 0 && h < 0.05 ? 'menos de 0,1 ha' : `${nf(h, h >= 100 ? 0 : 1)} ha`);
 const km1 = (k: number) => (k < 1 ? `${Math.round(k * 1000)} m` : `${nf(k, 1)} km`);
 const plural = (n: number, uno: string, varios: string) => `${n} ${n === 1 ? uno : varios}`;
 const lista = (xs: string[], max = 4) => (xs.length > max ? `${xs.slice(0, max).join(', ')} y ${xs.length - max} más` : xs.join(', '));
@@ -470,7 +488,7 @@ export function alertasDe(e: Entorno): string[] {
       const [uno, varios] = TIPO_PLURAL[t.tipo];
       if (t.dentro) {
         const suyos = e.poblados.lista.filter((p) => p.dentro && p.tipo === t.tipo).map((p) => p.nombre);
-        a.push(`${plural(t.dentro, `${uno} dentro`, `${varios} dentro`)}${suyos.length ? ` (${lista(suyos)})` : ''}.`);
+        a.push(`${plural(t.dentro, `${uno} dentro`, `${varios} dentro`)}${suyos.length ? ` (${lista([...new Set(suyos)])})` : ''}.`);
       }
       if (t.cerca) a.push(`${plural(t.cerca, uno, varios)} a menos de ${RADIO_POBLADOS_M / 1000} km del lindero.`);
     }

@@ -14,7 +14,7 @@
  */
 import { Pool, type PoolClient } from 'pg';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
-import { areaHectareas, etiqueta, type Capa } from './gis';
+import { areaHectareas, etiqueta, repararTexto, type Capa } from './gis';
 import { buscarPorSignificado } from './vectores';
 import { fundirPorRango } from '../../lib/cognitivo/embeddings';
 import { trazaActual } from '../../lib/cognitivo/traza';
@@ -83,6 +83,17 @@ export async function consultaConTope<T = any>(sql: string, params: unknown[] = 
   } finally {
     cliente.release();
   }
+}
+
+/**
+ * Las filas con los textos de las capas reparados (ver `repararTexto`). Lo ya cargado con acentos
+ * rotos se lee bien sin reescribir la base; lo que se cargue desde ahora ya entra reparado.
+ */
+export function conTextoReparado<T>(filas: T[]): T[] {
+  for (const f of filas as Array<Record<string, unknown>>) {
+    for (const k of Object.keys(f)) if (typeof f[k] === 'string') f[k] = repararTexto(f[k] as string);
+  }
+  return filas;
 }
 
 /** ¿Está viva y con PostGIS puesto? Es lo que contesta el panel de estado. */
