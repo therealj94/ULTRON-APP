@@ -87,14 +87,29 @@ const catastro_buscar: Herramienta = {
   },
 };
 
+/** Días desde hoy (en Honduras) hasta el 31 de diciembre de este año o del que viene. */
+export function diasHastaFinDe(periodo: 'este_anio' | 'proximo_anio', ahora = new Date()): number {
+  const hoy = new Date(ahora.toLocaleString('en-US', { timeZone: 'America/Tegucigalpa' }));
+  const anio = hoy.getFullYear() + (periodo === 'proximo_anio' ? 1 : 0);
+  const fin = new Date(anio, 11, 31);
+  return Math.max(0, Math.round((fin.getTime() - new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).getTime()) / 86_400_000));
+}
+
 const catastro_vencimientos: Herramienta = {
   nombre: 'catastro_vencimientos',
-  descripcion: 'Lista las concesiones que vencen dentro de los próximos N días, de la más urgente a la menos. Para «qué se me vence» o revisiones de cartera.',
-  esquema: { type: 'object', properties: { dias: { type: 'integer', description: 'Ventana en días', default: 365 } } },
+  descripcion:
+    'Lista las concesiones que vencen, de la más urgente a la menos. Para «qué se me vence», «qué vence este año» o revisiones de cartera. Para «este año» pasá {"periodo":"este_anio"} y para «el año que viene» {"periodo":"proximo_anio"}: no calcules días a mano. Sin ventana, llamala sin argumentos (365 días); no preguntes.',
+  esquema: {
+    type: 'object',
+    properties: {
+      periodo: { type: 'string', enum: ['este_anio', 'proximo_anio'], description: 'Año calendario de Honduras' },
+      dias: { type: 'integer', description: 'Ventana en días, si la dieron en días', default: 365 },
+    },
+  },
   plataformas: ['electrum'],
-  async ejecutar({ dias }) {
+  async ejecutar({ dias, periodo }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
-    const ventana = Number(dias) || 365;
+    const ventana = periodo === 'este_anio' || periodo === 'proximo_anio' ? diasHastaFinDe(periodo) : Number(dias) || 365;
     const filas = await porVencer(ventana, 25);
     if (!filas.length) {
       // Distinguir «no vence ninguna» de «no hay fechas cargadas»: son respuestas opuestas y la
