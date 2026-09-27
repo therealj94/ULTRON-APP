@@ -117,6 +117,35 @@ y `evaluar.py` añade la columna de las reglas por etiqueta y «todas bien»/gru
 
 **Siguiente:** entrenar `mensaje` y `documento` en la GPU con los datos completos, medirlos (`evaluar.py`, `mensaje` contra las reglas) y, con esas cifras, decidir si `CLASIFICADOR_MODO` pasa de `reglas` a `sombra`.
 
+## Embeddings BGE-M3: en la GPU del cerebro, publicados por el Caddy de la T4
+
+La búsqueda por significado de Dr Electrum (`lib/cognitivo/embeddings.ts`, `server/electrum/vectores.ts`) usa BGE-M3 (1024 dimensiones). **No corre en la T4**: su GPU está llena (Voicebox, Laya y `chico` ocupan ~14,5 de 15 GB) y en CPU iba a 0,7 fragmentos por segundo y saturaba la máquina. Corre en la A10G del nodo del cerebro, que estaba ociosa:
+
+```bash
+# en el nodo del cerebro (i-06530893af0dd0638), escucha SOLO en su IP privada
+sudo docker run -d --name embed --restart unless-stopped --gpus all -p 172.31.23.34:8794:80 -v embed-modelos:/data \
+  ghcr.io/huggingface/text-embeddings-inference:86-1.9.4 --model-id BAAI/bge-m3 --max-client-batch-size 32 --max-batch-tokens 4096
+```
+
+- ~1,5 GB de VRAM, 67 ms por consulta. Indexar los 3706 fragmentos tardó unos minutos (38/s).
+- Security group: `8794` abierto **solo desde la IP privada de la T4** (`172.31.19.170/32`, regla `sgr-0af61442e031b96a4`). No se expone a internet.
+- En `/opt/voicebox/caddy/Caddyfile` de la T4, antes del bloque de Laya, una ruta que exige la clave y reenvía por la red privada:
+
+  ```
+  @embed {
+  	path /embed/*
+  	header Authorization "Bearer <EMBED_API_KEY>"
+  }
+  handle @embed {
+  	uri strip_prefix /embed
+  	reverse_proxy 172.31.23.34:8794
+  }
+  ```
+
+  Sin la clave, `/embed/*` cae en el `respond 403` del final. TEI no lleva `--api-key` a propósito: imprime sus argumentos al arrancar.
+- En Render (`ultron-looi-desk`): `EMBED_URL=https://35-175-175-203.sslip.io/embed` y `EMBED_API_KEY` (la misma de la ruta). Lo que ya estaba cargado se indexa con `scripts/cognitivo/indexar-vectores.ts`; lo que se sube después se indexa solo.
+- Si el servicio cae, la búsqueda vuelve sola a texto completo (interruptor en `lib/cognitivo/interruptor.ts`): Electrum no se rompe, busca peor.
+
 ## Si no se va a usar
 
 Apagarla (`stop`, no `terminate`, el disco se conserva). Quitar `ULTRON_TTS_URL`/`CHATTERBOX_URL` de Render para que `/api/health` no la sondee.

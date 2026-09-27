@@ -500,6 +500,71 @@ concesión de explotación devuelve la Guía de Participación Ciudadana, págin
 territorial, el Reglamento de la Ley General de Minería, página 2; por el plan de cierre, la Ley
 General de Minería, página 7.
 
+### Cómo llega Render a la base — **hecho y verificado (27-09-2026)**
+
+Hasta el 26-09-2026 ningún servicio de Render tenía `ELECTRUM_DB_URL`: Electrum contestaba «el catastro
+no está conectado» y no podía citar nada de lo cargado. Render no puede abrir un túnel SSH, así que
+se abrió el puerto con cuatro candados:
+
+1. **Postgres** escucha en `localhost,172.31.23.34` (IP privada) y `pg_hba.conf` solo acepta
+   `hostssl electrum electrum 74.220.48.0/24 scram-sha-256`: TLS obligatorio, solo esa base, solo
+   ese usuario, solo la red de salida de Render Oregon (las dos IPs vistas: `74.220.48.161` y `.179`).
+2. **Security group**: `5432` solo desde `74.220.48.0/24` (`sgr-03db89e3f278f7a21`).
+3. **Certificado verificable**: `/etc/postgresql/16/main/tls/server.crt`, autofirmado para
+   `DNS:34-207-148-69.sslip.io` y las dos IPs, hasta 2036. El mismo certificado (público) está en
+   Render como archivo secreto `electrum-db-ca.pem`.
+4. **La URL verifica todo**: `…@34-207-148-69.sslip.io:5432/electrum?sslmode=verify-full&sslrootcert=/etc/secrets/electrum-db-ca.pem`.
+
+Dos fallos que obligaron a esto, y que conviene no redescubrir:
+
+- Con `sslmode=require` en la URL, `pg` actual **verifica el certificado** e ignora el
+  `rejectUnauthorized:false` de `db.ts` (la URL gana). El autofirmado se rechaza. Bajarlo a
+  `no-verify` apaga la verificación: no se hizo.
+- Con una **IP** como host, `pg` no manda el nombre del servidor y Node compara el certificado contra
+  `localhost`. Por eso el host es el nombre `sslip.io`, no la IP.
+
+La IP pública del nodo del cerebro **no es elástica**: si el nodo se para y arranca, cambian la URL,
+el certificado y `ULTRON_NODO_URL`. La cuenta tiene el cupo de IPs elásticas lleno (10 de 10); hay
+que liberar una o pedir más cupo antes de fijarla.
+
+### Las leyes que se cargaron después — 27-09-2026
+
+Faltaba casi toda la ley ambiental. Se bajaron de fuentes oficiales (TSC, FAOLEX, SAR, OIT), se
+comprobó que cada PDF fuera lo que decía ser —uno de FAOLEX titulado como la reforma 109-2019 era en
+realidad el Acuerdo INHGEOMIN 22/02/2019, ya cargado— y se pasaron a texto con una página por salto:
+
+| Ley | Fragmentos |
+|---|---|
+| Ley General del Ambiente, Decreto 104-93 | 85 |
+| Reglamento General de la Ley del Ambiente, Acuerdo 109-93 | 124 |
+| Reglamento del SINEIA, Acuerdo Ejecutivo 008-2015 (OCR) | 131 |
+| Reformas al Reglamento del SINEIA, Acuerdo Ejecutivo 005-2019 | 237 |
+| Ley General de Aguas, Decreto 181-2009 (OCR) | 143 |
+| Ley Forestal, Áreas Protegidas y Vida Silvestre, Decreto 98-2007 (OCR) | 338 |
+| Reforma a la Ley General de Minería, Decreto 109-2019 | 26 |
+| Convenio 169 de la OIT | 130 |
+
+Además: la capa de 99 yacimientos y ocurrencias de DEFOMIN (UTM 16N convertida a grados, WGS84
+asumido) y los rótulos por OCR de cuatro mapas 1:100 000 de Olancho (JICA / MMAJ). Total:
+**83 documentos, 3706 fragmentos, todos con vector** (búsqueda híbrida, ver `docs/NODO-T4.md`).
+
+Después, el mismo día: el estudio **JICA-MMAJ «Report on Geological Survey of the Western Area,
+Republic of Honduras»** (Vol. 2 a 6, 1978-1980, en inglés: sectores Vueltas del Río, Laguna Seca,
+Zapotal III, Minitas, Pueblo Nuevo y Olancho), 1008 páginas escaneadas pasadas por OCR, más el
+*Informe técnico geológico de la zona La Lola* (Gabriel Segura, 2000) y tres láminas sueltas.
+Quedan **92 documentos y 6004 fragmentos, todos con vector**. BGE-M3 es multilingüe: una pregunta
+en español encuentra el pasaje en inglés. Para que entrara hubo que arreglar `pareceProsa`, que solo
+conocía palabras funcionales del español y rechazaba cualquier informe en inglés como ilegible.
+Cinco láminas (perfiles y leyendas: rótulos sueltos) no pasaron el control, con razón; su contenido
+está dentro del Vol. 3.
+
+Dos lecciones de la carga:
+
+- El lector de PDF del cargador sacó 3 de 28 páginas del Reglamento del SINEIA y 1 carácter por
+  página de otros; `pdftotext` los leyó enteros. Para leyes, convertir antes a `.txt` con `\f`.
+- En OCR, `tesseract` en paralelo **sin** `OMP_THREAD_LIMIT=1` se pisa los hilos: 13 minutos por
+  página. Con un hilo por proceso, 3 segundos.
+
 ## La foto de un papel — **hecha y verificada**
 
 En Honduras el expediente está en papel y sobre una mesa. Lo que se hace de verdad es sacarle una
