@@ -409,7 +409,7 @@ const mapa_capa: Herramienta = {
 const expediente_buscar: Herramienta = {
   nombre: 'expediente_buscar',
   descripcion:
-    'Busca en los documentos subidos (informes, resoluciones, ensayos, planes de labores) y devuelve el texto con su página. Usala antes de responder cualquier cosa que debería estar en un documento.',
+    'Busca en los documentos subidos (informes, resoluciones, ensayos, planes de labores; también los informes geológicos de JICA 1978-1980, en inglés, y sus resúmenes en español) y devuelve el texto con su página. Usala antes de responder cualquier cosa que debería estar en un documento. Buscá en español: los términos técnicos se buscan también en inglés.',
   esquema: {
     type: 'object',
     properties: { texto: { type: 'string', description: 'Qué buscar, en palabras normales' } },
@@ -424,7 +424,13 @@ const expediente_buscar: Herramienta = {
       .slice(0, 3)
       .map((h) => `${h.documento}${h.pagina ? `, página ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 220)}»`)
       .join(' | ');
-    return { ok: true, texto: `${cita}. Citá el documento y la página al contestar.`, ui: { hits } };
+    // Los informes de JICA y los 43-101 están en inglés: la persona lee español.
+    const ingles = hits.slice(0, 3).some((h) => /\b(the|and|of|with|in the|grade|vein|drill|sample)\b/i.test(h.texto));
+    return {
+      ok: true,
+      texto: `${cita}. Citá el documento y la página al contestar.${ingles ? ' Hay fragmentos en inglés: traducilos al español al citarlos (cifras y unidades tal cual) y decí que el original está en inglés.' : ''}`,
+      ui: { hits },
+    };
   },
 };
 

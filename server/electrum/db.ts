@@ -806,6 +806,58 @@ function terminosDeBusqueda(texto: string): string {
  * cualquiera de ellos y ordenando por relevancia. Un buscador que devuelve cero ante una pregunta
  * bien formulada no sirve, aunque sea técnicamente correcto.
  */
+/**
+ * LOS INFORMES EN INGLÉS SE BUSCAN EN ESPAÑOL.
+ *
+ * El índice de texto completo es español, y los informes de JICA (1978-1980) —y cualquier 43-101—
+ * están en inglés: preguntar por «ley de oro» no encontraba «gold grade» aunque estuviera en cada
+ * página. Los vectores cruzan idiomas, pero solo si hay nodo de vectores; esto no depende de nada.
+ * Cada término técnico se busca también por su equivalente en inglés.
+ */
+export const GLOSARIO_MINERO: Record<string, string[]> = {
+  oro: ['gold'], plata: ['silver'], cobre: ['copper'], plomo: ['lead'], zinc: ['zinc'], hierro: ['iron'],
+  antimonio: ['antimony'], molibdeno: ['molybdenum'], manganeso: ['manganese'], estano: ['tin'], tungsteno: ['tungsten'],
+  veta: ['vein'], vetas: ['veins'], vetilla: ['veinlet'], ley: ['grade'], leyes: ['grades', 'assay'],
+  perforacion: ['drilling', 'boring'], sondeo: ['drill', 'boring'], sondeos: ['drill', 'borings'], pozo: ['hole'],
+  muestra: ['sample'], muestras: ['samples'], muestreo: ['sampling'], falla: ['fault'], fallas: ['faults'],
+  yacimiento: ['deposit', 'ore'], yacimientos: ['deposits', 'ore'], mena: ['ore'], mineralizacion: ['mineralization', 'mineralized'],
+  alteracion: ['alteration'], porfido: ['porphyry'], skarn: ['skarn'], geoquimica: ['geochemical', 'geochemistry'],
+  geofisica: ['geophysical', 'geophysics'], anomalia: ['anomaly'], anomalias: ['anomalies'], trinchera: ['trench'],
+  trincheras: ['trenches'], reservas: ['reserves'], recursos: ['resources'], mina: ['mine'], minas: ['mines'],
+  roca: ['rock'], rocas: ['rocks'], intrusivo: ['intrusive'], intrusivos: ['intrusive', 'intrusives'], granito: ['granite'],
+  granodiorita: ['granodiorite'], andesita: ['andesite'], caliza: ['limestone'], calizas: ['limestones'], esquisto: ['schist'],
+  filita: ['phyllite'], toba: ['tuff'], cuarzo: ['quartz'], pirita: ['pyrite'], galena: ['galena'], esfalerita: ['sphalerite'],
+  calcopirita: ['chalcopyrite'], magnetita: ['magnetite'], recomendacion: ['recommendation'], recomendaciones: ['recommendations'],
+  conclusion: ['conclusion'], conclusiones: ['conclusions'], geologia: ['geology', 'geological'], estructura: ['structure'],
+  rumbo: ['strike', 'trend'], buzamiento: ['dip'], espesor: ['thickness', 'width'], ancho: ['width'], tonelaje: ['tonnage'],
+  levantamiento: ['survey'], estudio: ['survey', 'study'], informe: ['report'], resumen: ['summary', 'abstract'],
+  formacion: ['formation'], sector: ['sector'], area: ['area'], prospecto: ['prospect'], exploracion: ['exploration'],
+  aluvial: ['alluvial', 'placer'], suelo: ['soil'], sedimentos: ['sediments', 'sediment'], quebrada: ['stream', 'creek'],
+};
+
+const sinTilde = (w: string) => w.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+
+/**
+ * Los términos de la búsqueda como `tsquery`, cada uno con su equivalente en inglés si lo tiene:
+ * «ley oro» → `(ley | grade) & (oro | gold)`. Con `o` en vez de `y`, cualquiera de todos.
+ * Devuelve null si ningún término tiene traducción: entonces sirve la búsqueda de siempre.
+ */
+export function consultaBilingue(limpio: string, union: '&' | '|' = '&'): string | null {
+  const palabras = limpio
+    .split(/\s+/)
+    .map((w) => w.replace(/['\\:&|!()<>*"-]/g, ''))
+    .filter((w) => w.length >= 2)
+    .slice(0, 10);
+  let traducida = false;
+  const grupos = palabras.map((w) => {
+    const en = GLOSARIO_MINERO[sinTilde(w)];
+    if (!en) return w;
+    traducida = true;
+    return `(${[w, ...en].join(' | ')})`;
+  });
+  return traducida && grupos.length ? grupos.join(` ${union} `) : null;
+}
+
 export async function buscarPorTexto(
   texto: string,
   limite = 8
@@ -830,7 +882,11 @@ export async function buscarPorTexto(
     ORDER BY puntaje DESC
     LIMIT $2`;
 
-  const exacto = await consulta<any>(SQL("websearch_to_tsquery('spanish', $1)"), [limpio, limite]);
+  const bilingue = consultaBilingue(limpio, '&');
+  const exacto = await consulta<any>(
+    bilingue ? SQL("to_tsquery('spanish', $1)") : SQL("websearch_to_tsquery('spanish', $1)"),
+    [bilingue || limpio, limite]
+  );
   if (exacto.length) return exacto;
 
   // Segunda pasada: cualquiera de los términos, que es lo que un humano espera de un buscador.
@@ -842,7 +898,7 @@ export async function buscarPorTexto(
     .filter(Boolean)
     .join(' | ');
   if (!sueltos) return [];
-  return consulta(SQL("to_tsquery('spanish', $1)"), [sueltos, limite]);
+  return consulta(SQL("to_tsquery('spanish', $1)"), [consultaBilingue(limpio, '|') || sueltos, limite]);
 }
 
 export type HitExpediente = { documento: string; pagina: number | null; texto: string; puntaje: number; via?: 'texto' | 'significado' | 'ambos' };
