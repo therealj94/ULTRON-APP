@@ -32,9 +32,9 @@ el contexto que ese prompt resume. No hay claves en este archivo.
   - Prueba apartada: híbrido 76,9 % exacto, tabla 57,3 %.
   - Otra sesión amplió Laya a tres modelos (`electrum`, `mensaje`, `documento`); no pisar su trabajo.
 - **Base de Electrum** (Postgres + PostGIS + pgvector) en el nodo del cerebro
-  (`i-06530893af0dd0638`, g5.xlarge, 34.207.148.69, IP NO elástica):
+  (`i-06530893af0dd0638`, g5.xlarge, **IP elástica 34.201.236.251** desde el 27-09 05:35 UTC):
   - Render `ultron-looi-desk` la usa con `ELECTRUM_DB_URL` =
-    `…@34-207-148-69.sslip.io:5432/electrum?sslmode=verify-full&sslrootcert=/etc/secrets/electrum-db-ca.pem`
+    `…@34-201-236-251.sslip.io:5432/electrum?sslmode=verify-full&sslrootcert=/etc/secrets/electrum-db-ca.pem`
     y el archivo secreto `electrum-db-ca.pem` (certificado público del nodo, hasta 2036).
   - `pg_hba`: `hostssl electrum electrum 74.220.48.0/24 scram-sha-256`. SG: 5432 solo desde
     `74.220.48.0/24` (regla `sgr-03db89e3f278f7a21`).
@@ -66,21 +66,7 @@ el contexto que ese prompt resume. No hay claves en este archivo.
 
 ## 2. Pendientes, en orden, con lo que hay que hacer
 
-1. **IP elástica para el nodo del cerebro** (cuando AWS apruebe el cupo). Corta Qwen, la base y los
-   embeddings unos minutos: avisar antes.
-   1. `aws ec2 allocate-address` → IP nueva X.
-   2. Regenerar el certificado de Postgres (`/etc/postgresql/16/main/tls/server.crt`, dueño
-      postgres, key 600) con SAN para `34-207-148-69.sslip.io`, `X-con-guiones.sslip.io`, las dos IPs
-      públicas y `172.31.23.34`; `pg_reload_conf()`; subir el certificado nuevo al archivo secreto
-      `electrum-db-ca.pem` de `ultron-looi-desk`.
-   3. Asociar X a `i-06530893af0dd0638`.
-   4. Render: `ULTRON_NODO_URL` y `QWEN_ENDPOINT_URL` (`https://X:8443`) en **los dos** servicios;
-      `ELECTRUM_DB_URL` con host `X-con-guiones.sslip.io` en `ultron-looi-desk` (traer la URL del nodo
-      cifrada, nunca mostrarla). Redesplegar ambos.
-   5. Verificar: `GET https://aura-fp.onrender.com/api/nodo/listo` y un job de Render en
-      `ultron-looi-desk` que cuente concesiones con esa URL.
-   6. Actualizar las referencias a 34.207.148.69 en el repo (`.env.example`, `AREAS.md`,
-      `docs/NODO-T4.md`, `src/10-infra/secretos.ts`, `src/10-infra/README.md`, `docs/ELECTRUM.md`) en un PR.
+1. ~~IP elástica para el nodo del cerebro~~ **hecho el 27-09**: 34.201.236.251, variables de Render actualizadas y verificadas (Qwen `listo:true`, base con TLS). Referencias del repo en el commit `5e75e86` de esta rama.
 2. **Veta Wallet** (repo `veta-wallet-backend-`):
    - Las 2 recargas atascadas **nunca llegaron a la cadena**: `0xF549bed434F05A5aEd3d632fcD202A6a5549F30E`
      y `0x53513A256782408373479C0a0Cfd1FCC6462f9fc` tienen nonce 0 y saldo 0 en Polygon, Amoy,
