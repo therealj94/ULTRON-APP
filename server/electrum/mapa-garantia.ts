@@ -58,11 +58,27 @@ async function porReferencias(texto: string): Promise<Resuelta | null> {
   }
   const exps = [...String(texto).matchAll(/\bexpediente\s+(?:n[°ºo.]*\s*)?([\w./-]{1,30})/gi)].map((m) => m[1].replace(/[.,;:]+$/, ''));
   for (const e of exps.reverse()) {
-    const filas = await buscarConcesiones(e, 6).catch(() => [] as FilaConcesion[]);
-    const f = filas.find((x) => String(x.expediente || '').toLowerCase() === e.toLowerCase());
-    if (f) return { id: Number(f.id), nombre: f.nombre };
+    const f = await porExpediente(e);
+    if (f) return f;
+  }
+  /*
+   * «la concesión 1276»: la gente dice el número del expediente, no el id interno. Se prueba como
+   * expediente y, si no hay ninguno así, como id.
+   */
+  const nums = [...String(texto).matchAll(/\bcon[cs]esi[oó]n\s+(?:n[°ºo.]*\s*)?(\d{1,7})\b/gi)].map((m) => m[1]);
+  for (const n of nums.reverse()) {
+    const f = await porExpediente(n);
+    if (f) return f;
+    const g = await geometriaDe(Number(n)).catch(() => null);
+    if (g) return { id: Number(n), nombre: `la concesión ${n}` };
   }
   return null;
+}
+
+async function porExpediente(e: string): Promise<Resuelta | null> {
+  const filas = await buscarConcesiones(e, 6).catch(() => [] as FilaConcesion[]);
+  const f = filas.find((x) => String(x.expediente || '').toLowerCase() === e.toLowerCase());
+  return f ? { id: Number(f.id), nombre: f.nombre } : null;
 }
 
 /** Por el nombre que queda en el pedido, si da UNA sola concesión. */
@@ -78,6 +94,8 @@ async function porNombre(texto: string): Promise<Resuelta | null> {
 export async function concesionAMostrar(mensaje: string, respuesta: string, historial: MsgHilo[] = []): Promise<Resuelta | null> {
   return (
     (await porReferencias(respuesta)) ||
+    // Lo que pidió la persona, por número antes que por nombre: «muéstrame el expediente 1276».
+    (await porReferencias(mensaje)) ||
     (await porNombre(mensaje)) ||
     // Lo último que se habló, de lo más nuevo a lo más viejo: «muéstramela en el mapa» después de
     // que el doctor la nombró.

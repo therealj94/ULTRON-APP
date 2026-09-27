@@ -118,6 +118,16 @@ test('el mapa se mueve aunque el modelo no lo pida, contra PostGIS', { skip: HAY
     assert.equal(r.ui?.concesion_id, idCh);
   });
 
+  await t.test('por el número que dijo la persona, aunque el doctor no lo repita', async () => {
+    const porExp = await garantizarMapa({ mensaje: 'muéstrame el expediente 1276', texto: 'Listo.', ui: [] });
+    assert.equal(porExp.ui?.concesion_id, idCh);
+    const porConcesion = await garantizarMapa({ mensaje: 'muéstrame la concesión 1276', texto: 'Listo.', ui: [] });
+    assert.equal(porConcesion.ui?.concesion_id, idCh);
+    const [{ id: idSur }] = await consulta<{ id: number }>(`SELECT id::int FROM concesion WHERE nombre = 'Clavo Rico Sur'`);
+    const porId = await garantizarMapa({ mensaje: `muéstrame la concesión ${idSur}`, texto: 'Listo.', ui: [] });
+    assert.equal(porId.ui?.concesion_id, idSur);
+  });
+
   await t.test('si no se sabe cuál era, no puede quedar diciendo que ya está en el mapa', async () => {
     const r = await garantizarMapa({ mensaje: 'muéstrame Clavo Rico', texto: 'Ahí la tiene, resaltada en el mapa.', ui: [] });
     assert.equal(r.ui, undefined);
