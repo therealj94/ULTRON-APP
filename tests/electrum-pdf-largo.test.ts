@@ -48,3 +48,25 @@ test('aprender indexa el PDF entero, con la página real de cada fragmento', { s
   }
   await consulta(`DELETE FROM documento WHERE nombre = 'informe-largo.pdf'`);
 });
+
+test('volver a subir un PDF que quedó cortado lo repara en su lugar; uno sano se salta', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async () => {
+  await consulta(`DELETE FROM documento WHERE nombre = 'informe-cortado.pdf'`);
+  await aprender('informe-cortado.pdf', PDF);
+  const [doc] = await consulta<{ id: number }>(`SELECT id FROM documento WHERE nombre = 'informe-cortado.pdf'`);
+  // Así quedó en producción lo cargado con el tope viejo: un solo trozo de ~8 000 caracteres.
+  await consulta(`DELETE FROM fragmento WHERE documento_id = $1`, [doc.id]);
+  await consulta(`INSERT INTO fragmento (documento_id, pagina, orden, texto) VALUES ($1, 1, 0, $2)`, [doc.id, 'Índice. '.repeat(990)]);
+
+  const r = await aprender('informe-cortado.pdf', PDF);
+  assert.equal((r.ui as any)?.reparado, true, r.dicho);
+  assert.equal((r.ui as any)?.documento_id, doc.id, 'el mismo documento, no uno nuevo');
+  const filas = await consulta<{ pagina: number; texto: string }>(`SELECT pagina, texto FROM fragmento WHERE documento_id = $1`, [doc.id]);
+  assert.ok(filas.some((f) => f.texto.includes('MARCA6X') && Number(f.pagina) === 6), 'la página 6 volvió');
+  const [n] = await consulta<{ n: string }>(`SELECT count(*)::text AS n FROM documento WHERE nombre = 'informe-cortado.pdf'`);
+  assert.equal(n.n, '1');
+
+  // Ahora está sano: la próxima vez se salta como repetido.
+  const otra = await aprender('informe-cortado.pdf', PDF);
+  assert.equal((otra.ui as any)?.repetido, true);
+  await consulta(`DELETE FROM documento WHERE nombre = 'informe-cortado.pdf'`);
+});
