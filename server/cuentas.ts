@@ -289,22 +289,39 @@ const huella = (t: string) => crypto.createHash('sha256').update(t).digest('hex'
  * mandó uno hace menos de `esperaMs` (para que el formulario no sirva para inundar un buzón).
  */
 export async function crearEnlace(correo: string, tipo: TipoEnlace, minutos: number, esperaMs = 90_000): Promise<string | null> {
-  if (esperaMs > 0) {
-    const [reciente] = await q(
-      `SELECT 1 FROM cuentas.enlace WHERE correo = $1 AND tipo = $2 AND usado IS NULL AND creado > now() - ($3::float8 * interval '1 millisecond') LIMIT 1`,
-      [correo, tipo, esperaMs]
-    );
-    if (reciente) return null;
+  await asegurarEsquema();
+  // Todo en una transacción con un candado por correo y tipo: dos pedidos a la vez (dos pestañas, o
+  // los dos servicios) no pueden dejar dos enlaces vivos.
+  const c = await conexion().connect();
+  try {
+    await c.query('BEGIN');
+    await c.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`cuentas.enlace:${tipo}:${correo}`]);
+    if (esperaMs > 0) {
+      const r = await c.query(
+        `SELECT 1 FROM cuentas.enlace WHERE correo = $1 AND tipo = $2 AND usado IS NULL AND creado > now() - ($3::float8 * interval '1 millisecond') LIMIT 1`,
+        [correo, tipo, esperaMs]
+      );
+      if (r.rowCount) {
+        await c.query('COMMIT');
+        return null;
+      }
+    }
+    await c.query(`UPDATE cuentas.enlace SET usado = now() WHERE correo = $1 AND tipo = $2 AND usado IS NULL`, [correo, tipo]);
+    const token = crypto.randomBytes(32).toString('base64url');
+    await c.query(`INSERT INTO cuentas.enlace (huella, correo, tipo, vence) VALUES ($1, $2, $3, now() + ($4::float8 * interval '1 minute'))`, [
+      huella(token),
+      correo,
+      tipo,
+      minutos,
+    ]);
+    await c.query('COMMIT');
+    return token;
+  } catch (e) {
+    await c.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    c.release();
   }
-  await q(`UPDATE cuentas.enlace SET usado = now() WHERE correo = $1 AND tipo = $2 AND usado IS NULL`, [correo, tipo]);
-  const token = crypto.randomBytes(32).toString('base64url');
-  await q(`INSERT INTO cuentas.enlace (huella, correo, tipo, vence) VALUES ($1, $2, $3, now() + ($4::float8 * interval '1 minute'))`, [
-    huella(token),
-    correo,
-    tipo,
-    minutos,
-  ]);
-  return token;
 }
 
 /** Gasta el enlace (una sola vez, y solo si no venció). Devuelve el correo, o null. */

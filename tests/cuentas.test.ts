@@ -46,7 +46,11 @@ async function levantar(plataforma: 'electrum' | 'ultron') {
   app.use(express.json());
   montarRutasCuentas(app, {
     plataforma,
-    normalizarCorreo: (c) => String(c || '').trim().toLowerCase(),
+    // Como MAIL_ALIASES: un correo personal que es el mismo que uno de la casa.
+    normalizarCorreo: (c) => {
+      const x = String(c || '').trim().toLowerCase();
+      return x === 'ana.personal@gmail.com' ? 'ana@mina.hn' : x;
+    },
     nombreYRol: (correo, n) => ({ nombre: n || correo.split('@')[0], rol: 'Prueba' }),
     // El cerebro remoto de mentira: la clave de siempre de José es «remota-de-siempre».
     claveRemotaAbre: async (correo, clave) => correo === 'j.ordonez@ordenglobal.org' && clave === 'remota-de-siempre',
@@ -181,6 +185,23 @@ test('cambiar la contraseña sabiendo la actual (también la del cerebro remoto)
   }
 });
 
+test('dos pedidos de enlace a la vez dejan un solo enlace vivo', { skip: sinBase ? 'sin base' : false }, async () => {
+  const pg = new (await import('pg')).Pool({ connectionString: cuentas.urlCuentas() });
+  try {
+    await pg.query(`DELETE FROM cuentas.enlace WHERE correo = 'carrera@ordenglobal.org'`);
+    const tokens = await Promise.all(Array.from({ length: 6 }, () => cuentas.crearEnlace('carrera@ordenglobal.org', 'restablecer', 30, 0)));
+    assert.equal(tokens.filter(Boolean).length, 6);
+    const { rows } = await pg.query(`SELECT count(*)::int AS n FROM cuentas.enlace WHERE correo = 'carrera@ordenglobal.org' AND usado IS NULL`);
+    assert.equal(rows[0].n, 1);
+    // Con la espera de reenvío, a la vez: sale uno solo.
+    await pg.query(`DELETE FROM cuentas.enlace WHERE correo = 'carrera@ordenglobal.org'`);
+    const conEspera = await Promise.all(Array.from({ length: 6 }, () => cuentas.crearEnlace('carrera@ordenglobal.org', 'restablecer', 30)));
+    assert.equal(conEspera.filter(Boolean).length, 1);
+  } finally {
+    await pg.end();
+  }
+});
+
 test('pedir acceso → José aprueba con nivel → la persona crea su clave y entra al padrón', { skip: sinBase ? 'sin base' : false }, async () => {
   const { srv, pedir } = await levantar('electrum');
   try {
@@ -192,7 +213,8 @@ test('pedir acceso → José aprueba con nivel → la persona crea su clave y en
     buzon.length = 0;
 
     assert.equal((await pedir('/api/ultron/cuentas/solicitar', { nombre: 'Ana', correo: 'ana@mina.hn', motivo: 'x' })).status, 400, 'motivo corto');
-    const r = await pedir('/api/ultron/cuentas/solicitar', { nombre: 'Ana Pérez', correo: 'ana@mina.hn', motivo: 'Ingeniera de campo de la concesión' });
+    // Con su alias personal: se guarda bajo el correo con el que después va a entrar.
+    const r = await pedir('/api/ultron/cuentas/solicitar', { nombre: 'Ana Pérez', correo: 'Ana.Personal@gmail.com', motivo: 'Ingeniera de campo de la concesión' });
     assert.equal(r.status, 200);
     const alAprobador = buzon.find((m) => m.para === 'j.ordonez@ordenglobal.org');
     assert.ok(alAprobador, 'el aviso le llega a José');
@@ -234,6 +256,17 @@ test('pedir acceso → José aprueba con nivel → la persona crea su clave y en
     assert.equal(await cuentas.entrarConCuenta('ana@mina.hn', 'lo que sea largo'), 'sin_clave');
     assert.equal((await pedir('/api/ultron/clave/restablecer', { token: activar, clave: 'Mi clave de campo 1' })).status, 200);
     assert.equal(await cuentas.entrarConCuenta('ana@mina.hn', 'Mi clave de campo 1'), 'ok');
+
+    // Ana es solo de Dr Electrum: un enlace de clave usado en AU-RA guarda la clave pero NO abre sesión.
+    const aura = await levantar('ultron');
+    try {
+      const t = await cuentas.crearEnlace('ana@mina.hn', 'restablecer', 30, 0);
+      const r2 = await aura.pedir('/api/ultron/clave/restablecer', { token: t, clave: 'Otra clave de campo 2' });
+      assert.equal(r2.status, 200);
+      assert.equal(r2.json.token, null);
+    } finally {
+      aura.srv.close();
+    }
 
     // Aunque José aprobara por error al falso, NO pasa por José: otro dominio no es la misma persona.
     await pedir(`/api/ultron/cuentas/solicitudes/${falso.id}`, { decision: 'aprobar', nivel: 'lee' }, jose.token);

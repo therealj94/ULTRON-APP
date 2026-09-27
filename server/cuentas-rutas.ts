@@ -17,7 +17,7 @@
  */
 import type { Express, Request, Response } from 'express';
 import { enviarCorreo, correoValido } from '../lib/correo-ses';
-import { personaPorCorreoExacto, type Nivel, type Plataforma } from '../lib/acceso';
+import { identificar, personaPorCorreoExacto, puedeEntrar, type Nivel, type Plataforma } from '../lib/acceso';
 import { anotarExitoEntrada, anotarFalloEntrada, emitirSesion, esperaEntrada, exigirSesion, limitar, sesionDe } from './seguridad';
 import {
   NIVELES,
@@ -157,7 +157,8 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
     if (!e) return res.status(410).json({ ok: false, error: 'El enlace ya se usó o venció.', code: 'enlace_vencido' });
     const { nombre, rol } = d.nombreYRol(e.correo, (await cuentaDe(e.correo))?.nombre);
     await fijarClave(e.correo, clave, nombre);
-    const s = emitirSesion({ correo: e.correo, nombre, rol });
+    // La clave queda guardada igual, pero la sesión solo se abre si esta plataforma le corresponde.
+    const s = puedeEntrar(identificar({ correo: e.correo }), d.plataforma) ? emitirSesion({ correo: e.correo, nombre, rol }) : null;
     const aviso = plantilla({
       plataforma: d.plataforma,
       saludo: `Hola, ${nombre}:`,
@@ -167,6 +168,7 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
       ],
     });
     void enviarCorreo({ para: e.correo, asunto: `${prod}: tu contraseña cambió`, ...aviso });
+    if (!s) return res.json({ ok: true, token: null, message: `Tu contraseña quedó guardada, pero tu cuenta no tiene acceso a ${prod}.` });
     return res.json({ ok: true, token: s.token, miembro: { nombre, correo: e.correo, rol }, message: 'Listo: tu contraseña quedó guardada.' });
   });
 
@@ -212,7 +214,9 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
   app.post('/api/ultron/cuentas/solicitar', limitar(5, 30 * 60_000, 'cuentas-solicitar'), async (req, res) => {
     if (!cuentasDisponibles()) return sinBase(res);
     const nombre = String(req.body?.nombre || '').replace(/\s+/g, ' ').trim();
-    const correo = String(req.body?.correo || '').trim().toLowerCase();
+    // Con los mismos alias que la entrada: si no, la clave quedaría guardada bajo un correo que la
+    // entrada nunca va a buscar.
+    const correo = d.normalizarCorreo(req.body?.correo);
     const motivo = String(req.body?.motivo || '').trim().slice(0, 600);
     if (nombre.length < 3 || nombre.length > 80) return res.status(400).json({ ok: false, error: 'Escribí tu nombre completo.' });
     if (!correoValido(correo)) return res.status(400).json({ ok: false, error: 'Escribí un correo válido.' });

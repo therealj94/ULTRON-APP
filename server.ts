@@ -68,7 +68,7 @@ import {
 import { identidadDe, exigirPlataforma } from './server/seguridad';
 import { cuentaDe, cuentasDisponibles, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
 import { montarRutasCuentas } from './server/cuentas-rutas';
-import { personaPorCorreoExacto } from './lib/acceso';
+import { personaPorCorreoExacto, puedeEntrar } from './lib/acceso';
 import { puedeEscribir } from './lib/acceso';
 import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
 import { catastroGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
@@ -1117,6 +1117,11 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
     }
     if (propia === 'suspendida') return res.status(403).json({ error: 'Esta cuenta está suspendida.', codigo: 'SUSPENDIDA' });
     if (propia === 'ok') {
+      // Una cuenta propia solo abre la plataforma que tiene aprobada: una de Dr Electrum no entra a
+      // AU-RA (donde cualquier sesión abre la mesa) aunque la clave sea la misma para las dos.
+      if (!puedeEntrar(identificar({ correo }), PLATAFORMA)) {
+        return res.status(403).json({ error: `Tu cuenta no tiene acceso a ${ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP'}. Pedilo desde «Solicitar acceso».`, codigo: 'SIN_ACCESO' });
+      }
       anotarExitoEntrada(correo, ipEntrada);
       const { nombre, rol } = nombreYRolDe(correo, (await cuentaDe(correo).catch(() => null))?.nombre);
       const s = emitirSesion({ correo, nombre, rol });

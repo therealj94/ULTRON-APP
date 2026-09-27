@@ -180,6 +180,7 @@ export function PonerClave({
 }) {
   const [correo, setCorreo] = useState<string | null>(null);
   const [vencido, setVencido] = useState('');
+  const [guardada, setGuardada] = useState('');
   const [nueva, setNueva] = useState('');
   const [otra, setOtra] = useState('');
   const [yendo, setYendo] = useState(false);
@@ -198,6 +199,7 @@ export function PonerClave({
     const r = await llamar('/api/ultron/clave/restablecer', { token, clave: nueva });
     setYendo(false);
     if (r.ok && r.json.token) return onListo(String(r.json.token));
+    if (r.ok) return setGuardada(r.json.message || 'Tu contraseña quedó guardada.');
     if (r.status === 410) setVencido(r.json?.error || 'El enlace ya se usó o venció.');
     else setFallo(r.json?.error || 'No pude guardar la contraseña.');
   }
@@ -205,7 +207,11 @@ export function PonerClave({
   return (
     <div className="space-y-3">
       <h2 className={tema.titulo}>{titulo}</h2>
-      {vencido ? (
+      {guardada ? (
+        <Aviso tema={tema} tipo="ok">
+          {guardada}
+        </Aviso>
+      ) : vencido ? (
         <>
           <Aviso tema={tema} tipo="error">
             {vencido}
