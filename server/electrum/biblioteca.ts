@@ -426,27 +426,35 @@ export async function renombrarCarpeta(de: unknown, a: unknown, quien?: string |
 /**
  * Borrar de verdad. Un documento se lleva sus fragmentos; una capa, sus concesiones, entidades y
  * traslapes (así está el esquema, en cascada). El original en el cubo NO se toca: si se borró por
- * error, se vuelve a importar.
+ * error, se vuelve a importar con «traer también lo borrado» (sin eso, lo borrado no vuelve solo).
  */
 export async function eliminar(refs: Ref[], quien?: string | null) {
   await asegurarBiblioteca();
   const docs = ids(refs, 'documento');
   const capas = ids(refs, 'capa');
-  const quitados: Array<{ clase: string; id: number; nombre: string; concesiones?: number }> = [];
+  const quitados: Array<{ clase: string; id: number; nombre: string; archivo: string | null; concesiones?: number }> = [];
   await enTransaccion(async (q) => {
     if (docs.length) {
-      const r = await q(`DELETE FROM documento WHERE id = ANY($1::bigint[]) RETURNING id, nombre`, [docs]);
-      for (const x of r as any[]) quitados.push({ clase: 'documento', id: Number(x.id), nombre: x.nombre });
+      const r = await q(`DELETE FROM documento WHERE id = ANY($1::bigint[]) RETURNING id, nombre, archivo`, [docs]);
+      for (const x of r as any[]) quitados.push({ clase: 'documento', id: Number(x.id), nombre: x.nombre, archivo: x.archivo || null });
     }
     if (capas.length) {
       const conc = await q(`SELECT capa_id, count(*)::int AS n FROM concesion WHERE capa_id = ANY($1::bigint[]) GROUP BY capa_id`, [capas]);
       const porCapa = new Map((conc as any[]).map((x) => [Number(x.capa_id), Number(x.n)]));
-      const r = await q(`DELETE FROM capa WHERE id = ANY($1::bigint[]) RETURNING id, nombre`, [capas]);
-      for (const x of r as any[]) quitados.push({ clase: 'capa', id: Number(x.id), nombre: x.nombre, concesiones: porCapa.get(Number(x.id)) || 0 });
+      const r = await q(`DELETE FROM capa WHERE id = ANY($1::bigint[]) RETURNING id, nombre, archivo`, [capas]);
+      for (const x of r as any[]) quitados.push({ clase: 'capa', id: Number(x.id), nombre: x.nombre, archivo: x.archivo || null, concesiones: porCapa.get(Number(x.id)) || 0 });
+    }
+    // La bitácora va en la MISMA transacción: con el original anotado, una reimportación no lo vuelve
+    // a traer (ver importar.ts). Si la anotación fallara aparte, lo borrado reviviría en silencio.
+    for (const x of quitados) {
+      await q(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle) VALUES ($1, 'eliminar', $2, $3)`, [
+        quien || null,
+        `${x.clase} ${x.id}`,
+        JSON.stringify({ nombre: x.nombre, archivo: x.archivo, concesiones: x.concesiones }),
+      ]);
     }
   });
   if (quitados.some((x) => x.clase === 'capa')) olvidarTablero();
-  for (const x of quitados) await anotar(quien, 'eliminar', `${x.clase} ${x.id}`, { nombre: x.nombre, concesiones: x.concesiones });
   return { eliminados: quitados.length, quitados };
 }
 

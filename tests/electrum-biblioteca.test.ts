@@ -468,3 +468,88 @@ test('expediente_listar: el panorama por carpeta, lo de una carpeta con su estad
     await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lis-%' OR id = $1`, [esc.id]);
   }
 });
+
+test('borrar en el panel anota el original, y una reimportación no lo vuelve a traer solo', { skip: sinBase }, async () => {
+  const { borradosEnPanel } = await import('../server/electrum/importar');
+  await bib.asegurarBiblioteca();
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-bor-%'`);
+  const clave = 's3://cubo/entrada/INDEXSA/prueba-bor-escaneo.pdf';
+  const [d] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, tipo, paginas, archivo) VALUES ('prueba-bor-escaneo.pdf', 'escaneo', 88, $1) RETURNING id`, [clave]);
+  const otra = 's3://cubo/entrada/INDEXSA/prueba-bor-sigue.pdf';
+  assert.equal((await borradosEnPanel([clave, otra])).size, 0, 'antes de borrar, nada');
+  const r = await bib.eliminar([{ clase: 'documento', id: d.id }], 'José');
+  assert.equal(r.eliminados, 1);
+  const [b] = await consulta<{ detalle: any }>(`SELECT detalle FROM biblioteca_bitacora WHERE accion = 'eliminar' AND objeto = $1 ORDER BY id DESC LIMIT 1`, [`documento ${d.id}`]);
+  assert.equal(b.detalle.archivo, clave, 'la bitácora guarda de dónde venía');
+  const borrados = await borradosEnPanel([clave, otra]);
+  assert.deepEqual([...borrados], [clave], 'lo borrado se reconoce; lo demás no');
+  await consulta(`DELETE FROM biblioteca_bitacora WHERE detalle->>'archivo' = $1`, [clave]);
+});
+
+test('expediente_leer: lee seguido desde una página, dice dónde sigue y elige el informe y no el mapa', { skip: sinBase }, async () => {
+  const { TODAS } = await import('../server/electrum/manos');
+  const { leerSeguido } = await import('../server/electrum/db');
+  const leer = TODAS.find((h) => h.nombre === 'expediente_leer')!;
+  assert.ok(leer, 'la mano existe y es de Electrum');
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lee-%'`);
+  // Diez páginas; la 3 es larga (varios trozos, con la cola repetida entre trozos para la búsqueda).
+  const pags = Array.from({ length: 10 }, (_, i) =>
+    i === 2
+      ? Array.from({ length: 12 }, (_, k) => `Párrafo ${k + 1} de las conclusiones: el sector Guasucarán muestra vetas epitermales con oro y plata en la zona ${k + 1}.`).join('\n\n')
+      : `Página ${i + 1}. ${i === 3 ? 'Capítulo 5, conclusiones del estudio geológico por sector.' : 'Texto corriente del informe de exploración minera.'}`
+  );
+  await aprender('prueba-lee-JICA Fase III (OCR).txt', Buffer.from(pags.join('\f')), { carpeta: 'Pruebas Leer/FASE3' });
+  await aprender('prueba-lee-mapa Fase III.txt', Buffer.from('Mapa de ubicación de la Fase III, una sola lámina con la leyenda del área de estudio.'), { carpeta: 'Pruebas Leer/Mapas' });
+  try {
+    const l = await leerSeguido('prueba-lee Fase III', 3, { paginas: 2 });
+    assert.ok(l.ok);
+    if (!l.ok) return;
+    assert.equal(l.documento, 'prueba-lee-JICA Fase III (OCR).txt', 'gana el de más texto');
+    assert.deepEqual([l.desde, l.hasta, l.sigue, l.ultima], [3, 4, { pagina: 5, trozo: 0 }, 10]);
+    assert.match(l.texto, /^\[p\. 3\]/);
+    assert.match(l.texto, /\[p\. 4\]\nPágina 4\. Capítulo 5/);
+    assert.doesNotMatch(l.texto, /Página 5\./);
+    for (let k = 1; k <= 12; k++) assert.equal(l.texto.split(`Párrafo ${k} de las`).length - 1, 1, `el párrafo ${k} sale una sola vez`);
+    assert.deepEqual(l.otros, ['prueba-lee-mapa Fase III.txt']);
+
+    // Con un tope chico corta A MITAD de la página 3, y el cursor retoma donde quedó: ni repite el
+    // comienzo ni se salta nada.
+    const corta = await leerSeguido('prueba-lee Fase III', 3, { paginas: 4, tope: 1000 });
+    assert.ok(corta.ok && corta.sigue);
+    if (!corta.ok || !corta.sigue) return;
+    assert.ok(corta.texto.length <= 1000);
+    assert.equal(corta.sigue.pagina, 3);
+    assert.ok(corta.sigue.trozo > 0, 'el corte cae dentro de la página');
+    const resto = await leerSeguido('prueba-lee Fase III', corta.sigue.pagina, { paginas: 4, tope: 1000, trozo: corta.sigue.trozo });
+    assert.ok(resto.ok);
+    if (!resto.ok) return;
+    assert.match(resto.texto, /^\[p\. 3, sigue\]/);
+    const junto = corta.texto + '\n' + resto.texto;
+    for (let k = 1; k <= 12; k++) assert.equal(junto.split(`Párrafo ${k} de las`).length - 1, 1, `al retomar, el párrafo ${k} sale una sola vez`);
+    assert.match(resto.texto, /\[p\. 4\]/, 'y sigue con la página siguiente');
+
+    const r = await leer.ejecutar({ documento: 'prueba-lee Fase III', pagina: 4, paginas: 1 }, {} as any);
+    assert.match(r.texto, /página 4 de 10/);
+    assert.match(r.texto, /Capítulo 5, conclusiones/);
+    assert.match(r.texto, /Sigue en la página 5/);
+    const fin = await leer.ejecutar({ documento: 'prueba-lee Fase III', pagina: 10 }, {} as any);
+    assert.match(fin.texto, /Fin del documento/);
+    const [d] = await consulta<{ id: number }>(`SELECT id FROM documento WHERE nombre = 'prueba-lee-mapa Fase III.txt'`);
+    const porId = await leer.ejecutar({ documento: `#${d.id}` }, {} as any);
+    assert.match(porId.texto, /Mapa de ubicación/);
+    const nada = await leer.ejecutar({ documento: 'no existe en ningún lado xyz' }, {} as any);
+    assert.match(nada.texto, /No hay ningún documento/);
+
+    // Páginas en blanco: el cursor salta a la próxima página que tiene texto, no a la misma.
+    await aprender('prueba-lee-con blancos.txt', Buffer.from(['Página 1. Portada del informe de la zona de Tatanacho con su índice.', '', '', 'Página 4. Recursos estimados del depósito de Tatanacho por bloque.'].join('\f')));
+    const blanco = await leerSeguido('prueba-lee con blancos', 2, { paginas: 1 });
+    assert.ok(blanco.ok);
+    if (!blanco.ok) return;
+    assert.equal(blanco.texto, '');
+    assert.deepEqual(blanco.sigue, { pagina: 4, trozo: 0 });
+    const rb = await leer.ejecutar({ documento: 'prueba-lee con blancos', pagina: 2, paginas: 1 }, {} as any);
+    assert.match(rb.texto, /sigue en la página 4/);
+  } finally {
+    await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lee-%'`);
+  }
+});

@@ -68,7 +68,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Para la geología de un lugar usás geologia_zona y, si piden un mapa, mapa_geologico. Decís siempre la escala del mapa geológico: uno regional sirve para saber qué mirar, no para decidir dentro de una concesión.',
       'Un indicio no es un recurso: hablás de «condiciones favorables» y de qué haría falta para confirmarlas (cartografía 1:50 000, muestreo, geoquímica, geofísica, perforación).',
     ],
-    herramientas: ['geologia_zona', 'mapa_geologico', 'informe_pdf', 'catastro_buscar', 'gis_medir', 'expediente_buscar', 'expediente_listar', 'calculo_mina', 'web_buscar', 'web_leer'],
+    herramientas: ['geologia_zona', 'mapa_geologico', 'informe_pdf', 'catastro_buscar', 'gis_medir', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'calculo_mina', 'web_buscar', 'web_leer'],
     vigila: 'Que nadie llame «reserva» a un recurso inferido, ni «yacimiento» a una anomalía sin perforar.',
   },
   {
@@ -82,7 +82,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Toda recomendación de método viene con su costo por tonelada aproximado y su exigencia de capital.',
       'Decís siempre la dilución esperada: es lo que se come el negocio y lo que nadie pone en la presentación.',
     ],
-    herramientas: ['informe_pdf', 'calculo_mina', 'gis_medir', 'catastro_buscar', 'expediente_buscar', 'expediente_listar', 'web_buscar'],
+    herramientas: ['informe_pdf', 'calculo_mina', 'gis_medir', 'catastro_buscar', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar'],
     vigila: 'Que no se compare un costo de cielo abierto con uno de subterráneo como si fueran la misma cosa.',
   },
   {
@@ -96,7 +96,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'En presas de relaves nombrás el método de crecimiento (aguas arriba, línea central, aguas abajo) y decís lo que hay que decir: las de aguas arriba son las que fallaron en Mariana y Brumadinho.',
       'Un talud no se define por lo que ahorra, se define por la geotecnia. Si no hay estudio, lo pedís.',
     ],
-    herramientas: ['informe_pdf', 'gis_medir', 'mapa_volar', 'concesion_entorno', 'expediente_buscar', 'expediente_listar', 'web_buscar', 'web_leer'],
+    herramientas: ['informe_pdf', 'gis_medir', 'mapa_volar', 'concesion_entorno', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar', 'web_leer'],
     vigila: 'Que nadie diseñe una presa de relaves «provisional». No existen: duran para siempre.',
   },
   {
@@ -110,7 +110,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Distinguís recuperación de laboratorio de recuperación de planta. Entre una y otra se pierden puntos, siempre.',
       'Si el oro puede ser refractario, lo planteás antes de que alguien construya la planta equivocada.',
     ],
-    herramientas: ['informe_pdf', 'calculo_mina', 'expediente_buscar', 'expediente_listar', 'web_buscar'],
+    herramientas: ['informe_pdf', 'calculo_mina', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar'],
     vigila: 'Que no se multiplique ley por tonelaje y se llame a eso «lo que vamos a producir».',
   },
   {
@@ -140,7 +140,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'El cierre se planifica desde el primer día y se garantiza con dinero. Una mina sin plan de cierre financiado es un pasivo del país.',
       'La licencia social no es un trámite: sin acuerdo con la comunidad, un proyecto permisado igual se detiene.',
     ],
-    herramientas: ['informe_pdf', 'gis_medir', 'catastro_en_punto', 'concesion_entorno', 'mapa_capa', 'expediente_buscar', 'expediente_listar', 'documento_revisar', 'web_buscar', 'web_leer'],
+    herramientas: ['informe_pdf', 'gis_medir', 'catastro_en_punto', 'concesion_entorno', 'mapa_capa', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'web_buscar', 'web_leer'],
     vigila: 'Que no se confunda tener licencia ambiental con tener licencia social. Son cosas distintas.',
   },
   {
@@ -154,7 +154,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Un traslape de derechos se resuelve por prelación de la solicitud, no por quién llegó primero al terreno.',
       'Separás siempre tres cosas que la gente mezcla: el derecho minero, el permiso ambiental y el acuerdo con el dueño del suelo. Tener uno no es tener los otros.',
     ],
-    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'gis_traslapes', 'expediente_buscar', 'expediente_listar', 'documento_revisar', 'mapa_volar'],
+    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'gis_traslapes', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'mapa_volar'],
     vigila: 'Que nadie dé por vigente una concesión porque «así aparece en el mapa».',
   },
   {
@@ -168,7 +168,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Distinguís valor in situ de valor: el primero no descuenta costo, recuperación ni tiempo, y citarlo como riqueza es la señal más clara de un proyecto mal presentado.',
       'Los costos los das por tonelada Y por onza. Uno solo de los dos siempre esconde algo.',
     ],
-    herramientas: ['informe_pdf', 'calculo_mina', 'metales_spot', 'expediente_buscar', 'expediente_listar', 'web_buscar'],
+    herramientas: ['informe_pdf', 'calculo_mina', 'metales_spot', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar'],
     vigila: 'Que no se presente un valor in situ como si fuera el valor del proyecto.',
   },
 ];

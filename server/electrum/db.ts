@@ -1011,3 +1011,123 @@ export async function buscarEnExpedientes(texto: string, limite = 8, opts: { doc
   for (const h of hits) trazaActual()?.documento({ fuente: h.documento, ref: h.pagina ? `p. ${h.pagina}` : undefined, puntaje: h.puntaje });
   return hits;
 }
+
+/** Dónde retomar: la página y, si se cortó dentro de ella, cuántos trozos de esa página ya se leyeron. */
+export type Cursor = { pagina: number; trozo: number };
+
+export type LecturaSeguida =
+  | { ok: false; candidatos: string[] }
+  | {
+      ok: true;
+      documento: string;
+      carpeta: string | null;
+      desde: number;
+      hasta: number;
+      ultima: number | null;
+      sigue: Cursor | null;
+      texto: string;
+      otros: string[];
+    };
+
+/**
+ * Leer SEGUIDO un documento desde una página: el capítulo que el índice o la búsqueda ubicaron.
+ * La búsqueda devuelve trozos sueltos y cortos; para contestar «qué concluye el capítulo 5» hay que
+ * leer las páginas enteras. Devuelve hasta `tope` caracteres y dice dónde sigue.
+ *
+ * El corte puede caer dentro de una página (una hoja de cálculo es una sola página enorme): por eso
+ * el cursor lleva también el trozo, y `trozo` salta los ya leídos de la primera página. Con solo el
+ * número de página, retomar repetiría el mismo comienzo para siempre.
+ *
+ * `documento` es parte del nombre o de la carpeta (como en la búsqueda) o el número del documento.
+ * Entre varios que casan gana el que trae la frase entera en el nombre y, después, el de más texto:
+ * «Fase III» tiene que dar el informe de 125 páginas y no un mapa de una.
+ */
+export async function leerSeguido(
+  documento: string,
+  desde = 1,
+  opts: { paginas?: number; tope?: number; trozo?: number } = {}
+): Promise<LecturaSeguida> {
+  const ref = String(documento || '').trim().slice(0, 160);
+  const paginas = Math.max(1, Math.min(20, Math.floor(opts.paginas ?? 6)));
+  const tope = Math.max(1000, Math.min(20000, opts.tope ?? 9000));
+  const inicio = Math.max(1, Math.floor(Number(desde) || 1));
+  const saltar = Math.max(0, Math.floor(Number(opts.trozo) || 0));
+  const porId = /^#?(\d{1,9})$/.exec(ref);
+  const filtro = porId ? { sql: ` AND d.id = $2`, args: [porId[1]] } : filtroDocumento(ref, 2);
+  if (!filtro.sql) return { ok: false, candidatos: [] };
+  const frase = `%${ref.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  const candidatos = await consulta<{ id: number; nombre: string; carpeta: string | null; n: number; ultima: number | null }>(
+    `SELECT d.id, d.nombre, d.carpeta, count(f.id)::int AS n, max(f.pagina) AS ultima
+       FROM documento d JOIN fragmento f ON f.documento_id = d.id
+      WHERE true${filtro.sql}
+      GROUP BY d.id
+      ORDER BY (unaccent(lower(d.nombre)) LIKE unaccent(lower($1)) ESCAPE '\\') DESC, count(f.id) DESC, d.id DESC
+      LIMIT 6`,
+    [frase, ...filtro.args]
+  );
+  if (!candidatos.length) return { ok: false, candidatos: [] };
+  const d = candidatos[0];
+  const conPaginas = d.ultima != null;
+  // Con páginas se lee por página; sin ellas (un .txt sin saltos), `desde` cuenta trozos.
+  const filas = await consulta<{ pagina: number | null; orden: number; texto: string }>(
+    conPaginas
+      ? `SELECT pagina, orden, texto FROM fragmento WHERE documento_id = $1 AND pagina >= $2 AND pagina < $3 ORDER BY orden`
+      : `SELECT pagina, orden, texto FROM fragmento WHERE documento_id = $1 AND orden >= $2 - 1 AND orden < $3 - 1 ORDER BY orden`,
+    [d.id, inicio, inicio + paginas]
+  );
+  let texto = '';
+  let hasta = inicio - 1;
+  let sigue: Cursor | null = null;
+  let anterior: { pagina: number | null; texto: string } | null = null;
+  let paginaActual: number | null = null;
+  let enPagina = 0; // cuántos trozos de la página actual van (leídos o saltados)
+  for (const f of filas) {
+    const donde = conPaginas ? Number(f.pagina) : f.orden + 1;
+    if (donde !== paginaActual) {
+      paginaActual = donde;
+      enPagina = 0;
+    }
+    const indice = enPagina++;
+    // Los trozos ya leídos de la primera página se saltan, pero sirven para quitar la cola del siguiente.
+    if (conPaginas && donde === inicio && indice < saltar) {
+      anterior = { pagina: f.pagina, texto: f.texto };
+      continue;
+    }
+    // Cada trozo empieza con la cola del anterior de la misma página (para la búsqueda): aquí sobra.
+    let t = f.texto;
+    if (anterior && anterior.pagina === f.pagina) {
+      const cola = anterior.texto.slice(-120);
+      if (cola.length >= 40 && t.startsWith(cola)) t = t.slice(cola.length).replace(/^\s+/, '');
+    }
+    const cabeza = conPaginas && donde !== hasta ? `\n[p. ${donde}${indice ? ', sigue' : ''}]\n` : '\n';
+    if (texto.length + cabeza.length + t.length > tope && texto) {
+      sigue = { pagina: donde, trozo: conPaginas ? indice : 0 };
+      break;
+    }
+    texto += cabeza + t;
+    hasta = donde;
+    anterior = { pagina: f.pagina, texto: f.texto };
+  }
+  if (sigue == null) {
+    // Lo que sigue es la próxima página QUE TIENE TEXTO: si el rango pedido estaba en blanco, avanzar.
+    const [prox] = await consulta<{ p: number | null }>(
+      conPaginas
+        ? `SELECT min(pagina) AS p FROM fragmento WHERE documento_id = $1 AND pagina >= $2`
+        : `SELECT min(orden) + 1 AS p FROM fragmento WHERE documento_id = $1 AND orden >= $2 - 1`,
+      [d.id, inicio + paginas]
+    );
+    if (prox?.p != null) sigue = { pagina: Number(prox.p), trozo: 0 };
+  }
+  trazaActual()?.documento({ fuente: d.nombre, ref: conPaginas ? `pp. ${inicio}-${Math.max(inicio, hasta)}` : undefined, puntaje: 1 });
+  return {
+    ok: true,
+    documento: d.nombre,
+    carpeta: d.carpeta,
+    desde: inicio,
+    hasta: Math.max(inicio - 1, hasta),
+    ultima: conPaginas ? d.ultima : d.n,
+    sigue,
+    texto: texto.trim(),
+    otros: candidatos.slice(1).map((c) => c.nombre),
+  };
+}
