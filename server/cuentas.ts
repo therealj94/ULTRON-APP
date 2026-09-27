@@ -98,6 +98,21 @@ CREATE TABLE IF NOT EXISTS cuentas.solicitud (
   nota         text
 );
 CREATE INDEX IF NOT EXISTS solicitud_estado ON cuentas.solicitud (estado, creada DESC);
+CREATE TABLE IF NOT EXISTS cuentas.codigo (
+  id           bigserial PRIMARY KEY,
+  huella       text NOT NULL UNIQUE,
+  pista        text NOT NULL,
+  plataforma   text NOT NULL,
+  nivel        text NOT NULL DEFAULT 'lee',
+  para         text NOT NULL DEFAULT '',
+  creado_por   text NOT NULL,
+  creado       timestamptz NOT NULL DEFAULT now(),
+  vence        timestamptz NOT NULL,
+  revocado     timestamptz,
+  primer_uso   timestamptz,
+  usos         integer NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS codigo_vence ON cuentas.codigo (plataforma, vence DESC);
 `;
 
 function conexion(): Pool {
@@ -218,13 +233,28 @@ export async function recargarCuentas(): Promise<number> {
   if (!cuentasDisponibles()) return 0;
   const filas = await q(`SELECT correo, nombre, acceso, estado, clave_hash IS NOT NULL AS clave_hash, clave_desde FROM cuentas.cuenta`);
   const cuentas = filas.map(filaACuenta);
+  // Los códigos de los últimos dos días: los vivos entran al padrón; los vencidos o revocados
+  // cortan toda sesión abierta con ellos (sesión anterior a «desde» = no vale).
+  const codigos = await q<{ id: string; nivel: Nivel; para: string; plataforma: Plataforma; vence: Date; revocado: Date | null }>(
+    `SELECT id::text, nivel, para, plataforma, vence, revocado FROM cuentas.codigo WHERE vence > now() - interval '2 days'`
+  );
   claveDesdePorCorreo.clear();
   for (const c of cuentas) if (c.claveDesde) claveDesdePorCorreo.set(c.correo, c.claveDesde);
-  fijarCuentasAprobadas(
-    cuentas
+  const ahora = Date.now();
+  const vivos = [];
+  for (const k of codigos) {
+    const fin = k.revocado ? new Date(k.revocado).getTime() : new Date(k.vence).getTime();
+    // Vencido o revocado: TODA sesión suya queda fuera, sin comparar horas (el reloj de la base y el
+    // del servidor no tienen por qué coincidir al milisegundo). Con él ya no se abren sesiones nuevas.
+    if (k.revocado || fin <= ahora) claveDesdePorCorreo.set(correoDeCodigo(Number(k.id)), Number.MAX_SAFE_INTEGER);
+    else vivos.push({ id: `t-${k.id}`, nombre: k.para || 'Invitado', correos: [correoDeCodigo(Number(k.id))], acceso: { [k.plataforma]: k.nivel } });
+  }
+  fijarCuentasAprobadas([
+    ...cuentas
       .filter((c) => c.estado === 'activa' && Object.keys(c.acceso).length)
-      .map((c) => ({ id: idDeCuenta(c.correo), nombre: c.nombre, correos: [c.correo], acceso: c.acceso }))
-  );
+      .map((c) => ({ id: idDeCuenta(c.correo), nombre: c.nombre, correos: [c.correo], acceso: c.acceso })),
+    ...vivos,
+  ]);
   return cuentas.length;
 }
 
@@ -428,4 +458,115 @@ export async function decidirSolicitud(
   const yaTeniaClave = !!c?.tiene;
   const enlace = yaTeniaClave ? null : await crearEnlace(solicitud.correo, 'activar', 72 * 60, 0);
   return { solicitud, enlace, yaTeniaClave };
+}
+
+/* ------------------------------------------------------------------ códigos temporales */
+
+/**
+ * Un acceso que se entrega en mano y se apaga solo: 1, 5 o 24 horas, a lo sumo. Cada código es
+ * nuevo y al azar (~59 bits), y de él se guarda solo la huella y los últimos 4 caracteres para
+ * reconocerlo en la lista: el código entero se ve UNA vez, al crearlo. La sesión que abre vence
+ * con el código, y al revocarlo o vencer, cualquier sesión abierta con él deja de valer.
+ */
+export const HORAS_CODIGO = [1, 5, 24] as const;
+const ALFABETO = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sin 0/O ni 1/I/L: se dicta por teléfono
+
+export function correoDeCodigo(id: number): string {
+  return `codigo-${id}@temporal.drelectrum`;
+}
+
+/** «de 7kq4 m9xp-2hrt» → «DE-7KQ4-M9XP-2HRT». Null si no tiene forma de código. */
+export function normalizarCodigo(texto: unknown): string | null {
+  const limpio = String(texto || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const cuerpo = limpio.startsWith('DE') ? limpio.slice(2) : limpio;
+  if (cuerpo.length !== 12 || [...cuerpo].some((c) => !ALFABETO.includes(c))) return null;
+  return `DE-${cuerpo.slice(0, 4)}-${cuerpo.slice(4, 8)}-${cuerpo.slice(8)}`;
+}
+
+function codigoNuevo(): string {
+  const bytes = crypto.randomBytes(24);
+  let c = '';
+  // Rechazo por encima del múltiplo para que ninguna letra salga más que otra.
+  for (const b of bytes) {
+    if (b >= 248) continue;
+    c += ALFABETO[b % ALFABETO.length];
+    if (c.length === 12) break;
+  }
+  if (c.length < 12) return codigoNuevo();
+  return `DE-${c.slice(0, 4)}-${c.slice(4, 8)}-${c.slice(8)}`;
+}
+
+export type CodigoVisible = {
+  id: number;
+  pista: string;
+  para: string;
+  nivel: Nivel;
+  creado: string;
+  vence: string;
+  revocado: string | null;
+  primerUso: string | null;
+  usos: number;
+  estado: 'vivo' | 'vencido' | 'revocado';
+};
+
+function filaACodigo(f: any): CodigoVisible {
+  const vence = new Date(f.vence);
+  return {
+    id: Number(f.id),
+    pista: f.pista,
+    para: f.para || '',
+    nivel: f.nivel,
+    creado: new Date(f.creado).toISOString(),
+    vence: vence.toISOString(),
+    revocado: f.revocado ? new Date(f.revocado).toISOString() : null,
+    primerUso: f.primer_uso ? new Date(f.primer_uso).toISOString() : null,
+    usos: Number(f.usos || 0),
+    estado: f.revocado ? 'revocado' : vence.getTime() <= Date.now() ? 'vencido' : 'vivo',
+  };
+}
+
+export async function crearCodigo(o: { horas: number; plataforma: Plataforma; nivel: Nivel; para: string; por: string }): Promise<{ codigo: string } & CodigoVisible> {
+  if (!HORAS_CODIGO.includes(o.horas as any)) throw new Error('duración inválida');
+  if (o.nivel === 'mando') throw new Error('un código temporal no da mando');
+  for (let intento = 0; intento < 5; intento++) {
+    const codigo = codigoNuevo();
+    const [f] = await q(
+      `INSERT INTO cuentas.codigo (huella, pista, plataforma, nivel, para, creado_por, vence)
+       VALUES ($1, $2, $3, $4, $5, $6, now() + ($7::float8 * interval '1 hour'))
+       ON CONFLICT (huella) DO NOTHING RETURNING *`,
+      [huella(codigo), codigo.slice(-4), o.plataforma, o.nivel, o.para.slice(0, 80), o.por, o.horas]
+    );
+    if (f) {
+      await recargarCuentas();
+      return { codigo, ...filaACodigo(f) };
+    }
+  }
+  throw new Error('no pude generar un código único');
+}
+
+export async function listarCodigos(plataforma: Plataforma): Promise<CodigoVisible[]> {
+  const filas = await q(`SELECT * FROM cuentas.codigo WHERE plataforma = $1 AND vence > now() - interval '7 days' ORDER BY creado DESC LIMIT 40`, [plataforma]);
+  return filas.map(filaACodigo);
+}
+
+export async function revocarCodigo(id: number, plataforma: Plataforma): Promise<boolean> {
+  const [f] = await q(`UPDATE cuentas.codigo SET revocado = now() WHERE id = $1 AND plataforma = $2 AND revocado IS NULL AND vence > now() RETURNING id`, [id, plataforma]);
+  if (!f) return false;
+  claveDesdePorCorreo.set(correoDeCodigo(id), Number.MAX_SAFE_INTEGER);
+  await recargarCuentas();
+  return true;
+}
+
+/** Entrar con un código: vivo, de esta plataforma y no revocado. */
+export async function entrarConCodigo(texto: string, plataforma: Plataforma): Promise<CodigoVisible | null> {
+  const codigo = normalizarCodigo(texto);
+  if (!codigo) return null;
+  const [f] = await q(
+    `UPDATE cuentas.codigo SET usos = usos + 1, primer_uso = coalesce(primer_uso, now())
+      WHERE huella = $1 AND plataforma = $2 AND revocado IS NULL AND vence > now() RETURNING *`,
+    [huella(codigo), plataforma]
+  );
+  if (!f) return null;
+  await recargarCuentas();
+  return filaACodigo(f);
 }

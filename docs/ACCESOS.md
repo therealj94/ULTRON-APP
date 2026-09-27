@@ -139,3 +139,22 @@ Para abrir una sala de demostración se ponen los ids de chat en `ELECTRUM_TELEG
 Electrum atiende a quien esté dentro, siempre con nivel de consulta. **Vacío por defecto**, y alguien
 del padrón a quien no se le dio Electrum tampoco entra por esa sala: que se le dijera que no pesa más
 que una puerta abierta.
+
+## Códigos de acceso temporal (Dr Electrum)
+
+Para que alguien pruebe Dr Electrum sin cuenta. El aprobador (`CUENTAS_APROBADOR`) los crea en
+**Cuenta → Códigos**, con el mapa abierto: 1, 5 o 24 horas (no hay más), nivel Consulta o Trabajo
+(nunca Mando) y, si quiere, para quién. El invitado entra en «Tengo un código de acceso».
+
+- **Nunca se repite.** Cada código es nuevo y al azar (`DE-XXXX-XXXX-XXXX`, unos 59 bits). En la
+  base se guarda solo su huella SHA-256 y los últimos 4 caracteres para reconocerlo: el código
+  entero se ve UNA vez, al crearlo.
+- **Al vencer lo saca del todo.** La sesión que abre lleva la hora de vencimiento firmada y el
+  servidor la rechaza desde ese segundo (también desde el caché en memoria). Además, al vencer o
+  al revocarse, toda sesión de ese código queda marcada como inválida y el código sale del padrón.
+  La pantalla del invitado muestra la cuenta regresiva y se cierra sola con el aviso.
+- **Revocar** lo corta al instante.
+- Solo en Dr Electrum: en AU-RA cualquier sesión abre la mesa de la junta, y los dos servicios
+  firman con secretos distintos, así que una sesión de invitado de Electrum no vale en AU-RA.
+- La llave de demostración fija (`ELECTRUM_CLAVE`) sigue funcionando en el mismo campo; lo que
+  tiene forma de código entra como código.

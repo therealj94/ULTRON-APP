@@ -4,7 +4,7 @@
  * tema oscuro de la estación y el marco.
  */
 import { useEffect, useState } from 'react';
-import { CambiarClave, PanelSolicitudes, type Tema } from '../src/cuentas/Cuentas';
+import { CambiarClave, PanelCodigos, PanelSolicitudes, type Tema } from '../src/cuentas/Cuentas';
 import { guardarSesion, headersElectrum } from './acceso';
 
 const AMBAR = '#FFAE3B';
@@ -31,12 +31,12 @@ export function Cuenta({
   onCerrar,
 }: {
   abierta: boolean;
-  inicio?: 'clave' | 'solicitudes';
+  inicio?: 'clave' | 'solicitudes' | 'codigos';
   pendientes: number | null;
   onPendientes: (n: number) => void;
   onCerrar: () => void;
 }) {
-  const [pestana, setPestana] = useState<'clave' | 'solicitudes'>(inicio);
+  const [pestana, setPestana] = useState<'clave' | 'solicitudes' | 'codigos'>(inicio);
   useEffect(() => {
     if (abierta) setPestana(pendientes === null ? 'clave' : inicio);
   }, [abierta, inicio, pendientes]);
@@ -60,6 +60,7 @@ export function Cuenta({
               [
                 ['clave', 'Contraseña'],
                 ['solicitudes', `Solicitudes${pendientes ? ` · ${pendientes}` : ''}`],
+                ['codigos', 'Códigos'],
               ] as const
             ).map(([id, txt]) => (
               <button
@@ -77,6 +78,8 @@ export function Cuenta({
         )}
         {pestana === 'solicitudes' && aprueba ? (
           <PanelSolicitudes tema={TEMA_ELECTRUM} headers={headersElectrum} onCambio={onPendientes} />
+        ) : pestana === 'codigos' && aprueba ? (
+          <PanelCodigos tema={TEMA_ELECTRUM} headers={headersElectrum} />
         ) : (
           <CambiarClave tema={TEMA_ELECTRUM} headers={headersElectrum} onListo={(t) => guardarSesion(t)} />
         )}

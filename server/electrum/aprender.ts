@@ -26,7 +26,8 @@ import { indexarPendientes } from './vectores';
 import crypto from 'node:crypto';
 import JSZip from 'jszip';
 import { extraerPdf } from '../../lib/leer-pdf';
-import { consulta, guardarCapa, hayBase, recalcularTraslapes, traslapesDeCapa } from './db';
+import { cuerpo, textoPorPaginas } from '../../lib/leer-pdf-pdfjs';
+import { consulta, enTransaccion, guardarCapa, hayBase, recalcularTraslapes, traslapesDeCapa } from './db';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 
@@ -183,6 +184,41 @@ function paginasDePdf(texto: string, paginasDeclaradas: number): Array<{ pagina:
   return [{ pagina: 1, texto }];
 }
 
+/**
+ * Hasta el 27-09-2026 los PDF se indexaban con el tope de 8 000 caracteres del lector de la
+ * conversación: 40 de 59 quedaron cortados. Si vuelve a llegar uno de esos, se relee y se
+ * reemplazan sus fragmentos en el mismo documento. Null si el que había estaba bien.
+ */
+async function repararSiTruncado(id: number, paginasViejas: number | null, nombre: string, datos: Buffer) {
+  const [h] = await consulta<{ car: number }>(`SELECT coalesce(sum(length(texto)), 0)::int AS car FROM fragmento WHERE documento_id = $1`, [id]);
+  const antes = Number(h?.car || 0);
+  if (!((paginasViejas || 0) > 3 && antes <= 8200)) return null;
+  const leido = await leerDocumento(nombre, datos);
+  if (leido.ok === false) return null;
+  const ahora = leido.trozos.reduce((n, t) => n + t.texto.length, 0);
+  if (ahora < antes * 1.3) return null;
+  await enTransaccion(async (q) => {
+    await q(`DELETE FROM fragmento WHERE documento_id = $1`, [id]);
+    for (let i = 0; i < leido.trozos.length; i += 200) {
+      const tramo = leido.trozos.slice(i, i + 200);
+      const args: unknown[] = [];
+      const marcas = tramo.map((t, j) => {
+        args.push(id, t.pagina, t.orden, t.texto);
+        return `($${j * 4 + 1},$${j * 4 + 2},$${j * 4 + 3},$${j * 4 + 4})`;
+      });
+      await q(`INSERT INTO fragmento (documento_id, pagina, orden, texto) VALUES ${marcas.join(',')}`, args);
+    }
+    await q(`UPDATE documento SET paginas = $2 WHERE id = $1`, [id, leido.paginas.length]);
+  });
+  void indexarPendientes({ documentoId: id }).catch((e) => console.error('[electrum] no pude vectorizar', nombre, String(e?.message || e).slice(0, 120)));
+  return {
+    clase: 'documento' as const,
+    dicho: `«${nombre}» ya estaba, pero cortado (${antes.toLocaleString('es-ES')} caracteres). Lo volví a leer entero: ${leido.paginas.length} páginas, ${leido.trozos.length} fragmentos. Ya lo puedo citar completo.`,
+    avisos: leido.avisos,
+    ui: { accion: 'documento', documento_id: id, nombre, paginas: leido.paginas.length, fragmentos: leido.trozos.length, reparado: true },
+  };
+}
+
 /** Huella del contenido, no del nombre: el mismo expediente llega con veinte nombres distintos. */
 export function huellaDe(datos: Buffer): string {
   return crypto.createHash('md5').update(datos).digest('hex');
@@ -296,9 +332,21 @@ async function leerDocumento(nombre: string, datos: Buffer): Promise<Leido> {
   // Por la extensión, no por un mime inventado: pasarle 'application/pdf' a esPdfNombre hacía
   // que TODO pareciera PDF, y un .txt terminaba rechazado como «escaneo sin texto».
   if (/\.pdf$/i.test(nombre)) {
-    const leido = extraerPdf(datos);
+    /*
+     * Primero pdf.js: trae las páginas reales (las citas salen con su número de verdad) y lee lo que
+     * el lector propio no entiende. El lector propio queda de respaldo, SIN tope de texto: con el tope
+     * de 8 000 caracteres que tiene para la conversación, todo informe de más de tres páginas se
+     * indexaba cortado (el SIR 2010-5090-I del USGS quedó en 8 000 de 330 000 caracteres).
+     */
+    const leido = extraerPdf(datos, { maxTexto: Infinity });
     texto = leido.texto || '';
     nPaginas = Math.max(1, Number((leido as any).paginas) || 1);
+    const pdfjs = await textoPorPaginas(datos);
+    const totalPdfjs = pdfjs ? pdfjs.paginas.reduce((n, p) => n + cuerpo(p), 0) : 0;
+    if (pdfjs && totalPdfjs >= 40 && totalPdfjs >= cuerpo(texto) * 0.8) {
+      texto = pdfjs.paginas.join('\f');
+      nPaginas = Math.max(1, pdfjs.total);
+    }
     if (!texto.trim()) {
       const ocr = await conOcr(nombre, datos);
       if (ocr) return ocr;
@@ -488,6 +536,11 @@ export async function aprender(
       [huella, opts.concesionId ?? null]
     );
     if (ya) {
+      // Un PDF indexado con el tope viejo de 8 000 caracteres se reconoce por la firma (varias
+      // páginas y como mucho ~8 000 caracteres en total). Volver a subirlo lo repara en su lugar:
+      // mismo documento, fragmentos nuevos. Lo que estaba bien se sigue saltando.
+      const reparado = /\.pdf$/i.test(nombre) ? await repararSiTruncado(ya.id, ya.paginas, nombre, datos) : null;
+      if (reparado) return reparado;
       return {
         clase: 'documento',
         dicho: `«${nombre}» ya estaba en el cerebro, con el mismo contenido: no lo dupliqué.`,

@@ -420,3 +420,164 @@ export function PanelSolicitudes({ tema, headers, onCambio }: { tema: Tema; head
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ códigos temporales */
+
+/** ¿Parece un código temporal? (DE-XXXX-XXXX-XXXX, con o sin guiones). */
+export function pareceCodigo(texto: string): boolean {
+  const limpio = texto.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const cuerpo = limpio.startsWith('DE') ? limpio.slice(2) : limpio;
+  return /^[A-HJKMNP-Z2-9]{12}$/.test(cuerpo);
+}
+
+export async function entrarConCodigo(codigo: string): Promise<{ ok: true; token: string; vence: string } | { ok: false; error: string }> {
+  const r = await llamar('/api/ultron/entrar-codigo', { codigo });
+  if (r.ok && r.json.token) return { ok: true, token: String(r.json.token), vence: String(r.json.vence) };
+  return { ok: false, error: r.status === 429 ? 'Demasiados intentos. Probá de nuevo en unos minutos.' : r.json?.error || 'Ese código no abre.' };
+}
+
+type Codigo = { id: number; pista: string; para: string; nivel: string; vence: string; primerUso: string | null; usos: number; estado: 'vivo' | 'vencido' | 'revocado' };
+
+export function faltaPara(iso: string, ahora = Date.now()): string {
+  const ms = new Date(iso).getTime() - ahora;
+  if (ms <= 0) return 'vencido';
+  const m = Math.ceil(ms / 60_000);
+  if (m < 60) return `${m} min`;
+  const h = Math.floor(m / 60);
+  return `${h} h ${String(m % 60).padStart(2, '0')} min`;
+}
+
+export function PanelCodigos({ tema, headers }: { tema: Tema; headers: () => Record<string, string> }) {
+  const [lista, setLista] = useState<Codigo[] | null>(null);
+  const [horas, setHoras] = useState(1);
+  const [nivel, setNivel] = useState<'lee' | 'escribe'>('lee');
+  const [para, setPara] = useState('');
+  const [nuevo, setNuevo] = useState<{ codigo: string; vence: string } | null>(null);
+  const [copiado, setCopiado] = useState(false);
+  const [fallo, setFallo] = useState('');
+  const [yendo, setYendo] = useState(false);
+  const [, setTic] = useState(0);
+
+  async function cargar() {
+    const r = await llamar('/api/ultron/codigos', undefined, headers());
+    if (r.ok) setLista(r.json.codigos);
+    else setFallo(r.json?.error || 'No pude traer los códigos.');
+  }
+  useEffect(() => {
+    void cargar();
+    const t = setInterval(() => setTic((n) => n + 1), 30_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function crear(e: FormEvent) {
+    e.preventDefault();
+    setYendo(true);
+    setFallo('');
+    setCopiado(false);
+    const r = await llamar('/api/ultron/codigos', { horas, nivel, para: para.trim() }, headers());
+    setYendo(false);
+    if (!r.ok) return setFallo(r.json?.error || 'No pude crear el código.');
+    setNuevo({ codigo: r.json.codigo, vence: r.json.vence });
+    setPara('');
+    await cargar();
+  }
+
+  async function revocar(c: Codigo) {
+    if (!confirm(`¿Revocar el código …${c.pista}${c.para ? ` de ${c.para}` : ''}? Quien lo esté usando queda fuera al instante.`)) return;
+    const r = await llamar(`/api/ultron/codigos/${c.id}/revocar`, {}, headers());
+    if (!r.ok) setFallo(r.json?.error || 'No pude revocarlo.');
+    await cargar();
+  }
+
+  async function copiar() {
+    if (!nuevo) return;
+    try {
+      await navigator.clipboard.writeText(nuevo.codigo);
+      setCopiado(true);
+    } catch {
+      setCopiado(false);
+    }
+  }
+
+  const vivos = (lista || []).filter((c) => c.estado === 'vivo');
+  const otros = (lista || []).filter((c) => c.estado !== 'vivo').slice(0, 8);
+  return (
+    <div className="space-y-3">
+      <h2 className={tema.titulo}>Códigos de acceso temporal</h2>
+      <p className={tema.texto}>Para que alguien pruebe Dr Electrum sin cuenta. Cada código es único, se ve una sola vez y al vencer saca a quien lo usa: no puede seguir preguntando.</p>
+      <form onSubmit={crear} className="space-y-2.5">
+        <div className="flex gap-1.5" role="radiogroup" aria-label="Duración">
+          {[1, 5, 24].map((h) => (
+            <button
+              key={h}
+              type="button"
+              role="radio"
+              aria-checked={horas === h}
+              onClick={() => setHoras(h)}
+              className={horas === h ? `${tema.boton} !w-auto flex-1` : `${tema.secundario} !w-auto flex-1`}
+              style={horas === h ? tema.botonStyle : undefined}
+            >
+              {h === 1 ? '1 hora' : `${h} horas`}
+            </button>
+          ))}
+        </div>
+        <input className={tema.campo} aria-label="Para quién (opcional)" placeholder="para quién (opcional): nombre o institución" value={para} onChange={(e) => setPara(e.target.value)} maxLength={80} />
+        <label className={`${tema.texto} flex items-center gap-2`}>
+          Nivel
+          <select className={`${tema.campo} !w-auto !py-1.5`} value={nivel} onChange={(e) => setNivel(e.target.value as 'lee' | 'escribe')} aria-label="Nivel del código">
+            <option value="lee">Consulta (preguntar y ver)</option>
+            <option value="escribe">Trabajo (también subir archivos)</option>
+          </select>
+        </label>
+        <button type="submit" className={tema.boton} style={tema.botonStyle} disabled={yendo}>
+          {yendo ? 'Creando…' : 'Crear código'}
+        </button>
+      </form>
+      {nuevo && (
+        <div className={tema.tarjeta} role="status">
+          <div className={tema.texto}>Código nuevo, vence en {faltaPara(nuevo.vence)}. Copialo ahora: no se vuelve a mostrar.</div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <code className="select-all rounded-lg bg-black/30 px-3 py-2 font-mono text-[20px] tracking-[0.12em]" aria-label="Código">
+              {nuevo.codigo}
+            </code>
+            <button type="button" className={`${tema.secundario} !w-auto px-4`} onClick={copiar}>
+              {copiado ? 'Copiado ✓' : 'Copiar'}
+            </button>
+          </div>
+        </div>
+      )}
+      {fallo && (
+        <Aviso tema={tema} tipo="error">
+          {fallo}
+        </Aviso>
+      )}
+      {lista && vivos.length === 0 && <p className={tema.texto}>No hay códigos vivos.</p>}
+      {vivos.map((c) => (
+        <div key={c.id} className={`${tema.tarjeta} flex items-center gap-3`}>
+          <div className="min-w-0 flex-1">
+            <div className="font-mono">…{c.pista}{c.para ? ` · ${c.para}` : ''}</div>
+            <div className={tema.texto}>
+              {c.nivel === 'escribe' ? 'Trabajo' : 'Consulta'} · vence en {faltaPara(c.vence)} · {c.usos ? `usado ${c.usos} ${c.usos === 1 ? 'vez' : 'veces'}` : 'sin usar'}
+            </div>
+          </div>
+          <button type="button" className={`${tema.secundario} !w-auto px-3`} onClick={() => revocar(c)}>
+            Revocar
+          </button>
+        </div>
+      ))}
+      {otros.length > 0 && (
+        <details>
+          <summary className={`${tema.texto} cursor-pointer`}>Vencidos y revocados</summary>
+          <ul className="mt-2 space-y-1">
+            {otros.map((c) => (
+              <li key={c.id} className={tema.texto}>
+                …{c.pista}{c.para ? ` · ${c.para}` : ''} — {c.estado}{c.usos ? `, usado ${c.usos} ${c.usos === 1 ? 'vez' : 'veces'}` : ''}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}

@@ -62,6 +62,22 @@ export async function consulta<T = any>(sql: string, params: unknown[] = []): Pr
   return r.rows as T[];
 }
 
+/** Varias consultas en una transacción: o entran todas, o ninguna. */
+export async function enTransaccion<T>(fn: (q: (sql: string, params?: unknown[]) => Promise<any[]>) => Promise<T>): Promise<T> {
+  const cliente = await conexion().connect();
+  try {
+    await cliente.query('BEGIN');
+    const r = await fn(async (sql, params = []) => (await cliente.query(sql, params as any[])).rows);
+    await cliente.query('COMMIT');
+    return r;
+  } catch (e) {
+    await cliente.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    cliente.release();
+  }
+}
+
 /**
  * Una consulta que la BASE corta si tarda más de `ms`, y devuelve la conexión al pool.
  *
