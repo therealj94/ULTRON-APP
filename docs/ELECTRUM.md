@@ -548,6 +548,16 @@ Además: la capa de 99 yacimientos y ocurrencias de DEFOMIN (UTM 16N convertida 
 asumido) y los rótulos por OCR de cuatro mapas 1:100 000 de Olancho (JICA / MMAJ). Total:
 **83 documentos, 3706 fragmentos, todos con vector** (búsqueda híbrida, ver `docs/NODO-T4.md`).
 
+Después, el mismo día: el estudio **JICA-MMAJ «Report on Geological Survey of the Western Area,
+Republic of Honduras»** (Vol. 2 a 6, 1978-1980, en inglés: sectores Vueltas del Río, Laguna Seca,
+Zapotal III, Minitas, Pueblo Nuevo y Olancho), 1008 páginas escaneadas pasadas por OCR, más el
+*Informe técnico geológico de la zona La Lola* (Gabriel Segura, 2000) y tres láminas sueltas.
+Quedan **92 documentos y 6004 fragmentos, todos con vector**. BGE-M3 es multilingüe: una pregunta
+en español encuentra el pasaje en inglés. Para que entrara hubo que arreglar `pareceProsa`, que solo
+conocía palabras funcionales del español y rechazaba cualquier informe en inglés como ilegible.
+Cinco láminas (perfiles y leyendas: rótulos sueltos) no pasaron el control, con razón; su contenido
+está dentro del Vol. 3.
+
 Dos lecciones de la carga:
 
 - El lector de PDF del cargador sacó 3 de 28 páginas del Reglamento del SINEIA y 1 carácter por
