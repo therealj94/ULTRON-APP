@@ -83,7 +83,8 @@ export function limpiarParaVoz(text: string) {
 }
 
 export function decodeDataUrl(input: string, fallbackMime: string) {
-  const m = String(input || '').match(/^data:([^;]+);base64,(.*)$/);
+  // «data:audio/webm;codecs=opus;base64,…» (Chrome): el tipo es lo de antes del primer «;».
+  const m = String(input || '').match(/^data:([^;,]+)[^,]*?;base64,([\s\S]*)$/);
   return { mime: m ? m[1] : fallbackMime, buffer: Buffer.from(m ? m[2] : input, 'base64') };
 }
 

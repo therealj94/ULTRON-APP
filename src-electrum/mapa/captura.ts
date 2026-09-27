@@ -22,6 +22,28 @@ export type OrdenMapa =
   | { accion: 'candidatas'; geojson: FeatureCollection; encuadre?: [number, number, number, number] }
   | { accion: 'punto'; punto: [number, number] };
 
+/** Lo que se tocó en el mapa: una concesión, un rasgo de una capa encendida, o un punto cualquiera. */
+export type Tocado =
+  | { tipo: 'concesion'; id: number; nombre?: string; lngLat: [number, number] }
+  | { tipo: 'rasgo'; eid: number; nombre?: string; lngLat: [number, number] }
+  | { tipo: 'punto'; lngLat: [number, number] };
+
+export type RolVisible =
+  | 'litologia'
+  | 'falla'
+  | 'tracto_permisivo'
+  | 'ocurrencia'
+  | 'area_protegida'
+  | 'microcuenca'
+  | 'zona_informal'
+  | 'forestal'
+  | 'provincia_geologica'
+  | 'placa'
+  | 'municipio';
+
+/** Una capa encendida encima del catastro (geología, fallas, áreas protegidas…). */
+export type CapaExtra = { id: number; nombre: string; rol: RolVisible; geojson: FeatureCollection };
+
 /** Lo mínimo del mapa de MapLibre que usa la captura. */
 type MapaVivo = {
   getCanvas: () => HTMLCanvasElement;

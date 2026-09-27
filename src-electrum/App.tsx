@@ -19,7 +19,10 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useStat
 import { FaceCanvas } from '../src/02-cara';
 import type { FaceState, Mode } from '../src/types';
 import type { Emocion } from '../lib/emocion';
-import type { Fondo, Motor, OrdenMapa } from './mapa/captura';
+import type { CapaExtra, Fondo, Motor, OrdenMapa, Tocado } from './mapa/captura';
+import { Tarjeta } from './mapa/Tarjeta';
+import { CapasControl } from './mapa/CapasControl';
+import type { PedidoPanel } from './panel/Panel';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
@@ -154,6 +157,21 @@ export default function App() {
   const [fondo, setFondo] = useState<Fondo>('satelite');
   const [orden, setOrden] = useState<OrdenMapa | null>(null);
   const [panel, setPanel] = useState<'chat' | 'expedientes'>('chat');
+  /*
+   * EL MAPA SE TOCA. Lo tocado abre su tarjeta; las capas encendidas se pintan debajo del catastro;
+   * y desde la tarjeta se le puede pedir algo a Dr Electrum, que llega al panel como si se hubiera
+   * escrito ahí.
+   */
+  const [tocado, setTocado] = useState<Tocado | null>(null);
+  const [extras, setExtras] = useState<CapaExtra[]>([]);
+  const [pedidoPanel, setPedidoPanel] = useState<PedidoPanel | null>(null);
+  const nPedido = useRef(0);
+  const cerrarTarjeta = useCallback(() => setTocado(null), []);
+  const pedirAlPanel = useCallback((p: Omit<PedidoPanel, 'n'>) => {
+    nPedido.current += 1;
+    setPanel('chat');
+    setPedidoPanel({ ...p, n: nPedido.current } as PedidoPanel);
+  }, []);
   const claveGoogle = (import.meta as any).env?.VITE_GOOGLE_MAPS_KEY || '';
 
   /**
@@ -349,9 +367,26 @@ export default function App() {
               </div>
             }
           >
-            <Mapa orden={orden} motor={motor} fondo={fondo} claveGoogle={claveGoogle} />
+            <Mapa
+              orden={orden}
+              motor={motor}
+              fondo={fondo}
+              claveGoogle={claveGoogle}
+              extras={extras}
+              seleccion={tocado?.tipo === 'concesion' ? tocado.id : null}
+              onTocar={setTocado}
+            />
           </Suspense>
           </SinMapa>
+          <CapasControl encendidas={extras} onCambio={setExtras} />
+          <Tarjeta
+            tocado={tocado}
+            onCerrar={cerrarTarjeta}
+            onVolar={setOrden}
+            onTocar={setTocado}
+            onPreguntar={(texto) => pedirAlPanel({ tipo: 'pregunta', texto })}
+            onFicha={(id) => pedirAlPanel({ tipo: 'ficha', id })}
+          />
         </div>
         <Panel
           abierto={enTrabajo}
@@ -363,6 +398,7 @@ export default function App() {
           onEmocion={setEmocion}
           onUi={alUi}
           onTrabajo={alTrabajo}
+          pedido={pedidoPanel}
         />
       </div>
 

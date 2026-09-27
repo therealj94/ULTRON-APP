@@ -279,7 +279,7 @@ async function atenderArchivo(
    * tiene consulta la ve leída pero no guardada, igual que con un documento.
    */
   if (parsed.imageDataUrl) {
-    const b64 = parsed.imageDataUrl.replace(/^data:[^;]+;base64,/, '');
+    const b64 = parsed.imageDataUrl.replace(/^data:[^,]*?;base64,/, '');
     const datos = Buffer.from(b64, 'base64');
     if (datos.length > 80) {
       const nombre = `foto-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '')}.jpg`;

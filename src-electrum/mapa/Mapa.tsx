@@ -14,8 +14,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { Map as MapaLibre } from 'maplibre-gl';
 import { duracion } from '../movimiento';
-import { esMapaVivo, fijarMapaVivo, type Fondo, type Motor, type OrdenMapa } from './captura';
-import { AMBAR, RESALTE, ESTILO_SATELITE, ESTILO_CALLES, capasDeConcesiones, capasDeResaltado } from './capas';
+import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type Tocado } from './captura';
+import { AMBAR, RESALTE, ESTILO_SATELITE, ESTILO_CALLES, ESTILO_ROL, COLOR_ROCA, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion } from './capas';
 import urlDelWorker from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
 /*
@@ -41,6 +41,12 @@ type Props = {
   /** Clave de Google Maps; sin ella el motor de Google no se puede encender. */
   claveGoogle?: string;
   onMotor?: (m: Motor) => void;
+  /** Capas encendidas encima del catastro (geología, fallas, áreas protegidas…). */
+  extras?: CapaExtra[];
+  /** La concesión de la tarjeta abierta: se marca con borde blanco. */
+  seleccion?: number | null;
+  /** Tocar el mapa: una concesión, un rasgo de una capa encendida o un punto. */
+  onTocar?: (t: Tocado) => void;
 };
 
 /** Honduras entera, que es donde se abre si nadie ha pedido nada todavía. */
@@ -70,6 +76,11 @@ const HONDURAS: [number, number, number, number] = [-89.4, 12.9, -83.1, 16.6];
  * cuál de los caminos fue el que borró.
  */
 const pintado: { concesiones: unknown; resaltada: unknown } = { concesiones: null, resaltada: null };
+/** Las capas encendidas, por el mismo motivo: si el estilo se recarga, se reponen desde aquí. */
+const pintadoExtra = new Map<string, { rol: string; geojson: unknown }>();
+const fuenteExtra = (id: number) => `extra-${id}`;
+/** Las capas de dibujo tocables de las capas encendidas, para saber qué se tocó. */
+const capasTocablesExtra = () => [...pintadoExtra.keys()].flatMap((f) => [`${f}-punto`, `${f}-borde`, `${f}-relleno`]);
 
 /** Pone fuentes y capas si faltan, y les devuelve los datos que tenían. Idempotente y barata. */
 function asegurarCapas(m: maplibregl.Map) {
@@ -91,6 +102,22 @@ function asegurarCapas(m: maplibregl.Map) {
     }
     for (const c of capas) if (!m.getLayer((c as any).id)) m.addLayer(c as any);
   }
+  // La tocada y la de bajo el dedo: encima del catastro, debajo del resaltado de Dr Electrum.
+  for (const c of capasDeSeleccion()) if (!m.getLayer(c.id)) m.addLayer(c as any, m.getLayer('resaltada-relleno') ? 'resaltada-relleno' : undefined);
+  // Las capas encendidas van DEBAJO del catastro: la concesión se sigue leyendo encima de la roca.
+  for (const [fuente, { rol, geojson }] of pintadoExtra) {
+    if (!m.getSource(fuente)) {
+      for (const c of capasDeExtra(fuente, rol)) if (m.getLayer(c.id)) m.removeLayer(c.id);
+      m.addSource(fuente, { type: 'geojson', data: geojson as any });
+    }
+    for (const c of capasDeExtra(fuente, rol)) if (!m.getLayer(c.id)) m.addLayer(c as any, 'concesiones-relleno');
+  }
+}
+
+/** Quita del mapa las capas encendidas que ya no están en la lista. */
+function quitarExtra(m: maplibregl.Map, fuente: string, rol: string) {
+  for (const c of capasDeExtra(fuente, rol)) if (m.getLayer(c.id)) m.removeLayer(c.id);
+  if (m.getSource(fuente)) m.removeSource(fuente);
 }
 
 /**
@@ -105,6 +132,9 @@ function asegurarCapas(m: maplibregl.Map) {
  * el resaltado sin tocar el catastro.
  */
 const capasGoogle: Record<'concesiones' | 'resaltada', any> = { concesiones: null, resaltada: null };
+const extrasGoogle = new Map<string, any>();
+/** A quién avisar cuando se toca el mapa de Google: se fija desde el componente. */
+let tocarGoogle: ((t: Tocado) => void) | null = null;
 
 function pintarGoogle(g: any, cual: 'concesiones' | 'resaltada', datos: unknown) {
   const G = (window as any).google?.maps;
@@ -118,6 +148,12 @@ function pintarGoogle(g: any, cual: 'concesiones' | 'resaltada', datos: unknown)
         : { fillColor: RESALTE, fillOpacity: 0.22, strokeColor: RESALTE, strokeWeight: 3, strokeOpacity: 1 }
     );
     capasGoogle[cual] = capa;
+    if (cual === 'concesiones') {
+      capa.addListener('click', (ev: any) => {
+        const id = Number(ev.feature?.getProperty('id'));
+        if (Number.isFinite(id)) tocarGoogle?.({ tipo: 'concesion', id, nombre: ev.feature.getProperty('nombre'), lngLat: [ev.latLng.lng(), ev.latLng.lat()] });
+      });
+    }
   }
   // Vaciar antes de poner: `addGeoJson` acumula, y sin esto cada vuelo añadiría otro polígono
   // encima del anterior hasta dejar el mapa lleno de siluetas viejas.
@@ -137,7 +173,58 @@ function pintar(m: maplibregl.Map, cual: 'concesiones' | 'resaltada', datos: unk
   (m.getSource(cual) as any)?.setData(datos);
 }
 
-export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
+/** Pinta en Google las capas encendidas y quita las que se apagaron. */
+function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
+  const G = (window as any).google?.maps;
+  if (!G || !g) return;
+  const quedan = new Set(extras.map((x) => fuenteExtra(x.id)));
+  for (const [f, capa] of extrasGoogle) {
+    if (!quedan.has(f)) {
+      capa.setMap(null);
+      extrasGoogle.delete(f);
+    }
+  }
+  for (const x of extras) {
+    const f = fuenteExtra(x.id);
+    if (extrasGoogle.has(f)) continue;
+    const e = ESTILO_ROL[x.rol] || { color: '#FFFFFF', relleno: 0.1, ancho: 1 };
+    const capa = new G.Data();
+    capa.setStyle((feat: any) => ({
+      fillColor: x.rol === 'litologia' ? COLOR_ROCA[feat.getProperty('clase')] || COLOR_ROCA.otra : e.color,
+      fillOpacity: e.relleno,
+      strokeColor: x.rol === 'litologia' ? '#000000' : e.color,
+      strokeOpacity: x.rol === 'litologia' ? 0.4 : 0.95,
+      strokeWeight: Math.max(1, e.ancho),
+      zIndex: 0,
+      icon: { path: G.SymbolPath.CIRCLE, scale: 4, fillColor: e.color, fillOpacity: 1, strokeColor: '#000', strokeWeight: 1 },
+    }));
+    try {
+      capa.addGeoJson(x.geojson as any);
+    } catch {
+      /* geometría que Google no entiende: se queda sin esa capa */
+    }
+    capa.addListener('click', (ev: any) => {
+      const eid = Number(ev.feature?.getProperty('eid'));
+      if (Number.isFinite(eid)) tocarGoogle?.({ tipo: 'rasgo', eid, nombre: ev.feature.getProperty('nombre'), lngLat: [ev.latLng.lng(), ev.latLng.lat()] });
+    });
+    capa.setMap(g);
+    extrasGoogle.set(f, capa);
+  }
+}
+
+export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar }: Props) {
+  /** El último `onTocar`, para los manejadores que se atan una sola vez al crear el mapa. */
+  const tocarRef = useRef(onTocar);
+  tocarRef.current = onTocar;
+  /** Las capas encendidas de ahora, para reponerlas cuando Google termina de cargar (asíncrono). */
+  const extrasRef = useRef(extras);
+  extrasRef.current = extras;
+  useEffect(() => {
+    tocarGoogle = (t) => tocarRef.current?.(t);
+    return () => {
+      tocarGoogle = null;
+    };
+  }, []);
   const caja = useRef<HTMLDivElement>(null);
   const mapa = useRef<MapaLibre | null>(null);
   const [listo, setListo] = useState(false);
@@ -183,6 +270,43 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       // Cada vez que el estilo cambia, no solo la primera: las teselas que fallan lo recargan solas.
       m.on('styledata', () => asegurarCapas(m));
       setListo(true);
+    });
+
+    /*
+     * TOCAR. Primero la concesión (lo que esta plataforma existe para enseñar), después un rasgo de
+     * una capa encendida, y si no hay nada, el punto: «¿qué hay aquí?». Una caja de unos píxeles
+     * alrededor del dedo, porque en un teléfono nadie acierta a una línea de falla de un píxel.
+     */
+    const bajoElDedo = (p: maplibregl.Point, holgura: number) => {
+      const caja: [maplibregl.PointLike, maplibregl.PointLike] = [
+        [p.x - holgura, p.y - holgura],
+        [p.x + holgura, p.y + holgura],
+      ];
+      const existentes = (ids: string[]) => ids.filter((id) => m.getLayer(id));
+      const conc = m.queryRenderedFeatures(caja, { layers: existentes(['concesiones-relleno', 'concesiones-borde']) });
+      const extra = conc.length ? [] : m.queryRenderedFeatures(caja, { layers: existentes(capasTocablesExtra()) });
+      return { conc, extra };
+    };
+    m.on('click', (e) => {
+      const { conc, extra } = bajoElDedo(e.point, 6);
+      const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+      const c = conc.find((f) => Number.isFinite(Number(f.properties?.id)));
+      if (c) return tocarRef.current?.({ tipo: 'concesion', id: Number(c.properties!.id), nombre: c.properties?.nombre, lngLat });
+      // Entre varias capas encendidas gana la de arriba: puntos, luego líneas, luego polígonos.
+      const orden = (id: string) => (id.endsWith('-punto') ? 0 : id.endsWith('-borde') ? 1 : 2);
+      const r = extra.filter((f) => Number.isFinite(Number(f.properties?.eid))).sort((a, b) => orden(a.layer.id) - orden(b.layer.id))[0];
+      if (r) return tocarRef.current?.({ tipo: 'rasgo', eid: Number(r.properties!.eid), nombre: r.properties?.nombre, lngLat });
+      tocarRef.current?.({ tipo: 'punto', lngLat });
+    });
+    let bajo: number | null = null;
+    m.on('mousemove', (e) => {
+      const { conc, extra } = bajoElDedo(e.point, 3);
+      const id = conc.length ? Number(conc[0].properties?.id) : null;
+      m.getCanvas().style.cursor = conc.length || extra.length ? 'pointer' : '';
+      if (id !== bajo && m.getLayer('concesiones-hover')) {
+        bajo = id;
+        m.setFilter('concesiones-hover', ['==', ['to-number', ['get', 'id']], id ?? -1]);
+      }
     });
     mapa.current = m;
     /*
@@ -261,9 +385,15 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       // catastro de la pantalla.
       capasGoogle.concesiones = null;
       capasGoogle.resaltada = null;
+      extrasGoogle.clear();
+      google.current.addListener('click', (ev: any) => {
+        tocarGoogle?.({ tipo: 'punto', lngLat: [ev.latLng.lng(), ev.latLng.lat()] });
+      });
       for (const cual of ['concesiones', 'resaltada'] as const) {
         if (pintado[cual]) pintarGoogle(google.current, cual, pintado[cual]);
       }
+      // Y las capas encendidas: el efecto que las pinta corrió antes de que existiera el mapa.
+      pintarExtrasGoogle(google.current, extrasRef.current);
     };
     if (yaEsta) return arrancar();
     const s = document.createElement('script');
@@ -280,6 +410,27 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       google.current.setMapTypeId(fondo === 'satelite' ? 'hybrid' : 'roadmap');
     }
   }, [fondo, motor]);
+
+  /* ---------------------------------------------------------------- capas encendidas y tocada */
+
+  useEffect(() => {
+    const quedan = new Map(extras.map((x) => [fuenteExtra(x.id), x]));
+    const m = mapa.current;
+    for (const [f, v] of [...pintadoExtra]) {
+      if (!quedan.has(f)) {
+        pintadoExtra.delete(f);
+        if (m && listo) quitarExtra(m, f, v.rol);
+      }
+    }
+    for (const [f, x] of quedan) pintadoExtra.set(f, { rol: x.rol, geojson: x.geojson });
+    if (m && listo) asegurarCapas(m);
+    if (google.current && motor === 'google') pintarExtrasGoogle(google.current, extras);
+  }, [extras, listo, motor]);
+
+  useEffect(() => {
+    const m = mapa.current;
+    if (m && listo && m.getLayer('concesiones-sel')) m.setFilter('concesiones-sel', ['==', ['to-number', ['get', 'id']], seleccion ?? -1]);
+  }, [seleccion, listo]);
 
   /* ---------------------------------------------------------------- órdenes */
 

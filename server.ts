@@ -70,6 +70,7 @@ import { puedeEscribir } from './lib/acceso';
 import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
 import { catastroGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
 import { cargarGeologia } from './server/electrum/geologia-datos';
+import { capaParaMapa, capasVisibles, fichaParaMapa, queHayAqui, rasgoParaMapa } from './server/electrum/explorar';
 import { clasificarPendientes } from './server/electrum/documentos-laya';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
@@ -470,6 +471,89 @@ app.get('/api/electrum/catastro.geojson', exigirPlataforma('electrum'), limitar(
   }
 });
 
+/*
+ * EL MAPA SE PUEDE TOCAR. Lo que contesta al tocar una concesión, un punto o un rasgo de una capa, y
+ * las capas que se pueden encender encima del catastro (server/electrum/explorar.ts). Todo de solo
+ * lectura: lo puede usar cualquiera que entre a Electrum, igual que las herramientas de consulta.
+ */
+const idDe = (v: unknown) => {
+  const n = Number(v);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+};
+async function enviarJsonComprimido(req: express.Request, res: express.Response, cuerpoObj: unknown) {
+  const cuerpo = Buffer.from(JSON.stringify(cuerpoObj));
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Vary', 'Accept-Encoding');
+  if (req.headers['accept-encoding'] && req.acceptsEncodings('gzip', 'identity') === 'gzip' && cuerpo.length > 1024) {
+    res.setHeader('Content-Encoding', 'gzip');
+    return res.end(await gzipAsync(cuerpo, { level: 6 }));
+  }
+  return res.end(cuerpo);
+}
+function falloMapa(res: express.Response, que: string, e: any) {
+  console.error(`[electrum] mapa/${que} falló:`, String(e?.message || e).slice(0, 200));
+  return res.status(503).json({ error: 'No pude leer eso de la base.', honesto: true });
+}
+
+app.get('/api/electrum/mapa/concesion/:id', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  const id = idDe(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Id de concesión inválido.', honesto: true });
+  try {
+    const f = await fichaParaMapa(id);
+    if (!f) return res.status(404).json({ error: 'Esa concesión no está en el catastro.', honesto: true });
+    return res.json(f);
+  } catch (e) {
+    return falloMapa(res, 'concesion', e);
+  }
+});
+
+app.get('/api/electrum/mapa/aqui', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  const lon = Number(req.query.lon);
+  const lat = Number(req.query.lat);
+  if (!Number.isFinite(lon) || !Number.isFinite(lat) || Math.abs(lon) > 180 || Math.abs(lat) > 90) {
+    return res.status(400).json({ error: 'Coordenadas inválidas.', honesto: true });
+  }
+  try {
+    return res.json(await queHayAqui(lon, lat));
+  } catch (e) {
+    return falloMapa(res, 'aqui', e);
+  }
+});
+
+app.get('/api/electrum/mapa/capas', exigirPlataforma('electrum'), limitar(60), async (_req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return res.json({ capas: await capasVisibles() });
+  } catch (e) {
+    return falloMapa(res, 'capas', e);
+  }
+});
+
+app.get('/api/electrum/mapa/capa/:id', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+  const id = idDe(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Id de capa inválido.', honesto: true });
+  try {
+    const c = await capaParaMapa(id);
+    if (!c) return res.status(404).json({ error: 'Esa capa no se puede pintar (no existe o es demasiado grande).', honesto: true });
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    return enviarJsonComprimido(req, res, c);
+  } catch (e) {
+    return falloMapa(res, 'capa', e);
+  }
+});
+
+app.get('/api/electrum/mapa/rasgo/:id', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  const id = idDe(req.params.id);
+  if (!id) return res.status(400).json({ error: 'Id inválido.', honesto: true });
+  try {
+    const r = await rasgoParaMapa(id);
+    if (!r) return res.status(404).json({ error: 'Ese rasgo ya no está.', honesto: true });
+    return res.json(r);
+  } catch (e) {
+    return falloMapa(res, 'rasgo', e);
+  }
+});
+
 /**
  * Clasificar con Laya los documentos que no tienen lectura (los anteriores a que existiera, o los
  * que entraron con el lector caído); con `{"todos": true}`, todos, tras reentrenar el modelo. Solo
@@ -789,7 +873,7 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
  * `/api/tts` está en la lista de rutas abiertas de la APK y un sintetizador abierto es la GPU de
  * Voicebox trabajando para cualquiera. Devuelve WAV (audio/wav) con la voz de Alex.
  */
-app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (req, res) => {
   const texto = String(req.body?.texto || '').slice(0, 1200).trim();
   if (!texto) return res.status(400).json({ error: 'Falta el texto.', honesto: true });
   // Solo marcas ([risa], [suspiro]) y nada que decir: eso no es «no tengo voz», es que no hay texto.

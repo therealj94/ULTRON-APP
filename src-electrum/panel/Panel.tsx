@@ -24,10 +24,16 @@ import type { FaceState } from '../../src/types';
 import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/captura';
 import { sinMovimiento } from '../movimiento';
-import { ALTURAS, repartoDe, siguienteReparto } from '../preferencias';
+import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
+import { callar, desbloquear, hablar } from './voz';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 
+/** Lo que se le pide al panel desde fuera (la tarjeta del mapa). `n` distingue dos pedidos iguales. */
+export type PedidoPanel = { tipo: 'pregunta'; texto: string; n: number } | { tipo: 'ficha'; id: number; n: number };
+
 type Props = {
+  /** Un pedido de la tarjeta del mapa: una pregunta para Dr Electrum, o la ficha en PDF de una concesión. */
+  pedido?: PedidoPanel | null;
   abierto: boolean;
   vista: 'chat' | 'expedientes';
   onFace: (f: FaceState) => void;
@@ -73,32 +79,6 @@ const AMBAR = '#FFAE3B';
  * reproductores y, si alguien pregunta dos veces seguidas, las dos voces se pisan. Al pedir una
  * nueva se corta la anterior, que es lo que hace una persona cuando la interrumpen.
  */
-let sonando: HTMLAudioElement | null = null;
-
-/*
- * Cada petición de voz nace con un número. Silenciar sube el número y con eso invalida todo lo que
- * venía en camino.
- *
- * Silenciar solo cambiaba un booleano: no paraba lo que ya sonaba, y una petición lanzada un
- * segundo antes llegaba después y se reproducía igual. Quien silencia en una reunión lo hace
- * porque quiere silencio AHORA, no a partir del siguiente turno.
- */
-let generacionVoz = 0;
-
-/** Corta lo que suena e invalida lo que viene. Se puede llamar siempre, incluso sin nada sonando. */
-export function callar() {
-  generacionVoz++;
-  if (sonando) {
-    try {
-      sonando.pause();
-      sonando.currentTime = 0;
-    } catch {
-      /* el navegador ya lo había soltado */
-    }
-    sonando = null;
-  }
-}
-
 /**
  * Hablarle. El navegador graba en webm/opus, que es lo que da `MediaRecorder` en Chrome y Firefox;
  * Safari da mp4. Se manda el mime tal cual en vez de suponerlo: el transcriptor lo necesita para
@@ -114,7 +94,49 @@ async function grabar(
   const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
   const trozos: BlobPart[] = [];
   rec.ondataavailable = (e) => e.data.size && trozos.push(e.data);
+  /*
+   * CORTAR SOLO. Antes había que volver a tocar «Parar» al terminar de hablar: con las manos
+   * ocupadas, o en una conversación, eso es un botón de más. Se escucha el nivel del micrófono y,
+   * cuando ya se habló y hay 1,3 s de silencio, se manda solo. Tope de 45 s por si hay ruido.
+   */
+  let vigilante: number | undefined;
+  let contexto: AudioContext | null = null;
+  try {
+    const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (AC) {
+      contexto = new AC() as AudioContext;
+      const fuente = contexto.createMediaStreamSource(stream);
+      const analizador = contexto.createAnalyser();
+      analizador.fftSize = 1024;
+      fuente.connect(analizador);
+      const muestras = new Uint8Array(analizador.fftSize);
+      const inicio = Date.now();
+      let hablo = false;
+      let ultimoSonido = Date.now();
+      let piso = 0.01;
+      vigilante = window.setInterval(() => {
+        analizador.getByteTimeDomainData(muestras);
+        let suma = 0;
+        for (const m of muestras) suma += ((m - 128) / 128) ** 2;
+        const nivel = Math.sqrt(suma / muestras.length);
+        // El piso de ruido se aprende en el primer medio segundo: una oficina no es un cerro.
+        if (Date.now() - inicio < 500) piso = Math.max(piso, nivel * 1.5);
+        else if (nivel > Math.max(0.025, piso * 2)) {
+          hablo = true;
+          ultimoSonido = Date.now();
+        }
+        const t = Date.now();
+        if ((hablo && t - ultimoSonido > 1300) || (!hablo && t - inicio > 9000) || t - inicio > 45000) {
+          if (rec.state !== 'inactive') rec.stop();
+        }
+      }, 100);
+    }
+  } catch {
+    /* sin analizador: se corta con el botón, como antes */
+  }
   rec.onstop = async () => {
+    if (vigilante) clearInterval(vigilante);
+    void contexto?.close().catch(() => {});
     stream.getTracks().forEach((t) => t.stop());
     alEstado('oyendo');
     try {
@@ -148,33 +170,6 @@ async function grabar(
   rec.start();
   alEstado('grabando');
   return () => rec.state !== 'inactive' && rec.stop();
-}
-
-async function decirEnVoz(texto: string, emocion: string | undefined, headers: Record<string, string>) {
-  const mia = ++generacionVoz;
-  try {
-    sonando?.pause();
-    const r = await fetch('/api/electrum/voz', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify({ texto: texto.slice(0, 1200), emocion }),
-    });
-    if (!r.ok) return;
-    const blob = await r.blob();
-    // Si silenciaron mientras esto venía, no suena: ni se crea el reproductor.
-    if (mia !== generacionVoz) return;
-    const url = URL.createObjectURL(blob);
-    const a = new Audio(url);
-    sonando = a;
-    a.onended = () => URL.revokeObjectURL(url);
-    if (mia !== generacionVoz) {
-      URL.revokeObjectURL(url);
-      return;
-    }
-    await a.play().catch(() => URL.revokeObjectURL(url));
-  } catch {
-    /* sin voz se sigue leyendo; no es motivo para romper el turno */
-  }
 }
 
 /**
@@ -304,7 +299,7 @@ function hiloGuardado(): Turno[] {
   }
 }
 
-export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, onTrabajo, onVista }: Props) {
+export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, onTrabajo, onVista, pedido }: Props) {
   const [turnos, setTurnos] = useState<Turno[]>(hiloGuardado);
   /*
    * `preguntar` no puede depender de `turnos` —se reharía en cada mensaje y con él todo lo que
@@ -345,9 +340,25 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
   }, [turnos]);
   const [texto, setTexto] = useState('');
   const [pensando, setPensando] = useState(false);
-  // Arranca apagada: un navegador no deja sonar nada hasta que alguien toca algo, y una demo que
-  // empieza hablando sola en una sala de reunión es peor que una que espera a que se lo pidan.
-  const [vozActiva, setVozActiva] = useState(false);
+  /*
+   * Arranca ENCENDIDA y se recuerda. Apagada por defecto y escondida en un menú, nadie la
+   * encontraba y el doctor parecía mudo. El navegador igual no deja sonar nada hasta el primer
+   * toque: por eso cada toque (enviar, dictar, «Voz») desbloquea el reproductor (voz.ts).
+   */
+  const [vozActiva, setVozActivaCruda] = useState<boolean>(() => leerPreferencia('voz', true, (v) => typeof v === 'boolean'));
+  const setVozActiva = useCallback((f: (v: boolean) => boolean) => {
+    setVozActivaCruda((v) => {
+      const n = f(v);
+      guardarPreferencia('voz', n);
+      if (n) desbloquear();
+      else callar();
+      return n;
+    });
+  }, []);
+  /** Está sonando la voz ahora mismo: el botón pasa a «Callar». */
+  const [hablando, setHablando] = useState(false);
+  /** Un fallo de voz se avisa una vez por sesión de pantalla, no en cada respuesta. */
+  const vozAvisada = useRef(false);
   /*
    * `preguntar` usaba `vozActiva` sin declararlo en sus dependencias, así que podía quedarse con la
    * preferencia de hace dos turnos: silenciabas y la respuesta siguiente hablaba igual. Una ref
@@ -450,6 +461,10 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
     async (pregunta: string) => {
       const q = pregunta.trim();
       if (!q || pensando) return;
+      // Una pregunta nueva corta la respuesta anterior que todavía suena.
+      callar();
+      setHablando(false);
+      if (vozActivaRef.current) desbloquear();
       setTexto('');
       setTurnos((t) => [...t, { de: 'persona', texto: q }]);
       setEnVivo({ panel: '', traza: [] });
@@ -476,6 +491,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
        * pantalla no había nada que descargar. Se engancha a la respuesta cuando llega el `fin`.
        */
       let informeDelTurno: Turno['informe'] | undefined;
+      /** Si la respuesta se va a decir en voz alta, la cara la maneja la voz, no el reloj de abajo. */
+      let vozEnCamino = false;
       const imagenesDelTurno: NonNullable<Turno['imagenes']> = [];
 
       try {
@@ -576,7 +593,27 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   cerrado = true;
                   onFace('SPEAKING');
                   if (d.emocion) onEmocion(d.emocion);
-                  if (vozActivaRef.current && d.texto) void decirEnVoz(d.texto, d.emocion, headersElectrum());
+                  if (vozActivaRef.current && d.texto) {
+                    vozEnCamino = true;
+                    void hablar(d.texto, d.emocion, headersElectrum(), {
+                      alEmpezar: () => {
+                        setHablando(true);
+                        onFace('SPEAKING');
+                      },
+                      alTerminar: () => {
+                        setHablando(false);
+                        onFace('IDLE');
+                      },
+                      alFallar: (motivo) => {
+                        setHablando(false);
+                        onFace('IDLE');
+                        if (!vozAvisada.current) {
+                          vozAvisada.current = true;
+                          avisoSuelto(`No pude decírtelo en voz alta: ${motivo}. La respuesta está escrita arriba.`);
+                        }
+                      },
+                    });
+                  }
                   setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined }]);
                   terminado = true;
                 }
@@ -624,10 +661,10 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         }
         setPensando(false);
         setEnVivo({ panel: '', traza: [] });
-        setTimeout(() => onFace('IDLE'), 1200);
+        if (!vozEnCamino) setTimeout(() => onFace('IDLE'), 1200);
       }
     },
-    [pensando, onFace, onEmocion, onUi, onTrabajo, avisar]
+    [pensando, onFace, onEmocion, onUi, onTrabajo, avisar, avisoSuelto]
   );
 
   /** Abrir un informe al resto del equipo. Solo puede hacerlo quien lo pidió; el servidor lo comprueba. */
@@ -667,8 +704,9 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
    * su propia ruta y no por el turno: no hace falta molestar al modelo para armar un documento cuyo
    * contenido sale entero del catastro.
    */
-  const pedirInforme = useCallback(async () => {
+  const pedirInforme = useCallback(async (idForzado?: number) => {
     if (pensando) return;
+    const idFicha = typeof idForzado === 'number' ? idForzado : enFoco;
     setPensando(true);
     onFace('THINKING');
     onTrabajo();
@@ -683,8 +721,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headersElectrum() },
         body: JSON.stringify(
-          enFoco != null
-            ? { tipo: 'concesion', concesion_id: enFoco, mapa: 'imagen' in foto ? foto.imagen : null }
+          idFicha != null
+            ? { tipo: 'concesion', concesion_id: idFicha, mapa: 'imagen' in foto ? foto.imagen : null }
             : { tipo: 'cartera', mapa: 'imagen' in foto ? foto.imagen : null }
         ),
       });
@@ -711,6 +749,23 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       setTimeout(() => onFace('IDLE'), 900);
     }
   }, [pensando, onFace, onTrabajo, enFoco, avisoSuelto]);
+
+  /*
+   * Lo que pide la tarjeta del mapa: una pregunta va al turno como si se hubiera escrito aquí; la
+   * ficha en PDF va por su ruta, igual que el botón del panel. Si Dr Electrum está contestando otra
+   * cosa se dice, en vez de tragarse el pedido.
+   */
+  const ultimoPedido = useRef(0);
+  useEffect(() => {
+    if (!pedido || pedido.n === ultimoPedido.current) return;
+    ultimoPedido.current = pedido.n;
+    if (pensando) {
+      avisoSuelto('Estoy terminando otra respuesta: volvé a tocar el botón cuando acabe.');
+      return;
+    }
+    if (pedido.tipo === 'pregunta') void preguntar(pedido.texto);
+    else void pedirInforme(pedido.id);
+  }, [pedido, pensando, preguntar, pedirInforme, avisoSuelto]);
 
   /*
     La conversación comparte la pantalla con el mapa —42 % abajo— porque las dos cosas se miran a la
@@ -955,15 +1010,30 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   pararGrabacion.current = null;
                   return;
                 }
+                // Si le hablás, te contesta hablando; y si estaba hablando, se calla para escucharte.
+                callar();
+                setHablando(false);
+                if (!vozActivaRef.current) setVozActiva(() => true);
+                desbloquear();
                 try {
-                  pararGrabacion.current = await grabar((t) => void preguntar(t), setOyendo, avisoSuelto);
+                  pararGrabacion.current = await grabar(
+                    (t) => {
+                      pararGrabacion.current = null;
+                      void preguntar(t);
+                    },
+                    setOyendo,
+                    (m) => {
+                      pararGrabacion.current = null;
+                      avisoSuelto(m);
+                    }
+                  );
                 } catch {
                   setOyendo('');
                   avisoSuelto('No me dejaron usar el micrófono. Revisá el permiso del navegador.');
                 }
               }}
               disabled={pensando || oyendo === 'oyendo'}
-              title={oyendo === 'grabando' ? 'Parar y mandarme lo que dijiste' : 'Hablarme'}
+              title={oyendo === 'grabando' ? 'Te escucho: cuando te calles lo mando solo (o tocá para mandarlo ya)' : 'Hablale: te contesta en voz alta'}
               aria-label={oyendo === 'grabando' ? 'Parar y mandarme lo que dijiste' : 'Dictarle la pregunta a Dr Electrum'}
               className="shrink-0 rounded-lg border px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
               style={
@@ -972,7 +1042,17 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   : { borderColor: 'rgba(255,255,255,.12)', color: '#9FB0B8' }
               }
             >
-              {oyendo === 'grabando' ? 'Parar' : oyendo === 'oyendo' ? '…' : 'Decir'}
+              {oyendo === 'grabando' ? (
+                <>
+                  ●<span className="hidden sm:inline"> Escuchando</span>
+                </>
+              ) : oyendo === 'oyendo' ? (
+                '…'
+              ) : (
+                <>
+                  🎙<span className="hidden sm:inline"> Hablar</span>
+                </>
+              )}
             </button>
             {/*
               * VOZ y PDF se esconden en un menú cuando no hay ancho.
@@ -984,8 +1064,18 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               *
               * Dictar NO se esconde: es la razón de que alguien use esto con las manos sucias.
               */}
+            {/* La voz no se esconde: es lo que hace que el doctor hable. */}
+            <BotonVoz
+              vozActiva={vozActiva}
+              setVozActiva={setVozActiva}
+              hablando={hablando}
+              onCallar={() => {
+                callar();
+                setHablando(false);
+                onFace('IDLE');
+              }}
+            />
             <div className="hidden sm:contents">
-              <BotonVoz vozActiva={vozActiva} setVozActiva={setVozActiva} />
               <BotonPdf pedirInforme={pedirInforme} pensando={pensando} ficha={enFoco != null} />
             </div>
             <div className="relative shrink-0 sm:hidden">
@@ -993,7 +1083,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                 type="button"
                 onClick={() => setMasAbierto((v) => !v)}
                 aria-expanded={masAbierto}
-                aria-label="Más opciones: voz e informe"
+                aria-label="Más opciones: informe"
                 className="h-full rounded-lg border border-white/12 px-2.5 font-mono text-[13px] leading-none text-[#9FB0B8] transition-colors hover:border-white/25 hover:text-white cursor-pointer"
               >
                 ⋯
@@ -1003,7 +1093,6 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   className="absolute bottom-[calc(100%+6px)] right-0 z-40 flex flex-col gap-1.5 rounded-lg border border-white/12 bg-[#0A0C0E] p-1.5 shadow-lg"
                   onClick={() => setMasAbierto(false)}
                 >
-                  <BotonVoz vozActiva={vozActiva} setVozActiva={setVozActiva} />
                   <BotonPdf pedirInforme={pedirInforme} pensando={pensando} ficha={enFoco != null} />
                 </div>
               )}
@@ -1499,24 +1588,46 @@ function Expedientes({ onUi }: { onUi: (datos: Array<Record<string, unknown>>) =
   );
 }
 
-/** Silenciar o dejar hablar. Vive suelto para poder estar en la fila o dentro del menú. */
-function BotonVoz({ vozActiva, setVozActiva }: { vozActiva: boolean; setVozActiva: (f: (v: boolean) => boolean) => void }) {
+/**
+ * La voz: encendida (🔊), apagada (🔇), o —mientras habla— «Callar». Siempre visible, también en
+ * el teléfono: escondida en un menú, nadie sabía que el doctor podía hablar.
+ */
+function BotonVoz({
+  vozActiva,
+  setVozActiva,
+  hablando,
+  onCallar,
+}: {
+  vozActiva: boolean;
+  setVozActiva: (f: (v: boolean) => boolean) => void;
+  hablando: boolean;
+  onCallar: () => void;
+}) {
+  if (hablando) {
+    return (
+      <button
+        type="button"
+        onClick={onCallar}
+        title="Que se calle ahora"
+        className="shrink-0 animate-pulse rounded-lg border px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] uppercase cursor-pointer"
+        style={{ borderColor: AMBAR, color: AMBAR }}
+      >
+        ■<span className="hidden sm:inline"> Callar</span>
+      </button>
+    );
+  }
   return (
     <button
       type="button"
-      onClick={() =>
-        setVozActiva((v) => {
-          // Al silenciar se corta lo que suena y se invalida lo que viene; no basta el booleano.
-          if (v) callar();
-          return !v;
-        })
-      }
-      title={vozActiva ? 'Silenciar a Dr Electrum' : 'Que Dr Electrum hable'}
+      onClick={() => setVozActiva((v) => !v)}
+      title={vozActiva ? 'Dr Electrum contesta en voz alta. Tocá para silenciarlo.' : 'Dr Electrum está en silencio. Tocá para que conteste en voz alta.'}
+      aria-label={vozActiva ? 'Voz encendida: tocá para silenciar' : 'Voz apagada: tocá para que hable'}
       aria-pressed={vozActiva}
       className="shrink-0 rounded-lg border px-2.5 py-1.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer"
       style={vozActiva ? { borderColor: AMBAR, color: AMBAR } : { borderColor: 'rgba(255,255,255,.12)', color: '#9FB0B8' }}
     >
-      Voz
+      {vozActiva ? '🔊' : '🔇'}
+      <span className="hidden sm:inline"> Voz</span>
     </button>
   );
 }
