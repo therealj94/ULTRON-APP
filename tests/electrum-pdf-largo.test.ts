@@ -32,6 +32,14 @@ test('pdf.js lee las 6 páginas, cada marca en su página', async () => {
   for (let n = 1; n <= 6; n++) assert.ok(r!.paginas[n - 1].includes(`MARCA${n}X`), `página ${n}`);
 });
 
+test('pdf.js con tope vencido: devuelve null, corta el trabajo y no deja nada colgado', async () => {
+  const t0 = Date.now();
+  assert.equal(await textoPorPaginas(PDF, 1), null);
+  assert.ok(Date.now() - t0 < 2000);
+  // Y después sigue funcionando normal.
+  assert.equal((await textoPorPaginas(PDF))!.total, 6);
+});
+
 test('aprender indexa el PDF entero, con la página real de cada fragmento', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async () => {
   await consulta(`DELETE FROM documento WHERE nombre = 'informe-largo.pdf'`);
   const r = await aprender('informe-largo.pdf', PDF);

@@ -15,17 +15,30 @@ const importar = new Function('m', 'return import(m)') as (m: string) => Promise
 export type PaginasPdf = { paginas: string[]; total: number };
 
 export async function textoPorPaginas(datos: Buffer, topeMs = 60_000): Promise<PaginasPdf | null> {
+  let tarea: any = null;
+  let reloj: NodeJS.Timeout | undefined;
   try {
-    const { extractText, getDocumentProxy } = await importar('unpdf');
+    const { extractText, getResolvedPDFJS } = await importar('unpdf');
+    const pdfjs = await getResolvedPDFJS();
+    // La tarea de carga se puede destruir en cualquier momento, también antes de que el documento
+    // termine de abrirse: es lo que corta el trabajo si vence el tope.
+    tarea = pdfjs.getDocument({ data: new Uint8Array(datos), isEvalSupported: false, useSystemFonts: true });
     const trabajo = (async () => {
-      const pdf = await getDocumentProxy(new Uint8Array(datos));
+      const pdf = await tarea.promise;
       const { totalPages, text } = await extractText(pdf, { mergePages: false });
       return { paginas: (text as string[]).map((t) => String(t || '')), total: Number(totalPages) || (text as string[]).length };
     })();
-    return await Promise.race([trabajo, new Promise<null>((r) => setTimeout(() => r(null), topeMs).unref?.())]);
+    // Que un fallo después de que ganó el reloj no quede como promesa rechazada sin atender.
+    trabajo.catch(() => {});
+    return await Promise.race([trabajo, new Promise<null>((r) => (reloj = setTimeout(() => r(null), topeMs)))]);
   } catch (e: any) {
     console.warn('[pdf] pdf.js no pudo leerlo:', String(e?.message || e).slice(0, 160));
     return null;
+  } finally {
+    if (reloj) clearTimeout(reloj);
+    // Terminó o venció el tope: se destruye la tarea (y con ella el documento) y pdf.js deja de
+    // trabajar. Si no, un PDF lento seguía consumiendo CPU y memoria después de abandonado.
+    await Promise.resolve(tarea?.destroy?.()).catch(() => {});
   }
 }
 
