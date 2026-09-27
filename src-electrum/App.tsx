@@ -24,7 +24,7 @@ import { Tarjeta } from './mapa/Tarjeta';
 import { CapasControl } from './mapa/CapasControl';
 import { Tablero } from './mapa/Tablero';
 import { Recorrido, prepararRecorrido, type Controles } from './demo/Recorrido';
-import type { PedidoPanel } from './panel/Panel';
+import type { PedidoPanel, VistaPanel } from './panel/Panel';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
@@ -225,7 +225,7 @@ export default function App() {
   const [motor, setMotor] = useState<Motor>('maplibre');
   const [fondo, setFondo] = useState<Fondo>('satelite');
   const [orden, setOrden] = useState<OrdenMapa | null>(null);
-  const [panel, setPanel] = useState<'chat' | 'expedientes'>('chat');
+  const [panel, setPanel] = useState<VistaPanel>('chat');
   /*
    * EL MAPA SE TOCA. Lo tocado abre su tarjeta; las capas encendidas se pintan debajo del catastro;
    * y desde la tarjeta se le puede pedir algo a Dr Electrum, que llega al panel como si se hubiera
@@ -295,7 +295,7 @@ export default function App() {
    * pasaba absolutamente nada. Un botón que no hace nada visible es un botón roto, y este era el
    * que llevaba a subir archivos.
    */
-  const elegirPanel = useCallback((p: 'chat' | 'expedientes') => {
+  const elegirPanel = useCallback((p: VistaPanel) => {
     setPanel(p);
     setEscenario('trabajo');
   }, []);
@@ -581,7 +581,7 @@ export default function App() {
         Plegada: una insignia con el estado, en el mismo sitio donde estaba la cara. Sigue diciendo
         que hay alguien del otro lado —y qué está haciendo— en una línea en vez de en un cuadrado.
       */}
-      {enTrabajo && caraPlegada && panel !== 'expedientes' && (
+      {enTrabajo && caraPlegada && panel === 'chat' && (
         <button
           type="button"
           onClick={() => plegarCara(false)}
@@ -607,15 +607,15 @@ export default function App() {
          * Expedientes— su botón de plegar seguía siendo enfocable: quien navega con teclado se
          * topaba con un control de algo que no está en pantalla. Mismo caso que el panel oculto.
          */
-        inert={enTrabajo && (panel === 'expedientes' || caraPlegada)}
+        inert={enTrabajo && (panel !== 'chat' || caraPlegada)}
         style={{
           /*
             En Expedientes el panel ocupa toda la altura y la cara se quedaba encima de la pestaña
             «Consulta», tapando justo el botón para volver. La cara se apoya en el mapa; cuando no
             hay mapa a la vista, no tiene dónde apoyarse y sobra. Se aparta en lugar de estorbar.
           */
-          opacity: enTrabajo && (panel === 'expedientes' || caraPlegada) ? 0 : 1,
-          pointerEvents: enTrabajo && (panel === 'expedientes' || caraPlegada) ? 'none' : 'auto',
+          opacity: enTrabajo && (panel !== 'chat' || caraPlegada) ? 0 : 1,
+          pointerEvents: enTrabajo && (panel !== 'chat' || caraPlegada) ? 'none' : 'auto',
           ...(enTrabajo
             ? /*
                * Arriba a la izquierda, SOBRE EL MAPA — no abajo.
@@ -676,7 +676,9 @@ export default function App() {
       </div>
 
       {vence && (
-        <div className="pointer-events-none absolute left-1/2 top-[52px] z-[45] -translate-x-1/2 rounded-full border border-[#FFAE3B]/40 bg-black/70 px-3 py-1 font-mono text-[11px] tracking-[0.1em] text-[#FFD08A] backdrop-blur" role="status">
+        // En el teléfono va debajo de las pestañas del panel y a la derecha: centrado arriba tapaba
+        // «Expedientes» e «Infra», y quien entra con un código no podía cambiar de pestaña.
+        <div className="pointer-events-none absolute right-2 top-[104px] sm:right-auto sm:left-1/2 sm:top-[52px] z-[45] sm:-translate-x-1/2 rounded-full border border-[#FFAE3B]/40 bg-black/75 px-2.5 py-0.5 sm:px-3 sm:py-1 font-mono text-[10px] sm:text-[11px] tracking-[0.1em] text-[#FFD08A] backdrop-blur" role="status">
           ACCESO TEMPORAL · VENCE EN {faltaPara(vence).toUpperCase()}
         </div>
       )}

@@ -68,6 +68,10 @@ import {
 import { identidadDe, exigirPlataforma } from './server/seguridad';
 import { cuentaDe, cuentasDisponibles, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
 import { montarRutasCuentas } from './server/cuentas-rutas';
+import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
+import { asegurarBiblioteca } from './server/electrum/biblioteca';
+import { expedientesListo, guardarExpediente } from './lib/s3';
+import { createHash } from 'node:crypto';
 import { personaPorCorreoExacto, puedeEntrar } from './lib/acceso';
 import { puedeEscribir } from './lib/acceso';
 import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
@@ -767,9 +771,26 @@ app.post(
     try {
       // El tipo va también: un teléfono manda la foto con `image/jpeg` y a veces con un nombre sin
       // extensión, y por el nombre solo se perdería que era una imagen.
+      /*
+       * Desde el panel de infraestructura se sube DENTRO de una carpeta. Y el original se guarda en
+       * el cubo de expedientes: sin él, un documento no se puede volver a leer cuando mejora un
+       * lector (fue lo que pasó con los 37 PDF de INHGEOMIN cortados en 8 000 caracteres). Si el
+       * cubo no está, se aprende igual: guardar el original es un plus, no una condición.
+       */
+      const carpeta = typeof req.query.carpeta === 'string' ? req.query.carpeta : undefined;
+      let archivo: string | undefined;
+      if (expedientesListo()) {
+        const mes = new Date().toISOString().slice(0, 7);
+        const clave = `biblioteca/${mes}/${createHash('md5').update(datos).digest('hex').slice(0, 12)}-${nombre.replace(/[^\p{L}\p{N}._ -]+/gu, '_')}`;
+        const g = await guardarExpediente(clave, datos, String(req.headers['content-type'] || 'application/octet-stream'));
+        if (g.ok) archivo = `s3://${process.env.ELECTRUM_EXPEDIENTES_BUCKET}/${clave}`;
+        else console.warn('[electrum] no guardé el original en el cubo:', g.detalle);
+      }
       const r = await aprenderElectrum(nombre, datos, {
         subidoPor: id?.persona.nombre,
         mime: String(req.headers['content-type'] || ''),
+        carpeta,
+        archivo,
       });
       return res.json({
         clase: r.clase,
@@ -1164,6 +1185,9 @@ function nombreYRolDe(correo: string, nombreCuenta?: string) {
   const rol = JUNTA[correo]?.rol || (ES_ELECTRUM ? 'Dr Electrum FP' : 'Junta Directiva · Orden Global');
   return { nombre, rol };
 }
+
+// El panel de infraestructura de lo que sabe Dr Electrum (carpetas, estados, releer, importar).
+if (ES_ELECTRUM) montarRutasBiblioteca(app);
 
 montarRutasCuentas(app, {
   plataforma: PLATAFORMA,
@@ -2531,6 +2555,7 @@ async function startServer() {
     // El tablero nacional precalculado, para que la primera vez que alguien lo abre ya esté listo.
     if (ES_ELECTRUM) mantenerTableroCaliente();
     mantenerCuentasAlDia();
+    if (ES_ELECTRUM && hayBaseElectrum()) void asegurarBiblioteca();
     // Cada plataforma registra SU bot. Los dos desde el mismo proceso era la costura más fácil de
     // olvidar: un despliegue de Dr Electrum se quedaba con el webhook del bot de la junta.
     if (ES_ULTRON) {

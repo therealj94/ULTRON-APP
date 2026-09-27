@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs && esbuild scripts/electrum/importar-cubo.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/importar-cubo.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
@@ -36,7 +36,8 @@
     "shpjs": "^6.2.0",
     "three": "^0.186.1",
     "undici": "^7.29.1",
-    "unpdf": "^1.8.1"
+    "unpdf": "^1.8.1",
+    "word-extractor": "^1.0.4"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",

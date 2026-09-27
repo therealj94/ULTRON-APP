@@ -27,6 +27,10 @@ import { sinMovimiento } from '../movimiento';
 import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
 import { callar, desbloquear, hablar } from './voz';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
+import { Biblioteca } from '../biblioteca/Biblioteca';
+
+/** Las tres pestañas del panel. */
+export type VistaPanel = 'chat' | 'expedientes' | 'infra';
 
 /** Lo que se le pide al panel desde fuera (la tarjeta del mapa). `n` distingue dos pedidos iguales. */
 export type PedidoPanel = { tipo: 'pregunta'; texto: string; n: number } | { tipo: 'ficha'; id: number; n: number };
@@ -35,12 +39,12 @@ type Props = {
   /** Un pedido de la tarjeta del mapa: una pregunta para Dr Electrum, o la ficha en PDF de una concesión. */
   pedido?: PedidoPanel | null;
   abierto: boolean;
-  vista: 'chat' | 'expedientes';
+  vista: VistaPanel;
   onFace: (f: FaceState) => void;
   onEmocion: (e: Emocion) => void;
   onUi: (datos: Array<Record<string, unknown>>) => void;
   onTrabajo: () => void;
-  onVista: (v: 'chat' | 'expedientes') => void;
+  onVista: (v: VistaPanel) => void;
   /** Fracción de la pantalla que ocupa el panel. */
   alto: number;
   onAlto: (v: number) => void;
@@ -774,7 +778,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
     reducida a una franja donde no cabe ni la lista de lo que se está subiendo. Esa pestaña toma
     toda la altura.
   */
-  const completo = vista === 'expedientes';
+  const completo = vista !== 'chat';
 
   return (
     <aside
@@ -792,7 +796,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       {!completo && <Asa alto={alto} onAlto={onAlto} onArrastrar={setArrastrando} />}
       {/* La cabecera: siempre visible, nunca fuera de pantalla, y dice por dónde se sube. */}
       <div className="flex items-center gap-1 px-3 pt-2.5 pb-2 border-b border-white/[0.07] shrink-0">
-        {(['chat', 'expedientes'] as const).map((v) => (
+        {(['chat', 'expedientes', 'infra'] as const).map((v) => (
           <button
             key={v}
             type="button"
@@ -805,7 +809,17 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                 : { color: '#8FA3B0' }
             }
           >
-            {v === 'chat' ? 'Consulta' : 'Expedientes'}
+            {v === 'chat' ? (
+              'Consulta'
+            ) : v === 'expedientes' ? (
+              'Expedientes'
+            ) : (
+              // En un teléfono de 360 px no caben las tres pestañas con el nombre entero.
+              <>
+                <span className="sm:hidden">Infra</span>
+                <span className="hidden sm:inline">Infraestructura</span>
+              </>
+            )}
           </button>
         ))}
         {/*
@@ -1108,8 +1122,10 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
             </button>
           </form>
         </>
-      ) : (
+      ) : vista === 'expedientes' ? (
         <Expedientes onUi={onUi} />
+      ) : (
+        <Biblioteca />
       )}
     </aside>
   );
