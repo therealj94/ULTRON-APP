@@ -700,6 +700,12 @@ export async function recalcularTraslapes(minimoHa = 0.01): Promise<number> {
   return Number(n);
 }
 
+/** Una concesión por su id, con todos sus campos: la ficha que se abre al tocarla en el mapa. */
+export async function concesionPorId(id: number): Promise<FilaConcesion | null> {
+  const [f] = await consulta<FilaConcesion>(`SELECT ${CAMPOS_SELECT} FROM concesion WHERE id = $1`, [id]);
+  return f ? { ...f, id: Number(f.id) } : null;
+}
+
 /** Qué concesión cubre este punto. La pregunta de «estoy parado aquí, ¿de quién es esto?». */
 export async function concesionEnPunto(lon: number, lat: number): Promise<FilaConcesion[]> {
   return consulta<FilaConcesion>(

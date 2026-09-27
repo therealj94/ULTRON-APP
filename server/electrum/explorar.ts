@@ -1,0 +1,293 @@
+/**
+ * EXPLORAR EL MAPA A MANO.
+ *
+ * Hasta ahora el mapa solo lo movía Dr Electrum: se le preguntaba y él volaba. Tocar una concesión
+ * no hacía nada, y para saber de quién era un polígono había que escribirlo. Esto es lo que contesta
+ * el mapa cuando se toca:
+ *
+ *  · una concesión → su ficha entera: datos del catastro, alertas del entorno (áreas protegidas,
+ *    caseríos, ríos, traslapes), geología (roca, fallas, indicios) y los documentos que la nombran;
+ *  · un punto cualquiera → qué concesión lo cubre, cuáles hay cerca y qué roca y fallas tiene;
+ *  · un rasgo de una capa (una unidad de roca, una falla, un yacimiento) → todos sus atributos.
+ *
+ * Y las capas que se pueden encender encima del catastro. Todo sale de las mismas funciones que usa
+ * Dr Electrum para contestar, así que lo que se ve al tocar y lo que él dice son las mismas cifras.
+ * Cada parte se calcula por separado y con su tope: si la geología tarda, la ficha llega igual y lo
+ * dice en esa sección.
+ */
+import type { FeatureCollection, Geometry } from 'geojson';
+import { buscarEnExpedientes, concesionEnPunto, geometriaDe, concesionPorId, conTextoReparado, consultaConTope, cercaDe, type FilaConcesion, type RolCapa } from './db';
+import { alertasDe, capasPorRol, entornoDe, type Entorno } from './entorno';
+import { claseDeRoca, geologiaDe, type Geologia } from './geologia';
+import { repararTexto } from './gis';
+
+const nf = (x: number, d = 1) => new Intl.NumberFormat('es-ES', { maximumFractionDigits: d }).format(x);
+const km = (x: number) => (x < 1 ? `${nf(x * 1000, 0)} m` : `${nf(x, 1)} km`);
+
+/** Una sección de la ficha: sus renglones, o por qué no está. */
+export type Parte = { estado: 'ok'; renglones: string[] } | { estado: 'error'; motivo: string };
+
+async function conTope<T>(fn: () => Promise<T>, ms: number): Promise<T> {
+  let reloj: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      fn(),
+      new Promise<never>((_, no) => {
+        reloj = setTimeout(() => no(new Error(`tardó más de ${ms / 1000} s`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(reloj);
+  }
+}
+
+async function parte(fn: () => Promise<string[]>, ms = 12000): Promise<Parte> {
+  try {
+    return { estado: 'ok', renglones: await conTope(fn, ms) };
+  } catch (e: any) {
+    return { estado: 'error', motivo: String(e?.message || e).slice(0, 160) };
+  }
+}
+
+/* ------------------------------------------------------------------ renglones */
+
+/** Los datos del catastro como pares etiqueta → valor, en el orden en que se leen. */
+export function datosDe(f: FilaConcesion, hoy = new Date()): Array<[string, string]> {
+  const d: Array<[string, string | null | undefined]> = [
+    ['Expediente', f.expediente],
+    ['Titular', f.titular],
+    ['Tipo', f.tipo],
+    ['Mineral', f.mineral],
+    ['Estado', f.estado],
+    ['Otorgada', f.otorgada],
+    ['Vence', f.vence ? `${f.vence}${venceEn(f.vence, hoy)}` : null],
+    ['Área medida', f.hectareas != null ? `${nf(f.hectareas, 2)} ha` : null],
+    ['Área declarada', f.hectareas_dec != null ? `${nf(f.hectareas_dec, 2)} ha` : null],
+    ['Municipio', f.municipio],
+    ['Departamento', f.departamento],
+  ];
+  return d.filter((x): x is [string, string] => !!x[1] && String(x[1]).trim() !== '').map(([k, v]) => [k, repararTexto(String(v))]);
+}
+
+function venceEn(vence: string, hoy: Date): string {
+  const dias = Math.round((Date.parse(`${vence}T12:00:00-06:00`) - hoy.getTime()) / 86_400_000);
+  if (!Number.isFinite(dias)) return '';
+  if (dias < 0) return ` (venció hace ${nf(-dias, 0)} días)`;
+  if (dias === 0) return ' (vence hoy)';
+  return dias <= 365 ? ` (faltan ${nf(dias, 0)} días)` : '';
+}
+
+/** El entorno en renglones: lo que alerta primero, después dónde queda y lo que no se pudo cruzar. */
+export function renglonesEntorno(e: Entorno): string[] {
+  const r = [...alertasDe(e)];
+  if (e.municipios.estado === 'ok' && e.municipios.lista.length) {
+    r.push(`Municipio: ${e.municipios.lista.map((m) => (m.pct < 99.5 ? `${m.nombre} (${nf(m.pct, 0)} %)` : m.nombre)).join(', ')}.`);
+  }
+  if (e.carretera.estado === 'ok' && e.carretera.km != null) r.push(`Carretera más cercana a ${km(e.carretera.km)}.`);
+  if (e.rios.estado === 'ok' && !e.rios.kmDentro && e.rios.masCercano) r.push(`Sin cauces dentro; el más cercano, ${e.rios.masCercano.nombre}, a ${km(e.rios.masCercano.km)}.`);
+  if (!r.length) r.push('Sin áreas protegidas, caseríos, ríos ni traslapes en las capas cargadas.');
+  if (e.faltan.length) r.push(`No cruzado (capa no cargada): ${e.faltan.join(', ').replace(/_/g, ' ')}.`);
+  return r;
+}
+
+/** La geología en renglones cortos: roca, intrusivos, fallas, recursos e indicios. */
+export function renglonesGeologia(g: Geologia): string[] {
+  const r: string[] = [];
+  const u = g.litologia.dentro.slice(0, 3);
+  if (u.length) r.push(`Roca: ${u.map((x) => `${x.unidad}${x.descripcion ? ` — ${x.descripcion}` : ''} (${nf(x.pct, 0)} %)`).join('; ')}.`);
+  else if (g.litologia.cerca.length) r.push(`Roca más cercana: ${g.litologia.cerca[0].unidad} a ${km(g.litologia.cerca[0].km)}.`);
+  if (g.intrusivos.dentro.length) r.push(`Intrusivos dentro: ${g.intrusivos.dentro.map((x) => x.unidad).join(', ')}.`);
+  else if (g.intrusivos.kmAlContacto != null) r.push(`Intrusivo más cercano a ${km(g.intrusivos.kmAlContacto)}.`);
+  if (g.fallas.kmDentro > 0) r.push(`Fallas: ${km(g.fallas.kmDentro)} dentro${g.fallas.rumbos.dominante ? `, rumbo dominante ${g.fallas.rumbos.dominante}` : ''}.`);
+  else if (g.fallas.cerca.length) r.push(`Falla más cercana: ${g.fallas.cerca[0].nombre || 'sin nombre'} a ${km(g.fallas.cerca[0].km)}.`);
+  if (g.fallas.activaMasCercana) r.push(`Falla activa más cercana: ${g.fallas.activaMasCercana.nombre || 'sin nombre'} a ${km(g.fallas.activaMasCercana.km)}.`);
+  if (g.recursos.tractos.length) r.push(`Tracto permisivo: ${g.recursos.tractos.map((t) => `${t.nombre} (${nf(t.pct, 0)} %)`).join(', ')}.`);
+  const y = g.recursos.yacimientos;
+  if (y.length) {
+    const dentro = y.filter((x) => x.dentro);
+    r.push(
+      `${y.length} yacimiento(s) u ocurrencia(s) en ${nf(g.radioKm, 0)} km${dentro.length ? `, ${dentro.length} dentro` : ''}: ${y
+        .slice(0, 4)
+        .map((x) => `${x.nombre}${x.mineral ? ` (${x.mineral})` : ''} a ${km(x.km)}`)
+        .join('; ')}.`
+    );
+  }
+  r.push(`Indicios: ${g.indicios.nivel}${g.indicios.modelos.length ? ` — ${g.indicios.modelos.slice(0, 3).join(', ')}` : ''}.`);
+  if (g.escala) r.push(`Escala de la fuente: ${g.escala}.`);
+  if (g.faltan.length) r.push(`Sin capa cargada: ${g.faltan.join(', ')}.`);
+  return r;
+}
+
+/* ------------------------------------------------------------------ la ficha */
+
+export type FichaMapa = {
+  id: number;
+  nombre: string;
+  datos: Array<[string, string]>;
+  /** Para volar a ella desde la tarjeta. */
+  encuadre: [number, number, number, number] | null;
+  geojson: Geometry | null;
+  entorno: Parte;
+  geologia: Parte;
+  documentos: Parte;
+};
+
+/** Todo lo que hay de una concesión, para la tarjeta que se abre al tocarla. */
+export async function fichaParaMapa(id: number): Promise<FichaMapa | null> {
+  const f = await concesionPorId(id);
+  if (!f) return null;
+  const [geo, entorno, geologia, documentos] = await Promise.all([
+    geometriaDe(id).catch(() => null),
+    parte(async () => {
+      const e = await entornoDe(id);
+      return e ? renglonesEntorno(e) : ['No tiene geometría: no hay entorno que cruzar.'];
+    }),
+    parte(async () => {
+      const g = await geologiaDe({ concesion: id });
+      if ('error' in g) return [g.error];
+      return renglonesGeologia(g);
+    }, 14000),
+    parte(async () => {
+      const propios = await consultaConTope<{ nombre: string; tipo: string | null; paginas: number | null }>(
+        `SELECT nombre, tipo, paginas FROM documento WHERE concesion_id = $1 ORDER BY subido DESC LIMIT 8`,
+        [id],
+        6000
+      ).then(conTextoReparado);
+      const nombran = await buscarEnExpedientes(f.nombre, 4).catch(() => []);
+      const r = [
+        ...propios.map((d) => `${d.nombre}${d.tipo ? ` · ${d.tipo}` : ''}${d.paginas ? ` · ${d.paginas} pág.` : ''}`),
+        ...nombran
+          .filter((h) => !propios.some((d) => d.nombre === h.documento))
+          .map((h) => `${h.documento}${h.pagina ? `, pág. ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 160)}…»`),
+      ];
+      return r.length ? r : ['Ningún documento subido la nombra todavía.'];
+    }, 8000),
+  ]);
+  return { id, nombre: repararTexto(f.nombre), datos: datosDe(f), encuadre: geo?.encuadre ?? null, geojson: geo?.geojson ?? null, entorno, geologia, documentos };
+}
+
+/* ------------------------------------------------------------------ un punto */
+
+export type AquiMapa = {
+  lon: number;
+  lat: number;
+  concesiones: Array<{ id: number; nombre: string; titular: string | null }>;
+  cerca: Array<{ id: number; nombre: string; km: number }>;
+  geologia: Parte;
+};
+
+/** «¿Qué hay aquí?»: quién tiene el punto, qué hay cerca y sobre qué roca está. */
+export async function queHayAqui(lon: number, lat: number): Promise<AquiMapa> {
+  const [en, cerca, geologia] = await Promise.all([
+    conTope(() => concesionEnPunto(lon, lat), 6000).catch(() => [] as FilaConcesion[]),
+    conTope(() => cercaDe(lon, lat, 3, 6), 6000).catch(() => [] as Array<FilaConcesion & { km: number }>),
+    parte(async () => {
+      const g = await geologiaDe({ lon, lat, radioKm: 3 });
+      if ('error' in g) return [g.error];
+      return renglonesGeologia(g);
+    }, 14000),
+  ]);
+  const dentro = new Set(en.map((c) => Number(c.id)));
+  return {
+    lon,
+    lat,
+    concesiones: en.map((c) => ({ id: Number(c.id), nombre: repararTexto(c.nombre), titular: c.titular ? repararTexto(c.titular) : null })),
+    cerca: cerca.filter((c) => !dentro.has(Number(c.id))).map((c) => ({ id: Number(c.id), nombre: repararTexto(c.nombre), km: Math.round(c.km * 100) / 100 })),
+    geologia,
+  };
+}
+
+/* ------------------------------------------------------------------ capas */
+
+/**
+ * Las capas que se pueden encender. No todas: la red hídrica nacional son 119 mil líneas y los
+ * caseríos decenas de miles de puntos; mandadas enteras al teléfono lo ahogan. Esas se ven en la
+ * ficha de cada concesión, que las cruza en la base.
+ */
+export const ROLES_VISIBLES: RolCapa[] = [
+  'litologia',
+  'falla',
+  'tracto_permisivo',
+  'ocurrencia',
+  'area_protegida',
+  'microcuenca',
+  'zona_informal',
+  'forestal',
+  'provincia_geologica',
+  'placa',
+  'municipio',
+];
+const MAX_RASGOS = 20000;
+
+export type CapaVisible = { id: number; nombre: string; rol: RolCapa; entidades: number };
+
+export async function capasVisibles(): Promise<CapaVisible[]> {
+  const capas = (await capasPorRol()).filter((c) => ROLES_VISIBLES.includes(c.rol));
+  if (!capas.length) return [];
+  const cuentas = await consultaConTope<{ id: string; n: number }>(
+    `SELECT capa_id::text AS id, count(*)::int AS n FROM entidad_geo WHERE capa_id = ANY($1::bigint[]) GROUP BY capa_id`,
+    [capas.map((c) => c.id)],
+    6000
+  );
+  const n = new Map(cuentas.map((c) => [Number(c.id), c.n]));
+  return capas
+    .map((c) => ({ ...c, nombre: repararTexto(c.nombre), entidades: n.get(c.id) || 0 }))
+    .filter((c) => c.entidades > 0 && c.entidades <= MAX_RASGOS)
+    .sort((a, b) => ROLES_VISIBLES.indexOf(a.rol) - ROLES_VISIBLES.indexOf(b.rol) || a.nombre.localeCompare(b.nombre));
+}
+
+/**
+ * Una capa para pintarla: geometría simplificada (es para mirar, no para medir) y lo mínimo en cada
+ * rasgo —su id, nombre y, en la litología, la clase de roca para colorearla—. Los atributos enteros
+ * se piden al tocar el rasgo.
+ */
+export async function capaParaMapa(capaId: number): Promise<{ rol: RolCapa; geojson: FeatureCollection } | null> {
+  const capa = (await capasVisibles()).find((c) => c.id === capaId);
+  if (!capa) return null;
+  const tolerancia = capa.rol === 'ocurrencia' ? 0 : capa.rol === 'municipio' || capa.rol === 'placa' ? 0.002 : 0.0005;
+  const filas = await consultaConTope<{ id: string; nombre: string | null; texto: string | null; g: string }>(
+    `SELECT e.id::text, e.nombre,
+            CASE WHEN $3::boolean THEN (SELECT string_agg(a.v, ' ') FROM jsonb_each_text(e.atributos) AS a(k, v)
+                                WHERE a.k ~* '(desc|lito|roca|unit|unidad|label|clase|type|tipo|name|nombre)') END AS texto,
+            ST_AsGeoJSON(CASE WHEN $2::float8 > 0 THEN ST_SimplifyPreserveTopology(e.geom, $2::float8) ELSE e.geom END, 5)::text AS g
+       FROM entidad_geo e WHERE e.capa_id = $1 LIMIT ${MAX_RASGOS}`,
+    [capaId, tolerancia, capa.rol === 'litologia'],
+    15000
+  ).then(conTextoReparado);
+  return {
+    rol: capa.rol,
+    geojson: {
+      type: 'FeatureCollection',
+      features: filas
+        .filter((f) => f.g)
+        .map((f) => ({
+          type: 'Feature',
+          geometry: JSON.parse(f.g),
+          properties: {
+            eid: Number(f.id),
+            nombre: f.nombre || '',
+            ...(capa.rol === 'litologia' ? { clase: claseDeRoca(`${f.nombre || ''} ${f.texto || ''}`) } : {}),
+          },
+        })),
+    },
+  };
+}
+
+/** Un rasgo de una capa con todos sus atributos, para la tarjeta que se abre al tocarlo. */
+export async function rasgoParaMapa(eid: number): Promise<{ id: number; capa: string; rol: string | null; nombre: string; atributos: Array<[string, string]> } | null> {
+  const [f] = await consultaConTope<{ id: string; capa: string; rol: string | null; nombre: string | null; atributos: Record<string, unknown> }>(
+    `SELECT e.id::text, c.nombre AS capa, c.rol, e.nombre, e.atributos
+       FROM entidad_geo e JOIN capa c ON c.id = e.capa_id WHERE e.id = $1`,
+    [eid],
+    6000
+  );
+  if (!f) return null;
+  const atributos = Object.entries(f.atributos || {})
+    .filter(([, v]) => v != null && String(v).trim() !== '')
+    .slice(0, 30)
+    .map(([k, v]) => [k, repararTexto(String(v)).slice(0, 240)] as [string, string]);
+  // «entidad 12» es el nombre que le pone el cargador a un rasgo sin columna de nombre: no se enseña.
+  const propio = f.nombre && !/^entidad \d+$/i.test(f.nombre) ? f.nombre : '';
+  const porAtributo = atributos.find(([k]) => /^(nombre|nom|name|unidad|unit|label|desc)/i.test(k))?.[1] || '';
+  return { id: Number(f.id), capa: repararTexto(f.capa), rol: f.rol, nombre: repararTexto(propio || porAtributo || 'Sin nombre en la capa'), atributos };
+}

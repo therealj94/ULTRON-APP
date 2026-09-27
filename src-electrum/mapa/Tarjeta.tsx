@@ -1,0 +1,313 @@
+/**
+ * LO QUE SE ABRE AL TOCAR EL MAPA.
+ *
+ * Tocar una concesión abre su ficha: datos del catastro, alertas del entorno, geología y documentos,
+ * con botones para volar a ella, bajar la ficha en PDF, pedir los mapas geológicos o preguntarle a
+ * Dr Electrum. Tocar un punto cualquiera dice quién lo tiene, qué hay cerca y sobre qué roca está.
+ * Tocar un rasgo de una capa encendida (una unidad de roca, una falla, un yacimiento) enseña sus
+ * atributos tal cual vienen en la capa.
+ *
+ * No carga MapLibre: vive fuera del trozo del mapa y lo monta App encima de él.
+ */
+import { useEffect, useState, type ReactNode } from 'react';
+import type { Geometry } from 'geojson';
+import { headersElectrum } from '../acceso';
+import type { OrdenMapa, Tocado } from './captura';
+
+const AMBAR = '#FFAE3B';
+
+type Parte = { estado: 'ok'; renglones: string[] } | { estado: 'error'; motivo: string };
+type Ficha = {
+  id: number;
+  nombre: string;
+  datos: Array<[string, string]>;
+  encuadre: [number, number, number, number] | null;
+  geojson: Geometry | null;
+  entorno: Parte;
+  geologia: Parte;
+  documentos: Parte;
+};
+type Aqui = {
+  lon: number;
+  lat: number;
+  concesiones: Array<{ id: number; nombre: string; titular: string | null }>;
+  cerca: Array<{ id: number; nombre: string; km: number }>;
+  geologia: Parte;
+};
+type Rasgo = { id: number; capa: string; rol: string | null; nombre: string; atributos: Array<[string, string]> };
+
+type Props = {
+  tocado: Tocado | null;
+  onCerrar: () => void;
+  onVolar: (o: OrdenMapa) => void;
+  onPreguntar: (texto: string) => void;
+  onFicha: (id: number) => void;
+  onTocar: (t: Tocado) => void;
+};
+
+function urlDe(t: Tocado): string {
+  if (t.tipo === 'concesion') return `/api/electrum/mapa/concesion/${t.id}`;
+  if (t.tipo === 'rasgo') return `/api/electrum/mapa/rasgo/${t.eid}`;
+  return `/api/electrum/mapa/aqui?lon=${t.lngLat[0].toFixed(6)}&lat=${t.lngLat[1].toFixed(6)}`;
+}
+
+export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onTocar }: Props) {
+  const [datos, setDatos] = useState<Ficha | Aqui | Rasgo | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [pregunta, setPregunta] = useState('');
+
+  useEffect(() => {
+    setDatos(null);
+    setError(null);
+    setPregunta('');
+    if (!tocado) return;
+    const corte = new AbortController();
+    (async () => {
+      try {
+        const r = await fetch(urlDe(tocado), { headers: headersElectrum(), signal: corte.signal });
+        const j = await r.json().catch(() => null);
+        if (corte.signal.aborted) return;
+        if (!r.ok) return setError(j?.error || `El servidor contestó ${r.status}.`);
+        setDatos(j);
+      } catch (e: any) {
+        if (!corte.signal.aborted) setError('No alcancé el servidor. Revisá la conexión y volvé a tocar.');
+      }
+    })();
+    return () => corte.abort();
+  }, [tocado]);
+
+  // Esc cierra, como cualquier ventana.
+  useEffect(() => {
+    if (!tocado) return;
+    const k = (e: KeyboardEvent) => e.key === 'Escape' && onCerrar();
+    window.addEventListener('keydown', k);
+    return () => window.removeEventListener('keydown', k);
+  }, [tocado, onCerrar]);
+
+  if (!tocado) return null;
+
+  const titulo =
+    tocado.tipo === 'concesion'
+      ? (datos as Ficha | null)?.nombre || tocado.nombre || `Concesión ${tocado.id}`
+      : tocado.tipo === 'rasgo'
+        ? (datos as Rasgo | null)?.nombre || tocado.nombre || 'Rasgo de la capa'
+        : `${tocado.lngLat[1].toFixed(5)}, ${tocado.lngLat[0].toFixed(5)}`;
+  const etiqueta = tocado.tipo === 'concesion' ? 'Concesión' : tocado.tipo === 'rasgo' ? (datos as Rasgo | null)?.capa || 'Capa' : '¿Qué hay aquí?';
+
+  const preguntarSobre = (q: string) => {
+    const base =
+      tocado.tipo === 'concesion'
+        ? `Sobre la concesión ${titulo} (id ${tocado.id}): `
+        : tocado.tipo === 'punto'
+          ? `Sobre el punto ${tocado.lngLat[1].toFixed(5)}, ${tocado.lngLat[0].toFixed(5)}: `
+          : `Sobre ${titulo} de la capa ${etiqueta}: `;
+    onPreguntar(base + q);
+  };
+
+  return (
+    <section
+      role="dialog"
+      aria-label={`${etiqueta}: ${titulo}`}
+      className="absolute z-20 flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-[#0A0C0E]/94 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl left-2 right-2 bottom-2 max-h-[calc(100%-118px)] md:left-auto md:right-3 md:bottom-3 md:top-[118px] md:max-h-none md:w-[372px]"
+    >
+      <header className="flex items-start gap-2 border-b border-white/[0.08] px-4 pt-3 pb-2.5 shrink-0">
+        <div className="min-w-0 flex-1">
+          <div className="font-mono text-[10px] tracking-[0.16em] uppercase" style={{ color: AMBAR }}>
+            {etiqueta}
+          </div>
+          <h2 className="mt-0.5 text-[15px] font-semibold leading-snug text-[#F3F6F8] break-words">{titulo}</h2>
+        </div>
+        <button
+          type="button"
+          onClick={onCerrar}
+          className="-mr-1 flex h-7 w-7 items-center justify-center rounded-full text-[16px] text-[#8FA3B0] hover:bg-white/10 hover:text-white cursor-pointer"
+          aria-label="Cerrar"
+        >
+          ×
+        </button>
+      </header>
+
+      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 text-[13px] leading-relaxed text-[#C9D5DB]">
+        {error && <p className="text-[#E8A08F]">{error}</p>}
+        {!error && !datos && <Cargando />}
+
+        {datos && tocado.tipo === 'concesion' && (
+          <FichaVista f={datos as Ficha} onVolar={onVolar} onFicha={onFicha} onPreguntar={onPreguntar} />
+        )}
+        {datos && tocado.tipo === 'punto' && <AquiVista a={datos as Aqui} onTocar={onTocar} onPreguntar={onPreguntar} />}
+        {datos && tocado.tipo === 'rasgo' && <RasgoVista r={datos as Rasgo} />}
+      </div>
+
+      <form
+        className="flex gap-2 border-t border-white/[0.08] px-3 py-2.5 shrink-0"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (pregunta.trim()) preguntarSobre(pregunta.trim());
+          setPregunta('');
+        }}
+      >
+        <input
+          value={pregunta}
+          onChange={(e) => setPregunta(e.target.value)}
+          placeholder="Preguntale a Dr Electrum sobre esto…"
+          className="min-w-0 flex-1 rounded-lg border border-white/12 bg-black/40 px-3 py-1.5 text-[13px] text-[#E7EEF2] placeholder:text-[#61717A] focus:border-[#FFAE3B]/60 focus:outline-none"
+        />
+        <button type="submit" className="rounded-lg px-3 py-1.5 text-[12px] font-semibold text-black cursor-pointer" style={{ background: AMBAR }}>
+          Preguntar
+        </button>
+      </form>
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ piezas */
+
+function Cargando() {
+  return (
+    <div className="space-y-2" role="status" aria-label="Cargando">
+      {[80, 64, 72, 50].map((w, i) => (
+        <div key={i} className="h-3 animate-pulse rounded bg-white/[0.07]" style={{ width: `${w}%` }} />
+      ))}
+    </div>
+  );
+}
+
+function Seccion({ titulo, children }: { titulo: string; children: ReactNode }) {
+  return (
+    <div>
+      <h3 className="mb-1.5 font-mono text-[10px] tracking-[0.16em] uppercase text-[#7F939D]">{titulo}</h3>
+      {children}
+    </div>
+  );
+}
+
+function Renglones({ p, alerta = false }: { p: Parte; alerta?: boolean }) {
+  if (p.estado === 'error') return <p className="text-[#8FA3B0]">No se pudo calcular: {p.motivo}</p>;
+  return (
+    <ul className="space-y-1">
+      {p.renglones.map((r, i) => (
+        <li key={i} className="flex gap-2">
+          <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: alerta && !/^(No cruzado|Sin |Municipio|Carretera)/.test(r) ? '#E8805F' : '#5E7078' }} />
+          <span>{r}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function Boton({ children, onClick, fuerte = false }: { children: ReactNode; onClick: () => void; fuerte?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-lg border px-2.5 py-1.5 text-[12px] font-medium transition-colors cursor-pointer"
+      style={fuerte ? { background: AMBAR, borderColor: AMBAR, color: '#000' } : { borderColor: 'rgba(255,255,255,.14)', color: '#DCE5EA' }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: Props['onVolar']; onFicha: Props['onFicha']; onPreguntar: Props['onPreguntar'] }) {
+  return (
+    <>
+      <div className="flex flex-wrap gap-1.5">
+        {f.geojson && f.encuadre && <Boton onClick={() => onVolar({ accion: 'volar', geojson: f.geojson!, encuadre: f.encuadre! })}>Volar aquí</Boton>}
+        <Boton fuerte onClick={() => onFicha(f.id)}>
+          Ficha PDF
+        </Boton>
+        <Boton onClick={() => onPreguntar(`Hacé los tres mapas geológicos (litológico, estructural y geotectónico) de la concesión ${f.nombre} (id ${f.id}).`)}>
+          Mapas geológicos
+        </Boton>
+        <Boton onClick={() => onPreguntar(`Analizá la concesión ${f.nombre} (id ${f.id}): entorno, geología, riesgos legales y ambientales, y qué recomendás.`)}>
+          Analizar
+        </Boton>
+      </div>
+      <Seccion titulo="Catastro">
+        <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+          {f.datos.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-[#7F939D]">{k}</dt>
+              <dd className="text-[#E7EEF2] break-words">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      </Seccion>
+      <Seccion titulo="Entorno y alertas">
+        <Renglones p={f.entorno} alerta />
+      </Seccion>
+      <Seccion titulo="Geología">
+        <Renglones p={f.geologia} />
+      </Seccion>
+      <Seccion titulo="Documentos">
+        <Renglones p={f.documentos} />
+      </Seccion>
+    </>
+  );
+}
+
+function AquiVista({ a, onTocar, onPreguntar }: { a: Aqui; onTocar: Props['onTocar']; onPreguntar: Props['onPreguntar'] }) {
+  const coord = `${a.lat.toFixed(6)}, ${a.lon.toFixed(6)}`;
+  return (
+    <>
+      <div className="flex flex-wrap gap-1.5">
+        <Boton onClick={() => void navigator.clipboard?.writeText(coord).catch(() => {})}>Copiar coordenadas</Boton>
+        <Boton fuerte onClick={() => onPreguntar(`¿Qué hay en el punto ${coord} (latitud, longitud)? Quién lo tiene, qué concesiones hay cerca, geología y entorno.`)}>
+          Analizar este punto
+        </Boton>
+      </div>
+      <Seccion titulo="Concesión en este punto">
+        {a.concesiones.length ? (
+          <ul className="space-y-1">
+            {a.concesiones.map((c) => (
+              <li key={c.id}>
+                <button type="button" className="text-left underline decoration-white/25 underline-offset-2 hover:text-white cursor-pointer" onClick={() => onTocar({ tipo: 'concesion', id: c.id, nombre: c.nombre, lngLat: [a.lon, a.lat] })}>
+                  {c.nombre}
+                </button>
+                {c.titular && <span className="text-[#7F939D]"> · {c.titular}</span>}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>Ninguna concesión del catastro cubre este punto.</p>
+        )}
+      </Seccion>
+      {a.cerca.length > 0 && (
+        <Seccion titulo="Cerca (3 km)">
+          <ul className="space-y-1">
+            {a.cerca.map((c) => (
+              <li key={c.id}>
+                <button type="button" className="text-left underline decoration-white/25 underline-offset-2 hover:text-white cursor-pointer" onClick={() => onTocar({ tipo: 'concesion', id: c.id, nombre: c.nombre, lngLat: [a.lon, a.lat] })}>
+                  {c.nombre}
+                </button>
+                <span className="text-[#7F939D]"> · a {c.km < 1 ? `${Math.round(c.km * 1000)} m` : `${c.km.toLocaleString('es-HN', { maximumFractionDigits: 1 })} km`}</span>
+              </li>
+            ))}
+          </ul>
+        </Seccion>
+      )}
+      <Seccion titulo="Geología (3 km alrededor)">
+        <Renglones p={a.geologia} />
+      </Seccion>
+    </>
+  );
+}
+
+function RasgoVista({ r }: { r: Rasgo }) {
+  return (
+    <Seccion titulo="Atributos">
+      {r.atributos.length ? (
+        <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+          {r.atributos.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="font-mono text-[11px] text-[#7F939D]">{k}</dt>
+              <dd className="text-[#E7EEF2] break-words">{v}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p>La capa no trae atributos para este rasgo.</p>
+      )}
+    </Seccion>
+  );
+}

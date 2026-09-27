@@ -27,7 +27,12 @@ import { sinMovimiento } from '../movimiento';
 import { ALTURAS, repartoDe, siguienteReparto } from '../preferencias';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 
+/** Lo que se le pide al panel desde fuera (la tarjeta del mapa). `n` distingue dos pedidos iguales. */
+export type PedidoPanel = { tipo: 'pregunta'; texto: string; n: number } | { tipo: 'ficha'; id: number; n: number };
+
 type Props = {
+  /** Un pedido de la tarjeta del mapa: una pregunta para Dr Electrum, o la ficha en PDF de una concesión. */
+  pedido?: PedidoPanel | null;
   abierto: boolean;
   vista: 'chat' | 'expedientes';
   onFace: (f: FaceState) => void;
@@ -304,7 +309,7 @@ function hiloGuardado(): Turno[] {
   }
 }
 
-export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, onTrabajo, onVista }: Props) {
+export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, onTrabajo, onVista, pedido }: Props) {
   const [turnos, setTurnos] = useState<Turno[]>(hiloGuardado);
   /*
    * `preguntar` no puede depender de `turnos` —se reharía en cada mensaje y con él todo lo que
@@ -667,8 +672,9 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
    * su propia ruta y no por el turno: no hace falta molestar al modelo para armar un documento cuyo
    * contenido sale entero del catastro.
    */
-  const pedirInforme = useCallback(async () => {
+  const pedirInforme = useCallback(async (idForzado?: number) => {
     if (pensando) return;
+    const idFicha = typeof idForzado === 'number' ? idForzado : enFoco;
     setPensando(true);
     onFace('THINKING');
     onTrabajo();
@@ -683,8 +689,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headersElectrum() },
         body: JSON.stringify(
-          enFoco != null
-            ? { tipo: 'concesion', concesion_id: enFoco, mapa: 'imagen' in foto ? foto.imagen : null }
+          idFicha != null
+            ? { tipo: 'concesion', concesion_id: idFicha, mapa: 'imagen' in foto ? foto.imagen : null }
             : { tipo: 'cartera', mapa: 'imagen' in foto ? foto.imagen : null }
         ),
       });
@@ -711,6 +717,23 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       setTimeout(() => onFace('IDLE'), 900);
     }
   }, [pensando, onFace, onTrabajo, enFoco, avisoSuelto]);
+
+  /*
+   * Lo que pide la tarjeta del mapa: una pregunta va al turno como si se hubiera escrito aquí; la
+   * ficha en PDF va por su ruta, igual que el botón del panel. Si Dr Electrum está contestando otra
+   * cosa se dice, en vez de tragarse el pedido.
+   */
+  const ultimoPedido = useRef(0);
+  useEffect(() => {
+    if (!pedido || pedido.n === ultimoPedido.current) return;
+    ultimoPedido.current = pedido.n;
+    if (pensando) {
+      avisoSuelto('Estoy terminando otra respuesta: volvé a tocar el botón cuando acabe.');
+      return;
+    }
+    if (pedido.tipo === 'pregunta') void preguntar(pedido.texto);
+    else void pedirInforme(pedido.id);
+  }, [pedido, pensando, preguntar, pedirInforme, avisoSuelto]);
 
   /*
     La conversación comparte la pantalla con el mapa —42 % abajo— porque las dos cosas se miran a la
