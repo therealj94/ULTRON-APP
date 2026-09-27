@@ -133,7 +133,7 @@ async function itemsCte(): Promise<string> {
     SELECT 'documento'::text AS clase, d.id, d.nombre, d.carpeta, d.subido, d.subido_por,
            coalesce(d.tipo, 'otro') AS detalle, coalesce(d.paginas, 0) AS cantidad,
            coalesce(f.n, 0) AS fragmentos, coalesce(f.car, 0) AS caracteres, coalesce(f.sinv, 0) AS sin_vector,
-           (d.archivo IS NOT NULL) AS original, d.releido,
+           (d.archivo IS NOT NULL) AS original, lower(substring(d.archivo from '\.([A-Za-z0-9]+)$')) AS ext_original, d.releido,
            CASE WHEN coalesce(f.n, 0) = 0 THEN 'sin_texto'
                 WHEN coalesce(d.paginas, 0) > 3 AND f.car BETWEEN 7400 AND 8200 THEN 'cortado'
                 WHEN coalesce(d.paginas, 0) >= 3 AND f.car < d.paginas * 400 THEN 'poco_texto'
@@ -144,7 +144,7 @@ async function itemsCte(): Promise<string> {
       LEFT JOIN rep ON rep.ln = lower(d.nombre)
     UNION ALL
     SELECT 'capa', c.id, c.nombre, c.carpeta, c.subido, c.subido_por, c.formato, c.entidades,
-           0, 0, 0, (c.archivo IS NOT NULL), NULL::timestamptz,
+           0, 0, 0, (c.archivo IS NOT NULL), lower(substring(c.archivo from '\.([A-Za-z0-9]+)$')), NULL::timestamptz,
            CASE WHEN c.entidades = 0 THEN 'vacia' ELSE 'ok' END
       FROM capa c
   )`;
@@ -163,6 +163,8 @@ export type Item = {
   caracteres: number;
   sin_vector: number;
   original: boolean;
+  /** La extensión del original («pdf», «jpg»…), sin la ruta del cubo. */
+  ext_original: string | null;
   releido: string | null;
   estado: Estado;
 };
@@ -321,6 +323,9 @@ export async function detalle(clase: string, id: number) {
   };
 }
 
+/** Originales que son fotos: esos no se releen con los lectores de texto. */
+export const ES_FOTO = /\.(jpe?g|png|webp|heic|heif|bmp|tiff?)$/i;
+
 /** «s3://cubo/entrada/X/y.pdf» → «entrada/X/y.pdf»: el nombre del cubo no le sirve a quien mira. */
 function origenVisible(archivo: string): string {
   const m = /^s3:\/\/[^/]+\/(.+)$/.exec(archivo);
@@ -454,6 +459,9 @@ export async function releer(id: number, quien?: string | null) {
   const m = /^s3:\/\/([^/]+)\/(.+)$/.exec(d.archivo || '');
   if (!m) return { ok: false, dicho: 'No tengo el original guardado: para releerlo hay que volver a subirlo.' };
   if (m[1] !== bucketExpedientes()) return { ok: false, dicho: 'El original está en otro cubo al que este servidor no tiene acceso.' };
+  // Una foto se lee con el ojo, no con los lectores de texto: releerla por aquí trataría los bytes
+  // de la imagen como si fueran texto. Para renovar una transcripción, se vuelve a subir la foto.
+  if (ES_FOTO.test(m[2])) return { ok: false, dicho: 'Es una foto: se lee con el ojo. Para renovar la transcripción, volvé a subirla.' };
   const bajado = await bajarExpediente(m[2]);
   if (!bajado.ok) return { ok: false, dicho: `No pude bajar el original: ${bajado.detalle}` };
   // El nombre del ORIGINAL decide el lector: si se renombró en el panel sin extensión, sigue siendo un PDF.

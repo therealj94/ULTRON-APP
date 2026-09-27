@@ -32,6 +32,7 @@ type Item = {
   caracteres: number;
   sin_vector: number;
   original: boolean;
+  ext_original: string | null;
   releido: string | null;
   estado: Estado;
 };
@@ -66,6 +67,7 @@ type Importacion = {
   actualizada: string;
   terminada: string | null;
   donde: string | null;
+  opciones?: { imagenes?: boolean } | null;
 };
 
 const ESTADO: Record<Estado, { txt: string; color: string; ayuda: string }> = {
@@ -95,6 +97,8 @@ const hora = (iso?: string | null) => {
   }
 };
 const clave = (i: { clase: string; id: number }) => `${i.clase}:${i.id}`;
+/** Una foto se lee con el ojo: «Releer» (lectores de texto) no le sirve. */
+const esFoto = (nombre: string) => /\.(jpe?g|png|webp|heic|heif|bmp|tiff?)$/i.test(nombre);
 
 async function pedir<T = any>(url: string, init: RequestInit = {}): Promise<{ ok: boolean; status: number; j: T & { error?: string } }> {
   try {
@@ -224,7 +228,7 @@ export function Biblioteca() {
     });
 
   const seleccion = [...elegidos.values()];
-  const releibles = seleccion.filter((i) => i.clase === 'documento' && i.original);
+  const releibles = seleccion.filter((i) => i.clase === 'documento' && i.original && !esFoto(i.nombre) && !esFoto(`.${i.ext_original || ''}`));
 
   const releerElegidos = async (lista: Item[]) => {
     if (!lista.length) return;
@@ -542,7 +546,7 @@ function Etiqueta({ estado }: { estado: Estado }) {
   );
 }
 
-function Fila({ i, elegido, onElegir, onAbrir, mostrarCarpeta }: { i: Item; elegido: boolean; onElegir: () => void; onAbrir: () => void; mostrarCarpeta: boolean }) {
+function Fila({ i, elegido, onElegir, onAbrir, mostrarCarpeta }: { key?: string; i: Item; elegido: boolean; onElegir: () => void; onAbrir: () => void; mostrarCarpeta: boolean }) {
   const contenido =
     i.clase === 'documento'
       ? `${nf(i.cantidad)} pág · ${i.caracteres >= 1000 ? `${nf(Math.round(i.caracteres / 1000))} k` : nf(i.caracteres)} car`
@@ -638,7 +642,7 @@ function Ramas({ nodos, lugar, onLugar, nivel = 0 }: { nodos: Nodo[]; lugar: str
   );
 }
 
-function Rama({ n, lugar, onLugar, nivel }: { n: Nodo; lugar: string; onLugar: (c: string) => void; nivel: number }) {
+function Rama({ n, lugar, onLugar, nivel }: { key?: string; n: Nodo; lugar: string; onLugar: (c: string) => void; nivel: number }) {
   const dentro = lugar === n.ruta || lugar.startsWith(n.ruta + '/');
   const [abierta, setAbierta] = useState(dentro || nivel === 0);
   useEffect(() => {
@@ -1030,8 +1034,8 @@ function Detalle({
             {!editando && <Boton onClick={() => setEditando(true)}>Renombrar</Boton>}
             <Boton onClick={() => onMover(ref_)}>Mover</Boton>
             {ref_.clase === 'documento' && (
-              <Boton onClick={() => onReleer(ref_)} disabled={!i.original}>
-                {i.original ? 'Releer del original' : 'Sin original para releer'}
+              <Boton onClick={() => onReleer(ref_)} disabled={!i.original || esFoto(d?.archivo || i.nombre)}>
+                {!i.original ? 'Sin original para releer' : esFoto(d?.archivo || i.nombre) ? 'Foto: se vuelve a subir' : 'Releer del original'}
               </Boton>
             )}
             {nivel === 'mando' && (
@@ -1184,14 +1188,18 @@ function Importar({ onCerrar, alCambio }: { onCerrar: () => void; alCambio: () =
                   <button type="button" onClick={() => setAbierta((v) => (v === x.id ? null : x.id))} className="ml-auto text-[#B9C7CE] hover:text-white cursor-pointer">
                     {abierta === x.id ? 'ocultar' : 'ver detalle'}
                   </button>
-                  {(x.estado === 'en_curso' || x.estado === 'interrumpida') && (
+                  {(x.estado === 'en_curso' || x.estado === 'interrumpida' || x.estado === 'parada') && (
                     <button
                       type="button"
                       className="text-[#F2A493] hover:text-white cursor-pointer"
                       onClick={async () => {
                         if (x.estado === 'en_curso') await pedir(`${R}/importaciones/${x.id}/parar`, { method: 'POST', body: '{}' });
                         else {
-                          const r = await pedir(`${R}/importar`, { method: 'POST', body: JSON.stringify({ prefijo: x.prefijo, carpeta: x.carpeta }) });
+                          // Se retoma con las mismas opciones: si pedía leer imágenes, las sigue leyendo.
+                          const r = await pedir(`${R}/importar`, {
+                            method: 'POST',
+                            body: JSON.stringify({ prefijo: x.prefijo, carpeta: x.carpeta, imagenes: !!x.opciones?.imagenes }),
+                          });
                           if (!r.ok) setError(r.j.error || 'No pude retomarla.');
                         }
                         await traer();

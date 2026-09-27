@@ -76,6 +76,11 @@ export function planear(objetos: ObjetoS3[], prefijo: string, base: string | nul
       omitidos.push({ key: g.shp.key, motivo: 'shapefile vacío (sin geometrías)' });
       continue;
     }
+    // El mismo tope que un archivo suelto, sobre el conjunto: se baja y se comprime entero en memoria.
+    if (bytes > MAX_BYTES) {
+      omitidos.push({ key: g.shp.key, motivo: `shapefile de más de ${MAX_BYTES / 1024 / 1024} MB entre todas sus partes` });
+      continue;
+    }
     unidades.push({ tipo: 'shapefile', key: g.shp.key, partes: g, bytes, carpeta: carpetaDe(g.shp.key, prefijo, base) });
   }
   for (const o of objetos) {
@@ -338,7 +343,7 @@ async function correr(id: number, prefijo: string, unidades: Unidad[], por: stri
 export async function importaciones(limite = 20) {
   await asegurarBiblioteca();
   return consulta<any>(
-    `SELECT id, prefijo, carpeta, total, hechos, nuevos, repetidos, fallos, omitidos, por, iniciada, actualizada, terminada, donde,
+    `SELECT id, prefijo, carpeta, total, hechos, nuevos, repetidos, fallos, omitidos, por, iniciada, actualizada, terminada, donde, opciones,
             CASE WHEN estado IN ('en_curso', 'parando') AND actualizada < now() - interval '15 minutes' THEN 'interrumpida' ELSE estado END AS estado
        FROM importacion ORDER BY iniciada DESC LIMIT $1`,
     [Math.max(1, Math.min(100, limite))]

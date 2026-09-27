@@ -40,20 +40,43 @@ test('RTF: acentos por código de página y Unicode, sin tablas de fuentes ni nu
   assert.doesNotMatch(p.texto, /Times New Roman|Normal|\(\)|\.\)/);
 });
 
-test('PPTX: una página por diapositiva, en su orden, con las notas', async () => {
+test('PPTX: una página por diapositiva en el orden de la presentación, con sus notas', async () => {
   const z = new JSZip();
   const diapo = (t: string[]) => `<p:sld><p:cSld><p:spTree>${t.map((x) => `<a:p><a:r><a:t>${x}</a:t></a:r></a:p>`).join('')}</p:spTree></p:cSld></p:sld>`;
   z.file('ppt/slides/slide10.xml', diapo(['Cierre']));
   z.file('ppt/slides/slide2.xml', diapo(['Producción de oro', '71,600 onz troy']));
   z.file('ppt/slides/slide1.xml', diapo(['Situación actual', 'Minería en Honduras']));
-  z.file('ppt/notesSlides/notesSlide2.xml', `<p:notes><a:p><a:r><a:t>Fuente: BCH &amp; INHGEOMIN</a:t></a:r></a:p></p:notes>`);
+  z.file('ppt/slides/_rels/slide2.xml.rels', `<Relationships><Relationship Id="rId2" Target="../notesSlides/notesSlide7.xml"/></Relationships>`);
+  z.file('ppt/notesSlides/notesSlide7.xml', `<p:notes><a:p><a:r><a:t>Fuente: BCH &amp; INHGEOMIN</a:t></a:r></a:p></p:notes>`);
+  // Sin presentation.xml: el orden sale del número del nombre.
+  const sinOrden = await paginasDePptx(await z.generateAsync({ type: 'nodebuffer' }));
+  assert.deepEqual(
+    sinOrden.map((p) => [p.pagina, p.texto.split('\n')[0]]),
+    [
+      [1, 'Situación actual'],
+      [2, 'Producción de oro'],
+      [3, 'Cierre'],
+    ]
+  );
+  // Con presentation.xml manda la presentación: «Cierre» (slide10) se movió a la segunda posición.
+  z.file(
+    'ppt/presentation.xml',
+    `<p:presentation><p:sldIdLst><p:sldId id="256" r:id="rId7"/><p:sldId id="257" r:id="rId9"/><p:sldId id="258" r:id="rId8"/></p:sldIdLst></p:presentation>`
+  );
+  z.file(
+    'ppt/_rels/presentation.xml.rels',
+    `<Relationships><Relationship Id="rId7" Target="slides/slide1.xml"/><Relationship Id="rId8" Target="slides/slide2.xml"/><Relationship Id="rId9" Target="slides/slide10.xml"/></Relationships>`
+  );
   const paginas = await paginasDePptx(await z.generateAsync({ type: 'nodebuffer' }));
   assert.deepEqual(
-    paginas.map((p) => p.pagina),
-    [1, 2, 10]
+    paginas.map((p) => [p.pagina, p.texto.split('\n')[0]]),
+    [
+      [1, 'Situación actual'],
+      [2, 'Cierre'],
+      [3, 'Producción de oro'],
+    ]
   );
-  assert.equal(paginas[0].texto, 'Situación actual\nMinería en Honduras');
-  assert.match(paginas[1].texto, /71,600 onz troy\n\nNotas: Fuente: BCH & INHGEOMIN/);
+  assert.match(paginas[2].texto, /71,600 onz troy\n\nNotas: Fuente: BCH & INHGEOMIN/, 'las notas se encuentran por la relación de la diapositiva');
 });
 
 test('XLSX: una página por hoja, filas con « | », celdas compartidas e inline, encabezado repetido', async () => {
@@ -112,6 +135,8 @@ test('importar: agrupa shapefiles, ordena en carpetas y dice por qué omite cada
       o('Estudio/enorme.pdf', 200 * 1024 * 1024),
       o('Estudio/vacio.pdf', 0),
       o('raiz.docx'),
+      o('Grande/catastro.shp', 30 * 1024 * 1024),
+      o('Grande/catastro.dbf', 40 * 1024 * 1024),
     ],
     P,
     'INDEXSA 2026'
@@ -137,6 +162,8 @@ test('importar: agrupa shapefiles, ordena en carpetas y dice por qué omite cada
   assert.match(motivo('Estudio/pag-001.jpg') || '', /imagen/);
   assert.match(motivo('Estudio/enorme.pdf') || '', /pesa más/);
   assert.match(motivo('Estudio/vacio.pdf') || '', /vacío/);
+  assert.match(motivo('Grande/catastro.shp') || '', /más de 64 MB entre todas sus partes/, 'el tope vale para el shapefile entero');
+  assert.equal(por('Grande/catastro.shp'), undefined);
   // Con imágenes pedidas, la foto entra.
   const conFotos = planear([o('Estudio/pag-001.jpg')], P, null, { imagenes: true });
   assert.equal(conFotos.unidades[0]?.tipo, 'imagen');
@@ -260,6 +287,14 @@ test('panel: estados, carpetas, mover, renombrar, borrar y bitácora, con permis
     assert.equal(del.json.eliminados, 2);
     const [quedan] = await consulta<{ n: number }>(`SELECT count(*)::int AS n FROM fragmento WHERE documento_id = $1`, [c.id]);
     assert.equal(quedan.n, 0, 'los fragmentos se van con el documento');
+
+    // Una foto no se relee con los lectores de texto.
+    process.env.ELECTRUM_EXPEDIENTES_BUCKET = 'cubo-de-prueba';
+    const [foto] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, tipo, paginas, archivo) VALUES ('prueba-bib-foto.jpg', 'otro', 1, 's3://cubo-de-prueba/biblioteca/x.jpg') RETURNING id`);
+    const rf = await pedir(`/api/electrum/biblioteca/releer/${foto.id}`, {}, obrero);
+    assert.equal(rf.json.ok, false);
+    assert.match(rf.json.dicho, /foto/);
+    delete process.env.ELECTRUM_EXPEDIENTES_BUCKET;
 
     // Importar y mirar el cubo: solo mando.
     assert.equal((await pedir('/api/electrum/biblioteca/importar', { prefijo: 'entrada/x/' }, obrero)).status, 403);

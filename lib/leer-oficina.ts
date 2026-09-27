@@ -163,13 +163,35 @@ export function paginasDeRtf(datos: Buffer): PaginaLeida[] {
 
 /* -------------------------------------------------------------------------------- .pptx */
 
-/** Una diapositiva por página, en su orden, con las notas del orador al final de cada una. */
-export async function paginasDePptx(datos: Buffer): Promise<PaginaLeida[]> {
-  const zip = await abrirZip(datos);
+/**
+ * El orden de las diapositivas. El nombre del archivo NO lo dice: en una presentación donde se
+ * movieron o borraron diapositivas, `slide10.xml` puede ser la tercera. El orden de verdad es el de
+ * `ppt/presentation.xml` (su lista `sldIdLst`) resuelto por sus relaciones. Si falta, se cae al
+ * número del nombre.
+ */
+async function ordenDeDiapositivas(zip: JSZip): Promise<string[]> {
   const num = (n: string) => Number(/(\d+)\.xml$/.exec(n)?.[1] || 0);
-  const diapos = Object.keys(zip.files)
+  const porNombre = Object.keys(zip.files)
     .filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))
     .sort((a, b) => num(a) - num(b));
+  const pres = await zip.file('ppt/presentation.xml')?.async('text');
+  const rels = await zip.file('ppt/_rels/presentation.xml.rels')?.async('text');
+  if (!pres || !rels) return porNombre;
+  const destino: Record<string, string> = {};
+  for (const m of rels.matchAll(/<Relationship\b[^>]*>/g)) {
+    const id = /\bId="([^"]+)"/.exec(m[0])?.[1];
+    const target = /\bTarget="([^"]+)"/.exec(m[0])?.[1];
+    if (id && target) destino[id] = target.startsWith('/') ? target.slice(1) : `ppt/${target.replace(/^\.\//, '')}`;
+  }
+  const lista = /<p:sldIdLst>([\s\S]*?)<\/p:sldIdLst>/.exec(pres)?.[1] || '';
+  const orden = [...lista.matchAll(/<p:sldId\b[^>]*\br:id="([^"]+)"/g)].map((m) => destino[m[1]]).filter((r) => r && zip.file(r));
+  return orden.length ? orden : porNombre;
+}
+
+/** Una diapositiva por página, en el orden de la presentación, con las notas del orador. */
+export async function paginasDePptx(datos: Buffer): Promise<PaginaLeida[]> {
+  const zip = await abrirZip(datos);
+  const diapos = await ordenDeDiapositivas(zip);
   const textoXml = (xml: string) =>
     limpio(
       desescapar(
@@ -181,15 +203,19 @@ export async function paginasDePptx(datos: Buffer): Promise<PaginaLeida[]> {
       )
     );
   const out: PaginaLeida[] = [];
-  for (const n of diapos) {
+  for (const [k, n] of diapos.entries()) {
     const xml = await zip.file(n)!.async('text');
     let texto = textoXml(xml);
-    const nota = zip.file(`ppt/notesSlides/notesSlide${num(n)}.xml`);
+    // Las notas se encuentran por la relación de la diapositiva, no por el número del nombre.
+    const relsDiapo = (await zip.file(n.replace(/slides\/(slide\d+\.xml)$/, 'slides/_rels/$1.rels'))?.async('text')) || '';
+    const destinoNota = /Target="\.\.\/notesSlides\/(notesSlide\d+\.xml)"/.exec(relsDiapo)?.[1];
+    const nota = zip.file(destinoNota ? `ppt/notesSlides/${destinoNota}` : n.replace(/slides\/slide(\d+)\.xml$/, 'notesSlides/notesSlide$1.xml'));
     if (nota) {
       const t = textoXml(await nota.async('text')).replace(/^\d+$/m, '').trim();
       if (t) texto += `\n\nNotas: ${t}`;
     }
-    out.push({ pagina: num(n), texto: texto.trim() });
+    // La página es la POSICIÓN en la presentación: la que ve quien la abre.
+    out.push({ pagina: k + 1, texto: texto.trim() });
   }
   return out.filter((p) => p.texto);
 }
