@@ -899,12 +899,37 @@ export function consultaBilingue(limpio: string, union: '&' | '|' = '&'): string
   return traducida && grupos.length ? grupos.join(` ${union} `) : null;
 }
 
+/**
+ * «Solo en este documento o carpeta»: cada palabra del filtro tiene que aparecer en el nombre o en
+ * la carpeta del documento («JICA Fase III» encuentra «JICA-MMAJ 2003 … Fase III (OCR).txt»;
+ * «INDEXSA» encuentra todo lo de la carpeta «INDEXSA SEP 2026/…»). Devuelve el trozo de SQL y sus
+ * parámetros a partir de `desde`.
+ */
+export function filtroDocumento(documento: string | undefined, desde: number): { sql: string; args: string[] } {
+  const palabras = String(documento || '')
+    .split(/[\s/_,.;:()«»"'-]+/)
+    .map((w) => w.trim())
+    .filter((w) => w.length >= 2)
+    .slice(0, 6);
+  if (!palabras.length) return { sql: '', args: [] };
+  const sql = palabras
+    .map((_, i) => `unaccent(lower(d.nombre || ' ' || coalesce(d.carpeta, ''))) LIKE unaccent(lower($${desde + i})) ESCAPE '\\'`)
+    .join(' AND ');
+  return { sql: ` AND ${sql}`, args: palabras.map((w) => `%${w.replace(/[\\%_]/g, (c) => `\\${c}`)}%`) };
+}
+
 export async function buscarPorTexto(
   texto: string,
-  limite = 8
+  limite = 8,
+  opts: { documento?: string } = {}
 ): Promise<Array<{ id: number; documento: string; pagina: number | null; texto: string; puntaje: number }>> {
   const limpio = terminosDeBusqueda(texto);
-  if (!limpio) return [];
+  const filtro = filtroDocumento(opts.documento, 3);
+  if (!limpio) {
+    if (!filtro.sql) return [];
+    // Sin términos útiles pero con documento: el comienzo del documento, que es de lo que trata.
+    return primerosFragmentos(opts.documento, limite);
+  }
 
   /*
    * `ts_headline` recorta el trozo ALREDEDOR de lo que coincidió, en vez de devolver el principio
@@ -919,14 +944,14 @@ export async function buscarPorTexto(
            ts_rank(f.tsv, q.tq)::float8 AS puntaje
     FROM fragmento f
     JOIN documento d ON d.id = f.documento_id, q
-    WHERE f.tsv @@ q.tq
+    WHERE f.tsv @@ q.tq${filtro.sql}
     ORDER BY puntaje DESC
     LIMIT $2`;
 
   const bilingue = consultaBilingue(limpio, '&');
   const exacto = await consulta<any>(
     bilingue ? SQL("to_tsquery('spanish', $1)") : SQL("websearch_to_tsquery('spanish', $1)"),
-    [bilingue || limpio, limite]
+    [bilingue || limpio, limite, ...filtro.args]
   );
   if (exacto.length) return exacto;
 
@@ -938,8 +963,24 @@ export async function buscarPorTexto(
     .map((w) => w.replace(/['\\:&|!()<>]/g, ''))
     .filter(Boolean)
     .join(' | ');
-  if (!sueltos) return [];
-  return consulta(SQL("to_tsquery('spanish', $1)"), [consultaBilingue(limpio, '|') || sueltos, limite]);
+  if (!sueltos) return filtro.sql ? primerosFragmentos(opts.documento, limite) : [];
+  const alguno = await consulta<any>(SQL("to_tsquery('spanish', $1)"), [consultaBilingue(limpio, '|') || sueltos, limite, ...filtro.args]);
+  if (alguno.length || !filtro.sql) return alguno;
+  return primerosFragmentos(opts.documento, limite);
+}
+
+/** El comienzo de los documentos que casan con el filtro: portada, índice, resumen. */
+async function primerosFragmentos(documento: string | undefined, limite: number) {
+  const filtro = filtroDocumento(documento, 2);
+  if (!filtro.sql) return [];
+  return consulta<{ id: number; documento: string; pagina: number | null; texto: string; puntaje: number }>(
+    `SELECT f.id, d.nombre AS documento, f.pagina, left(f.texto, 700) AS texto, 0::float8 AS puntaje
+       FROM fragmento f JOIN documento d ON d.id = f.documento_id
+      WHERE f.orden < 3${filtro.sql}
+      ORDER BY d.id, f.orden
+      LIMIT $1`,
+    [limite, ...filtro.args]
+  );
 }
 
 export type HitExpediente = { documento: string; pagina: number | null; texto: string; puntaje: number; via?: 'texto' | 'significado' | 'ambos' };
@@ -949,10 +990,10 @@ export type HitExpediente = { documento: string; pagina: number | null; texto: s
  * significado, fundidos por rango), y solo por texto si no. Lo que sale queda anotado en la traza
  * del turno como documento consultado.
  */
-export async function buscarEnExpedientes(texto: string, limite = 8): Promise<HitExpediente[]> {
+export async function buscarEnExpedientes(texto: string, limite = 8, opts: { documento?: string } = {}): Promise<HitExpediente[]> {
   const [porTexto, porSignificado] = await Promise.all([
-    buscarPorTexto(texto, Math.max(limite, 20)),
-    buscarPorSignificado(texto, Math.max(limite, 20)).catch(() => []),
+    buscarPorTexto(texto, Math.max(limite, 20), opts),
+    buscarPorSignificado(texto, Math.max(limite, 20), opts).catch(() => []),
   ]);
   let hits: HitExpediente[];
   if (!porSignificado.length) {

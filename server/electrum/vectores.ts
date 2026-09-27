@@ -10,7 +10,7 @@
  * Todo es opcional y se apaga solo: sin pgvector o sin servicio de embeddings, `vectoresListos()`
  * dice que no y la búsqueda de expedientes se queda en texto completo.
  */
-import { consulta, hayBase } from './db';
+import { consulta, filtroDocumento, hayBase } from './db';
 import { embeddingsConfigurados, literalPg, vectorDe, vectorizar } from '../../lib/cognitivo/embeddings';
 import { disponible } from '../../lib/cognitivo/interruptor';
 
@@ -89,18 +89,19 @@ export async function indexarPendientes(opts: { documentoId?: number; maximo?: n
 export type HitVector = { id: number; documento: string; pagina: number | null; texto: string; similitud: number };
 
 /** Los fragmentos más cercanos a la pregunta, por coseno. Vacío si no hay vectores. */
-export async function buscarPorSignificado(texto: string, limite = 30): Promise<HitVector[]> {
+export async function buscarPorSignificado(texto: string, limite = 30, opts: { documento?: string } = {}): Promise<HitVector[]> {
   if (!(await vectoresListos())) return [];
   const v = await vectorDe(texto);
   if (!v) return [];
+  const filtro = filtroDocumento(opts.documento, 3);
   const filas = await consulta<HitVector>(
     `SELECT f.id, d.nombre AS documento, f.pagina, left(f.texto, 700) AS texto,
             (1 - (f.embedding <=> $1::vector))::float8 AS similitud
        FROM fragmento f JOIN documento d ON d.id = f.documento_id
-      WHERE f.embedding IS NOT NULL
+      WHERE f.embedding IS NOT NULL${filtro.sql}
       ORDER BY f.embedding <=> $1::vector
       LIMIT $2`,
-    [literalPg(v), limite]
+    [literalPg(v), limite, ...filtro.args]
   );
   // Por debajo de esto, el vecino más cercano no tiene que ver con la pregunta.
   const umbral = Number(process.env.EMBED_UMBRAL || 0.35);

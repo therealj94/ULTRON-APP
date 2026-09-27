@@ -411,3 +411,60 @@ test('aprender: .rtf, .pptx y .xlsx entran como documentos con su carpeta y su o
   assert.equal(d2.carpeta, 'INDEXSA/Presentación 1', 'lo que ya tenía carpeta no se mueve solo');
   await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-bib-of-%'`);
 });
+
+test('expediente_buscar con `documento`: busca DENTRO del informe o de la carpeta, no en su portada', { skip: sinBase }, async () => {
+  const { buscarEnExpedientes, filtroDocumento } = await import('../server/electrum/db');
+  await bib.asegurarBiblioteca();
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-bus-%'`);
+  const informe = [
+    'Página 1. INFORME SOBRE LA EXPLORACIÓN MINERA JICA MMAJ 2003 FASE III, Honduras.',
+    'Página 2. Prólogo del gobierno del Japón para la cooperación técnica.',
+    'Página 3. Épocas de mineralización: Mioceno con epitermales de baja sulfuración y pórfidos de cobre; Plioceno con epitermales de oro.',
+  ].join('\f');
+  await aprender('prueba-bus-JICA-MMAJ 2003 Fase III (OCR).txt', Buffer.from(informe), { carpeta: 'INDEXSA SEP 2026/LIBROS/FASE3' });
+  // Otro documento que repite el nombre del informe muchas veces, para tentar a la búsqueda general.
+  await aprender('prueba-bus-índice.txt', Buffer.from('JICA MMAJ 2003 Fase III. JICA Fase III. Informe JICA Fase III 2003. Índice general de la biblioteca.'), { carpeta: 'Otros' });
+  await aprender('prueba-bus-oro.txt', Buffer.from('Situación actual: la producción formal de oro es de 71,600 onzas troy al año y la informal de 176,411 onzas.'), { carpeta: 'INDEXSA SEP 2026/PRESENTACION 1' });
+
+  assert.equal(filtroDocumento('', 3).sql, '');
+  assert.equal(filtroDocumento('JICA Fase III', 3).args.length, 3);
+
+  const dentro = await buscarEnExpedientes('épocas de mineralización', 3, { documento: 'JICA Fase III' });
+  assert.ok(dentro.length > 0);
+  assert.equal(Number(dentro[0].pagina), 3, `trajo la página ${dentro[0].pagina}: ${dentro[0].texto}`);
+  assert.ok(dentro.every((h) => h.documento.includes('Fase III (OCR)')), 'solo del informe pedido');
+
+  const carpeta = await buscarEnExpedientes('producción de oro formal e informal', 3, { documento: 'INDEXSA presentacion' });
+  assert.equal(carpeta[0]?.documento, 'prueba-bus-oro.txt');
+
+  // Sin tema útil pero con documento: el comienzo del documento.
+  const inicio = await buscarEnExpedientes('de', 3, { documento: 'JICA Fase III OCR' });
+  assert.match(inicio[0]?.texto || '', /INFORME SOBRE LA EXPLORACIÓN/);
+
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-bus-%'`);
+});
+
+test('expediente_listar: el panorama por carpeta, lo de una carpeta con su estado, y lo que necesita atención', { skip: sinBase }, async () => {
+  const { TODAS } = await import('../server/electrum/manos');
+  const listar = TODAS.find((h) => h.nombre === 'expediente_listar')!;
+  assert.ok(listar, 'la mano existe y es de Electrum');
+  await bib.asegurarBiblioteca();
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lis-%'`);
+  await aprender('prueba-lis-ficha.txt', Buffer.from('INVENTARIO MINERO DE HONDURAS. Ficha de ocurrencia mineral El Dorado, oro aluvial en Iriona, Colón.'), { carpeta: 'Pruebas Listar/FOM' });
+  const [esc] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, tipo, paginas, carpeta) VALUES ('prueba-lis-escaneo.pdf', 'escaneo', 9, 'Pruebas Listar/Escaneos') RETURNING id`);
+  try {
+    const todo = await listar.ejecutar({}, {} as any);
+    assert.match(todo.texto, /Pruebas Listar: 2 \(1 necesitan atención\)/);
+    const carpeta = await listar.ejecutar({ filtro: 'Pruebas Listar' }, {} as any);
+    assert.match(carpeta.texto, /2 piezas/);
+    assert.match(carpeta.texto, /«prueba-lis-escaneo\.pdf» \(9 pág, SIN TEXTO/);
+    const atencion = await listar.ejecutar({ filtro: 'Pruebas Listar', solo_atencion: true }, {} as any);
+    assert.match(atencion.texto, /^1 pieza/);
+    const nombre = await listar.ejecutar({ filtro: 'prueba-lis-ficha' }, {} as any);
+    assert.match(nombre.texto, /leído\) en Pruebas Listar\/FOM/);
+    const nada = await listar.ejecutar({ filtro: 'no existe en ningún lado xyz' }, {} as any);
+    assert.match(nada.texto, /No hay nada cargado/);
+  } finally {
+    await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lis-%' OR id = $1`, [esc.id]);
+  }
+});
