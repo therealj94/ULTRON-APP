@@ -8,7 +8,8 @@
  *
  *  - **Geográfico** (.shp, .zip, .kml, .kmz, .geojson, .csv) → motor GIS → PostGIS. Las concesiones
  *    quedan buscables, medibles y cruzables, y el mapa puede volar a ellas.
- *  - **Documento** (.pdf, .txt, .md) → texto → troceado **con su página** → índice de texto completo.
+ *  - **Documento** (.pdf, .docx, .doc, .rtf, .pptx, .xlsx, .txt, .md) → texto → troceado **con su
+ *    página** (la diapositiva en un .pptx, la hoja en un .xlsx) → índice de texto completo.
  *    La página no es un adorno: una cita que no se puede ir a comprobar no es una cita.
  *  - **Imagen** (.jpg, .png, .heic) → modelo de visión → el mismo índice. Es la foto que se saca en
  *    la oficina de INHGEOMIN o parado en el lindero: un plano con sellos, una resolución en papel.
@@ -26,6 +27,7 @@ import { indexarPendientes } from './vectores';
 import crypto from 'node:crypto';
 import JSZip from 'jszip';
 import { extraerPdf } from '../../lib/leer-pdf';
+import { paginasDeDoc, paginasDePptx, paginasDeRtf, paginasDeXlsx, type PaginaLeida } from '../../lib/leer-oficina';
 import { cuerpo, textoPorPaginas } from '../../lib/leer-pdf-pdfjs';
 import { consulta, enTransaccion, guardarCapa, hayBase, recalcularTraslapes, traslapesDeCapa } from './db';
 
@@ -66,7 +68,14 @@ export type Inspeccion = {
 };
 
 const ES_GEO = /\.(zip|shp|kml|kmz|geojson|json|csv|gpkg|dxf)$/i;
-const ES_DOC = /\.(pdf|docx|txt|md|markdown)$/i;
+const ES_DOC = /\.(pdf|docx|doc|rtf|pptx|xlsx|xlsm|txt|md|markdown)$/i;
+/** Formatos de oficina que ya vienen con sus páginas (diapositivas, hojas). */
+const OFICINA: Array<[RegExp, (d: Buffer) => Promise<PaginaLeida[]> | PaginaLeida[], string]> = [
+  [/\.doc$/i, paginasDeDoc, '.doc'],
+  [/\.rtf$/i, paginasDeRtf, '.rtf'],
+  [/\.pptx$/i, paginasDePptx, '.pptx'],
+  [/\.xls[xm]$/i, (d) => paginasDeXlsx(d), '.xlsx'],
+];
 const ES_IMAGEN = /\.(jpe?g|png|webp|heic|heif|bmp|tiff?)$/i;
 
 /** Tipos que un navegador o un teléfono mandan para una foto, por si el nombre no lleva extensión. */
@@ -197,10 +206,21 @@ async function repararSiTruncado(id: number, paginasViejas: number | null, nombr
   if (leido.ok === false) return null;
   const ahora = leido.trozos.reduce((n, t) => n + t.texto.length, 0);
   if (ahora < antes * 1.3) return null;
+  await reemplazarFragmentos(id, leido.paginas.length, leido.trozos, nombre);
+  return {
+    clase: 'documento' as const,
+    dicho: `«${nombre}» ya estaba, pero cortado (${antes.toLocaleString('es-ES')} caracteres). Lo volví a leer entero: ${leido.paginas.length} páginas, ${leido.trozos.length} fragmentos. Ya lo puedo citar completo.`,
+    avisos: leido.avisos,
+    ui: { accion: 'documento', documento_id: id, nombre, paginas: leido.paginas.length, fragmentos: leido.trozos.length, reparado: true },
+  };
+}
+
+/** Cambia los fragmentos de un documento por los de una lectura nueva, todo o nada. */
+async function reemplazarFragmentos(id: number, paginas: number, trozos: Array<{ pagina: number; orden: number; texto: string }>, nombre: string) {
   await enTransaccion(async (q) => {
     await q(`DELETE FROM fragmento WHERE documento_id = $1`, [id]);
-    for (let i = 0; i < leido.trozos.length; i += 200) {
-      const tramo = leido.trozos.slice(i, i + 200);
+    for (let i = 0; i < trozos.length; i += 200) {
+      const tramo = trozos.slice(i, i + 200);
       const args: unknown[] = [];
       const marcas = tramo.map((t, j) => {
         args.push(id, t.pagina, t.orden, t.texto);
@@ -208,14 +228,40 @@ async function repararSiTruncado(id: number, paginasViejas: number | null, nombr
       });
       await q(`INSERT INTO fragmento (documento_id, pagina, orden, texto) VALUES ${marcas.join(',')}`, args);
     }
-    await q(`UPDATE documento SET paginas = $2 WHERE id = $1`, [id, leido.paginas.length]);
+    await q(`UPDATE documento SET paginas = $2 WHERE id = $1`, [id, paginas]);
   });
   void indexarPendientes({ documentoId: id }).catch((e) => console.error('[electrum] no pude vectorizar', nombre, String(e?.message || e).slice(0, 120)));
+}
+
+/**
+ * Volver a leer un documento que ya está, desde su original, con los lectores de hoy.
+ *
+ * Es lo que hace el botón «Releer» del panel de infraestructura: cuando mejora un lector (el PDF
+ * entero con pdf.js, el .doc de Word 97, el OCR), lo que se cargó antes se pone al día sin
+ * borrarlo ni duplicarlo. Si la lectura nueva sale PEOR que la que hay —menos texto—, no se toca:
+ * releer nunca puede dejar a Dr Electrum sabiendo menos que antes.
+ */
+export async function releerDocumento(
+  id: number,
+  nombre: string,
+  datos: Buffer
+): Promise<{ ok: boolean; dicho: string; antes: number; ahora: number; paginas?: number; fragmentos?: number }> {
+  const [h] = await consulta<{ car: number }>(`SELECT coalesce(sum(length(texto)), 0)::int AS car FROM fragmento WHERE documento_id = $1`, [id]);
+  const antes = Number(h?.car || 0);
+  const leido = await leerDocumento(nombre, datos);
+  if (leido.ok === false) return { ok: false, dicho: leido.dicho, antes, ahora: 0 };
+  const ahora = leido.trozos.reduce((n, t) => n + t.texto.length, 0);
+  if (ahora < antes) {
+    return { ok: false, dicho: `La lectura nueva saca menos texto (${ahora.toLocaleString('es-ES')} caracteres) que la que ya hay (${antes.toLocaleString('es-ES')}): lo dejé como estaba.`, antes, ahora };
+  }
+  await reemplazarFragmentos(id, leido.paginas.length, leido.trozos, nombre);
   return {
-    clase: 'documento' as const,
-    dicho: `«${nombre}» ya estaba, pero cortado (${antes.toLocaleString('es-ES')} caracteres). Lo volví a leer entero: ${leido.paginas.length} páginas, ${leido.trozos.length} fragmentos. Ya lo puedo citar completo.`,
-    avisos: leido.avisos,
-    ui: { accion: 'documento', documento_id: id, nombre, paginas: leido.paginas.length, fragmentos: leido.trozos.length, reparado: true },
+    ok: true,
+    dicho: ahora === antes ? `Releído: igual que antes (${leido.paginas.length} páginas).` : `Releído: de ${antes.toLocaleString('es-ES')} a ${ahora.toLocaleString('es-ES')} caracteres, ${leido.paginas.length} páginas, ${leido.trozos.length} fragmentos.`,
+    antes,
+    ahora,
+    paginas: leido.paginas.length,
+    fragmentos: leido.trozos.length,
   };
 }
 
@@ -367,6 +413,33 @@ async function leerDocumento(nombre: string, datos: Buffer): Promise<Leido> {
         avisos: [{ nivel: 'error', texto: 'docx sin texto' }],
       };
     }
+  } else if (OFICINA.some(([re]) => re.test(nombre))) {
+    const [, leer, formato] = OFICINA.find(([re]) => re.test(nombre))!;
+    let paginasOficina: PaginaLeida[] = [];
+    try {
+      paginasOficina = await leer(datos);
+    } catch (e: any) {
+      return {
+        ok: false,
+        motivo: 'corto',
+        dicho: `No pude abrir ese ${formato}: ${String(e?.message || e).slice(0, 120)}.`,
+        avisos: [{ nivel: 'error', texto: `${formato} ilegible` }],
+      };
+    }
+    if (!paginasOficina.some((p) => p.texto.trim())) {
+      return {
+        ok: false,
+        motivo: 'corto',
+        dicho: `Ese ${formato} no tiene texto dentro: puede ser solo imágenes o un archivo en blanco.`,
+        avisos: [{ nivel: 'error', texto: `${formato} sin texto` }],
+      };
+    }
+    // Ya vienen con su estructura (tablas, diapositivas): no pasan por el juez de prosa, que es para
+    // capas de texto de PDF mal codificadas. Una hoja de coordenadas no tiene «de, la, el» y es buena.
+    const paginas = paginasOficina.map((p, i) => ({ pagina: i + 1, texto: p.texto }));
+    const trozos = trocear(paginas);
+    if (!trozos.length) return { ok: false, motivo: 'corto', dicho: 'El archivo tiene texto pero demasiado corto para indexarlo.', avisos };
+    return { ok: true, texto: paginas.map((p) => p.texto).join('\n\n'), paginas, trozos, avisos };
   } else {
     texto = datos.toString('utf8');
   }
@@ -419,9 +492,21 @@ export async function inspeccionar(nombre: string, datos: Buffer): Promise<Inspe
 export async function aprender(
   nombreArchivo: string,
   datos: Buffer,
-  opts: { subidoPor?: string; concesionId?: number; tipoDoc?: string; sinTraslapes?: boolean; mime?: string } = {}
+  opts: {
+    subidoPor?: string;
+    concesionId?: number;
+    tipoDoc?: string;
+    sinTraslapes?: boolean;
+    mime?: string;
+    /** Carpeta del panel de infraestructura («INDEXSA 2026/Minas de Oro»). */
+    carpeta?: string | null;
+    /** Dónde quedó el original («s3://cubo/clave»): con él se puede volver a leer. */
+    archivo?: string | null;
+  } = {}
 ): Promise<Aprendido> {
   const nombre = String(nombreArchivo || 'archivo');
+  const carpeta = opts.carpeta ? String(opts.carpeta) : null;
+  const archivo = opts.archivo ? String(opts.archivo) : null;
 
   if (!hayBase()) {
     return {
@@ -436,7 +521,8 @@ export async function aprender(
     const { capa, avisos } = await ingerir(nombre, datos);
     if (!capa) return { clase: 'nada', dicho: avisos.map((a) => a.texto).join(' ') || 'No pude leer ese archivo.', avisos };
 
-    const guardado = await guardarCapa(capa, { subidoPor: opts.subidoPor, avisos });
+    const guardado = await guardarCapa(capa, { subidoPor: opts.subidoPor, avisos, archivo: archivo || undefined });
+    if (carpeta && guardado.capaId) await consulta(`UPDATE capa SET carpeta = $2 WHERE id = $1`, [guardado.capaId, carpeta]).catch(() => {});
 
     /*
      * Los traslapes se recalculan cruzando TODAS las concesiones contra todas. Hacerlo después de
@@ -536,6 +622,14 @@ export async function aprender(
       [huella, opts.concesionId ?? null]
     );
     if (ya) {
+      // Lo que ya estaba y no tenía carpeta ni original, los adopta: volver a importar una carpeta
+      // ordena lo viejo en vez de dejarlo suelto. Lo que ya tenía carpeta no se mueve solo.
+      if (carpeta || archivo) {
+        await consulta(
+          `UPDATE documento SET carpeta = COALESCE(carpeta, $2), archivo = COALESCE(archivo, $3) WHERE id = $1`,
+          [ya.id, carpeta, archivo]
+        ).catch(() => {});
+      }
       // Un PDF indexado con el tope viejo de 8 000 caracteres se reconoce por la firma (varias
       // páginas y como mucho ~8 000 caracteres en total). Volver a subirlo lo repara en su lugar:
       // mismo documento, fragmentos nuevos. Lo que estaba bien se sigue saltando.
@@ -578,7 +672,9 @@ export async function aprender(
       tipoPorDefecto = clasificarDoc(nombre, visto.texto);
     } else {
       const leido = await leerDocumento(nombre, datos);
-      if (leido.ok === false) return { clase: 'nada', dicho: leido.dicho, avisos: leido.avisos };
+      // `escaneo` va en la ui para quien importa una carpeta: lo deja anotado en el panel como
+      // «sin texto», con su original, en vez de que desaparezca sin rastro.
+      if (leido.ok === false) return { clase: 'nada', dicho: leido.dicho, avisos: leido.avisos, ui: leido.motivo === 'escaneo' ? { escaneo: true } : undefined };
       paginas = leido.paginas;
       trozos = leido.trozos;
       avisos = leido.avisos;
@@ -614,10 +710,10 @@ export async function aprender(
     }
 
     const [doc] = await consulta<{ id: number }>(
-      `INSERT INTO documento (nombre, tipo, concesion_id, paginas, subido_por, huella)
-       VALUES ($1,$2,$3,$4,$5,$6)
+      `INSERT INTO documento (nombre, tipo, concesion_id, paginas, subido_por, huella, carpeta, archivo)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
        ON CONFLICT DO NOTHING RETURNING id`,
-      [nombre, opts.tipoDoc || tipoPorDefecto, opts.concesionId ?? null, paginas.length, opts.subidoPor || null, huella]
+      [nombre, opts.tipoDoc || tipoPorDefecto, opts.concesionId ?? null, paginas.length, opts.subidoPor || null, huella, carpeta, archivo]
     );
     // Sin fila devuelta, otra carga en paralelo lo metió entre el SELECT y el INSERT. No es un
     // error: es justo lo que el índice único tiene que impedir, y aquí se nota en vez de reventar.
@@ -666,7 +762,7 @@ export async function aprender(
 
   return {
     clase: 'nada',
-    dicho: `No sé qué hacer con «${nombre}». Mandame shapefile, KML, KMZ, GeoJSON o CSV para el mapa; PDF o texto para los expedientes; o la foto de un papel, que también la leo.`,
+    dicho: `No sé qué hacer con «${nombre}». Mandame shapefile, KML, KMZ, GeoJSON o CSV para el mapa; PDF, Word, RTF, PowerPoint, Excel o texto para los expedientes; o la foto de un papel, que también la leo.`,
     avisos: [{ nivel: 'error', texto: 'formato no reconocido' }],
   };
 }

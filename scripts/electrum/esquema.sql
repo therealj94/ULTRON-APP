@@ -478,3 +478,51 @@ END $$;
 INSERT INTO esquema_version (version, nota)
 VALUES (8, 'roles de geología: litología, fallas, placas, provincias geológicas y tractos permisivos')
 ON CONFLICT (version) DO NOTHING;
+
+-- ---------------------------------------------------------------- v9: panel de infraestructura
+--
+-- Lo que sabe Dr Electrum, ordenado en carpetas y con cuentas claras: quién movió, borró, releyó o
+-- importó qué, y cuándo. `archivo` (ya existía) guarda dónde quedó el original —«s3://cubo/clave»—
+-- y es lo que permite volver a leerlo cuando mejora un lector. El servidor aplica este bloque solo
+-- al arrancar (server/electrum/biblioteca.ts, `asegurarBiblioteca`); aquí queda por escrito.
+
+ALTER TABLE documento ADD COLUMN IF NOT EXISTS carpeta text;
+ALTER TABLE documento ADD COLUMN IF NOT EXISTS releido timestamptz;
+ALTER TABLE capa ADD COLUMN IF NOT EXISTS carpeta text;
+CREATE INDEX IF NOT EXISTS documento_carpeta_idx ON documento (carpeta);
+CREATE INDEX IF NOT EXISTS capa_carpeta_idx ON capa (carpeta);
+
+CREATE TABLE IF NOT EXISTS biblioteca_bitacora (
+  id       bigserial PRIMARY KEY,
+  cuando   timestamptz NOT NULL DEFAULT now(),
+  quien    text,
+  accion   text NOT NULL,          -- mover | renombrar | carpeta | eliminar | releer | importar
+  objeto   text,                   -- «documento 12», «capa 3», «carpeta INDEXSA/…»
+  detalle  jsonb NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS biblioteca_bitacora_cuando_idx ON biblioteca_bitacora (cuando DESC);
+
+CREATE TABLE IF NOT EXISTS importacion (
+  id          bigserial PRIMARY KEY,
+  prefijo     text NOT NULL,       -- de dónde: «entrada/INFORMACION INDEXSA…/»
+  carpeta     text,                -- a dónde, en el panel
+  estado      text NOT NULL DEFAULT 'en_curso',   -- en_curso | terminada | fallida | parada
+  total       integer NOT NULL DEFAULT 0,
+  hechos      integer NOT NULL DEFAULT 0,
+  nuevos      integer NOT NULL DEFAULT 0,
+  repetidos   integer NOT NULL DEFAULT 0,
+  fallos      integer NOT NULL DEFAULT 0,
+  omitidos    integer NOT NULL DEFAULT 0,
+  por         text,
+  iniciada    timestamptz NOT NULL DEFAULT now(),
+  actualizada timestamptz NOT NULL DEFAULT now(),
+  terminada   timestamptz,
+  detalle     jsonb NOT NULL DEFAULT '[]'::jsonb
+);
+ALTER TABLE importacion ADD COLUMN IF NOT EXISTS donde text;       -- servidor | trabajo (Render)
+ALTER TABLE importacion ADD COLUMN IF NOT EXISTS opciones jsonb NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE importacion ADD COLUMN IF NOT EXISTS trabajo text;     -- id del trabajo de Render
+
+INSERT INTO esquema_version (version, nota)
+VALUES (9, 'panel de infraestructura: carpetas, bitácora e importaciones desde el cubo')
+ON CONFLICT (version) DO NOTHING;
