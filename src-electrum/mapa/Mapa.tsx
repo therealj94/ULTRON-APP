@@ -293,6 +293,9 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       } else if (o.accion === 'capa') {
         pintar(m, 'concesiones', o.geojson);
         if (o.encuadre) m.fitBounds(o.encuadre, { padding: 60, duration: duracion(1400) });
+      } else if (o.accion === 'candidatas') {
+        pintar(m, 'resaltada', o.geojson);
+        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 80, duration: duracion(1400), maxZoom: 14 });
       } else if (o.accion === 'punto') {
         m.flyTo({ center: o.punto, zoom: 14, duration: duracion(1200) });
       }
@@ -312,6 +315,12 @@ export function Mapa({ orden, motor, fondo, claveGoogle }: Props) {
       } else if (o.accion === 'capa') {
         pintado.concesiones = o.geojson;
         pintarGoogle(g, 'concesiones', o.geojson);
+        if (o.encuadre) {
+          g.fitBounds(new G.LatLngBounds({ lat: o.encuadre[1], lng: o.encuadre[0] }, { lat: o.encuadre[3], lng: o.encuadre[2] }));
+        }
+      } else if (o.accion === 'candidatas') {
+        pintado.resaltada = o.geojson;
+        pintarGoogle(g, 'resaltada', o.geojson);
         if (o.encuadre) {
           g.fitBounds(new G.LatLngBounds({ lat: o.encuadre[1], lng: o.encuadre[0] }, { lat: o.encuadre[3], lng: o.encuadre[2] }));
         }

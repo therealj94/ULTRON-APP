@@ -197,6 +197,8 @@ export default function App() {
         setOrden({ accion: 'volar', geojson: d.geojson as any, encuadre: d.encuadre as any, centro: d.centro as any });
       } else if (d.accion === 'capa' && d.geojson) {
         setOrden({ accion: 'capa', geojson: d.geojson as any, encuadre: d.encuadre as any });
+      } else if (d.accion === 'candidatas' && d.geojson) {
+        setOrden({ accion: 'candidatas', geojson: d.geojson as any, encuadre: d.encuadre as any });
       } else if (Array.isArray(d.punto)) {
         setOrden({ accion: 'punto', punto: d.punto as [number, number] });
       }

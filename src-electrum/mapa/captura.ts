@@ -18,6 +18,8 @@ export type Fondo = 'satelite' | 'calles';
 export type OrdenMapa =
   | { accion: 'volar'; geojson: Geometry; encuadre?: [number, number, number, number]; centro?: [number, number] }
   | { accion: 'capa'; geojson: FeatureCollection; encuadre?: [number, number, number, number] }
+  /** Varias concesiones resaltadas a la vez (una búsqueda con varios resultados); el catastro sigue debajo. */
+  | { accion: 'candidatas'; geojson: FeatureCollection; encuadre?: [number, number, number, number] }
   | { accion: 'punto'; punto: [number, number] };
 
 /** Lo mínimo del mapa de MapLibre que usa la captura. */
