@@ -78,6 +78,17 @@ test('tablero nacional, contra PostGIS', { skip: hayBase() ? false : 'sin ELECTR
   );
   assert.equal(t.traslapes.total, 1);
   assert.equal(t.traslapes.mayores[0].ha > 0, true);
+  assert.deepEqual(t.traslapes.mismoNombre, { total: 0, hectareas: 0 });
+  // Un duplicado del padrón (misma concesión, mismo nombre, cargada dos veces) no va a la lista.
+  await consulta(`INSERT INTO concesion (nombre, estado, geom) SELECT nombre, estado, geom FROM concesion WHERE nombre = 'El Guirisero'`);
+  await recalcularTraslapes();
+  olvidarTablero();
+  const conDuplicado = await tablero();
+  assert.equal(conDuplicado.traslapes.mismoNombre.total, 1);
+  assert.ok(conDuplicado.traslapes.mayores.every((m) => m.a !== m.b));
+  await consulta(`DELETE FROM concesion WHERE id = (SELECT max(id) FROM concesion WHERE nombre = 'El Guirisero')`);
+  await recalcularTraslapes();
+  olvidarTablero();
   // Reserva Azul pisa la mitad este de Cerro Azul (0,01°) y toda La Vecina.
   assert.equal(t.areasProtegidas!.concesiones, 2);
   const vecina = t.areasProtegidas!.lista.find((c) => c.concesion === 'La Vecina')!;
@@ -90,5 +101,6 @@ test('tablero nacional, contra PostGIS', { skip: hayBase() ? false : 'sin ELECTR
   assert.ok(t.poblados!.lista.every((p) => !p.nombres.includes('Todo el país')));
   // Caché: el segundo pedido no recalcula.
   const t2 = await tablero();
-  assert.equal(t2.generado, t.generado);
+  const t3 = await tablero();
+  assert.equal(t3.generado, t2.generado);
 });

@@ -17,7 +17,7 @@
  *  · la capa de caseríos incluye algún polígono que lo cubre todo: los caseríos se cuentan solo
  *    como puntos.
  */
-import { conTextoReparado, consultaConTope, hayBase, resumenTraslapes, traslapes } from './db';
+import { conTextoReparado, consultaConTope, hayBase, resumenTraslapes } from './db';
 import { capasPorRol, nombreDe } from './entorno';
 
 const TOPE = 20000;
@@ -31,7 +31,14 @@ export type Tablero = {
   porEstado: Array<{ nombre: string; n: number; ha: number }>;
   porClase: Array<{ nombre: string; n: number; ha: number }>;
   porDepartamento: Array<{ nombre: string; n: number }>;
-  traslapes: { total: number; hectareas: number; mayores: Array<{ a: string; b: string; ha: number; aId: number; bId: number }> };
+  traslapes: {
+    total: number;
+    hectareas: number;
+    /** Entre concesiones con el mismo nombre: el mismo derecho cargado dos veces, casi siempre. */
+    mismoNombre: { total: number; hectareas: number };
+    /** Los mayores entre concesiones DISTINTAS, que son los que importan. */
+    mayores: Array<{ a: string; b: string; ha: number; aId: number; bId: number }>;
+  };
   areasProtegidas: { concesiones: number; hectareas: number; lista: Conflicto[] } | null;
   microcuencas: { concesiones: number; hectareas: number; lista: Conflicto[] } | null;
   poblados: { concesiones: number; caserios: number; lista: Array<{ id: number; concesion: string; n: number; nombres: string[] }> } | null;
@@ -125,7 +132,14 @@ async function calcular(): Promise<Tablero> {
         )
       : Promise.resolve([]),
     resumenTraslapes(),
-    traslapes(8),
+    // Se separan los de mismo nombre: en el padrón nacional muchos «traslapes» son el mismo derecho
+    // cargado desde dos capas («Las Joyas con Las Joyas»), y listarlos como conflicto confunde.
+    q<{ a: string; b: string; ha: number; a_id: string; b_id: string; mismo: boolean }>(
+      `SELECT ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS ha, t.a_id::text, t.b_id::text,
+              lower(unaccent(trim(ca.nombre))) = lower(unaccent(trim(cb.nombre))) AS mismo
+         FROM traslape t JOIN concesion ca ON ca.id = t.a_id JOIN concesion cb ON cb.id = t.b_id
+        ORDER BY t.hectareas DESC`
+    ),
     conflictos(de('area_protegida'), 'area_protegida'),
     conflictos(de('microcuenca'), 'microcuenca'),
     de('poblado').length
@@ -157,7 +171,14 @@ async function calcular(): Promise<Tablero> {
     traslapes: {
       total: tr.total,
       hectareas: Math.round(tr.hectareas),
-      mayores: mayores.map((m) => ({ a: m.a, b: m.b, ha: r1(m.hectareas), aId: Number(m.a_id), bId: Number(m.b_id) })),
+      mismoNombre: {
+        total: mayores.filter((m) => m.mismo).length,
+        hectareas: Math.round(mayores.filter((m) => m.mismo).reduce((s, m) => s + m.ha, 0)),
+      },
+      mayores: mayores
+        .filter((m) => !m.mismo)
+        .slice(0, 8)
+        .map((m) => ({ a: m.a, b: m.b, ha: r1(m.ha), aId: Number(m.a_id), bId: Number(m.b_id) })),
     },
     areasProtegidas: ap,
     microcuencas: mc,
