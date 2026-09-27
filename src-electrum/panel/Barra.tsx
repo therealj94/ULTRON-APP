@@ -17,6 +17,9 @@ type Props = {
   onMotor: (m: Motor) => void;
   onFondo: (f: Fondo) => void;
   onSalir: () => void;
+  onCuenta?: () => void;
+  /** Solicitudes de acceso esperando al aprobador; null si esta sesión no aprueba. */
+  pendientes?: number | null;
 };
 
 const AMBAR = '#FFAE3B';
@@ -58,7 +61,7 @@ function Opcion({
   );
 }
 
-export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor, onFondo, onSalir }: Props) {
+export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor, onFondo, onSalir, onCuenta, pendientes }: Props) {
   const enTrabajo = escenario === 'trabajo';
   return (
     <div className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between gap-3 px-3 py-2.5 pointer-events-none">
@@ -124,6 +127,11 @@ export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor
           INHGEOMIN— eso significa que el siguiente que se siente entra como vos.
         */}
         <Grupo>
+          {onCuenta && (
+            <Opcion activa={false} alterna={false} onClick={onCuenta} titulo={pendientes ? `${pendientes} solicitudes de acceso esperando` : 'Tu cuenta: cambiar la contraseña'}>
+              Cuenta{pendientes ? ` · ${pendientes}` : ''}
+            </Opcion>
+          )}
           <Opcion activa={false} alterna={false} onClick={onSalir} titulo="Cerrar la sesión en este navegador">
             Salir
           </Opcion>

@@ -66,6 +66,9 @@ import {
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
 import { identidadDe, exigirPlataforma } from './server/seguridad';
+import { cuentaDe, cuentasDisponibles, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
+import { montarRutasCuentas } from './server/cuentas-rutas';
+import { personaPorCorreoExacto, puedeEntrar } from './lib/acceso';
 import { puedeEscribir } from './lib/acceso';
 import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
 import { catastroGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
@@ -1097,6 +1100,35 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
       honesto: true,
     });
   }
+  /*
+   * Primero la clave propia (server/cuentas.ts): quien ya se hizo una aquí —cambiándola, recuperándola
+   * o al activar una cuenta aprobada— entra con esa y solo con esa. Quien no, sigue entrando por el
+   * cerebro remoto como siempre. Si la base de cuentas no contesta, se cae al remoto para no dejar
+   * a la junta afuera por una base caída.
+   */
+  if (cuentasDisponibles()) {
+    const propia = await entrarConCuenta(correo, String(claveEntrada)).catch((e) => {
+      console.warn('[cuentas] base sin contestar en la entrada; sigo con el remoto:', String(e?.message || e).slice(0, 120));
+      return 'sin_clave' as const;
+    });
+    if (propia === 'mal') {
+      anotarFalloEntrada(correo, ipEntrada);
+      return res.status(401).json({ error: 'Correo o clave incorrectos.', codigo: 'NO_ENTRA' });
+    }
+    if (propia === 'suspendida') return res.status(403).json({ error: 'Esta cuenta está suspendida.', codigo: 'SUSPENDIDA' });
+    if (propia === 'ok') {
+      // Una cuenta propia solo abre la plataforma que tiene aprobada: una de Dr Electrum no entra a
+      // AU-RA (donde cualquier sesión abre la mesa) aunque la clave sea la misma para las dos.
+      if (!puedeEntrar(identificar({ correo }), PLATAFORMA)) {
+        return res.status(403).json({ error: `Tu cuenta no tiene acceso a ${ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP'}. Pedilo desde «Solicitar acceso».`, codigo: 'SIN_ACCESO' });
+      }
+      anotarExitoEntrada(correo, ipEntrada);
+      const { nombre, rol } = nombreYRolDe(correo, (await cuentaDe(correo).catch(() => null))?.nombre);
+      const s = emitirSesion({ correo, nombre, rol });
+      const producto = ES_ELECTRUM ? 'Dr Electrum FP' : 'AU-RA FP';
+      return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol }, message: `Bienvenido a ${producto}, ${nombre}` });
+    }
+  }
   try {
     const remoteRes = await fetch(`${ULTRON_REMOTE_URL}/entrar`, {
       method: 'POST',
@@ -1124,6 +1156,34 @@ app.post(['/api/electrum/entrar', '/api/ultron/entrar'], limitar(12), async (req
   } catch (err: any) {
     return res.status(500).json({ error: 'Fallo al contactar el cerebro remoto', message: String(err?.message || err).slice(0, 160) });
   }
+});
+
+/** El nombre y el rol con que se saluda y se firma la sesión, venga la clave de donde venga. */
+function nombreYRolDe(correo: string, nombreCuenta?: string) {
+  const nombre = nombreCuenta || JUNTA[correo]?.nombre || personaPorCorreoExacto(correo)?.nombre || correo.split('@')[0];
+  const rol = JUNTA[correo]?.rol || (ES_ELECTRUM ? 'Dr Electrum FP' : 'Junta Directiva · Orden Global');
+  return { nombre, rol };
+}
+
+montarRutasCuentas(app, {
+  plataforma: PLATAFORMA,
+  normalizarCorreo,
+  nombreYRol: nombreYRolDe,
+  claveRemotaAbre: async (correo, clave) => {
+    try {
+      const r = await fetch(`${ULTRON_REMOTE_URL}/entrar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ correo, clave }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (r.ok) return true;
+      if (r.status === 401 || r.status === 403) return false;
+      return null;
+    } catch {
+      return null;
+    }
+  },
 });
 
 app.post('/api/ultron/biometric-login', limitar(12), async (req, res) => {
@@ -2468,6 +2528,7 @@ async function startServer() {
     );
     // El tablero nacional precalculado, para que la primera vez que alguien lo abre ya esté listo.
     if (ES_ELECTRUM) mantenerTableroCaliente();
+    mantenerCuentasAlDia();
     // Cada plataforma registra SU bot. Los dos desde el mismo proceso era la costura más fácil de
     // olvidar: un despliegue de Dr Electrum se quedaba con el webhook del bot de la junta.
     if (ES_ULTRON) {

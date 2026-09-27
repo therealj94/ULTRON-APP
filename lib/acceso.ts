@@ -205,13 +205,32 @@ function telegramHeredado(id: string): string[] {
   ];
 }
 
+/** Los dominios de Orden Global. `ULTRON_DOMINIOS_CASA` agrega otros, separados por comas. */
+export function esDominioDeLaCasa(dominio: unknown): boolean {
+  const d = fold(dominio);
+  if (!d) return false;
+  const casa = ['ordenglobal.org', 'ordenglobal.link', 'ordenglobal.com', ...lista(process.env.ULTRON_DOMINIOS_CASA).map(fold)];
+  return casa.includes(d);
+}
+
 /* ------------------------------------------------------------------ el padrón */
 
 let cache: { llave: string; gente: Persona[] } | null = null;
 
+/**
+ * Las cuentas aprobadas desde la web (server/cuentas.ts), que viven en la base y no en el entorno.
+ * Se suman al padrón sin pisar a nadie: si el correo ya es de alguien, solo se le agregan las
+ * plataformas que no tenía; el nivel que ya tenía no cambia desde aquí.
+ */
+let aprobadas: { version: number; gente: Persona[] } = { version: 0, gente: [] };
+export function fijarCuentasAprobadas(gente: Array<Partial<Persona> & { id: string }>) {
+  const limpias = gente.map(normalizar).filter((p): p is Persona => !!p && p.correos.length > 0);
+  aprobadas = { version: aprobadas.version + 1, gente: limpias };
+}
+
 /** La llave cambia cuando cambia el entorno, así que el padrón se rehace solo. Las pruebas dependen de esto. */
 function llaveEntorno(): string {
-  const partes = [String(process.env.ULTRON_PADRON || '')];
+  const partes = [String(process.env.ULTRON_PADRON || ''), `aprobadas:${aprobadas.version}`];
   for (const p of BASE) partes.push(`${p.id}:${telegramHeredado(p.id).join(',')}`);
   return partes.join('|');
 }
@@ -238,6 +257,16 @@ export function padron(): Persona[] {
     const previo = porId.get(p.id);
     porId.set(p.id, previo ? fundir(previo, p) : p);
   }
+  for (const a of aprobadas.gente) {
+    const suyo = [...porId.values()].find((p) => p.correos.some((c) => a.correos.includes(c)));
+    if (!suyo) {
+      if (!porId.has(a.id)) porId.set(a.id, a);
+      continue;
+    }
+    const acceso = { ...suyo.acceso };
+    for (const [plat, niv] of Object.entries(a.acceso) as Array<[Plataforma, Nivel]>) if (!acceso[plat]) acceso[plat] = niv;
+    porId.set(suyo.id, { ...suyo, acceso });
+  }
   const gente = [...porId.values()];
   cache = { llave, gente };
   return gente;
@@ -255,11 +284,22 @@ function porCorreo(correo: string): Persona | null {
   if (!c) return null;
   for (const p of padron()) if (p.correos.includes(c)) return p;
   // Los correos de Orden Global son nombre.apellido@: si el buzón coincide en la parte local con
-  // uno conocido, es la misma persona con otro dominio de la casa.
-  const local = c.split('@')[0];
-  if (!local) return null;
-  for (const p of padron()) if (p.correos.some((x) => x.split('@')[0] === local)) return p;
+  // uno conocido, es la misma persona con otro dominio de la casa. SOLO entre dominios de la casa:
+  // con cuentas que se solicitan desde la web, «j.ordonez@gmail.com» no puede pasar por José.
+  const [local, dominio] = c.split('@');
+  if (!local || !esDominioDeLaCasa(dominio)) return null;
+  for (const p of padron()) if (p.correos.some((x) => x.split('@')[0] === local && esDominioDeLaCasa(x.split('@')[1]))) return p;
   return null;
+}
+
+/**
+ * La persona dueña de EXACTAMENTE este correo, sin parecidos de buzón ni de dominio. Es la que se usa
+ * para mandar un enlace de contraseña: el enlace va solo a una dirección que está en el padrón.
+ */
+export function personaPorCorreoExacto(correo: string): Persona | null {
+  const c = fold(correo).replace(/^mailto:/, '');
+  if (!c) return null;
+  return padron().find((p) => p.correos.includes(c)) || null;
 }
 
 function porTelegram(userId?: string | number, chatId?: string | number): Persona | null {
