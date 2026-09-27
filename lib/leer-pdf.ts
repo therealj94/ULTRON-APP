@@ -317,8 +317,13 @@ export function bufferDeCualquier(raw: unknown): Buffer | null {
   if (Buffer.isBuffer(raw)) return raw.length > 80 ? raw : null;
   if (raw instanceof Uint8Array) return raw.length > 80 ? Buffer.from(raw) : null;
   if (typeof raw === 'string' && raw.length > 80) {
-    const m = raw.match(/^data:([^;]+);base64,(.*)$/);
-    const b = Buffer.from(m ? m[2] : raw, 'base64');
+    /*
+     * El tipo puede traer parámetros: Chrome graba «data:audio/webm;codecs=opus;base64,…». Con
+     * `[^;]+` eso no casaba, se decodificaba la cabecera entera como base64, el «=» de «codecs=opus»
+     * cortaba la decodificación y el oído contestaba «No me llegó audio» a cada dictado de la web.
+     */
+    const m = raw.match(/^data:[^,]*?;base64,([\s\S]*)$/);
+    const b = Buffer.from(m ? m[1] : raw, 'base64');
     return b.length > 80 ? b : null;
   }
   if (typeof raw === 'object' && Array.isArray((raw as any).data)) {

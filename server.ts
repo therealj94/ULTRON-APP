@@ -873,7 +873,7 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
  * `/api/tts` está en la lista de rutas abiertas de la APK y un sintetizador abierto es la GPU de
  * Voicebox trabajando para cualquiera. Devuelve WAV (audio/wav) con la voz de Alex.
  */
-app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (req, res) => {
   const texto = String(req.body?.texto || '').slice(0, 1200).trim();
   if (!texto) return res.status(400).json({ error: 'Falta el texto.', honesto: true });
   // Solo marcas ([risa], [suspiro]) y nada que decir: eso no es «no tengo voz», es que no hay texto.

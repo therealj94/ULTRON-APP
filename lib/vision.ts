@@ -10,7 +10,8 @@ import { presupuesto, type Presupuesto } from './presupuesto';
 export type Vista = { texto: string; via: string; foto?: Buffer };
 
 function dataUrlAPartes(raw: string): { mime: string; b64: string } {
-  const m = String(raw || '').match(/^data:([^;]+);base64,(.+)$/);
+  // El tipo puede traer parámetros («image/jpeg;name=x»): se ignoran, pero no rompen el corte.
+  const m = String(raw || '').match(/^data:([^;,]+)[^,]*?;base64,([\s\S]+)$/);
   if (m) return { mime: m[1], b64: m[2] };
   return { mime: 'image/jpeg', b64: String(raw || '').replace(/^base64,/, '') };
 }
@@ -18,7 +19,7 @@ function dataUrlAPartes(raw: string): { mime: string; b64: string } {
 function bufferDeCualquierFoto(j: any): Buffer | undefined {
   const b64 = j?.imagen || j?.image || j?.png || j?.jpeg || j?.foto;
   if (typeof b64 === 'string' && b64.length > 80) {
-    const clean = b64.replace(/^data:[^;]+;base64,/, '');
+    const clean = b64.replace(/^data:[^,]*?;base64,/, '');
     try {
       const buf = Buffer.from(clean, 'base64');
       if (buf.length > 80) return buf;
