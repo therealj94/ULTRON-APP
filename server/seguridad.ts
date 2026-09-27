@@ -214,6 +214,21 @@ export function tokenDe(req: Request): string {
   return h.replace(/^Bearer\s+/i, '').trim();
 }
 
+/**
+ * Cuándo cambió por última vez la contraseña de un correo (ms), o null. Lo pone server/cuentas.ts:
+ * una sesión abierta ANTES de ese momento ya no vale, porque la abrió alguien con la clave vieja —y
+ * si alguien cambia la clave es, muchas veces, porque otro la conocía—.
+ */
+let claveCambiadaEn: (correo: string) => number | null = () => null;
+export function fijarClaveCambiadaEn(fn: (correo: string) => number | null) {
+  claveCambiadaEn = fn;
+}
+
+function anteriorALaClave(s: Sesion): boolean {
+  const desde = claveCambiadaEn(s.correo.toLowerCase());
+  return !!desde && s.at < desde;
+}
+
 export function sesionDe(req: Request): Sesion | null {
   const t = tokenDe(req);
   if (!t) return null;
@@ -223,14 +238,14 @@ export function sesionDe(req: Request): Sesion | null {
   }
   const cached = sesiones.get(t);
   if (cached) {
-    if (Date.now() - cached.at > SESION_TTL_MS) {
+    if (Date.now() - cached.at > SESION_TTL_MS || anteriorALaClave(cached)) {
       sesiones.delete(t);
       return null;
     }
     return cached;
   }
   const firmada = leerSesionFirmada(t);
-  if (firmada) {
+  if (firmada && !anteriorALaClave(firmada)) {
     sesiones.set(t, firmada);
     return firmada;
   }

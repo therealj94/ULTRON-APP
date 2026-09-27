@@ -49,7 +49,7 @@ export const PAGINA_RAIZ = ES_ELECTRUM ? 'electrum.html' : 'index.html';
 const PERMITIDO_EN_ELECTRUM = [
   /^\/api\/electrum(\/|$)/,
   /^\/api\/health(\/|$)/,
-  /^\/api\/ultron\/(entrar|salir|sesion|biometric-login)(\/|$)/,
+  /^\/api\/ultron\/(entrar|salir|sesion|biometric-login|clave|cuentas)(\/|$)/,
   /^\/api\/cognitivo(\/|$)/,
 ];
 

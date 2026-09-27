@@ -18,14 +18,16 @@
  */
 import { useState, type FormEvent } from 'react';
 import { almacenamientoFragil, guardarLlave, guardarSesion, porQueNoAbre, puertaAbierta, type Donde } from './acceso';
+import { OlvideClave, SolicitarAcceso } from '../src/cuentas/Cuentas';
+import { TEMA_ELECTRUM } from './Cuenta';
 
 const ACENTO = '#FFAE3B';
 
-export function Entrar({ onAbierta }: { onAbierta: () => void }) {
+export function Entrar({ onAbierta, modoInicial = 'correo' }: { onAbierta: () => void; modoInicial?: 'correo' | 'olvide' | 'solicitar' }) {
   const [correo, setCorreo] = useState('');
   const [clave, setClave] = useState('');
   const [llave, setLlave] = useState('');
-  const [modo, setModo] = useState<'correo' | 'llave'>('correo');
+  const [modo, setModo] = useState<'correo' | 'llave' | 'olvide' | 'solicitar'>(modoInicial);
   const [yendo, setYendo] = useState(false);
   const [fallo, setFallo] = useState('');
   /** Si la credencial no pudo guardarse en disco, se entra igual pero se dice que no durará. */
@@ -115,7 +117,11 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
             </div>
           </div>
 
-          {modo === 'correo' ? (
+          {modo === 'olvide' ? (
+            <OlvideClave tema={TEMA_ELECTRUM} correoInicial={correo} onVolver={() => setModo('correo')} />
+          ) : modo === 'solicitar' ? (
+            <SolicitarAcceso tema={TEMA_ELECTRUM} producto="Dr Electrum FP" onVolver={() => setModo('correo')} />
+          ) : modo === 'correo' ? (
             <form onSubmit={entrarConCorreo} className="space-y-3">
               <input
                 className={campo}
@@ -145,6 +151,14 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
               >
                 {yendo ? 'Entrando…' : 'Entrar'}
               </button>
+              <div className="flex items-center justify-between pt-1 text-[12px]">
+                <button type="button" onClick={() => { setModo('olvide'); setFallo(''); }} className="text-[#8FA3B0] hover:text-[#E7EEF2] transition-colors cursor-pointer">
+                  ¿Olvidaste tu contraseña?
+                </button>
+                <button type="button" onClick={() => { setModo('solicitar'); setFallo(''); }} className="text-[#8FA3B0] hover:text-[#E7EEF2] transition-colors cursor-pointer">
+                  Solicitar acceso
+                </button>
+              </div>
             </form>
           ) : (
             <form onSubmit={entrarConLlave} className="space-y-3">
@@ -194,6 +208,7 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
             </div>
           )}
 
+          {(modo === 'correo' || modo === 'llave') && (
           <button
             type="button"
             onClick={() => {
@@ -204,6 +219,7 @@ export function Entrar({ onAbierta }: { onAbierta: () => void }) {
           >
             {modo === 'correo' ? 'Tengo una llave de demostración' : 'Entrar con mi correo'}
           </button>
+          )}
 
           <p className="mt-8 text-center text-[11px] leading-relaxed text-[#8FA3B0]">
             Dr Electrum FP es privado: catastro minero y expedientes de Honduras. Si tu correo está en

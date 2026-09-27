@@ -52,6 +52,37 @@ medardo | | | | ultron=lee electrum=lee
 
 También acepta un array JSON, si empieza por `[`.
 
+## Cuentas desde la web: pedir acceso, olvidé y cambiar la contraseña
+
+Las dos webs (AU-RA FP y Dr Electrum FP) tienen, en la pantalla de entrada, **«¿Olvidaste tu
+contraseña?»** y **«Solicitar acceso»**, y con la sesión abierta, **Cambiar contraseña** (en AU-RA,
+en el panel de acceso; en Dr Electrum, el botón **Cuenta** de la barra, con el mapa abierto).
+
+- **Pedir acceso.** La persona deja nombre, correo y para qué lo quiere. Al aprobador
+  (`CUENTAS_APROBADOR`, por defecto `j.ordonez@ordenglobal.org`) le llega un correo con el enlace
+  «Revisar la solicitud»; entra con su sesión y elige **Consulta, Trabajo o Mando**, o rechaza. La
+  persona recibe un enlace (72 h, un solo uso) para crear su contraseña. Nadie entra sin esa
+  aprobación, y solo el aprobador ve la lista (tener mando no alcanza).
+- **Olvidé.** Manda un enlace de 30 minutos y un solo uso, SOLO a un correo que esté exacto en el
+  padrón o en una cuenta aprobada. La respuesta es la misma exista o no el correo.
+- **Cambiar.** Pide la actual. Al cambiarla o recuperarla, las sesiones abiertas antes se cierran
+  (en este servicio al instante, en el otro en menos de un minuto) y llega un aviso por correo.
+
+Dónde vive: esquema `cuentas` en Postgres (`CUENTAS_DB_URL`, o la cognitiva, o la de Dr Electrum),
+compartido por los dos servicios para que la clave sea una sola. Las claves se guardan con scrypt;
+los enlaces, como huella SHA-256. **Quien se hace clave aquí entra con esa y solo con esa**; quien
+todavía no, sigue entrando con la del cerebro remoto (`ULTRON_REMOTE_URL`), que no se toca porque
+abre otras cosas de Orden Global.
+
+Los correos salen por Amazon SES desde `no-responder@ordenglobal.org` (`CORREO_REMITENTE`), con las
+llaves de AWS del servicio; el usuario IAM necesita `ses:SendEmail` para ese remitente. Los enlaces
+apuntan siempre a la dirección pública de cada plataforma (`CUENTAS_ORIGEN`, o `PUBLIC_BASE` en
+Dr Electrum), nunca a la que diga la petición.
+
+Una cuenta aprobada se suma al padrón sin pisar a nadie: si el correo ya era de alguien, solo gana
+las plataformas que no tenía. Y un correo de afuera no pasa por uno de la casa: `j.ordonez@gmail.com`
+no es José (el parecido por buzón vale solo entre dominios de Orden Global).
+
 ## Decir quién sos no es serlo
 
 La identificación trae **prueba**, y solo dos cuentan:

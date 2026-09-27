@@ -28,7 +28,9 @@ import type { PedidoPanel } from './panel/Panel';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
-import { hayCredencial, headersElectrum, porQueNoAbre, puertaAbierta, salir, type Puerta } from './acceso';
+import { guardarSesion, hayCredencial, headersElectrum, porQueNoAbre, puertaAbierta, salir, type Puerta } from './acceso';
+import { PonerClave, enlaceEnLaUrl, quitarEnlaceDeLaUrl, solicitudesPendientes, type EnlaceUrl } from '../src/cuentas/Cuentas';
+import { Cuenta, TEMA_ELECTRUM } from './Cuenta';
 import {
   ALTO_MAX,
   ALTO_MIN,
@@ -98,6 +100,35 @@ export default function App() {
   );
   /** El porqué exacto, cuando el problema NO es la credencial. */
   const [porque, setPorque] = useState('');
+  /**
+   * Lo que trae la dirección desde un correo (poner clave, activar la cuenta, revisar solicitudes).
+   * Se lee una vez y se borra de la barra enseguida: el enlace no se queda en el historial.
+   */
+  const [enlace, setEnlace] = useState<EnlaceUrl>(() => {
+    const e = enlaceEnLaUrl();
+    if (e) quitarEnlaceDeLaUrl();
+    return e;
+  });
+  const [modoEntrada, setModoEntrada] = useState<'correo' | 'olvide'>('correo');
+  /** Solicitudes de acceso esperando; null si esta sesión no es la de quien aprueba. */
+  const [pendientes, setPendientes] = useState<number | null>(null);
+  const [cuenta, setCuenta] = useState<null | 'clave' | 'solicitudes'>(null);
+  useEffect(() => {
+    if (puerta !== 'abierta') return setPendientes(null);
+    let vivo = true;
+    void solicitudesPendientes(headersElectrum()).then((n) => {
+      if (!vivo) return;
+      setPendientes(n);
+      if (n !== null && enlace?.tipo === 'solicitudes') {
+        setCuenta('solicitudes');
+        setEnlace(null);
+      }
+    });
+    return () => {
+      vivo = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [puerta]);
   useEffect(() => {
     if (puerta !== 'probando') return;
     let vivo = true;
@@ -293,6 +324,35 @@ export default function App() {
     })();
   }, [enTrabajo, puerta]);
 
+  if (enlace && enlace.tipo !== 'solicitudes') {
+    return (
+      <div className="fixed inset-0 bg-black text-[#E7EEF2] overflow-y-auto">
+        <div className="min-h-full flex flex-col items-center justify-center px-6 py-12">
+          <div className="w-full max-w-[340px]">
+            <div className="text-center mb-8 font-display font-bold tracking-[0.34em] text-lg" style={{ color: '#FFAE3B' }}>
+              DR ELECTRUM FP
+            </div>
+            <PonerClave
+              tema={TEMA_ELECTRUM}
+              tipo={enlace.tipo}
+              token={enlace.token}
+              onListo={(t) => {
+                guardarSesion(t);
+                setEnlace(null);
+                setPuerta('probando');
+              }}
+              onPedirOtro={() => {
+                setEnlace(null);
+                setModoEntrada('olvide');
+                setPuerta('cerrada');
+              }}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (puerta === 'probando') {
     return (
       <div className="fixed inset-0 bg-black flex items-center justify-center">
@@ -330,7 +390,7 @@ export default function App() {
       </div>
     );
   }
-  if (puerta === 'cerrada') return <Entrar onAbierta={() => setPuerta('abierta')} />;
+  if (puerta === 'cerrada') return <Entrar modoInicial={modoEntrada} onAbierta={() => setPuerta('abierta')} />;
 
   return (
     <div className="fixed inset-0 bg-black text-[#E7EEF2] overflow-hidden">
@@ -342,6 +402,8 @@ export default function App() {
         onEscenario={setEscenario}
         onMotor={setMotor}
         onFondo={setFondo}
+        onCuenta={() => setCuenta('clave')}
+        pendientes={pendientes}
         onSalir={() => {
           // El hilo también se va: en una computadora compartida, salir tiene que llevarse lo que
           // se habló, no solo la credencial.
@@ -576,6 +638,8 @@ export default function App() {
           {cara}
         </div>
       </div>
+
+      <Cuenta abierta={!!cuenta} inicio={cuenta || 'clave'} pendientes={pendientes} onPendientes={setPendientes} onCerrar={() => setCuenta(null)} />
 
       {/* Presentación, solo mientras la cara manda. */}
       <div

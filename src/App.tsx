@@ -23,6 +23,7 @@ import { hayWebGL } from './11-sala/webgl';
 import { tareaDeHerramientas, type Postura, type Tarea } from './11-sala/tareas';
 import type { PedidoTarea } from './11-sala/VistaSala';
 import './11-sala/tema.css';
+import { enlaceEnLaUrl, quitarEnlaceDeLaUrl, type EnlaceUrl } from './cuentas/Cuentas';
 
 // La sala trae three.js (medio mega): se baja aparte, sin frenar el arranque.
 const Sala = lazy(() => import('./11-sala/VistaSala'));
@@ -121,7 +122,13 @@ export default function App() {
       vivo = false;
     };
   }, []);
-  const [accesoOpen, setAccesoOpen] = useState(false);
+  /** Lo que trae la dirección desde un correo de cuentas; se lee una vez y se borra de la barra. */
+  const [enlaceCorreo] = useState<EnlaceUrl>(() => {
+    const e = enlaceEnLaUrl();
+    if (e) quitarEnlaceDeLaUrl();
+    return e;
+  });
+  const [accesoOpen, setAccesoOpen] = useState(() => !!enlaceCorreo);
   const [vaultOpen, setVaultOpen] = useState(false);
   const [photosOpen, setPhotosOpen] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -921,6 +928,7 @@ export default function App() {
 
         <AccesoModal
           isOpen={accesoOpen}
+          enlace={enlaceCorreo}
           usuario={usuario}
           soundFxEnabled={soundFxEnabled}
           onClose={() => setAccesoOpen(false)}
