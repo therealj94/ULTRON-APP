@@ -74,7 +74,11 @@ test('el entorno de una concesión, cruzado en PostGIS', { skip: HAY ? false : '
     capa('Zonas informales oro HN', [[{ NOMBRE: 'Guiriseros del Chiquito' }, punto(-86.56, 14.01)]]),
     capa('Yacimientos y ocurrencias mineras DEFOMIN', [[{ NOMBRE: 'Veta Vieja', MINERAL: 'Oro' }, punto(-86.59, 14.005)]]),
     // El catálogo general repite el punto de DEFOMIN: es el mismo yacimiento, no otro.
-    capa('Yacimientos y ocurrencias minera', [[{ NOMBRE: 'Veta Vieja', MINERAL: 'Oro' }, punto(-86.59, 14.005)]]),
+    // Dentro de la concesión también hay otra «Veta Vieja», a más de un kilómetro: esa sí es otra.
+    capa('Yacimientos y ocurrencias minera', [
+      [{ NOMBRE: 'Veta Vieja', MINERAL: 'Oro' }, punto(-86.59, 14.005)],
+      [{ NOMBRE: 'Veta Vieja', MINERAL: 'Plata' }, punto(-86.595, 14.017)],
+    ]),
   ];
   for (const c of capas) await guardarCapa(c, { comoConcesiones: false });
 
@@ -154,8 +158,9 @@ test('el entorno de una concesión, cruzado en PostGIS', { skip: HAY ? false : '
     if (x.zonasInformales.estado === 'ok') assert.ok(Math.abs(x.zonasInformales.lista[0].km - 2.16) < 0.1);
     if (x.ocurrencias.estado === 'ok') {
       assert.equal(x.ocurrencias.lista[0].dentro, true);
-      assert.equal(x.ocurrencias.lista[0].detalle, 'Oro');
-      assert.equal(x.ocurrencias.lista.length, 1, `el punto repetido en dos capas cuenta una vez: ${JSON.stringify(x.ocurrencias.lista)}`);
+      // Tres filas en las capas: el punto repetido cuenta una vez, la otra veta del mismo nombre, aparte.
+      assert.equal(x.ocurrencias.lista.length, 2, `el punto repetido en dos capas cuenta una vez: ${JSON.stringify(x.ocurrencias.lista)}`);
+      assert.deepEqual(x.ocurrencias.lista.map((o) => o.detalle).sort(), ['Oro', 'Plata']);
     } else assert.fail(`ocurrencias: ${x.ocurrencias.estado}`);
     assert.equal(x.traslapes.length, 1);
     assert.equal(x.traslapes[0].con, 'La Vecina');

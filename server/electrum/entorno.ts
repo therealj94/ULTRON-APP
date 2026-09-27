@@ -425,10 +425,11 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
 
 /** Zonas o puntos a menos de 5 km, marcando los que caen dentro. */
 async function puntosCerca(id: number, capas: number[], rol: RolCapa): Promise<Punto[]> {
-  const filas = await consulta<{ nombre: string | null; km: number; dentro: boolean; detalle: string | null }>(
+  const filas = await consulta<{ nombre: string | null; km: number; dentro: boolean; detalle: string | null; lugar: string }>(
     `WITH ${C(RADIO_LEJOS_M)}
      SELECT ${nombreDe(rol)} AS nombre, (ST_Distance(e.geom::geography, c.gg) / 1000.0)::float8 AS km,
-            ST_Intersects(e.geom, c.geom) AS dentro, ${DETALLE} AS detalle
+            ST_Intersects(e.geom, c.geom) AS dentro, ${DETALLE} AS detalle,
+            round(ST_X(ST_PointOnSurface(e.geom))::numeric, 4) || ',' || round(ST_Y(ST_PointOnSurface(e.geom))::numeric, 4) AS lugar
        FROM entidad_geo e, c
       WHERE e.capa_id = ANY($2) AND e.geom && c.caja
         AND ST_DWithin(e.geom::geography, c.gg, ${RADIO_LEJOS_M})
@@ -437,12 +438,14 @@ async function puntosCerca(id: number, capas: number[], rol: RolCapa): Promise<P
   );
   /*
    * El mismo punto en dos capas (los yacimientos de DEFOMIN y los del catálogo general repiten
-   * muchos) salía dos veces, y la alerta contaba 8 donde había 4. Mismo nombre a la misma distancia
-   * (±10 m) es el mismo punto.
+   * muchos) salía dos veces, y la alerta contaba 8 donde había 4. Mismo nombre en el mismo lugar
+   * (un punto sobre la geometría, a 4 decimales: unos 11 m) es el mismo punto. Por el lugar y no por
+   * la distancia al lindero: dentro de la concesión esa distancia es 0 para todos, y dos vetas con el
+   * mismo nombre a kilómetros una de otra se fundían en una (revisión de Codex en #39).
    */
   const vistos = new Set<string>();
   const unicos = filas.filter((f) => {
-    const clave = `${rolDeCapaNormal(f.nombre || '')}|${Math.round(f.km * 100)}`;
+    const clave = `${rolDeCapaNormal(f.nombre || '')}|${f.lugar}`;
     if (vistos.has(clave)) return false;
     vistos.add(clave);
     return true;
