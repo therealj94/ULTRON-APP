@@ -24,6 +24,8 @@ const VUELTAS_DEL_RIO: [number, number] = [-88.5501, 15.2132];
 
 export type Controles = {
   orden: (o: OrdenMapa) => void;
+  /** El 3D es de MapLibre: el recorrido lo pone antes de empezar, aunque estuvieran en Google. */
+  maplibre: () => void;
   tresD: (v: boolean) => void;
   tablero: (v: boolean) => void;
   tocar: (t: Tocado | null) => void;
@@ -86,10 +88,13 @@ export function Recorrido({ activo, onTerminar, controles }: { activo: boolean; 
           ).catch(() => null),
           json<{ capas: Array<{ id: number; nombre: string; rol: string }> }>('/api/electrum/mapa/capas').catch(() => ({ capas: [] })),
         ]);
-        const pasos = 5 + (fichaConflicto ? 1 : 0) + (aqui ? 1 : 0);
+        // Los pasos que de verdad se van a narrar: inicio, tablero y cierre siempre; el conflicto
+        // suma dos (3D y geología con ficha) y Vueltas del Río uno.
+        const pasos = 3 + (fichaConflicto?.encuadre && conflicto ? 2 : 0) + (aqui ? 1 : 0);
         setTotal(pasos);
 
         // 1. Honduras entera.
+        c.current.maplibre();
         c.current.tocar(null);
         c.current.tablero(false);
         c.current.tresD(false);

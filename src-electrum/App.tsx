@@ -192,7 +192,7 @@ export default function App() {
     }
   }, []);
   const controlesRecorrido = useMemo<Controles>(
-    () => ({ orden: setOrden, tresD: setTresD, tablero: setTableroAbierto, tocar: setTocado, capas: setExtras, cara: (f) => setFace(f) }),
+    () => ({ orden: setOrden, maplibre: () => setMotor('maplibre'), tresD: setTresD, tablero: setTableroAbierto, tocar: setTocado, capas: setExtras, cara: (f) => setFace(f) }),
     []
   );
   const pedirAlPanel = useCallback((p: Omit<PedidoPanel, 'n'>) => {

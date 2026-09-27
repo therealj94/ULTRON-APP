@@ -27,10 +27,16 @@ export type DatosTablero = {
 
 const nf = (x: number, d = 0) => x.toLocaleString('es-ES', { maximumFractionDigits: d });
 
-/** El tablero se pide una vez y se comparte (lo usa también el recorrido). */
+/**
+ * El tablero se comparte entre el panel y el recorrido, pero vence a los 5 minutos: con la pestaña
+ * abierta toda una tarde, reabrirlo tiene que traer las cifras de ahora (el servidor guarda 10).
+ */
 let enMemoria: Promise<DatosTablero> | null = null;
+let pedidoEn = 0;
+const VIGENCIA_MS = 5 * 60 * 1000;
 export function pedirTablero(): Promise<DatosTablero> {
-  if (!enMemoria) {
+  if (!enMemoria || Date.now() - pedidoEn > VIGENCIA_MS) {
+    pedidoEn = Date.now();
     enMemoria = fetch('/api/electrum/tablero', { headers: headersElectrum() })
       .then(async (r) => {
         const j = await r.json().catch(() => null);
