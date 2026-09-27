@@ -26,6 +26,7 @@ import { indexarPendientes } from './vectores';
 import crypto from 'node:crypto';
 import JSZip from 'jszip';
 import { extraerPdf } from '../../lib/leer-pdf';
+import { cuerpo, textoPorPaginas } from '../../lib/leer-pdf-pdfjs';
 import { consulta, guardarCapa, hayBase, recalcularTraslapes, traslapesDeCapa } from './db';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
@@ -296,9 +297,21 @@ async function leerDocumento(nombre: string, datos: Buffer): Promise<Leido> {
   // Por la extensión, no por un mime inventado: pasarle 'application/pdf' a esPdfNombre hacía
   // que TODO pareciera PDF, y un .txt terminaba rechazado como «escaneo sin texto».
   if (/\.pdf$/i.test(nombre)) {
-    const leido = extraerPdf(datos);
+    /*
+     * Primero pdf.js: trae las páginas reales (las citas salen con su número de verdad) y lee lo que
+     * el lector propio no entiende. El lector propio queda de respaldo, SIN tope de texto: con el tope
+     * de 8 000 caracteres que tiene para la conversación, todo informe de más de tres páginas se
+     * indexaba cortado (el SIR 2010-5090-I del USGS quedó en 8 000 de 330 000 caracteres).
+     */
+    const leido = extraerPdf(datos, { maxTexto: Infinity });
     texto = leido.texto || '';
     nPaginas = Math.max(1, Number((leido as any).paginas) || 1);
+    const pdfjs = await textoPorPaginas(datos);
+    const totalPdfjs = pdfjs ? pdfjs.paginas.reduce((n, p) => n + cuerpo(p), 0) : 0;
+    if (pdfjs && totalPdfjs >= 40 && totalPdfjs >= cuerpo(texto) * 0.8) {
+      texto = pdfjs.paginas.join('\f');
+      nPaginas = Math.max(1, pdfjs.total);
+    }
     if (!texto.trim()) {
       const ocr = await conOcr(nombre, datos);
       if (ocr) return ocr;

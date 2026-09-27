@@ -239,7 +239,13 @@ function imagenDeStream(dict: string, bytes: Buffer): Buffer | null {
   return null;
 }
 
-export function extraerPdf(input: Buffer): PdfLeido {
+/**
+ * `maxTexto`: el tope de 8 000 caracteres es para meter un PDF en una conversación. Para INDEXAR un
+ * expediente no puede haber tope —se cortaba todo informe de más de tres páginas y quedaba «leído»
+ * pero con el índice nada más—, así que aprender.ts pide `Infinity`.
+ */
+export function extraerPdf(input: Buffer, opciones: { maxTexto?: number } = {}): PdfLeido {
+  const maxTexto = opciones.maxTexto ?? MAX_TEXTO;
   const buf = input?.length ? input : Buffer.alloc(0);
   if (buf.length < 8) return { texto: '', imagenes: [], paginas: 0, bytes: buf.length, detalle: 'Archivo vacío. No leí nada.' };
   if (buf.length > MAX_BYTES) {
@@ -275,7 +281,7 @@ export function extraerPdf(input: Buffer): PdfLeido {
     const t = textoDeContenidoPdf(buf.toString('latin1'));
     if (t) textos.push(t);
   }
-  const texto = textos.join('\n').slice(0, MAX_TEXTO);
+  const texto = Number.isFinite(maxTexto) ? textos.join('\n').slice(0, maxTexto) : textos.join('\n');
   const detalle = texto
     ? `Leí ${texto.length} caracteres de texto` + (imagenes.length ? ` y ${imagenes.length} imagen(es) embebida(s).` : '.')
     : imagenes.length

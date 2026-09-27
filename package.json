@@ -35,7 +35,8 @@
     "react-dom": "^19.0.1",
     "shpjs": "^6.2.0",
     "three": "^0.186.1",
-    "undici": "^7.29.1"
+    "undici": "^7.29.1",
+    "unpdf": "^1.8.1"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.30.1",
