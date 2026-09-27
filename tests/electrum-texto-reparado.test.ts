@@ -33,6 +33,8 @@ test('repararTexto: las tildes que el padrón perdió como «?» vuelven, tal co
   assert.equal(repararTexto('Compa??a Minera R?o Lempa Concepci?n'), 'Compañía Minera Río Lempa Concepción');
   assert.equal(repararTexto('DISE?O Y CONSTRUCCI?N'), 'DISEÑO Y CONSTRUCCIÓN');
   assert.equal(repararTexto('Peque?a Miner?a Met?lica'), 'Pequeña Minería Metálica');
+  // Con los dos daños a la vez, se reparan los dos.
+  assert.equal(repararTexto('MontaÃ±a Rehabilitaci?n'), 'Montaña Rehabilitación');
 });
 
 test('repararTexto: un «?» que no es una tilde perdida queda igual', () => {

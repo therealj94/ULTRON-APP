@@ -310,7 +310,7 @@ const HUELLA_MOJIBAKE = /[ÃÂ][\u0080-¿]/;
 export function repararTexto(s: string): string {
   if (!HUELLA_MOJIBAKE.test(s) || /[^\u0000-ÿ]/.test(s)) return reponerTildes(s);
   const r = Buffer.from(s, 'latin1').toString('utf8');
-  return r.includes('�') ? reponerTildes(s) : r;
+  return reponerTildes(r.includes('�') ? s : r);
 }
 
 /**
