@@ -38,6 +38,24 @@ export type Tablero = {
   ms: number;
 };
 
+/**
+ * La clase que trae el padrón en su columna CLASIFICAC, legible. El .dbf del catastro perdió las
+ * tildes al exportarse —vienen como «?»: «Peque?a Min. No Met?lica»— y no hay byte que reparar,
+ * así que se reponen las palabras que usa el padrón. Null si no trae clase.
+ */
+export function normalizarClase(v: string | null | undefined): string | null {
+  const t = String(v || '').trim();
+  if (!t) return null;
+  const arreglado = t
+    .replace(/Peque\?a/gi, 'Pequeña')
+    .replace(/Miner\?a/gi, 'Minería')
+    .replace(/Met\?lica/gi, 'Metálica')
+    .replace(/Pr\?stamo/gi, 'Préstamo')
+    .replace(/\bMin\.\s/gi, 'Minería ')
+    .replace(/\s+/g, ' ');
+  return arreglado.replace(/(^|\s)(\S)/g, (_m, e, c) => e + c.toUpperCase()).replace(/\bDe\b/g, 'de');
+}
+
 /** La clase de una concesión por el nombre de la capa de la que vino. */
 export function claseDeCapa(nombre: string | null | undefined): string {
   const n = String(nombre || '')
@@ -93,9 +111,9 @@ async function calcular(): Promise<Tablero> {
     q<{ nombre: string | null; n: number; ha: number }>(
       `SELECT estado AS nombre, count(*)::int AS n, coalesce(sum(hectareas), 0)::float8 AS ha FROM concesion GROUP BY 1 ORDER BY 2 DESC`
     ),
-    q<{ capa: string | null; n: number; ha: number }>(
-      `SELECT c.nombre AS capa, count(*)::int AS n, coalesce(sum(k.hectareas), 0)::float8 AS ha
-         FROM concesion k LEFT JOIN capa c ON c.id = k.capa_id GROUP BY 1`
+    q<{ capa: string | null; clase: string | null; n: number; ha: number }>(
+      `SELECT c.nombre AS capa, k.atributos->>'clasificac' AS clase, count(*)::int AS n, coalesce(sum(k.hectareas), 0)::float8 AS ha
+         FROM concesion k LEFT JOIN capa c ON c.id = k.capa_id GROUP BY 1, 2`
     ),
     de('departamento').length
       ? q<{ nombre: string | null; n: number }>(
@@ -122,10 +140,10 @@ async function calcular(): Promise<Tablero> {
       : Promise.resolve(null),
   ]);
 
-  // Las capas del catastro traen la clase en el nombre; varias capas pueden dar la misma clase.
+  // La clase del padrón (CLASIFICAC) si la trae; si no, la que dice el nombre de la capa.
   const clases = new Map<string, { n: number; ha: number }>();
   for (const f of porClase) {
-    const c = claseDeCapa(f.capa);
+    const c = normalizarClase(f.clase) || claseDeCapa(f.capa);
     const a = clases.get(c) || { n: 0, ha: 0 };
     clases.set(c, { n: a.n + f.n, ha: a.ha + f.ha });
   }
@@ -173,6 +191,20 @@ export async function tablero(opts: { fresco?: boolean } = {}): Promise<Tablero>
       });
   }
   return enCurso;
+}
+
+/**
+ * El tablero listo antes de que alguien lo abra: se calcula al arrancar y se renueva antes de que
+ * venza. Con el catastro nacional el cálculo en frío tarda ~11 s, y en una demo el primer toque al
+ * tablero no puede quedarse en esqueletos.
+ */
+let mantenedor: NodeJS.Timeout | null = null;
+export function mantenerTableroCaliente(retrasoMs = 20_000) {
+  if (mantenedor || !hayBase()) return;
+  const calentar = () => void tablero({ fresco: true }).catch((e) => console.warn('[electrum] tablero en segundo plano:', String(e?.message || e).slice(0, 120)));
+  setTimeout(calentar, retrasoMs).unref?.();
+  mantenedor = setInterval(calentar, VIGENCIA_MS - 60_000);
+  mantenedor.unref?.();
 }
 
 /** Para las pruebas: que el siguiente pedido recalcule. */

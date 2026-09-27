@@ -71,7 +71,7 @@ import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
 import { catastroGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
 import { cargarGeologia } from './server/electrum/geologia-datos';
 import { capaParaMapa, capasVisibles, fichaParaMapa, queHayAqui, rasgoParaMapa } from './server/electrum/explorar';
-import { tablero } from './server/electrum/tablero';
+import { mantenerTableroCaliente, tablero } from './server/electrum/tablero';
 import { clasificarPendientes } from './server/electrum/documentos-laya';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
@@ -2466,6 +2466,8 @@ async function startServer() {
       `[${PLATAFORMA === 'electrum' ? 'Dr Electrum FP' : 'AU-RA FP'}] :${PORT} — sirviendo ${PAGINA_RAIZ}` +
         `${ES_ELECTRUM ? ' · API de AU-RA cerrada' : ''}`
     );
+    // El tablero nacional precalculado, para que la primera vez que alguien lo abre ya esté listo.
+    if (ES_ELECTRUM) mantenerTableroCaliente();
     // Cada plataforma registra SU bot. Los dos desde el mismo proceso era la costura más fácil de
     // olvidar: un despliegue de Dr Electrum se quedaba con el webhook del bot de la junta.
     if (ES_ULTRON) {

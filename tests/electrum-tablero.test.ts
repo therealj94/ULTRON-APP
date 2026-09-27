@@ -8,7 +8,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Feature, Geometry } from 'geojson';
 import { consulta, guardarCapa, hayBase, recalcularTraslapes } from '../server/electrum/db';
-import { claseDeCapa, olvidarTablero, tablero } from '../server/electrum/tablero';
+import { claseDeCapa, normalizarClase, olvidarTablero, tablero } from '../server/electrum/tablero';
+import { nombreParaDecir } from '../src-electrum/demo/Recorrido';
 import type { Capa } from '../server/electrum/gis';
 
 const caja = (o: number, s: number, e: number, n: number): Geometry => ({ type: 'Polygon', coordinates: [[[o, s], [e, s], [e, n], [o, n], [o, s]]] });
@@ -23,6 +24,19 @@ test('la clase sale del nombre de la capa', () => {
   assert.equal(claseDeCapa('CONCESIÓN NO METÁLICA EN SOLICITUD DE EXPLORAR'), 'No metálica');
   assert.equal(claseDeCapa('ARTESANAL METALICA DELIMITADA'), 'Minería artesanal');
   assert.equal(claseDeCapa(null), 'Sin clase en la capa');
+});
+
+test('la clase del padrón, con las tildes que perdió el .dbf', () => {
+  assert.equal(normalizarClase('Peque?a Min. No Met?lica'), 'Pequeña Minería No Metálica');
+  assert.equal(normalizarClase('Peque?a Miner?a Met?lica'), 'Pequeña Minería Metálica');
+  assert.equal(normalizarClase('Banco de Pr?stamo'), 'Banco de Préstamo');
+  assert.equal(normalizarClase('Artesanal No Metálica'), 'Artesanal No Metálica');
+  assert.equal(normalizarClase(''), null);
+});
+
+test('el nombre para decir en voz alta, sin notas del padrón', () => {
+  assert.equal(nombreParaDecir('El Mochito. (GRAVADO CON PRIMERA HIPOTECA)'), 'El Mochito');
+  assert.equal(nombreParaDecir('Macuelizo'), 'Macuelizo');
 });
 
 test('tablero nacional, contra PostGIS', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async () => {
