@@ -67,7 +67,7 @@ type Importacion = {
   actualizada: string;
   terminada: string | null;
   donde: string | null;
-  opciones?: { imagenes?: boolean } | null;
+  opciones?: { imagenes?: boolean; borrados?: boolean } | null;
 };
 
 const ESTADO: Record<Estado, { txt: string; color: string; ayuda: string }> = {
@@ -1068,6 +1068,7 @@ function Importar({ onCerrar, alCambio }: { onCerrar: () => void; alCambio: () =
   const [elegida, setElegida] = useState('');
   const [destino, setDestino] = useState('');
   const [imagenes, setImagenes] = useState(false);
+  const [borrados, setBorrados] = useState(false);
   const [yendo, setYendo] = useState(false);
   const [abierta, setAbierta] = useState<number | null>(null);
   const hechosAntes = useRef<Record<number, number>>({});
@@ -1104,7 +1105,7 @@ function Importar({ onCerrar, alCambio }: { onCerrar: () => void; alCambio: () =
   const empezar = async () => {
     setYendo(true);
     setError('');
-    const r = await pedir(`${R}/importar`, { method: 'POST', body: JSON.stringify({ prefijo: elegida, carpeta: destino || undefined, imagenes }) });
+    const r = await pedir(`${R}/importar`, { method: 'POST', body: JSON.stringify({ prefijo: elegida, carpeta: destino || undefined, imagenes, borrados }) });
     setYendo(false);
     if (!r.ok) return setError(r.j.error || 'No pude empezar.');
     setElegida('');
@@ -1153,6 +1154,12 @@ function Importar({ onCerrar, alCambio }: { onCerrar: () => void; alCambio: () =
               Leer también las imágenes (JPG, PNG) con el ojo. Es lento y casi siempre son páginas escaneadas que ya vienen en un PDF: dejalo apagado salvo que sean fotos de papeles sueltos.
             </span>
           </label>
+          <label className="flex items-start gap-2 text-[12.5px] text-[#C9D5DB]">
+            <input type="checkbox" checked={borrados} onChange={(e) => setBorrados(e.target.checked)} className="accent-[#FFAE3B] mt-0.5" />
+            <span>
+              Traer también lo que se borró en el panel. Apagado, lo borrado no vuelve solo al reimportar: queda en «omitidos» con el motivo.
+            </span>
+          </label>
           <div className="flex justify-end">
             <Boton onClick={() => void empezar()} disabled={yendo || hayViva}>
               {yendo ? 'preparando…' : hayViva ? 'Hay una en marcha' : 'Importar'}
@@ -1195,10 +1202,10 @@ function Importar({ onCerrar, alCambio }: { onCerrar: () => void; alCambio: () =
                       onClick={async () => {
                         if (x.estado === 'en_curso') await pedir(`${R}/importaciones/${x.id}/parar`, { method: 'POST', body: '{}' });
                         else {
-                          // Se retoma con las mismas opciones: si pedía leer imágenes, las sigue leyendo.
+                          // Se retoma con las mismas opciones: si pedía leer imágenes o traer lo borrado, lo sigue haciendo.
                           const r = await pedir(`${R}/importar`, {
                             method: 'POST',
-                            body: JSON.stringify({ prefijo: x.prefijo, carpeta: x.carpeta, imagenes: !!x.opciones?.imagenes }),
+                            body: JSON.stringify({ prefijo: x.prefijo, carpeta: x.carpeta, imagenes: !!x.opciones?.imagenes, borrados: !!x.opciones?.borrados }),
                           });
                           if (!r.ok) setError(r.j.error || 'No pude retomarla.');
                         }

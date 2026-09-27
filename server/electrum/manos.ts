@@ -19,6 +19,7 @@ import { areaHectareas, distanciaKm, encuadre, perimetroKm } from './gis';
 import {
   buscarConcesiones,
   buscarEnExpedientes,
+  leerSeguido,
   capaGeojson,
   cercaDe,
   concesionEnPunto,
@@ -429,7 +430,7 @@ const mapa_capa: Herramienta = {
 const expediente_buscar: Herramienta = {
   nombre: 'expediente_buscar',
   descripcion:
-    'Busca en los documentos subidos (informes, resoluciones, ensayos, planes de labores, fichas de ocurrencias, presentaciones, hojas de cálculo; también los informes geológicos de JICA, en inglés, y sus resúmenes en español) y devuelve el texto con su página. Usala antes de responder cualquier cosa que debería estar en un documento. Buscá en español: los términos técnicos se buscan también en inglés. Si la pregunta es sobre un documento o una carpeta concreta («JICA Fase III», «Minas de Oro 3», «INDEXSA», «Presentación 1», «FOM»), pasá `documento` con parte de su nombre o carpeta y en `texto` solo el tema: así busca DENTRO de ese documento y no se queda con la portada.',
+    'Busca en los documentos subidos (informes, resoluciones, ensayos, fichas de ocurrencias, presentaciones, hojas de cálculo, los informes de JICA en inglés y sus resúmenes) y devuelve trozos con su página. Usala antes de responder lo que debería estar en un documento. Buscá en español. Si es sobre un documento o carpeta concreta («JICA Fase III», «Minas de Oro 3», «INDEXSA», «FOM»), pasá `documento` con parte de su nombre y en `texto` solo el tema: busca DENTRO de ese documento.',
   esquema: {
     type: 'object',
     properties: {
@@ -454,18 +455,64 @@ const expediente_buscar: Herramienta = {
     }
     const cita = hits
       .slice(0, 3)
-      .map((h) => `${h.documento}${h.pagina ? `, página ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 220)}»`)
+      .map((h) => `${h.documento}${h.pagina ? `, página ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 450)}»`)
       .join(' | ');
     // Los informes de JICA y los 43-101 están en inglés: la persona lee español.
     const ingles = hits.slice(0, 3).some((h) => /\b(the|and|of|with|in the|grade|vein|drill|sample)\b/i.test(h.texto));
     return {
       ok: true,
-      texto: `${cita}. Citá el documento y la página al contestar.${ingles ? ' Hay fragmentos en inglés: traducilos al español al citarlos (cifras y unidades tal cual) y decí que el original está en inglés.' : ''}`,
+      texto: `${cita}. Citá el documento y la página al contestar. Son trozos cortos: si la respuesta está en esas páginas (un capítulo, unas conclusiones, una tabla), leelas enteras con expediente_leer antes de contestar.${ingles ? ' Hay fragmentos en inglés: traducilos al español al citarlos (cifras y unidades tal cual) y decí que el original está en inglés.' : ''}`,
       ui: { hits },
     };
   },
 };
 
+
+/**
+ * Leer seguido. La búsqueda trae trozos de unas líneas; para «qué concluye el capítulo 5» o «dame la
+ * tabla de leyes de El Peñón» hay que leer las páginas enteras. Antes Dr Electrum ubicaba el
+ * capítulo en el índice y ahí se quedaba: «no me salió completo en la búsqueda».
+ */
+const expediente_leer: Herramienta = {
+  nombre: 'expediente_leer',
+  descripcion:
+    'Lee seguido un documento desde una página (unas 6 por vez) y dice dónde sigue: para el capítulo, las conclusiones o la tabla que expediente_buscar o el índice ubicaron. Sin página, desde la 1.',
+  esquema: {
+    type: 'object',
+    properties: {
+      documento: { type: 'string', description: 'Parte del nombre o carpeta («Fase III»), o su número' },
+      pagina: { type: 'number', description: 'Desde qué página' },
+      paginas: { type: 'number', description: 'Opcional: cuántas (1 a 12)' },
+    },
+    required: ['documento'],
+  },
+  plataformas: ['electrum'],
+  async ejecutar({ documento, pagina, paginas }) {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    const ref = String(documento || '').trim();
+    if (!ref) return { ok: false, texto: 'Decime qué documento: parte de su nombre o su número.' };
+    const l = await leerSeguido(ref, Number(pagina) || 1, { paginas: Math.min(12, Number(paginas) || 6) });
+    if (!l.ok) return { ok: true, texto: `No hay ningún documento con texto que se llame o esté en una carpeta como «${ref}». Probá con expediente_listar para ver cómo se llama.` };
+    if (!l.texto) {
+      return {
+        ok: true,
+        texto: `«${l.documento}» no tiene texto desde la página ${l.desde}${l.ultima ? ` (llega hasta la ${l.ultima})` : ''}.${l.sigue ? ` Sigue en la página ${l.sigue}.` : ''}`,
+      };
+    }
+    const rango = l.hasta > l.desde ? `páginas ${l.desde} a ${l.hasta}` : `página ${l.desde}`;
+    const ingles = /\b(the|and|of|with|grade|vein|drill|sample)\b/i.test(l.texto.slice(0, 3000));
+    return {
+      ok: true,
+      texto:
+        `«${l.documento}», ${rango}${l.ultima ? ` de ${l.ultima}` : ''}:\n${l.texto}\n` +
+        (l.sigue ? `[Sigue en la página ${l.sigue}: leela con expediente_leer si hace falta.] ` : '[Fin del documento.] ') +
+        (l.otros.length ? `[Otros documentos que también casan: ${l.otros.slice(0, 4).join('; ')}.] ` : '') +
+        'Citá el documento y la página.' +
+        (ingles ? ' El original está en inglés: traducí al español (cifras y unidades tal cual) y decilo.' : ''),
+      ui: { documento: l.documento, desde: l.desde, hasta: l.hasta },
+    };
+  },
+};
 
 /**
  * Qué hay cargado. Sin filtro, el panorama por carpeta; con filtro, la lista de documentos y capas
@@ -651,6 +698,7 @@ export const MANOS: Record<string, Herramienta> = {
   mapa_capa,
   expediente_buscar,
   expediente_listar,
+  expediente_leer,
   documento_revisar,
   informe_pdf,
   // Estas dos no son de Electrum: viven en lib/manos/compartidas.ts porque AU-RA hace las mismas

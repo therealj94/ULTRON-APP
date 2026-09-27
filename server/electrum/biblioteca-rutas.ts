@@ -200,6 +200,7 @@ export function montarRutasBiblioteca(app: Express) {
         prefijo: String(req.body?.prefijo || ''),
         carpeta: req.body?.carpeta ? String(req.body.carpeta) : null,
         imagenes: req.body?.imagenes === true,
+        borrados: req.body?.borrados === true,
         por: quien(req),
       });
       return r.ok === false ? res.status(409).json({ error: r.error, honesto: true }) : res.json({ ...r, honesto: true });

@@ -40,6 +40,12 @@ Pestaña **Infraestructura** del panel de Dr Electrum. Muestra todo lo que el si
 
 Cada cambio queda en la **bitácora**: quién, qué y cuándo.
 
+## Cómo lo usa Dr Electrum
+
+- `expediente_listar`: qué hay cargado, por carpeta o por nombre, con su estado.
+- `expediente_buscar`: busca por tema. Con `documento`, busca solo dentro de ese informe o carpeta.
+- `expediente_leer`: lee seguido un documento desde una página, unas 6 por vez, y dice en qué página sigue. Sirve para un capítulo, unas conclusiones o una tabla que la búsqueda ubicó.
+
 ## Formatos que lee
 
 - **Documentos:**
@@ -74,6 +80,7 @@ Cómo trabaja la importación:
   - archivos de más de 64 MB;
   - imágenes, salvo que se pida leerlas.
 - **Escaneos sin texto:** quedan anotados como **sin texto**, con su original, para releerlos cuando pasen por OCR.
+- **Lo borrado no vuelve solo:** al eliminar una pieza, la bitácora guarda de qué original venía. Si después se reimporta la carpeta, ese archivo queda en «omitidos», con el motivo. Para traerlo de nuevo, marcar **«Traer también lo que se borró en el panel»** al importar.
 
 ## Lo que sube la pantalla también queda
 

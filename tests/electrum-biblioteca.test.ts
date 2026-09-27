@@ -468,3 +468,66 @@ test('expediente_listar: el panorama por carpeta, lo de una carpeta con su estad
     await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lis-%' OR id = $1`, [esc.id]);
   }
 });
+
+test('borrar en el panel anota el original, y una reimportación no lo vuelve a traer solo', { skip: sinBase }, async () => {
+  const { borradosEnPanel } = await import('../server/electrum/importar');
+  await bib.asegurarBiblioteca();
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-bor-%'`);
+  const clave = 's3://cubo/entrada/INDEXSA/prueba-bor-escaneo.pdf';
+  const [d] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, tipo, paginas, archivo) VALUES ('prueba-bor-escaneo.pdf', 'escaneo', 88, $1) RETURNING id`, [clave]);
+  const otra = 's3://cubo/entrada/INDEXSA/prueba-bor-sigue.pdf';
+  assert.equal((await borradosEnPanel([clave, otra])).size, 0, 'antes de borrar, nada');
+  const r = await bib.eliminar([{ clase: 'documento', id: d.id }], 'José');
+  assert.equal(r.eliminados, 1);
+  const [b] = await consulta<{ detalle: any }>(`SELECT detalle FROM biblioteca_bitacora WHERE accion = 'eliminar' AND objeto = $1 ORDER BY id DESC LIMIT 1`, [`documento ${d.id}`]);
+  assert.equal(b.detalle.archivo, clave, 'la bitácora guarda de dónde venía');
+  const borrados = await borradosEnPanel([clave, otra]);
+  assert.deepEqual([...borrados], [clave], 'lo borrado se reconoce; lo demás no');
+  await consulta(`DELETE FROM biblioteca_bitacora WHERE detalle->>'archivo' = $1`, [clave]);
+});
+
+test('expediente_leer: lee seguido desde una página, dice dónde sigue y elige el informe y no el mapa', { skip: sinBase }, async () => {
+  const { TODAS } = await import('../server/electrum/manos');
+  const { leerSeguido } = await import('../server/electrum/db');
+  const leer = TODAS.find((h) => h.nombre === 'expediente_leer')!;
+  assert.ok(leer, 'la mano existe y es de Electrum');
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lee-%'`);
+  // Diez páginas; la 3 es larga (varios trozos, con la cola repetida entre trozos para la búsqueda).
+  const pags = Array.from({ length: 10 }, (_, i) =>
+    i === 2
+      ? Array.from({ length: 12 }, (_, k) => `Párrafo ${k + 1} de las conclusiones: el sector Guasucarán muestra vetas epitermales con oro y plata en la zona ${k + 1}.`).join('\n\n')
+      : `Página ${i + 1}. ${i === 3 ? 'Capítulo 5, conclusiones del estudio geológico por sector.' : 'Texto corriente del informe de exploración minera.'}`
+  );
+  await aprender('prueba-lee-JICA Fase III (OCR).txt', Buffer.from(pags.join('\f')), { carpeta: 'Pruebas Leer/FASE3' });
+  await aprender('prueba-lee-mapa Fase III.txt', Buffer.from('Mapa de ubicación de la Fase III, una sola lámina con la leyenda del área de estudio.'), { carpeta: 'Pruebas Leer/Mapas' });
+  try {
+    const l = await leerSeguido('prueba-lee Fase III', 3, { paginas: 2 });
+    assert.ok(l.ok);
+    if (!l.ok) return;
+    assert.equal(l.documento, 'prueba-lee-JICA Fase III (OCR).txt', 'gana el de más texto');
+    assert.deepEqual([l.desde, l.hasta, l.sigue, l.ultima], [3, 4, 5, 10]);
+    assert.match(l.texto, /^\[p\. 3\]/);
+    assert.match(l.texto, /\[p\. 4\]\nPágina 4\. Capítulo 5/);
+    assert.doesNotMatch(l.texto, /Página 5\./);
+    for (let k = 1; k <= 12; k++) assert.equal(l.texto.split(`Párrafo ${k} de las`).length - 1, 1, `el párrafo ${k} sale una sola vez`);
+    assert.deepEqual(l.otros, ['prueba-lee-mapa Fase III.txt']);
+
+    // Con un tope chico corta y dice en qué página sigue.
+    const corta = await leerSeguido('prueba-lee Fase III', 3, { paginas: 4, tope: 1000 });
+    assert.ok(corta.ok && corta.sigue != null && corta.sigue <= 4 && corta.texto.length <= 1000);
+
+    const r = await leer.ejecutar({ documento: 'prueba-lee Fase III', pagina: 4, paginas: 1 }, {} as any);
+    assert.match(r.texto, /página 4 de 10/);
+    assert.match(r.texto, /Capítulo 5, conclusiones/);
+    assert.match(r.texto, /Sigue en la página 5/);
+    const fin = await leer.ejecutar({ documento: 'prueba-lee Fase III', pagina: 10 }, {} as any);
+    assert.match(fin.texto, /Fin del documento/);
+    const [d] = await consulta<{ id: number }>(`SELECT id FROM documento WHERE nombre = 'prueba-lee-mapa Fase III.txt'`);
+    const porId = await leer.ejecutar({ documento: `#${d.id}` }, {} as any);
+    assert.match(porId.texto, /Mapa de ubicación/);
+    const nada = await leer.ejecutar({ documento: 'no existe en ningún lado xyz' }, {} as any);
+    assert.match(nada.texto, /No hay ningún documento/);
+  } finally {
+    await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lee-%'`);
+  }
+});

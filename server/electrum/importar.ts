@@ -187,8 +187,10 @@ export async function iniciarImportacion(p: {
   prefijo: string;
   carpeta?: string | null;
   imagenes?: boolean;
+  /** Traer también lo que alguien borró en el panel. Sin esto, lo borrado no vuelve solo. */
+  borrados?: boolean;
   por?: string | null;
-}): Promise<{ ok: true; id: number; plan: Plan['resumen']; total: number; yaEstaban: number; donde: string } | { ok: false; error: string }> {
+}): Promise<{ ok: true; id: number; plan: Plan['resumen']; total: number; yaEstaban: number; borrados: number; donde: string } | { ok: false; error: string }> {
   if (!bucketExpedientes()) return { ok: false, error: 'Falta ELECTRUM_EXPEDIENTES_BUCKET en el servidor.' };
   await asegurarBiblioteca();
   const [viva] = await consulta<{ id: number }>(
@@ -199,27 +201,33 @@ export async function iniciarImportacion(p: {
   if (!prefijo.startsWith('entrada/') || prefijo.includes('..') || !prefijo.endsWith('/')) {
     return { ok: false, error: 'Solo se importan carpetas de «entrada/».' };
   }
-  const preparado = await preparar(prefijo, p.carpeta ?? null, !!p.imagenes);
+  const preparado = await preparar(prefijo, p.carpeta ?? null, !!p.imagenes, !!p.borrados);
   if ('error' in preparado) return { ok: false, error: preparado.error };
-  const { plan, pendientes, base } = preparado;
+  const { plan, pendientes, base, borrados } = preparado;
+  const yaEstaban = plan.unidades.length - pendientes.length - borrados.length;
+  const omitidos = [
+    ...plan.omitidos.map((o) => ({ key: o.key.slice(prefijo.length), r: 'omitido', d: o.motivo })),
+    ...borrados.map((u) => ({ key: u.key.slice(prefijo.length), r: 'omitido', d: BORRADO })),
+  ];
   const trabajo = puedeLanzarTrabajo();
   const [fila] = await consulta<{ id: number }>(
     `INSERT INTO importacion (prefijo, carpeta, total, omitidos, repetidos, hechos, por, detalle, donde, opciones)
-     VALUES ($1,$2,$3,$4,$5,$5,$6,$7,$8,$9) RETURNING id`,
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
     [
       prefijo,
       base,
       plan.unidades.length,
-      plan.omitidos.length,
+      omitidos.length,
+      yaEstaban,
       plan.unidades.length - pendientes.length,
       p.por || null,
-      JSON.stringify(plan.omitidos.slice(0, 1500).map((o) => ({ key: o.key.slice(prefijo.length), r: 'omitido', d: o.motivo }))),
+      JSON.stringify(omitidos.slice(0, 1500)),
       trabajo ? 'trabajo' : 'servidor',
-      JSON.stringify({ imagenes: !!p.imagenes }),
+      JSON.stringify({ imagenes: !!p.imagenes, borrados: !!p.borrados }),
     ]
   );
   const id = Number(fila.id);
-  await anotar(p.por, 'importar', `importación ${id}`, { prefijo, carpeta: base, total: plan.unidades.length, omitidos: plan.omitidos.length, ya: plan.unidades.length - pendientes.length });
+  await anotar(p.por, 'importar', `importación ${id}`, { prefijo, carpeta: base, total: plan.unidades.length, omitidos: omitidos.length, ya: yaEstaban, borrados: borrados.length });
   if (!pendientes.length) {
     await consulta(`UPDATE importacion SET estado = 'terminada', terminada = now() WHERE id = $1`, [id]);
   } else if (trabajo) {
@@ -236,11 +244,17 @@ export async function iniciarImportacion(p: {
       enProceso = null;
     });
   }
-  return { ok: true, id, plan: plan.resumen, total: plan.unidades.length, yaEstaban: plan.unidades.length - pendientes.length, donde: trabajo ? 'trabajo' : 'servidor' };
+  return { ok: true, id, plan: plan.resumen, total: plan.unidades.length, yaEstaban, borrados: borrados.length, donde: trabajo ? 'trabajo' : 'servidor' };
 }
 
-/** Lista el prefijo, arma el plan y quita lo que ya se importó (su original ya está anotado). */
-async function preparar(prefijo: string, carpeta: string | null, imagenes: boolean) {
+export const BORRADO = 'Se borró en el panel (está en la bitácora): no se vuelve a traer solo. Para traerlo, importá con «traer también lo borrado».';
+
+/**
+ * Lista el prefijo, arma el plan y quita lo que ya se importó (su original ya está anotado) y lo que
+ * alguien BORRÓ en el panel. Sin eso, cada reimportación revivía lo borrado: los 18 escaneos que
+ * tenían ya su versión con OCR volvieron como «sin texto» la primera vez que se reimportó.
+ */
+async function preparar(prefijo: string, carpeta: string | null, imagenes: boolean, traerBorrados = false) {
   const lista = await listarExpedientes(prefijo);
   if (!lista.ok) return { error: `No pude listar el cubo: ${lista.detalle}` };
   if (!lista.objetos.length) return { error: 'Esa carpeta está vacía.' };
@@ -256,7 +270,23 @@ async function preparar(prefijo: string, carpeta: string | null, imagenes: boole
       for (const x of r) ya.add(x.archivo);
     }
   }
-  return { plan, base, pendientes: plan.unidades.filter((u) => !ya.has(`s3://${bucket}/${u.key}`)) };
+  const faltan = plan.unidades.filter((u) => !ya.has(`s3://${bucket}/${u.key}`));
+  const borrado = traerBorrados ? new Set<string>() : await borradosEnPanel(faltan.map((u) => `s3://${bucket}/${u.key}`));
+  const esBorrado = (u: Unidad) => borrado.has(`s3://${bucket}/${u.key}`);
+  return { plan, base, pendientes: faltan.filter((u) => !esBorrado(u)), borrados: faltan.filter(esBorrado) };
+}
+
+/** De estos originales («s3://cubo/clave»), los que alguien borró en el panel: la bitácora lo sabe. */
+export async function borradosEnPanel(originales: string[]): Promise<Set<string>> {
+  const borrado = new Set<string>();
+  for (let i = 0; i < originales.length; i += 1000) {
+    const r = await consulta<{ archivo: string }>(
+      `SELECT DISTINCT detalle->>'archivo' AS archivo FROM biblioteca_bitacora WHERE accion = 'eliminar' AND detalle->>'archivo' = ANY($1::text[])`,
+      [originales.slice(i, i + 1000)]
+    );
+    for (const x of r) borrado.add(x.archivo);
+  }
+  return borrado;
 }
 
 export async function pararImportacion(id: number): Promise<boolean> {
@@ -277,7 +307,7 @@ export async function correrImportacion(id: number): Promise<string> {
   );
   if (!f) return 'no existe';
   if (f.estado !== 'en_curso') return f.estado;
-  const preparado = await preparar(f.prefijo, f.carpeta, !!f.opciones?.imagenes);
+  const preparado = await preparar(f.prefijo, f.carpeta, !!f.opciones?.imagenes, !!f.opciones?.borrados);
   if ('error' in preparado) {
     await consulta(`UPDATE importacion SET estado = 'fallida', terminada = now() WHERE id = $1`, [id]);
     return 'fallida';
