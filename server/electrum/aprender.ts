@@ -272,7 +272,7 @@ export function huellaDe(datos: Buffer): string {
 
 type Leido =
   | { ok: true; texto: string; paginas: Array<{ pagina: number; texto: string }>; trozos: ReturnType<typeof trocear>; avisos: Aviso[] }
-  | { ok: false; motivo: 'escaneo' | 'corto'; dicho: string; avisos: Aviso[] };
+  | { ok: false; motivo: 'escaneo' | 'corto'; dicho: string; avisos: Aviso[]; paginas?: number };
 
 /**
  * Lee un documento hasta dejarlo troceado, sin tocar la base.
@@ -384,14 +384,25 @@ async function leerDocumento(nombre: string, datos: Buffer): Promise<Leido> {
      * de 8 000 caracteres que tiene para la conversación, todo informe de más de tres páginas se
      * indexaba cortado (el SIR 2010-5090-I del USGS quedó en 8 000 de 330 000 caracteres).
      */
-    const leido = extraerPdf(datos, { maxTexto: Infinity });
-    texto = leido.texto || '';
-    nPaginas = Math.max(1, Number((leido as any).paginas) || 1);
+    /*
+     * Y si pdf.js abrió el PDF y no encontró NI UNA letra, es un escaneo: el lector propio no se
+     * corre. Con un escaneo de 57 páginas tardaba 82 s en decodificar las imágenes y terminaba
+     * leyendo el archivo entero como si fuera texto (1,3 millones de caracteres de basura); en la
+     * máquina de un trabajo de importación eran minutos por archivo, y una carpeta de estudios
+     * escaneados no terminaba nunca.
+     */
     const pdfjs = await textoPorPaginas(datos);
     const totalPdfjs = pdfjs ? pdfjs.paginas.reduce((n, p) => n + cuerpo(p), 0) : 0;
-    if (pdfjs && totalPdfjs >= 40 && totalPdfjs >= cuerpo(texto) * 0.8) {
-      texto = pdfjs.paginas.join('\f');
+    if (pdfjs && totalPdfjs === 0) {
       nPaginas = Math.max(1, pdfjs.total);
+    } else {
+      const leido = extraerPdf(datos, { maxTexto: Infinity });
+      texto = leido.texto || '';
+      nPaginas = Math.max(1, Number((leido as any).paginas) || 1);
+      if (pdfjs && totalPdfjs >= 40 && totalPdfjs >= cuerpo(texto) * 0.8) {
+        texto = pdfjs.paginas.join('\f');
+        nPaginas = Math.max(1, pdfjs.total);
+      }
     }
     if (!texto.trim()) {
       const ocr = await conOcr(nombre, datos);
@@ -401,6 +412,7 @@ async function leerDocumento(nombre: string, datos: Buffer): Promise<Leido> {
         motivo: 'escaneo',
         dicho: 'Ese PDF no trae texto: es un escaneo de imágenes. Para poder citarlo necesito una versión con texto, o pasarlo por reconocimiento óptico.',
         avisos: [{ nivel: 'error', texto: 'PDF sin capa de texto' }],
+        paginas: nPaginas,
       };
     }
   } else if (/\.docx$/i.test(nombre)) {
@@ -674,7 +686,7 @@ export async function aprender(
       const leido = await leerDocumento(nombre, datos);
       // `escaneo` va en la ui para quien importa una carpeta: lo deja anotado en el panel como
       // «sin texto», con su original, en vez de que desaparezca sin rastro.
-      if (leido.ok === false) return { clase: 'nada', dicho: leido.dicho, avisos: leido.avisos, ui: leido.motivo === 'escaneo' ? { escaneo: true } : undefined };
+      if (leido.ok === false) return { clase: 'nada', dicho: leido.dicho, avisos: leido.avisos, ui: leido.motivo === 'escaneo' ? { escaneo: true, paginas: leido.paginas ?? null } : undefined };
       paginas = leido.paginas;
       trozos = leido.trozos;
       avisos = leido.avisos;

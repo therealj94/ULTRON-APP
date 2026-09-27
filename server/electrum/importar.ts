@@ -320,7 +320,15 @@ async function correr(id: number, prefijo: string, unidades: Unidad[], por: stri
           });
           dicho = a.dicho;
           if (a.clase === 'nada' && (a.ui as any)?.escaneo) {
-            const id2 = await anotarSinTexto({ nombre: b.nombre, datos: b.datos, carpeta: u.carpeta, archivo: `s3://${bucket}/${u.key}`, por, motivo: a.dicho }).catch(() => null);
+            const id2 = await anotarSinTexto({
+              nombre: b.nombre,
+              datos: b.datos,
+              carpeta: u.carpeta,
+              archivo: `s3://${bucket}/${u.key}`,
+              por,
+              motivo: a.dicho,
+              paginas: (a.ui as any)?.paginas ?? null,
+            }).catch(() => null);
             r = 'fallo';
             if (id2) dicho = `Escaneo sin texto: quedó en el panel como «sin texto» para pasarlo por OCR y releerlo.`;
           } else if (a.clase === 'nada') r = 'fallo';

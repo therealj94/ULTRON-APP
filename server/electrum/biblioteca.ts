@@ -25,7 +25,6 @@
  */
 import { consulta, enTransaccion, hayBase } from './db';
 import { huellaDe, releerDocumento } from './aprender';
-import { extraerPdf } from '../../lib/leer-pdf';
 import { olvidarTablero } from './tablero';
 import { bajarExpediente, bucketExpedientes } from '../../lib/s3';
 
@@ -477,16 +476,18 @@ export async function releer(id: number, quien?: string | null) {
  * original, que el panel muestra como «sin texto». Así se sabe que existe y qué falta, y cuando
  * haya OCR se relee desde aquí. Dr Electrum no lo cita (no tiene texto), pero ya no se pierde.
  */
-export async function anotarSinTexto(p: { nombre: string; datos: Buffer; carpeta: string | null; archivo: string; por?: string | null; motivo: string }) {
+export async function anotarSinTexto(p: {
+  nombre: string;
+  datos: Buffer;
+  carpeta: string | null;
+  archivo: string;
+  por?: string | null;
+  motivo: string;
+  /** Las páginas que ya contó pdf.js: volver a abrir un escaneo grande para contarlas son minutos. */
+  paginas?: number | null;
+}) {
   await asegurarBiblioteca();
-  let paginas: number | null = null;
-  if (/\.pdf$/i.test(p.nombre)) {
-    try {
-      paginas = Math.max(1, Number((extraerPdf(p.datos, { maxTexto: 0 }) as any).paginas) || 0) || null;
-    } catch {
-      paginas = null;
-    }
-  }
+  const paginas = p.paginas && p.paginas > 0 ? Math.floor(p.paginas) : null;
   const r = await consulta<{ id: number }>(
     `INSERT INTO documento (nombre, tipo, paginas, subido_por, huella, carpeta, archivo, meta)
      VALUES ($1, 'escaneo', $2, $3, $4, $5, $6, $7)

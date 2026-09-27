@@ -323,6 +323,22 @@ test('panel: estados, carpetas, mover, renombrar, borrar y bitácora, con permis
   }
 });
 
+test('un PDF escaneado se reconoce en el acto (sin el lector propio) y trae sus páginas', { skip: sinBase }, async () => {
+  const fs = await import('node:fs');
+  const pdf = fs.readFileSync('tests/fixtures/escaneo-3-paginas.pdf');
+  await consulta(`DELETE FROM documento WHERE nombre = 'prueba-bib-escaneo-real.pdf'`);
+  const t0 = Date.now();
+  const r = await aprender('prueba-bib-escaneo-real.pdf', pdf);
+  assert.equal(r.clase, 'nada');
+  assert.equal((r.ui as any)?.escaneo, true);
+  assert.equal((r.ui as any)?.paginas, 3, 'las páginas las cuenta pdf.js');
+  assert.ok(Date.now() - t0 < 5000, `tardó ${Date.now() - t0} ms`);
+  const id = await bib.anotarSinTexto({ nombre: 'prueba-bib-escaneo-real.pdf', datos: pdf, carpeta: 'Escaneos', archivo: 's3://cubo/entrada/e.pdf', motivo: r.dicho, paginas: 3 });
+  const [d] = await consulta<{ paginas: number; tipo: string }>(`SELECT paginas, tipo FROM documento WHERE id = $1`, [id]);
+  assert.deepEqual(d, { paginas: 3, tipo: 'escaneo' });
+  await consulta(`DELETE FROM documento WHERE nombre = 'prueba-bib-escaneo-real.pdf'`);
+});
+
 test('aprender: .rtf, .pptx y .xlsx entran como documentos con su carpeta y su original', { skip: sinBase }, async () => {
   await bib.asegurarBiblioteca();
   await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-bib-of-%'`);
