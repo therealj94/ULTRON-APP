@@ -4,7 +4,7 @@
  */
 export const SECRETOS_PUBLICOS = {
   mesa: import.meta.env?.VITE_MESA_URL || 'https://ultron-looi-desk.onrender.com',
-  qwenUrl: import.meta.env?.VITE_QWEN_URL || 'https://34.207.148.69:8443',
+  qwenUrl: import.meta.env?.VITE_QWEN_URL || 'https://34.201.236.251:8443',
 } as const;
 
 export function envServidor(nombre: string, fallback = ''): string {

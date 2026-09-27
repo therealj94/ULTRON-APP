@@ -150,6 +150,6 @@ sudo docker run -d --name embed --restart unless-stopped --gpus all -p 172.31.23
 
 Apagarla (`stop`, no `terminate`, el disco se conserva). Quitar `ULTRON_TTS_URL`/`CHATTERBOX_URL` de Render para que `/api/health` no la sondee.
 
-## Qwen (g5.xlarge, `34.207.148.69`)
+## Qwen (g5.xlarge, `34.201.236.251`, IP elástica)
 
 Responde en 0,4 s el calentado y 2,8–6,4 s un turno completo con harness. No necesita nada por ahora. Lo que sí necesita el sistema alrededor: la clave AWS de Render (memoria S3) estaba borrada en IAM; ver `docs/ENTREGA-4.0.md` § Pendientes.

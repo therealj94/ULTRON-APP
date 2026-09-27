@@ -511,9 +511,9 @@ se abrió el puerto con cuatro candados:
    ese usuario, solo la red de salida de Render Oregon (las dos IPs vistas: `74.220.48.161` y `.179`).
 2. **Security group**: `5432` solo desde `74.220.48.0/24` (`sgr-03db89e3f278f7a21`).
 3. **Certificado verificable**: `/etc/postgresql/16/main/tls/server.crt`, autofirmado para
-   `DNS:34-207-148-69.sslip.io` y las dos IPs, hasta 2036. El mismo certificado (público) está en
+   `DNS:34-201-236-251.sslip.io` (y el nombre y la IP anteriores, `34-207-148-69`), hasta 2036. El mismo certificado (público) está en
    Render como archivo secreto `electrum-db-ca.pem`.
-4. **La URL verifica todo**: `…@34-207-148-69.sslip.io:5432/electrum?sslmode=verify-full&sslrootcert=/etc/secrets/electrum-db-ca.pem`.
+4. **La URL verifica todo**: `…@34-201-236-251.sslip.io:5432/electrum?sslmode=verify-full&sslrootcert=/etc/secrets/electrum-db-ca.pem`.
 
 Dos fallos que obligaron a esto, y que conviene no redescubrir:
 
@@ -523,9 +523,7 @@ Dos fallos que obligaron a esto, y que conviene no redescubrir:
 - Con una **IP** como host, `pg` no manda el nombre del servidor y Node compara el certificado contra
   `localhost`. Por eso el host es el nombre `sslip.io`, no la IP.
 
-La IP pública del nodo del cerebro **no es elástica**: si el nodo se para y arranca, cambian la URL,
-el certificado y `ULTRON_NODO_URL`. La cuenta tiene el cupo de IPs elásticas lleno (10 de 10); hay
-que liberar una o pedir más cupo antes de fijarla.
+Desde el 27-09-2026 el nodo del cerebro tiene **IP elástica `34.201.236.251`** (`eipalloc-04828a381c61ef964`): sobrevive a paradas y reinicios. El cambio fue: certificado nuevo con los dos nombres, archivo secreto en Render, asociar la IP, `ULTRON_NODO_URL`/`QWEN_ENDPOINT_URL` en los dos servicios y `ELECTRUM_DB_URL` en `ultron-looi-desk`, redesplegar. Unos dos minutos de corte.
 
 ### Las leyes que se cargaron después — 27-09-2026
 
