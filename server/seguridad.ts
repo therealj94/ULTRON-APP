@@ -14,6 +14,8 @@ export type Sesion = {
   nombre: string;
   rol: string;
   at: number;
+  /** Cuándo vence (ms). Las de un código temporal vencen con el código, no a los 14 días. */
+  exp?: number;
 };
 
 const sesiones = new Map<string, Sesion>();
@@ -87,22 +89,25 @@ function leerSesionFirmada(token: string): Sesion | null {
     nombre: String(p.nombre),
     rol: String(p.rol || 'Junta'),
     at: Number(p.at) || Date.now(),
+    exp: Number(p.exp) || undefined,
   };
 }
 
-export function emitirSesion(user: { correo: string; nombre: string; rol: string }): Sesion {
+export function emitirSesion(user: { correo: string; nombre: string; rol: string }, opciones: { vence?: number } = {}): Sesion {
   const at = Date.now();
+  // Nunca más de 14 días; una sesión de código temporal vence justo con el código.
+  const exp = Math.min(at + SESION_TTL_MS, opciones.vence ?? Infinity);
   const token = firmarSesion({
     correo: user.correo,
     nombre: user.nombre,
     rol: user.rol,
     at,
-    exp: at + SESION_TTL_MS,
+    exp,
     // Dos entradas del mismo miembro en el mismo milisegundo (teléfono y web a la vez) daban el mismo
     // token, y cerrar la de un aparato cerraba la del otro.
     n: crypto.randomBytes(9).toString('base64url'),
   });
-  const s: Sesion = { token, correo: user.correo, nombre: user.nombre, rol: user.rol, at };
+  const s: Sesion = { token, correo: user.correo, nombre: user.nombre, rol: user.rol, at, exp };
   sesiones.set(token, s);
   return s;
 }
@@ -238,7 +243,7 @@ export function sesionDe(req: Request): Sesion | null {
   }
   const cached = sesiones.get(t);
   if (cached) {
-    if (Date.now() - cached.at > SESION_TTL_MS || anteriorALaClave(cached)) {
+    if (Date.now() - cached.at > SESION_TTL_MS || (cached.exp && Date.now() > cached.exp) || anteriorALaClave(cached)) {
       sesiones.delete(t);
       return null;
     }

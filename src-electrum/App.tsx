@@ -29,7 +29,7 @@ import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
 import { Entrar } from './Entrar';
 import { guardarSesion, hayCredencial, headersElectrum, porQueNoAbre, puertaAbierta, salir, type Puerta } from './acceso';
-import { PonerClave, enlaceEnLaUrl, quitarEnlaceDeLaUrl, solicitudesPendientes, type EnlaceUrl } from '../src/cuentas/Cuentas';
+import { PonerClave, enlaceEnLaUrl, faltaPara, quitarEnlaceDeLaUrl, solicitudesPendientes, type EnlaceUrl } from '../src/cuentas/Cuentas';
 import { Cuenta, TEMA_ELECTRUM } from './Cuenta';
 import {
   ALTO_MAX,
@@ -113,6 +113,42 @@ export default function App() {
   /** Solicitudes de acceso esperando; null si esta sesión no es la de quien aprueba. */
   const [pendientes, setPendientes] = useState<number | null>(null);
   const [cuenta, setCuenta] = useState<null | 'clave' | 'solicitudes'>(null);
+  /**
+   * Acceso temporal (código): cuándo vence. La pantalla cuenta hacia atrás y, al llegar, cierra la
+   * sesión y vuelve a la entrada con el aviso. El servidor ya lo rechaza desde ese segundo; esto es
+   * para que la persona lo vea en vez de encontrarse errores.
+   */
+  const [vence, setVence] = useState<string | null>(null);
+  const [avisoEntrada, setAvisoEntrada] = useState('');
+  const [, setTic] = useState(0);
+  useEffect(() => {
+    if (puerta !== 'abierta') return setVence(null);
+    let vivo = true;
+    fetch('/api/ultron/sesion', { headers: headersElectrum() })
+      .then((r) => r.json())
+      .then((j) => vivo && setVence(j?.user?.vence || null))
+      .catch(() => {});
+    return () => {
+      vivo = false;
+    };
+  }, [puerta]);
+  useEffect(() => {
+    if (!vence) return;
+    const fin = new Date(vence).getTime();
+    const cerrar = () => {
+      salir();
+      setVence(null);
+      setAvisoEntrada('Tu acceso temporal terminó. Para seguir, pedí un código nuevo o solicitá una cuenta.');
+      setPuerta('cerrada');
+    };
+    if (fin <= Date.now()) return cerrar();
+    const t = setTimeout(cerrar, Math.min(fin - Date.now(), 2_147_000_000));
+    const tic = setInterval(() => setTic((n) => n + 1), 30_000);
+    return () => {
+      clearTimeout(t);
+      clearInterval(tic);
+    };
+  }, [vence]);
   useEffect(() => {
     if (puerta !== 'abierta') return setPendientes(null);
     let vivo = true;
@@ -390,7 +426,7 @@ export default function App() {
       </div>
     );
   }
-  if (puerta === 'cerrada') return <Entrar modoInicial={modoEntrada} onAbierta={() => setPuerta('abierta')} />;
+  if (puerta === 'cerrada') return <Entrar modoInicial={modoEntrada} aviso={avisoEntrada} onAbierta={() => { setAvisoEntrada(''); setPuerta('abierta'); }} />;
 
   return (
     <div className="fixed inset-0 bg-black text-[#E7EEF2] overflow-hidden">
@@ -638,6 +674,12 @@ export default function App() {
           {cara}
         </div>
       </div>
+
+      {vence && (
+        <div className="pointer-events-none absolute left-1/2 top-[52px] z-[45] -translate-x-1/2 rounded-full border border-[#FFAE3B]/40 bg-black/70 px-3 py-1 font-mono text-[11px] tracking-[0.1em] text-[#FFD08A] backdrop-blur" role="status">
+          ACCESO TEMPORAL · VENCE EN {faltaPara(vence).toUpperCase()}
+        </div>
+      )}
 
       <Cuenta abierta={!!cuenta} inicio={cuenta || 'clave'} pendientes={pendientes} onPendientes={setPendientes} onCerrar={() => setCuenta(null)} />
 

@@ -18,12 +18,12 @@
  */
 import { useState, type FormEvent } from 'react';
 import { almacenamientoFragil, guardarLlave, guardarSesion, porQueNoAbre, puertaAbierta, type Donde } from './acceso';
-import { OlvideClave, SolicitarAcceso } from '../src/cuentas/Cuentas';
+import { OlvideClave, SolicitarAcceso, entrarConCodigo, pareceCodigo } from '../src/cuentas/Cuentas';
 import { TEMA_ELECTRUM } from './Cuenta';
 
 const ACENTO = '#FFAE3B';
 
-export function Entrar({ onAbierta, modoInicial = 'correo' }: { onAbierta: () => void; modoInicial?: 'correo' | 'olvide' | 'solicitar' }) {
+export function Entrar({ onAbierta, modoInicial = 'correo', aviso = '' }: { onAbierta: () => void; modoInicial?: 'correo' | 'olvide' | 'solicitar'; aviso?: string }) {
   const [correo, setCorreo] = useState('');
   const [clave, setClave] = useState('');
   const [llave, setLlave] = useState('');
@@ -89,6 +89,20 @@ export function Entrar({ onAbierta, modoInicial = 'correo' }: { onAbierta: () =>
      * en memoria y se avisa.
      */
     try {
+      // Un código temporal (DE-XXXX-XXXX-XXXX) abre una sesión que vence sola; lo demás es la llave
+      // de demostración de siempre.
+      if (pareceCodigo(llave)) {
+        const r = await entrarConCodigo(llave.trim());
+        if (r.ok === false) {
+          setFallo(r.error);
+          return;
+        }
+        avisarSiEsFragil(guardarSesion(r.token));
+        const p = await puertaAbierta();
+        if (p.estado === 'abierta') onAbierta();
+        else setFallo(porQueNoAbre(p, 'sesion'));
+        return;
+      }
       avisarSiEsFragil(guardarLlave(llave.trim()));
       const p = await puertaAbierta();
       if (p.estado === 'abierta') onAbierta();
@@ -117,6 +131,11 @@ export function Entrar({ onAbierta, modoInicial = 'correo' }: { onAbierta: () =>
             </div>
           </div>
 
+          {aviso && (
+            <div className="mb-4 rounded-lg border px-3 py-2.5 text-[13px] leading-relaxed" style={{ borderColor: 'rgba(255,174,59,0.3)', background: 'rgba(255,174,59,0.07)', color: '#FFD08A' }} role="status">
+              {aviso}
+            </div>
+          )}
           {modo === 'olvide' ? (
             <OlvideClave tema={TEMA_ELECTRUM} correoInicial={correo} onVolver={() => setModo('correo')} />
           ) : modo === 'solicitar' ? (
@@ -165,9 +184,9 @@ export function Entrar({ onAbierta, modoInicial = 'correo' }: { onAbierta: () =>
               <input
                 className={campo}
                 type="password"
-                aria-label="Llave de demostración"
+                aria-label="Código de acceso"
                 autoComplete="off"
-                placeholder="llave de demostración"
+                placeholder="código de acceso (DE-XXXX-XXXX-XXXX)"
                 value={llave}
                 onChange={(e) => setLlave(e.target.value)}
                 disabled={yendo}
@@ -178,7 +197,7 @@ export function Entrar({ onAbierta, modoInicial = 'correo' }: { onAbierta: () =>
                 className="w-full rounded-lg py-2.5 text-[15px] font-semibold text-black transition-opacity disabled:opacity-35"
                 style={{ background: ACENTO }}
               >
-                {yendo ? 'Probando…' : 'Entrar con la llave'}
+                {yendo ? 'Probando…' : 'Entrar con el código'}
               </button>
             </form>
           )}
@@ -217,13 +236,13 @@ export function Entrar({ onAbierta, modoInicial = 'correo' }: { onAbierta: () =>
             }}
             className="mt-6 w-full text-center text-[12px] text-[#8FA3B0] hover:text-[#E7EEF2] transition-colors"
           >
-            {modo === 'correo' ? 'Tengo una llave de demostración' : 'Entrar con mi correo'}
+            {modo === 'correo' ? 'Tengo un código de acceso' : 'Entrar con mi correo'}
           </button>
           )}
 
           <p className="mt-8 text-center text-[11px] leading-relaxed text-[#8FA3B0]">
             Dr Electrum FP es privado: catastro minero y expedientes de Honduras. Si tu correo está en
-            el padrón, entrás con él; si venís a ver la demostración, pedí el enlace con llave.
+            el padrón, entrás con él; si venís a ver la demostración, pedí un código de acceso.
           </p>
         </div>
       </div>

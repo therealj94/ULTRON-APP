@@ -278,3 +278,76 @@ test('pedir acceso → José aprueba con nivel → la persona crea su clave y en
     await cuentas._cerrarCuentas();
   }
 });
+
+test('códigos temporales: únicos, 1/5/24 h, abren Dr Electrum y al vencer o revocarse sacan a quien los usa', { skip: sinBase ? 'sin base' : false }, async () => {
+  const { srv, pedir } = await levantar('electrum');
+  const aura = await levantar('ultron');
+  try {
+    const pg = new (await import('pg')).Pool({ connectionString: cuentas.urlCuentas() });
+    await pg.query('TRUNCATE cuentas.codigo RESTART IDENTITY');
+    reiniciarPadron();
+    const jose = emitirSesion({ correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' });
+    const medardo = emitirSesion({ correo: 'm.ordonez@ordenglobal.org', nombre: 'Medardo', rol: 'Junta' });
+
+    assert.equal(cuentas.normalizarCodigo('de 7kq4 m9xp-2hrt'), 'DE-7KQ4-M9XP-2HRT');
+    assert.equal(cuentas.normalizarCodigo('DE-7KQ4-M9XP-2HR0'), null, 'el 0 no está en el alfabeto');
+    assert.equal((await pedir('/api/ultron/codigos', { horas: 1 }, medardo.token)).status, 403, 'solo el aprobador');
+    assert.equal((await pedir('/api/ultron/codigos', { horas: 2 }, jose.token)).status, 400, 'solo 1, 5 o 24');
+    assert.equal((await aura.pedir('/api/ultron/codigos', { horas: 1 }, jose.token)).status, 404, 'en AU-RA no hay códigos');
+
+    // Nunca el mismo: 30 seguidos, todos distintos.
+    const hechos = new Set<string>();
+    for (let i = 0; i < 30; i++) hechos.add((await cuentas.crearCodigo({ horas: 1, plataforma: 'electrum', nivel: 'lee', para: '', por: 'prueba' })).codigo);
+    assert.equal(hechos.size, 30);
+
+    const c = await pedir('/api/ultron/codigos', { horas: 5, para: 'Ing. Prueba', nivel: 'mando' }, jose.token);
+    assert.equal(c.status, 200, JSON.stringify(c.json));
+    assert.match(c.json.codigo, /^DE-[A-Z2-9]{4}-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    assert.equal(c.json.nivel, 'lee', 'mando no se da por código: queda en consulta');
+    const horas = (new Date(c.json.vence).getTime() - Date.now()) / 3600_000;
+    assert.ok(horas > 4.9 && horas <= 5, `vence en ${horas} h`);
+    // En la base no está el código: solo su huella y los últimos 4.
+    const { rows } = await pg.query(`SELECT * FROM cuentas.codigo WHERE id = $1`, [c.json.id]);
+    assert.ok(!JSON.stringify(rows[0]).includes(c.json.codigo));
+    assert.equal(rows[0].pista, c.json.codigo.slice(-4));
+
+    // Entrar: sesión que vence con el código, y acceso de consulta a Dr Electrum.
+    assert.equal((await pedir('/api/ultron/entrar-codigo', { codigo: 'DE-AAAA-BBBB-CCCC' })).status, 401);
+    const e = await pedir('/api/ultron/entrar-codigo', { codigo: c.json.codigo.toLowerCase().replace(/-/g, ' ') });
+    assert.equal(e.status, 200, JSON.stringify(e.json));
+    const s = sesionDe(reqCon(e.json.token));
+    assert.ok(s);
+    assert.ok(Math.abs((s!.exp || 0) - new Date(c.json.vence).getTime()) < 2000, 'la sesión vence con el código');
+    assert.equal(nivelDe(identificar({ correo: s!.correo }), 'electrum'), 'lee');
+    assert.equal(nivelDe(identificar({ correo: s!.correo }), 'ultron'), null);
+
+    // Revocar: fuera al instante, y el código ya no abre.
+    assert.equal((await pedir(`/api/ultron/codigos/${c.json.id}/revocar`, {}, jose.token)).status, 200);
+    assert.equal(sesionDe(reqCon(e.json.token)), null, 'la sesión abierta con el código quedó cortada');
+    assert.equal(nivelDe(identificar({ correo: s!.correo }), 'electrum'), null, 'y salió del padrón');
+    assert.equal((await pedir('/api/ultron/entrar-codigo', { codigo: c.json.codigo })).status, 401);
+
+    // Vencer: igual que revocar, aunque nadie toque nada.
+    const v = await pedir('/api/ultron/codigos', { horas: 1 }, jose.token);
+    const ev = await pedir('/api/ultron/entrar-codigo', { codigo: v.json.codigo });
+    assert.ok(sesionDe(reqCon(ev.json.token)));
+    await pg.query(`UPDATE cuentas.codigo SET vence = now() - interval '1 second' WHERE id = $1`, [v.json.id]);
+    await cuentas.recargarCuentas();
+    assert.equal(sesionDe(reqCon(ev.json.token)), null, 'vencido: fuera');
+    assert.equal((await pedir('/api/ultron/entrar-codigo', { codigo: v.json.codigo })).status, 401);
+
+    // Y la sesión vence sola a su hora aunque no se recargue nada.
+    const corta = emitirSesion({ correo: 'x@temporal.drelectrum', nombre: 'X', rol: 'r' }, { vence: Date.now() + 150 });
+    assert.ok(sesionDe(reqCon(corta.token)));
+    await new Promise((r) => setTimeout(r, 250));
+    assert.equal(sesionDe(reqCon(corta.token)), null);
+
+    const lista = await pedir('/api/ultron/codigos', undefined, jose.token);
+    assert.ok(lista.json.codigos.some((k: any) => k.id === c.json.id && k.estado === 'revocado'));
+    assert.ok(lista.json.codigos.every((k: any) => !('codigo' in k) && !('huella' in k)), 'la lista no trae códigos ni huellas');
+    await pg.end();
+  } finally {
+    srv.close();
+    aura.srv.close();
+  }
+});

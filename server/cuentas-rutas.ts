@@ -19,8 +19,14 @@ import type { Express, Request, Response } from 'express';
 import { enviarCorreo, correoValido } from '../lib/correo-ses';
 import { identificar, personaPorCorreoExacto, puedeEntrar, type Nivel, type Plataforma } from '../lib/acceso';
 import { anotarExitoEntrada, anotarFalloEntrada, emitirSesion, esperaEntrada, exigirSesion, limitar, sesionDe } from './seguridad';
+import { correoDeCodigo } from './cuentas';
 import {
+  HORAS_CODIGO,
   NIVELES,
+  crearCodigo,
+  entrarConCodigo,
+  listarCodigos,
+  revocarCodigo,
   crearEnlace,
   crearSolicitud,
   cuentaDe,
@@ -254,6 +260,58 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
       return res.status(500).json({ ok: false, error: 'No pude guardar la solicitud. Probá en un momento.' });
     }
     return res.json({ ok: true, message: RESPUESTA_SOLICITUD });
+  });
+
+  /* ---------------------------------------------------------------- códigos temporales */
+  // Solo en Dr Electrum: en AU-RA cualquier sesión abre la mesa de la junta, y un invitado no
+  // tiene nada que hacer ahí.
+  const conCodigos = d.plataforma === 'electrum';
+
+  app.get('/api/ultron/codigos', limitar(60), async (req, res) => {
+    if (!cuentasDisponibles()) return sinBase(res);
+    if (!conCodigos) return res.status(404).json({ ok: false, error: 'Los códigos temporales son de Dr Electrum.' });
+    if (!esAprobador(req)) return res.status(403).json({ ok: false, error: 'Los códigos los maneja solo el aprobador de cuentas.', code: 'no_aprobador' });
+    return res.json({ ok: true, codigos: await listarCodigos(d.plataforma), horas: HORAS_CODIGO });
+  });
+
+  app.post('/api/ultron/codigos', limitar(20), async (req, res) => {
+    if (!cuentasDisponibles()) return sinBase(res);
+    if (!conCodigos) return res.status(404).json({ ok: false, error: 'Los códigos temporales son de Dr Electrum.' });
+    const por = esAprobador(req);
+    if (!por) return res.status(403).json({ ok: false, error: 'Los códigos los crea solo el aprobador de cuentas.', code: 'no_aprobador' });
+    const horas = Number(req.body?.horas);
+    if (!HORAS_CODIGO.includes(horas as any)) return res.status(400).json({ ok: false, error: 'Elegí 1, 5 o 24 horas.' });
+    const nivel: Nivel = req.body?.nivel === 'escribe' ? 'escribe' : 'lee';
+    const para = String(req.body?.para || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    const c = await crearCodigo({ horas, plataforma: d.plataforma, nivel, para, por });
+    return res.json({ ok: true, ...c, message: `Código creado. Vence en ${horas} ${horas === 1 ? 'hora' : 'horas'}. Copialo ahora: no se vuelve a mostrar.` });
+  });
+
+  app.post('/api/ultron/codigos/:id/revocar', limitar(30), async (req, res) => {
+    if (!cuentasDisponibles()) return sinBase(res);
+    if (!conCodigos) return res.status(404).json({ ok: false, error: 'Los códigos temporales son de Dr Electrum.' });
+    if (!esAprobador(req)) return res.status(403).json({ ok: false, error: 'Solo el aprobador puede revocar códigos.', code: 'no_aprobador' });
+    const ok = await revocarCodigo(Number(req.params.id), d.plataforma);
+    if (!ok) return res.status(409).json({ ok: false, error: 'Ese código ya estaba vencido o revocado.' });
+    return res.json({ ok: true, message: 'Código revocado: quien lo usaba quedó fuera.' });
+  });
+
+  app.post('/api/ultron/entrar-codigo', limitar(10, 15 * 60_000, 'entrar-codigo'), async (req, res) => {
+    if (!cuentasDisponibles()) return sinBase(res);
+    if (!conCodigos) return res.status(404).json({ ok: false, error: 'Los códigos temporales son de Dr Electrum.' });
+    const ip = String(req.ip || req.socket.remoteAddress || 'x');
+    // El freno por cuenta se usa con la IP como «cuenta»: probar códigos al azar se frena igual.
+    const espera = esperaEntrada(`codigo:${ip}`, ip);
+    if (espera > 0) return res.status(429).json({ ok: false, error: 'Demasiados intentos. Probá de nuevo en unos minutos.', code: 'demasiados_intentos' });
+    const c = await entrarConCodigo(String(req.body?.codigo || ''), d.plataforma);
+    if (!c) {
+      anotarFalloEntrada(`codigo:${ip}`, ip);
+      return res.status(401).json({ ok: false, error: 'Ese código no existe, venció o fue revocado.', code: 'codigo_invalido' });
+    }
+    const nombre = c.para || 'Invitado';
+    const rol = 'Acceso temporal · Dr Electrum FP';
+    const s = emitirSesion({ correo: correoDeCodigo(c.id), nombre, rol }, { vence: new Date(c.vence).getTime() });
+    return res.json({ ok: true, token: s.token, miembro: { nombre, correo: correoDeCodigo(c.id), rol }, vence: c.vence, message: `Bienvenido a Dr Electrum FP, ${nombre}. Tu acceso vence el ${new Date(c.vence).toLocaleString('es-HN', { timeZone: 'America/Tegucigalpa' })}.` });
   });
 
   /* ---------------------------------------------------------------- aprobar */

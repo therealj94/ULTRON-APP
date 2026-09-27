@@ -1202,7 +1202,9 @@ app.post('/api/ultron/biometric-login', limitar(12), async (req, res) => {
 app.get('/api/ultron/sesion', async (req, res) => {
   const s = sesionDe(req);
   if (s) {
-    return res.json({ authenticated: true, user: { nombre: s.nombre, correo: s.correo, rol: s.rol }, remoteUrl: ULTRON_REMOTE_URL, honesto: true });
+    // `vence` va solo cuando la sesión es de un código temporal: la pantalla cuenta hacia atrás y se cierra sola.
+    const vence = s.exp && s.exp - s.at < 7 * 24 * 3600_000 ? new Date(s.exp).toISOString() : null;
+    return res.json({ authenticated: true, user: { nombre: s.nombre, correo: s.correo, rol: s.rol, vence }, remoteUrl: ULTRON_REMOTE_URL, honesto: true });
   }
   res.json({ authenticated: false, user: null, remoteUrl: ULTRON_REMOTE_URL, honesto: true });
 });
