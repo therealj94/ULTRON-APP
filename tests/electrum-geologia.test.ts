@@ -141,6 +141,13 @@ test('los pedidos de geología convocan al geólogo, y el geólogo tiene las her
   }
 });
 
+test('geomática, que es a quien se convoca por «mapa», también dibuja los mapas geológicos', async () => {
+  const { ESPECIALISTAS } = await import('../server/electrum/especialistas');
+  const geomatica = ESPECIALISTAS.find((e) => e.id === 'geomatica')!;
+  assert.ok(geomatica.herramientas.includes('mapa_geologico'));
+  assert.ok(geomatica.herramientas.includes('geologia_zona'));
+});
+
 /* ------------------------------------------------------------------ con PostGIS */
 
 test('geología contra PostGIS, con el paquete real', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async (t) => {
