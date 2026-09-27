@@ -29,6 +29,7 @@ import {
   consulta,
   contarPorVencer,
   porVencer,
+  vencenEnAnio,
   resumenTraslapes,
   traslapes,
   distinguir,
@@ -87,15 +88,33 @@ const catastro_buscar: Herramienta = {
   },
 };
 
+/** Días desde hoy (en Honduras) hasta el 31 de diciembre de este año o del que viene. */
+export function diasHastaFinDe(periodo: 'este_anio' | 'proximo_anio', ahora = new Date()): number {
+  const hoy = new Date(ahora.toLocaleString('en-US', { timeZone: 'America/Tegucigalpa' }));
+  const anio = hoy.getFullYear() + (periodo === 'proximo_anio' ? 1 : 0);
+  const fin = new Date(anio, 11, 31);
+  return Math.max(0, Math.round((fin.getTime() - new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).getTime()) / 86_400_000));
+}
+
 const catastro_vencimientos: Herramienta = {
   nombre: 'catastro_vencimientos',
-  descripcion: 'Lista las concesiones que vencen dentro de los próximos N días, de la más urgente a la menos. Para «qué se me vence» o revisiones de cartera.',
-  esquema: { type: 'object', properties: { dias: { type: 'integer', description: 'Ventana en días', default: 365 } } },
+  descripcion:
+    'Lista las concesiones que vencen, de la más urgente a la menos. Para «qué se me vence», «qué vence este año» o revisiones de cartera. Para «este año» pasá {"periodo":"este_anio"} y para «el año que viene» {"periodo":"proximo_anio"}: no calcules días a mano. Sin ventana, llamala sin argumentos (365 días); no preguntes.',
+  esquema: {
+    type: 'object',
+    properties: {
+      periodo: { type: 'string', enum: ['este_anio', 'proximo_anio'], description: 'Año calendario de Honduras' },
+      dias: { type: 'integer', description: 'Ventana en días, si la dieron en días', default: 365 },
+    },
+  },
   plataformas: ['electrum'],
-  async ejecutar({ dias }) {
+  async ejecutar({ dias, periodo }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
-    const ventana = Number(dias) || 365;
-    const filas = await porVencer(ventana, 25);
+    const anual = periodo === 'este_anio' || periodo === 'proximo_anio' ? (periodo as 'este_anio' | 'proximo_anio') : null;
+    const ventana = anual ? diasHastaFinDe(anual) : Number(dias) || 365;
+    const delAnio = anual ? await vencenEnAnio(anual, 25) : null;
+    const filas = delAnio ? delAnio.filas : await porVencer(ventana, 25);
+    const cuando = anual === 'este_anio' ? 'de aquí al 31 de diciembre' : anual === 'proximo_anio' ? 'el año que viene' : `en los próximos ${ventana} días`;
     if (!filas.length) {
       // Distinguir «no vence ninguna» de «no hay fechas cargadas»: son respuestas opuestas y la
       // vacía las confundía. El catastro nacional de Honduras no trae ni una fecha.
@@ -109,15 +128,15 @@ const catastro_vencimientos: Herramienta = {
           ui: { filas: [], sinFechas: true },
         };
       }
-      return { ok: true, texto: `Ninguna concesión vence en los próximos ${ventana} días.`, ui: { filas: [] } };
+      return { ok: true, texto: `Ninguna concesión vence ${cuando}.`, ui: { filas: [] } };
     }
     const lista = filas.slice(0, 6).map((f) => `${f.nombre} ${cuandoVence(Number(f.dias))} (${f.vence})`);
     // Igual que con los traslapes: la lista son las 25 más urgentes, la cifra es el total.
-    const total = await contarPorVencer(ventana);
+    const total = delAnio ? delAnio.total : await contarPorVencer(ventana);
     const vencidas = await contarPorVencer(-1); // hasta ayer: ya vencidas
     return {
       ok: true,
-      texto: `${total} por vencer: ${lista.join('; ')}${total > lista.length ? ', y más' : ''}.${vencidas ? ` ${vencidas} ${vencidas === 1 ? 'ya está vencida' : 'ya están vencidas'}.` : ''}`,
+      texto: `${anual ? `${total} vencen ${cuando}` : `${total} por vencer`}: ${lista.join('; ')}${total > lista.length ? ', y más' : ''}.${vencidas ? ` ${vencidas} ${vencidas === 1 ? 'ya está vencida' : 'ya están vencidas'}.` : ''}`,
       ui: { filas },
     };
   },

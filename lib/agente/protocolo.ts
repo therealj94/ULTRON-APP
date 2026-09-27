@@ -52,12 +52,83 @@ export function instruccionHermes(hs: Herramienta[]): string {
 
 /* ------------------------------------------------------------------ desde el modelo */
 
+/**
+ * JSON COMO LO ESCRIBE UN MODELO.
+ *
+ * Visto en producción (27-09): «¿qué concesiones vencen este año?» → el modelo pidió
+ * `catastro_vencimientos` con los días calculados a mano (`"dias": 365 - 270`), el JSON no se pudo
+ * leer, se le rechazó la llamada y terminó preguntándole a José cuántos días. Los errores son
+ * siempre los mismos: comentarios, comas de más, comillas simples, claves sin comillas, una cuenta
+ * en lugar de un número, bloques de código alrededor. Se reparan esos, y nada más: lo que siga
+ * roto se sigue rechazando con su motivo.
+ */
+/**
+ * Suma, resta, multiplica y divide números, con precedencia. Nada más: no evalúa código. Si la
+ * cuenta no da un número finito (división por cero, algo que no se entiende), lanza: mejor
+ * rechazar la llamada con su motivo que pasarle a la herramienta un cero inventado.
+ */
+function cuenta(expr: string): number {
+  // Números sin signo y operadores aparte: «365-270» es una resta, no 365 seguido de −270.
+  const fichas = expr.replace(/\s+/g, '').match(/\d+(?:\.\d+)?|[-+*/]/g) || [];
+  let i = 0;
+  const numero = (): number => {
+    let signo = 1;
+    while (fichas[i] === '-' || fichas[i] === '+') signo *= fichas[i++] === '-' ? -1 : 1;
+    const n = Number(fichas[i++]);
+    if (!Number.isFinite(n)) throw new Error('cuenta ilegible');
+    return signo * n;
+  };
+  const terminos: number[] = [];
+  const signos: string[] = [];
+  let actual = numero();
+  while (i < fichas.length) {
+    const op = fichas[i++];
+    const n = numero();
+    if (op === '*') actual *= n;
+    else if (op === '/') actual /= n;
+    else {
+      terminos.push(actual);
+      signos.push(op);
+      actual = n;
+    }
+  }
+  terminos.push(actual);
+  const v = terminos.reduce((acc, t, k) => (k === 0 ? t : signos[k - 1] === '-' ? acc - t : acc + t), 0);
+  if (!Number.isFinite(v)) throw new Error('la cuenta no da un número');
+  return v;
+}
+
+export function jsonTolerante(texto: string): any {
+  const crudo = String(texto ?? '').trim();
+  try {
+    return JSON.parse(crudo);
+  } catch {
+    /* se intenta reparar */
+  }
+  let t = crudo
+    .replace(/^```(?:json)?\s*|\s*```$/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:"'\\])\/\/[^\n]*/g, '$1')
+    .replace(/'([^'"\\]*)'/g, '"$1"')
+    .replace(/([{,]\s*)([A-Za-z_][\w-]*)\s*:/g, '$1"$2":')
+    .replace(/:\s*(-?\d+(?:\.\d+)?(?:\s*[-+*/]\s*-?\d+(?:\.\d+)?)+)(?=\s*[,}\]])/g, (_m, expr: string) => {
+      return `: ${Math.round(cuenta(expr) * 1000) / 1000}`;
+    })
+    .replace(/,\s*([}\]])/g, '$1')
+    .trim();
+  // Llaves de más o de menos al final, lo típico de un corte.
+  const abiertas = (t.match(/{/g) || []).length - (t.match(/}/g) || []).length;
+  if (abiertas > 0) t += '}'.repeat(abiertas);
+  else if (abiertas < 0) t = t.replace(new RegExp(`}{${-abiertas}}\\s*$`), '');
+  return JSON.parse(t);
+}
+
 /** Acepta argumentos como objeto o como cadena JSON, que es como los manda cada servidor. */
 function comoObjeto(x: unknown): Record<string, unknown> {
   if (x && typeof x === 'object' && !Array.isArray(x)) return x as Record<string, unknown>;
   if (typeof x === 'string') {
     try {
-      const j = JSON.parse(x);
+      const j = jsonTolerante(x);
       return j && typeof j === 'object' ? j : {};
     } catch {
       return {};
@@ -90,7 +161,7 @@ export function deHermes(texto: string): Llamada[] {
     const cuerpo = m[1]?.trim();
     if (!cuerpo) continue;
     try {
-      const j = JSON.parse(cuerpo);
+      const j = jsonTolerante(cuerpo);
       const nombre = String(j?.name || j?.tool || '').trim();
       if (nombre) salida.push({ nombre, argumentos: comoObjeto(j?.arguments ?? j?.parameters ?? j?.args), via: 'hermes' });
     } catch {
@@ -149,7 +220,7 @@ export function pedidosRechazados(mensaje: any, texto: string, herramientas: Her
       continue;
     }
     try {
-      const j = JSON.parse(cuerpo);
+      const j = jsonTolerante(cuerpo);
       const nombre = String(j?.name || j?.tool || '').trim();
       if (!nombre) motivos.push('una llamada sin nombre de herramienta');
       else if (!nombres.has(nombre)) motivos.push(`«${nombre}» no es una de tus herramientas`);
