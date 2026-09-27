@@ -563,6 +563,27 @@ export async function porVencer(dias = 365, limite = 50): Promise<Array<FilaConc
   );
 }
 
+/**
+ * Las que vencen DENTRO de un año calendario de Honduras: «este año» es de hoy al 31 de diciembre
+ * (lo ya vencido se cuenta aparte) y «el año que viene» es del 1 de enero al 31 de diciembre. Con
+ * solo un tope de días, «el año que viene» traía primero todo lo anterior y, con el límite de la
+ * lista, podía no enseñar ni una del año pedido (revisión de Codex en #45).
+ */
+export function rangoDeAnio(periodo: 'este_anio' | 'proximo_anio'): string {
+  return periodo === 'este_anio'
+    ? `vence >= ${HOY_HN} AND vence <= make_date(extract(year FROM ${HOY_HN})::int, 12, 31)`
+    : `vence >= make_date(extract(year FROM ${HOY_HN})::int + 1, 1, 1) AND vence <= make_date(extract(year FROM ${HOY_HN})::int + 1, 12, 31)`;
+}
+
+export async function vencenEnAnio(periodo: 'este_anio' | 'proximo_anio', limite = 50): Promise<{ filas: Array<FilaConcesion & { dias: number }>; total: number }> {
+  const donde = `vence IS NOT NULL AND ${rangoDeAnio(periodo)}`;
+  const [filas, [c]] = await Promise.all([
+    consulta<FilaConcesion & { dias: number }>(`SELECT ${CAMPOS_SELECT}, (vence - ${HOY_HN}) AS dias FROM concesion WHERE ${donde} ORDER BY vence ASC LIMIT $1`, [limite]),
+    consulta<{ n: number }>(`SELECT count(*)::int AS n FROM concesion WHERE ${donde}`),
+  ]);
+  return { filas, total: Number(c?.n || 0) };
+}
+
 /** Cuántas vencen dentro de la ventana, sin límite: la cifra que se afirma, no el largo de la lista. */
 export async function contarPorVencer(dias = 365): Promise<number> {
   const [r] = await consulta<{ n: number }>(

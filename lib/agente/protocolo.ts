@@ -62,18 +62,30 @@ export function instruccionHermes(hs: Herramienta[]): string {
  * en lugar de un número, bloques de código alrededor. Se reparan esos, y nada más: lo que siga
  * roto se sigue rechazando con su motivo.
  */
-/** Suma, resta, multiplica y divide números, con precedencia. Nada más: no evalúa código. */
+/**
+ * Suma, resta, multiplica y divide números, con precedencia. Nada más: no evalúa código. Si la
+ * cuenta no da un número finito (división por cero, algo que no se entiende), lanza: mejor
+ * rechazar la llamada con su motivo que pasarle a la herramienta un cero inventado.
+ */
 function cuenta(expr: string): number {
-  const fichas = expr.match(/-?\d+(?:\.\d+)?|[-+*/]/g) || [];
-  // Primero * y /, después + y -.
+  // Números sin signo y operadores aparte: «365-270» es una resta, no 365 seguido de −270.
+  const fichas = expr.replace(/\s+/g, '').match(/\d+(?:\.\d+)?|[-+*/]/g) || [];
+  let i = 0;
+  const numero = (): number => {
+    let signo = 1;
+    while (fichas[i] === '-' || fichas[i] === '+') signo *= fichas[i++] === '-' ? -1 : 1;
+    const n = Number(fichas[i++]);
+    if (!Number.isFinite(n)) throw new Error('cuenta ilegible');
+    return signo * n;
+  };
   const terminos: number[] = [];
   const signos: string[] = [];
-  let actual = Number(fichas[0]);
-  for (let i = 1; i < fichas.length; i += 2) {
-    const op = fichas[i];
-    const n = Number(fichas[i + 1]);
+  let actual = numero();
+  while (i < fichas.length) {
+    const op = fichas[i++];
+    const n = numero();
     if (op === '*') actual *= n;
-    else if (op === '/') actual = n ? actual / n : NaN;
+    else if (op === '/') actual /= n;
     else {
       terminos.push(actual);
       signos.push(op);
@@ -81,7 +93,9 @@ function cuenta(expr: string): number {
     }
   }
   terminos.push(actual);
-  return terminos.reduce((acc, t, i) => (i === 0 ? t : signos[i - 1] === '-' ? acc - t : acc + t), 0);
+  const v = terminos.reduce((acc, t, k) => (k === 0 ? t : signos[k - 1] === '-' ? acc - t : acc + t), 0);
+  if (!Number.isFinite(v)) throw new Error('la cuenta no da un número');
+  return v;
 }
 
 export function jsonTolerante(texto: string): any {
@@ -98,8 +112,7 @@ export function jsonTolerante(texto: string): any {
     .replace(/'([^'"\\]*)'/g, '"$1"')
     .replace(/([{,]\s*)([A-Za-z_][\w-]*)\s*:/g, '$1"$2":')
     .replace(/:\s*(-?\d+(?:\.\d+)?(?:\s*[-+*/]\s*-?\d+(?:\.\d+)?)+)(?=\s*[,}\]])/g, (_m, expr: string) => {
-      const v = cuenta(expr);
-      return `: ${Number.isFinite(v) ? Math.round(v * 1000) / 1000 : 0}`;
+      return `: ${Math.round(cuenta(expr) * 1000) / 1000}`;
     })
     .replace(/,\s*([}\]])/g, '$1')
     .trim();

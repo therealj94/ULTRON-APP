@@ -11,6 +11,11 @@ import { diasHastaFinDe } from '../server/electrum/manos';
 test('repara los errores típicos y nada más', () => {
   assert.deepEqual(jsonTolerante('{"dias": 365 - 270}'), { dias: 95 });
   assert.deepEqual(jsonTolerante('{"a": 2 + 3 * 4, "b": 10 / 4}'), { a: 14, b: 2.5 });
+  // Sin espacios también es una resta (revisión de Codex en #45), y el signo al principio vale.
+  assert.deepEqual(jsonTolerante('{"dias":365-270}'), { dias: 95 });
+  assert.deepEqual(jsonTolerante('{"x": -5 + 10}'), { x: 5 });
+  // Una cuenta que no da número no se convierte en 0: la llamada se rechaza.
+  assert.throws(() => jsonTolerante('{"dias": 10 / 0}'));
   assert.deepEqual(jsonTolerante("{name: 'x', arguments: {dias: 95, // hasta fin de año\n}}"), { name: 'x', arguments: { dias: 95 } });
   assert.deepEqual(jsonTolerante('```json\n{"a":1,}\n```'), { a: 1 });
   assert.deepEqual(jsonTolerante('{"a":{"b":1}'), { a: { b: 1 } });
