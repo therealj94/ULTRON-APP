@@ -19,7 +19,7 @@
  * más preciso, y el pie lo recuerda.
  */
 import type { Geometry, Position } from 'geojson';
-import { conTextoReparado, consulta as consultaBase, hayBase, type RolCapa } from './db';
+import { conTextoReparado, consultaConTope, hayBase, type RolCapa } from './db';
 import { capasPorRol, nombreDe } from './entorno';
 import { claseDeRoca, resolverZona, roseta, rumboTexto, type ClaseRoca, type Geologia, type Zona } from './geologia';
 import { paisesRegion } from './geologia-datos';
@@ -28,7 +28,12 @@ import {
   renglones, rotulo, trazado, transformador, vacia, type Caja,
 } from './plano';
 
-const consulta = <T = any>(sql: string, params: unknown[] = []) => consultaBase<T>(sql, params).then(conTextoReparado);
+/**
+ * Con tope en la BASE (10 s por consulta): el `msMaximo` de la herramienta solo deja de esperar, y
+ * una consulta lenta seguiría ocupando su conexión; tres mapas a la vez agotaban el pool (revisión
+ * de Codex en #41).
+ */
+const consulta = <T = any>(sql: string, params: unknown[] = []) => consultaConTope<T>(sql, params, 10_000).then(conTextoReparado);
 
 export type TipoMapaGeo = 'litologico' | 'estructural' | 'geotectonico';
 export const TIPOS_MAPA_GEO: TipoMapaGeo[] = ['litologico', 'estructural', 'geotectonico'];
@@ -578,7 +583,8 @@ export async function datosMapaGeologico(tipo: TipoMapaGeo, z: Zona, opts: { pie
        FROM (SELECT ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON($1), 4326), 32616) u) t`,
     [G]
   );
-  const aire = Math.max(radioKm * 1000 * 0.6, 0.35 * Math.max(c.x2 - c.x1, c.y2 - c.y1));
+  // Un punto ya es el círculo del radio pedido: basta un margen alrededor. Lo demás, con su entorno.
+  const aire = zona.tipo === 'punto' ? 0.25 * Math.max(c.x2 - c.x1, c.y2 - c.y1) : Math.max(radioKm * 1000 * 0.6, 0.35 * Math.max(c.x2 - c.x1, c.y2 - c.y1));
   let w = c.x2 - c.x1 + 2 * aire;
   let h = c.y2 - c.y1 + 2 * aire;
   if (w / h < MARCO.w / MARCO.h) w = (h * MARCO.w) / MARCO.h;

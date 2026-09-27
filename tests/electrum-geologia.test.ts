@@ -184,6 +184,24 @@ test('geología contra PostGIS, con el paquete real', { skip: hayBase() ? false 
       assert.match(texto, /Fuentes: /);
     });
 
+    await t.test('un punto con radio es ESE círculo: no se le suma otro entorno encima', async () => {
+      const g5 = await geologiaDe({ lon: -87.35, lat: 14.78, radioKm: 5 });
+      assert.ok(!('error' in g5));
+      if ('error' in g5) return;
+      // Todo lo que se reporta está dentro de los 5 km del punto; nada «cerca» fuera del círculo.
+      assert.ok(g5.recursos.yacimientos.every((y) => y.dentro), JSON.stringify(g5.recursos.yacimientos));
+      assert.deepEqual(g5.fallas.cerca, []);
+      assert.deepEqual(g5.litologia.cerca, []);
+      assert.ok(Math.abs(g5.zona.ha - Math.PI * 25 * 100) / (Math.PI * 2500) < 0.02, `el círculo mide ${g5.zona.ha} ha`);
+    });
+
+    await t.test('reemplazar el paquete deja una capa por nombre, no dos', async () => {
+      await cargarGeologia({ reemplazar: true });
+      const filas = await consulta<{ nombre: string; n: number }>(`SELECT nombre, count(*)::int n FROM capa WHERE nombre = ANY($1) GROUP BY nombre`, [nombres]);
+      assert.equal(filas.length, 8);
+      assert.ok(filas.every((f) => f.n === 1), JSON.stringify(filas));
+    });
+
     await t.test('una zona que no existe se dice, no se inventa', async () => {
       const r = await geologiaDe({ capa: 'Capa que no existe en ningún lado' });
       assert.ok('error' in r);

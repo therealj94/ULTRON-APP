@@ -248,7 +248,12 @@ export async function geologiaDe(z: Zona): Promise<Geologia | { error: string }>
   const zona = await resolverZona(z);
   if ('error' in zona) return zona;
   const radioKm = Math.max(1, Math.min(50, z.radioKm ?? 10));
-  const R = radioKm * 1000;
+  /*
+   * Si la zona es un punto, ya ES el círculo de ese radio: sumarle otro entorno del mismo radio
+   * miraba hasta el doble de lejos y daba distancias medidas desde el borde del círculo, no desde el
+   * punto (revisión de Codex en #41). Para un punto, «cerca» es «dentro del círculo».
+   */
+  const R = zona.tipo === 'punto' ? 0 : radioKm * 1000;
 
   const capas = await capasPorRol();
   const de = (rol: RolCapa) => capas.filter((x) => x.rol === rol).map((x) => x.id);

@@ -830,7 +830,9 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   </div>
                 )}
                 {t.imagenes?.map((im) => (
-                  <MapaDelTurno key={im.url} imagen={im} onAviso={avisoSuelto} />
+                  <div key={im.url}>
+                    <MapaDelTurno imagen={im} onAviso={avisoSuelto} />
+                  </div>
                 ))}
                 {t.informe && (
                   <button

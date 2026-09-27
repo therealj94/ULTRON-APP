@@ -77,8 +77,12 @@ export async function cargarGeologia(opts: { reemplazar?: boolean } = {}): Promi
       out.push({ nombre: capa.nombre, estado: 'ya estaba', entidades: capa.entidades, rol });
       continue;
     }
-    if (previas.length) await consulta(`DELETE FROM capa WHERE id = ANY($1::bigint[])`, [previas.map((p) => p.id)]);
+    /*
+     * La nueva primero y la vieja después: si la carga falla a la mitad, la capa anterior sigue
+     * ahí. Borrar antes dejaba la capa ausente ante cualquier error (revisión de Codex en #41).
+     */
     const r = await guardarCapa(capa, { archivo, subidoPor: 'paquete de geología (data/geologia)', comoConcesiones: false });
+    if (previas.length) await consulta(`DELETE FROM capa WHERE id = ANY($1::bigint[])`, [previas.map((p) => p.id)]);
     out.push({ nombre: capa.nombre, estado: previas.length ? 'reemplazada' : 'cargada', entidades: r.entidades, rol });
   }
   return out;
