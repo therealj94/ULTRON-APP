@@ -41,7 +41,7 @@ export const MINAS: PerfilCerebro = {
     [/\brelave|\btailing|\btsf\b|\bpresa\b|\bbrumadinho\b|\bmariana\b|\bgistm\b|\bdrenaje [aá]cido\b|\bamd\b|\bdar\b|\bcianuro\b|\bicmm\b|\bcierre\b|\bsilicosis\b|\bseguridad\b/, ['relaves', 'tsf', 'presa', 'brumadinho', 'mariana', 'gistm', 'drenaje acido', 'cianuro', 'icmi', 'icmm', 'cierre', 'silicosis', 'licencia social']],
     [/\bartesanal|\bmape\b|\basgm\b|\bmercurio|\bminamata|\bamalgama/, ['artesanal', 'mape', 'mercurio', 'minamata', 'amalgama', 'retorta']],
     [/\binhgeomin\b|\bconcesi|\bpermiso|\bexpediente|\bcanon\b|\bhonduras\b|\bambiental|\bmiambiente\b|\bserna\b|\bvigencia|\bvence/, ['inhgeomin', 'concesion', 'permiso', 'canon', 'honduras', 'ambiental', 'miambiente', '238-2012', 'cielo abierto']],
-    [/\bprotegid|\bparque nacional\b|\bzona n[uú]cleo\b|\bamortigua|\bexclusi[oó]n\b|\bsineia\b|\bcategor[ií]a ambiental\b|\blicencia ambiental\b|\bimpacto ambiental\b|\bconsulta previa\b|\bind[ií]gena|\blenca|\bmiskit|\bgar[ií]funa|\bconvenio 169\b/, ['exclusion', 'protegidas', 'productoras', 'sineia', 'categorizacion', '104-93', 'convenio 169', 'consentimiento']],
+    [/\bprotegid|\bparque nacional\b|\bzona n[uú]cleo\b|\bamortigua|\bexclusi[oó]n\b|\bsineia\b|\bcategor[ií]a ambiental\b|\blicencia ambiental\b|\bimpacto ambiental\b|\bconsulta previa\b|\bind[ií]gena|\blenca|\bmiskit|\bgar[ií]funa|\bconvenio 169\b|\bpatrimonio\b|\bunesco\b|\bhidroel[eé]ctric|\benerg[ií]a renovable\b/, ['exclusion', 'protegidas', 'productoras', 'sineia', 'categorizacion', '104-93', 'convenio 169', 'consentimiento', 'unesco', 'renovable']],
     [/\bcobre\b|\bcu\b|\bzinc\b|\bplomo\b|\bn[ií]quel\b|\bmolibden/, ['cobre', 'zinc', 'plomo', 'niquel', 'molibdeno', 'porcentaje', 'libras', 'concentrado']],
   ],
 
