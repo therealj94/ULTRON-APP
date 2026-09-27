@@ -117,6 +117,26 @@ function Cifra({ etiqueta, valor, sufijo, color = AMBAR, d = 0 }: { etiqueta: st
   );
 }
 
+/**
+ * «El Mochito. (GRAVADO CON PRIMERA HIPOTECA)» → «El Mochito» y, aparte y en pequeño, la nota del
+ * padrón: es un dato legal que no se pierde, pero no puede ocupar media línea en la lista.
+ */
+export function partirNombre(texto: string): { nombre: string; nota: string | null } {
+  const m = /^(.*?)[\s.]*\(([^)]*)\)\s*$/.exec(String(texto || ''));
+  if (!m || !m[1].trim()) return { nombre: String(texto || '').trim(), nota: null };
+  return { nombre: m[1].trim(), nota: m[2].trim().toLowerCase() || null };
+}
+
+function Nombre({ texto }: { texto: string }) {
+  const { nombre, nota } = partirNombre(texto);
+  return (
+    <>
+      <span className="text-[#E7EEF2]">{nombre}</span>
+      {nota && <span className="ml-1 rounded bg-white/[0.07] px-1 py-px align-middle text-[9.5px] uppercase tracking-wide text-[#9FB0B8]">{nota}</span>}
+    </>
+  );
+}
+
 function ListaConflictos({ lista, onIr, color }: { lista: Conflicto[]; onIr: (id: number) => void; color: string }) {
   return (
     <ol className="space-y-1">
@@ -129,7 +149,7 @@ function ListaConflictos({ lista, onIr, color }: { lista: Conflicto[]; onIr: (id
           >
             <span className="w-4 shrink-0 font-mono text-[10px] text-[#61717A]">{i + 1}</span>
             <span className="min-w-0 flex-1">
-              <span className="text-[#E7EEF2]">{c.concesion}</span>
+              <Nombre texto={c.concesion} />
               <span className="text-[#7F939D]"> · {c.con}</span>
             </span>
             <span className="shrink-0 font-mono text-[11px]" style={{ color }}>
@@ -188,7 +208,11 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
             <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
               <Cifra etiqueta="concesiones en el catastro" valor={d.total.concesiones} />
               <Cifra etiqueta="hectáreas concesionadas" valor={d.total.hectareas} sufijo="ha" />
-              <Cifra etiqueta={`traslapes entre derechos (${nf(d.traslapes.hectareas)} ha)`} valor={d.traslapes.total} color="#FFD98A" />
+              <Cifra
+                etiqueta={`traslapes entre derechos (${nf(d.traslapes.hectareas)} ha)${d.traslapes.mismoNombre?.total ? ` · ${nf(d.traslapes.mismoNombre.total)} posibles duplicados del padrón` : ''}`}
+                valor={d.traslapes.total}
+                color="#FFD98A"
+              />
               {d.areasProtegidas && (
                 <Cifra etiqueta={`concesiones que pisan áreas protegidas (${nf(d.areasProtegidas.hectareas)} ha)`} valor={d.areasProtegidas.concesiones} color="#2ECC71" />
               )}
@@ -229,7 +253,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                         <button type="button" onClick={() => onIr(p.id)} className="flex w-full items-baseline gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] hover:bg-white/[0.06] cursor-pointer">
                           <span className="w-4 shrink-0 font-mono text-[10px] text-[#61717A]">{i + 1}</span>
                           <span className="min-w-0 flex-1">
-                            <span className="text-[#E7EEF2]">{p.concesion}</span>
+                            <Nombre texto={p.concesion} />
                             {p.nombres.length > 0 && <span className="text-[#7F939D]"> · {p.nombres.join(', ')}</span>}
                           </span>
                           <span className="shrink-0 font-mono text-[11px] text-[#E8805F]">{p.n}</span>
@@ -247,7 +271,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                         <button type="button" onClick={() => onIr(t.aId)} className="flex w-full items-baseline gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] hover:bg-white/[0.06] cursor-pointer">
                           <span className="w-4 shrink-0 font-mono text-[10px] text-[#61717A]">{i + 1}</span>
                           <span className="min-w-0 flex-1 text-[#E7EEF2]">
-                            {t.a} <span className="text-[#7F939D]">con</span> {t.b}
+                            <Nombre texto={t.a} /> <span className="text-[#7F939D]">con</span> <Nombre texto={t.b} />
                           </span>
                           <span className="shrink-0 font-mono text-[11px] text-[#FFD98A]">{nf(t.ha, 1)} ha</span>
                         </button>

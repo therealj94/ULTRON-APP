@@ -91,7 +91,11 @@ export async function consultaConTope<T = any>(sql: string, params: unknown[] = 
  */
 export function conTextoReparado<T>(filas: T[]): T[] {
   for (const f of filas as Array<Record<string, unknown>>) {
-    for (const k of Object.keys(f)) if (typeof f[k] === 'string') f[k] = repararTexto(f[k] as string);
+    for (const k of Object.keys(f)) {
+      const v = f[k];
+      if (typeof v === 'string') f[k] = repararTexto(v);
+      else if (Array.isArray(v)) f[k] = v.map((x) => (typeof x === 'string' ? repararTexto(x) : x));
+    }
   }
   return filas;
 }

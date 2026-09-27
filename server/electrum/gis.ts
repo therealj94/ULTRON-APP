@@ -308,9 +308,42 @@ function primeraCoordenada(g: Geometry | null): Position | null {
  */
 const HUELLA_MOJIBAKE = /[ÃÂ][\u0080-¿]/;
 export function repararTexto(s: string): string {
-  if (!HUELLA_MOJIBAKE.test(s) || /[^\u0000-ÿ]/.test(s)) return s;
+  if (!HUELLA_MOJIBAKE.test(s) || /[^\u0000-ÿ]/.test(s)) return reponerTildes(s);
   const r = Buffer.from(s, 'latin1').toString('utf8');
-  return r.includes('�') ? s : r;
+  return reponerTildes(r.includes('�') ? s : r);
+}
+
+/**
+ * Las palabras del padrón que llegaron con la tilde convertida en «?». Aquí no hay byte que
+ * reparar: el .dbf del catastro se exportó en una página de códigos sin tildes y cada vocal
+ * acentuada y cada ñ quedó como «?» (381 concesiones en producción: «Rehabilitaci?n»,
+ * «Alcald?a», «R?o»). Son las 52 palabras que aparecen en los nombres y titulares reales.
+ */
+const TILDES: Record<string, string> = {
+  'alcald?a': 'alcaldía', 'hidr?ulico': 'hidráulico', 'jos?': 'josé', 'rodr?guez': 'rodríguez', 'r?o': 'río',
+  'moraz?n': 'morazán', 'compa??a': 'compañía', 'compa?ia': 'compañia', 't?cnicas': 'técnicas', 'esqu?as': 'esquías',
+  'neptal?': 'neptalí', 'ca?a': 'caña', 'agr?cola': 'agrícola', 'taulab?': 'taulabé', 'tecnol?gicas': 'tecnológicas',
+  'dise?o': 'diseño', 'pr?stamo': 'préstamo', 'bah?a': 'bahía', 'roat?n': 'roatán', 'kil?metros': 'kilómetros',
+  'pe?ita': 'peñita', 'peque?a': 'pequeña', 'rinc?n': 'rincón', 'asf?ltica': 'asfáltica', 'construcci?': 'construcció',
+  'hidroel?ctrico': 'hidroeléctrico', 'l?pez': 'lópez', 'para?so': 'paraíso', 'lim?n': 'limón', 'atl?ntida': 'atlántida',
+  'trav?s': 'través', 'v?as': 'vías', 'tabl?n': 'tablón', 'desvi?': 'desvió', 'ram?rez': 'ramírez',
+  'chamelec?n': 'chamelecón', 'cort?z': 'cortéz', 'miner?a': 'minería', 'met?lica': 'metálica', 'met?lico': 'metálico',
+};
+
+/**
+ * «Rehabilitaci?n con Concreto Hidr?ulico» → «Rehabilitación con Concreto Hidráulico». Solo toca
+ * palabras con un «?» dentro que están en la lista o terminan en «-ci?n»/«-si?n»; lo demás,
+ * incluida una pregunta de verdad, queda igual. Respeta mayúsculas: «DISE?O» → «DISEÑO».
+ */
+export function reponerTildes(s: string): string {
+  if (!s || !s.includes('?')) return s;
+  return s.replace(/[A-Za-zÀ-ÿ]+\?[A-Za-zÀ-ÿ?]*/g, (w) => {
+    const bajo = w.toLowerCase();
+    const arreglo = TILDES[bajo] ?? bajo.replace(/([cs])i\?n$/, '$1ión');
+    if (arreglo.includes('?')) return w;
+    if (w === w.toUpperCase()) return arreglo.toUpperCase();
+    return w[0] === w[0].toUpperCase() ? arreglo[0].toUpperCase() + arreglo.slice(1) : arreglo;
+  });
 }
 
 /** Descarta lo que no tiene geometría usable, que en un catastro real es más común de lo que parece. */

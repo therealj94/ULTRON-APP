@@ -115,7 +115,11 @@ export function Recorrido({ activo, onTerminar, controles }: { activo: boolean; 
             `Las cruzo todas con las capas del país: ${plural(t.traslapes.total, 'traslape', 'traslapes')} entre derechos` +
             (t.areasProtegidas ? `, ${plural(t.areasProtegidas.concesiones, 'concesión que pisa', 'concesiones que pisan')} áreas protegidas` : '') +
             (t.microcuencas ? ` y ${plural(t.microcuencas.concesiones, 'que pisa', 'que pisan')} microcuencas declaradas` : '') +
-            '. Esto, que antes tomaba semanas de trabajo en un escritorio, lo tengo al día en segundos.'
+            '.' +
+            (t.traslapes.mismoNombre?.total
+              ? ` De esos traslapes, ${nf(t.traslapes.mismoNombre.total)} son entre concesiones con el mismo nombre: parecen registros duplicados en el padrón, y conviene depurarlos.`
+              : '') +
+            ' Esto, que antes tomaba semanas de trabajo en un escritorio, lo tengo al día en segundos.'
         );
         if (!sigue()) return;
         c.current.tablero(false);
