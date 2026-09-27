@@ -22,6 +22,8 @@ import type { Emocion } from '../lib/emocion';
 import type { CapaExtra, Fondo, Motor, OrdenMapa, Tocado } from './mapa/captura';
 import { Tarjeta } from './mapa/Tarjeta';
 import { CapasControl } from './mapa/CapasControl';
+import { Tablero } from './mapa/Tablero';
+import { Recorrido, prepararRecorrido, type Controles } from './demo/Recorrido';
 import type { PedidoPanel } from './panel/Panel';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
@@ -167,6 +169,32 @@ export default function App() {
   const [pedidoPanel, setPedidoPanel] = useState<PedidoPanel | null>(null);
   const nPedido = useRef(0);
   const cerrarTarjeta = useCallback(() => setTocado(null), []);
+  /*
+   * LO QUE SE ENSEÑA EN UNA DEMO: el tablero nacional, el terreno en 3D y el recorrido guiado.
+   */
+  const [tresD, setTresD] = useState(false);
+  const [tableroAbierto, setTableroAbierto] = useState(false);
+  const [recorrido, setRecorrido] = useState(false);
+  const cerrarTablero = useCallback(() => setTableroAbierto(false), []);
+  const terminarRecorrido = useCallback(() => setRecorrido(false), []);
+  /** Ir a una concesión desde el tablero: se cierra, el mapa vuela y se abre su ficha. */
+  const irAConcesion = useCallback(async (id: number) => {
+    setTableroAbierto(false);
+    try {
+      const r = await fetch(`/api/electrum/mapa/concesion/${id}`, { headers: headersElectrum() });
+      const f = await r.json().catch(() => null);
+      if (r.ok && f?.geojson && f?.encuadre) {
+        setOrden({ accion: 'volar', geojson: f.geojson, encuadre: f.encuadre });
+        setTocado({ tipo: 'concesion', id, nombre: f.nombre, lngLat: [(f.encuadre[0] + f.encuadre[2]) / 2, (f.encuadre[1] + f.encuadre[3]) / 2] });
+      }
+    } catch {
+      /* sin red: el tablero ya se cerró y el mapa se queda donde estaba */
+    }
+  }, []);
+  const controlesRecorrido = useMemo<Controles>(
+    () => ({ orden: setOrden, maplibre: () => setMotor('maplibre'), tresD: setTresD, tablero: setTableroAbierto, tocar: setTocado, capas: setExtras, cara: (f) => setFace(f) }),
+    []
+  );
   const pedirAlPanel = useCallback((p: Omit<PedidoPanel, 'n'>) => {
     nPedido.current += 1;
     setPanel('chat');
@@ -375,10 +403,50 @@ export default function App() {
               extras={extras}
               seleccion={tocado?.tipo === 'concesion' ? tocado.id : null}
               onTocar={setTocado}
+              tresD={tresD && motor === 'maplibre'}
             />
           </Suspense>
           </SinMapa>
           <CapasControl encendidas={extras} onCambio={setExtras} />
+          {/* Arriba al centro del mapa: entre la cara (izquierda) y el control de zoom (derecha). */}
+          <div className="absolute left-1/2 top-2.5 z-10 flex -translate-x-1/2 gap-1 rounded-full border border-white/12 bg-black/70 p-1 shadow-lg backdrop-blur-md">
+            {[
+              { k: 'tablero', icono: '▦', texto: 'Tablero', activo: tableroAbierto, alTocar: () => setTableroAbierto((v) => !v), titulo: 'Cifras del catastro nacional y conflictos con áreas protegidas, microcuencas y caseríos' },
+              {
+                k: '3d',
+                icono: '⛰',
+                texto: '3D',
+                activo: tresD && motor === 'maplibre',
+                alTocar: () => (motor === 'maplibre' ? setTresD((v) => !v) : setMotor('maplibre')),
+                titulo: motor === 'maplibre' ? 'Terreno real en tres dimensiones' : 'El 3D es del motor MapLibre: tocá para cambiar',
+              },
+              {
+                k: 'recorrido',
+                icono: recorrido ? '■' : '▶',
+                texto: recorrido ? 'Detener' : 'Recorrido',
+                activo: recorrido,
+                alTocar: () => {
+                  if (!recorrido) prepararRecorrido();
+                  setRecorrido((v) => !v);
+                },
+                titulo: 'Dr Electrum presenta la plataforma solo, con su voz',
+              },
+            ].map((b) => (
+              <button
+                key={b.k}
+                type="button"
+                onClick={b.alTocar}
+                aria-pressed={b.activo}
+                title={b.titulo}
+                className="flex items-center gap-1.5 rounded-full px-2.5 py-1 font-mono text-[10.5px] tracking-[0.1em] uppercase transition-colors cursor-pointer"
+                style={b.activo ? { background: '#FFAE3B', color: '#000' } : { color: '#DCE5EA' }}
+              >
+                <span aria-hidden>{b.icono}</span>
+                <span className="hidden sm:inline">{b.texto}</span>
+              </button>
+            ))}
+          </div>
+
           <Tarjeta
             tocado={tocado}
             onCerrar={cerrarTarjeta}
@@ -401,6 +469,10 @@ export default function App() {
           pedido={pedidoPanel}
         />
       </div>
+
+      {/* El tablero y los subtítulos del recorrido, a pantalla completa y por encima de todo. */}
+      <Tablero abierto={tableroAbierto} onCerrar={cerrarTablero} onIr={irAConcesion} />
+      <Recorrido activo={recorrido} onTerminar={terminarRecorrido} controles={controlesRecorrido} />
 
       {/*
         La cara. Un solo elemento que se mueve entre dos sitios: centro del escenario, o esquina.

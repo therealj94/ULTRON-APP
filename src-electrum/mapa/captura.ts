@@ -20,7 +20,11 @@ export type OrdenMapa =
   | { accion: 'capa'; geojson: FeatureCollection; encuadre?: [number, number, number, number] }
   /** Varias concesiones resaltadas a la vez (una búsqueda con varios resultados); el catastro sigue debajo. */
   | { accion: 'candidatas'; geojson: FeatureCollection; encuadre?: [number, number, number, number] }
-  | { accion: 'punto'; punto: [number, number] };
+  | { accion: 'punto'; punto: [number, number] }
+  /** Un movimiento de cámara de presentación: centro, zoom, inclinación y giro, a la velocidad pedida. */
+  | { accion: 'camara'; centro: [number, number]; zoom: number; inclinacion?: number; giro?: number; ms?: number }
+  /** Encuadrar un rectángulo (Honduras entera, una región), con inclinación opcional. */
+  | { accion: 'encuadrar'; encuadre: [number, number, number, number]; inclinacion?: number; giro?: number; ms?: number };
 
 /** Lo que se tocó en el mapa: una concesión, un rasgo de una capa encendida, o un punto cualquiera. */
 export type Tocado =

@@ -1,0 +1,80 @@
+/**
+ * El tablero nacional contra PostGIS (ELECTRUM_DB_URL; VACÍA el catastro). Paisaje conocido:
+ * dos concesiones metálicas y una artesanal; un área protegida y una microcuenca que pisan a una;
+ * caseríos como puntos y, como en el padrón real, un polígono en la capa de caseríos que lo cubre
+ * todo (no debe contar); y departamentos para repartir por ubicación.
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import type { Feature, Geometry } from 'geojson';
+import { consulta, guardarCapa, hayBase, recalcularTraslapes } from '../server/electrum/db';
+import { claseDeCapa, olvidarTablero, tablero } from '../server/electrum/tablero';
+import type { Capa } from '../server/electrum/gis';
+
+const caja = (o: number, s: number, e: number, n: number): Geometry => ({ type: 'Polygon', coordinates: [[[o, s], [e, s], [e, n], [o, n], [o, s]]] });
+const punto = (lon: number, lat: number): Geometry => ({ type: 'Point', coordinates: [lon, lat] });
+function capa(nombre: string, rasgos: Array<[Record<string, unknown>, Geometry]>): Capa {
+  const features: Feature[] = rasgos.map(([properties, geometry]) => ({ type: 'Feature', properties, geometry }));
+  return { nombre, formato: 'geojson', origenCrs: 'EPSG:4326', entidades: features.length, descartadas: 0, geojson: { type: 'FeatureCollection', features } };
+}
+
+test('la clase sale del nombre de la capa', () => {
+  assert.equal(claseDeCapa('CONCESIÓN METÁLICA OTORGADA PARA EXPLOTAR'), 'Metálica');
+  assert.equal(claseDeCapa('CONCESIÓN NO METÁLICA EN SOLICITUD DE EXPLORAR'), 'No metálica');
+  assert.equal(claseDeCapa('ARTESANAL METALICA DELIMITADA'), 'Minería artesanal');
+  assert.equal(claseDeCapa(null), 'Sin clase en la capa');
+});
+
+test('tablero nacional, contra PostGIS', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async () => {
+  await consulta('TRUNCATE traslape, concesion, entidad_geo, capa RESTART IDENTITY CASCADE');
+  await guardarCapa(
+    capa('CONCESION METALICA OTORGADA PARA EXPLOTAR', [
+      [{ NOMBRE: 'Cerro Azul', ESTADO: 'Otorgada' }, caja(-87.2, 14.8, -87.18, 14.82)],
+      [{ NOMBRE: 'La Vecina', ESTADO: 'Explotar' }, caja(-87.19, 14.8, -87.17, 14.82)],
+    ]),
+    { comoConcesiones: true }
+  );
+  await guardarCapa(capa('ARTESANAL METALICA DELIMITADA', [[{ NOMBRE: 'El Guirisero', ESTADO: 'Delimitada' }, caja(-86.5, 14.2, -86.49, 14.21)]]), { comoConcesiones: true });
+  await recalcularTraslapes();
+  for (const c of [
+    capa('Areas Protegidas', [[{ NOMBRE: 'Reserva Azul' }, caja(-87.19, 14.79, -87.1, 14.83)]]),
+    capa('Microcuencas declaradas', [[{ NOMBRE: 'Microcuenca El Oro' }, caja(-87.3, 14.79, -87.195, 14.805)]]),
+    capa('CASERIOS', [
+      [{ NOMBRE: 'Todo el país' }, caja(-90, 12, -83, 17)],
+      [{ NOMBRE: 'Las Minitas' }, punto(-87.195, 14.81)],
+      [{ NOMBRE: 'El Pino' }, punto(-87.185, 14.815)],
+    ]),
+    capa('DEPARTAMENTOS', [
+      [{ NOMBRE: 'Santa Bárbara' }, caja(-88, 14.5, -87, 15.5)],
+      [{ NOMBRE: 'Olancho' }, caja(-87, 14, -85, 15.5)],
+    ]),
+  ]) {
+    await guardarCapa(c, { comoConcesiones: false });
+  }
+  olvidarTablero();
+  const t = await tablero();
+  assert.equal(t.total.concesiones, 3);
+  assert.deepEqual(
+    t.porClase.map((c) => [c.nombre, c.n]),
+    [['Metálica', 2], ['Minería artesanal', 1]]
+  );
+  assert.deepEqual(
+    t.porDepartamento.map((d) => [d.nombre, d.n]),
+    [['Santa Bárbara', 2], ['Olancho', 1]]
+  );
+  assert.equal(t.traslapes.total, 1);
+  assert.equal(t.traslapes.mayores[0].ha > 0, true);
+  // Reserva Azul pisa la mitad este de Cerro Azul (0,01°) y toda La Vecina.
+  assert.equal(t.areasProtegidas!.concesiones, 2);
+  const vecina = t.areasProtegidas!.lista.find((c) => c.concesion === 'La Vecina')!;
+  assert.ok(vecina.pct > 99, `pct ${vecina.pct}`);
+  assert.equal(t.areasProtegidas!.lista[0].con, 'Reserva Azul');
+  assert.equal(t.microcuencas!.concesiones, 1);
+  assert.equal(t.microcuencas!.lista[0].concesion, 'Cerro Azul');
+  // El polígono que cubre todo no cuenta: solo los dos caseríos (puntos) dentro de las concesiones.
+  assert.equal(t.poblados!.caserios, 3, JSON.stringify(t.poblados)); // El Pino cae en las dos que se traslapan
+  assert.ok(t.poblados!.lista.every((p) => !p.nombres.includes('Todo el país')));
+  // Caché: el segundo pedido no recalcula.
+  const t2 = await tablero();
+  assert.equal(t2.generado, t.generado);
+});

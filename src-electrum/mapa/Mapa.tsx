@@ -47,6 +47,8 @@ type Props = {
   seleccion?: number | null;
   /** Tocar el mapa: una concesión, un rasgo de una capa encendida o un punto. */
   onTocar?: (t: Tocado) => void;
+  /** Terreno en 3D: relieve real, sombreado y cielo, con la cámara inclinada. */
+  tresD?: boolean;
 };
 
 /** Honduras entera, que es donde se abre si nadie ha pedido nada todavía. */
@@ -111,6 +113,50 @@ function asegurarCapas(m: maplibregl.Map) {
       m.addSource(fuente, { type: 'geojson', data: geojson as any });
     }
     for (const c of capasDeExtra(fuente, rol)) if (!m.getLayer(c.id)) m.addLayer(c as any, 'concesiones-relleno');
+  }
+  aplicarTerreno(m);
+}
+
+/*
+ * EL TERRENO EN 3D.
+ *
+ * Relieve de los mosaicos abiertos de elevación de AWS (Terrarium, sin clave), exagerado un poco
+ * para que la sierra de Honduras se lea, con sombreado y cielo. Se pone y se quita sin tocar el
+ * catastro, y se repone si el estilo se recarga (cambiar de fondo): `terreno3D` vive fuera de React
+ * por lo mismo que `pintado`.
+ */
+let terreno3D = false;
+const TESELAS_RELIEVE = ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'];
+
+function aplicarTerreno(m: maplibregl.Map) {
+  if (terreno3D) {
+    if (!m.getSource('relieve')) {
+      m.addSource('relieve', { type: 'raster-dem', tiles: TESELAS_RELIEVE, encoding: 'terrarium', tileSize: 256, maxzoom: 14 } as any);
+    }
+    if (!m.getSource('relieve-sombra')) {
+      m.addSource('relieve-sombra', { type: 'raster-dem', tiles: TESELAS_RELIEVE, encoding: 'terrarium', tileSize: 256, maxzoom: 14 } as any);
+    }
+    if (!m.getLayer('sombreado')) {
+      m.addLayer(
+        {
+          id: 'sombreado',
+          type: 'hillshade',
+          source: 'relieve-sombra',
+          paint: { 'hillshade-exaggeration': 0.45, 'hillshade-shadow-color': '#1b1308', 'hillshade-highlight-color': '#fff4dc' },
+        } as any,
+        m.getLayer('concesiones-relleno') ? 'concesiones-relleno' : undefined
+      );
+    }
+    if (!m.getTerrain()) m.setTerrain({ source: 'relieve', exaggeration: 1.6 });
+    try {
+      (m as any).setSky?.({ 'sky-color': '#0d1a2b', 'horizon-color': '#c98a3a', 'fog-color': '#0b0d0f', 'sky-horizon-blend': 0.6, 'horizon-fog-blend': 0.4, 'fog-ground-blend': 0.2 });
+    } catch {
+      /* cielo opcional */
+    }
+  } else {
+    if (m.getTerrain()) m.setTerrain(null);
+    if (m.getLayer('sombreado')) m.removeLayer('sombreado');
+    for (const f of ['relieve-sombra', 'relieve']) if (m.getSource(f)) m.removeSource(f);
   }
 }
 
@@ -212,7 +258,7 @@ function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
   }
 }
 
-export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar }: Props) {
+export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false }: Props) {
   /** El último `onTocar`, para los manejadores que se atan una sola vez al crear el mapa. */
   const tocarRef = useRef(onTocar);
   tocarRef.current = onTocar;
@@ -432,6 +478,18 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     if (m && listo && m.getLayer('concesiones-sel')) m.setFilter('concesiones-sel', ['==', ['to-number', ['get', 'id']], seleccion ?? -1]);
   }, [seleccion, listo]);
 
+  /* ---------------------------------------------------------------- 3D */
+
+  useEffect(() => {
+    terreno3D = tresD;
+    const m = mapa.current;
+    if (!m || !listo) return;
+    aplicarTerreno(m);
+    // La cámara acompaña: se inclina al entrar en 3D y vuelve a plano al salir.
+    if (tresD) m.easeTo({ pitch: Math.max(m.getPitch(), 62), bearing: m.getBearing() || -18, duration: duracion(1800) });
+    else m.easeTo({ pitch: 0, bearing: 0, duration: duracion(1200) });
+  }, [tresD, listo]);
+
   /* ---------------------------------------------------------------- órdenes */
 
   const obedecer = useCallback((o: OrdenMapa) => {
@@ -449,6 +507,10 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
         if (o.encuadre) m.fitBounds(o.encuadre, { padding: 80, duration: duracion(1400), maxZoom: 14 });
       } else if (o.accion === 'punto') {
         m.flyTo({ center: o.punto, zoom: 14, duration: duracion(1200) });
+      } else if (o.accion === 'camara') {
+        m.flyTo({ center: o.centro, zoom: o.zoom, pitch: o.inclinacion ?? m.getPitch(), bearing: o.giro ?? m.getBearing(), duration: duracion(o.ms ?? 4000), essential: true });
+      } else if (o.accion === 'encuadrar') {
+        m.fitBounds(o.encuadre, { padding: 40, pitch: o.inclinacion ?? 0, bearing: o.giro ?? 0, duration: duracion(o.ms ?? 3000) } as any);
       }
     }
     const g = google.current;
@@ -478,6 +540,11 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
       } else if (o.accion === 'punto') {
         g.setCenter({ lat: o.punto[1], lng: o.punto[0] });
         g.setZoom(14);
+      } else if (o.accion === 'camara') {
+        g.setCenter({ lat: o.centro[1], lng: o.centro[0] });
+        g.setZoom(Math.round(o.zoom));
+      } else if (o.accion === 'encuadrar') {
+        g.fitBounds(new G.LatLngBounds({ lat: o.encuadre[1], lng: o.encuadre[0] }, { lat: o.encuadre[3], lng: o.encuadre[2] }));
       }
     }
   }, [listo, motor]);

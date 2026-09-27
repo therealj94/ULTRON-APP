@@ -71,6 +71,7 @@ import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
 import { catastroGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
 import { cargarGeologia } from './server/electrum/geologia-datos';
 import { capaParaMapa, capasVisibles, fichaParaMapa, queHayAqui, rasgoParaMapa } from './server/electrum/explorar';
+import { tablero } from './server/electrum/tablero';
 import { clasificarPendientes } from './server/electrum/documentos-laya';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
@@ -539,6 +540,17 @@ app.get('/api/electrum/mapa/capa/:id', exigirPlataforma('electrum'), limitar(30)
     return enviarJsonComprimido(req, res, c);
   } catch (e) {
     return falloMapa(res, 'capa', e);
+  }
+});
+
+/** El tablero nacional: cifras del catastro y conflictos con áreas protegidas, microcuencas y caseríos. */
+app.get('/api/electrum/tablero', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+  try {
+    const fresco = req.query.fresco === '1' && nivelDe(identidadDe(req), 'electrum') === 'mando';
+    res.setHeader('Cache-Control', 'private, max-age=120');
+    return enviarJsonComprimido(req, res, await tablero({ fresco }));
+  } catch (e) {
+    return falloMapa(res, 'tablero', e);
   }
 });
 
