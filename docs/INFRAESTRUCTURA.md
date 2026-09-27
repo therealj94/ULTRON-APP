@@ -82,7 +82,7 @@ Si `ELECTRUM_EXPEDIENTES_BUCKET` está puesto, `/api/electrum/subir` guarda el o
 ## Variables y permisos
 
 - `ELECTRUM_EXPEDIENTES_BUCKET`: cubo de expedientes.
-- `ELECTRUM_IMPORTAR_PLAN`: plan del trabajo de importación (`standard` por defecto).
+- `ELECTRUM_IMPORTAR_PLAN`: plan del trabajo de importación: `starter`, `standard` (por defecto), `pro` o `pro_plus`. La API de Render pide el id interno (`plan-srv-008` es el estándar, 2 GB), y el servidor lo traduce.
 - `ELECTRUM_IMPORTAR_EN_PROCESO=1`: importa dentro del servidor. Solo para desarrollo y pruebas.
 - **IAM** (política `expedientes-electrum` del usuario del servicio):
   - `GetObject` sobre `entrada/*` y `biblioteca/*`;

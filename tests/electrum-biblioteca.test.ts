@@ -15,7 +15,7 @@ const llaveAntes = process.env.ELECTRUM_CLAVE;
 process.env.ELECTRUM_CLAVE = 'llave-de-prueba-biblioteca';
 
 const { paginasDePptx, paginasDeRtf, paginasDeXlsx, paginasDeDoc } = await import('../lib/leer-oficina');
-const { planear } = await import('../server/electrum/importar');
+const { planear, planDeTrabajo } = await import('../server/electrum/importar');
 const bib = await import('../server/electrum/biblioteca');
 const { montarRutasBiblioteca } = await import('../server/electrum/biblioteca-rutas');
 const { aprender } = await import('../server/electrum/aprender');
@@ -168,6 +168,15 @@ test('importar: agrupa shapefiles, ordena en carpetas y dice por qué omite cada
   const conFotos = planear([o('Estudio/pag-001.jpg')], P, null, { imagenes: true });
   assert.equal(conFotos.unidades[0]?.tipo, 'imagen');
   assert.equal(conFotos.unidades[0]?.carpeta, 'Estudio');
+});
+
+test('importar: el plan del trabajo de Render va por su id interno', () => {
+  assert.equal(planDeTrabajo(undefined), 'plan-srv-008');
+  assert.equal(planDeTrabajo('standard'), 'plan-srv-008');
+  assert.equal(planDeTrabajo(' Pro '), 'plan-srv-010');
+  assert.equal(planDeTrabajo('pro plus'), 'plan-srv-011');
+  assert.equal(planDeTrabajo('plan-srv-006'), 'plan-srv-006');
+  assert.equal(planDeTrabajo('gigante'), 'plan-srv-008', 'lo desconocido cae al estándar, no a un error de Render');
 });
 
 test('carpetas: se limpian (sin «..», sin vacíos, con tope)', () => {
