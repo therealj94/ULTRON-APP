@@ -51,6 +51,10 @@ async function abrirZip(datos: Buffer): Promise<JSZip> {
  * no necesita LibreOffice en el servidor. Cuerpo, notas al pie y encabezados, en ese orden.
  */
 export async function paginasDeDoc(datos: Buffer): Promise<PaginaLeida[]> {
+  // Un «.doc» no siempre es Word: 28 de las Fichas de Ocurrencias Mineras son WordPerfect 5.1, y
+  // hay RTF guardados con esa extensión. Se mira la firma, no el nombre.
+  if (datos.subarray(0, 4).equals(FIRMA_WP)) return paginasDeWordPerfect(datos);
+  if (datos.subarray(0, 5).toString('latin1') === '{\\rtf') return paginasDeRtf(datos);
   const mod: any = await import('word-extractor');
   const Extractor = mod.default || mod;
   const doc = await new Extractor().extract(datos);
@@ -58,7 +62,100 @@ export async function paginasDeDoc(datos: Buffer): Promise<PaginaLeida[]> {
     .map((t: unknown) => limpio(String(t || '')))
     .filter(Boolean);
   const texto = partes.join('\n\n');
-  return texto ? [{ pagina: 1, texto }] : [];
+  if (texto.replace(/\s+/g, '').length >= 40) return [{ pagina: 1, texto }];
+  // Word 2002 «guardado rápido»: el texto está en el archivo, pero la tabla de piezas que usa
+  // word-extractor no lo encuentra (cuatro fichas FOMR salían vacías). Se rescata de los bytes.
+  const rescatado = textoCrudoDeDoc(datos);
+  return rescatado ? [{ pagina: 1, texto: rescatado }] : texto ? [{ pagina: 1, texto }] : [];
+}
+
+/**
+ * Los tramos largos de texto legible (cp1252) de un .doc: en Word 97-2003 el cuerpo se guarda en
+ * 8 bits y queda contiguo. Se descartan los rellenos (ÿÿÿ…), las firmas internas y lo que tenga
+ * menos de la mitad de letras.
+ */
+export function textoCrudoDeDoc(datos: Buffer): string {
+  // Las repeticiones largas (relleno ÿÿÿ…, líneas de guiones) se vuelven cortes: si no, el texto
+  // pegado a un relleno queda en el mismo tramo y se descarta entero.
+  const t = new TextDecoder('windows-1252').decode(datos).replace(/(\S)\1{19,}/g, '\n');
+  const tramos = t.match(/[\t\r\n\x20-\x7e\xa0-\xff]{40,}/g) || [];
+  const buenos = tramos.filter((r) => {
+    const s = r.trim();
+    if (/^bjbj/.test(s)) return false;
+    // Relleno (ÿÿÿ…) fuera; una línea de guiones dentro de una ficha, no.
+    const repetido = (s.match(/(\S)\1{7,}/g) || []).join('').length;
+    if (repetido > s.length * 0.3) return false;
+    // El español escrito es casi todo ASCII: la basura binaria que pasa por texto es de acentos
+    // sueltos («ðàÐÄ…»). Se exige mayoría de letras sin tilde.
+    const ascii = (s.match(/[A-Za-z]/g) || []).length;
+    return ascii >= s.replace(/\s/g, '').length * 0.5;
+  });
+  return limpio(buenos.join('\n').replace(/\r/g, '\n'));
+}
+
+/* ----------------------------------------------------------------------- WordPerfect 5.x */
+
+const FIRMA_WP = Buffer.from([0xff, 0x57, 0x50, 0x43]); // «\xFFWPC»
+
+/**
+ * El juego de caracteres «multinacional 1» de WordPerfect (el 1), que es donde viven los acentos
+ * del español. Se comprobó contra las fichas FOM: 27 es «á» en «Metálico», 59 «ó» en «Ubicación»,
+ * 57 «ñ» en «dueño», 71 «ü» en «güiris». Sigue el orden de la tabla de WordPerfect.
+ */
+const WP_MULTINACIONAL = 'ÁáÂâÄäÀàÅåÆæÇçÉéÊêËëÈèÍíÎîÏïÌìÑñÓóÔôÖöÒòÚúÛûÜüÙùŸÿÃãĐđØøÕõÝýÐðÞþ';
+function caracterWp(juego: number, n: number): string {
+  if (juego === 0 && n >= 0x20 && n < 0x7f) return String.fromCharCode(n);
+  if (juego === 1 && n >= 26 && n < 26 + WP_MULTINACIONAL.length) return WP_MULTINACIONAL[n - 26];
+  if (juego === 4) return ({ 7: '¿', 8: '¡', 0: '•', 1: '•', 11: '£', 12: '¥', 17: '½', 18: '¼', 23: '©', 22: '®', 29: '«', 30: '»' } as Record<number, string>)[n] ?? '';
+  if (juego === 6) return ({ 0: '−', 1: '±', 2: '≤', 3: '≥', 36: '°' } as Record<number, string>)[n] ?? '';
+  return '';
+}
+
+/**
+ * WordPerfect 5.x a texto. El documento empieza donde dice la cabecera (bytes 4-7). Los bytes
+ * 0x20-0x7E son texto; 0x0A es fin de párrafo; 0xC0 es un carácter extendido (juego + número);
+ * 0xC1-0xCF son funciones de largo fijo que terminan con el mismo byte (0xC1 es un tabulador);
+ * 0xD0-0xFF son funciones de largo variable: código, subcódigo y dos bytes con lo que sigue.
+ */
+export function paginasDeWordPerfect(datos: Buffer): PaginaLeida[] {
+  if (datos.length < 16 || !datos.subarray(0, 4).equals(FIRMA_WP)) return [];
+  let i = Math.min(datos.readUInt32LE(4), datos.length);
+  let texto = '';
+  while (i < datos.length) {
+    const c = datos[i];
+    if (c >= 0x20 && c < 0x7f) {
+      texto += String.fromCharCode(c);
+      i++;
+    } else if (c === 0x0a || c === 0x8c || c === 0x0c) {
+      texto += '\n';
+      i++;
+    } else if (c === 0x0d || c === 0x80) {
+      texto += ' ';
+      i++;
+    } else if (c >= 0xa9 && c <= 0xab) {
+      texto += '-';
+      i++;
+    } else if (c < 0xc0) {
+      i++;
+    } else if (c === 0xc0) {
+      if (i + 3 >= datos.length) break;
+      texto += caracterWp(datos[i + 2], datos[i + 1]);
+      i += 4;
+    } else if (c <= 0xcf) {
+      const fin = datos.indexOf(c, i + 1);
+      if (fin < 0 || fin - i > 64) {
+        i++;
+        continue;
+      }
+      if (c === 0xc1 || c === 0xc2) texto += '\t';
+      i = fin + 1;
+    } else {
+      if (i + 4 > datos.length) break;
+      i += 4 + datos.readUInt16LE(i + 2);
+    }
+  }
+  const limpio2 = limpio(texto);
+  return limpio2 ? [{ pagina: 1, texto: limpio2 }] : [];
 }
 
 /* --------------------------------------------------------------------------------- .rtf */

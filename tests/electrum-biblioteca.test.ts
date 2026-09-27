@@ -14,7 +14,7 @@ process.env.ELECTRUM_IMPORTAR_EN_PROCESO = '1';
 const llaveAntes = process.env.ELECTRUM_CLAVE;
 process.env.ELECTRUM_CLAVE = 'llave-de-prueba-biblioteca';
 
-const { paginasDePptx, paginasDeRtf, paginasDeXlsx, paginasDeDoc } = await import('../lib/leer-oficina');
+const { paginasDePptx, paginasDeRtf, paginasDeXlsx, paginasDeDoc, textoCrudoDeDoc } = await import('../lib/leer-oficina');
 const { planear, planDeTrabajo } = await import('../server/electrum/importar');
 const bib = await import('../server/electrum/biblioteca');
 const { montarRutasBiblioteca } = await import('../server/electrum/biblioteca-rutas');
@@ -101,6 +101,40 @@ test('XLSX: una página por hoja, filas con « | », celdas compartidas e inline
   assert.match(t, /^Hoja «Muestreo»\nNumero |  | Au g\/t\n1 |  | 0\.20\n/);
   assert.match(t, /\[Numero \|  \| Au g\/t\]/, 'el encabezado vuelve cada 40 filas');
   assert.match(t, /La Lola \| bocamina \|  \| sí$/);
+});
+
+test('DOC que en realidad es WordPerfect 5.1: texto, acentos, tabuladores y funciones saltadas', async () => {
+  const cabecera = Buffer.alloc(16);
+  Buffer.from([0xff, 0x57, 0x50, 0x43]).copy(cabecera);
+  cabecera.writeUInt32LE(16, 4);
+  const txt = (s: string) => Buffer.from(s, 'latin1');
+  const ext = (n: number, juego: number) => Buffer.from([0xc0, n, juego, 0xc0]);
+  const variable = Buffer.from([0xd0, 0x01, 0x04, 0x00, 0xaa, 0xbb, 0x01, 0xd0]); // se salta entera
+  const tab = Buffer.from([0xc1, 1, 2, 3, 4, 5, 6, 7, 0xc1]);
+  const doc = Buffer.concat([
+    cabecera,
+    txt('INVENTARIO MINERO DE HONDURAS'), Buffer.from([0x0a]),
+    variable,
+    txt('Met'), ext(27, 1), txt('lico: Au, Ag'), Buffer.from([0x0a]),
+    tab, txt('Ubicaci'), ext(59, 1), txt('n: CA'), ext(56, 1), txt('ADA DEL BUEY, due'), ext(57, 1), txt('o g'), ext(71, 1), txt('iris'),
+  ]);
+  const [p] = await paginasDeDoc(doc);
+  assert.equal(p.texto, 'INVENTARIO MINERO DE HONDURAS\nMetálico: Au, Ag\nUbicación: CAÑADA DEL BUEY, dueño güiris');
+});
+
+test('DOC «guardado rápido»: el texto se rescata de los bytes, sin relleno ni basura', () => {
+  const relleno = Buffer.alloc(600, 0xff);
+  const basura = Buffer.from('ðàÐÄàÐàÐÄÐÄ¸ÐÄ¸ÐÄ¸ÐÄÐÄÐÄÐÄ¸ÄÐàÐÄ¸ÄÐÄÐàÐÄàðÐðÐÄÐÄ¬Ä¬ÐðÄ¬', 'latin1');
+  const ficha = Buffer.from(
+    'Codigo: Iofa\r\tINVENTARIO MINERO DE HONDURAS\r\tINFORME DE OCURRENCIA MINERAL\r1.\tNombre: GUANGOLOLO\r' +
+      '--------------------------------\r5.\tUbicación: Departamento: LA PAZ\rDictamen: Sin interés económico. Obra de güirises.\r',
+    'latin1'
+  );
+  const t = textoCrudoDeDoc(Buffer.concat([relleno, Buffer.from([0, 1, 2]), basura, Buffer.from([0, 0]), ficha, relleno]));
+  assert.match(t, /^Codigo: Iofa\nINVENTARIO MINERO DE HONDURAS/);
+  assert.match(t, /Ubicación: Departamento: LA PAZ/);
+  assert.match(t, /güirises/);
+  assert.doesNotMatch(t, /ÿ|ðàÐ/);
 });
 
 test('DOC: un archivo que no es Word 97 no cuelga ni inventa texto', async () => {
