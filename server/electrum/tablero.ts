@@ -17,7 +17,7 @@
  *  · la capa de caseríos incluye algún polígono que lo cubre todo: los caseríos se cuentan solo
  *    como puntos.
  */
-import { conTextoReparado, consultaConTope, hayBase, resumenTraslapes, traslapes } from './db';
+import { conTextoReparado, consultaConTope, hayBase, resumenTraslapes } from './db';
 import { capasPorRol, nombreDe } from './entorno';
 
 const TOPE = 20000;
@@ -31,12 +31,37 @@ export type Tablero = {
   porEstado: Array<{ nombre: string; n: number; ha: number }>;
   porClase: Array<{ nombre: string; n: number; ha: number }>;
   porDepartamento: Array<{ nombre: string; n: number }>;
-  traslapes: { total: number; hectareas: number; mayores: Array<{ a: string; b: string; ha: number; aId: number; bId: number }> };
+  traslapes: {
+    total: number;
+    hectareas: number;
+    /** Entre concesiones con el mismo nombre: el mismo derecho cargado dos veces, casi siempre. */
+    mismoNombre: { total: number; hectareas: number };
+    /** Los mayores entre concesiones DISTINTAS, que son los que importan. */
+    mayores: Array<{ a: string; b: string; ha: number; aId: number; bId: number }>;
+  };
   areasProtegidas: { concesiones: number; hectareas: number; lista: Conflicto[] } | null;
   microcuencas: { concesiones: number; hectareas: number; lista: Conflicto[] } | null;
   poblados: { concesiones: number; caserios: number; lista: Array<{ id: number; concesion: string; n: number; nombres: string[] }> } | null;
   ms: number;
 };
+
+/**
+ * La clase que trae el padrón en su columna CLASIFICAC, legible. El .dbf del catastro perdió las
+ * tildes al exportarse —vienen como «?»: «Peque?a Min. No Met?lica»— y no hay byte que reparar,
+ * así que se reponen las palabras que usa el padrón. Null si no trae clase.
+ */
+export function normalizarClase(v: string | null | undefined): string | null {
+  const t = String(v || '').trim();
+  if (!t) return null;
+  const arreglado = t
+    .replace(/Peque\?a/gi, 'Pequeña')
+    .replace(/Miner\?a/gi, 'Minería')
+    .replace(/Met\?lica/gi, 'Metálica')
+    .replace(/Pr\?stamo/gi, 'Préstamo')
+    .replace(/\bMin\.\s/gi, 'Minería ')
+    .replace(/\s+/g, ' ');
+  return arreglado.replace(/(^|\s)(\S)/g, (_m, e, c) => e + c.toUpperCase()).replace(/\bDe\b/g, 'de');
+}
 
 /** La clase de una concesión por el nombre de la capa de la que vino. */
 export function claseDeCapa(nombre: string | null | undefined): string {
@@ -93,9 +118,13 @@ async function calcular(): Promise<Tablero> {
     q<{ nombre: string | null; n: number; ha: number }>(
       `SELECT estado AS nombre, count(*)::int AS n, coalesce(sum(hectareas), 0)::float8 AS ha FROM concesion GROUP BY 1 ORDER BY 2 DESC`
     ),
-    q<{ capa: string | null; n: number; ha: number }>(
-      `SELECT c.nombre AS capa, count(*)::int AS n, coalesce(sum(k.hectareas), 0)::float8 AS ha
-         FROM concesion k LEFT JOIN capa c ON c.id = k.capa_id GROUP BY 1`
+    q<{ capa: string | null; clase: string | null; n: number; ha: number }>(
+      // La llave se busca sin distinguir mayúsculas: según cómo se cargó el .dbf llega como
+      // «clasificac» o «CLASIFICAC», y en JSONB son llaves distintas.
+      `SELECT c.nombre AS capa,
+              (SELECT a.valor FROM jsonb_each_text(k.atributos) AS a(llave, valor) WHERE lower(a.llave) = 'clasificac' LIMIT 1) AS clase,
+              count(*)::int AS n, coalesce(sum(k.hectareas), 0)::float8 AS ha
+         FROM concesion k LEFT JOIN capa c ON c.id = k.capa_id GROUP BY 1, 2`
     ),
     de('departamento').length
       ? q<{ nombre: string | null; n: number }>(
@@ -107,7 +136,14 @@ async function calcular(): Promise<Tablero> {
         )
       : Promise.resolve([]),
     resumenTraslapes(),
-    traslapes(8),
+    // Se separan los de mismo nombre: en el padrón nacional muchos «traslapes» son el mismo derecho
+    // cargado desde dos capas («Las Joyas con Las Joyas»), y listarlos como conflicto confunde.
+    q<{ a: string; b: string; ha: number; a_id: string; b_id: string; mismo: boolean }>(
+      `SELECT ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS ha, t.a_id::text, t.b_id::text,
+              lower(unaccent(trim(ca.nombre))) = lower(unaccent(trim(cb.nombre))) AS mismo
+         FROM traslape t JOIN concesion ca ON ca.id = t.a_id JOIN concesion cb ON cb.id = t.b_id
+        ORDER BY t.hectareas DESC`
+    ),
     conflictos(de('area_protegida'), 'area_protegida'),
     conflictos(de('microcuenca'), 'microcuenca'),
     de('poblado').length
@@ -122,10 +158,10 @@ async function calcular(): Promise<Tablero> {
       : Promise.resolve(null),
   ]);
 
-  // Las capas del catastro traen la clase en el nombre; varias capas pueden dar la misma clase.
+  // La clase del padrón (CLASIFICAC) si la trae; si no, la que dice el nombre de la capa.
   const clases = new Map<string, { n: number; ha: number }>();
   for (const f of porClase) {
-    const c = claseDeCapa(f.capa);
+    const c = normalizarClase(f.clase) || claseDeCapa(f.capa);
     const a = clases.get(c) || { n: 0, ha: 0 };
     clases.set(c, { n: a.n + f.n, ha: a.ha + f.ha });
   }
@@ -139,7 +175,14 @@ async function calcular(): Promise<Tablero> {
     traslapes: {
       total: tr.total,
       hectareas: Math.round(tr.hectareas),
-      mayores: mayores.map((m) => ({ a: m.a, b: m.b, ha: r1(m.hectareas), aId: Number(m.a_id), bId: Number(m.b_id) })),
+      mismoNombre: {
+        total: mayores.filter((m) => m.mismo).length,
+        hectareas: Math.round(mayores.filter((m) => m.mismo).reduce((s, m) => s + m.ha, 0)),
+      },
+      mayores: mayores
+        .filter((m) => !m.mismo)
+        .slice(0, 8)
+        .map((m) => ({ a: m.a, b: m.b, ha: r1(m.ha), aId: Number(m.a_id), bId: Number(m.b_id) })),
     },
     areasProtegidas: ap,
     microcuencas: mc,
@@ -173,6 +216,20 @@ export async function tablero(opts: { fresco?: boolean } = {}): Promise<Tablero>
       });
   }
   return enCurso;
+}
+
+/**
+ * El tablero listo antes de que alguien lo abra: se calcula al arrancar y se renueva antes de que
+ * venza. Con el catastro nacional el cálculo en frío tarda ~11 s, y en una demo el primer toque al
+ * tablero no puede quedarse en esqueletos.
+ */
+let mantenedor: NodeJS.Timeout | null = null;
+export function mantenerTableroCaliente(retrasoMs = 20_000) {
+  if (mantenedor || !hayBase()) return;
+  const calentar = () => void tablero({ fresco: true }).catch((e) => console.warn('[electrum] tablero en segundo plano:', String(e?.message || e).slice(0, 120)));
+  setTimeout(calentar, retrasoMs).unref?.();
+  mantenedor = setInterval(calentar, VIGENCIA_MS - 60_000);
+  mantenedor.unref?.();
 }
 
 /** Para las pruebas: que el siguiente pedido recalcule. */

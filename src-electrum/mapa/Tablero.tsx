@@ -19,7 +19,7 @@ export type DatosTablero = {
   porEstado: Array<{ nombre: string; n: number; ha: number }>;
   porClase: Array<{ nombre: string; n: number; ha: number }>;
   porDepartamento: Array<{ nombre: string; n: number }>;
-  traslapes: { total: number; hectareas: number; mayores: Array<{ a: string; b: string; ha: number; aId: number; bId: number }> };
+  traslapes: { total: number; hectareas: number; mismoNombre?: { total: number; hectareas: number }; mayores: Array<{ a: string; b: string; ha: number; aId: number; bId: number }> };
   areasProtegidas: { concesiones: number; hectareas: number; lista: Conflicto[] } | null;
   microcuencas: { concesiones: number; hectareas: number; lista: Conflicto[] } | null;
   poblados: { concesiones: number; caserios: number; lista: Array<{ id: number; concesion: string; n: number; nombres: string[] }> } | null;
@@ -240,7 +240,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                 </Tarjeta>
               )}
               {d.traslapes.mayores.length > 0 && (
-                <Tarjeta titulo="Mayores traslapes entre concesiones">
+                <Tarjeta titulo="Mayores traslapes entre concesiones distintas">
                   <ol className="space-y-1">
                     {d.traslapes.mayores.map((t, i) => (
                       <li key={`${t.aId}-${t.bId}`}>
@@ -254,6 +254,11 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                       </li>
                     ))}
                   </ol>
+                  {!!d.traslapes.mismoNombre?.total && (
+                    <p className="mt-2 border-t border-white/[0.07] pt-2 text-[11.5px] leading-snug text-[#9FB0B8]">
+                      Aparte, {nf(d.traslapes.mismoNombre.total)} traslapes ({nf(d.traslapes.mismoNombre.hectareas)} ha) son entre concesiones con el mismo nombre: posibles registros duplicados en el padrón, para revisar con INHGEOMIN.
+                    </p>
+                  )}
                 </Tarjeta>
               )}
             </div>

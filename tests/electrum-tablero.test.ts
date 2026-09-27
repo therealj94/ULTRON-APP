@@ -8,7 +8,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Feature, Geometry } from 'geojson';
 import { consulta, guardarCapa, hayBase, recalcularTraslapes } from '../server/electrum/db';
-import { claseDeCapa, olvidarTablero, tablero } from '../server/electrum/tablero';
+import { claseDeCapa, normalizarClase, olvidarTablero, tablero } from '../server/electrum/tablero';
+import { nombreParaDecir } from '../src-electrum/demo/Recorrido';
 import type { Capa } from '../server/electrum/gis';
 
 const caja = (o: number, s: number, e: number, n: number): Geometry => ({ type: 'Polygon', coordinates: [[[o, s], [e, s], [e, n], [o, n], [o, s]]] });
@@ -23,6 +24,19 @@ test('la clase sale del nombre de la capa', () => {
   assert.equal(claseDeCapa('CONCESIÓN NO METÁLICA EN SOLICITUD DE EXPLORAR'), 'No metálica');
   assert.equal(claseDeCapa('ARTESANAL METALICA DELIMITADA'), 'Minería artesanal');
   assert.equal(claseDeCapa(null), 'Sin clase en la capa');
+});
+
+test('la clase del padrón, con las tildes que perdió el .dbf', () => {
+  assert.equal(normalizarClase('Peque?a Min. No Met?lica'), 'Pequeña Minería No Metálica');
+  assert.equal(normalizarClase('Peque?a Miner?a Met?lica'), 'Pequeña Minería Metálica');
+  assert.equal(normalizarClase('Banco de Pr?stamo'), 'Banco de Préstamo');
+  assert.equal(normalizarClase('Artesanal No Metálica'), 'Artesanal No Metálica');
+  assert.equal(normalizarClase(''), null);
+});
+
+test('el nombre para decir en voz alta, sin notas del padrón', () => {
+  assert.equal(nombreParaDecir('El Mochito. (GRAVADO CON PRIMERA HIPOTECA)'), 'El Mochito');
+  assert.equal(nombreParaDecir('Macuelizo'), 'Macuelizo');
 });
 
 test('tablero nacional, contra PostGIS', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async () => {
@@ -64,6 +78,27 @@ test('tablero nacional, contra PostGIS', { skip: hayBase() ? false : 'sin ELECTR
   );
   assert.equal(t.traslapes.total, 1);
   assert.equal(t.traslapes.mayores[0].ha > 0, true);
+  assert.deepEqual(t.traslapes.mismoNombre, { total: 0, hectareas: 0 });
+  // Un duplicado del padrón (misma concesión, mismo nombre, cargada dos veces) no va a la lista.
+  await consulta(`INSERT INTO concesion (nombre, estado, geom) SELECT nombre, estado, geom FROM concesion WHERE nombre = 'El Guirisero'`);
+  await recalcularTraslapes();
+  olvidarTablero();
+  const conDuplicado = await tablero();
+  assert.equal(conDuplicado.traslapes.mismoNombre.total, 1);
+  assert.ok(conDuplicado.traslapes.mayores.every((m) => m.a !== m.b));
+  await consulta(`DELETE FROM concesion WHERE id = (SELECT max(id) FROM concesion WHERE nombre = 'El Guirisero')`);
+  await recalcularTraslapes();
+  olvidarTablero();
+  // La columna CLASIFICAC del padrón manda sobre el nombre de la capa, venga la llave en mayúsculas o no.
+  await consulta(`UPDATE concesion SET atributos = jsonb_build_object('CLASIFICAC', 'Peque?a Miner?a Met?lica') WHERE nombre = 'Cerro Azul'`);
+  await consulta(`UPDATE concesion SET atributos = jsonb_build_object('clasificac', 'Banco de Pr?stamo') WHERE nombre = 'La Vecina'`);
+  olvidarTablero();
+  const conClase = await tablero();
+  const clases = new Map(conClase.porClase.map((c) => [c.nombre, c.n]));
+  assert.equal(clases.get('Pequeña Minería Metálica'), 1);
+  assert.equal(clases.get('Banco de Préstamo'), 1);
+  await consulta(`UPDATE concesion SET atributos = '{}'::jsonb WHERE nombre IN ('Cerro Azul', 'La Vecina')`);
+  olvidarTablero();
   // Reserva Azul pisa la mitad este de Cerro Azul (0,01°) y toda La Vecina.
   assert.equal(t.areasProtegidas!.concesiones, 2);
   const vecina = t.areasProtegidas!.lista.find((c) => c.concesion === 'La Vecina')!;
@@ -76,5 +111,6 @@ test('tablero nacional, contra PostGIS', { skip: hayBase() ? false : 'sin ELECTR
   assert.ok(t.poblados!.lista.every((p) => !p.nombres.includes('Todo el país')));
   // Caché: el segundo pedido no recalcula.
   const t2 = await tablero();
-  assert.equal(t2.generado, t.generado);
+  const t3 = await tablero();
+  assert.equal(t3.generado, t2.generado);
 });

@@ -46,6 +46,9 @@ async function json<T>(url: string): Promise<T> {
   return j as T;
 }
 
+/** El nombre para decirlo en voz alta: sin notas del padrón como «(GRAVADO CON PRIMERA HIPOTECA)». */
+export const nombreParaDecir = (n: string) => String(n || '').replace(/\s*\([^)]*\)\s*/g, ' ').replace(/[.\s]+$/, '').replace(/\s+/g, ' ').trim();
+
 const centroDe = (e: [number, number, number, number]): [number, number] => [(e[0] + e[2]) / 2, (e[1] + e[3]) / 2];
 
 export function Recorrido({ activo, onTerminar, controles }: { activo: boolean; onTerminar: () => void; controles: Controles }) {
@@ -130,7 +133,7 @@ export function Recorrido({ activo, onTerminar, controles }: { activo: boolean; 
             c.current.orden({ accion: 'camara', centro: centroDe(fichaConflicto.encuadre), zoom: 12.6, inclinacion: 64, giro: -25, ms: 2500 });
           }
           await decir(
-            `Miremos el terreno real, en tres dimensiones. Esta es ${conflicto.concesion}. ` +
+            `Miremos el terreno real, en tres dimensiones. Esta es ${nombreParaDecir(conflicto.concesion)}. ` +
               `Pisa ${nf(conflicto.ha, 1)} hectáreas del área protegida ${conflicto.con}, el ${nf(conflicto.pct)} por ciento de la concesión. ` +
               'Es exactamente el tipo de caso que una fiscalización necesita ver primero.'
           );
@@ -163,7 +166,7 @@ export function Recorrido({ activo, onTerminar, controles }: { activo: boolean; 
           await decir(
             'Ahora Santa Bárbara, Vueltas del Río. Leí completos los cinco volúmenes de la agencia japonesa JICA, de 1978 a 1980, escaneados y en inglés, y los resumí en español. ' +
               'Aquí están los mejores resultados de oro de todo el occidente: en superficie, de uno a diez gramos por tonelada.' +
-              (enVueltas ? ` Y cruzo ese prospecto con el catastro de hoy: está dentro de la concesión ${enVueltas.nombre}${enVueltas.titular ? `, de ${enVueltas.titular}` : ''}.` : '')
+              (enVueltas ? ` Y cruzo ese prospecto con el catastro de hoy: está dentro de la concesión ${nombreParaDecir(enVueltas.nombre)}${enVueltas.titular ? `, de ${enVueltas.titular}` : ''}.` : '')
           );
         }
 
