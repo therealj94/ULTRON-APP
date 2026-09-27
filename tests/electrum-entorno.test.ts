@@ -103,6 +103,11 @@ test('el entorno de una concesión, cruzado en PostGIS', { skip: HAY ? false : '
       'Buffer Carretera HN', 'Red vial', 'Areas Protegidas', 'Áreas protegidas SINAPH', 'MUNICIPIOS', 'Límite municipal',
       'DEPARTAMENTOS', 'Zonas informales oro HN', 'Catalogo Patrimonio Publico Forestal', 'Yacimientos y ocurrencias mineras DEFOMIN',
       'Depositos aluviales', 'Estructuras geologicas', 'Concesiones Otorgadas', 'Parque Nacional Bosque Nublado', 'Aldeas del municipio', 'Curvas de nivel',
+      // Geología (v8): las capas de data/geologia y lo que un geólogo subiría con otro nombre.
+      'Geología superficial USGS Caribe 1:2.5M', 'Fallas geológicas USGS Caribe 1:2.5M', 'Fallas activas GEM Centroamérica',
+      'Límites de placas tectónicas PB2002', 'Provincias geológicas USGS Caribe', 'Tractos permisivos pórfido de cobre USGS',
+      'Yacimientos y prospectos pórfido de cobre USGS', 'Yacimientos MRDS USGS', 'Mapa geologico 1:50000 Minas de Oro',
+      'Intrusivos Olancho', 'Lineamientos Landsat', 'Falla de Guayape', 'Plutones terciarios',
     ];
     const filas = await consulta<{ n: string; rol: string | null }>(`SELECT n, electrum_rol_capa(n) AS rol FROM unnest($1::text[]) AS n`, [nombres]);
     for (const f of filas) assert.equal(f.rol, rolDeCapa(f.n), `«${f.n}»: la base dice ${f.rol}, la aplicación ${rolDeCapa(f.n)}`);

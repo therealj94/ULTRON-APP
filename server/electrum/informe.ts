@@ -38,7 +38,7 @@ import { documentoPdf, medirJpeg, type Bloque } from '../../lib/pdf';
 import { entornoDe, NOMBRE_ROL, pct, RADIO_LEJOS_M, RADIO_POBLADOS_M, type Entorno, type Seccion } from './entorno';
 import { planoConcesion } from './plano';
 
-const AMBAR: [number, number, number] = [1, 0.68, 0.23];
+export const AMBAR: [number, number, number] = [1, 0.68, 0.23];
 
 const nf = (n: number, d = 2) =>
   new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
@@ -47,7 +47,7 @@ function fecha(d = new Date()): string {
   return new Intl.DateTimeFormat('es-ES', { dateStyle: 'long', timeZone: 'America/Tegucigalpa' }).format(d);
 }
 
-function pie(quien: string | null): string {
+export function pie(quien: string | null): string {
   const q = quien ? ` · a petición de ${quien}` : '';
   return `Dr Electrum FP · ${fecha()}${q} · documento de demostración`;
 }
@@ -128,7 +128,12 @@ function fichaCampos(c: FilaConcesion): Array<[string, string]> {
   return filas;
 }
 
-export type Informe = { pdf: Buffer; nombre: string; dicho: string };
+/**
+ * Un documento listo para recoger. `pdf` son los bytes, sean de un PDF o —con `tipo` 'image/jpeg'—
+ * de un mapa: los mapas geológicos viajan por el mismo almacén, con el mismo dueño y la misma
+ * caducidad, y Telegram los manda como foto en vez de como archivo.
+ */
+export type Informe = { pdf: Buffer; nombre: string; dicho: string; tipo?: 'application/pdf' | 'image/jpeg' };
 
 /* ------------------------------------------------------------------ entorno en la ficha */
 

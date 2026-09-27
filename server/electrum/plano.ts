@@ -73,23 +73,23 @@ export type DatosPlano = {
 export const ANCHO = 1600;
 export const ALTO = 1400;
 /** El marco del mapa. A la derecha va la columna de norte, escala y leyenda. */
-const MARCO = { x: 110, y: 150, w: 1060, h: 1130 };
-const PANEL = { x: 1210, w: 350 };
+export const MARCO = { x: 110, y: 150, w: 1060, h: 1130 };
+export const PANEL = { x: 1210, w: 350 };
 /** A qué ancho se imprime: la ficha lo pone a ancho de página (504 pt = 177,8 mm). */
 const MM_IMPRESO = (504 * 25.4) / 72;
 
-const AMBAR = '#ffad3b';
-const AMBAR_OSCURO = '#a65f00';
-const FUENTE = 'Liberation Sans';
+export const AMBAR = '#ffad3b';
+export const AMBAR_OSCURO = '#a65f00';
+export const FUENTE = 'Liberation Sans';
 
-const esc = (s: string) =>
+export const esc = (s: string) =>
   String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;' })[c]!);
 
 /** Miles con espacio, como se escriben las coordenadas en un plano: «512 000». */
 export const miles = (n: number) => String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 
 /** El número «redondo» (1, 2, 2,5 o 5 por potencia de diez) más cercano por arriba. */
-function redondo(x: number): number {
+export function redondo(x: number): number {
   const p = 10 ** Math.floor(Math.log10(x));
   for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= x) return m * p;
   return 10 * p;
@@ -149,7 +149,7 @@ export function trazado(g: Geometry | null | undefined, t: T): string {
 }
 
 /** Los puntos de una geometría, sea Point, MultiPoint o una colección. */
-function puntos(g: Geometry | null | undefined): Position[] {
+export function puntos(g: Geometry | null | undefined): Position[] {
   if (!g) return [];
   if (g.type === 'Point') return [g.coordinates];
   if (g.type === 'MultiPoint') return g.coordinates;
@@ -162,7 +162,7 @@ const esLinea = (g: Geometry) => /LineString/.test(g.type);
 const esPunto = (g: Geometry) => /Point/.test(g.type);
 
 /** Texto con halo blanco, para que se lea encima de rayados y ríos. Dos pasadas: halo y letra. */
-function rotulo(x: number, y: number, texto: string, tam: number, color = '#1a1a1a', peso = 400, ancla = 'start'): string {
+export function rotulo(x: number, y: number, texto: string, tam: number, color = '#1a1a1a', peso = 400, ancla = 'start'): string {
   const a = `x="${x.toFixed(1)}" y="${y.toFixed(1)}" font-family="${FUENTE}" font-size="${tam}" font-weight="${peso}" text-anchor="${ancla}"`;
   return (
     `<text ${a} fill="none" stroke="#ffffff" stroke-width="${Math.max(3, tam / 5)}" stroke-linejoin="round">${esc(texto)}</text>` +
@@ -171,14 +171,14 @@ function rotulo(x: number, y: number, texto: string, tam: number, color = '#1a1a
 }
 
 /** Ancho aproximado de un texto en Liberation Sans, para no encimar rótulos. */
-const anchoTexto = (s: string, tam: number, negrita = false) => s.length * tam * (negrita ? 0.58 : 0.53);
+export const anchoTexto = (s: string, tam: number, negrita = false) => s.length * tam * (negrita ? 0.58 : 0.53);
 
-type Caja = [number, number, number, number];
-const chocan = (a: Caja, b: Caja) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
+export type Caja = [number, number, number, number];
+export const chocan = (a: Caja, b: Caja) => a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1];
 const dentroDelMarco = (x: number, y: number) => x >= MARCO.x && x <= MARCO.x + MARCO.w && y >= MARCO.y && y <= MARCO.y + MARCO.h;
 
 /** Parte un texto en renglones de hasta `ancho` px. */
-function renglones(texto: string, ancho: number, tam: number): string[] {
+export function renglones(texto: string, ancho: number, tam: number): string[] {
   const out: string[] = [];
   let l = '';
   for (const w of texto.split(/\s+/)) {
@@ -633,7 +633,7 @@ export async function datosPlano(id: number, opts: { subtitulo?: string; pie?: s
   };
 }
 
-function vacia(g: Geometry): boolean {
+export function vacia(g: Geometry): boolean {
   if (!g) return true;
   if (g.type === 'GeometryCollection') return !g.geometries.length;
   return !(g as { coordinates: unknown[] }).coordinates?.length;

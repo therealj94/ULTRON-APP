@@ -419,3 +419,62 @@ END $$;
 INSERT INTO esquema_version (version, nota)
 VALUES (7, 'rol de cada capa (río, poblado, área protegida…) para cruzar la ficha con su entorno')
 ON CONFLICT (version) DO NOTHING;
+
+-- ---------------------------------------------------------------- versión 8
+--
+-- Geología: las capas de roca, fallas, placas, provincias geológicas y tractos permisivos
+-- (data/geologia, cargadas con scripts/electrum/cargar-geologia.ts) tienen rol propio y las cruza
+-- server/electrum/geologia.ts. Los patrones nuevos van ANTES que los de la v7 y en este orden:
+--
+--   tracto_permisivo    tracto(s) permisivo · permissive
+--   placa               placa(s) tectonica · limite(s) de placa · plate boundary · pb2002
+--   provincia_geologica provincia(s) geologica · geologic province   (antes que litología)
+--   falla               falla(s) · fault(s) · lineamiento · estructura(s) geologica · estructural
+--                       (palabras enteras; antes que litología: «Fallas geológicas» es una falla)
+--   litologia           geolog · litolog · litholog · intrusiv · plutón(es)
+--
+-- La misma lista en server/electrum/db.ts (`rolDeCapa`); tests/electrum-entorno.test.ts compara
+-- las dos contra esta función.
+
+ALTER TABLE capa DROP CONSTRAINT IF EXISTS capa_rol_valido;
+ALTER TABLE capa ADD CONSTRAINT capa_rol_valido CHECK (rol IS NULL OR rol IN (
+  'rio', 'poblado', 'area_protegida', 'microcuenca', 'carretera', 'municipio', 'departamento',
+  'ocurrencia', 'zona_informal', 'forestal',
+  'litologia', 'falla', 'placa', 'provincia_geologica', 'tracto_permisivo'));
+
+CREATE OR REPLACE FUNCTION electrum_rol_capa(nombre text) RETURNS text AS $$
+  SELECT CASE
+    WHEN n ~ 'tractos? permisiv|permissive' THEN 'tracto_permisivo'
+    WHEN n ~ 'placas? tectonic|limites? de placas?|plate boundar|pb2002' THEN 'placa'
+    WHEN n ~ 'provincias? geologic|geologic provinc' THEN 'provincia_geologica'
+    WHEN n ~ '(^| )fallas?( |$)|(^| )faults?( |$)|lineamiento|estructuras? geologic|estructural' THEN 'falla'
+    WHEN n ~ 'geolog|litolog|litholog|intrusiv|(^| )plutones?( |$)' THEN 'litologia'
+    WHEN n ~ 'microcuenca|cuencas? declarada' THEN 'microcuenca'
+    WHEN n ~ 'informal|artesanal|guiris|pequena mineria|(^| )mape( |$)' THEN 'zona_informal'
+    WHEN n ~ 'ocurrencia|yacimiento|defomin|indicio|prospecto' THEN 'ocurrencia'
+    WHEN n ~ 'protegida|sinaph|reserva biologica|parque nacional|refugio de vida' THEN 'area_protegida'
+    WHEN n ~ 'forestal|bosque' THEN 'forestal'
+    WHEN n ~ 'caserio|aldea|poblad|comunidad|localidad|asentamiento|ciudad' THEN 'poblado'
+    WHEN n ~ 'carretera|(^| )(red vial|vias?|caminos?|rutas?)( |$)' THEN 'carretera'
+    WHEN n ~ 'departament' THEN 'departamento'
+    WHEN n ~ 'municipi|municipal' THEN 'municipio'
+    WHEN n ~ 'red hidric|hidrograf|(^| )(rios?|quebradas?|drenajes?|cauces?)( |$)' THEN 'rio'
+  END
+  FROM (SELECT trim(regexp_replace(lower(unaccent(coalesce(nombre, ''))), '[^a-z0-9]+', ' ', 'g')) AS n) t;
+$$ LANGUAGE sql STABLE;
+
+-- Una vez: las capas de geografía que se quedaron sin rol y ahora casan con uno de geología.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM esquema_version WHERE version = 8) THEN
+    UPDATE capa c
+       SET rol = electrum_rol_capa(c.nombre)
+     WHERE c.rol IS NULL
+       AND electrum_rol_capa(c.nombre) IN ('litologia', 'falla', 'placa', 'provincia_geologica', 'tracto_permisivo')
+       AND EXISTS (SELECT 1 FROM entidad_geo e WHERE e.capa_id = c.id);
+  END IF;
+END $$;
+
+INSERT INTO esquema_version (version, nota)
+VALUES (8, 'roles de geología: litología, fallas, placas, provincias geológicas y tractos permisivos')
+ON CONFLICT (version) DO NOTHING;

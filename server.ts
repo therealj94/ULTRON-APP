@@ -69,6 +69,7 @@ import { identidadDe, exigirPlataforma } from './server/seguridad';
 import { puedeEscribir } from './lib/acceso';
 import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
 import { catastroGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
+import { cargarGeologia } from './server/electrum/geologia-datos';
 import { clasificarPendientes } from './server/electrum/documentos-laya';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
@@ -485,6 +486,23 @@ app.post('/api/electrum/documentos/clasificar', exigirPlataforma('electrum'), li
   }
 });
 
+/**
+ * Cargar el paquete de geología abierta (data/geologia) en el catastro: roca, fallas, placas,
+ * provincias geológicas, tractos permisivos y yacimientos del USGS. Lo hace quien manda; lo ya
+ * cargado no se duplica, y con `reemplazar` se vuelve a cargar entero.
+ */
+app.post('/api/electrum/geologia/cargar', exigirPlataforma('electrum'), limitar(2), async (req, res) => {
+  if (nivelDe(identidadDe(req), 'electrum') !== 'mando') return res.status(403).json({ error: 'Esto lo hace quien manda.', honesto: true });
+  if (!hayBaseElectrum()) return res.status(503).json({ error: 'El catastro no está conectado.', honesto: true });
+  try {
+    const capas = await cargarGeologia({ reemplazar: req.body?.reemplazar === true });
+    res.json({ capas, honesto: true });
+  } catch (e: any) {
+    console.error('[electrum] cargar geología falló:', String(e?.message || e).slice(0, 200));
+    res.status(500).json({ error: `No pude cargar la geología: ${String(e?.message || e).slice(0, 200)}`, honesto: true });
+  }
+});
+
 app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
   const id = identidadDe(req);
   const catastro = await saludElectrum();
@@ -804,8 +822,10 @@ app.get('/api/electrum/informe/:id', exigirPlataforma('electrum'), limitar(60), 
     }
     return res.status(404).json({ error: 'Ese informe ya no está. Se guardan media hora porque describen el catastro del momento; pedime otro.', honesto: true });
   }
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="${r.informe.nombre}"`);
+  // Un mapa geológico viaja por el mismo almacén: se sirve como imagen, en línea, para verlo sin bajarlo.
+  const imagen = r.informe.tipo === 'image/jpeg';
+  res.setHeader('Content-Type', imagen ? 'image/jpeg' : 'application/pdf');
+  res.setHeader('Content-Disposition', `${imagen ? 'inline' : 'attachment'}; filename="${r.informe.nombre}"`);
   res.setHeader('Cache-Control', 'private, no-store');
   return res.end(r.informe.pdf);
 });

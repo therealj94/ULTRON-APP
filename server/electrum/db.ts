@@ -178,7 +178,7 @@ const GEOM_VALIDA = (param: string) =>
 /* ------------------------------------------------------------------ rol de una capa */
 
 /** Lo que una capa de geografía ES para el cruce de la ficha (esquema v7, `capa.rol`). */
-export type RolCapa =
+export type RolEntorno =
   | 'rio'
   | 'poblado'
   | 'area_protegida'
@@ -189,6 +189,15 @@ export type RolCapa =
   | 'ocurrencia'
   | 'zona_informal'
   | 'forestal';
+
+/**
+ * Las capas de geología (esquema v8): unidades de roca, fallas, límites de placa, provincias
+ * geológicas y tractos permisivos. Las cruza server/electrum/geologia.ts, no la ficha del entorno:
+ * que falte el mapa geológico no es algo que la ficha de una concesión tenga que reclamar.
+ */
+export type RolGeologia = 'litologia' | 'falla' | 'placa' | 'provincia_geologica' | 'tracto_permisivo';
+
+export type RolCapa = RolEntorno | RolGeologia;
 
 /**
  * Los patrones, EN ORDEN: gana el primero que casa, del más específico al más general.
@@ -204,6 +213,13 @@ export type RolCapa =
  * Las palabras cortas van enteras: «aluvial» no es una red vial ni «estructura» una ruta.
  */
 const ROLES: Array<[RolCapa, RegExp]> = [
+  // Geología (v8) primero: «Fallas geológicas» es una falla, no una unidad de roca, y «Provincias
+  // geológicas» tampoco; por eso litología va la última de las cinco.
+  ['tracto_permisivo', /tractos? permisiv|permissive/],
+  ['placa', /placas? tectonic|limites? de placas?|plate boundar|pb2002/],
+  ['provincia_geologica', /provincias? geologic|geologic provinc/],
+  ['falla', /(^| )fallas?( |$)|(^| )faults?( |$)|lineamiento|estructuras? geologic|estructural/],
+  ['litologia', /geolog|litolog|litholog|intrusiv|(^| )plutones?( |$)/],
   ['microcuenca', /microcuenca|cuencas? declarada/],
   ['zona_informal', /informal|artesanal|guiris|pequena mineria|(^| )mape( |$)/],
   ['ocurrencia', /ocurrencia|yacimiento|defomin|indicio|prospecto/],

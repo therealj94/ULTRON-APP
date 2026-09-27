@@ -36,6 +36,9 @@ import {
 import { personaPorId } from '../../lib/acceso';
 import { clasificarDocumento, lecturaEnTexto, type LecturaDocumento } from './documentos-laya';
 import { entornoDe, entornoEnTexto } from './entorno';
+import { geologiaDe, geologiaEnTexto, type Zona } from './geologia';
+import { mapaGeologico, NOMBRE_MAPA, TIPOS_MAPA_GEO, type TipoMapaGeo } from './mapa-geologico';
+import { informeGeologico } from './informe-geologico';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -172,6 +175,97 @@ const concesion_entorno: Herramienta = {
     const e = await entornoDe(id);
     if (!e) return { ok: false, texto: `La concesión ${id} no está en el catastro o no tiene geometría, así que no hay entorno que cruzar.` };
     return { ok: true, texto: entornoEnTexto(e), ui: { entorno: e } };
+  },
+};
+
+/* ------------------------------------------------------------------ geología */
+
+/** Cómo se nombra una zona en las herramientas de geología: la concesión, una capa, un municipio o un punto. */
+const ESQUEMA_ZONA = {
+  concesion_id: { type: 'integer', description: 'Id de una concesión (de catastro_buscar)' },
+  nombre: { type: 'string', description: 'Nombre o expediente de una concesión, si no tenés el id' },
+  capa: { type: 'string', description: 'Nombre de una capa cargada cuyos polígonos son la zona (p. ej. «Tule», «MINAS DE ORO I»)' },
+  municipio: { type: 'string', description: 'Un municipio de Honduras' },
+  lon: { type: 'number', description: 'Longitud en grados (negativa en Honduras), si la zona es un punto' },
+  lat: { type: 'number', description: 'Latitud en grados, si la zona es un punto' },
+  radio_km: { type: 'number', description: 'Radio del entorno que se mira alrededor, en km (1 a 50; 10 por defecto)' },
+} as const;
+
+function zonaDe(a: Record<string, unknown>): Zona {
+  const num = (v: unknown) => (v == null || v === '' ? undefined : Number(v));
+  return {
+    concesion: a.concesion_id != null && a.concesion_id !== '' ? Number(a.concesion_id) : a.nombre ? String(a.nombre) : undefined,
+    capa: a.capa ? String(a.capa) : undefined,
+    municipio: a.municipio ? String(a.municipio) : undefined,
+    lon: num(a.lon),
+    lat: num(a.lat),
+    radioKm: num(a.radio_km),
+  };
+}
+
+/**
+ * La geología de una zona, cruzada en PostGIS (geologia.ts): rocas e intrusivos, fallas y sus
+ * rumbos, tectónica, tractos permisivos, yacimientos e indicios con su evidencia. El modelo recibe
+ * el texto ya redactado con cifras, fuentes y límites de escala, para citarlo y no para inventarlo.
+ */
+const geologia_zona: Herramienta = {
+  nombre: 'geologia_zona',
+  descripcion:
+    'Geología de una zona (concesión, capa de proyecto, municipio o punto): unidades de roca con su % de área, intrusivos y contactos, fallas que la cruzan con rumbos y cruces, falla activa más cercana, marco de placas, tractos permisivos del USGS, yacimientos cercanos por mineral e INDICIOS de potencial con su evidencia. Usala antes de opinar sobre la geología, las estructuras, los intrusivos o el potencial minero de un lugar; citá sus cifras y sus límites de escala tal cual.',
+  esquema: { type: 'object', properties: ESQUEMA_ZONA },
+  plataformas: ['electrum'],
+  msMaximo: 20_000,
+  async ejecutar(args) {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    const g = await geologiaDe(zonaDe(args));
+    if ('error' in g) return { ok: false, texto: g.error };
+    const { zona, ...resto } = g;
+    return { ok: true, texto: geologiaEnTexto(g), ui: { geologia: { ...resto, zona: { ...zona, geojson: undefined } } } };
+  },
+};
+
+/**
+ * Los mapas geológicos en imagen: litológico, estructural (con roseta de rumbos) o geotectónico, o
+ * los tres. Se guardan como los informes —con dueño y media hora de vida— y Telegram los manda
+ * como foto.
+ */
+const mapa_geologico: Herramienta = {
+  nombre: 'mapa_geologico',
+  descripcion:
+    'Dibuja mapas geológicos en imagen de una zona: litologico (rocas coloreadas por clase, intrusivos, fallas y yacimientos), estructural (fallas por tipo, cruces y roseta de rumbos), geotectonico (placas, subducción, provincias geológicas y fallas activas de la región) o todos. Usala cuando pidan un mapa geológico, estructural, de fallas, tectónico o de intrusivos.',
+  esquema: {
+    type: 'object',
+    properties: {
+      tipo: { type: 'string', enum: [...TIPOS_MAPA_GEO, 'todos'], default: 'litologico', description: 'Qué mapa: litologico, estructural, geotectonico o todos' },
+      ...ESQUEMA_ZONA,
+    },
+  },
+  plataformas: ['electrum'],
+  msMaximo: 30_000,
+  async ejecutar(args, ctx) {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    const pedido = String(args.tipo || 'litologico');
+    const tipos: TipoMapaGeo[] = pedido === 'todos' ? TIPOS_MAPA_GEO : TIPOS_MAPA_GEO.includes(pedido as TipoMapaGeo) ? [pedido as TipoMapaGeo] : ['litologico'];
+    const z = zonaDe(args);
+    const hechos: Array<{ id: string; nombre: string; url: string; bytes: number; tipo: 'image/jpeg'; titulo: string }> = [];
+    const fallos: string[] = [];
+    for (const t of tipos) {
+      const m = await mapaGeologico(t, z, { pie: 'Dr Electrum FP' });
+      if ('error' in m) {
+        // La zona que no existe falla igual para los tres: se dice una vez y no se insiste.
+        if (!hechos.length && t === tipos[0]) return { ok: false, texto: m.error };
+        fallos.push(`${NOMBRE_MAPA[t]}: ${m.error}`);
+        continue;
+      }
+      const nombre = `${t}-${m.titulo.replace(/^.*— /, '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w.-]+/g, '-').toLowerCase().slice(0, 50)}.jpg`;
+      const id = guardarInforme({ pdf: m.jpeg, nombre, dicho: m.titulo, tipo: 'image/jpeg' }, ctx.quien);
+      hechos.push({ id, nombre, url: `/api/electrum/informe/${id}`, bytes: m.jpeg.length, tipo: 'image/jpeg', titulo: m.titulo });
+    }
+    return {
+      ok: true,
+      texto: `${hechos.length === 1 ? `Dibujé el ${hechos[0].titulo.split(' — ')[0].toLowerCase()}` : `Dibujé ${hechos.length} mapas (${hechos.map((h) => h.titulo.split(' — ')[0].toLowerCase()).join(', ')})`}; ya están listos para ver.${fallos.length ? ` No pude: ${fallos.join('; ')}.` : ''} Si hace falta explicarlos, pedí antes geologia_zona y citá sus cifras; el mapa geológico es regional y el pie lo dice.`,
+      ui: { informe: hechos[0], informes: hechos },
+    };
   },
 };
 
@@ -378,13 +472,18 @@ const informe_pdf: Herramienta = {
     properties: {
       tipo: {
         type: 'string',
-        description: 'concesion para una ficha, cartera para el estado de todo, conversacion para poner en PDF lo que se viene hablando (una investigación, un análisis)',
-        enum: ['concesion', 'cartera', 'conversacion'],
+        description: 'concesion para una ficha, cartera para el estado de todo, conversacion para poner en PDF lo que se viene hablando (una investigación, un análisis), geologico para el informe geológico de una zona con sus tres mapas (concesión, capa, municipio o punto)',
+        enum: ['concesion', 'cartera', 'conversacion', 'geologico'],
         default: 'concesion',
       },
       titulo: { type: 'string', description: 'Solo para conversacion: de qué trata, en pocas palabras (p. ej. «Caliza coralina en Honduras»)' },
       nombre: { type: 'string', description: 'Nombre o expediente de la concesión, si el informe es de una' },
       concesion_id: { type: 'integer', description: 'Id de la concesión, si ya lo tenés de una búsqueda anterior' },
+      capa: ESQUEMA_ZONA.capa,
+      municipio: ESQUEMA_ZONA.municipio,
+      lon: ESQUEMA_ZONA.lon,
+      lat: ESQUEMA_ZONA.lat,
+      radio_km: ESQUEMA_ZONA.radio_km,
       lectura: {
         type: 'string',
         description:
@@ -394,7 +493,8 @@ const informe_pdf: Herramienta = {
   },
   plataformas: ['electrum'],
   msMaximo: 25_000,
-  async ejecutar({ tipo, nombre, concesion_id, lectura, titulo }, ctx) {
+  async ejecutar(args, ctx) {
+    const { tipo, nombre, concesion_id, lectura, titulo } = args;
     const conversacion = String(tipo || '') === 'conversacion';
     if (!conversacion && !hayBase()) return { ok: false, texto: SIN_BASE };
     // El pie del PDF lleva el NOMBRE de quien lo pidió; la propiedad del informe, su id. Antes el
@@ -402,7 +502,9 @@ const informe_pdf: Herramienta = {
     const quien = ctx.quien;
     const opts = { quien: quien ? personaPorId(quien)?.nombre || null : null, lectura: lectura ? String(lectura) : undefined };
 
-    const r = conversacion
+    const r = String(tipo || '') === 'geologico'
+      ? await informeGeologico(zonaDe(args), opts)
+      : conversacion
       ? informeConversacion({ ...opts, titulo: titulo ? String(titulo) : undefined, historial: ctx.historial || [] })
       : String(tipo || 'concesion') === 'cartera'
         ? await informeCartera(opts)
@@ -429,6 +531,8 @@ export const MANOS: Record<string, Herramienta> = {
   catastro_vencimientos,
   catastro_en_punto,
   concesion_entorno,
+  geologia_zona,
+  mapa_geologico,
   gis_traslapes,
   gis_medir,
   mapa_volar,

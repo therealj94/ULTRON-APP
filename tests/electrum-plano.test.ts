@@ -115,8 +115,11 @@ test('el rol de una capa sale de su nombre', () => {
     ['Yacimientos y ocurrencias mineras DEFOMIN', 'ocurrencia'],
     // Los que NO tienen que casar: una palabra corta dentro de otra no es la palabra.
     ['Depositos aluviales', null],
-    ['Estructuras geologicas', null],
     ['Concesiones Otorgadas', null],
+    // «estructura» no es «ruta» (sigue sin ser carretera); desde la v8, unas estructuras geológicas
+    // son fallas y lineamientos, y entran con ese rol.
+    ['Estructuras geologicas', 'falla'],
+    ['Geologia de Olancho 1:100000', 'litologia'],
     // El orden importa: un parque con bosque es área protegida, unas aldeas del municipio son aldeas.
     ['Parque Nacional Bosque Nublado', 'area_protegida'],
     ['Aldeas del municipio', 'poblado'],
