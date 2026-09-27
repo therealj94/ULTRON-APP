@@ -255,12 +255,19 @@ async function textoDeDocx(datos: Buffer): Promise<string> {
  * formulario de tres líneas, que legítimamente no tiene ninguna.
  */
 const COMUNES_ES = /(^|[^\p{L}])(de|la|el|en|que|los|las|por|con|para|del|se|un|una|al|es|no|su|sus)($|[^\p{L}])/giu;
+/**
+ * Lo mismo en inglés. Buena parte de lo técnico que llega está en inglés —informes 43-101, los
+ * estudios de JICA— y sin esto un informe bien leído se rechazaba como ilegible: su proporción de
+ * palabras funcionales españolas no llega al 8 %. Vale la que dé más de las dos.
+ */
+const COMUNES_EN = /(^|[^\p{L}])(the|of|and|in|to|is|are|was|were|with|for|by|on|as|at|from|which|this|that|an|be)($|[^\p{L}])/giu;
 
 export function pareceProsa(texto: string): boolean {
   const palabras = texto.match(/\p{L}{2,}/gu) || [];
   if (palabras.length < 150) return true; // demasiado corto para juzgarlo
-  const comunes = (texto.match(COMUNES_ES) || []).length;
-  return comunes / palabras.length >= 0.08;
+  const es = (texto.match(COMUNES_ES) || []).length;
+  const en = (texto.match(COMUNES_EN) || []).length;
+  return Math.max(es, en) / palabras.length >= 0.08;
 }
 
 /**
