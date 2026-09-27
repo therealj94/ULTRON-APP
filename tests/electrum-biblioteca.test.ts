@@ -505,16 +505,28 @@ test('expediente_leer: lee seguido desde una página, dice dónde sigue y elige 
     assert.ok(l.ok);
     if (!l.ok) return;
     assert.equal(l.documento, 'prueba-lee-JICA Fase III (OCR).txt', 'gana el de más texto');
-    assert.deepEqual([l.desde, l.hasta, l.sigue, l.ultima], [3, 4, 5, 10]);
+    assert.deepEqual([l.desde, l.hasta, l.sigue, l.ultima], [3, 4, { pagina: 5, trozo: 0 }, 10]);
     assert.match(l.texto, /^\[p\. 3\]/);
     assert.match(l.texto, /\[p\. 4\]\nPágina 4\. Capítulo 5/);
     assert.doesNotMatch(l.texto, /Página 5\./);
     for (let k = 1; k <= 12; k++) assert.equal(l.texto.split(`Párrafo ${k} de las`).length - 1, 1, `el párrafo ${k} sale una sola vez`);
     assert.deepEqual(l.otros, ['prueba-lee-mapa Fase III.txt']);
 
-    // Con un tope chico corta y dice en qué página sigue.
+    // Con un tope chico corta A MITAD de la página 3, y el cursor retoma donde quedó: ni repite el
+    // comienzo ni se salta nada.
     const corta = await leerSeguido('prueba-lee Fase III', 3, { paginas: 4, tope: 1000 });
-    assert.ok(corta.ok && corta.sigue != null && corta.sigue <= 4 && corta.texto.length <= 1000);
+    assert.ok(corta.ok && corta.sigue);
+    if (!corta.ok || !corta.sigue) return;
+    assert.ok(corta.texto.length <= 1000);
+    assert.equal(corta.sigue.pagina, 3);
+    assert.ok(corta.sigue.trozo > 0, 'el corte cae dentro de la página');
+    const resto = await leerSeguido('prueba-lee Fase III', corta.sigue.pagina, { paginas: 4, tope: 1000, trozo: corta.sigue.trozo });
+    assert.ok(resto.ok);
+    if (!resto.ok) return;
+    assert.match(resto.texto, /^\[p\. 3, sigue\]/);
+    const junto = corta.texto + '\n' + resto.texto;
+    for (let k = 1; k <= 12; k++) assert.equal(junto.split(`Párrafo ${k} de las`).length - 1, 1, `al retomar, el párrafo ${k} sale una sola vez`);
+    assert.match(resto.texto, /\[p\. 4\]/, 'y sigue con la página siguiente');
 
     const r = await leer.ejecutar({ documento: 'prueba-lee Fase III', pagina: 4, paginas: 1 }, {} as any);
     assert.match(r.texto, /página 4 de 10/);
@@ -527,6 +539,16 @@ test('expediente_leer: lee seguido desde una página, dice dónde sigue y elige 
     assert.match(porId.texto, /Mapa de ubicación/);
     const nada = await leer.ejecutar({ documento: 'no existe en ningún lado xyz' }, {} as any);
     assert.match(nada.texto, /No hay ningún documento/);
+
+    // Páginas en blanco: el cursor salta a la próxima página que tiene texto, no a la misma.
+    await aprender('prueba-lee-con blancos.txt', Buffer.from(['Página 1. Portada del informe de la zona de Tatanacho con su índice.', '', '', 'Página 4. Recursos estimados del depósito de Tatanacho por bloque.'].join('\f')));
+    const blanco = await leerSeguido('prueba-lee con blancos', 2, { paginas: 1 });
+    assert.ok(blanco.ok);
+    if (!blanco.ok) return;
+    assert.equal(blanco.texto, '');
+    assert.deepEqual(blanco.sigue, { pagina: 4, trozo: 0 });
+    const rb = await leer.ejecutar({ documento: 'prueba-lee con blancos', pagina: 2, paginas: 1 }, {} as any);
+    assert.match(rb.texto, /sigue en la página 4/);
   } finally {
     await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lee-%'`);
   }

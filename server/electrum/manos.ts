@@ -483,20 +483,22 @@ const expediente_leer: Herramienta = {
       documento: { type: 'string', description: 'Parte del nombre o carpeta («Fase III»), o su número' },
       pagina: { type: 'number', description: 'Desde qué página' },
       paginas: { type: 'number', description: 'Opcional: cuántas (1 a 12)' },
+      trozo: { type: 'number', description: 'Opcional: el trozo donde dijo que sigue' },
     },
     required: ['documento'],
   },
   plataformas: ['electrum'],
-  async ejecutar({ documento, pagina, paginas }) {
+  async ejecutar({ documento, pagina, paginas, trozo }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const ref = String(documento || '').trim();
     if (!ref) return { ok: false, texto: 'Decime qué documento: parte de su nombre o su número.' };
-    const l = await leerSeguido(ref, Number(pagina) || 1, { paginas: Math.min(12, Number(paginas) || 6) });
+    const l = await leerSeguido(ref, Number(pagina) || 1, { paginas: Math.min(12, Number(paginas) || 6), trozo: Number(trozo) || 0 });
+    const donde = l.ok && l.sigue ? `la página ${l.sigue.pagina}${l.sigue.trozo ? `, a mitad de página (pasá pagina ${l.sigue.pagina} y trozo ${l.sigue.trozo})` : ''}` : '';
     if (!l.ok) return { ok: true, texto: `No hay ningún documento con texto que se llame o esté en una carpeta como «${ref}». Probá con expediente_listar para ver cómo se llama.` };
     if (!l.texto) {
       return {
         ok: true,
-        texto: `«${l.documento}» no tiene texto desde la página ${l.desde}${l.ultima ? ` (llega hasta la ${l.ultima})` : ''}.${l.sigue ? ` Sigue en la página ${l.sigue}.` : ''}`,
+        texto: `«${l.documento}» no tiene texto en esas páginas desde la ${l.desde}${l.ultima ? ` (llega hasta la ${l.ultima})` : ''}.${l.sigue ? ` El texto sigue en ${donde}.` : ''}`,
       };
     }
     const rango = l.hasta > l.desde ? `páginas ${l.desde} a ${l.hasta}` : `página ${l.desde}`;
@@ -505,7 +507,7 @@ const expediente_leer: Herramienta = {
       ok: true,
       texto:
         `«${l.documento}», ${rango}${l.ultima ? ` de ${l.ultima}` : ''}:\n${l.texto}\n` +
-        (l.sigue ? `[Sigue en la página ${l.sigue}: leela con expediente_leer si hace falta.] ` : '[Fin del documento.] ') +
+        (l.sigue ? `[Sigue en ${donde}: leelo con expediente_leer si hace falta.] ` : '[Fin del documento.] ') +
         (l.otros.length ? `[Otros documentos que también casan: ${l.otros.slice(0, 4).join('; ')}.] ` : '') +
         'Citá el documento y la página.' +
         (ingles ? ' El original está en inglés: traducí al español (cifras y unidades tal cual) y decilo.' : ''),

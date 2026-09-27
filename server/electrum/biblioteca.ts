@@ -444,10 +444,17 @@ export async function eliminar(refs: Ref[], quien?: string | null) {
       const r = await q(`DELETE FROM capa WHERE id = ANY($1::bigint[]) RETURNING id, nombre, archivo`, [capas]);
       for (const x of r as any[]) quitados.push({ clase: 'capa', id: Number(x.id), nombre: x.nombre, archivo: x.archivo || null, concesiones: porCapa.get(Number(x.id)) || 0 });
     }
+    // La bitácora va en la MISMA transacción: con el original anotado, una reimportación no lo vuelve
+    // a traer (ver importar.ts). Si la anotación fallara aparte, lo borrado reviviría en silencio.
+    for (const x of quitados) {
+      await q(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle) VALUES ($1, 'eliminar', $2, $3)`, [
+        quien || null,
+        `${x.clase} ${x.id}`,
+        JSON.stringify({ nombre: x.nombre, archivo: x.archivo, concesiones: x.concesiones }),
+      ]);
+    }
   });
   if (quitados.some((x) => x.clase === 'capa')) olvidarTablero();
-  // El original queda anotado: una reimportación de esa carpeta NO lo vuelve a traer (ver importar.ts).
-  for (const x of quitados) await anotar(quien, 'eliminar', `${x.clase} ${x.id}`, { nombre: x.nombre, archivo: x.archivo, concesiones: x.concesiones });
   return { eliminados: quitados.length, quitados };
 }
 
