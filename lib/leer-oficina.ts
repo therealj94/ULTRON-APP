@@ -62,35 +62,68 @@ export async function paginasDeDoc(datos: Buffer): Promise<PaginaLeida[]> {
     .map((t: unknown) => limpio(String(t || '')))
     .filter(Boolean);
   const texto = partes.join('\n\n');
-  if (texto.replace(/\s+/g, '').length >= 40) return [{ pagina: 1, texto }];
-  // Word 2002 «guardado rápido»: el texto está en el archivo, pero la tabla de piezas que usa
-  // word-extractor no lo encuentra (cuatro fichas FOMR salían vacías). Se rescata de los bytes.
-  const rescatado = textoCrudoDeDoc(datos);
-  return rescatado ? [{ pagina: 1, texto: rescatado }] : texto ? [{ pagina: 1, texto }] : [];
+  // Con cuerpo sustancial, word-extractor manda. Con poco o nada, se mira el tramo declarado.
+  if (texto.replace(/\s+/g, '').length >= 500) return [{ pagina: 1, texto }];
+  /*
+   * Cuatro fichas FOMR (Word 2002) salían vacías: word-extractor lee el texto corrido 512 bytes y
+   * encuentra ceros. Solo si salió VACÍO se lee el tramo que el propio documento declara como su
+   * texto (fcMin–fcMac de WordDocument). Nada de barrer el archivo entero: ahí quedan restos de
+   * versiones anteriores, y un dato viejo indexado junto al vigente es peor que no tenerlo.
+   */
+  const activo = await textoActivoDeDoc(datos).catch(() => '');
+  // El tramo declarado ES el cuerpo del documento: si trae más, es que word-extractor se quedó corto
+  // (en la ficha FOMR 110 devolvía solo las dos primeras líneas de 6 000 caracteres).
+  const elegido = activo.replace(/\s+/g, '').length > texto.replace(/\s+/g, '').length ? activo : texto;
+  return elegido.trim() ? [{ pagina: 1, texto: elegido }] : [];
 }
 
 /**
- * Los tramos largos de texto legible (cp1252) de un .doc: en Word 97-2003 el cuerpo se guarda en
- * 8 bits y queda contiguo. Se descartan los rellenos (ÿÿÿ…), las firmas internas y lo que tenga
- * menos de la mitad de letras.
+ * El texto vigente de un Word 97-2003 NO «guardado rápido», desde su flujo WordDocument: el tramo
+ * [fcMin, fcMac) que declara la cabecera (FIB), en cp1252 o UTF-16 según lo que digan los bytes. Si el
+ * documento es complejo (guardado rápido), el texto vigente está repartido en la tabla de piezas y
+ * no se adivina: devuelve vacío.
  */
-export function textoCrudoDeDoc(datos: Buffer): string {
-  // Las repeticiones largas (relleno ÿÿÿ…, líneas de guiones) se vuelven cortes: si no, el texto
-  // pegado a un relleno queda en el mismo tramo y se descarta entero.
-  const t = new TextDecoder('windows-1252').decode(datos).replace(/(\S)\1{19,}/g, '\n');
-  const tramos = t.match(/[\t\r\n\x20-\x7e\xa0-\xff]{40,}/g) || [];
-  const buenos = tramos.filter((r) => {
-    const s = r.trim();
-    if (/^bjbj/.test(s)) return false;
-    // Relleno (ÿÿÿ…) fuera; una línea de guiones dentro de una ficha, no.
-    const repetido = (s.match(/(\S)\1{7,}/g) || []).join('').length;
-    if (repetido > s.length * 0.3) return false;
-    // El español escrito es casi todo ASCII: la basura binaria que pasa por texto es de acentos
-    // sueltos («ðàÐÄ…»). Se exige mayoría de letras sin tilde.
-    const ascii = (s.match(/[A-Za-z]/g) || []).length;
-    return ascii >= s.replace(/\s/g, '').length * 0.5;
+export function textoDeFlujoWord(flujo: Buffer): string {
+  if (flujo.length < 0x60 || flujo.readUInt16LE(0) !== 0xa5ec) return '';
+  const banderas = flujo.readUInt16LE(0x0a);
+  if (banderas & 0x0004) return ''; // fComplex
+  const desde = flujo.readUInt32LE(0x18);
+  const hasta = Math.min(flujo.readUInt32LE(0x1c), flujo.length);
+  if (!(desde > 0 && hasta > desde)) return '';
+  const tramo = flujo.subarray(desde, hasta);
+  // `fExtChar` viene encendido en todo Word 97+ aunque el texto esté en 8 bits: la codificación se
+  // decide por los bytes. En UTF-16 el español deja un cero en casi todas las posiciones impares.
+  const sinRelleno = tramo.subarray(tramo.findIndex((b) => b !== 0) & ~1);
+  let ceros = 0;
+  let impares = 0;
+  for (let k = 1; k < Math.min(sinRelleno.length, 4000); k += 2, impares++) if (sinRelleno[k] === 0) ceros++;
+  const utf16 = impares > 0 && ceros / impares > 0.6;
+  const crudo = utf16 ? sinRelleno.toString('utf16le') : new TextDecoder('windows-1252').decode(tramo);
+  return limpio(
+    crudo
+      .replace(/\u0000/g, '')
+      // Campos de Word: \x13 instrucción \x14 resultado \x15. Queda el resultado, no «PRIVATE».
+      .replace(/\u0013[^\u0014\u0015]*\u0014/g, '')
+      .replace(/\u0013[^\u0015]*\u0015/g, '')
+      .replace(/\r/g, '\n')
+      .replace(/\u0007/g, '\t')
+      .replace(/[\u0001-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+  );
+}
+
+async function textoActivoDeDoc(datos: Buffer): Promise<string> {
+  const Ole: any = (await import('word-extractor/lib/ole-compound-doc.js' as any)).default ?? (await import('word-extractor/lib/ole-compound-doc.js' as any));
+  const Lector: any = (await import('word-extractor/lib/buffer-reader.js' as any)).default ?? (await import('word-extractor/lib/buffer-reader.js' as any));
+  const doc = new Ole(new Lector(datos));
+  await doc.read();
+  const flujo: Buffer = await new Promise((ok, mal) => {
+    const s = doc.stream('WordDocument');
+    const trozos: Buffer[] = [];
+    s.on('data', (c: Buffer) => trozos.push(c));
+    s.on('error', mal);
+    s.on('end', () => ok(Buffer.concat(trozos)));
   });
-  return limpio(buenos.join('\n').replace(/\r/g, '\n'));
+  return textoDeFlujoWord(flujo);
 }
 
 /* ----------------------------------------------------------------------- WordPerfect 5.x */

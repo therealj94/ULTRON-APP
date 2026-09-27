@@ -14,7 +14,7 @@ process.env.ELECTRUM_IMPORTAR_EN_PROCESO = '1';
 const llaveAntes = process.env.ELECTRUM_CLAVE;
 process.env.ELECTRUM_CLAVE = 'llave-de-prueba-biblioteca';
 
-const { paginasDePptx, paginasDeRtf, paginasDeXlsx, paginasDeDoc, textoCrudoDeDoc } = await import('../lib/leer-oficina');
+const { paginasDePptx, paginasDeRtf, paginasDeXlsx, paginasDeDoc, textoDeFlujoWord } = await import('../lib/leer-oficina');
 const { planear, planDeTrabajo } = await import('../server/electrum/importar');
 const bib = await import('../server/electrum/biblioteca');
 const { montarRutasBiblioteca } = await import('../server/electrum/biblioteca-rutas');
@@ -122,19 +122,27 @@ test('DOC que en realidad es WordPerfect 5.1: texto, acentos, tabuladores y func
   assert.equal(p.texto, 'INVENTARIO MINERO DE HONDURAS\nMetálico: Au, Ag\nUbicación: CAÑADA DEL BUEY, dueño güiris');
 });
 
-test('DOC «guardado rápido»: el texto se rescata de los bytes, sin relleno ni basura', () => {
-  const relleno = Buffer.alloc(600, 0xff);
-  const basura = Buffer.from('ðàÐÄàÐàÐÄÐÄ¸ÐÄ¸ÐÄ¸ÐÄÐÄÐÄÐÄ¸ÄÐàÐÄ¸ÄÐÄÐàÐÄàðÐðÐÄÐÄ¬Ä¬ÐðÄ¬', 'latin1');
-  const ficha = Buffer.from(
-    'Codigo: Iofa\r\tINVENTARIO MINERO DE HONDURAS\r\tINFORME DE OCURRENCIA MINERAL\r1.\tNombre: GUANGOLOLO\r' +
-      '--------------------------------\r5.\tUbicación: Departamento: LA PAZ\rDictamen: Sin interés económico. Obra de güirises.\r',
-    'latin1'
-  );
-  const t = textoCrudoDeDoc(Buffer.concat([relleno, Buffer.from([0, 1, 2]), basura, Buffer.from([0, 0]), ficha, relleno]));
-  assert.match(t, /^Codigo: Iofa\nINVENTARIO MINERO DE HONDURAS/);
-  assert.match(t, /Ubicación: Departamento: LA PAZ/);
-  assert.match(t, /güirises/);
-  assert.doesNotMatch(t, /ÿ|ðàÐ/);
+test('DOC: el texto vigente sale del tramo que declara el documento; si es «guardado rápido», nada', () => {
+  const flujo = (banderas: number, texto: Buffer) => {
+    const cab = Buffer.alloc(0x400);
+    cab.writeUInt16LE(0xa5ec, 0);
+    cab.writeUInt16LE(banderas, 0x0a);
+    const relleno = Buffer.alloc(0x200); // ceros delante, como en las fichas FOMR
+    cab.writeUInt32LE(0x400, 0x18); // fcMin
+    cab.writeUInt32LE(0x400 + relleno.length + texto.length, 0x1c); // fcMac
+    const viejo = Buffer.from('Nombre: NOMBRE VIEJO BORRADO', 'latin1'); // resto fuera del tramo
+    return Buffer.concat([cab, relleno, texto, viejo]);
+  };
+  // Con un campo de Word (\x13 PRIVATE \x15): la instrucción no es texto.
+  const ficha = Buffer.from('No. 105\x13 PRIVATE \x15\rCodigo: Iofa\r\tINVENTARIO MINERO DE HONDURAS\r1.\tNombre: GUANGOLOLO\x07Au ?\x07\r5.\tUbicación: LA PAZ\r', 'latin1');
+  const t = textoDeFlujoWord(flujo(0, ficha));
+  assert.equal(t, 'No. 105\nCodigo: Iofa\nINVENTARIO MINERO DE HONDURAS\n1. Nombre: GUANGOLOLO Au ?\n5. Ubicación: LA PAZ');
+  assert.doesNotMatch(t, /VIEJO/, 'lo que queda fuera del tramo declarado no entra');
+  assert.equal(textoDeFlujoWord(flujo(0x0004, ficha)), '', 'guardado rápido: no se adivina');
+  assert.equal(textoDeFlujoWord(Buffer.from('no es un flujo de Word')), '');
+  // Texto en UTF-16 (fExtChar).
+  const u16 = Buffer.from('Metálico: Au\rñandú', 'utf16le');
+  assert.equal(textoDeFlujoWord(flujo(0x1000, u16)), 'Metálico: Au\nñandú');
 });
 
 test('DOC: un archivo que no es Word 97 no cuelga ni inventa texto', async () => {
