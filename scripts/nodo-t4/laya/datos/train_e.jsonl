@@ -1,0 +1,92 @@
+{"q": "What is the typical cutoff grade for an underground gold operation at 1,900 dollars per ounce?", "e": ["economista"]}
+{"q": "How do I calculate the NPV of the project with an 8 percent discount rate?", "e": ["economista"]}
+{"q": "What's our all-in sustaining cost per ounce this quarter?", "e": ["economista"]}
+{"q": "Can you estimate the payback period if capex is 45 million?", "e": ["economista"]}
+{"q": "What haul road width do we need for 40 tonne trucks?", "e": ["civil"]}
+{"q": "Check the freeboard on the tailings dam after the rainy season", "e": ["civil"]}
+{"q": "Is the waste dump stable at a 37 degree overall slope?", "e": ["civil"]}
+{"q": "We need a bridge over the creek for the access road, what load rating?", "e": ["civil"]}
+{"q": "Design the drainage ditches around the camp and the plant pad", "e": ["civil"]}
+{"q": "What bench height and berm width should we use in the pit?", "e": ["minas"]}
+{"q": "How many trucks do we need to move 3,000 tonnes per day with a 12 minute cycle time?", "e": ["minas"]}
+{"q": "The dilution in the stopes is too high, how do we reduce it?", "e": ["minas"]}
+{"q": "Which mining method fits a narrow steep vein, cut and fill or shrinkage?", "e": ["minas"]}
+{"q": "What powder factor should we use for the blast in hard andesite?", "e": ["minas"]}
+{"q": "What's the strip ratio of the pit design?", "e": ["minas"]}
+{"q": "Leach recovery dropped to 70 percent, what could be wrong in the CIL circuit?", "e": ["metalurgista"]}
+{"q": "Is this ore refractory? The cyanide bottle roll gave only 40 percent", "e": ["metalurgista"]}
+{"q": "What grind size should we target before flotation?", "e": ["metalurgista"]}
+{"q": "How much cyanide consumption is normal in heap leaching?", "e": ["metalurgista"]}
+{"q": "Can we add a gravity circuit to catch the coarse gold before leaching?", "e": ["metalurgista"]}
+{"q": "What kind of deposit is this, epithermal low sulfidation or porphyry?", "e": ["geologo"]}
+{"q": "How many blanks, duplicates and standards per batch for QA/QC?", "e": ["geologo"]}
+{"q": "Log this drill core: sheared andesite with quartz veinlets and pyrite", "e": ["geologo"]}
+{"q": "Is the difference between the fire assay and the screen metallic assay a nugget effect?", "e": ["geologo"]}
+{"q": "What alteration halo would you expect around the ore shoot?", "e": ["geologo"]}
+{"q": "Can we upgrade the inferred resource to indicated with more drilling?", "e": ["geologo"]}
+{"q": "Where should we put the next drill holes to follow the vein at depth?", "e": ["geologo"]}
+{"q": "Interpret the geochemical soil anomaly for copper and zinc", "e": ["geologo"]}
+{"q": "Reproject the shapefile from NAD27 to WGS84 UTM 16N", "e": ["geomatica"]}
+{"q": "Measure the area in hectares of this polygon", "e": ["geomatica"]}
+{"q": "Process the drone survey into an orthomosaic and a DEM", "e": ["geomatica"]}
+{"q": "We flew the drone over the pit, can you make contour lines every 2 meters?", "e": ["geomatica"]}
+{"q": "Load this KML and overlay it on the concession map", "e": ["geomatica"]}
+{"q": "Do we need an environmental impact assessment for the exploration stage?", "e": ["ambiental"]}
+{"q": "The creek downstream is showing high turbidity, what monitoring do we need?", "e": ["ambiental"]}
+{"q": "Is there acid rock drainage risk with this much pyrite in the waste?", "e": ["ambiental"]}
+{"q": "What goes into the mine closure and reclamation plan?", "e": ["ambiental"]}
+{"q": "Does the community need to be consulted before we start drilling?", "e": ["ambiental"]}
+{"q": "When does the exploitation concession expire?", "e": ["legal"]}
+{"q": "Who holds the mining title of this claim?", "e": ["legal"]}
+{"q": "What are the royalty obligations under the Honduran mining law?", "e": ["legal"]}
+{"q": "Can the landowner block access to our concession?", "e": ["legal"]}
+{"q": "Our claim overlaps with the neighbor's polygon, who has priority?", "e": ["legal", "geomatica"]}
+{"q": "Estimate the grade and the cutoff for the new ore body", "e": ["geologo", "economista"]}
+{"q": "The pit slope failed on the north wall, check the geotechnics and redesign the benches", "e": ["civil", "minas"]}
+{"q": "Tailings seepage is reaching the river, is the dam safe and what's the environmental impact?", "e": ["civil", "ambiental"]}
+{"q": "Plant recovery is low and it's hurting the AISC", "e": ["metalurgista", "economista"]}
+{"q": "Hi, how are you today?", "e": []}
+{"q": "Thanks, that's all for now", "e": []}
+{"q": "How do I upload a file to the app?", "e": []}
+{"q": "What's the weather like in Tegucigalpa?", "e": []}
+{"q": "Give me a summary of the project", "e": []}
+{"q": "¿Cuál es el cycle time de los camiones en la rampa del tajo?", "e": ["minas"]}
+{"q": "Revisá el freeboard de la presa de colas antes del invierno", "e": ["civil"]}
+{"q": "¿El assay de oro salió con nugget effect o es un error del lab?", "e": ["geologo"]}
+{"q": "¿Cuánto es el AISC si subimos el throughput de la planta?", "e": ["economista", "metalurgista"]}
+{"q": "Necesito el ortomosaico del vuelo con dron de ayer", "e": ["geomatica"]}
+{"q": "oiga esta piedra tiene como puntitos dorados y brilla, ¿será oro o pirita?", "e": ["geologo"]}
+{"q": "encontramos una veta de cuarzo con manchas de óxido en la quebrada, ¿vale la pena muestrearla?", "e": ["geologo"]}
+{"q": "¿cómo tomo la muestra de canal en la pared del socavón para que salga representativa?", "e": ["geologo"]}
+{"q": "el laboratorio me dio 12 gramos en una muestra y 0.3 en la de al lado, ¿le creo?", "e": ["geologo"]}
+{"q": "¿qué es mejor para saber si hay oro abajo, trincheras o perforación?", "e": ["geologo"]}
+{"q": "¿cuántos metros de perforación necesitamos para tener un recurso inferido?", "e": ["geologo"]}
+{"q": "la roca está blanca y blandita cerca de la veta, ¿eso es alteración?", "e": ["geologo"]}
+{"q": "¿por qué la veta se pierde al cruzar esa falla?", "e": ["geologo"]}
+{"q": "¿cómo describo los testigos de la perforación, qué tengo que anotar?", "e": ["geologo"]}
+{"q": "en el río sacan oro de aluvión, ¿de dónde viene ese oro?", "e": ["geologo"]}
+{"q": "¿cada cuántas muestras meto un estándar y un blanco?", "e": ["geologo"]}
+{"q": "mándeme al geólogo que quiero saber qué tipo de yacimiento tenemos", "e": ["geologo"]}
+{"q": "¿el cobre que salió en el suelo es anomalía o es lo normal de la zona?", "e": ["geologo"]}
+{"q": "¿qué ley promedio tiene el cuerpo si sumo los tres pozos?", "e": ["geologo"]}
+{"q": "¿los sulfuros masivos que salieron en el pozo indican un VMS?", "e": ["geologo"]}
+{"q": "hicimos mapeo y hay un dique cortando la veta, ¿qué edad tiene?", "e": ["geologo"]}
+{"q": "¿la mineralización sigue en profundidad o es solo superficial?", "e": ["geologo"]}
+{"q": "¿el reporte del laboratorio con fire assay y absorción atómica es confiable?", "e": ["geologo"]}
+{"q": "quiero entender la estructura: ¿el clavo mineralizado va con el rumbo de la falla?", "e": ["geologo"]}
+{"q": "¿qué diferencia hay entre recurso medido y reserva probada?", "e": ["geologo"]}
+{"q": "con 2 gramos en la veta angosta, ¿sale explotarla subterráneo?", "e": ["geologo", "minas"]}
+{"q": "¿la ley de los pozos nuevos justifica hacer la planta?", "e": ["geologo", "economista"]}
+{"q": "¿el oro es fino y está encapsulado en sulfuros, cómo lo recuperamos?", "e": ["geologo", "metalurgista"]}
+{"q": "la veta sale de la concesión hacia el norte, ¿se puede pedir esa área?", "e": ["geologo", "legal"]}
+{"q": "¿a qué altura vuelo el dron para tener 3 centímetros por pixel?", "e": ["geomatica"]}
+{"q": "¿cuántos puntos de control necesito para la fotogrametría del tajo?", "e": ["geomatica"]}
+{"q": "sacame el volumen del botadero con el levantamiento del dron", "e": ["geomatica"]}
+{"q": "tomé los puntos con el GPS del teléfono, ¿qué tan precisos son para el lindero?", "e": ["geomatica"]}
+{"q": "convertí las coordenadas del mojón de grados a UTM", "e": ["geomatica"]}
+{"q": "¿el modelo de elevación del dron sirve para calcular la pendiente del terreno?", "e": ["geomatica"]}
+{"q": "pasame la ortofoto a KMZ para abrirla en Google Earth", "e": ["geomatica"]}
+{"q": "What happened with the Quebrada Seca permit renewal?", "e": ["legal"]}
+{"q": "Río Blanco: send me the monthly production report", "e": ["minas"]}
+{"q": "Cerro Partido drilling results, what's the average grade?", "e": ["geologo"]}
+{"q": "Las Presas: is the tailings facility at capacity?", "e": ["civil"]}
