@@ -183,11 +183,13 @@ export async function enviarInformeElectrum(chatId: string, id: string, pieDeFot
   const r = t.estado === 'ok' ? t.informe : null;
   if (!token || !r) return false;
   try {
+    // Un mapa va como foto —se ve en el chat sin abrir nada—; un PDF, como documento.
+    const foto = r.tipo === 'image/jpeg';
     const cuerpo = new FormData();
     cuerpo.append('chat_id', chatId);
     cuerpo.append('caption', pieDeFoto.slice(0, 900));
-    cuerpo.append('document', new Blob([new Uint8Array(r.pdf)], { type: 'application/pdf' }), r.nombre);
-    const resp = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, {
+    cuerpo.append(foto ? 'photo' : 'document', new Blob([new Uint8Array(r.pdf)], { type: foto ? 'image/jpeg' : 'application/pdf' }), r.nombre);
+    const resp = await fetch(`https://api.telegram.org/bot${token}/${foto ? 'sendPhoto' : 'sendDocument'}`, {
       method: 'POST',
       body: cuerpo,
       signal: AbortSignal.timeout(30_000),
@@ -408,11 +410,22 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
   await responderElectrum(parsed.chatId, texto);
   recordarElectrum(parsed.chatId, mensaje, salida.texto);
 
-  const informe = salida.ui.map((d: any) => d?.informe).find(Boolean);
-  if (informe?.id) {
-    const ok = await enviarInformeElectrum(parsed.chatId, String(informe.id), String(informe.nombre || 'informe.pdf'), quien.id?.persona.id || null);
-    if (!ok) await responderElectrum(parsed.chatId, 'Armé el informe pero no pude mandártelo por acá. Pedímelo desde la pantalla.');
-    return { estado: ok ? 'informe' : 'informe falló', chatId: parsed.chatId };
+  // Todo lo que el turno armó —un PDF, o los tres mapas geológicos—, sin repetir y con tope.
+  const vistos = new Set<string>();
+  const informes = salida.ui
+    .flatMap((d: any) => (Array.isArray(d?.informes) ? d.informes : d?.informe ? [d.informe] : []))
+    .filter((x: any) => x?.id && !vistos.has(String(x.id)) && vistos.add(String(x.id)))
+    .slice(0, 5);
+  if (informes.length) {
+    let enviados = 0;
+    for (const inf of informes) {
+      const pieFoto = String(inf.titulo || inf.nombre || 'informe.pdf');
+      if (await enviarInformeElectrum(parsed.chatId, String(inf.id), pieFoto, quien.id?.persona.id || null)) enviados++;
+    }
+    if (enviados < informes.length) {
+      await responderElectrum(parsed.chatId, enviados ? `Te mandé ${enviados} de ${informes.length}; el resto pedímelo desde la pantalla.` : 'Lo armé pero no pude mandártelo por acá. Pedímelo desde la pantalla.');
+    }
+    return { estado: enviados ? 'informe' : 'informe falló', chatId: parsed.chatId };
   }
   return { estado: 'contestado', chatId: parsed.chatId };
 }

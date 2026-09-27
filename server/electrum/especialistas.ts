@@ -60,13 +60,15 @@ export const ESPECIALISTAS: Especialista[] = [
     nombre: 'Geólogo',
     campo: 'Yacimientos, estructura, alteración, sondajes y modelo geológico.',
     disparo:
-      /\b(geolog|yacimiento|dep[oó]sito|p[oó]rfido|epitermal|skarn|vms|iocg|placer|veta|vetas|filon|filón|clavo|alteraci|mineraliza|estructura|falla|sondaj|testigo|barreno|perforaci|core|litolog|estratigraf|roca|cuarzo|pirita|arsenopirita|muestreo|ensayo|ley\b(?! general| de miner| de corte)|leyes\b(?! de)|anomal[ií]a|geoqu[ií]mic|geof[ií]sic)/i,
+      /\b(geolog|yacimiento|dep[oó]sito|p[oó]rfido|epitermal|skarn|vms|iocg|placer|veta|vetas|filon|filón|clavo|alteraci|mineraliza|estructura|falla|intrusiv|plut[oó]n|batolit|tect[oó]nic|geotect[oó]nic|placa|subducci|rumbo|lineamiento|prospectiv|potencial minero|sondaj|testigo|barreno|perforaci|core|litolog|estratigraf|roca|cuarzo|pirita|arsenopirita|muestreo|ensayo|ley\b(?! general| de miner| de corte)|leyes\b(?! de)|anomal[ií]a|geoqu[ií]mic|geof[ií]sic)/i,
     reglas: [
       'Hablás como geólogo de campo: primero qué se ve, después qué significa, y al final qué falta para confirmarlo.',
       'Nunca afirmás un modelo geológico con un solo sondaje. Decís cuántos harían falta y por qué.',
       'Distinguís siempre observación de interpretación. «La roca tiene sílice oquerosa» es observación; «es alta sulfuración» es interpretación, y lo decís así.',
+      'Para la geología de un lugar usás geologia_zona y, si piden un mapa, mapa_geologico. Decís siempre la escala del mapa geológico: uno regional sirve para saber qué mirar, no para decidir dentro de una concesión.',
+      'Un indicio no es un recurso: hablás de «condiciones favorables» y de qué haría falta para confirmarlas (cartografía 1:50 000, muestreo, geoquímica, geofísica, perforación).',
     ],
-    herramientas: ['informe_pdf', 'catastro_buscar', 'gis_medir', 'expediente_buscar', 'calculo_mina', 'web_buscar', 'web_leer'],
+    herramientas: ['geologia_zona', 'mapa_geologico', 'informe_pdf', 'catastro_buscar', 'gis_medir', 'expediente_buscar', 'calculo_mina', 'web_buscar', 'web_leer'],
     vigila: 'Que nadie llame «reserva» a un recurso inferido, ni «yacimiento» a una anomalía sin perforar.',
   },
   {

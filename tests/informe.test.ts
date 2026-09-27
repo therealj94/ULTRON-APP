@@ -79,7 +79,9 @@ test('el informe levanta lo que el padrón esconde', async (t) => {
 test('la mano del informe no acepta cifras del modelo', async (t) => {
   await t.test('su esquema solo deja elegir QUÉ informe y aportar una lectura', () => {
     const props = Object.keys(MANOS.informe_pdf.esquema.properties).sort();
-    assert.deepEqual(props, ['concesion_id', 'lectura', 'nombre', 'tipo', 'titulo']);
+    // capa, municipio, lon, lat y radio_km dicen DÓNDE (la zona del informe geológico), igual que
+    // concesion_id dice cuál: eligen el lugar, no ponen números en el documento.
+    assert.deepEqual(props, ['capa', 'concesion_id', 'lat', 'lectura', 'lon', 'municipio', 'nombre', 'radio_km', 'tipo', 'titulo']);
     // El título del informe de conversación es texto corto, no un lugar para meter números.
     assert.equal(MANOS.informe_pdf.esquema.properties.titulo.type, 'string');
     // Si algún día aparece acá un campo de números, el reparto se rompió.

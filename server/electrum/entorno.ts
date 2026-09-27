@@ -24,7 +24,7 @@
  * caja de la concesión, ampliada en grados lo justo para la distancia que se pide— y solo sobre lo
  * que sobrevive a ese filtro se mide en metros sobre `geography`. Las consultas corren en paralelo.
  */
-import { baseTieneRol, conTextoReparado, consultaConTope, hayBase, rolDeCapa, traslapesDe, type RolCapa } from './db';
+import { baseTieneRol, conTextoReparado, consultaConTope, hayBase, rolDeCapa, traslapesDe, type RolCapa, type RolEntorno } from './db';
 
 /**
  * Cada consulta del entorno la corta la base a los 8 s: una capa lenta no se queda con el pool. Y
@@ -72,7 +72,7 @@ export const RADIO_LEJOS_M = 5000;
 export const RADIO_POBLADOS_M = 2000;
 
 /** Cómo se dice cada rol en una frase, para «no cargada». */
-export const NOMBRE_ROL: Record<RolCapa, string> = {
+export const NOMBRE_ROL: Record<RolEntorno, string> = {
   rio: 'red hídrica',
   poblado: 'caseríos y aldeas',
   area_protegida: 'áreas protegidas',
@@ -86,7 +86,7 @@ export const NOMBRE_ROL: Record<RolCapa, string> = {
 };
 
 /** Qué sección del entorno sale de qué rol. */
-export const SECCIONES: Partial<Record<keyof Entorno, RolCapa>> = {
+export const SECCIONES: Partial<Record<keyof Entorno, RolEntorno>> = {
   municipios: 'municipio',
   departamentos: 'departamento',
   areasProtegidas: 'area_protegida',
@@ -414,7 +414,7 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
       hectareas: t.hectareas,
       pct: ha > 0 ? (t.hectareas / ha) * 100 : 0,
     })),
-    faltan: (Object.keys(NOMBRE_ROL) as RolCapa[]).filter((r) => !de(r).length),
+    faltan: (Object.keys(NOMBRE_ROL) as RolEntorno[]).filter((r) => !de(r).length),
     alertas: [],
     ms: 0,
   };

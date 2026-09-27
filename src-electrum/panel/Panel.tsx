@@ -47,6 +47,8 @@ type Turno = {
   traza?: Array<{ herramienta: string; ok: boolean; resumen: string; ms?: number }>;
   /** Si el turno produjo un informe, queda a mano para bajarlo. */
   informe?: { nombre: string; url: string; bytes: number; compartido?: boolean };
+  /** Los mapas geológicos que armó el turno: se ven aquí mismo y se pueden bajar. */
+  imagenes?: Array<{ nombre: string; url: string; bytes: number; titulo?: string }>;
   /**
    * La pregunta que habría que repetir. Solo la llevan los turnos que NO terminaron bien: un corte
    * o un fallo. Guardarla es lo que separa «se rompió» de «se rompió y aquí está el botón».
@@ -214,6 +216,53 @@ async function bajarInforme(informe: { nombre: string; url: string }): Promise<s
   } catch (e: any) {
     return `No alcancé el servidor para bajar el informe (${String(e?.message || e).slice(0, 80)}).`;
   }
+}
+
+/**
+ * Un mapa geológico del turno, visto en el hilo. La ruta exige credencial, así que no sirve un
+ * `<img src>` directo: se pide por fetch con la cabecera y se muestra el blob. Si ya caducó (media
+ * hora, como los informes) se dice, en vez de dejar una imagen rota.
+ */
+function MapaDelTurno({ imagen, onAviso }: { imagen: { nombre: string; url: string; bytes: number; titulo?: string }; onAviso: (m: string) => void }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    let url: string | null = null;
+    fetch(imagen.url, { headers: headersElectrum() })
+      .then(async (r) => {
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}) as any);
+          throw new Error(j?.error || (r.status === 404 ? 'Ese mapa ya caducó; pedime otro.' : `El servidor contestó ${r.status}.`));
+        }
+        url = URL.createObjectURL(await r.blob());
+        if (vivo) setSrc(url);
+      })
+      .catch((e) => vivo && setError(String(e?.message || e)));
+    return () => {
+      vivo = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [imagen.url]);
+  return (
+    <figure className="mt-2 overflow-hidden rounded-lg border" style={{ borderColor: 'rgba(255,174,59,.35)' }}>
+      {src ? (
+        <img src={src} alt={imagen.titulo || imagen.nombre} className="block w-full bg-white" />
+      ) : (
+        <div className="px-3 py-6 text-center font-mono text-[11px] text-[#6C7F89]">{error || 'Cargando el mapa…'}</div>
+      )}
+      <figcaption className="flex items-center gap-2 px-3 py-1.5">
+        <span className="min-w-0 flex-1 truncate text-[12px] text-[#C9D6DC]">{imagen.titulo || imagen.nombre}</span>
+        <button
+          type="button"
+          onClick={() => void bajarInforme(imagen).then((m) => m && onAviso(m))}
+          className="rounded border border-white/15 px-2 py-0.5 font-mono text-[10px] tracking-[0.14em] uppercase text-[#9FB0B8] hover:border-white/30 hover:text-white cursor-pointer"
+        >
+          Bajar
+        </button>
+      </figcaption>
+    </figure>
+  );
 }
 
 const EJEMPLOS = [
@@ -427,6 +476,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
        * pantalla no había nada que descargar. Se engancha a la respuesta cuando llega el `fin`.
        */
       let informeDelTurno: Turno['informe'] | undefined;
+      const imagenesDelTurno: NonNullable<Turno['imagenes']> = [];
 
       try {
         /*
@@ -508,8 +558,13 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                 else if (evento === 'ui') {
                   onUi([d]); // el mapa se mueve YA, no al final
                   if (d?.accion === 'volar' && Number.isFinite(Number(d.concesion_id))) setEnFoco(Number(d.concesion_id));
-                  if (d?.informe?.url) {
-                    informeDelTurno = { nombre: String(d.informe.nombre || 'informe.pdf'), url: String(d.informe.url), bytes: Number(d.informe.bytes) || 0 };
+                  // Un mapa (image/jpeg) se ve en el hilo; un PDF queda como tarjeta para bajar.
+                  const armados: any[] = Array.isArray(d?.informes) ? d.informes : d?.informe ? [d.informe] : [];
+                  for (const x of armados) {
+                    if (!x?.url) continue;
+                    if (x.tipo === 'image/jpeg') {
+                      if (!imagenesDelTurno.some((y) => y.url === x.url)) imagenesDelTurno.push({ nombre: String(x.nombre || 'mapa.jpg'), url: String(x.url), bytes: Number(x.bytes) || 0, titulo: x.titulo ? String(x.titulo) : undefined });
+                    } else informeDelTurno = { nombre: String(x.nombre || 'informe.pdf'), url: String(x.url), bytes: Number(x.bytes) || 0 };
                   }
                 }
                 else if (evento === 'error') {
@@ -522,7 +577,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   onFace('SPEAKING');
                   if (d.emocion) onEmocion(d.emocion);
                   if (vozActivaRef.current && d.texto) void decirEnVoz(d.texto, d.emocion, headersElectrum());
-                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno }]);
+                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined }]);
                   terminado = true;
                 }
               }
@@ -774,6 +829,11 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                     </button>
                   </div>
                 )}
+                {t.imagenes?.map((im) => (
+                  <div key={im.url}>
+                    <MapaDelTurno imagen={im} onAviso={avisoSuelto} />
+                  </div>
+                ))}
                 {t.informe && (
                   <button
                     type="button"
