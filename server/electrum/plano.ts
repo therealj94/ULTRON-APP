@@ -30,7 +30,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Geometry, Position } from 'geojson';
-import { consulta, hayBase } from './db';
+import { conTextoReparado, consulta as consultaBase, hayBase } from './db';
+
+/** Los rótulos, con los acentos de las capas reparados: el plano y la ficha dicen lo mismo. */
+const consulta = <T = any>(sql: string, params: unknown[] = []) => consultaBase<T>(sql, params).then(conTextoReparado);
 import { capasPorRol, nombreDe, NOMBRE_ROL, RADIO_POBLADOS_M } from './entorno';
 import type { RolCapa } from './db';
 

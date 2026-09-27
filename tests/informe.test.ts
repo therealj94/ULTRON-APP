@@ -43,9 +43,11 @@ test('el informe levanta lo que el padrón esconde', async (t) => {
   });
 
   await t.test('lo que vence pronto se avisa antes de que sea tarde', () => {
-    // La cuenta va a medianoche UTC, que es lo que trae el padrón: si son las seis de la tarde,
-    // «dentro de sesenta días» son cincuenta y nueve días enteros. Por eso se comprueba el rango.
-    const dentroDe = new Date(Date.now() + 60 * 86_400_000).toISOString().slice(0, 10);
+    // La ficha cuenta días de calendario EN HONDURAS (UTC−6). Armar la fecha con el día UTC hacía
+    // fallar esta prueba entre las 00:00 y las 06:00 UTC: allí ya es mañana, en Tegucigalpa todavía
+    // no, y salían 61. Se parte del mismo «hoy» que usa la ficha.
+    const hoyHN = Date.parse(`${new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Tegucigalpa' }).format(new Date())}T00:00:00Z`);
+    const dentroDe = new Date(hoyHN + 60 * 86_400_000).toISOString().slice(0, 10);
     const aviso = contradicciones({ ...base, vence: dentroDe }).find((x) => /dentro de \d+ días/.test(x));
     assert.ok(aviso, 'tiene que avisar de un vencimiento a sesenta días');
     const dias = Number(aviso!.match(/dentro de (\d+) días/)![1]);

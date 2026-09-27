@@ -297,6 +297,22 @@ function primeraCoordenada(g: Geometry | null): Position | null {
   return anida((g as any).coordinates);
 }
 
+/**
+ * «MontaÃ±a Verde» → «Montaña Verde». Es UTF-8 leído como latin1: pasa con los .dbf de ICF y SINIT,
+ * que traen un .cpg que dice una cosa y bytes de otra. La ficha de El Mochito salió así en
+ * producción, con «Santa BÃ¡rbara» en la ubicación.
+ *
+ * Solo se toca si el texto tiene la huella (Ã o Â seguida de un carácter de 0x80–0xBF), si todo él
+ * cabe en latin1 y si al releerlo como UTF-8 no queda ningún carácter inválido. Un texto sano no
+ * cumple las tres cosas, así que queda igual.
+ */
+const HUELLA_MOJIBAKE = /[ÃÂ][\u0080-¿]/;
+export function repararTexto(s: string): string {
+  if (!HUELLA_MOJIBAKE.test(s) || /[^\u0000-ÿ]/.test(s)) return s;
+  const r = Buffer.from(s, 'latin1').toString('utf8');
+  return r.includes('�') ? s : r;
+}
+
 /** Descarta lo que no tiene geometría usable, que en un catastro real es más común de lo que parece. */
 function limpiar(fc: FeatureCollection): { fc: FeatureCollection; descartadas: number } {
   const buenas = fc.features.filter((f) => {
@@ -304,6 +320,10 @@ function limpiar(fc: FeatureCollection): { fc: FeatureCollection; descartadas: n
     const c = primeraCoordenada(f.geometry);
     return !!c && isFinite(c[0]) && isFinite(c[1]);
   });
+  for (const f of buenas) {
+    const p = f.properties as Record<string, unknown> | null;
+    if (p) for (const k of Object.keys(p)) if (typeof p[k] === 'string') p[k] = repararTexto(p[k] as string);
+  }
   return { fc: { type: 'FeatureCollection', features: buenas }, descartadas: fc.features.length - buenas.length };
 }
 

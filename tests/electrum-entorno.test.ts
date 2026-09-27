@@ -69,9 +69,12 @@ test('el entorno de una concesión, cruzado en PostGIS', { skip: HAY ? false : '
     capa('Microcuencas declaradas', [[{ NOMBRE: 'Microcuenca Río Chiquito' }, caja(-86.62, 13.98, -86.56, 14.005)]]),
     capa('Buffer Carretera HN', [[{ NOMBRE: 'CA-6' }, linea([-86.7, 14.05], [-86.5, 14.05])]]),
     capa('MUNICIPIOS', [[{ NOMBRE: 'San Juan de Flores' }, caja(-86.7, 13.9, -86.5, 14.1)]]),
-    capa('DEPARTAMENTOS', [[{ NOMBRE: 'Francisco Morazán' }, caja(-87.0, 13.5, -86.0, 14.5)]]),
+    // Así llegan los .dbf de SINIT con .cpg equivocado: UTF-8 leído como latin1. La ficha lo repara.
+    capa('DEPARTAMENTOS', [[{ NOMBRE: 'Francisco Moraz\u00c3\u00a1n' }, caja(-87.0, 13.5, -86.0, 14.5)]]),
     capa('Zonas informales oro HN', [[{ NOMBRE: 'Guiriseros del Chiquito' }, punto(-86.56, 14.01)]]),
     capa('Yacimientos y ocurrencias mineras DEFOMIN', [[{ NOMBRE: 'Veta Vieja', MINERAL: 'Oro' }, punto(-86.59, 14.005)]]),
+    // El catálogo general repite el punto de DEFOMIN: es el mismo yacimiento, no otro.
+    capa('Yacimientos y ocurrencias minera', [[{ NOMBRE: 'Veta Vieja', MINERAL: 'Oro' }, punto(-86.59, 14.005)]]),
   ];
   for (const c of capas) await guardarCapa(c, { comoConcesiones: false });
 
@@ -152,7 +155,8 @@ test('el entorno de una concesión, cruzado en PostGIS', { skip: HAY ? false : '
     if (x.ocurrencias.estado === 'ok') {
       assert.equal(x.ocurrencias.lista[0].dentro, true);
       assert.equal(x.ocurrencias.lista[0].detalle, 'Oro');
-    }
+      assert.equal(x.ocurrencias.lista.length, 1, `el punto repetido en dos capas cuenta una vez: ${JSON.stringify(x.ocurrencias.lista)}`);
+    } else assert.fail(`ocurrencias: ${x.ocurrencias.estado}`);
     assert.equal(x.traslapes.length, 1);
     assert.equal(x.traslapes[0].con, 'La Vecina');
 
