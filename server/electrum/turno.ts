@@ -15,6 +15,7 @@ import { MEMORIA_ESTRUCTURADA } from '../../lib/manos/memoria';
 import { fichaEnTexto, fichasMencionadas } from '../../lib/cognitivo/entidades';
 import { correrAgente, type Mensaje } from '../../lib/agente/bucle';
 import type { MsgHilo } from './hilo';
+import { garantizarMapa } from './mapa-garantia';
 import type { Contexto } from '../../lib/agente/tipos';
 import { extraerEmocion, type Emocion } from '../../lib/emocion';
 import { quitarExpresiones } from '../../lib/expresiones';
@@ -256,12 +257,35 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     (buenas.length
       ? `${buenas.map((t) => t.resumen).join(' ')} No alcancé a redactarlo mejor; si querés, volvé a preguntármelo.`
       : 'No me salió ninguna respuesta esta vez. No te voy a inventar una: volvé a preguntármelo.');
+  /*
+   * El mapa no depende de que el modelo se acuerde de moverlo (mapa-garantia.ts): si se pidió ver
+   * algo, o la respuesta dice que lo enseñó, y no salió ninguna orden para el mapa, se vuela aquí;
+   * si no se sabe a qué, la respuesta no puede quedar diciendo que ya está en el mapa.
+   */
+  const ui = [...r.ui];
+  const traza = r.traza.map((t) => ({ herramienta: t.llamada.nombre, ok: t.ok, resumen: t.resumen, ms: t.ms }));
+  let final = texto;
+  try {
+    const g = await garantizarMapa({ mensaje, texto, ui, historial, canal: ctx.canal });
+    final = g.texto;
+    if (g.ui) {
+      ui.push(g.ui);
+      enVivo?.({ ui: g.ui });
+    }
+    if (g.nota) {
+      const paso = { herramienta: 'mapa_garantia', ok: !!g.ui, resumen: g.nota, ms: 0 };
+      traza.push(paso);
+      trazaActual()?.paso(paso);
+    }
+  } catch (e: any) {
+    console.warn('[electrum] garantía del mapa:', String(e?.message || e).slice(0, 160));
+  }
   return {
-    texto,
+    texto: final,
     emocion: emo.emocion,
     panel: nombrePanel,
-    traza: r.traza.map((t) => ({ herramienta: t.llamada.nombre, ok: t.ok, resumen: t.resumen, ms: t.ms })),
-    ui: r.ui,
+    traza,
+    ui,
     fin: r.fin,
   };
 }

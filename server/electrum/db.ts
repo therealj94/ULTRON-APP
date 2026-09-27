@@ -736,6 +736,26 @@ export async function geometriaDe(id: number): Promise<{ geojson: Geometry; cent
   return { geojson: JSON.parse(r[0].g), centro: [r[0].lon, r[0].lat], encuadre: [r[0].o, r[0].s, r[0].e, r[0].n] };
 }
 
+/**
+ * Varias concesiones juntas, para pintarlas y encuadrarlas de una vez: lo que devolvió una
+ * búsqueda con más de un resultado. El mapa enseña las candidatas mientras el doctor pregunta cuál.
+ */
+export async function geometriasDe(ids: number[]): Promise<{ geojson: FeatureCollection; encuadre: [number, number, number, number] } | null> {
+  if (!ids.length) return null;
+  const filas = await consulta<{ f: string; o: number; s: number; e: number; n: number }>(
+    `SELECT json_build_object('type','Feature','geometry', ST_AsGeoJSON(geom)::json,
+              'properties', json_build_object('id', id, 'nombre', nombre, 'expediente', expediente))::text AS f,
+            ST_XMin(geom) o, ST_YMin(geom) s, ST_XMax(geom) e, ST_YMax(geom) n
+       FROM concesion WHERE id = ANY($1::bigint[]) AND geom IS NOT NULL AND NOT ST_IsEmpty(geom)`,
+    [ids]
+  );
+  if (!filas.length) return null;
+  return {
+    geojson: { type: 'FeatureCollection', features: filas.map((x) => JSON.parse(x.f)) },
+    encuadre: [Math.min(...filas.map((x) => x.o)), Math.min(...filas.map((x) => x.s)), Math.max(...filas.map((x) => x.e)), Math.max(...filas.map((x) => x.n))],
+  };
+}
+
 /** Una capa entera como GeoJSON, para pintarla en el mapa. */
 export async function capaGeojson(capaId: number): Promise<FeatureCollection> {
   const filas = await consulta<{ f: string }>(

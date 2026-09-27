@@ -23,6 +23,7 @@ import {
   cercaDe,
   concesionEnPunto,
   geometriaDe,
+  geometriasDe,
   hayBase,
   coberturaDeFechas,
   consulta,
@@ -73,7 +74,16 @@ const catastro_buscar: Herramienta = {
       filas.length === 1 || exacta
         ? `${uno.nombre} (id ${uno.id}), expediente ${uno.expediente || 'sin número'}. Titular ${(uno.titular || 'no declarado').replace(/\.$/, '')}. ${uno.tipo ? `Concesión de ${uno.tipo}` : 'Concesión'}${uno.mineral ? ` para ${uno.mineral}` : ''}, ${uno.hectareas != null ? `${nf(uno.hectareas)} hectáreas medidas` : 'sin área'}, estado ${uno.estado || 'no declarado'}${uno.vence ? `, vence el ${uno.vence}` : ''}.`
         : `Coinciden ${filas.length}: ${filas.slice(0, 6).map(distinguir).join('; ')}. Pedí una por su id o su expediente para la ficha.`;
-    return { ok: true, texto: cabeza, ui: { filas, id: filas.length === 1 || exacta ? uno.id : null } };
+    /*
+     * El mapa sigue a la búsqueda, sin esperar a que el modelo se acuerde de `mapa_volar`: con una
+     * sola concesión vuela a ella; con varias, las pinta y las encuadra a todas mientras se pregunta
+     * cuál. Visto en producción: el doctor decía «ahí la tiene en el mapa» y el mapa no se movía.
+     */
+    const unica = filas.length === 1 || exacta;
+    const mapa = unica
+      ? await geometriaDe(uno.id).then((g) => (g ? { accion: 'volar', concesion_id: Number(uno.id), centro: g.centro, encuadre: g.encuadre, geojson: g.geojson, resaltar: true } : {}))
+      : await geometriasDe(filas.map((f) => f.id)).then((g) => (g ? { accion: 'candidatas', geojson: g.geojson, encuadre: g.encuadre } : {}));
+    return { ok: true, texto: cabeza, ui: { filas, id: unica ? uno.id : null, ...mapa } };
   },
 };
 
@@ -174,7 +184,10 @@ const concesion_entorno: Herramienta = {
     if (id == null) return { ok: false, texto: 'Decime de qué concesión: por id o por nombre.' };
     const e = await entornoDe(id);
     if (!e) return { ok: false, texto: `La concesión ${id} no está en el catastro o no tiene geometría, así que no hay entorno que cruzar.` };
-    return { ok: true, texto: entornoEnTexto(e), ui: { entorno: e } };
+    // Mientras se cuenta lo que tiene alrededor, el mapa está sobre ella.
+    const g = await geometriaDe(id).catch(() => null);
+    const mapa = g ? { accion: 'volar', concesion_id: Number(id), centro: g.centro, encuadre: g.encuadre, geojson: g.geojson, resaltar: true } : {};
+    return { ok: true, texto: entornoEnTexto(e), ui: { entorno: e, ...mapa } };
   },
 };
 
