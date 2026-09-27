@@ -14,7 +14,7 @@ process.env.ELECTRUM_IMPORTAR_EN_PROCESO = '1';
 const llaveAntes = process.env.ELECTRUM_CLAVE;
 process.env.ELECTRUM_CLAVE = 'llave-de-prueba-biblioteca';
 
-const { paginasDePptx, paginasDeRtf, paginasDeXlsx, paginasDeDoc } = await import('../lib/leer-oficina');
+const { paginasDePptx, paginasDeRtf, paginasDeXlsx, paginasDeDoc, textoDeFlujoWord } = await import('../lib/leer-oficina');
 const { planear, planDeTrabajo } = await import('../server/electrum/importar');
 const bib = await import('../server/electrum/biblioteca');
 const { montarRutasBiblioteca } = await import('../server/electrum/biblioteca-rutas');
@@ -101,6 +101,48 @@ test('XLSX: una página por hoja, filas con « | », celdas compartidas e inline
   assert.match(t, /^Hoja «Muestreo»\nNumero |  | Au g\/t\n1 |  | 0\.20\n/);
   assert.match(t, /\[Numero \|  \| Au g\/t\]/, 'el encabezado vuelve cada 40 filas');
   assert.match(t, /La Lola \| bocamina \|  \| sí$/);
+});
+
+test('DOC que en realidad es WordPerfect 5.1: texto, acentos, tabuladores y funciones saltadas', async () => {
+  const cabecera = Buffer.alloc(16);
+  Buffer.from([0xff, 0x57, 0x50, 0x43]).copy(cabecera);
+  cabecera.writeUInt32LE(16, 4);
+  const txt = (s: string) => Buffer.from(s, 'latin1');
+  const ext = (n: number, juego: number) => Buffer.from([0xc0, n, juego, 0xc0]);
+  const variable = Buffer.from([0xd0, 0x01, 0x04, 0x00, 0xaa, 0xbb, 0x01, 0xd0]); // se salta entera
+  const tab = Buffer.from([0xc1, 1, 2, 3, 4, 5, 6, 7, 0xc1]);
+  const doc = Buffer.concat([
+    cabecera,
+    txt('INVENTARIO MINERO DE HONDURAS'), Buffer.from([0x0a]),
+    variable,
+    txt('Met'), ext(27, 1), txt('lico: Au, Ag'), Buffer.from([0x0a]),
+    tab, txt('Ubicaci'), ext(59, 1), txt('n: CA'), ext(56, 1), txt('ADA DEL BUEY, due'), ext(57, 1), txt('o g'), ext(71, 1), txt('iris'),
+  ]);
+  const [p] = await paginasDeDoc(doc);
+  assert.equal(p.texto, 'INVENTARIO MINERO DE HONDURAS\nMetálico: Au, Ag\nUbicación: CAÑADA DEL BUEY, dueño güiris');
+});
+
+test('DOC: el texto vigente sale del tramo que declara el documento; si es «guardado rápido», nada', () => {
+  const flujo = (banderas: number, texto: Buffer) => {
+    const cab = Buffer.alloc(0x400);
+    cab.writeUInt16LE(0xa5ec, 0);
+    cab.writeUInt16LE(banderas, 0x0a);
+    const relleno = Buffer.alloc(0x200); // ceros delante, como en las fichas FOMR
+    cab.writeUInt32LE(0x400, 0x18); // fcMin
+    cab.writeUInt32LE(0x400 + relleno.length + texto.length, 0x1c); // fcMac
+    const viejo = Buffer.from('Nombre: NOMBRE VIEJO BORRADO', 'latin1'); // resto fuera del tramo
+    return Buffer.concat([cab, relleno, texto, viejo]);
+  };
+  // Con un campo de Word (\x13 PRIVATE \x15): la instrucción no es texto.
+  const ficha = Buffer.from('No. 105\x13 PRIVATE \x15\rCodigo: Iofa\r\tINVENTARIO MINERO DE HONDURAS\r1.\tNombre: GUANGOLOLO\x07Au ?\x07\r5.\tUbicación: LA PAZ\r', 'latin1');
+  const t = textoDeFlujoWord(flujo(0, ficha));
+  assert.equal(t, 'No. 105\nCodigo: Iofa\nINVENTARIO MINERO DE HONDURAS\n1. Nombre: GUANGOLOLO Au ?\n5. Ubicación: LA PAZ');
+  assert.doesNotMatch(t, /VIEJO/, 'lo que queda fuera del tramo declarado no entra');
+  assert.equal(textoDeFlujoWord(flujo(0x0004, ficha)), '', 'guardado rápido: no se adivina');
+  assert.equal(textoDeFlujoWord(Buffer.from('no es un flujo de Word')), '');
+  // Texto en UTF-16 (fExtChar).
+  const u16 = Buffer.from('Metálico: Au\rñandú', 'utf16le');
+  assert.equal(textoDeFlujoWord(flujo(0x1000, u16)), 'Metálico: Au\nñandú');
 });
 
 test('DOC: un archivo que no es Word 97 no cuelga ni inventa texto', async () => {
@@ -368,4 +410,61 @@ test('aprender: .rtf, .pptx y .xlsx entran como documentos con su carpeta y su o
   const [d2] = await consulta<{ carpeta: string }>(`SELECT carpeta FROM documento WHERE nombre = 'prueba-bib-of-agenda.pptx'`);
   assert.equal(d2.carpeta, 'INDEXSA/Presentación 1', 'lo que ya tenía carpeta no se mueve solo');
   await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-bib-of-%'`);
+});
+
+test('expediente_buscar con `documento`: busca DENTRO del informe o de la carpeta, no en su portada', { skip: sinBase }, async () => {
+  const { buscarEnExpedientes, filtroDocumento } = await import('../server/electrum/db');
+  await bib.asegurarBiblioteca();
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-bus-%'`);
+  const informe = [
+    'Página 1. INFORME SOBRE LA EXPLORACIÓN MINERA JICA MMAJ 2003 FASE III, Honduras.',
+    'Página 2. Prólogo del gobierno del Japón para la cooperación técnica.',
+    'Página 3. Épocas de mineralización: Mioceno con epitermales de baja sulfuración y pórfidos de cobre; Plioceno con epitermales de oro.',
+  ].join('\f');
+  await aprender('prueba-bus-JICA-MMAJ 2003 Fase III (OCR).txt', Buffer.from(informe), { carpeta: 'INDEXSA SEP 2026/LIBROS/FASE3' });
+  // Otro documento que repite el nombre del informe muchas veces, para tentar a la búsqueda general.
+  await aprender('prueba-bus-índice.txt', Buffer.from('JICA MMAJ 2003 Fase III. JICA Fase III. Informe JICA Fase III 2003. Índice general de la biblioteca.'), { carpeta: 'Otros' });
+  await aprender('prueba-bus-oro.txt', Buffer.from('Situación actual: la producción formal de oro es de 71,600 onzas troy al año y la informal de 176,411 onzas.'), { carpeta: 'INDEXSA SEP 2026/PRESENTACION 1' });
+
+  assert.equal(filtroDocumento('', 3).sql, '');
+  assert.equal(filtroDocumento('JICA Fase III', 3).args.length, 3);
+
+  const dentro = await buscarEnExpedientes('épocas de mineralización', 3, { documento: 'JICA Fase III' });
+  assert.ok(dentro.length > 0);
+  assert.equal(Number(dentro[0].pagina), 3, `trajo la página ${dentro[0].pagina}: ${dentro[0].texto}`);
+  assert.ok(dentro.every((h) => h.documento.includes('Fase III (OCR)')), 'solo del informe pedido');
+
+  const carpeta = await buscarEnExpedientes('producción de oro formal e informal', 3, { documento: 'INDEXSA presentacion' });
+  assert.equal(carpeta[0]?.documento, 'prueba-bus-oro.txt');
+
+  // Sin tema útil pero con documento: el comienzo del documento.
+  const inicio = await buscarEnExpedientes('de', 3, { documento: 'JICA Fase III OCR' });
+  assert.match(inicio[0]?.texto || '', /INFORME SOBRE LA EXPLORACIÓN/);
+
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-bus-%'`);
+});
+
+test('expediente_listar: el panorama por carpeta, lo de una carpeta con su estado, y lo que necesita atención', { skip: sinBase }, async () => {
+  const { TODAS } = await import('../server/electrum/manos');
+  const listar = TODAS.find((h) => h.nombre === 'expediente_listar')!;
+  assert.ok(listar, 'la mano existe y es de Electrum');
+  await bib.asegurarBiblioteca();
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lis-%'`);
+  await aprender('prueba-lis-ficha.txt', Buffer.from('INVENTARIO MINERO DE HONDURAS. Ficha de ocurrencia mineral El Dorado, oro aluvial en Iriona, Colón.'), { carpeta: 'Pruebas Listar/FOM' });
+  const [esc] = await consulta<{ id: number }>(`INSERT INTO documento (nombre, tipo, paginas, carpeta) VALUES ('prueba-lis-escaneo.pdf', 'escaneo', 9, 'Pruebas Listar/Escaneos') RETURNING id`);
+  try {
+    const todo = await listar.ejecutar({}, {} as any);
+    assert.match(todo.texto, /Pruebas Listar: 2 \(1 necesitan atención\)/);
+    const carpeta = await listar.ejecutar({ filtro: 'Pruebas Listar' }, {} as any);
+    assert.match(carpeta.texto, /2 piezas/);
+    assert.match(carpeta.texto, /«prueba-lis-escaneo\.pdf» \(9 pág, SIN TEXTO/);
+    const atencion = await listar.ejecutar({ filtro: 'Pruebas Listar', solo_atencion: true }, {} as any);
+    assert.match(atencion.texto, /^1 pieza/);
+    const nombre = await listar.ejecutar({ filtro: 'prueba-lis-ficha' }, {} as any);
+    assert.match(nombre.texto, /leído\) en Pruebas Listar\/FOM/);
+    const nada = await listar.ejecutar({ filtro: 'no existe en ningún lado xyz' }, {} as any);
+    assert.match(nada.texto, /No hay nada cargado/);
+  } finally {
+    await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lis-%' OR id = $1`, [esc.id]);
+  }
 });

@@ -51,6 +51,10 @@ async function abrirZip(datos: Buffer): Promise<JSZip> {
  * no necesita LibreOffice en el servidor. Cuerpo, notas al pie y encabezados, en ese orden.
  */
 export async function paginasDeDoc(datos: Buffer): Promise<PaginaLeida[]> {
+  // Un «.doc» no siempre es Word: 28 de las Fichas de Ocurrencias Mineras son WordPerfect 5.1, y
+  // hay RTF guardados con esa extensión. Se mira la firma, no el nombre.
+  if (datos.subarray(0, 4).equals(FIRMA_WP)) return paginasDeWordPerfect(datos);
+  if (datos.subarray(0, 5).toString('latin1') === '{\\rtf') return paginasDeRtf(datos);
   const mod: any = await import('word-extractor');
   const Extractor = mod.default || mod;
   const doc = await new Extractor().extract(datos);
@@ -58,7 +62,133 @@ export async function paginasDeDoc(datos: Buffer): Promise<PaginaLeida[]> {
     .map((t: unknown) => limpio(String(t || '')))
     .filter(Boolean);
   const texto = partes.join('\n\n');
-  return texto ? [{ pagina: 1, texto }] : [];
+  // Con cuerpo sustancial, word-extractor manda. Con poco o nada, se mira el tramo declarado.
+  if (texto.replace(/\s+/g, '').length >= 500) return [{ pagina: 1, texto }];
+  /*
+   * Cuatro fichas FOMR (Word 2002) salían vacías: word-extractor lee el texto corrido 512 bytes y
+   * encuentra ceros. Solo si salió VACÍO se lee el tramo que el propio documento declara como su
+   * texto (fcMin–fcMac de WordDocument). Nada de barrer el archivo entero: ahí quedan restos de
+   * versiones anteriores, y un dato viejo indexado junto al vigente es peor que no tenerlo.
+   */
+  const activo = await textoActivoDeDoc(datos).catch(() => '');
+  // El tramo declarado ES el cuerpo del documento: si trae más, es que word-extractor se quedó corto
+  // (en la ficha FOMR 110 devolvía solo las dos primeras líneas de 6 000 caracteres).
+  const elegido = activo.replace(/\s+/g, '').length > texto.replace(/\s+/g, '').length ? activo : texto;
+  return elegido.trim() ? [{ pagina: 1, texto: elegido }] : [];
+}
+
+/**
+ * El texto vigente de un Word 97-2003 NO «guardado rápido», desde su flujo WordDocument: el tramo
+ * [fcMin, fcMac) que declara la cabecera (FIB), en cp1252 o UTF-16 según lo que digan los bytes. Si el
+ * documento es complejo (guardado rápido), el texto vigente está repartido en la tabla de piezas y
+ * no se adivina: devuelve vacío.
+ */
+export function textoDeFlujoWord(flujo: Buffer): string {
+  if (flujo.length < 0x60 || flujo.readUInt16LE(0) !== 0xa5ec) return '';
+  const banderas = flujo.readUInt16LE(0x0a);
+  if (banderas & 0x0004) return ''; // fComplex
+  const desde = flujo.readUInt32LE(0x18);
+  const hasta = Math.min(flujo.readUInt32LE(0x1c), flujo.length);
+  if (!(desde > 0 && hasta > desde)) return '';
+  const tramo = flujo.subarray(desde, hasta);
+  // `fExtChar` viene encendido en todo Word 97+ aunque el texto esté en 8 bits: la codificación se
+  // decide por los bytes. En UTF-16 el español deja un cero en casi todas las posiciones impares.
+  const sinRelleno = tramo.subarray(tramo.findIndex((b) => b !== 0) & ~1);
+  let ceros = 0;
+  let impares = 0;
+  for (let k = 1; k < Math.min(sinRelleno.length, 4000); k += 2, impares++) if (sinRelleno[k] === 0) ceros++;
+  const utf16 = impares > 0 && ceros / impares > 0.6;
+  const crudo = utf16 ? sinRelleno.toString('utf16le') : new TextDecoder('windows-1252').decode(tramo);
+  return limpio(
+    crudo
+      .replace(/\u0000/g, '')
+      // Campos de Word: \x13 instrucción \x14 resultado \x15. Queda el resultado, no «PRIVATE».
+      .replace(/\u0013[^\u0014\u0015]*\u0014/g, '')
+      .replace(/\u0013[^\u0015]*\u0015/g, '')
+      .replace(/\r/g, '\n')
+      .replace(/\u0007/g, '\t')
+      .replace(/[\u0001-\u0008\u000b\u000c\u000e-\u001f]/g, '')
+  );
+}
+
+async function textoActivoDeDoc(datos: Buffer): Promise<string> {
+  const Ole: any = (await import('word-extractor/lib/ole-compound-doc.js' as any)).default ?? (await import('word-extractor/lib/ole-compound-doc.js' as any));
+  const Lector: any = (await import('word-extractor/lib/buffer-reader.js' as any)).default ?? (await import('word-extractor/lib/buffer-reader.js' as any));
+  const doc = new Ole(new Lector(datos));
+  await doc.read();
+  const flujo: Buffer = await new Promise((ok, mal) => {
+    const s = doc.stream('WordDocument');
+    const trozos: Buffer[] = [];
+    s.on('data', (c: Buffer) => trozos.push(c));
+    s.on('error', mal);
+    s.on('end', () => ok(Buffer.concat(trozos)));
+  });
+  return textoDeFlujoWord(flujo);
+}
+
+/* ----------------------------------------------------------------------- WordPerfect 5.x */
+
+const FIRMA_WP = Buffer.from([0xff, 0x57, 0x50, 0x43]); // «\xFFWPC»
+
+/**
+ * El juego de caracteres «multinacional 1» de WordPerfect (el 1), que es donde viven los acentos
+ * del español. Se comprobó contra las fichas FOM: 27 es «á» en «Metálico», 59 «ó» en «Ubicación»,
+ * 57 «ñ» en «dueño», 71 «ü» en «güiris». Sigue el orden de la tabla de WordPerfect.
+ */
+const WP_MULTINACIONAL = 'ÁáÂâÄäÀàÅåÆæÇçÉéÊêËëÈèÍíÎîÏïÌìÑñÓóÔôÖöÒòÚúÛûÜüÙùŸÿÃãĐđØøÕõÝýÐðÞþ';
+function caracterWp(juego: number, n: number): string {
+  if (juego === 0 && n >= 0x20 && n < 0x7f) return String.fromCharCode(n);
+  if (juego === 1 && n >= 26 && n < 26 + WP_MULTINACIONAL.length) return WP_MULTINACIONAL[n - 26];
+  if (juego === 4) return ({ 7: '¿', 8: '¡', 0: '•', 1: '•', 11: '£', 12: '¥', 17: '½', 18: '¼', 23: '©', 22: '®', 29: '«', 30: '»' } as Record<number, string>)[n] ?? '';
+  if (juego === 6) return ({ 0: '−', 1: '±', 2: '≤', 3: '≥', 36: '°' } as Record<number, string>)[n] ?? '';
+  return '';
+}
+
+/**
+ * WordPerfect 5.x a texto. El documento empieza donde dice la cabecera (bytes 4-7). Los bytes
+ * 0x20-0x7E son texto; 0x0A es fin de párrafo; 0xC0 es un carácter extendido (juego + número);
+ * 0xC1-0xCF son funciones de largo fijo que terminan con el mismo byte (0xC1 es un tabulador);
+ * 0xD0-0xFF son funciones de largo variable: código, subcódigo y dos bytes con lo que sigue.
+ */
+export function paginasDeWordPerfect(datos: Buffer): PaginaLeida[] {
+  if (datos.length < 16 || !datos.subarray(0, 4).equals(FIRMA_WP)) return [];
+  let i = Math.min(datos.readUInt32LE(4), datos.length);
+  let texto = '';
+  while (i < datos.length) {
+    const c = datos[i];
+    if (c >= 0x20 && c < 0x7f) {
+      texto += String.fromCharCode(c);
+      i++;
+    } else if (c === 0x0a || c === 0x8c || c === 0x0c) {
+      texto += '\n';
+      i++;
+    } else if (c === 0x0d || c === 0x80) {
+      texto += ' ';
+      i++;
+    } else if (c >= 0xa9 && c <= 0xab) {
+      texto += '-';
+      i++;
+    } else if (c < 0xc0) {
+      i++;
+    } else if (c === 0xc0) {
+      if (i + 3 >= datos.length) break;
+      texto += caracterWp(datos[i + 2], datos[i + 1]);
+      i += 4;
+    } else if (c <= 0xcf) {
+      const fin = datos.indexOf(c, i + 1);
+      if (fin < 0 || fin - i > 64) {
+        i++;
+        continue;
+      }
+      if (c === 0xc1 || c === 0xc2) texto += '\t';
+      i = fin + 1;
+    } else {
+      if (i + 4 > datos.length) break;
+      i += 4 + datos.readUInt16LE(i + 2);
+    }
+  }
+  const limpio2 = limpio(texto);
+  return limpio2 ? [{ pagina: 1, texto: limpio2 }] : [];
 }
 
 /* --------------------------------------------------------------------------------- .rtf */

@@ -38,6 +38,7 @@ import {
 import { personaPorId } from '../../lib/acceso';
 import { clasificarDocumento, lecturaEnTexto, type LecturaDocumento } from './documentos-laya';
 import { entornoDe, entornoEnTexto } from './entorno';
+import { arbol as arbolBiblioteca, listar as listarBiblioteca, resumen as resumenBiblioteca } from './biblioteca';
 import { geologiaDe, geologiaEnTexto, type Zona } from './geologia';
 import { mapaGeologico, NOMBRE_MAPA, TIPOS_MAPA_GEO, type TipoMapaGeo } from './mapa-geologico';
 import { informeGeologico } from './informe-geologico';
@@ -428,17 +429,29 @@ const mapa_capa: Herramienta = {
 const expediente_buscar: Herramienta = {
   nombre: 'expediente_buscar',
   descripcion:
-    'Busca en los documentos subidos (informes, resoluciones, ensayos, planes de labores; también los informes geológicos de JICA 1978-1980, en inglés, y sus resúmenes en español) y devuelve el texto con su página. Usala antes de responder cualquier cosa que debería estar en un documento. Buscá en español: los términos técnicos se buscan también en inglés.',
+    'Busca en los documentos subidos (informes, resoluciones, ensayos, planes de labores, fichas de ocurrencias, presentaciones, hojas de cálculo; también los informes geológicos de JICA, en inglés, y sus resúmenes en español) y devuelve el texto con su página. Usala antes de responder cualquier cosa que debería estar en un documento. Buscá en español: los términos técnicos se buscan también en inglés. Si la pregunta es sobre un documento o una carpeta concreta («JICA Fase III», «Minas de Oro 3», «INDEXSA», «Presentación 1», «FOM»), pasá `documento` con parte de su nombre o carpeta y en `texto` solo el tema: así busca DENTRO de ese documento y no se queda con la portada.',
   esquema: {
     type: 'object',
-    properties: { texto: { type: 'string', description: 'Qué buscar, en palabras normales' } },
+    properties: {
+      texto: { type: 'string', description: 'Qué buscar, en palabras normales (el tema, sin el nombre del documento)' },
+      documento: { type: 'string', description: 'Opcional: parte del nombre del documento o de su carpeta, para buscar solo ahí' },
+    },
     required: ['texto'],
   },
   plataformas: ['electrum'],
-  async ejecutar({ texto }) {
+  async ejecutar({ texto, documento }) {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
-    const hits = await buscarEnExpedientes(String(texto), 5);
-    if (!hits.length) return { ok: true, texto: `No encontré nada sobre «${texto}» en los expedientes cargados.`, ui: { hits: [] } };
+    const doc = documento ? String(documento).slice(0, 120) : undefined;
+    const hits = await buscarEnExpedientes(String(texto), 5, { documento: doc });
+    if (!hits.length) {
+      return {
+        ok: true,
+        texto: doc
+          ? `No encontré «${texto}» en documentos que se llamen o estén en una carpeta como «${doc}». Probá sin \`documento\` o con otra parte del nombre.`
+          : `No encontré nada sobre «${texto}» en los expedientes cargados.`,
+        ui: { hits: [] },
+      };
+    }
     const cita = hits
       .slice(0, 3)
       .map((h) => `${h.documento}${h.pagina ? `, página ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 220)}»`)
@@ -453,6 +466,67 @@ const expediente_buscar: Herramienta = {
   },
 };
 
+
+/**
+ * Qué hay cargado. Sin filtro, el panorama por carpeta; con filtro, la lista de documentos y capas
+ * de esa carpeta o con ese nombre, con su estado. Es la mano que contesta «¿qué tenés de Minas de
+ * Oro?» o «¿qué quedó sin leer?»: buscar por contenido no sirve para saber qué existe.
+ */
+const ESTADO_TXT: Record<string, string> = {
+  ok: 'leído', sin_texto: 'SIN TEXTO (escaneo sin OCR)', cortado: 'CORTADO (hay que releerlo)', poco_texto: 'poco texto', repetido: 'repetido', vacia: 'capa vacía',
+};
+const expediente_listar: Herramienta = {
+  nombre: 'expediente_listar',
+  descripcion:
+    'Dice qué información tiene cargada Dr Electrum: sin filtro, cuántos documentos y capas hay por carpeta y cuántos necesitan atención; con `filtro` (parte de una carpeta o nombre, p. ej. «Minas de Oro», «INDEXSA», «FOM»), la lista de lo que hay ahí con su estado. Con `solo_atencion` lista lo que está sin texto, cortado o repetido. Usala cuando pregunten qué documentos hay, si algo está cargado o qué falta.',
+  esquema: {
+    type: 'object',
+    properties: {
+      filtro: { type: 'string', description: 'Opcional: parte del nombre de una carpeta o de un documento' },
+      solo_atencion: { type: 'boolean', description: 'Opcional: solo lo que necesita atención' },
+    },
+  },
+  plataformas: ['electrum'],
+  async ejecutar({ filtro, solo_atencion }) {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    const f = filtro ? String(filtro).trim().slice(0, 120) : '';
+    if (!f && !solo_atencion) {
+      const [r, carpetas] = await Promise.all([resumenBiblioteca(), arbolBiblioteca()]);
+      const raiz = new Map<string, { n: number; atencion: number }>();
+      for (const c of carpetas) {
+        const k = (c.carpeta || '(sin carpeta)').split('/')[0];
+        const x = raiz.get(k) || { n: 0, atencion: 0 };
+        x.n += c.documentos + c.capas;
+        x.atencion += c.atencion;
+        raiz.set(k, x);
+      }
+      const lineas = [...raiz.entries()].sort((a, b) => b[1].n - a[1].n).map(([k, x]) => `${k}: ${x.n}${x.atencion ? ` (${x.atencion} necesitan atención)` : ''}`);
+      return {
+        ok: true,
+        texto: `Hay ${r.documentos} documentos y ${r.capas} capas del mapa, ${r.fragmentos} fragmentos indexados. Necesitan atención ${r.atencion}: ${r.porEstado.sin_texto} sin texto, ${r.porEstado.cortado} cortados, ${r.porEstado.poco_texto} con poco texto, ${r.porEstado.repetido} repetidos. Por carpeta: ${lineas.join('; ')}.`,
+      };
+    }
+    // Primero como carpeta; si no casa ninguna, como parte del nombre.
+    let r = f ? await listarBiblioteca({ carpeta: f, subcarpetas: true, estado: solo_atencion ? 'atencion' : undefined, orden: 'carpeta', limite: 60 }) : { items: [], total: 0 };
+    if (!r.total) r = await listarBiblioteca({ q: f || undefined, estado: solo_atencion ? 'atencion' : undefined, orden: 'carpeta', limite: 60 });
+    if (!r.total && f) {
+      const carpetas = (await arbolBiblioteca()).map((c) => c.carpeta).filter((c): c is string => !!c && c.toLowerCase().includes(f.toLowerCase()));
+      if (carpetas.length) {
+        const todos = await Promise.all(carpetas.slice(0, 5).map((c) => listarBiblioteca({ carpeta: c, estado: solo_atencion ? 'atencion' : undefined, limite: 30 })));
+        r = { items: todos.flatMap((t) => t.items), total: todos.reduce((n, t) => n + t.total, 0) };
+      }
+    }
+    if (!r.total) return { ok: true, texto: `No hay nada cargado que se llame o esté en una carpeta como «${f}».` };
+    const lineas = r.items.map(
+      (i) => `${i.clase === 'capa' ? 'capa' : 'doc'} «${i.nombre}» (${i.clase === 'capa' ? `${i.cantidad} geometrías` : `${i.cantidad} pág`}, ${ESTADO_TXT[i.estado] || i.estado})${i.carpeta ? ` en ${i.carpeta}` : ''}`
+    );
+    return {
+      ok: true,
+      texto: `${r.total} ${r.total === 1 ? 'pieza' : 'piezas'}${f ? ` para «${f}»` : ''}${solo_atencion ? ' que necesitan atención' : ''}${r.total > r.items.length ? ` (muestro ${r.items.length})` : ''}: ${lineas.join('; ')}.`,
+      ui: { hits: r.items.slice(0, 20) },
+    };
+  },
+};
 
 /**
  * Qué es un documento y qué trae (Laya, modelo `documento`): tipo, y si hay coordenadas, fuentes de
@@ -576,6 +650,7 @@ export const MANOS: Record<string, Herramienta> = {
   mapa_volar,
   mapa_capa,
   expediente_buscar,
+  expediente_listar,
   documento_revisar,
   informe_pdf,
   // Estas dos no son de Electrum: viven en lib/manos/compartidas.ts porque AU-RA hace las mismas
