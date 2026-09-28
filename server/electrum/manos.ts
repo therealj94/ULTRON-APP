@@ -469,6 +469,17 @@ const expediente_buscar: Herramienta = {
 
 
 /**
+ * Qué parte de un texto son palabras de verdad (tres letras o más, con vocal). Un párrafo en español
+ * pasa de 0,6; el OCR de una tabla girada («L I € os S LoLE vO6£8S!») no llega a 0,2.
+ */
+export function legibilidad(texto: string): number {
+  const fichas = String(texto || '').split(/\s+/).filter(Boolean);
+  if (!fichas.length) return 1;
+  const palabras = fichas.filter((w) => /^[«"(¿¡]?[a-záéíóúñü]{3,}[.,;:)»"?!]?$/i.test(w) && /[aeiouáéíóú]/i.test(w));
+  return palabras.length / fichas.length;
+}
+
+/**
  * Leer seguido. La búsqueda trae trozos de unas líneas; para «qué concluye el capítulo 5» o «dame la
  * tabla de leyes de El Peñón» hay que leer las páginas enteras. Antes Dr Electrum ubicaba el
  * capítulo en el índice y ahí se quedaba: «no me salió completo en la búsqueda».
@@ -502,11 +513,17 @@ const expediente_leer: Herramienta = {
       };
     }
     const rango = l.hasta > l.desde ? `páginas ${l.desde} a ${l.hasta}` : `página ${l.desde}`;
+    // Un OCR de tablas o planos girados da letras sueltas y símbolos. Pasa sobre todo cuando se va a
+    // la página que dice el índice: el índice cuenta páginas IMPRESAS y el archivo, las del PDF.
+    const ilegible = legibilidad(l.texto) < 0.35
+      ? `[Estas páginas salieron casi ilegibles en el OCR (tablas o planos girados). Si fuiste por el número del índice, ese número es de la página impresa y no coincide con la del archivo: buscá el título del capítulo con expediente_buscar y documento «${l.documento}».] `
+      : '';
     const ingles = /\b(the|and|of|with|grade|vein|drill|sample)\b/i.test(l.texto.slice(0, 3000));
     return {
       ok: true,
       texto:
         `«${l.documento}», ${rango}${l.ultima ? ` de ${l.ultima}` : ''}:\n${l.texto}\n` +
+        ilegible +
         (l.sigue ? `[Sigue en ${donde}: leelo con expediente_leer si hace falta.] ` : '[Fin del documento.] ') +
         (l.otros.length ? `[Otros documentos que también casan: ${l.otros.slice(0, 4).join('; ')}.] ` : '') +
         'Citá el documento y la página.' +

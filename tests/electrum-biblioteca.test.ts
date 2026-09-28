@@ -550,6 +550,17 @@ test('expediente_leer: lee seguido desde una página, dice dónde sigue y elige 
     assert.match(porId.texto, /Mapa de ubicación/);
     const nada = await leer.ejecutar({ documento: 'no existe en ningún lado xyz' }, {} as any);
     assert.match(nada.texto, /No hay ningún documento/);
+    assert.doesNotMatch(r.texto, /ilegibles/, 'un texto normal no lleva el aviso');
+
+    // Una página de OCR de una tabla girada: avisa, y dice que el índice cuenta páginas impresas.
+    const { legibilidad } = await import('../server/electrum/manos');
+    const basura = 'L I ! I l I I € os S LoLE vO6£8S! | ELOESE [S3 6€09 6€£ I L I I I L L L £ s\'0 GELL €11889! | ¿685€ |S3 8£09 8€ IL L I I I I I I € $0 vel! 8018881';
+    assert.ok(legibilidad(basura) < 0.2, `legibilidad ${legibilidad(basura)}`);
+    assert.ok(legibilidad('Las conclusiones del estudio geológico en los sectores Guasucarán, Comayagua y Erandique indican mineralización de oro.') > 0.6);
+    await aprender('prueba-lee-tabla girada.txt', Buffer.from(['Página 1. Índice: Capítulo 1 Conclusiones, página 3.', basura, basura].join('\f')));
+    const girada = await leer.ejecutar({ documento: 'prueba-lee tabla girada', pagina: 2, paginas: 2 }, {} as any);
+    assert.match(girada.texto, /casi ilegibles en el OCR/);
+    assert.match(girada.texto, /página impresa/);
 
     // Páginas en blanco: el cursor salta a la próxima página que tiene texto, no a la misma.
     await aprender('prueba-lee-con blancos.txt', Buffer.from(['Página 1. Portada del informe de la zona de Tatanacho con su índice.', '', '', 'Página 4. Recursos estimados del depósito de Tatanacho por bloque.'].join('\f')));
