@@ -4,7 +4,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buscarWeb, extraerConTavily, leerPagina, markdownATexto, reiniciarTavily } from '../src/06-manos/web';
+import { buscarWeb, extraerConTavily, leerPagina, markdownATexto, reiniciarTavily, urlSinSecretos } from '../src/06-manos/web';
 
 type Pedido = { url: string; init: any };
 function simular(responder: (p: Pedido) => Response | Promise<Response>) {
@@ -89,6 +89,54 @@ test('leerPagina: lo que la red pública rechaza no se reintenta con Tavily', as
     assert.equal(await leerPagina('http://localhost:7811/api/secreto', 500), '');
     assert.equal(await leerPagina('http://169.254.169.254/latest/meta-data/', 500), '');
     assert.equal(deTavily(s.pedidos).length, 0);
+  } finally {
+    s.restaurar();
+  }
+});
+
+test('Extract: una URL con llave no sale a Tavily', async () => {
+  reiniciarTavily();
+  const s = simular(() => json({ results: [{ raw_content: 'no' }] }));
+  try {
+    for (const u of [
+      'https://usuario:clave@sitio.com/x',
+      'https://bucket.s3.amazonaws.com/a.pdf?X-Amz-Signature=abc&X-Amz-Credential=def',
+      'https://cuenta.blob.core.windows.net/c/a.pdf?sv=2024&sig=abc&se=2026',
+      'https://storage.googleapis.com/b/a?X-Goog-Signature=abc',
+      'https://api.sitio.com/datos?access_token=abc',
+      'https://sitio.com/x?apikey=abc',
+      'https://sitio.com/reset?code=abc',
+    ]) {
+      assert.equal(await extraerConTavily(u, 500), '', u);
+    }
+    assert.equal(s.pedidos.length, 0);
+    // Una consulta común sí puede ir (SciELO arma sus artículos con parámetros).
+    assert.equal(urlSinSecretos(new URL('https://www.scielo.org.ar/scielo.php?script=sci_arttext&pid=S1666')), true);
+    // Sin tiempo suficiente, no se empieza.
+    assert.equal(await extraerConTavily('https://www.scielo.org.ar/x', 500, 800), '');
+    assert.equal(s.pedidos.length, 0);
+  } finally {
+    s.restaurar();
+  }
+});
+
+test('las redes sociales van después de todas las fuentes', async () => {
+  delete process.env.TAVILY_API_KEY;
+  reiniciarTavily();
+  const s = simular((p) =>
+    p.url.startsWith('https://api.tavily.com/search')
+      ? json({
+          results: [
+            { title: 'Oro en Olancho Honduras', url: 'https://www.facebook.com/p/oro-olancho', content: 'oro olancho honduras' },
+            { title: 'Minería de oro en Olancho', url: 'https://www.instagram.com/p/oro', content: 'oro olancho honduras' },
+            { title: 'Olancho: oro y geología', url: 'https://geologia.org/olancho-oro', content: 'olancho oro honduras' },
+          ],
+        })
+      : new Response('', { status: 503 })
+  );
+  try {
+    const hits = await buscarWeb('oro Olancho Honduras', 3);
+    assert.equal(new URL(hits[0].url).hostname, 'geologia.org', JSON.stringify(hits.map((h) => h.url)));
   } finally {
     s.restaurar();
   }

@@ -159,7 +159,18 @@ export function markdownATexto(md: string): string {
  * que arma el texto con JavaScript). Solo nombres de dominio públicos: nunca una IP ni un nombre
  * interno, que no tienen por qué salir a un tercero.
  */
-export async function extraerConTavily(url: string, maxChars: number): Promise<string> {
+/**
+ * Parámetros que suelen llevar una llave: enlaces prefirmados (S3, GCS, Azure), tokens de sesión o
+ * de API. Una URL así no sale a un tercero aunque el sitio haya bloqueado al servidor.
+ */
+const PARAM_SECRETO = /(^|[_-])(token|sig|signature|key|apikey|api_key|auth|secret|pass|password|pwd|credential|session|sess|jwt|code|otp|hash)([_-]|$)|^x-(amz|goog|ms)-|^(se|sp|sv|sr|st|skoid|sktid)$/i;
+export function urlSinSecretos(u: URL): boolean {
+  if (u.username || u.password) return false;
+  for (const k of u.searchParams.keys()) if (PARAM_SECRETO.test(k)) return false;
+  return true;
+}
+
+export async function extraerConTavily(url: string, maxChars: number, ms = 15000): Promise<string> {
   let u: URL;
   try {
     u = new URL(url);
@@ -167,7 +178,8 @@ export async function extraerConTavily(url: string, maxChars: number): Promise<s
     return '';
   }
   if (!/^https?:$/.test(u.protocol) || !u.hostname.includes('.') || /^[\d.]+$|:/.test(u.hostname) || /\.(local|internal|lan)$/i.test(u.hostname)) return '';
-  const j = await pedirTavily('/extract', { urls: [u.toString()] }, 15000);
+  if (!urlSinSecretos(u) || ms < 1500) return '';
+  const j = await pedirTavily('/extract', { urls: [u.toString()] }, ms);
   const crudo = String(j?.results?.[0]?.raw_content || '');
   return markdownATexto(crudo).slice(0, maxChars);
 }
@@ -228,7 +240,7 @@ export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
   ];
   const r = await Promise.allSettled(motores.map(([, , fn]) => fn()));
   const vistos = new Set<string>();
-  const todos: Array<WebHit & { puntos: number }> = [];
+  const todos: Array<WebHit & { puntos: number; social: boolean }> = [];
   r.forEach((x, i) => {
     if (x.status !== 'fulfilled') return;
     x.value.forEach((h, k) => {
@@ -242,18 +254,24 @@ export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
       const minimo = ['brave', 'tavily', 'wikipedia'].includes(motores[i][0]) ? 0.25 : 0.6;
       if (claves.length >= 2 && rel < minimo) return;
       vistos.add(clave);
-      // Una publicación de red social no es una fuente para citar: va al final, no se descarta.
-      const social = /(^|\.)(facebook|instagram|tiktok|x|twitter|youtube|pinterest)\.com$/i.test(new URL(h.url).hostname) ? 3 : 0;
-      todos.push({ ...h, puntos: motores[i][1] + 3 * rel - k * 0.15 - social });
+      // Una publicación de red social no es una fuente para citar: va después de todas las demás.
+      const social = /(^|\.)(facebook|instagram|tiktok|x|twitter|youtube|pinterest)\.com$/i.test(new URL(h.url).hostname);
+      todos.push({ ...h, social, puntos: motores[i][1] + 3 * rel - k * 0.15 });
     });
   });
   return todos
-    .sort((a, b) => b.puntos - a.puntos)
+    .sort((a, b) => Number(a.social) - Number(b.social) || b.puntos - a.puntos)
     .slice(0, max)
-    .map(({ puntos: _p, ...h }) => h);
+    .map(({ puntos: _p, social: _s, ...h }) => h);
 }
 
+/**
+ * `web_leer` corta a los 15 s: lo directo y la vuelta por Tavily comparten ese presupuesto, así la
+ * herramienta no vence con un pedido a Tavily todavía en el aire.
+ */
+const PRESUPUESTO_LEER_MS = 13_000;
 export async function leerPagina(url: string, maxChars = 1800): Promise<string> {
+  const t0 = Date.now();
   let directo = '';
   let bloqueada = false;
   try {
@@ -274,7 +292,7 @@ export async function leerPagina(url: string, maxChars = 1800): Promise<string> 
   }
   // Si el sitio bloqueó al servidor o la página vino casi vacía (armada con JavaScript), la lee Tavily.
   if (bloqueada || directo.length < 200) {
-    const otra = await extraerConTavily(url, maxChars).catch(() => '');
+    const otra = await extraerConTavily(url, maxChars, PRESUPUESTO_LEER_MS - (Date.now() - t0)).catch(() => '');
     if (otra.length > directo.length) return otra;
   }
   return directo;
