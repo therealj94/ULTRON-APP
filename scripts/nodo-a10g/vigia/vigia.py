@@ -69,6 +69,49 @@ MUESTRAS_SANAS = 300
 MIN_SANAS_PARA_APRENDER = 50
 MIN_CAIDAS_PARA_APRENDER = 3
 PRECURSOR_CADA_S = 6 * 3600
+# Las capas que se miran en cada vuelta y la de base (si cae, lo que depende de ella espera).
+CAPAS = ['llama', 'puente', 'motor', 'mesa']
+CAPA_BASE = 'llama'
+CAPA_PROFUNDA = 'genera'  # se mira cada CADA_GENERA_S, solo con la base sana
+SONDAS = {}               # capa -> sonda genérica (vigia.json); las de la A10G están en Nodo.probar
+PUERTOS_COLA = ('8443', '11434', '11435', '8080')
+CONFIG = os.environ.get('VIGIA_CONFIG', '/etc/ultron-vigia.json')
+
+
+def configurar(c):
+    """
+    Otro nodo, otras capas. Sin archivo, la A10G tal cual. Con `/etc/ultron-vigia.json`:
+
+        {"capas": {"voz": {"sonda": {"tipo": "docker", "contenedor": "voicebox"},
+                            "remedios": ["docker:voicebox"], "espera_s": 120, "caro": true}},
+         "puertos_cola": ["17493"]}
+
+    Cada capa da un síntoma `<capa>_caida`. Un remedio `docker:X` reinicia el contenedor; cualquier
+    otro nombre es un servicio de systemd.
+    """
+    global SINTOMAS, DEPENDE_DE_LLAMA, ESPERA_INICIAL, TOPE_HORA, CARO, CAPAS, CAPA_BASE, CAPA_PROFUNDA, SONDAS, PUERTOS_COLA
+    capas = c.get('capas') or {}
+    if not capas:
+        return
+    SINTOMAS = {f'{k}_caida': (k, list(v['remedios'])) for k, v in capas.items()}
+    DEPENDE_DE_LLAMA = set()
+    ESPERA_INICIAL = {r: float(v.get('espera_s', 10)) for v in capas.values() for r in v['remedios']}
+    TOPE_HORA = {r: int(v['tope_hora']) for v in capas.values() for r in v['remedios'] if v.get('tope_hora')}
+    CARO = {r for v in capas.values() if v.get('caro') for r in v['remedios']}
+    CAPAS = list(capas)
+    CAPA_BASE = None
+    CAPA_PROFUNDA = None
+    SONDAS = {k: v['sonda'] for k, v in capas.items()}
+    PUERTOS_COLA = tuple(str(x) for x in c.get('puertos_cola', []))
+
+
+def cargar_config(ruta=None):
+    try:
+        with open(ruta or CONFIG) as f:
+            configurar(json.load(f))
+            return True
+    except FileNotFoundError:
+        return False
 
 
 def log(*a):
@@ -94,9 +137,38 @@ class Nodo:
         except urllib.error.HTTPError as e:
             return e.code, e.read(4096)
 
+    def _sonda(self, sonda):
+        tipo = sonda.get('tipo')
+        if tipo == 'docker':
+            r = subprocess.run(['docker', 'inspect', '--format', '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}', sonda['contenedor']],
+                               capture_output=True, text=True, timeout=10)
+            partes = r.stdout.split()
+            if r.returncode != 0 or not partes or partes[0] != 'running':
+                return False
+            salud = partes[1] if len(partes) > 1 else 'healthy'
+            return None if salud == 'starting' else salud == 'healthy'
+        if tipo == 'http':
+            codigo, _ = self._http(sonda['url'], plazo=sonda.get('plazo', 8))
+            if 'codigos' in sonda:
+                return codigo in sonda['codigos']
+            return codigo < sonda.get('menor_que', 500)
+        if tipo == 'tls':
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE  # se mira que la puerta conteste, no el certificado
+            host = sonda.get('host', '127.0.0.1')
+            with socket.create_connection((host, int(sonda.get('puerto', 443))), timeout=8) as crudo:
+                with ctx.wrap_socket(crudo, server_hostname=sonda.get('sni') or host) as t:
+                    t.sendall(f"GET {sonda.get('ruta', '/')} HTTP/1.1\r\nHost: {sonda.get('sni') or host}\r\nConnection: close\r\n\r\n".encode())
+                    linea = t.recv(64).decode('latin-1')
+            return linea.startswith('HTTP/') and int(linea.split()[1]) < sonda.get('menor_que', 500)
+        return False
+
     def probar(self, capa):
         """True: sana. False: falla. None: cargando (llama subiendo el modelo), ni sana ni caída."""
         try:
+            if capa in SONDAS:
+                return self._sonda(SONDAS[capa])
             if capa == 'llama':
                 codigo, cuerpo = self._http('http://127.0.0.1:8080/health', plazo=6)
                 if codigo == 503 and b'loading' in cuerpo.lower():
@@ -126,7 +198,7 @@ class Nodo:
                     return c.getresponse().status < 500
                 finally:
                     c.close()
-        except (OSError, http.client.HTTPException, ValueError):
+        except (OSError, http.client.HTTPException, ValueError, subprocess.SubprocessError, IndexError):
             return False
         return False
 
@@ -138,7 +210,7 @@ class Nodo:
                 p = linea.split()
                 if len(p) >= 4 and p[0] == 'LISTEN':
                     puerto = p[3].rsplit(':', 1)[-1]
-                    if puerto in ('8443', '11434', '11435', '8080'):
+                    if puerto in PUERTOS_COLA:
                         s[f'cola_{puerto}'] = float(p[1])
         except Exception:
             pass
@@ -166,7 +238,8 @@ class Nodo:
         return s
 
     def reiniciar(self, servicio):
-        r = subprocess.run(['systemctl', 'restart', servicio], capture_output=True, text=True, timeout=120)
+        orden = ['docker', 'restart', servicio[7:]] if servicio.startswith('docker:') else ['systemctl', 'restart', servicio]
+        r = subprocess.run(orden, capture_output=True, text=True, timeout=180)
         return r.returncode == 0
 
 
@@ -312,10 +385,9 @@ def remediar(e, nodo, sintoma, motivo):
 def vuelta(e, nodo):
     ahora = nodo.ahora()
     senales = nodo.senales()
-    capas = ['llama', 'puente', 'motor', 'mesa']
-    resultados = {c: nodo.probar(c) for c in capas}
-    if resultados['llama'] is True and (ahora - e['ultimo_genera'] >= CADA_GENERA_S or e['fallas'].get('llama_colgado')):
-        resultados['genera'] = nodo.probar('genera')
+    resultados = {c: nodo.probar(c) for c in CAPAS}
+    if CAPA_PROFUNDA and resultados.get(CAPA_BASE) is True and (ahora - e['ultimo_genera'] >= CADA_GENERA_S or e['fallas'].get('llama_colgado')):
+        resultados[CAPA_PROFUNDA] = nodo.probar(CAPA_PROFUNDA)
         e['ultimo_genera'] = ahora
     presentes = sintomas_de(resultados)
     # Lo que falla por primera vez se vuelve a mirar a los 15 s en esta misma vuelta: un parpadeo
@@ -331,7 +403,7 @@ def vuelta(e, nodo):
                 resultados[capa] = True
                 presentes.discard(sintoma)
                 log(f'{sintoma}: parpadeo, a los {REMIRAR_S} s ya contestaba')
-    llama_mal = bool(presentes & {'llama_caido', 'llama_colgado'}) or resultados['llama'] is None
+    llama_mal = CAPA_BASE is not None and (bool(presentes & {'llama_caido', 'llama_colgado'}) or resultados.get(CAPA_BASE) is None)
 
     # Cerrar lo que volvió solo, y contar las vueltas seguidas de lo que sigue mal.
     for sintoma in list(SINTOMAS):
@@ -450,6 +522,7 @@ def resumen(e, resultados, ahora):
 
 
 def main():
+    cargar_config()
     nodo = Nodo()
     e = cargar()
     resultados = vuelta(e, nodo)

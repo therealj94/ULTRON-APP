@@ -1,4 +1,6 @@
 """Pruebas del vigía con un nodo falso: qué reinicia, qué aprende y cuándo se frena."""
+import importlib
+import json
 import os
 import sys
 import tempfile
@@ -7,7 +9,6 @@ import unittest
 sys.path.insert(0, os.path.dirname(__file__))
 import vigia  # noqa: E402
 
-CAPA_DE_SERVICIO = {'llama-ultron': 'llama', 'ollama-proxy': 'puente', 'ultron-motor': 'motor', 'qwen-proxy': 'mesa'}
 
 
 class NodoFalso:
@@ -168,6 +169,54 @@ class Vigia(unittest.TestCase):
             self.assertEqual(r['ultimo']['resuelto'], 'ultron-motor')
             self.assertEqual(r['aprendido']['motor_mudo']['remedio'], 'ultron-motor')
         self.assertEqual(vigia.cargar('/no/existe.json')['incidentes'], [])
+
+
+
+T4 = os.path.join(os.path.dirname(__file__), '..', '..', 'nodo-t4', 'vigia.json')
+
+
+class VigiaT4(unittest.TestCase):
+    """El mismo vigía, configurado para la T4: contenedores y servicios propios."""
+
+    def setUp(self):
+        self.assertTrue(vigia.cargar_config(T4))
+        self.e = vigia.estado_vacio()
+        self.n = NodoFalso()
+
+    def tearDown(self):
+        importlib.reload(vigia)  # vuelve la A10G para las demás pruebas
+
+    def test_capas_de_la_t4(self):
+        self.assertEqual(set(vigia.CAPAS), {'voz', 'chico', 'laya', 'manos', 'entrada'})
+        self.assertIsNone(vigia.CAPA_BASE)
+        self.assertEqual(vigia.SINTOMAS['voz_caida'], ('voz', ['docker:voicebox']))
+        self.assertIn('docker:voicebox', vigia.CARO)
+
+    def test_voz_colgada_reinicia_el_contenedor(self):
+        self.n.caidas['voz'] = 'docker:voicebox'
+        self.n.tarda['docker:voicebox'] = 40
+        vigia.vuelta(self.e, self.n)
+        self.assertEqual(self.n.reinicios, ['docker:voicebox'])
+        self.assertEqual(self.e['incidentes'][-1]['resuelto'], 'docker:voicebox')
+
+    def test_laya_y_voz_a_la_vez_cada_una_lo_suyo(self):
+        self.n.caidas['voz'] = 'docker:voicebox'
+        self.n.caidas['laya'] = 'laya-electrum'
+        vigia.vuelta(self.e, self.n)
+        self.assertEqual(sorted(self.n.reinicios), ['docker:voicebox', 'laya-electrum'])
+
+    def test_sano_no_toca_nada(self):
+        for _ in range(3):
+            vigia.vuelta(self.e, self.n)
+            self.n.minuto()
+        self.assertEqual(self.n.reinicios, [])
+
+    def test_config_valida(self):
+        with open(T4) as f:
+            c = json.load(f)
+        for k, v in c['capas'].items():
+            self.assertIn(v['sonda']['tipo'], ('docker', 'http', 'tls'), k)
+            self.assertTrue(v['remedios'], k)
 
 
 if __name__ == '__main__':

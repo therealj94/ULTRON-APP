@@ -1115,6 +1115,21 @@ Probado en el nodo congelando el motor (`kill -STOP`): volvió solo en 75 s. El 
 `/salud` del motor y de ahí a la fila **Autocura** del estado en la web, en cifras y sin nombres de
 servicios. Instalar o actualizar: `sudo bash scripts/nodo-a10g/vigia/instalar.sh` en el nodo.
 
+**También en la T4.** El mismo programa lee `/etc/ultron-vigia.json` si existe
+(`scripts/nodo-t4/vigia.json`) y cuida las cinco capas de la T4:
+
+| Capa | Sonda | Remedio |
+|---|---|---|
+| voz y Whisper | salud del contenedor `voicebox` | reiniciar el contenedor |
+| modelo chico | `:8793/health` | reiniciar el contenedor `chico` |
+| Laya | `:8792` contesta | reiniciar `laya-electrum` |
+| manos | `:8787` contesta | reiniciar `ultron-manos` |
+| entrada HTTPS | Caddy contesta por TLS | reiniciar el contenedor `caddy` |
+
+Docker solo reinicia un contenedor cuando su proceso muere, no cuando queda «unhealthy»; eso lo
+cubre el vigía. Probado congelando `ultron-manos`: volvió solo en 90 s. Instalar:
+`sudo bash scripts/nodo-t4/instalar-vigia.sh`.
+
 ## Búsqueda en internet — gratis y sin clave
 
 `web_buscar` consulta varios motores a la vez (`src/06-manos/web.ts`) y se queda con lo más
