@@ -779,6 +779,22 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     aplicarTerreno(m);
   }, [curvas, fondo, listo]);
 
+  // Un puntaje calculado al abrir una ficha entra al dato del catastro pintado (si cambió).
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m || !listo) return;
+    const alRecibir = (e: Event) => {
+      const { id, puntaje } = (e as CustomEvent<{ id: number; puntaje: number }>).detail || ({} as any);
+      const fc = pintado.concesiones as { features?: Array<{ properties?: Record<string, unknown> }> } | null;
+      const f = fc?.features?.find((x) => Number(x.properties?.id) === Number(id));
+      if (!f?.properties || f.properties.prosp === puntaje) return;
+      f.properties.prosp = puntaje;
+      pintar(m, 'concesiones', fc);
+    };
+    window.addEventListener('electrum:prospectividad', alRecibir);
+    return () => window.removeEventListener('electrum:prospectividad', alRecibir);
+  }, [listo]);
+
   useEffect(() => {
     rellenoPorProsp = prospectividad;
     const m = mapa.current;

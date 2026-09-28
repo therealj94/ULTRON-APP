@@ -14,6 +14,7 @@ import type { Geometry } from 'geojson';
 import { headersElectrum } from '../acceso';
 import type { OrdenMapa, Tocado } from './captura';
 import { colorProsp } from './prospectividad';
+import { Timelapse } from './Timelapse';
 
 const AMBAR = '#FFAE3B';
 
@@ -90,6 +91,10 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
         if (corte.signal.aborted) return;
         if (!r.ok) return setError(j?.error || `El servidor contestó ${r.status}.`);
         setDatos(j);
+        // El puntaje recién calculado va al mapa, para que el relleno por prospectividad lo pinte ya.
+        if (tocado.tipo === 'concesion' && typeof j?.prospectividad?.puntaje === 'number') {
+          window.dispatchEvent(new CustomEvent('electrum:prospectividad', { detail: { id: tocado.id, puntaje: j.prospectividad.puntaje } }));
+        }
       } catch (e: any) {
         if (!corte.signal.aborted) setError('No alcancé el servidor. Revisá la conexión y volvé a tocar.');
       }
@@ -242,8 +247,10 @@ function Boton({ children, onClick, fuerte = false }: { children: ReactNode; onC
 }
 
 function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: Props['onVolar']; onFicha: Props['onFicha']; onPreguntar: Props['onPreguntar'] }) {
+  const [timelapse, setTimelapse] = useState(false);
   return (
     <>
+      {timelapse && <Timelapse id={f.id} nombre={f.nombre} onCerrar={() => setTimelapse(false)} />}
       <div className="flex flex-wrap gap-1.5">
         {f.geojson && f.encuadre && <Boton onClick={() => onVolar({ accion: 'volar', geojson: f.geojson!, encuadre: f.encuadre! })}>Volar aquí</Boton>}
         <Boton fuerte onClick={() => onFicha(f.id)}>
@@ -255,6 +262,7 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: P
         <Boton onClick={() => onPreguntar(`Analizá la concesión ${f.nombre} (id ${f.id}): entorno, geología, riesgos legales y ambientales, y qué recomendás.`)}>
           Analizar
         </Boton>
+        {f.geojson && <Boton onClick={() => setTimelapse(true)}>Timelapse satelital</Boton>}
       </div>
       <Exportes id={f.id} />
       <Seccion titulo="Catastro">

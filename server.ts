@@ -76,6 +76,7 @@ import { montarRutasExportar } from './server/electrum/exportar';
 import { montarRutasProspectividad, puntajesPorConcesion } from './server/electrum/prospectividad';
 import { montarRutasArea } from './server/electrum/area';
 import { iniciarAlertas } from './server/electrum/alertas';
+import { montarRutasTimelapse } from './server/electrum/timelapse';
 import { asegurarBiblioteca } from './server/electrum/biblioteca';
 import { expedientesListo, guardarExpediente } from './lib/s3';
 import { createHash } from 'node:crypto';
@@ -1216,6 +1217,7 @@ if (ES_ELECTRUM) montarRutasSatelite(app);
 if (ES_ELECTRUM) montarRutasExportar(app);
 if (ES_ELECTRUM) montarRutasProspectividad(app);
 if (ES_ELECTRUM) montarRutasArea(app);
+if (ES_ELECTRUM) montarRutasTimelapse(app);
 
 montarRutasCuentas(app, {
   plataforma: PLATAFORMA,
