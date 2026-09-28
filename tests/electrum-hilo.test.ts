@@ -385,25 +385,46 @@ test('servidor: los visitantes de la demo no se ven entre sí', { skip: HAY_BINA
   });
 });
 
-test('si preguntan qué dice un informe, los trozos de los expedientes llegan pegados a la pregunta', async (t) => {
+test('si preguntan qué dice un informe, los trozos de ESE informe llegan pegados a la pregunta', async (t) => {
   const { hayBase, consulta } = await import('../server/electrum/db');
   if (!hayBase()) return t.skip('sin ELECTRUM_DB_URL');
   const { aprender } = await import('../server/electrum/aprender');
-  const { pideDocumento } = await import('../server/electrum/expedientes-previos');
+  const { pideDocumento, palabrasDeNombre, documentoNombrado, bloqueExpedientes } = await import('../server/electrum/expedientes-previos');
   assert.ok(pideDocumento('¿Qué dice el informe de Minas de Oro 2 sobre Tatanacho?'));
   assert.ok(pideDocumento('¿qué concluye JICA en la fase III?'));
   assert.ok(!pideDocumento('¿cuándo vence Cerro Partido?'));
+  assert.deepEqual(palabrasDeNombre('¿Qué dice el informe de Minas de Oro 2 sobre Tatanacho?'), ['minas', '2', 'tatanacho']);
+  // Sin la herramienta de leer en el panel, no se la nombra.
+  assert.doesNotMatch(bloqueExpedientes({ documento: null, trozos: ['- x, p. 1: «y»'] }, false), /expediente_leer/);
+  assert.match(bloqueExpedientes({ documento: null, trozos: ['- x, p. 1: «y»'] }, true), /expediente_leer/);
+
   await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-prev-%'`);
-  const paginas = ['Página 1. Informe técnico sobre la solicitud de concesión, zona de Quebrachal.', 'Página 2. Recursos estimados en la zona de Quebrachal: 1,2 Mt con ley media de 2,4 g/t de oro.'];
-  await aprender('prueba-prev-Informe Quebrachal (OCR).txt', Buffer.from(paginas.join('\f')), { carpeta: 'Pruebas Previos' });
+  const paginas = ['Página 1. Informe técnico sobre la solicitud de concesión.', 'Página 2. Recursos estimados: 1,2 Mt con ley media de 2,4 g/t de oro en vetas de cuarzo.'];
+  await aprender('prueba-prev-Informe Quebrachal Norte (OCR).txt', Buffer.from(paginas.join('\f')), { carpeta: 'Pruebas Previos' });
+  // Otro informe cuyo TEXTO habla de Quebrachal Norte y de recursos: buscar en todo lo traería.
+  await aprender('prueba-prev-Informe Palmar Sur.txt', Buffer.from('Página 1. Comparado con Quebrachal Norte, los recursos estimados de Palmar Sur son 9 Mt con ley media de 0,8 g/t.'), { carpeta: 'Pruebas Previos' });
   try {
+    const nombrado = await documentoNombrado('¿Qué dice el informe de Quebrachal Norte sobre los recursos?');
+    assert.equal(nombrado?.nombre, 'prueba-prev-Informe Quebrachal Norte (OCR).txt');
+
     NODO.length = 0;
-    const pregunta = '¿Qué dice el informe sobre los recursos de Quebrachal?';
+    const pregunta = '¿Qué dice el informe de Quebrachal Norte sobre los recursos estimados?';
     await turnoElectrum(pregunta, { quien: null, nivel: 'lee', plataforma: 'electrum', canal: 'mesa', mensaje: pregunta });
     const usuario = (NODO[0]?.messages || []).filter((m: any) => m.role === 'user').pop()?.content || '';
-    assert.match(usuario, /DE LOS EXPEDIENTES CARGADOS/);
-    assert.match(usuario, /prueba-prev-Informe Quebrachal \(OCR\)\.txt, p\. 2: «Página 2\. Recursos estimados/);
-    assert.match(usuario, /Quebrachal\?$/, 'la pregunta sigue al final');
+    assert.match(usuario, /DE LOS EXPEDIENTES CARGADOS, lo que encontró la búsqueda DENTRO de «prueba-prev-Informe Quebrachal Norte \(OCR\)\.txt»/);
+    assert.match(usuario, /prueba-prev-Informe Quebrachal Norte \(OCR\)\.txt, p\. 2: «Página 2\. Recursos estimados/);
+    assert.doesNotMatch(usuario, /Palmar Sur\.txt/, 'nada de otro informe citado como si fuera este');
+    assert.match(usuario, /estimados\?$/, 'la pregunta sigue al final');
+
+    // «¿y qué concluye?» no nombra nada: el documento sale de lo que se preguntó antes.
+    NODO.length = 0;
+    const historial = [
+      { role: 'user', content: pregunta },
+      { role: 'assistant', content: 'Estima 1,2 Mt con 2,4 g/t de oro.' },
+    ] as any;
+    await turnoElectrum('¿y qué concluye el informe sobre la ley?', { quien: null, nivel: 'lee', plataforma: 'electrum', canal: 'mesa', mensaje: '¿y qué concluye el informe sobre la ley?' }, { historial });
+    const seguida = (NODO[0]?.messages || []).filter((m: any) => m.role === 'user').pop()?.content || '';
+    assert.match(seguida, /DENTRO de «prueba-prev-Informe Quebrachal Norte \(OCR\)\.txt»/);
 
     NODO.length = 0;
     await turnoElectrum('¿cuándo vence Cerro Partido?', { quien: null, nivel: 'lee', plataforma: 'electrum', canal: 'mesa', mensaje: '¿cuándo vence Cerro Partido?' });
