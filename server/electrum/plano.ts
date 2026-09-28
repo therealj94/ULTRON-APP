@@ -73,6 +73,8 @@ export type DatosPlano = {
   ubicacion?: [number, number];
   /** El cajetín: titular, expediente, estado, área… en pares [rótulo, valor]. */
   cajetin?: Array<[string, string]>;
+  /** Rótulo de la leyenda para el polígono principal («Concesión» si no se dice). */
+  etiquetaPrincipal?: string;
 };
 
 /* ------------------------------------------------------------------ lienzo */
@@ -268,7 +270,9 @@ export function svgPlano(d: DatosPlano): string {
     const ds = rasgos.filter((r) => r.geom && filtro(r.geom)).map((r) => trazado(r.geom, t)).filter(Boolean);
     if (!ds.length) return;
     usar(e);
-    partes.push(`<path d="${ds.join('')}" fill-rule="evenodd" ${e.atrs}/>`);
+    // Un trazado por rasgo: juntos en uno solo con «evenodd», dos rasgos que se superponen (dos
+    // traslapes sobre la misma franja, por ejemplo) se anulaban y la zona quedaba sin relleno.
+    partes.push(`<g ${e.atrs}>${ds.map((x) => `<path d="${x}" fill-rule="evenodd"/>`).join('')}</g>`);
   };
 
   /* --- fondo y geografía, de abajo arriba --- */
@@ -283,7 +287,7 @@ export function svgPlano(d: DatosPlano): string {
    * cruza, que es justo lo que hay que ver, sale lavado por el ámbar— y el lindero por encima de todo.
    */
   const dConcesion = trazado(d.concesion.geom, t);
-  usar(ESTILOS.concesion);
+  usar(d.etiquetaPrincipal ? { ...ESTILOS.concesion, etiqueta: d.etiquetaPrincipal } : ESTILOS.concesion);
   partes.push(`<path d="${dConcesion}" fill-rule="evenodd" fill="${AMBAR}" fill-opacity="0.30" stroke="none"/>`);
   capa(d.zonasInformales, ESTILOS.zonasInformales, esPoligono);
   capa(d.carretera, ESTILOS.carreteraEje, esLinea);
@@ -592,19 +596,31 @@ export async function jpegDeSvg(svg: string, calidad = 88): Promise<Buffer> {
  * se recorta a esa vista ANTES de reproyectar —pasar un departamento entero a UTM para quedarse con
  * un cuadrito es trabajo tirado— y se simplifica a medio píxel: más detalle no se ve.
  */
-export async function datosPlano(id: number, opts: { subtitulo?: string; pie?: string; relieve?: boolean } = {}): Promise<DatosPlano | null> {
+/** Un área que no está en el catastro (dibujada en el mapa para pedirla): su polígono y su nombre. */
+export type AreaPlano = { geojson: Geometry; nombre: string; ubicacion?: string };
+
+export async function datosPlano(
+  objetivo: number | AreaPlano,
+  opts: { subtitulo?: string; pie?: string; relieve?: boolean } = {}
+): Promise<DatosPlano | null> {
   if (!hayBase()) return null;
+  const area = typeof objetivo === 'number' ? null : objetivo;
+  const id = typeof objetivo === 'number' ? objetivo : -1;
+  const COLUMNAS = `ST_AsGeoJSON(u, 1) AS g, ST_XMin(u) x1, ST_YMin(u) y1, ST_XMax(u) x2, ST_YMax(u) y2,
+            ST_X(ST_PointOnSurface(u)) ex, ST_Y(ST_PointOnSurface(u)) ey,
+            ST_X(ST_Centroid(geom)) lon, ST_Y(ST_Centroid(geom)) lat, ST_IsEmpty(geom) vacia`;
   const [c] = await consulta<{
     nombre: string; g: string; x1: number; y1: number; x2: number; y2: number; ex: number; ey: number; lon: number; lat: number; vacia: boolean;
     titular: string | null; expediente: string | null; estado: string | null; ha: number | null; vence: string | null; municipio: string | null; departamento: string | null;
   }>(
-    `SELECT nombre, titular, expediente, estado, hectareas::float8 AS ha, to_char(vence, 'DD/MM/YYYY') AS vence, municipio, departamento,
-            ST_AsGeoJSON(u, 1) AS g, ST_XMin(u) x1, ST_YMin(u) y1, ST_XMax(u) x2, ST_YMax(u) y2,
-            ST_X(ST_PointOnSurface(u)) ex, ST_Y(ST_PointOnSurface(u)) ey,
-            ST_X(ST_Centroid(geom)) lon, ST_Y(ST_Centroid(geom)) lat, ST_IsEmpty(geom) vacia
-       FROM (SELECT nombre, titular, expediente, estado, hectareas, vence, municipio, departamento, geom, ST_Transform(geom, 32616) AS u
-               FROM concesion WHERE id = $1) t`,
-    [id]
+    area
+      ? `SELECT $2::text AS nombre, NULL::text AS titular, NULL::text AS expediente, NULL::text AS estado, (ST_Area(geom::geography) / 10000.0)::float8 AS ha,
+                NULL::text AS vence, NULL::text AS municipio, NULL::text AS departamento, ${COLUMNAS}
+           FROM (SELECT geom, ST_Transform(geom, 32616) AS u FROM (SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326) AS geom) s) t`
+      : `SELECT nombre, titular, expediente, estado, hectareas::float8 AS ha, to_char(vence, 'DD/MM/YYYY') AS vence, municipio, departamento, ${COLUMNAS}
+           FROM (SELECT nombre, titular, expediente, estado, hectareas, vence, municipio, departamento, geom, ST_Transform(geom, 32616) AS u
+                   FROM concesion WHERE id = $1) t`,
+    area ? [JSON.stringify(area.geojson), area.nombre] : [id]
   );
   if (!c || c.vacia) return null;
 
@@ -665,12 +681,21 @@ export async function datosPlano(id: number, opts: { subtitulo?: string; pie?: s
         LIMIT 300`,
       [...params, id]
     ),
-    consulta<{ g: string }>(
-      `WITH ${V}
-       SELECT ${recorte('t.geom')} AS g FROM traslape t, v
-        WHERE (t.a_id = $5 OR t.b_id = $5) AND t.geom IS NOT NULL AND t.geom && v.env`,
-      [...params, id]
-    ),
+    area
+      ? // Un área que se piensa pedir: lo que pisa de cada concesión vigente, calculado ahora.
+        consulta<{ g: string }>(
+          `WITH ${V}, a AS (SELECT ST_SetSRID(ST_GeomFromGeoJSON($5), 4326) AS g)
+           SELECT ${recorte('ST_Intersection(c.geom, a.g)')} AS g FROM concesion c, v, a
+            WHERE c.geom && a.g AND ST_Intersects(c.geom, a.g)
+            LIMIT 200`,
+          [...params, JSON.stringify(area.geojson)]
+        )
+      : consulta<{ g: string }>(
+          `WITH ${V}
+           SELECT ${recorte('t.geom')} AS g FROM traslape t, v
+            WHERE (t.a_id = $5 OR t.b_id = $5) AND t.geom IS NOT NULL AND t.geom && v.env`,
+          [...params, id]
+        ),
     enVista('rio', 4000),
     enVista('area_protegida', 200),
     enVista('microcuenca', 200),
@@ -692,9 +717,21 @@ export async function datosPlano(id: number, opts: { subtitulo?: string; pie?: s
 
   // El relieve es fondo: si el modelo de elevación no contesta a tiempo, el plano sale sin él.
   const relieve = opts.relieve === false ? null : await relieveUtm(vista, Math.round(MARCO.w / 2), Math.round(MARCO.h / 2)).catch(() => null);
-  const lugar = [c.municipio, c.departamento].filter(Boolean).join(', ');
+  const lugar = area?.ubicacion || [c.municipio, c.departamento].filter(Boolean).join(', ');
   const hoy = new Date().toLocaleDateString('es-HN', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Tegucigalpa' });
-  const cajetin: Array<[string, string]> = [
+  const nfHa = (x: number) => `${new Intl.NumberFormat('es-HN', { maximumFractionDigits: 2 }).format(x)} ha`;
+  const cajetin: Array<[string, string]> = area
+    ? [
+        ['Solicitante', '—'],
+        ['Expediente', 'sin presentar'],
+        ['Estado', 'Área propuesta'],
+        ['Área medida', c.ha != null ? nfHa(c.ha) : '—'],
+        ['Ubicación', lugar || '—'],
+        ['Traslapes', traslapes.length ? `${traslapes.length} con concesiones` : 'ninguno'],
+        ['Datum', 'WGS 84 / UTM 16N'],
+        ['Elaborado', `Dr Electrum FP · ${hoy}`],
+      ]
+    : [
     ['Titular', c.titular || '—'],
     ['Expediente', c.expediente || '—'],
     ['Estado', c.estado || '—'],
@@ -703,10 +740,11 @@ export async function datosPlano(id: number, opts: { subtitulo?: string; pie?: s
     ['Vence', c.vence || '—'],
     ['Datum', 'WGS 84 / UTM 16N'],
     ['Elaborado', `Dr Electrum FP · ${hoy}`],
-  ];
+      ];
 
   return {
-    titulo: `Plano de situación — ${c.nombre}`,
+    titulo: area ? `Área solicitada — ${c.nombre}` : `Plano de situación — ${c.nombre}`,
+    etiquetaPrincipal: area ? 'Área solicitada' : undefined,
     subtitulo: opts.subtitulo,
     vista,
     convergencia: gamma,

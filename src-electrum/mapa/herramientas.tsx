@@ -16,8 +16,9 @@ import proj4 from 'proj4';
 import { estiloCalles, estiloSatelite } from './estilos';
 import { sinMovimiento } from '../movimiento';
 import type { Fondo } from './captura';
+import { headersElectrum } from '../acceso';
 
-type Modo = 'medir' | 'perfil' | null;
+type Modo = 'medir' | 'perfil' | 'area' | null;
 let enUso: Modo = null;
 /** ¿Hay una herramienta que se está usando? Entonces el toque es un vértice. */
 export function herramientaEnUso(): boolean {
@@ -147,7 +148,7 @@ const FUENTE = 'herramienta';
 function pintarTrazo(m: maplibregl.Map, puntos: Array<[number, number]>, cursor: [number, number] | null, modo: Modo, cerrado: boolean) {
   const linea = cursor && !cerrado ? [...puntos, cursor] : puntos;
   const feats: any[] = [];
-  if (modo === 'medir' && linea.length >= 3) feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [[...linea, linea[0]]] }, properties: { k: 'area' } });
+  if ((modo === 'medir' || modo === 'area') && linea.length >= 3) feats.push({ type: 'Feature', geometry: { type: 'Polygon', coordinates: [[...linea, linea[0]]] }, properties: { k: 'area' } });
   if (linea.length >= 2) feats.push({ type: 'Feature', geometry: { type: 'LineString', coordinates: linea }, properties: { k: 'linea' } });
   for (const p of puntos) feats.push({ type: 'Feature', geometry: { type: 'Point', coordinates: p }, properties: { k: 'vertice' } });
   const datos = { type: 'FeatureCollection', features: feats };
@@ -295,7 +296,7 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
 
   const c = useMemo(() => (coord ? coordenadas(coord.lon, coord.lat) : null), [coord]);
   const dist = largo(puntos);
-  const area = modo === 'medir' && puntos.length >= 3 ? areaM2(puntos) : 0;
+  const area = (modo === 'medir' || modo === 'area') && puntos.length >= 3 ? areaM2(puntos) : 0;
 
   return (
     <>
@@ -306,6 +307,9 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
         </BotonHerr>
         <BotonHerr activo={modo === 'perfil'} onClick={() => empezar('perfil')} titulo="Perfil topográfico">
           <path d="M2 16 7 8l3 4 3-6 5 10z" />
+        </BotonHerr>
+        <BotonHerr activo={modo === 'area'} onClick={() => empezar('area')} titulo="Pedir un área nueva: dibujarla y revisar qué pisa">
+          <path d="M4 15 3 6l7-3 7 5-2 8zM10 7v6M7 10h6" />
         </BotonHerr>
         <BotonHerr activo={comparar} onClick={() => setComparar((v) => !v)} titulo={fondo === 'satelite' ? 'Comparar con el mapa de calles' : 'Comparar con la imagen satelital'}>
           <path d="M10 2v16M3 4h5v12H3zM12 4h5v12h-5z" />
@@ -322,10 +326,12 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
       {modo && (
         <div className="pointer-events-auto absolute right-[52px] top-[118px] z-30 w-[240px] rounded-lg border border-white/12 bg-[#0A0C0E]/94 p-2.5 text-[12px] text-[#C9D5DB] shadow-lg backdrop-blur-xl">
           <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
-            {modo === 'medir' ? 'Medir' : 'Perfil topográfico'}
+            {modo === 'medir' ? 'Medir' : modo === 'area' ? 'Área nueva' : 'Perfil topográfico'}
           </div>
           {puntos.length < 2 ? (
-            <p className="text-[#8FA3B0]">Tocá el mapa para poner puntos; doble toque o Enter para terminar, Esc para salir.</p>
+            <p className="text-[#8FA3B0]">
+              {modo === 'area' ? 'Dibujá el área que pensás pedir: tocá cada vértice; ' : 'Tocá el mapa para poner puntos; '}doble toque o Enter para terminar, Esc para salir.
+            </p>
           ) : (
             <p>
               Distancia: <b className="text-[#F3F6F8]">{km(dist)}</b>
@@ -338,7 +344,7 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
             </p>
           )}
           <div className="mt-2 flex gap-1.5">
-            {!cerrado && puntos.length >= 2 && (
+            {!cerrado && puntos.length >= (modo === 'area' ? 3 : 2) && (
               <button type="button" onClick={() => setCerrado(true)} className="rounded-md px-2 py-1 text-[11px] font-semibold text-black cursor-pointer" style={{ background: AMBAR }}>
                 Terminar
               </button>
@@ -360,6 +366,8 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
           {perfil && <GraficoPerfil p={perfil} />}
         </div>
       )}
+
+      {modo === 'area' && cerrado && puntos.length >= 3 && <PanelArea puntos={puntos} />}
 
       {c && coord && (
         <div className="pointer-events-none absolute bottom-[34px] right-[10px] z-10 rounded-md bg-black/70 px-2 py-1 font-mono text-[10.5px] leading-snug text-[#DCE5EA] backdrop-blur-sm">
@@ -547,5 +555,128 @@ function Comparador({ mapa, fondo, onCerrar }: { mapa: maplibregl.Map; fondo: Fo
         Cerrar comparación
       </button>
     </>
+  );
+}
+
+/* --------------------------------------------------------------- área nueva */
+
+type Analisis = {
+  nombre: string;
+  ha: number;
+  perimetroKm: number;
+  libreHa: number;
+  traslapes: Array<{ con: string; conId: number; hectareas: number; pct: number }>;
+  renglones: string[];
+};
+
+/**
+ * ÁREA NUEVA: al cerrar el polígono se cruza en el servidor con el catastro y todas las capas; de ahí
+ * sale la revisión previa en PDF (plano de situación, vértices WGS84/NAD27 y entorno).
+ */
+function PanelArea({ puntos }: { puntos: Array<[number, number]> }) {
+  const [nombre, setNombre] = useState('Área solicitada');
+  const [r, setR] = useState<Analisis | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [cargando, setCargando] = useState(false);
+  const [armando, setArmando] = useState(false);
+  const geojson = useMemo(() => ({ type: 'Polygon', coordinates: [[...puntos, puntos[0]]] }), [puntos]);
+  const hf = (x: number) => x.toLocaleString('es-HN', { maximumFractionDigits: 2 });
+
+  useEffect(() => {
+    let vivo = true;
+    setCargando(true);
+    setError(null);
+    setR(null);
+    fetch('/api/electrum/area/analizar', { method: 'POST', headers: { ...headersElectrum(), 'Content-Type': 'application/json' }, body: JSON.stringify({ geojson }) })
+      .then(async (res) => {
+        const j = await res.json().catch(() => null);
+        if (!vivo) return;
+        if (!res.ok) setError(j?.error || `El servidor contestó ${res.status}.`);
+        else setR(j);
+      })
+      .catch(() => vivo && setError('No alcancé el servidor.'))
+      .finally(() => vivo && setCargando(false));
+    return () => {
+      vivo = false;
+    };
+  }, [geojson]);
+
+  const pdf = async () => {
+    setArmando(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/electrum/area/informe', { method: 'POST', headers: { ...headersElectrum(), 'Content-Type': 'application/json' }, body: JSON.stringify({ geojson, nombre }) });
+      const j = await res.json().catch(() => null);
+      if (!res.ok || !j?.url) return setError(j?.error || `El servidor contestó ${res.status}.`);
+      const b = await fetch(j.url, { headers: headersElectrum() });
+      if (!b.ok) return setError(`No pude bajar el PDF (${b.status}).`);
+      const url = URL.createObjectURL(await b.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = j.nombre || 'area-solicitada.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch {
+      setError('No alcancé el servidor.');
+    } finally {
+      setArmando(false);
+    }
+  };
+
+  return (
+    <div className="pointer-events-auto absolute left-3 right-3 bottom-12 z-30 mx-auto max-h-[60%] max-w-[560px] overflow-y-auto rounded-xl border border-white/12 bg-[#0A0C0E]/95 p-3 text-[12px] text-[#C9D5DB] shadow-[0_10px_30px_rgba(0,0,0,.55)] backdrop-blur-xl">
+      <div className="mb-2 flex items-center gap-2">
+        <input
+          value={nombre}
+          onChange={(e) => setNombre(e.target.value.slice(0, 80))}
+          aria-label="Nombre del área"
+          className="min-w-0 flex-1 rounded-md border border-white/15 bg-black/40 px-2 py-1 text-[12.5px] text-[#F3F6F8] outline-none focus:border-white/35"
+        />
+        <button type="button" disabled={armando || cargando || !r} onClick={() => void pdf()} className="rounded-md px-2.5 py-1 text-[11.5px] font-semibold text-black disabled:opacity-50 cursor-pointer" style={{ background: AMBAR }}>
+          {armando ? 'Armando…' : 'Revisión en PDF'}
+        </button>
+      </div>
+      {cargando && <p className="text-[#8FA3B0]">Cruzando el área con el catastro y las capas…</p>}
+      {error && <p className="text-[#E8A08F]">{error}</p>}
+      {r && (
+        <div className="space-y-2">
+          <p>
+            <b className="text-[#F3F6F8]">{hf(r.ha)} ha</b> · perímetro {hf(r.perimetroKm)} km ·{' '}
+            <span style={{ color: r.traslapes.length ? '#E8A08F' : '#8FD19E' }}>
+              {r.traslapes.length ? `libres ${hf(r.libreHa)} ha (${Math.round((r.libreHa / r.ha) * 100)} %)` : 'libre de concesiones'}
+            </span>
+          </p>
+          {!!r.traslapes.length && (
+            <div>
+              <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase text-[#7F939D]">Concesiones que pisa</div>
+              <ul className="space-y-0.5">
+                {r.traslapes.slice(0, 12).map((t) => (
+                  <li key={t.conId} className="flex justify-between gap-2">
+                    <span className="truncate">{t.con}</span>
+                    <span className="shrink-0 font-mono text-[11px] text-[#E8A08F]">
+                      {hf(t.hectareas)} ha · {t.pct.toLocaleString('es-HN', { maximumFractionDigits: 1 })} %
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <div>
+            <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase text-[#7F939D]">Entorno</div>
+            <ul className="space-y-1">
+              {r.renglones.map((x, i) => (
+                <li key={i} className="flex gap-2">
+                  <span className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-[#5E7078]" />
+                  <span>{x}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <p className="text-[10.5px] text-[#61717A]">Revisión previa con lo cargado en la plataforma: no es una constancia del catastro oficial.</p>
+        </div>
+      )}
+    </div>
   );
 }

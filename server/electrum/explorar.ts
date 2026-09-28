@@ -21,6 +21,7 @@ import { alertasDe, capasPorRol, entornoDe, type Entorno } from './entorno';
 import { claseDeRoca, geologiaDe, type Geologia } from './geologia';
 import { repararTexto } from './gis';
 import { sateliteEnRenglones } from './satelite';
+import { prospectividadDe, prospectividadEnRenglones, type Prospectividad } from './prospectividad';
 
 const nf = (x: number, d = 1) => new Intl.NumberFormat('es-ES', { maximumFractionDigits: d }).format(x);
 const km = (x: number) => (x < 1 ? `${nf(x * 1000, 0)} m` : `${nf(x, 1)} km`);
@@ -158,23 +159,27 @@ export type FichaMapa = {
   documentos: Parte;
   /** Lo que Sentinel-2 midió dentro (pérdida de vegetación, suelo expuesto, anomalías). */
   satelite: Parte;
+  /** Geología + geoquímica + satélite en un puntaje de 0 a 100, con lo que suma cada uno. */
+  prospectividad: Parte & { puntaje?: number; nivel?: string };
 };
 
 /** Todo lo que hay de una concesión, para la tarjeta que se abre al tocarla. */
 export async function fichaParaMapa(id: number): Promise<FichaMapa | null> {
   const f = await concesionPorId(id);
   if (!f) return null;
-  const [geo, entorno, geologia, documentos, satelite] = await Promise.all([
+  // La geología se calcula una vez: la usan su renglón y la prospectividad.
+  const geologiaP = conTope(() => geologiaDe({ concesion: id }), 14000).catch((e) => ({ error: motivoPublico(e, 'geología') }));
+  const [geo, entorno, geologia, documentos, satelite, prosp] = await Promise.all([
     geometriaDe(id).catch(() => null),
     parte('entorno', async () => {
       const e = await entornoDe(id);
       return e ? renglonesEntorno(e) : ['No tiene geometría: no hay entorno que cruzar.'];
     }),
     parte('geología', async () => {
-      const g = await geologiaDe({ concesion: id });
+      const g = await geologiaP;
       if ('error' in g) return [g.error];
       return renglonesGeologia(g);
-    }, 14000),
+    }, 15000),
     parte('documentos', async () => {
       const propios = await consultaConTope<{ nombre: string; tipo: string | null; paginas: number | null }>(
         `SELECT nombre, tipo, paginas FROM documento WHERE concesion_id = $1 ORDER BY subido DESC LIMIT 8`,
@@ -202,8 +207,17 @@ export async function fichaParaMapa(id: number): Promise<FichaMapa | null> {
       const r = await sateliteEnRenglones(id);
       return r.length ? r : ['Esta concesión todavía no se midió con Sentinel-2.'];
     }, 6000),
+    (async () => {
+      let p: Prospectividad | null = null;
+      const parteP = await parte('prospectividad', async () => {
+        p = await prospectividadDe(id, await geologiaP);
+        return prospectividadEnRenglones(p);
+      }, 20000);
+      const q = p as Prospectividad | null;
+      return q ? { ...parteP, puntaje: q.puntaje, nivel: q.nivel } : parteP;
+    })(),
   ]);
-  return { id, nombre: repararTexto(f.nombre), datos: datosDe(f), encuadre: geo?.encuadre ?? null, geojson: geo?.geojson ?? null, entorno, geologia, documentos, satelite };
+  return { id, nombre: repararTexto(f.nombre), datos: datosDe(f), encuadre: geo?.encuadre ?? null, geojson: geo?.geojson ?? null, entorno, geologia, documentos, satelite, prospectividad: prosp };
 }
 
 /* ------------------------------------------------------------------ un punto */

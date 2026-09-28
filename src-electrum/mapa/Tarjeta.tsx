@@ -13,6 +13,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { Geometry } from 'geojson';
 import { headersElectrum } from '../acceso';
 import type { OrdenMapa, Tocado } from './captura';
+import { colorProsp } from './prospectividad';
 
 const AMBAR = '#FFAE3B';
 
@@ -28,6 +29,8 @@ type Ficha = {
   documentos: Parte;
   /** Sentinel-2 dentro de la concesión; un servidor anterior no lo manda. */
   satelite?: Parte;
+  /** Geología + geoquímica + satélite, de 0 a 100; un servidor anterior no lo manda. */
+  prospectividad?: Parte & { puntaje?: number; nivel?: string };
 };
 type Lista<T> = { estado: 'ok'; lista: T[] } | { estado: 'error'; motivo: string };
 type Aqui = {
@@ -264,6 +267,22 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: P
           ))}
         </dl>
       </Seccion>
+      {f.prospectividad && (
+        <Seccion titulo="Prospectividad">
+          {f.prospectividad.puntaje != null && (
+            <div className="mb-2 flex items-center gap-2" aria-label={`Prospectividad ${f.prospectividad.puntaje} de 100`}>
+              <span className="font-mono text-[20px] font-semibold leading-none" style={{ color: colorProsp(f.prospectividad.puntaje) }}>
+                {f.prospectividad.puntaje}
+              </span>
+              <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.min(100, f.prospectividad.puntaje))}%`, background: colorProsp(f.prospectividad.puntaje) }} />
+              </div>
+              <span className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-[#9FB0B9]">{f.prospectividad.nivel}</span>
+            </div>
+          )}
+          <Renglones p={f.prospectividad} />
+        </Seccion>
+      )}
       <Seccion titulo="Entorno y alertas">
         <Renglones p={f.entorno} alerta />
       </Seccion>

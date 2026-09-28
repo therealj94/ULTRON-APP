@@ -73,6 +73,8 @@ import { montarRutasTeselas } from './server/electrum/teselas';
 import { montarRutasMuestras } from './server/electrum/muestras';
 import { montarRutasSatelite, perdidaPorConcesion } from './server/electrum/satelite';
 import { montarRutasExportar } from './server/electrum/exportar';
+import { montarRutasProspectividad, puntajesPorConcesion } from './server/electrum/prospectividad';
+import { montarRutasArea } from './server/electrum/area';
 import { asegurarBiblioteca } from './server/electrum/biblioteca';
 import { expedientesListo, guardarExpediente } from './lib/s3';
 import { createHash } from 'node:crypto';
@@ -458,17 +460,20 @@ app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), 
  */
 app.get('/api/electrum/catastro.geojson', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
   try {
-    const [fc, encuadre, traslapes, perdida] = await Promise.all([
+    const [fc, encuadre, traslapes, perdida, prosp] = await Promise.all([
       catastroGeojson(),
       encuadreCatastro(),
-      // Lo que adorna el mapa (rayado de traslapes, alerta del satélite) no puede tumbar el catastro.
+      // Lo que adorna el mapa (rayado de traslapes, alerta del satélite, prospectividad) no puede tumbar el catastro.
       traslapesGeojson().catch(() => null),
       perdidaPorConcesion().catch(() => null),
+      puntajesPorConcesion().catch(() => null),
     ]);
-    if (perdida?.size) {
+    if (perdida?.size || prosp?.size) {
       for (const f of fc.features) {
-        const p = perdida.get(Number(f.properties?.id));
+        const p = perdida?.get(Number(f.properties?.id));
         if (p && p > 0) (f.properties as any).perdida_ha = Math.round(p * 10) / 10;
+        const q = prosp?.get(Number(f.properties?.id));
+        if (q != null) (f.properties as any).prosp = q;
       }
     }
     res.setHeader('Cache-Control', 'private, max-age=60');
@@ -1208,6 +1213,8 @@ if (ES_ELECTRUM) montarRutasTeselas(app);
 if (ES_ELECTRUM) montarRutasMuestras(app);
 if (ES_ELECTRUM) montarRutasSatelite(app);
 if (ES_ELECTRUM) montarRutasExportar(app);
+if (ES_ELECTRUM) montarRutasProspectividad(app);
+if (ES_ELECTRUM) montarRutasArea(app);
 
 montarRutasCuentas(app, {
   plataforma: PLATAFORMA,

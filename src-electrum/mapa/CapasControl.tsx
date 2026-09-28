@@ -10,6 +10,7 @@ import { useCallback, useRef, useState } from 'react';
 import { headersElectrum } from '../acceso';
 import type { CapaExtra, RasterEncendido, RasterEscaneado, RolVisible } from './captura';
 import { COLOR_ROCA, ESTILO_ROL, GRUPOS_ESTADO, NOMBRE_ROCA } from './capas';
+import { leyendaProsp } from './prospectividad';
 import { ELEMENTOS_MUESTRA, NOMBRE_ELEMENTO, leyendaMuestras, type ElementoMuestra } from './muestras';
 
 /** Los rasters por sección, en el orden en que llegan: los mapas escaneados y lo calculado del satélite. */
@@ -42,6 +43,8 @@ export function CapasControl({
   onMuestras,
   curvas = true,
   onCurvas,
+  prospectividad = false,
+  onProspectividad,
 }: {
   encendidas: CapaExtra[];
   onCambio: (f: (antes: CapaExtra[]) => CapaExtra[]) => void;
@@ -56,6 +59,9 @@ export function CapasControl({
   /** Curvas de nivel y sombreado del terreno. */
   curvas?: boolean;
   onCurvas?: (v: boolean) => void;
+  /** Colorear las concesiones por puntaje de prospectividad (geología + muestras + satélite). */
+  prospectividad?: boolean;
+  onProspectividad?: (v: boolean) => void;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [lista, setLista] = useState<Disponible[] | null>(null);
@@ -185,6 +191,27 @@ export function CapasControl({
               <input type="checkbox" checked={curvas} onChange={() => onCurvas(!curvas)} className="accent-[#FFAE3B]" />
               <span className="text-[#E7EEF2]">Curvas de nivel y relieve</span>
             </label>
+          )}
+          {onProspectividad && (
+            <div className="mb-2">
+              <label className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 hover:bg-white/[0.05]">
+                <input type="checkbox" checked={prospectividad} onChange={() => onProspectividad(!prospectividad)} className="accent-[#FFAE3B]" />
+                <span className="text-[#E7EEF2]">Colorear por prospectividad</span>
+              </label>
+              {prospectividad && (
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pl-7 pr-1">
+                  {leyendaProsp().map((l) => (
+                    <span key={l.texto} className="flex items-center gap-1.5 text-[10.5px]">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: l.color }} />
+                      {l.texto}
+                    </span>
+                  ))}
+                  <span className="col-span-2 mt-0.5 text-[10.5px] leading-snug text-[#61717A]">
+                    Geología, muestras de JICA y Sentinel-2, de 0 a 100. Gris claro: todavía sin calcular (se calcula al abrir su ficha).
+                  </span>
+                </div>
+              )}
+            </div>
           )}
           <div className="mb-2 font-mono text-[10px] tracking-[0.16em] uppercase" style={{ color: AMBAR }}>
             Capas sobre el catastro

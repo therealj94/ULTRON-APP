@@ -238,6 +238,7 @@ export default function App() {
   const [muestras, setMuestras] = useState<MuestrasEncendidas | null>(null);
   const [traslapes, setTraslapes] = useState<unknown | null>(null);
   const [curvas, setCurvas] = useState(true);
+  const [prospectividad, setProspectividad] = useState(false);
   const encuadrarRaster = useCallback((encuadre: [number, number, number, number]) => setOrden({ accion: 'encuadrar', encuadre, ms: 1600 }), []);
   const [pedidoPanel, setPedidoPanel] = useState<PedidoPanel | null>(null);
   const nPedido = useRef(0);
@@ -513,10 +514,11 @@ export default function App() {
               muestras={motor === 'maplibre' ? muestras : null}
               traslapes={traslapes}
               curvas={curvas}
+              prospectividad={prospectividad}
             />
           </Suspense>
           </SinMapa>
-          <CapasControl encendidas={extras} onCambio={setExtras} rasters={rasters} onRasters={setRasters} onEncuadrar={encuadrarRaster} muestras={muestras} onMuestras={setMuestras} curvas={curvas} onCurvas={setCurvas} />
+          <CapasControl encendidas={extras} onCambio={setExtras} rasters={rasters} onRasters={setRasters} onEncuadrar={encuadrarRaster} muestras={muestras} onMuestras={setMuestras} curvas={curvas} onCurvas={setCurvas} prospectividad={prospectividad} onProspectividad={setProspectividad} />
           {/* Arriba al centro del mapa: entre la cara (izquierda) y el control de zoom (derecha). */}
           <div className="absolute left-1/2 top-2.5 z-10 flex -translate-x-1/2 gap-1 rounded-full border border-white/12 bg-black/70 p-1 shadow-lg backdrop-blur-md">
             {[

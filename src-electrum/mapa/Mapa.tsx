@@ -15,10 +15,11 @@ import * as maplibregl from 'maplibre-gl';
 import type { Map as MapaLibre } from 'maplibre-gl';
 import { duracion, sinMovimiento } from '../movimiento';
 import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './captura';
-import { AMBAR, RESALTE, ESTILO_ROL, COLOR_ROCA, CAPAS_TOCABLES_CONCESION, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion, capasDeTraslapes, rayadoTraslape } from './capas';
+import { AMBAR, RESALTE, ESTILO_ROL, COLOR_ROCA, CAPAS_TOCABLES_CONCESION, colorEstado, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion, capasDeTraslapes, rayadoTraslape } from './capas';
 import { estiloCalles, estiloSatelite } from './estilos';
 import { urlTeselas } from './teselas';
 import { colorMuestra, pesoMuestra, radioMuestra, type ElementoMuestra } from './muestras';
+import { rellenoProsp } from './prospectividad';
 import mlcontour from 'maplibre-contour';
 import { Herramientas, herramientaEnUso } from './herramientas';
 import urlDelWorker from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
@@ -62,6 +63,8 @@ type Props = {
   traslapes?: unknown | null;
   /** Curvas de nivel (y sombreado suave en «calles»). */
   curvas?: boolean;
+  /** Relleno de las concesiones por puntaje de prospectividad en vez de por estado. */
+  prospectividad?: boolean;
 };
 
 /** Honduras entera, que es donde se abre si nadie ha pedido nada todavía. */
@@ -152,6 +155,7 @@ function asegurarCapas(m: maplibregl.Map) {
     for (const c of capasDeTraslapes()) if (!m.getLayer(c.id)) m.addLayer(c as any, m.getLayer('concesiones-sel') ? 'concesiones-sel' : undefined);
   }
   aplicarCurvas(m);
+  aplicarRelleno(m);
   // Las capas encendidas van DEBAJO del catastro: la concesión se sigue leyendo encima de la roca.
   for (const [fuente, { rol, geojson }] of pintadoExtra) {
     if (!m.getSource(fuente)) {
@@ -281,6 +285,14 @@ function fuenteCurvas(): string {
   // Metros: [menor, maestra] por zoom.
   // Espaciadas para que el terreno se lea sin tapar el mapa: la maestra cada 5 menores.
   return dem.contourProtocolUrl({ thresholds: { 10: [200, 1000], 11: [100, 500], 12: [50, 250], 13: [20, 100], 14: [10, 50] }, contourLayer: 'curvas', elevationKey: 'cota', levelKey: 'nivel' });
+}
+
+/** Relleno de las concesiones: por estado (lo normal) o por prospectividad, más opaco para que se lea. */
+let rellenoPorProsp = false;
+function aplicarRelleno(m: maplibregl.Map) {
+  if (!m.getLayer('concesiones-relleno')) return;
+  m.setPaintProperty('concesiones-relleno', 'fill-color', (rellenoPorProsp ? rellenoProsp() : colorEstado()) as any);
+  m.setPaintProperty('concesiones-relleno', 'fill-opacity', (rellenoPorProsp ? ['interpolate', ['linear'], ['zoom'], 6, 0.55, 12, 0.35] : ['interpolate', ['linear'], ['zoom'], 6, 0.18, 12, 0.1]) as any);
 }
 
 function aplicarCurvas(m: maplibregl.Map) {
@@ -478,7 +490,7 @@ function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
   }
 }
 
-export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null, traslapes = null, curvas = true }: Props) {
+export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null, traslapes = null, curvas = true, prospectividad = false }: Props) {
   /** El último `onTocar`, para los manejadores que se atan una sola vez al crear el mapa. */
   const tocarRef = useRef(onTocar);
   tocarRef.current = onTocar;
@@ -766,6 +778,12 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     aplicarCurvas(m);
     aplicarTerreno(m);
   }, [curvas, fondo, listo]);
+
+  useEffect(() => {
+    rellenoPorProsp = prospectividad;
+    const m = mapa.current;
+    if (m && listo) aplicarRelleno(m);
+  }, [prospectividad, listo]);
 
   useEffect(() => {
     const m = mapa.current;

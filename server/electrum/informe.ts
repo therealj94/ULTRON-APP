@@ -167,7 +167,7 @@ export function municipioContradice(padron: string | null, e: Entorno | null): s
 }
 
 /** Las secciones de entorno de la ficha. Las cifras salen todas de `entornoDe`. */
-function bloquesEntorno(e: Entorno): Bloque[] {
+export function bloquesEntorno(e: Entorno): Bloque[] {
   const b: Bloque[] = [];
 
   /* --- ubicación administrativa --- */
