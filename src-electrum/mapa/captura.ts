@@ -30,6 +30,7 @@ export type OrdenMapa =
 export type Tocado =
   | { tipo: 'concesion'; id: number; nombre?: string; lngLat: [number, number] }
   | { tipo: 'rasgo'; eid: number; nombre?: string; lngLat: [number, number] }
+  | { tipo: 'muestra'; id: number; nombre?: string; lngLat: [number, number] }
   | { tipo: 'punto'; lngLat: [number, number] };
 
 export type RolVisible =

@@ -10,6 +10,9 @@ import { useCallback, useRef, useState } from 'react';
 import { headersElectrum } from '../acceso';
 import type { CapaExtra, RasterEncendido, RasterEscaneado, RolVisible } from './captura';
 import { COLOR_ROCA, ESTILO_ROL, NOMBRE_ROCA } from './capas';
+import { ELEMENTOS_MUESTRA, NOMBRE_ELEMENTO, leyendaMuestras, type ElementoMuestra } from './muestras';
+
+export type MuestrasEncendidas = { elemento: ElementoMuestra; geojson: { features?: unknown[] } };
 
 const AMBAR = '#FFAE3B';
 type Disponible = { id: number; nombre: string; rol: RolVisible; entidades: number };
@@ -25,6 +28,8 @@ export function CapasControl({
   rasters = [],
   onRasters,
   onEncuadrar,
+  muestras = null,
+  onMuestras,
 }: {
   encendidas: CapaExtra[];
   onCambio: (f: (antes: CapaExtra[]) => CapaExtra[]) => void;
@@ -33,6 +38,9 @@ export function CapasControl({
   onRasters?: (f: (antes: RasterEncendido[]) => RasterEncendido[]) => void;
   /** Llevar el mapa al encuadre de un mapa escaneado al encenderlo. */
   onEncuadrar?: (encuadre: [number, number, number, number]) => void;
+  /** Muestras geoquímicas de JICA encendidas y el elemento que las colorea. */
+  muestras?: MuestrasEncendidas | null;
+  onMuestras?: (m: MuestrasEncendidas | null) => void;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [lista, setLista] = useState<Disponible[] | null>(null);
@@ -40,6 +48,34 @@ export function CapasControl({
   const [error, setError] = useState<string | null>(null);
   const [bajando, setBajando] = useState<number | null>(null);
   const guardadas = useRef(new Map<number, CapaExtra>());
+  /** Los puntos, bajados la primera vez que se encienden y guardados mientras siga la pantalla. */
+  const puntos = useRef<MuestrasEncendidas['geojson'] | null>(null);
+  const [errorMuestras, setErrorMuestras] = useState<string | null>(null);
+  const [bajandoMuestras, setBajandoMuestras] = useState(false);
+  const [elemento, setElemento] = useState<ElementoMuestra>('au');
+
+  const encenderMuestras = useCallback(
+    async (e: ElementoMuestra) => {
+      if (!onMuestras) return;
+      if (!puntos.current) {
+        setBajandoMuestras(true);
+        try {
+          const r = await fetch('/api/electrum/mapa/muestras', { headers: headersElectrum() });
+          const j = await r.json().catch(() => null);
+          if (!r.ok || !Array.isArray(j?.features)) return setErrorMuestras(j?.error || `No pude bajar las muestras (el servidor contestó ${r.status}).`);
+          if (!j.features.length) return setErrorMuestras('Todavía no hay muestras cargadas en este servidor.');
+          puntos.current = j;
+        } catch {
+          return setErrorMuestras('No pude bajar las muestras: revisá la conexión.');
+        } finally {
+          setBajandoMuestras(false);
+        }
+      }
+      setErrorMuestras(null);
+      onMuestras({ elemento: e, geojson: puntos.current! });
+    },
+    [onMuestras]
+  );
 
   const abrir = useCallback(async () => {
     setAbierto((a) => !a);
@@ -186,6 +222,57 @@ export function CapasControl({
               </ul>
             </div>
           )}
+          {onMuestras && (
+            <div className="mt-3 border-t border-white/[0.08] pt-2">
+              <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
+                Muestras geoquímicas
+              </div>
+              <label className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-1 hover:bg-white/[0.05]">
+                <input
+                  type="checkbox"
+                  checked={!!muestras}
+                  disabled={bajandoMuestras}
+                  onChange={() => (muestras ? onMuestras(null) : void encenderMuestras(elemento))}
+                  className="mt-[3px] accent-[#FFAE3B]"
+                />
+                <span className="min-w-0">
+                  <span className="block leading-snug text-[#E7EEF2]">Rocas, sedimentos y minerales (JICA)</span>
+                  <span className="block text-[11px] text-[#7F939D]">
+                    {bajandoMuestras ? 'Bajando…' : muestras ? `${muestras.geojson.features?.length ?? 0} muestras · Fases I–III` : 'Fases I–III · leyes de laboratorio'}
+                  </span>
+                </span>
+              </label>
+              {errorMuestras && <p className="px-1 text-[11px] text-[#E8A08F]">{errorMuestras}</p>}
+              {muestras && (
+                <div className="pl-7 pr-1 pb-1">
+                  <select
+                    value={muestras.elemento}
+                    aria-label="Elemento que colorea las muestras"
+                    onChange={(ev) => {
+                      const e = ev.target.value as ElementoMuestra;
+                      setElemento(e);
+                      onMuestras({ ...muestras, elemento: e });
+                    }}
+                    className="mb-1.5 w-full rounded-md border border-white/12 bg-black/50 px-2 py-1 text-[12px] text-[#E7EEF2]"
+                  >
+                    {ELEMENTOS_MUESTRA.map((e) => (
+                      <option key={e} value={e}>
+                        {NOMBRE_ELEMENTO[e]}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+                    {leyendaMuestras(muestras.elemento).map((l) => (
+                      <span key={l.texto} className="flex items-center gap-1.5 whitespace-nowrap text-[10.5px]">
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ background: l.color }} />
+                        {l.texto}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {hayRoca && (
             <div className="mt-3 border-t border-white/[0.08] pt-2">
               <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase text-[#7F939D]">Clases de roca</div>
@@ -208,7 +295,7 @@ export function CapasControl({
         aria-expanded={abierto}
         className="pointer-events-auto shrink-0 flex items-center gap-2 rounded-full border border-white/15 bg-black/75 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] uppercase text-[#DCE5EA] shadow-lg backdrop-blur-md hover:border-white/30 cursor-pointer"
       >
-        <span aria-hidden>▤</span> Capas{encendidas.length + rasters.length ? ` · ${encendidas.length + rasters.length}` : ''}
+        <span aria-hidden>▤</span> Capas{encendidas.length + rasters.length + (muestras ? 1 : 0) ? ` · ${encendidas.length + rasters.length + (muestras ? 1 : 0)}` : ''}
       </button>
     </div>
   );

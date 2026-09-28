@@ -21,7 +21,7 @@ import type { FaceState, Mode } from '../src/types';
 import type { Emocion } from '../lib/emocion';
 import type { CapaExtra, Fondo, Motor, OrdenMapa, RasterEncendido, Tocado } from './mapa/captura';
 import { Tarjeta } from './mapa/Tarjeta';
-import { CapasControl } from './mapa/CapasControl';
+import { CapasControl, type MuestrasEncendidas } from './mapa/CapasControl';
 import { Tablero } from './mapa/Tablero';
 import { Recorrido, prepararRecorrido, type Controles } from './demo/Recorrido';
 import type { PedidoPanel, VistaPanel } from './panel/Panel';
@@ -235,6 +235,7 @@ export default function App() {
   const [extras, setExtras] = useState<CapaExtra[]>([]);
   /** Mapas escaneados encendidos (JICA…), con su transparencia. */
   const [rasters, setRasters] = useState<RasterEncendido[]>([]);
+  const [muestras, setMuestras] = useState<MuestrasEncendidas | null>(null);
   const encuadrarRaster = useCallback((encuadre: [number, number, number, number]) => setOrden({ accion: 'encuadrar', encuadre, ms: 1600 }), []);
   const [pedidoPanel, setPedidoPanel] = useState<PedidoPanel | null>(null);
   const nPedido = useRef(0);
@@ -506,10 +507,11 @@ export default function App() {
               onTocar={setTocado}
               tresD={tresD && motor === 'maplibre'}
               rasters={motor === 'maplibre' ? rasters : []}
+              muestras={motor === 'maplibre' ? muestras : null}
             />
           </Suspense>
           </SinMapa>
-          <CapasControl encendidas={extras} onCambio={setExtras} rasters={rasters} onRasters={setRasters} onEncuadrar={encuadrarRaster} />
+          <CapasControl encendidas={extras} onCambio={setExtras} rasters={rasters} onRasters={setRasters} onEncuadrar={encuadrarRaster} muestras={muestras} onMuestras={setMuestras} />
           {/* Arriba al centro del mapa: entre la cara (izquierda) y el control de zoom (derecha). */}
           <div className="absolute left-1/2 top-2.5 z-10 flex -translate-x-1/2 gap-1 rounded-full border border-white/12 bg-black/70 p-1 shadow-lg backdrop-blur-md">
             {[
