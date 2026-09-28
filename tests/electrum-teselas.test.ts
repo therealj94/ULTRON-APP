@@ -106,7 +106,14 @@ test('teselas: tramos del cubo con sesión, índice de mapas escaneados, y los p
   assert.equal(r1.status, 206);
   assert.equal(r1.headers.get('content-range'), 'bytes 100-199/5000');
   assert.equal(r1.headers.get('etag'), '"e1"');
-  assert.match(String(r1.headers.get('cache-control')), /private/);
+  // Privado y revalidado siempre: un mapa re-subido no puede mezclarse con tramos viejos del navegador.
+  assert.equal(r1.headers.get('cache-control'), 'private, no-cache');
+  const r304 = await pedir('/api/electrum/teselas/honduras.pmtiles', { range: 'bytes=100-199', 'if-none-match': '"e1"' });
+  assert.equal(r304.status, 304);
+  assert.equal((await r304.arrayBuffer()).byteLength, 0);
+  const otro = await pedir('/api/electrum/teselas/honduras.pmtiles', { range: 'bytes=100-199', 'if-none-match': '"viejo"' });
+  assert.equal(otro.status, 206, 'otro ETag: van los bytes');
+  await otro.arrayBuffer();
   assert.deepEqual(Buffer.from(await r1.arrayBuffer()), archivo.subarray(100, 200));
   const aS3 = pedidos.filter((p) => p.key === 'biblioteca/teselas/honduras.pmtiles').length;
   assert.equal(pedidos.at(-1)?.range, 'bytes=100-199');

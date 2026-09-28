@@ -153,14 +153,20 @@ export function montarRutasTeselas(app: Express) {
       v = { datos: r.datos, total: r.total ?? desde + r.datos.length, etag: r.etag };
       recordar(k, v);
     }
+    /*
+     * Privado (va con sesión) y SIEMPRE revalidado: si un mapa se vuelve a subir con el mismo
+     * nombre, un tramo guardado un día entero se mezclaría con los nuevos (cabecera vieja, teselas
+     * nuevas) y el mapa quedaría ilegible. Con el ETag, lo que no cambió vuelve como 304 sin bytes.
+     */
+    res.setHeader('Cache-Control', 'private, no-cache');
+    if (v.etag) res.setHeader('ETag', v.etag);
+    const siNo = String(req.headers['if-none-match'] || '');
+    if (v.etag && siNo.split(/\s*,\s*/).some((e) => e.replace(/^W\//, '') === v!.etag)) return res.status(304).end();
     res.status(206);
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Accept-Ranges', 'bytes');
     res.setHeader('Content-Range', `bytes ${desde}-${desde + v.datos.length - 1}/${v.total}`);
     res.setHeader('Content-Length', String(v.datos.length));
-    if (v.etag) res.setHeader('ETag', v.etag);
-    // Privado (va con sesión) pero se puede guardar: un PMTiles no cambia sin cambiar de ETag.
-    res.setHeader('Cache-Control', 'private, max-age=86400');
     return res.end(v.datos);
   });
 }

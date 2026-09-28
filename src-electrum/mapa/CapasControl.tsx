@@ -43,22 +43,27 @@ export function CapasControl({
 
   const abrir = useCallback(async () => {
     setAbierto((a) => !a);
+    /*
+     * Los mapas escaneados son un extra: si su índice falla (o llega vacío porque el cubo no
+     * contestó), la lista de capas sigue sirviendo y el índice se vuelve a pedir la próxima vez que
+     * se abra la caja, en vez de quedar vacío toda la sesión.
+     */
+    if (!escaneados?.length) {
+      fetch('/api/electrum/mapa/rasters', { headers: headersElectrum() })
+        .then((rr) => (rr.ok ? rr.json() : null))
+        .then((jr) => setEscaneados(Array.isArray(jr?.rasters) ? jr.rasters : []))
+        .catch(() => setEscaneados((antes) => antes ?? []));
+    }
     if (lista) return;
     try {
-      const [r, rr] = await Promise.all([
-        fetch('/api/electrum/mapa/capas', { headers: headersElectrum() }),
-        fetch('/api/electrum/mapa/rasters', { headers: headersElectrum() }).catch(() => null),
-      ]);
+      const r = await fetch('/api/electrum/mapa/capas', { headers: headersElectrum() });
       const j = await r.json().catch(() => null);
-      // Los mapas escaneados son un extra: si no hay índice, la lista de capas sigue sirviendo.
-      const jr = rr && rr.ok ? await rr.json().catch(() => null) : null;
-      setEscaneados(jr?.rasters || []);
       if (!r.ok) return setError(j?.error || `El servidor contestó ${r.status}.`);
       setLista(j.capas || []);
     } catch {
       setError('No alcancé el servidor.');
     }
-  }, [lista]);
+  }, [lista, escaneados]);
 
   const alternarRaster = useCallback(
     (x: RasterEscaneado) => {
