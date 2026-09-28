@@ -139,15 +139,44 @@ function anillos(g: Geometry): Position[][] {
 
 const cache = new Map<number, { at: number; t: Timelapse }>();
 const VIDA_MS = 12 * 3600_000;
+/** Lo que falló se recuerda un rato: un id sin escenas no se vuelve a buscar en cada toque. */
+const fallos = new Map<number, { at: number; error: string }>();
+const VIDA_FALLO_MS = 10 * 60_000;
 const enCurso = new Map<number, Promise<Timelapse | { error: string }>>();
+/** Cuántos se arman a la vez en todo el servidor: cada uno lee decenas de ventanas de S3. */
+const MAX_A_LA_VEZ = 2;
+let armando = 0;
+const cola: Array<() => void> = [];
 
 export async function timelapseConcesion(id: number, hoy = new Date()): Promise<Timelapse | { error: string }> {
   const c = cache.get(id);
   if (c && Date.now() - c.at < VIDA_MS) return c.t;
+  const f = fallos.get(id);
+  if (f && Date.now() - f.at < VIDA_FALLO_MS) return { error: f.error };
   if (enCurso.has(id)) return enCurso.get(id)!;
-  const p = armar(id, hoy).finally(() => enCurso.delete(id));
+  const p = (async () => {
+    if (armando >= MAX_A_LA_VEZ) await new Promise<void>((ok) => cola.push(ok));
+    armando++;
+    try {
+      const r = await armar(id, hoy);
+      if ('error' in r) {
+        fallos.set(id, { at: Date.now(), error: r.error });
+        while (fallos.size > 200) fallos.delete(fallos.keys().next().value as number);
+      }
+      return r;
+    } finally {
+      armando--;
+      cola.shift()?.();
+    }
+  })().finally(() => enCurso.delete(id));
   enCurso.set(id, p);
   return p;
+}
+
+/** Una lectura de COG que no contesta no puede dejar colgado el cuadro: se abandona a los 25 s. */
+function conTope<T>(p: Promise<T>, ms: number): Promise<T> {
+  let reloj: NodeJS.Timeout | undefined;
+  return Promise.race([p, new Promise<never>((_, no) => (reloj = setTimeout(() => no(new Error(`lectura sin respuesta en ${ms / 1000} s`)), ms)))]).finally(() => clearTimeout(reloj));
 }
 
 async function armar(id: number, hoy: Date): Promise<Timelapse | { error: string }> {
@@ -174,7 +203,7 @@ async function armar(id: number, hoy: Date): Promise<Timelapse | { error: string
       }
       if (!v) return;
       try {
-        const r = await recorte(it, v);
+        const r = await conTope(recorte(it, v), 25_000);
         if (!r || r.vacio > TOPE_VACIO || r.nube > TOPE_NUBE) continue;
         if (!mejor || r.bruma < mejor.r.bruma) mejor = { it, r };
         if (r.bruma <= TOPE_BRUMA) break;
@@ -220,7 +249,8 @@ async function armar(id: number, hoy: Date): Promise<Timelapse | { error: string
 }
 
 export function montarRutasTimelapse(app: Express) {
-  app.get('/api/electrum/concesion/:id/timelapse', exigirPlataforma('electrum'), limitar(8), async (req: Request, res: Response) => {
+  // El cupo es por persona para TODOS los timelapse (con la ruta como clave, cada id tenía el suyo).
+  app.get('/api/electrum/concesion/:id/timelapse', exigirPlataforma('electrum'), limitar(8, 60_000, 'timelapse'), async (req: Request, res: Response) => {
     if (!hayBase()) return res.status(503).json({ error: 'El catastro no está conectado en este servidor.', honesto: true });
     const id = Math.floor(Number(req.params.id));
     if (!(id > 0)) return res.status(400).json({ error: 'Id inválido.', honesto: true });

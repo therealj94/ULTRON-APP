@@ -218,25 +218,45 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
     }
     mapa.doubleClickZoom.disable();
     mapa.getCanvas().style.cursor = 'crosshair';
+    const minimo = modo === 'area' ? 3 : 2;
+    // Terminar solo con los vértices que la herramienta necesita: un perfil de un punto o un área de
+    // dos no es un resultado, es un error que se vería en la pantalla.
+    const terminar = () => {
+      if (estado.current.puntos.length >= minimo) setCerrado(true);
+    };
     const tocar = (e: maplibregl.MapMouseEvent) => {
       if (estado.current.cerrado) return;
-      setPuntos((p) => [...p, [e.lngLat.lng, e.lngLat.lat]]);
+      const nuevo: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+      // El doble toque dispara dos clics en el mismo lugar: el segundo vértice repetido no cuenta.
+      setPuntos((p) => {
+        const u = p[p.length - 1];
+        return u && Math.abs(u[0] - nuevo[0]) < 1e-9 && Math.abs(u[1] - nuevo[1]) < 1e-9 ? p : [...p, nuevo];
+      });
     };
     const doble = (e: maplibregl.MapMouseEvent) => {
       e.preventDefault();
-      setCerrado(true);
+      terminar();
     };
     const tecla = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cerrar();
-      if (e.key === 'Enter') setCerrado(true);
+      // Mientras se escribe (el chat, el nombre del área), Enter y Esc son del campo, no de la herramienta.
+      if ((e.target as HTMLElement | null)?.closest?.('input,textarea,select')) return;
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        cerrar();
+      }
+      if (e.key === 'Enter') {
+        // Que no «apriete» el botón con el foco (el de la herramienta, que la apagaría).
+        e.preventDefault();
+        terminar();
+      }
     };
     mapa.on('click', tocar);
     mapa.on('dblclick', doble);
-    window.addEventListener('keydown', tecla);
+    window.addEventListener('keydown', tecla, { capture: true });
     return () => {
       mapa.off('click', tocar);
       mapa.off('dblclick', doble);
-      window.removeEventListener('keydown', tecla);
+      window.removeEventListener('keydown', tecla, { capture: true });
       mapa.getCanvas().style.cursor = '';
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -287,6 +307,8 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
   }, []);
   const empezar = (m: Modo) => {
     if (modo === m) return cerrar();
+    // La ficha abierta ocupa el mismo rincón que el panel de la herramienta: se cierra.
+    window.dispatchEvent(new Event('electrum:herramienta'));
     setModo(m);
     setPuntos([]);
     setCerrado(false);
@@ -370,7 +392,7 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
       {modo === 'area' && cerrado && puntos.length >= 3 && <PanelArea puntos={puntos} />}
 
       {c && coord && (
-        <div className="pointer-events-none absolute bottom-[34px] right-[10px] z-10 rounded-md bg-black/70 px-2 py-1 font-mono text-[10.5px] leading-snug text-[#DCE5EA] backdrop-blur-sm">
+        <div className="pointer-events-none absolute bottom-[52px] left-3 z-10 hidden rounded-md bg-black/70 sm:block px-2 py-1 font-mono text-[10.5px] leading-snug text-[#DCE5EA] backdrop-blur-sm">
           {coord.lat.toFixed(5)}°, {coord.lon.toFixed(5)}°
           <br />
           UTM {c.zona}N WGS84 {Math.round(c.e).toLocaleString('es-HN')} E · {Math.round(c.n).toLocaleString('es-HN')} N
@@ -506,7 +528,15 @@ function Comparador({ mapa, fondo, onCerrar }: { mapa: maplibregl.Map; fondo: Fo
     mapa.on('move', seguir);
     const medir = new ResizeObserver(() => otro.resize());
     medir.observe(caja.current);
+    // El tamaño del lienzo se toma al crear el mapa, antes de que el estilo absoluto termine de
+    // aplicarse: se vuelve a medir en el cuadro siguiente y al cargar, o queda una franja sin dibujar.
+    const cuadro = requestAnimationFrame(() => otro.resize());
+    otro.once('load', () => {
+      otro.resize();
+      seguir();
+    });
     return () => {
+      cancelAnimationFrame(cuadro);
       mapa.off('move', seguir);
       medir.disconnect();
       otro.remove();
@@ -544,13 +574,13 @@ function Comparador({ mapa, fondo, onCerrar }: { mapa: maplibregl.Map; fondo: Fo
         >
           ⇆
         </button>
-        <span className="absolute top-3 -left-2 -translate-x-full whitespace-nowrap rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-[#DCE5EA]">Mapa con capas</span>
-        <span className="absolute top-3 left-2 whitespace-nowrap rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-[#DCE5EA]">{otroNombre}</span>
+        <span className="absolute top-12 -left-2 -translate-x-full whitespace-nowrap rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-[#DCE5EA]">Mapa con capas</span>
+        <span className="absolute top-12 left-2 whitespace-nowrap rounded bg-black/70 px-1.5 py-0.5 font-mono text-[10px] text-[#DCE5EA]">{otroNombre}</span>
       </div>
       <button
         type="button"
         onClick={onCerrar}
-        className="pointer-events-auto absolute bottom-[34px] left-1/2 z-[6] -translate-x-1/2 rounded-full border border-white/20 bg-black/80 px-3 py-1 font-mono text-[10.5px] text-[#DCE5EA] hover:border-white/40 cursor-pointer"
+        className="pointer-events-auto absolute bottom-[34px] left-1/2 z-[6] -translate-x-1/2 rounded-full border border-white/20 bg-black/80 px-3 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-[#DCE5EA] hover:border-white/40 cursor-pointer"
       >
         Cerrar comparación
       </button>
@@ -591,7 +621,7 @@ function PanelArea({ puntos }: { puntos: Array<[number, number]> }) {
       .then(async (res) => {
         const j = await res.json().catch(() => null);
         if (!vivo) return;
-        if (!res.ok) setError(j?.error || `El servidor contestó ${res.status}.`);
+        if (!res.ok) setError(j?.error || (res.status === 404 ? 'Esta función todavía no está activa en el servidor.' : `El servidor contestó ${res.status}.`));
         else setR(j);
       })
       .catch(() => vivo && setError('No alcancé el servidor.'))
@@ -607,7 +637,7 @@ function PanelArea({ puntos }: { puntos: Array<[number, number]> }) {
     try {
       const res = await fetch('/api/electrum/area/informe', { method: 'POST', headers: { ...headersElectrum(), 'Content-Type': 'application/json' }, body: JSON.stringify({ geojson, nombre }) });
       const j = await res.json().catch(() => null);
-      if (!res.ok || !j?.url) return setError(j?.error || `El servidor contestó ${res.status}.`);
+      if (!res.ok || !j?.url) return setError(j?.error || (res.status === 404 ? 'Esta función todavía no está activa en el servidor.' : `El servidor contestó ${res.status}.`));
       const b = await fetch(j.url, { headers: headersElectrum() });
       if (!b.ok) return setError(`No pude bajar el PDF (${b.status}).`);
       const url = URL.createObjectURL(await b.blob());
@@ -645,7 +675,7 @@ function PanelArea({ puntos }: { puntos: Array<[number, number]> }) {
           <p>
             <b className="text-[#F3F6F8]">{hf(r.ha)} ha</b> · perímetro {hf(r.perimetroKm)} km ·{' '}
             <span style={{ color: r.traslapes.length ? '#E8A08F' : '#8FD19E' }}>
-              {r.traslapes.length ? `libres ${hf(r.libreHa)} ha (${Math.round((r.libreHa / r.ha) * 100)} %)` : 'libre de concesiones'}
+              {r.traslapes.length ? `libres ${hf(r.libreHa)} ha (${r.ha > 0 ? Math.round((r.libreHa / r.ha) * 100) : 0} %)` : 'libre de concesiones'}
             </span>
           </p>
           {!!r.traslapes.length && (

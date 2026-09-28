@@ -145,7 +145,7 @@ async function muestrasDe(id: number): Promise<MuestraProsp[]> {
   const filas = await consulta<any>(
     `SELECT m.codigo, m.tipo, ST_Distance(m.geom::geography, c.geom::geography) / 1000 AS km, ${cols.map((c) => `m.${c}`).join(', ')}, m.limites
        FROM muestra_geoquimica m, concesion c
-      WHERE c.id = $1 AND ST_DWithin(m.geom::geography, c.geom::geography, 1000)`,
+      WHERE c.id = $1 AND m.geom && ST_Expand(c.geom, 0.012) AND ST_DWithin(m.geom::geography, c.geom::geography, 1000)`,
     [id]
   );
   return filas.map((f) => ({
@@ -199,12 +199,20 @@ const lote: Lote = { corriendo: false, hechas: 0, total: 0, fallidas: 0, empezo:
 /** Todas las concesiones, de a una (la geología es pesada y la base es compartida). */
 export async function calcularTodas(opts: { soloFaltantes?: boolean } = {}): Promise<void> {
   if (lote.corriendo) return;
-  await asegurarTabla();
-  const ids = await consulta<{ id: string }>(
+  // Se marca antes del primer await: dos pedidos seguidos no arrancan dos lotes.
+  lote.corriendo = true;
+  let ids: Array<{ id: string }> = [];
+  try {
+    await asegurarTabla();
+    ids = await consulta<{ id: string }>(
     opts.soloFaltantes
       ? `SELECT c.id::text AS id FROM concesion c LEFT JOIN prospectividad_concesion p ON p.concesion_id = c.id WHERE p.concesion_id IS NULL AND c.geom IS NOT NULL ORDER BY c.id`
       : `SELECT id::text AS id FROM concesion WHERE geom IS NOT NULL ORDER BY id`
-  );
+    );
+  } catch (e) {
+    lote.corriendo = false;
+    throw e;
+  }
   Object.assign(lote, { corriendo: true, hechas: 0, total: ids.length, fallidas: 0, empezo: new Date().toISOString(), termino: null });
   try {
     for (const { id } of ids) {

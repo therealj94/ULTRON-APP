@@ -59,6 +59,14 @@ function valido(x: any): string | null {
   if (!x || !Number.isInteger(x.id) || x.id <= 0) return 'id inválido';
   const d = x.datos;
   if (!d || !n(d.ha) || !n(d.ha_comparable) || !n(d.ha_expuesto) || !tres(d.veg) || !tres(d.arc) || !tres(d.fe)) return 'datos incompletos';
+  // Cada parte cabe en su todo (con la holgura del redondeo): si no, la ficha diría «120 %» y la
+  // prospectividad y las alertas saldrían de un número imposible.
+  const cabe = (parte: number, todo: number) => parte <= todo + Math.max(0.5, todo * 0.01);
+  const s3 = (t: number[]) => t[0] + t[1] + t[2];
+  if (!cabe(d.ha_comparable, d.ha)) return 'ha_comparable mayor que ha';
+  if (!cabe(d.ha_expuesto, d.ha)) return 'ha_expuesto mayor que ha';
+  if (!cabe(s3(d.veg), d.ha_comparable)) return 'la caída de vegetación suma más que lo comparable';
+  if (!cabe(s3(d.arc), d.ha_expuesto) || !cabe(s3(d.fe), d.ha_expuesto)) return 'las anomalías suman más que el suelo expuesto';
   return null;
 }
 
@@ -85,6 +93,12 @@ export async function cargarSatelite(filas: Array<{ id: number; datos: SateliteC
       [JSON.stringify(lote), periodo.slice(0, 80), fuente.slice(0, 200)]
     );
     guardadas += r[0]?.n ?? 0;
+  }
+  // La prospectividad guardada de estas concesiones usaba la medición anterior: se borra, y se
+  // recalcula al abrir su ficha o en el próximo lote (que calcula las que faltan).
+  if (buenas.length) {
+    const [{ hay }] = await consulta<{ hay: boolean }>(`SELECT to_regclass('prospectividad_concesion') IS NOT NULL AS hay`);
+    if (hay) await consulta(`DELETE FROM prospectividad_concesion WHERE concesion_id = ANY($1::bigint[])`, [buenas.map((x) => x.id)]);
   }
   return { guardadas, fuera_del_catastro: buenas.length - guardadas, rechazadas };
 }

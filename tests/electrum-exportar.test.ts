@@ -102,3 +102,19 @@ test('exportar: con sesión, formatos, 404 y 400', { skip: hayBase() ? false : '
   assert.equal((await pedir(`/${id}/exportar?formato=shp`)).status, 400);
   assert.equal((await pedir(`/999999999/exportar?formato=kml`)).status, 404);
 });
+
+test('plano: un id que llega como texto (bigint de pg) es una concesión, no un área dibujada', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async (t) => {
+  const { datosPlano } = await import('../server/electrum/plano');
+  await consulta(`DELETE FROM concesion WHERE nombre = 'prueba-plano-id'`);
+  const [{ id }] = await consulta<{ id: string }>(
+    `INSERT INTO concesion (nombre, titular, estado, geom) VALUES ('prueba-plano-id', 'Minera Y', 'Otorgada', ST_Multi(ST_GeomFromText('POLYGON((-87 15, -86.99 15, -86.99 15.01, -87 15.01, -87 15))', 4326))) RETURNING id::text`
+  );
+  t.after(() => consulta(`DELETE FROM concesion WHERE nombre = 'prueba-plano-id'`));
+  assert.equal(typeof id, 'string');
+  const d = await datosPlano(id as unknown as number, { relieve: false });
+  assert.ok(d);
+  assert.equal(d!.titulo, 'Plano de situación — prueba-plano-id');
+  assert.equal(d!.etiquetaPrincipal, undefined);
+  assert.ok(d!.cajetin!.some(([k, v]) => k === 'Titular' && v === 'Minera Y'));
+  assert.ok(d!.vista[0] > 400000 && d!.vista[0] < 600000, `vista ${d!.vista}`);
+});

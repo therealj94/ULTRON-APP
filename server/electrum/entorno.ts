@@ -187,7 +187,11 @@ async function seccion<T>(ids: number[], fn: () => Promise<T>, msMax = 8000): Pr
     ]);
     return { estado: 'ok', ...datos } as Seccion<T>;
   } catch (e: any) {
-    return { estado: 'error', motivo: String(e?.message || e).slice(0, 160) };
+    // El motivo que se enseña (y que va al PDF) es estable; el error de Postgres o GEOS, con sus
+    // coordenadas y nombres internos, va al registro.
+    const m = String(e?.message || e);
+    console.error('[electrum] entorno: sección falló:', m.slice(0, 200));
+    return { estado: 'error', motivo: /tard[oó] m[aá]s de|statement timeout|canceling statement/i.test(m) ? 'la consulta tardó demasiado' : 'falló la consulta a la base' };
   } finally {
     clearTimeout(reloj);
   }

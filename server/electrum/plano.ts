@@ -604,8 +604,10 @@ export async function datosPlano(
   opts: { subtitulo?: string; pie?: string; relieve?: boolean } = {}
 ): Promise<DatosPlano | null> {
   if (!hayBase()) return null;
-  const area = typeof objetivo === 'number' ? null : objetivo;
-  const id = typeof objetivo === 'number' ? objetivo : -1;
+  // Un id puede llegar como texto: pg devuelve los bigint así. Solo un objeto es un área dibujada.
+  const area = objetivo && typeof objetivo === 'object' ? objetivo : null;
+  const id = area ? -1 : Number(objetivo);
+  if (!area && !(Number.isSafeInteger(id) && id > 0)) return null;
   const COLUMNAS = `ST_AsGeoJSON(u, 1) AS g, ST_XMin(u) x1, ST_YMin(u) y1, ST_XMax(u) x2, ST_YMax(u) y2,
             ST_X(ST_PointOnSurface(u)) ex, ST_Y(ST_PointOnSurface(u)) ey,
             ST_X(ST_Centroid(geom)) lon, ST_Y(ST_Centroid(geom)) lat, ST_IsEmpty(geom) vacia`;

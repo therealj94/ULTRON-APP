@@ -172,7 +172,7 @@ export function CapasControl({
       {abierto && (
         <div className="pointer-events-auto min-h-0 max-h-[420px] w-[280px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-white/12 bg-[#0A0C0E]/94 p-3 text-[12.5px] text-[#C9D5DB] shadow-[0_10px_30px_rgba(0,0,0,.55)] backdrop-blur-xl">
           <div className="mb-1 font-mono text-[10px] tracking-[0.16em] uppercase" style={{ color: AMBAR }}>
-            Catastro por estado
+            {prospectividad ? 'Catastro por estado (el borde)' : 'Catastro por estado'}
           </div>
           <div className="mb-2 grid grid-cols-2 gap-x-2 gap-y-0.5">
             {GRUPOS_ESTADO.map((g) => (
@@ -184,6 +184,14 @@ export function CapasControl({
             <span className="flex items-center gap-1.5 text-[10.5px]">
               <span className="h-2.5 w-3.5 shrink-0 rounded-[2px] border border-[#FF5A5A]" style={{ background: 'repeating-linear-gradient(135deg, rgba(255,80,80,.8) 0 2px, transparent 2px 5px)' }} />
               Traslape
+            </span>
+            <span className="flex items-center gap-1.5 text-[10.5px]">
+              <span className="h-2.5 w-3.5 shrink-0 rounded-[2px] border-2 border-[#FF7A45] animate-pulse" />
+              Vence en ≤ 90 días
+            </span>
+            <span className="flex items-center gap-1.5 text-[10.5px]">
+              <span className="h-2.5 w-3.5 shrink-0 rounded-[2px] border-2 border-[#FF4FD8] animate-pulse" />
+              Pérdida de vegetación
             </span>
           </div>
           {onCurvas && (
@@ -206,8 +214,12 @@ export function CapasControl({
                       {l.texto}
                     </span>
                   ))}
+                  <span className="flex items-center gap-1.5 text-[10.5px]">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-sm border border-white/40" style={{ background: 'rgba(160,170,176,0.35)' }} />
+                    Sin calcular
+                  </span>
                   <span className="col-span-2 mt-0.5 text-[10.5px] leading-snug text-[#61717A]">
-                    Geología, muestras de JICA y Sentinel-2, de 0 a 100. Gris claro: todavía sin calcular (se calcula al abrir su ficha).
+                    Geología, muestras de JICA y Sentinel-2, de 0 a 100. Se calcula al abrir la ficha de cada concesión.
                   </span>
                 </div>
               )}
@@ -231,7 +243,7 @@ export function CapasControl({
                     <span className="min-w-0">
                       <span className="block leading-snug text-[#E7EEF2]">{e?.nombre || c.rol}</span>
                       <span className="block truncate text-[11px] text-[#7F939D]" title={c.nombre}>
-                        {bajando === c.id ? 'bajando…' : `${c.nombre} · ${c.entidades.toLocaleString('es-HN')}`}
+                        {bajando === c.id ? 'Bajando…' : `${c.nombre} · ${c.entidades.toLocaleString('es-HN')}`}
                       </span>
                     </span>
                   </label>
@@ -260,22 +272,22 @@ export function CapasControl({
                       </label>
                       {on && (
                         <div className="flex items-center gap-2 pl-7 pr-1 pb-1">
-                          <span className="font-mono text-[10px] text-[#7F939D]">transparencia</span>
+                          <span className="font-mono text-[10px] text-[#7F939D]">opacidad</span>
                           <input
                             type="range"
                             min={10}
                             max={100}
                             step={5}
                             value={Math.round(on.opacidad * 100)}
-                            aria-label={`Transparencia de ${x.nombre}`}
+                            aria-label={`Opacidad de ${x.nombre}`}
                             onChange={(e) => {
                               const v = Number(e.target.value) / 100;
                               onRasters?.((antes) => antes.map((r) => (r.clave === x.clave ? { ...r, opacidad: v } : r)));
                             }}
                             className="h-1 flex-1 accent-[#FFAE3B]"
                           />
-                          <button type="button" onClick={() => onEncuadrar?.(x.encuadre)} className="font-mono text-[10px] text-[#B9C7CE] hover:text-white cursor-pointer">
-                            ir
+                          <button type="button" onClick={() => onEncuadrar?.(x.encuadre)} aria-label={`Ir a ${x.nombre}`} className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#B9C7CE] hover:text-white cursor-pointer">
+                            Ir
                           </button>
                         </div>
                       )}

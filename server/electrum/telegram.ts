@@ -348,6 +348,11 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
       await responderElectrum(parsed.chatId, 'Las alertas son para personas del padrón de Dr Electrum; en esta sala de demostración no se activan.');
       return { estado: 'alertas rechazadas', chatId: parsed.chatId };
     }
+    // Solo en el chat privado: en un grupo, el catastro le llegaría también a quien no está en el padrón.
+    if (String(parsed.chatId) !== String(parsed.userId)) {
+      await responderElectrum(parsed.chatId, 'Las alertas se activan en tu chat privado conmigo, no en un grupo: escribime /alertas por privado.');
+      return { estado: 'alertas en grupo', chatId: parsed.chatId };
+    }
     try {
       if (parsed.comando === '/alertas') {
         await suscribir(parsed.chatId, quien.id.persona.id);

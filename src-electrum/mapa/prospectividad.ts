@@ -3,7 +3,7 @@
  * MapLibre: lo usan la tarjeta, la leyenda y el mapa.
  */
 export const CORTES_PROSP = [15, 35, 55] as const;
-export const COLORES_PROSP = ['#56636B', '#3B82F6', '#EAB308', '#EF4444'] as const;
+export const COLORES_PROSP = ['#44505A', '#2EC4B6', '#FFD166', '#E63946'] as const;
 export const NIVELES_PROSP = ['muy baja', 'baja', 'media', 'alta'] as const;
 
 export const colorProsp = (p: number) => COLORES_PROSP[CORTES_PROSP.filter((c) => p >= c).length];

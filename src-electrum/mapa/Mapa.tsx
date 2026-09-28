@@ -584,6 +584,8 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     });
     let bajo: number | null = null;
     m.on('mousemove', (e) => {
+      // Con una herramienta en uso el cursor es la cruz de la herramienta, no la manito del catastro.
+      if (herramientaEnUso()) return;
       const { muestra, conc, extra } = bajoElDedo(e.point, 3);
       const id = conc.length ? Number(conc[0].properties?.id) : null;
       m.getCanvas().style.cursor = muestra.length || conc.length || extra.length ? 'pointer' : '';

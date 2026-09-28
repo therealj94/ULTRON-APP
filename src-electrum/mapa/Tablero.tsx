@@ -25,7 +25,7 @@ export type DatosTablero = {
   poblados: { concesiones: number; caserios: number; lista: Array<{ id: number; concesion: string; n: number; nombres: string[] }> } | null;
 };
 
-const nf = (x: number, d = 0) => x.toLocaleString('es-ES', { maximumFractionDigits: d });
+const nf = (x: number, d = 0) => x.toLocaleString('es-HN', { maximumFractionDigits: d });
 
 /**
  * El tablero se comparte entre el panel y el recorrido, pero vence a los 5 minutos: con la pestaña

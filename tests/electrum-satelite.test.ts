@@ -55,7 +55,7 @@ test('satélite: carga, concesiones que no están, texto con límites y ficha', 
   assert.match(t, /no un hallazgo/);
 
   // Volver a cargar reemplaza.
-  await cargarSatelite([{ id, datos: { ...medido, veg: [0, 0, 0], ha_expuesto: 0 } as any }], 'otra', 'Copernicus Sentinel-2 L2A');
+  await cargarSatelite([{ id, datos: { ...medido, veg: [0, 0, 0], ha_expuesto: 0, arc: [0, 0, 0], fe: [0, 0, 0] } as any }], 'otra', 'Copernicus Sentinel-2 L2A');
   const t2 = (await sateliteEnRenglones(id)).join('\n');
   assert.match(t2, /Sin caída de vegetación densa en las 111 ha comparables/);
   assert.match(t2, /Sin suelo expuesto: bajo la vegetación el satélite no ve la roca/);
@@ -103,4 +103,23 @@ test('satélite: cargar solo con nivel de escritura', { skip: sinBase }, async (
   const obrero = emitirSesion({ correo: 'obrero@mina.hn', nombre: 'Obrero', rol: 'x' }).token;
   assert.equal(await post(obrero, { concesiones: [] }), 400);
   assert.equal(await post(obrero, cuerpo), 200);
+});
+
+test('satélite: rechaza mediciones imposibles', async () => {
+  const { cargarSatelite } = await import('../server/electrum/satelite');
+  const { hayBase } = await import('../server/electrum/db');
+  if (!hayBase()) return;
+  const base = { ha: 100, ha_comparable: 90, veg: [1, 2, 3], ha_expuesto: 20, arc: [1, 1, 1], fe: [1, 1, 1] };
+  const r = await cargarSatelite(
+    [
+      { id: 999999991, datos: { ...base, ha_comparable: 150 } },
+      { id: 999999992, datos: { ...base, veg: [50, 30, 20] } },
+      { id: 999999993, datos: { ...base, arc: [10, 10, 10] } },
+      { id: 999999994, datos: base },
+    ] as any,
+    'prueba',
+    'prueba'
+  );
+  assert.deepEqual(r.rechazadas.map((x) => x.fila), [0, 1, 2]);
+  assert.equal(r.fuera_del_catastro, 1, 'la buena no existe en el catastro: se salta sin error');
 });

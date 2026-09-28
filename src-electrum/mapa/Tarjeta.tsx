@@ -89,7 +89,7 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
         const r = await fetch(urlDe(tocado), { headers: headersElectrum(), signal: corte.signal });
         const j = await r.json().catch(() => null);
         if (corte.signal.aborted) return;
-        if (!r.ok) return setError(j?.error || `El servidor contestó ${r.status}.`);
+        if (!r.ok) return setError(j?.error || (r.status === 404 ? 'Esta función todavía no está activa en el servidor.' : `El servidor contestó ${r.status}.`));
         setDatos(j);
         // El puntaje recién calculado va al mapa, para que el relleno por prospectividad lo pinte ya.
         if (tocado.tipo === 'concesion' && typeof j?.prospectividad?.puntaje === 'number') {
@@ -278,7 +278,7 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: P
       {f.prospectividad && (
         <Seccion titulo="Prospectividad">
           {f.prospectividad.puntaje != null && (
-            <div className="mb-2 flex items-center gap-2" aria-label={`Prospectividad ${f.prospectividad.puntaje} de 100`}>
+            <div className="mb-2 flex items-center gap-2" role="img" aria-label={`Prospectividad ${f.prospectividad.puntaje} de 100`}>
               <span className="font-mono text-[20px] font-semibold leading-none" style={{ color: colorProsp(f.prospectividad.puntaje) }}>
                 {f.prospectividad.puntaje}
               </span>
@@ -444,7 +444,7 @@ function Exportes({ id }: { id: number }) {
       const r = await fetch(`/api/electrum/concesion/${id}/exportar?formato=${formato}`, { headers: headersElectrum() });
       if (!r.ok) {
         const j = await r.json().catch(() => null);
-        return setError(j?.error || `El servidor contestó ${r.status}.`);
+        return setError(j?.error || (r.status === 404 ? 'Esta función todavía no está activa en el servidor.' : `El servidor contestó ${r.status}.`));
       }
       const nombre = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || `concesion-${id}.${formato}`;
       const url = URL.createObjectURL(await r.blob());

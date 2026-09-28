@@ -31,12 +31,16 @@ export function Timelapse({ id, nombre, onCerrar }: { id: number; nombre: string
       .then(async (r) => {
         const j = await r.json().catch(() => null);
         if (!vivo) return;
-        if (!r.ok) return setError(j?.error || `El servidor contestó ${r.status}.`);
-        imagenes.current = (j as Datos).cuadros.map((c) => {
+        if (!r.ok) return setError(r.status === 404 && !j?.error ? 'Esta función todavía no está activa en el servidor.' : j?.error || `El servidor contestó ${r.status}.`);
+        const imgs = (j as Datos).cuadros.map((c) => {
           const im = new Image();
           im.src = c.img;
           return im;
         });
+        // Todos los cuadros decodificados antes de arrancar: si no, el año avanza sobre un cuadro negro.
+        await Promise.all(imgs.map((im) => im.decode().catch(() => undefined)));
+        if (!vivo) return;
+        imagenes.current = imgs;
         setDatos(j);
         setI(0);
       })
@@ -47,8 +51,13 @@ export function Timelapse({ id, nombre, onCerrar }: { id: number; nombre: string
   }, [id]);
 
   useEffect(() => {
+    // En captura y cortando la propagación: Esc cierra el timelapse y NO también la ficha de atrás.
     const k = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCerrar();
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onCerrar();
+        return;
+      }
       if (e.key === ' ') {
         e.preventDefault();
         setAndando((v) => !v);
@@ -56,8 +65,8 @@ export function Timelapse({ id, nombre, onCerrar }: { id: number; nombre: string
       if (e.key === 'ArrowRight' && datos) setI((x) => (x + 1) % datos.cuadros.length);
       if (e.key === 'ArrowLeft' && datos) setI((x) => (x - 1 + datos.cuadros.length) % datos.cuadros.length);
     };
-    window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
+    window.addEventListener('keydown', k, { capture: true });
+    return () => window.removeEventListener('keydown', k, { capture: true });
   }, [datos, onCerrar]);
 
   useEffect(() => {
@@ -94,14 +103,14 @@ export function Timelapse({ id, nombre, onCerrar }: { id: number; nombre: string
         ctx.restore();
       }
     };
-    if (im.complete) dibujar();
-    else im.onload = dibujar;
+    // Ya están decodificados: se dibuja siempre el cuadro de ahora, nunca uno viejo que llega tarde.
+    dibujar();
   }, [i, datos, lindero]);
 
   const c = datos?.cuadros[i];
   // Por portal: la tarjeta tiene backdrop-filter, y dentro de ella «fixed» se mediría contra la tarjeta.
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm" role="dialog" aria-label={`Timelapse satelital de ${nombre}`} onClick={onCerrar}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`Timelapse satelital de ${nombre}`} onClick={onCerrar}>
       <div className="w-full max-w-[560px] rounded-2xl border border-white/12 bg-[#0A0C0E] p-3 text-[12.5px] text-[#C9D5DB] shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-2 flex items-start justify-between gap-2">
           <div>
@@ -111,11 +120,12 @@ export function Timelapse({ id, nombre, onCerrar }: { id: number; nombre: string
             <div className="text-[15px] font-semibold text-[#F3F6F8]">{nombre}</div>
           </div>
           <button type="button" onClick={onCerrar} aria-label="Cerrar" className="rounded-md px-2 py-1 text-[#9FB0B9] hover:bg-white/10 cursor-pointer">
-            ✕
+            ×
           </button>
         </div>
         {!datos && !error && <p className="py-16 text-center text-[#8FA3B0]">Leyendo una escena de Sentinel-2 por año desde 2018… (unos segundos)</p>}
         {error && <p className="py-10 text-center text-[#E8A08F]">{error}</p>}
+        {datos && !datos.cuadros.length && <p className="py-10 text-center text-[#8FA3B0]">Sin escenas limpias de Sentinel-2 para esta concesión.</p>}
         {datos && c && (
           <>
             <div className="relative overflow-hidden rounded-lg">

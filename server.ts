@@ -730,6 +730,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
       {
         historial,
         abandonado: () => seFue,
+        internet: req.body?.internet === true,
         enVivo: (e) => {
           if (e.panel) enviar('panel', { panel: e.panel });
           if (e.herramienta) enviar('herramienta', e.herramienta);

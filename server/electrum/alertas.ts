@@ -18,6 +18,7 @@ import { consulta as consultaCruda, conTextoReparado, hayBase } from './db';
 // Los nombres del catastro vienen a veces con la codificación rota («Construcci?n»): se reparan al leer.
 const consulta = <T = any>(sql: string, params: unknown[] = []) => consultaCruda<T>(sql, params).then(conTextoReparado);
 import { asegurarSatelite } from './satelite';
+import { nivelDe, personaPorId } from '../../lib/acceso';
 
 export const UMBRALES = [90, 30, 7, 1, 0] as const;
 const PERDIDA_MINIMA_HA = 5;
@@ -97,48 +98,56 @@ export function textoSatelite(filas: Perdida[], periodo: string | null): string 
 
 /* ------------------------------------------------------------------ consultas */
 
-const HOY_HN = `(now() AT TIME ZONE '${HN}')::date`;
+/** «Hoy» en Honduras, como texto YYYY-MM-DD. Las consultas lo reciben de acá: una vuelta que cruza
+ * la medianoche no mezcla el día de la marca con los umbrales del día siguiente. */
+export const hoyHN = (ahora = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: HN, year: 'numeric', month: '2-digit', day: '2-digit' }).format(ahora);
 
-async function venceEnUmbral(): Promise<Vence[]> {
+async function venceEnUmbral(hoy: string): Promise<Vence[]> {
   return consulta<Vence>(
-    `SELECT nombre, expediente, to_char(vence, 'DD/MM/YYYY') AS vence, (vence - ${HOY_HN})::int AS dias
-       FROM concesion WHERE vence IS NOT NULL AND (vence - ${HOY_HN}) = ANY($1::int[])
+    `SELECT nombre, expediente, to_char(vence, 'DD/MM/YYYY') AS vence, (vence - $2::date)::int AS dias
+       FROM concesion WHERE vence IS NOT NULL AND (vence - $2::date) = ANY($1::int[])
       ORDER BY vence, nombre`,
-    [UMBRALES as unknown as number[]]
+    [UMBRALES as unknown as number[], hoy]
   );
 }
 
-async function venceEn90(): Promise<Vence[]> {
+async function venceEn90(hoy: string): Promise<Vence[]> {
   return consulta<Vence>(
-    `SELECT nombre, expediente, to_char(vence, 'DD/MM/YYYY') AS vence, (vence - ${HOY_HN})::int AS dias
-       FROM concesion WHERE vence IS NOT NULL AND vence BETWEEN ${HOY_HN} AND ${HOY_HN} + 90
-      ORDER BY vence, nombre`
+    `SELECT nombre, expediente, to_char(vence, 'DD/MM/YYYY') AS vence, (vence - $1::date)::int AS dias
+       FROM concesion WHERE vence IS NOT NULL AND vence BETWEEN $1::date AND $1::date + 90
+      ORDER BY vence, nombre`,
+    [hoy]
   );
 }
 
-async function perdidas(): Promise<{ filas: Perdida[]; periodo: string | null; cargado: string | null }> {
+/** Las caídas fuertes de vegetación cargadas DESPUÉS de `desde` (todas, si es null). */
+async function perdidas(desde: string | null): Promise<{ filas: Perdida[]; periodo: string | null }> {
   await asegurarSatelite();
   const filas = await consulta<{ nombre: string; ha: number; comp: number; periodo: string }>(
     `SELECT c.nombre, ((s.datos->'veg'->>1)::float8 + (s.datos->'veg'->>2)::float8) AS ha, (s.datos->>'ha_comparable')::float8 AS comp, s.periodo
        FROM satelite_concesion s JOIN concesion c ON c.id = s.concesion_id
       WHERE (s.datos->'veg'->>1)::float8 + (s.datos->'veg'->>2)::float8 >= $1
-      ORDER BY ha DESC`,
-    [PERDIDA_MINIMA_HA]
+        AND ($2::timestamptz IS NULL OR s.cargado > $2::timestamptz)
+      ORDER BY s.cargado DESC, ha DESC`,
+    [PERDIDA_MINIMA_HA, desde]
   );
+  const ordenadas = filas.map((f) => ({ nombre: f.nombre, ha: Number(f.ha), pct: f.comp > 0 ? (Number(f.ha) / Number(f.comp)) * 100 : null }));
+  // El período es el de la carga más reciente (la primera fila, por el orden); la lista, de mayor a menor.
+  return { filas: ordenadas.sort((a, b) => b.ha - a.ha), periodo: filas[0]?.periodo ?? null };
+}
+
+async function ultimaCarga(): Promise<string | null> {
+  await asegurarSatelite();
   const [m] = await consulta<{ cargado: string | null }>(`SELECT max(cargado)::text AS cargado FROM satelite_concesion`);
-  return {
-    filas: filas.map((f) => ({ nombre: f.nombre, ha: Number(f.ha), pct: f.comp > 0 ? (Number(f.ha) / Number(f.comp)) * 100 : null })),
-    periodo: filas[0]?.periodo ?? null,
-    cargado: m?.cargado ?? null,
-  };
+  return m?.cargado ?? null;
 }
 
 /** Lo que se le manda a quien pide /alertas_ya: todo lo vigente, sin marcar nada como enviado. */
-export async function resumenAhora(): Promise<string> {
-  const [v, p] = await Promise.all([venceEn90(), perdidas()]);
+export async function resumenAhora(ahora = new Date()): Promise<string> {
+  const [v, p] = await Promise.all([venceEn90(hoyHN(ahora)), perdidas(null)]);
   const partes = [
     textoVencimientos(v, '📅 Vencen en los próximos 90 días:') || '📅 Nada vence en los próximos 90 días (de las que tienen fecha cargada).',
-    textoSatelite(p.filas, p.periodo) || '🛰 Sin caídas fuertes de vegetación en la última medición de Sentinel-2.',
+    textoSatelite(p.filas, p.periodo) || '🛰 Sin caídas fuertes de vegetación en las mediciones de Sentinel-2 cargadas.',
   ];
   return partes.join('\n\n');
 }
@@ -146,6 +155,34 @@ export async function resumenAhora(): Promise<string> {
 /* ------------------------------------------------------------------ el reloj */
 
 type Enviar = (chatId: string, texto: string) => Promise<{ ok: boolean }>;
+type Campo = 'ultimo_diario' | 'ultimo_semanal';
+
+/**
+ * Reclamar antes de mandar: el UPDATE solo gana si el chat todavía no tenía la marca, así que dos
+ * instancias del servidor (un despliegue sin corte las tiene a las dos vivas un rato) no mandan dos
+ * veces lo mismo. Si el envío falla, la marca vuelve a lo que era.
+ */
+async function reclamarDia(chat: string, campo: Campo, hoy: string): Promise<{ ok: boolean; antes: string | null }> {
+  const r = await consulta<{ antes: string | null }>(
+    `UPDATE alerta_suscripcion s SET ${campo} = $2::date
+       FROM (SELECT ${campo} AS antes FROM alerta_suscripcion WHERE chat_id = $1 FOR UPDATE) v
+      WHERE s.chat_id = $1 AND (v.antes IS NULL OR v.antes <> $2::date)
+      RETURNING to_char(v.antes, 'YYYY-MM-DD') AS antes`,
+    [chat, hoy]
+  );
+  return r.length ? { ok: true, antes: r[0].antes } : { ok: false, antes: null };
+}
+
+async function reclamarSatelite(chat: string, carga: string): Promise<{ ok: boolean; antes: string | null }> {
+  const r = await consulta<{ antes: string | null }>(
+    `UPDATE alerta_suscripcion s SET ultimo_satelite = $2::timestamptz
+       FROM (SELECT ultimo_satelite AS antes FROM alerta_suscripcion WHERE chat_id = $1 FOR UPDATE) v
+      WHERE s.chat_id = $1 AND (v.antes IS NULL OR v.antes < $2::timestamptz)
+      RETURNING v.antes::text AS antes`,
+    [chat, carga]
+  );
+  return r.length ? { ok: true, antes: r[0].antes } : { ok: false, antes: null };
+}
 
 /**
  * Una vuelta: para cada suscripción, lo que le toca y todavía no se le mandó. Devuelve cuántos
@@ -154,38 +191,45 @@ type Enviar = (chatId: string, texto: string) => Promise<{ ok: boolean }>;
 export async function revisarAlertas(enviar: Enviar, ahora = new Date()): Promise<number> {
   if (!hayBase()) return 0;
   await asegurarTabla();
-  const hoy = new Intl.DateTimeFormat('en-CA', { timeZone: HN, year: 'numeric', month: '2-digit', day: '2-digit' }).format(ahora);
+  const hoy = hoyHN(ahora);
   const hora = Number(new Intl.DateTimeFormat('en-US', { timeZone: HN, hour: 'numeric', hourCycle: 'h23' }).format(ahora));
   const lunes = new Intl.DateTimeFormat('en-US', { timeZone: HN, weekday: 'short' }).format(ahora) === 'Mon';
-  const subs = await consulta<{ chat_id: string; ultimo_diario: string | null; ultimo_semanal: string | null; ultimo_satelite: string | null }>(
-    `SELECT chat_id, to_char(ultimo_diario, 'YYYY-MM-DD') AS ultimo_diario, to_char(ultimo_semanal, 'YYYY-MM-DD') AS ultimo_semanal, ultimo_satelite::text FROM alerta_suscripcion`
-  );
+  // Nada antes de las 7 de la mañana hondureña: una alerta de madrugada es ruido.
+  if (hora < 7) return 0;
+  const subs = await consulta<{ chat_id: string; persona_id: string | null }>(`SELECT chat_id, persona_id FROM alerta_suscripcion`);
   if (!subs.length) return 0;
-  // Lo común se consulta una vez por vuelta, no una por chat.
-  const diario = hora >= 7 ? await venceEnUmbral() : null;
-  const semanal = hora >= 7 && lunes ? await venceEn90() : null;
-  const sat = await perdidas();
-  let enviados = 0;
+  // Quien ya no tiene acceso a Dr Electrum (lo sacaron del padrón) deja de recibir el catastro.
+  const vigentes: typeof subs = [];
   for (const s of subs) {
-    if (diario && s.ultimo_diario !== hoy) {
-      const t = textoVencimientos(diario, '⏰ Vencimientos que llegan a un umbral hoy (90, 30, 7, 1 días o el mismo día):');
-      if (!t || (await enviar(s.chat_id, t)).ok) {
-        await consulta(`UPDATE alerta_suscripcion SET ultimo_diario = $2::date WHERE chat_id = $1`, [s.chat_id, hoy]);
-        if (t) enviados++;
-      }
+    if (nivelDe(personaPorId(s.persona_id), 'electrum')) vigentes.push(s);
+    else await consulta(`DELETE FROM alerta_suscripcion WHERE chat_id = $1`, [s.chat_id]);
+  }
+  // Lo común se consulta una vez por vuelta, no una por chat.
+  const diario = await venceEnUmbral(hoy);
+  const semanal = lunes ? await venceEn90(hoy) : null;
+  const carga = await ultimaCarga();
+  let enviados = 0;
+  const mandar = async (chat: string, texto: string, deshacer: () => Promise<unknown>) => {
+    const r = await enviar(chat, texto).catch(() => ({ ok: false }));
+    if (r.ok) enviados++;
+    else await deshacer();
+  };
+  for (const s of vigentes) {
+    const t = textoVencimientos(diario, '⏰ Vencimientos que llegan a un umbral hoy (90, 30, 7, 1 días o el mismo día):');
+    const d = await reclamarDia(s.chat_id, 'ultimo_diario', hoy);
+    if (d.ok && t) await mandar(s.chat_id, t, () => consulta(`UPDATE alerta_suscripcion SET ultimo_diario = $2::date WHERE chat_id = $1`, [s.chat_id, d.antes]));
+    if (semanal) {
+      const w = await reclamarDia(s.chat_id, 'ultimo_semanal', hoy);
+      const tw = textoVencimientos(semanal, '📅 Resumen del lunes — vencen en los próximos 90 días:') || '📅 Resumen del lunes: nada vence en los próximos 90 días.';
+      if (w.ok) await mandar(s.chat_id, tw, () => consulta(`UPDATE alerta_suscripcion SET ultimo_semanal = $2::date WHERE chat_id = $1`, [s.chat_id, w.antes]));
     }
-    if (semanal && s.ultimo_semanal !== hoy) {
-      const t = textoVencimientos(semanal, '📅 Resumen del lunes — vencen en los próximos 90 días:') || '📅 Resumen del lunes: nada vence en los próximos 90 días.';
-      if ((await enviar(s.chat_id, t)).ok) {
-        await consulta(`UPDATE alerta_suscripcion SET ultimo_semanal = $2::date WHERE chat_id = $1`, [s.chat_id, hoy]);
-        enviados++;
-      }
-    }
-    if (sat.cargado && (!s.ultimo_satelite || new Date(sat.cargado) > new Date(s.ultimo_satelite))) {
-      const t = textoSatelite(sat.filas, sat.periodo);
-      if (!t || (await enviar(s.chat_id, t)).ok) {
-        await consulta(`UPDATE alerta_suscripcion SET ultimo_satelite = $2::timestamptz WHERE chat_id = $1`, [s.chat_id, sat.cargado]);
-        if (t) enviados++;
+    if (carga) {
+      const c = await reclamarSatelite(s.chat_id, carga);
+      if (c.ok) {
+        // Solo lo cargado después de lo último que se le avisó: una concesión nueva no reenvía el país.
+        const p = await perdidas(c.antes);
+        const ts = textoSatelite(p.filas, p.periodo);
+        if (ts) await mandar(s.chat_id, ts, () => consulta(`UPDATE alerta_suscripcion SET ultimo_satelite = $2::timestamptz WHERE chat_id = $1`, [s.chat_id, c.antes]));
       }
     }
   }

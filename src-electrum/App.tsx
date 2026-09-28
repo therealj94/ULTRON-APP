@@ -243,6 +243,12 @@ export default function App() {
   const [pedidoPanel, setPedidoPanel] = useState<PedidoPanel | null>(null);
   const nPedido = useRef(0);
   const cerrarTarjeta = useCallback(() => setTocado(null), []);
+  // Una herramienta del mapa (medir, perfil, área) ocupa el rincón de la ficha: la cierra al empezar.
+  useEffect(() => {
+    const cerrar = () => setTocado(null);
+    window.addEventListener('electrum:herramienta', cerrar);
+    return () => window.removeEventListener('electrum:herramienta', cerrar);
+  }, []);
   /*
    * LO QUE SE ENSEÑA EN UNA DEMO: el tablero nacional, el terreno en 3D y el recorrido guiado.
    */
@@ -691,8 +697,10 @@ export default function App() {
       {vence && (
         // En el teléfono va debajo de las pestañas del panel y a la derecha: centrado arriba tapaba
         // «Expedientes» e «Infra», y quien entra con un código no podía cambiar de pestaña.
-        <div className="pointer-events-none absolute right-2 top-[104px] sm:right-auto sm:left-1/2 sm:top-[52px] z-[45] sm:-translate-x-1/2 rounded-full border border-[#FFAE3B]/40 bg-black/75 px-2.5 py-0.5 sm:px-3 sm:py-1 font-mono text-[10px] sm:text-[11px] tracking-[0.1em] text-[#FFD08A] backdrop-blur" role="status">
-          ACCESO TEMPORAL · VENCE EN {faltaPara(vence).toUpperCase()}
+        // En la barra de arriba, al medio (vacía en escritorio): más abajo tapaba Tablero/3D/Recorrido,
+        // y en el teléfono el botón de alejar.
+        <div className="pointer-events-none absolute right-[48px] top-[104px] sm:right-auto sm:left-1/2 sm:top-[14px] z-[45] sm:-translate-x-1/2 rounded-full border border-[#FFAE3B]/40 bg-black/75 px-2.5 py-0.5 sm:px-3 sm:py-1 font-mono text-[10px] sm:text-[11px] tracking-[0.1em] text-[#FFD08A] backdrop-blur" role="status">
+          <span className="hidden sm:inline">ACCESO TEMPORAL · </span>VENCE EN {faltaPara(vence).toUpperCase()}
         </div>
       )}
 

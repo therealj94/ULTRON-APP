@@ -157,7 +157,7 @@ export function Entrar({ onAbierta, modoInicial = 'correo', aviso = '' }: { onAb
                 type="password"
                 autoComplete="current-password"
                 aria-label="Clave"
-                placeholder="tu clave"
+                placeholder="tu contraseña"
                 value={clave}
                 onChange={(e) => setClave(e.target.value)}
                 disabled={yendo}
