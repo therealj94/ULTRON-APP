@@ -36,6 +36,20 @@ type Aqui = {
   geologia: Parte;
 };
 type Rasgo = { id: number; capa: string; rol: string | null; nombre: string; atributos: Array<[string, string]> };
+type Muestra = {
+  id: number;
+  codigo: string;
+  tipo: string;
+  fuente: string;
+  datum: string;
+  utm: [number, number];
+  lon: number;
+  lat: number;
+  lugar: string | null;
+  completa: boolean;
+  leyes: Array<[string, string]>;
+  concesiones: Array<{ id: number; nombre: string }>;
+};
 
 type Props = {
   tocado: Tocado | null;
@@ -49,11 +63,12 @@ type Props = {
 function urlDe(t: Tocado): string {
   if (t.tipo === 'concesion') return `/api/electrum/mapa/concesion/${t.id}`;
   if (t.tipo === 'rasgo') return `/api/electrum/mapa/rasgo/${t.eid}`;
+  if (t.tipo === 'muestra') return `/api/electrum/mapa/muestra/${t.id}`;
   return `/api/electrum/mapa/aqui?lon=${t.lngLat[0].toFixed(6)}&lat=${t.lngLat[1].toFixed(6)}`;
 }
 
 export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onTocar }: Props) {
-  const [datos, setDatos] = useState<Ficha | Aqui | Rasgo | null>(null);
+  const [datos, setDatos] = useState<Ficha | Aqui | Rasgo | Muestra | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pregunta, setPregunta] = useState('');
 
@@ -92,8 +107,17 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
       ? (datos as Ficha | null)?.nombre || tocado.nombre || `Concesión ${tocado.id}`
       : tocado.tipo === 'rasgo'
         ? (datos as Rasgo | null)?.nombre || tocado.nombre || 'Rasgo de la capa'
-        : `${tocado.lngLat[1].toFixed(5)}, ${tocado.lngLat[0].toFixed(5)}`;
-  const etiqueta = tocado.tipo === 'concesion' ? 'Concesión' : tocado.tipo === 'rasgo' ? (datos as Rasgo | null)?.capa || 'Capa' : '¿Qué hay aquí?';
+        : tocado.tipo === 'muestra'
+          ? `Muestra ${(datos as Muestra | null)?.codigo || tocado.nombre || tocado.id}`
+          : `${tocado.lngLat[1].toFixed(5)}, ${tocado.lngLat[0].toFixed(5)}`;
+  const etiqueta =
+    tocado.tipo === 'concesion'
+      ? 'Concesión'
+      : tocado.tipo === 'rasgo'
+        ? (datos as Rasgo | null)?.capa || 'Capa'
+        : tocado.tipo === 'muestra'
+          ? 'Muestra geoquímica · JICA'
+          : '¿Qué hay aquí?';
 
   const preguntarSobre = (q: string) => {
     const base =
@@ -101,7 +125,9 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
         ? `Sobre la concesión ${titulo} (id ${tocado.id}): `
         : tocado.tipo === 'punto'
           ? `Sobre el punto ${tocado.lngLat[1].toFixed(5)}, ${tocado.lngLat[0].toFixed(5)}: `
-          : `Sobre ${titulo} de la capa ${etiqueta}: `;
+          : tocado.tipo === 'muestra'
+            ? `Sobre la ${titulo.toLowerCase()} de JICA (en ${tocado.lngLat[1].toFixed(5)}, ${tocado.lngLat[0].toFixed(5)}): `
+            : `Sobre ${titulo} de la capa ${etiqueta}: `;
     onPreguntar(base + q);
   };
 
@@ -137,6 +163,7 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
         )}
         {datos && tocado.tipo === 'punto' && <AquiVista a={datos as Aqui} onTocar={onTocar} onPreguntar={onPreguntar} />}
         {datos && tocado.tipo === 'rasgo' && <RasgoVista r={datos as Rasgo} />}
+        {datos && tocado.tipo === 'muestra' && <MuestraVista m={datos as Muestra} onTocar={onTocar} onPreguntar={onPreguntar} />}
       </div>
 
       <form
@@ -225,7 +252,7 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: P
         </Boton>
       </div>
       <Seccion titulo="Catastro">
-        <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
           {f.datos.map(([k, v]) => (
             <div key={k} className="contents">
               <dt className="text-[#7F939D]">{k}</dt>
@@ -305,7 +332,7 @@ function RasgoVista({ r }: { r: Rasgo }) {
   return (
     <Seccion titulo="Atributos">
       {r.atributos.length ? (
-        <dl className="grid grid-cols-[auto,1fr] gap-x-3 gap-y-1">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
           {r.atributos.map(([k, v]) => (
             <div key={k} className="contents">
               <dt className="font-mono text-[11px] text-[#7F939D]">{k}</dt>
@@ -317,5 +344,56 @@ function RasgoVista({ r }: { r: Rasgo }) {
         <p>La capa no trae atributos para este rasgo.</p>
       )}
     </Seccion>
+  );
+}
+
+function MuestraVista({ m, onTocar, onPreguntar }: { m: Muestra; onTocar: Props['onTocar']; onPreguntar: Props['onPreguntar'] }) {
+  const coord = `${m.lat.toFixed(6)}, ${m.lon.toFixed(6)}`;
+  return (
+    <>
+      <p className="text-[#9FB0BA]">
+        {m.tipo}
+        {m.lugar ? ` · ${m.lugar}` : ''}
+      </p>
+      <Seccion titulo="Leyes">
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
+          {m.leyes.map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="font-mono text-[12px] text-[#7F939D]">{k}</dt>
+              <dd className="font-mono text-[13px] text-[#E7EEF2]">{v}</dd>
+            </div>
+          ))}
+        </dl>
+        <p className="mt-2 text-[11px] leading-snug text-[#61717A]">
+          «&lt;» es bajo el límite de detección; «&gt;», sobre el tope del laboratorio.
+          {!m.completa && ' De esta muestra solo se leyeron con seguridad el oro y la plata.'} Leído del informe escaneado: si una cifra decide algo, verificala en la tabla original.
+        </p>
+      </Seccion>
+      {m.concesiones.length > 0 && (
+        <Seccion titulo="Cae en">
+          <ul className="space-y-1">
+            {m.concesiones.map((c) => (
+              <li key={c.id}>
+                <button type="button" className="text-left underline decoration-white/25 underline-offset-2 hover:text-white cursor-pointer" onClick={() => onTocar({ tipo: 'concesion', id: c.id, nombre: c.nombre, lngLat: [m.lon, m.lat] })}>
+                  {c.nombre}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </Seccion>
+      )}
+      <Seccion titulo="Origen">
+        <p>{m.fuente}</p>
+        <p className="font-mono text-[11px] text-[#7F939D]">
+          UTM {m.utm[0].toLocaleString('es-HN')} E · {m.utm[1].toLocaleString('es-HN')} N ({m.datum}) · {coord}
+        </p>
+      </Seccion>
+      <div className="flex flex-wrap gap-1.5">
+        <Boton fuerte onClick={() => onPreguntar(`¿Qué otras muestras de JICA hay cerca de la muestra ${m.codigo} (${coord}) y qué anomalías muestran?`)}>
+          Muestras cercanas
+        </Boton>
+        <Boton onClick={() => onTocar({ tipo: 'punto', lngLat: [m.lon, m.lat] })}>¿Qué hay aquí?</Boton>
+      </div>
+    </>
   );
 }

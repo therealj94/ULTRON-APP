@@ -18,6 +18,7 @@ import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Motor, type
 import { AMBAR, RESALTE, ESTILO_ROL, COLOR_ROCA, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion } from './capas';
 import { estiloCalles, estiloSatelite } from './estilos';
 import { urlTeselas } from './teselas';
+import { colorMuestra, radioMuestra, type ElementoMuestra } from './muestras';
 import urlDelWorker from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
 /*
@@ -53,6 +54,8 @@ type Props = {
   tresD?: boolean;
   /** Mapas escaneados encendidos (JICA…), con su transparencia. Van debajo de todo lo vectorial. */
   rasters?: RasterEncendido[];
+  /** Muestras geoquímicas de JICA y el elemento que las colorea; null las apaga. */
+  muestras?: { elemento: ElementoMuestra; geojson: unknown } | null;
 };
 
 /** Honduras entera, que es donde se abre si nadie ha pedido nada todavía. */
@@ -88,6 +91,8 @@ const fuenteExtra = (id: number) => `extra-${id}`;
 /** Los mapas escaneados encendidos, clave → transparencia. Fuera de React por lo mismo que `pintado`. */
 const pintadoRaster = new Map<string, { opacidad: number; zoomMax?: number }>();
 const fuenteRaster = (clave: string) => `raster-${clave}`;
+/** Las muestras geoquímicas encendidas: el elemento que colorea y sus puntos. Fuera de React por lo mismo. */
+let pintadoMuestras: { elemento: ElementoMuestra; geojson: unknown } | null = null;
 /** Las capas de dibujo tocables de las capas encendidas, para saber qué se tocó. */
 const capasTocablesExtra = () => [...pintadoExtra.keys()].flatMap((f) => [`${f}-punto`, `${f}-borde`, `${f}-relleno`]);
 
@@ -138,7 +143,34 @@ function asegurarCapas(m: maplibregl.Map) {
       m.setPaintProperty(f, 'raster-opacity', opacidad);
     }
   }
+  // Las muestras, ENCIMA de todo: son puntos chicos, y un punto debajo de un polígono no se toca.
+  if (pintadoMuestras) {
+    const { elemento, geojson } = pintadoMuestras;
+    if (!m.getSource('muestras')) {
+      if (m.getLayer('muestras-punto')) m.removeLayer('muestras-punto');
+      m.addSource('muestras', { type: 'geojson', data: geojson as any });
+    }
+    if (!m.getLayer('muestras-punto')) {
+      m.addLayer({
+        id: 'muestras-punto',
+        type: 'circle',
+        source: 'muestras',
+        paint: { 'circle-stroke-color': '#0B0D0F', 'circle-stroke-width': 0.8, 'circle-opacity': 0.92 },
+      } as any);
+    }
+    // Solo las que midieron ese elemento, y las de más ley dibujadas encima.
+    m.setFilter('muestras-punto', ['has', elemento]);
+    m.setLayoutProperty('muestras-punto', 'circle-sort-key', ['to-number', ['get', elemento]]);
+    m.setPaintProperty('muestras-punto', 'circle-color', colorMuestra(elemento) as any);
+    m.setPaintProperty('muestras-punto', 'circle-radius', radioMuestra(elemento) as any);
+  }
   aplicarTerreno(m);
+}
+
+/** Apaga las muestras. */
+function quitarMuestras(m: maplibregl.Map) {
+  if (m.getLayer('muestras-punto')) m.removeLayer('muestras-punto');
+  if (m.getSource('muestras')) m.removeSource('muestras');
 }
 
 /** Quita un mapa escaneado que se apagó. */
@@ -289,7 +321,7 @@ function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
   }
 }
 
-export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [] }: Props) {
+export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null }: Props) {
   /** El último `onTocar`, para los manejadores que se atan una sola vez al crear el mapa. */
   const tocarRef = useRef(onTocar);
   tocarRef.current = onTocar;
@@ -360,13 +392,17 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
         [p.x + holgura, p.y + holgura],
       ];
       const existentes = (ids: string[]) => ids.filter((id) => m.getLayer(id));
-      const conc = m.queryRenderedFeatures(caja, { layers: existentes(['concesiones-relleno', 'concesiones-borde']) });
-      const extra = conc.length ? [] : m.queryRenderedFeatures(caja, { layers: existentes(capasTocablesExtra()) });
-      return { conc, extra };
+      // Una muestra gana a todo: es un punto encima de la concesión donde se tomó.
+      const muestra = m.queryRenderedFeatures(caja, { layers: existentes(['muestras-punto']) });
+      const conc = muestra.length ? [] : m.queryRenderedFeatures(caja, { layers: existentes(['concesiones-relleno', 'concesiones-borde']) });
+      const extra = conc.length || muestra.length ? [] : m.queryRenderedFeatures(caja, { layers: existentes(capasTocablesExtra()) });
+      return { muestra, conc, extra };
     };
     m.on('click', (e) => {
-      const { conc, extra } = bajoElDedo(e.point, 6);
+      const { muestra, conc, extra } = bajoElDedo(e.point, 6);
       const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+      const mu = muestra.find((f) => Number.isFinite(Number(f.properties?.id)));
+      if (mu) return tocarRef.current?.({ tipo: 'muestra', id: Number(mu.properties!.id), nombre: mu.properties?.c, lngLat });
       const c = conc.find((f) => Number.isFinite(Number(f.properties?.id)));
       if (c) return tocarRef.current?.({ tipo: 'concesion', id: Number(c.properties!.id), nombre: c.properties?.nombre, lngLat });
       // Entre varias capas encendidas gana la de arriba: puntos, luego líneas, luego polígonos.
@@ -377,9 +413,9 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     });
     let bajo: number | null = null;
     m.on('mousemove', (e) => {
-      const { conc, extra } = bajoElDedo(e.point, 3);
+      const { muestra, conc, extra } = bajoElDedo(e.point, 3);
       const id = conc.length ? Number(conc[0].properties?.id) : null;
-      m.getCanvas().style.cursor = conc.length || extra.length ? 'pointer' : '';
+      m.getCanvas().style.cursor = muestra.length || conc.length || extra.length ? 'pointer' : '';
       if (id !== bajo && m.getLayer('concesiones-hover')) {
         bajo = id;
         m.setFilter('concesiones-hover', ['==', ['to-number', ['get', 'id']], id ?? -1]);
@@ -516,6 +552,16 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     for (const [clave, r] of quedan) pintadoRaster.set(clave, { opacidad: Math.max(0.1, Math.min(1, r.opacidad)), zoomMax: r.zoomMax });
     if (m && listo) asegurarCapas(m);
   }, [rasters, listo]);
+
+  useEffect(() => {
+    const m = mapa.current;
+    const antes = pintadoMuestras;
+    pintadoMuestras = muestras;
+    if (!m || !listo) return;
+    // Otros puntos (se recargaron): la fuente se rehace con ellos; otro elemento solo repinta.
+    if (!muestras || (antes && antes.geojson !== muestras.geojson)) quitarMuestras(m);
+    if (muestras) asegurarCapas(m);
+  }, [muestras, listo]);
 
   useEffect(() => {
     const m = mapa.current;
