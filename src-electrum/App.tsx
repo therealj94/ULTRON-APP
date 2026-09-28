@@ -521,6 +521,7 @@ export default function App() {
               traslapes={traslapes}
               curvas={curvas}
               prospectividad={prospectividad}
+              visible={enTrabajo}
             />
           </Suspense>
           </SinMapa>

@@ -65,10 +65,67 @@ type Props = {
   curvas?: boolean;
   /** Relleno de las concesiones por puntaje de prospectividad en vez de por estado. */
   prospectividad?: boolean;
+  /** ¿Se está viendo? El mapa se monta detrás de la cara: la entrada se hace cuando aparece. */
+  visible?: boolean;
 };
 
 /** Honduras entera, que es donde se abre si nadie ha pedido nada todavía. */
 const HONDURAS: [number, number, number, number] = [-89.4, 12.9, -83.1, 16.6];
+
+/**
+ * LA ENTRADA: la primera vez de la sesión, la Tierra en globo sobre Centroamérica y el descenso
+ * hasta Honduras. Después, la proyección de siempre (las medidas y los planos son en Mercator/UTM).
+ * Si alguien pidió menos movimiento, o ya la vio en esta pestaña, se abre directo en Honduras.
+ *
+ * El mapa NACE en el globo (se decide al crearlo) y baja cuando se deja ver: si esperara al
+ * evento `load` —que espera las teselas— se vería Honduras un instante y después el salto al espacio.
+ */
+let introPendiente = false;
+/** Hasta cuándo dura la entrada: el encuadre del catastro que llega en medio no la corta. */
+let introHasta = 0;
+const introEnCurso = () => introPendiente || Date.now() < introHasta;
+
+function quiereIntro(): boolean {
+  try {
+    return !sinMovimiento() && !sessionStorage.getItem('electrum:intro');
+  } catch {
+    return false;
+  }
+}
+
+function prepararGlobo(m: maplibregl.Map) {
+  try {
+    m.setProjection({ type: 'globe' });
+    // El halo de la atmósfera alrededor del globo; se apaga solo al acercarse (zoom 7).
+    m.setSky({ 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] } as any);
+  } catch {
+    introPendiente = false;
+  }
+}
+
+function introDesdeElEspacio(m: maplibregl.Map) {
+  if (!introPendiente) return;
+  introPendiente = false;
+  try {
+    sessionStorage.setItem('electrum:intro', '1');
+  } catch {
+    /* sin almacenamiento: la volverá a ver la próxima vez, nada más */
+  }
+  introHasta = Date.now() + 300 + duracion(4800) + 400;
+  const volver = () => {
+    try {
+      m.setProjection({ type: 'mercator' });
+    } catch {
+      /* el estilo ya cambió: su proyección es la de siempre */
+    }
+  };
+  setTimeout(() => {
+    // Si algo más mueve el mapa antes (una orden de Dr Electrum, un toque), el descenso se corta y
+    // la proyección vuelve igual al terminar ese movimiento.
+    m.fitBounds(HONDURAS, { padding: 40, duration: duracion(4800), curve: 1.5, essential: true });
+    m.once('moveend', volver);
+  }, 300);
+}
 
 /**
  * Pone las fuentes y las capas si no están, y no hace nada si ya están.
@@ -490,7 +547,7 @@ function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
   }
 }
 
-export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null, traslapes = null, curvas = true, prospectividad = false }: Props) {
+export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null, traslapes = null, curvas = true, prospectividad = false, visible = true }: Props) {
   /** El último `onTocar`, para los manejadores que se atan una sola vez al crear el mapa. */
   const tocarRef = useRef(onTocar);
   tocarRef.current = onTocar;
@@ -525,11 +582,11 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
 
   useEffect(() => {
     if (motor !== 'maplibre' || !caja.current || mapa.current) return;
+    introPendiente = quiereIntro();
     const m = new maplibregl.Map({
       container: caja.current,
       style: fondoRef.current === 'satelite' ? estiloSatelite() : estiloCalles(),
-      bounds: HONDURAS,
-      fitBoundsOptions: { padding: 40 },
+      ...(introPendiente ? { center: [-86.8, 14.6] as [number, number], zoom: 1.4 } : { bounds: HONDURAS, fitBoundsOptions: { padding: 40 } }),
       attributionControl: { compact: true },
       /*
        * Conservar el búfer de dibujo. Sin esto, el lienzo de WebGL se vacía tras cada cuadro y
@@ -542,6 +599,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     // A la derecha, no a la izquierda: abajo a la izquierda vive la cara cuando cede el paso, y la
     // escala le asomaba por detrás como un recorte de papel blanco.
     m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
+    if (introPendiente) m.once('style.load', () => prepararGlobo(m));
     m.on('load', () => {
       // Las fuentes nacen vacías: el contenido llega cuando una herramienta lo manda.
       asegurarCapas(m);
@@ -781,6 +839,12 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     aplicarTerreno(m);
   }, [curvas, fondo, listo]);
 
+  // La entrada desde el espacio, la primera vez que el mapa se deja ver en la sesión.
+  useEffect(() => {
+    const m = mapa.current;
+    if (m && listo && visible) introDesdeElEspacio(m);
+  }, [listo, visible]);
+
   // Un puntaje calculado al abrir una ficha entra al dato del catastro pintado (si cambió).
   useEffect(() => {
     const m = mapa.current;
@@ -839,7 +903,8 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
         }
       } else if (o.accion === 'capa') {
         pintar(m, 'concesiones', o.geojson);
-        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 60, duration: duracion(1400) });
+        // Durante la entrada desde el espacio, el descenso ya termina sobre el país.
+        if (o.encuadre && !introEnCurso()) m.fitBounds(o.encuadre, { padding: 60, duration: duracion(1400) });
       } else if (o.accion === 'candidatas') {
         pintar(m, 'resaltada', o.geojson);
         if (o.encuadre) m.fitBounds(o.encuadre, { padding: 80, duration: duracion(1400), maxZoom: 14 });
