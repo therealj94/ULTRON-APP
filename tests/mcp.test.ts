@@ -134,8 +134,8 @@ test('la puerta: sin token 401, token ajeno 401, origen extraño 403, GET 405, v
     }
   }));
 
-test('sin configurar, /mcp no existe', () =>
-  conEntorno({ MCP_TOKEN: undefined }, async () => {
+test('sin configurar y con OAuth apagado, /mcp no existe', () =>
+  conEntorno({ MCP_TOKEN: undefined, MCP_OAUTH: '0' }, async () => {
     const s = await levantar('electrum');
     try {
       assert.equal(s.montado, false);

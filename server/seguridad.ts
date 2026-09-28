@@ -50,7 +50,7 @@ function secretoSesion(): string {
   return secretoDelArranque;
 }
 
-function firmarSesion(user: { correo: string; nombre: string; rol: string; at: number; exp: number; n: string }): string {
+function firmarSesion(user: { correo: string; nombre: string; rol: string; at: number; exp: number; n: string; aud?: string; tipo?: string; cid?: string }): string {
   const body = Buffer.from(JSON.stringify(user)).toString('base64url');
   const sig = crypto.createHmac('sha256', secretoSesion()).update(body).digest('base64url');
   return `u1.${body}.${sig}`;
@@ -82,6 +82,8 @@ function cuerpoFirmado(token: string): any | null {
 function leerSesionFirmada(token: string): Sesion | null {
   const p = cuerpoFirmado(token);
   if (!p?.correo || !p?.nombre) return null;
+  // Un token de MCP (server/mcp-oauth.ts) no abre la app: solo sirve en /mcp, y solo para leer.
+  if (p.aud) return null;
   if (Number(p.exp) && Date.now() > Number(p.exp)) return null;
   return {
     token,
@@ -110,6 +112,67 @@ export function emitirSesion(user: { correo: string; nombre: string; rol: string
   const s: Sesion = { token, correo: user.correo, nombre: user.nombre, rol: user.rol, at, exp };
   sesiones.set(token, s);
   return s;
+}
+
+/* ------------------------------------------------------- tokens de MCP */
+
+/**
+ * Los tokens que recibe un cliente MCP (Claude) tras entrar con la cuenta de Dr Electrum. Van
+ * firmados como una sesión, pero con `aud: 'mcp'`: la app los rechaza (leerSesionFirmada) y /mcp
+ * solo acepta estos. Heredan lo que ya protege a una sesión: se cierran con borrarSesion y mueren
+ * si la persona cambia la contraseña.
+ */
+export type TokenMcp = { correo: string; nombre: string; rol: string; cid: string; at: number; exp: number };
+
+export function emitirTokenMcp(
+  user: { correo: string; nombre: string; rol: string },
+  tipo: 'acceso' | 'refresco',
+  cid: string,
+  ttlMs: number,
+  at = Date.now()
+): { token: string; exp: number } {
+  const exp = at + ttlMs;
+  const token = firmarSesion({ ...user, at, exp, n: crypto.randomBytes(9).toString('base64url'), aud: 'mcp', tipo, cid });
+  return { token, exp };
+}
+
+export function leerTokenMcp(token: string, tipo: 'acceso' | 'refresco'): TokenMcp | null {
+  const p = cuerpoFirmado(String(token || ''));
+  if (!p || p.aud !== 'mcp' || p.tipo !== tipo || !p.correo || !p.cid) return null;
+  if (!Number(p.exp) || Date.now() > Number(p.exp)) return null;
+  if (sesionCerrada(token)) return null;
+  const t: TokenMcp = { correo: String(p.correo), nombre: String(p.nombre || ''), rol: String(p.rol || ''), cid: String(p.cid), at: Number(p.at) || 0, exp: Number(p.exp) };
+  const desde = claveCambiadaEn(t.correo.toLowerCase());
+  if (desde && t.at < desde) return null;
+  return t;
+}
+
+/**
+ * Datos firmados que no son sesiones (el id de un cliente registrado, un código de autorización).
+ * El prefijo entra en la firma: un código no se puede presentar como id de cliente ni al revés.
+ */
+export function firmarDato(prefijo: string, dato: object): string {
+  const body = Buffer.from(JSON.stringify(dato)).toString('base64url');
+  const sig = crypto.createHmac('sha256', secretoSesion()).update(`${prefijo}.${body}`).digest('base64url');
+  return `${prefijo}.${body}.${sig}`;
+}
+
+export function leerDato(prefijo: string, token: string): any | null {
+  const partes = String(token || '').split('.');
+  if (partes.length !== 3 || partes[0] !== prefijo) return null;
+  const expect = crypto.createHmac('sha256', secretoSesion()).update(`${prefijo}.${partes[1]}`).digest();
+  let got: Buffer;
+  try {
+    got = Buffer.from(partes[2], 'base64url');
+  } catch {
+    return null;
+  }
+  if (got.length !== expect.length || !crypto.timingSafeEqual(expect, got)) return null;
+  try {
+    return JSON.parse(Buffer.from(partes[1], 'base64url').toString('utf8'));
+  } catch {
+    return null;
+  }
 }
 
 /* ------------------------------------------------------- sesiones cerradas */

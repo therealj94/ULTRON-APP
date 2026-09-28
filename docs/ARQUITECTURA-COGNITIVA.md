@@ -132,7 +132,7 @@ A quién le llega el aviso de una solicitud nueva:
 | `POST /api/cognitivo/reglas/probar` | mando | «¿Qué pasaría si…?», sin ejecutar nada. |
 
 | `GET /api/cognitivo/estado` | mando | Qué servicios de la T4 responden ahora, pgvector y MCP. |
-| `POST /mcp` | portador `MCP_TOKEN` | Herramientas de lectura para otros agentes (ver fase 6). |
+| `POST /mcp` | OAuth con la cuenta de cada persona, o portador `MCP_TOKEN` | Herramientas de lectura para Claude y otros agentes (ver fase 6). |
 
 ## Fase 3 — Clasificador rápido (listo; Laya en sombra)
 
@@ -198,10 +198,25 @@ siempre. Se pide sin «pensamiento» y se limpia cualquier `<think>` que venga.
   documento estructurado: texto por página y **tablas fila por fila**. Verificado contra la forma
   real de docling-core. Se avisa que es OCR y que las cifras se comprueban contra el original.
 - **MCP** en `/mcp` (HTTP «streamable», sin estado): herramientas de **solo lectura** de esa
-  plataforma, para Claude Desktop, Claude Code o cualquier agente. Token `MCP_TOKEN` (24+
-  caracteres) atado a una persona del padrón (`MCP_QUIEN`) que tenga acceso a esa plataforma; cada
-  llamada queda en la traza (canal `mcp`) y pasa por las reglas. Probado con el cliente oficial del
-  SDK. Sin las dos variables, `/mcp` no existe.
+  plataforma, para Claude (web, escritorio, teléfono), Claude Code o cualquier agente. Cada
+  llamada queda en la traza (canal `mcp`) a nombre de quien la hizo y pasa por las reglas. Probado
+  con el cliente oficial del SDK.
+- **Conectar Claude con tu cuenta (OAuth, `server/mcp-oauth.ts`)**, sin llaves de API. En Claude:
+  *Configuración → Conectores → Agregar conector personalizado* y la dirección
+  `https://<servicio>/mcp`. Claude abre la pantalla de Dr Electrum: si el navegador ya tiene la
+  sesión, es un clic en «Permitir»; si no, correo y contraseña. Lo que hay detrás:
+  - Descubrimiento (RFC 9728 y 8414), registro dinámico de cliente (RFC 7591), PKCE S256
+    obligatorio, token de acceso de 1 hora y de refresco de 30 días que rota en cada uso.
+  - Solo vuelve a `https://claude.ai|claude.com/api/mcp/auth_callback` o a un cliente local
+    (`localhost`); `MCP_OAUTH_REDIRECTS` agrega direcciones exactas.
+  - El token dice `aud: mcp`: **no abre la app**, y una sesión de la app no abre `/mcp`.
+  - El padrón se mira en cada llamada: quitarle el acceso a alguien lo corta al instante. Cambiar
+    la contraseña o `POST /oauth/revoke` también.
+  - Nada en la base: cliente, código y tokens van firmados con `ULTRON_SESION_SECRETO`, así que
+    un redespliegue no desconecta a nadie. `MCP_OAUTH=0` lo apaga.
+- **Token fijo** (un agente sin navegador): `MCP_TOKEN` (24+ caracteres) atado a una persona del
+  padrón (`MCP_QUIEN`) con acceso a esa plataforma. Con `MCP_OAUTH=0` y sin las dos variables,
+  `/mcp` no existe.
 
   ```json
   { "mcpServers": { "dr-electrum": { "type": "http", "url": "https://<servicio>/mcp",
@@ -279,6 +294,7 @@ encontraron y quedó corregido, cada cosa con su prueba:
 | `EMBED_URL`, `EMBED_API_KEY`, `EMBED_DIM`, `EMBED_UMBRAL`, `EMBED_UMBRAL_CEREBRO` | Búsqueda por significado | Solo palabras; 1024; 0.35; 0.5 |
 | `MODELO_CHICO_URL`, `MODELO_CHICO_API_KEY`, `MODELO_CHICO_NOMBRE`, `MODELO_CHICO_MODO`, `MODELO_CHICO_TIMEOUT_MS` | Modelo chico | Apagado (`MODELO_CHICO_MODO=activo` lo enciende); 5 s |
 | `DOCLING_URL`, `DOCLING_API_KEY`, `DOCLING_TIMEOUT_MS` | OCR de escaneos | Los escaneos se rechazan diciendo por qué; 180 s |
-| `MCP_TOKEN`, `MCP_QUIEN`, `MCP_ORIGENES`, `MCP_TOPE_MINUTO` | Servidor MCP | `/mcp` no existe; —; sin navegadores; 60 |
+| `MCP_TOKEN`, `MCP_QUIEN`, `MCP_ORIGENES`, `MCP_TOPE_MINUTO` | Servidor MCP (token fijo) | solo OAuth; —; sin navegadores; 60 |
+| `MCP_OAUTH`, `MCP_OAUTH_REDIRECTS`, `URL_PUBLICA` | MCP con la cuenta de cada persona | encendido; solo Claude y localhost; la del pedido |
 | `INTERRUPTOR_MS` | Cuánto se salta un servicio de la T4 tras un fallo | 60 000 |
 | `EMBED_CONSULTA_MS` | Tope de la consulta de embeddings en un turno | 1 500 |
