@@ -469,14 +469,47 @@ const expediente_buscar: Herramienta = {
 
 
 /**
- * Qué parte de un texto son palabras de verdad (tres letras o más, con vocal). Un párrafo en español
- * pasa de 0,6; el OCR de una tabla girada («L I € os S LoLE vO6£8S!») no llega a 0,2.
+ * Qué parte de un texto NO está rota. Se cuenta lo roto, no lo bueno, para que una tabla de leyes
+ * bien leída (números, TEP20, DDH-07, g/t, «|») no pase por ilegible. Roto es lo que el OCR de una
+ * tabla o un plano girado deja y ningún texto real tiene: letras sueltas («L I l»), mayúsculas y
+ * minúsculas mezcladas dentro de la palabra («LoLE»), y símbolos o letras metidos entre cifras
+ * («vO6£8S!», «6€09», «[S3»). Medido sobre el OCR de los informes JICA: prosa y tablas de ensayes
+ * dan más de 0,6; las tablas y planos girados, menos.
  */
 export function legibilidad(texto: string): number {
-  const fichas = String(texto || '').split(/\s+/).filter(Boolean);
+  const fichas = String(texto || '')
+    .split(/\s+/)
+    .map((w) => w.replace(/^[«"'(¿¡]+|[.,;:)»"'?!]+$/g, ''))
+    .filter(Boolean);
   if (!fichas.length) return 1;
-  const palabras = fichas.filter((w) => /^[«"(¿¡]?[a-záéíóúñü]{3,}[.,;:)»"?!]?$/i.test(w) && /[aeiouáéíóú]/i.test(w));
-  return palabras.length / fichas.length;
+  const rota = (w: string) => {
+    if (/^[<>≤≥]/.test(w)) return false; // «<5», «<0.2»: bajo el límite de detección, en toda tabla de ensayes
+    if (w.length === 1) return !/^[aeoyAEOYNSWG0-9|\-–=+x×]$/.test(w); // y, a, o… y N/S/E/W de las coordenadas
+    if (/[a-záéíóúñü][A-ZÁÉÍÓÚÑÜ]/.test(w)) return true; // LoLE, vO6
+    if (/[£€¥¢§¤©®¬¦°¿¡]/.test(w) && !/^\d+([.,]\d+)?°$/.test(w)) return true; // 6€09 · ¿685€ (salvo 45°)
+    if (/\d/.test(w) && /[A-Za-záéíóúñü]/.test(w)) {
+      // Cifras con letras: solo valen los códigos (TEP20, DDH-07, 3C) y las cifras con unidad (12m, 3,5g/t).
+      return !(/^[A-Z]{1,6}-?\d{1,6}[A-Z]?$/.test(w) || /^\d{1,6}[A-Z]{1,3}$/.test(w) || /^\d+([.,]\d+)?(m|km|cm|mm|g|kg|t|mt|oz|ha|g\/t|ppm|ppb)$/i.test(w));
+    }
+    return /[\[\]{}<>$#@*_~^\\]/.test(w); // [S3 · $0
+  };
+  return 1 - fichas.filter(rota).length / fichas.length;
+}
+
+/**
+ * Las páginas de una lectura de `leerSeguido` que salieron ilegibles, una por una: seis páginas de
+ * prosa no pueden tapar la única que está rota, que suele ser justo la que se pidió.
+ */
+export function paginasIlegibles(texto: string, umbral = 0.6): number[] {
+  const partes = String(texto || '').split(/\[p\. (\d+)(?:, sigue)?\]\n/);
+  // Sin marcas de página (un .txt sin saltos): el texto entero cuenta como una página.
+  if (partes.length === 1) return legibilidad(texto) < umbral ? [0] : [];
+  const malas: number[] = [];
+  for (let i = 1; i + 1 < partes.length; i += 2) {
+    const n = Number(partes[i]);
+    if (partes[i + 1].trim().length >= 40 && legibilidad(partes[i + 1]) < umbral && !malas.includes(n)) malas.push(n);
+  }
+  return malas;
 }
 
 /**
@@ -515,8 +548,10 @@ const expediente_leer: Herramienta = {
     const rango = l.hasta > l.desde ? `páginas ${l.desde} a ${l.hasta}` : `página ${l.desde}`;
     // Un OCR de tablas o planos girados da letras sueltas y símbolos. Pasa sobre todo cuando se va a
     // la página que dice el índice: el índice cuenta páginas IMPRESAS y el archivo, las del PDF.
-    const ilegible = legibilidad(l.texto) < 0.35
-      ? `[Estas páginas salieron casi ilegibles en el OCR (tablas o planos girados). Si fuiste por el número del índice, ese número es de la página impresa y no coincide con la del archivo: buscá el título del capítulo con expediente_buscar y documento «${l.documento}».] `
+    const malas = paginasIlegibles(l.texto);
+    const cuales = malas.length && malas[0] !== 0 ? (malas.length === 1 ? `La página ${malas[0]} salió` : `Las páginas ${malas.join(', ')} salieron`) : 'Esto salió';
+    const ilegible = malas.length
+      ? `[${cuales} casi ilegible${malas.length > 1 ? 's' : ''} en el OCR (tabla o plano girado). Si fuiste por el número del índice, ese número es de la página impresa y no coincide con la del archivo: buscá el título del capítulo con expediente_buscar y documento «${l.documento}».] `
       : '';
     const ingles = /\b(the|and|of|with|grade|vein|drill|sample)\b/i.test(l.texto.slice(0, 3000));
     return {
