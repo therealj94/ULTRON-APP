@@ -12,7 +12,7 @@ import type { Express, Request, Response } from 'express';
 import type { Geometry, Position } from 'geojson';
 import proj4 from 'proj4';
 import { exigirPlataforma, limitar } from '../seguridad';
-import { consulta, geometriaDe, hayBase } from './db';
+import { consulta, conTextoReparado, geometriaDe, hayBase } from './db';
 
 const UTM16_WGS = '+proj=utm +zone=16 +datum=WGS84 +units=m +no_defs';
 const UTM16_NAD27 = '+proj=utm +zone=16 +ellps=clrk66 +towgs84=0,125,194,0,0,0,0 +units=m +no_defs';
@@ -148,7 +148,7 @@ export function montarRutasExportar(app: Express) {
       const [c] = await consulta<{ nombre: string; titular: string | null; expediente: string | null; estado: string | null; ha: number | null }>(
         `SELECT nombre, titular, expediente, estado, hectareas::float8 AS ha FROM concesion WHERE id = $1`,
         [id]
-      );
+      ).then(conTextoReparado);
       const geo = c ? await geometriaDe(id) : null;
       if (!c || !geo) return res.status(404).json({ error: 'Esa concesión no está o no tiene geometría.', honesto: true });
       const datos: Array<[string, string]> = [

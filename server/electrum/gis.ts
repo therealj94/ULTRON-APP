@@ -328,6 +328,15 @@ const TILDES: Record<string, string> = {
   'hidroel?ctrico': 'hidroeléctrico', 'l?pez': 'lópez', 'para?so': 'paraíso', 'lim?n': 'limón', 'atl?ntida': 'atlántida',
   'trav?s': 'través', 'v?as': 'vías', 'tabl?n': 'tablón', 'desvi?': 'desvió', 'ram?rez': 'ramírez',
   'chamelec?n': 'chamelecón', 'cort?z': 'cortéz', 'miner?a': 'minería', 'met?lica': 'metálica', 'met?lico': 'metálico',
+  // Las que llegaron con «�» (U+FFFD) en vez de «?»: el mismo daño, otro exportador.
+  'mar?as': 'marías', 'b?rbara': 'bárbara', 'progrese?os': 'progreseños', 'ingenier?a': 'ingeniería', '?vila': 'ávila',
+  'pe?a': 'peña', 'vel?squez': 'velásquez', 'cort?s': 'cortés', 'casta?os': 'castaños', 'tepemech?n': 'tepemechín',
+  'p?treos': 'pétreos', 'esp?ritu': 'espíritu', 'm?ltiples': 'múltiples', 'r?os': 'ríos', '?ridos': 'áridos',
+  'hern?ndez': 'hernández', 'andaluc?a': 'andalucía', 'pi?a': 'piña', 'gir?n': 'girón', 'ul?a': 'ulúa', 'fil?n': 'filón',
+  'chant?n': 'chantón', 'murci?lago': 'murciélago', 'pe?on': 'peñon', 'mara?on': 'marañon', 'jehov?': 'jehová',
+  'ordo?ez': 'ordoñez', 'caba?as': 'cabañas', 'am?rica': 'américa', 'pe?itas': 'peñitas', 'ren?': 'rené',
+  'agr?colas': 'agrícolas', 'garc?a': 'garcía', 'liberte?o': 'liberteño', 'r?cord': 'récord', 'd?az': 'díaz',
+  'rub?': 'rubí', 'ilangue?os': 'ilangueños', 'cofrad?a': 'cofradía', 'mart?n': 'martín',
 };
 
 /**
@@ -336,8 +345,12 @@ const TILDES: Record<string, string> = {
  * incluida una pregunta de verdad, queda igual. Respeta mayúsculas: «DISE?O» → «DISEÑO».
  */
 export function reponerTildes(s: string): string {
-  if (!s || !s.includes('?')) return s;
-  return s.replace(/[A-Za-zÀ-ÿ]+\?[A-Za-zÀ-ÿ?]*/g, (w) => {
+  if (!s) return s;
+  // «�» es el mismo hueco que «?»: se trata igual, y si no se sabe qué letra era queda «?», que se lee mejor.
+  if (s.includes('\uFFFD')) s = s.replace(/\uFFFD/g, '?');
+  if (!s.includes('?')) return s;
+  return s.replace(/[A-Za-zÀ-ÿ]*\?[A-Za-zÀ-ÿ?]*/g, (w) => {
+    if (w === '?') return w;
     const bajo = w.toLowerCase();
     const arreglo = TILDES[bajo] ?? bajo.replace(/([cs])i\?n$/, '$1ión');
     if (arreglo.includes('?')) return w;

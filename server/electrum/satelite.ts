@@ -15,7 +15,7 @@
 import type { Express, Request, Response } from 'express';
 import { exigirPlataforma, identidadDe, limitar } from '../seguridad';
 import { nivelDe } from '../../lib/acceso';
-import { consulta, hayBase } from './db';
+import { consulta, conTextoReparado, hayBase } from './db';
 
 /** Hectáreas por clase: [moderada, alta, muy alta]. */
 type Tres = [number, number, number];
@@ -147,8 +147,29 @@ export async function perdidaPorConcesion(): Promise<Map<number, number>> {
   return new Map(filas.map((f) => [Number(f.id), Number(f.p)]));
 }
 
+/** Las concesiones con más caída fuerte de vegetación: para el tablero. */
+export async function mayoresPerdidas(limite = 8): Promise<Array<{ id: number; nombre: string; ha: number; pct: number | null; periodo: string }>> {
+  await asegurarSatelite();
+  const filas = await consulta<{ id: string; nombre: string; ha: number; comp: number; periodo: string }>(
+    `SELECT c.id::text, c.nombre, ((s.datos->'veg'->>1)::float8 + (s.datos->'veg'->>2)::float8) AS ha, (s.datos->>'ha_comparable')::float8 AS comp, s.periodo
+       FROM satelite_concesion s JOIN concesion c ON c.id = s.concesion_id
+      ORDER BY ha DESC NULLS LAST LIMIT $1`,
+    [limite]
+  ).then(conTextoReparado);
+  return filas.filter((f) => Number(f.ha) > 0).map((f) => ({ id: Number(f.id), nombre: f.nombre, ha: Math.round(Number(f.ha) * 10) / 10, pct: f.comp > 0 ? Math.round((Number(f.ha) / Number(f.comp)) * 1000) / 10 : null, periodo: f.periodo }));
+}
+
 export function montarRutasSatelite(app: Express) {
   const E = exigirPlataforma('electrum');
+  app.get('/api/electrum/satelite/mayores', E, limitar(30), async (_req: Request, res: Response) => {
+    if (!hayBase()) return res.status(503).json({ error: 'El catastro no está conectado en este servidor.', honesto: true });
+    try {
+      return res.json({ lista: await mayoresPerdidas(8), honesto: true });
+    } catch (e: any) {
+      console.error('[satelite] mayores:', String(e?.message || e).slice(0, 200));
+      return res.status(500).json({ error: 'No pude leer las mediciones del satélite.', honesto: true });
+    }
+  });
   app.post('/api/electrum/satelite/cargar', E, limitar(10), async (req: Request, res: Response) => {
     if (!hayBase()) return res.status(503).json({ error: 'El catastro no está conectado en este servidor.', code: 'sin_base', honesto: true });
     const nivel = nivelDe(identidadDe(req), 'electrum');

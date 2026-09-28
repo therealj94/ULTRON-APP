@@ -15,7 +15,7 @@
 import type { Express, Request, Response } from 'express';
 import { exigirPlataforma, identidadDe, limitar } from '../seguridad';
 import { nivelDe } from '../../lib/acceso';
-import { consulta, hayBase } from './db';
+import { consulta, conTextoReparado, hayBase } from './db';
 import { geologiaDe, type Geologia } from './geologia';
 import { asegurarMuestras, ELEMENTOS, type Elemento } from './muestras';
 import { asegurarSatelite, type SateliteConcesion } from './satelite';
@@ -239,7 +239,7 @@ export function montarRutasProspectividad(app: Express) {
       const top = await consulta<{ id: string; nombre: string; puntaje: number; datos: Prospectividad }>(
         `SELECT c.id::text AS id, c.nombre, p.puntaje, p.datos FROM prospectividad_concesion p JOIN concesion c ON c.id = p.concesion_id
           ORDER BY p.puntaje DESC, c.nombre LIMIT 30`
-      );
+      ).then(conTextoReparado);
       const [{ n }] = await consulta<{ n: number }>(`SELECT count(*)::int AS n FROM prospectividad_concesion`);
       return res.json({
         calculadas: n,

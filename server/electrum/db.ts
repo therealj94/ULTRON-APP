@@ -654,7 +654,7 @@ export async function catastroGeojson(limite = 4000, toleranciaGrados = 0.0001):
       ORDER BY hectareas DESC NULLS LAST
       LIMIT $1`,
     [limite, toleranciaGrados]
-  );
+  ).then(conTextoReparado);
   return {
     type: 'FeatureCollection',
     features: filas.map((f) => ({
@@ -678,7 +678,7 @@ export async function traslapesGeojson(limite = 3000, toleranciaGrados = 0.0001)
       ORDER BY t.hectareas DESC
       LIMIT $1`,
     [limite, toleranciaGrados]
-  );
+  ).then(conTextoReparado);
   return {
     type: 'FeatureCollection',
     features: filas.map((f) => ({ type: 'Feature', geometry: JSON.parse(f.g) as Geometry, properties: { a: f.a, b: f.b, hectareas: f.ha } })),
