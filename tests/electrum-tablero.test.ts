@@ -114,6 +114,7 @@ test('tablero nacional, contra PostGIS', { skip: hayBase() ? false : 'sin ELECTR
   assert.equal(t.areasProtegidas!.lista[0].con, 'Reserva Azul');
   assert.equal(t.microcuencas!.concesiones, 1);
   assert.equal(t.microcuencas!.lista[0].concesion, 'Cerro Azul');
+  assert.deepEqual(t.incompletas, [], 'todo llegó a tiempo');
   // El polígono que cubre todo no cuenta: solo los dos caseríos (puntos) dentro de las concesiones.
   assert.equal(t.poblados!.caserios, 3, JSON.stringify(t.poblados)); // El Pino cae en las dos que se traslapan
   assert.ok(t.poblados!.lista.every((p) => !p.nombres.includes('Todo el país')));
