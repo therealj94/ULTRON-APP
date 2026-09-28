@@ -318,6 +318,42 @@ async function atenderArchivo(
   return null;
 }
 
+/**
+ * A quien no está en el padrón ya no se le contesta con silencio: quien escribía desde una cuenta
+ * nueva creía que el bot estaba caído (28-sep). En chat privado recibe UNA respuesta amable por día,
+ * con su número para pedir acceso; en un grupo no se dice nada. A quien manda en Electrum le llega el
+ * aviso, también una vez por día y por persona, para que decida si le da acceso.
+ */
+const rechazosAvisados = new Map<string, number>();
+export async function avisarRechazo(chatId: string, userId: string, nombre: string, ahora = Date.now()): Promise<{ respondido: boolean; avisados: number }> {
+  const quien = String(userId || chatId);
+  if ((rechazosAvisados.get(quien) || 0) > ahora - 86_400_000) return { respondido: false, avisados: 0 };
+  if (rechazosAvisados.size > 2000) rechazosAvisados.clear();
+  rechazosAvisados.set(quien, ahora);
+  let respondido = false;
+  if (String(chatId) === String(userId)) {
+    const r = await responderElectrum(
+      chatId,
+      `Hola. Soy Dr Electrum FP, un asistente privado. Tu cuenta de Telegram todavía no tiene acceso: pedíselo a José y pasale este número: ${quien}.`
+    );
+    respondido = r.ok;
+  }
+  const alias = String(nombre || 'sin nombre').replace(/[\u0000-\u001f]/g, ' ').slice(0, 60);
+  let avisados = 0;
+  for (const p of padron()) {
+    if (nivelDe(p, 'electrum') !== 'mando') continue;
+    for (const destino of p.telegram) {
+      if (String(destino) === quien) continue;
+      const r = await responderElectrum(
+        String(destino),
+        `Aviso: «${alias}» (Telegram ${quien}) le escribió a Dr Electrum y no está en el padrón, así que no le contesté más que para decirle que pida acceso.${String(chatId) === String(userId) ? '' : ` Fue en un grupo (${chatId}).`} Si tiene que entrar, decí con qué nivel: consulta, trabajo o mando.`
+      );
+      if (r.ok) avisados++;
+    }
+  }
+  return { respondido, avisados };
+}
+
 /* ------------------------------------------------------------------ el turno */
 
 /**
@@ -334,6 +370,7 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
   const quien = autorizarElectrum(parsed.chatId, parsed.userId, parsed.nombre);
   if (!quien) {
     console.warn('[electrum] telegram rechazado', parsed.chatId, parsed.userId, parsed.nombre);
+    await avisarRechazo(parsed.chatId, parsed.userId, parsed.nombre);
     return { estado: 'rechazado', chatId: parsed.chatId };
   }
 
