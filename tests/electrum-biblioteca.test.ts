@@ -584,3 +584,62 @@ test('expediente_leer: lee seguido desde una página, dice dónde sigue y elige 
     await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-lee-%'`);
   }
 });
+
+test('cargar texto (OCR) en un documento que ya está: sin duplicar, con guardia y con permisos', { skip: sinBase }, async () => {
+  await bib.asegurarBiblioteca();
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-txt-%'`);
+  const llave = process.env.ELECTRUM_CLAVE;
+  process.env.ELECTRUM_CLAVE = 'llave-de-prueba-biblioteca';
+  fijarCuentasAprobadas([
+    { id: 'lector-txt', nombre: 'Lector', correos: ['lector@mina.hn'], acceso: { electrum: 'lee' } } as any,
+    { id: 'obrero-txt', nombre: 'Obrero', correos: ['obrero@mina.hn'], acceso: { electrum: 'escribe' } } as any,
+  ]);
+  const lector = emitirSesion({ correo: 'lector@mina.hn', nombre: 'Lector', rol: 'x' }).token;
+  const obrero = emitirSesion({ correo: 'obrero@mina.hn', nombre: 'Obrero', rol: 'x' }).token;
+  // Un escaneo anotado «sin texto», con su original.
+  const [esc] = await consulta<{ id: number }>(
+    `INSERT INTO documento (nombre, tipo, paginas, archivo, carpeta, meta) VALUES ('prueba-txt-escaneo.pdf', 'escaneo', 3, 's3://cubo/entrada/x/prueba-txt-escaneo.pdf', 'Pruebas Texto', '{"pendiente":"ocr"}') RETURNING id`
+  );
+  const { srv } = await levantar();
+  const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  const subir = async (id: number, nombre: string, texto: string, token: string, forzar = false) => {
+    const r = await fetch(`${base}/api/electrum/biblioteca/texto/${id}?nombre=${encodeURIComponent(nombre)}${forzar ? '&forzar=1' : ''}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/octet-stream', 'x-ultron-sesion': token },
+      body: Buffer.from(texto),
+    });
+    return { status: r.status, json: (await r.json().catch(() => ({}))) as any };
+  };
+  const ocr = ['Página 1. Informe de la zona de Tatanacho, solicitud de concesión minera.', 'Página 2. Recursos estimados de 6,19 Mt con 0,67 g/t de oro y 0,76 % de cobre.', 'Página 3. Conclusiones: se recomienda perforación adicional en el bloque norte.'].join('\f');
+  try {
+    assert.equal((await subir(esc.id, 'escaneo (OCR).txt', ocr, lector)).status, 403, 'el lector no carga texto');
+    const r = await subir(esc.id, 'escaneo (OCR).txt', ocr, obrero);
+    assert.equal(r.status, 200);
+    assert.equal(r.json.ok, true, r.json.dicho);
+    const [d] = await consulta<{ archivo: string; nombre: string; carpeta: string; paginas: number; meta: any }>(`SELECT archivo, nombre, carpeta, paginas, meta FROM documento WHERE id = $1`, [esc.id]);
+    assert.deepEqual([d.archivo, d.nombre, d.carpeta, d.paginas], ['s3://cubo/entrada/x/prueba-txt-escaneo.pdf', 'prueba-txt-escaneo.pdf', 'Pruebas Texto', 3], 'mismo documento, mismo original');
+    assert.equal(d.meta.pendiente, undefined, 'ya no está pendiente de OCR');
+    assert.equal(d.meta.texto_de, 'escaneo (OCR).txt');
+    const f = await consulta<{ pagina: number; texto: string }>(`SELECT pagina, texto FROM fragmento WHERE documento_id = $1 ORDER BY orden`, [esc.id]);
+    assert.ok(f.some((x) => Number(x.pagina) === 2 && /6,19 Mt/.test(x.texto)), 'citable con página');
+    const [n] = await consulta<{ n: number }>(`SELECT count(*)::int AS n FROM documento WHERE nombre LIKE 'prueba-txt-%'`);
+    assert.equal(n.n, 1, 'no se duplicó');
+
+    // Mucho menos texto que el que ya tiene: no, salvo forzar.
+    const corto = await subir(esc.id, 'otro.txt', 'Página 1. Una línea sola de un archivo equivocado.', obrero);
+    assert.equal(corto.json.ok, false);
+    assert.match(corto.json.dicho, /forzar/);
+    const forzado = await subir(esc.id, 'otro.txt', 'Página 1. Una línea sola de un archivo equivocado.', obrero, true);
+    assert.equal(forzado.json.ok, true);
+
+    const bit = await consulta<{ quien: string; detalle: any }>(`SELECT quien, detalle FROM biblioteca_bitacora WHERE accion = 'texto' AND objeto = $1 ORDER BY id`, [`documento ${esc.id}`]);
+    assert.deepEqual(bit.map((b) => [b.quien, b.detalle.ok]), [['Obrero', true], ['Obrero', false], ['Obrero', true]]);
+  } finally {
+    srv.close();
+    fijarCuentasAprobadas([]);
+    if (llave === undefined) delete process.env.ELECTRUM_CLAVE;
+    else process.env.ELECTRUM_CLAVE = llave;
+    await consulta(`DELETE FROM biblioteca_bitacora WHERE objeto = $1`, [`documento ${esc.id}`]);
+    await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-txt-%'`);
+  }
+});

@@ -24,7 +24,7 @@
  * contesta con fuentes, «¿quién borró el informe de Minas de Oro?» tiene que tener respuesta.
  */
 import { consulta, enTransaccion, hayBase } from './db';
-import { huellaDe, releerDocumento } from './aprender';
+import { cargarTexto, huellaDe, releerDocumento } from './aprender';
 import { olvidarTablero } from './tablero';
 import { bajarExpediente, bucketExpedientes } from '../../lib/s3';
 
@@ -477,6 +477,15 @@ export async function releer(id: number, quien?: string | null) {
   const r = await releerDocumento(id, nombreLector, bajado.datos);
   if (r.ok) await consulta(`UPDATE documento SET releido = now() WHERE id = $1`, [id]);
   await anotar(quien, 'releer', `documento ${id}`, { nombre: d.nombre, ok: r.ok, antes: r.antes, ahora: r.ahora });
+  return r;
+}
+
+/** Cargar el texto de otra lectura (un OCR) en un documento que ya está. Ver `cargarTexto`. */
+export async function cargarTextoEn(id: number, nombre: string, datos: Buffer, quien?: string | null, forzar = false) {
+  await asegurarBiblioteca();
+  const r = await cargarTexto(id, nombre, datos, { forzar, por: quien });
+  if (r.ok) await consulta(`UPDATE documento SET releido = now() WHERE id = $1`, [id]);
+  await anotar(quien, 'texto', `documento ${id}`, { archivo: nombre, ok: r.ok, antes: r.antes, ahora: r.ahora, forzar });
   return r;
 }
 

@@ -8,7 +8,7 @@
  */
 import { useCallback, useRef, useState } from 'react';
 import { headersElectrum } from '../acceso';
-import type { CapaExtra, RolVisible } from './captura';
+import type { CapaExtra, RasterEncendido, RasterEscaneado, RolVisible } from './captura';
 import { COLOR_ROCA, ESTILO_ROL, NOMBRE_ROCA } from './capas';
 
 const AMBAR = '#FFAE3B';
@@ -19,15 +19,41 @@ type Disponible = { id: number; nombre: string; rol: RolVisible; entidades: numb
  * que terminan de bajar casi a la vez armaban cada una su lista con la vieja y la segunda borraba
  * a la primera (revisión de Codex en #44).
  */
-export function CapasControl({ encendidas, onCambio }: { encendidas: CapaExtra[]; onCambio: (f: (antes: CapaExtra[]) => CapaExtra[]) => void }) {
+export function CapasControl({
+  encendidas,
+  onCambio,
+  rasters = [],
+  onRasters,
+  onEncuadrar,
+}: {
+  encendidas: CapaExtra[];
+  onCambio: (f: (antes: CapaExtra[]) => CapaExtra[]) => void;
+  /** Mapas escaneados encendidos (JICA…), con su transparencia. */
+  rasters?: RasterEncendido[];
+  onRasters?: (f: (antes: RasterEncendido[]) => RasterEncendido[]) => void;
+  /** Llevar el mapa al encuadre de un mapa escaneado al encenderlo. */
+  onEncuadrar?: (encuadre: [number, number, number, number]) => void;
+}) {
   const [abierto, setAbierto] = useState(false);
   const [lista, setLista] = useState<Disponible[] | null>(null);
+  const [escaneados, setEscaneados] = useState<RasterEscaneado[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [bajando, setBajando] = useState<number | null>(null);
   const guardadas = useRef(new Map<number, CapaExtra>());
 
   const abrir = useCallback(async () => {
     setAbierto((a) => !a);
+    /*
+     * Los mapas escaneados son un extra: si su índice falla (o llega vacío porque el cubo no
+     * contestó), la lista de capas sigue sirviendo y el índice se vuelve a pedir la próxima vez que
+     * se abra la caja, en vez de quedar vacío toda la sesión.
+     */
+    if (!escaneados?.length) {
+      fetch('/api/electrum/mapa/rasters', { headers: headersElectrum() })
+        .then((rr) => (rr.ok ? rr.json() : null))
+        .then((jr) => setEscaneados(Array.isArray(jr?.rasters) ? jr.rasters : []))
+        .catch(() => setEscaneados((antes) => antes ?? []));
+    }
     if (lista) return;
     try {
       const r = await fetch('/api/electrum/mapa/capas', { headers: headersElectrum() });
@@ -37,7 +63,17 @@ export function CapasControl({ encendidas, onCambio }: { encendidas: CapaExtra[]
     } catch {
       setError('No alcancé el servidor.');
     }
-  }, [lista]);
+  }, [lista, escaneados]);
+
+  const alternarRaster = useCallback(
+    (x: RasterEscaneado) => {
+      if (!onRasters) return;
+      if (rasters.some((r) => r.clave === x.clave)) return onRasters((antes) => antes.filter((r) => r.clave !== x.clave));
+      onRasters((antes) => (antes.some((r) => r.clave === x.clave) ? antes : [...antes, { ...x, opacidad: 0.75 }]));
+      onEncuadrar?.(x.encuadre);
+    },
+    [rasters, onRasters, onEncuadrar]
+  );
 
   const alternar = useCallback(
     async (c: Disponible) => {
@@ -104,6 +140,52 @@ export function CapasControl({ encendidas, onCambio }: { encendidas: CapaExtra[]
               );
             })}
           </ul>
+          {!!escaneados?.length && (
+            <div className="mt-3 border-t border-white/[0.08] pt-2">
+              <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
+                Mapas escaneados
+              </div>
+              <ul className="space-y-1">
+                {escaneados.map((x) => {
+                  const on = rasters.find((r) => r.clave === x.clave);
+                  return (
+                    <li key={x.clave}>
+                      <label className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-1 hover:bg-white/[0.05]">
+                        <input type="checkbox" checked={!!on} onChange={() => alternarRaster(x)} className="mt-[3px] accent-[#FFAE3B]" />
+                        <span className="min-w-0">
+                          <span className="block leading-snug text-[#E7EEF2]">{x.nombre}</span>
+                          <span className="block truncate text-[11px] text-[#7F939D]" title={x.notas || x.fuente}>
+                            {[x.fuente, x.escala].filter(Boolean).join(' · ')}
+                          </span>
+                        </span>
+                      </label>
+                      {on && (
+                        <div className="flex items-center gap-2 pl-7 pr-1 pb-1">
+                          <span className="font-mono text-[10px] text-[#7F939D]">transparencia</span>
+                          <input
+                            type="range"
+                            min={10}
+                            max={100}
+                            step={5}
+                            value={Math.round(on.opacidad * 100)}
+                            aria-label={`Transparencia de ${x.nombre}`}
+                            onChange={(e) => {
+                              const v = Number(e.target.value) / 100;
+                              onRasters?.((antes) => antes.map((r) => (r.clave === x.clave ? { ...r, opacidad: v } : r)));
+                            }}
+                            className="h-1 flex-1 accent-[#FFAE3B]"
+                          />
+                          <button type="button" onClick={() => onEncuadrar?.(x.encuadre)} className="font-mono text-[10px] text-[#B9C7CE] hover:text-white cursor-pointer">
+                            ir
+                          </button>
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
           {hayRoca && (
             <div className="mt-3 border-t border-white/[0.08] pt-2">
               <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase text-[#7F939D]">Clases de roca</div>
@@ -126,7 +208,7 @@ export function CapasControl({ encendidas, onCambio }: { encendidas: CapaExtra[]
         aria-expanded={abierto}
         className="pointer-events-auto shrink-0 flex items-center gap-2 rounded-full border border-white/15 bg-black/75 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] uppercase text-[#DCE5EA] shadow-lg backdrop-blur-md hover:border-white/30 cursor-pointer"
       >
-        <span aria-hidden>▤</span> Capas{encendidas.length ? ` · ${encendidas.length}` : ''}
+        <span aria-hidden>▤</span> Capas{encendidas.length + rasters.length ? ` · ${encendidas.length + rasters.length}` : ''}
       </button>
     </div>
   );

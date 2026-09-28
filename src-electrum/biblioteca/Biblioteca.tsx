@@ -1038,6 +1038,7 @@ function Detalle({
                 {!i.original ? 'Sin original para releer' : esFoto(d?.archivo || i.nombre) ? 'Foto: se vuelve a subir' : 'Releer del original'}
               </Boton>
             )}
+            {ref_.clase === 'documento' && <CargarTexto id={ref_.id} sinTexto={i.estado === 'sin_texto'} onHecho={(txt) => onCambio(txt)} onError={setError} />}
             {nivel === 'mando' && (
               <Boton peligro onClick={() => onBorrar(ref_)}>
                 Eliminar
@@ -1047,6 +1048,56 @@ function Detalle({
         )}
       </aside>
     </div>
+  );
+}
+
+/**
+ * Subir el texto de un OCR (o de otra lectura mejor) a ESTE documento, en vez de subirlo como uno
+ * nuevo: el escaneo deja de estar «sin texto» y no queda duplicado. Si trae mucho menos texto que
+ * el que ya había, el servidor lo rechaza y aquí se pregunta si forzar.
+ */
+function CargarTexto({ id, sinTexto, onHecho, onError }: { id: number; sinTexto: boolean; onHecho: (txt: string) => void; onError: (e: string) => void }) {
+  const entrada = useRef<HTMLInputElement>(null);
+  const [yendo, setYendo] = useState(false);
+  const mandar = async (f: File, forzar = false): Promise<void> => {
+    setYendo(true);
+    onError('');
+    try {
+      const r = await fetch(`${R}/texto/${id}?nombre=${encodeURIComponent(f.name)}${forzar ? '&forzar=1' : ''}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/octet-stream', ...headersElectrum() },
+        body: f,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) return onError(j.error || 'No pude cargar el texto.');
+      if (!j.ok) {
+        if (!forzar && /forzar/.test(j.dicho || '') && window.confirm(`${j.dicho}\n\n¿Cargarlo igual?`)) return mandar(f, true);
+        return onError(j.dicho || 'No se cargó.');
+      }
+      onHecho(j.dicho);
+    } catch {
+      onError('No alcancé el servidor.');
+    } finally {
+      setYendo(false);
+    }
+  };
+  return (
+    <>
+      <input
+        ref={entrada}
+        type="file"
+        accept=".txt,.md,.pdf,.docx,.doc,.rtf"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (f) void mandar(f);
+        }}
+      />
+      <Boton onClick={() => entrada.current?.click()} disabled={yendo}>
+        {yendo ? 'Cargando texto…' : sinTexto ? 'Cargar texto (OCR)' : 'Reemplazar texto'}
+      </Boton>
+    </>
   );
 }
 
@@ -1305,6 +1356,7 @@ const ACCION: Record<string, string> = {
   carpeta: 'cambió la carpeta',
   eliminar: 'eliminó',
   releer: 'releyó',
+  texto: 'cargó texto en',
   importar: 'importación',
 };
 
@@ -1349,6 +1401,8 @@ function resumenDetalle(f: any): string {
       return d.concesiones ? `con ${nf(d.concesiones)} concesiones` : '';
     case 'releer':
       return d.ok ? `${nf(d.antes || 0)} → ${nf(d.ahora || 0)} caracteres` : 'no cambió';
+    case 'texto':
+      return d.ok ? `${d.archivo || ''} · ${nf(d.antes || 0)} → ${nf(d.ahora || 0)} caracteres` : `${d.archivo || ''} · no se cargó`;
     case 'importar':
       return d.estado ? `${d.estado}${d.capasNuevas ? ` · ${nf(d.capasNuevas)} capas nuevas` : ''}` : `${d.prefijo || ''} · ${nf(d.total || 0)} archivos, ${nf(d.omitidos || 0)} omitidos`;
     default:

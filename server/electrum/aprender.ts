@@ -265,6 +265,57 @@ export async function releerDocumento(
   };
 }
 
+/**
+ * Cargar a un documento que YA está el texto de otra lectura: el OCR de un escaneo que quedó «sin
+ * texto», o uno mejor (páginas giradas enderezadas antes de leerlas). El documento conserva su
+ * nombre, su carpeta y su original; cambian solo sus fragmentos. Así un escaneo no queda duplicado
+ * en «el PDF sin texto» más «el .txt del OCR», y una reimportación no lo vuelve a traer (su original
+ * sigue anotado).
+ *
+ * `nombre` es el del archivo que trae el texto: decide el lector (.txt con \f entre páginas, .pdf
+ * con capa de texto, .docx…). Si el texto nuevo trae menos de la mitad que el que ya hay, no se
+ * toca salvo `forzar`: probablemente es otro archivo o una lectura peor.
+ */
+export async function cargarTexto(
+  id: number,
+  nombre: string,
+  datos: Buffer,
+  opts: { forzar?: boolean; por?: string | null } = {}
+): Promise<{ ok: boolean; dicho: string; antes: number; ahora: number; paginas?: number; fragmentos?: number }> {
+  const [d] = await consulta<{ nombre: string; car: number }>(
+    `SELECT d.nombre, coalesce((SELECT sum(length(f.texto)) FROM fragmento f WHERE f.documento_id = d.id), 0)::int AS car FROM documento d WHERE d.id = $1`,
+    [id]
+  );
+  if (!d) return { ok: false, dicho: 'Ese documento ya no existe.', antes: 0, ahora: 0 };
+  const antes = Number(d.car || 0);
+  const leido = await leerDocumento(nombre, datos);
+  if (leido.ok === false) return { ok: false, dicho: leido.dicho, antes, ahora: 0 };
+  const ahora = leido.trozos.reduce((n, t) => n + t.texto.length, 0);
+  if (!ahora) return { ok: false, dicho: 'El archivo no trae texto que se pueda indexar.', antes, ahora };
+  if (!opts.forzar && antes > 0 && ahora < antes * 0.5) {
+    return {
+      ok: false,
+      dicho: `El texto nuevo trae ${ahora.toLocaleString('es-ES')} caracteres, menos de la mitad de los ${antes.toLocaleString('es-ES')} que ya tiene: parece otro archivo o una lectura peor. Si es a propósito, cargalo con «forzar».`,
+      antes,
+      ahora,
+    };
+  }
+  await reemplazarFragmentos(id, leido.paginas.length, leido.trozos, d.nombre);
+  // Deja de estar pendiente de OCR, y queda dicho de dónde salió el texto.
+  await consulta(
+    `UPDATE documento SET meta = (meta - 'pendiente') || jsonb_build_object('texto_de', $2::text, 'texto_cargado', now()::text, 'texto_por', $3::text) WHERE id = $1`,
+    [id, nombre.slice(0, 200), opts.por || null]
+  );
+  return {
+    ok: true,
+    dicho: `Texto cargado en «${d.nombre}»: de ${antes.toLocaleString('es-ES')} a ${ahora.toLocaleString('es-ES')} caracteres, ${leido.paginas.length} páginas, ${leido.trozos.length} fragmentos.`,
+    antes,
+    ahora,
+    paginas: leido.paginas.length,
+    fragmentos: leido.trozos.length,
+  };
+}
+
 /** Huella del contenido, no del nombre: el mismo expediente llega con veinte nombres distintos. */
 export function huellaDe(datos: Buffer): string {
   return crypto.createHash('md5').update(datos).digest('hex');

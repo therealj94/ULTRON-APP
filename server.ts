@@ -69,6 +69,7 @@ import { identidadDe, exigirPlataforma } from './server/seguridad';
 import { cuentaDe, cuentasDisponibles, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
 import { montarRutasCuentas } from './server/cuentas-rutas';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
+import { montarRutasTeselas } from './server/electrum/teselas';
 import { asegurarBiblioteca } from './server/electrum/biblioteca';
 import { expedientesListo, guardarExpediente } from './lib/s3';
 import { createHash } from 'node:crypto';
@@ -1188,6 +1189,7 @@ function nombreYRolDe(correo: string, nombreCuenta?: string) {
 
 // El panel de infraestructura de lo que sabe Dr Electrum (carpetas, estados, releer, importar).
 if (ES_ELECTRUM) montarRutasBiblioteca(app);
+if (ES_ELECTRUM) montarRutasTeselas(app);
 
 montarRutasCuentas(app, {
   plataforma: PLATAFORMA,
