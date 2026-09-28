@@ -732,7 +732,8 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     if (traslapes) asegurarCapas(m);
   }, [traslapes, listo]);
 
-  // El pulso de las alertas: opacidad y grosor que respiran, ~30 cuadros por segundo; quieto si se pidió menos movimiento.
+  // El pulso de las alertas: opacidad y grosor que respiran, ~30 cuadros por segundo (15 con el terreno 3D,
+  // donde cada cuadro cuesta mucho más); quieto si se pidió menos movimiento.
   useEffect(() => {
     const m = mapa.current;
     if (!m || !listo || sinMovimiento()) return;
@@ -740,7 +741,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     let ultimo = 0;
     const paso = (t: number) => {
       if (!vivo) return;
-      if (t - ultimo > 33 && m.getLayer('concesiones-alerta')) {
+      if (t - ultimo > (m.getTerrain() ? 66 : 33) && m.getLayer('concesiones-alerta')) {
         ultimo = t;
         const f = (Math.sin(t / 380) + 1) / 2;
         m.setPaintProperty('concesiones-alerta', 'line-opacity', 0.25 + 0.65 * f);

@@ -178,6 +178,9 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
   const [perfilError, setPerfilError] = useState<string | null>(null);
   const [calculando, setCalculando] = useState(false);
   const cursor = useRef<[number, number] | null>(null);
+  // Estable: si cambiara en cada render (el de las coordenadas bajo el cursor, por ejemplo), la órbita
+  // se reiniciaría y su inclinación inicial la frenaría a cada rato.
+  const pararOrbita = useCallback(() => setOrbitando(false), []);
   const estado = useRef({ modo, puntos, cerrado });
   estado.current = { modo, puntos, cerrado };
 
@@ -314,10 +317,10 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
         )}
       </div>
       {comparar && <Comparador mapa={mapa} fondo={fondo} onCerrar={() => setComparar(false)} />}
-      <Orbita mapa={mapa} activa={orbitando} onParar={() => setOrbitando(false)} tresD={tresD} />
+      <Orbita mapa={mapa} activa={orbitando} onParar={pararOrbita} tresD={tresD} />
 
       {modo && (
-        <div className="pointer-events-auto absolute right-[52px] top-[118px] z-10 w-[240px] rounded-lg border border-white/12 bg-[#0A0C0E]/94 p-2.5 text-[12px] text-[#C9D5DB] shadow-lg backdrop-blur-xl">
+        <div className="pointer-events-auto absolute right-[52px] top-[118px] z-30 w-[240px] rounded-lg border border-white/12 bg-[#0A0C0E]/94 p-2.5 text-[12px] text-[#C9D5DB] shadow-lg backdrop-blur-xl">
           <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
             {modo === 'medir' ? 'Medir' : 'Perfil topográfico'}
           </div>
@@ -451,7 +454,8 @@ function Orbita({ mapa, activa, onParar, tresD }: { mapa: maplibregl.Map; activa
     mapa.easeTo({ pitch: Math.max(mapa.getPitch(), tresD ? 62 : 50), duration: 900 });
     const paso = (t: number) => {
       if (!vivo) return;
-      if (antes && !mapa.isMoving()) mapa.setBearing(mapa.getBearing() + ((t - antes) / 1000) * 9);
+      // El paso se acota: tras una pestaña oculta o un cuadro lento, no pega un salto.
+      if (antes && !mapa.isMoving()) mapa.setBearing(mapa.getBearing() + (Math.min(100, t - antes) / 1000) * 9);
       antes = t;
       requestAnimationFrame(paso);
     };

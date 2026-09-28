@@ -137,7 +137,7 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
     <section
       role="dialog"
       aria-label={`${etiqueta}: ${titulo}`}
-      className="absolute z-20 flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-[#0A0C0E]/94 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl left-2 right-2 bottom-2 max-h-[calc(100%-118px)] md:left-auto md:right-3 md:bottom-3 md:top-[118px] md:max-h-none md:w-[372px]"
+      className="absolute z-20 flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-[#0A0C0E]/94 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl left-2 right-[48px] bottom-2 max-h-[calc(100%-118px)] md:left-auto md:right-[52px] md:bottom-3 md:top-[118px] md:max-h-none md:w-[372px]"
     >
       <header className="flex items-start gap-2 border-b border-white/[0.08] px-4 pt-3 pb-2.5 shrink-0">
         <div className="min-w-0 flex-1">
