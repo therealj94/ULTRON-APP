@@ -21,7 +21,9 @@ import { conTextoReparado, consultaConTope, hayBase, resumenTraslapes } from './
 import { capasPorRol, nombreDe } from './entorno';
 
 const TOPE = 20000;
-const q = <T = any>(sql: string, p: unknown[] = []) => consultaConTope<T>(sql, p, TOPE).then(conTextoReparado);
+const q = <T = any>(sql: string, p: unknown[] = [], ms = TOPE) => consultaConTope<T>(sql, p, ms).then(conTextoReparado);
+/** En segundo plano nadie espera: el cálculo pesado tiene más margen que un pedido de la pantalla. */
+const TOPE_FONDO = 60000;
 const VALIDA = `CASE WHEN ST_IsValid(e.geom) THEN e.geom ELSE ST_CollectionExtract(ST_MakeValid(e.geom), 3) END`;
 
 export type Conflicto = { id: number; concesion: string; estado: string | null; con: string; ha: number; pct: number };
@@ -42,6 +44,12 @@ export type Tablero = {
   areasProtegidas: { concesiones: number; hectareas: number; lista: Conflicto[] } | null;
   microcuencas: { concesiones: number; hectareas: number; lista: Conflicto[] } | null;
   poblados: { concesiones: number; caserios: number; lista: Array<{ id: number; concesion: string; n: number; nombres: string[] }> } | null;
+  /**
+   * Secciones que no se alcanzaron a calcular esta vez (vienen en null o vacías y se reintentan en
+   * un minuto). No es lo mismo que una capa que no está cargada: eso también es null, pero sin
+   * figurar acá.
+   */
+  incompletas: string[];
   ms: number;
 };
 
@@ -77,21 +85,35 @@ export function claseDeCapa(nombre: string | null | undefined): string {
 
 const r1 = (x: unknown) => Math.round(Number(x || 0) * 10) / 10;
 
-async function conflictos(capas: number[], rol: 'area_protegida' | 'microcuenca') {
+/*
+ * Cada polígono de la capa se valida UNA vez (no una por cada concesión que toca) y se corta en
+ * piezas de 128 vértices: la intersección con una pieza chica es barata y el índice de `concesion`
+ * encuentra las que la tocan. Las piezas no se superponen, así que las hectáreas suman igual.
+ * Medido con las 324 áreas protegidas y las 1 782 concesiones reales: de 6,5 s a 1 s con el mismo
+ * resultado; en producción, con la geometría sin simplificar, la versión anterior pasaba de 20 s y
+ * el tablero no salía.
+ */
+async function conflictos(capas: number[], rol: 'area_protegida' | 'microcuenca', tope: number) {
   if (!capas.length) return null;
   const filas = await q<{ id: string; concesion: string; estado: string | null; con: string | null; ha: number; ha_c: number }>(
-    `WITH p AS (
-       SELECT k.id, k.nombre AS concesion, k.estado, k.hectareas AS ha_c, ${nombreDe(rol)} AS con,
-              ST_Area(ST_Intersection(k.geom, ${VALIDA})::geography) / 10000.0 AS ha
-         FROM concesion k
-         JOIN entidad_geo e ON e.capa_id = ANY($1) AND e.geom && k.geom AND ST_Dimension(e.geom) = 2
-          AND ST_Intersects(k.geom, ${VALIDA})
+    `WITH e AS MATERIALIZED (
+       SELECT ${nombreDe(rol)} AS con, ${VALIDA} AS g
+         FROM entidad_geo e
+        WHERE e.capa_id = ANY($1) AND ST_Dimension(e.geom) = 2
+          AND e.geom && (SELECT ST_SetSRID(ST_Extent(geom)::geometry, 4326) FROM concesion)
+     ),
+     piezas AS MATERIALIZED (SELECT con, ST_Subdivide(g, 128) AS g FROM e WHERE NOT ST_IsEmpty(g)),
+     p AS (
+       SELECT k.id, k.nombre AS concesion, k.estado, k.hectareas AS ha_c, x.con,
+              ST_Area(ST_Intersection(k.geom, x.g)::geography) / 10000.0 AS ha
+         FROM piezas x JOIN concesion k ON k.geom && x.g AND ST_Intersects(k.geom, x.g)
      )
      SELECT id::text, concesion, estado, con, sum(ha)::float8 AS ha, max(ha_c)::float8 AS ha_c
        FROM p GROUP BY id, concesion, estado, con
       HAVING sum(ha) >= 0.01
       ORDER BY ha DESC`,
-    [capas]
+    [capas],
+    tope
   );
   const ids = new Set(filas.map((f) => f.id));
   return {
@@ -108,8 +130,17 @@ async function conflictos(capas: number[], rol: 'area_protegida' | 'microcuenca'
   };
 }
 
-async function calcular(): Promise<Tablero> {
+async function calcular(tope = TOPE): Promise<Tablero> {
   const t0 = Date.now();
+  // Lo pesado (cruces con capas) no tumba el tablero entero: si no llega, esa sección sale vacía,
+  // queda anotada en `incompletas` y el resto se muestra igual.
+  const incompletas: string[] = [];
+  const opcional = <T,>(que: string, p: Promise<T>, vacio: T): Promise<T> =>
+    p.catch((e) => {
+      incompletas.push(que);
+      console.warn(`[electrum] tablero: ${que} no llegó:`, String(e?.message || e).slice(0, 120));
+      return vacio;
+    });
   const capas = await capasPorRol();
   const de = (rol: string) => capas.filter((c) => c.rol === rol).map((c) => c.id);
 
@@ -127,13 +158,14 @@ async function calcular(): Promise<Tablero> {
          FROM concesion k LEFT JOIN capa c ON c.id = k.capa_id GROUP BY 1, 2`
     ),
     de('departamento').length
-      ? q<{ nombre: string | null; n: number }>(
+      ? opcional('departamentos', q<{ nombre: string | null; n: number }>(
           `SELECT ${nombreDe('departamento')} AS nombre, count(*)::int AS n
              FROM concesion k
              JOIN entidad_geo e ON e.capa_id = ANY($1) AND e.geom && k.geom AND ST_Intersects(e.geom, ST_PointOnSurface(k.geom))
             GROUP BY 1 ORDER BY 2 DESC`,
-          [de('departamento')]
-        )
+          [de('departamento')],
+          tope
+        ), [])
       : Promise.resolve([]),
     resumenTraslapes(),
     // Se separan los de mismo nombre: en el padrón nacional muchos «traslapes» son el mismo derecho
@@ -144,17 +176,18 @@ async function calcular(): Promise<Tablero> {
          FROM traslape t JOIN concesion ca ON ca.id = t.a_id JOIN concesion cb ON cb.id = t.b_id
         ORDER BY t.hectareas DESC`
     ),
-    conflictos(de('area_protegida'), 'area_protegida'),
-    conflictos(de('microcuenca'), 'microcuenca'),
+    opcional('areas_protegidas', conflictos(de('area_protegida'), 'area_protegida', tope), null),
+    opcional('microcuencas', conflictos(de('microcuenca'), 'microcuenca', tope), null),
     de('poblado').length
-      ? q<{ id: string; concesion: string; n: number; nombres: string[] | null }>(
+      ? opcional('poblados', q<{ id: string; concesion: string; n: number; nombres: string[] | null }>(
           `SELECT k.id::text, k.nombre AS concesion, count(*)::int AS n,
                   (array_agg(DISTINCT ${nombreDe('poblado')}) FILTER (WHERE ${nombreDe('poblado')} IS NOT NULL))[1:4] AS nombres
              FROM concesion k
              JOIN entidad_geo e ON e.capa_id = ANY($1) AND ST_Dimension(e.geom) = 0 AND e.geom && k.geom AND ST_Intersects(k.geom, e.geom)
             GROUP BY k.id, k.nombre ORDER BY n DESC`,
-          [de('poblado')]
-        )
+          [de('poblado')],
+          tope
+        ), null)
       : Promise.resolve(null),
   ]);
 
@@ -193,29 +226,48 @@ async function calcular(): Promise<Tablero> {
           lista: pob.slice(0, 15).map((f) => ({ id: Number(f.id), concesion: f.concesion, n: f.n, nombres: (f.nombres || []).filter(Boolean) })),
         }
       : null,
+    incompletas,
     ms: Date.now() - t0,
   };
 }
 
 let guardado: { t: number; datos: Tablero } | null = null;
-let enCurso: Promise<Tablero> | null = null;
+/**
+ * Cálculos en curso, uno por tope: un pedido de la pantalla (20 s) no se cuelga del cálculo de
+ * fondo (60 s), que puede tardar hasta un minuto con una capa pesada.
+ */
+const enCurso = new Map<number, Promise<Tablero>>();
 const VIGENCIA_MS = 10 * 60 * 1000;
 
-/** El tablero, de la caché si tiene menos de diez minutos. Dos pedidos a la vez comparten el cálculo. */
-export async function tablero(opts: { fresco?: boolean } = {}): Promise<Tablero> {
+/** El tablero, de la caché si tiene menos de diez minutos. Dos pedidos con el mismo tope comparten el cálculo. */
+export async function tablero(opts: { fresco?: boolean; tope?: number } = {}): Promise<Tablero> {
   if (!hayBase()) throw new Error('sin base');
   if (!opts.fresco && guardado && Date.now() - guardado.t < VIGENCIA_MS) return guardado.datos;
-  if (!enCurso) {
-    enCurso = calcular()
+  const tope = opts.tope ?? TOPE;
+  let p = enCurso.get(tope);
+  if (!p) {
+    p = calcular(tope)
       .then((datos) => {
-        guardado = { t: Date.now(), datos };
+        // Incompleto: sirve ya, pero vence en un minuto para reintentar lo que faltó. Un resultado
+        // incompleto nunca pisa uno completo más nuevo.
+        const completo = !datos.incompletas.length;
+        if (completo || !guardado || guardado.datos.incompletas.length) {
+          guardado = { t: completo ? Date.now() : Date.now() - VIGENCIA_MS + 60_000, datos };
+        }
+        // Lo que no llegó en 20 s se completa ya en segundo plano, con el margen del fondo.
+        if (!completo && tope < TOPE_FONDO && !enCurso.has(TOPE_FONDO)) {
+          void tablero({ fresco: true, tope: TOPE_FONDO }).catch((e) =>
+            console.warn('[electrum] tablero en segundo plano:', String(e?.message || e).slice(0, 120))
+          );
+        }
         return datos;
       })
       .finally(() => {
-        enCurso = null;
+        enCurso.delete(tope);
       });
+    enCurso.set(tope, p);
   }
-  return enCurso;
+  return p;
 }
 
 /**
@@ -226,7 +278,7 @@ export async function tablero(opts: { fresco?: boolean } = {}): Promise<Tablero>
 let mantenedor: NodeJS.Timeout | null = null;
 export function mantenerTableroCaliente(retrasoMs = 20_000) {
   if (mantenedor || !hayBase()) return;
-  const calentar = () => void tablero({ fresco: true }).catch((e) => console.warn('[electrum] tablero en segundo plano:', String(e?.message || e).slice(0, 120)));
+  const calentar = () => void tablero({ fresco: true, tope: TOPE_FONDO }).catch((e) => console.warn('[electrum] tablero en segundo plano:', String(e?.message || e).slice(0, 120)));
   setTimeout(calentar, retrasoMs).unref?.();
   mantenedor = setInterval(calentar, VIGENCIA_MS - 60_000);
   mantenedor.unref?.();

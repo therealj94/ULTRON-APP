@@ -175,7 +175,11 @@ const catastro_resumen: Herramienta = {
       t.porClase.length ? `Por clase: ${lista(t.porClase, 4)}.` : '',
       t.porDepartamento.length ? `Departamentos con más: ${lista(t.porDepartamento, 4)}.` : '',
       `Traslapes: ${n0(t.traslapes.total)} (${n0(t.traslapes.hectareas)} ha)${t.traslapes.mismoNombre.total ? `, de ellos ${n0(t.traslapes.mismoNombre.total)} entre concesiones con el mismo nombre (probablemente cargadas dos veces)` : ''}.`,
-      t.areasProtegidas ? `${n0(t.areasProtegidas.concesiones)} pisan áreas protegidas (${n0(t.areasProtegidas.hectareas)} ha).` : 'La capa de áreas protegidas no está cargada.',
+      t.areasProtegidas
+        ? `${n0(t.areasProtegidas.concesiones)} pisan áreas protegidas (${n0(t.areasProtegidas.hectareas)} ha).`
+        : t.incompletas.includes('areas_protegidas')
+          ? 'El cruce con áreas protegidas no terminó a tiempo esta vez; se está recalculando.'
+          : 'La capa de áreas protegidas no está cargada.',
       t.microcuencas ? `${n0(t.microcuencas.concesiones)} pisan microcuencas (${n0(t.microcuencas.hectareas)} ha).` : '',
       t.poblados ? `${n0(t.poblados.concesiones)} tienen caseríos dentro (${n0(t.poblados.caserios)} caseríos).` : '',
       prosp && prosp.calculadas
