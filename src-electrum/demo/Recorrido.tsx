@@ -35,6 +35,8 @@ export type Controles = {
 
 type Ficha = { id: number; nombre: string; encuadre: [number, number, number, number] | null; geojson: Geometry | null };
 
+// Formato de España a propósito: esto se DICE en voz alta, y «46.839,5» la voz lo lee como número;
+// «46,839.5» lo leería como «cuarenta y seis coma…».
 const nf = (x: number, d = 0) => x.toLocaleString('es-ES', { maximumFractionDigits: d });
 const plural = (n: number, uno: string, varios: string) => `${nf(n)} ${n === 1 ? uno : varios}`;
 const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -154,7 +156,7 @@ export function Recorrido({ activo, onTerminar, controles }: { activo: boolean; 
           c.current.capas((antes) => [...antes.filter((a) => !encender.some((e) => e?.id === a.id)), ...(encender.filter(Boolean) as CapaExtra[])]);
           c.current.tocar({ tipo: 'concesion', id: fichaConflicto.id, nombre: fichaConflicto.nombre, lngLat: centroDe(fichaConflicto.encuadre) });
           await decir(
-            'Enciendo la geología: cada color es un tipo de roca, y las líneas rojas son fallas. A la derecha está su ficha: catastro, alertas del entorno, geología, indicios de mineralización y los documentos que la mencionan. Todo sale de los datos, no de mi imaginación.'
+            'Enciendo la geología: cada color es un tipo de roca, y las líneas rojas son fallas. En su ficha está todo: catastro, prospectividad, alertas del entorno, geología, lo que midió el satélite y los documentos que la mencionan. Todo sale de los datos, no de mi imaginación.'
           );
         }
 

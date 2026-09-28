@@ -8,6 +8,7 @@
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { headersElectrum } from '../acceso';
+import { colorProsp } from './prospectividad';
 import { sinMovimiento } from '../movimiento';
 
 const AMBAR = '#FFAE3B';
@@ -25,7 +26,7 @@ export type DatosTablero = {
   poblados: { concesiones: number; caserios: number; lista: Array<{ id: number; concesion: string; n: number; nombres: string[] }> } | null;
 };
 
-const nf = (x: number, d = 0) => x.toLocaleString('es-ES', { maximumFractionDigits: d });
+const nf = (x: number, d = 0) => x.toLocaleString('es-HN', { maximumFractionDigits: d });
 
 /**
  * El tablero se comparte entre el panel y el recorrido, pero vence a los 5 minutos: con la pestaña
@@ -162,15 +163,34 @@ function ListaConflictos({ lista, onIr, color }: { lista: Conflicto[]; onIr: (id
   );
 }
 
+type Prospecta = { id: number; nombre: string; puntaje: number; nivel: string; cobertura: number };
+type Perdida = { id: number; nombre: string; ha: number; pct: number | null; periodo: string };
+
+/** Lo que se suma al tablero si el servidor lo tiene: si no, esas tarjetas no aparecen. */
+async function pedirJson<T>(url: string, clave: string): Promise<T[]> {
+  try {
+    const r = await fetch(url, { headers: headersElectrum() });
+    if (!r.ok) return [];
+    const j = await r.json();
+    return Array.isArray(j?.[clave]) ? j[clave] : [];
+  } catch {
+    return [];
+  }
+}
+
 export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerrar: () => void; onIr: (id: number) => void }) {
   const [datos, setDatos] = useState<DatosTablero | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [prospectas, setProspectas] = useState<Prospecta[]>([]);
+  const [perdidas, setPerdidas] = useState<Perdida[]>([]);
   const caja = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!abierto) return;
     setError(null);
     pedirTablero().then(setDatos, (e) => setError(String(e?.message || e)));
+    void pedirJson<Prospecta>('/api/electrum/prospectividad', 'ranking').then(setProspectas);
+    void pedirJson<Perdida>('/api/electrum/satelite/mayores', 'lista').then(setPerdidas);
     const k = (e: KeyboardEvent) => e.key === 'Escape' && onCerrar();
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
@@ -263,6 +283,50 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                   </ol>
                 </Tarjeta>
               )}
+              {prospectas.length > 0 && (
+                <Tarjeta titulo="Las más prospectivas · geología + muestras + satélite">
+                  <ol className="space-y-1">
+                    {prospectas.slice(0, 8).map((p, i) => (
+                      <li key={p.id}>
+                        <button type="button" onClick={() => onIr(p.id)} className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] hover:bg-white/[0.06] cursor-pointer">
+                          <span className="w-4 shrink-0 font-mono text-[10px] text-[#61717A]">{i + 1}</span>
+                          <span className="min-w-0 flex-1 truncate">
+                            <Nombre texto={p.nombre} />
+                          </span>
+                          <span className="h-1.5 w-16 shrink-0 overflow-hidden rounded-full bg-white/10">
+                            <span className="block h-full rounded-full" style={{ width: `${p.puntaje}%`, background: colorProsp(p.puntaje) }} />
+                          </span>
+                          <span className="w-7 shrink-0 text-right font-mono text-[11px]" style={{ color: colorProsp(p.puntaje) }}>
+                            {p.puntaje}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                </Tarjeta>
+              )}
+              {perdidas.length > 0 && (
+                <Tarjeta titulo={`Satélite: mayor caída de vegetación · ${perdidas[0].periodo}`}>
+                  <ol className="space-y-1">
+                    {perdidas.map((p, i) => (
+                      <li key={p.id}>
+                        <button type="button" onClick={() => onIr(p.id)} className="flex w-full items-baseline gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] hover:bg-white/[0.06] cursor-pointer">
+                          <span className="w-4 shrink-0 font-mono text-[10px] text-[#61717A]">{i + 1}</span>
+                          <span className="min-w-0 flex-1">
+                            <Nombre texto={p.nombre} />
+                          </span>
+                          <span className="shrink-0 font-mono text-[11px] text-[#FF4FD8]">
+                            {nf(p.ha, 1)} ha{p.pct != null ? ` · ${nf(p.pct, 1)} %` : ''}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ol>
+                  <p className="mt-2 border-t border-white/[0.07] pt-2 text-[11px] leading-snug text-[#7F939D]">
+                    Copernicus Sentinel-2, temporada seca. Puede ser desmonte, camino o tajo, pero también quema o cosecha: se confirma con la imagen.
+                  </p>
+                </Tarjeta>
+              )}
               {d.traslapes.mayores.length > 0 && (
                 <Tarjeta titulo="Mayores traslapes entre concesiones distintas">
                   <ol className="space-y-1">
@@ -287,7 +351,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
               )}
             </div>
             <p className="pb-2 text-[11px] text-[#61717A]">
-              Cruces hechos en PostGIS con las capas cargadas (catastro nacional, áreas protegidas, microcuencas declaradas y caseríos). Actualizado{' '}
+              Cruces hechos en PostGIS con las capas cargadas (catastro nacional, áreas protegidas, microcuencas declaradas y caseríos) y mediciones de Copernicus Sentinel-2. Actualizado{' '}
               {new Date(d.generado).toLocaleString('es-HN')}.
             </p>
           </div>

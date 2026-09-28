@@ -45,7 +45,7 @@ export type Yacimiento = { nombre: string; mineral: string; tipo: string; estado
 export type Criterio = { clave: string; cumple: boolean; puntos: number; evidencia: string; modelos: string[] };
 
 export type Geologia = {
-  zona: { nombre: string; tipo: 'concesión' | 'capa' | 'municipio' | 'punto'; ha: number; lon: number; lat: number; geojson: Geometry };
+  zona: { nombre: string; tipo: 'concesión' | 'capa' | 'municipio' | 'punto'; id?: number; ha: number; lon: number; lat: number; geojson: Geometry };
   radioKm: number;
   /** Qué capas se usaron para cada rol: la fuente de cada cifra. */
   fuentes: Partial<Record<RolCapa, string[]>>;
@@ -193,7 +193,20 @@ export async function resolverZona(z: Zona): Promise<ZonaResuelta | { error: str
           [String(z.concesion).trim()]
         );
     if (!f) return { error: `No encuentro la concesión «${z.concesion}» en el catastro.` };
-    return { nombre: f.nombre, tipo: 'concesión', ha: r2(f.ha), lon: f.lon, lat: f.lat, geojson: JSON.parse(f.g) };
+    // El id, para lo que se guarda por concesión (el satélite): la misma búsqueda, el mismo orden.
+    const idC =
+      Number.isSafeInteger(id) && id > 0
+        ? id
+        : Number(
+            (
+              await consulta<{ id: string }>(
+                `SELECT id::text FROM concesion WHERE nombre ILIKE '%' || $1 || '%' OR expediente = $1
+                  ORDER BY (lower(nombre) = lower($1)) DESC, length(nombre) LIMIT 1`,
+                [String(z.concesion).trim()]
+              )
+            )[0]?.id
+          ) || undefined;
+    return { nombre: f.nombre, tipo: 'concesión', id: idC, ha: r2(f.ha), lon: f.lon, lat: f.lat, geojson: JSON.parse(f.g) };
   }
   if (z.capa && z.capa.trim()) {
     const [f] = await fila(

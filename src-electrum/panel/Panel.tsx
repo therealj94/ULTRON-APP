@@ -325,6 +325,10 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
   const [arrastrando, setArrastrando] = useState(false);
   /** El menú de «⋯» en pantalla estrecha. */
   const [masAbierto, setMasAbierto] = useState(false);
+  /** «Internet»: la próxima pregunta se contesta buscando en la web, con las fuentes citadas. */
+  const [internet, setInternet] = useState(false);
+  const internetRef = useRef(internet);
+  internetRef.current = internet;
 
   useEffect(() => {
     try {
@@ -515,6 +519,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
            */
           body: JSON.stringify({
             mensaje: q,
+            internet: internetRef.current,
             hilo: turnosRef.current
               .filter((t) => !t.local)
               .slice(-24)
@@ -1078,6 +1083,17 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               *
               * Dictar NO se esconde: es la razón de que alguien use esto con las manos sucias.
               */}
+            <button
+              type="button"
+              onClick={() => setInternet((v) => !v)}
+              aria-pressed={internet}
+              title={internet ? 'Buscando en internet: la respuesta cita sus fuentes. Tocá para apagarlo.' : 'Contestar buscando en internet, con las fuentes citadas'}
+              aria-label={internet ? 'Apagar la búsqueda en internet' : 'Buscar en internet para contestar'}
+              className="shrink-0 rounded-lg border px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase transition-colors cursor-pointer"
+              style={internet ? { borderColor: AMBAR, color: '#000', background: AMBAR } : { borderColor: 'rgba(255,255,255,.12)', color: '#9FB0B8' }}
+            >
+              🌐<span className="hidden sm:inline"> Internet</span>
+            </button>
             {/* La voz no se esconde: es lo que hace que el doctor hable. */}
             <BotonVoz
               vozActiva={vozActiva}

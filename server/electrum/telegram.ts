@@ -27,6 +27,7 @@ import { turnoElectrum } from './turno';
 import { verImagen, vistaFallida } from '../../lib/vision';
 import { cargarHilo, claveHilo, fusionarHiloElectrum, hiloDe, olvidarHilo, recordarHilo, type TurnoHilo } from './hilo';
 import { tomarInforme } from './informe';
+import { desuscribir, resumenAhora, suscribir } from './alertas';
 
 const ES_GEO = /\.(zip|kml|kmz|geojson|json|csv|shp)$/i;
 const MAX_ARCHIVO = 40 * 1024 * 1024;
@@ -98,6 +99,7 @@ export function ayudaElectrum(nivel: Nivel): string {
     'Preguntame con palabras normales: «mostrame Cerro Partido», «¿se traslapa algo?», «250.000 t a 3,4 g/t, ¿cuántas onzas?», «¿qué vence este año?».',
     'Convoco al especialista que haga falta —geólogo, ingeniero de minas, metalurgista, civil, GIS, ambiental, legal o economista— y te digo cuál contestó.',
     'Si te mando un número, salió de una cuenta o del catastro, no de mi memoria. Y si no lo tengo, te lo digo.',
+    'Alertas: /alertas para que te avise de vencimientos y cambios del satélite, /alertas_ya para ver todo ahora, /alertas_no para apagarlas.',
   ];
   if (nivel === 'lee') {
     lineas.push('Tu acceso es de consulta: podés preguntar todo, pero lo que me mandes lo leo para ese momento y no queda guardado.');
@@ -338,6 +340,37 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
   if (parsed.comando === '/start' || parsed.comando === '/ayuda' || parsed.comando === '/help') {
     await responderElectrum(parsed.chatId, ayudaElectrum(quien.nivel));
     return { estado: 'ayuda', chatId: parsed.chatId };
+  }
+
+  // Alertas: solo quien está en el padrón (una sala de demostración no se suscribe a nada).
+  if (parsed.comando === '/alertas' || parsed.comando === '/alertas_no' || parsed.comando === '/alertas_ya') {
+    if (!quien.id) {
+      await responderElectrum(parsed.chatId, 'Las alertas son para personas del padrón de Dr Electrum; en esta sala de demostración no se activan.');
+      return { estado: 'alertas rechazadas', chatId: parsed.chatId };
+    }
+    // Solo en el chat privado: en un grupo, el catastro le llegaría también a quien no está en el padrón.
+    if (String(parsed.chatId) !== String(parsed.userId)) {
+      await responderElectrum(parsed.chatId, 'Las alertas se activan en tu chat privado conmigo, no en un grupo: escribime /alertas por privado.');
+      return { estado: 'alertas en grupo', chatId: parsed.chatId };
+    }
+    try {
+      if (parsed.comando === '/alertas') {
+        await suscribir(parsed.chatId, quien.id.persona.id);
+        await responderElectrum(
+          parsed.chatId,
+          'Listo: te aviso por acá cuando una concesión quede a 90, 30, 7 o 1 días de vencer (y el día que vence), cuando llegue una medición nueva de Sentinel-2 con caída fuerte de vegetación, y los lunes con lo que vence en 90 días. /alertas_ya para ver todo ahora, /alertas_no para apagarlas.'
+        );
+      } else if (parsed.comando === '/alertas_no') {
+        const habia = await desuscribir(parsed.chatId);
+        await responderElectrum(parsed.chatId, habia ? 'Apagadas. Ya no te mando alertas a este chat.' : 'Este chat no tenía alertas activadas.');
+      } else {
+        await responderElectrum(parsed.chatId, await resumenAhora());
+      }
+    } catch (e: any) {
+      console.warn('[electrum] alertas', String(e?.message || e).slice(0, 160));
+      await responderElectrum(parsed.chatId, 'No pude tocar las alertas ahora (la base no contestó). Probá en un rato.');
+    }
+    return { estado: 'alertas', chatId: parsed.chatId };
   }
 
   // Firmar solicitudes de la cola desde el teléfono. Solo cuenta el Telegram comprobado del padrón:

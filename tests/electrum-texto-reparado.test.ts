@@ -45,3 +45,14 @@ test('conTextoReparado: también las listas de texto', () => {
   const [f] = conTextoReparado([{ nombres: ['El Tabl?n', 'Rinc?n', null], n: 2 }]);
   assert.deepEqual(f, { nombres: ['El Tablón', 'Rincón', null], n: 2 });
 });
+
+test('reponerTildes: el hueco «�» se repara igual que «?», también al empezar la palabra', () => {
+  assert.equal(repararTexto('Chant�n 2'), 'Chantón 2');
+  assert.equal(repararTexto('Pe�a Blanca'), 'Peña Blanca');
+  assert.equal(repararTexto('�vila'), 'Ávila');
+  assert.equal(repararTexto('El Murci�lago'), 'El Murciélago');
+  assert.equal(repararTexto('Construcci?n y pavimentaci?n del anillo agr?cola'), 'Construcción y pavimentación del anillo agrícola');
+  // Una pregunta de verdad no se toca, y lo que no se sabe queda como «?», no como «�».
+  assert.equal(repararTexto('¿Qué hay?'), '¿Qué hay?');
+  assert.equal(repararTexto('Xq�z'), 'Xq?z');
+});

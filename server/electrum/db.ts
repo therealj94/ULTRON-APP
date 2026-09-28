@@ -644,24 +644,44 @@ export async function coberturaDeFechas(): Promise<{ conVence: number; total: nu
  * para contar hectáreas.
  */
 export async function catastroGeojson(limite = 4000, toleranciaGrados = 0.0001): Promise<FeatureCollection> {
-  const filas = await consulta<{ g: string; id: number; nombre: string; titular: string | null; estado: string | null; ha: number | null }>(
+  const filas = await consulta<{ g: string; id: number; nombre: string; titular: string | null; estado: string | null; ha: number | null; vence: string | null }>(
     // Seis decimales son once centímetros: de sobra para pintar, y el cuerpo baja un cuarto frente a
     // los quince que manda PostGIS por defecto (ruido de coma flotante que nadie ve).
     `SELECT ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, $2), 6)::text AS g,
-            id, nombre, titular, estado, hectareas::float8 AS ha
+            id, nombre, titular, estado, hectareas::float8 AS ha, to_char(vence, 'YYYY-MM-DD') AS vence
        FROM concesion
       WHERE geom IS NOT NULL
       ORDER BY hectareas DESC NULLS LAST
       LIMIT $1`,
     [limite, toleranciaGrados]
-  );
+  ).then(conTextoReparado);
   return {
     type: 'FeatureCollection',
     features: filas.map((f) => ({
       type: 'Feature',
       geometry: JSON.parse(f.g) as Geometry,
-      properties: { id: f.id, nombre: f.nombre, titular: f.titular, estado: f.estado, hectareas: f.ha },
+      properties: { id: f.id, nombre: f.nombre, titular: f.titular, estado: f.estado, hectareas: f.ha, ...(f.vence ? { vence: f.vence } : {}) },
     })),
+  } as FeatureCollection;
+}
+
+/**
+ * Las zonas donde dos concesiones se pisan, con su geometría, para rayarlas en el mapa. Las más
+ * grandes primero y con tope: son para verlas, no para medir (eso lo hace `traslapes`).
+ */
+export async function traslapesGeojson(limite = 3000, toleranciaGrados = 0.0001): Promise<FeatureCollection> {
+  const filas = await consulta<{ g: string; a: string; b: string; ha: number }>(
+    `SELECT ST_AsGeoJSON(ST_SimplifyPreserveTopology(t.geom, $2), 6)::text AS g,
+            ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS ha
+       FROM traslape t JOIN concesion ca ON ca.id = t.a_id JOIN concesion cb ON cb.id = t.b_id
+      WHERE t.geom IS NOT NULL AND NOT ST_IsEmpty(t.geom)
+      ORDER BY t.hectareas DESC
+      LIMIT $1`,
+    [limite, toleranciaGrados]
+  ).then(conTextoReparado);
+  return {
+    type: 'FeatureCollection',
+    features: filas.map((f) => ({ type: 'Feature', geometry: JSON.parse(f.g) as Geometry, properties: { a: f.a, b: f.b, hectareas: f.ha } })),
   } as FeatureCollection;
 }
 

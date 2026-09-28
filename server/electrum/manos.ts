@@ -44,6 +44,7 @@ import { geologiaDe, geologiaEnTexto, type Zona } from './geologia';
 import { mapaGeologico, NOMBRE_MAPA, TIPOS_MAPA_GEO, type TipoMapaGeo } from './mapa-geologico';
 import { informeGeologico } from './informe-geologico';
 import { muestrasDeZonaEnTexto } from './muestras';
+import { sateliteEnRenglones } from './satelite';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -256,8 +257,13 @@ const geologia_zona: Herramienta = {
     if ('error' in g) return { ok: false, texto: g.error };
     const { zona, ...resto } = g;
     // Lo MEDIDO en la zona (muestras de JICA), después de lo cartografiado. Si falla, la geología igual sale.
-    const leyes = await muestrasDeZonaEnTexto(zona.geojson, zona.tipo === 'punto' ? 0 : g.radioKm).catch(() => '');
-    return { ok: true, texto: geologiaEnTexto(g) + (leyes ? `\n${leyes}` : ''), ui: { geologia: { ...resto, zona: { ...zona, geojson: undefined } } } };
+    const [leyes, satelite] = await Promise.all([
+      muestrasDeZonaEnTexto(zona.geojson, zona.tipo === 'punto' ? 0 : g.radioKm).catch(() => ''),
+      // Lo que Sentinel-2 midió dentro de la concesión (pérdida de vegetación, suelo expuesto, anomalías).
+      zona.tipo === 'concesión' && zona.id ? sateliteEnRenglones(zona.id).catch(() => [] as string[]) : Promise.resolve([] as string[]),
+    ]);
+    const extra = [leyes, satelite.length ? `SATÉLITE: ${satelite.join(' ')}` : ''].filter(Boolean).join('\n');
+    return { ok: true, texto: geologiaEnTexto(g) + (extra ? `\n${extra}` : ''), ui: { geologia: { ...resto, zona: { ...zona, geojson: undefined } } } };
   },
 };
 

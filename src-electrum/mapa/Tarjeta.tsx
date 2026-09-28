@@ -13,6 +13,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import type { Geometry } from 'geojson';
 import { headersElectrum } from '../acceso';
 import type { OrdenMapa, Tocado } from './captura';
+import { colorProsp } from './prospectividad';
+import { Timelapse } from './Timelapse';
 
 const AMBAR = '#FFAE3B';
 
@@ -26,6 +28,10 @@ type Ficha = {
   entorno: Parte;
   geologia: Parte;
   documentos: Parte;
+  /** Sentinel-2 dentro de la concesión; un servidor anterior no lo manda. */
+  satelite?: Parte;
+  /** Geología + geoquímica + satélite, de 0 a 100; un servidor anterior no lo manda. */
+  prospectividad?: Parte & { puntaje?: number; nivel?: string };
 };
 type Lista<T> = { estado: 'ok'; lista: T[] } | { estado: 'error'; motivo: string };
 type Aqui = {
@@ -83,8 +89,12 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
         const r = await fetch(urlDe(tocado), { headers: headersElectrum(), signal: corte.signal });
         const j = await r.json().catch(() => null);
         if (corte.signal.aborted) return;
-        if (!r.ok) return setError(j?.error || `El servidor contestó ${r.status}.`);
+        if (!r.ok) return setError(j?.error || (r.status === 404 ? 'Esta función todavía no está activa en el servidor.' : `El servidor contestó ${r.status}.`));
         setDatos(j);
+        // El puntaje recién calculado va al mapa, para que el relleno por prospectividad lo pinte ya.
+        if (tocado.tipo === 'concesion' && typeof j?.prospectividad?.puntaje === 'number') {
+          window.dispatchEvent(new CustomEvent('electrum:prospectividad', { detail: { id: tocado.id, puntaje: j.prospectividad.puntaje } }));
+        }
       } catch (e: any) {
         if (!corte.signal.aborted) setError('No alcancé el servidor. Revisá la conexión y volvé a tocar.');
       }
@@ -135,7 +145,7 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
     <section
       role="dialog"
       aria-label={`${etiqueta}: ${titulo}`}
-      className="absolute z-20 flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-[#0A0C0E]/94 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl left-2 right-2 bottom-2 max-h-[calc(100%-118px)] md:left-auto md:right-3 md:bottom-3 md:top-[118px] md:max-h-none md:w-[372px]"
+      className="absolute z-20 flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-[#0A0C0E]/94 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl left-2 right-[48px] bottom-2 max-h-[calc(100%-118px)] md:left-auto md:right-[52px] md:bottom-3 md:top-[118px] md:max-h-none md:w-[372px]"
     >
       <header className="flex items-start gap-2 border-b border-white/[0.08] px-4 pt-3 pb-2.5 shrink-0">
         <div className="min-w-0 flex-1">
@@ -237,8 +247,10 @@ function Boton({ children, onClick, fuerte = false }: { children: ReactNode; onC
 }
 
 function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: Props['onVolar']; onFicha: Props['onFicha']; onPreguntar: Props['onPreguntar'] }) {
+  const [timelapse, setTimelapse] = useState(false);
   return (
     <>
+      {timelapse && <Timelapse id={f.id} nombre={f.nombre} onCerrar={() => setTimelapse(false)} />}
       <div className="flex flex-wrap gap-1.5">
         {f.geojson && f.encuadre && <Boton onClick={() => onVolar({ accion: 'volar', geojson: f.geojson!, encuadre: f.encuadre! })}>Volar aquí</Boton>}
         <Boton fuerte onClick={() => onFicha(f.id)}>
@@ -250,7 +262,9 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: P
         <Boton onClick={() => onPreguntar(`Analizá la concesión ${f.nombre} (id ${f.id}): entorno, geología, riesgos legales y ambientales, y qué recomendás.`)}>
           Analizar
         </Boton>
+        {f.geojson && <Boton onClick={() => setTimelapse(true)}>Timelapse satelital</Boton>}
       </div>
+      <Exportes id={f.id} />
       <Seccion titulo="Catastro">
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
           {f.datos.map(([k, v]) => (
@@ -261,12 +275,33 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: P
           ))}
         </dl>
       </Seccion>
+      {f.prospectividad && (
+        <Seccion titulo="Prospectividad">
+          {f.prospectividad.puntaje != null && (
+            <div className="mb-2 flex items-center gap-2" role="img" aria-label={`Prospectividad ${f.prospectividad.puntaje} de 100`}>
+              <span className="font-mono text-[20px] font-semibold leading-none" style={{ color: colorProsp(f.prospectividad.puntaje) }}>
+                {f.prospectividad.puntaje}
+              </span>
+              <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/10">
+                <div className="h-full rounded-full" style={{ width: `${Math.max(2, Math.min(100, f.prospectividad.puntaje))}%`, background: colorProsp(f.prospectividad.puntaje) }} />
+              </div>
+              <span className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-[#9FB0B9]">{f.prospectividad.nivel}</span>
+            </div>
+          )}
+          <Renglones p={f.prospectividad} />
+        </Seccion>
+      )}
       <Seccion titulo="Entorno y alertas">
         <Renglones p={f.entorno} alerta />
       </Seccion>
       <Seccion titulo="Geología">
         <Renglones p={f.geologia} />
       </Seccion>
+      {f.satelite && (
+        <Seccion titulo="Satélite (Sentinel-2)">
+          <Renglones p={f.satelite} />
+        </Seccion>
+      )}
       <Seccion titulo="Documentos">
         <Renglones p={f.documentos} />
       </Seccion>
@@ -395,5 +430,59 @@ function MuestraVista({ m, onTocar, onPreguntar }: { m: Muestra; onTocar: Props[
         <Boton onClick={() => onTocar({ tipo: 'punto', lngLat: [m.lon, m.lat] })}>¿Qué hay aquí?</Boton>
       </div>
     </>
+  );
+}
+
+/** Bajar la concesión para otros programas: Google Earth, SIG, AutoCAD, y los vértices en CSV. */
+function Exportes({ id }: { id: number }) {
+  const [bajando, setBajando] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const bajar = async (formato: string) => {
+    setBajando(formato);
+    setError(null);
+    try {
+      const r = await fetch(`/api/electrum/concesion/${id}/exportar?formato=${formato}`, { headers: headersElectrum() });
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        return setError(j?.error || (r.status === 404 ? 'Esta función todavía no está activa en el servidor.' : `El servidor contestó ${r.status}.`));
+      }
+      const nombre = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || `concesion-${id}.${formato}`;
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = nombre;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch {
+      setError('No alcancé el servidor.');
+    } finally {
+      setBajando(null);
+    }
+  };
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-[#7F939D]">Bajar</span>
+        {[
+          ['kml', 'KML · Google Earth'],
+          ['dxf', 'DXF · AutoCAD'],
+          ['geojson', 'GeoJSON'],
+          ['csv', 'Vértices CSV'],
+        ].map(([f, t]) => (
+          <button
+            key={f}
+            type="button"
+            disabled={!!bajando}
+            onClick={() => void bajar(f)}
+            className="rounded-md border border-white/15 px-2 py-1 font-mono text-[10.5px] text-[#DCE5EA] hover:border-white/35 disabled:opacity-50 cursor-pointer"
+          >
+            {bajando === f ? 'Bajando…' : t}
+          </button>
+        ))}
+      </div>
+      {error && <p className="mt-1 text-[11px] text-[#E8A08F]">{error}</p>}
+    </div>
   );
 }

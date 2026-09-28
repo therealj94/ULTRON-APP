@@ -37,6 +37,7 @@ import {
 import { documentoPdf, medirJpeg, type Bloque } from '../../lib/pdf';
 import { entornoDe, NOMBRE_ROL, pct, RADIO_LEJOS_M, RADIO_POBLADOS_M, type Entorno, type Seccion } from './entorno';
 import { planoConcesion } from './plano';
+import { verticesDe } from './exportar';
 
 export const AMBAR: [number, number, number] = [1, 0.68, 0.23];
 
@@ -166,7 +167,7 @@ export function municipioContradice(padron: string | null, e: Entorno | null): s
 }
 
 /** Las secciones de entorno de la ficha. Las cifras salen todas de `entornoDe`. */
-function bloquesEntorno(e: Entorno): Bloque[] {
+export function bloquesEntorno(e: Entorno): Bloque[] {
   const b: Bloque[] = [];
 
   /* --- ubicación administrativa --- */
@@ -409,6 +410,29 @@ export async function informeConcesion(
       );
     } else if (plano && 'error' in plano) {
       bloques.push({ tipo: 'nota', texto: `No se pudo dibujar el plano de situación (${plano.error}). Los datos de la ficha no dependen de él.` });
+    }
+    /*
+     * Los vértices, en los dos datums que circulan en Honduras: WGS84 (GPS, catastro digital) y
+     * NAD27 (mapas 1:50 000 y muchos expedientes). Con muchos vértices va el principio y se dice:
+     * la lista entera baja en CSV desde el mapa.
+     */
+    const vs = verticesDe(geo.geojson);
+    if (vs.length) {
+      const tope = 40;
+      const m = (n: number) => new Intl.NumberFormat('es-HN', { maximumFractionDigits: 1, minimumFractionDigits: 1 }).format(n);
+      bloques.push(
+        { tipo: 'seccion', texto: 'Vértices del polígono' },
+        {
+          tipo: 'tabla',
+          cabecera: ['#', 'Este WGS84', 'Norte WGS84', 'Este NAD27', 'Norte NAD27'],
+          filas: vs.slice(0, tope).map((v) => [String(v.n), m(v.e), m(v.nn), m(v.e27), m(v.n27)]),
+          anchos: [30, 118, 118, 118, 118],
+        },
+        {
+          tipo: 'nota',
+          texto: `UTM zona 16N, en metros. NAD27 con el cambio de datum de Centroamérica (NIMA): precisión de algunos metros.${vs.length > tope ? ` Son ${vs.length} vértices; aquí van los primeros ${tope}. La lista completa baja en CSV desde la tarjeta de la concesión en el mapa.` : ''}`,
+        }
+      );
     }
   } else {
     bloques.push({ tipo: 'seccion', texto: 'Geometría medida' }, { tipo: 'parrafo', texto: 'Esta concesión no tiene geometría cargada, así que no hay área medida ni mapa. Lo que diga el padrón sobre hectáreas está sin comprobar.' });

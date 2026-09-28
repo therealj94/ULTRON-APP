@@ -35,6 +35,7 @@ import { conTextoReparado, consulta as consultaBase, hayBase } from './db';
 /** Los rótulos, con los acentos de las capas reparados: el plano y la ficha dicen lo mismo. */
 const consulta = <T = any>(sql: string, params: unknown[] = []) => consultaBase<T>(sql, params).then(conTextoReparado);
 import { capasPorRol, nombreDe, NOMBRE_ROL, RADIO_POBLADOS_M } from './entorno';
+import { relieveUtm } from './relieve';
 import type { RolCapa } from './db';
 
 /* ------------------------------------------------------------------ datos */
@@ -66,12 +67,25 @@ export type DatosPlano = {
   faltan?: string[];
   /** Línea de pie: fecha, fuente. */
   pie?: string;
+  /** Relieve sombreado del marco (`data:image/jpeg;base64,…`, de relieve.ts), debajo de todo. */
+  relieve?: string | null;
+  /** Dónde está, en lon/lat: el recuadro de ubicación en Honduras. */
+  ubicacion?: [number, number];
+  /** El cajetín: titular, expediente, estado, área… en pares [rótulo, valor]. */
+  cajetin?: Array<[string, string]>;
+  /** Rótulo de la leyenda para el polígono principal («Concesión» si no se dice). */
+  etiquetaPrincipal?: string;
 };
 
 /* ------------------------------------------------------------------ lienzo */
 
 export const ANCHO = 1600;
-export const ALTO = 1400;
+/** Con el cajetín debajo del marco (antes 1400). */
+export const ALTO = 1580;
+/** El cajetín: franja con los datos de la concesión, debajo de las coordenadas del marco. */
+export const CAJETIN = { x: 60, y: 1340, w: ANCHO - 120, h: 170 };
+/** El recuadro de ubicación, en la esquina inferior derecha del marco. */
+export const UBICACION = { w: 240, h: 170 };
 /** El marco del mapa. A la derecha va la columna de norte, escala y leyenda. */
 export const MARCO = { x: 110, y: 150, w: 1060, h: 1130 };
 export const PANEL = { x: 1210, w: 350 };
@@ -256,7 +270,9 @@ export function svgPlano(d: DatosPlano): string {
     const ds = rasgos.filter((r) => r.geom && filtro(r.geom)).map((r) => trazado(r.geom, t)).filter(Boolean);
     if (!ds.length) return;
     usar(e);
-    partes.push(`<path d="${ds.join('')}" fill-rule="evenodd" ${e.atrs}/>`);
+    // Un trazado por rasgo: juntos en uno solo con «evenodd», dos rasgos que se superponen (dos
+    // traslapes sobre la misma franja, por ejemplo) se anulaban y la zona quedaba sin relleno.
+    partes.push(`<g ${e.atrs}>${ds.map((x) => `<path d="${x}" fill-rule="evenodd"/>`).join('')}</g>`);
   };
 
   /* --- fondo y geografía, de abajo arriba --- */
@@ -271,7 +287,7 @@ export function svgPlano(d: DatosPlano): string {
    * cruza, que es justo lo que hay que ver, sale lavado por el ámbar— y el lindero por encima de todo.
    */
   const dConcesion = trazado(d.concesion.geom, t);
-  usar(ESTILOS.concesion);
+  usar(d.etiquetaPrincipal ? { ...ESTILOS.concesion, etiqueta: d.etiquetaPrincipal } : ESTILOS.concesion);
   partes.push(`<path d="${dConcesion}" fill-rule="evenodd" fill="${AMBAR}" fill-opacity="0.30" stroke="none"/>`);
   capa(d.zonasInformales, ESTILOS.zonasInformales, esPoligono);
   capa(d.carretera, ESTILOS.carreteraEje, esLinea);
@@ -324,6 +340,8 @@ export function svgPlano(d: DatosPlano): string {
   /* --- rótulos, sin encimarse: primero la concesión, después lo demás por importancia --- */
   // La caja de la escala se reserva de entrada: un rótulo encima de la barra no se lee, y la barra tampoco.
   const ocupadas: Caja[] = [[bx - 16, by - 46, bx + largoPx + 74, by + 32]];
+  // Ningún rótulo encima del recuadro de ubicación.
+  if (d.ubicacion) ocupadas.push([MARCO.x + MARCO.w - UBICACION.w - 20, MARCO.y + MARCO.h - UBICACION.h - 20, MARCO.x + MARCO.w, MARCO.y + MARCO.h]);
   const poner = (x: number, y: number, texto: string, tam: number, color: string, peso = 400, ancla = 'start'): boolean => {
     const w = anchoTexto(texto, tam, peso > 500);
     const x0 = ancla === 'middle' ? x - w / 2 : ancla === 'end' ? x - w : x;
@@ -450,6 +468,7 @@ export function svgPlano(d: DatosPlano): string {
     titulo,
     subtitulo,
     `<g clip-path="url(#marco)">`,
+    d.relieve ? `<image href="${d.relieve}" x="${MARCO.x}" y="${MARCO.y}" width="${MARCO.w}" height="${MARCO.h}" preserveAspectRatio="none" opacity="0.85"/>` : '',
     `<path d="${cuadricula.join('')}" stroke="#b9b9b9" stroke-width="1.2" fill="none"/>`,
     ...partes,
     escala,
@@ -457,6 +476,8 @@ export function svgPlano(d: DatosPlano): string {
     `<rect x="${MARCO.x}" y="${MARCO.y}" width="${MARCO.w}" height="${MARCO.h}" fill="none" stroke="#222" stroke-width="2.5"/>`,
     ...etiquetas,
     ...panel,
+    d.ubicacion ? svgUbicacion(d.ubicacion[0], d.ubicacion[1]) : '',
+    d.cajetin?.length ? svgCajetin(d.cajetin) : '',
     pie,
     '</svg>',
   ].join('\n');
@@ -477,6 +498,69 @@ function medio(g: Geometry): Position | null {
 /* ------------------------------------------------------------------ a JPEG */
 
 const DIR_FUENTES = path.join(process.cwd(), 'server', 'electrum', 'fuentes');
+
+/** Honduras (Natural Earth, dominio público, simplificado a ~1 km) para el recuadro de ubicación. */
+let contorno: number[][][] | null = null;
+function contornoHonduras(): number[][][] {
+  if (!contorno) {
+    try {
+      contorno = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'server', 'electrum', 'honduras-contorno.json'), 'utf8')).anillos;
+    } catch {
+      contorno = [];
+    }
+  }
+  return contorno!;
+}
+
+/** El recuadro: Honduras entera con una marca donde está la concesión. */
+function svgUbicacion(lon: number, lat: number): string {
+  // Esquina inferior DERECHA: la izquierda es de la barra de escala.
+  const x0 = MARCO.x + MARCO.w - UBICACION.w - 14;
+  const y0 = MARCO.y + MARCO.h - UBICACION.h - 14;
+  const [w, h] = [UBICACION.w, UBICACION.h];
+  const bb = [-89.45, 12.9, -83.05, 16.55];
+  const k = Math.cos((14.7 * Math.PI) / 180);
+  const esc = Math.min((w - 20) / ((bb[2] - bb[0]) * k), (h - 34) / (bb[3] - bb[1]));
+  const X = (l: number) => x0 + 10 + (l - bb[0]) * k * esc;
+  const Y = (f: number) => y0 + 24 + (bb[3] - f) * esc;
+  const tierra = contornoHonduras()
+    .map((a) => `M${a.map(([l, f]) => `${X(l).toFixed(1)} ${Y(f).toFixed(1)}`).join('L')}Z`)
+    .join('');
+  return [
+    `<rect x="${x0}" y="${y0}" width="${w}" height="${h}" fill="#ffffff" fill-opacity="0.92" stroke="#222" stroke-width="1.5"/>`,
+    `<text x="${x0 + 10}" y="${y0 + 18}" font-family="${FUENTE}" font-size="15" font-weight="700" fill="#333">Ubicación en Honduras</text>`,
+    tierra ? `<path d="${tierra}" fill="#e9e4d6" stroke="#7a7466" stroke-width="1"/>` : '',
+    `<circle cx="${X(lon).toFixed(1)}" cy="${Y(lat).toFixed(1)}" r="9" fill="none" stroke="#c62828" stroke-width="3"/>`,
+    `<circle cx="${X(lon).toFixed(1)}" cy="${Y(lat).toFixed(1)}" r="3" fill="#c62828"/>`,
+  ].join('');
+}
+
+/** El cajetín: los datos de la concesión en celdas, como el rótulo de un plano de ingeniería. */
+function svgCajetin(pares: Array<[string, string]>): string {
+  const { x, y, w, h } = CAJETIN;
+  const cols = 4;
+  const filas = Math.max(1, Math.ceil(pares.length / cols));
+  const cw = w / cols;
+  const fh = h / filas;
+  const celdas = pares.map(([k, v], i) => {
+    const cx = x + (i % cols) * cw;
+    const cy = y + Math.floor(i / cols) * fh;
+    const valor = v.length > 38 ? `${v.slice(0, 37)}…` : v;
+    return (
+      `<text x="${cx + 14}" y="${cy + 26}" font-family="${FUENTE}" font-size="15" fill="#777">${esc(k.toUpperCase())}</text>` +
+      `<text x="${cx + 14}" y="${cy + 56}" font-family="${FUENTE}" font-size="21" font-weight="700" fill="#1a1a1a">${esc(valor)}</text>`
+    );
+  });
+  const lineas: string[] = [];
+  for (let c = 1; c < cols; c++) lineas.push(`M${x + c * cw} ${y}L${x + c * cw} ${y + h}`);
+  for (let f = 1; f < filas; f++) lineas.push(`M${x} ${y + f * fh}L${x + w} ${y + f * fh}`);
+  return [
+    `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#ffffff" stroke="#222" stroke-width="2.5"/>`,
+    `<path d="${lineas.join('')}" stroke="#bbb" stroke-width="1.2"/>`,
+    `<path d="M${x} ${y}L${x + w} ${y}" stroke="${AMBAR}" stroke-width="5"/>`,
+    ...celdas,
+  ].join('');
+}
 export const FUENTES = ['LiberationSans-Regular.ttf', 'LiberationSans-Bold.ttf'].map((f) => path.join(DIR_FUENTES, f));
 
 /**
@@ -512,16 +596,33 @@ export async function jpegDeSvg(svg: string, calidad = 88): Promise<Buffer> {
  * se recorta a esa vista ANTES de reproyectar —pasar un departamento entero a UTM para quedarse con
  * un cuadrito es trabajo tirado— y se simplifica a medio píxel: más detalle no se ve.
  */
-export async function datosPlano(id: number, opts: { subtitulo?: string; pie?: string } = {}): Promise<DatosPlano | null> {
+/** Un área que no está en el catastro (dibujada en el mapa para pedirla): su polígono y su nombre. */
+export type AreaPlano = { geojson: Geometry; nombre: string; ubicacion?: string };
+
+export async function datosPlano(
+  objetivo: number | AreaPlano,
+  opts: { subtitulo?: string; pie?: string; relieve?: boolean } = {}
+): Promise<DatosPlano | null> {
   if (!hayBase()) return null;
+  // Un id puede llegar como texto: pg devuelve los bigint así. Solo un objeto es un área dibujada.
+  const area = objetivo && typeof objetivo === 'object' ? objetivo : null;
+  const id = area ? -1 : Number(objetivo);
+  if (!area && !(Number.isSafeInteger(id) && id > 0)) return null;
+  const COLUMNAS = `ST_AsGeoJSON(u, 1) AS g, ST_XMin(u) x1, ST_YMin(u) y1, ST_XMax(u) x2, ST_YMax(u) y2,
+            ST_X(ST_PointOnSurface(u)) ex, ST_Y(ST_PointOnSurface(u)) ey,
+            ST_X(ST_Centroid(geom)) lon, ST_Y(ST_Centroid(geom)) lat, ST_IsEmpty(geom) vacia`;
   const [c] = await consulta<{
     nombre: string; g: string; x1: number; y1: number; x2: number; y2: number; ex: number; ey: number; lon: number; lat: number; vacia: boolean;
+    titular: string | null; expediente: string | null; estado: string | null; ha: number | null; vence: string | null; municipio: string | null; departamento: string | null;
   }>(
-    `SELECT nombre, ST_AsGeoJSON(u, 1) AS g, ST_XMin(u) x1, ST_YMin(u) y1, ST_XMax(u) x2, ST_YMax(u) y2,
-            ST_X(ST_PointOnSurface(u)) ex, ST_Y(ST_PointOnSurface(u)) ey,
-            ST_X(ST_Centroid(geom)) lon, ST_Y(ST_Centroid(geom)) lat, ST_IsEmpty(geom) vacia
-       FROM (SELECT nombre, geom, ST_Transform(geom, 32616) AS u FROM concesion WHERE id = $1) t`,
-    [id]
+    area
+      ? `SELECT $2::text AS nombre, NULL::text AS titular, NULL::text AS expediente, NULL::text AS estado, (ST_Area(geom::geography) / 10000.0)::float8 AS ha,
+                NULL::text AS vence, NULL::text AS municipio, NULL::text AS departamento, ${COLUMNAS}
+           FROM (SELECT geom, ST_Transform(geom, 32616) AS u FROM (SELECT ST_SetSRID(ST_GeomFromGeoJSON($1), 4326) AS geom) s) t`
+      : `SELECT nombre, titular, expediente, estado, hectareas::float8 AS ha, to_char(vence, 'DD/MM/YYYY') AS vence, municipio, departamento, ${COLUMNAS}
+           FROM (SELECT nombre, titular, expediente, estado, hectareas, vence, municipio, departamento, geom, ST_Transform(geom, 32616) AS u
+                   FROM concesion WHERE id = $1) t`,
+    area ? [JSON.stringify(area.geojson), area.nombre] : [id]
   );
   if (!c || c.vacia) return null;
 
@@ -582,12 +683,21 @@ export async function datosPlano(id: number, opts: { subtitulo?: string; pie?: s
         LIMIT 300`,
       [...params, id]
     ),
-    consulta<{ g: string }>(
-      `WITH ${V}
-       SELECT ${recorte('t.geom')} AS g FROM traslape t, v
-        WHERE (t.a_id = $5 OR t.b_id = $5) AND t.geom IS NOT NULL AND t.geom && v.env`,
-      [...params, id]
-    ),
+    area
+      ? // Un área que se piensa pedir: lo que pisa de cada concesión vigente, calculado ahora.
+        consulta<{ g: string }>(
+          `WITH ${V}, a AS (SELECT ST_SetSRID(ST_GeomFromGeoJSON($5), 4326) AS g)
+           SELECT ${recorte('ST_Intersection(c.geom, a.g)')} AS g FROM concesion c, v, a
+            WHERE c.geom && a.g AND ST_Intersects(c.geom, a.g)
+            LIMIT 200`,
+          [...params, JSON.stringify(area.geojson)]
+        )
+      : consulta<{ g: string }>(
+          `WITH ${V}
+           SELECT ${recorte('t.geom')} AS g FROM traslape t, v
+            WHERE (t.a_id = $5 OR t.b_id = $5) AND t.geom IS NOT NULL AND t.geom && v.env`,
+          [...params, id]
+        ),
     enVista('rio', 4000),
     enVista('area_protegida', 200),
     enVista('microcuenca', 200),
@@ -607,8 +717,36 @@ export async function datosPlano(id: number, opts: { subtitulo?: string; pie?: s
 
   const faltan = (['rio', 'area_protegida', 'microcuenca', 'poblado', 'carretera'] as RolCapa[]).filter((r) => !de(r).length).map((r) => NOMBRE_ROL[r]);
 
+  // El relieve es fondo: si el modelo de elevación no contesta a tiempo, el plano sale sin él.
+  const relieve = opts.relieve === false ? null : await relieveUtm(vista, Math.round(MARCO.w / 2), Math.round(MARCO.h / 2)).catch(() => null);
+  const lugar = area?.ubicacion || [c.municipio, c.departamento].filter(Boolean).join(', ');
+  const hoy = new Date().toLocaleDateString('es-HN', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Tegucigalpa' });
+  const nfHa = (x: number) => `${new Intl.NumberFormat('es-HN', { maximumFractionDigits: 2 }).format(x)} ha`;
+  const cajetin: Array<[string, string]> = area
+    ? [
+        ['Solicitante', '—'],
+        ['Expediente', 'sin presentar'],
+        ['Estado', 'Área propuesta'],
+        ['Área medida', c.ha != null ? nfHa(c.ha) : '—'],
+        ['Ubicación', lugar || '—'],
+        ['Traslapes', traslapes.length ? `${traslapes.length} con concesiones` : 'ninguno'],
+        ['Datum', 'WGS 84 / UTM 16N'],
+        ['Elaborado', `Dr Electrum FP · ${hoy}`],
+      ]
+    : [
+    ['Titular', c.titular || '—'],
+    ['Expediente', c.expediente || '—'],
+    ['Estado', c.estado || '—'],
+    ['Área (catastro)', c.ha != null ? `${new Intl.NumberFormat('es-HN', { maximumFractionDigits: 2 }).format(c.ha)} ha` : '—'],
+    ['Ubicación', lugar || '—'],
+    ['Vence', c.vence || '—'],
+    ['Datum', 'WGS 84 / UTM 16N'],
+    ['Elaborado', `Dr Electrum FP · ${hoy}`],
+      ];
+
   return {
-    titulo: `Plano de situación — ${c.nombre}`,
+    titulo: area ? `Área solicitada — ${c.nombre}` : `Plano de situación — ${c.nombre}`,
+    etiquetaPrincipal: area ? 'Área solicitada' : undefined,
     subtitulo: opts.subtitulo,
     vista,
     convergencia: gamma,
@@ -630,6 +768,9 @@ export async function datosPlano(id: number, opts: { subtitulo?: string; pie?: s
       .filter((p) => !vacia(p.geom) && esPunto(p.geom)),
     faltan,
     pie: opts.pie,
+    relieve,
+    ubicacion: [c.lon, c.lat],
+    cajetin,
   };
 }
 

@@ -91,19 +91,114 @@ async function buscarNoticias(query: string, max: number): Promise<WebHit[]> {
 
 const esNoticia = (q: string) => /\b(noticias?|hoy|[uú]ltima hora|qu[eé] pas[oó]|actualidad|titulares)\b/i.test(q);
 
-export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
-  const orden: Array<() => Promise<WebHit[]>> = esNoticia(query)
-    ? [() => buscarNoticias(query, max), () => buscarDDG(query, max), () => buscarBing(query, max)]
-    : [() => buscarDDG(query, max), () => buscarBing(query, max), () => buscarNoticias(query, max)];
-  for (const fn of orden) {
-    try {
-      const hits = await fn();
-      if (hits.length) return hits;
-    } catch {
-      /* siguiente */
-    }
+/*
+ * Con clave, los buscadores de verdad. Sin clave, los de siempre: los buscadores bloquean las IPs
+ * de servidores (DuckDuckGo contesta «anomaly», Bing «Blocked»), así que ninguno es seguro solo.
+ * La clave se pone en el entorno del servidor, nunca en el código.
+ */
+async function buscarBrave(query: string, max: number): Promise<WebHit[]> {
+  const clave = String(process.env.BRAVE_SEARCH_API_KEY || '').trim();
+  if (!clave) return [];
+  const r = await fetch(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${max}&search_lang=es&safesearch=moderate`, {
+    headers: { Accept: 'application/json', 'X-Subscription-Token': clave },
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!r.ok) throw new Error(`Brave ${r.status}`);
+  const j: any = await r.json();
+  return (j?.web?.results || []).slice(0, max).map((x: any) => ({ title: stripHtml(String(x.title || '')), url: String(x.url || ''), snippet: stripHtml(String(x.description || '')) }));
+}
+
+async function buscarTavily(query: string, max: number): Promise<WebHit[]> {
+  const clave = String(process.env.TAVILY_API_KEY || '').trim();
+  if (!clave) return [];
+  const r = await fetch('https://api.tavily.com/search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${clave}` },
+    body: JSON.stringify({ query, max_results: max, search_depth: 'basic' }),
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!r.ok) throw new Error(`Tavily ${r.status}`);
+  const j: any = await r.json();
+  return (j?.results || []).slice(0, max).map((x: any) => ({ title: String(x.title || ''), url: String(x.url || ''), snippet: String(x.content || '').replace(/\s+/g, ' ').slice(0, 400) }));
+}
+
+/** Wikipedia: no bloquea servidores y cubre lo enciclopédico (geología, minerales, lugares, leyes). */
+async function buscarWikipedia(query: string, max: number, idioma = 'es'): Promise<WebHit[]> {
+  const r = await fetch(`https://${idioma}.wikipedia.org/w/api.php?action=query&list=search&format=json&utf8=1&srlimit=${max}&srsearch=${encodeURIComponent(query)}`, {
+    headers: { 'User-Agent': 'DrElectrumFP/1.0 (busqueda de referencia minera)', Accept: 'application/json' },
+    signal: AbortSignal.timeout(5000),
+  });
+  if (!r.ok) return [];
+  const j: any = await r.json();
+  return (j?.query?.search || []).map((x: any) => ({
+    title: `${x.title} — Wikipedia`,
+    url: `https://${idioma}.wikipedia.org/wiki/${encodeURIComponent(String(x.title).replace(/ /g, '_'))}`,
+    snippet: stripHtml(String(x.snippet || '')),
+  }));
+}
+
+const VACIAS = new Set('para como sobre entre desde hasta donde cual cuales quien quienes cuando este esta estos estas that with from what the and los las del una uno unos unas por con que hay ser mas muy hoy dia ayer como cuanto cuanta cuantos noticias noticia ultimas ultima dame busca buscar informacion sus son fue era'.split(' '));
+const sinTilde = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+export function palabrasClave(q: string): string[] {
+  return [...new Set(sinTilde(q).split(/[^a-z0-9ñ]+/).filter((w) => w.length >= 3 && !VACIAS.has(w)))];
+}
+
+/** Cuántas palabras de la consulta aparecen en el título o el extracto. */
+export function relevancia(h: WebHit, claves: string[]): number {
+  if (!claves.length) return 1;
+  // Al principio de palabra: «oro» cuenta en «oro» y «orogénico», no en «valor».
+  const t = ` ${sinTilde(`${h.title} ${h.snippet} ${decodeURIComponent(h.url)}`).replace(/[^a-z0-9ñ]+/g, ' ')}`;
+  return claves.filter((w) => t.includes(` ${w}`)).length / claves.length;
+}
+
+/** Descarta lo que no es un resultado: páginas del propio buscador y enlaces sin dominio. */
+function esResultado(h: WebHit): boolean {
+  try {
+    const u = new URL(h.url);
+    if (!/^https?:$/.test(u.protocol)) return false;
+    return !/(^|\.)(bing\.com|duckduckgo\.com|google\.com)$/i.test(u.hostname);
+  } catch {
+    return false;
   }
-  return [];
+}
+
+const normalUrl = (u: string) => u.replace(/^https?:\/\/(www\.)?/i, '').replace(/[#?].*$/, '').replace(/\/$/, '').toLowerCase();
+
+export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
+  const claves = palabrasClave(query);
+  const noticia = esNoticia(query);
+  // Todos a la vez: el que conteste bien gana, el que se bloquea no retrasa a los demás.
+  const motores: Array<[string, number, () => Promise<WebHit[]>]> = [
+    ['brave', 3, () => buscarBrave(query, max + 3)],
+    ['tavily', 3, () => buscarTavily(query, max + 3)],
+    ['ddg', 2, () => buscarDDG(query, max + 3)],
+    ['bing', 1, () => buscarBing(query, max + 3)],
+    ['wikipedia', 1, () => buscarWikipedia(query, 3, 'es')],
+    ['noticias', noticia ? 2.5 : 0.5, () => buscarNoticias(query, max)],
+  ];
+  const r = await Promise.allSettled(motores.map(([, , fn]) => fn()));
+  const vistos = new Set<string>();
+  const todos: Array<WebHit & { puntos: number }> = [];
+  r.forEach((x, i) => {
+    if (x.status !== 'fulfilled') return;
+    x.value.forEach((h, k) => {
+      if (!h.title || !h.url || !esResultado(h)) return;
+      const clave = normalUrl(h.url);
+      if (vistos.has(clave)) return;
+      const rel = relevancia(h, claves);
+      // Los raspados sin la mayoría de las palabras de la consulta son ruido (un buscador
+      // bloqueado devuelve su portada; uno flojo, lo que tenga una palabra suelta). Los que tienen
+      // su propio motor de relevancia (APIs, Wikipedia) solo necesitan compartir algo.
+      const minimo = ['brave', 'tavily', 'wikipedia'].includes(motores[i][0]) ? 0.25 : 0.6;
+      if (claves.length >= 2 && rel < minimo) return;
+      vistos.add(clave);
+      todos.push({ ...h, puntos: motores[i][1] + 3 * rel - k * 0.15 });
+    });
+  });
+  return todos
+    .sort((a, b) => b.puntos - a.puntos)
+    .slice(0, max)
+    .map(({ puntos: _p, ...h }) => h);
 }
 
 export async function leerPagina(url: string, maxChars = 1800): Promise<string> {
@@ -124,7 +219,7 @@ export async function leerPagina(url: string, maxChars = 1800): Promise<string> 
 export function consultaWeb(message: string): string | null {
   const q = message.trim();
   const m = q.match(
-    /^(?:(?:ultron|aura|au-ra|au ra)[,\s]+)?(?:busca(?:me)?|investiga|googlea|averigua|consulta en internet|busca en internet|qu[eé] dice internet (?:de|sobre)|noticias (?:de|sobre)|qu[eé] hay de nuevo (?:de|sobre)|dame informaci[oó]n (?:de|sobre))\s+(.+)$/i
+    /^(?:(?:ultron|aura|au-ra|au ra|dr\.? electrum|doctor electrum|doctor|electrum)[,\s]+)?(?:busc[aá](?:me)?(?: en (?:internet|la web))?|investig[aá]|googlea|averigu[aá]|consult[aá] en internet|qu[eé] dice internet (?:de|sobre)|noticias (?:de|sobre)|qu[eé] hay de nuevo (?:de|sobre)|dame informaci[oó]n (?:de|sobre))\s+(.+)$/i
   );
   if (m) return m[1].replace(/[?¿.!]+$/g, '').trim();
   if (/\b(noticias|[uú]ltimas noticias|qu[eé] pas[oó] hoy|hoy en el mundo)\b/i.test(q)) return q.replace(/[?¿.!]+$/g, '');

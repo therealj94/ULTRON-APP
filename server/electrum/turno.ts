@@ -29,6 +29,7 @@ import { lineasPorSignificado } from '../../lib/cognitivo/conocimiento-semantico
 import { PERFILES } from '../../lib/perfiles';
 import { personaPorId } from '../../lib/acceso';
 import { personalidadElectrum } from './personalidad';
+import { buscarWeb, consultaWeb, leerPagina } from '../../src/06-manos/web';
 
 export type RespuestaTurno = {
   texto: string;
@@ -139,6 +140,12 @@ export type OpcionesTurno = {
   enVivo?: (e: EnVivo) => void;
   /** ¿Se fue quien preguntaba? El turno deja de empezar cosas nuevas. */
   abandonado?: () => boolean;
+  /**
+   * Quien pregunta pidió buscar en internet (el botón «Internet» de la pantalla). La búsqueda la
+   * hace el servidor ANTES de pensar: no queda a criterio del modelo si busca o no, y las fuentes
+   * llegan pegadas a la pregunta para que las cite.
+   */
+  internet?: boolean;
 };
 
 export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: OpcionesTurno = {}): Promise<RespuestaTurno> {
@@ -157,8 +164,28 @@ export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: Op
   });
 }
 
+/**
+ * Lo que dice internet sobre la pregunta: los mejores resultados y el texto de las dos primeras
+ * fuentes, con la instrucción de citarlas. Si no hay resultados, también se dice: así el modelo no
+ * contesta «según internet» sin haber leído nada.
+ */
+async function bloqueInternet(mensaje: string, enVivo?: (e: EnVivo) => void): Promise<string> {
+  const t0 = Date.now();
+  const hits = await buscarWeb(mensaje.slice(0, 300), 6).catch(() => []);
+  const leidas = await Promise.all(hits.slice(0, 2).map((h) => leerPagina(h.url, 1500).catch(() => '')));
+  enVivo?.({ herramienta: { herramienta: 'web_buscar', ok: hits.length > 0, resumen: hits.length ? `${hits.length} resultados` : 'sin resultados', ms: Date.now() - t0 } });
+  if (!hits.length) {
+    return 'DE INTERNET: lo pidieron buscar y la búsqueda no devolvió resultados ahora. Decilo así; no cites fuentes que no leíste.';
+  }
+  const lista = hits.map((h, i) => `[${i + 1}] ${h.title} — ${h.url}\n${h.snippet.slice(0, 280)}${leidas[i] ? `\nTexto de la página: ${leidas[i]}` : ''}`);
+  return `DE INTERNET (lo pidieron buscar; usalo, y citá cada dato con su fuente así: (fuente: dominio). Lo que no esté acá no lo atribuyas a internet):\n${lista.join('\n\n')}`;
+}
+
 async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: OpcionesTurno): Promise<RespuestaTurno> {
   const { historial = [], enVivo, abandonado } = opciones;
+  // El botón «Internet», o pedirlo con palabras («buscá en internet…», «noticias de…»): por
+  // pantalla, por voz o por Telegram, igual.
+  const internet = opciones.internet === true || consultaWeb(mensaje) !== null;
   // Quién del panel contesta (Laya) se pide YA, en paralelo con la clasificación: son dos consultas
   // independientes y en serie sumaban sus tiempos. Corre dentro de `enTurno`, así que su paso
   // queda en la traza de este turno igual que antes.
@@ -171,7 +198,9 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   ctx = { ...ctx, riesgo: clas.riesgo, historial: historial.map((m) => ({ role: m.role, content: m.content })) };
   const { panel } = await panelP;
   // Las de su oficio y, para todos, la memoria estructurada (fichas de empresas, concesiones, personas).
-  const herramientas = [...(panel.length ? manosDe(herramientasDe(panel)) : TODAS), ...MEMORIA_ESTRUCTURADA];
+  const base = panel.length ? manosDe(herramientasDe(panel)) : TODAS;
+  // Con «Internet» pedido, las dos de la web están aunque el especialista convocado no las traiga.
+  const herramientas = [...base, ...(internet ? manosDe(['web_buscar', 'web_leer']).filter((h) => !base.some((b) => b.nombre === h.nombre)) : []), ...MEMORIA_ESTRUCTURADA];
   const nombrePanel = panel.map((e) => e.nombre).join(' y ');
   // Lo primero que se puede decir: quién va a contestar. No cuesta nada y quita la sensación de
   // que no pasa nada.
@@ -215,9 +244,11 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     await expedientesDeLaPregunta(mensaje, { antes }).catch(() => ({ documento: null, trozos: [] })),
     herramientas.some((h) => h.nombre === 'expediente_leer')
   );
+  const deInternet = internet ? await bloqueInternet(consultaWeb(mensaje) || mensaje, enVivo) : null;
   const previos = [
     ...(delCerebro.length ? [`DE TU CEREBRO, sobre lo que preguntan (esto lo sabés de verdad):\n${delCerebro.join('\n')}`] : []),
     ...(deExpedientes ? [deExpedientes] : []),
+    ...(deInternet ? [deInternet] : []),
   ];
   const usuario = previos.length ? `${previos.join('\n\n')}\n\n${mensaje}` : mensaje;
 

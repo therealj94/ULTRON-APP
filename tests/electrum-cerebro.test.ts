@@ -206,3 +206,12 @@ test('troceado de documentos: las citas tienen que poder comprobarse', async (t)
     assert.deepEqual(trocear([]), []);
   });
 });
+
+test('búsqueda web: palabras clave sin vacías y relevancia al principio de palabra', async () => {
+  const { palabrasClave, relevancia } = await import('../src/06-manos/web');
+  assert.deepEqual(palabrasClave('¿Cuál es el precio del oro hoy?'), ['precio', 'oro']);
+  const h = { title: 'Precio del oro hoy', url: 'https://ejemplo.hn/oro', snippet: 'Cotización del oro' };
+  assert.equal(relevancia(h, ['precio', 'oro']), 1);
+  // «oro» no está en «valor»: la definición de «precio» no pasa por una noticia del oro.
+  assert.equal(relevancia({ title: '¿Qué es un precio?', url: 'https://x.com/precio', snippet: 'Diferencia con valor' }, ['precio', 'oro']), 0.5);
+});

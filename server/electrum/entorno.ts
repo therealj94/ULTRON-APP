@@ -24,6 +24,7 @@
  * caja de la concesión, ampliada en grados lo justo para la distancia que se pide— y solo sobre lo
  * que sobrevive a ese filtro se mide en metros sobre `geography`. Las consultas corren en paralelo.
  */
+import type { Geometry } from 'geojson';
 import { baseTieneRol, conTextoReparado, consultaConTope, hayBase, rolDeCapa, traslapesDe, type RolCapa, type RolEntorno } from './db';
 
 /**
@@ -106,10 +107,18 @@ export const SECCIONES: Partial<Record<keyof Entorno, RolEntorno>> = {
  * ampliar su caja para cubrir N metros a su latitud (un grado de longitud mide 107 km en Honduras,
  * no 111). Con eso el `&&` descarta por índice todo lo que no puede estar a menos de N metros.
  */
-const C = (metros = 0) => `c AS (
+/**
+ * De dónde sale la geometría que se cruza: una concesión del catastro (por id) o un polígono
+ * dibujado (GeoJSON). En los dos casos es `$1`; el resto de la consulta no cambia.
+ */
+type Fuente = { param: number | string; geom: string };
+const GEOM_CONCESION = '(SELECT geom FROM concesion WHERE id = $1)';
+const GEOM_AREA = 'ST_SetSRID(ST_GeomFromGeoJSON($1::text), 4326)';
+
+const C = (metros = 0, g = GEOM_CONCESION) => `c AS (
   SELECT geom, geom::geography AS gg,
          ST_Expand(geom, ${metros} / (111320.0 * cos(radians(ST_Y(ST_Centroid(geom)))))) AS caja
-    FROM concesion WHERE id = $1
+    FROM (SELECT ${g} AS geom) s WHERE geom IS NOT NULL
 )`;
 
 /** Geometría reparable sin tocar la fila: un polígono roto en una capa no tumba el cruce. */
@@ -178,14 +187,18 @@ async function seccion<T>(ids: number[], fn: () => Promise<T>, msMax = 8000): Pr
     ]);
     return { estado: 'ok', ...datos } as Seccion<T>;
   } catch (e: any) {
-    return { estado: 'error', motivo: String(e?.message || e).slice(0, 160) };
+    // El motivo que se enseña (y que va al PDF) es estable; el error de Postgres o GEOS, con sus
+    // coordenadas y nombres internos, va al registro.
+    const m = String(e?.message || e);
+    console.error('[electrum] entorno: sección falló:', m.slice(0, 200));
+    return { estado: 'error', motivo: /tard[oó] m[aá]s de|statement timeout|canceling statement/i.test(m) ? 'la consulta tardó demasiado' : 'falló la consulta a la base' };
   } finally {
     clearTimeout(reloj);
   }
 }
 
 /** Polígonos que pisa: hectáreas y porcentaje de la concesión, por nombre. */
-async function pisadas(id: number, capas: number[], rol: RolCapa, haConcesion: number): Promise<Pisada[]> {
+async function pisadas(f: Fuente, capas: number[], rol: RolCapa, haConcesion: number): Promise<Pisada[]> {
   /*
    * Se une por nombre ANTES de medir: dos rasgos del mismo área protegida que se solapan (pasa con
    * capas digitalizadas por partes) contarían dos veces la misma hectárea y la ficha diría que la
@@ -194,7 +207,7 @@ async function pisadas(id: number, capas: number[], rol: RolCapa, haConcesion: n
    * único que se limita es la lista que se enseña.
    */
   const filas = await consulta<{ nombre: string | null; ha: number }>(
-    `WITH ${C()},
+    `WITH ${C(0, f.geom)},
      t AS (
        SELECT ${nombreDe(rol)} AS nombre, ${VALIDA} AS g
          FROM entidad_geo e, c
@@ -204,11 +217,11 @@ async function pisadas(id: number, capas: number[], rol: RolCapa, haConcesion: n
      SELECT t.nombre, (ST_Area(ST_Intersection((SELECT geom FROM c), ST_Union(t.g))::geography) / 10000.0)::float8 AS ha
        FROM t GROUP BY t.nombre
       ORDER BY ha DESC LIMIT 12`,
-    [id, capas]
+    [f.param, capas]
   );
   return filas
-    .filter((f) => f.ha >= 0.01)
-    .map((f) => ({ nombre: f.nombre || 'sin nombre en la capa', ha: r2(f.ha), pct: haConcesion > 0 ? (f.ha / haConcesion) * 100 : 0 }));
+    .filter((x) => x.ha >= 0.01)
+    .map((x) => ({ nombre: x.nombre || 'sin nombre en la capa', ha: r2(x.ha), pct: haConcesion > 0 ? (x.ha / haConcesion) * 100 : 0 }));
 }
 
 /* ------------------------------------------------------------------ el entorno */
@@ -228,7 +241,47 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
   );
   if (!c || c.vacia) return null;
   const ha = c.m2 / 10000;
+  // `bigint` llega de pg como texto: se compara como número o «la otra» sale siendo ella misma.
+  const traslapes = traslapesDe(id)
+    .catch(() => [])
+    .then((ts) =>
+      ts.map((t) => ({
+        con: Number(t.a_id) === id ? t.b : t.a,
+        conId: Number(Number(t.a_id) === id ? t.b_id : t.a_id),
+        hectareas: t.hectareas,
+        pct: ha > 0 ? (t.hectareas / ha) * 100 : 0,
+      }))
+    );
+  return entornoCon({ param: id, geom: GEOM_CONCESION }, { id, nombre: c.nombre, ha }, traslapes, t0);
+}
 
+/**
+ * El entorno de un polígono dibujado en el mapa (un área que se piensa pedir): lo mismo que una
+ * concesión, y en «traslapes» las concesiones del catastro que pisa. null si no es un polígono válido.
+ */
+export async function entornoDeArea(geojson: Geometry, nombre = 'Área solicitada'): Promise<Entorno | null> {
+  if (!hayBase()) return null;
+  const t0 = Date.now();
+  const g = JSON.stringify(geojson);
+  const [a] = await consulta<{ m2: number; valida: boolean }>(
+    `SELECT ST_Area(g::geography)::float8 AS m2, (ST_IsValid(g) AND GeometryType(g) IN ('POLYGON', 'MULTIPOLYGON') AND NOT ST_IsEmpty(g)) AS valida
+       FROM (SELECT ${GEOM_AREA} AS g) s`,
+    [g]
+  );
+  if (!a?.valida || !(a.m2 > 0)) return null;
+  const ha = a.m2 / 10000;
+  const traslapes = consulta<{ id: string; nombre: string; ha: number }>(
+    `SELECT c.id::text, c.nombre, (ST_Area(ST_Intersection(c.geom, a.g)::geography) / 10000.0)::float8 AS ha
+       FROM concesion c, (SELECT ${GEOM_AREA} AS g) a
+      WHERE c.geom && a.g AND ST_Intersects(c.geom, a.g)
+      ORDER BY ha DESC LIMIT 50`,
+    [g]
+  ).then((fs) => fs.filter((x) => x.ha >= 0.01).map((x) => ({ con: x.nombre, conId: Number(x.id), hectareas: r2(x.ha), pct: (x.ha / ha) * 100 })));
+  return entornoCon({ param: g, geom: GEOM_AREA }, { id: 0, nombre, ha }, traslapes, t0);
+}
+
+async function entornoCon(f: Fuente, cab: { id: number; nombre: string; ha: number }, traslapesP: Promise<Entorno['traslapes']>, t0: number): Promise<Entorno> {
+  const ha = cab.ha;
   const capas = await capasPorRol();
   const de = (rol: RolCapa) => capas.filter((x) => x.rol === rol).map((x) => x.id);
   const nombres: Partial<Record<RolCapa, string[]>> = {};
@@ -242,21 +295,21 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
 
   const [municipios, departamentos, areasProtegidas, microcuencas, forestal, rios, poblados, carretera, zonasInformales, ocurrencias, traslapes] =
     await Promise.all([
-      seccion(de('municipio'), async () => ({ lista: await pisadas(id, de('municipio'), 'municipio', ha) })),
-      seccion(de('departamento'), async () => ({ lista: await pisadas(id, de('departamento'), 'departamento', ha) })),
+      seccion(de('municipio'), async () => ({ lista: await pisadas(f, de('municipio'), 'municipio', ha) })),
+      seccion(de('departamento'), async () => ({ lista: await pisadas(f, de('departamento'), 'departamento', ha) })),
 
       seccion(de('area_protegida'), async () => {
         const [pisa, cerca] = await Promise.all([
-          pisadas(id, de('area_protegida'), 'area_protegida', ha),
+          pisadas(f, de('area_protegida'), 'area_protegida', ha),
           consulta<{ nombre: string | null; km: number }>(
-            `WITH ${C(RADIO_LEJOS_M)}
+            `WITH ${C(RADIO_LEJOS_M, f.geom)}
              SELECT nombre, min(m)::float8 / 1000.0 AS km FROM (
                SELECT ${nombreDe('area_protegida')} AS nombre, ST_Distance(e.geom::geography, c.gg) AS m
                  FROM entidad_geo e, c
                 WHERE e.capa_id = ANY($2) AND e.geom && c.caja
                   AND ST_DWithin(e.geom::geography, c.gg, ${RADIO_LEJOS_M})
              ) t GROUP BY nombre ORDER BY km LIMIT 12`,
-            [id, de('area_protegida')]
+            [f.param, de('area_protegida')]
           ),
         ]);
         const pisadasN = new Set(pisa.map((p) => p.nombre));
@@ -268,8 +321,8 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
         };
       }),
 
-      seccion(de('microcuenca'), async () => ({ pisa: await pisadas(id, de('microcuenca'), 'microcuenca', ha) })),
-      seccion(de('forestal'), async () => ({ pisa: await pisadas(id, de('forestal'), 'forestal', ha) })),
+      seccion(de('microcuenca'), async () => ({ pisa: await pisadas(f, de('microcuenca'), 'microcuenca', ha) })),
+      seccion(de('forestal'), async () => ({ pisa: await pisadas(f, de('forestal'), 'forestal', ha) })),
 
       seccion(de('rio'), async () => {
         /*
@@ -278,7 +331,7 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
          * lleva los diez cauces más largos, la cifra lleva todos.
          */
         const tramos = await consulta<{ nombre: string | null; km: number; total: number }>(
-          `WITH ${C()},
+          `WITH ${C(0, f.geom)},
            t AS (
              SELECT ${nombreDe('rio')} AS nombre,
                     ST_Length(ST_Intersection(${VALIDA}, c.geom)::geography) / 1000.0 AS km
@@ -288,7 +341,7 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
            ),
            g AS (SELECT nombre, sum(km) AS km FROM t GROUP BY nombre)
            SELECT nombre, km::float8, (sum(km) OVER ())::float8 AS total FROM g ORDER BY km DESC LIMIT 10`,
-          [id, de('rio')]
+          [f.param, de('rio')]
         );
         const kmDentro = tramos.length ? r2(tramos[0].total) : 0;
         let masCercano: Cercana | null = null;
@@ -302,13 +355,13 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
             `WITH cand AS (
                SELECT e.* FROM entidad_geo e
                 WHERE e.capa_id = ANY($2) AND ST_Dimension(e.geom) = 1
-                ORDER BY e.geom <-> (SELECT geom FROM concesion WHERE id = $1)
+                ORDER BY e.geom <-> ${f.geom}
                 LIMIT 5
              )
              SELECT ${nombreDe('rio')} AS nombre,
-                    (ST_Distance(e.geom::geography, (SELECT geom::geography FROM concesion WHERE id = $1)) / 1000.0)::float8 AS km
+                    (ST_Distance(e.geom::geography, (${f.geom})::geography) / 1000.0)::float8 AS km
                FROM cand e ORDER BY km LIMIT 1`,
-            [id, de('rio')]
+            [f.param, de('rio')]
           );
           if (r) masCercano = { nombre: r.nombre || 'cauce sin nombre en la capa', km: r2(r.km) };
         }
@@ -323,7 +376,7 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
         const ids = de('poblado');
         const [conteo, lista] = await Promise.all([
           consulta<{ capa_id: string; dentro: number; cerca: number; pob: number | null }>(
-            `WITH ${C(RADIO_POBLADOS_M)}
+            `WITH ${C(RADIO_POBLADOS_M, f.geom)}
              SELECT e.capa_id::text,
                     count(*) FILTER (WHERE ST_Intersects(e.geom, c.geom))::int AS dentro,
                     count(*) FILTER (WHERE NOT ST_Intersects(e.geom, c.geom))::int AS cerca,
@@ -332,10 +385,10 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
               WHERE e.capa_id = ANY($2) AND e.geom && c.caja
                 AND ST_DWithin(e.geom::geography, c.gg, ${RADIO_POBLADOS_M})
               GROUP BY e.capa_id`,
-            [id, ids]
+            [f.param, ids]
           ),
           consulta<{ capa_id: string; nombre: string | null; km: number; dentro: boolean; pob: number | null }>(
-            `WITH ${C(RADIO_POBLADOS_M)}
+            `WITH ${C(RADIO_POBLADOS_M, f.geom)}
              SELECT e.capa_id::text, ${nombreDe('poblado')} AS nombre,
                     (ST_Distance(e.geom::geography, c.gg) / 1000.0)::float8 AS km,
                     ST_Intersects(e.geom, c.geom) AS dentro, ${POBLACION}::float8 AS pob
@@ -343,7 +396,7 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
               WHERE e.capa_id = ANY($2) AND e.geom && c.caja
                 AND ST_DWithin(e.geom::geography, c.gg, ${RADIO_POBLADOS_M})
               ORDER BY km LIMIT 40`,
-            [id, ids]
+            [f.param, ids]
           ),
         ]);
         const porTipo = new Map<Poblado['tipo'], { dentro: number; cerca: number }>();
@@ -377,25 +430,25 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
           `WITH cand AS (
              SELECT e.geom FROM entidad_geo e
               WHERE e.capa_id = ANY($2)
-              ORDER BY e.geom <-> (SELECT geom FROM concesion WHERE id = $1)
+              ORDER BY e.geom <-> ${f.geom}
               LIMIT 5
            )
-           SELECT (ST_Distance(cand.geom::geography, (SELECT geom::geography FROM concesion WHERE id = $1)) / 1000.0)::float8 AS km,
+           SELECT (ST_Distance(cand.geom::geography, (${f.geom})::geography) / 1000.0)::float8 AS km,
                   ST_Dimension(cand.geom) AS dim
              FROM cand ORDER BY km LIMIT 1`,
-          [id, de('carretera')]
+          [f.param, de('carretera')]
         );
         return { km: r ? r2(r.km) : null, franja: r ? Number(r.dim) === 2 : false };
       }),
 
-      seccion(de('zona_informal'), async () => ({ lista: await puntosCerca(id, de('zona_informal'), 'zona_informal') })),
-      seccion(de('ocurrencia'), async () => ({ lista: await puntosCerca(id, de('ocurrencia'), 'ocurrencia') })),
+      seccion(de('zona_informal'), async () => ({ lista: await puntosCerca(f, de('zona_informal'), 'zona_informal') })),
+      seccion(de('ocurrencia'), async () => ({ lista: await puntosCerca(f, de('ocurrencia'), 'ocurrencia') })),
 
-      traslapesDe(id).catch(() => []),
+      traslapesP,
     ]);
 
   const e: Entorno = {
-    concesion: { id, nombre: c.nombre, hectareas: r2(ha) },
+    concesion: { id: cab.id, nombre: cab.nombre, hectareas: r2(ha) },
     capas: nombres,
     municipios,
     departamentos,
@@ -407,13 +460,7 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
     carretera,
     zonasInformales,
     ocurrencias,
-    // `bigint` llega de pg como texto: se compara como número o «la otra» sale siendo ella misma.
-    traslapes: traslapes.map((t) => ({
-      con: Number(t.a_id) === id ? t.b : t.a,
-      conId: Number(Number(t.a_id) === id ? t.b_id : t.a_id),
-      hectareas: t.hectareas,
-      pct: ha > 0 ? (t.hectareas / ha) * 100 : 0,
-    })),
+    traslapes,
     faltan: (Object.keys(NOMBRE_ROL) as RolEntorno[]).filter((r) => !de(r).length),
     alertas: [],
     ms: 0,
@@ -424,9 +471,9 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
 }
 
 /** Zonas o puntos a menos de 5 km, marcando los que caen dentro. */
-async function puntosCerca(id: number, capas: number[], rol: RolCapa): Promise<Punto[]> {
+async function puntosCerca(f: Fuente, capas: number[], rol: RolCapa): Promise<Punto[]> {
   const filas = await consulta<{ nombre: string | null; km: number; dentro: boolean; detalle: string | null; lugar: string }>(
-    `WITH ${C(RADIO_LEJOS_M)}
+    `WITH ${C(RADIO_LEJOS_M, f.geom)}
      SELECT ${nombreDe(rol)} AS nombre, (ST_Distance(e.geom::geography, c.gg) / 1000.0)::float8 AS km,
             ST_Intersects(e.geom, c.geom) AS dentro, ${DETALLE} AS detalle,
             round(ST_X(ST_PointOnSurface(e.geom))::numeric, 4) || ',' || round(ST_Y(ST_PointOnSurface(e.geom))::numeric, 4) AS lugar
@@ -434,7 +481,7 @@ async function puntosCerca(id: number, capas: number[], rol: RolCapa): Promise<P
       WHERE e.capa_id = ANY($2) AND e.geom && c.caja
         AND ST_DWithin(e.geom::geography, c.gg, ${RADIO_LEJOS_M})
       ORDER BY km LIMIT 40`,
-    [id, capas]
+    [f.param, capas]
   );
   /*
    * El mismo punto en dos capas (los yacimientos de DEFOMIN y los del catálogo general repiten

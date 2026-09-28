@@ -13,12 +13,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { Map as MapaLibre } from 'maplibre-gl';
-import { duracion } from '../movimiento';
+import { duracion, sinMovimiento } from '../movimiento';
 import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './captura';
-import { AMBAR, RESALTE, ESTILO_ROL, COLOR_ROCA, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion } from './capas';
+import { AMBAR, RESALTE, ESTILO_ROL, COLOR_ROCA, CAPAS_TOCABLES_CONCESION, colorEstado, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion, capasDeTraslapes, rayadoTraslape } from './capas';
 import { estiloCalles, estiloSatelite } from './estilos';
 import { urlTeselas } from './teselas';
-import { colorMuestra, radioMuestra, type ElementoMuestra } from './muestras';
+import { colorMuestra, pesoMuestra, radioMuestra, type ElementoMuestra } from './muestras';
+import { rellenoProsp } from './prospectividad';
+import mlcontour from 'maplibre-contour';
+import { Herramientas, herramientaEnUso } from './herramientas';
 import urlDelWorker from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
 /*
@@ -56,10 +59,73 @@ type Props = {
   rasters?: RasterEncendido[];
   /** Muestras geoquímicas de JICA y el elemento que las colorea; null las apaga. */
   muestras?: { elemento: ElementoMuestra; geojson: unknown } | null;
+  /** Zonas donde dos concesiones se pisan, para rayarlas. */
+  traslapes?: unknown | null;
+  /** Curvas de nivel (y sombreado suave en «calles»). */
+  curvas?: boolean;
+  /** Relleno de las concesiones por puntaje de prospectividad en vez de por estado. */
+  prospectividad?: boolean;
+  /** ¿Se está viendo? El mapa se monta detrás de la cara: la entrada se hace cuando aparece. */
+  visible?: boolean;
 };
 
 /** Honduras entera, que es donde se abre si nadie ha pedido nada todavía. */
 const HONDURAS: [number, number, number, number] = [-89.4, 12.9, -83.1, 16.6];
+
+/**
+ * LA ENTRADA: la primera vez de la sesión, la Tierra en globo sobre Centroamérica y el descenso
+ * hasta Honduras. Después, la proyección de siempre (las medidas y los planos son en Mercator/UTM).
+ * Si alguien pidió menos movimiento, o ya la vio en esta pestaña, se abre directo en Honduras.
+ *
+ * El mapa NACE en el globo (se decide al crearlo) y baja cuando se deja ver: si esperara al
+ * evento `load` —que espera las teselas— se vería Honduras un instante y después el salto al espacio.
+ */
+let introPendiente = false;
+/** Hasta cuándo dura la entrada: el encuadre del catastro que llega en medio no la corta. */
+let introHasta = 0;
+const introEnCurso = () => introPendiente || Date.now() < introHasta;
+
+function quiereIntro(): boolean {
+  try {
+    return !sinMovimiento() && !sessionStorage.getItem('electrum:intro');
+  } catch {
+    return false;
+  }
+}
+
+function prepararGlobo(m: maplibregl.Map) {
+  try {
+    m.setProjection({ type: 'globe' });
+    // El halo de la atmósfera alrededor del globo; se apaga solo al acercarse (zoom 7).
+    m.setSky({ 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] } as any);
+  } catch {
+    introPendiente = false;
+  }
+}
+
+function introDesdeElEspacio(m: maplibregl.Map) {
+  if (!introPendiente) return;
+  introPendiente = false;
+  try {
+    sessionStorage.setItem('electrum:intro', '1');
+  } catch {
+    /* sin almacenamiento: la volverá a ver la próxima vez, nada más */
+  }
+  introHasta = Date.now() + 300 + duracion(4800) + 400;
+  const volver = () => {
+    try {
+      m.setProjection({ type: 'mercator' });
+    } catch {
+      /* el estilo ya cambió: su proyección es la de siempre */
+    }
+  };
+  setTimeout(() => {
+    // Si algo más mueve el mapa antes (una orden de Dr Electrum, un toque), el descenso se corta y
+    // la proyección vuelve igual al terminar ese movimiento.
+    m.fitBounds(HONDURAS, { padding: 40, duration: duracion(4800), curve: 1.5, essential: true });
+    m.once('moveend', volver);
+  }, 300);
+}
 
 /**
  * Pone las fuentes y las capas si no están, y no hace nada si ya están.
@@ -118,6 +184,35 @@ function asegurarCapas(m: maplibregl.Map) {
   }
   // La tocada y la de bajo el dedo: encima del catastro, debajo del resaltado de Dr Electrum.
   for (const c of capasDeSeleccion()) if (!m.getLayer(c.id)) m.addLayer(c as any, m.getLayer('resaltada-relleno') ? 'resaltada-relleno' : undefined);
+  // Concesiones con algo que atender: por vencer (≤ 90 días) o con pérdida de vegetación fuerte.
+  if (!m.getLayer('concesiones-alerta') && m.getSource('concesiones')) {
+    m.addLayer(
+      {
+        id: 'concesiones-alerta',
+        type: 'line',
+        source: 'concesiones',
+        filter: filtroAlerta(),
+        paint: {
+          'line-color': ['case', ['>=', ['coalesce', ['get', 'perdida_ha'], 0], 5], '#FF4FD8', '#FF7A45'],
+          'line-width': 3,
+          'line-blur': 2,
+          'line-opacity': 0.7,
+        },
+      } as any,
+      m.getLayer('concesiones-sel') ? 'concesiones-sel' : undefined
+    );
+  }
+  // Los traslapes, rayados encima del catastro y debajo de la concesión tocada.
+  if (pintadoTraslapes) {
+    if (!m.hasImage('rayado-traslape')) m.addImage('rayado-traslape', rayadoTraslape());
+    if (!m.getSource('traslapes')) {
+      for (const c of capasDeTraslapes()) if (m.getLayer(c.id)) m.removeLayer(c.id);
+      m.addSource('traslapes', { type: 'geojson', data: pintadoTraslapes as any });
+    }
+    for (const c of capasDeTraslapes()) if (!m.getLayer(c.id)) m.addLayer(c as any, m.getLayer('concesiones-sel') ? 'concesiones-sel' : undefined);
+  }
+  aplicarCurvas(m);
+  aplicarRelleno(m);
   // Las capas encendidas van DEBAJO del catastro: la concesión se sigue leyendo encima de la roca.
   for (const [fuente, { rol, geojson }] of pintadoExtra) {
     if (!m.getSource(fuente)) {
@@ -147,17 +242,43 @@ function asegurarCapas(m: maplibregl.Map) {
   if (pintadoMuestras) {
     const { elemento, geojson } = pintadoMuestras;
     if (!m.getSource('muestras')) {
-      if (m.getLayer('muestras-punto')) m.removeLayer('muestras-punto');
+      for (const id of ['muestras-punto', 'muestras-calor']) if (m.getLayer(id)) m.removeLayer(id);
       m.addSource('muestras', { type: 'geojson', data: geojson as any });
+    }
+    /*
+     * De lejos, un mapa de calor pesado por la ley (dónde se juntan las anomalías); al acercarse se
+     * desvanece y quedan los puntos, que son los que se tocan.
+     */
+    if (!m.getLayer('muestras-calor')) {
+      m.addLayer({
+        id: 'muestras-calor',
+        type: 'heatmap',
+        source: 'muestras',
+        maxzoom: 11,
+        paint: {
+          'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 6, 10, 10, 26],
+          'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 6, 1, 10, 2],
+          'heatmap-opacity': ['interpolate', ['linear'], ['zoom'], 8, 0.85, 10.5, 0],
+          'heatmap-color': ['interpolate', ['linear'], ['heatmap-density'], 0, 'rgba(0,0,0,0)', 0.2, 'rgba(59,130,246,0.45)', 0.45, 'rgba(34,197,94,0.6)', 0.65, 'rgba(234,179,8,0.75)', 0.85, 'rgba(249,115,22,0.85)', 1, 'rgba(239,68,68,0.95)'],
+        },
+      } as any);
     }
     if (!m.getLayer('muestras-punto')) {
       m.addLayer({
         id: 'muestras-punto',
         type: 'circle',
         source: 'muestras',
-        paint: { 'circle-stroke-color': '#0B0D0F', 'circle-stroke-width': 0.8, 'circle-opacity': 0.92 },
+        minzoom: 7.5,
+        paint: {
+          'circle-stroke-color': '#0B0D0F',
+          'circle-stroke-width': 0.8,
+          'circle-opacity': ['interpolate', ['linear'], ['zoom'], 7.5, 0, 9, 0.92],
+          'circle-stroke-opacity': ['interpolate', ['linear'], ['zoom'], 7.5, 0, 9, 1],
+        },
       } as any);
     }
+    m.setFilter('muestras-calor', ['has', elemento]);
+    m.setPaintProperty('muestras-calor', 'heatmap-weight', pesoMuestra(elemento) as any);
     // Solo las que midieron ese elemento, y las de más ley dibujadas encima.
     m.setFilter('muestras-punto', ['has', elemento]);
     m.setLayoutProperty('muestras-punto', 'circle-sort-key', ['to-number', ['get', elemento]]);
@@ -169,7 +290,7 @@ function asegurarCapas(m: maplibregl.Map) {
 
 /** Apaga las muestras. */
 function quitarMuestras(m: maplibregl.Map) {
-  if (m.getLayer('muestras-punto')) m.removeLayer('muestras-punto');
+  for (const id of ['muestras-punto', 'muestras-calor']) if (m.getLayer(id)) m.removeLayer(id);
   if (m.getSource('muestras')) m.removeSource('muestras');
 }
 
@@ -189,26 +310,131 @@ function quitarRaster(m: maplibregl.Map, clave: string) {
  * por lo mismo que `pintado`.
  */
 let terreno3D = false;
+
+/** Por vencer en 90 días (fechas ISO se comparan como texto) o con ≥ 5 ha de pérdida fuerte de vegetación. */
+function filtroAlerta(): unknown[] {
+  const hoy = new Date();
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const limite = new Date(hoy.getTime() + 90 * 86_400_000);
+  return [
+    'any',
+    ['all', ['has', 'vence'], ['>=', ['get', 'vence'], iso(hoy)], ['<=', ['get', 'vence'], iso(limite)]],
+    ['>=', ['coalesce', ['get', 'perdida_ha'], 0], 5],
+  ];
+}
+/** Relieve sombreado y curvas de nivel en el mapa plano; el fondo del momento decide cuánto sombreado. */
+const relieve = { curvas: true, fondo: 'satelite' as Fondo };
+/** Los traslapes con su geometría, para rayarlos. Fuera de React por lo mismo que `pintado`. */
+let pintadoTraslapes: unknown = null;
 const TESELAS_RELIEVE = ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'];
 
+/**
+ * Las curvas de nivel se calculan EN EL NAVEGADOR a partir del mismo modelo de elevación del 3D
+ * (Terrarium, abierto): `maplibre-contour` registra un protocolo que convierte cada tesela de
+ * elevación en líneas vectoriales, en un worker para no trabar el mapa. Nada que servir ni pagar.
+ */
+let dem: any = null;
+function fuenteCurvas(): string {
+  if (!dem) {
+    dem = new (mlcontour as any).DemSource({ url: TESELAS_RELIEVE[0], encoding: 'terrarium', maxzoom: 12, worker: true, cacheSize: 80, timeoutMs: 15_000 });
+    dem.setupMaplibre(maplibregl);
+  }
+  // Metros: [menor, maestra] por zoom.
+  // Espaciadas para que el terreno se lea sin tapar el mapa: la maestra cada 5 menores.
+  return dem.contourProtocolUrl({ thresholds: { 10: [200, 1000], 11: [100, 500], 12: [50, 250], 13: [20, 100], 14: [10, 50] }, contourLayer: 'curvas', elevationKey: 'cota', levelKey: 'nivel' });
+}
+
+/** Relleno de las concesiones: por estado (lo normal) o por prospectividad, más opaco para que se lea. */
+let rellenoPorProsp = false;
+function aplicarRelleno(m: maplibregl.Map) {
+  if (!m.getLayer('concesiones-relleno')) return;
+  m.setPaintProperty('concesiones-relleno', 'fill-color', (rellenoPorProsp ? rellenoProsp() : colorEstado()) as any);
+  m.setPaintProperty('concesiones-relleno', 'fill-opacity', (rellenoPorProsp ? ['interpolate', ['linear'], ['zoom'], 6, 0.55, 12, 0.35] : ['interpolate', ['linear'], ['zoom'], 6, 0.18, 12, 0.1]) as any);
+}
+
+function aplicarCurvas(m: maplibregl.Map) {
+  const ids = ['curvas-linea', 'curvas-cota'];
+  if (!relieve.curvas) {
+    for (const id of ids) if (m.getLayer(id)) m.removeLayer(id);
+    if (m.getSource('curvas')) m.removeSource('curvas');
+    return;
+  }
+  if (!m.getSource('curvas')) {
+    for (const id of ids) if (m.getLayer(id)) m.removeLayer(id);
+    m.addSource('curvas', { type: 'vector', tiles: [fuenteCurvas()], minzoom: 10, maxzoom: 14 } as any);
+  }
+  const sobreSatelite = relieve.fondo === 'satelite';
+  // Debajo de todo lo vectorial del catastro: las curvas son el terreno, no una capa más.
+  const antes = m.getStyle().layers.find((l) => l.id.startsWith('extra-') || l.id === 'concesiones-relleno')?.id;
+  if (!m.getLayer('curvas-linea')) {
+    m.addLayer(
+      {
+        id: 'curvas-linea',
+        type: 'line',
+        source: 'curvas',
+        'source-layer': 'curvas',
+        minzoom: 10,
+        paint: {
+          'line-color': sobreSatelite ? 'rgba(255,238,210,0.55)' : 'rgba(255,226,180,0.30)',
+          'line-width': ['match', ['get', 'nivel'], 1, 1.1, 0.5],
+          'line-opacity': ['match', ['get', 'nivel'], 1, 1, 0.55],
+        },
+      } as any,
+      antes
+    );
+  }
+  if (!m.getLayer('curvas-cota')) {
+    m.addLayer(
+      {
+        id: 'curvas-cota',
+        type: 'symbol',
+        source: 'curvas',
+        'source-layer': 'curvas',
+        minzoom: 12,
+        filter: ['>', ['get', 'nivel'], 0],
+        layout: {
+          'symbol-placement': 'line',
+          'text-field': ['concat', ['number-format', ['get', 'cota'], {}], ' m'],
+          'text-font': ['Noto Sans Regular'],
+          'text-size': 10,
+          'text-padding': 20,
+        },
+        paint: { 'text-color': 'rgba(255,236,205,0.85)', 'text-halo-color': 'rgba(0,0,0,0.75)', 'text-halo-width': 1.2 },
+      } as any,
+      antes
+    );
+  }
+  m.setPaintProperty('curvas-linea', 'line-color', sobreSatelite ? 'rgba(255,238,210,0.55)' : 'rgba(255,226,180,0.30)');
+}
+
+/*
+ * EL TERRENO: en 3D, relieve real con sombreado y cielo; en el plano, un sombreado suave sobre el
+ * fondo «calles» (junto con las curvas) para que la sierra se lea sin inclinar la cámara.
+ */
 function aplicarTerreno(m: maplibregl.Map) {
+  const sombrear = terreno3D || (relieve.curvas && relieve.fondo === 'calles');
+  if (sombrear && !m.getSource('relieve-sombra')) {
+    m.addSource('relieve-sombra', { type: 'raster-dem', tiles: TESELAS_RELIEVE, encoding: 'terrarium', tileSize: 256, maxzoom: 14 } as any);
+  }
+  if (sombrear && !m.getLayer('sombreado')) {
+    const antes = m.getStyle().layers.find((l) => l.id.startsWith('raster-') || l.id.startsWith('curvas-') || l.id.startsWith('extra-') || l.id === 'concesiones-relleno')?.id;
+    m.addLayer(
+      {
+        id: 'sombreado',
+        type: 'hillshade',
+        source: 'relieve-sombra',
+        paint: { 'hillshade-shadow-color': '#1b1308', 'hillshade-highlight-color': '#fff4dc' },
+      } as any,
+      antes
+    );
+  }
+  if (sombrear) m.setPaintProperty('sombreado', 'hillshade-exaggeration', terreno3D ? 0.45 : 0.28);
+  if (!sombrear) {
+    if (m.getLayer('sombreado')) m.removeLayer('sombreado');
+  }
   if (terreno3D) {
     if (!m.getSource('relieve')) {
       m.addSource('relieve', { type: 'raster-dem', tiles: TESELAS_RELIEVE, encoding: 'terrarium', tileSize: 256, maxzoom: 14 } as any);
-    }
-    if (!m.getSource('relieve-sombra')) {
-      m.addSource('relieve-sombra', { type: 'raster-dem', tiles: TESELAS_RELIEVE, encoding: 'terrarium', tileSize: 256, maxzoom: 14 } as any);
-    }
-    if (!m.getLayer('sombreado')) {
-      m.addLayer(
-        {
-          id: 'sombreado',
-          type: 'hillshade',
-          source: 'relieve-sombra',
-          paint: { 'hillshade-exaggeration': 0.45, 'hillshade-shadow-color': '#1b1308', 'hillshade-highlight-color': '#fff4dc' },
-        } as any,
-        m.getLayer('concesiones-relleno') ? 'concesiones-relleno' : undefined
-      );
     }
     if (!m.getTerrain()) m.setTerrain({ source: 'relieve', exaggeration: 1.6 });
     try {
@@ -218,8 +444,8 @@ function aplicarTerreno(m: maplibregl.Map) {
     }
   } else {
     if (m.getTerrain()) m.setTerrain(null);
-    if (m.getLayer('sombreado')) m.removeLayer('sombreado');
-    for (const f of ['relieve-sombra', 'relieve']) if (m.getSource(f)) m.removeSource(f);
+    if (m.getSource('relieve')) m.removeSource('relieve');
+    if (!sombrear && m.getSource('relieve-sombra')) m.removeSource('relieve-sombra');
   }
 }
 
@@ -321,7 +547,7 @@ function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
   }
 }
 
-export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null }: Props) {
+export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null, traslapes = null, curvas = true, prospectividad = false, visible = true }: Props) {
   /** El último `onTocar`, para los manejadores que se atan una sola vez al crear el mapa. */
   const tocarRef = useRef(onTocar);
   tocarRef.current = onTocar;
@@ -356,11 +582,11 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
 
   useEffect(() => {
     if (motor !== 'maplibre' || !caja.current || mapa.current) return;
+    introPendiente = quiereIntro();
     const m = new maplibregl.Map({
       container: caja.current,
       style: fondoRef.current === 'satelite' ? estiloSatelite() : estiloCalles(),
-      bounds: HONDURAS,
-      fitBoundsOptions: { padding: 40 },
+      ...(introPendiente ? { center: [-86.8, 14.6] as [number, number], zoom: 1.4 } : { bounds: HONDURAS, fitBoundsOptions: { padding: 40 } }),
       attributionControl: { compact: true },
       /*
        * Conservar el búfer de dibujo. Sin esto, el lienzo de WebGL se vacía tras cada cuadro y
@@ -373,6 +599,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     // A la derecha, no a la izquierda: abajo a la izquierda vive la cara cuando cede el paso, y la
     // escala le asomaba por detrás como un recorte de papel blanco.
     m.addControl(new maplibregl.ScaleControl({ unit: 'metric' }), 'bottom-right');
+    if (introPendiente) m.once('style.load', () => prepararGlobo(m));
     m.on('load', () => {
       // Las fuentes nacen vacías: el contenido llega cuando una herramienta lo manda.
       asegurarCapas(m);
@@ -394,11 +621,13 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
       const existentes = (ids: string[]) => ids.filter((id) => m.getLayer(id));
       // Una muestra gana a todo: es un punto encima de la concesión donde se tomó.
       const muestra = m.queryRenderedFeatures(caja, { layers: existentes(['muestras-punto']) });
-      const conc = muestra.length ? [] : m.queryRenderedFeatures(caja, { layers: existentes(['concesiones-relleno', 'concesiones-borde']) });
+      const conc = muestra.length ? [] : m.queryRenderedFeatures(caja, { layers: existentes(CAPAS_TOCABLES_CONCESION) });
       const extra = conc.length || muestra.length ? [] : m.queryRenderedFeatures(caja, { layers: existentes(capasTocablesExtra()) });
       return { muestra, conc, extra };
     };
     m.on('click', (e) => {
+      // Midiendo o trazando un perfil, el toque es un vértice, no una pregunta.
+      if (herramientaEnUso()) return;
       const { muestra, conc, extra } = bajoElDedo(e.point, 6);
       const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat];
       const mu = muestra.find((f) => Number.isFinite(Number(f.properties?.id)));
@@ -413,6 +642,8 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     });
     let bajo: number | null = null;
     m.on('mousemove', (e) => {
+      // Con una herramienta en uso el cursor es la cruz de la herramienta, no la manito del catastro.
+      if (herramientaEnUso()) return;
       const { muestra, conc, extra } = bajoElDedo(e.point, 3);
       const id = conc.length ? Number(conc[0].properties?.id) : null;
       m.getCanvas().style.cursor = muestra.length || conc.length || extra.length ? 'pointer' : '';
@@ -565,6 +796,79 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
 
   useEffect(() => {
     const m = mapa.current;
+    const antes = pintadoTraslapes;
+    pintadoTraslapes = traslapes;
+    if (!m || !listo) return;
+    if (antes !== traslapes) for (const id of ['traslapes-rayado', 'traslapes-borde']) if (m.getLayer(id)) m.removeLayer(id);
+    if (antes !== traslapes && m.getSource('traslapes')) m.removeSource('traslapes');
+    if (traslapes) asegurarCapas(m);
+  }, [traslapes, listo]);
+
+  // El pulso de las alertas: opacidad y grosor que respiran, ~30 cuadros por segundo (15 con el terreno 3D,
+  // donde cada cuadro cuesta mucho más); quieto si se pidió menos movimiento.
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m || !listo || sinMovimiento()) return;
+    let vivo = true;
+    let ultimo = 0;
+    const paso = (t: number) => {
+      if (!vivo) return;
+      if (t - ultimo > (m.getTerrain() ? 66 : 33) && m.getLayer('concesiones-alerta')) {
+        ultimo = t;
+        const f = (Math.sin(t / 380) + 1) / 2;
+        m.setPaintProperty('concesiones-alerta', 'line-opacity', 0.25 + 0.65 * f);
+        m.setPaintProperty('concesiones-alerta', 'line-width', 2 + 4 * f);
+      }
+      requestAnimationFrame(paso);
+    };
+    requestAnimationFrame(paso);
+    return () => {
+      vivo = false;
+    };
+  }, [listo]);
+
+  // Curvas y sombreado: dependen de si están pedidas y del fondo (más marcadas sobre el satélite).
+  useEffect(() => {
+    relieve.curvas = curvas;
+    relieve.fondo = fondo;
+    const m = mapa.current;
+    if (!m || !listo) return;
+    if (m.getLayer('curvas-linea')) m.removeLayer('curvas-linea');
+    if (m.getLayer('curvas-cota')) m.removeLayer('curvas-cota');
+    aplicarCurvas(m);
+    aplicarTerreno(m);
+  }, [curvas, fondo, listo]);
+
+  // La entrada desde el espacio, la primera vez que el mapa se deja ver en la sesión.
+  useEffect(() => {
+    const m = mapa.current;
+    if (m && listo && visible) introDesdeElEspacio(m);
+  }, [listo, visible]);
+
+  // Un puntaje calculado al abrir una ficha entra al dato del catastro pintado (si cambió).
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m || !listo) return;
+    const alRecibir = (e: Event) => {
+      const { id, puntaje } = (e as CustomEvent<{ id: number; puntaje: number }>).detail || ({} as any);
+      const fc = pintado.concesiones as { features?: Array<{ properties?: Record<string, unknown> }> } | null;
+      const f = fc?.features?.find((x) => Number(x.properties?.id) === Number(id));
+      if (!f?.properties || f.properties.prosp === puntaje) return;
+      f.properties.prosp = puntaje;
+      pintar(m, 'concesiones', fc);
+    };
+    window.addEventListener('electrum:prospectividad', alRecibir);
+    return () => window.removeEventListener('electrum:prospectividad', alRecibir);
+  }, [listo]);
+
+  useEffect(() => {
+    rellenoPorProsp = prospectividad;
+    const m = mapa.current;
+    if (m && listo) aplicarRelleno(m);
+  }, [prospectividad, listo]);
+
+  useEffect(() => {
+    const m = mapa.current;
     if (m && listo && m.getLayer('concesiones-sel')) m.setFilter('concesiones-sel', ['==', ['to-number', ['get', 'id']], seleccion ?? -1]);
   }, [seleccion, listo]);
 
@@ -587,11 +891,20 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     if (m && listo) {
       if (o.accion === 'volar') {
         pintar(m, 'resaltada', { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: o.geojson, properties: {} }] });
-        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 80, duration: duracion(1400), maxZoom: 15 });
-        else if (o.centro) m.flyTo({ center: o.centro, zoom: 13, duration: duracion(1400) });
+        /*
+         * Vuelo de presentación: sube, cruza y baja inclinándose y girando un poco al llegar, para
+         * que se lea el relieve alrededor de la concesión. Con «menos movimiento» pedido, salto directo.
+         */
+        const cam = o.encuadre ? m.cameraForBounds(o.encuadre, { padding: 90, maxZoom: 15 }) : null;
+        const centro = cam?.center ?? o.centro;
+        const zoom = cam?.zoom ?? (o.centro ? 13 : undefined);
+        if (centro && zoom !== undefined) {
+          m.flyTo({ center: centro as any, zoom, pitch: terreno3D ? 60 : 38, bearing: -14, curve: 1.6, speed: 0.9, duration: duracion(2800), essential: true });
+        }
       } else if (o.accion === 'capa') {
         pintar(m, 'concesiones', o.geojson);
-        if (o.encuadre) m.fitBounds(o.encuadre, { padding: 60, duration: duracion(1400) });
+        // Durante la entrada desde el espacio, el descenso ya termina sobre el país.
+        if (o.encuadre && !introEnCurso()) m.fitBounds(o.encuadre, { padding: 60, duration: duracion(1400) });
       } else if (o.accion === 'candidatas') {
         pintar(m, 'resaltada', o.geojson);
         if (o.encuadre) m.fitBounds(o.encuadre, { padding: 80, duration: duracion(1400), maxZoom: 14 });
@@ -655,6 +968,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
       */}
       <div ref={caja} style={{ position: 'absolute', inset: 0, display: motor === 'maplibre' ? 'block' : 'none' }} />
       <div ref={cajaGoogle} style={{ position: 'absolute', inset: 0, display: motor === 'google' ? 'block' : 'none' }} />
+      {motor === 'maplibre' && listo && mapa.current && <Herramientas mapa={mapa.current} tresD={tresD} fondo={fondo} />}
       {motor === 'google' && falloGoogle && (
         <div className="absolute inset-0 grid place-items-center p-8 text-center">
           <p className="max-w-sm text-sm text-[#8FA3B0] leading-relaxed">{falloGoogle}</p>

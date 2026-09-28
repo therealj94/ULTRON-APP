@@ -9,8 +9,19 @@
 import { useCallback, useRef, useState } from 'react';
 import { headersElectrum } from '../acceso';
 import type { CapaExtra, RasterEncendido, RasterEscaneado, RolVisible } from './captura';
-import { COLOR_ROCA, ESTILO_ROL, NOMBRE_ROCA } from './capas';
+import { COLOR_ROCA, ESTILO_ROL, GRUPOS_ESTADO, NOMBRE_ROCA } from './capas';
+import { leyendaProsp } from './prospectividad';
 import { ELEMENTOS_MUESTRA, NOMBRE_ELEMENTO, leyendaMuestras, type ElementoMuestra } from './muestras';
+
+/** Los rasters por sección, en el orden en que llegan: los mapas escaneados y lo calculado del satélite. */
+function gruposRaster(xs: RasterEscaneado[] | null): Array<[string, RasterEscaneado[]]> {
+  const g = new Map<string, RasterEscaneado[]>();
+  for (const x of xs || []) {
+    const k = x.grupo || 'Mapas escaneados';
+    g.set(k, [...(g.get(k) || []), x]);
+  }
+  return [...g];
+}
 
 export type MuestrasEncendidas = { elemento: ElementoMuestra; geojson: { features?: unknown[] } };
 
@@ -30,6 +41,10 @@ export function CapasControl({
   onEncuadrar,
   muestras = null,
   onMuestras,
+  curvas = true,
+  onCurvas,
+  prospectividad = false,
+  onProspectividad,
 }: {
   encendidas: CapaExtra[];
   onCambio: (f: (antes: CapaExtra[]) => CapaExtra[]) => void;
@@ -41,6 +56,12 @@ export function CapasControl({
   /** Muestras geoquímicas de JICA encendidas y el elemento que las colorea. */
   muestras?: MuestrasEncendidas | null;
   onMuestras?: (m: MuestrasEncendidas | null) => void;
+  /** Curvas de nivel y sombreado del terreno. */
+  curvas?: boolean;
+  onCurvas?: (v: boolean) => void;
+  /** Colorear las concesiones por puntaje de prospectividad (geología + muestras + satélite). */
+  prospectividad?: boolean;
+  onProspectividad?: (v: boolean) => void;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [lista, setLista] = useState<Disponible[] | null>(null);
@@ -150,6 +171,60 @@ export function CapasControl({
     <div className="pointer-events-none absolute left-3 bottom-3 top-[150px] z-10 flex flex-col items-start justify-end gap-2">
       {abierto && (
         <div className="pointer-events-auto min-h-0 max-h-[420px] w-[280px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-white/12 bg-[#0A0C0E]/94 p-3 text-[12.5px] text-[#C9D5DB] shadow-[0_10px_30px_rgba(0,0,0,.55)] backdrop-blur-xl">
+          <div className="mb-1 font-mono text-[10px] tracking-[0.16em] uppercase" style={{ color: AMBAR }}>
+            {prospectividad ? 'Catastro por estado (el borde)' : 'Catastro por estado'}
+          </div>
+          <div className="mb-2 grid grid-cols-2 gap-x-2 gap-y-0.5">
+            {GRUPOS_ESTADO.map((g) => (
+              <span key={g.clave} className="flex items-center gap-1.5 text-[10.5px]">
+                <span className="h-2.5 w-3.5 shrink-0 rounded-[2px] border" style={{ borderColor: g.color, background: `${g.color}33`, borderStyle: g.clave === 'tramite' ? 'dashed' : 'solid' }} />
+                {g.nombre}
+              </span>
+            ))}
+            <span className="flex items-center gap-1.5 text-[10.5px]">
+              <span className="h-2.5 w-3.5 shrink-0 rounded-[2px] border border-[#FF5A5A]" style={{ background: 'repeating-linear-gradient(135deg, rgba(255,80,80,.8) 0 2px, transparent 2px 5px)' }} />
+              Traslape
+            </span>
+            <span className="flex items-center gap-1.5 text-[10.5px]">
+              <span className="h-2.5 w-3.5 shrink-0 rounded-[2px] border-2 border-[#FF7A45] animate-pulse" />
+              Vence en ≤ 90 días
+            </span>
+            <span className="flex items-center gap-1.5 text-[10.5px]">
+              <span className="h-2.5 w-3.5 shrink-0 rounded-[2px] border-2 border-[#FF4FD8] animate-pulse" />
+              Pérdida de vegetación
+            </span>
+          </div>
+          {onCurvas && (
+            <label className="mb-2 flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 hover:bg-white/[0.05]">
+              <input type="checkbox" checked={curvas} onChange={() => onCurvas(!curvas)} className="accent-[#FFAE3B]" />
+              <span className="text-[#E7EEF2]">Curvas de nivel y relieve</span>
+            </label>
+          )}
+          {onProspectividad && (
+            <div className="mb-2">
+              <label className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 hover:bg-white/[0.05]">
+                <input type="checkbox" checked={prospectividad} onChange={() => onProspectividad(!prospectividad)} className="accent-[#FFAE3B]" />
+                <span className="text-[#E7EEF2]">Colorear por prospectividad</span>
+              </label>
+              {prospectividad && (
+                <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 pl-7 pr-1">
+                  {leyendaProsp().map((l) => (
+                    <span key={l.texto} className="flex items-center gap-1.5 text-[10.5px]">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: l.color }} />
+                      {l.texto}
+                    </span>
+                  ))}
+                  <span className="flex items-center gap-1.5 text-[10.5px]">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-sm border border-white/40" style={{ background: 'rgba(160,170,176,0.35)' }} />
+                    Sin calcular
+                  </span>
+                  <span className="col-span-2 mt-0.5 text-[10.5px] leading-snug text-[#61717A]">
+                    Geología, muestras de JICA y Sentinel-2, de 0 a 100. Se calcula al abrir la ficha de cada concesión.
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
           <div className="mb-2 font-mono text-[10px] tracking-[0.16em] uppercase" style={{ color: AMBAR }}>
             Capas sobre el catastro
           </div>
@@ -168,7 +243,7 @@ export function CapasControl({
                     <span className="min-w-0">
                       <span className="block leading-snug text-[#E7EEF2]">{e?.nombre || c.rol}</span>
                       <span className="block truncate text-[11px] text-[#7F939D]" title={c.nombre}>
-                        {bajando === c.id ? 'bajando…' : `${c.nombre} · ${c.entidades.toLocaleString('es-HN')}`}
+                        {bajando === c.id ? 'Bajando…' : `${c.nombre} · ${c.entidades.toLocaleString('es-HN')}`}
                       </span>
                     </span>
                   </label>
@@ -176,13 +251,13 @@ export function CapasControl({
               );
             })}
           </ul>
-          {!!escaneados?.length && (
-            <div className="mt-3 border-t border-white/[0.08] pt-2">
+          {gruposRaster(escaneados).map(([grupo, xs]) => (
+            <div key={grupo} className="mt-3 border-t border-white/[0.08] pt-2">
               <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
-                Mapas escaneados
+                {grupo}
               </div>
               <ul className="space-y-1">
-                {escaneados.map((x) => {
+                {xs.map((x) => {
                   const on = rasters.find((r) => r.clave === x.clave);
                   return (
                     <li key={x.clave}>
@@ -197,23 +272,34 @@ export function CapasControl({
                       </label>
                       {on && (
                         <div className="flex items-center gap-2 pl-7 pr-1 pb-1">
-                          <span className="font-mono text-[10px] text-[#7F939D]">transparencia</span>
+                          <span className="font-mono text-[10px] text-[#7F939D]">opacidad</span>
                           <input
                             type="range"
                             min={10}
                             max={100}
                             step={5}
                             value={Math.round(on.opacidad * 100)}
-                            aria-label={`Transparencia de ${x.nombre}`}
+                            aria-label={`Opacidad de ${x.nombre}`}
                             onChange={(e) => {
                               const v = Number(e.target.value) / 100;
                               onRasters?.((antes) => antes.map((r) => (r.clave === x.clave ? { ...r, opacidad: v } : r)));
                             }}
                             className="h-1 flex-1 accent-[#FFAE3B]"
                           />
-                          <button type="button" onClick={() => onEncuadrar?.(x.encuadre)} className="font-mono text-[10px] text-[#B9C7CE] hover:text-white cursor-pointer">
-                            ir
+                          <button type="button" onClick={() => onEncuadrar?.(x.encuadre)} aria-label={`Ir a ${x.nombre}`} className="font-mono text-[10px] uppercase tracking-[0.1em] text-[#B9C7CE] hover:text-white cursor-pointer">
+                            Ir
                           </button>
+                        </div>
+                      )}
+                      {on && !!x.leyenda?.length && (
+                        <div className="grid grid-cols-1 gap-y-0.5 pl-7 pr-1 pb-1">
+                          {x.leyenda.map((l) => (
+                            <span key={l.texto} className="flex items-center gap-1.5 text-[10.5px]">
+                              <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: l.color }} />
+                              {l.texto}
+                            </span>
+                          ))}
+                          {x.notas && <span className="mt-0.5 text-[10.5px] leading-snug text-[#61717A]">{x.notas}</span>}
                         </div>
                       )}
                     </li>
@@ -221,7 +307,7 @@ export function CapasControl({
                 })}
               </ul>
             </div>
-          )}
+          ))}
           {onMuestras && (
             <div className="mt-3 border-t border-white/[0.08] pt-2">
               <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>

@@ -60,3 +60,9 @@ export function radioMuestra(e: ElementoMuestra): unknown[] {
   const porLey = (k: number) => ['step', ['to-number', ['get', e]], 2 * k, c[1], 3 * k, c[2], 4 * k, c[3], 5.5 * k];
   return ['interpolate', ['linear'], ['zoom'], 6, porLey(1), 12, porLey(1.8)];
 }
+
+/** Peso de cada muestra en el mapa de calor: 0 bajo el primer corte, hasta 1 en la clase más alta. */
+export function pesoMuestra(e: ElementoMuestra): unknown[] {
+  const c = CORTES[e];
+  return ['step', ['to-number', ['get', e]], 0, c[0], 0.15, c[1], 0.35, c[2], 0.6, c[3], 0.85, c[4], 1];
+}

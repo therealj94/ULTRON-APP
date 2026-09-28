@@ -82,9 +82,25 @@ export type RasterEscaneado = {
   encuadre: [number, number, number, number];
   zoomMax?: number;
   notas?: string;
+  /** Sección del control de capas («Mapas escaneados» si no dice). */
+  grupo?: string;
+  /** Qué quiere decir cada color, para las capas calculadas (Sentinel-2). */
+  leyenda?: Array<{ color: string; texto: string }>;
 };
 
 let indice: { cuando: number; rasters: RasterEscaneado[]; base: boolean } | null = null;
+
+const textoCorto = (v: unknown, n: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, n) : undefined);
+
+/** Solo colores #rrggbb y textos cortos: el índice lo escribe una persona a mano. */
+function leyendaValida(v: unknown): RasterEscaneado['leyenda'] {
+  if (!Array.isArray(v)) return undefined;
+  const l = v
+    .filter((x) => x && /^#[0-9a-f]{6}$/i.test(String(x.color)) && typeof x.texto === 'string' && x.texto.trim())
+    .slice(0, 8)
+    .map((x) => ({ color: String(x.color), texto: String(x.texto).trim().slice(0, 60) }));
+  return l.length ? l : undefined;
+}
 
 /** Qué mapas escaneados hay (y si está el mapa base), del `indice.json` del cubo. Cinco minutos de memoria. */
 export async function indiceTeselas(): Promise<{ rasters: RasterEscaneado[]; base: boolean }> {
@@ -97,7 +113,8 @@ export async function indiceTeselas(): Promise<{ rasters: RasterEscaneado[]; bas
     try {
       const j = JSON.parse(r.datos.toString('utf8'));
       base = !!j.base;
-      rasters = (Array.isArray(j.rasters) ? j.rasters : []).filter(
+      rasters = (Array.isArray(j.rasters) ? j.rasters : [])
+        .filter(
         (x: any) =>
           x &&
           typeof x.clave === 'string' &&
@@ -106,7 +123,8 @@ export async function indiceTeselas(): Promise<{ rasters: RasterEscaneado[]; bas
           Array.isArray(x.encuadre) &&
           x.encuadre.length === 4 &&
           x.encuadre.every((n: unknown) => Number.isFinite(Number(n)))
-      );
+        )
+        .map((x: any) => ({ ...x, grupo: textoCorto(x.grupo, 60), leyenda: leyendaValida(x.leyenda) }));
     } catch {
       console.error('[teselas] indice.json no es JSON válido');
     }

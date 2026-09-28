@@ -58,6 +58,10 @@ export type RasterEscaneado = {
   encuadre: [number, number, number, number];
   zoomMax?: number;
   notas?: string;
+  /** Sección del control de capas («Mapas escaneados» si no dice). */
+  grupo?: string;
+  /** Qué quiere decir cada color, para las capas calculadas (Sentinel-2). */
+  leyenda?: Array<{ color: string; texto: string }>;
 };
 /** Un mapa escaneado encendido, con la transparencia que se le dio. */
 export type RasterEncendido = RasterEscaneado & { opacidad: number };
