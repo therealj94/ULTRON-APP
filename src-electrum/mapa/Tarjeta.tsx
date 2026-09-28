@@ -26,6 +26,8 @@ type Ficha = {
   entorno: Parte;
   geologia: Parte;
   documentos: Parte;
+  /** Sentinel-2 dentro de la concesión; un servidor anterior no lo manda. */
+  satelite?: Parte;
 };
 type Lista<T> = { estado: 'ok'; lista: T[] } | { estado: 'error'; motivo: string };
 type Aqui = {
@@ -267,6 +269,11 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: P
       <Seccion titulo="Geología">
         <Renglones p={f.geologia} />
       </Seccion>
+      {f.satelite && (
+        <Seccion titulo="Satélite (Sentinel-2)">
+          <Renglones p={f.satelite} />
+        </Seccion>
+      )}
       <Seccion titulo="Documentos">
         <Renglones p={f.documentos} />
       </Seccion>

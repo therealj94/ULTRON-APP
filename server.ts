@@ -71,6 +71,7 @@ import { montarRutasCuentas } from './server/cuentas-rutas';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
 import { montarRutasTeselas } from './server/electrum/teselas';
 import { montarRutasMuestras } from './server/electrum/muestras';
+import { montarRutasSatelite } from './server/electrum/satelite';
 import { asegurarBiblioteca } from './server/electrum/biblioteca';
 import { expedientesListo, guardarExpediente } from './lib/s3';
 import { createHash } from 'node:crypto';
@@ -1192,6 +1193,7 @@ function nombreYRolDe(correo: string, nombreCuenta?: string) {
 if (ES_ELECTRUM) montarRutasBiblioteca(app);
 if (ES_ELECTRUM) montarRutasTeselas(app);
 if (ES_ELECTRUM) montarRutasMuestras(app);
+if (ES_ELECTRUM) montarRutasSatelite(app);
 
 montarRutasCuentas(app, {
   plataforma: PLATAFORMA,

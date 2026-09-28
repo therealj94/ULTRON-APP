@@ -12,6 +12,16 @@ import type { CapaExtra, RasterEncendido, RasterEscaneado, RolVisible } from './
 import { COLOR_ROCA, ESTILO_ROL, NOMBRE_ROCA } from './capas';
 import { ELEMENTOS_MUESTRA, NOMBRE_ELEMENTO, leyendaMuestras, type ElementoMuestra } from './muestras';
 
+/** Los rasters por sección, en el orden en que llegan: los mapas escaneados y lo calculado del satélite. */
+function gruposRaster(xs: RasterEscaneado[] | null): Array<[string, RasterEscaneado[]]> {
+  const g = new Map<string, RasterEscaneado[]>();
+  for (const x of xs || []) {
+    const k = x.grupo || 'Mapas escaneados';
+    g.set(k, [...(g.get(k) || []), x]);
+  }
+  return [...g];
+}
+
 export type MuestrasEncendidas = { elemento: ElementoMuestra; geojson: { features?: unknown[] } };
 
 const AMBAR = '#FFAE3B';
@@ -176,13 +186,13 @@ export function CapasControl({
               );
             })}
           </ul>
-          {!!escaneados?.length && (
-            <div className="mt-3 border-t border-white/[0.08] pt-2">
+          {gruposRaster(escaneados).map(([grupo, xs]) => (
+            <div key={grupo} className="mt-3 border-t border-white/[0.08] pt-2">
               <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
-                Mapas escaneados
+                {grupo}
               </div>
               <ul className="space-y-1">
-                {escaneados.map((x) => {
+                {xs.map((x) => {
                   const on = rasters.find((r) => r.clave === x.clave);
                   return (
                     <li key={x.clave}>
@@ -216,12 +226,23 @@ export function CapasControl({
                           </button>
                         </div>
                       )}
+                      {on && !!x.leyenda?.length && (
+                        <div className="grid grid-cols-1 gap-y-0.5 pl-7 pr-1 pb-1">
+                          {x.leyenda.map((l) => (
+                            <span key={l.texto} className="flex items-center gap-1.5 text-[10.5px]">
+                              <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: l.color }} />
+                              {l.texto}
+                            </span>
+                          ))}
+                          {x.notas && <span className="mt-0.5 text-[10.5px] leading-snug text-[#61717A]">{x.notas}</span>}
+                        </div>
+                      )}
                     </li>
                   );
                 })}
               </ul>
             </div>
-          )}
+          ))}
           {onMuestras && (
             <div className="mt-3 border-t border-white/[0.08] pt-2">
               <div className="mb-1 font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>

@@ -20,6 +20,7 @@ import { geometriaDe, concesionPorId, conTextoReparado, consultaConTope, type Fi
 import { alertasDe, capasPorRol, entornoDe, type Entorno } from './entorno';
 import { claseDeRoca, geologiaDe, type Geologia } from './geologia';
 import { repararTexto } from './gis';
+import { sateliteEnRenglones } from './satelite';
 
 const nf = (x: number, d = 1) => new Intl.NumberFormat('es-ES', { maximumFractionDigits: d }).format(x);
 const km = (x: number) => (x < 1 ? `${nf(x * 1000, 0)} m` : `${nf(x, 1)} km`);
@@ -155,13 +156,15 @@ export type FichaMapa = {
   entorno: Parte;
   geologia: Parte;
   documentos: Parte;
+  /** Lo que Sentinel-2 midió dentro (pérdida de vegetación, suelo expuesto, anomalías). */
+  satelite: Parte;
 };
 
 /** Todo lo que hay de una concesión, para la tarjeta que se abre al tocarla. */
 export async function fichaParaMapa(id: number): Promise<FichaMapa | null> {
   const f = await concesionPorId(id);
   if (!f) return null;
-  const [geo, entorno, geologia, documentos] = await Promise.all([
+  const [geo, entorno, geologia, documentos, satelite] = await Promise.all([
     geometriaDe(id).catch(() => null),
     parte('entorno', async () => {
       const e = await entornoDe(id);
@@ -195,8 +198,12 @@ export async function fichaParaMapa(id: number): Promise<FichaMapa | null> {
       ];
       return r.length ? r : ['Ningún documento subido la nombra todavía.'];
     }, 8000),
+    parte('satélite', async () => {
+      const r = await sateliteEnRenglones(id);
+      return r.length ? r : ['Esta concesión todavía no se midió con Sentinel-2.'];
+    }, 6000),
   ]);
-  return { id, nombre: repararTexto(f.nombre), datos: datosDe(f), encuadre: geo?.encuadre ?? null, geojson: geo?.geojson ?? null, entorno, geologia, documentos };
+  return { id, nombre: repararTexto(f.nombre), datos: datosDe(f), encuadre: geo?.encuadre ?? null, geojson: geo?.geojson ?? null, entorno, geologia, documentos, satelite };
 }
 
 /* ------------------------------------------------------------------ un punto */
