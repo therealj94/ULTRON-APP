@@ -10,7 +10,7 @@
  * Mientras una herramienta está activa, tocar el mapa pone un vértice en vez de abrir la tarjeta
  * (`herramientaEnUso`, que consulta Mapa.tsx).
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import proj4 from 'proj4';
 import { estiloCalles, estiloSatelite } from './estilos';
@@ -384,7 +384,7 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
   );
 }
 
-export function BotonHerr({ activo, onClick, titulo, children }: { activo: boolean; onClick: () => void; titulo: string; children: React.ReactNode }) {
+export function BotonHerr({ activo, onClick, titulo, children }: { activo: boolean; onClick: () => void; titulo: string; children: ReactNode }) {
   return (
     <button
       type="button"
