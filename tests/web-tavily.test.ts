@@ -4,7 +4,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buscarWeb, extraerConTavily, leerPagina, markdownATexto, reiniciarTavily, urlSinSecretos } from '../src/06-manos/web';
+import { buscarWeb, buscarWebDetallado, extraerConTavily, leerPagina, markdownATexto, reiniciarTavily, resumenMotores, urlSinSecretos } from '../src/06-manos/web';
 
 type Pedido = { url: string; init: any };
 function simular(responder: (p: Pedido) => Response | Promise<Response>) {
@@ -140,4 +140,27 @@ test('las redes sociales van después de todas las fuentes', async () => {
   } finally {
     s.restaurar();
   }
+});
+
+test('la traza dice qué motores trajeron algo y con qué entró Tavily; «hoy» busca solo lo reciente', async () => {
+  delete process.env.TAVILY_API_KEY;
+  reiniciarTavily();
+  const s = simular((p) =>
+    p.url.startsWith('https://api.tavily.com/search')
+      ? json({ results: [{ title: 'Precio del oro hoy', url: 'https://oro.com/hoy', content: 'precio del oro hoy onza' }] })
+      : new Response('', { status: 503 })
+  );
+  try {
+    const d = await buscarWebDetallado('precio del oro hoy', 3);
+    assert.equal(d.tavily, 'sin clave');
+    assert.equal(d.motores.tavily, 1);
+    assert.match(resumenMotores(d.motores, d.tavily), /tavily 1 \(sin clave\)/);
+    assert.equal(JSON.parse(deTavily(s.pedidos)[0].init.body).time_range, 'week', 'lo de hoy, de esta semana');
+    s.pedidos.length = 0;
+    await buscarWebDetallado('depósito epitermal de baja sulfuración', 3);
+    assert.equal(JSON.parse(deTavily(s.pedidos)[0].init.body).time_range, undefined, 'lo técnico, de cualquier fecha');
+  } finally {
+    s.restaurar();
+  }
+  assert.equal(resumenMotores({ brave: 0, tavily: 8, ddg: 'error', bing: 5 }, 'clave'), 'tavily 8 (clave), ddg error, bing 5');
 });

@@ -137,9 +137,19 @@ async function pedirTavily(ruta: string, cuerpo: unknown, ms: number): Promise<a
 export function reiniciarTavily() {
   tavilyPausaHasta = 0;
 }
+/** Con qué entra Tavily ahora: la cuenta, el modo sin clave, apagado o en pausa por límite. */
+export function modoTavily(): 'clave' | 'sin clave' | 'apagado' | 'en pausa' {
+  const c = tavilyCabeceras();
+  if (!c) return 'apagado';
+  if (Date.now() < tavilyPausaHasta) return 'en pausa';
+  return c.Authorization ? 'clave' : 'sin clave';
+}
+
+/** «hoy», «precio», «actual»: lo que cambia rápido se busca solo en lo publicado esta semana. */
+const esFresco = (q: string) => esNoticia(q) || /\b(ahora|actual(es|mente)?|esta semana|este mes|precio|cotizaci[oó]n)\b/i.test(q);
 
 async function buscarTavily(query: string, max: number): Promise<WebHit[]> {
-  const j = await pedirTavily('/search', { query, max_results: max, search_depth: 'basic' }, 8000);
+  const j = await pedirTavily('/search', { query, max_results: max, search_depth: 'basic', ...(esFresco(query) ? { time_range: 'week' } : {}) }, 8000);
   return (j?.results || []).slice(0, max).map((x: any) => ({ title: String(x.title || ''), url: String(x.url || ''), snippet: String(x.content || '').replace(/\s+/g, ' ').slice(0, 400) }));
 }
 
@@ -227,6 +237,16 @@ function esResultado(h: WebHit): boolean {
 const normalUrl = (u: string) => u.replace(/^https?:\/\/(www\.)?/i, '').replace(/[#?].*$/, '').replace(/\/$/, '').toLowerCase();
 
 export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
+  return (await buscarWebDetallado(query, max)).hits;
+}
+
+/**
+ * Cuántos resultados trajo cada motor (o «error»), para la traza: así se ve si Tavily entra con la
+ * cuenta o sin clave y qué buscador está bloqueado, sin adivinar.
+ */
+export type Motores = Record<string, number | 'error'>;
+export async function buscarWebDetallado(query: string, max = 5): Promise<{ hits: WebHit[]; motores: Motores; tavily: ReturnType<typeof modoTavily> }> {
+  const tavily = modoTavily();
   const claves = palabrasClave(query);
   const noticia = esNoticia(query);
   // Todos a la vez: el que conteste bien gana, el que se bloquea no retrasa a los demás.
@@ -239,6 +259,15 @@ export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
     ['noticias', noticia ? 2.5 : 0.5, () => buscarNoticias(query, max)],
   ];
   const r = await Promise.allSettled(motores.map(([, , fn]) => fn()));
+  const cuenta: Motores = {};
+  r.forEach((x, i) => {
+    const nombre = motores[i][0];
+    if (x.status === 'fulfilled') cuenta[nombre] = x.value.length;
+    else {
+      cuenta[nombre] = 'error';
+      console.warn(`[web] ${nombre}:`, String((x.reason as Error)?.message || x.reason).slice(0, 120));
+    }
+  });
   const vistos = new Set<string>();
   const todos: Array<WebHit & { puntos: number; social: boolean }> = [];
   r.forEach((x, i) => {
@@ -259,10 +288,19 @@ export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
       todos.push({ ...h, social, puntos: motores[i][1] + 3 * rel - k * 0.15 });
     });
   });
-  return todos
+  const hits = todos
     .sort((a, b) => Number(a.social) - Number(b.social) || b.puntos - a.puntos)
     .slice(0, max)
     .map(({ puntos: _p, social: _s, ...h }) => h);
+  return { hits, motores: cuenta, tavily };
+}
+
+/** «tavily 8 (clave), bing 5, wikipedia 3»: los motores que trajeron algo o fallaron. */
+export function resumenMotores(m: Motores, tavily?: string): string {
+  return Object.entries(m)
+    .filter(([, v]) => v === 'error' || v > 0)
+    .map(([k, v]) => `${k} ${v}${k === 'tavily' && tavily ? ` (${tavily})` : ''}`)
+    .join(', ');
 }
 
 /**

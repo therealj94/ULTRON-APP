@@ -29,7 +29,7 @@ import { lineasPorSignificado } from '../../lib/cognitivo/conocimiento-semantico
 import { PERFILES } from '../../lib/perfiles';
 import { personaPorId } from '../../lib/acceso';
 import { personalidadElectrum } from './personalidad';
-import { buscarWeb, consultaWeb, leerPagina } from '../../src/06-manos/web';
+import { buscarWebDetallado, consultaWeb, leerPagina, resumenMotores } from '../../src/06-manos/web';
 
 export type RespuestaTurno = {
   texto: string;
@@ -171,9 +171,17 @@ export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: Op
  */
 async function bloqueInternet(mensaje: string, enVivo?: (e: EnVivo) => void): Promise<string> {
   const t0 = Date.now();
-  const hits = await buscarWeb(mensaje.slice(0, 300), 6).catch(() => []);
+  const { hits, motores, tavily } = await buscarWebDetallado(mensaje.slice(0, 300), 6).catch(() => ({ hits: [], motores: {}, tavily: undefined }));
   const leidas = await Promise.all(hits.slice(0, 2).map((h) => leerPagina(h.url, 1500).catch(() => '')));
-  enVivo?.({ herramienta: { herramienta: 'web_buscar', ok: hits.length > 0, resumen: hits.length ? `${hits.length} resultados` : 'sin resultados', ms: Date.now() - t0 } });
+  const deDonde = resumenMotores(motores, tavily);
+  enVivo?.({
+    herramienta: {
+      herramienta: 'web_buscar',
+      ok: hits.length > 0,
+      resumen: `${hits.length ? `${hits.length} resultados` : 'sin resultados'}${deDonde ? ` · ${deDonde}` : ''}`,
+      ms: Date.now() - t0,
+    },
+  });
   if (!hits.length) {
     return 'DE INTERNET: lo pidieron buscar y la búsqueda no devolvió resultados ahora. Decilo así; no cites fuentes que no leíste.';
   }
