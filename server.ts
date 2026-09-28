@@ -75,6 +75,7 @@ import { montarRutasSatelite, perdidaPorConcesion } from './server/electrum/sate
 import { montarRutasExportar } from './server/electrum/exportar';
 import { montarRutasProspectividad, puntajesPorConcesion } from './server/electrum/prospectividad';
 import { montarRutasArea } from './server/electrum/area';
+import { iniciarAlertas } from './server/electrum/alertas';
 import { asegurarBiblioteca } from './server/electrum/biblioteca';
 import { expedientesListo, guardarExpediente } from './lib/s3';
 import { createHash } from 'node:crypto';
@@ -2591,6 +2592,7 @@ async function startServer() {
         .catch((e) => console.warn('[AU-RA] telegram webhook', String(e?.message || e).slice(0, 160)));
     }
     if (ES_ELECTRUM && electrumBotListo()) {
+      if (hayBaseElectrum()) iniciarAlertas((chat, texto) => responderElectrum(chat, texto));
       registrarWebhookElectrum()
         .then((r) => console.log('[electrum] telegram webhook', r.detalle))
         .catch((e) => console.warn('[electrum] telegram webhook', String(e?.message || e).slice(0, 160)));
