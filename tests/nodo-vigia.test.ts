@@ -27,7 +27,11 @@ test('autocura: cifras para la pantalla, sin nombres de servicios', () => {
     necesita_persona: [],
   };
   const a = autocuraDe(v, ahora)!;
-  assert.deepEqual(a, { activa: true, sano: true, resueltas24h: 2, prevenidas24h: 1, aprendidas: 1, ultima: { hace_s: 600, duro_s: 34, sola: false } });
+  assert.deepEqual(a, { activa: true, sano: true, resueltas24h: 2, prevenidas24h: 1, aprendidas: 1, necesitaPersona: false, ultima: { hace_s: 600, duro_s: 34, sola: false } });
+  const mal = autocuraDe({ ...v, sano: false, necesita_persona: ['llama-ultron'] }, ahora)!;
+  assert.equal(mal.sano, false, 'caído se ve caído');
+  assert.equal(mal.necesitaPersona, true);
+  assert.doesNotMatch(JSON.stringify(mal), /llama-ultron/);
   assert.doesNotMatch(JSON.stringify(a), /ultron-motor|motor_mudo/);
   assert.equal(autocuraDe({ ...v, actualizado: ahora / 1000 - 900 }, ahora)!.activa, false, 'un vigía callado no se muestra como activo');
   assert.equal(autocuraDe(null, ahora), null);

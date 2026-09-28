@@ -1366,8 +1366,12 @@ function Estado() {
     const hoy = cura.resueltas24h + cura.prevenidas24h;
     filas.push([
       'Autocura',
-      true,
-      hoy
+      cura.sano,
+      cura.necesitaPersona
+        ? 'no pudo levantarlo solo: necesita una persona'
+        : !cura.sano
+          ? 'algo no contesta: intentando levantarlo'
+          : hoy
         ? `${hoy} ${hoy === 1 ? 'caída resuelta' : 'caídas resueltas'} sola${hoy === 1 ? '' : 's'} hoy${cura.ultima ? ` · la última en ${cura.ultima.duro_s} s` : ''}`
         : `vigilando · ${cura.aprendidas ? `${cura.aprendidas} ${cura.aprendidas === 1 ? 'remedio aprendido' : 'remedios aprendidos'}` : 'sin caídas'}`,
     ]);

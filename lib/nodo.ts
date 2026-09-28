@@ -57,6 +57,7 @@ export function autocuraDe(v: any, ahora = Date.now()) {
     resueltas24h: Number(v.incidentes_24h) || 0,
     prevenidas24h: Number(v.prevenidos_24h) || 0,
     aprendidas: v.aprendido && typeof v.aprendido === 'object' ? Object.keys(v.aprendido).length : 0,
+    necesitaPersona: Array.isArray(v.necesita_persona) && v.necesita_persona.length > 0,
     ultima: ultimo ? { hace_s: Math.max(0, Math.round(ahora / 1000 - ultimo.inicio)), duro_s: Math.round(Number(ultimo.duracion) || 0), sola: ultimo.resuelto === 'solo' } : null,
   };
 }
