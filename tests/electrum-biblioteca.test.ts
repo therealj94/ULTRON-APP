@@ -483,7 +483,18 @@ test('borrar en el panel anota el original, y una reimportación no lo vuelve a 
   assert.equal(b.detalle.archivo, clave, 'la bitácora guarda de dónde venía');
   const borrados = await borradosEnPanel([clave, otra]);
   assert.deepEqual([...borrados], [clave], 'lo borrado se reconoce; lo demás no');
-  await consulta(`DELETE FROM biblioteca_bitacora WHERE detalle->>'archivo' = $1`, [clave]);
+
+  // Una copia del mismo archivo en otra carpeta del cubo tiene otra clave: se reconoce por la huella.
+  const { huellaBorrada } = await import('../server/electrum/importar');
+  const { huellaDe } = await import('../server/electrum/aprender');
+  const datos = Buffer.from('Informe técnico de la zona de prueba, copia exacta que vive en dos carpetas del cubo.');
+  const r2 = await aprender('prueba-bor-copia.txt', datos, { archivo: 's3://cubo/entrada/A/prueba-bor-copia.txt' });
+  assert.equal(r2.clase, 'documento', r2.dicho);
+  assert.equal(await huellaBorrada(huellaDe(datos)), false);
+  await bib.eliminar([{ clase: 'documento', id: Number((r2.ui as any).documento_id) }], 'José');
+  assert.equal(await huellaBorrada(huellaDe(datos)), true, 'la copia de otra carpeta ya no entra sola');
+  assert.equal(await huellaBorrada(huellaDe(Buffer.from('otro contenido'))), false);
+  await consulta(`DELETE FROM biblioteca_bitacora WHERE detalle->>'archivo' = $1 OR detalle->>'huella' = $2`, [clave, huellaDe(datos)]);
 });
 
 test('expediente_leer: lee seguido desde una página, dice dónde sigue y elige el informe y no el mapa', { skip: sinBase }, async () => {

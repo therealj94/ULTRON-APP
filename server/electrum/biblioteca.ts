@@ -432,11 +432,11 @@ export async function eliminar(refs: Ref[], quien?: string | null) {
   await asegurarBiblioteca();
   const docs = ids(refs, 'documento');
   const capas = ids(refs, 'capa');
-  const quitados: Array<{ clase: string; id: number; nombre: string; archivo: string | null; concesiones?: number }> = [];
+  const quitados: Array<{ clase: string; id: number; nombre: string; archivo: string | null; huella?: string | null; concesiones?: number }> = [];
   await enTransaccion(async (q) => {
     if (docs.length) {
-      const r = await q(`DELETE FROM documento WHERE id = ANY($1::bigint[]) RETURNING id, nombre, archivo`, [docs]);
-      for (const x of r as any[]) quitados.push({ clase: 'documento', id: Number(x.id), nombre: x.nombre, archivo: x.archivo || null });
+      const r = await q(`DELETE FROM documento WHERE id = ANY($1::bigint[]) RETURNING id, nombre, archivo, huella`, [docs]);
+      for (const x of r as any[]) quitados.push({ clase: 'documento', id: Number(x.id), nombre: x.nombre, archivo: x.archivo || null, huella: x.huella || null });
     }
     if (capas.length) {
       const conc = await q(`SELECT capa_id, count(*)::int AS n FROM concesion WHERE capa_id = ANY($1::bigint[]) GROUP BY capa_id`, [capas]);
@@ -444,13 +444,14 @@ export async function eliminar(refs: Ref[], quien?: string | null) {
       const r = await q(`DELETE FROM capa WHERE id = ANY($1::bigint[]) RETURNING id, nombre, archivo`, [capas]);
       for (const x of r as any[]) quitados.push({ clase: 'capa', id: Number(x.id), nombre: x.nombre, archivo: x.archivo || null, concesiones: porCapa.get(Number(x.id)) || 0 });
     }
-    // La bitácora va en la MISMA transacción: con el original anotado, una reimportación no lo vuelve
-    // a traer (ver importar.ts). Si la anotación fallara aparte, lo borrado reviviría en silencio.
+    // La bitácora va en la MISMA transacción: con el original y la huella anotados, una reimportación
+    // no lo vuelve a traer, ni de esa clave ni de una copia en otra carpeta (ver importar.ts). Si la
+    // anotación fallara aparte, lo borrado reviviría en silencio.
     for (const x of quitados) {
       await q(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle) VALUES ($1, 'eliminar', $2, $3)`, [
         quien || null,
         `${x.clase} ${x.id}`,
-        JSON.stringify({ nombre: x.nombre, archivo: x.archivo, concesiones: x.concesiones }),
+        JSON.stringify({ nombre: x.nombre, archivo: x.archivo, huella: x.huella, concesiones: x.concesiones }),
       ]);
     }
   });

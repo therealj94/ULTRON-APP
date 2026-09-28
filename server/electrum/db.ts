@@ -906,6 +906,9 @@ export function consultaBilingue(limpio: string, union: '&' | '|' = '&'): string
  * parámetros a partir de `desde`.
  */
 export function filtroDocumento(documento: string | undefined, desde: number): { sql: string; args: string[] } {
+  // «#123»: ese documento y ningún otro (lo usa la búsqueda previa del turno cuando ya sabe cuál es).
+  const porId = /^#(\d{1,9})$/.exec(String(documento || '').trim());
+  if (porId) return { sql: ` AND d.id = $${desde}::bigint`, args: [porId[1]] };
   const palabras = String(documento || '')
     .split(/[\s/_,.;:()«»"'-]+/)
     .map((w) => w.trim())

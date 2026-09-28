@@ -21,6 +21,7 @@ import { extraerEmocion, type Emocion } from '../../lib/emocion';
 import { quitarExpresiones } from '../../lib/expresiones';
 import { fetchNodo, NODO_MODELO, NODO_SECRETO, NODO_URL } from '../../lib/nodo';
 import { decidirPanel, herramientasDe, promptPanel } from './especialistas';
+import { bloqueExpedientes, expedientesDeLaPregunta } from './expedientes-previos';
 import { manosDe, TODAS } from './manos';
 import { CONOCIMIENTO_MINAS } from '../../src/08-cerebro-minas/conocimiento';
 import { hechosCerebro, lineas as lineasCerebro } from '../../lib/cerebro';
@@ -207,9 +208,18 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   const fichas = await fichasMencionadas('electrum', mensaje).catch(() => []);
   if (fichas.length) delCerebro = [...delCerebro, ...fichas.map(fichaEnTexto)];
 
-  const usuario = delCerebro.length
-    ? `DE TU CEREBRO, sobre lo que preguntan (esto lo sabés de verdad):\n${delCerebro.join('\n')}\n\n${mensaje}`
-    : mensaje;
+  // Si preguntan por lo que dice un papel, lo que hay en los expedientes va pegado a la pregunta:
+  // el modelo no puede decir «no lo tengo» sin haber mirado (expedientes-previos.ts).
+  const antes = historial.filter((m) => m.role === 'user').slice(-2).map((m) => String(m.content || ''));
+  const deExpedientes = bloqueExpedientes(
+    await expedientesDeLaPregunta(mensaje, { antes }).catch(() => ({ documento: null, trozos: [] })),
+    herramientas.some((h) => h.nombre === 'expediente_leer')
+  );
+  const previos = [
+    ...(delCerebro.length ? [`DE TU CEREBRO, sobre lo que preguntan (esto lo sabés de verdad):\n${delCerebro.join('\n')}`] : []),
+    ...(deExpedientes ? [deExpedientes] : []),
+  ];
+  const usuario = previos.length ? `${previos.join('\n\n')}\n\n${mensaje}` : mensaje;
 
   if (!NODO_URL || !NODO_SECRETO) {
     return {

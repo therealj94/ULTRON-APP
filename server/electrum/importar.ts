@@ -21,7 +21,7 @@
  * de camino cuesta solo volver a pulsar «Importar».
  */
 import JSZip from 'jszip';
-import { aprender } from './aprender';
+import { aprender, huellaDe } from './aprender';
 import { consulta, recalcularTraslapes } from './db';
 import { olvidarTablero } from './tablero';
 import { anotar, anotarSinTexto, asegurarBiblioteca, normalizarCarpeta } from './biblioteca';
@@ -276,6 +276,12 @@ async function preparar(prefijo: string, carpeta: string | null, imagenes: boole
   return { plan, base, pendientes: faltan.filter((u) => !esBorrado(u)), borrados: faltan.filter(esBorrado) };
 }
 
+/** Si un documento con este contenido se borró en el panel (la bitácora guarda su huella). */
+export async function huellaBorrada(huella: string): Promise<boolean> {
+  const r = await consulta(`SELECT 1 FROM biblioteca_bitacora WHERE accion = 'eliminar' AND detalle->>'huella' = $1 LIMIT 1`, [huella]);
+  return r.length > 0;
+}
+
 /** De estos originales («s3://cubo/clave»), los que alguien borró en el panel: la bitácora lo sabe. */
 export async function borradosEnPanel(originales: string[]): Promise<Set<string>> {
   const borrado = new Set<string>();
@@ -318,10 +324,10 @@ export async function correrImportacion(id: number): Promise<string> {
     preparado.plan.unidades.length,
     preparado.plan.omitidos.length,
   ]);
-  return correr(id, f.prefijo, preparado.pendientes, f.por);
+  return correr(id, f.prefijo, preparado.pendientes, f.por, !!f.opciones?.borrados);
 }
 
-async function correr(id: number, prefijo: string, unidades: Unidad[], por: string | null): Promise<string> {
+async function correr(id: number, prefijo: string, unidades: Unidad[], por: string | null, traerBorrados = false): Promise<string> {
   const bucket = bucketExpedientes();
   let capasNuevas = 0;
   let estadoFinal = 'terminada';
@@ -336,12 +342,17 @@ async function correr(id: number, prefijo: string, unidades: Unidad[], por: stri
         break;
       }
       const rel = u.key.slice(prefijo.length);
-      let r: 'nuevo' | 'repetido' | 'fallo' = 'fallo';
+      let r: 'nuevo' | 'repetido' | 'fallo' | 'omitido' = 'fallo';
       let dicho = '';
       try {
         const b = await bajarUnidad(u);
         if ('error' in b) dicho = `no pude bajarlo: ${b.error}`;
-        else {
+        else if (!traerBorrados && (u.tipo === 'documento' || u.tipo === 'imagen') && (await huellaBorrada(huellaDe(b.datos)))) {
+          // El mismo archivo con otro nombre o en otra carpeta del cubo: lo que se borró fue su
+          // CONTENIDO, y no vuelve por la puerta de al lado.
+          r = 'omitido';
+          dicho = BORRADO;
+        } else {
           const a = await aprender(b.nombre, b.datos, {
             subidoPor: por || undefined,
             carpeta: u.carpeta,
@@ -374,11 +385,11 @@ async function correr(id: number, prefijo: string, unidades: Unidad[], por: stri
       await consulta(
         `UPDATE importacion
             SET hechos = hechos + 1,
-                nuevos = nuevos + $2, repetidos = repetidos + $3, fallos = fallos + $4,
+                nuevos = nuevos + $2, repetidos = repetidos + $3, fallos = fallos + $4, omitidos = omitidos + $6,
                 actualizada = now(),
                 detalle = CASE WHEN jsonb_array_length(detalle) < 4000 THEN detalle || $5::jsonb ELSE detalle END
           WHERE id = $1`,
-        [id, r === 'nuevo' ? 1 : 0, r === 'repetido' ? 1 : 0, r === 'fallo' ? 1 : 0, JSON.stringify([{ key: rel, r, d: dicho.slice(0, 240) }])]
+        [id, r === 'nuevo' ? 1 : 0, r === 'repetido' ? 1 : 0, r === 'fallo' ? 1 : 0, JSON.stringify([{ key: rel, r, d: dicho.slice(0, 240) }]), r === 'omitido' ? 1 : 0]
       ).catch(() => {});
       // Que el proceso respire entre archivo y archivo.
       await new Promise((ok) => setImmediate(ok));
