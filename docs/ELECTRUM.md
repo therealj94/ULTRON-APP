@@ -1114,3 +1114,19 @@ nunca se reinicia por precursor, porque descarga el modelo de la GPU.
 Probado en el nodo congelando el motor (`kill -STOP`): volvió solo en 75 s. El resumen llega a
 `/salud` del motor y de ahí a la fila **Autocura** del estado en la web, en cifras y sin nombres de
 servicios. Instalar o actualizar: `sudo bash scripts/nodo-a10g/vigia/instalar.sh` en el nodo.
+
+## Búsqueda en internet — gratis y sin clave
+
+`web_buscar` consulta varios motores a la vez (`src/06-manos/web.ts`) y se queda con lo más
+relevante:
+
+- **Tavily**, sin clave (`X-Tavily-Access-Mode: keyless`), con límite de uso. Con
+  `TAVILY_API_KEY` en Render usa la cuenta gratis: 1 000 búsquedas al mes, sin tarjeta. Si Tavily
+  contesta 429, descansa 10 minutos y los demás siguen. `TAVILY_SIN_LLAVE=0` apaga el modo sin clave.
+- **DuckDuckGo lite, Bing, Wikipedia y Google Noticias**, sin clave.
+- **Brave**, solo si hay `BRAVE_SEARCH_API_KEY`. Desde febrero de 2026 ya no tiene plan gratis.
+
+Las publicaciones de redes sociales van al final: no son fuentes para citar. `web_leer` lee la
+página desde el servidor. Si el sitio bloquea IPs de nube o la página viene casi vacía (armada con
+JavaScript), la lee **Tavily Extract**. Solo con dominios públicos: una IP, un nombre interno o lo
+que la red pública rechaza nunca sale a un tercero.
