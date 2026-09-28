@@ -40,8 +40,12 @@ import numpy as np
 
 STAC = 'https://earth-search.aws.element84.com/v1'
 BBOX = [-89.4, 12.9, -83.1, 16.5]
-TEMPORADAS = {'2025': '2025-01-15T00:00:00Z/2025-05-10T00:00:00Z', '2026': '2026-01-15T00:00:00Z/2026-05-10T00:00:00Z'}
-POR_TEMPORADA = 3
+# Enero a mediados de marzo: ya es la temporada seca y todavía no es el pico de las quemas (marzo–mayo),
+# que en la primera versión se leían como «pérdida de vegetación» en medio Olancho.
+TEMPORADAS = {'2025': '2025-01-01T00:00:00Z/2025-03-20T00:00:00Z', '2026': '2026-01-01T00:00:00Z/2026-03-20T00:00:00Z'}
+# Hasta cinco escenas por temporada, elegidas para que cada punto quede cubierto por al menos dos.
+POR_TEMPORADA = 5
+NUBES_MAX = 35
 # Bandas: 10 m (B02, B04) se leen en su 2.ª sobrevista (40 m); 20 m (B8A, B11, B12, SCL), en la 1.ª.
 BANDAS = {'blue': 1, 'red': 1, 'nir08': 0, 'swir16': 0, 'swir22': 0, 'scl': 0}
 # SCL válidos: 4 vegetación, 5 suelo desnudo, 6 agua, 7 sin clasificar. Fuera: sin dato, saturado,
@@ -78,7 +82,7 @@ def escenas(trabajo):
     hn = shape(json.load(open(os.path.join(trabajo, 'hn.geojson')))['features'][0]['geometry'])
     por = {}
     for anio, fechas in TEMPORADAS.items():
-        cuerpo = {'collections': ['sentinel-2-l2a'], 'bbox': BBOX, 'datetime': fechas, 'query': {'eo:cloud_cover': {'lt': 20}}, 'limit': 100}
+        cuerpo = {'collections': ['sentinel-2-l2a'], 'bbox': BBOX, 'datetime': fechas, 'query': {'eo:cloud_cover': {'lt': NUBES_MAX}}, 'limit': 100}
         j = pedir(f'{STAC}/search', cuerpo)
         while True:
             for it in j['features']:
@@ -93,12 +97,49 @@ def escenas(trabajo):
     for t, anios in sorted(por.items()):
         elegidas[t] = {}
         for anio, items in anios.items():
-            # Menos nubes primero; a igualdad, la escena más completa (las del borde de la órbita traen media tesela).
-            items.sort(key=lambda it: it['properties']['eo:cloud_cover'] + 0.5 * it['properties'].get('s2:nodata_pixel_percentage', 0))
             elegidas[t][anio] = [{'id': it['id'], 'nubes': it['properties']['eo:cloud_cover'], 'fecha': it['properties']['datetime'][:10],
-                                  'bandas': {b: it['assets'][b]['href'] for b in BANDAS}} for it in items[:POR_TEMPORADA]]
+                                  'bandas': {b: it['assets'][b]['href'] for b in BANDAS}} for it in cubrir(items, hn)]
     json.dump(elegidas, open(os.path.join(trabajo, 'elegidas.json'), 'w'), indent=1)
     print(f'{len(elegidas)} teselas MGRS sobre Honduras;', sum(len(v) for a in elegidas.values() for v in a.values()), 'escenas elegidas')
+
+
+def cubrir(items, hn):
+    """
+    Las escenas que más superficie útil agregan, no solo las de menos nubes.
+
+    En el borde de una órbita, una escena trae media tesela: elegir por nubes dejaba franjas enteras
+    sin dato (Copán y Ocotepeque, en la primera versión). Aquí se suma, escena por escena, la que más
+    cubre de lo que todavía está sin ver una vez, o visto una sola vez (la mediana necesita más de
+    una), descontando sus nubes.
+    """
+    from shapely.geometry import shape
+    from shapely.ops import unary_union
+    huellas = [shape(it['geometry']).intersection(hn) for it in items]
+    total = unary_union(huellas)
+    una = dos = None
+    elegidos = []
+    libres = list(range(len(items)))
+    while libres and len(elegidos) < POR_TEMPORADA:
+        def valor(i):
+            h = huellas[i]
+            if una is None:
+                nueva, segunda = h.area, 0.0
+            else:
+                nueva = h.difference(una).area
+                vista_una = h.intersection(una)
+                segunda = (vista_una.difference(dos) if dos is not None else vista_una).area
+            return (2 * nueva + segunda) * (1 - items[i]['properties']['eo:cloud_cover'] / 100)
+        i = max(libres, key=valor)
+        if valor(i) <= total.area * 0.002:
+            break
+        h = huellas[i]
+        if una is not None:
+            doble = una.intersection(h)
+            dos = doble if dos is None else dos.union(doble)
+        una = h if una is None else una.union(h)
+        elegidos.append(items[i])
+        libres.remove(i)
+    return elegidos
 
 
 def leer(href, nivel, destino):
@@ -134,6 +175,7 @@ def tesela(args):
     ndvi_anio = {}
     agua_votos = None
     gt = srs = tam = None
+    usadas = 0
     for anio, escs in anios.items():
         ndvis = []
         for e in escs:
@@ -152,6 +194,7 @@ def tesela(args):
                     b[banda] = np.where(ok & (a > 0), a / 10000.0, np.nan)
                 for banda in pilas:
                     pilas[banda].append(b[banda])
+                usadas += 1
                 with np.errstate(invalid='ignore', divide='ignore'):
                     ndvis.append((b['nir08'] - b['red']) / (b['nir08'] + b['red']))
             except Exception as ex:
@@ -191,7 +234,7 @@ def tesela(args):
     os.makedirs(os.path.dirname(salida), exist_ok=True)
     os.replace(crudo, salida)
     subprocess.run(['rm', '-rf', tmp])
-    return t, f"{sum(len(v) for v in anios.values())} escenas, expuesto {expuesto.mean() * 100:.1f} %"
+    return t, f"{usadas} de {sum(len(v) for v in anios.values())} escenas, expuesto {expuesto.mean() * 100:.1f} %"
 
 
 def teselas(trabajo, j):
