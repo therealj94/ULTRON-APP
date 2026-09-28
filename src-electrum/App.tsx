@@ -19,7 +19,7 @@ import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useStat
 import { FaceCanvas } from '../src/02-cara';
 import type { FaceState, Mode } from '../src/types';
 import type { Emocion } from '../lib/emocion';
-import type { CapaExtra, Fondo, Motor, OrdenMapa, RasterEncendido, Tocado } from './mapa/captura';
+import { guardarCatastro, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './mapa/captura';
 import { Tarjeta } from './mapa/Tarjeta';
 import { CapasControl, type MuestrasEncendidas } from './mapa/CapasControl';
 import { Tablero } from './mapa/Tablero';
@@ -271,8 +271,29 @@ export default function App() {
       /* sin red: el tablero ya se cerró y el mapa se queda donde estaba */
     }
   }, []);
+  /*
+   * Lo que el recorrido maneja, y cómo estaba todo antes de empezar: al terminar deja las capas, el
+   * fondo y el reparto de la pantalla como los tenía quien lo lanzó (el 3D se queda puesto).
+   * `alto` va con `setAlto` y no con `cambiarAlto`: agrandar el mapa para la demo no es una preferencia.
+   */
+  const estadoRef = useRef({ fondo, alto, rasters, muestras, extras, prospectividad });
+  estadoRef.current = { fondo, alto, rasters, muestras, extras, prospectividad };
   const controlesRecorrido = useMemo<Controles>(
-    () => ({ orden: setOrden, maplibre: () => setMotor('maplibre'), tresD: setTresD, tablero: setTableroAbierto, tocar: setTocado, capas: setExtras, cara: (f) => setFace(f) }),
+    () => ({
+      orden: setOrden,
+      maplibre: () => setMotor('maplibre'),
+      tresD: setTresD,
+      tocar: setTocado,
+      capas: setExtras,
+      cara: (f) => setFace(f),
+      rasters: setRasters,
+      muestras: setMuestras,
+      prospectividad: setProspectividad,
+      fondo: setFondo,
+      alto: setAlto,
+      estado: () => estadoRef.current,
+      trabajo: () => setEscenario('trabajo'),
+    }),
     []
   );
   const pedirAlPanel = useCallback((p: Omit<PedidoPanel, 'n'>) => {
@@ -366,7 +387,10 @@ export default function App() {
         const r = await fetch('/api/electrum/catastro.geojson', { headers: headersElectrum() });
         if (!r.ok) return;
         const j = await r.json();
-        if (j?.geojson?.features?.length) setOrden({ accion: 'capa', geojson: j.geojson, encuadre: j.encuadre || undefined });
+        if (j?.geojson?.features?.length) {
+          guardarCatastro(j.geojson);
+          setOrden({ accion: 'capa', geojson: j.geojson, encuadre: j.encuadre || undefined });
+        }
         if (j?.traslapes?.features?.length) setTraslapes(j.traslapes);
       } catch {
         /* sin catastro que pintar: el mapa se queda con su fondo, que es la verdad */
@@ -573,6 +597,8 @@ export default function App() {
             onPreguntar={(texto) => pedirAlPanel({ tipo: 'pregunta', texto })}
             onFicha={(id) => pedirAlPanel({ tipo: 'ficha', id })}
           />
+          {/* El cuadro del recorrido vive DENTRO del mapa: se acomoda a él y no tapa la conversación. */}
+          <Recorrido activo={recorrido} onTerminar={terminarRecorrido} controles={controlesRecorrido} fichaAbierta={!!tocado} />
         </div>
         <Panel
           abierto={enTrabajo}
@@ -588,9 +614,8 @@ export default function App() {
         />
       </div>
 
-      {/* El tablero y los subtítulos del recorrido, a pantalla completa y por encima de todo. */}
+      {/* El tablero, a pantalla completa y por encima de todo. */}
       <Tablero abierto={tableroAbierto} onCerrar={cerrarTablero} onIr={irAConcesion} />
-      <Recorrido activo={recorrido} onTerminar={terminarRecorrido} controles={controlesRecorrido} />
 
       {/*
         La cara. Un solo elemento que se mueve entre dos sitios: centro del escenario, o esquina.

@@ -15,16 +15,24 @@ import type { Geometry, FeatureCollection } from 'geojson';
 export type Motor = 'maplibre' | 'google';
 export type Fondo = 'satelite' | 'calles';
 
+/**
+ * Lo que tapa el mapa por cada lado (px): el cuadro del recorrido, la ficha. Con margen, la cámara
+ * encuadra en lo que queda libre en vez de en el centro de la pantalla. Sin margen, no lo toca.
+ */
+export type Margen = { arriba: number; abajo: number; izquierda: number; derecha: number };
+
 export type OrdenMapa =
-  | { accion: 'volar'; geojson: Geometry; encuadre?: [number, number, number, number]; centro?: [number, number] }
+  | { accion: 'volar'; geojson: Geometry; encuadre?: [number, number, number, number]; centro?: [number, number]; margen?: Margen }
   | { accion: 'capa'; geojson: FeatureCollection; encuadre?: [number, number, number, number] }
   /** Varias concesiones resaltadas a la vez (una búsqueda con varios resultados); el catastro sigue debajo. */
   | { accion: 'candidatas'; geojson: FeatureCollection; encuadre?: [number, number, number, number] }
   | { accion: 'punto'; punto: [number, number] }
   /** Un movimiento de cámara de presentación: centro, zoom, inclinación y giro, a la velocidad pedida. */
-  | { accion: 'camara'; centro: [number, number]; zoom: number; inclinacion?: number; giro?: number; ms?: number }
+  | { accion: 'camara'; centro: [number, number]; zoom: number; inclinacion?: number; giro?: number; ms?: number; margen?: Margen }
   /** Encuadrar un rectángulo (Honduras entera, una región), con inclinación opcional. */
-  | { accion: 'encuadrar'; encuadre: [number, number, number, number]; inclinacion?: number; giro?: number; ms?: number };
+  | { accion: 'encuadrar'; encuadre: [number, number, number, number]; inclinacion?: number; giro?: number; ms?: number; margen?: Margen }
+  /** Girar la cámara alrededor de donde mira (o de `centro`), a velocidad pareja: la toma de dron. */
+  | { accion: 'orbitar'; grados: number; ms: number; centro?: [number, number]; zoom?: number; inclinacion?: number; margen?: Margen };
 
 /** Lo que se tocó en el mapa: una concesión, un rasgo de una capa encendida, o un punto cualquiera. */
 export type Tocado =
@@ -145,4 +153,16 @@ export async function capturaDelMapa(): Promise<Captura> {
   } catch (e: any) {
     return { falta: `No pude leer el lienzo del mapa (${String(e?.message || e).slice(0, 80)}).` };
   }
+}
+
+/**
+ * El catastro que está pintado, para quien necesita mirarlo entero sin volver a bajarlo (el
+ * recorrido busca en él la zona con más información). Lo guarda `App` al recibirlo.
+ */
+let catastro: { type: 'FeatureCollection'; features: Array<{ geometry: any; properties: Record<string, any> }> } | null = null;
+export function guardarCatastro(fc: unknown) {
+  catastro = fc && typeof fc === 'object' && Array.isArray((fc as any).features) ? (fc as any) : null;
+}
+export function catastroGuardado() {
+  return catastro;
 }

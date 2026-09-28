@@ -57,7 +57,7 @@ export function pedirTablero(): Promise<DatosTablero> {
 }
 
 /** Un número que sube desde cero hasta su valor. */
-function Contador({ valor, ms = 1400, d = 0 }: { valor: number; ms?: number; d?: number }) {
+export function Contador({ valor, ms = 1400, d = 0 }: { valor: number; ms?: number; d?: number }) {
   const [v, setV] = useState(sinMovimiento() ? valor : 0);
   useEffect(() => {
     if (sinMovimiento()) return setV(valor);
