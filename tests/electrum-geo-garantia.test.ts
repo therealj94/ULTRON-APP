@@ -4,7 +4,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { garantizarMapasGeo, tipoPedido, zonaDelPedido } from '../server/electrum/geo-garantia';
+import { garantizarMapasGeo, PIDE_MAPAS_GEO, tipoPedido, zonaDelPedido } from '../server/electrum/geo-garantia';
 import type { Contexto, Herramienta } from '../lib/agente/tipos';
 
 const ctx: Contexto = { quien: 'jose', nivel: 'mando', plataforma: 'electrum', canal: 'mesa' } as Contexto;
@@ -32,6 +32,13 @@ test('lo que pide el botón de la ficha', () => {
   assert.equal(tipoPedido(BOTON), 'todos');
   assert.equal(tipoPedido('hacé el mapa estructural de la concesión Minas de Oro'), 'estructural');
   assert.deepEqual(zonaDelPedido('mapa litológico de la concesión Cerro Partido'), { nombre: 'Cerro Partido' });
+  assert.deepEqual(zonaDelPedido('mapa litológico de la concesión Cerro Partido por favor'), { nombre: 'Cerro Partido' });
+  assert.deepEqual(zonaDelPedido('los mapas geológicos de la concesión Finca San Luis y Finca el Mango para mañana'), { nombre: 'Finca San Luis y Finca el Mango' });
+});
+
+test('solo cuenta como pedido si dice «mapa»', () => {
+  for (const si of [BOTON, 'hacé el mapa estructural de X', 'mapa de fallas de la concesión Y', 'quiero los mapas geológicos', 'el mapa geotectónico']) assert.ok(PIDE_MAPAS_GEO.test(si), si);
+  for (const no of ['explicame el contexto litológico de la concesión X', '¿qué rumbo estructural tiene?', 'el marco geotectónico de Honduras']) assert.ok(!PIDE_MAPAS_GEO.test(no), no);
 });
 
 test('el modelo dijo «ahí tenés los tres» sin dibujar: se dibujan de verdad', async () => {

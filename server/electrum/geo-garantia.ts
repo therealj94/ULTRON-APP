@@ -13,8 +13,11 @@
 import type { Contexto, Herramienta, ResultadoHerramienta } from '../../lib/agente/tipos';
 import { validar } from '../../lib/agente/protocolo';
 
-/** Se pidieron mapas geológicos: «mapa(s) geológico(s)», litológico, estructural, geotectónico, de fallas. */
-export const PIDE_MAPAS_GEO = /\bmapas?\s+(geol[oó]gic|litol[oó]gic|estructural|geotect[oó]nic|tect[oó]nic|de\s+fallas)|\b(litol[oó]gico|geotect[oó]nico)\b/i;
+/**
+ * Se pidieron mapas geológicos: tiene que decir «mapa». «Explicame el contexto litológico» es una
+ * pregunta, no un pedido de imagen, y no puede disparar el dibujo (ni un aviso de que no se dibujó).
+ */
+export const PIDE_MAPAS_GEO = /\bmapas?\b(?:\s+(?:del?|la|el|los|tres|\d))*\s+(geol[oó]gic|litol[oó]gic|estructural|geotect[oó]nic|tect[oó]nic|de\s+fallas)/i;
 /** La respuesta dice que ya los enseñó. */
 export const DICE_MAPAS_GEO = /(ah[ií] (ten[eé]s|tiene|est[aá]n|van)|est[aá]n en (la )?pantalla|ya (te )?(los )?(tenés|est[aá]n|quedaron)|te (los )?dej[eé]|listos para ver|los (ves|mir[aá]s)|dibuj[eé])/i;
 
@@ -36,7 +39,10 @@ export function zonaDelPedido(mensaje: string): { concesion_id?: number; nombre?
   const id = /\bid\s*(\d{1,7})\b/i.exec(mensaje);
   if (id) return { concesion_id: Number(id[1]) };
   const nombre = /\bconcesi[oó]n\s+(?:de\s+)?[«"“]?([^«»"“”(),.;:?!]{2,60})/i.exec(mensaje);
-  if (nombre) return { nombre: nombre[1].trim() };
+  // Lo que sigue al nombre no es parte de él: «Cerro Partido por favor», «… para mañana», «… en PDF».
+  // La «y» no se corta: hay concesiones que la llevan («Finca San Luis y Finca el Mango»).
+  const limpio = nombre?.[1].replace(/\s+(por\s+favor|porfa|pf|pls|gracias|ahora|ya|r[aá]pido|para\b|en\s+el\s+mapa|en\s+pdf|con\s+sus?\b|cuando\s+puedas).*$/i, '').trim();
+  if (limpio) return { nombre: limpio };
   return null;
 }
 

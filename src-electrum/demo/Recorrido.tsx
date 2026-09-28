@@ -462,6 +462,8 @@ export function Recorrido({ activo, onTerminar, controles, fichaAbierta = false 
       c0.fondo(antes.fondo);
       c0.alto(antes.alto);
       c0.cara('IDLE');
+      // La ficha que abrió el recorrido se cierra con él (al empezar ya se había cerrado la que hubiera).
+      c0.tocar(null);
       c0.orden({ accion: 'orbitar', grados: 0, ms: 900, margen: SIN_MARGEN });
     };
   }, [activo, onTerminar]);
