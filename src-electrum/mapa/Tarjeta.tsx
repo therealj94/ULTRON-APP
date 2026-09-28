@@ -253,6 +253,7 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: P
           Analizar
         </Boton>
       </div>
+      <Exportes id={f.id} />
       <Seccion titulo="Catastro">
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
           {f.datos.map(([k, v]) => (
@@ -402,5 +403,59 @@ function MuestraVista({ m, onTocar, onPreguntar }: { m: Muestra; onTocar: Props[
         <Boton onClick={() => onTocar({ tipo: 'punto', lngLat: [m.lon, m.lat] })}>¿Qué hay aquí?</Boton>
       </div>
     </>
+  );
+}
+
+/** Bajar la concesión para otros programas: Google Earth, SIG, AutoCAD, y los vértices en CSV. */
+function Exportes({ id }: { id: number }) {
+  const [bajando, setBajando] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const bajar = async (formato: string) => {
+    setBajando(formato);
+    setError(null);
+    try {
+      const r = await fetch(`/api/electrum/concesion/${id}/exportar?formato=${formato}`, { headers: headersElectrum() });
+      if (!r.ok) {
+        const j = await r.json().catch(() => null);
+        return setError(j?.error || `El servidor contestó ${r.status}.`);
+      }
+      const nombre = /filename="([^"]+)"/.exec(r.headers.get('content-disposition') || '')?.[1] || `concesion-${id}.${formato}`;
+      const url = URL.createObjectURL(await r.blob());
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = nombre;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch {
+      setError('No alcancé el servidor.');
+    } finally {
+      setBajando(null);
+    }
+  };
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-[#7F939D]">Bajar</span>
+        {[
+          ['kml', 'KML · Google Earth'],
+          ['dxf', 'DXF · AutoCAD'],
+          ['geojson', 'GeoJSON'],
+          ['csv', 'Vértices CSV'],
+        ].map(([f, t]) => (
+          <button
+            key={f}
+            type="button"
+            disabled={!!bajando}
+            onClick={() => void bajar(f)}
+            className="rounded-md border border-white/15 px-2 py-1 font-mono text-[10.5px] text-[#DCE5EA] hover:border-white/35 disabled:opacity-50 cursor-pointer"
+          >
+            {bajando === f ? 'Bajando…' : t}
+          </button>
+        ))}
+      </div>
+      {error && <p className="mt-1 text-[11px] text-[#E8A08F]">{error}</p>}
+    </div>
   );
 }

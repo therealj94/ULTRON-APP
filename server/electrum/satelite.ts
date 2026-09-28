@@ -106,11 +106,11 @@ export async function sateliteEnRenglones(concesionId: number): Promise<string[]
     const p = suma(d.veg);
     r.push(
       p > 0
-        ? `Pérdida de vegetación densa: ${ha(p)} ha (${((p / d.ha_comparable) * 100).toLocaleString('es-HN', { maximumFractionDigits: 1 })} % de las ${ha(d.ha_comparable)} ha comparables; moderada ${ha(d.veg[0])}, fuerte ${ha(d.veg[1])}, muy fuerte ${ha(d.veg[2])}). Puede ser desmonte, camino o tajo, pero también quema o cosecha: se confirma con la imagen o en campo.`
-        : `Sin pérdida de vegetación densa en las ${ha(d.ha_comparable)} ha comparables.`
+        ? `Caída de vegetación densa: ${ha(p)} ha (${((p / d.ha_comparable) * 100).toLocaleString('es-HN', { maximumFractionDigits: 1 })} % de las ${ha(d.ha_comparable)} ha comparables; moderada ${ha(d.veg[0])}, fuerte ${ha(d.veg[1])}, muy fuerte ${ha(d.veg[2])}). Puede ser desmonte, camino o tajo, pero también quema, sequía o cosecha: se confirma con la imagen o en campo.`
+        : `Sin caída de vegetación densa en las ${ha(d.ha_comparable)} ha comparables.`
     );
   } else {
-    r.push('Pérdida de vegetación: sin datos comparables (nubes o agua en alguno de los dos años).');
+    r.push('Caída de vegetación: sin datos comparables (nubes o agua en alguno de los dos años).');
   }
   if (d.ha_expuesto > 0) {
     const a = suma(d.arc);
@@ -122,6 +122,15 @@ export async function sateliteEnRenglones(concesionId: number): Promise<string[]
     r.push(`Sin suelo expuesto: bajo la vegetación el satélite no ve la roca (sin anomalía no quiere decir sin alteración).`);
   }
   return r;
+}
+
+/** Hectáreas de pérdida de vegetación fuerte o muy fuerte por concesión, para marcarlas en el mapa. */
+export async function perdidaPorConcesion(): Promise<Map<number, number>> {
+  await asegurarSatelite();
+  const filas = await consulta<{ id: string; p: number }>(
+    `SELECT concesion_id::text AS id, (datos->'veg'->>1)::float8 + (datos->'veg'->>2)::float8 AS p FROM satelite_concesion`
+  );
+  return new Map(filas.map((f) => [Number(f.id), Number(f.p)]));
 }
 
 export function montarRutasSatelite(app: Express) {

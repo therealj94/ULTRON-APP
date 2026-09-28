@@ -9,7 +9,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { headersElectrum } from '../acceso';
 import type { CapaExtra, RasterEncendido, RasterEscaneado, RolVisible } from './captura';
-import { COLOR_ROCA, ESTILO_ROL, NOMBRE_ROCA } from './capas';
+import { COLOR_ROCA, ESTILO_ROL, GRUPOS_ESTADO, NOMBRE_ROCA } from './capas';
 import { ELEMENTOS_MUESTRA, NOMBRE_ELEMENTO, leyendaMuestras, type ElementoMuestra } from './muestras';
 
 /** Los rasters por sección, en el orden en que llegan: los mapas escaneados y lo calculado del satélite. */
@@ -40,6 +40,8 @@ export function CapasControl({
   onEncuadrar,
   muestras = null,
   onMuestras,
+  curvas = true,
+  onCurvas,
 }: {
   encendidas: CapaExtra[];
   onCambio: (f: (antes: CapaExtra[]) => CapaExtra[]) => void;
@@ -51,6 +53,9 @@ export function CapasControl({
   /** Muestras geoquímicas de JICA encendidas y el elemento que las colorea. */
   muestras?: MuestrasEncendidas | null;
   onMuestras?: (m: MuestrasEncendidas | null) => void;
+  /** Curvas de nivel y sombreado del terreno. */
+  curvas?: boolean;
+  onCurvas?: (v: boolean) => void;
 }) {
   const [abierto, setAbierto] = useState(false);
   const [lista, setLista] = useState<Disponible[] | null>(null);
@@ -160,6 +165,27 @@ export function CapasControl({
     <div className="pointer-events-none absolute left-3 bottom-3 top-[150px] z-10 flex flex-col items-start justify-end gap-2">
       {abierto && (
         <div className="pointer-events-auto min-h-0 max-h-[420px] w-[280px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-white/12 bg-[#0A0C0E]/94 p-3 text-[12.5px] text-[#C9D5DB] shadow-[0_10px_30px_rgba(0,0,0,.55)] backdrop-blur-xl">
+          <div className="mb-1 font-mono text-[10px] tracking-[0.16em] uppercase" style={{ color: AMBAR }}>
+            Catastro por estado
+          </div>
+          <div className="mb-2 grid grid-cols-2 gap-x-2 gap-y-0.5">
+            {GRUPOS_ESTADO.map((g) => (
+              <span key={g.clave} className="flex items-center gap-1.5 text-[10.5px]">
+                <span className="h-2.5 w-3.5 shrink-0 rounded-[2px] border" style={{ borderColor: g.color, background: `${g.color}33`, borderStyle: g.clave === 'tramite' ? 'dashed' : 'solid' }} />
+                {g.nombre}
+              </span>
+            ))}
+            <span className="flex items-center gap-1.5 text-[10.5px]">
+              <span className="h-2.5 w-3.5 shrink-0 rounded-[2px] border border-[#FF5A5A]" style={{ background: 'repeating-linear-gradient(135deg, rgba(255,80,80,.8) 0 2px, transparent 2px 5px)' }} />
+              Traslape
+            </span>
+          </div>
+          {onCurvas && (
+            <label className="mb-2 flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 hover:bg-white/[0.05]">
+              <input type="checkbox" checked={curvas} onChange={() => onCurvas(!curvas)} className="accent-[#FFAE3B]" />
+              <span className="text-[#E7EEF2]">Curvas de nivel y relieve</span>
+            </label>
+          )}
           <div className="mb-2 font-mono text-[10px] tracking-[0.16em] uppercase" style={{ color: AMBAR }}>
             Capas sobre el catastro
           </div>

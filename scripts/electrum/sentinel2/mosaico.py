@@ -23,9 +23,10 @@ COLORES = {
     'veg': [(255, 170, 60), (235, 50, 40), (160, 0, 60)],
 }
 ALFA = (170, 210, 245)
-# Pérdida de vegetación: donde en 2025 había vegetación densa (NDVI > 0,5) y el NDVI bajó.
+# Caída de vegetación: donde en 2025 había vegetación densa (NDVI > 0,5) y el NDVI bajó. Con una caída
+# de 0,15 (primera prueba) salían 4 900 km²: sequía, quemas y cosechas, no desmonte. Desde 0,25 queda lo fuerte.
 NDVI_DENSO = 0.5
-CAIDAS = (0.15, 0.25, 0.40)
+CAIDAS = (0.25, 0.35, 0.50)
 PMTILES = os.path.expanduser('~/go/bin/go-pmtiles')
 
 

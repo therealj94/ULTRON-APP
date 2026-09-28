@@ -13,46 +13,121 @@ export const AMBAR = '#FFAE3B';
 export const RESALTE = '#FFD98A';
 
 /**
+ * El estado de cada concesión, en cuatro grupos que se leen de un vistazo. Los valores son los del
+ * catastro de INHGEOMIN tal como llegan («S-Explotar» es una solicitud de explotación).
+ */
+export const GRUPOS_ESTADO = [
+  { clave: 'otorgada', nombre: 'Otorgada', color: AMBAR, estados: ['Otorgada', 'Explotar', 'Explorar'] },
+  { clave: 'tramite', nombre: 'En trámite (solicitud)', color: '#5CC8FF', estados: ['Solicitud', 'S-Explotar', 'S-Explorar'] },
+  { clave: 'delimitada', nombre: 'Delimitada', color: '#B891FF', estados: ['Delimitada'] },
+  { clave: 'suspendida', nombre: 'Suspendida', color: '#FF6B6B', estados: ['Suspenso', 'Suspendida', 'Suspendido'] },
+] as const;
+const COLOR_OTRO = '#C9D5DB';
+const ESTADOS_TRAMITE = GRUPOS_ESTADO[1].estados as readonly string[];
+
+/** Color por estado, como expresión de MapLibre. */
+export function colorEstado(): unknown[] {
+  const e: unknown[] = ['match', ['coalesce', ['get', 'estado'], '']];
+  for (const g of GRUPOS_ESTADO) e.push([...g.estados], g.color);
+  e.push(COLOR_OTRO);
+  return e;
+}
+
+/**
  * Las concesiones cargadas. Relleno muy bajo para no tapar el terreno, borde nítido para que el
- * lindero se lea, y el nombre encima solo cuando hay zoom suficiente para que no se amontonen.
+ * lindero se lea —punteado si todavía es una solicitud—, color por estado, y el nombre encima solo
+ * cuando hay zoom suficiente para que no se amontonen.
  */
 export function capasDeConcesiones() {
+  const enTramite = ['in', ['coalesce', ['get', 'estado'], ''], ['literal', ESTADOS_TRAMITE]];
   return [
     {
       id: 'concesiones-relleno',
       type: 'fill',
       source: 'concesiones',
-      paint: { 'fill-color': AMBAR, 'fill-opacity': 0.12 },
+      paint: { 'fill-color': colorEstado(), 'fill-opacity': ['interpolate', ['linear'], ['zoom'], 6, 0.18, 12, 0.1] },
     },
     {
       id: 'concesiones-borde',
       type: 'line',
       source: 'concesiones',
+      filter: ['!', enTramite],
       paint: {
-        'line-color': AMBAR,
+        'line-color': colorEstado(),
         'line-width': ['interpolate', ['linear'], ['zoom'], 8, 1, 14, 2.2],
         'line-opacity': 0.9,
+      },
+    },
+    {
+      // MapLibre no deja que el punteado dependa de cada rasgo: las solicitudes van en su propia capa.
+      id: 'concesiones-borde-tramite',
+      type: 'line',
+      source: 'concesiones',
+      filter: enTramite,
+      paint: {
+        'line-color': colorEstado(),
+        'line-width': ['interpolate', ['linear'], ['zoom'], 8, 1, 14, 2.2],
+        'line-opacity': 0.95,
+        'line-dasharray': [2, 1.4],
       },
     },
     {
       id: 'concesiones-nombre',
       type: 'symbol',
       source: 'concesiones',
-      minzoom: 11,
+      minzoom: 10.5,
       layout: {
         'text-field': ['get', 'nombre'],
-        'text-size': 12,
-        'text-font': ['Noto Sans Regular'],
+        'text-size': ['interpolate', ['linear'], ['zoom'], 10.5, 10.5, 14, 13],
+        'text-font': ['Noto Sans Medium'],
+        'text-max-width': 9,
         'text-allow-overlap': false,
         'text-padding': 6,
+        'text-letter-spacing': 0.02,
       },
       paint: {
-        'text-color': '#FFF3DF',
-        'text-halo-color': 'rgba(0,0,0,0.85)',
-        'text-halo-width': 1.4,
+        'text-color': '#FFF6E8',
+        'text-halo-color': 'rgba(0,0,0,0.9)',
+        'text-halo-width': 1.6,
+        'text-halo-blur': 0.4,
       },
     },
   ];
+}
+
+/** Las capas del catastro que se tocan con el dedo. */
+export const CAPAS_TOCABLES_CONCESION = ['concesiones-relleno', 'concesiones-borde', 'concesiones-borde-tramite'];
+
+/**
+ * Donde dos concesiones se pisan: rayado rojo encima del catastro. El rayado es una imagen chica
+ * que se registra en el mapa (`rayadoTraslape`), porque MapLibre rellena con patrones, no con trazos.
+ */
+export function capasDeTraslapes() {
+  return [
+    { id: 'traslapes-rayado', type: 'fill', source: 'traslapes', paint: { 'fill-pattern': 'rayado-traslape', 'fill-opacity': 0.85 } },
+    {
+      id: 'traslapes-borde',
+      type: 'line',
+      source: 'traslapes',
+      paint: { 'line-color': '#FF5A5A', 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 0.6, 14, 1.4], 'line-opacity': 0.9 },
+    },
+  ];
+}
+
+/** 12×12 px de rayas diagonales rojas semitransparentes, para `addImage`. */
+export function rayadoTraslape(): { width: number; height: number; data: Uint8Array } {
+  const n = 12;
+  const data = new Uint8Array(n * n * 4);
+  for (let y = 0; y < n; y++) {
+    for (let x = 0; x < n; x++) {
+      const d = (x + y) % n;
+      if (d < 2 || d > n - 1) {
+        const i = (y * n + x) * 4;
+        data.set([255, 80, 80, 200], i);
+      }
+    }
+  }
+  return { width: n, height: n, data };
 }
 
 /** La que Dr Electrum está nombrando ahora mismo: más clara, más gruesa, imposible de perder. */

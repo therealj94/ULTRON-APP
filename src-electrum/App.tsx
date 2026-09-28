@@ -236,6 +236,8 @@ export default function App() {
   /** Mapas escaneados encendidos (JICA…), con su transparencia. */
   const [rasters, setRasters] = useState<RasterEncendido[]>([]);
   const [muestras, setMuestras] = useState<MuestrasEncendidas | null>(null);
+  const [traslapes, setTraslapes] = useState<unknown | null>(null);
+  const [curvas, setCurvas] = useState(true);
   const encuadrarRaster = useCallback((encuadre: [number, number, number, number]) => setOrden({ accion: 'encuadrar', encuadre, ms: 1600 }), []);
   const [pedidoPanel, setPedidoPanel] = useState<PedidoPanel | null>(null);
   const nPedido = useRef(0);
@@ -358,6 +360,7 @@ export default function App() {
         if (!r.ok) return;
         const j = await r.json();
         if (j?.geojson?.features?.length) setOrden({ accion: 'capa', geojson: j.geojson, encuadre: j.encuadre || undefined });
+        if (j?.traslapes?.features?.length) setTraslapes(j.traslapes);
       } catch {
         /* sin catastro que pintar: el mapa se queda con su fondo, que es la verdad */
       }
@@ -508,10 +511,12 @@ export default function App() {
               tresD={tresD && motor === 'maplibre'}
               rasters={motor === 'maplibre' ? rasters : []}
               muestras={motor === 'maplibre' ? muestras : null}
+              traslapes={traslapes}
+              curvas={curvas}
             />
           </Suspense>
           </SinMapa>
-          <CapasControl encendidas={extras} onCambio={setExtras} rasters={rasters} onRasters={setRasters} onEncuadrar={encuadrarRaster} muestras={muestras} onMuestras={setMuestras} />
+          <CapasControl encendidas={extras} onCambio={setExtras} rasters={rasters} onRasters={setRasters} onEncuadrar={encuadrarRaster} muestras={muestras} onMuestras={setMuestras} curvas={curvas} onCurvas={setCurvas} />
           {/* Arriba al centro del mapa: entre la cara (izquierda) y el control de zoom (derecha). */}
           <div className="absolute left-1/2 top-2.5 z-10 flex -translate-x-1/2 gap-1 rounded-full border border-white/12 bg-black/70 p-1 shadow-lg backdrop-blur-md">
             {[

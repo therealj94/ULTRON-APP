@@ -71,14 +71,15 @@ import { montarRutasCuentas } from './server/cuentas-rutas';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
 import { montarRutasTeselas } from './server/electrum/teselas';
 import { montarRutasMuestras } from './server/electrum/muestras';
-import { montarRutasSatelite } from './server/electrum/satelite';
+import { montarRutasSatelite, perdidaPorConcesion } from './server/electrum/satelite';
+import { montarRutasExportar } from './server/electrum/exportar';
 import { asegurarBiblioteca } from './server/electrum/biblioteca';
 import { expedientesListo, guardarExpediente } from './lib/s3';
 import { createHash } from 'node:crypto';
 import { personaPorCorreoExacto, puedeEntrar } from './lib/acceso';
 import { puedeEscribir } from './lib/acceso';
 import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
-import { catastroGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
+import { catastroGeojson, traslapesGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
 import { cargarGeologia } from './server/electrum/geologia-datos';
 import { capaParaMapa, capasVisibles, fichaParaMapa, queHayAqui, rasgoParaMapa } from './server/electrum/explorar';
 import { mantenerTableroCaliente, tablero } from './server/electrum/tablero';
@@ -457,7 +458,19 @@ app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), 
  */
 app.get('/api/electrum/catastro.geojson', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
   try {
-    const [fc, encuadre] = await Promise.all([catastroGeojson(), encuadreCatastro()]);
+    const [fc, encuadre, traslapes, perdida] = await Promise.all([
+      catastroGeojson(),
+      encuadreCatastro(),
+      // Lo que adorna el mapa (rayado de traslapes, alerta del satélite) no puede tumbar el catastro.
+      traslapesGeojson().catch(() => null),
+      perdidaPorConcesion().catch(() => null),
+    ]);
+    if (perdida?.size) {
+      for (const f of fc.features) {
+        const p = perdida.get(Number(f.properties?.id));
+        if (p && p > 0) (f.properties as any).perdida_ha = Math.round(p * 10) / 10;
+      }
+    }
     res.setHeader('Cache-Control', 'private, max-age=60');
     res.setHeader('Vary', 'Accept-Encoding');
     /*
@@ -465,7 +478,7 @@ app.get('/api/electrum/catastro.geojson', exigirPlataforma('electrum'), limitar(
      * un teléfono en el campo al abrir el mapa. Coordenadas repetidas comprimen como pocas cosas:
      * medido con 1007 concesiones, de 908 KB a menos de una cuarta parte.
      */
-    const cuerpo = Buffer.from(JSON.stringify({ geojson: fc, encuadre, honesto: true }));
+    const cuerpo = Buffer.from(JSON.stringify({ geojson: fc, encuadre, traslapes, honesto: true }));
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     // req.acceptsEncodings respeta «gzip;q=0»: quien lo prohíbe recibe el JSON tal cual.
     // Sin cabecera no se comprime: algunos clientes no la mandan y no saben descomprimir.
@@ -1194,6 +1207,7 @@ if (ES_ELECTRUM) montarRutasBiblioteca(app);
 if (ES_ELECTRUM) montarRutasTeselas(app);
 if (ES_ELECTRUM) montarRutasMuestras(app);
 if (ES_ELECTRUM) montarRutasSatelite(app);
+if (ES_ELECTRUM) montarRutasExportar(app);
 
 montarRutasCuentas(app, {
   plataforma: PLATAFORMA,

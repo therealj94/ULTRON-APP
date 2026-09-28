@@ -49,21 +49,21 @@ test('satélite: carga, concesiones que no están, texto con límites y ficha', 
 
   const t = (await sateliteEnRenglones(id)).join('\n');
   assert.match(t, /^Copernicus Sentinel-2 L2A, temporada seca 2025 → 2026; píxel de 40 m\./);
-  assert.match(t, /Pérdida de vegetación densa: 6\.4 ha \(5\.8 % de las 111 ha comparables; moderada 4\.3, fuerte 1\.5, muy fuerte 0\.6\)/);
-  assert.match(t, /quema o cosecha/);
+  assert.match(t, /Caída de vegetación densa: 6\.4 ha \(5\.8 % de las 111 ha comparables; moderada 4\.3, fuerte 1\.5, muy fuerte 0\.6\)/);
+  assert.match(t, /quema, sequía o cosecha/);
   assert.match(t, /Suelo expuesto: 12 ha de 118\. Anomalía de arcillas \(alteración argílica\/sericítica\): 3\.4 ha, 1\.2 alta o muy alta\. Óxidos de hierro: ninguna\./);
   assert.match(t, /no un hallazgo/);
 
   // Volver a cargar reemplaza.
   await cargarSatelite([{ id, datos: { ...medido, veg: [0, 0, 0], ha_expuesto: 0 } as any }], 'otra', 'Copernicus Sentinel-2 L2A');
   const t2 = (await sateliteEnRenglones(id)).join('\n');
-  assert.match(t2, /Sin pérdida de vegetación densa en las 111 ha comparables/);
+  assert.match(t2, /Sin caída de vegetación densa en las 111 ha comparables/);
   assert.match(t2, /Sin suelo expuesto: bajo la vegetación el satélite no ve la roca/);
 
   // La ficha del mapa lo trae; una concesión sin medir lo dice.
   const f = await fichaParaMapa(id);
   assert.equal(f?.satelite.estado, 'ok');
-  assert.match((f?.satelite as any).renglones.join(' '), /Sin pérdida de vegetación densa/);
+  assert.match((f?.satelite as any).renglones.join(' '), /Sin caída de vegetación densa/);
   const otra = await concesionDePrueba('prueba-sat-2');
   const f2 = await fichaParaMapa(otra);
   assert.deepEqual((f2?.satelite as any).renglones, ['Esta concesión todavía no se midió con Sentinel-2.']);
