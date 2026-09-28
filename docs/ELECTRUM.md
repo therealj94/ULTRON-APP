@@ -293,6 +293,7 @@ para la pantalla. Por eso el mapa vuela a una concesión sin que el modelo escri
 |---|---|
 | `catastro_buscar` | concesiones por nombre, titular, expediente o municipio |
 | `catastro_vencimientos` | lo que vence y en cuántos días |
+| `catastro_resumen` | cifras de todo el catastro: total, estados, traslapes, áreas protegidas, las más prospectivas y la mayor caída de vegetación |
 | `catastro_en_punto` | qué concesión cubre unas coordenadas y qué hay cerca |
 | `concesion_entorno` | lo que una concesión tiene alrededor (áreas protegidas, ríos, caseríos…), con alertas |
 | `gis_traslapes` | qué se pisa con qué, en hectáreas |
@@ -1085,3 +1086,31 @@ cerebro: lo que cambia es la piel.
   con ruta propia bajo la puerta de Electrum. Describe; la lectura de geólogo la hace el turno.
 - Las manos de administración de ULTRON (sistema, ejecutor, taller, bóveda) y su memoria **no** pasan
   a Electrum: el filtro por plataforma de `manos.ts` lo garantiza.
+
+## El cerebro se levanta solo — el vigía del nodo
+
+El 28-sep el motor del A10G (`scripts/nodo-a10g/ultron-motor.py`, puerto 8443) quedó sordo cinco
+horas: el saludo TLS se hacía dentro de `accept()`, en el hilo principal, y una conexión que abría y
+no saludaba —un escáner de internet— lo trababa para todos. Se arregló la causa (saludo en el hilo de
+cada conexión y plazo de 60 s) y se puso encima un vigía para lo que venga.
+
+`scripts/nodo-a10g/vigia/vigia.py` corre cada minuto (`ultron-vigia.timer`) y mira la cadena de abajo
+arriba: llama-server, que el modelo de verdad escriba un token (cada 5 min), el puente de Ollama, el
+motor y la mesa. Lo que falla se vuelve a mirar a los 15 s; si sigue mal, reinicia **solo esa capa** y
+confirma que volvió. No reinicia la máquina ni para la instancia.
+
+Lo que aprende queda en `/var/lib/ultron-vigia/estado.json`:
+
+| Qué | Cómo |
+|---|---|
+| Qué remedio sirve para cada síntoma | tasa de éxito medida; se prueba primero el que más curó |
+| Cuánto tarda cada servicio en volver | media móvil; llama ~2,5 min, el motor ~3 s |
+| Qué anuncia una caída | señales del minuto anterior (cola de accept, RAM, disco, GPU) contra el p95 de lo sano; con 3 caídas, la señal que siempre estuvo alta queda como precursor y se actúa antes |
+| Qué se repite | 3 caídas del mismo síntoma en 7 días → reinicio preventivo a las 3:00 de Honduras |
+
+Freno: 3 reinicios por hora por servicio (2 para llama); pasado eso, «necesita una persona». Llama
+nunca se reinicia por precursor, porque descarga el modelo de la GPU.
+
+Probado en el nodo congelando el motor (`kill -STOP`): volvió solo en 75 s. El resumen llega a
+`/salud` del motor y de ahí a la fila **Autocura** del estado en la web, en cifras y sin nombres de
+servicios. Instalar o actualizar: `sudo bash scripts/nodo-a10g/vigia/instalar.sh` en el nodo.

@@ -1,0 +1,11 @@
+[Unit]
+Description=ULTRON · el vigía, cada minuto
+
+[Timer]
+OnBootSec=2min
+# Cuenta desde que terminó la vuelta anterior: una vuelta que espera a llama no se pisa con la siguiente.
+OnUnitInactiveSec=60s
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target
