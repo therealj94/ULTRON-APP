@@ -501,3 +501,33 @@ test('al acabarse las rondas, redacta con lo que averiguó en vez de pegar resul
   assert.equal(r.texto, 'En resumen: llueve en las tres ciudades.');
   assert.doesNotMatch(r.texto, /Me quedé sin vueltas/);
 });
+
+test('si el cierre vuelve a pedir una herramienta, se le insiste una vez antes de pegar resultados crudos', async () => {
+  let n = 0;
+  const cierres: string[] = [];
+  const pensar: Pensar = async ({ herramientas, mensajes }) => {
+    if (herramientas.length) return { texto: `<tool_call>{"name":"clima","arguments":{"ciudad":"C${n++}"}}</tool_call>` };
+    cierres.push(String((mensajes.at(-1) as any).content));
+    // Primer cierre: otro pedido de herramienta (se limpia y queda vacío). Segundo: el texto.
+    return cierres.length === 1 ? { texto: '<tool_call>{"name":"clima","arguments":{"ciudad":"Otra"}}</tool_call>' } : { texto: 'Llueve en las tres ciudades.' };
+  };
+  const r = await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: HS, ctx: CTX, pensar, presupuesto: { rondas: 2 } });
+  assert.equal(r.fin, 'sin rondas');
+  assert.equal(r.texto, 'Llueve en las tres ciudades.');
+  assert.equal(cierres.length, 2);
+  assert.match(cierres[1], /NO podés pedir herramientas/);
+});
+
+test('el reintento del cierre no empieza si quien preguntó ya se fue', async () => {
+  let n = 0;
+  let cierres = 0;
+  let ido = false;
+  const pensar: Pensar = async ({ herramientas }) => {
+    if (herramientas.length) return { texto: `<tool_call>{"name":"clima","arguments":{"ciudad":"C${n++}"}}</tool_call>` };
+    cierres++;
+    ido = true; // se va mientras corre el primer cierre, que además vuelve vacío
+    return { texto: '<tool_call>{"name":"clima","arguments":{"ciudad":"Otra"}}</tool_call>' };
+  };
+  await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: HS, ctx: CTX, pensar, presupuesto: { rondas: 2 }, abandonado: () => ido });
+  assert.equal(cierres, 1, 'no hubo segundo pedido al modelo');
+});
