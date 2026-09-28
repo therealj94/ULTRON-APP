@@ -1,4 +1,4 @@
-/** Manos: búsqueda y lectura web. Sin API key. El 27B no vive aquí. */
+/** Manos: búsqueda y lectura web. Funciona sin claves; con claves (Brave, Tavily) busca mejor. El 27B no vive aquí. */
 import { pedirPublico } from '../../lib/red-publica';
 
 export type WebHit = { title: string; url: string; snippet: string };
@@ -108,18 +108,68 @@ async function buscarBrave(query: string, max: number): Promise<WebHit[]> {
   return (j?.web?.results || []).slice(0, max).map((x: any) => ({ title: stripHtml(String(x.title || '')), url: String(x.url || ''), snippet: stripHtml(String(x.description || '')) }));
 }
 
-async function buscarTavily(query: string, max: number): Promise<WebHit[]> {
+/*
+ * Tavily: con `TAVILY_API_KEY` usa la cuenta (1 000 búsquedas al mes gratis); sin clave, su modo
+ * sin llave (`X-Tavily-Access-Mode: keyless`), que busca y lee páginas con un límite de uso. Si el
+ * límite contesta 429, Tavily descansa diez minutos y los demás motores siguen solos: no se gastan
+ * pedidos que van a rebotar. `TAVILY_SIN_LLAVE=0` apaga el modo sin llave.
+ */
+const TAVILY = 'https://api.tavily.com';
+let tavilyPausaHasta = 0;
+function tavilyCabeceras(): Record<string, string> | null {
   const clave = String(process.env.TAVILY_API_KEY || '').trim();
-  if (!clave) return [];
-  const r = await fetch('https://api.tavily.com/search', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${clave}` },
-    body: JSON.stringify({ query, max_results: max, search_depth: 'basic' }),
-    signal: AbortSignal.timeout(8000),
-  });
+  if (clave) return { 'Content-Type': 'application/json', Authorization: `Bearer ${clave}` };
+  if (process.env.TAVILY_SIN_LLAVE === '0') return null;
+  return { 'Content-Type': 'application/json', 'X-Tavily-Access-Mode': 'keyless' };
+}
+async function pedirTavily(ruta: string, cuerpo: unknown, ms: number): Promise<any | null> {
+  const cabeceras = tavilyCabeceras();
+  if (!cabeceras || Date.now() < tavilyPausaHasta) return null;
+  const r = await fetch(`${TAVILY}${ruta}`, { method: 'POST', headers: cabeceras, body: JSON.stringify(cuerpo), signal: AbortSignal.timeout(ms) });
+  if (r.status === 429 || r.status === 432 || r.status === 433) {
+    tavilyPausaHasta = Date.now() + 10 * 60_000;
+    throw new Error(`Tavily ${r.status}: límite, descansa 10 min`);
+  }
   if (!r.ok) throw new Error(`Tavily ${r.status}`);
-  const j: any = await r.json();
+  return r.json();
+}
+/** Para las pruebas. */
+export function reiniciarTavily() {
+  tavilyPausaHasta = 0;
+}
+
+async function buscarTavily(query: string, max: number): Promise<WebHit[]> {
+  const j = await pedirTavily('/search', { query, max_results: max, search_depth: 'basic' }, 8000);
   return (j?.results || []).slice(0, max).map((x: any) => ({ title: String(x.title || ''), url: String(x.url || ''), snippet: String(x.content || '').replace(/\s+/g, ' ').slice(0, 400) }));
+}
+
+/** Markdown de Tavily Extract a texto corrido: sin tablas, sin marcas y con los enlaces como texto. */
+export function markdownATexto(md: string): string {
+  return md
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/:?-{3,}:?/g, ' ')
+    .replace(/[|#*_>`]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Lee una página con Tavily Extract cuando el servidor no pudo (sitio que bloquea IPs de nube o
+ * que arma el texto con JavaScript). Solo nombres de dominio públicos: nunca una IP ni un nombre
+ * interno, que no tienen por qué salir a un tercero.
+ */
+export async function extraerConTavily(url: string, maxChars: number): Promise<string> {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return '';
+  }
+  if (!/^https?:$/.test(u.protocol) || !u.hostname.includes('.') || /^[\d.]+$|:/.test(u.hostname) || /\.(local|internal|lan)$/i.test(u.hostname)) return '';
+  const j = await pedirTavily('/extract', { urls: [u.toString()] }, 15000);
+  const crudo = String(j?.results?.[0]?.raw_content || '');
+  return markdownATexto(crudo).slice(0, maxChars);
 }
 
 /** Wikipedia: no bloquea servidores y cubre lo enciclopédico (geología, minerales, lugares, leyes). */
@@ -192,7 +242,9 @@ export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
       const minimo = ['brave', 'tavily', 'wikipedia'].includes(motores[i][0]) ? 0.25 : 0.6;
       if (claves.length >= 2 && rel < minimo) return;
       vistos.add(clave);
-      todos.push({ ...h, puntos: motores[i][1] + 3 * rel - k * 0.15 });
+      // Una publicación de red social no es una fuente para citar: va al final, no se descarta.
+      const social = /(^|\.)(facebook|instagram|tiktok|x|twitter|youtube|pinterest)\.com$/i.test(new URL(h.url).hostname) ? 3 : 0;
+      todos.push({ ...h, puntos: motores[i][1] + 3 * rel - k * 0.15 - social });
     });
   });
   return todos
@@ -202,18 +254,30 @@ export async function buscarWeb(query: string, max = 5): Promise<WebHit[]> {
 }
 
 export async function leerPagina(url: string, maxChars = 1800): Promise<string> {
+  let directo = '';
+  let bloqueada = false;
   try {
     // Conecta a la IP ya comprobada y revisa cada redirección (lib/red-publica.ts): esto lo abre
     // el modelo con URLs que no eligió una persona.
     const r = await pedirPublico(url, { ms: 7000, headers: { 'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AU-RA-FP/3.0', Accept: 'text/html,*/*' } });
-    if (r.status >= 400) return '';
-    if (!/html|text|json/.test(r.tipo)) return '';
-    const html = r.texto;
-    const body = html.match(/<body[\s\S]*<\/body>/i)?.[0] || html;
-    return stripHtml(body).slice(0, maxChars);
-  } catch {
-    return '';
+    if (r.status < 400 && /html|text|json/.test(r.tipo)) {
+      const html = r.texto;
+      const body = html.match(/<body[\s\S]*<\/body>/i)?.[0] || html;
+      directo = stripHtml(body).slice(0, maxChars);
+    } else if (r.status >= 400) {
+      bloqueada = true;
+    }
+  } catch (e: any) {
+    // Lo que red-publica rechaza por no ser público no se reintenta afuera.
+    if (/solo http|p[uú]blic|privad|interna|no permitid|bloquead/i.test(String(e?.message || ''))) return '';
+    bloqueada = true;
   }
+  // Si el sitio bloqueó al servidor o la página vino casi vacía (armada con JavaScript), la lee Tavily.
+  if (bloqueada || directo.length < 200) {
+    const otra = await extraerConTavily(url, maxChars).catch(() => '');
+    if (otra.length > directo.length) return otra;
+  }
+  return directo;
 }
 
 export function consultaWeb(message: string): string | null {
