@@ -215,6 +215,13 @@ test('la puerta se defiende: dirección ajena, sin PKCE, código repetido, verif
       const tokens: any = await t1.json();
       assert.equal(tokens.token_type, 'Bearer');
       assert.equal((await cambiar(verificador)).status, 400, 'el código se usa una sola vez');
+      const conRelleno = (c: string) =>
+        fetch(`${s.base}/oauth/token`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ grant_type: 'authorization_code', code: c, redirect_uri: 'http://localhost:9999/cb', client_id: cliente.client_id, code_verifier: verificador }).toString(),
+        });
+      assert.equal((await conRelleno(code + '=')).status, 400, 'ni con la firma rellenada');
 
       // Renovar rota el refresco: el viejo deja de valer.
       const renovar = (rt: string) =>
@@ -223,6 +230,12 @@ test('la puerta se defiende: dirección ajena, sin PKCE, código repetido, verif
       assert.equal(r2.status, 200);
       await new Promise((r) => setTimeout(r, 30));
       assert.equal((await renovar(tokens.refresh_token)).status, 400, 'refresco viejo cerrado');
+      assert.equal((await renovar(tokens.refresh_token + '=')).status, 400, 'ni con la firma rellenada');
+      // Revocar el acceso lo corta en /mcp, también disfrazado.
+      await fetch(`${s.base}/oauth/revoke`, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: tokens.access_token }).toString() });
+      const ping = (t: string) => fetch(s.url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${t}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) });
+      assert.equal((await ping(tokens.access_token)).status, 401, 'revocado');
+      assert.equal((await ping(tokens.access_token + '=')).status, 401, 'revocado, con relleno');
     } finally {
       await s.cerrar();
     }

@@ -57,21 +57,25 @@ function firmarSesion(user: { correo: string; nombre: string; rol: string; at: n
 }
 
 /** Lo que dice un token bien firmado (sin mirar si se cerró ni si venció). */
+/**
+ * La firma se compara como TEXTO, tal cual la emitimos. Compararla decodificada dejaba pasar formas
+ * equivalentes (`…=` al final, caracteres que el decodificador ignora): el token seguía siendo
+ * válido pero su huella era otra, y una sesión cerrada volvía a abrir con un `=` agregado.
+ */
+function firmaCanonica(esperada: string, dada: string): boolean {
+  const a = Buffer.from(esperada);
+  const b = Buffer.from(String(dada));
+  return a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+}
+
 function cuerpoFirmado(token: string): any | null {
   if (!token.startsWith('u1.')) return null;
   const parts = token.split('.');
   if (parts.length !== 3) return null;
   const body = parts[1];
   const sig = parts[2];
-  const expect = crypto.createHmac('sha256', secretoSesion()).update(body).digest();
-  let got: Buffer;
-  try {
-    got = Buffer.from(sig, 'base64url');
-  } catch {
-    return null;
-  }
-  if (expect.length !== got.length || expect.length === 0) return null;
-  if (!crypto.timingSafeEqual(expect, got)) return null;
+  const expect = crypto.createHmac('sha256', secretoSesion()).update(body).digest('base64url');
+  if (!firmaCanonica(expect, sig)) return null;
   try {
     return JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
   } catch {
@@ -160,14 +164,8 @@ export function firmarDato(prefijo: string, dato: object): string {
 export function leerDato(prefijo: string, token: string): any | null {
   const partes = String(token || '').split('.');
   if (partes.length !== 3 || partes[0] !== prefijo) return null;
-  const expect = crypto.createHmac('sha256', secretoSesion()).update(`${prefijo}.${partes[1]}`).digest();
-  let got: Buffer;
-  try {
-    got = Buffer.from(partes[2], 'base64url');
-  } catch {
-    return null;
-  }
-  if (got.length !== expect.length || !crypto.timingSafeEqual(expect, got)) return null;
+  const expect = crypto.createHmac('sha256', secretoSesion()).update(`${prefijo}.${partes[1]}`).digest('base64url');
+  if (!firmaCanonica(expect, partes[2])) return null;
   try {
     return JSON.parse(Buffer.from(partes[1], 'base64url').toString('utf8'));
   } catch {
