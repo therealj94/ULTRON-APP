@@ -550,6 +550,26 @@ test('expediente_leer: lee seguido desde una página, dice dónde sigue y elige 
     assert.match(porId.texto, /Mapa de ubicación/);
     const nada = await leer.ejecutar({ documento: 'no existe en ningún lado xyz' }, {} as any);
     assert.match(nada.texto, /No hay ningún documento/);
+    assert.doesNotMatch(r.texto, /ilegibles/, 'un texto normal no lleva el aviso');
+
+    // Una página de OCR de una tabla girada: avisa, y dice que el índice cuenta páginas impresas.
+    const { legibilidad, paginasIlegibles } = await import('../server/electrum/manos');
+    // Una tabla de leyes bien leída NO es ilegible, aunque casi todo sean números y códigos.
+    const tabla = '[TABLA] Muestra | Desde (m) | Hasta (m) | Au (g/t) | Cu (%)\nTEP20 | 12,0 | 74,0 | 3,48 | 0,76\nDDH-07 | 3,2 | 12 | 0,62 | 0,82\nTEP21 | 0 | 18,5 | 1.065 ppm | 8%';
+    assert.ok(legibilidad(tabla) > 0.9, `tabla ${legibilidad(tabla)}`);
+    const ensayes = 'No SAMPLE E N Au Ag Cu ppb ppm ppm\n397 F233c G 410199 1573645 <5 <02 42\n398 F234ce G 411195 1577104 <5 <02 2';
+    assert.ok(legibilidad(ensayes) > 0.8, `ensayes ${legibilidad(ensayes)}`);
+    // Seis páginas de prosa no tapan la única rota.
+    const prosa = 'Las conclusiones del estudio geológico indican mineralización de oro en vetas de cuarzo del sector.';
+    assert.deepEqual(paginasIlegibles(`[p. 93]\nL I € os S LoLE vO6£8S! | ELOESE [S3 6€09 6€£ I L I I I L L L £ s'0 GELL €11889!\n[p. 94]\n${prosa}\n[p. 95]\n${prosa}\n[p. 96]\n${prosa}`), [93]);
+    assert.deepEqual(paginasIlegibles(`[p. 3]\n${tabla}\n[p. 4]\n${prosa}`), []);
+    const basura = 'L I ! I l I I € os S LoLE vO6£8S! | ELOESE [S3 6€09 6€£ I L I I I L L L £ s\'0 GELL €11889! | ¿685€ |S3 8£09 8€ IL L I I I I I I € $0 vel! 8018881';
+    assert.ok(legibilidad(basura) < 0.6, `legibilidad ${legibilidad(basura)}`);
+    assert.ok(legibilidad('Las conclusiones del estudio geológico en los sectores Guasucarán, Comayagua y Erandique indican mineralización de oro.') > 0.95);
+    await aprender('prueba-lee-tabla girada.txt', Buffer.from(['Página 1. Índice: Capítulo 1 Conclusiones, página 3.', basura, basura].join('\f')));
+    const girada = await leer.ejecutar({ documento: 'prueba-lee tabla girada', pagina: 2, paginas: 2 }, {} as any);
+    assert.match(girada.texto, /Las páginas 2, 3 salieron casi ilegibles en el OCR/);
+    assert.match(girada.texto, /página impresa/);
 
     // Páginas en blanco: el cursor salta a la próxima página que tiene texto, no a la misma.
     await aprender('prueba-lee-con blancos.txt', Buffer.from(['Página 1. Portada del informe de la zona de Tatanacho con su índice.', '', '', 'Página 4. Recursos estimados del depósito de Tatanacho por bloque.'].join('\f')));
