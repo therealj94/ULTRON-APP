@@ -118,14 +118,18 @@ export async function correrAgente(opts: {
   /** Cuántas veces se le devolvió al modelo un pedido que no se pudo usar. */
   let correcciones = 0;
   const redactarFinal = async (): Promise<string | null> => {
-    if (opts.abandonado?.() || !traza.some((t) => t.ok)) return null;
+    if (!traza.some((t) => t.ok)) return null;
     // Dos intentos: el modelo del nodo, con el protocolo de herramientas en el system, a veces
     // contesta el cierre con OTRO pedido de herramienta, que se limpia y deja el texto vacío. Pasó
     // en producción con el JICA Fase III: había encontrado las conclusiones en la p. 31 y el turno
     // terminó pegando resúmenes crudos. El segundo intento se lo dice sin rodeos.
-    for (const cierre of [CIERRE, CIERRE_ESTRICTO]) {
+    for (const [i, cierre] of [CIERRE, CIERRE_ESTRICTO].entries()) {
+      // Quien preguntó puede haberse ido mientras corría el primer intento: no se empieza otro.
+      if (opts.abandonado?.()) return null;
+      // El reintento solo si cabe entero: el adaptador del nodo no baja de 8 s por llamada
+      // (MIN_LLAMADA_MS en server/electrum/turno.ts), y el turno no puede pasarse de su tope.
       const restante = p.ms - (Date.now() - t0);
-      if (restante < 5_000) return null;
+      if (restante < (i === 0 ? 5_000 : MS_REINTENTO_CIERRE)) return null;
       try {
         const s = await opts.pensar({ mensajes: [...mensajes, { role: 'user', content: cierre }], herramientas: [], msRestante: restante });
         const t = limpiarTexto(s.texto || '');
@@ -284,7 +288,8 @@ const CIERRE =
   '(Sistema) Se acabaron las herramientas de este turno. Con lo que ya averiguaste, redactá ahora la respuesta final para quien pregunta, sin pedir más herramientas. Si algo quedó sin averiguar, decilo y ofrecé seguir.';
 
 const CIERRE_ESTRICTO =
-  '(Sistema) NO podés pedir herramientas: no hay más. Escribí YA, en texto normal y sin etiquetas, la respuesta final con lo que devolvieron las herramientas de arriba (documento y página incluidos). Si faltó algo, decilo en una línea.';
+  '(Sistema) NO podés pedir herramientas: no hay más. Escribí YA, en texto normal y sin etiquetas, la respuesta final con lo que devolvieron las herramientas de arriba; si algo salió de un documento, con su documento y página. Si faltó algo, decilo en una línea.';
+const MS_REINTENTO_CIERRE = 8_000;
 
 /** Una herramienta colgada no puede colgar el turno entero. */
 function conTope<T>(promesa: Promise<T>, ms: number, nombre: string): Promise<T> {

@@ -517,3 +517,17 @@ test('si el cierre vuelve a pedir una herramienta, se le insiste una vez antes d
   assert.equal(cierres.length, 2);
   assert.match(cierres[1], /NO podés pedir herramientas/);
 });
+
+test('el reintento del cierre no empieza si quien preguntó ya se fue', async () => {
+  let n = 0;
+  let cierres = 0;
+  let ido = false;
+  const pensar: Pensar = async ({ herramientas }) => {
+    if (herramientas.length) return { texto: `<tool_call>{"name":"clima","arguments":{"ciudad":"C${n++}"}}</tool_call>` };
+    cierres++;
+    ido = true; // se va mientras corre el primer cierre, que además vuelve vacío
+    return { texto: '<tool_call>{"name":"clima","arguments":{"ciudad":"Otra"}}</tool_call>' };
+  };
+  await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: HS, ctx: CTX, pensar, presupuesto: { rondas: 2 }, abandonado: () => ido });
+  assert.equal(cierres, 1, 'no hubo segundo pedido al modelo');
+});
