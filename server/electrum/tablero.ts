@@ -232,25 +232,42 @@ async function calcular(tope = TOPE): Promise<Tablero> {
 }
 
 let guardado: { t: number; datos: Tablero } | null = null;
-let enCurso: Promise<Tablero> | null = null;
+/**
+ * Cálculos en curso, uno por tope: un pedido de la pantalla (20 s) no se cuelga del cálculo de
+ * fondo (60 s), que puede tardar hasta un minuto con una capa pesada.
+ */
+const enCurso = new Map<number, Promise<Tablero>>();
 const VIGENCIA_MS = 10 * 60 * 1000;
 
-/** El tablero, de la caché si tiene menos de diez minutos. Dos pedidos a la vez comparten el cálculo. */
+/** El tablero, de la caché si tiene menos de diez minutos. Dos pedidos con el mismo tope comparten el cálculo. */
 export async function tablero(opts: { fresco?: boolean; tope?: number } = {}): Promise<Tablero> {
   if (!hayBase()) throw new Error('sin base');
   if (!opts.fresco && guardado && Date.now() - guardado.t < VIGENCIA_MS) return guardado.datos;
-  if (!enCurso) {
-    enCurso = calcular(opts.tope)
+  const tope = opts.tope ?? TOPE;
+  let p = enCurso.get(tope);
+  if (!p) {
+    p = calcular(tope)
       .then((datos) => {
-        // Incompleto: sirve ya, pero vence en un minuto para reintentar lo que faltó.
-        guardado = { t: datos.incompletas.length ? Date.now() - VIGENCIA_MS + 60_000 : Date.now(), datos };
+        // Incompleto: sirve ya, pero vence en un minuto para reintentar lo que faltó. Un resultado
+        // incompleto nunca pisa uno completo más nuevo.
+        const completo = !datos.incompletas.length;
+        if (completo || !guardado || guardado.datos.incompletas.length) {
+          guardado = { t: completo ? Date.now() : Date.now() - VIGENCIA_MS + 60_000, datos };
+        }
+        // Lo que no llegó en 20 s se completa ya en segundo plano, con el margen del fondo.
+        if (!completo && tope < TOPE_FONDO && !enCurso.has(TOPE_FONDO)) {
+          void tablero({ fresco: true, tope: TOPE_FONDO }).catch((e) =>
+            console.warn('[electrum] tablero en segundo plano:', String(e?.message || e).slice(0, 120))
+          );
+        }
         return datos;
       })
       .finally(() => {
-        enCurso = null;
+        enCurso.delete(tope);
       });
+    enCurso.set(tope, p);
   }
-  return enCurso;
+  return p;
 }
 
 /**

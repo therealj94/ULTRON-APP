@@ -44,6 +44,8 @@ export function pedirTablero(): Promise<DatosTablero> {
       .then(async (r) => {
         const j = await r.json().catch(() => null);
         if (!r.ok || !j?.total) throw new Error(j?.error || `El servidor contestó ${r.status}.`);
+        // Incompleto no se guarda: el próximo pedido va al servidor, que ya lo está completando.
+        if (j.incompletas?.length) enMemoria = null;
         return j as DatosTablero;
       })
       .catch((e) => {
@@ -198,6 +200,16 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
     return () => window.removeEventListener('keydown', k);
   }, [abierto, onCerrar]);
 
+  // Si alguna sección no llegó a tiempo, se vuelve a pedir sola mientras el tablero esté abierto.
+  const faltan = datos?.incompletas?.length ?? 0;
+  useEffect(() => {
+    if (!abierto || !faltan) return;
+    const t = setTimeout(() => {
+      pedirTablero().then(setDatos, () => {});
+    }, 30_000);
+    return () => clearTimeout(t);
+  }, [abierto, faltan, datos]);
+
   if (!abierto) return null;
   const d = datos;
 
@@ -247,7 +259,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
               <p className="font-mono text-[11px] text-[#8FA3AD]" role="status">
                 Todavía calculando el cruce con{' '}
                 {d.incompletas.map((x) => ({ areas_protegidas: 'áreas protegidas', microcuencas: 'microcuencas', poblados: 'caseríos', departamentos: 'departamentos' })[x] || x).join(', ')}
-                . Se completa solo en un minuto.
+                . Se completa solo en un momento.
               </p>
             )}
 
