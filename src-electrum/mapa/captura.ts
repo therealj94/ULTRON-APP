@@ -48,6 +48,19 @@ export type RolVisible =
 /** Una capa encendida encima del catastro (geología, fallas, áreas protegidas…). */
 export type CapaExtra = { id: number; nombre: string; rol: RolVisible; geojson: FeatureCollection };
 
+/** Un mapa escaneado y georreferenciado (JICA…), servido en teselas raster desde el cubo. */
+export type RasterEscaneado = {
+  clave: string;
+  nombre: string;
+  fuente?: string;
+  escala?: string;
+  encuadre: [number, number, number, number];
+  zoomMax?: number;
+  notas?: string;
+};
+/** Un mapa escaneado encendido, con la transparencia que se le dio. */
+export type RasterEncendido = RasterEscaneado & { opacidad: number };
+
 /** Lo mínimo del mapa de MapLibre que usa la captura. */
 type MapaVivo = {
   getCanvas: () => HTMLCanvasElement;

@@ -4,17 +4,18 @@
  * Quién puede qué:
  *  - Mirar (resumen, carpetas, lista, detalle, bitácora, importaciones): cualquiera que entre a Dr
  *    Electrum. Saber qué sabe el sistema es parte de poder creerle.
- *  - Ordenar (mover, renombrar, carpetas) y releer: nivel de TRABAJO.
+ *  - Ordenar (mover, renombrar, carpetas), releer y cargar texto (OCR): nivel de TRABAJO.
  *  - Borrar e importar desde el cubo: solo MANDO. Borrar una capa se lleva sus concesiones, y una
  *    importación son horas de máquina.
  */
-import type { Express, Request, Response } from 'express';
+import express, { type Express, type Request, type Response } from 'express';
 import { exigirPlataforma, identidadDe, limitar } from '../seguridad';
 import { nivelDe } from '../../lib/acceso';
 import { hayBase } from './db';
 import {
   arbol,
   bitacora,
+  cargarTextoEn,
   detalle,
   eliminar,
   listar,
@@ -169,6 +170,32 @@ export function montarRutasBiblioteca(app: Express) {
       return res.json({ ...(await releer(id, quien(req))), honesto: true });
     } catch (e) {
       return fallo(res, e, 'releer');
+    }
+  });
+
+  /*
+   * El texto de otra lectura para un documento que ya está: el OCR de un escaneo «sin texto», o
+   * uno mejor. Cuerpo = el archivo (.txt con \f entre páginas, .pdf con texto, .docx…); `nombre`
+   * decide el lector. `forzar=1` deja cargar aunque traiga menos de la mitad del texto que había.
+   */
+  app.post(`${R}/texto/:id`, E, limitar(60), express.raw({ type: () => true, limit: '64mb' }), async (req, res) => {
+    if (!hayBase()) return sinBase(res);
+    if (!exigir(req, res, 'escribe')) return;
+    const id = Math.floor(Number(req.params.id));
+    if (!(id > 0)) return res.status(400).json({ error: 'Documento inválido.', honesto: true });
+    const nombre = String(req.query.nombre || '')
+      .split(/[\\/]/)
+      .pop()!
+      .replace(/[\u0000-\u001f]/g, '')
+      .trim()
+      .slice(0, 200);
+    if (!nombre) return res.status(400).json({ error: 'Falta el nombre del archivo.', honesto: true });
+    const datos = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (!datos.length) return res.status(400).json({ error: 'El archivo llegó vacío.', honesto: true });
+    try {
+      return res.json({ ...(await cargarTextoEn(id, nombre, datos, quien(req), req.query.forzar === '1')), honesto: true });
+    } catch (e) {
+      return fallo(res, e, 'cargar el texto');
     }
   });
 

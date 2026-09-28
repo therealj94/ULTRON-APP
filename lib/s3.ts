@@ -68,7 +68,9 @@ async function s3(opts: {
   query?: Record<string, string>;
   contentType?: string;
   timeoutMs?: number;
-}): Promise<{ ok: boolean; status: number; body: Buffer; detalle: string }> {
+  /** «bytes=a-b»: solo ese tramo del objeto (S3 contesta 206). No entra en la firma: S3 no lo exige. */
+  range?: string;
+}): Promise<{ ok: boolean; status: number; body: Buffer; detalle: string; cabeceras?: Record<string, string> }> {
   const bucket = opts.bucket ?? bucketMemoria();
   const access = String(process.env.AWS_ACCESS_KEY_ID || '').trim();
   const secret = String(process.env.AWS_SECRET_ACCESS_KEY || '').trim();
@@ -104,6 +106,7 @@ async function s3(opts: {
   const kSigning = hmac(kService, 'aws4_request');
   const signature = crypto.createHmac('sha256', kSigning).update(stringToSign).digest('hex');
   headers.authorization = `AWS4-HMAC-SHA256 Credential=${access}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`;
+  if (opts.range) headers.range = opts.range;
   try {
     const r = await fetch(`https://${host}${path}${query ? `?${query}` : ''}`, {
       method: opts.method,
@@ -115,7 +118,12 @@ async function s3(opts: {
     if (!r.ok) {
       return { ok: false, status: r.status, body: buf, detalle: `S3 ${r.status}: ${buf.toString('utf8').slice(0, 160)}` };
     }
-    return { ok: true, status: r.status, body: buf, detalle: 'ok' };
+    const cabeceras: Record<string, string> = {};
+    for (const k of ['content-range', 'etag', 'last-modified', 'content-type']) {
+      const v = r.headers.get(k);
+      if (v) cabeceras[k] = v;
+    }
+    return { ok: true, status: r.status, body: buf, detalle: 'ok', cabeceras };
   } catch (e: any) {
     return { ok: false, status: 0, body: Buffer.alloc(0), detalle: String(e?.message || e).slice(0, 160) };
   }
@@ -208,4 +216,27 @@ export async function guardarExpediente(key: string, datos: Buffer, tipo = 'appl
   if (!bucket) return { ok: false, detalle: 'Falta ELECTRUM_EXPEDIENTES_BUCKET.' };
   const r = await s3({ method: 'PUT', key, bucket, body: datos, contentType: tipo, timeoutMs: 180_000 });
   return { ok: r.ok, detalle: r.detalle };
+}
+
+/**
+ * Un TRAMO de un objeto del cubo de expedientes (Range). Lo usan las teselas: un archivo PMTiles de
+ * 240 MB se lee a pedacitos, el que pide cada tesela, sin bajarlo nunca entero.
+ */
+export async function tramoExpediente(
+  key: string,
+  desde: number,
+  hasta: number
+): Promise<{ ok: boolean; status: number; datos: Buffer; total: number | null; etag: string | null; detalle: string }> {
+  const bucket = bucketExpedientes();
+  if (!bucket) return { ok: false, status: 0, datos: Buffer.alloc(0), total: null, etag: null, detalle: 'Falta ELECTRUM_EXPEDIENTES_BUCKET.' };
+  const r = await s3({ method: 'GET', key, bucket, range: `bytes=${desde}-${hasta}`, timeoutMs: 30_000 });
+  const m = /\/(\d+)$/.exec(r.cabeceras?.['content-range'] || '');
+  return {
+    ok: r.ok,
+    status: r.status,
+    datos: r.ok ? r.body : Buffer.alloc(0),
+    total: m ? Number(m[1]) : null,
+    etag: r.cabeceras?.etag || null,
+    detalle: r.detalle,
+  };
 }

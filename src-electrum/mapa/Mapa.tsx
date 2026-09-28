@@ -14,8 +14,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { Map as MapaLibre } from 'maplibre-gl';
 import { duracion } from '../movimiento';
-import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type Tocado } from './captura';
-import { AMBAR, RESALTE, ESTILO_SATELITE, ESTILO_CALLES, ESTILO_ROL, COLOR_ROCA, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion } from './capas';
+import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './captura';
+import { AMBAR, RESALTE, ESTILO_ROL, COLOR_ROCA, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion } from './capas';
+import { estiloCalles, estiloSatelite } from './estilos';
+import { urlTeselas } from './teselas';
 import urlDelWorker from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 
 /*
@@ -49,6 +51,8 @@ type Props = {
   onTocar?: (t: Tocado) => void;
   /** Terreno en 3D: relieve real, sombreado y cielo, con la cámara inclinada. */
   tresD?: boolean;
+  /** Mapas escaneados encendidos (JICA…), con su transparencia. Van debajo de todo lo vectorial. */
+  rasters?: RasterEncendido[];
 };
 
 /** Honduras entera, que es donde se abre si nadie ha pedido nada todavía. */
@@ -81,6 +85,9 @@ const pintado: { concesiones: unknown; resaltada: unknown } = { concesiones: nul
 /** Las capas encendidas, por el mismo motivo: si el estilo se recarga, se reponen desde aquí. */
 const pintadoExtra = new Map<string, { rol: string; geojson: unknown }>();
 const fuenteExtra = (id: number) => `extra-${id}`;
+/** Los mapas escaneados encendidos, clave → transparencia. Fuera de React por lo mismo que `pintado`. */
+const pintadoRaster = new Map<string, { opacidad: number; zoomMax?: number }>();
+const fuenteRaster = (clave: string) => `raster-${clave}`;
 /** Las capas de dibujo tocables de las capas encendidas, para saber qué se tocó. */
 const capasTocablesExtra = () => [...pintadoExtra.keys()].flatMap((f) => [`${f}-punto`, `${f}-borde`, `${f}-relleno`]);
 
@@ -114,7 +121,31 @@ function asegurarCapas(m: maplibregl.Map) {
     }
     for (const c of capasDeExtra(fuente, rol)) if (!m.getLayer(c.id)) m.addLayer(c as any, 'concesiones-relleno');
   }
+  /*
+   * Los mapas escaneados, DEBAJO de todo lo vectorial: un mapa geológico de 1980 es papel, y encima
+   * tienen que seguir leyéndose las capas encendidas y el catastro de hoy.
+   */
+  for (const [clave, { opacidad, zoomMax }] of pintadoRaster) {
+    const f = fuenteRaster(clave);
+    if (!m.getSource(f)) {
+      if (m.getLayer(f)) m.removeLayer(f);
+      m.addSource(f, { type: 'raster', url: urlTeselas(clave), tileSize: 256, ...(zoomMax ? { maxzoom: zoomMax } : {}) } as any);
+    }
+    if (!m.getLayer(f)) {
+      const primeraVectorial = m.getStyle().layers.find((l) => l.id.startsWith('extra-') || l.id === 'sombreado' || l.id === 'concesiones-relleno');
+      m.addLayer({ id: f, type: 'raster', source: f, paint: { 'raster-opacity': opacidad, 'raster-fade-duration': 150 } } as any, primeraVectorial?.id);
+    } else {
+      m.setPaintProperty(f, 'raster-opacity', opacidad);
+    }
+  }
   aplicarTerreno(m);
+}
+
+/** Quita un mapa escaneado que se apagó. */
+function quitarRaster(m: maplibregl.Map, clave: string) {
+  const f = fuenteRaster(clave);
+  if (m.getLayer(f)) m.removeLayer(f);
+  if (m.getSource(f)) m.removeSource(f);
 }
 
 /*
@@ -258,7 +289,7 @@ function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
   }
 }
 
-export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false }: Props) {
+export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [] }: Props) {
   /** El último `onTocar`, para los manejadores que se atan una sola vez al crear el mapa. */
   const tocarRef = useRef(onTocar);
   tocarRef.current = onTocar;
@@ -295,7 +326,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     if (motor !== 'maplibre' || !caja.current || mapa.current) return;
     const m = new maplibregl.Map({
       container: caja.current,
-      style: fondoRef.current === 'satelite' ? ESTILO_SATELITE : ESTILO_CALLES,
+      style: fondoRef.current === 'satelite' ? estiloSatelite() : estiloCalles(),
       bounds: HONDURAS,
       fitBoundsOptions: { padding: 40 },
       attributionControl: { compact: true },
@@ -402,7 +433,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     if (fondoPuesto.current === fondo) return;
     fondoPuesto.current = fondo;
     m.once('styledata', () => asegurarCapas(m));
-    m.setStyle(fondo === 'satelite' ? ESTILO_SATELITE : ESTILO_CALLES);
+    m.setStyle(fondo === 'satelite' ? estiloSatelite() : estiloCalles());
   }, [fondo, listo]);
 
   /* ---------------------------------------------------------------- Google */
@@ -472,6 +503,19 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     if (m && listo) asegurarCapas(m);
     if (google.current && motor === 'google') pintarExtrasGoogle(google.current, extras);
   }, [extras, listo, motor]);
+
+  useEffect(() => {
+    const quedan = new Map(rasters.map((r) => [r.clave, r]));
+    const m = mapa.current;
+    for (const clave of [...pintadoRaster.keys()]) {
+      if (!quedan.has(clave)) {
+        pintadoRaster.delete(clave);
+        if (m && listo) quitarRaster(m, clave);
+      }
+    }
+    for (const [clave, r] of quedan) pintadoRaster.set(clave, { opacidad: Math.max(0.1, Math.min(1, r.opacidad)), zoomMax: r.zoomMax });
+    if (m && listo) asegurarCapas(m);
+  }, [rasters, listo]);
 
   useEffect(() => {
     const m = mapa.current;

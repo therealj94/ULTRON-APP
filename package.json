@@ -15,6 +15,7 @@
   "dependencies": {
     "@breezystack/lamejs": "^1.2.7",
     "@mediapipe/tasks-vision": "1.0.1",
+    "@protomaps/basemaps": "^5.7.2",
     "@resvg/resvg-js": "^2.6.2",
     "@tailwindcss/vite": "^4.1.14",
     "@tmcw/togeojson": "^7.1.2",
@@ -30,6 +31,7 @@
     "maplibre-gl": "^6.10.0",
     "motion": "^12.23.24",
     "pg": "^8.23.0",
+    "pmtiles": "^4.5.0",
     "proj4": "^2.22.0",
     "react": "^19.0.1",
     "react-dom": "^19.0.1",
