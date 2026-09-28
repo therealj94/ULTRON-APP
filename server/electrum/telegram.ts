@@ -324,20 +324,29 @@ async function atenderArchivo(
  * con su número para pedir acceso; en un grupo no se dice nada. A quien manda en Electrum le llega el
  * aviso, también una vez por día y por persona, para que decida si le da acceso.
  */
-const rechazosAvisados = new Map<string, number>();
+const DIA = 86_400_000;
+const rechazosRespondidos = new Map<string, number>(); // respuesta en privado, por persona
+const rechazosAvisados = new Map<string, number>(); // aviso a quien manda, por persona
+function tocaHoy(m: Map<string, number>, quien: string, ahora: number): boolean {
+  if ((m.get(quien) || 0) > ahora - DIA) return false;
+  if (m.size > 2000) m.clear();
+  m.set(quien, ahora);
+  return true;
+}
 export async function avisarRechazo(chatId: string, userId: string, nombre: string, ahora = Date.now()): Promise<{ respondido: boolean; avisados: number }> {
   const quien = String(userId || chatId);
-  if ((rechazosAvisados.get(quien) || 0) > ahora - 86_400_000) return { respondido: false, avisados: 0 };
-  if (rechazosAvisados.size > 2000) rechazosAvisados.clear();
-  rechazosAvisados.set(quien, ahora);
+  const privado = String(chatId) === String(userId);
   let respondido = false;
-  if (String(chatId) === String(userId)) {
+  // Lo que pasó en un grupo no gasta la respuesta privada: si después abre el chat, se le contesta.
+  if (privado && tocaHoy(rechazosRespondidos, quien, ahora)) {
     const r = await responderElectrum(
       chatId,
       `Hola. Soy Dr Electrum FP, un asistente privado. Tu cuenta de Telegram todavía no tiene acceso: pedíselo a José y pasale este número: ${quien}.`
     );
     respondido = r.ok;
+    if (!r.ok) rechazosRespondidos.delete(quien); // que lo intente con el próximo mensaje
   }
+  if (!tocaHoy(rechazosAvisados, quien, ahora)) return { respondido, avisados: 0 };
   const alias = String(nombre || 'sin nombre').replace(/[\u0000-\u001f]/g, ' ').slice(0, 60);
   let avisados = 0;
   for (const p of padron()) {
@@ -346,7 +355,7 @@ export async function avisarRechazo(chatId: string, userId: string, nombre: stri
       if (String(destino) === quien) continue;
       const r = await responderElectrum(
         String(destino),
-        `Aviso: «${alias}» (Telegram ${quien}) le escribió a Dr Electrum y no está en el padrón, así que no le contesté más que para decirle que pida acceso.${String(chatId) === String(userId) ? '' : ` Fue en un grupo (${chatId}).`} Si tiene que entrar, decí con qué nivel: consulta, trabajo o mando.`
+        `Aviso: «${alias}» (Telegram ${quien}) le escribió a Dr Electrum y no está en el padrón, así que no le contesté más que para decirle que pida acceso.${privado ? '' : ` Fue en un grupo (${chatId}).`} Si tiene que entrar, decí con qué nivel: consulta, trabajo o mando.`
       );
       if (r.ok) avisados++;
     }

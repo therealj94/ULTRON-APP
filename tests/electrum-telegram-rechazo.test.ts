@@ -50,4 +50,12 @@ test('rechazo: responde al desconocido una vez por día y avisa a quien manda', 
   assert.equal(g.respondido, false);
   assert.ok(!enviados.some((e) => e.chat === '-100999'));
   assert.match(enviados.find((e) => e.chat === '111')!.text, /en un grupo \(-100999\)/);
+
+  // Si después abre el chat privado, igual se le contesta (lo del grupo no gastó la respuesta);
+  // a José no se le repite el aviso.
+  enviados.length = 0;
+  const p = await avisarRechazo('777', '777', 'Alguien', ahora + 60_000);
+  assert.deepEqual(p, { respondido: true, avisados: 0 });
+  assert.ok(enviados.some((e) => e.chat === '777'));
+  assert.ok(!enviados.some((e) => e.chat === '111'));
 });

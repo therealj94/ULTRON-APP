@@ -17,8 +17,12 @@ set -euo pipefail
 
 LISTA="${1:-para-ocr.txt}"
 DESTINO="${2:-$(dirname "$LISTA")/ocr}"
-IDIOMA="${IDIOMA:-spa}"
-DPI="${DPI:-300}"
+# Español y además inglés: los informes y mapas de JICA están en inglés.
+IDIOMA="${IDIOMA:-spa+eng}"
+DPI="${DPI:-300}"   # un mapa de pliego entero (36×21 pulgadas) basta con DPI=200
+# psm 1 = segmentación automática CON detección de orientación: una página escaneada de costado
+# o de cabeza se lee derecha. Con el psm por defecto salía texto basura de esas páginas.
+PSM="${PSM:-1}"
 
 command -v tesseract >/dev/null || { echo "Falta tesseract (apt install tesseract-ocr tesseract-ocr-spa)"; exit 1; }
 command -v pdftoppm  >/dev/null || { echo "Falta pdftoppm (apt install poppler-utils)"; exit 1; }
@@ -58,7 +62,7 @@ while IFS= read -r ARCHIVO; do
   : > "$TMP/todo.txt"
   HECHAS=0
   for IMG in "$TMP"/p-*.png; do
-    if tesseract "$IMG" "${IMG%.png}" -l "$IDIOMA" --dpi "$DPI" >/dev/null 2>&1 && [ -f "${IMG%.png}.txt" ]; then
+    if tesseract "$IMG" "${IMG%.png}" -l "$IDIOMA" --dpi "$DPI" --psm "$PSM" >/dev/null 2>&1 && [ -f "${IMG%.png}.txt" ]; then
       cat "${IMG%.png}.txt" >> "$TMP/todo.txt"
       HECHAS=$((HECHAS + 1))
     fi
