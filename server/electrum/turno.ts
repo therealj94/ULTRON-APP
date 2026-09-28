@@ -16,6 +16,7 @@ import { fichaEnTexto, fichasMencionadas } from '../../lib/cognitivo/entidades';
 import { correrAgente, type Mensaje } from '../../lib/agente/bucle';
 import type { MsgHilo } from './hilo';
 import { garantizarMapa } from './mapa-garantia';
+import { garantizarMapasGeo } from './geo-garantia';
 import type { Contexto } from '../../lib/agente/tipos';
 import { extraerEmocion, type Emocion } from '../../lib/emocion';
 import { quitarExpresiones } from '../../lib/expresiones';
@@ -328,6 +329,22 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     }
   } catch (e: any) {
     console.warn('[electrum] garantía del mapa:', String(e?.message || e).slice(0, 160));
+  }
+  // Lo mismo con los mapas geológicos (geo-garantia.ts): pedidos y no dibujados, se dibujan aquí.
+  try {
+    const g = await garantizarMapasGeo({ mensaje, texto: final, corrieron: traza, herramienta: herramientas.find((h) => h.nombre === 'mapa_geologico') ?? TODAS.find((h) => h.nombre === 'mapa_geologico'), ctx });
+    final = g.texto;
+    if (g.ui) {
+      ui.push(g.ui);
+      enVivo?.({ ui: g.ui });
+    }
+    if (g.nota) {
+      const paso = { herramienta: 'mapas_geo_garantia', ok: !!g.ui, resumen: g.nota, ms: 0 };
+      traza.push(paso);
+      trazaActual()?.paso(paso);
+    }
+  } catch (e: any) {
+    console.warn('[electrum] garantía de mapas geológicos:', String(e?.message || e).slice(0, 160));
   }
   return {
     texto: final,

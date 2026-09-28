@@ -14,7 +14,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import type { Map as MapaLibre } from 'maplibre-gl';
 import { duracion, sinMovimiento } from '../movimiento';
-import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './captura';
+import { esMapaVivo, fijarMapaVivo, type CapaExtra, type Fondo, type Margen, type Motor, type OrdenMapa, type RasterEncendido, type Tocado } from './captura';
 import { AMBAR, RESALTE, ESTILO_ROL, COLOR_ROCA, CAPAS_TOCABLES_CONCESION, colorEstado, capasDeConcesiones, capasDeExtra, capasDeResaltado, capasDeSeleccion, capasDeTraslapes, rayadoTraslape } from './capas';
 import { estiloCalles, estiloSatelite } from './estilos';
 import { urlTeselas } from './teselas';
@@ -310,6 +310,20 @@ function quitarRaster(m: maplibregl.Map, clave: string) {
  * por lo mismo que `pintado`.
  */
 let terreno3D = false;
+/** Cuántas órdenes de cámara llevan dadas: una órbita en espera sabe si ya la reemplazó otra. */
+let ordenesDadas = 0;
+
+/**
+ * El margen de la orden, puesto en el mapa antes de moverse: MapLibre encuadra y centra dentro de
+ * lo que queda libre (fitBounds lo suma a su propio relleno, flyTo y easeTo lo conservan). Poner el
+ * margen es un salto, así que se hace solo si cambió y justo antes de empezar un movimiento nuevo.
+ */
+function ponerMargen(m: maplibregl.Map, margen: Margen | undefined) {
+  if (!margen) return;
+  const p = { top: Math.round(margen.arriba), bottom: Math.round(margen.abajo), left: Math.round(margen.izquierda), right: Math.round(margen.derecha) };
+  const a = m.getPadding();
+  if (a.top !== p.top || a.bottom !== p.bottom || a.left !== p.left || a.right !== p.right) m.setPadding(p);
+}
 
 /** Por vencer en 90 días (fechas ISO se comparan como texto) o con ≥ 5 ha de pérdida fuerte de vegetación. */
 function filtroAlerta(): unknown[] {
@@ -888,7 +902,9 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
 
   const obedecer = useCallback((o: OrdenMapa) => {
     const m = mapa.current;
+    const mia = ++ordenesDadas;
     if (m && listo) {
+      if (o.accion === 'volar' || o.accion === 'camara' || o.accion === 'encuadrar') ponerMargen(m, o.margen);
       if (o.accion === 'volar') {
         pintar(m, 'resaltada', { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: o.geojson, properties: {} }] });
         /*
@@ -914,6 +930,25 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
         m.flyTo({ center: o.centro, zoom: o.zoom, pitch: o.inclinacion ?? m.getPitch(), bearing: o.giro ?? m.getBearing(), duration: duracion(o.ms ?? 4000), essential: true });
       } else if (o.accion === 'encuadrar') {
         m.fitBounds(o.encuadre, { padding: 40, pitch: o.inclinacion ?? 0, bearing: o.giro ?? 0, duration: duracion(o.ms ?? 3000) } as any);
+      } else if (o.accion === 'orbitar') {
+        // Velocidad pareja, sin acelerar ni frenar: así se lee como una toma de dron y no como un salto.
+        const girar = () => {
+          // Si mientras tanto llegó otra orden, esta ya no corre: cortaría el vuelo nuevo.
+          if (mia !== ordenesDadas) return;
+          ponerMargen(m, o.margen);
+          m.easeTo({
+            ...(o.centro ? { center: o.centro } : {}),
+            ...(o.zoom !== undefined ? { zoom: o.zoom } : {}),
+            pitch: o.inclinacion ?? Math.max(m.getPitch(), terreno3D ? 60 : 45),
+            bearing: m.getBearing() + (sinMovimiento() ? 0 : o.grados),
+            duration: duracion(o.ms),
+            easing: (t: number) => t,
+            essential: true,
+          });
+        };
+        // Espera a que termine el vuelo en curso: girar encima lo dejaba a medio camino.
+        if (m.isMoving()) m.once('moveend', girar);
+        else girar();
       }
     }
     const g = google.current;
@@ -948,6 +983,8 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
         g.setZoom(Math.round(o.zoom));
       } else if (o.accion === 'encuadrar') {
         g.fitBounds(new G.LatLngBounds({ lat: o.encuadre[1], lng: o.encuadre[0] }, { lat: o.encuadre[3], lng: o.encuadre[2] }));
+      } else if (o.accion === 'orbitar' && o.centro) {
+        g.setCenter({ lat: o.centro[1], lng: o.centro[0] });
       }
     }
   }, [listo, motor]);
