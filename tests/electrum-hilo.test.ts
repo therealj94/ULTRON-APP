@@ -384,3 +384,32 @@ test('servidor: los visitantes de la demo no se ven entre sí', { skip: HAY_BINA
     assert.ok(vioBeto.includes('Danlí'), 'el de Beto sigue entero');
   });
 });
+
+test('si preguntan qué dice un informe, los trozos de los expedientes llegan pegados a la pregunta', async (t) => {
+  const { hayBase, consulta } = await import('../server/electrum/db');
+  if (!hayBase()) return t.skip('sin ELECTRUM_DB_URL');
+  const { aprender } = await import('../server/electrum/aprender');
+  const { pideDocumento } = await import('../server/electrum/expedientes-previos');
+  assert.ok(pideDocumento('¿Qué dice el informe de Minas de Oro 2 sobre Tatanacho?'));
+  assert.ok(pideDocumento('¿qué concluye JICA en la fase III?'));
+  assert.ok(!pideDocumento('¿cuándo vence Cerro Partido?'));
+  await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-prev-%'`);
+  const paginas = ['Página 1. Informe técnico sobre la solicitud de concesión, zona de Quebrachal.', 'Página 2. Recursos estimados en la zona de Quebrachal: 1,2 Mt con ley media de 2,4 g/t de oro.'];
+  await aprender('prueba-prev-Informe Quebrachal (OCR).txt', Buffer.from(paginas.join('\f')), { carpeta: 'Pruebas Previos' });
+  try {
+    NODO.length = 0;
+    const pregunta = '¿Qué dice el informe sobre los recursos de Quebrachal?';
+    await turnoElectrum(pregunta, { quien: null, nivel: 'lee', plataforma: 'electrum', canal: 'mesa', mensaje: pregunta });
+    const usuario = (NODO[0]?.messages || []).filter((m: any) => m.role === 'user').pop()?.content || '';
+    assert.match(usuario, /DE LOS EXPEDIENTES CARGADOS/);
+    assert.match(usuario, /prueba-prev-Informe Quebrachal \(OCR\)\.txt, p\. 2: «Página 2\. Recursos estimados/);
+    assert.match(usuario, /Quebrachal\?$/, 'la pregunta sigue al final');
+
+    NODO.length = 0;
+    await turnoElectrum('¿cuándo vence Cerro Partido?', { quien: null, nivel: 'lee', plataforma: 'electrum', canal: 'mesa', mensaje: '¿cuándo vence Cerro Partido?' });
+    const otra = (NODO[0]?.messages || []).filter((m: any) => m.role === 'user').pop()?.content || '';
+    assert.doesNotMatch(otra, /DE LOS EXPEDIENTES/, 'una pregunta de catastro no carga informes');
+  } finally {
+    await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-prev-%'`);
+  }
+});
