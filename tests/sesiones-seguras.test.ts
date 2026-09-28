@@ -77,6 +77,9 @@ test('cerrar sesión mata el token aunque se borre el caché; la basura no se an
     assert.equal(await borrarSesion(s.token), true);
     _olvidarCacheSesiones();
     assert.equal(sesionDe(req(s.token)), null, 'el mismo token, ya cerrado, no entra');
+    // Ni con la firma escrita de otra forma equivalente: el decodificador acepta `=` y basura al
+    // final, pero la huella de la lista de cerradas es del texto exacto (hallazgo en #65).
+    for (const disfraz of ['=', '==', '.', '\n', '!']) assert.equal(sesionDe(req(s.token + disfraz)), null, `cerrado + ${JSON.stringify(disfraz)}`);
     const guardado = JSON.parse(fs.readFileSync(archivo, 'utf8'));
     assert.equal(Object.keys(guardado).length, 1, 'quedó anotado en disco');
     assert.ok(!JSON.stringify(guardado).includes(s.token), 'se guarda la huella, no el token');

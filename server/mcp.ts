@@ -11,10 +11,11 @@
  * configuración no es eso. Las que solo mueven la pantalla (el mapa, el PDF para descargar) tampoco:
  * afuera no hay pantalla.
  *
- * Quién llama: `MCP_TOKEN` (portador, 24+ caracteres) va atado a una persona del padrón,
- * `MCP_QUIEN`. Cada llamada queda en la traza (canal `mcp`) a su nombre y pasa por el motor de
- * reglas como cualquier otra. Sin las dos variables, o si esa persona no tiene acceso a esta
- * plataforma, `/mcp` no existe (404): un servidor MCP abierto a medias es peor que ninguno.
+ * Quién llama: cada persona con SU cuenta, por OAuth (server/mcp-oauth.ts): la agrega en Claude
+ * como conector y entra con su correo y contraseña de la plataforma. O, para un agente sin
+ * navegador, `MCP_TOKEN` (portador, 24+ caracteres) atado a una persona del padrón, `MCP_QUIEN`. Cada llamada queda en la traza (canal `mcp`) a su nombre y pasa por el motor de
+ * reglas como cualquier otra. Con MCP_OAUTH=0 y sin token fijo válido, `/mcp` no existe (404): un
+ * servidor MCP abierto a medias es peor que ninguno.
  *
  * Transporte: HTTP «streamable» sin estado, respuestas JSON (spec 2025-03-26 en adelante). No hay
  * canal SSE porque no hay nada que empujar: GET y DELETE responden 405, como dice la especificación.
@@ -31,6 +32,7 @@ import { enTurno, iniciarTraza } from '../lib/cognitivo/traza';
 import { COMPARTIDAS } from '../lib/manos/compartidas';
 import { MEMORIA_ESTRUCTURADA } from '../lib/manos/memoria';
 import { TODAS as MANOS_ELECTRUM } from './electrum/manos';
+import { ALCANCE, montarOauthMcp, quienPorTokenMcp, urlMetadatosRecurso } from './mcp-oauth';
 
 export const VERSIONES_MCP = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const SOLO_PANTALLA = new Set(['mapa_volar', 'mapa_capa', 'informe_pdf']);
@@ -169,25 +171,44 @@ async function atender(c: Config, hs: Map<string, Herramienta>, m: Pedido): Prom
   }
 }
 
-export function montarMcp(app: express.Express, plataforma: Plataforma = PLATAFORMA) {
+export function montarMcp(app: express.Express, plataforma: Plataforma = PLATAFORMA, opciones: { oauth?: boolean } = {}) {
+  // Con OAuth (server/mcp-oauth.ts) cada persona conecta SU Claude entrando con su cuenta. Encendido
+  // por omisión; MCP_OAUTH=0 lo apaga y deja solo el token fijo.
+  const oauth = opciones.oauth ?? process.env.MCP_OAUTH !== '0';
   const conf = configMcp(plataforma);
-  if (conf.ok === false) {
-    if (process.env.MCP_TOKEN) console.warn(`[mcp] no se monta: ${conf.motivo}`);
+  const fija = conf.ok ? conf.c : null;
+  if (conf.ok === false && process.env.MCP_TOKEN) console.warn(`[mcp] token fijo sin montar: ${conf.motivo}`);
+  if (!fija && !oauth) {
     app.all('/mcp', (_req, res) => res.status(404).json({ error: 'MCP no está habilitado en este despliegue' }));
     return false;
   }
-  const c = conf.c;
+  if (oauth) montarOauthMcp(app, plataforma);
+  const origenes = String(process.env.MCP_ORIGENES || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const hs = new Map(herramientasMcp(plataforma).map((h) => [h.nombre, h]));
+
+  /** A nombre de quién va esta llamada: el token fijo de MCP_QUIEN, o el de quien entró por OAuth. */
+  const quienLlama = (dado: string): Config | null => {
+    if (!dado) return null;
+    if (fija && mismoToken(fija.token, dado)) return fija;
+    if (!oauth) return null;
+    const q = quienPorTokenMcp(dado, plataforma);
+    return q ? { token: '', quien: q.quien, nivel: q.nivel, plataforma, origenes } : null;
+  };
 
   app.all('/mcp', async (req, res) => {
     // Protección contra DNS rebinding (la exige la especificación): un navegador que llega con un
     // Origin que no está en la lista no pasa, aunque traiga el token.
     const origen = req.headers.origin;
-    if (origen && !c.origenes.includes(origen)) return res.status(403).json(fallo(null, -32000, 'Origen no permitido'));
+    if (origen && !origenes.includes(origen)) return res.status(403).json(fallo(null, -32000, 'Origen no permitido'));
     const auth = String(req.headers.authorization || '');
     const dado = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-    if (!dado || !mismoToken(c.token, dado)) {
-      res.setHeader('WWW-Authenticate', 'Bearer realm="mcp"');
+    const c = quienLlama(dado);
+    if (!c) {
+      // Con OAuth, el 401 dice dónde está la puerta (RFC 9728): así Claude sabe a dónde mandar a entrar.
+      res.setHeader('WWW-Authenticate', oauth ? `Bearer resource_metadata="${urlMetadatosRecurso(req)}", scope="${ALCANCE}"` : 'Bearer realm="mcp"');
       return res.status(401).json(fallo(null, -32001, 'Falta el token o no es válido'));
     }
     if (req.method !== 'POST') return res.status(405).setHeader('Allow', 'POST').end();
@@ -215,6 +236,6 @@ export function montarMcp(app: express.Express, plataforma: Plataforma = PLATAFO
       if (!res.headersSent) res.status(500).json(fallo(null, -32603, 'Error interno'));
     }
   });
-  console.log(`[mcp] /mcp activo para ${plataforma}: ${hs.size} herramientas de lectura, a nombre de ${c.quien}`);
+  console.log(`[mcp] /mcp activo para ${plataforma}: ${hs.size} herramientas de lectura${fija ? `, token fijo a nombre de ${fija.quien}` : ''}${oauth ? ', OAuth con la cuenta de cada persona' : ''}`);
   return true;
 }
