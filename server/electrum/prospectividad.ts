@@ -230,23 +230,31 @@ export async function calcularTodas(opts: { soloFaltantes?: boolean } = {}): Pro
   }
 }
 
+/** Las más prospectivas y cuántas hay calculadas: lo comparten la ruta del tablero y Dr Electrum. */
+export async function rankingProspectividad(limite = 30): Promise<{
+  calculadas: number;
+  ranking: Array<{ id: number; nombre: string; puntaje: number; nivel: Prospectividad['nivel']; cobertura: number }>;
+}> {
+  await asegurarTabla();
+  const top = await consulta<{ id: string; nombre: string; puntaje: number; datos: Prospectividad }>(
+    `SELECT c.id::text AS id, c.nombre, p.puntaje, p.datos FROM prospectividad_concesion p JOIN concesion c ON c.id = p.concesion_id
+      ORDER BY p.puntaje DESC, c.nombre LIMIT $1`,
+    [limite]
+  ).then(conTextoReparado);
+  const [{ n }] = await consulta<{ n: number }>(`SELECT count(*)::int AS n FROM prospectividad_concesion`);
+  return {
+    calculadas: n,
+    ranking: top.map((t) => ({ id: Number(t.id), nombre: t.nombre, puntaje: t.puntaje, nivel: t.datos.nivel, cobertura: t.datos.cobertura })),
+  };
+}
+
 export function montarRutasProspectividad(app: Express) {
   const E = exigirPlataforma('electrum');
   app.get('/api/electrum/prospectividad', E, limitar(30), async (_req: Request, res: Response) => {
     if (!hayBase()) return res.status(503).json({ error: 'El catastro no está conectado en este servidor.', honesto: true });
     try {
-      await asegurarTabla();
-      const top = await consulta<{ id: string; nombre: string; puntaje: number; datos: Prospectividad }>(
-        `SELECT c.id::text AS id, c.nombre, p.puntaje, p.datos FROM prospectividad_concesion p JOIN concesion c ON c.id = p.concesion_id
-          ORDER BY p.puntaje DESC, c.nombre LIMIT 30`
-      ).then(conTextoReparado);
-      const [{ n }] = await consulta<{ n: number }>(`SELECT count(*)::int AS n FROM prospectividad_concesion`);
-      return res.json({
-        calculadas: n,
-        lote,
-        ranking: top.map((t) => ({ id: Number(t.id), nombre: t.nombre, puntaje: t.puntaje, nivel: t.datos.nivel, cobertura: t.datos.cobertura })),
-        honesto: true,
-      });
+      const { calculadas, ranking } = await rankingProspectividad(30);
+      return res.json({ calculadas, lote, ranking, honesto: true });
     } catch (e: any) {
       console.error('[prospectividad]', String(e?.message || e).slice(0, 200));
       return res.status(500).json({ error: 'No pude leer la prospectividad.', honesto: true });

@@ -44,7 +44,9 @@ import { geologiaDe, geologiaEnTexto, type Zona } from './geologia';
 import { mapaGeologico, NOMBRE_MAPA, TIPOS_MAPA_GEO, type TipoMapaGeo } from './mapa-geologico';
 import { informeGeologico } from './informe-geologico';
 import { muestrasDeZonaEnTexto } from './muestras';
-import { sateliteEnRenglones } from './satelite';
+import { mayoresPerdidas, sateliteEnRenglones } from './satelite';
+import { tablero } from './tablero';
+import { rankingProspectividad } from './prospectividad';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -103,7 +105,7 @@ export function diasHastaFinDe(periodo: 'este_anio' | 'proximo_anio', ahora = ne
 const catastro_vencimientos: Herramienta = {
   nombre: 'catastro_vencimientos',
   descripcion:
-    'Lista las concesiones que vencen, de la más urgente a la menos. Para «qué se me vence», «qué vence este año» o revisiones de cartera. Para «este año» pasá {"periodo":"este_anio"} y para «el año que viene» {"periodo":"proximo_anio"}: no calcules días a mano. Sin ventana, llamala sin argumentos (365 días); no preguntes.',
+    'Lista las concesiones que vencen, la más urgente primero. Para «qué se me vence» o «qué vence este año». Para «este año» pasá {"periodo":"este_anio"} y para «el año que viene» {"periodo":"proximo_anio"}: no calcules días a mano. Sin ventana, llamala sin argumentos (365 días); no preguntes.',
   esquema: {
     type: 'object',
     properties: {
@@ -142,6 +144,49 @@ const catastro_vencimientos: Herramienta = {
       ok: true,
       texto: `${anual ? `${total} vencen ${cuando}` : `${total} por vencer`}: ${lista.join('; ')}${total > lista.length ? ', y más' : ''}.${vencidas ? ` ${vencidas} ${vencidas === 1 ? 'ya está vencida' : 'ya están vencidas'}.` : ''}`,
       ui: { filas },
+    };
+  },
+};
+
+/**
+ * Las cifras de todo el catastro: las mismas del tablero (ya calculadas y en caché), más el ranking
+ * de prospectividad y la mayor caída de vegetación del satélite. Para «¿cuántas concesiones hay?»,
+ * que antes el doctor no sabía contestar con una sola cifra.
+ */
+const catastro_resumen: Herramienta = {
+  nombre: 'catastro_resumen',
+  descripcion:
+    'Cifras de todo el catastro (total, estados, traslapes, áreas protegidas, prospectividad, satélite). Para «¿cuántas hay?».',
+  esquema: { type: 'object', properties: {} },
+  plataformas: ['electrum'],
+  msMaximo: 25_000,
+  async ejecutar() {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    const [t, prosp, sat] = await Promise.all([
+      tablero(),
+      rankingProspectividad(5).catch(() => null),
+      mayoresPerdidas(3).catch(() => []),
+    ]);
+    const n0 = (n: number) => nf(n, 0);
+    const lista = (xs: Array<{ nombre: string; n: number }>, k: number) => xs.slice(0, k).map((x) => `${x.nombre} ${n0(x.n)}`).join(', ');
+    const partes = [
+      `El catastro tiene ${n0(t.total.concesiones)} concesiones que suman ${n0(t.total.hectareas)} hectáreas.`,
+      t.porEstado.length ? `Por estado: ${lista(t.porEstado, 5)}.` : '',
+      t.porClase.length ? `Por clase: ${lista(t.porClase, 4)}.` : '',
+      t.porDepartamento.length ? `Departamentos con más: ${lista(t.porDepartamento, 4)}.` : '',
+      `Traslapes: ${n0(t.traslapes.total)} (${n0(t.traslapes.hectareas)} ha)${t.traslapes.mismoNombre.total ? `, de ellos ${n0(t.traslapes.mismoNombre.total)} entre concesiones con el mismo nombre (probablemente cargadas dos veces)` : ''}.`,
+      t.areasProtegidas ? `${n0(t.areasProtegidas.concesiones)} pisan áreas protegidas (${n0(t.areasProtegidas.hectareas)} ha).` : 'La capa de áreas protegidas no está cargada.',
+      t.microcuencas ? `${n0(t.microcuencas.concesiones)} pisan microcuencas (${n0(t.microcuencas.hectareas)} ha).` : '',
+      t.poblados ? `${n0(t.poblados.concesiones)} tienen caseríos dentro (${n0(t.poblados.caserios)} caseríos).` : '',
+      prosp && prosp.calculadas
+        ? `Prospectividad calculada en ${n0(prosp.calculadas)} de ${n0(t.total.concesiones)}; las más altas: ${prosp.ranking.map((r) => `${r.nombre} ${r.puntaje}/100`).join(', ')}.`
+        : 'La prospectividad todavía no está calculada.',
+      sat.length ? `Mayor caída de vegetación según Sentinel-2: ${sat.map((x) => `${x.nombre} ${nf(x.ha, 1)} ha`).join(', ')}.` : '',
+    ];
+    return {
+      ok: true,
+      texto: partes.filter(Boolean).join(' '),
+      ui: { total: t.total, porEstado: t.porEstado, prospectividad: prosp?.ranking ?? [], satelite: sat },
     };
   },
 };
@@ -247,7 +292,7 @@ function zonaDe(a: Record<string, unknown>): Zona {
 const geologia_zona: Herramienta = {
   nombre: 'geologia_zona',
   descripcion:
-    'Geología de una zona (concesión, capa de proyecto, municipio o punto): unidades de roca con su % de área, intrusivos y contactos, fallas que la cruzan con rumbos y cruces, falla activa más cercana, marco de placas, tractos permisivos del USGS, yacimientos cercanos por mineral, leyes de muestras JICA e INDICIOS de potencial con su evidencia. Usala antes de opinar sobre la geología, las estructuras, los intrusivos o el potencial minero de un lugar; citá sus cifras y sus límites de escala tal cual.',
+    'Geología de una zona (concesión, capa de proyecto, municipio o punto): unidades de roca con su % de área, intrusivos y contactos, fallas que la cruzan con rumbos y cruces, falla activa más cercana, marco de placas, tractos permisivos del USGS, yacimientos cercanos por mineral, leyes de muestras JICA e INDICIOS de potencial con su evidencia. Usala antes de opinar sobre la geología o el potencial minero de un lugar; citá cifras y límites de escala tal cual.',
   esquema: { type: 'object', properties: ESQUEMA_ZONA },
   plataformas: ['electrum'],
   msMaximo: 20_000,
@@ -275,7 +320,7 @@ const geologia_zona: Herramienta = {
 const mapa_geologico: Herramienta = {
   nombre: 'mapa_geologico',
   descripcion:
-    'Dibuja mapas geológicos en imagen de una zona: litologico (rocas coloreadas por clase, intrusivos, fallas y yacimientos), estructural (fallas por tipo, cruces y roseta de rumbos), geotectonico (placas, subducción, provincias geológicas y fallas activas de la región) o todos. Usala cuando pidan un mapa geológico, estructural, de fallas, tectónico o de intrusivos.',
+    'Dibuja mapas geológicos en imagen de una zona: litologico (rocas coloreadas por clase, intrusivos, fallas y yacimientos), estructural (fallas por tipo, cruces y roseta de rumbos), geotectonico (placas, subducción, provincias geológicas y fallas activas de la región) o todos. Usala cuando pidan un mapa geológico, estructural, de fallas o tectónico.',
   esquema: {
     type: 'object',
     properties: {
@@ -439,7 +484,7 @@ const mapa_capa: Herramienta = {
 const expediente_buscar: Herramienta = {
   nombre: 'expediente_buscar',
   descripcion:
-    'Busca en los documentos subidos (informes, resoluciones, ensayos, fichas de ocurrencias, presentaciones, hojas de cálculo, los informes de JICA en inglés y sus resúmenes) y devuelve trozos con su página. Usala antes de responder lo que debería estar en un documento. Buscá en español. Si es sobre un documento o carpeta concreta («JICA Fase III», «Minas de Oro 3», «INDEXSA», «FOM»), pasá `documento` con parte de su nombre y en `texto` solo el tema: busca DENTRO de ese documento.',
+    'Busca en los documentos subidos (informes, resoluciones, ensayos, fichas de ocurrencias, hojas de cálculo, JICA en inglés y sus resúmenes) y devuelve trozos con su página. Usala antes de responder lo que debería estar en un documento. Buscá en español. Si es sobre un documento o carpeta concreta («JICA Fase III», «Minas de Oro 3», «INDEXSA», «FOM»), pasá `documento` con parte de su nombre y en `texto` solo el tema: busca DENTRO de ese documento.',
   esquema: {
     type: 'object',
     properties: {
@@ -588,7 +633,7 @@ const ESTADO_TXT: Record<string, string> = {
 const expediente_listar: Herramienta = {
   nombre: 'expediente_listar',
   descripcion:
-    'Dice qué información tiene cargada Dr Electrum: sin filtro, cuántos documentos y capas hay por carpeta y cuántos necesitan atención; con `filtro` (parte de una carpeta o nombre, p. ej. «Minas de Oro», «INDEXSA», «FOM»), la lista de lo que hay ahí con su estado. Con `solo_atencion` lista lo que está sin texto, cortado o repetido. Usala cuando pregunten qué documentos hay, si algo está cargado o qué falta.',
+    'Dice qué información tiene cargada Dr Electrum: sin filtro, cuántos documentos y capas hay por carpeta y cuántos necesitan atención; con `filtro` (parte de una carpeta o nombre, p. ej. «Minas de Oro», «INDEXSA»), la lista de lo que hay ahí con su estado. Con `solo_atencion` lista lo que está sin texto, cortado o repetido. Usala cuando pregunten qué documentos hay, si algo está cargado o qué falta.',
   esquema: {
     type: 'object',
     properties: {
@@ -688,7 +733,7 @@ const documento_revisar: Herramienta = {
 const informe_pdf: Herramienta = {
   nombre: 'informe_pdf',
   descripcion:
-    'Arma un informe en PDF descargable: la ficha completa de una concesión (con área medida, traslapes y citas de expediente), el estado de toda la cartera cargada, o lo que se viene conversando (tipo conversacion: una investigación o un análisis, con sus fuentes). Usala cuando pidan «un informe», «un PDF», «algo para imprimir» o «para llevar a la reunión». Si solo piden MAPAS (geológico, estructural, tectónico), usá mapa_geologico, que los manda como imagen.',
+    'Arma un informe en PDF descargable: la ficha completa de una concesión (área medida, traslapes y citas del expediente), el estado de toda la cartera cargada, o lo que se viene conversando (tipo conversacion: una investigación o un análisis, con sus fuentes). Usala cuando pidan un informe, un PDF o algo para imprimir. Si solo piden MAPAS (geológico, estructural, tectónico), usá mapa_geologico, que los manda como imagen.',
   esquema: {
     type: 'object',
     properties: {
@@ -752,6 +797,7 @@ const informe_pdf: Herramienta = {
 export const MANOS: Record<string, Herramienta> = {
   catastro_buscar,
   catastro_vencimientos,
+  catastro_resumen,
   catastro_en_punto,
   concesion_entorno,
   geologia_zona,

@@ -43,3 +43,21 @@ export async function saludNodo(timeoutMs = 4000): Promise<{ ok: boolean; status
     clearTimeout(t);
   }
 }
+
+/**
+ * El vigía del nodo (scripts/nodo-a10g/vigia) levanta solo lo que se cae y aprende qué lo cura. A la
+ * pantalla le llega en cifras: sin nombres de servicios ni puertos, que son del nodo.
+ */
+export function autocuraDe(v: any, ahora = Date.now()) {
+  if (!v || typeof v !== 'object' || !Number.isFinite(v.actualizado)) return null;
+  const ultimo = v.ultimo && Number.isFinite(v.ultimo.inicio) ? v.ultimo : null;
+  return {
+    activa: ahora / 1000 - v.actualizado < 300,
+    sano: v.sano === true,
+    resueltas24h: Number(v.incidentes_24h) || 0,
+    prevenidas24h: Number(v.prevenidos_24h) || 0,
+    aprendidas: v.aprendido && typeof v.aprendido === 'object' ? Object.keys(v.aprendido).length : 0,
+    necesitaPersona: Array.isArray(v.necesita_persona) && v.necesita_persona.length > 0,
+    ultima: ultimo ? { hace_s: Math.max(0, Math.round(ahora / 1000 - ultimo.inicio)), duro_s: Math.round(Number(ultimo.duracion) || 0), sola: ultimo.resuelto === 'solo' } : null,
+  };
+}

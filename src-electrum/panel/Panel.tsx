@@ -1360,6 +1360,22 @@ function Estado() {
     ['Catastro', !!s.catastro?.viva, s.catastro?.viva ? `${s.catastro.concesiones} concesiones` : s.catastro?.motivo || 'fuera de línea'],
     ['Telegram', !!s.bot, s.bot ? 'escuchando' : 'apagado'],
   ];
+  // El vigía del nodo: se levanta solo y aprende de cada caída. Solo si está reportando.
+  const cura = s.cerebro?.autocura;
+  if (cura?.activa) {
+    const hoy = cura.resueltas24h + cura.prevenidas24h;
+    filas.push([
+      'Autocura',
+      cura.sano,
+      cura.necesitaPersona
+        ? 'no pudo levantarlo solo: necesita una persona'
+        : !cura.sano
+          ? 'algo no contesta: intentando levantarlo'
+          : hoy
+        ? `${hoy} ${hoy === 1 ? 'caída resuelta' : 'caídas resueltas'} sola${hoy === 1 ? '' : 's'} hoy${cura.ultima ? ` · la última en ${cura.ultima.duro_s} s` : ''}`
+        : `vigilando · ${cura.aprendidas ? `${cura.aprendidas} ${cura.aprendidas === 1 ? 'remedio aprendido' : 'remedios aprendidos'}` : 'sin caídas'}`,
+    ]);
+  }
 
   return (
     <section>

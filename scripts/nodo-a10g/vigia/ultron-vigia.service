@@ -1,0 +1,10 @@
+[Unit]
+Description=ULTRON · el vigía: levanta el motor, el puente y llama si se caen, y aprende de cada caída
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/ultron/vigia.py
+# Un llama que recarga 27 B en la GPU tarda ~2,5 min; con dos intentos y margen.
+TimeoutStartSec=900
+Nice=5

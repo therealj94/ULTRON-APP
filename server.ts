@@ -5,7 +5,7 @@ import path from 'path';
 import { promisify } from 'util';
 import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
-import { fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
+import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { quitarExpresiones } from './lib/expresiones';
@@ -639,17 +639,23 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
   // precisamente la diferencia que importa a las once de la noche. Laya (quién del panel contesta)
   // se sondea A LA VEZ: en serie, su segundo y medio se sumaba a los cuatro del nodo.
   const layaEst = estadoLaya();
-  const [cerebro, layaSonda] = await Promise.all([
-    nodo ? saludNodo(4000).then((r) => r.ok).catch(() => false) : Promise.resolve(false),
+  const [sondaNodo, layaSonda] = await Promise.all([
+    nodo ? saludNodo(4000).catch(() => null) : Promise.resolve(null),
     layaEst.configurado ? saludLaya(1500).catch(() => null) : Promise.resolve(null),
   ]);
 
+  const cerebro = !!sondaNodo?.ok;
   res.json({
     ...catastro,
     listo: cerebro,
     // El nombre del modelo es un detalle interno, como el padrón: solo a quien manda. A un cliente
     // se le enseña que el cerebro está en línea, no con qué pesos está hecho.
-    cerebro: { configurado: nodo, vivo: cerebro, modelo: nivelDe(id, 'electrum') === 'mando' ? ULTRON_NODO_MODELO : undefined },
+    cerebro: {
+      configurado: nodo,
+      vivo: cerebro,
+      modelo: nivelDe(id, 'electrum') === 'mando' ? ULTRON_NODO_MODELO : undefined,
+      autocura: autocuraDe(sondaNodo?.json?.vigia),
+    },
     voz: { llave: voz.voicebox, perfil: vozDe('electrum') },
     // A todos, si está y si contesta; el detalle (tiempos, fallos, último motivo) solo a quien manda.
     laya: {
