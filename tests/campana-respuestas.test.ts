@@ -88,4 +88,21 @@ describe('Campaña SFSP: quién contestó', () => {
       mudo.close();
     }
   });
+
+  it('si el servidor rechaza la contraseña, el error dice el motivo', async () => {
+    const srv = net.createServer((c) => {
+      c.write('* OK listo\r\n');
+      c.on('data', (d) => { const tag = String(d).split(' ')[0]; c.write(`${tag} NO [AUTHENTICATIONFAILED] Authentication failed.\r\n`); });
+    }).listen(0);
+    await new Promise((ok) => srv.once('listening', ok));
+    const { Imap } = await import('../lib/campana-respuestas');
+    const imap = new Imap();
+    try {
+      await imap.abrir('127.0.0.1', (srv.address() as net.AddressInfo).port, 2000, false);
+      await assert.rejects(imap.orden('LOGIN "a" "b"'), /AUTHENTICATIONFAILED\] Authentication failed/);
+    } finally {
+      imap.cerrar();
+      srv.close();
+    }
+  });
 });
