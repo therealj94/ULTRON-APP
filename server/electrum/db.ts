@@ -223,7 +223,15 @@ export type RolEntorno =
  */
 export type RolGeologia = 'litologia' | 'falla' | 'placa' | 'provincia_geologica' | 'tracto_permisivo';
 
-export type RolCapa = RolEntorno | RolGeologia;
+/**
+ * Capas de REFERENCIA (esquema v10): se ven en el mapa pero no son el catastro. `historico` son
+ * estudios viejos —JICA-MMAJ 1978-2003 y lo parecido—: sirven de contexto, no dicen quién tiene qué
+ * hoy. `proyecto` son los polígonos propios (Minas de Oro I–V, Monarka…): contados como concesiones
+ * se traslapaban con su propia copia del catastro oficial.
+ */
+export type RolReferencia = 'historico' | 'proyecto';
+
+export type RolCapa = RolEntorno | RolGeologia | RolReferencia;
 
 /**
  * Los patrones, EN ORDEN: gana el primero que casa, del más específico al más general.
@@ -246,6 +254,8 @@ const ROLES: Array<[RolCapa, RegExp]> = [
   ['provincia_geologica', /provincias? geologic|geologic provinc/],
   ['falla', /(^| )fallas?( |$)|(^| )faults?( |$)|lineamiento|estructuras? geologic|estructural/],
   ['litologia', /geolog|litolog|litholog|intrusiv|(^| )plutones?( |$)/],
+  // Después de litología: un mapa geológico de JICA sigue siendo roca; las «zonas de JICA», historia.
+  ['historico', /(^| )jica( |$)|(^| )mmaj( |$)|historic/],
   ['microcuenca', /microcuenca|cuencas? declarada/],
   ['zona_informal', /informal|artesanal|guiris|pequena mineria|(^| )mape( |$)/],
   ['ocurrencia', /ocurrencia|yacimiento|defomin|indicio|prospecto/],

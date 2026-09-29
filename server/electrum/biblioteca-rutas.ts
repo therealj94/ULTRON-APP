@@ -26,6 +26,7 @@ import {
   renombrarItem,
   resumen,
 } from './biblioteca';
+import { ACCIONES, aplicar as aplicarOrden, proponer as proponerOrden, type Accion } from './ordenar';
 import { carpetasDelCubo, importacion, importaciones, iniciarImportacion, pararImportacion } from './importar';
 
 function nivel(req: Request) {
@@ -158,6 +159,41 @@ export function montarRutasBiblioteca(app: Express) {
       return res.json({ ok: true, ...(await eliminar(refs, quien(req))), honesto: true });
     } catch (e) {
       return fallo(res, e, 'borrar');
+    }
+  });
+
+  /*
+   * Ordenar el catastro (server/electrum/ordenar.ts): primero la propuesta, que no cambia nada;
+   * después aplicar, que borra y reclasifica capas. Las dos, solo MANDO: mirar la propuesta ya
+   * enseña el catastro entero capa por capa, y aplicarla cambia lo que contesta todo el sistema.
+   */
+  app.get(`${R}/ordenar`, E, limitar(20), async (req, res) => {
+    if (!hayBase()) return sinBase(res);
+    if (!exigir(req, res, 'mando')) return;
+    const oficial = Math.floor(Number(req.query.oficial)) || null;
+    try {
+      return res.json({ ...(await proponerOrden(oficial)), honesto: true });
+    } catch (e) {
+      return fallo(res, e, 'proponer el orden del catastro');
+    }
+  });
+
+  app.post(`${R}/ordenar`, E, limitar(6), async (req, res) => {
+    if (!hayBase()) return sinBase(res);
+    if (!exigir(req, res, 'mando')) return;
+    if (req.body?.confirmo !== true) return res.status(400).json({ error: 'Falta confirmar.', code: 'sin_confirmar', honesto: true });
+    const decision = (Array.isArray(req.body?.decision) ? req.body.decision : [])
+      .slice(0, 2000)
+      .map((d: any) => ({ capaId: Math.floor(Number(d?.capaId)), accion: String(d?.accion) as Accion }))
+      .filter((d: { capaId: number; accion: Accion }) => d.capaId > 0 && ACCIONES.includes(d.accion));
+    if (decision.filter((d: { accion: Accion }) => d.accion === 'oficial').length !== 1) {
+      return res.status(400).json({ error: 'Tiene que haber exactamente un catastro oficial.', honesto: true });
+    }
+    try {
+      const r = await aplicarOrden(decision, quien(req));
+      return res.status(r.ok ? 200 : 400).json({ ...r, honesto: true });
+    } catch (e) {
+      return fallo(res, e, 'ordenar el catastro');
     }
   });
 

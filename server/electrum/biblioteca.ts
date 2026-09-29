@@ -23,7 +23,7 @@
  * Y cada acción que cambia algo queda en la bitácora: quién, qué y cuándo. En un sistema que
  * contesta con fuentes, «¿quién borró el informe de Minas de Oro?» tiene que tener respuesta.
  */
-import { consulta, enTransaccion, hayBase } from './db';
+import { baseTieneRol, consulta, enTransaccion, hayBase } from './db';
 import { cargarTexto, huellaDe, releerDocumento } from './aprender';
 import { olvidarTablero } from './tablero';
 import { bajarExpediente, bucketExpedientes } from '../../lib/s3';
@@ -59,6 +59,47 @@ const ESQUEMA = [
   `UPDATE concesion SET otorgada = NULL WHERE otorgada < DATE '1901-01-01'`,
 ];
 
+/*
+ * v10 (scripts/electrum/esquema.sql): los roles de referencia —histórico y proyecto—. Va aparte y
+ * cada paso por su cuenta: una base sin `capa.rol` (anterior a la v7) no puede tomar la restricción,
+ * y eso no debe dejar sin panel de infraestructura a quien la usa.
+ */
+const ESQUEMA_V10 = [
+  `ALTER TABLE capa DROP CONSTRAINT IF EXISTS capa_rol_valido`,
+  `ALTER TABLE capa ADD CONSTRAINT capa_rol_valido CHECK (rol IS NULL OR rol IN (
+     'rio', 'poblado', 'area_protegida', 'microcuenca', 'carretera', 'municipio', 'departamento',
+     'ocurrencia', 'zona_informal', 'forestal',
+     'litologia', 'falla', 'placa', 'provincia_geologica', 'tracto_permisivo',
+     'historico', 'proyecto'))`,
+  `CREATE OR REPLACE FUNCTION electrum_rol_capa(nombre text) RETURNS text AS $f$
+  SELECT CASE
+    WHEN n ~ 'tractos? permisiv|permissive' THEN 'tracto_permisivo'
+    WHEN n ~ 'placas? tectonic|limites? de placas?|plate boundar|pb2002' THEN 'placa'
+    WHEN n ~ 'provincias? geologic|geologic provinc' THEN 'provincia_geologica'
+    WHEN n ~ '(^| )fallas?( |$)|(^| )faults?( |$)|lineamiento|estructuras? geologic|estructural' THEN 'falla'
+    WHEN n ~ 'geolog|litolog|litholog|intrusiv|(^| )plutones?( |$)' THEN 'litologia'
+    WHEN n ~ '(^| )jica( |$)|(^| )mmaj( |$)|historic' THEN 'historico'
+    WHEN n ~ 'microcuenca|cuencas? declarada' THEN 'microcuenca'
+    WHEN n ~ 'informal|artesanal|guiris|pequena mineria|(^| )mape( |$)' THEN 'zona_informal'
+    WHEN n ~ 'ocurrencia|yacimiento|defomin|indicio|prospecto' THEN 'ocurrencia'
+    WHEN n ~ 'protegida|sinaph|reserva biologica|parque nacional|refugio de vida' THEN 'area_protegida'
+    WHEN n ~ 'forestal|bosque' THEN 'forestal'
+    WHEN n ~ 'caserio|aldea|poblad|comunidad|localidad|asentamiento|ciudad' THEN 'poblado'
+    WHEN n ~ 'carretera|(^| )(red vial|vias?|caminos?|rutas?)( |$)' THEN 'carretera'
+    WHEN n ~ 'departament' THEN 'departamento'
+    WHEN n ~ 'municipi|municipal' THEN 'municipio'
+    WHEN n ~ 'red hidric|hidrograf|(^| )(rios?|quebradas?|drenajes?|cauces?)( |$)' THEN 'rio'
+  END
+  FROM (SELECT trim(regexp_replace(lower(unaccent(coalesce(nombre, ''))), '[^a-z0-9]+', ' ', 'g')) AS n) t;
+$f$ LANGUAGE sql STABLE;`,
+  `UPDATE capa c SET rol = 'historico'
+    WHERE c.rol IS NULL AND electrum_rol_capa(c.nombre) = 'historico'
+      AND EXISTS (SELECT 1 FROM entidad_geo e WHERE e.capa_id = c.id)`,
+  `INSERT INTO esquema_version (version, nota)
+     VALUES (10, 'catastro oficial único; capas de referencia: histórico y proyecto')
+     ON CONFLICT (version) DO NOTHING`,
+];
+
 let listo: Promise<boolean> | null = null;
 /** Las columnas y tablas del panel. Idempotente: se aplica una vez por arranque. */
 export function asegurarBiblioteca(): Promise<boolean> {
@@ -66,6 +107,11 @@ export function asegurarBiblioteca(): Promise<boolean> {
   if (!listo) {
     listo = (async () => {
       for (const sql of ESQUEMA) await consulta(sql);
+      if (await baseTieneRol()) {
+        for (const sql of ESQUEMA_V10) {
+          await consulta(sql).catch((e) => console.error('[biblioteca] v10:', String(e?.message || e).slice(0, 200)));
+        }
+      }
       // Una importación que corría DENTRO de este servidor murió con el reinicio: se dice. Las que
       // corren en un trabajo de Render siguen vivas aunque el servidor se reinicie.
       await consulta(`UPDATE importacion SET estado = 'interrumpida', terminada = now() WHERE estado IN ('en_curso', 'parando') AND donde = 'servidor'`);

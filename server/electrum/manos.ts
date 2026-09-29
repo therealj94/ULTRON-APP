@@ -50,6 +50,7 @@ import { rankingProspectividad } from './prospectividad';
 import { estadosQueCalzan, fasesDe, significadoEstado } from './estados';
 import { convertir, leerSistema, nombreSistema, sistemaPara, type Sistema } from './datum';
 import { comoSeSabe, idsQueCumplen, mineralDePedido, mineralesPorConcesion } from './minerales';
+import { esHistorico, fraseFuente, fuenteCatastro } from './ordenar';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -165,14 +166,16 @@ const catastro_resumen: Herramienta = {
   msMaximo: 25_000,
   async ejecutar() {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
-    const [t, prosp, sat] = await Promise.all([
+    const [t, prosp, sat, fuente] = await Promise.all([
       tablero(),
       rankingProspectividad(5).catch(() => null),
       mayoresPerdidas(3).catch(() => []),
+      fuenteCatastro().catch(() => null),
     ]);
     const n0 = (n: number) => nf(n, 0);
     const lista = (xs: Array<{ nombre: string; n: number }>, k: number) => xs.slice(0, k).map((x) => `${x.nombre} ${n0(x.n)}`).join(', ');
     const partes = [
+      fuente ? fraseFuente(fuente) : '',
       `El catastro tiene ${n0(t.total.concesiones)} concesiones que suman ${n0(t.total.hectareas)} hectáreas.`,
       // TODOS los estados, con lo que significan: con solo los cinco primeros, «Explorar» y
       // «S-Explorar» no llegaban al modelo y contestaba que no había concesiones en exploración.
@@ -670,13 +673,14 @@ const expediente_buscar: Herramienta = {
     }
     const cita = hits
       .slice(0, 3)
-      .map((h) => `${h.documento}${h.pagina ? `, página ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 450)}»`)
+      .map((h) => `${esHistorico(h.documento) ? '[HISTÓRICO] ' : ''}${h.documento}${h.pagina ? `, página ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 450)}»`)
       .join(' | ');
+    const historico = hits.slice(0, 3).some((h) => esHistorico(h.documento));
     // Los informes de JICA y los 43-101 están en inglés: la persona lee español.
     const ingles = hits.slice(0, 3).some((h) => /\b(the|and|of|with|in the|grade|vein|drill|sample)\b/i.test(h.texto));
     return {
       ok: true,
-      texto: `${cita}. Citá el documento y la página al contestar. Son trozos cortos: si la respuesta está en esas páginas (un capítulo, unas conclusiones, una tabla), leelas enteras con expediente_leer antes de contestar.${ingles ? ' Hay fragmentos en inglés: traducilos al español al citarlos (cifras y unidades tal cual) y decí que el original está en inglés.' : ''}`,
+      texto: `${cita}. Citá el documento y la página al contestar. Son trozos cortos: si la respuesta está en esas páginas (un capítulo, unas conclusiones, una tabla), leelas enteras con expediente_leer antes de contestar.${ingles ? ' Hay fragmentos en inglés: traducilos al español al citarlos (cifras y unidades tal cual) y decí que el original está en inglés.' : ''}${historico ? ' Lo marcado [HISTÓRICO] es de estudios viejos (JICA-MMAJ, 1978-2003): citalo como antecedente, con su año, nunca como la situación de hoy; lo vigente sale del catastro oficial.' : ''}`,
       ui: { hits },
     };
   },
