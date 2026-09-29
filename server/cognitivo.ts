@@ -47,6 +47,7 @@ export function montarRutasCognitivas(app: Express) {
         plataforma: PLATAFORMA,
         quien: req.query.quien ? String(req.query.quien) : undefined,
         limite: numero(req.query.limite, 50),
+        antes: req.query.antes && !Number.isNaN(Date.parse(String(req.query.antes))) ? new Date(String(req.query.antes)).toISOString() : undefined,
         soloErrores: req.query.errores === '1',
         conPolitica: req.query.politica === '1',
       });

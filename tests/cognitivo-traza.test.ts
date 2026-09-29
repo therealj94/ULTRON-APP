@@ -99,6 +99,9 @@ async function cicloDeTraza() {
   const [ultima] = await listarTrazas({ plataforma: 'ultron', limite: 1 });
   assert.equal(ultima.id, reg.id);
   assert.equal(ultima.feedback, -1);
+  // Por páginas: «antes» deja fuera lo más nuevo y, con la hora de la traza, la incluye.
+  assert.ok(!(await listarTrazas({ plataforma: 'ultron', limite: 50, antes: '2000-01-01T00:00:00.000Z' })).some((x) => x.id === reg.id));
+  assert.ok((await listarTrazas({ plataforma: 'ultron', limite: 50, antes: ultima.t_inicio })).some((x) => x.id === reg.id));
   const r = await resumenTrazas('ultron', 1);
   assert.ok(r.turnos >= 1 && r.revisiones >= 1 && r.noUtiles >= 1);
   assert.equal(r.porHerramienta.web.usos >= 1, true);
