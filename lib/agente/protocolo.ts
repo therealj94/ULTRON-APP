@@ -154,18 +154,65 @@ export function deNativo(mensaje: any): Llamada[] {
 // Tolerante a propósito: algunos modelos cierran con </tool_call> y otros se olvidan al final.
 const RE_HERMES = /<tool_call>\s*([\s\S]*?)\s*(?:<\/tool_call>|$)/gi;
 
-/** Llamadas escritas por el modelo en el texto, formato Hermes. */
+/**
+ * EL FORMATO XML DE QWEN 3.5 EN ADELANTE.
+ *
+ * Desde Qwen3-Coder, y en Qwen 3.5/3.6/3.8, la plantilla oficial ya no pide JSON: el modelo escribe
+ * `<tool_call><function=catastro_buscar><parameter=texto>Clavo Rico</parameter></function></tool_call>`
+ * (vLLM tiene un parser aparte para esto). Aunque le pidamos Hermes, a veces vuelve a su formato de
+ * entrenamiento; antes esa llamada caía como «JSON que no se puede leer» y se perdía una ronda.
+ * Los valores llegan como texto: lo que parece número, booleano, lista u objeto se lee como tal.
+ */
+const RE_FUNCION = /<function=([A-Za-z0-9_.-]+)\s*>([\s\S]*?)(?:<\/function>|$)/;
+const RE_PARAMETRO = /<parameter=([A-Za-z0-9_.-]+)\s*>([\s\S]*?)(?:<\/parameter>|(?=<parameter=)|(?=<\/function>)|$)/g;
+
+function valorXml(bruto: string): unknown {
+  const v = bruto.trim();
+  if (/^-?\d+(\.\d+)?$/.test(v) || /^(true|false|null)$/.test(v) || /^[[{]/.test(v)) {
+    try {
+      return JSON.parse(v);
+    } catch {
+      /* no era JSON: queda como texto */
+    }
+  }
+  return v;
+}
+
+/** `<function=…><parameter=…>…` → nombre y argumentos; null si el cuerpo no es de esa forma. */
+export function llamadaXml(cuerpo: string): { nombre: string; argumentos: Record<string, unknown> } | null {
+  const f = String(cuerpo || '').match(RE_FUNCION);
+  if (!f) return null;
+  const argumentos: Record<string, unknown> = {};
+  for (const p of f[2].matchAll(RE_PARAMETRO)) argumentos[p[1]] = valorXml(p[2]);
+  return { nombre: f[1].trim(), argumentos };
+}
+
+/** Lo que hay dentro de una etiqueta: JSON (Hermes) o XML (Qwen 3.5+). Lanza si no es ninguno. */
+function cuerpoDeLlamada(cuerpo: string): { nombre: string; argumentos: Record<string, unknown> } {
+  const x = llamadaXml(cuerpo);
+  if (x) return x;
+  const j = jsonTolerante(cuerpo);
+  return { nombre: String(j?.name || j?.tool || '').trim(), argumentos: comoObjeto(j?.arguments ?? j?.parameters ?? j?.args) };
+}
+
+/** Llamadas escritas por el modelo en el texto, formato Hermes (o su variante XML). */
 export function deHermes(texto: string): Llamada[] {
   const salida: Llamada[] = [];
   for (const m of String(texto || '').matchAll(RE_HERMES)) {
     const cuerpo = m[1]?.trim();
     if (!cuerpo) continue;
     try {
-      const j = jsonTolerante(cuerpo);
-      const nombre = String(j?.name || j?.tool || '').trim();
-      if (nombre) salida.push({ nombre, argumentos: comoObjeto(j?.arguments ?? j?.parameters ?? j?.args), via: 'hermes' });
+      const { nombre, argumentos } = cuerpoDeLlamada(cuerpo);
+      if (nombre) salida.push({ nombre, argumentos, via: 'hermes' });
     } catch {
       // JSON roto dentro de la etiqueta: se ignora esa llamada, no se tumba el turno.
+    }
+  }
+  // La variante XML suelta, sin la etiqueta <tool_call> alrededor.
+  if (!salida.length && !/<tool_call>/i.test(String(texto || ''))) {
+    for (const m of String(texto || '').matchAll(new RegExp(RE_FUNCION.source, 'g'))) {
+      const x = llamadaXml(m[0]);
+      if (x?.nombre) salida.push({ ...x, via: 'hermes' });
     }
   }
   return salida;
@@ -220,8 +267,7 @@ export function pedidosRechazados(mensaje: any, texto: string, herramientas: Her
       continue;
     }
     try {
-      const j = jsonTolerante(cuerpo);
-      const nombre = String(j?.name || j?.tool || '').trim();
+      const { nombre } = cuerpoDeLlamada(cuerpo);
       if (!nombre) motivos.push('una llamada sin nombre de herramienta');
       else if (!nombres.has(nombre)) motivos.push(`«${nombre}» no es una de tus herramientas`);
     } catch {
@@ -235,6 +281,7 @@ export function pedidosRechazados(mensaje: any, texto: string, herramientas: Her
 export function limpiarTexto(texto: string): string {
   return String(texto || '')
     .replace(RE_HERMES, '')
+    .replace(new RegExp(RE_FUNCION.source, 'g'), '')
     .replace(/^\s*PEDIR_HERRAMIENTA:.*$/gim, '')
     .replace(/<\/?tools>/gi, '')
     .replace(/\n{3,}/g, '\n\n')
