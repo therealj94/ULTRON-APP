@@ -22,7 +22,8 @@ const ELECTRUM = {
   // salía con `acento: undefined` — funcionaba solo porque variante.ts repite el color de reserva.
   acento: '#FFAE3B',
   /*
-   * Libre: gira con el teléfono. AU-RA sigue en horizontal; esta no.
+   * Libre: gira con el teléfono. (AU-RA también es libre en el manifiesto desde la 4.5 y decide
+   * su orientación en tiempo de ejecución: src/lib/orientacion.ts.)
    *
    * Estuvo bloqueada en horizontal «igual que AU-RA» (20-sep), y al día siguiente la pantalla del
    * campo se rehízo para las DOS formas —dos columnas con ancho, una sola con el pulgar abajo en

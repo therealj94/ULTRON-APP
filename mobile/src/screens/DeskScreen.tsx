@@ -53,6 +53,7 @@ import { ClaudioDePie } from '../avatares/ClaudioDePie';
 import { SelectorAvatar } from '../avatares/SelectorAvatar';
 import { avatarPorId, distribucion, type AvatarId } from '../avatares/catalogo';
 import { ChatMesa } from '../components/ChatMesa';
+import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 
 type Props = {
@@ -349,6 +350,11 @@ export function DeskScreen({ user, onLogout }: Props) {
   /** AU-RA canta: POST /api/cantar. Cara SING, mic pausado, sin rellenos. */
   const sing = useCallback(
     async (req: SongRequest, titulo: string) => {
+      // El repertorio está grabado con la voz de AU-RA: un Claudio no lo canta con la voz de ella.
+      if ('id' in req && avatarActual() !== 'aura') {
+        await say(`«${titulo}» la tiene grabada AU-RA con su voz. Cámbiame a AU-RA para oírla, o dime la letra y te la digo yo.`, 'CONCERNED', { emocion: 'preocupado' });
+        return;
+      }
       showBubble(`♪ ${titulo}`);
       logUltron(`(canta ${titulo})`);
       speakingRef.current = true;

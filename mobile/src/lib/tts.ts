@@ -512,15 +512,18 @@ export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPr
   await ensureAudioMode();
   beginSpeak();
   try {
-    const key = 'id' in req ? `id:${req.id}` : `letra:${req.titulo || ''}|${req.letra}`;
+    const avatar = avatarActual();
+    // Una letra libre la dice quien está en pantalla (su voz, su caché). El repertorio grabado es
+    // de AU-RA: con un Claudio el servidor no lo sirve (la mesa lo explica antes de pedirlo).
+    const key = `${avatar}|` + ('id' in req ? `id:${req.id}` : `letra:${req.titulo || ''}|${req.letra}`);
     let uri = songCache.get(key) || null;
     const meta: PlayMeta = { kind: 'sing', text: 'letra' in req ? req.letra : null };
-    if (!uri && 'id' in req && (req.id as ClipId) in REMOTE_CLIPS && (await remoteClipAvailable(req.id as ClipId))) {
+    if (!uri && usaBancoDeVoz(avatar) && 'id' in req && (req.id as ClipId) in REMOTE_CLIPS && (await remoteClipAvailable(req.id as ClipId))) {
       return await playSource({ uri: `${API_BASE}${REMOTE_CLIPS[req.id as ClipId]}` }, my, opts, 180_000, meta);
     }
     if (!uri) {
       opts?.onPreparing?.();
-      uri = await downloadPost(CANTAR_ENDPOINT, req as Record<string, unknown>, 55_000);
+      uri = await downloadPost(CANTAR_ENDPOINT, { ...(req as Record<string, unknown>), ...(avatar !== 'aura' ? { avatar } : {}) }, 55_000);
       if (uri) songCache.set(key, uri);
     }
     if (my !== gen) return false;
@@ -545,15 +548,17 @@ export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPre
   beginSpeak();
   try {
     const tema = (opts?.tema || '').trim();
+    const avatar = avatarActual();
     const meta: PlayMeta = { kind: 'pray' };
-    const key = `tema:${tema}`;
+    const key = `${avatar}|tema:${tema}`;
     let uri = prayerCache.get(key) || null;
-    if (!uri && !tema && (await remoteClipAvailable('oracion'))) {
+    // La oración grabada es de AU-RA; con un Claudio, la pide al servidor con su voz.
+    if (!uri && !tema && usaBancoDeVoz(avatar) && (await remoteClipAvailable('oracion'))) {
       return await playSource({ uri: `${API_BASE}${REMOTE_CLIPS.oracion}` }, my, opts, 300_000, meta);
     }
     if (!uri) {
       opts?.onPreparing?.();
-      uri = await downloadPost(ORAR_ENDPOINT, tema ? { tema } : {}, 90_000);
+      uri = await downloadPost(ORAR_ENDPOINT, { ...(tema ? { tema } : {}), ...(avatar !== 'aura' ? { avatar } : {}) }, 90_000);
       if (uri) prayerCache.set(key, uri);
     }
     if (my !== gen) return false;

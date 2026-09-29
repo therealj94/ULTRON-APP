@@ -4,6 +4,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { cantar } from '../server/voz';
 import { lineaAvatar, normalizarAvatar, vozEleven, VOZ_CLAUDIO_ELEVEN, VOZ_CLAUDIO_PIE_ELEVEN, VOZ_ELECTRUM_ELEVEN } from '../server/eleven';
 
 test('avatar: solo los tres conocidos; cualquier otra cosa es AU-RA', () => {
@@ -40,4 +41,10 @@ test('el cerebro sabe que habla como Claudio; con AU-RA el prompt no cambia', ()
   assert.match(lineaAvatar('claudio'), /Te llamas Claudio, no AU-RA/);
   assert.match(lineaAvatar('claudio-pie'), /cuerpo entero/);
   assert.ok(lineaAvatar('claudio').length < 400);
+});
+
+test('el repertorio grabado es de AU-RA: un Claudio no lo canta con la voz de ella', async () => {
+  // Sin tocar la red: con un Claudio, un id del repertorio no busca ni sirve la grabación.
+  assert.equal(await cantar({ id: 'jesus', avatar: 'claudio' }), null);
+  assert.equal(await cantar({ id: 'waymaker', avatar: 'claudio-pie' }), null);
 });

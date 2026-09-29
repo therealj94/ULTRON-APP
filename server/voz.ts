@@ -513,24 +513,27 @@ export function oracionPorTema(tema: string): string {
  * Lo generado es WAV y se guarda como `.wav`: guardarlo como `.mp3` hacía que se sirviera luego con
  * `audio/mpeg` y un teléfono que se fía del tipo no lo abre.
  */
-export async function orar(opts: { tema?: string } = {}): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
+export async function orar(opts: { tema?: string; avatar?: AvatarVoz | string } = {}): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
   const tema = String(opts.tema || '').trim();
+  const avatar = normalizarAvatar(opts.avatar);
+  // Con un Claudio, su propia voz y su propio archivo en disco (la grabada es de AU-RA).
+  const sufijo = avatar === 'aura' ? '' : `-${avatar}`;
   if (tema.length >= 3) {
     const hash = crypto.createHash('sha1').update(`oracion|${tema.toLowerCase()}`).digest('hex').slice(0, 16);
-    const ruta = path.join(DIR_CANTO, `oracion-${hash}.wav`);
+    const ruta = path.join(DIR_CANTO, `oracion-${hash}${sufijo}.wav`);
     const guardado = leerCanto(ruta);
     if (guardado) return { audio: guardado, contentType: 'audio/wav', motor: 'clip' };
-    const out = await hablar({ texto: oracionPorTema(tema), emocion: 'oracion', sinCache: true });
+    const out = await hablar({ texto: oracionPorTema(tema), emocion: 'oracion', sinCache: true, avatar });
     if (!out) return null;
     guardarCanto(ruta, out.audio);
     return { audio: out.audio, contentType: out.contentType, motor: out.motor };
   }
-  const grabado = clipGrabado('oracion');
+  const grabado = avatar === 'aura' ? clipGrabado('oracion') : null;
   if (grabado) return { audio: grabado, contentType: 'audio/mpeg', motor: 'clip' };
-  const ruta = path.join(DIR_CANTO, 'oracion-del-dia.wav');
+  const ruta = path.join(DIR_CANTO, `oracion-del-dia${sufijo}.wav`);
   const guardado = leerCanto(ruta);
   if (guardado) return { audio: guardado, contentType: 'audio/wav', motor: 'clip' };
-  const out = await hablar({ texto: ORACION_DEL_DIA, emocion: 'oracion', sinCache: true });
+  const out = await hablar({ texto: ORACION_DEL_DIA, emocion: 'oracion', sinCache: true, avatar });
   if (!out) return null;
   guardarCanto(ruta, out.audio);
   return { audio: out.audio, contentType: out.contentType, motor: out.motor };
@@ -578,9 +581,12 @@ function clipGrabado(id: string): Buffer | null {
  * `letra` libre → Kokoro no canta, así que la DICE con la voz oficial (máx 600 caracteres), con
  * caché en disco por hash.
  */
-export async function cantar(opts: { id?: string; letra?: string; titulo?: string }): Promise<{ audio: Buffer; contentType: string; motor: string; titulo: string } | null> {
+export async function cantar(opts: { id?: string; letra?: string; titulo?: string; avatar?: AvatarVoz | string }): Promise<{ audio: Buffer; contentType: string; motor: string; titulo: string } | null> {
   const id = String(opts.id || '').trim().toLowerCase();
+  const avatar = normalizarAvatar(opts.avatar);
   if (id) {
+    // El repertorio está grabado con la voz de AU-RA: un Claudio no lo «canta» con la voz de ella.
+    if (avatar !== 'aura') return null;
     const grabado = clipGrabado(id);
     const meta = CANCIONES.find((c) => c.id === id);
     if (grabado) return { audio: grabado, contentType: 'audio/mpeg', motor: 'clip', titulo: meta?.titulo || id };
@@ -588,11 +594,12 @@ export async function cantar(opts: { id?: string; letra?: string; titulo?: strin
   }
   const letra = sinEtiquetas(String(opts.letra || '')).replace(/\s+/g, ' ').trim().slice(0, 600);
   if (letra.length < 8) return null;
-  const hash = crypto.createHash('sha1').update(letra).digest('hex').slice(0, 16);
+  // La caché va por avatar: la misma letra dicha por AU-RA y por Claudio son dos audios.
+  const hash = crypto.createHash('sha1').update(avatar === 'aura' ? letra : `${avatar}|${letra}`).digest('hex').slice(0, 16);
   const ruta = path.join(DIR_CANTO, `${hash}.wav`);
   const guardado = leerCanto(ruta);
   if (guardado) return { audio: guardado, contentType: 'audio/wav', motor: 'clip', titulo: opts.titulo || 'canción' };
-  const out = await hablar({ texto: letra, performance: 'sing', emocion: 'canto', sinCache: true });
+  const out = await hablar({ texto: letra, performance: 'sing', emocion: 'canto', sinCache: true, avatar });
   if (!out) return null;
   guardarCanto(ruta, out.audio);
   return { audio: out.audio, contentType: out.contentType, motor: out.motor, titulo: opts.titulo || 'canción' };

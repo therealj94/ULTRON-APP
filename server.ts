@@ -1715,7 +1715,7 @@ app.all('/api/voz', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
 /** Oración del día: AU-RA cierra los ojos y ora (clip grabado con la voz oficial). */
 app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
   const tema = String(req.body?.tema || req.query?.tema || '').slice(0, 120);
-  const out = await orar({ tema });
+  const out = await orar({ tema, avatar: normalizarAvatar(req.body?.avatar ?? req.query?.avatar) });
   if (!out) return res.status(503).json({ error: 'No pude orar ahora (voz sin respuesta).', honesto: true });
   res.setHeader('Content-Type', out.contentType);
   res.setHeader('Cache-Control', 'private, max-age=86400');
@@ -1762,7 +1762,11 @@ app.post('/api/cantar', exigirMesaODesk, limitar(12), async (req, res) => {
   const titulo = String(req.body?.titulo || '').trim();
   const pedido = String(req.body?.pedido || '').trim();
   const cancion = id || (pedido ? cancionPorPedido(pedido)?.id : '') || '';
-  const out = await cantar(cancion ? { id: cancion } : { letra, titulo });
+  const avatar = normalizarAvatar(req.body?.avatar);
+  const out = await cantar(cancion ? { id: cancion, avatar } : { letra, titulo, avatar });
+  if (!out && cancion && avatar !== 'aura') {
+    return res.status(409).json({ error: 'Esa canción está grabada con la voz de AU-RA.', canciones: repertorio(), honesto: true });
+  }
   if (!out) {
     return res.status(letra || cancion ? 503 : 400).json({
       error: letra || cancion ? 'No pude cantar ahora (voz sin respuesta).' : 'Decime qué canto: un id del repertorio o una letra.',
