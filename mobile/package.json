@@ -1,13 +1,12 @@
 {
   "name": "ultron-fp-mobile",
-  "version": "4.5.0",
+  "version": "4.6.0",
   "private": true,
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "typecheck": "tsc --noEmit",
-    "voice-bank": "node scripts/build-voice-bank.mjs",
     "ios": "expo run:ios",
     "check:intenciones": "node scripts/check-intenciones.mjs",
     "assets": "python3 scripts/make-assets.py",
@@ -37,6 +36,7 @@
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
     "expo-system-ui": "~6.0.9",
+    "expo-updates": "~29.0.20",
     "react": "19.1.0",
     "react-native": "0.81.5",
     "react-native-reanimated": "~4.1.1",
@@ -49,6 +49,7 @@
     "@babel/plugin-proposal-optional-chaining": "7.21.0",
     "@babel/plugin-transform-template-literals": "7.29.7",
     "@expo/config-plugins": "54.0.5",
+    "@expo/env": "~2.0.12",
     "@types/react": "~19.1.0",
     "patch-package": "^8.0.1",
     "typescript": "~5.9.2"

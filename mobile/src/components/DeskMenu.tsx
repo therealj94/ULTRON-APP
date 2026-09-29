@@ -1,22 +1,25 @@
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View, useWindowDimensions } from 'react-native';
-import { APP_VERSION, VOICE_NAME, type DeskPresence, type Mode } from '../config';
+import { APP_VERSION, type DeskPresence, type Mode } from '../config';
 import type { Cancion } from '../lib/api';
 import { agrupar, fetchCapacidades, type Capacidad, type CapacidadesPayload } from '../lib/capacidades';
 import { GENEROS } from '../lib/intenciones';
 import type { SttEngine } from '../lib/storage';
 import type { Postura } from '../lib/tareas';
 import { T, SOMBRA } from '../tema';
+import { de, tr, useIdioma, type Bilingue } from '../i18n';
+import { AVATARES, avatarPorId, type AvatarId } from '../avatares/catalogo';
+import { SelectorIdioma } from '../ui/SelectorIdioma';
 
-const MODES: Array<{ id: Mode; label: string; hint: string }> = [
-  { id: 'GUARDIAN', label: 'Guardián', hint: 'vigila' },
-  { id: 'MINING', label: 'Minería', hint: 'señales' },
-  { id: 'GOLD', label: 'Oro', hint: 'alto valor' },
-  { id: 'CREATIVE', label: 'Creativo', hint: 'ideas' },
-  { id: 'ANALYTICAL', label: 'Analítico', hint: 'frío' },
-  { id: 'STRATEGIC', label: 'Estratégico', hint: 'junta' },
-  { id: 'EXPLORER', label: 'Explorador', hint: 'investiga' },
-  { id: 'CONOCER', label: 'Conocerte', hint: 'entrevista' },
+const MODES: Array<{ id: Mode; label: Bilingue; hint: Bilingue }> = [
+  { id: 'GUARDIAN', label: { es: 'Guardián', en: 'Guardian' }, hint: { es: 'vigila', en: 'watches' } },
+  { id: 'MINING', label: { es: 'Minería', en: 'Mining' }, hint: { es: 'señales', en: 'signals' } },
+  { id: 'GOLD', label: { es: 'Oro', en: 'Gold' }, hint: { es: 'alto valor', en: 'high value' } },
+  { id: 'CREATIVE', label: { es: 'Creativo', en: 'Creative' }, hint: { es: 'ideas', en: 'ideas' } },
+  { id: 'ANALYTICAL', label: { es: 'Analítico', en: 'Analytical' }, hint: { es: 'frío', en: 'cold' } },
+  { id: 'STRATEGIC', label: { es: 'Estratégico', en: 'Strategic' }, hint: { es: 'junta', en: 'board' } },
+  { id: 'EXPLORER', label: { es: 'Explorador', en: 'Explorer' }, hint: { es: 'investiga', en: 'investigates' } },
+  { id: 'CONOCER', label: { es: 'Conocerte', en: 'Get to know you' }, hint: { es: 'entrevista', en: 'interview' } },
 ];
 
 type Props = {
@@ -64,9 +67,9 @@ type Props = {
   /** Qué cara eligió: los anillos (Skia) o la habitación 3D. */
   cara: 'anillos' | 'sala';
   onSetCara: (c: 'anillos' | 'sala') => void;
-  /** El avatar de la mesa (AU-RA, Claudio o Claudio de pie) y cómo cambiarlo. */
-  avatar?: 'aura' | 'claudio' | 'claudio-pie';
-  onSetAvatar?: (a: 'aura' | 'claudio' | 'claudio-pie') => void;
+  /** El avatar de la mesa (Guardián, AU-RA o Claudio): el menú muestra lo suyo. */
+  avatar: AvatarId;
+  onSetAvatar: (a: AvatarId) => void;
   /** Se ve la cara clásica (respaldo): solo ella sabe dibujar el blaster y el sable. */
   caraClasica: boolean;
   /** Cómo contesta: de pie en el centro o sentada en su sillón. */
@@ -117,6 +120,7 @@ const Card = ({ c, onCommand }: { c: Capacidad; onCommand: (text: string) => voi
 );
 
 export function DeskMenu(p: Props) {
+  useIdioma();
   const { width } = useWindowDimensions();
   const panelW = Math.min(460, width * 0.64);
   const x = useRef(new Animated.Value(panelW)).current;
@@ -167,6 +171,11 @@ export function DeskMenu(p: Props) {
   const caidos = cat.payload ? cat.payload.capacidades.filter((c) => c.vivo === false).length : 0;
   const catAt = cat.at ? new Date(cat.at) : null;
 
+  const av = avatarPorId(p.avatar);
+  const esOjos = p.avatar === 'ojos';
+  const esAura = p.avatar === 'aura';
+  const esClaudio = p.avatar === 'claudio';
+
   return (
     <View style={styles.wrap} pointerEvents="box-none">
       <Animated.View style={[styles.dim, { opacity: dim }]}>
@@ -175,148 +184,160 @@ export function DeskMenu(p: Props) {
       <Animated.View style={[styles.panel, { width: panelW, transform: [{ translateX: x }] }]}>
         <ScrollView ref={scroll} contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.head}>
-            <View>
-              <Text style={styles.kicker}>AU-RA FP</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.kicker, { color: av.tema.acentoTexto }]}>
+                {de(av.nombre).toUpperCase()} · {de(av.oficio)}
+              </Text>
               <Text style={styles.user}>{p.userName}</Text>
             </View>
-            <Pressable onPress={p.onClose} style={styles.close} hitSlop={10} accessibilityRole="button" accessibilityLabel="Cerrar el menú">
+            <Pressable onPress={p.onClose} style={styles.close} hitSlop={10} accessibilityRole="button" accessibilityLabel={tr('Cerrar el menú', 'Close the menu')}>
               <Text style={styles.closeText}>✕</Text>
             </Pressable>
           </View>
 
           <View style={styles.statusRow}>
             <View style={[styles.dot, { backgroundColor: p.online ? T.activo : T.aviso }]} />
-            <Text style={styles.statusText}>{p.online ? 'Conectada' : 'Sin cerebro · modo local'}</Text>
+            <Text style={[styles.statusText, { flex: 1 }]}>{p.online ? tr('Conectado', 'Connected') : tr('Sin cerebro · modo local', 'No brain · local mode')}</Text>
+            <SelectorIdioma acento={av.tema.acento} sobreAcento={av.tema.sobreAcento} />
+          </View>
+
+          <Text style={styles.section}>{tr('Con quién hablas', 'Who you’re talking to')}</Text>
+          <View style={styles.chips}>
+            {AVATARES.map((a) => (
+              <Chip key={a.id} on={p.avatar === a.id} label={de(a.nombre)} sub={de(a.oficio)} onPress={() => p.onSetAvatar(a.id)} />
+            ))}
+          </View>
+
+          <Text style={styles.section}>{tr(`Atajos de ${de(av.nombre)}`, `${de(av.nombre)}’s shortcuts`)}</Text>
+          <View style={styles.chips}>
+            {av.acciones.map((a) => (
+              <Chip key={a.id} label={de(a.etiqueta)} onPress={() => p.onCommand(de(a.pedido))} />
+            ))}
           </View>
 
           <View style={styles.row}>
             <View>
-              <Text style={styles.label}>Escuchar</Text>
-              <Text style={styles.sub}>{p.micMuted ? 'silenciado' : p.listening ? 'oyendo · sin palabra clave' : 'conectando…'}</Text>
+              <Text style={styles.label}>{tr('Escuchar', 'Listen')}</Text>
+              <Text style={styles.sub}>{p.micMuted ? tr('silenciado', 'muted') : p.listening ? tr('oyendo · sin palabra clave', 'listening · no wake word') : tr('conectando…', 'connecting…')}</Text>
             </View>
-            <Switch value={!p.micMuted} onValueChange={p.onToggleMic} accessibilityLabel="Escuchar" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={!p.micMuted} onValueChange={p.onToggleMic} accessibilityLabel={tr('Escuchar', 'Listen')} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
-              <Text style={styles.label}>Ver</Text>
+              <Text style={styles.label}>{tr('Ver', 'See')}</Text>
               <Text style={styles.sub} numberOfLines={1}>
-                {p.visionOn ? (p.objects.length ? p.objects.join(' · ') : 'cámara activa') : 'cámara apagada'}
+                {p.visionOn ? (p.objects.length ? p.objects.join(' · ') : tr('cámara activa', 'camera on')) : tr('cámara apagada', 'camera off')}
               </Text>
             </View>
-            <Switch value={p.visionOn} onValueChange={p.onToggleVision} accessibilityLabel="Ver con la cámara" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={p.visionOn} onValueChange={p.onToggleVision} accessibilityLabel={tr('Ver con la cámara', 'See with the camera')} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
 
-          {/* ---------------- catálogo ---------------- */}
-          <View onLayout={(e) => (catY.current = e.nativeEvent.layout.y)}>
-            <Pressable
-              onPress={() => setCatOpen((o) => !o)}
-              style={styles.catHead}
-              accessibilityRole="button"
-              accessibilityLabel="Qué puede hacer AU-RA"
-              accessibilityState={{ expanded: catOpen }}
-            >
-              <View style={{ flex: 1 }}>
-                <Text style={styles.section}>Qué puede hacer AU-RA</Text>
-                <Text style={styles.sub}>
-                  {cat.status === 'loading'
-                    ? 'consultando…'
-                    : cat.payload
-                      ? `${cat.payload.capacidades.length} capacidades · ${vivos} vivas${caidos ? ` · ${caidos} caídas` : ''}${cat.offline ? ' · sin red, copia guardada' : ''}`
-                      : cat.status === 'fail'
-                        ? 'sin red y sin copia guardada'
-                        : 'toca para ver el catálogo'}
-                </Text>
+          {/* ---------------- Guardián: vigilancia ---------------- */}
+          {esOjos && (
+            <>
+              <Text style={styles.section}>{tr('Presencia', 'Presence')}</Text>
+              <View style={styles.chips}>
+                {(['stay', 'explore', 'sleep'] as DeskPresence[]).map((pr) => (
+                  <Chip
+                    key={pr}
+                    on={p.presence === pr}
+                    label={pr === 'stay' ? tr('atento', 'alert') : pr === 'explore' ? tr('explorar', 'explore') : tr('dormir', 'sleep')}
+                    onPress={() => p.onSetPresence(pr)}
+                  />
+                ))}
               </View>
-              <Text style={styles.chev}>{catOpen ? '▾' : '▸'}</Text>
-            </Pressable>
-          </View>
-          {catOpen && (
-            <View style={{ gap: 10 }}>
-              <View style={styles.voiceBox}>
-                <Text style={styles.voiceName}>{VOICE_NAME}</Text>
-                <Text style={styles.sub}>
-                  {cat.payload?.voz?.motor || 'Voicebox · Kokoro, en el servidor propio de AU-RA'} · {cat.payload?.voz?.timbre || 'Dora · español, cálida, cercana'}
-                </Text>
-                <Pressable onPress={p.onProbarVoz} style={styles.voiceBtn} accessibilityRole="button">
-                  <Text style={styles.voiceBtnText}>Probar voz</Text>
-                </Pressable>
+              <Text style={styles.section}>{tr('Modo', 'Mode')}</Text>
+              <View style={styles.chips}>
+                {MODES.map((m) => (
+                  <Chip key={m.id} on={p.mode === m.id} label={de(m.label)} sub={de(m.hint)} onPress={() => p.onSetMode(m.id)} />
+                ))}
               </View>
-              {cat.status === 'loading' && !cat.payload && <ActivityIndicator color={T.principal} />}
-              {cat.status === 'fail' && !cat.payload && (
-                <Text style={styles.hint}>No pude bajar el catálogo. Cuando haya red se guarda una copia para verlo sin conexión.</Text>
+              <Text style={styles.section}>{tr('Acciones', 'Actions')}</Text>
+              <View style={styles.chips}>
+                <Chip label={tr('¿qué ves?', 'what do you see?')} onPress={p.onWhatDoYouSee} />
+                <Chip label={tr('conocerme', 'get to know me')} sub={tr('entrevista opcional', 'optional interview')} onPress={p.onConocer} />
+                {p.caraClasica ? (
+                  <>
+                    <Chip label="blaster" onPress={p.onBlaster} />
+                    <Chip label={tr('sable jedi', 'jedi saber')} onPress={p.onSaber} />
+                  </>
+                ) : null}
+              </View>
+            </>
+          )}
+
+          {/* ---------------- AU-RA: compañera ---------------- */}
+          {esAura && (
+            <>
+              <Text style={styles.section}>{tr('Su cara', 'Her face')}</Text>
+              <View style={styles.chips}>
+                <Chip on={p.cara === 'anillos'} label={tr('Anillos', 'Rings')} sub={tr('sus ojos de luz', 'her eyes of light')} onPress={() => p.onSetCara('anillos')} />
+                <Chip on={p.cara === 'sala'} label={tr('Habitación 3D', '3D room')} sub={tr('de cuerpo entero', 'full body')} onPress={() => p.onSetCara('sala')} />
+              </View>
+              {p.cara === 'sala' ? (
+                <>
+                  <Text style={styles.section}>{tr('Te contesta', 'She answers')}</Text>
+                  <View style={styles.chips}>
+                    <Chip on={p.postura === 'pie'} label={tr('De pie', 'Standing')} sub={tr('en el centro', 'in the middle')} onPress={() => p.onSetPostura('pie')} />
+                    <Chip on={p.postura === 'sentada'} label={tr('Sentada', 'Sitting')} sub={tr('en su sillón', 'in her armchair')} onPress={() => p.onSetPostura('sentada')} />
+                  </View>
+                </>
+              ) : null}
+
+              <Text style={styles.section}>{tr('Recordar un hecho', 'Remember a fact')}</Text>
+              <View style={styles.composer}>
+                <TextInput
+                  value={fact}
+                  onChangeText={setFact}
+                  placeholder={tr('Ej.: la reunión de junta es los lunes', 'E.g.: the board meeting is on Mondays')}
+                  placeholderTextColor={T.texto3}
+                  style={styles.input}
+                  returnKeyType="done"
+                  onSubmitEditing={() => {
+                    if (fact.trim()) p.onRemember(fact.trim());
+                    setFact('');
+                  }}
+                />
+              </View>
+
+              <Text style={styles.section}>{tr('Orar', 'Pray')}</Text>
+              <Pressable onPress={p.onOrar} style={styles.orarBtn} accessibilityRole="button" accessibilityLabel={tr('Orar por el día', 'Pray for the day')}>
+                <Text style={styles.orarText}>{tr('Orar por el día', 'Pray for the day')}</Text>
+                <Text style={styles.orarSub}>{tr('La oración diaria con su voz (~3 min). También: «ora», «oremos», «bendice el día».', 'The daily prayer in her voice (~3 min).')}</Text>
+              </Pressable>
+
+              <Text style={styles.section}>{tr('Cantar', 'Sing')}</Text>
+              <Text style={styles.sub}>{tr('Su repertorio grabado (la primera vez puede tardar unos segundos).', 'Her recorded repertoire (the first time may take a few seconds).')}</Text>
+              <View style={styles.chips}>
+                {p.canciones.map((c) => (
+                  <Chip key={c.id} label={c.titulo} sub={c.artista} onPress={() => p.onSingSong(c.id)} />
+                ))}
+              </View>
+              <Text style={styles.sub}>{tr('Letras propias por género, dichas en vivo.', 'Original lyrics by genre, performed live.')}</Text>
+              <View style={styles.chips}>
+                {GENEROS.map((g) => (
+                  <Chip key={g.id} label={g.etiqueta} onPress={() => p.onSingGenre(g.id)} />
+                ))}
+              </View>
+            </>
+          )}
+
+          {/* ---------------- Claudio: marketing ---------------- */}
+          {esClaudio && (
+            <Text style={styles.hint}>
+              {tr(
+                'Claudio piensa en marketing: pídele ideas de contenido, textos para redes, eslóganes, guiones de video o un plan de campaña. Dale el producto y el público, y te lo deja listo para publicar. Acostado lo ves de retrato; con el teléfono derecho, de cuerpo entero.',
+                'Claudio thinks marketing: ask for content ideas, social posts, slogans, video scripts or a campaign plan. Give him the product and the audience and he’ll leave it ready to publish. Lay the phone down for his portrait; hold it upright to see him full body.'
               )}
-              {grupos.map((g) => (
-                <View key={g.grupo} style={{ gap: 8 }}>
-                  <Text style={styles.groupTitle}>{g.titulo}</Text>
-                  {g.items.map((c) => (
-                    <Card key={c.id} c={c} onCommand={p.onCommand} />
-                  ))}
-                </View>
-              ))}
-              {catAt && <Text style={styles.hint}>catálogo {cat.offline ? 'guardado' : 'actualizado'} {catAt.toLocaleString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</Text>}
-            </View>
+            </Text>
           )}
 
-          {p.onSetAvatar && (
-            <>
-              <Text style={styles.section}>Con quién hablas</Text>
-              <View style={styles.chips}>
-                <Chip on={p.avatar === 'aura'} label="AU-RA" sub="los ojos" onPress={() => p.onSetAvatar?.('aura')} />
-                <Chip on={p.avatar === 'claudio'} label="Claudio" sub="el zorro" onPress={() => p.onSetAvatar?.('claudio')} />
-                <Chip on={p.avatar === 'claudio-pie'} label="Claudio de pie" sub="en vertical" onPress={() => p.onSetAvatar?.('claudio-pie')} />
-              </View>
-            </>
-          )}
-
-          {(!p.avatar || p.avatar === 'aura') && <Text style={styles.section}>Su cara</Text>}
-          {(!p.avatar || p.avatar === 'aura') && <View style={styles.chips}>
-            <Chip on={p.cara === 'anillos'} label="Anillos" sub="sus ojos de luz" onPress={() => p.onSetCara('anillos')} />
-            <Chip on={p.cara === 'sala'} label="Habitación 3D" sub="de cuerpo entero" onPress={() => p.onSetCara('sala')} />
-          </View>}
-
-          {p.cara === 'sala' ? (
-            <>
-              <Text style={styles.section}>Te contesta</Text>
-              <View style={styles.chips}>
-                <Chip on={p.postura === 'pie'} label="De pie" sub="en el centro" onPress={() => p.onSetPostura('pie')} />
-                <Chip on={p.postura === 'sentada'} label="Sentada" sub="en su sillón" onPress={() => p.onSetPostura('sentada')} />
-              </View>
-            </>
-          ) : null}
-
-          <Text style={styles.section}>Presencia</Text>
-          <View style={styles.chips}>
-            {(['stay', 'explore', 'sleep'] as DeskPresence[]).map((pr) => (
-              <Chip key={pr} on={p.presence === pr} label={pr === 'stay' ? 'atento' : pr === 'explore' ? 'explorar' : 'dormir'} onPress={() => p.onSetPresence(pr)} />
-            ))}
-          </View>
-
-          <Text style={styles.section}>Modo</Text>
-          <View style={styles.chips}>
-            {MODES.map((m) => (
-              <Chip key={m.id} on={p.mode === m.id} label={m.label} sub={m.hint} onPress={() => p.onSetMode(m.id)} />
-            ))}
-          </View>
-
-          <Text style={styles.section}>Acciones</Text>
-          <View style={styles.chips}>
-            <Chip label="¿qué ves?" onPress={p.onWhatDoYouSee} />
-            <Chip label="conocerme" sub="entrevista opcional" onPress={p.onConocer} />
-            <Chip label="chiste" onPress={() => p.onCommand('cuéntame un chiste')} />
-            {p.caraClasica ? (
-              <>
-                <Chip label="blaster" onPress={p.onBlaster} />
-                <Chip label="sable jedi" onPress={p.onSaber} />
-              </>
-            ) : null}
-          </View>
-
-          <Text style={styles.section}>Investigar en internet</Text>
+          <Text style={styles.section}>{tr('Investigar en internet', 'Search the web')}</Text>
           <View style={styles.composer}>
             <TextInput
               value={query}
               onChangeText={setQuery}
-              placeholder="Ej.: precio del café hoy en Honduras"
+              placeholder={tr('Ej.: precio del café hoy en Honduras', 'E.g.: coffee price today in Honduras')}
               placeholderTextColor={T.texto3}
               style={styles.input}
               returnKeyType="search"
@@ -326,115 +347,145 @@ export function DeskMenu(p: Props) {
               }}
             />
           </View>
-          <Text style={styles.hint}>También por voz: «busca…», «investiga…», «noticias de…».</Text>
 
-          <Text style={styles.section}>Cantar</Text>
-          <Text style={styles.sub}>Repertorio grabado con su voz (la primera vez puede tardar unos segundos).</Text>
-          <View style={styles.chips}>
-            {p.canciones.map((c) => (
-              <Chip key={c.id} label={c.titulo} sub={c.artista} onPress={() => p.onSingSong(c.id)} />
-            ))}
-          </View>
-          <Text style={styles.sub}>Letras propias por género: AU-RA las canta en vivo.</Text>
-          <View style={styles.chips}>
-            {GENEROS.map((g) => (
-              <Chip key={g.id} label={g.etiqueta} onPress={() => p.onSingGenre(g.id)} />
-            ))}
-          </View>
-
-          <Text style={styles.section}>Orar</Text>
-          <Pressable onPress={p.onOrar} style={styles.orarBtn} accessibilityRole="button" accessibilityLabel="Orar por el día">
-            <Text style={styles.orarText}>Orar por el día</Text>
-            <Text style={styles.orarSub}>La oración diaria con su voz (~3 min). También: «ora», «oremos», «bendice el día».</Text>
-          </Pressable>
-
-          <Text style={styles.section}>Recordar un hecho</Text>
-          <View style={styles.composer}>
-            <TextInput
-              value={fact}
-              onChangeText={setFact}
-              placeholder="Ej.: la reunión de junta es los lunes"
-              placeholderTextColor={T.texto3}
-              style={styles.input}
-              returnKeyType="done"
-              onSubmitEditing={() => {
-                if (fact.trim()) p.onRemember(fact.trim());
-                setFact('');
-              }}
-            />
-          </View>
-
-          <Text style={styles.section}>Escribir una orden</Text>
+          <Text style={styles.section}>{tr('Escribir una orden', 'Type a request')}</Text>
           <View style={styles.composer}>
             <TextInput
               value={p.draft}
               onChangeText={p.onChangeDraft}
-              placeholder="Orden para AU-RA…"
+              placeholder={tr(`Escríbele a ${de(av.nombre)}…`, `Write to ${de(av.nombre)}…`)}
               placeholderTextColor={T.texto3}
               style={styles.input}
               onSubmitEditing={p.onSendDraft}
               returnKeyType="send"
             />
-            <Pressable onPress={p.onSendDraft} style={styles.send} accessibilityRole="button" accessibilityLabel="Enviar la orden">
-              <Text style={styles.sendText}>OK</Text>
+            <Pressable onPress={p.onSendDraft} style={[styles.send, { backgroundColor: av.tema.acento }]} accessibilityRole="button" accessibilityLabel={tr('Enviar la orden', 'Send the request')}>
+              <Text style={[styles.sendText, { color: av.tema.sobreAcento }]}>OK</Text>
             </Pressable>
           </View>
 
           {p.conSala ? (
             <Text style={styles.hint}>
-              Tócale la cabeza y se pone curiosa; el cuerpo le da cosquillas. Toques seguidos: «ya, ya». Desliza hacia arriba sobre ella para abrir este
-              menú. Cuando busca en internet se sienta en su escritorio; si envía algo, lanza un avión de papel. Sacude el teléfono: se asusta.
+              {tr(
+                'Tócale la cabeza y se pone curiosa; el cuerpo le da cosquillas. Toques seguidos: «ya, ya». Desliza hacia arriba sobre ella para abrir este menú. Cuando busca en internet se sienta en su escritorio; si envía algo, lanza un avión de papel. Sacude el teléfono: se asusta.',
+                'Touch her head and she gets curious; her body is ticklish. Several taps: “okay, okay”. Swipe up on her to open this menu. When she searches the web she sits at her desk; when she sends something, she throws a paper plane. Shake the phone: she gets startled.'
+              )}
             </Text>
-          ) : !p.caraClasica ? (
+          ) : esClaudio ? null : !p.caraClasica ? (
             <Text style={styles.hint}>
-              Tócale un ojo y parpadea; tócala y te contesta. Arrastra el dedo y te sigue con la mirada. Mantén pulsado: duerme o despierta. Inclina
-              el teléfono: sus ojos tienen profundidad. Desliza rápido hacia la izquierda para abrir este menú.
+              {tr(
+                'Tócale un ojo y parpadea; tócala y te contesta. Arrastra el dedo y te sigue con la mirada. Mantén pulsado: duerme o despierta. Inclina el teléfono: sus ojos tienen profundidad. Desliza rápido hacia la izquierda para abrir este menú.',
+                'Touch an eye and she blinks; touch her and she answers. Drag your finger and her eyes follow. Long press: sleep or wake. Tilt the phone: her eyes have depth. Swipe left quickly to open this menu.'
+              )}
             </Text>
           ) : (
             <Text style={styles.hint}>
-              Tócala: un ojo guiña, la frente le da curiosidad, la barbilla le hace cosquillas, frotar la mejilla la calma. Arrastra el dedo y te sigue
-              con la mirada. Toques seguidos: «ya, ya». Mantén pulsado: duerme o despierta. Sacude el teléfono: se asusta.
+              {tr(
+                'Tócalo: un ojo guiña, la frente le da curiosidad, la barbilla le hace cosquillas, frotar la mejilla lo calma. Arrastra el dedo y te sigue con la mirada. Toques seguidos: «ya, ya». Mantén pulsado: duerme o despierta. Sacude el teléfono: se asusta.',
+                'Touch it: an eye winks, the forehead makes it curious, the chin tickles, rubbing the cheek calms it. Drag your finger and its eyes follow. Several taps: “okay, okay”. Long press: sleep or wake. Shake the phone: it gets startled.'
+              )}
             </Text>
           )}
 
-          <Text style={styles.section}>Ajustes</Text>
-          <Text style={styles.label}>Voz</Text>
-          <Text style={styles.sub}>{VOICE_NAME}. Una sola voz; las frases fijas van grabadas en el APK.</Text>
-          <Text style={styles.label}>Oído</Text>
-          <Text style={styles.sub}>Cómo convierte tu voz en texto.</Text>
+          {/* ---------------- catálogo ---------------- */}
+          <View onLayout={(e) => (catY.current = e.nativeEvent.layout.y)}>
+            <Pressable
+              onPress={() => setCatOpen((o) => !o)}
+              style={styles.catHead}
+              accessibilityRole="button"
+              accessibilityLabel={tr(`Qué puede hacer ${de(av.nombre)}`, `What ${de(av.nombre)} can do`)}
+              accessibilityState={{ expanded: catOpen }}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.section}>{tr(`Qué puede hacer ${de(av.nombre)}`, `What ${de(av.nombre)} can do`)}</Text>
+                <Text style={styles.sub}>
+                  {cat.status === 'loading'
+                    ? tr('consultando…', 'checking…')
+                    : cat.payload
+                      ? tr(
+                          `${cat.payload.capacidades.length} capacidades · ${vivos} vivas${caidos ? ` · ${caidos} caídas` : ''}${cat.offline ? ' · sin red, copia guardada' : ''}`,
+                          `${cat.payload.capacidades.length} capabilities · ${vivos} live${caidos ? ` · ${caidos} down` : ''}${cat.offline ? ' · offline, saved copy' : ''}`
+                        )
+                      : cat.status === 'fail'
+                        ? tr('sin red y sin copia guardada', 'offline and no saved copy')
+                        : tr('toca para ver el catálogo', 'tap to see the catalog')}
+                </Text>
+              </View>
+              <Text style={[styles.chev, { color: av.tema.acentoTexto }]}>{catOpen ? '▾' : '▸'}</Text>
+            </Pressable>
+          </View>
+          {catOpen && (
+            <View style={{ gap: 10 }}>
+              <View style={styles.voiceBox}>
+                <Text style={styles.voiceName}>
+                  {de(av.nombre)} · {de(av.voz)}
+                </Text>
+                <Text style={styles.sub}>{tr('Voz de ElevenLabs v4, en vivo, en el idioma que elegiste.', 'ElevenLabs v4 voice, live, in the language you chose.')}</Text>
+                <Pressable onPress={p.onProbarVoz} style={[styles.voiceBtn, { backgroundColor: av.tema.acento }]} accessibilityRole="button">
+                  <Text style={[styles.voiceBtnText, { color: av.tema.sobreAcento }]}>{tr('Probar voz', 'Try the voice')}</Text>
+                </Pressable>
+              </View>
+              {cat.status === 'loading' && !cat.payload && <ActivityIndicator color={av.tema.acento} />}
+              {cat.status === 'fail' && !cat.payload && (
+                <Text style={styles.hint}>{tr('No pude bajar el catálogo. Cuando haya red se guarda una copia para verlo sin conexión.', 'I couldn’t download the catalog. When there’s a connection a copy is saved for offline use.')}</Text>
+              )}
+              {grupos.map((g) => (
+                <View key={g.grupo} style={{ gap: 8 }}>
+                  <Text style={styles.groupTitle}>{g.titulo}</Text>
+                  {g.items.map((c) => (
+                    <Card key={c.id} c={c} onCommand={p.onCommand} />
+                  ))}
+                </View>
+              ))}
+              {catAt && (
+                <Text style={styles.hint}>
+                  {tr('catálogo', 'catalog')} {cat.offline ? tr('guardado', 'saved') : tr('actualizado', 'updated')}{' '}
+                  {catAt.toLocaleString(tr('es-HN', 'en-US'), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                </Text>
+              )}
+            </View>
+          )}
+
+          <Text style={styles.section}>{tr('Ajustes', 'Settings')}</Text>
+          <Text style={styles.label}>{tr('Voz', 'Voice')}</Text>
+          <Text style={styles.sub}>
+            {de(av.voz)}. {tr('Todo se dice en vivo con su voz; ya no hay frases grabadas.', 'Everything is spoken live in its voice; there are no recorded phrases anymore.')}
+          </Text>
+          <Text style={styles.label}>{tr('Oído', 'Hearing')}</Text>
+          <Text style={styles.sub}>{tr('Cómo convierte tu voz en texto.', 'How your voice becomes text.')}</Text>
           <View style={styles.chips}>
-            <Chip on={p.settings.sttEngine === 'native'} label="Teléfono" sub="Google · en vivo" onPress={() => p.onSetSttEngine('native')} />
-            <Chip on={p.settings.sttEngine === 'cloud'} label="Nube" sub="en el servidor" onPress={() => p.onSetSttEngine('cloud')} />
+            <Chip on={p.settings.sttEngine === 'native'} label={tr('Teléfono', 'Phone')} sub={tr('Google · en vivo', 'Google · live')} onPress={() => p.onSetSttEngine('native')} />
+            <Chip on={p.settings.sttEngine === 'cloud'} label={tr('Nube', 'Cloud')} sub={tr('en el servidor', 'on the server')} onPress={() => p.onSetSttEngine('cloud')} />
           </View>
           <View style={styles.row}>
             <View>
-              <Text style={styles.label}>Comenta lo que ve</Text>
-              <Text style={styles.sub}>Observaciones espontáneas de la cámara</Text>
+              <Text style={styles.label}>{tr('Comenta lo que ve', 'Comments on what it sees')}</Text>
+              <Text style={styles.sub}>{tr('Observaciones espontáneas de la cámara', 'Spontaneous camera remarks')}</Text>
             </View>
-            <Switch value={p.settings.proactive} onValueChange={p.onToggleProactive} accessibilityLabel="Comenta lo que ve" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={p.settings.proactive} onValueChange={p.onToggleProactive} accessibilityLabel={tr('Comenta lo que ve', 'Comments on what it sees')} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
-              <Text style={styles.label}>Efectos de sonido</Text>
-              <Text style={styles.sub}>Toques, blaster, sable</Text>
+              <Text style={styles.label}>{tr('Efectos de sonido', 'Sound effects')}</Text>
+              <Text style={styles.sub}>{tr('Toques, blaster, sable', 'Taps, blaster, saber')}</Text>
             </View>
-            <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} accessibilityLabel="Efectos de sonido" trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
+            <Switch value={p.settings.sfx} onValueChange={p.onToggleSfx} accessibilityLabel={tr('Efectos de sonido', 'Sound effects')} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
           </View>
           <View style={styles.row}>
             <View>
-              <Text style={styles.label}>Memoria de largo plazo</Text>
-              <Text style={styles.sub}>{p.memoryCount ? `${p.memoryCount} hechos guardados` : 'nada guardado aún'}</Text>
+              <Text style={styles.label}>{tr('Memoria de largo plazo', 'Long-term memory')}</Text>
+              <Text style={styles.sub}>{p.memoryCount ? tr(`${p.memoryCount} hechos guardados`, `${p.memoryCount} facts saved`) : tr('nada guardado aún', 'nothing saved yet')}</Text>
             </View>
-            <Pressable onPress={p.onForget} style={styles.smallBtn} accessibilityRole="button" accessibilityLabel="Olvidar la memoria de largo plazo">
-              <Text style={styles.smallBtnText}>Olvidar</Text>
+            <Pressable onPress={p.onForget} style={styles.smallBtn} accessibilityRole="button" accessibilityLabel={tr('Olvidar la memoria de largo plazo', 'Forget long-term memory')}>
+              <Text style={styles.smallBtnText}>{tr('Olvidar', 'Forget')}</Text>
             </Pressable>
           </View>
 
           <Pressable onPress={p.onLogout} style={styles.logout} accessibilityRole="button">
-            <Text style={styles.logoutText}>Cerrar sesión</Text>
+            <Text style={styles.logoutText}>{tr('Cerrar sesión', 'Sign out')}</Text>
           </Pressable>
           <Text style={styles.version}>
-            v{APP_VERSION} · {VOICE_NAME}
+            v{APP_VERSION} · {de(av.nombre)}
           </Text>
         </ScrollView>
       </Animated.View>

@@ -5,7 +5,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { guionEleven, pausaPorFallo, VOZ_ELECTRUM_ELEVEN, vozEleven, _reiniciarFrenoEleven, elevenListo } from '../server/eleven';
+import { guionEleven, pausaPorFallo, VOZ_ELECTRUM_ELEVEN, VOCES_ELEVEN, vozEleven, _reiniciarFrenoEleven, elevenListo } from '../server/eleven';
 import { abrirVozEnVivo, expresar, hablar } from '../server/voz';
 import { PROVEEDORES_OIDO, PROVEEDORES_OIDO_ELECTRUM, transcribirAudio } from '../lib/oido';
 import { voiceboxFalso, conVoicebox, CLAVE_FALSA } from './voicebox-falso';
@@ -57,13 +57,13 @@ test('el guion: el tono de la emoción delante, las marcas en español pasadas a
   assert.equal((muchas.match(/\[laughs\]/g) || []).length, 4);
 });
 
-test('la voz: Jorge para Dr Electrum; AU-RA no usa ElevenLabs salvo que se pida', () => {
+test('la voz: Jorge para Dr Electrum; AU-RA con su voz v4 propia', () => {
   const antes = { e: process.env.ELEVENLABS_VOZ_ELECTRUM, a: process.env.ELEVENLABS_VOZ_AURA };
   delete process.env.ELEVENLABS_VOZ_ELECTRUM;
   delete process.env.ELEVENLABS_VOZ_AURA;
   try {
     assert.equal(vozEleven('electrum'), VOZ_ELECTRUM_ELEVEN);
-    assert.equal(vozEleven('ultron'), null);
+    assert.equal(vozEleven('ultron'), VOCES_ELEVEN.aura.es);
     process.env.ELEVENLABS_VOZ_ELECTRUM = 'otra-voz';
     assert.equal(vozEleven('electrum'), 'otra-voz');
   } finally {
@@ -136,19 +136,35 @@ test('si ElevenLabs falla, habla Voicebox; sin cupo, se deja de intentar un rato
   assert.equal(pausaPorFallo(500, 'error'), 0, 'un fallo pasajero no frena');
 });
 
-test('AU-RA sigue con Voicebox aunque haya clave de ElevenLabs', async () => {
+test('AU-RA FP habla con ElevenLabs: la voz del avatar y del idioma elegidos; Voicebox queda de respaldo', async () => {
   const vb = await voiceboxFalso();
   try {
-    await conVoicebox(vb.url, CLAVE_FALSA, () =>
-      conEleven(
+    await conVoicebox(vb.url, CLAVE_FALSA, async () => {
+      await conEleven(
         () => mp3(),
         async (llamadas) => {
           const h = await hablar({ texto: 'Hola, soy Aura.', plataforma: 'ultron', sinCache: true });
-          assert.equal(h?.motor, 'voicebox:kokoro');
-          assert.equal(llamadas.length, 0);
+          assert.equal(h?.motor, 'elevenlabs:eleven_v4_turbo');
+          assert.equal(llamadas.length, 1);
+          assert.ok(llamadas[0].url.includes(`/text-to-speech/${VOCES_ELEVEN.aura.es}/`));
+          assert.equal(llamadas[0].cuerpo.language_code, 'es');
+          const en = await hablar({ texto: 'Hi, I am your guardian. It is 25 degrees.', plataforma: 'ultron', avatar: 'ojos', idioma: 'en', sinCache: true });
+          assert.equal(en?.motor, 'elevenlabs:eleven_v4_turbo');
+          assert.ok(llamadas[1].url.includes(`/text-to-speech/${VOCES_ELEVEN.ojos.en}/`));
+          assert.equal(llamadas[1].cuerpo.language_code, 'en');
+          // En inglés las cifras no se vuelven palabras en español.
+          assert.match(llamadas[1].cuerpo.text, /25 degrees/);
         }
-      )
-    );
+      );
+      // Si ElevenLabs no contesta, sigue hablando con Voicebox.
+      await conEleven(
+        () => new Response('caído', { status: 503 }),
+        async () => {
+          const h = await hablar({ texto: 'Sigo aquí.', plataforma: 'ultron', sinCache: true });
+          assert.equal(h?.motor, 'voicebox:kokoro');
+        }
+      );
+    });
   } finally {
     await vb.cerrar();
   }
@@ -229,8 +245,6 @@ test('en vivo: el audio llega mientras se genera y al final queda en la caché; 
       assert.equal(h?.cache, true);
       assert.equal(h?.audio.length, 600);
       assert.equal(llamadas.length, 1);
-      // AU-RA no pasa por aquí.
-      assert.equal(await abrirVozEnVivo({ texto: 'Hola.', plataforma: 'ultron' }), null);
     }
   );
   await conEleven(

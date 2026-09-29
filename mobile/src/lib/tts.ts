@@ -1,17 +1,18 @@
 /**
- * Voz de AU-RA — una sola voz (Voicebox en el servidor propio, perfil Kokoro Dora), nunca la robótica
- * del sistema: si el servidor no da audio, AU-RA calla y el texto queda en pantalla.
+ * La voz de la mesa: la del avatar en pantalla (Guardián, AU-RA o Claudio), en el idioma elegido,
+ * siempre EN VIVO desde el servidor (ElevenLabs v4, con Voicebox de respaldo). Nunca la robótica del
+ * sistema: si el servidor no da audio, se calla y el texto queda en pantalla.
  *
- *  - Banco offline (assets/voice, generado por scripts/build-voice-bank.mjs): 0 ms, sin red.
- *  - Clips remotos (/voz/<id>.mp3): canciones grabadas, chistes, discurso y los clips nuevos; si el
- *    servidor no los sirve como audio, se cae a TTS con el texto del clip.
- *  - Resto: GET /api/tts?text&emocion&performance (WAV) descargado a disco, por oraciones, con la
- *    siguiente oración precargada mientras suena la actual.
- *  - Canciones: POST /api/cantar {id} → mp3 grabado; {letra,titulo} → WAV (Kokoro la dice, no la canta).
- *  - Oración del día: el estático /voz/oracion.mp3, o POST /api/orar {tema?} → WAV (cacheado).
- *  - Expresiones ([risa], [suspiro]…, src/lib/expresiones.ts): viajan dentro del texto a /api/tts y
- *    el servidor pega la toma grabada; las demás etiquetas se quitan antes de pedir voz.
- *  - Reacciones sin palabras (speakReaccion): tomas del estudio al azar, con el clip viejo de respaldo.
+ * Ya no hay nada grabado en el teléfono: los saludos, «un momento» y las reacciones se dicen en vivo
+ * con la voz del avatar (src/lib/frases.ts) y quedan en la caché de audio para la siguiente vez.
+ *
+ *  - Habla: GET /api/tts?text&emocion&performance&avatar&idioma descargado a disco, por oraciones,
+ *    con la siguiente precargada mientras suena la actual.
+ *  - Canciones: POST /api/cantar {id | letra, avatar, idioma}.
+ *  - Oración: POST /api/orar {tema?, avatar, idioma} (el servidor la guarda por avatar e idioma).
+ *  - Expresiones ([risa], [suspiro]…, src/lib/expresiones.ts): viajan dentro del texto y la voz las
+ *    actúa; las demás etiquetas se quitan antes de pedir voz.
+ *  - Reacciones sin palabras (speakReaccion): una expresión corta dicha por el avatar.
  *  - Lip-sync: cada reproducción emite un nivel 0..1 a 20 Hz (setSpeechLevelListener) calculado con
  *    lipsync.ts sobre positionMillis (expo-av no da metering al reproducir).
  *
@@ -24,10 +25,11 @@ import { CANTAR_ENDPOINT, ORAR_ENDPOINT, TTS_ENDPOINT, sessionHeaders, ttsUrl } 
 import { API_BASE } from '../config';
 import type { Emocion } from './emocion';
 import { envolventeDeTexto, envolventeLibre, type EnvelopeKind } from './lipsync';
-import { CLIP_TEXT, PHRASE_TO_CLIP, REMOTE_CLIPS, VOICE_BANK, bankKey, type ClipId } from './voiceBank';
+import { frase, reaccionDe, type FraseId } from './frases';
 import { soloExpresiones } from './expresiones';
-import { usaBancoDeVoz, type AvatarId } from '../avatares/catalogo';
+import type { AvatarId } from '../avatares/catalogo';
 import { avatarActual, fijarAvatar } from '../avatares/actual';
+import { idiomaActual } from '../i18n';
 
 type Perf = 'speak' | 'sing';
 
@@ -43,10 +45,7 @@ export type SpeakCallbacks = {
 let current: Audio.Sound | null = null;
 let gen = 0;
 
-/**
- * Quién habla. Los clips grabados del banco (saludos, risas, «aquí estoy») son de Dora: con un
- * Claudio delante no se tocan, y todo se pide al servidor con su voz (`avatar` en /api/tts).
- */
+/** Quién habla: decide la voz que se pide al servidor (`avatar` en /api/tts). */
 export function setAvatarVoz(id: AvatarId) {
   fijarAvatar(id);
 }
@@ -141,52 +140,6 @@ async function ensureAudioMode() {
   }
 }
 
-// ---------------------------------------------------------------- banco / clips
-
-/** ¿Está el clip empaquetado en el APK? */
-export function isBundled(id: ClipId) {
-  return VOICE_BANK[id] !== undefined;
-}
-
-const remoteOk = new Map<ClipId, { ok: boolean; at: number }>();
-const REMOTE_NEG_TTL = 10 * 60_000;
-
-/**
- * ¿Sirve el servidor este clip como audio? Los clips que aún no se subieron devuelven la SPA (HTML 200),
- * no 404: por eso se mira el content-type. Positivo se recuerda siempre; negativo 10 min.
- */
-export async function remoteClipAvailable(id: ClipId): Promise<boolean> {
-  const hit = remoteOk.get(id);
-  if (hit && (hit.ok || Date.now() - hit.at < REMOTE_NEG_TTL)) return hit.ok;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 6_000);
-  try {
-    const res = await fetch(`${API_BASE}${REMOTE_CLIPS[id]}`, { method: 'HEAD', signal: ctrl.signal });
-    const ct = String(res.headers.get('content-type') || '');
-    const ok = res.ok && /audio|octet/.test(ct);
-    remoteOk.set(id, { ok, at: Date.now() });
-    return ok;
-  } catch {
-    remoteOk.set(id, { ok: false, at: Date.now() });
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** Fuente de un clip: asset local si está empaquetado; si no, remoto cuando el servidor lo sirve. */
-async function clipSource(id: ClipId): Promise<AVPlaybackSource | null> {
-  if (!usaBancoDeVoz(avatarActual())) return null;
-  const local = VOICE_BANK[id];
-  if (local !== undefined) return local;
-  return (await remoteClipAvailable(id)) ? { uri: `${API_BASE}${REMOTE_CLIPS[id]}` } : null;
-}
-
-/** Clip que dice exactamente esta frase (0 ms si está empaquetado). */
-export function clipForPhrase(text: string): ClipId | null {
-  return PHRASE_TO_CLIP[bankKey(text)] || null;
-}
-
 // ---------------------------------------------------------------- descarga TTS
 
 /**
@@ -237,22 +190,16 @@ async function conExtension(path: string, ct: string): Promise<string> {
 }
 
 async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<AVPlaybackSource | null> {
-  if (perf === 'speak') {
-    const clip = clipForPhrase(text);
-    if (clip) {
-      const src = await clipSource(clip);
-      if (src) return src;
-    }
-  }
   const avatar = avatarActual();
-  const key = `${avatar}|${perf}|${emocion}|${text}`;
+  const idioma = idiomaActual();
+  const key = `${avatar}|${idioma}|${perf}|${emocion}|${text}`;
   const hit = fileCache.get(key);
   if (hit) return { uri: hit };
   const headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
   for (let attempt = 0; attempt < 2; attempt++) {
     const path = tmpPath('ultron', 'wav');
     try {
-      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, emocion, avatar), path, { headers });
+      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, emocion, avatar, idioma), path, { headers });
       const ct = String((r.headers as any)?.['Content-Type'] || (r.headers as any)?.['content-type'] || '');
       const info = await FileSystem.getInfoAsync(path);
       if (r.status === 200 && info.exists && (info.size || 0) > 64 && (!ct || /audio|octet/.test(ct))) {
@@ -263,7 +210,7 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<
       await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
       if (r.status === 200 && ct && !/audio|octet/.test(ct)) {
         // servidor sin GET /api/tts: devolvió HTML. Usar POST.
-        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar }, 40_000);
+        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma }, 40_000);
         if (uri) guardarEnCache(key, uri);
         return uri ? { uri } : null;
       }
@@ -419,65 +366,19 @@ async function playSource(source: AVPlaybackSource | null, my: number, cb: Speak
   return true;
 }
 
-/**
- * Clip del banco por id (local → remoto → TTS con su texto). Ideal para «mmm», risas, «ya, ya».
- * `fallback: false` = si no hay clip, no hablar nada (para no pagar TTS por una muletilla).
- */
-export async function speakClip(id: ClipId, opts?: SpeakCallbacks & { fallback?: boolean; emocion?: Emocion }): Promise<boolean> {
-  await stopSpeaking();
-  const my = gen;
-  opts?.onStart?.();
-  await ensureAudioMode();
-  beginSpeak();
-  try {
-    const text = CLIP_TEXT[id];
-    const src = await clipSource(id);
-    if (src) return await playSource(src, my, opts, 120_000, { text });
-    if (opts?.fallback === false || my !== gen) return false;
-    const tts = await fetchSource(text, 'speak', opts?.emocion || 'neutral');
-    return await playSource(tts, my, opts, 25_000, { text });
-  } finally {
-    endSpeak();
-    if (my === gen) opts?.onEnd?.();
-  }
+/** Una frase corta de la mesa («un momento», «de nada»), dicha en vivo por el avatar. */
+export async function speakFrase(id: FraseId, opts?: SpeakCallbacks & { emocion?: Emocion }): Promise<boolean> {
+  return speak(frase(id), opts);
 }
 
 /**
- * Reacción sin palabras por emoción: primero una toma del estudio al azar (las del tacto van en el
- * APK), luego las otras tomas y, si ninguna está, el clip de siempre. Sin TTS: una risa leída no es una risa.
+ * Reacción sin palabras por emoción (risa, sorpresa, cariño, sueño, pensar): una expresión corta que
+ * la voz del avatar actúa. Sin reacción para esa emoción, no suena nada.
  */
-const REACCIONES: Record<string, { tomas: ClipId[]; respaldo: ClipId[] }> = {
-  risa: { tomas: ['risacorta', 'risatierna', 'jepicara'], respaldo: ['risa1', 'risa2'] },
-  sorpresa: { tomas: ['sorpresaoh', 'asombro'], respaldo: ['uy2'] },
-  pensando: { tomas: ['mmmpensando', 'hmm'], respaldo: ['mmm2'] },
-  carino: { tomas: ['aww'], respaldo: ['carino'] },
-  cansado: { tomas: ['bostezo'], respaldo: ['cansado'] },
-};
-
 export async function speakReaccion(emocion: string, opts?: SpeakCallbacks): Promise<boolean> {
-  const r = REACCIONES[emocion === 'ternura' ? 'carino' : emocion === 'sueno' ? 'cansado' : emocion];
-  if (!r) return false;
-  await stopSpeaking();
-  const my = gen;
-  opts?.onStart?.();
-  await ensureAudioMode();
-  beginSpeak();
-  try {
-    // Al azar entre las que suenan ya (en el APK, o el servidor ya dijo que las tiene): un toque no
-    // espera seis segundos a que conteste un HEAD. Las demás se consultan de fondo para la próxima.
-    const listas = r.tomas.filter((t) => isBundled(t) || remoteOk.get(t)?.ok === true);
-    for (const t of r.tomas) if (!listas.includes(t)) void remoteClipAvailable(t);
-    const primera = listas[Math.floor(Math.random() * listas.length)];
-    for (const id of [...listas.filter((t) => t === primera), ...listas.filter((t) => t !== primera), ...r.respaldo]) {
-      if (my !== gen) return false;
-      const src = await clipSource(id);
-      if (src) return await playSource(src, my, opts, 10_000, { text: CLIP_TEXT[id] });
-    }
-    return false;
-  } finally {
-    endSpeak();
-    if (my === gen) opts?.onEnd?.();
-  }
+  const texto = reaccionDe(emocion);
+  if (!texto) return false;
+  return speak(texto, { ...opts, emocion: emocion === 'risa' ? 'risa' : 'neutral' });
 }
 
 /** URL/ruta arbitraria (p. ej. un mp3 del servidor). Avisa onAudioStart/onEnd como todo lo demás. */
@@ -501,9 +402,8 @@ export type SongRequest = { id: string } | { letra: string; titulo?: string };
 const songCache = new Map<string, string>();
 
 /**
- * Canciones: POST /api/cantar → el mp3 grabado del repertorio, o una letra libre dicha en WAV (Kokoro
- * no canta; el servidor la cachea). Para ids del repertorio, si el clip estático /voz/<id>.mp3 existe
- * se usa directo (más rápido).
+ * Canciones: POST /api/cantar → el repertorio (grabado con la voz de AU-RA: solo ella lo canta) o
+ * una letra libre dicha por el avatar en pantalla (el servidor la guarda por avatar e idioma).
  */
 export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPreparing?: () => void }): Promise<boolean> {
   await stopSpeaking();
@@ -513,17 +413,15 @@ export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPr
   beginSpeak();
   try {
     const avatar = avatarActual();
+    const idioma = idiomaActual();
     // Una letra libre la dice quien está en pantalla (su voz, su caché). El repertorio grabado es
-    // de AU-RA: con un Claudio el servidor no lo sirve (la mesa lo explica antes de pedirlo).
-    const key = `${avatar}|` + ('id' in req ? `id:${req.id}` : `letra:${req.titulo || ''}|${req.letra}`);
+    // de AU-RA: con otro avatar el servidor no lo sirve (la mesa lo explica antes de pedirlo).
+    const key = `${avatar}|${idioma}|` + ('id' in req ? `id:${req.id}` : `letra:${req.titulo || ''}|${req.letra}`);
     let uri = songCache.get(key) || null;
     const meta: PlayMeta = { kind: 'sing', text: 'letra' in req ? req.letra : null };
-    if (!uri && usaBancoDeVoz(avatar) && 'id' in req && (req.id as ClipId) in REMOTE_CLIPS && (await remoteClipAvailable(req.id as ClipId))) {
-      return await playSource({ uri: `${API_BASE}${REMOTE_CLIPS[req.id as ClipId]}` }, my, opts, 180_000, meta);
-    }
     if (!uri) {
       opts?.onPreparing?.();
-      uri = await downloadPost(CANTAR_ENDPOINT, { ...(req as Record<string, unknown>), ...(avatar !== 'aura' ? { avatar } : {}) }, 55_000);
+      uri = await downloadPost(CANTAR_ENDPOINT, { ...(req as Record<string, unknown>), avatar, idioma }, 55_000);
       if (uri) songCache.set(key, uri);
     }
     if (my !== gen) return false;
@@ -537,8 +435,8 @@ export async function speakSong(req: SongRequest, opts?: SpeakCallbacks & { onPr
 const prayerCache = new Map<string, string>();
 
 /**
- * Oración del día: POST /api/orar {} | {tema} → audio (~3 min; el servidor lo cachea). Sin tema, si el
- * estático /voz/oracion.mp3 existe se usa directo. Cara PRAY, mic pausado y boca con envolvente 'pray'.
+ * Oración: POST /api/orar {tema?, avatar, idioma} → audio (~3 min la del día; el servidor la guarda
+ * por avatar e idioma). Cara PRAY, mic pausado y boca con envolvente 'pray'.
  */
 export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPreparing?: () => void }): Promise<boolean> {
   await stopSpeaking();
@@ -549,16 +447,13 @@ export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPre
   try {
     const tema = (opts?.tema || '').trim();
     const avatar = avatarActual();
+    const idioma = idiomaActual();
     const meta: PlayMeta = { kind: 'pray' };
-    const key = `${avatar}|tema:${tema}`;
+    const key = `${avatar}|${idioma}|tema:${tema}`;
     let uri = prayerCache.get(key) || null;
-    // La oración grabada es de AU-RA; con un Claudio, la pide al servidor con su voz.
-    if (!uri && !tema && usaBancoDeVoz(avatar) && (await remoteClipAvailable('oracion'))) {
-      return await playSource({ uri: `${API_BASE}${REMOTE_CLIPS.oracion}` }, my, opts, 300_000, meta);
-    }
     if (!uri) {
       opts?.onPreparing?.();
-      uri = await downloadPost(ORAR_ENDPOINT, { ...(tema ? { tema } : {}), ...(avatar !== 'aura' ? { avatar } : {}) }, 90_000);
+      uri = await downloadPost(ORAR_ENDPOINT, { ...(tema ? { tema } : {}), avatar, idioma }, 90_000);
       if (uri) prayerCache.set(key, uri);
     }
     if (my !== gen) return false;
@@ -569,9 +464,9 @@ export async function speakPrayer(opts?: SpeakCallbacks & { tema?: string; onPre
   }
 }
 
-/** Calienta la caché del servidor/disco para frases que no están grabadas. */
+/** Calienta la caché de audio con frases que se van a decir pronto (saludos, «un momento»). */
 export async function prefetchPhrases(phrases: string[], emocion: Emocion = 'neutral') {
-  const queue = phrases.map(cleanForSpeech).filter((p) => p && !clipForPhrase(p));
+  const queue = phrases.map(cleanForSpeech).filter(Boolean);
   const worker = async () => {
     while (queue.length) {
       const p = queue.shift()!;

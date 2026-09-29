@@ -11,6 +11,7 @@ import { normalizarEmocion, pelarEtiqueta, type Emocion } from './emocion';
 import { loadCreds, loadMesaToken, saveMesaToken } from './storage';
 import { quitarExpresiones } from './expresiones';
 import { avatarActual } from '../avatares/actual';
+import { idiomaActual } from '../i18n';
 
 let refreshing: Promise<boolean> | null = null;
 
@@ -209,8 +210,9 @@ function turnoBody(opts: TurnoOpts) {
     memoria: opts.memoria || [],
     ...(opts.image ? { image: opts.image } : {}),
     ...(escena ? { escena } : {}),
-    // Con quién habla la persona: si es un Claudio, el cerebro contesta como él.
-    ...(avatarActual() !== 'aura' ? { avatar: avatarActual() } : {}),
+    // Con quién habla la persona y en qué idioma: el cerebro contesta como ese avatar y en esa lengua.
+    avatar: avatarActual(),
+    idioma: idiomaActual(),
   });
 }
 
@@ -348,11 +350,9 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
   };
 }
 
-/** GET /api/tts?text=&emocion=&performance= → audio/wav de Voicebox (cabecera X-Ultron-TTS con el motor). Sin `engine`. */
-export function ttsUrl(text: string, performance: 'speak' | 'sing', emocion: Emocion = 'neutral', avatar = 'aura') {
-  const q = new URLSearchParams({ text, performance, emocion });
-  // Solo si no es AU-RA: así las URLs de ella quedan iguales que antes (y su caché también).
-  if (avatar !== 'aura') q.set('avatar', avatar);
+/** GET /api/tts?text=&emocion=&performance=&avatar=&idioma= → audio con la voz del avatar (cabecera X-Ultron-TTS con el motor). */
+export function ttsUrl(text: string, performance: 'speak' | 'sing', emocion: Emocion = 'neutral', avatar = 'aura', idioma = 'es') {
+  const q = new URLSearchParams({ text, performance, emocion, avatar, idioma });
   return `${API_BASE}/api/tts?${q.toString()}`;
 }
 
@@ -392,7 +392,7 @@ export async function transcribe(opts: { base64: string; mime: string }): Promis
     {
       method: 'POST',
       // audioBase64/mimeType: servidor 3.1; audio/mime: servidor anterior
-      body: JSON.stringify({ audioBase64: `data:${opts.mime};base64,${opts.base64}`, mimeType: opts.mime, audio: opts.base64, mime: opts.mime, language: 'es' }),
+      body: JSON.stringify({ audioBase64: `data:${opts.mime};base64,${opts.base64}`, mimeType: opts.mime, audio: opts.base64, mime: opts.mime, language: idiomaActual() }),
     },
     16_000
   );

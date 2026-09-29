@@ -7,20 +7,24 @@ import { iniciarReporte, miga } from './src/lib/reporte';
 import { Animated, AppState, Easing, PermissionsAndroid, Platform, StyleSheet, View, type AppStateStatus } from 'react-native';
 import { APP_VERSION, type SessionUser } from './src/config';
 import { healthCheck, logoutRemote } from './src/lib/api';
-import { borrarRastrosViejos, loadSession, loadSettings, saveSession } from './src/lib/storage';
+import { borrarRastrosViejos, loadSession, loadSettings, saveSession, saveSettings } from './src/lib/storage';
 import { modoActual, orientar } from './src/lib/orientacion';
 import { preloadSfx } from './src/lib/sfx';
 import { setAvatarVoz } from './src/lib/tts';
 import { Arranque, type PasoArranque } from './src/screens/Arranque';
 import { FOTOS_CLAUDIO } from './src/avatares/ClaudioRetrato';
 import { FOTOS_CLAUDIO_PIE } from './src/avatares/ClaudioDePie';
+import { SelectorAvatar } from './src/avatares/SelectorAvatar';
+import type { AvatarId } from './src/avatares/catalogo';
+import { fijarIdioma, tr, useIdioma } from './src/i18n';
 import { DeskScreen } from './src/screens/DeskScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { ES_ELECTRUM } from './src/variante';
 import { T } from './src/tema';
 import ElectrumApp from './src/electrum/ElectrumApp';
+import { useActualizacionAlVolver } from './src/lib/ota';
 
-type Phase = 'splash' | 'login' | 'desk';
+type Phase = 'splash' | 'login' | 'elegir' | 'desk';
 
 /** El splash nativo (logo) se queda hasta que el splash JS está montado: sin pantallazo blanco ni corte. */
 void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -58,11 +62,31 @@ async function hideSystemBars() {
 
 /** Lo que carga el arranque, en orden. La barra avanza con esto, no con un reloj. */
 const PASOS: PasoArranque[] = [
-  { id: 'sesion', texto: 'Abriendo tu sesión', hecho: false },
-  { id: 'avatares', texto: 'Despertando a AU-RA y a Claudio', hecho: false },
-  { id: 'voces', texto: 'Afinando las voces', hecho: false },
-  { id: 'servidor', texto: 'Conectando con el servidor', hecho: false },
+  { id: 'sesion', texto: '', hecho: false },
+  { id: 'avatares', texto: '', hecho: false },
+  { id: 'voces', texto: '', hecho: false },
+  { id: 'servidor', texto: '', hecho: false },
 ];
+
+/** El texto de cada paso, en el idioma guardado (se lee en el primer paso del arranque). */
+function textoPaso(id: string): string {
+  switch (id) {
+    case 'sesion':
+      return tr('Abriendo tu sesión', 'Opening your session');
+    case 'avatares':
+      return tr('Despertando al Guardián, a AU-RA y a Claudio', 'Waking up the Guardian, AU-RA and Claudio');
+    case 'voces':
+      return tr('Afinando las voces', 'Tuning the voices');
+    default:
+      return tr('Conectando con el servidor', 'Connecting to the server');
+  }
+}
+
+/** Buenos días / tardes / noches según la hora de Honduras (UTC−6, sin horario de verano). */
+function saludoPorHora(ahora = new Date()): string {
+  const h = (ahora.getUTCHours() + 24 - 6) % 24;
+  return h < 12 ? tr('Buenos días', 'Good morning') : h < 19 ? tr('Buenas tardes', 'Good afternoon') : tr('Buenas noches', 'Good evening');
+}
 
 /** Las fotos de los avatares se decodifican durante la carga: al entrar ya están, sin parpadeo. */
 async function precargarAvatares() {
@@ -92,12 +116,19 @@ function conTope<T>(p: Promise<T>, ms: number): Promise<T | null> {
  * con la variante por omisión, todo lo que sigue es el mismo código de siempre, sin una rama nueva.
  */
 export default function App() {
+  // Antes de bifurcar: las actualizaciones por aire. Solo AU-RA las tiene encendidas; en Dr Electrum
+  // `Updates.isEnabled` es falso y el hook no hace nada.
+  useActualizacionAlVolver();
   if (ES_ELECTRUM) return <ElectrumApp />;
   return <AppUltron />;
 }
 
 function AppUltron() {
+  useIdioma();
   const [phase, setPhase] = useState<Phase>('splash');
+  /** El avatar que tenía guardado (la bienvenida lo marca) y si se acaba de elegir (se presenta). */
+  const [avatarGuardado, setAvatarGuardado] = useState<AvatarId>('aura');
+  const [recienElegido, setRecienElegido] = useState(false);
   const [cargaVisible, setCargaVisible] = useState(true);
   const [user, setUser] = useState<SessionUser | null>(null);
   const [pasos, setPasos] = useState<PasoArranque[]>(PASOS);
@@ -106,7 +137,7 @@ function AppUltron() {
   const marcar = (id: string) => setPasos((ps) => ps.map((p) => (p.id === id ? { ...p, hecho: true } : p)));
 
   const enterDesk = useCallback(async (u: SessionUser) => {
-    miga('login ok, entrando a la mesa');
+    miga('entrando a la mesa');
     setUser(u);
     await requestDeskPermissions();
     miga('permisos pedidos');
@@ -122,7 +153,10 @@ function AppUltron() {
     await hideSystemBars();
     const [session, ajustes] = await Promise.all([loadSession(), loadSettings()]);
     miga(session ? 'sesión guardada' : 'sin sesión');
+    // El idioma y el avatar de la última vez: la carga ya se lee en ese idioma.
+    fijarIdioma(ajustes.idioma);
     setAvatarVoz(ajustes.avatar);
+    setAvatarGuardado(ajustes.avatar);
     marcar('sesion');
     await conTope(precargarAvatares(), 6_000);
     marcar('avatares');
@@ -130,7 +164,7 @@ function AppUltron() {
     marcar('voces');
     // Sin servidor se entra igual (la mesa tiene modo local); solo se avisa.
     const salud = await conTope(healthCheck(), 5_000);
-    if (!salud) setAviso('Sin conexión con el servidor: entras en modo local');
+    if (!salud) setAviso(tr('Sin conexión con el servidor: entras en modo local', 'No connection to the server: you’re entering local mode'));
     marcar('servidor');
     await new Promise((r) => setTimeout(r, salud ? 250 : 900));
     if (session) await enterDesk(session);
@@ -163,10 +197,33 @@ function AppUltron() {
   return (
     <View style={styles.root}>
       <StatusBar style="light" hidden />
-      {phase === 'login' && <LoginScreen onAuthenticated={(u) => void enterDesk(u)} />}
+      {phase === 'login' && (
+        <LoginScreen
+          onAuthenticated={(u) => {
+            // Al entrar se elige con quién hablar (y el idioma, arriba): después, la mesa.
+            miga('login ok, eligiendo avatar');
+            setUser(u);
+            setPhase('elegir');
+          }}
+        />
+      )}
+      {phase === 'elegir' && user && (
+        <SelectorAvatar
+          nombre={user.name}
+          saludo={saludoPorHora()}
+          actual={avatarGuardado}
+          onElegir={(id) => {
+            setAvatarVoz(id);
+            setAvatarGuardado(id);
+            setRecienElegido(true);
+            void saveSettings({ avatar: id, avatarElegido: true }).finally(() => void enterDesk(user));
+          }}
+        />
+      )}
       {phase === 'desk' && user && (
         <DeskScreen
           user={user}
+          recienElegido={recienElegido}
           onLogout={() => {
             // El historial del turno vive en la mesa y se va con ella; la memoria de largo plazo es por
             // persona (el siguiente no la ve). Las credenciales guardadas se quedan: las usa la entrada.
@@ -174,12 +231,15 @@ function AppUltron() {
             void logoutRemote();
             void borrarRastrosViejos();
             setUser(null);
+            setRecienElegido(false);
             setPhase('login');
             void orientar('libre');
           }}
         />
       )}
-      {cargaVisible && <Arranque pasos={pasos} version={APP_VERSION} aviso={aviso} opacity={phase === 'splash' ? undefined : cargaOp} />}
+      {cargaVisible && (
+        <Arranque pasos={pasos.map((p) => ({ ...p, texto: textoPaso(p.id) }))} version={APP_VERSION} aviso={aviso} opacity={phase === 'splash' ? undefined : cargaOp} />
+      )}
     </View>
   );
 }

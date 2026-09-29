@@ -10,6 +10,7 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
 import { T } from '../tema';
+import { tr } from '../i18n';
 
 export type PasoArranque = { id: string; texto: string; hecho: boolean };
 
@@ -78,7 +79,7 @@ export function Arranque({ pasos, version, opacity, aviso }: Props) {
           <Animated.View style={[s.relleno, { width: barra.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} />
         </View>
         <Text style={[s.paso, !!aviso && s.aviso]} accessibilityLiveRegion="polite">
-          {aviso || actual?.texto || 'Listo'}
+          {aviso || actual?.texto || tr('Listo', 'Ready')}
         </Text>
       </Animated.View>
       <Text style={s.version}>v{version}</Text>

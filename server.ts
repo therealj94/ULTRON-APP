@@ -8,7 +8,7 @@ import { createServer as createViteServer } from 'vite';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
-import { lineaAvatar, normalizarAvatar } from './server/eleven';
+import { lineaAvatar, normalizarAvatar, normalizarIdioma } from './server/eleven';
 import { quitarExpresiones } from './lib/expresiones';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
@@ -1692,13 +1692,14 @@ function leerPeticionVoz(req: express.Request) {
     emocion: normalizarEmocion(fuente.emocion),
     performance: String(fuente.performance || 'speak') === 'sing' ? ('sing' as const) : ('speak' as const),
     avatar: normalizarAvatar(fuente.avatar),
+    idioma: normalizarIdioma(fuente.idioma),
   };
 }
 
 async function responderVoz(req: express.Request, res: express.Response) {
   const p = leerPeticionVoz(req);
   if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
-  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar });
+  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma });
   if (!out) return res.status(503).json({ error: 'Voz no disponible (Voicebox sin respuesta)', honesto: true });
   res.setHeader('Content-Type', out.contentType);
   res.setHeader('Cache-Control', out.cache ? 'private, max-age=3600' : 'no-store');
@@ -1715,7 +1716,7 @@ app.all('/api/voz', exigirMesaODesk, limitar(60, 60_000, 'voz'), responderVoz);
 /** Oración del día: AU-RA cierra los ojos y ora (clip grabado con la voz oficial). */
 app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
   const tema = String(req.body?.tema || req.query?.tema || '').slice(0, 120);
-  const out = await orar({ tema, avatar: normalizarAvatar(req.body?.avatar ?? req.query?.avatar) });
+  const out = await orar({ tema, avatar: normalizarAvatar(req.body?.avatar ?? req.query?.avatar), idioma: normalizarIdioma(req.body?.idioma ?? req.query?.idioma) });
   if (!out) return res.status(503).json({ error: 'No pude orar ahora (voz sin respuesta).', honesto: true });
   res.setHeader('Content-Type', out.contentType);
   res.setHeader('Cache-Control', 'private, max-age=86400');
@@ -1763,9 +1764,10 @@ app.post('/api/cantar', exigirMesaODesk, limitar(12), async (req, res) => {
   const pedido = String(req.body?.pedido || '').trim();
   const cancion = id || (pedido ? cancionPorPedido(pedido)?.id : '') || '';
   const avatar = normalizarAvatar(req.body?.avatar);
-  const out = await cantar(cancion ? { id: cancion, avatar } : { letra, titulo, avatar });
+  const idioma = normalizarIdioma(req.body?.idioma);
+  const out = await cantar(cancion ? { id: cancion, avatar, idioma } : { letra, titulo, avatar, idioma });
   if (!out && cancion && avatar !== 'aura') {
-    return res.status(409).json({ error: 'Esa canción está grabada con la voz de AU-RA.', canciones: repertorio(), honesto: true });
+    return res.status(409).json({ error: idioma === 'en' ? "That song is recorded in AU-RA's voice." : 'Esa canción está grabada con la voz de AU-RA.', canciones: repertorio(), honesto: true });
   }
   if (!out) {
     return res.status(letra || cancion ? 503 : 400).json({
@@ -2104,7 +2106,8 @@ async function prepararTurno(body: any) {
     datos.length > 0;
   // Un cálculo sale palabra por palabra como lo armó la plataforma, salvo que pidan explicación.
   const soloCalculo = calculoMina && !/por qu[eé]|explic|c[oó]mo se (calcula|saca)|f[oó]rmula|analiz|opin/.test(q) ? calculoMina : null;
-  const directo = decirTaller || soloCalculo || (soloDato ? datos.join(' ') : null);
+  // En inglés no hay atajo: esos textos están armados en español, y el modelo los dice en el idioma pedido.
+  const directo = normalizarIdioma(body?.idioma) === 'en' ? null : decirTaller || soloCalculo || (soloDato ? datos.join(' ') : null);
 
   const personalidad = `${buildPersonality({ nombre: (quien ? nombreDe(quien) : nombre) || undefined, canal, modo: String(mode), mando })}
 
@@ -2114,7 +2117,7 @@ ${perfilActivo().conocimiento}
 ${promptAgente(clas.agente)}
 
 No finjas recuerdos: solo la memoria de ${quien ? nombreDe(quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.
-Modo de mesa pedido: ${mode}.${canal === 'mesa' && lineaAvatar(normalizarAvatar(body?.avatar)) ? `\n${lineaAvatar(normalizarAvatar(body?.avatar))}` : ''}
+Modo de mesa pedido: ${mode}.${canal === 'mesa' ? `\n${lineaAvatar(normalizarAvatar(body?.avatar), normalizarIdioma(body?.idioma))}` : ''}
 HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemoria(quienMem)}`;
 
   const compuesto = construirMensajes({ personalidad, user: mensajeHilo || message, canal, historial: hilo });

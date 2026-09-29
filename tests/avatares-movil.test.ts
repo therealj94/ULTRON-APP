@@ -6,24 +6,38 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { AVATARES, distribucion, normalizarAvatarId, usaBancoDeVoz } from '../mobile/src/avatares/catalogo';
+import { AVATARES, avatarPorId, distribucion, normalizarAvatarId } from '../mobile/src/avatares/catalogo';
 import { aperturaBoca, bocaSigueVoz, fotoCuerpo, fotoPorMirada, fotoRetrato } from '../mobile/src/avatares/expresiones';
 
-test('tres avatares, ids únicos; lo desconocido es AU-RA', () => {
-  assert.deepEqual(AVATARES.map((a) => a.id), ['aura', 'claudio', 'claudio-pie']);
-  assert.equal(normalizarAvatarId('claudio-pie'), 'claudio-pie');
+test('tres avatares (Guardián, AU-RA, Claudio); «claudio-pie» es Claudio; lo desconocido es AU-RA', () => {
+  assert.deepEqual(AVATARES.map((a) => a.id), ['ojos', 'aura', 'claudio']);
+  assert.equal(normalizarAvatarId('claudio-pie'), 'claudio');
+  assert.equal(normalizarAvatarId('ojos'), 'ojos');
   assert.equal(normalizarAvatarId('electrum'), 'aura');
   assert.equal(normalizarAvatarId(undefined), 'aura');
-  // Los clips grabados son de Dora: solo AU-RA los usa.
-  assert.equal(usaBancoDeVoz('aura'), true);
-  assert.equal(usaBancoDeVoz('claudio'), false);
 });
 
-test('pantalla: horizontal a pantalla completa; vertical, cuadro con chat abajo; el de pie al revés', () => {
-  assert.deepEqual(distribucion('aura', true), { tipo: 'completa', chat: 'flota' });
-  assert.deepEqual(distribucion('claudio', false), { tipo: 'cuadro', chat: 'abajo' });
-  assert.deepEqual(distribucion('claudio-pie', false), { tipo: 'completa', chat: 'flota' });
-  assert.deepEqual(distribucion('claudio-pie', true), { tipo: 'cuadro', chat: 'lado' });
+test('cada avatar tiene su interfaz: color propio, oficio y atajos en los dos idiomas', () => {
+  const acentos = new Set(AVATARES.map((a) => a.tema.acento));
+  assert.equal(acentos.size, 3, 'tres colores distintos');
+  assert.equal(avatarPorId('ojos').tema.acento, '#5CE1FF', 'el Guardián es celeste, como su cara');
+  for (const a of AVATARES) {
+    assert.ok(a.acciones.length >= 3, `${a.id}: atajos`);
+    for (const t of [a.nombre, a.oficio, a.descripcion, a.voz, a.presentacion, ...a.acciones.flatMap((x) => [x.etiqueta, x.pedido])]) {
+      assert.ok(t.es.trim() && t.en.trim(), `${a.id}: falta un idioma`);
+    }
+  }
+  // Los atajos que son comandos de la mesa van en español en los dos idiomas (intenciones.ts).
+  assert.equal(avatarPorId('ojos').acciones.find((x) => x.id === 'ver')?.pedido.en, 'qué ves');
+  assert.match(avatarPorId('claudio').oficio.es, /marketing/);
+  assert.match(avatarPorId('aura').oficio.es, /compañera/);
+});
+
+test('pantalla: Guardián y AU-RA, completa acostados y cuadro derechos; Claudio completo siempre, de pie si está derecho', () => {
+  assert.deepEqual(distribucion('aura', true), { tipo: 'completa', chat: 'flota', pose: null });
+  assert.deepEqual(distribucion('ojos', false), { tipo: 'cuadro', chat: 'abajo', pose: null });
+  assert.deepEqual(distribucion('claudio', true), { tipo: 'completa', chat: 'flota', pose: 'retrato' });
+  assert.deepEqual(distribucion('claudio', false), { tipo: 'completa', chat: 'flota', pose: 'pie' });
 });
 
 test('cada estado de la cara tiene su foto de Claudio, y solo la de siempre mueve la boca', () => {

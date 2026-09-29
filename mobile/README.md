@@ -9,7 +9,15 @@ Orden Global (paleta negro + cian `#05E1FF`, UI en español).
 GitHub Actions (`.github/workflows/android-apk.yml`) hace `npm ci` → `npm run typecheck` → `expo prebuild` →
 `gradlew assembleRelease` (arm64-v8a + armeabi-v7a, Hermes, JS empaquetado) y publica el artefacto `AU-RA-FP-apk`
 (`out/AU-RA-FP-<versión>.apk`). Se dispara con cada push a `main` o `cursor/**` que toque `mobile/`, `src/`, `server*`,
-o a mano con *Run workflow*. No hay OTA (`expo-updates` se retiró): cada cambio es un APK nuevo.
+o a mano con *Run workflow*.
+
+**Actualizaciones por aire (AU-RA, desde la 4.6):** `expo-updates` con huella nativa
+(`runtimeVersion: fingerprint`). Al fusionar a `main`, `.github/workflows/ota.yml` publica el JS
+nuevo en el canal `production` si la huella coincide con la de la última APK publicada
+(`runtime-ultron.txt` en el Release); si el cambio tocó algo nativo, se salta y hace falta la APK
+nueva. La app descarga en segundo plano y aplica al volver a abrirla (`src/lib/ota.ts`). Necesita el
+secreto `EXPO_TOKEN` en el repositorio. Marcha atrás: *Run workflow* → «volver-a-la-apk». Dr Electrum
+todavía no tiene OTA (necesita su propio proyecto EAS).
 
 Instalación: el APK va firmado con la keystore debug del template; si había una versión anterior firmada distinto,
 desinstálala primero. Versión: `app.json` `expo.version` = `package.json` `version` (4.0.0), `android.versionCode` 40.
