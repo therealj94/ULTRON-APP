@@ -107,11 +107,12 @@ export type Avisos = {
   alFallar?: (motivo: string) => void;
 };
 
-async function sintetizar(texto: string, emocion: string | undefined, headers: Record<string, string>): Promise<Blob> {
+async function sintetizar(texto: string, emocion: string | undefined, headers: Record<string, string>, previo?: string, siguiente?: string): Promise<Blob> {
   const r = await fetch('/api/electrum/voz', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify({ texto, emocion }),
+    // Los vecinos van para que la voz enlace la entonación entre trozos (ElevenLabs los usa).
+    body: JSON.stringify({ texto, emocion, previo, siguiente }),
   });
   if (!r.ok) {
     const j: any = await r.json().catch(() => null);
@@ -147,12 +148,13 @@ export async function hablar(texto: string, emocion: string | undefined, headers
   if (!trozos.length) return;
   const a = elReproductor();
   let empezo = false;
-  let siguiente: Promise<Blob> | null = sintetizar(trozos[0], emocion, headers);
+  const pedir = (i: number) => sintetizar(trozos[i], emocion, headers, trozos[i - 1], trozos[i + 1]);
+  let siguiente: Promise<Blob> | null = pedir(0);
   try {
     for (let i = 0; i < trozos.length; i++) {
       const blob = await siguiente!;
       if (mia !== generacion) return;
-      siguiente = i + 1 < trozos.length ? sintetizar(trozos[i + 1], emocion, headers) : null;
+      siguiente = i + 1 < trozos.length ? pedir(i + 1) : null;
       // Que un fallo del trozo siguiente no quede como promesa rechazada sin atender.
       siguiente?.catch(() => {});
       if (!empezo) {

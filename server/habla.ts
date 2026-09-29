@@ -74,9 +74,15 @@ const UNIDADES_HABLADAS: Array<[RegExp, string]> = [
  *   · «3,4» → decimal. «3.4» o «3.4567» (punto sin grupos de tres) → también decimal.
  *   · «0442» (un código con cero delante, como un expediente) → cifra por cifra.
  */
-export function cifrasAVoz(text: string): string {
+/** Solo las unidades («3,4 g/t» → «3,4 gramos por tonelada»); los números quedan como están. */
+export function unidadesAVoz(text: string): string {
   let t = text;
   for (const [re, por] of UNIDADES_HABLADAS) t = t.replace(re, por);
+  return t;
+}
+
+export function cifrasAVoz(text: string): string {
+  const t = unidadesAVoz(text);
   return t.replace(/\d{1,3}(?:\.\d{3})+(?!\d)(?:,\d+)?|\d+,\d+|\d+\.\d+|\d+/g, (raw) => {
     const decimales = (entero: string, d: string) =>
       `${numeroEnPalabras(Number(entero))} punto ${d.split('').map((c) => numeroEnPalabras(Number(c))).join(' ')}`;
@@ -111,9 +117,13 @@ export function rellenoAzar(): string {
   return RELLENOS[Math.floor(Math.random() * RELLENOS.length)];
 }
 
-/** `max`: una respuesta se corta a 1200 caracteres; un guion largo (la oración) pide más. */
-export function afinarParaBoca(text: string, max = 1200): string {
-  return cifrasAVoz(
+/**
+ * `max`: una respuesta se corta a 1200 caracteres; un guion largo (la oración) pide más.
+ * `cifras: false` deja los números en dígitos: ElevenLabs los lee mejor por su cuenta (concuerda
+ * el género, «mil doscientas hectáreas», y dice las fechas como fechas). Kokoro no: a él sí se le dan en palabras.
+ */
+export function afinarParaBoca(text: string, max = 1200, opciones: { cifras?: boolean } = {}): string {
+  return (opciones.cifras === false ? unidadesAVoz : cifrasAVoz)(
     String(text || '')
       .replace(/\*+/g, '')
       .replace(/#+\s?/g, '')
@@ -126,6 +136,9 @@ export function afinarParaBoca(text: string, max = 1200): string {
       .replace(/:\s+/g, ', ')
       // «AU-RA» se escribe con guion y mayúsculas, y la voz lo deletrea («a, u, erre, a»). Se dice «Aura».
       .replace(/\bAU-?RA\b/g, 'Aura')
+      // «Dr Electrum» se leía «de erre Electrum».
+      .replace(/\bDr\.?\s+(?=\p{Lu})/gu, 'Doctor ')
+      .replace(/\bDra\.?\s+(?=\p{Lu})/gu, 'Doctora ')
       .replace(/\bjaja+\b/gi, 'je je')
       .replace(/\blol\b/gi, 'je')
       .replace(/\s+/g, ' ')

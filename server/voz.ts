@@ -1,7 +1,8 @@
 /**
  * VOZ — el único camino por el que AU-RA habla.
  *
- *   hablar()  → Voicebox (Kokoro, en el servidor propio de AU-RA) → null. Con [risa], [suspiro]…
+ *   hablar()  → ElevenLabs v4 Turbo si la plataforma tiene voz ahí (Dr Electrum; server/eleven.ts)
+ *               → Voicebox (Kokoro, en el servidor propio de AU-RA) → null. Con [risa], [suspiro]…
  *               (lib/expresiones.ts) AU-RA pega la toma grabada entre los trozos hablados.
  *   cantar()  → clip grabado del repertorio; una letra libre se DICE (Kokoro no canta)
  *   expresar()→ deja el texto listo para la boca: sin etiquetas de audio, cifras en palabras
@@ -22,6 +23,7 @@ import { leerWav, wavAMp3, type Pcm } from '../lib/mp3';
 import { trocearExpresiones } from '../lib/expresiones';
 import { adaptarPcm, empalmar, escribirWav, tomaDeExpresion } from './empalme';
 import type { Presupuesto } from '../lib/presupuesto';
+import { elevenListo, guionEleven, hablarEleven, modeloEleven, vozEleven } from './eleven';
 
 export type Performance = 'speak' | 'sing';
 
@@ -165,11 +167,11 @@ const MAX_GUION = 4000;
  * La emoción y el canto ya no cambian el audio —Kokoro tiene un solo registro por perfil y no
  * canta—, pero se siguen aceptando para no romper a quien llama: la cara y el cerebro las usan.
  */
-export function expresar(texto: string, _emocion: Emocion = 'neutral', _performance: Performance = 'speak'): string {
+export function expresar(texto: string, _emocion: Emocion = 'neutral', _performance: Performance = 'speak', opciones: { cifras?: boolean } = {}): string {
   const crudo = String(texto || '');
   ETIQUETA_AUDIO.lastIndex = 0;
-  if (ETIQUETA_AUDIO.test(crudo)) return afinarParaBoca(sinEtiquetas(crudo), MAX_GUION);
-  const base = afinarParaBoca(crudo);
+  if (ETIQUETA_AUDIO.test(crudo)) return afinarParaBoca(sinEtiquetas(crudo), MAX_GUION, opciones);
+  const base = afinarParaBoca(crudo, 1200, opciones);
   if (!base) return '';
   /*
    * Las sustituciones se comen la puntuación que traen pegada. Sin eso salía «mmm....» y
@@ -367,11 +369,38 @@ export async function hablar(opts: {
   plataforma?: 'ultron' | 'electrum';
   /** Si la ruta tiene reloj (lib/presupuesto), la voz no se pasa de lo que el cliente espera. */
   presupuesto?: Presupuesto;
+  /** Lo dicho justo antes y lo que viene (la pantalla habla por trozos): ElevenLabs enlaza la entonación. */
+  previo?: string;
+  siguiente?: string;
 }): Promise<Habla | null> {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
   const emocion = normalizarEmocion(opts.emocion);
   const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
+
+  /*
+   * Primero ElevenLabs, si esta plataforma tiene voz ahí (Dr Electrum sí; AU-RA solo si alguien
+   * pone ELEVENLABS_VOZ_AURA). Aquí las marcas y la emoción SÍ suenan: v4 las entiende. Si no
+   * contesta, sigue abajo el camino de siempre con Voicebox, sin que quien habla note nada.
+   */
+  const vozXi = performance === 'speak' ? vozEleven(plataforma) : null;
+  if (vozXi && elevenListo()) {
+    const guion = guionEleven(String(opts.texto || '').slice(0, MAX_GUION), emocion, (t) => expresar(t, emocion, 'speak', { cifras: false }));
+    if (guion) {
+      const keyXi = crypto.createHash('sha1').update(`eleven|${modeloEleven()}|${vozXi}|${guion}`).digest('hex');
+      if (!opts.sinCache) {
+        const hit = cacheGet(keyXi);
+        if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
+      }
+      const xi = await hablarEleven({ texto: guion, voz: vozXi, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto });
+      if (xi) {
+        const out = { ...xi, motor: `elevenlabs:${modeloEleven()}` };
+        cacheSet(keyXi, out);
+        return { ...out, cache: false, ms: Date.now() - t0 };
+      }
+    }
+  }
+
   const partes = partesDe(String(opts.texto || '').slice(0, MAX_GUION), plataforma, emocion, performance);
   if (!partes.length) return null;
   const perfil = vozDe(plataforma);

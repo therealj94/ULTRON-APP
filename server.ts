@@ -845,7 +845,7 @@ app.post('/api/electrum/oir', exigirPlataforma('electrum'), limitar(40), async (
   const audio = bufferDeCualquier(req.body?.audio);
   if (!audio || audio.length < 400) return res.status(400).json({ error: 'No me llegó audio.', honesto: true });
   try {
-    const oido = await transcribirAudio({ audio, mime: String(req.body?.mime || 'audio/webm'), language: 'es' });
+    const oido = await transcribirAudio({ audio, mime: String(req.body?.mime || 'audio/webm'), language: 'es', plataforma: 'electrum' });
     if (!oido.texto) return res.status(200).json({ texto: '', detalle: oido.detalle, via: oido.via, honesto: true });
     return res.json({ texto: oido.texto, via: oido.via, honesto: true });
   } catch (e: any) {
@@ -947,7 +947,9 @@ app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (
     return res.status(400).json({ error: 'Ahí no hay nada que decir en voz alta.', honesto: true });
   }
   try {
-    const out = await hablar({ texto, emocion: req.body?.emocion, plataforma: 'electrum' });
+    // La pantalla habla por trozos: lo de antes y lo de después hacen que la entonación no se corte.
+    const vecino = (v: unknown) => (typeof v === 'string' ? v.slice(0, 400) : undefined);
+    const out = await hablar({ texto, emocion: req.body?.emocion, plataforma: 'electrum', previo: vecino(req.body?.previo), siguiente: vecino(req.body?.siguiente) });
     if (!out) return res.status(503).json({ error: 'No tengo voz ahora mismo.', honesto: true });
     res.setHeader('Content-Type', out.contentType);
     res.setHeader('Cache-Control', 'private, max-age=600');
