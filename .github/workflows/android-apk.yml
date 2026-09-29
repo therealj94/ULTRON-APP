@@ -96,6 +96,11 @@ jobs:
         working-directory: mobile/android
         env:
           GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
+          # La huella que va dentro de la APK es la de ANTES de compilar: la misma que calcula
+          # `eas update` al publicar (que no compila). Si Gradle la recalcula por su cuenta, lo hace
+          # con lo que la compilación ya escribió y sale otra, y ninguna actualización le llegaría
+          # (pasó en la primera APK con OTA). Vacío en Dr Electrum: no tiene OTA.
+          EXPO_UPDATES_FINGERPRINT_OVERRIDE: ${{ steps.runtime.outputs.runtime }}
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
