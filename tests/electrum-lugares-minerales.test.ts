@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buscarLugar, separarDepartamento } from '../server/electrum/lugares';
 import { mineralDePedido, pedidoDeFiltro, pedidoDeLugar } from '../lib/pedidos-mapa';
-import { comoSeSabe, idsQueCumplen, mineralesEnNombre, mineralesEnTexto, type MineralesDeConcesion } from '../server/electrum/minerales';
+import { claseDeConcesion, comoSeSabe, idsQueCumplen, mineralesEnNombre, mineralesEnTexto, type MineralesDeConcesion } from '../server/electrum/minerales';
 import { idsEnHerramientas } from '../server/electrum/mapa-garantia';
 
 test('los lugares de Honduras se encuentran por su nombre', () => {
@@ -53,6 +53,19 @@ test('los minerales salen de las capas y del nombre, y se dice cómo se sabe', (
   assert.deepEqual(idsQueCumplen(datos, 'metalicas'), [1, 3]);
   assert.deepEqual(idsQueCumplen(datos, 'no metalicas'), [2]);
   assert.match(comoSeSabe('oro'), /no guarda el mineral/);
+});
+
+test('la clase del catastro se repara (tildes perdidas) y, sin CLASIFICAC, sale de la capa', () => {
+  const datos = new Map<number, MineralesDeConcesion>([
+    [1, { minerales: [], porOcurrencia: [], clase: claseDeConcesion('Peque?a Min. No Met?lica', 'Concesiones') }],
+    [2, { minerales: [], porOcurrencia: [], clase: claseDeConcesion('Met?lica', null) }],
+    [3, { minerales: [], porOcurrencia: [], clase: claseDeConcesion(null, 'Concesiones No Metálicas') }],
+    [4, { minerales: [], porOcurrencia: [], clase: claseDeConcesion('', 'Concesiones Metalicas') }],
+    [5, { minerales: [], porOcurrencia: [], clase: claseDeConcesion(null, 'Solicitudes') }],
+  ]);
+  assert.equal(datos.get(5)!.clase, null);
+  assert.deepEqual(idsQueCumplen(datos, 'metalicas'), [2, 4]);
+  assert.deepEqual(idsQueCumplen(datos, 'no metalicas'), [1, 3]);
 });
 
 test('se habla de UNA concesión cuando las herramientas trajeron un solo id', () => {

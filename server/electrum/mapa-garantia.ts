@@ -114,6 +114,19 @@ export async function concesionAMostrar(mensaje: string, respuesta: string, hist
 export type Garantia = { ui?: Record<string, unknown>; texto: string; nota?: string };
 
 /**
+ * Una concesión que se llama EXACTAMENTE como lo pedido («muéstrame El Mochito»). Solo ella le gana
+ * a un lugar del gacetero con ese nombre: una que apenas se le parezca no convierte a Juticalpa en
+ * una concesión.
+ */
+export async function concesionDeNombreExacto(pedido: string): Promise<FilaConcesion | null> {
+  try {
+    return unicaExacta(await buscarConcesiones(pedido, 6), pedido);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Después del turno: si hacía falta mover el mapa y no se movió, se mueve; si no se puede, se dice.
  * `canal` telegram no tiene mapa: ahí no se hace nada.
  */
@@ -156,6 +169,31 @@ export async function garantizarMapa(p: {
     }
   }
   if (!pide && !dice) return { texto: p.texto };
+  /*
+   * ¿Un lugar de Honduras? («llévame a Juticalpa», «¿dónde queda Trujillo?») Va ANTES que la
+   * concesión, igual que /api/electrum/lugar y que el panel (que ya puso el alfiler): un municipio
+   * con una sola concesión que se le parezca no puede convertirse en esa concesión.
+   */
+  const q = pedidoDeLugar(p.mensaje);
+  const l = q ? buscarLugar(q) : null;
+  const exacta = l && q ? await concesionDeNombreExacto(q) : null;
+  if (exacta) {
+    const g = await geometriaDe(Number(exacta.id)).catch(() => null);
+    if (g) {
+      return {
+        texto: p.texto,
+        ui: { accion: 'volar', concesion_id: Number(exacta.id), centro: g.centro, encuadre: g.encuadre, geojson: g.geojson, resaltar: true, garantia: true },
+        nota: `el mapa voló a ${exacta.nombre} (id ${exacta.id}): se llama así, aunque también hay un lugar con ese nombre`,
+      };
+    }
+  }
+  if (l) {
+    return {
+      texto: p.texto,
+      ui: { accion: 'lugar', nombre: l.lugar.nombre, tipo: l.lugar.tipo, departamento: l.lugar.departamento, centro: l.lugar.centro, zoom: l.lugar.zoom },
+      nota: `el mapa fue a ${l.lugar.nombre} (${l.lugar.tipo})`,
+    };
+  }
   const c = await concesionAMostrar(p.mensaje, p.texto, p.historial || []);
   if (c) {
     const g = await geometriaDe(c.id).catch(() => null);
@@ -166,16 +204,6 @@ export async function garantizarMapa(p: {
         nota: `el mapa voló a ${c.nombre} (id ${c.id}) aunque el modelo no lo pidió`,
       };
     }
-  }
-  // No es una concesión: ¿un lugar de Honduras? («llévame a Juticalpa», «¿dónde queda Trujillo?»)
-  const q = pedidoDeLugar(p.mensaje);
-  const l = q ? buscarLugar(q) : null;
-  if (l) {
-    return {
-      texto: p.texto,
-      ui: { accion: 'lugar', nombre: l.lugar.nombre, tipo: l.lugar.tipo, departamento: l.lugar.departamento, centro: l.lugar.centro, zoom: l.lugar.zoom },
-      nota: `el mapa fue a ${l.lugar.nombre} (${l.lugar.tipo})`,
-    };
   }
   if (dice) {
     return {

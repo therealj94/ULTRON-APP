@@ -536,6 +536,7 @@ function quitarExtra(m: maplibregl.Map, fuente: string, rol: string) {
  * el resaltado sin tocar el catastro.
  */
 const capasGoogle: Record<'concesiones' | 'resaltada', any> = { concesiones: null, resaltada: null };
+const ESTILO_CONCESIONES_GOOGLE = { fillColor: AMBAR, fillOpacity: 0.12, strokeColor: AMBAR, strokeWeight: 1.6, strokeOpacity: 0.9 };
 const extrasGoogle = new Map<string, any>();
 /** A quién avisar cuando se toca el mapa de Google: se fija desde el componente. */
 let tocarGoogle: ((t: Tocado) => void) | null = null;
@@ -546,12 +547,9 @@ function pintarGoogle(g: any, cual: 'concesiones' | 'resaltada', datos: unknown)
   let capa = capasGoogle[cual];
   if (!capa) {
     capa = new G.Data();
-    capa.setStyle(
-      cual === 'concesiones'
-        ? { fillColor: AMBAR, fillOpacity: 0.12, strokeColor: AMBAR, strokeWeight: 1.6, strokeOpacity: 0.9 }
-        : { fillColor: RESALTE, fillOpacity: 0.22, strokeColor: RESALTE, strokeWeight: 3, strokeOpacity: 1 }
-    );
+    capa.setStyle(cual === 'concesiones' ? ESTILO_CONCESIONES_GOOGLE : { fillColor: RESALTE, fillOpacity: 0.22, strokeColor: RESALTE, strokeWeight: 3, strokeOpacity: 1 });
     capasGoogle[cual] = capa;
+    if (cual === 'concesiones' && filtroGoogle) filtrarGoogle(filtroGoogle);
     if (cual === 'concesiones') {
       capa.addListener('click', (ev: any) => {
         const id = Number(ev.feature?.getProperty('id'));
@@ -627,18 +625,33 @@ export function etiquetaFiltro(mineral: string): string {
 
 /** La condición del filtro, en el lenguaje de expresiones de MapLibre. */
 function condicionFiltro(mineral: string): any {
-  const clase = ['coalesce', ['get', 'clase'], ''];
-  if (mineral === 'metalicas') return ['all', ['in', 'Metálica', clase], ['!', ['in', 'No Metálica', clase]]];
-  if (mineral === 'no metalicas') return ['any', ['in', 'No Metálica', clase], ['in', 'Banco', clase]];
+  // En minúsculas: la clase llega «Pequeña Minería No Metálica» del padrón o «No metálica» por la capa.
+  const clase = ['downcase', ['coalesce', ['get', 'clase'], '']];
+  if (mineral === 'metalicas') return ['all', ['in', 'metálica', clase], ['!', ['in', 'no metálica', clase]]];
+  if (mineral === 'no metalicas') return ['any', ['in', 'no metálica', clase], ['in', 'banco', clase]];
   return ['in', mineral, ['coalesce', ['get', 'minerales'], '']];
 }
 
 /** La misma condición en JavaScript, para contar y encuadrar lo que quedó. */
 export function cumpleFiltro(props: Record<string, unknown> | null | undefined, mineral: string): boolean {
-  const clase = String(props?.clase || '');
-  if (mineral === 'metalicas') return clase.includes('Metálica') && !clase.includes('No Metálica');
-  if (mineral === 'no metalicas') return clase.includes('No Metálica') || clase.includes('Banco');
+  const clase = String(props?.clase || '').toLowerCase();
+  if (mineral === 'metalicas') return clase.includes('metálica') && !clase.includes('no metálica');
+  if (mineral === 'no metalicas') return clase.includes('no metálica') || clase.includes('banco');
   return String(props?.minerales || '').split(',').includes(mineral);
+}
+
+/** El filtro puesto ahora (para el mapa de Google, que no tiene expresiones). */
+let filtroGoogle: string | null = null;
+
+/** En Google el filtro es de estilo: las que no cumplen se esconden (el catastro sigue cargado). */
+function filtrarGoogle(mineral: string | null) {
+  filtroGoogle = mineral;
+  const capa = capasGoogle.concesiones;
+  if (!capa) return;
+  capa.setStyle((f: any) => ({
+    ...ESTILO_CONCESIONES_GOOGLE,
+    visible: !filtroGoogle || cumpleFiltro({ clase: f.getProperty('clase'), minerales: f.getProperty('minerales') }, filtroGoogle),
+  }));
 }
 
 /** Los filtros originales de cada capa del catastro, para poder quitar el nuestro sin romper los suyos. */
@@ -1209,6 +1222,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
         m.flyTo({ center: o.centro, zoom: o.zoom, pitch: terreno3D ? 50 : m.getPitch(), curve: 1.5, duration: duracion(2600), essential: true });
       } else if (o.accion === 'filtrar') {
         aplicarFiltro(m, o.mineral);
+        filtroGoogle = o.mineral; // si se cambia a Google, sigue filtrado
         if (o.mineral) {
           const r = resumenFiltro(o.mineral);
           setFiltro({ mineral: o.mineral, n: r.n });
@@ -1257,6 +1271,19 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
       } else if (o.accion === 'lugar') {
         g.setCenter({ lat: o.centro[1], lng: o.centro[0] });
         g.setZoom(Math.round(o.zoom));
+      } else if (o.accion === 'filtrar') {
+        // Lo mismo que en MapLibre: esconder las que no cumplen, contar, encuadrar y avisar (la
+        // confirmación hablada espera este aviso).
+        filtrarGoogle(o.mineral);
+        if (o.mineral) {
+          const r = resumenFiltro(o.mineral);
+          setFiltro({ mineral: o.mineral, n: r.n });
+          window.dispatchEvent(new CustomEvent('electrum:filtrado', { detail: { mineral: o.mineral, n: r.n, etiqueta: etiquetaFiltro(o.mineral) } }));
+          if (r.encuadre && r.n) g.fitBounds(new G.LatLngBounds({ lat: r.encuadre[1], lng: r.encuadre[0] }, { lat: r.encuadre[3], lng: r.encuadre[2] }));
+        } else {
+          setFiltro(null);
+          window.dispatchEvent(new CustomEvent('electrum:filtrado', { detail: { mineral: null, n: 0 } }));
+        }
       }
     }
   }, [listo, motor]);

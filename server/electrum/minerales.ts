@@ -15,6 +15,7 @@
  */
 import { consulta, hayBase } from './db';
 import { capasPorRol } from './entorno';
+import { claseDeCapa, normalizarClase } from './tablero';
 
 import type { Mineral } from '../../lib/pedidos-mapa';
 export type { Mineral };
@@ -96,10 +97,10 @@ async function calcular(): Promise<Map<number, MineralesDeConcesion>> {
   const out = new Map<number, MineralesDeConcesion>();
   if (!hayBase()) return out;
   const capas = (await capasPorRol()).filter((c) => c.rol === 'ocurrencia').map((c) => c.id);
-  const base = await consulta<{ id: number; nombre: string; clase: string | null }>(
-    `SELECT id, nombre,
-            (SELECT a.v FROM jsonb_each_text(atributos) AS a(k, v) WHERE lower(a.k) = 'clasificac' LIMIT 1) AS clase
-       FROM concesion`
+  const base = await consulta<{ id: number; nombre: string; clase: string | null; capa: string | null }>(
+    `SELECT k.id, k.nombre, c.nombre AS capa,
+            (SELECT a.v FROM jsonb_each_text(k.atributos) AS a(k, v) WHERE lower(a.k) = 'clasificac' LIMIT 1) AS clase
+       FROM concesion k LEFT JOIN capa c ON c.id = k.capa_id`
   );
   const cerca = capas.length
     ? await consulta<{ id: number; txt: string | null }>(
@@ -123,9 +124,18 @@ async function calcular(): Promise<Map<number, MineralesDeConcesion>> {
     const oc = porOc.get(Number(f.id)) || [];
     const nom = mineralesEnNombre(f.nombre || '');
     const todos = [...new Set([...oc, ...nom])];
-    out.set(Number(f.id), { minerales: todos, porOcurrencia: oc, clase: f.clase ? String(f.clase).trim() : null });
+    out.set(Number(f.id), { minerales: todos, porOcurrencia: oc, clase: claseDeConcesion(f.clase, f.capa) });
   }
   return out;
+}
+
+/**
+ * La clase legible, como la cuenta el tablero: el .dbf perdió las tildes («Peque?a Min. No Met?lica»)
+ * y hay filas sin CLASIFICAC que solo se saben por la capa de la que vinieron.
+ */
+export function claseDeConcesion(clase: string | null | undefined, capa: string | null | undefined): string | null {
+  const c = normalizarClase(clase) ?? claseDeCapa(capa);
+  return c === 'Sin clase en la capa' ? null : c;
 }
 
 /** Los ids que cumplen el pedido (un mineral o una clase). */

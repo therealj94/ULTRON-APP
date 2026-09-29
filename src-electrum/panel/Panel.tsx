@@ -713,7 +713,9 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                         .filter((v: any) => v && RETRATOS[v.quien] && typeof v.texto === 'string' && v.texto.trim())
                         .map((v: any) => ({ quien: String(v.quien), texto: String(v.texto), nombre: RETRATOS[v.quien].nombre }))
                     : [];
-                  if (vozActivaRef.current && d.texto) {
+                  // En silencio la mesa igual se «dice»: hablarDialogo la lee al ritmo de lectura con
+                  // sus caras y subtítulos (voz.ts), sin sonido. Una respuesta de uno solo, no.
+                  if ((vozActivaRef.current || voces.length) && d.texto) {
                     vozEnCamino = true;
                     // `voz` trae las etiquetas de expresión de v4 que la pantalla no enseña.
                     const avisosVoz: Parameters<typeof hablar>[3] = {

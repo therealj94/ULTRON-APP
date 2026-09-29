@@ -545,11 +545,11 @@ function falloMapa(res: express.Response, que: string, e: any) {
 app.get('/api/electrum/lugar', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
   const q = String(req.query.q || '').trim().slice(0, 80);
   if (q.length < 2) return res.status(400).json({ error: 'Decime a qué lugar.', honesto: true });
+  // El lugar va primero; solo una concesión que se llama exactamente así le gana (como en garantizarMapa).
   const r = buscarLugar(q);
-  if (r) return res.json({ ok: true, tipo: 'lugar', lugar: r.lugar, otros: r.otros, fuente: 'GeoNames', honesto: true });
   try {
     const filas = await buscarConcesiones(q, 6);
-    const f = filas.length === 1 ? filas[0] : unicaExacta(filas, q);
+    const f = r ? unicaExacta(filas, q) : filas.length === 1 ? filas[0] : unicaExacta(filas, q);
     if (f) {
       const g = await geometriaDe(Number(f.id));
       if (g) return res.json({ ok: true, tipo: 'concesion', ui: { accion: 'volar', concesion_id: Number(f.id), nombre: f.nombre, centro: g.centro, encuadre: g.encuadre, geojson: g.geojson, resaltar: true }, honesto: true });
@@ -557,6 +557,7 @@ app.get('/api/electrum/lugar', exigirPlataforma('electrum'), limitar(60), async 
   } catch {
     /* sin base: solo lugares */
   }
+  if (r) return res.json({ ok: true, tipo: 'lugar', lugar: r.lugar, otros: r.otros, fuente: 'GeoNames', honesto: true });
   return res.json({ ok: false, error: `No encuentro «${q}» ni como lugar de Honduras ni como concesión.`, honesto: true });
 });
 
