@@ -25,6 +25,8 @@ const ZOOM_MAX = 8;
 const HUECO = 16; // entre páginas del PDF y contra los bordes
 
 type Vista = { z: number; x: number; y: number };
+/** Lo que se usa de un evento de puntero (sin depender de los tipos de React, que el CI no instala). */
+type Puntero = { pointerId: number; clientX: number; clientY: number; target: EventTarget | null };
 type Pagina = { ancho: number; alto: number; lienzo: HTMLCanvasElement; pag: PDFPageProxy };
 
 /** Lo que mide el contenido a zoom 1: la imagen ajustada a la pantalla, o la columna de páginas. */
@@ -271,11 +273,11 @@ export function Visor({ fuente, puedeBajar, onCerrar, onBajar }: { fuente: Fuent
   const dedos = useRef(new Map<number, { x: number; y: number }>());
   const pellizco = useRef<{ d: number; z: number } | null>(null);
   const ultimoToque = useRef(0);
-  const local = (e: React.PointerEvent) => {
+  const local = (e: Puntero) => {
     const r = marco.current!.getBoundingClientRect();
     return { x: e.clientX - r.left, y: e.clientY - r.top };
   };
-  const bajo = (e: React.PointerEvent) => {
+  const bajo = (e: Puntero) => {
     (e.target as Element).setPointerCapture?.(e.pointerId);
     dedos.current.set(e.pointerId, local(e));
     if (dedos.current.size === 2) {
@@ -291,7 +293,7 @@ export function Visor({ fuente, puedeBajar, onCerrar, onBajar }: { fuente: Fuent
       } else ultimoToque.current = ahora;
     }
   };
-  const mueve = (e: React.PointerEvent) => {
+  const mueve = (e: Puntero) => {
     const antes = dedos.current.get(e.pointerId);
     if (!antes) return;
     const p = local(e);
@@ -306,7 +308,7 @@ export function Visor({ fuente, puedeBajar, onCerrar, onBajar }: { fuente: Fuent
       poner({ ...v, x: v.x + p.x - antes.x, y: v.y + p.y - antes.y });
     }
   };
-  const sube = (e: React.PointerEvent) => {
+  const sube = (e: Puntero) => {
     dedos.current.delete(e.pointerId);
     if (dedos.current.size < 2) pellizco.current = null;
   };
@@ -397,7 +399,9 @@ export function Visor({ fuente, puedeBajar, onCerrar, onBajar }: { fuente: Fuent
             )}
             {pdf &&
               paginas.map((p, i) => (
-                <LienzoPagina key={i} pagina={p} ancho={base.w} />
+                <div key={i}>
+                  <LienzoPagina pagina={p} ancho={base.w} />
+                </div>
               ))}
           </div>
         )}
