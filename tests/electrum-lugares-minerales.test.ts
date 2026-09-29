@@ -62,10 +62,14 @@ test('la clase del catastro se repara (tildes perdidas) y, sin CLASIFICAC, sale 
     [3, { minerales: [], porOcurrencia: [], clase: claseDeConcesion(null, 'Concesiones No Metálicas') }],
     [4, { minerales: [], porOcurrencia: [], clase: claseDeConcesion('', 'Concesiones Metalicas') }],
     [5, { minerales: [], porOcurrencia: [], clase: claseDeConcesion(null, 'Solicitudes') }],
+    // Como llega en producción: el carácter de reemplazo en vez de la tilde.
+    [6, { minerales: [], porOcurrencia: [], clase: claseDeConcesion('No Met\uFFFDlica', null) }],
+    [7, { minerales: [], porOcurrencia: [], clase: claseDeConcesion('Met\uFFFDlica', null) }],
   ]);
   assert.equal(datos.get(5)!.clase, null);
-  assert.deepEqual(idsQueCumplen(datos, 'metalicas'), [2, 4]);
-  assert.deepEqual(idsQueCumplen(datos, 'no metalicas'), [1, 3]);
+  assert.deepEqual(idsQueCumplen(datos, 'metalicas'), [2, 4, 7]);
+  assert.deepEqual(idsQueCumplen(datos, 'no metalicas'), [1, 3, 6]);
+  assert.equal(datos.get(6)!.clase, 'No Metálica');
 });
 
 test('se habla de UNA concesión cuando las herramientas trajeron un solo id', () => {

@@ -61,11 +61,13 @@ export type Tablero = {
 export function normalizarClase(v: string | null | undefined): string | null {
   const t = String(v || '').trim();
   if (!t) return null;
+  // La letra perdida llega como «?» o como el carácter de reemplazo «\uFFFD» (visto en producción el
+  // 29-09: «No Met\uFFFDlica», 457 concesiones), según por dónde pasó el .dbf.
   const arreglado = t
-    .replace(/Peque\?a/gi, 'Pequeña')
-    .replace(/Miner\?a/gi, 'Minería')
-    .replace(/Met\?lica/gi, 'Metálica')
-    .replace(/Pr\?stamo/gi, 'Préstamo')
+    .replace(/Peque[?\uFFFD]a/gi, 'Pequeña')
+    .replace(/Miner[?\uFFFD]a/gi, 'Minería')
+    .replace(/Met[?\uFFFD]lica/gi, 'Metálica')
+    .replace(/Pr[?\uFFFD]stamo/gi, 'Préstamo')
     .replace(/\bMin\.\s/gi, 'Minería ')
     .replace(/\s+/g, ' ');
   return arreglado.replace(/(^|\s)(\S)/g, (_m, e, c) => e + c.toUpperCase()).replace(/\bDe\b/g, 'de');
