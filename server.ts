@@ -19,6 +19,7 @@ import { construirMensajes, extraerPython } from './lib/qwen';
 import { extraerPedidoHerramienta, quitarLineaPedido, resolverPedido } from './lib/harness';
 import { notaDeVoz, pideNotaDeVoz } from './lib/voz';
 import { iniciarCentinela } from './lib/centinela';
+import { iniciarRevisionCampana } from './lib/campana-respuestas';
 import { clave, fotoBoveda, guardarCaja } from './lib/boveda';
 import { capturaPagina, verImagen, vistaFallida, NO_PUDE_VER } from './lib/vision';
 import { presupuesto, PRESUPUESTO_OIDO_MS, PRESUPUESTO_VISION_MS } from './lib/presupuesto';
@@ -2647,6 +2648,8 @@ async function startServer() {
       console.log('[electrum] bot apagado: falta ELECTRUM_BOT_TOKEN o ELECTRUM_WEBHOOK_SECRET.');
     }
     iniciarCentinela(180_000);
+    // Cada mañana a las 7:00 de Honduras, quién contestó el correo de la campaña SFSP.
+    if (ES_ULTRON) console.log('[AU-RA] campaña SFSP', iniciarRevisionCampana());
     cargarSesionesCerradas()
       .then((d) => console.log('[AU-RA] sesiones', d))
       .catch((e) => console.warn('[AU-RA] sesiones', String(e?.message || e).slice(0, 160)));
