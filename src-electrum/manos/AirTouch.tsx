@@ -260,6 +260,9 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
         }
         if (!detector) throw new Error('sin detector');
       } catch {
+        // Sin detector Air touch no sirve: se suelta la cámara (y su luz de «grabando»).
+        flujo?.getTracks().forEach((t) => t.stop());
+        flujo = null;
         if (vivo) onEstadoRef.current('error');
         return;
       }

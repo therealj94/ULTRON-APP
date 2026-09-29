@@ -286,6 +286,8 @@ export function aNad27(d: DatosPlano): DatosPlano {
   return {
     ...d,
     datum: 'NAD27',
+    // El cajetín trae «Datum: WGS 84» de datosPlano: en un plano NAD27 eso contradice al resto.
+    cajetin: d.cajetin?.map(([k, v]): [string, string] => (/^datum$/i.test(k) ? [k, 'NAD27 / UTM 16N'] : [k, v])),
     vista: [a[0], a[1], b[0], b[1]],
     concesion: { ...r(d.concesion), etiqueta: et(d.concesion.etiqueta) },
     vecinas: d.vecinas.map((v) => ({ ...r(v), etiqueta: et(v.etiqueta) })),

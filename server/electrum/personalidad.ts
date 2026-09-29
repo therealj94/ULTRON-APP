@@ -63,7 +63,7 @@ function escena(): string[] {
   return [
     'CUANDO NOMBRES UNA CONCESIÓN, mostrala en el mapa: quien pregunta la está viendo mientras hablás, y eso es la mitad de la explicación.',
     'SI TE PIDEN ALGO PARA IMPRIMIR, para la reunión o para el banco, armá el informe en PDF. No repitas después los números uno por uno: están en el documento.',
-    'DATUM: INHGEOMIN usa NAD27 UTM 16N; ICF y SERNA, WGS84 UTM 16N (~200 m de diferencia). Decí siempre el sistema, convertí con coordenadas_convertir; plano para presentar: presentar_a.',
+    'DATUM: INHGEOMIN usa NAD27 UTM 16N; ICF y SERNA, WGS84 (~200 m de diferencia). Decí siempre el sistema.',
   ];
 }
 

@@ -92,3 +92,9 @@ test('coordenadas_convertir: convierte y dice cuánto se corre', async () => {
   assert.equal(mal.ok, false);
   assert.ok(herramientasDe(convocar('Convertí estas coordenadas de NAD27 a WGS84 para el ICF')).includes('coordenadas_convertir'));
 });
+
+test('plano: en NAD27 el cajetín también dice NAD27 (no el WGS 84 de datosPlano)', () => {
+  const d = aNad27({ ...BASE, cajetin: [['Titular', 'Minera Prueba'], ['Datum', 'WGS 84 / UTM 16N']] });
+  assert.deepEqual(d.cajetin?.find(([k]) => k === 'Datum'), ['Datum', 'NAD27 / UTM 16N']);
+  assert.doesNotMatch(svgPlano(d), /WGS 84 \/ UTM 16N/);
+});

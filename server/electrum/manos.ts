@@ -213,14 +213,16 @@ const catastro_resumen: Herramienta = {
 const catastro_contar: Herramienta = {
   nombre: 'catastro_contar',
   descripcion:
-    'Cuenta concesiones con filtros: todo «¿cuántas…?» con condición. No digas que no hay sin contar aquí.',
+    'Cuenta concesiones con filtros. No digas que no hay sin contar aquí.',
   esquema: {
     type: 'object',
     properties: {
       estado: { type: 'string', description: 'exploración, explotación, solicitud, vigentes o literal' },
       clase: { type: 'string', description: 'Metálica, No Metálica…' },
       departamento: { type: 'string', description: 'Departamento' },
+      municipio: { type: 'string', description: 'Municipio' },
       mineral: { type: 'string', description: 'Mineral' },
+      titular: { type: 'string', description: 'Titular' },
     },
   },
   plataformas: ['electrum'],
@@ -293,8 +295,9 @@ const coordenadas_convertir: Herramienta = {
         description: 'UTM [este, norte] en m; geográficas [lon, lat] en grados',
         items: { type: 'array', items: { type: 'number' } },
       },
-      desde: { type: 'string', description: '«NAD27 UTM», «WGS84 geográficas»…' },
+      desde: { type: 'string', description: 'NAD27/WGS84, UTM o geográficas' },
       hacia: { type: 'string', description: 'Igual que desde' },
+      presentar_a: { type: 'string', description: 'O el sistema de esa institución', enum: ['INHGEOMIN', 'ICF', 'SERNA'] },
     },
     required: ['puntos', 'desde'],
   },
@@ -403,8 +406,8 @@ const concesion_entorno: Herramienta = {
 /** Cómo se nombra una zona en las herramientas de geología: la concesión, una capa, un municipio o un punto. */
 const ESQUEMA_ZONA = {
   concesion_id: { type: 'integer', description: 'Id (de catastro_buscar)' },
-  nombre: { type: 'string', description: 'Nombre o expediente, sin id' },
-  capa: { type: 'string', description: 'Capa cargada que es la zona («Tule»)' },
+  nombre: { type: 'string', description: 'Nombre o expediente' },
+  capa: { type: 'string', description: 'Capa cargada (la zona)' },
   municipio: { type: 'string', description: 'Municipio' },
   lon: { type: 'number', description: 'Longitud (negativa) de un punto' },
   lat: { type: 'number', description: 'Latitud de un punto' },
@@ -431,7 +434,7 @@ function zonaDe(a: Record<string, unknown>): Zona {
 const geologia_zona: Herramienta = {
   nombre: 'geologia_zona',
   descripcion:
-    'Geología de una zona: rocas con % de área, intrusivos, fallas y rumbos, falla activa cercana, placas, tractos USGS, yacimientos cercanos, leyes JICA e indicios de potencial. Usala antes de opinar sobre geología o potencial; citá cifras tal cual.',
+    'Geología de una zona: rocas y % de área, intrusivos, fallas, placas, tractos USGS, yacimientos, leyes JICA e indicios. Usala antes de opinar; citá cifras tal cual.',
   esquema: { type: 'object', properties: ESQUEMA_ZONA },
   plataformas: ['electrum'],
   msMaximo: 20_000,

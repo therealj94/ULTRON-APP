@@ -568,6 +568,10 @@ export default function App() {
   }, [puerta, usuario]);
   // Apagar al salir.
   useEffect(() => () => oido.detener(), [oido]);
+  // Salir no desmonta la app (vuelve la pantalla de entrada): el micrófono se apaga igual.
+  useEffect(() => {
+    if (puerta !== 'abierta') oido.detener();
+  }, [puerta, oido]);
   // Un toque en cualquier lado despierta el audio que el navegador dejó en pausa.
   useEffect(() => {
     const t = () => {
@@ -882,7 +886,7 @@ export default function App() {
           />
           {/* El cuadro del recorrido vive DENTRO del mapa: se acomoda a él y no tapa la conversación. */}
           <Recorrido activo={recorrido} onTerminar={terminarRecorrido} controles={controlesRecorrido} fichaAbierta={!!tocado} modo={modoRecorrido} />
-          <AirTouch activo={manos} onEstado={setEstadoManos} />
+          <AirTouch activo={manos && puerta === 'abierta'} onEstado={setEstadoManos} />
           {preguntas && !recorrido && (
             <Preguntas
               cara={(f) => setFace(f)}
