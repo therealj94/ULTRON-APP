@@ -23,7 +23,7 @@ export const RETRATOS: Record<string, Rasgos> = {
 };
 
 /** Una cara en SVG. `boca` 0..1 la abre; el resto (parpadeo, mirada) es CSS. */
-function Cara({ quien, habla, boca }: { quien: string; habla: boolean; boca: React.RefObject<SVGEllipseElement | null> }) {
+function Cara({ quien, habla, boca }: { quien: string; habla: boolean; boca: { current: SVGEllipseElement | null } }) {
   const r = RETRATOS[quien] || RETRATOS.narrador;
   const c = r.color;
   const ojos = (
@@ -145,7 +145,9 @@ export function Retratos() {
     <div className="pointer-events-none fixed inset-x-0 top-16 z-[60] flex justify-center px-3" role="status" aria-label={`En conversación: ${participantes.map((q) => RETRATOS[q]?.nombre || q).join(', ')}`}>
       <div className="flex items-end gap-4 rounded-2xl border border-white/10 bg-black/65 px-4 py-3 shadow-[0_12px_40px_rgba(0,0,0,.55)] backdrop-blur-md md:gap-6">
         {participantes.map((q) => (
-          <Retrato key={q} quien={q} habla={escena.hablante === q} activo={!!escena.hablante} />
+          <div key={q}>
+            <Retrato quien={q} habla={escena.hablante === q} activo={!!escena.hablante} />
+          </div>
         ))}
       </div>
       <style>{'@keyframes retrato-parpadeo{0%,92%,100%{transform:scaleY(1)}95%{transform:scaleY(.1)}}.retrato-ojos{animation:retrato-parpadeo 4.2s infinite}'}</style>
