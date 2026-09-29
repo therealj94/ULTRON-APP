@@ -15,6 +15,7 @@
  * del texto, LOGOUT): cinco órdenes no justifican una dependencia más en el servidor.
  */
 
+import net from 'node:net';
 import tls from 'node:tls';
 import { clave } from './boveda';
 
@@ -149,7 +150,7 @@ const MESES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'O
 const fechaImap = (d: Date) => `${d.getUTCDate()}-${MESES[d.getUTCMonth()]}-${d.getUTCFullYear()}`;
 const citar = (s: string) => `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
-class Imap {
+export class Imap {
   private sock!: tls.TLSSocket;
   private buf = '';
   private n = 0;
@@ -159,9 +160,12 @@ class Imap {
   private fallar: ((e: Error) => void) | null = null;
   private caido: Error | null = null;
 
-  async abrir(host: string, puerto: number, espera = 30_000) {
+  // `seguro` en falso solo en las pruebas: un servidor local sin TLS.
+  async abrir(host: string, puerto: number, espera = 30_000, seguro = true) {
     await new Promise<void>((ok, mal) => {
-      this.sock = tls.connect({ host, port: puerto, servername: host }, () => ok());
+      this.sock = (seguro
+        ? tls.connect({ host, port: puerto, servername: host }, () => ok())
+        : net.connect({ host, port: puerto }, () => ok())) as tls.TLSSocket;
       this.sock.setTimeout(espera, () => this.sock.destroy(new Error('IMAP sin respuesta')));
       const caer = (e: Error) => { this.caido ??= e; mal(e); this.fallar?.(e); };
       this.sock.on('error', caer);
@@ -187,7 +191,11 @@ class Imap {
     const tag = `a${++this.n}`;
     this.sock.write(`${tag} ${texto}\r\n`);
     const r = await this.hasta(new RegExp(`^${tag} (OK|NO|BAD)`, 'm'));
-    if (!new RegExp(`^${tag} OK`, 'm').test(r)) throw new Error(`IMAP ${texto.split(' ')[0]}: ${r.split('\n').pop()?.slice(0, 120)}`);
+    if (!new RegExp(`^${tag} OK`, 'm').test(r)) {
+      // La línea con la etiqueta dice el motivo («[AUTHENTICATIONFAILED] Authentication failed.»).
+      const motivo = r.split(/\r?\n/).find((l) => l.startsWith(`${tag} `))?.slice(tag.length + 1) || 'sin motivo';
+      throw new Error(`IMAP ${texto.split(' ')[0]}: ${motivo.slice(0, 120)}`);
+    }
     return r;
   }
 
