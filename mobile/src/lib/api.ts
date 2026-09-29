@@ -10,6 +10,7 @@ import type { Mode, SessionUser } from '../config';
 import { normalizarEmocion, pelarEtiqueta, type Emocion } from './emocion';
 import { loadCreds, loadMesaToken, saveMesaToken } from './storage';
 import { quitarExpresiones } from './expresiones';
+import { avatarActual } from '../avatares/actual';
 
 let refreshing: Promise<boolean> | null = null;
 
@@ -126,6 +127,29 @@ export async function loginClave(correo: string, clave: string) {
   return data;
 }
 
+/**
+ * «Olvidé mi clave»: el servidor manda al correo un enlace de 30 minutos (el mismo de la web). Siempre
+ * contesta lo mismo, exista o no la cuenta, para no revelar quién tiene acceso.
+ */
+export async function olvideClave(correo: string): Promise<string> {
+  const data = await api<{ message?: string }>('/api/ultron/clave/olvide', { method: 'POST', body: JSON.stringify({ correo: String(correo).trim().toLowerCase() }) }, 15_000, false);
+  return data.message || 'Si ese correo tiene acceso, te llegará un enlace para poner una contraseña nueva.';
+}
+
+/**
+ * «Crear cuenta»: en AU-RA nadie entra solo. Se manda una solicitud y José (o quien apruebe) la
+ * revisa; si la aprueba, llega un correo para crear la contraseña.
+ */
+export async function pedirCuenta(nombre: string, correo: string, motivo: string): Promise<string> {
+  const data = await api<{ message?: string }>(
+    '/api/ultron/cuentas/solicitar',
+    { method: 'POST', body: JSON.stringify({ nombre: nombre.trim(), correo: String(correo).trim().toLowerCase(), motivo: motivo.trim() }) },
+    15_000,
+    false
+  );
+  return data.message || 'Recibimos tu solicitud. Cuando sea revisada te escribiremos a ese correo.';
+}
+
 export async function logoutRemote() {
   try {
     await api('/api/ultron/salir', { method: 'POST', body: '{}' }, 6_000);
@@ -185,6 +209,8 @@ function turnoBody(opts: TurnoOpts) {
     memoria: opts.memoria || [],
     ...(opts.image ? { image: opts.image } : {}),
     ...(escena ? { escena } : {}),
+    // Con quién habla la persona: si es un Claudio, el cerebro contesta como él.
+    ...(avatarActual() !== 'aura' ? { avatar: avatarActual() } : {}),
   });
 }
 
@@ -323,8 +349,10 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
 }
 
 /** GET /api/tts?text=&emocion=&performance= → audio/wav de Voicebox (cabecera X-Ultron-TTS con el motor). Sin `engine`. */
-export function ttsUrl(text: string, performance: 'speak' | 'sing', emocion: Emocion = 'neutral') {
+export function ttsUrl(text: string, performance: 'speak' | 'sing', emocion: Emocion = 'neutral', avatar = 'aura') {
   const q = new URLSearchParams({ text, performance, emocion });
+  // Solo si no es AU-RA: así las URLs de ella quedan iguales que antes (y su caché también).
+  if (avatar !== 'aura') q.set('avatar', avatar);
   return `${API_BASE}/api/tts?${q.toString()}`;
 }
 

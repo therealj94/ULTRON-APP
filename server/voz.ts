@@ -23,7 +23,7 @@ import { leerWav, wavAMp3, type Pcm } from '../lib/mp3';
 import { trocearExpresiones } from '../lib/expresiones';
 import { adaptarPcm, empalmar, escribirWav, tomaDeExpresion } from './empalme';
 import type { Presupuesto } from '../lib/presupuesto';
-import { abrirEleven, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, modeloEleven, vozEleven } from './eleven';
+import { abrirEleven, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, modeloEleven, normalizarAvatar, vozEleven, type AvatarVoz } from './eleven';
 
 export type Performance = 'speak' | 'sing';
 
@@ -368,10 +368,11 @@ function pedidoEleven(o: {
   emocion: Emocion;
   performance: Performance;
   plataforma: 'ultron' | 'electrum';
+  avatar?: AvatarVoz;
   previo?: string;
   siguiente?: string;
 }): { voz: string; guion: string; clave: string; motor: string; estabilidad: number } | null {
-  const voz = o.performance === 'speak' ? vozEleven(o.plataforma) : null;
+  const voz = o.performance === 'speak' ? vozEleven(o.plataforma, o.avatar) : null;
   if (!voz || !elevenListo()) return null;
   // Dr Electrum habla como persona: alguna muletilla («bueno,», «este») en vez de dicción de locutor.
   const base = String(o.texto || '').slice(0, MAX_GUION);
@@ -437,18 +438,21 @@ export async function hablar(opts: {
   siguiente?: string;
   /** Saltarse ElevenLabs (la ruta en vivo ya lo intentó y falló): directo a Voicebox. */
   sinEleven?: boolean;
+  /** En la app de AU-RA: quién habla (ella o uno de los Claudio). Decide la voz. */
+  avatar?: AvatarVoz | string;
 }): Promise<Habla | null> {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
   const emocion = normalizarEmocion(opts.emocion);
   const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
+  const avatar = plataforma === 'ultron' ? normalizarAvatar(opts.avatar) : 'aura';
 
   /*
    * Primero ElevenLabs, si esta plataforma tiene voz ahí (Dr Electrum sí; AU-RA solo si alguien
    * pone ELEVENLABS_VOZ_AURA). Aquí las marcas y la emoción SÍ suenan: v4 las entiende. Si no
    * contesta, sigue abajo el camino de siempre con Voicebox, sin que quien habla note nada.
    */
-  const xiPedido = opts.sinEleven ? null : pedidoEleven({ ...opts, performance, emocion, plataforma });
+  const xiPedido = opts.sinEleven ? null : pedidoEleven({ ...opts, performance, emocion, plataforma, avatar });
   if (xiPedido) {
     if (!opts.sinCache) {
       const hit = cacheGet(xiPedido.clave);
@@ -462,9 +466,14 @@ export async function hablar(opts: {
     }
   }
 
-  const partes = partesDe(String(opts.texto || '').slice(0, MAX_GUION), plataforma, emocion, performance);
+  /*
+   * Respaldo de los Claudio en Voicebox: la voz de hombre (Kokoro Alex), nunca la de AU-RA, y sin
+   * las tomas grabadas de risa o suspiro, que son de ella.
+   */
+  const claudio = avatar !== 'aura';
+  const partes = partesDe(String(opts.texto || '').slice(0, MAX_GUION), plataforma, emocion, performance).filter((p) => !claudio || p.tipo === 'habla');
   if (!partes.length) return null;
-  const perfil = vozDe(plataforma);
+  const perfil = claudio ? vozDe('electrum') : vozDe(plataforma);
   const key = claveVoz(perfil, partes);
   if (!opts.sinCache) {
     const hit = cacheGet(key);

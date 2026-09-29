@@ -34,9 +34,40 @@ export function modeloEleven(): string {
   return String(process.env.ELEVENLABS_MODELO || '').trim() || MODELO_ELEVEN;
 }
 
-/** La voz de ElevenLabs de cada plataforma, o null si esa plataforma no la usa. */
-export function vozEleven(plataforma: 'ultron' | 'electrum'): string | null {
+/**
+ * Los avatares de la app de AU-RA que no son ella. Cada uno con su voz: un personaje que cambia de
+ * cara pero sigue sonando a la de al lado se deshace al primer segundo de audio.
+ *   · Claudio (el zorro, retrato): «Charlee», joven, latino, juguetón (biblioteca de ElevenLabs).
+ *   · Claudio de pie (cuerpo entero): «Alejandro», joven, enérgico y amable.
+ * Se cambian sin tocar código con ELEVENLABS_VOZ_CLAUDIO y ELEVENLABS_VOZ_CLAUDIO_PIE.
+ */
+export const VOZ_CLAUDIO_ELEVEN = 'cQIBhnciTWugZAxX52uW';
+export const VOZ_CLAUDIO_PIE_ELEVEN = 'I1n8B4pOly0qmOu46LFX';
+
+export type AvatarVoz = 'aura' | 'claudio' | 'claudio-pie';
+
+export function normalizarAvatar(v: unknown): AvatarVoz {
+  // Solo un texto: un parámetro repetido en la URL llega como lista y no elige voz.
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return s === 'claudio' || s === 'claudio-pie' ? s : 'aura';
+}
+
+/**
+ * Lo que el cerebro necesita saber cuando en la mesa está un Claudio: su nombre y cómo es. Es el
+ * mismo asistente con otra cara y otra voz; si alguien pregunta, lo dice. Vacío con AU-RA: su
+ * personalidad ya es la de siempre y el prompt no crece.
+ */
+export function lineaAvatar(avatar: AvatarVoz): string {
+  if (avatar === 'aura') return '';
+  const cuerpo = avatar === 'claudio-pie' ? ' (se le ve de cuerpo entero, de pie)' : '';
+  return `AVATAR: en esta mesa te ven y te oyen como Claudio${cuerpo}, un zorro de lentes amarillos y suéter negro con la corona de Orden Global: curioso, cálido y bromista. Te llamas Claudio, no AU-RA; sabes y puedes lo mismo. Si preguntan, eres el asistente de la junta con otra cara y otra voz.`;
+}
+
+/** La voz de ElevenLabs de cada plataforma (y avatar), o null si no la usa. */
+export function vozEleven(plataforma: 'ultron' | 'electrum', avatar: AvatarVoz = 'aura'): string | null {
   if (plataforma === 'electrum') return String(process.env.ELEVENLABS_VOZ_ELECTRUM || '').trim() || VOZ_ELECTRUM_ELEVEN;
+  if (avatar === 'claudio') return String(process.env.ELEVENLABS_VOZ_CLAUDIO || '').trim() || VOZ_CLAUDIO_ELEVEN;
+  if (avatar === 'claudio-pie') return String(process.env.ELEVENLABS_VOZ_CLAUDIO_PIE || '').trim() || VOZ_CLAUDIO_PIE_ELEVEN;
   return String(process.env.ELEVENLABS_VOZ_AURA || '').trim() || null;
 }
 

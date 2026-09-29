@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { miga, reportarEstado } from '../lib/reporte';
-import { Alert, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -45,9 +45,15 @@ import {
   type SttEngine,
 } from '../lib/storage';
 import { playSfx, preloadSfx, setSfxEnabled } from '../lib/sfx';
-import { StreamSpeaker, setSpeechLevelListener, speak, speakClip, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
+import { StreamSpeaker, setAvatarVoz, setSpeechLevelListener, speak, speakClip, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
 import { CLIP_IDS, CLIP_TEXT, bankKey, type ClipId } from '../lib/voiceBank';
 import { quitarExpresiones } from '../lib/expresiones';
+import { ClaudioRetrato } from '../avatares/ClaudioRetrato';
+import { ClaudioDePie } from '../avatares/ClaudioDePie';
+import { SelectorAvatar } from '../avatares/SelectorAvatar';
+import { avatarPorId, distribucion, type AvatarId } from '../avatares/catalogo';
+import { ChatMesa } from '../components/ChatMesa';
+import { orientar } from '../lib/orientacion';
 
 type Props = {
   user: SessionUser;
@@ -128,17 +134,23 @@ export function DeskScreen({ user, onLogout }: Props) {
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
   const [objects, setObjects] = useState<string[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  /** El selector de avatar abierto (la primera vez es la bienvenida; después, desde el menú). */
+  const [eligiendo, setEligiendo] = useState<'primera' | 'menu' | null>(null);
   // La mesa no se apaga sola: si la pantalla se bloquea, deja de escuchar y de verte.
   useKeepAwake('mesa');
   // Botón atrás de Android: cierra el menú; con el menú cerrado hace lo de siempre.
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (eligiendo === 'menu') {
+        setEligiendo(null);
+        return true;
+      }
       if (!menuOpen) return false;
       setMenuOpen(false);
       return true;
     });
     return () => sub.remove();
-  }, [menuOpen]);
+  }, [menuOpen, eligiendo]);
   const [catalogRequest, setCatalogRequest] = useState(0);
   const [attack, setAttack] = useState<'blaster' | 'saber' | null>(null);
   const [irritation, setIrritation] = useState(0);
@@ -153,6 +165,12 @@ export function DeskScreen({ user, onLogout }: Props) {
   const [atencion, setAtencion] = useState(0);
   const [verPersona, setVerPersona] = useState(false);
   const [visionMotor, setVisionMotor] = useState<MotorVision>('ninguno');
+  /** Con quién se habla: AU-RA (los ojos), Claudio o Claudio de pie. null hasta leer los ajustes. */
+  const [avatar, setAvatar] = useState<AvatarId | null>(null);
+  /** Lo que se dijo en la mesa, para el chat del modo cuadro (vertical). */
+  const [mensajes, setMensajes] = useState<Turn[]>([]);
+  const { width: anchoPantalla, height: altoPantalla } = useWindowDimensions();
+  const horizontal = anchoPantalla >= altoPantalla;
 
   const speakingRef = useRef(false);
   const handling = useRef(false);
@@ -251,7 +269,9 @@ export function DeskScreen({ user, onLogout }: Props) {
   }, [bubble, bubbleOp]);
 
   const logUltron = useCallback((text: string) => {
-    historial.current = [...historial.current, { rol: 'ultron' as const, texto: quitarExpresiones(text).trim() }].slice(-12);
+    const texto = quitarExpresiones(text).trim();
+    historial.current = [...historial.current, { rol: 'ultron' as const, texto }].slice(-12);
+    if (texto) setMensajes((m) => [...m, { rol: 'ultron' as const, texto }].slice(-80));
   }, []);
 
   /** Fin de cualquier audio: mic de vuelta, cara en reposo, HUD según mute real (ref, no closure). */
@@ -651,6 +671,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       lastUserAt.current = Date.now();
       await stopSpeaking();
       historial.current = [...historial.current, { rol: 'usuario' as const, texto: cmd }].slice(-12);
+      setMensajes((m) => [...m, { rol: 'usuario' as const, texto: cmd }].slice(-80));
 
       const enConocer = modeRef.current === 'CONOCER' && conocerIdxRef.current >= 0 && conocerIdxRef.current < CONOCER_QUESTIONS.length;
       const intent = interpretar(cmd, { dormido: presenceRef.current === 'sleep', enConocer });
@@ -1034,6 +1055,10 @@ export function DeskScreen({ user, onLogout }: Props) {
       setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx });
       setPostura(s.postura === 'sentada' ? 'sentada' : 'pie');
       setCara(s.cara === 'sala' ? 'sala' : 'anillos');
+      setAvatar(s.avatar);
+      setAvatarVoz(s.avatar);
+      // La bienvenida arranca en la orientación del avatar (Claudio de pie, parado: vertical).
+      void orientar(avatarPorId(s.avatar).completa === 'vertical' ? 'vertical' : 'horizontal');
       setSfxEnabled(s.sfx);
       proactiveRef.current = s.proactive;
       if (s.sttEngine !== currentSttEngine()) await setSttEngine(s.sttEngine);
@@ -1051,9 +1076,16 @@ export function DeskScreen({ user, onLogout }: Props) {
         setStatus('listening');
       } else setStatus(micOk ? 'muted' : 'offline');
 
-      handling.current = true;
-      await say(greetingFor(user.name), 'HAPPY', { emocion: 'feliz' });
-      handling.current = false;
+      if (!s.avatarElegido) {
+        // Primera vez: la bienvenida pregunta con quién hablar; el saludo lo da el avatar elegido.
+        setEligiendo('primera');
+      } else {
+        handling.current = true;
+        await say(greetingFor(user.name), 'HAPPY', { emocion: 'feliz' });
+        handling.current = false;
+        // Después del saludo la mesa sigue al teléfono: en vertical, cuadro con la cara y el chat.
+        void orientar('libre');
+      }
 
       if (s.visionEnabled && camPerm && !camPerm.granted && camPerm.canAskAgain !== false) {
         Alert.alert('Cámara', '¿Permitir cámara para mirarte e identificar lo que hay en la mesa?', [
@@ -1200,6 +1232,27 @@ export function DeskScreen({ user, onLogout }: Props) {
     []
   );
 
+  /** Elegir avatar (bienvenida o menú): su voz desde ya, se guarda y se presenta él mismo. */
+  const elegirAvatar = async (id: AvatarId) => {
+    const primera = eligiendo === 'primera';
+    setEligiendo(null);
+    setMenuOpen(false);
+    await stopSpeaking();
+    setAvatar(id);
+    setAvatarVoz(id);
+    await saveSettings({ avatar: id, avatarElegido: true });
+    const a = avatarPorId(id);
+    if (primera) {
+      await orientar(a.completa === 'vertical' ? 'vertical' : 'horizontal');
+      handling.current = true;
+      await say(`${greetingFor(user.name)} ${a.presentacion}`, 'HAPPY', { emocion: 'feliz' });
+      handling.current = false;
+      void orientar('libre');
+    } else {
+      void say(a.presentacion, 'HAPPY', { emocion: 'feliz' });
+    }
+  };
+
   const toggleMute = async () => {
     if (!micMutedRef.current) {
       await muteMic();
@@ -1270,7 +1323,14 @@ export function DeskScreen({ user, onLogout }: Props) {
   };
   const probarVoz = () => {
     setMenuOpen(false);
-    void say(`Así sueno, ${user.name}. Una sola voz: la mía, en mi propio servidor. Puedo contarte un chiste o cantarte una de las mías; tú dime.`, 'HAPPY', { emocion: 'feliz' });
+    const a = avatarPorId(avatar || 'aura');
+    void say(
+      a.id === 'aura'
+        ? `Así sueno, ${user.name}. Una sola voz: la mía, en mi propio servidor. Puedo contarte un chiste o cantarte una de las mías; tú dime.`
+        : `Así sueno, ${user.name}. Soy ${a.nombre}, con mi propia voz. Pregúntame lo que quieras.`,
+      'HAPPY',
+      { emocion: 'feliz' }
+    );
   };
 
   const sendDraft = () => {
@@ -1321,8 +1381,72 @@ export function DeskScreen({ user, onLogout }: Props) {
   const enSala = vista === 'sala';
   nivelVisible.current = vista === 'clasica';
 
+  // Qué avatar se ve. Los Claudio son fotos animadas; AU-RA, sus ojos (o la sala) de siempre.
+  const avatarId: AvatarId = avatar || 'aura';
+  const reparto = distribucion(avatarId, horizontal);
+  const enCuadro = reparto.tipo === 'cuadro';
+  const caraAura =
+    vista === 'sala' && postura ? (
+      <SalaAura
+        face={face}
+        emocion={emocion}
+        postura={postura}
+        pedido={pedido}
+        speechLevelSource={suscribirNivelVoz}
+        mirada={{ x: gaze.x, y: gaze.y, activa: verPersona }}
+        onTocar={onTocarSala}
+        onDeslizar={onDeslizarSala}
+        onFallo={onFalloSala}
+      />
+    ) : vista === 'anillos' ? (
+      <CaraSegura
+        face={face}
+        acento={mode === 'GOLD' ? '#FFD166' : undefined}
+        gazeX={gaze.x}
+        gazeY={gaze.y}
+        speechLevelSource={suscribirNivelVoz}
+        online={online}
+        pedido={pedido}
+        onTap={onTap}
+        onLongPress={onLongPress}
+        onDragGaze={onDragGaze}
+        onDragEnd={onDragEnd}
+        onRub={onRub}
+        onSwipe={onSwipe}
+        onFallo={onFalloSkia}
+      />
+    ) : vista === 'clasica' ? (
+      <UltronFace
+        face={face}
+        mode={mode}
+        gazeX={gaze.x}
+        gazeY={gaze.y}
+        level={level}
+        speechLevelSource={suscribirNivelVoz}
+        attention={atencion}
+        attack={attack}
+        irritation={irritation}
+        winkSide={winkSide}
+        onTap={onTap}
+        onLongPress={onLongPress}
+        onDragGaze={onDragGaze}
+        onDragEnd={onDragEnd}
+        onRub={onRub}
+        onSwipe={onSwipe}
+      />
+    ) : null;
+  const caraNode =
+    avatarId === 'claudio' ? (
+      <ClaudioRetrato face={face} gazeX={gaze.x} gazeY={gaze.y} speechLevelSource={suscribirNivelVoz} onTap={() => onTap('face', 0, 0)} onLongPress={onLongPress} />
+    ) : avatarId === 'claudio-pie' ? (
+      <ClaudioDePie face={face} gazeX={gaze.x} speechLevelSource={suscribirNivelVoz} onTap={() => onTap('face', 0, 0)} onLongPress={onLongPress} />
+    ) : (
+      caraAura
+    );
+  const esClaudio = avatarId !== 'aura';
+
   return (
-    <View style={[styles.root, !enSala && styles.rootCara]}>
+    <View style={[styles.root, !enSala && !esClaudio && styles.rootCara, esClaudio && styles.rootClaudio, enCuadro && { flexDirection: horizontal ? 'row' : 'column' }]}>
       <CamaraVision
         enabled={visionOn && !!camPerm?.granted}
         dormido={presence === 'sleep'}
@@ -1333,100 +1457,90 @@ export function DeskScreen({ user, onLogout }: Props) {
         onScene={onScene}
         onMotor={setVisionMotor}
       />
-      {vista === 'sala' && postura ? (
-        <SalaAura
-          face={face}
-          emocion={emocion}
-          postura={postura}
-          pedido={pedido}
-          speechLevelSource={suscribirNivelVoz}
-          mirada={{ x: gaze.x, y: gaze.y, activa: verPersona }}
-          onTocar={onTocarSala}
-          onDeslizar={onDeslizarSala}
-          onFallo={onFalloSala}
-        />
-      ) : vista === 'anillos' ? (
-        <CaraSegura
-          face={face}
-          acento={mode === 'GOLD' ? '#FFD166' : undefined}
-          gazeX={gaze.x}
-          gazeY={gaze.y}
-          speechLevelSource={suscribirNivelVoz}
-          online={online}
-          pedido={pedido}
-          onTap={onTap}
-          onLongPress={onLongPress}
-          onDragGaze={onDragGaze}
-          onDragEnd={onDragEnd}
-          onRub={onRub}
-          onSwipe={onSwipe}
-          onFallo={onFalloSkia}
-        />
-      ) : vista === 'clasica' ? (
-        <UltronFace
-          face={face}
-          mode={mode}
-          gazeX={gaze.x}
-          gazeY={gaze.y}
-          level={level}
-          speechLevelSource={suscribirNivelVoz}
-          attention={atencion}
-          attack={attack}
-          irritation={irritation}
-          winkSide={winkSide}
-          onTap={onTap}
-          onLongPress={onLongPress}
-          onDragGaze={onDragGaze}
-          onDragEnd={onDragEnd}
-          onRub={onRub}
-          onSwipe={onSwipe}
-        />
-      ) : null}
+      {enCuadro ? (
+        <>
+          <View
+            style={[
+              styles.cuadro,
+              esClaudio && { backgroundColor: T.fondo },
+              horizontal ? { width: Math.round(anchoPantalla * 0.42) } : { height: Math.round(Math.min(anchoPantalla * 0.95, altoPantalla * 0.44)) },
+            ]}
+          >
+            {caraNode}
+          </View>
+          <View style={{ flex: 1 }}>
+            <ChatMesa
+              mensajes={mensajes}
+              nombreAvatar={avatarPorId(avatarId).nombre}
+              estado={statusLabel}
+              colorEstado={dotColor}
+              parcial={partial}
+              borrador={draft}
+              micSilenciado={micMuted}
+              escuchando={listening}
+              onBorrador={setDraft}
+              onEnviar={sendDraft}
+              onMic={() => void toggleMute()}
+              onMenu={() => setMenuOpen(true)}
+              onCambiarAvatar={() => setEligiendo('menu')}
+            />
+          </View>
+        </>
+      ) : (
+        caraNode
+      )}
 
-      <View pointerEvents="none" style={styles.hud}>
-        <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
-        <Text style={styles.hudText}>
-          {statusLabel}
-          {verPersona ? (visionMotor === 'mlkit' ? ' · te veo' : ' · alguien') : ''}
-          {!online ? ' · sin cerebro' : ''}
-        </Text>
-      </View>
-
-      {!!partial && (
-        <View pointerEvents="none" style={styles.partialWrap}>
-          <Text numberOfLines={2} style={styles.partialText}>
-            {partial}
+      {!enCuadro && (
+        <>
+        <View pointerEvents="none" style={styles.hud}>
+          <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
+          <Text style={styles.hudText}>
+            {statusLabel}
+            {verPersona ? (visionMotor === 'mlkit' ? ' · te veo' : ' · alguien') : ''}
+            {!online ? ' · sin cerebro' : ''}
           </Text>
         </View>
-      )}
 
-      {!!bubble && (
-        <Animated.View pointerEvents="none" style={[styles.bubbleFloat, enSala ? styles.bubbleArriba : styles.bubbleAbajo, { opacity: bubbleOp }]}>
-          <View style={styles.bubbleCard}>
-            <Text numberOfLines={3} style={styles.bubbleText}>
-              {bubble}
+        {!!partial && (
+          <View pointerEvents="none" style={styles.partialWrap}>
+            <Text numberOfLines={2} style={styles.partialText}>
+              {partial}
             </Text>
           </View>
-        </Animated.View>
+        )}
+
+        {!!bubble && (
+          <Animated.View pointerEvents="none" style={[styles.bubbleFloat, enSala ? styles.bubbleArriba : styles.bubbleAbajo, { opacity: bubbleOp }]}>
+            <View style={styles.bubbleCard}>
+              <Text numberOfLines={3} style={styles.bubbleText}>
+                {bubble}
+              </Text>
+            </View>
+          </Animated.View>
+        )}
+
+        <View style={styles.controles} pointerEvents="box-none">
+          <Pressable
+            onPress={() => void toggleMute()}
+            accessibilityRole="button"
+            accessibilityLabel={micMuted ? 'Activar el micrófono' : 'Silenciar el micrófono'}
+            style={[styles.mic, !micMuted && styles.micAbierto, listening && !micMuted && styles.micOyendo]}
+          >
+            <Text style={[styles.micIcono, !micMuted && { color: T.sobrePrincipal }]}>{micMuted ? '🔇' : '🎙'}</Text>
+          </Pressable>
+          <Pressable onPress={() => setMenuOpen(true)} accessibilityRole="button" accessibilityLabel="Escribir y ajustes" style={styles.escribir}>
+            <Text style={styles.escribirTexto}>Escribir</Text>
+          </Pressable>
+          <Pressable onPress={() => setEligiendo('menu')} accessibilityRole="button" accessibilityLabel={`Avatar: ${avatarPorId(avatarId).nombre}. Tocar para cambiar`} style={styles.escribir}>
+            <Text style={styles.escribirTexto}>{avatarPorId(avatarId).nombre}</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.edgeZone} {...edgePan.panHandlers}>
+          <View pointerEvents="none" style={styles.edgeHint} />
+        </View>
+        </>
       )}
-
-      <View style={styles.controles} pointerEvents="box-none">
-        <Pressable
-          onPress={() => void toggleMute()}
-          accessibilityRole="button"
-          accessibilityLabel={micMuted ? 'Activar el micrófono' : 'Silenciar el micrófono'}
-          style={[styles.mic, !micMuted && styles.micAbierto, listening && !micMuted && styles.micOyendo]}
-        >
-          <Text style={[styles.micIcono, !micMuted && { color: T.sobrePrincipal }]}>{micMuted ? '🔇' : '🎙'}</Text>
-        </Pressable>
-        <Pressable onPress={() => setMenuOpen(true)} accessibilityRole="button" accessibilityLabel="Escribir y ajustes" style={styles.escribir}>
-          <Text style={styles.escribirTexto}>Escribir</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.edgeZone} {...edgePan.panHandlers}>
-        <View pointerEvents="none" style={styles.edgeHint} />
-      </View>
 
       <DeskMenu
         visible={menuOpen}
@@ -1504,18 +1618,39 @@ export function DeskScreen({ user, onLogout }: Props) {
         conSala={enSala}
         cara={cara ?? 'anillos'}
         onSetCara={cambiarCara}
+        avatar={avatarId}
+        onSetAvatar={(id) => void elegirAvatar(id)}
         caraClasica={vista === 'clasica'}
         postura={postura || 'pie'}
         onSetPostura={cambiarPostura}
       />
+
+      {eligiendo && (
+        <SelectorAvatar
+          nombre={user.name}
+          saludo={saludoPorHora()}
+          actual={avatarId}
+          onElegir={(id) => void elegirAvatar(id)}
+          onCerrar={eligiendo === 'menu' ? () => setEligiendo(null) : undefined}
+        />
+      )}
     </View>
   );
+}
+
+/** Buenos días / tardes / noches según la hora de Honduras (UTC−6, sin horario de verano). */
+function saludoPorHora(ahora = new Date()): string {
+  const h = (ahora.getUTCHours() + 24 - 6) % 24;
+  return h < 12 ? 'Buenos días' : h < 19 ? 'Buenas tardes' : 'Buenas noches';
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: T.fondo2 },
   // la cara de respaldo se dibuja sobre negro, como siempre
   rootCara: { backgroundColor: '#000' },
+  // Claudio va sobre el grafito de la marca, no sobre negro.
+  rootClaudio: { backgroundColor: T.fondo },
+  cuadro: { overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
   hud: {
     position: 'absolute',
     top: 12,

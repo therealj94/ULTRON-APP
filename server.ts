@@ -8,6 +8,7 @@ import { createServer as createViteServer } from 'vite';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
+import { lineaAvatar, normalizarAvatar } from './server/eleven';
 import { quitarExpresiones } from './lib/expresiones';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
@@ -1690,13 +1691,14 @@ function leerPeticionVoz(req: express.Request) {
     texto: String(fuente.text || fuente.texto || '').slice(0, 2400).trim(),
     emocion: normalizarEmocion(fuente.emocion),
     performance: String(fuente.performance || 'speak') === 'sing' ? ('sing' as const) : ('speak' as const),
+    avatar: normalizarAvatar(fuente.avatar),
   };
 }
 
 async function responderVoz(req: express.Request, res: express.Response) {
   const p = leerPeticionVoz(req);
   if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
-  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance });
+  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar });
   if (!out) return res.status(503).json({ error: 'Voz no disponible (Voicebox sin respuesta)', honesto: true });
   res.setHeader('Content-Type', out.contentType);
   res.setHeader('Cache-Control', out.cache ? 'private, max-age=3600' : 'no-store');
@@ -2108,7 +2110,7 @@ ${perfilActivo().conocimiento}
 ${promptAgente(clas.agente)}
 
 No finjas recuerdos: solo la memoria de ${quien ? nombreDe(quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.
-Modo de mesa pedido: ${mode}.
+Modo de mesa pedido: ${mode}.${canal === 'mesa' && lineaAvatar(normalizarAvatar(body?.avatar)) ? `\n${lineaAvatar(normalizarAvatar(body?.avatar))}` : ''}
 HECHOS:\n${hechos.join('\n') || '(ninguno)'}\n${hechosCatalogo()}\n${promptMemoria(quienMem)}`;
 
   const compuesto = construirMensajes({ personalidad, user: mensajeHilo || message, canal, historial: hilo });

@@ -26,6 +26,8 @@ import type { Emocion } from './emocion';
 import { envolventeDeTexto, envolventeLibre, type EnvelopeKind } from './lipsync';
 import { CLIP_TEXT, PHRASE_TO_CLIP, REMOTE_CLIPS, VOICE_BANK, bankKey, type ClipId } from './voiceBank';
 import { soloExpresiones } from './expresiones';
+import { usaBancoDeVoz, type AvatarId } from '../avatares/catalogo';
+import { avatarActual, fijarAvatar } from '../avatares/actual';
 
 type Perf = 'speak' | 'sing';
 
@@ -40,6 +42,14 @@ export type SpeakCallbacks = {
 
 let current: Audio.Sound | null = null;
 let gen = 0;
+
+/**
+ * Quién habla. Los clips grabados del banco (saludos, risas, «aquí estoy») son de Dora: con un
+ * Claudio delante no se tocan, y todo se pide al servidor con su voz (`avatar` en /api/tts).
+ */
+export function setAvatarVoz(id: AvatarId) {
+  fijarAvatar(id);
+}
 const fileCache = new Map<string, string>();
 /**
  * Tope de la caché de audios: antes solo crecía (un mp3 por frase distinta, para siempre en la sesión y
@@ -166,6 +176,7 @@ export async function remoteClipAvailable(id: ClipId): Promise<boolean> {
 
 /** Fuente de un clip: asset local si está empaquetado; si no, remoto cuando el servidor lo sirve. */
 async function clipSource(id: ClipId): Promise<AVPlaybackSource | null> {
+  if (!usaBancoDeVoz(avatarActual())) return null;
   const local = VOICE_BANK[id];
   if (local !== undefined) return local;
   return (await remoteClipAvailable(id)) ? { uri: `${API_BASE}${REMOTE_CLIPS[id]}` } : null;
@@ -233,14 +244,15 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<
       if (src) return src;
     }
   }
-  const key = `${perf}|${emocion}|${text}`;
+  const avatar = avatarActual();
+  const key = `${avatar}|${perf}|${emocion}|${text}`;
   const hit = fileCache.get(key);
   if (hit) return { uri: hit };
   const headers = { Accept: 'audio/*', ...(await sessionHeaders()) };
   for (let attempt = 0; attempt < 2; attempt++) {
     const path = tmpPath('ultron', 'wav');
     try {
-      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, emocion), path, { headers });
+      const r = await FileSystem.downloadAsync(ttsUrl(text, perf, emocion, avatar), path, { headers });
       const ct = String((r.headers as any)?.['Content-Type'] || (r.headers as any)?.['content-type'] || '');
       const info = await FileSystem.getInfoAsync(path);
       if (r.status === 200 && info.exists && (info.size || 0) > 64 && (!ct || /audio|octet/.test(ct))) {
@@ -251,7 +263,7 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<
       await FileSystem.deleteAsync(path, { idempotent: true }).catch(() => {});
       if (r.status === 200 && ct && !/audio|octet/.test(ct)) {
         // servidor sin GET /api/tts: devolvió HTML. Usar POST.
-        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion }, 40_000);
+        const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar }, 40_000);
         if (uri) guardarEnCache(key, uri);
         return uri ? { uri } : null;
       }

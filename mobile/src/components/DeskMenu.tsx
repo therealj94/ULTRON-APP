@@ -64,6 +64,9 @@ type Props = {
   /** Qué cara eligió: los anillos (Skia) o la habitación 3D. */
   cara: 'anillos' | 'sala';
   onSetCara: (c: 'anillos' | 'sala') => void;
+  /** El avatar de la mesa (AU-RA, Claudio o Claudio de pie) y cómo cambiarlo. */
+  avatar?: 'aura' | 'claudio' | 'claudio-pie';
+  onSetAvatar?: (a: 'aura' | 'claudio' | 'claudio-pie') => void;
   /** Se ve la cara clásica (respaldo): solo ella sabe dibujar el blaster y el sable. */
   caraClasica: boolean;
   /** Cómo contesta: de pie en el centro o sentada en su sillón. */
@@ -254,11 +257,22 @@ export function DeskMenu(p: Props) {
             </View>
           )}
 
-          <Text style={styles.section}>Su cara</Text>
-          <View style={styles.chips}>
+          {p.onSetAvatar && (
+            <>
+              <Text style={styles.section}>Con quién hablas</Text>
+              <View style={styles.chips}>
+                <Chip on={p.avatar === 'aura'} label="AU-RA" sub="los ojos" onPress={() => p.onSetAvatar?.('aura')} />
+                <Chip on={p.avatar === 'claudio'} label="Claudio" sub="el zorro" onPress={() => p.onSetAvatar?.('claudio')} />
+                <Chip on={p.avatar === 'claudio-pie'} label="Claudio de pie" sub="en vertical" onPress={() => p.onSetAvatar?.('claudio-pie')} />
+              </View>
+            </>
+          )}
+
+          {(!p.avatar || p.avatar === 'aura') && <Text style={styles.section}>Su cara</Text>}
+          {(!p.avatar || p.avatar === 'aura') && <View style={styles.chips}>
             <Chip on={p.cara === 'anillos'} label="Anillos" sub="sus ojos de luz" onPress={() => p.onSetCara('anillos')} />
             <Chip on={p.cara === 'sala'} label="Habitación 3D" sub="de cuerpo entero" onPress={() => p.onSetCara('sala')} />
-          </View>
+          </View>}
 
           {p.cara === 'sala' ? (
             <>

@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import type { SessionUser } from '../config';
+import { normalizarAvatarId, type AvatarId } from '../avatares/catalogo';
 import {
   CLAVE_MEMORIA_COMPARTIDA,
   agregarHecho,
@@ -45,6 +46,10 @@ export type AppSettings = {
   postura: 'pie' | 'sentada';
   /** Su cara: los anillos (Skia, la de siempre desde el 25-sep) o la habitación 3D. */
   cara: 'anillos' | 'sala';
+  /** Con quién se habla en la mesa: AU-RA (los ojos), Claudio (retrato) o Claudio de pie. */
+  avatar: AvatarId;
+  /** Ya eligió avatar alguna vez: la bienvenida deja de preguntar y solo saluda. */
+  avatarElegido: boolean;
 };
 export type ConocerProgress = {
   correo: string;
@@ -62,6 +67,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   sfx: true,
   postura: 'pie',
   cara: 'anillos',
+  avatar: 'aura',
+  avatarElegido: false,
 };
 
 export async function saveSession(user: SessionUser | null) {
@@ -120,6 +127,7 @@ export async function loadSettings(): Promise<AppSettings> {
     const raw = await AsyncStorage.getItem(KEYS.settings);
     const s: AppSettings = raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
     s.voiceId = 'ultron';
+    s.avatar = normalizarAvatarId(s.avatar);
     return s;
   } catch {
     return DEFAULT_SETTINGS;
