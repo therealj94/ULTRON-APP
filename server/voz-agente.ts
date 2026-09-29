@@ -19,7 +19,7 @@ import crypto from 'crypto';
 import type express from 'express';
 import { clave } from '../lib/boveda';
 import { quitarExpresiones } from '../lib/expresiones';
-import { emitirSesion, firmarDato, leerDato, mismoSecreto, secretoDerivado, type Sesion } from './seguridad';
+import { emitirSesion, firmarDato, leerDato, mismoSecreto, secretoDerivado, soltarSesion, type Sesion } from './seguridad';
 import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 
 /** La etiqueta del secreto que ElevenLabs manda como Bearer. Cambiarla invalida el guardado allá. */
@@ -185,6 +185,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     // Una sesión corta de ESTE servidor para pedirle el turno al cerebro con el nombre de quien habla.
     const sesion = emitirSesion({ correo: pase.correo, nombre: pase.nombre, rol: pase.rol }, { vence: Date.now() + 5 * 60_000 });
     let algo = false;
+    // Lo que ya se le dio a la voz, en claro: sirve para seguir un «replace» del cerebro.
+    let dicho = '';
     try {
       const r = await fetch(`http://127.0.0.1:${d.puerto}/api/turno/stream`, {
         method: 'POST',
@@ -201,7 +203,20 @@ export function montarVozAgente(app: express.Express, d: Deps) {
           const t = algo ? crudo : crudo.replace(/^\s+/, '');
           if (t) {
             algo = true;
+            dicho += t;
             escribir(trozoOpenAI(id, modelo, t));
+          }
+        } else if (evento === 'replace') {
+          /* El cerebro cambió la respuesta ya empezada (usó una herramienta y la respuesta buena es
+             otra). Lo ya dicho no se puede desdecir: si la nueva empieza igual, se dice lo que falta;
+             si no, se sigue con la respuesta nueva, que es la buena. Antes se ignoraba y la voz se
+             quedaba con el texto viejo, anterior a la herramienta. */
+          const nuevo = quitarExpresiones(String(datos?.voz ?? datos?.text ?? '')).trim();
+          const resto = nuevo.startsWith(dicho.trim()) ? nuevo.slice(dicho.trim().length) : (dicho ? ' ' : '') + nuevo;
+          if (resto.trim()) {
+            algo = true;
+            dicho += resto;
+            escribir(trozoOpenAI(id, modelo, resto));
           }
         } else if (evento === 'done') {
           if (!algo) {
@@ -215,10 +230,15 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         }
       }
     } catch (e: any) {
-      if (corte.signal.aborted) return; // la persona interrumpió: nadie espera esto
+      if (corte.signal.aborted) {
+        soltarSesion(sesion.token);
+        return; // la persona interrumpió: nadie espera esto
+      }
       console.warn('[voz agente] turno', String(e?.message || e).slice(0, 160));
       if (!algo) escribir(trozoOpenAI(id, modelo, pase.idioma === 'en' ? 'Sorry, I lost the connection for a second. Can you repeat that?' : 'Perdón, se me cortó un segundo. ¿Me lo repites?'));
     }
+    // La sesión de un turno no se vuelve a usar: fuera del caché, o cada turno hablado dejaría una.
+    soltarSesion(sesion.token);
     escribir(trozoOpenAI(id, modelo, null, 'stop'));
     cerrar();
   };

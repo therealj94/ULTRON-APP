@@ -21,6 +21,8 @@ export type EstadoConversacion = 'conectando' | 'escuchando' | 'hablando' | 'cer
 
 type Props = {
   activa: boolean;
+  /** El micrófono de ESTA sesión en silencio (el botón del micrófono de la mesa, mientras se conversa). */
+  silenciado?: boolean;
   avatar: AvatarId;
   idioma: Idioma;
   onEstado: (e: EstadoConversacion, detalle?: string) => void;
@@ -36,11 +38,24 @@ export function ModoConversacion(p: Props) {
   );
 }
 
-function Sesion({ activa, avatar, idioma, onEstado, onMensaje }: Props) {
+function Sesion({ activa, silenciado = false, avatar, idioma, onEstado, onMensaje }: Props) {
   const conv = useConversation();
   const cbs = useRef({ onEstado, onMensaje });
   cbs.current = { onEstado, onMensaje };
   const abierta = useRef(false);
+  const silencio = useRef(silenciado);
+  silencio.current = silenciado;
+
+  // Silenciar corta de verdad el micrófono de WebRTC (no solo el ícono).
+  useEffect(() => {
+    if (!activa || !abierta.current) return;
+    try {
+      conv.setMuted(silenciado);
+    } catch {
+      /* sin sesión todavía: se aplica al conectar */
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [silenciado, activa]);
 
   useEffect(() => {
     if (!activa) return;
@@ -59,6 +74,11 @@ function Sesion({ activa, avatar, idioma, onEstado, onMensaje }: Props) {
           dynamicVariables: { pase: r.pase },
           onConnect: () => {
             abierta.current = true;
+            if (silencio.current) {
+              try {
+                conv.setMuted(true);
+              } catch {}
+            }
             miga('conversación fluida: conectada');
             cbs.current.onEstado('escuchando');
           },

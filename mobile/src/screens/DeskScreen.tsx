@@ -179,6 +179,16 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
   const [mensajes, setMensajes] = useState<Turn[]>([]);
   /** Conversación fluida (ElevenLabs Agents): el micrófono y la voz van por WebRTC mientras dura. */
   const [conversando, setConversando] = useState(false);
+  /*
+   * Durante la conversación fluida el micrófono que manda es el de WebRTC (ElevenLabs), no el de la
+   * mesa. Silenciar la mesa ahí dejaba el ícono en 🔇 mientras la voz seguía saliendo. Este estado
+   * es el de ESE micrófono; el botón de siempre lo maneja mientras se conversa.
+   */
+  const [convSilencio, setConvSilencio] = useState(false);
+  useEffect(() => {
+    if (conversando) setConvSilencio(false);
+  }, [conversando]);
+  const micApagado = conversando ? convSilencio : micMuted;
   const [estadoConv, setEstadoConv] = useState<EstadoConversacion>('cerrada');
   const { width: anchoPantalla, height: altoPantalla } = useWindowDimensions();
   const horizontal = anchoPantalla >= altoPantalla;
@@ -1315,6 +1325,10 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
   }, [conversando, restFace]);
 
   const toggleMute = async () => {
+    if (conversando) {
+      setConvSilencio((v) => !v);
+      return;
+    }
     if (!micMutedRef.current) {
       await muteMic();
       micMutedRef.current = true;
@@ -1555,7 +1569,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
               colorEstado={dotColor}
               parcial={partial}
               borrador={draft}
-              micSilenciado={micMuted}
+              micSilenciado={micApagado}
               escuchando={listening}
               onBorrador={setDraft}
               onEnviar={sendDraft}
@@ -1632,10 +1646,10 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
           <Pressable
             onPress={() => void toggleMute()}
             accessibilityRole="button"
-            accessibilityLabel={micMuted ? tr('Activar el micrófono', 'Turn on the microphone') : tr('Silenciar el micrófono', 'Mute the microphone')}
-            style={[styles.mic, !micMuted && { backgroundColor: tema.acento }, listening && !micMuted && styles.micOyendo]}
+            accessibilityLabel={micApagado ? tr('Activar el micrófono', 'Turn on the microphone') : tr('Silenciar el micrófono', 'Mute the microphone')}
+            style={[styles.mic, !micApagado && { backgroundColor: tema.acento }, (listening || conversando) && !micApagado && styles.micOyendo]}
           >
-            <Text style={[styles.micIcono, !micMuted && { color: tema.sobreAcento }]}>{micMuted ? '🔇' : '🎙'}</Text>
+            <Text style={[styles.micIcono, !micApagado && { color: tema.sobreAcento }]}>{micApagado ? '🔇' : '🎙'}</Text>
           </Pressable>
           <Pressable onPress={() => setMenuOpen(true)} accessibilityRole="button" accessibilityLabel={tr('Escribir y ajustes', 'Type and settings')} style={styles.escribir}>
             <Text style={styles.escribirTexto}>{tr('Escribir', 'Type')}</Text>
@@ -1656,14 +1670,14 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
         </>
       )}
 
-      <ModoConversacion activa={conversando} avatar={avatarId} idioma={idioma} onEstado={alEstadoConv} onMensaje={alMensajeConv} />
+      <ModoConversacion activa={conversando} silenciado={convSilencio} avatar={avatarId} idioma={idioma} onEstado={alEstadoConv} onMensaje={alMensajeConv} />
 
       <DeskMenu
         visible={menuOpen}
         userName={user.name}
         mode={mode}
         presence={presence}
-        micMuted={micMuted}
+        micMuted={micApagado}
         listening={listening}
         visionOn={visionOn && !!camPerm?.granted}
         online={online}

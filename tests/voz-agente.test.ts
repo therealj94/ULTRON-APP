@@ -132,3 +132,46 @@ test('si la persona interrumpe (ElevenLabs cierra), el turno de adentro se corta
     await s.cerrar();
   }
 });
+
+test('si el cerebro cambia la respuesta (replace tras una herramienta), la voz sigue con la buena', async () => {
+  const dichoCon = async (eventos: Array<[string, unknown]>) => {
+    const s = await montar((_req, res) => {
+      const enviar = sse(res);
+      for (const [e, d] of eventos) enviar(e, d);
+      res.end();
+    });
+    try {
+      const r = await fetch(`http://127.0.0.1:${s.puerto}/api/voz/llm`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${secretoDerivado(ETIQUETA_SECRETO_LLM)}`, 'x-pase': emitirPase(persona, 'aura', 'es') },
+        body: JSON.stringify({ messages: [{ role: 'user', content: '¿A cuánto está el oro?' }] }),
+      });
+      return (await r.text())
+        .split('\n\n')
+        .filter((l) => l.startsWith('data: {'))
+        .map((l) => JSON.parse(l.slice(6)).choices[0].delta.content || '')
+        .join('');
+    } finally {
+      await s.cerrar();
+    }
+  };
+  // La nueva empieza igual: se dice solo lo que falta.
+  assert.equal(
+    await dichoCon([
+      ['delta', { text: 'Déjame ver.', voz: 'Déjame ver.' }],
+      ['replace', { text: 'Déjame ver. El oro está a 3 412 dólares.', voz: 'Déjame ver. El oro está a 3 412 dólares.' }],
+      ['done', { reply: 'Déjame ver. El oro está a 3 412 dólares.' }],
+    ]),
+    'Déjame ver. El oro está a 3 412 dólares.'
+  );
+  // La nueva es otra: se sigue con ella (lo dicho no se puede desdecir).
+  assert.equal(
+    await dichoCon([
+      ['delta', { text: 'Creo que ronda los 3 000.', voz: 'Creo que ronda los 3 000.' }],
+      ['replace', { text: 'El oro está a 3 412 dólares la onza.', voz: 'El oro está a 3 412 dólares la onza.' }],
+      ['delta', { text: ' Subió un poco.', voz: ' Subió un poco.' }],
+      ['done', { reply: 'El oro está a 3 412 dólares la onza. Subió un poco.' }],
+    ]),
+    'Creo que ronda los 3 000. El oro está a 3 412 dólares la onza. Subió un poco.'
+  );
+});
