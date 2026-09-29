@@ -14,6 +14,8 @@
  */
 import type { MsgHilo } from './hilo';
 import { buscarConcesiones, geometriaDe, unicaExacta, type FilaConcesion } from './db';
+import { buscarLugar, pedidoDeLugar } from './lugares';
+import { pedidoDeFiltro } from './minerales';
 
 /** La persona quiere VER algo: muéstrame, enséñame, ubícala, ¿dónde queda?, llévame, en el mapa… */
 export const PIDE_MAPA = /\b(mu[eé]str|mostr|ens[eé][ñn]|ub[ií]ca|ubicaci[oó]n|d[oó]nde (queda|est[aá])|ll[eé]v[aá]me|vol[aá] (a|hasta)|localiza|en el mapa|al mapa)/i;
@@ -112,20 +114,86 @@ export async function concesionAMostrar(mensaje: string, respuesta: string, hist
 export type Garantia = { ui?: Record<string, unknown>; texto: string; nota?: string };
 
 /**
+ * Una concesión que se llama EXACTAMENTE como lo pedido («muéstrame El Mochito»). Solo ella le gana
+ * a un lugar del gacetero con ese nombre: una que apenas se le parezca no convierte a Juticalpa en
+ * una concesión.
+ */
+export async function concesionDeNombreExacto(pedido: string): Promise<FilaConcesion | null> {
+  try {
+    return unicaExacta(await buscarConcesiones(pedido, 6), pedido);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Después del turno: si hacía falta mover el mapa y no se movió, se mueve; si no se puede, se dice.
  * `canal` telegram no tiene mapa: ahí no se hace nada.
  */
+/** Los ids de concesión distintos que trajeron las herramientas del turno («… (id 1397) …»). */
+export function idsEnHerramientas(texto: string): number[] {
+  return [...new Set([...String(texto || '').matchAll(/\bid (\d{1,7})\b/g)].map((m) => Number(m[1])))];
+}
+
 export async function garantizarMapa(p: {
   mensaje: string;
   texto: string;
   ui: Array<Record<string, unknown>>;
   historial?: MsgHilo[];
   canal?: string;
+  /** Lo que devolvieron las herramientas que salieron bien, junto. */
+  herramientas?: string;
 }): Promise<Garantia> {
-  if (p.canal === 'telegram' || movioElMapa(p.ui)) return { texto: p.texto };
-  const pide = PIDE_MAPA.test(p.mensaje);
+  if (p.canal === 'telegram') return { texto: p.texto };
+  // «Muéstrame solo las de oro»: si el turno no marcó el filtro, se marca aquí.
+  const filtro = pedidoDeFiltro(p.mensaje);
+  if (filtro && !p.ui.some((d) => d?.accion === 'filtrar')) {
+    return { texto: p.texto, ui: { accion: 'filtrar', mineral: filtro === 'quitar' ? null : filtro }, nota: `filtro del mapa: ${filtro}` };
+  }
+  if (movioElMapa(p.ui) || p.ui.some((d) => d?.accion === 'lugar' || d?.accion === 'filtrar')) return { texto: p.texto };
+  const pide = PIDE_MAPA.test(p.mensaje) || !!pedidoDeLugar(p.mensaje);
   const dice = DICE_MAPA.test(p.texto);
+  /*
+   * Se habla de UNA concesión (las herramientas trajeron una sola): el mapa va a ella aunque nadie
+   * haya dicho «muéstrame». Si estamos hablando de Clavo Rico, Clavo Rico tiene que estar en pantalla.
+   */
+  const unicas = idsEnHerramientas(p.herramientas || '');
+  if (!pide && !dice && unicas.length === 1) {
+    const g = await geometriaDe(unicas[0]).catch(() => null);
+    if (g) {
+      return {
+        texto: p.texto,
+        ui: { accion: 'volar', concesion_id: unicas[0], centro: g.centro, encuadre: g.encuadre, geojson: g.geojson, resaltar: true, garantia: true },
+        nota: `el mapa voló a la concesión ${unicas[0]}: es de la que se habló`,
+      };
+    }
+  }
   if (!pide && !dice) return { texto: p.texto };
+  /*
+   * ¿Un lugar de Honduras? («llévame a Juticalpa», «¿dónde queda Trujillo?») Va ANTES que la
+   * concesión, igual que /api/electrum/lugar y que el panel (que ya puso el alfiler): un municipio
+   * con una sola concesión que se le parezca no puede convertirse en esa concesión.
+   */
+  const q = pedidoDeLugar(p.mensaje);
+  const l = q ? buscarLugar(q) : null;
+  const exacta = l && q ? await concesionDeNombreExacto(q) : null;
+  if (exacta) {
+    const g = await geometriaDe(Number(exacta.id)).catch(() => null);
+    if (g) {
+      return {
+        texto: p.texto,
+        ui: { accion: 'volar', concesion_id: Number(exacta.id), centro: g.centro, encuadre: g.encuadre, geojson: g.geojson, resaltar: true, garantia: true },
+        nota: `el mapa voló a ${exacta.nombre} (id ${exacta.id}): se llama así, aunque también hay un lugar con ese nombre`,
+      };
+    }
+  }
+  if (l) {
+    return {
+      texto: p.texto,
+      ui: { accion: 'lugar', nombre: l.lugar.nombre, tipo: l.lugar.tipo, departamento: l.lugar.departamento, centro: l.lugar.centro, zoom: l.lugar.zoom },
+      nota: `el mapa fue a ${l.lugar.nombre} (${l.lugar.tipo})`,
+    };
+  }
   const c = await concesionAMostrar(p.mensaje, p.texto, p.historial || []);
   if (c) {
     const g = await geometriaDe(c.id).catch(() => null);

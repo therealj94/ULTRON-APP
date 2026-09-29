@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { headersElectrum } from '../acceso';
+import { comentar } from '../personajes/mesa';
 
 type Cuadro = { fecha: string; nubes: number; escena: string; img: string };
 type Datos = { cuadros: Cuadro[]; ancho: number; alto: number; contorno: number[][][]; fuente: string; faltan: number[] };
@@ -16,7 +17,7 @@ const fechaLarga = (f: string) => {
   return `${d} de ${MESES[m - 1]} de ${a}`;
 };
 
-export function Timelapse({ id, nombre, onCerrar }: { id: number; nombre: string; onCerrar: () => void }) {
+export function Timelapse({ id, nombre, resumen, onCerrar }: { id: number; nombre: string; resumen?: string; onCerrar: () => void }) {
   const [datos, setDatos] = useState<Datos | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [i, setI] = useState(0);
@@ -43,6 +44,15 @@ export function Timelapse({ id, nombre, onCerrar }: { id: number; nombre: string
         imagenes.current = imgs;
         setDatos(j);
         setI(0);
+        // Mientras corre, la Ing. Tatiana lo lee: qué cambió en la cobertura y qué preguntar.
+        const cs = (j as Datos).cuadros;
+        if (cs.length) {
+          const nubes = Math.round(cs.reduce((n, c) => n + (Number(c.nubes) || 0), 0) / cs.length);
+          comentar(
+            'timelapse',
+            `Timelapse Sentinel-2 de la concesión ${nombre}: ${cs.length} imágenes de temporada seca, de ${cs[0].fecha.slice(0, 4)} a ${cs[cs.length - 1].fecha.slice(0, 4)}, con ${nubes} % de nubes en promedio.${(j as Datos).faltan?.length ? ` Faltan los años ${(j as Datos).faltan.join(', ')} (sin escena limpia).` : ''} ${resumen || ''}`
+          );
+        }
       })
       .catch(() => vivo && setError('No alcancé el servidor.'));
     return () => {

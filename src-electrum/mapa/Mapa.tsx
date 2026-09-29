@@ -492,7 +492,18 @@ function aplicarTerreno(m: maplibregl.Map) {
         id: 'sombreado',
         type: 'hillshade',
         source: 'relieve-sombra',
-        paint: { 'hillshade-shadow-color': '#1b1308', 'hillshade-highlight-color': '#fff4dc' },
+        /*
+         * Luz desde cuatro direcciones (oeste, noroeste, norte, noreste) en vez de una: con una sola
+         * fuente las fallas y crestas paralelas a la luz desaparecen, y un geólogo lee lineamientos
+         * justamente por esas estructuras.
+         */
+        paint: {
+          'hillshade-method': 'multidirectional',
+          'hillshade-illumination-direction': [270, 315, 0, 45],
+          'hillshade-illumination-altitude': [35, 35, 35, 35],
+          'hillshade-shadow-color': ['#1b1308', '#1b1308', '#1b1308', '#1b1308'],
+          'hillshade-highlight-color': ['#fff4dc', '#fff4dc', '#fff4dc', '#fff4dc'],
+        },
       } as any,
       antes
     );
@@ -501,6 +512,27 @@ function aplicarTerreno(m: maplibregl.Map) {
   if (!sombrear) {
     if (m.getLayer('sombreado')) m.removeLayer('sombreado');
   }
+  /*
+   * En «calles» (sin satélite) un tinte hipsométrico suave: los valles verdes, la sierra ocre, las
+   * cumbres claras. Se calcula en la tarjeta de video desde el mismo modelo de elevación y va debajo
+   * del sombreado; sobre el satélite no se pone porque taparía la imagen.
+   */
+  const tintar = sombrear && relieve.fondo === 'calles';
+  if (tintar && !m.getLayer('hipsometria')) {
+    m.addLayer(
+      {
+        id: 'hipsometria',
+        type: 'color-relief',
+        source: 'relieve-sombra',
+        paint: {
+          'color-relief-opacity': 0.32,
+          'color-relief-color': ['interpolate', ['linear'], ['elevation'], -1, 'rgba(0,0,0,0)', 0, '#1d3a2b', 250, '#34563a', 700, '#6b7442', 1300, '#94784c', 2000, '#b39f86', 2800, '#e6ded2'],
+        },
+      } as any,
+      'sombreado'
+    );
+  }
+  if (!tintar && m.getLayer('hipsometria')) m.removeLayer('hipsometria');
   if (terreno3D) {
     if (!m.getSource('relieve')) {
       m.addSource('relieve', { type: 'raster-dem', tiles: TESELAS_RELIEVE, encoding: 'terrarium', tileSize: 256, maxzoom: 14 } as any);
@@ -536,6 +568,7 @@ function quitarExtra(m: maplibregl.Map, fuente: string, rol: string) {
  * el resaltado sin tocar el catastro.
  */
 const capasGoogle: Record<'concesiones' | 'resaltada', any> = { concesiones: null, resaltada: null };
+const ESTILO_CONCESIONES_GOOGLE = { fillColor: AMBAR, fillOpacity: 0.12, strokeColor: AMBAR, strokeWeight: 1.6, strokeOpacity: 0.9 };
 const extrasGoogle = new Map<string, any>();
 /** A quién avisar cuando se toca el mapa de Google: se fija desde el componente. */
 let tocarGoogle: ((t: Tocado) => void) | null = null;
@@ -546,12 +579,9 @@ function pintarGoogle(g: any, cual: 'concesiones' | 'resaltada', datos: unknown)
   let capa = capasGoogle[cual];
   if (!capa) {
     capa = new G.Data();
-    capa.setStyle(
-      cual === 'concesiones'
-        ? { fillColor: AMBAR, fillOpacity: 0.12, strokeColor: AMBAR, strokeWeight: 1.6, strokeOpacity: 0.9 }
-        : { fillColor: RESALTE, fillOpacity: 0.22, strokeColor: RESALTE, strokeWeight: 3, strokeOpacity: 1 }
-    );
+    capa.setStyle(cual === 'concesiones' ? ESTILO_CONCESIONES_GOOGLE : { fillColor: RESALTE, fillOpacity: 0.22, strokeColor: RESALTE, strokeWeight: 3, strokeOpacity: 1 });
     capasGoogle[cual] = capa;
+    if (cual === 'concesiones' && filtroGoogle) filtrarGoogle(filtroGoogle);
     if (cual === 'concesiones') {
       capa.addListener('click', (ev: any) => {
         const id = Number(ev.feature?.getProperty('id'));
@@ -616,6 +646,99 @@ function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
   }
 }
 
+/* ---------------------------------------------------------------- filtro por mineral y lugar */
+
+/** Lo que se muestra encima del mapa mientras hay un filtro puesto. */
+export function etiquetaFiltro(mineral: string): string {
+  if (mineral === 'metalicas') return 'Concesiones metálicas';
+  if (mineral === 'no metalicas') return 'Concesiones no metálicas';
+  return `Con indicios de ${mineral}`;
+}
+
+/** La condición del filtro, en el lenguaje de expresiones de MapLibre. */
+function condicionFiltro(mineral: string): any {
+  // En minúsculas: la clase llega «Pequeña Minería No Metálica» del padrón o «No metálica» por la capa.
+  const clase = ['downcase', ['coalesce', ['get', 'clase'], '']];
+  if (mineral === 'metalicas') return ['all', ['in', 'metálica', clase], ['!', ['in', 'no metálica', clase]]];
+  if (mineral === 'no metalicas') return ['any', ['in', 'no metálica', clase], ['in', 'banco', clase]];
+  return ['in', mineral, ['coalesce', ['get', 'minerales'], '']];
+}
+
+/** La misma condición en JavaScript, para contar y encuadrar lo que quedó. */
+export function cumpleFiltro(props: Record<string, unknown> | null | undefined, mineral: string): boolean {
+  const clase = String(props?.clase || '').toLowerCase();
+  if (mineral === 'metalicas') return clase.includes('metálica') && !clase.includes('no metálica');
+  if (mineral === 'no metalicas') return clase.includes('no metálica') || clase.includes('banco');
+  return String(props?.minerales || '').split(',').includes(mineral);
+}
+
+/** El filtro puesto ahora (para el mapa de Google, que no tiene expresiones). */
+let filtroGoogle: string | null = null;
+
+/** En Google el filtro es de estilo: las que no cumplen se esconden (el catastro sigue cargado). */
+function filtrarGoogle(mineral: string | null) {
+  filtroGoogle = mineral;
+  const capa = capasGoogle.concesiones;
+  if (!capa) return;
+  capa.setStyle((f: any) => ({
+    ...ESTILO_CONCESIONES_GOOGLE,
+    visible: !filtroGoogle || cumpleFiltro({ clase: f.getProperty('clase'), minerales: f.getProperty('minerales') }, filtroGoogle),
+  }));
+}
+
+/** Los filtros originales de cada capa del catastro, para poder quitar el nuestro sin romper los suyos. */
+const filtrosOriginales = new Map<string, any>();
+
+function aplicarFiltro(m: maplibregl.Map, mineral: string | null) {
+  const capas = (m.getStyle()?.layers || []).filter((l: any) => l.source === 'concesiones').map((l) => l.id);
+  for (const id of capas) {
+    if (!filtrosOriginales.has(id)) filtrosOriginales.set(id, m.getFilter(id) ?? null);
+    const orig = filtrosOriginales.get(id);
+    const f = mineral ? (orig ? ['all', orig, condicionFiltro(mineral)] : condicionFiltro(mineral)) : orig;
+    // Solo si cambia: poner el mismo filtro dispara `styledata`, y el efecto que lo repone escucha eso.
+    if (JSON.stringify(m.getFilter(id) ?? null) !== JSON.stringify(f ?? null)) m.setFilter(id, f ?? null);
+  }
+}
+
+/** Cuántas quedaron y el rectángulo que las encierra. */
+function resumenFiltro(mineral: string): { n: number; encuadre: [number, number, number, number] | null } {
+  const fc = pintado.concesiones as { features?: Array<{ properties?: Record<string, unknown>; geometry?: any }> } | null;
+  let n = 0;
+  let caja: [number, number, number, number] | null = null;
+  const tocar = (c: any) => {
+    if (typeof c?.[0] === 'number') {
+      caja = caja ? [Math.min(caja[0], c[0]), Math.min(caja[1], c[1]), Math.max(caja[2], c[0]), Math.max(caja[3], c[1])] : [c[0], c[1], c[0], c[1]];
+    } else if (Array.isArray(c)) c.forEach(tocar);
+  };
+  for (const f of fc?.features || []) {
+    if (!cumpleFiltro(f.properties, mineral)) continue;
+    n++;
+    tocar(f.geometry?.coordinates);
+  }
+  return { n, encuadre: caja };
+}
+
+/** El alfiler del lugar pedido, con su nombre. */
+function alfiler(nombre: string, detalle?: string): HTMLElement {
+  const el = document.createElement('div');
+  el.setAttribute('role', 'img');
+  el.setAttribute('aria-label', `${nombre}${detalle ? `, ${detalle}` : ''}`);
+  el.style.cssText = 'display:flex;flex-direction:column;align-items:center;pointer-events:none;transform:translateY(-6px)';
+  const etiqueta = document.createElement('div');
+  etiqueta.style.cssText = 'background:rgba(8,12,16,.86);border:1px solid rgba(255,174,59,.55);color:#FFE3A8;font:600 12px/1.25 ui-sans-serif,system-ui;padding:5px 9px;border-radius:9px;white-space:nowrap;box-shadow:0 6px 18px rgba(0,0,0,.5);text-align:center';
+  etiqueta.textContent = nombre;
+  if (detalle) {
+    const d = document.createElement('div');
+    d.style.cssText = 'font:500 10px/1.2 ui-monospace,monospace;color:#9FB2BC;letter-spacing:.04em;margin-top:2px';
+    d.textContent = detalle;
+    etiqueta.appendChild(d);
+  }
+  const punta = document.createElement('div');
+  punta.style.cssText = 'width:14px;height:14px;margin-top:4px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:#FF5A3C;border:2px solid #fff;box-shadow:0 0 0 6px rgba(255,90,60,.25),0 2px 6px rgba(0,0,0,.5);animation:electrum-alfiler 1.6s ease-in-out infinite';
+  el.append(etiqueta, punta);
+  return el;
+}
+
 export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null, traslapes = null, curvas = true, prospectividad = false, visible = true, enfoque = null, yo = null }: Props) {
   /** El último `onTocar`, para los manejadores que se atan una sola vez al crear el mapa. */
   const tocarRef = useRef(onTocar);
@@ -632,6 +755,9 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
   const caja = useRef<HTMLDivElement>(null);
   const mapa = useRef<MapaLibre | null>(null);
   const [listo, setListo] = useState(false);
+  /** El filtro por mineral puesto ahora (y cuántas quedaron), para la etiqueta de encima del mapa. */
+  const [filtro, setFiltro] = useState<{ mineral: string; n: number } | null>(null);
+  const marcaLugar = useRef<maplibregl.Marker | null>(null);
   const cajaGoogle = useRef<HTMLDivElement>(null);
   const google = useRef<any>(null);
   const [falloGoogle, setFalloGoogle] = useState<string | null>(null);
@@ -1038,6 +1164,24 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     return () => window.removeEventListener('electrum:mapa', alPedir);
   }, [listo]);
 
+  // Cambiar el fondo rehace las capas: el filtro por mineral se vuelve a poner encima.
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m || !listo || !filtro) return;
+    const poner = () => {
+      try {
+        aplicarFiltro(m, filtro.mineral);
+      } catch {
+        /* las capas todavía no están: el próximo styledata lo pone */
+      }
+    };
+    poner();
+    m.on('styledata', poner);
+    return () => {
+      m.off('styledata', poner);
+    };
+  }, [filtro, listo, fondo]);
+
   // «Usted está aquí»: un punto azul con halo, como en cualquier mapa del teléfono.
   useEffect(() => {
     const m = mapa.current;
@@ -1104,6 +1248,22 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
         // Espera a que termine el vuelo en curso: girar encima lo dejaba a medio camino.
         if (m.isMoving()) m.once('moveend', girar);
         else girar();
+      } else if (o.accion === 'lugar') {
+        marcaLugar.current?.remove();
+        marcaLugar.current = new maplibregl.Marker({ element: alfiler(o.nombre, o.detalle), anchor: 'bottom' }).setLngLat(o.centro).addTo(m);
+        m.flyTo({ center: o.centro, zoom: o.zoom, pitch: terreno3D ? 50 : m.getPitch(), curve: 1.5, duration: duracion(2600), essential: true });
+      } else if (o.accion === 'filtrar') {
+        aplicarFiltro(m, o.mineral);
+        filtroGoogle = o.mineral; // si se cambia a Google, sigue filtrado
+        if (o.mineral) {
+          const r = resumenFiltro(o.mineral);
+          setFiltro({ mineral: o.mineral, n: r.n });
+          window.dispatchEvent(new CustomEvent('electrum:filtrado', { detail: { mineral: o.mineral, n: r.n, etiqueta: etiquetaFiltro(o.mineral) } }));
+          if (r.encuadre && r.n) m.fitBounds(r.encuadre, { padding: 60, maxZoom: 11, duration: duracion(1600) });
+        } else {
+          setFiltro(null);
+          window.dispatchEvent(new CustomEvent('electrum:filtrado', { detail: { mineral: null, n: 0 } }));
+        }
       }
     }
     const g = google.current;
@@ -1140,6 +1300,22 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
         g.fitBounds(new G.LatLngBounds({ lat: o.encuadre[1], lng: o.encuadre[0] }, { lat: o.encuadre[3], lng: o.encuadre[2] }));
       } else if (o.accion === 'orbitar' && o.centro) {
         g.setCenter({ lat: o.centro[1], lng: o.centro[0] });
+      } else if (o.accion === 'lugar') {
+        g.setCenter({ lat: o.centro[1], lng: o.centro[0] });
+        g.setZoom(Math.round(o.zoom));
+      } else if (o.accion === 'filtrar') {
+        // Lo mismo que en MapLibre: esconder las que no cumplen, contar, encuadrar y avisar (la
+        // confirmación hablada espera este aviso).
+        filtrarGoogle(o.mineral);
+        if (o.mineral) {
+          const r = resumenFiltro(o.mineral);
+          setFiltro({ mineral: o.mineral, n: r.n });
+          window.dispatchEvent(new CustomEvent('electrum:filtrado', { detail: { mineral: o.mineral, n: r.n, etiqueta: etiquetaFiltro(o.mineral) } }));
+          if (r.encuadre && r.n) g.fitBounds(new G.LatLngBounds({ lat: r.encuadre[1], lng: r.encuadre[0] }, { lat: r.encuadre[3], lng: r.encuadre[2] }));
+        } else {
+          setFiltro(null);
+          window.dispatchEvent(new CustomEvent('electrum:filtrado', { detail: { mineral: null, n: 0 } }));
+        }
       }
     }
   }, [listo, motor]);
@@ -1167,6 +1343,23 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
       <div ref={caja} style={{ position: 'absolute', inset: 0, display: motor === 'maplibre' ? 'block' : 'none' }} />
       <div ref={cajaGoogle} style={{ position: 'absolute', inset: 0, display: motor === 'google' ? 'block' : 'none' }} />
       {motor === 'maplibre' && listo && mapa.current && <Herramientas mapa={mapa.current} tresD={tresD} fondo={fondo} />}
+      {filtro && (
+        <div className="absolute bottom-4 left-1/2 z-[6] flex -translate-x-1/2 items-center gap-2 rounded-full border border-[#FFAE3B]/50 bg-black/75 py-1 pl-3 pr-1 text-[12px] text-[#FFE3A8] shadow-lg backdrop-blur" role="status" data-filtro-mapa>
+          <span className="h-2 w-2 rounded-full bg-[#FFAE3B]" aria-hidden />
+          <span>
+            {etiquetaFiltro(filtro.mineral)} · <b>{filtro.n}</b>
+          </span>
+          <button
+            type="button"
+            className="rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] text-[#C9D6DC] hover:bg-white/10 cursor-pointer"
+            onClick={() => obedecer({ accion: 'filtrar', mineral: null })}
+            title="Volver a ver todas las concesiones"
+          >
+            Todas ✕
+          </button>
+        </div>
+      )}
+      <style>{'@keyframes electrum-alfiler{0%,100%{transform:rotate(-45deg) translate(0,0)}50%{transform:rotate(-45deg) translate(2px,-2px)}}'}</style>
       {/* El visor del recorrido: cuatro esquinas y el nombre, como el cuadro de una cámara. */}
       <div ref={visor} aria-hidden className="pointer-events-none absolute left-0 top-0 z-[4]" style={{ opacity: 0, transition: 'opacity .5s' }}>
         {(['left-0 top-0 border-l-[3px] border-t-[3px] rounded-tl-lg', 'right-0 top-0 border-r-[3px] border-t-[3px] rounded-tr-lg', 'left-0 bottom-0 border-l-[3px] border-b-[3px] rounded-bl-lg', 'right-0 bottom-0 border-r-[3px] border-b-[3px] rounded-br-lg'] as const).map((k) => (

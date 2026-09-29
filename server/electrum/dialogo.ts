@@ -23,8 +23,8 @@ export type { Personaje };
 /** Quién es cada uno y con qué voz habla. */
 export const PERSONAJES: Record<Personaje, { nombre: string; voz: string; quien: string }> = {
   electrum: { nombre: 'Dr Electrum', voz: 'Rt1JHkPO27QCUX6Nd5bV', quien: 'geólogo sénior con cuarenta años de campo, pausado y preciso' },
-  tatiana: { nombre: 'Ing. Tatiana', voz: '2rigMbVWLdqtBSCahJFX', quien: 'ingeniera civil y ambiental: construcción, relaves, permisos; ordenada y directa' },
-  chema: { nombre: 'Don Chema', voz: 'gbTn1bmCvNgk0QEAVyfM', quien: 'metalurgista y minero de planta de Olancho, práctico, habla sencillo y con refranes' },
+  tatiana: { nombre: 'Ing. Tatiana', voz: 'irla3teuChAApguKnzms', quien: 'ingeniera civil y ambiental: construcción, relaves, permisos; ordenada y directa' },
+  chema: { nombre: 'Don Chema', voz: 'wfTWLJ20rcMqvU8gIiAB', quien: 'metalurgista y minero de planta de Olancho, práctico, habla sencillo y con refranes' },
   narrador: { nombre: 'Narrador', voz: 'sDh3eviBhiuHKi0MjTNq', quien: 'narrador sereno de documental' },
 };
 

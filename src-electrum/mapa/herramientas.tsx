@@ -10,6 +10,7 @@
  * Mientras una herramienta está activa, tocar el mapa pone un vértice en vez de abrir la tarjeta
  * (`herramientaEnUso`, que consulta Mapa.tsx).
  */
+import { comentar } from '../personajes/mesa';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import proj4 from 'proj4';
@@ -291,6 +292,12 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
         if (!vivo) return;
         if (!p) setPerfilError('No pude leer la elevación de todo el trazo (sin conexión al modelo de elevación).');
         setPerfil(p);
+        // El equipo lo lee: pendientes para caminos y obra (Tatiana), y lo que implica para la planta (Don Chema).
+        if (p)
+          comentar(
+            'perfil',
+            `Perfil topográfico de ${(p.total / 1000).toFixed(2)} km. Cota mínima ${Math.round(p.min)} m y máxima ${Math.round(p.max)} m (desnivel ${Math.round(p.max - p.min)} m). Sube ${Math.round(p.sube)} m y baja ${Math.round(p.baja)} m en total. Pendiente máxima ${Math.round(p.pendienteMax)} %.`
+          );
       })
       .finally(() => vivo && setCalculando(false));
     return () => {

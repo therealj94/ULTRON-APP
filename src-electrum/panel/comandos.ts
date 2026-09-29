@@ -29,7 +29,13 @@ export type Comando =
   | { accion: 'fondo'; cual: 'satelite' | 'calles' }
   | { accion: 'pais' }
   | { accion: 'ficha'; que: 'pdf' | 'geologico' | 'timelapse' | 'analizar' }
-  | { accion: 'dialogo' };
+  | { accion: 'dialogo' }
+  /** Abrir o cerrar la mesa técnica (los tres discuten cada pregunta). */
+  | { accion: 'mesa'; abrir: boolean }
+  /** Explorar sin voces, o que vuelvan a hablar. */
+  | { accion: 'silencio'; activar: boolean }
+  /** Dejar que le hablen encima (se calla y escucha), o no. */
+  | { accion: 'interrumpir'; activar: boolean };
 
 /** Minúsculas, sin tildes ni signos, espacios simples. */
 export function normalizarDicho(texto: string): string {
@@ -54,6 +60,12 @@ export function comandoDe(texto: string): Comando | null {
   if (/^(siguiente|sigue|sigamos|continua|continuar|continuemos|adelante|pasa|pasale|otro capitulo|el siguiente)( capitulo)?$/.test(t)) return { accion: 'siguiente' };
   if (/^(detente|deten|detener|para|pare|parale|stop|termina|terminar|salir)( el recorrido| la presentacion)?$/.test(t) || /^(para|termina|deten) (el )?(recorrido|tour|presentacion)$/.test(t)) return { accion: 'detener' };
   if (/^(callate|calla|silencio|basta|shh+|ya no hables|deja de hablar)$/.test(t)) return { accion: 'callar' };
+  if (/^(modo silencio|silencio total|sin voz|sin voces|silencialos|silencia(los)?( a todos)?|apaga (las )?voces|quita (las )?voces|mute)$/.test(t)) return { accion: 'silencio', activar: true };
+  if (/^((activa|enciende|prende|pon|vuelve)( las| la)? (voz|voces)|con voz|que hablen( otra vez)?|hablen( otra vez)?|quita el silencio)$/.test(t)) return { accion: 'silencio', activar: false };
+  if (/^(abre|abrir|activa|convoca|llama|junta|arma|reune)( a)?( la)? mesa( tecnica| de trabajo| de discusion)?$|^(mesa tecnica|que venga el equipo|llama al equipo|junta al equipo)$/.test(t)) return { accion: 'mesa', abrir: true };
+  if (/^(cierra|cerrar|termina|terminar|disuelve|levanta)( la)? mesa( tecnica| de trabajo| de discusion)?$|^(se acabo la mesa|gracias equipo)$/.test(t)) return { accion: 'mesa', abrir: false };
+  if (/^(no me interrumpas|no te dejes interrumpir|termina (siempre )?lo que dices|no te calles cuando hable)$/.test(t)) return { accion: 'interrumpir', activar: false };
+  if (/^(dejame interrumpir(te)?|puedo interrumpir(te)?|interrumpible|callate cuando (yo )?hable)$/.test(t)) return { accion: 'interrumpir', activar: true };
 
   if (/^(sal|salir|salte|quita|quitar)( de)?( la)? pantalla completa$/.test(t)) return { accion: 'pantalla', entrar: false };
   if (/^(pon |poner |abre |activa )?(la )?pantalla completa$/.test(t)) return { accion: 'pantalla', entrar: true };
@@ -200,5 +212,8 @@ export function nombreDeComando(c: Comando): string {
     case 'manos': return c.activar ? 'Air touch activado' : 'Air touch apagado';
     case 'ubicacion': return 'Su ubicación';
     case 'dialogo': return 'Como conversación';
+    case 'mesa': return c.abrir ? 'Mesa técnica abierta' : 'Mesa técnica cerrada';
+    case 'silencio': return c.activar ? 'Modo silencio' : 'Voces encendidas';
+    case 'interrumpir': return c.activar ? 'Puede interrumpir hablando' : 'Termina lo que dice';
   }
 }

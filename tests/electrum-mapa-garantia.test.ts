@@ -81,6 +81,7 @@ test('el mapa se mueve aunque el modelo no lo pida, contra PostGIS', { skip: HAY
       [{ NOMBRE: 'Los Chaguites', TITULAR: 'Minera Uno', EXPEDIENTE: '1276' }, caja(-87.2, 14.8, -87.18, 14.82)],
       [{ NOMBRE: 'Clavo Rico Norte', TITULAR: 'Minera Dos', EXPEDIENTE: 'EXP-9' }, caja(-86.9, 14.2, -86.88, 14.22)],
       [{ NOMBRE: 'Clavo Rico Sur', TITULAR: 'Minera Tres', EXPEDIENTE: 'EXP-10' }, caja(-86.9, 14.1, -86.88, 14.12)],
+      [{ NOMBRE: 'Juticalpa Norte', TITULAR: 'Minera Cuatro', EXPEDIENTE: 'EXP-11' }, caja(-85.9, 14.7, -85.88, 14.72)],
     ])
   );
   const [{ id: idCh }] = await consulta<{ id: number }>(`SELECT id::int FROM concesion WHERE nombre = 'Los Chaguites'`);
@@ -148,6 +149,19 @@ test('el mapa se mueve aunque el modelo no lo pida, contra PostGIS', { skip: HAY
     assert.equal(u.accion, 'candidatas');
     assert.equal(u.geojson.features.length, 2);
     assert.deepEqual(u.encuadre.map((x: number) => Math.round(x * 100) / 100), [-86.9, 14.1, -86.88, 14.22]);
+  });
+
+  await t.test('un lugar del gacetero le gana a una concesión que apenas se le parece', async () => {
+    const r = await garantizarMapa({ mensaje: 'llévame a Juticalpa', texto: 'Vamos.', ui: [] });
+    assert.equal(r.ui?.accion, 'lugar');
+    assert.equal(r.ui?.nombre, 'Juticalpa');
+  });
+
+  await t.test('pero una concesión con ese nombre EXACTO le gana al poblado homónimo', async () => {
+    // «Los Chagüites» también es un poblado de Lempira en GeoNames.
+    const r = await garantizarMapa({ mensaje: 'muéstrame Los Chaguites', texto: 'Ahí está.', ui: [] });
+    assert.equal(r.ui?.accion, 'volar');
+    assert.equal(r.ui?.concesion_id, idCh);
   });
 
   await t.test('concesion_entorno también pone el mapa sobre la concesión', async () => {

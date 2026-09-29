@@ -34,6 +34,10 @@ type Opciones = {
    * calla y escucha. Quien llama corta la voz; el oído empieza a grabar en el acto.
    */
   alInterrumpir?: () => void;
+  /** Cuánto suena ahora la voz de la mesa (0..1; −1 sin medidor): para separar su eco de la persona. */
+  nivelSalida?: () => number;
+  /** ¿Se le puede hablar encima? (el botón «Interrumpir»; por omisión, sí). */
+  interrumpible?: () => boolean;
 };
 
 const PREVIO_MS = 450;
@@ -44,10 +48,19 @@ const MIN_VOZ_MS = 330;
 const MAX_FRASE_MS = 30_000;
 const ARRANQUE_MS = 90;
 const COLA_ECO_MS = 400;
-/** Interrumpir exige voz fuerte (el eco del parlante, tras la cancelación, queda muy por debajo)… */
-const RMS_INTERRUMPIR = 0.08;
-/** …y sostenida. Un golpe o una tos no cortan al doctor. */
-const INTERRUMPIR_MS = 400;
+/**
+ * INTERRUMPIR. Antes pedía voz muy fuerte (RMS 0,08 sostenido 0,4 s) y, con la cancelación de eco
+ * bajando la voz de la persona mientras suena el parlante, casi nunca llegaba: «le hablo y no me
+ * escucha». Ahora se APRENDE cuánto del parlante se cuela al micrófono (el acople: micrófono ÷
+ * salida en los momentos en que solo suena la mesa) y se interrumpe cuando lo que entra supera ese
+ * eco esperado por un margen, sostenido ~0,3 s. En las pausas entre palabras de la voz el eco cae a
+ * casi nada, y ahí la persona se oye clarísima.
+ */
+const INTERRUMPIR_MS = 300;
+/** Lo mínimo que tiene que sobrar por encima del eco esperado (RMS). */
+const SOBRA_MINIMA = 0.02;
+/** Los primeros ms de cada voz solo sirven para aprender el acople: no se interrumpe. */
+const APRENDER_MS = 250;
 /** Lo que se sube: 16 kHz, 16 bits, mono. Es lo que usan los modelos de voz a texto. */
 const TASA_SALIDA = 16_000;
 
@@ -129,6 +142,11 @@ export function crearOido(op: Opciones) {
   let sobreMs = 0;
   let encimaMs = 0;
   let ecoMs = 0;
+  // El eco del parlante en el micrófono: RMS del micrófono por cada unidad de salida. Se aprende.
+  let acople = 0.12;
+  let sonandoMs = 0;
+  // La salida de los últimos ~170 ms: el eco llega con retraso y deja cola en la sala.
+  const salidas: number[] = [];
   let ruido = 0.008;
   let nivelActual = 0;
   let pendientes = 0;
@@ -226,12 +244,13 @@ export function crearOido(op: Opciones) {
 
     // Suena la mesa: nada de grabar (y se tira lo que se estuviera grabando), salvo que le hablen encima.
     if (op.hablandoAhora()) {
+      sonandoMs += ms;
       /*
        * La persona YA estaba hablando cuando arrancó una voz de la mesa (la respuesta llegó en
        * mitad de su frase): tiene prioridad, como en una conversación. La voz se calla y su frase
        * se sigue grabando; antes se tiraba entera.
        */
-      if (frase && vozMs >= 250 && op.alInterrumpir) {
+      if (frase && vozMs >= 250 && op.alInterrumpir && (op.interrumpible?.() ?? true)) {
         op.alInterrumpir();
         frase.push(t);
         fraseMs += ms;
@@ -240,7 +259,18 @@ export function crearOido(op: Opciones) {
       ecoMs = COLA_ECO_MS;
       if (frase) terminarFrase(true);
       sobreMs = 0;
-      encimaMs = op.alInterrumpir && rms > Math.max(RMS_INTERRUMPIR, ruido * 10) ? encimaMs + ms : 0;
+      salidas.push(Math.max(0, op.nivelSalida?.() ?? 0));
+      if (salidas.length > 4) salidas.shift();
+      const salida = Math.max(...salidas);
+      // Aprender el acople con lo que claramente es solo eco (no más que 1,6 veces lo esperado).
+      if (salida > 0.05) {
+        const r = rms / salida;
+        if (r < acople * 1.6 || sonandoMs < APRENDER_MS) acople = Math.min(0.6, Math.max(0.01, acople * 0.94 + r * 0.06));
+      }
+      const esperado = acople * salida * 1.35 + ruido * 2;
+      const sobra = rms - esperado;
+      const puede = !!op.alInterrumpir && (op.interrumpible?.() ?? true) && sonandoMs > APRENDER_MS;
+      encimaMs = puede && sobra > Math.max(SOBRA_MINIMA, ruido * 4) ? encimaMs + ms : Math.max(0, encimaMs - ms * 0.5);
       guardarPrevio(t, ms);
       if (encimaMs >= INTERRUMPIR_MS) {
         encimaMs = 0;
@@ -252,6 +282,8 @@ export function crearOido(op: Opciones) {
       return;
     }
     encimaMs = 0;
+    sonandoMs = 0;
+    salidas.length = 0;
     if (ecoMs > 0) {
       // La cola del eco no entra ni en el «previo».
       ecoMs -= ms;

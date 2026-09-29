@@ -109,7 +109,9 @@ export function bloqueMesa(quienes: Experto[], mesa: boolean): string | null {
     hablan.length > 1
       ? 'Se contestan entre ellos: cada uno aporta lo suyo sobre lo que dijo el otro (Tatiana construye y permisa lo que Don Chema propone; el doctor lo aterriza en la geología y el valor).'
       : '',
-    mesa ? 'Analizan juntos y CIERRA Dr Electrum con la recomendación de la mesa en una o dos frases.' : '',
+    mesa
+      ? 'ES UNA DISCUSIÓN, no tres informes: de 5 a 9 intervenciones cortas. Se contestan de verdad —si uno propone, otro pregunta, cuestiona o agrega; pueden no estar de acuerdo y decir por qué, y cambiar de idea si el otro tiene razón—. Si falta un dato clave para decidir, se lo preguntan a la persona. CIERRA Dr Electrum con lo que la mesa recomienda y le pregunta a la persona qué quiere profundizar o qué dato falta.'
+      : '',
     'El oficio lo saben de verdad; los datos de una concesión, solo de las herramientas.',
   ]
     .filter(Boolean)
