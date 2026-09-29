@@ -22,15 +22,24 @@ type Opciones = {
   /** Se llama con cada frase oída, ya en texto. */
   alTexto: (texto: string) => void;
   alEstado: (e: EstadoOido) => void;
-  /** ¿Está hablando Dr Electrum ahora? Mientras sí, no se graba. */
+  /** ¿Está hablando Dr Electrum ahora? Mientras sí, no se graba (salvo que lo interrumpan). */
   hablandoAhora: () => boolean;
+  /**
+   * Alguien le habla ENCIMA, fuerte y sostenido: como en una conversación de verdad, el doctor se
+   * calla y escucha. Quien llama corta la voz; el oído empieza a grabar en el acto.
+   */
+  alInterrumpir?: () => void;
 };
 
 const TICK_MS = 50;
 const SILENCIO_FIN_MS = 900;
 const MIN_VOZ_MS = 450;
 const MAX_FRASE_MS = 15_000;
-const COLA_ECO_MS = 600;
+const COLA_ECO_MS = 400;
+/** Interrumpir exige voz fuerte (el eco del parlante, tras la cancelación, queda muy por debajo)… */
+const RMS_INTERRUMPIR = 0.08;
+/** …y sostenida: ~400 ms. Un golpe o una tos no cortan al doctor. */
+const TICKS_INTERRUMPIR = 8;
 
 export function crearOido(op: Opciones) {
   let stream: MediaStream | null = null;
@@ -47,6 +56,7 @@ export function crearOido(op: Opciones) {
   let ruido = 0.008;
   let ignorarHasta = 0;
   let nivelActual = 0;
+  let encima = 0;
   let estado: EstadoOido = 'apagado';
   const poner = (e: EstadoOido) => {
     if (e !== estado) {
@@ -133,8 +143,16 @@ export function crearOido(op: Opciones) {
       ignorarHasta = ahora + COLA_ECO_MS;
       if (rec) terminarFrase(true);
       sobreUmbral = 0;
+      encima = op.alInterrumpir && rms > Math.max(RMS_INTERRUMPIR, ruido * 10) ? encima + 1 : 0;
+      if (encima >= TICKS_INTERRUMPIR) {
+        encima = 0;
+        ignorarHasta = 0;
+        op.alInterrumpir!();
+        empezarFrase();
+      }
       return;
     }
+    encima = 0;
     if (ahora < ignorarHasta) return;
 
     const umbral = Math.max(0.012, ruido * 3.2);

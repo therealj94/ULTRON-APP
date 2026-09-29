@@ -28,7 +28,8 @@ export type Comando =
   | { accion: 'orbitar' }
   | { accion: 'fondo'; cual: 'satelite' | 'calles' }
   | { accion: 'pais' }
-  | { accion: 'ficha'; que: 'pdf' | 'geologico' | 'timelapse' | 'analizar' };
+  | { accion: 'ficha'; que: 'pdf' | 'geologico' | 'timelapse' | 'analizar' }
+  | { accion: 'dialogo' };
 
 /** Minúsculas, sin tildes ni signos, espacios simples. */
 export function normalizarDicho(texto: string): string {
@@ -74,6 +75,7 @@ export function comandoDe(texto: string): Comando | null {
   if (/^(pon|poner|activa|activar|muestra|ver)( el| en)? (3d|tres d|tercera dimension|relieve)$/.test(t)) return { accion: 'tresD', activar: true };
   if (/^(quita|quitar|apaga|apagar|sin)( el)? (3d|tres d|relieve)$/.test(t)) return { accion: 'tresD', activar: false };
 
+  if (/^(explicamelo|explicalo|dimelo|cuentamelo|hazlo|ponlo|dilo)( como| en)?( una)? (conversacion|dialogo|podcast|charla|platica)( con tatiana)?$/.test(t)) return { accion: 'dialogo' };
   // Girar antes que mover: «gira a la derecha» no es «a la derecha».
   if (/^(gira|girar|gíralo|giralo|rota|rotar|rotalo|voltea|da vuelta|dale vuelta)( el mapa| la vista)?( un poco| mas)?( hacia| para| a)? (la )?izquierda$/.test(t) || /^(gira|rota)( el mapa)? (en contra del reloj|antihorario)$/.test(t)) return { accion: 'rotar', dir: -1 };
   if (/^(gira|girar|giralo|rota|rotar|rotalo|voltea|da vuelta|dale vuelta)( el mapa| la vista)?( un poco| mas)?(( hacia| para| a)? (la )?derecha)?$/.test(t) || /^(gira|rota)( el mapa)? (como el reloj|en sentido horario|horario)$/.test(t)) return { accion: 'rotar', dir: 1 };
@@ -197,5 +199,6 @@ export function nombreDeComando(c: Comando): string {
     case 'ficha': return { pdf: 'Ficha en PDF', geologico: 'Mapa geológico', timelapse: 'Timelapse satelital', analizar: 'Analizando' }[c.que];
     case 'manos': return c.activar ? 'Air touch activado' : 'Air touch apagado';
     case 'ubicacion': return 'Su ubicación';
+    case 'dialogo': return 'Como conversación';
   }
 }

@@ -23,7 +23,7 @@ import { leerWav, wavAMp3, type Pcm } from '../lib/mp3';
 import { trocearExpresiones } from '../lib/expresiones';
 import { adaptarPcm, empalmar, escribirWav, tomaDeExpresion } from './empalme';
 import type { Presupuesto } from '../lib/presupuesto';
-import { abrirEleven, conMuletillas, elevenListo, guionEleven, hablarEleven, modeloEleven, vozEleven } from './eleven';
+import { abrirEleven, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, modeloEleven, vozEleven } from './eleven';
 
 export type Performance = 'speak' | 'sing';
 
@@ -370,7 +370,7 @@ function pedidoEleven(o: {
   plataforma: 'ultron' | 'electrum';
   previo?: string;
   siguiente?: string;
-}): { voz: string; guion: string; clave: string; motor: string } | null {
+}): { voz: string; guion: string; clave: string; motor: string; estabilidad: number } | null {
   const voz = o.performance === 'speak' ? vozEleven(o.plataforma) : null;
   if (!voz || !elevenListo()) return null;
   // Dr Electrum habla como persona: alguna muletilla («bueno,», «este») en vez de dicción de locutor.
@@ -378,11 +378,12 @@ function pedidoEleven(o: {
   const humano = o.plataforma === 'electrum' ? conMuletillas(base, { primero: !o.previo, emocion: o.emocion }) : base;
   const guion = guionEleven(humano, o.emocion, (t) => expresar(t, o.emocion, 'speak', { cifras: false }));
   if (!guion) return null;
+  const estabilidad = estabilidadDe(o.emocion);
   const clave = crypto
     .createHash('sha1')
-    .update(`eleven|${modeloEleven()}|${voz}|${guion}|${(o.previo || '').slice(-300)}|${(o.siguiente || '').slice(0, 300)}`)
+    .update(`eleven|${modeloEleven()}|${voz}|${estabilidad}|${guion}|${(o.previo || '').slice(-300)}|${(o.siguiente || '').slice(0, 300)}`)
     .digest('hex');
-  return { voz, guion, clave, motor: `elevenlabs:${modeloEleven()}` };
+  return { voz, guion, clave, motor: `elevenlabs:${modeloEleven()}`, estabilidad };
 }
 
 /**
@@ -407,7 +408,7 @@ export async function abrirVozEnVivo(opts: {
   if (!p) return null;
   const hit = cacheGet(p.clave);
   if (hit) return { tipo: 'cache', habla: { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: 0 } };
-  const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente });
+  const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad });
   if (!r?.body) return null;
   return {
     tipo: 'vivo',
@@ -453,7 +454,7 @@ export async function hablar(opts: {
       const hit = cacheGet(xiPedido.clave);
       if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
     }
-    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto });
+    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad });
     if (xi) {
       const out = { ...xi, motor: xiPedido.motor };
       cacheSet(xiPedido.clave, out);

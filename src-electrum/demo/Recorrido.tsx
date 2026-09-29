@@ -15,7 +15,7 @@
  */
 import { useEffect, useRef, useState, type PointerEvent as EventoPuntero } from 'react';
 import { headersElectrum } from '../acceso';
-import { callar, desbloquear, hablar } from '../panel/voz';
+import { callar, desbloquear, hablar, hablarDialogo } from '../panel/voz';
 import type { CapaExtra, Fondo, Margen, OrdenMapa, RasterEncendido, RasterEscaneado, Tocado } from '../mapa/captura';
 import { catastroGuardado } from '../mapa/captura';
 import type { MuestrasEncendidas } from '../mapa/CapasControl';
@@ -739,6 +739,21 @@ export function Recorrido({
                   : 'Todo esto me lo pide cualquiera de su equipo con palabras normales o con la voz: desde la web, la aplicación del teléfono o Telegram.'
               );
               if (modo !== 'herramientas') await decir('Le armo la ficha en PDF, el plano profesional, el perfil del terreno, los archivos para Google Earth y AutoCAD, y le aviso cuando algo cambia.');
+              /*
+               * Dos voces: la ingeniera Tatiana entra a la conversación (Eleven v4, diálogo a varias
+               * voces). Es lo mismo que hace el botón «Como conversación» con cualquier respuesta.
+               */
+              if (sigue() && !saltoEste()) {
+                const lineas = [
+                  { quien: 'tatiana', nombre: 'Ing. Tatiana', texto: '[curious] Doctor, ¿y si alguien prefiere que se lo expliquen conversando, como ahora?' },
+                  { quien: 'electrum', nombre: 'Dr Electrum', texto: '[warmly] Para eso está usted, Tatiana. [chuckles] Toquen «Como conversación» debajo de cualquier respuesta, o díganme «explícamelo como conversación».' },
+                  { quien: 'tatiana', nombre: 'Ing. Tatiana', texto: '[laughs] Y yo le hago las preguntas que haría cualquiera. Perfecto.' },
+                ];
+                setTexto(lineas.map((l) => `${l.nombre}: ${l.texto.replace(/\[[^\]]+\]\s*/g, '')}`).join('\n'));
+                c.current.cara('SPEAKING');
+                await Promise.race([hablarDialogo(lineas, headersElectrum()), new Promise<void>((r) => (despertar.current = r))]);
+                c.current.cara('IDLE');
+              }
             },
           },
         };

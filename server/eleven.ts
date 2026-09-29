@@ -152,7 +152,11 @@ const VOCABULARIO_INGLES = new Set(
     'restrained tired gentle gently emotion emotional conviction confident sincere hopeful nostalgic wistful ' +
     'laughs laughing chuckles chuckle giggles sighs sigh sighing whispers whispering whisper gasps gasp inhales ' +
     'exhales breath breathes clears throat pause short long hesitant hesitates impressed scoffs yawns nervous ' +
-    'laugh matter of fact flat dry casual friendly authoritative dramatic cheerful solemn intimate'
+    'laugh matter of fact flat dry casual friendly authoritative dramatic cheerful solemn intimate ' +
+    // Las de Eleven v4: se pueden encadenar y las sigue en orden.
+    'whispering shouting laughing ecstatic excitedly cheerfully nervously sarcastic sarcastically confidently ' +
+    'seriously dramatically proudly sadly happily curiously thoughtfully reassuring encouraging ' +
+    'patient patiently enthusiastic enthusiastically amazed awe hushed chuckling giggling grin smiling'
   ).split(' ')
 );
 function esEtiquetaIngles(k: string): boolean {
@@ -260,7 +264,21 @@ type PedidoEleven = {
   siguiente?: string;
   reloj?: Presupuesto;
   timeoutMs?: number;
+  /** 0..1. Más baja = más expresiva (v4 solo acepta estabilidad y similitud). 0,5 si no se dice. */
+  estabilidad?: number;
 };
+
+/**
+ * La estabilidad según la emoción: con alegría, risa o sorpresa se deja variar más la voz; en lo
+ * serio (una alarma, un «no») se la sostiene. Es el control expresivo que v4 deja fuera de las
+ * etiquetas.
+ */
+export function estabilidadDe(emocion: string | undefined): number {
+  const e = String(emocion || '');
+  if (/^(feliz|risa|sorpresa|travieso|orgullo|carino|curioso)$/.test(e)) return 0.38;
+  if (/^(firme|seco|alarma|preocupado|triste|oracion)$/.test(e)) return 0.6;
+  return 0.5;
+}
 
 /**
  * Abre la síntesis y devuelve la respuesta EN CURSO (el audio va llegando por `body`), o null si
@@ -277,7 +295,7 @@ export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> 
     model_id: modeloEleven(),
     language_code: 'es',
     // Estabilidad media: deja que la emoción se note sin que cada frase suene a otra persona.
-    voice_settings: { stability: 0.5, similarity_boost: 0.8 },
+    voice_settings: { stability: Math.min(0.9, Math.max(0.2, opts.estabilidad ?? 0.5)), similarity_boost: 0.8 },
   };
   if (opts.previo) cuerpo.previous_text = opts.previo.slice(-300);
   if (opts.siguiente) cuerpo.next_text = opts.siguiente.slice(0, 300);

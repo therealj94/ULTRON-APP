@@ -626,7 +626,7 @@ const mapa_capa: Herramienta = {
 const expediente_buscar: Herramienta = {
   nombre: 'expediente_buscar',
   descripcion:
-    'Busca en los documentos subidos (informes, resoluciones, ensayos, fichas de ocurrencias, hojas de cálculo, JICA en inglés y sus resúmenes) y devuelve trozos con su página. Usala antes de responder lo que debería estar en un documento. Buscá en español. Si es sobre un documento o carpeta concreta («JICA Fase III», «Minas de Oro 3», «INDEXSA», «FOM»), pasá `documento` con parte de su nombre y en `texto` solo el tema: busca DENTRO de ese documento.',
+    'Busca en los documentos subidos (informes, resoluciones, ensayos, hojas de cálculo, JICA y sus resúmenes) y devuelve trozos con su página. Usala antes de responder lo que debería estar en un documento. Buscá en español. Para un documento o carpeta concreta («JICA Fase III», «INDEXSA»), pasá `documento` con parte de su nombre y en `texto` solo el tema.',
   esquema: {
     type: 'object',
     properties: {

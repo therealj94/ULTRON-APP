@@ -404,3 +404,73 @@ export function prepararRelleno(texto: string, headers: Record<string, string>) 
   if (rellenosGuardados.has(texto)) return;
   void blobDeRelleno(texto, headers).catch(() => {});
 }
+
+/* ------------------------------------------------------------ diálogo a varias voces */
+
+export type LineaDialogo = { quien: string; texto: string; nombre?: string };
+
+/** Como `partirDialogo` del servidor: pedidos de hasta ~1800 caracteres, sin partir una línea. */
+export function partirDialogo(lineas: LineaDialogo[], tope = 1800): LineaDialogo[][] {
+  const trozos: LineaDialogo[][] = [];
+  let actual: LineaDialogo[] = [];
+  let largo = 0;
+  for (const l of lineas) {
+    if (actual.length && largo + l.texto.length > tope) {
+      trozos.push(actual);
+      actual = [];
+      largo = 0;
+    }
+    actual.push(l);
+    largo += l.texto.length;
+  }
+  if (actual.length) trozos.push(actual);
+  return trozos;
+}
+
+/**
+ * Hace sonar un diálogo (Dr Electrum, la ingeniera Tatiana…) con las voces de cada uno, trozo a
+ * trozo, pidiendo el siguiente mientras suena el actual. `callar()` lo corta como a cualquier voz.
+ */
+export async function hablarDialogo(lineas: LineaDialogo[], headers: Record<string, string>, avisos: Avisos = {}) {
+  callar();
+  const mia = ++generacion;
+  const trozos = partirDialogo(lineas.map(({ quien, texto }) => ({ quien, texto })));
+  if (!trozos.length) return;
+  reanudarVoz();
+  const a = elReproductor();
+  const corte = new AbortController();
+  cortePendiente = corte;
+  const pedir = async (i: number): Promise<Response> => {
+    const r = await fetch('/api/electrum/dialogo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ lineas: trozos[i] }),
+      signal: corte.signal,
+    });
+    if (!r.ok) {
+      const j: any = await r.json().catch(() => null);
+      throw new Error(j?.error || `el servidor contestó ${r.status}`);
+    }
+    return r;
+  };
+  let empezo = false;
+  let siguiente: Promise<Response> | null = pedir(0);
+  try {
+    for (let i = 0; i < trozos.length; i++) {
+      const r = await siguiente!;
+      if (mia !== generacion) return;
+      siguiente = i + 1 < trozos.length ? pedir(i + 1) : null;
+      siguiente?.catch(() => {});
+      if (!empezo) {
+        empezo = true;
+        avisos.alEmpezar?.();
+      }
+      await sonar(a, r, mia);
+      if (mia !== generacion) return;
+    }
+  } catch (e: any) {
+    if (mia === generacion && e?.name !== 'AbortError') avisos.alFallar?.(String(e?.message || e));
+  } finally {
+    if (mia === generacion && empezo) avisos.alTerminar?.();
+  }
+}

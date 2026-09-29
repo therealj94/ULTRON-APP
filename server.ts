@@ -90,6 +90,7 @@ import { capaParaMapa, capasVisibles, fichaParaMapa, queHayAqui, rasgoParaMapa }
 import { mantenerTableroCaliente, tablero } from './server/electrum/tablero';
 import { clasificarPendientes } from './server/electrum/documentos-laya';
 import { interpretarComando } from './server/electrum/comando-voz';
+import { abrirDialogo, guionDialogo, lineasValidas, partirDialogo, PERSONAJES } from './server/electrum/dialogo';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
   cargarMemoria,
@@ -747,7 +748,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
       }
     );
     if (!seFue) recordarHilo(clave, mensaje, salida.texto);
-    enviar('fin', { texto: salida.texto, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin, trazaId: salida.trazaId });
+    enviar('fin', { texto: salida.texto, voz: salida.voz, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin, trazaId: salida.trazaId });
   } catch (e: any) {
     console.error('[electrum] turno en vivo falló:', String(e?.message || e).slice(0, 200));
     enviar('error', { error: 'Se me cayó el turno. Volvé a preguntarme.' });
@@ -843,6 +844,47 @@ app.post(
  * Oírle. Ruta propia por lo mismo que la voz: `/api/stt` está en la lista abierta de la APK, y un
  * transcriptor abierto es otra factura con la puerta quitada.
  */
+/**
+ * «Explícamelo como conversación»: el guion a varias voces (Dr Electrum y la ingeniera Tatiana) a
+ * partir de una respuesta. Lo escribe el cerebro; sin él, uno determinista sobre el mismo texto.
+ */
+app.post('/api/electrum/dialogo/guion', exigirPlataforma('electrum'), limitar(20), async (req, res) => {
+  const texto = String(req.body?.texto || '').trim();
+  if (!texto) return res.status(400).json({ error: 'Falta el texto que convertir en diálogo.', honesto: true });
+  const { lineas, origen } = await guionDialogo(texto, req.body?.tema ? String(req.body.tema).slice(0, 200) : undefined);
+  if (!lineas.length) return res.status(422).json({ error: 'No pude armar un diálogo con eso.', honesto: true });
+  return res.json({
+    origen,
+    lineas: lineas.map((l) => ({ ...l, nombre: PERSONAJES[l.quien].nombre })),
+    trozos: partirDialogo(lineas).map((t) => t.length),
+  });
+});
+
+/** El audio de un trozo de diálogo (el navegador los pide en orden), a medida que ElevenLabs lo genera. */
+app.post('/api/electrum/dialogo', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  const lineas = lineasValidas(req.body?.lineas);
+  const [trozo] = partirDialogo(lineas);
+  if (!trozo?.length) return res.status(400).json({ error: 'Faltan las líneas del diálogo.', honesto: true });
+  const r = await abrirDialogo(trozo);
+  if (!r?.body) return res.status(503).json({ error: 'La voz del diálogo no está disponible ahora.', honesto: true });
+  res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Cache-Control', 'no-store');
+  const lector = r.body.getReader();
+  res.on('close', () => {
+    if (!res.writableEnded) lector.cancel().catch(() => undefined);
+  });
+  try {
+    for (;;) {
+      const { done, value } = await lector.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+  } catch (e: any) {
+    console.warn('[dialogo] cortado', String(e?.message || e).slice(0, 120));
+  }
+  res.end();
+});
+
 /**
  * Una frase corta que el navegador no reconoció como orden: Laya dice si es una orden de pantalla
  * (y cuál) o una pregunta. Nunca falla hacia el usuario: sin Laya, `id: null` y la frase va al cerebro.

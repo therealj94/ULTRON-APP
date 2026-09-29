@@ -26,7 +26,7 @@ import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/captura';
 import { sinMovimiento } from '../movimiento';
 import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
-import { callar, desbloquear, hablar, prepararRelleno, rellenar, suena } from './voz';
+import { callar, desbloquear, hablar, hablarDialogo, prepararRelleno, rellenar, suena, type LineaDialogo } from './voz';
 import { FRASES_GENERALES, fraseDeEspera, fraseDeTrabajo } from './trabajando';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 import { Biblioteca } from '../biblioteca/Biblioteca';
@@ -69,6 +69,8 @@ type Turno = {
    * vez de que el doctor adivine cuál era.
    */
   opciones?: Array<{ id: number; nombre: string; detalle: string }>;
+  /** La respuesta dicha como conversación entre personajes (Dr Electrum, la ingeniera Tatiana…). */
+  dialogo?: Array<LineaDialogo & { nombre: string }>;
   /**
    * La pregunta que habría que repetir. Solo la llevan los turnos que NO terminaron bien: un corte
    * o un fallo. Guardarla es lo que separa «se rompió» de «se rompió y aquí está el botón».
@@ -685,7 +687,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   if (d.emocion) onEmocion(d.emocion);
                   if (vozActivaRef.current && d.texto) {
                     vozEnCamino = true;
-                    void hablar(d.texto, d.emocion, headersElectrum(), {
+                    // `voz` trae las etiquetas de expresión de v4 que la pantalla no enseña.
+                    void hablar(typeof d.voz === 'string' && d.voz ? d.voz : d.texto, d.emocion, headersElectrum(), {
                       alEmpezar: () => {
                         setHablando(true);
                         onFace('SPEAKING');
@@ -767,6 +770,66 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
   );
 
   /** Abrir un informe al resto del equipo. Solo puede hacerlo quien lo pidió; el servidor lo comprueba. */
+  /*
+   * «EXPLÍCAMELO COMO CONVERSACIÓN». La respuesta se vuelve un diálogo a varias voces (Eleven v4):
+   * el doctor explica y la ingeniera Tatiana pregunta lo que preguntaría quien escucha. El guion lo
+   * escribe el servidor; aquí se enseña con el nombre de cada uno y suena con la voz de cada uno.
+   */
+  const [conversando, setConversando] = useState(false);
+  const conversar = useCallback(
+    async (texto: string) => {
+      if (!texto.trim() || conversando) return;
+      setConversando(true);
+      desbloquear();
+      onFace('THINKING');
+      if (vozActivaRef.current) void rellenar('Déjeme armarlo como conversación con la ingeniera Tatiana…', headersElectrum());
+      try {
+        const r = await fetch('/api/electrum/dialogo/guion', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headersElectrum() },
+          body: JSON.stringify({ texto }),
+        });
+        const j: any = await r.json().catch(() => null);
+        if (!r.ok || !Array.isArray(j?.lineas)) {
+          avisoSuelto(j?.error || `No pude armar la conversación: el servidor contestó ${r.status}.`);
+          return;
+        }
+        const lineas = j.lineas as Array<LineaDialogo & { nombre: string }>;
+        setTurnos((t) => [...t, { de: 'electrum', texto: lineas.map((l) => `${l.nombre}: ${l.texto}`).join('\n'), dialogo: lineas, panel: 'En conversación', local: true }]);
+        await hablarDialogo(lineas, headersElectrum(), {
+          alEmpezar: () => {
+            setHablando(true);
+            onFace('SPEAKING');
+          },
+          alTerminar: () => {
+            setHablando(false);
+            onFace('IDLE');
+          },
+          alFallar: (m) => {
+            setHablando(false);
+            onFace('IDLE');
+            avisoSuelto(`La conversación está escrita arriba; no pude decirla en voz alta: ${m}.`);
+          },
+        });
+      } catch {
+        avisoSuelto('No alcancé el servidor para armar la conversación.');
+      } finally {
+        setConversando(false);
+      }
+    },
+    [conversando, onFace, avisoSuelto]
+  );
+  // «Explícamelo como conversación» dicho en voz alta: la última respuesta del doctor.
+  useEffect(() => {
+    const alPedir = () => {
+      const ultima = [...turnosRef.current].reverse().find((t) => t.de === 'electrum' && !t.local && t.texto);
+      if (ultima) void conversar(ultima.texto);
+      else avisoSuelto('Primero pregúnteme algo, y después se lo explico como conversación.');
+    };
+    window.addEventListener('electrum:dialogo', alPedir);
+    return () => window.removeEventListener('electrum:dialogo', alPedir);
+  }, [conversar, avisoSuelto]);
+
   const compartir = useCallback(
     async (indice: number, informe: { url: string }) => {
       try {
@@ -1008,8 +1071,32 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                     t.de === 'persona' ? 'bg-white/10 text-[#E7EEF2]' : 'bg-white/[0.045] text-[#DDE7EC]'
                   }`}
                 >
-                  {t.texto}
+                  {t.dialogo ? (
+                    <div className="space-y-1.5">
+                      {t.dialogo.map((l, k) => (
+                        <p key={k}>
+                          <span className="font-mono text-[10.5px] tracking-[0.08em] uppercase" style={{ color: l.quien === 'electrum' ? AMBAR : l.quien === 'tatiana' ? '#7FD1C7' : '#C7B8FF' }}>
+                            {l.nombre}
+                          </span>{' '}
+                          {l.texto.replace(/\[[^\]\n]{1,40}\]\s*/g, '')}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    t.texto
+                  )}
                 </div>
+                {t.de === 'electrum' && !t.local && !t.dialogo && t.texto.length > 140 && (
+                  <button
+                    type="button"
+                    disabled={conversando || pensando}
+                    onClick={() => void conversar(t.texto)}
+                    className="mt-1 block rounded-md px-1.5 py-0.5 font-mono text-[10px] tracking-[0.1em] uppercase text-[#8FA2AC] transition-colors hover:text-[#FFAE3B] disabled:opacity-40 cursor-pointer"
+                    title="Dr Electrum y la ingeniera Tatiana se lo explican conversando, cada uno con su voz"
+                  >
+                    ▶ Como conversación
+                  </button>
+                )}
                 {/*
                   * Un turno que se cortó lleva su pregunta encima, y el botón la repite tal cual.
                   * Sin esto, recuperarse de un corte obliga a volver a escribirla — y si era larga,

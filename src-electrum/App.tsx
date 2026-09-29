@@ -470,6 +470,9 @@ export default function App() {
         case 'fondo':
           setFondo(cmd.cual);
           break;
+        case 'dialogo':
+          window.dispatchEvent(new Event('electrum:dialogo'));
+          break;
         case 'ficha': {
           // Lo mismo que tocar el botón de la ficha abierta. Sin ficha abierta, se dice qué hacer.
           const boton = { pdf: 'btn-pdf', geologico: 'btn-geologicos', timelapse: 'btn-timelapse', analizar: 'btn-analizar' }[cmd.que];
@@ -541,6 +544,8 @@ export default function App() {
         },
         alEstado: setEstadoOido,
         hablandoAhora: suena,
+        // Hablarle encima lo calla y lo pone a escuchar, como en una conversación de verdad.
+        alInterrumpir: () => callar(),
       }),
     []
   );

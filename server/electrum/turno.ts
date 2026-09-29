@@ -33,6 +33,8 @@ import { personalidadElectrum } from './personalidad';
 import { buscarWebDetallado, consultaWeb, leerPagina, resumenMotores } from '../../src/06-manos/web';
 
 export type RespuestaTurno = {
+  /** Lo que se DICE: el texto con las etiquetas de expresión de v4 ([thoughtful]…), si las hay. */
+  voz?: string;
   texto: string;
   emocion: Emocion;
   /** Qué especialistas contestaron, para mostrarlo encima de la respuesta. */
@@ -346,8 +348,15 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   } catch (e: any) {
     console.warn('[electrum] garantía de mapas geológicos:', String(e?.message || e).slice(0, 160));
   }
+  /*
+   * La VOZ lleva las etiquetas de expresión que escribió el modelo ([thoughtful], [laughs]…): la
+   * pantalla no las enseña, pero Eleven v4 las actúa. Si alguna garantía cambió el texto, la voz
+   * dice el texto final tal cual (sin etiquetas que ya no calzan).
+   */
+  const voz = final === texto && emo.texto.trim() !== limpio ? emo.texto.trim() : undefined;
   return {
     texto: final,
+    voz,
     emocion: emo.emocion,
     panel: nombrePanel,
     traza,
