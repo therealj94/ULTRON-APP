@@ -32,7 +32,11 @@ export type OrdenMapa =
   /** Encuadrar un rectángulo (Honduras entera, una región), con inclinación opcional. */
   | { accion: 'encuadrar'; encuadre: [number, number, number, number]; inclinacion?: number; giro?: number; ms?: number; margen?: Margen }
   /** Girar la cámara alrededor de donde mira (o de `centro`), a velocidad pareja: la toma de dron. */
-  | { accion: 'orbitar'; grados: number; ms: number; centro?: [number, number]; zoom?: number; inclinacion?: number; margen?: Margen };
+  | { accion: 'orbitar'; grados: number; ms: number; centro?: [number, number]; zoom?: number; inclinacion?: number; margen?: Margen }
+  /** Ir a un lugar de Honduras («llévame a Juticalpa») y dejarlo marcado con su nombre. */
+  | { accion: 'lugar'; centro: [number, number]; zoom: number; nombre: string; detalle?: string }
+  /** Dejar en el mapa solo las concesiones de un mineral o una clase (null: todas otra vez). */
+  | { accion: 'filtrar'; mineral: string | null };
 
 /** Lo que se tocó en el mapa: una concesión, un rasgo de una capa encendida, o un punto cualquiera. */
 export type Tocado =

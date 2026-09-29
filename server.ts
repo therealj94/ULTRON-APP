@@ -85,7 +85,10 @@ import { createHash } from 'node:crypto';
 import { personaPorCorreoExacto, puedeEntrar } from './lib/acceso';
 import { puedeEscribir } from './lib/acceso';
 import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
-import { catastroGeojson, traslapesGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum } from './server/electrum/db';
+import { buscarConcesiones, catastroGeojson, geometriaDe, traslapesGeojson, consulta as consultaElectrum, encuadreCatastro, hayBase as hayBaseElectrum, saludBase as saludElectrum, unicaExacta } from './server/electrum/db';
+import { buscarLugar } from './server/electrum/lugares';
+import { comentarMesa, TEMAS as TEMAS_COMENTARIO, type Tema } from './server/electrum/comentario';
+import { mineralesPorConcesion } from './server/electrum/minerales';
 import { cargarGeologia } from './server/electrum/geologia-datos';
 import { capaParaMapa, capasVisibles, fichaParaMapa, queHayAqui, rasgoParaMapa } from './server/electrum/explorar';
 import { mantenerTableroCaliente, tablero } from './server/electrum/tablero';
@@ -466,20 +469,25 @@ app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), 
  */
 app.get('/api/electrum/catastro.geojson', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
   try {
-    const [fc, encuadre, traslapes, perdida, prosp] = await Promise.all([
+    const [fc, encuadre, traslapes, perdida, prosp, minerales] = await Promise.all([
       catastroGeojson(),
       encuadreCatastro(),
       // Lo que adorna el mapa (rayado de traslapes, alerta del satélite, prospectividad) no puede tumbar el catastro.
       traslapesGeojson().catch(() => null),
       perdidaPorConcesion().catch(() => null),
       puntajesPorConcesion().catch(() => null),
+      // Minerales deducidos de las ocurrencias cercanas y la clase: para «muéstrame solo las de oro».
+      mineralesPorConcesion().catch(() => null),
     ]);
-    if (perdida?.size || prosp?.size) {
+    if (perdida?.size || prosp?.size || minerales?.size) {
       for (const f of fc.features) {
         const p = perdida?.get(Number(f.properties?.id));
         if (p && p > 0) (f.properties as any).perdida_ha = Math.round(p * 10) / 10;
         const q = prosp?.get(Number(f.properties?.id));
         if (q != null) (f.properties as any).prosp = q;
+        const mi = minerales?.get(Number(f.properties?.id));
+        if (mi?.minerales.length) (f.properties as any).minerales = mi.minerales.join(',');
+        if (mi?.clase) (f.properties as any).clase = mi.clase;
       }
     }
     res.setHeader('Cache-Control', 'private, max-age=60');
@@ -529,6 +537,28 @@ function falloMapa(res: express.Response, que: string, e: any) {
   console.error(`[electrum] mapa/${que} falló:`, String(e?.message || e).slice(0, 200));
   return res.status(503).json({ error: 'No pude leer eso de la base.', honesto: true });
 }
+
+/**
+ * «Llévame a Juticalpa»: un lugar de Honduras (ciudad, municipio, aldea, cerro, río, laguna…) del
+ * gacetero de GeoNames (server/electrum/lugares.ts). Si no es un lugar, se prueba como concesión.
+ */
+app.get('/api/electrum/lugar', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 80);
+  if (q.length < 2) return res.status(400).json({ error: 'Decime a qué lugar.', honesto: true });
+  const r = buscarLugar(q);
+  if (r) return res.json({ ok: true, tipo: 'lugar', lugar: r.lugar, otros: r.otros, fuente: 'GeoNames', honesto: true });
+  try {
+    const filas = await buscarConcesiones(q, 6);
+    const f = filas.length === 1 ? filas[0] : unicaExacta(filas, q);
+    if (f) {
+      const g = await geometriaDe(Number(f.id));
+      if (g) return res.json({ ok: true, tipo: 'concesion', ui: { accion: 'volar', concesion_id: Number(f.id), nombre: f.nombre, centro: g.centro, encuadre: g.encuadre, geojson: g.geojson, resaltar: true }, honesto: true });
+    }
+  } catch {
+    /* sin base: solo lugares */
+  }
+  return res.json({ ok: false, error: `No encuentro «${q}» ni como lugar de Honduras ni como concesión.`, honesto: true });
+});
 
 app.get('/api/electrum/mapa/concesion/:id', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
   const id = idDe(req.params.id);
@@ -741,6 +771,8 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
         historial,
         abandonado: () => seFue,
         internet: req.body?.internet === true,
+        // La mesa técnica abierta en pantalla: contestan los tres, discutiendo, hasta que se cierre.
+        mesa: req.body?.mesa === true,
         enVivo: (e) => {
           if (e.panel) enviar('panel', { panel: e.panel });
           if (e.herramienta) enviar('herramienta', e.herramienta);
@@ -849,6 +881,18 @@ app.post(
  * «Explícamelo como conversación»: el guion a varias voces (Dr Electrum y la ingeniera Tatiana) a
  * partir de una respuesta. Lo escribe el cerebro; sin él, uno determinista sobre el mismo texto.
  */
+/**
+ * El equipo comenta lo que se acaba de ver en pantalla (timelapse, documento, perfil…): 2 a 4
+ * líneas de quien sabe de eso, con la pregunta de si profundizar (server/electrum/comentario.ts).
+ */
+app.post('/api/electrum/mesa/comentar', exigirPlataforma('electrum'), limitar(20), async (req, res) => {
+  const tema = String(req.body?.tema || 'general') as Tema;
+  if (!TEMAS_COMENTARIO.includes(tema)) return res.status(400).json({ error: 'Tema desconocido.', honesto: true });
+  const contexto = String(req.body?.contexto || '').slice(0, 3000);
+  const { lineas, origen } = await comentarMesa(tema, contexto);
+  return res.json({ origen, lineas: lineas.map((l) => ({ ...l, nombre: PERSONAJES[l.quien].nombre })), honesto: true });
+});
+
 app.post('/api/electrum/dialogo/guion', exigirPlataforma('electrum'), limitar(20), async (req, res) => {
   const texto = String(req.body?.texto || '').trim();
   if (!texto) return res.status(400).json({ error: 'Falta el texto que convertir en diálogo.', honesto: true });

@@ -15,7 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { MEDIAPIPE_WASM_URL_DEFAULT } from '../../src/02-cara/vision/mediapipe';
-import { crearGestos, type EventoGesto, type Punto } from './gestos';
+import { crearGestos, leerMano, type EventoGesto, type Punto } from './gestos';
 
 const AMBAR = '#FFAE3B';
 const MODELO_MANOS = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
@@ -94,8 +94,27 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
   const cursor = useRef<HTMLDivElement>(null);
   const [aviso, setAviso] = useState('');
   const [manos, setManos] = useState(0);
+  /** Qué gesto se está leyendo ahora, en palabras («Pellizco», «Arrastrando»…). */
+  const [gesto, setGesto] = useState('');
+  /** Ya vio una mano alguna vez desde que se encendió (para la guía de entrada). */
+  const [vista, setVista] = useState(false);
+  /** Lleva un rato sin ver ninguna mano: consejo de luz y distancia. */
+  const [perdida, setPerdida] = useState(false);
   const onEstadoRef = useRef(onEstado);
   onEstadoRef.current = onEstado;
+  // El estado también se muestra aquí: una guía que pide la mano no sirve si la cámara no abrió.
+  const [estado, setEstado] = useState<EstadoManos>('apagado');
+  const informar = useCallback((e: EstadoManos) => {
+    setEstado(e);
+    onEstadoRef.current(e);
+  }, []);
+  const vistaRef = useRef(false);
+  useEffect(() => {
+    if (!activo) {
+      vistaRef.current = false;
+      setVista(false);
+    }
+  }, [activo]);
 
   const avisar = useCallback((t: string) => {
     setAviso(t);
@@ -112,6 +131,18 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
     const gestos = crearGestos();
     const soltarCaptura = protegerCaptura();
     let arrastre: Arrastre = null;
+    // Desde que se enciende: el consejo de luz sale a los 5 s SIN mano, no al abrir.
+    let ultimaMano = performance.now();
+    let gestoAhora = '';
+    // El nombre del gesto se publica a lo sumo 8 veces por segundo (no un render por cuadro).
+    const nombrar = (g: string) => {
+      gestoAhora = g;
+    };
+    const publicar = window.setInterval(() => {
+      setGesto((a) => (a === gestoAhora ? a : gestoAhora));
+      const sinMano = performance.now() - ultimaMano > 5000;
+      setPerdida((a) => (a === sinMano ? a : sinMano));
+    }, 125);
 
     const debajo = (x: number, y: number): Element | null => {
       // El cursor no recibe eventos (pointer-events: none), así que no se tapa a sí mismo.
@@ -122,6 +153,8 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
       const c = cursor.current;
       switch (e.tipo) {
         case 'cursor':
+          ultimaMano = performance.now();
+          nombrar(e.pinza ? (arrastre ? 'Arrastrando' : 'Pellizco') : e.manos === 2 ? 'Dos manos' : 'Señalando');
           if (c) {
             c.style.opacity = '1';
             c.style.transform = `translate(${e.x - 18}px, ${e.y - 18}px) scale(${e.pinza ? 0.72 : 1})`;
@@ -177,6 +210,7 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
           break;
         }
         case 'zoom': {
+          nombrar(e.factor > 1 ? 'Zoom: acercando' : 'Zoom: alejando');
           const marco = document.querySelector('[data-visor-marco]');
           if (marco) {
             // El visor hace zoom con la rueda + Ctrl, como un pellizco de trackpad.
@@ -195,19 +229,36 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
       }
     };
 
+    // El esqueleto de la mano, del color del gesto: se ve de un vistazo si la está leyendo y qué hace.
+    const HUESOS = [[0, 1], [1, 2], [2, 3], [3, 4], [0, 5], [5, 6], [6, 7], [7, 8], [5, 9], [9, 10], [10, 11], [11, 12], [9, 13], [13, 14], [14, 15], [15, 16], [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]];
     const dibujar = (todas: Punto[][]) => {
       const cv = lienzo.current;
       const ctx = cv?.getContext('2d');
       if (!cv || !ctx) return;
       ctx.clearRect(0, 0, cv.width, cv.height);
-      ctx.fillStyle = AMBAR;
+      // El lienzo va en espejo como el video, así que se dibuja en coordenadas del cuadro.
       for (const lm of todas) {
-        for (const p of lm) {
+        const l = leerMano(lm);
+        const color = l?.puno ? '#FF6B5A' : l?.pinza ? '#FFD34D' : l?.palma ? '#5CD6C4' : AMBAR;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (const [a, b] of HUESOS) {
+          ctx.moveTo(lm[a].x * cv.width, lm[a].y * cv.height);
+          ctx.lineTo(lm[b].x * cv.width, lm[b].y * cv.height);
+        }
+        ctx.stroke();
+        ctx.fillStyle = '#fff';
+        for (const k of [4, 8]) {
           ctx.beginPath();
-          // El lienzo va en espejo como el video, así que se dibuja en coordenadas del cuadro.
-          ctx.arc(p.x * cv.width, p.y * cv.height, 2.2, 0, Math.PI * 2);
+          ctx.arc(lm[k].x * cv.width, lm[k].y * cv.height, 3.2, 0, Math.PI * 2);
           ctx.fill();
         }
+      }
+      if (todas.length && !vistaRef.current) {
+        vistaRef.current = true;
+        setVista(true);
       }
     };
 
@@ -229,11 +280,11 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
     };
 
     (async () => {
-      onEstadoRef.current('cargando');
+      informar('cargando');
       try {
         flujo = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
       } catch {
-        if (vivo) onEstadoRef.current('sin-permiso');
+        if (vivo) informar('sin-permiso');
         return;
       }
       if (!vivo) return flujo.getTracks().forEach((t) => t.stop());
@@ -249,7 +300,7 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
               baseOptions: { modelAssetPath: MODELO_MANOS, delegate },
               runningMode: 'VIDEO',
               numHands: 2,
-              minHandDetectionConfidence: 0.6,
+              minHandDetectionConfidence: 0.5,
               minHandPresenceConfidence: 0.5,
               minTrackingConfidence: 0.5,
             });
@@ -263,16 +314,17 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
         // Sin detector Air touch no sirve: se suelta la cámara (y su luz de «grabando»).
         flujo?.getTracks().forEach((t) => t.stop());
         flujo = null;
-        if (vivo) onEstadoRef.current('error');
+        if (vivo) informar('error');
         return;
       }
       if (!vivo) return;
-      onEstadoRef.current('activo');
+      informar('activo');
       bucle();
     })();
 
     return () => {
       vivo = false;
+      clearInterval(publicar);
       cancelAnimationFrame(reloj);
       if (arrastre?.tipo === 'puntero') enviarPuntero('up', arrastre.el, 0, 0);
       soltarCaptura();
@@ -284,9 +336,9 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
         /* ya cerrado */
       }
       if (cursor.current) cursor.current.style.opacity = '0';
-      onEstadoRef.current('apagado');
+      informar('apagado');
     };
-  }, [activo, avisar]);
+  }, [activo, avisar, informar]);
 
   if (!activo) return null;
   // Al cuerpo de la página: un ancestro con transform dejaría el cursor «fijo» mal ubicado.
@@ -302,16 +354,46 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
         <span className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full" style={{ background: AMBAR }} />
       </div>
       {/* La vista de la cámara, chica y en espejo, con los puntos de la mano. */}
-      <div className="pointer-events-none fixed bottom-3 left-3 z-[70] overflow-hidden rounded-xl border border-white/15 bg-black/70 shadow-lg backdrop-blur" style={{ width: 150 }}>
+      <div
+        className="pointer-events-none fixed bottom-3 left-3 z-[70] overflow-hidden rounded-xl border bg-black/70 shadow-lg backdrop-blur transition-colors"
+        style={{ width: 200, borderColor: manos ? `${AMBAR}aa` : 'rgba(255,255,255,.15)', boxShadow: manos ? `0 0 18px ${AMBAR}44` : undefined }}
+        data-air-touch={manos ? 'mano' : 'sin-mano'}
+      >
         <div className="relative" style={{ transform: 'scaleX(-1)' }}>
-          <video ref={video} muted playsInline className="block h-[112px] w-[150px] object-cover opacity-70" />
-          <canvas ref={lienzo} width={150} height={112} className="absolute inset-0 h-full w-full" />
+          <video ref={video} muted playsInline className="block h-[150px] w-[200px] object-cover opacity-70" />
+          <canvas ref={lienzo} width={200} height={150} className="absolute inset-0 h-full w-full" />
         </div>
-        <div className="px-2 py-1 font-mono text-[9.5px] leading-tight tracking-[0.08em] text-[#C9D5DB]">
-          <span style={{ color: AMBAR }}>AIR TOUCH</span> · {manos === 0 ? 'muestre la mano' : manos === 1 ? '1 mano' : '2 manos'}
+        <div className="px-2 py-1.5 font-mono text-[10px] leading-tight tracking-[0.08em] text-[#C9D5DB]">
+          <div className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-full" style={{ background: manos ? '#5CD6C4' : '#7F939D' }} aria-hidden />
+            <span style={{ color: AMBAR }}>AIR TOUCH</span>
+            <span>· {manos === 0 ? 'sin mano' : manos === 1 ? '1 mano' : '2 manos'}</span>
+          </div>
+          <div className="mt-0.5 min-h-[14px] text-[11px] font-semibold normal-case tracking-normal" style={{ color: manos ? '#FFE3A8' : '#8FA2AC' }} data-air-gesto>
+            {manos ? gesto || 'Señalando' : perdida ? 'Acérquese a la luz, mano a medio metro' : 'Muestre la mano a la cámara'}
+          </div>
           <div className="mt-0.5 text-[9px] normal-case tracking-normal text-[#8FA2AC]">Pellizque = tocar · pellizque y mueva = arrastrar · dos manos = zoom · puño = cerrar</div>
         </div>
       </div>
+      {/* La guía de entrada: hasta que vea la mano por primera vez, se dice qué hacer; al verla, se confirma. */}
+      {estado === 'error' || estado === 'sin-permiso' ? (
+        <div className="pointer-events-none fixed left-1/2 top-1/3 z-[80] -translate-x-1/2 rounded-2xl border border-[#FF6B5A]/50 bg-black/80 px-5 py-4 text-center shadow-2xl backdrop-blur" role="alert">
+          <div className="text-[14px] font-semibold text-[#FFB4A8]">{estado === 'sin-permiso' ? 'Air touch necesita la cámara' : 'No pude cargar el detector de manos'}</div>
+          <div className="mt-1 text-[12px] text-[#9FB0B8]">{estado === 'sin-permiso' ? 'Permita la cámara en el candado de la barra del navegador y vuelva a tocar «Air touch».' : 'Revise la conexión y vuelva a tocar «Air touch».'}</div>
+        </div>
+      ) : estado === 'cargando' ? (
+        <div className="pointer-events-none fixed left-1/2 top-1/3 z-[80] -translate-x-1/2 rounded-2xl border border-white/15 bg-black/80 px-5 py-3 text-center text-[13px] text-[#C9D5DB] shadow-2xl backdrop-blur" role="status">
+          Preparando la cámara y el detector de manos…
+        </div>
+      ) : !vista ? (
+        <div className="pointer-events-none fixed left-1/2 top-1/3 z-[80] -translate-x-1/2 rounded-2xl border border-white/15 bg-black/80 px-5 py-4 text-center shadow-2xl backdrop-blur" role="status">
+          <div className="text-[34px] leading-none" aria-hidden>✋</div>
+          <div className="mt-2 text-[14px] font-semibold text-[#FFE3A8]">Levante la mano frente a la cámara</div>
+          <div className="mt-1 text-[12px] text-[#9FB0B8]">Palma hacia la pantalla, a medio metro y con luz de frente.</div>
+        </div>
+      ) : (
+        <GuiaVista />
+      )}
       {aviso && (
         <div className="pointer-events-none fixed left-1/2 top-16 z-[80] -translate-x-1/2 rounded-full border border-[#FFAE3B]/40 bg-black/80 px-4 py-1.5 font-mono text-[12px] tracking-[0.12em] uppercase" style={{ color: AMBAR }}>
           {aviso}
@@ -323,6 +405,22 @@ export function AirTouch({ activo, onEstado }: { activo: boolean; onEstado: (e: 
 }
 
 /** El botón «Manos», al lado del micrófono. */
+/** «✓ Mano detectada» un momento, la primera vez que la ve. */
+function GuiaVista() {
+  const [ver, setVer] = useState(true);
+  useEffect(() => {
+    const t = window.setTimeout(() => setVer(false), 1800);
+    return () => clearTimeout(t);
+  }, []);
+  if (!ver) return null;
+  return (
+    <div className="pointer-events-none fixed left-1/2 top-1/3 z-[80] -translate-x-1/2 rounded-2xl border border-[#5CD6C4]/50 bg-black/80 px-5 py-3 text-center shadow-2xl backdrop-blur" role="status">
+      <div className="text-[14px] font-semibold text-[#5CD6C4]">✓ Mano detectada</div>
+      <div className="mt-1 text-[12px] text-[#9FB0B8]">Mueva el cursor y pellizque para tocar.</div>
+    </div>
+  );
+}
+
 export function BotonManos({ activo, estado, onCambiar }: { activo: boolean; estado: EstadoManos; onCambiar: () => void }) {
   const etiqueta =
     estado === 'cargando' ? 'Cargando…' : estado === 'sin-permiso' ? 'Permitir cámara' : estado === 'error' ? 'Sin Air touch' : activo ? 'Manos activas' : 'Air touch';

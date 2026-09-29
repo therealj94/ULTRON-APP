@@ -16,6 +16,8 @@
  *  · `callar()` corta lo que suena e invalida lo que viene en camino.
  */
 
+import { guardarPreferencia, leerPreferencia } from '../preferencias';
+
 /** Medio segundo de silencio en WAV: lo que suena al desbloquear el reproductor. */
 const SILENCIO =
   'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
@@ -124,6 +126,34 @@ export function nivelVoz(): number {
   // La voz hablada ronda 0,05–0,25 de RMS: se estira para que la boca abra de verdad.
   return Math.min(1, Math.max(0, (rms - 0.012) * 5));
 }
+
+/* ------------------------------------------------------------ explorar sin voces */
+
+/*
+ * EL SILENCIO ES GLOBAL: con las voces apagadas no habla nadie —ni la respuesta, ni la mesa, ni el
+ * recorrido, ni el «estoy revisando…»—. Lo que se iba a decir se lee: el diálogo se ve con sus caras
+ * y sus subtítulos, al ritmo de lectura, y el recorrido espera lo que tarda leerlo. Es la misma
+ * preferencia que el botón «Voz» del panel.
+ */
+let mudo = !leerPreferencia('voz', true, (v) => typeof v === 'boolean');
+const oyentesMudo = new Set<(m: boolean) => void>();
+export const estaMudo = () => mudo;
+export function silenciar(m: boolean) {
+  if (m === mudo) return;
+  mudo = m;
+  guardarPreferencia('voz', !m);
+  if (m) callar();
+  else desbloquear();
+  oyentesMudo.forEach((f) => f(m));
+}
+export function escucharMudo(f: (m: boolean) => void): () => void {
+  oyentesMudo.add(f);
+  return () => {
+    oyentesMudo.delete(f);
+  };
+}
+/** Lo que tarda en leerse un texto (unas 3 palabras por segundo), entre 1,5 y 12 s. */
+export const msDeLectura = (t: string) => Math.max(1500, Math.min(12_000, String(t || '').split(/\s+/).length * 330));
 
 /** Corta lo que suena e invalida lo que venía. Se puede llamar siempre. */
 export function callar() {
@@ -303,6 +333,14 @@ function sonarBlob(a: HTMLAudioElement, blob: Blob, mia: number): Promise<void> 
  * Nunca lanza: los problemas llegan por `alFallar`.
  */
 export async function hablar(texto: string, emocion: string | undefined, headers: Record<string, string>, avisos: Avisos = {}) {
+  if (mudo) {
+    // En silencio no suena, pero se respeta el tiempo de leerlo (el recorrido va a ese paso).
+    const mia = ++generacion;
+    avisos.alEmpezar?.();
+    await new Promise((ok) => setTimeout(ok, msDeLectura(texto.replace(/\[[^\]\n]{1,40}\]/g, ''))));
+    if (mia === generacion) avisos.alTerminar?.();
+    return;
+  }
   const trozos = trocearParaVoz(texto);
   // Callar corta también lo que viene en camino: ni se sigue bajando ni se gastan créditos.
   const corte = new AbortController();
@@ -381,6 +419,7 @@ async function blobDeRelleno(texto: string, headers: Record<string, string>, sen
  * Nunca lanza y nunca avisa de fallos: si no suena, la respuesta llega igual.
  */
 export function rellenar(texto: string, headers: Record<string, string>, avisos: Pick<Avisos, 'alEmpezar' | 'alTerminar'> = {}): Promise<void> {
+  if (mudo) return Promise.resolve();
   // No pisa una respuesta que está sonando.
   if (suena() && !relleno) return Promise.resolve();
   callar();
@@ -464,6 +503,27 @@ export function escucharEscena(f: (e: Escena) => void): () => void {
     oyentesEscena.delete(f);
   };
 }
+/**
+ * El diálogo sin voces: la mesa aparece igual, cada uno «dice» su línea en el subtítulo el tiempo
+ * que tarda leerla, con su cara encendida. Nada suena.
+ */
+async function leerDialogo(lineas: LineaDialogo[], avisos: Avisos) {
+  callar();
+  const mia = ++generacion;
+  const hablan = [...new Set(lineas.map((l) => l.quien))];
+  const participantes = hablan.some((q) => q !== 'electrum' && q !== 'narrador') && !hablan.includes('electrum') ? ['electrum', ...hablan] : hablan;
+  avisos.alEmpezar?.();
+  for (const l of lineas) {
+    if (mia !== generacion) return;
+    publicarEscena({ hablante: l.quien, participantes, linea: l.texto });
+    await new Promise((ok) => setTimeout(ok, msDeLectura(l.texto.replace(/\[[^\]\n]{1,40}\]/g, ''))));
+  }
+  if (mia === generacion) {
+    terminarEscena();
+    avisos.alTerminar?.();
+  }
+}
+
 /** Quién habla ahora en un diálogo (null fuera de un diálogo). */
 export const hablanteActual = () => escena.hablante;
 
@@ -519,6 +579,7 @@ function lectorDialogo(r: Response, alSegmentos: (s: Segmento[]) => void): Lecto
  * (las caras se animan con eso). `callar()` lo corta como a cualquier voz.
  */
 export async function hablarDialogo(lineas: LineaDialogo[], headers: Record<string, string>, avisos: Avisos = {}) {
+  if (mudo) return leerDialogo(lineas, avisos);
   const trozos = partirDialogo(lineas.map(({ quien, texto }) => ({ quien, texto })));
   const corte = new AbortController();
   const pedir = async (i: number): Promise<Response> => {

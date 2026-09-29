@@ -707,6 +707,48 @@ export function Recorrido({
               setFoco(null);
             },
           },
+          mapaVoz: {
+            hay: true,
+            correr: async () => {
+              capitulo(++i, { titulo: 'El mapa, con palabras', chips: ['«Llévame a Juticalpa»', '«Solo las de oro»', '«Quita el filtro»'] });
+              c.current.tocar(null);
+              await decir('Al mapa también se le habla. Si me dice «llévame a Juticalpa», lo llevo y se lo dejo marcado.');
+              try {
+                const r = await fetch('/api/electrum/lugar?q=Juticalpa', { headers: headersElectrum() });
+                const j: any = r.ok ? await r.json() : null;
+                if (j?.ok && j.lugar && sigue()) {
+                  c.current.orden({ accion: 'lugar', centro: j.lugar.centro, zoom: 11, nombre: j.lugar.nombre, detalle: [j.lugar.tipo, j.lugar.departamento].filter(Boolean).join(' · ') });
+                  await espera(2600);
+                }
+              } catch {
+                /* sin lugar: se sigue contando */
+              }
+              if (!sigue()) return;
+              c.current.orden({ accion: 'filtrar', mineral: 'oro' });
+              await decir('Y si me dice «muéstrame solo las de oro», dejo en el mapa las concesiones que tienen un yacimiento de oro registrado dentro o muy cerca. Lo mismo con plata, cobre, antimonio o las no metálicas.');
+              c.current.orden({ accion: 'filtrar', mineral: null });
+            },
+          },
+          mesa: {
+            hay: true,
+            correr: async () => {
+              capitulo(++i, { titulo: 'La mesa de trabajo', chips: ['Don Chema · metalurgista', 'Ing. Tatiana · civil y ambiental', '«Mesa técnica»'] });
+              c.current.tocar(null);
+              if (document.querySelector('[data-tour="mesa"]')) setFoco('[data-tour="mesa"]');
+              const lineas = [
+                { quien: 'electrum', nombre: 'Dr Electrum', texto: '[warmly] Y no trabajo solo. Le presento a mi equipo.' },
+                { quien: 'chema', nombre: 'Don Chema', texto: '[warmly] Buenas, soy Don Chema, metalurgista. Usted me dice qué mineral tiene y yo le digo qué planta ocupa: chancado, molienda, flotación o lixiviación, y cuántas toneladas al día aguanta.' },
+                { quien: 'tatiana', nombre: 'Ing. Tatiana', texto: '[confident] Y yo soy la ingeniera Tatiana. Lo que Don Chema diseña, yo lo construyo: la obra, la presa de relaves, el agua, y los permisos ambientales.' },
+                { quien: 'electrum', nombre: 'Dr Electrum', texto: '[thoughtful] Pregúntele a cualquiera por su nombre, o toque «Mesa» y lo discutimos entre los tres hasta llegar a una recomendación.' },
+                { quien: 'chema', nombre: 'Don Chema', texto: '[chuckles] Como decimos en Olancho: tres cabezas piensan más que una.' },
+              ];
+              setTexto(lineas.map((l) => `${l.nombre}: ${l.texto.replace(/\[[^\]]+\]\s*/g, '')}`).join('\n'));
+              c.current.cara('SPEAKING');
+              await Promise.race([hablarDialogo(lineas, headersElectrum()), new Promise<void>((r) => (despertar.current = r))]);
+              c.current.cara('IDLE');
+              setFoco(null);
+            },
+          },
           chat: {
             hay: true,
             correr: () =>
@@ -760,10 +802,10 @@ export function Recorrido({
 
         const ORDEN: Record<ModoRecorrido, string[]> = {
           // El completo lo cuenta todo: la geología, lo legal y las herramientas, en ese orden.
-          completo: ['intro', 'potencial', 'satelite', 'zona', 'analisis', 'oro', 'conflictos', 'traslapes', 'vencimientos', 'marco', 'fichaBotones', 'geologicoVivo', 'timelapse', 'manos', 'cierre'],
-          geologico: ['intro', 'zona', 'analisis', 'oro', 'alteracion', 'geologicoVivo', 'cierre'],
-          legal: ['intro', 'conflictos', 'traslapes', 'vencimientos', 'marco', 'cierre'],
-          herramientas: ['barra', 'capasBoton', 'herramientasMapa', 'fichaBotones', 'geologicoVivo', 'timelapse', 'chat', 'manos', 'pestanas', 'reparto', 'cierre'],
+          completo: ['intro', 'potencial', 'satelite', 'zona', 'analisis', 'oro', 'conflictos', 'traslapes', 'vencimientos', 'marco', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'mesa', 'manos', 'cierre'],
+          geologico: ['intro', 'zona', 'analisis', 'oro', 'alteracion', 'geologicoVivo', 'mesa', 'cierre'],
+          legal: ['intro', 'conflictos', 'traslapes', 'vencimientos', 'marco', 'mesa', 'cierre'],
+          herramientas: ['barra', 'capasBoton', 'herramientasMapa', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'chat', 'mesa', 'manos', 'pestanas', 'reparto', 'cierre'],
         };
         const lista = ORDEN[modo].filter((k) => C[k].hay);
         setTotal(lista.length);

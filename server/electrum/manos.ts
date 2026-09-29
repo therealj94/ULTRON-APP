@@ -49,6 +49,7 @@ import { tablero } from './tablero';
 import { rankingProspectividad } from './prospectividad';
 import { estadosQueCalzan, fasesDe, significadoEstado } from './estados';
 import { convertir, leerSistema, nombreSistema, sistemaPara, type Sistema } from './datum';
+import { comoSeSabe, idsQueCumplen, mineralDePedido, mineralesPorConcesion } from './minerales';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -252,8 +253,24 @@ const catastro_contar: Herramienta = {
     };
     parecido('departamento', departamento, 'departamento');
     parecido('municipio', municipio, 'municipio');
-    parecido('mineral', mineral, 'mineral');
     parecido('titular', titular, 'titular');
+    /*
+     * El mineral: el catastro no lo guarda (la columna viene vacía). Se deduce de los yacimientos y
+     * ocurrencias registrados dentro o a menos de 1 km (minerales.ts), y se dice que es deducido.
+     */
+    let conMineral: string | null = null;
+    let filtroMapa: Record<string, unknown> | null = null;
+    if (mineral) {
+      const pedido = mineralDePedido(String(mineral));
+      if (pedido) {
+        const ids = idsQueCumplen(await mineralesPorConcesion(), pedido);
+        args.push(ids);
+        donde.push(`id = ANY($${args.length}::bigint[])`);
+        filtros.push(pedido === 'metalicas' || pedido === 'no metalicas' ? `clase ${pedido}` : `indicios de ${pedido}`);
+        conMineral = comoSeSabe(pedido);
+        filtroMapa = { accion: 'filtrar', mineral: pedido };
+      } else parecido('mineral', mineral, 'mineral');
+    }
     if (clase) {
       args.push(`%${String(clase).trim()}%`);
       donde.push(
@@ -268,12 +285,14 @@ const catastro_contar: Herramienta = {
     const total = filas.reduce((s, f) => s + f.n, 0);
     const ha = filas.reduce((s, f) => s + Number(f.ha), 0);
     const cual = filtros.length ? ` con ${filtros.join(', ')}` : '';
-    if (!total) return { ok: true, texto: `No hay concesiones${cual} en el catastro cargado.`, ui: { total: 0 } };
+    const aclara = conMineral ? ` (${conMineral}.)` : '';
+    if (!total) return { ok: true, texto: `No hay concesiones${cual} en el catastro cargado.${aclara}`, ui: { total: 0 } };
     const desglose = filas.map((f) => `${f.estado || 'sin estado'} ${nf(f.n, 0)} (${significadoEstado(f.estado)}, ${nf(Number(f.ha), 0)} ha)`).join('; ');
     return {
       ok: true,
-      texto: `Hay ${nf(total, 0)} concesiones${cual}, que suman ${nf(ha, 0)} hectáreas. Por estado: ${desglose}.`,
-      ui: { total, hectareas: Math.round(ha), porEstado: filas },
+      texto: `Hay ${nf(total, 0)} concesiones${cual}, que suman ${nf(ha, 0)} hectáreas. Por estado: ${desglose}.${aclara}${filtroMapa ? ' Quedaron marcadas en el mapa.' : ''}`,
+      // Con mineral, el mapa se queda solo con esas (la pantalla lo pinta; Telegram lo ignora).
+      ui: filtroMapa || { total, hectareas: Math.round(ha), porEstado: filas },
     };
   },
 };

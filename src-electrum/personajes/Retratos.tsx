@@ -22,6 +22,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { escucharEscena, nivelVoz, type Escena } from '../panel/voz';
 import { METAS, expresionDeLinea, reaccionA, sinEtiquetas, type Expresion, type Metas } from './expresion';
+import { abrirMesa, escucharMesa, mesaAbierta } from './mesa';
 
 type Rasgos = { nombre: string; papel: string; color: string; piel: string; sombra: string; iris: string };
 
@@ -486,8 +487,12 @@ export function Retratos() {
   const [ultimos, setUltimos] = useState<string[] | null>(null);
   const mesa = useRef<Mesa>({ hablante: null, expresion: 'neutral', orden: [] });
   useEffect(() => escucharEscena(setEscena), []);
+  // La mesa técnica abierta: los tres quedan en pantalla escuchando entre una pregunta y otra.
+  const [abierta, setAbierta] = useState(mesaAbierta());
+  useEffect(() => escucharMesa(setAbierta), []);
 
-  const participantes = escena.participantes && escena.participantes.length >= 2 ? escena.participantes : null;
+  const enDialogo = escena.participantes && escena.participantes.length >= 2 ? escena.participantes : null;
+  const participantes = enDialogo || (abierta ? ['electrum', 'chema', 'tatiana'] : null);
   useEffect(() => {
     if (participantes) {
       setUltimos(participantes);
@@ -521,7 +526,24 @@ export function Retratos() {
             </div>
           ))}
         </div>
+        {abierta && (
+          <button
+            type="button"
+            onClick={() => abrirMesa(false)}
+            className="pointer-events-auto absolute right-2 top-2 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] text-[#9FB0B8] hover:bg-white/10 hover:text-white cursor-pointer"
+            title="Cerrar la mesa técnica"
+            aria-label="Cerrar la mesa técnica"
+          >
+            ✕
+          </button>
+        )}
         <div className="relative mt-2 min-h-[18px] w-full max-w-[520px] text-center text-[12.5px] leading-snug md:text-[13px]">
+          {!dicho && abierta && !enDialogo && (
+            <p className="retrato-linea text-[#9FB0B8]" data-mesa-escucha>
+              <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#5CD6C4]">Mesa técnica · </span>
+              Le escuchamos: pregunte y lo discutimos entre los tres.
+            </p>
+          )}
           {dicho && (
             <p key={dicho} className="retrato-linea line-clamp-2 text-[#E6EEF2]" data-retrato-linea>
               <span className="font-semibold" style={{ color }}>

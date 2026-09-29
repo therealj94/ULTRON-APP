@@ -29,8 +29,11 @@ import { BotonOido, type ModoOido } from './panel/BotonOido';
 import { AirTouch, BotonManos, type EstadoManos } from './manos/AirTouch';
 import { crearOido, capturaActiva, type EstadoOido } from './panel/oido';
 import { comandoDe, comandoDeLaya, nombreDeComando, type Comando } from './panel/comandos';
-import { callar, escucharEscena, hablanteActual, hablar, nivelVoz, reanudarVoz, suena } from './panel/voz';
+import { callar, escucharEscena, hablanteActual, hablar, nivelVoz, reanudarVoz, silenciar, suena } from './panel/voz';
 import { Retratos } from './personajes/Retratos';
+import { BotonInterrumpir, BotonMesa, BotonVoces } from './panel/BotonesVoz';
+import { abrirMesa } from './personajes/mesa';
+import { pedidoDeFiltro, pedidoDeLugar } from '../lib/pedidos-mapa';
 import { EMOCION_DE, expresionDeLinea, reaccionA } from './personajes/expresion';
 
 /** La boca de la cara principal: en un diálogo, solo cuando habla Dr Electrum (los demás tienen su cara). */
@@ -245,6 +248,25 @@ export default function App() {
   }, []);
   const [face, setFace] = useState<FaceState>('IDLE');
   const [emocion, setEmocion] = useState<Emocion>('neutral');
+  // Lo que dejó el filtro por mineral, dicho en voz cuando lo pidió la persona (no el cerebro).
+  useEffect(() => {
+    const alFiltrar = (e: Event) => {
+      const d = (e as CustomEvent<{ mineral: string | null; n: number; etiqueta?: string }>).detail;
+      if (!filtroHablado.current || !d) return;
+      filtroHablado.current = false;
+      if (!d.mineral) return void hablar('Listo, otra vez todas las concesiones.', 'neutral', headersElectrum());
+      const clase = d.mineral === 'metalicas' || d.mineral === 'no metalicas';
+      void hablar(
+        d.n
+          ? `Marqué ${d.n} ${clase ? `concesiones ${d.mineral.replace('metalicas', 'metálicas')}` : `concesiones con indicios de ${d.mineral}`}.${clase ? '' : ' El catastro no guarda el mineral: son las que tienen un yacimiento u ocurrencia registrada dentro o a menos de un kilómetro.'}`
+          : `No encontré concesiones con indicios de ${d.mineral} registrados.`,
+        'neutral',
+        headersElectrum()
+      );
+    };
+    window.addEventListener('electrum:filtrado', alFiltrar);
+    return () => window.removeEventListener('electrum:filtrado', alFiltrar);
+  }, []);
   // En un diálogo la cara principal también actúa: pone la expresión de la línea que dice Dr
   // Electrum y, mientras otro habla, le devuelve la emoción a medias (como los retratos).
   useEffect(
@@ -406,6 +428,16 @@ export default function App() {
     guardarPreferencia('manos', v);
   }, []);
   const [modoOido, setModoOido] = useState<ModoOido>(() => leerPreferencia<ModoOido>('oido', 'siempre', (v) => v === 'siempre' || v === 'tocar'));
+  // Hablarle encima lo interrumpe (como en una llamada). Se puede apagar: entonces termina lo que dice.
+  const [interrumpible, setInterrumpibleCrudo] = useState<boolean>(() => leerPreferencia<boolean>('interrumpir', true, (v) => typeof v === 'boolean'));
+  const interrumpibleRef = useRef(interrumpible);
+  interrumpibleRef.current = interrumpible;
+  const setInterrumpible = useCallback((v: boolean) => {
+    setInterrumpibleCrudo(v);
+    guardarPreferencia('interrumpir', v);
+  }, []);
+  /** El filtro por mineral lo pidió la persona con un comando (no el cerebro): se confirma en voz. */
+  const filtroHablado = useRef(false);
   const [estadoOido, setEstadoOido] = useState<EstadoOido>('apagado');
   const [oidoUltimo, setOidoUltimo] = useState('');
   const unaFrase = useRef(false);
@@ -428,6 +460,16 @@ export default function App() {
           break;
         case 'callar':
           callar();
+          break;
+        case 'mesa':
+          abrirMesa(cmd.abrir);
+          if (cmd.abrir) void hablar('[warmly] La mesa está lista: Don Chema, la ingeniera Tatiana y yo. ¿Qué analizamos?', 'neutral', headersElectrum());
+          break;
+        case 'silencio':
+          silenciar(cmd.activar);
+          break;
+        case 'interrumpir':
+          setInterrumpible(cmd.activar);
           break;
         case 'cerrar':
           // Como lo cerraría una persona: Escape cierra el visor, el timelapse y la ficha.
@@ -518,6 +560,38 @@ export default function App() {
       if (cmd) return hacer(cmd);
       const captura = capturaActiva();
       if (captura && captura(texto) !== false) return;
+      // «Muéstrame solo las de oro»: el mapa se queda con esas en el acto.
+      const filtro = pedidoDeFiltro(texto);
+      if (filtro) {
+        filtroHablado.current = true;
+        setOidoUltimo(`${texto} → ${filtro === 'quitar' ? 'Todas las concesiones' : `Solo ${filtro}`}`);
+        setOrden({ accion: 'filtrar', mineral: filtro === 'quitar' ? null : filtro });
+        return;
+      }
+      // «Llévame a Juticalpa»: el lugar (o la concesión con ese nombre), marcado en el mapa.
+      const lugar = pedidoDeLugar(texto);
+      if (lugar) {
+        try {
+          const r = await fetch(`/api/electrum/lugar?q=${encodeURIComponent(lugar)}`, { headers: headersElectrum(), signal: AbortSignal.timeout(5000) });
+          const j: any = r.ok ? await r.json() : null;
+          if (j?.ok && j.tipo === 'lugar' && j.lugar) {
+            const l = j.lugar;
+            setOidoUltimo(`${texto} → ${l.nombre}`);
+            setOrden({ accion: 'lugar', centro: l.centro, zoom: l.zoom, nombre: l.nombre, detalle: [l.tipo, l.departamento].filter(Boolean).join(' · ') || undefined });
+            const de = l.departamento && !String(l.nombre).includes(l.departamento) ? ` de ${l.departamento}` : '';
+            void hablar(`Aquí está ${l.nombre}${l.tipo ? `, ${l.tipo}${de}` : ''}.`, 'neutral', headersElectrum());
+            return;
+          }
+          if (j?.ok && j.tipo === 'concesion' && j.ui?.geojson) {
+            setOidoUltimo(`${texto} → ${j.ui.nombre}`);
+            setOrden({ accion: 'volar', geojson: j.ui.geojson, encuadre: j.ui.encuadre, centro: j.ui.centro });
+            setTocado({ tipo: 'concesion', id: Number(j.ui.concesion_id), nombre: j.ui.nombre, lngLat: j.ui.centro });
+            return;
+          }
+        } catch {
+          /* sin respuesta: sigue como pregunta */
+        }
+      }
       const palabras = texto.trim().split(/\s+/).length;
       /*
        * LAYA: la orden dicha de otra manera («súbeme un poquito el mapa», «ponlo de ladito»). Las
@@ -563,6 +637,8 @@ export default function App() {
         },
         alEstado: setEstadoOido,
         hablandoAhora: suena,
+        nivelSalida: nivelVoz,
+        interrumpible: () => interrumpibleRef.current,
         // Hablarle encima lo calla y lo pone a escuchar, como en una conversación de verdad.
         alInterrumpir: () => {
           callar();
@@ -635,6 +711,16 @@ export default function App() {
     for (const d of datos) {
       if (d.accion === 'volar' && d.geojson) {
         setOrden({ accion: 'volar', geojson: d.geojson as any, encuadre: d.encuadre as any, centro: d.centro as any });
+        // De la que se habla, su ficha abierta: lo que tiene y lo que se puede hacer con ella.
+        const id = Number(d.concesion_id);
+        if (Number.isSafeInteger(id) && id > 0) {
+          const c = (d.centro as [number, number] | undefined) || [0, 0];
+          setTocado({ tipo: 'concesion', id, nombre: typeof d.nombre === 'string' ? d.nombre : undefined, lngLat: c });
+        }
+      } else if (d.accion === 'lugar' && Array.isArray(d.centro)) {
+        setOrden({ accion: 'lugar', centro: d.centro as [number, number], zoom: Number(d.zoom) || 12, nombre: String(d.nombre || ''), detalle: [d.tipo, d.departamento].filter(Boolean).join(' · ') || undefined });
+      } else if (d.accion === 'filtrar') {
+        setOrden({ accion: 'filtrar', mineral: typeof d.mineral === 'string' ? d.mineral : null });
       } else if (d.accion === 'capa' && d.geojson) {
         setOrden({ accion: 'capa', geojson: d.geojson as any, encuadre: d.encuadre as any });
       } else if (d.accion === 'candidatas' && d.geojson) {
@@ -784,6 +870,9 @@ export default function App() {
           <>
             <BotonOido modo={modoOido} estado={estadoOido} nivel={oido.nivel} oido={oidoUltimo} onModo={cambiarModoOido} onTocar={tocarOido} />
             <BotonManos activo={manos} estado={estadoManos} onCambiar={() => setManos(!manos)} />
+            <BotonVoces />
+            {modoOido === 'siempre' && <BotonInterrumpir activo={interrumpible} onCambiar={setInterrumpible} />}
+            <BotonMesa />
           </>
         }
         onSalir={() => {

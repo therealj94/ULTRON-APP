@@ -155,6 +155,8 @@ export type OpcionesTurno = {
    * llegan pegadas a la pregunta para que las cite.
    */
   internet?: boolean;
+  /** La mesa técnica está abierta en pantalla: cada pregunta la discuten los tres. */
+  mesa?: boolean;
 };
 
 export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: OpcionesTurno = {}): Promise<RespuestaTurno> {
@@ -206,7 +208,7 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   // Quién del panel contesta (Laya) se pide YA, en paralelo con la clasificación: son dos consultas
   // independientes y en serie sumaban sus tiempos. Corre dentro de `enTurno`, así que su paso
   // queda en la traza de este turno igual que antes.
-  const panelP = decidirPanel(mensaje);
+  const panelP = decidirPanel(opciones.mesa ? `mesa técnica: ${mensaje}` : mensaje);
   panelP.catch(() => undefined); // si la clasificación falla antes, que esto no quede como rechazo sin atender
   // La decisión rápida del turno. De la clasificación se usa el riesgo, que va a las reglas, y la
   // alerta de ataque.
@@ -334,7 +336,7 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   const traza = r.traza.map((t) => ({ herramienta: t.llamada.nombre, ok: t.ok, resumen: t.resumen, ms: t.ms }));
   let final = texto;
   try {
-    const g = await garantizarMapa({ mensaje, texto, ui, historial, canal: ctx.canal });
+    const g = await garantizarMapa({ mensaje, texto, ui, historial, canal: ctx.canal, herramientas: traza.filter((t) => t.ok).map((t) => t.resumen).join('\n') });
     final = g.texto;
     if (g.ui) {
       ui.push(g.ui);

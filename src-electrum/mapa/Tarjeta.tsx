@@ -296,7 +296,7 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar, invitado }: { f: Ficha; 
   const [timelapse, setTimelapse] = useState(false);
   return (
     <>
-      {timelapse && <Timelapse id={f.id} nombre={f.nombre} onCerrar={() => setTimelapse(false)} />}
+      {timelapse && <Timelapse id={f.id} nombre={f.nombre} resumen={f.satelite?.estado === 'ok' ? f.satelite.renglones.join(' ') : undefined} onCerrar={() => setTimelapse(false)} />}
       <div className="flex flex-wrap gap-1.5">
         {f.geojson && f.encuadre && <Boton onClick={() => onVolar({ accion: 'volar', geojson: f.geojson!, encuadre: f.encuadre! })}>Volar aquí</Boton>}
         <Boton fuerte tour="btn-pdf" onClick={() => onFicha(f.id)}>

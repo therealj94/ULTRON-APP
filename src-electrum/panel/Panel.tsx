@@ -26,10 +26,12 @@ import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/captura';
 import { sinMovimiento } from '../movimiento';
 import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
-import { callar, desbloquear, hablar, hablarDialogo, prepararRelleno, rellenar, suena, type LineaDialogo } from './voz';
+import { callar, desbloquear, escucharMudo, estaMudo, hablar, hablarDialogo, prepararRelleno, rellenar, silenciar, suena, type LineaDialogo } from './voz';
 import { FRASES_GENERALES, fraseDeEspera, fraseDeTrabajo } from './trabajando';
 import { RETRATOS } from '../personajes/Retratos';
 import { EMOCION_DE, expresionDeLinea } from '../personajes/expresion';
+import { comentar, mesaAbierta, type TemaComentario } from '../personajes/mesa';
+import { pedidoDeFiltro, pedidoDeLugar } from '../../lib/pedidos-mapa';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 import { Biblioteca } from '../biblioteca/Biblioteca';
 import { pedirArchivo, Visor, type Fuente } from './Visor';
@@ -392,15 +394,11 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
    * encontraba y el doctor parecía mudo. El navegador igual no deja sonar nada hasta el primer
    * toque: por eso cada toque (enviar, dictar, «Voz») desbloquea el reproductor (voz.ts).
    */
-  const [vozActiva, setVozActivaCruda] = useState<boolean>(() => leerPreferencia('voz', true, (v) => typeof v === 'boolean'));
+  // La misma llave que el botón «Voces» de arriba (voz.ts): apagar una apaga las dos.
+  const [vozActiva, setVozActivaCruda] = useState<boolean>(() => !estaMudo());
+  useEffect(() => escucharMudo((m) => setVozActivaCruda(!m)), []);
   const setVozActiva = useCallback((f: (v: boolean) => boolean) => {
-    setVozActivaCruda((v) => {
-      const n = f(v);
-      guardarPreferencia('voz', n);
-      if (n) desbloquear();
-      else callar();
-      return n;
-    });
+    silenciar(!f(!estaMudo()));
   }, []);
   /** Está sonando la voz ahora mismo: el botón pasa a «Callar». */
   const [hablando, setHablando] = useState(false);
@@ -519,6 +517,19 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       setTexto('');
       setTurnos((t) => [...t, { de: 'persona', texto: q }]);
       setEnVivo({ panel: '', traza: [] });
+      // Lo que es para el mapa no espera al cerebro: «solo las de oro», «llévame a Juticalpa».
+      const filtro = pedidoDeFiltro(q);
+      if (filtro) onUi([{ accion: 'filtrar', mineral: filtro === 'quitar' ? null : filtro }]);
+      const lugar = pedidoDeLugar(q);
+      if (lugar) {
+        void fetch(`/api/electrum/lugar?q=${encodeURIComponent(lugar)}`, { headers: headersElectrum() })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j: any) => {
+            if (j?.ok && j.tipo === 'lugar' && j.lugar) onUi([{ accion: 'lugar', ...j.lugar }]);
+            else if (j?.ok && j.tipo === 'concesion' && j.ui) onUi([j.ui]);
+          })
+          .catch(() => {});
+      }
       setPensando(true);
       onFace('THINKING');
       onTrabajo();
@@ -597,6 +608,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
           body: JSON.stringify({
             mensaje: q,
             internet: internetRef.current,
+            // Con la mesa abierta, contestan los tres discutiendo.
+            mesa: mesaAbierta(),
             hilo: turnosRef.current
               .filter((t) => !t.local)
               .slice(-24)
@@ -846,6 +859,51 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
     window.addEventListener('electrum:dialogo', alPedir);
     return () => window.removeEventListener('electrum:dialogo', alPedir);
   }, [conversar, avisoSuelto]);
+
+  /*
+   * EL EQUIPO COMENTA lo que se abre en pantalla (mesa.ts → `comentar`): el timelapse, un documento,
+   * un perfil del terreno. Quien sabe de eso lo mira, otro le agrega y al final le preguntan si
+   * quiere profundizar. Si ya se está contestando o hablando otra cosa, no se encima.
+   */
+  const ocupadoRef = useRef(false);
+  ocupadoRef.current = pensando || conversando || hablando;
+  useEffect(() => {
+    let ultimo = 0;
+    const alComentar = async (e: Event) => {
+      const d = (e as CustomEvent<{ tema: TemaComentario; contexto: string }>).detail;
+      if (!d || ocupadoRef.current || Date.now() - ultimo < 4000) return;
+      ultimo = Date.now();
+      try {
+        const r = await fetch('/api/electrum/mesa/comentar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headersElectrum() },
+          body: JSON.stringify(d),
+        });
+        const j: any = await r.json().catch(() => null);
+        const lineas = (Array.isArray(j?.lineas) ? j.lineas : []).filter((l: any) => l && RETRATOS[l.quien] && typeof l.texto === 'string') as Array<LineaDialogo & { nombre: string }>;
+        if (!lineas.length || ocupadoRef.current) return;
+        setTurnos((t) => [...t, { de: 'electrum', texto: lineas.map((l) => `${l.nombre}: ${l.texto.replace(/\[[^\]\n]{1,40}\]\s*/g, '')}`).join('\n'), dialogo: lineas, panel: 'El equipo comenta' }]);
+        await hablarDialogo(lineas, headersElectrum(), {
+          alEmpezar: () => {
+            setHablando(true);
+            onFace('SPEAKING');
+          },
+          alTerminar: () => {
+            setHablando(false);
+            onFace('IDLE');
+          },
+          alFallar: () => {
+            setHablando(false);
+            onFace('IDLE');
+          },
+        });
+      } catch {
+        /* sin comentario: la pantalla sigue igual */
+      }
+    };
+    window.addEventListener('electrum:comentario', alComentar);
+    return () => window.removeEventListener('electrum:comentario', alComentar);
+  }, [onFace]);
 
   const compartir = useCallback(
     async (indice: number, informe: { url: string }) => {
@@ -1538,6 +1596,8 @@ function Cargador({
           else {
             marcar(id, 'ok', j.dicho);
             alCargar();
+            // El equipo lo mira: qué es, qué trae y si quiere que lo trabajen.
+            comentar(j.clase === 'catastro' || j.clase === 'capa' ? 'general' : 'documento', `Archivo «${archivo.name}». ${String(j.dicho || '')}`);
             if (j.clase === 'catastro' && (j.ui?.concesiones || j.ui?.capa_id)) alCatastro();
           }
         } catch {
