@@ -824,7 +824,7 @@ export default function App() {
             onVolar={setOrden}
             onTocar={setTocado}
             onPreguntar={(texto) => pedirAlPanel({ tipo: 'pregunta', texto })}
-            onFicha={(id) => pedirAlPanel({ tipo: 'ficha', id })}
+            onFicha={(id, presentarA) => pedirAlPanel({ tipo: 'ficha', id, presentarA })}
             invitado={invitado}
           />
           {/* El cuadro del recorrido vive DENTRO del mapa: se acomoda a él y no tapa la conversación. */}

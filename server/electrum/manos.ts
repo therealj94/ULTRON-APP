@@ -47,6 +47,8 @@ import { muestrasDeZonaEnTexto } from './muestras';
 import { mayoresPerdidas, sateliteEnRenglones } from './satelite';
 import { tablero } from './tablero';
 import { rankingProspectividad } from './prospectividad';
+import { estadosQueCalzan, fasesDe, significadoEstado } from './estados';
+import { convertir, leerSistema, nombreSistema, sistemaPara, type Sistema } from './datum';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -171,8 +173,16 @@ const catastro_resumen: Herramienta = {
     const lista = (xs: Array<{ nombre: string; n: number }>, k: number) => xs.slice(0, k).map((x) => `${x.nombre} ${n0(x.n)}`).join(', ');
     const partes = [
       `El catastro tiene ${n0(t.total.concesiones)} concesiones que suman ${n0(t.total.hectareas)} hectáreas.`,
-      t.porEstado.length ? `Por estado: ${lista(t.porEstado, 5)}.` : '',
-      t.porClase.length ? `Por clase: ${lista(t.porClase, 4)}.` : '',
+      // TODOS los estados, con lo que significan: con solo los cinco primeros, «Explorar» y
+      // «S-Explorar» no llegaban al modelo y contestaba que no había concesiones en exploración.
+      t.porEstado.length ? `Por estado: ${t.porEstado.map((e) => `${e.nombre} ${n0(e.n)} (${significadoEstado(e.nombre)}, ${n0(e.ha)} ha)`).join(', ')}.` : '',
+      (() => {
+        const f = fasesDe(t.porEstado);
+        return t.porEstado.length
+          ? `En fase de exploración: ${n0(f.exploracion.vigentes)} vigentes y ${n0(f.exploracion.solicitadas)} solicitadas (${n0(f.exploracion.vigentes + f.exploracion.solicitadas)} en total). En fase de explotación: ${n0(f.explotacion.vigentes)} vigentes y ${n0(f.explotacion.solicitadas)} solicitadas.`
+          : '';
+      })(),
+      t.porClase.length ? `Por clase: ${lista(t.porClase, t.porClase.length)}.` : '',
       t.porDepartamento.length ? `Departamentos con más: ${lista(t.porDepartamento, 4)}.` : '',
       `Traslapes: ${n0(t.traslapes.total)} (${n0(t.traslapes.hectareas)} ha)${t.traslapes.mismoNombre.total ? `, de ellos ${n0(t.traslapes.mismoNombre.total)} entre concesiones con el mismo nombre (probablemente cargadas dos veces)` : ''}.`,
       t.areasProtegidas
@@ -191,6 +201,131 @@ const catastro_resumen: Herramienta = {
       ok: true,
       texto: partes.filter(Boolean).join(' '),
       ui: { total: t.total, porEstado: t.porEstado, prospectividad: prosp?.ranking ?? [], satelite: sat },
+    };
+  },
+};
+
+/**
+ * Contar con filtros: «¿cuántas en exploración en Olancho?», «¿cuántas metálicas solicitadas?»,
+ * «¿cuántas de oro tiene tal titular?». Traduce los estados del catastro (Explorar, S-Explorar…)
+ * a como los dice la gente, y siempre separa vigentes de solicitudes.
+ */
+const catastro_contar: Herramienta = {
+  nombre: 'catastro_contar',
+  descripcion:
+    'Cuenta concesiones con filtros: todo «¿cuántas…?» con condición. No digas que no hay sin contar aquí.',
+  esquema: {
+    type: 'object',
+    properties: {
+      estado: { type: 'string', description: 'exploración, explotación, solicitud, vigentes o literal' },
+      clase: { type: 'string', description: 'Metálica, No Metálica…' },
+      departamento: { type: 'string', description: 'Departamento' },
+      mineral: { type: 'string', description: 'Mineral' },
+    },
+  },
+  plataformas: ['electrum'],
+  async ejecutar({ estado, clase, departamento, municipio, mineral, titular }) {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    const existentes = (await consulta<{ e: string }>(`SELECT DISTINCT estado AS e FROM concesion WHERE estado IS NOT NULL`)).map((r) => r.e);
+    const donde: string[] = [];
+    const args: unknown[] = [];
+    const filtros: string[] = [];
+    if (estado) {
+      const calzan = estadosQueCalzan(String(estado), existentes) || [];
+      if (!calzan.length) {
+        return {
+          ok: true,
+          texto: `En el catastro no hay un estado que corresponda a «${estado}». Los estados que existen son: ${existentes.map((e) => `${e} (${significadoEstado(e)})`).join(', ')}.`,
+        };
+      }
+      args.push(calzan);
+      donde.push(`estado = ANY($${args.length})`);
+      filtros.push(`estado ${calzan.join(' o ')}`);
+    }
+    const parecido = (col: string, v: unknown, nombre: string) => {
+      if (!v) return;
+      args.push(`%${String(v).trim()}%`);
+      donde.push(`unaccent(lower(coalesce(${col},''))) LIKE unaccent(lower($${args.length}))`);
+      filtros.push(`${nombre} «${v}»`);
+    };
+    parecido('departamento', departamento, 'departamento');
+    parecido('municipio', municipio, 'municipio');
+    parecido('mineral', mineral, 'mineral');
+    parecido('titular', titular, 'titular');
+    if (clase) {
+      args.push(`%${String(clase).trim()}%`);
+      donde.push(
+        `(EXISTS (SELECT 1 FROM jsonb_each_text(atributos) AS a(llave, valor) WHERE lower(a.llave) = 'clasificac' AND unaccent(lower(a.valor)) LIKE unaccent(lower($${args.length}))) OR unaccent(lower(coalesce(tipo,''))) LIKE unaccent(lower($${args.length})))`
+      );
+      filtros.push(`clase «${clase}»`);
+    }
+    const filas = await consulta<{ estado: string | null; n: number; ha: number }>(
+      `SELECT estado, count(*)::int AS n, coalesce(sum(hectareas), 0)::float8 AS ha FROM concesion ${donde.length ? `WHERE ${donde.join(' AND ')}` : ''} GROUP BY 1 ORDER BY 2 DESC`,
+      args
+    );
+    const total = filas.reduce((s, f) => s + f.n, 0);
+    const ha = filas.reduce((s, f) => s + Number(f.ha), 0);
+    const cual = filtros.length ? ` con ${filtros.join(', ')}` : '';
+    if (!total) return { ok: true, texto: `No hay concesiones${cual} en el catastro cargado.`, ui: { total: 0 } };
+    const desglose = filas.map((f) => `${f.estado || 'sin estado'} ${nf(f.n, 0)} (${significadoEstado(f.estado)}, ${nf(Number(f.ha), 0)} ha)`).join('; ');
+    return {
+      ok: true,
+      texto: `Hay ${nf(total, 0)} concesiones${cual}, que suman ${nf(ha, 0)} hectáreas. Por estado: ${desglose}.`,
+      ui: { total, hectareas: Math.round(ha), porEstado: filas },
+    };
+  },
+};
+
+/**
+ * NAD27 ↔ WGS84. A INHGEOMIN se le presenta en NAD27; al ICF y a SERNA, en WGS84. Un vértice mal
+ * convertido corre el lindero unos 200 m: esto lo hace con el cambio de datum de Centroamérica, el
+ * mismo de los planos y de la ficha.
+ */
+const coordenadas_convertir: Herramienta = {
+  nombre: 'coordenadas_convertir',
+  descripcion:
+    'Convierte NAD27 ↔ WGS84 (UTM o geográficas). Nunca de cabeza.',
+  esquema: {
+    type: 'object',
+    properties: {
+      puntos: {
+        type: 'array',
+        description: 'UTM [este, norte] en m; geográficas [lon, lat] en grados',
+        items: { type: 'array', items: { type: 'number' } },
+      },
+      desde: { type: 'string', description: '«NAD27 UTM», «WGS84 geográficas»…' },
+      hacia: { type: 'string', description: 'Igual que desde' },
+    },
+    required: ['puntos', 'desde'],
+  },
+  plataformas: ['electrum'],
+  async ejecutar({ puntos, desde, hacia, presentar_a }) {
+    const origen = leerSistema(String(desde || ''));
+    const destino: Sistema | null = presentar_a ? sistemaPara(String(presentar_a)) : leerSistema(String(hacia || ''));
+    if (!origen) return { ok: false, texto: `No entendí el sistema de origen «${desde}». Decime NAD27 o WGS84, y si es UTM o geográficas.` };
+    if (!destino) return { ok: false, texto: 'Falta a qué sistema convertir (NAD27 o WGS84, UTM o geográficas), o a qué institución se presenta.' };
+    const lista = (Array.isArray(puntos) ? puntos : []).filter((p: unknown) => Array.isArray(p) && p.length >= 2 && p.every((n) => Number.isFinite(Number(n)))).slice(0, 200) as number[][];
+    if (!lista.length) return { ok: false, texto: 'No llegaron puntos válidos: mandalos como pares de números.' };
+    // Un punto UTM de Honduras tiene el este entre ~160 000 y ~840 000 y el norte entre ~1 400 000 y ~1 800 000.
+    if (origen.forma === 'utm' && lista.some(([e, n]) => Math.abs(e) < 1000 || Math.abs(n) < 100000)) {
+      return { ok: false, texto: 'Esos números parecen grados, no metros UTM. ¿Son geográficas (longitud, latitud)?' };
+    }
+    const fmt = (s: Sistema, p: [number, number]) =>
+      s.forma === 'utm' ? `E ${nf(p[0], 1)} · N ${nf(p[1], 1)}` : `lon ${p[0].toFixed(6)} · lat ${p[1].toFixed(6)}`;
+    const salida = lista.map(([a, b], i) => {
+      const r = convertir([Number(a), Number(b)], origen, destino);
+      return { n: i + 1, desde: [Number(a), Number(b)] as [number, number], hacia: r };
+    });
+    const renglones = salida.map((s) => `${s.n}) ${fmt(origen, s.desde)} → ${fmt(destino, s.hacia)}`);
+    const mismaForma = origen.forma === 'utm' && destino.forma === 'utm' && origen.zona === destino.zona;
+    const corrimiento = mismaForma ? Math.hypot(salida[0].hacia[0] - salida[0].desde[0], salida[0].hacia[1] - salida[0].desde[1]) : null;
+    return {
+      ok: true,
+      texto:
+        `De ${nombreSistema(origen)} a ${nombreSistema(destino)}${presentar_a ? ` (lo que pide ${presentar_a})` : ''}, con el cambio de datum de NAD27 para Centroamérica (precisión de algunos metros):\n` +
+        renglones.join('\n') +
+        (corrimiento != null ? `\nEntre un sistema y otro el punto se corre ${nf(corrimiento, 0)} m.` : ''),
+      ui: { puntos: salida, desde: nombreSistema(origen), hacia: nombreSistema(destino) },
     };
   },
 };
@@ -267,13 +402,13 @@ const concesion_entorno: Herramienta = {
 
 /** Cómo se nombra una zona en las herramientas de geología: la concesión, una capa, un municipio o un punto. */
 const ESQUEMA_ZONA = {
-  concesion_id: { type: 'integer', description: 'Id de una concesión (de catastro_buscar)' },
-  nombre: { type: 'string', description: 'Nombre o expediente de una concesión, si no tenés el id' },
-  capa: { type: 'string', description: 'Nombre de una capa cargada cuyos polígonos son la zona (p. ej. «Tule», «MINAS DE ORO I»)' },
-  municipio: { type: 'string', description: 'Un municipio de Honduras' },
-  lon: { type: 'number', description: 'Longitud en grados (negativa en Honduras), si la zona es un punto' },
-  lat: { type: 'number', description: 'Latitud en grados, si la zona es un punto' },
-  radio_km: { type: 'number', description: 'Radio del entorno que se mira alrededor, en km (1 a 50; 10 por defecto)' },
+  concesion_id: { type: 'integer', description: 'Id (de catastro_buscar)' },
+  nombre: { type: 'string', description: 'Nombre o expediente, sin id' },
+  capa: { type: 'string', description: 'Capa cargada que es la zona («Tule»)' },
+  municipio: { type: 'string', description: 'Municipio' },
+  lon: { type: 'number', description: 'Longitud (negativa) de un punto' },
+  lat: { type: 'number', description: 'Latitud de un punto' },
+  radio_km: { type: 'number', description: 'Radio en km (1–50; 10)' },
 } as const;
 
 function zonaDe(a: Record<string, unknown>): Zona {
@@ -296,7 +431,7 @@ function zonaDe(a: Record<string, unknown>): Zona {
 const geologia_zona: Herramienta = {
   nombre: 'geologia_zona',
   descripcion:
-    'Geología de una zona (concesión, capa de proyecto, municipio o punto): unidades de roca con su % de área, intrusivos y contactos, fallas que la cruzan con rumbos y cruces, falla activa más cercana, marco de placas, tractos permisivos del USGS, yacimientos cercanos por mineral, leyes de muestras JICA e INDICIOS de potencial con su evidencia. Usala antes de opinar sobre la geología o el potencial minero de un lugar; citá cifras y límites de escala tal cual.',
+    'Geología de una zona: rocas con % de área, intrusivos, fallas y rumbos, falla activa cercana, placas, tractos USGS, yacimientos cercanos, leyes JICA e indicios de potencial. Usala antes de opinar sobre geología o potencial; citá cifras tal cual.',
   esquema: { type: 'object', properties: ESQUEMA_ZONA },
   plataformas: ['electrum'],
   msMaximo: 20_000,
@@ -324,7 +459,7 @@ const geologia_zona: Herramienta = {
 const mapa_geologico: Herramienta = {
   nombre: 'mapa_geologico',
   descripcion:
-    'Dibuja mapas geológicos en imagen de una zona: litologico (rocas coloreadas por clase, intrusivos, fallas y yacimientos), estructural (fallas por tipo, cruces y roseta de rumbos), geotectonico (placas, subducción, provincias geológicas y fallas activas de la región) o todos. Usala cuando pidan un mapa geológico, estructural, de fallas o tectónico.',
+    'Dibuja mapas geológicos en imagen de una zona: litologico (rocas, intrusivos, fallas, yacimientos), estructural (fallas, cruces, roseta de rumbos), geotectonico (placas, provincias, fallas activas) o todos.',
   esquema: {
     type: 'object',
     properties: {
@@ -737,13 +872,13 @@ const documento_revisar: Herramienta = {
 const informe_pdf: Herramienta = {
   nombre: 'informe_pdf',
   descripcion:
-    'Arma un informe en PDF descargable: la ficha completa de una concesión (área medida, traslapes y citas del expediente), el estado de toda la cartera cargada, o lo que se viene conversando (tipo conversacion: una investigación o un análisis, con sus fuentes). Usala cuando pidan un informe, un PDF o algo para imprimir. Si solo piden MAPAS (geológico, estructural, tectónico), usá mapa_geologico, que los manda como imagen.',
+    'Arma un informe en PDF: ficha de una concesión (área medida, traslapes, citas del expediente), la cartera entera o lo conversado (con fuentes). Para informe, PDF o algo para imprimir. Si solo piden mapas geológicos, usá mapa_geologico.',
   esquema: {
     type: 'object',
     properties: {
       tipo: {
         type: 'string',
-        description: 'concesion para una ficha, cartera para el estado de todo, conversacion para poner en PDF lo que se viene hablando (una investigación, un análisis), geologico para el informe geológico de una zona con sus tres mapas (concesión, capa, municipio o punto)',
+        description: 'concesion (ficha), cartera (todo), conversacion (lo hablado: investigación, análisis), geologico (zona con sus tres mapas)',
         enum: ['concesion', 'cartera', 'conversacion', 'geologico'],
         default: 'concesion',
       },
@@ -758,20 +893,29 @@ const informe_pdf: Herramienta = {
       lectura: {
         type: 'string',
         description:
-          'Tu lectura del caso en dos o tres frases, si tenés algo que aportar. Va en una sección aparte rotulada como interpretación. NO pongas cifras acá: las cifras las pone el catastro.',
+          'Tu lectura en dos o tres frases, rotulada como interpretación. Sin cifras: las pone el catastro.',
+      },
+      presentar_a: {
+        type: 'string',
+        description: 'Ficha para presentar a esa institución (su datum y casilla de firma)',
+        enum: ['INHGEOMIN', 'ICF', 'SERNA'],
       },
     },
   },
   plataformas: ['electrum'],
   msMaximo: 25_000,
   async ejecutar(args, ctx) {
-    const { tipo, nombre, concesion_id, lectura, titulo } = args;
+    const { tipo, nombre, concesion_id, lectura, titulo, presentar_a } = args;
     const conversacion = String(tipo || '') === 'conversacion';
     if (!conversacion && !hayBase()) return { ok: false, texto: SIN_BASE };
     // El pie del PDF lleva el NOMBRE de quien lo pidió; la propiedad del informe, su id. Antes el
     // pie decía «a petición de jose»: el identificador interno del padrón, impreso con membrete.
     const quien = ctx.quien;
-    const opts = { quien: quien ? personaPorId(quien)?.nombre || null : null, lectura: lectura ? String(lectura) : undefined };
+    const opts = {
+      quien: quien ? personaPorId(quien)?.nombre || null : null,
+      lectura: lectura ? String(lectura) : undefined,
+      presentadoA: presentar_a ? String(presentar_a).toUpperCase() : undefined,
+    };
 
     const r = String(tipo || '') === 'geologico'
       ? await informeGeologico(zonaDe(args), opts)
@@ -802,6 +946,8 @@ export const MANOS: Record<string, Herramienta> = {
   catastro_buscar,
   catastro_vencimientos,
   catastro_resumen,
+  catastro_contar,
+  coordenadas_convertir,
   catastro_en_punto,
   concesion_entorno,
   geologia_zona,

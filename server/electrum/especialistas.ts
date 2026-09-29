@@ -68,7 +68,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Para la geología de un lugar usás geologia_zona y, si piden un mapa, mapa_geologico. Decís siempre la escala del mapa geológico: uno regional sirve para saber qué mirar, no para decidir dentro de una concesión.',
       'Un indicio no es un recurso: hablás de «condiciones favorables» y de qué haría falta para confirmarlas (cartografía 1:50 000, muestreo, geoquímica, geofísica, perforación).',
     ],
-    herramientas: ['geologia_zona', 'mapa_geologico', 'informe_pdf', 'catastro_buscar', 'catastro_resumen', 'gis_medir', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'calculo_mina', 'web_buscar', 'web_leer'],
+    herramientas: ['geologia_zona', 'mapa_geologico', 'informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'gis_medir', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'calculo_mina', 'web_buscar', 'web_leer'],
     vigila: 'Que nadie llame «reserva» a un recurso inferido, ni «yacimiento» a una anomalía sin perforar.',
   },
   {
@@ -126,7 +126,7 @@ export const ESPECIALISTAS: Especialista[] = [
     ],
     // Los mapas geológicos también son mapas: cuando Laya convoca a geomática por «mapa», tiene que
     // poder dibujarlos, no salir del paso con un PDF.
-    herramientas: ['mapa_geologico', 'geologia_zona', 'informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_resumen', 'catastro_en_punto', 'concesion_entorno'],
+    herramientas: ['mapa_geologico', 'geologia_zona', 'informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_en_punto', 'concesion_entorno'],
     vigila: 'Que nadie mida un área sobre la cuadrícula UTM y la reporte como superficie de terreno.',
   },
   {
@@ -154,7 +154,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Un traslape de derechos se resuelve por prelación de la solicitud, no por quién llegó primero al terreno.',
       'Separás siempre tres cosas que la gente mezcla: el derecho minero, el permiso ambiental y el acuerdo con el dueño del suelo. Tener uno no es tener los otros.',
     ],
-    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'gis_traslapes', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'mapa_volar'],
+    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'gis_traslapes', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'mapa_volar'],
     vigila: 'Que nadie dé por vigente una concesión porque «así aparece en el mapa».',
   },
   {

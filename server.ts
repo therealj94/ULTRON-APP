@@ -921,7 +921,10 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
   }
 
   try {
-    const opts = { quien, lectura: req.body?.lectura ? String(req.body.lectura) : undefined, mapa };
+    // A quién se presenta: solo las tres que se conocen (decide el datum del plano y la casilla de firma).
+    const presentar = String(req.body?.presentar_a || '').toUpperCase();
+    const presentadoA = ['INHGEOMIN', 'ICF', 'SERNA'].includes(presentar) ? presentar : undefined;
+    const opts = { quien, lectura: req.body?.lectura ? String(req.body.lectura) : undefined, mapa, presentadoA };
     const r =
       tipo === 'cartera'
         ? await informeCartera(opts)

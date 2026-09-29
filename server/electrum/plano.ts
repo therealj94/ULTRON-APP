@@ -31,6 +31,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Geometry, Position } from 'geojson';
 import { conTextoReparado, consulta as consultaBase, hayBase } from './db';
+import { mapearGeometria, utmWgsANad27, type Datum } from './datum';
 
 /** Los rótulos, con los acentos de las capas reparados: el plano y la ficha dicen lo mismo. */
 const consulta = <T = any>(sql: string, params: unknown[] = []) => consultaBase<T>(sql, params).then(conTextoReparado);
@@ -75,6 +76,15 @@ export type DatosPlano = {
   cajetin?: Array<[string, string]>;
   /** Rótulo de la leyenda para el polígono principal («Concesión» si no se dice). */
   etiquetaPrincipal?: string;
+  /** En qué datum van las coordenadas del plano (WGS84 si no se dice). */
+  datum?: Datum;
+  /**
+   * Plano para presentar (solicitud o requerimiento): el cajetín lleva la casilla de firma y sello
+   * del ingeniero responsable, como la pide INHGEOMIN.
+   */
+  firma?: boolean;
+  /** A quién se presenta («INHGEOMIN», «ICF», «SERNA»): va en el cajetín junto a la firma. */
+  presentadoA?: string;
 };
 
 /* ------------------------------------------------------------------ lienzo */
@@ -249,9 +259,47 @@ function muestraLeyenda(e: Estilo, x: number, y: number): string {
 
 /* ------------------------------------------------------------------ el SVG */
 
-/** Intervalo de cuadrícula: entre tres y seis líneas en el ancho del plano. */
+/**
+ * Intervalo de cuadrícula: entre tres y seis líneas en el ancho del plano, y SIEMPRE múltiplo de
+ * 100 m, para que cada línea caiga en una coordenada que termina en 00 (así los pide INHGEOMIN, y
+ * así se leen los mapas 1:50 000). Antes, en una concesión chica, salía cada 50 o cada 25 m.
+ */
 export function intervaloCuadricula(anchoM: number): number {
-  return redondo(anchoM / 6);
+  const r = redondo(anchoM / 6);
+  return r <= 100 ? 100 : Math.round(r / 100) * 100;
+}
+
+/**
+ * El plano pasado a NAD27 / UTM 16N. Llega en WGS84 / UTM 16N (así lo arma la base) y se corren
+ * TODAS las coordenadas —vista, geometrías, puntos de rótulo— con el cambio de datum de
+ * Centroamérica. En un plano de unos kilómetros el corrimiento es casi una traslación (unos 200 m
+ * al sur), así que el relieve sombreado, que acompaña a la vista, sigue calzando.
+ */
+export function aNad27(d: DatosPlano): DatosPlano {
+  if (d.datum === 'NAD27') return d;
+  const g = (x: Geometry) => (x ? mapearGeometria(x, utmWgsANad27) : x);
+  const r = <R extends Rasgo>(x: R): R => ({ ...x, geom: g(x.geom) });
+  const et = (e?: [number, number]) => (e ? (utmWgsANad27(e) as [number, number]) : e);
+  const [x1, y1, x2, y2] = d.vista;
+  const a = utmWgsANad27([x1, y1]);
+  const b = utmWgsANad27([x2, y2]);
+  return {
+    ...d,
+    datum: 'NAD27',
+    vista: [a[0], a[1], b[0], b[1]],
+    concesion: { ...r(d.concesion), etiqueta: et(d.concesion.etiqueta) },
+    vecinas: d.vecinas.map((v) => ({ ...r(v), etiqueta: et(v.etiqueta) })),
+    traslapes: d.traslapes.map(g),
+    rios: d.rios.map(r),
+    areasProtegidas: d.areasProtegidas.map(r),
+    microcuencas: d.microcuencas.map(r),
+    forestal: d.forestal.map(r),
+    carretera: d.carretera.map(r),
+    municipios: d.municipios.map(r),
+    zonasInformales: d.zonasInformales.map(r),
+    ocurrencias: d.ocurrencias.map(r),
+    poblados: d.poblados.map(r),
+  };
 }
 
 /**
@@ -451,7 +499,7 @@ export function svgPlano(d: DatosPlano): string {
     ? `<text x="60" y="104" font-family="${FUENTE}" font-size="24" fill="#5c5c5c">${esc(d.subtitulo)}</text>`
     : '';
   const pie = `<text x="60" y="${ALTO - 36}" font-family="${FUENTE}" font-size="19" fill="#555">${esc(
-    `WGS 84 / UTM zona 16N (EPSG:32616) · coordenadas en metros${d.pie ? ` · ${d.pie}` : ''}`
+    `${d.datum === 'NAD27' ? 'NAD27 / UTM zona 16N (EPSG:26716), cambio de datum de Centroamérica' : 'WGS 84 / UTM zona 16N (EPSG:32616)'} · coordenadas en metros${d.pie ? ` · ${d.pie}` : ''}`
   )}</text>`;
 
   return [
@@ -477,7 +525,7 @@ export function svgPlano(d: DatosPlano): string {
     ...etiquetas,
     ...panel,
     d.ubicacion ? svgUbicacion(d.ubicacion[0], d.ubicacion[1]) : '',
-    d.cajetin?.length ? svgCajetin(d.cajetin) : '',
+    d.cajetin?.length || d.firma ? svgCajetin(d.cajetin || [], d.firma ? { presentadoA: d.presentadoA, datum: d.datum } : null) : '',
     pie,
     '</svg>',
   ].join('\n');
@@ -536,9 +584,12 @@ function svgUbicacion(lon: number, lat: number): string {
 }
 
 /** El cajetín: los datos de la concesión en celdas, como el rótulo de un plano de ingeniería. */
-function svgCajetin(pares: Array<[string, string]>): string {
-  const { x, y, w, h } = CAJETIN;
-  const cols = 4;
+function svgCajetin(pares: Array<[string, string]>, firma: { presentadoA?: string; datum?: Datum } | null = null): string {
+  const { x, y, h } = CAJETIN;
+  // Con firma, la casilla del ingeniero ocupa la punta derecha y los datos se reparten en el resto.
+  const anchoFirma = firma ? 380 : 0;
+  const w = CAJETIN.w - anchoFirma;
+  const cols = firma ? 3 : 4;
   const filas = Math.max(1, Math.ceil(pares.length / cols));
   const cw = w / cols;
   const fh = h / filas;
@@ -554,11 +605,29 @@ function svgCajetin(pares: Array<[string, string]>): string {
   const lineas: string[] = [];
   for (let c = 1; c < cols; c++) lineas.push(`M${x + c * cw} ${y}L${x + c * cw} ${y + h}`);
   for (let f = 1; f < filas; f++) lineas.push(`M${x} ${y + f * fh}L${x + w} ${y + f * fh}`);
+  const casilla: string[] = [];
+  if (firma) {
+    const fx = x + w;
+    casilla.push(
+      `<rect x="${fx}" y="${y}" width="${anchoFirma}" height="${h}" fill="#ffffff" stroke="#222" stroke-width="2.5"/>`,
+      `<text x="${fx + 14}" y="${y + 24}" font-family="${FUENTE}" font-size="15" font-weight="700" fill="#1a1a1a">FIRMA Y SELLO DEL INGENIERO RESPONSABLE</text>`,
+      // El recuadro del sello y la raya de la firma: en blanco, para llenar a mano.
+      `<rect x="${fx + anchoFirma - 118}" y="${y + 36}" width="104" height="104" fill="none" stroke="#999" stroke-width="1.5" stroke-dasharray="6 5"/>`,
+      `<text x="${fx + anchoFirma - 66}" y="${y + 94}" font-family="${FUENTE}" font-size="13" text-anchor="middle" fill="#aaa">SELLO</text>`,
+      `<path d="M${fx + 14} ${y + 96}L${fx + anchoFirma - 132} ${y + 96}" stroke="#555" stroke-width="1.2"/>`,
+      `<text x="${fx + 14}" y="${y + 114}" font-family="${FUENTE}" font-size="13" fill="#777">Nombre y firma</text>`,
+      `<text x="${fx + 14}" y="${y + 138}" font-family="${FUENTE}" font-size="13" fill="#777">N.º de colegiado: ____________</text>`,
+      `<text x="${fx + 14}" y="${y + 160}" font-family="${FUENTE}" font-size="13" fill="#777">${esc(
+        `${firma.presentadoA ? `Para ${firma.presentadoA} · ` : ''}${firma.datum === 'NAD27' ? 'NAD27 UTM 16N' : 'WGS84 UTM 16N'}`
+      )}</text>`
+    );
+  }
   return [
     `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="#ffffff" stroke="#222" stroke-width="2.5"/>`,
     `<path d="${lineas.join('')}" stroke="#bbb" stroke-width="1.2"/>`,
-    `<path d="M${x} ${y}L${x + w} ${y}" stroke="${AMBAR}" stroke-width="5"/>`,
+    `<path d="M${x} ${y}L${x + CAJETIN.w} ${y}" stroke="${AMBAR}" stroke-width="5"/>`,
     ...celdas,
+    ...casilla,
   ].join('');
 }
 export const FUENTES = ['LiberationSans-Regular.ttf', 'LiberationSans-Bold.ttf'].map((f) => path.join(DIR_FUENTES, f));
@@ -783,10 +852,12 @@ export function vacia(g: Geometry): boolean {
 /** El plano de una concesión en JPEG, listo para el PDF. null si no hay geometría. */
 export async function planoConcesion(
   id: number,
-  opts: { subtitulo?: string; pie?: string } = {}
+  opts: { subtitulo?: string; pie?: string; datum?: Datum; firma?: boolean; presentadoA?: string } = {}
 ): Promise<{ jpeg: Buffer; ancho: number; alto: number; svg: string } | null> {
-  const d = await datosPlano(id, opts);
-  if (!d) return null;
+  const base = await datosPlano(id, opts);
+  if (!base) return null;
+  const conFirma = { ...base, firma: opts.firma, presentadoA: opts.presentadoA };
+  const d = opts.datum === 'NAD27' ? aNad27(conFirma) : conFirma;
   const svg = svgPlano(d);
   return { jpeg: await jpegDeSvg(svg), ancho: ANCHO, alto: ALTO, svg };
 }

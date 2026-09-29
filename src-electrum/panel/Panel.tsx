@@ -36,7 +36,7 @@ import { pedirArchivo, Visor, type Fuente } from './Visor';
 export type VistaPanel = 'chat' | 'expedientes' | 'infra';
 
 /** Lo que se le pide al panel desde fuera (la tarjeta del mapa). `n` distingue dos pedidos iguales. */
-export type PedidoPanel = { tipo: 'pregunta'; texto: string; n: number } | { tipo: 'ficha'; id: number; n: number };
+export type PedidoPanel = { tipo: 'pregunta'; texto: string; n: number } | { tipo: 'ficha'; id: number; n: number; presentarA?: 'INHGEOMIN' | 'ICF' | 'SERNA' };
 
 type Props = {
   /** Un pedido de la tarjeta del mapa: una pregunta para Dr Electrum, o la ficha en PDF de una concesión. */
@@ -803,7 +803,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
    * su propia ruta y no por el turno: no hace falta molestar al modelo para armar un documento cuyo
    * contenido sale entero del catastro.
    */
-  const pedirInforme = useCallback(async (idForzado?: number) => {
+  const pedirInforme = useCallback(async (idForzado?: number, presentarA?: string) => {
     if (pensando) return;
     const idFicha = typeof idForzado === 'number' ? idForzado : enFoco;
     setPensando(true);
@@ -821,7 +821,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         headers: { 'Content-Type': 'application/json', ...headersElectrum() },
         body: JSON.stringify(
           idFicha != null
-            ? { tipo: 'concesion', concesion_id: idFicha, mapa: 'imagen' in foto ? foto.imagen : null }
+            ? { tipo: 'concesion', concesion_id: idFicha, mapa: 'imagen' in foto ? foto.imagen : null, presentar_a: presentarA || undefined }
             : { tipo: 'cartera', mapa: 'imagen' in foto ? foto.imagen : null }
         ),
       });
@@ -863,7 +863,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       return;
     }
     if (pedido.tipo === 'pregunta') void preguntar(pedido.texto);
-    else void pedirInforme(pedido.id);
+    else void pedirInforme(pedido.id, pedido.presentarA);
   }, [pedido, pensando, preguntar, pedirInforme, avisoSuelto]);
 
   /*

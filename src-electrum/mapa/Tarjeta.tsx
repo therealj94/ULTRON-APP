@@ -62,7 +62,8 @@ type Props = {
   onCerrar: () => void;
   onVolar: (o: OrdenMapa) => void;
   onPreguntar: (texto: string) => void;
-  onFicha: (id: number) => void;
+  /** La ficha en PDF; con `presentarA`, el plano sale en el sistema de esa institución y con firma y sello. */
+  onFicha: (id: number, presentarA?: 'INHGEOMIN' | 'ICF' | 'SERNA') => void;
   onTocar: (t: Tocado) => void;
   /** Entró con un código temporal: ve la ficha entera, pero sin los botones para bajar archivos. */
   invitado?: boolean;
@@ -251,6 +252,46 @@ function Boton({ children, onClick, fuerte = false, tour }: { children: ReactNod
   );
 }
 
+/**
+ * El plano para PRESENTAR: INHGEOMIN lo recibe en NAD27 / UTM con la cuadrícula en múltiplos de
+ * 100 m; ICF y SERNA, en WGS84 / UTM. Los tres llevan la casilla de firma y sello del ingeniero.
+ */
+function PlanoTramite({ onElegir }: { onElegir: (a: 'INHGEOMIN' | 'ICF' | 'SERNA') => void }) {
+  const [abierto, setAbierto] = useState(false);
+  const opciones: Array<{ a: 'INHGEOMIN' | 'ICF' | 'SERNA'; datum: string }> = [
+    { a: 'INHGEOMIN', datum: 'NAD27 · UTM 16N' },
+    { a: 'ICF', datum: 'WGS84 · UTM 16N' },
+    { a: 'SERNA', datum: 'WGS84 · UTM 16N' },
+  ];
+  return (
+    <div className="relative">
+      <Boton tour="btn-tramite" onClick={() => setAbierto((v) => !v)}>
+        Plano para trámite ▾
+      </Boton>
+      {abierto && (
+        <div className="absolute left-0 top-[calc(100%+4px)] z-10 w-[230px] overflow-hidden rounded-lg border border-white/15 bg-[#0A0C0E] shadow-xl" role="menu">
+          {opciones.map((o) => (
+            <button
+              key={o.a}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setAbierto(false);
+                onElegir(o.a);
+              }}
+              className="flex w-full items-baseline justify-between gap-2 px-3 py-2 text-left text-[12.5px] text-[#DCE5EA] hover:bg-white/[0.07] cursor-pointer"
+            >
+              <span className="font-medium">Para {o.a}</span>
+              <span className="font-mono text-[10.5px] text-[#8FA2AC]">{o.datum}</span>
+            </button>
+          ))}
+          <div className="border-t border-white/10 px-3 py-1.5 text-[10.5px] leading-snug text-[#7F939D]">Con casilla de firma y sello del ingeniero.</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FichaVista({ f, onVolar, onFicha, onPreguntar, invitado }: { f: Ficha; onVolar: Props['onVolar']; onFicha: Props['onFicha']; onPreguntar: Props['onPreguntar']; invitado: boolean }) {
   const [timelapse, setTimelapse] = useState(false);
   return (
@@ -261,6 +302,7 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar, invitado }: { f: Ficha; 
         <Boton fuerte tour="btn-pdf" onClick={() => onFicha(f.id)}>
           Ficha PDF
         </Boton>
+        <PlanoTramite onElegir={(a) => onFicha(f.id, a)} />
         <Boton tour="btn-geologicos" onClick={() => onPreguntar(`Hacé los tres mapas geológicos (litológico, estructural y geotectónico) de la concesión ${f.nombre} (id ${f.id}).`)}>
           Mapas geológicos
         </Boton>
@@ -450,7 +492,9 @@ function Exportes({ id }: { id: number }) {
     setBajando(formato);
     setError(null);
     try {
-      const r = await fetch(`/api/electrum/concesion/${id}/exportar?formato=${formato}`, { headers: headersElectrum() });
+      // «dxf-nad27»: el mismo DXF con las coordenadas en NAD27 (el que recibe INHGEOMIN).
+      const [f, datum] = formato.split('-');
+      const r = await fetch(`/api/electrum/concesion/${id}/exportar?formato=${f}${datum ? `&datum=${datum}` : ''}`, { headers: headersElectrum() });
       if (!r.ok) {
         const j = await r.json().catch(() => null);
         return setError(j?.error || (r.status === 404 ? 'Esta función todavía no está activa en el servidor.' : `El servidor contestó ${r.status}.`));
@@ -476,7 +520,8 @@ function Exportes({ id }: { id: number }) {
         <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-[#7F939D]">Bajar</span>
         {[
           ['kml', 'KML · Google Earth'],
-          ['dxf', 'DXF · AutoCAD'],
+          ['dxf', 'DXF · WGS84'],
+          ['dxf-nad27', 'DXF · NAD27'],
           ['geojson', 'GeoJSON'],
           ['csv', 'Vértices CSV'],
         ].map(([f, t]) => (
