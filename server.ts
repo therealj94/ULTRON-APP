@@ -69,8 +69,10 @@ import {
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
 import { identidadDe, exigirPlataforma, esInvitado } from './server/seguridad';
-import { cuentaDe, cuentasDisponibles, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
-import { montarRutasCuentas } from './server/cuentas-rutas';
+import { cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
+import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
+import { montarRutasGenesis } from './server/genesis';
+import { enviarCorreo } from './lib/correo-ses';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
 import { montarRutasTeselas } from './server/electrum/teselas';
 import { montarRutasMuestras } from './server/electrum/muestras';
@@ -1430,6 +1432,40 @@ montarRutasCuentas(app, {
     }
   },
 });
+
+/*
+ * Entrar con Genesis ID (solo AU-RA: Dr Electrum tiene su propia puerta). Genesis prueba QUIÉN es
+ * la persona; si entra lo decide el padrón. Ver server/genesis.ts.
+ */
+if (!ES_ELECTRUM) {
+  montarRutasGenesis(app, {
+    limitar,
+    normalizarCorreo,
+    tieneAcceso: (correo) => puedeEntrar(identificar({ correo }), PLATAFORMA),
+    nombreYRol: nombreYRolDe,
+    emitirSesion,
+    pedirAcceso: async ({ nombre, correo, motivo }) => {
+      if (!cuentasDisponibles()) return false;
+      const s = await crearSolicitud({ nombre, correo, motivo, plataforma: PLATAFORMA });
+      // null = ya había una pendiente (o ya tiene acceso): la solicitud existe, no se repite el aviso.
+      if (!s) return true;
+      for (const para of aprobadores()) {
+        const c = plantilla({
+          plataforma: PLATAFORMA,
+          saludo: 'Hola:',
+          parrafos: [
+            `${nombre} (${correo}) entró a AU-RA FP con su Genesis ID y pidió acceso.`,
+            motivo,
+            'Su identidad ya está verificada por Genesis ID. Entrá con tu sesión para aprobarla con el nivel que corresponda, o rechazarla. Nadie entra hasta que decidas.',
+          ],
+        });
+        const envio = await enviarCorreo({ para, asunto: `AU-RA FP: ${nombre} pide acceso con Genesis ID`, ...c });
+        if (!envio.ok) console.error('[genesis] no salió el aviso al aprobador:', envio.detalle);
+      }
+      return true;
+    },
+  });
+}
 
 app.post('/api/ultron/biometric-login', limitar(12), async (req, res) => {
   const correo = normalizarCorreo(req.body?.correo);
