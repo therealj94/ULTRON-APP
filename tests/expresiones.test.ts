@@ -382,40 +382,23 @@ describe('el banco de la web', () => {
   });
 });
 
-describe('el banco del teléfono', () => {
-  const fuente = fs.readFileSync(path.join(RAIZ, 'mobile', 'src', 'lib', 'voiceBank.ts'), 'utf8');
-
-  it('todo lo empaquetado existe y el APK crece poco', () => {
-    const requeridos = [...fuente.matchAll(/require\('\.\.\/\.\.\/assets\/voice\/([^']+)'\)/g)].map((m) => m[1]);
-    assert.ok(requeridos.length >= 24);
-    let total = 0;
-    for (const f of requeridos) {
-      const p = path.join(RAIZ, 'mobile', 'assets', 'voice', f);
-      assert.ok(fs.existsSync(p), f);
-      total += fs.statSync(p).size;
-    }
-    assert.ok(total < 500 * 1024, `${Math.round(total / 1024)} KB`);
-    for (const id of ['risacorta', 'jepicara', 'sorpresaoh', 'mmmpensando', 'aww', 'bostezo', 'bienvenido', 'vertejose', 'hastaluego']) {
-      assert.ok(requeridos.includes(`${id}.mp3`), `${id} va en el APK`);
-    }
-    for (const id of CANCIONES.map((c) => c.id)) assert.ok(!requeridos.includes(`${id}.mp3`), `${id}: las canciones no van en el APK`);
+describe('el teléfono ya no lleva voz grabada', () => {
+  // Desde el 29-sep todo se dice en vivo con la voz del avatar elegido (ElevenLabs v4, español o
+  // inglés): los clips de Dora no sonaban como el Guardián ni como Claudio.
+  it('no hay banco de voz en el APK ni código que lo cargue', () => {
+    assert.ok(!fs.existsSync(path.join(RAIZ, 'mobile', 'assets', 'voice')), 'mobile/assets/voice ya no existe');
+    assert.ok(!fs.existsSync(path.join(RAIZ, 'mobile', 'src', 'lib', 'voiceBank.ts')), 'voiceBank.ts ya no existe');
+    const tts = fs.readFileSync(path.join(RAIZ, 'mobile', 'src', 'lib', 'tts.ts'), 'utf8');
+    assert.doesNotMatch(tts, /assets\/voice|voiceBank|REMOTE_CLIPS/);
   });
 
-  it('cada ruta remota la sirve el servidor', () => {
-    const bloque = fuente.slice(fuente.indexOf('REMOTE_CLIPS'), fuente.indexOf('};', fuente.indexOf('REMOTE_CLIPS')));
-    const rutas = [...bloque.matchAll(/: '(\/voz\/[^']+)'/g)].map((m) => m[1]);
-    assert.ok(rutas.length >= 70);
-    for (const r of rutas) assert.ok(fs.existsSync(path.join(PUBLICO, r)), r);
-  });
-
-  it('la frase exacta lleva a su clip', () => {
-    for (const [frase, id] of [
-      ['quebuenovertejose', 'vertejose'],
-      ['bienvenidoaauraenqueteayudo', 'bienvenido'],
-      ['hastaluego', 'hastaluego'],
-      ['estoysinconexionahoramismo', 'sinconexion'],
-    ]) {
-      assert.match(fuente, new RegExp(`"${frase}": '${id}'`), frase);
+  it('las frases de la mesa están en los dos idiomas y sin género', () => {
+    const fuente = fs.readFileSync(path.join(RAIZ, 'mobile', 'src', 'lib', 'frases.ts'), 'utf8');
+    const filas = [...fuente.matchAll(/^\s+(\w+): \{ es: '([^']+)', en: '([^']+)' \},$/gm)];
+    assert.ok(filas.length >= 20, `${filas.length} frases`);
+    for (const [, id, es, en] of filas) {
+      assert.ok(es.trim() && en.trim(), id);
+      assert.doesNotMatch(es, /\b(lista|listo para|contenta|cansada)\b/i, `${id}: las dicen tres personajes, sin género`);
     }
   });
 });

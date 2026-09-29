@@ -1,0 +1,148 @@
+name: OTA (EAS Update)
+
+# Actualizaciones por aire para las APK de main. Solo JS y assets: lo nativo va en una APK nueva
+# (android-apk.yml), y la huella (runtimeVersion con política `fingerprint`) garantiza que una
+# actualización solo la descarga una APK con EXACTAMENTE el mismo nativo.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "mobile/**"
+      - ".github/workflows/ota.yml"
+  workflow_dispatch:
+    inputs:
+      accion:
+        description: "publicar = subir el JS de este commit · volver-a-la-apk = que las APK olviden las OTA y usen su JS de fábrica"
+        type: choice
+        options: [publicar, volver-a-la-apk]
+        default: publicar
+
+# Nunca dos publicaciones a la vez en el mismo canal, y nunca cortar una a medias.
+concurrency:
+  group: ota-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ota:
+    # Solo desde main: el canal `production` es el de las APK de main.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # El secreto EXPO_TOKEN va en los secretos del repositorio (Settings → Secrets → Actions). Quien
+    # pueda empujar a main puede cambiar el JS de la app: el token se revoca si se filtra.
+    # A nivel de trabajo, como en android-apk.yml: app.config.js se evalúa al calcular la huella y
+    # al exportar el paquete, y con otra variante o canal saldría la huella (y el JS) de otra APK.
+    env:
+      ULTRON_APP: ${{ matrix.variante }}
+      EXPO_CANAL: production
+      EXPO_NO_TELEMETRY: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        # Solo AU-RA por ahora: Dr Electrum tiene las OTA apagadas (app.config.js) hasta tener su
+        # propio proyecto EAS. Para sumarlo: ["ultron", "electrum"].
+        variante: ["ultron"]
+    steps:
+      # Sin el token no se puede publicar: se avisa y el resto se salta (no se deja main en rojo por
+      # algo que solo el dueño de la cuenta de Expo puede poner).
+      - name: ¿Hay EXPO_TOKEN?
+        id: token
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -z "$EXPO_TOKEN" ]; then
+            echo "::warning::Falta el secreto EXPO_TOKEN (token de la cuenta dueña del proyecto, vetawallet): no se publica la OTA. https://expo.dev/settings/access-tokens"
+            echo "hay=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "hay=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.hay == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.hay == 'true'
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Setup EAS
+        if: steps.token.outputs.hay == 'true'
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          packager: npm
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install JS
+        if: steps.token.outputs.hay == 'true'
+        working-directory: mobile
+        run: npm ci
+
+      - name: Typecheck
+        if: steps.token.outputs.hay == 'true' && inputs.accion != 'volver-a-la-apk'
+        working-directory: mobile
+        run: npm run typecheck
+
+      - name: Runtime (huella nativa) de este commit
+        if: steps.token.outputs.hay == 'true'
+        id: runtime
+        working-directory: mobile
+        run: echo "runtime=$(node ../scripts/qa/runtime-android.mjs)" >> "$GITHUB_OUTPUT"
+
+      # ¿Hay una APK publicada que pueda recibir esto? La huella de la última APK de main está en
+      # el Release «latest» (runtime-<variante>.txt, lo escribe android-apk.yml). Si no coincide,
+      # el commit tocó algo nativo: la actualización no le llegaría a nadie y lo que toca es la APK
+      # nueva que android-apk.yml ya está compilando para este mismo push.
+      - name: ¿Lo puede recibir la APK publicada?
+        id: apk
+        if: steps.token.outputs.hay == 'true' && inputs.accion != 'volver-a-la-apk'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RT: ${{ steps.runtime.outputs.runtime }}
+        run: |
+          mkdir -p rt
+          gh release download --repo "$GITHUB_REPOSITORY" --pattern "runtime-${ULTRON_APP}.txt" --dir rt 2>/dev/null || true
+          PUBLICADA=$(cat "rt/runtime-${ULTRON_APP}.txt" 2>/dev/null || echo "")
+          if [ "$PUBLICADA" = "$RT" ]; then
+            echo "compatible=true" >> "$GITHUB_OUTPUT"
+            echo "✓ ${ULTRON_APP}: misma huella que la APK publicada ($RT) → se publica OTA" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "compatible=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::${ULTRON_APP}: este commit cambia el nativo (huella $RT, APK publicada ${PUBLICADA:-ninguna}). No va por OTA: hace falta la APK nueva."
+            echo "✗ ${ULTRON_APP}: requiere APK nueva (huella $RT ≠ ${PUBLICADA:-ninguna})" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publicar OTA
+        if: steps.token.outputs.hay == 'true' && inputs.accion != 'volver-a-la-apk' && steps.apk.outputs.compatible == 'true'
+        working-directory: mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          # Por variable y no interpolado en el script: un mensaje de commit con comillas o `$(…)`
+          # no debe poder ejecutar nada.
+          MENSAJE: ${{ github.event.head_commit.message || 'publicación manual' }}
+        run: |
+          eas update \
+            --channel production \
+            --platform android \
+            --message "$(printf '%s' "$MENSAJE" | head -n1 | cut -c1-200) (${GITHUB_SHA::7})" \
+            --non-interactive
+
+      # Marcha atrás de emergencia: las APK de esta huella dejan de usar cualquier OTA y vuelven al
+      # JS con el que se compilaron. Para volver a una OTA anterior concreta: `eas update:republish`.
+      - name: Volver al JS de la APK
+        if: steps.token.outputs.hay == 'true' && inputs.accion == 'volver-a-la-apk'
+        working-directory: mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          eas update:roll-back-to-embedded \
+            --channel production \
+            --platform android \
+            --runtime-version "${{ steps.runtime.outputs.runtime }}" \
+            --message "Vuelta al JS de la APK (${GITHUB_SHA::7})" \
+            --non-interactive

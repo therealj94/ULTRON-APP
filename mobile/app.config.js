@@ -22,7 +22,8 @@ const ELECTRUM = {
   // salía con `acento: undefined` — funcionaba solo porque variante.ts repite el color de reserva.
   acento: '#FFAE3B',
   /*
-   * Libre: gira con el teléfono. AU-RA sigue en horizontal; esta no.
+   * Libre: gira con el teléfono. (AU-RA también es libre en el manifiesto desde la 4.5 y decide
+   * su orientación en tiempo de ejecución: src/lib/orientacion.ts.)
    *
    * Estuvo bloqueada en horizontal «igual que AU-RA» (20-sep), y al día siguiente la pantalla del
    * campo se rehízo para las DOS formas —dos columnas con ancho, una sola con el pulgar abajo en
@@ -41,6 +42,15 @@ const ELECTRUM = {
   iconoAdaptable: './assets/electrum/adaptive-icon.png',
   arranque: './assets/electrum/splash-icon.png',
 };
+
+/*
+ * Canal de EAS Update (actualizaciones por aire) que escucha la APK. Va al manifiesto al compilar y
+ * NO cambia después. `production` solo para las APK de main; las de ramas escuchan `pruebas`: si
+ * escucharan `production`, una APK de prueba que solo cambió JS tendría la misma huella que main y
+ * se «actualizaría» sola al código de main. El canal entra en la huella nativa, así que quien
+ * publica (.github/workflows/ota.yml) pone el mismo valor que quien compiló.
+ */
+const CANAL = process.env.EXPO_CANAL || 'production';
 
 // AU-RA es Grafito (elegida el 25-sep): el sistema, el ícono adaptable y el arranque van en el
 // mismo gris oscuro que la sala, o el teléfono enseña otro color antes de abrirse.
@@ -88,6 +98,8 @@ module.exports = ({ config }) => {
           ]),
         ],
       },
+      // Actualizaciones por aire: el canal va en la cabecera (sin EAS Build no se pone solo).
+      updates: { ...expo.updates, requestHeaders: { 'expo-channel-name': CANAL } },
       // Cada app habla con SU servicio: desde que un despliegue sirve un solo producto, AU-RA vive
       // en aura-fp y Dr Electrum en ultron-looi-desk. Apuntar las dos al mismo deja a una en 404.
       extra: { ...expo.extra, variante: 'ultron', ultronUrl: 'https://aura-fp.onrender.com' },
@@ -145,6 +157,12 @@ module.exports = ({ config }) => {
       if (nombre === 'expo-splash-screen') return [nombre, { ...opts, image: ELECTRUM.arranque }];
       return p;
     }),
+    /*
+     * Sin actualizaciones por aire por ahora: `eas update` exige que el slug sea el del proyecto EAS
+     * de `extra.eas.projectId`, y el doctor todavía comparte el de AU-RA. Heredando la URL de AU-RA
+     * pediría el JS de la otra app. Se enciende cuando tenga su propio proyecto (slug dr-electrum-fp).
+     */
+    updates: { ...expo.updates, enabled: false },
     extra: { ...expo.extra, variante: 'electrum', acento: ELECTRUM.acento, ultronUrl: 'https://ultron-looi-desk.onrender.com' },
   };
 };

@@ -22,7 +22,9 @@ const apk = process.argv[2];
 const variante = (process.argv[3] || 'ultron').toLowerCase();
 
 const ESPERADO = {
-  ultron: { paquete: 'link.ordenglobal.ultronfp', nombre: 'AU-RA FP', orientacion: 'landscape', nativo: 'landscape', ubicacion: false },
+  // AU-RA también gira (4.5): horizontal para hablar a pantalla completa, vertical para cara + chat
+  // o Claudio de pie. La app bloquea la orientación en tiempo de ejecución (src/lib/orientacion.ts).
+  ultron: { paquete: 'link.ordenglobal.ultronfp', nombre: 'AU-RA FP', orientacion: 'default', nativo: 'unspecified', ubicacion: false },
   // Dr Electrum gira libre (se usa de pie, con una mano): el config dice 'default' y el manifiesto
   // nativo lo escribe como `unspecified` (-1).
   electrum: { paquete: 'link.ordenglobal.drelectrumfp', nombre: 'Dr Electrum FP', orientacion: 'default', nativo: 'unspecified', ubicacion: true },

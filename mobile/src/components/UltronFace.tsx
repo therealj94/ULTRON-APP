@@ -69,6 +69,11 @@ type Props = {
   /** Versión compacta (login/splash): diámetro de ojo y alto del escenario fijos. */
   size?: number;
   stageHeight?: number;
+  /**
+   * El recuadro donde se dibuja, si no es la pantalla entera (el Guardián en vertical va en un cuadro
+   * arriba del chat). Con él la cara se mide contra el cuadro y no se sale; los gestos siguen vivos.
+   */
+  caja?: { w: number; h: number };
 };
 
 const CYAN = '#00E5FF';
@@ -210,8 +215,11 @@ export function UltronFace({
   onSwipe,
   size,
   stageHeight,
+  caja,
 }: Props) {
-  const { width, height } = useWindowDimensions();
+  const pantalla = useWindowDimensions();
+  const width = caja?.w ?? pantalla.width;
+  const height = caja?.h ?? pantalla.height;
   const stageH = stageHeight ?? height;
   const D = size ?? Math.min(height * 0.42, width * 0.28, 320);
   const compact = size !== undefined;

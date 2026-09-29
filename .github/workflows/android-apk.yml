@@ -26,6 +26,10 @@ jobs:
     # estaba mal, que es la peor forma de estar mal.
     env:
       ULTRON_APP: ${{ matrix.variante }}
+      # También a nivel de trabajo, por lo mismo: Gradle vuelve a evaluar app.config.js y ahí calcula
+      # la huella (runtimeVersion) que queda dentro de la APK. Solo las APK de main escuchan las
+      # actualizaciones de producción; las de ramas, `pruebas` (ver CANAL en app.config.js).
+      EXPO_CANAL: ${{ github.ref == 'refs/heads/main' && 'production' || 'pruebas' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
     # Dos aplicaciones del mismo proyecto. Una matriz y no dos ficheros: así no se desincronizan,
@@ -65,6 +69,15 @@ jobs:
         working-directory: mobile
         run: npm run typecheck
 
+      # La huella nativa ANTES del prebuild: es la que calculará `eas update` al publicar (que no
+      # hace prebuild). Después se compara con la que Gradle metió en la APK. Solo AU-RA recibe
+      # actualizaciones por aire (Dr Electrum las tiene apagadas hasta tener su proyecto EAS).
+      - name: Runtime (huella nativa)
+        id: runtime
+        if: matrix.variante == 'ultron'
+        working-directory: mobile
+        run: echo "runtime=$(node ../scripts/qa/runtime-android.mjs)" >> "$GITHUB_OUTPUT"
+
       - name: Prebuild Android
         working-directory: mobile
         env:
@@ -83,6 +96,11 @@ jobs:
         working-directory: mobile/android
         env:
           GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
+          # La huella que va dentro de la APK es la de ANTES de compilar: la misma que calcula
+          # `eas update` al publicar (que no compila). Si Gradle la recalcula por su cuenta, lo hace
+          # con lo que la compilación ya escribió y sale otra, y ninguna actualización le llegaría
+          # (pasó en la primera APK con OTA). Vacío en Dr Electrum: no tiene OTA.
+          EXPO_UPDATES_FINGERPRINT_OVERRIDE: ${{ steps.runtime.outputs.runtime }}
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
@@ -105,11 +123,29 @@ jobs:
         working-directory: mobile
         run: node ../scripts/qa/comprobar-apk.mjs "out/${{ matrix.marca }}-${{ steps.version.outputs.version }}.apk" "${{ matrix.variante }}"
 
+      # La huella que la APK anunciará al pedir actualizaciones, leída de la APK y no supuesta. Si no
+      # coincide con la de antes del prebuild, ninguna actualización publicada le llegaría nunca.
+      # Se guarda junto al APK: el flujo de OTA la usa para saber si hay APK que pueda recibir.
+      - name: Runtime de la APK
+        if: matrix.variante == 'ultron'
+        working-directory: mobile
+        run: |
+          APK="out/${{ matrix.marca }}-${{ steps.version.outputs.version }}.apk"
+          EN_APK=$(unzip -p "$APK" assets/fingerprint)
+          if [ "$EN_APK" != "${{ steps.runtime.outputs.runtime }}" ]; then
+            echo "::error::La APK trae la huella «$EN_APK» y el proyecto da «${{ steps.runtime.outputs.runtime }}». Ninguna OTA le llegaría."
+            exit 1
+          fi
+          echo "$EN_APK" > "out/runtime-${{ matrix.variante }}.txt"
+          echo "runtime ${{ matrix.variante }} ($EXPO_CANAL): $EN_APK" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.marca }}-apk
-          path: mobile/out/*.apk
+          path: |
+            mobile/out/*.apk
+            mobile/out/runtime-*.txt
           if-no-files-found: error
           retention-days: 30
 
@@ -147,5 +183,9 @@ jobs:
 
             Instalación: abrir el .apk en el teléfono y permitir «instalar apps desconocidas». Si
             había una versión de EAS, desinstalarla primero (firma distinta).
-          files: apks/*.apk
+          # runtime-ultron.txt: la huella de la APK de AU-RA. El flujo de OTA la lee de aquí («latest»)
+          # para no publicar actualizaciones que ninguna APK instalada puede usar.
+          files: |
+            apks/*.apk
+            apks/runtime-*.txt
           make_latest: true

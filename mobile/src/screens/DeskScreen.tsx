@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { miga, reportarEstado } from '../lib/reporte';
-import { Alert, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -8,7 +8,7 @@ import { Accelerometer } from 'expo-sensors';
 import { UltronFace, type TouchZone } from '../components/UltronFace';
 import { SalaAura, type PedidoTarea } from '../components/SalaAura';
 import { CaraSegura } from '../cara/CaraSegura';
-import { TAREA_TEXTO, tareaDeHerramientas, type Postura, type Tarea } from '../lib/tareas';
+import { textoTarea, tareaDeHerramientas, type Postura, type Tarea } from '../lib/tareas';
 import { T, SOMBRA } from '../tema';
 import { CamaraVision, DORMIDO_PERIODO_MS, SERVIDOR_CADA_MS, SERVIDOR_DORMIDO_MS, type FrameGrabber } from '../components/CamaraVision';
 import { DeskMenu } from '../components/DeskMenu';
@@ -17,8 +17,8 @@ import type { DeskPresence, FaceState, Mode, SessionUser } from '../config';
 import { CANCIONES_LOCAL, healthCheck, listCanciones, rememberFact, turno, turnoStream, type Cancion, type Turn } from '../lib/api';
 import { faceForEmocion, type Emocion } from '../lib/emocion';
 import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones';
-import { AYUDA, CONOCER_CORE, CONOCER_QUESTIONS, fechaLocal, horaLocal } from '../lib/knowledge';
-import LINES from '../../voice-lines.json';
+import { ayuda, CONOCER_CORE, CONOCER_QUESTIONS, fechaLocal, horaLocal, preguntaConocer } from '../lib/knowledge';
+import { lineas, lineasGag } from '../lib/lineas';
 import {
   currentSttEngine,
   destroySpeech,
@@ -45,13 +45,24 @@ import {
   type SttEngine,
 } from '../lib/storage';
 import { playSfx, preloadSfx, setSfxEnabled } from '../lib/sfx';
-import { StreamSpeaker, setSpeechLevelListener, speak, speakClip, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
-import { CLIP_IDS, CLIP_TEXT, bankKey, type ClipId } from '../lib/voiceBank';
+import { StreamSpeaker, setAvatarVoz, setSpeechLevelListener, speak, speakPrayer, speakReaccion, speakSong, stopSpeaking, type SongRequest } from '../lib/tts';
+import { frase, saludoConNombre, type FraseId } from '../lib/frases';
+import { de, idiomaActual, tr, useIdioma } from '../i18n';
 import { quitarExpresiones } from '../lib/expresiones';
+import { ClaudioRetrato } from '../avatares/ClaudioRetrato';
+import { ClaudioDePie } from '../avatares/ClaudioDePie';
+import { SelectorAvatar } from '../avatares/SelectorAvatar';
+import { avatarPorId, distribucion, type AvatarId } from '../avatares/catalogo';
+import { AccionesAvatar } from '../components/AccionesAvatar';
+import { ChatMesa } from '../components/ChatMesa';
+import { avatarActual } from '../avatares/actual';
+import { orientar } from '../lib/orientacion';
 
 type Props = {
   user: SessionUser;
   onLogout: () => void;
+  /** Se acaba de elegir el avatar al entrar: se presenta él mismo con su voz. */
+  recienElegido?: boolean;
 };
 
 const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.length)];
@@ -59,19 +70,9 @@ const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(Math.random() * arr.le
 /** Un permiso negado: Android ya no vuelve a preguntar, así que se ofrece ir a los ajustes. */
 function pedirEnAjustes(titulo: string, texto: string) {
   Alert.alert(titulo, texto, [
-    { text: 'Ahora no', style: 'cancel' },
-    { text: 'Abrir ajustes', onPress: () => void Linking.openSettings().catch(() => {}) },
+    { text: tr('Ahora no', 'Not now'), style: 'cancel' },
+    { text: tr('Abrir ajustes', 'Open settings'), onPress: () => void Linking.openSettings().catch(() => {}) },
   ]);
-}
-
-/**
- * Saludo al entrar: «Qué bueno verte, José.» grabado con su voz para quien está en la junta (José y
- * Medardo van en el APK y suenan sin red); a los demás, la bienvenida grabada. `say()` lo reconoce
- * por la frase exacta (PHRASE_TO_CLIP) y toca el clip en vez de pedir voz.
- */
-function greetingFor(name: string) {
-  const id = `verte${bankKey(String(name || '').trim().split(/\s+/)[0] || '')}`;
-  return (CLIP_IDS as readonly string[]).includes(id) ? CLIP_TEXT[id as ClipId] : CLIP_TEXT.bienvenido;
 }
 
 const GAG_EMOCION: Record<string, Emocion> = {
@@ -87,13 +88,22 @@ const GAG_EMOCION: Record<string, Emocion> = {
   curious: 'curioso',
 };
 
-/** Gag → clip corto de emoción del servidor (se toca antes de las líneas, sin fallback a TTS). */
-const GAG_CLIP: Record<string, ClipId> = { sad: 'triste', angry: 'molesto', startle: 'sorpresa', yawn: 'bostezo', proud: 'orgullo', laugh: 'risacorta' };
+/** Gag → una expresión corta antes de las líneas, dicha en vivo por el avatar. */
+const GAG_FRASE: Record<string, FraseId> = { sad: 'triste', angry: 'molesto', startle: 'sorpresa', yawn: 'bostezo', laugh: 'risacorta' };
 
 const haptic = (kind: 'light' | 'medium' = 'light') =>
   Haptics.impactAsync(kind === 'light' ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
-export function DeskScreen({ user, onLogout }: Props) {
+export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
+  // Toda la mesa se redibuja si cambia el idioma (desde el menú), y el oído vuelve a arrancar en
+  // el idioma nuevo (el reconocedor del teléfono fija el idioma al empezar a escuchar).
+  const idioma = useIdioma();
+  const idiomaOido = useRef(idioma);
+  useEffect(() => {
+    if (idiomaOido.current === idioma) return;
+    idiomaOido.current = idioma;
+    void restartMic().catch(() => {});
+  }, [idioma]);
   // Diagnóstico de campo: si la app muere aquí, el servidor sabrá hasta dónde llegó.
   useEffect(() => {
     miga('DeskScreen montado');
@@ -128,17 +138,23 @@ export function DeskScreen({ user, onLogout }: Props) {
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
   const [objects, setObjects] = useState<string[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
+  /** El selector de avatar abierto desde el menú (al entrar se elige en App, antes de la mesa). */
+  const [eligiendo, setEligiendo] = useState<'menu' | null>(null);
   // La mesa no se apaga sola: si la pantalla se bloquea, deja de escuchar y de verte.
   useKeepAwake('mesa');
   // Botón atrás de Android: cierra el menú; con el menú cerrado hace lo de siempre.
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (eligiendo === 'menu') {
+        setEligiendo(null);
+        return true;
+      }
       if (!menuOpen) return false;
       setMenuOpen(false);
       return true;
     });
     return () => sub.remove();
-  }, [menuOpen]);
+  }, [menuOpen, eligiendo]);
   const [catalogRequest, setCatalogRequest] = useState(0);
   const [attack, setAttack] = useState<'blaster' | 'saber' | null>(null);
   const [irritation, setIrritation] = useState(0);
@@ -153,6 +169,12 @@ export function DeskScreen({ user, onLogout }: Props) {
   const [atencion, setAtencion] = useState(0);
   const [verPersona, setVerPersona] = useState(false);
   const [visionMotor, setVisionMotor] = useState<MotorVision>('ninguno');
+  /** Con quién se habla: AU-RA (los ojos), Claudio o Claudio de pie. null hasta leer los ajustes. */
+  const [avatar, setAvatar] = useState<AvatarId | null>(null);
+  /** Lo que se dijo en la mesa, para el chat del modo cuadro (vertical). */
+  const [mensajes, setMensajes] = useState<Turn[]>([]);
+  const { width: anchoPantalla, height: altoPantalla } = useWindowDimensions();
+  const horizontal = anchoPantalla >= altoPantalla;
 
   const speakingRef = useRef(false);
   const handling = useRef(false);
@@ -166,7 +188,6 @@ export function DeskScreen({ user, onLogout }: Props) {
   const dragging = useRef(false);
   const personSeenAt = useRef(0);
   const conocerIdxRef = useRef(-1);
-  const chisteIdx = useRef(0);
   const objectsRef = useRef<string[]>([]);
   const sceneRef = useRef('');
   const lastSceneRemark = useRef(0);
@@ -251,7 +272,9 @@ export function DeskScreen({ user, onLogout }: Props) {
   }, [bubble, bubbleOp]);
 
   const logUltron = useCallback((text: string) => {
-    historial.current = [...historial.current, { rol: 'ultron' as const, texto: quitarExpresiones(text).trim() }].slice(-12);
+    const texto = quitarExpresiones(text).trim();
+    historial.current = [...historial.current, { rol: 'ultron' as const, texto }].slice(-12);
+    if (texto) setMensajes((m) => [...m, { rol: 'ultron' as const, texto }].slice(-80));
   }, []);
 
   /** Fin de cualquier audio: mic de vuelta, cara en reposo, HUD según mute real (ref, no closure). */
@@ -292,18 +315,13 @@ export function DeskScreen({ user, onLogout }: Props) {
     [logUltron, onAudio, settle, showBubble]
   );
 
-  /** Clip del banco por id. Si el servidor no lo sirve: `fallback` (texto) o nada. */
+  /** Una frase corta de la mesa (frases.ts), dicha en vivo por el avatar y en el idioma elegido. */
   const playClip = useCallback(
-    async (id: ClipId, f: FaceState, opts?: { fallbackText?: string | null; emocion?: Emocion }) => {
-      if (opts?.fallbackText !== null) showBubble(opts?.fallbackText ?? CLIP_TEXT[id]);
-      speakingRef.current = true;
-      setFace(f);
-      setStatus('speaking');
-      const ok = await speakClip(id, { fallback: false, onAudioStart: () => onAudio(f), onEnd: settle });
-      if (!ok && opts?.fallbackText) await say(opts.fallbackText, f, { emocion: opts.emocion });
-      return ok;
+    async (id: FraseId, f: FaceState, opts?: { emocion?: Emocion }) => {
+      await say(frase(id), f, { emocion: opts?.emocion });
+      return true;
     },
-    [onAudio, say, settle, showBubble]
+    [say]
   );
 
   /**
@@ -311,16 +329,16 @@ export function DeskScreen({ user, onLogout }: Props) {
    * demás. Es irreversible, así que antes se pregunta.
    */
   const confirmarOlvido = useCallback(() => {
-    Alert.alert('¿Olvidar lo que recuerdo de ti?', `Se borran los hechos que guardé en este teléfono para ${user.name}. No se puede deshacer.`, [
-      { text: 'Cancelar', style: 'cancel' },
+    Alert.alert(tr('¿Olvidar lo que recuerdo de ti?', 'Forget what I remember about you?'), tr(`Se borran los hechos que guardé en este teléfono para ${user.name}. No se puede deshacer.`, `The facts I saved on this phone for ${user.name} will be erased. This can’t be undone.`), [
+      { text: tr('Cancelar', 'Cancel'), style: 'cancel' },
       {
-        text: 'Olvidar',
+        text: tr('Olvidar', 'Forget'),
         style: 'destructive',
         onPress: () =>
           void (async () => {
             await clearLongMemory(user);
             longMemory.current = [];
-            await say('Memoria de largo plazo borrada.', 'CONCERNED', { emocion: 'preocupado' });
+            await say(tr('Memoria de largo plazo borrada.', 'Long-term memory erased.'), 'CONCERNED', { emocion: 'preocupado' });
           })(),
       },
     ]);
@@ -329,14 +347,26 @@ export function DeskScreen({ user, onLogout }: Props) {
   /** AU-RA canta: POST /api/cantar. Cara SING, mic pausado, sin rellenos. */
   const sing = useCallback(
     async (req: SongRequest, titulo: string) => {
+      // El repertorio está grabado con la voz de AU-RA: los otros avatares no lo cantan con la de ella.
+      if ('id' in req && avatarActual() !== 'aura') {
+        await say(
+          tr(
+            `«${titulo}» la tiene grabada AU-RA con su voz. Cámbiame a AU-RA para oírla, o dime la letra y te la digo yo.`,
+            `“${titulo}” is recorded in AU-RA’s voice. Switch to AU-RA to hear it, or give me the lyrics and I’ll say them.`
+          ),
+          'CONCERNED',
+          { emocion: 'preocupado' }
+        );
+        return;
+      }
       showBubble(`♪ ${titulo}`);
       logUltron(`(canta ${titulo})`);
       speakingRef.current = true;
       setFace('SING');
       setStatus('speaking');
-      setToolHint('afinando');
+      setToolHint(tr('afinando', 'warming up'));
       const ok = await speakSong(req, {
-        onPreparing: () => setToolHint('preparando la canción'),
+        onPreparing: () => setToolHint(tr('preparando la canción', 'preparing the song')),
         onAudioStart: () => {
           setToolHint('');
           onAudio('SING');
@@ -344,7 +374,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         onEnd: settle,
       });
       setToolHint('');
-      if (!ok) await say('No pude cantar esa ahora. Prueba con «canta 1» o «canta salsa».', 'CONCERNED', { emocion: 'preocupado' });
+      if (!ok) await say(tr('No pude cantar esa ahora. Prueba con «canta 1» o «canta salsa».', 'I couldn’t sing that one right now. Try “sing 1” or “sing salsa”.'), 'CONCERNED', { emocion: 'preocupado' });
     },
     [logUltron, onAudio, say, settle, showBubble]
   );
@@ -360,7 +390,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       setToolHint('');
       const ok = await speakPrayer({
         tema,
-        onPreparing: () => setToolHint('preparando la oración'),
+        onPreparing: () => setToolHint(tr('preparando la oración', 'preparing the prayer')),
         onAudioStart: () => {
           setToolHint('');
           pauseMicForTts(true);
@@ -371,7 +401,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         onEnd: settle,
       });
       setToolHint('');
-      if (!ok) await say('No pude traer la oración ahora. Inténtalo en un momento.', 'CONCERNED', { emocion: 'preocupado' });
+      if (!ok) await say(tr('No pude traer la oración ahora. Inténtalo en un momento.', 'I couldn’t bring up the prayer right now. Try again in a moment.'), 'CONCERNED', { emocion: 'preocupado' });
     },
     [logUltron, say, settle, showBubble]
   );
@@ -380,19 +410,19 @@ export function DeskScreen({ user, onLogout }: Props) {
     async (mas: boolean) => {
       const progress = await loadConocerProgress(user.correo);
       if (progress.completedCore && !mas) {
-        await say('Ya completamos las diez preguntas principales. Si quieres, di «conocer más».', 'HAPPY', { emocion: 'feliz' });
+        await say(tr('Ya completamos las diez preguntas principales. Si quieres, di «conocer más».', 'We finished the ten main questions. If you want, say “learn more”.'), 'HAPPY', { emocion: 'feliz' });
         return;
       }
       const next = CONOCER_QUESTIONS.findIndex((q) => !progress.answeredIds.includes(q.id));
       if (next < 0) {
-        await say('Ya respondiste todo lo que tenía para preguntarte. Gracias.', 'HAPPY', { emocion: 'carino' });
+        await say(tr('Ya respondiste todo lo que tenía para preguntarte. Gracias.', 'You’ve answered everything I had to ask. Thank you.'), 'HAPPY', { emocion: 'carino' });
         return;
       }
       setMode('CONOCER');
       modeRef.current = 'CONOCER';
       conocerIdxRef.current = next;
       await say(
-        `${mas ? 'Sigamos conociéndonos.' : `Quiero conocerte. Son ${CONOCER_CORE} preguntas cortas; di «luego» y lo dejamos.`} ${CONOCER_QUESTIONS[next].prompt}`,
+        `${mas ? tr('Sigamos conociéndonos.', 'Let’s keep getting to know each other.') : tr(`Quiero conocerte. Son ${CONOCER_CORE} preguntas cortas; di «luego» y lo dejamos.`, `I’d like to get to know you. It’s ${CONOCER_CORE} short questions; say “later” and we’ll stop.`)} ${preguntaConocer(next)}`,
         'CURIOUS',
         { emocion: 'curioso' }
       );
@@ -427,7 +457,7 @@ export function DeskScreen({ user, onLogout }: Props) {
     setAttack('saber');
     setFace('ANGRY');
     playSfx('saber');
-    await say('Sable de luz, listo. Que Orden Global te acompañe.', 'ANGRY', { emocion: 'travieso' });
+    await say(tr('Sable de luz, listo. Que Orden Global te acompañe.', 'Lightsaber ready. May Orden Global be with you.'), 'ANGRY', { emocion: 'travieso' });
     setAttack(null);
   }, [say]);
 
@@ -448,9 +478,9 @@ export function DeskScreen({ user, onLogout }: Props) {
       };
       let emocion: Emocion = 'neutral';
       let reacted = false;
-      // Un solo relleno, local y sin red: «mmm» del banco si el cerebro tarda (inmediato con imagen).
+      // Un solo relleno si el cerebro tarda (inmediato con imagen): «mmm, déjame ver» con la voz del avatar.
       const mmm = () =>
-        void speakClip(pick(['mmm', 'unmomento'] as const), { fallback: false, onAudioStart: () => pauseMicForTts(true), onEnd: () => !speakingRef.current && pauseMicForTts(false) });
+        void speak(frase(pick(['mmm', 'unmomento'] as const)), { onAudioStart: () => pauseMicForTts(true), onEnd: () => !speakingRef.current && pauseMicForTts(false) });
       let mmmTimer: ReturnType<typeof setTimeout> | null = opts?.image ? (mmm(), null) : setTimeout(mmm, 700);
       const cancelMmm = () => {
         if (mmmTimer) clearTimeout(mmmTimer);
@@ -491,7 +521,7 @@ export function DeskScreen({ user, onLogout }: Props) {
                 const t = tareaDeHerramientas(tools);
                 if (t) {
                   hacerTarea(t);
-                  setToolHint(TAREA_TEXTO[t]);
+                  setToolHint(textoTarea(t));
                 }
               },
             });
@@ -531,7 +561,7 @@ export function DeskScreen({ user, onLogout }: Props) {
             // misma espera con JSON (70 s, y otro intento) dejaba a la mesa «pensando» unos 3 minutos.
             if (Date.now() - t0Turno > 20_000) {
               setToolHint('');
-              await say('Se me fue el hilo pensando eso. ¿Me lo repites?', 'CONFUSED', { emocion: 'preocupado' });
+              await say(tr('Se me fue el hilo pensando eso. ¿Me lo repites?', 'I lost my train of thought on that. Could you repeat it?'), 'CONFUSED', { emocion: 'preocupado' });
               return;
             }
             /* el servidor no tiene stream → JSON clásico */
@@ -554,8 +584,8 @@ export function DeskScreen({ user, onLogout }: Props) {
           const auth = /sesión|privado|401/i.test(String(out.error || ''));
           if (auth) {
             setOnline(true);
-            await say('Se me cerró la sesión de la mesa. Entra de nuevo y te oigo.', 'CONCERNED', { emocion: 'preocupado' });
-            Alert.alert('Sesión cerrada', 'Tu sesión de la mesa se cerró. Entra de nuevo para seguir.', [
+            await say(tr('Se me cerró la sesión de la mesa. Entra de nuevo y te oigo.', 'My desk session closed. Sign in again and I’ll hear you.'), 'CONCERNED', { emocion: 'preocupado' });
+            Alert.alert(tr('Sesión cerrada', 'Session closed'), tr('Tu sesión de la mesa se cerró. Entra de nuevo para seguir.', 'Your desk session closed. Sign in again to continue.'), [
               { text: 'Luego', style: 'cancel' },
               { text: 'Entrar', onPress: onLogout },
             ]);
@@ -584,7 +614,7 @@ export function DeskScreen({ user, onLogout }: Props) {
   const whatDoYouSee = useCallback(async () => {
     const frame = grabFrame.current ? await grabFrame.current() : null;
     if (frame) {
-      await askBrain('Mira la cámara y dime en dos frases qué ves: quién está, qué hace y qué objetos hay.', { image: `data:image/jpeg;base64,${frame}` });
+      await askBrain(tr('Mira la cámara y dime en dos frases qué ves: quién está, qué hace y qué objetos hay.', 'Look at the camera and tell me in two sentences what you see: who is there, what they are doing and what objects there are.'), { image: `data:image/jpeg;base64,${frame}` });
       return;
     }
     // Sin frame: lo que la detección local ya sabe (persona, lado, gesto) y las etiquetas del servidor.
@@ -592,19 +622,19 @@ export function DeskScreen({ user, onLogout }: Props) {
     const objs = objectsRef.current;
     if (escenaFresca(e)) {
       const mesa = objs.filter((l) => !/persona|rostro|cara|hombre|mujer|niñ|gente|face|person/.test(l));
-      await say(`${e.descripcion}${mesa.length ? ` En la mesa: ${mesa.join(', ')}.` : ''}`, 'SCAN');
+      await say(`${e.descripcion}${mesa.length ? ` ${tr('En la mesa', 'On the desk')}: ${mesa.join(', ')}.` : ''}`, 'SCAN');
       return;
     }
-    await say(objs.length ? `Veo: ${objs.join(', ')}.` : 'Aún no identifico nada. Dame un momento con la cámara.', 'SCAN');
+    await say(objs.length ? `${tr('Veo', 'I see')}: ${objs.join(', ')}.` : tr('Aún no identifico nada. Dame un momento con la cámara.', 'I can’t identify anything yet. Give me a moment with the camera.'), 'SCAN');
   }, [askBrain, escenaFresca, say]);
 
   const runGag = useCallback(
     async (gag: Gag) => {
       const emocion = GAG_EMOCION[gag.id] || 'neutral';
       setFace(gag.face);
-      const clip = GAG_CLIP[gag.id];
-      if (clip) await speakClip(clip, { fallback: false, onAudioStart: () => onAudio(gag.face) });
-      for (const line of gag.lines) {
+      const corta = GAG_FRASE[gag.id];
+      if (corta) await speak(frase(corta), { onAudioStart: () => onAudio(gag.face) });
+      for (const line of lineasGag(gag.id, gag.lines)) {
         await say(line, gag.face, { emocion });
         if (gag.lineGapMs) await new Promise((r) => setTimeout(r, gag.lineGapMs));
       }
@@ -625,7 +655,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       if (coreDone && ci < CONOCER_CORE) return exitConocer('Gracias. Ya te conozco mejor; no repetiré estas preguntas. Si quieres más, di «conocer más».');
       if (next < 0) return exitConocer('Listo. Ya te conozco mejor.');
       conocerIdxRef.current = next;
-      await say(`Anotado. ${CONOCER_QUESTIONS[next].prompt}`, 'CURIOUS', { emocion: 'curioso' });
+      await say(`${tr('Anotado.', 'Noted.')} ${preguntaConocer(next)}`, 'CURIOUS', { emocion: 'curioso' });
     },
     [exitConocer, say, user]
   );
@@ -651,6 +681,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       lastUserAt.current = Date.now();
       await stopSpeaking();
       historial.current = [...historial.current, { rol: 'usuario' as const, texto: cmd }].slice(-12);
+      setMensajes((m) => [...m, { rol: 'usuario' as const, texto: cmd }].slice(-80));
 
       const enConocer = modeRef.current === 'CONOCER' && conocerIdxRef.current >= 0 && conocerIdxRef.current < CONOCER_QUESTIONS.length;
       const intent = interpretar(cmd, { dormido: presenceRef.current === 'sleep', enConocer });
@@ -659,18 +690,18 @@ export function DeskScreen({ user, onLogout }: Props) {
         if (presenceRef.current === 'sleep') {
           setPresence('stay');
           presenceRef.current = 'stay';
-          if (intent.tipo === 'despertar') return void (await say('Despierto. Te escucho.', 'HAPPY', { emocion: 'feliz' }));
+          if (intent.tipo === 'despertar') return void (await say(tr('Despierto. Te escucho.', 'Awake. I’m listening.'), 'HAPPY', { emocion: 'feliz' }));
         }
         // En la entrevista todo es respuesta salvo salir / callar / dormir / menú / sesión.
         if (enConocer && !['conocer_salir', 'callar', 'dormir', 'logout', 'menu', 'catalogo'].includes(intent.tipo)) return void (await answerConocer(cmd));
 
         switch (intent.tipo) {
           case 'despertar':
-            return void (await say('Aquí estoy.', 'HAPPY', { emocion: 'feliz' }));
+            return void (await say(tr('Aquí estoy.', 'I’m here.'), 'HAPPY', { emocion: 'feliz' }));
           case 'dormir':
             setPresence('sleep');
             presenceRef.current = 'sleep';
-            return void (await say('Descanso un momento. Háblame o tócame para despertar.', 'SLEEPING', { emocion: 'cansado' }));
+            return void (await say(tr('Descanso un momento. Háblame o tócame para despertar.', 'Resting for a moment. Talk to me or touch me to wake me up.'), 'SLEEPING', { emocion: 'cansado' }));
           case 'callar':
             await stopSpeaking();
             settle();
@@ -685,18 +716,18 @@ export function DeskScreen({ user, onLogout }: Props) {
           case 'catalogo':
             setMenuOpen(true);
             setCatalogRequest((n) => n + 1);
-            return void (await playClip('listo', 'IDLE', { fallbackText: 'Aquí tienes todo lo que puedo hacer.' }));
+            return void (await playClip('todo', 'IDLE'));
           case 'conocer':
             return void (await startConocer(intent.mas));
           case 'conocer_salir':
             return void (await exitConocer());
           case 'logout':
-            await say('Hasta luego.', 'IDLE', { emocion: 'carino' });
+            await say(tr('Hasta luego.', 'See you later.'), 'IDLE', { emocion: 'carino' });
             return onLogout();
           case 'recordar': {
             hacerTarea('anotar');
             const line = `${user.name}: ${intent.hecho}`;
-            if (longMemory.current.includes(line)) return void (await say('Eso ya lo tenía en memoria.', 'HAPPY'));
+            if (longMemory.current.includes(line)) return void (await say(tr('Eso ya lo tenía en memoria.', 'I already had that in memory.'), 'HAPPY'));
             const remoto = rememberFact(line, user.name);
             longMemory.current = (await addLongFact(user, line)).map((f) => f.hecho);
             const ok = await remoto;
@@ -705,24 +736,24 @@ export function DeskScreen({ user, onLogout }: Props) {
           case 'olvidar':
             // Borrar es irreversible y la voz se puede oír mal: se confirma en la pantalla.
             confirmarOlvido();
-            return void (await say('Para borrar lo que recuerdo de ti, confírmalo en la pantalla.', 'CONCERNED', { emocion: 'preocupado' }));
+            return void (await say(tr('Para borrar lo que recuerdo de ti, confírmalo en la pantalla.', 'To erase what I remember about you, confirm it on the screen.'), 'CONCERNED', { emocion: 'preocupado' }));
           case 'que_recuerdas': {
             const mine = longMemory.current.filter((f) => f.startsWith(user.name)).slice(0, 4).map((f) => f.replace(/^[^:]+:\s*/, ''));
-            if (mine.length) return void (await say(`Recuerdo: ${mine.join('. ')}.`, 'HAPPY', { emocion: 'feliz' }));
+            if (mine.length) return void (await say(`${tr('Recuerdo', 'I remember')}: ${mine.join('. ')}.`, 'HAPPY', { emocion: 'feliz' }));
             return void (await askBrain(cmd));
           }
           case 'vision_on': {
             if (!camPerm?.granted) {
               const res = await requestCam();
-              if (!res.granted) return void (await say('Necesito permiso de cámara para mirarte.', 'CONCERNED', { emocion: 'preocupado' }));
+              if (!res.granted) return void (await say(tr('Necesito permiso de cámara para mirarte.', 'I need camera permission to see you.'), 'CONCERNED', { emocion: 'preocupado' }));
             }
             setVisionOn(true);
-            return void (await say('Visión activa. Te estoy mirando.', 'SCAN'));
+            return void (await say(tr('Visión activa. Te estoy mirando.', 'Vision on. I’m watching.'), 'SCAN'));
           }
           case 'que_ves':
             return void (await whatDoYouSee());
           case 'blaster':
-            return void (await fireBlaster('¡Blaster listo! Pium, pium, pium.'));
+            return void (await fireBlaster(tr('¡Blaster listo! Pium, pium, pium.', 'Blaster ready! Pew, pew, pew.')));
           case 'sable':
             return void (await fireSaber());
           case 'cantar': {
@@ -735,26 +766,21 @@ export function DeskScreen({ user, onLogout }: Props) {
           }
           case 'orar':
             return void (await pray(intent.tema));
-          case 'chiste': {
-            chisteIdx.current = (chisteIdx.current % 5) + 1;
-            const ok = await playClip(`chiste${chisteIdx.current}` as ClipId, 'HAPPY', { fallbackText: null });
-            if (!ok) await askBrain('Cuéntame un chiste corto y bueno.');
-            return;
-          }
+          case 'chiste':
+            // Un chiste nuevo cada vez, contado por el avatar con su gracia (ya no hay chistes grabados).
+            return void (await askBrain(tr('Cuéntame un chiste corto, limpio y bueno. Solo el chiste.', 'Tell me a short, clean, good joke. Just the joke.')));
           case 'clip': {
             if (intent.id === 'puedo') {
               setMenuOpen(true);
               setCatalogRequest((n) => n + 1);
             }
-            const ok = await playClip(intent.id, 'HAPPY', { fallbackText: null });
-            if (!ok) await askBrain(cmd);
-            return;
+            return void (await playClip(intent.id, 'HAPPY'));
           }
           case 'saludo':
-            return void (await playClip('hola', 'HAPPY', { fallbackText: `Hola, ${user.name}. Aquí estoy.`, emocion: 'feliz' }));
+            return void (await say(`${tr('Hola', 'Hi')}, ${user.name}. ${frase('aqui')}`, 'HAPPY', { emocion: 'feliz' }));
           case 'gracias': {
             const id = pick(['denada', 'cuandoquieras'] as const);
-            return void (await playClip(id, 'HAPPY', { fallbackText: CLIP_TEXT[id], emocion: 'carino' }));
+            return void (await playClip(id, 'HAPPY', { emocion: 'carino' }));
           }
           case 'gag':
             return void (await runGag(intent.gag));
@@ -763,7 +789,7 @@ export function DeskScreen({ user, onLogout }: Props) {
           case 'fecha':
             return void (await say(fechaLocal(), 'IDLE'));
           case 'ayuda':
-            return void (await say(AYUDA, 'HAPPY', { emocion: 'feliz' }));
+            return void (await say(ayuda(), 'HAPPY', { emocion: 'feliz' }));
           case 'cerebro':
           default:
             await askBrain(cmd);
@@ -793,7 +819,7 @@ export function DeskScreen({ user, onLogout }: Props) {
     setPresence('stay');
     presenceRef.current = 'stay';
     playSfx('boing');
-    void playClip('despertar', 'STARTLE', { fallbackText: 'Ya despierto.', emocion: 'sorpresa' });
+    void playClip('despertar', 'STARTLE', { emocion: 'sorpresa' });
   }, [playClip]);
 
   /** Toques seguidos: «ya, ya» — molesto 1,2 s y luego se ríe. */
@@ -804,11 +830,10 @@ export function DeskScreen({ user, onLogout }: Props) {
       void haptic('medium');
       setFace('ANGRY');
       const t = setTimeout(() => setFace('LAUGH'), 1200);
-      showBubble('Ya, ya.');
+      showBubble(tr('Ya, ya.', 'Okay, okay.'));
       speakingRef.current = true;
       setStatus('speaking');
-      const ok = await speakClip('yaya', { fallback: false, onAudioStart: () => onAudio('ANGRY'), onEnd: () => {} });
-      if (!ok) await speak('Ya, ya.', { emocion: 'molesto', onAudioStart: () => pauseMicForTts(true) });
+      await speak(frase('yaya'), { emocion: 'molesto', onAudioStart: () => onAudio('ANGRY') });
       clearTimeout(t);
       setFace('LAUGH');
       playSfx('giggle');
@@ -849,7 +874,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       }
       if (irr >= 0.92) {
         handling.current = true;
-        void fireBlaster(pick(LINES.angry)).finally(() => {
+        void fireBlaster(pick(lineas('angry'))).finally(() => {
           handling.current = false;
         });
         return;
@@ -857,7 +882,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       if (sinceLast < 380 && zone !== 'eyeL' && zone !== 'eyeR') {
         playSfx('wink');
         setFace('WINK');
-        void say(pick(LINES.double), 'WINK', { emocion: 'travieso' });
+        void say(pick(lineas('double')), 'WINK', { emocion: 'travieso' });
         return;
       }
       switch (zone) {
@@ -866,24 +891,24 @@ export function DeskScreen({ user, onLogout }: Props) {
           playSfx('wink');
           setWinkSide(zone === 'eyeL' ? 'L' : 'R');
           setFace('WINK');
-          if (tapCount.current % 2) void say(pick(LINES.eye), 'WINK', { emocion: 'travieso' });
+          if (tapCount.current % 2) void say(pick(lineas('eye')), 'WINK', { emocion: 'travieso' });
           else setTimeout(() => setFace(restFace()), 900);
           return;
         case 'forehead':
           playSfx('tap');
           setFace('CURIOUS');
-          if (tapCount.current % 2) void say(pick(LINES.forehead), 'CURIOUS', { emocion: 'curioso' });
+          if (tapCount.current % 2) void say(pick(lineas('forehead')), 'CURIOUS', { emocion: 'curioso' });
           else setTimeout(() => setFace(restFace()), 1500);
           return;
         case 'chin':
           playSfx('giggle');
           setFace('LAUGH');
-          void say(pick(LINES.tickle), 'LAUGH', { emocion: 'risa' });
+          void say(pick(lineas('tickle')), 'LAUGH', { emocion: 'risa' });
           return;
         case 'mouth':
           playSfx('giggle');
           setFace('HAPPY');
-          void say(pick(LINES.mouth), 'HAPPY', { emocion: 'travieso' });
+          void say(pick(lineas('mouth')), 'HAPPY', { emocion: 'travieso' });
           return;
         case 'cheek':
           playSfx('tap');
@@ -892,7 +917,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         default:
           playSfx('tap');
           setFace(tapCount.current % 2 ? 'WINK' : 'HAPPY');
-          if (tapCount.current % 3 === 1) void playClip('aqui', 'HAPPY', { fallbackText: pick(LINES.tap), emocion: 'feliz' });
+          if (tapCount.current % 3 === 1) void say(pick(lineas('tap')), 'HAPPY', { emocion: 'feliz' });
           else setTimeout(() => setFace(restFace()), 700);
       }
     },
@@ -910,7 +935,7 @@ export function DeskScreen({ user, onLogout }: Props) {
     void (async () => {
       // Primero el «aww» grabado, después la frase.
       await speakReaccion('carino', { onAudioStart: () => onAudio('HAPPY') });
-      await say(pick(LINES.love), 'HAPPY', { emocion: 'carino' });
+      await say(pick(lineas('love')), 'HAPPY', { emocion: 'carino' });
     })();
   }, [onAudio, say]);
 
@@ -924,7 +949,7 @@ export function DeskScreen({ user, onLogout }: Props) {
     void (async () => {
       // Se duerme bostezando.
       await speakReaccion('cansado', { onAudioStart: () => onAudio('SLEEPING') });
-      await say('Descanso un momento. Háblame o tócame para despertar.', 'SLEEPING', { emocion: 'cansado' });
+      await say(tr('Descanso un momento. Háblame o tócame para despertar.', 'Resting for a moment. Talk to me or touch me to wake me up.'), 'SLEEPING', { emocion: 'cansado' });
     })();
   }, [onAudio, say, wakeUp]);
 
@@ -985,7 +1010,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         lastShakeAt = Date.now();
         setFace('SURPRISED');
         playSfx('tap');
-        void say(pick(LINES.shake), 'SURPRISED', { emocion: 'sorpresa' });
+        void say(pick(lineas('shake')), 'SURPRISED', { emocion: 'sorpresa' });
       }
     });
     return () => sub.remove();
@@ -1034,6 +1059,10 @@ export function DeskScreen({ user, onLogout }: Props) {
       setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx });
       setPostura(s.postura === 'sentada' ? 'sentada' : 'pie');
       setCara(s.cara === 'sala' ? 'sala' : 'anillos');
+      setAvatar(s.avatar);
+      setAvatarVoz(s.avatar);
+      // La bienvenida arranca en horizontal (hablar a pantalla completa); después la mesa sigue al teléfono.
+      void orientar('horizontal');
       setSfxEnabled(s.sfx);
       proactiveRef.current = s.proactive;
       if (s.sttEngine !== currentSttEngine()) await setSttEngine(s.sttEngine);
@@ -1051,14 +1080,19 @@ export function DeskScreen({ user, onLogout }: Props) {
         setStatus('listening');
       } else setStatus(micOk ? 'muted' : 'offline');
 
+      // El avatar se eligió al entrar (App): si es recién elegido, se presenta él mismo con su voz.
       handling.current = true;
-      await say(greetingFor(user.name), 'HAPPY', { emocion: 'feliz' });
+      const saludo = saludoConNombre(user.name);
+      await say(recienElegido ? `${saludo} ${de(avatarPorId(s.avatar).presentacion)}` : saludo, 'HAPPY', { emocion: 'feliz' });
       handling.current = false;
+      // Después del saludo la mesa sigue al teléfono: en vertical, cuadro con la cara y el chat
+      // (Claudio se pone de pie).
+      void orientar('libre');
 
       if (s.visionEnabled && camPerm && !camPerm.granted && camPerm.canAskAgain !== false) {
-        Alert.alert('Cámara', '¿Permitir cámara para mirarte e identificar lo que hay en la mesa?', [
-          { text: 'Ahora no', style: 'cancel', onPress: () => setVisionOn(false) },
-          { text: 'Permitir', onPress: () => void requestCam() },
+        Alert.alert(tr('Cámara', 'Camera'), tr('¿Permitir cámara para mirarte e identificar lo que hay en la mesa?', 'Allow the camera so I can see you and identify what’s on the desk?'), [
+          { text: tr('Ahora no', 'Not now'), style: 'cancel', onPress: () => setVisionOn(false) },
+          { text: tr('Permitir', 'Allow'), onPress: () => void requestCam() },
         ]);
       }
     })();
@@ -1156,7 +1190,7 @@ export function DeskScreen({ user, onLogout }: Props) {
             wakeUp();
           } else if (calm) {
             const id = pick(['hola', 'aqui', 'holadenuevo', 'mealegra'] as const);
-            void playClip(id, 'HAPPY', { fallbackText: CLIP_TEXT[id], emocion: 'feliz' });
+            void playClip(id, 'HAPPY', { emocion: 'feliz' });
           }
         } else if (ev === 'sonrie') {
           if (!calm || presenceRef.current === 'sleep' || now - lastSonrisaAt.current < 8_000) continue;
@@ -1172,7 +1206,7 @@ export function DeskScreen({ user, onLogout }: Props) {
           acompanaDicho.current = true;
           if (!calm) continue;
           setFace('CURIOUS');
-          void say('¿Y quién te acompaña?', 'CURIOUS', { emocion: 'curioso' });
+          void say(tr('¿Y quién te acompaña?', 'And who’s with you?'), 'CURIOUS', { emocion: 'curioso' });
         }
       }
     },
@@ -1200,6 +1234,17 @@ export function DeskScreen({ user, onLogout }: Props) {
     []
   );
 
+  /** Cambiar de avatar desde el menú: su voz desde ya, se guarda y se presenta él mismo. */
+  const elegirAvatar = async (id: AvatarId) => {
+    setEligiendo(null);
+    setMenuOpen(false);
+    await stopSpeaking();
+    setAvatar(id);
+    setAvatarVoz(id);
+    await saveSettings({ avatar: id, avatarElegido: true });
+    void say(de(avatarPorId(id).presentacion), 'HAPPY', { emocion: 'feliz' });
+  };
+
   const toggleMute = async () => {
     if (!micMutedRef.current) {
       await muteMic();
@@ -1207,16 +1252,16 @@ export function DeskScreen({ user, onLogout }: Props) {
       setMicMuted(true);
       setStatus('muted');
       await saveSettings({ micMuted: true });
-      await say('Micrófono en silencio.', 'IDLE');
+      await say(tr('Micrófono en silencio.', 'Microphone muted.'), 'IDLE');
     } else {
       const ok = await ensureSpeechPermissions();
-      if (!ok) return pedirEnAjustes('Micrófono', 'Para escucharte necesito el micrófono. Actívalo en los ajustes del teléfono.');
+      if (!ok) return pedirEnAjustes(tr('Micrófono', 'Microphone'), tr('Para escucharte necesito el micrófono. Actívalo en los ajustes del teléfono.', 'I need the microphone to hear you. Turn it on in the phone settings.'));
       await unmuteMic();
       micMutedRef.current = false;
       setMicMuted(false);
       setStatus('listening');
       await saveSettings({ micMuted: false });
-      await say('Te escucho de nuevo.', 'HAPPY', { emocion: 'feliz' });
+      await say(tr('Te escucho de nuevo.', 'I’m listening again.'), 'HAPPY', { emocion: 'feliz' });
     }
   };
 
@@ -1225,7 +1270,7 @@ export function DeskScreen({ user, onLogout }: Props) {
       if (!camPerm?.granted) {
         const r = await requestCam();
         if (!r.granted) {
-          pedirEnAjustes('Cámara', 'Para verte necesito la cámara. Actívala en los ajustes del teléfono.');
+          pedirEnAjustes(tr('Cámara', 'Camera'), tr('Para verte necesito la cámara. Actívala en los ajustes del teléfono.', 'I need the camera to see you. Turn it on in the phone settings.'));
           return;
         }
       }
@@ -1241,11 +1286,11 @@ export function DeskScreen({ user, onLogout }: Props) {
   const setPresenceUI = (p: DeskPresence) => {
     setPresence(p);
     presenceRef.current = p;
-    if (p === 'sleep') void say('Descanso un momento. Háblame o tócame para despertar.', 'SLEEPING', { emocion: 'cansado' });
+    if (p === 'sleep') void say(tr('Descanso un momento. Háblame o tócame para despertar.', 'Resting for a moment. Talk to me or touch me to wake me up.'), 'SLEEPING', { emocion: 'cansado' });
     else if (p === 'explore') {
       setMode('EXPLORER');
-      void say('Modo explorador: listo para investigar.', 'SCAN', { emocion: 'curioso' });
-    } else void playClip('aqui', 'IDLE', { fallbackText: 'Aquí estoy.' });
+      void say(tr('Modo explorador: listo para investigar.', 'Explorer mode: ready to investigate.'), 'SCAN', { emocion: 'curioso' });
+    } else void playClip('aqui', 'IDLE');
   };
 
   const changeStt = async (e: SttEngine) => {
@@ -1259,7 +1304,7 @@ export function DeskScreen({ user, onLogout }: Props) {
     proactiveRef.current = next;
     setSettings((p) => ({ ...p, proactive: next }));
     await saveSettings({ proactive: next });
-    await say(next ? 'Comentarios de cámara activados.' : 'Comentarios de cámara apagados.', 'IDLE');
+    await say(next ? tr('Comentarios de cámara activados.', 'Camera comments on.') : tr('Comentarios de cámara apagados.', 'Camera comments off.'), 'IDLE');
   };
   const toggleSfx = async () => {
     const next = !settings.sfx;
@@ -1270,7 +1315,15 @@ export function DeskScreen({ user, onLogout }: Props) {
   };
   const probarVoz = () => {
     setMenuOpen(false);
-    void say(`Así sueno, ${user.name}. Una sola voz: la mía, en mi propio servidor. Puedo contarte un chiste o cantarte una de las mías; tú dime.`, 'HAPPY', { emocion: 'feliz' });
+    const a = avatarPorId(avatar || 'aura');
+    void say(
+      tr(
+        `Así sueno, ${user.name}. Soy ${de(a.nombre)}, con mi propia voz. ${de(a.oficio)}: pregúntame lo que quieras.`,
+        `This is how I sound, ${user.name}. I’m ${de(a.nombre)}, with my own voice. ${de(a.oficio)}: ask me anything.`
+      ),
+      'HAPPY',
+      { emocion: 'feliz' }
+    );
   };
 
   const sendDraft = () => {
@@ -1294,35 +1347,113 @@ export function DeskScreen({ user, onLogout }: Props) {
   ).current;
 
   const dotColor =
-    status === 'muted' ? T.aviso : status === 'reconnect' || status === 'thinking' ? T.principal : status === 'offline' ? T.texto3 : T.activo;
+    status === 'muted' ? T.aviso : status === 'reconnect' || status === 'thinking' ? avatarPorId(avatar || 'aura').tema.acento : status === 'offline' ? T.texto3 : T.activo;
   const statusLabel =
     toolHint ? toolHint :
     status === 'listening'
       ? listening
-        ? 'te escucho'
-        : 'conectando mic'
+        ? tr('te escucho', 'listening')
+        : tr('conectando mic', 'connecting mic')
       : status === 'muted'
-        ? 'silenciado'
+        ? tr('silenciado', 'muted')
         : status === 'thinking'
-          ? 'pensando'
+          ? tr('pensando', 'thinking')
           : status === 'speaking'
-            ? face === 'SING' ? 'cantando' : 'hablando'
+            ? face === 'SING' ? tr('cantando', 'singing') : tr('hablando', 'speaking')
             : status === 'orando'
-              ? 'orando'
+              ? tr('orando', 'praying')
             : status === 'reconnect'
-              ? 'reconectando mic'
+              ? tr('reconectando mic', 'reconnecting mic')
               : status === 'offline'
-                ? 'sin mic'
-                : 'iniciando';
+                ? tr('sin mic', 'no mic')
+                : tr('iniciando', 'starting');
 
-  // Qué cara se ve: los anillos (Skia), la sala 3D o, si lo elegido falló, la cara de siempre.
+  // Qué avatar se ve y cómo se reparte la pantalla (Claudio: retrato acostado, de pie derecho).
+  const avatarId: AvatarId = avatar || 'aura';
+  const tema = avatarPorId(avatarId).tema;
+  const reparto = distribucion(avatarId, horizontal);
+  const enCuadro = reparto.tipo === 'cuadro';
+  // El cuadro de la cara (cuando va con el chat): la cara clásica se mide contra él, no contra la pantalla.
+  const cuadroW = horizontal ? Math.round(anchoPantalla * 0.42) : anchoPantalla;
+  const cuadroH = horizontal ? altoPantalla : Math.round(Math.min(anchoPantalla * 0.95, altoPantalla * 0.44));
+  const cajaCara = enCuadro ? { w: cuadroW, h: cuadroH } : undefined;
+
+  // Qué cara se ve. El Guardián: sus ojos celestes de siempre (la cara clásica). AU-RA: los anillos
+  // dorados (Skia) o la sala 3D; si lo elegido falló, la clásica.
   const vista: 'anillos' | 'sala' | 'clasica' | null =
-    cara === null ? null : cara === 'anillos' ? (skiaFallo ? 'clasica' : 'anillos') : conSala ? 'sala' : 'clasica';
-  const enSala = vista === 'sala';
-  nivelVisible.current = vista === 'clasica';
+    avatarId === 'ojos' ? 'clasica' : cara === null ? null : cara === 'anillos' ? (skiaFallo ? 'clasica' : 'anillos') : conSala ? 'sala' : 'clasica';
+  const enSala = avatarId === 'aura' && vista === 'sala';
+  nivelVisible.current = vista === 'clasica' && avatarId !== 'claudio';
+  const caraAura =
+    vista === 'sala' && postura ? (
+      <SalaAura
+        face={face}
+        emocion={emocion}
+        postura={postura}
+        pedido={pedido}
+        speechLevelSource={suscribirNivelVoz}
+        mirada={{ x: gaze.x, y: gaze.y, activa: verPersona }}
+        onTocar={onTocarSala}
+        onDeslizar={onDeslizarSala}
+        onFallo={onFalloSala}
+      />
+    ) : vista === 'anillos' ? (
+      <CaraSegura
+        face={face}
+        acento={mode === 'GOLD' ? '#FFD166' : undefined}
+        gazeX={gaze.x}
+        gazeY={gaze.y}
+        speechLevelSource={suscribirNivelVoz}
+        online={online}
+        pedido={pedido}
+        onTap={onTap}
+        onLongPress={onLongPress}
+        onDragGaze={onDragGaze}
+        onDragEnd={onDragEnd}
+        onRub={onRub}
+        onSwipe={onSwipe}
+        onFallo={onFalloSkia}
+      />
+    ) : vista === 'clasica' ? (
+      <UltronFace
+        face={face}
+        mode={mode}
+        caja={cajaCara}
+        gazeX={gaze.x}
+        gazeY={gaze.y}
+        level={level}
+        speechLevelSource={suscribirNivelVoz}
+        attention={atencion}
+        attack={attack}
+        irritation={irritation}
+        winkSide={winkSide}
+        onTap={onTap}
+        onLongPress={onLongPress}
+        onDragGaze={onDragGaze}
+        onDragEnd={onDragEnd}
+        onRub={onRub}
+        onSwipe={onSwipe}
+      />
+    ) : null;
+  const caraNode =
+    avatarId === 'claudio' ? (
+      reparto.pose === 'pie' ? (
+        <ClaudioDePie face={face} gazeX={gaze.x} speechLevelSource={suscribirNivelVoz} onTap={() => onTap('face', 0, 0)} onLongPress={onLongPress} />
+      ) : (
+        <ClaudioRetrato face={face} gazeX={gaze.x} gazeY={gaze.y} speechLevelSource={suscribirNivelVoz} onTap={() => onTap('face', 0, 0)} onLongPress={onLongPress} />
+      )
+    ) : (
+      caraAura
+    );
+  const esClaudio = avatarId === 'claudio';
+  const acciones = avatarPorId(avatarId).acciones;
+  const onAccion = (pedido: string) => {
+    void haptic('light');
+    void handleCommand(pedido);
+  };
 
   return (
-    <View style={[styles.root, !enSala && styles.rootCara]}>
+    <View style={[styles.root, !enSala && { backgroundColor: esClaudio ? tema.fondo : '#000' }, enCuadro && { flexDirection: horizontal ? 'row' : 'column' }]}>
       <CamaraVision
         enabled={visionOn && !!camPerm?.granted}
         dormido={presence === 'sleep'}
@@ -1333,100 +1464,106 @@ export function DeskScreen({ user, onLogout }: Props) {
         onScene={onScene}
         onMotor={setVisionMotor}
       />
-      {vista === 'sala' && postura ? (
-        <SalaAura
-          face={face}
-          emocion={emocion}
-          postura={postura}
-          pedido={pedido}
-          speechLevelSource={suscribirNivelVoz}
-          mirada={{ x: gaze.x, y: gaze.y, activa: verPersona }}
-          onTocar={onTocarSala}
-          onDeslizar={onDeslizarSala}
-          onFallo={onFalloSala}
-        />
-      ) : vista === 'anillos' ? (
-        <CaraSegura
-          face={face}
-          acento={mode === 'GOLD' ? '#FFD166' : undefined}
-          gazeX={gaze.x}
-          gazeY={gaze.y}
-          speechLevelSource={suscribirNivelVoz}
-          online={online}
-          pedido={pedido}
-          onTap={onTap}
-          onLongPress={onLongPress}
-          onDragGaze={onDragGaze}
-          onDragEnd={onDragEnd}
-          onRub={onRub}
-          onSwipe={onSwipe}
-          onFallo={onFalloSkia}
-        />
-      ) : vista === 'clasica' ? (
-        <UltronFace
-          face={face}
-          mode={mode}
-          gazeX={gaze.x}
-          gazeY={gaze.y}
-          level={level}
-          speechLevelSource={suscribirNivelVoz}
-          attention={atencion}
-          attack={attack}
-          irritation={irritation}
-          winkSide={winkSide}
-          onTap={onTap}
-          onLongPress={onLongPress}
-          onDragGaze={onDragGaze}
-          onDragEnd={onDragEnd}
-          onRub={onRub}
-          onSwipe={onSwipe}
-        />
-      ) : null}
+      {enCuadro ? (
+        <>
+          <View
+            style={[
+              styles.cuadro,
+              { backgroundColor: esClaudio ? tema.fondo : '#000' },
+              horizontal ? { width: cuadroW } : { height: cuadroH },
+            ]}
+          >
+            {caraNode}
+          </View>
+          <View style={{ flex: 1 }}>
+            <ChatMesa
+              mensajes={mensajes}
+              avatar={avatarId}
+              acciones={acciones}
+              onAccion={onAccion}
+              nombreAvatar={de(avatarPorId(avatarId).nombre)}
+              estado={statusLabel}
+              colorEstado={dotColor}
+              parcial={partial}
+              borrador={draft}
+              micSilenciado={micMuted}
+              escuchando={listening}
+              onBorrador={setDraft}
+              onEnviar={sendDraft}
+              onMic={() => void toggleMute()}
+              onMenu={() => setMenuOpen(true)}
+              onCambiarAvatar={() => setEligiendo('menu')}
+            />
+          </View>
+        </>
+      ) : (
+        caraNode
+      )}
 
-      <View pointerEvents="none" style={styles.hud}>
-        <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
-        <Text style={styles.hudText}>
-          {statusLabel}
-          {verPersona ? (visionMotor === 'mlkit' ? ' · te veo' : ' · alguien') : ''}
-          {!online ? ' · sin cerebro' : ''}
-        </Text>
-      </View>
-
-      {!!partial && (
-        <View pointerEvents="none" style={styles.partialWrap}>
-          <Text numberOfLines={2} style={styles.partialText}>
-            {partial}
+      {!enCuadro && (
+        <>
+        <View pointerEvents="none" style={styles.hud}>
+          <View style={[styles.hudDot, { backgroundColor: dotColor }]} />
+          <Text style={styles.hudText}>
+            {de(avatarPorId(avatarId).nombre)} · {statusLabel}
+            {verPersona ? (visionMotor === 'mlkit' ? tr(' · te veo', ' · I see you') : tr(' · alguien', ' · someone')) : ''}
+            {!online ? tr(' · sin cerebro', ' · offline') : ''}
           </Text>
         </View>
-      )}
 
-      {!!bubble && (
-        <Animated.View pointerEvents="none" style={[styles.bubbleFloat, enSala ? styles.bubbleArriba : styles.bubbleAbajo, { opacity: bubbleOp }]}>
-          <View style={styles.bubbleCard}>
-            <Text numberOfLines={3} style={styles.bubbleText}>
-              {bubble}
+        {!!partial && (
+          <View pointerEvents="none" style={styles.partialWrap}>
+            <Text numberOfLines={2} style={styles.partialText}>
+              {partial}
             </Text>
           </View>
-        </Animated.View>
+        )}
+
+        {!!bubble && (
+          <Animated.View
+            pointerEvents="none"
+            style={[styles.bubbleFloat, enSala ? styles.bubbleArriba : horizontal ? styles.bubbleAbajo : styles.bubbleAbajoVertical, !horizontal && styles.bubbleVertical, { opacity: bubbleOp }]}
+          >
+            <View style={styles.bubbleCard}>
+              <Text numberOfLines={3} style={styles.bubbleText}>
+                {bubble}
+              </Text>
+            </View>
+          </Animated.View>
+        )}
+
+        {/* Los atajos de este avatar (su oficio): abajo a la izquierda, o arriba de los botones en vertical. */}
+        <View style={[styles.acciones, horizontal ? styles.accionesH : styles.accionesV]} pointerEvents="box-none">
+          <AccionesAvatar acciones={acciones} tema={tema} onAccion={onAccion} />
+        </View>
+
+        <View style={[styles.controles, !horizontal && styles.controlesV]} pointerEvents="box-none">
+          <Pressable
+            onPress={() => void toggleMute()}
+            accessibilityRole="button"
+            accessibilityLabel={micMuted ? tr('Activar el micrófono', 'Turn on the microphone') : tr('Silenciar el micrófono', 'Mute the microphone')}
+            style={[styles.mic, !micMuted && { backgroundColor: tema.acento }, listening && !micMuted && styles.micOyendo]}
+          >
+            <Text style={[styles.micIcono, !micMuted && { color: tema.sobreAcento }]}>{micMuted ? '🔇' : '🎙'}</Text>
+          </Pressable>
+          <Pressable onPress={() => setMenuOpen(true)} accessibilityRole="button" accessibilityLabel={tr('Escribir y ajustes', 'Type and settings')} style={styles.escribir}>
+            <Text style={styles.escribirTexto}>{tr('Escribir', 'Type')}</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setEligiendo('menu')}
+            accessibilityRole="button"
+            accessibilityLabel={`${de(avatarPorId(avatarId).nombre)}. ${tr('Tocar para cambiar de avatar', 'Tap to switch avatar')}`}
+            style={[styles.escribir, { borderWidth: 1.5, borderColor: tema.acento }]}
+          >
+            <Text style={[styles.escribirTexto, { color: tema.acentoTexto }]}>{de(avatarPorId(avatarId).nombre)}</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.edgeZone} {...edgePan.panHandlers}>
+          <View pointerEvents="none" style={[styles.edgeHint, { backgroundColor: tema.acentoFondo }]} />
+        </View>
+        </>
       )}
-
-      <View style={styles.controles} pointerEvents="box-none">
-        <Pressable
-          onPress={() => void toggleMute()}
-          accessibilityRole="button"
-          accessibilityLabel={micMuted ? 'Activar el micrófono' : 'Silenciar el micrófono'}
-          style={[styles.mic, !micMuted && styles.micAbierto, listening && !micMuted && styles.micOyendo]}
-        >
-          <Text style={[styles.micIcono, !micMuted && { color: T.sobrePrincipal }]}>{micMuted ? '🔇' : '🎙'}</Text>
-        </Pressable>
-        <Pressable onPress={() => setMenuOpen(true)} accessibilityRole="button" accessibilityLabel="Escribir y ajustes" style={styles.escribir}>
-          <Text style={styles.escribirTexto}>Escribir</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.edgeZone} {...edgePan.panHandlers}>
-        <View pointerEvents="none" style={styles.edgeHint} />
-      </View>
 
       <DeskMenu
         visible={menuOpen}
@@ -1461,7 +1598,7 @@ export function DeskScreen({ user, onLogout }: Props) {
         }}
         onBlaster={() => {
           setMenuOpen(false);
-          void fireBlaster('¡Blaster listo! Pium, pium, pium.');
+          void fireBlaster(tr('¡Blaster listo! Pium, pium, pium.', 'Blaster ready! Pew, pew, pew.'));
         }}
         onSaber={() => {
           setMenuOpen(false);
@@ -1504,18 +1641,35 @@ export function DeskScreen({ user, onLogout }: Props) {
         conSala={enSala}
         cara={cara ?? 'anillos'}
         onSetCara={cambiarCara}
+        avatar={avatarId}
+        onSetAvatar={(id) => void elegirAvatar(id)}
         caraClasica={vista === 'clasica'}
         postura={postura || 'pie'}
         onSetPostura={cambiarPostura}
       />
+
+      {eligiendo && (
+        <SelectorAvatar
+          nombre={user.name}
+          saludo={saludoPorHora()}
+          actual={avatarId}
+          onElegir={(id) => void elegirAvatar(id)}
+          onCerrar={eligiendo === 'menu' ? () => setEligiendo(null) : undefined}
+        />
+      )}
     </View>
   );
 }
 
+/** Buenos días / tardes / noches según la hora de Honduras (UTC−6, sin horario de verano). */
+function saludoPorHora(ahora = new Date()): string {
+  const h = (ahora.getUTCHours() + 24 - 6) % 24;
+  return h < 12 ? tr('Buenos días', 'Good morning') : h < 19 ? tr('Buenas tardes', 'Good afternoon') : tr('Buenas noches', 'Good evening');
+}
+
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: T.fondo2 },
-  // la cara de respaldo se dibuja sobre negro, como siempre
-  rootCara: { backgroundColor: '#000' },
+  cuadro: { overflow: 'hidden', backgroundColor: '#000', position: 'relative' },
   hud: {
     position: 'absolute',
     top: 12,
@@ -1534,13 +1688,19 @@ const styles = StyleSheet.create({
   bubbleFloat: { position: 'absolute', left: 90, right: 90, alignItems: 'center' },
   bubbleArriba: { top: 14 },
   bubbleAbajo: { bottom: 88 },
+  // En vertical (Claudio de pie) la burbuja va más ancha y por encima de los atajos y los botones.
+  bubbleAbajoVertical: { bottom: 170 },
+  bubbleVertical: { left: 16, right: 16 },
+  acciones: { position: 'absolute' },
+  accionesH: { left: 16, bottom: 22, right: 380 },
+  accionesV: { left: 0, right: 0, bottom: 86 },
   bubbleCard: { backgroundColor: T.panel, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, maxWidth: 520, ...SOMBRA },
   bubbleText: { color: T.texto, fontSize: 16, lineHeight: 22, textAlign: 'center' },
   partialWrap: { position: 'absolute', left: 120, right: 120, bottom: 24, alignItems: 'center' },
   partialText: { color: T.texto2, fontSize: 14, fontStyle: 'italic', textAlign: 'center', backgroundColor: 'rgba(52,54,58,0.9)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4, overflow: 'hidden' },
   controles: { position: 'absolute', right: 56, bottom: 16, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  controlesV: { right: 16, left: 16, justifyContent: 'flex-end' },
   mic: { width: 56, height: 56, borderRadius: 28, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center', ...SOMBRA },
-  micAbierto: { backgroundColor: T.principal },
   micOyendo: { borderWidth: 3, borderColor: T.activo },
   micIcono: { fontSize: 22, color: T.texto2 },
   escribir: { height: 44, borderRadius: 22, paddingHorizontal: 18, backgroundColor: T.panel, justifyContent: 'center', ...SOMBRA },

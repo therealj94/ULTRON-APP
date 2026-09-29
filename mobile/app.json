@@ -2,13 +2,13 @@
   "expo": {
     "name": "AU-RA FP",
     "slug": "ultron-fp",
-    "version": "4.4.1",
-    "orientation": "landscape",
+    "version": "4.6.0",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "android": {
       "package": "link.ordenglobal.ultronfp",
-      "versionCode": 47,
+      "versionCode": 49,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -26,6 +26,14 @@
       "softwareKeyboardLayoutMode": "pan"
     },
     "scheme": "ultronfp",
+    "runtimeVersion": {
+      "policy": "fingerprint"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/d41656ec-6fc7-4fd2-b183-eba687473fd9",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
+    },
     "extra": {
       "ultronUrl": "https://ultron-looi-desk.onrender.com",
       "eas": {

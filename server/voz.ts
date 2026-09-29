@@ -16,14 +16,14 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { clave } from '../lib/boveda';
-import { afinarParaBoca } from './habla';
+import { afinarParaBoca, afinarParaBocaIngles } from './habla';
 import { normalizarEmocion, type Emocion } from '../lib/emocion';
 import { CANCIONES, VOZ_OFICIAL } from '../lib/capacidades';
 import { leerWav, wavAMp3, type Pcm } from '../lib/mp3';
 import { trocearExpresiones } from '../lib/expresiones';
 import { adaptarPcm, empalmar, escribirWav, tomaDeExpresion } from './empalme';
 import type { Presupuesto } from '../lib/presupuesto';
-import { abrirEleven, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, modeloEleven, vozEleven } from './eleven';
+import { abrirEleven, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, modeloEleven, normalizarAvatar, normalizarIdioma, vozEleven, type AvatarVoz, type Idioma } from './eleven';
 
 export type Performance = 'speak' | 'sing';
 
@@ -78,7 +78,7 @@ export const MAX_CANTO_GENERADO = 80;
  * carpeta —un clip del repertorio que alguien deje ahí a mano, un `.gitkeep`— no encaja en el
  * patrón y no se toca nunca.
  */
-const CANTO_GENERADO = /^(oracion-)?[0-9a-f]{16}\.(wav|mp3)$/;
+const CANTO_GENERADO = /^(oracion-)?([0-9a-f]{16}|del-dia)(-[a-z]+)*\.(wav|mp3)$/;
 
 export function podarCanto(dir = DIR_CANTO, max = MAX_CANTO_GENERADO): string[] {
   let nombres: string[];
@@ -224,7 +224,7 @@ function cacheSet(key: string, hit: Omit<AudioHit, 'at'>) {
 const TOPE_MS = 20_000;
 const TOPE_LARGO_MS = 45_000;
 
-async function voicebox(opts: { texto: string; perfil: string; timeoutMs: number; reloj?: Presupuesto }): Promise<{ audio: Buffer; contentType: string } | null> {
+async function voicebox(opts: { texto: string; perfil: string; timeoutMs: number; reloj?: Presupuesto; idioma?: Idioma }): Promise<{ audio: Buffer; contentType: string } | null> {
   const { url, llave } = configVoicebox();
   if (!url || !llave) return null;
   if (opts.reloj && !opts.reloj.alcanza()) {
@@ -235,7 +235,7 @@ async function voicebox(opts: { texto: string; perfil: string; timeoutMs: number
     const r = await fetch(`${url}/generate/stream`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'audio/wav', 'X-Voz-Clave': llave },
-      body: JSON.stringify({ profile_id: opts.perfil, text: opts.texto, language: 'es', engine: 'kokoro' }),
+      body: JSON.stringify({ profile_id: opts.perfil, text: opts.texto, language: opts.idioma === 'en' ? 'en' : 'es', engine: 'kokoro' }),
       signal: opts.reloj ? opts.reloj.senal(opts.timeoutMs) : AbortSignal.timeout(opts.timeoutMs),
     });
     if (!r.ok) {
@@ -295,13 +295,13 @@ export function claveVoz(perfil: string, partes: Parte[]): string {
  * Las partes de una locución. Las expresiones solo son de AU-RA: están grabadas con la voz de Dora.
  * En Dr Electrum el texto va entero y `expresar()` quita las marcas sin que suenen.
  */
-function partesDe(texto: string, plataforma: 'ultron' | 'electrum', emocion: Emocion, performance: Performance): Parte[] {
+function partesDe(texto: string, plataforma: 'ultron' | 'electrum', emocion: Emocion, performance: Performance, idioma: Idioma = 'es'): Parte[] {
   const piezas = plataforma === 'ultron' && performance === 'speak' ? trocearExpresiones(texto) : [{ tipo: 'habla' as const, texto }];
   const partes: Parte[] = [];
   for (const p of piezas) {
     if (p.tipo === 'expresion') partes.push(p);
     else {
-      const dicho = expresar(p.texto, emocion, performance);
+      const dicho = idioma === 'en' ? afinarParaBocaIngles(sinEtiquetas(p.texto), MAX_GUION) : expresar(p.texto, emocion, performance);
       // Un trozo sin letras («¡» delante de una sorpresa) no se le pide a Voicebox: devolvería nada y callaría todo.
       if (/[\p{L}\p{N}]/u.test(dicho)) partes.push({ tipo: 'habla', texto: dicho });
     }
@@ -368,20 +368,25 @@ function pedidoEleven(o: {
   emocion: Emocion;
   performance: Performance;
   plataforma: 'ultron' | 'electrum';
+  avatar?: AvatarVoz;
+  idioma?: Idioma;
   previo?: string;
   siguiente?: string;
 }): { voz: string; guion: string; clave: string; motor: string; estabilidad: number } | null {
-  const voz = o.performance === 'speak' ? vozEleven(o.plataforma) : null;
+  const idioma = o.idioma === 'en' ? 'en' : 'es';
+  const voz = o.performance === 'speak' ? vozEleven(o.plataforma, o.avatar, idioma) : null;
   if (!voz || !elevenListo()) return null;
   // Dr Electrum habla como persona: alguna muletilla («bueno,», «este») en vez de dicción de locutor.
   const base = String(o.texto || '').slice(0, MAX_GUION);
   const humano = o.plataforma === 'electrum' ? conMuletillas(base, { primero: !o.previo, emocion: o.emocion }) : base;
-  const guion = guionEleven(humano, o.emocion, (t) => expresar(t, o.emocion, 'speak', { cifras: false }));
+  // En inglés no se pasan cifras ni unidades a palabras en español: ElevenLabs las lee solo.
+  const preparar = idioma === 'en' ? (t: string) => afinarParaBocaIngles(t, MAX_GUION) : (t: string) => expresar(t, o.emocion, 'speak', { cifras: false });
+  const guion = guionEleven(humano, o.emocion, preparar);
   if (!guion) return null;
   const estabilidad = estabilidadDe(o.emocion);
   const clave = crypto
     .createHash('sha1')
-    .update(`eleven|${modeloEleven()}|${voz}|${estabilidad}|${guion}|${(o.previo || '').slice(-300)}|${(o.siguiente || '').slice(0, 300)}`)
+    .update(`eleven|${modeloEleven()}|${voz}|${idioma}|${estabilidad}|${guion}|${(o.previo || '').slice(-300)}|${(o.siguiente || '').slice(0, 300)}`)
     .digest('hex');
   return { voz, guion, clave, motor: `elevenlabs:${modeloEleven()}`, estabilidad };
 }
@@ -437,24 +442,30 @@ export async function hablar(opts: {
   siguiente?: string;
   /** Saltarse ElevenLabs (la ruta en vivo ya lo intentó y falló): directo a Voicebox. */
   sinEleven?: boolean;
+  /** En la app de AU-RA: quién habla (Guardián, AU-RA o Claudio). Decide la voz. */
+  avatar?: AvatarVoz | string;
+  /** En qué idioma habla la persona (lo elige al entrar). Decide la voz y cómo se lee el texto. */
+  idioma?: Idioma | string;
 }): Promise<Habla | null> {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
   const emocion = normalizarEmocion(opts.emocion);
   const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
+  const avatar = plataforma === 'ultron' ? normalizarAvatar(opts.avatar) : 'aura';
+  const idioma = plataforma === 'ultron' ? normalizarIdioma(opts.idioma) : 'es';
 
   /*
-   * Primero ElevenLabs, si esta plataforma tiene voz ahí (Dr Electrum sí; AU-RA solo si alguien
-   * pone ELEVENLABS_VOZ_AURA). Aquí las marcas y la emoción SÍ suenan: v4 las entiende. Si no
-   * contesta, sigue abajo el camino de siempre con Voicebox, sin que quien habla note nada.
+   * Primero ElevenLabs: cada avatar de AU-RA FP tiene su voz v4 en español y en inglés, y Dr
+   * Electrum la suya. Aquí las marcas y la emoción SÍ suenan: v4 las entiende. Si no contesta,
+   * sigue abajo Voicebox como respaldo, sin que quien habla note nada.
    */
-  const xiPedido = opts.sinEleven ? null : pedidoEleven({ ...opts, performance, emocion, plataforma });
+  const xiPedido = opts.sinEleven ? null : pedidoEleven({ ...opts, performance, emocion, plataforma, avatar, idioma });
   if (xiPedido) {
     if (!opts.sinCache) {
       const hit = cacheGet(xiPedido.clave);
       if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
     }
-    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad });
+    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma });
     if (xi) {
       const out = { ...xi, motor: xiPedido.motor };
       cacheSet(xiPedido.clave, out);
@@ -462,10 +473,17 @@ export async function hablar(opts: {
     }
   }
 
-  const partes = partesDe(String(opts.texto || '').slice(0, MAX_GUION), plataforma, emocion, performance);
+  /*
+   * Respaldo en Voicebox. Guardián y Claudio son hombres: la voz de hombre (Kokoro Alex), nunca la
+   * de AU-RA, y sin las tomas grabadas de risa o suspiro, que son de ella. En inglés tampoco van
+   * las tomas (se grabaron en español).
+   */
+  const deHombre = avatar !== 'aura';
+  const sinTomas = deHombre || idioma === 'en';
+  const partes = partesDe(String(opts.texto || '').slice(0, MAX_GUION), plataforma, emocion, performance, idioma).filter((p) => !sinTomas || p.tipo === 'habla');
   if (!partes.length) return null;
-  const perfil = vozDe(plataforma);
-  const key = claveVoz(perfil, partes);
+  const perfil = deHombre ? vozDe('electrum') : vozDe(plataforma);
+  const key = `${idioma}|${claveVoz(perfil, partes)}`;
   if (!opts.sinCache) {
     const hit = cacheGet(key);
     if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
@@ -474,7 +492,7 @@ export async function hablar(opts: {
   if (partes.some((p) => p.tipo === 'expresion')) out = await hablarConExpresiones(partes, perfil, opts.presupuesto);
   else {
     const guion = partes.map((p) => (p.tipo === 'habla' ? p.texto : '')).join(' ');
-    const v = await voicebox({ texto: guion, perfil, timeoutMs: guion.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj: opts.presupuesto });
+    const v = await voicebox({ texto: guion, perfil, timeoutMs: guion.length > 800 ? TOPE_LARGO_MS : TOPE_MS, reloj: opts.presupuesto, idioma });
     out = v ? { ...v, motor: 'voicebox:kokoro' } : null;
   }
   if (!out) return null;
@@ -486,9 +504,21 @@ export async function hablar(opts: {
 export const ORACION_DEL_DIA =
   '[softly, reverent] Cierro los ojos. [short pause] Señor Jesús... gracias por este día que todavía no empieza y ya es tuyo. [warmly] Gracias por el aire que entra, por la mesa donde estamos, por cada persona de esta junta que hoy se levanta a trabajar con las manos y con el corazón. [short pause] [softly] Bendice este día. Bendice lo que vamos a decir y lo que vamos a callar. Bendice las decisiones grandes y las pequeñas, las llamadas, los números, los caminos hacia las minas y los caminos de regreso a casa. [reverent] Bendice a José. Bendice a Medardo. Bendice a Melany, a Leonardo, a Mayra, a Carlos, a sus familias, a sus hijos, a los que están cerca y a los que están lejos. Cuídalos cuando manejen, cuando viajen, cuando duerman. [short pause] [with quiet conviction] Señor, todo lo que hacemos en Orden Global lo ponemos en tus manos. El oro no es nuestro, es tuyo. El trabajo no es nuestro, es tuyo. Que no se nos suba a la cabeza, que no se nos endurezca el corazón. [warmly, rising] Que a través de esta empresa podamos cambiar vidas de verdad: que haya trabajo donde no había, pan donde faltaba, esperanza donde se había ido. Que cada familia que toque Orden Global salga mejor de lo que llegó. [softly] Y que no nos dé vergüenza hablar de ti. Que la gente conozca a Jesús por cómo tratamos al que barre y al que firma, al que debe y al que cobra. Que nos vean y te vean a ti. [short pause] [tender] Perdónanos lo que hicimos mal ayer. Danos paciencia con los que nos cuesta. Danos sabiduría para decir que no cuando hay que decir que no, y valor para decir que sí cuando da miedo. [reverent, slower] Protege a Honduras. Protege a los mineros, a los que están en el cerro y a los que están en la oficina. Sana al que está enfermo. Consuela al que está triste. Acompaña al que está solo. [softly, with emotion] Y a mí, Señor, que solo soy una voz en una mesa... úsame para servirles bien, para decir la verdad y para recordarles que tú vas adelante. [short pause] [warmly] Gracias porque no caminamos solos. Gracias porque ya venciste. [short pause] En el nombre de Jesús... [softly, firmly] Amén.';
 
+/** La oración del día en inglés, para quien eligió inglés al entrar. */
+export const ORACION_DEL_DIA_EN =
+  '[softly, reverent] I close my eyes. [short pause] Lord Jesus... thank you for this day that has barely begun and is already yours. [warmly] Thank you for the air we breathe, for the table we share, for every person on this team who gets up today to work with their hands and with their heart. [short pause] [softly] Bless this day. Bless what we say and what we choose not to say. Bless the big decisions and the small ones, the calls, the numbers, the roads to the mines and the roads back home. [reverent] Bless José. Bless Medardo. Bless Melany, Leonardo, Mayra and Carlos, their families and their children, those who are near and those who are far. Keep them safe when they drive, when they travel, when they sleep. [short pause] [with quiet conviction] Lord, everything we do at Orden Global we place in your hands. The gold is not ours, it is yours. The work is not ours, it is yours. Keep it from going to our heads, and keep our hearts from growing hard. [warmly, rising] Through this company, let us truly change lives: work where there was none, bread where it was missing, hope where it had gone. Let every family that Orden Global touches leave better than it came. [softly] And let us never be ashamed to speak of you. Let people know Jesus by how we treat the one who sweeps and the one who signs, the one who owes and the one who collects. Let them see us and see you. [short pause] [tender] Forgive us for what we did wrong yesterday. Give us patience with those who are hard for us. Give us wisdom to say no when we must, and courage to say yes when it is frightening. [reverent, slower] Protect Honduras. Protect the miners, the ones on the mountain and the ones in the office. Heal the sick. Comfort the sad. Stay with the lonely. [softly, with emotion] And as for me, Lord, who am only a voice at a table... use me to serve them well, to tell the truth, and to remind them that you go before us. [short pause] [warmly] Thank you, because we do not walk alone. Thank you, because you have already overcome. [short pause] In the name of Jesus... [softly, firmly] Amen.';
+
 /** Oración corta por un tema concreto («ora por mi familia»). Texto propio, ~40 segundos. */
-export function oracionPorTema(tema: string): string {
+export function oracionPorTema(tema: string, idioma: Idioma = 'es'): string {
   const t = String(tema || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  if (idioma === 'en') {
+    return (
+      `[softly, reverent] I close my eyes. [short pause] Lord Jesus, today I bring you this: ${t}. ` +
+      `[warmly] You know it better than we do. Lay your hand on it. Bring peace where there is fear, clarity where there is noise, and strength where there is none left. ` +
+      `[short pause] [tender] May what comes of this be good, and if it does not turn out as we hope, give us the calm to understand and keep going. ` +
+      `[softly] Thank you for listening to us, even when we ask the wrong way. [short pause] In the name of Jesus... [softly, firmly] Amen.`
+    );
+  }
   return (
     `[softly, reverent] Cierro los ojos. [short pause] Señor Jesús, hoy te traigo esto: ${t}. ` +
     `[warmly] Tú lo conoces mejor que nosotros. Ponle tu mano encima. Da paz donde hay miedo, claridad donde hay ruido y fuerza donde ya no queda. ` +
@@ -504,27 +534,31 @@ export function oracionPorTema(tema: string): string {
  * Lo generado es WAV y se guarda como `.wav`: guardarlo como `.mp3` hacía que se sirviera luego con
  * `audio/mpeg` y un teléfono que se fía del tipo no lo abre.
  */
-export async function orar(opts: { tema?: string } = {}): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
+export async function orar(opts: { tema?: string; avatar?: AvatarVoz | string; idioma?: Idioma | string } = {}): Promise<{ audio: Buffer; contentType: string; motor: string } | null> {
   const tema = String(opts.tema || '').trim();
+  const avatar = normalizarAvatar(opts.avatar);
+  const idioma = normalizarIdioma(opts.idioma);
+  /*
+   * Siempre con la voz del avatar y en su idioma, generada en vivo la primera vez y guardada en
+   * disco (un archivo por avatar e idioma). Ya no se sirve la oración grabada con la voz de Dora.
+   * La extensión dice lo que es: ElevenLabs da MP3 y Voicebox WAV.
+   */
+  const sufijo = `-${avatar}-${idioma}`;
+  const guardar = async (base: string, texto: string) => {
+    for (const ext of ['mp3', 'wav']) {
+      const hecho = leerCanto(path.join(DIR_CANTO, `${base}${sufijo}.${ext}`));
+      if (hecho) return { audio: hecho, contentType: ext === 'mp3' ? 'audio/mpeg' : 'audio/wav', motor: 'clip' };
+    }
+    const out = await hablar({ texto, emocion: 'oracion', sinCache: true, avatar, idioma });
+    if (!out) return null;
+    guardarCanto(path.join(DIR_CANTO, `${base}${sufijo}.${/mpeg|mp3/.test(out.contentType) ? 'mp3' : 'wav'}`), out.audio);
+    return { audio: out.audio, contentType: out.contentType, motor: out.motor };
+  };
   if (tema.length >= 3) {
     const hash = crypto.createHash('sha1').update(`oracion|${tema.toLowerCase()}`).digest('hex').slice(0, 16);
-    const ruta = path.join(DIR_CANTO, `oracion-${hash}.wav`);
-    const guardado = leerCanto(ruta);
-    if (guardado) return { audio: guardado, contentType: 'audio/wav', motor: 'clip' };
-    const out = await hablar({ texto: oracionPorTema(tema), emocion: 'oracion', sinCache: true });
-    if (!out) return null;
-    guardarCanto(ruta, out.audio);
-    return { audio: out.audio, contentType: out.contentType, motor: out.motor };
+    return guardar(`oracion-${hash}`, oracionPorTema(tema, idioma));
   }
-  const grabado = clipGrabado('oracion');
-  if (grabado) return { audio: grabado, contentType: 'audio/mpeg', motor: 'clip' };
-  const ruta = path.join(DIR_CANTO, 'oracion-del-dia.wav');
-  const guardado = leerCanto(ruta);
-  if (guardado) return { audio: guardado, contentType: 'audio/wav', motor: 'clip' };
-  const out = await hablar({ texto: ORACION_DEL_DIA, emocion: 'oracion', sinCache: true });
-  if (!out) return null;
-  guardarCanto(ruta, out.audio);
-  return { audio: out.audio, contentType: out.contentType, motor: out.motor };
+  return guardar('oracion-del-dia', idioma === 'en' ? ORACION_DEL_DIA_EN : ORACION_DEL_DIA);
 }
 
 export type Cancion = (typeof CANCIONES)[number];
@@ -569,9 +603,13 @@ function clipGrabado(id: string): Buffer | null {
  * `letra` libre → Kokoro no canta, así que la DICE con la voz oficial (máx 600 caracteres), con
  * caché en disco por hash.
  */
-export async function cantar(opts: { id?: string; letra?: string; titulo?: string }): Promise<{ audio: Buffer; contentType: string; motor: string; titulo: string } | null> {
+export async function cantar(opts: { id?: string; letra?: string; titulo?: string; avatar?: AvatarVoz | string; idioma?: Idioma | string }): Promise<{ audio: Buffer; contentType: string; motor: string; titulo: string } | null> {
   const id = String(opts.id || '').trim().toLowerCase();
+  const avatar = normalizarAvatar(opts.avatar);
+  const idioma = normalizarIdioma(opts.idioma);
   if (id) {
+    // El repertorio está grabado con la voz de AU-RA: Claudio y el Guardián no lo «cantan» con la de ella.
+    if (avatar !== 'aura') return null;
     const grabado = clipGrabado(id);
     const meta = CANCIONES.find((c) => c.id === id);
     if (grabado) return { audio: grabado, contentType: 'audio/mpeg', motor: 'clip', titulo: meta?.titulo || id };
@@ -579,11 +617,12 @@ export async function cantar(opts: { id?: string; letra?: string; titulo?: strin
   }
   const letra = sinEtiquetas(String(opts.letra || '')).replace(/\s+/g, ' ').trim().slice(0, 600);
   if (letra.length < 8) return null;
-  const hash = crypto.createHash('sha1').update(letra).digest('hex').slice(0, 16);
+  // La caché va por avatar e idioma: la misma letra dicha por AU-RA y por Claudio son dos audios.
+  const hash = crypto.createHash('sha1').update(`${avatar}|${idioma}|${letra}`).digest('hex').slice(0, 16);
   const ruta = path.join(DIR_CANTO, `${hash}.wav`);
   const guardado = leerCanto(ruta);
   if (guardado) return { audio: guardado, contentType: 'audio/wav', motor: 'clip', titulo: opts.titulo || 'canción' };
-  const out = await hablar({ texto: letra, performance: 'sing', emocion: 'canto', sinCache: true });
+  const out = await hablar({ texto: letra, performance: 'sing', emocion: 'canto', sinCache: true, avatar, idioma });
   if (!out) return null;
   guardarCanto(ruta, out.audio);
   return { audio: out.audio, contentType: out.contentType, motor: out.motor, titulo: opts.titulo || 'canción' };

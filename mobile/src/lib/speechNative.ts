@@ -8,6 +8,7 @@
  * - Se pausa mientras AU-RA habla (evita que se escuche a sí mismo).
  */
 import { Platform } from 'react-native';
+import { localeActual } from '../i18n';
 import {
   ExpoSpeechRecognitionModule,
   type ExpoSpeechRecognitionErrorCode,
@@ -165,7 +166,8 @@ async function start() {
   attach();
   try {
     ExpoSpeechRecognitionModule.start({
-      lang: 'es-HN',
+      // El idioma que la persona eligió al entrar.
+      lang: localeActual(),
       interimResults: true,
       maxAlternatives: 1,
       continuous: true,

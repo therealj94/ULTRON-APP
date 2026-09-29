@@ -4,6 +4,7 @@
  * Copia de `tareaDeHerramientas` de src/11-sala/tareas.ts (Metro no importa fuera de mobile/).
  * tests/sala-movil.test.ts comprueba que las dos dan lo mismo para cada herramienta.
  */
+import { idiomaActual } from '../i18n';
 export type Tarea = 'buscar' | 'enviar' | 'anotar' | 'oro' | 'leer' | 'mirar';
 export type Postura = 'pie' | 'sentada';
 
@@ -23,7 +24,7 @@ export function tareaDeHerramientas(tools: readonly string[] | null | undefined)
   return null;
 }
 
-/** Lo que dice el estado mientras trabaja (la etiqueta de arriba). */
+/** Lo que dice el estado mientras trabaja (la etiqueta de arriba), en los dos idiomas. */
 export const TAREA_TEXTO: Record<Tarea, string> = {
   buscar: 'buscando en internet',
   enviar: 'enviando',
@@ -32,3 +33,14 @@ export const TAREA_TEXTO: Record<Tarea, string> = {
   leer: 'leyendo el documento',
   mirar: 'mirando',
 };
+const TAREA_TEXTO_EN: Record<Tarea, string> = {
+  buscar: 'searching the web',
+  enviar: 'sending',
+  anotar: 'taking notes',
+  oro: 'checking the price',
+  leer: 'reading the document',
+  mirar: 'looking',
+};
+export function textoTarea(t: Tarea): string {
+  return idiomaActual() === 'en' ? TAREA_TEXTO_EN[t] : TAREA_TEXTO[t];
+}

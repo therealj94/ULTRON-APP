@@ -15,7 +15,7 @@
  *
  * Voz: «Jorge», hombre mayor, español mexicano neutro, grave y un poco ronco, de narración
  * educativa. Se cambia sin tocar código con ELEVENLABS_VOZ_ELECTRUM (y ELEVENLABS_MODELO para el
- * modelo). AU-RA no usa ElevenLabs salvo que alguien ponga ELEVENLABS_VOZ_AURA.
+ * modelo). Las voces de AU-RA FP (tres avatares, dos idiomas) están más abajo (VOCES_ELEVEN).
  */
 
 import { clave } from '../lib/boveda';
@@ -34,10 +34,79 @@ export function modeloEleven(): string {
   return String(process.env.ELEVENLABS_MODELO || '').trim() || MODELO_ELEVEN;
 }
 
-/** La voz de ElevenLabs de cada plataforma, o null si esa plataforma no la usa. */
-export function vozEleven(plataforma: 'ultron' | 'electrum'): string | null {
+/**
+ * Las voces de AU-RA FP (29-sep): tres avatares, cada uno con su voz de ElevenLabs en español y en
+ * inglés, dichas con el modelo v4 (MODELO_ELEVEN). El idioma lo elige la persona al entrar.
+ *
+ *  - Guardián (los ojos celestes): hombre sereno y preciso, voz de vigilante.
+ *  - AU-RA (la dorada): mujer cálida, compañera personal.
+ *  - Claudio (el zorro): «CLAUDIO», la voz que José diseñó (latino neutro, juguetón); la de inglés
+ *    es el mismo personaje. Retrato o de pie es el mismo Claudio: suena igual.
+ *
+ * Todas se cambian sin tocar código con ELEVENLABS_VOZ_<AVATAR>_<IDIOMA> (p. ej.
+ * ELEVENLABS_VOZ_AURA_EN). Las de antes (ELEVENLABS_VOZ_AURA, ELEVENLABS_VOZ_CLAUDIO) siguen
+ * valiendo para el español.
+ */
+export type AvatarVoz = 'ojos' | 'aura' | 'claudio';
+export type Idioma = 'es' | 'en';
+
+export const VOCES_ELEVEN: Record<AvatarVoz, Record<Idioma, string>> = {
+  ojos: { es: 'jR5VcWrKqhJJTTbtXtU5', en: '1krh7GKGPtz8i429a6kk' },
+  aura: { es: 'AoT6sxPBYB0OGpSnIiwc', en: 'NPil3puXYP3J45yudmVD' },
+  claudio: { es: '5hNQxGboC72zatTcGoJN', en: 'mm5ADfbOYUswycjGCmWd' },
+};
+export const VOZ_CLAUDIO_ELEVEN = VOCES_ELEVEN.claudio.es;
+
+export function normalizarAvatar(v: unknown): AvatarVoz {
+  // Solo un texto: un parámetro repetido en la URL llega como lista y no elige voz.
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  // «claudio-pie» es de la 4.5: el de pie es el mismo Claudio (la app lo pone de pie en vertical).
+  if (s === 'claudio' || s === 'claudio-pie') return 'claudio';
+  if (s === 'ojos' || s === 'guardian' || s === 'guardián') return 'ojos';
+  return 'aura';
+}
+
+export function normalizarIdioma(v: unknown): Idioma {
+  const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return s === 'en' || s.startsWith('en-') ? 'en' : 'es';
+}
+
+/** Cómo se llama cada avatar, en cada idioma (para el prompt y para la app). */
+export const NOMBRE_AVATAR: Record<AvatarVoz, Record<Idioma, string>> = {
+  ojos: { es: 'Guardián', en: 'Guardian' },
+  aura: { es: 'AU-RA', en: 'AU-RA' },
+  claudio: { es: 'Claudio', en: 'Claudio' },
+};
+
+/**
+ * Lo que el cerebro necesita saber de quién está en la mesa: su nombre, cómo es, su oficio y en qué
+ * idioma habla. Es el mismo asistente (mismas herramientas y memoria) con otra cara, otra voz y otro
+ * enfoque; si alguien pregunta, lo dice.
+ */
+export function lineaAvatar(avatar: AvatarVoz, idioma: Idioma = 'es'): string {
+  const oficio: Record<AvatarVoz, string> = {
+    ojos: 'AVATAR: te ven como el Guardián, dos ojos celestes sobre negro. Te llamas Guardián, no AU-RA. Tu oficio: cuidar el espacio de la persona. Vigilas con la cámara cuando te lo piden, describes lo que ves con precisión, avisas de cambios, explicas los modos de la mesa (guardián, análisis, estrategia, explorador) y das consejos de seguridad. Tono sereno, preciso y breve; nunca alarmista.',
+    aura: 'AVATAR: te ven como AU-RA, la de los ojos dorados. Tu oficio: compañera personal. Ayudas con la agenda y los recordatorios, recuerdas lo que la persona te cuenta (su memoria), das ánimo, oras con ella si lo pide y conversas con calidez. Tono cálido, cercano y claro.',
+    claudio: 'AVATAR: te ven como Claudio, un zorro de lentes amarillos y suéter negro con la corona de Orden Global. Te llamas Claudio, no AU-RA. Tu oficio: anfitrión de marketing. Das ideas de contenido, escribes textos y publicaciones para redes, eslóganes, guiones cortos de video y campañas; propones con ejemplos listos para usar. Tono curioso, cálido, ingenioso y bromista, sin dejar de ser profesional.',
+  };
+  const lengua =
+    idioma === 'en'
+      ? '\nIDIOMA: la persona eligió INGLÉS. Responde SIEMPRE en inglés natural (en-US), aunque los hechos, la memoria o las herramientas vengan en español; traduce lo que cites. Solo cambia de idioma si ella te lo pide.'
+      : '';
+  return `${oficio[avatar]} Sabes y puedes lo mismo que los otros avatares; si preguntan, eres el asistente de Orden Global con esta cara y esta voz.${lengua}`;
+}
+
+/** La voz de ElevenLabs de cada plataforma, avatar e idioma, o null si no la usa. */
+export function vozEleven(plataforma: 'ultron' | 'electrum', avatar: AvatarVoz = 'aura', idioma: Idioma = 'es'): string | null {
   if (plataforma === 'electrum') return String(process.env.ELEVENLABS_VOZ_ELECTRUM || '').trim() || VOZ_ELECTRUM_ELEVEN;
-  return String(process.env.ELEVENLABS_VOZ_AURA || '').trim() || null;
+  const env = (k: string) => String(process.env[k] || '').trim();
+  const propia = env(`ELEVENLABS_VOZ_${avatar.toUpperCase()}_${idioma.toUpperCase()}`);
+  if (propia) return propia;
+  if (idioma === 'es') {
+    const vieja = env(`ELEVENLABS_VOZ_${avatar.toUpperCase()}`);
+    if (vieja) return vieja;
+  }
+  return VOCES_ELEVEN[avatar][idioma];
 }
 
 /* ---------------- Freno ---------------- */
@@ -266,6 +335,8 @@ type PedidoEleven = {
   timeoutMs?: number;
   /** 0..1. Más baja = más expresiva (v4 solo acepta estabilidad y similitud). 0,5 si no se dice. */
   estabilidad?: number;
+  /** En qué idioma se dice (la voz ya es la de ese idioma). Español si no se dice. */
+  idioma?: Idioma;
 };
 
 /**
@@ -293,7 +364,7 @@ export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> 
   const cuerpo: Record<string, unknown> = {
     text: opts.texto,
     model_id: modeloEleven(),
-    language_code: 'es',
+    language_code: opts.idioma === 'en' ? 'en' : 'es',
     // Estabilidad media: deja que la emoción se note sin que cada frase suene a otra persona.
     voice_settings: { stability: Math.min(0.9, Math.max(0.2, opts.estabilidad ?? 0.5)), similarity_boost: 0.8 },
   };

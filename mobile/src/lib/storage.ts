@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import type { SessionUser } from '../config';
+import { normalizarAvatarId, type AvatarId } from '../avatares/catalogo';
+import { normalizarIdioma, type Idioma } from '../i18n';
 import {
   CLAVE_MEMORIA_COMPARTIDA,
   agregarHecho,
@@ -45,6 +47,12 @@ export type AppSettings = {
   postura: 'pie' | 'sentada';
   /** Su cara: los anillos (Skia, la de siempre desde el 25-sep) o la habitación 3D. */
   cara: 'anillos' | 'sala';
+  /** Con quién se habla en la mesa: el Guardián (ojos celestes), AU-RA (la dorada) o Claudio. Se elige al entrar. */
+  avatar: AvatarId;
+  /** Ya eligió avatar alguna vez. */
+  avatarElegido: boolean;
+  /** Idioma de la interfaz, de la voz y de las respuestas. Se elige en la entrada. */
+  idioma: Idioma;
 };
 export type ConocerProgress = {
   correo: string;
@@ -62,6 +70,9 @@ const DEFAULT_SETTINGS: AppSettings = {
   sfx: true,
   postura: 'pie',
   cara: 'anillos',
+  avatar: 'aura',
+  avatarElegido: false,
+  idioma: 'es',
 };
 
 export async function saveSession(user: SessionUser | null) {
@@ -120,6 +131,8 @@ export async function loadSettings(): Promise<AppSettings> {
     const raw = await AsyncStorage.getItem(KEYS.settings);
     const s: AppSettings = raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : DEFAULT_SETTINGS;
     s.voiceId = 'ultron';
+    s.avatar = normalizarAvatarId(s.avatar);
+    s.idioma = normalizarIdioma(s.idioma);
     return s;
   } catch {
     return DEFAULT_SETTINGS;

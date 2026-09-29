@@ -1,20 +1,30 @@
 import { StatusBar } from 'expo-status-bar';
 import * as SplashScreen from 'expo-splash-screen';
 import * as SystemUI from 'expo-system-ui';
-import * as ScreenOrientation from 'expo-screen-orientation';
+import { Asset } from 'expo-asset';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { iniciarReporte, miga } from './src/lib/reporte';
-import { Animated, AppState, Easing, PermissionsAndroid, Platform, StyleSheet, Text, View, type AppStateStatus } from 'react-native';
+import { Animated, AppState, Easing, PermissionsAndroid, Platform, StyleSheet, View, type AppStateStatus } from 'react-native';
 import { APP_VERSION, type SessionUser } from './src/config';
-import { logoutRemote } from './src/lib/api';
-import { borrarRastrosViejos, loadSession, saveSession } from './src/lib/storage';
+import { healthCheck, logoutRemote } from './src/lib/api';
+import { borrarRastrosViejos, loadSession, loadSettings, saveSession, saveSettings } from './src/lib/storage';
+import { modoActual, orientar } from './src/lib/orientacion';
+import { preloadSfx } from './src/lib/sfx';
+import { setAvatarVoz } from './src/lib/tts';
+import { Arranque, type PasoArranque } from './src/screens/Arranque';
+import { FOTOS_CLAUDIO } from './src/avatares/ClaudioRetrato';
+import { FOTOS_CLAUDIO_PIE } from './src/avatares/ClaudioDePie';
+import { SelectorAvatar } from './src/avatares/SelectorAvatar';
+import type { AvatarId } from './src/avatares/catalogo';
+import { fijarIdioma, tr, useIdioma } from './src/i18n';
 import { DeskScreen } from './src/screens/DeskScreen';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { ES_ELECTRUM } from './src/variante';
 import { T } from './src/tema';
 import ElectrumApp from './src/electrum/ElectrumApp';
+import { useActualizacionAlVolver } from './src/lib/ota';
 
-type Phase = 'splash' | 'login' | 'desk';
+type Phase = 'splash' | 'login' | 'elegir' | 'desk';
 
 /** El splash nativo (logo) se queda hasta que el splash JS está montado: sin pantallazo blanco ni corte. */
 void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -24,24 +34,13 @@ try {
   /* versión sin setOptions */
 }
 
-const SPLASH_MS = 1800;
-
-/**
- * Login en vertical, escritorio en horizontal. El manifest arranca en landscape (la mesa es lo
- * principal); aquí forzamos el giro y, si el sistema tarda, reintentamos hasta que reporte el
- * lock correcto (algunos Android ignoran el primer lockAsync justo tras el arranque).
- */
-async function lockOrientation(kind: 'portrait' | 'landscape') {
-  const want = kind === 'portrait' ? ScreenOrientation.OrientationLock.PORTRAIT_UP : ScreenOrientation.OrientationLock.LANDSCAPE;
-  for (let i = 0; i < 3; i += 1) {
-    try {
-      await ScreenOrientation.lockAsync(want);
-      const cur = await ScreenOrientation.getOrientationLockAsync();
-      if (cur === want || (kind === 'landscape' && (cur === ScreenOrientation.OrientationLock.LANDSCAPE_LEFT || cur === ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT))) return;
-    } catch {
-      /* reintento */
-    }
-    await new Promise((r) => setTimeout(r, 150));
+/** Un solo diálogo nativo (cámara + micrófono) al entrar al escritorio. */
+async function requestDeskPermissions() {
+  if (Platform.OS !== 'android') return;
+  try {
+    await PermissionsAndroid.requestMultiple([PermissionsAndroid.PERMISSIONS.RECORD_AUDIO, PermissionsAndroid.PERMISSIONS.CAMERA]);
+  } catch {
+    /* DeskScreen vuelve a pedir con contexto */
   }
 }
 
@@ -61,60 +60,47 @@ async function hideSystemBars() {
   }
 }
 
-/** Un solo diálogo nativo (cámara + micrófono) al entrar al escritorio. */
-async function requestDeskPermissions() {
-  if (Platform.OS !== 'android') return;
-  try {
-    await PermissionsAndroid.requestMultiple([PermissionsAndroid.PERMISSIONS.RECORD_AUDIO, PermissionsAndroid.PERMISSIONS.CAMERA]);
-  } catch {
-    /* DeskScreen vuelve a pedir con contexto */
+/** Lo que carga el arranque, en orden. La barra avanza con esto, no con un reloj. */
+const PASOS: PasoArranque[] = [
+  { id: 'sesion', texto: '', hecho: false },
+  { id: 'avatares', texto: '', hecho: false },
+  { id: 'voces', texto: '', hecho: false },
+  { id: 'servidor', texto: '', hecho: false },
+];
+
+/** El texto de cada paso, en el idioma guardado (se lee en el primer paso del arranque). */
+function textoPaso(id: string): string {
+  switch (id) {
+    case 'sesion':
+      return tr('Abriendo tu sesión', 'Opening your session');
+    case 'avatares':
+      return tr('Despertando al Guardián, a AU-RA y a Claudio', 'Waking up the Guardian, AU-RA and Claudio');
+    case 'voces':
+      return tr('Afinando las voces', 'Tuning the voices');
+    default:
+      return tr('Conectando con el servidor', 'Connecting to the server');
   }
 }
 
-/**
- * Splash JS de AU-RA: el logo sobre grafito y tres puntos dorados que respiran mientras se carga la
- * sesión. Se funde encima de la pantalla siguiente (la sala, donde ella ya viene entrando).
- */
-function JsSplash({ opacity }: { opacity: Animated.Value }) {
-  const rise = useRef(new Animated.Value(0)).current;
-  const puntos = useRef([0, 1, 2].map(() => new Animated.Value(0))).current;
+/** Buenos días / tardes / noches según la hora de Honduras (UTC−6, sin horario de verano). */
+function saludoPorHora(ahora = new Date()): string {
+  const h = (ahora.getUTCHours() + 24 - 6) % 24;
+  return h < 12 ? tr('Buenos días', 'Good morning') : h < 19 ? tr('Buenas tardes', 'Good afternoon') : tr('Buenas noches', 'Good evening');
+}
 
-  useEffect(() => {
-    // el nativo se oculta cuando este ya está pintado: la transición la hace el fade nativo
-    void SplashScreen.hideAsync().catch(() => {});
-    Animated.timing(rise, { toValue: 1, duration: 800, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-    const ola = Animated.loop(
-      Animated.stagger(
-        150,
-        puntos.map((v) =>
-          Animated.sequence([
-            Animated.timing(v, { toValue: 1, duration: 320, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-            Animated.timing(v, { toValue: 0, duration: 320, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-          ])
-        )
-      )
-    );
-    ola.start();
-    return () => ola.stop();
-  }, [rise, puntos]);
+/** Las fotos de los avatares se decodifican durante la carga: al entrar ya están, sin parpadeo. */
+async function precargarAvatares() {
+  const fotos = [
+    ...Object.values(FOTOS_CLAUDIO).flatMap((v) => (Array.isArray(v) ? v : [v])),
+    ...Object.values(FOTOS_CLAUDIO_PIE),
+    require('./assets/marca/logo-aura.png'),
+  ].filter((m): m is number => typeof m === 'number');
+  await Asset.loadAsync(fotos);
+}
 
-  const ty = rise.interpolate({ inputRange: [0, 1], outputRange: [12, 0] });
-  return (
-    <Animated.View pointerEvents="none" style={[styles.splash, { opacity }]}>
-      <Animated.Image
-        source={require('./assets/marca/logo-aura.png')}
-        resizeMode="contain"
-        accessibilityLabel="AU-RA by Orden Global"
-        style={[styles.logo, { opacity: rise, transform: [{ translateY: ty }] }]}
-      />
-      <View style={styles.puntos}>
-        {puntos.map((v, i) => (
-          <Animated.View key={i} style={[styles.punto, { transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [0, -8] }) }] }]} />
-        ))}
-      </View>
-      <Text style={styles.meta}>v{APP_VERSION}</Text>
-    </Animated.View>
-  );
+/** Una promesa con tope: el arranque nunca se queda esperando algo que no contesta. */
+function conTope<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  return Promise.race([p.catch(() => null), new Promise<null>((r) => setTimeout(() => r(null), ms))]);
 }
 
 /**
@@ -130,59 +116,78 @@ function JsSplash({ opacity }: { opacity: Animated.Value }) {
  * con la variante por omisión, todo lo que sigue es el mismo código de siempre, sin una rama nueva.
  */
 export default function App() {
+  // Antes de bifurcar: las actualizaciones por aire. Solo AU-RA las tiene encendidas; en Dr Electrum
+  // `Updates.isEnabled` es falso y el hook no hace nada.
+  useActualizacionAlVolver();
   if (ES_ELECTRUM) return <ElectrumApp />;
   return <AppUltron />;
 }
 
 function AppUltron() {
+  useIdioma();
   const [phase, setPhase] = useState<Phase>('splash');
-  const [splashShown, setSplashShown] = useState(true);
+  /** El avatar que tenía guardado (la bienvenida lo marca) y si se acaba de elegir (se presenta). */
+  const [avatarGuardado, setAvatarGuardado] = useState<AvatarId>('aura');
+  const [recienElegido, setRecienElegido] = useState(false);
+  const [cargaVisible, setCargaVisible] = useState(true);
   const [user, setUser] = useState<SessionUser | null>(null);
-  const phaseRef = useRef(phase);
-  phaseRef.current = phase;
-  const splashOp = useRef(new Animated.Value(1)).current;
+  const [pasos, setPasos] = useState<PasoArranque[]>(PASOS);
+  const [aviso, setAviso] = useState('');
+  const cargaOp = useRef(new Animated.Value(1)).current;
+  const marcar = (id: string) => setPasos((ps) => ps.map((p) => (p.id === id ? { ...p, hecho: true } : p)));
 
   const enterDesk = useCallback(async (u: SessionUser) => {
-    miga('login ok, entrando a la mesa');
+    miga('entrando a la mesa');
     setUser(u);
     await requestDeskPermissions();
     miga('permisos pedidos');
-    await lockOrientation('landscape');
-    miga('orientación horizontal');
+    // La mesa decide su orientación según el avatar (bienvenida en la suya, después libre).
     setPhase('desk');
     miga('fase desk');
   }, []);
 
   const boot = useCallback(async () => {
     await iniciarReporte();
-    const minSplash = new Promise((r) => setTimeout(r, SPLASH_MS));
+    // El nativo se quita cuando esta pantalla ya está pintada con el planeta en el mismo lugar.
+    void SplashScreen.hideAsync().catch(() => {});
     await hideSystemBars();
-    miga('barras ocultas');
-    // Con sesión guardada la mesa arranca ya en horizontal (manifest); solo el login gira a vertical.
-    const session = await loadSession();
+    const [session, ajustes] = await Promise.all([loadSession(), loadSettings()]);
     miga(session ? 'sesión guardada' : 'sin sesión');
-    if (!session) await lockOrientation('portrait');
-    await minSplash;
+    // El idioma y el avatar de la última vez: la carga ya se lee en ese idioma.
+    fijarIdioma(ajustes.idioma);
+    setAvatarVoz(ajustes.avatar);
+    setAvatarGuardado(ajustes.avatar);
+    marcar('sesion');
+    await conTope(precargarAvatares(), 6_000);
+    marcar('avatares');
+    await conTope(preloadSfx(), 3_000);
+    marcar('voces');
+    // Sin servidor se entra igual (la mesa tiene modo local); solo se avisa.
+    const salud = await conTope(healthCheck(), 5_000);
+    if (!salud) setAviso(tr('Sin conexión con el servidor: entras en modo local', 'No connection to the server: you’re entering local mode'));
+    marcar('servidor');
+    await new Promise((r) => setTimeout(r, salud ? 250 : 900));
     if (session) await enterDesk(session);
     else {
+      await orientar('libre');
       setPhase('login');
       miga('fase login');
     }
   }, [enterDesk]);
 
-  // La pantalla siguiente ya está montada debajo: el splash se funde con suavidad.
+  // La pantalla siguiente ya está montada debajo: la carga se funde encima.
   useEffect(() => {
     if (phase === 'splash') return;
-    Animated.timing(splashOp, { toValue: 0, duration: 700, delay: 120, easing: Easing.inOut(Easing.quad), useNativeDriver: true }).start(({ finished }) => {
-      if (finished) setSplashShown(false);
+    Animated.timing(cargaOp, { toValue: 0, duration: 520, delay: 80, easing: Easing.inOut(Easing.quad), useNativeDriver: true }).start(({ finished }) => {
+      if (finished) setCargaVisible(false);
     });
-  }, [phase, splashOp]);
+  }, [phase, cargaOp]);
 
   useEffect(() => {
     void boot();
     const sub = AppState.addEventListener('change', (s: AppStateStatus) => {
       if (s === 'active') {
-        void lockOrientation(phaseRef.current === 'desk' ? 'landscape' : 'portrait');
+        void orientar(modoActual());
         void hideSystemBars();
       }
     });
@@ -192,10 +197,33 @@ function AppUltron() {
   return (
     <View style={styles.root}>
       <StatusBar style="light" hidden />
-      {phase === 'login' && <LoginScreen onAuthenticated={(u) => void enterDesk(u)} />}
+      {phase === 'login' && (
+        <LoginScreen
+          onAuthenticated={(u) => {
+            // Al entrar se elige con quién hablar (y el idioma, arriba): después, la mesa.
+            miga('login ok, eligiendo avatar');
+            setUser(u);
+            setPhase('elegir');
+          }}
+        />
+      )}
+      {phase === 'elegir' && user && (
+        <SelectorAvatar
+          nombre={user.name}
+          saludo={saludoPorHora()}
+          actual={avatarGuardado}
+          onElegir={(id) => {
+            setAvatarVoz(id);
+            setAvatarGuardado(id);
+            setRecienElegido(true);
+            void saveSettings({ avatar: id, avatarElegido: true }).finally(() => void enterDesk(user));
+          }}
+        />
+      )}
       {phase === 'desk' && user && (
         <DeskScreen
           user={user}
+          recienElegido={recienElegido}
           onLogout={() => {
             // El historial del turno vive en la mesa y se va con ella; la memoria de largo plazo es por
             // persona (el siguiente no la ve). Las credenciales guardadas se quedan: las usa la entrada.
@@ -203,21 +231,19 @@ function AppUltron() {
             void logoutRemote();
             void borrarRastrosViejos();
             setUser(null);
+            setRecienElegido(false);
             setPhase('login');
-            void lockOrientation('portrait');
+            void orientar('libre');
           }}
         />
       )}
-      {splashShown && <JsSplash opacity={splashOp} />}
+      {cargaVisible && (
+        <Arranque pasos={pasos.map((p) => ({ ...p, texto: textoPaso(p.id) }))} version={APP_VERSION} aviso={aviso} opacity={phase === 'splash' ? undefined : cargaOp} />
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: T.fondo },
-  splash: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center', gap: 18, backgroundColor: T.fondo },
-  logo: { width: 340, height: 128 },
-  puntos: { flexDirection: 'row', gap: 8, height: 20, alignItems: 'flex-end' },
-  punto: { width: 10, height: 10, borderRadius: 5, backgroundColor: T.principal },
-  meta: { position: 'absolute', bottom: 24, color: T.texto3, fontSize: 11 },
 });
