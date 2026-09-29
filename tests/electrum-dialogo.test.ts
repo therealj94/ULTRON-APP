@@ -61,11 +61,11 @@ test('dialogo: los tiempos de ElevenLabs se vuelven «quién habla» por persona
   assert.equal(quienDeVoz(PERSONAJES.tatiana.voz), 'tatiana');
   assert.equal(quienDeVoz('otra-voz'), null);
   const s = segmentosDe([
-    { voice_id: PERSONAJES.tatiana.voz, start_time_seconds: 0, end_time_seconds: 1.12 },
+    { voice_id: PERSONAJES.tatiana.voz, start_time_seconds: 0, end_time_seconds: 1.12, dialogue_input_index: 0 },
     { voice_id: PERSONAJES.electrum.voz, start_time_seconds: 1.7600000000000002, end_time_seconds: 2.08 },
     { voice_id: 'desconocida', start_time_seconds: 3, end_time_seconds: 4 },
     { voice_id: PERSONAJES.chema.voz, start_time_seconds: 5, end_time_seconds: 5 },
   ]);
-  assert.deepEqual(s, [{ q: 'tatiana', d: 0, h: 1.12 }, { q: 'electrum', d: 1.76, h: 2.08 }]);
+  assert.deepEqual(s, [{ q: 'tatiana', d: 0, h: 1.12, i: 0 }, { q: 'electrum', d: 1.76, h: 2.08 }]);
   assert.deepEqual(segmentosDe('basura'), []);
 });

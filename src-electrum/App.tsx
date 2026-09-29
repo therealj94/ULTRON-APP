@@ -29,8 +29,9 @@ import { BotonOido, type ModoOido } from './panel/BotonOido';
 import { AirTouch, BotonManos, type EstadoManos } from './manos/AirTouch';
 import { crearOido, capturaActiva, type EstadoOido } from './panel/oido';
 import { comandoDe, comandoDeLaya, nombreDeComando, type Comando } from './panel/comandos';
-import { callar, hablanteActual, hablar, nivelVoz, reanudarVoz, suena } from './panel/voz';
+import { callar, escucharEscena, hablanteActual, hablar, nivelVoz, reanudarVoz, suena } from './panel/voz';
 import { Retratos } from './personajes/Retratos';
+import { EMOCION_DE, expresionDeLinea, reaccionA } from './personajes/expresion';
 
 /** La boca de la cara principal: en un diálogo, solo cuando habla Dr Electrum (los demás tienen su cara). */
 const labioDeElectrum = () => {
@@ -244,6 +245,17 @@ export default function App() {
   }, []);
   const [face, setFace] = useState<FaceState>('IDLE');
   const [emocion, setEmocion] = useState<Emocion>('neutral');
+  // En un diálogo la cara principal también actúa: pone la expresión de la línea que dice Dr
+  // Electrum y, mientras otro habla, le devuelve la emoción a medias (como los retratos).
+  useEffect(
+    () =>
+      escucharEscena((e) => {
+        if (!e.participantes || !e.hablante) return;
+        const x = expresionDeLinea(e.linea);
+        setEmocion(EMOCION_DE[e.hablante === 'electrum' ? x : reaccionA(x)]);
+      }),
+    []
+  );
   const [mode, setMode] = useState<Mode>('MINING');
   const [motor, setMotor] = useState<Motor>('maplibre');
   const [fondo, setFondo] = useState<Fondo>('satelite');

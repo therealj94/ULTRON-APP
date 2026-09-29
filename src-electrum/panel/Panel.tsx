@@ -29,6 +29,7 @@ import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteRepar
 import { callar, desbloquear, hablar, hablarDialogo, prepararRelleno, rellenar, suena, type LineaDialogo } from './voz';
 import { FRASES_GENERALES, fraseDeEspera, fraseDeTrabajo } from './trabajando';
 import { RETRATOS } from '../personajes/Retratos';
+import { EMOCION_DE, expresionDeLinea } from '../personajes/expresion';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 import { Biblioteca } from '../biblioteca/Biblioteca';
 import { pedirArchivo, Visor, type Fuente } from './Visor';
@@ -685,7 +686,10 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   cerrado = true;
                   respondiendo = true;
                   onFace('SPEAKING');
-                  if (d.emocion) onEmocion(d.emocion);
+                  // La etiqueta con la que se va a DECIR (v4) manda sobre un «neutral» del cerebro.
+                  const deVoz = typeof d.voz === 'string' ? expresionDeLinea(d.voz, true) : 'neutral';
+                  if (deVoz !== 'neutral' && (!d.emocion || d.emocion === 'neutral')) onEmocion(EMOCION_DE[deVoz]);
+                  else if (d.emocion) onEmocion(d.emocion);
                   if (vozActivaRef.current && d.texto) {
                     vozEnCamino = true;
                     // `voz` trae las etiquetas de expresión de v4 que la pantalla no enseña.

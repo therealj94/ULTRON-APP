@@ -145,8 +145,8 @@ export function quienDeVoz(voz: string): Personaje | null {
   return (Object.keys(PERSONAJES) as Personaje[]).find((p) => PERSONAJES[p].voz === voz) || null;
 }
 
-/** Un segmento de tiempo por hablante, como lo entiende la pantalla: quién, desde y hasta (s). */
-export type Segmento = { q: Personaje; d: number; h: number };
+/** Un segmento de tiempo por hablante, como lo entiende la pantalla: quién, desde y hasta (s), y qué línea del trozo dice (i). */
+export type Segmento = { q: Personaje; d: number; h: number; i?: number };
 
 /** Lo que manda ElevenLabs en cada trozo (voice_segments) → nuestros segmentos por personaje. */
 export function segmentosDe(crudo: unknown): Segmento[] {
@@ -156,7 +156,8 @@ export function segmentosDe(crudo: unknown): Segmento[] {
     const q = quienDeVoz(String(s?.voice_id || ''));
     const d = Number(s?.start_time_seconds);
     const h = Number(s?.end_time_seconds);
-    if (q && Number.isFinite(d) && Number.isFinite(h) && h > d) out.push({ q, d: Math.round(d * 1000) / 1000, h: Math.round(h * 1000) / 1000 });
+    const i = Number(s?.dialogue_input_index);
+    if (q && Number.isFinite(d) && Number.isFinite(h) && h > d) out.push({ q, d: Math.round(d * 1000) / 1000, h: Math.round(h * 1000) / 1000, ...(Number.isInteger(i) && i >= 0 ? { i } : {}) });
   }
   return out;
 }

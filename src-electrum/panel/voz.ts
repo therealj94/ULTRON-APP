@@ -435,20 +435,25 @@ export function partirDialogo(lineas: LineaDialogo[], tope = 1800): LineaDialogo
 
 /* --- quién habla ahora: lo miran las caras de la pantalla --- */
 
-export type Escena = { hablante: string | null; participantes: string[] | null };
-let escena: Escena = { hablante: null, participantes: null };
+export type Escena = {
+  hablante: string | null;
+  participantes: string[] | null;
+  /** La línea que se está diciendo (con sus etiquetas de expresión: [laughs], [curious]…). */
+  linea?: string | null;
+};
+let escena: Escena = { hablante: null, participantes: null, linea: null };
 const oyentesEscena = new Set<(e: Escena) => void>();
 let relojEscena: number | undefined;
 
 function publicarEscena(e: Escena) {
-  if (e.hablante === escena.hablante && (e.participantes || []).join() === (escena.participantes || []).join()) return;
+  if (e.hablante === escena.hablante && (e.linea ?? null) === (escena.linea ?? null) && (e.participantes || []).join() === (escena.participantes || []).join()) return;
   escena = e;
   oyentesEscena.forEach((f) => f(e));
 }
 function terminarEscena() {
   if (relojEscena) clearInterval(relojEscena);
   relojEscena = undefined;
-  publicarEscena({ hablante: null, participantes: null });
+  publicarEscena({ hablante: null, participantes: null, linea: null });
 }
 
 /** Avisa cada vez que cambia quién habla en un diálogo (o termina). Devuelve cómo dejar de escuchar. */
@@ -462,7 +467,7 @@ export function escucharEscena(f: (e: Escena) => void): () => void {
 /** Quién habla ahora en un diálogo (null fuera de un diálogo). */
 export const hablanteActual = () => escena.hablante;
 
-type Segmento = { q: string; d: number; h: number };
+type Segmento = { q: string; d: number; h: number; i?: number };
 
 function bytesDeBase64(b64: string): Uint8Array {
   const bin = atob(b64);
@@ -523,7 +528,7 @@ export async function hablarDialogo(lineas: LineaDialogo[], headers: Record<stri
   const corte = new AbortController();
   cortePendiente = corte;
   const participantes = [...new Set(lineas.map((l) => l.quien))];
-  publicarEscena({ hablante: null, participantes });
+  publicarEscena({ hablante: null, participantes, linea: null });
   const pedir = async (i: number): Promise<Response> => {
     const r = await fetch('/api/electrum/dialogo', {
       method: 'POST',
@@ -553,11 +558,14 @@ export async function hablarDialogo(lineas: LineaDialogo[], headers: Record<stri
       const segmentos: Segmento[] = [];
       const lector = lectorDialogo(r, (s) => segmentos.push(...s));
       if (relojEscena) clearInterval(relojEscena);
+      const lineasTrozo = trozos[i];
       relojEscena = window.setInterval(() => {
         const t = a.currentTime;
         const s = segmentos.find((x) => t >= x.d && t < x.h);
-        publicarEscena({ hablante: a.paused ? null : s?.q ?? escena.hablante, participantes });
-      }, 80);
+        const hablante = a.paused ? null : s?.q ?? escena.hablante;
+        const linea = s && typeof s.i === 'number' ? lineasTrozo[s.i]?.texto ?? null : hablante ? escena.linea ?? null : null;
+        publicarEscena({ hablante, participantes, linea });
+      }, 60);
       if (typeof MediaSource !== 'undefined' && MediaSource.isTypeSupported('audio/mpeg')) {
         await sonarLector(a, lector, mia);
       } else {
