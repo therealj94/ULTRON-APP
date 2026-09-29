@@ -19,7 +19,7 @@ AQUI="$(cd "$(dirname "$0")/laya" && pwd)"
 BASE="${LAYA_BASE:-/opt/laya}"
 PUERTO="${LAYA_PUERTO:-8792}"
 MODELO="$BASE/modelo-electrum"
-NUEVOS=(mensaje documento)
+NUEVOS=(mensaje documento comando)
 ENTORNO=/etc/laya-electrum.env
 
 sudo mkdir -p "$BASE" && sudo chown "$(id -u):$(id -g)" "$BASE"

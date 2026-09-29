@@ -22,6 +22,7 @@ import { extraerEmocion, type Emocion } from '../../lib/emocion';
 import { quitarExpresiones } from '../../lib/expresiones';
 import { fetchNodo, NODO_MODELO, NODO_SECRETO, NODO_URL } from '../../lib/nodo';
 import { decidirPanel, herramientasDe, promptPanel } from './especialistas';
+import { bloqueMesa, duenioDe, EXPERTOS, OFICIOS, quienesDe, textoDeVoces, vocesDelTurno, type Voz } from './personajes';
 import { bloqueExpedientes, expedientesDeLaPregunta } from './expedientes-previos';
 import { manosDe, TODAS } from './manos';
 import { CONOCIMIENTO_MINAS } from '../../src/08-cerebro-minas/conocimiento';
@@ -33,6 +34,13 @@ import { personalidadElectrum } from './personalidad';
 import { buscarWebDetallado, consultaWeb, leerPagina, resumenMotores } from '../../src/06-manos/web';
 
 export type RespuestaTurno = {
+  /** Lo que se DICE: el texto con las etiquetas de expresión de v4 ([thoughtful]…), si las hay. */
+  voz?: string;
+  /**
+   * Quién dice qué, cuando contesta la mesa (Don Chema, la Ing. Tatiana…) y no solo el doctor: cada
+   * intervención suena con la voz de su personaje y se ve con su cara. Sin esto, habla Dr Electrum.
+   */
+  voces?: Voz[];
   texto: string;
   emocion: Emocion;
   /** Qué especialistas contestaron, para mostrarlo encima de la respuesta. */
@@ -205,12 +213,21 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   const clas = await clasificar(mensaje, 'electrum');
   trazaActual()?.clasificacion(clas);
   ctx = { ...ctx, riesgo: clas.riesgo, historial: historial.map((m) => ({ role: m.role, content: m.content })) };
-  const { panel } = await panelP;
+  const { panel, fuente } = await panelP;
+  // Quién de la mesa contesta: el dueño de cada especialidad convocada (personajes.ts).
+  const mesa = fuente === 'mesa';
+  const quienes = quienesDe(panel);
+  const deLaMesa = bloqueMesa(quienes, mesa);
   // Las de su oficio y, para todos, la memoria estructurada (fichas de empresas, concesiones, personas).
   const base = panel.length ? manosDe(herramientasDe(panel)) : TODAS;
   // Con «Internet» pedido, las dos de la web están aunque el especialista convocado no las traiga.
   const herramientas = [...base, ...(internet ? manosDe(['web_buscar', 'web_leer']).filter((h) => !base.some((b) => b.nombre === h.nombre)) : []), ...MEMORIA_ESTRUCTURADA];
-  const nombrePanel = panel.map((e) => e.nombre).join(' y ');
+  // Con la mesa se ve quién habla: «Don Chema (Metalurgista) y Ing. Tatiana (Ingeniero Civil)».
+  const nombrePanel = deLaMesa
+    ? `${mesa ? 'Mesa técnica: ' : ''}${(mesa ? EXPERTOS : quienes)
+        .map((p) => `${OFICIOS[p].nombre} (${panel.filter((e) => duenioDe(e.id) === p).map((e) => e.nombre).join(', ') || OFICIOS[p].titulo})`)
+        .join(' y ')}`
+    : panel.map((e) => e.nombre).join(' y ');
   // Lo primero que se puede decir: quién va a contestar. No cuesta nada y quita la sensación de
   // que no pasa nada.
   if (nombrePanel) enVivo?.({ panel: nombrePanel });
@@ -258,6 +275,7 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     ...(delCerebro.length ? [`DE TU CEREBRO, sobre lo que preguntan (esto lo sabés de verdad):\n${delCerebro.join('\n')}`] : []),
     ...(deExpedientes ? [deExpedientes] : []),
     ...(deInternet ? [deInternet] : []),
+    ...(deLaMesa ? [deLaMesa] : []),
   ];
   const usuario = previos.length ? `${previos.join('\n\n')}\n\n${mensaje}` : mensaje;
 
@@ -346,8 +364,18 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   } catch (e: any) {
     console.warn('[electrum] garantía de mapas geológicos:', String(e?.message || e).slice(0, 160));
   }
+  /*
+   * La VOZ lleva las etiquetas de expresión que escribió el modelo ([thoughtful], [laughs]…): la
+   * pantalla no las enseña, pero Eleven v4 las actúa. Si alguna garantía cambió el texto, la voz
+   * dice el texto final tal cual (sin etiquetas que ya no calzan).
+   */
+  const voz = final === texto && emo.texto.trim() !== limpio ? emo.texto.trim() : undefined;
+  // La mesa: cada intervención con su personaje. El texto que se lee queda «Don Chema: …».
+  const voces = deLaMesa ? vocesDelTurno(voz ?? final, mesa ? EXPERTOS : quienes) : [];
   return {
-    texto: final,
+    texto: voces.length ? textoDeVoces(voces) : final,
+    voz: voces.length ? undefined : voz,
+    ...(voces.length ? { voces } : {}),
     emocion: emo.emocion,
     panel: nombrePanel,
     traza,

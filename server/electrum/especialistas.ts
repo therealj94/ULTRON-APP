@@ -20,6 +20,7 @@
  */
 import { consultarLaya, type MotivoLaya } from '../../lib/laya';
 import { trazaActual } from '../../lib/cognitivo/traza';
+import { esMesa, llamados, PANEL_MESA } from './personajes';
 
 export type EspecialistaId =
   | 'geologo'
@@ -68,7 +69,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Para la geología de un lugar usás geologia_zona y, si piden un mapa, mapa_geologico. Decís siempre la escala del mapa geológico: uno regional sirve para saber qué mirar, no para decidir dentro de una concesión.',
       'Un indicio no es un recurso: hablás de «condiciones favorables» y de qué haría falta para confirmarlas (cartografía 1:50 000, muestreo, geoquímica, geofísica, perforación).',
     ],
-    herramientas: ['geologia_zona', 'mapa_geologico', 'informe_pdf', 'catastro_buscar', 'catastro_resumen', 'gis_medir', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'calculo_mina', 'web_buscar', 'web_leer'],
+    herramientas: ['geologia_zona', 'mapa_geologico', 'informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'gis_medir', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'calculo_mina', 'web_buscar', 'web_leer'],
     vigila: 'Que nadie llame «reserva» a un recurso inferido, ni «yacimiento» a una anomalía sin perforar.',
   },
   {
@@ -126,7 +127,7 @@ export const ESPECIALISTAS: Especialista[] = [
     ],
     // Los mapas geológicos también son mapas: cuando Laya convoca a geomática por «mapa», tiene que
     // poder dibujarlos, no salir del paso con un PDF.
-    herramientas: ['mapa_geologico', 'geologia_zona', 'informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_resumen', 'catastro_en_punto', 'concesion_entorno'],
+    herramientas: ['mapa_geologico', 'geologia_zona', 'informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_en_punto', 'concesion_entorno'],
     vigila: 'Que nadie mida un área sobre la cuadrícula UTM y la reporte como superficie de terreno.',
   },
   {
@@ -154,7 +155,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Un traslape de derechos se resuelve por prelación de la solicitud, no por quién llegó primero al terreno.',
       'Separás siempre tres cosas que la gente mezcla: el derecho minero, el permiso ambiental y el acuerdo con el dueño del suelo. Tener uno no es tener los otros.',
     ],
-    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'gis_traslapes', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'mapa_volar'],
+    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'gis_traslapes', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'mapa_volar'],
     vigila: 'Que nadie dé por vigente una concesión porque «así aparece en el mapa».',
   },
   {
@@ -219,8 +220,9 @@ export function convocar(mensaje: string, maximo = 2): Especialista[] {
   const q = fold(mensaje);
   if (!q.trim()) return [];
 
-  // 1) Pedido explícito: si el usuario nombró a alguien, ese va sí o sí y va primero.
-  const explicitos = pedidosExplicitos(mensaje);
+  // 1) Pedido explícito: si el usuario nombró a alguien (por su oficio o por su nombre: «Don
+  //    Chema, …»), ese va sí o sí y va primero.
+  const explicitos = [...llamados(mensaje), ...pedidosExplicitos(mensaje)];
 
   // 2) Por tema, ordenados por CUÁNTO texto de su campo aparece, no solo cuántas veces.
   //
@@ -268,12 +270,18 @@ export function convocar(mensaje: string, maximo = 2): Especialista[] {
 export async function decidirPanel(
   mensaje: string,
   maximo = 2
-): Promise<{ panel: Especialista[]; fuente: 'laya' | 'tabla' | 'laya+tabla'; motivo: MotivoLaya; ms: number }> {
+): Promise<{ panel: Especialista[]; fuente: 'laya' | 'tabla' | 'laya+tabla' | 'mesa'; motivo: MotivoLaya; ms: number }> {
+  // «Mesa técnica»: los tres, una especialidad cada uno. Eso se obedece, no se clasifica.
+  if (esMesa(mensaje)) {
+    const panel = PANEL_MESA.map((id) => POR_ID.get(id)!).filter(Boolean);
+    trazaActual()?.paso({ herramienta: 'laya_panel', ok: true, ms: 0, resumen: `mesa técnica → ${panel.map((e) => e.id).join(', ')}` });
+    return { panel, fuente: 'mesa', motivo: 'sin texto' as MotivoLaya, ms: 0 };
+  }
   const { decision: d, motivo, ms } = await consultarLaya(mensaje);
   let panel: Especialista[] = [];
   let fuente: 'laya' | 'tabla' | 'laya+tabla' = d ? 'laya' : 'tabla';
   if (d) {
-    for (const id of [...pedidosExplicitos(mensaje), ...d.panel]) {
+    for (const id of [...llamados(mensaje), ...pedidosExplicitos(mensaje), ...d.panel]) {
       const e = POR_ID.get(id as EspecialistaId);
       if (e && !panel.includes(e)) panel.push(e);
     }
@@ -335,8 +343,8 @@ export function promptPanel(panel: Especialista[]): string {
   );
   return [
     `PANEL CONVOCADO: ${panel.map((e) => e.nombre).join(' y ')}.`,
-    'Hablás vos, Dr Electrum, con el criterio de quien o quienes están abajo. Si la respuesta es',
-    'claramente de una especialidad, decilo al pasar («como geólogo, …»), sin ceremonia.',
+    'Si el mensaje trae MESA DE TRABAJO, hablan quienes dice, con su formato; si no, hablás vos,',
+    'Dr Electrum, con el criterio de los de abajo.',
     'Si te preguntan algo que NO es de este panel, lo decís y ofrecés traer a quien corresponda:',
     'contestar de lo que no es tuyo es el error que un cliente técnico no perdona.',
     '',

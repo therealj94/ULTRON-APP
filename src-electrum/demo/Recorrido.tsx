@@ -15,7 +15,7 @@
  */
 import { useEffect, useRef, useState, type PointerEvent as EventoPuntero } from 'react';
 import { headersElectrum } from '../acceso';
-import { callar, desbloquear, hablar } from '../panel/voz';
+import { callar, desbloquear, hablar, hablarDialogo } from '../panel/voz';
 import type { CapaExtra, Fondo, Margen, OrdenMapa, RasterEncendido, RasterEscaneado, Tocado } from '../mapa/captura';
 import { catastroGuardado } from '../mapa/captura';
 import type { MuestrasEncendidas } from '../mapa/CapasControl';
@@ -48,6 +48,10 @@ export type Controles = {
   estado: () => Estado;
   /** Si la cara estaba en el centro, que ceda el paso al mapa. */
   trabajo: () => void;
+  /** El visor del mapa: esquinas y nombre sobre lo que se está mostrando (null lo quita). */
+  enfocar: (e: { encuadre: [number, number, number, number]; etiqueta?: string } | null) => void;
+  /** Abre un mapa o PDF en el visor a pantalla completa (null lo cierra). */
+  visor: (f: { tipo: 'imagen' | 'pdf'; nombre: string; url: string; titulo?: string } | null) => void;
 };
 
 export type ModoRecorrido = 'completo' | 'geologico' | 'legal' | 'herramientas';
@@ -101,7 +105,7 @@ const ANCHO_FICHA = 440;
 
 const enCompu = () => typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches;
 
-const CAPACIDADES = ['Pregunta con la voz', 'Web, app y Telegram', 'Ficha en PDF', 'Plano profesional', 'KML · GeoJSON · DXF', 'Perfil del terreno', 'Pedir área nueva', 'Alertas', 'Desde Claude'];
+const CAPACIDADES = ['Pregunta con la voz', 'Manos libres', 'Web, app y Telegram', 'Ficha en PDF', 'Mapas geológicos', 'Timelapse satelital', 'KML · GeoJSON · DXF', 'Perfil del terreno', 'Pedir área nueva', 'Alertas'];
 
 export function Recorrido({
   activo,
@@ -111,7 +115,8 @@ export function Recorrido({
   modo = 'completo',
 }: {
   activo: boolean;
-  onTerminar: () => void;
+  /** `natural`: llegó al final (se ofrecen preguntas); false si alguien lo detuvo. */
+  onTerminar: (natural: boolean) => void;
   controles: Controles;
   fichaAbierta?: boolean;
   modo?: ModoRecorrido;
@@ -125,6 +130,9 @@ export function Recorrido({
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   /** El control de la pantalla que se está explicando (selector CSS), con un anillo alrededor. */
   const [foco, setFoco] = useState<string | null>(null);
+  /** El título grande de cada capítulo, que aparece un momento al centro, como en una película. */
+  const [titular, setTitular] = useState<{ n: number; titulo: string; clave: number } | null>(null);
+  const restaurado = useRef(false);
   const caja = useRef<HTMLDivElement>(null);
   const vivo = useRef(0);
   /** El capítulo que se pidió saltar, y cómo despertar la espera en curso. */
@@ -170,6 +178,17 @@ export function Recorrido({
     despertar.current?.();
   };
   const nActual = useRef(0);
+  // «Siguiente» dicho en voz alta (el micrófono abierto lo manda como evento).
+  const saltar$ = useRef(saltar);
+  saltar$.current = saltar;
+  useEffect(() => {
+    if (!activo) return;
+    const alPedir = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === 'siguiente') saltar$.current();
+    };
+    window.addEventListener('electrum:recorrido', alPedir);
+    return () => window.removeEventListener('electrum:recorrido', alPedir);
+  }, [activo]);
 
   useEffect(() => {
     if (!activo) return;
@@ -183,6 +202,9 @@ export function Recorrido({
       nActual.current = i;
       setN(i);
       setCap(k);
+      // Cada capítulo empieza limpio: el visor del anterior ya no señala nada de este.
+      c.current.enfocar(null);
+      if (i > 0) setTitular({ n: i, titulo: k.titulo, clave: Date.now() });
     };
     const saltoEste = () => saltado.current === nActual.current;
     /** Una espera que el botón «Siguiente» corta. */
@@ -211,6 +233,7 @@ export function Recorrido({
     const mover = (o: OrdenMapa) => c.current.orden(o.accion === 'volar' || o.accion === 'camara' || o.accion === 'encuadrar' || o.accion === 'orbitar' ? ({ ...o, margen: margen$.current() } as OrdenMapa) : o);
     const orbitar = (grados: number, ms: number) => mover({ accion: 'orbitar', grados, ms });
 
+    let natural = false;
     (async () => {
       try {
         capitulo(0, { titulo: 'Preparando el recorrido' });
@@ -268,7 +291,7 @@ export function Recorrido({
         const venc = vencimientos(catastro);
         const traslapeMayor = t?.traslapes?.mayores?.[0];
         const [fTraslape, fProspecta] = await Promise.all([
-          modo === 'legal' && traslapeMayor ? ficha(traslapeMayor.aId) : Promise.resolve(null),
+          (modo === 'legal' || completo) && traslapeMayor ? ficha(traslapeMayor.aId) : Promise.resolve(null),
           modo === 'herramientas' && (enZona[0] || ranking[0]) ? ficha((enZona[0] || ranking[0]).id) : Promise.resolve(null),
         ]);
         if (!sigue()) return;
@@ -278,20 +301,40 @@ export function Recorrido({
           c.current.capas(() => []);
           c.current.prospectividad(false);
           c.current.tocar(null);
+          c.current.enfocar(null);
           setFoco(null);
         };
-        /** Abre la ficha y vuela a la concesión, dejando libre el lado de la ficha (en el teléfono no la abre). */
+        /**
+         * Abre la ficha y vuela a la concesión, dejando libre el lado de la ficha (en el teléfono no
+         * la abre). Al llegar, el visor la enmarca con su nombre: de lejos una concesión es una
+         * mancha de color que se pierde entre las demás, y así se sabe exactamente cuál es.
+         */
         const irConFicha = async (f: Ficha & { encuadre: [number, number, number, number] | null }, siempre = false) => {
+          c.current.enfocar(null);
           if (enCompu() || siempre) {
             c.current.tocar({ tipo: 'concesion', id: f.id, nombre: f.nombre, lngLat: centroDe(f.encuadre!) });
             await pausa(350);
           }
           mover({ accion: 'volar', geojson: f.geojson, encuadre: f.encuadre! });
-          await pausa(3000);
+          await pausa(2600);
+          if (sigue() && f.encuadre) c.current.enfocar({ encuadre: f.encuadre, etiqueta: nombreParaDecir(f.nombre) });
+          await pausa(400);
+        };
+        /** La ficha que se usa para enseñar los botones: la de la zona más rica, o la más prometedora. */
+        const fDemo = fProspecta?.geojson && fProspecta.encuadre ? fProspecta : fZona?.geojson && fZona.encuadre ? fZona : null;
+        /** Espera a que aparezca un control (la ficha se abre con animación) y lo devuelve. */
+        const esperarControl = async (selector: string, ms = 4000) => {
+          for (let k = 0; k < ms / 200 && sigue(); k++) {
+            const el = document.querySelector(selector) as HTMLElement | null;
+            if (el) return el;
+            await espera(200);
+          }
+          return null;
         };
         /** Enseña un control de la pantalla con un anillo, mientras lo explica. */
         const senalar = async (selector: string, titulo: string, textos: string[]) => {
           capitulo(++i, { titulo });
+          c.current.tocar(null);
           // Algunos controles aparecen cuando el mapa termina de cargar: se los espera un poco.
           for (let k = 0; k < 20 && sigue() && !document.querySelector(selector); k++) await espera(200);
           setFoco(selector);
@@ -449,8 +492,10 @@ export function Recorrido({
               c.current.rasters([]);
               c.current.capas(() => []);
               c.current.muestras({ elemento: 'au', geojson: muestras });
-              mover({ accion: 'camara', centro: oro!.centro, zoom: 9.4, inclinacion: 58, giro: -32, ms: 6500 });
+              mover({ accion: 'camara', centro: oro!.centro, zoom: 9.8, inclinacion: 58, giro: -32, ms: 6500 });
               await pausa(3000);
+              const [ox, oy] = oro!.centro;
+              if (sigue()) c.current.enfocar({ encuadre: [ox - 0.06, oy - 0.05, ox + 0.06, oy + 0.05], etiqueta: `Foco de oro · hasta ${nf(oro!.maxGt, 1)} g/t` });
               orbitar(40, 30_000);
               await decir(
                 `También tengo ${nf(oro!.total)} muestras de sedimentos y rocas que tomó JICA, con su ley de oro, plata, cobre y zinc. El calor muestra dónde se juntan las anomalías: la más alta de oro llega a ${nf(oro!.maxGt, 1)} gramos por tonelada, y ${plural(oro!.sobreUnGramo, 'muestra pasa', 'muestras pasan')} de un gramo.`
@@ -577,21 +622,95 @@ export function Recorrido({
               ]),
           },
           fichaBotones: {
-            hay: !!(fProspecta?.geojson && fProspecta.encuadre),
+            hay: !!fDemo,
             correr: async () => {
               capitulo(++i, { titulo: 'La ficha de cada concesión' });
-              await irConFicha(fProspecta!, true);
+              await irConFicha(fDemo!, true);
+              await esperarControl('[data-tour="ficha"]');
               setFoco('[data-tour="ficha"]');
               await decir('Toque cualquier concesión y se abre su ficha: catastro, prospectividad, entorno, geología y satélite.');
-              await decir('Desde ahí saca la ficha en PDF, los mapas geológicos, el análisis o el timelapse del satélite, y la baja en KML para Google Earth o DXF para AutoCAD.');
+              const botones: Array<[string, string]> = [
+                ['[data-tour="btn-pdf"]', 'Ficha PDF le arma el informe completo de la concesión, con su plano, listo para mandar.'],
+                ['[data-tour="btn-analizar"]', 'Analizar me pide el análisis legal, ambiental y geológico de esa concesión, con mi recomendación.'],
+                ['[data-tour="exportes"]', 'Y aquí la baja en KML para Google Earth, DXF para AutoCAD, GeoJSON o los vértices en CSV.'],
+              ];
+              for (const [sel, frase] of botones) {
+                if (!sigue() || saltoEste()) break;
+                if (!(await esperarControl(sel, 1200))) continue;
+                setFoco(sel);
+                await decir(frase);
+              }
               setFoco(null);
+            },
+          },
+          geologicoVivo: {
+            hay: !!fDemo,
+            correr: async () => {
+              const f = fDemo!;
+              capitulo(++i, { titulo: 'Mapas geológicos al instante', chips: ['Litológico', 'Estructural', 'Geotectónico'] });
+              if (!ficha$.current) await irConFicha(f, true);
+              const boton = await esperarControl('[data-tour="btn-geologicos"]');
+              if (boton) setFoco('[data-tour="btn-geologicos"]');
+              // Se pide ya, y mientras se dibuja se explica: nunca un silencio esperando.
+              const pedido = fetch('/api/electrum/mapa-geologico', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...headersElectrum() },
+                body: JSON.stringify({ concesion_id: f.id, tipo: 'litologico' }),
+              })
+                .then(async (r) => (r.ok ? ((await r.json()) as { url: string; nombre: string; titulo: string }) : null))
+                .catch(() => null);
+              await decir(`Con este botón le dibujo los mapas geológicos de la concesión: el litológico, el estructural con la roseta de rumbos y el geotectónico. Le dibujo el litológico de ${nombreParaDecir(f.nombre)} ahora mismo.`);
+              const mapa = await pedido;
+              setFoco(null);
+              if (mapa && sigue() && !saltoEste()) {
+                c.current.visor({ tipo: 'imagen', nombre: mapa.nombre, url: mapa.url, titulo: mapa.titulo });
+                await decir('Aquí está. Las rocas por clase, los intrusivos, las fallas y los yacimientos cercanos, con la concesión marcada. Se abre a pantalla completa y se le puede hacer zoom.');
+                await pausa(2500);
+                c.current.visor(null);
+              } else if (sigue()) {
+                await decir('Ese mapa se lo dibujo cuando lo pida desde la ficha o con la voz: «hazme el mapa geológico de esta concesión».');
+              }
+            },
+          },
+          timelapse: {
+            hay: !!fDemo?.geojson,
+            correr: async () => {
+              const f = fDemo!;
+              capitulo(++i, { titulo: 'El satélite, año por año' });
+              if (!ficha$.current) await irConFicha(f, true);
+              const boton = await esperarControl('[data-tour="btn-timelapse"]');
+              if (!boton) {
+                await decir('Desde la ficha también se ve el timelapse del satélite: un cuadro por año, para ver cómo cambió el terreno.');
+                return;
+              }
+              setFoco('[data-tour="btn-timelapse"]');
+              await decir('Y el timelapse satelital: le junto una imagen de Sentinel-2 por cada temporada seca, con el lindero encima.');
+              setFoco(null);
+              if (!sigue() || saltoEste()) return;
+              boton.click();
+              await decir('Así se ve si entró maquinaria, si abrieron un camino o si el bosque se perdió. Año por año, sin salir de la oficina.');
+              await pausa(4500);
+              // Se cierra como lo cerraría una persona: con Escape.
+              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+              await pausa(400);
+            },
+          },
+          manos: {
+            hay: true,
+            correr: async () => {
+              capitulo(++i, { titulo: 'Manos libres', chips: ['«Siguiente»', '«Acércate»', '«Más mapa»', '«Cierra la ventana»', 'Air touch'] });
               c.current.tocar(null);
+              if (document.querySelector('[data-tour="microfono"]')) setFoco('[data-tour="microfono"]');
+              await decir('No hace falta tocar nada. Tengo el micrófono abierto: pregúnteme en voz alta, o dígame «siguiente», «acércate», «aléjate», «más mapa» o «cierra la ventana».');
+              if (document.querySelector('[data-tour="manos"]')) setFoco('[data-tour="manos"]');
+              await decir('Y con Air touch me maneja con la mano frente a la cámara: el cursor sigue su mano, pellizca para tocar, pellizca y arrastra para mover el mapa, dos manos para el zoom y el puño cierra la ventana.');
+              setFoco(null);
             },
           },
           chat: {
             hay: true,
             correr: () =>
-              senalar('[data-tour="chat"]', 'Pregúnteme', ['Aquí me pregunta con palabras normales. Con el micrófono me dicta, y le contesto hablando.']),
+              senalar('[data-tour="chat"]', 'Pregúnteme', ['Aquí me escribe con palabras normales, o simplemente me habla: le contesto con la voz, y mientras busco le voy diciendo qué estoy haciendo.']),
           },
           pestanas: {
             hay: true,
@@ -617,18 +736,34 @@ export function Recorrido({
               await decir(
                 modo === 'herramientas'
                   ? 'Eso es todo lo que tiene a mano. Y si no encuentra un botón, pídamelo con palabras: yo lo hago.'
-                  : 'Todo esto me lo pide cualquiera de su equipo con palabras normales o con la voz: desde la web, la aplicación del teléfono, Telegram, y hasta desde su propio asistente Claude.'
+                  : 'Todo esto me lo pide cualquiera de su equipo con palabras normales o con la voz: desde la web, la aplicación del teléfono o Telegram.'
               );
-              if (modo !== 'herramientas') await decir('Le armo la ficha en PDF, el plano profesional, el perfil del terreno, los archivos para Google Earth y AutoCAD, y le aviso cuando algo cambia. Pregúnteme lo que quiera.');
+              if (modo !== 'herramientas') await decir('Le armo la ficha en PDF, el plano profesional, el perfil del terreno, los archivos para Google Earth y AutoCAD, y le aviso cuando algo cambia.');
+              /*
+               * Dos voces: la ingeniera Tatiana entra a la conversación (Eleven v4, diálogo a varias
+               * voces). Es lo mismo que hace el botón «Como conversación» con cualquier respuesta.
+               */
+              if (sigue() && !saltoEste()) {
+                const lineas = [
+                  { quien: 'tatiana', nombre: 'Ing. Tatiana', texto: '[curious] Doctor, ¿y si alguien prefiere que se lo expliquen conversando, como ahora?' },
+                  { quien: 'electrum', nombre: 'Dr Electrum', texto: '[warmly] Para eso está usted, Tatiana. [chuckles] Toquen «Como conversación» debajo de cualquier respuesta, o díganme «explícamelo como conversación».' },
+                  { quien: 'tatiana', nombre: 'Ing. Tatiana', texto: '[laughs] Y yo le hago las preguntas que haría cualquiera. Perfecto.' },
+                ];
+                setTexto(lineas.map((l) => `${l.nombre}: ${l.texto.replace(/\[[^\]]+\]\s*/g, '')}`).join('\n'));
+                c.current.cara('SPEAKING');
+                await Promise.race([hablarDialogo(lineas, headersElectrum()), new Promise<void>((r) => (despertar.current = r))]);
+                c.current.cara('IDLE');
+              }
             },
           },
         };
 
         const ORDEN: Record<ModoRecorrido, string[]> = {
-          completo: ['intro', 'potencial', 'satelite', 'zona', 'analisis', 'oro', 'conflictos', 'cierre'],
-          geologico: ['intro', 'zona', 'analisis', 'oro', 'alteracion', 'cierre'],
+          // El completo lo cuenta todo: la geología, lo legal y las herramientas, en ese orden.
+          completo: ['intro', 'potencial', 'satelite', 'zona', 'analisis', 'oro', 'conflictos', 'traslapes', 'vencimientos', 'marco', 'fichaBotones', 'geologicoVivo', 'timelapse', 'manos', 'cierre'],
+          geologico: ['intro', 'zona', 'analisis', 'oro', 'alteracion', 'geologicoVivo', 'cierre'],
           legal: ['intro', 'conflictos', 'traslapes', 'vencimientos', 'marco', 'cierre'],
-          herramientas: ['barra', 'capasBoton', 'herramientasMapa', 'fichaBotones', 'chat', 'pestanas', 'reparto', 'cierre'],
+          herramientas: ['barra', 'capasBoton', 'herramientasMapa', 'fichaBotones', 'geologicoVivo', 'timelapse', 'chat', 'manos', 'pestanas', 'reparto', 'cierre'],
         };
         const lista = ORDEN[modo].filter((k) => C[k].hay);
         setTotal(lista.length);
@@ -636,6 +771,7 @@ export function Recorrido({
           if (!sigue()) return;
           await C[k].correr();
         }
+        natural = sigue();
       } catch (e: any) {
         if (sigue()) setTexto(`No pude seguir el recorrido: ${String(e?.message || e)}`);
         await espera(3500);
@@ -649,22 +785,31 @@ export function Recorrido({
           c.current.fondo(antes.fondo);
           c.current.alto(antes.alto);
           c.current.tocar(null);
+          c.current.enfocar(null);
+          c.current.visor(null);
           c.current.cara('IDLE');
           setFoco(null);
           // Sin el cuadro, el mapa vuelve a encuadrar en toda la pantalla.
           c.current.orden({ accion: 'orbitar', grados: 0, ms: 900, margen: SIN_MARGEN });
           setTexto('');
-          onTerminar();
+          // Ya quedó todo restaurado: que la limpieza del efecto no lo repita (eran dos órbitas seguidas).
+          restaurado.current = true;
+          onTerminar(natural);
         }
       }
     })();
 
+    restaurado.current = false;
     return () => {
       vivo.current++;
       callar();
       despertar.current?.();
+      setTitular(null);
+      if (restaurado.current) return;
       // Detenido a mitad: también se deshace lo que el recorrido encendió.
       const c0 = c.current;
+      c0.enfocar(null);
+      c0.visor(null);
       c0.rasters(antes.rasters);
       c0.muestras(antes.muestras);
       c0.capas(() => antes.extras);
@@ -708,7 +853,7 @@ export function Recorrido({
     callar();
     despertar.current?.();
     setTexto('');
-    onTerminar();
+    onTerminar(false);
   };
 
   /*
@@ -724,6 +869,7 @@ export function Recorrido({
 
   return (
     <>
+    <Cine titular={titular} />
     {foco && <Foco selector={foco} />}
     <div
       ref={caja}
@@ -762,6 +908,9 @@ export function Recorrido({
               {n > 0 ? `Capítulo ${n} de ${total} · ` : ''}
               {cap.titulo}
             </span>
+            <button type="button" onClick={alternarPantallaCompleta} className="shrink-0 rounded-md px-1.5 text-[13px] leading-none text-[#9FB0B8] hover:text-white cursor-pointer" aria-label="Pantalla completa" title="Pantalla completa">
+              ⛶
+            </button>
             <button type="button" onClick={saltar} disabled={n === 0} className="shrink-0 rounded-md border border-white/15 px-2 py-0.5 font-mono text-[10px] tracking-[0.1em] uppercase text-[#DCE5EA] hover:border-white/35 disabled:opacity-40 cursor-pointer" title="Pasar al capítulo siguiente">
               Siguiente ▸
             </button>
@@ -846,16 +995,89 @@ function Foco({ selector }: { selector: string }) {
         width: r.w,
         height: r.h,
         border: `2px solid ${AMBAR}`,
+        // El oscurecido es quieto: animar una sombra de 9999 px repintaba la pantalla entera por cuadro.
         boxShadow: `0 0 0 9999px rgba(0,0,0,.42), 0 0 22px 4px ${AMBAR}88`,
-        animation: 'electrum-foco 1.6s ease-in-out infinite',
       }}
     >
-      <style>{'@keyframes electrum-foco{0%,100%{outline:0 solid transparent}50%{box-shadow:0 0 0 9999px rgba(0,0,0,.42),0 0 34px 8px #FFAE3Baa}}'}</style>
+      {/* Lo que late es solo un borde encima del anillo: barato de dibujar. */}
+      <span className="absolute -inset-[3px] rounded-[14px] border-2" style={{ borderColor: AMBAR, animation: 'electrum-foco 1.6s ease-in-out infinite' }} />
+      <style>{'@keyframes electrum-foco{0%,100%{opacity:.15;transform:scale(1)}50%{opacity:.9;transform:scale(1.015)}}'}</style>
     </div>
   );
 }
 
-/** Para arrancarlo desde un toque: desbloquea el audio en ese mismo gesto. */
+/*
+ * LO CINEMATOGRÁFICO: barras de cine arriba y abajo mientras dura el recorrido, y el título de cada
+ * capítulo que aparece grande al centro unos segundos y se desvanece. No tapan nada que se toque
+ * (pointer-events: none) y las barras van justo encima del mapa pero debajo de todos sus controles:
+ * en el recorrido de herramientas se señalan esos botones, y una barra encima los tapaba.
+ */
+function Cine({ titular }: { titular: { n: number; titulo: string; clave: number } | null }) {
+  const [visible, setVisible] = useState<typeof titular>(null);
+  useEffect(() => {
+    if (!titular) return setVisible(null);
+    setVisible(titular);
+    const t = setTimeout(() => setVisible((v) => (v?.clave === titular.clave ? null : v)), 2600);
+    return () => clearTimeout(t);
+  }, [titular]);
+  return (
+    <>
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-[1] bg-black" style={{ height: 'min(6vh, 46px)', animation: 'electrum-barra-arriba .9s ease-out both' }} />
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 z-[1] bg-black" style={{ height: 'min(6vh, 46px)', animation: 'electrum-barra-abajo .9s ease-out both' }} />
+      {visible && (
+        <div key={visible.clave} aria-hidden className="pointer-events-none fixed inset-x-0 top-[26%] z-[31] flex flex-col items-center px-6 text-center" style={{ animation: 'electrum-titular 2.6s ease-in-out both' }}>
+          <span className="font-mono text-[11px] tracking-[0.4em] text-[#FFAE3B]/80 md:text-[12px]">{String(visible.n).padStart(2, '0')}</span>
+          <span className="mt-1 font-display text-[26px] font-bold leading-tight text-white drop-shadow-[0_4px_24px_rgba(0,0,0,.9)] md:text-[40px]">{visible.titulo}</span>
+          <span className="mt-2 h-px w-24 bg-gradient-to-r from-transparent via-[#FFAE3B] to-transparent" />
+        </div>
+      )}
+      <style>{`@keyframes electrum-barra-arriba{from{transform:translateY(-100%)}to{transform:none}}@keyframes electrum-barra-abajo{from{transform:translateY(100%)}to{transform:none}}@keyframes electrum-titular{0%{opacity:0;transform:translateY(10px) scale(.98);filter:blur(4px)}18%{opacity:1;transform:none;filter:none}78%{opacity:1}100%{opacity:0;transform:translateY(-6px)}}`}</style>
+    </>
+  );
+}
+
+/** Si el recorrido puso la pantalla completa (para quitarla al terminar, y solo en ese caso). */
+let entramosAPantallaCompleta = false;
+
+export function entrarPantallaCompleta() {
+  try {
+    if (document.fullscreenElement || !document.fullscreenEnabled) return;
+    const p = document.documentElement.requestFullscreen?.();
+    entramosAPantallaCompleta = true;
+    p?.catch(() => {
+      entramosAPantallaCompleta = false;
+    });
+  } catch {
+    /* el navegador no deja: se sigue en la ventana */
+  }
+}
+
+/** Sale de la pantalla completa solo si la puso el recorrido: si ya estaba así, se respeta. */
+export function salirPantallaCompleta() {
+  try {
+    if (entramosAPantallaCompleta && document.fullscreenElement) void document.exitFullscreen().catch(() => {});
+  } catch {
+    /* nada que hacer */
+  }
+  entramosAPantallaCompleta = false;
+}
+
+function alternarPantallaCompleta() {
+  try {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+      entramosAPantallaCompleta = false;
+    } else entrarPantallaCompleta();
+  } catch {
+    /* sin pantalla completa en este navegador */
+  }
+}
+
+/**
+ * Para arrancarlo desde un toque: desbloquea el audio y pone la pantalla completa en ese mismo
+ * gesto (los navegadores solo dejan hacer las dos cosas dentro de un toque).
+ */
 export function prepararRecorrido() {
   desbloquear();
+  entrarPantallaCompleta();
 }

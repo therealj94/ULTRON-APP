@@ -68,7 +68,9 @@ export function kml(nombre: string, g: Geometry, datos: Array<[string, string]>)
  * DXF R12 (el más compatible: AutoCAD, QGIS, LibreCAD), en metros UTM 16N WGS84: una POLYLINE
  * cerrada por anillo en la capa CONCESION y el número de cada vértice en la capa VERTICES.
  */
-export function dxf(nombre: string, g: Geometry): string {
+/** DXF en metros UTM 16N: WGS84 por omisión, o NAD27 (lo que recibe INHGEOMIN). */
+export function dxf(nombre: string, g: Geometry, datum: 'WGS84' | 'NAD27' = 'WGS84'): string {
+  const UTM = datum === 'NAD27' ? UTM16_NAD27 : UTM16_WGS;
   const L: string[] = [];
   const par = (c: number | string, v: number | string) => L.push(String(c), typeof v === 'number' ? v.toFixed(3) : v);
   par(0, 'SECTION');
@@ -88,7 +90,7 @@ export function dxf(nombre: string, g: Geometry): string {
       par(70, 1);
       const r = anillo.slice(0, -1);
       for (const [lon, lat] of r) {
-        const [e, nn] = proj4('EPSG:4326', UTM16_WGS, [lon, lat]);
+        const [e, nn] = proj4('EPSG:4326', UTM, [lon, lat]);
         par(0, 'VERTEX');
         par(8, i === 0 ? 'CONCESION' : 'HUECO');
         par(10, e);
@@ -98,7 +100,7 @@ export function dxf(nombre: string, g: Geometry): string {
       par(0, 'SEQEND');
       if (i === 0) {
         for (const [lon, lat] of r) {
-          const [e, nn] = proj4('EPSG:4326', UTM16_WGS, [lon, lat]);
+          const [e, nn] = proj4('EPSG:4326', UTM, [lon, lat]);
           par(0, 'TEXT');
           par(8, 'VERTICES');
           par(10, e);
@@ -112,7 +114,7 @@ export function dxf(nombre: string, g: Geometry): string {
   }
   par(0, 'TEXT');
   par(8, 'ROTULO');
-  const [cx, cy] = polis.length ? proj4('EPSG:4326', UTM16_WGS, polis[0][0][0] as [number, number]) : [0, 0];
+  const [cx, cy] = polis.length ? proj4('EPSG:4326', UTM, polis[0][0][0] as [number, number]) : [0, 0];
   par(10, cx);
   par(20, cy + 20);
   par(30, 0);
@@ -143,6 +145,7 @@ export function montarRutasExportar(app: Express) {
     if (!hayBase()) return res.status(503).json({ error: 'El catastro no está conectado en este servidor.', honesto: true });
     const id = Math.floor(Number(req.params.id));
     const formato = String(req.query.formato || '').toLowerCase();
+    const nad27 = String(req.query.datum || '').toLowerCase() === 'nad27';
     if (!(id > 0)) return res.status(400).json({ error: 'Id inválido.', honesto: true });
     if (!['kml', 'geojson', 'dxf', 'csv'].includes(formato)) return res.status(400).json({ error: 'Formato: kml, geojson, dxf o csv.', honesto: true });
     try {
@@ -170,14 +173,14 @@ export function montarRutasExportar(app: Express) {
         cuerpo = JSON.stringify({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: geo.geojson, properties: { nombre: c.nombre, ...Object.fromEntries(datos) } }] });
         tipo = 'application/geo+json';
       } else if (formato === 'dxf') {
-        cuerpo = dxf(c.nombre, geo.geojson);
+        cuerpo = dxf(c.nombre, geo.geojson, nad27 ? 'NAD27' : 'WGS84');
         tipo = 'application/dxf';
       } else {
         cuerpo = csvVertices(verticesDe(geo.geojson));
         tipo = 'text/csv; charset=utf-8';
       }
       res.setHeader('Content-Type', tipo);
-      res.setHeader('Content-Disposition', `attachment; filename="${base}.${formato === 'csv' ? 'vertices.csv' : formato}"`);
+      res.setHeader('Content-Disposition', `attachment; filename="${base}${formato === 'dxf' && nad27 ? '-nad27' : ''}.${formato === 'csv' ? 'vertices.csv' : formato}"`);
       return res.send(cuerpo);
     } catch (e: any) {
       console.error('[exportar]', String(e?.message || e).slice(0, 200));

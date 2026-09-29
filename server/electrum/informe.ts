@@ -38,6 +38,7 @@ import { documentoPdf, medirJpeg, type Bloque } from '../../lib/pdf';
 import { entornoDe, NOMBRE_ROL, pct, RADIO_LEJOS_M, RADIO_POBLADOS_M, type Entorno, type Seccion } from './entorno';
 import { planoConcesion } from './plano';
 import { verticesDe } from './exportar';
+import { sistemaPara } from './datum';
 
 export const AMBAR: [number, number, number] = [1, 0.68, 0.23];
 
@@ -109,6 +110,12 @@ export type OpcionesInforme = {
   lectura?: string;
   /** Captura del mapa en JPEG, tal como la da el lienzo de MapLibre. */
   mapa?: Buffer;
+  /**
+   * A quién se presenta el plano: «INHGEOMIN» lo pide en NAD27 / UTM (cuadrícula en múltiplos de
+   * 100) y con firma y sello del ingeniero; «ICF» y «SERNA», en WGS84 / UTM. Sin esto, ficha de
+   * consulta en WGS84 y sin casilla de firma.
+   */
+  presentadoA?: string;
 };
 
 function fichaCampos(c: FilaConcesion): Array<[string, string]> {
@@ -360,6 +367,9 @@ export async function informeConcesion(
     planoConcesion(f.id, {
       subtitulo: [f.expediente ? `Expediente ${f.expediente}` : null, f.titular || 'sin titular declarado'].filter(Boolean).join(' · '),
       pie: `Dr Electrum FP · ${fecha()}`,
+      datum: opts.presentadoA ? sistemaPara(opts.presentadoA).datum : 'WGS84',
+      firma: !!opts.presentadoA,
+      presentadoA: opts.presentadoA,
     }).catch((e) => ({ error: String(e?.message || e).slice(0, 160) })),
   ]);
 
@@ -420,12 +430,14 @@ export async function informeConcesion(
     if (vs.length) {
       const tope = 40;
       const m = (n: number) => new Intl.NumberFormat('es-HN', { maximumFractionDigits: 1, minimumFractionDigits: 1 }).format(n);
+      // Para INHGEOMIN, NAD27 va primero: es el que se presenta; WGS84 queda de referencia.
+      const nad27Primero = !!opts.presentadoA && sistemaPara(opts.presentadoA).datum === 'NAD27';
       bloques.push(
         { tipo: 'seccion', texto: 'Vértices del polígono' },
         {
           tipo: 'tabla',
-          cabecera: ['#', 'Este WGS84', 'Norte WGS84', 'Este NAD27', 'Norte NAD27'],
-          filas: vs.slice(0, tope).map((v) => [String(v.n), m(v.e), m(v.nn), m(v.e27), m(v.n27)]),
+          cabecera: nad27Primero ? ['#', 'Este NAD27', 'Norte NAD27', 'Este WGS84', 'Norte WGS84'] : ['#', 'Este WGS84', 'Norte WGS84', 'Este NAD27', 'Norte NAD27'],
+          filas: vs.slice(0, tope).map((v) => (nad27Primero ? [String(v.n), m(v.e27), m(v.n27), m(v.e), m(v.nn)] : [String(v.n), m(v.e), m(v.nn), m(v.e27), m(v.n27)])),
           anchos: [30, 118, 118, 118, 118],
         },
         {

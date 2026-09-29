@@ -1,0 +1,20 @@
+{"q": "gira un poquito a la derecha y ya", "e": ["rotar_derecha"], "nota": "diminutivo y cierre"}
+{"q": "muévete para arriba doctor", "e": ["mover_arriba"], "nota": ""}
+{"q": "¿qué hay más arriba en el mapa?", "e": ["ninguna"], "nota": "pregunta con «arriba»"}
+{"q": "siguiente pregunta: ¿cuántas vencen?", "e": ["ninguna"], "nota": "«siguiente» dentro de una pregunta"}
+{"q": "cierra la sesión", "e": ["ninguna"], "nota": "cerrar sesión no es cerrar ventana (lo hace el botón Salir)"}
+{"q": "para, para, para", "e": ["detener"], "nota": ""}
+{"q": "ya cállate un rato", "e": ["callar"], "nota": ""}
+{"q": "pon el mapa en satélite y acércate", "e": ["fondo_satelite"], "nota": "dos órdenes: gana la primera"}
+{"q": "dale zoom a los almendros", "e": ["ninguna"], "nota": "con nombre: lo resuelve el cerebro volando"}
+{"q": "rota el mapa noventa grados", "e": ["rotar_derecha"], "nota": ""}
+{"q": "mira desde arriba", "e": ["vista_cenital"], "nota": ""}
+{"q": "¿cómo pongo el 3d?", "e": ["ninguna"], "nota": "pregunta cómo, no ordena"}
+{"q": "activa el 3d", "e": ["relieve_3d"], "nota": ""}
+{"q": "hazme la ficha de la concesión el tule", "e": ["ninguna"], "nota": "ficha de OTRA concesión con nombre"}
+{"q": "hazme la ficha de esta", "e": ["ficha_pdf"], "nota": ""}
+{"q": "vuelve a honduras completa", "e": ["ver_pais"], "nota": ""}
+{"q": "¿dónde estoy parado según el mapa?", "e": ["mi_ubicacion"], "nota": ""}
+{"q": "¿dónde queda juticalpa?", "e": ["ninguna"], "nota": "lugar con nombre"}
+{"q": "un poco más a la izquierda", "e": ["mover_izquierda"], "nota": ""}
+{"q": "gira hacia la izquierda un poquito", "e": ["rotar_izquierda"], "nota": ""}

@@ -139,11 +139,27 @@ export function capasDeResaltado() {
       source: 'resaltada',
       paint: { 'fill-color': RESALTE, 'fill-opacity': 0.22 },
     },
+    /*
+     * Halo ancho y difuso debajo del borde: la concesión nombrada se lee sobre el satélite, sobre
+     * el relleno de prospectividad y sobre las anomalías del satélite (rosadas), que antes la tapaban.
+     */
+    {
+      id: 'resaltada-halo',
+      type: 'line',
+      source: 'resaltada',
+      paint: { 'line-color': RESALTE, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 8, 14, 16], 'line-blur': 7, 'line-opacity': 0.55 },
+    },
     {
       id: 'resaltada-borde',
       type: 'line',
       source: 'resaltada',
-      paint: { 'line-color': RESALTE, 'line-width': 3, 'line-opacity': 1 },
+      paint: { 'line-color': RESALTE, 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 2.5, 14, 4], 'line-opacity': 1 },
+    },
+    {
+      id: 'resaltada-nucleo',
+      type: 'line',
+      source: 'resaltada',
+      paint: { 'line-color': '#FFFFFF', 'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.8, 14, 1.4], 'line-opacity': 0.95 },
     },
   ];
 }

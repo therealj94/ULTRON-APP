@@ -73,6 +73,11 @@ export interface FaceCanvasProps {
   /** Reporta cada gesto táctil o de expresión que la cara ejecuta. */
   onGesto?: (g: Gesto) => void;
   lipLevel?: number;
+  /**
+   * Lee el volumen de la voz en cada cuadro (0..1), sin re-renderizar a 60 Hz. `-1` = no hay
+   * medidor: la boca usa su ritmo propio mientras habla. Si falta, manda `lipLevel`.
+   */
+  leerLabio?: () => number;
   showHud?: boolean;
   /** Casco minero con lámpara (solo Dr Electrum). */
   casco?: boolean;
@@ -330,6 +335,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   onCloseOverlays,
   onGesto,
   lipLevel = 0,
+  leerLabio,
   showHud = false,
 }) => {
   void onToggleVisor;
@@ -337,6 +343,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const lipRef = useRef(0);
   lipRef.current = lipLevel;
+  const leerLabioRef = useRef(leerLabio);
+  leerLabioRef.current = leerLabio;
   const cameraFlashLiveRef = useRef(false);
   cameraFlashLiveRef.current = isCameraFlashing;
 
@@ -422,6 +430,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   });
 
   const vidaRef = useRef<Vida>(crearVida(N_MOTAS));
+  /** Los gestos que acompañan a la voz: ritmo, ceja en los golpes, mirada que se va y vuelve. */
+  const hablaRef = useRef({ prom: 0, golpe: 0, cabeceo: 0, miradaIn: 2.5, mirada: 0, miradaX: 0, miradaY: 0, callado: 0, parpadeoDado: true });
   const expRef = useRef<Expresion>({ tipo: null, t: 0, dur: 0, nextPulse: 0 });
 
   // Seguimiento táctil
@@ -932,7 +942,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const X = expRef.current;
       S.t += dt;
       const age = S.t - S.faceSince;
-      const lip = clamp(lipRef.current, 0, 1);
+      const medido = leerLabioRef.current ? leerLabioRef.current() : null;
+      const lip = clamp(medido != null && medido >= 0 ? medido : lipRef.current, 0, 1);
       if (lip > 0.02) {
         S.lipSeen = lip;
         S.lipSeenAt = S.t;
@@ -1013,6 +1024,54 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       // Arrastre: la boca se estira levemente hacia el lado del dedo.
       const arrastrando = touchState.current.downTime > 0 && touchState.current.movedDistance > 12 && V.lastTouch;
       V.mouthStretchT = arrastrando && V.lastTouch ? clamp(V.lastTouch.x * 2.2, -1, 1) * 0.7 : 0;
+
+      /*
+       * ── GESTOS AL HABLAR ── Una persona no habla con la cabeza quieta: marca los golpes de voz con
+       * la ceja y un leve cabeceo, se balancea, aparta la mirada un instante para pensar la frase
+       * y vuelve a quien escucha, y parpadea al cerrar una idea. Todo sale de la voz medida.
+       */
+      {
+        const G = hablaRef.current;
+        const hablandoAhora = S.face === 'SPEAKING';
+        const nivel = hablandoAhora ? (medido === -1 ? 0.35 + 0.3 * Math.abs(Math.sin(S.t * 5.3)) : lip) : 0;
+        G.prom = approach(G.prom, nivel, 2.2, dt);
+        // Golpe de voz: el nivel salta muy por encima del promedio reciente.
+        if (hablandoAhora && nivel - G.prom > 0.22 && G.golpe < 0.3) {
+          G.golpe = 1;
+          G.cabeceo = 1;
+        }
+        G.golpe = G.golpe > 0.01 ? G.golpe * (1 - dt * 4.5) : 0;
+        G.cabeceo = G.cabeceo > 0.01 ? G.cabeceo * (1 - dt * 6) : 0;
+        V.browLiftT += 0.38 * G.golpe;
+        V.jolt -= 0.018 * G.cabeceo; // la cabeza baja un pelo en el golpe, como asintiendo
+        if (hablandoAhora) {
+          V.tiltT += 0.028 * Math.sin(S.t * 0.83) + 0.012 * Math.sin(S.t * 2.1);
+          V.swayX += 0.012 * Math.sin(S.t * 0.61);
+          // Mirada que se va a pensar y vuelve.
+          G.miradaIn -= dt;
+          if (G.miradaIn <= 0) {
+            G.mirada = 1;
+            G.miradaX = (Math.random() < 0.5 ? -1 : 1) * (0.25 + Math.random() * 0.2);
+            G.miradaY = -0.12 - Math.random() * 0.12;
+            G.miradaIn = 3 + Math.random() * 3.5;
+          }
+          // Parpadeo al cerrar la frase: tras un silencio corto, uno solo.
+          if (nivel < 0.03) G.callado += dt;
+          else {
+            G.callado = 0;
+            G.parpadeoDado = false;
+          }
+          if (G.callado > 0.28 && !G.parpadeoDado) {
+            G.parpadeoDado = true;
+            A.next = Math.min(A.next, 0.02);
+          }
+        } else {
+          G.callado = 0;
+        }
+        G.mirada = G.mirada > 0.01 ? G.mirada * (1 - dt * 1.6) : 0;
+        V.gazeXT += G.miradaX * Math.min(1, G.mirada * 1.6);
+        V.gazeYT += G.miradaY * Math.min(1, G.mirada * 1.6);
+      }
 
       // ── atención a la persona (cámara): brillo +8 %, giro sutil; al perderla vuelve despacio ──
       const camNow = cameraGazeRef.current;
@@ -1321,7 +1380,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       const hablando =
         S.face === 'SPEAKING' || S.face === 'SING' || S.face === 'PRAY' || X.tipo === 'canto' || X.tipo === 'oracion';
       const hablaConLabio = hablando && lip > 0.02;
-      const sinSenal = hablando && S.t - S.lipSeenAt > 1.5;
+      // Con medidor real, un silencio es un silencio (la boca cierra); sin medidor, ritmo propio ya.
+      const sinSenal = hablando && (medido === -1 || (medido == null && S.t - S.lipSeenAt > 1.5));
       let mouthWant: number;
       let jawT = 0;
       /** Elige un visema nuevo: redondo («o/u»), ancho («e/i») o neutro («a»), con asimetría propia. */

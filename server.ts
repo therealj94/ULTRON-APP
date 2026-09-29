@@ -57,6 +57,7 @@ import {
 } from './server/electrum/hilo';
 import { TODAS as TODAS_ELECTRUM } from './server/electrum/manos';
 import { compartirInforme, guardarInforme, informeCartera, informeConcesion, tomarInforme } from './server/electrum/informe';
+import { mapaGeologico, TIPOS_MAPA_GEO, type TipoMapaGeo } from './server/electrum/mapa-geologico';
 import { aprender as aprenderElectrum, ojoQueLeyo } from './server/electrum/aprender';
 import {
   electrumBotListo,
@@ -89,6 +90,8 @@ import { cargarGeologia } from './server/electrum/geologia-datos';
 import { capaParaMapa, capasVisibles, fichaParaMapa, queHayAqui, rasgoParaMapa } from './server/electrum/explorar';
 import { mantenerTableroCaliente, tablero } from './server/electrum/tablero';
 import { clasificarPendientes } from './server/electrum/documentos-laya';
+import { interpretarComando } from './server/electrum/comando-voz';
+import { abrirDialogo, guionDialogo, lineasValidas, partirDialogo, PERSONAJES, segmentosDe } from './server/electrum/dialogo';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
   cargarMemoria,
@@ -746,7 +749,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
       }
     );
     if (!seFue) recordarHilo(clave, mensaje, salida.texto);
-    enviar('fin', { texto: salida.texto, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin, trazaId: salida.trazaId });
+    enviar('fin', { texto: salida.texto, voz: salida.voz, voces: salida.voces, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin, trazaId: salida.trazaId });
   } catch (e: any) {
     console.error('[electrum] turno en vivo falló:', String(e?.message || e).slice(0, 200));
     enviar('error', { error: 'Se me cayó el turno. Volvé a preguntarme.' });
@@ -842,6 +845,80 @@ app.post(
  * Oírle. Ruta propia por lo mismo que la voz: `/api/stt` está en la lista abierta de la APK, y un
  * transcriptor abierto es otra factura con la puerta quitada.
  */
+/**
+ * «Explícamelo como conversación»: el guion a varias voces (Dr Electrum y la ingeniera Tatiana) a
+ * partir de una respuesta. Lo escribe el cerebro; sin él, uno determinista sobre el mismo texto.
+ */
+app.post('/api/electrum/dialogo/guion', exigirPlataforma('electrum'), limitar(20), async (req, res) => {
+  const texto = String(req.body?.texto || '').trim();
+  if (!texto) return res.status(400).json({ error: 'Falta el texto que convertir en diálogo.', honesto: true });
+  const { lineas, origen } = await guionDialogo(texto, req.body?.tema ? String(req.body.tema).slice(0, 200) : undefined);
+  if (!lineas.length) return res.status(422).json({ error: 'No pude armar un diálogo con eso.', honesto: true });
+  return res.json({
+    origen,
+    lineas: lineas.map((l) => ({ ...l, nombre: PERSONAJES[l.quien].nombre })),
+    trozos: partirDialogo(lineas).map((t) => t.length),
+  });
+});
+
+/**
+ * El audio de un trozo de diálogo (el navegador los pide en orden), a medida que ElevenLabs lo
+ * genera, con QUIÉN HABLA en cada momento: JSON por líneas {a: audio en base64, s: [{q, d, h}]}.
+ * Las caras de la pantalla (una por personaje) se animan con esos tiempos.
+ */
+app.post('/api/electrum/dialogo', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  const lineas = lineasValidas(req.body?.lineas);
+  const [trozo] = partirDialogo(lineas);
+  if (!trozo?.length) return res.status(400).json({ error: 'Faltan las líneas del diálogo.', honesto: true });
+  const r = await abrirDialogo(trozo);
+  if (!r?.body) return res.status(503).json({ error: 'La voz del diálogo no está disponible ahora.', honesto: true });
+  res.setHeader('Content-Type', 'application/x-ndjson');
+  res.setHeader('Cache-Control', 'no-store');
+  const lector = r.body.getReader();
+  res.on('close', () => {
+    if (!res.writableEnded) lector.cancel().catch(() => undefined);
+  });
+  const dec = new TextDecoder();
+  let resto = '';
+  const pasar = (linea: string) => {
+    if (!linea.trim()) return;
+    try {
+      const d = JSON.parse(linea);
+      res.write(JSON.stringify({ a: typeof d.audio_base64 === 'string' ? d.audio_base64 : '', s: segmentosDe(d.voice_segments) }) + '\n');
+    } catch {
+      /* una línea rota no tumba el diálogo */
+    }
+  };
+  try {
+    for (;;) {
+      const { done, value } = await lector.read();
+      if (done) break;
+      resto += dec.decode(value, { stream: true });
+      const partes = resto.split('\n');
+      resto = partes.pop() || '';
+      partes.forEach(pasar);
+    }
+    pasar(resto);
+  } catch (e: any) {
+    console.warn('[dialogo] cortado', String(e?.message || e).slice(0, 120));
+  }
+  res.end();
+});
+
+/**
+ * Una frase corta que el navegador no reconoció como orden: Laya dice si es una orden de pantalla
+ * (y cuál) o una pregunta. Nunca falla hacia el usuario: sin Laya, `id: null` y la frase va al cerebro.
+ */
+app.post('/api/electrum/comando', exigirPlataforma('electrum'), limitar(120), async (req, res) => {
+  const texto = String(req.body?.texto || '').slice(0, 300);
+  if (!texto.trim()) return res.status(400).json({ error: 'Falta el texto.', honesto: true });
+  try {
+    return res.json(await interpretarComando(texto));
+  } catch {
+    return res.json({ id: null, p: 0, motivo: 'error', ms: 0 });
+  }
+});
+
 app.post('/api/electrum/oir', exigirPlataforma('electrum'), limitar(40), async (req, res) => {
   const audio = bufferDeCualquier(req.body?.audio);
   if (!audio || audio.length < 400) return res.status(400).json({ error: 'No me llegó audio.', honesto: true });
@@ -921,7 +998,10 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
   }
 
   try {
-    const opts = { quien, lectura: req.body?.lectura ? String(req.body.lectura) : undefined, mapa };
+    // A quién se presenta: solo las tres que se conocen (decide el datum del plano y la casilla de firma).
+    const presentar = String(req.body?.presentar_a || '').toUpperCase();
+    const presentadoA = ['INHGEOMIN', 'ICF', 'SERNA'].includes(presentar) ? presentar : undefined;
+    const opts = { quien, lectura: req.body?.lectura ? String(req.body.lectura) : undefined, mapa, presentadoA };
     const r =
       tipo === 'cartera'
         ? await informeCartera(opts)
@@ -1015,6 +1095,27 @@ app.get('/api/electrum/informe/:id', exigirPlataforma('electrum'), limitar(60), 
   res.setHeader('Content-Disposition', `${imagen || esInvitado(req) ? 'inline' : 'attachment'}; filename="${r.informe.nombre}"`);
   res.setHeader('Cache-Control', 'private, no-store');
   return res.end(r.informe.pdf);
+});
+
+/**
+ * Un mapa geológico directo, sin pasar por el cerebro: lo usa el recorrido para enseñarlo en vivo
+ * (dibujarlo de verdad tarda unos segundos; el modelo, además, varios más). Se guarda como los
+ * informes —con dueño y media hora de vida— y se ve en el visor.
+ */
+app.post('/api/electrum/mapa-geologico', exigirPlataforma('electrum'), limitar(12), async (req, res) => {
+  const concesion = Math.floor(Number(req.body?.concesion_id));
+  if (!(concesion > 0)) return res.status(400).json({ error: 'Falta la concesión.', honesto: true });
+  const tipo = (TIPOS_MAPA_GEO as readonly string[]).includes(String(req.body?.tipo)) ? (String(req.body.tipo) as TipoMapaGeo) : 'litologico';
+  try {
+    const m = await mapaGeologico(tipo, { concesion }, { pie: 'Dr Electrum FP' });
+    if ('error' in m) return res.status(422).json({ error: m.error, honesto: true });
+    const nombre = `${tipo}-${concesion}.jpg`;
+    const id = guardarInforme({ pdf: m.jpeg, nombre, dicho: m.titulo, tipo: 'image/jpeg' }, identidadDe(req)?.persona.id || null);
+    return res.json({ id, url: `/api/electrum/informe/${id}`, nombre, titulo: m.titulo, tipo: 'image/jpeg', bytes: m.jpeg.length, honesto: true });
+  } catch (e: any) {
+    console.warn('[electrum] mapa geológico directo', String(e?.message || e).slice(0, 160));
+    return res.status(502).json({ error: 'No pude dibujar el mapa ahora.', honesto: true });
+  }
 });
 
 /**

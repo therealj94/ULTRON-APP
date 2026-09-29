@@ -1,0 +1,151 @@
+{"q": "Rotalo para la derecha porfa", "e": ["rotar_derecha"]}
+{"q": "Oye dónde queda catacamas", "e": ["ninguna"]}
+{"q": "Oye corre la vista al este", "e": ["mover_derecha"]}
+{"q": "la pestaña de infraestructura si puedes", "e": ["abrir_infra"]}
+{"q": "Subeme el mapa", "e": ["mover_arriba"]}
+{"q": "Oye enséñame el cambio año por año de esta", "e": ["timelapse"]}
+{"q": "eh, bájame el mapa rápido", "e": ["mover_abajo"]}
+{"q": "rotalo para la izquierda por favor.", "e": ["rotar_izquierda"]}
+{"q": "doctor que hay al este de juticalpa", "e": ["ninguna"]}
+{"q": "Ahora aléjalo más.", "e": ["zoom_menos"]}
+{"q": "oye, ¿donde queda catacamas?", "e": ["ninguna"]}
+{"q": "Este abre el resumen de cifras ahí", "e": ["abrir_tablero"]}
+{"q": "oye da la vuelta de dron ya", "e": ["orbitar"]}
+{"q": "mira, dale una vuelta entera.", "e": ["orbitar"]}
+{"q": "ey sácame el pdf de esta ya.", "e": ["ficha_pdf"]}
+{"q": "a ver la pestaña de chat", "e": ["abrir_consulta"]}
+{"q": "Mira la pestana de archivos por favor", "e": ["abrir_expedientes"]}
+{"q": "a ver arma la ficha de la concesion los pinares", "e": ["ninguna"]}
+{"q": "este... quita ese recuadro gracias", "e": ["cerrar"]}
+{"q": "Eh, ¿el 3d es exacto?", "e": ["ninguna"]}
+{"q": "que se vea más la conversación", "e": ["mas_chat"]}
+{"q": "porfa orienta el mapa como siempre un poquito", "e": ["norte_arriba"]}
+{"q": "si, la primera.", "e": ["ninguna"]}
+{"q": "Dale, el mapa de geología de esta por favor", "e": ["mapa_geologico"]}
+{"q": "Ok, la pestaña de archivos.", "e": ["abrir_expedientes"]}
+{"q": "ahora giralo al reves del reloj", "e": ["rotar_izquierda"]}
+{"q": "Porfa toda la pantalla si puedes", "e": ["pantalla_completa"]}
+{"q": "apaga lo tridimensional", "e": ["quitar_3d"]}
+{"q": "eh, ¿qué es la vista cenital?", "e": ["ninguna"]}
+{"q": "doctor, quiero manejarte con las manos ahorita", "e": ["manos_on"]}
+{"q": "vista desde el cielo derecha hacia abajo porfa", "e": ["vista_cenital"]}
+{"q": "que se vea más el mapa porfa.", "e": ["mas_mapa"]}
+{"q": "dale, quiero la foto de satélite", "e": ["fondo_satelite"]}
+{"q": "Vaya, toda la pantalla ya", "e": ["pantalla_completa"]}
+{"q": "doctor, no quiero mas tour", "e": ["detener"]}
+{"q": "ey, deja el norte hacia arriba", "e": ["norte_arriba"]}
+{"q": "Este... despliégame las capas.", "e": ["abrir_capas"]}
+{"q": "dale, ya no me hables porfa", "e": ["callar"]}
+{"q": "Doctor electrum, quiero el mapa de calles.", "e": ["fondo_calles"]}
+{"q": "a ver llévame a la mina de san juan", "e": ["ninguna"]}
+{"q": "eh gira la economía alrededor del oro.", "e": ["ninguna"]}
+{"q": "a ver ya no quiero las manos", "e": ["manos_off"]}
+{"q": "A ver enséñame dónde ando.", "e": ["mi_ubicacion"]}
+{"q": "ahora quiero el mapa de calles ya", "e": ["fondo_calles"]}
+{"q": "¿cuál concesión es la siguiente en vencer?", "e": ["ninguna"]}
+{"q": "Doctor, llevame a la mina de san juan", "e": ["ninguna"]}
+{"q": "Qué es la vista cenital", "e": ["ninguna"]}
+{"q": "ve para el sur", "e": ["mover_abajo"]}
+{"q": "eh arma la ficha de la concesión los pinares", "e": ["ninguna"]}
+{"q": "Ya no quiero relieve ahorita.", "e": ["quitar_3d"]}
+{"q": "ahora agrándame el mapa un poquito", "e": ["mas_mapa"]}
+{"q": "este... da la vuelta de dron", "e": ["orbitar"]}
+{"q": "ok ensename las cifras nacionales", "e": ["abrir_tablero"]}
+{"q": "oye, muestrame la concesion el tule.", "e": ["ninguna"]}
+{"q": "¿cuántas solicitudes de exploración hay?", "e": ["ninguna"]}
+{"q": "quiero la vista inclinada", "e": ["inclinar"]}
+{"q": "ensename donde ando", "e": ["mi_ubicacion"]}
+{"q": "vaya, mitad y mitad la pantalla.", "e": ["mitad"]}
+{"q": "guarda silencio doctor un poquito", "e": ["callar"]}
+{"q": "Doctor electrum, vamos al proximo.", "e": ["siguiente"]}
+{"q": "partido en dos pues", "e": ["mitad"]}
+{"q": "A ver, quiero la ficha impresa de esta", "e": ["ficha_pdf"]}
+{"q": "Eh, el mapa de geologia de esta un poquito", "e": ["mapa_geologico"]}
+{"q": "este quiero manejarte con las manos doctor", "e": ["manos_on"]}
+{"q": "Oye si la primera", "e": ["ninguna"]}
+{"q": "ahora la vista de todo el país doctor", "e": ["ver_pais"]}
+{"q": "porfa acercamelo mas", "e": ["zoom_mas"]}
+{"q": "este... acércamelo más gracias", "e": ["zoom_mas"]}
+{"q": "Ok, evalúame esta concesión", "e": ["analizar"]}
+{"q": "oiga, ya terminemos el recorrido pues", "e": ["detener"]}
+{"q": "ahora ve para el norte", "e": ["mover_arriba"]}
+{"q": "evalúame esta concesión", "e": ["analizar"]}
+{"q": "a ver el menú de las capas ya.", "e": ["abrir_capas"]}
+{"q": "eh, gira la economia alrededor del oro.", "e": ["ninguna"]}
+{"q": "doctor activa la vista tridimensional ahi", "e": ["relieve_3d"]}
+{"q": "el mapa de geologia de esta ahorita", "e": ["mapa_geologico"]}
+{"q": "Oiga, ponle perspectiva", "e": ["inclinar"]}
+{"q": "Vaya, el menú de las capas", "e": ["abrir_capas"]}
+{"q": "ok, llevalo para la derecha", "e": ["mover_derecha"]}
+{"q": "doctor perfecto gracias", "e": ["ninguna"]}
+{"q": "este... ya terminemos el recorrido", "e": ["detener"]}
+{"q": "Ey dale para adelante ahorita", "e": ["siguiente"]}
+{"q": "vuelve a la ventana normal", "e": ["salir_pantalla"]}
+{"q": "Ahora quiero que me guíes por la plataforma", "e": ["abrir_recorrido"]}
+{"q": "ey partido en dos rapido", "e": ["mitad"]}
+{"q": "eh sacame de la pantalla completa", "e": ["salir_pantalla"]}
+{"q": "arranca el tutorial.", "e": ["abrir_recorrido"]}
+{"q": "la pestana de infraestructura", "e": ["abrir_infra"]}
+{"q": "Ey, activa la vista tridimensional porfa", "e": ["relieve_3d"]}
+{"q": "Dale quiero ver honduras completa doctor", "e": ["ver_pais"]}
+{"q": "¿donde queda catacamas?", "e": ["ninguna"]}
+{"q": "gira la economía alrededor del oro.", "e": ["ninguna"]}
+{"q": "activa la vista tridimensional ahorita", "e": ["relieve_3d"]}
+{"q": "porfa corre la vista al oeste", "e": ["mover_izquierda"]}
+{"q": "Este... ponle perspectiva.", "e": ["inclinar"]}
+{"q": "a ver, llévame a la mina de san juan", "e": ["ninguna"]}
+{"q": "ok, corre la vista al oeste", "e": ["mover_izquierda"]}
+{"q": "doctor el 3d es exacto", "e": ["ninguna"]}
+{"q": "Este... rotalo para la izquierda ya.", "e": ["rotar_izquierda"]}
+{"q": "porfa pon el antes y despues satelital", "e": ["timelapse"]}
+{"q": "doctor electrum, bajame el mapa.", "e": ["mover_abajo"]}
+{"q": "a ver perfecto gracias", "e": ["ninguna"]}
+{"q": "ponlo a todo lo que da la pantalla ya", "e": ["pantalla_completa"]}
+{"q": "a ver cierra esa ventanita si puedes", "e": ["cerrar"]}
+{"q": "por favor llevalo para la derecha", "e": ["mover_derecha"]}
+{"q": "a ver, llevame al chat", "e": ["abrir_consulta"]}
+{"q": "doctor deja el norte hacia arriba", "e": ["norte_arriba"]}
+{"q": "que es la vista cenital", "e": ["ninguna"]}
+{"q": "oye sí la primera.", "e": ["ninguna"]}
+{"q": "sácame el pdf de esta gracias", "e": ["ficha_pdf"]}
+{"q": "Bueno ponle el fondo de satélite rápido", "e": ["fondo_satelite"]}
+{"q": "mira, agrándame el mapa ya.", "e": ["mas_mapa"]}
+{"q": "mira arranca el tutorial ahí", "e": ["abrir_recorrido"]}
+{"q": "oye, abre el resumen de cifras", "e": ["abrir_tablero"]}
+{"q": "Mira llévame al chat", "e": ["abrir_consulta"]}
+{"q": "mira rótalo para la derecha", "e": ["rotar_derecha"]}
+{"q": "guarda silencio doctor gracias", "e": ["callar"]}
+{"q": "ponle el fondo de calles", "e": ["fondo_calles"]}
+{"q": "Oiga gíralo como las agujas del reloj", "e": ["rotar_derecha"]}
+{"q": "Dale hazle un analisis a esta porfa", "e": ["analizar"]}
+{"q": "¿qué hay al este de juticalpa?", "e": ["ninguna"]}
+{"q": "Doctor electrum ponle el fondo de satélite.", "e": ["fondo_satelite"]}
+{"q": "eh cuál concesión es la siguiente en vencer.", "e": ["ninguna"]}
+{"q": "dale, donde ando yo", "e": ["mi_ubicacion"]}
+{"q": "bueno ya no quiero las manos", "e": ["manos_off"]}
+{"q": "Eh, vista desde el cielo derecha hacia abajo", "e": ["vista_cenital"]}
+{"q": "alejalo mas", "e": ["zoom_menos"]}
+{"q": "cierra esa ventanita", "e": ["cerrar"]}
+{"q": "ey que se vea más la conversación", "e": ["mas_chat"]}
+{"q": "Por favor vuelve a la ventana normal gracias", "e": ["salir_pantalla"]}
+{"q": "doctor, llevalo para la izquierda", "e": ["mover_izquierda"]}
+{"q": "a ver que se vea más la conversación", "e": ["mas_chat"]}
+{"q": "eh, arma la ficha de la concesion los pinares.", "e": ["ninguna"]}
+{"q": "ya no quiero las manos", "e": ["manos_off"]}
+{"q": "A ver ve para el norte", "e": ["mover_arriba"]}
+{"q": "oye, ¿qué hay al este de juticalpa?", "e": ["ninguna"]}
+{"q": "Enciende el control de manos", "e": ["manos_on"]}
+{"q": "a ver, quiero ver honduras completa un poquito", "e": ["ver_pais"]}
+{"q": "ok vamos al próximo", "e": ["siguiente"]}
+{"q": "perfecto, gracias", "e": ["ninguna"]}
+{"q": "doctor, ¿el 3d es exacto?", "e": ["ninguna"]}
+{"q": "A ver, acercamelo mas", "e": ["zoom_mas"]}
+{"q": "Mira llévame a los archivos", "e": ["abrir_expedientes"]}
+{"q": "oye alejalo mas", "e": ["zoom_menos"]}
+{"q": "por favor llevame a infraestructura pues", "e": ["abrir_infra"]}
+{"q": "eh muéstrame la concesión el tule", "e": ["ninguna"]}
+{"q": "A ver vista desde el cielo derecha hacia abajo", "e": ["vista_cenital"]}
+{"q": "eh enséñame el cambio año por año de esta", "e": ["timelapse"]}
+{"q": "oye cuántas solicitudes de exploración hay", "e": ["ninguna"]}
+{"q": "Muéstrame la concesión el tule", "e": ["ninguna"]}
+{"q": "bueno apaga lo tridimensional", "e": ["quitar_3d"]}

@@ -26,7 +26,10 @@ import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/captura';
 import { sinMovimiento } from '../movimiento';
 import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
-import { callar, desbloquear, hablar } from './voz';
+import { callar, desbloquear, hablar, hablarDialogo, prepararRelleno, rellenar, suena, type LineaDialogo } from './voz';
+import { FRASES_GENERALES, fraseDeEspera, fraseDeTrabajo } from './trabajando';
+import { RETRATOS } from '../personajes/Retratos';
+import { EMOCION_DE, expresionDeLinea } from '../personajes/expresion';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 import { Biblioteca } from '../biblioteca/Biblioteca';
 import { pedirArchivo, Visor, type Fuente } from './Visor';
@@ -35,7 +38,7 @@ import { pedirArchivo, Visor, type Fuente } from './Visor';
 export type VistaPanel = 'chat' | 'expedientes' | 'infra';
 
 /** Lo que se le pide al panel desde fuera (la tarjeta del mapa). `n` distingue dos pedidos iguales. */
-export type PedidoPanel = { tipo: 'pregunta'; texto: string; n: number } | { tipo: 'ficha'; id: number; n: number };
+export type PedidoPanel = { tipo: 'pregunta'; texto: string; n: number } | { tipo: 'ficha'; id: number; n: number; presentarA?: 'INHGEOMIN' | 'ICF' | 'SERNA' };
 
 type Props = {
   /** Un pedido de la tarjeta del mapa: una pregunta para Dr Electrum, o la ficha en PDF de una concesión. */
@@ -63,6 +66,13 @@ type Turno = {
   informe?: { nombre: string; url: string; bytes: number; compartido?: boolean };
   /** Los mapas geológicos que armó el turno: se ven aquí mismo y se pueden bajar. */
   imagenes?: Array<{ nombre: string; url: string; bytes: number; titulo?: string }>;
+  /**
+   * La búsqueda no fue precisa y trajo varias parecidas: se ofrecen como botones para elegir, en
+   * vez de que el doctor adivine cuál era.
+   */
+  opciones?: Array<{ id: number; nombre: string; detalle: string }>;
+  /** La respuesta dicha como conversación entre personajes (Dr Electrum, la ingeniera Tatiana…). */
+  dialogo?: Array<LineaDialogo & { nombre: string }>;
   /**
    * La pregunta que habría que repetir. Solo la llevan los turnos que NO terminaron bien: un corte
    * o un fallo. Guardarla es lo que separa «se rompió» de «se rompió y aquí está el botón».
@@ -327,6 +337,12 @@ function hiloGuardado(): Turno[] {
 export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, onTrabajo, onVista, pedido, invitado = false }: Props) {
   /** Lo que está abierto en el visor a pantalla completa (un mapa del hilo o un PDF). */
   const [visor, setVisor] = useState<Fuente | null>(null);
+  // El recorrido (y los comandos de voz) abren y cierran el visor desde fuera.
+  useEffect(() => {
+    const alPedir = (e: Event) => setVisor(((e as CustomEvent<Fuente | null>).detail as Fuente | null) || null);
+    window.addEventListener('electrum:visor', alPedir);
+    return () => window.removeEventListener('electrum:visor', alPedir);
+  }, []);
   const [turnos, setTurnos] = useState<Turno[]>(hiloGuardado);
   /*
    * `preguntar` no puede depender de `turnos` —se reharía en cada mensaje y con él todo lo que
@@ -488,10 +504,14 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
     setTurnos((t) => [...t, { de: 'electrum', texto, local: true }]);
   }, []);
 
+  /** Lo que se dijo mientras el doctor pensaba: se pregunta en cuanto termine (ver más abajo). */
+  const enCola = useRef<string | null>(null);
   const preguntar = useCallback(
     async (pregunta: string) => {
       const q = pregunta.trim();
       if (!q || pensando) return;
+      // Una pregunta nueva deja sin efecto la que estaba anotada.
+      enCola.current = null;
       // Una pregunta nueva corta la respuesta anterior que todavía suena.
       callar();
       setHablando(false);
@@ -502,6 +522,39 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       setPensando(true);
       onFace('THINKING');
       onTrabajo();
+
+      /*
+       * NUNCA EN SILENCIO. Apenas se pide algo, dice en voz alta qué va a hacer («estoy dibujando el
+       * mapa geológico para usted…»); si la espera se alarga, vuelve a decir en qué va según la
+       * última herramienta. La respuesta espera a que termine la frase en curso (voz.ts).
+       */
+      let respondiendo = false;
+      let ultimaHerramienta: string | null = null;
+      let ultimaFrase = Date.now();
+      let esperas = 0;
+      const dichas = new Set<string>();
+      const decirTrabajo = (frase: string) => {
+        dichas.add(frase);
+        ultimaFrase = Date.now();
+        void rellenar(frase, headersElectrum(), {
+          alEmpezar: () => !respondiendo && onFace('SPEAKING'),
+          alTerminar: () => !respondiendo && onFace('THINKING'),
+        });
+      };
+      if (vozActivaRef.current) {
+        decirTrabajo(fraseDeTrabajo(q));
+        // La próxima general queda lista para que salga sin espera.
+        prepararRelleno(FRASES_GENERALES[Math.floor(Math.random() * FRASES_GENERALES.length)], headersElectrum());
+      }
+      const relojEspera = window.setInterval(() => {
+        if (respondiendo || !vozActivaRef.current || suena() || esperas >= 4) return;
+        if (Date.now() - ultimaFrase < 9000) return;
+        let frase = fraseDeEspera(ultimaHerramienta, esperas);
+        if (dichas.has(frase)) frase = fraseDeEspera(null, esperas);
+        esperas++;
+        decirTrabajo(frase);
+      }, 1000);
+      const avisarRespondido = () => window.dispatchEvent(new Event('electrum:respondido'));
 
       /*
        * Un turno se puede cortar por fuera: se va la señal, Render recicla el proceso, el usuario
@@ -525,6 +578,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       /** Si la respuesta se va a decir en voz alta, la cara la maneja la voz, no el reloj de abajo. */
       let vozEnCamino = false;
       const imagenesDelTurno: NonNullable<Turno['imagenes']> = [];
+      let opcionesDelTurno: Turno['opciones'];
 
       try {
         /*
@@ -603,10 +657,21 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               else if (linea.startsWith('data: ')) {
                 const d = JSON.parse(linea.slice(6));
                 if (evento === 'panel') setEnVivo((v) => ({ ...v, panel: d.panel }));
-                else if (evento === 'herramienta') setEnVivo((v) => ({ ...v, traza: [...v.traza, d] }));
+                else if (evento === 'herramienta') {
+                  ultimaHerramienta = String(d?.herramienta || '') || null;
+                  setEnVivo((v) => ({ ...v, traza: [...v.traza, d] }));
+                }
                 else if (evento === 'ui') {
                   onUi([d]); // el mapa se mueve YA, no al final
                   if (d?.accion === 'volar' && Number.isFinite(Number(d.concesion_id))) setEnFoco(Number(d.concesion_id));
+                  // Varias parecidas: botones para elegir. Una sola (o la exacta) no pide elección.
+                  if (d?.accion === 'candidatas' && Array.isArray(d.filas) && d.filas.length > 1) {
+                    opcionesDelTurno = d.filas.slice(0, 6).map((f: any) => ({
+                      id: Number(f.id),
+                      nombre: String(f.nombre || `id ${f.id}`),
+                      detalle: [f.municipio, f.titular, f.expediente].filter(Boolean).map(String).join(' · '),
+                    }));
+                  }
                   // Un mapa (image/jpeg) se ve en el hilo; un PDF queda como tarjeta para bajar.
                   const armados: any[] = Array.isArray(d?.informes) ? d.informes : d?.informe ? [d.informe] : [];
                   for (const x of armados) {
@@ -623,11 +688,22 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   terminado = true;
                 } else if (evento === 'fin') {
                   cerrado = true;
+                  respondiendo = true;
                   onFace('SPEAKING');
-                  if (d.emocion) onEmocion(d.emocion);
+                  // La etiqueta con la que se va a DECIR (v4) manda sobre un «neutral» del cerebro.
+                  const deVoz = typeof d.voz === 'string' ? expresionDeLinea(d.voz, true) : 'neutral';
+                  if (deVoz !== 'neutral' && (!d.emocion || d.emocion === 'neutral')) onEmocion(EMOCION_DE[deVoz]);
+                  else if (d.emocion) onEmocion(d.emocion);
+                  // Contestó la mesa (Don Chema, la Ing. Tatiana…): cada uno con su voz y su cara.
+                  const voces: Array<LineaDialogo & { nombre: string }> = Array.isArray(d.voces)
+                    ? d.voces
+                        .filter((v: any) => v && RETRATOS[v.quien] && typeof v.texto === 'string' && v.texto.trim())
+                        .map((v: any) => ({ quien: String(v.quien), texto: String(v.texto), nombre: RETRATOS[v.quien].nombre }))
+                    : [];
                   if (vozActivaRef.current && d.texto) {
                     vozEnCamino = true;
-                    void hablar(d.texto, d.emocion, headersElectrum(), {
+                    // `voz` trae las etiquetas de expresión de v4 que la pantalla no enseña.
+                    const avisosVoz: Parameters<typeof hablar>[3] = {
                       alEmpezar: () => {
                         setHablando(true);
                         onFace('SPEAKING');
@@ -635,18 +711,22 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                       alTerminar: () => {
                         setHablando(false);
                         onFace('IDLE');
+                        avisarRespondido();
                       },
                       alFallar: (motivo) => {
                         setHablando(false);
                         onFace('IDLE');
+                        avisarRespondido();
                         if (!vozAvisada.current) {
                           vozAvisada.current = true;
                           avisoSuelto(`No pude decírtelo en voz alta: ${motivo}. La respuesta está escrita arriba.`);
                         }
                       },
-                    });
+                    };
+                    if (voces.length) void hablarDialogo(voces, headersElectrum(), avisosVoz);
+                    else void hablar(typeof d.voz === 'string' && d.voz ? d.voz : d.texto, d.emocion, headersElectrum(), avisosVoz);
                   }
-                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined }]);
+                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined, opciones: opcionesDelTurno, dialogo: voces.length ? voces : undefined }]);
                   terminado = true;
                 }
               }
@@ -674,6 +754,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         }
       } finally {
         clearTimeout(reloj);
+        clearInterval(relojEspera);
+        respondiendo = true;
         abortoRef.current = null;
         /*
          * EL PUNTO DE F05. El lector sale cuando el flujo termina, y eso pasa también cuando el
@@ -693,13 +775,78 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         }
         setPensando(false);
         setEnVivo({ panel: '', traza: [] });
-        if (!vozEnCamino) setTimeout(() => onFace('IDLE'), 1200);
+        if (!vozEnCamino) {
+          // Sin respuesta hablada, lo que quedara del «estoy revisando…» se corta: ya no hay nada que esperar.
+          if (vozActivaRef.current) callar();
+          setTimeout(() => onFace('IDLE'), 1200);
+          avisarRespondido();
+        }
       }
     },
     [pensando, onFace, onEmocion, onUi, onTrabajo, avisar, avisoSuelto]
   );
 
   /** Abrir un informe al resto del equipo. Solo puede hacerlo quien lo pidió; el servidor lo comprueba. */
+  /*
+   * «EXPLÍCAMELO COMO CONVERSACIÓN». La respuesta se vuelve un diálogo a varias voces (Eleven v4):
+   * el doctor explica y la ingeniera Tatiana pregunta lo que preguntaría quien escucha. El guion lo
+   * escribe el servidor; aquí se enseña con el nombre de cada uno y suena con la voz de cada uno.
+   */
+  const [conversando, setConversando] = useState(false);
+  const conversar = useCallback(
+    async (texto: string) => {
+      if (!texto.trim() || conversando) return;
+      setConversando(true);
+      desbloquear();
+      onFace('THINKING');
+      if (vozActivaRef.current) void rellenar('Déjeme armarlo como conversación con la ingeniera Tatiana…', headersElectrum());
+      try {
+        const r = await fetch('/api/electrum/dialogo/guion', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...headersElectrum() },
+          body: JSON.stringify({ texto }),
+        });
+        const j: any = await r.json().catch(() => null);
+        if (!r.ok || !Array.isArray(j?.lineas)) {
+          avisoSuelto(j?.error || `No pude armar la conversación: el servidor contestó ${r.status}.`);
+          return;
+        }
+        const lineas = j.lineas as Array<LineaDialogo & { nombre: string }>;
+        setTurnos((t) => [...t, { de: 'electrum', texto: lineas.map((l) => `${l.nombre}: ${l.texto}`).join('\n'), dialogo: lineas, panel: 'En conversación', local: true }]);
+        await hablarDialogo(lineas, headersElectrum(), {
+          alEmpezar: () => {
+            setHablando(true);
+            onFace('SPEAKING');
+          },
+          alTerminar: () => {
+            setHablando(false);
+            onFace('IDLE');
+          },
+          alFallar: (m) => {
+            setHablando(false);
+            onFace('IDLE');
+            avisoSuelto(`La conversación está escrita arriba; no pude decirla en voz alta: ${m}.`);
+          },
+        });
+      } catch {
+        avisoSuelto('No alcancé el servidor para armar la conversación.');
+      } finally {
+        setConversando(false);
+      }
+    },
+    [conversando, onFace, avisoSuelto]
+  );
+  // «Explícamelo como conversación» dicho en voz alta: la última respuesta del doctor.
+  useEffect(() => {
+    const alPedir = () => {
+      const ultima = [...turnosRef.current].reverse().find((t) => t.de === 'electrum' && !t.local && t.texto);
+      if (ultima) void conversar(ultima.texto);
+      else avisoSuelto('Primero pregúnteme algo, y después se lo explico como conversación.');
+    };
+    window.addEventListener('electrum:dialogo', alPedir);
+    return () => window.removeEventListener('electrum:dialogo', alPedir);
+  }, [conversar, avisoSuelto]);
+
   const compartir = useCallback(
     async (indice: number, informe: { url: string }) => {
       try {
@@ -736,7 +883,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
    * su propia ruta y no por el turno: no hace falta molestar al modelo para armar un documento cuyo
    * contenido sale entero del catastro.
    */
-  const pedirInforme = useCallback(async (idForzado?: number) => {
+  const pedirInforme = useCallback(async (idForzado?: number, presentarA?: string) => {
     if (pensando) return;
     const idFicha = typeof idForzado === 'number' ? idForzado : enFoco;
     setPensando(true);
@@ -754,7 +901,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         headers: { 'Content-Type': 'application/json', ...headersElectrum() },
         body: JSON.stringify(
           idFicha != null
-            ? { tipo: 'concesion', concesion_id: idFicha, mapa: 'imagen' in foto ? foto.imagen : null }
+            ? { tipo: 'concesion', concesion_id: idFicha, mapa: 'imagen' in foto ? foto.imagen : null, presentar_a: presentarA || undefined }
             : { tipo: 'cartera', mapa: 'imagen' in foto ? foto.imagen : null }
         ),
       });
@@ -788,15 +935,46 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
    * cosa se dice, en vez de tragarse el pedido.
    */
   const ultimoPedido = useRef(0);
+  /*
+   * EN UNA CONVERSACIÓN NADA SE PIERDE. Lo que se dice mientras el doctor todavía piensa queda
+   * anotado y se pregunta en cuanto termina de contestar (la última gana: si se corrigió, vale la
+   * corrección). Antes se tiraba en silencio y parecía que no había oído.
+   */
+  const preguntarRef = useRef(preguntar);
+  preguntarRef.current = preguntar;
+  const pensandoRef = useRef(pensando);
+  pensandoRef.current = pensando;
+  useEffect(() => {
+    // Terminó de contestar, o le cortaron la respuesta hablándole encima: va la anotada.
+    const alTerminar = () => {
+      const q = enCola.current;
+      if (!q) return;
+      // Un respiro para que la pantalla suelte el «pensando» antes de la siguiente.
+      window.setTimeout(() => {
+        if (enCola.current !== q || pensandoRef.current) return;
+        enCola.current = null;
+        void preguntarRef.current(q);
+      }, 120);
+    };
+    window.addEventListener('electrum:respondido', alTerminar);
+    window.addEventListener('electrum:interrumpido', alTerminar);
+    return () => {
+      window.removeEventListener('electrum:respondido', alTerminar);
+      window.removeEventListener('electrum:interrumpido', alTerminar);
+    };
+  }, []);
   useEffect(() => {
     if (!pedido || pedido.n === ultimoPedido.current) return;
     ultimoPedido.current = pedido.n;
     if (pensando) {
-      avisoSuelto('Estoy terminando otra respuesta: volvé a tocar el botón cuando acabe.');
+      if (pedido.tipo === 'pregunta') {
+        enCola.current = pedido.texto;
+        avisoSuelto(`Anotado: «${pedido.texto.slice(0, 80)}». Se lo contesto apenas termine esta respuesta.`);
+      } else avisoSuelto('Estoy terminando otra respuesta: volvé a tocar el botón cuando acabe.');
       return;
     }
     if (pedido.tipo === 'pregunta') void preguntar(pedido.texto);
-    else void pedirInforme(pedido.id);
+    else void pedirInforme(pedido.id, pedido.presentarA);
   }, [pedido, pensando, preguntar, pedirInforme, avisoSuelto]);
 
   /*
@@ -941,8 +1119,32 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                     t.de === 'persona' ? 'bg-white/10 text-[#E7EEF2]' : 'bg-white/[0.045] text-[#DDE7EC]'
                   }`}
                 >
-                  {t.texto}
+                  {t.dialogo ? (
+                    <div className="space-y-1.5">
+                      {t.dialogo.map((l, k) => (
+                        <p key={k}>
+                          <span className="font-mono text-[10.5px] tracking-[0.08em] uppercase" style={{ color: RETRATOS[l.quien]?.color || AMBAR }}>
+                            {l.nombre}
+                          </span>{' '}
+                          {l.texto.replace(/\[[^\]\n]{1,40}\]\s*/g, '')}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    t.texto
+                  )}
                 </div>
+                {t.de === 'electrum' && !t.local && !t.dialogo && t.texto.length > 140 && (
+                  <button
+                    type="button"
+                    disabled={conversando || pensando}
+                    onClick={() => void conversar(t.texto)}
+                    className="mt-1 block rounded-md px-1.5 py-0.5 font-mono text-[10px] tracking-[0.1em] uppercase text-[#8FA2AC] transition-colors hover:text-[#FFAE3B] disabled:opacity-40 cursor-pointer"
+                    title="Dr Electrum y la ingeniera Tatiana se lo explican conversando, cada uno con su voz"
+                  >
+                    ▶ Como conversación
+                  </button>
+                )}
                 {/*
                   * Un turno que se cortó lleva su pregunta encima, y el botón la repite tal cual.
                   * Sin esto, recuperarse de un corte obliga a volver a escribirla — y si era larga,
@@ -958,6 +1160,27 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                     >
                       Volver a preguntar
                     </button>
+                  </div>
+                )}
+                {/* La búsqueda trajo varias: se elige tocando (o diciendo «la segunda»). */}
+                {t.opciones && t.opciones.length > 1 && (
+                  <div className="mt-1.5 flex max-w-[92%] flex-col gap-1" role="group" aria-label="¿Cuál de estas?">
+                    <span className="font-mono text-[10px] tracking-[0.14em] uppercase text-[#7F939D]">¿Cuál de estas?</span>
+                    {t.opciones.map((o, k) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        disabled={pensando}
+                        onClick={() => void preguntar(`La ${k + 1}: ${o.nombre} (id ${o.id}).`)}
+                        className="flex items-baseline gap-2 rounded-lg border border-white/12 bg-white/[0.03] px-2.5 py-1.5 text-left transition-colors hover:border-[#FFAE3B]/55 hover:bg-[#FFAE3B]/[0.07] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        <span className="font-mono text-[10px] text-[#FFAE3B]">{k + 1}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13px] text-[#E7EEF2]">{o.nombre}</span>
+                          {o.detalle && <span className="block truncate text-[11px] text-[#7F939D]">{o.detalle}</span>}
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 )}
                 {t.imagenes?.map((im) => (

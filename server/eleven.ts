@@ -152,7 +152,11 @@ const VOCABULARIO_INGLES = new Set(
     'restrained tired gentle gently emotion emotional conviction confident sincere hopeful nostalgic wistful ' +
     'laughs laughing chuckles chuckle giggles sighs sigh sighing whispers whispering whisper gasps gasp inhales ' +
     'exhales breath breathes clears throat pause short long hesitant hesitates impressed scoffs yawns nervous ' +
-    'laugh matter of fact flat dry casual friendly authoritative dramatic cheerful solemn intimate'
+    'laugh matter of fact flat dry casual friendly authoritative dramatic cheerful solemn intimate ' +
+    // Las de Eleven v4: se pueden encadenar y las sigue en orden.
+    'whispering shouting laughing ecstatic excitedly cheerfully nervously sarcastic sarcastically confidently ' +
+    'seriously dramatically proudly sadly happily curiously thoughtfully reassuring encouraging ' +
+    'patient patiently enthusiastic enthusiastically amazed awe hushed chuckling giggling grin smiling'
   ).split(' ')
 );
 function esEtiquetaIngles(k: string): boolean {
@@ -203,6 +207,53 @@ export function guionEleven(texto: string, emocion: Emocion, preparar: (t: strin
   return guion;
 }
 
+/* ---------------- Muletillas: que no suene a locutor ---------------- */
+
+const ARRANQUES = ['Bueno,', 'Mire,', 'A ver,', 'Pues mire,', 'Eh…', 'Mmm,', 'Fíjese que', 'Vea,'];
+const INTERCALADAS = ['eh', 'este', 'digamos'];
+/** Emociones donde una muletilla estorba: rezar, cantar, una alarma o un tono seco. */
+const SIN_MULETILLA = new Set<string>(['oracion', 'canto', 'alarma', 'firme', 'seco']);
+const YA_EMPIEZA_SUELTO = /^\s*(\[|(bueno|mire|a ver|pues|eh|mmm|este|f[ií]jese|vea|ok|claro|s[ií]|no|listo|perfecto|dale|hola|buen[oa]s)(?!\p{L}))/iu;
+
+function huella(texto: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < texto.length; i++) {
+    h ^= texto.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/**
+ * Le quita la perfección de locutor a lo que dice Dr Electrum: a veces arranca con «bueno,»,
+ * «mire,» o un «eh…», y en una frase larga mete un «este» o un «digamos» entre dos ideas, como
+ * habla un geólogo de verdad. Sale de una huella del texto, no del azar: la misma frase se dice
+ * igual las dos veces (la caché de audio depende de eso) y las pruebas saben qué esperar.
+ *
+ * Solo en el primer trozo de una respuesta va la muletilla de arranque: repetirla en cada trozo
+ * sonaría a tic.
+ */
+export function conMuletillas(texto: string, opts: { primero: boolean; emocion?: string }): string {
+  const t = String(texto || '');
+  if (t.length < 50 || SIN_MULETILLA.has(String(opts.emocion || ''))) return t;
+  const h = huella(t);
+  let salida = t;
+  if (opts.primero && h % 100 < 40 && !YA_EMPIEZA_SUELTO.test(t)) {
+    salida = `${ARRANQUES[(h >>> 8) % ARRANQUES.length]} ${salida.trimStart()}`;
+  }
+  if (t.length > 140 && (h >>> 16) % 100 < 30) {
+    // Entre dos ideas: la primera coma pasado el arranque, con una palabra en minúscula detrás.
+    const m = /, (?=\p{Ll})/gu;
+    m.lastIndex = Math.min(60, salida.length);
+    const hallado = m.exec(salida);
+    if (hallado) {
+      const k = hallado.index + 2;
+      salida = `${salida.slice(0, k)}${INTERCALADAS[(h >>> 24) % INTERCALADAS.length]}, ${salida.slice(k)}`;
+    }
+  }
+  return salida;
+}
+
 /* ---------------- La llamada ---------------- */
 
 type PedidoEleven = {
@@ -213,7 +264,21 @@ type PedidoEleven = {
   siguiente?: string;
   reloj?: Presupuesto;
   timeoutMs?: number;
+  /** 0..1. Más baja = más expresiva (v4 solo acepta estabilidad y similitud). 0,5 si no se dice. */
+  estabilidad?: number;
 };
+
+/**
+ * La estabilidad según la emoción: con alegría, risa o sorpresa se deja variar más la voz; en lo
+ * serio (una alarma, un «no») se la sostiene. Es el control expresivo que v4 deja fuera de las
+ * etiquetas.
+ */
+export function estabilidadDe(emocion: string | undefined): number {
+  const e = String(emocion || '');
+  if (/^(feliz|risa|sorpresa|travieso|orgullo|carino|curioso)$/.test(e)) return 0.38;
+  if (/^(firme|seco|alarma|preocupado|triste|oracion)$/.test(e)) return 0.6;
+  return 0.5;
+}
 
 /**
  * Abre la síntesis y devuelve la respuesta EN CURSO (el audio va llegando por `body`), o null si
@@ -230,7 +295,7 @@ export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> 
     model_id: modeloEleven(),
     language_code: 'es',
     // Estabilidad media: deja que la emoción se note sin que cada frase suene a otra persona.
-    voice_settings: { stability: 0.5, similarity_boost: 0.8 },
+    voice_settings: { stability: Math.min(0.9, Math.max(0.2, opts.estabilidad ?? 0.5)), similarity_boost: 0.8 },
   };
   if (opts.previo) cuerpo.previous_text = opts.previo.slice(-300);
   if (opts.siguiente) cuerpo.next_text = opts.siguiente.slice(0, 300);

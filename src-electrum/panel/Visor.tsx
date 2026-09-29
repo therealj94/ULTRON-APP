@@ -371,6 +371,7 @@ export function Visor({ fuente, puedeBajar, onCerrar, onBajar }: { fuente: Fuent
       </div>
       <div
         ref={marco}
+        data-visor-marco
         className="relative flex-1 touch-none select-none overflow-hidden"
         style={{ cursor: dedos.current.size ? 'grabbing' : 'grab' }}
         onPointerDown={bajo}
