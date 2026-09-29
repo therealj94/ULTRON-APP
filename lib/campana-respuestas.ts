@@ -91,6 +91,8 @@ export function textoDelCuerpo(crudo: string): string {
     try { return Buffer.from(b64[1].replace(/\s+/g, ''), 'base64').toString('utf8'); } catch { /* sigue */ }
   }
   t = t.replace(/^[\s\S]*?content-type:\s*text\/plain[^\n]*\n(?:[a-z-]+:[^\n]*\n)*\r?\n/i, '');
+  // La parte de texto termina en el siguiente límite MIME; lo que sigue es la versión HTML.
+  t = t.split(/\r?\n--[^\r\n]+/)[0];
   if (qp) t = t.replace(/=\r?\n/g, '').replace(/=([0-9A-F]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
   return Buffer.from(t, 'latin1').toString('utf8');
 }
@@ -113,19 +115,32 @@ export function clasificar(mensajes: Array<{ from: string; asunto: string; fecha
 }
 
 /** El mensaje de Telegram. Si nadie contestó, también se dice: José quiere saberlo cada mañana. */
+// Las bajas van antes que las respuestas: son las que no se pueden perder.
 export function resumen(c: Clasificadas, desde: Date): string {
   const dia = desde.toISOString().slice(0, 10);
   const lineas = [`AU-RA · Campaña SFSP · respuestas desde el ${dia}`];
+  if (c.bajas.length) lineas.push('', `Pidieron no recibir más (${c.bajas.length}), van a bajas.txt:`, ...c.bajas.map((r) => `• ${r.correo}`));
+  if (c.rebotes.length) lineas.push('', `Rebotaron ${c.rebotes.length} (el correo no existe o no acepta).`);
   if (!c.respuestas.length) lineas.push('', 'Nadie contestó en las últimas 24 horas.');
   else {
     lineas.push('', `Contestaron ${c.respuestas.length}:`);
-    for (const r of c.respuestas.slice(0, 25)) lineas.push(`• ${r.de} <${r.correo}>${r.extracto ? `\n  «${r.extracto}»` : ''}`);
-    if (c.respuestas.length > 25) lineas.push(`… y ${c.respuestas.length - 25} más en el buzón.`);
+    for (const r of c.respuestas) lineas.push(`• ${r.de} <${r.correo}>${r.extracto ? `\n  «${r.extracto}»` : ''}`);
   }
-  if (c.bajas.length) lineas.push('', `Pidieron no recibir más (${c.bajas.length}), van a bajas.txt:`, ...c.bajas.map((r) => `• ${r.correo}`));
-  if (c.rebotes.length) lineas.push('', `Rebotaron ${c.rebotes.length} (el correo no existe o no acepta).`);
   lineas.push('', 'Todo está en j.ordonez@ordenglobal.org.');
   return lineas.join('\n');
+}
+
+/** Telegram corta en 4096: el resumen se parte en mensajes por líneas enteras, sin perder nada. */
+export function trozos(texto: string, max = 3900): string[] {
+  const out: string[] = [];
+  let actual = '';
+  for (const l of texto.split('\n')) {
+    const linea = l.length > max ? l.slice(0, max) : l;
+    if (actual && actual.length + 1 + linea.length > max) { out.push(actual); actual = linea; }
+    else actual = actual ? `${actual}\n${linea}` : linea;
+  }
+  if (actual) out.push(actual);
+  return out;
 }
 
 // ─── IMAP mínimo ─────────────────────────────────────────────────────────────────────────────────
@@ -139,12 +154,18 @@ class Imap {
   private buf = '';
   private n = 0;
   private espera: ((s: string) => void) | null = null;
+  // Si el socket se cae o se cuelga, la orden pendiente falla en vez de esperar para siempre
+  // (una espera eterna dejaría sin programar las revisiones de los días siguientes).
+  private fallar: ((e: Error) => void) | null = null;
+  private caido: Error | null = null;
 
-  async abrir(host: string, puerto: number) {
+  async abrir(host: string, puerto: number, espera = 30_000) {
     await new Promise<void>((ok, mal) => {
       this.sock = tls.connect({ host, port: puerto, servername: host }, () => ok());
-      this.sock.setTimeout(30_000, () => this.sock.destroy(new Error('IMAP sin respuesta')));
-      this.sock.on('error', mal);
+      this.sock.setTimeout(espera, () => this.sock.destroy(new Error('IMAP sin respuesta')));
+      const caer = (e: Error) => { this.caido ??= e; mal(e); this.fallar?.(e); };
+      this.sock.on('error', caer);
+      this.sock.on('close', () => caer(new Error('IMAP cerró la conexión')));
       this.sock.on('data', (d) => { this.buf += d.toString('latin1'); this.revisar(); });
     });
     await this.hasta(/^\* (OK|PREAUTH)/m);
@@ -153,9 +174,11 @@ class Imap {
   private revisar() { if (this.espera) this.espera(this.buf); }
 
   private hasta(re: RegExp): Promise<string> {
-    return new Promise((ok) => {
-      const mirar = (b: string) => { if (re.test(b)) { this.espera = null; const r = this.buf; this.buf = ''; ok(r); } };
+    return new Promise((ok, mal) => {
+      const mirar = (b: string) => { if (re.test(b)) { this.espera = null; this.fallar = null; const r = this.buf; this.buf = ''; ok(r); } };
       this.espera = mirar;
+      this.fallar = (e) => { this.espera = null; this.fallar = null; mal(e); };
+      if (this.caido) return this.fallar(this.caido);
       mirar(this.buf);
     });
   }
@@ -172,14 +195,14 @@ class Imap {
 }
 
 /** Los mensajes del buzón desde `desde`: remitente, asunto, fecha y el inicio del texto. */
-export async function leerBuzon(desde: Date) {
+export async function leerBuzon(desde: Date, espera = 30_000) {
   const host = process.env.CAMPANA_IMAP_HOST || 'mail.ordenglobal.org';
   const puerto = Number(process.env.CAMPANA_IMAP_PUERTO || 993);
   const usuario = process.env.CAMPANA_IMAP_USUARIO || 'j.ordonez@ordenglobal.org';
   const clave = process.env.CAMPANA_IMAP_CLAVE || '';
   if (!clave) throw new Error('Falta CAMPANA_IMAP_CLAVE.');
   const imap = new Imap();
-  await imap.abrir(host, puerto);
+  await imap.abrir(host, puerto, espera);
   try {
     await imap.orden(`LOGIN ${citar(usuario)} ${citar(clave)}`);
     await imap.orden('EXAMINE INBOX');
@@ -208,17 +231,22 @@ export async function leerBuzon(desde: Date) {
 /** Al chat de José (TELEGRAM_JOSE_CHAT_ID), no al de la junta: el buzón es suyo. */
 async function aJose(texto: string): Promise<{ ok: boolean; detalle: string }> {
   const token = clave('telegram_token');
-  const chat = process.env.TELEGRAM_JOSE_CHAT_ID || clave('telegram_chat');
-  if (!token || !chat) return { ok: false, detalle: 'Falta el bot o el chat de José en Telegram.' };
+  // Sin el chat de José no se manda a ningún otro: los nombres y respuestas son de su buzón.
+  const chat = process.env.TELEGRAM_JOSE_CHAT_ID || '';
+  if (!token || !chat) return { ok: false, detalle: 'Falta el bot o TELEGRAM_JOSE_CHAT_ID. No envié nada.' };
+  const partes = trozos(texto);
   try {
-    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chat, text: texto.slice(0, 3900) }),
-      signal: AbortSignal.timeout(12000),
-    });
-    const j: any = await r.json().catch(() => ({}));
-    return r.ok && j.ok ? { ok: true, detalle: 'enviado a José' } : { ok: false, detalle: `Telegram ${r.status}` };
+    for (const [i, parte] of partes.entries()) {
+      const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chat, text: parte }),
+        signal: AbortSignal.timeout(12000),
+      });
+      const j: any = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) return { ok: false, detalle: `Telegram ${r.status} en el mensaje ${i + 1} de ${partes.length}` };
+    }
+    return { ok: true, detalle: `enviado a José (${partes.length} mensaje${partes.length > 1 ? 's' : ''})` };
   } catch (e: any) {
     return { ok: false, detalle: String(e?.message || e).slice(0, 120) };
   }

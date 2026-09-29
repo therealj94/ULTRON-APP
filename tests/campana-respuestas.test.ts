@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
+import net from 'node:net';
 import { describe, it } from 'node:test';
 import {
   clasificar,
   decodificarCabecera,
   extracto,
+  leerBuzon,
   proximaRevision,
   remitente,
   resumen,
   textoDelCuerpo,
+  trozos,
 } from '../lib/campana-respuestas';
 
 describe('Campaña SFSP: quién contestó', () => {
@@ -51,5 +54,38 @@ describe('Campaña SFSP: quién contestó', () => {
       new Date('2026-09-29T13:00:00Z'),
     );
     assert.match(lleno, /Contestaron 1:\n• Ana <ana@banco\.com>\n  «Con gusto»/);
+  });
+
+  it('en un correo multipart toma solo la parte de texto: un «No» es una baja', () => {
+    const crudo = '--b1\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nNo\r\n--b1\r\nContent-Type: text/html\r\n\r\n<html><p>No</p></html>\r\n--b1--\r\n';
+    assert.equal(textoDelCuerpo(crudo).trim(), 'No');
+    const c = clasificar([{ from: 'x@y.com', asunto: 'Re: Invitación personal: unir a Centroamérica', fecha: '', texto: textoDelCuerpo(crudo) }]);
+    assert.equal(c.bajas.length, 1);
+  });
+
+  it('un resumen largo se parte en mensajes sin perder a nadie, y las bajas van primero', () => {
+    const respuestas = Array.from({ length: 60 }, (_, i) => ({ de: `P${i}`, correo: `p${i}@x.com`, asunto: '', fecha: '', extracto: 'x'.repeat(190) }));
+    const texto = resumen({ respuestas, bajas: [{ de: 'B', correo: 'baja@x.com', asunto: '', fecha: '', extracto: 'no' }], rebotes: [] }, new Date());
+    const partes = trozos(texto);
+    assert.ok(partes.length > 1);
+    assert.ok(partes.every((p) => p.length <= 3900));
+    assert.equal(partes.join('\n'), texto);
+    assert.ok(texto.indexOf('baja@x.com') < texto.indexOf('p0@x.com'));
+  });
+
+  it('si el servidor IMAP no contesta, la lectura falla en vez de quedarse esperando', async () => {
+    const mudo = net.createServer(() => {}).listen(0);
+    await new Promise((ok) => mudo.once('listening', ok));
+    process.env.CAMPANA_IMAP_HOST = '127.0.0.1';
+    process.env.CAMPANA_IMAP_PUERTO = String((mudo.address() as net.AddressInfo).port);
+    process.env.CAMPANA_IMAP_CLAVE = 'x';
+    try {
+      await assert.rejects(leerBuzon(new Date(), 300));
+    } finally {
+      delete process.env.CAMPANA_IMAP_HOST;
+      delete process.env.CAMPANA_IMAP_PUERTO;
+      delete process.env.CAMPANA_IMAP_CLAVE;
+      mudo.close();
+    }
   });
 });
