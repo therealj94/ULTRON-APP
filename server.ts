@@ -2001,6 +2001,13 @@ async function prepararTurno(body: any) {
       tools.push('escena');
     }
     const image = body?.image;
+    // Preguntan qué ve y no llegó ni foto ni escena de la cámara: se le da la verdad al modelo. Sin
+    // esto inventaba causas («el ojo está ciego porque la clave de acceso no existe en los
+    // registros», 29-sep) que asustan y no son ciertas.
+    if (preguntaPorVer && !image && !escena) {
+      hechos.push('VISION: en este turno no llegó imagen de la cámara. Si te preguntan qué ves, dilo simple («ahora mismo no me está entrando imagen de la cámara; revisa que esté activada en el menú») y no inventes causas técnicas: nada de claves, registros, nodos ni errores.');
+      tools.push('vision');
+    }
     if (image) {
       const vista = await verImagen(String(image));
       // Un fallo de visión NO se le pasa crudo al modelo: lo parafraseaba como «la cámara me muestra un
