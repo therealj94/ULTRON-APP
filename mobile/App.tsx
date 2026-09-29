@@ -18,6 +18,8 @@ import { SelectorAvatar } from './src/avatares/SelectorAvatar';
 import type { AvatarId } from './src/avatares/catalogo';
 import { fijarIdioma, tr, useIdioma } from './src/i18n';
 import { DeskScreen } from './src/screens/DeskScreen';
+import { PulseProvider } from './src/pulse/PulseProvider';
+import { salir as salirDelChat } from './src/pulse/relevo';
 import { LoginScreen } from './src/screens/LoginScreen';
 import { ES_ELECTRUM } from './src/variante';
 import { T } from './src/tema';
@@ -221,6 +223,7 @@ function AppUltron() {
         />
       )}
       {phase === 'desk' && user && (
+        <PulseProvider>
         <DeskScreen
           user={user}
           recienElegido={recienElegido}
@@ -234,8 +237,11 @@ function AppUltron() {
             setRecienElegido(false);
             setPhase('login');
             void orientar('libre');
+            // El chat es de esta persona: al salir se olvida la llave del relevo en este teléfono.
+            void salirDelChat();
           }}
         />
+        </PulseProvider>
       )}
       {cargaVisible && (
         <Arranque pasos={pasos.map((p) => ({ ...p, texto: textoPaso(p.id) }))} version={APP_VERSION} aviso={aviso} opacity={phase === 'splash' ? undefined : cargaOp} />

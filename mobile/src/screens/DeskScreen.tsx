@@ -55,6 +55,7 @@ import { SelectorAvatar } from '../avatares/SelectorAvatar';
 import { avatarPorId, distribucion, type AvatarId } from '../avatares/catalogo';
 import { AccionesAvatar } from '../components/AccionesAvatar';
 import { ModoConversacion, type EstadoConversacion } from '../components/ModoConversacion';
+import { usePulse } from '../pulse/PulseProvider';
 import { ChatMesa } from '../components/ChatMesa';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
@@ -96,6 +97,8 @@ const haptic = (kind: 'light' | 'medium' = 'light') =>
   Haptics.impactAsync(kind === 'light' ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
 export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
+  // PULSE2CHAT: el chat y las llamadas entre personas con Genesis ID (ver src/pulse).
+  const pulse = usePulse();
   // Toda la mesa se redibuja si cambia el idioma (desde el menú), y el oído vuelve a arrancar en
   // el idioma nuevo (el reconocedor del teléfono fija el idioma al empezar a escuchar).
   const idioma = useIdioma();
@@ -1617,6 +1620,14 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
             <Text style={[styles.escribirTexto, { color: conversando ? tema.sobreAcento : tema.acentoTexto }]}>
               {conversando ? (estadoConv === 'conectando' ? tr('Conectando…', 'Connecting…') : tr('Terminar', 'End')) : tr('Conversar', 'Talk')}
             </Text>
+          </Pressable>
+          <Pressable
+            onPress={() => pulse.abrir()}
+            accessibilityRole="button"
+            accessibilityLabel={tr('Abrir el chat PULSE2CHAT', 'Open PULSE2CHAT chat')}
+            style={styles.escribir}
+          >
+            <Text style={styles.escribirTexto}>{tr('Chat', 'Chat')}</Text>
           </Pressable>
           <Pressable
             onPress={() => void toggleMute()}

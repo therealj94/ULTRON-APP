@@ -32,6 +32,7 @@ import {
 } from '../config';
 import { loginBiometric, loginClave, olvideClave, pedirCuenta } from '../lib/api';
 import { miga } from '../lib/reporte';
+import { entrarConGenesis, retomarSiVolvio, type ResultadoGenesis } from '../lib/genesis';
 import {
   getFingerprintUnlock,
   loadCreds,
@@ -329,6 +330,44 @@ export function LoginScreen({ onAuthenticated }: Props) {
     }
   };
 
+  /*
+   * ENTRAR CON GENESIS ID: la wallet de la persona (app Orden Global o web de Veta Wallet) le pide
+   * permiso y devuelve un pase que solo este teléfono puede canjear. Sin contraseña que escribir
+   * aquí. El mismo pase conecta el chat PULSE2CHAT. Ver src/lib/genesis.ts.
+   */
+  const [genesisCargando, setGenesisCargando] = useState(false);
+  const alVolverDeGenesis = async (r: ResultadoGenesis) => {
+    if (r.ok) {
+      await finish({ name: r.miembro.nombre, role: r.miembro.rol, correo: r.miembro.correo });
+      return;
+    }
+    if (r.codigo === 'CANCELADO') return;
+    setError(
+      r.codigo === 'PENDIENTE'
+        ? tr('Tu Genesis ID es válido. Tu acceso a AU-RA quedó pedido: cuando lo aprueben, entras con este mismo botón.', 'Your Genesis ID is valid. Access to AU-RA was requested: once approved, sign in with this same button.')
+        : r.mensaje
+    );
+  };
+  const entrarGenesis = async () => {
+    setGenesisCargando(true);
+    setError('');
+    try {
+      await alVolverDeGenesis(await entrarConGenesis());
+    } catch (e: any) {
+      miga(`genesis: ${String(e?.message || e).slice(0, 80)}`);
+      setError(tr('No pude entrar con Genesis ID. Probá de nuevo.', 'Couldn’t sign in with Genesis ID. Try again.'));
+    } finally {
+      setGenesisCargando(false);
+    }
+  };
+  // Si Android cerró AU-RA mientras la persona estaba en su wallet, la app arranca con la vuelta.
+  useEffect(() => {
+    void retomarSiVolvio()
+      .then((r) => r && alVolverDeGenesis(r))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const pickUser = (u: DeskUser) => {
     setSelected(u);
     setError('');
@@ -436,6 +475,14 @@ export function LoginScreen({ onAuthenticated }: Props) {
         </View>
       ) : phase === 'pick' ? (
         <View style={styles.bloque}>
+          <Boton
+            titulo={tr('Entrar con Genesis ID', 'Sign in with Genesis ID')}
+            onPress={() => void entrarGenesis()}
+            cargando={genesisCargando}
+            etiqueta={tr('Entrar con Genesis ID desde tu wallet Orden Global', 'Sign in with Genesis ID from your Orden Global wallet')}
+          />
+          {!!error && <Text style={styles.error}>{error}</Text>}
+          <Text style={styles.separador}>{tr('o con tu cuenta de AU-RA', 'or with your AU-RA account')}</Text>
           {DESK_USERS.map((u) => (
             <Pressable
               key={u.id}
@@ -588,6 +635,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
 }
 
 const styles = StyleSheet.create({
+  separador: { color: T.texto3, fontSize: 12, textAlign: 'center', marginVertical: 4 },
   root: { flex: 1, backgroundColor: T.fondo },
   brillo: { position: 'absolute', top: -180, right: -140, width: 420, height: 420, borderRadius: 420, backgroundColor: 'rgba(214,181,108,0.035)' },
   scroll: { flex: 1, width: '100%' },
