@@ -20,6 +20,8 @@ type Props = {
   onCuenta?: () => void;
   /** Solicitudes de acceso esperando al aprobador; null si esta sesión no aprueba. */
   pendientes?: number | null;
+  /** Lo que va junto al logo (el botón del micrófono). */
+  extra?: ReactNode;
 };
 
 const AMBAR = '#FFAE3B';
@@ -61,10 +63,11 @@ function Opcion({
   );
 }
 
-export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor, onFondo, onSalir, onCuenta, pendientes }: Props) {
+export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor, onFondo, onSalir, onCuenta, pendientes, extra }: Props) {
   const enTrabajo = escenario === 'trabajo';
   return (
     <div className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between gap-3 px-3 py-2.5 pointer-events-none">
+      <div className="flex shrink-0 items-center gap-2">
       <button
         type="button"
         onClick={() => onEscenario(enTrabajo ? 'cara' : 'trabajo')}
@@ -77,6 +80,9 @@ export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor
           <span className="sm:hidden">DR E</span>
         </span>
       </button>
+      {/* El micrófono, siempre a la vista: también con la cara en el centro. */}
+      {extra}
+      </div>
 
       {/* A 400 px los tres grupos no caben: se arrastran en vez de cortarse. */}
       <div

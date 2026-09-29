@@ -203,6 +203,53 @@ export function guionEleven(texto: string, emocion: Emocion, preparar: (t: strin
   return guion;
 }
 
+/* ---------------- Muletillas: que no suene a locutor ---------------- */
+
+const ARRANQUES = ['Bueno,', 'Mire,', 'A ver,', 'Pues mire,', 'Eh…', 'Mmm,', 'Fíjese que', 'Vea,'];
+const INTERCALADAS = ['eh', 'este', 'digamos'];
+/** Emociones donde una muletilla estorba: rezar, cantar, una alarma o un tono seco. */
+const SIN_MULETILLA = new Set<string>(['oracion', 'canto', 'alarma', 'firme', 'seco']);
+const YA_EMPIEZA_SUELTO = /^\s*(\[|(bueno|mire|a ver|pues|eh|mmm|este|f[ií]jese|vea|ok|claro|s[ií]|no|listo|perfecto|dale|hola|buen[oa]s)(?!\p{L}))/iu;
+
+function huella(texto: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < texto.length; i++) {
+    h ^= texto.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+/**
+ * Le quita la perfección de locutor a lo que dice Dr Electrum: a veces arranca con «bueno,»,
+ * «mire,» o un «eh…», y en una frase larga mete un «este» o un «digamos» entre dos ideas, como
+ * habla un geólogo de verdad. Sale de una huella del texto, no del azar: la misma frase se dice
+ * igual las dos veces (la caché de audio depende de eso) y las pruebas saben qué esperar.
+ *
+ * Solo en el primer trozo de una respuesta va la muletilla de arranque: repetirla en cada trozo
+ * sonaría a tic.
+ */
+export function conMuletillas(texto: string, opts: { primero: boolean; emocion?: string }): string {
+  const t = String(texto || '');
+  if (t.length < 50 || SIN_MULETILLA.has(String(opts.emocion || ''))) return t;
+  const h = huella(t);
+  let salida = t;
+  if (opts.primero && h % 100 < 40 && !YA_EMPIEZA_SUELTO.test(t)) {
+    salida = `${ARRANQUES[(h >>> 8) % ARRANQUES.length]} ${salida.trimStart()}`;
+  }
+  if (t.length > 140 && (h >>> 16) % 100 < 30) {
+    // Entre dos ideas: la primera coma pasado el arranque, con una palabra en minúscula detrás.
+    const m = /, (?=\p{Ll})/gu;
+    m.lastIndex = Math.min(60, salida.length);
+    const hallado = m.exec(salida);
+    if (hallado) {
+      const k = hallado.index + 2;
+      salida = `${salida.slice(0, k)}${INTERCALADAS[(h >>> 24) % INTERCALADAS.length]}, ${salida.slice(k)}`;
+    }
+  }
+  return salida;
+}
+
 /* ---------------- La llamada ---------------- */
 
 type PedidoEleven = {

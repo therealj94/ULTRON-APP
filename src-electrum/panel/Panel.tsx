@@ -26,7 +26,8 @@ import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/captura';
 import { sinMovimiento } from '../movimiento';
 import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
-import { callar, desbloquear, hablar } from './voz';
+import { callar, desbloquear, hablar, prepararRelleno, rellenar, suena } from './voz';
+import { FRASES_GENERALES, fraseDeEspera, fraseDeTrabajo } from './trabajando';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 import { Biblioteca } from '../biblioteca/Biblioteca';
 import { pedirArchivo, Visor, type Fuente } from './Visor';
@@ -63,6 +64,11 @@ type Turno = {
   informe?: { nombre: string; url: string; bytes: number; compartido?: boolean };
   /** Los mapas geológicos que armó el turno: se ven aquí mismo y se pueden bajar. */
   imagenes?: Array<{ nombre: string; url: string; bytes: number; titulo?: string }>;
+  /**
+   * La búsqueda no fue precisa y trajo varias parecidas: se ofrecen como botones para elegir, en
+   * vez de que el doctor adivine cuál era.
+   */
+  opciones?: Array<{ id: number; nombre: string; detalle: string }>;
   /**
    * La pregunta que habría que repetir. Solo la llevan los turnos que NO terminaron bien: un corte
    * o un fallo. Guardarla es lo que separa «se rompió» de «se rompió y aquí está el botón».
@@ -327,6 +333,12 @@ function hiloGuardado(): Turno[] {
 export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, onTrabajo, onVista, pedido, invitado = false }: Props) {
   /** Lo que está abierto en el visor a pantalla completa (un mapa del hilo o un PDF). */
   const [visor, setVisor] = useState<Fuente | null>(null);
+  // El recorrido (y los comandos de voz) abren y cierran el visor desde fuera.
+  useEffect(() => {
+    const alPedir = (e: Event) => setVisor(((e as CustomEvent<Fuente | null>).detail as Fuente | null) || null);
+    window.addEventListener('electrum:visor', alPedir);
+    return () => window.removeEventListener('electrum:visor', alPedir);
+  }, []);
   const [turnos, setTurnos] = useState<Turno[]>(hiloGuardado);
   /*
    * `preguntar` no puede depender de `turnos` —se reharía en cada mensaje y con él todo lo que
@@ -504,6 +516,39 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       onTrabajo();
 
       /*
+       * NUNCA EN SILENCIO. Apenas se pide algo, dice en voz alta qué va a hacer («estoy dibujando el
+       * mapa geológico para usted…»); si la espera se alarga, vuelve a decir en qué va según la
+       * última herramienta. La respuesta espera a que termine la frase en curso (voz.ts).
+       */
+      let respondiendo = false;
+      let ultimaHerramienta: string | null = null;
+      let ultimaFrase = Date.now();
+      let esperas = 0;
+      const dichas = new Set<string>();
+      const decirTrabajo = (frase: string) => {
+        dichas.add(frase);
+        ultimaFrase = Date.now();
+        void rellenar(frase, headersElectrum(), {
+          alEmpezar: () => !respondiendo && onFace('SPEAKING'),
+          alTerminar: () => !respondiendo && onFace('THINKING'),
+        });
+      };
+      if (vozActivaRef.current) {
+        decirTrabajo(fraseDeTrabajo(q));
+        // La próxima general queda lista para que salga sin espera.
+        prepararRelleno(FRASES_GENERALES[Math.floor(Math.random() * FRASES_GENERALES.length)], headersElectrum());
+      }
+      const relojEspera = window.setInterval(() => {
+        if (respondiendo || !vozActivaRef.current || suena() || esperas >= 4) return;
+        if (Date.now() - ultimaFrase < 9000) return;
+        let frase = fraseDeEspera(ultimaHerramienta, esperas);
+        if (dichas.has(frase)) frase = fraseDeEspera(null, esperas);
+        esperas++;
+        decirTrabajo(frase);
+      }, 1000);
+      const avisarRespondido = () => window.dispatchEvent(new Event('electrum:respondido'));
+
+      /*
        * Un turno se puede cortar por fuera: se va la señal, Render recicla el proceso, el usuario
        * toca «parar». El navegador necesita poder abandonar la lectura, y el corte de tiempo tiene
        * que ser MAYOR que el presupuesto del turno en el servidor (50 s) para no abandonar una
@@ -525,6 +570,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       /** Si la respuesta se va a decir en voz alta, la cara la maneja la voz, no el reloj de abajo. */
       let vozEnCamino = false;
       const imagenesDelTurno: NonNullable<Turno['imagenes']> = [];
+      let opcionesDelTurno: Turno['opciones'];
 
       try {
         /*
@@ -603,10 +649,21 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               else if (linea.startsWith('data: ')) {
                 const d = JSON.parse(linea.slice(6));
                 if (evento === 'panel') setEnVivo((v) => ({ ...v, panel: d.panel }));
-                else if (evento === 'herramienta') setEnVivo((v) => ({ ...v, traza: [...v.traza, d] }));
+                else if (evento === 'herramienta') {
+                  ultimaHerramienta = String(d?.herramienta || '') || null;
+                  setEnVivo((v) => ({ ...v, traza: [...v.traza, d] }));
+                }
                 else if (evento === 'ui') {
                   onUi([d]); // el mapa se mueve YA, no al final
                   if (d?.accion === 'volar' && Number.isFinite(Number(d.concesion_id))) setEnFoco(Number(d.concesion_id));
+                  // Varias parecidas: botones para elegir. Una sola (o la exacta) no pide elección.
+                  if (d?.accion === 'candidatas' && Array.isArray(d.filas) && d.filas.length > 1) {
+                    opcionesDelTurno = d.filas.slice(0, 6).map((f: any) => ({
+                      id: Number(f.id),
+                      nombre: String(f.nombre || `id ${f.id}`),
+                      detalle: [f.municipio, f.titular, f.expediente].filter(Boolean).map(String).join(' · '),
+                    }));
+                  }
                   // Un mapa (image/jpeg) se ve en el hilo; un PDF queda como tarjeta para bajar.
                   const armados: any[] = Array.isArray(d?.informes) ? d.informes : d?.informe ? [d.informe] : [];
                   for (const x of armados) {
@@ -623,6 +680,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   terminado = true;
                 } else if (evento === 'fin') {
                   cerrado = true;
+                  respondiendo = true;
                   onFace('SPEAKING');
                   if (d.emocion) onEmocion(d.emocion);
                   if (vozActivaRef.current && d.texto) {
@@ -635,10 +693,12 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                       alTerminar: () => {
                         setHablando(false);
                         onFace('IDLE');
+                        avisarRespondido();
                       },
                       alFallar: (motivo) => {
                         setHablando(false);
                         onFace('IDLE');
+                        avisarRespondido();
                         if (!vozAvisada.current) {
                           vozAvisada.current = true;
                           avisoSuelto(`No pude decírtelo en voz alta: ${motivo}. La respuesta está escrita arriba.`);
@@ -646,7 +706,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                       },
                     });
                   }
-                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined }]);
+                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined, opciones: opcionesDelTurno }]);
                   terminado = true;
                 }
               }
@@ -674,6 +734,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         }
       } finally {
         clearTimeout(reloj);
+        clearInterval(relojEspera);
+        respondiendo = true;
         abortoRef.current = null;
         /*
          * EL PUNTO DE F05. El lector sale cuando el flujo termina, y eso pasa también cuando el
@@ -693,7 +755,12 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         }
         setPensando(false);
         setEnVivo({ panel: '', traza: [] });
-        if (!vozEnCamino) setTimeout(() => onFace('IDLE'), 1200);
+        if (!vozEnCamino) {
+          // Sin respuesta hablada, lo que quedara del «estoy revisando…» se corta: ya no hay nada que esperar.
+          if (vozActivaRef.current) callar();
+          setTimeout(() => onFace('IDLE'), 1200);
+          avisarRespondido();
+        }
       }
     },
     [pensando, onFace, onEmocion, onUi, onTrabajo, avisar, avisoSuelto]
@@ -958,6 +1025,27 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                     >
                       Volver a preguntar
                     </button>
+                  </div>
+                )}
+                {/* La búsqueda trajo varias: se elige tocando (o diciendo «la segunda»). */}
+                {t.opciones && t.opciones.length > 1 && (
+                  <div className="mt-1.5 flex max-w-[92%] flex-col gap-1" role="group" aria-label="¿Cuál de estas?">
+                    <span className="font-mono text-[10px] tracking-[0.14em] uppercase text-[#7F939D]">¿Cuál de estas?</span>
+                    {t.opciones.map((o, k) => (
+                      <button
+                        key={o.id}
+                        type="button"
+                        disabled={pensando}
+                        onClick={() => void preguntar(`La ${k + 1}: ${o.nombre} (id ${o.id}).`)}
+                        className="flex items-baseline gap-2 rounded-lg border border-white/12 bg-white/[0.03] px-2.5 py-1.5 text-left transition-colors hover:border-[#FFAE3B]/55 hover:bg-[#FFAE3B]/[0.07] disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                      >
+                        <span className="font-mono text-[10px] text-[#FFAE3B]">{k + 1}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13px] text-[#E7EEF2]">{o.nombre}</span>
+                          {o.detalle && <span className="block truncate text-[11px] text-[#7F939D]">{o.detalle}</span>}
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 )}
                 {t.imagenes?.map((im) => (

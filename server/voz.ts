@@ -23,7 +23,7 @@ import { leerWav, wavAMp3, type Pcm } from '../lib/mp3';
 import { trocearExpresiones } from '../lib/expresiones';
 import { adaptarPcm, empalmar, escribirWav, tomaDeExpresion } from './empalme';
 import type { Presupuesto } from '../lib/presupuesto';
-import { abrirEleven, elevenListo, guionEleven, hablarEleven, modeloEleven, vozEleven } from './eleven';
+import { abrirEleven, conMuletillas, elevenListo, guionEleven, hablarEleven, modeloEleven, vozEleven } from './eleven';
 
 export type Performance = 'speak' | 'sing';
 
@@ -373,7 +373,10 @@ function pedidoEleven(o: {
 }): { voz: string; guion: string; clave: string; motor: string } | null {
   const voz = o.performance === 'speak' ? vozEleven(o.plataforma) : null;
   if (!voz || !elevenListo()) return null;
-  const guion = guionEleven(String(o.texto || '').slice(0, MAX_GUION), o.emocion, (t) => expresar(t, o.emocion, 'speak', { cifras: false }));
+  // Dr Electrum habla como persona: alguna muletilla («bueno,», «este») en vez de dicción de locutor.
+  const base = String(o.texto || '').slice(0, MAX_GUION);
+  const humano = o.plataforma === 'electrum' ? conMuletillas(base, { primero: !o.previo, emocion: o.emocion }) : base;
+  const guion = guionEleven(humano, o.emocion, (t) => expresar(t, o.emocion, 'speak', { cifras: false }));
   if (!guion) return null;
   const clave = crypto
     .createHash('sha1')

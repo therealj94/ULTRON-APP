@@ -23,7 +23,13 @@ import { guardarCatastro, type CapaExtra, type Fondo, type Motor, type OrdenMapa
 import { Tarjeta } from './mapa/Tarjeta';
 import { CapasControl, type MuestrasEncendidas } from './mapa/CapasControl';
 import { Tablero } from './mapa/Tablero';
-import { Recorrido, prepararRecorrido, type Controles, type ModoRecorrido } from './demo/Recorrido';
+import { Recorrido, prepararRecorrido, salirPantallaCompleta, entrarPantallaCompleta, type Controles, type ModoRecorrido } from './demo/Recorrido';
+import { Preguntas } from './demo/Preguntas';
+import { BotonOido, type ModoOido } from './panel/BotonOido';
+import { AirTouch, BotonManos, type EstadoManos } from './manos/AirTouch';
+import { crearOido, capturaActiva, type EstadoOido } from './panel/oido';
+import { comandoDe, type Comando } from './panel/comandos';
+import { callar, nivelVoz, reanudarVoz, suena } from './panel/voz';
 import { Bienvenida, bienvenidaApagada } from './demo/Bienvenida';
 import type { PedidoPanel, VistaPanel } from './panel/Panel';
 import { Panel } from './panel/Panel';
@@ -272,7 +278,17 @@ export default function App() {
    */
   const [bienvenidaVista, setBienvenidaVista] = useState(false);
   const cerrarTablero = useCallback(() => setTableroAbierto(false), []);
-  const terminarRecorrido = useCallback(() => setRecorrido(false), []);
+  /** Al terminar el recorrido por sí solo: «¿Tiene alguna pregunta?». */
+  const [preguntas, setPreguntas] = useState(false);
+  const terminarRecorrido = useCallback((natural: boolean) => {
+    setRecorrido(false);
+    if (natural) setPreguntas(true);
+    else salirPantallaCompleta();
+  }, []);
+  /** El visor del mapa durante el recorrido: esquinas y nombre sobre lo que se muestra. */
+  const [enfoque, setEnfoque] = useState<{ encuadre: [number, number, number, number]; etiqueta?: string } | null>(null);
+  /** Dónde está quien usa la app (si dio permiso): un punto en el mapa y «¿dónde estoy?». */
+  const [yo, setYo] = useState<[number, number] | null>(null);
   /** Ir a una concesión desde el tablero: se cierra, el mapa vuela y se abre su ficha. */
   const irAConcesion = useCallback(async (id: number) => {
     setTableroAbierto(false);
@@ -309,6 +325,8 @@ export default function App() {
       alto: setAlto,
       estado: () => estadoRef.current,
       trabajo: () => setEscenario('trabajo'),
+      enfocar: setEnfoque,
+      visor: (f) => window.dispatchEvent(new CustomEvent('electrum:visor', { detail: f })),
     }),
     []
   );
@@ -353,6 +371,181 @@ export default function App() {
     if (orden) alTrabajo();
   }, [orden, alTrabajo]);
 
+  /*
+   * EL OÍDO SIEMPRE ABIERTO Y LOS COMANDOS DE VOZ.
+   *
+   * Al entrar se piden el micrófono y la ubicación (el navegador pregunta una vez). Con el
+   * micrófono abierto, cada frase se pasa a texto y se decide qué es: un comando para la pantalla
+   * («acércate», «siguiente», «cierra la ventana») se hace en el acto; si alguien tiene la palabra
+   * (el cierre del recorrido preguntando) le llega a él; lo demás es una pregunta para Dr Electrum.
+   */
+  /** Air touch: se enciende a pedido (la cámara no se pide sola) y se recuerda para la próxima vez. */
+  const [manos, setManosCrudo] = useState<boolean>(() => leerPreferencia<boolean>('manos', false, (v) => typeof v === 'boolean'));
+  const [estadoManos, setEstadoManos] = useState<EstadoManos>('apagado');
+  const setManos = useCallback((v: boolean) => {
+    setManosCrudo(v);
+    guardarPreferencia('manos', v);
+  }, []);
+  const [modoOido, setModoOido] = useState<ModoOido>(() => leerPreferencia<ModoOido>('oido', 'siempre', (v) => v === 'siempre' || v === 'tocar'));
+  const [estadoOido, setEstadoOido] = useState<EstadoOido>('apagado');
+  const [oidoUltimo, setOidoUltimo] = useState('');
+  const unaFrase = useRef(false);
+  const recorridoRef = useRef(recorrido);
+  recorridoRef.current = recorrido;
+  const yoRef = useRef(yo);
+  yoRef.current = yo;
+
+  const ejecutarComando = useCallback(
+    (cmd: Comando) => {
+      const mapa = (detalle: Record<string, unknown>) => window.dispatchEvent(new CustomEvent('electrum:mapa', { detail: detalle }));
+      switch (cmd.accion) {
+        case 'siguiente':
+          window.dispatchEvent(new CustomEvent('electrum:recorrido', { detail: 'siguiente' }));
+          break;
+        case 'detener':
+          if (recorridoRef.current) terminarRecorrido(false);
+          setPreguntas(false);
+          callar();
+          break;
+        case 'callar':
+          callar();
+          break;
+        case 'cerrar':
+          // Como lo cerraría una persona: Escape cierra el visor, el timelapse y la ficha.
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          setTocado(null);
+          setTableroAbierto(false);
+          break;
+        case 'zoom':
+          setEscenario('trabajo');
+          mapa({ accion: 'zoom', dir: cmd.dir });
+          break;
+        case 'reparto':
+          setEscenario('trabajo');
+          cambiarAlto(cmd.alto === 'mapa' ? ALTURAS.mapa : cmd.alto === 'chat' ? ALTURAS.lectura : ALTURAS.dividido);
+          break;
+        case 'pantalla':
+          if (cmd.entrar) entrarPantallaCompleta();
+          else salirPantallaCompleta();
+          break;
+        case 'abrir':
+          if (cmd.que === 'tablero') setTableroAbierto(true);
+          else if (cmd.que === 'capas') {
+            setEscenario('trabajo');
+            (document.querySelector('[data-tour="capas"]') as HTMLElement | null)?.click();
+          } else if (cmd.que === 'recorrido') {
+            setModoRecorrido('completo');
+            setEscenario('trabajo');
+            setRecorrido(true);
+          } else elegirPanel(cmd.que === 'consulta' ? 'chat' : cmd.que === 'expedientes' ? 'expedientes' : 'infra');
+          break;
+        case 'tresD':
+          setEscenario('trabajo');
+          setTresD(cmd.activar);
+          break;
+        case 'manos':
+          setManos(cmd.activar);
+          break;
+        case 'ubicacion':
+          setEscenario('trabajo');
+          if (yoRef.current) mapa({ accion: 'ir', centro: yoRef.current, zoom: 12 });
+          else pedirUbicacion(true);
+          break;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [terminarRecorrido, cambiarAlto, elegirPanel]
+  );
+
+  const enrutarDicho = useCallback(
+    (texto: string) => {
+      setOidoUltimo(texto);
+      const cmd = comandoDe(texto);
+      if (cmd) return ejecutarComando(cmd);
+      const captura = capturaActiva();
+      if (captura && captura(texto) !== false) return;
+      // En pleno recorrido solo mandan los comandos: una charla de fondo no lo interrumpe.
+      if (recorridoRef.current) return;
+      // Menos de dos palabras sueltas no es una pregunta (un «eh», un «ajá» de otra conversación).
+      if (texto.trim().split(/\s+/).length < 2) return;
+      setEscenario('trabajo');
+      pedirAlPanel({ tipo: 'pregunta', texto });
+    },
+    [ejecutarComando, pedirAlPanel]
+  );
+  const enrutarRef = useRef(enrutarDicho);
+  enrutarRef.current = enrutarDicho;
+
+  const oido = useMemo(
+    () =>
+      crearOido({
+        alTexto: (t) => {
+          if (unaFrase.current) {
+            unaFrase.current = false;
+            oidoRef.current?.detener();
+          }
+          enrutarRef.current(t);
+        },
+        alEstado: setEstadoOido,
+        hablandoAhora: suena,
+      }),
+    []
+  );
+  const oidoRef = useRef(oido);
+
+  const pedirUbicacion = useCallback((volar = false) => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      (p) => {
+        const punto: [number, number] = [p.coords.longitude, p.coords.latitude];
+        setYo(punto);
+        if (volar) window.dispatchEvent(new CustomEvent('electrum:mapa', { detail: { accion: 'ir', centro: punto, zoom: 12 } }));
+      },
+      () => undefined,
+      { enableHighAccuracy: false, timeout: 12_000, maximumAge: 10 * 60_000 }
+    );
+  }, []);
+
+  // Al entrar: micrófono (si está en «siempre») y ubicación. El navegador pregunta una sola vez.
+  useEffect(() => {
+    if (puerta !== 'abierta' || !usuario) return;
+    if (modoOido === 'siempre') void oido.iniciar();
+    pedirUbicacion();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [puerta, usuario]);
+  // Apagar al salir.
+  useEffect(() => () => oido.detener(), [oido]);
+  // Un toque en cualquier lado despierta el audio que el navegador dejó en pausa.
+  useEffect(() => {
+    const t = () => {
+      oido.reanudar();
+      reanudarVoz();
+    };
+    window.addEventListener('pointerdown', t);
+    return () => window.removeEventListener('pointerdown', t);
+  }, [oido]);
+
+  const cambiarModoOido = useCallback(
+    (m: ModoOido) => {
+      setModoOido(m);
+      guardarPreferencia('oido', m);
+      unaFrase.current = false;
+      if (m === 'siempre') void oido.iniciar();
+      else oido.detener();
+    },
+    [oido]
+  );
+  const tocarOido = useCallback(() => {
+    if (modoOido === 'siempre') {
+      // Sin permiso todavía: volver a pedirlo con el toque.
+      if (oido.estado() === 'sin-permiso' || oido.estado() === 'apagado') void oido.iniciar();
+      return;
+    }
+    unaFrase.current = true;
+    void oido.iniciar();
+  }, [modoOido, oido]);
+
+
   /** Las herramientas devuelven `ui`; aquí se traduce a órdenes para el mapa. */
   const alUi = useCallback((datos: Array<Record<string, unknown>>) => {
     for (const d of datos) {
@@ -379,6 +572,7 @@ export default function App() {
         emocion={emocion}
         funMode={false}
         casco
+        leerLabio={nivelVoz}
         onFaceChange={(f) => setFace(f)}
         onModeChange={(m) => setMode(m)}
       />
@@ -502,6 +696,12 @@ export default function App() {
         onFondo={setFondo}
         onCuenta={() => setCuenta('clave')}
         pendientes={pendientes}
+        extra={
+          <>
+            <BotonOido modo={modoOido} estado={estadoOido} nivel={oido.nivel} oido={oidoUltimo} onModo={cambiarModoOido} onTocar={tocarOido} />
+            <BotonManos activo={manos} estado={estadoManos} onCambiar={() => setManos(!manos)} />
+          </>
+        }
         onSalir={() => {
           // El hilo también se va: en una computadora compartida, salir tiene que llevarse lo que
           // se habló, no solo la credencial.
@@ -570,6 +770,8 @@ export default function App() {
               curvas={curvas}
               prospectividad={prospectividad}
               visible={enTrabajo}
+              enfoque={enfoque}
+              yo={yo}
             />
           </Suspense>
           </SinMapa>
@@ -592,11 +794,11 @@ export default function App() {
                 texto: recorrido ? 'Detener' : 'Recorrido',
                 activo: recorrido,
                 alTocar: () => {
-                  if (!recorrido) {
-                    prepararRecorrido();
-                    setModoRecorrido('completo');
-                  }
-                  setRecorrido((v) => !v);
+                  if (recorrido) return terminarRecorrido(false);
+                  prepararRecorrido();
+                  setPreguntas(false);
+                  setModoRecorrido('completo');
+                  setRecorrido(true);
                 },
                 titulo: 'Dr Electrum presenta la plataforma solo, con su voz',
               },
@@ -627,6 +829,22 @@ export default function App() {
           />
           {/* El cuadro del recorrido vive DENTRO del mapa: se acomoda a él y no tapa la conversación. */}
           <Recorrido activo={recorrido} onTerminar={terminarRecorrido} controles={controlesRecorrido} fichaAbierta={!!tocado} modo={modoRecorrido} />
+          <AirTouch activo={manos} onEstado={setEstadoManos} />
+          {preguntas && !recorrido && (
+            <Preguntas
+              cara={(f) => setFace(f)}
+              onPreguntar={(texto) => pedirAlPanel({ tipo: 'pregunta', texto })}
+              onOtro={(m) => {
+                setPreguntas(false);
+                setModoRecorrido(m);
+                setRecorrido(true);
+              }}
+              onCerrar={() => {
+                setPreguntas(false);
+                salirPantallaCompleta();
+              }}
+            />
+          )}
         </div>
         <Panel
           abierto={enTrabajo}

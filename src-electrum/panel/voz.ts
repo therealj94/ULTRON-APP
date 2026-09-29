@@ -48,14 +48,87 @@ export function desbloquear() {
     // respuesta: Safari recuerda el elemento, no el sonido.
     a.play()?.catch?.(() => {});
     desbloqueado = true;
+    conectarMedidor(a);
   } catch {
     /* sin audio en este navegador */
   }
 }
 
+/* ------------------------------------------------------------ el medidor para la boca */
+
+/*
+ * La boca de la cara sigue a la voz DE VERDAD: un analizador escucha el reproductor y da el volumen
+ * de cada instante. `createMediaElementSource` se puede llamar UNA sola vez por elemento, y desde
+ * ahí el sonido sale por el AudioContext: si ese contexto queda en pausa, el reproductor enmudece.
+ * Por eso solo se engancha cuando el contexto arrancó de verdad (dentro de un toque), y se reanuda
+ * antes de cada locución y en cada toque.
+ */
+let ctxVoz: AudioContext | null = null;
+let analizadorVoz: AnalyserNode | null = null;
+let datosVoz: Uint8Array | null = null;
+let medidorPedido = false;
+
+function conectarMedidor(a: HTMLAudioElement) {
+  if (medidorPedido || typeof window === 'undefined') return;
+  const AC = (window as any).AudioContext || (window as any).webkitAudioContext;
+  if (!AC) return;
+  medidorPedido = true;
+  let ctx: AudioContext;
+  try {
+    ctx = new AC() as AudioContext;
+  } catch {
+    return;
+  }
+  void Promise.resolve(ctx.state === 'running' ? undefined : ctx.resume())
+    .then(() => {
+      if (ctx.state !== 'running') {
+        // Sin arrancar no se engancha nada: la voz sigue saliendo directo, sin medidor.
+        void ctx.close().catch(() => {});
+        medidorPedido = false;
+        return;
+      }
+      const fuente = ctx.createMediaElementSource(a);
+      const an = ctx.createAnalyser();
+      an.fftSize = 512;
+      an.smoothingTimeConstant = 0.35;
+      fuente.connect(an);
+      an.connect(ctx.destination);
+      ctxVoz = ctx;
+      analizadorVoz = an;
+      datosVoz = new Uint8Array(an.fftSize);
+    })
+    .catch(() => {
+      medidorPedido = false;
+    });
+}
+
+/** Si el navegador pausó el audio (otra pestaña, una llamada), lo despierta. Llamarla en los toques. */
+export function reanudarVoz() {
+  if (ctxVoz && ctxVoz.state !== 'running') void ctxVoz.resume().catch(() => {});
+}
+
+/**
+ * Cuánto suena la voz ahora: 0..1. `-1` si no hay medidor (Safari viejo, o antes del primer
+ * toque): la cara entonces mueve la boca con su propio ritmo mientras habla.
+ */
+export function nivelVoz(): number {
+  if (!analizadorVoz || !datosVoz) return -1;
+  if (!suena()) return 0;
+  analizadorVoz.getByteTimeDomainData(datosVoz as any);
+  let suma = 0;
+  for (let k = 0; k < datosVoz.length; k++) {
+    const v = (datosVoz[k] - 128) / 128;
+    suma += v * v;
+  }
+  const rms = Math.sqrt(suma / datosVoz.length);
+  // La voz hablada ronda 0,05–0,25 de RMS: se estira para que la boca abra de verdad.
+  return Math.min(1, Math.max(0, (rms - 0.012) * 5));
+}
+
 /** Corta lo que suena e invalida lo que venía. Se puede llamar siempre. */
 export function callar() {
   generacion++;
+  relleno = null;
   cortePendiente?.abort();
   cortePendiente = null;
   // El silencio del desbloqueo no se corta: cortarlo a la mitad le quita el permiso en Safari.
@@ -200,7 +273,10 @@ function sonarEnVivo(a: HTMLAudioElement, r: Response, mia: number): Promise<voi
 
 async function sonar(a: HTMLAudioElement, r: Response, mia: number): Promise<void> {
   if (enVivoPosible(r)) return sonarEnVivo(a, r, mia);
-  const blob = await r.blob();
+  return sonarBlob(a, await r.blob(), mia);
+}
+
+function sonarBlob(a: HTMLAudioElement, blob: Blob, mia: number): Promise<void> {
   return new Promise((listo, fallo) => {
     const url = URL.createObjectURL(blob);
     const fin = (e?: unknown) => {
@@ -221,17 +297,34 @@ async function sonar(a: HTMLAudioElement, r: Response, mia: number): Promise<voi
  * Nunca lanza: los problemas llegan por `alFallar`.
  */
 export async function hablar(texto: string, emocion: string | undefined, headers: Record<string, string>, avisos: Avisos = {}) {
-  callar();
-  const mia = ++generacion;
   const trozos = trocearParaVoz(texto);
-  if (!trozos.length) return;
-  const a = elReproductor();
-  let empezo = false;
   // Callar corta también lo que viene en camino: ni se sigue bajando ni se gastan créditos.
   const corte = new AbortController();
-  cortePendiente = corte;
   const pedir = (i: number) => sintetizar(trozos[i], emocion, headers, trozos[i - 1], trozos[i + 1], corte.signal);
-  let siguiente: Promise<Response> | null = pedir(0);
+  let adelantado: Promise<Response> | null = null;
+  /*
+   * Si está sonando el «estoy revisando…», se le deja terminar la frase —cortarla a la mitad suena
+   * peor que el silencio— y mientras tanto ya se pide la respuesta, para que entre sin hueco.
+   */
+  const r = relleno;
+  if (r && r.gen === generacion && trozos.length) {
+    adelantado = pedir(0);
+    adelantado.catch(() => {});
+    await Promise.race([r.fin, new Promise((ok) => setTimeout(ok, 7000))]);
+    if (generacion !== r.gen) {
+      // Mientras tanto alguien calló o empezó otra cosa: esta respuesta ya no va.
+      corte.abort();
+      return;
+    }
+  }
+  callar();
+  const mia = ++generacion;
+  if (!trozos.length) return;
+  reanudarVoz();
+  const a = elReproductor();
+  let empezo = false;
+  cortePendiente = corte;
+  let siguiente: Promise<Response> | null = adelantado || pedir(0);
   try {
     for (let i = 0; i < trozos.length; i++) {
       const respuesta = await siguiente!;
@@ -256,4 +349,58 @@ export async function hablar(texto: string, emocion: string | undefined, headers
 /** ¿Está sonando algo ahora? */
 export function suena(): boolean {
   return !!reproductor && !reproductor.paused && !!reproductor.src && !reproductor.src.startsWith('data:');
+}
+
+/* ------------------------------------------------------------ «estoy revisando…» */
+
+/** El «estoy revisando…» que está sonando: `hablar` espera a que termine antes de empezar. */
+let relleno: { gen: number; fin: Promise<void> } | null = null;
+/** Las frases cortas se guardan ya dichas: la segunda vez suenan al instante, sin ir al servidor. */
+const rellenosGuardados = new Map<string, Blob>();
+
+async function blobDeRelleno(texto: string, headers: Record<string, string>, senal?: AbortSignal): Promise<Blob> {
+  const guardado = rellenosGuardados.get(texto);
+  if (guardado) return guardado;
+  const r = await sintetizar(texto, 'pensando', headers, undefined, undefined, senal || new AbortController().signal);
+  const blob = await r.blob();
+  if (blob.size > 0) {
+    if (rellenosGuardados.size > 40) rellenosGuardados.delete(rellenosGuardados.keys().next().value as string);
+    rellenosGuardados.set(texto, blob);
+  }
+  return blob;
+}
+
+/**
+ * Dice una frase corta de trabajo («estoy dibujando el mapa geológico…») mientras el cerebro piensa.
+ * Nunca lanza y nunca avisa de fallos: si no suena, la respuesta llega igual.
+ */
+export function rellenar(texto: string, headers: Record<string, string>, avisos: Pick<Avisos, 'alEmpezar' | 'alTerminar'> = {}): Promise<void> {
+  // No pisa una respuesta que está sonando.
+  if (suena() && !relleno) return Promise.resolve();
+  callar();
+  const mia = ++generacion;
+  const corte = new AbortController();
+  cortePendiente = corte;
+  reanudarVoz();
+  const fin = (async () => {
+    try {
+      const blob = await blobDeRelleno(texto, headers, corte.signal);
+      if (mia !== generacion) return;
+      avisos.alEmpezar?.();
+      await sonarBlob(elReproductor(), blob, mia);
+    } catch {
+      /* sin voz para el relleno: no pasa nada */
+    } finally {
+      if (relleno?.gen === mia) relleno = null;
+      if (mia === generacion) avisos.alTerminar?.();
+    }
+  })();
+  relleno = { gen: mia, fin };
+  return fin;
+}
+
+/** Deja lista (sin sonar) una frase de trabajo, para que la próxima vez salga sin espera. */
+export function prepararRelleno(texto: string, headers: Record<string, string>) {
+  if (rellenosGuardados.has(texto)) return;
+  void blobDeRelleno(texto, headers).catch(() => {});
 }

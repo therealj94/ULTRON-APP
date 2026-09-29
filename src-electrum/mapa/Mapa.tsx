@@ -67,6 +67,13 @@ type Props = {
   prospectividad?: boolean;
   /** ¿Se está viendo? El mapa se monta detrás de la cara: la entrada se hace cuando aparece. */
   visible?: boolean;
+  /**
+   * El visor: un recuadro con esquinas y el nombre de lo que se está mostrando, pegado al terreno
+   * (sigue la cámara). Lo usa el recorrido para que se sepa exactamente qué mirar.
+   */
+  enfoque?: { encuadre: [number, number, number, number]; etiqueta?: string } | null;
+  /** Dónde está quien usa la app (lon, lat), si dio permiso de ubicación: un punto azul que respira. */
+  yo?: [number, number] | null;
 };
 
 /** Honduras entera, que es donde se abre si nadie ha pedido nada todavía. */
@@ -95,7 +102,13 @@ function quiereIntro(): boolean {
 
 function prepararGlobo(m: maplibregl.Map) {
   try {
-    m.setProjection({ type: 'globe' });
+    /*
+     * Globo de lejos y plano de cerca, en UNA sola proyección que se interpola con el zoom. Antes
+     * se cambiaba a Mercator al terminar el descenso, y si algo lo interrumpía (el recorrido, un
+     * toque) el cambio llegaba a mitad de vuelo: MapLibre recargaba todas las teselas y el mapa
+     * entero parpadeaba. Desde zoom 7 ya es Mercator puro.
+     */
+    m.setProjection({ type: ['interpolate', ['linear'], ['zoom'], 5, 'vertical-perspective', 7, 'mercator'] } as any);
     // El halo de la atmósfera alrededor del globo; se apaga solo al acercarse (zoom 7).
     m.setSky({ 'atmosphere-blend': ['interpolate', ['linear'], ['zoom'], 0, 1, 5, 1, 7, 0] } as any);
   } catch {
@@ -112,18 +125,10 @@ function introDesdeElEspacio(m: maplibregl.Map) {
     /* sin almacenamiento: la volverá a ver la próxima vez, nada más */
   }
   introHasta = Date.now() + 300 + duracion(4800) + 400;
-  const volver = () => {
-    try {
-      m.setProjection({ type: 'mercator' });
-    } catch {
-      /* el estilo ya cambió: su proyección es la de siempre */
-    }
-  };
   setTimeout(() => {
     // Si algo más mueve el mapa antes (una orden de Dr Electrum, un toque), el descenso se corta y
-    // la proyección vuelve igual al terminar ese movimiento.
+    // no pasa nada raro: la proyección ya es plana en cuanto hay zoom.
     m.fitBounds(HONDURAS, { padding: 40, duration: duracion(4800), curve: 1.5, essential: true });
-    m.once('moveend', volver);
   }, 300);
 }
 
@@ -236,6 +241,7 @@ function asegurarCapas(m: maplibregl.Map) {
       m.addLayer({ id: f, type: 'raster', source: f, paint: { 'raster-opacity': opacidad, 'raster-fade-duration': 150 } } as any, primeraVectorial?.id);
     } else {
       m.setPaintProperty(f, 'raster-opacity', opacidad);
+      if (m.getLayoutProperty(f, 'visibility') === 'none') m.setLayoutProperty(f, 'visibility', 'visible');
     }
   }
   // Las muestras, ENCIMA de todo: son puntos chicos, y un punto debajo de un polígono no se toca.
@@ -294,11 +300,14 @@ function quitarMuestras(m: maplibregl.Map) {
   if (m.getSource('muestras')) m.removeSource('muestras');
 }
 
-/** Quita un mapa escaneado que se apagó. */
+/**
+ * Esconde un mapa escaneado que se apagó, sin borrarlo: volver a encenderlo (el recorrido los va
+ * alternando) no descarga todo de nuevo ni deja el terreno pelado mientras llega. Borrar y crear la
+ * fuente en cada cambio era otro parpadeo.
+ */
 function quitarRaster(m: maplibregl.Map, clave: string) {
   const f = fuenteRaster(clave);
-  if (m.getLayer(f)) m.removeLayer(f);
-  if (m.getSource(f)) m.removeSource(f);
+  if (m.getLayer(f)) m.setLayoutProperty(f, 'visibility', 'none');
 }
 
 /*
@@ -318,11 +327,55 @@ let ordenesDadas = 0;
  * lo que queda libre (fitBounds lo suma a su propio relleno, flyTo y easeTo lo conservan). Poner el
  * margen es un salto, así que se hace solo si cambió y justo antes de empezar un movimiento nuevo.
  */
-function ponerMargen(m: maplibregl.Map, margen: Margen | undefined) {
-  if (!margen) return;
-  const p = { top: Math.round(margen.arriba), bottom: Math.round(margen.abajo), left: Math.round(margen.izquierda), right: Math.round(margen.derecha) };
-  const a = m.getPadding();
-  if (a.top !== p.top || a.bottom !== p.bottom || a.left !== p.left || a.right !== p.right) m.setPadding(p);
+/**
+ * El margen en píxeles, achicado si no cabe: con «más chat» el mapa queda de doscientos píxeles de
+ * alto y un margen pensado para la pantalla entera lo dejaba sin sitio. MapLibre calculaba la
+ * cámara con un área negativa, daba NaN y tumbaba el mapa entero («No pude cargar el mapa»).
+ */
+function rellenoDe(margen: Margen | undefined, m?: maplibregl.Map, extra = 0) {
+  if (!margen) return undefined;
+  let r = { top: Math.max(0, margen.arriba), bottom: Math.max(0, margen.abajo), left: Math.max(0, margen.izquierda), right: Math.max(0, margen.derecha) };
+  const cont = m?.getContainer();
+  if (cont) {
+    const libreV = cont.clientHeight - 2 * extra - 40;
+    const libreH = cont.clientWidth - 2 * extra - 40;
+    const kv = r.top + r.bottom > libreV ? Math.max(0, libreV) / Math.max(1, r.top + r.bottom) : 1;
+    const kh = r.left + r.right > libreH ? Math.max(0, libreH) / Math.max(1, r.left + r.right) : 1;
+    r = { top: r.top * kv, bottom: r.bottom * kv, left: r.left * kh, right: r.right * kh };
+  }
+  return { top: Math.round(r.top), bottom: Math.round(r.bottom), left: Math.round(r.left), right: Math.round(r.right) };
+}
+
+/**
+ * El margen va DENTRO del movimiento (flyTo/easeTo lo animan junto con la cámara). Antes se ponía
+ * con `setPadding`, que es un salto instantáneo y además corta el movimiento en curso: cada capítulo
+ * del recorrido empezaba con un tirón. Para encuadrar algo con el margen nuevo se calcula la cámara
+ * como si ya estuviera puesto (sin dibujar nada) y se vuela hasta ahí con el margen animado.
+ */
+function camaraConMargen(
+  m: maplibregl.Map,
+  encuadre: [number, number, number, number],
+  margen: Margen | undefined,
+  opts: { relleno: number; maxZoom?: number; giro?: number }
+): { center: maplibregl.LngLat; zoom: number } | null {
+  const tr = (m as any).transform;
+  const cont = m.getContainer();
+  // El relleno propio tampoco puede comerse el mapa entero.
+  const relleno = Math.max(0, Math.min(opts.relleno, (Math.min(cont.clientWidth, cont.clientHeight) - 60) / 2));
+  const nuevo = rellenoDe(margen, m, relleno);
+  const antes = { ...m.getPadding() };
+  try {
+    if (nuevo && typeof tr?.setPadding === 'function') tr.setPadding(nuevo);
+    const cam = m.cameraForBounds(encuadre, { padding: relleno, maxZoom: opts.maxZoom, bearing: opts.giro ?? m.getBearing() });
+    if (!cam?.center || cam.zoom === undefined || !Number.isFinite(cam.zoom)) return null;
+    const c = maplibregl.LngLat.convert(cam.center as maplibregl.LngLatLike);
+    return Number.isFinite(c.lng) && Number.isFinite(c.lat) ? { center: c, zoom: cam.zoom } : null;
+  } catch {
+    // Un mapa sin sitio (plegado, a medio redimensionar): no se encuadra, pero tampoco se cae.
+    return null;
+  } finally {
+    if (nuevo && typeof tr?.setPadding === 'function') tr.setPadding(antes);
+  }
 }
 
 /** Por vencer en 90 días (fechas ISO se comparan como texto) o con ≥ 5 ha de pérdida fuerte de vegetación. */
@@ -379,7 +432,9 @@ function aplicarCurvas(m: maplibregl.Map) {
   }
   const sobreSatelite = relieve.fondo === 'satelite';
   // Debajo de todo lo vectorial del catastro: las curvas son el terreno, no una capa más.
-  const antes = m.getStyle().layers.find((l) => l.id.startsWith('extra-') || l.id === 'concesiones-relleno')?.id;
+  // (Se mira el orden solo si hay que añadir algo: `getStyle()` copia el estilo entero.)
+  const faltan = !m.getLayer('curvas-linea') || !m.getLayer('curvas-cota');
+  const antes = faltan ? m.getStyle().layers.find((l) => l.id.startsWith('extra-') || l.id === 'concesiones-relleno')?.id : undefined;
   if (!m.getLayer('curvas-linea')) {
     m.addLayer(
       {
@@ -561,7 +616,7 @@ function pintarExtrasGoogle(g: any, extras: CapaExtra[]) {
   }
 }
 
-export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null, traslapes = null, curvas = true, prospectividad = false, visible = true }: Props) {
+export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion = null, onTocar, tresD = false, rasters = [], muestras = null, traslapes = null, curvas = true, prospectividad = false, visible = true, enfoque = null, yo = null }: Props) {
   /** El último `onTocar`, para los manejadores que se atan una sola vez al crear el mapa. */
   const tocarRef = useRef(onTocar);
   tocarRef.current = onTocar;
@@ -618,7 +673,16 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
       // Las fuentes nacen vacías: el contenido llega cuando una herramienta lo manda.
       asegurarCapas(m);
       // Cada vez que el estilo cambia, no solo la primera: las teselas que fallan lo recargan solas.
-      m.on('styledata', () => asegurarCapas(m));
+      // Juntado en un solo pase por cuadro: un cambio de estilo dispara varios `styledata` seguidos.
+      let pendiente = false;
+      m.on('styledata', () => {
+        if (pendiente) return;
+        pendiente = true;
+        requestAnimationFrame(() => {
+          pendiente = false;
+          asegurarCapas(m);
+        });
+      });
       setListo(true);
     });
 
@@ -680,16 +744,11 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     (window as any).__mapa = m;
 
     /*
-     * MapLibre mide su contenedor UNA vez, al construirse, y después solo escucha a la ventana. Aquí
-     * el contenedor cambia sin que la ventana se mueva —aparece el panel lateral, el escenario pasa
-     * de la cara al trabajo— y el mapa se quedaba con el tamaño de arranque: lienzo de 300 px de
-     * alto sobre una caja de 548, o sea negro. Hay que avisarle cuando la caja cambia.
+     * El tamaño lo sigue MapLibre solo (trae su propio ResizeObserver, que además redibuja en el
+     * acto). Había un segundo observador nuestro que llamaba a `resize()` sin redibujar: cada vez
+     * que el panel cambiaba de alto el lienzo quedaba un cuadro en negro —parpadeo al arrastrar—.
      */
-    const observador = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(() => m.resize()) : null;
-    if (observador && caja.current) observador.observe(caja.current);
-
     return () => {
-      observador?.disconnect();
       m.remove();
       mapa.current = null;
       if (esMapaVivo(m)) fijarMapaVivo(null);
@@ -818,28 +877,12 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     if (traslapes) asegurarCapas(m);
   }, [traslapes, listo]);
 
-  // El pulso de las alertas: opacidad y grosor que respiran, ~30 cuadros por segundo (15 con el terreno 3D,
-  // donde cada cuadro cuesta mucho más); quieto si se pidió menos movimiento.
-  useEffect(() => {
-    const m = mapa.current;
-    if (!m || !listo || sinMovimiento()) return;
-    let vivo = true;
-    let ultimo = 0;
-    const paso = (t: number) => {
-      if (!vivo) return;
-      if (t - ultimo > (m.getTerrain() ? 66 : 33) && m.getLayer('concesiones-alerta')) {
-        ultimo = t;
-        const f = (Math.sin(t / 380) + 1) / 2;
-        m.setPaintProperty('concesiones-alerta', 'line-opacity', 0.25 + 0.65 * f);
-        m.setPaintProperty('concesiones-alerta', 'line-width', 2 + 4 * f);
-      }
-      requestAnimationFrame(paso);
-    };
-    requestAnimationFrame(paso);
-    return () => {
-      vivo = false;
-    };
-  }, [listo]);
+  /*
+   * Las alertas ya NO laten. El pulso cambiaba el estilo 30 veces por segundo: cada cambio
+   * disparaba `styledata` (y con él toda la reposición de capas) y, con el terreno 3D, obligaba a
+   * MapLibre a tirar y rehacer las texturas del relieve —eso era el parpadeo—. Quedan con un halo
+   * quieto (`line-blur`), que se ve igual de bien y no cuesta nada.
+   */
 
   // Curvas y sombreado: dependen de si están pedidas y del fondo (más marcadas sobre el satélite).
   useEffect(() => {
@@ -847,8 +890,7 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     relieve.fondo = fondo;
     const m = mapa.current;
     if (!m || !listo) return;
-    if (m.getLayer('curvas-linea')) m.removeLayer('curvas-linea');
-    if (m.getLayer('curvas-cota')) m.removeLayer('curvas-cota');
+    // Sin quitar y volver a poner las capas (eso las hacía parpadear): `aplicarCurvas` actualiza el color.
     aplicarCurvas(m);
     aplicarTerreno(m);
   }, [curvas, fondo, listo]);
@@ -869,16 +911,25 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
       const f = fc?.features?.find((x) => Number(x.properties?.id) === Number(id));
       if (!f?.properties || f.properties.prosp === puntaje) return;
       f.properties.prosp = puntaje;
-      pintar(m, 'concesiones', fc);
+      /*
+       * Volver a mandar el catastro entero (mil polígonos) rehace todas sus teselas y los nombres
+       * parpadean. Solo hace falta si el relleno por prospectividad se está viendo; si no, el dato
+       * queda guardado y entra la próxima vez que se pinte.
+       */
+      if (rellenoPorProsp) pintar(m, 'concesiones', fc);
     };
     window.addEventListener('electrum:prospectividad', alRecibir);
     return () => window.removeEventListener('electrum:prospectividad', alRecibir);
   }, [listo]);
 
   useEffect(() => {
+    const antes = rellenoPorProsp;
     rellenoPorProsp = prospectividad;
     const m = mapa.current;
-    if (m && listo) aplicarRelleno(m);
+    if (!m || !listo) return;
+    // Los puntajes que llegaron mientras el relleno estaba apagado entran ahora, de una vez.
+    if (prospectividad && !antes && pintado.concesiones) pintar(m, 'concesiones', pintado.concesiones);
+    aplicarRelleno(m);
   }, [prospectividad, listo]);
 
   useEffect(() => {
@@ -898,24 +949,105 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     else m.easeTo({ pitch: 0, bearing: 0, duration: duracion(1200) });
   }, [tresD, listo]);
 
+  /* ---------------------------------------------------------------- visor */
+
+  /*
+   * Se mueve con la cámara escribiendo el estilo directo, sin pasar por React: a 60 cuadros por
+   * segundo un setState por cuadro volvería a dibujar todo el mapa, que es justo lo que parpadea.
+   */
+  const visor = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const m = mapa.current;
+    const el = visor.current;
+    if (!el) return;
+    if (!m || !listo || !enfoque || motor !== 'maplibre') {
+      el.style.opacity = '0';
+      return;
+    }
+    const [a, b, c, d] = enfoque.encuadre;
+    const poner = () => {
+      const pts = [
+        [a, b],
+        [c, b],
+        [c, d],
+        [a, d],
+      ].map((p) => m.project(p as [number, number]));
+      const xs = pts.map((p) => p.x);
+      const ys = pts.map((p) => p.y);
+      const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+      // Nunca más chico que un dedo, para que se vea aunque la concesión sea diminuta a ese zoom.
+      const w = Math.max(96, Math.max(...xs) - Math.min(...xs) + 36);
+      const h = Math.max(72, Math.max(...ys) - Math.min(...ys) + 36);
+      el.style.transform = `translate(${Math.round(cx - w / 2)}px, ${Math.round(cy - h / 2)}px)`;
+      el.style.width = `${Math.round(w)}px`;
+      el.style.height = `${Math.round(h)}px`;
+      el.style.opacity = '1';
+    };
+    poner();
+    m.on('move', poner);
+    m.on('resize', poner);
+    return () => {
+      m.off('move', poner);
+      m.off('resize', poner);
+    };
+  }, [enfoque, listo, motor]);
+
+  /* ---------------------------------------------------------------- manos libres */
+
+  // Las órdenes de voz («acércate», «aléjate», «dónde estoy») llegan como eventos de la ventana.
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m || !listo) return;
+    const alPedir = (e: Event) => {
+      const d = (e as CustomEvent<{ accion: string; dir?: number; centro?: [number, number]; zoom?: number; factor?: number }>).detail || ({} as any);
+      if (d.accion === 'zoom') {
+        if ((d.dir ?? 1) > 0) m.zoomIn({ duration: duracion(700) });
+        else m.zoomOut({ duration: duracion(700) });
+      } else if (d.accion === 'zoom-libre' && typeof d.factor === 'number') {
+        // El pellizco de Air touch: zoom continuo, sin animación (lo anima la mano).
+        m.setZoom(Math.max(2, Math.min(18, m.getZoom() + Math.log2(d.factor))));
+      } else if (d.accion === 'mover' && Array.isArray(d.centro)) {
+        m.panBy(d.centro as [number, number], { duration: 0 });
+      } else if (d.accion === 'ir' && Array.isArray(d.centro)) {
+        m.flyTo({ center: d.centro, zoom: d.zoom ?? 12, duration: duracion(1600), essential: true });
+      }
+    };
+    window.addEventListener('electrum:mapa', alPedir);
+    return () => window.removeEventListener('electrum:mapa', alPedir);
+  }, [listo]);
+
+  // «Usted está aquí»: un punto azul con halo, como en cualquier mapa del teléfono.
+  useEffect(() => {
+    const m = mapa.current;
+    if (!m || !listo || !yo || motor !== 'maplibre') return;
+    const el = document.createElement('div');
+    el.setAttribute('aria-label', 'Usted está aquí');
+    el.style.cssText = 'width:16px;height:16px;border-radius:50%;background:#3B82F6;border:3px solid #fff;box-shadow:0 0 0 6px rgba(59,130,246,.28),0 2px 8px rgba(0,0,0,.5)';
+    const marca = new maplibregl.Marker({ element: el }).setLngLat(yo).addTo(m);
+    return () => {
+      marca.remove();
+    };
+  }, [yo, listo, motor]);
+
   /* ---------------------------------------------------------------- órdenes */
 
   const obedecer = useCallback((o: OrdenMapa) => {
     const m = mapa.current;
     const mia = ++ordenesDadas;
     if (m && listo) {
-      if (o.accion === 'volar' || o.accion === 'camara' || o.accion === 'encuadrar') ponerMargen(m, o.margen);
+      const relleno = 'margen' in o ? rellenoDe(o.margen, m) : undefined;
       if (o.accion === 'volar') {
         pintar(m, 'resaltada', { type: 'FeatureCollection', features: [{ type: 'Feature', geometry: o.geojson, properties: {} }] });
         /*
          * Vuelo de presentación: sube, cruza y baja inclinándose y girando un poco al llegar, para
          * que se lea el relieve alrededor de la concesión. Con «menos movimiento» pedido, salto directo.
          */
-        const cam = o.encuadre ? m.cameraForBounds(o.encuadre, { padding: 90, maxZoom: 15 }) : null;
+        const cam = o.encuadre ? camaraConMargen(m, o.encuadre, o.margen, { relleno: 70, maxZoom: 15, giro: -14 }) : null;
         const centro = cam?.center ?? o.centro;
         const zoom = cam?.zoom ?? (o.centro ? 13 : undefined);
         if (centro && zoom !== undefined) {
-          m.flyTo({ center: centro as any, zoom, pitch: terreno3D ? 60 : 38, bearing: -14, curve: 1.6, speed: 0.9, duration: duracion(2800), essential: true });
+          m.flyTo({ center: centro as any, zoom, pitch: terreno3D ? 60 : 38, bearing: -14, curve: 1.6, speed: 0.9, duration: duracion(2800), essential: true, ...(relleno ? { padding: relleno } : {}) });
         }
       } else if (o.accion === 'capa') {
         pintar(m, 'concesiones', o.geojson);
@@ -927,16 +1059,18 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
       } else if (o.accion === 'punto') {
         m.flyTo({ center: o.punto, zoom: 14, duration: duracion(1200) });
       } else if (o.accion === 'camara') {
-        m.flyTo({ center: o.centro, zoom: o.zoom, pitch: o.inclinacion ?? m.getPitch(), bearing: o.giro ?? m.getBearing(), duration: duracion(o.ms ?? 4000), essential: true });
+        m.flyTo({ center: o.centro, zoom: o.zoom, pitch: o.inclinacion ?? m.getPitch(), bearing: o.giro ?? m.getBearing(), duration: duracion(o.ms ?? 4000), essential: true, ...(relleno ? { padding: relleno } : {}) });
       } else if (o.accion === 'encuadrar') {
-        m.fitBounds(o.encuadre, { padding: 40, pitch: o.inclinacion ?? 0, bearing: o.giro ?? 0, duration: duracion(o.ms ?? 3000) } as any);
+        const cam = camaraConMargen(m, o.encuadre, o.margen, { relleno: 40, giro: o.giro ?? 0 });
+        if (cam) m.flyTo({ center: cam.center, zoom: cam.zoom, pitch: o.inclinacion ?? 0, bearing: o.giro ?? 0, curve: 1.3, duration: duracion(o.ms ?? 3000), essential: true, ...(relleno ? { padding: relleno } : {}) });
+        else m.fitBounds(o.encuadre, { padding: 40, pitch: o.inclinacion ?? 0, bearing: o.giro ?? 0, duration: duracion(o.ms ?? 3000) } as any);
       } else if (o.accion === 'orbitar') {
         // Velocidad pareja, sin acelerar ni frenar: así se lee como una toma de dron y no como un salto.
         const girar = () => {
           // Si mientras tanto llegó otra orden, esta ya no corre: cortaría el vuelo nuevo.
           if (mia !== ordenesDadas) return;
-          ponerMargen(m, o.margen);
           m.easeTo({
+            ...(relleno ? { padding: relleno } : {}),
             ...(o.centro ? { center: o.centro } : {}),
             ...(o.zoom !== undefined ? { zoom: o.zoom } : {}),
             pitch: o.inclinacion ?? Math.max(m.getPitch(), terreno3D ? 60 : 45),
@@ -990,7 +1124,13 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
   }, [listo, motor]);
 
   useEffect(() => {
-    if (orden) obedecer(orden);
+    if (!orden) return;
+    try {
+      obedecer(orden);
+    } catch (e) {
+      // Una cámara imposible (mapa plegado a mitad de un vuelo) se descarta; el mapa sigue en pie.
+      console.warn('[mapa] orden descartada:', (e as Error)?.message || e);
+    }
   }, [orden, obedecer]);
 
   return (
@@ -1006,6 +1146,17 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
       <div ref={caja} style={{ position: 'absolute', inset: 0, display: motor === 'maplibre' ? 'block' : 'none' }} />
       <div ref={cajaGoogle} style={{ position: 'absolute', inset: 0, display: motor === 'google' ? 'block' : 'none' }} />
       {motor === 'maplibre' && listo && mapa.current && <Herramientas mapa={mapa.current} tresD={tresD} fondo={fondo} />}
+      {/* El visor del recorrido: cuatro esquinas y el nombre, como el cuadro de una cámara. */}
+      <div ref={visor} aria-hidden className="pointer-events-none absolute left-0 top-0 z-[4]" style={{ opacity: 0, transition: 'opacity .5s' }}>
+        {(['left-0 top-0 border-l-[3px] border-t-[3px] rounded-tl-lg', 'right-0 top-0 border-r-[3px] border-t-[3px] rounded-tr-lg', 'left-0 bottom-0 border-l-[3px] border-b-[3px] rounded-bl-lg', 'right-0 bottom-0 border-r-[3px] border-b-[3px] rounded-br-lg'] as const).map((k) => (
+          <span key={k} className={`absolute h-5 w-5 ${k}`} style={{ borderColor: '#FFD98A', filter: 'drop-shadow(0 0 6px rgba(255,217,138,.8))' }} />
+        ))}
+        {enfoque?.etiqueta && (
+          <span className="absolute -top-7 left-0 whitespace-nowrap rounded-md bg-black/75 px-2 py-0.5 font-mono text-[11px] tracking-[0.08em] text-[#FFE3A8] shadow-lg backdrop-blur">
+            {enfoque.etiqueta}
+          </span>
+        )}
+      </div>
       {motor === 'google' && falloGoogle && (
         <div className="absolute inset-0 grid place-items-center p-8 text-center">
           <p className="max-w-sm text-sm text-[#8FA3B0] leading-relaxed">{falloGoogle}</p>

@@ -56,6 +56,7 @@ import {
 } from './server/electrum/hilo';
 import { TODAS as TODAS_ELECTRUM } from './server/electrum/manos';
 import { compartirInforme, guardarInforme, informeCartera, informeConcesion, tomarInforme } from './server/electrum/informe';
+import { mapaGeologico, TIPOS_MAPA_GEO, type TipoMapaGeo } from './server/electrum/mapa-geologico';
 import { aprender as aprenderElectrum, ojoQueLeyo } from './server/electrum/aprender';
 import {
   electrumBotListo,
@@ -1014,6 +1015,27 @@ app.get('/api/electrum/informe/:id', exigirPlataforma('electrum'), limitar(60), 
   res.setHeader('Content-Disposition', `${imagen || esInvitado(req) ? 'inline' : 'attachment'}; filename="${r.informe.nombre}"`);
   res.setHeader('Cache-Control', 'private, no-store');
   return res.end(r.informe.pdf);
+});
+
+/**
+ * Un mapa geológico directo, sin pasar por el cerebro: lo usa el recorrido para enseñarlo en vivo
+ * (dibujarlo de verdad tarda unos segundos; el modelo, además, varios más). Se guarda como los
+ * informes —con dueño y media hora de vida— y se ve en el visor.
+ */
+app.post('/api/electrum/mapa-geologico', exigirPlataforma('electrum'), limitar(12), async (req, res) => {
+  const concesion = Math.floor(Number(req.body?.concesion_id));
+  if (!(concesion > 0)) return res.status(400).json({ error: 'Falta la concesión.', honesto: true });
+  const tipo = (TIPOS_MAPA_GEO as readonly string[]).includes(String(req.body?.tipo)) ? (String(req.body.tipo) as TipoMapaGeo) : 'litologico';
+  try {
+    const m = await mapaGeologico(tipo, { concesion }, { pie: 'Dr Electrum FP' });
+    if ('error' in m) return res.status(422).json({ error: m.error, honesto: true });
+    const nombre = `${tipo}-${concesion}.jpg`;
+    const id = guardarInforme({ pdf: m.jpeg, nombre, dicho: m.titulo, tipo: 'image/jpeg' }, identidadDe(req)?.persona.id || null);
+    return res.json({ id, url: `/api/electrum/informe/${id}`, nombre, titulo: m.titulo, tipo: 'image/jpeg', bytes: m.jpeg.length, honesto: true });
+  } catch (e: any) {
+    console.warn('[electrum] mapa geológico directo', String(e?.message || e).slice(0, 160));
+    return res.status(502).json({ error: 'No pude dibujar el mapa ahora.', honesto: true });
+  }
 });
 
 /**

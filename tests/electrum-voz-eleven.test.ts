@@ -240,3 +240,28 @@ test('en vivo: el audio llega mientras se genera y al final queda en la caché; 
     }
   );
 });
+
+
+test('muletillas: son deterministas, solo en frases largas y no en la oración', async () => {
+  const { conMuletillas } = await import('../server/eleven');
+  const corta = 'Hay 206 concesiones.';
+  assert.equal(conMuletillas(corta, { primero: true }), corta);
+  const larga = 'La concesión Los Almendros tiene doscientas hectáreas, y el expediente dice que se otorgó en dos mil diez para oro y plata en Olancho.';
+  assert.equal(conMuletillas(larga, { primero: true }), conMuletillas(larga, { primero: true }));
+  assert.equal(conMuletillas(larga, { primero: true, emocion: 'oracion' }), larga);
+  // Lo que ya arranca suelto no se duplica.
+  const suelta = 'Bueno, la concesión Los Almendros tiene doscientas hectáreas y vence el año que viene en diciembre.';
+  assert.ok(!/^(Mire|A ver|Pues|Eh|Mmm|Fíjese|Vea|Bueno), Bueno/.test(conMuletillas(suelta, { primero: true })));
+  assert.ok(conMuletillas(suelta, { primero: true }).startsWith('Bueno, la concesión'));
+});
+
+test('muletillas: en muchas frases distintas, algunas arrancan con muletilla y el trozo siguiente nunca', async () => {
+  const { conMuletillas } = await import('../server/eleven');
+  let con = 0;
+  for (let i = 0; i < 60; i++) {
+    const t = `La concesión número ${i} está en el municipio de Juticalpa, con un área de ${100 + i} hectáreas medidas sobre el elipsoide.`;
+    if (conMuletillas(t, { primero: true }) !== t && !conMuletillas(t, { primero: true }).startsWith('La concesión')) con++;
+    assert.ok(conMuletillas(t, { primero: false }).startsWith('La concesión'));
+  }
+  assert.ok(con > 5 && con < 45, `con muletilla: ${con}`);
+});
