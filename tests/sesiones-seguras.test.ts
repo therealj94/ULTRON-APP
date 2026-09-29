@@ -276,3 +276,17 @@ test('invitado: quien entró con un código mira pero no baja; con usuario propi
     // Sin sesión (la llave de la demostración) tampoco se lleva archivos.
     assert.equal(esInvitado({ headers: {} } as any), true);
   }));
+
+test('invitado: una cuenta solo de AU-RA que entra con la llave de la demo no baja nada de Dr Electrum', () =>
+  conEnv(
+    {
+      ULTRON_SESION_SECRETO: 'secreto-de-prueba-invitado-0123456789',
+      ULTRON_PADRON: 'soloaura | Solo Aura | solo.aura@prueba.hn | | ultron=lee',
+    },
+    () => {
+      const soloAura = emitirSesion({ correo: 'solo.aura@prueba.hn', nombre: 'Solo Aura', rol: 'Junta' });
+      assert.equal(esInvitado(req(soloAura.token)), true);
+      const jose = emitirSesion({ correo: JOSE, nombre: 'José', rol: 'Junta' });
+      assert.equal(esInvitado(req(jose.token)), false);
+    }
+  ));

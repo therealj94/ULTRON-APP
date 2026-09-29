@@ -327,7 +327,10 @@ export const DOMINIO_CODIGO = '@temporal.drelectrum';
  */
 export function esInvitado(req: Request): boolean {
   const s = sesionDe(req);
-  return !s || s.correo.toLowerCase().endsWith(DOMINIO_CODIGO);
+  if (!s || s.correo.toLowerCase().endsWith(DOMINIO_CODIGO)) return true;
+  // Una sesión que no da Dr Electrum (cuenta solo de AU-RA que entró con la llave de la demo) no
+  // convierte al visitante en usuario de Electrum: mira como cualquier invitado.
+  return !nivelDe(identidadDe(req), 'electrum');
 }
 
 export function exigirSesion(req: Request, res: Response, next: NextFunction) {

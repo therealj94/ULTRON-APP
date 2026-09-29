@@ -23,7 +23,7 @@ import { leerWav, wavAMp3, type Pcm } from '../lib/mp3';
 import { trocearExpresiones } from '../lib/expresiones';
 import { adaptarPcm, empalmar, escribirWav, tomaDeExpresion } from './empalme';
 import type { Presupuesto } from '../lib/presupuesto';
-import { elevenListo, guionEleven, hablarEleven, modeloEleven, vozEleven } from './eleven';
+import { abrirEleven, elevenListo, guionEleven, hablarEleven, modeloEleven, vozEleven } from './eleven';
 
 export type Performance = 'speak' | 'sing';
 
@@ -358,6 +358,65 @@ async function hablarConExpresiones(partes: Parte[], perfil: string, reloj?: Pre
   return { audio: escribirWav(empalmar(piezas)), contentType: 'audio/wav', motor: 'voicebox:kokoro+expresiones' };
 }
 
+/**
+ * Lo que se le pediría a ElevenLabs para esta locución, o null si no toca (plataforma sin voz ahí,
+ * canto, sin clave o en pausa, o nada que decir). La clave de caché lleva los vecinos: cambian la
+ * entonación, y una frase repetida no debe heredar la de otra respuesta.
+ */
+function pedidoEleven(o: {
+  texto: string;
+  emocion: Emocion;
+  performance: Performance;
+  plataforma: 'ultron' | 'electrum';
+  previo?: string;
+  siguiente?: string;
+}): { voz: string; guion: string; clave: string; motor: string } | null {
+  const voz = o.performance === 'speak' ? vozEleven(o.plataforma) : null;
+  if (!voz || !elevenListo()) return null;
+  const guion = guionEleven(String(o.texto || '').slice(0, MAX_GUION), o.emocion, (t) => expresar(t, o.emocion, 'speak', { cifras: false }));
+  if (!guion) return null;
+  const clave = crypto
+    .createHash('sha1')
+    .update(`eleven|${modeloEleven()}|${voz}|${guion}|${(o.previo || '').slice(-300)}|${(o.siguiente || '').slice(0, 300)}`)
+    .digest('hex');
+  return { voz, guion, clave, motor: `elevenlabs:${modeloEleven()}` };
+}
+
+/**
+ * La voz EN VIVO para la web de Dr Electrum: si ElevenLabs contesta, devuelve el audio mientras se
+ * genera (la ruta lo pasa al navegador trozo a trozo y llama a `guardar` al final para la caché).
+ * Si ya estaba en caché, lo devuelve entero. Null: que la ruta use `hablar({ sinEleven: true })`.
+ */
+export async function abrirVozEnVivo(opts: {
+  texto: string;
+  emocion?: Emocion | string;
+  plataforma?: 'ultron' | 'electrum';
+  previo?: string;
+  siguiente?: string;
+}): Promise<
+  | { tipo: 'cache'; habla: Habla }
+  | { tipo: 'vivo'; contentType: string; motor: string; cuerpo: ReadableStream<Uint8Array>; guardar: (audio: Buffer) => void }
+  | null
+> {
+  const emocion = normalizarEmocion(opts.emocion);
+  const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
+  const p = pedidoEleven({ ...opts, emocion, performance: 'speak', plataforma });
+  if (!p) return null;
+  const hit = cacheGet(p.clave);
+  if (hit) return { tipo: 'cache', habla: { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: 0 } };
+  const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente });
+  if (!r?.body) return null;
+  return {
+    tipo: 'vivo',
+    contentType: 'audio/mpeg',
+    motor: p.motor,
+    cuerpo: r.body,
+    guardar: (audio) => {
+      if (audio.length >= 400) cacheSet(p.clave, { audio, contentType: 'audio/mpeg', motor: p.motor });
+    },
+  };
+}
+
 export async function hablar(opts: {
   texto: string;
   /** Se acepta y se normaliza por compatibilidad; ya no cambia la voz. */
@@ -372,6 +431,8 @@ export async function hablar(opts: {
   /** Lo dicho justo antes y lo que viene (la pantalla habla por trozos): ElevenLabs enlaza la entonación. */
   previo?: string;
   siguiente?: string;
+  /** Saltarse ElevenLabs (la ruta en vivo ya lo intentó y falló): directo a Voicebox. */
+  sinEleven?: boolean;
 }): Promise<Habla | null> {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
@@ -383,21 +444,17 @@ export async function hablar(opts: {
    * pone ELEVENLABS_VOZ_AURA). Aquí las marcas y la emoción SÍ suenan: v4 las entiende. Si no
    * contesta, sigue abajo el camino de siempre con Voicebox, sin que quien habla note nada.
    */
-  const vozXi = performance === 'speak' ? vozEleven(plataforma) : null;
-  if (vozXi && elevenListo()) {
-    const guion = guionEleven(String(opts.texto || '').slice(0, MAX_GUION), emocion, (t) => expresar(t, emocion, 'speak', { cifras: false }));
-    if (guion) {
-      const keyXi = crypto.createHash('sha1').update(`eleven|${modeloEleven()}|${vozXi}|${guion}`).digest('hex');
-      if (!opts.sinCache) {
-        const hit = cacheGet(keyXi);
-        if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
-      }
-      const xi = await hablarEleven({ texto: guion, voz: vozXi, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto });
-      if (xi) {
-        const out = { ...xi, motor: `elevenlabs:${modeloEleven()}` };
-        cacheSet(keyXi, out);
-        return { ...out, cache: false, ms: Date.now() - t0 };
-      }
+  const xiPedido = opts.sinEleven ? null : pedidoEleven({ ...opts, performance, emocion, plataforma });
+  if (xiPedido) {
+    if (!opts.sinCache) {
+      const hit = cacheGet(xiPedido.clave);
+      if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
+    }
+    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto });
+    if (xi) {
+      const out = { ...xi, motor: xiPedido.motor };
+      cacheSet(xiPedido.clave, out);
+      return { ...out, cache: false, ms: Date.now() - t0 };
     }
   }
 

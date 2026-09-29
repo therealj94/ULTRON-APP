@@ -1,9 +1,11 @@
 /**
  * ELEVENLABS — la voz principal de Dr Electrum, con Voicebox detrás.
  *
- *   hablarEleven()  → Eleven v4 Turbo (≈0,3 s al primer audio por /stream, medio carácter de
+ *   abrirEleven()   → Eleven v4 Turbo por /stream: el audio empieza a llegar a los ≈0,3 s y la
+ *                     ruta de la web lo pasa al navegador a medida que llega (medio carácter de
  *                     crédito por carácter). Si falla, se cae la clave o se acaba el cupo, devuelve
- *                     null y `hablar()` sigue con Voicebox como siempre: nunca se queda mudo por esto.
+ *                     null y sigue Voicebox como siempre: nunca se queda mudo por esto.
+ *   hablarEleven()  → lo mismo, entero en memoria (caché, respaldo, quien no reproduce en vivo).
  *   guionEleven()   → el texto tal como lo dice un geólogo con años: cifras en palabras, unidades
  *                     dichas, las marcas de expresión en español pasadas a las etiquetas que v4
  *                     entiende ([laughs], [sighs]…) y, delante, el tono de la emoción del turno.
@@ -203,7 +205,7 @@ export function guionEleven(texto: string, emocion: Emocion, preparar: (t: strin
 
 /* ---------------- La llamada ---------------- */
 
-export async function hablarEleven(opts: {
+type PedidoEleven = {
   texto: string;
   voz: string;
   /** Lo dicho justo antes y lo que viene: v4 enlaza la entonación entre trozos. */
@@ -211,7 +213,14 @@ export async function hablarEleven(opts: {
   siguiente?: string;
   reloj?: Presupuesto;
   timeoutMs?: number;
-}): Promise<{ audio: Buffer; contentType: string } | null> {
+};
+
+/**
+ * Abre la síntesis y devuelve la respuesta EN CURSO (el audio va llegando por `body`), o null si
+ * no se pudo. Es lo que usa la ruta de la web para pasarle el audio al navegador a medida que
+ * ElevenLabs lo genera, en vez de esperar al final.
+ */
+export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> {
   const key = clave('elevenlabs');
   if (!key || !elevenListo()) return null;
   if (opts.reloj && !opts.reloj.alcanza()) return null;
@@ -232,7 +241,7 @@ export async function hablarEleven(opts: {
       body: JSON.stringify(cuerpo),
       signal: opts.reloj ? opts.reloj.senal(timeoutMs) : AbortSignal.timeout(timeoutMs),
     });
-    if (!r.ok) {
+    if (!r.ok || !r.body) {
       const txt = (await r.text().catch(() => '')).slice(0, 240);
       const pausa = pausaPorFallo(r.status, txt);
       if (pausa) pausaHasta = Date.now() + pausa;
@@ -240,6 +249,19 @@ export async function hablarEleven(opts: {
       console.warn('[voz eleven]', r.status, txt.slice(0, 160), pausa ? `(pausa ${Math.round(pausa / 1000)} s)` : '');
       return null;
     }
+    return r;
+  } catch (e: any) {
+    ultimoFallo = String(e?.message || e).slice(0, 120);
+    console.warn('[voz eleven]', ultimoFallo);
+    return null;
+  }
+}
+
+/** La síntesis entera en memoria (para la caché, el respaldo y quien no pasa el audio en vivo). */
+export async function hablarEleven(opts: PedidoEleven): Promise<{ audio: Buffer; contentType: string } | null> {
+  const r = await abrirEleven(opts);
+  if (!r) return null;
+  try {
     const audio = Buffer.from(await r.arrayBuffer());
     if (audio.length < 400) {
       ultimoFallo = `audio vacío (${audio.length} bytes)`;

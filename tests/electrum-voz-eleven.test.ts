@@ -6,7 +6,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { guionEleven, pausaPorFallo, VOZ_ELECTRUM_ELEVEN, vozEleven, _reiniciarFrenoEleven, elevenListo } from '../server/eleven';
-import { expresar, hablar } from '../server/voz';
+import { abrirVozEnVivo, expresar, hablar } from '../server/voz';
 import { PROVEEDORES_OIDO, PROVEEDORES_OIDO_ELECTRUM, transcribirAudio } from '../lib/oido';
 import { voiceboxFalso, conVoicebox, CLAVE_FALSA } from './voicebox-falso';
 
@@ -93,10 +93,14 @@ test('Dr Electrum habla con v4 Turbo, con los vecinos para enlazar la entonació
           assert.equal(llamadas[0].cuerpo.previous_text, 'Antes.');
           assert.equal(llamadas[0].cuerpo.next_text, 'Después.');
           assert.equal(vb.pedidos.filter((p) => p.ruta.startsWith('POST /generate')).length, 0, 'Voicebox ni se entera');
-          // La segunda vez sale de la caché: ni un crédito más.
-          const otra = await hablar({ texto: 'Buenas tardes, José.', emocion: 'feliz', plataforma: 'electrum' });
+          // La segunda vez, con los mismos vecinos, sale de la caché: ni un crédito más.
+          const otra = await hablar({ texto: 'Buenas tardes, José.', emocion: 'feliz', plataforma: 'electrum', previo: 'Antes.', siguiente: 'Después.' });
           assert.equal(otra?.cache, true);
           assert.equal(llamadas.length, 1);
+          // Con otros vecinos la entonación es otra: se vuelve a pedir.
+          const distinta = await hablar({ texto: 'Buenas tardes, José.', emocion: 'feliz', plataforma: 'electrum', previo: 'Otra cosa.' });
+          assert.equal(distinta?.cache, false);
+          assert.equal(llamadas.length, 2);
         }
       )
     );
@@ -187,4 +191,52 @@ test('el oído de Dr Electrum: Scribe primero con el vocabulario minero, Whisper
   } finally {
     await vb.cerrar();
   }
+});
+
+test('en vivo: el audio llega mientras se genera y al final queda en la caché; si falla, null (Voicebox)', async () => {
+  const pedazos = [new Uint8Array(300).fill(1), new Uint8Array(300).fill(2)];
+  const enCurso = () =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        start(c) {
+          for (const p of pedazos) c.enqueue(p);
+          c.close();
+        },
+      }),
+      { status: 200, headers: { 'Content-Type': 'audio/mpeg' } }
+    );
+  await conEleven(
+    () => enCurso(),
+    async (llamadas) => {
+      const pedido = { texto: 'Una frase en vivo.', plataforma: 'electrum' as const, previo: 'Antes.' };
+      const v = await abrirVozEnVivo(pedido);
+      assert.equal(v?.tipo, 'vivo');
+      if (v?.tipo !== 'vivo') return;
+      assert.equal(v.motor, 'elevenlabs:eleven_v4_turbo');
+      const lector = v.cuerpo.getReader();
+      const recibido: Buffer[] = [];
+      for (;;) {
+        const { done, value } = await lector.read();
+        if (done) break;
+        recibido.push(Buffer.from(value));
+      }
+      assert.equal(recibido.length, 2, 'llegó por pedazos');
+      v.guardar(Buffer.concat(recibido));
+      // Lo guardado sirve igual para la ruta en vivo y para hablar(): ni un crédito más.
+      const otra = await abrirVozEnVivo(pedido);
+      assert.equal(otra?.tipo, 'cache');
+      const h = await hablar(pedido);
+      assert.equal(h?.cache, true);
+      assert.equal(h?.audio.length, 600);
+      assert.equal(llamadas.length, 1);
+      // AU-RA no pasa por aquí.
+      assert.equal(await abrirVozEnVivo({ texto: 'Hola.', plataforma: 'ultron' }), null);
+    }
+  );
+  await conEleven(
+    () => new Response('caído', { status: 503 }),
+    async () => {
+      assert.equal(await abrirVozEnVivo({ texto: 'Otra frase.', plataforma: 'electrum' }), null);
+    }
+  );
 });

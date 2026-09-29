@@ -7,7 +7,7 @@ import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
-import { hablar, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
+import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { quitarExpresiones } from './lib/expresiones';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
@@ -949,7 +949,40 @@ app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (
   try {
     // La pantalla habla por trozos: lo de antes y lo de después hacen que la entonación no se corte.
     const vecino = (v: unknown) => (typeof v === 'string' ? v.slice(0, 400) : undefined);
-    const out = await hablar({ texto, emocion: req.body?.emocion, plataforma: 'electrum', previo: vecino(req.body?.previo), siguiente: vecino(req.body?.siguiente) });
+    const pedido = { texto, emocion: req.body?.emocion, plataforma: 'electrum' as const, previo: vecino(req.body?.previo), siguiente: vecino(req.body?.siguiente) };
+    /*
+     * EN VIVO: el audio de ElevenLabs se le pasa al navegador a medida que se genera (el primer
+     * pedazo sale a los ≈0,3 s) y al final queda en la caché. Si ElevenLabs no abre, Voicebox.
+     */
+    const vivo = await abrirVozEnVivo(pedido);
+    if (vivo?.tipo === 'vivo') {
+      res.setHeader('Content-Type', vivo.contentType);
+      res.setHeader('Cache-Control', 'private, max-age=600');
+      res.setHeader('X-Motor', vivo.motor);
+      const lector = vivo.cuerpo.getReader();
+      // Si la persona calla o cambia de pregunta, se deja de pedirle audio a ElevenLabs.
+      res.on('close', () => {
+        if (!res.writableEnded) lector.cancel().catch(() => undefined);
+      });
+      const trozos: Buffer[] = [];
+      let entero = true;
+      try {
+        for (;;) {
+          const { done, value } = await lector.read();
+          if (done) break;
+          const b = Buffer.from(value);
+          trozos.push(b);
+          res.write(b);
+        }
+      } catch (e: any) {
+        entero = false;
+        console.warn('[electrum] voz en vivo cortada', String(e?.message || e).slice(0, 120));
+      }
+      res.end();
+      if (entero) vivo.guardar(Buffer.concat(trozos));
+      return;
+    }
+    const out = vivo?.tipo === 'cache' ? vivo.habla : await hablar({ ...pedido, sinEleven: true });
     if (!out) return res.status(503).json({ error: 'No tengo voz ahora mismo.', honesto: true });
     res.setHeader('Content-Type', out.contentType);
     res.setHeader('Cache-Control', 'private, max-age=600');
