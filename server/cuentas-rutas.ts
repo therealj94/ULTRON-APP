@@ -283,6 +283,8 @@ export function montarRutasCuentas(app: Express, d: DepsCuentas) {
     if (!HORAS_CODIGO.includes(horas as any)) return res.status(400).json({ ok: false, error: 'Elegí 1, 5 o 24 horas.' });
     const nivel: Nivel = req.body?.nivel === 'escribe' ? 'escribe' : 'lee';
     const para = String(req.body?.para || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+    // El nombre es con el que Dr Electrum saluda a quien entra con el código.
+    if (!para) return res.status(400).json({ ok: false, error: 'Poné el nombre de la persona: Dr Electrum la saluda con él al entrar.' });
     const c = await crearCodigo({ horas, plataforma: d.plataforma, nivel, para, por });
     return res.json({ ok: true, ...c, message: `Código creado. Vence en ${horas} ${horas === 1 ? 'hora' : 'horas'}. Copialo ahora: no se vuelve a mostrar.` });
   });

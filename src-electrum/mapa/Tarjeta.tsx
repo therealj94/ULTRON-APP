@@ -64,6 +64,8 @@ type Props = {
   onPreguntar: (texto: string) => void;
   onFicha: (id: number) => void;
   onTocar: (t: Tocado) => void;
+  /** Entró con un código temporal: ve la ficha entera, pero sin los botones para bajar archivos. */
+  invitado?: boolean;
 };
 
 function urlDe(t: Tocado): string {
@@ -73,7 +75,7 @@ function urlDe(t: Tocado): string {
   return `/api/electrum/mapa/aqui?lon=${t.lngLat[0].toFixed(6)}&lat=${t.lngLat[1].toFixed(6)}`;
 }
 
-export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onTocar }: Props) {
+export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onTocar, invitado = false }: Props) {
   const [datos, setDatos] = useState<Ficha | Aqui | Rasgo | Muestra | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pregunta, setPregunta] = useState('');
@@ -145,6 +147,7 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
     <section
       role="dialog"
       aria-label={`${etiqueta}: ${titulo}`}
+      data-tour="ficha"
       className="absolute z-20 flex flex-col overflow-hidden rounded-2xl border border-white/12 bg-[#0A0C0E]/94 shadow-[0_12px_40px_rgba(0,0,0,.6)] backdrop-blur-xl left-2 right-[48px] bottom-2 max-h-[calc(100%-118px)] md:left-auto md:right-[52px] md:bottom-3 md:top-[118px] md:max-h-none md:w-[372px]"
     >
       <header className="flex items-start gap-2 border-b border-white/[0.08] px-4 pt-3 pb-2.5 shrink-0">
@@ -169,7 +172,7 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
         {!error && !datos && <Cargando />}
 
         {datos && tocado.tipo === 'concesion' && (
-          <FichaVista f={datos as Ficha} onVolar={onVolar} onFicha={onFicha} onPreguntar={onPreguntar} />
+          <FichaVista f={datos as Ficha} onVolar={onVolar} onFicha={onFicha} onPreguntar={onPreguntar} invitado={invitado} />
         )}
         {datos && tocado.tipo === 'punto' && <AquiVista a={datos as Aqui} onTocar={onTocar} onPreguntar={onPreguntar} />}
         {datos && tocado.tipo === 'rasgo' && <RasgoVista r={datos as Rasgo} />}
@@ -246,7 +249,7 @@ function Boton({ children, onClick, fuerte = false }: { children: ReactNode; onC
   );
 }
 
-function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: Props['onVolar']; onFicha: Props['onFicha']; onPreguntar: Props['onPreguntar'] }) {
+function FichaVista({ f, onVolar, onFicha, onPreguntar, invitado }: { f: Ficha; onVolar: Props['onVolar']; onFicha: Props['onFicha']; onPreguntar: Props['onPreguntar']; invitado: boolean }) {
   const [timelapse, setTimelapse] = useState(false);
   return (
     <>
@@ -264,7 +267,7 @@ function FichaVista({ f, onVolar, onFicha, onPreguntar }: { f: Ficha; onVolar: P
         </Boton>
         {f.geojson && <Boton onClick={() => setTimelapse(true)}>Timelapse satelital</Boton>}
       </div>
-      <Exportes id={f.id} />
+      {!invitado && <Exportes id={f.id} />}
       <Seccion titulo="Catastro">
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
           {f.datos.map(([k, v]) => (

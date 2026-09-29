@@ -323,7 +323,7 @@ export function Herramientas({ mapa, tresD, fondo }: { mapa: maplibregl.Map; tre
   return (
     <>
       {/* Botonera, debajo del zoom de MapLibre. */}
-      <div className="pointer-events-auto absolute right-[10px] top-[118px] z-10 flex flex-col overflow-hidden rounded-md border border-white/15 bg-black/75 shadow-lg backdrop-blur-md">
+      <div className="pointer-events-auto absolute right-[10px] top-[118px] z-10 flex flex-col overflow-hidden rounded-md border border-white/15 bg-black/75 shadow-lg backdrop-blur-md" data-tour="herramientas">
         <BotonHerr activo={modo === 'medir'} onClick={() => empezar('medir')} titulo="Medir distancia y área">
           <path d="M3 17 17 3m-11 3 2 2m1-5 2 2m1 1 2 2m1-5 2 2" />
         </BotonHerr>

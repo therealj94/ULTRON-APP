@@ -32,6 +32,7 @@
     "maplibre-contour": "^0.1.1",
     "maplibre-gl": "^6.10.0",
     "motion": "^12.23.24",
+    "pdfjs-dist": "^5.7.284",
     "pg": "^8.23.0",
     "pmtiles": "^4.5.0",
     "pngjs": "^7.0.0",

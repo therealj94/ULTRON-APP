@@ -318,6 +318,21 @@ export function sesionDe(req: Request): Sesion | null {
   return null;
 }
 
+/** El dominio de los correos que se inventan para las sesiones de código temporal. */
+export const DOMINIO_CODIGO = '@temporal.drelectrum';
+
+/**
+ * Un invitado mira pero no se lleva archivos: quien entró con un código temporal, o sin sesión
+ * (la llave de la demostración). Los que tienen usuario propio sí pueden bajar.
+ */
+export function esInvitado(req: Request): boolean {
+  const s = sesionDe(req);
+  if (!s || s.correo.toLowerCase().endsWith(DOMINIO_CODIGO)) return true;
+  // Una sesión que no da Dr Electrum (cuenta solo de AU-RA que entró con la llave de la demo) no
+  // convierte al visitante en usuario de Electrum: mira como cualquier invitado.
+  return !nivelDe(identidadDe(req), 'electrum');
+}
+
 export function exigirSesion(req: Request, res: Response, next: NextFunction) {
   const s = sesionDe(req);
   if (!s) return res.status(401).json({ error: 'sesión requerida', code: 'sesion_requerida', honesto: true });

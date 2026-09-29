@@ -1,6 +1,7 @@
 /**
  * Oído: transcribe audio de verdad. Whisper en el servidor propio de AU-RA (Voicebox), Gemini de reserva.
- * Si no hay clave o no se entiende, se dice. No se inventa lo hablado.
+ * En Dr Electrum va primero ElevenLabs Scribe v2, con el vocabulario minero como pista; Whisper y
+ * Gemini quedan detrás. Si no hay clave o no se entiende, se dice. No se inventa lo hablado.
  */
 
 import { clave } from './boveda';
@@ -120,10 +121,86 @@ async function transcribirVoicebox(audio: Buffer, mime: string, language: string
   return { texto: texto.slice(0, 4000), via: 'voicebox:whisper' };
 }
 
+/**
+ * Las palabras que un transcriptor general escribe mal y que en Dr Electrum son el trabajo: siglas,
+ * departamentos y el oficio. Scribe las usa de pista (`keyterms`) y ya no escribe «ingeo mín» o
+ * «Olanchito» donde se dijo INHGEOMIN u Olancho.
+ */
+export const TERMINOS_ELECTRUM = [
+  'Dr Electrum',
+  'INHGEOMIN',
+  'JICA',
+  'Orden Global',
+  'concesión',
+  'concesiones',
+  'catastro',
+  'expediente',
+  'traslape',
+  'prospectividad',
+  'geoquímica',
+  'litológico',
+  'geotectónico',
+  'estructural',
+  'pórfido',
+  'epitermal',
+  'veta',
+  'ley de oro',
+  'gramos por tonelada',
+  'onzas',
+  'hectáreas',
+  'Olancho',
+  'Francisco Morazán',
+  'El Paraíso',
+  'Choluteca',
+  'Santa Bárbara',
+  'Copán',
+  'Minas de Oro',
+  'Sentinel',
+  'KML',
+  'DXF',
+  'UTM',
+  'Decreto 109-2019',
+];
+
+/**
+ * ElevenLabs Scribe v2. Más preciso que Whisper en español con nombres propios y siglas, y con
+ * pistas de vocabulario. Pide su corte al presupuesto: 15 s o lo que quede.
+ */
+async function transcribirEleven(audio: Buffer, mime: string, language: string, reloj: Presupuesto): Promise<Escucha> {
+  const key = clave('elevenlabs');
+  if (!key) return null;
+  const form = new FormData();
+  form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `voz.${extensionDe(mime)}`);
+  form.append('model_id', process.env.ELEVENLABS_STT_MODELO || 'scribe_v2');
+  form.append('language_code', language);
+  form.append('tag_audio_events', 'false');
+  // Una pista por campo: un arreglo JSON en un solo campo lo rechaza por «caracteres inválidos».
+  for (const t of TERMINOS_ELECTRUM) form.append('keyterms', t);
+  const r = await fetch('https://api.elevenlabs.io/v1/speech-to-text', { method: 'POST', headers: { 'xi-api-key': key }, body: form, signal: reloj.senal(15000) });
+  if (!r.ok) {
+    console.warn('[stt eleven]', r.status, (await r.text().catch(() => '')).slice(0, 160));
+    return null;
+  }
+  const j: any = await r.json().catch(() => null);
+  if (typeof j?.text !== 'string') {
+    console.warn('[stt eleven] respuesta sin texto');
+    return null;
+  }
+  const texto = j.text.trim();
+  if (texto.length < 2 || STT_BASURA.test(texto)) return { texto: '', via: 'elevenlabs:scribe' };
+  return { texto: texto.slice(0, 4000), via: 'elevenlabs:scribe' };
+}
+
 /** El orden: el Whisper propio (gratis), y Gemini de reserva. */
 export const PROVEEDORES_OIDO: ProveedorOido[] = [
   { nombre: 'voicebox', listo: () => !!(clave('voicebox_url') && clave('voicebox_clave')), oir: transcribirVoicebox },
   { nombre: 'gemini', listo: () => !!clave('gemini'), oir: transcribirGemini },
+];
+
+/** Dr Electrum: Scribe primero; el Whisper propio y Gemini, de respaldo en ese orden. */
+export const PROVEEDORES_OIDO_ELECTRUM: ProveedorOido[] = [
+  { nombre: 'elevenlabs', listo: () => !!clave('elevenlabs'), oir: transcribirEleven },
+  ...PROVEEDORES_OIDO,
 ];
 
 /**
@@ -164,6 +241,8 @@ export async function transcribirAudio(opts: {
   presupuesto?: Presupuesto;
   /** Pruebas: otra cadena de proveedores. */
   proveedores?: ProveedorOido[];
+  /** Quién oye. Dr Electrum usa Scribe primero; AU-RA, el Whisper propio. */
+  plataforma?: 'ultron' | 'electrum';
 }): Promise<Oido> {
   const buf = opts.audio?.length ? opts.audio : Buffer.alloc(0);
   const mime = String(opts.mime || 'audio/ogg').split(';')[0].trim() || 'audio/ogg';
@@ -175,7 +254,7 @@ export async function transcribirAudio(opts: {
     return { texto: '', via: 'grande', detalle: `Audio de ${buf.length} bytes. Máximo 8 MB. No lo oí.` };
   }
   const reloj = opts.presupuesto || presupuesto(PRESUPUESTO_SIN_APURO_MS);
-  const { escucha, intentados, motivo } = await oirEnCadena(opts.proveedores || PROVEEDORES_OIDO, buf, mime, language, reloj);
+  const { escucha, intentados, motivo } = await oirEnCadena(opts.proveedores || (opts.plataforma === 'electrum' ? PROVEEDORES_OIDO_ELECTRUM : PROVEEDORES_OIDO), buf, mime, language, reloj);
   if (escucha?.texto) {
     return { texto: escucha.texto, via: escucha.via, detalle: `Oí ${escucha.texto.length} caracteres.` };
   }

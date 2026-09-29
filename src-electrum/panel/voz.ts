@@ -22,6 +22,8 @@ const SILENCIO =
 
 let reproductor: HTMLAudioElement | null = null;
 let generacion = 0;
+/** Lo que se está pidiendo al servidor para la locución en curso: `callar()` lo corta. */
+let cortePendiente: AbortController | null = null;
 let desbloqueado = false;
 
 function elReproductor(): HTMLAudioElement {
@@ -54,6 +56,8 @@ export function desbloquear() {
 /** Corta lo que suena e invalida lo que venía. Se puede llamar siempre. */
 export function callar() {
   generacion++;
+  cortePendiente?.abort();
+  cortePendiente = null;
   // El silencio del desbloqueo no se corta: cortarlo a la mitad le quita el permiso en Safari.
   if (reproductor && !String(reproductor.src).startsWith('data:')) {
     try {
@@ -107,20 +111,96 @@ export type Avisos = {
   alFallar?: (motivo: string) => void;
 };
 
-async function sintetizar(texto: string, emocion: string | undefined, headers: Record<string, string>): Promise<Blob> {
+async function sintetizar(
+  texto: string,
+  emocion: string | undefined,
+  headers: Record<string, string>,
+  previo: string | undefined,
+  siguiente: string | undefined,
+  senal: AbortSignal
+): Promise<Response> {
   const r = await fetch('/api/electrum/voz', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify({ texto, emocion }),
+    // Los vecinos van para que la voz enlace la entonación entre trozos (ElevenLabs los usa).
+    body: JSON.stringify({ texto, emocion, previo, siguiente }),
+    signal: senal,
   });
   if (!r.ok) {
     const j: any = await r.json().catch(() => null);
     throw new Error(r.status === 401 ? 'la sesión venció: volvé a entrar' : j?.error || `el servidor contestó ${r.status}`);
   }
-  return r.blob();
+  return r;
 }
 
-function sonar(a: HTMLAudioElement, blob: Blob, mia: number): Promise<void> {
+const BLOQUEADO = 'el navegador bloqueó el sonido: tocá «Voz» una vez para permitirlo';
+
+/**
+ * ¿Se puede reproducir mientras llega? MediaSource con MP3: Chrome, Edge, Firefox y Android sí; el
+ * iPhone no (ahí se espera el trozo entero, como antes).
+ */
+function enVivoPosible(r: Response): boolean {
+  try {
+    return (
+      !!r.body &&
+      /audio\/mpeg/.test(r.headers.get('content-type') || '') &&
+      typeof MediaSource !== 'undefined' &&
+      MediaSource.isTypeSupported('audio/mpeg')
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Reproduce el audio A MEDIDA QUE LLEGA: el primer pedazo suena sin esperar al último. */
+function sonarEnVivo(a: HTMLAudioElement, r: Response, mia: number): Promise<void> {
+  return new Promise((listo, fallo) => {
+    const ms = new MediaSource();
+    const url = URL.createObjectURL(ms);
+    const lector = r.body!.getReader();
+    let hecho = false;
+    const fin = (e?: unknown) => {
+      if (hecho) return;
+      hecho = true;
+      a.onended = a.onerror = null;
+      lector.cancel().catch(() => {});
+      URL.revokeObjectURL(url);
+      e ? fallo(e) : listo();
+    };
+    if (mia !== generacion) return fin();
+    a.onended = () => fin();
+    a.onerror = () => fin(new Error('el navegador no pudo reproducir el audio'));
+    ms.addEventListener(
+      'sourceopen',
+      async () => {
+        try {
+          const sb = ms.addSourceBuffer('audio/mpeg');
+          const listoSb = () => new Promise<void>((ok) => sb.addEventListener('updateend', () => ok(), { once: true }));
+          for (;;) {
+            if (mia !== generacion) return fin();
+            const { done, value } = await lector.read();
+            if (done) break;
+            if (value?.length) {
+              sb.appendBuffer(value);
+              await listoSb();
+            }
+          }
+          if (ms.readyState === 'open') ms.endOfStream();
+        } catch (e) {
+          // Callar a mitad corta la descarga: eso no es un fallo que haya que contar.
+          fin(mia !== generacion ? undefined : e);
+        }
+      },
+      { once: true }
+    );
+    a.src = url;
+    a.play().catch((e) => fin(e?.name === 'NotAllowedError' ? new Error(BLOQUEADO) : e));
+  });
+}
+
+async function sonar(a: HTMLAudioElement, r: Response, mia: number): Promise<void> {
+  if (enVivoPosible(r)) return sonarEnVivo(a, r, mia);
+  const blob = await r.blob();
   return new Promise((listo, fallo) => {
     const url = URL.createObjectURL(blob);
     const fin = (e?: unknown) => {
@@ -132,7 +212,7 @@ function sonar(a: HTMLAudioElement, blob: Blob, mia: number): Promise<void> {
     a.onended = () => fin();
     a.onerror = () => fin(new Error('el navegador no pudo reproducir el audio'));
     a.src = url;
-    a.play().catch((e) => fin(e?.name === 'NotAllowedError' ? new Error('el navegador bloqueó el sonido: tocá «Voz» una vez para permitirlo') : e));
+    a.play().catch((e) => fin(e?.name === 'NotAllowedError' ? new Error(BLOQUEADO) : e));
   });
 }
 
@@ -147,23 +227,27 @@ export async function hablar(texto: string, emocion: string | undefined, headers
   if (!trozos.length) return;
   const a = elReproductor();
   let empezo = false;
-  let siguiente: Promise<Blob> | null = sintetizar(trozos[0], emocion, headers);
+  // Callar corta también lo que viene en camino: ni se sigue bajando ni se gastan créditos.
+  const corte = new AbortController();
+  cortePendiente = corte;
+  const pedir = (i: number) => sintetizar(trozos[i], emocion, headers, trozos[i - 1], trozos[i + 1], corte.signal);
+  let siguiente: Promise<Response> | null = pedir(0);
   try {
     for (let i = 0; i < trozos.length; i++) {
-      const blob = await siguiente!;
+      const respuesta = await siguiente!;
       if (mia !== generacion) return;
-      siguiente = i + 1 < trozos.length ? sintetizar(trozos[i + 1], emocion, headers) : null;
+      siguiente = i + 1 < trozos.length ? pedir(i + 1) : null;
       // Que un fallo del trozo siguiente no quede como promesa rechazada sin atender.
       siguiente?.catch(() => {});
       if (!empezo) {
         empezo = true;
         avisos.alEmpezar?.();
       }
-      await sonar(a, blob, mia);
+      await sonar(a, respuesta, mia);
       if (mia !== generacion) return;
     }
   } catch (e: any) {
-    if (mia === generacion) avisos.alFallar?.(String(e?.message || e));
+    if (mia === generacion && e?.name !== 'AbortError') avisos.alFallar?.(String(e?.message || e));
   } finally {
     if (mia === generacion && empezo) avisos.alTerminar?.();
   }

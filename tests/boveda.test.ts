@@ -38,12 +38,26 @@ describe('Bóveda honesta', () => {
     delete process.env.VOICEBOX_CLAVE;
     try {
       assert.equal(cajas().find((c) => c.id === 'voz')?.listo, false);
-      assert.ok(!cajas().some((c) => /eleven|chatterbox/i.test(`${c.id} ${c.nombre}`)), 'no queda rastro de las voces viejas');
+      assert.ok(!cajas().some((c) => /chatterbox/i.test(`${c.id} ${c.nombre}`)), 'no queda rastro de las voces viejas');
     } finally {
       guardarCaja('voicebox_url', prevUrl);
       guardarCaja('voicebox_clave', prev);
       if (envUrl !== undefined) process.env.VOICEBOX_URL = envUrl;
       if (envClave !== undefined) process.env.VOICEBOX_CLAVE = envClave;
+    }
+  });
+
+  it('ElevenLabs (voz de Dr Electrum) se marca lista solo con su clave, y la clave no se muestra', () => {
+    const prev = process.env.ELEVENLABS_API_KEY;
+    try {
+      delete process.env.ELEVENLABS_API_KEY;
+      assert.equal(cajas().find((c) => c.id === 'elevenlabs')?.listo, false);
+      process.env.ELEVENLABS_API_KEY = 'sk_prueba_no_se_imprime';
+      assert.equal(cajas().find((c) => c.id === 'elevenlabs')?.listo, true);
+      assert.ok(!JSON.stringify(fotoBoveda()).includes('sk_prueba'));
+    } finally {
+      if (prev === undefined) delete process.env.ELEVENLABS_API_KEY;
+      else process.env.ELEVENLABS_API_KEY = prev;
     }
   });
 

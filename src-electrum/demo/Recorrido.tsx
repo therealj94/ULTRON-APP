@@ -20,7 +20,8 @@ import type { CapaExtra, Fondo, Margen, OrdenMapa, RasterEncendido, RasterEscane
 import { catastroGuardado } from '../mapa/captura';
 import type { MuestrasEncendidas } from '../mapa/CapasControl';
 import { Contador, pedirTablero, type DatosTablero } from '../mapa/Tablero';
-import { analisisDeFicha, centroDe, concesionesEn, focoDeOro, fold, nombreParaDecir, zonaMasRica, type Ficha } from './guion';
+import { analisisDeFicha, centroDe, concesionesEn, focoDeOro, fold, nombreParaDecir, vencimientos, zonaMasRica, type Ficha } from './guion';
+import { ALTURAS } from '../preferencias';
 
 export { nombreParaDecir } from './guion';
 
@@ -48,6 +49,8 @@ export type Controles = {
   /** Si la cara estaba en el centro, que ceda el paso al mapa. */
   trabajo: () => void;
 };
+
+export type ModoRecorrido = 'completo' | 'geologico' | 'legal' | 'herramientas';
 
 type Cifra = { valor: number; etiqueta: string; d?: number };
 type Capitulo = { titulo: string; cifras?: Cifra[]; chips?: string[] };
@@ -100,7 +103,19 @@ const enCompu = () => typeof window !== 'undefined' && window.matchMedia('(min-w
 
 const CAPACIDADES = ['Pregunta con la voz', 'Web, app y Telegram', 'Ficha en PDF', 'Plano profesional', 'KML · GeoJSON · DXF', 'Perfil del terreno', 'Pedir área nueva', 'Alertas', 'Desde Claude'];
 
-export function Recorrido({ activo, onTerminar, controles, fichaAbierta = false }: { activo: boolean; onTerminar: () => void; controles: Controles; fichaAbierta?: boolean }) {
+export function Recorrido({
+  activo,
+  onTerminar,
+  controles,
+  fichaAbierta = false,
+  modo = 'completo',
+}: {
+  activo: boolean;
+  onTerminar: () => void;
+  controles: Controles;
+  fichaAbierta?: boolean;
+  modo?: ModoRecorrido;
+}) {
   const [texto, setTexto] = useState('');
   const [n, setN] = useState(0);
   const [total, setTotal] = useState(8);
@@ -108,6 +123,8 @@ export function Recorrido({ activo, onTerminar, controles, fichaAbierta = false 
   const [chico, setChico] = useState(false);
   /** Dónde lo dejó quien lo arrastró (px dentro del mapa); null = su sitio de siempre. */
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  /** El control de la pantalla que se está explicando (selector CSS), con un anillo alrededor. */
+  const [foco, setFoco] = useState<string | null>(null);
   const caja = useRef<HTMLDivElement>(null);
   const vivo = useRef(0);
   /** El capítulo que se pidió saltar, y cómo despertar la espera en curso. */
@@ -200,18 +217,32 @@ export function Recorrido({ activo, onTerminar, controles, fichaAbierta = false 
         setTexto('Juntando las cifras, los mapas y las fichas…');
         c.current.trabajo();
         c.current.maplibre();
-        c.current.alto(ALTO_RECORRIDO);
+        // En el de herramientas hace falta ver el chat y sus botones; en los demás, el mapa grande.
+        c.current.alto(modo === 'herramientas' ? ALTURAS.dividido : ALTO_RECORRIDO);
         c.current.fondo('satelite');
         c.current.tocar(null);
         c.current.tresD(true);
 
+        /*
+         * Cada recorrido pide solo lo que va a contar: el de herramientas no necesita el tablero
+         * nacional (lo más lento de armar) ni las fichas de los conflictos, y se notaba en la espera.
+         */
+        const completo = modo === 'completo';
         const [t, rasters, capas, perdidas, ranking, muestras] = await Promise.all([
-          reintentar(() => pedirTablero()).catch(() => null as DatosTablero | null),
-          json<{ rasters: RasterEscaneado[] }>('/api/electrum/mapa/rasters').then((j) => j.rasters || []).catch(() => [] as RasterEscaneado[]),
-          json<{ capas: Array<{ id: number; nombre: string; rol: string }> }>('/api/electrum/mapa/capas').then((j) => j.capas || []).catch(() => []),
-          json<{ lista: Array<{ id: number; nombre: string; ha: number }> }>('/api/electrum/satelite/mayores').then((j) => j.lista || []).catch(() => []),
-          json<{ ranking: Array<{ id: number; nombre: string; puntaje: number }> }>('/api/electrum/prospectividad').then((j) => j.ranking || []).catch(() => []),
-          json<any>('/api/electrum/mapa/muestras').catch(() => null),
+          completo || modo === 'legal' ? reintentar(() => pedirTablero()).catch(() => null as DatosTablero | null) : Promise.resolve(null as DatosTablero | null),
+          modo !== 'legal'
+            ? json<{ rasters: RasterEscaneado[] }>('/api/electrum/mapa/rasters').then((j) => j.rasters || []).catch(() => [] as RasterEscaneado[])
+            : Promise.resolve([] as RasterEscaneado[]),
+          modo !== 'herramientas'
+            ? json<{ capas: Array<{ id: number; nombre: string; rol: string }> }>('/api/electrum/mapa/capas').then((j) => j.capas || []).catch(() => [])
+            : Promise.resolve([] as Array<{ id: number; nombre: string; rol: string }>),
+          completo
+            ? json<{ lista: Array<{ id: number; nombre: string; ha: number }> }>('/api/electrum/satelite/mayores').then((j) => j.lista || []).catch(() => [])
+            : Promise.resolve([] as Array<{ id: number; nombre: string; ha: number }>),
+          completo || modo === 'herramientas'
+            ? json<{ ranking: Array<{ id: number; nombre: string; puntaje: number }> }>('/api/electrum/prospectividad').then((j) => j.ranking || []).catch(() => [])
+            : Promise.resolve([] as Array<{ id: number; nombre: string; puntaje: number }>),
+          completo || modo === 'geologico' ? json<any>('/api/electrum/mapa/muestras').catch(() => null) : Promise.resolve(null),
         ]);
         const catastro = catastroGuardado() ?? (await json<{ geojson: any }>('/api/electrum/catastro.geojson').then((j) => j.geojson).catch(() => null));
         if (!sigue()) return;
@@ -222,7 +253,7 @@ export function Recorrido({ activo, onTerminar, controles, fichaAbierta = false 
         const conflicto = t?.areasProtegidas?.lista[0];
         const s2 = (k: string) => rasters.find((r) => r.clave === k);
         const [fZona, fPerdida, fConflicto, fallas, protegidas] = await Promise.all([
-          enZona[0] ? ficha(enZona[0].id) : Promise.resolve(null),
+          enZona[0] && modo !== 'herramientas' ? ficha(enZona[0].id) : Promise.resolve(null),
           perdidas[0] ? ficha(perdidas[0].id) : Promise.resolve(null),
           conflicto ? ficha(conflicto.id) : Promise.resolve(null),
           capa(zona ? capas.find((x) => x.rol === 'falla' && fold(x.nombre).includes(fold(zona.nombre))) : undefined),
@@ -230,203 +261,381 @@ export function Recorrido({ activo, onTerminar, controles, fichaAbierta = false 
         ]);
         if (!sigue()) return;
 
-        const hay = {
-          satelite: !!(fPerdida?.geojson && fPerdida.encuadre && s2('s2-veg')),
-          zona: !!(zona && zona.mapas.length),
-          analisis: !!(fZona?.geojson && fZona.encuadre),
-          oro: !!oro,
-          conflicto: !!(fConflicto?.geojson && fConflicto.encuadre && conflicto),
-        };
-        const cuantos = 3 + Number(hay.satelite) + Number(hay.zona) + Number(hay.analisis) + Number(hay.oro) + Number(hay.conflicto);
-        setTotal(cuantos);
-        let i = 0;
+        /*
+         * LOS CAPÍTULOS. Cada uno sabe si tiene datos para contarse (`hay`) y cómo contarse. Cada modo
+         * elige cuáles y en qué orden: el completo lo muestra todo, los otros van a su tema.
+         */
+        const venc = vencimientos(catastro);
+        const traslapeMayor = t?.traslapes?.mayores?.[0];
+        const [fTraslape, fProspecta] = await Promise.all([
+          modo === 'legal' && traslapeMayor ? ficha(traslapeMayor.aId) : Promise.resolve(null),
+          modo === 'herramientas' && (enZona[0] || ranking[0]) ? ficha((enZona[0] || ranking[0]).id) : Promise.resolve(null),
+        ]);
+        if (!sigue()) return;
         const limpiar = () => {
           c.current.rasters([]);
           c.current.muestras(null);
           c.current.capas(() => []);
           c.current.prospectividad(false);
           c.current.tocar(null);
+          setFoco(null);
+        };
+        /** Abre la ficha y vuela a la concesión, dejando libre el lado de la ficha (en el teléfono no la abre). */
+        const irConFicha = async (f: Ficha & { encuadre: [number, number, number, number] | null }, siempre = false) => {
+          if (enCompu() || siempre) {
+            c.current.tocar({ tipo: 'concesion', id: f.id, nombre: f.nombre, lngLat: centroDe(f.encuadre!) });
+            await pausa(350);
+          }
+          mover({ accion: 'volar', geojson: f.geojson, encuadre: f.encuadre! });
+          await pausa(3000);
+        };
+        /** Enseña un control de la pantalla con un anillo, mientras lo explica. */
+        const senalar = async (selector: string, titulo: string, textos: string[]) => {
+          capitulo(++i, { titulo });
+          // Algunos controles aparecen cuando el mapa termina de cargar: se los espera un poco.
+          for (let k = 0; k < 20 && sigue() && !document.querySelector(selector); k++) await espera(200);
+          setFoco(selector);
+          for (const x of textos) await decir(x);
+          setFoco(null);
+        };
+        let i = 0;
+
+        type Cap = { hay: boolean; correr: () => Promise<void> };
+        const C: Record<string, Cap> = {
+          intro: {
+            hay: true,
+            correr: async () => {
+              limpiar();
+              capitulo(++i, {
+                titulo: modo === 'legal' ? 'El catastro, con ojos legales' : modo === 'geologico' ? 'La geología de Honduras' : 'Honduras, en tres dimensiones',
+                cifras: t
+                  ? [
+                      { valor: t.total.concesiones, etiqueta: 'concesiones' },
+                      { valor: t.total.hectareas, etiqueta: 'hectáreas' },
+                      { valor: t.traslapes.total, etiqueta: 'traslapes' },
+                      ...(t.poblados ? [{ valor: t.poblados.caserios, etiqueta: 'caseríos dentro' }] : []),
+                    ]
+                  : undefined,
+              });
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 58, giro: -24, ms: 5000 });
+              await pausa(1800);
+              orbitar(26, 26_000);
+              if (modo === 'legal') {
+                await decir(`Le muestro el catastro como lo mira un abogado o un regulador: ${t ? `${plural(t.total.concesiones, 'concesión', 'concesiones')}, ` : ''}cada una cruzada con las áreas protegidas, el agua, las comunidades, los demás derechos y sus fechas.`);
+              } else if (modo === 'geologico') {
+                await decir('Le muestro la geología: los mapas de JICA escaneados sobre el terreno real, las fallas, la geoquímica de campo y lo que ve el satélite, todo cruzado con las concesiones.');
+              } else {
+                await decir('Buenas. Soy Dr Electrum, la plataforma de inteligencia minera de Orden Global. Esto es Honduras, con su relieve real, en tres dimensiones.');
+                await decir(
+                  t
+                    ? `Encima tengo el catastro minero nacional completo: ${plural(t.total.concesiones, 'concesión', 'concesiones')} y ${nf(t.total.hectareas)} hectáreas, y cada una cruzada con la geología, el satélite, las áreas protegidas, el agua y las comunidades.`
+                    : 'Encima tengo el catastro minero nacional completo, y cada concesión cruzada con la geología, el satélite, las áreas protegidas, el agua y las comunidades.'
+                );
+              }
+            },
+          },
+          potencial: {
+            hay: true,
+            correr: async () => {
+              capitulo(++i, { titulo: 'El potencial de cada concesión', chips: ranking.slice(0, 3).map((r) => `${nombreParaDecir(r.nombre)} · ${r.puntaje}`) });
+              c.current.prospectividad(true);
+              mover({ accion: 'camara', centro: [-86.6, 14.6], zoom: 7.4, inclinacion: 62, giro: 12, ms: 5000 });
+              await pausa(1500);
+              orbitar(-22, 22_000);
+              await decir(
+                'Así se ve el país con los ojos de un inversionista. A cada concesión le calculo un puntaje de prospectividad de cero a cien, con la geología, la geoquímica de JICA y el satélite. En rojo, las más prometedoras.' +
+                  (ranking.length >= 3 ? ` Hoy las primeras son ${nombreParaDecir(ranking[0].nombre)}, ${nombreParaDecir(ranking[1].nombre)} y ${nombreParaDecir(ranking[2].nombre)}.` : '')
+              );
+              await decir('Y las que laten son alertas: concesiones que vencen pronto o que perdieron vegetación. Nadie tiene que acordarse: yo aviso.');
+            },
+          },
+          satelite: {
+            hay: !!(fPerdida?.geojson && fPerdida.encuadre && s2('s2-veg')),
+            correr: async () => {
+              c.current.prospectividad(false);
+              capitulo(++i, { titulo: 'Lo que ve el satélite', cifras: [{ valor: perdidas[0].ha, etiqueta: 'ha de vegetación perdida', d: 1 }] });
+              c.current.rasters([{ ...s2('s2-veg')!, opacidad: 0.85 }]);
+              mover({ accion: 'volar', geojson: fPerdida!.geojson, encuadre: fPerdida!.encuadre! });
+              await pausa(3200);
+              orbitar(40, 24_000);
+              await decir(
+                `Cada año comparo las imágenes del satélite europeo Sentinel-2 de la temporada seca. Esta es ${nombreParaDecir(fPerdida!.nombre)}: perdió ${nf(perdidas[0].ha, 1)} hectáreas de vegetación de un año al otro. Puede ser un tajo, un camino o una quema; yo lo detecto y lo marco para confirmarlo en campo.`
+              );
+              if (s2('s2-arc')) {
+                c.current.rasters([{ ...s2('s2-arc')!, opacidad: 0.85 }]);
+                await decir('Con las mismas imágenes busco alteración hidrotermal: arcillas y óxidos de hierro, la huella que dejan los fluidos que traen el oro y el cobre.');
+              }
+            },
+          },
+          alteracion: {
+            hay: !!(zona && (s2('s2-arc') || s2('s2-fe'))),
+            correr: async () => {
+              capitulo(++i, { titulo: 'Alteración vista desde el satélite' });
+              c.current.tocar(null);
+              c.current.muestras(null);
+              c.current.capas(() => []);
+              c.current.rasters([{ ...(s2('s2-arc') || s2('s2-fe'))!, opacidad: 0.85 }]);
+              mover({ accion: 'encuadrar', encuadre: zona!.encuadre, inclinacion: 60, giro: -20, ms: 5000 });
+              await pausa(2000);
+              orbitar(30, 26_000);
+              await decir('Con las bandas del satélite Sentinel-2 busco alteración hidrotermal en todo el país: arcillas, que es lo que deja el fluido caliente en la roca.');
+              if (s2('s2-fe') && s2('s2-arc')) {
+                c.current.rasters([{ ...s2('s2-fe')!, opacidad: 0.85 }]);
+                await decir('Y óxidos de hierro, que marcan sulfuros meteorizados. No es un hallazgo: es una guía para ordenar dónde ir a campo primero.');
+              }
+            },
+          },
+          zona: {
+            hay: !!(zona && zona.mapas.length),
+            correr: async () => {
+              const mapas = zona!.mapas;
+              capitulo(++i, {
+                titulo: `La zona con más información: ${zona!.nombre}`,
+                cifras: [
+                  { valor: mapas.length, etiqueta: 'mapas de JICA' },
+                  { valor: enZona.length, etiqueta: 'concesiones' },
+                  { valor: enZona.reduce((s, x) => s + x.ha, 0), etiqueta: 'hectáreas' },
+                ],
+              });
+              c.current.rasters([]);
+              c.current.tocar(null);
+              mover({ accion: 'encuadrar', encuadre: zona!.encuadre, inclinacion: 60, giro: 28, ms: 6500 });
+              await pausa(2600);
+              c.current.rasters([{ ...(mapas[0] as RasterEscaneado), opacidad: 0.82 }]);
+              if (fallas) c.current.capas(() => [fallas]);
+              orbitar(-30, 30_000);
+              await decir(
+                `Ahora vamos a la zona de Honduras donde más información tengo: ${zona!.nombre}. Aquí se juntan ${plural(mapas.length, 'mapa', 'mapas')} de la agencia japonesa JICA, que escaneé y georreferencié sobre el terreno real, las fallas, el satélite y ${plural(enZona.length, 'concesión', 'concesiones')}.`
+              );
+              if (mapas[1]) {
+                c.current.rasters([{ ...(mapas[1] as RasterEscaneado), opacidad: 0.82 }]);
+                await decir('Este es el mapa estructural: las fallas y fracturas por donde subieron los fluidos que dejaron los metales.');
+              }
+              if (mapas[2]) {
+                c.current.rasters([{ ...(mapas[2] as RasterEscaneado), opacidad: 0.8 }]);
+                await decir('Y estas son las anomalías geoquímicas que midió JICA en los ríos. Donde coinciden las fallas, los intrusivos y las anomalías, ahí conviene mirar.');
+              }
+            },
+          },
+          analisis: {
+            hay: !!(fZona?.geojson && fZona.encuadre),
+            correr: async () => {
+              const f = fZona!;
+              capitulo(++i, {
+                titulo: `Análisis completo: ${nombreParaDecir(f.nombre)}`,
+                cifras: typeof f.prospectividad?.puntaje === 'number' ? [{ valor: f.prospectividad.puntaje, etiqueta: 'de 100 en prospectividad' }] : undefined,
+              });
+              if (zona?.mapas[0]) c.current.rasters([{ ...(zona.mapas[0] as RasterEscaneado), opacidad: 0.5 }]);
+              await irConFicha(f);
+              orbitar(120, 60_000);
+              const frases = analisisDeFicha(f);
+              // De a dos frases: se oye como una explicación y no como una lista leída.
+              for (let k = 0; k < frases.length && sigue() && !saltoEste(); k += 2) await decir(frases.slice(k, k + 2).join(' '));
+              await decir('Todo esto está en su ficha, y en un toque se lo entrego en PDF con su plano, o en KML para Google Earth y DXF para AutoCAD.');
+            },
+          },
+          oro: {
+            hay: !!oro,
+            correr: async () => {
+              capitulo(++i, {
+                titulo: 'Geoquímica de campo',
+                cifras: [
+                  { valor: oro!.total, etiqueta: 'muestras de JICA' },
+                  { valor: oro!.maxGt, etiqueta: 'g/t de oro, la más alta', d: 1 },
+                  { valor: oro!.sobreUnGramo, etiqueta: 'sobre 1 g/t' },
+                ],
+              });
+              c.current.tocar(null);
+              c.current.rasters([]);
+              c.current.capas(() => []);
+              c.current.muestras({ elemento: 'au', geojson: muestras });
+              mover({ accion: 'camara', centro: oro!.centro, zoom: 9.4, inclinacion: 58, giro: -32, ms: 6500 });
+              await pausa(3000);
+              orbitar(40, 30_000);
+              await decir(
+                `También tengo ${nf(oro!.total)} muestras de sedimentos y rocas que tomó JICA, con su ley de oro, plata, cobre y zinc. El calor muestra dónde se juntan las anomalías: la más alta de oro llega a ${nf(oro!.maxGt, 1)} gramos por tonelada, y ${plural(oro!.sobreUnGramo, 'muestra pasa', 'muestras pasan')} de un gramo.`
+              );
+              await decir('Toque cualquier punto y le digo qué es, cuánto dio y en qué concesión cae hoy.');
+            },
+          },
+          conflictos: {
+            hay: !!(fConflicto?.geojson && fConflicto.encuadre && conflicto),
+            correr: async () => {
+              const f = fConflicto!;
+              capitulo(++i, {
+                titulo: 'Dónde mirar primero',
+                cifras: [
+                  ...(t?.areasProtegidas ? [{ valor: t.areasProtegidas.concesiones, etiqueta: 'en áreas protegidas' }] : []),
+                  ...(t?.microcuencas ? [{ valor: t.microcuencas.concesiones, etiqueta: 'en microcuencas' }] : []),
+                  ...(t?.poblados ? [{ valor: t.poblados.concesiones, etiqueta: 'con caseríos dentro' }] : []),
+                ],
+              });
+              c.current.muestras(null);
+              c.current.rasters([]);
+              c.current.prospectividad(false);
+              if (protegidas) c.current.capas(() => [protegidas]);
+              await irConFicha(f);
+              orbitar(-60, 36_000);
+              await decir(
+                `Lo que un regulador o un inversionista tiene que ver antes que nada: los conflictos. ` +
+                  (t?.areasProtegidas ? `${plural(t.areasProtegidas.concesiones, 'concesión pisa', 'concesiones pisan')} áreas protegidas` : '') +
+                  (t?.microcuencas ? `, ${nf(t.microcuencas.concesiones)} pisan microcuencas declaradas` : '') +
+                  (t?.poblados ? ` y ${nf(t.poblados.concesiones)} tienen caseríos dentro` : '') +
+                  '.'
+              );
+              await decir(
+                `Esta es ${nombreParaDecir(conflicto!.concesion)}: pisa ${nf(conflicto!.ha, 1)} hectáreas de ${conflicto!.con}, el ${nf(conflicto!.pct)} por ciento de su superficie. Esto, que antes tomaba semanas de escritorio, lo tengo al día en segundos.`
+              );
+            },
+          },
+          traslapes: {
+            hay: !!(t && fTraslape?.geojson && fTraslape.encuadre && traslapeMayor),
+            correr: async () => {
+              capitulo(++i, {
+                titulo: 'Derechos que se pisan',
+                cifras: [
+                  { valor: t!.traslapes.total, etiqueta: 'traslapes' },
+                  { valor: t!.traslapes.hectareas, etiqueta: 'hectáreas en disputa' },
+                  ...(t!.traslapes.mismoNombre ? [{ valor: t!.traslapes.mismoNombre.total, etiqueta: 'con el mismo nombre' }] : []),
+                ],
+              });
+              c.current.capas(() => []);
+              await irConFicha(fTraslape!);
+              orbitar(50, 30_000);
+              await decir(
+                `Cruzo cada concesión con todas las demás: hay ${plural(t!.traslapes.total, 'traslape', 'traslapes')} entre derechos, ${nf(t!.traslapes.hectareas)} hectáreas que dos titulares reclaman a la vez. En el mapa van rayados.`
+              );
+              await decir(
+                `El más grande es entre ${nombreParaDecir(traslapeMayor!.a)} y ${nombreParaDecir(traslapeMayor!.b)}: ${nf(traslapeMayor!.ha, 1)} hectáreas.` +
+                  (t!.traslapes.mismoNombre?.total ? ` Y ${nf(t!.traslapes.mismoNombre.total)} son entre concesiones con el mismo nombre: parecen registros duplicados que conviene depurar.` : '')
+              );
+            },
+          },
+          vencimientos: {
+            hay: !!catastro,
+            correr: async () => {
+              capitulo(++i, {
+                titulo: 'Fechas que no se pueden pasar',
+                cifras: [
+                  { valor: venc.noventa, etiqueta: 'vencen en 90 días' },
+                  { valor: venc.anio, etiqueta: 'vencen en el año' },
+                  ...(venc.vencidas ? [{ valor: venc.vencidas, etiqueta: 'con la fecha ya pasada' }] : []),
+                ],
+              });
+              c.current.tocar(null);
+              c.current.capas(() => []);
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 50, giro: 10, ms: 5000 });
+              await pausa(2000);
+              orbitar(-20, 22_000);
+              /*
+               * Lo que dice sale de las fechas, sin adornar. El padrón cargado hoy trae fechas que
+               * terminan en 2014: decir solo «ninguna vence este año» era cierto y engañoso a la vez.
+               */
+              const conFecha = venc.anio + venc.vencidas + venc.noventa;
+              await decir(
+                venc.anio
+                  ? `Llevo las fechas de todas: ${plural(venc.anio, 'concesión vence', 'concesiones vencen')} en los próximos doce meses${venc.noventa ? `, ${nf(venc.noventa)} en los próximos noventa días` : ''}. Las que laten en el mapa son las más urgentes.`
+                  : venc.vencidas
+                    ? `Llevo las fechas del padrón: en los próximos doce meses no vence ninguna, pero ${plural(venc.vencidas, 'concesión tiene', 'concesiones tienen')} la fecha de vencimiento ya pasada. O están vencidas, o el padrón está desactualizado: vale la pena revisarlas con el expediente.`
+                    : conFecha
+                      ? 'Llevo las fechas de todas. En los próximos doce meses no vence ninguna; cuando se acerque una, late en el mapa.'
+                      : 'El padrón cargado no trae fechas de vencimiento. En cuanto se carguen, llevo la cuenta y las más urgentes laten en el mapa.'
+              );
+              await decir('Y le aviso por Telegram antes de que se pase un plazo: la alerta le llega a usted, no hay que acordarse.');
+            },
+          },
+          marco: {
+            hay: true,
+            correr: async () => {
+              capitulo(++i, { titulo: 'El marco legal, a mano', chips: ['Reformas Decreto 109-2019', 'Formularios INHGEOMIN', 'Análisis legal por concesión', 'Expedientes con búsqueda'] });
+              c.current.tocar(null);
+              await decir(
+                'Tengo leídos los documentos legales: las reformas del Decreto 109-2019 a la Ley General de Minería y los formularios de INHGEOMIN, de exploración, explotación, beneficio, comercialización y declaración jurada.'
+              );
+              await decir('Pregúnteme qué pide un trámite o qué dice un artículo y le contesto citando el documento. Y en la ficha de cada concesión, «Analizar» le hace el análisis legal y ambiental.');
+            },
+          },
+          barra: {
+            hay: true,
+            correr: () =>
+              senalar('[data-tour="barra-mapa"]', 'Arriba del mapa', [
+                'Arriba del mapa: el Tablero, con las cifras de todo el país y sus conflictos; el 3D, para ver el terreno real; y este Recorrido.',
+              ]),
+          },
+          capasBoton: {
+            hay: true,
+            correr: () =>
+              senalar('[data-tour="capas"]', 'Capas', [
+                'Aquí enciende capas: geología, fallas, áreas protegidas, microcuencas, los mapas de JICA, las muestras y el satélite. Cada una con su leyenda y su transparencia.',
+              ]),
+          },
+          herramientasMapa: {
+            hay: true,
+            correr: () =>
+              senalar('[data-tour="herramientas"]', 'Herramientas del mapa', [
+                'Estas son las herramientas del mapa: medir distancias y áreas, el perfil topográfico, pedir un área nueva dibujándola, comparar con el satélite y la órbita de trescientos sesenta grados.',
+              ]),
+          },
+          fichaBotones: {
+            hay: !!(fProspecta?.geojson && fProspecta.encuadre),
+            correr: async () => {
+              capitulo(++i, { titulo: 'La ficha de cada concesión' });
+              await irConFicha(fProspecta!, true);
+              setFoco('[data-tour="ficha"]');
+              await decir('Toque cualquier concesión y se abre su ficha: catastro, prospectividad, entorno, geología y satélite.');
+              await decir('Desde ahí saca la ficha en PDF, los mapas geológicos, el análisis o el timelapse del satélite, y la baja en KML para Google Earth o DXF para AutoCAD.');
+              setFoco(null);
+              c.current.tocar(null);
+            },
+          },
+          chat: {
+            hay: true,
+            correr: () =>
+              senalar('[data-tour="chat"]', 'Pregúnteme', ['Aquí me pregunta con palabras normales. Con el micrófono me dicta, y le contesto hablando.']),
+          },
+          pestanas: {
+            hay: true,
+            correr: () =>
+              senalar('[data-tour="pestanas"]', 'Expedientes e infraestructura', [
+                'En Expedientes sube documentos y los busca por su contenido; en Infraestructura ve todo lo que sé y de dónde sale cada dato.',
+              ]),
+          },
+          reparto: {
+            hay: true,
+            correr: () =>
+              senalar('[data-tour="reparto"]', 'Más mapa o más chat', ['Y con estos botones reparte la pantalla: más mapa, mitad y mitad, o más conversación.']),
+          },
+          cierre: {
+            hay: true,
+            correr: async () => {
+              capitulo(++i, { titulo: 'Pregúnteme lo que quiera', chips: CAPACIDADES });
+              limpiar();
+              c.current.prospectividad(modo !== 'legal');
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 55, giro: 16, ms: 6000 });
+              await pausa(2400);
+              orbitar(-24, 24_000);
+              await decir(
+                modo === 'herramientas'
+                  ? 'Eso es todo lo que tiene a mano. Y si no encuentra un botón, pídamelo con palabras: yo lo hago.'
+                  : 'Todo esto me lo pide cualquiera de su equipo con palabras normales o con la voz: desde la web, la aplicación del teléfono, Telegram, y hasta desde su propio asistente Claude.'
+              );
+              if (modo !== 'herramientas') await decir('Le armo la ficha en PDF, el plano profesional, el perfil del terreno, los archivos para Google Earth y AutoCAD, y le aviso cuando algo cambia. Pregúnteme lo que quiera.');
+            },
+          },
         };
 
-        // 1. Honduras desde el aire.
-        limpiar();
-        capitulo(++i, {
-          titulo: 'Honduras, en tres dimensiones',
-          cifras: t
-            ? [
-                { valor: t.total.concesiones, etiqueta: 'concesiones' },
-                { valor: t.total.hectareas, etiqueta: 'hectáreas' },
-                { valor: t.traslapes.total, etiqueta: 'traslapes' },
-                ...(t.poblados ? [{ valor: t.poblados.caserios, etiqueta: 'caseríos dentro' }] : []),
-              ]
-            : undefined,
-        });
-        mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 58, giro: -24, ms: 5000 });
-        await pausa(1800);
-        orbitar(26, 26_000);
-        await decir('Buenas. Soy Dr Electrum, la plataforma de inteligencia minera de Orden Global. Esto es Honduras, con su relieve real, en tres dimensiones.');
-        await decir(
-          t
-            ? `Encima tengo el catastro minero nacional completo: ${plural(t.total.concesiones, 'concesión', 'concesiones')} y ${nf(t.total.hectareas)} hectáreas, y cada una cruzada con la geología, el satélite, las áreas protegidas, el agua y las comunidades.`
-            : 'Encima tengo el catastro minero nacional completo, y cada concesión cruzada con la geología, el satélite, las áreas protegidas, el agua y las comunidades.'
-        );
-
-        // 2. El potencial de cada concesión.
-        if (!sigue()) return;
-        capitulo(++i, { titulo: 'El potencial de cada concesión', chips: ranking.slice(0, 3).map((r) => `${nombreParaDecir(r.nombre)} · ${r.puntaje}`) });
-        c.current.prospectividad(true);
-        mover({ accion: 'camara', centro: [-86.6, 14.6], zoom: 7.4, inclinacion: 62, giro: 12, ms: 5000 });
-        await pausa(1500);
-        orbitar(-22, 22_000);
-        await decir(
-          'Así se ve el país con los ojos de un inversionista. A cada concesión le calculo un puntaje de prospectividad de cero a cien, con la geología, la geoquímica de JICA y el satélite. En rojo, las más prometedoras.' +
-            (ranking.length >= 3 ? ` Hoy las primeras son ${nombreParaDecir(ranking[0].nombre)}, ${nombreParaDecir(ranking[1].nombre)} y ${nombreParaDecir(ranking[2].nombre)}.` : '')
-        );
-        await decir('Y las que laten son alertas: concesiones que vencen pronto o que perdieron vegetación. Nadie tiene que acordarse: yo aviso.');
-
-        // 3. Lo que ve el satélite.
-        if (hay.satelite && sigue()) {
-          c.current.prospectividad(false);
-          capitulo(++i, { titulo: 'Lo que ve el satélite', cifras: [{ valor: perdidas[0].ha, etiqueta: 'ha de vegetación perdida', d: 1 }] });
-          c.current.rasters([{ ...s2('s2-veg')!, opacidad: 0.85 }]);
-          mover({ accion: 'volar', geojson: fPerdida!.geojson, encuadre: fPerdida!.encuadre! });
-          await pausa(3200);
-          orbitar(40, 24_000);
-          await decir(
-            `Cada año comparo las imágenes del satélite europeo Sentinel-2 de la temporada seca. Esta es ${nombreParaDecir(fPerdida!.nombre)}: perdió ${nf(perdidas[0].ha, 1)} hectáreas de vegetación de un año al otro. Puede ser un tajo, un camino o una quema; yo lo detecto y lo marco para confirmarlo en campo.`
-          );
-          if (s2('s2-arc')) {
-            c.current.rasters([{ ...s2('s2-arc')!, opacidad: 0.85 }]);
-            await decir('Con las mismas imágenes busco alteración hidrotermal: arcillas y óxidos de hierro, la huella que dejan los fluidos que traen el oro y el cobre.');
-          }
+        const ORDEN: Record<ModoRecorrido, string[]> = {
+          completo: ['intro', 'potencial', 'satelite', 'zona', 'analisis', 'oro', 'conflictos', 'cierre'],
+          geologico: ['intro', 'zona', 'analisis', 'oro', 'alteracion', 'cierre'],
+          legal: ['intro', 'conflictos', 'traslapes', 'vencimientos', 'marco', 'cierre'],
+          herramientas: ['barra', 'capasBoton', 'herramientasMapa', 'fichaBotones', 'chat', 'pestanas', 'reparto', 'cierre'],
+        };
+        const lista = ORDEN[modo].filter((k) => C[k].hay);
+        setTotal(lista.length);
+        for (const k of lista) {
+          if (!sigue()) return;
+          await C[k].correr();
         }
-
-        // 4. La zona con más información.
-        if (hay.zona && sigue()) {
-          const mapas = zona!.mapas;
-          capitulo(++i, {
-            titulo: `La zona con más información: ${zona!.nombre}`,
-            cifras: [
-              { valor: mapas.length, etiqueta: 'mapas de JICA' },
-              { valor: enZona.length, etiqueta: 'concesiones' },
-              { valor: enZona.reduce((s, x) => s + x.ha, 0), etiqueta: 'hectáreas' },
-            ],
-          });
-          c.current.rasters([]);
-          c.current.tocar(null);
-          mover({ accion: 'encuadrar', encuadre: zona!.encuadre, inclinacion: 60, giro: 28, ms: 6500 });
-          await pausa(2600);
-          c.current.rasters([{ ...(mapas[0] as RasterEscaneado), opacidad: 0.82 }]);
-          if (fallas) c.current.capas(() => [fallas]);
-          orbitar(-30, 30_000);
-          await decir(
-            `Ahora vamos a la zona de Honduras donde más información tengo: ${zona!.nombre}. Aquí se juntan ${plural(mapas.length, 'mapa', 'mapas')} de la agencia japonesa JICA, que escaneé y georreferencié sobre el terreno real, las fallas, el satélite y ${plural(enZona.length, 'concesión', 'concesiones')}.`
-          );
-          if (mapas[1]) {
-            c.current.rasters([{ ...(mapas[1] as RasterEscaneado), opacidad: 0.82 }]);
-            await decir('Este es el mapa estructural: las fallas y fracturas por donde subieron los fluidos que dejaron los metales.');
-          }
-          if (mapas[2]) {
-            c.current.rasters([{ ...(mapas[2] as RasterEscaneado), opacidad: 0.8 }]);
-            await decir('Y estas son las anomalías geoquímicas que midió JICA en los ríos. Donde coinciden las fallas, los intrusivos y las anomalías, ahí conviene mirar.');
-          }
-        }
-
-        // 5. El análisis completo de la mejor concesión de la zona.
-        if (hay.analisis && sigue()) {
-          const f = fZona!;
-          capitulo(++i, {
-            titulo: `Análisis completo: ${nombreParaDecir(f.nombre)}`,
-            cifras: typeof f.prospectividad?.puntaje === 'number' ? [{ valor: f.prospectividad.puntaje, etiqueta: 'de 100 en prospectividad' }] : undefined,
-          });
-          if (zona?.mapas[0]) c.current.rasters([{ ...(zona.mapas[0] as RasterEscaneado), opacidad: 0.5 }]);
-          // La ficha se abre ANTES del vuelo: así el vuelo ya deja libre su lado. En el teléfono no:
-          // ahí la ficha sube desde abajo y tapa el mapa entero, y la voz y el cuadro ya lo cuentan.
-          if (enCompu()) {
-            c.current.tocar({ tipo: 'concesion', id: f.id, nombre: f.nombre, lngLat: centroDe(f.encuadre!) });
-            await pausa(350);
-          }
-          mover({ accion: 'volar', geojson: f.geojson, encuadre: f.encuadre! });
-          await pausa(3000);
-          orbitar(120, 60_000);
-          const frases = analisisDeFicha(f);
-          // De a dos frases: se oye como una explicación y no como una lista leída.
-          for (let k = 0; k < frases.length && sigue() && !saltoEste(); k += 2) await decir(frases.slice(k, k + 2).join(' '));
-          await decir('Todo esto está en su ficha, a la derecha, y en un toque se lo entrego en PDF con su plano, o en KML para Google Earth y DXF para AutoCAD.');
-        }
-
-        // 6. La geoquímica de campo.
-        if (hay.oro && sigue()) {
-          capitulo(++i, {
-            titulo: 'Geoquímica de campo',
-            cifras: [
-              { valor: oro!.total, etiqueta: 'muestras de JICA' },
-              { valor: oro!.maxGt, etiqueta: 'g/t de oro, la más alta', d: 1 },
-              { valor: oro!.sobreUnGramo, etiqueta: 'sobre 1 g/t' },
-            ],
-          });
-          c.current.tocar(null);
-          c.current.rasters([]);
-          c.current.capas(() => []);
-          c.current.muestras({ elemento: 'au', geojson: muestras });
-          mover({ accion: 'camara', centro: oro!.centro, zoom: 9.4, inclinacion: 58, giro: -32, ms: 6500 });
-          await pausa(3000);
-          orbitar(40, 30_000);
-          await decir(
-            `También tengo ${nf(oro!.total)} muestras de sedimentos y rocas que tomó JICA, con su ley de oro, plata, cobre y zinc. El calor muestra dónde se juntan las anomalías: la más alta de oro llega a ${nf(oro!.maxGt, 1)} gramos por tonelada, y ${plural(oro!.sobreUnGramo, 'muestra pasa', 'muestras pasan')} de un gramo.`
-          );
-          await decir('Toque cualquier punto y le digo qué es, cuánto dio y en qué concesión cae hoy.');
-        }
-
-        // 7. Los conflictos.
-        if (hay.conflicto && sigue()) {
-          const f = fConflicto!;
-          capitulo(++i, {
-            titulo: 'Dónde mirar primero',
-            cifras: [
-              ...(t?.areasProtegidas ? [{ valor: t.areasProtegidas.concesiones, etiqueta: 'en áreas protegidas' }] : []),
-              ...(t?.microcuencas ? [{ valor: t.microcuencas.concesiones, etiqueta: 'en microcuencas' }] : []),
-              ...(t?.poblados ? [{ valor: t.poblados.concesiones, etiqueta: 'con caseríos dentro' }] : []),
-            ],
-          });
-          c.current.muestras(null);
-          if (protegidas) c.current.capas(() => [protegidas]);
-          // La ficha se abre ANTES del vuelo: así el vuelo ya deja libre su lado. En el teléfono no:
-          // ahí la ficha sube desde abajo y tapa el mapa entero, y la voz y el cuadro ya lo cuentan.
-          if (enCompu()) {
-            c.current.tocar({ tipo: 'concesion', id: f.id, nombre: f.nombre, lngLat: centroDe(f.encuadre!) });
-            await pausa(350);
-          }
-          mover({ accion: 'volar', geojson: f.geojson, encuadre: f.encuadre! });
-          await pausa(3000);
-          orbitar(-60, 36_000);
-          await decir(
-            `Y lo que un regulador o un inversionista tiene que ver antes que nada: los conflictos. ` +
-              (t?.areasProtegidas ? `${plural(t.areasProtegidas.concesiones, 'concesión pisa', 'concesiones pisan')} áreas protegidas` : '') +
-              (t?.microcuencas ? `, ${nf(t.microcuencas.concesiones)} pisan microcuencas declaradas` : '') +
-              (t?.poblados ? ` y ${nf(t.poblados.concesiones)} tienen caseríos dentro` : '') +
-              '.'
-          );
-          await decir(
-            `Esta es ${nombreParaDecir(conflicto!.concesion)}: pisa ${nf(conflicto!.ha, 1)} hectáreas de ${conflicto!.con}, el ${nf(conflicto!.pct)} por ciento de su superficie. Esto, que antes tomaba semanas de escritorio, lo tengo al día en segundos.`
-          );
-        }
-
-        // 8. Lo que se le puede pedir.
-        if (!sigue()) return;
-        capitulo(++i, { titulo: 'Pregúnteme lo que quiera', chips: CAPACIDADES });
-        c.current.tocar(null);
-        c.current.capas(() => []);
-        c.current.rasters([]);
-        c.current.muestras(null);
-        c.current.prospectividad(true);
-        mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 55, giro: 16, ms: 6000 });
-        await pausa(2400);
-        orbitar(-24, 24_000);
-        await decir(
-          'Todo esto me lo pide cualquiera de su equipo con palabras normales o con la voz: desde la web, la aplicación del teléfono, Telegram, y hasta desde su propio asistente Claude.'
-        );
-        await decir('Le armo la ficha en PDF, el plano profesional, el perfil del terreno, los archivos para Google Earth y AutoCAD, y le aviso cuando algo cambia. Pregúnteme lo que quiera.');
       } catch (e: any) {
         if (sigue()) setTexto(`No pude seguir el recorrido: ${String(e?.message || e)}`);
         await espera(3500);
@@ -441,6 +650,7 @@ export function Recorrido({ activo, onTerminar, controles, fichaAbierta = false 
           c.current.alto(antes.alto);
           c.current.tocar(null);
           c.current.cara('IDLE');
+          setFoco(null);
           // Sin el cuadro, el mapa vuelve a encuadrar en toda la pantalla.
           c.current.orden({ accion: 'orbitar', grados: 0, ms: 900, margen: SIN_MARGEN });
           setTexto('');
@@ -462,11 +672,12 @@ export function Recorrido({ activo, onTerminar, controles, fichaAbierta = false 
       c0.fondo(antes.fondo);
       c0.alto(antes.alto);
       c0.cara('IDLE');
+      setFoco(null);
       // La ficha que abrió el recorrido se cierra con él (al empezar ya se había cerrado la que hubiera).
       c0.tocar(null);
       c0.orden({ accion: 'orbitar', grados: 0, ms: 900, margen: SIN_MARGEN });
     };
-  }, [activo, onTerminar]);
+  }, [activo, onTerminar, modo]);
 
   /* ---------------------------------------------------------------- arrastrar */
   const arrastre = useRef<{ dx: number; dy: number } | null>(null);
@@ -512,10 +723,12 @@ export function Recorrido({ activo, onTerminar, controles, fichaAbierta = false 
     : `left-2 right-2 bottom-2 md:bottom-3 md:right-auto md:left-1/2 md:-translate-x-1/2 ${fichaAbierta ? 'md:left-[calc(50%-212px)]' : ''}`;
 
   return (
+    <>
+    {foco && <Foco selector={foco} />}
     <div
       ref={caja}
       style={lugar}
-      className={`absolute z-[30] md:w-[min(460px,calc(100%-460px))] ${pos ? 'w-[min(460px,calc(100%-16px))]' : ''} ${clasesLugar}`}
+      className={`absolute ${foco ? 'z-[75]' : 'z-[30]'} md:w-[min(460px,calc(100%-460px))] ${pos ? 'w-[min(460px,calc(100%-16px))]' : ''} ${clasesLugar}`}
       role="region"
       aria-label="Recorrido guiado"
     >
@@ -591,6 +804,53 @@ export function Recorrido({ activo, onTerminar, controles, fichaAbierta = false 
           </p>
         </div>
       )}
+    </div>
+    </>
+  );
+}
+
+/**
+ * EL ANILLO: señala un control de la pantalla mientras Dr Electrum lo explica. Sigue al elemento
+ * cuadro a cuadro (se mueve si el panel cambia de alto) y oscurece el resto sin bloquear nada.
+ */
+function Foco({ selector }: { selector: string }) {
+  const [r, setR] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    let antes = '';
+    const paso = () => {
+      if (!vivo) return;
+      const el = document.querySelector(selector) as HTMLElement | null;
+      const b = el?.getBoundingClientRect();
+      const nuevo = b && b.width > 0 ? { x: b.left - 6, y: b.top - 6, w: b.width + 12, h: b.height + 12 } : null;
+      const k = JSON.stringify(nuevo);
+      if (k !== antes) {
+        antes = k;
+        setR(nuevo);
+      }
+      requestAnimationFrame(paso);
+    };
+    requestAnimationFrame(paso);
+    return () => {
+      vivo = false;
+    };
+  }, [selector]);
+  if (!r) return null;
+  return (
+    <div
+      aria-hidden
+      data-foco="" className="pointer-events-none fixed z-[70] rounded-xl transition-all duration-300"
+      style={{
+        left: r.x,
+        top: r.y,
+        width: r.w,
+        height: r.h,
+        border: `2px solid ${AMBAR}`,
+        boxShadow: `0 0 0 9999px rgba(0,0,0,.42), 0 0 22px 4px ${AMBAR}88`,
+        animation: 'electrum-foco 1.6s ease-in-out infinite',
+      }}
+    >
+      <style>{'@keyframes electrum-foco{0%,100%{outline:0 solid transparent}50%{box-shadow:0 0 0 9999px rgba(0,0,0,.42),0 0 34px 8px #FFAE3Baa}}'}</style>
     </div>
   );
 }

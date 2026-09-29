@@ -19,7 +19,7 @@ import path from 'node:path';
 import http from 'node:http';
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
-import { emitirSesion, sesionDe, borrarSesion, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, FRENO_ENTRADA, _olvidarCacheSesiones } from '../server/seguridad';
+import { DOMINIO_CODIGO, esInvitado, emitirSesion, sesionDe, borrarSesion, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, FRENO_ENTRADA, _olvidarCacheSesiones } from '../server/seguridad';
 import { destinoPublico } from '../lib/red-publica';
 
 const JOSE = 'j.ordonez@ordenglobal.org';
@@ -266,3 +266,27 @@ test('servidor: el freno, la salida que dura tras reiniciar, y el ojo sin sesió
     assert.deepEqual(pedidosOjo, [], 'el ojo no recibió nada');
   });
 });
+
+test('invitado: quien entró con un código mira pero no baja; con usuario propio, sí', () =>
+  conEnv({ ULTRON_SESION_SECRETO: 'secreto-de-prueba-invitado-0123456789' }, () => {
+    const conCodigo = emitirSesion({ correo: `codigo-7${DOMINIO_CODIGO}`, nombre: 'Keidy', rol: 'Invitado' }, { vence: Date.now() + 3600_000 });
+    const jose = emitirSesion({ correo: JOSE, nombre: 'José', rol: 'Junta' });
+    assert.equal(esInvitado(req(conCodigo.token)), true);
+    assert.equal(esInvitado(req(jose.token)), false);
+    // Sin sesión (la llave de la demostración) tampoco se lleva archivos.
+    assert.equal(esInvitado({ headers: {} } as any), true);
+  }));
+
+test('invitado: una cuenta solo de AU-RA que entra con la llave de la demo no baja nada de Dr Electrum', () =>
+  conEnv(
+    {
+      ULTRON_SESION_SECRETO: 'secreto-de-prueba-invitado-0123456789',
+      ULTRON_PADRON: 'soloaura | Solo Aura | solo.aura@prueba.hn | | ultron=lee',
+    },
+    () => {
+      const soloAura = emitirSesion({ correo: 'solo.aura@prueba.hn', nombre: 'Solo Aura', rol: 'Junta' });
+      assert.equal(esInvitado(req(soloAura.token)), true);
+      const jose = emitirSesion({ correo: JOSE, nombre: 'José', rol: 'Junta' });
+      assert.equal(esInvitado(req(jose.token)), false);
+    }
+  ));

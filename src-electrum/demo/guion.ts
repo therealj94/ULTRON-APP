@@ -195,3 +195,55 @@ export function analisisDeFicha(f: Ficha): string[] {
   if (haN && haN >= 1) dichas.push(`Desde el satélite veo alteración por arcillas en ${nf(haN, 1)} hectáreas: una guía para ir a campo.`);
   return dichas;
 }
+
+/**
+ * El saludo según la hora de Honduras (UTC−6 todo el año, sin horario de verano), no la del
+ * aparato: una computadora con la hora de otro país saludaría mal. De 5 a 11 días, de 12 a 17
+ * tardes, el resto noches.
+ */
+export function saludoHonduras(ahora = new Date()): 'Buenos días' | 'Buenas tardes' | 'Buenas noches' {
+  let h: number;
+  try {
+    h = Number(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: 'America/Tegucigalpa' }).format(ahora));
+  } catch {
+    h = (ahora.getUTCHours() + 24 - 6) % 24;
+  }
+  if (h >= 5 && h < 12) return 'Buenos días';
+  if (h >= 12 && h < 18) return 'Buenas tardes';
+  return 'Buenas noches';
+}
+
+/** El nombre de pila para saludar: «José Ordóñez» → «José». Los genéricos no se dicen. */
+const TRATAMIENTOS = /^(ing|lic|licda|dr|dra|sr|sra|srta|don|doña|arq|abg|abog|prof|ph\.?d)\.?$/i;
+
+export function nombreDePila(nombre: string | null | undefined): string | null {
+  // «Ing. María López» se saluda «María», no «Ing.».
+  const partes = String(nombre || '').trim().split(/\s+/);
+  const n = partes.find((p) => !TRATAMIENTOS.test(p)) || '';
+  if (!n || /^(invitado|usuario|null|undefined)$/i.test(n) || n.includes('@')) return null;
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+/**
+ * Vencimientos del catastro pintado: en 90 días, en el año y ya vencidas. Las fechas imposibles
+ * del padrón (1899-11-30, un «sin fecha» de Excel) no cuentan como vencidas: no son un dato.
+ */
+export function vencimientos(catastro: { features: Rasgo[] } | null, hoy = new Date()) {
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const h = iso(hoy);
+  const en90 = iso(new Date(hoy.getTime() + 90 * 86_400_000));
+  const enAnio = iso(new Date(hoy.getTime() + 365 * 86_400_000));
+  let noventa = 0;
+  let anio = 0;
+  let vencidas = 0;
+  for (const f of catastro?.features || []) {
+    const v = String(f.properties?.vence || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(v) || v < '1990-01-01') continue;
+    if (v < h) vencidas++;
+    else {
+      if (v <= en90) noventa++;
+      if (v <= enAnio) anio++;
+    }
+  }
+  return { noventa, anio, vencidas };
+}

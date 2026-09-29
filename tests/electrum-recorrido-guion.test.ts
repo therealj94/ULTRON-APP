@@ -4,7 +4,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analisisDeFicha, concesionesEn, focoDeOro, zonaMasRica, type Encuadre } from '../src-electrum/demo/guion';
+import { analisisDeFicha, concesionesEn, focoDeOro, nombreDePila, saludoHonduras, vencimientos, zonaMasRica, type Encuadre } from '../src-electrum/demo/guion';
 
 const OLANCHO: Encuadre = [-87, 14.6079, -86.4999, 15.3967];
 const HN: Encuadre = [-89.4, 12.9, -83.1, 16.6];
@@ -89,4 +89,32 @@ test('las frases de la ficha, como se dicen en voz alta', () => {
   ]);
   // Una ficha sin nada más que el nombre no inventa frases.
   assert.deepEqual(analisisDeFicha({ id: 1, nombre: 'Sola' }), ['Esta es Sola.']);
+});
+
+test('el saludo va con la hora de Honduras (UTC−6), no la del navegador', () => {
+  // 13:30 UTC = 7:30 en Tegucigalpa; 19:00 UTC = 13:00; 01:00 UTC = 19:00 del día anterior.
+  assert.equal(saludoHonduras(new Date('2026-09-28T13:30:00Z')), 'Buenos días');
+  assert.equal(saludoHonduras(new Date('2026-09-28T19:00:00Z')), 'Buenas tardes');
+  assert.equal(saludoHonduras(new Date('2026-09-29T01:00:00Z')), 'Buenas noches');
+  assert.equal(saludoHonduras(new Date('2026-09-28T10:59:00Z')), 'Buenas noches', '4:59 todavía es de noche');
+  assert.equal(saludoHonduras(new Date('2026-09-28T11:00:00Z')), 'Buenos días', '5:00 ya es de día');
+  assert.equal(saludoHonduras(new Date('2026-09-29T00:00:00Z')), 'Buenas noches', '18:00 ya es de noche');
+});
+
+test('se saluda por el nombre de pila, sin tratamientos ni nombres genéricos', () => {
+  assert.equal(nombreDePila('José Ordóñez'), 'José');
+  assert.equal(nombreDePila('Medardo Ordóñez'), 'Medardo');
+  assert.equal(nombreDePila('keidy'), 'Keidy');
+  assert.equal(nombreDePila('Ing. María López'), 'María');
+  assert.equal(nombreDePila('Lic Carlos'), 'Carlos');
+  assert.equal(nombreDePila('Invitado'), null);
+  assert.equal(nombreDePila(''), null);
+  assert.equal(nombreDePila('a@b.com'), null);
+});
+
+test('vencimientos: en 90 días, en el año y vencidas; las fechas imposibles no cuentan', () => {
+  const f = (vence: string | null) => ({ type: 'Feature', geometry: caja(-86.5, 14.8), properties: vence ? { vence } : {} });
+  const catastro = { features: [f('2026-10-15'), f('2027-03-01'), f('2028-01-01'), f('2025-01-01'), f('1899-11-30'), f(null)] } as any;
+  assert.deepEqual(vencimientos(catastro, new Date('2026-09-28T12:00:00Z')), { noventa: 1, anio: 2, vencidas: 1 });
+  assert.deepEqual(vencimientos(null), { noventa: 0, anio: 0, vencidas: 0 });
 });
