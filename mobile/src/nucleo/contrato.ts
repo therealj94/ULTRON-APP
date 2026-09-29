@@ -1,0 +1,149 @@
+/**
+ * EL CONTRATO DE LA APP 5.0: lo que comparten las piezas sin conocerse.
+ *
+ * Seis partes de la app se escriben por separado (llamadas, chat, servidor, la carcasa con la
+ * entrada y la primera vez, la compañera AURA, y Genesis/wallet). Se encuentran solo aquí:
+ *   · el PERFIL de la persona (lo que contó la primera vez: cómo le decimos, avatar, tema, encuesta);
+ *   · las ACCIONES que AURA puede pedirle a la app («vete atrás», «abre ajustes», «escríbele a Beto…»);
+ *   · los EVENTOS que se avisan entre piezas (empezó una llamada, se envió un mensaje, cambió la pantalla).
+ *
+ * Nada de React aquí: lo importan la voz, el relevo y las pantallas por igual.
+ */
+import type { AvatarId } from '../avatares/catalogo';
+import type { Idioma } from '../i18n';
+
+/* ── el perfil ───────────────────────────────────────────────────────────────────────────── */
+
+export type Tema = 'oscuro' | 'claro' | 'sistema';
+
+/** Lo que la persona contó en la primera vez. Todo opcional salvo lo que la app necesita para arrancar. */
+export type Encuesta = {
+  /** Ciudad o país donde vive. */
+  vive?: string;
+  comida?: string;
+  musica?: string;
+  /** Pareja, hijos, familia: texto libre («casado, dos hijas: Ana y Sofía»). */
+  familia?: string;
+  /** A qué se dedica. */
+  trabajo?: string;
+  /** Pasatiempos, deportes, lo que le gusta. */
+  gustos?: string;
+  /** Lo que quiera que AURA sepa y no cupo arriba. */
+  otros?: string;
+};
+
+export type Perfil = {
+  /** Cómo quiere que le digan («José», «Jefe», «Pepe»). */
+  apodo: string;
+  avatar: AvatarId;
+  tema: Tema;
+  idioma: Idioma;
+  /** Lo que compartió Genesis ID con permiso de la persona. */
+  nombreGenesis?: string;
+  /** Solo mes y día («03-14»): el año no hace falta para felicitar. */
+  cumple?: string;
+  encuesta: Encuesta;
+  /** true cuando terminó la primera vez (o la saltó a propósito). */
+  completado: boolean;
+  /** Milisegundos. */
+  actualizado: number;
+};
+
+/**
+ * Servidor (aura-fp), con la sesión de la mesa:
+ *   GET  /api/perfil            → { perfil: Perfil | null }
+ *   PUT  /api/perfil  Partial<Perfil>  → { perfil: Perfil }
+ * El cerebro lo lee en cada turno (todos los avatares) para llamar a la persona por su apodo y
+ * acordarse de lo que contó.
+ */
+export const RUTA_PERFIL = '/api/perfil';
+
+/* ── lo que AURA le puede pedir a la app ─────────────────────────────────────────────────── */
+
+export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil';
+
+export type AccionApp =
+  | { tipo: 'atras' }
+  | { tipo: 'abrir'; pantalla: Pantalla }
+  | { tipo: 'tema'; valor: Tema }
+  | { tipo: 'avatar'; valor: AvatarId }
+  /** Abre la conversación con alguien (correo exacto o nombre como sale en la lista). */
+  | { tipo: 'abrir_chat'; con: string }
+  /** Deja el borrador escrito en el chat con esa persona, sin enviarlo. AURA lo lee en voz alta. */
+  | { tipo: 'redactar'; para: string; texto: string }
+  /** Envía el borrador que está escrito (en el chat abierto o el de `para`). */
+  | { tipo: 'enviar'; para?: string }
+  /** Borra el borrador sin enviarlo. */
+  | { tipo: 'descartar' }
+  /** true = AURA se calla y deja de escuchar; false = vuelve. */
+  | { tipo: 'silencio'; valor: boolean };
+
+/**
+ * Servidor → teléfono (con la sesión de la mesa):
+ *   GET  /api/app/acciones   (text/event-stream)  cada evento: data: {"id":"…","accion":AccionApp}
+ *   POST /api/app/contexto   { pantalla, chatAbierto?: {correo,nombre}, contactos: {correo,nombre}[], borrador?: string }
+ * El contexto le dice al cerebro dónde está la persona y a quién puede escribirle, para que «escríbele
+ * a mi mamá» encuentre a quién. Nunca viaja el contenido de los chats, solo nombres.
+ */
+export const RUTA_ACCIONES = '/api/app/acciones';
+export const RUTA_CONTEXTO = '/api/app/contexto';
+
+export type Contexto = {
+  pantalla: Pantalla;
+  chatAbierto?: { correo: string; nombre: string } | null;
+  contactos: { correo: string; nombre: string }[];
+  borrador?: string;
+};
+
+/* ── eventos entre piezas ────────────────────────────────────────────────────────────────── */
+
+export type Eventos = {
+  /** Una acción que hay que hacer (venga de la voz, de un atajo o de la compañera). */
+  accion: AccionApp;
+  /** Resultado de una acción, para que AURA diga «listo» o «no pude». */
+  hecho: { accion: AccionApp; ok: boolean; detalle?: string };
+  /** La llamada (voz o video) empezó o terminó: AURA se apaga y vuelve. */
+  llamada: { activa: boolean; video: boolean };
+  /** Cambió la pantalla visible. */
+  pantalla: { pantalla: Pantalla; chatAbierto?: { correo: string; nombre: string } | null };
+  /** Se envió un mensaje de chat (para la palomita ✔ y el «listo»). */
+  enviado: { para: string; id?: string };
+  /** El perfil cambió (tema, apodo, avatar…). */
+  perfil: Perfil;
+};
+
+type Oyente<K extends keyof Eventos> = (dato: Eventos[K]) => void;
+const oyentes = new Map<keyof Eventos, Set<(dato: any) => void>>();
+
+/** Avisa a todos los que escuchan `tipo`. Un oyente que falla no tumba a los demás. */
+export function emitir<K extends keyof Eventos>(tipo: K, dato: Eventos[K]) {
+  const s = oyentes.get(tipo);
+  if (!s) return;
+  for (const f of [...s]) {
+    try {
+      f(dato);
+    } catch {
+      /* un oyente roto no rompe el bus */
+    }
+  }
+}
+
+/** Escucha `tipo`; devuelve la función para dejar de escuchar. */
+export function escuchar<K extends keyof Eventos>(tipo: K, f: Oyente<K>): () => void {
+  let s = oyentes.get(tipo);
+  if (!s) oyentes.set(tipo, (s = new Set()));
+  s.add(f);
+  return () => {
+    s.delete(f);
+  };
+}
+
+/* ── permisos que pide la app (la pantalla de permisos de la primera vez los muestra todos) ── */
+
+export const PERMISOS_ANDROID = [
+  'android.permission.RECORD_AUDIO',
+  'android.permission.CAMERA',
+  'android.permission.BLUETOOTH_CONNECT',
+  'android.permission.POST_NOTIFICATIONS',
+  'android.permission.ACCESS_COARSE_LOCATION',
+] as const;
