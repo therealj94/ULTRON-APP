@@ -54,6 +54,9 @@ const ESQUEMA = [
   `INSERT INTO esquema_version (version, nota)
      VALUES (9, 'panel de infraestructura: carpetas, bitácora e importaciones desde el cubo')
      ON CONFLICT (version) DO NOTHING`,
+  // Lo que ya entró con la fecha vacía del .dbf leída como 1899 (ver `fecha` en db.ts): no es fecha.
+  `UPDATE concesion SET vence = NULL WHERE vence < DATE '1901-01-01'`,
+  `UPDATE concesion SET otorgada = NULL WHERE otorgada < DATE '1901-01-01'`,
 ];
 
 let listo: Promise<boolean> | null = null;

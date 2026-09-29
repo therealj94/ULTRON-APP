@@ -171,8 +171,14 @@ function delDbf(props: Record<string, unknown>, campo: string): string | null {
 function fecha(props: Record<string, unknown>, res: RegExp): string | null {
   const k = Object.keys(props).find((x) => res.test(x));
   if (!k || !props[k]) return null;
-  const d = new Date(String(props[k]));
-  return isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : null;
+  const v = props[k];
+  const d = v instanceof Date ? v : new Date(String(v));
+  if (!isFinite(d.getTime())) return null;
+  // Una fecha VACÍA del .dbf («00000000») llega leída como 30-11-1899, y la de Excel/Access como
+  // 30-12-1899: no es una fecha, es la ausencia de una. Guardada, 703 concesiones salían «vencidas
+  // hace 46 000 días» y tapaban las que de verdad vencen.
+  if (d.getUTCFullYear() <= 1900) return null;
+  return d.toISOString().slice(0, 10);
 }
 
 /** Envuelve cualquier polígono como MultiPolygon, que es lo que exige la columna. */
