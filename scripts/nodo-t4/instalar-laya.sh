@@ -14,6 +14,8 @@
 #   bash scripts/nodo-t4/instalar-laya.sh                      # instala, entrena lo que no tenga modelo, arranca
 #   REENTRENAR=1 bash scripts/nodo-t4/instalar-laya.sh         # vuelve a entrenar los tres (tras cambiar los datos)
 #   REENTRENAR=mensaje bash scripts/nodo-t4/instalar-laya.sh   # solo ese (o «electrum», o «mensaje,documento»)
+#   Con datos reales de la Escuela en /opt/laya-reales (ver scripts/entrenamiento/README.md) se suman solos.
+#   Un modelo reentrenado se promueve solo si no empeora al anterior en las pruebas (FORZAR=1 lo salta).
 set -euo pipefail
 AQUI="$(cd "$(dirname "$0")/laya" && pwd)"
 BASE="${LAYA_BASE:-/opt/laya}"
@@ -26,6 +28,33 @@ sudo mkdir -p "$BASE" && sudo chown "$(id -u):$(id -g)" "$BASE"
 cp "$AQUI"/servidor.py "$AQUI"/entrenar.py "$AQUI"/evaluar.py "$AQUI"/comun.py "$AQUI"/preguntas.json "$BASE"/
 rm -rf "$BASE/datos" && cp -r "$AQUI/datos" "$BASE/datos"
 rm -rf "$BASE/modelos" && cp -r "$AQUI/modelos" "$BASE/modelos"
+cp "$AQUI"/comparar.py "$BASE"/
+
+# Datos REALES revisados en la Escuela (scripts/entrenamiento/exportar.ts), fuera del repositorio
+# porque son preguntas de personas: $LAYA_REALES/electrum/train_*.jsonl y $LAYA_REALES/<modelo>/train_*.jsonl.
+REALES="${LAYA_REALES:-/opt/laya-reales}"
+if [ -d "$REALES/electrum" ]; then cp "$REALES"/electrum/train_*.jsonl "$BASE/datos/" 2>/dev/null && echo "electrum: + datos reales de $REALES/electrum"; fi
+for n in "${NUEVOS[@]}"; do
+  if [ -d "$REALES/$n" ]; then cp "$REALES/$n"/train_*.jsonl "$BASE/modelos/$n/datos/" 2>/dev/null && echo "$n: + datos reales de $REALES/$n"; fi
+done
+
+# Promover un modelo recién entrenado SOLO si no empeora al que está sirviendo, medidos los dos sobre
+# las mismas pruebas apartadas (comparar.py). FORZAR=1 lo promueve igual (la primera vez no hay con qué
+# comparar). El rechazado queda en <dir>.rechazado para mirarlo.
+promover() {  # promover <dir actual> <dir nuevo> <argumentos de evaluar.py…>
+  local actual="$1" nuevo="$2"; shift 2
+  if [ ! -f "$actual/model.safetensors" ] || [ "${FORZAR:-0}" = 1 ]; then
+    rm -rf "$actual" && mv "$nuevo" "$actual"; return 0
+  fi
+  (cd "$BASE" && venv/bin/python evaluar.py --modelo "$actual" "$@" --json "$nuevo.viejo.json" >/dev/null \
+     && venv/bin/python evaluar.py --modelo "$nuevo" "$@" --json "$nuevo.nuevo.json" >/dev/null)
+  if (cd "$BASE" && venv/bin/python comparar.py "$nuevo.viejo.json" "$nuevo.nuevo.json"); then
+    rm -rf "$actual.anterior" && mv "$actual" "$actual.anterior" && mv "$nuevo" "$actual"
+  else
+    rm -rf "$actual.rechazado" && mv "$nuevo" "$actual.rechazado"
+    echo "AVISO: el nuevo $(basename "$actual") no se promueve; sigue el anterior (el nuevo quedó en $actual.rechazado)"
+  fi
+}
 
 if [ ! -x "$BASE/venv/bin/python" ]; then
   python3 -m venv "$BASE/venv"
@@ -43,7 +72,7 @@ reentrenar() { local r="${REENTRENAR:-0}"; [ "$r" = 1 ] || [ "$r" = todos ] || [
 if [ ! -f "$MODELO/model.safetensors" ] || reentrenar electrum; then
   echo "Entrenando electrum (la primera vez baja el modelo base, ~1,3 GB)…"
   (cd "$BASE" && venv/bin/python entrenar.py --datos datos --salida "$MODELO.nuevo" --device cuda)
-  rm -rf "$MODELO" && mv "$MODELO.nuevo" "$MODELO"
+  promover "$MODELO" "$MODELO.nuevo" --tabla datos/test-tabla.jsonl --bordes datos/bordes-tabla.jsonl
 fi
 
 # Los modelos nuevos solo se entrenan si tienen preguntas y datos. Si su entrenamiento falla (datos
@@ -58,7 +87,7 @@ for n in "${NUEVOS[@]}"; do
   if [ ! -f "$dir/model.safetensors" ] || reentrenar "$n"; then
     echo "Entrenando $n…"
     if (cd "$BASE" && venv/bin/python entrenar.py --modelo-dir "modelos/$n" --salida "$dir.nuevo" --device cuda); then
-      rm -rf "$dir" && mv "$dir.nuevo" "$dir"
+      promover "$dir" "$dir.nuevo" --modelo-dir "modelos/$n"
     else
       echo "AVISO: falló el entrenamiento de $n; se deja el checkpoint anterior (si lo hay)"
       rm -rf "$dir.nuevo"

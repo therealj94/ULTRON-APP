@@ -1,0 +1,11 @@
+# Las versiones con las que se verificó el ajuste de punta a punta (29-09-2026, prueba de humo en CPU
+# con Qwen/Qwen3-0.6B). En GPU, torch con CUDA de la misma versión y bitsandbytes para el 4 bits.
+torch==2.14.0
+transformers==5.17.0
+peft==0.21.1
+accelerate==1.15.0
+safetensors==0.8.0
+tokenizers==0.23.2
+huggingface_hub==1.33.0
+# solo en GPU (QLoRA):
+bitsandbytes; platform_system == "Linux"

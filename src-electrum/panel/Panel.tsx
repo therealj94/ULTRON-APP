@@ -33,6 +33,8 @@ import { EMOCION_DE, expresionDeLinea } from '../personajes/expresion';
 import { comentar, mesaAbierta, type TemaComentario } from '../personajes/mesa';
 import { pedidoDeFiltro, pedidoDeLugar } from '../../lib/pedidos-mapa';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
+import { Opinion } from './Opinion';
+import { Escuela } from '../escuela/Escuela';
 import { Biblioteca } from '../biblioteca/Biblioteca';
 import { pedirArchivo, Visor, type Fuente } from './Visor';
 
@@ -88,6 +90,10 @@ type Turno = {
    * suyas le enseña un pasado que no ocurrió, y la pregunta siguiente se contesta sobre eso.
    */
   local?: boolean;
+  /** La traza de este turno en el servidor: a ella va la opinión «¿sirvió?». */
+  trazaId?: string;
+  /** Lo que opinó la persona (👍 1 / 👎 -1), para no volver a preguntarle. */
+  opinion?: 1 | -1;
 };
 
 const AMBAR = '#FFAE3B';
@@ -741,7 +747,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                     if (voces.length) void hablarDialogo(voces, headersElectrum(), avisosVoz);
                     else void hablar(typeof d.voz === 'string' && d.voz ? d.voz : d.texto, d.emocion, headersElectrum(), avisosVoz);
                   }
-                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined, opciones: opcionesDelTurno, dialogo: voces.length ? voces : undefined }]);
+                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined, opciones: opcionesDelTurno, dialogo: voces.length ? voces : undefined, trazaId: typeof d.trazaId === 'string' ? d.trazaId : undefined }]);
                   terminado = true;
                 }
               }
@@ -1194,6 +1200,9 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                     t.texto
                   )}
                 </div>
+                {t.de === 'electrum' && !t.local && t.trazaId && (
+                  <Opinion trazaId={t.trazaId} valor={t.opinion} onValor={(v) => setTurnos((ts) => ts.map((x, k) => (k === i ? { ...x, opinion: v } : x)))} />
+                )}
                 {t.de === 'electrum' && !t.local && !t.dialogo && t.texto.length > 140 && (
                   <button
                     type="button"
@@ -1497,7 +1506,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       ) : vista === 'expedientes' ? (
         <Expedientes onUi={onUi} />
       ) : (
-        <Biblioteca />
+        <InfraYEscuela />
       )}
       {/* Al cuerpo del documento: el panel tiene desenfoque de fondo, y eso encierra lo `fixed` dentro de él. */}
       {visor &&
@@ -2223,5 +2232,39 @@ function Buscador({ escrito, setEscrito }: { escrito: string; setEscrito: (v: st
       aria-label="Buscar en capas y expedientes"
       className="w-full rounded-lg bg-white/[0.06] border border-white/12 px-3 py-2 text-sm text-[#E7EEF2] placeholder:text-[#7D909A] focus:outline-none focus:border-[#FFAE3B]/60"
     />
+  );
+}
+
+/**
+ * Infraestructura tiene dos partes: lo que sabe Dr Electrum (la biblioteca) y la Escuela, donde el
+ * equipo revisa lo que contestó la mesa para entrenar a Laya y a Qwen.
+ */
+function InfraYEscuela() {
+  const [parte, setParte] = useState<'conocimiento' | 'escuela'>('conocimiento');
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 gap-1 border-b border-white/[0.06] px-3 pt-2" role="tablist" aria-label="Infraestructura">
+        {(
+          [
+            ['conocimiento', 'Conocimiento'],
+            ['escuela', 'Escuela'],
+          ] as const
+        ).map(([k, t]) => (
+          <button
+            key={k}
+            type="button"
+            role="tab"
+            aria-selected={parte === k}
+            onClick={() => setParte(k)}
+            data-tour={k === 'escuela' ? 'escuela' : undefined}
+            className="-mb-px border-b-2 px-2.5 py-1.5 font-mono text-[10.5px] uppercase tracking-[0.12em] transition-colors cursor-pointer"
+            style={parte === k ? { borderColor: AMBAR, color: AMBAR } : { borderColor: 'transparent', color: '#8FA2AC' }}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+      <div className="min-h-0 flex-1">{parte === 'conocimiento' ? <Biblioteca /> : <Escuela />}</div>
+    </div>
   );
 }
