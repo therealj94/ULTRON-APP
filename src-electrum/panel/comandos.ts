@@ -19,7 +19,16 @@ export type Comando =
   | { accion: 'abrir'; que: 'tablero' | 'capas' | 'expedientes' | 'infraestructura' | 'consulta' | 'recorrido' }
   | { accion: 'tresD'; activar: boolean }
   | { accion: 'manos'; activar: boolean }
-  | { accion: 'ubicacion' };
+  | { accion: 'ubicacion' }
+  | { accion: 'mover'; dir: 'arriba' | 'abajo' | 'izquierda' | 'derecha' }
+  | { accion: 'rotar'; dir: 1 | -1 }
+  | { accion: 'norte' }
+  | { accion: 'inclinar' }
+  | { accion: 'cenital' }
+  | { accion: 'orbitar' }
+  | { accion: 'fondo'; cual: 'satelite' | 'calles' }
+  | { accion: 'pais' }
+  | { accion: 'ficha'; que: 'pdf' | 'geologico' | 'timelapse' | 'analizar' };
 
 /** Minúsculas, sin tildes ni signos, espacios simples. */
 export function normalizarDicho(texto: string): string {
@@ -65,6 +74,28 @@ export function comandoDe(texto: string): Comando | null {
   if (/^(pon|poner|activa|activar|muestra|ver)( el| en)? (3d|tres d|tercera dimension|relieve)$/.test(t)) return { accion: 'tresD', activar: true };
   if (/^(quita|quitar|apaga|apagar|sin)( el)? (3d|tres d|relieve)$/.test(t)) return { accion: 'tresD', activar: false };
 
+  // Girar antes que mover: «gira a la derecha» no es «a la derecha».
+  if (/^(gira|girar|gíralo|giralo|rota|rotar|rotalo|voltea|da vuelta|dale vuelta)( el mapa| la vista)?( un poco| mas)?( hacia| para| a)? (la )?izquierda$/.test(t) || /^(gira|rota)( el mapa)? (en contra del reloj|antihorario)$/.test(t)) return { accion: 'rotar', dir: -1 };
+  if (/^(gira|girar|giralo|rota|rotar|rotalo|voltea|da vuelta|dale vuelta)( el mapa| la vista)?( un poco| mas)?(( hacia| para| a)? (la )?derecha)?$/.test(t) || /^(gira|rota)( el mapa)? (como el reloj|en sentido horario|horario)$/.test(t)) return { accion: 'rotar', dir: 1 };
+  if (/^((pon|deja)( el)? norte (arriba|hacia arriba)|norte arriba|endereza(lo)?( el mapa| la vista)?|quita (el giro|la rotacion)|orienta(lo)? al norte)$/.test(t)) return { accion: 'norte' };
+  if (/^(inclina(lo)?( el mapa| la camara| mas)?|ponlo de lado|vista (en )?perspectiva|dale angulo|mas inclinado)$/.test(t)) return { accion: 'inclinar' };
+  if (/^(vista (de arriba|cenital|en planta|aerea)|ponlo plano|mira(lo)? desde arriba|quita la inclinacion|aplanalo)$/.test(t)) return { accion: 'cenital' };
+  if (/^(orbita|(dale )?la vuelta( completa)?|vuelta completa|gira alrededor|da una vuelta( de 360)?|gira 360( grados)?|sobrevuela en circulo)$/.test(t)) return { accion: 'orbitar' };
+  const mover = t.match(/^(muevete |mueve el mapa |mueve |corre el mapa |desplazate |ve |anda |llevame |corre |desliza el mapa )?(mas |un poco |un poco mas )?(hacia el |hacia la |hacia |para el |para la |para |al |a la |a el |a )?(arriba|norte|abajo|sur|izquierda|oeste|derecha|este)$/);
+  if (mover) {
+    const d = mover[4];
+    return { accion: 'mover', dir: d === 'norte' || d === 'arriba' ? 'arriba' : d === 'sur' || d === 'abajo' ? 'abajo' : d === 'oeste' || d === 'izquierda' ? 'izquierda' : 'derecha' };
+  }
+  if (/^(sube|subelo|sube el mapa)$/.test(t)) return { accion: 'mover', dir: 'arriba' };
+  if (/^(baja|bajalo|baja el mapa)$/.test(t)) return { accion: 'mover', dir: 'abajo' };
+  if (/^((pon|cambia a|vista|fondo|modo)( el| de| a)? ?(satelite|satelital)|satelite)$/.test(t)) return { accion: 'fondo', cual: 'satelite' };
+  if (/^((pon|cambia a|vista|fondo|modo|mapa)( el| de| a)? ?calles|calles)$/.test(t)) return { accion: 'fondo', cual: 'calles' };
+  if (/^((muestrame|ensename|ver|ve a)( todo)? (el pais|honduras)( entera| completa| completo)?|vista general|todo honduras|honduras (entera|completa)|todo el pais)$/.test(t)) return { accion: 'pais' };
+  if (/^((hazme|saca|genera|dame|bajame|arma)( la)? ficha( en)? pdf( de esta| de esta concesion)?|ficha pdf|(el )?pdf de esta( concesion)?)$/.test(t)) return { accion: 'ficha', que: 'pdf' };
+  if (/^((hazme|haz|dibuja|saca|genera|dame)( el| los)? mapas? geologicos?( de esta( concesion)?)?|mapa geologico( de esta( concesion)?)?)$/.test(t)) return { accion: 'ficha', que: 'geologico' };
+  if (/^((pon|ponme|abre|muestrame|reproduce)( el)? time ?lapse( satelital)?( de esta( concesion)?)?|time ?lapse( satelital)?)$/.test(t)) return { accion: 'ficha', que: 'timelapse' };
+  if (/^(analiza(la)?( esta( concesion)?| la concesion)?|haz el analisis( de esta)?|analizar)$/.test(t)) return { accion: 'ficha', que: 'analizar' };
+
   if (/^(activa|activar|enciende|prende|pon|usar|usa)( el| las| los)? (air touch|manos|gestos|control con las manos)$/.test(t)) return { accion: 'manos', activar: true };
   if (/^(desactiva|desactivar|apaga|apagar|quita|quitar)( el| las| los)? (air touch|manos|gestos|camara)$/.test(t)) return { accion: 'manos', activar: false };
 
@@ -92,4 +123,79 @@ export function recorridoPedido(texto: string): 'completo' | 'geologico' | 'lega
   if (/geolog/.test(t)) return 'geologico';
   if (/completo|todo/.test(t)) return 'completo';
   return null;
+}
+
+/**
+ * Las etiquetas del modelo «comando» de Laya (scripts/nodo-t4/laya/modelos/comando) → la orden.
+ * `ninguna` (o una etiqueta que no se conoce) es null: la frase va al cerebro como pregunta.
+ */
+export function comandoDeLaya(id: string | null | undefined): Comando | null {
+  switch (id) {
+    case 'siguiente': return { accion: 'siguiente' };
+    case 'detener': return { accion: 'detener' };
+    case 'callar': return { accion: 'callar' };
+    case 'cerrar': return { accion: 'cerrar' };
+    case 'zoom_mas': return { accion: 'zoom', dir: 1 };
+    case 'zoom_menos': return { accion: 'zoom', dir: -1 };
+    case 'mover_arriba': return { accion: 'mover', dir: 'arriba' };
+    case 'mover_abajo': return { accion: 'mover', dir: 'abajo' };
+    case 'mover_izquierda': return { accion: 'mover', dir: 'izquierda' };
+    case 'mover_derecha': return { accion: 'mover', dir: 'derecha' };
+    case 'rotar_izquierda': return { accion: 'rotar', dir: -1 };
+    case 'rotar_derecha': return { accion: 'rotar', dir: 1 };
+    case 'norte_arriba': return { accion: 'norte' };
+    case 'inclinar': return { accion: 'inclinar' };
+    case 'vista_cenital': return { accion: 'cenital' };
+    case 'orbitar': return { accion: 'orbitar' };
+    case 'relieve_3d': return { accion: 'tresD', activar: true };
+    case 'quitar_3d': return { accion: 'tresD', activar: false };
+    case 'mas_mapa': return { accion: 'reparto', alto: 'mapa' };
+    case 'mas_chat': return { accion: 'reparto', alto: 'chat' };
+    case 'mitad': return { accion: 'reparto', alto: 'mitad' };
+    case 'pantalla_completa': return { accion: 'pantalla', entrar: true };
+    case 'salir_pantalla': return { accion: 'pantalla', entrar: false };
+    case 'abrir_tablero': return { accion: 'abrir', que: 'tablero' };
+    case 'abrir_capas': return { accion: 'abrir', que: 'capas' };
+    case 'abrir_expedientes': return { accion: 'abrir', que: 'expedientes' };
+    case 'abrir_infra': return { accion: 'abrir', que: 'infraestructura' };
+    case 'abrir_consulta': return { accion: 'abrir', que: 'consulta' };
+    case 'abrir_recorrido': return { accion: 'abrir', que: 'recorrido' };
+    case 'fondo_satelite': return { accion: 'fondo', cual: 'satelite' };
+    case 'fondo_calles': return { accion: 'fondo', cual: 'calles' };
+    case 'mi_ubicacion': return { accion: 'ubicacion' };
+    case 'ver_pais': return { accion: 'pais' };
+    case 'ficha_pdf': return { accion: 'ficha', que: 'pdf' };
+    case 'mapa_geologico': return { accion: 'ficha', que: 'geologico' };
+    case 'timelapse': return { accion: 'ficha', que: 'timelapse' };
+    case 'analizar': return { accion: 'ficha', que: 'analizar' };
+    case 'manos_on': return { accion: 'manos', activar: true };
+    case 'manos_off': return { accion: 'manos', activar: false };
+    default: return null;
+  }
+}
+
+/** Lo que se muestra al ejecutar una orden, para que se vea que se entendió. */
+export function nombreDeComando(c: Comando): string {
+  switch (c.accion) {
+    case 'siguiente': return 'Siguiente';
+    case 'detener': return 'Recorrido detenido';
+    case 'callar': return 'En silencio';
+    case 'cerrar': return 'Cerrando';
+    case 'zoom': return c.dir > 0 ? 'Acercando' : 'Alejando';
+    case 'mover': return { arriba: 'Moviendo al norte', abajo: 'Moviendo al sur', izquierda: 'Moviendo al oeste', derecha: 'Moviendo al este' }[c.dir];
+    case 'rotar': return c.dir > 0 ? 'Girando a la derecha' : 'Girando a la izquierda';
+    case 'norte': return 'Norte arriba';
+    case 'inclinar': return 'Inclinando la vista';
+    case 'cenital': return 'Vista desde arriba';
+    case 'orbitar': return 'Vuelta completa';
+    case 'tresD': return c.activar ? 'Relieve 3D' : 'Sin 3D';
+    case 'reparto': return c.alto === 'mapa' ? 'Más mapa' : c.alto === 'chat' ? 'Más chat' : 'Mitad y mitad';
+    case 'pantalla': return c.entrar ? 'Pantalla completa' : 'Ventana normal';
+    case 'abrir': return `Abriendo ${c.que}`;
+    case 'fondo': return c.cual === 'satelite' ? 'Fondo satelital' : 'Fondo de calles';
+    case 'pais': return 'Todo el país';
+    case 'ficha': return { pdf: 'Ficha en PDF', geologico: 'Mapa geológico', timelapse: 'Timelapse satelital', analizar: 'Analizando' }[c.que];
+    case 'manos': return c.activar ? 'Air touch activado' : 'Air touch apagado';
+    case 'ubicacion': return 'Su ubicación';
+  }
 }

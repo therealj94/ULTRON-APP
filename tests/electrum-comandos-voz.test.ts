@@ -73,3 +73,45 @@ test('frases de espera: la de la herramienta, o una de «sigo en eso»', () => {
   assert.match(fraseDeEspera('herramienta_desconocida', 0), /ya casi|poquito|redactar/i);
   assert.match(fraseDeEspera(null, 1), /\S/);
 });
+
+test('comandos: mover, rotar, enderezar, inclinar y la ficha abierta', async () => {
+  const { comandoDe: c, comandoDeLaya, nombreDeComando } = await import('../src-electrum/panel/comandos');
+  assert.deepEqual(c('muévete al norte'), { accion: 'mover', dir: 'arriba' });
+  assert.deepEqual(c('a la derecha'), { accion: 'mover', dir: 'derecha' });
+  assert.deepEqual(c('un poco más a la izquierda'), { accion: 'mover', dir: 'izquierda' });
+  assert.deepEqual(c('ve hacia el sur'), { accion: 'mover', dir: 'abajo' });
+  assert.deepEqual(c('baja el mapa'), { accion: 'mover', dir: 'abajo' });
+  assert.deepEqual(c('gira a la derecha'), { accion: 'rotar', dir: 1 });
+  assert.deepEqual(c('rota el mapa'), { accion: 'rotar', dir: 1 });
+  assert.deepEqual(c('gira un poco a la izquierda'), { accion: 'rotar', dir: -1 });
+  assert.deepEqual(c('pon el norte arriba'), { accion: 'norte' });
+  assert.deepEqual(c('inclínalo'), { accion: 'inclinar' });
+  assert.deepEqual(c('vista de arriba'), { accion: 'cenital' });
+  assert.deepEqual(c('dale la vuelta completa'), { accion: 'orbitar' });
+  assert.deepEqual(c('pon el satélite'), { accion: 'fondo', cual: 'satelite' });
+  assert.deepEqual(c('muéstrame todo el país'), { accion: 'pais' });
+  assert.deepEqual(c('hazme la ficha en pdf'), { accion: 'ficha', que: 'pdf' });
+  assert.deepEqual(c('mapa geológico de esta'), { accion: 'ficha', que: 'geologico' });
+  assert.deepEqual(c('ponme el timelapse'), { accion: 'ficha', que: 'timelapse' });
+  assert.deepEqual(c('analiza esta concesión'), { accion: 'ficha', que: 'analizar' });
+  // Lo que no es orden sigue sin serlo.
+  assert.equal(c('¿qué hay al norte de Juticalpa?'), null);
+  assert.equal(c('¿cuál es la siguiente concesión que vence al sur?'), null);
+  assert.equal(c('hazme el mapa geológico de la concesión el tule'), null);
+  // Las etiquetas de Laya.
+  assert.deepEqual(comandoDeLaya('rotar_izquierda'), { accion: 'rotar', dir: -1 });
+  assert.deepEqual(comandoDeLaya('abrir_infra'), { accion: 'abrir', que: 'infraestructura' });
+  assert.equal(comandoDeLaya('ninguna'), null);
+  assert.equal(comandoDeLaya('algo_raro'), null);
+  assert.equal(nombreDeComando({ accion: 'rotar', dir: 1 }), 'Girando a la derecha');
+});
+
+test('comandos: cada etiqueta del modelo «comando» de Laya tiene su orden', async () => {
+  const fs = await import('node:fs');
+  const { comandoDeLaya } = await import('../src-electrum/panel/comandos');
+  const m = JSON.parse(fs.readFileSync(new URL('../scripts/nodo-t4/laya/modelos/comando/modelo.json', import.meta.url), 'utf8'));
+  for (const id of m.ids as string[]) {
+    if (id === 'ninguna') assert.equal(comandoDeLaya(id), null);
+    else assert.ok(comandoDeLaya(id), `sin orden para ${id}`);
+  }
+});

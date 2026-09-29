@@ -89,6 +89,7 @@ import { cargarGeologia } from './server/electrum/geologia-datos';
 import { capaParaMapa, capasVisibles, fichaParaMapa, queHayAqui, rasgoParaMapa } from './server/electrum/explorar';
 import { mantenerTableroCaliente, tablero } from './server/electrum/tablero';
 import { clasificarPendientes } from './server/electrum/documentos-laya';
+import { interpretarComando } from './server/electrum/comando-voz';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
   cargarMemoria,
@@ -842,6 +843,20 @@ app.post(
  * Oírle. Ruta propia por lo mismo que la voz: `/api/stt` está en la lista abierta de la APK, y un
  * transcriptor abierto es otra factura con la puerta quitada.
  */
+/**
+ * Una frase corta que el navegador no reconoció como orden: Laya dice si es una orden de pantalla
+ * (y cuál) o una pregunta. Nunca falla hacia el usuario: sin Laya, `id: null` y la frase va al cerebro.
+ */
+app.post('/api/electrum/comando', exigirPlataforma('electrum'), limitar(120), async (req, res) => {
+  const texto = String(req.body?.texto || '').slice(0, 300);
+  if (!texto.trim()) return res.status(400).json({ error: 'Falta el texto.', honesto: true });
+  try {
+    return res.json(await interpretarComando(texto));
+  } catch {
+    return res.json({ id: null, p: 0, motivo: 'error', ms: 0 });
+  }
+});
+
 app.post('/api/electrum/oir', exigirPlataforma('electrum'), limitar(40), async (req, res) => {
   const audio = bufferDeCualquier(req.body?.audio);
   if (!audio || audio.length < 400) return res.status(400).json({ error: 'No me llegó audio.', honesto: true });

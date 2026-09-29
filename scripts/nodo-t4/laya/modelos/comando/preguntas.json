@@ -1,0 +1,322 @@
+{
+ "ninguna": {
+  "type": "noul",
+  "instructions": "¿Esto NO es una orden de pantalla, sino una pregunta o conversación?",
+  "criteria": {
+   "true": "sí: nada que hacer en la pantalla: es una pregunta, un pedido de información, un comentario o charla («¿cuántas concesiones hay en Olancho?», «muéstrame la concesión Los Almendros», «gracias»)",
+   "false": "no: una orden para mover, abrir, cerrar o cambiar algo de la pantalla"
+  }
+ },
+ "siguiente": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: pasar al siguiente capítulo o paso («siguiente», «continúa», «adelante», «pasemos a lo que sigue»)",
+   "false": "no: otra orden o una pregunta que usa la palabra «siguiente» («¿qué vence el mes siguiente?»)"
+  }
+ },
+ "detener": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: terminar o parar el recorrido o la presentación («para el recorrido», «ya, termina el tour»)",
+   "false": "no: callar la voz sin parar el recorrido, o cerrar una ventana"
+  }
+ },
+ "callar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: que se calle o deje de hablar ahora («silencio», «cállate», «deja de hablar»)",
+   "false": "no: parar el recorrido o cerrar una ventana"
+  }
+ },
+ "cerrar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: cerrar la ventana, ficha, visor, imagen o panel abierto («cierra eso», «quita la ficha»)",
+   "false": "no: cerrar la sesión, callar, o una pregunta sobre el cierre de una mina"
+  }
+ },
+ "zoom_mas": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: acercar el mapa, hacer zoom hacia adentro, ver más de cerca («acércate», «más cerca», «amplía»)",
+   "false": "no: alejar, o volar a un lugar con nombre"
+  }
+ },
+ "zoom_menos": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: alejar el mapa, zoom hacia afuera, ver más área («aléjate», «más lejos», «abre la vista»)",
+   "false": "no: acercar, o ver el país entero"
+  }
+ },
+ "mover_arriba": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: desplazar el mapa hacia arriba o hacia el norte («sube el mapa», «muévete al norte», «más arriba»)",
+   "false": "no: rotar, inclinar, o una pregunta sobre lo que hay al norte"
+  }
+ },
+ "mover_abajo": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: desplazar el mapa hacia abajo o hacia el sur («baja el mapa», «ve al sur», «más abajo»)",
+   "false": "no: alejar, o una pregunta sobre el sur"
+  }
+ },
+ "mover_izquierda": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: desplazar el mapa hacia la izquierda o el oeste («muévete a la izquierda», «corre el mapa al oeste»)",
+   "false": "no: rotar a la izquierda"
+  }
+ },
+ "mover_derecha": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: desplazar el mapa hacia la derecha o el este («a la derecha», «córrelo al este»)",
+   "false": "no: rotar a la derecha"
+  }
+ },
+ "rotar_izquierda": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: girar o rotar el mapa hacia la izquierda, en contra de las agujas del reloj («gira a la izquierda», «rota un poco al otro lado»)",
+   "false": "no: mover el mapa a la izquierda sin girarlo"
+  }
+ },
+ "rotar_derecha": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: girar o rotar el mapa hacia la derecha, en sentido horario («gíralo a la derecha», «rota el mapa»)",
+   "false": "no: mover el mapa a la derecha sin girarlo"
+  }
+ },
+ "norte_arriba": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: enderezar el mapa, poner el norte arriba, quitar el giro («pon el norte arriba», «endereza el mapa»)",
+   "false": "no: moverse hacia el norte"
+  }
+ },
+ "inclinar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: inclinar el mapa, verlo en perspectiva o de lado, más ángulo («inclínalo», «ponlo de lado», «vista en perspectiva»)",
+   "false": "no: activar el relieve 3D o rotar"
+  }
+ },
+ "vista_cenital": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: ver el mapa desde arriba, plano, sin inclinación («vista de arriba», «ponlo plano»)",
+   "false": "no: quitar el relieve 3D"
+  }
+ },
+ "orbitar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: dar la vuelta alrededor, girar 360 grados, sobrevolar en círculo («dale la vuelta completa», «orbita»)",
+   "false": "no: rotar un poco"
+  }
+ },
+ "relieve_3d": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: activar el 3D o el relieve del terreno («pon el 3D», «muéstrame el relieve»)",
+   "false": "no: inclinar sin 3D, o una pregunta sobre el relieve"
+  }
+ },
+ "quitar_3d": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: apagar el 3D o el relieve («quita el 3D», «sin relieve»)",
+   "false": "no: poner la vista plana o cenital"
+  }
+ },
+ "mas_mapa": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: darle más espacio al mapa en la pantalla («más mapa», «agranda el mapa»)",
+   "false": "no: acercar el mapa (zoom)"
+  }
+ },
+ "mas_chat": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: darle más espacio a la conversación o al chat («más chat», «agranda la conversación»)",
+   "false": "no: abrir la consulta"
+  }
+ },
+ "mitad": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: repartir la pantalla mitad mapa y mitad chat («mitad y mitad», «divide la pantalla»)",
+   "false": "no: otra forma de repartir"
+  }
+ },
+ "pantalla_completa": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: poner la pantalla completa («pantalla completa», «ponlo en grande todo»)",
+   "false": "no: agrandar solo el mapa"
+  }
+ },
+ "salir_pantalla": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: salir de la pantalla completa («sal de pantalla completa», «quita la pantalla completa»)",
+   "false": "no: cerrar una ventana"
+  }
+ },
+ "abrir_tablero": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: abrir el tablero de cifras o el resumen nacional («abre el tablero», «muéstrame las cifras del país en el tablero»)",
+   "false": "no: preguntar una cifra concreta"
+  }
+ },
+ "abrir_capas": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: abrir el menú de capas del mapa («abre las capas», «qué capas hay, ábrelas»)",
+   "false": "no: activar una capa concreta por nombre"
+  }
+ },
+ "abrir_expedientes": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: abrir la pestaña de expedientes o archivos («ve a expedientes», «abre los archivos»)",
+   "false": "no: buscar un expediente concreto por nombre"
+  }
+ },
+ "abrir_infra": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: abrir la pestaña de infraestructura del conocimiento («abre infraestructura»)",
+   "false": "no: preguntar por carreteras o infraestructura física"
+  }
+ },
+ "abrir_consulta": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: volver a la pestaña de consulta o chat («ve al chat», «abre la consulta»)",
+   "false": "no: dar más espacio al chat"
+  }
+ },
+ "abrir_recorrido": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: empezar un recorrido o tutorial guiado («empieza el recorrido», «hazme el tour»)",
+   "false": "no: pasar al siguiente capítulo"
+  }
+ },
+ "fondo_satelite": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: cambiar el fondo del mapa a satélite («pon el satélite», «vista satelital»)",
+   "false": "no: ver el timelapse satelital"
+  }
+ },
+ "fondo_calles": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: cambiar el fondo del mapa a calles o mapa normal («pon calles», «mapa de calles»)",
+   "false": "no: preguntar por carreteras"
+  }
+ },
+ "mi_ubicacion": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: ir a donde está la persona ahora («¿dónde estoy?», «llévame a mi ubicación»)",
+   "false": "no: preguntar dónde queda un lugar con nombre"
+  }
+ },
+ "ver_pais": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: ver Honduras entera, todo el país, volver a la vista general («muéstrame todo el país», «vista general»)",
+   "false": "no: alejar un poco"
+  }
+ },
+ "ficha_pdf": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: sacar la ficha en PDF de la concesión que está abierta («bájame el PDF de esta», «hazme la ficha en PDF»)",
+   "false": "no: el informe de la cartera o de otra concesión con nombre"
+  }
+ },
+ "mapa_geologico": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: hacer el mapa geológico de la concesión abierta («hazme el mapa geológico de esta», «dibuja la geología aquí»)",
+   "false": "no: una pregunta sobre geología sin pedir el mapa"
+  }
+ },
+ "timelapse": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: abrir el timelapse satelital de la concesión abierta («ponme el timelapse», «cómo cambió con los años, muéstramelo»)",
+   "false": "no: cambiar el fondo a satélite"
+  }
+ },
+ "analizar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: analizar la concesión que está abierta («analiza esta concesión», «dame el análisis de esta»)",
+   "false": "no: una pregunta concreta sobre la concesión"
+  }
+ },
+ "manos_on": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: activar el control con las manos o Air touch («activa las manos», «prende el air touch»)",
+   "false": "no: apagarlo"
+  }
+ },
+ "manos_off": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
+  "criteria": {
+   "true": "sí: apagar el control con las manos o la cámara («apaga las manos», «quita el air touch»)",
+   "false": "no: encenderlo"
+  }
+ }
+}

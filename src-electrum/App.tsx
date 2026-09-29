@@ -28,8 +28,8 @@ import { Preguntas } from './demo/Preguntas';
 import { BotonOido, type ModoOido } from './panel/BotonOido';
 import { AirTouch, BotonManos, type EstadoManos } from './manos/AirTouch';
 import { crearOido, capturaActiva, type EstadoOido } from './panel/oido';
-import { comandoDe, type Comando } from './panel/comandos';
-import { callar, nivelVoz, reanudarVoz, suena } from './panel/voz';
+import { comandoDe, comandoDeLaya, nombreDeComando, type Comando } from './panel/comandos';
+import { callar, hablar, nivelVoz, reanudarVoz, suena } from './panel/voz';
 import { Bienvenida, bienvenidaApagada } from './demo/Bienvenida';
 import type { PedidoPanel, VistaPanel } from './panel/Panel';
 import { Panel } from './panel/Panel';
@@ -451,6 +451,33 @@ export default function App() {
           if (yoRef.current) mapa({ accion: 'ir', centro: yoRef.current, zoom: 12 });
           else pedirUbicacion(true);
           break;
+        case 'mover':
+          setEscenario('trabajo');
+          mapa({ accion: 'mover', dir: cmd.dir });
+          break;
+        case 'rotar':
+          setEscenario('trabajo');
+          mapa({ accion: 'rotar', grados: 30 * cmd.dir });
+          break;
+        case 'norte':
+        case 'inclinar':
+        case 'cenital':
+        case 'orbitar':
+        case 'pais':
+          setEscenario('trabajo');
+          mapa({ accion: cmd.accion });
+          break;
+        case 'fondo':
+          setFondo(cmd.cual);
+          break;
+        case 'ficha': {
+          // Lo mismo que tocar el botón de la ficha abierta. Sin ficha abierta, se dice qué hacer.
+          const boton = { pdf: 'btn-pdf', geologico: 'btn-geologicos', timelapse: 'btn-timelapse', analizar: 'btn-analizar' }[cmd.que];
+          const el = document.querySelector(`[data-tour="${boton}"]`) as HTMLElement | null;
+          if (el) el.click();
+          else void hablar('Primero abra una concesión: tóquela en el mapa o dígame su nombre, y lo hago.', 'neutral', headersElectrum());
+          break;
+        }
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -458,16 +485,42 @@ export default function App() {
   );
 
   const enrutarDicho = useCallback(
-    (texto: string) => {
+    async (texto: string) => {
       setOidoUltimo(texto);
+      const hacer = (c: Comando) => {
+        // Lo que entendió, a la vista: «súbeme el mapa → Moviendo al norte».
+        setOidoUltimo(`${texto} → ${nombreDeComando(c)}`);
+        ejecutarComando(c);
+      };
       const cmd = comandoDe(texto);
-      if (cmd) return ejecutarComando(cmd);
+      if (cmd) return hacer(cmd);
       const captura = capturaActiva();
       if (captura && captura(texto) !== false) return;
+      const palabras = texto.trim().split(/\s+/).length;
+      /*
+       * LAYA: la orden dicha de otra manera («súbeme un poquito el mapa», «ponlo de ladito»). Las
+       * reglas de arriba son instantáneas pero rígidas; el modelo «comando» del nodo entiende la
+       * intención en ~100 ms. Si no está, tarda o duda, la frase sigue como pregunta.
+       */
+      if (palabras <= 14) {
+        try {
+          const r = await fetch('/api/electrum/comando', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...headersElectrum() },
+            body: JSON.stringify({ texto }),
+            signal: AbortSignal.timeout(1800),
+          });
+          const j = r.ok ? await r.json() : null;
+          const c2 = comandoDeLaya(j?.id);
+          if (c2) return hacer(c2);
+        } catch {
+          /* sin Laya: sigue como pregunta */
+        }
+      }
       // En pleno recorrido solo mandan los comandos: una charla de fondo no lo interrumpe.
       if (recorridoRef.current) return;
       // Menos de dos palabras sueltas no es una pregunta (un «eh», un «ajá» de otra conversación).
-      if (texto.trim().split(/\s+/).length < 2) return;
+      if (palabras < 2) return;
       setEscenario('trabajo');
       pedirAlPanel({ tipo: 'pregunta', texto });
     },
@@ -484,7 +537,7 @@ export default function App() {
             unaFrase.current = false;
             oidoRef.current?.detener();
           }
-          enrutarRef.current(t);
+          void enrutarRef.current(t);
         },
         alEstado: setEstadoOido,
         hablandoAhora: suena,

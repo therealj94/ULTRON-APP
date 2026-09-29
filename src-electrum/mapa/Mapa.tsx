@@ -1000,9 +1000,30 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     const m = mapa.current;
     if (!m || !listo) return;
     const alPedir = (e: Event) => {
-      const d = (e as CustomEvent<{ accion: string; dir?: number; centro?: [number, number]; zoom?: number; factor?: number }>).detail || ({} as any);
-      if (d.accion === 'zoom') {
-        if ((d.dir ?? 1) > 0) m.zoomIn({ duration: duracion(700) });
+      const d = (e as CustomEvent<{ accion: string; dir?: number | string; grados?: number; centro?: [number, number]; zoom?: number; factor?: number }>).detail || ({} as any);
+      const cont = m.getContainer();
+      if (d.accion === 'mover') {
+        // Un tercio de la pantalla por orden: se nota, y no se pierde de vista lo que se miraba.
+        const dx = cont.clientWidth * 0.33;
+        const dy = cont.clientHeight * 0.33;
+        const paso: Record<string, [number, number]> = { arriba: [0, -dy], abajo: [0, dy], izquierda: [-dx, 0], derecha: [dx, 0] };
+        const v = paso[String(d.dir)];
+        if (v) m.panBy(v, { duration: duracion(700) });
+      } else if (d.accion === 'rotar') {
+        m.easeTo({ bearing: m.getBearing() + (Number(d.grados) || 30), duration: duracion(900), essential: true });
+      } else if (d.accion === 'norte') {
+        m.easeTo({ bearing: 0, duration: duracion(900), essential: true });
+      } else if (d.accion === 'inclinar') {
+        m.easeTo({ pitch: Math.min(m.getMaxPitch(), m.getPitch() < 40 ? 55 : m.getPitch() + 15), duration: duracion(900), essential: true });
+      } else if (d.accion === 'cenital') {
+        m.easeTo({ pitch: 0, duration: duracion(900), essential: true });
+      } else if (d.accion === 'orbitar') {
+        // Toma de dron: una vuelta entera a velocidad pareja, con la cámara inclinada para leer el relieve.
+        m.easeTo({ bearing: m.getBearing() + 359, pitch: Math.max(m.getPitch(), 50), duration: duracion(16000), easing: (t: number) => t, essential: true });
+      } else if (d.accion === 'pais') {
+        m.fitBounds(HONDURAS, { padding: 40, pitch: 0, bearing: 0, duration: duracion(2200), essential: true });
+      } else if (d.accion === 'zoom') {
+        if (Number(d.dir ?? 1) > 0) m.zoomIn({ duration: duracion(700) });
         else m.zoomOut({ duration: duracion(700) });
       } else if (d.accion === 'zoom-libre' && typeof d.factor === 'number') {
         // El pellizco de Air touch: zoom continuo, sin animación (lo anima la mano).

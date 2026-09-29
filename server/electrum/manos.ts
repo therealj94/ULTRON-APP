@@ -893,7 +893,7 @@ const informe_pdf: Herramienta = {
       lectura: {
         type: 'string',
         description:
-          'Tu lectura en dos o tres frases, rotulada como interpretación. Sin cifras: las pone el catastro.',
+          'Tu lectura en dos o tres frases, rotulada como interpretación. NO pongas cifras: las pone el catastro.',
       },
       presentar_a: {
         type: 'string',
