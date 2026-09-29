@@ -140,9 +140,31 @@ export async function guionDialogo(texto: string, tema?: string): Promise<{ line
 
 /* ------------------------------------------------------------------ el audio */
 
+/** De qué personaje es una voz de ElevenLabs (para los tiempos por hablante). */
+export function quienDeVoz(voz: string): Personaje | null {
+  return (Object.keys(PERSONAJES) as Personaje[]).find((p) => PERSONAJES[p].voz === voz) || null;
+}
+
+/** Un segmento de tiempo por hablante, como lo entiende la pantalla: quién, desde y hasta (s). */
+export type Segmento = { q: Personaje; d: number; h: number };
+
+/** Lo que manda ElevenLabs en cada trozo (voice_segments) → nuestros segmentos por personaje. */
+export function segmentosDe(crudo: unknown): Segmento[] {
+  if (!Array.isArray(crudo)) return [];
+  const out: Segmento[] = [];
+  for (const s of crudo as any[]) {
+    const q = quienDeVoz(String(s?.voice_id || ''));
+    const d = Number(s?.start_time_seconds);
+    const h = Number(s?.end_time_seconds);
+    if (q && Number.isFinite(d) && Number.isFinite(h) && h > d) out.push({ q, d: Math.round(d * 1000) / 1000, h: Math.round(h * 1000) / 1000 });
+  }
+  return out;
+}
+
 /**
- * Abre el audio de un trozo de diálogo (ya partido con partirDialogo). Devuelve la respuesta en
- * curso para pasarla al navegador a medida que llega, o null si no se pudo.
+ * Abre el audio de un trozo de diálogo (ya partido con partirDialogo), CON LOS TIEMPOS DE CADA
+ * VOZ: la respuesta en curso trae JSON por líneas ({audio_base64, voice_segments}), y con eso las
+ * caras de la pantalla saben quién habla en cada instante. null si no se pudo.
  */
 export async function abrirDialogo(lineas: Linea[]): Promise<Response | null> {
   const key = clave('elevenlabs');
@@ -156,9 +178,9 @@ export async function abrirDialogo(lineas: Linea[]): Promise<Response | null> {
     .filter((x) => x.text);
   if (!inputs.length) return null;
   try {
-    const r = await fetch('https://api.elevenlabs.io/v1/text-to-dialogue/stream?output_format=mp3_44100_96', {
+    const r = await fetch('https://api.elevenlabs.io/v1/text-to-dialogue/stream/with-timestamps?output_format=mp3_44100_96', {
       method: 'POST',
-      headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
+      headers: { 'xi-api-key': key, 'Content-Type': 'application/json' },
       // Estabilidad baja: en un diálogo la gracia es que se note la emoción de cada uno.
       body: JSON.stringify({ model_id: 'eleven_v4', inputs, settings: { stability: 0.4 } }),
       signal: AbortSignal.timeout(30_000),

@@ -90,7 +90,7 @@ import { capaParaMapa, capasVisibles, fichaParaMapa, queHayAqui, rasgoParaMapa }
 import { mantenerTableroCaliente, tablero } from './server/electrum/tablero';
 import { clasificarPendientes } from './server/electrum/documentos-laya';
 import { interpretarComando } from './server/electrum/comando-voz';
-import { abrirDialogo, guionDialogo, lineasValidas, partirDialogo, PERSONAJES } from './server/electrum/dialogo';
+import { abrirDialogo, guionDialogo, lineasValidas, partirDialogo, PERSONAJES, segmentosDe } from './server/electrum/dialogo';
 import { catalogoCapacidades, MODOS, GESTOS_TACTILES, VOZ_OFICIAL } from './lib/capacidades';
 import {
   cargarMemoria,
@@ -860,25 +860,44 @@ app.post('/api/electrum/dialogo/guion', exigirPlataforma('electrum'), limitar(20
   });
 });
 
-/** El audio de un trozo de diálogo (el navegador los pide en orden), a medida que ElevenLabs lo genera. */
+/**
+ * El audio de un trozo de diálogo (el navegador los pide en orden), a medida que ElevenLabs lo
+ * genera, con QUIÉN HABLA en cada momento: JSON por líneas {a: audio en base64, s: [{q, d, h}]}.
+ * Las caras de la pantalla (una por personaje) se animan con esos tiempos.
+ */
 app.post('/api/electrum/dialogo', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
   const lineas = lineasValidas(req.body?.lineas);
   const [trozo] = partirDialogo(lineas);
   if (!trozo?.length) return res.status(400).json({ error: 'Faltan las líneas del diálogo.', honesto: true });
   const r = await abrirDialogo(trozo);
   if (!r?.body) return res.status(503).json({ error: 'La voz del diálogo no está disponible ahora.', honesto: true });
-  res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('Cache-Control', 'no-store');
   const lector = r.body.getReader();
   res.on('close', () => {
     if (!res.writableEnded) lector.cancel().catch(() => undefined);
   });
+  const dec = new TextDecoder();
+  let resto = '';
+  const pasar = (linea: string) => {
+    if (!linea.trim()) return;
+    try {
+      const d = JSON.parse(linea);
+      res.write(JSON.stringify({ a: typeof d.audio_base64 === 'string' ? d.audio_base64 : '', s: segmentosDe(d.voice_segments) }) + '\n');
+    } catch {
+      /* una línea rota no tumba el diálogo */
+    }
+  };
   try {
     for (;;) {
       const { done, value } = await lector.read();
       if (done) break;
-      res.write(Buffer.from(value));
+      resto += dec.decode(value, { stream: true });
+      const partes = resto.split('\n');
+      resto = partes.pop() || '';
+      partes.forEach(pasar);
     }
+    pasar(resto);
   } catch (e: any) {
     console.warn('[dialogo] cortado', String(e?.message || e).slice(0, 120));
   }

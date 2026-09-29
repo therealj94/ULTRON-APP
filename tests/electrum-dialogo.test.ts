@@ -55,3 +55,17 @@ test('comandos: «explícamelo como conversación» pide el diálogo', async () 
   assert.deepEqual(comandoDe('Explícamelo como conversación'), { accion: 'dialogo' });
   assert.deepEqual(comandoDe('hazlo como podcast'), { accion: 'dialogo' });
 });
+
+test('dialogo: los tiempos de ElevenLabs se vuelven «quién habla» por personaje', async () => {
+  const { segmentosDe, quienDeVoz } = await import('../server/electrum/dialogo');
+  assert.equal(quienDeVoz(PERSONAJES.tatiana.voz), 'tatiana');
+  assert.equal(quienDeVoz('otra-voz'), null);
+  const s = segmentosDe([
+    { voice_id: PERSONAJES.tatiana.voz, start_time_seconds: 0, end_time_seconds: 1.12 },
+    { voice_id: PERSONAJES.electrum.voz, start_time_seconds: 1.7600000000000002, end_time_seconds: 2.08 },
+    { voice_id: 'desconocida', start_time_seconds: 3, end_time_seconds: 4 },
+    { voice_id: PERSONAJES.chema.voz, start_time_seconds: 5, end_time_seconds: 5 },
+  ]);
+  assert.deepEqual(s, [{ q: 'tatiana', d: 0, h: 1.12 }, { q: 'electrum', d: 1.76, h: 2.08 }]);
+  assert.deepEqual(segmentosDe('basura'), []);
+});

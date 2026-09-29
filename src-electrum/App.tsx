@@ -29,7 +29,14 @@ import { BotonOido, type ModoOido } from './panel/BotonOido';
 import { AirTouch, BotonManos, type EstadoManos } from './manos/AirTouch';
 import { crearOido, capturaActiva, type EstadoOido } from './panel/oido';
 import { comandoDe, comandoDeLaya, nombreDeComando, type Comando } from './panel/comandos';
-import { callar, hablar, nivelVoz, reanudarVoz, suena } from './panel/voz';
+import { callar, hablanteActual, hablar, nivelVoz, reanudarVoz, suena } from './panel/voz';
+import { Retratos } from './personajes/Retratos';
+
+/** La boca de la cara principal: en un diálogo, solo cuando habla Dr Electrum (los demás tienen su cara). */
+const labioDeElectrum = () => {
+  const h = hablanteActual();
+  return h && h !== 'electrum' ? 0 : nivelVoz();
+};
 import { Bienvenida, bienvenidaApagada } from './demo/Bienvenida';
 import type { PedidoPanel, VistaPanel } from './panel/Panel';
 import { Panel } from './panel/Panel';
@@ -634,7 +641,7 @@ export default function App() {
         emocion={emocion}
         funMode={false}
         casco
-        leerLabio={nivelVoz}
+        leerLabio={labioDeElectrum}
         onFaceChange={(f) => setFace(f)}
         onModeChange={(m) => setMode(m)}
       />
@@ -892,6 +899,7 @@ export default function App() {
           {/* El cuadro del recorrido vive DENTRO del mapa: se acomoda a él y no tapa la conversación. */}
           <Recorrido activo={recorrido} onTerminar={terminarRecorrido} controles={controlesRecorrido} fichaAbierta={!!tocado} modo={modoRecorrido} />
           <AirTouch activo={manos && puerta === 'abierta'} onEstado={setEstadoManos} />
+          <Retratos />
           {preguntas && !recorrido && (
             <Preguntas
               cara={(f) => setFace(f)}

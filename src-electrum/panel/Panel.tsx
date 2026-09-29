@@ -28,6 +28,7 @@ import { sinMovimiento } from '../movimiento';
 import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
 import { callar, desbloquear, hablar, hablarDialogo, prepararRelleno, rellenar, suena, type LineaDialogo } from './voz';
 import { FRASES_GENERALES, fraseDeEspera, fraseDeTrabajo } from './trabajando';
+import { RETRATOS } from '../personajes/Retratos';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 import { Biblioteca } from '../biblioteca/Biblioteca';
 import { pedirArchivo, Visor, type Fuente } from './Visor';
@@ -1075,7 +1076,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                     <div className="space-y-1.5">
                       {t.dialogo.map((l, k) => (
                         <p key={k}>
-                          <span className="font-mono text-[10.5px] tracking-[0.08em] uppercase" style={{ color: l.quien === 'electrum' ? AMBAR : l.quien === 'tatiana' ? '#7FD1C7' : '#C7B8FF' }}>
+                          <span className="font-mono text-[10.5px] tracking-[0.08em] uppercase" style={{ color: RETRATOS[l.quien]?.color || AMBAR }}>
                             {l.nombre}
                           </span>{' '}
                           {l.texto.replace(/\[[^\]\n]{1,40}\]\s*/g, '')}
