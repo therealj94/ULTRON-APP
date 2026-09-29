@@ -35,14 +35,13 @@ export function modeloEleven(): string {
 }
 
 /**
- * Los avatares de la app de AU-RA que no son ella. Cada uno con su voz: un personaje que cambia de
- * cara pero sigue sonando a la de al lado se deshace al primer segundo de audio.
- *   · Claudio (el zorro, retrato): «Charlee», joven, latino, juguetón (biblioteca de ElevenLabs).
- *   · Claudio de pie (cuerpo entero): «Alejandro», joven, enérgico y amable.
- * Se cambian sin tocar código con ELEVENLABS_VOZ_CLAUDIO y ELEVENLABS_VOZ_CLAUDIO_PIE.
+ * La voz de Claudio: «CLAUDIO», la voz que José diseñó en ElevenLabs para el zorro (hombre de unos
+ * 30, latino neutro, cálido y juguetón). Es el mismo personaje de retrato o de pie, así que suena
+ * igual en los dos. Se dice con el modelo v4 (MODELO_ELEVEN). Se cambian sin tocar código con
+ * ELEVENLABS_VOZ_CLAUDIO y ELEVENLABS_VOZ_CLAUDIO_PIE.
  */
-export const VOZ_CLAUDIO_ELEVEN = 'cQIBhnciTWugZAxX52uW';
-export const VOZ_CLAUDIO_PIE_ELEVEN = 'I1n8B4pOly0qmOu46LFX';
+export const VOZ_CLAUDIO_ELEVEN = '5hNQxGboC72zatTcGoJN';
+export const VOZ_CLAUDIO_PIE_ELEVEN = VOZ_CLAUDIO_ELEVEN;
 
 export type AvatarVoz = 'aura' | 'claudio' | 'claudio-pie';
 
