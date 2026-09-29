@@ -54,6 +54,14 @@ export function taparPersonales(texto: string): string {
     .replace(/(\+?504[\s-]?)?\b[2389]\d{3}[\s-]?\d{4}\b/g, (m) => (/^(19|20)\d{2}[\s-](19|20)\d{2}$/.test(m) ? m : '[TELÉFONO]'));
 }
 
+/** Lo mismo dentro de los argumentos de una herramienta (cualquier texto, a cualquier profundidad). */
+export function taparEnValor<T>(v: T): T {
+  if (typeof v === 'string') return taparPersonales(v) as T;
+  if (Array.isArray(v)) return v.map((x) => taparEnValor(x)) as T;
+  if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, taparEnValor(x)])) as T;
+  return v;
+}
+
 /* ------------------------------------------------------------------ qué sirve */
 
 /** La escribió el modelo del nodo (Qwen). Las del MCP las escribe otro cliente: no son de Qwen. */
@@ -85,7 +93,13 @@ export function filaLaya(t: TrazaParaEntrenar): FilaLaya | null {
 
 export type MensajeChat =
   | { role: 'system' | 'user'; content: string }
-  | { role: 'assistant'; content: string; tool_calls?: Array<{ type: 'function'; function: { name: string; arguments: Record<string, unknown> } }> }
+  | {
+      role: 'assistant';
+      content: string;
+      tool_calls?: Array<{ type: 'function'; function: { name: string; arguments: Record<string, unknown> } }>;
+      /** false = queda como contexto pero no se aprende (las llamadas de un turno que se corrigió). */
+      entrenar?: boolean;
+    }
   | { role: 'tool'; name: string; content: string };
 
 export type EjemploQwen = { id: string; messages: MensajeChat[]; herramientas: string[]; origen: 'aprobada' | 'corregida' };
@@ -98,7 +112,8 @@ export type Motivo =
   | 'terminó con error'
   | 'sin respuesta'
   | 'faltan los argumentos de una herramienta'
-  | 'repetida';
+  | 'repetida'
+  | 'apartada para evaluar';
 
 /**
  * Un ejemplo de conversación para ajustar a Qwen: la pregunta, las llamadas a herramientas tal como
@@ -129,8 +144,20 @@ export function ejemploQwen(t: TrazaParaEntrenar, herramientasReales: Set<string
     const k = p.ronda ?? i;
     rondas.set(k, [...(rondas.get(k) || []), p]);
   });
+  /*
+   * En un turno CORREGIDO la persona escribió la respuesta final, pero no dijo que las llamadas
+   * estuvieran bien (pudo marcarlo malo justamente por la herramienta o sus argumentos). Quedan como
+   * contexto —la respuesta corregida se apoya en lo que devolvieron— pero no se aprenden: solo se
+   * aprende la respuesta que escribió la persona.
+   */
+  const aprenderLlamadas = !r.corrige;
   for (const ps of [...rondas.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v)) {
-    messages.push({ role: 'assistant', content: '', tool_calls: ps.map((p) => ({ type: 'function' as const, function: { name: p.herramienta, arguments: p.args || {} } })) });
+    messages.push({
+      role: 'assistant',
+      content: '',
+      tool_calls: ps.map((p) => ({ type: 'function' as const, function: { name: p.herramienta, arguments: taparEnValor(p.args || {}) } })),
+      ...(aprenderLlamadas ? {} : { entrenar: false }),
+    });
     for (const p of ps) messages.push({ role: 'tool', name: p.herramienta, content: taparPersonales(p.resumen || '(sin resumen)') });
   }
   messages.push({ role: 'assistant', content: final });
@@ -142,6 +169,17 @@ export function ejemploQwen(t: TrazaParaEntrenar, herramientasReales: Set<string
       origen: r.corrige ? 'corregida' : 'aprobada',
     },
   };
+}
+
+/**
+ * UNA de cada diez trazas aprobadas (siempre la misma: depende solo de su id) queda APARTADA para
+ * evaluar y nunca entra al entrenamiento. Si los casos de evaluación salieran de los mismos ejemplos
+ * con los que se entrena, la compuerta mediría memoria y podría aprobar un adaptador que empeoró.
+ */
+export function apartadaParaEvaluar(id: string, cada = 10): boolean {
+  let h = 2166136261;
+  for (const c of id) h = Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0;
+  return h % cada === 0;
 }
 
 export type CasoEval = { id: string; area: string; pregunta: string; espera: { herramientas?: string[]; agente?: string }; nota: string };
@@ -194,14 +232,17 @@ export function exportar(trazas: TrazaParaEntrenar[], herramientasReales: Set<st
       vistas.laya.add(clave);
       laya.push(f);
     }
+    const apartada = apartadaParaEvaluar(t.id);
     const q = ejemploQwen(t, herramientasReales, sistema);
     if ('motivo' in q) excluir(q.motivo);
+    else if (apartada) excluir('apartada para evaluar');
     else if (vistas.qwen.has(clave)) excluir('repetida');
     else {
       vistas.qwen.add(clave);
       qwen.push(q.ejemplo);
     }
-    const c = casoEval(t, herramientasReales);
+    // Solo las apartadas: una pregunta con la que se entrenó no puede medir si el modelo aprendió.
+    const c = apartada ? casoEval(t, herramientasReales) : null;
     if (c && !vistas.evals.has(clave)) {
       vistas.evals.add(clave);
       evals.push(c);
@@ -225,4 +266,23 @@ export function exportar(trazas: TrazaParaEntrenar[], herramientasReales: Set<st
       },
     },
   };
+}
+
+/**
+ * TODAS las trazas, página por página. El servidor da como mucho 500 por pedido, las más nuevas
+ * primero: sin recorrer las páginas, en cuanto hubiera más de 500 turnos los ejemplos revisados más
+ * viejos se perderían del conjunto. Cada página pide las que empezaron en o antes de la última vista
+ * (con «en» para no perder las que comparten el mismo milisegundo) y se descartan las repetidas.
+ */
+export async function traerTodas<T extends { id: string; t_inicio: string }>(pagina: (antes: string | null) => Promise<T[]>, tope = 200): Promise<T[]> {
+  const vistas = new Map<string, T>();
+  let antes: string | null = null;
+  for (let i = 0; i < tope; i++) {
+    const filas = await pagina(antes);
+    const nuevas = filas.filter((f) => !vistas.has(f.id));
+    for (const f of nuevas) vistas.set(f.id, f);
+    if (!nuevas.length || !filas.length) break;
+    antes = filas[filas.length - 1].t_inicio;
+  }
+  return [...vistas.values()];
 }

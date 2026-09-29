@@ -99,10 +99,15 @@ def renderizar_cabe(tok, mensajes, herramientas, max_largo, piso=160):
     return None, n
 
 
-def codificar(tok, texto, max_largo):
-    """input_ids y labels: -100 en todo lo que no dice el asistente."""
+def codificar(tok, texto, max_largo, aprender=None):
+    """input_ids y labels: -100 en todo lo que no dice el asistente, y también en los turnos del
+    asistente marcados para no aprender (`aprender[i]` False: el i-ésimo turno del asistente)."""
     enc = tok(texto, return_offsets_mapping=True, add_special_tokens=False, truncation=True, max_length=max_largo)
     tramos = tramos_del_asistente(texto)
+    if aprender is not None:
+        if len(aprender) != len(tramos):
+            raise ValueError(f'{len(tramos)} turnos del asistente en el texto y {len(aprender)} en el ejemplo: no se puede enmascarar con seguridad')
+        tramos = [t for t, si in zip(tramos, aprender) if si]
     labels = []
     for (a, b), t in zip(enc['offset_mapping'], enc['input_ids']):
         dentro = any(a >= i and b <= f and b > a for i, f in tramos)
@@ -176,7 +181,9 @@ def main():
             print(f'  fuera: {ej.get("id")} no cabe en {a.max_largo} tokens ni acortando las herramientas ({n})')
             continue
         acortados += texto != completo
-        fila = codificar(tok, texto, a.max_largo)
+        # Las llamadas de un turno corregido son contexto, no algo a aprender (ver dataset.ts).
+        aprender = [m.get('entrenar', True) is not False for m in ej['messages'] if m['role'] == 'assistant']
+        fila = codificar(tok, texto, a.max_largo, aprender)
         if any(l != -100 for l in fila['labels']):
             filas.append(fila)
             largos.append(len(fila['input_ids']))

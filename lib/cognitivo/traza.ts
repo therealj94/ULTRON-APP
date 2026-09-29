@@ -264,7 +264,16 @@ async function guardarTraza(t: Traza) {
   anexar('trazas', t);
 }
 
-export type FiltroTrazas = { plataforma?: string; quien?: string; limite?: number; desde?: string; soloErrores?: boolean; conPolitica?: boolean };
+export type FiltroTrazas = {
+  plataforma?: string;
+  quien?: string;
+  limite?: number;
+  desde?: string;
+  /** Solo las que empezaron en o antes de este instante: para recorrer todas por páginas (más nuevas primero). */
+  antes?: string;
+  soloErrores?: boolean;
+  conPolitica?: boolean;
+};
 
 export async function listarTrazas(f: FiltroTrazas = {}): Promise<Traza[]> {
   const limite = Math.min(Math.max(f.limite || 50, 1), 500);
@@ -276,8 +285,9 @@ export async function listarTrazas(f: FiltroTrazas = {}): Promise<Traza[]> {
          AND ($3::timestamptz IS NULL OR t_inicio >= $3)
          AND (NOT $4 OR error IS NOT NULL)
          AND (NOT $5 OR jsonb_array_length(politica) > 0)
-       ORDER BY t_inicio DESC LIMIT $6`,
-      [f.plataforma || null, f.quien || null, f.desde || null, !!f.soloErrores, !!f.conPolitica, limite]
+         AND ($7::timestamptz IS NULL OR t_inicio <= $7)
+       ORDER BY t_inicio DESC, id DESC LIMIT $6`,
+      [f.plataforma || null, f.quien || null, f.desde || null, !!f.soloErrores, !!f.conPolitica, limite, f.antes || null]
     );
     return filas.map(normalizarFila);
   }
@@ -287,6 +297,7 @@ export async function listarTrazas(f: FiltroTrazas = {}): Promise<Traza[]> {
         (!f.plataforma || t.plataforma === f.plataforma) &&
         (!f.quien || t.quien === f.quien) &&
         (!f.desde || t.t_inicio >= f.desde) &&
+        (!f.antes || t.t_inicio <= f.antes) &&
         (!f.soloErrores || !!t.error) &&
         (!f.conPolitica || t.politica.length > 0)
     )

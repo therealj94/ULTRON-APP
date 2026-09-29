@@ -26,11 +26,13 @@ turnos reales ──► traza (pregunta, herramientas, respuesta)          lib/c
 
 - **Solo entra lo revisado por una persona.** Un turno se usa si alguien lo aprobó, o si lo marcó como malo y escribió la respuesta correcta. Una respuesta sin revisar no enseña nada: el modelo aprendería sus propios errores.
 - **Para Qwen, solo texto de Qwen o de una persona.** Nunca salidas de otros modelos comerciales (OpenAI, Anthropic, Google, etc.). Sus términos lo prohíben, y además arrastran su estilo y sus errores. El exportador filtra por el modelo que quedó en la traza.
-- **Los datos personales se tapan al exportar.** Se tapan correos, teléfonos de Honduras, DNI, RTN y secretos. Los nombres de concesiones, titulares y lugares se quedan, porque son el oficio.
+- **Los datos personales se tapan al exportar.** Se tapan correos, teléfonos de Honduras, DNI, RTN y secretos, también dentro de los argumentos de las herramientas. Los nombres de concesiones, titulares y lugares se quedan, porque son el oficio.
 - **Los hechos no se entrenan.** Cargos, leyes y concesiones cambian, y tienen que salir de las herramientas con su fuente (ver `server/electrum/instituciones.ts`). Lo que se enseña es el comportamiento:
   - qué herramienta usar y con qué argumentos,
   - cómo contestar con lo que devolvió,
   - a quién convocar.
+- **Evaluar con preguntas que no se entrenaron.** Una de cada diez trazas aprobadas (siempre la misma, por su id) queda apartada: sale solo como caso de evaluación y nunca entra al ajuste. Si no, la compuerta mediría memoria.
+- **Una corrección enseña solo la respuesta.** En un turno marcado ✗ con la respuesta correcta, las llamadas a herramientas originales quedan como contexto (la respuesta se apoya en lo que devolvieron), pero no se aprenden: pudieron ser justamente el error.
 - **Nada se promueve sin ganarle al que está.**
   - Laya se compara con `evaluar.py` y `comparar.py`.
   - Qwen se compara con `scripts/evals/correr.ts`.
@@ -53,7 +55,7 @@ turnos reales ──► traza (pregunta, herramientas, respuesta)          lib/c
 EVAL_SESION=<sesión con mando en Dr Electrum> npx tsx scripts/entrenamiento/exportar.ts --salida entrenamiento/salida
 ```
 
-Imprime y guarda en `informe.json` cuánto entró, qué quedó fuera y por qué. También muestra las señales de dónde falla hoy: turnos con llamadas ilegibles, sin rondas y con error.
+Recorre todas las trazas por páginas (el servidor da 500 por pedido), así que los ejemplos revisados viejos no se pierden. Imprime y guarda en `informe.json` cuánto entró, qué quedó fuera y por qué. También muestra las señales de dónde falla hoy: turnos con llamadas ilegibles, sin rondas y con error.
 
 `--prueba-humo 24` escribe además `qwen-sft-PRUEBA-sin-revisar.jsonl`. Son respuestas de Qwen sin revisar, y sirven solo para probar el ajuste de punta a punta con un modelo chico. **Nunca** son para el modelo de producción.
 
