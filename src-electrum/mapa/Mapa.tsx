@@ -492,7 +492,18 @@ function aplicarTerreno(m: maplibregl.Map) {
         id: 'sombreado',
         type: 'hillshade',
         source: 'relieve-sombra',
-        paint: { 'hillshade-shadow-color': '#1b1308', 'hillshade-highlight-color': '#fff4dc' },
+        /*
+         * Luz desde cuatro direcciones (oeste, noroeste, norte, noreste) en vez de una: con una sola
+         * fuente las fallas y crestas paralelas a la luz desaparecen, y un geólogo lee lineamientos
+         * justamente por esas estructuras.
+         */
+        paint: {
+          'hillshade-method': 'multidirectional',
+          'hillshade-illumination-direction': [270, 315, 0, 45],
+          'hillshade-illumination-altitude': [35, 35, 35, 35],
+          'hillshade-shadow-color': ['#1b1308', '#1b1308', '#1b1308', '#1b1308'],
+          'hillshade-highlight-color': ['#fff4dc', '#fff4dc', '#fff4dc', '#fff4dc'],
+        },
       } as any,
       antes
     );
@@ -501,6 +512,27 @@ function aplicarTerreno(m: maplibregl.Map) {
   if (!sombrear) {
     if (m.getLayer('sombreado')) m.removeLayer('sombreado');
   }
+  /*
+   * En «calles» (sin satélite) un tinte hipsométrico suave: los valles verdes, la sierra ocre, las
+   * cumbres claras. Se calcula en la tarjeta de video desde el mismo modelo de elevación y va debajo
+   * del sombreado; sobre el satélite no se pone porque taparía la imagen.
+   */
+  const tintar = sombrear && relieve.fondo === 'calles';
+  if (tintar && !m.getLayer('hipsometria')) {
+    m.addLayer(
+      {
+        id: 'hipsometria',
+        type: 'color-relief',
+        source: 'relieve-sombra',
+        paint: {
+          'color-relief-opacity': 0.32,
+          'color-relief-color': ['interpolate', ['linear'], ['elevation'], -1, 'rgba(0,0,0,0)', 0, '#1d3a2b', 250, '#34563a', 700, '#6b7442', 1300, '#94784c', 2000, '#b39f86', 2800, '#e6ded2'],
+        },
+      } as any,
+      'sombreado'
+    );
+  }
+  if (!tintar && m.getLayer('hipsometria')) m.removeLayer('hipsometria');
   if (terreno3D) {
     if (!m.getSource('relieve')) {
       m.addSource('relieve', { type: 'raster-dem', tiles: TESELAS_RELIEVE, encoding: 'terrarium', tileSize: 256, maxzoom: 14 } as any);
