@@ -27,7 +27,14 @@ export function escucharMesa(f: (v: boolean) => void): () => void {
 
 export type TemaComentario = 'timelapse' | 'documento' | 'perfil' | 'geologico' | 'foto' | 'ficha' | 'filtro' | 'lugar' | 'general';
 
+/** Durante el recorrido la mesa habla con su guion: los comentarios sueltos se callan para no encimarse. */
+let enRecorrido = false;
+export function fijarRecorrido(v: boolean) {
+  enRecorrido = v;
+}
+
 /** Que el equipo comente lo que se acaba de ver. `contexto`: lo que se ve, con sus cifras. */
 export function comentar(tema: TemaComentario, contexto: string) {
+  if (enRecorrido) return;
   window.dispatchEvent(new CustomEvent('electrum:comentario', { detail: { tema, contexto: String(contexto || '').slice(0, 3000) } }));
 }

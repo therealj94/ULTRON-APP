@@ -67,7 +67,11 @@ export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor
   const enTrabajo = escenario === 'trabajo';
   return (
     <div className="absolute top-0 left-0 right-0 z-40 flex items-center justify-between gap-3 px-3 py-2.5 pointer-events-none">
-      <div className="flex shrink-0 items-center gap-2">
+      {/*
+        En un teléfono el micrófono, Air touch, Voces, Interrumpir y Mesa no caben junto a la marca:
+        se deslizan de lado (con un desvanecido que avisa que hay más) en vez de salirse de la pantalla.
+      */}
+      <div className="pointer-events-auto flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden max-md:[mask-image:linear-gradient(90deg,#000_88%,transparent)] md:flex-none md:shrink-0 md:overflow-visible">
       <button
         type="button"
         onClick={() => onEscenario(enTrabajo ? 'cara' : 'trabajo')}
@@ -86,7 +90,7 @@ export function Barra({ escenario, motor, fondo, hayGoogle, onEscenario, onMotor
 
       {/* A 400 px los tres grupos no caben: se arrastran en vez de cortarse. */}
       <div
-        className="flex items-center gap-2 transition-opacity duration-300 overflow-x-auto max-w-[calc(100vw-7rem)] md:max-w-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="flex min-w-0 items-center gap-2 transition-opacity duration-300 overflow-x-auto max-w-[42vw] md:max-w-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         style={{ opacity: enTrabajo ? 1 : 0, pointerEvents: enTrabajo ? 'auto' : 'none' }}
         /*
          * Invisible también para el teclado. Con la cara en el centro estos botones tienen opacidad

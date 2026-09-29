@@ -27,6 +27,7 @@ import { bloqueExpedientes, expedientesDeLaPregunta } from './expedientes-previo
 import { manosDe, TODAS } from './manos';
 import { CONOCIMIENTO_MINAS } from '../../src/08-cerebro-minas/conocimiento';
 import { hechosCerebro, lineas as lineasCerebro } from '../../lib/cerebro';
+import { bloqueInstituciones } from './instituciones';
 import { lineasPorSignificado } from '../../lib/cognitivo/conocimiento-semantico';
 import { PERFILES } from '../../lib/perfiles';
 import { personaPorId } from '../../lib/acceso';
@@ -273,8 +274,11 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     herramientas.some((h) => h.nombre === 'expediente_leer')
   );
   const deInternet = internet ? await bloqueInternet(consultaWeb(mensaje) || mensaje, enVivo) : null;
+  // Quién dirige hoy INHGEOMIN, SERNA o el ICF y qué dice hoy la ley: con fecha y fuente.
+  const deInstituciones = bloqueInstituciones(mensaje);
   const previos = [
     ...(delCerebro.length ? [`DE TU CEREBRO, sobre lo que preguntan (esto lo sabés de verdad):\n${delCerebro.join('\n')}`] : []),
+    ...(deInstituciones ? [deInstituciones] : []),
     ...(deExpedientes ? [deExpedientes] : []),
     ...(deInternet ? [deInternet] : []),
     ...(deLaMesa ? [deLaMesa] : []),

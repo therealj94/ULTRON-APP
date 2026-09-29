@@ -511,7 +511,7 @@ export function Retratos() {
 
   return createPortal(
     <div
-      className="pointer-events-none fixed inset-x-0 top-16 z-[60] flex justify-center px-3"
+      className="pointer-events-none fixed inset-x-0 top-16 z-[60] flex justify-center pl-3 pr-14 md:px-3"
       role="status"
       aria-label={`En conversación: ${orden.map((q) => RETRATOS[q]?.nombre || q).join(', ')}${hablante ? `. Habla ${RETRATOS[hablante]?.nombre || hablante}` : ''}`}
       data-retratos={participantes ? 'abierta' : 'saliendo'}

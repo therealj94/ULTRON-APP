@@ -15,7 +15,8 @@
  */
 import { useEffect, useRef, useState, type PointerEvent as EventoPuntero } from 'react';
 import { headersElectrum } from '../acceso';
-import { callar, desbloquear, hablar, hablarDialogo } from '../panel/voz';
+import { callar, desbloquear, escucharEscena, hablar, hablarDialogo, msDeLectura } from '../panel/voz';
+import { fijarRecorrido } from '../personajes/mesa';
 import type { CapaExtra, Fondo, Margen, OrdenMapa, RasterEncendido, RasterEscaneado, Tocado } from '../mapa/captura';
 import { catastroGuardado } from '../mapa/captura';
 import type { MuestrasEncendidas } from '../mapa/CapasControl';
@@ -229,6 +230,62 @@ export function Recorrido({
       if (falta > 0) await pausa(falta);
       if (sigue()) c.current.cara('IDLE');
     };
+    /**
+     * LA MESA CONVERSA. Un diálogo de los tres (una sola locución a varias voces, sin cortes entre
+     * líneas) donde cada línea puede traer su gesto de cámara o de capa (`al`): se dispara cuando esa
+     * línea EMPIEZA a sonar —lo dice la escena de voz.ts con los tiempos de ElevenLabs—. Así el mapa
+     * se mueve con lo que se dice, no antes ni después. Sin voz (silencio o fallo), se lee al ritmo de
+     * lectura con los mismos gestos.
+     */
+    type Linea = { quien: 'electrum' | 'tatiana' | 'chema'; texto: string; al?: () => void };
+    const NOMBRES = { electrum: 'Dr Electrum', tatiana: 'Ing. Tatiana', chema: 'Don Chema' } as const;
+    const limpio = (t: string) => t.replace(/\[[^\]]+\]\s*/g, '');
+    const conversar = async (lineas: Linea[]) => {
+      const ls = lineas.filter((l) => l.texto.trim());
+      if (!sigue() || saltoEste() || !ls.length) return;
+      let hechas = 0;
+      const hasta = (k: number) => {
+        for (; hechas <= k && hechas < ls.length; hechas++) {
+          if (!sigue()) return;
+          try {
+            ls[hechas].al?.();
+          } catch {
+            /* un gesto que falla no para la conversación */
+          }
+        }
+        setTexto(`${NOMBRES[ls[Math.min(k, ls.length - 1)].quien]}: ${limpio(ls[Math.min(k, ls.length - 1)].texto)}`);
+      };
+      hasta(0);
+      const soltar = escucharEscena((e) => {
+        if (!e.linea) return;
+        const k = ls.findIndex((l, j) => j >= hechas - 1 && l.texto === e.linea);
+        if (k >= 0) hasta(k);
+      });
+      c.current.cara('SPEAKING');
+      let fallo = false;
+      const t0 = Date.now();
+      await Promise.race([
+        hablarDialogo(
+          ls.map((l) => ({ quien: l.quien, nombre: NOMBRES[l.quien], texto: l.texto })),
+          headersElectrum(),
+          { alFallar: () => (fallo = true) }
+        ),
+        new Promise<void>((r) => (despertar.current = r)),
+      ]);
+      soltar();
+      if (saltoEste()) callar();
+      // Sin voz: se lee, con los mismos gestos en su momento.
+      if (fallo && sigue() && !saltoEste()) {
+        for (let k = hechas; k < ls.length && sigue() && !saltoEste(); k++) {
+          hasta(k);
+          await pausa(msDeLectura(limpio(ls[k].texto)));
+        }
+      } else if (Date.now() - t0 < 800 && sigue() && !saltoEste()) await pausa(1200);
+      if (sigue()) {
+        hasta(ls.length - 1);
+        c.current.cara('IDLE');
+      }
+    };
     /** Toda orden de cámara del recorrido lleva el margen de ese momento. */
     const mover = (o: OrdenMapa) => c.current.orden(o.accion === 'volar' || o.accion === 'camara' || o.accion === 'encuadrar' || o.accion === 'orbitar' ? ({ ...o, margen: margen$.current() } as OrdenMapa) : o);
     const orbitar = (grados: number, ms: number) => mover({ accion: 'orbitar', grados, ms });
@@ -236,6 +293,7 @@ export function Recorrido({
     let natural = false;
     (async () => {
       try {
+        fijarRecorrido(true);
         capitulo(0, { titulo: 'Preparando el recorrido' });
         setTexto('Juntando las cifras, los mapas y las fichas…');
         c.current.trabajo();
@@ -363,17 +421,25 @@ export function Recorrido({
               mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 58, giro: -24, ms: 5000 });
               await pausa(1800);
               orbitar(26, 26_000);
+              const cuantas = t ? `${plural(t.total.concesiones, 'concesión', 'concesiones')} y ${nf(t.total.hectareas)} hectáreas` : 'todo el catastro minero nacional';
               if (modo === 'legal') {
-                await decir(`Le muestro el catastro como lo mira un abogado o un regulador: ${t ? `${plural(t.total.concesiones, 'concesión', 'concesiones')}, ` : ''}cada una cruzada con las áreas protegidas, el agua, las comunidades, los demás derechos y sus fechas.`);
+                await conversar([
+                  { quien: 'tatiana', texto: `[serious] Hoy miramos el catastro con ojos legales: ${cuantas}, cada una cruzada con las áreas protegidas, el agua, las comunidades y los demás derechos.` },
+                  { quien: 'electrum', texto: '[thoughtful] Y con sus fechas. Lo que un regulador o un abogado necesita saber antes de firmar nada.' },
+                ]);
               } else if (modo === 'geologico') {
-                await decir('Le muestro la geología: los mapas de JICA escaneados sobre el terreno real, las fallas, la geoquímica de campo y lo que ve el satélite, todo cruzado con las concesiones.');
+                await conversar([
+                  { quien: 'electrum', texto: '[warmly] Hoy le muestro la geología: los mapas de JICA escaneados sobre el terreno real, las fallas, la geoquímica de campo y lo que ve el satélite.' },
+                  { quien: 'chema', texto: '[curious] Y todo eso cruzado con las concesiones, doctor. Así sabemos qué roca le toca a cada quien.' },
+                ]);
               } else {
-                await decir('Buenas. Soy Dr Electrum, la plataforma de inteligencia minera de Orden Global. Esto es Honduras, con su relieve real, en tres dimensiones.');
-                await decir(
-                  t
-                    ? `Encima tengo el catastro minero nacional completo: ${plural(t.total.concesiones, 'concesión', 'concesiones')} y ${nf(t.total.hectareas)} hectáreas, y cada una cruzada con la geología, el satélite, las áreas protegidas, el agua y las comunidades.`
-                    : 'Encima tengo el catastro minero nacional completo, y cada concesión cruzada con la geología, el satélite, las áreas protegidas, el agua y las comunidades.'
-                );
+                await conversar([
+                  { quien: 'electrum', texto: '[warmly] Buenas. Soy Dr Electrum. Esto es Honduras, con su relieve real, en tres dimensiones.' },
+                  { quien: 'tatiana', texto: '[curious] Doctor, ¿y todo eso que brilla encima del mapa?' },
+                  { quien: 'electrum', texto: `El catastro minero nacional completo: ${cuantas}. Y cada concesión cruzada con la geología, el satélite, las áreas protegidas, el agua y las comunidades.`, al: () => orbitar(30, 30_000) },
+                  { quien: 'chema', texto: '[chuckles] O sea que antes de ir al monte ya sabemos qué nos vamos a encontrar.' },
+                  { quien: 'electrum', texto: '[warmly] Exacto, Don Chema. Hoy les enseñamos cómo lo trabajamos los tres: yo la geología, usted la planta y la ingeniera Tatiana la obra y los permisos.' },
+                ]);
               }
             },
           },
@@ -381,15 +447,20 @@ export function Recorrido({
             hay: true,
             correr: async () => {
               capitulo(++i, { titulo: 'El potencial de cada concesión', chips: ranking.slice(0, 3).map((r) => `${nombreParaDecir(r.nombre)} · ${r.puntaje}`) });
-              c.current.prospectividad(true);
-              mover({ accion: 'camara', centro: [-86.6, 14.6], zoom: 7.4, inclinacion: 62, giro: 12, ms: 5000 });
-              await pausa(1500);
-              orbitar(-22, 22_000);
-              await decir(
-                'Así se ve el país con los ojos de un inversionista. A cada concesión le calculo un puntaje de prospectividad de cero a cien, con la geología, la geoquímica de JICA y el satélite. En rojo, las más prometedoras.' +
-                  (ranking.length >= 3 ? ` Hoy las primeras son ${nombreParaDecir(ranking[0].nombre)}, ${nombreParaDecir(ranking[1].nombre)} y ${nombreParaDecir(ranking[2].nombre)}.` : '')
-              );
-              await decir('Y las que laten son alertas: concesiones que vencen pronto o que perdieron vegetación. Nadie tiene que acordarse: yo aviso.');
+              await conversar([
+                {
+                  quien: 'chema',
+                  texto: '[curious] Doctor, de todas esas, ¿cuáles valen la pena de verdad?',
+                  al: () => {
+                    c.current.prospectividad(true);
+                    mover({ accion: 'camara', centro: [-86.6, 14.6], zoom: 7.4, inclinacion: 62, giro: 12, ms: 5000 });
+                  },
+                },
+                { quien: 'electrum', texto: '[thoughtful] A cada una le calculo un puntaje de prospectividad de cero a cien, con la geología, la geoquímica de JICA y el satélite. En rojo, las más prometedoras.', al: () => orbitar(-22, 22_000) },
+                ...(ranking.length >= 3 ? [{ quien: 'electrum' as const, texto: `Hoy encabezan ${nombreParaDecir(ranking[0].nombre)}, ${nombreParaDecir(ranking[1].nombre)} y ${nombreParaDecir(ranking[2].nombre)}.` }] : []),
+                { quien: 'tatiana', texto: '[serious] Y las que laten son alertas: las que vencen pronto o las que perdieron vegetación. Esas me toca revisarlas a mí primero.' },
+                { quien: 'chema', texto: 'Mientras nadie tenga que acordarse de memoria, doctor, vamos bien.' },
+              ]);
             },
           },
           satelite: {
@@ -397,17 +468,27 @@ export function Recorrido({
             correr: async () => {
               c.current.prospectividad(false);
               capitulo(++i, { titulo: 'Lo que ve el satélite', cifras: [{ valor: perdidas[0].ha, etiqueta: 'ha de vegetación perdida', d: 1 }] });
-              c.current.rasters([{ ...s2('s2-veg')!, opacidad: 0.85 }]);
-              mover({ accion: 'volar', geojson: fPerdida!.geojson, encuadre: fPerdida!.encuadre! });
-              await pausa(3200);
-              orbitar(40, 24_000);
-              await decir(
-                `Cada año comparo las imágenes del satélite europeo Sentinel-2 de la temporada seca. Esta es ${nombreParaDecir(fPerdida!.nombre)}: perdió ${nf(perdidas[0].ha, 1)} hectáreas de vegetación de un año al otro. Puede ser un tajo, un camino o una quema; yo lo detecto y lo marco para confirmarlo en campo.`
-              );
-              if (s2('s2-arc')) {
-                c.current.rasters([{ ...s2('s2-arc')!, opacidad: 0.85 }]);
-                await decir('Con las mismas imágenes busco alteración hidrotermal: arcillas y óxidos de hierro, la huella que dejan los fluidos que traen el oro y el cobre.');
-              }
+              await conversar([
+                {
+                  quien: 'tatiana',
+                  texto: `[serious] Esta me preocupa. Es ${nombreParaDecir(fPerdida!.nombre)}: comparando las imágenes del satélite Sentinel-2 de cada temporada seca, perdió ${nf(perdidas[0].ha, 1)} hectáreas de vegetación de un año al otro.`,
+                  al: () => {
+                    c.current.rasters([{ ...s2('s2-veg')!, opacidad: 0.85 }]);
+                    mover({ accion: 'volar', geojson: fPerdida!.geojson, encuadre: fPerdida!.encuadre! });
+                  },
+                },
+                { quien: 'chema', texto: '[curious] ¿Y eso qué es, ingeniera? ¿Un tajo o una quema?', al: () => orbitar(40, 24_000) },
+                { quien: 'tatiana', texto: '[thoughtful] Puede ser un tajo, un camino o una quema. Eso se confirma en campo, pero lo importante es que lo vemos antes de que llegue una denuncia.' },
+                ...(s2('s2-arc')
+                  ? [
+                      {
+                        quien: 'electrum' as const,
+                        texto: 'Y con las mismas bandas yo busco alteración hidrotermal: arcillas y óxidos de hierro, la huella que dejan los fluidos que traen el oro y el cobre.',
+                        al: () => c.current.rasters([{ ...s2('s2-arc')!, opacidad: 0.85 }]),
+                      },
+                    ]
+                  : []),
+              ]);
             },
           },
           alteracion: {
@@ -443,21 +524,27 @@ export function Recorrido({
               c.current.rasters([]);
               c.current.tocar(null);
               mover({ accion: 'encuadrar', encuadre: zona!.encuadre, inclinacion: 60, giro: 28, ms: 6500 });
-              await pausa(2600);
-              c.current.rasters([{ ...(mapas[0] as RasterEscaneado), opacidad: 0.82 }]);
-              if (fallas) c.current.capas(() => [fallas]);
-              orbitar(-30, 30_000);
-              await decir(
-                `Ahora vamos a la zona de Honduras donde más información tengo: ${zona!.nombre}. Aquí se juntan ${plural(mapas.length, 'mapa', 'mapas')} de la agencia japonesa JICA, que escaneé y georreferencié sobre el terreno real, las fallas, el satélite y ${plural(enZona.length, 'concesión', 'concesiones')}.`
-              );
-              if (mapas[1]) {
-                c.current.rasters([{ ...(mapas[1] as RasterEscaneado), opacidad: 0.82 }]);
-                await decir('Este es el mapa estructural: las fallas y fracturas por donde subieron los fluidos que dejaron los metales.');
-              }
-              if (mapas[2]) {
-                c.current.rasters([{ ...(mapas[2] as RasterEscaneado), opacidad: 0.8 }]);
-                await decir('Y estas son las anomalías geoquímicas que midió JICA en los ríos. Donde coinciden las fallas, los intrusivos y las anomalías, ahí conviene mirar.');
-              }
+              await pausa(1800);
+              await conversar([
+                {
+                  quien: 'electrum',
+                  texto: `[warmly] Ahora vamos a la zona donde más información tengo: ${zona!.nombre}. Aquí se juntan ${plural(mapas.length, 'mapa', 'mapas')} de la agencia japonesa JICA, georreferenciados sobre el terreno real, las fallas y ${plural(enZona.length, 'concesión', 'concesiones')}.`,
+                  al: () => {
+                    c.current.rasters([{ ...(mapas[0] as RasterEscaneado), opacidad: 0.82 }]);
+                    if (fallas) c.current.capas(() => [fallas]);
+                    orbitar(-30, 30_000);
+                  },
+                },
+                { quien: 'chema', texto: '[curious] ¿Y qué roca hay ahí, doctor? Eso me dice qué planta ocupamos.' },
+                ...(mapas[1]
+                  ? [{ quien: 'electrum' as const, texto: '[thoughtful] Mire el mapa estructural: las fallas y fracturas por donde subieron los fluidos que dejaron los metales.', al: () => c.current.rasters([{ ...(mapas[1] as RasterEscaneado), opacidad: 0.82 }]) }]
+                  : []),
+                ...(mapas[2]
+                  ? [{ quien: 'electrum' as const, texto: 'Y estas son las anomalías geoquímicas que midió JICA en los ríos. Donde coinciden fallas, intrusivos y anomalías, ahí conviene explorar.', al: () => c.current.rasters([{ ...(mapas[2] as RasterEscaneado), opacidad: 0.8 }]) }]
+                  : []),
+                { quien: 'chema', texto: 'Si es veta de cuarzo con oro libre, gravimetría y una cianuración pequeña. Si viene amarrado en sulfuros, ya hablamos de flotación.' },
+                { quien: 'tatiana', texto: '[thoughtful] Y cualquiera de las dos necesita agua y un sitio seguro para los relaves. Eso lo voy mirando desde ya.' },
+              ]);
             },
           },
           analisis: {
@@ -472,9 +559,18 @@ export function Recorrido({
               await irConFicha(f);
               orbitar(120, 60_000);
               const frases = analisisDeFicha(f);
-              // De a dos frases: se oye como una explicación y no como una lista leída.
-              for (let k = 0; k < frases.length && sigue() && !saltoEste(); k += 2) await decir(frases.slice(k, k + 2).join(' '));
-              await decir('Todo esto está en su ficha, y en un toque se lo entrego en PDF con su plano, o en KML para Google Earth y DXF para AutoCAD.');
+              // De a dos frases del doctor, con las preguntas y el oficio de los otros dos en medio.
+              const bloques: string[] = [];
+              for (let k = 0; k < frases.length; k += 2) bloques.push(frases.slice(k, k + 2).join(' '));
+              await conversar([
+                { quien: 'tatiana', texto: `[curious] Doctor, ¿qué tenemos en ${nombreParaDecir(f.nombre)}?` },
+                ...(bloques[0] ? [{ quien: 'electrum' as const, texto: `[thoughtful] ${bloques[0]}` }] : []),
+                ...(bloques[1] ? [{ quien: 'chema' as const, texto: '[curious] ¿Y la roca qué dice?' }, { quien: 'electrum' as const, texto: bloques[1] }] : []),
+                ...bloques.slice(2).map((b) => ({ quien: 'electrum' as const, texto: b })),
+                { quien: 'tatiana', texto: '[serious] Antes de mover tierra ahí, yo revisaría el agua y las comunidades del entorno: eso es lo que define la licencia ambiental.' },
+                { quien: 'chema', texto: 'Y yo pediría pruebas metalúrgicas antes de hablar de planta. Sin eso, la recuperación es un supuesto.' },
+                { quien: 'electrum', texto: '[warmly] Todo esto queda en su ficha: en un toque se lo entrego en PDF con su plano, o en KML para Google Earth y DXF para AutoCAD.' },
+              ]);
             },
           },
           oro: {
@@ -491,16 +587,28 @@ export function Recorrido({
               c.current.tocar(null);
               c.current.rasters([]);
               c.current.capas(() => []);
-              c.current.muestras({ elemento: 'au', geojson: muestras });
-              mover({ accion: 'camara', centro: oro!.centro, zoom: 9.8, inclinacion: 58, giro: -32, ms: 6500 });
-              await pausa(3000);
               const [ox, oy] = oro!.centro;
-              if (sigue()) c.current.enfocar({ encuadre: [ox - 0.06, oy - 0.05, ox + 0.06, oy + 0.05], etiqueta: `Foco de oro · hasta ${nf(oro!.maxGt, 1)} g/t` });
-              orbitar(40, 30_000);
-              await decir(
-                `También tengo ${nf(oro!.total)} muestras de sedimentos y rocas que tomó JICA, con su ley de oro, plata, cobre y zinc. El calor muestra dónde se juntan las anomalías: la más alta de oro llega a ${nf(oro!.maxGt, 1)} gramos por tonelada, y ${plural(oro!.sobreUnGramo, 'muestra pasa', 'muestras pasan')} de un gramo.`
-              );
-              await decir('Toque cualquier punto y le digo qué es, cuánto dio y en qué concesión cae hoy.');
+              await conversar([
+                {
+                  quien: 'electrum',
+                  texto: `[thoughtful] También tengo ${nf(oro!.total)} muestras de sedimentos y rocas que tomó JICA, con su ley de oro, plata, cobre y zinc. El calor muestra dónde se juntan las anomalías.`,
+                  al: () => {
+                    c.current.muestras({ elemento: 'au', geojson: muestras });
+                    mover({ accion: 'camara', centro: oro!.centro, zoom: 9.8, inclinacion: 58, giro: -32, ms: 6500 });
+                  },
+                },
+                { quien: 'chema', texto: '[surprised] ¿Y cuánto dio la mejor, doctor?' },
+                {
+                  quien: 'electrum',
+                  texto: `${nf(oro!.maxGt, 1)} gramos por tonelada de oro. Y ${plural(oro!.sobreUnGramo, 'muestra pasa', 'muestras pasan')} de un gramo.`,
+                  al: () => {
+                    if (sigue()) c.current.enfocar({ encuadre: [ox - 0.06, oy - 0.05, ox + 0.06, oy + 0.05], etiqueta: `Foco de oro · hasta ${nf(oro!.maxGt, 1)} g/t` });
+                    orbitar(40, 30_000);
+                  },
+                },
+                { quien: 'chema', texto: '[laughs] Con eso ya me dan ganas de ir a tomar muestras yo mismo.' },
+                { quien: 'electrum', texto: '[warmly] Toque cualquier punto y le digo qué es, cuánto dio y en qué concesión cae hoy.' },
+              ]);
             },
           },
           conflictos: {
@@ -521,16 +629,20 @@ export function Recorrido({
               if (protegidas) c.current.capas(() => [protegidas]);
               await irConFicha(f);
               orbitar(-60, 36_000);
-              await decir(
-                `Lo que un regulador o un inversionista tiene que ver antes que nada: los conflictos. ` +
-                  (t?.areasProtegidas ? `${plural(t.areasProtegidas.concesiones, 'concesión pisa', 'concesiones pisan')} áreas protegidas` : '') +
-                  (t?.microcuencas ? `, ${nf(t.microcuencas.concesiones)} pisan microcuencas declaradas` : '') +
-                  (t?.poblados ? ` y ${nf(t.poblados.concesiones)} tienen caseríos dentro` : '') +
-                  '.'
-              );
-              await decir(
-                `Esta es ${nombreParaDecir(conflicto!.concesion)}: pisa ${nf(conflicto!.ha, 1)} hectáreas de ${conflicto!.con}, el ${nf(conflicto!.pct)} por ciento de su superficie. Esto, que antes tomaba semanas de escritorio, lo tengo al día en segundos.`
-              );
+              await conversar([
+                {
+                  quien: 'tatiana',
+                  texto:
+                    '[serious] Ahora lo que un regulador ve antes que nada: los conflictos. ' +
+                    (t?.areasProtegidas ? `${plural(t.areasProtegidas.concesiones, 'concesión pisa', 'concesiones pisan')} áreas protegidas` : 'Hay concesiones sobre áreas protegidas') +
+                    (t?.microcuencas ? `, ${nf(t.microcuencas.concesiones)} pisan microcuencas declaradas` : '') +
+                    (t?.poblados ? ` y ${nf(t.poblados.concesiones)} tienen caseríos dentro` : '') +
+                    '.',
+                },
+                { quien: 'electrum', texto: `[thoughtful] Esta es ${nombreParaDecir(conflicto!.concesion)}: pisa ${nf(conflicto!.ha, 1)} hectáreas de ${conflicto!.con}, el ${nf(conflicto!.pct)} por ciento de su superficie.` },
+                { quien: 'chema', texto: '[concerned] Ahí no hay planta que valga si la comunidad y el agua no están de acuerdo.' },
+                { quien: 'tatiana', texto: 'Por eso lo miramos primero. Esto, que antes eran semanas de escritorio, aquí lo tenemos al día en segundos, y es lo primero que va a preguntar MiAmbiente.' },
+              ]);
             },
           },
           traslapes: {
@@ -547,13 +659,14 @@ export function Recorrido({
               c.current.capas(() => []);
               await irConFicha(fTraslape!);
               orbitar(50, 30_000);
-              await decir(
-                `Cruzo cada concesión con todas las demás: hay ${plural(t!.traslapes.total, 'traslape', 'traslapes')} entre derechos, ${nf(t!.traslapes.hectareas)} hectáreas que dos titulares reclaman a la vez. En el mapa van rayados.`
-              );
-              await decir(
-                `El más grande es entre ${nombreParaDecir(traslapeMayor!.a)} y ${nombreParaDecir(traslapeMayor!.b)}: ${nf(traslapeMayor!.ha, 1)} hectáreas.` +
-                  (t!.traslapes.mismoNombre?.total ? ` Y ${nf(t!.traslapes.mismoNombre.total)} son entre concesiones con el mismo nombre: parecen registros duplicados que conviene depurar.` : '')
-              );
+              await conversar([
+                { quien: 'electrum', texto: `[serious] Cruzo cada concesión con todas las demás: hay ${plural(t!.traslapes.total, 'traslape', 'traslapes')} entre derechos, ${nf(t!.traslapes.hectareas)} hectáreas que dos titulares reclaman a la vez. En el mapa van rayados.` },
+                { quien: 'tatiana', texto: '[curious] ¿Y cuál es el más grande, doctor?' },
+                { quien: 'electrum', texto: `Entre ${nombreParaDecir(traslapeMayor!.a)} y ${nombreParaDecir(traslapeMayor!.b)}: ${nf(traslapeMayor!.ha, 1)} hectáreas. Eso se resuelve por la prelación de la solicitud, no por quién llegó primero al terreno.` },
+                ...(t!.traslapes.mismoNombre?.total
+                  ? [{ quien: 'tatiana' as const, texto: `[thoughtful] Y ${nf(t!.traslapes.mismoNombre.total)} son entre concesiones con el mismo nombre: parecen registros duplicados que conviene depurar con INHGEOMIN.` }]
+                  : []),
+              ]);
             },
           },
           vencimientos: {
@@ -577,6 +690,7 @@ export function Recorrido({
                * terminan en 2014: decir solo «ninguna vence este año» era cierto y engañoso a la vez.
                */
               const conFecha = venc.anio + venc.vencidas + venc.noventa;
+              await conversar([{ quien: 'tatiana', texto: '[curious] ¿Y las fechas, doctor? Un plazo vencido nos puede costar la concesión.' }]);
               await decir(
                 venc.anio
                   ? `Llevo las fechas de todas: ${plural(venc.anio, 'concesión vence', 'concesiones vencen')} en los próximos doce meses${venc.noventa ? `, ${nf(venc.noventa)} en los próximos noventa días` : ''}. Las que laten en el mapa son las más urgentes.`
@@ -592,12 +706,15 @@ export function Recorrido({
           marco: {
             hay: true,
             correr: async () => {
-              capitulo(++i, { titulo: 'El marco legal, a mano', chips: ['Reformas Decreto 109-2019', 'Formularios INHGEOMIN', 'Análisis legal por concesión', 'Expedientes con búsqueda'] });
+              capitulo(++i, { titulo: 'El marco legal, a mano', chips: ['Ley 238-2012 y reformas', 'Fallo constitucional 2026', 'Formularios INHGEOMIN', 'Análisis legal por concesión'] });
               c.current.tocar(null);
-              await decir(
-                'Tengo leídos los documentos legales: las reformas del Decreto 109-2019 a la Ley General de Minería y los formularios de INHGEOMIN, de exploración, explotación, beneficio, comercialización y declaración jurada.'
-              );
-              await decir('Pregúnteme qué pide un trámite o qué dice un artículo y le contesto citando el documento. Y en la ficha de cada concesión, «Analizar» le hace el análisis legal y ambiental.');
+              await conversar([
+                { quien: 'electrum', texto: '[thoughtful] Tengo leídos los documentos legales: las reformas del Decreto 109-2019 a la Ley General de Minería y los formularios de INHGEOMIN, de exploración, explotación, beneficio, comercialización y declaración jurada.' },
+                { quien: 'chema', texto: '[curious] ¿Y está al día, doctor? Que la ley ha cambiado.' },
+                { quien: 'electrum', texto: '[serious] Al día. El Decreto 18-2024 prohibió concesiones en áreas protegidas y zonas de agua declaradas, y en junio de 2026 la Sala de lo Constitucional anuló en parte siete artículos, entre ellos los de plazos y consulta. Cuando le cito algo, le digo la fecha y la fuente.' },
+                { quien: 'tatiana', texto: 'Y lo ambiental lo llevo yo: la licencia de SERNA, la constancia del ICF sobre áreas protegidas y los plazos de cada trámite.' },
+                { quien: 'electrum', texto: '[warmly] Pregúntenos qué pide un trámite o qué dice un artículo y le contestamos citando el documento. En cada ficha, «Analizar» le hace el análisis legal y ambiental completo.' },
+              ]);
             },
           },
           barra: {
@@ -688,8 +805,12 @@ export function Recorrido({
               setFoco(null);
               if (!sigue() || saltoEste()) return;
               boton.click();
-              await decir('Así se ve si entró maquinaria, si abrieron un camino o si el bosque se perdió. Año por año, sin salir de la oficina.');
-              await pausa(4500);
+              await conversar([
+                { quien: 'tatiana', texto: '[thoughtful] Aquí es donde yo me fijo. Año por año se ve si entró maquinaria, si abrieron un camino o si el bosque se perdió.' },
+                { quien: 'chema', texto: '[curious] ¿Y se nota si ya están sacando material?' },
+                { quien: 'tatiana', texto: 'Se nota el suelo desnudo que crece y los caminos nuevos. Si lo vemos a tiempo, se corrige antes de que sea una multa.' },
+              ]);
+              await pausa(2500);
               // Se cierra como lo cerraría una persona: con Escape.
               window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
               await pausa(400);
@@ -742,10 +863,7 @@ export function Recorrido({
                 { quien: 'electrum', nombre: 'Dr Electrum', texto: '[thoughtful] Pregúntele a cualquiera por su nombre, o toque «Mesa» y lo discutimos entre los tres hasta llegar a una recomendación.' },
                 { quien: 'chema', nombre: 'Don Chema', texto: '[chuckles] Como decimos en Olancho: tres cabezas piensan más que una.' },
               ];
-              setTexto(lineas.map((l) => `${l.nombre}: ${l.texto.replace(/\[[^\]]+\]\s*/g, '')}`).join('\n'));
-              c.current.cara('SPEAKING');
-              await Promise.race([hablarDialogo(lineas, headersElectrum()), new Promise<void>((r) => (despertar.current = r))]);
-              c.current.cara('IDLE');
+              await conversar(lineas.map(({ quien, texto }) => ({ quien: quien as 'electrum' | 'tatiana' | 'chema', texto })));
               setFoco(null);
             },
           },
@@ -785,17 +903,14 @@ export function Recorrido({
                * Dos voces: la ingeniera Tatiana entra a la conversación (Eleven v4, diálogo a varias
                * voces). Es lo mismo que hace el botón «Como conversación» con cualquier respuesta.
                */
-              if (sigue() && !saltoEste()) {
-                const lineas = [
-                  { quien: 'tatiana', nombre: 'Ing. Tatiana', texto: '[curious] Doctor, ¿y si alguien prefiere que se lo expliquen conversando, como ahora?' },
-                  { quien: 'electrum', nombre: 'Dr Electrum', texto: '[warmly] Para eso está usted, Tatiana. [chuckles] Toquen «Como conversación» debajo de cualquier respuesta, o díganme «explícamelo como conversación».' },
-                  { quien: 'tatiana', nombre: 'Ing. Tatiana', texto: '[laughs] Y yo le hago las preguntas que haría cualquiera. Perfecto.' },
-                ];
-                setTexto(lineas.map((l) => `${l.nombre}: ${l.texto.replace(/\[[^\]]+\]\s*/g, '')}`).join('\n'));
-                c.current.cara('SPEAKING');
-                await Promise.race([hablarDialogo(lineas, headersElectrum()), new Promise<void>((r) => (despertar.current = r))]);
-                c.current.cara('IDLE');
-              }
+              // El cierre lo hace la mesa entera: cada uno dice qué le toca y se despiden invitando a preguntar.
+              await conversar([
+                { quien: 'tatiana', texto: '[curious] Doctor, ¿y si alguien prefiere que se lo expliquemos conversando, como ahora?' },
+                { quien: 'electrum', texto: '[warmly] Para eso están ustedes. [chuckles] Toquen «Mesa» arriba y cada pregunta la discutimos los tres, o pídanle a cualquiera por su nombre.' },
+                { quien: 'chema', texto: '[warmly] Usted me dice el mineral y yo le armo la planta.' },
+                { quien: 'tatiana', texto: 'Y yo le digo cómo se construye, cuánto cuesta y qué permisos ocupa.' },
+                { quien: 'electrum', texto: '[warmly] Y yo le pongo la geología y los números en orden. Estamos a sus órdenes: pregúntenos lo que quiera.' },
+              ]);
             },
           },
         };
@@ -818,6 +933,7 @@ export function Recorrido({
         if (sigue()) setTexto(`No pude seguir el recorrido: ${String(e?.message || e)}`);
         await espera(3500);
       } finally {
+        fijarRecorrido(false);
         if (sigue()) {
           // Todo vuelve a como estaba, menos el 3D y la cámara: quien lo vio sigue desde ahí.
           c.current.rasters(antes.rasters);
