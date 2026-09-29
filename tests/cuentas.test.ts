@@ -294,6 +294,10 @@ test('códigos temporales: únicos, 1/5/24 h, abren Dr Electrum y al vencer o re
     assert.equal((await pedir('/api/ultron/codigos', { horas: 1 }, medardo.token)).status, 403, 'solo el aprobador');
     assert.equal((await pedir('/api/ultron/codigos', { horas: 2 }, jose.token)).status, 400, 'solo 1, 5 o 24');
     assert.equal((await aura.pedir('/api/ultron/codigos', { horas: 1 }, jose.token)).status, 404, 'en AU-RA no hay códigos');
+    // Sin el nombre de la persona no se crea: es con el que Dr Electrum la saluda.
+    const sinNombre = await pedir('/api/ultron/codigos', { horas: 1, para: '   ' }, jose.token);
+    assert.equal(sinNombre.status, 400);
+    assert.match(sinNombre.json.error, /nombre de la persona/);
 
     // Nunca el mismo: 30 seguidos, todos distintos.
     const hechos = new Set<string>();
@@ -317,6 +321,7 @@ test('códigos temporales: únicos, 1/5/24 h, abren Dr Electrum y al vencer o re
     assert.equal(e.status, 200, JSON.stringify(e.json));
     const s = sesionDe(reqCon(e.json.token));
     assert.ok(s);
+    assert.equal(s!.nombre, 'Ing. Prueba', 'la sesión lleva el nombre que se puso al crear el código');
     assert.ok(Math.abs((s!.exp || 0) - new Date(c.json.vence).getTime()) < 2000, 'la sesión vence con el código');
     assert.equal(nivelDe(identificar({ correo: s!.correo }), 'electrum'), 'lee');
     assert.equal(nivelDe(identificar({ correo: s!.correo }), 'ultron'), null);
@@ -328,7 +333,7 @@ test('códigos temporales: únicos, 1/5/24 h, abren Dr Electrum y al vencer o re
     assert.equal((await pedir('/api/ultron/entrar-codigo', { codigo: c.json.codigo })).status, 401);
 
     // Vencer: igual que revocar, aunque nadie toque nada.
-    const v = await pedir('/api/ultron/codigos', { horas: 1 }, jose.token);
+    const v = await pedir('/api/ultron/codigos', { horas: 1, para: 'Keidy' }, jose.token);
     const ev = await pedir('/api/ultron/entrar-codigo', { codigo: v.json.codigo });
     assert.ok(sesionDe(reqCon(ev.json.token)));
     await pg.query(`UPDATE cuentas.codigo SET vence = now() - interval '1 second' WHERE id = $1`, [v.json.id]);

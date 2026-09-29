@@ -20,6 +20,7 @@ import {
   type KeyboardEvent as TeclaReact,
   type PointerEvent as PunteroReact,
 } from 'react';
+import { createPortal } from 'react-dom';
 import type { FaceState } from '../../src/types';
 import type { Emocion } from '../../lib/emocion';
 import { capturaDelMapa } from '../mapa/captura';
@@ -28,6 +29,7 @@ import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteRepar
 import { callar, desbloquear, hablar } from './voz';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
 import { Biblioteca } from '../biblioteca/Biblioteca';
+import { pedirArchivo, Visor, type Fuente } from './Visor';
 
 /** Las tres pestañas del panel. */
 export type VistaPanel = 'chat' | 'expedientes' | 'infra';
@@ -48,6 +50,8 @@ type Props = {
   /** Fracción de la pantalla que ocupa el panel. */
   alto: number;
   onAlto: (v: number) => void;
+  /** Entró con un código temporal: ve mapas y PDF a pantalla completa, pero no los baja. */
+  invitado?: boolean;
 };
 
 type Turno = {
@@ -222,19 +226,25 @@ async function bajarInforme(informe: { nombre: string; url: string }): Promise<s
  * `<img src>` directo: se pide por fetch con la cabecera y se muestra el blob. Si ya caducó (media
  * hora, como los informes) se dice, en vez de dejar una imagen rota.
  */
-function MapaDelTurno({ imagen, onAviso }: { imagen: { nombre: string; url: string; bytes: number; titulo?: string }; onAviso: (m: string) => void }) {
+function MapaDelTurno({
+  imagen,
+  puedeBajar,
+  onAviso,
+  onAbrir,
+}: {
+  imagen: { nombre: string; url: string; bytes: number; titulo?: string };
+  puedeBajar: boolean;
+  onAviso: (m: string) => void;
+  onAbrir: () => void;
+}) {
   const [src, setSrc] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let vivo = true;
     let url: string | null = null;
-    fetch(imagen.url, { headers: headersElectrum() })
-      .then(async (r) => {
-        if (!r.ok) {
-          const j = await r.json().catch(() => ({}) as any);
-          throw new Error(j?.error || (r.status === 404 ? 'Ese mapa ya caducó; pedime otro.' : `El servidor contestó ${r.status}.`));
-        }
-        url = URL.createObjectURL(await r.blob());
+    pedirArchivo(imagen.url)
+      .then((b) => {
+        url = URL.createObjectURL(b);
         if (vivo) setSrc(url);
       })
       .catch((e) => vivo && setError(String(e?.message || e)));
@@ -243,22 +253,33 @@ function MapaDelTurno({ imagen, onAviso }: { imagen: { nombre: string; url: stri
       if (url) URL.revokeObjectURL(url);
     };
   }, [imagen.url]);
+  const chico =
+    'flex items-center gap-1 rounded border border-white/15 px-2 py-0.5 font-mono text-[10px] tracking-[0.14em] uppercase text-[#9FB0B8] hover:border-white/30 hover:text-white cursor-pointer';
   return (
     <figure className="mt-2 overflow-hidden rounded-lg border" style={{ borderColor: 'rgba(255,174,59,.35)' }}>
       {src ? (
-        <img src={src} alt={imagen.titulo || imagen.nombre} className="block w-full bg-white" />
+        // Tocar el mapa lo abre en grande, con zoom.
+        <button type="button" onClick={onAbrir} className="group relative block w-full cursor-zoom-in" aria-label={`Ver en grande: ${imagen.titulo || imagen.nombre}`}>
+          <img src={src} alt={imagen.titulo || imagen.nombre} className="block w-full bg-white" />
+          <span className="pointer-events-none absolute right-2 top-2 rounded-md bg-black/70 px-2 py-1 font-mono text-[10px] tracking-[0.12em] uppercase text-white opacity-80 transition-opacity group-hover:opacity-100">
+            ⤢ Ver en grande
+          </span>
+        </button>
       ) : (
         <div className="px-3 py-6 text-center font-mono text-[11px] text-[#6C7F89]">{error || 'Cargando el mapa…'}</div>
       )}
       <figcaption className="flex items-center gap-2 px-3 py-1.5">
         <span className="min-w-0 flex-1 truncate text-[12px] text-[#C9D6DC]">{imagen.titulo || imagen.nombre}</span>
-        <button
-          type="button"
-          onClick={() => void bajarInforme(imagen).then((m) => m && onAviso(m))}
-          className="rounded border border-white/15 px-2 py-0.5 font-mono text-[10px] tracking-[0.14em] uppercase text-[#9FB0B8] hover:border-white/30 hover:text-white cursor-pointer"
-        >
-          Bajar
-        </button>
+        {src && (
+          <button type="button" onClick={onAbrir} className={chico}>
+            Abrir
+          </button>
+        )}
+        {puedeBajar && (
+          <button type="button" onClick={() => void bajarInforme(imagen).then((m) => m && onAviso(m))} className={chico}>
+            Bajar
+          </button>
+        )}
       </figcaption>
     </figure>
   );
@@ -303,7 +324,9 @@ function hiloGuardado(): Turno[] {
   }
 }
 
-export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, onTrabajo, onVista, pedido }: Props) {
+export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, onTrabajo, onVista, pedido, invitado = false }: Props) {
+  /** Lo que está abierto en el visor a pantalla completa (un mapa del hilo o un PDF). */
+  const [visor, setVisor] = useState<Fuente | null>(null);
   const [turnos, setTurnos] = useState<Turno[]>(hiloGuardado);
   /*
    * `preguntar` no puede depender de `turnos` —se reharía en cada mensaje y con él todo lo que
@@ -800,7 +823,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       {/* El asa de repartir. En Expedientes no: ahí el panel se lleva la pantalla entera. */}
       {!completo && <Asa alto={alto} onAlto={onAlto} onArrastrar={setArrastrando} />}
       {/* La cabecera: siempre visible, nunca fuera de pantalla, y dice por dónde se sube. */}
-      <div className="flex items-center gap-1 px-3 pt-2.5 pb-2 border-b border-white/[0.07] shrink-0">
+      <div className="flex items-center gap-1 px-3 pt-2.5 pb-2 border-b border-white/[0.07] shrink-0" data-tour="pestanas">
         {(['chat', 'expedientes', 'infra'] as const).map((v) => (
           <button
             key={v}
@@ -832,12 +855,46 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
          * consultar el expediente de un concesionario tiene que poder dejar la pantalla limpia antes
          * de que se siente otro. Borra las dos copias, la de la pantalla y la del servidor.
          */}
+        {/*
+         * EL REPARTO, CON BOTONES. El asa se arrastra, pero no todo el mundo la encuentra ni la puede
+         * arrastrar con precisión en un teléfono: tres botones visibles dicen qué se puede hacer.
+         */}
+        {!completo && (
+          <div className="ml-auto flex items-center gap-0.5 rounded-lg border border-white/10 p-0.5" role="group" aria-label="Repartir la pantalla" data-tour="reparto">
+            {(
+              [
+                ['mapa', ALTURAS.mapa, 'Más mapa', 'M3 4h18v12H3z M3 19h18'],
+                ['dividido', ALTURAS.dividido, 'Mitad y mitad', 'M3 4h18v7H3z M3 14h18v6H3z'],
+                ['lectura', ALTURAS.lectura, 'Más chat', 'M3 4h18v3H3z M3 10h18v10H3z'],
+              ] as const
+            ).map(([k, v, t, d]) => {
+              const activo = repartoDe(alto) === k;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => onAlto(v)}
+                  aria-pressed={activo}
+                  title={t}
+                  aria-label={t}
+                  className="flex h-7 items-center gap-1 rounded-md px-1.5 text-[11px] transition-colors cursor-pointer"
+                  style={activo ? { background: 'rgba(255,174,59,0.16)', color: AMBAR } : { color: '#8FA3B0' }}
+                >
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden>
+                    <path d={d} />
+                  </svg>
+                  <span className="hidden lg:inline font-mono uppercase tracking-[0.1em]">{t}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
         {vista === 'chat' && turnos.length > 0 && (
           <button
             type="button"
             onClick={olvidar}
             disabled={pensando}
-            className="ml-auto px-2.5 py-1.5 rounded-lg font-mono text-[11px] tracking-[0.14em] uppercase text-[#8FA3B0] hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className={`${completo ? 'ml-auto ' : ''}px-2.5 py-1.5 rounded-lg font-mono text-[11px] tracking-[0.14em] uppercase text-[#8FA3B0] hover:text-white transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed`}
             title="Borrar esta conversación, acá y en el servidor"
           >
             Borrar
@@ -905,26 +962,41 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                 )}
                 {t.imagenes?.map((im) => (
                   <div key={im.url}>
-                    <MapaDelTurno imagen={im} onAviso={avisoSuelto} />
+                    <MapaDelTurno imagen={im} puedeBajar={!invitado} onAviso={avisoSuelto} onAbrir={() => setVisor({ tipo: 'imagen', nombre: im.nombre, url: im.url, titulo: im.titulo })} />
                   </div>
                 ))}
                 {t.informe && (
-                  <button
-                    type="button"
-                    onClick={() => void bajarInforme(t.informe!).then((m) => m && avisoSuelto(m))}
-                    className="mt-2 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-white/[0.06] cursor-pointer"
-                    style={{ borderColor: 'rgba(255,174,59,.35)' }}
-                  >
-                    <span className="font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
-                      PDF
-                    </span>
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[13px] text-[#E7EEF2]">{t.informe.nombre}</span>
-                      <span className="block font-mono text-[10px] text-[#6C7F89]">
-                        {Math.round(t.informe.bytes / 1024)} KB · se guarda media hora · {t.informe.compartido ? 'compartido con el equipo' : 'solo vos'}
+                  // Tocar el PDF lo abre a pantalla completa; bajarlo es aparte, y solo con usuario.
+                  <div className="mt-2 flex items-stretch gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setVisor({ tipo: 'pdf', nombre: t.informe!.nombre, url: t.informe!.url })}
+                      className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-white/[0.06] cursor-pointer"
+                      style={{ borderColor: 'rgba(255,174,59,.35)' }}
+                      aria-label={`Abrir ${t.informe.nombre}`}
+                    >
+                      <span className="font-mono text-[10px] tracking-[0.14em] uppercase" style={{ color: AMBAR }}>
+                        PDF
                       </span>
-                    </span>
-                  </button>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] text-[#E7EEF2]">{t.informe.nombre}</span>
+                        <span className="block font-mono text-[10px] text-[#6C7F89]">
+                          {Math.round(t.informe.bytes / 1024)} KB · se guarda media hora · {t.informe.compartido ? 'compartido con el equipo' : 'solo vos'}
+                        </span>
+                      </span>
+                      <span className="font-mono text-[10px] tracking-[0.12em] uppercase text-[#9FB0B8]">Abrir ⤢</span>
+                    </button>
+                    {!invitado && (
+                      <button
+                        type="button"
+                        onClick={() => void bajarInforme(t.informe!).then((m) => m && avisoSuelto(m))}
+                        className="flex items-center rounded-lg border border-white/15 px-2.5 font-mono text-[10px] tracking-[0.12em] uppercase text-[#9FB0B8] transition-colors hover:border-white/30 hover:text-white cursor-pointer"
+                        aria-label={`Bajar ${t.informe.nombre}`}
+                      >
+                        Bajar
+                      </button>
+                    )}
+                  </div>
                 )}
                 {/*
                   * Compartirlo es un ACTO, no el estado por defecto. Un informe de cartera lleva
@@ -1018,6 +1090,7 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
               onChange={(e) => setTexto(e.target.value)}
               placeholder="Preguntale a Dr Electrum…"
               aria-label="Tu pregunta para Dr Electrum"
+              data-tour="chat"
               autoComplete="off"
               className="flex-1 min-w-0 bg-white/[0.06] border border-white/12 rounded-lg px-3 py-2 text-sm text-[#E7EEF2] placeholder:text-[#7D909A] focus:outline-none focus:border-[#FFAE3B]/60"
             />
@@ -1143,6 +1216,17 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       ) : (
         <Biblioteca />
       )}
+      {/* Al cuerpo del documento: el panel tiene desenfoque de fondo, y eso encierra lo `fixed` dentro de él. */}
+      {visor &&
+        createPortal(
+          <Visor
+            fuente={visor}
+            puedeBajar={!invitado}
+            onCerrar={() => setVisor(null)}
+            onBajar={() => void bajarInforme(visor).then((m) => m && avisoSuelto(m))}
+          />,
+          document.body
+        )}
     </aside>
   );
 }

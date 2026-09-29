@@ -23,7 +23,8 @@ import { guardarCatastro, type CapaExtra, type Fondo, type Motor, type OrdenMapa
 import { Tarjeta } from './mapa/Tarjeta';
 import { CapasControl, type MuestrasEncendidas } from './mapa/CapasControl';
 import { Tablero } from './mapa/Tablero';
-import { Recorrido, prepararRecorrido, type Controles } from './demo/Recorrido';
+import { Recorrido, prepararRecorrido, type Controles, type ModoRecorrido } from './demo/Recorrido';
+import { Bienvenida, bienvenidaApagada } from './demo/Bienvenida';
 import type { PedidoPanel, VistaPanel } from './panel/Panel';
 import { Panel } from './panel/Panel';
 import { Barra } from './panel/Barra';
@@ -119,14 +120,23 @@ export default function App() {
    * para que la persona lo vea en vez de encontrarse errores.
    */
   const [vence, setVence] = useState<string | null>(null);
+  /** Quién entró: para saludarlo por su nombre y recordar sus preferencias de bienvenida. */
+  const [usuario, setUsuario] = useState<{ nombre: string; correo: string; invitado: boolean } | null>(null);
   const [avisoEntrada, setAvisoEntrada] = useState('');
   const [, setTic] = useState(0);
   useEffect(() => {
-    if (puerta !== 'abierta') return setVence(null);
+    if (puerta !== 'abierta') {
+      setUsuario(null);
+      return setVence(null);
+    }
     let vivo = true;
     fetch('/api/ultron/sesion', { headers: headersElectrum() })
       .then((r) => r.json())
-      .then((j) => vivo && setVence(j?.user?.vence || null))
+      .then((j) => {
+        if (!vivo) return;
+        setVence(j?.user?.vence || null);
+        setUsuario(j?.user?.correo ? { nombre: String(j.user.nombre || ''), correo: String(j.user.correo), invitado: j.user.invitado === true } : null);
+      })
       .catch(() => {});
     return () => {
       vivo = false;
@@ -255,6 +265,12 @@ export default function App() {
   const [tresD, setTresD] = useState(false);
   const [tableroAbierto, setTableroAbierto] = useState(false);
   const [recorrido, setRecorrido] = useState(false);
+  const [modoRecorrido, setModoRecorrido] = useState<ModoRecorrido>('completo');
+  /**
+   * La bienvenida sale una vez por visita, con la cara en el centro, salvo que esa persona haya
+   * pedido no verla más. Se cierra al elegir, al saltar, o si alguien se pone a trabajar antes.
+   */
+  const [bienvenidaVista, setBienvenidaVista] = useState(false);
   const cerrarTablero = useCallback(() => setTableroAbierto(false), []);
   const terminarRecorrido = useCallback(() => setRecorrido(false), []);
   /** Ir a una concesión desde el tablero: se cierra, el mapa vuela y se abre su ficha. */
@@ -362,6 +378,7 @@ export default function App() {
         soundFxEnabled={false}
         emocion={emocion}
         funMode={false}
+        casco
         onFaceChange={(f) => setFace(f)}
         onModeChange={(m) => setMode(m)}
       />
@@ -370,6 +387,13 @@ export default function App() {
   );
 
   const enTrabajo = escenario === 'trabajo';
+  /** Sin usuario propio (código temporal, o la llave de la demo) se mira todo pero no se baja nada. */
+  const invitado = !usuario || usuario.invitado;
+  const mostrarBienvenida = !enTrabajo && !bienvenidaVista && !recorrido && !!usuario && !bienvenidaApagada(usuario.correo);
+  // Si se pone a trabajar por su cuenta (toca la cara, pregunta), la bienvenida ya no sale.
+  useEffect(() => {
+    if (enTrabajo) setBienvenidaVista(true);
+  }, [enTrabajo]);
 
   /*
    * Al abrir el mapa, pintar lo que hay cargado.
@@ -551,7 +575,7 @@ export default function App() {
           </SinMapa>
           <CapasControl encendidas={extras} onCambio={setExtras} rasters={rasters} onRasters={setRasters} onEncuadrar={encuadrarRaster} muestras={muestras} onMuestras={setMuestras} curvas={curvas} onCurvas={setCurvas} prospectividad={prospectividad} onProspectividad={setProspectividad} />
           {/* Arriba al centro del mapa: entre la cara (izquierda) y el control de zoom (derecha). */}
-          <div className="absolute left-1/2 top-2.5 z-10 flex -translate-x-1/2 gap-1 rounded-full border border-white/12 bg-black/70 p-1 shadow-lg backdrop-blur-md">
+          <div className="absolute left-1/2 top-2.5 z-10 flex -translate-x-1/2 gap-1 rounded-full border border-white/12 bg-black/70 p-1 shadow-lg backdrop-blur-md" data-tour="barra-mapa">
             {[
               { k: 'tablero', icono: '▦', texto: 'Tablero', activo: tableroAbierto, alTocar: () => setTableroAbierto((v) => !v), titulo: 'Cifras del catastro nacional y conflictos con áreas protegidas, microcuencas y caseríos' },
               {
@@ -568,7 +592,10 @@ export default function App() {
                 texto: recorrido ? 'Detener' : 'Recorrido',
                 activo: recorrido,
                 alTocar: () => {
-                  if (!recorrido) prepararRecorrido();
+                  if (!recorrido) {
+                    prepararRecorrido();
+                    setModoRecorrido('completo');
+                  }
                   setRecorrido((v) => !v);
                 },
                 titulo: 'Dr Electrum presenta la plataforma solo, con su voz',
@@ -596,9 +623,10 @@ export default function App() {
             onTocar={setTocado}
             onPreguntar={(texto) => pedirAlPanel({ tipo: 'pregunta', texto })}
             onFicha={(id) => pedirAlPanel({ tipo: 'ficha', id })}
+            invitado={invitado}
           />
           {/* El cuadro del recorrido vive DENTRO del mapa: se acomoda a él y no tapa la conversación. */}
-          <Recorrido activo={recorrido} onTerminar={terminarRecorrido} controles={controlesRecorrido} fichaAbierta={!!tocado} />
+          <Recorrido activo={recorrido} onTerminar={terminarRecorrido} controles={controlesRecorrido} fichaAbierta={!!tocado} modo={modoRecorrido} />
         </div>
         <Panel
           abierto={enTrabajo}
@@ -611,6 +639,7 @@ export default function App() {
           onUi={alUi}
           onTrabajo={alTrabajo}
           pedido={pedidoPanel}
+          invitado={invitado}
         />
       </div>
 
@@ -679,7 +708,10 @@ export default function App() {
               ancho && alto <= 0.6
               ? { left: 16, top: 64, width: 132, height: 132, zIndex: 30 }
               : { left: 12, top: 60, width: 96, height: 96, zIndex: 30 }
-            : { left: '50%', top: '50%', width: 'min(76vmin, 560px)', height: 'min(76vmin, 560px)', transform: 'translate(-50%,-50%)', zIndex: 30 }),
+            : mostrarBienvenida
+              ? // Con la bienvenida abajo, la cara sube y se achica un poco: las opciones no la tapan.
+                { left: '50%', top: '33%', width: 'min(64vmin, 440px)', height: 'min(64vmin, 440px)', transform: 'translate(-50%,-50%)', zIndex: 30 }
+              : { left: '50%', top: '50%', width: 'min(76vmin, 560px)', height: 'min(76vmin, 560px)', transform: 'translate(-50%,-50%)', zIndex: 30 }),
         }}
       >
         <button
@@ -732,10 +764,28 @@ export default function App() {
 
       <Cuenta abierta={!!cuenta} inicio={cuenta || 'clave'} pendientes={pendientes} onPendientes={setPendientes} onCerrar={() => setCuenta(null)} />
 
+      {mostrarBienvenida && usuario && (
+        <Bienvenida
+          usuario={usuario}
+          cara={(f) => setFace(f)}
+          onElegir={(m) => {
+            setBienvenidaVista(true);
+            prepararRecorrido();
+            setModoRecorrido(m);
+            setEscenario('trabajo');
+            setRecorrido(true);
+          }}
+          onSaltar={() => {
+            setBienvenidaVista(true);
+            setEscenario('trabajo');
+          }}
+        />
+      )}
+
       {/* Presentación, solo mientras la cara manda. */}
       <div
         className="absolute left-0 right-0 bottom-10 text-center transition-opacity duration-500 px-6"
-        style={{ opacity: enTrabajo ? 0 : 1, pointerEvents: 'none' }}
+        style={{ opacity: enTrabajo || mostrarBienvenida ? 0 : 1, pointerEvents: 'none' }}
       >
         <div className="font-display font-bold tracking-[0.34em] text-[#FFAE3B] text-lg">DR ELECTRUM FP</div>
         <div className="mt-1 font-mono text-[11px] tracking-[0.22em] uppercase text-[#FFAE3B]/50">

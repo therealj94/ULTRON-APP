@@ -37,6 +37,7 @@ import {
   drawLaserBoltsAndImpacts,
   drawCameraViewfinderAndFlash,
 } from './funPack';
+import { drawCasco, luzDeLampara } from './casco';
 
 export interface FaceCanvasProps {
   face: FaceState;
@@ -73,6 +74,8 @@ export interface FaceCanvasProps {
   onGesto?: (g: Gesto) => void;
   lipLevel?: number;
   showHud?: boolean;
+  /** Casco minero con lámpara (solo Dr Electrum). */
+  casco?: boolean;
 }
 
 const MODES: Mode[] = ['GUARDIAN', 'MINING', 'GOLD', 'CREATIVE', 'ANALYTICAL', 'STRATEGIC', 'EXPLORER'];
@@ -302,6 +305,7 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
   soundFxEnabled,
   emocion,
   funMode = false,
+  casco = false,
   hasVisor = false,
   cameraGaze,
   isDrinking = false,
@@ -344,6 +348,9 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     energy: number;
     hasVisor: boolean;
     funMode: boolean;
+    casco: boolean;
+    /** Cuándo miró por última vez su lámpara (s de la cara): el destello dura un momento. */
+    miroLampara: number;
     showHud: boolean;
     t: number;
     faceSince: number;
@@ -362,6 +369,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     energy,
     hasVisor,
     funMode,
+    casco,
+    miroLampara: -99,
     showHud,
     t: 0,
     faceSince: 0,
@@ -556,6 +565,10 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
       disarmCombat();
     }
   }, [isCombatBlasterActive, triggerBlasterCombat, disarmCombat]);
+
+  useEffect(() => {
+    stateRef.current.casco = casco;
+  }, [casco]);
 
   // Apagar funMode en caliente desarma
   useEffect(() => {
@@ -1271,9 +1284,17 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
             A.ty = lt.y * 0.9 * k + (Math.random() - 0.5) * 0.1;
             A.saccadeIn = 0.45 + Math.random() * 0.9;
           } else if (now - S.lastInteraction > 3500) {
-            A.tx = (Math.random() - 0.5) * 0.45;
-            A.ty = (Math.random() - 0.5) * 0.3;
-            A.saccadeIn = 1.4 + Math.random() * 2.6;
+            if (S.casco && S.face === 'IDLE' && S.t - S.miroLampara > 12 && Math.random() < 0.22) {
+              // Con casco, de vez en cuando mira para arriba a su lámpara, y la lámpara le guiña.
+              A.tx = (Math.random() - 0.5) * 0.08;
+              A.ty = -0.95;
+              A.saccadeIn = 1.1;
+              S.miroLampara = S.t;
+            } else {
+              A.tx = (Math.random() - 0.5) * 0.45;
+              A.ty = (Math.random() - 0.5) * 0.3;
+              A.saccadeIn = 1.4 + Math.random() * 2.6;
+            }
           }
         }
       }
@@ -1522,7 +1543,8 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     // Giro sutil hacia la persona detectada: traslación 1.5 % del ancho + inclinación ~1.5°.
     const camShift = V.camX * at;
     const cx = W / 2 + camShift * W * 0.015;
-    const cy = H / 2 + Math.sin(S.t * 1.15) * (baseR * 0.018) * quieto - (A.bounce + V.lift + V.jolt) * baseR;
+    // Con casco la cara baja un poco: la copa necesita su lugar arriba.
+    const cy = H / 2 + (S.casco ? baseR * 0.38 : 0) + Math.sin(S.t * 1.15) * (baseR * 0.018) * quieto - (A.bounce + V.lift + V.jolt) * baseR;
 
     // Halo exterior que respira (en oración: cálido, más presente y estable)
     const breathK = (A.breath - 1) / 0.02; // −1..1
@@ -1560,6 +1582,13 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
 
     // Boca
     drawCyberMouth(ctx, 0, baseR * 1.28, baseR, theme, E, A, V);
+
+    if (S.casco) {
+      // El destello de la lámpara cuando la mira: sube rápido y se apaga en ~0.9 s.
+      const d = S.t - S.miroLampara;
+      const destello = d >= 0.35 && d < 1.25 ? Math.sin(((d - 0.35) / 0.9) * Math.PI) : 0;
+      drawCasco(ctx, baseR, theme, E, A, { intensidad: luzDeLampara(E, V, lip, destello), apunta: A.lx });
+    }
 
     // Chispas de canto (suben desde la boca)
     drawChispas(ctx, V.sparkles, theme, S.t);
@@ -1601,9 +1630,10 @@ export const FaceCanvas: React.FC<FaceCanvasProps> = ({
     const canvas = canvasRef.current;
     if (!canvas) return 'fuera';
     const rect = canvas.getBoundingClientRect();
-    const x = clientX - rect.left - rect.width / 2;
-    const y = clientY - rect.top - rect.height / 2;
     const baseR = Math.min(rect.width * 0.115, rect.height * 0.22);
+    const x = clientX - rect.left - rect.width / 2;
+    // Con casco la cara está más abajo (drawScene): los toques se miden desde donde está de verdad.
+    const y = clientY - rect.top - rect.height / 2 - (stateRef.current.casco ? baseR * 0.38 : 0);
     const eyeSpacing = baseR * 1.58;
     if (Math.hypot(x + eyeSpacing, y) < baseR * 1.1) return 'ojoIzq';
     if (Math.hypot(x - eyeSpacing, y) < baseR * 1.1) return 'ojoDer';

@@ -378,6 +378,7 @@ export function CapasControl({
       <button
         type="button"
         onClick={() => void abrir()}
+        data-tour="capas"
         aria-expanded={abierto}
         className="pointer-events-auto shrink-0 flex items-center gap-2 rounded-full border border-white/15 bg-black/75 px-3 py-1.5 font-mono text-[11px] tracking-[0.14em] uppercase text-[#DCE5EA] shadow-lg backdrop-blur-md hover:border-white/30 cursor-pointer"
       >

@@ -472,6 +472,7 @@ export function PanelCodigos({ tema, headers }: { tema: Tema; headers: () => Rec
 
   async function crear(e: FormEvent) {
     e.preventDefault();
+    if (!para.trim()) return setFallo('Poné el nombre de la persona: Dr Electrum la saluda con él al entrar.');
     setYendo(true);
     setFallo('');
     setCopiado(false);
@@ -522,7 +523,20 @@ export function PanelCodigos({ tema, headers }: { tema: Tema; headers: () => Rec
             </button>
           ))}
         </div>
-        <input className={tema.campo} aria-label="Para quién (opcional)" placeholder="para quién (opcional): nombre o institución" value={para} onChange={(e) => setPara(e.target.value)} maxLength={80} />
+        {/* El nombre es con el que Dr Electrum la saluda al entrar: «Buenos días, Keidy». */}
+        <label className={`${tema.texto} block`}>
+          Nombre de la persona
+          <input
+            className={`${tema.campo} mt-1`}
+            aria-label="Nombre de la persona"
+            placeholder="p. ej. Keidy Martínez (así la saluda Dr Electrum)"
+            autoComplete="off"
+            value={para}
+            onChange={(e) => setPara(e.target.value)}
+            maxLength={80}
+            required
+          />
+        </label>
         <label className={`${tema.texto} flex items-center gap-2`}>
           Nivel
           <select className={`${tema.campo} !w-auto !py-1.5`} value={nivel} onChange={(e) => setNivel(e.target.value as 'lee' | 'escribe')} aria-label="Nivel del código">

@@ -65,7 +65,7 @@ import {
   procesarElectrumTelegram,
   registrarWebhookElectrum,
 } from './server/electrum/telegram';
-import { identidadDe, exigirPlataforma } from './server/seguridad';
+import { identidadDe, exigirPlataforma, esInvitado } from './server/seguridad';
 import { cuentaDe, cuentasDisponibles, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
 import { montarRutasCuentas } from './server/cuentas-rutas';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
@@ -973,9 +973,10 @@ app.get('/api/electrum/informe/:id', exigirPlataforma('electrum'), limitar(60), 
     return res.status(404).json({ error: 'Ese informe ya no está. Se guardan media hora porque describen el catastro del momento; pedime otro.', honesto: true });
   }
   // Un mapa geológico viaja por el mismo almacén: se sirve como imagen, en línea, para verlo sin bajarlo.
+  // Un invitado lo ve en el visor pero no recibe la orden de guardarlo.
   const imagen = r.informe.tipo === 'image/jpeg';
   res.setHeader('Content-Type', imagen ? 'image/jpeg' : 'application/pdf');
-  res.setHeader('Content-Disposition', `${imagen ? 'inline' : 'attachment'}; filename="${r.informe.nombre}"`);
+  res.setHeader('Content-Disposition', `${imagen || esInvitado(req) ? 'inline' : 'attachment'}; filename="${r.informe.nombre}"`);
   res.setHeader('Cache-Control', 'private, no-store');
   return res.end(r.informe.pdf);
 });
@@ -1265,7 +1266,9 @@ app.get('/api/ultron/sesion', async (req, res) => {
   if (s) {
     // `vence` va solo cuando la sesión es de un código temporal: la pantalla cuenta hacia atrás y se cierra sola.
     const vence = s.exp && s.exp - s.at < 7 * 24 * 3600_000 ? new Date(s.exp).toISOString() : null;
-    return res.json({ authenticated: true, user: { nombre: s.nombre, correo: s.correo, rol: s.rol, vence }, remoteUrl: ULTRON_REMOTE_URL, honesto: true });
+    // `invitado`: entró con un código. Ve todo, pero la pantalla no le ofrece bajar archivos.
+    const invitado = esInvitado(req);
+    return res.json({ authenticated: true, user: { nombre: s.nombre, correo: s.correo, rol: s.rol, vence, invitado }, remoteUrl: ULTRON_REMOTE_URL, honesto: true });
   }
   res.json({ authenticated: false, user: null, remoteUrl: ULTRON_REMOTE_URL, honesto: true });
 });

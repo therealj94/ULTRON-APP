@@ -22,7 +22,7 @@ import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { Pool } from 'pg';
 import { fijarCuentasAprobadas, personaPorCorreoExacto, type Nivel, type Plataforma } from '../lib/acceso';
-import { fijarClaveCambiadaEn } from './seguridad';
+import { DOMINIO_CODIGO, fijarClaveCambiadaEn } from './seguridad';
 
 const scrypt = promisify(crypto.scrypt) as (clave: crypto.BinaryLike, sal: crypto.BinaryLike, largo: number, opciones: crypto.ScryptOptions) => Promise<Buffer>;
 
@@ -472,7 +472,7 @@ export const HORAS_CODIGO = [1, 5, 24] as const;
 const ALFABETO = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sin 0/O ni 1/I/L: se dicta por teléfono
 
 export function correoDeCodigo(id: number): string {
-  return `codigo-${id}@temporal.drelectrum`;
+  return `codigo-${id}${DOMINIO_CODIGO}`;
 }
 
 /** «de 7kq4 m9xp-2hrt» → «DE-7KQ4-M9XP-2HRT». Null si no tiene forma de código. */

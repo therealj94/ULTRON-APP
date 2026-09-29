@@ -11,7 +11,7 @@
 import type { Express, Request, Response } from 'express';
 import type { Geometry, Position } from 'geojson';
 import proj4 from 'proj4';
-import { exigirPlataforma, limitar } from '../seguridad';
+import { esInvitado, exigirPlataforma, limitar } from '../seguridad';
 import { consulta, conTextoReparado, geometriaDe, hayBase } from './db';
 
 const UTM16_WGS = '+proj=utm +zone=16 +datum=WGS84 +units=m +no_defs';
@@ -139,6 +139,7 @@ export const nombreArchivo = (s: string) =>
 
 export function montarRutasExportar(app: Express) {
   app.get('/api/electrum/concesion/:id/exportar', exigirPlataforma('electrum'), limitar(30), async (req: Request, res: Response) => {
+    if (esInvitado(req)) return res.status(403).json({ error: 'Bajar archivos es para quien tiene usuario. Con un código temporal se puede mirar todo, pero no llevárselo.', code: 'invitado', honesto: true });
     if (!hayBase()) return res.status(503).json({ error: 'El catastro no está conectado en este servidor.', honesto: true });
     const id = Math.floor(Number(req.params.id));
     const formato = String(req.query.formato || '').toLowerCase();
