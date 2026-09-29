@@ -54,6 +54,7 @@ import { ClaudioDePie } from '../avatares/ClaudioDePie';
 import { SelectorAvatar } from '../avatares/SelectorAvatar';
 import { avatarPorId, distribucion, type AvatarId } from '../avatares/catalogo';
 import { AccionesAvatar } from '../components/AccionesAvatar';
+import { ModoConversacion, type EstadoConversacion } from '../components/ModoConversacion';
 import { ChatMesa } from '../components/ChatMesa';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
@@ -173,6 +174,9 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
   const [avatar, setAvatar] = useState<AvatarId | null>(null);
   /** Lo que se dijo en la mesa, para el chat del modo cuadro (vertical). */
   const [mensajes, setMensajes] = useState<Turn[]>([]);
+  /** Conversación fluida (ElevenLabs Agents): el micrófono y la voz van por WebRTC mientras dura. */
+  const [conversando, setConversando] = useState(false);
+  const [estadoConv, setEstadoConv] = useState<EstadoConversacion>('cerrada');
   const { width: anchoPantalla, height: altoPantalla } = useWindowDimensions();
   const horizontal = anchoPantalla >= altoPantalla;
 
@@ -1245,6 +1249,68 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
     void say(de(avatarPorId(id).presentacion), 'HAPPY', { emocion: 'feliz' });
   };
 
+  /**
+   * Conversar de corrido (como el modo voz de ChatGPT): se suelta el micrófono de la mesa y la voz
+   * de la mesa, y los toma la sesión de ElevenLabs (ModoConversacion). Al terminar, todo vuelve.
+   */
+  const toggleConversar = async () => {
+    void haptic('medium');
+    if (conversando) {
+      setConversando(false);
+      return;
+    }
+    await stopSpeaking();
+    speakingRef.current = false;
+    await muteMic();
+    setMenuOpen(false);
+    setConversando(true);
+  };
+  const alEstadoConv = useCallback(
+    (e: EstadoConversacion, detalle?: string) => {
+      setEstadoConv(e);
+      if (e === 'hablando') {
+        setFace('SPEAKING');
+        setStatus('speaking');
+      } else if (e === 'escuchando') {
+        setFace('LISTENING');
+        setStatus('listening');
+        setListening(true);
+      } else if (e === 'conectando') {
+        setFace('THINKING');
+        setStatus('thinking');
+      } else if (e === 'error' || e === 'cerrada') {
+        setConversando(false);
+        if (e === 'error') {
+          miga(`conversación: ${String(detalle || '').slice(0, 80)}`);
+          showBubble(tr('No pude abrir la conversación fluida. Sigo contigo por la mesa.', 'I couldn’t open the live conversation. I’m still here on the desk.'));
+        }
+      }
+    },
+    [showBubble]
+  );
+  const alMensajeConv = useCallback(
+    (rol: 'usuario' | 'ultron', texto: string) => {
+      if (rol === 'usuario') {
+        historial.current = [...historial.current, { rol: 'usuario' as const, texto }].slice(-12);
+        setMensajes((m) => [...m, { rol: 'usuario' as const, texto }].slice(-80));
+      } else {
+        logUltron(texto);
+        showBubble(texto);
+      }
+    },
+    [logUltron, showBubble]
+  );
+  // Al terminar la conversación fluida, la mesa recupera el micrófono (si no estaba en silencio).
+  const convPrevia = useRef(false);
+  useEffect(() => {
+    if (convPrevia.current && !conversando) {
+      setFace(restFace());
+      if (!micMutedRef.current) void unmuteMic().then(() => setStatus('listening'));
+      else setStatus('muted');
+    }
+    convPrevia.current = conversando;
+  }, [conversando, restFace]);
+
   const toggleMute = async () => {
     if (!micMutedRef.current) {
       await muteMic();
@@ -1493,6 +1559,9 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
               onMic={() => void toggleMute()}
               onMenu={() => setMenuOpen(true)}
               onCambiarAvatar={() => setEligiendo('menu')}
+              conversando={conversando}
+              conectando={conversando && estadoConv === 'conectando'}
+              onConversar={() => void toggleConversar()}
             />
           </View>
         </>
@@ -1539,6 +1608,17 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
 
         <View style={[styles.controles, !horizontal && styles.controlesV]} pointerEvents="box-none">
           <Pressable
+            onPress={() => void toggleConversar()}
+            accessibilityRole="button"
+            accessibilityState={{ selected: conversando }}
+            accessibilityLabel={conversando ? tr('Terminar la conversación', 'End the conversation') : tr('Conversar de corrido', 'Talk freely')}
+            style={[styles.escribir, conversando ? { backgroundColor: tema.acento } : { borderWidth: 1.5, borderColor: tema.acento }]}
+          >
+            <Text style={[styles.escribirTexto, { color: conversando ? tema.sobreAcento : tema.acentoTexto }]}>
+              {conversando ? (estadoConv === 'conectando' ? tr('Conectando…', 'Connecting…') : tr('Terminar', 'End')) : tr('Conversar', 'Talk')}
+            </Text>
+          </Pressable>
+          <Pressable
             onPress={() => void toggleMute()}
             accessibilityRole="button"
             accessibilityLabel={micMuted ? tr('Activar el micrófono', 'Turn on the microphone') : tr('Silenciar el micrófono', 'Mute the microphone')}
@@ -1564,6 +1644,8 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
         </View>
         </>
       )}
+
+      <ModoConversacion activa={conversando} avatar={avatarId} idioma={idioma} onEstado={alEstadoConv} onMensaje={alMensajeConv} />
 
       <DeskMenu
         visible={menuOpen}

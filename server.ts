@@ -9,6 +9,7 @@ import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_N
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma } from './server/eleven';
+import { montarVozAgente } from './server/voz-agente';
 import { quitarExpresiones } from './lib/expresiones';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
@@ -2419,6 +2420,9 @@ app.post('/api/turno', exigirMesaODesk, limitar(60), async (req, res) => {
   });
 });
 
+
+/* Conversación fluida (ElevenLabs Agents con nuestro cerebro): server/voz-agente.ts. */
+montarVozAgente(app, { exigirMesaODesk, limitar, sesionDe, puerto: PORT });
 
 /**
  * Turno en streaming (SSE). Eventos: `tools`, `emocion` (antes del primer texto), `delta`,

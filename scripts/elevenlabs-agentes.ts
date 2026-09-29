@@ -1,0 +1,145 @@
+#!/usr/bin/env -S npx tsx
+/**
+ * Crea (o actualiza) los seis agentes de ElevenLabs de la conversación fluida de AU-RA FP: uno por
+ * avatar (Guardián, AU-RA, Claudio) e idioma (español, inglés). Cada agente escucha, detecta el
+ * turno, se deja interrumpir y habla con la voz v4 del avatar; para pensar llama a nuestro cerebro
+ * (server/voz-agente.ts, `/api/voz/llm`) como «LLM propio».
+ *
+ *   ELEVENLABS_API_KEY=… ULTRON_SESION_SECRETO=… npx tsx scripts/elevenlabs-agentes.ts [--url https://aura-fp.onrender.com]
+ *
+ * ULTRON_SESION_SECRETO tiene que ser el MISMO que usa el servidor en Render: de él se deriva la
+ * llave que ElevenLabs manda en cada turno (secretoDerivado). La llave se guarda en los secretos de
+ * ElevenLabs; no se imprime. Es idempotente: si un agente con ese nombre ya existe, lo actualiza.
+ * Imprime los ids para pegarlos en AGENTES (server/voz-agente.ts).
+ */
+import { secretoDerivado } from '../server/seguridad';
+import { ETIQUETA_SECRETO_LLM } from '../server/voz-agente';
+import { NOMBRE_AVATAR, VOCES_ELEVEN, type AvatarVoz, type Idioma } from '../server/eleven';
+
+const API = 'https://api.elevenlabs.io/v1';
+const key = String(process.env.ELEVENLABS_API_KEY || '').trim();
+if (!key || !process.env.ULTRON_SESION_SECRETO) {
+  console.error('Faltan ELEVENLABS_API_KEY y ULTRON_SESION_SECRETO en el entorno.');
+  process.exit(1);
+}
+const iUrl = process.argv.indexOf('--url');
+const BASE = (iUrl > 0 ? process.argv[iUrl + 1] : 'https://aura-fp.onrender.com').replace(/\/+$/, '');
+
+async function api(ruta: string, init: RequestInit = {}): Promise<any> {
+  const r = await fetch(`${API}${ruta}`, { ...init, headers: { 'xi-api-key': key, 'Content-Type': 'application/json', ...(init.headers || {}) } });
+  const texto = await r.text();
+  let j: any = null;
+  try {
+    j = JSON.parse(texto);
+  } catch {
+    j = { crudo: texto.slice(0, 300) };
+  }
+  if (!r.ok) throw Object.assign(new Error(`${init.method || 'GET'} ${ruta} → ${r.status}: ${JSON.stringify(j).slice(0, 400)}`), { status: r.status, cuerpo: j });
+  return j;
+}
+
+/** El secreto «aura-llm» en ElevenLabs: se crea si falta y se reemplaza si ya estaba. */
+async function secreto(): Promise<string> {
+  const nombre = 'aura-llm';
+  const valor = secretoDerivado(ETIQUETA_SECRETO_LLM);
+  const lista = await api('/convai/secrets');
+  const viejo = (lista.secrets || []).find((s: any) => s.name === nombre);
+  if (viejo) {
+    await api(`/convai/secrets/${viejo.secret_id}`, { method: 'PATCH', body: JSON.stringify({ type: 'update', name: nombre, value: valor }) });
+    return viejo.secret_id;
+  }
+  const nuevo = await api('/convai/secrets', { method: 'POST', body: JSON.stringify({ type: 'new', name: nombre, value: valor }) });
+  return nuevo.secret_id;
+}
+
+const PRIMERA: Record<AvatarVoz, Record<Idioma, string>> = {
+  ojos: { es: 'Te escucho.', en: 'I’m listening.' },
+  aura: { es: 'Aquí estoy. Te escucho.', en: 'I’m here. I’m listening.' },
+  claudio: { es: '¡Aquí estoy! Cuéntame.', en: 'I’m here! Tell me.' },
+};
+
+/** Lo que no hay que tomar como interrupción: asentir mientras el avatar habla. */
+const ASENTIR: Record<Idioma, string[]> = {
+  es: ['ajá', 'sí', 'ok', 'okay', 'mhm', 'claro', 'ya', 'exacto', 'ah ok', 'vale'],
+  en: ['uh-huh', 'yeah', 'yes', 'ok', 'okay', 'mhm', 'right', 'sure', 'got it'],
+};
+
+function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: string) {
+  const nombre = `AU-RA FP · ${NOMBRE_AVATAR[avatar][idioma]} (${idioma})`;
+  return {
+    name: nombre,
+    conversation_config: {
+      agent: {
+        language: idioma,
+        first_message: PRIMERA[avatar][idioma],
+        dynamic_variables: { dynamic_variable_placeholders: { pase: '' } },
+        prompt: {
+          // Nuestro cerebro arma su propio prompt (avatar, idioma, memoria, herramientas); esto solo
+          // queda de referencia en el panel de ElevenLabs.
+          prompt: `Eres ${NOMBRE_AVATAR[avatar][idioma]} de AU-RA FP. El cerebro vive en el servidor de Orden Global.`,
+          llm: 'custom-llm',
+          custom_llm: {
+            url: `${BASE}/api/voz/llm`,
+            model_id: 'aura',
+            api_key: { secret_id: secretId },
+            api_type: 'chat_completions',
+            request_headers: { 'X-Pase': { variable_name: 'pase' } },
+          },
+          backup_llm_config: { preference: 'disabled' },
+        },
+      },
+      tts: { model_id: modeloTts, voice_id: VOCES_ELEVEN[avatar][idioma] },
+      asr: { provider: 'scribe_realtime', quality: 'high', keywords: ['AU-RA', 'Aura', 'Claudio', 'Orden Global', 'Guardián', 'Genesis ID', 'Veta Wallet'] },
+      turn: {
+        turn_model: 'turn_v3',
+        turn_eagerness: 'normal',
+        speculative_turn: false,
+        interruption_ignore_terms: ASENTIR[idioma],
+        interruption_ignore_term_languages: [idioma],
+        merge_with_default_ignore_terms: true,
+        soft_timeout_config: { timeout_seconds: 2.5, message: idioma === 'en' ? 'Hmm… let me see.' : 'Mmm… a ver.' },
+      },
+      conversation: { max_duration_seconds: 1800 },
+    },
+    platform_settings: { auth: { enable_auth: true } },
+  };
+}
+
+async function main() {
+  const secretId = await secreto();
+  console.log('secreto aura-llm listo');
+  const existentes: any[] = (await api('/convai/agents?page_size=100')).agents || [];
+  const ids: Record<string, Record<string, string>> = {};
+  for (const avatar of ['ojos', 'aura', 'claudio'] as AvatarVoz[]) {
+    ids[avatar] = {};
+    for (const idioma of ['es', 'en'] as Idioma[]) {
+      let hecho: string | null = null;
+      // v4 Turbo primero (la voz de la mesa); si la API aún no lo acepta en agentes, v3 conversacional.
+      for (const modelo of ['eleven_v4_turbo', 'eleven_v3_conversational', 'eleven_flash_v2_5']) {
+        const cuerpo = config(avatar, idioma, secretId, modelo);
+        const ya = existentes.find((a) => a.name === cuerpo.name);
+        try {
+          if (ya) {
+            await api(`/convai/agents/${ya.agent_id}`, { method: 'PATCH', body: JSON.stringify(cuerpo) });
+            hecho = ya.agent_id;
+          } else {
+            hecho = (await api('/convai/agents/create', { method: 'POST', body: JSON.stringify(cuerpo) })).agent_id;
+          }
+          console.log(`✓ ${cuerpo.name}: ${hecho} (tts ${modelo})`);
+          break;
+        } catch (e: any) {
+          if (e.status === 422 || e.status === 400) {
+            console.warn(`  ${cuerpo.name}: ${modelo} no aceptado (${e.status}); pruebo el siguiente`);
+            continue;
+          }
+          throw e;
+        }
+      }
+      if (!hecho) throw new Error(`No pude crear el agente ${avatar}/${idioma}`);
+      ids[avatar][idioma] = hecho;
+    }
+  }
+  console.log(JSON.stringify(ids, null, 2));
+}
+
+await main();

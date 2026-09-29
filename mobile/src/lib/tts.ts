@@ -84,6 +84,11 @@ function emitLevel(v: number) {
   levelListener?.(q);
 }
 
+/** El nivel de boca de una voz que no suena por aquí (la conversación fluida, por WebRTC). */
+export function nivelExterno(v01: number) {
+  emitLevel(v01);
+}
+
 /** Texto para pedir voz: sin markdown ni emojis. Las expresiones conocidas se quedan (suenan); el resto de corchetes, no. */
 export function cleanForSpeech(text: string) {
   return soloExpresiones(String(text || ''))

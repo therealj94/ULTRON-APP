@@ -161,6 +161,19 @@ export function firmarDato(prefijo: string, dato: object): string {
   return `${prefijo}.${body}.${sig}`;
 }
 
+/**
+ * Un secreto propio de un uso (p. ej. la llave que ElevenLabs manda a nuestro cerebro), derivado del
+ * de las sesiones: no hace falta otra variable en Render, y rotar ULTRON_SESION_SECRETO lo rota.
+ */
+export function secretoDerivado(etiqueta: string): string {
+  return crypto.createHmac('sha256', secretoSesion()).update(`derivado:${etiqueta}`).digest('base64url');
+}
+
+/** Compara dos secretos sin filtrar por el tiempo cuánto coinciden. */
+export function mismoSecreto(esperado: string, dado: string): boolean {
+  return firmaCanonica(esperado, dado);
+}
+
 export function leerDato(prefijo: string, token: string): any | null {
   const partes = String(token || '').split('.');
   if (partes.length !== 3 || partes[0] !== prefijo) return null;

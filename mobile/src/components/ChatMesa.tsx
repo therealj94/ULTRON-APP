@@ -32,6 +32,10 @@ type Props = {
   onMic: () => void;
   onMenu: () => void;
   onCambiarAvatar: () => void;
+  /** Conversación fluida: el botón para empezar o terminar, y si está conectando. */
+  conversando: boolean;
+  conectando: boolean;
+  onConversar: () => void;
 };
 
 export function ChatMesa(p: Props) {
@@ -60,6 +64,20 @@ export function ChatMesa(p: Props) {
           <Text style={s.quienNombre}>{p.nombreAvatar}</Text>
           <Text style={s.quienEstado}>· {p.estado}</Text>
           <Text style={[s.cambiar, { color: tema.acentoTexto }]}>{tr('Cambiar', 'Switch')}</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => {
+            toque();
+            p.onConversar();
+          }}
+          style={[s.conversar, p.conversando ? { backgroundColor: tema.acento } : { borderColor: tema.acento, borderWidth: 1.5 }]}
+          accessibilityRole="button"
+          accessibilityState={{ selected: p.conversando }}
+          accessibilityLabel={p.conversando ? tr('Terminar la conversación', 'End the conversation') : tr('Conversar de corrido', 'Talk freely')}
+        >
+          <Text style={[s.conversarTexto, { color: p.conversando ? tema.sobreAcento : tema.acentoTexto }]}>
+            {p.conversando ? (p.conectando ? tr('Conectando…', 'Connecting…') : tr('Terminar', 'End')) : tr('Conversar', 'Talk')}
+          </Text>
         </Pressable>
         <Pressable
           onPress={() => {
@@ -151,6 +169,8 @@ const s = StyleSheet.create({
   quienNombre: { color: T.texto, fontSize: 15, fontWeight: '800' },
   quienEstado: { color: T.texto2, fontSize: 13, flexShrink: 1 },
   cambiar: { marginLeft: 'auto', fontSize: 13, fontWeight: '700' },
+  conversar: { height: 40, borderRadius: 20, paddingHorizontal: 14, alignItems: 'center', justifyContent: 'center' },
+  conversarTexto: { fontSize: 14, fontWeight: '800' },
   menu: { width: 44, height: 40, borderRadius: 20, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center', gap: 4 },
   raya: { width: 18, height: 2, borderRadius: 1, backgroundColor: T.texto },
   lista: { flex: 1 },
