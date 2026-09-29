@@ -26,9 +26,9 @@ import { METAS, expresionDeLinea, reaccionA, sinEtiquetas, type Expresion, type 
 type Rasgos = { nombre: string; papel: string; color: string; piel: string; sombra: string; iris: string };
 
 export const RETRATOS: Record<string, Rasgos> = {
-  electrum: { nombre: 'Dr Electrum', papel: 'Geólogo', color: '#FFAE3B', piel: '#E7B48A', sombra: '#B97F57', iris: '#6B4A2B' },
-  tatiana: { nombre: 'Ing. Tatiana', papel: 'Ambiental y legal', color: '#5CD6C4', piel: '#D9A07C', sombra: '#A86E4E', iris: '#2F6B5E' },
-  chema: { nombre: 'Don Chema', papel: 'Minero de campo', color: '#E08A5A', piel: '#B97B55', sombra: '#86523A', iris: '#3B2616' },
+  electrum: { nombre: 'Dr Electrum', papel: 'Geólogo sénior', color: '#FFAE3B', piel: '#E2AE86', sombra: '#B97F57', iris: '#6B4A2B' },
+  tatiana: { nombre: 'Ing. Tatiana', papel: 'Ing. civil y ambiental', color: '#5CD6C4', piel: '#D9A07C', sombra: '#A86E4E', iris: '#2F6B5E' },
+  chema: { nombre: 'Don Chema', papel: 'Metalurgista', color: '#E08A5A', piel: '#B97B55', sombra: '#86523A', iris: '#3B2616' },
   narrador: { nombre: 'Narrador', papel: 'Voz del recorrido', color: '#B39DFF', piel: '#2A2150', sombra: '#140F2C', iris: '#E6DEFF' },
 };
 
@@ -55,12 +55,13 @@ type Partes = {
   mejillas: SVGGElement | null;
   anillo: SVGCircleElement | null;
   halo: SVGCircleElement | null;
-  extra: SVGGraphicsElement | null; // lo que se mueve aparte: bigote, aretes, lámpara, ondas
+  extra: SVGGraphicsElement | null; // lo que se mueve aparte: aretes, lámpara, ondas
+  bigote: SVGGElement | null; // sigue a la boca (el doctor y Don Chema)
 };
 
 const vacias = (): Partes => ({
   cabeza: null, ojoI: null, ojoD: null, irisI: null, irisD: null, cejaI: null, cejaD: null, boca: null,
-  bocaClip: null, dientes: null, lengua: null, mejillas: null, anillo: null, halo: null, extra: null,
+  bocaClip: null, dientes: null, lengua: null, mejillas: null, anillo: null, halo: null, extra: null, bigote: null,
 });
 
 /** La boca como curva: comisuras que suben con la sonrisa, labio de abajo que baja con la voz. */
@@ -211,9 +212,9 @@ function Cara({ quien, mesa }: { quien: string; mesa: { current: Mesa } }) {
       P.halo?.setAttribute('opacity', f(habla ? 0.35 + voz * 0.5 : 0));
 
       // Lo propio de cada uno.
+      P.bigote?.setAttribute('transform', `translate(0 ${f(abreBoca * 0.28 - cur.sonrisa * 1.2)})`);
       if (P.extra) {
-        if (quien === 'chema') P.extra.setAttribute('transform', `translate(0 ${f(abreBoca * 0.28 - cur.sonrisa * 1.2)})`);
-        else if (quien === 'tatiana') P.extra.setAttribute('transform', `rotate(${f(-inclina * 0.8 + Math.sin(t * 2.1) * 2)} 60 60)`);
+        if (quien === 'tatiana') P.extra.setAttribute('transform', `rotate(${f(-inclina * 0.8 + Math.sin(t * 2.1) * 2)} 60 60)`);
         else if (quien === 'electrum') P.extra.setAttribute('opacity', f(0.55 + (habla ? voz * 0.45 : 0.1 + Math.sin(t * 1.3) * 0.05)));
         else if (quien === 'narrador') P.extra.setAttribute('transform', `rotate(${f(t * 14)} 60 60)`);
       }
@@ -247,8 +248,8 @@ function Cara({ quien, mesa }: { quien: string; mesa: { current: Mesa } }) {
       ref={set(lado === 'I' ? 'cejaI' : 'cejaD')}
       d={lado === 'I' ? 'M35 46 Q43 40.5 51 44.5' : 'M69 44.5 Q77 40.5 85 46'}
       fill="none"
-      stroke={quien === 'chema' ? '#E8E0D4' : esNarrador ? r.color : '#3A2418'}
-      strokeWidth={quien === 'chema' ? 3.4 : 2.6}
+      stroke={quien === 'chema' ? '#E8E0D4' : quien === 'electrum' ? '#D9D3C9' : esNarrador ? r.color : '#3A2418'}
+      strokeWidth={quien === 'chema' || quien === 'electrum' ? 3.4 : 2.6}
       strokeLinecap="round"
     />
   );
@@ -301,8 +302,23 @@ function Cara({ quien, mesa }: { quien: string; mesa: { current: Mesa } }) {
             <>
               {/* cuello y hombros */}
               <path d="M44 100 L46 90 L74 90 L76 100 Z" fill={r.sombra} />
-              <path d="M14 122 C18 104 36 98 60 98 C84 98 102 104 106 122 Z" fill={quien === 'tatiana' ? '#2E4A55' : quien === 'chema' ? '#5A4630' : '#3D4A2E'} />
-              {quien === 'tatiana' && <path d="M22 60 C18 90 26 104 34 106 L86 106 C94 104 102 90 98 60 Z" fill="#2B1A12" />}
+              <path d="M14 122 C18 104 36 98 60 98 C84 98 102 104 106 122 Z" fill={quien === 'tatiana' ? '#3F6E8C' : quien === 'chema' ? '#5A4630' : '#4A5236'} />
+              {quien === 'tatiana' && (
+                <>
+                  {/* cabello recogido detrás y chaleco reflectivo de obra */}
+                  <path d="M24 50 C20 80 26 98 34 102 L86 102 C94 98 100 80 96 50 Z" fill="#2B1A12" />
+                  <path d="M14 122 C17 107 28 101 45 99 L52 122 Z" fill="#FF8A1F" />
+                  <path d="M106 122 C103 107 92 101 75 99 L68 122 Z" fill="#FF8A1F" />
+                  <path d="M17 110 L49 106 L50.5 111 L16 115 Z" fill="#E9F2F4" opacity=".9" />
+                  <path d="M103 110 L71 106 L69.5 111 L104 115 Z" fill="#E9F2F4" opacity=".9" />
+                </>
+              )}
+              {quien === 'electrum' && (
+                <>
+                  {/* camisa de campo con cuello */}
+                  <path d="M46 98 L60 110 L74 98 L70 96 L60 104 L50 96 Z" fill="#6B7250" />
+                </>
+              )}
               {/* orejas */}
               <ellipse cx="27" cy="64" rx="5" ry="7.5" fill={r.sombra} />
               <ellipse cx="93" cy="64" rx="5" ry="7.5" fill={r.sombra} />
@@ -310,6 +326,23 @@ function Cara({ quien, mesa }: { quien: string; mesa: { current: Mesa } }) {
               <path d="M60 24 C82 24 94 40 94 62 C94 84 80 98 60 98 C40 98 26 84 26 62 C26 40 38 24 60 24 Z" fill={`url(#${id}-piel)`} />
               {/* nariz */}
               <path d="M60 60 Q57 72 55.5 74 Q60 77 64.5 74" fill="none" stroke={r.sombra} strokeWidth="1.6" strokeLinecap="round" opacity=".8" />
+              {quien === 'electrum' && (
+                <>
+                  {/* los años de campo: canas en las sienes, patas de gallo y surcos */}
+                  <path d="M26 40 C25 50 26 60 29 68 L33 66 C31 58 30 48 31 40 Z" fill="#CFC9BF" />
+                  <path d="M94 40 C95 50 94 60 91 68 L87 66 C89 58 90 48 89 40 Z" fill="#CFC9BF" />
+                  {/* barba corta: va debajo de la boca, que se abre encima */}
+                  <path d="M29 66 C29 88 43 101 60 101 C77 101 91 88 91 66 C88 79 79 92 60 92 C41 92 32 79 29 66 Z" fill="#CFC9BF" />
+                  <path d="M52 92.5 Q60 95.5 68 92.5 Q60 98 52 92.5 Z" fill="#B9B2A7" />
+                  <g fill="none" stroke={r.sombra} strokeWidth="1" strokeLinecap="round" opacity=".7">
+                    <path d="M33 57 L29.5 55.5 M33 60 L29 60 M33 63 L29.5 64.5" />
+                    <path d="M87 57 L90.5 55.5 M87 60 L91 60 M87 63 L90.5 64.5" />
+                    <path d="M50 73 Q46 79 47.5 86" />
+                    <path d="M70 73 Q74 79 72.5 86" />
+                    <path d="M49 41 Q60 39 71 41" opacity=".6" />
+                  </g>
+                </>
+              )}
             </>
           )}
 
@@ -333,9 +366,17 @@ function Cara({ quien, mesa }: { quien: string; mesa: { current: Mesa } }) {
 
           {quien === 'tatiana' && (
             <>
-              {/* cabello con flequillo de lado */}
-              <path d="M24 64 C18 30 38 16 62 17 C86 18 100 36 96 64 C94 50 88 40 80 36 C70 42 52 40 42 32 C36 40 30 50 28 64 Z" fill="#3A2317" />
-              <path d="M42 32 C52 40 70 42 80 36 C74 30 62 26 50 28 Z" fill="#52321F" />
+              {/* cabello a los lados, bajo el casco */}
+              <path d="M26 38 C23 50 24 62 28 72 L32 70 C29 60 29 48 31 38 Z" fill="#3A2317" />
+              <path d="M94 38 C97 50 96 62 92 72 L88 70 C91 60 91 48 89 38 Z" fill="#3A2317" />
+              {/* casco blanco de ingeniera, con su calcomanía */}
+              <path d="M25 36 C25 7 95 7 95 36 Z" fill="#F3F5F7" />
+              <path d="M25 36 C25 22 32 13 44 9.5 C36 16 33 26 33 36 Z" fill="#D5DCE2" />
+              <path d="M57 8.5 L63 8.5 L63 35 L57 35 Z" fill="#DCE2E7" />
+              <path d="M17 36.5 Q60 31 103 36.5 Q104 40.5 99 41.5 Q60 36.5 21 41.5 Q16 40.5 17 36.5 Z" fill="#E6EBEF" />
+              <circle cx="76" cy="24" r="4.2" fill={r.color} />
+              <path d="M74 24 L75.6 25.8 L78.4 22.4" fill="none" stroke="#0B1E1B" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M38 22 C42 16 49 12.5 55 11.5" fill="none" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" opacity=".8" />
               {/* lentes de seguridad */}
               <rect x="34" y="50" width="20" height="15" rx="6" fill={r.color} fillOpacity=".08" stroke={r.color} strokeWidth="1.8" />
               <rect x="66" y="50" width="20" height="15" rx="6" fill={r.color} fillOpacity=".08" stroke={r.color} strokeWidth="1.8" />
@@ -352,7 +393,7 @@ function Cara({ quien, mesa }: { quien: string; mesa: { current: Mesa } }) {
           {quien === 'chema' && (
             <>
               {/* bigote que sigue la boca */}
-              <g ref={set('extra')}>
+              <g ref={set('bigote')}>
                 <path d="M42 80 C48 74 55 76 60 78 C65 76 72 74 78 80 C72 84 65 82 60 81 C55 82 48 84 42 80 Z" fill="#E8E0D4" />
               </g>
               {/* sombrero de ala ancha, con su cinta */}
@@ -365,6 +406,10 @@ function Cara({ quien, mesa }: { quien: string; mesa: { current: Mesa } }) {
           )}
           {quien === 'electrum' && (
             <>
+              {/* bigote canoso: sigue a la boca */}
+              <g ref={set('bigote')}>
+                <path d="M45 81 C50 76.5 56 77.5 60 79.5 C64 77.5 70 76.5 75 81 C70 83.5 64.5 82.5 60 81.2 C55.5 82.5 50 83.5 45 81 Z" fill="#DDD7CD" />
+              </g>
               {/* casco minero con lámpara */}
               <path d="M24 34 C24 4 96 4 96 34 Z" fill={r.color} />
               <path d="M36 24 C43 18 50 15.5 56 15" fill="none" stroke="#fff" strokeOpacity=".35" strokeWidth="2.5" strokeLinecap="round" />

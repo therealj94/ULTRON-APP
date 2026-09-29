@@ -564,7 +564,10 @@ export default function App() {
         alEstado: setEstadoOido,
         hablandoAhora: suena,
         // Hablarle encima lo calla y lo pone a escuchar, como en una conversación de verdad.
-        alInterrumpir: () => callar(),
+        alInterrumpir: () => {
+          callar();
+          window.dispatchEvent(new Event('electrum:interrumpido'));
+        },
       }),
     []
   );

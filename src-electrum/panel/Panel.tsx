@@ -504,10 +504,14 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
     setTurnos((t) => [...t, { de: 'electrum', texto, local: true }]);
   }, []);
 
+  /** Lo que se dijo mientras el doctor pensaba: se pregunta en cuanto termine (ver más abajo). */
+  const enCola = useRef<string | null>(null);
   const preguntar = useCallback(
     async (pregunta: string) => {
       const q = pregunta.trim();
       if (!q || pensando) return;
+      // Una pregunta nueva deja sin efecto la que estaba anotada.
+      enCola.current = null;
       // Una pregunta nueva corta la respuesta anterior que todavía suena.
       callar();
       setHablando(false);
@@ -690,10 +694,16 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                   const deVoz = typeof d.voz === 'string' ? expresionDeLinea(d.voz, true) : 'neutral';
                   if (deVoz !== 'neutral' && (!d.emocion || d.emocion === 'neutral')) onEmocion(EMOCION_DE[deVoz]);
                   else if (d.emocion) onEmocion(d.emocion);
+                  // Contestó la mesa (Don Chema, la Ing. Tatiana…): cada uno con su voz y su cara.
+                  const voces: Array<LineaDialogo & { nombre: string }> = Array.isArray(d.voces)
+                    ? d.voces
+                        .filter((v: any) => v && RETRATOS[v.quien] && typeof v.texto === 'string' && v.texto.trim())
+                        .map((v: any) => ({ quien: String(v.quien), texto: String(v.texto), nombre: RETRATOS[v.quien].nombre }))
+                    : [];
                   if (vozActivaRef.current && d.texto) {
                     vozEnCamino = true;
                     // `voz` trae las etiquetas de expresión de v4 que la pantalla no enseña.
-                    void hablar(typeof d.voz === 'string' && d.voz ? d.voz : d.texto, d.emocion, headersElectrum(), {
+                    const avisosVoz: Parameters<typeof hablar>[3] = {
                       alEmpezar: () => {
                         setHablando(true);
                         onFace('SPEAKING');
@@ -712,9 +722,11 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                           avisoSuelto(`No pude decírtelo en voz alta: ${motivo}. La respuesta está escrita arriba.`);
                         }
                       },
-                    });
+                    };
+                    if (voces.length) void hablarDialogo(voces, headersElectrum(), avisosVoz);
+                    else void hablar(typeof d.voz === 'string' && d.voz ? d.voz : d.texto, d.emocion, headersElectrum(), avisosVoz);
                   }
-                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined, opciones: opcionesDelTurno }]);
+                  setTurnos((t) => [...t, { de: 'electrum', texto: d.texto || 'No pude contestar.', panel: d.panel, traza: d.traza, informe: informeDelTurno, imagenes: imagenesDelTurno.length ? imagenesDelTurno : undefined, opciones: opcionesDelTurno, dialogo: voces.length ? voces : undefined }]);
                   terminado = true;
                 }
               }
@@ -923,11 +935,42 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
    * cosa se dice, en vez de tragarse el pedido.
    */
   const ultimoPedido = useRef(0);
+  /*
+   * EN UNA CONVERSACIÓN NADA SE PIERDE. Lo que se dice mientras el doctor todavía piensa queda
+   * anotado y se pregunta en cuanto termina de contestar (la última gana: si se corrigió, vale la
+   * corrección). Antes se tiraba en silencio y parecía que no había oído.
+   */
+  const preguntarRef = useRef(preguntar);
+  preguntarRef.current = preguntar;
+  const pensandoRef = useRef(pensando);
+  pensandoRef.current = pensando;
+  useEffect(() => {
+    // Terminó de contestar, o le cortaron la respuesta hablándole encima: va la anotada.
+    const alTerminar = () => {
+      const q = enCola.current;
+      if (!q) return;
+      // Un respiro para que la pantalla suelte el «pensando» antes de la siguiente.
+      window.setTimeout(() => {
+        if (enCola.current !== q || pensandoRef.current) return;
+        enCola.current = null;
+        void preguntarRef.current(q);
+      }, 120);
+    };
+    window.addEventListener('electrum:respondido', alTerminar);
+    window.addEventListener('electrum:interrumpido', alTerminar);
+    return () => {
+      window.removeEventListener('electrum:respondido', alTerminar);
+      window.removeEventListener('electrum:interrumpido', alTerminar);
+    };
+  }, []);
   useEffect(() => {
     if (!pedido || pedido.n === ultimoPedido.current) return;
     ultimoPedido.current = pedido.n;
     if (pensando) {
-      avisoSuelto('Estoy terminando otra respuesta: volvé a tocar el botón cuando acabe.');
+      if (pedido.tipo === 'pregunta') {
+        enCola.current = pedido.texto;
+        avisoSuelto(`Anotado: «${pedido.texto.slice(0, 80)}». Se lo contesto apenas termine esta respuesta.`);
+      } else avisoSuelto('Estoy terminando otra respuesta: volvé a tocar el botón cuando acabe.');
       return;
     }
     if (pedido.tipo === 'pregunta') void preguntar(pedido.texto);

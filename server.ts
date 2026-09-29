@@ -748,7 +748,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
       }
     );
     if (!seFue) recordarHilo(clave, mensaje, salida.texto);
-    enviar('fin', { texto: salida.texto, voz: salida.voz, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin, trazaId: salida.trazaId });
+    enviar('fin', { texto: salida.texto, voz: salida.voz, voces: salida.voces, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin, trazaId: salida.trazaId });
   } catch (e: any) {
     console.error('[electrum] turno en vivo falló:', String(e?.message || e).slice(0, 200));
     enviar('error', { error: 'Se me cayó el turno. Volvé a preguntarme.' });

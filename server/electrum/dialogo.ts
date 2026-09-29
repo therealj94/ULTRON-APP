@@ -17,13 +17,14 @@ import { fetchNodo, NODO_MODELO, NODO_SECRETO, NODO_URL } from '../../lib/nodo';
 import { guionEleven, elevenListo } from '../eleven';
 import { expresar } from '../voz';
 
-export type Personaje = 'electrum' | 'tatiana' | 'chema' | 'narrador';
+import type { Personaje } from './personajes';
+export type { Personaje };
 
 /** Quién es cada uno y con qué voz habla. */
 export const PERSONAJES: Record<Personaje, { nombre: string; voz: string; quien: string }> = {
-  electrum: { nombre: 'Dr Electrum', voz: 'Rt1JHkPO27QCUX6Nd5bV', quien: 'geólogo de minas con décadas de campo, cálido y preciso' },
-  tatiana: { nombre: 'Ing. Tatiana', voz: '2rigMbVWLdqtBSCahJFX', quien: 'ingeniera ambiental y legal, curiosa, hace las preguntas que haría quien escucha' },
-  chema: { nombre: 'Don Chema', voz: 'gbTn1bmCvNgk0QEAVyfM', quien: 'minero de campo de Olancho, práctico, habla sencillo y con refranes' },
+  electrum: { nombre: 'Dr Electrum', voz: 'Rt1JHkPO27QCUX6Nd5bV', quien: 'geólogo sénior con cuarenta años de campo, pausado y preciso' },
+  tatiana: { nombre: 'Ing. Tatiana', voz: '2rigMbVWLdqtBSCahJFX', quien: 'ingeniera civil y ambiental: construcción, relaves, permisos; ordenada y directa' },
+  chema: { nombre: 'Don Chema', voz: 'gbTn1bmCvNgk0QEAVyfM', quien: 'metalurgista y minero de planta de Olancho, práctico, habla sencillo y con refranes' },
   narrador: { nombre: 'Narrador', voz: 'sDh3eviBhiuHKi0MjTNq', quien: 'narrador sereno de documental' },
 };
 
@@ -66,7 +67,7 @@ export function partirDialogo(lineas: Linea[], tope = TOPE_TROZO): Linea[][] {
 /* ------------------------------------------------------------------ el guion */
 
 const INSTRUCCION = [
-  'Convertí el texto en un diálogo hablado, en español de Honduras, entre Dr Electrum (geólogo de minas, cálido y preciso) y la ingeniera Tatiana (curiosa, pregunta lo que preguntaría quien escucha).',
+  'Convertí el texto en un diálogo hablado, en español de Honduras, entre Dr Electrum (geólogo sénior, pausado y preciso) y la Ing. Tatiana (ingeniera civil y ambiental: pregunta lo que preguntaría quien escucha y aporta obra, permisos y riesgos). Si el texto toca planta, proceso del mineral o explotación, entra también Don Chema (metalurgista y minero de planta, práctico, con algún refrán): quien = "chema".',
   'Reglas: entre 6 y 12 líneas cortas (una o dos frases cada una); Tatiana abre con una pregunta o un comentario; se contestan de verdad, a veces se interrumpen o se ríen; sin inventar cifras: solo las del texto; sin listas ni markdown.',
   'Marcá cómo se dice cada línea con UNA etiqueta de voz en inglés al principio cuando sume: [curious], [thoughtful], [warmly], [laughs], [chuckles], [surprised], [serious], [excited], [sighs], [whispers]. No en todas.',
   'Contestá SOLO un JSON: {"lineas":[{"quien":"tatiana","texto":"..."},{"quien":"electrum","texto":"..."}]}.',

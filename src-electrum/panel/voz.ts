@@ -519,16 +519,8 @@ function lectorDialogo(r: Response, alSegmentos: (s: Segmento[]) => void): Lecto
  * (las caras se animan con eso). `callar()` lo corta como a cualquier voz.
  */
 export async function hablarDialogo(lineas: LineaDialogo[], headers: Record<string, string>, avisos: Avisos = {}) {
-  callar();
-  const mia = ++generacion;
   const trozos = partirDialogo(lineas.map(({ quien, texto }) => ({ quien, texto })));
-  if (!trozos.length) return;
-  reanudarVoz();
-  const a = elReproductor();
   const corte = new AbortController();
-  cortePendiente = corte;
-  const participantes = [...new Set(lineas.map((l) => l.quien))];
-  publicarEscena({ hablante: null, participantes, linea: null });
   const pedir = async (i: number): Promise<Response> => {
     const r = await fetch('/api/electrum/dialogo', {
       method: 'POST',
@@ -542,8 +534,30 @@ export async function hablarDialogo(lineas: LineaDialogo[], headers: Record<stri
     }
     return r;
   };
+  // Como `hablar`: el «estoy revisando…» termina su frase mientras ya se pide el primer trozo.
+  let adelantado: Promise<Response> | null = null;
+  const rel = relleno;
+  if (rel && rel.gen === generacion && trozos.length) {
+    adelantado = pedir(0);
+    adelantado.catch(() => {});
+    await Promise.race([rel.fin, new Promise((ok) => setTimeout(ok, 7000))]);
+    if (generacion !== rel.gen) {
+      corte.abort();
+      return;
+    }
+  }
+  callar();
+  const mia = ++generacion;
+  if (!trozos.length) return;
+  reanudarVoz();
+  const a = elReproductor();
+  cortePendiente = corte;
+  // En la mesa siempre está el doctor: si contesta Don Chema solo, Dr Electrum lo escucha a su lado.
+  const hablan = [...new Set(lineas.map((l) => l.quien))];
+  const participantes = hablan.some((q) => q !== 'electrum' && q !== 'narrador') && !hablan.includes('electrum') ? ['electrum', ...hablan] : hablan;
+  publicarEscena({ hablante: null, participantes, linea: null });
   let empezo = false;
-  let siguiente: Promise<Response> | null = pedir(0);
+  let siguiente: Promise<Response> | null = adelantado || pedir(0);
   try {
     for (let i = 0; i < trozos.length; i++) {
       const r = await siguiente!;
