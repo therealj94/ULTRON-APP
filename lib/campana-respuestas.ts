@@ -16,7 +16,7 @@
  */
 
 import tls from 'node:tls';
-import { canales } from './canales';
+import { clave } from './boveda';
 
 export type Respuesta = { de: string; correo: string; asunto: string; fecha: string; extracto: string };
 export type Clasificadas = { respuestas: Respuesta[]; bajas: Respuesta[]; rebotes: Respuesta[] };
@@ -205,16 +205,35 @@ export async function leerBuzon(desde: Date) {
 
 // ─── La revisión diaria ──────────────────────────────────────────────────────────────────────────
 
+/** Al chat de José (TELEGRAM_JOSE_CHAT_ID), no al de la junta: el buzón es suyo. */
+async function aJose(texto: string): Promise<{ ok: boolean; detalle: string }> {
+  const token = clave('telegram_token');
+  const chat = process.env.TELEGRAM_JOSE_CHAT_ID || clave('telegram_chat');
+  if (!token || !chat) return { ok: false, detalle: 'Falta el bot o el chat de José en Telegram.' };
+  try {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chat, text: texto.slice(0, 3900) }),
+      signal: AbortSignal.timeout(12000),
+    });
+    const j: any = await r.json().catch(() => ({}));
+    return r.ok && j.ok ? { ok: true, detalle: 'enviado a José' } : { ok: false, detalle: `Telegram ${r.status}` };
+  } catch (e: any) {
+    return { ok: false, detalle: String(e?.message || e).slice(0, 120) };
+  }
+}
+
 export async function revisarRespuestas(ahora = new Date()): Promise<{ ok: boolean; detalle: string }> {
   const desde = new Date(ahora.getTime() - 24 * 3600_000);
   try {
     const c = clasificar(await leerBuzon(desde));
-    const env = await canales.telegram({ texto: resumen(c, desde) });
+    const env = await aJose(resumen(c, desde));
     return { ok: env.ok, detalle: `${c.respuestas.length} respuestas, ${c.bajas.length} bajas, ${c.rebotes.length} rebotes · ${env.detalle}` };
   } catch (e: any) {
     // Si el buzón no abre, José también se entera: el silencio parecería «nadie contestó».
     const detalle = String(e?.message || e).slice(0, 160);
-    await canales.telegram({ texto: `AU-RA · Campaña SFSP: no pude revisar el buzón esta mañana (${detalle}).` }).catch(() => {});
+    await aJose(`AU-RA · Campaña SFSP: no pude revisar el buzón esta mañana (${detalle}).`);
     return { ok: false, detalle };
   }
 }
