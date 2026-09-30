@@ -69,7 +69,7 @@ public partial class MainWindow : Window
         }
         if (speech != null && DateTimeOffset.UtcNow >= voiceDeadline) { StopVoice(); SetStatus("Escucha finalizada", "Se alcanzó el límite de 20 segundos. Revisa el texto o activa el micrófono otra vez."); }
     }
-    void Expand(bool yes) { expanded = yes; Panel.Visibility = yes ? Visibility.Visible : Visibility.Collapsed; Position(); Show(); if(yes && !renderOnly) { Activate(); Input.Focus(); } }
+    void Expand(bool yes) { expanded = yes; Panel.Visibility = StatusCard.Visibility = Footer.Visibility = yes ? Visibility.Visible : Visibility.Collapsed; Position(); Show(); if(yes && !renderOnly) { Activate(); Input.Focus(); } }
     void Toggle(object s, RoutedEventArgs e) { if(expanded) StopVoice(); Expand(!expanded); }
     void HidePanel(object s, RoutedEventArgs e) { ClearApproval(); StopVoice(); Hide(); }
     void Quick(object s, RoutedEventArgs e) { Input.Text = (string)((Button)s).Tag; Prepare(s,e); }
