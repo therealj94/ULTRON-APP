@@ -811,6 +811,11 @@ export function dejarDeEscuchar(soltar = false) {
 }
 
 export const miId = () => aparato;
+/**
+ * El id de este aparato aunque todavía no se haya pedido (recién recuperada la cuenta, `miId()` puede
+ * estar vacío un momento). Lo usa la cabecera `x-aura-aparato` (lib/aparato.ts). '' sin cuenta.
+ */
+export const miIdAhora = async (): Promise<string> => (yo ? miAparato().catch(() => aparato) : '');
 
 let ultimoAviso = 0;
 export function escribiendo(para: string) {

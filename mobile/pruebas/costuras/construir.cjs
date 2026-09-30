@@ -32,7 +32,7 @@ const alias = {
     b.onResolve({ filter: /.*/ }, (a) => {
       if (mapa[a.path]) return { path: mapa[a.path] };
       if (a.path === './api' && a.importer.includes(`${path.sep}lib${path.sep}`)) return { path: path.join(CHAT, 'api.js') };
-      if (a.path === './storage' && a.importer.includes(`${path.sep}lib${path.sep}`)) return { path: path.join(CHAT, 'storage.js') };
+      if (a.path === './storage' && a.importer.includes(`${path.sep}lib${path.sep}`)) return { path: path.join(PROPIOS, 'storage.js') };
       return null;
     });
   },
@@ -50,6 +50,8 @@ const piezas = {
   SESION: 'compa/sesion',
   COMPA_LLAMADA: 'compa/llamada',
   AUDIO_VOZ: 'compa/audioVoz',
+  API: 'lib/api',
+  APARATO: 'lib/aparato',
 };
 const lineas = Object.entries(piezas)
   .filter(([, r]) => fs.existsSync(path.join(SRC, r + '.ts')))

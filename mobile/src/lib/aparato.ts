@@ -19,11 +19,12 @@ let propio: string | null = null;
 let pidiendo: Promise<string> | null = null;
 
 /** El id del relevo si hay cuenta del chat (se carga tarde: el relevo trae la criptografía del chat). */
-function delRelevo(): string {
+async function delRelevo(): Promise<string> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const R = require('../pulse/relevo') as typeof import('../pulse/relevo');
-    return R.quien() ? String(R.miId() || '') : '';
+    if (!R.quien()) return '';
+    return String(R.miId() || (await R.miIdAhora()) || '');
   } catch {
     return '';
   }
@@ -55,7 +56,7 @@ function idPropio(): Promise<string> {
 }
 
 export async function idAparato(): Promise<string> {
-  return delRelevo() || (await idPropio());
+  return (await delRelevo()) || (await idPropio());
 }
 
 /** Las cabeceras de este teléfono. `turno`: además, que el turno sale de la app. */

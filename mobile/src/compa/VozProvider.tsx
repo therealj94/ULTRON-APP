@@ -43,6 +43,7 @@ import { coordinarLlamadas } from './llamada';
 import { ContextoApp, PuenteAcciones, type XhrMin } from './acciones';
 import { AudioVoz } from './audioVoz';
 import { cabecerasAparato } from '../lib/aparato';
+import { escucharCuenta } from '../pulse/relevo';
 import { contactosParaAura } from './contactos';
 import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido } from './canales';
 
@@ -209,13 +210,22 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     contexto.current = ctx;
     if (AppState.currentState !== 'background') puente.arrancar();
     ctx.arrancar();
+    // Entrar o salir del chat cambia el id del aparato (el del relevo o el propio): el SSE se rehace
+    // con la cabecera nueva y el permiso de voz precalentado (pedido con la vieja) se tira.
+    const offCuenta = escucharCuenta(() => {
+      precalentador.olvidar();
+      if (AppState.currentState === 'background') return;
+      puente.parar();
+      puente.arrancar();
+    });
     return () => {
+      offCuenta();
       puente.parar();
       if (puenteRef.current === puente) puenteRef.current = null;
       ctx.parar();
       contexto.current = null;
     };
-  }, []);
+  }, [precalentador]);
   const conversando = vista.montada && (vista.estado === 'escuchando' || vista.estado === 'hablando');
   useEffect(() => {
     contexto.current?.fijarConversando(conversando);
