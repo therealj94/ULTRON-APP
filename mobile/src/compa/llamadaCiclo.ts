@@ -45,6 +45,8 @@ export type EfectoCiclo =
   | { tipo: 'silenciar'; valor: boolean }
   /** Silenciado sin sesión: nadie escucha (ni la sesión ni el oído del teléfono). */
   | { tipo: 'dormir' }
+  /** Salir del silenciado sin sesión: el oído del teléfono vuelve a escuchar (ControlSesion.terminar). */
+  | { tipo: 'despertarOido' }
   /** Lo dicho en ESPERA, como primer mensaje de la llamada recién conectada. */
   | { tipo: 'primerMensaje'; texto: string }
   /** La frase breve al colgar por silencio (con la voz de la mesa, sin gastar un turno de la llamada). */
@@ -86,6 +88,15 @@ export const REINTENTO_LLAMADA_MS = 30_000;
 const REINTENTO_MAX_MS = 5 * 60_000;
 /** Sin minutos hoy: no se intenta de nuevo en este rato (el día de Honduras cambia antes o el teléfono se reinicia). */
 const TOPE_ESPERA_MS = 6 * 60 * 60_000;
+
+/**
+ * El día de Honduras (AAAA-MM-DD), como lo cuenta el servidor para el tope de voz (server/tope-voz.ts,
+ * America/Tegucigalpa). Honduras está en UTC−6 todo el año (sin horario de verano): se calcula sin Intl,
+ * que en Hermes no siempre trae zonas horarias.
+ */
+export function diaHonduras(ahora = Date.now()): string {
+  return new Date(ahora - 6 * 60 * 60_000).toISOString().slice(0, 10);
+}
 
 /* ── la palabra de activación ────────────────────────────────────────────────────────────── */
 
@@ -249,21 +260,55 @@ export class CicloLlamada {
 
   /** ¿Se puede llamar ahora? (modo llamada encendido, con minutos y sin estar esperando tras un fallo). */
   llamadaDisponible(): boolean {
+    this.revisarTopeVencido();
     return this.activo && !this.topeAgotado && this.reloj() >= this.sinLlamadaHasta;
   }
 
-  /** Encender o apagar el modo llamada (Ajustes). Apagarlo cuelga lo que haya. */
+  /**
+   * Sin minutos no es para siempre: se vuelve a intentar al pasar la espera o al cambiar el día de
+   * Honduras (cuando el servidor renueva el cupo, server/tope-voz.ts). Antes quedaba agotado mientras el
+   * proceso siguiera vivo: nunca más abría la llamada ni pedía permiso.
+   */
+  private revisarTopeVencido() {
+    if (!this.topeAgotado) return;
+    const ahora = this.reloj();
+    if (ahora >= this.sinLlamadaHasta || diaHonduras(ahora) !== this.diaTope) {
+      this.topeAgotado = false;
+      this.sinLlamadaHasta = 0;
+    }
+  }
+  /** El día de Honduras en que se agotaron los minutos. */
+  private diaTope = '';
+
+  /**
+   * Encender o apagar el modo llamada (Ajustes). Apagarlo cuelga lo que haya; y si estaba silenciado
+   * sin sesión (doble toque en espera: ControlSesion dormida), devuelve el oído del teléfono. Antes no
+   * había efecto: la sesión «dormida» seguía teniendo el audio (vozOcupaMicrofono) y nadie escuchaba.
+   */
   fijarActivo(on: boolean): EfectoCiclo[] {
     if (this.activo === on) return [];
     this.activo = on;
-    if (!on && this.sesionViva()) return this.cerrar('apagar', 'espera');
+    if (on) return [];
+    if (this.sesionViva()) return this.cerrar('apagar', 'espera');
+    if (this.e === 'silenciado') {
+      this.ir('espera');
+      this.sesionEnSilencio = false;
+      return [{ tipo: 'despertarOido' }];
+    }
     return [];
   }
 
-  /** Lo que le queda de voz hoy (del permiso del servidor; null: sin tope, la junta). */
+  /**
+   * Lo que le queda de voz hoy (del permiso del servidor; null: sin tope, la junta). Un permiso con cupo
+   * también quita el «sin minutos» (el servidor dice que sí hay).
+   */
   fijarTope(restanteMs: number | null) {
     this.restanteMs = restanteMs;
     this.avisado = false;
+    if (restanteMs === null || restanteMs > 0) {
+      this.topeAgotado = false;
+      if (this.sinLlamadaHasta > this.reloj()) this.sinLlamadaHasta = 0;
+    }
   }
 
   private ir(n: EstadoCiclo) {
@@ -410,6 +455,7 @@ export class CicloLlamada {
     this.fallos += 1;
     if (tope) {
       this.topeAgotado = true;
+      this.diaTope = diaHonduras(this.reloj());
       this.sinLlamadaHasta = this.reloj() + TOPE_ESPERA_MS;
     } else {
       this.sinLlamadaHasta = this.reloj() + Math.min(REINTENTO_MAX_MS, this.o.reintentoMs * 2 ** (this.fallos - 1));
@@ -494,6 +540,7 @@ export class CicloLlamada {
       // Se acabaron los minutos de hoy en plena llamada: se cuelga y atiende el oído del teléfono.
       if (this.restanteMs !== null && this.restanteMs - (ahora - this.conectadaDesde) <= 0) {
         this.topeAgotado = true;
+        this.diaTope = diaHonduras(ahora);
         this.sinLlamadaHasta = ahora + TOPE_ESPERA_MS;
         return [...this.cerrar('apagar', 'espera'), { tipo: 'alNativo', texto: null, motivo: 'tope' }];
       }
