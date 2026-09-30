@@ -34,6 +34,12 @@ export function construirMensajes(opts: {
   harness?: boolean;
   /** Con quién habla (server/nivel.ts). Un miembro no oye «asistente de la junta» ni ve sistema/ejecutor. */
   nivel?: NivelAura;
+  /**
+   * Lo que cambia en cada turno (hora, app, HECHOS: server/prompt-turno.ts piezasDelTurno). Va al FINAL
+   * del system, después de las reglas fijas: así el principio es igual turno a turno y el nodo reutiliza
+   * lo que ya leyó en vez de releer miles de fichas.
+   */
+  delTurno?: string;
 }): { messages: ChatMessage[]; meta: MensajesMeta } {
   const user = String(opts.user || '').trim();
   const codigo = esTareaDeCodigo(user);
@@ -65,6 +71,7 @@ export function construirMensajes(opts: {
     }
   }
 
+  if (opts.delTurno) parts.push(String(opts.delTurno).trim());
   const system = parts.filter(Boolean).join('\n\n');
   const historial = (opts.historial || []).slice(-16);
   return {

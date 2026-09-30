@@ -68,12 +68,15 @@ export const TURNO_VOZ_MS = 45_000;
  * EL PUENTE: si en este tiempo el cerebro no dijo nada, AURA dice una frase corta del estado en que está
  * («Déjame revisar…», «Buscando…», «Sacando cuentas…»), con la forma de ser del avatar y en su idioma,
  * en vez de quedarse callada. Una orden rápida o una charla contestan antes y no lo oyen nunca.
- * En la llamada, el agente de ElevenLabs ya dice su propio relleno corto («Mmm… a ver.») a los ~2,5 s;
- * por eso el puente va 2 s después (~4,5 s): si el cerebro sigue callado, se oye el ESTADO («Estoy
- * revisando…»), no dos muletillas seguidas. Antes 1,2 s, y salía en turnos que iban a contestar
- * enseguida (José: «no se siente conversación fluida»).
+ * En la llamada, el agente de ElevenLabs ya dice su propio relleno corto («Mmm… a ver.») a los ~2,5 s,
+ * pero ESE relleno no cuenta como respuesta: si el LLM propio no manda texto antes de CASCADA_ELEVENLABS_MS
+ * (el `cascade_timeout_seconds` de los agentes, 4 s), ElevenLabs corta la conversación con «LLM Cascade
+ * Error: TimeoutError» (30-sep: con el puente a 4,5 s, toda pregunta que pensaba más de 4 s colgaba la
+ * llamada). Por eso el puente va a los 3 s: después del relleno del agente y antes del corte. Antes
+ * 1,2 s, y salía en turnos que iban a contestar enseguida (José: «no se siente conversación fluida»).
  */
-export const PUENTE_VOZ_MS = ESPERA_FRASE_MS + 2_000;
+export const CASCADA_ELEVENLABS_MS = 4_000;
+export const PUENTE_VOZ_MS = Math.min(ESPERA_FRASE_MS + 500, CASCADA_ELEVENLABS_MS - 1_000);
 
 /**
  * Un agente de ElevenLabs por avatar e idioma (voz, idioma del reconocimiento y del turno). Los crea
@@ -463,6 +466,12 @@ type Deps = {
   puenteMs?: number;
   /** Junta o miembro por correo (server/nivel.ts; las pruebas pueden poner otro). */
   nivelDe?: (correo: string) => NivelAura;
+  /**
+   * Deja al cerebro con lo fijo del prompt de esta persona ya leído (server.ts calentarCerebro). Se
+   * llama al pedir el permiso, que el teléfono pide mientras suena la llamada: al contestar, la primera
+   * pregunta no espera a que el nodo lea miles de fichas. Sin esperar, y si falla no pasa nada.
+   */
+  calentar?: (correo: string) => void;
 };
 
 const PHRASES = {
@@ -511,6 +520,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       // El aparato (x-aura-aparato) va en el pase: lo que pida esta conversación va solo a ese teléfono.
       const p = emitirPase(s, avatar, idioma, { modo: req.body?.mode ?? req.body?.modo, aparato: aparatoValido(req.headers['x-aura-aparato']), nivel, topeMs: restante });
       const { cerradas } = abrirConversacion(s.correo, p.cid);
+      d.calentar?.(s.correo);
       if (cerradas) console.log(`[voz agente] ${cerradas} conversación(es) vieja(s) cerrada(s) por el tope de ${MAX_CONVERSACIONES}`);
       // `restanteMs` (solo miembros): lo que le queda de voz hoy; el teléfono avisa antes de agotarlo.
       return res.json({ token: j.token, agente, avatar, idioma, pase: p.pase, cid: p.cid, vence: new Date(p.exp).toISOString(), ...(restante !== undefined ? { restanteMs: restante } : {}), honesto: true });
@@ -544,6 +554,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
    * Si la persona interrumpe, ElevenLabs cierra la petición: se aborta el turno de adentro de verdad
    * (la señal llega hasta la llamada al nodo) para no seguir pensando algo que ya nadie va a oír.
    */
+  /** Cuándo se avisó por última vez de una llave de ElevenLabs que no coincide. */
+  let avisoLlaveMala = 0;
   const llm: express.RequestHandler = async (req, res) => {
     const ip = String(req.ip || req.socket.remoteAddress || 'x');
     const auth = String(req.headers.authorization || '');
@@ -553,7 +565,16 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       const cupo = gastarCupo(`voz-llm-fallo:${ip}`, 30);
       return res.status(cupo ? 401 : 429).json({ error: { message: cupo ? mensaje : 'too many requests' } });
     };
-    if (!bearer || !mismoSecreto(secretoDerivado(ETIQUETA_SECRETO_LLM), bearer)) return negar('unauthorized');
+    if (!bearer || !mismoSecreto(secretoDerivado(ETIQUETA_SECRETO_LLM), bearer)) {
+      // Si la llave «aura-llm» de ElevenLabs no se derivó del ULTRON_SESION_SECRETO de este servidor,
+      // TODOS los turnos caen aquí y ElevenLabs corta con «custom_llm generation failed» (30-sep: la
+      // voz no contestó nunca por esto). Se deja dicho en el registro, una vez cada 10 minutos.
+      if (bearer && Date.now() - avisoLlaveMala > 10 * 60_000) {
+        avisoLlaveMala = Date.now();
+        console.warn('[voz agente] la llave del LLM propio no coincide: corre scripts/elevenlabs-agentes.ts con el ULTRON_SESION_SECRETO de este servidor');
+      }
+      return negar('unauthorized');
+    }
     const ahora = Date.now();
     const crudo = String(req.headers['x-pase'] || '');
     const pase = leerPase(crudo, ahora);

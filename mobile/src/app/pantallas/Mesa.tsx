@@ -13,7 +13,7 @@ import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { modoActual, orientar, type ModoOrientacion } from '../../lib/orientacion';
 import { DeskScreen } from '../../screens/DeskScreen';
 import type { RaizParams } from '../rutas';
-import { salirDeLaSesion, tomarRecienElegido, useUsuario } from '../sesion';
+import { salirDeLaSesion, tomarRecienElegido, usuarioActual, useUsuario } from '../sesion';
 
 type Props = NativeStackScreenProps<RaizParams, 'Mesa'>;
 
@@ -28,7 +28,8 @@ export function Mesa(_: Props) {
       if (modoAlSalir.current) void orientar(modoAlSalir.current);
       return () => {
         modoAlSalir.current = modoActual();
-        void orientar('libre');
+        // Se sale a otra pantalla: sigue al teléfono. Se cerró la sesión: la entrada va en vertical.
+        void orientar(usuarioActual() ? 'libre' : 'vertical');
       };
     }, [])
   );

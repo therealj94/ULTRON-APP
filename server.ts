@@ -12,7 +12,7 @@ import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, le
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
-import { personalidadDelTurno } from './server/prompt-turno';
+import { piezasDelTurno } from './server/prompt-turno';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
@@ -2586,7 +2586,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
 
   // Con un miembro: su cerebro (lo público), sin catálogo del taller ni memoria de la junta
   // (server/prompt-turno.ts).
-  const personalidad = personalidadDelTurno({
+  const piezas = piezasDelTurno({
     nivel,
     perfil,
     nombre: comoLeDecimos,
@@ -2603,7 +2603,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     memoriaMiembro: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos) : undefined,
   });
 
-  const compuesto = construirMensajes({ personalidad, user: mensajeHilo || message, canal, historial: hilo, nivel });
+  // Lo fijo arriba y lo del turno al final (server/prompt-turno.ts): el nodo reutiliza lo ya leído.
+  const compuesto = construirMensajes({ personalidad: piezas.fijo, delTurno: piezas.delTurno, user: mensajeHilo || message, canal, historial: hilo, nivel });
   if (compuesto.meta.rag) tools.push('rag');
   if (compuesto.meta.cot) tools.push('cot');
   if (compuesto.meta.harness) tools.push('harness');
@@ -2692,6 +2693,34 @@ Empieza con una etiqueta de ánimo: [EMO: feliz], [EMO: curioso] o [EMO: neutral
   const sinEmo = extraerEmocion(r.texto).texto;
   if (/^\W*PASO\b/i.test(sinEmo) || /PEDIR_HERRAMIENTA/i.test(r.texto) || !sinEmo) return null;
   return r.texto;
+}
+
+/**
+ * EL CEREBRO PRECALENTADO. El último system que se le mandó a Qwen por persona: lo fijo (reglas,
+ * cerebro, memoria) va arriba y el nodo reutiliza lo que ya leyó mientras ese principio no cambie
+ * (server/prompt-turno.ts). Cuando suena la llamada del avatar, el teléfono pide el permiso de voz y el
+ * servidor le pasa ese system al nodo con una sola ficha de respuesta: al contestar, la primera pregunta
+ * tarda ~1 s en vez de 5 (medido en la A10G el 30-sep). Una vez por minuto por persona como mucho.
+ */
+const ultimoSistemaQwen = new Map<string, string>();
+const calentadoEn = new Map<string, number>();
+export const CALENTAR_CADA_MS = 60_000;
+
+function calentarCerebro(correo: string) {
+  const c = String(correo || '').toLowerCase();
+  const system = ultimoSistemaQwen.get(c);
+  if (!system || !ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) return;
+  const ahora = Date.now();
+  if (ahora - (calentadoEn.get(c) || 0) < CALENTAR_CADA_MS) return;
+  calentadoEn.set(c, ahora);
+  void fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': ULTRON_NODO_SECRETO },
+    body: JSON.stringify({ model: ULTRON_NODO_MODELO, stream: false, messages: [{ role: 'system', content: system }, { role: 'user', content: 'Hola' }], max_tokens: 1, temperature: 0 }),
+    signal: AbortSignal.timeout(30_000),
+  })
+    .then((r) => r.body?.cancel().catch(() => {}))
+    .catch(() => {});
 }
 
 /** Cómo se presenta lo que dice la persona: «Junta:» a la junta, «Miembro:» a un miembro de la comunidad. */
@@ -3120,6 +3149,7 @@ montarVozAgente(app, {
   exigirMesaODesk,
   limitar,
   sesionDe,
+  calentar: calentarCerebro,
   turno: (t: TurnoVoz) =>
     turnoEnVivoConTraza(
       // La persona del pase va como `sesion` para la memoria y el perfil; no es un token y no abre nada.
@@ -3281,6 +3311,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     soltar('delta', reply);
     return terminar(reply, 'tools-only', 'preocupado');
   }
+  if (p.correoApp) ultimoSistemaQwen.set(String(p.correoApp).toLowerCase(), system);
   try {
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
       method: 'POST',

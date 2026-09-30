@@ -8,7 +8,7 @@
  *   · miembro — su cerebro (lo público, perfilPara), sin catálogo del taller, sin memoria ni hechos de
  *               la junta, y el agente del turno sin la mecánica interna de la junta.
  */
-import { buildPersonality } from './desk';
+import { buildPersonality, lineaAhora } from './desk';
 import { promptAgente } from '../lib/cognitivo/agentes';
 import { promptMemoria } from '../lib/memoria';
 import { nombreDe, type MiembroId } from '../lib/junta';
@@ -40,20 +40,47 @@ export type PiezasTurno = {
   memoriaMiembro?: string;
 };
 
-export function personalidadDelTurno(p: PiezasTurno): string {
+/**
+ * El prompt del turno en dos partes, en el orden en que el nodo lo lee:
+ *
+ *   · `fijo`     — lo que es igual turno a turno para esta persona: quién eres, el cerebro, el catálogo y
+ *                  la memoria. Va ARRIBA: llama.cpp reutiliza lo que ya leyó mientras el principio no
+ *                  cambie, y así solo lee lo nuevo.
+ *   · `delTurno` — lo que cambia en cada turno: la hora, el perfil, el avatar, el agente, la app y los
+ *                  HECHOS. Va AL FINAL.
+ *
+ * 30-sep: con la hora y los HECHOS mezclados arriba, el nodo releía ~4 000 fichas en cada turno y la
+ * primera palabra de la llamada tardaba 7–9 s (ElevenLabs corta a los 4).
+ */
+export function piezasDelTurno(p: PiezasTurno, hora?: Date): { fijo: string; delTurno: string } {
   const miembro = p.nivel === 'miembro';
   const perfil = p.perfil || perfilPara(p.nivel);
   const recuerdos = miembro
     ? 'No finjas recuerdos: solo lo que está en la memoria de esta persona y en el hilo. Nunca hables de lo que dijeron otras personas.'
     : `No finjas recuerdos: solo la memoria de ${p.quien ? nombreDe(p.quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.`;
-  return `${buildPersonality({ nombre: p.nombre, canal: p.canal, modo: p.modo, mando: p.mando, nivel: p.nivel, perfil })}${p.bloquePerfil ? `\n\n${p.bloquePerfil}` : ''}${p.bloqueApp ? `\n\n${p.bloqueApp}` : ''}
+  const fijo = `${buildPersonality({ nombre: p.nombre, canal: p.canal, modo: p.modo, mando: p.mando, nivel: p.nivel, perfil, conHora: false })}
 
 ${perfil.tituloConocimiento}:
 ${perfil.conocimiento}
 
-${promptAgente(p.agente, p.nivel)}
-
 ${recuerdos}
-Modo de mesa pedido: ${p.modo}.${p.canal === 'mesa' && p.lineaAvatar ? `\n${p.lineaAvatar}` : ''}
-HECHOS:\n${p.hechos.join('\n') || '(ninguno)'}\n${miembro ? '' : `${hechosCatalogo()}\n`}${miembro && p.memoriaMiembro ? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre })}`;
+${miembro ? '' : `${hechosCatalogo()}\n`}${miembro && p.memoriaMiembro ? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre })}`;
+  const agente = promptAgente(p.agente, p.nivel);
+  const delTurno = [
+    lineaAhora(hora),
+    p.bloquePerfil || '',
+    `Modo de mesa pedido: ${p.modo}.${p.canal === 'mesa' && p.lineaAvatar ? `\n${p.lineaAvatar}` : ''}`,
+    agente,
+    p.bloqueApp || '',
+    `HECHOS:\n${p.hechos.join('\n') || '(ninguno)'}`,
+  ]
+    .filter((x) => x.trim())
+    .join('\n\n');
+  return { fijo, delTurno };
+}
+
+/** El prompt del turno de una pieza (lo fijo y después lo del turno). */
+export function personalidadDelTurno(p: PiezasTurno, hora?: Date): string {
+  const { fijo, delTurno } = piezasDelTurno(p, hora);
+  return `${fijo}\n\n${delTurno}`;
 }

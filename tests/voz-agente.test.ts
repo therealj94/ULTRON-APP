@@ -684,12 +684,13 @@ test('la llamada del avatar: `[[llamada]]` saluda como quien llama y `[[sigues]]
   }
 });
 
-test('el puente por omisión (José: «el "déjame ver" solo si lleva bastante tiempo»): ~4,5 s, después del relleno del agente; un cerebro que contesta en 1,8 s no lo oye', async () => {
-  const { PUENTE_VOZ_MS } = await import('../server/voz-agente');
+test('el puente por omisión: ~3 s, después del relleno del agente y ANTES del corte de ElevenLabs (4 s); un cerebro que contesta en 1,8 s no lo oye', async () => {
+  const { PUENTE_VOZ_MS, CASCADA_ELEVENLABS_MS } = await import('../server/voz-agente');
   const { ESPERA_FRASE_MS, frasesDe } = await import('../mobile/src/compa/frasesEstado');
-  // Después del relleno propio del agente (~2,5 s), para no sonar dos muletillas seguidas.
-  assert.equal(PUENTE_VOZ_MS, ESPERA_FRASE_MS + 2_000, 'el puente de la llamada va después del relleno del agente');
-  assert.ok(PUENTE_VOZ_MS >= 4_000 && PUENTE_VOZ_MS <= 5_000, `umbral ${PUENTE_VOZ_MS} ms (antes 1200)`);
+  // Después del relleno propio del agente (~2,5 s), para no sonar dos muletillas encimadas…
+  assert.ok(PUENTE_VOZ_MS > ESPERA_FRASE_MS, `el puente (${PUENTE_VOZ_MS} ms) va después del relleno del agente`);
+  // …y con margen antes del cascade_timeout de los agentes: si no llega texto, ElevenLabs cuelga (30-sep).
+  assert.ok(PUENTE_VOZ_MS <= CASCADA_ELEVENLABS_MS - 800, `umbral ${PUENTE_VOZ_MS} ms: tiene que llegar antes del corte de ${CASCADA_ELEVENLABS_MS} ms`);
   const espera = (ms: number) => async (t: TurnoVoz) => {
     await new Promise((r) => setTimeout(r, ms));
     t.enviar('delta', { text: 'El oro está a tres mil.', voz: 'El oro está a tres mil.' });
