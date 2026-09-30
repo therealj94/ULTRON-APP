@@ -45,6 +45,16 @@ internal sealed class Ajustes
     public string AgendaUrl { get; set; } = "";
     /// <summary>Mostrar en el notch lo que suena (Spotify, YouTube Music, el navegador…).</summary>
     public bool MostrarMusica { get; set; } = true;
+    /// <summary>
+    /// Cuentas conectadas con OAuth («spotify», «google», «microsoft»): el token de acceso y el de
+    /// renovar, cifrados con DPAPI como todo lo demás. Nunca salen de este equipo.
+    /// </summary>
+    public Dictionary<string, TokenOauth> Conexiones { get; set; } = new();
+    /// <summary>Client ID propios (opcional): si están, ganan a los que da el servidor AU-RA.</summary>
+    public string SpotifyClientId { get; set; } = "";
+    public string GoogleClientId { get; set; } = "";
+    public string GoogleClientSecret { get; set; } = "";
+    public string MicrosoftClientId { get; set; } = "";
     public List<Recordatorio> Recordatorios { get; set; } = new();
 
     static string Carpeta => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AuraWindows");
@@ -59,6 +69,7 @@ internal sealed class Ajustes
             var a = JsonSerializer.Deserialize<Ajustes>(bytes) ?? new Ajustes();
             if (a.Avatar is not ("aura" or "claudio" or "antonio" or "ojos")) a.Avatar = "aura";
             if (a.Idioma is not ("es" or "en")) a.Idioma = "es";
+            a.Conexiones ??= new();
             return a;
         }
         catch { return new Ajustes(); }

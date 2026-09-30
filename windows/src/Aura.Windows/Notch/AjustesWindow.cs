@@ -1,4 +1,5 @@
 using System;
+using System.Threading.Tasks;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -13,6 +14,8 @@ internal sealed class AjustesWindow : Window
     public Ajustes Resultado { get; private set; }
     /// <summary>El token al abrir: si cambió, fue por «Entrar» o «Cerrar sesión» aquí.</summary>
     public string TokenAlAbrir { get; }
+    /// <summary>Las conexiones (spotify, google, microsoft) que se conectaron o desconectaron aquí.</summary>
+    public System.Collections.Generic.HashSet<string> ConexionesTocadas { get; } = new();
 
     public AjustesWindow(Ajustes actual)
     {
@@ -91,7 +94,81 @@ internal sealed class AjustesWindow : Window
         Op("Hablar siempre con la voz de Windows", a.VozDeWindows, v => a.VozDeWindows = v);
         Op("Oír siempre con el dictado de Windows", a.OidoDeWindows, v => a.OidoDeWindows = v);
         raiz.Children.Add(Nota("Aunque estén apagadas, si el servidor no contesta AURA usa la voz y el oído de Windows solas. La pantalla se lee siempre en este equipo (UI Automation y OCR de Windows): al cerebro va solo texto, nunca imágenes."));
-        raiz.Children.Add(Titulo("Cuentas: correo y agenda (avisos en el notch)"));
+        raiz.Children.Add(Titulo("Conexiones: música, correo y agenda"));
+        raiz.Children.Add(Nota("Se entra en el navegador, en la página del propio servicio: AURA nunca ve tu contraseña. El permiso queda cifrado en esta PC y lo quitas cuando quieras (aquí o en la cuenta del servicio)."));
+        foreach (var (prov, nombre, para) in new[]
+        {
+            (Proveedor.Spotify, "Spotify", "Pone la canción, el artista o la playlist exacta que pidas (control desde AURA: Spotify Premium)."),
+            (Proveedor.Google, "Google", "Gmail y Google Calendar (solo leer) y YouTube Music: la canción exacta, sonando."),
+            (Proveedor.Microsoft, "Microsoft", "Outlook, Hotmail y Microsoft 365: correo y calendario (solo leer)."),
+        })
+        {
+            var claveCx = Manos.Servicios.Clave(prov);
+            var fila = new WrapPanel { Margin = new Thickness(0, 6, 0, 0) };
+            var boton = new Button { Style = (Style)FindResource("PildoraAcento") };
+            var quitar = new Button { Content = "Desconectar", Style = (Style)FindResource("Pildora") };
+            var nota = Nota(para);
+            void Pintar()
+            {
+                bool esta = a.Conexiones.TryGetValue(claveCx, out var tk);
+                boton.Content = esta ? $"{nombre} ✓" : $"Conectar {nombre}";
+                quitar.Visibility = esta ? Visibility.Visible : Visibility.Collapsed;
+                nota.Text = esta ? $"Conectado{(tk!.Cuenta.Length > 0 ? " como " + tk.Cuenta : "")}. {para}" : para;
+            }
+            Pintar();
+            boton.Click += async (_, _) =>
+            {
+                boton.IsEnabled = false; nota.Text = "Abriendo el navegador… acepta allí y vuelve.";
+                try
+                {
+                    // El Client ID: el propio de «Avanzado» si lo hay; si no, el que puso el servidor AU-RA.
+                    if (Manos.Servicios.Config(a, prov) == null && a.Token.Length > 0)
+                    {
+                        using var api = new AuraApi(a.Servidor, a.Token);
+                        var ids = await api.ClientesOauth();
+                        if (prov == Proveedor.Spotify && ids.Spotify != null) a.SpotifyClientId = ids.Spotify;
+                        if (prov == Proveedor.Google && ids.Google != null) { a.GoogleClientId = ids.Google; a.GoogleClientSecret = ids.GoogleSecreto ?? ""; }
+                        if (prov == Proveedor.Microsoft && ids.Microsoft != null) a.MicrosoftClientId = ids.Microsoft;
+                    }
+                    var cfg = Manos.Servicios.Config(a, prov)
+                        ?? throw new InvalidOperationException(a.Token.Length == 0
+                            ? "Primero entra con tu cuenta AU-RA (arriba): de ahí salen los permisos de la app. O pon un Client ID propio en «Avanzado»."
+                            : $"El servidor AU-RA aún no tiene el Client ID de {nombre}. Hay que ponerlo en Render (ver README) o en «Avanzado».");
+                    var token = await Manos.Conexion.Entrar(cfg);
+                    a.Conexiones[claveCx] = token;
+                    ConexionesTocadas.Add(claveCx);
+                    Pintar();
+                    Activate();
+                }
+                catch (Exception ex) when (ex is InvalidOperationException or AuraError or System.Net.Http.HttpRequestException or TaskCanceledException)
+                {
+                    nota.Text = ex.Message;
+                }
+                finally { boton.IsEnabled = true; }
+            };
+            quitar.Click += (_, _) => { a.Conexiones.Remove(claveCx); ConexionesTocadas.Add(claveCx); Pintar(); };
+            fila.Children.Add(boton); fila.Children.Add(quitar);
+            raiz.Children.Add(fila); raiz.Children.Add(nota);
+        }
+        var avanzado = new Expander { Header = "Avanzado: Client ID propios (opcional)", Foreground = Brushes.White, Margin = new Thickness(0, 10, 0, 0) };
+        var avz = new StackPanel();
+        TextBox Campo(string valor, string pista) { var t = new TextBox { Text = valor, ToolTip = pista }; avz.Children.Add(Nota(pista)); avz.Children.Add(Caja(t)); return t; }
+        var idSpotify = Campo(a.SpotifyClientId, "Spotify Client ID");
+        var idGoogle = Campo(a.GoogleClientId, "Google Client ID (app de escritorio)");
+        var secGoogle = Campo(a.GoogleClientSecret, "Google Client secret (el de la app de escritorio)");
+        var idMicrosoft = Campo(a.MicrosoftClientId, "Microsoft Application (client) ID");
+        avz.Children.Add(Nota($"En cada servicio, registra como dirección de vuelta: {Oauth.Redireccion}"));
+        avanzado.Content = avz;
+        raiz.Children.Add(avanzado);
+        void GuardarIds()
+        {
+            a.SpotifyClientId = idSpotify.Text.Trim(); a.GoogleClientId = idGoogle.Text.Trim();
+            a.GoogleClientSecret = secGoogle.Text.Trim(); a.MicrosoftClientId = idMicrosoft.Text.Trim();
+        }
+        idSpotify.LostFocus += (_, _) => GuardarIds(); idGoogle.LostFocus += (_, _) => GuardarIds();
+        secGoogle.LostFocus += (_, _) => GuardarIds(); idMicrosoft.LostFocus += (_, _) => GuardarIds();
+
+        raiz.Children.Add(Titulo("Correo y agenda sin conectar cuenta (IMAP / iCal)"));
         var correoDir = new TextBox { Text = a.CorreoDireccion }; raiz.Children.Add(Caja(correoDir));
         var correoClave = new PasswordBox { Password = a.CorreoClave, Background = Brushes.Transparent, Foreground = Brushes.White, BorderThickness = new Thickness(0) }; raiz.Children.Add(Caja(correoClave));
         raiz.Children.Add(Nota("Gmail: usa una «contraseña de aplicación» (Cuenta de Google → Seguridad → Verificación en 2 pasos → Contraseñas de aplicaciones). También Yahoo, iCloud y otros IMAP. Solo se lee: nada se marca ni se borra."));
@@ -134,6 +211,7 @@ internal sealed class AjustesWindow : Window
             if (a.Correo != correo.Text.Trim().ToLowerInvariant()) { a.Correo = correo.Text.Trim().ToLowerInvariant(); a.Token = ""; }
             if (clave.Password.Length > 0) a.Clave = clave.Password;
             a.CorreoDireccion = correoDir.Text.Trim(); a.CorreoClave = correoClave.Password; a.AgendaUrl = agendaUrl.Text.Trim();
+            GuardarIds();
             if (claveLlamadas.Password.Length > 0 || urlLlamadas.Text.Trim() != llamadas.Gateway)
             {
                 try { ConnectionStore.Save(new ConnectionSettings(urlLlamadas.Text.Trim(), claveLlamadas.Password)); }

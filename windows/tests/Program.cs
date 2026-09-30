@@ -213,6 +213,45 @@ Check(evs2.Where(e => e.Titulo == "NY").Select(e => e.Inicio.Hour).SequenceEqual
 Check(Ical.Eventos("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:x\r\nDTSTART:20261001T100000Z\r\nRRULE:FREQ=MONTHLY;BYDAY=TU\r\nEND:VEVENT\r\nEND:VCALENDAR", new DateTime(2026, 9, 28), new DateTime(2026, 10, 30), utc) is { Count: 0 }, "ical regla no soportada no inventa fechas");
 Check(evs.First(e => e.Titulo == "Standup").Fin - evs.First(e => e.Titulo == "Standup").Inicio == TimeSpan.FromMinutes(15), "ical duracion");
 
+// OAuth con PKCE y lectores de Gmail, Google Calendar, YouTube, Graph y Spotify
+var (verif, reto) = Oauth.Pkce();
+Check(verif.Length >= 43 && reto.Length == 43 && !reto.Contains('=') && !reto.Contains('+'), "pkce base64url");
+Check(Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.ASCII.GetBytes("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"))).TrimEnd('=').Replace('+', '-').Replace('/', '_') == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "pkce vector del RFC 7636");
+var gcfg = Oauth.Google("id-google", "secreto");
+var urlA = Oauth.UrlAutorizar(gcfg, reto, "est123");
+Check(urlA.StartsWith("https://accounts.google.com/o/oauth2/v2/auth?") && urlA.Contains("code_challenge_method=S256") && urlA.Contains("access_type=offline")
+      && urlA.Contains("redirect_uri=" + Uri.EscapeDataString("http://127.0.0.1:43821/callback")) && urlA.Contains("gmail.readonly"), "url google");
+Check(Oauth.Canje(gcfg, "c0d", verif)["client_secret"] == "secreto" && !Oauth.Canje(Oauth.Spotify("s"), "c", verif).ContainsKey("client_secret"), "canje con y sin secreto");
+Check(Oauth.Renovacion(Oauth.Microsoft("m"), "r")["scope"].Contains("Mail.Read"), "microsoft renueva con alcances");
+Check(Oauth.CodigoDe("/callback?code=abc%2F1&state=est123", "est123") == "abc/1", "codigo del callback");
+Check(Throws(() => Oauth.CodigoDe("/callback?code=abc&state=otro", "est123")), "estado distinto se rechaza");
+Check(Throws(() => Oauth.CodigoDe("/callback?error=access_denied&state=est123", "est123")), "cancelado");
+var ahora0 = new DateTimeOffset(2026, 9, 30, 12, 0, 0, TimeSpan.Zero);
+var tk = Oauth.LeerToken("{\"access_token\":\"A1\",\"refresh_token\":\"R1\",\"expires_in\":3600}", null, ahora0);
+Check(tk.Acceso == "A1" && tk.Renovar == "R1" && tk.Vence == ahora0.AddHours(1) && !tk.Vencido(ahora0) && tk.Vencido(ahora0.AddMinutes(59.5)), "token leido");
+var tk2 = Oauth.LeerToken("{\"access_token\":\"A2\",\"expires_in\":3600}", tk with { Cuenta = "yo@x.com" }, ahora0);
+Check(tk2.Renovar == "R1" && tk2.Cuenta == "yo@x.com", "renovar conserva refresh y cuenta");
+Check(Throws(() => Oauth.LeerToken("{\"error\":\"invalid_grant\"}", tk, ahora0)), "invalid_grant es error");
+Check(LectorApis.Remitente("\"Karla Pérez\" <karla@x.com>") == "Karla Pérez" && LectorApis.Remitente("<a@b.com>") == "a@b.com" && LectorApis.Remitente("a@b.com") == "a@b.com", "remitente");
+Check(LectorApis.GmailIds("{\"messages\":[{\"id\":\"m1\"},{\"id\":\"m2\"}]}").SequenceEqual(new[] { "m1", "m2" }) && LectorApis.GmailIds("{\"resultSizeEstimate\":0}").Count == 0, "gmail ids");
+var gm = LectorApis.GmailMensaje("{\"id\":\"m1\",\"internalDate\":\"1790000000000\",\"snippet\":\"La junta se movi&oacute; al jueves\",\"payload\":{\"headers\":[{\"name\":\"From\",\"value\":\"Karla <k@x.com>\"},{\"name\":\"Subject\",\"value\":\"Junta\"}]}}");
+Check(gm is { Id: "m1", De: "Karla", Asunto: "Junta" } && gm.Resumen == "La junta se movió al jueves", "gmail mensaje: " + gm);
+var gr = LectorApis.GraphCorreos("{\"value\":[{\"id\":\"g1\",\"subject\":\"\",\"bodyPreview\":\"hola \",\"receivedDateTime\":\"2026-09-30T15:00:00Z\",\"from\":{\"emailAddress\":{\"name\":\"\",\"address\":\"jefe@x.com\"}}}]}");
+Check(gr.Count == 1 && gr[0].De == "jefe@x.com" && gr[0].Asunto == "(sin asunto)" && gr[0].Resumen == "hola", "graph correos");
+var gev = LectorApis.GoogleEventos("{\"items\":[{\"summary\":\"Junta\",\"location\":\"Sala 2\",\"start\":{\"dateTime\":\"2026-10-01T09:00:00-06:00\"},\"end\":{\"dateTime\":\"2026-10-01T10:00:00-06:00\"}},{\"summary\":\"Feriado\",\"start\":{\"date\":\"2026-10-03\"},\"end\":{\"date\":\"2026-10-04\"}},{\"status\":\"cancelled\",\"summary\":\"x\",\"start\":{\"date\":\"2026-10-02\"}}]}", utc);
+Check(gev.Count == 2 && gev[0].Inicio == new DateTime(2026, 10, 1, 15, 0, 0) && gev[0].Lugar == "Sala 2" && gev[1].TodoElDia, "google calendar");
+var mev = LectorApis.GraphEventos("{\"value\":[{\"subject\":\"Cliente\",\"isAllDay\":false,\"start\":{\"dateTime\":\"2026-10-01T16:30:00.0000000\",\"timeZone\":\"UTC\"},\"end\":{\"dateTime\":\"2026-10-01T17:00:00.0000000\"},\"location\":{\"displayName\":\"Teams\"}},{\"subject\":\"x\",\"isCancelled\":true,\"start\":{\"dateTime\":\"2026-10-01T10:00:00\"}}]}", utc);
+Check(mev.Count == 1 && mev[0].Inicio == new DateTime(2026, 10, 1, 16, 30, 0) && mev[0].Lugar == "Teams", "graph calendario");
+var busq = "{\"artists\":{\"items\":[{\"name\":\"Bad Bunny\",\"uri\":\"spotify:artist:1\"}]},\"tracks\":{\"items\":[{\"name\":\"Tití Me Preguntó\",\"uri\":\"spotify:track:9\",\"artists\":[{\"name\":\"Bad Bunny\"}]}]},\"playlists\":{\"items\":[null,{\"name\":\"This Is Bad Bunny\",\"uri\":\"spotify:playlist:5\"}]}}";
+Check(LectorApis.SpotifyElegir(busq, "Bad Bunny") is { Uri: "spotify:artist:1", Contexto: true }, "spotify artista");
+Check(LectorApis.SpotifyElegir(busq, "titi me pregunto") is { Uri: "spotify:track:9", Contexto: false, Descripcion: "Tití Me Preguntó, de Bad Bunny" }, "spotify cancion");
+Check(LectorApis.SpotifyElegir(busq, "una playlist de bad bunny") is { Uri: "spotify:playlist:5" }, "spotify playlist (salta nulos)");
+Check(LectorApis.SpotifyElegir("{\"tracks\":{\"items\":[]}}", "x") is null, "spotify sin resultados");
+Check(LectorApis.SpotifyDispositivos("{\"devices\":[{\"id\":\"d1\",\"name\":\"PC\",\"is_active\":false},{\"id\":\"d2\",\"name\":\"TV\",\"is_restricted\":true}]}").Count == 1, "spotify dispositivos");
+Check(LectorApis.SpotifyMotivo("{\"error\":{\"status\":404,\"reason\":\"NO_ACTIVE_DEVICE\"}}") == "NO_ACTIVE_DEVICE" && LectorApis.SpotifyMotivo("no json") == "", "spotify motivo");
+Check(LectorApis.YoutubePrimero("{\"items\":[{\"id\":{\"kind\":\"youtube#channel\"}},{\"id\":{\"videoId\":\"v1\"},\"snippet\":{\"title\":\"Vivir Mi Vida &amp; m&aacute;s\"}}]}") is { Id: "v1", Titulo: "Vivir Mi Vida & más" }, "youtube primero");
+Check(LectorApis.Cuenta("{\"sub\":\"1\",\"email\":\"yo@gmail.com\"}") == "yo@gmail.com" && LectorApis.Cuenta("{\"userPrincipalName\":\"a@outlook.com\",\"mail\":null}") == "a@outlook.com", "cuenta");
+
 // La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).
 foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace una captura de pantalla en windows", "ayer me dijiste que bloqueara la compu" })
 {

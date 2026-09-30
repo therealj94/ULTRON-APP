@@ -1,7 +1,7 @@
 [Setup]
 AppId={{771C9ED5-39B8-4A11-A1DE-606D406422A3}
 AppName=AURA
-AppVersion=1.2.0
+AppVersion=1.3.0
 AppPublisher=Orden Global
 DefaultDirName={localappdata}\Programs\AuraWindows
 DefaultGroupName=AURA
@@ -10,7 +10,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 OutputDir=..\artifacts\installer
-OutputBaseFilename=AURA-Windows-Setup-1.2.0-x64
+OutputBaseFilename=AURA-Windows-Setup-1.3.0-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

@@ -33,6 +33,26 @@ AU-RA, Claudio y ANT-ONIO son sus **modelos 3D de la app** (`vendor/aura-avatar-
 
 Atajos: **Ctrl+Alt+Espacio** hablar · **Ctrl+Alt+A** chat · **Ctrl+Alt+W** elegir dónde escribir · **Ctrl+Alt+Esc** pausar todo.
 
+## Conexiones: Spotify, Google y Microsoft (1.3)
+
+En **Ajustes → Conexiones** hay un botón por servicio. Se entra en el navegador, en la página del propio servicio (OAuth 2 con PKCE): AURA nunca ve la contraseña. El permiso (token) queda cifrado con DPAPI en la PC y nunca pasa por el servidor AU-RA; se quita con «Desconectar» o desde la cuenta del servicio.
+
+| Servicio | Qué hace AURA | Permisos |
+|---|---|---|
+| **Spotify** | «pon Bad Bunny en Spotify» pone al artista; «pon Tití me preguntó» la canción; «una playlist de salsa» la playlist. Sin dispositivo activo usa el de la PC o abre la app. | leer y controlar la reproducción (**Premium** para controlar desde otra app; sin Premium la abre en la canción) |
+| **Google** | Gmail y Google Calendar con avisos en el notch; «ponme Vivir mi vida en YouTube Music» abre esa canción exacta, sonando. | Gmail, Calendar y YouTube **solo lectura** |
+| **Microsoft** | Outlook, Hotmail, Live y Microsoft 365: correo y calendario con avisos. | `Mail.Read`, `Calendars.Read` (solo lectura) |
+
+Correo y agenda toman la fuente en este orden: Google, Microsoft y, si no hay ninguna, IMAP / iCal (lo de 1.2 sigue funcionando).
+
+**Lo que hay que hacer UNA vez (solo el dueño de AU-RA):** registrar la app en cada servicio y poner su Client ID en Render (servicio `aura-fp`). Los tokens de cada persona no pasan por ahí; el servidor solo le dice al .exe con qué app entrar (`GET /api/windows/conexiones`, con sesión). En todos, la dirección de vuelta es **`http://127.0.0.1:43821/callback`**.
+
+1. **Spotify** — [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard) → *Create app* → Redirect URI `http://127.0.0.1:43821/callback`, API «Web API». Variable: `SPOTIFY_CLIENT_ID`. En modo de desarrollo, Spotify solo deja entrar a las cuentas que se agregan en *User Management* (hasta 25).
+2. **Google** — [console.cloud.google.com](https://console.cloud.google.com) → habilitar *Gmail API*, *Google Calendar API* y *YouTube Data API v3* → *Pantalla de consentimiento OAuth* (en «Prueba», agrega los correos que van a usarlo) → *Credenciales → ID de cliente OAuth → App de escritorio*. Variables: `GOOGLE_DESKTOP_CLIENT_ID` y `GOOGLE_DESKTOP_CLIENT_SECRET` (el de una app de escritorio, que Google mismo dice que no es secreto). Para abrirlo a cualquiera, Google tiene que verificar la app (Gmail es un permiso «restringido»).
+3. **Microsoft** — [portal Azure → Registro de aplicaciones](https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps) → *Nuevo registro* → cuentas «de cualquier organización y personales» → plataforma **Aplicaciones móviles y de escritorio** con `http://127.0.0.1:43821/callback` → *Permitir flujos de cliente público: Sí* → permisos delegados `Mail.Read`, `Calendars.Read`, `User.Read`, `offline_access`. Variable: `MICROSOFT_CLIENT_ID`.
+
+Sin tocar Render, cada quien puede pegar Client ID propios en *Ajustes → Conexiones → Avanzado*. La prueba del CI (`--conexiones-self-test`) hace el inicio de sesión completo de los tres contra proveedores simulados (`gateway/fixture-oauth.mjs`): vuelta del navegador, PKCE, estado falso rechazado, renovación con y sin rotación, un 401 que obliga a renovar, y cada API.
+
 ## Música, correo y agenda (1.2)
 
 - **Lo que suena, como la isla de Apple:** cualquier app que se anuncie a Windows (Spotify, YouTube Music, Chrome/Edge con YouTube, el reproductor) aparece en el notch: en reposo, su portada y unas barritas; al cambiar de canción, una tarjeta con portada, canción, artista, progreso y ⏮ ⏯ ⏭. «¿Qué está sonando?», «pon Bad Bunny en Spotify», «ponme salsa en YouTube Music». Pausa/siguiente usan el control multimedia de Windows (y las teclas si no hay). Sin cuentas ni claves. Elegir y reproducir UNA canción exacta necesitaría la API de Spotify con su inicio de sesión: por ahora abre la búsqueda.

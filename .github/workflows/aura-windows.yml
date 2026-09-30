@@ -78,6 +78,17 @@ jobs:
             Get-Content ./windows/artifacts/protocol/assistant.json
             if ($process.ExitCode -ne 0) { throw 'Assistant integration failed' }
           } finally { Stop-Process -Id $fixture.Id -ErrorAction SilentlyContinue }
+      - name: Spotify, Google and Microsoft sign-in (OAuth PKCE against simulated providers, no real accounts)
+        shell: pwsh
+        run: |
+          $fixture = Start-Process node -ArgumentList "$env:GITHUB_WORKSPACE/windows/gateway/fixture-oauth.mjs" -PassThru
+          try {
+            Start-Sleep -Seconds 1
+            $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--conexiones-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/protocol/conexiones.json" -PassThru
+            if (-not $process.WaitForExit(90000)) { $process.Kill(); throw 'Connections test timeout' }
+            Get-Content ./windows/artifacts/protocol/conexiones.json
+            if ($process.ExitCode -ne 0) { throw 'Connections test failed' }
+          } finally { Stop-Process -Id $fixture.Id -ErrorAction SilentlyContinue }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -28,6 +28,7 @@ montarRutasWindows(app, {
     assert.equal(modelo, 'windows');
     return respuesta ? { resultado: respuesta, motivo: 'ok', ms: 12 } : { resultado: null, motivo: 'sin configurar', ms: 0 };
   }) as any,
+  entorno: { SPOTIFY_CLIENT_ID: 'abc123spotifyid', GOOGLE_DESKTOP_CLIENT_ID: '123-x.apps.googleusercontent.com', GOOGLE_DESKTOP_CLIENT_SECRET: 'GOCSPX-prueba', MICROSOFT_CLIENT_ID: 'mal id con espacios' },
 });
 const srv = app.listen(0, '127.0.0.1');
 await new Promise((r) => srv.once('listening', r));
@@ -69,4 +70,12 @@ test('texto vacío o gigante: 400 sin preguntar', async () => {
   assert.equal((await post({ texto: '  ' })).status, 400);
   assert.equal((await post({ texto: 'x'.repeat(4001) })).status, 400);
   assert.equal(preguntas, antes);
+});
+
+test('conexiones: los Client ID del entorno, solo con sesión y solo si están bien formados', async () => {
+  assert.equal((await fetch(`${base}/api/windows/conexiones`)).status, 401);
+  const j: any = await (await fetch(`${base}/api/windows/conexiones`, { headers: { 'x-ultron-mesa': 'clave-de-mesa-de-prueba' } })).json();
+  assert.deepEqual(j.spotify, { clientId: 'abc123spotifyid' });
+  assert.deepEqual(j.google, { clientId: '123-x.apps.googleusercontent.com', clientSecret: 'GOCSPX-prueba' });
+  assert.equal(j.microsoft, null);
 });

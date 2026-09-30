@@ -249,6 +249,17 @@ public sealed class AuraApi : IDisposable
         catch (Exception e) when (e is InvalidOperationException or KeyNotFoundException or FormatException) { return null; }
     }
 
+    /// <summary>Los Client ID de Spotify, Google y Microsoft que puso el servidor (con sesión). Null en lo que falta.</summary>
+    public async Task<(string? Spotify, string? Google, string? GoogleSecreto, string? Microsoft)> ClientesOauth(CancellationToken ct = default)
+    {
+        using var r = await Enviar(() => Pedido(HttpMethod.Get, "api/windows/conexiones", null), ct, TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+        using var j = await Json(r, ct).ConfigureAwait(false);
+        static string? Id(JsonElement raiz, string servicio, string campo = "clientId") =>
+            raiz.TryGetProperty(servicio, out var s) && s.ValueKind == JsonValueKind.Object && s.TryGetProperty(campo, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        var raiz = j.RootElement;
+        return (Id(raiz, "spotify"), Id(raiz, "google"), Id(raiz, "google", "clientSecret"), Id(raiz, "microsoft"));
+    }
+
     public void Dispose() => http.Dispose();
 }
 

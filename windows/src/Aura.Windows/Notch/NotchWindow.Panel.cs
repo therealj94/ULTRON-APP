@@ -135,6 +135,14 @@ public partial class NotchWindow
         ajustes.ResponderConVoz = r.ResponderConVoz; ajustes.OcultarEnPantallaCompleta = r.OcultarEnPantallaCompleta;
         ajustes.VozDeWindows = r.VozDeWindows; ajustes.OidoDeWindows = r.OidoDeWindows;
         bool cambioCuentas = r.CorreoDireccion != ajustes.CorreoDireccion || r.CorreoClave != ajustes.CorreoClave || r.AgendaUrl != ajustes.AgendaUrl;
+        // Conexiones: solo las que se tocaron en la ventana (un token renovado mientras estaba abierta no se pisa).
+        foreach (var clave in v.ConexionesTocadas)
+            if (r.Conexiones.TryGetValue(clave, out var tk)) ajustes.Conexiones[clave] = tk; else ajustes.Conexiones.Remove(clave);
+        bool cambioIds = r.SpotifyClientId != ajustes.SpotifyClientId || r.GoogleClientId != ajustes.GoogleClientId
+                      || r.GoogleClientSecret != ajustes.GoogleClientSecret || r.MicrosoftClientId != ajustes.MicrosoftClientId;
+        ajustes.SpotifyClientId = r.SpotifyClientId; ajustes.GoogleClientId = r.GoogleClientId;
+        ajustes.GoogleClientSecret = r.GoogleClientSecret; ajustes.MicrosoftClientId = r.MicrosoftClientId;
+        cambioCuentas |= v.ConexionesTocadas.Count > 0 || cambioIds;
         ajustes.CorreoDireccion = r.CorreoDireccion; ajustes.CorreoClave = r.CorreoClave; ajustes.AgendaUrl = r.AgendaUrl;
         ajustes.AvisarCorreos = r.AvisarCorreos; ajustes.MostrarMusica = r.MostrarMusica;
         if (cambioCuentas) IniciarCuentas();

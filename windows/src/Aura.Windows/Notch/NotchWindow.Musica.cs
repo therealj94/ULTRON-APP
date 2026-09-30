@@ -23,7 +23,7 @@ public partial class NotchWindow
     DispatcherTimer? relojTarjeta;
     readonly DispatcherTimer relojProgreso = new() { Interval = TimeSpan.FromSeconds(1) };
     DateTime cancionDesde = DateTime.Now;
-    Correo? correo;
+    Buzon? correo;
     AgendaCuenta? agenda;
 
     bool MusicaSonando => ajustes.MostrarMusica && cancion is { Sonando: true };
@@ -105,7 +105,52 @@ public partial class NotchWindow
             return;
         }
         var q = partes.Length > 1 ? partes[1] : "";
-        var donde = partes[0] == "buscar" ? (cancion?.App == "YouTube Music" ? "ytmusic" : Aplicaciones.Buscar("spotify", 80) != null ? "spotify" : "ytmusic") : partes[0];
+        var spotify = Conectada(Proveedor.Spotify);
+        var google = Conectada(Proveedor.Google);
+        var donde = partes[0] == "buscar"
+            ? (cancion?.App == "YouTube Music" && google != null ? "ytmusic" : spotify != null || Aplicaciones.Buscar("spotify", 80) != null ? "spotify" : "ytmusic")
+            : partes[0];
+        // Con la cuenta conectada: la canción exacta, sonando.
+        if (donde == "spotify" && spotify != null)
+        {
+            pensando = true; TextoPiensa.Text = T("Buscando en Spotify…", "Searching Spotify…"); Recalcular();
+            try
+            {
+                var puesto = await SpotifyWeb.Poner(spotify, q);
+                pensando = false;
+                AgregarMensaje(ajustes.NombreAvatar, T("Sonando en Spotify: ", "Playing on Spotify: ") + puesto);
+                // Sin hablar encima de la canción: la tarjeta de música es la respuesta.
+                MostrarTarjetaMusica(6);
+                Avisar(new Aviso(T("Sonando en Spotify", "Playing on Spotify"), puesto, "\uE8D6", "happy", Segundos: 3));
+                if (continuo) EmpezarAEscuchar();
+                return;
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.Net.Http.HttpRequestException or TaskCanceledException)
+            {
+                pensando = false;
+                if (ex.Message.StartsWith("Te abrí")) { Hecho(T("Spotify", "Spotify"), q, "\uE8D6", ex.Message); return; }
+                AgregarMensaje(ajustes.NombreAvatar, "Spotify: " + ex.Message);
+            }
+        }
+        if (donde == "ytmusic" && google != null)
+        {
+            pensando = true; TextoPiensa.Text = T("Buscando en YouTube Music…", "Searching YouTube Music…"); Recalcular();
+            try
+            {
+                if (await GoogleWeb.Cancion(google, q, default) is { } v)
+                {
+                    pensando = false;
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(v.Url) { UseShellExecute = true });
+                    Hecho(T("YouTube Music", "YouTube Music"), v.Titulo, "\uE8D6", T($"Te pongo {v.Titulo} en YouTube Music.", $"Playing {v.Titulo} on YouTube Music."));
+                    return;
+                }
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.Net.Http.HttpRequestException or TaskCanceledException)
+            {
+                AgregarMensaje(ajustes.NombreAvatar, "YouTube: " + ex.Message);
+            }
+            pensando = false;
+        }
         var app = await Task.Run(() => Musica.Buscar(donde, q));
         Hecho(T("Buscando en ", "Searching ") + app, q, "", T($"Te busco {q} en {app}. Dale play a la que quieras.", $"Looking up {q} on {app}. Hit play on the one you want."));
     }
@@ -116,9 +161,12 @@ public partial class NotchWindow
     {
         correo?.Dispose(); correo = null;
         agenda?.Dispose(); agenda = null;
-        if (ajustes.CorreoDireccion.Length > 3 && ajustes.CorreoClave.Length > 0)
+        CrearConexiones();
+        var (buzonApi, agendaApi) = FuentesDeCuentas();
+        correo = buzonApi;
+        if (correo == null && ajustes.CorreoDireccion.Length > 3 && ajustes.CorreoClave.Length > 0) correo = new Correo(ajustes.CorreoDireccion, ajustes.CorreoClave);
+        if (correo != null)
         {
-            correo = new Correo(ajustes.CorreoDireccion, ajustes.CorreoClave);
             correo.Nuevo += c => Dispatcher.BeginInvoke(new Action(() =>
             {
                 if (!ajustes.AvisarCorreos || pausado) return;
@@ -127,11 +175,11 @@ public partial class NotchWindow
             correo.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso(T("Correo", "Email"), m, "", "worried", Segundos: 8))));
             correo.Vigilar();
         }
-        if (ajustes.AgendaUrl.Length > 8)
+        if (agendaApi != null || ajustes.AgendaUrl.Length > 8)
         {
             try
             {
-                agenda = new AgendaCuenta(ajustes.AgendaUrl);
+                agenda = agendaApi ?? new AgendaCuenta(ajustes.AgendaUrl);
                 agenda.Pronto += ev => Dispatcher.BeginInvoke(new Action(() =>
                 {
                     if (pausado) return;
@@ -147,7 +195,7 @@ public partial class NotchWindow
 
     async Task LeerCorreos(string que, bool hablado)
     {
-        if (correo == null) { NoPude(T("Conecta tu correo en Ajustes → Cuentas (Gmail con contraseña de aplicación).", "Connect your email in Settings → Accounts (Gmail with an app password).")); return; }
+        if (correo == null) { NoPude(T("Conecta tu correo en Ajustes → Conexiones (Google o Microsoft).", "Connect your email in Settings → Connections (Google or Microsoft).")); return; }
         pensando = true; TextoPiensa.Text = T("Revisando tu correo…", "Checking your email…"); Recalcular();
         System.Collections.Generic.List<Carta> cartas;
         var de = que.StartsWith("de|") ? LayaLigera.Normalizar(que[3..]) : null;
@@ -182,7 +230,7 @@ public partial class NotchWindow
 
     async Task LeerAgenda(string que)
     {
-        if (agenda == null) { NoPude(T("Conecta tu calendario en Ajustes → Cuentas (la dirección secreta en formato iCal).", "Connect your calendar in Settings → Accounts (the secret iCal address).")); return; }
+        if (agenda == null) { NoPude(T("Conecta tu calendario en Ajustes → Conexiones (Google o Microsoft).", "Connect your calendar in Settings → Connections (Google or Microsoft).")); return; }
         try { await agenda.Cargar(); } catch (Exception ex) { NoPude(ex.Message); return; }
         var hoy = DateTime.Now.Date;
         var (desde, hasta, cuando) = que switch
