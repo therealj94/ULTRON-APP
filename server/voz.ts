@@ -433,6 +433,8 @@ export async function hablar(opts: {
   /** Kokoro no canta: `sing` se dice igual que `speak`. */
   performance?: Performance;
   sinCache?: boolean;
+  /** Texto de un chat de la persona: ni se lee de la caché de audio ni se guarda en ella. */
+  privado?: boolean;
   /** Qué plataforma habla. Decide la voz; por omisión, AU-RA. */
   plataforma?: 'ultron' | 'electrum';
   /** Si la ruta tiene reloj (lib/presupuesto), la voz no se pasa de lo que el cliente espera. */
@@ -468,7 +470,7 @@ export async function hablar(opts: {
     const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma });
     if (xi) {
       const out = { ...xi, motor: xiPedido.motor };
-      cacheSet(xiPedido.clave, out);
+      if (!opts.privado) cacheSet(xiPedido.clave, out);
       return { ...out, cache: false, ms: Date.now() - t0 };
     }
   }
@@ -496,7 +498,7 @@ export async function hablar(opts: {
     out = v ? { ...v, motor: 'voicebox:kokoro' } : null;
   }
   if (!out) return null;
-  cacheSet(key, out);
+  if (!opts.privado) cacheSet(key, out);
   return { ...out, cache: false, ms: Date.now() - t0 };
 }
 

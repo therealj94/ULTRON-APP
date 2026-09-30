@@ -51,8 +51,8 @@ let activo = false;
 /**
  * El botón Colgar de la notificación. Devuelve true si el evento era de la llamada.
  *
- * notifee acepta UN SOLO manejador de segundo plano (`onBackgroundEvent`) para toda la app: si otra
- * pieza registra el suyo, tiene que llamar primero a esta función y no hacer nada más si da true.
+ * notifee acepta UN SOLO manejador de segundo plano (`onBackgroundEvent`) para toda la app: vive aquí,
+ * y las demás piezas se suman con `sumarManejadorDeFondo` (reciben lo que no es de esta llamada).
  */
 export function manejarEventoLlamada(evento: { type: number; detail?: any }): boolean {
   const m = cargar();
@@ -74,6 +74,17 @@ export function manejarEventoLlamada(evento: { type: number; detail?: any }): bo
  * la tarea del servicio y el manejador de segundo plano existan antes de mostrar la notificación.
  * La tarea es una promesa que no se resuelve: el servicio vive hasta `stopForegroundService`.
  */
+/*
+ * Los demás que necesitan el manejador de fondo (la llamada de AURA de un recordatorio,
+ * compa/recordatoriosNativo.ts): se les pasa lo que no es de la llamada de PULSE2CHAT. Cada uno
+ * devuelve true si el evento era suyo.
+ */
+type ManejadorDeFondo = (evento: { type: number; detail?: any }) => boolean | Promise<boolean>;
+const deFondo: ManejadorDeFondo[] = [];
+export function sumarManejadorDeFondo(f: ManejadorDeFondo) {
+  if (!deFondo.includes(f)) deFondo.push(f);
+}
+
 (function registrar() {
   const m = cargar();
   if (!m) return;
@@ -81,7 +92,14 @@ export function manejarEventoLlamada(evento: { type: number; detail?: any }): bo
     m.default.registerForegroundService(() => new Promise<void>(() => {}));
     m.default.onForegroundEvent((e) => void manejarEventoLlamada(e));
     m.default.onBackgroundEvent(async (e) => {
-      manejarEventoLlamada(e);
+      if (manejarEventoLlamada(e)) return;
+      for (const f of deFondo) {
+        try {
+          if (await f(e)) return;
+        } catch {
+          /* uno roto no deja sin evento a los demás */
+        }
+      }
     });
   } catch {
     /* sin notifee nativo (p. ej. un APK viejo) la llamada funciona, solo que no en segundo plano */

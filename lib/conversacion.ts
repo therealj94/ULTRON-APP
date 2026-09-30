@@ -100,6 +100,8 @@ export function esPreguntaExterna(message: string): boolean {
   if (esInterno(message)) return false;
   if (esSobreUltron(message)) return false;
   const q = fold(message);
+  // «busca en mis chats…»: eso lo busca el teléfono en PULSE2CHAT (lib/manos-app.ts), no internet.
+  if (/\b(en|in) (los |mis |my )?(chats?|mensajes|conversaciones|messages)\b/.test(q)) return false;
   if (esTemaOG(message) && !consultaWeb(message)) return false;
   if (/\b(precio|spot).*\b(oro|plata|xau|xag|lempira|hnl)\b|\b(oro|plata|lempira|hnl).*\b(precio|spot|tipo de cambio)\b/.test(q)) {
     return false;

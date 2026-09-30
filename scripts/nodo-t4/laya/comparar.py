@@ -9,7 +9,11 @@ datos reales mal etiquetados podían empeorar a Laya en producción sin que nadi
 Qué se compara (la cifra que decide en cada modelo):
   · electrum: F1 del híbrido (lo que corre en producción: nombrados + Laya + tabla) en la prueba;
     si baja más que la tolerancia, no se promueve. El exacto se muestra al lado.
-  · los demás (mensaje, documento, comando): F1 macro de Laya en «test» (o en «evals» si no hay test).
+  · los demás (mensaje, documento): F1 macro de Laya en «test» (o en «evals» si no hay test).
+  · un modelo SIN etiquetas sueltas (todo en grupos exclusivos, como «comando»): ahí el F1 macro es
+    siempre 0 y no decidía nada (se promovía cualquiera). Se decide por la EXACTITUD DE CADA GRUPO que
+    ya tenía el anterior: ninguno puede bajar más que la tolerancia. Un grupo nuevo (el `app` de
+    AU-RA en «comando») no tiene con qué compararse: se muestra y no frena.
 """
 import argparse
 import json
@@ -29,7 +33,32 @@ def cifra(inf):
     raise SystemExit('el informe no trae ni «hibrido» ni «test/evals»: ¿es de evaluar.py --json?')
 
 
+def grupos_de(inf):
+    """{grupo: exactitud} del conjunto que decide, si el modelo no tiene etiquetas sueltas; si no, None."""
+    for conjunto in ('test', 'evals'):
+        c = inf.get(conjunto)
+        if isinstance(c, dict) and isinstance(c.get('laya'), dict):
+            L = c['laya']
+            if L.get('sueltas') == 0:
+                return conjunto, {k[len('grupo_'):]: float(v) for k, v in L.items() if k.startswith('grupo_')}
+            return None
+    return None
+
+
 def decidir(viejo, nuevo, tolerancia):
+    gv, gn = grupos_de(viejo), grupos_de(nuevo)
+    if gv and gn:
+        conjunto, v = gv
+        _, n = gn
+        partes, promover = [], True
+        for g in sorted(set(v) | set(n)):
+            if g in v and g in n:
+                ok = n[g] >= v[g] - tolerancia
+                promover = promover and ok
+                partes.append(f'grupo {g}: anterior {v[g]:.3f} → nuevo {n[g]:.3f}{"" if ok else " (BAJA)"}')
+            elif g in n:
+                partes.append(f'grupo {g} (nuevo): {n[g]:.3f}')
+        return promover, f'exactitud por grupo ({conjunto}): ' + ' · '.join(partes) + f'; tolerancia {tolerancia:.3f}'
     nombre, v, v2 = cifra(viejo)
     nombre_n, n, n2 = cifra(nuevo)
     if nombre != nombre_n:

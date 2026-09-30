@@ -84,7 +84,36 @@ export type AccionApp =
   /** true = AURA se calla y deja de escuchar; false = vuelve. */
   | { tipo: 'silencio'; valor: boolean }
   /** «Ponte a pantalla completa» / «ponte al lado» / «ponte chiquita»: cómo se presenta (se guarda en el perfil). */
-  | { tipo: 'presencia'; valor: ModoPresencia };
+  | { tipo: 'presencia'; valor: ModoPresencia }
+  /*
+   * LAS MANOS (lib/manos-app.ts en el servidor). Solo llegan si este teléfono las declaró en su
+   * contexto (`manos`); un APK viejo no las declara y, si le llegara una, su puente la ignora.
+   */
+  /** Llama o videollama a un contacto. El servidor la manda SOLO tras el «sí» de la persona. */
+  | { tipo: 'llamar'; con: string; video: boolean }
+  /** Lee lo último de `de` (o lo no leído de todos) con la voz de AURA. `boleto`: lo pone el servidor. */
+  | { tipo: 'leer'; de?: string; boleto?: string }
+  /** Busca palabras en los chats; dice en qué chat está (sin leer el contenido) y lo abre. */
+  | { tipo: 'buscar'; q: string; boleto?: string }
+  | { tipo: 'idioma'; valor: Idioma }
+  /** Un dato de «lo que sabe de mí»: apodo, cumple (MM-DD) o un campo de la encuesta. */
+  | { tipo: 'perfil'; campo: CampoPerfil; valor: string }
+  /**
+   * Aviso local a esa hora (epoch ms). Con `llamada`, a esa hora AURA «te llama» (aviso de llamada
+   * entrante a pantalla completa; al contestar, te lo dice con su voz). Solo tras el «sí» de la persona.
+   */
+  | { tipo: 'recordatorio'; texto: string; cuando: number; llamada?: boolean }
+  /** Quita un recordatorio (por el id que el teléfono contó en su contexto). Solo tras el «sí». */
+  | { tipo: 'cancelar_recordatorio'; id: string };
+
+export type CampoPerfil = 'apodo' | 'cumple' | keyof Encuesta;
+
+/** Las manos que este teléfono sabe hacer: van en el contexto para que el servidor las ofrezca. */
+export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada'] as const;
+export type Mano = (typeof MANOS_APP)[number];
+
+/** Un recordatorio puesto en el teléfono (lo cuenta en el contexto para decirlo y cancelarlo por voz). */
+export type RecordatorioPuesto = { id: string; texto: string; cuando: number; llamada: boolean };
 
 /**
  * Servidor → teléfono (con la sesión de la mesa):
@@ -101,6 +130,10 @@ export type Contexto = {
   chatAbierto?: { correo: string; nombre: string } | null;
   contactos: { correo: string; nombre: string }[];
   borrador?: string;
+  /** Las manos que sabe hacer (MANOS_APP). Un servidor viejo la ignora. */
+  manos?: readonly Mano[];
+  /** Los recordatorios puestos (para «¿qué recordatorios tengo?» y «cancela el de las 5»). */
+  recordatorios?: RecordatorioPuesto[];
 };
 
 /* ── eventos entre piezas ────────────────────────────────────────────────────────────────── */
@@ -129,6 +162,18 @@ export type Eventos = {
   voz: { libre: boolean };
   /** El perfil cambió (tema, apodo, avatar…). */
   perfil: Perfil;
+  /**
+   * Lo que AURA tiene que decir con su voz y que sale del TELÉFONO, no del cerebro: la lectura de un
+   * mensaje cifrado («¿qué me dijo Beto?») o el resultado de una búsqueda. `boleto` es el de la acción
+   * (el servidor lo reconoce y lo dice tal cual, sin cerebro ni memoria). La voz lo pone (VozProvider).
+   */
+  lectura: { texto: string; boleto?: string };
+  /**
+   * La persona CONTESTÓ la llamada de un recordatorio («llámame a las 5 para recordarme…»): la voz
+   * abre la conversación y AURA se lo dice (VozProvider). Si la app se abrió por el toque, lo mismo
+   * queda guardado en compa/recordatorios.ts (`tomarPorDecir`) hasta que la voz se monte.
+   */
+  recordatorio: { texto: string; base: string };
 };
 
 type Oyente<K extends keyof Eventos> = (dato: Eventos[K]) => void;

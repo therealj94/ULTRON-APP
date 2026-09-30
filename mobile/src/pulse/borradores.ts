@@ -111,7 +111,7 @@ export function contextoChat(): { chatAbierto: Contacto | null; contactos: Conta
 export const escucharBorradores = suscribir;
 
 /** Busca a quién; si la lista todavía no se trajo (recién abierta la app), la trae una vez. */
-async function quienEs(con: string): Promise<Contacto | null> {
+export async function quienEs(con: string): Promise<Contacto | null> {
   let c = RELEVO.resolverContacto(con);
   if (!c && RELEVO.quien()) {
     await CHATS.refrescarLista().catch(() => undefined);

@@ -9,7 +9,7 @@
  * escuchando hasta volver a abrir la app, gastando batería y datos).
  *
  * Aquí se registran también los manejadores de voz del chat (`borradores.ts`: redactar, enviar,
- * descartar) y, mientras la navegación nueva no los tome, este proveedor abre el chat en su ventana
+ * descartar; `manos.ts`: llamar, leer, buscar) y, mientras la navegación nueva no los tome, este proveedor abre el chat en su ventana
  * (`PulseChat`) cuando AURA pide `abrir_chat` o `abrir: chats`. `abrirChatEnModal={false}` le deja
  * eso a la navegación.
  *
@@ -24,6 +24,7 @@ import * as RELEVO from './relevo';
 import * as LLAMADA from './llamada';
 import * as CHATS from './chats';
 import './borradores';
+import './manos';
 import { emitir, escuchar } from '../nucleo/contrato';
 import { conectarChat } from '../lib/genesis';
 import { PantallaLlamada } from './PantallaLlamada';
