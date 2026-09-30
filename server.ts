@@ -19,6 +19,7 @@ import {
   contextoDe,
   decibleHasta,
   dichoDeAcciones,
+  dichoDePropuesta,
   empujarAccion,
   extraerAcciones,
   instruccionAcciones,
@@ -2663,11 +2664,12 @@ function accionesDelCerebro(
   // El único borrador que un «sí» puede enviar: el de un turno anterior (antes de empujar nada de este).
   // Igual la propuesta: llamar o recordar pedido en ESTE turno no se hace, queda esperando el «sí».
   const nueva: { p: Propuesta | null } = { p: null };
+  const previa = propuestaAnterior(p.correoApp);
   const listas = prepararAcciones(acciones, {
     mensaje: p.crudo,
     contexto: p.contextoApp,
     pendiente: pendienteAnterior(p.correoApp),
-    propuesta: propuestaAnterior(p.correoApp),
+    propuesta: previa,
     alProponer: (x) => (nueva.p = x),
   });
   const eventos = listas.map((a) => empujarAccion(p.correoApp, a, { aparato: p.aparato }).evento);
@@ -2676,7 +2678,9 @@ function accionesDelCerebro(
   if (propuesta) anotarPropuesta(p.correoApp, propuesta);
   const mudo = !extraerEmocion(limpio).texto.trim();
   // El modelo escribió solo la línea: se dice la frase de la acción o, si era una propuesta, la pregunta.
-  if (mudo && eventos.length) return { texto: dichoDeAcciones(listas, p.idioma), acciones: eventos, sustituido: true };
+  // Una llamada o un recordatorio que se cumplió: con el nombre y la hora que la persona confirmó.
+  const cumplida = previa && listas[0] && (listas[0].tipo === 'llamar' || listas[0].tipo === 'recordatorio') && listas[0].tipo === previa.tipo;
+  if (mudo && eventos.length) return { texto: cumplida ? dichoDePropuesta(previa, p.idioma) : dichoDeAcciones(listas, p.idioma), acciones: eventos, sustituido: true };
   if (mudo && propuesta) return { texto: preguntaDePropuesta(propuesta, p.idioma), acciones: [], sustituido: true };
   return { texto: limpio, acciones: eventos, sustituido: false };
 }

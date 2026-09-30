@@ -143,7 +143,7 @@ test('reglas · llamar: se PROPONE (no se marca), solo a un contacto claro; lo d
   assert.equal(r?.accion, null, 'no sale ninguna acción en este turno');
   assert.deepEqual(r?.propuesta, { tipo: 'llamar', con: 'mama@x.com', nombre: 'Mamá', video: false });
   assert.equal(r?.decir, '¿Llamo a Mamá?');
-  const v = ordenPorReglas('hazle videollamada a Beto', { contexto: conManos, ahora: AHORA }) || ordenPorReglas('videollamada con Beto', { contexto: conManos, ahora: AHORA });
+  const v = ordenPorReglas('hazle videollamada a Beto', { contexto: conManos, ahora: AHORA });
   assert.deepEqual(v?.propuesta, { tipo: 'llamar', con: 'beto@x.com', nombre: 'Beto Pérez', video: true });
   assert.equal(v?.decir, '¿Le hago videollamada a Beto Pérez?');
   assert.equal(ordenPorReglas('márcale a Beto', { contexto: conManos, ahora: AHORA })?.propuesta?.tipo, 'llamar');
@@ -227,6 +227,9 @@ test('reglas · leer, buscar, idioma, perfil y presentación', () => {
   assert.deepEqual(ordenPorReglas('ponte en pantalla completa', o)?.accion, { tipo: 'presentacion', valor: 'completa' });
   assert.deepEqual(ordenPorReglas('hazte a un lado', o)?.accion, { tipo: 'presentacion', valor: 'lado' });
   assert.deepEqual(ordenPorReglas('hazte chiquita', o)?.accion, { tipo: 'presentacion', valor: 'lado' });
+  // «Lo que sabe de mí» es la pantalla de Perfil (una acción de siempre: también en un APK viejo).
+  assert.deepEqual(ordenPorReglas('muéstrame lo que sabes de mí', o)?.accion, { tipo: 'abrir', pantalla: 'perfil' });
+  assert.deepEqual(ordenPorReglas('abre lo que sabes de mí', { contexto: viejo, ahora: AHORA })?.accion, { tipo: 'abrir', pantalla: 'perfil' });
   // Las órdenes de siempre siguen igual y ganan.
   assert.deepEqual(ordenPorReglas('abre ajustes', o)?.accion, { tipo: 'abrir', pantalla: 'ajustes' });
   assert.deepEqual(ordenPorReglas('ponlo oscuro', o)?.accion, { tipo: 'tema', valor: 'oscuro' });

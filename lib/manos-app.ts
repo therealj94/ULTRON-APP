@@ -389,9 +389,9 @@ export function manoPorReglas(texto: string, o: OpcionesMano): ResultadoMano | n
 
   if (puede('llamar')) {
     const video =
-      /^(?:(?:haz(?:me)?|hace(?:me)?|inicia|empieza|pon(?:me)?) (?:una )?)?(?:video ?llamada|videollamada|video call|videocall)(?: (?:a|al|con|with|to))? (?<con>.+)$/d.exec(q) ||
+      /^(?:(?:haz(?:me|le)?|hace(?:me|le)?|inicia|empieza|pon(?:me)?) (?:una )?)?(?:video ?llamada|videollamada|video call|videocall)(?: (?:a|al|con|with|to))? (?<con>.+)$/d.exec(q) ||
       /^(?:video ?llama(?:le)?|videollama(?:le)?|llama(?:le)?(?: por| en) video(?: a| al)?|video call) (?:a |al )?(?<con>.+)$/d.exec(q);
-    const voz = video ? null : /^(?:llama(?:le)?|marca(?:le)?|haz(?:me)? una llamada|comunicame|call|phone|ring)(?: (?:a|al|con|to))? (?<con>.+)$/d.exec(q);
+    const voz = video ? null : /^(?:llama(?:le)?|marca(?:le)?|haz(?:me|le)? una llamada|hace(?:me|le)? una llamada|comunicame|call|phone|ring)(?: (?:a|al|con|to))? (?<con>.+)$/d.exec(q);
     const m = video || voz;
     if (m?.groups?.con) {
       const c = uno(m.groups.con);

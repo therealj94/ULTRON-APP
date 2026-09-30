@@ -38,7 +38,7 @@ import {
 } from './manos-app';
 
 export type { AccionMano, Mano, Propuesta } from './manos-app';
-export { preguntaDePropuesta } from './manos-app';
+export { dichoDePropuesta, preguntaDePropuesta } from './manos-app';
 
 export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil';
 export type TemaApp = 'oscuro' | 'claro' | 'sistema';
@@ -608,6 +608,8 @@ const PANTALLA_DE: Array<[RegExp, Pantalla]> = [
   [/^(los |las |mis |el |la |the |my )?(chats?|mensajes|conversaciones|messages|pulse2chat)$/, 'chats'],
   [/^(la |el |the )?(mesa|inicio|home|pantalla principal|principal)$/, 'mesa'],
   [/^(el |mi |the |my )?(perfil|profile)$/, 'perfil'],
+  // «Lo que sabe de mí» (la pantalla de Perfil): «abre lo que sabes de mí», «muéstrame qué sabes de mí».
+  [/^(lo )?que (sabes|sabe|conoces) de mi$|^what you know about me$/, 'perfil'],
 ];
 
 const DICHOS: Record<'es' | 'en', Record<string, string>> = {
