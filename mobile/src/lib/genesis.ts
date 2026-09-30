@@ -31,6 +31,8 @@ import * as RELEVO from '../pulse/relevo';
 const CAJON = 'aura.genesis.pendiente';
 const VUELTA = 'ultronfp://sso';
 const VIDA_PEDIDO_MS = 10 * 60_000;
+/** Lo que la entrada espera al relevo del chat después de que AU-RA ya aceptó (ver completar). */
+const TOPE_CHAT_MS = 12_000;
 
 type Pendiente = { verificador: string; estado: string; en: number };
 export type Miembro = { nombre: string; correo: string; rol: string; gid: string };
@@ -202,14 +204,14 @@ async function completar(url: string, p: Pendiente): Promise<ResultadoGenesis> {
   if (!data?.token || !data.miembro) return { ok: false, codigo: 'FALLO', mensaje: 'No pude entrar con Genesis ID.' };
   await saveMesaToken(data.token);
   // El chat con el MISMO pase (el relevo lo gasta por su lado). Si falla, AU-RA entra igual y el
-  // chat ofrece conectarse después.
-  let chat = false;
-  try {
-    await RELEVO.entrarConPase(v.pase, p.verificador, data.miembro.nombre);
-    chat = true;
-  } catch {
-    chat = false;
-  }
+  // chat ofrece conectarse después. Con tope: AU-RA ya aceptó, y un relevo lento dejaba el botón
+  // girando hasta un minuto. Si contesta después del tope, la cuenta del chat queda guardada igual
+  // (entrarConPase la guarda al terminar) y la pantalla de chats la encuentra.
+  const alta = RELEVO.entrarConPase(v.pase, p.verificador, data.miembro.nombre).then(
+    () => true,
+    () => false
+  );
+  const chat = await Promise.race([alta, new Promise<boolean>((r) => setTimeout(() => r(false), TOPE_CHAT_MS))]);
   return { ok: true, miembro: data.miembro, chat, ...(data.genesis ? { genesis: data.genesis } : {}) };
 }
 

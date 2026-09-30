@@ -303,7 +303,11 @@ const mocks = {
       stopAudioSession: async () => {
         obs.audioSesion = 'parada';
       },
-      selectAudioOutput: async () => {},
+      selectAudioOutput: async (s) => {
+        obs.salidaElegida = s;
+      },
+      // Lo que Android tiene conectado (la prueba pone `obs.salidasHay`; por omisión, solo el teléfono).
+      getAudioOutputs: async () => obs.salidasHay || ['speaker', 'earpiece'],
     },
   },
   '@livekit/react-native-webrtc': WEBRTC,

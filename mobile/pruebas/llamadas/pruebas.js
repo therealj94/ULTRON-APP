@@ -446,6 +446,24 @@ async function contestadaEnPie(video = false) {
     await flush();
     afirmar(obs.audioArranques === 2, 'lo re-aplicó de más: ' + obs.audioArranques);
   });
+  await prueba('R5-9', 'al apagar el altavoz con Bluetooth o audífonos, sale por ellos; sin nada, por el auricular', async () => {
+    const n = await nuevo();
+    await conReloj(n.L.llamar('b@a.com', true));
+    obs.salidasHay = ['speaker', 'earpiece', 'bluetooth'];
+    await n.L.altavoz(false);
+    afirmar(obs.salidaElegida === 'bluetooth', 'con el carro puesto fue a: ' + obs.salidaElegida);
+    obs.salidasHay = ['speaker', 'earpiece', 'headset'];
+    await n.L.altavoz(true);
+    afirmar(obs.salidaElegida === 'speaker', 'altavoz: ' + obs.salidaElegida);
+    await n.L.altavoz(false);
+    afirmar(obs.salidaElegida === 'headset', 'con audífonos fue a: ' + obs.salidaElegida);
+    obs.salidasHay = null;
+    await n.L.altavoz(true);
+    await n.L.altavoz(false);
+    afirmar(obs.salidaElegida === 'earpiece', 'sin nada conectado fue a: ' + obs.salidaElegida);
+    n.L.colgar('yo');
+    await flush();
+  });
   await prueba('R5-8', 'conecta con la app DETRÁS: no relanza el servicio (Android 14), solo cambia el texto', async () => {
     const n = await nuevo();
     await conReloj(n.L.llamar('b@a.com', false));
