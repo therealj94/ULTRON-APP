@@ -395,7 +395,7 @@ const catastro_en_punto: Herramienta = {
 const concesion_entorno: Herramienta = {
   nombre: 'concesion_entorno',
   descripcion:
-    'Entorno y semáforo de restricciones de una concesión (áreas protegidas, microcuencas, forestal, caseríos, traslapes): usala antes de opinar si se puede trabajar.',
+    'Entorno y semáforo de una concesión (áreas protegidas, microcuencas, forestal, caseríos, traslapes): usala antes de opinar si se puede trabajar.',
   esquema: {
     type: 'object',
     properties: {
@@ -982,7 +982,7 @@ const informe_pdf: Herramienta = {
 const cartera_analisis: Herramienta = {
   nombre: 'cartera_analisis',
   descripcion:
-    'Semáforo de una cartera; sin nombre, las lista.',
+    'Semáforo y prioridad de cada zona de una cartera; sin nombre, las lista.',
   esquema: {
     type: 'object',
     properties: { nombre: { type: 'string', description: 'Nombre' } },
