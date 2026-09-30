@@ -17,5 +17,6 @@
  <ItemGroup>
   <Resource Include="AvatarAssets/**/*.png"/>
   <Content Include="CallAssets/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
+  <Content Include="CentroAssets/**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true"/>
  </ItemGroup>
 </Project>
