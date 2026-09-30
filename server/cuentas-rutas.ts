@@ -17,6 +17,7 @@
  */
 import type { Express, Request, Response } from 'express';
 import { enviarCorreo, correoValido } from '../lib/correo-ses';
+import { dominioPrincipal } from './dominio';
 import { identificar, personaPorCorreoExacto, puedeEntrar, type Nivel, type Plataforma } from '../lib/acceso';
 import { anotarExitoEntrada, anotarFalloEntrada, emitirSesion, esperaEntrada, exigirSesion, limitar, sesionDe } from './seguridad';
 import { correoDeCodigo } from './cuentas';
@@ -58,7 +59,8 @@ export function producto(p: Plataforma) {
 
 /** La dirección pública de la plataforma, para los enlaces de los correos. */
 export function origenPublico(p: Plataforma): string {
-  const env = String(process.env.CUENTAS_ORIGEN || (p === 'electrum' ? process.env.PUBLIC_BASE : '') || '').trim();
+  const principal = p === 'electrum' && dominioPrincipal() ? `https://${dominioPrincipal()}` : '';
+  const env = String(process.env.CUENTAS_ORIGEN || principal || (p === 'electrum' ? process.env.PUBLIC_BASE : '') || '').trim();
   const base = env || (p === 'electrum' ? 'https://ultron-looi-desk.onrender.com' : 'https://aura-fp.onrender.com');
   return base.replace(/\/+$/, '');
 }
