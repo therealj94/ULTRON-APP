@@ -1198,6 +1198,16 @@ prueba('dos voces nunca: la mesa tapada (los chats encima) suelta el audio; la c
   assert.ok(m.oye());
 });
 
+prueba('al montarse la mesa no abre el micrófono antes del permiso (fijar no toca nada)', () => {
+  const m = mesaSimulada();
+  m.quiere = false;
+  const oido = new OidoMesa(m.deps);
+  oido.fijar('mesa');
+  assert.deepEqual(m.log, [], 'ni unmute ni pausa: el oído lo abre el arranque con el permiso');
+  assert.equal(oido.aplicar('mesa'), 'nada');
+  assert.equal(oido.aplicar('conversacion'), 'suelta');
+});
+
 prueba('una llamada que falla (PULSE2CHAT «no pudo») devuelve el oído de la mesa sin pausa colgada', () => {
   const m = mesaSimulada();
   const oido = new OidoMesa(m.deps);

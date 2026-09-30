@@ -55,7 +55,7 @@ const ESCENA_CADA_MS = 500;
 export const SERVIDOR_CADA_MS = 12_000;
 export const SERVIDOR_DORMIDO_MS = 30_000;
 // El ritmo (fotos por segundo con y sin alguien, subidas al servidor) vive en lib/camaraModo.ts, puro,
-// para medirlo en Node. Desde 4.8 la cámara arranca APAGADA: este ritmo solo corre si la piden.
+// para medirlo en Node. Desde la actualización por aire de la mesa (sobre 4.7.0) la cámara arranca APAGADA: este ritmo solo corre si la piden.
 /** Fallos seguidos de ML Kit antes de pasarse al servidor. */
 const FALLOS_ML_MAX = 3;
 /** Menos base64 que esto no es una foto: es la cámara todavía sin imagen. */

@@ -303,6 +303,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * conversación en vivo ni llamada. Al perderlo corta su turno, calla y SUELTA la pausa del micrófono
    * (una voz cortada no llama a su onEnd: esa pausa colgada dejaba a la mesa sorda en 4.7.0).
    */
+  /** El oído de la mesa ya se abrió con el permiso concedido (el arranque o la persona al activarlo). */
+  const oidoListo = useRef(false);
   /** El último pedido vino del oído (no del teclado ni de un atajo): el turno va con los topes de la voz. */
   const ultimoHablado = useRef(false);
   /** El reconocimiento de caras (se engancha más abajo, cuando ya existe `say`). */
@@ -319,11 +321,13 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         abortTurno.current?.();
         pending.current = null;
       },
-      micQuerido: () => !micMutedRef.current,
+      // Solo si el oído ya se abrió una vez con el permiso (no se abre «a ciegas» al volver de otra pantalla).
+      micQuerido: () => oidoListo.current && !micMutedRef.current,
       miga,
     });
-    // Nace dueña (la mesa se monta visible); el efecto de abajo corrige si no lo es.
-    oidoMesa.current.aplicar('mesa');
+    // Nace dueña (la mesa se monta visible) sin abrir nada todavía: el oído lo abre el arranque, con
+    // el permiso ya pedido. El efecto de abajo corrige si el audio es de otro.
+    oidoMesa.current.fijar('mesa');
   }
 
   useEffect(() => void (presenceRef.current = presence), [presence]);
@@ -1339,6 +1343,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       if (!alive) return;
       if (micOk && !s.micMuted) {
         await enableAlwaysOnMic();
+        oidoListo.current = true;
         // Si mientras tanto el audio pasó a otro (la conversación, una llamada, otra pantalla), se suelta.
         if (oidoMesa.current?.actual() !== 'mesa') void muteMic();
         setStatus('listening');
@@ -1690,6 +1695,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       const ok = await ensureSpeechPermissions();
       if (!ok) return pedirEnAjustes(tr('Micrófono', 'Microphone'), tr('Para escucharte necesito el micrófono. Actívalo en los ajustes del teléfono.', 'I need the microphone to hear you. Turn it on in the phone settings.'));
       await unmuteMic();
+      oidoListo.current = true;
       micMutedRef.current = false;
       setMicMuted(false);
       setStatus('listening');
@@ -1942,6 +1948,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const alOpcionMas = (o: OpcionMas) => {
     setMasAbierto(false);
     switch (o) {
+      case 'chat':
+        return pulse.abrir();
       case 'envivo':
         return toggleConversar();
       case 'escribir':
@@ -2094,6 +2102,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         camaraEncendida={visionOn}
         estadoCaras={caras.estadoTexto}
         trabajando={trabajando}
+        conChat={enCuadro}
       />
 
       <Tutorial visible={tutorialAbierto} nombreAvatar={de(avatarPorId(avatarId).nombre)} tema={tema} onCerrar={cerrarTutorial} />

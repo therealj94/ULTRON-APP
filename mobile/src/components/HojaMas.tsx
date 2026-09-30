@@ -22,7 +22,7 @@ import { Hoja } from '../ui/Hoja';
 import { Icono, type NombreIcono } from '../pulse/ui/Icono';
 import { Tocable } from '../pulse/ui/Tocable';
 
-export type OpcionMas = 'envivo' | 'escribir' | 'camara' | 'caras' | 'avatar' | 'modo' | 'tutorial' | 'ajustes';
+export type OpcionMas = 'chat' | 'envivo' | 'escribir' | 'camara' | 'caras' | 'avatar' | 'modo' | 'tutorial' | 'ajustes';
 
 type Props = {
   visible: boolean;
@@ -37,6 +37,8 @@ type Props = {
   estadoCaras: string;
   /** La mesa está en modo trabajo (avatar compacto + la conversación escrita). */
   trabajando: boolean;
+  /** Sin la barra de tres botones a la vista (el chat de la mesa): «Chats» también va aquí. */
+  conChat?: boolean;
 };
 
 type Mosaico = { id: OpcionMas; icono: NombreIcono; titulo: string; sub: string; activo?: boolean };
@@ -48,6 +50,7 @@ export function HojaMas(p: Props) {
   // Con la letra grande del sistema (o un teléfono muy angosto), una columna: nada se parte ni se corta.
   const columnas = width >= 640 ? (fontScale >= 1.3 ? 2 : 4) : fontScale >= 1.3 || width < 340 ? 1 : 2;
   const mosaicos: Mosaico[] = [
+    ...(p.conChat ? [{ id: 'chat' as const, icono: 'burbujas' as const, titulo: tr('Chats', 'Chats'), sub: tr('Tu gente y sus llamadas', 'Your people and calls') }] : []),
     {
       id: 'envivo',
       icono: 'llamar',

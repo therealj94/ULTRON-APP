@@ -54,7 +54,7 @@ export type AppSettings = {
   /** Idioma de la interfaz, de la voz y de las respuestas. Se elige en la entrada. */
   idioma: Idioma;
   /**
-   * Quién eligió la cámara «siempre» (por correo). Nadie más la tiene encendida al entrar: desde 4.8
+   * Quién eligió la cámara «siempre» (por correo). Nadie más la tiene encendida al entrar: desde la OTA de la mesa
    * arranca APAGADA (lib/camaraModo.ts). `visionEnabled` ya no la enciende.
    */
   camaraSiempre: Record<string, boolean>;

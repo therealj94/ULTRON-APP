@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * CAPTURAS DE LA MESA DEL TELÉFONO (4.8): la barra de tres botones, la hoja «Más», el recorrido y la
+ * CAPTURAS DE LA MESA DEL TELÉFONO (la OTA sobre 4.7.0): la barra de tres botones, la hoja «Más», el recorrido y la
  * transición grande → chiquita, montadas con react-native-web (vite.config.mts de esta carpeta) en
  * Chromium a tamaño de teléfono: 360×780 (angosto) y 412×915, y con la letra del sistema al 160 %.
  *

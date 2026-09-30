@@ -664,14 +664,14 @@ test('latencia de la mesa con la cámara como en 4.7.0 (escena en cada turno + l
     return r;
   });
   const sinCamara = await med('con la cámara apagada, turno como 4.7.0 (sin marca de voz)', () => primeraDelta({ message: '¿qué me recomiendas para hoy?' }));
-  // 4.8: lo dicho en voz alta en la mesa llega con `hablado: true` y lleva los topes de la voz.
-  const hablado = await med('4.8: cámara apagada y dicho en voz alta (hablado: true)', () => primeraDelta({ message: '¿qué me recomiendas para hoy?', hablado: true }));
+  // Ahora: lo dicho en voz alta en la mesa llega con `hablado: true` y lleva los topes de la voz.
+  const hablado = await med('ahora: cámara apagada y dicho en voz alta (hablado: true)', () => primeraDelta({ message: '¿qué me recomiendas para hoy?', hablado: true }));
   primerTokenMs = 0;
   pasoMs = 4;
   const antes = trabajoPorMinuto({ encendida: true, conPersona: true });
   const ahora = trabajoPorMinuto({ encendida: false, conPersona: true });
   console.log(
-    `[latencia] cámara en el teléfono con alguien delante: 4.7.0 ${antes.fotos} fotos/min + ${antes.subidas} subidas/min de ${Math.round(fotoB64.length / 1024)} KB (${Math.round((antes.subidas * fotoB64.length) / 1024)} KB/min de subida) · 4.8 por omisión ${ahora.fotos} fotos/min, ${ahora.subidas} subidas`
+    `[latencia] cámara en el teléfono con alguien delante: 4.7.0 ${antes.fotos} fotos/min + ${antes.subidas} subidas/min de ${Math.round(fotoB64.length / 1024)} KB (${Math.round((antes.subidas * fotoB64.length) / 1024)} KB/min de subida) · ahora por omisión ${ahora.fotos} fotos/min, ${ahora.subidas} subidas`
   );
   assert.ok(conCamara.primeraMs > 0 && sinCamara.primeraMs > 0);
   assert.deepEqual(ahora, { fotos: 0, subidas: 0 });

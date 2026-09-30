@@ -64,6 +64,14 @@ export class OidoMesa {
     return this.dueno;
   }
 
+  /**
+   * Anota el dueño SIN tocar nada: al montarse la mesa, que todavía no abrió su oído (lo abre ella
+   * al tener el permiso). Abrir el micrófono antes del permiso hacía caer al reconocedor a la nube.
+   */
+  fijar(dueno: DuenoAudio) {
+    this.dueno = dueno;
+  }
+
   /** ¿La mesa puede hablar ahora? (una frase suya, un saludo, un «mmm»). */
   puedeHablar(): boolean {
     return this.dueno === 'mesa' || this.dueno === null;
