@@ -18,6 +18,11 @@
  * todo lo que no hace falta (auditoría del 29-sep):
  *  · NO lleva mando: el turno por voz es solo de consulta (sin redespliegue, sin urgente ni llamada,
  *    sin ejecutor). Lo que cambia el sistema se pide en la mesa, con la sesión.
+ *    Decisión explícita (revisión 5.0, B7): lo que SÍ se puede desde la voz sin mando es (1) enviar
+ *    un borrador de PULSE2CHAT que AU-RA redactó y la persona oyó, con su «sí» explícito en el turno
+ *    siguiente (lib/acciones-app.ts: el envío lo hace el teléfono del aparato de esta conversación),
+ *    y (2) anotar y cerrar pendientes del taller (tarea_anotar / tarea_cerrar). Son de la persona y
+ *    no cambian el sistema; por eso no se cierran aquí.
  *  · Va atado a la SESIÓN que lo pidió (su huella): si esa sesión se cierra o la contraseña cambia,
  *    el pase deja de valer en el siguiente turno, no a los 30 minutos.
  *  · Va atado a UNA conversación (un nonce `cid`): vence tras 5 minutos sin turnos (cada turno lo
