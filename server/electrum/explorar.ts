@@ -22,6 +22,7 @@ import { claseDeRoca, geologiaDe, type Geologia } from './geologia';
 import { repararTexto } from './gis';
 import { sateliteEnRenglones } from './satelite';
 import { prospectividadDe, prospectividadEnRenglones, type Prospectividad } from './prospectividad';
+import { sqlDocumentoVisible } from './organizacion';
 
 const nf = (x: number, d = 1) => new Intl.NumberFormat('es-ES', { maximumFractionDigits: d }).format(x);
 const km = (x: number) => (x < 1 ? `${nf(x * 1000, 0)} m` : `${nf(x, 1)} km`);
@@ -182,7 +183,7 @@ export async function fichaParaMapa(id: number): Promise<FichaMapa | null> {
     }, 15000),
     parte('documentos', async () => {
       const propios = await consultaConTope<{ nombre: string; tipo: string | null; paginas: number | null }>(
-        `SELECT nombre, tipo, paginas FROM documento WHERE concesion_id = $1 ORDER BY subido DESC LIMIT 8`,
+        `SELECT nombre, tipo, paginas FROM documento d WHERE concesion_id = $1${sqlDocumentoVisible('d')} ORDER BY subido DESC LIMIT 8`,
         [id],
         6000
       ).then(conTextoReparado);
@@ -190,7 +191,7 @@ export async function fichaParaMapa(id: number): Promise<FichaMapa | null> {
       const nombran = await consultaConTope<{ documento: string; pagina: number | null; texto: string }>(
         `SELECT d.nombre AS documento, f.pagina, left(f.texto, 400) AS texto
            FROM fragmento f JOIN documento d ON d.id = f.documento_id
-          WHERE f.tsv @@ phraseto_tsquery('spanish', $1)
+          WHERE f.tsv @@ phraseto_tsquery('spanish', $1)${sqlDocumentoVisible('d')}
           ORDER BY ts_rank(f.tsv, phraseto_tsquery('spanish', $1)) DESC LIMIT 4`,
         [f.nombre],
         6000

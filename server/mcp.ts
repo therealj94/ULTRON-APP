@@ -32,6 +32,7 @@ import { enTurno, iniciarTraza } from '../lib/cognitivo/traza';
 import { COMPARTIDAS } from '../lib/manos/compartidas';
 import { MEMORIA_ESTRUCTURADA } from '../lib/manos/memoria';
 import { TODAS as MANOS_ELECTRUM } from './electrum/manos';
+import { conOrganizacion, organizacionDePersona } from './electrum/organizacion';
 import { ALCANCE, montarOauthMcp, quienPorTokenMcp, urlMetadatosRecurso } from './mcp-oauth';
 
 export const VERSIONES_MCP = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
@@ -225,10 +226,13 @@ export function montarMcp(app: express.Express, plataforma: Plataforma = PLATAFO
     try {
       // En serie: el tope por minuto se cuenta de verdad y una llamada lenta no multiplica la carga.
       const respuestas: object[] = [];
-      for (const m of mensajes) {
-        const r = await atender(c, hs, m);
-        if (r) respuestas.push(r);
-      }
+      // Lo que ve por MCP es lo de su organización, igual que en la pantalla (auditoría H14).
+      await conOrganizacion(organizacionDePersona(personaPorId(c.quien)), async () => {
+        for (const m of mensajes) {
+          const r = await atender(c, hs, m);
+          if (r) respuestas.push(r);
+        }
+      });
       if (!respuestas.length) return res.status(202).end();
       res.json(lote ? respuestas : respuestas[0]);
     } catch (e: any) {

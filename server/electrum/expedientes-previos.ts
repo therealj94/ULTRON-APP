@@ -17,6 +17,7 @@
  */
 import { buscarEnExpedientes, consulta, hayBase, type HitExpediente } from './db';
 import { COMO_CITAR } from './evidencias';
+import { sqlDocumentoVisible } from './organizacion';
 
 /**
  * Una pregunta sobre lo que dice un papel. Se queda corto a propósito: una pregunta de catastro o de
@@ -59,7 +60,7 @@ export async function documentoNombrado(texto: string): Promise<{ id: number; no
   const filas = await consulta<{ id: number; nombre: string; puntos: number }>(
     `SELECT d.id, d.nombre, (${suma}) AS puntos
        FROM documento d
-      WHERE EXISTS (SELECT 1 FROM fragmento f WHERE f.documento_id = d.id)
+      WHERE EXISTS (SELECT 1 FROM fragmento f WHERE f.documento_id = d.id)${sqlDocumentoVisible('d')}
       ORDER BY puntos DESC, (SELECT count(*) FROM fragmento f WHERE f.documento_id = d.id) DESC, d.id DESC
       LIMIT 2`,
     palabras

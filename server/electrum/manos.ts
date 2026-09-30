@@ -56,6 +56,7 @@ import { comoSeSabe, idsQueCumplen, mineralDePedido, mineralesPorConcesion } fro
 import { esHistorico, fraseFuente, fuenteCatastro } from './ordenar';
 import { restriccionesDe, restriccionesEnTexto } from './restricciones';
 import { analizarCartera, carteraEnTexto, carteras } from './cartera';
+import { sqlDocumentoVisible } from './organizacion';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -878,8 +879,8 @@ const documento_revisar: Herramienta = {
     const porId = /^\d+$/.test(ref);
     const docs = await consulta<{ id: number; nombre: string; meta: any }>(
       porId
-        ? `SELECT id, nombre, meta FROM documento WHERE id = $1`
-        : `SELECT id, nombre, meta FROM documento WHERE nombre ILIKE $1 ORDER BY subido DESC LIMIT 5`,
+        ? `SELECT id, nombre, meta FROM documento d WHERE id = $1${sqlDocumentoVisible('d')}`
+        : `SELECT id, nombre, meta FROM documento d WHERE nombre ILIKE $1${sqlDocumentoVisible('d')} ORDER BY subido DESC LIMIT 5`,
       [porId ? Number(ref) : `%${ref.replace(/[\\%_]/g, (c) => `\\${c}`)}%`],
     );
     if (!docs.length) return { ok: true, texto: `No encontré ningún documento que se llame como «${ref}».` };

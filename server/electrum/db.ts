@@ -20,6 +20,7 @@ import { buscarPorSignificado } from './vectores';
 import { fundirPorRango } from '../../lib/cognitivo/embeddings';
 import { trazaActual } from '../../lib/cognitivo/traza';
 import { anotarEvidencia } from './evidencias';
+import { organizacionParaGuardar, sqlDocumentoVisible } from './organizacion';
 
 let pool: Pool | null = null;
 
@@ -366,10 +367,16 @@ export async function guardarCapa(
    * resubida duplicaba cada área protegida y cada microcuenca, y la ficha contaba dos veces.
    */
   const huellaCapa = firmaDeCapa(capa);
+  /*
+   * Lo que sube un cliente (auditoría H14) entra como capa de PROYECTO suya: geografía, nunca
+   * concesiones. Como concesiones se sumaría al padrón nacional que ven todos, a los traslapes y a
+   * los tableros. Y no se compara con las capas de otros: su copia es suya.
+   */
+  const organizacion = organizacionParaGuardar();
   // Solo en las subidas normales: quien pasa `comoConcesiones` explícito (el paquete de geología)
   // gestiona él mismo el reemplazo —carga la nueva y DESPUÉS borra la vieja— y saltarse la carga
   // aquí le haría borrar la única copia.
-  if (huellaCapa && opts.comoConcesiones === undefined && !pareceCatastro(capa.geojson.features as Feature[]) && (await capaTieneHuella())) {
+  if (!organizacion && huellaCapa && opts.comoConcesiones === undefined && !pareceCatastro(capa.geojson.features as Feature[]) && (await capaTieneHuella())) {
     const conGeom = (capa.geojson.features as Feature[]).filter((f) => f && f.geometry);
     const n = conGeom.length;
     let [ya] = await consulta<{ id: string }>(`SELECT id::text FROM capa WHERE huella = $1 LIMIT 1`, [huellaCapa]);
@@ -432,7 +439,7 @@ export async function guardarCapa(
      * no rasgo a rasgo: una capa es de una cosa o de la otra, y decidir por rasgo deja la mitad de
      * un shapefile en cada tabla.
      */
-    const comoConcesiones = opts.comoConcesiones ?? pareceCatastro(capa.geojson.features as Feature[]);
+    const comoConcesiones = organizacion ? false : (opts.comoConcesiones ?? pareceCatastro(capa.geojson.features as Feature[]));
 
     /*
      * En bloques, no de una en una.
@@ -609,7 +616,9 @@ export async function guardarCapa(
      * El rol, solo para geografía: una capa de derechos mineros que se llame «Concesiones del
      * municipio de Danlí» no es un municipio, y con rol la ficha la cruzaría como tal.
      */
-    else if (!comoConcesiones && nEnt > 0 && (await baseTieneRol())) {
+    else if (organizacion) {
+      await cliente.query(`UPDATE capa SET organizacion = $2${(await baseTieneRol()) ? ", rol = 'proyecto'" : ''} WHERE id = $1`, [capaId, organizacion]);
+    } else if (!comoConcesiones && nEnt > 0 && (await baseTieneRol())) {
       const rol = rolDeCapa(capa.nombre);
       if (rol) await cliente.query('UPDATE capa SET rol = $2 WHERE id = $1', [capaId, rol]);
     }
@@ -1199,7 +1208,7 @@ export async function buscarPorTexto(
            ts_rank(f.tsv, q.tq)::float8 AS puntaje
     FROM fragmento f
     JOIN documento d ON d.id = f.documento_id, q
-    WHERE f.tsv @@ q.tq${filtro.sql}
+    WHERE f.tsv @@ q.tq${filtro.sql}${sqlDocumentoVisible('d')}
     ORDER BY puntaje DESC
     LIMIT $2`;
 
@@ -1231,7 +1240,7 @@ async function primerosFragmentos(documento: string | undefined, limite: number)
   return consulta<{ id: number; documento: string; documento_id: number; transcripcion: boolean; pagina: number | null; texto: string; puntaje: number }>(
     `SELECT f.id, d.nombre AS documento, f.pagina, d.id::int AS documento_id, (d.meta->>'origen' = 'foto_transcrita' AND coalesce(d.meta->>'revisado', 'false') <> 'true') AS transcripcion, left(f.texto, 700) AS texto, 0::float8 AS puntaje
        FROM fragmento f JOIN documento d ON d.id = f.documento_id
-      WHERE f.orden < 3${filtro.sql}
+      WHERE f.orden < 3${filtro.sql}${sqlDocumentoVisible('d')}
       ORDER BY d.id, f.orden
       LIMIT $1`,
     [limite, ...filtro.args]
@@ -1336,7 +1345,7 @@ export async function leerSeguido(
   const candidatos = await consulta<{ id: number; nombre: string; carpeta: string | null; n: number; ultima: number | null }>(
     `SELECT d.id, d.nombre, d.carpeta, count(f.id)::int AS n, max(f.pagina) AS ultima
        FROM documento d JOIN fragmento f ON f.documento_id = d.id
-      WHERE true${filtro.sql}
+      WHERE true${filtro.sql}${sqlDocumentoVisible('d')}
       GROUP BY d.id
       ORDER BY (unaccent(lower(d.nombre)) LIKE unaccent(lower($1)) ESCAPE '\\') DESC, count(f.id) DESC, d.id DESC
       LIMIT 6`,

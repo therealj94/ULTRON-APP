@@ -13,6 +13,7 @@
 import { consulta, filtroDocumento, hayBase } from './db';
 import { embeddingsConfigurados, literalPg, vectorDe, vectorizar } from '../../lib/cognitivo/embeddings';
 import { disponible } from '../../lib/cognitivo/interruptor';
+import { sqlDocumentoVisible } from './organizacion';
 
 let columna: { valor: boolean; t: number } | null = null;
 
@@ -99,7 +100,7 @@ export async function buscarPorSignificado(texto: string, limite = 30, opts: { d
             d.id::int AS documento_id, (d.meta->>'origen' = 'foto_transcrita' AND coalesce(d.meta->>'revisado', 'false') <> 'true') AS transcripcion,
             (1 - (f.embedding <=> $1::vector))::float8 AS similitud
        FROM fragmento f JOIN documento d ON d.id = f.documento_id
-      WHERE f.embedding IS NOT NULL${filtro.sql}
+      WHERE f.embedding IS NOT NULL${filtro.sql}${sqlDocumentoVisible('d')}
       ORDER BY f.embedding <=> $1::vector
       LIMIT $2`,
     [literalPg(v), limite, ...filtro.args]
