@@ -1,9 +1,10 @@
 /**
  * LAS RUTAS DE LA APP 5.0 (contrato: mobile/src/nucleo/contrato.ts).
  *
- *   GET  /api/perfil            → { perfil: Perfil | null } (+ lo público de la plataforma, que la web
- *                                  ya leía de esta misma ruta: acento, nombre, modos)
- *   PUT  /api/perfil  Partial<Perfil>  → { perfil } (503 `perfil_no_disponible` si el guardado no se pudo leer)
+ *   GET  /api/perfil            → { perfil: Perfil | null, disponible, durable } (+ lo público de la
+ *                                  plataforma, que la web ya leía de esta misma ruta: acento, nombre, modos)
+ *   PUT  /api/perfil  Partial<Perfil>  → { perfil, durable } (503 `perfil_no_disponible` si el guardado
+ *                                  no se pudo leer). El teléfono saca el cambio de su cola solo con `durable: true`.
  *   GET  /api/app/acciones      text/event-stream: cada evento `data: {"id","accion"}`
  *                                  (cabecera opcional `x-aura-aparato: <id del teléfono>`)
  *   POST /api/app/contexto      { pantalla, chatAbierto?, contactos, borrador? }
@@ -12,7 +13,7 @@
  * de la sesión firmada, nunca del cuerpo.
  */
 import type express from 'express';
-import { actualizarPerfil, leerPerfil, PerfilNoDisponible, validarCambios } from '../lib/perfil-persona';
+import { actualizarPerfil, almacenDurable, leerPerfilSeguro, PerfilNoDisponible, validarCambios } from '../lib/perfil-persona';
 import { aparatoValido, guardarContexto, MAX_CANALES_POR_CUENTA, suscribir, validarContexto } from '../lib/acciones-app';
 import type { Sesion } from './seguridad';
 
@@ -53,9 +54,13 @@ export function montarRutasApp(app: express.Express, d: Deps) {
   app.get('/api/perfil', d.limitar(60), async (req, res) => {
     const s = d.sesionDe(req);
     if (!s && d.tokenDe(req)) return sinSesion(res);
-    const perfil = s ? await leerPerfil(s.correo) : null;
+    // `disponible: false` = no se pudo leer lo guardado (S3 caído): el teléfono no debe tomar ese
+    // `perfil: null` como «no tiene perfil». `durable`: si este servicio guarda de verdad (S3 o disco
+    // declarado persistente); sin eso, lo que tiene puede perderse en un redespliegue.
+    const leido = s ? await leerPerfilSeguro(s.correo) : null;
+    const perfil = leido && leido.ok ? leido.perfil : null;
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ ...d.perfilPlataforma(req), perfil, honesto: true });
+    return res.json({ ...d.perfilPlataforma(req), perfil, ...(s ? { disponible: !!leido?.ok, durable: almacenDurable() } : {}), honesto: true });
   });
 
   app.put('/api/perfil', d.exigirMesa, d.limitar(30), async (req, res) => {

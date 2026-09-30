@@ -43,7 +43,7 @@ import {
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
-import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
+import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, hechosCatalogo } from './lib/taller';
@@ -1554,8 +1554,10 @@ app.get('/api/ultron/sesion', async (req, res) => {
 
 app.post('/api/ultron/salir', limitar(30), async (req, res) => {
   // El token deja de valer en el servidor, no solo en este aparato.
-  const cerrada = await borrarSesion(tokenDe(req)).catch(() => false);
-  res.json({ ok: true, cerrada, message: 'Sesión cerrada.' });
+  // `durable`: la revocación quedó guardada (S3, o el disco sin S3). Si no, se dice: un redespliegue
+  // podría olvidarla antes de que el token venza solo.
+  const { cerrada, durable } = await cerrarSesion(tokenDe(req)).catch(() => ({ cerrada: false, durable: false }));
+  res.json({ ok: true, cerrada, durable, message: cerrada && !durable ? 'Sesión cerrada en este servidor; no pude guardar el cierre de forma durable.' : 'Sesión cerrada.' });
 });
 
 
@@ -2134,7 +2136,11 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const mensajeHilo = resolverReferencia(message, hiloPrevio);
   const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: 16 });
   // Hechos que manda el cliente solo entran con sesión firmada (si no, cualquiera envenena la memoria).
-  const largaApp: string[] = body?.sesion && Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
+  // Y si el cliente dice de quién es esa memoria (`memoriaDe`, la mesa web), tiene que ser de la misma
+  // sesión: en una tableta compartida, lo de A no se guarda como de B.
+  const memoriaDe = typeof body?.memoriaDe === 'string' ? body.memoriaDe.trim().toLowerCase() : '';
+  const memoriaPropia = !memoriaDe || memoriaDe === String(body?.sesion?.correo || '').trim().toLowerCase();
+  const largaApp: string[] = body?.sesion && memoriaPropia && Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
   for (const h of largaApp) {
     if (h.trim().length <= 8) continue;
     // Los de un miembro, a SU memoria; nunca a la de la junta.

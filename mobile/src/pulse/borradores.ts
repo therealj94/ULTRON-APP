@@ -15,11 +15,14 @@ import { useSyncExternalStore } from 'react';
 import { emitir, escuchar, type AccionApp } from '../nucleo/contrato';
 import * as RELEVO from './relevo';
 import * as CHATS from './chats';
+import { registrarTrabajoActivo } from '../lib/barreraOta';
 
 export type Borrador = { texto: string; deVoz: boolean; en: number };
 export type Contacto = { correo: string; nombre: string };
 
 let borradores: Record<string, Borrador> = {};
+// Los borradores viven solo en memoria: con alguno escrito, la actualización por aire no recarga.
+registrarTrabajoActivo('borrador-chat', () => Object.values(borradores).some((b) => !!b?.texto?.trim()));
 let abierto: Contacto | null = null;
 /** El último que redactó AURA: a quién va «envíalo» si no hay un chat abierto. */
 let ultimoRedactado: string | null = null;

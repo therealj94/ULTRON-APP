@@ -939,7 +939,7 @@ prueba('manos: recordatorio — permiso de avisos, aviso programado una sola vez
     createChannel: async (c) => c.id,
     createTriggerNotification: async (n, t) => (puestos.push({ n, t }), n.id),
   };
-  const d = { notifee: () => ({ m, k: K }), ahora: () => ahora };
+  const d = { notifee: () => ({ m, k: K }), ahora: () => ahora, dueno: () => 'u-prueba' };
   const a = { texto: 'Llamar a mi mamá', cuando: ahora + 3 * 3600_000 };
   const r = await programarRecordatorio(a, d);
   assert.equal(r.ok, true, r.detalle);
@@ -983,7 +983,7 @@ function notifeeFalso({ exacto = false, permiso = 1 } = {}) {
     displayNotification: async (n) => (f.mostrados.push(n), n.id),
   };
   f.k = K;
-  f.deps = (ahora) => ({ notifee: () => ({ m: f.m, k: K }), ahora: () => ahora });
+  f.deps = (ahora) => ({ notifee: () => ({ m: f.m, k: K }), ahora: () => ahora, dueno: () => 'u-prueba' });
   return f;
 }
 
@@ -1047,7 +1047,7 @@ prueba('la llamada de AURA: suena, contestar quita lo que faltaba y se dice UNA 
   assert.equal(REC.interpretarEvento({ type: K.EventType.PRESS, detail: { notification: n1 } }, K)?.que, 'suena', 'tocar el aviso abre «AURA te llama»');
   const c = REC.interpretarEvento({ type: K.EventType.ACTION_PRESS, detail: { notification: n1, pressAction: { id: REC.ACCION_CONTESTAR } } }, K);
   assert.equal(c?.que, 'contestar');
-  assert.deepEqual(c.llamada, { base: r.id, texto: 'Tomar la pastilla', cuando: ahora + 3600_000, paso: 'l1' });
+  assert.deepEqual(c.llamada, { base: r.id, texto: 'Tomar la pastilla', cuando: ahora + 3600_000, paso: 'l1', dueno: 'u-prueba' });
   assert.equal(REC.interpretarEvento({ type: K.EventType.ACTION_PRESS, detail: { notification: n1, pressAction: { id: REC.ACCION_RECHAZAR } } }, K)?.que, 'rechazar');
   assert.equal(REC.interpretarEvento({ type: K.EventType.DELIVERED, detail: { notification: f.programados[2].n } }, K), null, 'el aviso final no suena como llamada');
   assert.equal(REC.interpretarEvento({ type: K.EventType.DELIVERED, detail: { notification: { id: 'pulse2chat-llamada' } } }, K), null, 'la de PULSE2CHAT no es de aquí');

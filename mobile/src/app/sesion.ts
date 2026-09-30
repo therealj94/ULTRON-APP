@@ -12,6 +12,7 @@ import type { SessionUser } from '../config';
 import { logoutRemote } from '../lib/api';
 import { cargarPerfil, soltarPerfil } from '../lib/perfil';
 import { borrarRastrosViejos, getFingerprintUnlock, loadCreds, saveCreds, saveMesaToken, saveSession } from '../lib/storage';
+import { fijarCuenta, generacionCuenta, sigueVigente } from '../lib/cuenta';
 import { salir as salirDelChat } from '../pulse/relevo';
 import { miga } from '../lib/reporte';
 import { reiniciarA } from './rutas';
@@ -44,6 +45,8 @@ export function useUsuario(): SessionUser | null {
 
 export function fijarUsuario(u: SessionUser | null) {
   usuario = u;
+  // La generación de la sesión (lib/cuenta.ts): lo que siga en vuelo de la persona anterior ya no aplica.
+  fijarCuenta(u?.correo ?? null);
   avisar();
 }
 
@@ -85,7 +88,10 @@ export async function entrarCon(u: SessionUser, compartido?: Compartido | null) 
   await olvidarClaveAjena(s.correo);
   await saveSession(s).catch(() => {});
   fijarUsuario(s);
+  const gen = generacionCuenta();
   const p = await cargarPerfil(s.correo, { nombre: s.name, genesis: compartido || null, topeMs: 6_000 });
+  // Si mientras cargaba el perfil salió (o entró otra persona), esta entrada ya no navega.
+  if (!sigueVigente(gen)) return;
   reiniciarA(p.completado ? 'Mesa' : 'PrimeraVez');
 }
 
@@ -95,22 +101,25 @@ async function olvidarClaveAjena(correo: string) {
   if (creds?.correo && creds.correo.trim().toLowerCase() !== correo) await saveCreds(null);
 }
 
-async function guardarClaveSoloConHuella(correo: string) {
+async function guardarClaveSoloConHuella(correo: string, gen: number) {
   const [creds, huella] = await Promise.all([loadCreds(), getFingerprintUnlock()]);
-  if (!creds) return;
+  // Si alguien entró mientras se leía, la clave guardada ya puede ser la suya: no se toca.
+  if (!creds || !sigueVigente(gen)) return;
   const mismo = (c?: string) => !!c && !!correo && c.trim().toLowerCase() === correo.trim().toLowerCase();
   if (!(huella?.enabled && mismo(huella.correo) && mismo(creds.correo))) await saveCreds(null);
 }
 
 /**
  * La sesión guardada ya no vale (venció, la cerraron en otro lado o es de otra cuenta): se borra aquí
- * sin pasar por el servidor, y la intro lleva a la entrada con el aviso.
+ * sin pasar por el servidor, y la intro lleva a la entrada con el aviso. Deja el MISMO estado seguro
+ * que cerrar sesión: también se olvida la cuenta del chat de este teléfono (antes quedaba guardada y
+ * el chat la recuperaba aunque AU-RA ya no tuviera a nadie dentro).
  */
 export async function soltarSesionCaida() {
   miga('sesión guardada caída: a la entrada');
-  await Promise.all([saveSession(null), saveMesaToken(null)]).catch(() => {});
   soltarPerfil();
   fijarUsuario(null);
+  await Promise.all([saveSession(null), saveMesaToken(null), salirDelChat()]).catch(() => {});
 }
 
 /** Cerrar sesión desde la mesa o desde Ajustes: vuelve a la entrada. */
@@ -120,14 +129,18 @@ export function salirDeLaSesion() {
   // persona. La clave guardada solo se queda si su dueño activó entrar con huella (la usa «Otras
   // formas de entrar»); si no, se va: en un teléfono compartido nadie debe quedar con la ajena.
   const quien = usuario?.correo || '';
-  void guardarClaveSoloConHuella(quien);
+  // Primero se suelta a la persona (generación nueva): nada de lo que sigue en vuelo puede tocar a
+  // quien entre después.
+  soltarPerfil();
+  fijarUsuario(null);
+  const gen = generacionCuenta();
+  void guardarClaveSoloConHuella(quien, gen);
   void saveSession(null);
+  // Revoca SOLO el token de esta persona (lo captura al empezar; ver lib/api.ts).
   void logoutRemote();
   void borrarRastrosViejos();
   // El chat es de esta persona: al salir se olvida la llave del relevo en este teléfono.
   void salirDelChat();
-  soltarPerfil();
-  fijarUsuario(null);
   recienElegido = false;
   reiniciarA('Entrar');
 }

@@ -24,7 +24,8 @@ interface Props {
   usuario: { name: string; role: string; authenticated: boolean };
   soundFxEnabled: boolean;
   onClose: () => void;
-  onAuthSuccess: (nombre: string, rol: string) => void;
+  /** `correo`: el de la sesión, para la memoria por cuenta de la mesa (09-estado/memoria.ts). */
+  onAuthSuccess: (nombre: string, rol: string, correo?: string) => void;
   onLogout: () => void;
 }
 
@@ -95,7 +96,7 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
           /* */
         }
         playSfx('grant', soundFxEnabled);
-        onAuthSuccess(data.miembro?.nombre || correo.split('@')[0], data.miembro?.rol || 'Junta Directiva · Orden Global');
+        onAuthSuccess(data.miembro?.nombre || correo.split('@')[0], data.miembro?.rol || 'Junta Directiva · Orden Global', data.miembro?.correo || data.user?.correo || correo);
         setClave('');
         onClose();
       } else {
@@ -147,7 +148,7 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
               const d = await fetch('/api/ultron/sesion', { headers: headersMesa() })
                 .then((r) => r.json())
                 .catch(() => null);
-              if (d?.authenticated) onAuthSuccess(d.user?.nombre || '', d.user?.rol || 'Junta Directiva · Orden Global');
+              if (d?.authenticated) onAuthSuccess(d.user?.nombre || '', d.user?.rol || 'Junta Directiva · Orden Global', d.user?.correo);
               playSfx('grant', soundFxEnabled);
               onClose();
             }}

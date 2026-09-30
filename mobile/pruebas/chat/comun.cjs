@@ -117,6 +117,8 @@ function movil() {
 /** Pone a este «teléfono» dentro de una cuenta del relevo. */
 async function entrarComo(M, c) {
   await M.RELEVO.salir();
+  // El chat es de quien está dentro de AU-RA (lib/cuenta.ts): la misma persona entra a los dos.
+  if (M.CUENTA) M.CUENTA.fijarCuenta(c.correo);
   globalThis.__ss.m.set('aura.p2c.cuenta', JSON.stringify(c));
   return M.RELEVO.recuperar();
 }

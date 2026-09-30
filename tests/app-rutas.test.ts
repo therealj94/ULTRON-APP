@@ -45,7 +45,12 @@ test('GET /api/perfil: sin token la ficha pública; con token malo 401; con sesi
   const r = await fetch(`${base}/api/perfil`, { headers: h(yo.token) });
   assert.equal(r.status, 200);
   assert.equal(r.headers.get('cache-control'), 'no-store');
-  assert.equal(((await r.json()) as any).perfil, null);
+  const j: any = await r.json();
+  assert.equal(j.perfil, null);
+  // A05: con sesión dice si pudo leer lo guardado y si este servicio guarda de verdad (sin S3: no).
+  assert.equal(j.disponible, true);
+  assert.equal(j.durable, false);
+  assert.equal(pub.disponible, undefined, 'la ficha pública no lleva nada de la persona');
 });
 
 test('PUT /api/perfil: valida, guarda por el correo de la sesión y se lee de vuelta', async () => {
