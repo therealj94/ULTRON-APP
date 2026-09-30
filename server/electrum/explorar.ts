@@ -22,7 +22,7 @@ import { claseDeRoca, geologiaDe, type Geologia } from './geologia';
 import { repararTexto } from './gis';
 import { sateliteEnRenglones } from './satelite';
 import { prospectividadDe, prospectividadEnRenglones, type Prospectividad } from './prospectividad';
-import { sqlDocumentoVisible } from './organizacion';
+import { sqlCapaVisible, sqlDocumentoVisible } from './organizacion';
 
 const nf = (x: number, d = 1) => new Intl.NumberFormat('es-ES', { maximumFractionDigits: d }).format(x);
 const km = (x: number) => (x < 1 ? `${nf(x * 1000, 0)} m` : `${nf(x, 1)} km`);
@@ -367,7 +367,7 @@ export async function capaParaMapa(capaId: number): Promise<{ rol: RolCapa; geoj
 export async function rasgoParaMapa(eid: number): Promise<{ id: number; capa: string; rol: string | null; nombre: string; atributos: Array<[string, string]> } | null> {
   const [f] = await consultaConTope<{ id: string; capa: string; rol: string | null; nombre: string | null; atributos: Record<string, unknown> }>(
     `SELECT e.id::text, c.nombre AS capa, c.rol, e.nombre, e.atributos
-       FROM entidad_geo e JOIN capa c ON c.id = e.capa_id WHERE e.id = $1`,
+       FROM entidad_geo e JOIN capa c ON c.id = e.capa_id WHERE e.id = $1${sqlCapaVisible('c')}`,
     [eid],
     6000
   );

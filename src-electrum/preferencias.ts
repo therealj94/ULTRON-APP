@@ -96,19 +96,31 @@ export function escucharPrefsUsuario(f: (p: PrefsUsuario) => void): () => void {
   return () => oyentesPrefs.delete(f);
 }
 
-let traidas = false;
-/** Trae las del servidor una vez por carga de página. Sin red, se queda con la copia local. */
+/**
+ * Para qué credencial se trajeron. Es por persona, no por página: si alguien sale y entra otra
+ * persona sin recargar, las de la anterior no pueden quedarse (revisión de Codex en #87).
+ */
+let traidasPara: string | null = null;
+
+/** Trae las del servidor una vez por credencial. Sin red, se queda con la copia local. */
 export async function traerPrefsUsuario(headers: Record<string, string>): Promise<void> {
-  if (traidas) return;
-  traidas = true;
+  const quien = JSON.stringify(headers);
+  if (traidasPara === quien) return;
+  traidasPara = quien;
   try {
     const r = await fetch('/api/electrum/preferencias', { headers });
-    if (!r.ok) return;
+    if (!r.ok || traidasPara !== quien) return;
     const j = await r.json();
-    publicar({ ...prefs, ...sanear(j?.preferencias) });
+    if (traidasPara === quien) publicar({ ...PREFS_USUARIO, ...sanear(j?.preferencias) });
   } catch {
-    traidas = false;
+    if (traidasPara === quien) traidasPara = null;
   }
+}
+
+/** Al salir: la próxima persona empieza con las de fábrica y las suyas se traen del servidor. */
+export function olvidarPrefsUsuario() {
+  traidasPara = null;
+  publicar({ ...PREFS_USUARIO });
 }
 
 /** Cambia una y la manda al servidor. La pantalla cambia en el acto; la red va detrás. */

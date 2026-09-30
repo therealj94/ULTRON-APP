@@ -27,7 +27,7 @@ import { baseTieneRol, consulta, enTransaccion, hayBase, olvidarEsquemaV10 } fro
 import { cargarTexto, huellaDe, releerDocumento } from './aprender';
 import { olvidarTablero } from './tablero';
 import { bajarExpediente, bucketExpedientes } from '../../lib/s3';
-import { organizacionActual, organizacionParaGuardar, sqlCapaPropia, sqlCapaVisible, sqlDocumentoVisible } from './organizacion';
+import { asegurarOrganizacion, organizacionActual, organizacionParaGuardar, sqlCapaPropia, sqlCapaVisible, sqlDocumentoVisible } from './organizacion';
 
 /* ------------------------------------------------------------------------------ esquema */
 
@@ -396,18 +396,21 @@ function origenVisible(archivo: string): string {
 /* ------------------------------------------------------------------------------ bitácora */
 
 export async function anotar(quien: string | null | undefined, accion: string, objeto: string, detalle: Record<string, unknown> = {}) {
-  await consulta(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle) VALUES ($1,$2,$3,$4)`, [
+  // Cada anotación es de la organización de quien la hizo, y cada una lee solo las suyas (H14).
+  await asegurarOrganizacion().catch(() => {});
+  await consulta(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle, organizacion) VALUES ($1,$2,$3,$4,$5)`, [
     quien || null,
     accion,
     objeto.slice(0, 300),
     JSON.stringify(detalle),
+    organizacionParaGuardar(),
   ]).catch((e) => console.error('[biblioteca] no pude anotar en la bitácora:', String(e?.message || e).slice(0, 160)));
 }
 
 export async function bitacora(limite = 100) {
   await asegurarBiblioteca();
   return consulta<{ id: number; cuando: string; quien: string | null; accion: string; objeto: string; detalle: any }>(
-    `SELECT id, cuando, quien, accion, objeto, detalle FROM biblioteca_bitacora ORDER BY cuando DESC, id DESC LIMIT $1`,
+    `SELECT id, cuando, quien, accion, objeto, detalle FROM biblioteca_bitacora d WHERE true${sqlDocumentoVisible('d')} ORDER BY cuando DESC, id DESC LIMIT $1`,
     [Math.max(1, Math.min(500, limite))]
   );
 }
@@ -507,6 +510,7 @@ export async function renombrarCarpeta(de: unknown, a: unknown, quien?: string |
  */
 export async function eliminar(refs: Ref[], quien?: string | null) {
   await asegurarBiblioteca();
+  await asegurarOrganizacion().catch(() => {});
   refs = await propios(refs);
   const docs = ids(refs, 'documento');
   const capas = ids(refs, 'capa');
@@ -526,10 +530,11 @@ export async function eliminar(refs: Ref[], quien?: string | null) {
     // no lo vuelve a traer, ni de esa clave ni de una copia en otra carpeta (ver importar.ts). Si la
     // anotación fallara aparte, lo borrado reviviría en silencio.
     for (const x of quitados) {
-      await q(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle) VALUES ($1, 'eliminar', $2, $3)`, [
+      await q(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle, organizacion) VALUES ($1, 'eliminar', $2, $3, $4)`, [
         quien || null,
         `${x.clase} ${x.id}`,
         JSON.stringify({ nombre: x.nombre, archivo: x.archivo, huella: x.huella, concesiones: x.concesiones }),
+        organizacionParaGuardar(),
       ]);
     }
   });

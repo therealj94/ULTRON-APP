@@ -136,7 +136,10 @@ let asegurada: Promise<void> | null = null;
 export function asegurarOrganizacion(): Promise<void> {
   if (!asegurada) {
     asegurada = (async () => {
-      for (const t of ['documento', 'capa', 'cartera']) {
+      // La bitácora la crea la biblioteca: tiene que existir antes de agregarle la columna.
+      const { asegurarBiblioteca } = await import('./biblioteca');
+      await asegurarBiblioteca();
+      for (const t of ['documento', 'capa', 'cartera', 'biblioteca_bitacora']) {
         await consulta(`ALTER TABLE ${t} ADD COLUMN IF NOT EXISTS organizacion text`);
         await consulta(`CREATE INDEX IF NOT EXISTS ${t}_organizacion_idx ON ${t} (organizacion)`);
       }
@@ -153,9 +156,10 @@ export function asegurarOrganizacion(): Promise<void> {
       );
       await consulta(`DROP INDEX IF EXISTS documento_huella_idx`);
       const [f] = await consulta<{ n: number }>(
-        `SELECT count(*)::int AS n FROM information_schema.columns WHERE column_name = 'organizacion' AND table_name IN ('documento', 'capa', 'cartera')`
+        `SELECT count(*)::int AS n FROM information_schema.columns
+          WHERE column_name = 'organizacion' AND table_name IN ('documento', 'capa', 'cartera', 'biblioteca_bitacora')`
       );
-      columnasListas = Number(f?.n) === 3;
+      columnasListas = Number(f?.n) === 4;
       if (!columnasListas) throw new Error('faltan las columnas de organización');
     })().catch((e) => {
       asegurada = null;

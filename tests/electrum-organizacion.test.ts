@@ -9,7 +9,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buscarEnExpedientes, cerrarBase, consulta, hayBase, leerSeguido } from '../server/electrum/db';
 import { aprender } from '../server/electrum/aprender';
-import { eliminar } from '../server/electrum/biblioteca';
+import { anotar, bitacora, eliminar } from '../server/electrum/biblioteca';
+import { rasgoParaMapa } from '../server/electrum/explorar';
 import { capasPorRol } from '../server/electrum/entorno';
 import { asegurarOrganizacion, CASA, conOrganizacion, organizacionDePersona, slugOrganizacion } from '../server/electrum/organizacion';
 
@@ -93,6 +94,28 @@ test('cada organización ve lo suyo', { skip: SIN_BASE }, async (t) => {
     assert.ok(delCliente.some((c) => c.rol === 'proyecto'));
     assert.ok(!deOtro.some((c) => c.rol === 'proyecto'), 'otro cliente no ve el proyecto ajeno');
     assert.ok(deOtro.some((c) => c.rol === 'area_protegida'), 'las comunes sí');
+  });
+
+  // Revisión de Codex en #87: el detalle de un rasgo se pedía por id sin mirar de quién era la capa.
+  await t.test('el detalle de un rasgo de un proyecto ajeno no se entrega por su número', async () => {
+    const [e] = await consulta<{ id: number }>(
+      `SELECT e.id::int AS id FROM entidad_geo e JOIN capa k ON k.id = e.capa_id WHERE k.organizacion = $1 LIMIT 1`,
+      [CLIENTE]
+    );
+    assert.ok(e, 'el proyecto del cliente tiene rasgos');
+    assert.ok(await conOrganizacion(CLIENTE, () => rasgoParaMapa(e.id)), 'el dueño lo ve');
+    assert.equal(await conOrganizacion(OTRO, () => rasgoParaMapa(e.id)), null, 'otro cliente no');
+  });
+
+  // Revisión de Codex en #87: la bitácora es de todos los usuarios y llevaba nombres de informes ajenos.
+  await t.test('la bitácora de cada organización es suya', async () => {
+    await conOrganizacion(CLIENTE, () => anotar('perez', 'informe_demo', 'informe-secreto-del-cliente.pdf'));
+    await conOrganizacion(CASA, () => anotar('jose', 'informe_demo', 'informe-de-la-casa.pdf'));
+    const deOtro = await conOrganizacion(OTRO, () => bitacora(50));
+    assert.ok(!deOtro.some((b) => /secreto|de-la-casa/.test(b.objeto)), 'un tercero no ve lo de nadie');
+    const delCliente = await conOrganizacion(CLIENTE, () => bitacora(50));
+    assert.ok(delCliente.some((b) => /secreto/.test(b.objeto)));
+    assert.ok(!delCliente.some((b) => /de-la-casa/.test(b.objeto)));
   });
 
   await consulta('TRUNCATE fragmento, documento, traslape, concesion, entidad_geo, capa RESTART IDENTITY CASCADE');

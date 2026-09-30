@@ -612,6 +612,9 @@ ALTER TABLE cartera   ADD COLUMN IF NOT EXISTS organizacion text;
 CREATE INDEX IF NOT EXISTS documento_organizacion_idx ON documento (organizacion);
 CREATE INDEX IF NOT EXISTS capa_organizacion_idx ON capa (organizacion);
 CREATE INDEX IF NOT EXISTS cartera_organizacion_idx ON cartera (organizacion);
+-- La bitácora también: cada organización lee solo sus anotaciones (revisión de Codex en #87).
+ALTER TABLE biblioteca_bitacora ADD COLUMN IF NOT EXISTS organizacion text;
+CREATE INDEX IF NOT EXISTS biblioteca_bitacora_organizacion_idx ON biblioteca_bitacora (organizacion);
 
 -- «Ya entró» es por organización: el mismo PDF de un cliente entra como suyo. Primero el índice
 -- nuevo y después se quita el viejo, para no quedar ni un momento sin protección contra duplicados.
