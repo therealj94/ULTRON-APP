@@ -33,6 +33,12 @@ AU-RA, Claudio y ANT-ONIO son sus **modelos 3D de la app** (`vendor/aura-avatar-
 
 Atajos: **Ctrl+Alt+Espacio** hablar · **Ctrl+Alt+A** chat · **Ctrl+Alt+W** elegir dónde escribir · **Ctrl+Alt+Esc** pausar todo.
 
+## Notificaciones de otras apps (1.4)
+
+Lo que le llega a Windows de **WhatsApp, Teams, Outlook, Telegram, Slack, Chrome/Edge** (notificaciones web, con el sitio) y cualquier otra app sale en el notch como en la isla de Apple: la app, quién y qué dice, con el botón **Abrir** (abre esa app). Por voz: «¿qué notificaciones tengo?», «léeme la última notificación», «silencia las notificaciones de WhatsApp», «vuelve a mostrar las de WhatsApp». En Ajustes: apagarlas, **modo privado** (solo la app, sin el texto) y **leerlas en voz alta**.
+
+Cómo: la API oficial de Windows para leer notificaciones ajenas (`UserNotificationListener`) solo existe para apps empaquetadas de la Tienda. AURA lee, **solo para mostrarlas y sin sacarlas del equipo**, la base donde Windows ya guarda las notificaciones de tu cuenta (`%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db`), con el SQLite que trae Windows (`winsqlite3.dll`, sin dependencias nuevas). Lo que ya estaba al abrir AURA no se anuncia. Límite honesto: esa base no es una API documentada; si una versión futura de Windows la cambia, AURA deja de mostrarlas (lo avisa) y lo demás sigue igual. La prueba del CI (`--avisos-self-test`) usa una base con la misma forma y además lanza una notificación real de Windows.
+
 ## Conexiones: Spotify, Google y Microsoft (1.3)
 
 En **Ajustes → Conexiones** hay un botón por servicio. Se entra en el navegador, en la página del propio servicio (OAuth 2 con PKCE): AURA nunca ve la contraseña. El permiso (token) queda cifrado con DPAPI en la PC y nunca pasa por el servidor AU-RA; se quita con «Desconectar» o desde la cuenta del servicio.

@@ -145,7 +145,11 @@ public partial class NotchWindow
         cambioCuentas |= v.ConexionesTocadas.Count > 0 || cambioIds;
         ajustes.CorreoDireccion = r.CorreoDireccion; ajustes.CorreoClave = r.CorreoClave; ajustes.AgendaUrl = r.AgendaUrl;
         ajustes.AvisarCorreos = r.AvisarCorreos; ajustes.MostrarMusica = r.MostrarMusica;
+        bool cambioAvisos = r.AvisosDeApps != ajustes.AvisosDeApps;
+        ajustes.AvisosDeApps = r.AvisosDeApps; ajustes.AvisosPrivados = r.AvisosPrivados; ajustes.AvisosEnVoz = r.AvisosEnVoz;
+        ajustes.AppsSilenciadas = r.AppsSilenciadas;
         if (cambioCuentas) IniciarCuentas();
+        if (cambioAvisos) IniciarAvisosApps();
         if (!ajustes.MostrarMusica) musicaVisible = false;
         AlCambiarMusica(cancion, false); // mostrar u ocultar la música al momento
         noRenovarHasta = DateTime.MinValue;

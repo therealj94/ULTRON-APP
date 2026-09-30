@@ -78,6 +78,13 @@ jobs:
             Get-Content ./windows/artifacts/protocol/assistant.json
             if ($process.ExitCode -ne 0) { throw 'Assistant integration failed' }
           } finally { Stop-Process -Id $fixture.Id -ErrorAction SilentlyContinue }
+      - name: Other apps' notifications in the notch (Windows notification database, read-only)
+        shell: pwsh
+        run: |
+          $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--avisos-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/protocol/avisos.json" -PassThru
+          if (-not $process.WaitForExit(90000)) { $process.Kill(); throw 'Notifications test timeout' }
+          Get-Content ./windows/artifacts/protocol/avisos.json
+          if ($process.ExitCode -ne 0) { throw 'Notifications test failed' }
       - name: Spotify, Google and Microsoft sign-in (OAuth PKCE against simulated providers, no real accounts)
         shell: pwsh
         run: |

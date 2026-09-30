@@ -12,7 +12,9 @@ public enum Mano
     // Nativas 1.1: controles por nombre (UI Automation), ventanas, información del equipo, portapapeles y archivos.
     Pulsar, QueHay, Ventana, Info, Portapapeles, AbrirArchivo,
     // 1.2: música (lo que suena en Spotify, YouTube Music o el navegador), correo y agenda.
-    Musica, Correo, Agenda
+    Musica, Correo, Agenda,
+    // 1.4: las notificaciones de las demás apps (solo por reglas: Laya no tiene esta etiqueta todavía).
+    Notificaciones
 }
 
 /// <summary>Lo que se va a hacer: la mano, su parámetro (qué app, qué búsqueda, qué texto…) y de dónde salió.</summary>
@@ -60,6 +62,7 @@ public static class Intencion
         // Lo que se PREGUNTA al equipo (hora, batería, disco, red) se contesta aquí, sin red: va antes que el filtro de preguntas.
         if (Parametros.Info(t) is { } info) return new(Mano.Info, info);
         if (Parametros.Musica(texto) is { } musica) return new(Mano.Musica, musica);
+        if (Parametros.Notificaciones(t) is { } avisos) return new(Mano.Notificaciones, avisos);
         if (Parametros.Correo(t) is { } correo) return new(Mano.Correo, correo);
         if (Parametros.Agenda(t) is { } agenda) return new(Mano.Agenda, agenda);
         if (Parametros.QueHay.IsMatch(t)) return new(Mano.QueHay);
@@ -615,5 +618,21 @@ public static class Parametros
         if (Regex.IsMatch(t, @"(?:manana|tomorrow)")) return "manana";
         if (Regex.IsMatch(t, @"(?:semana|week)")) return "semana";
         return "hoy";
+    }
+
+    static readonly Regex AvisosLeer = new(@"^(?:(?:que|cuales) notificaciones (?:tengo|hay|me llegaron)|(?:tengo|hay) (?:alguna )?notificaciones?(?: nuevas?)?|(?:leeme|lee|dime|muestrame|revisa) (?:las |mis )?notificaciones|que me llego|que me ha llegado|(?:what|which) notifications (?:do i have|did i get)|(?:read|show) (?:me )?(?:my )?notifications|any (?:new )?notifications|what did i get)$", O);
+    static readonly Regex AvisoUltimo = new(@"^(?:(?:leeme|lee|dime|repite|repiteme) la ultima notificacion|que decia (?:la|esa) notificacion|read (?:me )?the last notification|what did that notification say)$", O);
+    static readonly Regex AvisosSilenciar = new(@"^(?:silencia|calla|oculta|apaga|quita|bloquea) (?:las )?notificaciones de (?<app>.{2,40})|no me (?:muestres|ensenes|avises de) (?:las (?:notificaciones )?de )?(?<app>.{2,40})|mute (?:notifications from |the )?(?<app>.{2,40}?)(?: notifications)?$", O);
+    static readonly Regex AvisosActivar = new(@"^(?:vuelve a mostrar(?:me)?|muestrame otra vez|activa|reactiva) (?:las )?notificaciones de (?<app>.{2,40})|unmute (?:notifications from )?(?<app>.{2,40}?)(?: notifications)?$", O);
+
+    /// <summary>«leer», «ultima», «silenciar|whatsapp» o «activar|whatsapp», o null.</summary>
+    public static string? Notificaciones(string limpio)
+    {
+        var t = LayaLigera.Normalizar(limpio);
+        if (AvisoUltimo.IsMatch(t)) return "ultima";
+        if (AvisosLeer.IsMatch(t)) return "leer";
+        if (AvisosActivar.Match(t) is { Success: true } a) return "activar|" + a.Groups["app"].Value.Trim();
+        if (AvisosSilenciar.Match(t) is { Success: true } m && !Regex.IsMatch(m.Groups["app"].Value, @"^(?:nada|eso|esto|mas)$")) return "silenciar|" + m.Groups["app"].Value.Trim();
+        return null;
     }
 }
