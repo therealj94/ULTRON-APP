@@ -11,8 +11,8 @@ import type { Pantalla } from '../nucleo/contrato';
 export type RaizParams = {
   Intro: undefined;
   Bienvenida: { desdeIntro?: boolean } | undefined;
-  Entrar: { desdeIntro?: boolean; aviso?: string } | undefined;
-  CrearGenesis: undefined;
+  Entrar: { desdeIntro?: boolean; aviso?: string; codigo?: string } | undefined;
+  CrearGenesis: { sinVerificar?: boolean } | undefined;
   OtrasFormas: undefined;
   PrimeraVez: { desdeIntro?: boolean } | undefined;
   Mesa: { desdeIntro?: boolean; recienElegido?: boolean } | undefined;

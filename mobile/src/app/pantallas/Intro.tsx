@@ -128,7 +128,8 @@ export function Intro(_: Props) {
       destino.current = () => void entrarCon(u, g.genesis || null);
     } else if (vuelta && !vuelta.ok && vuelta.codigo !== 'CANCELADO') {
       const m = vuelta.codigo === 'PENDIENTE' ? tr('Tu acceso está en revisión.', 'Your access is under review.') : vuelta.mensaje;
-      destino.current = () => reiniciarA('Entrar', { desdeIntro: true, aviso: m });
+      const codigo = vuelta.codigo;
+      destino.current = () => reiniciarA('Entrar', { desdeIntro: true, aviso: m, codigo });
     } else destino.current = () => reiniciarA(vista ? 'Entrar' : 'Bienvenida', { desdeIntro: true });
 
     // La apertura se ve entera (más corta con sesión); con red lenta, lo que tarde la carga.
