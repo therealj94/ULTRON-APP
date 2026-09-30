@@ -38,6 +38,8 @@ const lineas = [
   existe('pulse/chats.ts') ? `export * as CHATS from ${JSON.stringify(path.join(SRC, 'pulse/chats'))};` : '',
   existe('pulse/borradores.ts') ? `export * as BORRADORES from ${JSON.stringify(path.join(SRC, 'pulse/borradores'))};` : '',
   existe('nucleo/contrato.ts') ? `export * as CONTRATO from ${JSON.stringify(path.join(SRC, 'nucleo/contrato'))};` : '',
+  existe('pulse/ui/formato.ts') ? `export * as FORMATO from ${JSON.stringify(path.join(SRC, 'pulse/ui/formato'))};` : '',
+  `export * as AZAR from ${JSON.stringify(path.join(SRC, 'pulse/azar'))};`,
 ];
 const entrada = path.join(path.dirname(SALIDA), 'entrada-' + path.basename(SALIDA, '.cjs') + '.ts');
 fs.mkdirSync(path.dirname(SALIDA), { recursive: true });
