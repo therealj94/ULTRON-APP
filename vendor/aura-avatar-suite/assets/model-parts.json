@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "file": "ANT-ONIO.glb",
+      "bytes": 17802936,
+      "sha256": "8685b383ecbe3e1cc785fc857f17f1b138f58f2ba409b5eef0ecfe00ad5e2a1f",
+      "parts": [
+        {
+          "file": "ANT-ONIO.glb.part-001",
+          "bytes": 1500000,
+          "sha256": "c69af385318588dc650b13142584768b8a30bebb18c03e9ee3b0fe1e706aa298"
+        },
+        {
+          "file": "ANT-ONIO.glb.part-002",
+          "bytes": 1500000,
+          "sha256": "ab86ab2b1e773221a1a1683c8cb288157d91bee332eb1c923f89160f5abcbcc5"
+        },
+        {
+          "file": "ANT-ONIO.glb.part-003",
+          "bytes": 1500000,
+          "sha256": "e411006d9d34e5d8624964472455f724cb0150cd5290282f9d239c4d3da7949f"
+        },
+        {
+          "file": "ANT-ONIO.glb.part-004",
+          "bytes": 1500000,
+          "sha256": "d1d41b11b6f6fe9afb63371fe6089abf2b8da0cb4cb0678c8f66ca693c2709f0"
+        },
+        {
+          "file": "ANT-ONIO.glb.part-005",
+          "bytes": 1500000,
+          "sha256": "59d04d513505a4104a48f47d51b2d7068e046dc2ab29b4d932ece1bd46028423"
+        },
+        {
+          "file": "ANT-ONIO.glb.part-006",
+          "bytes": 1500000,
+          "sha256": "d0dd256fd52a9c59a6716040643f076af1b64a889eb0f7c757b26d6eaf1048b2"
+        },
+        {
+          "file": "ANT-ONIO.glb.part-007",
+          "bytes": 1500000,
+          "sha256": "2b6eecc24e07aba54ff99c8d31ee281f3e3d7668cafc7f1472620246b3b0ab20"
+        },
+        {
+          "file": "ANT-ONIO.glb.part-008",
+          "bytes": 1500000,
+          "sha256": "e862d16d9729ddc5cd3ddea716aa1030f8f946feb0ee8a5489cfe0ca1b719009"
+        },
+        {
+          "file": "ANT-ONIO.glb.part-009",
+          "bytes": 1500000,
+          "sha256": "3a3f4733c9c406b4b58e81ab885abddfba16e2f032a148373c099997329a5471"
+        },
+        {
+          "file": "ANT-ONIO.glb.part-010",
+          "bytes": 1500000,
+          "sha256": "c6bbfc50b79b7ca7146099b82417c3089d018f02a6aa20af2de585b748828155"
+        },
+        {
+          "file": "ANT-ONIO.glb.part-011",
+          "bytes": 1500000,
+          "sha256": "6314681e54e395975fbf3bfa2818400b1fa3ce802408a21689e7dcb2006e2812"
+        },
+        {
+          "file": "ANT-ONIO.glb.part-012",
+          "bytes": 1302936,
+          "sha256": "51feaf4d00ed1bb47e93ac66245572d672d789aeaf01280a3ec6839b8fcb35ac"
+        }
+      ]
+    },
+    {
+      "file": "CLAUDIO.glb",
+      "bytes": 27762844,
+      "sha256": "c8c7d19100e63856b8779b13794c34a465a111d07746222b73d1daffb8249a85",
+      "parts": [
+        {
+          "file": "CLAUDIO.glb.part-001",
+          "bytes": 1500000,
+          "sha256": "f1e48ebfcd3e3743cb52a4a509a25e7b3c8eabae27c0907e92b7369bb7a57d5d"
+        },
+        {
+          "file": "CLAUDIO.glb.part-002",
+          "bytes": 1500000,
+          "sha256": "d1f2b76ae8749e23d2010fd7913673c2b85056861566b0e27facc9d97998c1cb"
+        },
+        {
+          "file": "CLAUDIO.glb.part-003",
+          "bytes": 1500000,
+          "sha256": "c058f583df7de71cf0ae4b988cb05087d00ff5eeb9f53143d9c9ae98a796469a"
+        },
+        {
+          "file": "CLAUDIO.glb.part-004",
+          "bytes": 1500000,
+          "sha256": "022613f78c26cf57cfab79bb8e2d1eb4c310cd18a005a9aa71311afebfa95d15"
+        },
+        {
+          "file": "CLAUDIO.glb.part-005",
+          "bytes": 1500000,
+          "sha256": "4972432a31fcdf894dc8e40b4df9b718da2884c03f5c7541d10fead12ac6d26e"
+        },
+        {
+          "file": "CLAUDIO.glb.part-006",
+          "bytes": 1500000,
+          "sha256": "61d8ab87277c585ff958cfd9341d4b03730dbf2b5ebb652e123b916dbdc4a32f"
+        },
+        {
+          "file": "CLAUDIO.glb.part-007",
+          "bytes": 1500000,
+          "sha256": "024c9c491e6f1fcc5c3184b7e8fad7993c73c0c6385318e64d4023d2c7236868"
+        },
+        {
+          "file": "CLAUDIO.glb.part-008",
+          "bytes": 1500000,
+          "sha256": "b9ab65880cb3c6eb6f83311d9001ae0c6b4f26bad5253f88d86cd4e9aa4d8571"
+        },
+        {
+          "file": "CLAUDIO.glb.part-009",
+          "bytes": 1500000,
+          "sha256": "1922cfeda065e8c40c9b14fa404dcb207599c49ce790abbdef9bdc25f7edda65"
+        },
+        {
+          "file": "CLAUDIO.glb.part-010",
+          "bytes": 1500000,
+          "sha256": "0fee187beb324475d603aa88d94f81a1e893df58de05a86d20cd2c0a754edf06"
+        },
+        {
+          "file": "CLAUDIO.glb.part-011",
+          "bytes": 1500000,
+          "sha256": "bbc9724d777557d13f49314963c424c6ffe5d1c1507f6a094300843704760a65"
+        },
+        {
+          "file": "CLAUDIO.glb.part-012",
+          "bytes": 1500000,
+          "sha256": "89d0af534dcc0153c7de90ce038e70b12ac1f521546d5c1ffa8041399ee2e863"
+        },
+        {
+          "file": "CLAUDIO.glb.part-013",
+          "bytes": 1500000,
+          "sha256": "11c2308bb3405a0e37ab173b5a2174fc04257956d90d566696a20062bcce5482"
+        },
+        {
+          "file": "CLAUDIO.glb.part-014",
+          "bytes": 1500000,
+          "sha256": "8f7be5edaab3cb2c26bd754c623d422ed576f56f377968cd079d68859fa0d02f"
+        },
+        {
+          "file": "CLAUDIO.glb.part-015",
+          "bytes": 1500000,
+          "sha256": "90e69bace37d99019d083e555e6b311a12b5ec112e34073cdcb0289e07ebf3d9"
+        },
+        {
+          "file": "CLAUDIO.glb.part-016",
+          "bytes": 1500000,
+          "sha256": "f47ddad4f5dec52e0cbf04f8df345cdd59eed419b31c00aca204c59bb32f7ca5"
+        },
+        {
+          "file": "CLAUDIO.glb.part-017",
+          "bytes": 1500000,
+          "sha256": "780467a3972a3982531e4cda692ca3eabee71bf034f0d87478ce8935ea400949"
+        },
+        {
+          "file": "CLAUDIO.glb.part-018",
+          "bytes": 1500000,
+          "sha256": "256603e3c653ca036b28b71ea9a1fbae28eb6579f45677f06660290aec16e7c3"
+        },
+        {
+          "file": "CLAUDIO.glb.part-019",
+          "bytes": 762844,
+          "sha256": "83dc42d2f2d494ca1fd2cf2ed9fc10ffd0664f82862692fdfffbc2abf8c0ef91"
+        }
+      ]
+    }
+  ]
+}

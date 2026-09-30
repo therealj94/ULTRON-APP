@@ -1,0 +1,11 @@
+# Generated offline bundles include upstream GLSL formatting; retain exact bytes.
+app.js linguist-generated=true -diff -whitespace
+AVATARES-AURA-DEMO.html linguist-generated=true -diff -whitespace
+integration/embed.bundle.js linguist-generated=true -diff -whitespace
+integration/*-embed.html linguist-generated=true -diff -whitespace
+integration/avatarHtml.ts linguist-generated=true -diff -whitespace
+*.glb binary
+*.png binary
+*.webp binary
+*.mp4 binary
+assets/model-parts/* binary -whitespace linguist-generated=true
