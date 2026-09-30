@@ -23,8 +23,13 @@
  * Al terminar una sesión que llegó a abrirse, `onFin` avisa con su pase (el VozProvider se lo cuenta
  * al servidor: POST /api/voz/agente/cerrar).
  *
- * La forma de la boca (avatar3d/senalVoz.ts): si algún cuerpo dibuja visemas (el 3D), cada 50 ms se
- * lee también el espectro de la voz del agente; y si ElevenLabs manda la alineación por letra
+ * La boca (avatar3d/senalVoz.ts, sincronia.ts): el volumen REAL de la voz del agente se lee cada
+ * 33 ms (≈ un cuadro), abre rápido y cierra suave (Envolvente) y se cierra en seco si la
+ * interrumpen o deja de hablar. LiveKit mide ese volumen sobre la pista ya decodificada, antes del
+ * búfer de salida del teléfono (~20–40 ms en Android), que el SDK no deja medir: la boca va, a lo
+ * sumo, ese poco por delante del sonido, dentro de lo que el ojo acepta (adelantarse molesta menos
+ * que atrasarse); no se le agrega retardo. Si algún cuerpo dibuja visemas (el 3D, la figurita), se
+ * lee también el espectro por bandas; y si ElevenLabs manda la alineación por letra
  * (`onAudioAlignment`, solo cuando el audio viaja en eventos), se pasa tal cual. Sin nadie que lo
  * pida, el espectro no se mide (tiene costo: LiveKit lo calcula en nativo).
  *
@@ -35,6 +40,7 @@ import { ConversationProvider, useConversation } from '@elevenlabs/react-native'
 import { envolventeLibre } from '../lib/lipsync';
 import { miga } from '../lib/reporte';
 import { senalVoz } from '../avatar3d/senalVoz';
+import { Envolvente, PASO_BOCA_MS } from '../avatar3d/sincronia';
 import type { EstadoVoz } from '../compa/sesion';
 
 export type EstadoConversacion = EstadoVoz;
@@ -138,6 +144,7 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
   useEffect(() => {
     let vivo = true;
     let nivel: ReturnType<typeof setInterval> | null = null;
+    const boca = new Envolvente();
     const avisar = (e: EstadoConversacion, detalle?: string) => vivo && cbs.current.onEstado(gen, e, detalle);
     // El audio y el fin se avisan AUNQUE esta generación ya no esté montada: el cierre de verdad
     // (onDisconnect) llega después de desmontarse, y es justo lo que espera una llamada.
@@ -181,6 +188,8 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
           },
           onModeChange: ({ mode }) => {
             hablando.current = mode === 'speaking';
+            // Terminó de hablar: la boca se cierra ya, no con la caída.
+            if (!hablando.current) boca.cortar();
             avisar(mode === 'speaking' ? 'hablando' : 'escuchando');
           },
           onMessage: (m) => {
@@ -188,6 +197,7 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
             if (texto && vivo) cbs.current.onMensaje(gen, m.source === 'user' ? 'usuario' : 'ultron', texto);
           },
           onInterruption: () => {
+            boca.cortar();
             if (vivo) cbs.current.onInterrupcion(gen);
           },
           onAudioAlignment: (al) => {
@@ -211,6 +221,7 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
         let sinVolumenDesde = 0;
         let envolvente: ((ms: number) => number) | null = null;
         let t0 = 0;
+        let antes = Date.now();
         nivel = setInterval(() => {
           let salida = 0;
           let entrada = 0;
@@ -242,8 +253,14 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
               /* sin espectro: la forma sale del volumen */
             }
           }
-          cbs.current.onNiveles(silencio.current ? 0 : salida, entrada);
-        }, 50);
+          // Abre rápido, cierra suave; en silencio, cerrada. (No se espera al «speaking» del SDK para
+          // abrir: a veces llega después del primer sonido y se comería la primera sílaba.)
+          const dt = ahora - antes;
+          antes = ahora;
+          if (silencio.current) boca.cortar();
+          const abre = silencio.current ? 0 : boca.seguir(salida, dt);
+          cbs.current.onNiveles(abre, entrada);
+        }, PASO_BOCA_MS);
       } catch (e: any) {
         soltarAudio();
         if (!vivo) return;

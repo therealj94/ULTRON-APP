@@ -7,8 +7,13 @@
  * resolución. Entonces se anota y durante dos semanas ni se intenta: la persona ve la figurita de
  * siempre sin enterarse. Un modelo nuevo (otra huella) se vuelve a probar.
  *
+ * Antes de caer, la escena se abarata sola (tipos.ts, Calidad: alta → media → baja). El nivel en
+ * que se quedó bien se recuerda por modelo (la misma huella), así la próxima vez arranca ahí y no
+ * vuelve a pasar tres segundos a saltos; también se olvida en dos semanas.
+ *
  * Sin React Native: se prueba en Node (el almacenamiento está en almacen.ts).
  */
+import { CALIDADES, type Calidad } from './tipos';
 
 export type RegistroCapacidad = Record<string, { motivo: string; en: number }>;
 
@@ -54,4 +59,22 @@ export function cuerpoQueToca(o: { hayModelo: boolean; puedeProbar: boolean; act
  */
 export function veredictoRendimiento(r: { fps: number; dpr: number; lento: boolean }): 'bien' | 'caer' {
   return r.lento || (r.dpr <= 1 && r.fps < FPS_MINIMO) ? 'caer' : 'bien';
+}
+
+/* ── la calidad que aguantó, por modelo ──────────────────────────────────────────────────── */
+
+export type RegistroCalidad = Record<string, { calidad: Calidad; en: number }>;
+
+/** Con qué calidad arranca este modelo en este teléfono (la que aguantó la última vez, o «alta»). */
+export function calidadInicial(reg: RegistroCalidad | null, huella: string | null | undefined, ahora: number): Calidad {
+  const r = huella ? reg?.[huella] : undefined;
+  return r && ahora - r.en <= OLVIDO_MS && CALIDADES.includes(r.calidad) ? r.calidad : 'alta';
+}
+
+/** El registro con la calidad que aguantó este modelo (y sin lo que ya se olvidó). */
+export function anotarCalidad(reg: RegistroCalidad | null, huella: string, calidad: Calidad, ahora: number): RegistroCalidad {
+  const r: RegistroCalidad = {};
+  for (const [k, v] of Object.entries(reg || {})) if (ahora - v.en <= OLVIDO_MS) r[k] = v;
+  if (CALIDADES.includes(calidad)) r[huella] = { calidad, en: ahora };
+  return r;
 }

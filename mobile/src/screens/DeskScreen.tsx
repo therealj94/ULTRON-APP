@@ -49,10 +49,12 @@ import { StreamSpeaker, setAvatarVoz, setSpeechLevelListener, speak, speakPrayer
 import { frase, saludoConNombre, type FraseId } from '../lib/frases';
 import { de, idiomaActual, tr, useIdioma } from '../i18n';
 import { quitarExpresiones } from '../lib/expresiones';
-import { ClaudioRetrato } from '../avatares/ClaudioRetrato';
-import { ClaudioDePie } from '../avatares/ClaudioDePie';
+import { ClaudioRetrato, fotosRetrato } from '../avatares/ClaudioRetrato';
+import { ClaudioDePie, FOTOS_ANTONIO_PIE } from '../avatares/ClaudioDePie';
+import { CuerpoMesa } from '../avatar3d/CuerpoMesa';
+import { hayModelo3D } from '../avatar3d/AvatarVivo';
 import { SelectorAvatar } from '../avatares/SelectorAvatar';
-import { avatarPorId, distribucion, type AvatarId } from '../avatares/catalogo';
+import { avatarPorId, conFotos, distribucion, type AvatarId } from '../avatares/catalogo';
 import { AccionesAvatar } from '../components/AccionesAvatar';
 import { VozProvider, useVoz, useVozOpcional, vozOcupaMicrofono } from '../compa/VozProvider';
 import { avisarMesa, mensajeVoz, sueloCompa } from '../compa/canales';
@@ -1592,7 +1594,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const vista: 'anillos' | 'sala' | 'clasica' | null =
     avatarId === 'ojos' ? 'clasica' : cara === null ? null : cara === 'anillos' ? (skiaFallo ? 'clasica' : 'anillos') : conSala ? 'sala' : 'clasica';
   const enSala = avatarId === 'aura' && vista === 'sala';
-  nivelVisible.current = vista === 'clasica' && avatarId !== 'claudio';
+  nivelVisible.current = vista === 'clasica' && !conFotos(avatarId);
   const caraAura =
     vista === 'sala' && postura ? (
       <SalaAura
@@ -1644,17 +1646,52 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         onSwipe={onSwipe}
       />
     ) : null;
-  const caraNode =
-    avatarId === 'claudio' ? (
-      reparto.pose === 'pie' ? (
-        <ClaudioDePie face={face} gazeX={gaze.x} speechLevelSource={suscribirNivelVoz} onTap={() => onTap('face', 0, 0)} onLongPress={onLongPress} />
-      ) : (
-        <ClaudioRetrato face={face} gazeX={gaze.x} gazeY={gaze.y} speechLevelSource={suscribirNivelVoz} onTap={() => onTap('face', 0, 0)} onLongPress={onLongPress} />
-      )
+  // Claudio y ANT-ONIO: su cuerpo 3D si hay modelo y el teléfono lo aguanta; si no, sus fotos (retrato
+  // acostado, de pie derecho), las de siempre. AU-RA sigue con su sala o sus anillos: la sala es su
+  // mesa (silla, escritorio, tareas) y su cuerpo 3D nuevo va en la compañera, al lado y a pantalla completa.
+  const nombreAvatar = de(avatarPorId(avatarId).nombre);
+  const fotosCara =
+    reparto.pose === 'pie' ? (
+      <ClaudioDePie
+        face={face}
+        gazeX={gaze.x}
+        speechLevelSource={suscribirNivelVoz}
+        fotos={avatarId === 'antonio' ? FOTOS_ANTONIO_PIE : undefined}
+        nombre={nombreAvatar}
+        onTap={() => onTap('face', 0, 0)}
+        onLongPress={onLongPress}
+      />
     ) : (
-      caraAura
+      <ClaudioRetrato
+        face={face}
+        gazeX={gaze.x}
+        gazeY={gaze.y}
+        speechLevelSource={suscribirNivelVoz}
+        fotos={fotosRetrato(avatarId) || undefined}
+        nombre={nombreAvatar}
+        onTap={() => onTap('face', 0, 0)}
+        onLongPress={onLongPress}
+      />
     );
-  const esClaudio = avatarId === 'claudio';
+  const caraNode = conFotos(avatarId) ? (
+    hayModelo3D(avatarId) ? (
+      <CuerpoMesa
+        avatar={avatarId}
+        camara={reparto.pose === 'pie' ? 'cuerpo' : 'retrato'}
+        face={face}
+        emocion={emocion}
+        mirada={{ x: gaze.x, y: gaze.y, activa: verPersona }}
+        respaldo={fotosCara}
+        onTap={() => onTap('face', 0, 0)}
+        onLongPress={onLongPress}
+      />
+    ) : (
+      fotosCara
+    )
+  ) : (
+    caraAura
+  );
+  const esClaudio = conFotos(avatarId);
   const acciones = avatarPorId(avatarId).acciones;
   // La compañera pasea por encima de lo que no se debe tapar: los atajos y la barra de escribir del
   // chat de la mesa (cuadro) o los botones con los atajos (de pie); acostado, solo los botones.

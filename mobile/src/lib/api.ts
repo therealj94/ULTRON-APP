@@ -397,7 +397,8 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
 
 /** GET /api/tts?text=&emocion=&performance=&avatar=&idioma= → audio con la voz del avatar (cabecera X-Ultron-TTS con el motor). */
 export function ttsUrl(text: string, performance: 'speak' | 'sing', emocion: Emocion = 'neutral', avatar = 'aura', idioma = 'es') {
-  const q = new URLSearchParams({ text, performance, emocion, avatar, idioma });
+  // `tiempos=1`: que el servidor mande también los tiempos por letra (la boca a tiempo, avatar3d/sincronia.ts).
+  const q = new URLSearchParams({ text, performance, emocion, avatar, idioma, tiempos: '1' });
   return `${API_BASE}/api/tts?${q.toString()}`;
 }
 

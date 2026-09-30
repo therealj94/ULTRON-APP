@@ -110,11 +110,23 @@ export const ESTADO_INICIAL: EstadoAvatar = {
 /** Un toque en el cuerpo: qué gesto y en qué zona. */
 export type ToqueAvatar = { gesto: GestoDedo; zona: ZonaToque };
 
+/**
+ * Cuánto gasta la escena (capacidad.ts la recuerda por modelo y la escena la baja sola si no da los
+ * cuadros):
+ *  · alta  → la resolución del teléfono (hasta 2×) y los materiales como los hizo Codex (barniz,
+ *            brillo especular, relieve);
+ *  · media → hasta 1,5× y sin barniz ni brillo especular;
+ *  · baja  → 1× y materiales simples (sin relieve ni reflejos del entorno).
+ * Sombras y bloom no hay en ningún nivel: el avatar va sobre la app, con fondo transparente.
+ */
+export const CALIDADES = ['alta', 'media', 'baja'] as const;
+export type Calidad = (typeof CALIDADES)[number];
+
 /* ── el protocolo con la escena 3D (WebView) ─────────────────────────────────────────────── */
 
 /** Lo que el teléfono le manda a la escena con `window.__avatar(mensaje)`. */
 export type AlaEscena =
-  | { tipo: 'config'; camara: Camara; fpsMax: number; dprMax: number; mapeo: unknown; reducido: boolean }
+  | { tipo: 'config'; camara: Camara; fpsMax: number; dprMax: number; mapeo: unknown; reducido: boolean; calidad?: Calidad }
   /** El modelo en pedazos de base64 (una WebView no puede leer los archivos de la APK). */
   | { tipo: 'trozo'; i: number; total: number; b64: string }
   | { tipo: 'fin'; bytes: number }
@@ -133,7 +145,7 @@ export type DeLaEscena =
   | { tipo: 'listo'; info: InfoModelo }
   | { tipo: 'zona'; id: number; zona: ZonaToque | null }
   /** Cuántos cuadros por segundo logra el teléfono (se mide al arrancar). */
-  | { tipo: 'rendimiento'; fps: number; dpr: number; lento: boolean }
+  | { tipo: 'rendimiento'; fps: number; dpr: number; lento: boolean; calidad?: Calidad }
   | { tipo: 'fallo'; motivo: string };
 
 /** Lo que la escena encontró en el modelo (para el diagnóstico y las pruebas). */

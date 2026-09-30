@@ -48,7 +48,7 @@ export { dichoDePropuesta, preguntaDePropuesta } from './manos-app';
 
 export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil';
 export type TemaApp = 'oscuro' | 'claro' | 'sistema';
-export type AvatarApp = 'ojos' | 'aura' | 'claudio';
+export type AvatarApp = 'ojos' | 'aura' | 'claudio' | 'antonio';
 /** Cómo está AURA en el teléfono: chiquita caminando, al lado de los chats o a pantalla completa. */
 export type PresenciaApp = 'paseo' | 'lado' | 'completa';
 
@@ -80,7 +80,7 @@ export type ContextoApp = {
 
 const PANTALLAS: Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil'];
 const TEMAS: TemaApp[] = ['oscuro', 'claro', 'sistema'];
-const AVATARES: AvatarApp[] = ['ojos', 'aura', 'claudio'];
+const AVATARES: AvatarApp[] = ['ojos', 'aura', 'claudio', 'antonio'];
 const PRESENCIAS: PresenciaApp[] = ['paseo', 'lado', 'completa'];
 export const MAX_TEXTO_BORRADOR = 2000;
 export const MAX_CONTACTOS = 300;
@@ -646,8 +646,8 @@ const PANTALLA_DE: Array<[RegExp, Pantalla]> = [
 ];
 
 const DICHOS: Record<'es' | 'en', Record<string, string>> = {
-  es: { completa: 'Aquí estoy, de frente.', lado: 'Me pongo a tu lado.', paseo: 'Me hago chiquita.', atras: 'Listo.', ajustes: 'Abro ajustes.', chats: 'Abro tus chats.', mesa: 'Vamos a la mesa.', perfil: 'Abro tu perfil.', oscuro: 'Listo, en oscuro.', claro: 'Listo, en claro.', sistema: 'Listo, como el sistema.', ojos: 'Te paso con el Guardián.', aura: 'Aquí AU-RA.', claudio: '¡Va! Te paso con Claudio.', silencio: 'Va.', habla: 'Aquí estoy.', enviar: '¡Listo, enviado!', descartar: 'Listo, lo borré.' },
-  en: { completa: 'Here I am, full screen.', lado: "I'll stay by your side.", paseo: "I'll make myself small.", atras: 'Done.', ajustes: 'Opening settings.', chats: 'Opening your chats.', mesa: 'Back to the desk.', perfil: 'Opening your profile.', oscuro: 'Done, dark it is.', claro: 'Done, light it is.', sistema: 'Done, following the system.', ojos: 'Switching you to the Guardian.', aura: 'AU-RA here.', claudio: 'Sure! Switching you to Claudio.', silencio: 'Okay.', habla: "I'm here.", enviar: 'Done, sent!', descartar: 'Okay, I deleted it.' },
+  es: { completa: 'Aquí estoy, de frente.', lado: 'Me pongo a tu lado.', paseo: 'Me hago chiquita.', atras: 'Listo.', ajustes: 'Abro ajustes.', chats: 'Abro tus chats.', mesa: 'Vamos a la mesa.', perfil: 'Abro tu perfil.', oscuro: 'Listo, en oscuro.', claro: 'Listo, en claro.', sistema: 'Listo, como el sistema.', ojos: 'Te paso con el Guardián.', aura: 'Aquí AU-RA.', claudio: '¡Va! Te paso con Claudio.', antonio: '¡Va! Te paso con ANT-ONIO.', silencio: 'Va.', habla: 'Aquí estoy.', enviar: '¡Listo, enviado!', descartar: 'Listo, lo borré.' },
+  en: { completa: 'Here I am, full screen.', lado: "I'll stay by your side.", paseo: "I'll make myself small.", atras: 'Done.', ajustes: 'Opening settings.', chats: 'Opening your chats.', mesa: 'Back to the desk.', perfil: 'Opening your profile.', oscuro: 'Done, dark it is.', claro: 'Done, light it is.', sistema: 'Done, following the system.', ojos: 'Switching you to the Guardian.', aura: 'AU-RA here.', claudio: 'Sure! Switching you to Claudio.', antonio: 'Sure! Switching you to ANT-ONIO.', silencio: 'Okay.', habla: "I'm here.", enviar: 'Done, sent!', descartar: 'Okay, I deleted it.' },
 };
 
 /**
@@ -769,9 +769,10 @@ function reglasDeSiempre(q: string, o: { idioma?: 'es' | 'en'; contexto?: Contex
   const presencia = presenciaDicha(q);
   if (presencia) return hecho({ tipo: 'presencia', valor: presencia }, d[presencia]);
 
-  const avatar = /^(?:cambia(?:me)?|pasa(?:me)?|pon(?:me)?|quiero hablar con|habla(?:me)? como|switch|change)(?: (?:a|al|con|to))? (claudio|aura|au ra|au-ra|guardian|ojos)$/.exec(q);
+  const avatar = /^(?:cambia(?:me)?|pasa(?:me)?|pon(?:me)?|quiero hablar con|habla(?:me)? como|switch|change)(?: (?:a|al|con|to))? (claudio|aura|au ra|au-ra|guardian|ojos|antonio|ant onio|ant-onio)$/.exec(q);
   if (avatar) {
-    const valor: AvatarApp = avatar[1] === 'claudio' ? 'claudio' : avatar[1] === 'guardian' || avatar[1] === 'ojos' ? 'ojos' : 'aura';
+    const valor: AvatarApp =
+      avatar[1] === 'claudio' ? 'claudio' : avatar[1] === 'guardian' || avatar[1] === 'ojos' ? 'ojos' : avatar[1].startsWith('ant') ? 'antonio' : 'aura';
     return hecho({ tipo: 'avatar', valor }, d[valor]);
   }
 

@@ -15,11 +15,11 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { StyleSheet, View } from 'react-native';
 import Animated, { useAnimatedStyle, useReducedMotion, useSharedValue, withTiming } from 'react-native-reanimated';
 import { MODELOS_3D } from './modelo';
-import { puedeProbar3D, recordarFallo3D } from './almacen';
+import { calidadGuardada, puedeProbar3D, recordarCalidad, recordarFallo3D } from './almacen';
 import { cuerpoQueToca } from './capacidad';
 import { Avatar3D, type ControlAvatar3D } from './Avatar3D';
 import type { PropsCuerpo } from './contrato';
-import type { ZonaToque } from './tipos';
+import type { Calidad, ZonaToque } from './tipos';
 
 export type ControlCuerpo = { zonaEn: (x: number, y: number) => Promise<ZonaToque | null> };
 
@@ -41,6 +41,7 @@ export const AvatarVivo = forwardRef<ControlCuerpo, Props>(function AvatarVivo({
   const reducido = useReducedMotion();
   const [probar, setProbar] = useState(false);
   const [listo, setListo] = useState(false);
+  const [calidad, setCalidad] = useState<Calidad>('alta');
   const control = useRef<ControlAvatar3D>(null);
   const opac3D = useSharedValue(0);
 
@@ -51,7 +52,11 @@ export const AvatarVivo = forwardRef<ControlCuerpo, Props>(function AvatarVivo({
     opac3D.value = 0;
     if (!modelo) return;
     let vivo = true;
-    void puedeProbar3D(modelo.huella).then((si) => vivo && setProbar(si));
+    void Promise.all([puedeProbar3D(modelo.huella), calidadGuardada(modelo.huella)]).then(([si, c]) => {
+      if (!vivo) return;
+      setCalidad(c);
+      setProbar(si);
+    });
     return () => {
       vivo = false;
     };
@@ -68,6 +73,7 @@ export const AvatarVivo = forwardRef<ControlCuerpo, Props>(function AvatarVivo({
     setListo(true);
     opac3D.value = withTiming(1, { duration: 320 });
   }, [opac3D]);
+  const alCalidad = useCallback((c: Calidad) => modelo && recordarCalidad(modelo.huella, c), [modelo]);
   const alFallo = useCallback(
     (motivo: string) => {
       if (modelo) recordarFallo3D(modelo.huella, motivo);
@@ -89,7 +95,19 @@ export const AvatarVivo = forwardRef<ControlCuerpo, Props>(function AvatarVivo({
     <View style={StyleSheet.absoluteFill} pointerEvents="none">
       <Animated.View style={[StyleSheet.absoluteFill, estiloRespaldo]}>{respaldo}</Animated.View>
       <Animated.View style={[StyleSheet.absoluteFill, s.centro, estilo3D]}>
-        <Avatar3D ref={control} modelo={modelo} {...cuerpo} dprMax={dprMax} reducido={reducido} onListo={alListo} onFallo={alFallo} />
+        {/* Otra huella (otro avatar u otro modelo) es otra escena: la WebView arranca de cero. */}
+        <Avatar3D
+          key={modelo.huella}
+          ref={control}
+          modelo={modelo}
+          {...cuerpo}
+          dprMax={dprMax}
+          reducido={reducido}
+          calidad={calidad}
+          onListo={alListo}
+          onFallo={alFallo}
+          onCalidad={alCalidad}
+        />
       </Animated.View>
     </View>
   );

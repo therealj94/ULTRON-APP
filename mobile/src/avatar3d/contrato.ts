@@ -74,6 +74,68 @@ export function estadoDesdeAnimo(a: Animo, ahora: number, x: ExtraEstado = {}): 
   };
 }
 
+/**
+ * La cara que pide la MESA (DeskScreen: el FaceState de la voz y el cerebro, más la emoción del
+ * turno) → lo que un cuerpo 3D tiene que mostrar. En la mesa, Claudio y ANT-ONIO son su cuerpo 3D
+ * (con sus fotos de respaldo); la emoción del turno afina la cara cuando la mesa solo dice «habla»
+ * o «en reposo».
+ */
+const CARA_DE_MESA: Record<string, ExpresionAvatar> = {
+  IDLE: 'tranquila',
+  LISTENING: 'escucha',
+  THINKING: 'piensa',
+  SCAN: 'piensa',
+  CONFUSED: 'piensa',
+  CURIOUS: 'escucha',
+  SPEAKING: 'tranquila',
+  SING: 'contenta',
+  MUSIC: 'contenta',
+  HAPPY: 'contenta',
+  PROUD: 'contenta',
+  WINK: 'contenta',
+  LAUGH: 'encantada',
+  CONCERNED: 'uy',
+  SAD: 'triste',
+  ANGRY: 'enojada',
+  SLEEPING: 'dormida',
+  YAWNING: 'dormida',
+  TIRED: 'dormida',
+  STARTLE: 'sorprendida',
+  SURPRISED: 'sorprendida',
+  PRAY: 'tranquila',
+};
+const CARA_DE_EMOCION: Record<string, ExpresionAvatar> = {
+  feliz: 'contenta',
+  orgullo: 'contenta',
+  travieso: 'contenta',
+  canto: 'contenta',
+  risa: 'encantada',
+  sorpresa: 'sorprendida',
+  curioso: 'escucha',
+  pensando: 'piensa',
+  preocupado: 'uy',
+  triste: 'triste',
+  molesto: 'enojada',
+  carino: 'timida',
+};
+
+export function estadoDesdeMesa(face: string, emocion: string, x: ExtraEstado = {}): EstadoAvatar {
+  const deCara = CARA_DE_MESA[face] || 'tranquila';
+  const afinable = face === 'IDLE' || face === 'SPEAKING';
+  const expresion = afinable ? CARA_DE_EMOCION[emocion] || deCara : deCara;
+  return {
+    ...ESTADO_INICIAL,
+    expresion,
+    hablando: face === 'SPEAKING' || face === 'SING',
+    escuchando: face === 'LISTENING' || face === 'CURIOUS',
+    silenciado: face === 'SLEEPING',
+    pensando: face === 'THINKING' || face === 'SCAN',
+    mirar: x.mirar || ESTADO_INICIAL.mirar,
+    gesto: x.gesto ?? null,
+    globo: x.globo || '',
+  };
+}
+
 /** ¿Cambió algo que un cuerpo tenga que ver? (el globo y la mirada cuentan; la hora no). */
 export function mismoEstado(a: EstadoAvatar, b: EstadoAvatar): boolean {
   return (

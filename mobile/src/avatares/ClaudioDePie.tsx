@@ -22,15 +22,26 @@ const ORDEN: FotoCuerpo[] = ['base', 'cierra', 'habla1', 'habla2'];
 
 export const FOTOS_CLAUDIO_PIE = FOTOS;
 
+/** ANT-ONIO de pie: sus fotos salen de su modelo 3D (scripts/avatar3d-fotos.mjs), con estos nombres. */
+export const FOTOS_ANTONIO_PIE: Record<FotoCuerpo, ImageSourcePropType> = {
+  base: require('../../assets/avatares/antonio-pie/base.webp'),
+  cierra: require('../../assets/avatares/antonio-pie/cierra.webp'),
+  habla1: require('../../assets/avatares/antonio-pie/habla1.webp'),
+  habla2: require('../../assets/avatares/antonio-pie/habla2.webp'),
+};
+
 type Props = {
   face: FaceState;
   gazeX?: number;
   speechLevelSource?: (cb: (nivel: number) => void) => () => void;
+  /** Las fotos (por omisión, las de Claudio). */
+  fotos?: Record<FotoCuerpo, ImageSourcePropType>;
+  nombre?: string;
   onTap?: () => void;
   onLongPress?: () => void;
 };
 
-function ClaudioDePieBase({ face, gazeX = 0, speechLevelSource, onTap, onLongPress }: Props) {
+function ClaudioDePieBase({ face, gazeX = 0, speechLevelSource, fotos = FOTOS, nombre = 'Claudio', onTap, onLongPress }: Props) {
   const opac = useRef(Object.fromEntries(ORDEN.map((f) => [f, new Animated.Value(f === 'base' ? 1 : 0)])) as Record<FotoCuerpo, Animated.Value>).current;
   const respira = useRef(new Animated.Value(0)).current;
   const mece = useRef(new Animated.Value(0)).current;
@@ -113,14 +124,14 @@ function ClaudioDePieBase({ face, gazeX = 0, speechLevelSource, onTap, onLongPre
   ];
 
   return (
-    <Pressable onPress={onTap} onLongPress={onLongPress} delayLongPress={500} onLayout={medir} style={styles.raiz} accessibilityRole="imagebutton" accessibilityLabel="Claudio de pie">
+    <Pressable onPress={onTap} onLongPress={onLongPress} delayLongPress={500} onLayout={medir} style={styles.raiz} accessibilityRole="imagebutton" accessibilityLabel={`${nombre} de pie`}>
       <View pointerEvents="none" style={styles.halo} />
       {/* La caja tiene la proporción de la foto (2:3): así los pies quedan en su borde de abajo y la sombra, debajo de ellos. */}
       <View pointerEvents="none" style={[styles.caja, cajaTam]}>
         <Animated.View style={[styles.sombra, { transform: [{ scaleX: brinco.interpolate({ inputRange: [0, 1], outputRange: [1, 0.88] }) }] }]} />
         <Animated.View style={[StyleSheet.absoluteFill, { transform: cuerpo }]}>
           {ORDEN.map((f) => (
-            <Animated.Image key={f} source={FOTOS[f]} resizeMode="contain" style={[styles.foto, { opacity: opac[f] }]} fadeDuration={0} />
+            <Animated.Image key={f} source={fotos[f]} resizeMode="contain" style={[styles.foto, { opacity: opac[f] }]} fadeDuration={0} />
           ))}
         </Animated.View>
       </View>

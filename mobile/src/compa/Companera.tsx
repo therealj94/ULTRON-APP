@@ -8,7 +8,7 @@
  *
  * El tacto (gestos.ts) y el ánimo (animo.ts) son máquinas puras; aquí solo se conectan y se ejecutan
  * sus efectos: háptica, risita, brinco, sacudida, globito, palomita ✔ y el doble toque que la
- * silencia de verdad (VozProvider). La boca sigue el volumen real de la voz (tts.escucharNivelVoz:
+ * silencia de verdad (VozProvider). La boca sigue la voz real (avatar3d/senalVoz: nivel y forma;
  * la de la mesa y la de la conversación fluida) y la cara, la emoción de lo que dice.
  *
  * En una llamada se va (con animación) y vuelve al colgar.
@@ -37,12 +37,12 @@ import Animated, {
 import { scheduleOnRN } from 'react-native-worklets';
 import * as Haptics from 'expo-haptics';
 import { playSfx } from '../lib/sfx';
-import { escucharNivelVoz } from '../lib/tts';
+import { senalVoz } from '../avatar3d/senalVoz';
 import { miga } from '../lib/reporte';
 import { tr } from '../i18n';
 import { MEDIDA } from '../nucleo/tema';
 import { escuchar, type Pantalla } from '../nucleo/contrato';
-import { FOTOS_CLAUDIO } from '../avatares/ClaudioRetrato';
+import { FOTOS_CLAUDIO, fotosRetrato } from '../avatares/ClaudioRetrato';
 import { useVoz } from './VozProvider';
 import { ANIMO_INICIAL, expresion, puedeCaminar, reducir, type Animo, type Efecto, type EventoAnimo, type Expresion, type Haptica } from './animo';
 import { FIGURAS, VIVO_QUIETO, estiloDe, fotoClaudio, medidas, mezclarFigura, type Figura } from './figura';
@@ -142,6 +142,8 @@ export function Companera() {
   const caminando = useSharedValue(0);
   const dir = useSharedValue(1);
   const vozNivel = useSharedValue(0);
+  const vozRedonda = useSharedValue(0);
+  const vozAncha = useSharedValue(0);
   const oido = useSharedValue(0);
   const dedoX = useSharedValue(0);
   const dedoY = useSharedValue(0);
@@ -376,14 +378,20 @@ export function Companera() {
     return () => cancelAnimation(fase);
   }, [conFase, exp, fase]);
 
-  // La boca: el nivel de la voz (la de la mesa o la de la conversación), sin pasar por React.
-  useEffect(
-    () =>
-      escucharNivelVoz((l) => {
-        vozNivel.value = withTiming(l, { duration: 60 });
-      }),
-    [vozNivel]
-  );
+  // La boca: la de la voz (la de la mesa o la de la conversación) con su forma (senalVoz: los tiempos
+  // por letra, el espectro o solo el nivel), sin pasar por React. Abre rápido y cierra suave.
+  useEffect(() => {
+    const soltar = senalVoz.pedirForma();
+    const off = senalVoz.boca.escuchar((b) => {
+      vozNivel.value = withTiming(b.nivel, { duration: b.nivel > vozNivel.value ? 30 : 70 });
+      vozRedonda.value = withTiming(b.visema === 'O' || b.visema === 'U' ? b.peso : 0, { duration: 50 });
+      vozAncha.value = withTiming(b.visema === 'E' || b.visema === 'I' || b.visema === 'SS' ? b.peso : 0, { duration: 50 });
+    });
+    return () => {
+      off();
+      soltar();
+    };
+  }, [vozNivel, vozRedonda, vozAncha]);
 
   // La voz de la persona: el anillo late y, si le hablan, se detiene y la mira.
   const ultimoOido = useRef(0);
@@ -587,6 +595,8 @@ export function Companera() {
           caminando: caminando.value,
           dir: dir.value,
           voz: vozNivel.value,
+          redonda: vozRedonda.value,
+          ancha: vozAncha.value,
           oido: oido.value,
           dedoX: dedoX.value,
           dedoY: dedoY.value,
@@ -624,8 +634,9 @@ export function Companera() {
     altoGlobo.value = e.nativeEvent.layout.height;
   };
 
-  // Claudio: su retrato en un círculo (la foto va con la expresión; al hablar, la de boca abierta).
+  // Claudio y ANT-ONIO: su retrato en un círculo (la foto va con la expresión; al hablar, la de boca abierta).
   const lado = M.R * 1.86;
+  const fotos = fotosRetrato(avatar) || FOTOS_CLAUDIO;
   const hablaOpac = useAnimatedStyle(() => ({ opacity: vozNivel.value > 0.18 ? 1 : 0 }));
 
   return (
@@ -662,10 +673,10 @@ export function Companera() {
                   <Picture picture={cuadro} />
                 </Canvas>
                 {estilo.retrato ? (
-                  <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2 }]}>
-                    <Image source={FOTOS_CLAUDIO[fotoClaudio(exp)]} style={s.foto} resizeMode="cover" />
+                  <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2, backgroundColor: estilo.cuerpo }]}>
+                    <Image source={fotos[fotoClaudio(exp)]} style={s.foto} resizeMode="cover" />
                     {fotoClaudio(exp) === 'base' ? (
-                      <Animated.Image source={FOTOS_CLAUDIO.habla[1]} style={[s.foto, StyleSheet.absoluteFill, hablaOpac]} resizeMode="cover" />
+                      <Animated.Image source={fotos.habla[1]} style={[s.foto, StyleSheet.absoluteFill, hablaOpac]} resizeMode="cover" />
                     ) : null}
                   </View>
                 ) : null}

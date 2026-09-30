@@ -70,6 +70,7 @@ export const AGENTES: Record<AvatarVoz, Record<Idioma, string>> = {
   ojos: { es: 'agent_3401m3qbvq59eqcv17ecpxxdp7en', en: 'agent_1801m3qbvrrye0zbpgxawy3cqfqt' },
   aura: { es: 'agent_6801m3qbvv83fzgvg42eev85m8m5', en: 'agent_3301m3qbvws7ez6rajshn8akxjbs' },
   claudio: { es: 'agent_3501m3qbvyc5e9b946hm5byv3c7g', en: 'agent_4901m3qbw01me4kt40nqkgy60ykm' },
+  antonio: { es: 'agent_6901m3r708f4e15vgc39yj4g8vw7', en: 'agent_3501m3r70c76e6nrvch0ewjcqkys' },
 };
 
 export function agenteDe(avatar: AvatarVoz, idioma: Idioma): string {
@@ -81,7 +82,7 @@ export function agenteDe(avatar: AvatarVoz, idioma: Idioma): string {
  * El modo de la mesa con que habla cada avatar si el teléfono no dice otro. Antes era GUARDIAN para
  * todos («firme, pocas palabras»), que a Claudio y a AU-RA les quitaba la calidez.
  */
-export const MODO_DE_AVATAR: Record<AvatarVoz, string> = { ojos: 'GUARDIAN', aura: 'CONVERSACION', claudio: 'CREATIVE' };
+export const MODO_DE_AVATAR: Record<AvatarVoz, string> = { ojos: 'GUARDIAN', aura: 'CONVERSACION', claudio: 'CREATIVE', antonio: 'ANALYTICAL' };
 
 export type Pase = {
   correo: string;
