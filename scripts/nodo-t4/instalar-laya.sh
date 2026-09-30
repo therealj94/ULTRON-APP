@@ -143,6 +143,9 @@ curl -sS -H "Authorization: Bearer ${CLAVE}" -H 'content-type: application/json'
   -d '{"texto":"¿a cómo está el oro hoy?"}' "http://127.0.0.1:${PUERTO}/v1/mensaje"; echo
 curl -sS -H "Authorization: Bearer ${CLAVE}" -H 'content-type: application/json' \
   -d '{"texto":"RESOLUCIÓN No. 123-2024 INHGEOMIN … Comuníquese. Firma y sello."}' "http://127.0.0.1:${PUERTO}/v1/documento"; echo
+# «comando», grupo app de AU-RA: una orden en inglés tiene que dar app_avatar (y accion ninguna).
+curl -sS -H "Authorization: Bearer ${CLAVE}" -H 'content-type: application/json' \
+  -d '{"texto":"switch me to claudio"}' "http://127.0.0.1:${PUERTO}/v1/comando"; echo
 echo
 echo "El :${PUERTO} NO se abre en el security group: Laya sale por el Caddy de Voicebox con TLS."
 echo "  /opt/voicebox/caddy/Caddyfile, antes de @autorizado:  handle_path /laya/* { reverse_proxy 127.0.0.1:${PUERTO} }"

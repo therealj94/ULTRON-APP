@@ -115,6 +115,39 @@ y `evaluar.py` añade la columna de las reglas por etiqueta y «todas bien»/gru
 
 **El clasificador del turno** (`lib/cognitivo/clasificador.ts`) ya no habla con `laya-serve` de `infra/t4/` (`LAYA_URL`): con `CLASIFICADOR_MODO=sombra` o `laya` pregunta a `/v1/mensaje` de este mismo servicio por `lib/laya.ts` (`ULTRON_LAYA_URL`/`ULTRON_LAYA_CLAVE`); por omisión (`reglas`) sigue decidiendo con reglas.
 
+### `comando`: las manos de AU-RA, en español e inglés (y Laya ligera)
+
+`modelos/comando` es compartido: Electrum lee su grupo `accion`; AU-RA, su grupo `app` (28 manos
+sacadas del código: navegar, abrir pantalla, tema, avatar, callar/volver a hablar, cámara, ayuda,
+chats, llamar, recordatorios, perfil, idioma, internet; `modelos/comando/ESPEC.md`). Los datos de
+AU-RA salen de `generador/generar_app.py` (bilingüe, sin fugas entre entrenamiento, validación y
+prueba) y se revisan sin GPU con `python revisar_datos.py modelos/comando`.
+
+El camino rápido de AU-RA (`lib/acciones-app.ts`, `ordenRapida`) va **reglas → Laya ligera → este
+modelo → cerebro**. Laya ligera (`lib/laya-ligera.ts`) es el grupo `app` destilado en un clasificador
+lineal que corre dentro del servidor, sin red (~0,05 ms de mediana); se entrena en CPU en segundos con
+`python scripts/nodo-t4/laya/ligera/entrenar_ligera.py` (con su compuerta) y se despliega con el
+servidor (OTA de Render: no toca el nodo). El Laya del nodo solo se consulta si la ligera duda.
+
+**Desplegar el `comando` nuevo en el nodo** (lo hace una persona; entrenar en CPU no es viable: una
+predicción tarda ~17 s y una época serían días):
+
+    cd <clon del repo en la T4> && git fetch origin && git checkout <rama> && git pull
+    REENTRENAR=comando bash scripts/nodo-t4/instalar-laya.sh
+
+Entrena en la GPU y promueve el nuevo solo si ningún grupo baja más de 0,01 en `test` (Electrum) ni en
+`evals` (`test_app.jsonl`, AU-RA) y si el grupo `app` acierta ≥ 0,85 en `test_app.jsonl`; si no, queda
+en `/opt/laya/modelo-comando.rechazado` y sigue el anterior. Después, verificar:
+
+    curl -s http://127.0.0.1:8792/salud | python3 -m json.tool | grep -A6 '"comando"'     # ok, 68 ids, entrenado hoy
+    cd /opt/laya && venv/bin/python evaluar.py --modelo modelo-comando --modelo-dir modelos/comando --errores 20
+    CLAVE=$(sudo sed -n 's/^LAYA_CLAVE=//p' /etc/laya-electrum.env)
+    curl -s -H "Authorization: Bearer $CLAVE" -H 'content-type: application/json' -d '{"texto":"switch me to claudio"}' http://127.0.0.1:8792/v1/comando
+
+y que el último dé `"grupos": {"accion": "ninguna", "app": "app_avatar"}`. En Render no hay nada que
+cambiar (mismas variables); `lib/acciones-app.ts` ya lee el grupo `app` y, si el checkpoint es viejo,
+sigue con `callar`/`cerrar` de `accion`.
+
 **Siguiente:** entrenar `mensaje` y `documento` en la GPU con los datos completos, medirlos (`evaluar.py`, `mensaje` contra las reglas) y, con esas cifras, decidir si `CLASIFICADOR_MODO` pasa de `reglas` a `sombra`.
 
 ## Embeddings BGE-M3: en la GPU del cerebro, publicados por el Caddy de la T4

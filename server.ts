@@ -2290,6 +2290,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
         }
       }
     }
+    // En voz, si el cerebro tarda, la app ya dice por él una frase corta de espera (el puente de
+    // server/voz-agente.ts, con el banco de mobile/src/compa/frasesEstado.ts): la respuesta no repite otra.
+    if (voz) hechos.push('VOZ: si tardas, ya se dijo por ti una frase corta de espera («déjame ver…»). No empieces con muletillas de espera («mmm», «a ver», «déjame revisar», «un momento»): ve directo a la respuesta.');
     const red = pedidoRed(message, hiloPrevio);
     if (red && voz) {
       // La búsqueda previa era lo que hacía esperar 3-4 s a la voz antes de la primera palabra (CI del
