@@ -77,11 +77,40 @@ export function setSpeechLevelListener(cb: ((level01: number) => void) | null) {
   levelListener = cb;
   lastLevel = -1;
 }
+/**
+ * Más oyentes del mismo nivel: la compañera AURA (src/compa) mueve su boquita con la misma voz que la
+ * cara de la mesa, sin quitarle a la mesa su suscripción de siempre.
+ */
+const nivelOyentes = new Set<(level01: number) => void>();
+export function escucharNivelVoz(cb: (level01: number) => void): () => void {
+  nivelOyentes.add(cb);
+  return () => {
+    nivelOyentes.delete(cb);
+  };
+}
 function emitLevel(v: number) {
   const q = Math.round(Math.max(0, Math.min(1, v)) * 50) / 50;
   if (q === lastLevel) return;
   lastLevel = q;
   levelListener?.(q);
+  for (const f of nivelOyentes) f(q);
+}
+
+// ---------------------------------------------------------------- llamadas
+/**
+ * En una llamada (voz o video) la mesa no suena: nada se prepara ni se reproduce, y sobre todo no se
+ * vuelve a fijar el modo de audio de expo-av (lo pone en modo multimedia y la llamada se oiría por el
+ * altavoz equivocado o se cortaría). Al colgar, el modo se vuelve a fijar en la siguiente locución.
+ */
+let suspendida = false;
+export function suspenderVoz(on: boolean) {
+  if (suspendida === on) return;
+  suspendida = on;
+  if (on) void stopSpeaking();
+  else audioModeSet = false;
+}
+export function vozSuspendida() {
+  return suspendida;
 }
 
 /** El nivel de boca de una voz que no suena por aquí (la conversación fluida, por WebRTC). */
@@ -130,7 +159,7 @@ export function splitSentences(text: string): string[] {
 
 let audioModeSet = false;
 async function ensureAudioMode() {
-  if (audioModeSet) return;
+  if (audioModeSet || suspendida) return;
   try {
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
@@ -275,6 +304,7 @@ async function downloadPost(url: string, body: Record<string, unknown>, timeoutM
 // ---------------------------------------------------------------- reproducción
 
 async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
+  if (suspendida) return null;
   try {
     const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: false, progressUpdateIntervalMillis: 50 });
     return sound;
