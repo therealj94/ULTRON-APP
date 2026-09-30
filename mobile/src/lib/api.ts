@@ -240,6 +240,8 @@ type TurnoOpts = {
   image?: string;
   /** Descripción de la escena que ya interpretó la cámara local (quién está, qué hace). El servidor la usa como hecho «ESCENA (cámara local): …». */
   escena?: string;
+  /** Lo dijo en voz alta (el oído de la mesa): el servidor no espera a internet más de lo que espera la voz. */
+  hablado?: boolean;
 };
 
 function turnoBody(opts: TurnoOpts) {
@@ -253,6 +255,7 @@ function turnoBody(opts: TurnoOpts) {
     memoria: opts.memoria || [],
     ...(opts.image ? { image: opts.image } : {}),
     ...(escena ? { escena } : {}),
+    ...(opts.hablado ? { hablado: true } : {}),
     // Con quién habla la persona y en qué idioma: el cerebro contesta como ese avatar y en esa lengua.
     avatar: avatarActual(),
     idioma: idiomaActual(),

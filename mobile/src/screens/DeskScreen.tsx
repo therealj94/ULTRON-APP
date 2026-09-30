@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { miga, reportarEstado } from '../lib/reporte';
-import { Alert, Animated, BackHandler, Linking, PanResponder, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Alert, AppState, Animated, BackHandler, Linking, PanResponder, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -24,6 +24,7 @@ import {
   destroySpeech,
   enableAlwaysOnMic,
   ensureSpeechPermissions,
+  isMicPaused,
   micWatchdogOk,
   muteMic,
   pauseMicForTts,
@@ -62,6 +63,14 @@ import { accionesDelTurno } from '../compa/acciones';
 import { emitir, escuchar } from '../nucleo/contrato';
 import { usePulse } from '../pulse/PulseProvider';
 import { ChatMesa } from '../components/ChatMesa';
+import { ALTO_BARRA, BarraMesa } from '../components/BarraMesa';
+import { HojaMas, type OpcionMas } from '../components/HojaMas';
+import { Tutorial } from '../tutorial/Tutorial';
+import { conTutorialVisto, tocaTutorial } from '../tutorial/pasos';
+import { OidoMesa, duenoAudio, motivoFalloVoz } from '../compa/duenoAudio';
+import { ControlCamara, conPreferencia, pedidoDeCamara, prefiereSiempre, respuestaModoCamara, type EstadoCamara } from '../lib/camaraModo';
+import { marcoMesa, useMesaVisible } from '../avatar3d/usePresencia';
+import { useCaras, type ApiCaras } from '../caras/useCaras';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
 
@@ -162,7 +171,21 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** El volumen del micrófono solo lo dibuja la cara clásica: con las otras no se re-renderiza por él. */
   const nivelVisible = useRef(false);
   const [micMuted, setMicMuted] = useState(false);
-  const [visionOn, setVisionOn] = useState(true);
+  /** La cámara arranca APAGADA (lib/camaraModo.ts): se enciende solo ahora o siempre, a pedido. */
+  const [visionOn, setVisionOn] = useState(false);
+  const camara = useRef(new ControlCamara()).current;
+  const [estadoCamara, setEstadoCamara] = useState<EstadoCamara>(camara.estado());
+  /** Se preguntó «¿solo ahora o siempre?» y se espera la respuesta. */
+  const esperaModoCamara = useRef(false);
+  const [masAbierto, setMasAbierto] = useState(false);
+  const [tutorialAbierto, setTutorialAbierto] = useState(false);
+  /**
+   * Charlar (el avatar grande, de frente) o Trabajar (el avatar compacto arriba y la conversación
+   * escrita debajo, para leer y volver a consultar lo dicho). Se elige en «Más» y se guarda.
+   */
+  const [modoMesa, setModoMesa] = useState<'charlar' | 'trabajar'>('charlar');
+  /** El alto de la columna de abajo (atajos + barra): la burbuja y lo que va oyendo van justo encima. */
+  const [altoAbajo, setAltoAbajo] = useState(ALTO_BARRA + 58);
   const [gaze, setGaze] = useState({ x: 0, y: 0 });
   const [objects, setObjects] = useState<string[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -219,6 +242,24 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Hay una llamada: la mesa calla, no oye y apaga la cámara hasta colgar. */
   const enLlamadaRef = useRef(false);
   const micApagado = conversando ? convSilencio : micMuted;
+  /** La mesa es la pantalla que se ve (la pila nativa la deja montada debajo de los chats y Ajustes). */
+  const mesaVisible = useMesaVisible();
+  const mesaVisibleRef = useRef(mesaVisible);
+  mesaVisibleRef.current = mesaVisible;
+  /** Hay una llamada (estado, para decidir el dueño del audio; el ref de abajo es para los callbacks). */
+  const [enLlamada, setEnLlamada] = useState(false);
+  /** La app está delante (con la app detrás la mesa no oye, no mira ni mueve sensores). */
+  const [appActiva, setAppActiva] = useState(AppState.currentState !== 'background');
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (st) => setAppActiva(st !== 'background'));
+    return () => sub.remove();
+  }, []);
+  /**
+   * La mesa está viva: se ve y la app está delante. Los sensores (acelerómetro), la mirada errante, el
+   * enojo que baja solo y el perro guardián del micrófono solo corren así (A25: una pantalla tapada en
+   * la pila no gasta batería ni reinicia un micrófono que es de otro).
+   */
+  const mesaActiva = mesaVisible && appActiva;
   const { width: anchoPantalla, height: altoPantalla } = useWindowDimensions();
   const horizontal = anchoPantalla >= altoPantalla;
 
@@ -257,6 +298,33 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const gazeCamAt = useRef(0);
   const gazeCamLast = useRef({ x: 0, y: 0 });
   const sonrisaTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /**
+   * Un solo dueño del audio (compa/duenoAudio.ts): la mesa oye y habla solo si se la ve y no hay
+   * conversación en vivo ni llamada. Al perderlo corta su turno, calla y SUELTA la pausa del micrófono
+   * (una voz cortada no llama a su onEnd: esa pausa colgada dejaba a la mesa sorda en 4.7.0).
+   */
+  /** El último pedido vino del oído (no del teclado ni de un atajo): el turno va con los topes de la voz. */
+  const ultimoHablado = useRef(false);
+  /** El reconocimiento de caras (se engancha más abajo, cuando ya existe `say`). */
+  const carasRef = useRef<ApiCaras | null>(null);
+  const oidoMesa = useRef<OidoMesa | null>(null);
+  if (!oidoMesa.current) {
+    oidoMesa.current = new OidoMesa({
+      muteMic,
+      unmuteMic,
+      pauseMicForTts,
+      stopSpeaking,
+      cancelarTurno: () => {
+        turnoCancelado.current = true;
+        abortTurno.current?.();
+        pending.current = null;
+      },
+      micQuerido: () => !micMutedRef.current,
+      miga,
+    });
+    // Nace dueña (la mesa se monta visible); el efecto de abajo corrige si no lo es.
+    oidoMesa.current.aplicar('mesa');
+  }
 
   useEffect(() => void (presenceRef.current = presence), [presence]);
   useEffect(() => void (modeRef.current = mode), [mode]);
@@ -296,7 +364,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   /** Descripción de la escena si es reciente y viene de un motor real; va en el body del turno. */
   const escenaReciente = useCallback((): string | undefined => {
     const e = escenaRef.current;
-    return escenaFresca(e) ? e.descripcion : undefined;
+    const quien = carasRef.current?.escena() || '';
+    const d = escenaFresca(e) ? e.descripcion : '';
+    return [d, quien].filter(Boolean).join(' ') || undefined;
   }, [escenaFresca]);
 
   // La burbuja y el hilo son para LEER: las expresiones de voz ([risa]…) se oyen, no se enseñan.
@@ -347,8 +417,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       if (emocion !== 'neutral') setEmocion(emocion);
       const f = nextFace || (performance === 'sing' ? 'SING' : faceForEmocion(emocion));
       showBubble(text);
-      // En la conversación fluida (o en una llamada) la mesa no habla encima: se lee, no se oye (M3).
-      if (conversandoRef.current || enLlamadaRef.current) return;
+      // En la conversación fluida, en una llamada o tapada por otra pantalla, la mesa no habla: se lee,
+      // no se oye (M3; un solo dueño del audio).
+      if (conversandoRef.current || enLlamadaRef.current || !mesaVisibleRef.current) return;
       logUltron(text);
       avisarMesa({ emocion, texto: quitarExpresiones(text).trim() });
       speakingRef.current = true;
@@ -374,6 +445,95 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     },
     [say]
   );
+
+  /* ---------- La cámara: apagada por omisión; solo ahora o siempre (lib/camaraModo.ts) ---------- */
+  useEffect(() => camara.suscribir((e) => {
+    setEstadoCamara(e);
+    setVisionOn(e.modo !== 'apagada');
+    if (e.modo === 'apagada') setObjects([]);
+  }), [camara]);
+  // «Solo ahora» vence sola; y al irse de la mesa se apaga (la cámara no mira detrás de los chats).
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (camara.tic()) miga('cámara: «solo ahora» venció, se apaga');
+    }, 15_000);
+    return () => clearInterval(t);
+  }, [camara]);
+  useEffect(() => {
+    if (!mesaVisible && camara.alSalirDeLaMesa()) miga('cámara: salió de la mesa, «solo ahora» se apaga');
+  }, [mesaVisible, camara]);
+
+  /** Enciende la cámara (pide el permiso si falta). `siempre` además queda guardado para esta persona. */
+  const encenderCamara = useCallback(
+    async (modo: 'temporal' | 'siempre'): Promise<boolean> => {
+      if (!camPerm?.granted) {
+        const r = await requestCam();
+        if (!r.granted) {
+          pedirEnAjustes(tr('Cámara', 'Camera'), tr('Para verte necesito la cámara. Actívala en los ajustes del teléfono.', 'I need the camera to see you. Turn it on in the phone settings.'));
+          return false;
+        }
+      }
+      camara.encender(modo);
+      const s0 = await loadSettings();
+      await saveSettings({ camaraSiempre: conPreferencia(s0.camaraSiempre, user.correo, modo === 'siempre') });
+      miga(`cámara: encendida (${modo})`);
+      return true;
+    },
+    [camPerm?.granted, camara, requestCam, user.correo]
+  );
+  const apagarCamara = useCallback(
+    async (quitarSiempre: boolean) => {
+      camara.apagar();
+      if (quitarSiempre) {
+        const s0 = await loadSettings();
+        await saveSettings({ camaraSiempre: conPreferencia(s0.camaraSiempre, user.correo, false) });
+      }
+      miga(`cámara: apagada${quitarSiempre ? ' (y sin «siempre»)' : ''}`);
+    },
+    [camara, user.correo]
+  );
+  /** Lo que se lee debajo de «Cámara» en la hoja «Más». */
+  const textoCamara =
+    estadoCamara.modo === 'siempre'
+      ? tr('Siempre', 'Always')
+      : estadoCamara.modo === 'temporal'
+        ? tr(`Solo ahora · ${Math.max(1, Math.round((estadoCamara.hasta - Date.now()) / 60_000))} min`, `Just now · ${Math.max(1, Math.round((estadoCamara.hasta - Date.now()) / 60_000))} min`)
+        : tr('Apagada', 'Off');
+  /** El botón «Cámara» de la hoja «Más»: encenderla (solo ahora / siempre) o apagarla. */
+  const menuCamara = useCallback(() => {
+    if (camara.encendida()) {
+      const siempre = camara.estado().modo === 'siempre';
+      Alert.alert(tr('Cámara encendida', 'Camera on'), siempre ? tr('Está en «siempre»: se enciende cada vez que entras.', 'It’s set to “always”: it turns on every time you come in.') : tr('Está encendida solo por ahora.', 'It’s on just for now.'), [
+        { text: tr('Dejarla así', 'Keep it'), style: 'cancel' },
+        ...(siempre ? [{ text: tr('Quitar «siempre»', 'Stop “always”'), onPress: () => void apagarCamara(true) }] : []),
+        { text: tr('Apagar', 'Turn off'), style: 'destructive' as const, onPress: () => void apagarCamara(false) },
+      ]);
+      return;
+    }
+    Alert.alert(tr('¿Te puedo ver?', 'May I see you?'), tr('La cámara me deja mirarte y ver lo que hay en la mesa. «Solo ahora» se apaga sola en 10 minutos o al salir de la mesa.', 'The camera lets me look at you and the desk. “Just now” turns off by itself in 10 minutes or when you leave the desk.'), [
+      { text: tr('Cancelar', 'Cancel'), style: 'cancel' },
+      { text: tr('Siempre', 'Always'), onPress: () => void encenderCamara('siempre') },
+      { text: tr('Solo ahora', 'Just now'), onPress: () => void encenderCamara('temporal') },
+    ]);
+  }, [apagarCamara, camara, encenderCamara]);
+
+  const camaraRef = useRef(camara);
+  const encenderCamaraRef = useRef(encenderCamara);
+  encenderCamaraRef.current = encenderCamara;
+  const apagarCamaraRef = useRef(apagarCamara);
+  apagarCamaraRef.current = apagarCamara;
+
+  const caras = useCaras({
+    correo: user.correo,
+    nombre: user.name,
+    nombreAvatar: de(avatarPorId(avatar || 'aura').nombre),
+    camaraEncendida: visionOn && !!camPerm?.granted,
+    mesaVisible,
+    grabFrame,
+    decir: (t, e) => say(t, e === 'feliz' ? 'HAPPY' : e === 'preocupado' ? 'CONCERNED' : e === 'curioso' ? 'CURIOUS' : 'IDLE', { emocion: e && e !== 'neutral' ? e : 'neutral' }),
+    encenderCamara: () => encenderCamara('temporal'),
+  });
+  carasRef.current = caras;
 
   /**
    * «Olvidar» (menú o voz): borra la memoria de largo plazo de quien está en la mesa, no la de los
@@ -527,7 +687,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         memoria: longMemory.current,
         image: opts?.image,
         escena: escenaReciente(),
+        hablado: ultimoHablado.current,
       };
+      ultimoHablado.current = false;
       let emocion: Emocion = 'neutral';
       let reacted = false;
       // Un solo relleno si el cerebro tarda (inmediato con imagen): «mmm, déjame ver» con la voz del avatar.
@@ -727,6 +889,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           abortTurno.current?.();
           pending.current = null;
           await stopSpeaking();
+          // La voz cortada no llama a su onEnd: la pausa del micrófono se suelta aquí.
+          oidoMesa.current?.vozCortada();
+          speakingRef.current = false;
           setToolHint('');
           return;
         }
@@ -751,6 +916,30 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         // En la entrevista todo es respuesta salvo salir / callar / dormir / menú / sesión.
         if (enConocer && !['conocer_salir', 'callar', 'dormir', 'logout', 'menu', 'catalogo'].includes(intent.tipo)) return void (await answerConocer(cmd));
 
+        // La respuesta a «¿solo ahora o siempre?» (la cámara).
+        if (esperaModoCamara.current) {
+          esperaModoCamara.current = false;
+          const r = respuestaModoCamara(cmd);
+          if (r === 'no') return void (await say(tr('Va, la dejo apagada.', 'Okay, I’ll leave it off.'), 'IDLE'));
+          const modo = r === 'siempre' ? 'siempre' : 'temporal';
+          if (!(await encenderCamara(modo))) return void (await say(tr('Necesito permiso de cámara para verte.', 'I need camera permission to see you.'), 'CONCERNED', { emocion: 'preocupado' }));
+          return void (await say(modo === 'siempre' ? tr('Listo: te veré siempre que entres. Dime «apaga la cámara» cuando quieras.', 'Done: I’ll see you every time you come in. Say “turn off the camera” anytime.') : tr('Listo, te veo. Me apago sola en diez minutos o al salir de la mesa.', 'Done, I can see you. I’ll turn off by myself in ten minutes or when you leave the desk.'), 'HAPPY', { emocion: 'feliz' }));
+        }
+        // Las caras (con permiso): «conóceme», «te presento a…», «olvida a…» y el «sí» de quien presentaron.
+        if (await caras.manejar(cmd)) return;
+        // La cámara por voz: «puedes verme», «mírame» → ¿solo ahora o siempre?; «apaga la cámara».
+        const pc = intent.tipo === 'vision_on' ? 'encender' : pedidoDeCamara(cmd);
+        if (pc === 'encender') {
+          if (camara.encendida()) return void (await say(tr('Ya te estoy viendo.', 'I can already see you.'), 'HAPPY', { emocion: 'feliz' }));
+          esperaModoCamara.current = true;
+          return void (await say(tr('¿Te veo solo ahora, o siempre que entres?', 'Should I see you just now, or every time you come in?'), 'CURIOUS', { emocion: 'curioso' }));
+        }
+        if (pc === 'apagar' || pc === 'apagar_siempre') {
+          const siempre = camara.estado().modo === 'siempre';
+          await apagarCamara(pc === 'apagar_siempre');
+          return void (await say(pc === 'apagar_siempre' || !siempre ? tr('Listo, apagué la cámara.', 'Done, camera off.') : tr('Apagué la cámara. Sigue en «siempre» para la próxima; dime «no me veas nunca» para quitarlo.', 'Camera off. It’s still set to “always” for next time; say “never look at me” to remove that.'), 'IDLE'));
+        }
+
         switch (intent.tipo) {
           case 'despertar':
             return void (await say(tr('Aquí estoy.', 'I’m here.'), 'HAPPY', { emocion: 'feliz' }));
@@ -760,6 +949,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             return void (await say(tr('Descanso un momento. Háblame o tócame para despertar.', 'Resting for a moment. Talk to me or touch me to wake me up.'), 'SLEEPING', { emocion: 'cansado' }));
           case 'callar':
             await stopSpeaking();
+            oidoMesa.current?.vozCortada();
             settle();
             return;
           case 'modo':
@@ -798,14 +988,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
             if (mine.length) return void (await say(`${tr('Recuerdo', 'I remember')}: ${mine.join('. ')}.`, 'HAPPY', { emocion: 'feliz' }));
             return void (await askBrain(cmd));
           }
-          case 'vision_on': {
-            if (!camPerm?.granted) {
-              const res = await requestCam();
-              if (!res.granted) return void (await say(tr('Necesito permiso de cámara para mirarte.', 'I need camera permission to see you.'), 'CONCERNED', { emocion: 'preocupado' }));
-            }
-            setVisionOn(true);
-            return void (await say(tr('Visión activa. Te estoy mirando.', 'Vision on. I’m watching.'), 'SCAN'));
-          }
+          case 'vision_on':
+            // Lo atiende la cámara de arriba (pregunta solo ahora o siempre).
+            return;
           case 'que_ves':
             return void (await whatDoYouSee());
           case 'blaster':
@@ -859,7 +1044,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [answerConocer, askBrain, camPerm?.granted, canciones, confirmarOlvido, exitConocer, fireBlaster, fireSaber, hacerTarea, idleStatus, onLogout, playClip, pray, requestCam, runGag, say, settle, sing, startConocer, user, whatDoYouSee]
+    [answerConocer, apagarCamara, askBrain, camara, canciones, caras, confirmarOlvido, encenderCamara, exitConocer, fireBlaster, fireSaber, hacerTarea, idleStatus, onLogout, playClip, pray, runGag, say, settle, sing, startConocer, user, whatDoYouSee]
   );
 
   // ---------- Tacto ----------
@@ -1053,6 +1238,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, []);
 
   useEffect(() => {
+    if (!mesaActiva) return;
     const id = setInterval(() => {
       if (irritationRef.current > 0) {
         irritationRef.current = Math.max(0, irritationRef.current - 0.06);
@@ -1060,10 +1246,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       }
     }, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [mesaActiva]);
 
   // ---------- Sacudida ----------
   useEffect(() => {
+    if (!mesaActiva) return;
     let last = 0;
     let lastShakeAt = 0;
     Accelerometer.setUpdateInterval(90);
@@ -1079,10 +1266,17 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       }
     });
     return () => sub.remove();
-  }, [say]);
+  }, [say, mesaActiva]);
 
   // ---------- Voz ----------
-  const onSpeechFinal = useCallback((text: string) => void handleCommand(text), [handleCommand]);
+  // Lo dicho en voz alta llega marcado (`hablado`): el servidor lo atiende con los topes de la voz.
+  const onSpeechFinal = useCallback(
+    (text: string) => {
+      ultimoHablado.current = true;
+      void handleCommand(text);
+    },
+    [handleCommand]
+  );
 
   useEffect(() => {
     setSpeechCallbacks({
@@ -1120,7 +1314,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       const s = await loadSettings();
       micMutedRef.current = s.micMuted;
       setMicMuted(s.micMuted);
-      setVisionOn(s.visionEnabled);
+      // La cámara arranca apagada salvo que esta persona haya elegido «siempre» (y haya permiso).
+      camara.arrancar(prefiereSiempre(s.camaraSiempre, user.correo) && !!camPerm?.granted);
+      const verTutorial = tocaTutorial(s.tutorialVisto, user.correo);
+      setModoMesa(s.modoMesa === 'trabajar' ? 'trabajar' : 'charlar');
       setSettings({ sttEngine: s.sttEngine, proactive: s.proactive, sfx: s.sfx });
       setPostura(s.postura === 'sentada' ? 'sentada' : 'pie');
       setCara(s.cara === 'sala' ? 'sala' : 'anillos');
@@ -1142,6 +1339,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       if (!alive) return;
       if (micOk && !s.micMuted) {
         await enableAlwaysOnMic();
+        // Si mientras tanto el audio pasó a otro (la conversación, una llamada, otra pantalla), se suelta.
+        if (oidoMesa.current?.actual() !== 'mesa') void muteMic();
         setStatus('listening');
       } else setStatus(micOk ? 'muted' : 'offline');
 
@@ -1154,12 +1353,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       // (Claudio se pone de pie).
       void orientar('libre');
 
-      if (s.visionEnabled && camPerm && !camPerm.granted && camPerm.canAskAgain !== false) {
-        Alert.alert(tr('Cámara', 'Camera'), tr('¿Permitir cámara para mirarte e identificar lo que hay en la mesa?', 'Allow the camera so I can see you and identify what’s on the desk?'), [
-          { text: tr('Ahora no', 'Not now'), style: 'cancel', onPress: () => setVisionOn(false) },
-          { text: tr('Permitir', 'Allow'), onPress: () => void requestCam() },
-        ]);
-      }
+      // La primera vez, el recorrido de qué puede hacer (saltable; se vuelve a abrir desde «Más»).
+      if (alive && verTutorial && mesaVisibleRef.current) setTutorialAbierto(true);
     })();
     return () => {
       alive = false;
@@ -1171,19 +1366,37 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   // Watchdog del micrófono: si el bucle se cuelga, reinicio duro.
   useEffect(() => {
+    if (!mesaActiva) return;
+    let pausadoSinVoz = 0;
     const id = setInterval(() => {
-      // Con la conversación o una llamada el micrófono es de otro: no se reinicia el de la mesa.
-      if (micMutedRef.current || speakingRef.current || conversandoRef.current || enLlamadaRef.current) return;
+      // Con la conversación, una llamada u otra pantalla el micrófono es de otro: no se toca el de la mesa.
+      if (oidoMesa.current?.actual() !== 'mesa') return;
+      if (micMutedRef.current || speakingRef.current || conversandoRef.current || enLlamadaRef.current) {
+        pausadoSinVoz = 0;
+        return;
+      }
+      // Pausado «por la voz» sin que nadie hable dos vueltas seguidas: una voz cortada que no avisó.
+      // Antes esto dejaba a la mesa sorda (el guardián daba por bueno un micrófono pausado).
+      if (isMicPaused() && !handling.current) {
+        if (++pausadoSinVoz >= 2) {
+          miga('oído de la mesa: pausa colgada sin voz, se suelta');
+          pauseMicForTts(false);
+          pausadoSinVoz = 0;
+        }
+        return;
+      }
+      pausadoSinVoz = 0;
       if (!micWatchdogOk()) {
         setStatus('reconnect');
         void restartMic().then(() => idleStatus());
       }
     }, 3000);
     return () => clearInterval(id);
-  }, [idleStatus]);
+  }, [idleStatus, mesaActiva]);
 
   // Mirada errante (único generador): se pausa si hay dedo, toque reciente o persona en cámara.
   useEffect(() => {
+    if (!mesaActiva) return;
     let t = 0;
     const id = setInterval(() => {
       if (dragging.current || touchGazeTimer.current || Date.now() - personSeenAt.current < 5000) return;
@@ -1191,7 +1404,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setGaze({ x: Math.sin(t * 0.3) * 0.15, y: Math.cos(t * 0.19) * 0.1 });
     }, 500);
     return () => clearInterval(id);
-  }, []);
+  }, [mesaActiva]);
 
   // Comentario proactivo: si la escena cambia y hay calma, el cerebro mira un frame y comenta (máx. 1 cada 2 min).
   const onScene = useCallback(
@@ -1246,6 +1459,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setVerPersona((v) => (v === hay ? v : hay));
       const att = !hay ? 0 : e.principal?.mirando ? 1 : 0.5;
       setAtencion((a) => (a === att ? a : att));
+      carasRef.current?.observar(e.personas, e.eventos.includes('llego'));
       if (!e.eventos.length || conversandoRef.current) return;
       const calm = !handling.current && !speakingRef.current;
       for (const ev of e.eventos) {
@@ -1338,7 +1552,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     if (!conversando) {
       if (estadoConv === 'error' && antes !== 'error') {
         miga(`conversación: ${String(voz.vista.detalle || '').slice(0, 80)}`);
-        showBubble(tr('No pude abrir la conversación fluida. Sigo contigo por la mesa.', 'I couldn’t open the live conversation. I’m still here on the desk.'));
+        // Por qué, dicho claro (sesión vencida, servidor actualizándose, sin red…), y que el micrófono
+        // de la mesa ya volvió: el dueño del audio vuelve a ser la mesa (efecto de abajo).
+        const motivo = motivoFalloVoz(voz.vista.detalle, idiomaActual() === 'en');
+        const texto = tr(`No pude abrir la conversación en vivo: ${motivo}. Sigo escuchándote por aquí.`, `I couldn’t open the live conversation: ${motivo}. I’m still listening here.`);
+        if (mesaVisibleRef.current) void say(texto, 'CONCERNED', { emocion: 'preocupado' });
+        else showBubble(texto);
       }
       return;
     }
@@ -1368,6 +1587,14 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           lastUserAt.current = Date.now();
           historial.current = [...historial.current, { rol: 'usuario' as const, texto: m.texto }].slice(-12);
           setMensajes((l) => [...l, { rol: 'usuario' as const, texto: m.texto }].slice(-80));
+          // La cámara por voz también en la conversación en vivo: ahí no se pregunta «¿solo ahora o
+          // siempre?» (contesta el agente), así que es «solo ahora»; el agente se entera de lo que pasó.
+          const pc = pedidoDeCamara(m.texto);
+          if (pc === 'encender' && !camaraRef.current.encendida()) {
+            void encenderCamaraRef.current('temporal').then((ok) => vozRef.current.avisarAgente(ok ? '[app] Cámara encendida solo por ahora (10 min).' : '[app] No se pudo encender la cámara (sin permiso).'));
+          } else if ((pc === 'apagar' || pc === 'apagar_siempre') && camaraRef.current.encendida()) {
+            void apagarCamaraRef.current(pc === 'apagar_siempre').then(() => vozRef.current.avisarAgente('[app] Cámara apagada.'));
+          }
         } else {
           logUltron(m.texto);
           showBubble(m.texto);
@@ -1377,17 +1604,21 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     [logUltron, showBubble]
   );
 
-  // El micrófono de la mesa se suelta solo mientras la conversación lo tiene, y vuelve en cuanto lo suelta.
-  const ocupaAntes = useRef(false);
+  // Un solo dueño del audio: la llamada, la conversación en vivo o la mesa (solo si se la ve).
   useEffect(() => {
-    if (vozOcupa && !ocupaAntes.current) void muteMic();
-    if (!vozOcupa && ocupaAntes.current) {
+    const dueno = duenoAudio({ enLlamada, conversacion: vozOcupa, mesaVisible, appActiva });
+    const hizo = oidoMesa.current!.aplicar(dueno);
+    if (hizo === 'suelta') {
+      speakingRef.current = false;
+      avisarMesa({ hablando: false, pensando: false });
+      setToolHint('');
       setFace(restFace());
-      if (!micMutedRef.current && !enLlamadaRef.current) void unmuteMic().then(() => setStatus('listening'));
-      else setStatus('muted');
+      if (dueno !== 'conversacion') setStatus('muted');
+    } else if (hizo === 'toma') {
+      setFace(restFace());
+      setStatus(micMutedRef.current ? 'muted' : 'listening');
     }
-    ocupaAntes.current = vozOcupa;
-  }, [vozOcupa, restFace]);
+  }, [enLlamada, vozOcupa, mesaVisible, appActiva, restFace]);
 
   // La voz toma el avatar de la mesa; al entrar se deja el permiso de la conversación listo.
   useEffect(() => {
@@ -1420,6 +1651,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       escuchar('llamada', ({ activa }) => {
         if (!!activa === enLlamadaRef.current) return;
         enLlamadaRef.current = !!activa;
+        setEnLlamada(!!activa);
         if (activa) {
           turnoCancelado.current = true;
           abortTurno.current?.();
@@ -1428,19 +1660,18 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           speakingRef.current = false;
           avisarMesa({ hablando: false, pensando: false });
           setToolHint('');
-          setVisionOn((v) => {
-            visionAntesLlamada.current = v;
-            return false;
-          });
+          // La cámara se apaga por la llamada (sin tocar la preferencia) y vuelve como estaba al colgar.
+          visionAntesLlamada.current = camara.encendida();
+          if (visionAntesLlamada.current) setVisionOn(false);
           setFace(restFace());
           setStatus('muted');
         } else {
-          if (visionAntesLlamada.current) setVisionOn(true);
+          if (visionAntesLlamada.current && camara.encendida()) setVisionOn(true);
           visionAntesLlamada.current = null;
           idleStatus();
         }
       }),
-    [idleStatus, restFace]
+    [camara, idleStatus, restFace]
   );
 
   const toggleMute = async () => {
@@ -1467,23 +1698,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     }
   };
 
-  const toggleVision = async () => {
-    if (!visionOn) {
-      if (!camPerm?.granted) {
-        const r = await requestCam();
-        if (!r.granted) {
-          pedirEnAjustes(tr('Cámara', 'Camera'), tr('Para verte necesito la cámara. Actívala en los ajustes del teléfono.', 'I need the camera to see you. Turn it on in the phone settings.'));
-          return;
-        }
-      }
-      setVisionOn(true);
-      await saveSettings({ visionEnabled: true });
-    } else {
-      setVisionOn(false);
-      setObjects([]);
-      await saveSettings({ visionEnabled: false });
-    }
-  };
+  const toggleVision = () => menuCamara();
 
   const setPresenceUI = (p: DeskPresence) => {
     setPresence(p);
@@ -1559,6 +1774,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   const dotColor =
     status === 'muted' ? T.aviso : status === 'reconnect' || status === 'thinking' ? avatarPorId(avatar || 'aura').tema.acento : status === 'offline' ? T.texto3 : T.activo;
+  /*
+   * EL PUNTO ÚNICO donde la mesa dice qué está haciendo (el HUD y la cabecera del chat de la mesa).
+   * El banco de frases variadas de estado («escuchando», «pensando», «revisando»…) lo arma otra rama
+   * (fraseDeEstado(estado, avatar, idioma), en la capa de lógica): cuando llegue, entra AQUÍ y en
+   * avatar3d/DockAura.textoEstado, sin copiar el banco.
+   */
   const statusLabel =
     toolHint ? toolHint :
     status === 'listening'
@@ -1583,10 +1804,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const avatarId: AvatarId = avatar || 'aura';
   const tema = avatarPorId(avatarId).tema;
   const reparto = distribucion(avatarId, horizontal);
-  const enCuadro = reparto.tipo === 'cuadro';
+  const trabajando = modoMesa === 'trabajar';
+  const enCuadro = reparto.tipo === 'cuadro' || trabajando;
   // El cuadro de la cara (cuando va con el chat): la cara clásica se mide contra él, no contra la pantalla.
-  const cuadroW = horizontal ? Math.round(anchoPantalla * 0.42) : anchoPantalla;
-  const cuadroH = horizontal ? altoPantalla : Math.round(Math.min(anchoPantalla * 0.95, altoPantalla * 0.44));
+  // Trabajando, el avatar va más compacto: lo que importa es la conversación.
+  const cuadroW = horizontal ? Math.round(anchoPantalla * (trabajando ? 0.34 : 0.42)) : anchoPantalla;
+  const cuadroH = horizontal ? altoPantalla : Math.round(Math.min(anchoPantalla * 0.95, altoPantalla * (trabajando ? 0.3 : 0.44)));
   const cajaCara = enCuadro ? { w: cuadroW, h: cuadroH } : undefined;
 
   // Qué cara se ve. El Guardián: sus ojos celestes de siempre (la cara clásica). AU-RA: los anillos
@@ -1684,6 +1907,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         respaldo={fotosCara}
         onTap={() => onTap('face', 0, 0)}
         onLongPress={onLongPress}
+        activo={mesaActiva}
       />
     ) : (
       fotosCara
@@ -1706,10 +1930,55 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     void handleCommand(pedido);
   };
 
+  // Dónde está el cuerpo grande en la ventana: la compañera sale de ahí al dejar la mesa (y vuelve).
+  const cuerpoRef = useRef<View>(null);
+  const medirCuerpo = useCallback(() => {
+    cuerpoRef.current?.measureInWindow((x, y, ancho, alto) => {
+      if (ancho > 0 && alto > 0) marcoMesa.emitir({ x, y, ancho, alto });
+    });
+  }, []);
+
+  /** La hoja «Más». */
+  const alOpcionMas = (o: OpcionMas) => {
+    setMasAbierto(false);
+    switch (o) {
+      case 'envivo':
+        return toggleConversar();
+      case 'escribir':
+        return setMenuOpen(true);
+      case 'camara':
+        return menuCamara();
+      case 'caras':
+        return caras.abrirOpciones();
+      case 'avatar':
+        return setEligiendo('menu');
+      case 'tutorial':
+        return setTutorialAbierto(true);
+      case 'ajustes':
+        return setMenuOpen(true);
+      case 'modo': {
+        const n = trabajando ? 'charlar' : 'trabajar';
+        setModoMesa(n);
+        void saveSettings({ modoMesa: n });
+        return;
+      }
+    }
+  };
+  const cerrarTutorial = (noVolver: boolean) => {
+    setTutorialAbierto(false);
+    if (!noVolver) return;
+    void loadSettings().then((s0) => saveSettings({ tutorialVisto: conTutorialVisto(s0.tutorialVisto, user.correo) }));
+  };
+
   return (
-    <View style={[styles.root, !enSala && { backgroundColor: esClaudio ? tema.fondo : '#000' }, enCuadro && { flexDirection: horizontal ? 'row' : 'column' }]}>
+    <View
+      ref={enCuadro ? undefined : cuerpoRef}
+      onLayout={enCuadro ? undefined : medirCuerpo}
+      style={[styles.root, !enSala && { backgroundColor: esClaudio ? tema.fondo : '#000' }, enCuadro && { flexDirection: horizontal ? 'row' : 'column' }]}
+    >
+      {/* La cámara solo con la mesa a la vista, sin llamada y encendida a pedido (apagada por omisión). */}
       <CamaraVision
-        enabled={visionOn && !!camPerm?.granted}
+        enabled={visionOn && !!camPerm?.granted && mesaActiva && !enLlamada}
         dormido={presence === 'sleep'}
         grabRef={grabFrame}
         onEscena={onEscena}
@@ -1721,6 +1990,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       {enCuadro ? (
         <>
           <View
+            ref={cuerpoRef}
+            onLayout={medirCuerpo}
             style={[
               styles.cuadro,
               { backgroundColor: esClaudio ? tema.fondo : '#000' },
@@ -1745,7 +2016,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               onBorrador={setDraft}
               onEnviar={sendDraft}
               onMic={() => void toggleMute()}
-              onMenu={() => setMenuOpen(true)}
+              onMenu={() => setMasAbierto(true)}
               onCambiarAvatar={() => setEligiendo('menu')}
               conversando={conversando}
               conectando={conversando && estadoConv === 'conectando'}
@@ -1769,7 +2040,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         </View>
 
         {!!partial && (
-          <View pointerEvents="none" style={styles.partialWrap}>
+          <View pointerEvents="none" style={[styles.partialWrap, { bottom: altoAbajo + 8 }]}>
             <Text numberOfLines={2} style={styles.partialText}>
               {partial}
             </Text>
@@ -1779,7 +2050,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         {!!bubble && (
           <Animated.View
             pointerEvents="none"
-            style={[styles.bubbleFloat, enSala ? styles.bubbleArriba : horizontal ? styles.bubbleAbajo : styles.bubbleAbajoVertical, !horizontal && styles.bubbleVertical, { opacity: bubbleOp }]}
+            style={[styles.bubbleFloat, enSala ? styles.bubbleArriba : { bottom: altoAbajo + 8 }, !horizontal && styles.bubbleVertical, { opacity: bubbleOp }]}
           >
             <View style={styles.bubbleCard}>
               <Text numberOfLines={3} style={styles.bubbleText}>
@@ -1789,58 +2060,43 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           </Animated.View>
         )}
 
-        {/* Los atajos de este avatar (su oficio): abajo a la izquierda, o arriba de los botones en vertical. */}
-        <View style={[styles.acciones, horizontal ? styles.accionesH : styles.accionesV]} pointerEvents="box-none">
-          <AccionesAvatar acciones={acciones} tema={tema} onAccion={onAccion} />
-        </View>
-
-        <View style={[styles.controles, !horizontal && styles.controlesV]} pointerEvents="box-none">
-          <Pressable
-            onPress={toggleConversar}
-            onPressIn={() => !conversando && voz.precalentar()}
-            accessibilityRole="button"
-            accessibilityState={{ selected: conversando }}
-            accessibilityLabel={conversando ? tr('Terminar la conversación', 'End the conversation') : tr('Conversar de corrido', 'Talk freely')}
-            style={[styles.escribir, conversando ? { backgroundColor: tema.acento } : { borderWidth: 1.5, borderColor: tema.acento }]}
-          >
-            <Text style={[styles.escribirTexto, { color: conversando ? tema.sobreAcento : tema.acentoTexto }]}>
-              {conversando ? (estadoConv === 'conectando' ? tr('Conectando…', 'Connecting…') : tr('Terminar', 'End')) : tr('Conversar', 'Talk')}
-            </Text>
-          </Pressable>
-          <Pressable
-            onPress={() => pulse.abrir()}
-            accessibilityRole="button"
-            accessibilityLabel={tr('Abrir el chat PULSE2CHAT', 'Open PULSE2CHAT chat')}
-            style={styles.escribir}
-          >
-            <Text style={styles.escribirTexto}>{tr('Chat', 'Chat')}</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => void toggleMute()}
-            accessibilityRole="button"
-            accessibilityLabel={micApagado ? tr('Activar el micrófono', 'Turn on the microphone') : tr('Silenciar el micrófono', 'Mute the microphone')}
-            style={[styles.mic, !micApagado && { backgroundColor: tema.acento }, (listening || conversando) && !micApagado && styles.micOyendo]}
-          >
-            <Text style={[styles.micIcono, !micApagado && { color: tema.sobreAcento }]}>{micApagado ? '🔇' : '🎙'}</Text>
-          </Pressable>
-          <Pressable onPress={() => setMenuOpen(true)} accessibilityRole="button" accessibilityLabel={tr('Escribir y ajustes', 'Type and settings')} style={styles.escribir}>
-            <Text style={styles.escribirTexto}>{tr('Escribir', 'Type')}</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => setEligiendo('menu')}
-            accessibilityRole="button"
-            accessibilityLabel={`${de(avatarPorId(avatarId).nombre)}. ${tr('Tocar para cambiar de avatar', 'Tap to switch avatar')}`}
-            style={[styles.escribir, { borderWidth: 1.5, borderColor: tema.acento }]}
-          >
-            <Text style={[styles.escribirTexto, { color: tema.acentoTexto }]}>{de(avatarPorId(avatarId).nombre)}</Text>
-          </Pressable>
-        </View>
+        <BarraMesa
+          tema={tema}
+          nombreAvatar={de(avatarPorId(avatarId).nombre)}
+          micApagado={micApagado}
+          oyendo={(listening || conversando) && !micApagado}
+          conversando={conversando}
+          conectando={conversando && estadoConv === 'conectando'}
+          onHablar={() => void toggleMute()}
+          onChat={() => pulse.abrir()}
+          onMas={() => setMasAbierto(true)}
+          onTerminar={toggleConversar}
+          // Los atajos de este avatar (su oficio): una fila que se desliza de lado, justo encima de la barra.
+          encima={<AccionesAvatar acciones={acciones} tema={tema} onAccion={onAccion} />}
+          onAlto={setAltoAbajo}
+        />
 
         <View style={styles.edgeZone} {...edgePan.panHandlers}>
           <View pointerEvents="none" style={[styles.edgeHint, { backgroundColor: tema.acentoFondo }]} />
         </View>
         </>
       )}
+
+      {caras.motor}
+
+      <HojaMas
+        visible={masAbierto}
+        onCerrar={() => setMasAbierto(false)}
+        onOpcion={alOpcionMas}
+        nombreAvatar={de(avatarPorId(avatarId).nombre)}
+        conversando={conversando}
+        estadoCamara={textoCamara}
+        camaraEncendida={visionOn}
+        estadoCaras={caras.estadoTexto}
+        trabajando={trabajando}
+      />
+
+      <Tutorial visible={tutorialAbierto} nombreAvatar={de(avatarPorId(avatarId).nombre)} tema={tema} onCerrar={cerrarTutorial} />
 
       <DeskMenu
         visible={menuOpen}
@@ -1964,24 +2220,12 @@ const styles = StyleSheet.create({
   hudText: { color: T.texto2, fontSize: 13, fontWeight: '600' },
   bubbleFloat: { position: 'absolute', left: 90, right: 90, alignItems: 'center' },
   bubbleArriba: { top: 14 },
-  bubbleAbajo: { bottom: 88 },
-  // En vertical (Claudio de pie) la burbuja va más ancha y por encima de los atajos y los botones.
-  bubbleAbajoVertical: { bottom: 170 },
   bubbleVertical: { left: 16, right: 16 },
-  acciones: { position: 'absolute' },
-  accionesH: { left: 16, bottom: 22, right: 380 },
-  accionesV: { left: 0, right: 0, bottom: 86 },
   bubbleCard: { backgroundColor: T.panel, borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10, maxWidth: 520, ...SOMBRA },
   bubbleText: { color: T.texto, fontSize: 16, lineHeight: 22, textAlign: 'center' },
-  partialWrap: { position: 'absolute', left: 120, right: 120, bottom: 24, alignItems: 'center' },
+  partialWrap: { position: 'absolute', left: 24, right: 24, alignItems: 'center' },
   partialText: { color: T.texto2, fontSize: 14, fontStyle: 'italic', textAlign: 'center', backgroundColor: 'rgba(52,54,58,0.9)', borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4, overflow: 'hidden' },
-  controles: { position: 'absolute', right: 56, bottom: 16, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  controlesV: { right: 16, left: 16, justifyContent: 'flex-end' },
-  mic: { width: 56, height: 56, borderRadius: 28, backgroundColor: T.panel, alignItems: 'center', justifyContent: 'center', ...SOMBRA },
-  micOyendo: { borderWidth: 3, borderColor: T.activo },
-  micIcono: { fontSize: 22, color: T.texto2 },
-  escribir: { height: 44, borderRadius: 22, paddingHorizontal: 18, backgroundColor: T.panel, justifyContent: 'center', ...SOMBRA },
-  escribirTexto: { color: T.texto, fontSize: 15, fontWeight: '600' },
-  edgeZone: { position: 'absolute', right: 0, top: 0, bottom: 0, width: 44, justifyContent: 'center', alignItems: 'flex-end' },
+  // El borde derecho abre el menú; no llega a la barra (ahí está «Más»).
+  edgeZone: { position: 'absolute', right: 0, top: 0, bottom: ALTO_BARRA + 64, width: 44, justifyContent: 'center', alignItems: 'flex-end' },
   edgeHint: { width: 5, height: 84, borderTopLeftRadius: 4, borderBottomLeftRadius: 4, backgroundColor: 'rgba(214,181,108,0.35)' },
 });

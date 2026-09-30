@@ -21,7 +21,7 @@ import { ESTADO_INICIAL, EXPRESIONES_AVATAR, VISEMAS, GESTOS_AVATAR } from '../t
 import { ARKIT_52, BYTES_MAX_NODOS, MAPEO_BASE, PERFIL_NODOS, buscarNombre, claveBase, clipBase, clipGesto, combinarMapeo, nombreVisema, pesosObjetivo, zona2D, zonaDeNodo, zonaPorPosicion } from '../mapeo.ts';
 import { LineaVisemas, componerBoca, visemaDeEspectro, visemaDeLetra, visemasDeTexto, HZ_MIN, HZ_MAX } from '../visemas.ts';
 import { SenalVoz } from '../senalVoz.ts';
-import { ANCHO_PARA_PANEL, disposicionDock, modoEfectivo, normalizarPresencia, siguienteModo } from '../presencia.ts';
+import { ANCHO_PARA_PANEL, CUERPOS, cuerpoVisible, disposicionDock, haciaMarco, modoEfectivo, normalizarPresencia, siguienteModo, transicionMesa } from '../presencia.ts';
 import { FPS_MINIMO, OLVIDO_MS, anotarCalidad, anotarFallo, calidadInicial, cuerpoQueToca, puede3D, veredictoRendimiento } from '../capacidad.ts';
 
 // modelo.ts pide los .glb con `require` (Metro los empaqueta); en Node, un .glb es su ruta.
@@ -439,11 +439,47 @@ prueba('presencia: el modo que se ve según la preferencia, la pantalla y la lla
   assert.equal(m('lado', 'ajustes'), 'paseo', 'al lado solo en los chats');
   assert.equal(m('completa', 'chats'), 'completa');
   assert.equal(m('completa', 'perfil'), 'completa');
-  assert.equal(m('completa', 'mesa'), 'paseo', 'la mesa ya es AURA de frente');
+  assert.equal(m('completa', 'mesa'), 'mesa', 'la mesa ya es AURA de frente: solo ella');
+  assert.equal(m(undefined, 'mesa'), 'mesa', 'en la mesa la compañera no camina encima (antes: dos Claudios)');
   assert.equal(m('lado', 'chats', true), 'oculta', 'en llamada se apaga como siempre');
   assert.equal(m('completa', null), 'oculta', 'fuera de la sesión no está');
   assert.equal(normalizarPresencia('lado'), 'lado');
   assert.equal(normalizarPresencia('flotando'), undefined);
+});
+
+prueba('presencia: UNA sola AURA visible en cada lugar (nunca la grande y la chiquita a la vez)', () => {
+  const prefs = [undefined, 'paseo', 'lado', 'completa'];
+  const pantallas = [null, 'mesa', 'chats', 'ajustes', 'perfil'];
+  let casos = 0;
+  for (const preferencia of prefs)
+    for (const pantalla of pantallas)
+      for (const enLlamada of [false, true]) {
+        const modo = modoEfectivo({ preferencia, pantalla, enLlamada });
+        const cuerpo = cuerpoVisible(modo);
+        // Los cuerpos que se montan: exactamente el que dice cuerpoVisible (o ninguno).
+        const montados = CUERPOS.filter((c) => c === cuerpo);
+        assert.ok(montados.length <= 1, `${preferencia}/${pantalla}/${enLlamada}: ${montados.join('+')}`);
+        if (pantalla === 'mesa' && !enLlamada) assert.equal(cuerpo, 'mesa', 'en la mesa se ve la mesa, no la compañera');
+        if (pantalla !== 'mesa') assert.notEqual(cuerpo, 'mesa');
+        if (enLlamada || !pantalla) assert.equal(cuerpo, null, 'en llamada o fuera de sesión, ninguna');
+        casos++;
+      }
+  assert.equal(casos, 40);
+});
+
+prueba('presencia: al entrar al chat la grande se ENCOGE hasta la compañera; al volver, CRECE hacia la mesa', () => {
+  assert.equal(transicionMesa('mesa', 'paseo'), 'encoger');
+  assert.equal(transicionMesa('paseo', 'mesa'), 'crecer');
+  assert.equal(transicionMesa('mesa', 'lado'), null, 'al panel del chat: su propio fundido');
+  assert.equal(transicionMesa('paseo', 'oculta'), null, 'una llamada: se va como siempre');
+  // La caja chiquita (104 px en la esquina de abajo) se mueve y agranda hasta cubrir el cuerpo grande.
+  const caja = { x: 260, y: 640, lado: 104 };
+  const marco = { x: 0, y: 0, ancho: 390, alto: 780 };
+  const h = haciaMarco(caja, marco);
+  assert.equal(caja.x + caja.lado / 2 + h.dx, marco.ancho / 2, 'centro en el centro del cuerpo grande (x)');
+  assert.equal(caja.y + caja.lado / 2 + h.dy, marco.alto / 2, 'centro en el centro del cuerpo grande (y)');
+  assert.ok(h.escala > 4 && h.escala <= 12, `se agranda como el cuerpo grande (${h.escala.toFixed(2)}×)`);
+  assert.equal(haciaMarco(caja, { x: 0, y: 0, ancho: 10, alto: 10 }).escala, 1, 'nunca más chica que ella misma');
 });
 
 prueba('presencia: en vertical una franja que no pasa de un sexto; acostado o tableta, un panel de un tercio', () => {

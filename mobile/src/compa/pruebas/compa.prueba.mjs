@@ -23,6 +23,7 @@ import { programarRecordatorio, _olvidarRecordatorios, CANAL_RECORDATORIOS } fro
 const { RE_LECTURA, turnoDeRecordatorio } = await import(new URL('../../../../lib/manos-app.ts', import.meta.url).href);
 import { MANOS_APP } from '../../nucleo/contrato.ts';
 import { AudioVoz } from '../audioVoz.ts';
+import { OidoMesa, duenoAudio, motivoFalloVoz } from '../duenoAudio.ts';
 import { FIGURAS, mezclarFigura, estiloDe } from '../figura.ts';
 import { emocionDeTexto } from '../../lib/emocion.ts';
 import { emitir, escuchar } from '../../nucleo/contrato.ts';
@@ -1113,6 +1114,114 @@ prueba('el contexto lleva los recordatorios puestos (para decirlos y cancelarlos
   });
   const c = await ctx.enviarAhora(true);
   assert.deepEqual(c.recordatorios, [{ id: 'aura-rec-1-a', texto: 'Ir al banco', cuando: 5, llamada: false }]);
+});
+
+/* ── un solo dueño del audio (José, 4.7.0: «me dejó de escuchar», «se quedaron ambos hablando») ── */
+
+/** El micrófono y la voz de la mesa, simulados como en lib/speech + lib/tts: quiere/pausado/hablando. */
+function mesaSimulada() {
+  const m = { quiere: true, pausado: false, hablando: false, turnos: 0, cortes: 0, log: [] };
+  m.deps = {
+    muteMic: () => void ((m.quiere = false), m.log.push('mute')),
+    unmuteMic: () => void ((m.quiere = true), m.log.push('unmute')),
+    pauseMicForTts: (p) => void ((m.pausado = p), m.log.push(`pausa:${p}`)),
+    stopSpeaking: () => void ((m.hablando = false), m.cortes++),
+    cancelarTurno: () => void m.turnos++,
+    micQuerido: () => true,
+  };
+  /** ¿El reconocedor arrancaría? (speechNative.start sale si no se quiere o está pausado). */
+  m.oye = () => m.quiere && !m.pausado;
+  return m;
+}
+
+prueba('dueño del audio: la llamada manda, después la conversación; la mesa solo si se la ve y la app está delante', () => {
+  const s = (o) => duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: true, appActiva: true, ...o });
+  assert.equal(s({}), 'mesa');
+  assert.equal(s({ conversacion: true }), 'conversacion');
+  assert.equal(s({ enLlamada: true, conversacion: true }), 'llamada');
+  assert.equal(s({ mesaVisible: false }), 'nadie', 'la mesa tapada por los chats no oye ni habla');
+  assert.equal(s({ appActiva: false }), 'nadie');
+});
+
+prueba('fallo de la conversación en vivo → el micrófono de la mesa vuelve de verdad (la pausa colgada se suelta)', () => {
+  const m = mesaSimulada();
+  const oido = new OidoMesa(m.deps);
+  const c = new ControlSesion('claudio', 'es', { reintentos: 1 });
+  const aplicar = () => oido.aplicar(duenoAudio({ enLlamada: false, conversacion: c.vista().montada || c.vista().dormida, mesaVisible: true, appActiva: true }));
+  aplicar();
+  // La mesa estaba hablando («¡Aquí estoy! Cuéntame.»): su voz pausó el micrófono.
+  m.hablando = true;
+  m.deps.pauseMicForTts(true);
+  // Toca «Conversar»: la conversación toma el audio; la voz de la mesa se corta A LA MITAD (sin onEnd).
+  c.iniciar();
+  assert.equal(aplicar(), 'suelta');
+  assert.equal(m.hablando, false, 'la mesa se calla: nunca dos voces');
+  assert.equal(m.turnos, 1, 'el turno que pensaba se corta');
+  assert.equal(m.pausado, false, 'la pausa de la voz cortada se suelta al soltar');
+  // No abre (servidor sin la ruta, 404): reintento y error.
+  c.alEstado(c.vista().gen, 'error', 'HTTP 404 · HTTP 404');
+  c.alEstado(c.vista().gen, 'error', 'HTTP 404 · HTTP 404');
+  assert.equal(c.vista().montada, false);
+  assert.equal(c.vista().estado, 'error');
+  assert.equal(aplicar(), 'toma');
+  assert.ok(m.oye(), 'la mesa vuelve a oír (antes: quería oír pero seguía pausada → sorda)');
+  assert.match(motivoFalloVoz(c.vista().detalle), /servidor todavía no tiene la conversación en vivo/);
+});
+
+prueba('sin el arreglo, el mismo camino deja a la mesa sorda (así fallaba 4.7.0)', () => {
+  // Lo de antes: mute al abrir, unmute al fallar, y nadie soltaba la pausa de la voz cortada.
+  const m = mesaSimulada();
+  m.deps.pauseMicForTts(true);
+  m.deps.stopSpeaking();
+  m.deps.muteMic();
+  m.deps.unmuteMic();
+  assert.equal(m.oye(), false, 'quiere oír pero la pausa sigue puesta: el reconocedor no arranca');
+});
+
+prueba('dos voces nunca: la mesa tapada (los chats encima) suelta el audio; la conversación desde la compañera la calla', () => {
+  const m = mesaSimulada();
+  const oido = new OidoMesa(m.deps);
+  oido.aplicar('mesa');
+  m.hablando = true;
+  // Se va a los chats: la mesa (montada debajo en la pila) deja de oír y de hablar.
+  assert.equal(oido.aplicar(duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: false, appActiva: true })), 'suelta');
+  assert.equal(m.hablando, false);
+  assert.equal(m.quiere, false, 'su oído no queda abierto detrás de los chats');
+  assert.equal(oido.puedeHablar(), false);
+  // Abre la conversación desde la compañera y falla: la mesa sigue tapada → sigue callada (no «vuelve» detrás).
+  assert.equal(oido.aplicar(duenoAudio({ enLlamada: false, conversacion: true, mesaVisible: false, appActiva: true })), 'suelta');
+  assert.equal(oido.aplicar(duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: false, appActiva: true })), 'suelta');
+  assert.equal(m.quiere, false);
+  // Vuelve a la mesa: ahí sí oye (y una sola vez).
+  assert.equal(oido.aplicar(duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: true, appActiva: true })), 'toma');
+  assert.equal(oido.aplicar(duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: true, appActiva: true })), 'nada');
+  assert.ok(m.oye());
+});
+
+prueba('una llamada que falla (PULSE2CHAT «no pudo») devuelve el oído de la mesa sin pausa colgada', () => {
+  const m = mesaSimulada();
+  const oido = new OidoMesa(m.deps);
+  oido.aplicar('mesa');
+  m.deps.pauseMicForTts(true); // la mesa hablaba al empezar la llamada
+  oido.aplicar(duenoAudio({ enLlamada: true, conversacion: false, mesaVisible: true, appActiva: true }));
+  oido.aplicar(duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: true, appActiva: true }));
+  assert.ok(m.oye());
+  // «Cállate» corta la voz: su onEnd no llega, la pausa se suelta igual.
+  m.deps.pauseMicForTts(true);
+  oido.vozCortada();
+  assert.ok(m.oye());
+});
+
+prueba('por qué no abrió la conversación, dicho para la persona (sin detalles técnicos)', () => {
+  assert.match(motivoFalloVoz('HTTP 401 · Entra de nuevo para hablar en conversación.'), /sesión venció/);
+  assert.match(motivoFalloVoz('HTTP 404 · HTTP 404'), /se estaba actualizando/);
+  assert.match(motivoFalloVoz('HTTP 429 · Se acabaron tus minutos'), /minutos de voz/);
+  assert.match(motivoFalloVoz('HTTP 503 · La conversación fluida no está lista todavía.'), /no está disponible/);
+  assert.match(motivoFalloVoz('HTTP 502 · No pude abrir la conversación ahora.'), /no respondió/);
+  assert.match(motivoFalloVoz('Network request failed'), /conexión/);
+  assert.match(motivoFalloVoz('Aborted'), /conexión/);
+  assert.match(motivoFalloVoz(''), /no pude conectar/);
+  assert.match(motivoFalloVoz('HTTP 404', true), /server/);
 });
 
 prueba('emoción del texto (conversación fluida)', () => {

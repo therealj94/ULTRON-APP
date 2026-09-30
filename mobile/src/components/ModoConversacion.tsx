@@ -264,8 +264,10 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
       } catch (e: any) {
         soltarAudio();
         if (!vivo) return;
-        miga(`conversación fluida: no abrió (${String(e?.message || e).slice(0, 80)})`);
-        avisar('error', String(e?.message || e));
+        // Con el código HTTP delante: así se le puede decir a la persona POR QUÉ (duenoAudio.motivoFalloVoz).
+        const detalle = `${e?.status ? `HTTP ${e.status} · ` : ''}${String(e?.message || e)}`;
+        miga(`conversación fluida: no abrió (${detalle.slice(0, 80)})`);
+        avisar('error', detalle);
       }
     })();
     return () => {

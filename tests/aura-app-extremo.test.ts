@@ -620,6 +620,67 @@ test('latencia hasta la primera palabra (voz), con cifras', { skip: !listo }, as
   assert.ok(pregunta.primeraMs < pregunta.totalMs - 100, 'la voz empieza antes de que termine la respuesta');
 });
 
+test('latencia de la mesa con la cámara como en 4.7.0 (escena en cada turno + la foto subiendo a la vez) y sin ella, con cifras', { skip: !listo }, async () => {
+  const N = 7;
+  const { default: sharp } = await import('sharp');
+  const { trabajoPorMinuto } = await import('../mobile/src/lib/camaraModo');
+  // Una foto como la de la cámara del teléfono (720 px de lado corto, JPEG calidad 0,5), hecha de un
+  // retrato real de la app: su tamaño es el que sube cada 20 s con alguien delante.
+  const retrato = fs.readdirSync(path.join(RAIZ, 'mobile/assets/avatares/claudio')).find((f) => /\.(webp|png|jpe?g)$/i.test(f))!;
+  const foto = await sharp(path.join(RAIZ, 'mobile/assets/avatares/claudio', retrato)).resize(1280, 720, { fit: 'cover' }).jpeg({ quality: 50 }).toBuffer();
+  const fotoB64 = foto.toString('base64');
+  const primeraDelta = async (body: Record<string, unknown>) => {
+    const t0 = performance.now();
+    const r = await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: hTurno(), body: JSON.stringify(body) });
+    let primera = -1;
+    let buf = '';
+    for await (const t of r.body as any) {
+      buf += new TextDecoder().decode(t);
+      if (primera < 0 && /event: (delta|emocion)/.test(buf)) primera = performance.now() - t0;
+    }
+    return { primeraMs: primera, totalMs: performance.now() - t0 };
+  };
+  primerTokenMs = 250;
+  pasoMs = 15;
+  contestar = () => 'Claro. Te cuento lo que veo y lo que sé, en corto, para que lo tengas a mano.';
+  const med = async (nombre: string, f: () => Promise<{ primeraMs: number; totalMs: number }>) => {
+    const p: number[] = [];
+    const t: number[] = [];
+    for (let i = 0; i < N; i++) {
+      const r = await f();
+      p.push(r.primeraMs);
+      t.push(r.totalMs);
+    }
+    const fila = { primeraMs: Math.round(mediana(p)), totalMs: Math.round(mediana(t)) };
+    console.log(`[latencia] mesa ${nombre}: primera palabra ${fila.primeraMs} ms · respuesta entera ${fila.totalMs} ms (mediana de ${N})`);
+    return fila;
+  };
+  const escena = 'Hay una persona frente a la mesa, a la izquierda, mirando la pantalla, sonriendo. En la mesa: taza, teléfono.';
+  const conCamara = await med('con la cámara de 4.7.0 (escena + foto subiendo)', async () => {
+    // La subida de la cámara (cada 20 s con alguien) cae justo con el turno: el peor caso de 4.7.0.
+    const subida = fetch(`${BASE}/api/vision/analyze`, { method: 'POST', headers: h(), body: JSON.stringify({ image: fotoB64, prompt: 'lista corta' }) }).then((r) => r.text()).catch(() => '');
+    const r = await primeraDelta({ message: '¿qué me recomiendas para hoy?', escena });
+    await subida;
+    return r;
+  });
+  const sinCamara = await med('con la cámara apagada, turno como 4.7.0 (sin marca de voz)', () => primeraDelta({ message: '¿qué me recomiendas para hoy?' }));
+  // 4.8: lo dicho en voz alta en la mesa llega con `hablado: true` y lleva los topes de la voz.
+  const hablado = await med('4.8: cámara apagada y dicho en voz alta (hablado: true)', () => primeraDelta({ message: '¿qué me recomiendas para hoy?', hablado: true }));
+  primerTokenMs = 0;
+  pasoMs = 4;
+  const antes = trabajoPorMinuto({ encendida: true, conPersona: true });
+  const ahora = trabajoPorMinuto({ encendida: false, conPersona: true });
+  console.log(
+    `[latencia] cámara en el teléfono con alguien delante: 4.7.0 ${antes.fotos} fotos/min + ${antes.subidas} subidas/min de ${Math.round(fotoB64.length / 1024)} KB (${Math.round((antes.subidas * fotoB64.length) / 1024)} KB/min de subida) · 4.8 por omisión ${ahora.fotos} fotos/min, ${ahora.subidas} subidas`
+  );
+  assert.ok(conCamara.primeraMs > 0 && sinCamara.primeraMs > 0);
+  assert.deepEqual(ahora, { fotos: 0, subidas: 0 });
+  assert.ok(antes.fotos > 150, 'con alguien delante, 4.7.0 tomaba ~3 fotos por segundo');
+  // Lo que espera a internet ya no frena la primera palabra de la mesa hablada (la red tarda 2,5 s).
+  assert.ok(hablado.primeraMs < 250 + 1500, `la mesa hablada no espera a internet (${hablado.primeraMs} ms)`);
+  assert.ok(hablado.primeraMs < sinCamara.primeraMs - 1000, 'y es más rápida que la mesa tratada como escrita');
+});
+
 test('un miembro de la comunidad (fuera del padrón): lo público, sin taller ni nada de la junta, en texto y en voz', { skip: !listo }, async () => {
   // Entró por Genesis abierto; se llama «José», pero su correo no está en el padrón.
   const m = emitirSesion({ correo: 'comunidad.prueba@gmail.com', nombre: 'José', rol: 'Miembro · Genesis ID' });
