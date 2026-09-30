@@ -337,6 +337,7 @@ public partial class NotchWindow : Window
         Terminar();
         if (fuente != null) { for (int i = 1; i <= 4; i++) UnregisterHotKey(fuente.Handle, i); fuente.RemoveHook(Gancho); }
         if (bandeja != null) { bandeja.Visible = false; bandeja.Dispose(); }
-        Application.Current.Shutdown();
+        // En las pruebas del CI la que termina es la prueba (con su resultado escrito), no la ventana.
+        if (!soloRender) Application.Current.Shutdown();
     }
 }
