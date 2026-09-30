@@ -2,7 +2,7 @@ using System.Globalization;
 using System.Text;
 
 namespace Aura.Windows.Core;
-public enum ActionKind { None, OpenNotepad, OpenCalculator, OpenExplorer, OpenDocuments, OpenSettings, SearchWeb, OpenUrl, Draft, Pause }
+public enum ActionKind { None, OpenNotepad, OpenCalculator, OpenExplorer, OpenDocuments, OpenDownloads, OpenDesktop, OpenSettings, SearchWeb, OpenUrl, Draft, Pause }
 public sealed record Command(ActionKind Kind, string Value = "");
 public static class Commands
 {
@@ -11,14 +11,17 @@ public static class Commands
     public static Command Parse(string input)
     {
         if (input.Length > 4000) return new(ActionKind.None);
+        input=input.Trim();
         var s = Normalize(input);
-        foreach (var polite in new[] { "aura, ", "por favor, " })
+        foreach (var polite in new[] { "aura, ", "aura ", "por favor, ", "por favor " })
             if (s.StartsWith(polite, StringComparison.Ordinal)) s = s[polite.Length..].Trim();
-        var exact = s switch {
+        var exact = s.TrimEnd('.','!','?') switch {
             "abre bloc de notas" or "abrir bloc de notas" or "abre el bloc de notas" or "abre notepad" => ActionKind.OpenNotepad,
             "abre calculadora" or "abrir calculadora" or "abre la calculadora" => ActionKind.OpenCalculator,
             "abre explorador" or "abrir explorador" => ActionKind.OpenExplorer,
-            "abre documentos" or "abrir documentos" => ActionKind.OpenDocuments,
+            "abre documentos" or "abrir documentos" or "abre mis documentos" => ActionKind.OpenDocuments,
+            "abre descargas" or "abrir descargas" => ActionKind.OpenDownloads,
+            "abre escritorio" or "abrir escritorio" => ActionKind.OpenDesktop,
             "abre configuracion" or "abrir configuracion" => ActionKind.OpenSettings,
             "detente" or "pausa" or "para" => ActionKind.Pause,
             _ => ActionKind.None };
@@ -31,6 +34,12 @@ public static class Commands
             if (prefix == "abrir url: " && !SafeHttps(value)) return new(ActionKind.None);
             return new(prefix == "busca: " ? ActionKind.SearchWeb : prefix == "borrador: " ? ActionKind.Draft : ActionKind.OpenUrl, value);
         }
+        foreach(var prefix in new[]{"busca ","buscar ","escribe ","redacta: "}) {
+            if(!s.StartsWith(prefix,StringComparison.Ordinal))continue;
+            // Text arguments stay literal; they never become executable instructions.
+            var value=input[(input.Length-s.Length+prefix.Length)..].Trim();
+            if(value.Length>0)return new(prefix.StartsWith("busc")?ActionKind.SearchWeb:ActionKind.Draft,value);
+        }
         return new(ActionKind.None);
     }
     public static string Describe(Command command) => command.Kind switch {
@@ -39,6 +48,8 @@ public static class Commands
         ActionKind.OpenExplorer => "Abrir Explorador de archivos",
         ActionKind.OpenDocuments => "Abrir tu carpeta Documentos",
         ActionKind.OpenSettings => "Abrir Configuración de Windows",
+        ActionKind.OpenDownloads => "Abrir tu carpeta Descargas",
+        ActionKind.OpenDesktop => "Abrir tu carpeta Escritorio",
         ActionKind.SearchWeb => "Buscar en el navegador: " + command.Value,
         ActionKind.OpenUrl => "Abrir esta página: " + command.Value,
         ActionKind.Draft => "Preparar este borrador: " + command.Value,

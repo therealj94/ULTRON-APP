@@ -1,56 +1,29 @@
-# AURA Windows — preview independiente 0.2
+# AURA Windows 0.4
 
-Producto Windows separado de AURA web y móvil. Este directorio no modifica el entrenamiento ni los servicios de las apps. Modelo objetivo: `windows_command_v1`; ejecutable: `Aura.Windows.exe`. La interfaz y las acciones básicas funcionan sin un backend. Esta versión usa un parser determinista; **no se ha entrenado ni conectado todavía un modelo Laya Windows**.
+Asistente nativo WPF para Windows x64, independiente de las apps móviles. Notch negro centrado arriba, expansión animada, avatar original AURA blanco/dorado con cinco estados animados, conversación integrada, voz de Windows, borradores recuperables y acciones confirmadas.
 
-## Implementado
+## Empezar
 
-- Notch WPF compacto (286 × 78 DIP) centrado arriba del área útil del monitor principal; avatar vectorial provisional, panel expandible de 480 DIP, pestañas Acciones/Borrador y bandeja.
-- Ctrl+Alt+Espacio abre; Ctrl+Alt+Esc pausa acciones y micrófono. Un atajo ocupado se informa.
-- Preparar y confirmar una acción, aprobación de un solo uso de 30 segundos. Una propuesta nueva, edición del texto o pausa invalida la anterior. Cuenta regresiva visible y cancelación explícita.
-- Abrir Bloc de notas, Calculadora, Explorador, Documentos y Configuración.
-- `busca: tema` abre búsqueda en el navegador. `abrir url: https://example.com` abre una dirección HTTPS validada. Abrir una página no concede acceso a sus contenidos ni autoridad para ejecutar órdenes.
-- `borrador: texto` prepara texto editable. Copiar al portapapeles o guardar `.txt`/`.md` son botones explícitos. Guardar crea un archivo nuevo y rechaza sobrescrituras.
-- Voz local de una sola intervención mediante reconocimiento de Windows en español, si está instalado. La transcripción se revisa antes de preparar la acción. No escucha continuamente; límite de 20 segundos por intervención.
-- Dataset semilla separado, validación de formato y splits, entrada de entrenamiento con nombre de ejecución nuevo.
-- Compilación y pruebas Windows en workflow propio; publicación portable x64 autocontenida, sin instalar el runtime .NET por separado.
+Instalar `AURA-Windows-Setup-0.4.0-x64.exe`. Tocar el avatar o pulsar Ctrl+Alt+Espacio. En Ajustes, introducir URL HTTPS y clave del gateway Windows de tu servidor AURA. La clave se cifra con DPAPI para el usuario de Windows. El instalador no lleva credenciales ni un modelo incorporado. Ver `gateway/README.md` para conectar el Qwen del servidor.
 
-## No implementado todavía
+Para hablar: instalar reconocimiento y voz en español en Windows y tocar el micrófono. El texto reconocido se envía como conversación; las órdenes locales muestran confirmación. «Conversación continua» vuelve a escuchar al terminar la respuesta, solo tras iniciar la sesión con el micrófono. Detener o Ctrl+Alt+Esc corta escucha y respuesta. Sin voz instalada, el teclado continúa disponible.
 
-Chat generativo, conexión a Laya/Qwen, avatar 3D/lipsync, escritura directa en otras aplicaciones, lectura de pantalla, automatización UIA, llamadas/video, inicio automático, actualizaciones, instalador firmado, selección de monitor y restauración de sesiones. No presentar estos puntos como terminados. No hay un servidor gateway expuesto ni credenciales incluidas. El historial y borrador no se guardan automáticamente; al salir con un borrador modificado se ofrece guardar, descartar o cancelar.
+## Capacidades
 
-## Compilar en Windows
+- Conversación con historial de sesión, cancelación, respuesta hablada, controles de pausa y paso de respuestas al borrador.
+- Abrir Bloc de notas, Calculadora, Explorador, Documentos, Descargas, Escritorio y Configuración. Abrir aplicaciones mediante sus accesos del menú Inicio.
+- Buscar en navegador, abrir URLs HTTPS, crear borradores y guardarlos como TXT/MD sin sobrescribir.
+- Seleccionar el campo editable de Bloc de notas o Word con Ctrl+Alt+W, revisar el destino e insertar hasta 12.000 caracteres con párrafos. Puede reemplazar la selección actual. Si cambia foco/documento se detiene. Word requiere prueba física con la versión instalada; CI cubre Bloc de notas.
+- Recuperación de borrador cifrada localmente; conversación no persistida. El borrador se conserva en LocalAppData/AuraWindows/draft.bin.
+- Llamadas WebRTC para dos personas mediante gateway Windows y una invitación. TURN y pruebas entre equipos siguen siendo requisitos de despliegue.
+- Avatar derivado del modelo original 3D de AURA (`aura-avatar-suite/src/aura.js`): reproducción nativa de 120 fotogramas con parpadeo, mirada y expresiones; actividad de boca vinculada a eventos de voz. Es una animación prerenderizada, no un visor 3D interactivo ni sincronía fonética exacta.
 
-Instalar SDK .NET 10 y ejecutar desde PowerShell:
+## Límites de distribución
 
-```powershell
-./windows/scripts/publish.ps1
-```
+El ejecutable funciona localmente para acciones y borradores. La conversación inteligente requiere el servidor Windows conectado al Qwen real. No se ha configurado una URL ni credenciales de producción. No hay control universal del escritorio, lectura de pantalla ni ejecución de shell. No hay entrenamiento Laya certificado, actualizador automático ni firma Authenticode del propietario. La configuración de voz y pruebas físicas de micrófono dependen del equipo.
 
-Salida: `windows/artifacts/win-x64/Aura.Windows.exe`. El workflow `AURA Windows independent` entrega el mismo directorio como artefacto ZIP. Es una preview portable, **no un instalador firmado**. El proyecto corre como usuario estándar. Windows ARM64 y otras arquitecturas requieren publicar y probar una variante correspondiente.
+## Compilar y verificar
 
-## Entrenamiento independiente
+En Windows con .NET 10: `./windows/scripts/publish.ps1`. Compilar instalador con Inno Setup 6 (`windows/installer/Aura.Windows.iss`). Workflow `AURA Windows independent`: pruebas C#, gateway, render nativo, conversación integrada contra proveedor de prueba, transporte WebRTC sintético, escritura real en Bloc de notas e instalación/desinstalación. Las pruebas simuladas verifican integración, no disponibilidad del Qwen productivo.
 
-Datos: 105 ejemplos sintéticos iniciales, 10 pruebas manuales y 15 bordes adversariales. Son un arranque para revisión, insuficientes para certificar un modelo productivo. Las familias de entrenamiento tienen variaciones de prefijo: no interpretar ese volumen como 105 intenciones diversas. La validación evita coincidencias normalizadas entre splits; no garantiza ausencia de similitud semántica. El entrenador heredado separa validación interna aleatoriamente: debe pasar a separación por familia antes de medir generalización.
-
-```bash
-python windows/training/validate.py
-# En un entorno separado con las dependencias de entrenamiento Laya verificadas:
-python windows/training/train_windows.py --run windows-v1-smoke --device cuda --epocas 4
-```
-
-El motor fue copiado de `scripts/nodo-t4/laya/{entrenar,comun}.py` del commit `d5bb8fea3e9773a443819ab774c1147eb7c764b2`. Se exige modelo Windows; no se invoca la ruta Electrum. Usa `laya`, PyTorch, NumPy y safetensors; hay que fijar versiones y verificar compatibilidad en el entorno GPU antes de entrenar. Reutiliza un encoder multilingüe base, **no pesos afinados de las apps**. No se descargaron ni entrenaron pesos en esta entrega. Salidas bajo `windows/training/checkpoints/<run>/`, nunca sobre modelos de apps.
-
-Separación de producción: proceso, token, URL, dataset, etiquetas `win_*`, calibración, checkpoint y ciclo de publicación exclusivos. Un clasificador detecta intención; un generador redacta; el motor local valida y ejecuta. Ninguna salida del modelo se convierte en una línea de shell. El catálogo del entrenamiento incluye paráfrasis que el parser actual todavía no entiende; no confundir capacidades futuras del modelo con las de esta preview.
-
-## Revisión 0.2
-
-Ver `REVISION_CRITICA_0.2.md` para cambios de diseño, fallos corregidos y límites. El workflow renderiza cuatro vistas WPF y verifica estados de edición y pausa sin ejecutar acciones reales. Las capturas son renderizados de la interfaz nativa con datos de prueba, no una prueba física de voz ni de interacción con otras apps.
-
-## Criterios antes de liberar
-
-1. Probar Windows 11 x64 con escala 100/150/200%, pantallas pequeñas, varios monitores, teclado y Narrador. La preview está anclada al principal; no afirmar cobertura multi-monitor hasta probarla.
-2. Verificar bandeja, atajos ocupados, pausa durante reconocimiento, caducidad/replay de aprobación, fallo al abrir programas, archivos existentes y micrófono sin idioma/permisos.
-3. Evaluación independiente por intención, rechazo de instrucciones citadas/negadas, multiacción y órdenes no soportadas. Agregar al menos 100 ejemplos humanos diversos por intención, y cientos de negativos antes de fijar umbrales. Cantidad propuesta, no garantía de calidad.
-4. Firmar binarios/instalador, añadir actualización firmada con rollback y probar instalación/desinstalación antes de distribución pública.
-5. No activar escritura sobre ventanas hasta enlazar confirmación con proceso, ventana, contenido exacto, sesión y vencimiento. Rechazar campos de contraseña, UAC y terminales; no enviar Enter automáticamente.
-6. Llamadas/video: verificar identidad, señalización, ICE/TURN, permisos y dispositivos con dos cuentas reales. No sustituirlo por botones que aparentan una llamada.
+No mezclar entrenamiento, modelos ni endpoints de intenciones de las apps. El PR mantiene su rama Windows. Los documentos 0.2 y 0.3 son históricos; este README describe 0.4.

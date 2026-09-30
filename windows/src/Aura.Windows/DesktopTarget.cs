@@ -31,31 +31,34 @@ internal sealed class DesktopTarget {
  }
  public static DesktopTarget Capture(){
   var h=GetForegroundWindow();GetWindowThreadProcessId(h,out var id);using var p=Process.GetProcessById((int)id);
-  if(!p.ProcessName.Equals("notepad",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("Por ahora la escritura directa solo admite Bloc de notas. Haz clic en su área de texto y usa Ctrl+Alt+W.");
+  if(!p.ProcessName.Equals("notepad",StringComparison.OrdinalIgnoreCase)&&!p.ProcessName.Equals("WINWORD",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("La escritura directa admite Bloc de notas y Microsoft Word. Haz clic en su área de texto y usa Ctrl+Alt+W.");
   string executable=Path.GetFullPath(p.MainModule?.FileName ?? "");
   string win=Environment.GetFolderPath(Environment.SpecialFolder.Windows);
   string store=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"WindowsApps","Microsoft.WindowsNotepad_");
   bool trusted=executable.Equals(Path.Combine(win,"System32","notepad.exe"),StringComparison.OrdinalIgnoreCase)||executable.Equals(Path.Combine(win,"notepad.exe"),StringComparison.OrdinalIgnoreCase)||executable.StartsWith(store,StringComparison.OrdinalIgnoreCase);
+  if(p.ProcessName.Equals("WINWORD",StringComparison.OrdinalIgnoreCase)){
+   trusted=new[]{Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86)}.Where(x=>!string.IsNullOrWhiteSpace(x)).Any(x=>executable.StartsWith(Path.Combine(x,"Microsoft Office")+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase));
+  }
   if(!trusted)throw new InvalidOperationException("El destino no es una instalación reconocida de Bloc de notas de Windows.");
   var element=AutomationElement.FocusedElement;
   if(element.Current.ProcessId!=(int)id)throw new InvalidOperationException("El campo seleccionado pertenece a otra aplicación.");
   CheckEditable(element);return new(h,(int)id,p.StartTime,element);
  }
  public async Task Write(string text,CancellationToken cancellation){
-  if(string.IsNullOrWhiteSpace(text)||text.Length>1000||text.Any(c=>char.IsControl(c)))throw new InvalidOperationException("Escritura directa: máximo 1.000 caracteres en un párrafo sin saltos de línea. Para documentos, guarda el borrador.");
+  if(string.IsNullOrWhiteSpace(text)||text.Length>12000||text.Any(c=>char.IsControl(c)&&c!='\n'&&c!='\r'&&c!='\t'))throw new InvalidOperationException("Escritura directa: máximo 12.000 caracteres. Para documentos, guarda el borrador.");
   if(Stopwatch.GetElapsedTime(captured)>TimeSpan.FromSeconds(90))throw new InvalidOperationException("La selección venció. Selecciona de nuevo Bloc de notas.");
   using var p=Process.GetProcessById(processId);if(p.StartTime!=start)throw new InvalidOperationException("El proceso de destino cambió.");
   cancellation.ThrowIfCancellationRequested();CheckEditable(element);
   if(!SetForegroundWindow(window))throw new InvalidOperationException("No se pudo activar la ventana seleccionada.");
   element.SetFocus();await Task.Delay(120,cancellation);
   int written=0;
-  foreach(var rune in text.EnumerateRunes()){
+  foreach(var rune in text.Replace("\r\n","\n").Replace("\r","\n").EnumerateRunes()){
    cancellation.ThrowIfCancellationRequested();
    if(GetForegroundWindow()!=window||!AutomationElement.FocusedElement.GetRuntimeId().SequenceEqual(runtimeId))throw new InvalidOperationException($"El foco cambió. Escritura detenida después de {written} caracteres; revisa el destino.");
    CheckEditable(element);
    if(new[]{0x10,0x11,0x12,0x5B,0x5C}.Any(key=>(GetAsyncKeyState(key)&0x8000)!=0))throw new InvalidOperationException("Hay una tecla modificadora presionada. Suéltala y selecciona otra vez el destino; puede haber texto parcial.");
    if(DocumentTitle(AutomationElement.FromHandle(window).Current.Name)!=DocumentTitle(Title))throw new InvalidOperationException("El documento de destino cambió. Se detuvo la escritura.");
-   var events=rune.ToString().SelectMany(c=>new[]{new Input {type=1,data=new(){keyboard=new(){scan=c,flags=4}}},new Input {type=1,data=new(){keyboard=new(){scan=c,flags=6}}}}).ToArray();
+   var events=rune.Value==10 ? new[]{new Input{type=1,data=new(){keyboard=new(){vk=0x0D}}},new Input{type=1,data=new(){keyboard=new(){vk=0x0D,flags=2}}}} : rune.Value==9 ? new[]{new Input{type=1,data=new(){keyboard=new(){vk=0x09}}},new Input{type=1,data=new(){keyboard=new(){vk=0x09,flags=2}}}} : rune.ToString().SelectMany(c=>new[]{new Input {type=1,data=new(){keyboard=new(){scan=c,flags=4}}},new Input {type=1,data=new(){keyboard=new(){scan=c,flags=6}}}}).ToArray();
    if(SendInput((uint)events.Length,events,Marshal.SizeOf<Input>())!=events.Length)throw new InvalidOperationException("Windows bloqueó la escritura. Puede haber texto parcial; revisa Bloc de notas.");
    written++;if(written%16==0)await Task.Delay(15,cancellation);
   }

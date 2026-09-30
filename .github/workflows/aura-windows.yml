@@ -67,6 +67,10 @@ jobs:
             if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Gateway protocol test timeout' }
             Get-Content ./windows/artifacts/protocol/result.json
             if ($process.ExitCode -ne 0) { throw 'Gateway protocol test failed' }
+            $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--assistant-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/protocol/assistant.json" -PassThru
+            if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Assistant test timeout' }
+            Get-Content ./windows/artifacts/protocol/assistant.json
+            if ($process.ExitCode -ne 0) { throw 'Assistant integration failed' }
           } finally { Stop-Process -Id $fixture.Id -ErrorAction SilentlyContinue }
       - uses: actions/upload-artifact@v4
         if: always()

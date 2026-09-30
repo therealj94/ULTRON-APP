@@ -27,10 +27,10 @@ internal static class DesktopSelfTest {
    }
    if(edit==null)throw new Exception("No editable control in Notepad");
    if(!SetForegroundWindow(process.MainWindowHandle))throw new Exception("Runner cannot foreground Notepad");edit.SetFocus();await Task.Delay(300);
-   var target=DesktopTarget.Capture();const string expected="AURA Windows prueba Unicode: José y Roatán";
+   var target=DesktopTarget.Capture();const string expected="AURA Windows prueba Unicode: José y Roatán\r\nSegunda línea con acentos: acción.";
    await target.Write(expected,CancellationToken.None);await Task.Delay(300);
    string actual=edit.TryGetCurrentPattern(ValuePattern.Pattern,out var value)?((ValuePattern)value).Current.Value:((TextPattern)edit.GetCurrentPattern(TextPattern.Pattern)).DocumentRange.GetText(-1);
-   if(!actual.Contains(expected,StringComparison.Ordinal))throw new Exception("Written content mismatch");
+   if(!actual.Replace("\r\n","\n").Contains(expected.Replace("\r\n","\n"),StringComparison.Ordinal))throw new Exception("Written content mismatch");
    File.WriteAllText(output,JsonSerializer.Serialize(new{ok=true,notepad=true,unicode=true,verifiedBy="UI Automation readback"}));
    Application.Current.Shutdown(0);
   }catch(Exception ex){File.WriteAllText(output,JsonSerializer.Serialize(new{ok=false,error=ex.Message}));Application.Current.Shutdown(1);}

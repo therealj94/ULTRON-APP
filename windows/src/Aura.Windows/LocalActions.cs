@@ -14,6 +14,8 @@ internal static class LocalActions
             ActionKind.OpenExplorer => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"),
             ActionKind.OpenDocuments => Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
             ActionKind.OpenSettings => "ms-settings:",
+            ActionKind.OpenDownloads => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"),
+            ActionKind.OpenDesktop => Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
             ActionKind.SearchWeb => "https://www.bing.com/search?q=" + Uri.EscapeDataString(command.Value),
             ActionKind.OpenUrl => command.Value,
             _ => throw new InvalidOperationException("La acción no abre una aplicación.")

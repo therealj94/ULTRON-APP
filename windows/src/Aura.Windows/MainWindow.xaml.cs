@@ -34,8 +34,9 @@ public partial class MainWindow : Window
     public MainWindow(bool renderOnly = false) {
         this.renderOnly = renderOnly;
         InitializeComponent();
+        InitializeAssistant();
         if (renderOnly) return;
-        tray = new Forms.NotifyIcon { Icon = System.Drawing.SystemIcons.Application, Text = "AURA Windows", Visible = true };
+        tray = new Forms.NotifyIcon { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? System.Drawing.SystemIcons.Application, Text = "AURA Windows", Visible = true };
         tray.DoubleClick += (_, _) => Dispatcher.Invoke(() => Expand(true));
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Abrir AURA", null, (_, _) => Dispatcher.Invoke(() => Expand(true)));
@@ -51,7 +52,7 @@ public partial class MainWindow : Window
         };
         ticker.Tick += (_, _) => Tick(); ticker.Start();
         Closing += OnClosing;
-        Closed += (_, _) => { ticker.Stop(); StopVoice(); StopNetwork(); writing?.Cancel(); interpretation?.Cancel(); tray.Dispose(); if(source != null) { UnregisterHotKey(source.Handle, 1); UnregisterHotKey(source.Handle, 2); UnregisterHotKey(source.Handle, 3); source.RemoveHook(Hook); } };
+        Closed += (_, _) => { ticker.Stop(); StopVoice(); StopNetwork(); writing?.Cancel(); interpretation?.Cancel(); SaveRecovery(); StopAssistant(); tray.Dispose(); if(source != null) { UnregisterHotKey(source.Handle, 1); UnregisterHotKey(source.Handle, 2); UnregisterHotKey(source.Handle, 3); source.RemoveHook(Hook); } };
     }
     void SetStatus(string title, string message) { StatusTitle.Text = title; Status.Text = message; }
     IntPtr Hook(IntPtr h, int msg, IntPtr w, IntPtr l, ref bool handled) {
@@ -61,12 +62,12 @@ public partial class MainWindow : Window
     }
     void Position() {
         var area = SystemParameters.WorkArea;
-        Width = Math.Min(expanded ? 480 : 286, area.Width);
-        Height = Math.Min(expanded ? 760 : 78, area.Height);
+        Width = Math.Min(expanded ? 500 : 292, area.Width);
+        Height = Math.Min(expanded ? 790 : 76, area.Height);
         Left = area.Left + (area.Width - Width) / 2; Top = area.Top;
     }
     void Tick() {
-        if(++blinkTick%8==0 && !gate.Paused && SystemParameters.ClientAreaAnimation) { var scale=new ScaleTransform(1,1);Eyes.RenderTransformOrigin=new Point(.5,.5);Eyes.RenderTransform=scale;scale.BeginAnimation(ScaleTransform.ScaleYProperty,new DoubleAnimation(1,.08,TimeSpan.FromMilliseconds(130)){AutoReverse=true}); }
+        if(dirty) SaveRecovery();
         if (ApprovalActions.Visibility == Visibility.Visible) {
             int seconds = gate.RemainingSeconds;
             if (seconds <= 0) { ClearApproval(); SetStatus("Confirmación vencida", "Prepara la acción otra vez para continuar."); }
@@ -74,16 +75,25 @@ public partial class MainWindow : Window
         }
         if (speech != null && DateTimeOffset.UtcNow >= voiceDeadline) { StopVoice(); SetStatus("Escucha finalizada", "Se alcanzó el límite de 20 segundos. Revisa el texto o activa el micrófono otra vez."); }
     }
-    void Expand(bool yes) { expanded = yes; Panel.Visibility = StatusCard.Visibility = Footer.Visibility = yes ? Visibility.Visible : Visibility.Collapsed; Position(); Show(); if(yes && !renderOnly) { Activate(); Input.Focus(); } }
+    void Expand(bool yes) {
+        double oldWidth=ActualWidth>0?ActualWidth:Width,oldHeight=ActualHeight>0?ActualHeight:Height;
+        BeginAnimation(WidthProperty,null);BeginAnimation(HeightProperty,null);BeginAnimation(LeftProperty,null);
+        expanded=yes;Panel.Visibility=StatusCard.Visibility=Footer.Visibility=yes?Visibility.Visible:Visibility.Collapsed;Position();Show();
+        if(!renderOnly && SystemParameters.ClientAreaAnimation){var d=TimeSpan.FromMilliseconds(280);var easing=new CubicEase{EasingMode=EasingMode.EaseOut};double endWidth=Width,endHeight=Height,endLeft=Left;
+            BeginAnimation(WidthProperty,new DoubleAnimation(oldWidth,endWidth,d){EasingFunction=easing,FillBehavior=FillBehavior.Stop});
+            BeginAnimation(HeightProperty,new DoubleAnimation(oldHeight,endHeight,d){EasingFunction=easing,FillBehavior=FillBehavior.Stop});
+            BeginAnimation(LeftProperty,new DoubleAnimation(SystemParameters.WorkArea.Left+(SystemParameters.WorkArea.Width-oldWidth)/2,endLeft,d){EasingFunction=easing,FillBehavior=FillBehavior.Stop});}
+        if(yes&&!renderOnly){Activate();ConversationInput.Focus();}
+    }
     void Toggle(object s, RoutedEventArgs e) { if(expanded) StopVoice(); Expand(!expanded); }
     void HidePanel(object s, RoutedEventArgs e) { ClearApproval(); StopVoice(); Hide(); }
-    void Quick(object s, RoutedEventArgs e) { Input.Text = (string)((Button)s).Tag; Prepare(s,e); }
+    void Quick(object s, RoutedEventArgs e) { Expand(true); Input.Text = (string)((Button)s).Tag; Prepare(s,e); }
     void InputChanged(object s, TextChangedEventArgs e) {
         inputRevision++;interpretation?.Cancel();
         if (ApprovalActions == null || ApprovalActions.Visibility != Visibility.Visible) return;
         ClearApproval(); SetStatus("Orden actualizada", "Prepara de nuevo la acción para confirmar el texto actualizado.");
     }
-    void DraftChanged(object s, TextChangedEventArgs e) => dirty = true;
+    void DraftChanged(object s, TextChangedEventArgs e) { dirty = true; }
     void ClearApproval() { gate.Cancel(); ApprovalActions.Visibility = Visibility.Collapsed; Countdown.Visibility = Visibility.Collapsed; }
     void Prepare(object s, RoutedEventArgs e) {
         ClearApproval();
@@ -105,19 +115,21 @@ public partial class MainWindow : Window
             if (command.Kind == ActionKind.Draft) {
                 if (dirty && MessageBox.Show(this, "¿Reemplazar el borrador que tienes en el editor?", "AURA · Borrador", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
                 if(gate.Paused) return;
-                Draft.Text = command.Value; Workspace.SelectedIndex = 1;
+                Draft.Text = command.Value; Workspace.SelectedIndex = 2;
                 SetStatus("Borrador preparado", "Revisa el texto. Puedes copiarlo o guardarlo en un archivo nuevo.");
             } else { LocalActions.Execute(command); SetStatus("Solicitud enviada a Windows", "Comprueba la aplicación de destino. Puedes seguir trabajando aquí."); }
         } catch(Exception ex) { SetStatus("No se completó", ex.Message); }
     }
     void Cancel(object s, RoutedEventArgs e) { ClearApproval(); SetStatus("Acción cancelada", "No se ejecutó la propuesta. Puedes preparar otra."); }
-    void PauseAll() { inputRevision++;gate.Pause(); StopNetwork(); writing?.Cancel(); interpretation?.Cancel(); target=null; TargetLabel.Text="Selecciona Bloc de notas con Ctrl+Alt+W."; ClearApproval(); StopVoice(); UpdateControls(); SetStatus("AURA está en pausa", "Se cancelaron las propuestas y el micrófono. Los programas que ya abriste siguen abiertos."); }
+    void PauseAll() { inputRevision++;StopAssistant();gate.Pause(); StopNetwork(); writing?.Cancel(); interpretation?.Cancel(); target=null; TargetLabel.Text="Selecciona Bloc de notas o Word con Ctrl+Alt+W."; ClearApproval(); StopVoice(); UpdateControls(); SetStatus("AURA está en pausa", "Se cancelaron las propuestas y el micrófono. Los programas que ya abriste siguen abiertos."); }
     void TogglePause(object s, RoutedEventArgs e) { if(gate.Paused) { gate.Resume(); UpdateControls(); SetStatus("Lista para ayudarte", "Puedes preparar una nueva acción."); } else PauseAll(); }
     void UpdateControls() {
-        State.Text = gate.Paused ? "Acciones pausadas" : speech != null ? "Escuchando…" : "Lista para ayudarte";
+        State.Text = gate.Paused ? "En pausa" : speech != null ? "Te escucho…" : assistantRequest != null ? "Pensando…" : speaking ? "Hablando…" : "Aquí, contigo";
         PauseButton.Content = gate.Paused ? "Reanudar acciones" : "Pausar acciones";
         PrepareButton.IsEnabled = VoiceButton.IsEnabled = CopyButton.IsEnabled = SaveButton.IsEnabled = WriteButton.IsEnabled = !gate.Paused;
-        Eyes.Opacity = gate.Paused ? 0.35 : 1;
+        Avatar.Opacity = gate.Paused ? 0.5 : 1;
+        SendButton.IsEnabled = !gate.Paused;
+        Avatar.SetState(gate.Paused ? "idle" : speech != null ? "listening" : assistantRequest != null ? "thinking" : speaking ? "speaking" : "idle");
     }
     void Copy(object s, RoutedEventArgs e) {
         if(gate.Paused || string.IsNullOrEmpty(Draft.Text)) return;
@@ -137,26 +149,7 @@ public partial class MainWindow : Window
         catch(Exception ex) { SetStatus("No se guardó", ex.Message); }
         return false;
     }
-    void Voice(object s, RoutedEventArgs e) {
-        Expand(true);
-        if (gate.Paused) return;
-        if(speech != null) { StopVoice(); SetStatus("Micrófono detenido", "Puedes continuar escribiendo."); return; }
-        ClearApproval();
-        try {
-            var installed = SpeechRecognitionEngine.InstalledRecognizers().FirstOrDefault(r => r.Culture.TwoLetterISOLanguageName == "es");
-            if(installed == null) { SetStatus("Voz en español no disponible", "Instala reconocimiento de voz en español en Windows. Puedes escribir mientras tanto."); return; }
-            long generation = ++voiceGeneration;
-            speech = new SpeechRecognitionEngine(installed); speech.SetInputToDefaultAudioDevice(); speech.LoadGrammar(new DictationGrammar());
-            speech.InitialSilenceTimeout = TimeSpan.FromSeconds(8); speech.BabbleTimeout = TimeSpan.FromSeconds(12);
-            speech.SpeechRecognized += (_, args) => Dispatcher.BeginInvoke(new Action(() => {
-                if(generation == voiceGeneration && !gate.Paused && speech != null) { Input.Text = args.Result.Text; SetStatus("Transcripción lista", "Revísala y pulsa Preparar acción. Todavía no se ejecutó nada."); }
-            }));
-            speech.RecognizeCompleted += (_, _) => Dispatcher.BeginInvoke(new Action(() => { if(generation == voiceGeneration) StopVoice(); }));
-            voiceDeadline = DateTimeOffset.UtcNow.AddSeconds(20); UpdateControls();
-            SetStatus("Te escucho", "Habla una vez. Puedes detener el micrófono tocándolo de nuevo.");
-            speech.RecognizeAsync(RecognizeMode.Single);
-        } catch(Exception ex) { StopVoice(); SetStatus("Voz no disponible", ex.Message); }
-    }
+    void Voice(object s, RoutedEventArgs e) => BeginListening();
     void StopVoice() {
         voiceGeneration++;
         var old = speech; speech = null;
@@ -164,6 +157,7 @@ public partial class MainWindow : Window
         UpdateControls();
     }
     void OnClosing(object? s, CancelEventArgs e) {
+        SaveRecovery();
         if(!dirty || string.IsNullOrEmpty(Draft.Text)) return;
         var choice = MessageBox.Show(this, "¿Guardar el borrador antes de salir?\nSí: guardar · No: descartar · Cancelar: volver", "AURA · Borrador sin guardar", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
         if(choice == MessageBoxResult.Cancel) e.Cancel = true;
@@ -174,7 +168,7 @@ public partial class MainWindow : Window
     }
     void KeyDownHandler(object s, KeyEventArgs e) {
         if(e.Key == Key.Escape) { ClearApproval(); StopVoice(); Expand(false); e.Handled = true; }
-        if(e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control && Workspace.SelectedIndex == 0) { Prepare(s, e); e.Handled = true; }
+        if(e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control && Workspace.SelectedIndex == 1) { Prepare(s, e); e.Handled = true; }
     }
     async void InterpretIntent(object s, RoutedEventArgs e) {
         if(gate.Paused||interpretation!=null||string.IsNullOrWhiteSpace(Input.Text))return;
@@ -192,10 +186,10 @@ public partial class MainWindow : Window
         finally{interpretation.Dispose();interpretation=null;}
     }
     void StopNetwork() { chat?.Close(); chat=null; call?.Close(); call=null; }
-    void OpenSettings(object s, RoutedEventArgs e) { var dialog=new SettingsWindow {Owner=this};if(dialog.ShowDialog()==true){inputRevision++;interpretation?.Cancel();StopNetwork();SetStatus("Conexión guardada", "Abre una conversación o una llamada con la configuración nueva.");} }
+    void OpenSettings(object s, RoutedEventArgs e) { StopAssistant(); var dialog=new SettingsWindow {Owner=this};if(dialog.ShowDialog()==true){inputRevision++;interpretation?.Cancel();StopNetwork();history.Clear();ConnectionHint.Text="Servidor configurado. Escribe o toca el micrófono para conversar.";SetStatus("Conexión guardada", "La próxima conversación usará tu servidor AURA.");} }
     void OpenChat(object s, RoutedEventArgs e) {
         if(gate.Paused)return;
-        try { if(chat==null){chat=new ChatWindow(text=>{if(gate.Paused)return;if(dirty && MessageBox.Show(this,"¿Reemplazar el borrador actual con esta respuesta?","AURA",MessageBoxButton.YesNo)!=MessageBoxResult.Yes)return;Draft.Text=text;Expand(true);Workspace.SelectedIndex=1;});chat.Closed+=(_,_)=>chat=null;} chat.Show();chat.Activate(); }
+        try { if(chat==null){chat=new ChatWindow(text=>{if(gate.Paused)return;if(dirty && MessageBox.Show(this,"¿Reemplazar el borrador actual con esta respuesta?","AURA",MessageBoxButton.YesNo)!=MessageBoxResult.Yes)return;Draft.Text=text;Expand(true);Workspace.SelectedIndex=2;});chat.Closed+=(_,_)=>chat=null;} chat.Show();chat.Activate(); }
         catch(Exception ex){SetStatus("No se pudo abrir la conversación",ex.Message);}
     }
     void OpenCall(object s, RoutedEventArgs e) {
@@ -205,17 +199,17 @@ public partial class MainWindow : Window
     }
     void CaptureTarget() {
         if(gate.Paused)return;
-        try{target=DesktopTarget.Capture();Expand(true);Workspace.SelectedIndex=1;TargetLabel.Text="Destino: "+target.Title;SetStatus("Destino seleccionado", "La selección vence en 90 segundos. Revisa el borrador antes de escribir.");}
+        try{target=DesktopTarget.Capture();Expand(true);Workspace.SelectedIndex=2;TargetLabel.Text="Destino: "+target.Title;SetStatus("Destino seleccionado", "La selección vence en 90 segundos. Revisa el borrador antes de escribir.");}
         catch(Exception ex){target=null;Expand(true);SetStatus("Selecciona Bloc de notas",ex.Message);}
     }
     async void WriteToDesktop(object s, RoutedEventArgs e) {
         if(gate.Paused||writing!=null)return;
-        if(target==null){SetStatus("Falta el destino", "Abre Bloc de notas, haz clic en su área editable y pulsa Ctrl+Alt+W. Después vuelve al borrador.");return;}
+        if(target==null){SetStatus("Falta el destino", "Abre Bloc de notas o Word, haz clic en su área editable y pulsa Ctrl+Alt+W. Después vuelve al borrador.");return;}
         string text=Draft.Text;var selected=target;
-        if(string.IsNullOrWhiteSpace(text)||text.Length>1000||text.Any(char.IsControl)){SetStatus("Usa un párrafo corto", "La escritura directa admite hasta 1.000 caracteres sin saltos de línea. Guarda el archivo para textos mayores.");return;}
-        if(MessageBox.Show(this,"Se escribirá en: "+selected.Title+"\n\n"+text+"\n\nSe escribe en el cursor y se reemplaza la selección actual. No se pulsa Enter. ¿Continuar?","AURA · Confirmar escritura",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes||gate.Paused)return;
+        if(string.IsNullOrWhiteSpace(text)||text.Length>12000||text.Any(c=>char.IsControl(c)&&c!='\n'&&c!='\r'&&c!='\t')){SetStatus("Texto demasiado extenso", "La escritura directa admite hasta 12.000 caracteres. Guarda el archivo para textos mayores.");return;}
+        if(MessageBox.Show(this,"Se escribirá en: "+selected.Title+"\n\n"+text+"\n\nSe escribe en el cursor y se reemplaza la selección actual. Se respetan los saltos de línea. ¿Continuar?","AURA · Confirmar escritura",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes||gate.Paused)return;
         target=null;TargetLabel.Text="Selecciona de nuevo para otra escritura.";writing=new();
-        try{await selected.Write(text,writing.Token);if(!gate.Paused)SetStatus("Texto escrito", "Revisa el resultado en Bloc de notas.");}
+        try{await selected.Write(text,writing.Token);if(!gate.Paused)SetStatus("Texto escrito", "Revisa el resultado en la ventana elegida.");}
         catch(OperationCanceledException){if(!gate.Paused)SetStatus("Escritura cancelada", "Puede haber texto parcial. Revisa Bloc de notas.");}
         catch(Exception ex){if(!gate.Paused)SetStatus("Escritura detenida",ex.Message);}
         finally{writing.Dispose();writing=null;}
@@ -225,14 +219,15 @@ public partial class MainWindow : Window
         if(!renderOnly) throw new InvalidOperationException();
         Directory.CreateDirectory(directory);
         Show(); Capture(Path.Combine(directory, "01-notch.png"));
-        Expand(true); Input.Text = "Abre la calculadora"; Prepare(this, new RoutedEventArgs());
+        Expand(true); Workspace.SelectedIndex=1; Input.Text = "Abre la calculadora"; Prepare(this, new RoutedEventArgs());
         Capture(Path.Combine(directory, "02-accion.png"));
         // Regression: modifying a prepared command must invalidate its approval.
         var token = approval; Input.Text = "abre documentos";
         if (gate.Consume(token) != null || ApprovalActions.Visibility != Visibility.Collapsed) throw new InvalidOperationException("Edited command kept its approval");
         Draft.Text = "Ideas para hoy\n\n1. Preparar la propuesta del proyecto.\n2. Revisar los documentos pendientes.\n3. Definir las siguientes acciones.";
-        Workspace.SelectedIndex = 1; SetStatus("Tu borrador, listo para revisar", "Edita el contenido y elige dónde guardarlo.");
+        Workspace.SelectedIndex = 2; SetStatus("Tu borrador, listo para revisar", "Edita el contenido y elige dónde guardarlo.");
         Capture(Path.Combine(directory, "03-borrador.png"));
+        Workspace.SelectedIndex=0; AddMessage("Tú", "Ayúdame a preparar las ideas para mi proyecto."); AddMessage("AURA", "Podemos empezar por el objetivo, las personas que lo necesitan y el primer paso concreto. ¿Qué quieres conseguir?"); Capture(Path.Combine(directory, "05-conversacion.png"));
         PauseAll(); Capture(Path.Combine(directory, "04-pausa.png"));
         if(PrepareButton.IsEnabled || CopyButton.IsEnabled || SaveButton.IsEnabled) throw new InvalidOperationException("Paused controls enabled");
         dirty = false; Close();

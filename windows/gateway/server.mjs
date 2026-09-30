@@ -31,6 +31,7 @@ export function createGateway(config) {
    if(!body || typeof body!=='object' || Array.isArray(body))return json(res,400,{error:'invalid_body'});
    const authorization=(req.headers.authorization||'').replace(/^Bearer /,'');
    const owner=eq(authorization,config.apiToken);
+   if(path==='/v1/status'){if(!owner)return json(res,401,{error:'unauthorized'});return json(res,200,{ok:true,modelConfigured:!!config.model,turnConfigured:!!config.turnSecret});}
    if(path==='/v1/intent'){
     if(!owner)return json(res,401,{error:'unauthorized'});
     if(!config.layaUrl||!config.layaToken)return json(res,503,{error:'windows_model_not_configured'});

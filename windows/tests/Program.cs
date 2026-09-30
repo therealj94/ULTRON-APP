@@ -27,5 +27,9 @@ Check(Commands.Describe(new(ActionKind.OpenCalculator)) == "Abrir Calculadora","
 id = gate.Propose(new(ActionKind.OpenNotepad)); Check(gate.RemainingSeconds == 30,"countdown");
 clock.Now = clock.Now.AddSeconds(30); Check(gate.RemainingSeconds == 0 && gate.Consume(id) == null,"exact expiry boundary");
 gate.Pause(); bool refused = false; try { gate.Propose(new(ActionKind.OpenNotepad)); } catch(InvalidOperationException) { refused = true; } Check(refused,"paused proposal denied");
+Check(Commands.Parse("busca café en Roatán").Value=="café en Roatán","natural search accents");
+Check(Commands.Parse("Aura abre descargas.").Kind==ActionKind.OpenDownloads,"voice punctuation");
+Check(Commands.Parse("escribe Hola, José").Value=="Hola, José","literal writing");
+Check(Commands.Parse("no escribas Hola").Kind==ActionKind.None,"writing negation");
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }
