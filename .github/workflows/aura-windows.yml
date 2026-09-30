@@ -74,6 +74,19 @@ jobs:
           name: AURA-Windows-protocol-verification
           path: windows/artifacts/protocol/
           retention-days: 14
+      - name: Real Notepad writing test on isolated runner
+        shell: pwsh
+        run: |
+          $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--desktop-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/desktop/result.json" -PassThru
+          if (-not $process.WaitForExit(45000)) { $process.Kill(); throw 'Desktop writing test timeout' }
+          Get-Content ./windows/artifacts/desktop/result.json
+          if ($process.ExitCode -ne 0) { throw 'Desktop writing test failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-desktop-verification
+          path: windows/artifacts/desktop/result.json
+          retention-days: 14
       - name: Build per-user Windows installer
         shell: pwsh
         run: |

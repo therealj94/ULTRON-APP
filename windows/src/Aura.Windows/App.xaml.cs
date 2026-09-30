@@ -7,6 +7,7 @@ public partial class App : Application {
  private Mutex? singleton;
  protected override void OnStartup(StartupEventArgs e) {
   base.OnStartup(e);
+  if(e.Args.Length == 2 && e.Args[0] == "--desktop-self-test") {ShutdownMode=ShutdownMode.OnExplicitShutdown;_ = DesktopSelfTest.Run(e.Args[1]);return;}
   if(e.Args.Length == 2 && e.Args[0] == "--gateway-self-test") {ShutdownMode=ShutdownMode.OnExplicitShutdown;_ = ProtocolSelfTest.Run(e.Args[1]);return;}
   if(e.Args.Length == 2 && e.Args[0] == "--rtc-self-test") {
    ShutdownMode = ShutdownMode.OnExplicitShutdown; Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(e.Args[1]))!);
