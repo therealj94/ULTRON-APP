@@ -13,7 +13,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import { montarRutasGenesis, verificarPase } from '../server/genesis';
+import { montarRutasGenesis, verificarPase, cumpleDeGenesis } from '../server/genesis';
 
 const VERIF = 'v'.repeat(43);
 const PERFIL = { verificada: true, nombre: 'ANA MARÍA LÓPEZ' };
@@ -31,7 +31,7 @@ const valido = (extra: Record<string, unknown> = {}) => ({
   body: { valido: true, gid: 'GEN-ANA1-ANA2-A', correo: 'ana@prueba.local', aud: ['aura', 'pulse2chat'], perfil: PERFIL, ...extra },
 });
 
-async function montar(padron: string[]) {
+async function montar(padron: string[], sembrarPerfil?: (correo: string, g: { nombreGenesis: string; cumple: string | null; apodo: string }) => Promise<unknown>) {
   const app = express();
   app.use(express.json());
   const solicitudes: any[] = [];
@@ -51,6 +51,7 @@ async function montar(padron: string[]) {
       return true;
     },
     fetch: genesisFalso,
+    sembrarPerfil,
   });
   const srv = app.listen(0);
   await new Promise((r) => srv.once('listening', r));
@@ -163,4 +164,64 @@ test('la configuración que ve la app no lleva nada secreto', async () => {
   } finally {
     await m.cerrar();
   }
+});
+
+test('nombre completo y cumple (alcance gid.cumple): vuelven en genesis {nombre, cumple} y siembran el perfil', async () => {
+  const sembrados: any[] = [];
+  const m = await montar(['ana@prueba.local'], async (correo, g) => {
+    sembrados.push({ correo, ...g });
+  });
+  try {
+    respuesta = valido({ perfil: { ...PERFIL, cumple: '03-14' } });
+    const r = await m.entrar({ pase: 'PASE', verificador: VERIF });
+    assert.equal(r.status, 200);
+    assert.deepEqual(r.body.genesis, { nombre: 'Ana María López', cumple: '03-14' });
+    assert.equal(r.body.miembro.nombre, 'Ana', 'el saludo sigue con el primer nombre');
+    assert.deepEqual(sembrados, [{ correo: 'ana@prueba.local', nombreGenesis: 'Ana María López', cumple: '03-14', apodo: 'Ana' }]);
+
+    // Sin el alcance (Genesis no manda cumple), nada: ni se inventa ni falla.
+    respuesta = valido();
+    const sin = await m.entrar({ pase: 'PASE', verificador: VERIF });
+    assert.deepEqual(sin.body.genesis, { nombre: 'Ana María López', cumple: null });
+    assert.equal(sembrados.at(-1).cumple, null);
+  } finally {
+    await m.cerrar();
+  }
+});
+
+test('si sembrar el perfil falla, igual entra; y fuera del padrón no se siembra nada', async () => {
+  let llamadas = 0;
+  const m = await montar(['ana@prueba.local'], async () => {
+    llamadas++;
+    throw new Error('disco lleno');
+  });
+  try {
+    respuesta = valido({ perfil: { ...PERFIL, cumple: '03-14' } });
+    const r = await m.entrar({ pase: 'PASE', verificador: VERIF });
+    assert.equal(r.status, 200);
+    assert.ok(r.body.token);
+    assert.equal(llamadas, 1);
+  } finally {
+    await m.cerrar();
+  }
+  llamadas = 0;
+  const fuera = await montar([], async () => {
+    llamadas++;
+  });
+  try {
+    respuesta = valido({ perfil: { ...PERFIL, cumple: '03-14' } });
+    assert.equal((await fuera.entrar({ pase: 'PASE', verificador: VERIF })).status, 403);
+    assert.equal(llamadas, 0, 'las reglas de acceso no cambian: sin acceso no hay perfil');
+  } finally {
+    await fuera.cerrar();
+  }
+});
+
+test('el cumple de Genesis: solo MM-DD válido (de una fecha entera se toma mes y día)', () => {
+  assert.equal(cumpleDeGenesis('03-14'), '03-14');
+  assert.equal(cumpleDeGenesis('1994-03-14'), '03-14');
+  assert.equal(cumpleDeGenesis('02-30'), null);
+  assert.equal(cumpleDeGenesis('14/03'), null);
+  assert.equal(cumpleDeGenesis(undefined), null);
+  assert.equal(cumpleDeGenesis(314), null);
 });
