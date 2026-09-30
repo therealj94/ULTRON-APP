@@ -23,6 +23,8 @@ import { createPortal } from 'react-dom';
 import { escucharEscena, nivelVoz, type Escena } from '../panel/voz';
 import { METAS, expresionDeLinea, reaccionA, sinEtiquetas, type Expresion, type Metas } from './expresion';
 import { abrirMesa, escucharMesa, mesaAbierta } from './mesa';
+import { cambiarPrefUsuario, escucharPrefsUsuario, prefsUsuario, traerPrefsUsuario } from '../preferencias';
+import { headersElectrum } from '../acceso';
 
 type Rasgos = { nombre: string; papel: string; color: string; piel: string; sombra: string; iris: string };
 
@@ -480,8 +482,24 @@ const CSS = `
 @media (prefers-reduced-motion: reduce){.retrato-entra,.retrato-mesa,.retrato-barra,.retrato-punto,.retrato-linea{animation:none}}
 `;
 
-/** La mesa del diálogo: aparece con las caras de quienes participan y se va al terminar. */
-export function Retratos() {
+/**
+ * La mesa del diálogo: aparece con las caras de quienes participan y se va al terminar.
+ *
+ * PLEGADA POR DEFECTO. Abierta tapaba el mapa justo mientras se mostraba algo en él, y en el
+ * recorrido repetía, debajo de las caras, la misma frase que ya dice el cuadro del capítulo.
+ * Plegada es una píldora con la cara de quien habla; se abre tocándola. Cómo la deja cada quien
+ * se guarda con la persona (server/electrum/preferencias.ts), aparte en el recorrido y fuera de él.
+ */
+export function Retratos({ enRecorrido = false }: { enRecorrido?: boolean }) {
+  const [prefs, setPrefs] = useState(prefsUsuario);
+  useEffect(() => {
+    const quitar = escucharPrefsUsuario(setPrefs);
+    void traerPrefsUsuario(headersElectrum());
+    return quitar;
+  }, []);
+  const clavePlegado = enRecorrido ? 'retratosPlegadosRecorrido' : 'retratosPlegados';
+  const plegado = prefs[clavePlegado];
+  const plegar = (v: boolean) => cambiarPrefUsuario(clavePlegado, v, headersElectrum());
   const [escena, setEscena] = useState<Escena>({ hablante: null, participantes: null, linea: null });
   // Al terminar, la mesa se queda un momento para salir con animación (no desaparece de golpe).
   const [ultimos, setUltimos] = useState<string[] | null>(null);
@@ -506,8 +524,36 @@ export function Retratos() {
   mesa.current = { hablante: escena.hablante, expresion: expresionDeLinea(escena.linea), orden: orden || [] };
   if (!orden) return null;
   const hablante = participantes ? escena.hablante : null;
-  const dicho = hablante ? sinEtiquetas(escena.linea) : '';
+  // En el recorrido la frase ya está en el cuadro del capítulo: aquí no se repite.
+  const dicho = hablante && !enRecorrido ? sinEtiquetas(escena.linea) : '';
   const color = hablante ? (RETRATOS[hablante] || RETRATOS.narrador).color : '#8FA2AC';
+
+  if (plegado) {
+    const quien = hablante || orden[0];
+    const r = RETRATOS[quien] || RETRATOS.narrador;
+    return createPortal(
+      <div className="pointer-events-none fixed inset-x-0 top-16 z-[60] flex justify-center pl-3 pr-14 md:px-3" data-retratos="plegada">
+        <button
+          type="button"
+          onClick={() => plegar(false)}
+          className={`retrato-mesa ${participantes ? '' : 'saliendo'} pointer-events-auto flex min-h-[40px] cursor-pointer items-center gap-2 rounded-full border border-white/10 bg-[rgba(8,12,16,.86)] py-1 pl-1 pr-3 shadow-[0_8px_24px_rgba(0,0,0,.5)] backdrop-blur-md hover:border-white/25`}
+          aria-label={`${hablante ? `Habla ${r.nombre}` : `Mesa: ${orden.map((q) => RETRATOS[q]?.nombre || q).join(', ')}`}. Mostrar las caras`}
+          title="Mostrar las caras"
+        >
+          <span className="relative h-8 w-8 overflow-hidden rounded-full">
+            <Cara quien={quien} mesa={mesa} />
+          </span>
+          <span className="font-mono text-[10px] uppercase tracking-[0.12em]" style={{ color: r.color }}>
+            {r.nombre}
+          </span>
+          {hablante && <Estado habla color={r.color} />}
+          <span aria-hidden className="text-[11px] text-[#9FB0B8]">▾</span>
+        </button>
+        <style>{CSS}</style>
+      </div>,
+      document.body
+    );
+  }
 
   return createPortal(
     <div
@@ -526,6 +572,15 @@ export function Retratos() {
             </div>
           ))}
         </div>
+        <button
+          type="button"
+          onClick={() => plegar(true)}
+          className="pointer-events-auto absolute left-2 top-2 flex h-8 w-8 cursor-pointer items-center justify-center rounded-full font-mono text-[12px] text-[#9FB0B8] hover:bg-white/10 hover:text-white"
+          title="Esconder las caras (se queda como lo dejes)"
+          aria-label="Esconder las caras"
+        >
+          ▴
+        </button>
         {abierta && (
           <button
             type="button"

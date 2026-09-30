@@ -1003,7 +1003,7 @@ export default function App() {
           {/* El cuadro del recorrido vive DENTRO del mapa: se acomoda a él y no tapa la conversación. */}
           <Recorrido activo={recorrido} onTerminar={terminarRecorrido} controles={controlesRecorrido} fichaAbierta={!!tocado} modo={modoRecorrido} />
           <AirTouch activo={manos && puerta === 'abierta'} onEstado={setEstadoManos} />
-          <Retratos />
+          <Retratos enRecorrido={recorrido} />
           {preguntas && !recorrido && (
             <Preguntas
               cara={(f) => setFace(f)}

@@ -88,7 +88,7 @@ import {
   claveHiloDe,
   quienDelHilo,
   fusionarHiloElectrum,
-  hiloDe as hiloElectrumDe,
+  cargarHilo as cargarHiloElectrum,
   hiloDelCliente,
   olvidarHilo,
   recordarHilo,
@@ -117,6 +117,7 @@ import { montarRutasMuestras } from './server/electrum/muestras';
 import { montarRutasSatelite, perdidaPorConcesion } from './server/electrum/satelite';
 import { montarRutasExportar } from './server/electrum/exportar';
 import { montarRutasProspectividad, puntajesPorConcesion } from './server/electrum/prospectividad';
+import { montarRutasPreferencias } from './server/electrum/preferencias';
 import { montarRutasCartera } from './server/electrum/cartera';
 import { montarRutasArea } from './server/electrum/area';
 import { iniciarAlertas } from './server/electrum/alertas';
@@ -377,7 +378,7 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
     const id = identidadDe(req);
     const clave = claveHiloDe(id?.persona.id, req, 'mesa');
     const historial = fusionarHiloElectrum({
-      servidor: hiloElectrumDe(clave),
+      servidor: await cargarHiloElectrum(clave),
       cliente: hiloDelCliente(req.body?.hilo),
       mensaje,
     });
@@ -408,6 +409,16 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
  * ser un lujo: quien consultó el expediente de un concesionario necesita dejar la pantalla limpia
  * antes de que se siente otro.
  */
+/**
+ * Lo que se venía hablando, para retomarlo en otro aparato o tras cerrar la pestaña (auditoría H17).
+ * Solo el hilo de quien lo pide: el suyo si tiene sesión, el de su visitante si entró con la llave.
+ */
+app.get('/api/electrum/hilo', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  const id = identidadDe(req);
+  const turnos = await cargarHiloElectrum(claveHiloDe(id?.persona.id, req, 'mesa'));
+  res.json({ turnos, honesto: true });
+});
+
 app.delete('/api/electrum/hilo', exigirPlataforma('electrum'), limitar(30), (req, res) => {
   // Solo el hilo de quien lo pide: el suyo si tiene sesión, el de su navegador si entró con la llave.
   const id = identidadDe(req);
@@ -821,7 +832,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
     const id = identidadDe(req);
     const clave = claveHiloDe(id?.persona.id, req, 'mesa');
     const historial = fusionarHiloElectrum({
-      servidor: hiloElectrumDe(clave),
+      servidor: await cargarHiloElectrum(clave),
       cliente: hiloDelCliente(req.body?.hilo),
       mensaje,
     });
@@ -1483,6 +1494,7 @@ if (ES_ELECTRUM) montarRutasMuestras(app);
 if (ES_ELECTRUM) montarRutasSatelite(app);
 if (ES_ELECTRUM) montarRutasExportar(app);
 if (ES_ELECTRUM) montarRutasProspectividad(app);
+if (ES_ELECTRUM) montarRutasPreferencias(app);
 if (ES_ELECTRUM) montarRutasCartera(app);
 if (ES_ELECTRUM) montarRutasArea(app);
 if (ES_ELECTRUM) montarRutasTimelapse(app);

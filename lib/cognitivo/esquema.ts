@@ -126,4 +126,12 @@ CREATE TABLE IF NOT EXISTS cognitivo.hilo (
   turnos     jsonb NOT NULL DEFAULT '[]',
   tocado     timestamptz NOT NULL DEFAULT now()
 );
+
+-- Cómo dejó cada quien la pantalla (el panel de caras plegado o abierto…): sigue con la persona
+-- aunque cambie de aparato. Nada sensible: solo interruptores de la interfaz.
+CREATE TABLE IF NOT EXISTS cognitivo.preferencia (
+  quien      text PRIMARY KEY,
+  datos      jsonb NOT NULL DEFAULT '{}',
+  tocado     timestamptz NOT NULL DEFAULT now()
+);
 `;
