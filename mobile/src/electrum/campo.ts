@@ -185,3 +185,12 @@ export function conPlazo<T>(p: Promise<T>, ms: number, que = 'plazo'): Promise<T
   });
   return Promise.race([p, vence]).finally(() => clearTimeout(reloj));
 }
+
+/**
+ * ¿Está quien lee al final del hilo? (Auditoría H16.) Si subió a releer una respuesta, lo nuevo no
+ * lo arrastra de vuelta abajo: se le avisa y baja cuando quiere. `margen` absorbe el rebote del
+ * desplazamiento y el último renglón a medio pintar.
+ */
+export function alFinalDelHilo(m: { y: number; alto: number; visible: number }, margen = 80): boolean {
+  return m.y + m.visible >= m.alto - margen;
+}

@@ -38,6 +38,7 @@ import {
   distinguir,
   unicaExacta,
 } from './db';
+import { COMO_CITAR } from './evidencias';
 import { personaPorId } from '../../lib/acceso';
 import { clasificarDocumento, lecturaEnTexto, type LecturaDocumento } from './documentos-laya';
 import { entornoDe, entornoEnTexto } from './entorno';
@@ -201,7 +202,7 @@ const catastro_resumen: Herramienta = {
       t.microcuencas ? `${n0(t.microcuencas.concesiones)} pisan microcuencas (${n0(t.microcuencas.hectareas)} ha).` : '',
       t.poblados ? `${n0(t.poblados.concesiones)} tienen caseríos dentro (${n0(t.poblados.caserios)} caseríos).` : '',
       prosp && prosp.calculadas
-        ? `Prospectividad calculada en ${n0(prosp.calculadas)} de ${n0(t.total.concesiones)}; las más altas: ${prosp.ranking.map((r) => `${r.nombre} ${r.puntaje}/100`).join(', ')}.`
+        ? `Prospectividad calculada en ${n0(prosp.calculadas)} de ${n0(t.total.concesiones)}${prosp.pendientes ? ` (${n0(prosp.pendientes)} pendientes de recalcular: cambiaron la geología, las muestras o el algoritmo)` : ''}; las más altas: ${prosp.ranking.map((r) => `${r.nombre} ${r.puntaje}/100`).join(', ')}.`
         : 'La prospectividad todavía no está calculada.',
       sat.length ? `Mayor caída de vegetación según Sentinel-2: ${sat.map((x) => `${x.nombre} ${nf(x.ha, 1)} ha`).join(', ')}.` : '',
     ];
@@ -676,14 +677,18 @@ const expediente_buscar: Herramienta = {
     }
     const cita = hits
       .slice(0, 3)
-      .map((h) => `${esHistorico(h.documento) ? '[HISTÓRICO] ' : ''}${h.documento}${h.pagina ? `, página ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 450)}»`)
+      .map(
+        (h) =>
+          `${h.codigo ? `[${h.codigo}] ` : ''}${esHistorico(h.documento) ? '[HISTÓRICO] ' : ''}${h.transcripcion ? '[FOTO TRANSCRITA, SIN REVISAR] ' : ''}${h.documento}${h.pagina ? `, página ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').slice(0, 450)}»`
+      )
       .join(' | ');
+    const transcrito = hits.slice(0, 3).some((h) => h.transcripcion);
     const historico = hits.slice(0, 3).some((h) => esHistorico(h.documento));
     // Los informes de JICA y los 43-101 están en inglés: la persona lee español.
     const ingles = hits.slice(0, 3).some((h) => /\b(the|and|of|with|in the|grade|vein|drill|sample)\b/i.test(h.texto));
     return {
       ok: true,
-      texto: `${cita}. Citá el documento y la página al contestar. Son trozos cortos: si la respuesta está en esas páginas (un capítulo, unas conclusiones, una tabla), leelas enteras con expediente_leer antes de contestar.${ingles ? ' Hay fragmentos en inglés: traducilos al español al citarlos (cifras y unidades tal cual) y decí que el original está en inglés.' : ''}${historico ? ' Lo marcado [HISTÓRICO] es de estudios viejos (JICA-MMAJ, 1978-2003): citalo como antecedente, con su año, nunca como la situación de hoy; lo vigente sale del catastro oficial.' : ''}`,
+      texto: `${cita}. ${COMO_CITAR}${transcrito ? ' Lo marcado [FOTO TRANSCRITA, SIN REVISAR] es una lectura automática de una foto: decilo al usarlo y no lo des como el documento original (expedientes, coordenadas, leyes, titulares y fechas se confirman con el papel).' : ''} Son trozos cortos: si la respuesta está en esas páginas (un capítulo, unas conclusiones, una tabla), leelas enteras con expediente_leer antes de contestar.${ingles ? ' Hay fragmentos en inglés: traducilos al español al citarlos (cifras y unidades tal cual) y decí que el original está en inglés.' : ''}${historico ? ' Lo marcado [HISTÓRICO] es de estudios viejos (JICA-MMAJ, 1978-2003): citalo como antecedente, con su año, nunca como la situación de hoy; lo vigente sale del catastro oficial.' : ''}`,
       ui: { hits },
     };
   },
@@ -783,7 +788,7 @@ const expediente_leer: Herramienta = {
         ilegible +
         (l.sigue ? `[Sigue en ${donde}: leelo con expediente_leer si hace falta.] ` : '[Fin del documento.] ') +
         (l.otros.length ? `[Otros documentos que también casan: ${l.otros.slice(0, 4).join('; ')}.] ` : '') +
-        'Citá el documento y la página.' +
+        `Citá con el código del documento y la página entre corchetes: [D${l.documentoId}-p${l.desde}] para la página ${l.desde}, [D${l.documentoId}-p${Math.max(l.desde, l.hasta)}] para la ${Math.max(l.desde, l.hasta)}; sin página exacta, [D${l.documentoId}]. No inventes códigos.` +
         (ingles ? ' El original está en inglés: traducí al español (cifras y unidades tal cual) y decilo.' : ''),
       ui: { documento: l.documento, desde: l.desde, hasta: l.hasta },
     };

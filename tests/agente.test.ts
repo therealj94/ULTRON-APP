@@ -531,3 +531,59 @@ test('el reintento del cierre no empieza si quien preguntó ya se fue', async ()
   await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: HS, ctx: CTX, pensar, presupuesto: { rondas: 2 }, abandonado: () => ido });
   assert.equal(cierres, 1, 'no hubo segundo pedido al modelo');
 });
+
+/* ------------------------------------------------ auditoría H08 y H09: un reloj y cancelación */
+
+const dormilona: Herramienta = {
+  nombre: 'dormilona',
+  descripcion: 'Tarda mucho.',
+  esquema: { type: 'object', properties: {}, required: [] },
+  plataformas: ['electrum'],
+  msMaximo: 20_000,
+  async ejecutar() {
+    await new Promise((r) => setTimeout(r, 3_000));
+    return { ok: true, texto: 'tarde' };
+  },
+};
+const pideDormilona = { texto: '', mensaje: { tool_calls: [{ function: { name: 'dormilona', arguments: {} } }] } };
+
+test('H08: una herramienta no se pasa de lo que le queda al turno, aunque su tope sea mayor', async () => {
+  const { pensar } = modelo(pideDormilona, 'listo');
+  const t0 = Date.now();
+  const r = await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: [dormilona], ctx: CTX, pensar, nativo: true, presupuesto: { ms: 1_200 } });
+  const ms = Date.now() - t0;
+  assert.ok(ms < 2_500, `tardó ${ms} ms con un turno de 1,2 s y una herramienta de 20 s de tope`);
+  assert.equal(r.traza[0].ok, false);
+  assert.match(r.traza[0].resumen, /tardó más de/);
+});
+
+test('H09: si quien preguntaba se va, se deja de esperar la herramienta en el acto', async () => {
+  const { pensar } = modelo(pideDormilona, 'listo');
+  const corte = new AbortController();
+  setTimeout(() => corte.abort(), 150);
+  const t0 = Date.now();
+  const r = await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: [dormilona], ctx: CTX, pensar, nativo: true, senal: corte.signal });
+  const ms = Date.now() - t0;
+  assert.ok(ms < 1_000, `siguió ${ms} ms después de irse`);
+  assert.equal(r.fin, 'abandonado');
+});
+
+test('H09: la llamada al modelo recibe la señal y cortarla termina el turno como abandonado', async () => {
+  const corte = new AbortController();
+  let recibida: AbortSignal | undefined;
+  const pensar: Pensar = ({ senal }) => {
+    recibida = senal;
+    return new Promise((_, mal) => senal?.addEventListener('abort', () => mal(new DOMException('abortado', 'AbortError'))));
+  };
+  setTimeout(() => corte.abort(), 100);
+  const r = await correrAgente({ mensajes: [{ role: 'user', content: 'x' }], herramientas: [], ctx: CTX, pensar, senal: corte.signal });
+  assert.equal(recibida, corte.signal);
+  assert.equal(r.fin, 'abandonado');
+});
+
+test('H08: el reloj del turno cuenta desde que llegó la petición', async () => {
+  const { msRestanteDelTurno, PRESUPUESTO_TURNO_MS } = await import('../server/electrum/turno');
+  assert.equal(msRestanteDelTurno(1_000, 1_000), PRESUPUESTO_TURNO_MS);
+  assert.equal(msRestanteDelTurno(1_000, 21_000), PRESUPUESTO_TURNO_MS - 20_000, 'lo gastado antes del bucle se descuenta');
+  assert.equal(msRestanteDelTurno(0, PRESUPUESTO_TURNO_MS + 5_000), 0);
+});

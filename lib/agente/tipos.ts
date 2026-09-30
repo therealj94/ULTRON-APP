@@ -67,6 +67,11 @@ export type Contexto = {
    * informe de conversación para poner en un PDF lo que ya se dijo, sin que el modelo lo reescriba.
    */
   historial?: Array<{ role: 'user' | 'assistant'; content: string }>;
+  /**
+   * Se dispara si quien preguntaba se fue (auditoría H09). Una herramienta que hace `fetch` largo
+   * puede pasarla para cortar; el bucle deja de esperarla igual.
+   */
+  senal?: AbortSignal;
 };
 
 export function efectoDe(h: Pick<Herramienta, 'efecto' | 'escribe'>): Efecto {

@@ -362,8 +362,14 @@ app.get('/api/nodo/listo', async (_req, res) => {
 
 /** El turno de Electrum: panel de especialistas + harness con manos + órdenes para el mapa. */
 app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+  const inicio = Date.now();
   const mensaje = String(req.body?.mensaje || '').slice(0, 4000).trim();
   if (!mensaje) return res.status(400).json({ error: 'Falta el mensaje.', honesto: true });
+  // Si se corta la conexión, se corta el turno: el modelo y la herramienta en curso (auditoría H09).
+  const corte = new AbortController();
+  res.on('close', () => {
+    if (!res.writableEnded) corte.abort();
+  });
   try {
     // Antes esto era `quienVerificado(req)`, con la PETICIÓN donde va el CUERPO: leía
     // `req.telegramUserId`, que no existe, así que Dr Electrum nunca supo con quién hablaba y el
@@ -386,8 +392,9 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
         prueba: id ? 'sesion' : null,
         duenio: quienDelHilo(id?.persona.id, req),
       },
-      { historial, idioma: req.body?.idioma }
+      { historial, idioma: req.body?.idioma, senal: corte.signal, inicio }
     );
+    if (corte.signal.aborted) return;
     recordarHilo(clave, mensaje, salida.texto);
     res.json({ ...salida, honesto: true });
   } catch (e: any) {
@@ -775,6 +782,7 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
  * Un WebSocket añadiría una conexión bidireccional que nadie usa y que Render tendría que sostener.
  */
 app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+  const inicio = Date.now();
   const mensaje = String(req.body?.mensaje || '').slice(0, 4000).trim();
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
@@ -800,8 +808,13 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
    * guardara, la pregunta siguiente se contestaría sobre algo que para él no existe.
    */
   let seFue = false;
+  const corte = new AbortController();
   res.on('close', () => {
-    if (!res.writableEnded) seFue = true;
+    if (!res.writableEnded) {
+      seFue = true;
+      // Cancelación real (auditoría H09): corta la llamada al modelo y la espera de la herramienta.
+      corte.abort();
+    }
   });
 
   try {
@@ -818,6 +831,8 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
       {
         historial,
         abandonado: () => seFue,
+        senal: corte.signal,
+        inicio,
         internet: req.body?.internet === true,
         // La mesa técnica abierta en pantalla: contestan los tres, discutiendo, hasta que se cierre.
         mesa: req.body?.mesa === true,

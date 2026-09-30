@@ -53,6 +53,7 @@ import {
   type EstadoInforme,
   type EstadoSalud,
   type TurnoCampo,
+  alFinalDelHilo,
 } from './campo';
 import { dictadoDisponible, escuchar, type Escucha } from './dictado';
 import { fraseDeError, SIN_NIVEL_PARA_CARGAR } from './frases';
@@ -119,6 +120,9 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
   const vozActivaRef = useRef(vozActiva);
   vozActivaRef.current = vozActiva;
   const hilo = useRef<ScrollView>(null);
+  /** Si quien lee está al final del hilo; si no, lo nuevo no lo arrastra (auditoría H16). */
+  const alFinal = useRef(true);
+  const [hayNuevo, setHayNuevo] = useState(false);
   const sonido = useRef<Audio.Sound | null>(null);
   /** Cada frase dicha tiene su número; si al llegar el audio ya hay otra más nueva, esta se tira. */
   const vozTurno = useRef(0);
@@ -168,6 +172,8 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
 
   const agregar = useCallback((t: TurnoCampo): number => {
     const id = (siguienteId.current += 1);
+    // Lo que manda la persona sí baja el hilo: acaba de preguntar y quiere ver la respuesta.
+    if (t.de === 'persona') alFinal.current = true;
     setTurnos((ts) => [...ts, { ...t, id }]);
     return id;
   }, []);
@@ -750,7 +756,16 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
             style={s.hilo}
             contentContainerStyle={{ padding: 14, gap: 12 }}
             keyboardShouldPersistTaps="handled"
-            onContentSizeChange={() => hilo.current?.scrollToEnd({ animated: true })}
+            scrollEventThrottle={100}
+            onScroll={(e) => {
+              const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent;
+              alFinal.current = alFinalDelHilo({ y: contentOffset.y, alto: contentSize.height, visible: layoutMeasurement.height });
+              if (alFinal.current) setHayNuevo(false);
+            }}
+            onContentSizeChange={() => {
+              if (alFinal.current) hilo.current?.scrollToEnd({ animated: true });
+              else setHayNuevo(true);
+            }}
           >
             {!turnos.length && (
               <View style={{ gap: 10 }}>
@@ -843,6 +858,20 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
               </Text>
             )}
           </ScrollView>
+          {hayNuevo && (
+            <Pressable
+              onPress={() => {
+                alFinal.current = true;
+                setHayNuevo(false);
+                hilo.current?.scrollToEnd({ animated: true });
+              }}
+              accessibilityRole="button"
+              accessibilityLabel="Bajar a la respuesta nueva"
+              style={s.nuevo}
+            >
+              <Text style={s.nuevoTexto}>↓ RESPUESTA NUEVA</Text>
+            </Pressable>
+          )}
 
           <View style={s.entrada}>
             {/*
@@ -989,6 +1018,8 @@ const s = StyleSheet.create({
   izquierda: { width: 240, paddingLeft: 14, paddingBottom: 14, justifyContent: 'space-between' },
   izquierdaVertical: { width: '100%', paddingHorizontal: 14, paddingBottom: 6, flexDirection: 'row', alignItems: 'center', gap: 12 },
   derecha: { flex: 1, borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.08)' },
+  nuevo: { alignSelf: 'center', marginTop: -52, marginBottom: 8, backgroundColor: ACENTO, borderRadius: 999, paddingHorizontal: 16, minHeight: 44, justifyContent: 'center' },
+  nuevoTexto: { color: '#000', fontSize: 12, fontWeight: '700', letterSpacing: 1.2 },
   derechaVertical: { borderLeftWidth: 0, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' },
   redondo: {
     width: 44,

@@ -28,7 +28,13 @@ export type Componente = { clave: 'geologia' | 'geoquimica' | 'satelite'; nombre
  * puntaje existe pero es «insuficiente» para compararlo con una concesión bien documentada.
  */
 export type EstadoProsp = 'sin_datos' | 'insuficiente' | 'evaluado';
-export type Prospectividad = { puntaje: number; nivel: 'alta' | 'media' | 'baja' | 'muy baja' | 'sin datos'; cobertura: number; estado?: EstadoProsp; componentes: Componente[] };
+export type Prospectividad = { puntaje: number; nivel: 'alta' | 'media' | 'baja' | 'muy baja' | 'sin datos'; cobertura: number; estado?: EstadoProsp; componentes: Componente[]; sello?: string };
+
+/**
+ * Versión del algoritmo (auditoría H15). Se sube cuando cambian los pesos, los cortes o las reglas:
+ * lo guardado con otra versión deja de contarse y queda pendiente de recalcular.
+ */
+export const VERSION_PROSPECTIVIDAD = 'p2';
 
 /** Por debajo de esto no se compara en el ranking: solo geología (45) no alcanza. */
 export const COBERTURA_MINIMA = 50;
@@ -153,6 +159,22 @@ function asegurarTabla(): Promise<void> {
   return tabla;
 }
 
+/**
+ * El sello de lo que se usó para calcular: versión del algoritmo + estado de la geología (capas con
+ * rol geológico) + estado de las muestras. Si alguien carga, borra o reemplaza una capa geológica o
+ * un lote de muestras, el sello cambia y lo calculado antes pasa a pendiente, sin borrar nada. El
+ * satélite es por concesión y ya borra su fila al recalcularse (satelite.ts).
+ */
+export async function selloInsumos(): Promise<string> {
+  await asegurarMuestras();
+  const [g] = await consulta<{ n: number; t: string | null; e: number }>(
+    `SELECT count(*)::int AS n, max(subido)::text AS t, coalesce(sum(entidades), 0)::int AS e FROM capa
+      WHERE rol IN ('litologia', 'falla', 'placa', 'provincia_geologica', 'tracto_permisivo', 'ocurrencia')`
+  );
+  const [m] = await consulta<{ n: number; t: string | null }>(`SELECT count(*)::int AS n, max(cargada)::text AS t FROM muestra_geoquimica`);
+  return `${VERSION_PROSPECTIVIDAD}|g${g?.n ?? 0}:${g?.e ?? 0}:${g?.t ?? '-'}|m${m?.n ?? 0}:${m?.t ?? '-'}`;
+}
+
 async function muestrasDe(id: number): Promise<MuestraProsp[]> {
   await asegurarMuestras();
   const cols = ELEMENTOS.map((e) => (e === 'as' ? 'as_' : e));
@@ -179,8 +201,8 @@ async function sateliteDe(id: number): Promise<SateliteConcesion | null> {
 
 /** Calcula y guarda. Si ya se tiene la geología (la ficha la calcula igual), se pasa y no se repite. */
 export async function prospectividadDe(id: number, geo?: Geologia | { error: string } | null): Promise<Prospectividad> {
-  const [g, ms, s] = await Promise.all([geo !== undefined ? geo : geologiaDe({ concesion: id }), muestrasDe(id), sateliteDe(id)]);
-  const p = puntuar(g && !('error' in g) ? g : null, ms, s);
+  const [g, ms, s, sello] = await Promise.all([geo !== undefined ? geo : geologiaDe({ concesion: id }), muestrasDe(id), sateliteDe(id), selloInsumos()]);
+  const p = { ...puntuar(g && !('error' in g) ? g : null, ms, s), sello };
   await asegurarTabla();
   await consulta(
     `INSERT INTO prospectividad_concesion (concesion_id, puntaje, datos, calculado) VALUES ($1, $2, $3, now())
@@ -207,8 +229,10 @@ export function prospectividadEnRenglones(p: Prospectividad): string[] {
  */
 export async function puntajesPorConcesion(): Promise<Map<number, number | null>> {
   await asegurarTabla();
+  // Lo calculado con otro algoritmo u otros insumos no se pinta: queda como no calculado (H15).
   const filas = await consulta<{ id: string; p: number; cob: number | null }>(
-    `SELECT concesion_id::text AS id, puntaje AS p, (datos->>'cobertura')::int AS cob FROM prospectividad_concesion`
+    `SELECT concesion_id::text AS id, puntaje AS p, (datos->>'cobertura')::int AS cob FROM prospectividad_concesion WHERE datos->>'sello' = $1`,
+    [await selloInsumos()]
   );
   return new Map(filas.map((f) => [Number(f.id), f.cob != null && f.cob <= 0 ? null : Number(f.p)]));
 }
@@ -226,11 +250,14 @@ export async function calcularTodas(opts: { soloFaltantes?: boolean } = {}): Pro
   let ids: Array<{ id: string }> = [];
   try {
     await asegurarTabla();
-    ids = await consulta<{ id: string }>(
-    opts.soloFaltantes
-      ? `SELECT c.id::text AS id FROM concesion c LEFT JOIN prospectividad_concesion p ON p.concesion_id = c.id WHERE p.concesion_id IS NULL AND c.geom IS NOT NULL ORDER BY c.id`
-      : `SELECT id::text AS id FROM concesion WHERE geom IS NOT NULL ORDER BY id`
-    );
+    // «Faltantes» incluye lo vencido: calculado con otro algoritmo o con otros insumos (H15).
+    ids = opts.soloFaltantes
+      ? await consulta<{ id: string }>(
+          `SELECT c.id::text AS id FROM concesion c LEFT JOIN prospectividad_concesion p ON p.concesion_id = c.id
+            WHERE (p.concesion_id IS NULL OR p.datos->>'sello' IS DISTINCT FROM $1) AND c.geom IS NOT NULL ORDER BY c.id`,
+          [await selloInsumos()]
+        )
+      : await consulta<{ id: string }>(`SELECT id::text AS id FROM concesion WHERE geom IS NOT NULL ORDER BY id`);
   } catch (e) {
     lote.corriendo = false;
     throw e;
@@ -255,20 +282,26 @@ export async function calcularTodas(opts: { soloFaltantes?: boolean } = {}): Pro
 /** Las más prospectivas y cuántas hay calculadas: lo comparten la ruta del tablero y Dr Electrum. */
 export async function rankingProspectividad(limite = 30): Promise<{
   calculadas: number;
+  pendientes: number;
   ranking: Array<{ id: number; nombre: string; puntaje: number; nivel: Prospectividad['nivel']; cobertura: number; estado: EstadoProsp }>;
 }> {
   await asegurarTabla();
+  const sello = await selloInsumos();
   // Las sin datos no entran; las evaluadas van antes que las de evidencia insuficiente, para no
   // poner arriba a una concesión solo porque tiene un componente medido y alto.
   const top = await consulta<{ id: string; nombre: string; puntaje: number; datos: Prospectividad }>(
     `SELECT c.id::text AS id, c.nombre, p.puntaje, p.datos FROM prospectividad_concesion p JOIN concesion c ON c.id = p.concesion_id
-      WHERE coalesce((p.datos->>'cobertura')::int, 0) > 0
+      WHERE coalesce((p.datos->>'cobertura')::int, 0) > 0 AND p.datos->>'sello' = $2
       ORDER BY coalesce((p.datos->>'cobertura')::int, 0) >= ${COBERTURA_MINIMA} DESC, p.puntaje DESC, c.nombre LIMIT $1`,
-    [limite]
+    [limite, sello]
   ).then(conTextoReparado);
-  const [{ n }] = await consulta<{ n: number }>(`SELECT count(*)::int AS n FROM prospectividad_concesion`);
+  const [{ n, viejas }] = await consulta<{ n: number; viejas: number }>(
+    `SELECT count(*) FILTER (WHERE datos->>'sello' = $1)::int AS n, count(*) FILTER (WHERE datos->>'sello' IS DISTINCT FROM $1)::int AS viejas FROM prospectividad_concesion`,
+    [sello]
+  );
   return {
     calculadas: n,
+    pendientes: viejas,
     ranking: top.map((t) => ({ id: Number(t.id), nombre: t.nombre, puntaje: t.puntaje, nivel: t.datos.nivel, cobertura: t.datos.cobertura, estado: estadoDe(t.datos.cobertura) })),
   };
 }
@@ -278,8 +311,8 @@ export function montarRutasProspectividad(app: Express) {
   app.get('/api/electrum/prospectividad', E, limitar(30), async (_req: Request, res: Response) => {
     if (!hayBase()) return res.status(503).json({ error: 'El catastro no está conectado en este servidor.', honesto: true });
     try {
-      const { calculadas, ranking } = await rankingProspectividad(30);
-      return res.json({ calculadas, lote, ranking, honesto: true });
+      const { calculadas, pendientes, ranking } = await rankingProspectividad(30);
+      return res.json({ calculadas, pendientes, lote, ranking, honesto: true });
     } catch (e: any) {
       console.error('[prospectividad]', String(e?.message || e).slice(0, 200));
       return res.status(500).json({ error: 'No pude leer la prospectividad.', honesto: true });

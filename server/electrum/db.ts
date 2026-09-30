@@ -19,6 +19,7 @@ import { areaHectareas, etiqueta, repararTexto, type Capa } from './gis';
 import { buscarPorSignificado } from './vectores';
 import { fundirPorRango } from '../../lib/cognitivo/embeddings';
 import { trazaActual } from '../../lib/cognitivo/traza';
+import { anotarEvidencia } from './evidencias';
 
 let pool: Pool | null = null;
 
@@ -1192,7 +1193,7 @@ export async function buscarPorTexto(
    */
   const SQL = (op: string) => `
     WITH q AS (SELECT ${op} AS tq)
-    SELECT f.id, d.nombre AS documento, f.pagina,
+    SELECT f.id, d.nombre AS documento, f.pagina, d.id::int AS documento_id, (d.meta->>'origen' = 'foto_transcrita' AND coalesce(d.meta->>'revisado', 'false') <> 'true') AS transcripcion,
            ts_headline('spanish', f.texto, q.tq,
              'MaxWords=55, MinWords=25, ShortWord=3, MaxFragments=2, FragmentDelimiter=" … ", StartSel="", StopSel=""') AS texto,
            ts_rank(f.tsv, q.tq)::float8 AS puntaje
@@ -1227,8 +1228,8 @@ export async function buscarPorTexto(
 async function primerosFragmentos(documento: string | undefined, limite: number) {
   const filtro = filtroDocumento(documento, 2);
   if (!filtro.sql) return [];
-  return consulta<{ id: number; documento: string; pagina: number | null; texto: string; puntaje: number }>(
-    `SELECT f.id, d.nombre AS documento, f.pagina, left(f.texto, 700) AS texto, 0::float8 AS puntaje
+  return consulta<{ id: number; documento: string; documento_id: number; transcripcion: boolean; pagina: number | null; texto: string; puntaje: number }>(
+    `SELECT f.id, d.nombre AS documento, f.pagina, d.id::int AS documento_id, (d.meta->>'origen' = 'foto_transcrita' AND coalesce(d.meta->>'revisado', 'false') <> 'true') AS transcripcion, left(f.texto, 700) AS texto, 0::float8 AS puntaje
        FROM fragmento f JOIN documento d ON d.id = f.documento_id
       WHERE f.orden < 3${filtro.sql}
       ORDER BY d.id, f.orden
@@ -1237,7 +1238,19 @@ async function primerosFragmentos(documento: string | undefined, limite: number)
   );
 }
 
-export type HitExpediente = { documento: string; pagina: number | null; texto: string; puntaje: number; via?: 'texto' | 'significado' | 'ambos' };
+export type HitExpediente = {
+  documento: string;
+  pagina: number | null;
+  texto: string;
+  puntaje: number;
+  via?: 'texto' | 'significado' | 'ambos';
+  /** Número del documento: con la página, el localizador que se puede comprobar (auditoría H13). */
+  documentoId?: number;
+  /** El código con que se cita: `D12-p5`. */
+  codigo?: string;
+  /** Viene de una foto transcrita que nadie revisó todavía (auditoría H11). */
+  transcripcion?: boolean;
+};
 
 /**
  * La búsqueda de expedientes que usa Dr Electrum: HÍBRIDA si hay vectores (texto completo +
@@ -1250,19 +1263,27 @@ export async function buscarEnExpedientes(texto: string, limite = 8, opts: { doc
     buscarPorSignificado(texto, Math.max(limite, 20), opts).catch(() => []),
   ]);
   let hits: HitExpediente[];
+  const deFila = (x: { documento_id?: number; transcripcion?: boolean }) => ({
+    documentoId: x.documento_id != null ? Number(x.documento_id) : undefined,
+    transcripcion: x.transcripcion === true || undefined,
+  });
   if (!porSignificado.length) {
-    hits = porTexto.slice(0, limite).map(({ id: _id, ...h }) => ({ ...h, via: 'texto' as const }));
+    hits = porTexto.slice(0, limite).map(({ id: _id, documento_id, transcripcion, ...h }: any) => ({ ...h, ...deFila({ documento_id, transcripcion }), via: 'texto' as const }));
   } else {
-    const fundidos = fundirPorRango<{ id: number; documento: string; pagina: number | null; texto: string }>([porTexto, porSignificado], (x) => String(x.id));
+    const fundidos = fundirPorRango<{ id: number; documento: string; pagina: number | null; texto: string; documento_id?: number; transcripcion?: boolean }>([porTexto, porSignificado], (x) => String(x.id));
     hits = fundidos.slice(0, limite).map(({ item, puntaje, de }) => ({
       documento: item.documento,
       pagina: item.pagina,
       texto: item.texto,
+      ...deFila(item),
       puntaje: Math.round(puntaje * 10000) / 10000,
       via: de.length > 1 ? ('ambos' as const) : de[0] === 0 ? ('texto' as const) : ('significado' as const),
     }));
   }
-  for (const h of hits) trazaActual()?.documento({ fuente: h.documento, ref: h.pagina ? `p. ${h.pagina}` : undefined, puntaje: h.puntaje });
+  for (const h of hits) {
+    trazaActual()?.documento({ fuente: h.documento, ref: h.pagina ? `p. ${h.pagina}` : undefined, puntaje: h.puntaje });
+    if (h.documentoId != null) h.codigo = anotarEvidencia({ documentoId: h.documentoId, documento: h.documento, pagina: h.pagina, transcripcion: h.transcripcion });
+  }
   return hits;
 }
 
@@ -1274,6 +1295,8 @@ export type LecturaSeguida =
   | {
       ok: true;
       documento: string;
+      /** El número del documento: con la página arma el código de cita `D12-p5` (auditoría H13). */
+      documentoId: number;
       carpeta: string | null;
       desde: number;
       hasta: number;
@@ -1373,9 +1396,13 @@ export async function leerSeguido(
     if (prox?.p != null) sigue = { pagina: Number(prox.p), trozo: 0 };
   }
   trazaActual()?.documento({ fuente: d.nombre, ref: conPaginas ? `pp. ${inicio}-${Math.max(inicio, hasta)}` : undefined, puntaje: 1 });
+  // Cada página leída queda como evidencia citable del turno (auditoría H13); sin páginas, el documento.
+  if (conPaginas) for (let p = inicio; p <= Math.max(inicio, hasta) && p < inicio + 40; p += 1) anotarEvidencia({ documentoId: Number(d.id), documento: d.nombre, pagina: p });
+  else anotarEvidencia({ documentoId: Number(d.id), documento: d.nombre, pagina: null });
   return {
     ok: true,
     documento: d.nombre,
+    documentoId: Number(d.id),
     carpeta: d.carpeta,
     desde: inicio,
     hasta: Math.max(inicio - 1, hasta),

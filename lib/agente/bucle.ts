@@ -39,6 +39,11 @@ export type Pensar = (opts: {
    * Quien implemente `pensar` tiene que acotar su petición con esto.
    */
   msRestante: number;
+  /**
+   * Se dispara si quien preguntaba se fue (auditoría H09). Quien implemente `pensar` la pasa a su
+   * `fetch` para cortar la llamada al modelo en vez de dejarla correr para nadie.
+   */
+  senal?: AbortSignal;
 }) => Promise<{ texto: string; mensaje?: any }>;
 
 export type Presupuesto = {
@@ -95,6 +100,12 @@ export async function correrAgente(opts: {
    * empieza nada nuevo.
    */
   abandonado?: () => boolean;
+  /**
+   * La cancelación de verdad (auditoría H09): cuando se dispara, la llamada al modelo en curso se
+   * corta y el bucle deja de esperar a la herramienta que esté corriendo. `abandonado` solo evitaba
+   * empezar cosas nuevas; lo ya empezado seguía hasta su tope.
+   */
+  senal?: AbortSignal;
   /** true cuando se sabe que el servidor acepta `tools`; si no, se instruye por prompt. */
   nativo?: boolean;
   /** Se llama en cuanto una herramienta deja algo para la interfaz (el mapa no espera al final). */
@@ -102,6 +113,7 @@ export async function correrAgente(opts: {
 }): Promise<Resultado> {
   const p = { ...PRESUPUESTO, ...(opts.presupuesto || {}) };
   const t0 = Date.now();
+  const seFue = () => opts.senal?.aborted === true || opts.abandonado?.() === true;
   const porNombre = new Map(opts.herramientas.map((h) => [h.nombre, h]));
   const nativas = herramientasNativas(opts.herramientas);
 
@@ -125,13 +137,13 @@ export async function correrAgente(opts: {
     // terminó pegando resúmenes crudos. El segundo intento se lo dice sin rodeos.
     for (const [i, cierre] of [CIERRE, CIERRE_ESTRICTO].entries()) {
       // Quien preguntó puede haberse ido mientras corría el primer intento: no se empieza otro.
-      if (opts.abandonado?.()) return null;
+      if (seFue()) return null;
       // El reintento solo si cabe entero: el adaptador del nodo no baja de 8 s por llamada
       // (MIN_LLAMADA_MS en server/electrum/turno.ts), y el turno no puede pasarse de su tope.
       const restante = p.ms - (Date.now() - t0);
       if (restante < (i === 0 ? 5_000 : MS_REINTENTO_CIERRE)) return null;
       try {
-        const s = await opts.pensar({ mensajes: [...mensajes, { role: 'user', content: cierre }], herramientas: [], msRestante: restante });
+        const s = await opts.pensar({ mensajes: [...mensajes, { role: 'user', content: cierre }], herramientas: [], msRestante: restante, senal: opts.senal });
         const t = limpiarTexto(s.texto || '');
         if (t) return t;
       } catch {
@@ -148,7 +160,7 @@ export async function correrAgente(opts: {
   for (let ronda = 1; ronda <= p.rondas + 1; ronda++) {
     const restante = p.ms - (Date.now() - t0);
     if (restante <= 0) return { texto: limpiarTexto(texto) || sinTiempo(traza), traza, ui, fin: 'sin tiempo', rondas: ronda - 1 };
-    if (opts.abandonado?.()) return { texto: limpiarTexto(texto), traza, ui, fin: 'abandonado', rondas: ronda - 1 };
+    if (seFue()) return { texto: limpiarTexto(texto), traza, ui, fin: 'abandonado', rondas: ronda - 1 };
 
     /*
      * Si la llamada al modelo se cae o se pasa de tiempo, el turno NO se cae con ella.
@@ -160,8 +172,9 @@ export async function correrAgente(opts: {
      */
     let salida: { texto: string; mensaje?: any };
     try {
-      salida = await opts.pensar({ mensajes, herramientas: nativas, msRestante: restante });
+      salida = await opts.pensar({ mensajes, herramientas: nativas, msRestante: restante, senal: opts.senal });
     } catch (e: any) {
+      if (seFue()) return { texto: limpiarTexto(texto), traza, ui, fin: 'abandonado', rondas: ronda - 1 };
       const corte = /abort|timeout|tiempo/i.test(String(e?.name || '') + String(e?.message || ''));
       return {
         texto: limpiarTexto(texto) || (corte ? sinTiempo(traza) : seCayo(traza, e)),
@@ -210,7 +223,7 @@ export async function correrAgente(opts: {
         break;
       }
       if (Date.now() - t0 >= p.ms) break;
-      if (opts.abandonado?.()) break;
+      if (seFue()) break;
 
       const huella = `${l.nombre}:${JSON.stringify(l.argumentos)}`;
       const previa = hechas.get(huella);
@@ -253,7 +266,10 @@ export async function correrAgente(opts: {
           resultado = { ok: false, texto: textoDeDecision({ herramienta: h.nombre }, dec) };
         } else {
           try {
-            resultado = await conTope(h.ejecutar(v.args, opts.ctx), h.msMaximo ?? 20_000, h.nombre);
+            // Su tope, pero nunca más de lo que le queda al turno (auditoría H08): una herramienta
+            // de 20 s lanzada a 45 s de un turno de 50 ya no puede llevarse el turno a 65.
+            const queda = Math.max(1_000, p.ms - (Date.now() - t0));
+            resultado = await conTope(h.ejecutar(v.args, { ...opts.ctx, senal: opts.senal }), Math.min(h.msMaximo ?? 20_000, queda), h.nombre, opts.senal);
           } catch (e: any) {
             resultado = { ok: false, texto: `«${h.nombre}» falló: ${String(e?.message || e).slice(0, 180)}` };
           }
@@ -291,12 +307,22 @@ const CIERRE_ESTRICTO =
   '(Sistema) NO podés pedir herramientas: no hay más. Escribí YA, en texto normal y sin etiquetas, la respuesta final con lo que devolvieron las herramientas de arriba; si algo salió de un documento, con su documento y página. Si faltó algo, decilo en una línea.';
 const MS_REINTENTO_CIERRE = 8_000;
 
-/** Una herramienta colgada no puede colgar el turno entero. */
-function conTope<T>(promesa: Promise<T>, ms: number, nombre: string): Promise<T> {
-  return Promise.race([
-    promesa,
-    new Promise<T>((_, rechazar) => setTimeout(() => rechazar(new Error(`«${nombre}» tardó más de ${Math.round(ms / 1000)} segundos`)), ms)),
-  ]);
+/**
+ * Una herramienta colgada no puede colgar el turno entero. El reloj se limpia al terminar (antes
+ * quedaba vivo hasta su tope aunque la herramienta hubiera contestado), y si quien preguntaba se
+ * va, se deja de esperar en el acto (auditoría H09).
+ */
+export function conTope<T>(promesa: Promise<T>, ms: number, nombre: string, senal?: AbortSignal): Promise<T> {
+  return new Promise<T>((resolver, rechazar) => {
+    if (senal?.aborted) return rechazar(new Error(`«${nombre}» cancelada: quien preguntaba se fue`));
+    const reloj = setTimeout(() => rechazar(new Error(`«${nombre}» tardó más de ${Math.round(ms / 1000)} segundos`)), ms);
+    const cortar = () => rechazar(new Error(`«${nombre}» cancelada: quien preguntaba se fue`));
+    senal?.addEventListener('abort', cortar, { once: true });
+    promesa.then(resolver, rechazar).finally(() => {
+      clearTimeout(reloj);
+      senal?.removeEventListener('abort', cortar);
+    });
+  });
 }
 
 function cierreForzado(traza: Traza[]): string {
