@@ -21,6 +21,7 @@
 import { clave } from '../lib/boveda';
 import type { Emocion } from '../lib/emocion';
 import type { Presupuesto } from '../lib/presupuesto';
+import type { AlineacionEleven } from '../lib/alineacion';
 
 /** Jorge — Neutral Latin American Spanish (biblioteca de ElevenLabs): maduro, grave, creíble. */
 export const VOZ_ELECTRUM_ELEVEN = 'Rt1JHkPO27QCUX6Nd5bV';
@@ -362,11 +363,8 @@ export function estabilidadDe(emocion: string | undefined): number {
  * no se pudo. Es lo que usa la ruta de la web para pasarle el audio al navegador a medida que
  * ElevenLabs lo genera, en vez de esperar al final.
  */
-export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> {
-  const key = clave('elevenlabs');
-  if (!key || !elevenListo()) return null;
-  if (opts.reloj && !opts.reloj.alcanza()) return null;
-  const timeoutMs = opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000);
+/** El cuerpo de la síntesis: el mismo con tiempos o sin ellos (misma voz, modelo y ajustes). */
+export function cuerpoEleven(opts: PedidoEleven): Record<string, unknown> {
   const cuerpo: Record<string, unknown> = {
     text: opts.texto,
     model_id: modeloEleven(),
@@ -376,6 +374,15 @@ export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> 
   };
   if (opts.previo) cuerpo.previous_text = opts.previo.slice(-300);
   if (opts.siguiente) cuerpo.next_text = opts.siguiente.slice(0, 300);
+  return cuerpo;
+}
+
+export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> {
+  const key = clave('elevenlabs');
+  if (!key || !elevenListo()) return null;
+  if (opts.reloj && !opts.reloj.alcanza()) return null;
+  const timeoutMs = opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000);
+  const cuerpo = cuerpoEleven(opts);
   try {
     const r = await fetch(`${API}/text-to-speech/${encodeURIComponent(opts.voz)}/stream?output_format=${FORMATO}`, {
       method: 'POST',
@@ -399,8 +406,81 @@ export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> 
   }
 }
 
-/** La síntesis entera en memoria (para la caché, el respaldo y quien no pasa el audio en vivo). */
-export async function hablarEleven(opts: PedidoEleven): Promise<{ audio: Buffer; contentType: string } | null> {
+/* ---------------- Con los tiempos por letra (la boca del avatar) ---------------- */
+
+/**
+ * La misma síntesis pidiendo TAMBIÉN los tiempos por letra (/text-to-speech/{voz}/with-timestamps):
+ * misma voz, mismo modelo, mismos ajustes; solo cambia que la respuesta trae el audio en base64 y la
+ * alineación. La documentación de ElevenLabs (30-sep-2026) no dice si v4 la acepta por HTTP: si el
+ * modelo configurado la rechaza (400/404/422), se anota y durante seis horas se pide el audio solo
+ * (la boca sigue con el nivel del audio). Nunca se reintenta en bucle ni se cambia de modelo.
+ */
+const sinTiempos = new Map<string, number>();
+export const SIN_TIEMPOS_MS = 6 * 60 * 60_000;
+
+export function tiemposDisponibles(modelo = modeloEleven(), ahora = Date.now()): boolean {
+  return (sinTiempos.get(modelo) || 0) <= ahora;
+}
+
+/** Solo para pruebas. */
+export function _olvidarSinTiempos() {
+  sinTiempos.clear();
+}
+
+type ConTiempos = { audio: Buffer; contentType: string; alineacion: AlineacionEleven | null };
+
+/** null: no hubo voz (sin clave, cupo, red); 'sin-tiempos': que se pida el audio solo. */
+export async function hablarElevenConTiempos(opts: PedidoEleven, ahora = Date.now()): Promise<ConTiempos | null | 'sin-tiempos'> {
+  const key = clave('elevenlabs');
+  if (!key || !elevenListo()) return null;
+  if (opts.reloj && !opts.reloj.alcanza()) return null;
+  const modelo = modeloEleven();
+  if (!tiemposDisponibles(modelo, ahora)) return 'sin-tiempos';
+  const timeoutMs = opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000);
+  try {
+    const r = await fetch(`${API}/text-to-speech/${encodeURIComponent(opts.voz)}/with-timestamps?output_format=${FORMATO}`, {
+      method: 'POST',
+      headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(cuerpoEleven(opts)),
+      signal: opts.reloj ? opts.reloj.senal(timeoutMs) : AbortSignal.timeout(timeoutMs),
+    });
+    if (!r.ok) {
+      const txt = (await r.text().catch(() => '')).slice(0, 240);
+      const pausa = pausaPorFallo(r.status, txt);
+      if (pausa) {
+        pausaHasta = Date.now() + pausa;
+        ultimoFallo = `${r.status} ${txt.slice(0, 120)}`;
+        console.warn('[voz eleven tiempos]', r.status, `(pausa ${Math.round(pausa / 1000)} s)`);
+        return null;
+      }
+      if (r.status === 400 || r.status === 404 || r.status === 422) {
+        sinTiempos.set(modelo, ahora + SIN_TIEMPOS_MS);
+        console.warn('[voz eleven tiempos]', r.status, `${modelo} no da tiempos: audio solo por 6 h`);
+      }
+      return 'sin-tiempos';
+    }
+    const j: any = await r.json();
+    const audio = Buffer.from(String(j?.audio_base64 || ''), 'base64');
+    if (audio.length < 400) return 'sin-tiempos';
+    const alineacion = (j?.normalized_alignment || j?.alignment || null) as AlineacionEleven | null;
+    return { audio, contentType: 'audio/mpeg', alineacion };
+  } catch (e: any) {
+    ultimoFallo = String(e?.message || e).slice(0, 120);
+    console.warn('[voz eleven tiempos]', ultimoFallo);
+    return 'sin-tiempos';
+  }
+}
+
+/**
+ * La síntesis entera en memoria (para la caché, el respaldo y quien no pasa el audio en vivo). Con
+ * `tiempos`, pide también los tiempos por letra; si no los dan, el audio solo, como siempre.
+ */
+export async function hablarEleven(opts: PedidoEleven & { tiempos?: boolean }): Promise<{ audio: Buffer; contentType: string; alineacion?: AlineacionEleven | null } | null> {
+  if (opts.tiempos) {
+    const t = await hablarElevenConTiempos(opts);
+    if (t === null) return null;
+    if (t !== 'sin-tiempos') return t;
+  }
   const r = await abrirEleven(opts);
   if (!r) return null;
   try {

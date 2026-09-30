@@ -126,6 +126,9 @@ export type VivoCompa = {
   fase: number;
   /** La palomita ✔: 0 nada, 0..1 se dibuja, 1..2 se desvanece. */
   palomita: number;
+  /** La forma de la boca que dice la voz (senalVoz): 1 redonda (o, u) … 0; 1 ancha (e, i, s) … 0. */
+  redonda: number;
+  ancha: number;
   /** 0..1: el latido del aura dorada. */
   latido: number;
 };
@@ -144,6 +147,8 @@ export const VIVO_QUIETO: VivoCompa = {
   fase: 0,
   palomita: 0,
   latido: 0.5,
+  redonda: 0,
+  ancha: 0,
 };
 
 /** Los colores de la compañera, sacados del avatar. */

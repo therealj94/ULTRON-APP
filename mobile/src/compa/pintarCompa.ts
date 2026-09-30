@@ -207,6 +207,9 @@ export function pintarCompa(Sk: SkiaApi, c: SkCanvas, M: Medidas, f: Figura, v: 
     const my = cy + R * 0.4;
     const w = R * 0.4 * f.ancho;
     const abierta = lim01(f.abierta + lim01(v.voz) * 0.95);
+    // Con la voz, la forma del visema: la «o» y la «u» juntan la boca; la «e», la «i» y la «s» la estiran.
+    const forma = 1 - 0.38 * lim01(v.redonda ?? 0) + 0.22 * lim01(v.ancha ?? 0);
+    const alto = 1 + 0.18 * lim01(v.redonda ?? 0) - 0.22 * lim01(v.ancha ?? 0);
     const curva = f.boca * R * 0.13;
     if (abierta < 0.06) {
       const p = Sk.Path.Make();
@@ -214,16 +217,16 @@ export function pintarCompa(Sk: SkiaApi, c: SkCanvas, M: Medidas, f: Figura, v: 
       p.quadTo(mx, my + curva * 1.2, mx + w / 2, my - curva * 0.4);
       c.drawPath(p, pincel(Sk, e.main, 0.95, Math.max(1.4, R * 0.075)));
     } else {
-      const h = R * (0.08 + 0.3 * abierta);
+      const h = R * (0.08 + 0.3 * abierta) * alto;
       const hueco = Sk.Path.Make();
       if (f.boca > 0.35) {
-        const ww = w * (0.85 + 0.15 * abierta);
+        const ww = w * (0.85 + 0.15 * abierta) * forma;
         hueco.moveTo(mx - ww / 2, my - h * 0.2);
         hueco.quadTo(mx, my - h * 0.05, mx + ww / 2, my - h * 0.2);
         hueco.cubicTo(mx + ww / 2, my + h * 1.1, mx - ww / 2, my + h * 1.1, mx - ww / 2, my - h * 0.2);
         hueco.close();
       } else {
-        const ww = w * (0.6 + 0.3 * abierta);
+        const ww = w * (0.6 + 0.3 * abierta) * forma;
         hueco.addOval(Sk.XYWHRect(mx - ww / 2, my - h * 0.35, ww, h));
       }
       c.drawPath(hueco, pincel(Sk, '#120C08', 1));

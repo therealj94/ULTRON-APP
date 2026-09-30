@@ -476,6 +476,9 @@ let parpadeo = 0;
 let proximoParpadeo = 1.5;
 let tiempo = 0;
 let habla = 0;
+/** Qué tan rápido va la boca a su forma (1/s): abriendo y cerrando. */
+const BOCA_ABRE = 40;
+const BOCA_CIERRA = 45;
 /** Las formas que usan los visemas del mapeo (se mueven rápido, como la boca). */
 let formasDeBoca = new Set<string>();
 const eu = new THREE.Euler();
@@ -539,7 +542,9 @@ function actualizar(dt: number) {
     const esParpado = mapeo.parpadeo.includes(nombre);
     const antes = pesos.get(nombre) || 0;
     const objetivo = meta[nombre] || 0;
-    const ahora = esParpado ? objetivo : suave(antes, objetivo, deBoca ? 18 : 8, dt);
+    // La boca sigue a la voz casi en el acto (abre en ~25 ms, cierra en ~22: al cortar la voz se
+    // cierra antes de 100 ms); la cara, más despacio. pruebas/sincronia.prueba.mjs mide con estos números.
+    const ahora = esParpado ? objetivo : suave(antes, objetivo, deBoca ? (objetivo < antes ? BOCA_CIERRA : BOCA_ABRE) : 8, dt);
     const quieto = Math.abs(ahora - antes) < 1e-4 && antes === objetivo;
     if (!quieto) pesos.set(nombre, ahora);
     for (const { mesh, i } of lista) {

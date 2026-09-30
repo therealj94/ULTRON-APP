@@ -3,7 +3,8 @@
  * cuerpo que la dibuje (la figurita 2D, el modelo 3D, lo que venga).
  *
  * De dónde sale hoy la voz de AURA:
- *  · la voz de la MESA (lib/tts.ts): una envolvente sincronizada con el audio que suena (lipsync.ts);
+ *  · la voz de la MESA (lib/tts.ts): los tiempos por letra que manda el servidor, sobre la posición
+ *    real del audio (`formaReproducida`), o una envolvente sincronizada con él (lipsync.ts);
  *  · la CONVERSACIÓN fluida (components/ModoConversacion.tsx): el volumen real que da el SDK de
  *    ElevenLabs cada 50 ms, que entra a tts por `nivelExterno`.
  * Las dos terminan en `tts.escucharNivelVoz`; el VozProvider conecta ese nivel aquí (`nivel`). La
@@ -13,7 +14,7 @@
  * Sin React Native: se prueba en Node.
  */
 import { canal } from '../compa/canales';
-import { BOCA_CERRADA, type Boca } from './tipos';
+import { BOCA_CERRADA, type Boca, type Visema } from './tipos';
 import { componerBoca, LineaVisemas, type Alineacion } from './visemas';
 
 /** Un espectro más viejo que esto ya no describe lo que suena. */
@@ -26,6 +27,8 @@ export class SenalVoz {
   private espectroUltimo: { bandas: number[]; en: number } | null = null;
   private interesados = 0;
   private ultimoNivel = 0;
+  /** El visema que dicta el audio de la mesa en este instante (sus tiempos por letra), o null. */
+  private formaFija: Visema | null = null;
 
   constructor(
     private reloj: () => number = Date.now,
@@ -45,6 +48,15 @@ export class SenalVoz {
     this.espectroUltimo = { bandas: Array.from(bandas), en: this.reloj() };
   }
 
+  /**
+   * El visema del audio de la mesa que suena ahora (lib/tts.ts lo saca de los tiempos por letra y de
+   * la posición real del audio). Manda sobre todo lo demás; null lo suelta. El nivel que viene
+   * después publica la boca.
+   */
+  formaReproducida(v: Visema | null) {
+    this.formaFija = v;
+  }
+
   /** La alineación por letra de un pedazo de audio de ElevenLabs. */
   alineacion(al: Alineacion) {
     this.linea.agregar(al, this.reloj());
@@ -55,6 +67,7 @@ export class SenalVoz {
     this.linea.cortar();
     this.espectroUltimo = null;
     this.ultimoNivel = 0;
+    this.formaFija = null;
     this.boca.emitir(BOCA_CERRADA);
   }
 
@@ -77,7 +90,7 @@ export class SenalVoz {
   private publicar() {
     const t = this.reloj();
     const e = this.espectroUltimo && t - this.espectroUltimo.en <= ESPECTRO_VIGENTE_MS ? this.espectroUltimo.bandas : null;
-    const b = componerBoca(this.ultimoNivel, { alineado: this.linea.en(t), espectro: e });
+    const b = componerBoca(this.ultimoNivel, { alineado: this.formaFija ?? this.linea.en(t), espectro: e });
     const u = this.boca.ultimo();
     if (u.nivel === b.nivel && u.visema === b.visema && u.peso === b.peso) return;
     this.boca.emitir(b);

@@ -8,7 +8,7 @@
  *
  * El tacto (gestos.ts) y el ánimo (animo.ts) son máquinas puras; aquí solo se conectan y se ejecutan
  * sus efectos: háptica, risita, brinco, sacudida, globito, palomita ✔ y el doble toque que la
- * silencia de verdad (VozProvider). La boca sigue el volumen real de la voz (tts.escucharNivelVoz:
+ * silencia de verdad (VozProvider). La boca sigue la voz real (avatar3d/senalVoz: nivel y forma;
  * la de la mesa y la de la conversación fluida) y la cara, la emoción de lo que dice.
  *
  * En una llamada se va (con animación) y vuelve al colgar.
@@ -37,7 +37,7 @@ import Animated, {
 import { scheduleOnRN } from 'react-native-worklets';
 import * as Haptics from 'expo-haptics';
 import { playSfx } from '../lib/sfx';
-import { escucharNivelVoz } from '../lib/tts';
+import { senalVoz } from '../avatar3d/senalVoz';
 import { miga } from '../lib/reporte';
 import { tr } from '../i18n';
 import { MEDIDA } from '../nucleo/tema';
@@ -142,6 +142,8 @@ export function Companera() {
   const caminando = useSharedValue(0);
   const dir = useSharedValue(1);
   const vozNivel = useSharedValue(0);
+  const vozRedonda = useSharedValue(0);
+  const vozAncha = useSharedValue(0);
   const oido = useSharedValue(0);
   const dedoX = useSharedValue(0);
   const dedoY = useSharedValue(0);
@@ -376,14 +378,20 @@ export function Companera() {
     return () => cancelAnimation(fase);
   }, [conFase, exp, fase]);
 
-  // La boca: el nivel de la voz (la de la mesa o la de la conversación), sin pasar por React.
-  useEffect(
-    () =>
-      escucharNivelVoz((l) => {
-        vozNivel.value = withTiming(l, { duration: 60 });
-      }),
-    [vozNivel]
-  );
+  // La boca: la de la voz (la de la mesa o la de la conversación) con su forma (senalVoz: los tiempos
+  // por letra, el espectro o solo el nivel), sin pasar por React. Abre rápido y cierra suave.
+  useEffect(() => {
+    const soltar = senalVoz.pedirForma();
+    const off = senalVoz.boca.escuchar((b) => {
+      vozNivel.value = withTiming(b.nivel, { duration: b.nivel > vozNivel.value ? 30 : 70 });
+      vozRedonda.value = withTiming(b.visema === 'O' || b.visema === 'U' ? b.peso : 0, { duration: 50 });
+      vozAncha.value = withTiming(b.visema === 'E' || b.visema === 'I' || b.visema === 'SS' ? b.peso : 0, { duration: 50 });
+    });
+    return () => {
+      off();
+      soltar();
+    };
+  }, [vozNivel, vozRedonda, vozAncha]);
 
   // La voz de la persona: el anillo late y, si le hablan, se detiene y la mira.
   const ultimoOido = useRef(0);
@@ -587,6 +595,8 @@ export function Companera() {
           caminando: caminando.value,
           dir: dir.value,
           voz: vozNivel.value,
+          redonda: vozRedonda.value,
+          ancha: vozAncha.value,
           oido: oido.value,
           dedoX: dedoX.value,
           dedoY: dedoY.value,

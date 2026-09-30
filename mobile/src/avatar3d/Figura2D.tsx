@@ -34,6 +34,8 @@ export function Figura2D({ avatar, estado, ancho, alto }: PropsCuerpo) {
   const fase = useSharedValue(0);
   const voz = useSharedValue(0);
   const oido = useSharedValue(0);
+  const redonda = useSharedValue(0);
+  const ancha = useSharedValue(0);
   const dedoX = useSharedValue(0);
   const dedoY = useSharedValue(0);
   const dedo = useSharedValue(0);
@@ -96,8 +98,20 @@ export function Figura2D({ avatar, estado, ancho, alto }: PropsCuerpo) {
     return () => cancelAnimation(fase);
   }, [conFase, exp, fase]);
 
-  // La boca y el oído, sin pasar por React.
-  useEffect(() => senalVoz.boca.escuchar((b) => (voz.value = withTiming(b.nivel, { duration: 60 }))), [voz]);
+  // La boca (apertura y forma, abre rápido y cierra suave) y el oído, sin pasar por React. Mientras
+  // se ve, pide la forma: en la conversación se mide el espectro de la voz.
+  useEffect(() => {
+    const soltar = senalVoz.pedirForma();
+    const off = senalVoz.boca.escuchar((b) => {
+      voz.value = withTiming(b.nivel, { duration: b.nivel > voz.value ? 30 : 70 });
+      redonda.value = withTiming(b.visema === 'O' || b.visema === 'U' ? b.peso : 0, { duration: 50 });
+      ancha.value = withTiming(b.visema === 'E' || b.visema === 'I' || b.visema === 'SS' ? b.peso : 0, { duration: 50 });
+    });
+    return () => {
+      off();
+      soltar();
+    };
+  }, [voz, redonda, ancha]);
   useEffect(() => nivelOido.escuchar((l) => (oido.value = withTiming(l, { duration: 80 }))), [oido]);
 
   const cuadro = useDerivedValue(() => {
@@ -106,7 +120,7 @@ export function Figura2D({ avatar, estado, ancho, alto }: PropsCuerpo) {
         Skia,
         M,
         mezclarFigura(desde.value, hacia.value, mezcla.value),
-        { ...VIVO_QUIETO, parpadeo: parpadeo.value, respira: respira.value, voz: voz.value, oido: oido.value, dedoX: dedoX.value, dedoY: dedoY.value, dedo: dedo.value, fase: fase.value, latido: latido.value },
+        { ...VIVO_QUIETO, parpadeo: parpadeo.value, respira: respira.value, voz: voz.value, redonda: redonda.value, ancha: ancha.value, oido: oido.value, dedoX: dedoX.value, dedoY: dedoY.value, dedo: dedo.value, fase: fase.value, latido: latido.value },
         estilo
       );
     } catch {

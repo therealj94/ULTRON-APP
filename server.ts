@@ -53,6 +53,7 @@ import { extraerPdf, dataUrlDeImagen, bufferDeCualquier } from './lib/leer-pdf';
 import { transcribirAudio } from './lib/oido';
 import { esTareaDeCodigo } from './lib/prompts/cot';
 import { extraerEmocion, normalizarEmocion, type Emocion } from './lib/emocion';
+import { cabeceraAlineacion } from './lib/alineacion';
 import { enTurno, iniciarTraza, trazaActual } from './lib/cognitivo/traza';
 import { montarRutasCognitivas } from './server/cognitivo';
 import { montarMcp } from './server/mcp';
@@ -1809,6 +1810,8 @@ function leerPeticionVoz(req: express.Request) {
     performance: String(fuente.performance || 'speak') === 'sing' ? ('sing' as const) : ('speak' as const),
     avatar: normalizarAvatar(fuente.avatar),
     idioma: normalizarIdioma(fuente.idioma),
+    // La app nueva pide los tiempos por letra para mover la boca a tiempo (sin ellos, la de antes).
+    tiempos: String(fuente.tiempos || '') === '1',
   };
 }
 
@@ -1828,7 +1831,7 @@ async function responderVoz(req: express.Request, res: express.Response) {
   // del servidor propio (Voicebox), que no gasta créditos.
   const cuenta = cuentaDeVozMiembro(req);
   const sinEleven = !!cuenta && restanteVozMs(cuenta) <= 0;
-  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma, sinEleven });
+  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma, sinEleven, tiempos: p.tiempos });
   if (!out) return res.status(503).json({ error: 'Voz no disponible (Voicebox sin respuesta)', honesto: true });
   if (cuenta && !out.cache && out.motor.startsWith('elevenlabs')) anotarVoz(cuenta, msDeHabla(p.texto));
   if (sinEleven) res.setHeader('X-Ultron-Tope-Voz', '1');
@@ -1837,6 +1840,8 @@ async function responderVoz(req: express.Request, res: express.Response) {
   res.setHeader('X-Ultron-TTS', out.motor);
   res.setHeader('X-Ultron-Emocion', p.emocion);
   res.setHeader('X-Ultron-Ms', String(out.ms));
+  const alineacion = p.tiempos ? cabeceraAlineacion(out.alineacion) : null;
+  if (alineacion) res.setHeader('X-Ultron-Alineacion', alineacion);
   return res.send(out.audio);
 }
 

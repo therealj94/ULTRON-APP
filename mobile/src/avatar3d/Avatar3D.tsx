@@ -31,8 +31,11 @@ import type { AlaEscena, Calidad, DeLaEscena, InfoModelo, ZonaToque } from './ti
 
 /** Bytes por pedazo: múltiplo de 3, así cada pedazo es base64 completo (sin relleno en medio). */
 const PASO = 3 * 65536;
-/** La boca no necesita más de ~15 cuadros por segundo, y cada envío cruza el puente. */
-const BOCA_CADA_MS = 66;
+/**
+ * La boca, como mucho un envío por cuadro de 30 fps (cada envío cruza el puente). Un visema nuevo o
+ * el cierre salen al momento: esperar al siguiente turno atrasaría la boca respecto de la voz.
+ */
+const BOCA_CADA_MS = 33;
 /** Lo que se espera la respuesta de un raycast antes de tratar el toque como uno cualquiera. */
 const ESPERA_ZONA_MS = 180;
 
@@ -146,8 +149,9 @@ export const Avatar3D = forwardRef<ControlAvatar3D, Props>(function Avatar3D(
       if (!listo.current) return;
       const ahora = Date.now();
       const cerrar = b.nivel < 0.02 && previo.nivel >= 0.02;
-      const cambio = b.visema !== previo.visema || Math.abs(b.nivel - previo.nivel) >= 0.03;
-      if (!cerrar && (!cambio || ahora - enviadoEn < BOCA_CADA_MS)) return;
+      const otraForma = b.visema !== previo.visema;
+      const cambio = Math.abs(b.nivel - previo.nivel) >= 0.03;
+      if (!cerrar && !otraForma && (!cambio || ahora - enviadoEn < BOCA_CADA_MS)) return;
       enviadoEn = ahora;
       previo = { nivel: b.nivel, visema: b.visema };
       enviar({ tipo: 'boca', nivel: Math.round(b.nivel * 100) / 100, visema: b.visema, peso: Math.round(b.peso * 100) / 100 });

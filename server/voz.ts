@@ -23,6 +23,7 @@ import { leerWav, wavAMp3, type Pcm } from '../lib/mp3';
 import { trocearExpresiones } from '../lib/expresiones';
 import { adaptarPcm, empalmar, escribirWav, tomaDeExpresion } from './empalme';
 import type { Presupuesto } from '../lib/presupuesto';
+import type { AlineacionEleven } from '../lib/alineacion';
 import { abrirEleven, conMuletillas, elevenListo, estabilidadDe, guionEleven, hablarEleven, modeloEleven, normalizarAvatar, normalizarIdioma, vozEleven, type AvatarVoz, type Idioma } from './eleven';
 
 export type Performance = 'speak' | 'sing';
@@ -190,7 +191,7 @@ export function expresar(texto: string, _emocion: Emocion = 'neutral', _performa
 
 /* ---------------- Caché LRU en memoria ---------------- */
 
-type AudioHit = { audio: Buffer; contentType: string; motor: string; at: number };
+type AudioHit = { audio: Buffer; contentType: string; motor: string; at: number; alineacion?: AlineacionEleven | null };
 const cache = new Map<string, AudioHit>();
 const CACHE_MAX = 60;
 const CACHE_BYTES = 32 * 1024 * 1024;
@@ -276,7 +277,8 @@ export async function saludVoz(timeoutMs = 4000): Promise<{ ok: boolean; status:
 
 /* ---------------- API pública ---------------- */
 
-export type Habla = { audio: Buffer; contentType: string; motor: string; cache: boolean; ms: number };
+/** `alineacion`: los tiempos por letra de ElevenLabs, si se pidieron y los dio (la boca del avatar). */
+export type Habla = { audio: Buffer; contentType: string; motor: string; cache: boolean; ms: number; alineacion?: AlineacionEleven | null };
 
 /** Lo que se va a decir, ya partido: trozos para Voicebox y expresiones grabadas, en orden. */
 type Parte = { tipo: 'habla'; texto: string } | { tipo: 'expresion'; etiqueta: string };
@@ -446,6 +448,8 @@ export async function hablar(opts: {
   avatar?: AvatarVoz | string;
   /** En qué idioma habla la persona (lo elige al entrar). Decide la voz y cómo se lee el texto. */
   idioma?: Idioma | string;
+  /** Pedir también los tiempos por letra (la boca del avatar en el teléfono). No cambia la voz. */
+  tiempos?: boolean;
 }): Promise<Habla | null> {
   const t0 = Date.now();
   const performance: Performance = opts.performance === 'sing' ? 'sing' : 'speak';
@@ -463,11 +467,14 @@ export async function hablar(opts: {
   if (xiPedido) {
     if (!opts.sinCache) {
       const hit = cacheGet(xiPedido.clave);
-      if (hit) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0 };
+      // Si ahora se piden los tiempos y lo guardado no los trae, se vuelve a pedir (una vez: se guarda con ellos).
+      const sirve = hit && (!opts.tiempos || hit.alineacion !== undefined);
+      if (hit && sirve) return { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: Date.now() - t0, alineacion: hit.alineacion };
     }
-    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma });
+    const xi = await hablarEleven({ texto: xiPedido.guion, voz: xiPedido.voz, previo: opts.previo, siguiente: opts.siguiente, reloj: opts.presupuesto, estabilidad: xiPedido.estabilidad, idioma, tiempos: opts.tiempos });
     if (xi) {
-      const out = { ...xi, motor: xiPedido.motor };
+      // null: se pidieron los tiempos y no vinieron (así lo guardado no los vuelve a pedir).
+      const out = { ...xi, motor: xiPedido.motor, ...(opts.tiempos ? { alineacion: xi.alineacion ?? null } : {}) };
       cacheSet(xiPedido.clave, out);
       return { ...out, cache: false, ms: Date.now() - t0 };
     }

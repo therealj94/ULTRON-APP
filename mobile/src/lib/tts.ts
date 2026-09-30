@@ -13,8 +13,10 @@
  *  - Expresiones ([risa], [suspiro]…, src/lib/expresiones.ts): viajan dentro del texto y la voz las
  *    actúa; las demás etiquetas se quitan antes de pedir voz.
  *  - Reacciones sin palabras (speakReaccion): una expresión corta dicha por el avatar.
- *  - Lip-sync: cada reproducción emite un nivel 0..1 a 20 Hz (setSpeechLevelListener) calculado con
- *    lipsync.ts sobre positionMillis (expo-av no da metering al reproducir).
+ *  - Lip-sync: cada reproducción emite un nivel 0..1 (setSpeechLevelListener) sobre la posición REAL
+ *    del audio (positionMillis de expo-av, interpolada entre avisos). Si el servidor mandó los tiempos
+ *    por letra (cabecera X-Ultron-Alineacion), la boca sale de ellos: el visema exacto de cada letra,
+ *    30 veces por segundo, a senalVoz (avatar3d/sincronia.ts). Si no, la envolvente de lipsync.ts.
  *
  * Todo lo que suena pasa por playPrepared() y comparte la generación `gen`: stopSpeaking() corta
  * cualquier cosa, y cada función avisa onStart/onAudioStart/onEnd para que la mesa pause el mic.
@@ -29,6 +31,8 @@ import { frase, reaccionDe, type FraseId } from './frases';
 import { soloExpresiones } from './expresiones';
 import type { AvatarId } from '../avatares/catalogo';
 import { avatarActual, fijarAvatar } from '../avatares/actual';
+import { senalVoz } from '../avatar3d/senalVoz';
+import { ADELANTO_MS, BocaAlineada, Envolvente, PASO_BOCA_MS, RelojReproduccion, leerAlineacion, type AlineacionAudio } from '../avatar3d/sincronia';
 import { idiomaActual } from '../i18n';
 
 type Perf = 'speak' | 'sing';
@@ -44,6 +48,18 @@ export type SpeakCallbacks = {
 
 let current: Audio.Sound | null = null;
 let gen = 0;
+
+/** Los tiempos por letra de cada audio descargado (por su ruta en el teléfono) y de cada sonido preparado. */
+const alineaciones = new Map<string, AlineacionAudio>();
+const alineacionDeSonido = new WeakMap<Audio.Sound, AlineacionAudio>();
+
+/** Una cabecera, sin importar mayúsculas (Android e iOS no las devuelven igual). */
+function cabecera(h: unknown, nombre: string): string {
+  if (!h || typeof h !== 'object') return '';
+  const n = nombre.toLowerCase();
+  for (const [k, v] of Object.entries(h as Record<string, unknown>)) if (k.toLowerCase() === n) return String(v ?? '');
+  return '';
+}
 
 /** Quién habla: decide la voz que se pide al servidor (`avatar` en /api/tts). */
 export function setAvatarVoz(id: AvatarId) {
@@ -62,6 +78,7 @@ function guardarEnCache(key: string, uri: string) {
   while (fileCache.size > CACHE_MAX) {
     const [viejo, ruta] = fileCache.entries().next().value as [string, string];
     fileCache.delete(viejo);
+    alineaciones.delete(ruta);
     void FileSystem.deleteAsync(ruta, { idempotent: true }).catch(() => {});
   }
 }
@@ -238,6 +255,8 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<
       const info = await FileSystem.getInfoAsync(path);
       if (r.status === 200 && info.exists && (info.size || 0) > 64 && (!ct || /audio|octet/.test(ct))) {
         const uri = await conExtension(path, ct);
+        const al = leerAlineacion(cabecera(r.headers, 'X-Ultron-Alineacion'));
+        if (al) alineaciones.set(uri, al);
         guardarEnCache(key, uri);
         return { uri };
       }
@@ -307,6 +326,9 @@ async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
   if (suspendida) return null;
   try {
     const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: false, progressUpdateIntervalMillis: 50 });
+    const uri = typeof source === 'object' && source && 'uri' in source ? String((source as { uri?: string }).uri || '') : '';
+    const al = uri ? alineaciones.get(uri) : undefined;
+    if (al) alineacionDeSonido.set(sound, al);
     return sound;
   } catch {
     return null;
@@ -316,28 +338,44 @@ async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
 type PlayMeta = { text?: string | null; kind?: EnvelopeKind };
 
 /**
- * Reproduce y, mientras suena, emite el nivel de boca: envolvente por sílabas del texto (si se conoce y
- * cuadra con la duración real) o libre. La posición se interpola entre actualizaciones de estado para
- * mantener 20 Hz aunque Android reporte más lento.
+ * Reproduce y, mientras suena, emite el nivel de boca sobre la posición real del audio (interpolada
+ * entre avisos de expo-av). Con los tiempos por letra del servidor: el visema exacto de cada letra
+ * (un poco adelantado, ADELANTO_MS, por lo que tarda en llegar a la pantalla), abriendo rápido y
+ * cerrando suave. Sin ellos: la envolvente por sílabas del texto (si cuadra con la duración) o libre.
  */
 function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: PlayMeta = {}): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
     let guard: ReturnType<typeof setTimeout> | null = null;
     let env: ((posMs: number) => number) | null = null;
-    let playing = false;
-    let lastPos = 0;
-    let lastAt = Date.now();
     const kind: EnvelopeKind = meta.kind || 'speak';
+    const reloj = new RelojReproduccion();
+    const al = alineacionDeSonido.get(sound);
+    const alineada = al ? new BocaAlineada(al) : null;
+    const suave = new Envolvente();
+    let antes = Date.now();
     const tick = setInterval(() => {
-      if (!playing) return emitLevel(0);
-      const pos = lastPos + (Date.now() - lastAt);
+      const ahora = Date.now();
+      const dt = ahora - antes;
+      antes = ahora;
+      if (!reloj.activo) {
+        suave.cortar();
+        senalVoz.formaReproducida(null);
+        return emitLevel(0);
+      }
+      const pos = reloj.posicion(ahora);
+      if (alineada) {
+        const b = alineada.en(pos + ADELANTO_MS);
+        senalVoz.formaReproducida(b.visema);
+        return emitLevel(suave.seguir(b.nivel, dt));
+      }
       emitLevel((env || (env = envolventeLibre(kind)))(pos));
-    }, 50);
+    }, alineada ? PASO_BOCA_MS : 50);
     const end = () => {
       if (done) return;
       done = true;
       clearInterval(tick);
+      senalVoz.formaReproducida(null);
       emitLevel(0);
       if (guard) clearTimeout(guard);
       if (current === sound) current = null;
@@ -351,9 +389,7 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: Play
         if ((st as any).error) end();
         return;
       }
-      playing = st.isPlaying;
-      lastPos = st.positionMillis || 0;
-      lastAt = Date.now();
+      reloj.aviso(st.positionMillis || 0, Date.now(), st.isPlaying);
       if (st.durationMillis && !guard) {
         guard = setTimeout(end, st.durationMillis + 1500);
         env = envolventeDeTexto(meta.text, st.durationMillis, kind);
@@ -369,6 +405,9 @@ export async function stopSpeaking() {
   gen += 1;
   const s = current;
   current = null;
+  // La boca se cierra ya, no cuando el reproductor termine de parar.
+  senalVoz.formaReproducida(null);
+  emitLevel(0);
   if (s) {
     try {
       await s.stopAsync();
