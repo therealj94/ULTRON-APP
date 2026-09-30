@@ -2,6 +2,7 @@ using System;
 using System.ComponentModel;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Runtime.InteropServices;
 using System.Speech.Recognition;
 using System.Windows;
@@ -26,6 +27,7 @@ public partial class MainWindow : Window
     DateTimeOffset voiceDeadline;
     bool expanded, dirty;
     HwndSource? source;
+    ChatWindow? chat; CallWindow? call; DesktopTarget? target; CancellationTokenSource? writing;
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
     public MainWindow(bool renderOnly = false) {
@@ -42,16 +44,17 @@ public partial class MainWindow : Window
             source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle); source.AddHook(Hook);
             bool open = RegisterHotKey(source.Handle, 1, 0x4003, 0x20);
             bool stop = RegisterHotKey(source.Handle, 2, 0x4003, 0x1B);
-            if (!open || !stop) SetStatus("Atajo ocupado", "Algún atajo está ocupado. Usa la bandeja para abrir o pausar AURA.");
+            bool capture = RegisterHotKey(source.Handle, 3, 0x4003, 0x57);
+            if (!open || !stop || !capture) SetStatus("Atajo ocupado", "Algún atajo está ocupado. Usa la bandeja para abrir o pausar AURA.");
             Position();
         };
         ticker.Tick += (_, _) => Tick(); ticker.Start();
         Closing += OnClosing;
-        Closed += (_, _) => { ticker.Stop(); StopVoice(); tray.Dispose(); if(source != null) { UnregisterHotKey(source.Handle, 1); UnregisterHotKey(source.Handle, 2); source.RemoveHook(Hook); } };
+        Closed += (_, _) => { ticker.Stop(); StopVoice(); StopNetwork(); writing?.Cancel(); tray.Dispose(); if(source != null) { UnregisterHotKey(source.Handle, 1); UnregisterHotKey(source.Handle, 2); UnregisterHotKey(source.Handle, 3); source.RemoveHook(Hook); } };
     }
     void SetStatus(string title, string message) { StatusTitle.Text = title; Status.Text = message; }
     IntPtr Hook(IntPtr h, int msg, IntPtr w, IntPtr l, ref bool handled) {
-        if (msg == 0x0312) { if (w.ToInt32() == 1) Expand(!expanded || !IsVisible); else if (w.ToInt32() == 2) PauseAll(); handled = true; }
+        if (msg == 0x0312) { if (w.ToInt32() == 1) Expand(!expanded || !IsVisible); else if (w.ToInt32() == 2) PauseAll(); else if(w.ToInt32() == 3) CaptureTarget(); handled = true; }
         if (msg is 0x007E or 0x02E0) Dispatcher.BeginInvoke(new Action(Position));
         return IntPtr.Zero;
     }
@@ -105,12 +108,12 @@ public partial class MainWindow : Window
         } catch(Exception ex) { SetStatus("No se completó", ex.Message); }
     }
     void Cancel(object s, RoutedEventArgs e) { ClearApproval(); SetStatus("Acción cancelada", "No se ejecutó la propuesta. Puedes preparar otra."); }
-    void PauseAll() { gate.Pause(); ClearApproval(); StopVoice(); UpdateControls(); SetStatus("AURA está en pausa", "Se cancelaron las propuestas y el micrófono. Los programas que ya abriste siguen abiertos."); }
+    void PauseAll() { gate.Pause(); StopNetwork(); writing?.Cancel(); target=null; TargetLabel.Text="Selecciona Bloc de notas con Ctrl+Alt+W."; ClearApproval(); StopVoice(); UpdateControls(); SetStatus("AURA está en pausa", "Se cancelaron las propuestas y el micrófono. Los programas que ya abriste siguen abiertos."); }
     void TogglePause(object s, RoutedEventArgs e) { if(gate.Paused) { gate.Resume(); UpdateControls(); SetStatus("Lista para ayudarte", "Puedes preparar una nueva acción."); } else PauseAll(); }
     void UpdateControls() {
         State.Text = gate.Paused ? "Acciones pausadas" : speech != null ? "Escuchando…" : "Lista para ayudarte";
         PauseButton.Content = gate.Paused ? "Reanudar acciones" : "Pausar acciones";
-        PrepareButton.IsEnabled = VoiceButton.IsEnabled = CopyButton.IsEnabled = SaveButton.IsEnabled = !gate.Paused;
+        PrepareButton.IsEnabled = VoiceButton.IsEnabled = CopyButton.IsEnabled = SaveButton.IsEnabled = WriteButton.IsEnabled = !gate.Paused;
         Eyes.Opacity = gate.Paused ? 0.35 : 1;
     }
     void Copy(object s, RoutedEventArgs e) {
@@ -169,6 +172,34 @@ public partial class MainWindow : Window
     void KeyDownHandler(object s, KeyEventArgs e) {
         if(e.Key == Key.Escape) { ClearApproval(); StopVoice(); Expand(false); e.Handled = true; }
         if(e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control && Workspace.SelectedIndex == 0) { Prepare(s, e); e.Handled = true; }
+    }
+    void StopNetwork() { chat?.Close(); chat=null; call?.Close(); call=null; }
+    void OpenSettings(object s, RoutedEventArgs e) { var dialog=new SettingsWindow {Owner=this};if(dialog.ShowDialog()==true){StopNetwork();SetStatus("Conexión guardada", "Abre una conversación o una llamada con la configuración nueva.");} }
+    void OpenChat(object s, RoutedEventArgs e) {
+        if(gate.Paused)return;
+        try { if(chat==null){chat=new ChatWindow(text=>{if(gate.Paused)return;if(dirty && MessageBox.Show(this,"¿Reemplazar el borrador actual con esta respuesta?","AURA",MessageBoxButton.YesNo)!=MessageBoxResult.Yes)return;Draft.Text=text;Expand(true);Workspace.SelectedIndex=1;});chat.Closed+=(_,_)=>chat=null;} chat.Show();chat.Activate(); }
+        catch(Exception ex){SetStatus("No se pudo abrir la conversación",ex.Message);}
+    }
+    void OpenCall(object s, RoutedEventArgs e) {
+        if(gate.Paused)return;
+        try {if(call==null){call=new CallWindow();call.Closed+=(_,_)=>call=null;}call.Show();call.Activate();}
+        catch(Exception ex){SetStatus("No se pudo abrir llamadas",ex.Message);}
+    }
+    void CaptureTarget() {
+        if(gate.Paused)return;
+        try{target=DesktopTarget.Capture();Expand(true);Workspace.SelectedIndex=1;TargetLabel.Text="Destino: "+target.Title;SetStatus("Destino seleccionado", "La selección vence en 90 segundos. Revisa el borrador antes de escribir.");}
+        catch(Exception ex){target=null;Expand(true);SetStatus("Selecciona Bloc de notas",ex.Message);}
+    }
+    async void WriteToDesktop(object s, RoutedEventArgs e) {
+        if(gate.Paused||writing!=null)return;
+        if(target==null){SetStatus("Falta el destino", "Abre Bloc de notas, haz clic en su área editable y pulsa Ctrl+Alt+W. Después vuelve al borrador.");return;}
+        string text=Draft.Text;var selected=target;
+        if(MessageBox.Show(this,"Se escribirá en: "+selected.Title+"\n\n"+text+"\n\nNo se pulsa Enter. ¿Continuar?","AURA · Confirmar escritura",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes||gate.Paused)return;
+        target=null;TargetLabel.Text="Selecciona de nuevo para otra escritura.";writing=new();
+        try{await selected.Write(text,writing.Token);if(!gate.Paused)SetStatus("Texto escrito", "Revisa el resultado en Bloc de notas.");}
+        catch(OperationCanceledException){if(!gate.Paused)SetStatus("Escritura cancelada", "Puede haber texto parcial. Revisa Bloc de notas.");}
+        catch(Exception ex){if(!gate.Paused)SetStatus("Escritura detenida",ex.Message);}
+        finally{writing.Dispose();writing=null;}
     }
     void Quit(object s, RoutedEventArgs e) => Close();
     internal void RenderPreviews(string directory) {

@@ -11,7 +11,7 @@ permissions:
 jobs:
   native:
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -20,6 +20,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test windows/gateway/server.test.mjs
       - run: python windows/training/validate.py
       - name: Core tests and portable executable
         shell: pwsh
@@ -40,4 +44,17 @@ jobs:
         with:
           name: AURA-Windows-design-review
           path: windows/artifacts/design/
+          retention-days: 14
+      - name: WebRTC transport test with synthetic audio and video
+        shell: pwsh
+        run: |
+          $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--rtc-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/rtc/result.json" -PassThru
+          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'RTC test timeout' }
+          Get-Content ./windows/artifacts/rtc/result.json
+          if ($process.ExitCode -ne 0) { throw 'RTC transport test failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-RTC-verification
+          path: windows/artifacts/rtc/
           retention-days: 14
