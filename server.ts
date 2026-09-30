@@ -2602,8 +2602,11 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   const { evento } = empujarAccion(correo, orden.accion, { aparato: aparatoValido(body?.aparato) });
   // El turno queda en el hilo como cualquier otro (sin esperar a S3).
   const quienMem = quienVerificado(body, body?.sesion || null);
-  await aTiempoParaVoz(opciones.voz, 'hilo', recordarTurno({ quien: quienMem, rol: 'user', texto: message, canal: 'mesa', esperar: false }), undefined);
-  if (orden.decir) void recordarTurno({ quien: quienMem, rol: 'ultron', texto: orden.decir, canal: 'mesa', esperar: false }).catch(() => {});
+  // En orden (lo de la persona y después lo que dijo AU-RA); hablando, con tope: sigue en segundo plano.
+  const hilo = recordarTurno({ quien: quienMem, rol: 'user', texto: message, canal: 'mesa', esperar: false }).then(() =>
+    orden.decir ? recordarTurno({ quien: quienMem, rol: 'ultron', texto: orden.decir, canal: 'mesa', esperar: false }) : undefined
+  );
+  await aTiempoParaVoz(opciones.voz, 'hilo', hilo, undefined);
   return { decir: orden.decir, acciones: [evento], via: `app-${orden.via}` };
 }
 
