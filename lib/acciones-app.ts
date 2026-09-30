@@ -15,6 +15,8 @@
  *  · las ÓRDENES: las simples y claras (atrás, abrir, tema, avatar, silencio, y el «sí, envíalo» de
  *    un borrador) se resuelven aquí SIN esperar al modelo grande —es lo que baja la latencia de la
  *    voz—; lo demás (redactar a alguien) lo decide el cerebro con la línea `ACCION_APP: {…}`.
+ *  · las MANOS (lib/manos-app.ts): llamar, leer, buscar, idioma, perfil, recordatorio y presentación,
+ *    solo si el teléfono las declara; llamar y recordar esperan el «sí» como una PROPUESTA (abajo).
  */
 import crypto from 'node:crypto';
 import { consultarModelo } from './laya';
