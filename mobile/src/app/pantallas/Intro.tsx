@@ -90,8 +90,9 @@ export function Intro(_: Props) {
     await iniciarReporte();
     // El nativo se quita cuando la intro ya está pintada (negro sobre negro: no se nota el paso).
     void SplashScreen.hideAsync().catch(() => {});
-    // La entrada sigue al teléfono (derecho o acostado); la mesa decide la suya al abrirse.
-    void orientar('libre');
+    // La app arranca siempre en vertical (aunque el teléfono esté acostado); la mesa la suelta después
+    // de la bienvenida.
+    void orientar('vertical');
 
     const [ajustes, sesion] = await Promise.all([loadSettings(), loadSession(), conTope(cargarFuentes(), 2_500), cargarHapticos()]);
     fijarIdioma(ajustes.idioma);

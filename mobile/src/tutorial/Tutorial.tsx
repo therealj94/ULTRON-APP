@@ -4,7 +4,7 @@
  * guardado para esta persona. Se vuelve a abrir desde «Más → Qué puedo hacer».
  */
 import { useMemo, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Animated, { FadeIn, FadeInRight, FadeOutLeft } from 'react-native-reanimated';
 import { tr } from '../i18n';
 import { T } from '../tema';
@@ -27,7 +27,10 @@ export function Tutorial({ visible, nombreAvatar, tema, onCerrar, pasoInicial = 
   const pasos = useMemo(() => pasosTutorial(nombreAvatar), [nombreAvatar]);
   const [i, setI] = useState(pasoInicial);
   const [noVolver, setNoVolver] = useState(true);
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
+  // Acostado (o con letra grande) la tarjeta no cabe entera: lo de arriba se desplaza y los botones
+  // quedan siempre a la vista.
+  const bajo = height < 560;
   if (!visible) return null;
   const p = pasos[Math.min(i, pasos.length - 1)];
   const ultimo = i >= pasos.length - 1;
@@ -38,11 +41,12 @@ export function Tutorial({ visible, nombreAvatar, tema, onCerrar, pasoInicial = 
   return (
     <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={() => cerrar(false)}>
       <View style={s.velo}>
-        <Animated.View entering={FadeIn.duration(220)} style={[s.tarjeta, { width: Math.min(width - 32, 460), borderColor: tema.acento }]}>
+        <Animated.View entering={FadeIn.duration(220)} style={[s.tarjeta, { width: Math.min(width - 32, bajo ? 560 : 460), maxHeight: height - 24, borderColor: tema.acento }, bajo && s.tarjetaBaja]}>
+          <ScrollView style={s.desliza} contentContainerStyle={[s.deslizaDentro, bajo && s.deslizaBaja]} showsVerticalScrollIndicator={false} bounces={false}>
           <Text style={[s.cuenta, { color: tema.acentoTexto }]}>
             {tr(`Qué puede hacer ${nombreAvatar}`, `What ${nombreAvatar} can do`)} · {i + 1}/{pasos.length}
           </Text>
-          <Animated.View key={p.id} entering={FadeInRight.duration(240)} exiting={FadeOutLeft.duration(160)} style={s.cuerpo}>
+          <Animated.View key={p.id} entering={FadeInRight.duration(240)} exiting={FadeOutLeft.duration(160)} style={[s.cuerpo, bajo && s.cuerpoBajo]}>
             <View style={[s.icono, { backgroundColor: tema.acentoFondo }]}>
               <Icono nombre={p.icono} tam={34} color={tema.acentoTexto} grosor={1.9} />
             </View>
@@ -61,6 +65,7 @@ export function Tutorial({ visible, nombreAvatar, tema, onCerrar, pasoInicial = 
             <View style={[s.caja, noVolver && { backgroundColor: tema.acento, borderColor: tema.acento }]}>{noVolver ? <Icono nombre="palomita" tam={16} color={tema.sobreAcento} grosor={2.6} /> : null}</View>
             <Text style={s.checkTexto}>{tr('No volver a mostrar', 'Don’t show again')}</Text>
           </Pressable>
+          </ScrollView>
           <View style={s.botones}>
             <Tocable onPress={() => cerrar(false)} etiqueta={tr('Saltar el recorrido', 'Skip the tour')} style={s.saltar}>
               <Text style={s.saltarTexto}>{tr('Saltar', 'Skip')}</Text>
@@ -83,8 +88,13 @@ export function Tutorial({ visible, nombreAvatar, tema, onCerrar, pasoInicial = 
 const s = StyleSheet.create({
   velo: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', paddingHorizontal: 16 },
   tarjeta: { backgroundColor: T.fondo2, borderRadius: 28, borderWidth: 1.5, padding: 22, gap: 14 },
+  tarjetaBaja: { paddingVertical: 14, gap: 8 },
+  desliza: { flexGrow: 0, flexShrink: 1 },
+  deslizaDentro: { gap: 14 },
+  deslizaBaja: { gap: 8 },
   cuenta: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
   cuerpo: { gap: 10, minHeight: 210 },
+  cuerpoBajo: { minHeight: 0, gap: 6 },
   icono: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center' },
   titulo: { color: T.texto, fontSize: 22, fontWeight: '800' },
   texto: { color: T.texto2, fontSize: 16, lineHeight: 23 },

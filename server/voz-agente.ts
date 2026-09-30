@@ -544,6 +544,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
    * Si la persona interrumpe, ElevenLabs cierra la petición: se aborta el turno de adentro de verdad
    * (la señal llega hasta la llamada al nodo) para no seguir pensando algo que ya nadie va a oír.
    */
+  /** Cuándo se avisó por última vez de una llave de ElevenLabs que no coincide. */
+  let avisoLlaveMala = 0;
   const llm: express.RequestHandler = async (req, res) => {
     const ip = String(req.ip || req.socket.remoteAddress || 'x');
     const auth = String(req.headers.authorization || '');
@@ -553,7 +555,16 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       const cupo = gastarCupo(`voz-llm-fallo:${ip}`, 30);
       return res.status(cupo ? 401 : 429).json({ error: { message: cupo ? mensaje : 'too many requests' } });
     };
-    if (!bearer || !mismoSecreto(secretoDerivado(ETIQUETA_SECRETO_LLM), bearer)) return negar('unauthorized');
+    if (!bearer || !mismoSecreto(secretoDerivado(ETIQUETA_SECRETO_LLM), bearer)) {
+      // Si la llave «aura-llm» de ElevenLabs no se derivó del ULTRON_SESION_SECRETO de este servidor,
+      // TODOS los turnos caen aquí y ElevenLabs corta con «custom_llm generation failed» (30-sep: la
+      // voz no contestó nunca por esto). Se deja dicho en el registro, una vez cada 10 minutos.
+      if (bearer && Date.now() - avisoLlaveMala > 10 * 60_000) {
+        avisoLlaveMala = Date.now();
+        console.warn('[voz agente] la llave del LLM propio no coincide: corre scripts/elevenlabs-agentes.ts con el ULTRON_SESION_SECRETO de este servidor');
+      }
+      return negar('unauthorized');
+    }
     const ahora = Date.now();
     const crudo = String(req.headers['x-pase'] || '');
     const pase = leerPase(crudo, ahora);

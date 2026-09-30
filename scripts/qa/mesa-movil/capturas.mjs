@@ -58,6 +58,9 @@ const ESCENAS = [
   ['tutorial-1-hablar', '?p=tutorial&paso=0', 360, 780],
   ['tutorial-3-chat', '?p=tutorial&paso=2', 360, 780],
   ['tutorial-7-camara', '?p=tutorial&paso=6', 360, 780],
+  // Acostado (José: la tarjeta se cortaba y no se veían los botones): 915×412 y 780×360.
+  ['tutorial-apaisado-6-buscar', '?p=tutorial&paso=5', 915, 412],
+  ['tutorial-apaisado-360', '?p=tutorial&paso=5', 780, 360],
   ['transicion-1-grande', '?p=transicion&h=1', 360, 780],
   ['transicion-2', '?p=transicion&h=0.7', 360, 780],
   ['transicion-3', '?p=transicion&h=0.4', 360, 780],

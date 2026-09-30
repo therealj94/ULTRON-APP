@@ -1371,8 +1371,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       setCara(s.cara === 'sala' ? 'sala' : 'anillos');
       setAvatar(s.avatar);
       setAvatarVoz(s.avatar);
-      // La bienvenida arranca en horizontal (hablar a pantalla completa); después la mesa sigue al teléfono.
-      void orientar('horizontal');
+      // La bienvenida arranca en vertical, como toda la app; después la mesa sigue al teléfono.
+      void orientar('vertical');
       setSfxEnabled(s.sfx);
       proactiveRef.current = s.proactive;
       if (s.sttEngine !== currentSttEngine()) await setSttEngine(s.sttEngine);

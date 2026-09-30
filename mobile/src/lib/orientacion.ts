@@ -1,10 +1,10 @@
 /**
  * Orientación de AU-RA en el teléfono.
  *
- * El flujo que pidió José (29-sep): la entrada sigue al teléfono (se ve bien derecha o acostada);
- * al entrar, la bienvenida arranca en la orientación del avatar (horizontal para AU-RA y Claudio,
- * vertical para Claudio de pie, que está parado) y después se suelta: si la persona gira el
- * teléfono, la mesa se reacomoda (en vertical, cuadro con la cara y el chat abajo).
+ * El flujo que pidió José (30-sep): la app arranca SIEMPRE en vertical, aunque el teléfono esté
+ * acostado (la entrada, el login y la bienvenida de la mesa). Después de la bienvenida se suelta: si
+ * la persona gira el teléfono, la mesa lo sigue (acostado, hablar a pantalla completa; derecho,
+ * cuadro con la cara y el chat abajo).
  *
  * Se recuerda el último modo pedido para volver a aplicarlo al volver de segundo plano: algunos
  * Android sueltan el bloqueo al pausar la app.
@@ -13,7 +13,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 
 export type ModoOrientacion = 'libre' | 'horizontal' | 'vertical';
 
-let ultimo: ModoOrientacion = 'horizontal';
+let ultimo: ModoOrientacion = 'vertical';
 
 export function modoActual(): ModoOrientacion {
   return ultimo;
