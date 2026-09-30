@@ -291,6 +291,28 @@ function sesionCerrada(token: string) {
   return v !== undefined && v > Date.now();
 }
 
+/**
+ * La huella de una sesión: lo que se anota al cerrarla. Un pase de voz lleva la huella de la sesión
+ * que lo pidió (no la sesión misma) para poder preguntar en cada turno si esa sesión sigue viva.
+ */
+export function huellaSesion(token: string): string {
+  return huellaToken(token);
+}
+
+/**
+ * ¿La sesión de esa huella sigue valiendo? No se cerró («Cerrar sesión» en cualquier aparato), no
+ * venció y la contraseña no cambió después de abrirla. Es lo mismo que mira sesionDe, pero sin el
+ * token: lo usa el pase de la voz, que no lleva la sesión dentro.
+ */
+export function sesionSigueViva(o: { huella: string; correo: string; at: number; exp?: number }, ahora = Date.now()): boolean {
+  leerCerradasDeDisco();
+  const cerrada = cerradas.get(o.huella);
+  if (cerrada !== undefined && cerrada > ahora) return false;
+  if (o.exp && ahora > o.exp) return false;
+  const desde = claveCambiadaEn(String(o.correo || '').toLowerCase());
+  return !(desde && o.at < desde);
+}
+
 /** Solo pruebas: olvida el caché en memoria (no las cerradas), como tras un redespliegue. */
 export function _olvidarCacheSesiones() {
   sesiones.clear();
@@ -444,6 +466,23 @@ export function limitar(max: number, ventanaMs = 60_000, grupo?: string) {
     }
     next();
   };
+}
+
+/**
+ * Un cupo con la clave que se quiera (no la IP): la voz lo cuenta por PERSONA, porque todos los turnos
+ * de ElevenLabs llegan de las mismas pocas IPs de sus servidores. Devuelve true si todavía hay cupo
+ * (y lo gasta).
+ */
+export function gastarCupo(claveCupo: string, max: number, ventanaMs = 60_000, ahora = Date.now()): boolean {
+  const k = `cupo:${claveCupo}`;
+  const arr = (hits.get(k) || []).filter((t) => ahora - t < ventanaMs);
+  if (arr.length >= max) {
+    hits.set(k, arr);
+    return false;
+  }
+  arr.push(ahora);
+  hits.set(k, arr);
+  return true;
 }
 
 /* ------------------------------------------------------- intentos de clave por cuenta */

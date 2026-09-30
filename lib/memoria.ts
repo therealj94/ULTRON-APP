@@ -210,6 +210,12 @@ export async function recordarTurno(opts: {
   rol: 'user' | 'ultron';
   texto: string;
   canal: CanalMem;
+  /**
+   * false: vuelve en cuanto el turno está en la memoria de este proceso y deja la copia a disco y S3
+   * en la cola, sin esperarla. Es lo que usa el turno ANTES de pensar: esperar el PUT a S3 (cientos
+   * de ms) retrasaba la primera palabra de cada respuesta, y la cola ya guarda en orden.
+   */
+  esperar?: boolean;
 }): Promise<void> {
   const a = await cargarMemoria();
   const texto = String(opts.texto || '').trim().slice(0, 4000);
@@ -234,7 +240,12 @@ export async function recordarTurno(opts: {
     }
   }
   cache = a;
-  await enqueue(() => persistirMemoria().then(() => undefined));
+  const guardado = enqueue(() => persistirMemoria().then(() => undefined));
+  if (opts.esperar === false) {
+    guardado.catch((e) => console.warn('[memoria] no se guardó el turno', String(e?.message || e).slice(0, 120)));
+    return;
+  }
+  await guardado;
 }
 
 export async function registrarCambio(opts: { quien: MiembroId | null; canal: CanalMem; que: string }): Promise<void> {

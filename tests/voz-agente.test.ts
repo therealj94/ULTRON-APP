@@ -1,30 +1,88 @@
 /**
  * La conversación fluida (server/voz-agente.ts): ElevenLabs le pide cada turno a nuestro cerebro
  * en formato OpenAI y lo recibe en streaming. Aquí se prueba el pase, el formato y la ruta entera
- * contra un /api/turno/stream falso: el texto llega a trozos, sin marcas de expresión, y si la
- * persona interrumpe (se cierra la petición) el turno de adentro se aborta.
+ * contra un cerebro falso EN PROCESO (como en producción: sin HTTP a sí mismo ni sesión interna):
+ *
+ *  · las dos llaves (secreto de ElevenLabs y pase) y que un pase deja de valer si la sesión que lo
+ *    pidió se cierra, si la conversación se cierra o si pasan cinco minutos sin turnos;
+ *  · el turno va SIN mando (soloConsulta lo pone server.ts; aquí, que no viaja ninguna sesión);
+ *  · el cupo es por persona, no por IP;
+ *  · el texto llega a trozos, sin marcas de expresión, y un segundo `done` o un error de adentro no
+ *    se leen; si la persona interrumpe, la señal del turno de adentro se aborta de verdad;
+ *  · la respuesta que sigue a una interrupción empieza con un «perdón» breve.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import { emitirPase, leerPase, montarVozAgente, trozoOpenAI, ultimoDeLaPersona, ETIQUETA_SECRETO_LLM } from '../server/voz-agente';
-import { secretoDerivado } from '../server/seguridad';
 
-const persona = { correo: 'j.ordonez@ordenglobal.org', nombre: 'José', rol: 'Junta' };
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voz-agente-'));
+process.env.ULTRON_SESIONES_CERRADAS_ARCHIVO = path.join(dir, 'cerradas.json');
+process.env.ULTRON_SESION_SECRETO = 'secreto-de-prueba-largo-para-las-sesiones-1234';
+process.env.ULTRON_MEMORIA_BUCKET = '';
 
-test('el pase: firmado, con avatar e idioma, vence a los 30 minutos y no se puede tocar', () => {
+const {
+  emitirPase,
+  leerPase,
+  montarVozAgente,
+  trozoOpenAI,
+  ultimoDeLaPersona,
+  asistenteTruncado,
+  restoDeReemplazo,
+  eventosSSE,
+  ETIQUETA_SECRETO_LLM,
+  CUPO_TURNOS_MIN,
+  MAX_CONVERSACIONES,
+  INACTIVIDAD_MS,
+  _conversaciones,
+  _reiniciarConversaciones,
+  abrirConversacion,
+} = await import('../server/voz-agente');
+const { secretoDerivado, emitirSesion, borrarSesion, soltarSesion, sesionDe, fijarClaveCambiadaEn } = await import('../server/seguridad');
+type TurnoVoz = import('../server/voz-agente').TurnoVoz;
+
+const BEARER = `Bearer ${secretoDerivado(ETIQUETA_SECRETO_LLM)}`;
+let n = 0;
+/** Una sesión de verdad (firmada) de una persona distinta por prueba, para que los cupos no se mezclen. */
+function persona(nombre = 'José') {
+  n++;
+  return emitirSesion({ correo: `persona${n}@ordenglobal.org`, nombre, rol: 'Junta' });
+}
+/** Un pase de una conversación abierta, como lo da /api/voz/agente. */
+function paseDe(s: ReturnType<typeof persona>, avatar: 'ojos' | 'aura' | 'claudio' = 'aura', idioma: 'es' | 'en' = 'es') {
+  const p = emitirPase(s, avatar, idioma);
+  abrirConversacion(s.correo, p.cid);
+  return p.pase;
+}
+
+test('el pase: firmado, atado a la sesión y a una conversación, vence a los 20 minutos y no se puede tocar', () => {
+  const s = persona();
   const ahora = Date.now();
-  const p = emitirPase(persona, 'claudio', 'en', ahora);
-  const l = leerPase(p, ahora + 60_000);
-  assert.equal(l?.correo, persona.correo);
+  const { pase, cid, exp } = emitirPase(s, 'claudio', 'en', { ahora });
+  const l = leerPase(pase, ahora + 60_000);
+  assert.equal(l?.correo, s.correo);
   assert.equal(l?.avatar, 'claudio');
   assert.equal(l?.idioma, 'en');
-  assert.equal(leerPase(p, ahora + 31 * 60_000), null, 'vencido');
-  const [pre, cuerpo, firma] = p.split('.');
+  assert.equal(l?.cid, cid);
+  assert.match(String(l?.h), /^[0-9a-f]{40}$/, 'lleva la huella de la sesión, no la sesión');
+  assert.ok(!pase.includes(s.token), 'el token de la sesión no viaja dentro del pase');
+  assert.ok(exp - ahora <= 20 * 60_000);
+  assert.equal(leerPase(pase, ahora + 21 * 60_000), null, 'vencido');
+  const [pre, cuerpo, firma] = pase.split('.');
   const otro = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(cuerpo, 'base64url').toString()), correo: 'otro@x.org' })).toString('base64url');
   assert.equal(leerPase(`${pre}.${otro}.${firma}`, ahora), null, 'cuerpo cambiado');
   assert.equal(leerPase('u1.abc.def'), null, 'una sesión de la app no es un pase');
+  // El modo: el que pide el teléfono si existe; si no, el de su avatar (ya no GUARDIAN para todos).
+  assert.equal(leerPase(emitirPase(s, 'claudio', 'es').pase)?.modo, 'CREATIVE');
+  assert.equal(leerPase(emitirPase(s, 'aura', 'es').pase)?.modo, 'CONVERSACION');
+  assert.equal(leerPase(emitirPase(s, 'ojos', 'es', { modo: 'analytical' }).pase)?.modo, 'ANALYTICAL');
+  assert.equal(leerPase(emitirPase(s, 'ojos', 'es', { modo: 'ROOT' }).pase)?.modo, 'GUARDIAN', 'un modo inventado no entra');
+  // Un pase no abre la app: no es una sesión.
+  const req = { headers: { 'x-ultron-sesion': pase } } as any;
+  assert.equal(sesionDe(req), null);
 });
 
 test('formato OpenAI: el último mensaje de la persona y los trozos del stream', () => {
@@ -39,95 +97,294 @@ test('formato OpenAI: el último mensaje de la persona y los trozos del stream',
   assert.equal(JSON.parse(trozoOpenAI('id1', 'aura', null, 'stop').slice(6)).choices[0].finish_reason, 'stop');
 });
 
-/** Un servidor con la ruta real y un cerebro falso que contesta a trozos. */
-async function montar(cerebro: (req: express.Request, res: express.Response) => void) {
+test('seguir un replace: sin doble espacio y sin desdecir lo dicho', () => {
+  assert.equal(restoDeReemplazo('Déjame ver.', 'Déjame ver. El oro está a 3 412.'), ' El oro está a 3 412.');
+  assert.equal(restoDeReemplazo('Déjame ver. ', 'Déjame ver. El oro está a 3 412.'), 'El oro está a 3 412.', 'lo dicho ya termina en espacio');
+  assert.equal(restoDeReemplazo('Creo que ronda los 3 000.', 'El oro está a 3 412.'), ' El oro está a 3 412.');
+  assert.equal(restoDeReemplazo('Creo que ronda. ', 'El oro está a 3 412.'), 'El oro está a 3 412.');
+  assert.equal(restoDeReemplazo('', 'Hola.'), 'Hola.');
+  assert.equal(restoDeReemplazo('Hola.', 'Hola.'), '');
+});
+
+test('¿la respuesta anterior quedó cortada? Se compara lo que dijimos con lo que ElevenLabs devuelve', () => {
+  const dicha = 'El oro está a tres mil cuatrocientos dólares la onza, y subió un poco esta semana.';
+  const hist = (asistente: string) => [
+    { role: 'user', content: '¿Cómo va el oro?' },
+    { role: 'assistant', content: asistente },
+    { role: 'user', content: 'Espera, ¿y la plata?' },
+  ];
+  assert.equal(asistenteTruncado(hist('El oro está a tres mil'), dicha), true, 'solo llegó el principio');
+  assert.equal(asistenteTruncado(hist('El oro está a tres mil…'), dicha), true, 'con puntos suspensivos también');
+  assert.equal(asistenteTruncado(hist(dicha), dicha), false, 'la dijo entera');
+  assert.equal(asistenteTruncado(hist('Otra cosa completamente distinta'), dicha), false, 'no es la nuestra: no se adivina');
+  assert.equal(asistenteTruncado([{ role: 'user', content: 'hola' }], dicha), false, 'sin respuesta anterior');
+  assert.equal(asistenteTruncado(hist('El oro'), ''), false, 'sin saber qué dijimos, no se afirma nada');
+});
+
+test('eventosSSE: lee eventos a trozos y suelta el lector al abortar', async () => {
+  let cancelado = false;
+  const enc = new TextEncoder();
+  const cuerpo = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(enc.encode('event: delta\ndata: {"text":"ho'));
+      c.enqueue(enc.encode('la"}\n\nevent: delta\ndata: {"text":"sigue"}\n\n'));
+    },
+    cancel() {
+      cancelado = true;
+    },
+  });
+  const ctrl = new AbortController();
+  const vistos: string[] = [];
+  for await (const e of eventosSSE(cuerpo, ctrl.signal)) {
+    vistos.push(e.datos.text);
+    if (vistos.length === 2) ctrl.abort();
+  }
+  assert.deepEqual(vistos, ['hola', 'sigue']);
+  assert.ok(cancelado, 'el lector se canceló (antes quedaba tomado)');
+});
+
+/** Un servidor con las rutas reales y un cerebro falso en proceso. */
+async function montar(cerebro: (t: TurnoVoz) => Promise<void>, o: { fetch?: typeof fetch; turnoMs?: number } = {}) {
   const app = express();
   app.use(express.json());
-  const vistos: any[] = [];
-  app.post('/api/turno/stream', (req, res) => {
-    vistos.push({ body: req.body, sesion: req.headers['x-ultron-sesion'] });
-    cerebro(req, res);
+  const vistos: TurnoVoz[] = [];
+  const pasa: express.RequestHandler = (_q, _s, next) => next();
+  montarVozAgente(app, {
+    exigirMesaODesk: pasa,
+    limitar: () => pasa,
+    sesionDe,
+    turno: async (t) => {
+      vistos.push(t);
+      await cerebro(t);
+    },
+    fetch: o.fetch,
+    turnoMs: o.turnoMs,
   });
-  const pasa: express.RequestHandler = (_q, _s, n) => n();
   const srv = app.listen(0);
   await new Promise((r) => srv.once('listening', r));
-  const puerto = (srv.address() as AddressInfo).port;
-  montarVozAgente(app, { exigirMesaODesk: pasa, limitar: () => pasa, sesionDe: () => null, puerto });
-  return { puerto, vistos, cerrar: () => new Promise((r) => srv.close(r)) };
+  const base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  return { base, vistos, cerrar: () => new Promise((r) => srv.close(r)) };
 }
 
-const sse = (res: express.Response) => {
-  res.setHeader('Content-Type', 'text/event-stream');
-  return (evento: string, datos: unknown) => res.write(`event: ${evento}\ndata: ${JSON.stringify(datos)}\n\n`);
-};
+const llm = (base: string, pase: string | null, messages: unknown[], extra: Record<string, string> = {}, signal?: AbortSignal) =>
+  fetch(`${base}/api/voz/llm/chat/completions`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: BEARER, ...(pase ? { 'x-pase': pase } : {}), ...extra },
+    body: JSON.stringify({ model: 'aura', stream: true, messages }),
+    signal,
+  });
 
-test('la ruta del LLM: exige el secreto y el pase, y devuelve el turno del cerebro a trozos', async () => {
-  const s = await montar((_req, res) => {
-    const enviar = sse(res);
-    enviar('tools', { tools: [] });
-    enviar('delta', { text: 'Hola José. ', voz: '[risa] Hola José. ' });
-    enviar('delta', { text: 'Todo bien.', voz: 'Todo bien.' });
-    enviar('done', { reply: 'Hola José. Todo bien.' });
-    res.end();
+const dichoDe = (texto: string) =>
+  texto
+    .split('\n\n')
+    .filter((l) => l.startsWith('data: {'))
+    .map((l) => JSON.parse(l.slice(6)).choices[0].delta.content || '')
+    .join('');
+
+test('la ruta del LLM: exige el secreto y el pase, y devuelve el turno del cerebro a trozos, sin sesión ni mando', async () => {
+  const s = await montar(async (t) => {
+    t.enviar('tools', { tools: [] });
+    t.enviar('delta', { text: 'Hola José. ', voz: '[risa] Hola José. ' });
+    t.enviar('delta', { text: 'Todo bien.', voz: 'Todo bien.' });
+    t.enviar('done', { reply: 'Hola José. Todo bien.' });
   });
   try {
-    const url = `http://127.0.0.1:${s.puerto}/api/voz/llm/chat/completions`;
-    const cuerpo = JSON.stringify({ model: 'aura', stream: true, messages: [{ role: 'user', content: '¿Cómo estás?' }] });
-    const sin = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: cuerpo });
+    const yo = persona();
+    const pase = paseDe(yo, 'ojos', 'es');
+    const cuerpo = [{ role: 'user', content: '¿Cómo estás?' }];
+    const sin = await fetch(`${s.base}/api/voz/llm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ messages: cuerpo }) });
     assert.equal(sin.status, 401, 'sin secreto no');
-    const malo = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${secretoDerivado(ETIQUETA_SECRETO_LLM)}` }, body: cuerpo });
-    assert.equal(malo.status, 401, 'sin pase no');
+    const mala = await llm(s.base, pase, cuerpo, { authorization: 'Bearer llave-equivocada' });
+    assert.equal(mala.status, 401, 'con la llave equivocada no');
+    const sinPase = await llm(s.base, null, cuerpo);
+    assert.equal(sinPase.status, 401, 'sin pase no');
+    const conSesion = await llm(s.base, yo.token, cuerpo);
+    assert.equal(conSesion.status, 401, 'una sesión no sirve de pase');
 
-    const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${secretoDerivado(ETIQUETA_SECRETO_LLM)}`, 'x-pase': emitirPase(persona, 'ojos', 'es') },
-      body: cuerpo,
-    });
+    const r = await llm(s.base, pase, cuerpo);
     assert.equal(r.status, 200);
+    assert.match(String(r.headers.get('content-type')), /text\/event-stream/);
+    assert.equal(r.headers.get('content-encoding'), null, 'sin compresión en el stream');
     const texto = await r.text();
     const trozos = texto
       .split('\n\n')
       .filter((l) => l.startsWith('data: {'))
       .map((l) => JSON.parse(l.slice(6)));
     assert.equal(trozos[0].choices[0].delta.role, 'assistant');
-    const dicho = trozos.map((t) => t.choices[0].delta.content || '').join('');
-    assert.equal(dicho, 'Hola José. Todo bien.', 'sin la marca [risa]');
+    assert.equal(dichoDe(texto), 'Hola José. Todo bien.', 'sin la marca [risa]');
     assert.equal(trozos.at(-1).choices[0].finish_reason, 'stop');
     assert.match(texto, /data: \[DONE\]\n\n$/);
-    // El cerebro recibió la pregunta con el avatar, el idioma y una sesión de quien habla.
-    assert.equal(s.vistos[0].body.message, '¿Cómo estás?');
-    assert.equal(s.vistos[0].body.avatar, 'ojos');
-    assert.equal(s.vistos[0].body.idioma, 'es');
-    assert.match(String(s.vistos[0].sesion), /^u1\./);
+    // El cerebro recibió la pregunta con el avatar, el idioma, el modo del avatar y la persona del pase.
+    const t = s.vistos[0];
+    assert.equal(t.body.message, '¿Cómo estás?');
+    assert.equal(t.body.avatar, 'ojos');
+    assert.equal(t.body.idioma, 'es');
+    assert.equal(t.body.mode, 'GUARDIAN');
+    assert.equal(t.persona.correo, yo.correo);
+    assert.equal(t.interrumpida, false);
+    assert.ok(!('sesion' in t) && !JSON.stringify(t.body).includes('u1.'), 'ninguna sesión viaja al turno');
   } finally {
     await s.cerrar();
   }
 });
 
-test('si la persona interrumpe (ElevenLabs cierra), el turno de adentro se corta', async () => {
-  let cortado = false;
-  const s = await montar((req, res) => {
-    const enviar = sse(res);
-    enviar('delta', { text: 'Empiezo a explicar…', voz: 'Empiezo a explicar…' });
-    const t = setInterval(() => enviar('delta', { text: ' más', voz: ' más' }), 50);
-    req.on('close', () => {
-      cortado = true;
-      clearInterval(t);
-    });
+test('un pase de una sesión cerrada (o con la clave cambiada después) ya no habla', async () => {
+  const s = await montar(async (t) => t.enviar('done', { reply: 'Hola.' }));
+  try {
+    const yo = persona();
+    const pase = paseDe(yo);
+    const msgs = [{ role: 'user', content: 'hola' }];
+    assert.equal((await llm(s.base, pase, msgs)).status, 200, 'con la sesión viva, sí');
+    await borrarSesion(yo.token);
+    assert.equal((await llm(s.base, pase, msgs)).status, 401, 'cerró sesión: el pase muere en el siguiente turno');
+
+    const otra = persona();
+    const pase2 = paseDe(otra);
+    assert.equal((await llm(s.base, pase2, msgs)).status, 200);
+    fijarClaveCambiadaEn((c) => (c === otra.correo ? Date.now() + 1000 : null));
+    assert.equal((await llm(s.base, pase2, msgs)).status, 401, 'cambió la contraseña: el pase de antes no vale');
+    fijarClaveCambiadaEn(() => null);
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('la conversación: se cierra desde el teléfono, vence sin turnos y hay tope por cuenta', async () => {
+  const s = await montar(async (t) => t.enviar('done', { reply: 'Hola.' }));
+  try {
+    const msgs = [{ role: 'user', content: 'hola' }];
+    const yo = persona();
+    // Cerrar: con la sesión de la persona y su pase.
+    const p1 = paseDe(yo);
+    assert.equal((await llm(s.base, p1, msgs)).status, 200);
+    const cerrada = await fetch(`${s.base}/api/voz/agente/cerrar`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ultron-sesion': yo.token }, body: JSON.stringify({ pase: p1 }) });
+    assert.equal(((await cerrada.json()) as any).cerrada, true);
+    assert.equal((await llm(s.base, p1, msgs)).status, 401, 'cerrada no vuelve');
+
+    // Inactividad: cinco minutos sin turnos y se da por cerrada.
+    const p2 = paseDe(yo);
+    const cid2 = leerPase(p2)!.cid;
+    _conversaciones().get(cid2)!.ultimo = Date.now() - INACTIVIDAD_MS - 1;
+    assert.equal((await llm(s.base, p2, msgs)).status, 401, 'vencida por silencio');
+
+    // Tope: abrir una más que el máximo cierra la más vieja.
+    const pases = Array.from({ length: MAX_CONVERSACIONES + 1 }, () => paseDe(yo));
+    assert.equal((await llm(s.base, pases[0], msgs)).status, 401, 'la más vieja se cerró');
+    assert.equal((await llm(s.base, pases.at(-1)!, msgs)).status, 200);
+    const vivas = [..._conversaciones().values()].filter((c) => c.correo === yo.correo);
+    assert.ok(vivas.length <= MAX_CONVERSACIONES);
+
+    // Tras un redespliegue (sin registro), un pase vigente se retoma.
+    const p3 = paseDe(yo);
+    _reiniciarConversaciones();
+    assert.equal((await llm(s.base, p3, msgs)).status, 200, 'se retoma: pase, tope y sesión siguen valiendo');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('el cupo es por persona: una no gasta el de otra (todas llegan de las mismas IPs)', async () => {
+  const s = await montar(async (t) => t.enviar('done', { reply: 'Hola.' }));
+  try {
+    const msgs = [{ role: 'user', content: 'hola' }];
+    const a = persona();
+    const b = persona();
+    const pa = paseDe(a);
+    const pb = paseDe(b);
+    for (let i = 0; i < CUPO_TURNOS_MIN; i++) assert.equal((await llm(s.base, pa, msgs)).status, 200);
+    assert.equal((await llm(s.base, pa, msgs)).status, 429, 'la persona A llegó a su tope');
+    assert.equal((await llm(s.base, pb, msgs)).status, 200, 'la persona B sigue hablando');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('un error de adentro se dice como persona; un segundo done no se lee; un turno que falla no cuelga', async () => {
+  let modo = 'error';
+  const s = await montar(async (t) => {
+    if (modo === 'error') return t.enviar('error', { error: 'Qwen caído' });
+    if (modo === 'doble') {
+      t.enviar('delta', { text: 'Listo.', voz: 'Listo.' });
+      t.enviar('done', { reply: 'Listo.' });
+      t.enviar('delta', { text: ' Esto ya no.', voz: ' Esto ya no.' });
+      t.enviar('done', { reply: 'Otra vez' });
+      return;
+    }
+    if (modo === 'lanza') throw new Error('se rompió algo por dentro');
+    if (modo === 'mudo') return t.enviar('done', { reply: '' });
   });
   try {
+    const yo = persona();
+    const pase = paseDe(yo, 'aura', 'es');
+    const msgs = [{ role: 'user', content: 'dime algo' }];
+    let dicho = dichoDe(await (await llm(s.base, pase, msgs)).text());
+    assert.equal(dicho, 'Se me fue el hilo. ¿Me lo repites?');
+    assert.ok(!/qwen/i.test(dicho), 'nunca «Qwen caído» en voz alta');
+    modo = 'doble';
+    const r = await llm(s.base, pase, msgs);
+    const texto = await r.text();
+    assert.equal(dichoDe(texto), 'Listo.');
+    assert.equal(texto.match(/"finish_reason":"stop"/g)?.length, 1);
+    assert.equal(texto.match(/\[DONE\]/g)?.length, 1);
+    modo = 'lanza';
+    dicho = dichoDe(await (await llm(s.base, pase, msgs)).text());
+    assert.equal(dicho, 'Perdón, se me cortó un segundo. ¿Me lo repites?');
+    modo = 'mudo';
+    dicho = dichoDe(await (await llm(s.base, pase, msgs)).text());
+    assert.equal(dicho, 'Se me fue el hilo. ¿Me lo repites?', 'nunca una respuesta vacía');
+    const en = paseDe(yo, 'aura', 'en');
+    modo = 'error';
+    assert.equal(dichoDe(await (await llm(s.base, en, msgs)).text()), 'I lost my train of thought. Can you say it again?');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('si la persona interrumpe (ElevenLabs cierra), la señal del turno de adentro se aborta, y lo siguiente empieza con perdón', async () => {
+  let abortado = false;
+  let turno = 0;
+  const s = await montar(async (t) => {
+    turno++;
+    if (turno === 1) {
+      t.enviar('delta', { text: 'Empiezo a explicar algo largo. ', voz: 'Empiezo a explicar algo largo. ' });
+      await new Promise<void>((resolve) => {
+        const iv = setInterval(() => t.enviar('delta', { text: 'más ', voz: 'más ' }), 30);
+        t.senal.addEventListener('abort', () => {
+          abortado = true;
+          clearInterval(iv);
+          resolve();
+        });
+      });
+      return;
+    }
+    t.enviar('delta', { text: 'La plata está a cuarenta.', voz: 'La plata está a cuarenta.' });
+    t.enviar('done', { reply: 'La plata está a cuarenta.' });
+  });
+  try {
+    const yo = persona();
+    const pase = paseDe(yo, 'aura', 'es');
     const ctrl = new AbortController();
-    const r = await fetch(`http://127.0.0.1:${s.puerto}/api/voz/llm`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${secretoDerivado(ETIQUETA_SECRETO_LLM)}`, 'x-pase': emitirPase(persona, 'aura', 'es') },
-      body: JSON.stringify({ messages: [{ role: 'user', content: 'Explícame algo largo' }] }),
-      signal: ctrl.signal,
-    });
+    const r = await llm(s.base, pase, [{ role: 'user', content: 'Explícame algo largo' }], {}, ctrl.signal);
     const lector = r.body!.getReader();
     await lector.read();
+    await lector.read();
     ctrl.abort();
-    await new Promise((r2) => setTimeout(r2, 300));
-    assert.ok(cortado, 'el cerebro dejó de trabajar');
+    await new Promise((r2) => setTimeout(r2, 200));
+    assert.ok(abortado, 'el cerebro recibió el corte');
+
+    const r2 = await llm(s.base, pase, [
+      { role: 'user', content: 'Explícame algo largo' },
+      { role: 'assistant', content: 'Empiezo a explicar' },
+      { role: 'user', content: '¿Y la plata?' },
+    ]);
+    const dicho = dichoDe(await r2.text());
+    assert.match(dicho, /^(¡Ah, perdón!|¡Uy, perdón!|Perdón\.) La plata está a cuarenta\.$/);
+    assert.equal(s.vistos[1].interrumpida, true, 'el cerebro sabe que lo interrumpieron (para no pedir perdón dos veces)');
+
+    // El turno siguiente, sin interrupción, ya no pide perdón.
+    const r3 = await llm(s.base, pase, [{ role: 'user', content: 'gracias' }]);
+    assert.equal(dichoDe(await r3.text()), 'La plata está a cuarenta.');
+    assert.equal(s.vistos[2].interrumpida, false);
   } finally {
     await s.cerrar();
   }
@@ -135,27 +392,16 @@ test('si la persona interrumpe (ElevenLabs cierra), el turno de adentro se corta
 
 test('si el cerebro cambia la respuesta (replace tras una herramienta), la voz sigue con la buena', async () => {
   const dichoCon = async (eventos: Array<[string, unknown]>) => {
-    const s = await montar((_req, res) => {
-      const enviar = sse(res);
-      for (const [e, d] of eventos) enviar(e, d);
-      res.end();
+    const s = await montar(async (t) => {
+      for (const [e, d] of eventos) t.enviar(e, d);
     });
     try {
-      const r = await fetch(`http://127.0.0.1:${s.puerto}/api/voz/llm`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${secretoDerivado(ETIQUETA_SECRETO_LLM)}`, 'x-pase': emitirPase(persona, 'aura', 'es') },
-        body: JSON.stringify({ messages: [{ role: 'user', content: '¿A cuánto está el oro?' }] }),
-      });
-      return (await r.text())
-        .split('\n\n')
-        .filter((l) => l.startsWith('data: {'))
-        .map((l) => JSON.parse(l.slice(6)).choices[0].delta.content || '')
-        .join('');
+      const r = await llm(s.base, paseDe(persona()), [{ role: 'user', content: '¿A cuánto está el oro?' }]);
+      return dichoDe(await r.text());
     } finally {
       await s.cerrar();
     }
   };
-  // La nueva empieza igual: se dice solo lo que falta.
   assert.equal(
     await dichoCon([
       ['delta', { text: 'Déjame ver.', voz: 'Déjame ver.' }],
@@ -164,14 +410,91 @@ test('si el cerebro cambia la respuesta (replace tras una herramienta), la voz s
     ]),
     'Déjame ver. El oro está a 3 412 dólares.'
   );
-  // La nueva es otra: se sigue con ella (lo dicho no se puede desdecir).
   assert.equal(
     await dichoCon([
-      ['delta', { text: 'Creo que ronda los 3 000.', voz: 'Creo que ronda los 3 000.' }],
+      ['delta', { text: 'Creo que ronda los 3 000. ', voz: 'Creo que ronda los 3 000. ' }],
       ['replace', { text: 'El oro está a 3 412 dólares la onza.', voz: 'El oro está a 3 412 dólares la onza.' }],
       ['delta', { text: ' Subió un poco.', voz: ' Subió un poco.' }],
       ['done', { reply: 'El oro está a 3 412 dólares la onza. Subió un poco.' }],
     ]),
-    'Creo que ronda los 3 000. El oro está a 3 412 dólares la onza. Subió un poco.'
+    'Creo que ronda los 3 000. El oro está a 3 412 dólares la onza. Subió un poco.',
+    'sin doble espacio'
   );
+});
+
+test('/api/voz/agente: 401 sin sesión, 503 sin configurar, 502 si ElevenLabs falla, y el pase si todo va bien', async () => {
+  let respuesta: { status: number; body: any } | 'red' = { status: 200, body: { token: 'tok-el' } };
+  const pedidas: string[] = [];
+  const elevenFalso: typeof fetch = (async (url: any) => {
+    pedidas.push(String(url));
+    if (respuesta === 'red') throw new Error('sin red');
+    return new Response(JSON.stringify(respuesta.body), { status: respuesta.status, headers: { 'content-type': 'application/json' } });
+  }) as any;
+  const s = await montar(async () => {}, { fetch: elevenFalso });
+  const abrir = (token: string | null, cuerpo: unknown = { avatar: 'claudio', idioma: 'en' }) =>
+    fetch(`${s.base}/api/voz/agente`, { method: 'POST', headers: { 'content-type': 'application/json', ...(token ? { 'x-ultron-sesion': token } : {}) }, body: JSON.stringify(cuerpo) });
+  const antes = process.env.ELEVENLABS_API_KEY;
+  try {
+    const yo = persona();
+    assert.equal((await abrir(null)).status, 401);
+    delete process.env.ELEVENLABS_API_KEY;
+    delete process.env.XI_API_KEY;
+    assert.equal((await abrir(yo.token)).status, 503);
+    process.env.ELEVENLABS_API_KEY = 'llave-falsa';
+    respuesta = { status: 401, body: { detail: { status: 'invalid_api_key', message: 'secreto de la cuenta' } } };
+    const r502 = await abrir(yo.token);
+    assert.equal(r502.status, 502);
+    assert.ok(!JSON.stringify(await r502.json()).includes('secreto'), 'el cuerpo de ElevenLabs no llega al teléfono');
+    respuesta = 'red';
+    assert.equal((await abrir(yo.token)).status, 502);
+    respuesta = { status: 200, body: { token: 'tok-el' } };
+    const ok = await abrir(yo.token, { avatar: 'claudio', idioma: 'en', mode: 'explorer' });
+    assert.equal(ok.status, 200);
+    const j: any = await ok.json();
+    assert.equal(j.token, 'tok-el');
+    assert.match(pedidas.at(-1)!, /agent_id=agent_4901/);
+    const p = leerPase(j.pase)!;
+    assert.equal(p.correo, yo.correo);
+    assert.equal(p.avatar, 'claudio');
+    assert.equal(p.modo, 'EXPLORER');
+    assert.equal(p.cid, j.cid);
+    assert.ok(_conversaciones().has(j.cid), 'la conversación quedó registrada');
+  } finally {
+    if (antes === undefined) delete process.env.ELEVENLABS_API_KEY;
+    else process.env.ELEVENLABS_API_KEY = antes;
+    await s.cerrar();
+  }
+});
+
+test('un turno que se tarda demasiado: la voz pide perdón a tiempo y el cerebro recibe el corte', async () => {
+  let cortado = false;
+  const s = await montar(
+    (t) =>
+      new Promise<void>((resolve) => {
+        t.senal.addEventListener('abort', () => {
+          cortado = true;
+          // Lo que llegue después del tope ya no se dice.
+          t.enviar('delta', { text: 'tarde', voz: 'tarde' });
+          resolve();
+        });
+      }),
+    { turnoMs: 150 }
+  );
+  try {
+    const t0 = Date.now();
+    const dicho = dichoDe(await (await llm(s.base, paseDe(persona()), [{ role: 'user', content: 'algo difícil' }])).text());
+    assert.equal(dicho, 'Perdón, me estoy tardando demasiado. ¿Me lo preguntas otra vez?');
+    assert.ok(Date.now() - t0 < 2000);
+    assert.ok(cortado);
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('soltarSesion: saca del caché sin revocar, y la sesión firmada sigue valiendo', () => {
+  const s = emitirSesion({ correo: 'caché@ordenglobal.org', nombre: 'Caché', rol: 'Junta' });
+  soltarSesion(s.token);
+  soltarSesion(undefined);
+  const req = { headers: { 'x-ultron-sesion': s.token } } as any;
+  assert.equal(sesionDe(req)?.correo, s.correo, 'soltar no es cerrar');
 });

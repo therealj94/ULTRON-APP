@@ -5,26 +5,46 @@
  * reconoce la voz, decide cuándo terminó el turno, corta al avatar si la persona le habla encima y
  * dice la respuesta con la voz v4 del avatar. Lo que NO hace: pensar. Cada turno nos lo pide como
  * «LLM propio» (formato OpenAI /chat/completions en streaming), y aquí se contesta con el mismo
- * cerebro de la mesa (/api/turno/stream): mismas herramientas, misma memoria, mismo avatar e idioma.
+ * cerebro de la mesa, llamado EN PROCESO (sin ida y vuelta HTTP ni sesión interna): mismas
+ * herramientas de consulta, misma memoria, mismo perfil, mismo avatar e idioma.
  *
  * Seguridad, en dos llaves:
  *  1. ElevenLabs manda `Authorization: Bearer <secreto>` en cada petición. El secreto está guardado
  *     en ElevenLabs (secretos del agente) y aquí se deriva del de las sesiones (secretoDerivado).
  *  2. Quién habla viaja en un PASE firmado (firmarDato('voz', …)) que el teléfono recibe al abrir la
- *     conversación y ElevenLabs reenvía en la cabecera `X-Pase` (variable dinámica `pase`). Vale 30
- *     minutos, solo aquí (una sesión de la app no sirve y un pase no abre la app), y dice correo,
- *     nombre, avatar e idioma.
+ *     conversación y ElevenLabs reenvía en la cabecera `X-Pase` (variable dinámica `pase`).
+ *
+ * El pase es una credencial al portador (quien lo tenga habla como la persona), así que se le quita
+ * todo lo que no hace falta (auditoría del 29-sep):
+ *  · NO lleva mando: el turno por voz es solo de consulta (sin redespliegue, sin urgente ni llamada,
+ *    sin ejecutor). Lo que cambia el sistema se pide en la mesa, con la sesión.
+ *  · Va atado a la SESIÓN que lo pidió (su huella): si esa sesión se cierra o la contraseña cambia,
+ *    el pase deja de valer en el siguiente turno, no a los 30 minutos.
+ *  · Va atado a UNA conversación (un nonce `cid`): vence tras 5 minutos sin turnos (cada turno lo
+ *    renueva) y nunca pasa de 20 minutos; cada cuenta tiene como mucho tres conversaciones vivas.
+ *  · Cada persona tiene su cupo de turnos por minuto: todos los turnos llegan de las IPs de
+ *    ElevenLabs, y contar por IP juntaba a todo el mundo en un solo cupo.
  */
 import crypto from 'crypto';
 import type express from 'express';
 import { clave } from '../lib/boveda';
 import { quitarExpresiones } from '../lib/expresiones';
-import { emitirSesion, firmarDato, leerDato, mismoSecreto, secretoDerivado, soltarSesion, type Sesion } from './seguridad';
+import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
 import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
+import { modoValido } from './desk';
 
 /** La etiqueta del secreto que ElevenLabs manda como Bearer. Cambiarla invalida el guardado allá. */
 export const ETIQUETA_SECRETO_LLM = 'elevenlabs-llm-v1';
-const PASE_TTL_MS = 30 * 60_000;
+/** Tope absoluto de un pase (ElevenLabs lo reenvía igual durante toda la conversación). */
+export const PASE_TTL_MS = 20 * 60_000;
+/** Sin turnos durante esto, la conversación se da por cerrada. Cada turno la renueva. */
+export const INACTIVIDAD_MS = 5 * 60_000;
+/** Conversaciones vivas por cuenta (varios teléfonos). La más vieja se cierra al abrir otra. */
+export const MAX_CONVERSACIONES = 3;
+/** Turnos por minuto y por persona. Una charla real no pasa de diez o quince. */
+export const CUPO_TURNOS_MIN = 30;
+/** Lo que puede tardar un turno hablado antes de pedir perdón y soltar a la persona. */
+export const TURNO_VOZ_MS = 45_000;
 
 /**
  * Un agente de ElevenLabs por avatar e idioma (voz, idioma del reconocimiento y del turno). Los crea
@@ -41,17 +61,147 @@ export function agenteDe(avatar: AvatarVoz, idioma: Idioma): string {
   return env || AGENTES[avatar][idioma];
 }
 
-export type Pase = { correo: string; nombre: string; rol: string; avatar: AvatarVoz; idioma: Idioma; exp: number };
+/**
+ * El modo de la mesa con que habla cada avatar si el teléfono no dice otro. Antes era GUARDIAN para
+ * todos («firme, pocas palabras»), que a Claudio y a AU-RA les quitaba la calidez.
+ */
+export const MODO_DE_AVATAR: Record<AvatarVoz, string> = { ojos: 'GUARDIAN', aura: 'CONVERSACION', claudio: 'CREATIVE' };
 
-export function emitirPase(s: { correo: string; nombre: string; rol: string }, avatar: AvatarVoz, idioma: Idioma, ahora = Date.now()): string {
-  return firmarDato('voz', { correo: s.correo, nombre: s.nombre, rol: s.rol, avatar, idioma, exp: ahora + PASE_TTL_MS });
+export type Pase = {
+  correo: string;
+  nombre: string;
+  rol: string;
+  avatar: AvatarVoz;
+  idioma: Idioma;
+  modo: string;
+  /** El nonce de la conversación. */
+  cid: string;
+  /** Huella de la sesión que lo pidió, y cuándo se abrió y vence esa sesión. */
+  h: string;
+  sat: number;
+  sexp?: number;
+  exp: number;
+};
+
+export function emitirPase(
+  s: Pick<Sesion, 'correo' | 'nombre' | 'rol' | 'token' | 'at'> & { exp?: number },
+  avatar: AvatarVoz,
+  idioma: Idioma,
+  o: { modo?: string; cid?: string; ahora?: number } = {}
+): { pase: string; cid: string; exp: number } {
+  const ahora = o.ahora ?? Date.now();
+  const cid = o.cid || crypto.randomBytes(12).toString('base64url');
+  // Nunca más allá de la sesión que lo pidió.
+  const exp = Math.min(ahora + PASE_TTL_MS, s.exp || Infinity);
+  const modo = modoValido(o.modo) || MODO_DE_AVATAR[avatar];
+  const pase = firmarDato('voz', { correo: s.correo, nombre: s.nombre, rol: s.rol, avatar, idioma, modo, cid, h: huellaSesion(s.token), sat: s.at, sexp: s.exp, exp });
+  return { pase, cid, exp };
 }
 
+/** Lo que dice un pase bien firmado y no vencido. Que su sesión siga viva se mira aparte. */
 export function leerPase(token: string, ahora = Date.now()): Pase | null {
   const d = leerDato('voz', token);
-  if (!d?.correo || !d?.nombre || !Number(d.exp) || ahora > Number(d.exp)) return null;
-  return { correo: String(d.correo), nombre: String(d.nombre), rol: String(d.rol || 'Junta'), avatar: normalizarAvatar(d.avatar), idioma: normalizarIdioma(d.idioma), exp: Number(d.exp) };
+  // Un pase de antes (sin sesión ni conversación) no se acepta: era el de 30 minutos al portador.
+  if (!d?.correo || !d?.nombre || !d?.cid || !d?.h || !Number(d.exp) || ahora > Number(d.exp)) return null;
+  const avatar = normalizarAvatar(d.avatar);
+  return {
+    correo: String(d.correo),
+    nombre: String(d.nombre),
+    rol: String(d.rol || 'Junta'),
+    avatar,
+    idioma: normalizarIdioma(d.idioma),
+    modo: modoValido(d.modo) || MODO_DE_AVATAR[avatar],
+    cid: String(d.cid),
+    h: String(d.h),
+    sat: Number(d.sat) || 0,
+    sexp: Number(d.sexp) || undefined,
+    exp: Number(d.exp),
+  };
 }
+
+/* ------------------------------------------------------------------ las conversaciones vivas */
+
+type Conversacion = {
+  cid: string;
+  correo: string;
+  abierta: number;
+  ultimo: number;
+  cerrada: boolean;
+  /** Lo que se le dio a la voz en el último turno, y si ElevenLabs lo cortó a la mitad. */
+  ultimaDicha: string;
+  cortada: boolean;
+  turnos: number;
+  /** El turno que está pensando ahora (si llega otro, este ya no lo oye nadie). */
+  enCurso: AbortController | null;
+};
+const conversaciones = new Map<string, Conversacion>();
+
+function podar(ahora: number) {
+  for (const [k, c] of conversaciones) if (c.cerrada || ahora - c.ultimo > INACTIVIDAD_MS) conversaciones.delete(k);
+}
+
+/** Registra una conversación nueva; si la cuenta ya tiene el máximo, cierra la más vieja. */
+export function abrirConversacion(correo: string, cid: string, ahora = Date.now()): { cerradas: number } {
+  podar(ahora);
+  const c = correo.toLowerCase();
+  const vivas = [...conversaciones.values()].filter((x) => x.correo === c).sort((a, b) => a.ultimo - b.ultimo);
+  let cerradas = 0;
+  while (vivas.length >= MAX_CONVERSACIONES) {
+    const vieja = vivas.shift()!;
+    vieja.enCurso?.abort();
+    anotarCerrada(vieja.cid, ahora);
+    conversaciones.delete(vieja.cid);
+    cerradas++;
+  }
+  conversaciones.set(cid, { cid, correo: c, abierta: ahora, ultimo: ahora, cerrada: false, ultimaDicha: '', cortada: false, turnos: 0, enCurso: null });
+  return { cerradas };
+}
+
+export function cerrarConversacion(cid: string): boolean {
+  const c = conversaciones.get(cid);
+  if (!c) return false;
+  c.enCurso?.abort();
+  conversaciones.delete(cid);
+  return true;
+}
+
+/**
+ * Un turno de esta conversación: la renueva si sigue viva. Una que no está registrada (el servidor se
+ * redesplegó a mitad de charla) se retoma: el pase firmado, su tope de 20 minutos y la sesión viva
+ * ya se comprobaron. Una que se cerró (más de tres abiertas, o la cerró el teléfono) no vuelve.
+ */
+function tocarConversacion(p: Pase, ahora: number): Conversacion | null {
+  let c = conversaciones.get(p.cid);
+  if (c && (c.cerrada || ahora - c.ultimo > INACTIVIDAD_MS)) {
+    conversaciones.delete(p.cid);
+    return null;
+  }
+  if (!c) {
+    if (cerradasDeCuenta.get(p.cid)) return null;
+    abrirConversacion(p.correo, p.cid, ahora);
+    c = conversaciones.get(p.cid)!;
+  }
+  c.ultimo = ahora;
+  return c;
+}
+
+/** Nonces cerrados a propósito (por el teléfono o por pasar el máximo), para que no se retomen. */
+const cerradasDeCuenta = new Map<string, number>();
+function anotarCerrada(cid: string, ahora = Date.now()) {
+  cerradasDeCuenta.set(cid, ahora);
+  if (cerradasDeCuenta.size > 5000) for (const [k, t] of cerradasDeCuenta) if (ahora - t > PASE_TTL_MS) cerradasDeCuenta.delete(k);
+}
+
+/** Solo pruebas. */
+export function _conversaciones() {
+  return conversaciones;
+}
+export function _reiniciarConversaciones() {
+  conversaciones.clear();
+  cerradasDeCuenta.clear();
+}
+
+/* ------------------------------------------------------------------ el formato de ElevenLabs */
 
 /** El último mensaje de la persona en el formato de OpenAI (texto o partes con texto). */
 export function ultimoDeLaPersona(messages: unknown): string {
@@ -59,10 +209,47 @@ export function ultimoDeLaPersona(messages: unknown): string {
   for (let i = lista.length - 1; i >= 0; i--) {
     const m: any = lista[i];
     if (m?.role !== 'user') continue;
-    if (typeof m.content === 'string') return m.content.trim();
-    if (Array.isArray(m.content)) return m.content.map((p: any) => (typeof p?.text === 'string' ? p.text : '')).join(' ').trim();
+    return textoDe(m.content);
   }
   return '';
+}
+
+function textoDe(content: unknown): string {
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) return content.map((p: any) => (typeof p?.text === 'string' ? p.text : '')).join(' ').trim();
+  return '';
+}
+
+const aplanar = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+/**
+ * ¿La respuesta anterior quedó cortada? ElevenLabs no documenta cómo marca una interrupción en el
+ * historial del «LLM propio» (29-sep: la documentación de Agents no lo dice), así que no se adivina
+ * con palabras: se compara lo que NOSOTROS le dimos a la voz en el turno anterior con el último
+ * mensaje de asistente que ElevenLabs manda de vuelta. Si el suyo es un pedazo del principio del
+ * nuestro, la voz no llegó a decirlo entero: la persona la interrumpió.
+ */
+export function asistenteTruncado(messages: unknown, ultimaDicha: string): boolean {
+  const nuestra = aplanar(quitarExpresiones(ultimaDicha || ''));
+  if (nuestra.length < 12) return false;
+  const lista = Array.isArray(messages) ? messages : [];
+  let i = lista.length - 1;
+  while (i >= 0 && (lista[i] as any)?.role === 'user') i--;
+  const m: any = lista[i];
+  if (!m || m.role !== 'assistant') return false;
+  const suya = aplanar(textoDe(m.content)).replace(/(\.{3}|…|—|-)$/, '').trim();
+  if (!suya) return true;
+  return suya.length + 8 < nuestra.length && nuestra.startsWith(suya);
+}
+
+/** Lo primero que dice AU-RA cuando la interrumpieron: un perdón breve, y enseguida lo nuevo. */
+const PERDON: Record<Idioma, string[]> = {
+  es: ['¡Ah, perdón! ', '¡Uy, perdón! ', 'Perdón. '],
+  en: ['Oh, sorry! ', 'Oops, sorry! ', 'Sorry. '],
+};
+export function perdonDe(idioma: Idioma, n = 0): string {
+  const l = PERDON[idioma];
+  return l[Math.abs(n) % l.length];
 }
 
 /** Un trozo SSE con la forma de OpenAI. */
@@ -74,44 +261,97 @@ export function trozoOpenAI(id: string, modelo: string, contenido: string | null
   return `data: ${JSON.stringify(c)}\n\n`;
 }
 
-/** Lee eventos SSE (`event:` + `data:`) de un cuerpo que llega a trozos. */
-export async function* eventosSSE(cuerpo: ReadableStream<Uint8Array>): AsyncGenerator<{ evento: string; datos: any }> {
+/**
+ * Lee eventos SSE (`event:` + `data:`) de un cuerpo que llega a trozos. Con `senal`, deja de leer
+ * cuando se aborta; y el lector se suelta siempre (antes quedaba tomado si el que leía se iba).
+ */
+export async function* eventosSSE(cuerpo: ReadableStream<Uint8Array>, senal?: AbortSignal): AsyncGenerator<{ evento: string; datos: any }> {
   const lector = cuerpo.getReader();
   const dec = new TextDecoder();
   let buf = '';
-  for (;;) {
-    const { done, value } = await lector.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let corte: number;
-    while ((corte = buf.indexOf('\n\n')) >= 0) {
-      const bloque = buf.slice(0, corte);
-      buf = buf.slice(corte + 2);
-      let evento = 'message';
-      const datos: string[] = [];
-      for (const linea of bloque.split('\n')) {
-        if (linea.startsWith('event:')) evento = linea.slice(6).trim();
-        else if (linea.startsWith('data:')) datos.push(linea.slice(5).trimStart());
-      }
-      if (!datos.length) continue;
-      try {
-        yield { evento, datos: JSON.parse(datos.join('\n')) };
-      } catch {
-        /* un trozo que no es JSON no es nuestro */
+  const alAbortar = () => void lector.cancel().catch(() => {});
+  senal?.addEventListener('abort', alAbortar, { once: true });
+  try {
+    for (;;) {
+      if (senal?.aborted) return;
+      const { done, value } = await lector.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let corte: number;
+      while ((corte = buf.indexOf('\n\n')) >= 0) {
+        const bloque = buf.slice(0, corte);
+        buf = buf.slice(corte + 2);
+        let evento = 'message';
+        const datos: string[] = [];
+        for (const linea of bloque.split('\n')) {
+          if (linea.startsWith('event:')) evento = linea.slice(6).trim();
+          else if (linea.startsWith('data:')) datos.push(linea.slice(5).trimStart());
+        }
+        if (!datos.length) continue;
+        try {
+          yield { evento, datos: JSON.parse(datos.join('\n')) };
+        } catch {
+          /* un trozo que no es JSON no es nuestro */
+        }
       }
     }
+  } finally {
+    senal?.removeEventListener('abort', alAbortar);
+    await lector.cancel().catch(() => {});
   }
 }
+
+/**
+ * Sigue un `replace` del cerebro (usó una herramienta y la respuesta buena es otra) sin desdecir lo ya
+ * dicho: si la nueva empieza igual, se dice lo que falta; si no, se sigue con la nueva. El espacio de
+ * unión solo si hace falta (antes quedaban dos).
+ */
+export function restoDeReemplazo(dicho: string, nuevo: string): string {
+  const d = aplanar(dicho);
+  const n = aplanar(nuevo);
+  if (!n) return '';
+  if (d && n.startsWith(d)) {
+    const falta = n.slice(d.length);
+    return /\s$/.test(dicho) ? falta.trimStart() : falta;
+  }
+  return (dicho && !/\s$/.test(dicho) ? ' ' : '') + n;
+}
+
+/* ------------------------------------------------------------------ las rutas */
+
+/** Lo que se le pide al cerebro para un turno hablado. */
+export type TurnoVoz = {
+  body: { message: string; mode: string; usuario: string; correo: string; avatar: AvatarVoz; idioma: Idioma; canal: 'mesa' };
+  /** Quién habla (del pase). NO es una sesión: no abre ninguna otra ruta. */
+  persona: { correo: string; nombre: string; rol: string };
+  /** La persona interrumpió la respuesta anterior (y ya se le dijo «perdón»). */
+  interrumpida: boolean;
+  senal: AbortSignal;
+  /** Los mismos eventos que /api/turno/stream: tools, emocion, delta, replace, done, error. */
+  enviar: (evento: string, datos: any) => void;
+};
 
 type Deps = {
   exigirMesaODesk: express.RequestHandler;
   limitar: (max: number, ventanaMs?: number, grupo?: string) => express.RequestHandler;
   sesionDe: (req: express.Request) => Sesion | null;
-  /** Dónde escucha este mismo servidor (para pedirle el turno al cerebro de siempre). */
-  puerto: number;
+  /** El cerebro de siempre, en proceso. Resuelve cuando mandó `done` o `error` (o lo cortaron). */
+  turno: (t: TurnoVoz) => Promise<void>;
+  /** Para pedir el permiso a ElevenLabs (las pruebas ponen uno falso). */
+  fetch?: typeof fetch;
+  /** Tope de un turno hablado (TURNO_VOZ_MS; las pruebas lo acortan). */
+  turnoMs?: number;
+};
+
+const PHRASES = {
+  hilo: { es: 'Se me fue el hilo. ¿Me lo repites?', en: 'I lost my train of thought. Can you say it again?' },
+  corte: { es: 'Perdón, se me cortó un segundo. ¿Me lo repites?', en: 'Sorry, I lost the connection for a second. Can you repeat that?' },
+  tarde: { es: 'Perdón, me estoy tardando demasiado. ¿Me lo preguntas otra vez?', en: "Sorry, I'm taking too long. Could you ask me again?" },
 };
 
 export function montarVozAgente(app: express.Express, d: Deps) {
+  const pedir = d.fetch || fetch;
+
   /**
    * Abrir una conversación fluida: el teléfono pide, con su sesión, el permiso de un solo uso de
    * ElevenLabs para el agente de su avatar e idioma, y el pase que dirá quién habla.
@@ -125,48 +365,84 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const key = clave('elevenlabs');
     if (!agente || !key) return res.status(503).json({ error: 'La conversación fluida no está lista todavía.', honesto: true });
     try {
-      const r = await fetch(`https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${encodeURIComponent(agente)}`, {
+      const r = await pedir(`https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${encodeURIComponent(agente)}`, {
         headers: { 'xi-api-key': key },
         signal: AbortSignal.timeout(10_000),
       });
       const j: any = await r.json().catch(() => ({}));
       if (!r.ok || !j?.token) {
-        console.warn('[voz agente] token', r.status, JSON.stringify(j).slice(0, 160));
+        // Solo el estado: el cuerpo de un error de ElevenLabs puede traer datos de la cuenta.
+        console.warn('[voz agente] token', r.status);
         return res.status(502).json({ error: 'No pude abrir la conversación ahora. Intenta en un momento.', honesto: true });
       }
-      return res.json({ token: j.token, agente, avatar, idioma, pase: emitirPase(s, avatar, idioma), honesto: true });
+      const p = emitirPase(s, avatar, idioma, { modo: req.body?.mode ?? req.body?.modo });
+      const { cerradas } = abrirConversacion(s.correo, p.cid);
+      if (cerradas) console.log(`[voz agente] ${cerradas} conversación(es) vieja(s) cerrada(s) por el tope de ${MAX_CONVERSACIONES}`);
+      return res.json({ token: j.token, agente, avatar, idioma, pase: p.pase, cid: p.cid, vence: new Date(p.exp).toISOString(), honesto: true });
     } catch (e: any) {
-      console.warn('[voz agente] token', String(e?.message || e).slice(0, 120));
+      console.warn('[voz agente] token', String(e?.name || 'error'));
       return res.status(502).json({ error: 'No pude abrir la conversación ahora. Intenta en un momento.', honesto: true });
     }
+  });
+
+  /** El teléfono cuelga: el pase de esa conversación deja de valer ya, no a los cinco minutos. */
+  app.post('/api/voz/agente/cerrar', d.exigirMesaODesk, d.limitar(30, 60_000, 'voz-agente'), (req, res) => {
+    const s = d.sesionDe(req);
+    if (!s) return res.status(401).json({ error: 'sesión requerida', honesto: true });
+    const p = leerPase(String(req.body?.pase || ''));
+    if (!p || p.correo.toLowerCase() !== s.correo.toLowerCase()) return res.json({ ok: true, cerrada: false, honesto: true });
+    anotarCerrada(p.cid);
+    return res.json({ ok: true, cerrada: cerrarConversacion(p.cid), honesto: true });
   });
 
   /**
    * El «LLM propio» de los agentes. ElevenLabs lo llama en cada turno con el historial en formato
    * OpenAI; aquí solo se toma lo último que dijo la persona (la memoria y el hilo los tiene el
-   * cerebro) y se contesta en streaming con los trozos de /api/turno/stream.
+   * cerebro) y se contesta en streaming con los eventos del turno.
    *
-   * Si la persona interrumpe, ElevenLabs cierra la petición: se aborta el turno de adentro para no
-   * seguir pensando algo que ya nadie va a oír.
+   * Si la persona interrumpe, ElevenLabs cierra la petición: se aborta el turno de adentro de verdad
+   * (la señal llega hasta la llamada al nodo) para no seguir pensando algo que ya nadie va a oír.
    */
   const llm: express.RequestHandler = async (req, res) => {
+    const ip = String(req.ip || req.socket.remoteAddress || 'x');
     const auth = String(req.headers.authorization || '');
     const bearer = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-    if (!bearer || !mismoSecreto(secretoDerivado(ETIQUETA_SECRETO_LLM), bearer)) {
-      return res.status(401).json({ error: { message: 'unauthorized' } });
+    const negar = (mensaje: string) => {
+      // Quien prueba llaves o pases a ciegas se frena por IP (a ElevenLabs, que las trae buenas, no le toca).
+      const cupo = gastarCupo(`voz-llm-fallo:${ip}`, 30);
+      return res.status(cupo ? 401 : 429).json({ error: { message: cupo ? mensaje : 'too many requests' } });
+    };
+    if (!bearer || !mismoSecreto(secretoDerivado(ETIQUETA_SECRETO_LLM), bearer)) return negar('unauthorized');
+    const ahora = Date.now();
+    const pase = leerPase(String(req.headers['x-pase'] || ''), ahora);
+    if (!pase) return negar('pase vencido o inválido');
+    if (!sesionSigueViva({ huella: pase.h, correo: pase.correo, at: pase.sat, exp: pase.sexp }, ahora)) return negar('la sesión de este pase se cerró');
+    const conv = tocarConversacion(pase, ahora);
+    if (!conv) return negar('conversación cerrada o vencida');
+    if (!gastarCupo(`voz-turnos:${pase.correo.toLowerCase()}`, CUPO_TURNOS_MIN)) {
+      return res.status(429).json({ error: { message: 'demasiados turnos; espera un momento' } });
     }
-    const pase = leerPase(String(req.headers['x-pase'] || ''));
-    if (!pase) return res.status(401).json({ error: { message: 'pase vencido o inválido' } });
+
     const mensaje = ultimoDeLaPersona(req.body?.messages);
     const id = `chatcmpl-${crypto.randomBytes(8).toString('hex')}`;
     const modelo = String(req.body?.model || 'aura');
 
+    // Si el turno anterior sigue pensando, ya nadie lo va a oír.
+    if (conv.enCurso) {
+      conv.enCurso.abort();
+      conv.enCurso = null;
+    }
+    const interrumpida = !!mensaje && (conv.cortada || asistenteTruncado(req.body?.messages, conv.ultimaDicha));
+    conv.cortada = false;
+    conv.turnos++;
+
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Cache-Control', 'no-store, no-transform');
     res.setHeader('X-Accel-Buffering', 'no');
+    req.socket.setNoDelay?.(true);
     res.flushHeaders?.();
     const escribir = (t: string) => {
-      if (!res.writableEnded) res.write(t);
+      if (!res.writableEnded && !res.destroyed) res.write(t);
     };
     const cerrar = () => {
       escribir('data: [DONE]\n\n');
@@ -179,66 +455,97 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     }
 
     const corte = new AbortController();
-    res.on('close', () => {
-      if (!res.writableEnded) corte.abort();
-    });
-    // Una sesión corta de ESTE servidor para pedirle el turno al cerebro con el nombre de quien habla.
-    const sesion = emitirSesion({ correo: pase.correo, nombre: pase.nombre, rol: pase.rol }, { vence: Date.now() + 5 * 60_000 });
+    conv.enCurso = corte;
     let algo = false;
-    // Lo que ya se le dio a la voz, en claro: sirve para seguir un «replace» del cerebro.
+    // Lo que ya se le dio a la voz, en claro: sirve para seguir un «replace» y para saber, en el
+    // turno que venga, si la persona cortó esta respuesta a la mitad.
     let dicho = '';
-    try {
-      const r = await fetch(`http://127.0.0.1:${d.puerto}/api/turno/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-ultron-sesion': sesion.token },
-        body: JSON.stringify({ message: mensaje, mode: 'GUARDIAN', usuario: pase.nombre, correo: pase.correo, avatar: pase.avatar, idioma: pase.idioma, canal: 'mesa' }),
-        signal: corte.signal,
-      });
-      if (!r.ok || !r.body) throw new Error(`turno ${r.status}`);
-      for await (const { evento, datos } of eventosSSE(r.body)) {
-        if (evento === 'delta') {
-          // La voz del agente lee el texto tal cual: sin las marcas de expresión de la mesa.
-          const crudo = quitarExpresiones(String(datos?.voz ?? datos?.text ?? ''));
-          // Al quitar una marca del principio queda un espacio: el primer trozo empieza limpio.
-          const t = algo ? crudo : crudo.replace(/^\s+/, '');
-          if (t) {
-            algo = true;
-            dicho += t;
-            escribir(trozoOpenAI(id, modelo, t));
-          }
-        } else if (evento === 'replace') {
-          /* El cerebro cambió la respuesta ya empezada (usó una herramienta y la respuesta buena es
-             otra). Lo ya dicho no se puede desdecir: si la nueva empieza igual, se dice lo que falta;
-             si no, se sigue con la respuesta nueva, que es la buena. Antes se ignoraba y la voz se
-             quedaba con el texto viejo, anterior a la herramienta. */
-          const nuevo = quitarExpresiones(String(datos?.voz ?? datos?.text ?? '')).trim();
-          const resto = nuevo.startsWith(dicho.trim()) ? nuevo.slice(dicho.trim().length) : (dicho ? ' ' : '') + nuevo;
-          if (resto.trim()) {
-            algo = true;
-            dicho += resto;
-            escribir(trozoOpenAI(id, modelo, resto));
-          }
-        } else if (evento === 'done') {
-          if (!algo) {
-            const t = quitarExpresiones(String(datos?.voz ?? datos?.reply ?? ''));
-            if (t) escribir(trozoOpenAI(id, modelo, t));
-          }
-          break;
-        } else if (evento === 'error') {
-          if (!algo) escribir(trozoOpenAI(id, modelo, String(datos?.error || (pase.idioma === 'en' ? 'I lost my train of thought. Can you say it again?' : 'Se me fue el hilo. ¿Me lo repites?'))));
-          break;
-        }
+    let terminado = false;
+    const decir = (t: string, forzar = false) => {
+      if (!t || (terminado && !forzar)) return;
+      algo = true;
+      dicho += t;
+      escribir(trozoOpenAI(id, modelo, t));
+    };
+    res.on('close', () => {
+      if (!res.writableEnded) {
+        corte.abort();
+        // ElevenLabs cortó mientras hablábamos: la próxima respuesta empieza pidiendo perdón.
+        if (algo) conv.cortada = true;
+        conv.ultimaDicha = dicho;
+        if (conv.enCurso === corte) conv.enCurso = null;
       }
-    } catch (e: any) {
-      if (corte.signal.aborted) {
-        soltarSesion(sesion.token);
-        return; // la persona interrumpió: nadie espera esto
-      }
-      console.warn('[voz agente] turno', String(e?.message || e).slice(0, 160));
-      if (!algo) escribir(trozoOpenAI(id, modelo, pase.idioma === 'en' ? 'Sorry, I lost the connection for a second. Can you repeat that?' : 'Perdón, se me cortó un segundo. ¿Me lo repites?'));
+    });
+
+    if (interrumpida) {
+      decir(perdonDe(pase.idioma, conv.turnos));
+      // El perdón no cuenta como «ya dijo algo»: si el cerebro falla, igual se explica.
+      algo = false;
     }
-    // La sesión de un turno no se vuelve a usar: fuera del caché, o cada turno hablado dejaría una.
-    soltarSesion(sesion.token);
+    const inicioPropio = dicho.length;
+
+    const reloj = AbortSignal.timeout(d.turnoMs ?? TURNO_VOZ_MS);
+    const senal = AbortSignal.any([corte.signal, reloj]);
+    let avisarFin: () => void = () => {};
+    const fin = new Promise<void>((r) => (avisarFin = r));
+    senal.addEventListener('abort', () => avisarFin(), { once: true });
+
+    const enviar = (evento: string, datos: any) => {
+      if (terminado || senal.aborted) return;
+      if (evento === 'delta') {
+        // La voz del agente lee el texto tal cual: sin las marcas de expresión de la mesa.
+        const crudo = quitarExpresiones(String(datos?.voz ?? datos?.text ?? ''));
+        // Al quitar una marca del principio queda un espacio: el primer trozo empieza limpio.
+        decir(dicho.length > inicioPropio ? crudo : crudo.replace(/^\s+/, ''));
+      } else if (evento === 'replace') {
+        const nuevo = quitarExpresiones(String(datos?.voz ?? datos?.text ?? ''));
+        decir(restoDeReemplazo(dicho.slice(inicioPropio), nuevo));
+      } else if (evento === 'done') {
+        if (!algo) decir(quitarExpresiones(String(datos?.voz ?? datos?.reply ?? '')).trim());
+        terminado = true;
+        avisarFin();
+      } else if (evento === 'error') {
+        // Nunca se lee el error de adentro («Qwen no contestó», «message vacío»): una frase de persona.
+        if (!algo) decir(PHRASES.hilo[pase.idioma]);
+        terminado = true;
+        avisarFin();
+      }
+    };
+
+    const t = d
+      .turno({
+        body: { message: mensaje, mode: pase.modo, usuario: pase.nombre, correo: pase.correo, avatar: pase.avatar, idioma: pase.idioma, canal: 'mesa' },
+        persona: { correo: pase.correo, nombre: pase.nombre, rol: pase.rol },
+        interrumpida,
+        senal,
+        enviar,
+      })
+      .then(
+        () => avisarFin(),
+        (e: any) => {
+          if (!senal.aborted) console.warn('[voz agente] turno', String(e?.message || e).slice(0, 160));
+          if (!terminado && !senal.aborted && !algo) decir(PHRASES.corte[pase.idioma]);
+          terminado = true;
+          avisarFin();
+        }
+      );
+    await Promise.race([fin, t]);
+    if (corte.signal.aborted) {
+      // La persona interrumpió (o llegó otro turno de esta conversación): nadie espera esto. Si la
+      // petición sigue abierta, se cierra bien para que ElevenLabs no quede esperando.
+      if (!res.writableEnded && !res.destroyed) {
+        escribir(trozoOpenAI(id, modelo, null, 'stop'));
+        cerrar();
+      }
+      return;
+    }
+    const porReloj = reloj.aborted && !terminado;
+    // Desde aquí el cerebro ya no habla: lo que llegue tarde no se dice.
+    terminado = true;
+    if (porReloj) corte.abort(); // que el cerebro suelte también
+    if (!algo) decir(porReloj ? PHRASES.tarde[pase.idioma] : PHRASES.hilo[pase.idioma], true);
+    if (conv.enCurso === corte) conv.enCurso = null;
+    conv.ultimaDicha = dicho;
     escribir(trozoOpenAI(id, modelo, null, 'stop'));
     cerrar();
   };

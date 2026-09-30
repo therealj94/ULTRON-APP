@@ -179,7 +179,16 @@ export type ContextoTaller = {
   prueba?: 'sesion' | 'telegram' | 'nombre' | null;
   canal?: 'mesa' | 'telegram';
   riesgo?: number | null;
+  /**
+   * El turno llega por la conversación fluida (un pase de voz, no una sesión): solo consulta. Nada
+   * que salga del sistema (Telegram, WhatsApp, correo, urgente, llamada) ni que lo cambie
+   * (redespliegue, mantenimiento), aunque quien hable tenga mando. Eso se pide en la mesa.
+   */
+  soloConsulta?: boolean;
 };
+
+/** Lo que el taller no hace desde la voz: todo lo que sale del sistema o lo cambia. */
+const FUERA_DE_LA_VOZ = new Set(['redeploy', 'mantenimiento', 'voz', 'urgente', 'llamar', 'enviar']);
 
 /**
  * Pasa la acción por las reglas y, si la dejan, la corre. Si no, devuelve el texto de la decisión
@@ -212,7 +221,15 @@ export async function despacharTaller(message: string, opts?: ContextoTaller): P
   const hechos: string[] = [];
   const out = (decir?: string): TallerOut => ({ hechos, tools, decir });
   const ctx: ContextoTaller = opts || {};
-  const consulta = !puedeCambiarSistema(opts?.quien);
+  const consulta = !puedeCambiarSistema(opts?.quien) || !!opts?.soloConsulta;
+
+  if (opts?.soloConsulta && p.accion && (FUERA_DE_LA_VOZ.has(p.accion) || (p.accion === 'pdf' && p.canal))) {
+    tools.push(p.accion);
+    hechos.push(
+      'ACCESO (conversación de voz): solo consulta. Desde la voz no mando mensajes, avisos urgentes ni llamadas, no redespliego y no hago mantenimiento. Se pide en la mesa, con la sesión abierta. Lo demás (estado, oro, web, pendientes, memoria) sí.'
+    );
+    return out('Eso no lo hago desde la conversación de voz. Pídemelo escrito en la mesa y lo vemos.');
+  }
 
   if (consulta && (p.accion === 'redeploy' || p.accion === 'mantenimiento')) {
     tools.push(p.accion);

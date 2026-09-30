@@ -31,7 +31,15 @@ const TONO_MODO: Record<string, string> = {
   STRATEGIC: 'voz baja, piensa a largo plazo',
   CREATIVE: 'juguetona, propone ideas',
   TELEGRAM: 'natural, como en un chat privado',
+  // El de AU-RA en la conversación fluida: ni guardián ni analista, compañera.
+  CONVERSACION: 'cálida y natural, como una charla con alguien de confianza',
 };
+
+/** El modo si es uno que existe (en mayúsculas), o null. Lo que venga del teléfono pasa por aquí. */
+export function modoValido(v: unknown): string | null {
+  const m = typeof v === 'string' ? v.trim().toUpperCase() : '';
+  return m && Object.prototype.hasOwnProperty.call(TONO_MODO, m) ? m : null;
+}
 
 /**
  * Persona de AU-RA. Corta a propósito: un 27B obedece mejor doce reglas claras que sesenta.
