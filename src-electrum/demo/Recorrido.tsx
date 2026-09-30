@@ -102,8 +102,8 @@ type DatosCartera = {
   total: number;
   enCatastro: number;
   hectareas: number;
-  porNivel: { rojo: number; ambar: number; verde: number };
-  filas: Array<{ id: number; nombre: string; estado: string | null; hectareas: number; prospectividad: number | null; nivel: 'rojo' | 'ambar' | 'verde'; motivos: Array<{ tipo: string; nombre: string; zona: string | null; pct: number }> }>;
+  porNivel: { rojo: number; ambar: number; verde: number; incompleto?: number };
+  filas: Array<{ id: number; nombre: string; estado: string | null; hectareas: number; prospectividad: number | null; nivel: 'rojo' | 'ambar' | 'verde' | 'incompleto'; motivos: Array<{ tipo: string; nombre: string; zona: string | null; pct: number }> }>;
 };
 const ficha = (id: number) => json<Ficha & { encuadre: [number, number, number, number] | null }>(`/api/electrum/mapa/concesion/${id}`).catch(() => null);
 const capa = (c: { id: number; nombre: string } | undefined) =>

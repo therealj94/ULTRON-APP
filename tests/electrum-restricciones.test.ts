@@ -57,6 +57,40 @@ test('restricciones, carteras y capas sin duplicar', { skip: hayBase() ? false :
     assert.equal(n, 1);
   });
 
+  await t.test('una capa cargada antes de la v10 (sin huella) tampoco se duplica, y queda con huella', async () => {
+    await consulta(`UPDATE capa SET huella = NULL WHERE nombre = 'AREAS PROTEGIDAS'`);
+    const otra = await guardarCapa(ap, { subidoPor: 'pruebas' });
+    assert.equal(otra.capaId, 0);
+    assert.equal(otra.repetidas, 1);
+    const [k] = await consulta<{ n: number; con: number }>(
+      `SELECT count(*)::int AS n, count(huella)::int AS con FROM capa WHERE nombre = 'AREAS PROTEGIDAS'`
+    );
+    assert.deepEqual({ n: k.n, con: k.con }, { n: 1, con: 1 });
+  });
+
+  await t.test('sin nada encontrado pero con capas que faltan: incompleto, nunca verde', async () => {
+    // Un polígono lejos de todo: no pisa nada de lo cargado, y la capa de caseríos no está.
+    const lejos = structuredClone(capa!);
+    lejos.nombre = 'LEJOS';
+    lejos.geojson.features = [{ ...(lejos.geojson.features as any[])[0], properties: { ...(lejos.geojson.features as any[])[0].properties, TITULAR: 'Otro S.A.' }, geometry: { ...(lejos.geojson.features as any[])[0].geometry, coordinates: mover((lejos.geojson.features as any[])[0].geometry.coordinates, 2) } }];
+    const r = await guardarCapa(lejos, { subidoPor: 'pruebas' });
+    const [c] = await consulta<{ id: string }>(`SELECT id::text FROM concesion WHERE capa_id = $1`, [r.capaId]);
+    const [x] = await restriccionesDe([Number(c.id)]);
+    assert.equal(x.items.length, 0);
+    assert.ok(x.sinRevisar.length > 0);
+    assert.equal(x.nivel, 'incompleto');
+    await consulta(`DELETE FROM capa WHERE id = $1`, [r.capaId]);
+  });
+
+  await t.test('patrimonio forestal con régimen de área protegida: ámbar, no rojo', async () => {
+    const fo = await guardarCapa(geografia('PATRIMONIO PUBLICO FORESTAL', 1, { nom_area: 'Bosque de Prueba', regim_mane: 'Área Protegida', acuer_regu: 'ICF-001-2020' }), { subidoPor: 'pruebas' });
+    const [r] = await restriccionesDe([Number(b.id)]);
+    const i = r.items.find((x) => x.tipo === 'forestal')!;
+    assert.equal(i.nivel, 'ambar');
+    assert.match(i.motivo, /confirmar con ICF/);
+    await consulta(`DELETE FROM capa WHERE id = $1`, [fo.capaId]);
+  });
+
   await t.test('área protegida en zona núcleo: rojo, con decreto', async () => {
     const [r] = await restriccionesDe([Number(a.id)]);
     assert.equal(r.nivel, 'rojo');
@@ -94,7 +128,7 @@ test('restricciones, carteras y capas sin duplicar', { skip: hayBase() ? false :
     const an = await analizarCartera('empresa');
     assert.ok(!('error' in an));
     assert.equal(an.filas.length, 2);
-    assert.deepEqual(an.porNivel, { rojo: 2, ambar: 0, verde: 0 });
+    assert.deepEqual(an.porNivel, { rojo: 2, ambar: 0, verde: 0, incompleto: 0 });
     assert.match(carteraEnTexto(an), /2 rojas/);
   });
 

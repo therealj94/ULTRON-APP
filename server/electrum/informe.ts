@@ -386,7 +386,7 @@ export async function informeConcesion(
     bloques.push({
       tipo: 'aviso',
       texto: `Semáforo de restricciones: ${NOMBRE_NIVEL[restr.nivel]}${
-        restr.nivel === 'rojo' ? ' — pisa una zona de exclusión (Art. 48 a) LGM)' : restr.nivel === 'ambar' ? ' — se puede trabajar con condiciones' : ' — sin restricciones en las capas cargadas'
+        restr.nivel === 'rojo' ? ' — pisa una zona de exclusión (Art. 48 a) LGM)' : restr.nivel === 'ambar' ? ' — se puede trabajar con condiciones' : restr.nivel === 'incompleto' ? ' — no se encontró nada, pero falta alguna capa de restricción' : ' — sin restricciones en las capas cargadas'
       }.`,
     });
   }

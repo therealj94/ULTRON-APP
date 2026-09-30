@@ -310,7 +310,9 @@ function firmaDeCapa(capa: Capa): string | null {
   if (!fs_.length) return null;
   const h = createHash('md5');
   h.update(String(fs_.length));
-  for (const f of fs_) h.update(JSON.stringify(f.geometry));
+  // Geometría Y atributos: dos capas distintas pueden compartir polígonos (una microcuenca y un
+  // bosque dibujados sobre el mismo lindero) y no por eso son la misma capa.
+  for (const f of fs_) h.update(JSON.stringify(f.geometry)).update(JSON.stringify(f.properties || {}));
   return h.digest('hex');
 }
 
@@ -367,11 +369,32 @@ export async function guardarCapa(
   // gestiona él mismo el reemplazo —carga la nueva y DESPUÉS borra la vieja— y saltarse la carga
   // aquí le haría borrar la única copia.
   if (huellaCapa && opts.comoConcesiones === undefined && !pareceCatastro(capa.geojson.features as Feature[]) && (await capaTieneHuella())) {
-    const [ya] = await consulta<{ id: string }>(`SELECT id::text FROM capa WHERE huella = $1 LIMIT 1`, [huellaCapa]);
-    if (ya) {
-      const n = (capa.geojson.features as Feature[]).filter((f) => f && f.geometry).length;
-      return { capaId: 0, concesiones: 0, entidades: 0, repetidas: n, reparadas: 0, vacias: 0, cartera: null };
+    const conGeom = (capa.geojson.features as Feature[]).filter((f) => f && f.geometry);
+    const n = conGeom.length;
+    let [ya] = await consulta<{ id: string }>(`SELECT id::text FROM capa WHERE huella = $1 LIMIT 1`, [huellaCapa]);
+    if (!ya) {
+      /*
+       * Las capas cargadas antes de la v10 no tienen huella. Se comparan geometría a geometría con
+       * las que tienen el mismo número de rasgos —en la base se guardan con el mismo
+       * ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON(…))), así que los bytes coinciden— y, si es la
+       * misma, se le anota la huella para que la próxima vez baste con mirarla.
+       */
+      [ya] = await consulta<{ id: string }>(
+        `WITH nueva AS (
+           SELECT array_agg(h ORDER BY h) AS hs
+             FROM (SELECT md5(ST_AsBinary(ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON(g), 4326)))) AS h FROM unnest($1::text[]) AS g) x
+         )
+         SELECT k.id::text FROM capa k, nueva
+          WHERE k.huella IS NULL
+            AND k.rol IS NOT DISTINCT FROM $3
+            AND (SELECT count(*) FROM entidad_geo e WHERE e.capa_id = k.id) = $2
+            AND (SELECT array_agg(md5(ST_AsBinary(e.geom)) ORDER BY md5(ST_AsBinary(e.geom))) FROM entidad_geo e WHERE e.capa_id = k.id) = nueva.hs
+          LIMIT 1`,
+        [conGeom.map((f) => JSON.stringify(f.geometry)), n, rolDeCapa(capa.nombre)]
+      ).catch(() => []);
+      if (ya) await consulta(`UPDATE capa SET huella = $2 WHERE id = $1`, [ya.id, huellaCapa]).catch(() => {});
     }
+    if (ya) return { capaId: 0, concesiones: 0, entidades: 0, repetidas: n, reparadas: 0, vacias: 0, cartera: null };
   }
   const cliente: PoolClient = await conexion().connect();
   try {

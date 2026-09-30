@@ -103,7 +103,7 @@ export async function analizarCartera(nombre?: string | null): Promise<AnalisisC
   const rPor = new Map(rs.map((r) => [r.concesionId, r]));
   const pPor = new Map(prosp.map((p) => [Number(p.id), Number(p.puntaje)]));
 
-  const rango: Record<Nivel, number> = { verde: 0, ambar: 1, rojo: 2 };
+  const rango: Record<Nivel, number> = { verde: 0, incompleto: 1, ambar: 2, rojo: 3 };
   const filas: FilaCartera[] = datos
     .map((d) => ({
       concesionId: Number(d.id),
@@ -127,7 +127,7 @@ export async function analizarCartera(nombre?: string | null): Promise<AnalisisC
     x.ha += f.hectareas;
     porEstado.set(e, x);
   }
-  const porNivel: Record<Nivel, number> = { rojo: 0, ambar: 0, verde: 0 };
+  const porNivel: Record<Nivel, number> = { rojo: 0, ambar: 0, verde: 0, incompleto: 0 };
   for (const f of filas) porNivel[f.restricciones.nivel]++;
 
   return {
@@ -151,7 +151,11 @@ export function carteraEnTexto(a: AnalisisCartera): string {
       (a.fuera.length ? ` ${a.fuera.length} ya no están en el catastro vigente: ${a.fuera.slice(0, 5).map((f) => f.nombre || f.expediente).join(', ')}${a.fuera.length > 5 ? '…' : ''}.` : '')
   );
   p.push(`Por estado: ${a.porEstado.map((e) => `${e.estado} ${e.n} (${significadoEstado(e.estado)}, ${nf(e.ha, 1)} ha)`).join('; ')}.`);
-  p.push(`Semáforo de restricciones: ${a.porNivel.verde} verdes, ${a.porNivel.ambar} ámbar, ${a.porNivel.rojo} rojas.`);
+  p.push(
+    `Semáforo de restricciones: ${a.porNivel.verde} verdes, ${a.porNivel.ambar} ámbar, ${a.porNivel.rojo} rojas` +
+      (a.porNivel.incompleto ? `, ${a.porNivel.incompleto} sin revisar completas (falta alguna capa de restricción)` : '') +
+      '.'
+  );
   const cuenta = (tipo: string) => a.filas.filter((f) => f.restricciones.items.some((i) => i.tipo === tipo)).length;
   p.push(
     `Pisan área protegida ${cuenta('area_protegida')}, microcuenca declarada o en trámite ${cuenta('microcuenca')}, patrimonio forestal ${cuenta('forestal')}; con caseríos dentro ${cuenta('poblados')}; traslapadas con terceros ${cuenta('traslape')}.`

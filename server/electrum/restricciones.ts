@@ -13,10 +13,11 @@
  *           Minera otorgará derechos mineros» en las Áreas Protegidas declaradas ni en las zonas
  *           productoras de agua declaradas. Pisar un área protegida declarada (núcleo o no) o una
  *           microcuenca declarada/aprobada es rojo.
- *  · ÁMBAR  microcuenca en proceso de declaratoria, patrimonio público forestal (requiere ICF),
+ *  · ÁMBAR  microcuenca en proceso de declaratoria, patrimonio público forestal (requiere ICF;
+ *           su régimen «área protegida» no es la declaratoria, que la da la capa de áreas protegidas),
  *           caseríos dentro (socialización y consulta), traslape con derechos de terceros.
- *  · VERDE  nada de lo anterior EN LAS CAPAS CARGADAS. Una capa que no está cargada no da verde:
- *           se dice que no se pudo revisar.
+ *  · VERDE  nada de lo anterior EN LAS CAPAS CARGADAS, y todas cargadas. Si falta alguna y no se
+ *           encontró nada, el nivel es `incompleto`, no verde.
  *
  * Todo sale de PostGIS, set a set: la cartera entera (90 zonas) se revisa en tres consultas, no
  * en noventa.
@@ -24,13 +25,18 @@
 import { conTextoReparado, consultaConTope, hayBase } from './db';
 import { capasPorRol } from './entorno';
 
-export type Nivel = 'rojo' | 'ambar' | 'verde';
+/**
+ * `incompleto`: no se encontró nada, pero falta alguna capa de restricción: no se puede decir verde
+ * (sin la capa de áreas protegidas, «no pisa ninguna» no es un dato, es una ausencia de dato).
+ */
+export type Nivel = 'rojo' | 'ambar' | 'verde' | 'incompleto';
+type NivelItem = 'rojo' | 'ambar';
 export type TipoRestriccion = 'area_protegida' | 'microcuenca' | 'forestal' | 'poblados' | 'traslape';
 
 export type Restriccion = {
   tipo: TipoRestriccion;
   nombre: string;
-  nivel: Exclude<Nivel, 'verde'>;
+  nivel: NivelItem;
   ha: number;
   pct: number;
   /** Zona del área protegida (Núcleo, Amortiguamiento…), estado de la microcuenca, régimen forestal. */
@@ -158,11 +164,13 @@ async function socialesYTerceros(ids: number[], poblados: number[]) {
   return { pob, tras };
 }
 
-function nivelDe(rol: TipoRestriccion, zona: string | null): Exclude<Nivel, 'verde'> {
+function nivelDe(rol: TipoRestriccion, zona: string | null): NivelItem {
   const z = (zona || '').toLowerCase();
   if (rol === 'area_protegida') return 'rojo';
   if (rol === 'microcuenca') return /proceso/.test(z) ? 'ambar' : 'rojo';
-  if (rol === 'forestal') return /protegid/.test(z) ? 'rojo' : 'ambar';
+  // El régimen «área protegida» del catálogo forestal no es la declaratoria: el rojo lo da la capa
+  // de áreas protegidas, que es la que dice si está declarada. Aquí queda ámbar.
+  if (rol === 'forestal') return 'ambar';
   return 'ambar';
 }
 
@@ -179,8 +187,8 @@ function motivoDe(rol: TipoRestriccion, zona: string | null): string {
         : 'Microcuenca declarada abastecedora de agua: zona productora de agua excluida (Art. 48 a) LGM).';
     case 'forestal':
       return /protegid/.test(z)
-        ? 'Patrimonio público forestal bajo régimen de área protegida: exclusión (Art. 48 a) LGM).'
-        : 'Patrimonio público forestal: el uso lo autoriza ICF y hay contrato de manejo vigente con terceros.';
+        ? 'Patrimonio público forestal con régimen de área protegida: confirmar con ICF si está declarada (si lo está, es exclusión por Art. 48 a) LGM).'
+        : 'Patrimonio público forestal: el uso lo autoriza ICF y puede haber contrato de manejo con terceros.';
     case 'poblados':
       return 'Caseríos dentro: socialización y consulta previa antes de cualquier trabajo.';
     case 'traslape':
@@ -257,7 +265,7 @@ export async function restriccionesDe(idsPedidos: number[]): Promise<Restriccion
   return cab
     .map((c) => {
       const items = (porId.get(c.id) || []).sort((a, b) => (a.nivel === b.nivel ? b.ha - a.ha : a.nivel === 'rojo' ? -1 : 1));
-      const nivel: Nivel = items.some((i) => i.nivel === 'rojo') ? 'rojo' : items.length ? 'ambar' : 'verde';
+      const nivel: Nivel = items.some((i) => i.nivel === 'rojo') ? 'rojo' : items.length ? 'ambar' : sinRevisar.length ? 'incompleto' : 'verde';
       return { concesionId: Number(c.id), nombre: c.nombre, hectareas: r2(c.ha), nivel, items, sinRevisar };
     })
     .sort((a, b) => (orden.get(String(a.concesionId)) ?? 0) - (orden.get(String(b.concesionId)) ?? 0));
@@ -266,7 +274,7 @@ export async function restriccionesDe(idsPedidos: number[]): Promise<Restriccion
 const nf = (x: number, d = 1) => new Intl.NumberFormat('es-ES', { maximumFractionDigits: d }).format(x);
 const ha1 = (x: number) => `${nf(x)} ha`;
 const pc = (x: number) => `${nf(x)} %`;
-export const NOMBRE_NIVEL: Record<Nivel, string> = { rojo: 'ROJO', ambar: 'ÁMBAR', verde: 'VERDE' };
+export const NOMBRE_NIVEL: Record<Nivel, string> = { rojo: 'ROJO', ambar: 'ÁMBAR', verde: 'VERDE', incompleto: 'SIN REVISAR COMPLETO' };
 
 /** Una restricción en una línea, con sus cifras y su instrumento. */
 export function lineaRestriccion(r: Restriccion): string {
@@ -291,6 +299,6 @@ export function restriccionesEnTexto(r: Restricciones): string {
   if (r.items.length) partes.push(r.items.map(lineaRestriccion).join(' '));
   else partes.push('Sin restricciones en las capas cargadas.');
   if (r.sinRevisar.length) partes.push(`No se pudo revisar (capa no cargada): ${r.sinRevisar.join(', ')}; el verde no cubre eso.`);
-  if (r.nivel !== 'verde') partes.push(`Base: ${BASE_LEGAL} Es una guía para priorizar, no un dictamen: se confirma con ICF e INHGEOMIN.`);
+  if (r.nivel === 'rojo' || r.nivel === 'ambar') partes.push(`Base: ${BASE_LEGAL} Es una guía para priorizar, no un dictamen: se confirma con ICF e INHGEOMIN.`);
   return partes.join(' ');
 }

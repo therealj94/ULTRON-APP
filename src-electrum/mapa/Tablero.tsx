@@ -106,13 +106,14 @@ type DatosCartera = {
   cartera: string;
   enCatastro: number;
   hectareas: number;
-  porNivel: { rojo: number; ambar: number; verde: number };
-  filas: Array<{ id: number; nombre: string; estado: string | null; hectareas: number; prospectividad: number | null; nivel: 'rojo' | 'ambar' | 'verde'; motivos: Array<{ tipo: string; nombre: string; zona: string | null; pct: number }> }>;
+  porNivel: { rojo: number; ambar: number; verde: number; incompleto?: number };
+  filas: Array<{ id: number; nombre: string; estado: string | null; hectareas: number; prospectividad: number | null; nivel: 'rojo' | 'ambar' | 'verde' | 'incompleto'; motivos: Array<{ tipo: string; nombre: string; zona: string | null; pct: number }> }>;
 };
 const SEMAFORO = {
   verde: { color: '#2ECC71', txt: 'sin restricciones' },
   ambar: { color: '#FFB020', txt: 'con condiciones' },
   rojo: { color: '#E0765F', txt: 'zona de exclusión' },
+  incompleto: { color: '#8FA3B0', txt: 'sin revisar completo' },
 } as const;
 
 function Tarjeta({ titulo, children, className = '' }: { titulo: string; children: ReactNode; className?: string }) {
@@ -202,7 +203,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
   const [prospectas, setProspectas] = useState<Prospecta[]>([]);
   const [perdidas, setPerdidas] = useState<Perdida[]>([]);
   const [cartera, setCartera] = useState<DatosCartera | null>(null);
-  const [verCartera, setVerCartera] = useState<'rojo' | 'ambar' | 'verde' | null>(null);
+  const [verCartera, setVerCartera] = useState<'rojo' | 'ambar' | 'verde' | 'incompleto' | null>(null);
   const caja = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -285,8 +286,8 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
 
             {cartera && cartera.filas.length > 0 && (
               <Tarjeta titulo={`Cartera · ${cartera.cartera} · ${nf(cartera.enCatastro)} zonas, ${nf(cartera.hectareas)} ha`}>
-                <div className="mb-2 grid grid-cols-3 gap-2">
-                  {(['verde', 'ambar', 'rojo'] as const).map((n) => (
+                <div className={`mb-2 grid gap-2 ${cartera.porNivel.incompleto ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'}`}>
+                  {(cartera.porNivel.incompleto ? (['verde', 'incompleto', 'ambar', 'rojo'] as const) : (['verde', 'ambar', 'rojo'] as const)).map((n) => (
                     <button
                       key={n}
                       type="button"
@@ -295,7 +296,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                       className={`rounded-lg border px-2 py-1.5 text-left cursor-pointer ${verCartera === n ? 'border-white/40 bg-white/[0.07]' : 'border-white/10 hover:border-white/25'}`}
                     >
                       <div className="font-display text-[22px] font-bold leading-none" style={{ color: SEMAFORO[n].color }}>
-                        {cartera.porNivel[n]}
+                        {cartera.porNivel[n] ?? 0}
                       </div>
                       <div className="mt-1 text-[11px] leading-snug text-[#9FB0B8]">{SEMAFORO[n].txt}</div>
                     </button>
