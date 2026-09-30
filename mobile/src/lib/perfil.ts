@@ -119,6 +119,7 @@ export function normalizarPerfil(raw: unknown): Perfil | null {
   if (PRESENTACIONES.includes(r.presentacion as Presentacion)) p.presentacion = r.presentacion as Presentacion;
   return p;
 }
+
 /**
  * Aplica cambios sobre un perfil. La encuesta se mezcla campo por campo (un campo vacío se borra);
  * `cumple: ''` lo borra; `nombreGenesis` solo lo pone el servidor, así que aquí se respeta el que hay
