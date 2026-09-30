@@ -98,8 +98,8 @@ public partial class NotchWindow : Window
     (double W, double H, double R) Tamano(Modo m) => m switch
     {
         Modo.Reposo => raton ? (300, 42, 15) : (236, 36, 13),
-        Modo.Escucha => (360, 50, 19),
-        Modo.Piensa => (340, 50, 19),
+        Modo.Escucha => (360, 58, 21),
+        Modo.Piensa => (340, 58, 21),
         Modo.Habla => (470, 80, 26),
         Modo.Aviso => (450, 84, 28),
         Modo.Confirma => (480, 118, 28),
@@ -235,7 +235,7 @@ public partial class NotchWindow : Window
         relojAviso?.Stop();
         if (avisos.Count == 0) { avisoActual = null; Recalcular(); return; }
         var a = avisoActual = avisos.Dequeue();
-        TituloAviso.Text = a.Titulo; CuerpoAviso.Text = a.Cuerpo; IconoAviso.Text = a.Icono; AvatarAviso.Estado = a.Cara;
+        TituloAviso.Text = a.Titulo; CuerpoAviso.Text = a.Cuerpo; IconoAviso.Codigo = a.Icono; AvatarAviso.Estado = a.Cara;
         CuerpoAviso.Visibility = string.IsNullOrWhiteSpace(a.Cuerpo) ? Visibility.Collapsed : Visibility.Visible;
         BotonAviso.Visibility = a.Boton != null ? Visibility.Visible : Visibility.Collapsed;
         BotonAviso.Content = a.Boton;

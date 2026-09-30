@@ -25,7 +25,7 @@
    </Grid>
 
    <!-- ESCUCHANDO -->
-   <Grid x:Name="CapaEscucha" IsHitTestVisible="False" Opacity="0">
+   <Grid x:Name="CapaEscucha" IsHitTestVisible="False" Opacity="0" Margin="0,6,0,0">
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <n:AvatarView x:Name="AvatarEscucha" Width="36" Height="36" Margin="10,0,0,0" VerticalAlignment="Center" Estado="listening"/>
     <TextBlock x:Name="TextoEscucha" Grid.Column="1" Text="Te escucho…" FontSize="13" Foreground="{StaticResource Tenue}" VerticalAlignment="Center" Margin="10,0,110,0" TextTrimming="CharacterEllipsis"/>
@@ -33,7 +33,7 @@
    </Grid>
 
    <!-- PENSANDO: lo que dijiste, y tres puntos que orbitan -->
-   <Grid x:Name="CapaPiensa" IsHitTestVisible="False" Opacity="0">
+   <Grid x:Name="CapaPiensa" IsHitTestVisible="False" Opacity="0" Margin="0,6,0,0">
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <n:AvatarView x:Name="AvatarPiensa" Width="36" Height="36" Margin="10,0,0,0" VerticalAlignment="Center" Estado="thinking"/>
     <TextBlock x:Name="TextoPiensa" Grid.Column="1" Text="Pensando…" FontSize="13" FontStyle="Italic" Foreground="{StaticResource Tenue}" VerticalAlignment="Center" Margin="10,0,100,0" TextTrimming="CharacterEllipsis"/>
@@ -57,7 +57,7 @@
     <Grid Width="52" Height="52" Margin="14,10,0,0" VerticalAlignment="Center">
      <n:AvatarView x:Name="AvatarAviso" Estado="happy"/>
      <Border x:Name="IconoAvisoFondo" Width="22" Height="22" CornerRadius="11" Background="{DynamicResource Acento}" HorizontalAlignment="Right" VerticalAlignment="Bottom">
-      <TextBlock x:Name="IconoAviso" FontFamily="{StaticResource Iconos}" Text="&#xE73E;" FontSize="11" Foreground="#111" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+      <n:Glifo x:Name="IconoAviso" Codigo="&#xE73E;" Width="12" Height="12" Pincel="#111" HorizontalAlignment="Center" VerticalAlignment="Center"/>
      </Border>
     </Grid>
     <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,10,10,0">
