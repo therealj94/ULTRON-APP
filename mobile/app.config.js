@@ -15,6 +15,8 @@ const base = require('./app.json');
 const ELECTRUM = {
   name: 'Dr Electrum FP',
   slug: 'dr-electrum-fp',
+  // Proyecto EAS propio en la cuenta ordenglobal (las OTA del doctor no se mezclan con las de AU-RA).
+  proyectoEas: '2bd6da7c-c804-467e-8fbd-a171699acc9b',
   scheme: 'drelectrumfp',
   // Paquete distinto: si fuera el mismo, instalar una desinstalaría la otra.
   paquete: 'link.ordenglobal.drelectrumfp',
@@ -176,11 +178,21 @@ module.exports = ({ config }) => {
       return p;
     }),
     /*
-     * Sin actualizaciones por aire por ahora: `eas update` exige que el slug sea el del proyecto EAS
-     * de `extra.eas.projectId`, y el doctor todavía comparte el de AU-RA. Heredando la URL de AU-RA
-     * pediría el JS de la otra app. Se enciende cuando tenga su propio proyecto (slug dr-electrum-fp).
+     * Actualizaciones por aire con SU propio proyecto EAS (@ordenglobal/dr-electrum-fp): `eas update`
+     * exige que el slug sea el del proyecto de `extra.eas.projectId`, así que el doctor ya no comparte
+     * el de AU-RA ni pide el JS de la otra app.
      */
-    updates: { ...expo.updates, enabled: false },
-    extra: { ...expo.extra, variante: 'electrum', acento: ELECTRUM.acento, ultronUrl: 'https://ultron-looi-desk.onrender.com' },
+    updates: {
+      ...expo.updates,
+      url: `https://u.expo.dev/${ELECTRUM.proyectoEas}`,
+      requestHeaders: { 'expo-channel-name': CANAL },
+    },
+    extra: {
+      ...expo.extra,
+      eas: { projectId: ELECTRUM.proyectoEas },
+      variante: 'electrum',
+      acento: ELECTRUM.acento,
+      ultronUrl: 'https://ultron-looi-desk.onrender.com',
+    },
   };
 };
