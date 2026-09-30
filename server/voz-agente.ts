@@ -68,12 +68,15 @@ export const TURNO_VOZ_MS = 45_000;
  * EL PUENTE: si en este tiempo el cerebro no dijo nada, AURA dice una frase corta del estado en que está
  * («Déjame revisar…», «Buscando…», «Sacando cuentas…»), con la forma de ser del avatar y en su idioma,
  * en vez de quedarse callada. Una orden rápida o una charla contestan antes y no lo oyen nunca.
- * En la llamada, el agente de ElevenLabs ya dice su propio relleno corto («Mmm… a ver.») a los ~2,5 s;
- * por eso el puente va 2 s después (~4,5 s): si el cerebro sigue callado, se oye el ESTADO («Estoy
- * revisando…»), no dos muletillas seguidas. Antes 1,2 s, y salía en turnos que iban a contestar
- * enseguida (José: «no se siente conversación fluida»).
+ * En la llamada, el agente de ElevenLabs ya dice su propio relleno corto («Mmm… a ver.») a los ~2,5 s,
+ * pero ESE relleno no cuenta como respuesta: si el LLM propio no manda texto antes de CASCADA_ELEVENLABS_MS
+ * (el `cascade_timeout_seconds` de los agentes, 4 s), ElevenLabs corta la conversación con «LLM Cascade
+ * Error: TimeoutError» (30-sep: con el puente a 4,5 s, toda pregunta que pensaba más de 4 s colgaba la
+ * llamada). Por eso el puente va a los 3 s: después del relleno del agente y antes del corte. Antes
+ * 1,2 s, y salía en turnos que iban a contestar enseguida (José: «no se siente conversación fluida»).
  */
-export const PUENTE_VOZ_MS = ESPERA_FRASE_MS + 2_000;
+export const CASCADA_ELEVENLABS_MS = 4_000;
+export const PUENTE_VOZ_MS = Math.min(ESPERA_FRASE_MS + 500, CASCADA_ELEVENLABS_MS - 1_000);
 
 /**
  * Un agente de ElevenLabs por avatar e idioma (voz, idioma del reconocimiento y del turno). Los crea
