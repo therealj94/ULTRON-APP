@@ -45,16 +45,19 @@ export const CASA = slugOrganizacion(process.env.ULTRON_ORGANIZACION_CASA) || 'o
 const PUBLICOS = /^(gmail|googlemail|hotmail|outlook|live|msn|yahoo|ymail|icloud|me|aol|proton|protonmail|gmx|zoho|mail)\./;
 
 /**
- * La organización de una persona del padrón:
+ * La organización de una persona:
  *  1. la que dice el padrón (`organizacion`), si la tiene;
- *  2. la casa, si su correo es de Orden Global o no tiene correo (Telegram de la junta);
- *  3. el dominio de su correo (todos los de mina.hn juntos);
- *  4. con correo público (gmail…), ella sola.
+ *  2. la casa, si José la puso a mano en el padrón: es su equipo, y hasta hoy veía todo. Separarla
+ *     por su correo al desplegar la dejaría sin los expedientes de la casa de un día para otro;
+ *  3. para una cuenta aprobada desde la página (`origen: 'web'`): la casa si su correo es de Orden
+ *     Global; si no, el dominio de su correo (todos los de mina.hn juntos); con correo público
+ *     (gmail…), ella sola.
  */
-export function organizacionDePersona(p: Pick<Persona, 'id' | 'correos'> & { organizacion?: string } | null | undefined): string {
+export function organizacionDePersona(p: (Pick<Persona, 'id' | 'correos'> & { organizacion?: string; origen?: 'web' }) | null | undefined): string {
   if (!p) return CASA;
   const dada = slugOrganizacion(p.organizacion);
   if (dada) return dada;
+  if (p.origen !== 'web') return CASA;
   const correo = p.correos?.[0];
   if (!correo) return CASA;
   const dominio = correo.split('@')[1] || '';

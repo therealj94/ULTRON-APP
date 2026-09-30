@@ -52,6 +52,11 @@ export type Persona = {
    * deduce del correo (server/electrum/organizacion.ts).
    */
   organizacion?: string;
+  /**
+   * De dónde salió: `web` es una cuenta aprobada desde la página (server/cuentas.ts); lo demás lo
+   * puso José a mano en el padrón. Decide la organización por defecto (H14).
+   */
+  origen?: 'web';
 };
 
 export type Identificacion = { persona: Persona; prueba: Prueba };
@@ -232,7 +237,10 @@ let cache: { llave: string; gente: Persona[] } | null = null;
  */
 let aprobadas: { version: number; gente: Persona[] } = { version: 0, gente: [] };
 export function fijarCuentasAprobadas(gente: Array<Partial<Persona> & { id: string }>) {
-  const limpias = gente.map(normalizar).filter((p): p is Persona => !!p && p.correos.length > 0);
+  const limpias = gente
+    .map(normalizar)
+    .filter((p): p is Persona => !!p && p.correos.length > 0)
+    .map((p) => ({ ...p, origen: 'web' as const }));
   aprobadas = { version: aprobadas.version + 1, gente: limpias };
 }
 

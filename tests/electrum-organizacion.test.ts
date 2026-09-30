@@ -17,9 +17,13 @@ import { asegurarOrganizacion, CASA, conOrganizacion, organizacionDePersona, slu
 test('de qué organización es cada persona', () => {
   assert.equal(organizacionDePersona({ id: 'jose', correos: ['jose@ordenglobal.org'] }), CASA);
   assert.equal(organizacionDePersona({ id: 'tg', correos: [] }), CASA, 'la junta por Telegram, sin correo, es de la casa');
-  assert.equal(organizacionDePersona({ id: 'perez', correos: ['perez@mina.hn'] }), 'mina.hn');
-  assert.equal(organizacionDePersona({ id: 'ana', correos: ['ana@gmail.com'] }), 'persona-ana', 'dos cuentas de gmail no son colegas');
+  assert.equal(organizacionDePersona({ id: 'perez', correos: ['perez@mina.hn'], origen: 'web' }), 'mina.hn');
+  assert.equal(organizacionDePersona({ id: 'ana', correos: ['ana@gmail.com'], origen: 'web' }), 'persona-ana', 'dos cuentas de gmail no son colegas');
+  assert.equal(organizacionDePersona({ id: 'jo', correos: ['jo@ordenglobal.org'], origen: 'web' }), CASA);
   assert.equal(organizacionDePersona({ id: 'x', correos: ['x@mina.hn'], organizacion: 'Minas del Norte' }), 'minas-del-norte', 'lo que diga el padrón manda');
+  // Quien José puso a mano en el padrón es su equipo: sigue viendo lo de la casa aunque su correo sea otro.
+  assert.equal(organizacionDePersona({ id: 'carga', correos: ['carga@mina.hn'] }), CASA);
+  assert.equal(organizacionDePersona({ id: 'cli', correos: ['cli@mina.hn'], organizacion: 'mina.hn' }), 'mina.hn', 'a un cliente del padrón se le pone la organización');
   assert.equal(slugOrganizacion("x'; DROP TABLE documento; --"), 'x-drop-table-documento');
 });
 
