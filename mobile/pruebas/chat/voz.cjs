@@ -65,7 +65,14 @@ const { ok, fin, espera, arrancarRelevo, movil, entrarComo } = require('./comun.
   CONTRATO.emitir('accion', { tipo: 'redactar', para: 'Zacarías', texto: 'hola' });
   const noEsta = await esperar((e) => e.t === 'hecho' && e.d.accion.tipo === 'redactar' && e.d.ok === false);
   ok('un nombre que no está: hecho ok:false y lo dice', !!noEsta, noEsta && noEsta.d.detalle);
+  // A María se le acaba de enviar: un «envíalo» repetido en seguida es el mismo pedido (llegó por el SSE
+  // y por el turno) y contesta lo mismo, sin mandar nada otra vez. A Roberto no se le envió nada.
+  const antesRep = eventos.length;
   CONTRATO.emitir('accion', { tipo: 'enviar', para: B.correo });
+  const rep = await esperar((e) => eventos.indexOf(e) >= antesRep && e.t === 'hecho' && e.d.accion.tipo === 'enviar');
+  const enRelevo2 = (await R.post('/bandeja', { ...B, desde: A.correo })).mensajes || [];
+  ok('«envíalo» repetido en seguida: el mismo resultado, sin mandar otro', rep && rep.d.ok === true && enRelevo2.length === enRelevo.length, rep && rep.d.detalle);
+  CONTRATO.emitir('accion', { tipo: 'enviar', para: C.correo });
   const nada = await esperar((e) => e.t === 'hecho' && e.d.accion.tipo === 'enviar' && e.d.ok === false);
   ok('enviar sin borrador: hecho ok:false', !!nada, nada && nada.d.detalle);
 

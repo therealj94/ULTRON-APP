@@ -365,6 +365,9 @@ function enojarse(n: Animo, ahora: number, efectos: Efecto[], _azar: () => numbe
   return { animo: n, efectos };
 }
 
+/** Dentro de este rato, otro «envío hecho» es el mismo pedido repetido: no se dice «¡Listo!» otra vez. */
+const LISTO_UNA_VEZ_MS = 5_000;
+
 /** Un mensaje salió (a mano o por voz): la palomita ✔ y «Enviado a …», una sola vez por envío. Muda. */
 function palomita(a: Animo, ahora: number, efectos: Efecto[], para?: string): Salida {
   if (ahora - a.ultimaPalomita < 2500) return { animo: a, efectos };
@@ -374,7 +377,9 @@ function palomita(a: Animo, ahora: number, efectos: Efecto[], para?: string): Sa
 
 /**
  * El resultado de «envíalo» (la acción `enviar`): se lo pidieron a ella, así que lo dice. Bien →
- * «¡Listo!» (una vez aunque el envío avise dos veces) y la palomita si `enviado` no la puso ya. Mal →
+ * «¡Listo!» (una vez aunque el mismo envío avise dos veces: el `hecho` repetido de un «envíalo» que
+ * llegó por el SSE y por el turno puede venir hasta 5 s después) y la palomita si `enviado` no la puso
+ * ya. Mal →
  * «no pude» con el motivo, que también le llega al agente de voz.
  */
 function envioPedido(a: Animo, ok: boolean, ahora: number, efectos: Efecto[], para?: string, detalle?: string): Salida {
@@ -387,7 +392,7 @@ function envioPedido(a: Animo, ok: boolean, ahora: number, efectos: Efecto[], pa
     return { animo: { ...a, reaccion: { exp: 'triste', hasta: ahora + 1800 } }, efectos };
   }
   const r = palomita(a, ahora, efectos, para);
-  if (ahora - a.ultimoListo < 2500) return r;
+  if (ahora - a.ultimoListo < LISTO_UNA_VEZ_MS) return r;
   efectos.push({ tipo: 'confirmar', ok: true, texto: textoCompa.listo() });
   return { animo: { ...r.animo, ultimoListo: ahora }, efectos };
 }

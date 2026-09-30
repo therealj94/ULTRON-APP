@@ -128,6 +128,14 @@ export type ResultadoEnvio = { ok: boolean; detalle: string; id?: string };
  * promesa, mismo resultado— en vez de mandar el mensaje otra vez.
  */
 const enCurso = new Map<string, Promise<ResultadoEnvio>>();
+/**
+ * Lo que se acaba de enviar por voz, por correo. El «envíalo» repetido puede llegar cuando el primero
+ * YA terminó (el `done` del turno llega después que el SSE): sin borrador y con un envío bueno hace
+ * menos de 5 s, es el mismo pedido y se contesta lo mismo, en vez de «no hay borrador» (AURA diría
+ * «no pude» justo después de «¡listo!»).
+ */
+const recientes = new Map<string, { r: ResultadoEnvio; en: number }>();
+export const VENTANA_REPETIDO_MS = 5_000;
 
 /**
  * Envía el borrador del chat con `correo` (o el abierto, o el último que redactó AURA). Lo usa la
@@ -142,7 +150,11 @@ export function enviarBorrador(correo?: string): Promise<ResultadoEnvio> {
   const ya = enCurso.get(c);
   if (ya) return ya;
   const b = borradores[c];
-  if (!b?.texto.trim()) return Promise.resolve({ ok: false, detalle: 'No hay borrador para enviar en ese chat.' });
+  if (!b?.texto.trim()) {
+    const hace = recientes.get(c);
+    if (hace && Date.now() - hace.en < VENTANA_REPETIDO_MS) return Promise.resolve(hace.r);
+    return Promise.resolve({ ok: false, detalle: 'No hay borrador para enviar en ese chat.' });
+  }
   const eraUltimo = ultimoRedactado === c;
   quitar(c);
   const p = (async (): Promise<ResultadoEnvio> => {
@@ -164,7 +176,9 @@ export function enviarBorrador(correo?: string): Promise<ResultadoEnvio> {
               : 'No se pudo enviar. Revisa la conexión.',
       };
     }
-    return { ok: true, detalle: r.e2e ? 'Enviado, cifrado de punta a punta.' : 'Enviado sin cifrar: esa persona todavía no abrió el chat en ningún aparato.', id: r.id };
+    const bien = { ok: true, detalle: r.e2e ? 'Enviado, cifrado de punta a punta.' : 'Enviado sin cifrar: esa persona todavía no abrió el chat en ningún aparato.', id: r.id };
+    recientes.set(c, { r: bien, en: Date.now() });
+    return bien;
   })().finally(() => {
     if (enCurso.get(c) === p) enCurso.delete(c);
   });
@@ -226,6 +240,7 @@ g.__auraBorradores = escuchar('accion', (a) => {
 RELEVO.alSalir(() => {
   borradores = {};
   enCurso.clear();
+  recientes.clear();
   ultimoRedactado = null;
   abierto = null;
   avisar();
