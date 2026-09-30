@@ -51,6 +51,7 @@ import { estadoLaya, saludLaya } from './lib/laya';
 import { ES_ELECTRUM, ES_ULTRON, PAGINA_RAIZ, PLATAFORMA, rutaPermitida } from './lib/plataforma';
 import {
   claveHiloDe,
+  quienDelHilo,
   fusionarHiloElectrum,
   hiloDe as hiloElectrumDe,
   hiloDelCliente,
@@ -347,6 +348,7 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
         canal: 'mesa',
         mensaje,
         prueba: id ? 'sesion' : null,
+        duenio: quienDelHilo(id?.persona.id, req),
       },
       { historial, idioma: req.body?.idioma }
     );
@@ -489,8 +491,11 @@ app.get('/api/electrum/catastro.geojson', exigirPlataforma('electrum'), limitar(
       for (const f of fc.features) {
         const p = perdida?.get(Number(f.properties?.id));
         if (p && p > 0) (f.properties as any).perdida_ha = Math.round(p * 10) / 10;
-        const q = prosp?.get(Number(f.properties?.id));
+        const id = Number(f.properties?.id);
+        const q = prosp?.get(id);
         if (q != null) (f.properties as any).prosp = q;
+        // Sin datos para evaluar: se pinta aparte, no como «muy baja» (auditoría H07).
+        else if (prosp?.has(id)) (f.properties as any).prosp_sin = 1;
         const mi = minerales?.get(Number(f.properties?.id));
         if (mi?.minerales.length) (f.properties as any).minerales = mi.minerales.join(',');
         if (mi?.clase) (f.properties as any).clase = mi.clase;
@@ -773,7 +778,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
     });
     const salida = await turnoElectrum(
       mensaje,
-      { quien: id?.persona.id || null, nivel: nivelDe(id, 'electrum'), plataforma: 'electrum', canal: 'mesa', mensaje, prueba: id ? 'sesion' : null },
+      { quien: id?.persona.id || null, nivel: nivelDe(id, 'electrum'), plataforma: 'electrum', canal: 'mesa', mensaje, prueba: id ? 'sesion' : null, duenio: quienDelHilo(id?.persona.id, req) },
       {
         historial,
         abandonado: () => seFue,
@@ -1025,7 +1030,8 @@ app.post('/api/electrum/informe', exigirPlataforma('electrum'), limitar(12), asy
   // al recogerlo y al compartirlo. Guardarlo por nombre hacía que nadie pudiera bajar su propio
   // informe: «Ing. Prueba» nunca es igual a «prueba», y la respuesta era «lo pidió otra persona».
   const quien = id?.persona.nombre || null;
-  const duenio = id?.persona.id || null;
+  // A nombre de la persona o, con la llave de la demo, de su visitante opaco (auditoría H05).
+  const duenio = quienDelHilo(id?.persona.id, req);
   const tipo = String(req.body?.tipo || 'concesion');
 
   let mapa: Buffer | undefined;
@@ -1132,7 +1138,7 @@ app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (
 /** Recoger un informe ya armado. Vive media hora: describe el catastro de este momento. */
 app.get('/api/electrum/informe/:id', exigirPlataforma('electrum'), limitar(60), (req, res) => {
   const id = identidadDe(req);
-  const r = tomarInforme(String(req.params.id), id?.persona.id || null);
+  const r = tomarInforme(String(req.params.id), quienDelHilo(id?.persona.id, req));
   if (r.estado !== 'ok') {
     if (r.estado === 'ajeno') {
       return res.status(403).json({
@@ -1164,7 +1170,7 @@ app.post('/api/electrum/mapa-geologico', exigirPlataforma('electrum'), limitar(1
     const m = await mapaGeologico(tipo, { concesion }, { pie: 'Dr Electrum FP' });
     if ('error' in m) return res.status(422).json({ error: m.error, honesto: true });
     const nombre = `${tipo}-${concesion}.jpg`;
-    const id = guardarInforme({ pdf: m.jpeg, nombre, dicho: m.titulo, tipo: 'image/jpeg' }, identidadDe(req)?.persona.id || null);
+    const id = guardarInforme({ pdf: m.jpeg, nombre, dicho: m.titulo, tipo: 'image/jpeg' }, quienDelHilo(identidadDe(req)?.persona.id, req));
     return res.json({ id, url: `/api/electrum/informe/${id}`, nombre, titulo: m.titulo, tipo: 'image/jpeg', bytes: m.jpeg.length, honesto: true });
   } catch (e: any) {
     console.warn('[electrum] mapa geológico directo', String(e?.message || e).slice(0, 160));
@@ -1180,7 +1186,7 @@ app.post('/api/electrum/mapa-geologico', exigirPlataforma('electrum'), limitar(1
  */
 app.post('/api/electrum/informe/:id/compartir', exigirPlataforma('electrum'), limitar(30), (req, res) => {
   const id = identidadDe(req);
-  const r = compartirInforme(String(req.params.id), id?.persona.id || null);
+  const r = compartirInforme(String(req.params.id), quienDelHilo(id?.persona.id, req));
   if (r === 'hecho') return res.json({ ok: true, honesto: true });
   if (r === 'ajeno') {
     return res.status(403).json({ error: 'Ese informe no es tuyo, así que no sos vos quien puede compartirlo.', honesto: true });

@@ -22,7 +22,20 @@ import { asegurarSatelite, type SateliteConcesion } from './satelite';
 import { CORTES } from '../../src-electrum/mapa/muestras';
 
 export type Componente = { clave: 'geologia' | 'geoquimica' | 'satelite'; nombre: string; puntos: number; max: number; medido: boolean; evidencia: string };
-export type Prospectividad = { puntaje: number; nivel: 'alta' | 'media' | 'baja' | 'muy baja'; cobertura: number; componentes: Componente[] };
+/**
+ * `estado`: si hubo con qué evaluar. «No estudiado» no es «muy baja» (auditoría H07): sin ningún
+ * componente medido el nivel es «sin datos», y con menos de COBERTURA_MINIMA puntos mirables el
+ * puntaje existe pero es «insuficiente» para compararlo con una concesión bien documentada.
+ */
+export type EstadoProsp = 'sin_datos' | 'insuficiente' | 'evaluado';
+export type Prospectividad = { puntaje: number; nivel: 'alta' | 'media' | 'baja' | 'muy baja' | 'sin datos'; cobertura: number; estado?: EstadoProsp; componentes: Componente[] };
+
+/** Por debajo de esto no se compara en el ranking: solo geología (45) no alcanza. */
+export const COBERTURA_MINIMA = 50;
+
+export function estadoDe(cobertura: number): EstadoProsp {
+  return cobertura <= 0 ? 'sin_datos' : cobertura < COBERTURA_MINIMA ? 'insuficiente' : 'evaluado';
+}
 export type MuestraProsp = { codigo: string; tipo: string; km: number; leyes: Partial<Record<Elemento, number | null>>; limites: Record<string, string> | null };
 
 const MAX = { geologia: 45, geoquimica: 30, satelite: 25 } as const;
@@ -113,8 +126,9 @@ export function puntuar(g: Geologia | null, ms: MuestraProsp[], s: SateliteConce
   const componentes = [componenteGeologia(g), componenteGeoquimica(ms), componenteSatelite(s)];
   const puntaje = Math.round(componentes.reduce((t, c) => t + c.puntos, 0));
   const cobertura = componentes.filter((c) => c.medido).reduce((t, c) => t + c.max, 0);
-  const nivel = puntaje >= 55 ? 'alta' : puntaje >= 35 ? 'media' : puntaje >= 15 ? 'baja' : 'muy baja';
-  return { puntaje, nivel, cobertura, componentes };
+  const estado = estadoDe(cobertura);
+  const nivel = estado === 'sin_datos' ? 'sin datos' : puntaje >= 55 ? 'alta' : puntaje >= 35 ? 'media' : puntaje >= 15 ? 'baja' : 'muy baja';
+  return { puntaje, nivel, cobertura, estado, componentes };
 }
 
 /* ------------------------------------------------------------------ base */
@@ -178,17 +192,25 @@ export async function prospectividadDe(id: number, geo?: Geologia | { error: str
 
 export function prospectividadEnRenglones(p: Prospectividad): string[] {
   return [
-    `Puntaje ${p.puntaje} de 100 (${p.nivel})${p.cobertura < 100 ? `; se pudieron mirar ${p.cobertura} de los 100 puntos` : ''}.`,
+    estadoDe(p.cobertura) === 'sin_datos'
+      ? 'Sin datos para evaluar la prospectividad: no hay geología, muestras ni satélite sobre esta concesión. Eso no es un puntaje bajo, es una zona no estudiada.'
+      : `Puntaje ${p.puntaje} de 100 (${p.nivel})${p.cobertura < 100 ? `; se pudieron mirar ${p.cobertura} de los 100 puntos` : ''}${estadoDe(p.cobertura) === 'insuficiente' ? '. Con tan poca evidencia no se compara con concesiones mejor documentadas' : ''}.`,
     ...p.componentes.map((c) => `${c.nombre}: ${c.medido ? `${nf(c.puntos)} de ${c.max}` : 'sin datos'}. ${c.evidencia}`),
     'Es una guía para ordenar dónde mirar primero, no una estimación de recursos.',
   ];
 }
 
-/** Puntaje guardado por concesión, para colorear el mapa. */
-export async function puntajesPorConcesion(): Promise<Map<number, number>> {
+/**
+ * Puntaje guardado por concesión, para colorear el mapa. `null` = sin datos para evaluar (se pinta
+ * aparte, no como «muy baja»). La cobertura se lee de lo guardado, así que las filas viejas que
+ * decían «muy baja» sin datos también se corrigen sin recalcular.
+ */
+export async function puntajesPorConcesion(): Promise<Map<number, number | null>> {
   await asegurarTabla();
-  const filas = await consulta<{ id: string; p: number }>(`SELECT concesion_id::text AS id, puntaje AS p FROM prospectividad_concesion`);
-  return new Map(filas.map((f) => [Number(f.id), Number(f.p)]));
+  const filas = await consulta<{ id: string; p: number; cob: number | null }>(
+    `SELECT concesion_id::text AS id, puntaje AS p, (datos->>'cobertura')::int AS cob FROM prospectividad_concesion`
+  );
+  return new Map(filas.map((f) => [Number(f.id), f.cob != null && f.cob <= 0 ? null : Number(f.p)]));
 }
 
 /* ------------------------------------------------------------------ en lote */
@@ -233,18 +255,21 @@ export async function calcularTodas(opts: { soloFaltantes?: boolean } = {}): Pro
 /** Las más prospectivas y cuántas hay calculadas: lo comparten la ruta del tablero y Dr Electrum. */
 export async function rankingProspectividad(limite = 30): Promise<{
   calculadas: number;
-  ranking: Array<{ id: number; nombre: string; puntaje: number; nivel: Prospectividad['nivel']; cobertura: number }>;
+  ranking: Array<{ id: number; nombre: string; puntaje: number; nivel: Prospectividad['nivel']; cobertura: number; estado: EstadoProsp }>;
 }> {
   await asegurarTabla();
+  // Las sin datos no entran; las evaluadas van antes que las de evidencia insuficiente, para no
+  // poner arriba a una concesión solo porque tiene un componente medido y alto.
   const top = await consulta<{ id: string; nombre: string; puntaje: number; datos: Prospectividad }>(
     `SELECT c.id::text AS id, c.nombre, p.puntaje, p.datos FROM prospectividad_concesion p JOIN concesion c ON c.id = p.concesion_id
-      ORDER BY p.puntaje DESC, c.nombre LIMIT $1`,
+      WHERE coalesce((p.datos->>'cobertura')::int, 0) > 0
+      ORDER BY coalesce((p.datos->>'cobertura')::int, 0) >= ${COBERTURA_MINIMA} DESC, p.puntaje DESC, c.nombre LIMIT $1`,
     [limite]
   ).then(conTextoReparado);
   const [{ n }] = await consulta<{ n: number }>(`SELECT count(*)::int AS n FROM prospectividad_concesion`);
   return {
     calculadas: n,
-    ranking: top.map((t) => ({ id: Number(t.id), nombre: t.nombre, puntaje: t.puntaje, nivel: t.datos.nivel, cobertura: t.datos.cobertura })),
+    ranking: top.map((t) => ({ id: Number(t.id), nombre: t.nombre, puntaje: t.puntaje, nivel: t.datos.nivel, cobertura: t.datos.cobertura, estado: estadoDe(t.datos.cobertura) })),
   };
 }
 

@@ -1141,9 +1141,12 @@ en los registros del servidor y en el historial.
 Un asistente cuyo trabajo es corregir a la gente no puede corregirla con normas viejas. Lo que se
 actualizó tras revisarlo contra las fuentes:
 
-- **JORC**: la edición vigente es la de **2024**, que deroga todas las anteriores —incluida la de
-  2012, que es la que todavía cita medio mundo— y se alinea con la Plantilla Internacional de
-  CRIRSCO revisada en junio de 2024.
+- **JORC**: la edición vigente es la de **2012** (obligatoria desde el 1 de diciembre de 2013). La
+  de 2024 es un **borrador** que estuvo en consulta pública de agosto a octubre de 2024; no
+  reemplaza a la de 2012 mientras JORC no la publique como vigente. Revisado en
+  [jorc.org](https://jorc.org/) el 30 de septiembre de 2026. (Antes este párrafo decía que la de
+  2024 era la vigente: estaba mal, lo señaló la auditoría H01.) El estado de cada norma vive en
+  `src/08-cerebro-minas/normas.ts`, con su fuente y la fecha de la última revisión.
 - **NI 43-101 está en reemplazo**: en junio de 2025 los reguladores canadienses publicaron para
   comentarios la derogación y sustitución completa de la norma; el plazo cerró en octubre de 2025 y
   todavía no está adoptada. «Scoping study» sustituye a la PEA, «relevancia» sustituye a

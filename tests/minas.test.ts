@@ -225,3 +225,72 @@ test('padrón de concesiones (datos de demostración)', async (t) => {
     for (const n of ['Quebrada Seca', 'Cerro Partido', 'Las Lajas', 'Río Blanco']) assert.ok(r.includes(n), `falta ${n}`);
   });
 });
+
+// Auditoría H02: «0.560 g/t» se leía como 560 g/t. Una ley no puede salir mil veces más alta.
+test('números ambiguos: el cero delante es decimal y las leyes no se multiplican por mil', async (t) => {
+  await t.test('0.560 y 0,560 son decimales', () => {
+    assert.equal(leerNumero('0.560'), 0.56);
+    assert.equal(leerNumero('0,560'), 0.56);
+  });
+  await t.test('en una ley, 1.234 g/t y 1,234 g/t son decimales', () => {
+    assert.equal(leerNumero('1.234', 'decimal'), 1.234);
+    assert.equal(leerNumero('1,234', 'decimal'), 1.234);
+  });
+  await t.test('en tonelaje, 250.000 y 250,000 siguen siendo miles', () => {
+    assert.equal(leerNumero('250.000'), 250000);
+    assert.equal(leerNumero('250,000'), 250000);
+  });
+  await t.test('el cálculo usa la ley correcta y avisa cómo leyó el tonelaje ambiguo', () => {
+    const r = resolverCalculoMina('cuánto oro hay en 1.234 t a 0.560 g/t');
+    assert.ok(r, 'debería calcular');
+    const v = r!.valores as Record<string, number>;
+    const ley = Object.entries(v).find(([k]) => /ley/i.test(k))?.[1];
+    assert.equal(ley, 0.56);
+    assert.match(r!.texto, /leí «1\.234» como 1\.?234/);
+  });
+  await t.test('sin números ambiguos no hay aviso', () => {
+    const r = resolverCalculoMina('cuánto oro hay en 250.000 t a 3,4 g/t');
+    assert.ok(r);
+    assert.doesNotMatch(r!.texto, /Ojo: leí/);
+  });
+});
+
+test('un tonelaje no se toma como precio de la onza', () => {
+  const r = resolverCalculoMina('cuánto oro hay en 250.000 t a 3,4 g/t');
+  assert.ok(r);
+  assert.doesNotMatch(r!.texto, /250\.000 dólares la onza/);
+  const conPrecio = resolverCalculoMina('cuánto vale el oro de 250.000 t a 3,4 g/t con el oro a 2.400');
+  assert.ok(conPrecio);
+  assert.match(conPrecio!.texto, /A 2\.?400 dólares la onza/);
+  assert.doesNotMatch(conPrecio!.texto, /Ojo: leí/);
+});
+
+// Auditoría H10: fuera de dominio no hay número; los supuestos se dicen.
+test('cálculos: entradas fuera de dominio dan «sin dato», no una cifra', () => {
+  assert.ok(Number.isNaN(recuperable(100, 150)), 'recuperación de 150 %');
+  assert.ok(Number.isNaN(recuperable(100, -5)));
+  assert.ok(Number.isNaN(aisc(-100, 10)), 'costo negativo');
+  assert.ok(Number.isNaN(aisc(100, 0)));
+  assert.ok(Number.isNaN(onzasContenidas(Number.NaN, 3)));
+  assert.ok(Number.isNaN(onzasContenidas(Infinity, 3)));
+  assert.ok(Number.isNaN(librasContenidas(1000, 120)), 'ley de cobre sobre 100 %');
+  assert.ok(Number.isNaN(leyDiluida(3, -10)));
+  assert.ok(Number.isNaN(leyDeCorte({ costoPorTonelada: 40, precioPorOnza: 2400, recuperacionPorcentaje: 150 })));
+  assert.ok(Number.isNaN(stripRatio(-1, 10)));
+  assert.ok(Number.isNaN(vidaDeMina(-1, 10)));
+  // Y lo válido sigue igual.
+  assert.equal(recuperable(100, 90), 90);
+  assert.equal(aisc(1000, 10), 100);
+});
+
+test('ley de corte: la recuperación supuesta se dice; una imposible no se calcula', () => {
+  const supuesta = resolverCalculoMina('ley de corte con costo de 40 dólares por tonelada y el oro a 2.400 la onza');
+  assert.ok(supuesta);
+  assert.match(supuesta!.texto, /90(,0)? por ciento de recuperación \(supuesto/);
+  assert.equal((supuesta!.valores as Record<string, number>).recuperacionSupuesta, 1);
+  const dada = resolverCalculoMina('ley de corte con costo de 40 dólares por tonelada, el oro a 2.400 la onza y recuperación de 85%');
+  assert.doesNotMatch(dada!.texto, /supuesto/);
+  const imposible = resolverCalculoMina('ley de corte con costo de 40 dólares por tonelada, el oro a 2.400 la onza y recuperación de 150%');
+  assert.equal(imposible!.tipo, 'ley-de-corte-incompleta');
+  assert.match(imposible!.texto, /entre 0 y 100/);
+});

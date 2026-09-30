@@ -42,6 +42,11 @@ export type Contexto = {
   /** Quién pregunta, ya verificado. Null si no se identificó. */
   quien: string | null;
   /**
+   * A nombre de quién quedan los informes de este turno: la persona o, si entró con la llave de la
+   * demo, su visitante opaco (server/electrum/hilo.ts, auditoría H05). Sin él, `quien`.
+   */
+  duenio?: string | null;
+  /**
    * Qué puede hacer en ESTA plataforma, según el padrón (lib/acceso.ts). Reemplazó a un `mando`
    * booleano: con dos niveles de escritura —alimentar el cerebro y cambiar el sistema— un solo
    * bit ya no alcanzaba, y colapsarlos obligaba a dar mando para permitir subir un expediente.

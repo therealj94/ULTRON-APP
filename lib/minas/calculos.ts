@@ -43,17 +43,29 @@ export const tonelajeDesdeVolumen = (metrosCubicos: number, densidad: number) =>
 /* ------------------------------------------------------------------ contenido metálico */
 
 /** Onzas troy contenidas en un tonelaje a una ley dada. No descuenta recuperación. */
+/*
+ * FUERA DE DOMINIO → NaN (que se dice «sin dato»), nunca un número. Una recuperación de 150 % o un
+ * costo negativo daban un resultado con apariencia de cuenta (auditoría H10). Aquí se valida en la
+ * función misma, para que ninguna ruta pueda saltárselo.
+ */
+const ok = (x: number) => Number.isFinite(x);
+const noNeg = (x: number) => ok(x) && x >= 0;
+const pct = (x: number) => ok(x) && x >= 0 && x <= 100;
+
 export function onzasContenidas(toneladas: number, leyGramosPorTonelada: number): number {
+  if (!noNeg(toneladas) || !noNeg(leyGramosPorTonelada)) return NaN;
   return (toneladas * leyGramosPorTonelada) / GRAMOS_POR_ONZA_TROY;
 }
 
 /** Libras de metal base contenidas, a partir de una ley en porcentaje. */
 export function librasContenidas(toneladas: number, leyPorcentaje: number): number {
+  if (!noNeg(toneladas) || !pct(leyPorcentaje)) return NaN;
   return ((toneladas * leyPorcentaje) / 100) * LIBRAS_POR_TONELADA;
 }
 
 /** Lo que de verdad sale de la planta: contenido por recuperación metalúrgica. */
 export function recuperable(contenido: number, recuperacionPorcentaje: number): number {
+  if (!noNeg(contenido) || !pct(recuperacionPorcentaje)) return NaN;
   return contenido * (recuperacionPorcentaje / 100);
 }
 
@@ -62,6 +74,7 @@ export function recuperable(contenido: number, recuperacionPorcentaje: number): 
  * dilución del 15% significa que 15 de cada 115 toneladas enviadas son estéril.
  */
 export function leyDiluida(leyGramosPorTonelada: number, dilucionPorcentaje: number): number {
+  if (!noNeg(leyGramosPorTonelada) || !noNeg(dilucionPorcentaje)) return NaN;
   return leyGramosPorTonelada / (1 + dilucionPorcentaje / 100);
 }
 
@@ -69,13 +82,13 @@ export function leyDiluida(leyGramosPorTonelada: number, dilucionPorcentaje: num
 
 /** Relación de descapote: toneladas de estéril por tonelada de mineral. */
 export function stripRatio(toneladasEsteril: number, toneladasMineral: number): number {
-  if (toneladasMineral <= 0) return NaN;
+  if (!noNeg(toneladasEsteril) || !ok(toneladasMineral) || toneladasMineral <= 0) return NaN;
   return toneladasEsteril / toneladasMineral;
 }
 
 /** Vida de mina en años: reservas sobre ritmo anual de tratamiento. */
 export function vidaDeMina(reservasToneladas: number, toneladasPorAno: number): number {
-  if (toneladasPorAno <= 0) return NaN;
+  if (!noNeg(reservasToneladas) || !ok(toneladasPorAno) || toneladasPorAno <= 0) return NaN;
   return reservasToneladas / toneladasPorAno;
 }
 
@@ -85,13 +98,13 @@ export function vidaDeMina(reservasToneladas: number, toneladasPorAno: number): 
  */
 export function leyDeCorte(opts: { costoPorTonelada: number; precioPorOnza: number; recuperacionPorcentaje: number }): number {
   const valorPorGramo = (opts.precioPorOnza / GRAMOS_POR_ONZA_TROY) * (opts.recuperacionPorcentaje / 100);
-  if (valorPorGramo <= 0) return NaN;
+  if (!noNeg(opts.costoPorTonelada) || !pct(opts.recuperacionPorcentaje) || !ok(valorPorGramo) || valorPorGramo <= 0) return NaN;
   return opts.costoPorTonelada / valorPorGramo;
 }
 
 /** Costo todo incluido por onza vendida (AISC). */
 export function aisc(costoTotalUsd: number, onzasVendidas: number): number {
-  if (onzasVendidas <= 0) return NaN;
+  if (!noNeg(costoTotalUsd) || !ok(onzasVendidas) || onzasVendidas <= 0) return NaN;
   return costoTotalUsd / onzasVendidas;
 }
 
@@ -133,8 +146,18 @@ function bonito(n: number): string {
  * En español el punto separa miles y la coma decimales, pero medio mundo escribe al revés,
  * así que se decide por la forma y no por la fe.
  */
-export function leerNumero(crudo: string): number {
+export function leerNumero(crudo: string, clase: 'general' | 'decimal' = 'general'): number {
   let s = String(crudo).trim().replace(/\s/g, '');
+  /*
+   * Un cero delante del separador es siempre decimal: «0.560 g/t» son 0,56 g/t, no 560. Antes se
+   * leía como miles y una ley salía mil veces más alta (auditoría H02).
+   */
+  if (/^0[.,]\d+$/.test(s)) return Number(s.replace(',', '.'));
+  /*
+   * Leyes y porcentajes («decimal»): un solo separador con tres cifras detrás es decimal. Una ley de
+   * «1.234 g/t» es 1,234 g/t; mil doscientos gramos por tonelada no existen en la práctica.
+   */
+  if (clase === 'decimal' && /^\d{1,3}[.,]\d{3}$/.test(s)) return Number(s.replace(',', '.'));
   const tieneComa = s.includes(',');
   const tienePunto = s.includes('.');
   if (tieneComa && tienePunto) {
@@ -172,23 +195,28 @@ function buscarTonelaje(q: string): number | null {
 
 function buscarLeyGt(q: string): number | null {
   const m = q.match(/(\d[\d.,]*)\s*(?:g\s*\/\s*t|gramos?\s*(?:por|\/)\s*tonelada|gr?\s*\/\s*t|ppm|g\s+por\s+tonelada)\b/i);
-  if (m) return leerNumero(m[1]);
+  if (m) return leerNumero(m[1], 'decimal');
   // «a 3,4 gramos» dicho en corto, solo si ya hay tonelaje en la frase.
   const corto = q.match(/\ba\s+(\d[\d.,]*)\s*gramos?\b/i);
-  return corto ? leerNumero(corto[1]) : null;
+  return corto ? leerNumero(corto[1], 'decimal') : null;
 }
 
 function buscarPorcentaje(q: string, etiqueta: RegExp): number | null {
   const re = new RegExp(`(?:${etiqueta.source})[^\\d%]{0,18}(\\d[\\d.,]*)\\s*%|(\\d[\\d.,]*)\\s*%[^\\d]{0,18}(?:${etiqueta.source})`, 'i');
   const m = q.match(re);
   if (!m) return null;
-  return leerNumero(m[1] || m[2]);
+  return leerNumero(m[1] || m[2], 'decimal');
 }
 
 function buscarPrecioOnza(q: string): number | null {
   const m = q.match(/(\d[\d.,]*)\s*(?:usd|d[oó]lares|dolares|\$)?\s*(?:la|por|\/)\s*onza|\$\s*(\d[\d.,]*)\s*(?:\/|por\s+)?oz/i);
   if (m) return leerNumero(m[1] || m[2]);
-  const m2 = q.match(/(?:oro|precio)\D{0,20}(\d[\d.,]{3,})/i);
+  /*
+   * «el oro a 2.400», «precio de 2.400»: la cifra tiene que ir pegada a «a» o a «precio». Antes bastaba
+   * con que apareciera «oro» antes de un número, y en «cuánto oro hay en 250.000 t» el tonelaje salía
+   * como precio de la onza. Una cifra seguida de toneladas nunca es un precio.
+   */
+  const m2 = q.match(/(?:precio(?:\s+del?\s+(?:oro|la\s+onza))?|oro\s+(?:est[aá]\s+)?a)\s*(?:de\s+|en\s+)?(?:usd\s*|\$\s*)?(\d[\d.,]{3,})(?!\s*(?:millones?\s+de\s+)?(?:toneladas?|tons?|tm|t)\b)/i);
   return m2 ? leerNumero(m2[1]) : null;
 }
 
@@ -198,7 +226,25 @@ function buscarPrecioOnza(q: string): number | null {
  *
  * `precioOnza` lo pone quien llama (el spot en vivo de la mesa) para no tener que decirlo cada vez.
  */
+/**
+ * Tonelajes que se pueden leer de dos maneras: «1.234 t» o «1,234 t» (un solo separador, tres
+ * cifras que no son «000», sin cero delante). Se leen como miles y la respuesta dice cómo, para que
+ * uno que era decimal no pase en silencio. Leyes y porcentajes ya se leen como decimales.
+ */
+export function numerosAmbiguos(texto: string): string[] {
+  return [...String(texto || '').matchAll(/(?<![\d.,])([1-9]\d{0,2}[.,](?!000)\d{3})(?=\s*(?:de\s+)?(?:toneladas?|tons?|tm|t)\b)/gi)].map((m) => m[1]);
+}
+
 export function resolverCalculoMina(mensaje: string, opts?: { precioOnza?: number }): Calculo | null {
+  const r = resolverCalculoMinaSinAviso(mensaje, opts);
+  if (!r || /incompleta/.test(r.tipo)) return r;
+  const dudas = numerosAmbiguos(mensaje);
+  if (!dudas.length) return r;
+  const lista = dudas.map((d) => `«${d}» como ${nf(leerNumero(d), 0)}`).join(', ');
+  return { ...r, texto: `${r.texto} Ojo: leí ${lista}; si era un decimal, dímelo y lo rehago.` };
+}
+
+function resolverCalculoMinaSinAviso(mensaje: string, opts?: { precioOnza?: number }): Calculo | null {
   const q = String(mensaje || '').toLowerCase();
   if (!q) return null;
 
@@ -208,7 +254,17 @@ export function resolverCalculoMina(mensaje: string, opts?: { precioOnza?: numbe
       const m = q.match(/(\d[\d.,]*)\s*(?:usd|d[oó]lares|dolares|\$)?\s*(?:por|\/|la)\s*tonelada/i);
       return m ? leerNumero(m[1]) : null;
     })();
-    const rec = buscarPorcentaje(q, /recuperaci[oó]n|recovery/) ?? 90;
+    const recDada = buscarPorcentaje(q, /recuperaci[oó]n|recovery/);
+    // Sin recuperación dada se SUPONE 90 %, y se dice que es un supuesto (auditoría H10).
+    const rec = recDada ?? 90;
+    if (!(rec > 0 && rec <= 100)) {
+      return {
+        tipo: 'ley-de-corte-incompleta',
+        texto: `Una recuperación de ${bonito(rec)} por ciento no puede ser: tiene que estar entre 0 y 100. Dame la correcta y te saco la ley de corte.`,
+        formula: 'ley de corte = costo por tonelada / (precio por onza / 31,1035 x recuperación)',
+        valores: {},
+      };
+    }
     const precio = buscarPrecioOnza(q) ?? opts?.precioOnza ?? null;
     if (costo == null || precio == null) {
       return {
@@ -221,9 +277,9 @@ export function resolverCalculoMina(mensaje: string, opts?: { precioOnza?: numbe
     const corte = leyDeCorte({ costoPorTonelada: costo, precioPorOnza: precio, recuperacionPorcentaje: rec });
     return {
       tipo: 'ley-de-corte',
-      texto: `Con un costo de ${bonito(costo)} dólares por tonelada, el oro a ${bonito(precio)} la onza y ${bonito(rec)} por ciento de recuperación, la ley de corte es de ${bonito(corte)} gramos por tonelada. Por debajo de eso la tonelada no paga su propio proceso.`,
+      texto: `Con un costo de ${bonito(costo)} dólares por tonelada, el oro a ${bonito(precio)} la onza y ${bonito(rec)} por ciento de recuperación${recDada == null ? ' (supuesto: no me la diste; dímela y la rehago)' : ''}, la ley de corte es de ${bonito(corte)} gramos por tonelada. Por debajo de eso la tonelada no paga su propio proceso.`,
       formula: `${nf(costo, dec(costo))} / ((${nf(precio, dec(precio))} / ${nf(GRAMOS_POR_ONZA_TROY, 4)}) x ${nf(rec / 100, dec(rec) + 2)}) = ${nf(corte, 3)} g/t`,
-      valores: { costoPorTonelada: costo, precioPorOnza: precio, recuperacion: rec, leyDeCorte: corte },
+      valores: { costoPorTonelada: costo, precioPorOnza: precio, recuperacion: rec, leyDeCorte: corte, ...(recDada == null ? { recuperacionSupuesta: 1 } : {}) },
     };
   }
 
@@ -246,7 +302,7 @@ export function resolverCalculoMina(mensaje: string, opts?: { precioOnza?: numbe
   // --- conversión de unidades suelta
   const conv = q.match(/(\d[\d.,]*)\s*(?:onzas?\s*(?:por|\/)\s*(?:tonelada\s+corta|short\s*ton|st))\b/i);
   if (conv) {
-    const oz = leerNumero(conv[1]);
+    const oz = leerNumero(conv[1], 'decimal');
     const gt = ozPorToneladaCortaAGt(oz);
     return {
       tipo: 'conversion',

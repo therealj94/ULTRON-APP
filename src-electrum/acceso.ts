@@ -107,8 +107,26 @@ export function recogerLlaveDelEnlace() {
   }
 }
 
+/**
+ * El visitante de este navegador: 128 bits al azar, generados una vez (auditoría H04). No es una
+ * credencial —la puerta la abren la sesión o la llave—; separa la conversación y los informes de
+ * quien entra con la llave de la demo de los de otro visitante en la misma red.
+ */
+const VISITA = 'electrum.visita';
+let visitaEnMemoria: string | null = null;
+export function visitaElectrum(): string {
+  const previa = guardado(VISITA) || visitaEnMemoria;
+  if (previa && /^[A-Za-z0-9_-]{22,64}$/.test(previa)) return previa;
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  const nueva = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  visitaEnMemoria = nueva;
+  guardar(VISITA, nueva);
+  return nueva;
+}
+
 export function headersElectrum(): Record<string, string> {
-  const h: Record<string, string> = {};
+  const h: Record<string, string> = { 'x-electrum-visita': visitaElectrum() };
   const sesion = guardado(SESION);
   if (sesion) h['x-ultron-sesion'] = sesion;
   const llave = guardado(LLAVE);

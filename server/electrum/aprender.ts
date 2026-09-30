@@ -722,11 +722,25 @@ export async function aprender(
     // al relanzar una carpeta de miles de expedientes, los ya cargados se saltan en un md5 en vez
     // de volver a parsear el PDF entero para acabar descubriendo que ya estaba.
     const huella = huellaDe(datos);
-    const [ya] = await consulta<{ id: number; paginas: number | null }>(
-      `SELECT id, paginas FROM documento
-        WHERE huella = $1 AND COALESCE(concesion_id, -1) = COALESCE($2::bigint, -1) LIMIT 1`,
+    const [previo] = await consulta<{ id: number; paginas: number | null; meta: Record<string, any> | null; n: number }>(
+      `SELECT d.id, d.paginas, d.meta, (SELECT count(*)::int FROM fragmento f WHERE f.documento_id = d.id) AS n
+         FROM documento d
+        WHERE d.huella = $1 AND COALESCE(d.concesion_id, -1) = COALESCE($2::bigint, -1) LIMIT 1`,
       [huella, opts.concesionId ?? null]
     );
+    /*
+     * La huella dice «este archivo ya entró», no «entró entero» (auditoría H03). Si le faltan
+     * fragmentos —una carga de antes que se cortó a la mitad—, se borra y se vuelve a cargar entera
+     * en vez de contestar «ya estaba». Se compara con los fragmentos que se guardaron como esperados;
+     * lo cargado antes de guardarlos cuenta como entero si tiene al menos uno.
+     */
+    const esperados = Number(previo?.meta?.fragmentos);
+    const incompleto = !!previo && (Number.isFinite(esperados) && esperados > 0 ? previo.n < esperados : previo.n === 0);
+    if (previo && incompleto) {
+      console.warn(`[electrum] «${nombre}» estaba a medias (${previo.n}${esperados ? ` de ${esperados}` : ''} fragmentos): lo vuelvo a cargar entero`);
+      await consulta(`DELETE FROM documento WHERE id = $1`, [previo.id]);
+    }
+    const ya = previo && !incompleto ? previo : null;
     if (ya) {
       // Lo que ya estaba y no tenía carpeta ni original, los adopta: volver a importar una carpeta
       // ordena lo viejo en vez de dejarlo suelto. Lo que ya tenía carpeta no se mueve solo.
@@ -744,7 +758,9 @@ export async function aprender(
       return {
         clase: 'documento',
         dicho: `«${nombre}» ya estaba en el cerebro, con el mismo contenido: no lo dupliqué.`,
-        avisos: [],
+        // Los avisos de la primera lectura (foto transcrita, páginas aproximadas) siguen valiendo:
+        // repetir la carga no la vuelve perfecta (auditoría H12).
+        avisos: Array.isArray(ya.meta?.avisos) ? (ya.meta!.avisos as Aviso[]) : [],
         ui: { accion: 'documento', documento_id: ya.id, nombre, paginas: ya.paginas ?? 0, fragmentos: 0, repetido: true },
       };
     }
@@ -815,12 +831,38 @@ export async function aprender(
       };
     }
 
-    const [doc] = await consulta<{ id: number }>(
-      `INSERT INTO documento (nombre, tipo, concesion_id, paginas, subido_por, huella, carpeta, archivo)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-       ON CONFLICT DO NOTHING RETURNING id`,
-      [nombre, opts.tipoDoc || tipoPorDefecto, opts.concesionId ?? null, paginas.length, opts.subidoPor || null, huella, carpeta, archivo]
-    );
+    /*
+     * TODO O NADA (auditoría H03): el documento y todos sus fragmentos en una transacción. Antes
+     * eran consultas sueltas; si la carga se caía en el segundo lote quedaba un documento a medias
+     * que, por la huella, después se daba por cargado. En `meta` quedan los fragmentos esperados (lo
+     * que permite detectar uno incompleto), los avisos de la lectura y de dónde salió el texto: una
+     * foto transcrita no es el documento original y queda sin revisar (H11).
+     */
+    const meta = {
+      fragmentos: trozos.length,
+      avisos,
+      origen: imagen ? 'foto_transcrita' : 'documento',
+      ...(imagen ? { revisado: false } : {}),
+    };
+    const doc = await enTransaccion(async (q) => {
+      const [fila] = await q(
+        `INSERT INTO documento (nombre, tipo, concesion_id, paginas, subido_por, huella, carpeta, archivo, meta)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         ON CONFLICT DO NOTHING RETURNING id`,
+        [nombre, opts.tipoDoc || tipoPorDefecto, opts.concesionId ?? null, paginas.length, opts.subidoPor || null, huella, carpeta, archivo, JSON.stringify(meta)]
+      );
+      if (!fila) return null;
+      // Inserción en bloque: un informe de 43-101 son miles de trozos y uno por uno tarda minutos.
+      for (let i = 0; i < trozos.length; i += 200) {
+        const args: unknown[] = [];
+        const marcas = trozos.slice(i, i + 200).map((t, j) => {
+          args.push(fila.id, t.pagina, t.orden, t.texto);
+          return `($${j * 4 + 1},$${j * 4 + 2},$${j * 4 + 3},$${j * 4 + 4})`;
+        });
+        await q(`INSERT INTO fragmento (documento_id, pagina, orden, texto) VALUES ${marcas.join(',')}`, args);
+      }
+      return { id: Number(fila.id) };
+    });
     // Sin fila devuelta, otra carga en paralelo lo metió entre el SELECT y el INSERT. No es un
     // error: es justo lo que el índice único tiene que impedir, y aquí se nota en vez de reventar.
     if (!doc) {
@@ -832,18 +874,6 @@ export async function aprender(
       };
     }
 
-    // Inserción en bloque: un informe de 43-101 son miles de trozos y uno por uno tarda minutos.
-    const valores: unknown[] = [];
-    const marcas = trozos.map((t, i) => {
-      valores.push(doc.id, t.pagina, t.orden, t.texto);
-      return `($${i * 4 + 1},$${i * 4 + 2},$${i * 4 + 3},$${i * 4 + 4})`;
-    });
-    for (let i = 0; i < marcas.length; i += 200) {
-      const tramo = marcas.slice(i, i + 200);
-      const args = valores.slice(i * 4, (i + 200) * 4);
-      const renumerado = tramo.map((_, j) => `($${j * 4 + 1},$${j * 4 + 2},$${j * 4 + 3},$${j * 4 + 4})`).join(',');
-      await consulta(`INSERT INTO fragmento (documento_id, pagina, orden, texto) VALUES ${renumerado}`, args);
-    }
 
     // Los vectores (búsqueda por significado) se calculan después, sin hacer esperar a quien subió
     // el documento: el texto completo ya lo hace buscable desde este momento.

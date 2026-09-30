@@ -17,6 +17,7 @@
  *
  * Es el mismo principio del canal `ui` de las manos: el modelo pide, el servidor construye.
  */
+import crypto from 'node:crypto';
 import { BASE_LEGAL, NOMBRE_NIVEL, restriccionesDe } from './restricciones';
 import { areaHectareas, perimetroKm } from './gis';
 import {
@@ -818,7 +819,8 @@ const VIDA_MS = 30 * 60 * 1000;
 const guardados = new Map<string, { informe: Informe; at: number; quien: string | null; compartido: boolean }>();
 
 export function guardarInforme(informe: Informe, quien: string | null): string {
-  const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  // 128 bits de azar criptográfico (auditoría H05). La hora y Math.random no sirven de secreto.
+  const id = crypto.randomBytes(16).toString('base64url');
   guardados.set(id, { informe, at: Date.now(), quien, compartido: false });
   const limite = Date.now() - VIDA_MS;
   for (const [k, v] of guardados) if (v.at < limite) guardados.delete(k);
@@ -853,8 +855,13 @@ export function tomarInforme(id: string, quien: string | null = null): TomaInfor
     guardados.delete(String(id));
     return { estado: 'no-esta' };
   }
-  // Sin autor conocido —un informe pedido por Telegram sin identificar— no hay a quién reservárselo.
-  if (g.quien && !g.compartido && g.quien !== quien) return { estado: 'ajeno' };
+  /*
+   * Dueño siempre comparado (auditoría H05). Antes, un informe sin dueño —el de un visitante con la
+   * llave de la demo— lo podía recoger cualquiera que tuviera el identificador. Ahora las rutas web
+   * lo guardan a nombre de la persona o del visitante opaco, y uno sin dueño solo lo recoge quien
+   * también llega sin dueño: el envío interno de Telegram, nunca una petición web.
+   */
+  if (!g.compartido && g.quien !== quien) return { estado: 'ajeno' };
   return { estado: 'ok', informe: g.informe };
 }
 
@@ -862,7 +869,8 @@ export function tomarInforme(id: string, quien: string | null = null): TomaInfor
 export function compartirInforme(id: string, quien: string | null): 'hecho' | 'no-esta' | 'ajeno' {
   const g = guardados.get(String(id));
   if (!g || Date.now() - g.at > VIDA_MS) return 'no-esta';
-  if (g.quien && g.quien !== quien) return 'ajeno';
+  // Solo su dueño lo comparte; uno sin dueño no lo comparte nadie.
+  if (!g.quien || g.quien !== quien) return 'ajeno';
   g.compartido = true;
   return 'hecho';
 }

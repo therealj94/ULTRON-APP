@@ -515,7 +515,7 @@ const mapa_geologico: Herramienta = {
         continue;
       }
       const nombre = `${t}-${m.titulo.replace(/^.*— /, '').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w.-]+/g, '-').toLowerCase().slice(0, 50)}.jpg`;
-      const id = guardarInforme({ pdf: m.jpeg, nombre, dicho: m.titulo, tipo: 'image/jpeg' }, ctx.quien);
+      const id = guardarInforme({ pdf: m.jpeg, nombre, dicho: m.titulo, tipo: 'image/jpeg' }, ctx.duenio ?? ctx.quien);
       hechos.push({ id, nombre, url: `/api/electrum/informe/${id}`, bytes: m.jpeg.length, tipo: 'image/jpeg', titulo: m.titulo });
     }
     return {
@@ -958,7 +958,7 @@ const informe_pdf: Herramienta = {
           );
 
     if ('error' in r) return { ok: false, texto: r.error };
-    const id = guardarInforme(r, quien);
+    const id = guardarInforme(r, ctx.duenio ?? quien);
     return {
       ok: true,
       texto: `${r.dicho} Ya está listo para descargar; decíselo y no repitas los números uno por uno, que están en el documento.`,
