@@ -32,6 +32,7 @@
  */
 import { Component, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { AppState, Platform } from 'react-native';
+import { SafeAreaInsetsContext, initialWindowMetrics } from 'react-native-safe-area-context';
 import { API_BASE } from '../config';
 import { api } from '../lib/api';
 import { loadMesaToken } from '../lib/storage';
@@ -52,7 +53,7 @@ import { coordinarLlamadas } from './llamada';
 import { ContextoApp, PuenteAcciones, decirLectura, type XhrMin } from './acciones';
 import { escucharPorDecir, escucharSonando, listarRecordatorios, llamadaSonando, tomarPorDecir, type LlamadaRecordatorio } from './recordatorios';
 import { callarAvisoQueSuena, contestadaEnPantalla, depsRecordatorios, perdidaEnPantalla, rechazar as rechazarRecordatorio } from './recordatoriosNativo';
-import { LlamadaAvatar, type VistaLlamada } from './LlamadaAvatar';
+import { ALTO_PILDORA, LlamadaAvatar, type VistaLlamada } from './LlamadaAvatar';
 import { callarTimbre, sonarTimbre } from './timbre';
 import { AudioVoz } from './audioVoz';
 import { cabecerasAparato } from '../lib/aparato';
@@ -615,9 +616,17 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     };
   }, [vista, control, precalentar, estadoCiclo, ciclo, ejecutar, usadoHoyMs, nombreLlamada, llamadaLista, minimizada, altavoz, llamame]);
 
+  // Llamada minimizada: la app baja lo que ocupa la píldora (las pantallas leen el borde de arriba
+  // con useSafeAreaInsets). Fuera de un SafeAreaProvider se usan los bordes de la ventana.
+  const bordesApp = useContext(SafeAreaInsetsContext);
+  const bordesConPildora = useMemo(() => {
+    const b = bordesApp || initialWindowMetrics?.insets || { top: 0, bottom: 0, left: 0, right: 0 };
+    return minimizada ? { ...b, top: b.top + ALTO_PILDORA } : b;
+  }, [bordesApp, minimizada]);
+
   return (
     <VozCtx.Provider value={valor}>
-      {children}
+      <SafeAreaInsetsContext.Provider value={bordesConPildora}>{children}</SafeAreaInsetsContext.Provider>
       {vista.montada ? (
         <ModoConversacion
           key={vista.gen}

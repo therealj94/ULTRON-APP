@@ -37,6 +37,13 @@ import { fotosRetrato } from '../avatares/ClaudioRetrato';
 import { Avatar, Boton, Deslizar, Icono, ROJO, RESORTE_SUAVE, tocar } from '../pulse/ui/llamadaPiezas';
 import { leyendaLlamada, llamadaActiva, llamadaTerminada, relojLlamada, type EstadoCiclo, type MotivoFin, type OrigenLlamada } from './llamadaCiclo';
 
+/**
+ * Lo que la píldora ocupa arriba, bajo la barra del teléfono (6 de aire + 60 de alto + 8 de aire). El
+ * VozProvider baja la app esa altura mientras la llamada está minimizada, como la barra verde de
+ * WhatsApp: la píldora nunca tapa el título de los chats ni los botones de arriba.
+ */
+export const ALTO_PILDORA = 74;
+
 export type VistaLlamada = {
   estado: EstadoCiclo;
   origen: OrigenLlamada | null;
