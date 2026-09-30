@@ -8,6 +8,11 @@ La app ya está lista para recibirlo: el renderer 3D, el mapeo de estados, la vo
 las cámaras y la caída al 2D existen y están probados con un modelo de prueba. Conectar el modelo es
 copiarlo, correr el revisor y registrarlo (§11).
 
+> **Estado (30-sep-2026): conectados los tres avatares de Codex** (AU-RA, Claudio y ANT-ONIO,
+> `vendor/aura-avatar-suite`). No siguen esta especificación humanoide sino un rig de nodos con
+> morph targets; la app los lee con el perfil «nodos» (§13). Esta especificación sigue valiendo para
+> un modelo humanoide futuro.
+
 ---
 
 ## 0. Lista corta
@@ -297,3 +302,64 @@ hueso `head` y la caja del cuerpo.
 - [ ] Tocar cabeza, mejilla y panza da tres reacciones distintas.
 - [ ] 60 fps a pantalla completa en un Android de gama media (la app lo mide: el diagnóstico de campo
       dice «avatar 3D: vuelve a 2D (…)» si no).
+
+## 13. Los avatares de Codex (perfil «nodos»)
+
+La entrega de Codex (`vendor/aura-avatar-suite`, no se edita desde la app: se consume) trae AU-RA
+(Grafito · Orbe), Claudio (zorro) y ANT-ONIO (hormiga, aprobado por Medardo). Cada GLB tiene 30 clips
+(19 emociones, escuchar, dormir y 9 gestos), una jerarquía de nodos articulados y seis morph targets de
+boca (`open`, `laugh`, `round`, `wide`, `frown`, `closed`). Sin esqueleto con piel, sin ARKit.
+
+**Decisión: una sola escena, la de la app.** El controlador de Codex (`src/avatar.js`, `stage.js`)
+no se usa en el teléfono: arma el personaje en JavaScript (Claudio, 353 mil triángulos con pelo, en
+cada arranque) y su `animate()` trabaja sobre los objetos que él mismo creó, así que no se puede
+aplicar a un GLB optimizado; su adaptador (`integration/AvatarWebView.tsx`) traía una página de
+684 KB por avatar con su propia copia de three.js. Lo que su controlador sabe hacer quedó horneado en
+los 30 clips, y eso es lo que la escena de la app (`src/12-avatar3d/escena.ts`, three 0.186.1, una
+sola copia, la misma versión que la de Codex) reproduce. Lo que un clip no hace en vivo lo pone la
+escena, traducido en `mobile/src/avatar3d/mapeo.ts` (`PERFIL_NODOS`):
+
+| AURA | Codex |
+|---|---|
+| expresión (tranquila, contenta, encantada, enojada, dormida, escucha, piensa, sorprendida, triste, uy, levantada, tímida) | clip neutral, feliz, risa, molesto, dormido, escuchando, pensando, sorpresa, triste, preocupado, alarma, cariño |
+| fondo (reposo, habla, escucha, piensa, duerme, camina) | neutral, neutral, escuchando, pensando, dormido, caminar |
+| toque cabeza / mejilla / panza, enojo, gusto, saludo, entrar/salir | asentir / corazón / celebrar, negar, celebrar, saludar, saludar |
+| visemas (15) | O/U → `round`, E/I/S → `wide`, P/B/M → `closed`, lo demás `open` (como su controlador) |
+| mirada | `head` + `gaze_1` (ojo izquierdo) / `gaze_-1`; AU-RA tiene un solo `gaze` |
+
+- Cada clip se parte al cargar en **cara** (lo que cuelga de `head` y los morph targets) y **cuerpo**:
+  un gesto mueve el cuerpo y la cara de la emoción sigue (Claudio tímido se lleva la mano al pecho
+  con cara de cariño).
+- La voz va **encima** de la boca del clip: la suelta hasta un 80 % mientras habla y la suma de las
+  formas no pasa de 1 (lo mismo que hacía su controlador).
+- Toques sin colisionadores: la zona sale de la caja de la cabeza (su geometría), no de un radio fijo.
+- Retrato: cabeza entera y hombros; si la cabeza es casi todo el cuerpo (AU-RA) se ve entera.
+
+**Calidad automática** (`capacidad.ts`, `almacen.ts`): la escena mide sus cuadros y baja sola de
+`alta` (hasta 2×, materiales de Codex) a `media` (1,5×, sin barniz ni brillo especular) y a `baja`
+(1×, materiales estándar sin relieve ni reflejos); si ni así pasa de 24 fps, cae al 2D. El nivel que
+aguantó se recuerda por modelo (huella) dos semanas. No hay sombras ni bloom en ningún nivel.
+
+**Dónde se ve.** AU-RA conserva su **sala** en la mesa (silla, escritorio, tareas con objetos: la sala
+es la mesa y no se reemplaza; no se muestra ninguna opción «sentada» del cuerpo nuevo). Su cuerpo 3D
+nuevo va en la compañera que pasea, al lado de los chats y a pantalla completa. Claudio y ANT-ONIO
+usan su 3D también en la mesa (`CuerpoMesa.tsx`), con sus fotos de respaldo (las de ANT-ONIO se
+renderizan desde su modelo: `scripts/avatar3d-fotos.mjs`).
+
+**Un solo comando** (desde la raíz; lo corre también cuando el relevo deje los finales en
+`vendor/aura-avatar-suite/assets/movil/{aura,claudio,antonio}.glb`):
+
+    npm run avatar3d
+
+Empaqueta la escena, toma de la entrega el GLB final si existe (si no, uno provisional desde los
+originales), lo pasa por gltf-transform (morphs con nombre, sin `KHR_materials_sheen`, dedup, resample,
+simplify hasta 70 mil triángulos si hace falta, texturas WebP ≤ 1024, meshopt; un Draco de entrada se
+convierte a meshopt: la escena solo lleva ese decodificador, empaquetado, sin CDN), lo revisa con el
+perfil «nodos» (≤ 3 MB, triángulos, clips y formas de boca que pide el mapeo), reescribe
+`src/avatar3d/modelo.ts` y rehace las fotos 2D de ANT-ONIO. Después: `cd mobile && npx tsx
+src/avatar3d/pruebas/avatar3d.prueba.mjs` y `node pruebas/avatar3d/navegador.mjs assets/avatar3d/<avatar>.glb`.
+
+Medido el 30-sep con los provisionales: aura 0,38 MB / 56 800 triángulos, claudio 1,99 MB / 68 538,
+antonio 1,78 MB / 69 697; la página de la escena 678 KB (antes 673); la APK/OTA suma 4,35 MB de GLB
+(2,3 MB comprimidos) y 0,39 MB de fotos de ANT-ONIO; el bundle JS, 25 KB. La huella nativa no cambia:
+se publica por aire.

@@ -4,7 +4,7 @@
  *
  * Todo lo que depende de cómo se llamen las cosas dentro del .glb vive aquí y en ningún otro lado:
  * si el modelo que entregue Codex trae nombres distintos, se corrige con un `aura.mapeo.json` junto
- * al modelo (ver docs/avatar-3d-especificacion.md y scripts/avatar3d-modelo.ts), sin tocar la escena
+ * al modelo (ver docs/avatar-3d-especificacion.md y scripts/avatar3d-modelo.mjs), sin tocar la escena
  * ni el teléfono. Los nombres por omisión son los de la especificación: los 52 blendshapes de ARKit,
  * los 15 visemas de Oculus (`viseme_*`), los huesos humanoides de VRM 1.0 y las animaciones en
  * español.

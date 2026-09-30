@@ -41,3 +41,11 @@ Añadir ANT-ONIO como opción sin renombrar los IDs existentes. Conservar los av
 Mantener voces, sesiones, memoria, permisos y herramientas existentes. La voz futura de ANT-ONIO con ElevenLabs se configura en una etapa posterior. No incluir claves en cliente, APK, GLB o Git.
 
 El acabado es estilizado y el rig usa nodos y morph targets, sin un archivo Blender ni esqueleto humanoide con piel ponderada. Medir memoria/FPS y comportamiento de audio en el teléfono objetivo antes de activar la nueva opción por defecto.
+
+## Integración en la app (30-sep-2026)
+
+Hecha en una sola escena (la de la app, three.js 0.186.1): los GLB de esta entrega, optimizados, se
+animan con sus 30 clips y el perfil «nodos» de `mobile/src/avatar3d/mapeo.ts`. ANT-ONIO es el cuarto
+avatar, con las voces y agentes que eligió José; la sala de AU-RA sigue siendo su mesa. Detalle,
+decisiones y medidas: `mobile/docs/avatar-3d-especificacion.md` §13. Cuando estén los finales en
+`vendor/aura-avatar-suite/assets/movil/`, desde la raíz: `npm run avatar3d`.
