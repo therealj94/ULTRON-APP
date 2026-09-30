@@ -23,7 +23,7 @@ process.env.ULTRON_MEMORIA_BUCKET = '';
 // Nada de esto puede salir de la máquina aunque una prueba fallara.
 for (const k of ['RENDER_DEPLOY_HOOK', 'RENDER_DEPLOY_HOOK_URL', 'RENDER_API_KEY', 'TELEGRAM_BOT_TOKEN', 'TWILIO_ACCOUNT_SID', 'TWILIO_AUTH_TOKEN', 'RESEND_API_KEY', 'SMTP_URL']) delete process.env[k];
 
-const { despacharTaller } = await import('../lib/taller');
+const { despacharTaller, parsePedido } = await import('../lib/taller');
 const { preguntarModeloChico } = await import('../lib/cognitivo/modelos');
 const { disponible, resetInterruptoresTest } = await import('../lib/cognitivo/interruptor');
 const { gastarCupo, sesionSigueViva, huellaSesion, emitirSesion, borrarSesion, fijarClaveCambiadaEn } = await import('../server/seguridad');
@@ -31,7 +31,10 @@ const { errorSeguro } = await import('../scripts/elevenlabs-agentes');
 const { puntoDeCorte } = await import('../lib/trozos');
 
 test('taller desde la voz: solo consulta, aunque quien hable tenga mando', async () => {
-  for (const pedido of ['redeploy', 'mantenimiento', 'envía por telegram el resumen', 'llámame y dime hola', 'mándame audio del sistema', 'mándame un pdf por whatsapp']) {
+  // «redespliega» es un redespliegue (antes la regla solo reconocía «redeploy» y la frase iba al cerebro).
+  for (const t of ['redespliega la mesa', 'redesplegar', 'redespliégala ya']) assert.equal(parsePedido(t).accion, 'redeploy', t);
+  assert.equal(parsePedido('el despliegue de ayer').accion, null);
+  for (const pedido of ['redeploy', 'redespliega la mesa', 'mantenimiento', 'envía por telegram el resumen', 'llámame y dime hola', 'mándame audio del sistema', 'mándame un pdf por whatsapp']) {
     const r = await despacharTaller(pedido, { quien: 'jose', prueba: 'sesion', canal: 'mesa', soloConsulta: true });
     assert.match(r.decir || '', /no lo hago desde la conversación de voz/i, pedido);
     assert.ok(r.hechos.some((h) => /ACCESO \(conversación de voz\): solo consulta/.test(h)), pedido);

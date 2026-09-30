@@ -34,7 +34,8 @@ export function parsePedido(raw: string): {
         ? 'correo'
         : null;
   if (/\b(boveda|cajas de (la )?boveda|abri la boveda|abre la boveda)\b/.test(l)) return { accion: 'boveda', canal, texto: q };
-  if (/\b(redeploy|redespleg|reinicia(r)? la mesa|nuevo deploy)\b/.test(l)) return { accion: 'redeploy', canal, texto: q };
+  // «redespliega», «redesplegar», «redespliégala»: el verbo cambia la raíz (antes solo casaba «redeploy»).
+  if (/\b(redeploy|redespl(?:ie|ié|e)g\w*|reinicia(r)? la mesa|nuevo deploy)\b/.test(l)) return { accion: 'redeploy', canal, texto: q };
   if (pideNotaDeVoz(q)) return { accion: 'voz', canal: canal || 'telegram', texto: q };
   if (/\b(mantenimiento|repara|arregla|diagnostico|diagnóstico)\b/.test(l)) return { accion: 'mantenimiento', canal, texto: q };
   // «¿cómo está el oro?» o «¿cómo está Pedro?» no preguntan por el sistema: solo cuenta si dice de qué.
