@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -64,7 +65,25 @@ public partial class NotchWindow
             ?? throw new InvalidOperationException(T($"AU-RA todavía no tiene la app de {servicio} registrada (falta su Client ID en el servidor).", $"AU-RA doesn't have the {servicio} app registered yet (missing Client ID on the server)."));
         Centro.Registro.Anotar("conexion", $"conectando {clave}");
         TokenOauth token;
-        try { token = await Conexion.Entrar(cfg); }
+        // Si al entrar el servicio te deja en su página (pasa con Spotify al iniciar sesión) y no vuelve a AURA,
+        // «Continuar» abre otra vez la autorización: ya con la sesión iniciada, vuelve directo.
+        string? urlConexion = null;
+        void Continuar() { if (urlConexion != null) try { Process.Start(new ProcessStartInfo(urlConexion) { UseShellExecute = true }); } catch { } }
+        try
+        {
+            token = await Conexion.Entrar(cfg, alAbrir: u =>
+            {
+                urlConexion = u;
+                _ = Dispatcher.BeginInvoke(new Action(async () =>
+                {
+                    await Task.Delay(15000);
+                    if (!ajustes.Conexiones.ContainsKey(clave))
+                        Avisar(new Aviso(T($"¿{cfg.Nombre} no volvió a AURA?", $"Didn't {cfg.Nombre} come back?"),
+                            T("Si ya iniciaste sesión y te quedaste en su página, toca Continuar.", "If you signed in and got stuck on their page, tap Continue."), "", "worried",
+                            T("Continuar", "Continue"), Continuar, 25));
+                }));
+            });
+        }
         catch (InvalidOperationException ex)
         {
             Centro.Registro.Anotar("conexion", $"{clave} falló: {ex.Message}");

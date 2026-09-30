@@ -45,7 +45,7 @@ internal sealed class Conexion : IDisposable
     /// equipo; un socket propio, sin HttpListener, que en Windows pediría permisos de administrador).
     /// `abrir` es quién abre la URL (el navegador; en las pruebas, un cliente HTTP).
     /// </summary>
-    public static async Task<TokenOauth> Entrar(ProveedorConfig c, Func<string, Task>? abrir = null, CancellationToken ct = default)
+    public static async Task<TokenOauth> Entrar(ProveedorConfig c, Func<string, Task>? abrir = null, CancellationToken ct = default, Action<string>? alAbrir = null)
     {
         if (string.IsNullOrWhiteSpace(c.ClientId)) throw new InvalidOperationException($"Falta el Client ID de {c.Nombre} (Ajustes → Conexiones, o ponlo en el servidor).");
         var (verificador, reto) = Oauth.Pkce();
@@ -60,6 +60,7 @@ internal sealed class Conexion : IDisposable
             try
             {
                 var url = Oauth.UrlAutorizar(c, reto, estado);
+                alAbrir?.Invoke(url);
                 if (abrir != null) _ = abrir(url);
                 else Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
                 while (true)
