@@ -123,6 +123,11 @@ export function useLista(): EstadoLista {
   return v;
 }
 
+/** La lista tal como está, sin sondear (el hilo la usa para el nombre y la foto de la otra persona). */
+export function useListaQuieta(): EstadoLista {
+  return useSyncExternalStore(lista.sub, lista.get, lista.get);
+}
+
 /* ── quién está escribiendo ───────────────────────────────────────────────────────────────── */
 
 const escriben = almacen<Record<string, number>>({});
