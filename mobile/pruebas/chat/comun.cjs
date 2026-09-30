@@ -23,7 +23,25 @@ function fin() {
 const espera = (ms) => new Promise((r) => setTimeout(r, ms));
 const libre = () => new Promise((r) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => r(p)); }); });
 
-/** Genesis de mentira: un pase `PASE:<correo>` vale para ese correo (con destino pulse2chat). */
+/**
+ * Un pase de prueba con la forma de los de verdad (cabecera.cuerpo.firma) y el `reto` del teléfono
+ * adentro: el relevo exige que el reto sea el SHA-256 (base64url) del verificador con que se canjea.
+ */
+function paseDe(correo, verificador) {
+  const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const reto = require('crypto').createHash('sha256').update(verificador).digest('base64url');
+  return `${b64({ alg: 'HS256', typ: 'GID' })}.${b64({ prueba: correo, aud: ['aura', 'pulse2chat'], reto })}.firma-de-prueba`;
+}
+const correoDelPase = (t) => {
+  if (t.startsWith('PASE:')) return t.slice(5);
+  try {
+    return String(JSON.parse(Buffer.from(t.split('.')[1] || '', 'base64url').toString()).prueba || '');
+  } catch {
+    return '';
+  }
+};
+
+/** Genesis de mentira: vale el pase de `paseDe(correo, …)` (o el viejo `PASE:<correo>`) para ese correo. */
 async function genesisFalso() {
   const puerto = await libre();
   const srv = http.createServer((q, s) => {
@@ -33,8 +51,9 @@ async function genesisFalso() {
       let j = {};
       try { j = JSON.parse(b || '{}'); } catch {}
       const t = String(j.token || '');
-      const vale = t.startsWith('PASE:');
-      const out = vale ? { valido: true, aud: ['aura', 'pulse2chat'], correo: t.slice(5), gid: 'GEN-AAAA-BBBB-C' } : { valido: false };
+      const correo = correoDelPase(t);
+      const vale = !!correo;
+      const out = vale ? { valido: true, aud: ['aura', 'pulse2chat'], correo, gid: 'GEN-AAAA-BBBB-C' } : { valido: false };
       s.writeHead(vale ? 200 : 401, { 'Content-Type': 'application/json' });
       s.end(JSON.stringify(out));
     });
@@ -102,4 +121,4 @@ async function entrarComo(M, c) {
   return M.RELEVO.recuperar();
 }
 
-module.exports = { ok, fin, espera, arrancarRelevo, movil, entrarComo };
+module.exports = { ok, fin, espera, arrancarRelevo, movil, entrarComo, paseDe };
