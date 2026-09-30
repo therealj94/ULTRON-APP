@@ -132,6 +132,12 @@ export function Entrar({ navigation, route }: Props) {
       <Texto v="etiqueta" color="acentoTexto" centro={!horizontal} style={{ marginTop: MEDIDA.espacio.l }}>
         PULSE 2CHAT × AURA
       </Texto>
+      {/* Acostado, el idioma va debajo de la marca para no pisar el título. */}
+      {horizontal && (
+        <View style={{ marginTop: MEDIDA.espacio.l }}>
+          <SelectorIdioma />
+        </View>
+      )}
     </View>
   );
 
@@ -191,7 +197,7 @@ export function Entrar({ navigation, route }: Props) {
   return (
     <View style={[s.raiz, { backgroundColor: tema.fondo }]}>
       <ScrollView
-        contentContainerStyle={[s.contenido, { paddingTop: ins.top + 64, paddingBottom: ins.bottom + 20 }, horizontal && s.contenidoH]}
+        contentContainerStyle={[s.contenido, { paddingTop: ins.top + (horizontal ? 20 : 64), paddingBottom: ins.bottom + 20 }, horizontal && s.contenidoH]}
         showsVerticalScrollIndicator={false}
         bounces={false}
       >
@@ -218,9 +224,11 @@ export function Entrar({ navigation, route }: Props) {
           </View>
         )}
       </ScrollView>
-      <View style={[s.idioma, { top: ins.top + 10 }]}>
-        <SelectorIdioma />
-      </View>
+      {!horizontal && (
+        <View style={[s.idioma, { top: ins.top + 10 }]}>
+          <SelectorIdioma />
+        </View>
+      )}
     </View>
   );
 }
@@ -233,7 +241,7 @@ const s = StyleSheet.create({
   marcaH: { alignItems: 'center' },
   sello: { alignItems: 'center', justifyContent: 'center', borderWidth: 1.5 },
   cuerpo: { gap: MEDIDA.espacio.xl, width: '100%' },
-  cuerpoH: { maxWidth: 440 },
+  cuerpoH: { maxWidth: 440, gap: MEDIDA.espacio.l },
   aviso: { flexDirection: 'row', gap: 12, padding: 14, borderRadius: MEDIDA.radio.m, alignItems: 'flex-start' },
   avisoIcono: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   confianza: { flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center', paddingHorizontal: 8 },
