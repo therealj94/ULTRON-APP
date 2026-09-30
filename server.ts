@@ -3499,11 +3499,16 @@ async function startServer() {
       .catch((e) => console.warn('[AU-RA] sesiones', String(e?.message || e).slice(0, 160)));
     // Lo que una caída dejó a medias en la cola de aprobaciones: se retoma o se marca incierto (nunca
     // se repite a ciegas). Unos segundos después: que los ejecutores y los avisos ya estén registrados.
-    setTimeout(() => {
-      reconciliarAprobaciones()
-        .then((r) => (r.retomadas || r.vencidas || r.inciertas) && console.log('[cognitivo] aprobaciones a medias', r))
+    // Si alguna «ejecutando» todavía estaba dentro de su plazo, se vuelve a mirar cuando venza (y otra
+    // vez si hiciera falta): un reinicio a los pocos minutos no la deja «ejecutando» para siempre.
+    const reconciliar = (soloEjecutando: boolean) =>
+      reconciliarAprobaciones({ soloEjecutando })
+        .then((r) => {
+          if (r.retomadas || r.vencidas || r.inciertas) console.log('[cognitivo] aprobaciones a medias', r);
+          if (r.revisarEnMs !== null) setTimeout(() => reconciliar(true), r.revisarEnMs + 5_000).unref?.();
+        })
         .catch((e) => console.warn('[cognitivo] aprobaciones a medias', String(e?.message || e).slice(0, 160)));
-    }, 15_000).unref?.();
+    setTimeout(() => reconciliar(false), 15_000).unref?.();
     cargarMemoria()
       .then(() => console.log('[AU-RA] memoria', estadoMemoria().detalle))
       .catch((e) => console.warn('[AU-RA] memoria', String(e?.message || e).slice(0, 160)));

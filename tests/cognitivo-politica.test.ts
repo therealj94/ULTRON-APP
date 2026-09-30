@@ -324,6 +324,15 @@ test('A26: aprobada y caída antes de ejecutar → al arrancar se retoma UNA vez
     // Una que está ejecutándose AHORA (dentro del plazo) no se toca.
     const f2 = await autorizar(con({ efecto: 'externo', destino: 'tercero', herramienta: 'avisar_proveedor', args: { a: 'prov-3' }, quien: 'jose' }));
     forzar(f2.aprobacionId!, { estado: 'ejecutando', resultado: { ok: false, texto: 'en curso', t: new Date().toISOString() } });
-    await reconciliarAprobaciones();
+    const r4 = await reconciliarAprobaciones();
     assert.equal((await aprobacionPorId(f2.aprobacionId!))?.estado, 'ejecutando');
+    // …pero avisa cuándo vence su plazo, para que quien arrancó vuelva a mirar: si el proceso que la
+    // ejecutaba murió, la segunda pasada (solo «ejecutando», sin retomar aprobadas) la deja incierta.
+    assert.ok(r4.revisarEnMs !== null && r4.revisarEnMs > 0 && r4.revisarEnMs <= 10 * 60_000, `revisarEnMs=${r4.revisarEnMs}`);
+    const r5 = await reconciliarAprobaciones({ soloEjecutando: true, ahora: Date.now() + r4.revisarEnMs! + 5_000 });
+    assert.equal(r5.retomadas, 0);
+    assert.equal(r5.inciertas, 1);
+    assert.equal(r5.revisarEnMs, null);
+    assert.equal((await aprobacionPorId(f2.aprobacionId!))?.estado, 'incierta');
+    assert.equal(veces, 1, 'la segunda pasada tampoco repite nada');
   }));

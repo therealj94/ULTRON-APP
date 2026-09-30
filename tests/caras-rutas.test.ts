@@ -8,6 +8,7 @@
  *    (`como: 'voz'` y la frase), que queda como constancia;
  *  · cada quien ve solo las suyas (la junta y un miembro de la comunidad por igual);
  *  · borrar de verdad: una por id, y todas; después GET no las trae y el archivo tampoco las tiene;
+ *  · si S3 no guarda, borrar NO se confirma (503) y reintentar con S3 sano borra de verdad;
  *  · la dueña es una sola ('yo' suma muestras, hasta 5) y un conocido con el mismo nombre también.
  */
 import test, { after } from 'node:test';
@@ -27,7 +28,7 @@ after(() => fs.rmSync(dir, { recursive: true, force: true }));
 
 const { montarRutasCaras } = await import('../server/caras-rutas');
 const { emitirSesion, sesionDe, exigirMesa } = await import('../server/seguridad');
-const { huellaCaras, _olvidarCacheCaras, MAX_MUESTRAS } = await import('../lib/caras-miembro');
+const { huellaCaras, _olvidarCacheCaras, _s3DePrueba, MAX_MUESTRAS } = await import('../lib/caras-miembro');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -128,4 +129,35 @@ test('olvidar de verdad: una por id y después todas; el archivo tampoco las tie
   assert.deepEqual(JSON.parse(fs.readFileSync(archivo('maria@ordenglobal.org'), 'utf8')).personas, []);
   // Las del miembro siguen ahí.
   assert.deepEqual((await listar(miembro.token)).map((p) => p.nombre), ['José']);
+});
+
+test('si S3 no guarda, borrar no se confirma (503) y al reintentar con S3 sano se borra de verdad', async () => {
+  const quien = emitirSesion({ correo: 's3-cae@ordenglobal.org', nombre: 'Prueba S3', rol: 'Junta' });
+  const guardado: Record<string, unknown> = {};
+  let s3Sano = true;
+  _s3DePrueba({ listo: () => true, put: async (k: string, j: unknown) => (s3Sano ? ((guardado[k] = j), { ok: true, detalle: '' }) : { ok: false, detalle: 'S3 503' }) });
+  try {
+    let r = await post(quien.token, { nombre: 'Beto', relacion: 'conocido', vectores: [vec(9)], consentimiento: { como: 'voz', frase: 'sí, recuérdame' } });
+    assert.equal(r.status, 200);
+    const id = (await listar(quien.token))[0].id;
+    // S3 se cae: el borrado responde 503 y la cara sigue (ni caché ni disco quedan «adelantados»).
+    s3Sano = false;
+    r = await fetch(`${base}/api/caras/${id}`, { method: 'DELETE', headers: h(quien.token) });
+    assert.equal(r.status, 503);
+    assert.equal(((await r.json()) as any).code, 'caras_no_guardadas');
+    _olvidarCacheCaras();
+    assert.equal((await listar(quien.token)).length, 1, 'la cara no se da por borrada sin recibo durable');
+    r = await fetch(`${base}/api/caras`, { method: 'DELETE', headers: h(quien.token) });
+    assert.equal(r.status, 503);
+    // S3 vuelve: el reintento encuentra la cara y la borra, en S3 y en disco.
+    s3Sano = true;
+    r = await fetch(`${base}/api/caras/${id}`, { method: 'DELETE', headers: h(quien.token) });
+    assert.equal(r.status, 200);
+    const enS3 = Object.values(guardado).at(-1) as any;
+    assert.deepEqual(enS3.personas, []);
+    _olvidarCacheCaras();
+    assert.deepEqual(await listar(quien.token), []);
+  } finally {
+    _s3DePrueba(null);
+  }
 });

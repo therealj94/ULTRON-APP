@@ -42,6 +42,14 @@ export type PersonaCara = {
 export type CajonCaras = { version: 1; personas: PersonaCara[] };
 
 export class CarasNoDisponibles extends Error {}
+/** S3 no guardó el cambio: en disco quedó, pero un redeploy lo perdería (y volvería una cara «borrada»). */
+export class CarasNoGuardadas extends Error {}
+
+/** S3 inyectable para las pruebas (simular que S3 falla al guardar). */
+let s3 = { listo: s3Listo, put: s3PutJson };
+export function _s3DePrueba(o: Partial<typeof s3> | null) {
+  s3 = o ? { ...s3, ...o } : { listo: s3Listo, put: s3PutJson };
+}
 
 const cache = new Map<string, CajonCaras>();
 const colas = new Map<string, Promise<void>>();
@@ -132,10 +140,17 @@ function guardar(c: string, cajon: CajonCaras): Promise<void> {
   cache.set(c, cajon);
   const previa = colas.get(c) || Promise.resolve();
   const paso = previa.then(async () => {
+    // Primero lo durable (S3) y después el disco: si S3 falla no queda nada «adelantado» en disco ni
+    // en caché, así que reintentar vuelve a encontrar la cara y la borra de verdad.
+    if (s3.listo()) {
+      const r = await s3.put(claveS3(c), cajon).catch((e) => ({ ok: false, detalle: String(e?.message || e) }));
+      if (!r.ok) {
+        console.warn('[caras] S3 no guardó', String((r as any).detalle || '').slice(0, 120));
+        if (cache.get(c) === cajon) cache.delete(c);
+        throw new CarasNoGuardadas(String((r as any).detalle || 'S3 no guardó'));
+      }
+    }
     escribirEnDisco(c, cajon);
-    if (!s3Listo()) return;
-    const r = await s3PutJson(claveS3(c), cajon).catch((e) => ({ ok: false, detalle: String(e?.message || e) }));
-    if (!r.ok) console.warn('[caras] S3 no guardó', String((r as any).detalle || '').slice(0, 120));
   });
   const cola = paso.catch(() => undefined);
   colas.set(c, cola);

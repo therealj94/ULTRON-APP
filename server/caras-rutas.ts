@@ -12,7 +12,7 @@
  * no sea un vector de 128 números se rechaza.
  */
 import type express from 'express';
-import { agregarCara, cargarCaras, CarasNoDisponibles, olvidarCara, olvidarTodasLasCaras, validarAlta } from '../lib/caras-miembro';
+import { agregarCara, cargarCaras, CarasNoDisponibles, CarasNoGuardadas, olvidarCara, olvidarTodasLasCaras, validarAlta } from '../lib/caras-miembro';
 import type { Sesion } from './seguridad';
 
 type Deps = {
@@ -22,6 +22,8 @@ type Deps = {
 };
 
 const sinSesion = (res: express.Response) => res.status(401).json({ error: 'Entra con tu sesión.', code: 'sesion_requerida', honesto: true });
+const noGuardado = (res: express.Response) =>
+  res.status(503).json({ error: 'No pude guardar el cambio de forma segura; intenta otra vez en un momento.', code: 'caras_no_guardadas', honesto: true });
 const noDisponible = (res: express.Response) =>
   res.status(503).json({ error: 'Ahora mismo no pude leer las caras guardadas; intenta en un momento.', code: 'caras_no_disponibles', honesto: true });
 
@@ -49,6 +51,7 @@ export function montarRutasCaras(app: express.Express, d: Deps) {
       return res.json({ persona: { id: p.id, nombre: p.nombre, relacion: p.relacion, muestras: p.vectores.length }, honesto: true });
     } catch (e) {
       if (e instanceof CarasNoDisponibles) return noDisponible(res);
+      if (e instanceof CarasNoGuardadas) return noGuardado(res);
       if (e instanceof RangeError) return res.status(409).json({ error: e.message, honesto: true });
       throw e;
     }
@@ -63,6 +66,7 @@ export function montarRutasCaras(app: express.Express, d: Deps) {
       return res.json({ ok: true, nombre: p.nombre, honesto: true });
     } catch (e) {
       if (e instanceof CarasNoDisponibles) return noDisponible(res);
+      if (e instanceof CarasNoGuardadas) return noGuardado(res);
       throw e;
     }
   });
@@ -70,7 +74,12 @@ export function montarRutasCaras(app: express.Express, d: Deps) {
   app.delete('/api/caras', d.exigirMesa, d.limitar(10), async (req, res) => {
     const s = d.sesionDe(req);
     if (!s) return sinSesion(res);
-    const borradas = await olvidarTodasLasCaras(s.correo);
-    return res.json({ ok: true, borradas, honesto: true });
+    try {
+      const borradas = await olvidarTodasLasCaras(s.correo);
+      return res.json({ ok: true, borradas, honesto: true });
+    } catch (e) {
+      if (e instanceof CarasNoGuardadas) return noGuardado(res);
+      throw e;
+    }
   });
 }

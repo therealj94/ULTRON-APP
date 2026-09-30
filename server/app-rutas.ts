@@ -123,6 +123,11 @@ export function montarRutasApp(app: express.Express, d: Deps) {
       if (motivo) escribir(`: fin ${motivo}\n\n`);
       if (!res.writableEnded) res.end();
     };
+    // Volvió tras un corte diciendo lo último que recibió: se le repite lo que vino después, si es
+    // reciente (el teléfono deduplica por id; lo viejo no se repite). La repetición va ANTES de
+    // suscribirse y las dos cosas corren en el mismo tramo síncrono (sin await en medio): ninguna acción
+    // nueva puede colarse entre medio, así que el teléfono recibe lo atrasado y después lo nuevo, en orden.
+    for (const e of accionesDesde(s.correo, aparato, req.headers['last-event-id'])) escribir(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
     soltar = suscribir(
       s.correo,
       (e) => {
@@ -132,9 +137,6 @@ export function montarRutasApp(app: express.Express, d: Deps) {
       // El mismo aparato que vuelve reemplaza a su canal viejo; al tope se desaloja el más viejo.
       { aparato, max: MAX_CANALES_POR_CUENTA, desalojar: () => cerrar('reemplazado') }
     );
-    // Volvió tras un corte diciendo lo último que recibió: se le repite lo que vino después, si es
-    // reciente (el teléfono deduplica por id; lo viejo no se repite).
-    for (const e of accionesDesde(s.correo, aparato, req.headers['last-event-id'])) escribir(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
     latido = setInterval(() => {
       if (!d.sesionDe(req)) return cerrar('sesion');
       escribir(': latido\n\n');

@@ -364,13 +364,18 @@ export const PLAZO_EJECUCION_MS = 10 * 60_000;
  *  · «aprobada» sin ejecutar: se ejecuta ahora (pasando otra vez por reglas y hechos frescos), o se da
  *    por fallida si ya venció;
  *  · «ejecutando» de hace más de PLAZO_EJECUCION_MS: «incierta». No se repite: se avisa para comprobar.
- * Devuelve cuántas tocó de cada tipo.
+ * Devuelve cuántas tocó de cada tipo y, en `revisarEnMs`, cuándo vence la «ejecutando» más reciente que
+ * todavía estaba dentro del plazo (null si no hay): quien arranca vuelve a mirar entonces, para que un
+ * reinicio a los pocos minutos no la deje «ejecutando» para siempre. `soloEjecutando` omite retomar las
+ * aprobadas (esa segunda pasada solo mira las que quedaron a medias).
  */
-export async function reconciliarAprobaciones(o: { ahora?: number; plazoMs?: number } = {}): Promise<{ retomadas: number; vencidas: number; inciertas: number }> {
+export async function reconciliarAprobaciones(
+  o: { ahora?: number; plazoMs?: number; soloEjecutando?: boolean } = {},
+): Promise<{ retomadas: number; vencidas: number; inciertas: number; revisarEnMs: number | null }> {
   const ahora = o.ahora ?? Date.now();
   const plazo = o.plazoMs ?? PLAZO_EJECUCION_MS;
-  const out = { retomadas: 0, vencidas: 0, inciertas: 0 };
-  for (const ap of await listarAprobaciones({ estado: 'aprobada', limite: 200 })) {
+  const out = { retomadas: 0, vencidas: 0, inciertas: 0, revisarEnMs: null as number | null };
+  for (const ap of o.soloEjecutando ? [] : await listarAprobaciones({ estado: 'aprobada', limite: 200 })) {
     if (new Date(ap.vence).getTime() < ahora) {
       out.vencidas++;
       await terminar(ap, false, 'Se aprobó pero no llegó a ejecutarse antes de vencer (el servicio se reinició). No se hizo.');
@@ -381,7 +386,11 @@ export async function reconciliarAprobaciones(o: { ahora?: number; plazoMs?: num
   }
   for (const ap of await listarAprobaciones({ estado: 'ejecutando', limite: 200 })) {
     const desde = ap.resultado?.t ? new Date(ap.resultado.t).getTime() : 0;
-    if (ahora - desde < plazo) continue;
+    if (ahora - desde < plazo) {
+      const falta = plazo - (ahora - desde);
+      out.revisarEnMs = out.revisarEnMs === null ? falta : Math.min(out.revisarEnMs, falta);
+      continue;
+    }
     let cambio = false;
     const fin = await modificar(ap.id, (x) => {
       if (x.estado !== 'ejecutando') return null;

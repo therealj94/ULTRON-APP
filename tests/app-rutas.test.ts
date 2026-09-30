@@ -301,6 +301,13 @@ test('A21: el canal que vuelve con Last-Event-ID recibe lo que se perdió (recie
   assert.ok(await espera(() => texto.includes(e2.evento.id) && texto.includes(e3.evento.id)), texto);
   assert.ok(!texto.includes(`id: ${e1}\n`), 'lo que ya recibió no se repite');
   assert.ok(texto.indexOf(e2.evento.id) < texto.indexOf(e3.evento.id), 'en orden');
+  // Una acción nueva que llega ya con el canal abierto va DESPUÉS de lo atrasado (nunca intercalada).
+  assert.ok(await espera(() => oyentesDe('tres@x.com') === 1));
+  const e4 = empujarAccion('tres@x.com', { tipo: 'abrir', pantalla: 'chats' }, { aparato: 'tel-C' });
+  assert.equal(e4.entregada, 1);
+  assert.ok(await espera(() => texto.includes(e4.evento.id)), texto);
+  assert.ok(texto.indexOf(e3.evento.id) < texto.indexOf(e4.evento.id), 'lo nuevo después de lo repetido');
+  assert.equal(texto.split(`id: ${e4.evento.id}\n`).length - 1, 1, 'lo nuevo llega una sola vez');
   ctrl.abort();
   await leer;
   // Un id que no se conoce (otro servidor, o de hace rato): no se adivina.
