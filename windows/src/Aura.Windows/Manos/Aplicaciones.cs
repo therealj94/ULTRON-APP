@@ -83,7 +83,7 @@ internal static class Aplicaciones
     });
 
     /// <summary>La app que mejor calza con lo que se dijo, o null. Nunca «la más parecida» si no se parece.</summary>
-    public static AppInstalada? Buscar(string dicho)
+    public static AppInstalada? Buscar(string dicho, int minimo = 40)
     {
         var q = LayaLigera.Normalizar(dicho);
         if (q.Length < 2) return null;
@@ -99,7 +99,7 @@ internal static class Aplicaciones
                 if (p > puntos || p == puntos && p > 0 && mejor != null && n.Length < LayaLigera.Normalizar(mejor.Nombre).Length) { puntos = p; mejor = app; }
             }
         }
-        if (mejor != null && puntos >= 40) return mejor;
+        if (mejor != null && puntos >= minimo) return mejor;
         foreach (var c in candidatos) if (Sistema.TryGetValue(c, out var s)) return new AppInstalada(dicho, s, false);
         return null;
     }

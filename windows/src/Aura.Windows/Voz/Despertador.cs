@@ -25,7 +25,7 @@ internal sealed class Despertador : IDisposable
             var info = todos.FirstOrDefault(r => r.Culture.TwoLetterISOLanguageName == idioma) ?? todos.FirstOrDefault();
             if (info == null) return "Windows no tiene reconocimiento de voz instalado: la palabra de activación no está disponible. Usa Ctrl+Alt+Espacio.";
             var m = new SpeechRecognitionEngine(info);
-            var frases = new Choices("oye aura", "hey aura", "ey aura", "hola aura", "aura", "oye claudio", "hey claudio", "oye antonio", "hey antonio", "ok aura");
+            var frases = new Choices("oye aura", "hey aura", "ok aura", "oye claudio", "hey claudio", "oye antonio", "hey antonio", "oye guardián", "hey guardian");
             m.LoadGrammar(new Grammar(new GrammarBuilder(frases) { Culture = info.Culture }) { Name = "despertar" });
             m.SetInputToDefaultAudioDevice();
             m.SpeechRecognized += (_, e) => { if (e.Result.Confidence >= 0.72f) Desperto?.Invoke(); };

@@ -31,6 +31,9 @@ public partial class NotchWindow
     CancellationTokenSource? turno, voz;
     bool escuchando, pensando, hablandoAhora, panelAbierto, pausado, continuo, turnoEnCurso;
     long generacion;
+    int vaciasSeguidas;
+    readonly SemaphoreSlim renovando = new(1, 1);
+    DateTime noRenovarHasta;
     string ultimaRespuesta = "";
     string emocionActual = "neutral";
 
@@ -42,6 +45,9 @@ public partial class NotchWindow
         if (soloRender) return;
         CrearApi();
         RecuperarBorrador();
+        // Con verbos ambiguos («pon Spotify») solo cuenta una app que de verdad está instalada (nombre exacto o que empieza así).
+        var comunes = Parametros.EsAppConocida;
+        Parametros.EsAppConocida = o => comunes(o) || Manos.Aplicaciones.Buscar(o, 80) != null;
         _ = Manos.Aplicaciones.Indexar().ContinueWith(_ => Dispatcher.BeginInvoke(new Action(() => FiltrarApps(this, null!))));
         PintarRecordatorios();
         relojRecordatorios.Tick += (_, _) => RevisarRecordatorios();
@@ -50,7 +56,7 @@ public partial class NotchWindow
         oido.Nivel += n => Dispatcher.BeginInvoke(new Action(() => { BarrasEscucha.Nivel = n; if (escuchando) { EscalaAnillo.ScaleX = EscalaAnillo.ScaleY = 1 + n * 0.5; } }));
         oido.EmpezoAHablar += () => Dispatcher.BeginInvoke(new Action(AlEmpezarAHablar));
         oido.Frase += wav => Dispatcher.BeginInvoke(new Action(() => _ = AlTerminarFrase(wav)));
-        oido.SeCanso += () => Dispatcher.BeginInvoke(new Action(() => { if (hablandoAhora || pensando) return; CerrarOido(); continuo = false; Recalcular(); }));
+        oido.SeCanso += () => Dispatcher.BeginInvoke(new Action(() => { if (oido.ModoInterrupcion) return; CerrarOido(); if (!hablandoAhora && !pensando) continuo = false; Recalcular(); }));
         oido.Fallo += m => Dispatcher.BeginInvoke(new Action(() => { CerrarOido(); continuo = false; Avisar(new Aviso("Micrófono", m, "", "worried", Segundos: 6)); Recalcular(); }));
 
         altavoz.Empezo += () => Dispatcher.BeginInvoke(new Action(() => { hablandoAhora = true; pensando = false; AvatarPanel.Estado = "speaking"; EstadoPanel.Text = Ingles ? "Speaking…" : "Hablando…"; AbrirOidoParaInterrumpir(); Recalcular(); }));
@@ -59,7 +65,8 @@ public partial class NotchWindow
         altavoz.Termino += () => Dispatcher.BeginInvoke(new Action(AlTerminarDeHablar));
         altavoz.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso("Voz", m, "", "worried"))));
 
-        despertador.Desperto += () => Dispatcher.BeginInvoke(new Action(() => { if (!escuchando && !pausado && !pensando) { Callar(); continuo = ajustes.ManosLibres; EmpezarAEscuchar(); } }));
+        // Su propia voz («…soy AU-RA») no la despierta: mientras suena algo, la palabra de activación no cuenta.
+        despertador.Desperto += () => Dispatcher.BeginInvoke(new Action(() => { if (!escuchando && !pausado && !pensando && !hablandoAhora && !altavoz.Ocupado) { Callar(); continuo = ajustes.ManosLibres; EmpezarAEscuchar(); } }));
         if (ajustes.PalabraActivacion) { var e = despertador.Encender(ajustes.Idioma); if (e != null) Avisar(new Aviso("Palabra de activación", e, "", "worried", Segundos: 7)); }
 
         var hola = ajustes.Idioma == "en" ? "Hi, I'm " + ajustes.NombreAvatar : "Hola, soy " + ajustes.NombreAvatar;
@@ -74,17 +81,27 @@ public partial class NotchWindow
         catch (AuraError ex) { api = null; Avisar(new Aviso("Revisa el servidor", ex.Message, "", "worried")); }
     }
 
+    /// <summary>
+    /// Una sola renovación a la vez y, si falla, ninguna más en 2 minutos: una clave vieja no puede
+    /// convertirse en una ráfaga de logins que bloquee la cuenta.
+    /// </summary>
     async Task<string?> RenovarSesion(CancellationToken ct)
     {
-        if (string.IsNullOrEmpty(ajustes.Correo) || string.IsNullOrEmpty(ajustes.Clave)) return null;
+        if (string.IsNullOrEmpty(ajustes.Correo) || string.IsNullOrEmpty(ajustes.Clave) || DateTime.UtcNow < noRenovarHasta) return null;
+        var antes = ajustes.Token;
+        await renovando.WaitAsync(ct);
         try
         {
+            if (ajustes.Token != antes && !string.IsNullOrEmpty(ajustes.Token)) return ajustes.Token; // otra renovación ya lo hizo
+            if (DateTime.UtcNow < noRenovarHasta) return null;
             using var otra = new AuraApi(ajustes.Servidor);
             var (token, nombre, _) = await otra.Entrar(ajustes.Correo, ajustes.Clave, ct);
-            ajustes.Token = token; if (nombre.Length > 0) ajustes.Nombre = nombre; ajustes.Guardar();
+            await Dispatcher.InvokeAsync(() => { ajustes.Token = token; if (nombre.Length > 0) ajustes.Nombre = nombre; try { ajustes.Guardar(); } catch { } });
             return token;
         }
-        catch { return null; }
+        catch (OperationCanceledException) { throw; }
+        catch { noRenovarHasta = DateTime.UtcNow.AddMinutes(2); return null; }
+        finally { renovando.Release(); }
     }
 
     async Task ComprobarConexion()
@@ -143,6 +160,7 @@ public partial class NotchWindow
 
     void AlEmpezarAHablar()
     {
+        if (!oido.Abierto) return; // llegó tarde, de un micrófono que ya se cerró
         if (hablandoAhora || pensando)
         {
             // Le hablaron encima: se calla ya y escucha (el audio ya viene grabando desde antes).
@@ -160,29 +178,43 @@ public partial class NotchWindow
     async Task AlTerminarFrase(byte[] wav)
     {
         if (pausado) return;
+        bool eraInterrupcion = oido.ModoInterrupcion;
         oido.Cerrar();
         escuchando = false; LuzMic.Opacity = 0; AnilloMic.Opacity = 0;
-        if (api == null) { Avisar(new Aviso("Conecta AURA", "Configura el servidor en Ajustes.", "", "worried")); return; }
-        pensando = true; TextoPiensa.Text = ajustes.Idioma == "en" ? "Transcribing…" : "Te entendí, un momento…"; Recalcular();
+        pensando = true; TextoPiensa.Text = T("Te entendí, un momento…", "Got it, one moment…"); Recalcular();
         long g = ++generacion;
-        string texto;
-        try { texto = await api.Oir(wav, ajustes.Idioma); }
-        catch (AuraError ex) { if (g != generacion) return; pensando = false; continuo = false; Avisar(new Aviso("No pude oírte", ex.Message, "", "worried")); Recalcular(); return; }
+        string texto = "";
+        string? error = null;
+        try { texto = await Transcribir(wav); }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex) { error = ex.Message; }
         if (g != generacion) return;
         pensando = false;
+        if (error != null) { continuo = false; Avisar(new Aviso(T("No pude oírte", "I couldn't hear you"), error, "", "worried", Segundos: 6)); Recalcular(); return; }
         if (texto.Length == 0)
         {
-            if (continuo) EmpezarAEscuchar();
-            else { Avisar(new Aviso(ajustes.Idioma == "en" ? "I didn't catch that" : "No alcancé a oírte", ajustes.Idioma == "en" ? "Try again or type it." : "Inténtalo otra vez o escríbemelo.", "", "worried", Segundos: 3)); Recalcular(); }
+            // Ruido (la tele, el ventilador): después de dos vacías seguidas, deja de escuchar sola.
+            if (continuo && ++vaciasSeguidas < 2 && !eraInterrupcion) EmpezarAEscuchar();
+            else { vaciasSeguidas = 0; continuo = false; if (!eraInterrupcion) Avisar(new Aviso(T("No alcancé a oírte", "I didn't catch that"), T("Inténtalo otra vez o escríbemelo.", "Try again or type it."), "", "worried", Segundos: 3)); Recalcular(); }
             return;
         }
+        vaciasSeguidas = 0;
         await Procesar(texto, true);
+    }
+
+    /// <summary>El oído del servidor (Whisper/Scribe) o, sin él, el dictado de Windows. Si se eligió, siempre el de Windows.</summary>
+    async Task<string> Transcribir(byte[] wav)
+    {
+        if (!ajustes.OidoDeWindows && api != null)
+        {
+            try { return await api.Oir(wav, ajustes.Idioma); }
+            catch (AuraError) { /* sin red o sin servidor: el de Windows */ }
+        }
+        return await VozLocal.Oir(wav, ajustes.Idioma);
     }
 
     // ───────────────────────────── entender y contestar ─────────────────────────────
 
-    static readonly Regex Si = new(@"^(?:si|sip|dale|hazlo|ok|okay|okey|claro|adelante|confirmo|va|de una|por supuesto|yes|yep|yeah|sure|do it|go ahead|confirm)\b", RegexOptions.Compiled);
-    static readonly Regex No = new(@"^(?:no|nel|cancela|cancelalo|mejor no|para|nope|cancel|stop|don t|dont)\b", RegexOptions.Compiled);
 
     internal async Task Procesar(string texto, bool hablado)
     {
@@ -190,14 +222,17 @@ public partial class NotchWindow
         if (texto.Length == 0 || pausado) return;
         if (propuesta != null)
         {
-            var t = Parametros.Limpiar(texto);
-            if (Si.IsMatch(t)) { await Responder(true); return; }
-            if (No.IsMatch(t)) { await Responder(false); return; }
+            // Solo un «sí» limpio confirma; cualquier «no» en la frase cancela («sí, pero mejor no» no bloquea nada).
+            switch (Parametros.Respuesta(texto))
+            {
+                case true: await Responder(true); return;
+                case false: await Responder(false); return;
+            }
         }
         AgregarMensaje("Tú", texto);
         long g = ++generacion;
         Pedido pedido;
-        try { pedido = await Intencion.Decidir(texto, api != null ? api.Intencion : null); }
+        try { pedido = await Intencion.Decidir(texto, api != null && !string.IsNullOrEmpty(api.Token) ? api.Intencion : null); }
         catch { pedido = Pedido.Nada; }
         if (g != generacion) return;
         if (pedido.Mano != Mano.Ninguna) { await Hacer(pedido, texto, hablado); return; }
@@ -205,9 +240,10 @@ public partial class NotchWindow
     }
 
     /// <summary>Le pregunta al cerebro (Qwen, el mismo de la app) y habla la respuesta mientras llega.</summary>
-    internal async Task<Respuesta?> Conversar(string texto, bool hablado, bool redactar = false)
+    /// <param name="contexto">Lo que acompaña a la pregunta (el texto de la pantalla, lo copiado). Va al cerebro, no al historial.</param>
+    internal async Task<Respuesta?> Conversar(string texto, bool hablado, bool redactar = false, string? contexto = null)
     {
-        if (api == null) { Avisar(new Aviso("Conecta AURA", "Configura el servidor en Ajustes.", "", "worried")); return null; }
+        if (api == null) { NoPude(T("Conecta AURA en Ajustes para conversar.", "Connect AURA in Settings to chat.")); return null; }
         Callar(false);
         long g = ++generacion;
         var cts = turno = new CancellationTokenSource();
@@ -224,7 +260,7 @@ public partial class NotchWindow
         Respuesta? r = null;
         try
         {
-            r = await api.Turno(texto, historial, ajustes.Nombre.Length > 0 ? ajustes.Nombre : Environment.UserName, ajustes.Avatar, ajustes.Idioma, hablado,
+            r = await api.Turno(contexto == null ? texto : texto + "\n\n" + contexto, historial, ajustes.Nombre.Length > 0 ? ajustes.Nombre : Environment.UserName, ajustes.Avatar, ajustes.Idioma, hablado,
                 alTrozo: trozo => Dispatcher.BeginInvoke(new Action(() =>
                 {
                     if (g != generacion) return;
@@ -237,10 +273,12 @@ public partial class NotchWindow
                 ct: cts.Token);
         }
         catch (OperationCanceledException) { return null; }
-        catch (AuraError ex)
+        catch (Exception ex)
         {
+            // Cualquier fallo (red, proxy, un servidor cambiado a mitad): nunca queda pegado en «pensando».
             if (g != generacion) return null;
             pensando = false; turnoEnCurso = false; continuo = false;
+            if (oido.ModoInterrupcion) CerrarOido();
             if (burbuja != null) burbuja.Text = ex.Message;
             Avisar(new Aviso(ajustes.Idioma == "en" ? "Couldn't reach AURA" : "No pude pensar ahora", ex.Message, "", "worried", Segundos: 6));
             Recalcular();
@@ -271,33 +309,45 @@ public partial class NotchWindow
         return r;
     }
 
-    /// <summary>Pide la voz de una frase (sin esperar) y la pone en la cola del altavoz.</summary>
-    internal void Decir(string frase, string emocion = "neutral", CancellationToken ct = default)
+    /// <summary>
+    /// Pide la voz de una frase (sin esperar) y la pone en la cola del altavoz: la del avatar (ElevenLabs,
+    /// en el servidor) o, si se eligió o el servidor no contesta, la de Windows. Devuelve si encoló algo.
+    /// </summary>
+    internal bool Decir(string frase, string emocion = "neutral", CancellationToken ct = default)
     {
-        if (!ajustes.ResponderConVoz || api == null || soloRender || string.IsNullOrWhiteSpace(frase)) return;
-        var a = api; var avatar = ajustes.Avatar; var idioma = ajustes.Idioma;
+        if (!ajustes.ResponderConVoz || soloRender || string.IsNullOrWhiteSpace(frase)) return false;
+        var a = api; var avatar = ajustes.Avatar; var idioma = ajustes.Idioma; bool local = ajustes.VozDeWindows || a == null;
         var tarea = Task.Run(async () =>
         {
-            try { return (Audio?)await a.Voz(frase, emocion, avatar, idioma, ct); }
+            if (!local)
+            {
+                try { return (Audio?)await a!.Voz(frase, emocion, avatar, idioma, ct); }
+                catch (OperationCanceledException) { return null; }
+                catch (Exception) { /* sin servidor: la voz de Windows */ }
+            }
+            try { return await VozLocal.Decir(frase, idioma, avatar, ct); }
             catch (OperationCanceledException) { return null; }
-            catch (AuraError ex) { _ = Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso("Voz", ex.Message, "", "worried")))); return null; }
+            catch (Exception ex) { _ = Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso(T("Voz", "Voice"), ex.Message, "", "worried")))); return null; }
         });
         altavoz.Encolar(tarea, frase);
+        return true;
     }
 
-    /// <summary>Una frase corta de AURA (confirmaciones): se dice y se muestra en el notch.</summary>
-    void Contestar(string frase, string emocion = "feliz")
+    /// <summary>Una frase corta de AURA. Si estás hablando, no te pisa: queda en el notch. Devuelve si la dijo en voz.</summary>
+    bool Contestar(string frase, string emocion = "feliz")
     {
         Subtitulo.Text = frase;
+        if (escuchando && !oido.ModoInterrupcion) return false;
         if (voz == null || voz.IsCancellationRequested) voz = new CancellationTokenSource();
-        Decir(frase, emocion, voz.Token);
+        return Decir(frase, emocion, voz.Token);
     }
 
     void AlTerminarDeHablar()
     {
         hablandoAhora = false;
         AvatarHabla.Boca = AvatarPanel.Boca = 0;
-        if (turnoEnCurso) { pensando = true; Recalcular(); return; }
+        // Entre frases del mismo turno sigue «hablando»: el notch no parpadea mientras llega la siguiente.
+        if (turnoEnCurso) { hablandoAhora = true; Recalcular(); return; }
         pensando = false;
         AvatarPanel.Estado = EstadoDeEmocion(emocionActual);
         oido.ModoInterrupcion = false;
@@ -314,7 +364,9 @@ public partial class NotchWindow
         turno?.Cancel(); voz?.Cancel(); voz = null;
         altavoz.Detener();
         hablandoAhora = false; pensando = false; turnoEnCurso = false;
-        if (terminarSesion) { continuo = false; CerrarOido(); }
+        if (terminarSesion) continuo = false;
+        // El oído en modo interrupción era para ESTA voz: si ya no habla, se cierra.
+        if (terminarSesion || oido.ModoInterrupcion) CerrarOido();
         Recalcular();
     }
 

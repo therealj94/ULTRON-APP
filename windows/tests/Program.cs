@@ -111,5 +111,50 @@ Check(AuraApi.Validar("https://aura-fp.onrender.com").AbsoluteUri == "https://au
 Check(Throws(() => AuraApi.Validar("http://aura-fp.onrender.com")), "sin http remoto");
 bool Throws(Action a) { try { a(); return false; } catch { return true; } }
 
+// ── Auditoría: «sí» ambiguo nunca confirma ──
+foreach (var f in new[] { "sí, pero mejor no", "claro que no", "yeah no, wait", "si no te importa, no", "no", "cancela", "espera" })
+    Check(Parametros.Respuesta(f) == false, "no confirma: " + f);
+foreach (var f in new[] { "sí", "Sí, dale", "claro", "vale", "ok", "yes please", "hazlo" })
+    Check(Parametros.Respuesta(f) == true, "confirma: " + f);
+Check(Parametros.Respuesta("¿qué hora es?") == null, "otra cosa no es respuesta");
+// ── Auditoría: conversación que no es orden ──
+foreach (var f in new[] { "vamos a hablar de política", "show me how to cook rice", "go to sleep", "pon atención", "prende la tele", "run me through it",
+    "start with the basics", "get me a coffee", "load the dishwasher", "lanza una moneda", "la canción anterior era mejor",
+    "mi jefe me pidió una captura de pantalla del error", "tengo un recordatorio a las 3 que no recuerdo" })
+    Check(R(f).Mano == Mano.Ninguna, "no es orden: " + f + " → " + R(f));
+Check(R("pon spotify") is { Mano: Mano.AbrirApp, Valor: "spotify" }, "verbo ambiguo con app conocida");
+Check(R("ve a descargas") is { Mano: Mano.AbrirCarpeta }, "verbo ambiguo con carpeta");
+Check(R("no me dejes olvidar pagar la luz en 20 minutos") is { Mano: Mano.Recordar } nd && nd.Cuando == TimeSpan.FromMinutes(20), "no me dejes olvidar");
+var mediodia = new DateTime(2026, 9, 30, 13, 0, 0);
+Check(Parametros.Tiempo("a las 12 de la noche", mediodia) == TimeSpan.FromHours(11), "medianoche");
+Check(Parametros.Tiempo("a la una de la noche", mediodia) == TimeSpan.FromHours(12), "madrugada");
+Check(Parametros.Tiempo("la reunion de dos horas a las 5", mediodia) == TimeSpan.FromHours(4), "hora explicita manda");
+Check(Parametros.TextoAEscribir("escribe lo que te dije") == null, "escribe lo que te dije = la respuesta");
+Check(Parametros.TextoAEscribir("escribe a las 10:30 la reunión") == "a las 10:30 la reunión", "dos puntos de la hora");
+
+// ── Manos nativas 1.1 ──
+Check(R("dale a Guardar") is { Mano: Mano.Pulsar, Valor: "Guardar" }, "pulsar");
+Check(R("abre la pestaña Insertar") is { Mano: Mano.Pulsar, Valor: "Insertar" }, "pestaña");
+Check(R("haz clic en el botón Aceptar") is { Mano: Mano.Pulsar, Valor: "Aceptar" }, "clic boton");
+Check(R("click the Save button") is { Mano: Mano.Pulsar } pz && pz.Valor.Equals("save", StringComparison.OrdinalIgnoreCase), "click en");
+Check(R("qué botones hay") is { Mano: Mano.QueHay }, "que hay");
+Check(R("cierra esta ventana") is { Mano: Mano.Ventana, Valor: "cerrar|", PideConfirmacion: true }, "cerrar ventana confirma");
+Check(R("cierra word") is { Mano: Mano.Ventana, Valor: "cerrar|word" }, "cerrar app");
+Check(R("minimiza esta ventana") is { Mano: Mano.Ventana, Valor: "minimizar|" }, "minimizar");
+Check(R("cambia a chrome") is { Mano: Mano.Ventana, Valor: "cambiar|chrome", PideConfirmacion: false }, "cambiar ventana");
+Check(R("cambia a claudio") is { Mano: Mano.Avatar, Valor: "claudio" }, "cambiar a avatar sigue siendo avatar");
+Check(R("cierra el chat") is { Mano: Mano.Ocultar } || R("cierra el chat").Mano != Mano.Ventana, "cerrar chat no es ventana");
+Check(R("minimiza todo") is { Mano: Mano.Escritorio }, "minimiza todo = escritorio");
+Check(R("¿qué hora es?") is { Mano: Mano.Info, Valor: "hora" }, "hora nativa");
+Check(R("cuánta batería me queda") is { Mano: Mano.Info, Valor: "bateria" }, "bateria");
+Check(R("how much disk space is left") is { Mano: Mano.Info, Valor: "disco" }, "disco");
+Check(R("tengo internet?") is { Mano: Mano.Info, Valor: "red" }, "red");
+Check(R("mi batería del carro está mala").Mano == Mano.Ninguna, "bateria del carro no");
+Check(R("qué hora es en Madrid").Mano == Mano.Ninguna, "hora de otro lugar al cerebro");
+Check(R("resume lo que copié") is { Mano: Mano.Portapapeles }, "portapapeles");
+Check(R("abre el último archivo que descargué") is { Mano: Mano.AbrirArchivo, Valor: "ultimo-descargado" }, "ultima descarga");
+Check(R("abre el archivo del contrato") is { Mano: Mano.AbrirArchivo, Valor: "contrato" }, "archivo por nombre");
+Check(R("dale play").Mano == Mano.MultimediaPausa && R("dale a play").Mano == Mano.MultimediaPausa, "dale play es musica");
+
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

@@ -63,20 +63,25 @@ public sealed class AuraApi : IDisposable
         return r;
     }
 
-    async Task<HttpResponseMessage> Enviar(Func<HttpRequestMessage> crear, CancellationToken ct, TimeSpan tope, HttpCompletionOption modo = HttpCompletionOption.ResponseContentRead)
+    async Task<HttpResponseMessage> Enviar(Func<HttpRequestMessage> crear, CancellationToken ct, TimeSpan tope, HttpCompletionOption modo = HttpCompletionOption.ResponseContentRead, bool renovar = true)
     {
+        // Un solo reloj para todo, reintento incluido: nada de esperas sin tope.
         using var reloj = CancellationTokenSource.CreateLinkedTokenSource(ct);
         reloj.CancelAfter(tope);
-        HttpResponseMessage r;
-        try { r = await http.SendAsync(crear(), modo, reloj.Token).ConfigureAwait(false); }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new AuraError("El servidor AURA tardó demasiado."); }
-        catch (HttpRequestException) { throw new AuraError("Sin conexión con el servidor AURA."); }
-        if (r.StatusCode == HttpStatusCode.Unauthorized && Renovar != null)
+        async Task<HttpResponseMessage> Una()
+        {
+            try { return await http.SendAsync(crear(), modo, reloj.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { throw new AuraError("El servidor AURA tardó demasiado."); }
+            catch (HttpRequestException) { throw new AuraError("Sin conexión con el servidor AURA."); }
+            catch (ObjectDisposedException) { throw new OperationCanceledException(ct); }
+        }
+        var r = await Una().ConfigureAwait(false);
+        if (r.StatusCode == HttpStatusCode.Unauthorized && renovar && Renovar != null)
         {
             r.Dispose();
-            Token = await Renovar(ct).ConfigureAwait(false);
+            Token = await Renovar(reloj.Token).ConfigureAwait(false);
             if (string.IsNullOrEmpty(Token)) throw new AuraError("Tu sesión venció. Entra otra vez en Ajustes.", HttpStatusCode.Unauthorized);
-            r = await http.SendAsync(crear(), modo, ct).ConfigureAwait(false);
+            r = await Una().ConfigureAwait(false);
         }
         if (!r.IsSuccessStatusCode)
         {
@@ -95,10 +100,17 @@ public sealed class AuraApi : IDisposable
         return r;
     }
 
+    /// <summary>El cuerpo JSON de la respuesta; si no es JSON (un portal cautivo, una página de error), un AuraError y no otra cosa.</summary>
+    static async Task<JsonDocument> Json(HttpResponseMessage r, CancellationToken ct)
+    {
+        try { return JsonDocument.Parse(await r.Content.ReadAsStringAsync(ct).ConfigureAwait(false)); }
+        catch (JsonException) { throw new AuraError("El servidor respondió algo que no entiendo. ¿Hay un portal de wifi o un proxy en medio?"); }
+    }
+
     public async Task<(string Token, string Nombre, string Correo)> Entrar(string correo, string clave, CancellationToken ct = default)
     {
-        using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/ultron/entrar", new { correo = correo.Trim().ToLowerInvariant(), clave }), ct, TimeSpan.FromSeconds(20)).ConfigureAwait(false);
-        using var j = JsonDocument.Parse(await r.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+        using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/ultron/entrar", new { correo = correo.Trim().ToLowerInvariant(), clave }), ct, TimeSpan.FromSeconds(20), renovar: false).ConfigureAwait(false);
+        using var j = await Json(r, ct).ConfigureAwait(false);
         var raiz = j.RootElement;
         var token = raiz.TryGetProperty("token", out var t) ? t.GetString() : null;
         if (string.IsNullOrEmpty(token)) throw new AuraError("El servidor no devolvió una sesión.");
@@ -207,7 +219,7 @@ public sealed class AuraApi : IDisposable
     {
         var b64 = "data:audio/wav;base64," + Convert.ToBase64String(wav);
         using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/stt", new { audioBase64 = b64, mimeType = "audio/wav", language = idioma }), ct, TimeSpan.FromSeconds(18)).ConfigureAwait(false);
-        using var j = JsonDocument.Parse(await r.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+        using var j = await Json(r, ct).ConfigureAwait(false);
         return j.RootElement.TryGetProperty("text", out var t) ? (t.GetString() ?? "").Trim() : "";
     }
 
@@ -216,7 +228,7 @@ public sealed class AuraApi : IDisposable
     {
         var cuerpo = new { mediaType = "image/jpeg", fileName = "pantalla.jpg", base64Data = "data:image/jpeg;base64," + Convert.ToBase64String(jpeg), prompt = pregunta };
         using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/vision/analyze", cuerpo), ct, TimeSpan.FromSeconds(45)).ConfigureAwait(false);
-        using var j = JsonDocument.Parse(await r.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+        using var j = await Json(r, ct).ConfigureAwait(false);
         return j.RootElement.TryGetProperty("summary", out var s) ? (s.GetString() ?? "").Trim() : "";
     }
 
@@ -226,13 +238,15 @@ public sealed class AuraApi : IDisposable
         if (string.IsNullOrEmpty(Token)) return null;
         try
         {
-            using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/windows/intencion", new { texto }), ct, TimeSpan.FromMilliseconds(1600)).ConfigureAwait(false);
-            using var j = JsonDocument.Parse(await r.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+            // Sin renovar la sesión: Laya es un atajo; un login por cada frase podría bloquear la cuenta.
+            using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/windows/intencion", new { texto }), ct, TimeSpan.FromMilliseconds(1600), renovar: false).ConfigureAwait(false);
+            using var j = await Json(r, ct).ConfigureAwait(false);
             var raiz = j.RootElement;
             var et = raiz.TryGetProperty("etiqueta", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : null;
             return new DecisionNodo(et, raiz.TryGetProperty("p", out var p) ? p.GetDouble() : 0, raiz.TryGetProperty("seguro", out var s) && s.GetBoolean());
         }
         catch (AuraError) { return null; }
+        catch (Exception e) when (e is InvalidOperationException or KeyNotFoundException or FormatException) { return null; }
     }
 
     public void Dispose() => http.Dispose();

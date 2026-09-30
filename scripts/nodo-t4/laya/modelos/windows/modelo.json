@@ -23,7 +23,13 @@
   "win_ocultar",
   "win_avatar",
   "win_escritorio",
-  "win_bloquear"
+  "win_bloquear",
+  "win_pulsar",
+  "win_que_hay",
+  "win_ventana",
+  "win_info",
+  "win_portapapeles",
+  "win_abrir_archivo"
  ],
  "grupos": {
   "win": [
@@ -48,7 +54,13 @@
    "win_ocultar",
    "win_avatar",
    "win_escritorio",
-   "win_bloquear"
+   "win_bloquear",
+   "win_pulsar",
+   "win_que_hay",
+   "win_ventana",
+   "win_info",
+   "win_portapapeles",
+   "win_abrir_archivo"
   ]
  },
  "recorte": {

@@ -81,6 +81,11 @@ RELLENO = {
               'la junta de las tres', 'sacar la basura', 'estirar las piernas', 'revisar el correo', 'tomar agua', 'la llamada con el cliente',
               'guardar el documento', 'recoger a los cipotes', 'pagar la tarjeta', 'la clase de inglés', 'descansar la vista', 'imprimir el contrato'],
         'v': ['claudio', 'aura', 'antonio', 'ant-onio', 'el guardián', 'los ojos', 'la hormiga', 'el zorro', 'la dorada'],
+        'b': ['guardar', 'aceptar', 'cancelar', 'insertar', 'archivo', 'inicio', 'diseño', 'siguiente', 'enviar', 'imprimir', 'buscar', 'nuevo',
+              'abrir', 'cerrar sesión', 'compartir', 'responder', 'descargar', 'continuar', 'revisar', 'vista', 'formato', 'ayuda', 'opciones',
+              'agregar', 'editar', 'copiar', 'pegar', 'deshacer', 'reproducir', 'suscribirse'],
+        'n': ['el informe de ventas', 'la factura de octubre', 'el contrato', 'mi currículum', 'las fotos del viaje', 'el presupuesto',
+              'la cotización', 'el acta de la junta', 'la tarea de inglés', 'el plan de trabajo', 'el recibo de la luz', 'la presentación'],
     },
     'en': {
         'a': ['notepad', 'the calculator', 'word', 'excel', 'powerpoint', 'chrome', 'edge', 'spotify', 'whatsapp', 'outlook', 'teams', 'zoom',
@@ -109,6 +114,10 @@ RELLENO = {
               'the three o clock meeting', 'take out the trash', 'stretch my legs', 'check my email', 'drink water', 'the client call',
               'save the document', 'pick up the kids', 'pay the card', 'english class', 'rest my eyes', 'print the contract'],
         'v': ['claudio', 'aura', 'antonio', 'ant-onio', 'the guardian', 'the eyes', 'the ant', 'the fox', 'the golden one'],
+        'b': ['save', 'ok', 'cancel', 'insert', 'file', 'home', 'design', 'next', 'send', 'print', 'search', 'new', 'open', 'sign out',
+              'share', 'reply', 'download', 'continue', 'review', 'view', 'format', 'help', 'options', 'add', 'edit', 'copy', 'paste', 'undo', 'play', 'subscribe'],
+        'n': ['the sales report', 'the october invoice', 'the contract', 'my resume', 'the trip photos', 'the budget', 'the quote',
+              'the board minutes', 'the english homework', 'the work plan', 'the power bill', 'the presentation'],
     },
 }
 
@@ -274,6 +283,47 @@ P = {
   'en': ['lock the computer', 'lock the pc', 'lock the screen', 'lock my computer', 'lock it up', 'i am leaving, lock the pc', 'lock windows',
          'secure the computer', 'lock the workstation', 'put the lock screen on'],
  },
+ 'win_pulsar': {
+  'es': ['dale a {b}', 'dale clic a {b}', 'haz clic en {b}', 'pulsa {b}', 'presiona {b}', 'aprieta {b}', 'dale en {b}', 'pulsa el botón {b}',
+         'haz clic en el botón {b}', 'abre la pestaña {b}', 'abre el menú {b}', 'selecciona {b}', 'dale al botón de {b}', 'presiona la opción {b}',
+         'clic en {b}', 'haz click en {b}', 'apriétale a {b}', 'dale doble clic a {b}', 've a la pestaña {b}', 'toca el botón {b}'],
+  'en': ['click {b}', 'click on {b}', 'press {b}', 'hit {b}', 'tap {b}', 'press the {b} button', 'click the {b} button', 'open the {b} tab',
+         'open the {b} menu', 'select {b}', 'choose {b}', 'go to the {b} tab', 'hit the {b} button', 'click on the {b} option', 'double click {b}'],
+ },
+ 'win_que_hay': {
+  'es': ['qué botones hay', 'qué opciones hay aquí', 'qué puedo pulsar aquí', 'léeme los botones', 'dime los botones de esta ventana',
+         'qué pestañas tiene', 'qué menús hay', 'qué puedo tocar aquí', 'qué controles tiene esta ventana', 'qué opciones me da esta pantalla',
+         'dime qué puedo hacer en esta ventana', 'qué hay para pulsar'],
+  'en': ['what buttons are there', 'what options are there', 'what can i click', 'read me the buttons', 'what tabs are there',
+         'what menus are there', 'what controls does this window have', 'what can i do in this window', 'list the buttons', 'which buttons can i press'],
+ },
+ 'win_ventana': {
+  'es': ['cambia a {a}', 'pásame a {a}', 'vuelve a {a}', 'tráeme {a}', 'muéstrame la ventana de {a}', 'minimiza esta ventana', 'maximiza esta ventana',
+         'cierra esta ventana', 'cierra {a}', 'minimiza {a}', 'maximiza la ventana', 'restaura la ventana', 'regresa a {a}', 'pon {a} al frente',
+         'agranda esta ventana', 'achica esta ventana', 'cierra la ventana de {a}', 'quita esta ventana'],
+  'en': ['switch to {a}', 'go back to {a}', 'bring up {a}', 'minimize this window', 'maximize this window', 'close this window', 'close {a}',
+         'minimize {a}', 'restore the window', 'bring {a} to the front', 'make this window bigger', 'close the {a} window', 'show me the {a} window'],
+ },
+ 'win_info': {
+  'es': ['qué hora es', 'qué horas son', 'qué día es hoy', 'a cuánto estamos', 'cuánta batería me queda', 'cómo está la batería',
+         'estoy conectado al cargador', 'cuánto espacio me queda en el disco', 'hay espacio en el disco', 'tengo internet', 'cómo está el wifi',
+         'cómo está la compu', 'dime la hora', 'qué fecha es', 'cuánto espacio libre tengo', 'estoy conectada a internet'],
+  'en': ['what time is it', 'what day is it', 'what is the date today', 'how much battery do i have', 'is it plugged in', 'how much disk space is left',
+         'am i connected to the internet', 'is the wifi working', 'how is my pc', 'tell me the time', 'how much free space do i have', 'battery level'],
+ },
+ 'win_portapapeles': {
+  'es': ['lee lo que copié', 'qué copié', 'resume lo que copié', 'traduce lo que copié', 'explícame lo que tengo copiado', 'léeme el portapapeles',
+         'revisa lo que copié', 'corrige lo que copié', 'qué dice lo que copié', 'mejora el texto que copié', 'lo que copié, resúmelo', 'pásame en limpio lo que copié'],
+  'en': ['read what i copied', 'what did i copy', 'summarize what i copied', 'translate what i copied', 'read my clipboard', 'explain the clipboard',
+         'fix what i copied', 'improve the text i copied', 'check my clipboard', 'what is in my clipboard'],
+ },
+ 'win_abrir_archivo': {
+  'es': ['abre el último archivo que descargué', 'abre la última descarga', 'ábreme lo último que bajé', 'abre el archivo {n}', 'busca el archivo {n}',
+         'abre el documento {n}', 'encuéntrame el archivo {n}', 'abre mi archivo de {n}', 'ábreme el pdf de {n}', 'abre el excel de {n}',
+         'busca el documento que se llama {n}', 'abre lo último que descargué'],
+  'en': ['open my last download', 'open the last file i downloaded', 'open the file {n}', 'find the file {n}', 'open the document {n}',
+         'open the pdf called {n}', 'find my file named {n}', 'open my latest download', 'open the excel file {n}', 'find the document {n}'],
+ },
 }
 
 # ── negativos: lo que NO es una mano (va al cerebro). Muchos se parecen a propósito. ──────────
@@ -299,6 +349,9 @@ NEG = {
   'tengo una duda', 'explícame esto', 'cómo le digo a mi jefe que me voy', 'qué le regalo a mi esposa', 'y tú qué harías', 'eso no era lo que pedí',
   'perfecto', 'excelente trabajo', 'está bien así', 'mejor no', 'espera que lo pienso', 'déjame ver', 'lo del bloc de notas era broma', 'no me gustó ese avatar',
   'el guardián da miedo', 'la hormiga es simpática', 'el zorro es chistoso', 'qué hiciste hoy', 'de qué hablamos ayer', 'resume lo que dije',
+  'el botón de guardar no me funciona', 'ayer cerré word sin guardar', 'para qué sirve la pestaña insertar', 'a qué hora es la reunión',
+  'mi batería del carro está mala', 'el disco de música de ayer', 'copié la tarea de mi compañero', 'descargué una película', 'qué hora es en madrid',
+  'cómo se cierra una ventana en windows', 'la ventana de la cocina está rota', 'no cierres nada', 'no pulses nada todavía',
  ],
  'en': [
   'hello aura', 'how are you', 'good morning', 'thanks', 'what time is it', 'tell me a joke', 'what is photosynthesis', 'who was george washington',
@@ -319,6 +372,9 @@ NEG = {
   'what is the gold price today', 'any news', 'what do you think of my idea', 'help me think', 'i have a question', 'explain this', 'how do i tell my boss i quit',
   'what should i get my wife', 'what would you do', 'that is not what i asked', 'perfect', 'great job', 'that is fine', 'never mind', 'let me think',
   'the notepad thing was a joke', 'i did not like that avatar', 'the guardian is scary', 'what did you do today', 'what did we talk about yesterday',
+  'the save button does not work', 'i closed word without saving yesterday', 'what is the insert tab for', 'what time is the meeting',
+  'my car battery is dead', 'i copied my friend s homework', 'i downloaded a movie', 'what time is it in madrid', 'how do you close a window',
+  'the kitchen window is broken', 'do not close anything', 'do not click anything yet',
  ],
 }
 
@@ -395,7 +451,7 @@ def repartir(valores):
 
 # Vocabulario CERRADO: los avatares y las carpetas de Windows son los que son; el .exe los conoce todos.
 # No tiene sentido esconderlos de entrenamiento (la prueba mediría nombres que nunca existirán).
-CERRADOS = {'v', 'd'}
+CERRADOS = {'v', 'd', 'b'}
 
 
 def rellenar(plantilla, l, destino, rng):

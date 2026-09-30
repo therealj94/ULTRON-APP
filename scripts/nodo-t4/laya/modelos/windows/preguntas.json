@@ -12,7 +12,7 @@
   "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
   "criteria": {
    "true": "sí: abrir o iniciar una aplicación instalada («abre excel», «launch spotify»)",
-   "false": "no: abrir una carpeta o una página web, o una pregunta sobre una app"
+   "false": "no: abrir una carpeta, un archivo o una página web, o una pregunta sobre una app"
   }
  },
  "win_abrir_carpeta": {
@@ -20,7 +20,7 @@
   "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
   "criteria": {
    "true": "sí: abrir una carpeta del equipo («abre descargas», «show me documents»)",
-   "false": "no: abrir una aplicación o una página web"
+   "false": "no: abrir una aplicación, un archivo o una página web"
   }
  },
  "win_buscar_web": {
@@ -164,7 +164,7 @@
   "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
   "criteria": {
    "true": "sí: mostrar el escritorio minimizando todo («minimiza todo»)",
-   "false": "no: abrir la carpeta Escritorio, o esconder solo a AURA"
+   "false": "no: abrir la carpeta Escritorio, o minimizar solo una ventana"
   }
  },
  "win_bloquear": {
@@ -173,6 +173,54 @@
   "criteria": {
    "true": "sí: bloquear el equipo («bloquea la compu», «lock the pc»)",
    "false": "no: preguntar cómo se bloquea un teléfono"
+  }
+ },
+ "win_pulsar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: pulsar un botón, pestaña, menú u opción de la ventana activa por su nombre («dale a guardar», «open the insert tab»)",
+   "false": "no: abrir una aplicación, o preguntar para qué sirve un botón"
+  }
+ },
+ "win_que_hay": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: que AURA diga qué botones u opciones tiene la ventana activa («qué botones hay»)",
+   "false": "no: pedir que explique lo que se ve en pantalla"
+  }
+ },
+ "win_ventana": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: cambiar a otra ventana abierta, o minimizar, maximizar o cerrar una ventana («cambia a chrome», «cierra esta ventana»)",
+   "false": "no: abrir una app nueva, mostrar el escritorio o esconder a AURA"
+  }
+ },
+ "win_info": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: preguntar al equipo la hora, la fecha, la batería, el espacio en disco o si hay internet («qué hora es», «cuánta batería me queda»)",
+   "false": "no: la hora de otro lugar, o la batería de otra cosa"
+  }
+ },
+ "win_portapapeles": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: hacer algo con el texto copiado («resume lo que copié», «read my clipboard»)",
+   "false": "no: contar que se copió algo"
+  }
+ },
+ "win_abrir_archivo": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: abrir o buscar un archivo del equipo por su nombre, o la última descarga («abre el archivo del contrato»)",
+   "false": "no: abrir una carpeta o una aplicación"
   }
  }
 }

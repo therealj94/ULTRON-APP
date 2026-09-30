@@ -24,6 +24,7 @@ public partial class NotchWindow
         if (panelAbierto == si) return;
         panelAbierto = si;
         if (!si) GuardarRecuperacion();
+        if (!soloRender) Activar(si);
         Recalcular();
     }
 
@@ -124,8 +125,18 @@ public partial class NotchWindow
     {
         var v = new AjustesWindow(ajustes) { Owner = this };
         if (v.ShowDialog() != true) return;
-        ajustes = v.Resultado;
+        // Solo lo que se edita en la ventana: los recordatorios y un token renovado mientras estaba abierta se conservan.
+        var r = v.Resultado;
+        bool cambioCuenta = r.Correo != ajustes.Correo || r.Servidor != ajustes.Servidor || r.Token != v.TokenAlAbrir;
+        ajustes.Servidor = r.Servidor; ajustes.Correo = r.Correo; ajustes.Avatar = r.Avatar; ajustes.Idioma = r.Idioma;
+        if (r.Clave.Length > 0 || r.Token.Length == 0) ajustes.Clave = r.Clave;
+        if (cambioCuenta) { ajustes.Token = r.Token; ajustes.Nombre = r.Nombre; }
+        ajustes.ManosLibres = r.ManosLibres; ajustes.PalabraActivacion = r.PalabraActivacion; ajustes.Interrumpir = r.Interrumpir;
+        ajustes.ResponderConVoz = r.ResponderConVoz; ajustes.OcultarEnPantallaCompleta = r.OcultarEnPantallaCompleta;
+        ajustes.VozDeWindows = r.VozDeWindows; ajustes.OidoDeWindows = r.OidoDeWindows;
+        noRenovarHasta = DateTime.MinValue;
         try { ajustes.Guardar(); } catch (Exception ex) { Avisar(new Aviso(T("No guardé los ajustes", "Settings not saved"), ex.Message, "", "worried")); }
+        Callar(true); // el turno en curso iba al servidor viejo
         CrearApi();
         AplicarAvatar(ajustes.Avatar);
         AvisoCuenta.Visibility = string.IsNullOrEmpty(ajustes.Token) ? Visibility.Visible : Visibility.Collapsed;
@@ -188,8 +199,7 @@ public partial class NotchWindow
 
     void EscribirBorrador(object s, RoutedEventArgs e)
     {
-        if (destino == null) { Avisar(new Aviso(T("Elige dónde escribir", "Choose where to type"), T("Haz clic en Word o el Bloc de notas y pulsa Ctrl+Alt+W.", "Click in Word or Notepad and press Ctrl+Alt+W."), "", "thinking", Segundos: 6)); return; }
-        PrepararEscritura(Borrador.Text);
+        _ = PrepararEscritura(Borrador.Text);
     }
 
     bool GuardarAntesDeSalir()

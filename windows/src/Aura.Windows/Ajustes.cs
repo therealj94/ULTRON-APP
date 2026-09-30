@@ -33,6 +33,10 @@ internal sealed class Ajustes
     public bool ResponderConVoz { get; set; } = true;
     /// <summary>Se esconde sola cuando una app está en pantalla completa (juegos, videos).</summary>
     public bool OcultarEnPantallaCompleta { get; set; } = true;
+    /// <summary>Hablar siempre con la voz de Windows (sin red). Si es false, se usa sola cuando el servidor no contesta.</summary>
+    public bool VozDeWindows { get; set; }
+    /// <summary>Oír siempre con el dictado de Windows (sin red). Si es false, se usa solo de respaldo.</summary>
+    public bool OidoDeWindows { get; set; }
     public List<Recordatorio> Recordatorios { get; set; } = new();
 
     static string Carpeta => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AuraWindows");

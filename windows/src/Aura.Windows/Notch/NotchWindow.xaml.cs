@@ -126,8 +126,8 @@ public partial class NotchWindow : Window
         var nuevo = ModoQueToca();
         if (nuevo != modo)
         {
-            if (nuevo == Modo.Panel && !soloRender) { Height = AltoPanel + 48; Activar(true); }
-            if (modo == Modo.Panel && nuevo != Modo.Panel) Activar(false);
+            // La ventana crece ANTES de animar hacia el panel (o la confirmación sobre el panel).
+            if ((nuevo == Modo.Panel || panelAbierto) && !soloRender && Height < AltoPanel + 48) Height = AltoPanel + 48;
             modo = nuevo;
         }
         Aplicar();
@@ -158,15 +158,16 @@ public partial class NotchWindow : Window
     {
         var ahora = reloj.Elapsed;
         double dt = (ahora - ultimo).TotalSeconds; ultimo = ahora;
-        if (!SystemParameters.ClientAreaAnimation) dt = 1; // movimiento reducido: salta al final
-        ancho.Paso(dt); alto.Paso(dt); radio.Paso(dt);
+        bool saltar = !SystemParameters.ClientAreaAnimation; // movimiento reducido: directo al final, sin animar
+        if (saltar) { ancho.Saltar(ancho.Objetivo); alto.Saltar(alto.Objetivo); radio.Saltar(radio.Objetivo); }
+        else { ancho.Paso(dt); alto.Paso(dt); radio.Paso(dt); }
         bool quieto = ancho.Quieto && alto.Quieto && radio.Quieto;
-        foreach (var (_, op) in capas.Values) { op.Paso(dt); quieto &= op.Quieto; }
+        foreach (var (_, op) in capas.Values) { if (saltar) op.Saltar(op.Objetivo); else op.Paso(dt); quieto &= op.Quieto; }
         Dibujar();
         if (quieto)
         {
             CompositionTarget.Rendering -= Fotograma; animando = false;
-            if (modo != Modo.Panel && Height > AltoCompacto + 1) Height = AltoCompacto;
+            if (!panelAbierto && Height > AltoCompacto + 1) Height = AltoCompacto;
         }
     }
 
@@ -214,12 +215,17 @@ public partial class NotchWindow : Window
         Top = 0;
     }
 
-    void Activar(bool si)
+    /// <summary>
+    /// Solo el panel toma el foco (para escribir en el chat). Al abrirlo se recuerda la ventana de trabajo y
+    /// al cerrarlo se le devuelve: tu app nunca se queda sin foco por culpa del notch.
+    /// </summary>
+    internal void Activar(bool si)
     {
         if (fuente == null) return;
         int ex = GetWindowLong(fuente.Handle, -20);
         SetWindowLong(fuente.Handle, -20, si ? ex & ~0x08000000 : ex | 0x08000000);
-        if (si) { Activate(); Dispatcher.BeginInvoke(new Action(() => Entrada.Focus()), DispatcherPriority.Input); }
+        if (si) { Manos.Pantalla.Recordar(fuente.Handle); Activate(); Dispatcher.BeginInvoke(new Action(() => Entrada.Focus()), DispatcherPriority.Input); }
+        else if (IsActive && Manos.Pantalla.UltimaAjena != IntPtr.Zero) { try { Manos.Ventanas.AlFrente(Manos.Pantalla.UltimaAjena); } catch { } }
     }
 
     // ───────────────────────────── avisos ─────────────────────────────
@@ -280,7 +286,7 @@ public partial class NotchWindow : Window
         {
             switch (w.ToInt32())
             {
-                case 1: Microfono(this, new RoutedEventArgs()); break;
+                case 1: if (fuente != null) Manos.Pantalla.Recordar(fuente.Handle); Microfono(this, new RoutedEventArgs()); break;
                 case 2: PausarTodo(); break;
                 case 3: ElegirDestino(); break;
                 case 4: AbrirPanel(!panelAbierto); break;
@@ -308,6 +314,7 @@ public partial class NotchWindow : Window
     /// <summary>Con un juego o un video a pantalla completa, el notch se aparta (salvo que esté hablando o avisando).</summary>
     void Vigilar()
     {
+        if (fuente != null) Manos.Pantalla.Recordar(fuente.Handle);
         if (fuente == null || !ajustes.OcultarEnPantallaCompleta) { Mostrar(true); return; }
         var fg = GetForegroundWindow();
         bool completa = false;

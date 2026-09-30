@@ -10,7 +10,7 @@
  *   GET  /api/windows/salud                 → { laya: { configurado, ... } }
  *
  * Con sesión de la mesa (o la clave de mesa): la GPU del nodo no se regala a cualquiera que dé con la
- * URL. El texto no se guarda ni se escribe en el log.
+ * URL. El cupo va ANTES de la sesión: los intentos sin sesión también gastan cupo. El texto no se guarda ni se escribe en el log.
  */
 import type express from 'express';
 import { consultarModelo, estadoLaya } from '../lib/laya';
@@ -26,7 +26,7 @@ export const UMBRAL_WINDOWS = 0.6;
 
 export function montarRutasWindows(app: express.Express, d: Deps) {
   const consultar = d.consultar ?? consultarModelo;
-  app.post('/api/windows/intencion', d.exigirMesa, d.limitar(120), async (req, res) => {
+  app.post('/api/windows/intencion', d.limitar(120), d.exigirMesa, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     const texto = typeof req.body?.texto === 'string' ? req.body.texto.trim() : '';
     if (!texto || texto.length > 4000) return res.status(400).json({ error: 'texto vacío o demasiado largo', honesto: true });

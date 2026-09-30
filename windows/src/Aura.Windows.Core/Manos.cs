@@ -8,7 +8,9 @@ public enum Mano
 {
     Ninguna, AbrirApp, AbrirCarpeta, BuscarWeb, AbrirWeb, Escribir, Redactar, VerPantalla, Captura,
     VolumenSubir, VolumenBajar, Silenciar, MultimediaPausa, MultimediaSiguiente, MultimediaAnterior,
-    Recordar, Callar, Pausa, AbrirChat, Ocultar, Avatar, Escritorio, Bloquear
+    Recordar, Callar, Pausa, AbrirChat, Ocultar, Avatar, Escritorio, Bloquear,
+    // Nativas 1.1: controles por nombre (UI Automation), ventanas, información del equipo, portapapeles y archivos.
+    Pulsar, QueHay, Ventana, Info, Portapapeles, AbrirArchivo
 }
 
 /// <summary>Lo que se va a hacer: la mano, su parámetro (qué app, qué búsqueda, qué texto…) y de dónde salió.</summary>
@@ -17,7 +19,12 @@ public sealed record Pedido(Mano Mano, string Valor = "", TimeSpan? Cuando = nul
     public static readonly Pedido Nada = new(Mano.Ninguna, Origen: "nadie", P: 0);
 
     /// <summary>Las que tienen efecto fuera de AURA y no se deshacen solas esperan el «sí».</summary>
-    public bool PideConfirmacion => Mano is Mano.Escribir or Mano.Bloquear;
+    /// <summary>
+    /// Lo que no se deshace solo espera el «sí»: escribir en otra ventana, bloquear, cerrar una ventana.
+    /// Pulsar un control se confirma cuando su nombre suena a algo con efecto (Enviar, Eliminar, Pagar…);
+    /// eso lo decide Controles.EsDelicado en el .exe, con el nombre real del control.
+    /// </summary>
+    public bool PideConfirmacion => Mano is Mano.Escribir or Mano.Bloquear || Mano == Mano.Ventana && Valor.StartsWith("cerrar", StringComparison.Ordinal);
 }
 
 /// <summary>Una decisión de Laya en el nodo (vía /api/windows/intencion).</summary>
@@ -38,13 +45,19 @@ public static class Intencion
         "win_volumen_bajar" => Mano.VolumenBajar, "win_silenciar" => Mano.Silenciar, "win_multimedia_pausa" => Mano.MultimediaPausa,
         "win_multimedia_siguiente" => Mano.MultimediaSiguiente, "win_recordar" => Mano.Recordar, "win_callar" => Mano.Callar,
         "win_pausa" => Mano.Pausa, "win_abrir_chat" => Mano.AbrirChat, "win_ocultar" => Mano.Ocultar, "win_avatar" => Mano.Avatar,
-        "win_escritorio" => Mano.Escritorio, "win_bloquear" => Mano.Bloquear, _ => Mano.Ninguna
+        "win_escritorio" => Mano.Escritorio, "win_bloquear" => Mano.Bloquear, "win_pulsar" => Mano.Pulsar, "win_que_hay" => Mano.QueHay,
+        "win_ventana" => Mano.Ventana, "win_info" => Mano.Info, "win_portapapeles" => Mano.Portapapeles, "win_abrir_archivo" => Mano.AbrirArchivo,
+        _ => Mano.Ninguna
     };
 
     public static Pedido PorReglas(string texto)
     {
         var t = Parametros.Limpiar(texto);
         if (t.Length == 0 || t.Length > 400) return Pedido.Nada;
+        // Lo que se PREGUNTA al equipo (hora, batería, disco, red) se contesta aquí, sin red: va antes que el filtro de preguntas.
+        if (Parametros.Info(t) is { } info) return new(Mano.Info, info);
+        if (Parametros.QueHay.IsMatch(t)) return new(Mano.QueHay);
+        if (Parametros.Portapapeles.IsMatch(t)) return new(Mano.Portapapeles, texto.Trim());
         if (Parametros.EsNegacion(t)) return Pedido.Nada;
         if (Parametros.Callar.IsMatch(t)) return new(Mano.Callar);
         if (Parametros.PausaTodo.IsMatch(t)) return new(Mano.Pausa);
@@ -60,6 +73,11 @@ public static class Intencion
         if (Parametros.Bloquear.IsMatch(t)) return new(Mano.Bloquear);
         if (Parametros.Recordatorio.IsMatch(t) && Parametros.Tiempo(t) is { } cuando)
             return new(Mano.Recordar, Parametros.TareaDeRecordatorio(texto), cuando);
+        if (Parametros.Archivo(texto) is { } archivo) return new(Mano.AbrirArchivo, archivo);
+        if (Parametros.Control(texto) is { } control) return new(Mano.Pulsar, control);
+        if (Parametros.Ventana(texto) is { } ventana)
+            return Parametros.Avatar(ventana) is { } avv && ventana.StartsWith("cambiar|", StringComparison.Ordinal) && Parametros.Avatares.ContainsKey(LayaLigera.Normalizar(ventana[8..]))
+                ? new(Mano.Avatar, avv) : new(Mano.Ventana, ventana);
         var busca = Parametros.Busqueda(texto);
         if (busca != null) return new(Mano.BuscarWeb, busca);
         var abrir = Parametros.ObjetoDeAbrir(texto);
@@ -104,6 +122,16 @@ public static class Intencion
                 return Parametros.Tiempo(t) is { } cuando ? new(mano, Parametros.TareaDeRecordatorio(texto), cuando, origen, p) : Pedido.Nada;
             case Mano.Avatar:
                 return Parametros.Avatar(t) is { } a ? new(mano, a, null, origen, p) : Pedido.Nada;
+            case Mano.Pulsar:
+                return Parametros.Control(texto, true) is { } c2 ? new(mano, c2, null, origen, p) : Pedido.Nada;
+            case Mano.Ventana:
+                return Parametros.Ventana(texto, true) is { } v2 ? new(mano, v2, null, origen, p) : Pedido.Nada;
+            case Mano.Info:
+                return Parametros.Info(t, true) is { } i2 ? new(mano, i2, null, origen, p) : Pedido.Nada;
+            case Mano.AbrirArchivo:
+                return Parametros.Archivo(texto, true) is { } a2 ? new(mano, a2, null, origen, p) : Pedido.Nada;
+            case Mano.Portapapeles:
+                return new(mano, texto.Trim(), null, origen, p);
             case Mano.MultimediaSiguiente:
                 return new(Parametros.Anterior.IsMatch(t) ? Mano.MultimediaAnterior : mano, "", null, origen, p);
             default:
@@ -150,16 +178,17 @@ public static class Parametros
     public static readonly Regex BajarVolumen = new(@"^(?:baja|bajale|baji|bajile|disminuye|ponle menos)(?:\s+(?:el|al|un poco|un poco el|tantito))?\s*(?:volumen|sonido|audio)?(?:\s+un poco)?$|^(?:menos volumen|mas bajo|mas bajito|volumen mas bajo|no tan alto|turn it down|volume down|quieter|turn down the volume|lower the volume|decrease (?:the )?volume|make it quieter)$", O);
     public static readonly Regex Mute = new(@"^(?:mute|mutea|unmute|silencia (?:la computadora|la compu|el volumen|el sonido)|quita(?:le)? el (?:sonido|audio|mute)|pon(?:le)? (?:en )?mute|mute (?:the )?(?:sound|audio|computer|volume)|turn off the sound)$", O);
     public static readonly Regex Siguiente = new(@"^(?:siguiente (?:cancion|tema|video)|pasa (?:la|esta) cancion|salta (?:esta|la) cancion|cambia (?:de|la) cancion|next (?:song|track)|skip (?:this )?(?:song|track)|skip)$", O);
-    public static readonly Regex Anterior = new(@"(?:cancion anterior|tema anterior|previous (?:song|track)|go back a song|la anterior cancion)", O);
-    public static readonly Regex PlayPausa = new(@"^(?:pausa (?:la|el) (?:musica|cancion|video|reproduccion)|para la musica|deten (?:la musica|el video)|dale play|ponle play|play|reanuda (?:la musica|el video)|continua (?:la cancion|la musica)|pause (?:the )?(?:music|song|video|playback)|resume (?:the )?(?:music|playback)|hit play)$", O);
-    public static readonly Regex Captura = new(@"(?:captura de pantalla|pantallazo|screenshot|screen capture|captura la pantalla|haz una captura|toma una captura|capture the screen)", O);
+    public static readonly Regex Anterior = new(@"^(?:(?:pon|pasa a|regresa a|vuelve a|dame|play)\s+)?(?:la |el )?(?:cancion anterior|tema anterior|anterior cancion|previous (?:song|track)|go back a song|the previous (?:song|track))$", O);
+    public static readonly Regex PlayPausa = new(@"^(?:pausa (?:la|el) (?:musica|cancion|video|reproduccion)|para la musica|deten (?:la musica|el video)|dale play|dale a play|dale al play|ponle play|play|reanuda (?:la musica|el video)|continua (?:la cancion|la musica)|pause (?:the )?(?:music|song|video|playback)|resume (?:the )?(?:music|playback)|hit play)$", O);
+    public static readonly Regex Captura = new(@"^(?:(?:toma(?:me|le)?|haz(?:me)?|saca(?:me|le)?|guarda(?:me)?|captura|take|grab|capture|save|snap|make)\s+(?:(?:una|un|a|la|the)\s+)?(?:foto (?:de|a) la pantalla|captura(?: de pantalla)?|pantallazo|screenshot|screen ?capture|la pantalla|the screen)(?:\s+.*)?|screenshot|pantallazo)$", O);
     public static readonly Regex VerPantalla = new(@"^(?:que ves(?: en (?:mi|la) pantalla)?|mira (?:mi|la) pantalla|lee (?:mi|la) pantalla|que hay en (?:mi|la) pantalla|revisa (?:mi|la) pantalla|analiza (?:mi|la) pantalla|what do you see(?: on (?:my|the) screen)?|look at (?:my|the) screen|read (?:my|the) screen|what is on (?:my|the) screen)$", O);
     public static readonly Regex Escritorio = new(@"^(?:minimiza todo|minimiza todas las ventanas|muestrame el escritorio|ve al escritorio|show (?:the|my) desktop|minimize (?:everything|all windows))$", O);
     public static readonly Regex Bloquear = new(@"^(?:bloquea (?:la computadora|la compu|la pc|la pantalla|el equipo|windows)|lock (?:the|my) (?:computer|pc|screen|workstation))$", O);
-    public static readonly Regex Recordatorio = new(@"(?:recuerdame|recordame|avisame|acuerdame|recordatorio|ponme una alarma|pon una alarma|pon una alerta|temporizador|timer|remind me|set a reminder|set an alarm|set a timer|alert me|ping me)", O);
+    // Imperativo al principio (o después del cuándo): «tengo un recordatorio a las 3 que no recuerdo» no crea nada.
+    public static readonly Regex Recordatorio = new(@"^(?:(?:en|a las|a la|at|in)\s+[^,]{1,30}?,?\s+)?(?:recuerdame|recordame|avisame|acuerdame|hazme acordar|no me dejes olvidar|pon(?:me)?\s+(?:un|una)\s+(?:recordatorio|alarma|alerta|temporizador|timer)|recordatorio|temporizador|remind me|set (?:a|an) (?:reminder|alarm|timer)|alert me|ping me|don t let me forget|dont let me forget|nudge me|timer)\b", O);
     public static readonly Regex CambioAvatar = new(@"(?:cambia(?:te)?(?: el avatar)? (?:a|por)|ponme a|pasame a|quiero hablar con|que salga|switch to|change (?:the avatar )?to|avatar)", O);
     public static readonly Regex PanelChat = new(@"^(?:el |tu )?(?:chat|panel|conversacion|historial|ventana de aura)$", O);
-    static readonly Regex Negacion = new(@"^(?:no|nunca|never|dont|do not|don t)\s+(?!(?:se oye|me oyes))", O);
+    static readonly Regex Negacion = new(@"^(?:no|nunca|never|dont|do not|don t)\s+(?!(?:se oye|me oyes|me dejes olvidar|let me forget))", O);
     static readonly Regex Pregunta = new(@"^(?:como|cual|cuando|donde|por que|porque|que es|que significa|sabes|puedes ver|how|why|what is|which|can you really)\b", O);
 
     public static string Limpiar(string texto)
@@ -175,10 +204,35 @@ public static class Parametros
         return t;
     }
 
+    static readonly Regex SoloSi = new(@"^(?:si|sip|sii|dale|hazlo|hagalo|ok|okay|okey|vale|claro|claro que si|adelante|confirmo|va|de una|por supuesto|si por favor|si hazlo|si dale|yes|yep|yeah|sure|do it|go ahead|confirm|yes please|yes do it)$", O);
+    static readonly Regex HayNo = new(@"\b(?:no|nel|nope|cancela|cancelalo|mejor no|para|espera|wait|stop|don t|dont|not|cancel)\b", O);
+
+    /// <summary>La respuesta a una confirmación: true solo si la frase ENTERA es un sí sin ningún «no»; false si hay un no; null si es otra cosa.</summary>
+    public static bool? Respuesta(string texto)
+    {
+        var t = Limpiar(texto);
+        if (HayNo.IsMatch(t)) return false;
+        if (SoloSi.IsMatch(t)) return true;
+        return null;
+    }
+
     public static bool EsNegacion(string limpio) => Negacion.IsMatch(limpio) || Pregunta.IsMatch(limpio);
 
     // Verbos de abrir, con lo que puede venir después («abre el/la/mi…»). En el texto ORIGINAL, sin tildes.
-    static readonly Regex Abrir = new(@"^(?:abre(?:me)?|abrime|abri|abrir|inicia|arranca|ejecuta|lanzame|lanza|prende|pon(?:me)?|entra a|metete a|ve a|vamos a|llevame a|muestrame|mostrame|ensename|sacame|open(?: up)?|launch|start|run|fire up|bring up|pull up|go to|take me to|show me|navigate to|visit|load|boot up|head to|get me)\s+(?<o>.+)$", O);
+    // Verbos FIRMES: «abre X» es abrir aunque X no se conozca (el .exe dirá si no está instalada).
+    static readonly Regex Abrir = new(@"^(?:abre(?:me)?|abrime|abri|abrir|inicia|arranca|ejecuta|lanzame|entra a|metete a|llevame a|open(?: up)?|launch|fire up|navigate to|visit|boot up)\s+(?<o>.+)$", O);
+    // Verbos AMBIGUOS («pon atención», «vamos a hablar», «show me how…», «go to sleep»): solo si X es algo conocido.
+    static readonly Regex AbrirAmbiguo = new(@"^(?:pon(?:me)?|prende|lanza|ve a|vamos a|muestrame|mostrame|ensename|sacame|start|run|bring up|pull up|go to|take me to|show me|load|head to|get me)\s+(?<o>.+)$", O);
+
+    static readonly HashSet<string> AppsComunes = new(StringComparer.Ordinal)
+    {
+        "word", "excel", "powerpoint", "outlook", "teams", "chrome", "edge", "firefox", "spotify", "whatsapp", "zoom", "paint", "notepad", "bloc de notas",
+        "calculadora", "calculator", "explorador", "explorador de archivos", "file explorer", "configuracion", "settings", "discord", "telegram", "notion",
+        "onenote", "photoshop", "vlc", "steam", "obs", "canva", "terminal", "visual studio code", "vs code", "administrador de tareas", "task manager",
+    };
+
+    /// <summary>¿Es algo que se abre? El .exe lo conecta con las apps instaladas; por defecto, una lista de apps comunes.</summary>
+    public static Func<string, bool> EsAppConocida { get; set; } = o => AppsComunes.Contains(o);
     static readonly Regex Articulo = new(@"^(?:(?:el|la|los|las|mi|mis|un|una|the|my|a|an)\s+)+", O);
     static readonly Regex Programa = new(@"^(?:(?:programa|aplicacion|app|pagina|pagina web|sitio|sitio web|web|carpeta|folder)\s+(?:de\s+|del\s+)?)", O);
     static readonly Regex ColaAbrir = new(@"\s+(?:en (?:el )?(?:navegador|chrome|edge|internet|el explorador|pantalla)|in (?:the )?(?:browser|chrome|explorer)|ahi|there|y (?:despues|luego).*|and (?:then )?.*)$", O);
@@ -187,6 +241,8 @@ public static class Parametros
     {
         var t = Limpiar(texto);
         var m = Abrir.Match(t);
+        bool ambiguo = false;
+        if (!m.Success) { m = AbrirAmbiguo.Match(t); ambiguo = true; }
         if (!m.Success) return null;
         var o = m.Groups["o"].Value.Trim();
         o = ColaAbrir.Replace(o, "").Trim();
@@ -196,6 +252,7 @@ public static class Parametros
         if (o.Length < 2 || o.Length > 60 || o.Split(' ').Length > 6) return null;
         // «pon la música»/«ponme a claudio» no son abrir; los decide otra regla o Laya.
         if (Regex.IsMatch(o, @"^(?:musica|cancion|play|pausa|volumen|a\s)")) return null;
+        if (ambiguo && Carpeta(o) == null && Sitio(o) == null && DominioEn(texto) == null && !EsAppConocida(o)) return null;
         return o;
     }
 
@@ -276,30 +333,39 @@ public static class Parametros
 
     static string? BuscarEnOriginal(string original, string normalizado)
     {
+        // Cada palabra original puede normalizarse en varias («10:30» → «10 30»): se aplana y se recuerda de qué palabra vino.
         var palabras = original.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        var norm = palabras.Select(LayaLigera.Normalizar).ToArray();
-        var objetivo = normalizado.Split(' ');
-        for (int i = 0; i + objetivo.Length <= norm.Length; i++)
+        var planas = new List<(string W, int I)>();
+        for (int i = 0; i < palabras.Length; i++)
+            foreach (var w in LayaLigera.Normalizar(palabras[i]).Split(' ', StringSplitOptions.RemoveEmptyEntries)) planas.Add((w, i));
+        var objetivo = normalizado.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (objetivo.Length == 0) return null;
+        for (int i = 0; i + objetivo.Length <= planas.Count; i++)
         {
-            if (!objetivo.Select((w, k) => norm[i + k] == w).All(x => x)) continue;
-            return string.Join(' ', palabras.Skip(i).Take(objetivo.Length)).Trim(' ', ',', '.', '!', '?', '¿', '¡');
+            bool igual = true;
+            for (int k = 0; k < objetivo.Length && igual; k++) igual = planas[i + k].W == objetivo[k];
+            if (!igual) continue;
+            int desde = planas[i].I, hasta = planas[i + objetivo.Length - 1].I;
+            return string.Join(' ', palabras.Skip(desde).Take(hasta - desde + 1)).Trim(' ', ',', '.', '!', '?', '¿', '¡');
         }
         return null;
     }
+
 
     static readonly Regex Escribir = new(@"^(?:escribe(?:me|lo)?|escribi|teclea|dicta|anota|pon|pega|type|write|dictate|enter|key in|put|paste|insert)\b(?:\s+(?:esto|lo que te digo|this|what i say))?(?:\s+(?:en|in|into)\s+(?:el |la |the )?(?:bloc de notas|notepad|word|documento|document|doc|ventana(?: activa)?|active window|window))?(?:\s+(?:donde esta el cursor|where the cursor is))?\s*[:,]?\s*(?<x>.*)$", O);
 
     /// <summary>El texto literal a escribir, del original. Null: «escríbelo» (se escribe la última respuesta o el borrador).</summary>
     public static string? TextoAEscribir(string texto)
     {
-        var dos = texto.IndexOf(':');
-        if (dos >= 0 && dos < texto.Length - 1) return texto[(dos + 1)..].Trim();
+        // «escribe: hola» sí; «a las 10:30» no es un separador.
+        var dos = Regex.Match(texto, @"(?<!\d):(?!\d)");
+        if (dos.Success && dos.Index < texto.Length - 1) return texto[(dos.Index + 1)..].Trim();
         var t = Limpiar(texto);
         var m = Escribir.Match(t);
         if (!m.Success) return null;
         var x = m.Groups["x"].Value.Trim();
         x = Regex.Replace(x, @"\s+(?:en|in|into)\s+(?:el |la |the )?(?:bloc de notas|notepad|word|documento|document|ventana)$", "").Trim();
-        if (x.Length == 0 || Regex.IsMatch(x, @"^(?:eso|esto|lo|that|it|this)$")) return null;
+        if (x.Length == 0 || Regex.IsMatch(x, @"^(?:eso|esto|lo|that|it|this|lo que (?:te dije|dijiste|me dijiste|escribiste)|tu respuesta|la respuesta|lo anterior|el borrador|what (?:you|i) (?:said|wrote)|your answer|the draft)$")) return null;
         return BuscarEnOriginal(texto, x) ?? x;
     }
 
@@ -323,7 +389,8 @@ public static class Parametros
         if (MediaHora.IsMatch(t)) return TimeSpan.FromMinutes(30);
         if (Ratito.IsMatch(t)) return TimeSpan.FromMinutes(5);
         var m = EnTanto.Match(t);
-        if (m.Success)
+        // Con hora explícita manda la hora: «la reunión de dos horas a las 5» es a las 5.
+        if (m.Success && !ALas.IsMatch(t))
         {
             var ns = m.Groups["n"].Value;
             if (!int.TryParse(ns, NumberStyles.None, CultureInfo.InvariantCulture, out var n) && !Numeros.TryGetValue(ns, out n)) return null;
@@ -340,7 +407,10 @@ public static class Parametros
         if (min > 59) return null;
         var p = a.Groups["p"].Value;
         var now = ahora ?? DateTime.Now;
-        if ((p is "de la tarde" or "de la noche" or "pm") && h < 12) h += 12;
+        // «de la noche»: 12 es medianoche y de 1 a 4 es madrugada; de 5 a 11, noche.
+        if (p is "de la noche" && h == 12) h = 0;
+        else if (p is "de la noche" && h >= 1 && h <= 4) { }
+        else if ((p is "de la tarde" or "de la noche" or "pm") && h < 12) h += 12;
         if ((p is "de la manana" or "am") && h == 12) h = 0;
         var objetivo = new DateTime(now.Year, now.Month, now.Day, h, min, 0);
         // «a las 5» sin decir tarde: la próxima vez que sean las 5 (si ya pasaron las 5 de la mañana, las 5 de la tarde).
@@ -379,5 +449,95 @@ public static class Parametros
             if (i > donde) { donde = i; elegido = v; }
         }
         return elegido;
+    }
+
+    // ───────────── nativas 1.1 ─────────────
+
+    public static readonly Regex QueHay = new(@"^(?:que (?:botones|opciones|controles|pestanas|menus) (?:hay|tiene(?: esta ventana)?|ves)|que puedo (?:hacer|tocar|pulsar) aqui|lee(?:me)? los botones|dime los botones|what (?:buttons|options|controls|tabs) (?:are there|do you see|can i (?:press|click))|read (?:me )?the buttons|what can i click)$", O);
+    public static readonly Regex Portapapeles = new(@"(?:lo que (?:copie|he copiado|tengo copiado)|el portapapeles|what i copied|my clipboard|the clipboard|lo copiado)", O);
+
+    static readonly Regex Pulsa = new(@"^(?:dale (?:clic |click )?(?:a|en)|haz (?:clic|click|doble clic) (?:en|a|sobre)|pulsa(?:le)?(?: en)?|presiona(?:le)?|aprieta(?:le)?|clic(?:k)? (?:en|on)|click|press|tap(?: on)?|hit|selecciona|select)\s+(?<o>.+)$", O);
+    static readonly Regex PestanaMenu = new(@"^(?:abre|abrime|ve a|open|go to)\s+(?:la |el |the )?(?:pestana|menu|tab|ficha)\s+(?:de |del )?(?<o>.+)$", O);
+    static readonly Regex TipoControl = new(@"^(?:(?:el|la|los|las|the)\s+)?(?:boton|opcion|pestana|menu|enlace|casilla|button|option|tab|menu|link|checkbox)\s+(?:de\s+|del\s+)?", O);
+
+    /// <summary>El nombre del control a pulsar («dale a Guardar» → «guardar»). `laxa`: Laya ya dijo que es pulsar.</summary>
+    public static string? Control(string texto, bool laxa = false)
+    {
+        var t = Limpiar(texto);
+        var m = PestanaMenu.Match(t);
+        if (!m.Success) m = Pulsa.Match(t);
+        if (!m.Success && laxa) m = Regex.Match(t, @"^\S+\s+(?:en\s+|a\s+)?(?<o>.+)$");
+        if (!m.Success) return null;
+        var o = TipoControl.Replace(m.Groups["o"].Value.Trim(), "").Trim();
+        o = Regex.Replace(o, @"^(?:el|la|los|las|the)\s+", "").Trim();
+        o = Regex.Replace(o, @"\s+(?:button|tab|menu|option|link|boton|pestana|opcion)$", "").Trim();
+        if (o.Length < 2 || o.Length > 50 || o.Split(' ').Length > 5) return null;
+        // «selecciona todo» es Ctrl+A en la app: también es un control con nombre en muchas; se deja.
+        return BuscarEnOriginal(texto, o) ?? o;
+    }
+
+    static readonly Regex VentanaAccion = new(@"^(?:(?<a>minimiza|maximiza|cierra|cerra|restaura|minimize|maximize|close|restore)\s+(?:(?:esta|la|this|the)\s+)?(?:ventana|window)(?:\s+de\s+(?<o>.+))?|(?<a>cierra|cerra|close|minimiza|minimize|maximiza|maximize)\s+(?:el |la |the )?(?<o>[^\s].*))$", O);
+    static readonly Regex VentanaCambiar = new(@"^(?:cambia(?:te)? a|pasa(?:me)? a|vuelve a|regresa a|trae(?:me)?|muestrame la ventana de|switch to|go back to|bring up the)\s+(?:la ventana de\s+|el |la |the )?(?<o>.+)$", O);
+
+    /// <summary>«cerrar|word», «minimizar|», «cambiar|chrome»… o null.</summary>
+    public static string? Ventana(string texto, bool laxa = false)
+    {
+        var t = Limpiar(texto);
+        var m = VentanaAccion.Match(t);
+        if (m.Success)
+        {
+            var a = m.Groups["a"].Value;
+            var accion = a.StartsWith("min") ? "minimizar" : a.StartsWith("max") ? "maximizar" : a.StartsWith("rest") ? "restaurar" : "cerrar";
+            var o = m.Groups["o"].Success ? m.Groups["o"].Value.Trim() : "";
+            o = Regex.Replace(o, @"^(?:(?:esta|la|this|the)\s+)?(?:ventana|window)\s*(?:de\s+)?", "").Trim();
+            // «cierra el chat» es el panel de AURA, no una ventana.
+            if (PanelChat.IsMatch(o)) return null;
+            if (o.Length > 40) return null;
+            return accion + "|" + o;
+        }
+        var c = VentanaCambiar.Match(t);
+        if (c.Success)
+        {
+            var o = c.Groups["o"].Value.Trim();
+            if (o.Length < 2 || o.Length > 40 || o.Split(' ').Length > 4) return null;
+            return "cambiar|" + o;
+        }
+        return laxa && ObjetoDeAbrir(texto) is { } ob ? "cambiar|" + ob : null;
+    }
+
+    static readonly Regex InfoHora = new(@"^(?:que hora es|que horas son|me dices la hora|dime la hora|la hora|what time is it|what s the time|tell me the time)$", O);
+    static readonly Regex InfoFecha = new(@"^(?:que (?:dia|fecha) es(?: hoy)?|a cuanto estamos(?: hoy)?|que dia es manana|what (?:day|date) is (?:it|today)|what s the date(?: today)?|today s date)$", O);
+    static readonly Regex InfoBateria = new(@"(?:bateria|battery|cargador|enchufad[ao]|plugged in)", O);
+    static readonly Regex InfoDisco = new(@"(?:espacio (?:libre|en (?:el )?disco|queda)|cuanto espacio|disco (?:lleno|duro)|disk space|free space|storage left)", O);
+    static readonly Regex InfoRed = new(@"(?:(?:estoy|estamos|esta la compu|tengo) (?:conectad[ao]s? a )?internet|hay internet|tengo wifi|como esta (?:el )?(?:wifi|internet)|(?:am i|are we) (?:connected|online)|is (?:the )?(?:wifi|internet) (?:working|on))", O);
+    static readonly Regex InfoSistema = new(@"^(?:como esta (?:la compu|la computadora|el equipo|mi pc)|estado del (?:equipo|sistema)|how is my (?:pc|computer)|system status)$", O);
+
+    /// <summary>hora | fecha | bateria | disco | red | sistema, o null.</summary>
+    public static string? Info(string limpio, bool laxa = false)
+    {
+        var t = LayaLigera.Normalizar(limpio);
+        if (InfoHora.IsMatch(t)) return "hora";
+        if (InfoFecha.IsMatch(t)) return "fecha";
+        if (InfoSistema.IsMatch(t)) return "sistema";
+        bool pregunta = Regex.IsMatch(t, @"^(?:cuanta|cuanto|como|que|tengo|estoy|hay|me queda|queda|how|what|is|am|do i|are)\b");
+        if ((pregunta || laxa) && InfoBateria.IsMatch(t)) return "bateria";
+        if ((pregunta || laxa) && InfoDisco.IsMatch(t)) return "disco";
+        if ((pregunta || laxa) && InfoRed.IsMatch(t)) return "red";
+        return laxa ? "sistema" : null;
+    }
+
+    static readonly Regex UltimaDescarga = new(@"(?:ultim[oa] (?:archivo |cosa )?(?:que )?(?:descargue|baje|descargado|bajado)|ultima descarga|lo ultimo que (?:descargue|baje)|last (?:download|downloaded file|file i downloaded)|my latest download)", O);
+    static readonly Regex AbrirArchivoRe = new(@"^(?:abre(?:me)?|abrime|busca(?:me)?|encuentra(?:me)?|open|find)\s+(?:el |mi |la |the |my )?(?:archivo|documento|file|document|pdf|excel|word)\s+(?:de |del |que se llama |llamado |called |named )?(?<o>.+)$", O);
+
+    /// <summary>«ultimo-descargado» o el nombre del archivo a buscar en Descargas, Documentos y Escritorio.</summary>
+    public static string? Archivo(string texto, bool laxa = false)
+    {
+        var t = Limpiar(texto);
+        if (UltimaDescarga.IsMatch(t)) return "ultimo-descargado";
+        var m = AbrirArchivoRe.Match(t);
+        if (!m.Success) return null;
+        var o = m.Groups["o"].Value.Trim();
+        if (o.Length < 2 || o.Length > 80) return null;
+        return BuscarEnOriginal(texto, o) ?? o;
     }
 }

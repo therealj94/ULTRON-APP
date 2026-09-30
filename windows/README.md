@@ -1,4 +1,4 @@
-# AURA para Windows 1.0
+# AURA para Windows 1.1
 
 La versión de escritorio de la app AU-RA: **el mismo cerebro (Qwen), las mismas voces (ElevenLabs, una por avatar) y los mismos avatares**, viviendo en un **notch negro arriba al centro de la pantalla** que crece y se encoge como la isla dinámica de Apple. Se le habla, contesta hablando, y hace cosas en la computadora.
 
@@ -33,9 +33,21 @@ AU-RA, Claudio y ANT-ONIO son sus **modelos 3D de la app** (`vendor/aura-avatar-
 
 Atajos: **Ctrl+Alt+Espacio** hablar · **Ctrl+Alt+A** chat · **Ctrl+Alt+W** elegir dónde escribir · **Ctrl+Alt+Esc** pausar todo.
 
+## Nativo (1.1)
+
+- **Leer la pantalla sin mandar imágenes:** el texto real de la ventana de trabajo con UI Automation y, si trae poco, el **OCR de Windows**, todo en este equipo. Al cerebro va solo el texto (con la pregunta); sin red, AURA lo lee ella misma. Los campos de contraseña nunca se leen.
+- **Pulsar por nombre:** «dale a Guardar», «abre la pestaña Insertar», «haz clic en Aceptar» con UI Automation (Invocar / Seleccionar / Expandir / Alternar), sin mover el ratón ni adivinar por la imagen. «Qué botones hay» los lee. Si el nombre suena a algo con efecto (Enviar, Eliminar, Pagar, Instalar…), primero pregunta.
+- **Ventanas:** «cambia a Chrome» (si no está abierta, la abre), minimizar, maximizar, restaurar; «cierra esta ventana» pide el «sí» y la app pregunta si guardar.
+- **El equipo:** hora, fecha, batería, espacio en disco, red y memoria, contestados al instante y sin internet.
+- **Portapapeles:** «lee lo que copié» (aquí) o «resume / traduce / corrige lo que copié» (con el cerebro).
+- **Archivos:** «abre la última descarga», «abre el archivo del contrato» (Descargas, Escritorio, Documentos y OneDrive). Un programa o instalador espera el «sí».
+- **Voz y oído de Windows:** si el servidor no contesta, habla con las voces de Windows (por el mismo altavoz: la boca se mueve igual) y oye con el dictado de Windows. En Ajustes se pueden dejar siempre así.
+
+Lo único que sigue necesitando el servidor es el **cerebro** (Qwen): las respuestas abiertas y redactar. Todo lo demás funciona sin internet.
+
 ## Qué hace («manos»)
 
-Abrir apps (menú Inicio y apps de la Tienda), carpetas y páginas; buscar en internet; **mirar tu pantalla** y explicarla (`/api/vision/analyze`); guardar capturas; volumen, silencio y música; mostrar el escritorio; **recordatorios en el notch**; **redactar documentos** (el cerebro los escribe y quedan en el borrador); **escribir en Word o el Bloc de notas** (confirmado); bloquear el equipo (confirmado); cambiar de avatar; callar y pausar. Nada de consola ni comandos arbitrarios.
+Abrir apps (menú Inicio y apps de la Tienda), carpetas, páginas y archivos; buscar en internet; **leer tu pantalla** y explicarla (nativo, ver arriba); pulsar controles por nombre; manejar ventanas; hora, batería, disco y red; guardar capturas; volumen, silencio y música; mostrar el escritorio; **recordatorios en el notch**; **redactar documentos** (el cerebro los escribe y quedan en el borrador); **escribir en Word o el Bloc de notas** (confirmado); bloquear el equipo (confirmado); cambiar de avatar; callar y pausar. Nada de consola ni comandos arbitrarios.
 
 Quién decide qué mano, en orden:
 1. **Reglas** exactas (`Aura.Windows.Core/Manos.cs`): «abre Excel», «súbele», «recuérdame en 10 minutos…».
@@ -50,7 +62,8 @@ Una mano sin su parámetro («abre» sin decir qué) no se hace: contesta el cer
 - Datos: `scripts/nodo-t4/laya/modelos/windows/` (22 manos, español catracho/latino e inglés, errores de dictado, negativos parecidos; entrenamiento, validación y prueba separados por plantilla y por valores). `python generador/generar.py` los regenera.
 - En el nodo: `windows` está en `NUEVOS` de `scripts/nodo-t4/instalar-laya.sh`; `REENTRENAR=windows bash scripts/nodo-t4/instalar-laya.sh` lo entrena en la T4 y lo sirve en `/v1/windows`. El servidor lo pide con `consultarModelo('windows', …)`.
 - En el .exe: `python scripts/nodo-t4/laya/ligera/entrenar_ligera_windows.py` escribe `LayaLigeraModelo.g.cs` y `informe-windows.json`. Las pruebas de C# comprueban que C# da exactamente lo mismo que Python.
-- Cifras honestas de la ligera (prueba apartada): exactitud 0,78; con su umbral decide sola el 29 % y acierta el 96 % de lo que decide (la compuerta pedía 97 %: por eso las reglas van antes y lo dudoso sube al nodo o al cerebro). El modelo del nodo se mide al entrenarse allí.
+- 28 manos desde la 1.1 (pulsar, qué hay, ventanas, información, portapapeles, archivos). **El modelo del nodo hay que reentrenarlo con `windows`** para que las conozca.
+- Cifras honestas de la ligera (prueba apartada): exactitud 0,75; con su umbral decide sola el 33 % y acierta el 94 % de lo que decide (la compuerta pedía 97 %: por eso las reglas van antes y lo dudoso sube al nodo o al cerebro). El modelo del nodo se mide al entrenarse allí.
 
 ## Empezar
 
@@ -58,9 +71,21 @@ Instalar `AURA-Windows-Setup-1.0.0-x64.exe` (por usuario, sin permisos de admini
 
 ## Compilar y probar
 
-- Núcleo (corre en cualquier sistema): `dotnet run --project windows/tests/Aura.Windows.Tests.csproj` — reglas, horas de recordatorio, Laya ligera C# = Python, SSE, cortador de frases, resorte.
+- Núcleo (corre en cualquier sistema): `dotnet run --project windows/tests/Aura.Windows.Tests.csproj` — 171 comprobaciones: reglas, casos de la auditoría, horas de recordatorio, confirmaciones, Laya ligera C# = Python, SSE, cortador de frases, resorte.
 - App: `./windows/scripts/publish.ps1` en Windows con .NET 10 (también compila en Linux con `EnableWindowsTargeting`, sin poder ejecutarse).
-- CI (`.github/workflows/aura-windows.yml`, Windows): pruebas, .exe, **capturas reales de cada estado del notch**, conversación completa contra un servidor AU-RA simulado (`gateway/fixture-aura.mjs`), llamadas, escritura real en el Bloc de notas, instalador, instalar y desinstalar.
+- CI (`.github/workflows/aura-windows.yml`, Windows): pruebas, .exe, **capturas reales de cada estado del notch**, conversación completa contra un servidor AU-RA simulado (`gateway/fixture-aura.mjs`), **prueba nativa** (UI Automation leyendo el Bloc de notas, OCR de Windows, controles por nombre, ventanas, información del equipo, voz de Windows), llamadas, escritura real en el Bloc de notas, instalador, instalar y desinstalar.
+
+## Auditoría (1.1)
+
+Una revisión independiente del código 1.0 encontró y se corrigió:
+- Reintento tras 401 sin tope de tiempo y respuestas no-JSON que dejaban el notch en «pensando»: un solo reloj, errores claros y la UI se limpia con cualquier fallo.
+- Ráfaga de logins con una clave vieja: una renovación a la vez, pausa de 2 min tras un fallo y Laya del nodo nunca renueva.
+- «Sí, pero mejor no» confirmaba: ahora solo un sí limpio confirma y cualquier «no» cancela.
+- Escribir en Word justo después de un borrador fallaba porque el panel tenía el foco: AURA devuelve el foco a tu ventana y el panel no lo roba al confirmar.
+- Ajustes pisaba recordatorios y el token: solo se copian los campos editados.
+- Micrófono abierto de más, frases vacías en bucle, la palabra de activación disparada por su propia voz, avisos que pisaban lo que decías, parpadeo entre frases y movimiento reducido: corregidos.
+- Horas: «12 de la noche», «1 de la noche» y «de dos horas a las 5»; «no me dejes olvidar» ya crea el recordatorio.
+- Conversación tomada por orden («vamos a hablar…», «show me how…», «pon atención», «la canción anterior era mejor»): los verbos ambiguos solo abren algo conocido y las órdenes van ancladas al imperativo.
 
 ## Límites
 

@@ -11,11 +11,14 @@ namespace Aura.Windows.Notch;
 internal sealed class AjustesWindow : Window
 {
     public Ajustes Resultado { get; private set; }
+    /// <summary>El token al abrir: si cambió, fue por «Entrar» o «Cerrar sesión» aquí.</summary>
+    public string TokenAlAbrir { get; }
 
     public AjustesWindow(Ajustes actual)
     {
         Resultado = JsonSerializer.Deserialize<Ajustes>(JsonSerializer.Serialize(actual))!;
         var a = Resultado;
+        TokenAlAbrir = actual.Token;
         Title = "Ajustes · AURA"; Width = 520; SizeToContent = SizeToContent.Height; ResizeMode = ResizeMode.NoResize;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         Background = new SolidColorBrush(Color.FromRgb(10, 10, 12)); Foreground = Brushes.White;
@@ -84,6 +87,10 @@ internal sealed class AjustesWindow : Window
         Op("Contestar con voz", a.ResponderConVoz, v => a.ResponderConVoz = v);
         Op("«Oye AURA» la despierta (micrófono atento, con la luz naranja encendida)", a.PalabraActivacion, v => a.PalabraActivacion = v);
         Op("Apartarse con juegos o videos a pantalla completa", a.OcultarEnPantallaCompleta, v => a.OcultarEnPantallaCompleta = v);
+        raiz.Children.Add(Titulo("Nativo (sin internet)"));
+        Op("Hablar siempre con la voz de Windows", a.VozDeWindows, v => a.VozDeWindows = v);
+        Op("Oír siempre con el dictado de Windows", a.OidoDeWindows, v => a.OidoDeWindows = v);
+        raiz.Children.Add(Nota("Aunque estén apagadas, si el servidor no contesta AURA usa la voz y el oído de Windows solas. La pantalla se lee siempre en este equipo (UI Automation y OCR de Windows): al cerebro va solo texto, nunca imágenes."));
         raiz.Children.Add(Titulo("Llamadas y video (servicio aparte, opcional)"));
         ConnectionSettings llamadas; try { llamadas = ConnectionStore.Load(); } catch { llamadas = new(); }
         var urlLlamadas = new TextBox { Text = llamadas.Gateway }; raiz.Children.Add(Caja(urlLlamadas));

@@ -70,7 +70,14 @@ LEXICO = {
   '@bloquear': 'bloquea bloquea bloquear lock candado asegura secure'.split(),
   '@neg': 'no not dont nunca never ni'.split(),
   '@pregunta': 'que como cuando donde quien cual cuanto por what how when where who why which'.split(),
-  '@contar': 'ayer yesterday fui estuvo estaba hice was were did went abri escribi busque'.split(),
+  '@contar': 'ayer yesterday fui estuvo estaba hice was were did went abri escribi busque cerre copie descargue'.split(),
+  '@pulsar': 'dale pulsa pulsale presiona aprieta clic click press tap hit selecciona select choose elige'.split(),
+  '@control': 'boton botones button buttons pestana pestanas tab tabs menu menus opcion opciones option options controles controls'.split(),
+  '@ventana2': 'ventana window minimiza maximiza cierra cerra minimize maximize close restaura restore frente front'.split(),
+  '@cambiar': 'cambia cambiate pasame vuelve regresa trae traeme switch bring'.split(),
+  '@info': 'hora horas time fecha date dia day bateria battery cargador plugged espacio space disco disk wifi internet conectado connected'.split(),
+  '@copia': 'copie copiado copiaste portapapeles clipboard copied'.split(),
+  '@archivo': 'archivo archivos file files documento document pdf descarga descargue download downloaded baje'.split(),
  },
  'prefijos': {
   '@abrir': 'abre abri inici arranc ejecut lanz'.split(),
@@ -81,14 +88,19 @@ LEXICO = {
   '@captura': 'captur screensh pantallaz'.split(),
   '@callar': 'calla silenc'.split(),
   '@bloquear': 'bloque'.split(),
-  '@ocultar': 'escond ocult minimiz'.split(),
+  '@ocultar': 'escond ocult'.split(),
+  '@ventana2': 'minimiz maximiz'.split(),
+  '@pulsar': 'puls presion apriet'.split(),
+  '@copia': 'copi'.split(),
+  '@archivo': 'archiv descarg'.split(),
  },
 }
 
 MUESTRAS = ['abre excel', 'open spotify', 'abre descargas', 'busca el precio del café', 'abre youtube', 'escribe hola en el bloc de notas',
             'redáctame una carta de renuncia', 'qué ves en mi pantalla', 'toma un screenshot', 'súbele al volumen', 'bájale', 'mute',
             'pausa la canción', 'siguiente canción', 'recuérdame en 10 minutos tomar agua', 'cállate', 'pausa todo', 'abre el chat',
-            'escóndete', 'cambia a claudio', 'minimiza todo', 'bloquea la compu', 'hola aura, cómo estás', 'ayer abrí word y se trabó']
+            'escóndete', 'cambia a claudio', 'minimiza todo', 'bloquea la compu', 'hola aura, cómo estás', 'ayer abrí word y se trabó',
+            'dale a guardar', 'qué botones hay', 'cierra esta ventana', 'cuánta batería me queda', 'resume lo que copié', 'abre el último archivo que descargué']
 
 
 def usar_lexico():

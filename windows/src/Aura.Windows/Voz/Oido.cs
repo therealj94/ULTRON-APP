@@ -45,8 +45,10 @@ internal sealed class Oido : IDisposable
         try
         {
             mic = new WaveInEvent { WaveFormat = new WaveFormat(Muestreo, 16, 1), BufferMilliseconds = MsBloque, NumberOfBuffers = 4 };
+            var este = mic;
             mic.DataAvailable += AlLlegar;
-            mic.RecordingStopped += (_, e) => { if (e.Exception != null) Fallo?.Invoke("El micrófono se detuvo: " + e.Exception.Message); };
+            // Solo cuenta el fallo del micrófono ACTUAL: uno viejo que muere tarde no cierra el nuevo.
+            mic.RecordingStopped += (_, e) => { if (e.Exception != null && ReferenceEquals(este, mic)) Fallo?.Invoke("El micrófono se detuvo: " + e.Exception.Message); };
             Reiniciar();
             mic.StartRecording();
         }
@@ -71,6 +73,7 @@ internal sealed class Oido : IDisposable
 
     void AlLlegar(object? s, WaveInEventArgs e)
     {
+        if (!ReferenceEquals(s, mic)) return;
         double suma = 0; int n = e.BytesRecorded / 2;
         for (int i = 0; i < e.BytesRecorded - 1; i += 2) { double v = BitConverter.ToInt16(e.Buffer, i) / 32768.0; suma += v * v; }
         double rms = n > 0 ? Math.Sqrt(suma / n) : 0;
@@ -97,7 +100,7 @@ internal sealed class Oido : IDisposable
                     foreach (var b in previo) frase.AddRange(b);
                     previo.Clear();
                 }
-                else if (!Continuo && msEsperando > EsperaMaxMs) canso = true;
+                else if (!Continuo && msEsperando > EsperaMaxMs) { canso = true; msEsperando = int.MinValue / 2; } // avisa UNA vez
             }
             else
             {
