@@ -138,7 +138,8 @@ Check(R("abre la pestaña Insertar") is { Mano: Mano.Pulsar, Valor: "Insertar" }
 Check(R("haz clic en el botón Aceptar") is { Mano: Mano.Pulsar, Valor: "Aceptar" }, "clic boton");
 Check(R("click the Save button") is { Mano: Mano.Pulsar } pz && pz.Valor.Equals("save", StringComparison.OrdinalIgnoreCase), "click en");
 Check(R("qué botones hay") is { Mano: Mano.QueHay }, "que hay");
-Check(R("cierra esta ventana") is { Mano: Mano.Ventana, Valor: "cerrar|", PideConfirmacion: true }, "cerrar ventana confirma");
+Check(R("cierra esta ventana") is { Mano: Mano.Ventana, Valor: "cerrar|", PideConfirmacion: false }, "cerrar una ventana va de una");
+Check(R("ciérrala") is { Mano: Mano.Ventana, Valor: "cerrar|" } && R("cierra chrome") is { Valor: "cerrar|chrome", PideConfirmacion: false } && R("cierra todo") is { PideConfirmacion: true }, "ciérrala y cerrar todo confirma");
 Check(R("cierra word") is { Mano: Mano.Ventana, Valor: "cerrar|word" }, "cerrar app");
 Check(R("minimiza esta ventana") is { Mano: Mano.Ventana, Valor: "minimizar|" }, "minimizar");
 Check(R("cambia a chrome") is { Mano: Mano.Ventana, Valor: "cambiar|chrome", PideConfirmacion: false }, "cambiar ventana");
@@ -335,6 +336,18 @@ Check(R("cállate") is { Mano: Mano.Callar } && R("silencia la computadora") is 
 Check(Fantasma.Es("¡Hasta la próxima!") && Fantasma.Es("Espera un momentito.") && Fantasma.Es("Gracias por ver el video") && Fantasma.Es("Subtítulos realizados por la comunidad de Amara.org"), "fantasmas del transcriptor");
 Check(Fantasma.Es("claro que sí, te lo abro", "¡Claro que sí, te lo abro ahora mismo!"), "eco de lo que dijo AURA");
 Check(!Fantasma.Es("abre el bloc de notas") && !Fantasma.Es("hasta qué hora abre el banco") && !Fantasma.Es("gracias, ahora pon música", null), "lo real sí pasa");
+
+// Las manos que pide el cerebro: la marca no se ve ni se dice, aunque llegue partida
+{
+    var fa = new FiltroAcciones(); var hechas = new List<string>();
+    var vis = fa.Agregar("Listo, la cierro. ⟦ha", o => hechas.Add(o)) + fa.Agregar("cer: cierra spo", o => hechas.Add(o)) + fa.Agregar("tify⟧ ¡ya!", o => hechas.Add(o));
+    Check(vis == "Listo, la cierro.  ¡ya!" && hechas.Count == 1 && hechas[0] == "cierra spotify", "marca partida: " + vis + " / " + string.Join(",", hechas));
+    Check(FiltroAcciones.Quitar("Va. ⟦hacer: pon bad bunny en spotify⟧") == "Va." && new FiltroAcciones().Agregar("⟦cualquier cosa⟧ hola") == " hola", "quitar marca y marca sin hacer");
+    Check(R(new FiltroAcciones() is { } f2 && f2.Agregar("⟦hacer: cierra chrome⟧") == "" ? f2.Ordenes[0] : "") is { Mano: Mano.Ventana, Valor: "cerrar|chrome" }, "la orden del cerebro la ejecutan las reglas");
+}
+
+Check(R("escribe hola") is { Mano: Mano.Escribir, Valor: "hola" } && R("teclea: nos vemos mañana") is { Mano: Mano.Escribir }, "escribir directo: " + R("escribe hola"));
+Check(R("escribe un correo a Juan sobre la junta").Mano != Mano.Escribir && R("write an email to my boss").Mano != Mano.Escribir, "redactar no es teclear");
 
 // La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).
 foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace una captura de pantalla en windows", "ayer me dijiste que bloqueara la compu" })

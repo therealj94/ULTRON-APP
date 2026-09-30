@@ -383,18 +383,25 @@ public partial class NotchWindow
         string emocion = "neutral";
         int dichas = 0;
         Respuesta? r = null;
+        // Las manos que pide el cerebro (⟦hacer: …⟧): no se ven ni se dicen, y se hacen apenas llegan. Con texto
+        // de otro lado delante (pantalla, archivo, portapapeles) no: ese texto podría traer órdenes escondidas.
+        var filtro = new FiltroAcciones();
+        bool conManos = contexto == null && !redactar;
+        void Orden(string o) { if (conManos) _ = Dispatcher.BeginInvoke(new Action(() => _ = HacerOrdenDelCerebro(o, hablado))); }
         try
         {
             r = await api.Turno(contexto == null ? texto : texto + "\n\n" + contexto, historial, ajustes.Nombre.Length > 0 ? ajustes.Nombre : Environment.UserName, ajustes.Avatar, ajustes.Idioma, hablado,
                 alTrozo: trozo => Dispatcher.BeginInvoke(new Action(() =>
                 {
                     if (g != generacion) return;
+                    trozo = filtro.Agregar(trozo, Orden);
+                    if (trozo.Length == 0) return;
                     if (burbuja != null) burbuja.Text += Expresiones.Quitar(trozo);
                     if (burbuja != null) Desplazar.ScrollToEnd();
                     if (conVoz) foreach (var f in cortador.Agregar(trozo)) { Decir(f, emocion, vcts.Token); dichas++; }
                 })),
                 alEmocion: e => Dispatcher.BeginInvoke(new Action(() => { if (g != generacion) return; emocion = e; emocionActual = e; AvatarPanel.Estado = hablandoAhora ? "speaking" : EstadoDeEmocion(e); })),
-                alReemplazo: nuevo => Dispatcher.BeginInvoke(new Action(() => { if (g == generacion && burbuja != null) burbuja.Text = Expresiones.Quitar(nuevo); })),
+                alReemplazo: nuevo => Dispatcher.BeginInvoke(new Action(() => { if (g == generacion && burbuja != null) burbuja.Text = FiltroAcciones.Quitar(Expresiones.Quitar(nuevo)); })),
                 ct: cts.Token);
         }
         catch (OperationCanceledException) { return null; }
@@ -413,6 +420,9 @@ public partial class NotchWindow
         // Lo que quedó sin cerrar con punto también se dice.
         if (conVoz && cortador.Resto() is { } resto) { Decir(resto, emocion, vcts.Token); dichas++; }
         turnoEnCurso = false;
+        // Si la marca llegó solo en el texto final (sin trozos), también cuenta.
+        if (filtro.Ordenes.Count == 0) new FiltroAcciones().Agregar(r.Texto, Orden);
+        r = r with { Texto = FiltroAcciones.Quitar(r.Texto) };
         if (burbuja != null && r.Texto.Length > 0) burbuja.Text = r.Texto;
         if (r.Error != null && r.Texto.Length == 0 && burbuja != null) burbuja.Text = r.Error;
         // Nunca una burbuja vacía: si no llegó nada, se quita.

@@ -30,11 +30,12 @@ public sealed record Pedido(Mano Mano, string Valor = "", TimeSpan? Cuando = nul
 
     /// <summary>Las que tienen efecto fuera de AURA y no se deshacen solas esperan el «sí».</summary>
     /// <summary>
-    /// Lo que no se deshace solo espera el «sí»: escribir en otra ventana, bloquear, cerrar una ventana.
+    /// Lo que no se deshace solo espera el «sí»: escribir en otra ventana, bloquear, cerrar TODO. Cerrar una
+    /// ventana va de una: si hay algo sin guardar, la propia app pregunta.
     /// Pulsar un control se confirma cuando su nombre suena a algo con efecto (Enviar, Eliminar, Pagar…);
     /// eso lo decide Controles.EsDelicado en el .exe, con el nombre real del control.
     /// </summary>
-    public bool PideConfirmacion => Mano is Mano.Escribir or Mano.Bloquear || Mano == Mano.Ventana && Valor.StartsWith("cerrar", StringComparison.Ordinal);
+    public bool PideConfirmacion => Mano is Mano.Escribir or Mano.Bloquear || Mano == Mano.Ventana && Valor == "cerrar|todo";
 }
 
 /// <summary>Una decisión de Laya en el nodo (vía /api/windows/intencion).</summary>
@@ -97,6 +98,8 @@ public static class Intencion
         if (Parametros.Ventana(texto) is { } ventana)
             return Parametros.Avatar(ventana) is { } avv && ventana.StartsWith("cambiar|", StringComparison.Ordinal) && Parametros.Avatares.ContainsKey(LayaLigera.Normalizar(ventana[8..]))
                 ? new(Mano.Avatar, avv) : new(Mano.Ventana, ventana);
+        // «escribe hola», «teclea: nos vemos mañana»: en la ventana donde estás. «Escribe un correo a…» es redactar (el cerebro).
+        if (Parametros.EscribirDirecto.IsMatch(t) && Parametros.TextoAEscribir(texto) is { Length: > 0 } escrito) return new(Mano.Escribir, escrito);
         var busca = Parametros.Busqueda(texto);
         if (busca != null) return new(Mano.BuscarWeb, busca);
         var abrir = Parametros.ObjetoDeAbrir(texto);
@@ -409,6 +412,8 @@ public static class Parametros
     }
 
 
+    public static readonly Regex EscribirDirecto = new(@"^(?:escribe|escribi|teclea|type|write)\b(?!\s+(?:un|una|unos|unas|me un|me una|a|an|le|les|sobre|about|mi|my)\b)\s*[:,]?\s*\S", O);
+
     static readonly Regex Escribir = new(@"^(?:escribe(?:me|lo)?|escribi|teclea|dicta|anota|pon|pega|type|write|dictate|enter|key in|put|paste|insert)\b(?:\s+(?:esto|lo que te digo|this|what i say))?(?:\s+(?:en|in|into)\s+(?:el |la |the )?(?:bloc de notas|notepad|word|documento|document|doc|ventana(?: activa)?|active window|window))?(?:\s+(?:donde esta el cursor|where the cursor is))?\s*[:,]?\s*(?<x>.*)$", O);
 
     /// <summary>El texto literal a escribir, del original. Null: «escríbelo» (se escribe la última respuesta o el borrador).</summary>
@@ -540,6 +545,9 @@ public static class Parametros
     public static string? Ventana(string texto, bool laxa = false)
     {
         var t = Limpiar(texto);
+        // «ciérrala», «minimízalo»: la ventana en la que estás.
+        var p = Regex.Match(t, @"^(?<a>cierra|cerra|minimiza|maximiza|restaura)(?:la|lo)$");
+        if (p.Success) { var a0 = p.Groups["a"].Value; return (a0.StartsWith("min") ? "minimizar" : a0.StartsWith("max") ? "maximizar" : a0.StartsWith("rest") ? "restaurar" : "cerrar") + "|"; }
         var m = VentanaAccion.Match(t);
         if (m.Success)
         {

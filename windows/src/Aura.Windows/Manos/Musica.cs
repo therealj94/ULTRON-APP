@@ -1,3 +1,4 @@
+using System.Linq;
 using System;
 using System.Diagnostics;
 using System.IO;
@@ -116,6 +117,36 @@ internal sealed class Musica : IDisposable
         }
         Process.Start(new ProcessStartInfo("https://music.youtube.com/search?q=" + Uri.EscapeDataString(q)) { UseShellExecute = true });
         return "YouTube Music";
+    }
+
+    /// <summary>
+    /// Spotify sin cuenta conectada: abre la búsqueda en la app de escritorio y pulsa el «Reproducir» del
+    /// primer resultado con UI Automation (los botones de Spotify se llaman «Play Bad Bunny» /
+    /// «Reproducir Bad Bunny»). Devuelve lo que puso, o null si no pudo (queda la búsqueda abierta).
+    /// </summary>
+    public static async Task<string?> PonerEnEscritorio(string q, bool ingles, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(q)) return null;
+        try { Process.Start(new ProcessStartInfo("spotify:search:" + Uri.EscapeDataString(q)) { UseShellExecute = true }); }
+        catch { return null; }
+        var reloj = Stopwatch.StartNew();
+        await Task.Delay(1500, ct);
+        while (reloj.Elapsed < TimeSpan.FromSeconds(12))
+        {
+            var v = Ventanas.Abiertas().FirstOrDefault(x => x.Proceso.Equals("spotify", StringComparison.OrdinalIgnoreCase));
+            if (v != null)
+            {
+                var botones = await Task.Run(() => Controles.Visibles(v.Handle, ingles, 8000, 2500), ct);
+                var play = botones.FirstOrDefault(b => System.Text.RegularExpressions.Regex.IsMatch(b.Nombre, @"^(?:Play|Reproducir|Reproduce)\s+\S", System.Text.RegularExpressions.RegexOptions.IgnoreCase));
+                if (play != null)
+                {
+                    Controles.Pulsar(play);
+                    return System.Text.RegularExpressions.Regex.Replace(play.Nombre, @"^(?:Play|Reproducir|Reproduce)\s+", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                }
+            }
+            await Task.Delay(800, ct);
+        }
+        return null;
     }
 
     public void Dispose()

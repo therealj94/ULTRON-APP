@@ -16,7 +16,7 @@ import { piezasDelTurno } from './server/prompt-turno';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
-import { montarRutasWindows } from './server/windows-rutas';
+import { montarRutasWindows, instruccionWindows } from './server/windows-rutas';
 import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
   abrirTurnoApp,
@@ -2582,7 +2582,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const bloquePerfil = lineaPerfil(perfilPersona);
   const bloqueApp = conApp
     ? instruccionAcciones(contextoApp, { idioma: idiomaTurno, pendiente: pendienteDe(ambito), propuesta: propuestaDe(ambito), ultimoLeido: ultimoLeidoDe(correoApp) })
-    : '';
+    : body?.origen === 'windows'
+      ? instruccionWindows(idiomaTurno === 'en' ? 'en' : 'es')
+      : '';
 
   // Con un miembro: su cerebro (lo público), sin catálogo del taller ni memoria de la junta
   // (server/prompt-turno.ts).

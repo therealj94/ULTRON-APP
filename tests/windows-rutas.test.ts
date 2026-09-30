@@ -12,7 +12,7 @@ import type { AddressInfo } from 'node:net';
 
 process.env.ULTRON_SESION_SECRETO = 'secreto-de-prueba-largo-para-aura-windows-rutas';
 process.env.ULTRON_MESA_CLAVE = 'clave-de-mesa-de-prueba';
-const { montarRutasWindows } = await import('../server/windows-rutas');
+const { montarRutasWindows, instruccionWindows } = await import('../server/windows-rutas');
 const { exigirMesa } = await import('../server/seguridad');
 
 let respuesta: any = null;
@@ -78,4 +78,11 @@ test('conexiones: los Client ID del entorno, solo con sesión y solo si están b
   assert.deepEqual(j.spotify, { clientId: 'abc123spotifyid' });
   assert.deepEqual(j.google, { clientId: '123-x.apps.googleusercontent.com', clientSecret: 'GOCSPX-prueba' });
   assert.equal(j.microsoft, null);
+});
+
+test('el cerebro en Windows sabe que tiene manos y cómo pedirlas', () => {
+  const es = instruccionWindows('es');
+  assert.match(es, /⟦hacer: cierra chrome⟧/);
+  assert.match(es, /Nunca hables de «ejecutor»/);
+  assert.match(instruccionWindows('en'), /Never mention an "executor"/);
 });
