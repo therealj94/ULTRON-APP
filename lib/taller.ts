@@ -10,6 +10,7 @@ import { fotoBoveda, clave } from './boveda';
 import { dictarSistema, notaDeVoz, pideNotaDeVoz } from './voz';
 import { puedeCambiarSistema, type MiembroId } from './junta';
 import type { Nivel } from './acceso';
+import type { NivelAura } from './perfiles/tipos';
 import { autorizar, textoDeDecision, type Efecto } from './cognitivo/politica';
 import { registrarEjecutor } from './cognitivo/aprobaciones';
 
@@ -186,7 +187,17 @@ export type ContextoTaller = {
    * (redespliegue, mantenimiento), aunque quien hable tenga mando. Eso se pide en la mesa.
    */
   soloConsulta?: boolean;
+  /**
+   * Con quién habla (server/nivel.ts). Un miembro de la comunidad no tiene taller: ni estado del
+   * sistema, ni bóveda, ni pendientes de la junta, ni envíos al Telegram de la organización.
+   * Sin este campo, junta (como siempre).
+   */
+  nivelAura?: NivelAura;
 };
+
+/** Lo que el modelo sabe cuando un miembro dispara, sin querer o no, una acción del taller. */
+export const TALLER_SOLO_JUNTA =
+  'TALLER: con miembros de la comunidad no hay taller. No mandas mensajes al Telegram, WhatsApp ni correo de la organización, no avisas a la junta, no anotas ni lees pendientes de la junta y no das el estado de los sistemas ni de la bóveda. Si te lo piden, dilo con naturalidad y sigue ayudando con lo demás.';
 
 /** Lo que el taller no hace desde la voz: todo lo que sale del sistema o lo cambia. */
 const FUERA_DE_LA_VOZ = new Set(['redeploy', 'mantenimiento', 'voz', 'urgente', 'llamar', 'enviar']);
@@ -222,6 +233,9 @@ export async function despacharTaller(message: string, opts?: ContextoTaller): P
   const hechos: string[] = [];
   const out = (decir?: string): TallerOut => ({ hechos, tools, decir });
   const ctx: ContextoTaller = opts || {};
+  // Un miembro no llega a ninguna acción: ni a las que leen (sistema, bóveda, pendientes) ni a las
+  // que mandan. Sin `decir`: el modelo contesta lo que haya que contestar, sin frase de taller.
+  if (ctx.nivelAura === 'miembro') return { hechos: [TALLER_SOLO_JUNTA], tools: [] };
   const consulta = !puedeCambiarSistema(opts?.quien) || !!opts?.soloConsulta;
 
   if (opts?.soloConsulta && p.accion && (FUERA_DE_LA_VOZ.has(p.accion) || (p.accion === 'pdf' && p.canal))) {

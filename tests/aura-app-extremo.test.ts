@@ -112,6 +112,9 @@ const proc: ChildProcess = spawn(process.execPath, ['--import', import.meta.reso
     ULTRON_LAYA_CLAVE: 'laya-falsa',
     TSX_TSCONFIG_PATH: path.join(RAIZ, 'tsconfig.json'),
     RED_LENTA_MS: '2500',
+    // Las personas de estas pruebas son de la junta (en el padrón, con consulta). Quien no está en el
+    // padrón es miembro de la comunidad (server/nivel.ts) y tiene su propia prueba al final.
+    ULTRON_PADRON: ['majo | María José | majo.prueba@ordenglobal.org | | ultron=lee', 'medidor | Medidor | medidor.prueba@ordenglobal.org | | ultron=lee', 'otra | Otra Persona | otra.prueba@ordenglobal.org | | ultron=lee'].join('\n'),
   },
   stdio: ['ignore', 'ignore', 'pipe'],
   detached: true,
@@ -503,4 +506,50 @@ test('latencia hasta la primera palabra (voz), con cifras', { skip: !listo }, as
   assert.ok(conDato.primeraMs < 250 + 1500, 'lo que espera a internet no frena la voz');
   // La primera frase larga sale en la coma, antes de que el 27B termine de escribir.
   assert.ok(pregunta.primeraMs < pregunta.totalMs - 100, 'la voz empieza antes de que termine la respuesta');
+});
+
+test('un miembro de la comunidad (fuera del padrón): lo público, sin taller ni nada de la junta, en texto y en voz', { skip: !listo }, async () => {
+  // Entró por Genesis abierto; se llama «José», pero su correo no está en el padrón.
+  const m = emitirSesion({ correo: 'comunidad.prueba@gmail.com', nombre: 'José', rol: 'Miembro · Genesis ID' });
+  const hm = { 'content-type': 'application/json', 'x-ultron-sesion': m.token };
+  const interno = ['8443', 'watchdog', 'NameSilo', 'nonce 0', 'Emisión interna', 'Mayra', 'express-js-on-vercel', 'asistente de la junta', 'HECHOS COMPARTIDOS DE LA JUNTA', 'TALLER: listos'];
+  contestar = () => '[EMO: neutral] Te cuento lo público.';
+  alNodo.length = 0;
+  const t = await (await fetch(`${BASE}/api/turno`, { method: 'POST', headers: hm, body: JSON.stringify({ message: 'cuéntame de la cadena 5550, sus validadores y los servidores de AU-RA' }) })).json();
+  assert.equal(t.reply, 'Te cuento lo público.');
+  const pedido = alNodo.at(-1)!;
+  for (const frase of interno) assert.equal(pedido.system.includes(frase), false, `el prompt del miembro trae «${frase}»`);
+  assert.match(pedido.system, /ORDEN GLOBAL \(LO PÚBLICO\)/);
+  assert.match(pedido.ultimo, /\n\nMiembro: /, 'al nodo no se le dice «Junta:»');
+  // El taller no existe: ni el estado del sistema ni los pendientes de la junta.
+  alNodo.length = 0;
+  const sis = await (await fetch(`${BASE}/api/turno`, { method: 'POST', headers: hm, body: JSON.stringify({ message: 'cómo está el sistema' }) })).json();
+  assert.equal((sis.herramientas || []).includes('sistema'), false);
+  assert.equal((alNodo.at(-1)?.system || '').includes('Nodos:'), false);
+  // Rol, perfil de la plataforma y rutas de la junta.
+  const ses = await (await fetch(`${BASE}/api/ultron/sesion`, { headers: hm })).json();
+  assert.equal(ses.user.rol, 'Miembro · Genesis ID');
+  assert.equal(ses.user.nivel, 'miembro');
+  const perfil = await (await fetch(`${BASE}/api/perfil`, { headers: hm })).json();
+  assert.equal(perfil.id, 'genesis-miembro');
+  assert.equal(perfil.proposito, 'Asistente personal para la comunidad de Orden Global.');
+  assert.equal(perfil.herramientas.includes('telegram'), false);
+  for (const ruta of ['/api/tareas', '/api/sistema', '/api/taller', '/api/vault/status']) assert.equal((await fetch(`${BASE}${ruta}`, { headers: hm })).status, 403, ruta);
+  const mem = await (await fetch(`${BASE}/api/memoria`, { headers: hm })).json();
+  assert.deepEqual(mem.junta, []);
+  assert.deepEqual(mem.cambios, []);
+  // La voz: el mismo cerebro público.
+  alNodo.length = 0;
+  const v = await voz(paseDe(m), [{ role: 'user', content: 'cuéntame de la cadena 5550 y cómo corre por dentro' }]);
+  assert.equal(v.status, 200);
+  for (const frase of interno) assert.equal(alNodo.at(-1)!.system.includes(frase), false, `voz: «${frase}»`);
+  assert.match(alNodo.at(-1)!.ultimo, /\n\nMiembro: /);
+  // Y la junta, como siempre (majo está en el padrón).
+  alNodo.length = 0;
+  await turno('cuéntame de la cadena 5550 y de los validadores');
+  assert.match(alNodo.at(-1)!.system, /CEREBRO ORDEN GLOBAL/);
+  assert.ok(alNodo.at(-1)!.system.includes('watchdog'));
+  assert.match(alNodo.at(-1)!.ultimo, /\n\nJunta: /);
+  const sesJunta = await (await fetch(`${BASE}/api/ultron/sesion`, { headers: h() })).json();
+  assert.equal(sesJunta.user.nivel, 'junta');
 });

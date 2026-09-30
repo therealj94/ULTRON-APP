@@ -32,8 +32,12 @@ type Deps = {
   limitar: (max: number, ventanaMs?: number, grupo?: string) => express.RequestHandler;
   sesionDe: (req: express.Request) => Sesion | null;
   tokenDe: (req: express.Request) => string;
-  /** Lo público de la plataforma (id, acento, modos…): lo que ya devolvía GET /api/perfil. */
-  perfilPlataforma: () => Record<string, unknown>;
+  /**
+   * Lo público de la plataforma (id, acento, modos…): lo que ya devolvía GET /api/perfil. Recibe la
+   * petición porque depende de quién pregunta: a un miembro de la comunidad se le describe el cerebro
+   * con que habla él (server/nivel.ts), no el de la junta.
+   */
+  perfilPlataforma: (req: express.Request) => Record<string, unknown>;
   latidoMs?: number;
   vidaMs?: number;
 };
@@ -51,7 +55,7 @@ export function montarRutasApp(app: express.Express, d: Deps) {
     if (!s && d.tokenDe(req)) return sinSesion(res);
     const perfil = s ? await leerPerfil(s.correo) : null;
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ ...d.perfilPlataforma(), perfil, honesto: true });
+    return res.json({ ...d.perfilPlataforma(req), perfil, honesto: true });
   });
 
   app.put('/api/perfil', d.exigirMesa, d.limitar(30), async (req, res) => {

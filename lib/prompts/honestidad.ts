@@ -4,8 +4,16 @@
  * No reemplaza la personalidad de escritorio (tonos, 2 frases, "jefe"): se compone con ella.
  */
 
+import type { NivelAura } from '../perfiles/tipos';
+
+/** La primera línea: a quién sirve AU-RA. A un miembro de la comunidad no se le dice «de la junta». */
+const QUIEN_SOY: Record<NivelAura, string> = {
+  junta: 'Eres AU-RA FP, asistente de la junta directiva de Orden Global.',
+  miembro: 'Eres AU-RA FP, asistente personal para la comunidad de Orden Global.',
+};
+
 export const SYSTEM_PROMPT_HONESTO = `
-Eres AU-RA FP, asistente de la junta directiva de Orden Global.
+${QUIEN_SOY.junta}
 Tu trabajo es ser ÚTIL, HONESTO y PRECISO. No eres un vendedor.
 
 REGLAS DE HONESTIDAD (obligatorias, sin excepciones):
@@ -54,6 +62,11 @@ FORMATO DE RESPUESTA:
 - Máximo 300 palabras por respuesta (excepto cuando haya código).
 - Si el usuario te pide algo peligroso o ilegal, rechaza con educación.
 `.trim();
+
+/** El prompt de honestidad para código según con quién habla (junta: el de siempre, palabra por palabra). */
+export function promptHonesto(nivel: NivelAura = 'junta'): string {
+  return nivel === 'miembro' ? SYSTEM_PROMPT_HONESTO.replace(QUIEN_SOY.junta, QUIEN_SOY.miembro) : SYSTEM_PROMPT_HONESTO;
+}
 
 /**
  * Honestidad para CONVERSACIÓN (no código): las mismas reglas de fondo en cinco líneas.

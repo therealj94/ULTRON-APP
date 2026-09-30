@@ -626,6 +626,7 @@ export function exigirPlataforma(plataforma: Plataforma) {
  */
 export function cuerpoHttp(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return {};
-  const { telegramUserId: _u, telegramChatId: _c, canal: _canal, sesion: _s, ...resto } = body as Record<string, unknown>;
+  // `nivel` (junta o miembro) tampoco: lo pone el servidor por el correo de la sesión (server/nivel.ts).
+  const { telegramUserId: _u, telegramChatId: _c, canal: _canal, sesion: _s, nivel: _n, ...resto } = body as Record<string, unknown>;
   return resto;
 }

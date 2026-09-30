@@ -29,6 +29,12 @@
  *    renueva) y nunca pasa de 20 minutos; cada cuenta tiene como mucho tres conversaciones vivas.
  *  · Cada persona tiene su cupo de turnos por minuto: todos los turnos llegan de las IPs de
  *    ElevenLabs, y contar por IP juntaba a todo el mundo en un solo cupo.
+ *  · Lleva FIRMADO el nivel de quien lo pidió (`nv`: junta o miembro, server/nivel.ts). En cada
+ *    turno se vuelve a calcular por el correo y vale el más estrecho de los dos: un pase de junta de
+ *    alguien a quien sacaron del padrón habla ya como miembro. El cliente no puede elegirlo.
+ *  · Un miembro tiene minutos de voz al día (server/tope-voz.ts, VOZ_MIEMBRO_MIN_DIA): no se abre
+ *    una conversación sin minutos, el pase vence cuando se acaban (`tp`) y un turno pasado el tope
+ *    solo dice, con amabilidad, que sigamos por escrito.
  */
 import crypto from 'crypto';
 import type express from 'express';
@@ -38,6 +44,8 @@ import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDe
 import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
 import { aparatoValido } from '../lib/acciones-app';
+import { nivelDeCorreo, nivelMasEstrecho, nivelValido, type NivelAura } from './nivel';
+import { anotarVoz, fraseTopeVoz, restanteVozMs } from './tope-voz';
 
 /** La etiqueta del secreto que ElevenLabs manda como Bearer. Cambiarla invalida el guardado allá. */
 export const ETIQUETA_SECRETO_LLM = 'elevenlabs-llm-v1';
@@ -93,21 +101,43 @@ export type Pase = {
    * también si el servidor se redespliega a mitad de charla.
    */
   aparato: string | null;
+  /** El nivel firmado al abrir (junta o miembro); null en un pase de antes, que se recalcula. */
+  nivel: NivelAura | null;
+  /** El pase vence antes de lo normal porque se acaban los minutos de voz del miembro. */
+  tope: boolean;
 };
 
 export function emitirPase(
   s: Pick<Sesion, 'correo' | 'nombre' | 'rol' | 'token' | 'at'> & { exp?: number },
   avatar: AvatarVoz,
   idioma: Idioma,
-  o: { modo?: string; cid?: string; ahora?: number; aparato?: string | null } = {}
+  o: { modo?: string; cid?: string; ahora?: number; aparato?: string | null; nivel?: NivelAura; topeMs?: number } = {}
 ): { pase: string; cid: string; exp: number } {
   const ahora = o.ahora ?? Date.now();
   const cid = o.cid || crypto.randomBytes(12).toString('base64url');
-  // Nunca más allá de la sesión que lo pidió.
-  const exp = Math.min(ahora + PASE_TTL_MS, s.exp || Infinity);
+  // Nunca más allá de la sesión que lo pidió, ni de los minutos de voz que le quedan (miembros).
+  const normal = Math.min(ahora + PASE_TTL_MS, s.exp || Infinity);
+  const porTope = o.topeMs !== undefined && Number.isFinite(o.topeMs) ? ahora + Math.max(0, o.topeMs) : Infinity;
+  const exp = Math.min(normal, porTope);
   const modo = modoValido(o.modo) || MODO_DE_AVATAR[avatar];
   const ap = aparatoValido(o.aparato);
-  const pase = firmarDato('voz', { correo: s.correo, nombre: s.nombre, rol: s.rol, avatar, idioma, modo, cid, h: huellaSesion(s.token), sat: s.at, sexp: s.exp, exp, ...(ap ? { ap } : {}) });
+  const nv = nivelValido(o.nivel);
+  const pase = firmarDato('voz', {
+    correo: s.correo,
+    nombre: s.nombre,
+    rol: s.rol,
+    avatar,
+    idioma,
+    modo,
+    cid,
+    h: huellaSesion(s.token),
+    sat: s.at,
+    sexp: s.exp,
+    exp,
+    ...(ap ? { ap } : {}),
+    ...(nv ? { nv } : {}),
+    ...(porTope < normal ? { tp: 1 } : {}),
+  });
   return { pase, cid, exp };
 }
 
@@ -130,6 +160,8 @@ export function leerPase(token: string, ahora = Date.now()): Pase | null {
     sexp: Number(d.sexp) || undefined,
     exp: Number(d.exp),
     aparato: aparatoValido(d.ap),
+    nivel: nivelValido(d.nv),
+    tope: d.tp === 1,
   };
 }
 
@@ -139,10 +171,15 @@ export function leerPase(token: string, ahora = Date.now()): Pase | null {
  * (ElevenLabs deja seguir la conversación hasta 30 minutos y el pase dura 20).
  */
 export function idiomaDePaseVencido(token: string, ahora = Date.now()): Idioma | null {
+  return paseVencido(token, ahora)?.idioma ?? null;
+}
+
+/** Igual, y además si venció porque se acabaron los minutos de voz del miembro (`tp` firmado). */
+export function paseVencido(token: string, ahora = Date.now()): { idioma: Idioma; tope: boolean } | null {
   const d = leerDato('voz', token);
   if (!d?.correo || !d?.cid || !d?.h || !Number(d.exp)) return null;
   const exp = Number(d.exp);
-  return ahora > exp && ahora - exp < 60 * 60_000 ? normalizarIdioma(d.idioma) : null;
+  return ahora > exp && ahora - exp < 60 * 60_000 ? { idioma: normalizarIdioma(d.idioma), tope: d.tp === 1 } : null;
 }
 
 /* ------------------------------------------------------------------ las conversaciones vivas */
@@ -166,6 +203,8 @@ type Conversacion = {
   dichoEnCurso: string;
   /** Si el turno en curso ya dijo algo propio (el «perdón» del principio no cuenta). */
   algoEnCurso: boolean;
+  /** Hasta cuándo ya se contó el tiempo de esta conversación en el tope de voz. */
+  medido: number;
 };
 const conversaciones = new Map<string, Conversacion>();
 
@@ -196,13 +235,24 @@ export function abrirConversacion(correo: string, cid: string, ahora = Date.now(
     conversaciones.delete(vieja.cid);
     cerradas++;
   }
-  conversaciones.set(cid, { cid, correo: c, abierta: ahora, ultimo: ahora, cerrada: false, ultimaDicha: '', cortada: false, turnos: 0, enCurso: null, dichoEnCurso: '', algoEnCurso: false });
+  conversaciones.set(cid, { cid, correo: c, abierta: ahora, ultimo: ahora, cerrada: false, ultimaDicha: '', cortada: false, turnos: 0, enCurso: null, dichoEnCurso: '', algoEnCurso: false, medido: ahora });
   return { cerradas };
 }
 
-export function cerrarConversacion(cid: string): boolean {
+/**
+ * El tiempo de esta conversación que todavía no se contó, y lo marca como contado (ms). Es lo que se
+ * suma al tope de voz de un miembro en cada turno y al colgar.
+ */
+export function medirConversacion(c: { medido: number }, ahora = Date.now()): number {
+  const ms = Math.max(0, ahora - c.medido);
+  c.medido = Math.max(c.medido, ahora);
+  return ms;
+}
+
+export function cerrarConversacion(cid: string, alCerrar?: (c: Conversacion) => void): boolean {
   const c = conversaciones.get(cid);
   if (!c) return false;
+  alCerrar?.(c);
   c.enCurso?.abort();
   conversaciones.delete(cid);
   return true;
@@ -371,8 +421,11 @@ export function restoDeReemplazo(dicho: string, nuevo: string): string {
 /** Lo que se le pide al cerebro para un turno hablado. */
 export type TurnoVoz = {
   body: { message: string; mode: string; usuario: string; correo: string; avatar: AvatarVoz; idioma: Idioma; canal: 'mesa'; aparato: string | null };
-  /** Quién habla (del pase). NO es una sesión: no abre ninguna otra ruta. */
-  persona: { correo: string; nombre: string; rol: string };
+  /**
+   * Quién habla (del pase). NO es una sesión: no abre ninguna otra ruta. `nivel` es el más estrecho
+   * entre el firmado en el pase y el que dice hoy el padrón por su correo.
+   */
+  persona: { correo: string; nombre: string; rol: string; nivel: NivelAura };
   /** La persona interrumpió la respuesta anterior (y ya se le dijo «perdón»). */
   interrumpida: boolean;
   senal: AbortSignal;
@@ -390,6 +443,8 @@ type Deps = {
   fetch?: typeof fetch;
   /** Tope de un turno hablado (TURNO_VOZ_MS; las pruebas lo acortan). */
   turnoMs?: number;
+  /** Junta o miembro por correo (server/nivel.ts; las pruebas pueden poner otro). */
+  nivelDe?: (correo: string) => NivelAura;
 };
 
 const PHRASES = {
@@ -402,6 +457,7 @@ const PHRASES = {
 
 export function montarVozAgente(app: express.Express, d: Deps) {
   const pedir = d.fetch || fetch;
+  const nivelDe = d.nivelDe || ((correo: string) => nivelDeCorreo(correo));
 
   /**
    * Abrir una conversación fluida: el teléfono pide, con su sesión, el permiso de un solo uso de
@@ -415,6 +471,13 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const agente = agenteDe(avatar, idioma);
     const key = clave('elevenlabs');
     if (!agente || !key) return res.status(503).json({ error: 'La conversación fluida no está lista todavía.', honesto: true });
+    // El nivel lo decide el servidor por el correo de la sesión, y va firmado en el pase.
+    const nivel = nivelDe(s.correo);
+    // Un miembro sin minutos de voz hoy no abre conversación: ni se le pide el permiso a ElevenLabs.
+    const restante = nivel === 'miembro' ? restanteVozMs(s.correo) : undefined;
+    if (restante !== undefined && restante <= 0) {
+      return res.status(429).json({ error: fraseTopeVoz(idioma), codigo: 'TOPE_VOZ', honesto: true });
+    }
     try {
       const r = await pedir(`https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${encodeURIComponent(agente)}`, {
         headers: { 'xi-api-key': key },
@@ -427,7 +490,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         return res.status(502).json({ error: 'No pude abrir la conversación ahora. Intenta en un momento.', honesto: true });
       }
       // El aparato (x-aura-aparato) va en el pase: lo que pida esta conversación va solo a ese teléfono.
-      const p = emitirPase(s, avatar, idioma, { modo: req.body?.mode ?? req.body?.modo, aparato: aparatoValido(req.headers['x-aura-aparato']) });
+      const p = emitirPase(s, avatar, idioma, { modo: req.body?.mode ?? req.body?.modo, aparato: aparatoValido(req.headers['x-aura-aparato']), nivel, topeMs: restante });
       const { cerradas } = abrirConversacion(s.correo, p.cid);
       if (cerradas) console.log(`[voz agente] ${cerradas} conversación(es) vieja(s) cerrada(s) por el tope de ${MAX_CONVERSACIONES}`);
       return res.json({ token: j.token, agente, avatar, idioma, pase: p.pase, cid: p.cid, vence: new Date(p.exp).toISOString(), honesto: true });
@@ -444,7 +507,13 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const p = leerPase(String(req.body?.pase || ''));
     if (!p || p.correo.toLowerCase() !== s.correo.toLowerCase()) return res.json({ ok: true, cerrada: false, honesto: true });
     anotarCerrada(p.cid);
-    return res.json({ ok: true, cerrada: cerrarConversacion(p.cid), honesto: true });
+    // Lo que duró desde el último turno hasta colgar también cuenta en el tope de un miembro.
+    const miembro = nivelMasEstrecho(p.nivel, nivelDe(p.correo)) === 'miembro';
+    const cerrada = cerrarConversacion(p.cid, (c) => {
+      const ms = medirConversacion(c);
+      if (miembro) anotarVoz(p.correo, ms);
+    });
+    return res.json({ ok: true, cerrada, honesto: true });
   });
 
   /**
@@ -468,24 +537,37 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const ahora = Date.now();
     const crudo = String(req.headers['x-pase'] || '');
     const pase = leerPase(crudo, ahora);
-    if (!pase) {
-      // Un pase de verdad que llegó a su tope: la voz se despide (frase fija, sin cerebro ni memoria).
-      const idioma = idiomaDePaseVencido(crudo, ahora);
-      if (!idioma) return negar('pase vencido o inválido');
+    /** Una frase fija, sin cerebro ni memoria (pase vencido, minutos de voz agotados). */
+    const soloFrase = (frase: string) => {
       const id = `chatcmpl-${crypto.randomBytes(8).toString('hex')}`;
       const modelo = String(req.body?.model || 'aura');
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-store, no-transform');
       res.write(trozoOpenAI(id, modelo, null, null, true));
-      res.write(trozoOpenAI(id, modelo, PHRASES.vencida[idioma]));
+      res.write(trozoOpenAI(id, modelo, frase));
       res.write(trozoOpenAI(id, modelo, null, 'stop'));
       return res.end('data: [DONE]\n\n');
+    };
+    if (!pase) {
+      // Un pase de verdad que llegó a su tope: la voz se despide. Si venció porque el miembro gastó
+      // sus minutos de voz del día, lo dice así (abrir otra no le serviría).
+      const vencido = paseVencido(crudo, ahora);
+      if (!vencido) return negar('pase vencido o inválido');
+      return soloFrase(vencido.tope ? fraseTopeVoz(vencido.idioma) : PHRASES.vencida[vencido.idioma]);
     }
     if (!sesionSigueViva({ huella: pase.h, correo: pase.correo, at: pase.sat, exp: pase.sexp }, ahora)) return negar('la sesión de este pase se cerró');
     const conv = tocarConversacion(pase, ahora);
     if (!conv) return negar('conversación cerrada o vencida');
     if (!gastarCupo(`voz-turnos:${pase.correo.toLowerCase()}`, CUPO_TURNOS_MIN)) {
       return res.status(429).json({ error: { message: 'demasiados turnos; espera un momento' } });
+    }
+    // El nivel de este turno: el firmado en el pase y el de hoy por el correo; vale el más estrecho.
+    const nivel = nivelMasEstrecho(pase.nivel, nivelDe(pase.correo));
+    // Lo hablado desde el turno anterior cuenta en los minutos del miembro. Sin minutos, no se piensa.
+    const hablado = medirConversacion(conv, ahora);
+    if (nivel === 'miembro') {
+      anotarVoz(pase.correo, hablado, ahora);
+      if (restanteVozMs(pase.correo, ahora) <= 0) return soloFrase(fraseTopeVoz(pase.idioma));
     }
 
     const mensaje = ultimoDeLaPersona(req.body?.messages);
@@ -597,7 +679,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const t = d
       .turno({
         body: { message: mensaje, mode: pase.modo, usuario: pase.nombre, correo: pase.correo, avatar: pase.avatar, idioma: pase.idioma, canal: 'mesa', aparato: pase.aparato },
-        persona: { correo: pase.correo, nombre: pase.nombre, rol: pase.rol },
+        persona: { correo: pase.correo, nombre: pase.nombre, rol: pase.rol, nivel },
         interrumpida,
         senal,
         enviar,
