@@ -51,9 +51,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Solo AU-RA por ahora: Dr Electrum tiene las OTA apagadas (app.config.js) hasta tener su
-        # propio proyecto EAS. Para sumarlo: ["ultron", "electrum"].
-        variante: ["ultron"]
+        # Cada app con su proyecto EAS en la cuenta ordenglobal (app.json / app.config.js).
+        variante: ["ultron", "electrum"]
     steps:
       # Sin el token no se puede publicar: se avisa y el resto se salta (no se deja main en rojo por
       # algo que solo el dueño de la cuenta de Expo puede poner).
@@ -63,7 +62,7 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           if [ -z "$EXPO_TOKEN" ]; then
-            echo "::warning::Falta el secreto EXPO_TOKEN (token de la cuenta dueña del proyecto, vetawallet): no se publica la OTA. https://expo.dev/settings/access-tokens"
+            echo "::warning::Falta el secreto EXPO_TOKEN (token de la cuenta dueña de los proyectos, ordenglobal): no se publica la OTA. https://expo.dev/settings/access-tokens"
             echo "hay=false" >> "$GITHUB_OUTPUT"
           else
             echo "hay=true" >> "$GITHUB_OUTPUT"

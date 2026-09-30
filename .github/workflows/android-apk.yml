@@ -81,10 +81,9 @@ jobs:
 
       # La huella nativa ANTES del prebuild: es la que calculará `eas update` al publicar (que no
       # hace prebuild). Después se compara con la que Gradle metió en la APK. Solo AU-RA recibe
-      # actualizaciones por aire (Dr Electrum las tiene apagadas hasta tener su proyecto EAS).
+      # actualizaciones por aire (cada app con su proyecto EAS en la cuenta ordenglobal).
       - name: Runtime (huella nativa)
         id: runtime
-        if: matrix.variante == 'ultron'
         working-directory: mobile
         run: echo "runtime=$(node ../scripts/qa/runtime-android.mjs)" >> "$GITHUB_OUTPUT"
 
@@ -219,7 +218,6 @@ jobs:
       # coincide con la de antes del prebuild, ninguna actualización publicada le llegaría nunca.
       # Se guarda junto al APK: el flujo de OTA la usa para saber si hay APK que pueda recibir.
       - name: Runtime de la APK
-        if: matrix.variante == 'ultron'
         working-directory: mobile
         run: |
           APK="out/${{ matrix.marca }}-${{ steps.version.outputs.version }}.apk"
