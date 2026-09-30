@@ -51,6 +51,8 @@ IDS = ['geologo', 'minas', 'civil', 'metalurgista', 'geomatica', 'ambiental', 'l
 MIN_POSITIVOS = 3
 PSEUDO_POSITIVOS = 10
 PISO, TECHO = 0.2, 0.8
+# Lo de siempre cuando ni la línea de comandos ni modelo.json («entrenamiento») dicen otra cosa.
+DEFECTOS = {'epocas': 4, 'lote': 32, 'micro': 8, 'lr': 3e-5, 'lr_cabeza': 2e-4, 'peso_positivo': 2.0}
 REJILLA = [round(float(u), 2) for u in np.arange(0.10, 0.91, 0.05)]
 
 
@@ -91,14 +93,19 @@ def lotes(items, tam, barajar, semilla=0):
 
 
 @torch.no_grad()
-def logits_de(modelo, items, device, tam=16):
+def logits_de(modelo, items, device, tam=None):
+    """Logits en el orden de `items`. En GPU, lotes de 128 ordenados por largo (en CPU, 16); siempre fp32."""
     modelo.eval()
-    salida = []
-    for b in lotes(items, tam, False):
+    tam = tam or (128 if str(device).startswith('cuda') else 16)
+    orden = sorted(range(len(items)), key=lambda i: len(items[i]['ids']))
+    salida = torch.zeros((len(items), 2))
+    for k in range(0, len(orden), tam):
+        idx = orden[k:k + tam]
+        b = collate_items([[items[i] for i in idx]], pad_id=0)
         lg, _ = modelo(b['input_ids'].to(device), b['attention_mask'].to(device), b['marker_pos'].to(device),
                        b['marker_mask'].to(device), b['qtype'].to(device))
-        salida.append(lg[:, :2].float().cpu())
-    return torch.cat(salida)
+        salida[idx] = lg[:, :2].float().cpu()
+    return salida
 
 
 def probabilidades(lg, temp=1.0):
@@ -156,9 +163,57 @@ def ajustar_temperatura(lg, etiquetas):
     return float(log_t.exp().clamp(0.5, 5.0))  # el mismo rango que acepta laya (TEMP_MIN)
 
 
-def ajustar(agente, it_ent, it_val, a, puntuar):
+def por_longitud(items, tam, semilla):
+    """Lotes de largo parecido (menos relleno: con frases cortas es la mitad del cómputo), en orden al azar.
+
+    Se baraja, se ordena por largo dentro de ventanas de 50 lotes y se barajan los lotes: sigue habiendo
+    azar entre épocas, pero ningún lote mezcla una frase de 8 tokens con una de 120.
+    """
+    rnd = random.Random(semilla)
+    orden = list(range(len(items)))
+    rnd.shuffle(orden)
+    ventana = tam * 50
+    lotes_ = []
+    for k in range(0, len(orden), ventana):
+        trozo = sorted(orden[k:k + ventana], key=lambda i: len(items[i]['ids']))
+        lotes_ += [trozo[m:m + tam] for m in range(0, len(trozo), tam)]
+    rnd.shuffle(lotes_)
+    return lotes_
+
+
+def muestreador(items, ids, grupos, negativos, semilla):
+    """Para modelos con grupos exclusivos grandes («windows»: 31 manos) casi todo el cómputo se va en
+    preguntar «¿es esta?» por las 30 que no son. Cada época usa, por texto, todas sus positivas, todas
+    las preguntas sueltas (fuera de grupo) y `negativos` preguntas del grupo elegidas al azar (otras en
+    cada época). Cada negativa pesa lo que las que representa (n_negativas / negativos), así la pérdida
+    esperada es la misma que preguntando por todas y la calibración no se corre.
+    """
+    en_grupo = {ids.index(i) for m in grupos.values() for i in m}
+    por_fila = {}
+    for n, it in enumerate(items):
+        por_fila.setdefault(it['fila'], []).append(n)
+
+    def epoca(ep):
+        rnd = random.Random(semilla * 1000 + ep)
+        elegidos = []
+        for fila in por_fila.values():
+            neg = [n for n in fila if items[n]['label'] == 0 and items[n]['esp'] in en_grupo]
+            resto = [n for n in fila if not (items[n]['label'] == 0 and items[n]['esp'] in en_grupo)]
+            k = min(negativos, len(neg))
+            peso = len(neg) / k if k else 1.0
+            elegidos += [(n, 1.0) for n in resto] + [(n, peso) for n in rnd.sample(neg, k)]
+        return elegidos
+    return epoca
+
+
+def ajustar(agente, it_ent, it_val, a, puntuar, epoca_de=None):
     """El bucle de entrenamiento (igual para todos los modelos). Devuelve el modelo con los pesos de
-    la mejor época según puntuar(logits de validación) → (puntuación, métricas para imprimir)."""
+    la mejor época según puntuar(logits de validación) → (puntuación, métricas para imprimir).
+
+    epoca_de(ep) → [(índice de ítem, peso)] elige qué se entrena en cada época (ver muestreador); sin
+    él, todo con peso 1. En CUDA se usa fp16 con escalado del gradiente (la T4 tiene núcleos tensor
+    para fp16, no para bf16): ~2× más rápido y la mitad de memoria; --sin-fp16 lo apaga.
+    """
     modelo = agente.model.to(a.device)
     # La tabla de embeddings (256k × 768, 197M de los 322M parámetros) queda congelada: con unos
     # cientos de consultas no hay nada que aprender ahí y en CPU es la mitad de la memoria.
@@ -166,7 +221,11 @@ def ajustar(agente, it_ent, it_val, a, puntuar):
     cabeza = [p for n, p in modelo.named_parameters() if not n.startswith('encoder.')]
     cuerpo = [p for n, p in modelo.named_parameters() if n.startswith('encoder.') and p.requires_grad]
     opt = torch.optim.AdamW([{'params': cuerpo, 'lr': a.lr}, {'params': cabeza, 'lr': a.lr_cabeza}], weight_decay=0.01)
-    pasos = a.epocas * math.ceil(len(it_ent) / a.lote)
+    epoca_de = epoca_de or (lambda ep: [(n, 1.0) for n in range(len(it_ent))])
+    por_epoca = len(epoca_de(0))
+    pasos = a.epocas * math.ceil(por_epoca / a.lote)
+    fp16 = a.device.startswith('cuda') and not a.sin_fp16
+    escala = torch.amp.GradScaler('cuda', enabled=fp16)
     calentar = max(1, int(0.06 * pasos))
     sched = torch.optim.lr_scheduler.LambdaLR(
         opt, lambda s: min(1.0, (s + 1) / calentar) * max(0.0, (pasos - s) / max(1, pasos - calentar)))
@@ -177,27 +236,35 @@ def ajustar(agente, it_ent, it_val, a, puntuar):
     for ep in range(a.epocas):
         modelo.train()
         t0, acum = time.time(), 0.0
-        orden = list(range(len(it_ent)))
-        random.Random(a.semilla + ep).shuffle(orden)
-        for k in range(0, len(orden), a.lote):
-            lote = [it_ent[i] for i in orden[k:k + a.lote]]
+        elegidos = epoca_de(ep)
+        items_ep = [it_ent[n] for n, _ in elegidos]
+        pesos_ep = [w for _, w in elegidos]
+        for lote in por_longitud(items_ep, a.lote, a.semilla + ep):
             opt.zero_grad()
+            total = sum(pesos_ep[i] for i in lote)
             for m in range(0, len(lote), a.micro):
                 sub = lote[m:m + a.micro]
-                b = collate_items([sub], pad_id=0)
-                lg, _ = modelo(b['input_ids'].to(a.device), b['attention_mask'].to(a.device), b['marker_pos'].to(a.device),
-                               b['marker_mask'].to(a.device), b['qtype'].to(a.device))
-                perdida = torch.nn.functional.cross_entropy(lg[:, :2].float(), b['label'].to(a.device), weight=peso)
-                (perdida * len(sub) / len(lote)).backward()
-                acum += float(perdida.detach()) * len(sub) / len(lote)
+                b = collate_items([[items_ep[i] for i in sub]], pad_id=0)
+                w = torch.tensor([pesos_ep[i] for i in sub], device=a.device)
+                with torch.autocast('cuda', dtype=torch.float16, enabled=fp16):
+                    lg, _ = modelo(b['input_ids'].to(a.device), b['attention_mask'].to(a.device), b['marker_pos'].to(a.device),
+                                   b['marker_mask'].to(a.device), b['qtype'].to(a.device))
+                y = b['label'].to(a.device)
+                # Media ponderada: peso de clase (positivo) × peso del ítem (lo que representa una negativa muestreada).
+                por_item = torch.nn.functional.cross_entropy(lg[:, :2].float(), y, reduction='none') * peso[y] * w
+                perdida = por_item.sum() / (peso[y] * w).sum().clamp_min(1e-9)
+                escala.scale(por_item.sum() / total).backward()
+                acum += float(perdida.detach()) * float(w.sum()) / total
+            escala.unscale_(opt)
             torch.nn.utils.clip_grad_norm_(modelo.parameters(), 1.0)
-            opt.step(); sched.step()
+            escala.step(opt); escala.update(); sched.step()
             paso += 1
             if paso % 25 == 0:
                 print(f'  época {ep + 1} paso {paso}/{pasos} pérdida {acum / 25:.4f} · {time.time() - t0:.0f}s', flush=True)
                 acum = 0.0
         lg = logits_de(modelo, it_val, a.device)
         puntos, m = puntuar(lg)
+        print(f'época {ep + 1}: {len(items_ep)} ítems en {time.time() - t0:.0f}s{" (fp16)" if fp16 else ""}', flush=True)
         print(f'época {ep + 1}: validación {json.dumps({k: round(v, 3) for k, v in m.items() if isinstance(v, (int, float))})}', flush=True)
         if puntos > mejor:
             mejor = puntos
@@ -445,17 +512,26 @@ def main_decisor(a):
     if faltan:
         print(f'AVISO: sin ningún positivo en entrenamiento: {faltan}', flush=True)
 
+    receta = conf.get('entrenamiento') or {}
+    for clave in ('epocas', 'lote', 'micro', 'lr', 'lr_cabeza', 'peso_positivo'):
+        if getattr(a, clave) is None:
+            setattr(a, clave, receta.get(clave, DEFECTOS[clave]))
+    negativos = a.negativos if a.negativos is not None else receta.get('negativos', 0)
+    print(f'receta: {a.epocas} épocas · lote {a.lote} (micro {a.micro}) · lr {a.lr}/{a.lr_cabeza} · '
+          f'negativas por texto {negativos or "todas"}', flush=True)
+
     agente = cargar_base(a)
     internas = {k: agente._to_internal(conf['preguntas'][k]) for k in ids}
     it_ent, it_val = codificar(agente, internas, ent, ids), codificar(agente, internas, val, ids)
     y_val = [it['label'] for it in it_val]
     medio = {i: 0.5 for i in ids}
+    epoca_de = muestreador(it_ent, ids, grupos, negativos, a.semilla) if negativos and grupos else None
 
     def puntuar(lg):
         m = metricas_decisor(val, matriz(it_val, lg, len(val), 1.0, len(ids)), ids, grupos, medio)
         return puntos_decisor(m, grupos), m
 
-    modelo = ajustar(agente, it_ent, it_val, a, puntuar)
+    modelo = ajustar(agente, it_ent, it_val, a, puntuar, epoca_de)
     lg = logits_de(modelo, it_val, a.device)
     temp = ajustar_temperatura(lg, y_val)
     P = matriz(it_val, lg, len(val), temp, len(ids))
@@ -475,7 +551,10 @@ def main_decisor(a):
                          'metodo_umbral': {'min_positivos': MIN_POSITIVOS, 'pseudo_positivos': PSEUDO_POSITIVOS,
                                            'piso': PISO, 'techo': TECHO},
                          'consultas_entrenamiento': len(ent), 'consultas_validacion': len(val),
-                         'descartadas_apartadas': en_prueba, 'epocas': a.epocas, 'semilla': a.semilla}},
+                         'descartadas_apartadas': en_prueba, 'epocas': a.epocas, 'semilla': a.semilla,
+                         'receta': {'lote': a.lote, 'micro': a.micro, 'lr': a.lr, 'lr_cabeza': a.lr_cabeza,
+                                    'peso_positivo': a.peso_positivo, 'negativos': negativos,
+                                    'fp16': a.device.startswith('cuda') and not a.sin_fp16}}},
             [os.path.join(conf['dir'], 'preguntas.json'), os.path.join(conf['dir'], 'modelo.json')])
 
 
@@ -484,12 +563,15 @@ def main():
     ap.add_argument('--modelo-dir', help='carpeta con modelo.json (modelos/mensaje…); sin ella, electrum')
     ap.add_argument('--datos', default=os.path.join(AQUI, 'datos'), help='solo electrum')
     ap.add_argument('--salida', default=None)
-    ap.add_argument('--epocas', type=int, default=4)
-    ap.add_argument('--lote', type=int, default=32)
-    ap.add_argument('--micro', type=int, default=8, help='sub-lote por pasada; el gradiente se acumula hasta --lote')
-    ap.add_argument('--lr', type=float, default=3e-5)
-    ap.add_argument('--lr-cabeza', type=float, default=2e-4)
-    ap.add_argument('--peso-positivo', type=float, default=2.0)
+    # Sin valor: el de modelo.json → «entrenamiento» (si lo trae) o el de siempre (DEFECTOS).
+    ap.add_argument('--epocas', type=int, default=None)
+    ap.add_argument('--lote', type=int, default=None)
+    ap.add_argument('--micro', type=int, default=None, help='sub-lote por pasada; el gradiente se acumula hasta --lote')
+    ap.add_argument('--lr', type=float, default=None)
+    ap.add_argument('--lr-cabeza', type=float, default=None)
+    ap.add_argument('--peso-positivo', type=float, default=None)
+    ap.add_argument('--negativos', type=int, default=None, help='negativas de grupo por texto y época (0 = todas)')
+    ap.add_argument('--sin-fp16', action='store_true', help='en CUDA, entrenar en fp32 (más lento)')
     ap.add_argument('--device', default='cpu')
     ap.add_argument('--semilla', type=int, default=7)
     ap.add_argument('--limite', type=int, default=0, help='solo pruebas: N consultas al azar')
@@ -502,6 +584,9 @@ def main():
         a.salida = a.salida or os.path.join(AQUI, 'modelo-' + os.path.basename(os.path.normpath(a.modelo_dir)))
         main_decisor(a)
     else:
+        for clave, v in DEFECTOS.items():
+            if getattr(a, clave) is None:
+                setattr(a, clave, v)
         a.salida = a.salida or os.path.join(AQUI, 'modelo-electrum')
         main_electrum(a)
 

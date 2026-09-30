@@ -88,8 +88,11 @@ def cargar_config(directorio):
         if isinstance(patrones, str):
             patrones = [patrones]
         rutas[clave] = sorted({r for p in patrones for r in glob.glob(os.path.join(directorio, p))})
+    receta = m.get('entrenamiento') or {}
+    if not isinstance(receta, dict):
+        raise ValueError(f'{nombre}: «entrenamiento» debe ser un objeto')
     return {'nombre': nombre, 'dir': directorio, 'ids': ids, 'grupos': grupos, 'preguntas': preguntas,
-            'recorte': {'cabeza': cabeza, 'cola': cola}, 'rutas': rutas}
+            'recorte': {'cabeza': cabeza, 'cola': cola}, 'rutas': rutas, 'entrenamiento': receta}
 
 
 def leer_filas(rutas, ids, grupos, estricto=True, origen=False, recortar_a_ids=False):

@@ -83,5 +83,13 @@
   "bordes": [
    "datos/bordes.jsonl"
   ]
+ },
+ "entrenamiento": {
+  "epocas": 5,
+  "lote": 64,
+  "micro": 64,
+  "negativos": 8,
+  "lr": 4e-05,
+  "lr_cabeza": 0.0003
  }
 }

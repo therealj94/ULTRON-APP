@@ -44,6 +44,9 @@ pre = {i: {'type': 'noul', 'instructions': '¿Esto NO es una orden para la compu
 json.dump(pre, open(os.path.join(AQUI, '..', 'preguntas.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 m = {'nombre': 'windows', 'descripcion': 'Qué MANO de AURA para Windows pidió la persona (grupo win, exclusivo), en español e inglés. Lo lee el servidor AU-RA en /api/windows/intencion para el .exe. ESPEC.md.',
      'ids': g.ETIQUETAS, 'grupos': {'win': g.ETIQUETAS}, 'recorte': {'cabeza': 120, 'cola': 120},
-     'datos': {'train': ['datos/train_*.jsonl'], 'test': ['datos/test.jsonl'], 'bordes': ['datos/bordes.jsonl']}}
+     'datos': {'train': ['datos/train_*.jsonl'], 'test': ['datos/test.jsonl'], 'bordes': ['datos/bordes.jsonl']},
+     # La receta de entrenar.py para este modelo: 31 manos en un grupo exclusivo → por texto, la positiva y
+     # 8 negativas al azar por época (con su peso), en fp16 y lotes grandes por largo: ~8× menos cómputo.
+     'entrenamiento': {'epocas': 5, 'lote': 64, 'micro': 64, 'negativos': 8, 'lr': 4e-5, 'lr_cabeza': 3e-4}}
 json.dump(m, open(os.path.join(AQUI, '..', 'modelo.json'), 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
 print(len(g.ETIQUETAS), 'etiquetas')
