@@ -5,7 +5,7 @@
   "description": "El Centro de AURA para Windows: la página (WebView2) de entrada, inicio, chat, PULSE2CHAT, música, cartera y ajustes.",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node --test --experimental-strip-types test/"
+    "test": "node --test test/"
   },
   "dependencies": {
     "@noble/ciphers": "1.3.0",

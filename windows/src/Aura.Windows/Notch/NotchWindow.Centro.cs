@@ -140,7 +140,7 @@ public partial class NotchWindow
             case "secreto.guardar": Secretos.Guardar(Texto(a, "clave"), Texto(a, "valor")); return true;
             case "secreto.borrar": Secretos.Borrar(Texto(a, "clave")); return true;
             case "notch.timbre": Timbre(Texto(a, "de"), Texto(a, "nombre"), Bool(a, "video") == true); return true;
-            case "notch.colgada": if (propuesta?.Titulo.StartsWith("📞") == true) { propuesta = null; relojPropuesta?.Stop(); Recalcular(); } return true;
+            case "notch.colgada" or "notch.timbreFin": if (propuesta?.Titulo.StartsWith("📞") == true) { propuesta = null; relojPropuesta?.Stop(); Recalcular(); } return true;
             case "notch.aviso": Avisar(new Aviso(Recortar(Texto(a, "titulo"), 60), Recortar(Texto(a, "cuerpo"), 120), "", "happy", T("Ver", "View"), () => AbrirCentro("pulse"), 6)); return true;
             case "chat.enviar":
             {

@@ -6,6 +6,10 @@ npm ci --no-audit --no-fund
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'Centro: npm ci failed' }
 node build.mjs
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'Centro build failed' }
+npx tsc -p tsconfig.json
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'Centro typecheck failed' }
+npm test
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw 'Centro tests failed' }
 Pop-Location
 dotnet run --project tests/Aura.Windows.Tests.csproj -c Release
 if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
