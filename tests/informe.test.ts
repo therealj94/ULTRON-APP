@@ -144,9 +144,26 @@ test('un informe es de quien lo pidió', async (t) => {
     assert.equal(informeCompartido(id), true);
   });
 
-  await t.test('un informe sin autor —de Telegram sin identificar— no se le reserva a nadie', () => {
+  // Auditoría H05: antes un informe sin autor lo recogía y lo compartía cualquiera con el id.
+  await t.test('un informe sin autor no lo recoge ni lo comparte una persona; solo el envío interno', () => {
     const id = guardarInforme({ pdf: Buffer.from('%PDF-'), nombre: 'suelto.pdf', dicho: '' }, null);
-    assert.equal(recoger(id, 'medardo'), 'suelto.pdf');
+    assert.equal(tomarInforme(id, 'medardo').estado, 'ajeno');
+    assert.equal(tomarInforme(id, 'visita:abc').estado, 'ajeno');
+    assert.equal(compartirInforme(id, 'medardo'), 'ajeno');
+    assert.equal(tomarInforme(id, null).estado, 'ok', 'Telegram sin identificar lo manda por dentro');
+  });
+
+  await t.test('dos visitantes de la demo no se ven los informes', () => {
+    const id = guardarInforme({ pdf: Buffer.from('%PDF-'), nombre: 'demo.pdf', dicho: '' }, 'visita:uno');
+    assert.equal(tomarInforme(id, 'visita:dos').estado, 'ajeno');
+    assert.equal(tomarInforme(id, 'visita:uno').estado, 'ok');
+  });
+
+  await t.test('el identificador es azar criptográfico, no la hora', () => {
+    const a = guardarInforme({ pdf: Buffer.from('%PDF-'), nombre: 'a.pdf', dicho: '' }, 'jose');
+    const b = guardarInforme({ pdf: Buffer.from('%PDF-'), nombre: 'b.pdf', dicho: '' }, 'jose');
+    assert.match(a, /^[A-Za-z0-9_-]{22}$/);
+    assert.notEqual(a.slice(0, 6), b.slice(0, 6));
   });
 
   await t.test('compartir algo que ya caducó no inventa un informe', () => {

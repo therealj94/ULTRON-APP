@@ -96,7 +96,7 @@ export function Tarjeta({ tocado, onCerrar, onVolar, onPreguntar, onFicha, onToc
         setDatos(j);
         // El puntaje recién calculado va al mapa, para que el relleno por prospectividad lo pinte ya.
         if (tocado.tipo === 'concesion' && typeof j?.prospectividad?.puntaje === 'number') {
-          window.dispatchEvent(new CustomEvent('electrum:prospectividad', { detail: { id: tocado.id, puntaje: j.prospectividad.puntaje } }));
+          window.dispatchEvent(new CustomEvent('electrum:prospectividad', { detail: { id: tocado.id, puntaje: j.prospectividad.cobertura > 0 ? j.prospectividad.puntaje : null } }));
         }
       } catch (e: any) {
         if (!corte.signal.aborted) setError('No alcancé el servidor. Revisá la conexión y volvé a tocar.');

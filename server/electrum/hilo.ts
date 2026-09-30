@@ -85,10 +85,24 @@ export type PeticionHilo = { ip?: string | null; headers?: Record<string, unknow
  */
 export function quienDelHilo(persona: string | null | undefined, req: PeticionHilo): string {
   if (persona) return persona;
+  /*
+   * Visitante opaco (auditoría H04): el navegador genera una vez un identificador aleatorio de 128
+   * bits y lo manda en `x-electrum-visita`. Con eso, dos personas detrás de la misma red y con el
+   * mismo navegador ya no comparten hilo ni informes. Se guarda hasheado: la clave no lleva el valor.
+   * La huella de IP y navegador queda solo de respaldo, para clientes viejos que no lo mandan.
+   */
+  const visita = visitaDe(req);
+  if (visita) return `visita:${crypto.createHash('sha256').update(visita).digest('hex').slice(0, 32)}`;
   const ip = String(req.ip || '');
   const agente = String(req.headers?.['user-agent'] || '').slice(0, 400);
   const huella = crypto.createHash('sha256').update(`${SAL_VISITANTE}|${ip}|${agente}`).digest('hex').slice(0, 24);
   return `visita:${huella}`;
+}
+
+/** El identificador de visitante que manda el navegador, si tiene la forma esperada. */
+export function visitaDe(req: PeticionHilo): string | null {
+  const v = String(req.headers?.['x-electrum-visita'] || '').trim();
+  return /^[A-Za-z0-9_-]{22,64}$/.test(v) ? v : null;
 }
 
 /** La llave del hilo de una petición HTTP: persona o visitante, y canal. */

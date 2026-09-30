@@ -247,3 +247,11 @@ export function vencimientos(catastro: { features: Rasgo[] } | null, hoy = new D
   }
   return { noventa, anio, vencidas };
 }
+
+/** «DERECHOS MINEROS EN HONDURAS A JUNIO 2026» → «Derechos mineros en Honduras a junio 2026». */
+export function enOracion(nombre: string): string {
+  const t = nombre.trim();
+  if (t !== t.toUpperCase()) return t;
+  const bajo = t.toLowerCase().replace(/\bhonduras\b/g, 'Honduras').replace(/\binhgeomin\b/g, 'INHGEOMIN');
+  return bajo.charAt(0).toUpperCase() + bajo.slice(1);
+}

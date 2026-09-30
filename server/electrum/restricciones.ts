@@ -22,7 +22,7 @@
  * Todo sale de PostGIS, set a set: la cartera entera (90 zonas) se revisa en tres consultas, no
  * en noventa.
  */
-import { conTextoReparado, consultaConTope, hayBase } from './db';
+import { claseTraslapeSql, conTextoReparado, consultaConTope, hayBase } from './db';
 import { capasPorRol } from './entorno';
 
 /**
@@ -156,8 +156,11 @@ async function socialesYTerceros(ids: number[], poblados: number[]) {
       `WITH ${FUENTE}
        SELECT s.id::text AS cid, o.nombre AS con, o.titular, s.ha::float8 AS ha_c,
               (ST_Area(ST_Intersection(s.geom, o.geom)::geography) / 10000.0)::float8 AS ha
-         FROM src s JOIN concesion o ON o.id <> s.id AND o.geom && s.geom AND ST_Intersects(o.geom, s.geom)
-        WHERE coalesce(lower(o.titular), '') <> coalesce(lower((SELECT titular FROM concesion WHERE id = s.id)), '')`,
+         FROM src s JOIN concesion sc ON sc.id = s.id
+         JOIN concesion o ON o.id <> s.id AND o.geom && s.geom AND ST_Intersects(o.geom, s.geom)
+        -- La misma clasificación que el tablero y el chat (db.ts): solo cuenta como tercero lo que
+        -- es de otro titular conocido; el mismo derecho repetido o sin titular no.
+        WHERE ${claseTraslapeSql('sc', 'o')} = 'entre_titulares'`,
       [ids]
     ),
   ]);
@@ -192,7 +195,7 @@ function motivoDe(rol: TipoRestriccion, zona: string | null): string {
     case 'poblados':
       return 'Caseríos dentro: socialización y consulta previa antes de cualquier trabajo.';
     case 'traslape':
-      return 'Se pisa con un derecho de otro titular: conflicto a resolver ante INHGEOMIN.';
+      return 'Se pisa con un derecho de otro titular: a verificar con INHGEOMIN (puede ser un conflicto o un error de digitalización; si es real, manda la prelación).';
   }
 }
 

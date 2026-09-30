@@ -1032,11 +1032,20 @@ export function Mapa({ orden, motor, fondo, claveGoogle, extras = [], seleccion 
     const m = mapa.current;
     if (!m || !listo) return;
     const alRecibir = (e: Event) => {
-      const { id, puntaje } = (e as CustomEvent<{ id: number; puntaje: number }>).detail || ({} as any);
+      // `puntaje` null = sin datos para evaluar: se marca aparte, no como «muy baja» (H07).
+      const { id, puntaje } = (e as CustomEvent<{ id: number; puntaje: number | null }>).detail || ({} as any);
       const fc = pintado.concesiones as { features?: Array<{ properties?: Record<string, unknown> }> } | null;
       const f = fc?.features?.find((x) => Number(x.properties?.id) === Number(id));
-      if (!f?.properties || f.properties.prosp === puntaje) return;
-      f.properties.prosp = puntaje;
+      if (!f?.properties) return;
+      if (puntaje == null) {
+        if (f.properties.prosp_sin === 1 && !('prosp' in f.properties)) return;
+        delete f.properties.prosp;
+        f.properties.prosp_sin = 1;
+      } else {
+        if (f.properties.prosp === puntaje) return;
+        f.properties.prosp = puntaje;
+        delete f.properties.prosp_sin;
+      }
       /*
        * Volver a mandar el catastro entero (mil polígonos) rehace todas sus teselas y los nombres
        * parpadean. Solo hace falta si el relleno por prospectividad se está viendo; si no, el dato

@@ -434,3 +434,20 @@ test('si preguntan qué dice un informe, los trozos de ESE informe llegan pegado
     await consulta(`DELETE FROM documento WHERE nombre LIKE 'prueba-prev-%'`);
   }
 });
+
+// Auditoría H04: la huella de IP y navegador mezclaba a dos visitantes de la misma red.
+test('visitante opaco: misma IP y navegador, identificadores distintos, hilos distintos', async () => {
+  const { quienDelHilo } = await import('../server/electrum/hilo');
+  const base = { ip: '10.0.0.1', headers: { 'user-agent': 'Mozilla/5.0 igual' } };
+  const a = quienDelHilo(null, { ...base, headers: { ...base.headers, 'x-electrum-visita': 'AAAAAAAAAAAAAAAAAAAAAA' } });
+  const b = quienDelHilo(null, { ...base, headers: { ...base.headers, 'x-electrum-visita': 'BBBBBBBBBBBBBBBBBBBBBB' } });
+  assert.notEqual(a, b);
+  assert.match(a, /^visita:[0-9a-f]{32}$/);
+  assert.ok(!a.includes('AAAA'), 'la clave no lleva el identificador tal cual');
+  // El mismo visitante, desde otra red, sigue siendo él.
+  assert.equal(quienDelHilo(null, { ip: '192.168.1.9', headers: { 'user-agent': 'otro', 'x-electrum-visita': 'AAAAAAAAAAAAAAAAAAAAAA' } }), a);
+  // Una persona con sesión manda sobre todo.
+  assert.equal(quienDelHilo('jose', { ...base, headers: { 'x-electrum-visita': 'AAAAAAAAAAAAAAAAAAAAAA' } }), 'jose');
+  // Un valor con mala forma no se acepta: queda la huella de respaldo.
+  assert.match(quienDelHilo(null, { ...base, headers: { ...base.headers, 'x-electrum-visita': 'corto' } }), /^visita:[0-9a-f]{24}$/);
+});

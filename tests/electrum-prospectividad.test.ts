@@ -36,10 +36,13 @@ test('sin datos en nada: cero, cobertura cero y cada ausencia dicha', () => {
   const p = puntuar(null, [], null);
   assert.equal(p.puntaje, 0);
   assert.equal(p.cobertura, 0);
-  assert.equal(p.nivel, 'muy baja');
+  // Auditoría H07: «no estudiado» no es «muy baja».
+  assert.equal(p.nivel, 'sin datos');
+  assert.equal(p.estado, 'sin_datos');
   assert.ok(p.componentes.every((c) => !c.medido));
   const r = prospectividadEnRenglones(p).join('\n');
-  assert.match(r, /se pudieron mirar 0 de los 100/);
+  assert.match(r, /Sin datos para evaluar/);
+  assert.match(r, /no es un puntaje bajo/);
   assert.match(r, /Sin muestras de JICA/);
   assert.match(r, /no una estimación de recursos/);
 });
@@ -83,4 +86,7 @@ test('geología sin capas cargadas no se cuenta como medida', () => {
   const q = puntuar(geo(5), [], null);
   assert.equal(q.componentes[0].puntos, 22.5);
   assert.equal(q.cobertura, 45);
+  // Solo geología (45 de 100): hay puntaje, pero es evidencia insuficiente para compararlo.
+  assert.equal(q.estado, 'insuficiente');
+  assert.match(prospectividadEnRenglones(q).join('\n'), /no se compara con concesiones mejor documentadas/);
 });

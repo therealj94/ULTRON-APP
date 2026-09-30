@@ -12,6 +12,7 @@ import type { Geometry, Position } from 'geojson';
 import { documentoPdf, type Bloque } from '../../lib/pdf';
 import { exigirPlataforma, identidadDe, limitar } from '../seguridad';
 import { consultaConTope, hayBase } from './db';
+import { quienDelHilo } from './hilo';
 import { entornoDeArea, type Entorno } from './entorno';
 import { renglonesEntorno } from './explorar';
 import { verticesDe } from './exportar';
@@ -189,7 +190,7 @@ export function montarRutasArea(app: Express) {
       const id = identidadDe(req);
       const r = await informeArea(x.g, x.nombre, id?.persona.nombre || null);
       if ('error' in r) return res.status(400).json({ error: r.error, honesto: true });
-      const guardado = guardarInforme({ ...r }, id?.persona.id || null);
+      const guardado = guardarInforme({ ...r }, quienDelHilo(id?.persona.id, req));
       return res.json({ id: guardado, nombre: r.nombre, url: `/api/electrum/informe/${guardado}`, bytes: r.pdf.length, honesto: true });
     } catch (e: any) {
       console.error('[area] informe:', String(e?.message || e).slice(0, 200));
