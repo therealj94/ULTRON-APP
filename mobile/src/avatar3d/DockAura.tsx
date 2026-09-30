@@ -18,7 +18,8 @@
 import { useMemo, useRef, type ReactNode } from 'react';
 import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
-import { tr, useIdioma } from '../i18n';
+import { idiomaActual, tr, useIdioma } from '../i18n';
+import { motivoFalloVoz } from '../compa/duenoAudio';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
 import type { Pantalla } from '../nucleo/contrato';
 import { useVozOpcional, type ApiVoz } from '../compa/VozProvider';
@@ -82,6 +83,8 @@ export function BotonAuraAlLado({ color, colorActivo }: { color: string; colorAc
 export function textoEstado(e: EstadoAvatar, voz: ApiVoz): string {
   const v = voz.vista;
   if (e.silenciado) return tr('En silencio · toca dos veces para despertarla', 'Muted · double-tap to wake her');
+  // No abrió: por qué, dicho claro (y que el micrófono vuelve a estar libre para reintentar).
+  if (!v.montada && v.estado === 'error') return `${tr('No pude conectar', 'Couldn’t connect')}: ${motivoFalloVoz(v.detalle, idiomaActual() === 'en')} · ${tr('toca el micrófono para reintentar', 'tap the mic to retry')}`;
   if (v.montada && v.estado === 'conectando') return tr('Conectando…', 'Connecting…');
   if (e.hablando) return tr('Hablando', 'Speaking');
   if (e.pensando) return tr('Pensando…', 'Thinking…');

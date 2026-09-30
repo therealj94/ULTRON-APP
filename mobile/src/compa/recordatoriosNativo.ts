@@ -14,6 +14,8 @@
  */
 import { emitir, escuchar } from '../nucleo/contrato';
 import { sumarManejadorDeFondo } from '../pulse/servicioLlamada';
+import { seudonimoActual } from '../lib/cuenta';
+import { registrarTrabajoActivo } from '../lib/barreraOta';
 import * as R from './recordatorios';
 
 type NotifeeCompleto = R.NotifeeMin & {
@@ -48,21 +50,39 @@ export function notifeeReal(): { m: NotifeeCompleto; k: R.ConstantesNotifee } | 
   return cargado;
 }
 
-export const depsRecordatorios: R.DepsRecordatorio = { notifee: notifeeReal };
+/** El dueño de los avisos es quien está dentro (su seudónimo, lib/cuenta.ts). */
+export const depsRecordatorios: R.DepsRecordatorio = { notifee: notifeeReal, dueno: seudonimoActual };
 
 let enLlamada = false;
 let aplazadas: R.LlamadaRecordatorio[] = [];
 
+/**
+ * La llamada que sonó es de OTRA persona (o de nadie: un aviso viejo sin dueño): se calla la que suena
+ * y nada más. No se enseña «AURA te llama» con su texto, no se lee en voz alta y no se le quitan a su
+ * dueño el reintento ni el aviso final.
+ */
+async function callarAjena(l: R.LlamadaRecordatorio) {
+  R.fijarSonando(null);
+  await notifeeReal()?.m.cancelNotification?.(`${l.base}-${l.paso}`).catch(() => undefined);
+}
+
 /** La persona contestó (el botón del aviso o el de la pantalla «AURA te llama»). */
 export async function contestar(l: R.LlamadaRecordatorio) {
+  if (!R.esDeQuienEsta(l, depsRecordatorios)) return callarAjena(l);
   R.fijarSonando(null);
   await R.alContestar(l.base, depsRecordatorios);
   if (R.anotarContestada(l)) emitir('recordatorio', { texto: l.texto, base: l.base });
 }
 
 export async function rechazar(l: R.LlamadaRecordatorio) {
+  if (!R.esDeQuienEsta(l, depsRecordatorios)) return callarAjena(l);
   R.fijarSonando(null);
   await R.alRechazar(l, depsRecordatorios);
+}
+
+/** Suena: la pantalla «AURA te llama» solo para su dueño. */
+function sonar(l: R.LlamadaRecordatorio) {
+  if (R.esDeQuienEsta(l, depsRecordatorios)) R.fijarSonando(l);
 }
 
 /** Un evento de notifee: true si era de los recordatorios. */
@@ -77,7 +97,7 @@ export async function atenderEvento(e: R.EventoNotifee): Promise<boolean> {
     // En plena llamada de PULSE2CHAT no suena encima: vuelve cuando esa termine.
     await R.aplazar(r.llamada, depsRecordatorios);
     if (!aplazadas.some((x) => x.base === r.llamada.base)) aplazadas.push(r.llamada);
-  } else R.fijarSonando(r.llamada);
+  } else sonar(r.llamada);
   return true;
 }
 
@@ -90,6 +110,8 @@ export async function atenderEvento(e: R.EventoNotifee): Promise<boolean> {
     /* sin eventos en primer plano, el aviso igual suena y abre la app */
   }
   sumarManejadorDeFondo(atenderEvento);
+  // Una llamada de AURA sonando: la actualización por aire no recarga encima (lib/ota.ts).
+  registrarTrabajoActivo('recordatorio-sonando', () => !!R.llamadaSonando());
   escuchar('llamada', ({ activa }) => {
     enLlamada = !!activa;
     if (!activa && aplazadas.length) {
@@ -105,7 +127,7 @@ export async function atenderEvento(e: R.EventoNotifee): Promise<boolean> {
       if (!r) return;
       if (r.que === 'contestar') void contestar(r.llamada);
       else if (r.que === 'rechazar') void rechazar(r.llamada);
-      else R.fijarSonando(r.llamada);
+      else sonar(r.llamada);
     })
     .catch(() => undefined);
 })();

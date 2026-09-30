@@ -78,7 +78,7 @@ const laya = http.createServer((req, res) => {
   req.on('end', () => {
     const j = JSON.parse(c || '{}');
     alLaya.push(`${req.url} ${j.texto}`);
-    const accion = /no me hables tanto/.test(j.texto) ? 'callar' : 'ninguna';
+    const accion = /no me hables tanto|deja la habladera/.test(j.texto) ? 'callar' : 'ninguna';
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ p: { [accion]: 0.92, ninguna: accion === 'ninguna' ? 0.92 : 0.03 }, etiquetas: [], grupos: { accion } }));
   });
 });
@@ -114,7 +114,7 @@ const proc: ChildProcess = spawn(process.execPath, ['--import', import.meta.reso
     RED_LENTA_MS: '2500',
     // Las personas de estas pruebas son de la junta (en el padrón, con consulta). Quien no está en el
     // padrón es miembro de la comunidad (server/nivel.ts) y tiene su propia prueba al final.
-    ULTRON_PADRON: ['majo | María José | majo.prueba@ordenglobal.org | | ultron=lee', 'medidor | Medidor | medidor.prueba@ordenglobal.org | | ultron=lee', 'otra | Otra Persona | otra.prueba@ordenglobal.org | | ultron=lee'].join('\n'),
+    ULTRON_PADRON: ['majo | María José | majo.prueba@ordenglobal.org | | ultron=lee', 'medidor | Medidor | medidor.prueba@ordenglobal.org | | ultron=lee', 'otra | Otra Persona | otra.prueba@ordenglobal.org | | ultron=lee', 'ligera | Ligera | ligera.prueba@ordenglobal.org | | ultron=lee', 'bilingue | Bilingue | bilingue.prueba@ordenglobal.org | | ultron=lee'].join('\n'),
   },
   stdio: ['ignore', 'ignore', 'pipe'],
   detached: true,
@@ -294,11 +294,22 @@ test('acciones: el camino rápido va al canal del teléfono sin el 27B; «escrí
     assert.equal(alNodo.length, 0, 'sin el modelo grande');
     assert.ok(await espera(() => tel.eventos().some((e) => e.id === atras.acciones[0].id && e.accion.tipo === 'atras')), 'el mismo id por el canal');
 
-    // Lo que las reglas no conocen y Laya «comando» decide claro.
+    // Lo que las reglas no conocen y Laya LIGERA decide claro: aquí mismo, sin preguntarle al nodo.
+    alLaya.length = 0;
     const calla = await turno('ya no me hables tanto');
     assert.deepEqual(calla.acciones.map((e: any) => e.accion), [{ tipo: 'silencio', valor: true }]);
-    assert.equal(calla.via, 'app-laya');
+    assert.equal(calla.via, 'app-ligera');
+    assert.equal(alLaya.filter((l) => l.startsWith('/v1/comando ')).length, 0, 'sin ida y vuelta al nodo');
+    // Lo que Laya ligera no ve claro y el Laya del nodo sí.
+    const calla2 = await turno('deja la habladera');
+    assert.deepEqual(calla2.acciones.map((e: any) => e.accion), [{ tipo: 'silencio', valor: true }]);
+    assert.equal(calla2.via, 'app-laya');
     assert.ok(alLaya.some((l) => l.startsWith('/v1/comando ')));
+    // En inglés, con la app en español: la acción y la respuesta en inglés.
+    const avatarEn = await turno('switch me to claudio');
+    assert.deepEqual(avatarEn.acciones.map((e: any) => e.accion), [{ tipo: 'avatar', valor: 'claudio' }]);
+    assert.equal(avatarEn.reply, 'Sure! Switching you to Claudio.');
+    assert.equal(alNodo.length, 0, 'sin el modelo grande');
 
     // Por voz también (el mismo turno): la voz dice «Va.» y la acción llega al teléfono.
     const tema = await voz(paseDe(), [{ role: 'user', content: 'ponlo oscuro' }]);
@@ -598,6 +609,25 @@ test('latencia hasta la primera palabra (voz), con cifras', { skip: !listo }, as
       await tel.cerrar();
     }
   });
+  // Órdenes que las reglas no conocían y resuelve Laya ligera (sin red): antes esperaban al 27B.
+  // Otra persona: cada cuenta tiene su cupo de turnos hablados por minuto.
+  const ligera = emitirSesion({ correo: 'ligera.prueba@ordenglobal.org', nombre: 'Ligera', rol: 'Junta' });
+  const ordenEn = await medir('orden en inglés «switch me to claudio» (Laya ligera)', async () => {
+    const tel = await canal(ligera.token);
+    try {
+      return await voz(paseDe(ligera), [{ role: 'user', content: 'switch me to claudio' }]);
+    } finally {
+      await tel.cerrar();
+    }
+  });
+  const ordenEs = await medir('orden «quiero ver mis chats» (Laya ligera)', async () => {
+    const tel = await canal(ligera.token);
+    try {
+      return await voz(paseDe(ligera), [{ role: 'user', content: 'quiero ver mis chats' }]);
+    } finally {
+      await tel.cerrar();
+    }
+  });
   const pregunta = await medir('pregunta al 27B (primer token del nodo a 250 ms, un trozo cada 15 ms)', () => voz(paseDe(medidor), [{ role: 'user', content: 'explícame cómo va el proyecto de la planta de beneficio este trimestre' }]));
   // Con la red de afuera lenta (tests/red-lenta.ts), un dato que va a internet (el spot del oro) no
   // puede frenar la primera palabra: la voz sigue sin él tras TOPE_PASO_VOZ_MS.
@@ -614,10 +644,72 @@ test('latencia hasta la primera palabra (voz), con cifras', { skip: !listo }, as
   // Holgado a propósito (máquinas de CI lentas): lo que se mira es el orden de magnitud.
   assert.ok(charla.primeraMs < 1500);
   assert.ok(orden.primeraMs < 1500);
+  assert.ok(ordenEn.primeraMs < 1500 && ordenEs.primeraMs < 1500);
   assert.ok(pregunta.primeraMs < 250 + 1500);
   assert.ok(conDato.primeraMs < 250 + 1500, 'lo que espera a internet no frena la voz');
   // La primera frase larga sale en la coma, antes de que el 27B termine de escribir.
   assert.ok(pregunta.primeraMs < pregunta.totalMs - 100, 'la voz empieza antes de que termine la respuesta');
+});
+
+test('latencia de la mesa con la cámara como en 4.7.0 (escena en cada turno + la foto subiendo a la vez) y sin ella, con cifras', { skip: !listo }, async () => {
+  const N = 7;
+  const { default: sharp } = await import('sharp');
+  const { trabajoPorMinuto } = await import('../mobile/src/lib/camaraModo');
+  // Una foto como la de la cámara del teléfono (720 px de lado corto, JPEG calidad 0,5), hecha de un
+  // retrato real de la app: su tamaño es el que sube cada 20 s con alguien delante.
+  const retrato = fs.readdirSync(path.join(RAIZ, 'mobile/assets/avatares/claudio')).find((f) => /\.(webp|png|jpe?g)$/i.test(f))!;
+  const foto = await sharp(path.join(RAIZ, 'mobile/assets/avatares/claudio', retrato)).resize(1280, 720, { fit: 'cover' }).jpeg({ quality: 50 }).toBuffer();
+  const fotoB64 = foto.toString('base64');
+  const primeraDelta = async (body: Record<string, unknown>) => {
+    const t0 = performance.now();
+    const r = await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: hTurno(), body: JSON.stringify(body) });
+    let primera = -1;
+    let buf = '';
+    for await (const t of r.body as any) {
+      buf += new TextDecoder().decode(t);
+      if (primera < 0 && /event: (delta|emocion)/.test(buf)) primera = performance.now() - t0;
+    }
+    return { primeraMs: primera, totalMs: performance.now() - t0 };
+  };
+  primerTokenMs = 250;
+  pasoMs = 15;
+  contestar = () => 'Claro. Te cuento lo que veo y lo que sé, en corto, para que lo tengas a mano.';
+  const med = async (nombre: string, f: () => Promise<{ primeraMs: number; totalMs: number }>) => {
+    const p: number[] = [];
+    const t: number[] = [];
+    for (let i = 0; i < N; i++) {
+      const r = await f();
+      p.push(r.primeraMs);
+      t.push(r.totalMs);
+    }
+    const fila = { primeraMs: Math.round(mediana(p)), totalMs: Math.round(mediana(t)) };
+    console.log(`[latencia] mesa ${nombre}: primera palabra ${fila.primeraMs} ms · respuesta entera ${fila.totalMs} ms (mediana de ${N})`);
+    return fila;
+  };
+  const escena = 'Hay una persona frente a la mesa, a la izquierda, mirando la pantalla, sonriendo. En la mesa: taza, teléfono.';
+  const conCamara = await med('con la cámara de 4.7.0 (escena + foto subiendo)', async () => {
+    // La subida de la cámara (cada 20 s con alguien) cae justo con el turno: el peor caso de 4.7.0.
+    const subida = fetch(`${BASE}/api/vision/analyze`, { method: 'POST', headers: h(), body: JSON.stringify({ image: fotoB64, prompt: 'lista corta' }) }).then((r) => r.text()).catch(() => '');
+    const r = await primeraDelta({ message: '¿qué me recomiendas para hoy?', escena });
+    await subida;
+    return r;
+  });
+  const sinCamara = await med('con la cámara apagada, turno como 4.7.0 (sin marca de voz)', () => primeraDelta({ message: '¿qué me recomiendas para hoy?' }));
+  // Ahora: lo dicho en voz alta en la mesa llega con `hablado: true` y lleva los topes de la voz.
+  const hablado = await med('ahora: cámara apagada y dicho en voz alta (hablado: true)', () => primeraDelta({ message: '¿qué me recomiendas para hoy?', hablado: true }));
+  primerTokenMs = 0;
+  pasoMs = 4;
+  const antes = trabajoPorMinuto({ encendida: true, conPersona: true });
+  const ahora = trabajoPorMinuto({ encendida: false, conPersona: true });
+  console.log(
+    `[latencia] cámara en el teléfono con alguien delante: 4.7.0 ${antes.fotos} fotos/min + ${antes.subidas} subidas/min de ${Math.round(fotoB64.length / 1024)} KB (${Math.round((antes.subidas * fotoB64.length) / 1024)} KB/min de subida) · ahora por omisión ${ahora.fotos} fotos/min, ${ahora.subidas} subidas`
+  );
+  assert.ok(conCamara.primeraMs > 0 && sinCamara.primeraMs > 0);
+  assert.deepEqual(ahora, { fotos: 0, subidas: 0 });
+  assert.ok(antes.fotos > 150, 'con alguien delante, 4.7.0 tomaba ~3 fotos por segundo');
+  // Lo que espera a internet ya no frena la primera palabra de la mesa hablada (la red tarda 2,5 s).
+  assert.ok(hablado.primeraMs < 250 + 1500, `la mesa hablada no espera a internet (${hablado.primeraMs} ms)`);
+  assert.ok(hablado.primeraMs < sinCamara.primeraMs - 1000, 'y es más rápida que la mesa tratada como escrita');
 });
 
 test('un miembro de la comunidad (fuera del padrón): lo público, sin taller ni nada de la junta, en texto y en voz', { skip: !listo }, async () => {

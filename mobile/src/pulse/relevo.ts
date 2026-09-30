@@ -25,11 +25,23 @@ import * as SecureStore from 'expo-secure-store';
 import Constants from 'expo-constants';
 import * as CANDADO from './candado';
 import type { Aparato, Bulto } from './candado';
+import { correoCuenta } from '../lib/cuenta';
 
 const BASE = String((Constants.expoConfig?.extra as any)?.mensajesApi || 'https://cerebro.ordenscan.com/mensajes').replace(/\/+$/, '');
 const CAJON_CUENTA = 'aura.p2c.cuenta';
 
-export type Cuenta = { correo: string; llave: string };
+/**
+ * La cuenta del chat en este teléfono. `aura`: el correo de la persona de AU-RA que la conectó. El chat
+ * es de quien está dentro de AU-RA: sin nadie dentro, o con otra persona, no se recupera ni escucha.
+ */
+export type Cuenta = { correo: string; llave: string; aura?: string };
+
+const normalCorreo = (c: string | null | undefined) => String(c || '').trim().toLowerCase();
+
+/** ¿Esta cuenta del chat es de esta persona de AU-RA? Las viejas (sin `aura`) valen si es el mismo correo. */
+function esDe(c: Cuenta, duenoAura: string): boolean {
+  return c.aura ? normalCorreo(c.aura) === duenoAura : normalCorreo(c.correo) === duenoAura;
+}
 let yo: Cuenta | null = null;
 let aparato = '';
 
@@ -129,10 +141,11 @@ function avisarCuenta() {
  * para todos sus contactos. Solo si la ficha quedó SIN nombre —cuenta recién hecha— se le pone el de
  * Genesis, aparte y después.
  */
-export async function entrarConPase(pase: string, verificador: string, nombre?: string): Promise<Cuenta> {
+export async function entrarConPase(pase: string, verificador: string, nombre?: string, duenoAura: string = correoCuenta()): Promise<Cuenta> {
   const d = await pedir<{ llave: string; correo: string }>('/alta', { pase, verificador });
   if (!d?.llave || !d?.correo) throw new Error('el relevo no devolvió la llave');
-  yo = { correo: String(d.correo).toLowerCase(), llave: d.llave };
+  const aura = normalCorreo(duenoAura);
+  yo = { correo: String(d.correo).toLowerCase(), llave: d.llave, ...(aura ? { aura } : {}) };
   await SecureStore.setItemAsync(CAJON_CUENTA, JSON.stringify(yo)).catch(() => {});
   publicadaPara = null;
   await publicarMiLlave().catch(() => null);
@@ -149,14 +162,27 @@ export async function entrarConPase(pase: string, verificador: string, nombre?: 
   return yo;
 }
 
-/** La cuenta que ya estaba en este teléfono, comprobada contra el relevo. null si no hay o no vale. */
-export async function recuperar(): Promise<Cuenta | null> {
-  if (yo) return yo;
+/**
+ * La cuenta que ya estaba en este teléfono, comprobada contra el relevo. null si no hay, no vale o no
+ * es de quien está dentro de AU-RA (`duenoAura`, por omisión la persona de la sesión: lib/cuenta.ts).
+ * Sin nadie dentro no se recupera: una sesión de AU-RA vencida no deja el chat de nadie escuchando.
+ * La de otra persona tampoco (no se borra: es suya, y salir de su sesión ya la borra).
+ */
+export async function recuperar(duenoAura: string = correoCuenta()): Promise<Cuenta | null> {
+  const dueno = normalCorreo(duenoAura);
+  if (!dueno) return null;
+  if (yo) {
+    if (esDe(yo, dueno)) return yo;
+    // En memoria quedó el chat de otra persona: se suelta antes de seguir.
+    await salir();
+    return null;
+  }
   const g = await SecureStore.getItemAsync(CAJON_CUENTA).catch(() => null);
   if (!g) return null;
   try {
     const c = JSON.parse(g) as Cuenta;
     if (!c?.correo || !c?.llave) return null;
+    if (!esDe(c, dueno)) return null;
     yo = c;
     avisarCuenta();
     await publicarMiLlave();
@@ -308,8 +334,17 @@ function soloPersonas(para: string) {
   }
 }
 
-/** Envía un texto, cerrado siempre que se pueda. `e2e:false` = salió en claro (y se dice). */
-export async function enviar(para: string, texto: string): Promise<{ ok: true; e2e: boolean; id?: string }> {
+/**
+ * Envía un texto CIFRADO de punta a punta. Si no se puede cifrar —el otro no tiene aparatos con llave
+ * (`sin-aparatos`: no abrió el chat en ningún lado, el llavero vino vacío o alguien lo vació), sin red,
+ * sin llave propia— NO sale: lanza con `motivo` y el mensaje queda para reintentar. Antes, sin aparatos,
+ * salía en claro al relevo y el aviso «sin cifrar» llegaba después, cuando ya no había nada que decidir.
+ *
+ * Mandarlo legible solo con una decisión explícita y PREVIA de la persona (`sinCifrar: true`, pedida
+ * por la pantalla antes de enviar). El contrato del relevo no cambia: `{ para, texto }` sigue siendo
+ * el envío en claro que ya aceptaba.
+ */
+export async function enviar(para: string, texto: string, o: { sinCifrar?: boolean } = {}): Promise<{ ok: true; e2e: boolean; id?: string }> {
   para = String(para || '').toLowerCase();
   soloPersonas(para);
   const r = await cerrarPara(para, texto);
@@ -317,7 +352,7 @@ export async function enviar(para: string, texto: string): Promise<{ ok: true; e
     const d = await pedir<{ id?: string }>('/enviar', firmado({ para, cif: r.cerrado }));
     return { ok: true, e2e: true, id: d?.id };
   }
-  if (r.motivo !== 'sin-aparatos') {
+  if (r.motivo !== 'sin-aparatos' || o.sinCifrar !== true) {
     const e: ErrorRelevo = new Error('no se pudo cifrar: ' + r.motivo);
     e.motivo = r.motivo;
     throw e;

@@ -120,9 +120,11 @@ def leer_filas(rutas, ids, grupos, estricto=True, origen=False, recortar_a_ids=F
                     continue
                 e = list(dict.fromkeys(e))
                 raras = [x for x in e if x not in ids]
-                if raras and recortar_a_ids:
+                recortadas = bool(raras and recortar_a_ids)
+                if recortadas:
                     # Al evaluar un checkpoint VIEJO con datos nuevos (p. ej. «comando» sin el grupo `app`
-                    # de AU-RA): las etiquetas que ese checkpoint no conoce se quitan, no son un error.
+                    # de AU-RA, o sin sus manos nuevas): las etiquetas que ese checkpoint no conoce se
+                    # quitan, no son un error.
                     e = [x for x in e if x in ids]
                     raras = []
                 if raras:
@@ -130,7 +132,10 @@ def leer_filas(rutas, ids, grupos, estricto=True, origen=False, recortar_a_ids=F
                     continue
                 for g, miembros in grupos.items():
                     k = [x for x in e if x in miembros]
-                    if len(k) != 1:
+                    # Un grupo que se quedó SIN etiqueta por el recorte (la mano nueva que el checkpoint viejo
+                    # no conoce) no es un error de datos: esa fila le cuenta como fallo en ese grupo, porque
+                    # su ganador nunca coincide con «ninguna etiqueta».
+                    if len(k) != 1 and not (recortadas and not k):
                         errores.append(f'{r}:{n} grupo {g}: debe llevar exactamente uno y lleva {k}')
                 fila = {**d, 'q': q.strip(), 'e': e}
                 if origen:

@@ -1,3 +1,4 @@
+import { Dialogo } from './Dialogo';
 import React, { useEffect, useState } from 'react';
 import { ShieldCheck, ShieldAlert, X, Lock, Mail, KeyRound, Globe, Loader2, LogOut } from 'lucide-react';
 import { playSfx } from '../03-voz/audio';
@@ -6,15 +7,15 @@ import { CambiarClave, OlvideClave, PanelSolicitudes, PonerClave, SolicitarAcces
 
 /** Las pantallas de cuentas con los colores de la sala de AU-RA. */
 export const TEMA_AURA: Tema = {
-  campo: 'w-full px-4 py-3 bg-[#34363A] border border-[#46484D] rounded-2xl text-[15px] text-[#ECE8E2] placeholder:text-[#8A847C] focus:border-[#D6B56C] focus:outline-none',
-  boton: 'w-full py-3 px-4 rounded-full bg-[#D6B56C] text-[#232528] hover:bg-[#C9A55A] font-semibold text-[15px] cursor-pointer disabled:opacity-50',
-  secundario: 'w-full py-3 px-4 rounded-full border border-[#6B4A3E] text-[#F0B39A] hover:bg-[#3F2E28] font-semibold text-[14px] cursor-pointer disabled:opacity-50',
-  enlace: 'w-full text-center text-[13px] text-[#B9B2A8] hover:text-[#ECE8E2] cursor-pointer',
-  titulo: 'font-display font-semibold text-xl text-[#ECE8E2]',
-  texto: 'text-[14px] leading-snug text-[#B9B2A8]',
-  error: 'p-2.5 rounded-xl bg-[#3F2E28] border border-[#6B4A3E] text-[13px] text-[#E0726B]',
-  ok: 'p-2.5 rounded-xl bg-[#2F3A30] border border-[#3F4D3F] text-[13px] text-[#A9C3A4]',
-  tarjeta: 'p-3 rounded-2xl bg-[#2B2D31] border border-[#46484D] text-[#ECE8E2]',
+  campo: 'w-full px-4 py-3 bg-(--aura-panel) border border-(--aura-borde) rounded-2xl text-[15px] text-(--aura-tinta) placeholder:text-(--aura-tinta-3) focus:border-(--aura-oro) focus:outline-none',
+  boton: 'w-full py-3 px-4 rounded-full bg-(--aura-oro) text-(--aura-fondo) hover:bg-(--aura-oro-hover) font-semibold text-[15px] cursor-pointer disabled:opacity-50',
+  secundario: 'w-full py-3 px-4 rounded-full border border-(--aura-barro-borde) text-(--aura-barro-texto) hover:bg-(--aura-barro-fondo) font-semibold text-[14px] cursor-pointer disabled:opacity-50',
+  enlace: 'w-full text-center text-[13px] text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer',
+  titulo: 'font-display font-semibold text-xl text-(--aura-tinta)',
+  texto: 'text-[14px] leading-snug text-(--aura-tinta-2)',
+  error: 'p-2.5 rounded-xl bg-(--aura-barro-fondo) border border-(--aura-barro-borde) text-[13px] text-(--aura-error-texto)',
+  ok: 'p-2.5 rounded-xl bg-(--aura-salvia-fondo) border border-(--aura-salvia-borde) text-[13px] text-(--aura-salvia-texto)',
+  tarjeta: 'p-3 rounded-2xl bg-(--aura-panel-hondo) border border-(--aura-borde) text-(--aura-tinta)',
 };
 
 interface Props {
@@ -24,7 +25,8 @@ interface Props {
   usuario: { name: string; role: string; authenticated: boolean };
   soundFxEnabled: boolean;
   onClose: () => void;
-  onAuthSuccess: (nombre: string, rol: string) => void;
+  /** `correo`: el de la sesión, para la memoria por cuenta de la mesa (09-estado/memoria.ts). */
+  onAuthSuccess: (nombre: string, rol: string, correo?: string) => void;
   onLogout: () => void;
 }
 
@@ -95,7 +97,7 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
           /* */
         }
         playSfx('grant', soundFxEnabled);
-        onAuthSuccess(data.miembro?.nombre || correo.split('@')[0], data.miembro?.rol || 'Junta Directiva · Orden Global');
+        onAuthSuccess(data.miembro?.nombre || correo.split('@')[0], data.miembro?.rol || 'Junta Directiva · Orden Global', data.miembro?.correo || data.user?.correo || correo);
         setClave('');
         onClose();
       } else {
@@ -120,19 +122,18 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
   };
 
   return (
-    <div id="ultron-acceso" className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-md">
-      <div className="w-full max-w-md bg-[#232528] rounded-[28px] p-6 shadow-[0_16px_48px_rgba(0,0,0,0.53)] flex flex-col gap-4 relative overflow-hidden">
-        <button type="button" onClick={onClose} className="absolute top-4 right-4 w-9 h-9 rounded-full bg-[#3A3C41] text-[#B9B2A8] hover:bg-[#3D3829] flex items-center justify-center cursor-pointer" aria-label="Cerrar">
+    <Dialogo abierto={isOpen} onCerrar={onClose} idTitulo="aura-acceso-titulo" claseCapa="items-center justify-center p-3 sm:p-4" clase="aura-sube w-full max-w-md bg-(--aura-fondo) rounded-[28px] p-6 shadow-[0_16px_48px_rgba(0,0,0,0.53)] flex flex-col gap-4 relative overflow-hidden">
+        <button type="button" onClick={onClose} className="absolute top-4 right-4 w-9 h-9 rounded-full bg-(--aura-panel-2) text-(--aura-tinta-2) hover:bg-(--aura-oro-suave) flex items-center justify-center cursor-pointer" aria-label="Cerrar">
           <X className="w-5 h-5" />
         </button>
         <div>
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#D6B56C]/10 border border-[#46484D] text-[12px] font-mono text-[#E0C27F] mb-1">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-(--aura-oro)/10 border border-(--aura-borde) text-[12px] font-mono text-(--aura-oro-texto) mb-1">
             <Globe className="w-3 h-3" />
             <span>cerebro Orden Global</span>
-            <span className={`w-1.5 h-1.5 rounded-full ${remoto === 'ok' ? 'bg-emerald-400 animate-pulse' : remoto === 'off' ? 'bg-red-400' : 'bg-amber-400'}`} />
+            <span className={`w-1.5 h-1.5 rounded-full ${remoto === 'ok' ? 'bg-(--aura-salvia) animate-pulse' : remoto === 'off' ? 'bg-(--aura-barro)' : 'bg-(--aura-oro)'}`} />
           </div>
-          <h2 className="font-display font-semibold text-2xl text-[#ECE8E2]">Entrar a la junta</h2>
-          <p className="text-[14px] leading-snug text-[#B9B2A8] mt-1">Con sesión: memoria propia, bóveda, redespliegue. Sin sesión, AU-RA igual conversa.</p>
+          <h2 id="aura-acceso-titulo" className="font-display font-semibold text-2xl text-(--aura-tinta)">{usuario.authenticated ? 'Tu sesión' : 'Entrar a la junta'}</h2>
+          <p className="text-[14px] leading-snug text-(--aura-tinta-2) mt-1">Con sesión: memoria propia, bóveda, redespliegue. Sin sesión, AU-RA igual conversa.</p>
         </div>
 
         {vista === 'poner' && enlaceVivo && enlaceVivo.tipo !== 'solicitudes' ? (
@@ -147,7 +148,7 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
               const d = await fetch('/api/ultron/sesion', { headers: headersMesa() })
                 .then((r) => r.json())
                 .catch(() => null);
-              if (d?.authenticated) onAuthSuccess(d.user?.nombre || '', d.user?.rol || 'Junta Directiva · Orden Global');
+              if (d?.authenticated) onAuthSuccess(d.user?.nombre || '', d.user?.rol || 'Junta Directiva · Orden Global', d.user?.correo);
               playSfx('grant', soundFxEnabled);
               onClose();
             }}
@@ -176,60 +177,59 @@ export const AccesoModal: React.FC<Props> = ({ isOpen, enlace = null, usuario, s
           </div>
         ) : usuario.authenticated ? (
           <div className="flex flex-col gap-3">
-            <div className="p-3 rounded-lg bg-[#2F3A30] border border-[#3F4D3F] text-left text-xs font-mono text-[#A9C3A4]">
+            <div className="p-3 rounded-lg bg-(--aura-salvia-fondo) border border-(--aura-salvia-borde) text-left text-xs font-mono text-(--aura-salvia-texto)">
               <div className="flex items-center gap-1.5 font-semibold mb-1"><ShieldCheck className="w-4 h-4" /> Sesión activa</div>
-              <div className="text-[#ECE8E2] text-sm font-semibold">{usuario.name}</div>
-              <div className="text-[#B9B2A8] text-[13px]">{usuario.role}</div>
+              <div className="text-(--aura-tinta) text-sm font-semibold">{usuario.name}</div>
+              <div className="text-(--aura-tinta-2) text-[13px]">{usuario.role}</div>
             </div>
-            <button type="button" onClick={() => setVista('clave')} className="py-3 rounded-full border border-[#46484D] text-[#ECE8E2] hover:bg-[#34363A] font-semibold text-[14px] flex items-center justify-center gap-2 cursor-pointer">
+            <button type="button" onClick={() => setVista('clave')} className="py-3 rounded-full border border-(--aura-borde) text-(--aura-tinta) hover:bg-(--aura-panel) font-semibold text-[14px] flex items-center justify-center gap-2 cursor-pointer">
               <KeyRound className="w-4 h-4" /> Cambiar contraseña
             </button>
             {pendientes !== null && (
-              <button type="button" onClick={() => setVista('solicitudes')} className="py-3 rounded-full border border-[#46484D] text-[#E0C27F] hover:bg-[#34363A] font-semibold text-[14px] flex items-center justify-center gap-2 cursor-pointer">
+              <button type="button" onClick={() => setVista('solicitudes')} className="py-3 rounded-full border border-(--aura-borde) text-(--aura-oro-texto) hover:bg-(--aura-panel) font-semibold text-[14px] flex items-center justify-center gap-2 cursor-pointer">
                 <ShieldCheck className="w-4 h-4" /> Solicitudes de acceso{pendientes ? ` · ${pendientes}` : ''}
               </button>
             )}
-            <button type="button" onClick={salir} className="py-3 rounded-full border border-[#6B4A3E] text-[#F0B39A] hover:bg-[#3F2E28] font-semibold text-[14px] flex items-center justify-center gap-2 cursor-pointer">
+            <button type="button" onClick={salir} className="py-3 rounded-full border border-(--aura-barro-borde) text-(--aura-barro-texto) hover:bg-(--aura-barro-fondo) font-semibold text-[14px] flex items-center justify-center gap-2 cursor-pointer">
               <LogOut className="w-4 h-4" /> Cerrar sesión
             </button>
           </div>
         ) : (
           <form onSubmit={entrar} className="flex flex-col gap-3 text-left">
-            <label className="block text-[13px] font-medium text-[#B9B2A8]">
+            <label className="block text-[13px] font-medium text-(--aura-tinta-2)">
               Correo
               <div className="relative mt-1">
-                <Mail className="w-4 h-4 text-[#B9B2A8] absolute left-3 top-1/2 -translate-y-1/2" />
-                <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="nombre@ordenglobal.org" required className="w-full pl-10 pr-4 py-3 bg-[#34363A] border border-[#46484D] rounded-full text-[15px] text-[#ECE8E2] placeholder:text-[#8A847C] focus:border-[#D6B56C] focus:outline-none" />
+                <Mail className="w-4 h-4 text-(--aura-tinta-2) absolute left-3 top-1/2 -translate-y-1/2" />
+                <input type="email" value={correo} onChange={(e) => setCorreo(e.target.value)} placeholder="nombre@ordenglobal.org" required className="w-full pl-10 pr-4 py-3 bg-(--aura-panel) border border-(--aura-borde) rounded-full text-[15px] text-(--aura-tinta) placeholder:text-(--aura-tinta-3) focus:border-(--aura-oro) focus:outline-none" />
               </div>
             </label>
-            <label className="block text-[13px] font-medium text-[#B9B2A8]">
+            <label className="block text-[13px] font-medium text-(--aura-tinta-2)">
               Clave
               <div className="relative mt-1">
-                <Lock className="w-4 h-4 text-[#B9B2A8] absolute left-3 top-1/2 -translate-y-1/2" />
-                <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} placeholder="••••••••" required className="w-full pl-10 pr-4 py-3 bg-[#34363A] border border-[#46484D] rounded-full text-[15px] text-[#ECE8E2] placeholder:text-[#8A847C] focus:border-[#D6B56C] focus:outline-none" />
+                <Lock className="w-4 h-4 text-(--aura-tinta-2) absolute left-3 top-1/2 -translate-y-1/2" />
+                <input type="password" value={clave} onChange={(e) => setClave(e.target.value)} placeholder="••••••••" required className="w-full pl-10 pr-4 py-3 bg-(--aura-panel) border border-(--aura-borde) rounded-full text-[15px] text-(--aura-tinta) placeholder:text-(--aura-tinta-3) focus:border-(--aura-oro) focus:outline-none" />
               </div>
             </label>
             {error && (
-              <div className="p-2 rounded bg-[#3F2E28] border border-[#6B4A3E] text-[13px] font-mono text-[#E0726B] flex items-center gap-1.5">
+              <div className="p-2 rounded bg-(--aura-barro-fondo) border border-(--aura-barro-borde) text-[13px] font-mono text-(--aura-error-texto) flex items-center gap-1.5">
                 <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
                 <span>{error}</span>
               </div>
             )}
-            <button type="submit" disabled={enviando} className="mt-1 py-3 px-4 rounded-full bg-[#D6B56C] text-[#232528] hover:bg-[#C9A55A] shadow-[0_6px_16px_rgba(214,181,108,0.3)] font-semibold text-[15px] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50">
+            <button type="submit" disabled={enviando} className="mt-1 py-3 px-4 rounded-full bg-(--aura-oro) text-(--aura-fondo) hover:bg-(--aura-oro-hover) shadow-[0_6px_16px_rgba(214,181,108,0.3)] font-semibold text-[15px] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50">
               {enviando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
               <span>{enviando ? 'Entrando…' : 'Entrar'}</span>
             </button>
             <div className="flex items-center justify-between px-1 text-[13px]">
-              <button type="button" onClick={() => { setVista('olvide'); setError(''); }} className="text-[#B9B2A8] hover:text-[#ECE8E2] cursor-pointer">
+              <button type="button" onClick={() => { setVista('olvide'); setError(''); }} className="text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer">
                 ¿Olvidaste tu contraseña?
               </button>
-              <button type="button" onClick={() => { setVista('solicitar'); setError(''); }} className="text-[#B9B2A8] hover:text-[#ECE8E2] cursor-pointer">
+              <button type="button" onClick={() => { setVista('solicitar'); setError(''); }} className="text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer">
                 Solicitar acceso
               </button>
             </div>
           </form>
         )}
-      </div>
-    </div>
+      </Dialogo>
   );
 };

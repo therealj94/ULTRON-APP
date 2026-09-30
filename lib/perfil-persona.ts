@@ -213,15 +213,31 @@ function leerDeDisco(correo: string): Perfil | null {
   }
 }
 
-function escribirEnDisco(correo: string, p: Perfil) {
+function escribirEnDisco(correo: string, p: Perfil): boolean {
   try {
     fs.mkdirSync(carpeta(), { recursive: true });
     const f = path.join(carpeta(), `${huella(correo)}.json`);
     fs.writeFileSync(`${f}.tmp`, JSON.stringify(p));
     fs.renameSync(`${f}.tmp`, f);
+    return true;
   } catch (e: any) {
     console.warn('[perfil] no pude escribir el disco', String(e?.message || e).slice(0, 120));
+    return false;
   }
+}
+
+/**
+ * ¿El disco de este servicio sobrevive a un redespliegue? Solo si quien lo despliega lo declara
+ * (`PERFIL_DISCO_DURABLE=1`: un disco persistente montado en ULTRON_PERFILES_DIR). Por omisión, no:
+ * el disco de Render se borra al redesplegar, y sin S3 lo guardado ahí NO es durable.
+ */
+export function discoDurable(): boolean {
+  return process.env.PERFIL_DISCO_DURABLE === '1' || process.env.PERFIL_DISCO_DURABLE === 'true';
+}
+
+/** ¿Hay dónde guardar de verdad (S3 o un disco declarado persistente)? */
+export function almacenDurable(): boolean {
+  return s3Listo() || discoDurable();
 }
 
 /**
@@ -277,8 +293,8 @@ export function perfilEnCache(correo: string): Perfil | null | undefined {
 export async function guardarPerfil(correo: string, p: Perfil): Promise<{ durable: boolean }> {
   const c = correoNormal(correo);
   cache.set(c, p);
-  escribirEnDisco(c, p);
-  if (!s3Listo()) return { durable: false };
+  const enDisco = escribirEnDisco(c, p);
+  if (!s3Listo()) return { durable: enDisco && discoDurable() };
   const r = await s3PutJson(claveS3(c), p).catch((e) => ({ ok: false, detalle: String(e?.message || e) }));
   if (!r.ok) console.warn('[perfil] S3 no guardó', String(r.detalle).slice(0, 120));
   return { durable: r.ok };

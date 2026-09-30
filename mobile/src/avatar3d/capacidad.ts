@@ -41,6 +41,19 @@ export function anotarFallo(reg: RegistroCapacidad | null, huella: string, motiv
 }
 
 /**
+ * Qué variante del modelo se prueba en este teléfono. Primero la alta (la que no pierde nada frente
+ * al original); si con ella falló (no dio los cuadros ni en calidad «baja», no cargó, se cayó), la
+ * ligera, que tiene su propia huella y su propio registro; si también falló, ninguna (la figurita 2D).
+ */
+export type VarianteModelo = 'alta' | 'ligera';
+
+export function varianteQueToca(o: { puedeAlta: boolean; hayLigera: boolean; puedeLigera: boolean }): VarianteModelo | null {
+  if (o.puedeAlta) return 'alta';
+  if (o.hayLigera && o.puedeLigera) return 'ligera';
+  return null;
+}
+
+/**
  * Qué cuerpo se dibuja (AvatarVivo):
  *  · «2d»       → solo la figurita, sin nada alrededor (sin modelo, el teléfono no lo aguanta o está escondida);
  *  · «probando» → la figurita a la vista y la escena 3D arrancando debajo, invisible;

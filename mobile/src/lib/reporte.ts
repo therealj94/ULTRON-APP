@@ -18,6 +18,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AppState, Platform, type AppStateStatus } from 'react-native';
 import Constants from 'expo-constants';
 import { API_BASE } from '../config';
+import { sanearTexto } from './saneador';
 
 const CLAVE = 'ultron_migas_v1';
 /** '1' mientras la app está en primer plano; '0' al irse a segundo plano. Si al abrir sigue en '1', murió. */
@@ -60,8 +61,17 @@ export function miga(texto: string) {
   guardar();
 }
 
+/** Lo que sale del teléfono, ya tapado (tokens, claves, correos, URL con parámetros…): ver saneador.ts. */
+function sanearCuerpo(c: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...c };
+  for (const [k, max] of [['error', 400], ['stack', 1500], ['murio_en', 200], ['nota', 300]] as const) if (out[k] !== undefined) out[k] = sanearTexto(out[k], max);
+  if (Array.isArray(out.migas)) out.migas = (out.migas as unknown[]).map((m) => sanearTexto(m, 160));
+  return out;
+}
+
 function enviar(cuerpo: Record<string, unknown>) {
   try {
+    cuerpo = sanearCuerpo(cuerpo);
     void fetch(`${API_BASE}/api/diag`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

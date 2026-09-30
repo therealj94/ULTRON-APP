@@ -1,10 +1,13 @@
 import { perfil as perfilActual } from '../perfil';
-import React, { useState } from 'react';
-import { X, Volume2, Sparkles, Shield, ShieldCheck, Fingerprint, Camera, Wand2, BookOpen, Smile, Trash2 } from 'lucide-react';
+import React, { useRef, useState } from 'react';
+import { X, Volume2, Mic, ShieldCheck, Fingerprint, Camera, Wand2, SlidersHorizontal, Lock, Activity, Trash2, MessageSquareX, KeyRound } from 'lucide-react';
 import type { Mode, FaceState } from '../types';
+import type { PreferenciaTema } from '../01-diseno/aura';
+import type { Postura } from '../11-sala/tareas';
 import { playSfx } from '../03-voz/audio';
-import { Capacidades } from './Capacidades';
+import { Capacidades, Repertorio, VozOficial, useCatalogo, type Catalogo } from './Capacidades';
 import { Control } from './Control';
+import { Dialogo } from './Dialogo';
 
 interface Props {
   isOpen: boolean;
@@ -14,6 +17,14 @@ interface Props {
   speakerEnabled: boolean;
   funMode: boolean;
   usuario: { name: string; authenticated: boolean };
+  tema: PreferenciaTema;
+  onTema: (t: PreferenciaTema) => void;
+  /** Solo con la sala 3D: de pie o sentada. */
+  postura?: Postura;
+  onPostura?: (p: Postura) => void;
+  estadoCerebro: string;
+  estadoArranque: string;
+  hayConversacion: boolean;
   onClose: () => void;
   onSelectMode: (mode: Mode) => void;
   onSelectFace: (face: FaceState) => void;
@@ -26,6 +37,7 @@ interface Props {
   onProbarVoz: () => void;
   onEjemplo: (cmd: string) => void;
   onOlvidar: () => void;
+  onVaciarConversacion: () => void;
 }
 
 export const MODOS: Array<{ id: Mode; label: string; desc: string }> = [
@@ -50,139 +62,365 @@ const NOMBRE_CARA: Partial<Record<FaceState, string>> = {
   SING: 'Cantando', SLEEPING: 'Dormida', SPEAKING: 'Hablando', LISTENING: 'Escuchando',
 };
 
-type Tab = 'capacidades' | 'personalidad' | 'sistema' | 'control';
+type Tab = 'preferencias' | 'voz' | 'privacidad' | 'diagnostico';
+const TABS: Array<{ id: Tab; label: string; Icono: typeof Volume2 }> = [
+  { id: 'preferencias', label: 'Preferencias', Icono: SlidersHorizontal },
+  { id: 'voz', label: 'Voz', Icono: Mic },
+  { id: 'privacidad', label: 'Privacidad y datos', Icono: Lock },
+  { id: 'diagnostico', label: 'Diagnóstico', Icono: Activity },
+];
 
-export const SettingsSheet: React.FC<Props> = (p) => {
-  const [tab, setTab] = useState<Tab>('capacidades');
-  const Tabs: Array<{ id: Tab; label: string; icon: React.ReactNode }> = [
-    { id: 'capacidades', label: 'Qué hace', icon: <BookOpen className="w-3.5 h-3.5" /> },
-    { id: 'personalidad', label: 'Personalidad', icon: <Smile className="w-3.5 h-3.5" /> },
-    { id: 'sistema', label: 'Sistema', icon: <Shield className="w-3.5 h-3.5" /> },
-    { id: 'control', label: 'Control', icon: <ShieldCheck className="w-3.5 h-3.5" /> },
+/** Un grupo de opciones excluyentes con semántica de radio y flechas, como pide ARIA. */
+function Radios<T extends string>(p: { etiqueta: string; valor: T; opciones: Array<{ id: T; label: string }>; onCambio: (v: T) => void }) {
+  const refs = useRef<Array<HTMLButtonElement | null>>([]);
+  const mover = (i: number) => {
+    const n = p.opciones.length;
+    const j = (i + n) % n;
+    p.onCambio(p.opciones[j].id);
+    refs.current[j]?.focus();
+  };
+  return (
+    <div role="radiogroup" aria-label={p.etiqueta} className="aura-segmento">
+      {p.opciones.map((o, i) => (
+        <button
+          key={o.id}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
+          type="button"
+          role="radio"
+          aria-checked={p.valor === o.id}
+          tabIndex={p.valor === o.id ? 0 : -1}
+          onClick={() => p.onCambio(o.id)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') (e.preventDefault(), mover(i + 1));
+            else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') (e.preventDefault(), mover(i - 1));
+          }}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Interruptor(p: { etiqueta: string; detalle?: string; activo: boolean; onCambio: () => void; icono?: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={p.activo}
+      onClick={p.onCambio}
+      className="w-full min-h-[56px] p-3 rounded-2xl border border-(--aura-borde) bg-(--aura-panel) flex items-center gap-3 text-left cursor-pointer hover:border-(--aura-oro)"
+    >
+      {p.icono && <span className="text-(--aura-oro-texto) shrink-0" aria-hidden="true">{p.icono}</span>}
+      <span className="flex-1 min-w-0">
+        <span className="block text-[16px] text-(--aura-tinta)">{p.etiqueta}</span>
+        {p.detalle && <span className="block text-[14px] text-(--aura-tinta-2)">{p.detalle}</span>}
+      </span>
+      <span className={`relative w-12 h-7 rounded-full shrink-0 transition-colors ${p.activo ? 'bg-(--aura-oro)' : 'bg-(--aura-panel-2) border border-(--aura-borde-campo)'}`} aria-hidden="true">
+        <span className={`absolute top-1 w-5 h-5 rounded-full transition-all ${p.activo ? 'left-6 bg-(--aura-sobre-oro)' : 'left-1 bg-(--aura-tinta-2)'}`} />
+      </span>
+      <span className="sr-only">{p.activo ? 'activado' : 'desactivado'}</span>
+    </button>
+  );
+}
+
+/**
+ * Quién procesa cada cosa, dicho con lo que de verdad pasa en esta web (A22): el reconocimiento de
+ * voz es el del navegador, la voz solo es «del servidor propio» si ese servidor está configurado, y
+ * la cámara manda una imagen solo cuando se le pregunta qué ve.
+ */
+function QuienProcesa({ cat }: { cat: Catalogo | null }) {
+  const v = cat?.voz;
+  const filas: Array<{ que: string; como: string }> = [
+    {
+      que: 'Lo que decís por el micrófono',
+      como: 'Lo transcribe el reconocimiento de voz de tu navegador. En Chrome y Edge ese servicio envía el audio a servidores de Google o de Microsoft; AU-RA recibe solo el texto.',
+    },
+    {
+      que: 'Lo que escribís o decís, y la respuesta',
+      como: 'Lo procesa el servidor de AU-RA con su modelo y, según el pedido, con herramientas (precios, búsqueda web, páginas). Puede equivocarse: debajo de cada respuesta se ve qué herramienta usó.',
+    },
+    {
+      que: 'La voz de AU-RA',
+      como: v?.voicebox && v.oficial
+        ? `La sintetiza ${v.oficial.motor}${v.servidor ? ` (${v.servidor})` : ''}.`
+        : v
+          ? 'Este servidor no tiene voz sintetizada configurada: suenan clips grabados desde el navegador y el texto queda en pantalla.'
+          : 'Leyendo cómo está configurada…',
+    },
+    {
+      que: 'La cámara',
+      como: 'La detección de caras y gestos corre en este navegador. Solo cuando preguntás «¿qué ves?» o analizás una foto, esa imagen va al servidor para describirla.',
+    },
+    { que: 'Lo que le pedís recordar', como: 'Se guarda en este navegador y en el servidor de AU-RA, asociado a tu sesión.' },
+    { que: 'Esta conversación en pantalla', como: 'Queda solo en esta pestaña: se borra al cerrarla o al cerrar sesión.' },
   ];
   return (
-    <div
-      id="ultron-settings-sheet"
-      className={`absolute left-0 right-0 top-0 z-30 transition-transform duration-300 ease-out px-3 pt-3 ${
-        p.isOpen ? 'translate-y-0' : '-translate-y-[115%] pointer-events-none'
-      }`}
-    >
-      <div className="max-w-3xl mx-auto flex flex-col gap-4 bg-[#232528] rounded-[28px] p-4 sm:p-5 shadow-[0_12px_40px_rgba(0,0,0,0.48)] max-h-[86vh] overflow-y-auto">
-        <div className="flex items-center justify-between">
-          <h2 className="font-display font-semibold text-xl text-[#ECE8E2]">Ajustes · {perfilActual().plataforma}</h2>
-          <button type="button" onClick={p.onClose} className="w-9 h-9 rounded-full bg-[#3A3C41] text-[#B9B2A8] hover:bg-[#3D3829] flex items-center justify-center cursor-pointer" aria-label="Cerrar ajustes">
-            <X className="w-5 h-5" />
-          </button>
+    <dl className="flex flex-col gap-2">
+      {filas.map((f) => (
+        <div key={f.que} className="aura-tarjeta honda p-3">
+          <dt className="text-[15px] font-semibold text-(--aura-tinta)">{f.que}</dt>
+          <dd className="text-[14px] text-(--aura-tinta-2) mt-0.5">{f.como}</dd>
         </div>
+      ))}
+    </dl>
+  );
+}
 
-        <div className="flex gap-1 rounded-full bg-[#34363A] p-1 text-[13px] font-medium">
-          {Tabs.map((t) => (
+export const SettingsSheet: React.FC<Props> = (p) => {
+  const [tab, setTab] = useState<Tab>('preferencias');
+  const refsTab = useRef<Array<HTMLButtonElement | null>>([]);
+  const { cat, error } = useCatalogo();
+  const ejemplo = (c: string) => {
+    p.onClose();
+    p.onEjemplo(c);
+  };
+  const moverTab = (i: number) => {
+    const j = (i + TABS.length) % TABS.length;
+    setTab(TABS[j].id);
+    refsTab.current[j]?.focus();
+  };
+
+  return (
+    <Dialogo
+      abierto={p.isOpen}
+      onCerrar={p.onClose}
+      idTitulo="aura-ajustes-titulo"
+      id="ultron-settings-sheet"
+      claseCapa="items-stretch sm:items-start justify-center sm:px-3 sm:pt-3"
+      clase="aura-hoja aura-baja w-full max-w-3xl sm:rounded-[28px] flex flex-col max-h-full sm:max-h-[88vh] overflow-hidden"
+    >
+      <div className="flex items-center justify-between gap-3 px-4 sm:px-5 pt-[calc(12px+env(safe-area-inset-top))] sm:pt-4 pb-3">
+        <h2 id="aura-ajustes-titulo" className="font-display font-semibold text-[20px] text-(--aura-tinta)">
+          Ajustes
+        </h2>
+        <button type="button" onClick={p.onClose} className="aura-redondo plano" aria-label="Cerrar ajustes">
+          <X className="w-5 h-5" aria-hidden="true" />
+        </button>
+      </div>
+
+      <div className="px-4 sm:px-5">
+        <div role="tablist" aria-label="Secciones de ajustes" className="aura-pestanas">
+          {TABS.map((t, i) => (
             <button
               key={t.id}
+              ref={(el) => {
+                refsTab.current[i] = el;
+              }}
+              id={`aura-tab-${t.id}`}
               type="button"
+              role="tab"
+              aria-selected={tab === t.id}
+              aria-controls={tab === t.id ? `aura-panel-${t.id}` : undefined}
+              tabIndex={tab === t.id ? 0 : -1}
               onClick={() => setTab(t.id)}
-              aria-pressed={tab === t.id}
-              className={`flex-1 py-2 rounded-full flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
-                tab === t.id ? 'bg-[#34363A] text-[#ECE8E2] shadow-[0_1px_4px_rgba(0,0,0,0.29)]' : 'text-[#B9B2A8] hover:text-[#ECE8E2]'
-              }`}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowRight') (e.preventDefault(), moverTab(i + 1));
+                else if (e.key === 'ArrowLeft') (e.preventDefault(), moverTab(i - 1));
+                else if (e.key === 'Home') (e.preventDefault(), moverTab(0));
+                else if (e.key === 'End') (e.preventDefault(), moverTab(TABS.length - 1));
+              }}
             >
-              {t.icon}
+              <t.Icono className="w-4 h-4" aria-hidden="true" />
               <span>{t.label}</span>
             </button>
           ))}
         </div>
+      </div>
 
-        {tab === 'control' && p.isOpen && <Control />}
-
-        {tab === 'capacidades' && <Capacidades onEjemplo={(c) => { p.onClose(); p.onEjemplo(c); }} onProbarVoz={p.onProbarVoz} />}
-
-        {tab === 'personalidad' && (
-          <div className="flex flex-col gap-4">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#B9B2A8]">Modo de personalidad</span>
-                <span className="text-[12px] text-[#8A847C]">activo: {MODOS.find((m) => m.id === p.currentMode)?.label || p.currentMode}</span>
+      <div id={`aura-panel-${tab}`} role="tabpanel" aria-labelledby={`aura-tab-${tab}`} tabIndex={0} className="flex-1 min-h-0 overflow-y-auto px-4 sm:px-5 py-4 flex flex-col gap-5 pb-[calc(16px+env(safe-area-inset-bottom))]">
+        {tab === 'preferencias' && (
+          <>
+            <section className="flex flex-col gap-2" aria-labelledby="pref-apariencia">
+              <h3 id="pref-apariencia" className="aura-sobretitulo">Apariencia</h3>
+              <div className="flex flex-wrap items-center gap-3">
+                <Radios
+                  etiqueta="Tema"
+                  valor={p.tema}
+                  opciones={[
+                    { id: 'sistema', label: 'Como el sistema' },
+                    { id: 'claro', label: 'Claro' },
+                    { id: 'oscuro', label: 'Oscuro' },
+                  ]}
+                  onCambio={p.onTema}
+                />
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {p.postura && p.onPostura && (
+                <div className="flex flex-wrap items-center gap-3 mt-1">
+                  <span className="text-[15px] text-(--aura-tinta-2)">Te contesta</span>
+                  <Radios
+                    etiqueta="Cómo te contesta"
+                    valor={p.postura}
+                    opciones={[
+                      { id: 'pie', label: 'De pie' },
+                      { id: 'sentada', label: 'Sentada' },
+                    ]}
+                    onCambio={p.onPostura}
+                  />
+                </div>
+              )}
+            </section>
+
+            <section aria-labelledby="pref-personalidad">
+              <div className="flex items-center justify-between mb-2 gap-2">
+                <h3 id="pref-personalidad" className="aura-sobretitulo">Personalidad</h3>
+                <span className="text-[14px] text-(--aura-tinta-3)">Activa: {nombreModo(p.currentMode)}</span>
+              </div>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2" role="radiogroup" aria-labelledby="pref-personalidad">
                 {MODOS.map((m) => {
                   const on = p.currentMode === m.id;
                   return (
                     <button
                       key={m.id}
                       type="button"
-                      onClick={() => { playSfx('mode', p.soundFxEnabled); p.onSelectMode(m.id); }}
-                      aria-pressed={on}
-                      className={`p-3 rounded-2xl border text-left flex flex-col gap-0.5 transition-all cursor-pointer ${
-                        on ? 'border-[#D6B56C] bg-[#3D3829] text-[#ECE8E2]' : 'border-[#46484D] bg-[#34363A] text-[#ECE8E2] hover:border-[#D6B56C]'
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => {
+                        playSfx('mode', p.soundFxEnabled);
+                        p.onSelectMode(m.id);
+                      }}
+                      className={`min-h-[64px] p-3 rounded-2xl border text-left flex flex-col gap-0.5 cursor-pointer ${
+                        on ? 'border-(--aura-oro) bg-(--aura-oro-suave)' : 'border-(--aura-borde) bg-(--aura-panel) hover:border-(--aura-oro)'
                       }`}
                     >
-                      <span className="font-semibold text-[14px]">{m.label}</span>
-                      <span className="text-[12px] text-[#B9B2A8]">{m.desc}</span>
+                      <span className="font-semibold text-[15px] text-(--aura-tinta)">{m.label}</span>
+                      <span className="text-[13px] text-(--aura-tinta-2)">{m.desc}</span>
                     </button>
                   );
                 })}
               </div>
-            </div>
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#B9B2A8]">Expresiones (probar)</span>
-                <span className="text-[12px] text-[#8A847C]">{NOMBRE_CARA[p.currentFace] || p.currentFace}</span>
+            </section>
+
+            <Interruptor etiqueta="Efectos de sonido" detalle="Toques y avisos cortos de la mesa" activo={p.soundFxEnabled} onCambio={p.onToggleSoundFx} icono={<Volume2 className="w-5 h-5" />} />
+
+            <details className="aura-tarjeta honda p-3">
+              <summary className="min-h-[44px] flex items-center cursor-pointer text-[15px] font-semibold text-(--aura-tinta)">Probar expresiones</summary>
+              <div className="flex flex-col gap-3 pt-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {CARAS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => {
+                        playSfx('tap', p.soundFxEnabled);
+                        p.onSelectFace(c);
+                      }}
+                      aria-pressed={p.currentFace === c}
+                      className={`min-h-[44px] px-3 rounded-full text-[14px] font-medium border cursor-pointer ${
+                        p.currentFace === c ? 'border-(--aura-oro) bg-(--aura-oro-suave) text-(--aura-tinta)' : 'border-(--aura-borde) bg-(--aura-panel) text-(--aura-tinta) hover:border-(--aura-oro)'
+                      }`}
+                    >
+                      {NOMBRE_CARA[c] || c}
+                    </button>
+                  ))}
+                </div>
+                <Interruptor etiqueta="Modo diversión" detalle="Solo en la cara clásica (sin sala 3D)" activo={p.funMode} onCambio={p.onToggleFunMode} icono={<Wand2 className="w-5 h-5" />} />
               </div>
-              <div className="flex flex-wrap gap-1.5">
-                {CARAS.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => { playSfx('tap', p.soundFxEnabled); p.onSelectFace(c); }}
-                    aria-pressed={p.currentFace === c}
-                    className={`px-3 py-1.5 rounded-full text-[13px] font-medium border transition-all cursor-pointer ${
-                      p.currentFace === c ? 'border-[#D6B56C] bg-[#3D3829] text-[#ECE8E2]' : 'border-[#46484D] bg-[#34363A] text-[#ECE8E2] hover:border-[#D6B56C]'
-                    }`}
-                  >
-                    {NOMBRE_CARA[c] || c}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <label className="flex items-center justify-between p-3 rounded-2xl border border-[#46484D] bg-[#34363A] cursor-pointer">
-              <span className="flex items-center gap-2 text-[14px] text-[#ECE8E2]">
-                <Wand2 className="w-4 h-4 text-[#E0C27F]" /> Modo diversión (solo en la cara clásica)
-              </span>
-              <input type="checkbox" checked={p.funMode} onChange={p.onToggleFunMode} className="accent-[#D6B56C] w-4 h-4" />
-            </label>
-          </div>
+            </details>
+          </>
         )}
 
-        {tab === 'sistema' && (
-          <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              <button type="button" onClick={() => { p.onClose(); p.onOpenAcceso(); }} className={`p-3 rounded-2xl border flex items-center gap-2 text-[14px] font-medium cursor-pointer ${p.usuario.authenticated ? 'border-[#3F4D3F] bg-[#2F3A30] text-[#A9C3A4]' : 'border-[#D6B56C] bg-[#3D3829] text-[#ECE8E2]'}`}>
-                {p.usuario.authenticated ? <ShieldCheck className="w-4 h-4" /> : <Fingerprint className="w-4 h-4" />}
-                <span>{p.usuario.authenticated ? `Sesión: ${p.usuario.name}` : 'Entrar a la junta'}</span>
-              </button>
-              <button type="button" onClick={() => { p.onClose(); p.onOpenVault(); }} className="p-3 rounded-2xl border border-[#46484D] bg-[#34363A] text-[#ECE8E2] hover:border-[#D6B56C] flex items-center gap-2 text-[14px] font-medium cursor-pointer">
-                <ShieldCheck className="w-4 h-4 text-[#E0C27F]" /> Bóveda de claves
-              </button>
-              <button type="button" onClick={() => { p.onClose(); p.onOpenPhotos(); }} className="p-3 rounded-2xl border border-[#46484D] bg-[#34363A] text-[#ECE8E2] hover:border-[#D6B56C] flex items-center gap-2 text-[14px] font-medium cursor-pointer">
-                <Camera className="w-4 h-4 text-[#E0C27F]" /> Fotos
-              </button>
+        {tab === 'voz' && (
+          <>
+            <Interruptor etiqueta="Voz de AU-RA" detalle={p.speakerEnabled ? 'Contesta en voz alta' : 'Silenciada: solo texto en pantalla'} activo={p.speakerEnabled} onCambio={p.onToggleSpeaker} icono={<Volume2 className="w-5 h-5" />} />
+            <VozOficial cat={cat} onProbarVoz={p.onProbarVoz} />
+            <div className="aura-tarjeta honda p-3">
+              <p className="text-[15px] font-semibold text-(--aura-tinta)">Cómo te oye</p>
+              <p className="text-[14px] text-(--aura-tinta-2) mt-0.5">
+                Con el micrófono abierto escucha todo el tiempo y podés interrumpirla hablando. En esta web lo transcribe el reconocimiento de voz del navegador (ver «Privacidad y datos»); en Firefox no hay, y se escribe.
+              </p>
             </div>
-            <div className="flex flex-wrap items-center gap-5 pt-3 border-t border-[#46484D] text-[14px] text-[#ECE8E2]">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={p.soundFxEnabled} onChange={p.onToggleSoundFx} className="accent-[#D6B56C] w-4 h-4" />
-                <span className="flex items-center gap-1.5"><Volume2 className="w-4 h-4 text-[#E0C27F]" /> Efectos</span>
-              </label>
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" checked={p.speakerEnabled} onChange={p.onToggleSpeaker} className="accent-[#D6B56C] w-4 h-4" />
-                <span className="flex items-center gap-1.5"><Sparkles className="w-4 h-4 text-[#E0C27F]" /> Voz</span>
-              </label>
-              <button type="button" onClick={p.onOlvidar} className="ml-auto flex items-center gap-1.5 text-[13px] font-medium text-[#E39A7A] hover:text-[#F0B39A] cursor-pointer">
-                <Trash2 className="w-3.5 h-3.5" /> Borrar conversación y memoria local
-              </button>
-            </div>
-          </div>
+            <Repertorio cat={cat} onEjemplo={ejemplo} />
+          </>
+        )}
+
+        {tab === 'privacidad' && (
+          <>
+            <section className="flex flex-col gap-2" aria-labelledby="priv-quien">
+              <h3 id="priv-quien" className="aura-sobretitulo">Quién procesa cada cosa</h3>
+              <QuienProcesa cat={cat} />
+            </section>
+            <section className="flex flex-col gap-2" aria-labelledby="priv-sesion">
+              <h3 id="priv-sesion" className="aura-sobretitulo">Tu sesión</h3>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    p.onClose();
+                    p.onOpenAcceso();
+                  }}
+                  className={`min-h-[52px] p-3 rounded-2xl border flex items-center gap-2 text-[15px] font-medium cursor-pointer ${
+                    p.usuario.authenticated ? 'border-(--aura-salvia-borde) bg-(--aura-salvia-fondo) text-(--aura-salvia-texto)' : 'border-(--aura-oro) bg-(--aura-oro-suave) text-(--aura-tinta)'
+                  }`}
+                >
+                  {p.usuario.authenticated ? <ShieldCheck className="w-5 h-5" aria-hidden="true" /> : <Fingerprint className="w-5 h-5" aria-hidden="true" />}
+                  <span>{p.usuario.authenticated ? `Sesión: ${p.usuario.name}` : 'Entrar a la junta'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    p.onClose();
+                    p.onOpenVault();
+                  }}
+                  className="min-h-[52px] p-3 rounded-2xl border border-(--aura-borde) bg-(--aura-panel) text-(--aura-tinta) hover:border-(--aura-oro) flex items-center gap-2 text-[15px] font-medium cursor-pointer"
+                >
+                  <KeyRound className="w-5 h-5 text-(--aura-oro-texto)" aria-hidden="true" /> Bóveda de claves
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    p.onClose();
+                    p.onOpenPhotos();
+                  }}
+                  className="min-h-[52px] p-3 rounded-2xl border border-(--aura-borde) bg-(--aura-panel) text-(--aura-tinta) hover:border-(--aura-oro) flex items-center gap-2 text-[15px] font-medium cursor-pointer"
+                >
+                  <Camera className="w-5 h-5 text-(--aura-oro-texto)" aria-hidden="true" /> Fotos de esta visita
+                </button>
+              </div>
+            </section>
+            <section className="flex flex-col gap-2" aria-labelledby="priv-borrar">
+              <h3 id="priv-borrar" className="aura-sobretitulo">Borrar</h3>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <button type="button" className="aura-secundario" onClick={p.onVaciarConversacion} disabled={!p.hayConversacion}>
+                  <MessageSquareX className="w-4 h-4" aria-hidden="true" /> Vaciar la conversación en pantalla
+                </button>
+                <button
+                  type="button"
+                  className="aura-secundario peligro"
+                  onClick={() => {
+                    p.onVaciarConversacion();
+                    p.onOlvidar();
+                  }}
+                >
+                  <Trash2 className="w-4 h-4" aria-hidden="true" /> Borrar conversación y memoria local
+                </button>
+              </div>
+            </section>
+          </>
+        )}
+
+        {tab === 'diagnostico' && (
+          <>
+            <section className="aura-tarjeta honda p-3 flex flex-col gap-1" aria-labelledby="diag-estado">
+              <h3 id="diag-estado" className="aura-sobretitulo">Estado</h3>
+              <p className="text-[15px] text-(--aura-tinta)">
+                Cerebro: {p.estadoCerebro} <span className="text-(--aura-tinta-2)">· {p.estadoArranque}</span>
+              </p>
+              <p className="text-[14px] text-(--aura-tinta-2)">Plataforma: {perfilActual().plataforma}</p>
+            </section>
+            <section aria-labelledby="diag-capacidades" className="flex flex-col gap-2">
+              <h3 id="diag-capacidades" className="aura-sobretitulo">Qué puede hacer y si responde ahora</h3>
+              <Capacidades cat={cat} error={error} onEjemplo={ejemplo} />
+            </section>
+            <section aria-labelledby="diag-control" className="flex flex-col gap-2">
+              <h3 id="diag-control" className="aura-sobretitulo">Control (con mando)</h3>
+              <Control />
+            </section>
+          </>
         )}
       </div>
-    </div>
+    </Dialogo>
   );
 };

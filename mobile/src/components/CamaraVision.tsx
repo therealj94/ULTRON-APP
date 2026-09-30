@@ -29,6 +29,7 @@ import { CameraView } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import FaceDetection from '@react-native-ml-kit/face-detection';
 import { describeImage } from '../lib/api';
+import { LOCAL_CON_PERSONA_MS, LOCAL_DORMIDA_MS, LOCAL_SIN_PERSONA_MS, SERVIDOR_CON_PERSONA_MS, SERVIDOR_SIN_PERSONA_MS } from '../lib/camaraModo';
 import { reportarEstado } from '../lib/reporte';
 import {
   MaquinaEscena,
@@ -53,13 +54,8 @@ const ESCENA_CADA_MS = 500;
 /** Respaldo por servidor: foto cada 12 s (30 s si la cara duerme). DeskScreen los usa para la frescura. */
 export const SERVIDOR_CADA_MS = 12_000;
 export const SERVIDOR_DORMIDO_MS = 30_000;
-/** Con ML Kit: cada cuánto se busca cara, según haya alguien, no haya nadie o esté dormida. */
-const LOCAL_CON_PERSONA_MS = 330;
-const LOCAL_SIN_PERSONA_MS = 1000;
-const LOCAL_DORMIDA_MS = 2500;
-/** Con ML Kit: cada cuánto se le pregunta al servidor qué hay en la mesa. */
-const SERVIDOR_CON_PERSONA_MS = 20_000;
-const SERVIDOR_SIN_PERSONA_MS = 60_000;
+// El ritmo (fotos por segundo con y sin alguien, subidas al servidor) vive en lib/camaraModo.ts, puro,
+// para medirlo en Node. Desde la actualización por aire de la mesa (sobre 4.7.0) la cámara arranca APAGADA: este ritmo solo corre si la piden.
 /** Fallos seguidos de ML Kit antes de pasarse al servidor. */
 const FALLOS_ML_MAX = 3;
 /** Menos base64 que esto no es una foto: es la cámara todavía sin imagen. */

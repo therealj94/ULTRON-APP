@@ -10,15 +10,16 @@
  *  1. Volver a preguntar al regresar a la app si hace rato que no se pregunta: la mesa de la junta
  *     puede pasar días abierta sin arrancar en frío.
  *  2. Aplicar lo ya descargado cuando la persona VUELVE a la app tras un rato fuera, que para ella
- *     es «volver a abrirla». Nunca en mitad de una conversación ni al girar la pantalla.
+ *     es «volver a abrirla». Nunca en mitad de una conversación ni al girar la pantalla, y nunca con
+ *     trabajo activo (llamada, conversación con AURA, borrador del chat, recordatorio sonando: ver
+ *     barreraOta.ts): entonces se pospone a la próxima vuelta o al siguiente arranque en frío.
  */
 import { useEffect, useRef } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 import * as Updates from 'expo-updates';
 import { miga } from './reporte';
+import { decidirAlVolver, motivosParaNoRecargar } from './barreraOta';
 
-/** Fuera al menos esto = «la volvió a abrir». Menos es mirar un mensaje y regresar. */
-const FUERA_PARA_APLICAR_MS = 10 * 60_000;
 /** Entre preguntas al servidor. El arranque en frío ya pregunta por su cuenta. */
 const ENTRE_BUSQUEDAS_MS = 30 * 60_000;
 
@@ -40,11 +41,15 @@ export function useActualizacionAlVolver() {
       if (s !== 'active' || !salioEn) return;
       const fuera = Date.now() - salioEn;
       salioEn = 0;
-      if (pendiente.current && fuera >= FUERA_PARA_APLICAR_MS) {
+      const motivos = motivosParaNoRecargar();
+      const que = decidirAlVolver({ pendiente: !!pendiente.current, fueraMs: fuera, motivos });
+      if (que === 'aplicar') {
         miga('ota: aplicando la actualización descargada al volver');
         void Updates.reloadAsync().catch(() => {});
         return;
       }
+      // Hay trabajo entre manos: no se corta. Queda descargada para la próxima vuelta o el arranque en frío.
+      if (que === 'posponer') miga(`ota: pospuesta (${motivos.join(', ')})`);
       if (Date.now() - ultimaBusqueda < ENTRE_BUSQUEDAS_MS) return;
       ultimaBusqueda = Date.now();
       // Solo descarga: queda pendiente y se aplica la próxima vez que vuelva tras un rato fuera.

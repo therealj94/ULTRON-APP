@@ -14,6 +14,12 @@
  *  · Antes de ejecutar se vuelven a pasar las reglas, ya con las firmas: si entre tanto el KYC dejó
  *    de estar aprobado, no se ejecuta aunque la junta haya firmado.
  *
+ * Ejecutar es una operación RECUPERABLE: aprobada → ejecutando (se toma de forma atómica: nadie más
+ * la ejecuta) → ejecutada / fallida. Si el proceso se cae en medio:
+ *  · «aprobada» sin tomar: al arrancar se retoma (reglas y hechos frescos otra vez), o vence;
+ *  · «ejecutando» sin terminar: pasa a «incierta» y se avisa. NUNCA se repite a ciegas: pudo haberse
+ *    hecho (dinero, mensajes) y hay que comprobarlo a mano antes de volver a pedirlo.
+ *
  * Cada paso queda en la cadena de auditoría.
  */
 import crypto from 'node:crypto';
@@ -23,7 +29,7 @@ import { enTransaccion, leerTodas, reescribir, sql, tipo } from './base';
 import { taparValores } from './traza';
 import type { Efecto } from './politica';
 
-export type EstadoAprobacion = 'pendiente' | 'aprobada' | 'rechazada' | 'vencida' | 'ejecutada' | 'fallida';
+export type EstadoAprobacion = 'pendiente' | 'aprobada' | 'ejecutando' | 'rechazada' | 'vencida' | 'ejecutada' | 'fallida' | 'incierta';
 
 export type Firma = { quien: string; decision: 'aprobar' | 'rechazar'; t: string; nota?: string | null };
 
@@ -57,7 +63,9 @@ export function registrarEjecutor(herramienta: string, fn: Ejecutor) {
 }
 /**
  * Quien sabe traer los hechos FRESCOS de una acción (KYC, firmas de la junta) al momento de
- * ejecutarla. Sin fuente registrada se usan los que se guardaron al pedirla, y eso se dice.
+ * ejecutarla. Sin fuente registrada se usan los que se guardaron al pedirla, y eso se dice — salvo en
+ * lo CRÍTICO: ahí los hechos guardados al pedir (que pudo poner cualquiera, hasta el modelo) no bastan
+ * y sin fuente fresca no se ejecuta.
  */
 type FuenteHechos = (args: Record<string, unknown>) => Promise<unknown>;
 const fuentesHechos = new Map<string, FuenteHechos>();
@@ -69,7 +77,7 @@ export function hayEjecutor(herramienta: string) {
   return ejecutores.has(herramienta);
 }
 
-type Aviso = (ap: Aprobacion, que: 'creada' | 'aprobada' | 'rechazada' | 'ejecutada' | 'fallida') => Promise<void> | void;
+type Aviso = (ap: Aprobacion, que: 'creada' | 'aprobada' | 'rechazada' | 'ejecutada' | 'fallida' | 'incierta') => Promise<void> | void;
 const avisos: Aviso[] = [];
 /** A quién se le avisa (Telegram de la junta, por ejemplo). Un aviso que falla no frena nada. */
 export function alAvisar(fn: Aviso) {
@@ -297,6 +305,11 @@ async function ejecutarAprobada(ap: Aprobacion): Promise<Aprobacion> {
   }
   const { evaluar } = await import('./politica');
   const fuente = fuentesHechos.get(ap.herramienta);
+  // Lo crítico se comprueba al ejecutar, con una fuente de verdad: los hechos que se guardaron al
+  // pedirlo no la sustituyen.
+  if (!fuente && ap.efecto === 'critico') {
+    return terminar(ap, false, `No hay de dónde comprobar ahora los datos de «${ap.herramienta}» (KYC, firmas). Sin comprobarlos al ejecutar, no ejecuto.`);
+  }
   let hechosFrescos: unknown = null;
   if (fuente) {
     try {
@@ -326,12 +339,78 @@ async function ejecutarAprobada(ap: Aprobacion): Promise<Aprobacion> {
   if (d.veredicto !== 'permitir') return terminar(ap, false, `Aprobada, pero ahora una regla lo impide (${d.regla}): ${d.motivo}`);
   const fn = ejecutores.get(ap.herramienta);
   if (!fn) return terminar(ap, false, `No hay quien ejecute «${ap.herramienta}» en este servidor.`);
+  // Se TOMA antes de hacer nada afuera: de «aprobada» a «ejecutando», de forma atómica. Si otro (otra
+  // firma que llegó a la vez, otra réplica, la recuperación al arrancar) ya la tomó, aquí no se hace.
+  let tomada = false;
+  const enCurso = await modificar(ap.id, (x) => {
+    if (x.estado !== 'aprobada') return null;
+    tomada = true;
+    return { ...x, estado: 'ejecutando', resultado: { ok: false, texto: 'en curso', t: new Date().toISOString() } };
+  });
+  if (!tomada) return enCurso || ap;
   try {
-    const r = await fn(ap.argumentos, ap);
+    const r = await fn(ap.argumentos, enCurso || ap);
     return terminar(ap, r.ok, r.texto);
   } catch (e: any) {
     return terminar(ap, false, `Falló al ejecutar: ${String(e?.message || e).slice(0, 200)}`);
   }
+}
+
+/** Lo que se tarda como mucho en ejecutar: pasado esto, una «ejecutando» sin terminar es de un proceso caído. */
+export const PLAZO_EJECUCION_MS = 10 * 60_000;
+
+/**
+ * Al arrancar (y cuando se quiera): lo que quedó a medias por una caída.
+ *  · «aprobada» sin ejecutar: se ejecuta ahora (pasando otra vez por reglas y hechos frescos), o se da
+ *    por fallida si ya venció;
+ *  · «ejecutando» de hace más de PLAZO_EJECUCION_MS: «incierta». No se repite: se avisa para comprobar.
+ * Devuelve cuántas tocó de cada tipo y, en `revisarEnMs`, cuándo vence la «ejecutando» más reciente que
+ * todavía estaba dentro del plazo (null si no hay): quien arranca vuelve a mirar entonces, para que un
+ * reinicio a los pocos minutos no la deje «ejecutando» para siempre. `soloEjecutando` omite retomar las
+ * aprobadas (esa segunda pasada solo mira las que quedaron a medias).
+ */
+export async function reconciliarAprobaciones(
+  o: { ahora?: number; plazoMs?: number; soloEjecutando?: boolean } = {},
+): Promise<{ retomadas: number; vencidas: number; inciertas: number; revisarEnMs: number | null }> {
+  const ahora = o.ahora ?? Date.now();
+  const plazo = o.plazoMs ?? PLAZO_EJECUCION_MS;
+  const out = { retomadas: 0, vencidas: 0, inciertas: 0, revisarEnMs: null as number | null };
+  for (const ap of o.soloEjecutando ? [] : await listarAprobaciones({ estado: 'aprobada', limite: 200 })) {
+    if (new Date(ap.vence).getTime() < ahora) {
+      out.vencidas++;
+      await terminar(ap, false, 'Se aprobó pero no llegó a ejecutarse antes de vencer (el servicio se reinició). No se hizo.');
+      continue;
+    }
+    out.retomadas++;
+    await ejecutarAprobada(ap);
+  }
+  for (const ap of await listarAprobaciones({ estado: 'ejecutando', limite: 200 })) {
+    const desde = ap.resultado?.t ? new Date(ap.resultado.t).getTime() : 0;
+    if (ahora - desde < plazo) {
+      const falta = plazo - (ahora - desde);
+      out.revisarEnMs = out.revisarEnMs === null ? falta : Math.min(out.revisarEnMs, falta);
+      continue;
+    }
+    let cambio = false;
+    const fin = await modificar(ap.id, (x) => {
+      if (x.estado !== 'ejecutando') return null;
+      cambio = true;
+      return {
+        ...x,
+        estado: 'incierta',
+        resultado: {
+          ok: false,
+          texto: 'El servicio se cayó mientras se ejecutaba: no se sabe si se hizo. Compruébalo antes de volver a pedirlo; no se repite solo.',
+          t: new Date(ahora).toISOString(),
+        },
+      };
+    });
+    if (!cambio || !fin) continue;
+    out.inciertas++;
+    await auditar({ tipo: 'aprobacion.incierta', plataforma: fin.plataforma, quien: null, datos: { id: fin.id, herramienta: fin.herramienta } });
+    await avisar(fin, 'incierta');
+  }
+  return out;
 }
 
 async function terminar(ap: Aprobacion, ok: boolean, texto: string): Promise<Aprobacion> {
@@ -349,6 +428,7 @@ export function resumenParaAviso(ap: Aprobacion, que: string): string {
   if (que === 'creada')
     return `🔐 Solicitud ${corto} (${ap.plataforma}): «${ap.herramienta}» pedida por ${ap.pedida_por || 'sin identificar'}.\nMotivo: ${ap.motivo}\nArgumentos: ${args}\nFirmas necesarias: ${ap.necesarias}. Responde /aprobar ${corto} o /rechazar ${corto}.`;
   if (que === 'ejecutada' || que === 'fallida') return `${que === 'ejecutada' ? '✅' : '⚠️'} Solicitud ${corto}: ${ap.resultado?.texto || que}`;
+  if (que === 'incierta') return `❓ Solicitud ${corto} («${ap.herramienta}»): ${ap.resultado?.texto || 'resultado desconocido'}`;
   return `Solicitud ${corto}: ${que}.`;
 }
 

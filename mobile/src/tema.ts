@@ -24,7 +24,8 @@ export const T = {
   avisoFondo: '#3F2E28',
   texto: '#ECE8E2',
   texto2: '#B9B2A8',
-  texto3: '#8A847C',
+  // ≥ 4,5:1 sobre fondo, fondo2, panel y panel2 (A17; antes #8A847C: 3,27:1 sobre panel).
+  texto3: '#B0A99F',
 } as const;
 
 /** Sombra para tarjetas y botones flotantes (Android usa elevation). */

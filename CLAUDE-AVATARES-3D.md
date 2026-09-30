@@ -49,3 +49,10 @@ animan con sus 30 clips y el perfil «nodos» de `mobile/src/avatar3d/mapeo.ts`.
 avatar, con las voces y agentes que eligió José; la sala de AU-RA sigue siendo su mesa. Detalle,
 decisiones y medidas: `mobile/docs/avatar-3d-especificacion.md` §13. Cuando estén los finales en
 `vendor/aura-avatar-suite/assets/movil/`, desde la raíz: `npm run avatar3d`.
+
+## Avatares en alta (30-sep-2026)
+
+La app ya no pierde calidad frente a estos originales: `npm run avatar3d` saca una variante **alta**
+(la cabeza sin simplificar, sin remuestrear animaciones, con el sheen del pelo y la tela) y una
+**ligera** para teléfonos que no la aguantan; la escena usa el estudio de luz de `src/stage.js`.
+Números y decisiones: `mobile/docs/avatar-3d-especificacion.md` §13.

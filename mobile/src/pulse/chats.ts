@@ -369,17 +369,19 @@ let serie = 0;
  * id del relevo y avisa `enviado` (la palomita; el «¡Listo!» hablado es del `hecho` de la voz). Si falla queda `fallido` en el
  * hilo, con su texto, para reintentar.
  */
-export async function enviarTexto(correo: string, texto: string, reintento?: string): Promise<Envio> {
+export async function enviarTexto(correo: string, texto: string, reintento?: string, o: { sinCifrar?: boolean } = {}): Promise<Envio> {
   const c = String(correo).toLowerCase();
   const limpio = texto.trim();
   if (!limpio) return { ok: false, motivo: 'vacio' };
   const yo = RELEVO.quien();
   if (!yo) return { ok: false, motivo: 'sin-cuenta' };
   const idLocal = reintento || `local-${Date.now().toString(36)}-${++serie}`;
-  ponerLocal(c, { id: idLocal, de: yo.correo, para: c, cuando: Date.now(), texto: limpio, pendiente: true, e2e: true });
+  // Sin `e2e` hasta saber cómo salió: el candado no se enseña antes del resultado.
+  ponerLocal(c, { id: idLocal, de: yo.correo, para: c, cuando: Date.now(), texto: limpio, pendiente: true, e2e: undefined });
   apurar(c);
   try {
-    const r = await RELEVO.enviar(c, limpio);
+    // Sin cifrar solo si la persona lo decidió antes (`sinCifrar`); si no, sin aparatos no sale.
+    const r = await RELEVO.enviar(c, limpio, { sinCifrar: o.sinCifrar === true });
     cambiarLocal(c, idLocal, { id: r.id || idLocal, pendiente: false, e2e: r.e2e });
     emitir('enviado', { para: c, id: r.id, nombre: RELEVO.contactosConocidos().find((x) => x.correo === c)?.nombre });
     void refrescarHilo(c);

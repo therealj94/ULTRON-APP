@@ -114,7 +114,7 @@ export function Boton({ titulo, onPress, variante = 'principal', cargando, texto
           <>
             <ActivityIndicator color={colorLetra} />
             {!!textoCargando && (
-              <Texto v="boton" color={colorLetra} numberOfLines={1}>
+              <Texto v="boton" color={colorLetra} numberOfLines={2} style={s.letra}>
                 {textoCargando}
               </Texto>
             )}
@@ -122,7 +122,8 @@ export function Boton({ titulo, onPress, variante = 'principal', cargando, texto
         ) : (
           <>
             {typeof icono === 'string' ? <Icono nombre={icono as NombreIcono} tam={tamIcono} color={colorLetra} /> : icono}
-            <Texto v={tam === 'chico' ? 'chicaFuerte' : 'boton'} color={colorLetra} numberOfLines={1} style={tam === 'chico' ? { fontSize: 14 } : undefined}>
+            {/* Hasta dos renglones con la letra grande del sistema (A18): la acción no se corta. */}
+            <Texto v={tam === 'chico' ? 'chicaFuerte' : 'boton'} color={colorLetra} numberOfLines={2} style={[s.letra, tam === 'chico' ? { fontSize: 14 } : undefined]}>
               {titulo}
             </Texto>
             {iconoDerecha && <Icono nombre={iconoDerecha} tam={tamIcono} color={colorLetra} />}
@@ -134,6 +135,7 @@ export function Boton({ titulo, onPress, variante = 'principal', cargando, texto
 }
 
 const s = StyleSheet.create({
+  letra: { flexShrink: 1, textAlign: 'center' },
   base: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, overflow: 'hidden' },
   filo: { ...StyleSheet.absoluteFillObject, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.35)' },
   brillo: { position: 'absolute', top: -30, bottom: -30, width: 70, left: 0 },

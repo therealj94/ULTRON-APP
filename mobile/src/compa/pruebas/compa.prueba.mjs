@@ -23,9 +23,21 @@ import { programarRecordatorio, _olvidarRecordatorios, CANAL_RECORDATORIOS } fro
 const { RE_LECTURA, turnoDeRecordatorio } = await import(new URL('../../../../lib/manos-app.ts', import.meta.url).href);
 import { MANOS_APP } from '../../nucleo/contrato.ts';
 import { AudioVoz } from '../audioVoz.ts';
+import { OidoMesa, duenoAudio, motivoFalloVoz } from '../duenoAudio.ts';
 import { FIGURAS, mezclarFigura, estiloDe } from '../figura.ts';
 import { emocionDeTexto } from '../../lib/emocion.ts';
 import { emitir, escuchar } from '../../nucleo/contrato.ts';
+import { ESTADOS_FRASE, EMOCION_DE_ESTADO, MemoriaFrases, fraseDeEstado, frasesDe, esRelleno, quitarRellenoInicial, estadoDeEspera } from '../frasesEstado.ts';
+import { EXPRESIONES_AVATAR } from '../../avatar3d/tipos.ts';
+import { EMOCIONES } from '../../lib/emocion.ts';
+import { AVATARES } from '../../avatares/catalogo.ts';
+import { textoCompa } from '../frases.ts';
+import { createRequire } from 'node:module';
+// El idioma y el avatar de ahora son datos de módulo: se fijan en la MISMA copia que leen frases.ts y
+// animo.ts (tsx las carga como CommonJS; un import de ESM aquí sería otra copia).
+const { fijarAvatar } = createRequire(import.meta.url)('../../avatares/actual.ts');
+const { fijarIdioma } = createRequire(import.meta.url)('../../i18n.ts');
+const { detectarIdioma } = await import(new URL('../../../../lib/idioma-detectar.ts', import.meta.url).href);
 
 let fallos = 0;
 let n = 0;
@@ -939,7 +951,7 @@ prueba('manos: recordatorio — permiso de avisos, aviso programado una sola vez
     createChannel: async (c) => c.id,
     createTriggerNotification: async (n, t) => (puestos.push({ n, t }), n.id),
   };
-  const d = { notifee: () => ({ m, k: K }), ahora: () => ahora };
+  const d = { notifee: () => ({ m, k: K }), ahora: () => ahora, dueno: () => 'u-prueba' };
   const a = { texto: 'Llamar a mi mamá', cuando: ahora + 3 * 3600_000 };
   const r = await programarRecordatorio(a, d);
   assert.equal(r.ok, true, r.detalle);
@@ -983,7 +995,7 @@ function notifeeFalso({ exacto = false, permiso = 1 } = {}) {
     displayNotification: async (n) => (f.mostrados.push(n), n.id),
   };
   f.k = K;
-  f.deps = (ahora) => ({ notifee: () => ({ m: f.m, k: K }), ahora: () => ahora });
+  f.deps = (ahora) => ({ notifee: () => ({ m: f.m, k: K }), ahora: () => ahora, dueno: () => 'u-prueba' });
   return f;
 }
 
@@ -1047,7 +1059,7 @@ prueba('la llamada de AURA: suena, contestar quita lo que faltaba y se dice UNA 
   assert.equal(REC.interpretarEvento({ type: K.EventType.PRESS, detail: { notification: n1 } }, K)?.que, 'suena', 'tocar el aviso abre «AURA te llama»');
   const c = REC.interpretarEvento({ type: K.EventType.ACTION_PRESS, detail: { notification: n1, pressAction: { id: REC.ACCION_CONTESTAR } } }, K);
   assert.equal(c?.que, 'contestar');
-  assert.deepEqual(c.llamada, { base: r.id, texto: 'Tomar la pastilla', cuando: ahora + 3600_000, paso: 'l1' });
+  assert.deepEqual(c.llamada, { base: r.id, texto: 'Tomar la pastilla', cuando: ahora + 3600_000, paso: 'l1', dueno: 'u-prueba' });
   assert.equal(REC.interpretarEvento({ type: K.EventType.ACTION_PRESS, detail: { notification: n1, pressAction: { id: REC.ACCION_RECHAZAR } } }, K)?.que, 'rechazar');
   assert.equal(REC.interpretarEvento({ type: K.EventType.DELIVERED, detail: { notification: f.programados[2].n } }, K), null, 'el aviso final no suena como llamada');
   assert.equal(REC.interpretarEvento({ type: K.EventType.DELIVERED, detail: { notification: { id: 'pulse2chat-llamada' } } }, K), null, 'la de PULSE2CHAT no es de aquí');
@@ -1115,6 +1127,124 @@ prueba('el contexto lleva los recordatorios puestos (para decirlos y cancelarlos
   assert.deepEqual(c.recordatorios, [{ id: 'aura-rec-1-a', texto: 'Ir al banco', cuando: 5, llamada: false }]);
 });
 
+/* ── un solo dueño del audio (José, 4.7.0: «me dejó de escuchar», «se quedaron ambos hablando») ── */
+
+/** El micrófono y la voz de la mesa, simulados como en lib/speech + lib/tts: quiere/pausado/hablando. */
+function mesaSimulada() {
+  const m = { quiere: true, pausado: false, hablando: false, turnos: 0, cortes: 0, log: [] };
+  m.deps = {
+    muteMic: () => void ((m.quiere = false), m.log.push('mute')),
+    unmuteMic: () => void ((m.quiere = true), m.log.push('unmute')),
+    pauseMicForTts: (p) => void ((m.pausado = p), m.log.push(`pausa:${p}`)),
+    stopSpeaking: () => void ((m.hablando = false), m.cortes++),
+    cancelarTurno: () => void m.turnos++,
+    micQuerido: () => true,
+  };
+  /** ¿El reconocedor arrancaría? (speechNative.start sale si no se quiere o está pausado). */
+  m.oye = () => m.quiere && !m.pausado;
+  return m;
+}
+
+prueba('dueño del audio: la llamada manda, después la conversación; la mesa solo si se la ve y la app está delante', () => {
+  const s = (o) => duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: true, appActiva: true, ...o });
+  assert.equal(s({}), 'mesa');
+  assert.equal(s({ conversacion: true }), 'conversacion');
+  assert.equal(s({ enLlamada: true, conversacion: true }), 'llamada');
+  assert.equal(s({ mesaVisible: false }), 'nadie', 'la mesa tapada por los chats no oye ni habla');
+  assert.equal(s({ appActiva: false }), 'nadie');
+});
+
+prueba('fallo de la conversación en vivo → el micrófono de la mesa vuelve de verdad (la pausa colgada se suelta)', () => {
+  const m = mesaSimulada();
+  const oido = new OidoMesa(m.deps);
+  const c = new ControlSesion('claudio', 'es', { reintentos: 1 });
+  const aplicar = () => oido.aplicar(duenoAudio({ enLlamada: false, conversacion: c.vista().montada || c.vista().dormida, mesaVisible: true, appActiva: true }));
+  aplicar();
+  // La mesa estaba hablando («¡Aquí estoy! Cuéntame.»): su voz pausó el micrófono.
+  m.hablando = true;
+  m.deps.pauseMicForTts(true);
+  // Toca «Conversar»: la conversación toma el audio; la voz de la mesa se corta A LA MITAD (sin onEnd).
+  c.iniciar();
+  assert.equal(aplicar(), 'suelta');
+  assert.equal(m.hablando, false, 'la mesa se calla: nunca dos voces');
+  assert.equal(m.turnos, 1, 'el turno que pensaba se corta');
+  assert.equal(m.pausado, false, 'la pausa de la voz cortada se suelta al soltar');
+  // No abre (servidor sin la ruta, 404): reintento y error.
+  c.alEstado(c.vista().gen, 'error', 'HTTP 404 · HTTP 404');
+  c.alEstado(c.vista().gen, 'error', 'HTTP 404 · HTTP 404');
+  assert.equal(c.vista().montada, false);
+  assert.equal(c.vista().estado, 'error');
+  assert.equal(aplicar(), 'toma');
+  assert.ok(m.oye(), 'la mesa vuelve a oír (antes: quería oír pero seguía pausada → sorda)');
+  assert.match(motivoFalloVoz(c.vista().detalle), /servidor todavía no tiene la conversación en vivo/);
+});
+
+prueba('sin el arreglo, el mismo camino deja a la mesa sorda (así fallaba 4.7.0)', () => {
+  // Lo de antes: mute al abrir, unmute al fallar, y nadie soltaba la pausa de la voz cortada.
+  const m = mesaSimulada();
+  m.deps.pauseMicForTts(true);
+  m.deps.stopSpeaking();
+  m.deps.muteMic();
+  m.deps.unmuteMic();
+  assert.equal(m.oye(), false, 'quiere oír pero la pausa sigue puesta: el reconocedor no arranca');
+});
+
+prueba('dos voces nunca: la mesa tapada (los chats encima) suelta el audio; la conversación desde la compañera la calla', () => {
+  const m = mesaSimulada();
+  const oido = new OidoMesa(m.deps);
+  oido.aplicar('mesa');
+  m.hablando = true;
+  // Se va a los chats: la mesa (montada debajo en la pila) deja de oír y de hablar.
+  assert.equal(oido.aplicar(duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: false, appActiva: true })), 'suelta');
+  assert.equal(m.hablando, false);
+  assert.equal(m.quiere, false, 'su oído no queda abierto detrás de los chats');
+  assert.equal(oido.puedeHablar(), false);
+  // Abre la conversación desde la compañera y falla: la mesa sigue tapada → sigue callada (no «vuelve» detrás).
+  assert.equal(oido.aplicar(duenoAudio({ enLlamada: false, conversacion: true, mesaVisible: false, appActiva: true })), 'suelta');
+  assert.equal(oido.aplicar(duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: false, appActiva: true })), 'suelta');
+  assert.equal(m.quiere, false);
+  // Vuelve a la mesa: ahí sí oye (y una sola vez).
+  assert.equal(oido.aplicar(duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: true, appActiva: true })), 'toma');
+  assert.equal(oido.aplicar(duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: true, appActiva: true })), 'nada');
+  assert.ok(m.oye());
+});
+
+prueba('al montarse la mesa no abre el micrófono antes del permiso (fijar no toca nada)', () => {
+  const m = mesaSimulada();
+  m.quiere = false;
+  const oido = new OidoMesa(m.deps);
+  oido.fijar('mesa');
+  assert.deepEqual(m.log, [], 'ni unmute ni pausa: el oído lo abre el arranque con el permiso');
+  assert.equal(oido.aplicar('mesa'), 'nada');
+  assert.equal(oido.aplicar('conversacion'), 'suelta');
+});
+
+prueba('una llamada que falla (PULSE2CHAT «no pudo») devuelve el oído de la mesa sin pausa colgada', () => {
+  const m = mesaSimulada();
+  const oido = new OidoMesa(m.deps);
+  oido.aplicar('mesa');
+  m.deps.pauseMicForTts(true); // la mesa hablaba al empezar la llamada
+  oido.aplicar(duenoAudio({ enLlamada: true, conversacion: false, mesaVisible: true, appActiva: true }));
+  oido.aplicar(duenoAudio({ enLlamada: false, conversacion: false, mesaVisible: true, appActiva: true }));
+  assert.ok(m.oye());
+  // «Cállate» corta la voz: su onEnd no llega, la pausa se suelta igual.
+  m.deps.pauseMicForTts(true);
+  oido.vozCortada();
+  assert.ok(m.oye());
+});
+
+prueba('por qué no abrió la conversación, dicho para la persona (sin detalles técnicos)', () => {
+  assert.match(motivoFalloVoz('HTTP 401 · Entra de nuevo para hablar en conversación.'), /sesión venció/);
+  assert.match(motivoFalloVoz('HTTP 404 · HTTP 404'), /se estaba actualizando/);
+  assert.match(motivoFalloVoz('HTTP 429 · Se acabaron tus minutos'), /minutos de voz/);
+  assert.match(motivoFalloVoz('HTTP 503 · La conversación fluida no está lista todavía.'), /no está disponible/);
+  assert.match(motivoFalloVoz('HTTP 502 · No pude abrir la conversación ahora.'), /no respondió/);
+  assert.match(motivoFalloVoz('Network request failed'), /conexión/);
+  assert.match(motivoFalloVoz('Aborted'), /conexión/);
+  assert.match(motivoFalloVoz(''), /no pude conectar/);
+  assert.match(motivoFalloVoz('HTTP 404', true), /server/);
+});
+
 prueba('emoción del texto (conversación fluida)', () => {
   assert.equal(emocionDeTexto('¡Jajaja, qué bueno!'), 'risa');
   assert.equal(emocionDeTexto('Lo siento mucho, de verdad'), 'triste');
@@ -1122,6 +1252,114 @@ prueba('emoción del texto (conversación fluida)', () => {
   assert.equal(emocionDeTexto('¿A quién se lo mando?'), 'curioso');
   assert.equal(emocionDeTexto('Wow, no me digas'), 'sorpresa');
   assert.equal(emocionDeTexto('Son las tres'), 'neutral');
+});
+
+/* ── el banco de frases de estado (escuchando, pensando, revisando… por avatar e idioma) ───────── */
+
+const AVATARES_BANCO = ['ojos', 'aura', 'claudio', 'antonio'];
+
+prueba('frases de estado: cada estado, avatar e idioma tiene variedad (≥5) y frases cortas', () => {
+  assert.deepEqual([...AVATARES.map((a) => a.id)].sort(), [...AVATARES_BANCO].sort(), 'los mismos avatares que el catálogo');
+  let total = 0;
+  for (const e of ESTADOS_FRASE) for (const a of AVATARES_BANCO) for (const i of ['es', 'en']) {
+    const l = frasesDe(e, a, i);
+    total += l.length;
+    assert.ok(l.length >= 5, `${e}/${a}/${i}: ${l.length}`);
+    assert.equal(new Set(l).size, l.length, `${e}/${a}/${i} sin repetidas`);
+    for (const f of l) assert.ok(f.length <= 48 && f.split(' ').length <= 9, `larga: «${f}»`);
+  }
+  assert.ok(total >= 850, `total ${total}`);
+});
+
+prueba('frases de estado: no se repiten seguidas y recuerdan las últimas', () => {
+  const m = new MemoriaFrases();
+  let azar = 0.1;
+  const paso = () => (azar = (azar * 9301 + 0.49297) % 1);
+  for (const e of ESTADOS_FRASE) for (const a of AVATARES_BANCO) {
+    const vistas = [];
+    for (let k = 0; k < 40; k++) vistas.push(fraseDeEstado(e, a, 'es', { memoria: m, azar: paso }).texto);
+    for (let k = 1; k < vistas.length; k++) assert.notEqual(vistas[k], vistas[k - 1], `${e}/${a}: repitió «${vistas[k]}»`);
+    const n = frasesDe(e, a, 'es').length;
+    const ventana = Math.min(4, n - 1);
+    for (let k = ventana; k < vistas.length; k++) assert.ok(!vistas.slice(k - ventana, k).includes(vistas[k]), `${e}/${a}: «${vistas[k]}» dentro de las últimas ${ventana}`);
+    assert.ok(new Set(vistas).size >= Math.min(n, 5), `${e}/${a}: poca variedad`);
+  }
+  // Aunque cambie el estado, la misma frase no sale dos veces seguidas.
+  const otra = new MemoriaFrases();
+  const a1 = fraseDeEstado('pensando', 'aura', 'es', { memoria: otra, azar: () => 0 }).texto;
+  const a2 = fraseDeEstado('revisando', 'aura', 'es', { memoria: otra, azar: () => 0 }).texto;
+  assert.notEqual(a1, a2);
+});
+
+prueba('frases de estado: cada idioma en su idioma; sin género; el Guardián sereno y breve', () => {
+  for (const e of ESTADOS_FRASE) for (const a of AVATARES_BANCO) {
+    for (const f of frasesDe(e, a, 'en')) {
+      assert.ok(!/[ñ¿¡áéíóú]/i.test(f), `en con español: «${f}»`);
+      assert.notEqual(detectarIdioma(f), 'es', `en detectada como español: «${f}»`);
+    }
+    for (const f of frasesDe(e, a, 'es')) assert.notEqual(detectarIdioma(f), 'en', `es detectada como inglés: «${f}»`);
+    for (const f of [...frasesDe(e, a, 'es'), ...frasesDe(e, a, 'en')]) {
+      assert.ok(!/\b(estoy|quedé|quede) (list[oa]|content[oa]|cansad[oa]|segur[oa])\b/i.test(f), `con género: «${f}»`);
+      assert.ok(!/\[/.test(f), `sin etiquetas de expresión en el globito: «${f}»`);
+    }
+  }
+  const largo = (a) => {
+    const l = ESTADOS_FRASE.flatMap((e) => frasesDe(e, a, 'es'));
+    return l.reduce((s, f) => s + f.length, 0) / l.length;
+  };
+  assert.ok(largo('ojos') < largo('claudio') && largo('ojos') < largo('antonio'), 'el Guardián habla más corto');
+  assert.ok(!frasesDe('alegria', 'ojos', 'es').includes('¡Qué alegre!'), 'el Guardián no usa la calidez de las de base');
+  assert.ok(frasesDe('pensando', 'antonio', 'es').some((f) => /cuatro/.test(f)), 'ANT-ONIO y sus cuatro brazos');
+  assert.ok(frasesDe('buscando', 'claudio', 'es').some((f) => /olfate/i.test(f)), 'Claudio, el zorro, olfatea');
+});
+
+prueba('frases de estado: cada estado va a una cara, una emoción y una cara de mesa que YA existen', () => {
+  const CARAS_MESA = ['IDLE', 'LISTENING', 'THINKING', 'SPEAKING', 'HAPPY', 'CONCERNED', 'ANGRY', 'SLEEPING', 'STARTLE', 'WINK', 'CONFUSED', 'MUSIC', 'SCAN', 'YAWNING', 'LAUGH', 'SURPRISED', 'SAD', 'TIRED', 'SING', 'CURIOUS', 'PROUD', 'PRAY'];
+  for (const e of ESTADOS_FRASE) {
+    const m = EMOCION_DE_ESTADO[e];
+    assert.ok(EXPRESIONES_AVATAR.includes(m.expresion), `${e}: ${m.expresion}`);
+    assert.ok(EMOCIONES.includes(m.emocion), `${e}: ${m.emocion}`);
+    assert.ok(CARAS_MESA.includes(m.cara), `${e}: ${m.cara}`);
+    const f = fraseDeEstado(e, 'aura', 'es');
+    assert.equal(f.expresion, m.expresion);
+  }
+  assert.equal(EMOCION_DE_ESTADO.escuchando.expresion, 'escucha');
+  assert.equal(EMOCION_DE_ESTADO.pensando.expresion, 'piensa');
+  assert.equal(EMOCION_DE_ESTADO.sorpresa.expresion, 'sorprendida');
+});
+
+prueba('frases de estado: la muletilla del cerebro sobra tras el puente; qué estado toca por la pregunta', () => {
+  assert.equal(esRelleno('Mmm, déjame ver.'), true);
+  assert.equal(esRelleno('Let me check…'), true);
+  assert.equal(esRelleno('El oro está a tres mil.'), false);
+  assert.equal(quitarRellenoInicial('Mmm, déjame ver. El oro subió.'), 'El oro subió.');
+  assert.equal(quitarRellenoInicial('Un momento. Hmm, a ver, ya: son las tres.'), 'Ya: son las tres.');
+  assert.equal(quitarRellenoInicial('Bienvenido de vuelta.'), 'Bienvenido de vuelta.');
+  assert.equal(estadoDeEspera('busca el precio del oro'), 'buscando');
+  assert.equal(estadoDeEspera('¿cuánto es 15 x 3?'), 'calculando');
+  assert.equal(estadoDeEspera('revisa mis pendientes'), 'revisando');
+  assert.equal(estadoDeEspera('¿qué opinas de la reunión?'), 'pensando');
+});
+
+prueba('frases de estado: la compañera las usa en su globito (con su avatar e idioma) y dice «pensando» al esperar', () => {
+  fijarAvatar('claudio');
+  fijarIdioma('en');
+  try {
+    const vistas = new Set();
+    for (let k = 0; k < 12; k++) vistas.add(textoCompa.escuchando());
+    assert.ok(vistas.size >= 4, 'varía');
+    for (const f of vistas) assert.ok(frasesDe('escuchando', 'claudio', 'en').includes(f), f);
+    const r = reducir(ANIMO_INICIAL, { tipo: 'mesa', hablando: false, pensando: true, emocion: 'neutral' }, 0);
+    const g = r.efectos.find((e) => e.tipo === 'globo');
+    assert.ok(g && frasesDe('pensando', 'claudio', 'en').includes(g.texto), JSON.stringify(r.efectos));
+    // Seguir pensando no repite el globito.
+    const r2 = reducir(r.animo, { tipo: 'mesa', hablando: false, pensando: true, emocion: 'neutral' }, 10);
+    assert.ok(!r2.efectos.some((e) => e.tipo === 'globo'));
+    assert.ok(frasesDe('disculpa', 'claudio', 'en').every((f) => /sorry/i.test(f)), 'el perdón de la interrupción dice «sorry»');
+  } finally {
+    fijarAvatar('aura');
+    fijarIdioma('es');
+  }
 });
 
 for (const [nombre, f] of pruebas) {

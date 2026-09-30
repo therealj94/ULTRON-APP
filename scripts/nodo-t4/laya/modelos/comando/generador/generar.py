@@ -9,7 +9,7 @@ de OTRAS plantillas y de otra semilla: mide si el modelo entendió la orden o so
 bordes.jsonl lo escribe una persona (casos difíciles) y no se toca aquí.
 
 El modelo es COMPARTIDO con AU-RA: cada frase lleva además una etiqueta del grupo `app` (las manos de
-AURA, ver generar_aura.py). Para las frases de Electrum casi siempre es `app_ninguna`; las de pantalla
+AURA, ver generar_app.py). Para las frases de Electrum casi siempre es `app_ninguna`; las de pantalla
 completa / mitad son `app_presencia` (en AU-RA, cómo se presenta AURA) y «busca en internet…»,
 `app_buscar_internet`. La etiqueta se añade al escribir: las frases y la semilla no cambian.
 
@@ -256,10 +256,26 @@ def ruido(s, r):
 
 
 def app_de(frase, accion):
-    """La etiqueta del grupo `app` (AU-RA) de una frase de Electrum. No usa el azar: las frases no cambian."""
+    """La etiqueta del grupo `app` (AU-RA) de una frase de Electrum. No usa el azar: las frases no cambian.
+
+    Lo que en AU-RA es la misma mano: callar es callar (app_callar); cerrar una ventana es volver atrás
+    (app_atras, como DE_LAYA en lib/acciones-app.ts); la pantalla completa / mitad es cómo se presenta
+    AURA; «apaga la cámara» es la cámara; «quiero el tutorial», la ayuda; «abre el chat», abrir los chats.
+    """
+    f = sin_tildes(frase.lower())
     if accion in ('pantalla_completa', 'salir_pantalla', 'mitad'):
         return 'app_presencia'
-    if 'internet' in sin_tildes(frase.lower()) or 'en la web' in frase.lower():
+    if accion == 'callar':
+        return 'app_callar'
+    if accion == 'cerrar':
+        return 'app_atras'
+    if accion in ('manos_on', 'manos_off') and 'camara' in f:
+        return 'app_camara'
+    if accion == 'abrir_recorrido' and 'tutorial' in f:
+        return 'app_ayuda'
+    if accion == 'abrir_consulta' and 'chat' in f:
+        return 'app_abrir'
+    if 'internet' in f or 'en la web' in frase.lower():
         return 'app_buscar_internet'
     return 'app_ninguna'
 

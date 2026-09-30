@@ -76,7 +76,7 @@ export function ChatMesa(p: Props) {
           accessibilityLabel={p.conversando ? tr('Terminar la conversación', 'End the conversation') : tr('Conversar de corrido', 'Talk freely')}
         >
           <Text style={[s.conversarTexto, { color: p.conversando ? tema.sobreAcento : tema.acentoTexto }]}>
-            {p.conversando ? (p.conectando ? tr('Conectando…', 'Connecting…') : tr('Terminar', 'End')) : tr('Conversar', 'Talk')}
+            {p.conversando ? (p.conectando ? tr('Conectando…', 'Connecting…') : tr('Terminar', 'End')) : tr('En vivo', 'Live')}
           </Text>
         </Pressable>
         <Pressable
@@ -86,7 +86,7 @@ export function ChatMesa(p: Props) {
           }}
           style={s.menu}
           accessibilityRole="button"
-          accessibilityLabel={tr('Menú y ajustes', 'Menu and settings')}
+          accessibilityLabel={tr('Más: cámara, caras, modo, qué puedo hacer y ajustes', 'More: camera, faces, mode, what I can do and settings')}
           hitSlop={8}
         >
           <View style={s.raya} />

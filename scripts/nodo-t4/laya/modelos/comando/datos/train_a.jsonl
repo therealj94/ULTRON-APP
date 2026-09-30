@@ -30,11 +30,11 @@
 {"q": "porfa derecha doctor", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "bueno, gira un poco a la derecha", "e": ["rotar_derecha", "app_ninguna"]}
 {"q": "mueve la vista a la izquierda pues", "e": ["mover_izquierda", "app_ninguna"]}
-{"q": "ahora cierra el timelapse si puedes", "e": ["cerrar", "app_ninguna"]}
+{"q": "ahora cierra el timelapse si puedes", "e": ["cerrar", "app_atras"]}
 {"q": "eh, lee el contrato", "e": ["ninguna", "app_ninguna"]}
 {"q": "Oye, ya volví", "e": ["ninguna", "app_ninguna"]}
 {"q": "ey avanza al próximo", "e": ["siguiente", "app_ninguna"]}
-{"q": "mira, quita esa ventana", "e": ["cerrar", "app_ninguna"]}
+{"q": "mira, quita esa ventana", "e": ["cerrar", "app_atras"]}
 {"q": "oiga, muestra los archivos.", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "A ver, ¿qué es el air touch?", "e": ["ninguna", "app_ninguna"]}
 {"q": "que concesiones hay en santa barbara", "e": ["ninguna", "app_ninguna"]}
@@ -83,7 +83,7 @@
 {"q": "oiga muestra toda honduras", "e": ["ver_pais", "app_ninguna"]}
 {"q": "vaya, analiza esto", "e": ["analizar", "app_ninguna"]}
 {"q": "Impresionante", "e": ["ninguna", "app_ninguna"]}
-{"q": "no digas nada pues", "e": ["callar", "app_ninguna"]}
+{"q": "no digas nada pues", "e": ["callar", "app_callar"]}
 {"q": "Vaya voltea el mapa a la derecha", "e": ["rotar_derecha", "app_ninguna"]}
 {"q": "bueno vista nacional por favor", "e": ["ver_pais", "app_ninguna"]}
 {"q": "a ver compara los almendros con san martín", "e": ["ninguna", "app_ninguna"]}
@@ -99,7 +99,7 @@
 {"q": "Doctor que significa el expediente", "e": ["ninguna", "app_ninguna"]}
 {"q": "ahora mitad y mitad.", "e": ["mitad", "app_presencia"]}
 {"q": "a ver jaja", "e": ["ninguna", "app_ninguna"]}
-{"q": "Ya, silencio por favor rápido.", "e": ["callar", "app_ninguna"]}
+{"q": "Ya, silencio por favor rápido.", "e": ["callar", "app_callar"]}
 {"q": "Oye, muevete al sur", "e": ["mover_abajo", "app_ninguna"]}
 {"q": "¿el tule traslapa con el porvenir?", "e": ["ninguna", "app_ninguna"]}
 {"q": "ya quita zoom", "e": ["zoom_menos", "app_ninguna"]}
@@ -107,7 +107,7 @@
 {"q": "Dame las concesiones de exploración en choluteca", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye busca el naranjo", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿san andres traslapa con los pinares?", "e": ["ninguna", "app_ninguna"]}
-{"q": "este cierra eso", "e": ["cerrar", "app_ninguna"]}
+{"q": "este cierra eso", "e": ["cerrar", "app_atras"]}
 {"q": "doctor cuándo vence la licencia ambiental", "e": ["ninguna", "app_ninguna"]}
 {"q": "Eh, pasale ya", "e": ["siguiente", "app_ninguna"]}
 {"q": "Eh, ¿cuál es el estado de monserrat?", "e": ["ninguna", "app_ninguna"]}
@@ -124,14 +124,14 @@
 {"q": "oye el tule esta vigente", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿cuál es el canon de san andrés?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Dale, enciende air touch pues", "e": ["manos_on", "app_ninguna"]}
-{"q": "eh, pestaña chat un poquito", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "eh, pestaña chat un poquito", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "porfa abre documentos", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "oye acercate a san andres", "e": ["ninguna", "app_ninguna"]}
 {"q": "hazme la ficha en pdf de el porvenir", "e": ["ninguna", "app_ninguna"]}
-{"q": "vaya, tutorial por favor.", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "vaya, tutorial por favor.", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "Doctor, corre el mapa a la derecha.", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "bueno, quiero ver más área porfa.", "e": ["zoom_menos", "app_ninguna"]}
-{"q": "vaya guarda silencio por favor", "e": ["callar", "app_ninguna"]}
+{"q": "vaya guarda silencio por favor", "e": ["callar", "app_callar"]}
 {"q": "a ver, mapa geológico de el tule", "e": ["ninguna", "app_ninguna"]}
 {"q": "cerro partido traslapa con nayla i", "e": ["ninguna", "app_ninguna"]}
 {"q": "Eh compara el volcan con san andres", "e": ["ninguna", "app_ninguna"]}
@@ -147,7 +147,7 @@
 {"q": "oiga ve a la conversación", "e": ["abrir_consulta", "app_ninguna"]}
 {"q": "a ver mapa de geología de esta mina ya", "e": ["mapa_geologico", "app_ninguna"]}
 {"q": "Doctor, ¿cuántas concesiones hay en santa bárbara?", "e": ["ninguna", "app_ninguna"]}
-{"q": "Eh tutorial por favor ahi.", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "Eh tutorial por favor ahi.", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "Por favor corre la pantalla para abajo porfa", "e": ["mover_abajo", "app_ninguna"]}
 {"q": "¿es rentable?", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿quién tiene los pinares?", "e": ["ninguna", "app_ninguna"]}
@@ -179,7 +179,7 @@
 {"q": "vaya da vuelta a la derecha", "e": ["rotar_derecha", "app_ninguna"]}
 {"q": "ey, cambia a satélite", "e": ["fondo_satelite", "app_ninguna"]}
 {"q": "a ver, ¿dónde queda choluteca?", "e": ["ninguna", "app_ninguna"]}
-{"q": "Porfa cierra la ventana", "e": ["cerrar", "app_ninguna"]}
+{"q": "Porfa cierra la ventana", "e": ["cerrar", "app_atras"]}
 {"q": "doctor, ¿hacia dónde corre la falla?", "e": ["ninguna", "app_ninguna"]}
 {"q": "no entiendo.", "e": ["ninguna", "app_ninguna"]}
 {"q": "A ver qué sabes de el expediente de san martín", "e": ["ninguna", "app_ninguna"]}
@@ -210,7 +210,7 @@
 {"q": "mira haz una órbita", "e": ["orbitar", "app_ninguna"]}
 {"q": "Doctor electrum, mas chat", "e": ["mas_chat", "app_ninguna"]}
 {"q": "eh enderézalo", "e": ["norte_arriba", "app_ninguna"]}
-{"q": "quiero escribirte, abre el chat.", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "quiero escribirte, abre el chat.", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "doctor qué concesiones hay en cortés", "e": ["ninguna", "app_ninguna"]}
 {"q": "mira, quiero ver las capas ya.", "e": ["abrir_capas", "app_ninguna"]}
 {"q": "vaya full screen", "e": ["pantalla_completa", "app_presencia"]}
@@ -219,7 +219,7 @@
 {"q": "Oye cuántas concesiones hay en choluteca", "e": ["ninguna", "app_ninguna"]}
 {"q": "Ok, analízala", "e": ["analizar", "app_ninguna"]}
 {"q": "eh, muéstrame el porvenir", "e": ["ninguna", "app_ninguna"]}
-{"q": "quitalo", "e": ["cerrar", "app_ninguna"]}
+{"q": "quitalo", "e": ["cerrar", "app_atras"]}
 {"q": "siguiente capítulo.", "e": ["siguiente", "app_ninguna"]}
 {"q": "ensename las concesiones de cortes.", "e": ["ninguna", "app_ninguna"]}
 {"q": "oiga, más arriba ya", "e": ["mover_arriba", "app_ninguna"]}
@@ -246,7 +246,7 @@
 {"q": "más a la derecha pues", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "doctor muestrame la escalera", "e": ["ninguna", "app_ninguna"]}
 {"q": "ensename las concesiones de danli", "e": ["ninguna", "app_ninguna"]}
-{"q": "por favor mutéate porfa", "e": ["callar", "app_ninguna"]}
+{"q": "por favor mutéate porfa", "e": ["callar", "app_callar"]}
 {"q": "Ve a danlí.", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver, ¿cual es el area de la esperanza?", "e": ["ninguna", "app_ninguna"]}
 {"q": "ensename las concesiones de santa barbara.", "e": ["ninguna", "app_ninguna"]}
@@ -255,7 +255,7 @@
 {"q": "dale, arrímate.", "e": ["zoom_mas", "app_ninguna"]}
 {"q": "dale, analiza esto", "e": ["analizar", "app_ninguna"]}
 {"q": "Oye, ¿cual es las muestras de jica de san martin?", "e": ["ninguna", "app_ninguna"]}
-{"q": "ey no digas nada.", "e": ["callar", "app_ninguna"]}
+{"q": "ey no digas nada.", "e": ["callar", "app_callar"]}
 {"q": "Eh acercate a las joyas", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh muéstrame la geología en mapa un poquito.", "e": ["mapa_geologico", "app_ninguna"]}
 {"q": "ábreme la ficha de la esperanza", "e": ["ninguna", "app_ninguna"]}
@@ -271,7 +271,7 @@
 {"q": "oye, sin relieve", "e": ["quitar_3d", "app_ninguna"]}
 {"q": "Bueno rota el mapa a la izquierda", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "Dale terreno en 3d.", "e": ["relieve_3d", "app_ninguna"]}
-{"q": "Ey, cierra el pdf porfa.", "e": ["cerrar", "app_ninguna"]}
+{"q": "Ey, cierra el pdf porfa.", "e": ["cerrar", "app_atras"]}
 {"q": "la siguiente concesión que vence, ¿cuál es?", "e": ["ninguna", "app_ninguna"]}
 {"q": "este... dividelo en dos pues", "e": ["mitad", "app_presencia"]}
 {"q": "Doctor solo el mapa gracias", "e": ["mas_mapa", "app_ninguna"]}
@@ -290,7 +290,7 @@
 {"q": "air touch gracias", "e": ["manos_on", "app_ninguna"]}
 {"q": "por favor cancela el recorrido", "e": ["detener", "app_ninguna"]}
 {"q": "Oye, abre las capas", "e": ["abrir_capas", "app_ninguna"]}
-{"q": "A ver, cierra el timelapse", "e": ["cerrar", "app_ninguna"]}
+{"q": "A ver, cierra el timelapse", "e": ["cerrar", "app_atras"]}
 {"q": "a ver, ¿cuándo vence los almendros?", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh, córrelo a la derecha", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "doctor cuándo vence los almendros", "e": ["ninguna", "app_ninguna"]}
@@ -319,13 +319,13 @@
 {"q": "Dale, ve a expedientes pues", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "¿cuál es el expediente de la esperanza?", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye, estoy aqui, muestrame", "e": ["mi_ubicacion", "app_ninguna"]}
-{"q": "por favor volvamos al chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "por favor volvamos al chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "llévame a el naranjo", "e": ["ninguna", "app_ninguna"]}
 {"q": "timelapse de monserrat", "e": ["ninguna", "app_ninguna"]}
-{"q": "Ahora tutorial por favor", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "Ahora tutorial por favor", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "Enciende el tres d ahorita", "e": ["relieve_3d", "app_ninguna"]}
 {"q": "¿hay oro en juticalpa?", "e": ["ninguna", "app_ninguna"]}
-{"q": "mira, fuera esa ventana", "e": ["cerrar", "app_ninguna"]}
+{"q": "mira, fuera esa ventana", "e": ["cerrar", "app_atras"]}
 {"q": "y en dolares?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Cambia a calles porfa", "e": ["fondo_calles", "app_ninguna"]}
 {"q": "porfa pon satelital un poquito", "e": ["fondo_satelite", "app_ninguna"]}
@@ -343,7 +343,7 @@
 {"q": "Por favor enderezalo", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "eh hazme la ficha en pdf de la escalera", "e": ["ninguna", "app_ninguna"]}
 {"q": "Ey, pon las capas", "e": ["abrir_capas", "app_ninguna"]}
-{"q": "porfa guarda silencio ahi", "e": ["callar", "app_ninguna"]}
+{"q": "porfa guarda silencio ahi", "e": ["callar", "app_callar"]}
 {"q": "a ver, zoom in", "e": ["zoom_mas", "app_ninguna"]}
 {"q": "doctor timelapse de el tule", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye, achica la pantalla un poquito", "e": ["salir_pantalla", "app_presencia"]}
@@ -352,7 +352,7 @@
 {"q": "Ponlo en planta", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "ubícame gracias", "e": ["mi_ubicacion", "app_ninguna"]}
 {"q": "ok, expande a toda la pantalla ahí", "e": ["pantalla_completa", "app_presencia"]}
-{"q": "Oye basta pues", "e": ["callar", "app_ninguna"]}
+{"q": "Oye basta pues", "e": ["callar", "app_callar"]}
 {"q": "Un poco a la derecha", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "A ver, ¿hay oro en choluteca?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Eh mueve la pantalla hacia arriba", "e": ["mover_arriba", "app_ninguna"]}
@@ -360,7 +360,7 @@
 {"q": "eh, ¿quién tiene nayla i?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Este... deja el mapa derecho", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "compara clavo rico con el volcan", "e": ["ninguna", "app_ninguna"]}
-{"q": "ve al chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "ve al chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "vaya, llévame al este", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "por favor dame un tour ya", "e": ["abrir_recorrido", "app_ninguna"]}
 {"q": "eh quiero usar las manos rapido.", "e": ["manos_on", "app_ninguna"]}
@@ -381,10 +381,10 @@
 {"q": "resetea la rotación", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "¿dónde está la mina san martín?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Muéstrame los traslapes de la concesión la esperanza", "e": ["ninguna", "app_ninguna"]}
-{"q": "doctor, quítalo", "e": ["cerrar", "app_ninguna"]}
+{"q": "doctor, quítalo", "e": ["cerrar", "app_atras"]}
 {"q": "giralo a la derecha", "e": ["rotar_derecha", "app_ninguna"]}
 {"q": "ey, que opinas de esta area, analizala", "e": ["analizar", "app_ninguna"]}
-{"q": "oye, baja la voz y callate por favor", "e": ["callar", "app_ninguna"]}
+{"q": "oye, baja la voz y callate por favor", "e": ["callar", "app_callar"]}
 {"q": "Ve a la conversacion", "e": ["abrir_consulta", "app_ninguna"]}
 {"q": "este... ponlo en perspectiva", "e": ["inclinar", "app_ninguna"]}
 {"q": "doctor, sal de pantalla completa", "e": ["salir_pantalla", "app_presencia"]}
@@ -423,7 +423,7 @@
 {"q": "a ver quiero ver calles.", "e": ["fondo_calles", "app_ninguna"]}
 {"q": "doctor qué dice el expediente", "e": ["ninguna", "app_ninguna"]}
 {"q": "mira, arma el pdf de la que esta abierta", "e": ["ficha_pdf", "app_ninguna"]}
-{"q": "bueno, ya no hables.", "e": ["callar", "app_ninguna"]}
+{"q": "bueno, ya no hables.", "e": ["callar", "app_callar"]}
 {"q": "oye qué concesiones hay en tegucigalpa", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver, ¿qué sabes de la fecha de vencimiento de el porvenir?", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor electrum, bájame el pdf de esta rápido", "e": ["ficha_pdf", "app_ninguna"]}
@@ -466,7 +466,7 @@
 {"q": "Oiga continúa con el recorrido", "e": ["siguiente", "app_ninguna"]}
 {"q": "oye, ¿qué concesiones vencen este año?", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver dime la geologia de el porvenir.", "e": ["ninguna", "app_ninguna"]}
-{"q": "ey ya cierra", "e": ["cerrar", "app_ninguna"]}
+{"q": "ey ya cierra", "e": ["cerrar", "app_atras"]}
 {"q": "enséñame dónde queda tegucigalpa", "e": ["ninguna", "app_ninguna"]}
 {"q": "bueno, hazle espacio al chat doctor", "e": ["mas_chat", "app_ninguna"]}
 {"q": "¿qué concesiones hay en danlí?", "e": ["ninguna", "app_ninguna"]}
@@ -500,7 +500,7 @@
 {"q": "Vuela a cerro partido", "e": ["ninguna", "app_ninguna"]}
 {"q": "vaya, abre infra", "e": ["abrir_infra", "app_ninguna"]}
 {"q": "correlo a la izquierda", "e": ["mover_izquierda", "app_ninguna"]}
-{"q": "mira, calla doctor", "e": ["callar", "app_ninguna"]}
+{"q": "mira, calla doctor", "e": ["callar", "app_callar"]}
 {"q": "Doctor, dime el canon de el volcán", "e": ["ninguna", "app_ninguna"]}
 {"q": "ok mas perspectiva", "e": ["inclinar", "app_ninguna"]}
 {"q": "abre infra", "e": ["abrir_infra", "app_ninguna"]}
@@ -529,7 +529,7 @@
 {"q": "eh siguiente un poquito", "e": ["siguiente", "app_ninguna"]}
 {"q": "ve a la unión", "e": ["ninguna", "app_ninguna"]}
 {"q": "abreme la ficha de los pinares", "e": ["ninguna", "app_ninguna"]}
-{"q": "Doctor cierra el tablero.", "e": ["cerrar", "app_ninguna"]}
+{"q": "Doctor cierra el tablero.", "e": ["cerrar", "app_atras"]}
 {"q": "oye, quita el 3d", "e": ["quitar_3d", "app_ninguna"]}
 {"q": "Oye dime el área protegida de la esperanza", "e": ["ninguna", "app_ninguna"]}
 {"q": "Busca clavo rico.", "e": ["ninguna", "app_ninguna"]}
@@ -550,7 +550,7 @@
 {"q": "ok, ver desde arriba", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "Porfa modo pantalla completa", "e": ["pantalla_completa", "app_presencia"]}
 {"q": "vaya, hacia el norte por favor", "e": ["mover_arriba", "app_ninguna"]}
-{"q": "quítalo", "e": ["cerrar", "app_ninguna"]}
+{"q": "quítalo", "e": ["cerrar", "app_atras"]}
 {"q": "ensename las concesiones de catacamas", "e": ["ninguna", "app_ninguna"]}
 {"q": "Bueno, más lejos.", "e": ["zoom_menos", "app_ninguna"]}
 {"q": "eh", "e": ["ninguna", "app_ninguna"]}
@@ -592,7 +592,7 @@
 {"q": "oiga gira como el reloj", "e": ["rotar_derecha", "app_ninguna"]}
 {"q": "Mira, recorrido completo", "e": ["abrir_recorrido", "app_ninguna"]}
 {"q": "timelapse de los pinares.", "e": ["ninguna", "app_ninguna"]}
-{"q": "vaya, ciérralo", "e": ["cerrar", "app_ninguna"]}
+{"q": "vaya, ciérralo", "e": ["cerrar", "app_atras"]}
 {"q": "quien tiene cerro partido", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh el tablero", "e": ["abrir_tablero", "app_ninguna"]}
 {"q": "este... apaga el relieve ahi.", "e": ["quitar_3d", "app_ninguna"]}
@@ -602,7 +602,7 @@
 {"q": "Doctor vista en planta ya.", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "ya sobrevuela en círculo", "e": ["orbitar", "app_ninguna"]}
 {"q": "Oye, dime la geologia de san andres", "e": ["ninguna", "app_ninguna"]}
-{"q": "porfa basta", "e": ["callar", "app_ninguna"]}
+{"q": "porfa basta", "e": ["callar", "app_callar"]}
 {"q": "a ver, ¿cuántas concesiones hay en tegucigalpa?", "e": ["ninguna", "app_ninguna"]}
 {"q": "vuela a san martín", "e": ["ninguna", "app_ninguna"]}
 {"q": "bueno, correlo a la derecha", "e": ["mover_derecha", "app_ninguna"]}
@@ -612,7 +612,7 @@
 {"q": "Ahora hazme el recorrido", "e": ["abrir_recorrido", "app_ninguna"]}
 {"q": "a ver pon las capas", "e": ["abrir_capas", "app_ninguna"]}
 {"q": "desplázate al sur ahí", "e": ["mover_abajo", "app_ninguna"]}
-{"q": "mira deja de hablar", "e": ["callar", "app_ninguna"]}
+{"q": "mira deja de hablar", "e": ["callar", "app_callar"]}
 {"q": "Bueno mas espacio para la conversacion", "e": ["mas_chat", "app_ninguna"]}
 {"q": "porfa ya no pantalla completa", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "hazme un resumen", "e": ["ninguna", "app_ninguna"]}
@@ -625,7 +625,7 @@
 {"q": "a ver, ¿las joyas está vigente?", "e": ["ninguna", "app_ninguna"]}
 {"q": "muéstrame monserrat", "e": ["ninguna", "app_ninguna"]}
 {"q": "Ahora gira todo alrededor", "e": ["orbitar", "app_ninguna"]}
-{"q": "mira, quita esa imagen", "e": ["cerrar", "app_ninguna"]}
+{"q": "mira, quita esa imagen", "e": ["cerrar", "app_atras"]}
 {"q": "vista aerea desde arriba", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "¿quién tiene concordia vi?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Doctor cuál es los caseríos cercanos de los pinares", "e": ["ninguna", "app_ninguna"]}
@@ -645,7 +645,7 @@
 {"q": "Mira voltea la pantalla a la izquierda", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "la esperanza traslapa con san martín", "e": ["ninguna", "app_ninguna"]}
 {"q": "Este... abre la biblioteca", "e": ["abrir_expedientes", "app_ninguna"]}
-{"q": "Eh, silencio por favor.", "e": ["callar", "app_ninguna"]}
+{"q": "Eh, silencio por favor.", "e": ["callar", "app_callar"]}
 {"q": "por favor gira un poco a la izquierda", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "Oye vista de calles", "e": ["fondo_calles", "app_ninguna"]}
 {"q": "eh, ya volví.", "e": ["ninguna", "app_ninguna"]}
@@ -654,7 +654,7 @@
 {"q": "mira, acercate a la concesion doctor", "e": ["zoom_mas", "app_ninguna"]}
 {"q": "qué hay al norte de gualaco", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor muéstrame san andrés", "e": ["ninguna", "app_ninguna"]}
-{"q": "Tutorial por favor", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "Tutorial por favor", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "Vuela a el tule", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver, ponlo plano", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "hazme la ficha en pdf de el naranjo", "e": ["ninguna", "app_ninguna"]}
@@ -663,13 +663,13 @@
 {"q": "analízala rápido", "e": ["analizar", "app_ninguna"]}
 {"q": "Doctor, ¿la esperanza traslapa con san martín?", "e": ["ninguna", "app_ninguna"]}
 {"q": "compara el porvenir con los pinares", "e": ["ninguna", "app_ninguna"]}
-{"q": "ahora cierra la ficha pues", "e": ["cerrar", "app_ninguna"]}
+{"q": "ahora cierra la ficha pues", "e": ["cerrar", "app_atras"]}
 {"q": "oye monserrat traslapa con las joyas", "e": ["ninguna", "app_ninguna"]}
 {"q": "ya, air touch", "e": ["manos_on", "app_ninguna"]}
 {"q": "saca la pantalla completa", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "oye, compara cerro partido con los pinares.", "e": ["ninguna", "app_ninguna"]}
 {"q": "Timelapse de nayla i", "e": ["ninguna", "app_ninguna"]}
-{"q": "ey, desaparece eso", "e": ["cerrar", "app_ninguna"]}
+{"q": "ey, desaparece eso", "e": ["cerrar", "app_atras"]}
 {"q": "oiga derecha.", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "a ver qué sabes de las muestras de jica de el naranjo", "e": ["ninguna", "app_ninguna"]}
 {"q": "dale analízala ahí", "e": ["analizar", "app_ninguna"]}
@@ -685,7 +685,7 @@
 {"q": "hola cómo estás", "e": ["ninguna", "app_ninguna"]}
 {"q": "oiga apaga los gestos ahorita", "e": ["manos_off", "app_ninguna"]}
 {"q": "Ahora deja el mapa derecho un poquito", "e": ["norte_arriba", "app_ninguna"]}
-{"q": "eh, muestra el chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "eh, muestra el chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "oye, arma el mapa de geología gracias", "e": ["mapa_geologico", "app_ninguna"]}
 {"q": "doctor electrum empieza la presentación un poquito", "e": ["abrir_recorrido", "app_ninguna"]}
 {"q": "ok, solo el mapa", "e": ["mas_mapa", "app_ninguna"]}
@@ -710,7 +710,7 @@
 {"q": "bueno, abre documentos", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "a ver, compara la escalera con los pinares", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh, muéstrame los pinares.", "e": ["ninguna", "app_ninguna"]}
-{"q": "mira cierra la ventana", "e": ["cerrar", "app_ninguna"]}
+{"q": "mira cierra la ventana", "e": ["cerrar", "app_atras"]}
 {"q": "Oye, vuela a los almendros", "e": ["ninguna", "app_ninguna"]}
 {"q": "Doctor qué es el air touch.", "e": ["ninguna", "app_ninguna"]}
 {"q": "Ahora ve a todo el país pues", "e": ["ver_pais", "app_ninguna"]}
@@ -729,7 +729,7 @@
 {"q": "Qué sabes de los traslapes de el naranjo", "e": ["ninguna", "app_ninguna"]}
 {"q": "Eh compara los almendros con san andrés", "e": ["ninguna", "app_ninguna"]}
 {"q": "muestra el satélite de fondo doctor", "e": ["fondo_satelite", "app_ninguna"]}
-{"q": "porfa desaparece eso", "e": ["cerrar", "app_ninguna"]}
+{"q": "porfa desaparece eso", "e": ["cerrar", "app_atras"]}
 {"q": "Doctor, ¿por que gira la tierra?", "e": ["ninguna", "app_ninguna"]}
 {"q": "este sal del modo pantalla completa", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "oiga ve a la infra", "e": ["abrir_infra", "app_ninguna"]}
@@ -741,7 +741,7 @@
 {"q": "¿cuál es el canon de san martín?", "e": ["ninguna", "app_ninguna"]}
 {"q": "A ver, ¿qué significa el titular?", "e": ["ninguna", "app_ninguna"]}
 {"q": "desactiva pantalla completa", "e": ["salir_pantalla", "app_presencia"]}
-{"q": "ok esconde la ventana", "e": ["cerrar", "app_ninguna"]}
+{"q": "ok esconde la ventana", "e": ["cerrar", "app_atras"]}
 {"q": "Eh compara concordia vi con las joyas", "e": ["ninguna", "app_ninguna"]}
 {"q": "ya, ve a donde estoy", "e": ["mi_ubicacion", "app_ninguna"]}
 {"q": "Doctor qué significa la licencia ambiental", "e": ["ninguna", "app_ninguna"]}
@@ -762,7 +762,7 @@
 {"q": "mira, quiero ver el antes y después porfa.", "e": ["timelapse", "app_ninguna"]}
 {"q": "a ver, llévame a concordia vi", "e": ["ninguna", "app_ninguna"]}
 {"q": "dime las muestras de jica de monserrat", "e": ["ninguna", "app_ninguna"]}
-{"q": "Este... no digas nada si puedes", "e": ["callar", "app_ninguna"]}
+{"q": "Este... no digas nada si puedes", "e": ["callar", "app_callar"]}
 {"q": "oye, ¿quién tiene san andrés?", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye, ¿que concesiones vencen este ano?", "e": ["ninguna", "app_ninguna"]}
 {"q": "sal del recorrido.", "e": ["detener", "app_ninguna"]}
@@ -853,7 +853,7 @@
 {"q": "este... más zoom doctor.", "e": ["zoom_mas", "app_ninguna"]}
 {"q": "Activa air touch ahorita", "e": ["manos_on", "app_ninguna"]}
 {"q": "Reparte la pantalla", "e": ["mitad", "app_presencia"]}
-{"q": "Silencio por favor", "e": ["callar", "app_ninguna"]}
+{"q": "Silencio por favor", "e": ["callar", "app_callar"]}
 {"q": "Ahora sal de full.", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "a ver desplázate al sur", "e": ["mover_abajo", "app_ninguna"]}
 {"q": "Bueno orienta al norte doctor", "e": ["norte_arriba", "app_ninguna"]}
@@ -948,13 +948,13 @@
 {"q": "Ya, córrelo a la izquierda", "e": ["mover_izquierda", "app_ninguna"]}
 {"q": "oye, dime el canon de la esperanza", "e": ["ninguna", "app_ninguna"]}
 {"q": "bueno, gira en contra del reloj", "e": ["rotar_izquierda", "app_ninguna"]}
-{"q": "dale, regresa al chat pues", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "dale, regresa al chat pues", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "¿cerro partido esta vigente?", "e": ["ninguna", "app_ninguna"]}
 {"q": "vaya abre el panel de cifras", "e": ["abrir_tablero", "app_ninguna"]}
 {"q": "Oye, dime la geología de concordia vi", "e": ["ninguna", "app_ninguna"]}
 {"q": "porfa vista oblicua", "e": ["inclinar", "app_ninguna"]}
 {"q": "oye, ficha pdf rápido", "e": ["ficha_pdf", "app_ninguna"]}
-{"q": "Dale ve al chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "Dale ve al chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "Oiga, muestra los archivos", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "ok mas zoom", "e": ["zoom_mas", "app_ninguna"]}
 {"q": "bueno, que el mapa ocupe más", "e": ["mas_mapa", "app_ninguna"]}
@@ -981,7 +981,7 @@
 {"q": "Doctor avanza al próximo", "e": ["siguiente", "app_ninguna"]}
 {"q": "ok quiero ver en 3d", "e": ["relieve_3d", "app_ninguna"]}
 {"q": "Por favor abre más el mapa", "e": ["mas_mapa", "app_ninguna"]}
-{"q": "ya desaparece eso por favor", "e": ["cerrar", "app_ninguna"]}
+{"q": "ya desaparece eso por favor", "e": ["cerrar", "app_atras"]}
 {"q": "Eh, ver desde arriba ahorita.", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "Doctor electrum, vista de todo el pais", "e": ["ver_pais", "app_ninguna"]}
 {"q": "ok divide la pantalla doctor", "e": ["mitad", "app_presencia"]}
@@ -999,7 +999,7 @@
 {"q": "qué sabes de la ley de oro de concordia vi", "e": ["ninguna", "app_ninguna"]}
 {"q": "vaya, un poco a la derecha", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "a ver, ¿cuál es los caseríos cercanos de los pinares?", "e": ["ninguna", "app_ninguna"]}
-{"q": "por favor deja de usar la camara", "e": ["manos_off", "app_ninguna"]}
+{"q": "por favor deja de usar la camara", "e": ["manos_off", "app_camara"]}
 {"q": "doctor electrum satélite", "e": ["fondo_satelite", "app_ninguna"]}
 {"q": "Oye cuál es la geología de cerro partido", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye quién tiene el porvenir.", "e": ["ninguna", "app_ninguna"]}
@@ -1022,7 +1022,7 @@
 {"q": "dale, zoom in pues", "e": ["zoom_mas", "app_ninguna"]}
 {"q": "A ver un poco a la derecha.", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "doctor, ¿cual es el estado de monserrat?", "e": ["ninguna", "app_ninguna"]}
-{"q": "Porfa calla.", "e": ["callar", "app_ninguna"]}
+{"q": "Porfa calla.", "e": ["callar", "app_callar"]}
 {"q": "Expedientes por favor ya.", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "Doctor, ¿cuándo vence el porvenir?", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver, dame tu evaluación de esta concesión gracias", "e": ["analizar", "app_ninguna"]}
@@ -1049,7 +1049,7 @@
 {"q": "¿que sabes de el canon de clavo rico?", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿cuál es el expediente de la escalera?", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver, ¿nayla i traslapa con concordia vi?", "e": ["ninguna", "app_ninguna"]}
-{"q": "regresa al chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "regresa al chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "Eh, ¿cuándo vence san martín?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Gira 360 grados", "e": ["orbitar", "app_ninguna"]}
 {"q": "a ver, activa los gestos", "e": ["manos_on", "app_ninguna"]}
@@ -1063,14 +1063,14 @@
 {"q": "ahora pestaña de expedientes", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "Doctor electrum apaga las manos", "e": ["manos_off", "app_ninguna"]}
 {"q": "dale más espacio para la conversación", "e": ["mas_chat", "app_ninguna"]}
-{"q": "ey tutorial por favor si puedes", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "ey tutorial por favor si puedes", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "oye, mapa geológico de monserrat", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh busca cerro partido", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor muéstrame los pinares", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor electrum sin 3d", "e": ["quitar_3d", "app_ninguna"]}
 {"q": "Vaya más chat", "e": ["mas_chat", "app_ninguna"]}
 {"q": "hazme la ficha en pdf de san martín", "e": ["ninguna", "app_ninguna"]}
-{"q": "A ver, quita la ficha pues", "e": ["cerrar", "app_ninguna"]}
+{"q": "A ver, quita la ficha pues", "e": ["cerrar", "app_atras"]}
 {"q": "doctor muestrame el recorrido doctor", "e": ["abrir_recorrido", "app_ninguna"]}
 {"q": "a ver, ¿qué sabes de los caseríos cercanos de clavo rico?", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh nayla i está vigente", "e": ["ninguna", "app_ninguna"]}
@@ -1084,7 +1084,7 @@
 {"q": "Dale, enderézalo", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "oye hazme la ficha en pdf de el naranjo", "e": ["ninguna", "app_ninguna"]}
 {"q": "Dale, desactiva las manos", "e": ["manos_off", "app_ninguna"]}
-{"q": "Cierra la tarjeta pues.", "e": ["cerrar", "app_ninguna"]}
+{"q": "Cierra la tarjeta pues.", "e": ["cerrar", "app_atras"]}
 {"q": "a ver, llevame a san andres", "e": ["ninguna", "app_ninguna"]}
 {"q": "oiga modo 2d", "e": ["quitar_3d", "app_ninguna"]}
 {"q": "oye, explicame la geologia", "e": ["ninguna", "app_ninguna"]}
@@ -1111,7 +1111,7 @@
 {"q": "mira, pasemos a lo siguiente doctor.", "e": ["siguiente", "app_ninguna"]}
 {"q": "Ya, ve a todo el país", "e": ["ver_pais", "app_ninguna"]}
 {"q": "doctor electrum, achica la pantalla ahí", "e": ["salir_pantalla", "app_presencia"]}
-{"q": "Ok, enciende la camara para las manos", "e": ["manos_on", "app_ninguna"]}
+{"q": "Ok, enciende la camara para las manos", "e": ["manos_on", "app_camara"]}
 {"q": "¿concordia vi traslapa con los almendros?", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver qué capas geológicas hay en la zona", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿y la otra?", "e": ["ninguna", "app_ninguna"]}
@@ -1152,7 +1152,7 @@
 {"q": "ahora rota al otro lado", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "Porfa modo satélite.", "e": ["fondo_satelite", "app_ninguna"]}
 {"q": "¿dónde queda cortés?", "e": ["ninguna", "app_ninguna"]}
-{"q": "por favor quiero el tutorial ahí.", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "por favor quiero el tutorial ahí.", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "Dale, modo calles doctor", "e": ["fondo_calles", "app_ninguna"]}
 {"q": "Eh, explícame la fecha de vencimiento", "e": ["ninguna", "app_ninguna"]}
 {"q": "mira pasemos a lo siguiente", "e": ["siguiente", "app_ninguna"]}
@@ -1206,7 +1206,7 @@
 {"q": "Eh, girar derecha", "e": ["rotar_derecha", "app_ninguna"]}
 {"q": "Dime la fecha de vencimiento de el naranjo", "e": ["ninguna", "app_ninguna"]}
 {"q": "por favor vista de satélite ahorita", "e": ["fondo_satelite", "app_ninguna"]}
-{"q": "oye, volvamos al chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "oye, volvamos al chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "eh, descarga la ficha", "e": ["ficha_pdf", "app_ninguna"]}
 {"q": "doctor electrum, enséñame el país completo", "e": ["ver_pais", "app_ninguna"]}
 {"q": "por favor expande el mapa", "e": ["mas_mapa", "app_ninguna"]}
@@ -1233,14 +1233,14 @@
 {"q": "ey, vista satelital", "e": ["fondo_satelite", "app_ninguna"]}
 {"q": "este regresa a la vista inicial", "e": ["ver_pais", "app_ninguna"]}
 {"q": "oye, ¿clavo rico esta vigente?", "e": ["ninguna", "app_ninguna"]}
-{"q": "shh", "e": ["callar", "app_ninguna"]}
+{"q": "shh", "e": ["callar", "app_callar"]}
 {"q": "a ver donde esta la mina san martin", "e": ["ninguna", "app_ninguna"]}
 {"q": "porfa gira eso hacia la izquierda", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "calcula cuantas onzas son 250 mil toneladas a 3 gramos", "e": ["ninguna", "app_ninguna"]}
 {"q": "explícame el área protegida", "e": ["ninguna", "app_ninguna"]}
 {"q": "A ver que sabes de el expediente de concordia vi", "e": ["ninguna", "app_ninguna"]}
 {"q": "Explícame las muestras de jica", "e": ["ninguna", "app_ninguna"]}
-{"q": "ok quiero escribirte abre el chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "ok quiero escribirte abre el chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "Oye el tule traslapa con clavo rico", "e": ["ninguna", "app_ninguna"]}
 {"q": "ahora vuelve a la ventana", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "este... analiza la concesion ya", "e": ["analizar", "app_ninguna"]}
@@ -1319,25 +1319,25 @@
 {"q": "ok, pdf de la concesion abierta rapido", "e": ["ficha_pdf", "app_ninguna"]}
 {"q": "Eh mapa geológico de el volcán", "e": ["ninguna", "app_ninguna"]}
 {"q": "A ver, ¿dónde queda gualaco?", "e": ["ninguna", "app_ninguna"]}
-{"q": "Porfa quiero el tutorial.", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "Porfa quiero el tutorial.", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "Doctor quién tiene concordia vi", "e": ["ninguna", "app_ninguna"]}
 {"q": "vista en perspectiva", "e": ["inclinar", "app_ninguna"]}
 {"q": "doctor electrum finaliza el tutorial ahí", "e": ["detener", "app_ninguna"]}
 {"q": "Mira, avanza ya", "e": ["siguiente", "app_ninguna"]}
 {"q": "eh, mi jefe quiere saber cuántas hay", "e": ["ninguna", "app_ninguna"]}
-{"q": "Este... para de hablar.", "e": ["callar", "app_ninguna"]}
+{"q": "Este... para de hablar.", "e": ["callar", "app_callar"]}
 {"q": "ahora quiero usar las manos", "e": ["manos_on", "app_ninguna"]}
 {"q": "porfa sal de pantalla completa", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "doctor gira la vista", "e": ["rotar_derecha", "app_ninguna"]}
-{"q": "Doctor, ve al chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "Doctor, ve al chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "Ahora ponlo full", "e": ["pantalla_completa", "app_presencia"]}
 {"q": "ya resetea la rotación", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "eh, dale play al timelapse", "e": ["timelapse", "app_ninguna"]}
 {"q": "doctor inicia la presentación", "e": ["abrir_recorrido", "app_ninguna"]}
 {"q": "oye, ábreme la ficha de el porvenir.", "e": ["ninguna", "app_ninguna"]}
 {"q": "Ahora rota a la derecha", "e": ["rotar_derecha", "app_ninguna"]}
-{"q": "Mira tutorial por favor", "e": ["abrir_recorrido", "app_ninguna"]}
-{"q": "eh muestra el chat doctor", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "Mira tutorial por favor", "e": ["abrir_recorrido", "app_ayuda"]}
+{"q": "eh muestra el chat doctor", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "doctor el naranjo traslapa con concordia vi", "e": ["ninguna", "app_ninguna"]}
 {"q": "Quiero ver las capas", "e": ["abrir_capas", "app_ninguna"]}
 {"q": "oye cuál es la fecha de vencimiento de el tule", "e": ["ninguna", "app_ninguna"]}
@@ -1392,7 +1392,7 @@
 {"q": "Doctor electrum, sal un poco", "e": ["zoom_menos", "app_ninguna"]}
 {"q": "oye, ¿san andrés está vigente?", "e": ["ninguna", "app_ninguna"]}
 {"q": "ey, activa el control por gestos doctor", "e": ["manos_on", "app_ninguna"]}
-{"q": "ya volvamos al chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "ya volvamos al chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "A ver, ¿san andrés traslapa con san martín?", "e": ["ninguna", "app_ninguna"]}
 {"q": "por favor muestra el satélite de fondo", "e": ["fondo_satelite", "app_ninguna"]}
 {"q": "eh vuela a el tule.", "e": ["ninguna", "app_ninguna"]}
@@ -1497,7 +1497,7 @@
 {"q": "Por favor deja eso derecho", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "Quien tiene concordia vi", "e": ["ninguna", "app_ninguna"]}
 {"q": "ve a juticalpa", "e": ["ninguna", "app_ninguna"]}
-{"q": "oiga, cierra el pdf si puedes", "e": ["cerrar", "app_ninguna"]}
+{"q": "oiga, cierra el pdf si puedes", "e": ["cerrar", "app_atras"]}
 {"q": "doctor, ¿cuando vence el volcan?", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye, abre el panel de infraestructura rápido.", "e": ["abrir_infra", "app_ninguna"]}
 {"q": "Vaya, agranda el chat.", "e": ["mas_chat", "app_ninguna"]}
@@ -1516,7 +1516,7 @@
 {"q": "Doctor sal de full un poquito", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "a ver dónde está la mina san martín", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh, muéstrame la esperanza", "e": ["ninguna", "app_ninguna"]}
-{"q": "Ahora para de hablar ya", "e": ["callar", "app_ninguna"]}
+{"q": "Ahora para de hablar ya", "e": ["callar", "app_callar"]}
 {"q": "¿que significa el estado?", "e": ["ninguna", "app_ninguna"]}
 {"q": "por favor arma el mapa de geología por favor", "e": ["mapa_geologico", "app_ninguna"]}
 {"q": "por favor quiero ver el recorrido.", "e": ["abrir_recorrido", "app_ninguna"]}
@@ -1525,7 +1525,7 @@
 {"q": "Mas a la izquierda.", "e": ["mover_izquierda", "app_ninguna"]}
 {"q": "ya corre el mapa a la derecha", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "mira ve a expedientes porfa", "e": ["abrir_expedientes", "app_ninguna"]}
-{"q": "porfa ya, cállate", "e": ["callar", "app_ninguna"]}
+{"q": "porfa ya, cállate", "e": ["callar", "app_callar"]}
 {"q": "Compara las joyas con la esperanza.", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor, abre la conversacion rapido", "e": ["abrir_consulta", "app_ninguna"]}
 {"q": "ok ve a la conversacion si puedes.", "e": ["abrir_consulta", "app_ninguna"]}
@@ -1551,7 +1551,7 @@
 {"q": "¿pisa un área protegida?", "e": ["ninguna", "app_ninguna"]}
 {"q": "acércame ahí", "e": ["zoom_mas", "app_ninguna"]}
 {"q": "mira, pon el satelite.", "e": ["fondo_satelite", "app_ninguna"]}
-{"q": "ahora mutéate", "e": ["callar", "app_ninguna"]}
+{"q": "ahora mutéate", "e": ["callar", "app_callar"]}
 {"q": "gira alrededor si puedes", "e": ["orbitar", "app_ninguna"]}
 {"q": "La segunda", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye, llévame a el porvenir.", "e": ["ninguna", "app_ninguna"]}
@@ -1564,7 +1564,7 @@
 {"q": "porfa abre los expedientes por favor", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "quiero ver en 3d", "e": ["relieve_3d", "app_ninguna"]}
 {"q": "pon calles", "e": ["fondo_calles", "app_ninguna"]}
-{"q": "mira, cierra el visor por favor", "e": ["cerrar", "app_ninguna"]}
+{"q": "mira, cierra el visor por favor", "e": ["cerrar", "app_atras"]}
 {"q": "Porfa dale la vuelta a la concesión", "e": ["orbitar", "app_ninguna"]}
 {"q": "doctor, ¿las joyas está vigente?", "e": ["ninguna", "app_ninguna"]}
 {"q": "este... abre el resumen del pais", "e": ["abrir_tablero", "app_ninguna"]}
@@ -1595,7 +1595,7 @@
 {"q": "eh, gira el mapa hacia la izquierda", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "mapa geologico de san martin", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor cual es la fecha de vencimiento de el tule", "e": ["ninguna", "app_ninguna"]}
-{"q": "Porfa no hables más", "e": ["callar", "app_ninguna"]}
+{"q": "Porfa no hables más", "e": ["callar", "app_callar"]}
 {"q": "chat más grande ya", "e": ["mas_chat", "app_ninguna"]}
 {"q": "A ver timelapse de las joyas", "e": ["ninguna", "app_ninguna"]}
 {"q": "Vaya, pestaña de consulta", "e": ["abrir_consulta", "app_ninguna"]}
@@ -1651,7 +1651,7 @@
 {"q": "Eh, timelapse de san andrés", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor, compara clavo rico con san martín", "e": ["ninguna", "app_ninguna"]}
 {"q": "Eh, desliza la pantalla hacia arriba.", "e": ["mover_arriba", "app_ninguna"]}
-{"q": "mira deja de usar la cámara", "e": ["manos_off", "app_ninguna"]}
+{"q": "mira deja de usar la cámara", "e": ["manos_off", "app_camara"]}
 {"q": "Doctor electrum corre la pantalla para arriba", "e": ["mover_arriba", "app_ninguna"]}
 {"q": "doctor electrum, mapa de carreteras de fondo porfa", "e": ["fondo_calles", "app_ninguna"]}
 {"q": "dibujame el mapa de rocas", "e": ["mapa_geologico", "app_ninguna"]}
@@ -1662,7 +1662,7 @@
 {"q": "Ya, hacia el sur", "e": ["mover_abajo", "app_ninguna"]}
 {"q": "eh gira a la derecha", "e": ["rotar_derecha", "app_ninguna"]}
 {"q": "doctor electrum pon la foto satelital", "e": ["fondo_satelite", "app_ninguna"]}
-{"q": "ey, cállate", "e": ["callar", "app_ninguna"]}
+{"q": "ey, cállate", "e": ["callar", "app_callar"]}
 {"q": "consulta por favor", "e": ["abrir_consulta", "app_ninguna"]}
 {"q": "Mira, enfoca más cerca", "e": ["zoom_mas", "app_ninguna"]}
 {"q": "¿que significa la geologia?", "e": ["ninguna", "app_ninguna"]}
@@ -1689,7 +1689,7 @@
 {"q": "analiza san martín", "e": ["ninguna", "app_ninguna"]}
 {"q": "A ver, ¿que significa las muestras de jica?", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver, ¿que significa el titular?", "e": ["ninguna", "app_ninguna"]}
-{"q": "dale, shh ahorita", "e": ["callar", "app_ninguna"]}
+{"q": "dale, shh ahorita", "e": ["callar", "app_callar"]}
 {"q": "porfa agranda la imagen del mapa.", "e": ["zoom_mas", "app_ninguna"]}
 {"q": "cual es la prospectividad de la escalera", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye ponlo de lado", "e": ["inclinar", "app_ninguna"]}
@@ -1697,7 +1697,7 @@
 {"q": "Ok continúa", "e": ["siguiente", "app_ninguna"]}
 {"q": "¿quien tiene clavo rico?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Este... muestrame los expedientes pues", "e": ["abrir_expedientes", "app_ninguna"]}
-{"q": "este ve al chat ahí", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "este ve al chat ahí", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "Eh, qué capas hay, ábrelas", "e": ["abrir_capas", "app_ninguna"]}
 {"q": "este giralo a la izquierda", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "la concesión está al sur del río", "e": ["ninguna", "app_ninguna"]}
@@ -1705,7 +1705,7 @@
 {"q": "eh abreme la ficha de monserrat", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye, ¿qué hora es?", "e": ["ninguna", "app_ninguna"]}
 {"q": "A ver enfoca mas cerca.", "e": ["zoom_mas", "app_ninguna"]}
-{"q": "Porfa desaparece eso si puedes", "e": ["cerrar", "app_ninguna"]}
+{"q": "Porfa desaparece eso si puedes", "e": ["cerrar", "app_atras"]}
 {"q": "ahora estoy aqui, muestrame ya", "e": ["mi_ubicacion", "app_ninguna"]}
 {"q": "Oye a pantalla completa un poquito", "e": ["pantalla_completa", "app_presencia"]}
 {"q": "centra en mí", "e": ["mi_ubicacion", "app_ninguna"]}
@@ -1737,13 +1737,13 @@
 {"q": "¿cuál es el área protegida de clavo rico?", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver mapa geológico de las joyas", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor quien es el titular de la mina de clavo rico", "e": ["ninguna", "app_ninguna"]}
-{"q": "doctor electrum, cierra eso", "e": ["cerrar", "app_ninguna"]}
+{"q": "doctor electrum, cierra eso", "e": ["cerrar", "app_atras"]}
 {"q": "doctor, ensename las concesiones de cortes", "e": ["ninguna", "app_ninguna"]}
 {"q": "Dale avanza al próximo", "e": ["siguiente", "app_ninguna"]}
 {"q": "Oye compara el tule con el porvenir", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh modo manos", "e": ["manos_on", "app_ninguna"]}
 {"q": "Eh, ¿qué sabes de la fecha de vencimiento de el tule?", "e": ["ninguna", "app_ninguna"]}
-{"q": "ahora pestaña chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "ahora pestaña chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "a ver explícame la geología.", "e": ["ninguna", "app_ninguna"]}
 {"q": "este ve a todo el país ahorita", "e": ["ver_pais", "app_ninguna"]}
 {"q": "doctor, achica la pantalla", "e": ["salir_pantalla", "app_presencia"]}
@@ -1822,13 +1822,13 @@
 {"q": "Muestra lo que hay a la izquierda gracias", "e": ["mover_izquierda", "app_ninguna"]}
 {"q": "a ver, activa el satélite pues", "e": ["fondo_satelite", "app_ninguna"]}
 {"q": "cuándo vence el naranjo", "e": ["ninguna", "app_ninguna"]}
-{"q": "por favor abre el chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "por favor abre el chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "oye, ¿cuántas concesiones hay en cortés?", "e": ["ninguna", "app_ninguna"]}
 {"q": "dale timelapse ya", "e": ["timelapse", "app_ninguna"]}
 {"q": "eh, ya no pantalla completa ya", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "doctor electrum, súbelo", "e": ["mover_arriba", "app_ninguna"]}
 {"q": "Ahora muéstrame el tablero", "e": ["abrir_tablero", "app_ninguna"]}
-{"q": "Oye pestaña chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "Oye pestaña chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "dale, míralo desde arriba gracias", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "a ver, ¿cuál es el área de las joyas?", "e": ["ninguna", "app_ninguna"]}
 {"q": "dale termina la pantalla completa", "e": ["salir_pantalla", "app_presencia"]}
@@ -1839,7 +1839,7 @@
 {"q": "Doctor, ¿qué sabes de la ley de oro de san martín?", "e": ["ninguna", "app_ninguna"]}
 {"q": "dale, ponme el timelapse", "e": ["timelapse", "app_ninguna"]}
 {"q": "Ok parte la pantalla", "e": ["mitad", "app_presencia"]}
-{"q": "Desaparece eso rápido", "e": ["cerrar", "app_ninguna"]}
+{"q": "Desaparece eso rápido", "e": ["cerrar", "app_atras"]}
 {"q": "este ve para la derecha", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "vista aérea desde arriba", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "Quita los gestos por favor", "e": ["manos_off", "app_ninguna"]}
@@ -1925,7 +1925,7 @@
 {"q": "Ahora muestrame el relieve", "e": ["relieve_3d", "app_ninguna"]}
 {"q": "A ver, analiza la escalera", "e": ["ninguna", "app_ninguna"]}
 {"q": "Doctor, ¿qué sabes de la fecha de vencimiento de el porvenir?", "e": ["ninguna", "app_ninguna"]}
-{"q": "dale, para de hablar", "e": ["callar", "app_ninguna"]}
+{"q": "dale, para de hablar", "e": ["callar", "app_callar"]}
 {"q": "por favor da vuelta a la izquierda.", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "que hay al norte de olancho", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver muestrame las joyas", "e": ["ninguna", "app_ninguna"]}
@@ -1938,7 +1938,7 @@
 {"q": "¿cómo está el clima en olancho?", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye, dame tu evaluacion de esta", "e": ["analizar", "app_ninguna"]}
 {"q": "llévame a san martín", "e": ["ninguna", "app_ninguna"]}
-{"q": "bueno ya cierra", "e": ["cerrar", "app_ninguna"]}
+{"q": "bueno ya cierra", "e": ["cerrar", "app_atras"]}
 {"q": "oye, analiza nayla i", "e": ["ninguna", "app_ninguna"]}
 {"q": "Eh, dime el area de el tule", "e": ["ninguna", "app_ninguna"]}
 {"q": "Este... un poco más arriba", "e": ["mover_arriba", "app_ninguna"]}
@@ -1971,12 +1971,12 @@
 {"q": "este... localízame", "e": ["mi_ubicacion", "app_ninguna"]}
 {"q": "¿que sabes de el estado de los pinares?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Doctor, ¿qué sabes de la geología de el tule?", "e": ["ninguna", "app_ninguna"]}
-{"q": "por favor silencio por favor por favor", "e": ["callar", "app_ninguna"]}
+{"q": "por favor silencio por favor por favor", "e": ["callar", "app_callar"]}
 {"q": "La ficha incluye el plano", "e": ["ninguna", "app_ninguna"]}
 {"q": "por favor endereza la vista", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "eh, ¿qué sabes de el canon de la esperanza?", "e": ["ninguna", "app_ninguna"]}
-{"q": "ok, quita la ficha", "e": ["cerrar", "app_ninguna"]}
-{"q": "doctor, no digas nada ya", "e": ["callar", "app_ninguna"]}
+{"q": "ok, quita la ficha", "e": ["cerrar", "app_atras"]}
+{"q": "doctor, no digas nada ya", "e": ["callar", "app_callar"]}
 {"q": "Este... usa las manos.", "e": ["manos_on", "app_ninguna"]}
 {"q": "vaya gira un poco a la izquierda", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "Oye compara san martin con nayla i.", "e": ["ninguna", "app_ninguna"]}
@@ -2000,7 +2000,7 @@
 {"q": "eh, dale zoom", "e": ["zoom_mas", "app_ninguna"]}
 {"q": "dale, ficha para imprimir pues", "e": ["ficha_pdf", "app_ninguna"]}
 {"q": "a ver, hazme el plano para inhgeomin de la concesión el tule", "e": ["ninguna", "app_ninguna"]}
-{"q": "doctor electrum cierra el tablero un poquito", "e": ["cerrar", "app_ninguna"]}
+{"q": "doctor electrum cierra el tablero un poquito", "e": ["cerrar", "app_atras"]}
 {"q": "oye, ¿clavo rico traslapa con los almendros?", "e": ["ninguna", "app_ninguna"]}
 {"q": "mira, mira de lado", "e": ["inclinar", "app_ninguna"]}
 {"q": "vaya, pon la foto satelital", "e": ["fondo_satelite", "app_ninguna"]}
@@ -2020,7 +2020,7 @@
 {"q": "dale, sube el mapa", "e": ["mover_arriba", "app_ninguna"]}
 {"q": "eh, ¿que sabes de la fecha de vencimiento de san martin?", "e": ["ninguna", "app_ninguna"]}
 {"q": "mapa geológico", "e": ["mapa_geologico", "app_ninguna"]}
-{"q": "Ya, apaga la camara", "e": ["manos_off", "app_ninguna"]}
+{"q": "Ya, apaga la camara", "e": ["manos_off", "app_camara"]}
 {"q": "doctor como uso las manos", "e": ["ninguna", "app_ninguna"]}
 {"q": "ok un poco a la izquierda", "e": ["mover_izquierda", "app_ninguna"]}
 {"q": "dime el area de el porvenir", "e": ["ninguna", "app_ninguna"]}
@@ -2038,14 +2038,14 @@
 {"q": "Oye, ¿concordia vi traslapa con clavo rico?", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿cuándo vence la escalera?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Infraestructura por favor", "e": ["abrir_infra", "app_ninguna"]}
-{"q": "mira muestra el chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "mira muestra el chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "Ve a gualaco", "e": ["ninguna", "app_ninguna"]}
 {"q": "dale orienta al norte", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "Por favor abre documentos", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "Doctor girar derecha", "e": ["rotar_derecha", "app_ninguna"]}
 {"q": "a ver, wow", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh, ¿qué hay al norte de santa bárbara?", "e": ["ninguna", "app_ninguna"]}
-{"q": "Por favor deja de hablar.", "e": ["callar", "app_ninguna"]}
+{"q": "Por favor deja de hablar.", "e": ["callar", "app_callar"]}
 {"q": "Analiza los almendros", "e": ["ninguna", "app_ninguna"]}
 {"q": "dime los caserios cercanos de la escalera", "e": ["ninguna", "app_ninguna"]}
 {"q": "porfa quiero ver los expedientes ahorita", "e": ["abrir_expedientes", "app_ninguna"]}
@@ -2061,7 +2061,7 @@
 {"q": "Los almendros está vigente", "e": ["ninguna", "app_ninguna"]}
 {"q": "cómo está el clima en olancho", "e": ["ninguna", "app_ninguna"]}
 {"q": "este vuelve a la ventana", "e": ["salir_pantalla", "app_presencia"]}
-{"q": "Ey abre el chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "Ey abre el chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "ok siguiente", "e": ["siguiente", "app_ninguna"]}
 {"q": "Doctor ordénalas por área", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿cuánto cuesta abrir una mina?", "e": ["ninguna", "app_ninguna"]}
@@ -2076,7 +2076,7 @@
 {"q": "Ok, dale play al timelapse", "e": ["timelapse", "app_ninguna"]}
 {"q": "ey, rota la cámara a la izquierda ya.", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "Por favor quiero ver calles", "e": ["fondo_calles", "app_ninguna"]}
-{"q": "porfa cierra el visor doctor", "e": ["cerrar", "app_ninguna"]}
+{"q": "porfa cierra el visor doctor", "e": ["cerrar", "app_atras"]}
 {"q": "Ahora vista nacional", "e": ["ver_pais", "app_ninguna"]}
 {"q": "¿clavo rico traslapa con los pinares?", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿qué sabes de la fecha de vencimiento de los almendros?", "e": ["ninguna", "app_ninguna"]}
@@ -2092,10 +2092,10 @@
 {"q": "doctor dime el área protegida de clavo rico", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver cuando vence el volcan.", "e": ["ninguna", "app_ninguna"]}
 {"q": "ábreme la ficha de nayla i", "e": ["ninguna", "app_ninguna"]}
-{"q": "eh pestaña chat.", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "eh pestaña chat.", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "Mapa mas grande si puedes.", "e": ["mas_mapa", "app_ninguna"]}
 {"q": "Doctor, ¿cuándo vence el naranjo?", "e": ["ninguna", "app_ninguna"]}
-{"q": "este... esconde la ventana", "e": ["cerrar", "app_ninguna"]}
+{"q": "este... esconde la ventana", "e": ["cerrar", "app_atras"]}
 {"q": "eh, ¿clavo rico traslapa con concordia vi?", "e": ["ninguna", "app_ninguna"]}
 {"q": "muestra los archivos", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "a ver cuándo vence los pinares", "e": ["ninguna", "app_ninguna"]}
@@ -2145,7 +2145,7 @@
 {"q": "infraestructura", "e": ["abrir_infra", "app_ninguna"]}
 {"q": "Doctor ensename las concesiones de la union", "e": ["ninguna", "app_ninguna"]}
 {"q": "Eh, muestrame el naranjo.", "e": ["ninguna", "app_ninguna"]}
-{"q": "cierra el pdf rápido", "e": ["cerrar", "app_ninguna"]}
+{"q": "cierra el pdf rápido", "e": ["cerrar", "app_atras"]}
 {"q": "ya no pantalla completa.", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "abreme la ficha de cerro partido", "e": ["ninguna", "app_ninguna"]}
 {"q": "dale, ve a mi ubicacion", "e": ["mi_ubicacion", "app_ninguna"]}
@@ -2191,7 +2191,7 @@
 {"q": "vaya, vuela alrededor", "e": ["orbitar", "app_ninguna"]}
 {"q": "por favor apaga el 3d si puedes", "e": ["quitar_3d", "app_ninguna"]}
 {"q": "compara monserrat con nayla i", "e": ["ninguna", "app_ninguna"]}
-{"q": "este calla", "e": ["callar", "app_ninguna"]}
+{"q": "este calla", "e": ["callar", "app_callar"]}
 {"q": "haz los mapas geológicos si puedes", "e": ["mapa_geologico", "app_ninguna"]}
 {"q": "porfa orienta al norte.", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "Bueno exporta a pdf la concesión abierta gracias", "e": ["ficha_pdf", "app_ninguna"]}
@@ -2220,7 +2220,7 @@
 {"q": "este abre infra", "e": ["abrir_infra", "app_ninguna"]}
 {"q": "A ver, llévame a el porvenir", "e": ["ninguna", "app_ninguna"]}
 {"q": "este... pon el mapa derecho", "e": ["norte_arriba", "app_ninguna"]}
-{"q": "Bueno cierra la ventana", "e": ["cerrar", "app_ninguna"]}
+{"q": "Bueno cierra la ventana", "e": ["cerrar", "app_atras"]}
 {"q": "dónde queda catacamas", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye, ¿cuándo vence el porvenir?", "e": ["ninguna", "app_ninguna"]}
 {"q": "ok, dame un tour", "e": ["abrir_recorrido", "app_ninguna"]}
@@ -2228,8 +2228,8 @@
 {"q": "Por favor abre el resumen del país un poquito.", "e": ["abrir_tablero", "app_ninguna"]}
 {"q": "a ver que sabes de la geologia de san andres", "e": ["ninguna", "app_ninguna"]}
 {"q": "porfa ve a los documentos por favor", "e": ["abrir_expedientes", "app_ninguna"]}
-{"q": "bueno, quita la ficha", "e": ["cerrar", "app_ninguna"]}
-{"q": "ahora silencio", "e": ["callar", "app_ninguna"]}
+{"q": "bueno, quita la ficha", "e": ["cerrar", "app_atras"]}
+{"q": "ahora silencio", "e": ["callar", "app_callar"]}
 {"q": "enséñame las concesiones de juticalpa.", "e": ["ninguna", "app_ninguna"]}
 {"q": "porfa abre las cifras ya", "e": ["abrir_tablero", "app_ninguna"]}
 {"q": "porfa aléjame doctor", "e": ["zoom_menos", "app_ninguna"]}
@@ -2244,9 +2244,9 @@
 {"q": "dale, apaga el air touch rapido", "e": ["manos_off", "app_ninguna"]}
 {"q": "ok, siguiente capítulo", "e": ["siguiente", "app_ninguna"]}
 {"q": "Ve al tablero", "e": ["abrir_tablero", "app_ninguna"]}
-{"q": "ahora ya cállate", "e": ["callar", "app_ninguna"]}
+{"q": "ahora ya cállate", "e": ["callar", "app_callar"]}
 {"q": "Vaya dame más chat ahorita", "e": ["mas_chat", "app_ninguna"]}
-{"q": "oiga cierra la ventana", "e": ["cerrar", "app_ninguna"]}
+{"q": "oiga cierra la ventana", "e": ["cerrar", "app_atras"]}
 {"q": "doctor cual es la ley de oro de san martin.", "e": ["ninguna", "app_ninguna"]}
 {"q": "consulta por favor ahi", "e": ["abrir_consulta", "app_ninguna"]}
 {"q": "quién tiene clavo rico", "e": ["ninguna", "app_ninguna"]}
@@ -2279,7 +2279,7 @@
 {"q": "doctor, ábreme la ficha de la esperanza", "e": ["ninguna", "app_ninguna"]}
 {"q": "Bueno reproduce el timelapse gracias", "e": ["timelapse", "app_ninguna"]}
 {"q": "Por favor achica el mapa", "e": ["mas_chat", "app_ninguna"]}
-{"q": "Doctor, tutorial por favor.", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "Doctor, tutorial por favor.", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "corre la vista para abajo", "e": ["mover_abajo", "app_ninguna"]}
 {"q": "mira cambia a calles", "e": ["fondo_calles", "app_ninguna"]}
 {"q": "vaya capas del mapa", "e": ["abrir_capas", "app_ninguna"]}
@@ -2369,7 +2369,7 @@
 {"q": "timelapse", "e": ["timelapse", "app_ninguna"]}
 {"q": "por favor vista en planta ahi", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "ensename las concesiones de juticalpa", "e": ["ninguna", "app_ninguna"]}
-{"q": "ahora shh", "e": ["callar", "app_ninguna"]}
+{"q": "ahora shh", "e": ["callar", "app_callar"]}
 {"q": "¿qué sabes de el canon de los almendros?", "e": ["ninguna", "app_ninguna"]}
 {"q": "qué hay al norte de danlí", "e": ["ninguna", "app_ninguna"]}
 {"q": "Oye, mapa geologico de san martin", "e": ["ninguna", "app_ninguna"]}
@@ -2420,7 +2420,7 @@
 {"q": "expande el chat", "e": ["mas_chat", "app_ninguna"]}
 {"q": "bueno, ve a infraestructura", "e": ["abrir_infra", "app_ninguna"]}
 {"q": "Oye la esperanza traslapa con el porvenir", "e": ["ninguna", "app_ninguna"]}
-{"q": "por favor no hables mas porfa", "e": ["callar", "app_ninguna"]}
+{"q": "por favor no hables mas porfa", "e": ["callar", "app_callar"]}
 {"q": "porfa abre documentos si puedes.", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "por favor corre la pantalla a la derecha doctor", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "ahora llevame mas al sur", "e": ["mover_abajo", "app_ninguna"]}
@@ -2438,8 +2438,8 @@
 {"q": "explicame el area protegida.", "e": ["ninguna", "app_ninguna"]}
 {"q": "Porfa todo el mapa", "e": ["ver_pais", "app_ninguna"]}
 {"q": "ver los documentos.", "e": ["abrir_expedientes", "app_ninguna"]}
-{"q": "Ya, cierra eso por favor", "e": ["cerrar", "app_ninguna"]}
-{"q": "enciende la cámara para las manos", "e": ["manos_on", "app_ninguna"]}
+{"q": "Ya, cierra eso por favor", "e": ["cerrar", "app_atras"]}
+{"q": "enciende la cámara para las manos", "e": ["manos_on", "app_camara"]}
 {"q": "la segunda.", "e": ["ninguna", "app_ninguna"]}
 {"q": "Ya, activa las manos.", "e": ["manos_on", "app_ninguna"]}
 {"q": "timelapse de los pinares", "e": ["ninguna", "app_ninguna"]}
@@ -2460,7 +2460,7 @@
 {"q": "A ver abre el tablero ahorita", "e": ["abrir_tablero", "app_ninguna"]}
 {"q": "eso esta muy bien", "e": ["ninguna", "app_ninguna"]}
 {"q": "Activa las manos", "e": ["manos_on", "app_ninguna"]}
-{"q": "oye no digas nada", "e": ["callar", "app_ninguna"]}
+{"q": "oye no digas nada", "e": ["callar", "app_callar"]}
 {"q": "vaya, córrelo a la derecha si puedes", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "bueno, rota antihorario", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "este... mapa más grande", "e": ["mas_mapa", "app_ninguna"]}
@@ -2479,14 +2479,14 @@
 {"q": "doctor electrum mas chat", "e": ["mas_chat", "app_ninguna"]}
 {"q": "¿cuál es el área de las joyas?", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor dale al siguiente", "e": ["siguiente", "app_ninguna"]}
-{"q": "Ve al chat pues", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "Ve al chat pues", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "a ver, ya no quiero el recorrido ahí", "e": ["detener", "app_ninguna"]}
 {"q": "¿qué dice el expediente?", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye cual es la fecha de vencimiento de la esperanza", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh dime el área protegida de concordia vi", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor, mi jefe quiere saber cuantas hay", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿cuál es la ley de oro de san martín?", "e": ["ninguna", "app_ninguna"]}
-{"q": "Deja de hablar.", "e": ["callar", "app_ninguna"]}
+{"q": "Deja de hablar.", "e": ["callar", "app_callar"]}
 {"q": "eh, genera el mapa litologico", "e": ["mapa_geologico", "app_ninguna"]}
 {"q": "por favor mira de lado por favor", "e": ["inclinar", "app_ninguna"]}
 {"q": "Ey hazme la ficha en pdf", "e": ["ficha_pdf", "app_ninguna"]}
@@ -2538,7 +2538,7 @@
 {"q": "oiga ve hacia el sur.", "e": ["mover_abajo", "app_ninguna"]}
 {"q": "porfa desenfoca y aleja", "e": ["zoom_menos", "app_ninguna"]}
 {"q": "qué es un timelapse", "e": ["ninguna", "app_ninguna"]}
-{"q": "ahora deja de hablar un poquito.", "e": ["callar", "app_ninguna"]}
+{"q": "ahora deja de hablar un poquito.", "e": ["callar", "app_callar"]}
 {"q": "¿cuántas concesiones hay en juticalpa?", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver, ¿quién tiene san martín?", "e": ["ninguna", "app_ninguna"]}
 {"q": "oiga, apaga el relieve", "e": ["quitar_3d", "app_ninguna"]}
@@ -2595,7 +2595,7 @@
 {"q": "ahora sal del modo pantalla completa", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "el pdf lleva firma", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿cuándo vence el naranjo?", "e": ["ninguna", "app_ninguna"]}
-{"q": "eh oculta eso doctor", "e": ["cerrar", "app_ninguna"]}
+{"q": "eh oculta eso doctor", "e": ["cerrar", "app_atras"]}
 {"q": "eh, ¿cuál es el titular de la esperanza?", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver apaga el 3d ahí", "e": ["quitar_3d", "app_ninguna"]}
 {"q": "mira, vamos con lo que sigue pues", "e": ["siguiente", "app_ninguna"]}
@@ -2615,14 +2615,14 @@
 {"q": "eh, ¿cuál es la licencia ambiental de las joyas?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Eh muéstrame las joyas", "e": ["ninguna", "app_ninguna"]}
 {"q": "bueno, inicia la presentacion.", "e": ["abrir_recorrido", "app_ninguna"]}
-{"q": "ya cierra", "e": ["cerrar", "app_ninguna"]}
+{"q": "ya cierra", "e": ["cerrar", "app_atras"]}
 {"q": "ahora que opinas de esta concesion analizala", "e": ["analizar", "app_ninguna"]}
 {"q": "Compara las joyas con san andrés", "e": ["ninguna", "app_ninguna"]}
 {"q": "acércate a los pinares", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿qué concesiones hay en el paraíso?", "e": ["ninguna", "app_ninguna"]}
 {"q": "aplánalo", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "ahora menos zoom", "e": ["zoom_menos", "app_ninguna"]}
-{"q": "Este shh gracias", "e": ["callar", "app_ninguna"]}
+{"q": "Este shh gracias", "e": ["callar", "app_callar"]}
 {"q": "A ver muestra toda honduras rápido", "e": ["ver_pais", "app_ninguna"]}
 {"q": "A ver, compara cerro partido con monserrat", "e": ["ninguna", "app_ninguna"]}
 {"q": "quiero el análisis de la ficha abierta", "e": ["analizar", "app_ninguna"]}
@@ -2683,7 +2683,7 @@
 {"q": "Doctor electrum, norte arriba", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "ya, dale la vuelta a la concesion ahorita", "e": ["orbitar", "app_ninguna"]}
 {"q": "eh acércate a clavo rico", "e": ["ninguna", "app_ninguna"]}
-{"q": "ya, volvamos al chat.", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "ya, volvamos al chat.", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "a ver que sabes de las muestras de jica de el tule", "e": ["ninguna", "app_ninguna"]}
 {"q": "Ya volvi", "e": ["ninguna", "app_ninguna"]}
 {"q": "compara el volcán con san martín", "e": ["ninguna", "app_ninguna"]}
@@ -2722,7 +2722,7 @@
 {"q": "estoy aquí muéstrame.", "e": ["mi_ubicacion", "app_ninguna"]}
 {"q": "Oye hay oro en olancho", "e": ["ninguna", "app_ninguna"]}
 {"q": "cerro partido traslapa con los almendros.", "e": ["ninguna", "app_ninguna"]}
-{"q": "este... quiero el tutorial ahí", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "este... quiero el tutorial ahí", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "Oye, ¿qué sabes de el estado de el porvenir?", "e": ["ninguna", "app_ninguna"]}
 {"q": "mira desactiva el relieve.", "e": ["quitar_3d", "app_ninguna"]}
 {"q": "fondo normal", "e": ["fondo_calles", "app_ninguna"]}
@@ -2769,7 +2769,7 @@
 {"q": "por favor aléjame por favor", "e": ["zoom_menos", "app_ninguna"]}
 {"q": "oye, quiero leer mas", "e": ["mas_chat", "app_ninguna"]}
 {"q": "vaya enséñame la infraestructura del conocimiento.", "e": ["abrir_infra", "app_ninguna"]}
-{"q": "doctor, silencio por favor si puedes", "e": ["callar", "app_ninguna"]}
+{"q": "doctor, silencio por favor si puedes", "e": ["callar", "app_callar"]}
 {"q": "Eh, ahorita vengo.", "e": ["ninguna", "app_ninguna"]}
 {"q": "timelapse de el volcán", "e": ["ninguna", "app_ninguna"]}
 {"q": "estaba hablando con otra persona", "e": ["ninguna", "app_ninguna"]}
@@ -2777,7 +2777,7 @@
 {"q": "qué significa la licencia ambiental.", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿donde queda danli?", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor electrum, a la derecha doctor", "e": ["mover_derecha", "app_ninguna"]}
-{"q": "a ver, fuera esa ventana", "e": ["cerrar", "app_ninguna"]}
+{"q": "a ver, fuera esa ventana", "e": ["cerrar", "app_atras"]}
 {"q": "¿que concesiones hay en juticalpa?", "e": ["ninguna", "app_ninguna"]}
 {"q": "mas a la derecha.", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "porfa dame una vuelta alrededor", "e": ["orbitar", "app_ninguna"]}
@@ -2823,7 +2823,7 @@
 {"q": "Doctor, ponlo full ahí", "e": ["pantalla_completa", "app_presencia"]}
 {"q": "ya desactiva el control por gestos pues", "e": ["manos_off", "app_ninguna"]}
 {"q": "dale, muéstrame el timelapse de la ficha abierta", "e": ["timelapse", "app_ninguna"]}
-{"q": "ok silencio por favor ahí", "e": ["callar", "app_ninguna"]}
+{"q": "ok silencio por favor ahí", "e": ["callar", "app_callar"]}
 {"q": "Eh, ¿que sabes de el expediente de concordia vi?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Ok, retrocede pues.", "e": ["zoom_menos", "app_ninguna"]}
 {"q": "eh, hazme la ficha en pdf de las joyas", "e": ["ninguna", "app_ninguna"]}
@@ -2832,7 +2832,7 @@
 {"q": "Que hay al norte de tegucigalpa", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor electrum, muestra toda honduras.", "e": ["ver_pais", "app_ninguna"]}
 {"q": "este split si puedes", "e": ["mitad", "app_presencia"]}
-{"q": "Vaya, cállate", "e": ["callar", "app_ninguna"]}
+{"q": "Vaya, cállate", "e": ["callar", "app_callar"]}
 {"q": "doctor quién tiene el tule", "e": ["ninguna", "app_ninguna"]}
 {"q": "mapa geologico de los pinares", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye que significa la ley de oro", "e": ["ninguna", "app_ninguna"]}
@@ -2887,7 +2887,7 @@
 {"q": "doctor, dime el expediente de monserrat", "e": ["ninguna", "app_ninguna"]}
 {"q": "abre el timelapse satelital de la concesión abierta", "e": ["timelapse", "app_ninguna"]}
 {"q": "a ver, ¿qué hay al norte de cortés?", "e": ["ninguna", "app_ninguna"]}
-{"q": "Baja la voz y cállate", "e": ["callar", "app_ninguna"]}
+{"q": "Baja la voz y cállate", "e": ["callar", "app_callar"]}
 {"q": "eh dónde queda gualaco.", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor, timelapse de clavo rico.", "e": ["ninguna", "app_ninguna"]}
 {"q": "ey, izquierda", "e": ["mover_izquierda", "app_ninguna"]}
@@ -2936,7 +2936,7 @@
 {"q": "bueno, ver el terreno real", "e": ["relieve_3d", "app_ninguna"]}
 {"q": "mira, muevete a la derecha por favor", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "este... pon el mapa geologico ahi", "e": ["mapa_geologico", "app_ninguna"]}
-{"q": "eh cierra la ficha porfa", "e": ["cerrar", "app_ninguna"]}
+{"q": "eh cierra la ficha porfa", "e": ["cerrar", "app_atras"]}
 {"q": "Doctor rotación a la derecha gracias", "e": ["rotar_derecha", "app_ninguna"]}
 {"q": "vaya, abre las cifras por favor.", "e": ["abrir_tablero", "app_ninguna"]}
 {"q": "¿cuando vence nayla i?", "e": ["ninguna", "app_ninguna"]}
@@ -3014,8 +3014,8 @@
 {"q": "Compara el volcán con clavo rico", "e": ["ninguna", "app_ninguna"]}
 {"q": "continuemos", "e": ["siguiente", "app_ninguna"]}
 {"q": "porfa abre la pestaña de infraestructura porfa", "e": ["abrir_infra", "app_ninguna"]}
-{"q": "oiga, quita esa imagen ahorita", "e": ["cerrar", "app_ninguna"]}
-{"q": "Ya, cierra el mapa geologico", "e": ["cerrar", "app_ninguna"]}
+{"q": "oiga, quita esa imagen ahorita", "e": ["cerrar", "app_atras"]}
+{"q": "Ya, cierra el mapa geologico", "e": ["cerrar", "app_atras"]}
 {"q": "ey, orienta al norte", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "oye qué sabes de el titular de el naranjo", "e": ["ninguna", "app_ninguna"]}
 {"q": "Por favor apaga modo manos doctor", "e": ["manos_off", "app_ninguna"]}
@@ -3070,7 +3070,7 @@
 {"q": "ahora el tablero porfa", "e": ["abrir_tablero", "app_ninguna"]}
 {"q": "doctor, acercate a el tule", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver, ensename las concesiones de danli", "e": ["ninguna", "app_ninguna"]}
-{"q": "eh, cierra todo eso", "e": ["cerrar", "app_ninguna"]}
+{"q": "eh, cierra todo eso", "e": ["cerrar", "app_atras"]}
 {"q": "Mueve hacia arriba si puedes.", "e": ["mover_arriba", "app_ninguna"]}
 {"q": "ahora quita el satélite y pon calles", "e": ["fondo_calles", "app_ninguna"]}
 {"q": "Mira, dónde estoy yo pues", "e": ["mi_ubicacion", "app_ninguna"]}
@@ -3079,12 +3079,12 @@
 {"q": "Llévame a nayla i", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh, endereza la cámara hacia abajo.", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "mira, más cerca si puedes", "e": ["zoom_mas", "app_ninguna"]}
-{"q": "este... calla.", "e": ["callar", "app_ninguna"]}
+{"q": "este... calla.", "e": ["callar", "app_callar"]}
 {"q": "ok expande el chat", "e": ["mas_chat", "app_ninguna"]}
-{"q": "por favor pestaña chat.", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "por favor pestaña chat.", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "oye, ¿que expediente tiene esa concesion?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Dale dale la vuelta completa", "e": ["orbitar", "app_ninguna"]}
-{"q": "Oiga, regresa al chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "Oiga, regresa al chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "Mira mueve hacia arriba", "e": ["mover_arriba", "app_ninguna"]}
 {"q": "oye analiza monserrat", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye, termina el recorrido", "e": ["detener", "app_ninguna"]}
@@ -3102,7 +3102,7 @@
 {"q": "doctor, ¿cuál es las muestras de jica de los almendros?", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor que significa s-explorar", "e": ["ninguna", "app_ninguna"]}
 {"q": "oiga, termina el recorrido", "e": ["detener", "app_ninguna"]}
-{"q": "Abre el chat pues.", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "Abre el chat pues.", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "Eh, mitad mapa mitad chat", "e": ["mitad", "app_presencia"]}
 {"q": "ok, agranda el mapa ya", "e": ["mas_mapa", "app_ninguna"]}
 {"q": "Bueno más espacio para la conversación", "e": ["mas_chat", "app_ninguna"]}
@@ -3174,7 +3174,7 @@
 {"q": "a ver rota a la izquierda", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "Eh, compara san andres con las joyas.", "e": ["ninguna", "app_ninguna"]}
 {"q": "este enséñame mi posición", "e": ["mi_ubicacion", "app_ninguna"]}
-{"q": "Baja la voz y callate porfa", "e": ["callar", "app_ninguna"]}
+{"q": "Baja la voz y callate porfa", "e": ["callar", "app_callar"]}
 {"q": "doctor, ¿cuántas concesiones hay en gualaco?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Este rota la camara a la derecha pues", "e": ["rotar_derecha", "app_ninguna"]}
 {"q": "doctor electrum orbita pues", "e": ["orbitar", "app_ninguna"]}
@@ -3188,17 +3188,17 @@
 {"q": "doctor electrum, quiero ver más el mapa rápido", "e": ["mas_mapa", "app_ninguna"]}
 {"q": "dale, modo pantalla completa.", "e": ["pantalla_completa", "app_presencia"]}
 {"q": "a ver vuela a los pinares", "e": ["ninguna", "app_ninguna"]}
-{"q": "por favor muestra el chat gracias.", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "por favor muestra el chat gracias.", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "bueno, mitad mitad", "e": ["mitad", "app_presencia"]}
 {"q": "oye rota antihorario ahí", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "A ver, compara clavo rico con el volcán", "e": ["ninguna", "app_ninguna"]}
 {"q": "que sabes de la geologia de concordia vi", "e": ["ninguna", "app_ninguna"]}
-{"q": "Porfa quiero escribirte, abre el chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "Porfa quiero escribirte, abre el chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "doctor, inclinalo", "e": ["inclinar", "app_ninguna"]}
 {"q": "Avanza", "e": ["siguiente", "app_ninguna"]}
 {"q": "mira rota antihorario.", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "este... calles", "e": ["fondo_calles", "app_ninguna"]}
-{"q": "Shh ahorita", "e": ["callar", "app_ninguna"]}
+{"q": "Shh ahorita", "e": ["callar", "app_callar"]}
 {"q": "abre la conversacion rapido", "e": ["abrir_consulta", "app_ninguna"]}
 {"q": "Eh, ¿qué sabes de el canon de los almendros?", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor, enfoca mas cerca", "e": ["zoom_mas", "app_ninguna"]}
@@ -3234,7 +3234,7 @@
 {"q": "Muestrame la geologia en mapa", "e": ["mapa_geologico", "app_ninguna"]}
 {"q": "qué significa s-explorar", "e": ["ninguna", "app_ninguna"]}
 {"q": "este... desactiva el control por gestos ya", "e": ["manos_off", "app_ninguna"]}
-{"q": "apaga la camara", "e": ["manos_off", "app_ninguna"]}
+{"q": "apaga la camara", "e": ["manos_off", "app_camara"]}
 {"q": "porfa quita zoom si puedes.", "e": ["zoom_menos", "app_ninguna"]}
 {"q": "Eh, compara cerro partido con san andrés", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver la mitad para cada uno", "e": ["mitad", "app_presencia"]}
@@ -3266,14 +3266,14 @@
 {"q": "Mapa geologico de el porvenir.", "e": ["ninguna", "app_ninguna"]}
 {"q": "quién tiene el volcán.", "e": ["ninguna", "app_ninguna"]}
 {"q": "porfa saca la pantalla completa ya", "e": ["salir_pantalla", "app_presencia"]}
-{"q": "ya no digas nada", "e": ["callar", "app_ninguna"]}
+{"q": "ya no digas nada", "e": ["callar", "app_callar"]}
 {"q": "Dale modo pantalla completa rápido", "e": ["pantalla_completa", "app_presencia"]}
 {"q": "Doctor, dime el titular de el naranjo.", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye ve a la union", "e": ["ninguna", "app_ninguna"]}
 {"q": "oiga, orbita", "e": ["orbitar", "app_ninguna"]}
 {"q": "eh compara los almendros con las joyas", "e": ["ninguna", "app_ninguna"]}
 {"q": "Doctor, ensename las concesiones de tegucigalpa", "e": ["ninguna", "app_ninguna"]}
-{"q": "doctor electrum, cierra todo eso ya", "e": ["cerrar", "app_ninguna"]}
+{"q": "doctor electrum, cierra todo eso ya", "e": ["cerrar", "app_atras"]}
 {"q": "oye, ¿cuál es el canon de las joyas?", "e": ["ninguna", "app_ninguna"]}
 {"q": "ey, mapa completo", "e": ["mas_mapa", "app_ninguna"]}
 {"q": "a ver, explícame las muestras de jica", "e": ["ninguna", "app_ninguna"]}
@@ -3301,7 +3301,7 @@
 {"q": "por favor apaga modo manos", "e": ["manos_off", "app_ninguna"]}
 {"q": "oiga estudia esta concesión", "e": ["analizar", "app_ninguna"]}
 {"q": "este... desliza la pantalla hacia arriba", "e": ["mover_arriba", "app_ninguna"]}
-{"q": "Ey, cierra eso porfa", "e": ["cerrar", "app_ninguna"]}
+{"q": "Ey, cierra eso porfa", "e": ["cerrar", "app_atras"]}
 {"q": "porfa quiero ver mas area", "e": ["zoom_menos", "app_ninguna"]}
 {"q": "por favor corre la vista para arriba", "e": ["mover_arriba", "app_ninguna"]}
 {"q": "dale, muéstrame el relieve rápido.", "e": ["relieve_3d", "app_ninguna"]}
@@ -3332,7 +3332,7 @@
 {"q": "Eh, ¿el pdf lleva firma?", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh, ¿qué sabes de la fecha de vencimiento de san martín?", "e": ["ninguna", "app_ninguna"]}
 {"q": "vuela a la escalera", "e": ["ninguna", "app_ninguna"]}
-{"q": "ya, fuera esa ventana", "e": ["cerrar", "app_ninguna"]}
+{"q": "ya, fuera esa ventana", "e": ["cerrar", "app_atras"]}
 {"q": "ahora hacia el sur", "e": ["mover_abajo", "app_ninguna"]}
 {"q": "Oye explícame los traslapes", "e": ["ninguna", "app_ninguna"]}
 {"q": "Oye dame el analisis de esta mina por favor.", "e": ["analizar", "app_ninguna"]}
@@ -3374,7 +3374,7 @@
 {"q": "Oye, eso me gusta", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye acércate a cerro partido.", "e": ["ninguna", "app_ninguna"]}
 {"q": "ahora rodealo", "e": ["orbitar", "app_ninguna"]}
-{"q": "No digas nada ahorita", "e": ["callar", "app_ninguna"]}
+{"q": "No digas nada ahorita", "e": ["callar", "app_callar"]}
 {"q": "Arma el mapa de geología rápido", "e": ["mapa_geologico", "app_ninguna"]}
 {"q": "doctor, más espacio para la conversación si puedes", "e": ["mas_chat", "app_ninguna"]}
 {"q": "ya, baja el mapa", "e": ["mover_abajo", "app_ninguna"]}
@@ -3397,7 +3397,7 @@
 {"q": "Ensename las concesiones de olancho.", "e": ["ninguna", "app_ninguna"]}
 {"q": "Agranda el chat ahorita", "e": ["mas_chat", "app_ninguna"]}
 {"q": "haz un análisis completo de esta concesión rápido", "e": ["analizar", "app_ninguna"]}
-{"q": "oiga, para de hablar", "e": ["callar", "app_ninguna"]}
+{"q": "oiga, para de hablar", "e": ["callar", "app_callar"]}
 {"q": "A ver, ¿y la otra?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Ok, hacia el oeste", "e": ["mover_izquierda", "app_ninguna"]}
 {"q": "oye, explícame la prospectividad", "e": ["ninguna", "app_ninguna"]}
@@ -3451,7 +3451,7 @@
 {"q": "muéstrame el siguiente paso", "e": ["siguiente", "app_ninguna"]}
 {"q": "A ver revisa la que esta abierta a fondo", "e": ["analizar", "app_ninguna"]}
 {"q": "oiga, quita el giro si puedes", "e": ["norte_arriba", "app_ninguna"]}
-{"q": "Ok, desaparece eso", "e": ["cerrar", "app_ninguna"]}
+{"q": "Ok, desaparece eso", "e": ["cerrar", "app_atras"]}
 {"q": "ey, termina el recorrido ya", "e": ["detener", "app_ninguna"]}
 {"q": "dime el área de el tule", "e": ["ninguna", "app_ninguna"]}
 {"q": "agranda todo a la pantalla porfa", "e": ["pantalla_completa", "app_presencia"]}
@@ -3461,7 +3461,7 @@
 {"q": "Mira, regresa a normal", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "mira, gira 360 grados", "e": ["orbitar", "app_ninguna"]}
 {"q": "qué concesiones hay en gualaco", "e": ["ninguna", "app_ninguna"]}
-{"q": "oye, muteate doctor", "e": ["callar", "app_ninguna"]}
+{"q": "oye, muteate doctor", "e": ["callar", "app_callar"]}
 {"q": "Por favor centra en mi ubicación", "e": ["mi_ubicacion", "app_ninguna"]}
 {"q": "activa pantalla completa.", "e": ["pantalla_completa", "app_presencia"]}
 {"q": "Bueno activa el control por gestos", "e": ["manos_on", "app_ninguna"]}
@@ -3470,7 +3470,7 @@
 {"q": "compara clavo rico con las joyas", "e": ["ninguna", "app_ninguna"]}
 {"q": "vaya, pantalla entera", "e": ["pantalla_completa", "app_presencia"]}
 {"q": "arma el mapa de geología", "e": ["mapa_geologico", "app_ninguna"]}
-{"q": "a ver, cierra la tarjeta.", "e": ["cerrar", "app_ninguna"]}
+{"q": "a ver, cierra la tarjeta.", "e": ["cerrar", "app_atras"]}
 {"q": "ey, muéstrame la infraestructura", "e": ["abrir_infra", "app_ninguna"]}
 {"q": "eh corre el mapa a la izquierda", "e": ["mover_izquierda", "app_ninguna"]}
 {"q": "a ver analiza concordia vi.", "e": ["ninguna", "app_ninguna"]}
@@ -3478,7 +3478,7 @@
 {"q": "a ver, compara el porvenir con cerro partido", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor el rumbo de la veta es norte sur", "e": ["ninguna", "app_ninguna"]}
 {"q": "Este mi posición", "e": ["mi_ubicacion", "app_ninguna"]}
-{"q": "bueno cierra la ficha", "e": ["cerrar", "app_ninguna"]}
+{"q": "bueno cierra la ficha", "e": ["cerrar", "app_atras"]}
 {"q": "bueno corre la vista para arriba.", "e": ["mover_arriba", "app_ninguna"]}
 {"q": "por favor abre capas del mapa por favor", "e": ["abrir_capas", "app_ninguna"]}
 {"q": "¿qué sabes de los traslapes de clavo rico?", "e": ["ninguna", "app_ninguna"]}
@@ -3490,11 +3490,11 @@
 {"q": "busca nayla i", "e": ["ninguna", "app_ninguna"]}
 {"q": "sube el mapa de tamaño", "e": ["mas_mapa", "app_ninguna"]}
 {"q": "doctor compara concordia vi con las joyas", "e": ["ninguna", "app_ninguna"]}
-{"q": "a ver, ya no hables", "e": ["callar", "app_ninguna"]}
+{"q": "a ver, ya no hables", "e": ["callar", "app_callar"]}
 {"q": "a ver hazme la ficha en pdf de el volcán", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver, hazme la toma de dron alrededor", "e": ["orbitar", "app_ninguna"]}
 {"q": "ya, abajo", "e": ["mover_abajo", "app_ninguna"]}
-{"q": "eh, cierra el pdf.", "e": ["cerrar", "app_ninguna"]}
+{"q": "eh, cierra el pdf.", "e": ["cerrar", "app_atras"]}
 {"q": "Quiero el pdf ahí", "e": ["ficha_pdf", "app_ninguna"]}
 {"q": "Las joyas traslapa con el tule.", "e": ["ninguna", "app_ninguna"]}
 {"q": "hazme la ficha en pdf de monserrat", "e": ["ninguna", "app_ninguna"]}
@@ -3536,7 +3536,7 @@
 {"q": "dale, modo ventana si puedes", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "porfa corre el mapa a la derecha.", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "doctor quién tiene san martín", "e": ["ninguna", "app_ninguna"]}
-{"q": "ey, deja de hablar doctor", "e": ["callar", "app_ninguna"]}
+{"q": "ey, deja de hablar doctor", "e": ["callar", "app_callar"]}
 {"q": "oye, ¿cuál es los caseríos cercanos de la esperanza?", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver, analiza el naranjo", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor donde queda choluteca", "e": ["ninguna", "app_ninguna"]}
@@ -3544,7 +3544,7 @@
 {"q": "mira, hazme la toma de dron alrededor", "e": ["orbitar", "app_ninguna"]}
 {"q": "Ver el terreno real gracias", "e": ["relieve_3d", "app_ninguna"]}
 {"q": "qué sabes de la fecha de vencimiento de los almendros", "e": ["ninguna", "app_ninguna"]}
-{"q": "cierra el timelapse por favor", "e": ["cerrar", "app_ninguna"]}
+{"q": "cierra el timelapse por favor", "e": ["cerrar", "app_atras"]}
 {"q": "ok gira alrededor", "e": ["orbitar", "app_ninguna"]}
 {"q": "ey, cambia el fondo a satélite.", "e": ["fondo_satelite", "app_ninguna"]}
 {"q": "recorrido completo", "e": ["abrir_recorrido", "app_ninguna"]}
@@ -3554,7 +3554,7 @@
 {"q": "split porfa", "e": ["mitad", "app_presencia"]}
 {"q": "Doctor electrum, timelapse", "e": ["timelapse", "app_ninguna"]}
 {"q": "Clavo rico traslapa con los pinares", "e": ["ninguna", "app_ninguna"]}
-{"q": "ahora ya no hables doctor.", "e": ["callar", "app_ninguna"]}
+{"q": "ahora ya no hables doctor.", "e": ["callar", "app_callar"]}
 {"q": "doctor, acércate a el porvenir", "e": ["ninguna", "app_ninguna"]}
 {"q": "Doctor, ¿la escalera traslapa con san martín?", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye acércate a la concesión los pinares", "e": ["ninguna", "app_ninguna"]}
@@ -3611,7 +3611,7 @@
 {"q": "doctor, ¿hay oro en santa bárbara?", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿quien tiene la escalera?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Vaya, córrelo a la izquierda", "e": ["mover_izquierda", "app_ninguna"]}
-{"q": "doctor electrum, fuera esa ventana", "e": ["cerrar", "app_ninguna"]}
+{"q": "doctor electrum, fuera esa ventana", "e": ["cerrar", "app_atras"]}
 {"q": "doctor, vista aerea desde arriba porfa", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "A ver hay oro en olancho", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver hay oro en santa barbara", "e": ["ninguna", "app_ninguna"]}
@@ -3644,20 +3644,20 @@
 {"q": "¿cuántos caseríos tiene dentro?", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver analiza los pinares", "e": ["ninguna", "app_ninguna"]}
 {"q": "el volcán traslapa con clavo rico", "e": ["ninguna", "app_ninguna"]}
-{"q": "doctor electrum muteate", "e": ["callar", "app_ninguna"]}
+{"q": "doctor electrum muteate", "e": ["callar", "app_callar"]}
 {"q": "doctor, compara las joyas con san andrés", "e": ["ninguna", "app_ninguna"]}
 {"q": "oiga analiza esto", "e": ["analizar", "app_ninguna"]}
 {"q": "doctor, acércate a el naranjo", "e": ["ninguna", "app_ninguna"]}
 {"q": "Doctor arma el informe de la cartera", "e": ["ninguna", "app_ninguna"]}
 {"q": "vuela a el porvenir", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor el naranjo traslapa con el tule.", "e": ["ninguna", "app_ninguna"]}
-{"q": "A ver, tutorial por favor ahorita", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "A ver, tutorial por favor ahorita", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "Doctor electrum, más inclinado", "e": ["inclinar", "app_ninguna"]}
 {"q": "oye, ¿hay oro en choluteca?", "e": ["ninguna", "app_ninguna"]}
 {"q": "bueno, continuemos", "e": ["siguiente", "app_ninguna"]}
 {"q": "a ver sin relieve", "e": ["quitar_3d", "app_ninguna"]}
 {"q": "oiga, dale vuelta para la derecha", "e": ["rotar_derecha", "app_ninguna"]}
-{"q": "oye, guarda silencio", "e": ["callar", "app_ninguna"]}
+{"q": "oye, guarda silencio", "e": ["callar", "app_callar"]}
 {"q": "ahora continúa un poquito", "e": ["siguiente", "app_ninguna"]}
 {"q": "Oye timelapse de la esperanza.", "e": ["ninguna", "app_ninguna"]}
 {"q": "qué concesiones hay en cortés.", "e": ["ninguna", "app_ninguna"]}
@@ -3701,7 +3701,7 @@
 {"q": "ya, muestrame las capas", "e": ["abrir_capas", "app_ninguna"]}
 {"q": "este... que el chat ocupe más", "e": ["mas_chat", "app_ninguna"]}
 {"q": "Muéstrame el volcán", "e": ["ninguna", "app_ninguna"]}
-{"q": "ahora cierra el pdf", "e": ["cerrar", "app_ninguna"]}
+{"q": "ahora cierra el pdf", "e": ["cerrar", "app_atras"]}
 {"q": "ok mueve hacia arriba", "e": ["mover_arriba", "app_ninguna"]}
 {"q": "dame un tour.", "e": ["abrir_recorrido", "app_ninguna"]}
 {"q": "Compara monserrat con el porvenir", "e": ["ninguna", "app_ninguna"]}
@@ -3717,7 +3717,7 @@
 {"q": "oye, ¿donde queda santa barbara?", "e": ["ninguna", "app_ninguna"]}
 {"q": "Ahorita vengo", "e": ["ninguna", "app_ninguna"]}
 {"q": "porfa orbita.", "e": ["orbitar", "app_ninguna"]}
-{"q": "cierra el visor", "e": ["cerrar", "app_ninguna"]}
+{"q": "cierra el visor", "e": ["cerrar", "app_atras"]}
 {"q": "Bueno pon la camara vertical", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "¿qué expediente tiene esa concesión?", "e": ["ninguna", "app_ninguna"]}
 {"q": "ver desde arriba.", "e": ["vista_cenital", "app_ninguna"]}
@@ -3797,11 +3797,11 @@
 {"q": "Oiga ya no uses las manos.", "e": ["manos_off", "app_ninguna"]}
 {"q": "eh, vuela a clavo rico", "e": ["ninguna", "app_ninguna"]}
 {"q": "Eh ve a la unión", "e": ["ninguna", "app_ninguna"]}
-{"q": "eh, cállate.", "e": ["callar", "app_ninguna"]}
+{"q": "eh, cállate.", "e": ["callar", "app_callar"]}
 {"q": "a ver, acércate a san andrés", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor, eh", "e": ["ninguna", "app_ninguna"]}
 {"q": "vaya, pon la camara vertical", "e": ["vista_cenital", "app_ninguna"]}
-{"q": "eh, silencio por favor", "e": ["callar", "app_ninguna"]}
+{"q": "eh, silencio por favor", "e": ["callar", "app_callar"]}
 {"q": "¿el tule esta vigente?", "e": ["ninguna", "app_ninguna"]}
 {"q": "muestrame san martin.", "e": ["ninguna", "app_ninguna"]}
 {"q": "abre el panel de infraestructura", "e": ["abrir_infra", "app_ninguna"]}
@@ -3809,7 +3809,7 @@
 {"q": "A ver cuál es el estado de el naranjo", "e": ["ninguna", "app_ninguna"]}
 {"q": "dime más", "e": ["ninguna", "app_ninguna"]}
 {"q": "Este... gira todo alrededor", "e": ["orbitar", "app_ninguna"]}
-{"q": "oiga, guarda silencio", "e": ["callar", "app_ninguna"]}
+{"q": "oiga, guarda silencio", "e": ["callar", "app_callar"]}
 {"q": "oye, muestrame monserrat.", "e": ["ninguna", "app_ninguna"]}
 {"q": "analízala ya", "e": ["analizar", "app_ninguna"]}
 {"q": "este... igual de grandes si puedes.", "e": ["mitad", "app_presencia"]}
@@ -3831,7 +3831,7 @@
 {"q": "Busca monserrat.", "e": ["ninguna", "app_ninguna"]}
 {"q": "a ver, quita el full screen", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "doctor ok perfecto", "e": ["ninguna", "app_ninguna"]}
-{"q": "doctor, guarda silencio", "e": ["callar", "app_ninguna"]}
+{"q": "doctor, guarda silencio", "e": ["callar", "app_callar"]}
 {"q": "Que concesiones hay en juticalpa", "e": ["ninguna", "app_ninguna"]}
 {"q": "Ahora un poco más abajo doctor", "e": ["mover_abajo", "app_ninguna"]}
 {"q": "mira activa el 3d.", "e": ["relieve_3d", "app_ninguna"]}
@@ -3854,13 +3854,13 @@
 {"q": "ya vista de arriba si puedes", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "doctor y en dolares", "e": ["ninguna", "app_ninguna"]}
 {"q": "¿san andrés traslapa con el naranjo?", "e": ["ninguna", "app_ninguna"]}
-{"q": "vaya cierra el tablero", "e": ["cerrar", "app_ninguna"]}
+{"q": "vaya cierra el tablero", "e": ["cerrar", "app_atras"]}
 {"q": "vaya pon la foto satelital", "e": ["fondo_satelite", "app_ninguna"]}
 {"q": "a ver, ya no quiero el recorrido porfa.", "e": ["detener", "app_ninguna"]}
 {"q": "Este... prende el air touch ahi", "e": ["manos_on", "app_ninguna"]}
 {"q": "oiga, desplázate al este ahorita", "e": ["mover_derecha", "app_ninguna"]}
 {"q": "eh, ¿quien es el titular de la mina de clavo rico?", "e": ["ninguna", "app_ninguna"]}
-{"q": "a ver apaga la cámara", "e": ["manos_off", "app_ninguna"]}
+{"q": "a ver apaga la cámara", "e": ["manos_off", "app_camara"]}
 {"q": "Este... dale vuelta para la izquierda", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "oye cual es el titular de la esperanza", "e": ["ninguna", "app_ninguna"]}
 {"q": "ok quiero el pdf", "e": ["ficha_pdf", "app_ninguna"]}
@@ -3877,7 +3877,7 @@
 {"q": "Oiga arranca el recorrido", "e": ["abrir_recorrido", "app_ninguna"]}
 {"q": "cuál es el titular de concordia vi", "e": ["ninguna", "app_ninguna"]}
 {"q": "porfa deten el tour un poquito", "e": ["detener", "app_ninguna"]}
-{"q": "Porfa cierra la tarjeta", "e": ["cerrar", "app_ninguna"]}
+{"q": "Porfa cierra la tarjeta", "e": ["cerrar", "app_atras"]}
 {"q": "ok, genera la ficha de la ficha abierta", "e": ["ficha_pdf", "app_ninguna"]}
 {"q": "doctor electrum, dibújame el mapa de rocas", "e": ["mapa_geologico", "app_ninguna"]}
 {"q": "vaya vista satelital", "e": ["fondo_satelite", "app_ninguna"]}
@@ -3927,7 +3927,7 @@
 {"q": "oiga, quita las manos", "e": ["manos_off", "app_ninguna"]}
 {"q": "ok ya no uses las manos", "e": ["manos_off", "app_ninguna"]}
 {"q": "oye cuántas concesiones hay en catacamas", "e": ["ninguna", "app_ninguna"]}
-{"q": "este... cierra el timelapse", "e": ["cerrar", "app_ninguna"]}
+{"q": "este... cierra el timelapse", "e": ["cerrar", "app_atras"]}
 {"q": "eh analiza el tule", "e": ["ninguna", "app_ninguna"]}
 {"q": "Este... desplazate al norte ya", "e": ["mover_arriba", "app_ninguna"]}
 {"q": "Oye, dime la geología de el tule", "e": ["ninguna", "app_ninguna"]}
@@ -3935,12 +3935,12 @@
 {"q": "A ver, mapa geológico de la escalera", "e": ["ninguna", "app_ninguna"]}
 {"q": "hola doctor.", "e": ["ninguna", "app_ninguna"]}
 {"q": "doctor, ¿cómo uso las manos?", "e": ["ninguna", "app_ninguna"]}
-{"q": "a ver, esconde la ventana por favor.", "e": ["cerrar", "app_ninguna"]}
+{"q": "a ver, esconde la ventana por favor.", "e": ["cerrar", "app_atras"]}
 {"q": "Ábreme la ficha de monserrat", "e": ["ninguna", "app_ninguna"]}
 {"q": "este más a la izquierda doctor", "e": ["mover_izquierda", "app_ninguna"]}
-{"q": "oiga, quiero el tutorial", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "oiga, quiero el tutorial", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "doctor electrum, quiero el pdf", "e": ["ficha_pdf", "app_ninguna"]}
-{"q": "Dale, ya no hables", "e": ["callar", "app_ninguna"]}
+{"q": "Dale, ya no hables", "e": ["callar", "app_callar"]}
 {"q": "doctor, busca san andrés", "e": ["ninguna", "app_ninguna"]}
 {"q": "dime la geologia de el porvenir.", "e": ["ninguna", "app_ninguna"]}
 {"q": "Porfa apaga el air touch si puedes.", "e": ["manos_off", "app_ninguna"]}
@@ -3967,12 +3967,12 @@
 {"q": "ya, usa las manos ahorita", "e": ["manos_on", "app_ninguna"]}
 {"q": "corta el tour", "e": ["detener", "app_ninguna"]}
 {"q": "mapa geologico de el porvenir", "e": ["ninguna", "app_ninguna"]}
-{"q": "doctor electrum no digas nada", "e": ["callar", "app_ninguna"]}
+{"q": "doctor electrum no digas nada", "e": ["callar", "app_callar"]}
 {"q": "A ver ver el terreno real", "e": ["relieve_3d", "app_ninguna"]}
 {"q": "Ok, ponlo mas lejos porfa", "e": ["zoom_menos", "app_ninguna"]}
 {"q": "gira al reves", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "este muéstrame el tablero", "e": ["abrir_tablero", "app_ninguna"]}
-{"q": "ok, callate", "e": ["callar", "app_ninguna"]}
+{"q": "ok, callate", "e": ["callar", "app_callar"]}
 {"q": "ok gíralo a la izquierda un poquito.", "e": ["rotar_izquierda", "app_ninguna"]}
 {"q": "Qué bonito se ve", "e": ["ninguna", "app_ninguna"]}
 {"q": "Doctor electrum, enciende las manos por favor", "e": ["manos_on", "app_ninguna"]}
@@ -4003,7 +4003,7 @@
 {"q": "los pinares traslapa con el naranjo", "e": ["ninguna", "app_ninguna"]}
 {"q": "porfa zoom out ya", "e": ["zoom_menos", "app_ninguna"]}
 {"q": "Oiga abre el dashboard", "e": ["abrir_tablero", "app_ninguna"]}
-{"q": "ok, cierra el mapa geológico", "e": ["cerrar", "app_ninguna"]}
+{"q": "ok, cierra el mapa geológico", "e": ["cerrar", "app_atras"]}
 {"q": "a ver ya no quiero el recorrido porfa", "e": ["detener", "app_ninguna"]}
 {"q": "doctor chat más grande", "e": ["mas_chat", "app_ninguna"]}
 {"q": "agranda todo a la pantalla rápido.", "e": ["pantalla_completa", "app_presencia"]}

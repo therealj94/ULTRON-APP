@@ -13,7 +13,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { evaluar, autorizar, resetRitmoTest, TOPE_EXTERNOS_HORA, type Accion, type Regla } from '../lib/cognitivo/politica';
-import { comandoDeAprobacion, firmar, listarAprobaciones, registrarEjecutor, registrarFuenteDeHechos, aprobacionPorId } from '../lib/cognitivo/aprobaciones';
+import { comandoDeAprobacion, firmar, listarAprobaciones, registrarEjecutor, registrarFuenteDeHechos, aprobacionPorId, reconciliarAprobaciones } from '../lib/cognitivo/aprobaciones';
 import { verificarCadena } from '../lib/cognitivo/auditoria';
 import { cerrar, sql } from '../lib/cognitivo/base';
 import { correrAgente, type Pensar } from '../lib/agente/bucle';
@@ -47,11 +47,31 @@ test('cambiar el sistema exige mando con prueba', () => {
 });
 
 test('lo crítico va a dos firmas; con dos firmas ya no vuelve a la cola', () => {
+  const kyc = { kyc: 'aprobado' as const };
   const d = evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens' }));
   assert.equal(d.veredicto, 'revision');
   assert.equal(d.necesarias, 2);
-  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', aprobada: { id: 'a', firmas: ['medardo'] } })).veredicto, 'revision');
-  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', aprobada: { id: 'a', firmas: ['medardo', 'carlos'] } })).veredicto, 'permitir');
+  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: kyc, aprobada: { id: 'a', firmas: ['medardo'] } })).veredicto, 'revision');
+  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: kyc, aprobada: { id: 'a', firmas: ['medardo', 'carlos'] } })).veredicto, 'permitir');
+});
+
+test('R6/A12: sin KYC comprobado lo crítico no pasa, ni con dos firmas (matriz del KYC)', () => {
+  const firmas = { id: 'a', firmas: ['medardo', 'carlos'] };
+  // El caso de la auditoría: transferir, crítico, mando, dos firmas y SIN hechos → antes «permitir».
+  const sinHechos = evaluar({ herramienta: 'transferir', efecto: 'critico', plataforma: 'ultron', args: {}, quien: 'jose', nivel: 'mando', prueba: 'sesion', aprobada: firmas });
+  assert.equal(sinHechos.veredicto, 'bloquear');
+  assert.equal(sinHechos.regla, 'hechos-obligatorios');
+  for (const kyc of [undefined, 'desconocido', 'pendiente', 'rechazado'] as const) {
+    const d = evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: kyc === undefined ? {} : { kyc }, aprobada: firmas }));
+    assert.equal(d.veredicto, 'bloquear', `KYC ${kyc ?? 'ausente'}`);
+  }
+  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: { kyc: 'aprobado' }, aprobada: firmas })).veredicto, 'permitir');
+  // Al PEDIRLA sin el dato: no se ejecuta, va a la cola (y al ejecutar se comprueba con la fuente).
+  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens' })).veredicto, 'revision');
+  // Al pedirla con un KYC negativo: bloqueo desde ya.
+  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: { kyc: 'rechazado' } })).veredicto, 'bloquear');
+  // Lo no crítico no exige KYC.
+  assert.equal(evaluar(con({ efecto: 'escritura', herramienta: 'anotar' })).veredicto, 'permitir');
 });
 
 test('sin KYC aprobado no se mueve valor, ni con la junta entera firmando', () => {
@@ -110,6 +130,8 @@ async function cicloDeAprobacion() {
     hechas.push(args);
     return { ok: true, texto: `transferidos ${args.monto} a ${args.a}` };
   });
+  // Lo crítico se comprueba al ejecutar con una fuente de verdad (A12): la del KYC.
+  registrarFuenteDeHechos('transferir_tokens', async () => ({ kyc: 'aprobado' }));
   const pedido = con({ efecto: 'critico', herramienta: 'transferir_tokens', args: { a: 'wallet-1', monto: 50 }, quien: 'jose', hechos: { kyc: 'aprobado' } });
   const d = await autorizar(pedido);
   assert.equal(d.veredicto, 'revision');
@@ -254,4 +276,63 @@ test('al ejecutar se miran los hechos de nuevo: un KYC revocado después de pedi
     assert.equal(corrio, false);
     assert.equal(r.aprobacion?.estado, 'fallida');
     assert.match(r.motivo, /KYC/);
+  }));
+
+test('A12: lo crítico no se ejecuta con los hechos guardados al pedir; sin fuente fresca, no', () =>
+  conArchivos(async () => {
+    let corrio = false;
+    registrarEjecutor('mover_sin_fuente', async () => ((corrio = true), { ok: true, texto: 'movido' }));
+    const d = await autorizar(con({ efecto: 'critico', herramienta: 'mover_sin_fuente', args: { a: 'w', monto: 5 }, quien: 'jose', hechos: { kyc: 'aprobado' } }));
+    assert.equal(d.veredicto, 'revision');
+    await firmar({ id: d.aprobacionId!, quien: 'medardo', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    const r = await firmar({ id: d.aprobacionId!, quien: 'melany', nivel: 'mando', plataforma: 'electrum', decision: 'aprobar' });
+    assert.equal(corrio, false, 'los hechos que se guardaron al pedir no bastan');
+    assert.equal(r.aprobacion?.estado, 'fallida');
+    assert.match(r.aprobacion?.resultado?.texto || '', /comprobar/);
+  }));
+
+/** Cambia a mano el estado de una solicitud en el archivo (lo que deja un proceso que se cae). */
+function forzar(id: string, cambio: Record<string, unknown>) {
+  const f = path.join(process.env.COGNITIVO_DIR!, 'aprobaciones.jsonl');
+  const filas = fs.readFileSync(f, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  fs.writeFileSync(f, filas.map((x) => JSON.stringify(x.id === id ? { ...x, ...cambio } : x)).join('\n') + '\n');
+}
+
+test('A26: aprobada y caída antes de ejecutar → al arrancar se retoma UNA vez; ejecutando y caída → incierta, sin repetir', () =>
+  conArchivos(async () => {
+    let veces = 0;
+    registrarEjecutor('avisar_proveedor', async () => (veces++, { ok: true, texto: 'avisado' }));
+    // Pedida y aprobada, pero el proceso murió antes de ejecutar (quedó «aprobada»).
+    const d = await autorizar(con({ efecto: 'externo', destino: 'tercero', herramienta: 'avisar_proveedor', args: { a: 'prov-1' }, quien: 'jose' }));
+    forzar(d.aprobacionId!, { estado: 'aprobada', firmas: [{ quien: 'medardo', decision: 'aprobar', t: new Date().toISOString() }] });
+    const [r1, r2] = await Promise.all([reconciliarAprobaciones(), reconciliarAprobaciones()]);
+    assert.equal(veces, 1, 'dos recuperaciones a la vez: una sola ejecución');
+    assert.equal(r1.retomadas + r2.retomadas >= 1, true);
+    assert.equal((await aprobacionPorId(d.aprobacionId!))?.estado, 'ejecutada');
+    await reconciliarAprobaciones();
+    assert.equal(veces, 1, 'ya ejecutada: no se repite');
+
+    // Otra: murió EJECUTANDO hace una hora (no se sabe si el efecto ocurrió).
+    const e = await autorizar(con({ efecto: 'externo', destino: 'tercero', herramienta: 'avisar_proveedor', args: { a: 'prov-2' }, quien: 'jose' }));
+    forzar(e.aprobacionId!, { estado: 'ejecutando', resultado: { ok: false, texto: 'en curso', t: new Date(Date.now() - 3600_000).toISOString() } });
+    const r3 = await reconciliarAprobaciones();
+    assert.equal(r3.inciertas, 1);
+    assert.equal(veces, 1, 'lo incierto NUNCA se repite a ciegas');
+    const inc = await aprobacionPorId(e.aprobacionId!);
+    assert.equal(inc?.estado, 'incierta');
+    assert.match(inc?.resultado?.texto || '', /no se sabe/);
+    // Una que está ejecutándose AHORA (dentro del plazo) no se toca.
+    const f2 = await autorizar(con({ efecto: 'externo', destino: 'tercero', herramienta: 'avisar_proveedor', args: { a: 'prov-3' }, quien: 'jose' }));
+    forzar(f2.aprobacionId!, { estado: 'ejecutando', resultado: { ok: false, texto: 'en curso', t: new Date().toISOString() } });
+    const r4 = await reconciliarAprobaciones();
+    assert.equal((await aprobacionPorId(f2.aprobacionId!))?.estado, 'ejecutando');
+    // …pero avisa cuándo vence su plazo, para que quien arrancó vuelva a mirar: si el proceso que la
+    // ejecutaba murió, la segunda pasada (solo «ejecutando», sin retomar aprobadas) la deja incierta.
+    assert.ok(r4.revisarEnMs !== null && r4.revisarEnMs > 0 && r4.revisarEnMs <= 10 * 60_000, `revisarEnMs=${r4.revisarEnMs}`);
+    const r5 = await reconciliarAprobaciones({ soloEjecutando: true, ahora: Date.now() + r4.revisarEnMs! + 5_000 });
+    assert.equal(r5.retomadas, 0);
+    assert.equal(r5.inciertas, 1);
+    assert.equal(r5.revisarEnMs, null);
+    assert.equal((await aprobacionPorId(f2.aprobacionId!))?.estado, 'incierta');
+    assert.equal(veces, 1, 'la segunda pasada tampoco repite nada');
   }));

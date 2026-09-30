@@ -48,7 +48,8 @@ promover() {  # promover <dir actual> <dir nuevo> <argumentos de evaluar.py…>
   fi
   (cd "$BASE" && venv/bin/python evaluar.py --modelo "$actual" "$@" --json "$nuevo.viejo.json" >/dev/null \
      && venv/bin/python evaluar.py --modelo "$nuevo" "$@" --json "$nuevo.nuevo.json" >/dev/null)
-  if (cd "$BASE" && venv/bin/python comparar.py "$nuevo.viejo.json" "$nuevo.nuevo.json"); then
+  # MINIMO_COMPARAR: lo que el nuevo tiene que alcanzar aunque el anterior fuera peor (ver el bucle de abajo).
+  if (cd "$BASE" && venv/bin/python comparar.py "$nuevo.viejo.json" "$nuevo.nuevo.json" ${MINIMO_COMPARAR:-}); then
     rm -rf "$actual.anterior" && mv "$actual" "$actual.anterior" && mv "$nuevo" "$actual"
   else
     rm -rf "$actual.rechazado" && mv "$nuevo" "$actual.rechazado"
@@ -87,7 +88,10 @@ for n in "${NUEVOS[@]}"; do
   if [ ! -f "$dir/model.safetensors" ] || reentrenar "$n"; then
     echo "Entrenando $n…"
     if (cd "$BASE" && venv/bin/python entrenar.py --modelo-dir "modelos/$n" --salida "$dir.nuevo" --device cuda); then
-      promover "$dir" "$dir.nuevo" --modelo-dir "modelos/$n"
+      # «comando»: las manos de AU-RA (grupo app) se ejecutan sin esperar al cerebro; el nuevo no entra
+      # si en la prueba de AU-RA (evals = test_app.jsonl, español e inglés) acierta menos del 85 %.
+      minimo=""; [ "$n" = comando ] && minimo="--minimo evals:app=0.85"
+      MINIMO_COMPARAR="$minimo" promover "$dir" "$dir.nuevo" --modelo-dir "modelos/$n"
     else
       echo "AVISO: falló el entrenamiento de $n; se deja el checkpoint anterior (si lo hay)"
       rm -rf "$dir.nuevo"
@@ -139,6 +143,9 @@ curl -sS -H "Authorization: Bearer ${CLAVE}" -H 'content-type: application/json'
   -d '{"texto":"¿a cómo está el oro hoy?"}' "http://127.0.0.1:${PUERTO}/v1/mensaje"; echo
 curl -sS -H "Authorization: Bearer ${CLAVE}" -H 'content-type: application/json' \
   -d '{"texto":"RESOLUCIÓN No. 123-2024 INHGEOMIN … Comuníquese. Firma y sello."}' "http://127.0.0.1:${PUERTO}/v1/documento"; echo
+# «comando», grupo app de AU-RA: una orden en inglés tiene que dar app_avatar (y accion ninguna).
+curl -sS -H "Authorization: Bearer ${CLAVE}" -H 'content-type: application/json' \
+  -d '{"texto":"switch me to claudio"}' "http://127.0.0.1:${PUERTO}/v1/comando"; echo
 echo
 echo "El :${PUERTO} NO se abre en el security group: Laya sale por el Caddy de Voicebox con TLS."
 echo "  /opt/voicebox/caddy/Caddyfile, antes de @autorizado:  handle_path /laya/* { reverse_proxy 127.0.0.1:${PUERTO} }"

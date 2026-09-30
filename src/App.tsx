@@ -3,27 +3,36 @@ import type { Mode, FaceState, CapturedPhoto } from './types';
 import { FaceCanvas, caraDeEmocion } from './02-cara';
 import type { Gesto } from './02-cara/gestos';
 import { caraDeTexto } from './02-cara/emocion';
-import { DockDrawer, SettingsSheet, nombreModo, Arranque, AccesoModal, UltronVaultModal, VisionOverlay, PhotoCaptureModal, CameraCountdownModal } from './07-pantallas';
+import { DockDrawer, SettingsSheet, nombreModo, Arranque, AccesoModal, UltronVaultModal, VisionOverlay, PhotoCaptureModal, CameraCountdownModal, MenuMas } from './07-pantallas';
 import type { Escena } from './02-cara/vision/escena';
 import { playSfx } from './03-voz/audio';
 import { hablar, cantar, callar, setVozActiva, type Dicho } from './03-voz/hablar';
 import { onLip, desbloquearAudio, audioDesbloqueado } from './03-voz/player';
-import { clipDeEmocion, saludoDe, saludoHora, siguienteChiste } from './03-voz/banco';
+import { clipDeEmocion, clipDeTexto, saludoDe, saludoHora, siguienteChiste } from './03-voz/banco';
 import { useOido } from './03-voz/useOido';
 import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
-import { guardarHecho, olvidarTodo } from './09-estado/memoria';
+import { fijarCuentaMemoria, guardarHecho, olvidarTodo } from './09-estado/memoria';
 import { headersMesa } from './10-infra/sesionCliente';
 import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
 import { quitarExpresiones } from '../lib/expresiones';
-import { Maximize2, Minimize2, Fingerprint, Camera, ShieldCheck, Settings2, Mic, MicOff, Keyboard } from 'lucide-react';
+import { Fingerprint, ShieldCheck, Settings2, Mic, MicOff, Keyboard, MoreHorizontal, MessagesSquare, LayoutPanelLeft } from 'lucide-react';
 import { hayWebGL } from './11-sala/webgl';
 import { tareaDeHerramientas, type Postura, type Tarea } from './11-sala/tareas';
 import type { PedidoTarea } from './11-sala/VistaSala';
 import './11-sala/tema.css';
 import { enlaceEnLaUrl, quitarEnlaceDeLaUrl, type EnlaceUrl } from './cuentas/Cuentas';
+import { useTema } from './01-diseno/useTema';
+import { useConversacion, type EntradaAccion } from './13-trabajo/conversacion';
+import { accionSensibleDe, resultadoDe } from './13-trabajo/accionSensible';
+import { Conversacion } from './13-trabajo/Conversacion';
+import { Compositor } from './13-trabajo/Compositor';
+import { Inicio, EJEMPLOS_INICIO } from './13-trabajo/Inicio';
+
+/** Conversar: la sala entera. Trabajar: avatar chico y la conversación con sus resultados. */
+type ModoMesa = 'conversar' | 'trabajar';
 
 // La sala trae three.js (medio mega): se baja aparte, sin frenar el arranque.
 const Sala = lazy(() => import('./11-sala/VistaSala'));
@@ -113,6 +122,19 @@ export default function App() {
   // ---- UI
   const [dockOpen, setDockOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [masOpen, setMasOpen] = useState(false);
+  const [modoMesa, setModoMesa] = useState<ModoMesa>(() => (lee('aura_modo_mesa', 'conversar') === 'trabajar' ? 'trabajar' : 'conversar'));
+  useEffect(() => guarda('aura_modo_mesa', modoMesa), [modoMesa]);
+  const { preferencia: preferenciaTema, setPreferencia: setPreferenciaTema, tema, variables: variablesTema } = useTema();
+  /** Lo que el micrófono va oyendo (se enseña al trabajar, donde no hay burbuja). */
+  const [oyendo, setOyendo] = useState('');
+  const oyendoTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [inicioOculto, setInicioOculto] = useState(false);
+  const escribirBtn = useRef<HTMLButtonElement>(null);
+  // La conversación en pantalla, por cuenta (13-trabajo/conversacion.ts).
+  const conv = useConversacion(usuario.authenticated ? usuario.name : null);
+  /** true mientras se despacha un pedido local: lo que AU-RA conteste ahí también queda escrito. */
+  const enComando = useRef(false);
   // Nombre de la plataforma: lo dice el servidor (Genesis Core o Cerebro de Minas), no está escrito aquí.
   const [perfilPlataforma, setPerfilPlataforma] = useState(perfilActual().plataforma);
   useEffect(() => {
@@ -187,6 +209,13 @@ export default function App() {
     (texto: string, o: { emocion?: Emocion; caraFinal?: FaceState; sinBurbuja?: boolean } = {}) => {
       const t = String(texto || '').trim();
       if (!t) return { fin: Promise.resolve() };
+      // Respuesta a un pedido de la persona (no un saludo ni una reacción): queda en la conversación,
+      // con el texto humano del clip si lo es, nunca su id interno.
+      if (enComando.current) {
+        const clip = clipDeTexto(t);
+        const escrito = clip ? clip.texto || '' : quitarExpresiones(t).trim();
+        if (escrito) conv.aura(escrito, 'lista');
+      }
       const e = o.emocion || 'neutral';
       if (e !== 'neutral') setEmocion(e);
       const d = hablar(t, { emocion: e });
@@ -208,7 +237,7 @@ export default function App() {
       });
       return d;
     },
-    [showBubble]
+    [showBubble, conv.aura]
   );
 
   // Gancho de QA/demo: con ?qa=1 en la URL, window.__ultron permite fijar cara, emoción, boca y modo
@@ -260,7 +289,11 @@ export default function App() {
     fetch('/api/ultron/sesion', { headers: headersMesa() })
       .then((r) => r.json())
       .then((d) => {
-        if (vivo && d.authenticated && d.user) setUsuario({ name: d.user.nombre || '', role: d.user.rol || 'Junta Directiva · Orden Global', authenticated: true });
+        if (vivo && d.authenticated && d.user) {
+          setUsuario({ name: d.user.nombre || '', role: d.user.rol || 'Junta Directiva · Orden Global', authenticated: true });
+          // La memoria larga de este navegador es POR CUENTA (09-estado/memoria.ts).
+          fijarCuentaMemoria(d.user.correo);
+        }
       })
       .catch(() => {});
     setEstadoArranque('buscando el cerebro');
@@ -286,8 +319,12 @@ export default function App() {
   useEffect(() => {
     if (cerebroListo === 'listo') return;
     let vivo = true;
-    const sondear = () =>
-      fetch('/api/nodo/listo')
+    // Una sola consulta en vuelo (el servidor puede tardar hasta calentar): sin solapar sondeos.
+    let enVuelo = false;
+    const sondear = () => {
+      if (enVuelo) return;
+      enVuelo = true;
+      fetch('/api/nodo/listo', { signal: AbortSignal.timeout(50_000) })
         .then((r) => r.json())
         .then((d) => {
           if (!vivo) return;
@@ -300,7 +337,11 @@ export default function App() {
             }
           } else setCerebroListo((s) => (s === 'listo' ? s : 'calentando'));
         })
-        .catch(() => vivo && setCerebroListo((s) => (s === 'listo' ? s : 'frio')));
+        .catch(() => vivo && setCerebroListo((s) => (s === 'listo' ? s : 'frio')))
+        .finally(() => {
+          enVuelo = false;
+        });
+    };
     if (!isBooting) sondear();
     const id = setInterval(sondear, 4000);
     return () => {
@@ -394,10 +435,20 @@ export default function App() {
   // ---- CEREBRO: un turno en stream. Emoción antes del texto; frases a la cola de voz.
   const turnoEnCurso = useRef<AbortController | null>(null);
   const pensar = useCallback(
-    async (cmd: string, o: { imagen?: string } = {}) => {
+    async (cmd: string, o: { imagen?: string; accionId?: string } = {}) => {
       turnoEnCurso.current?.abort();
       const ac = new AbortController();
       turnoEnCurso.current = ac;
+      // El turno en la conversación: su estado va cambiando con lo que manda el servidor.
+      const idTurno = conv.aura('', 'pensando');
+      let dicho = '';
+      const cerrarTurno = (cambio: { texto?: string; estado: 'lista' | 'error' | 'interrumpida'; ms?: number; trazaId?: string }) =>
+        conv.actualizar(idTurno, (x: any) => ({ ...cambio, texto: cambio.texto ?? x.texto, tsFin: Date.now() }));
+      const resultadoAccion = (respuesta: string, error?: string) => {
+        if (!o.accionId) return;
+        const r = resultadoDe(respuesta, error);
+        conv.actualizar<EntradaAccion>(o.accionId, { estado: r.estado, resultado: r.resumen, tsResultado: Date.now() });
+      };
       callarTodo();
       setFace('THINKING');
       setEmocion('pensando');
@@ -436,6 +487,7 @@ export default function App() {
             onTools: (tools) => {
               const t = tareaDeHerramientas(tools);
               if (t) hacerTarea(t, cmd);
+              conv.actualizar(idTurno, { herramientas: tools, estado: 'usando' } as any);
             },
             onEmocion: (e) => {
               emo = e;
@@ -450,6 +502,8 @@ export default function App() {
               huboTexto = true;
               pendiente += t;
               soltar(false);
+              dicho += t;
+              conv.actualizar(idTurno, { texto: quitarExpresiones(dicho).trim(), estado: 'respondiendo' } as any);
             },
             onReplace: (t) => {
               colaRef.current = [];
@@ -457,22 +511,34 @@ export default function App() {
               huboTexto = true;
               pendiente = t;
               soltar(true);
+              dicho = t;
+              conv.actualizar(idTurno, { texto: quitarExpresiones(dicho).trim(), estado: 'respondiendo' } as any);
             },
           }
         );
         clearTimeout(relleno);
-        if (turnoEnCurso.current !== ac) return;
+        if (turnoEnCurso.current !== ac) {
+          cerrarTurno({ estado: 'interrumpida' });
+          resultadoAccion('', 'interrumpido');
+          return;
+        }
         if (data.error === 'sesión requerida') {
           setAccesoOpen(true);
           decir('Eso necesita tu sesión de junta. Entrá y lo hacemos.', { emocion: 'neutral' });
+          cerrarTurno({ texto: 'Eso necesita tu sesión de junta. Entrá y lo hacemos.', estado: 'lista' });
+          resultadoAccion('', 'sesión requerida');
           return;
         }
         const texto = String(data.reply || '').trim();
         if (!texto) {
           console.warn('[cerebro] turno sin respuesta:', data.error);
           decir(fraseSinCerebro(), { emocion: 'preocupado' });
+          cerrarTurno({ texto: fraseSinCerebro(), estado: 'error' });
+          resultadoAccion('');
           return;
         }
+        cerrarTurno({ texto, estado: 'lista', ms: data.ms, trazaId: data.trazaId });
+        resultadoAccion(texto);
         if (data.emocion) emo = data.emocion;
         // Sin stream (el servidor contestó en JSON) no llegó ningún trozo: se dice la respuesta entera.
         if (!huboTexto) pendiente = String(data.voz || texto);
@@ -485,12 +551,18 @@ export default function App() {
         }
       } catch (e: any) {
         clearTimeout(relleno);
-        if (e?.name === 'AbortError') return;
+        if (e?.name === 'AbortError') {
+          cerrarTurno({ estado: 'interrumpida' });
+          resultadoAccion('', 'interrumpido');
+          return;
+        }
         console.error('[cerebro] turno falló:', e);
         decir(fraseSinCerebro(), { emocion: 'preocupado' });
+        cerrarTurno({ texto: fraseSinCerebro(), estado: 'error' });
+        resultadoAccion('');
       }
     },
-    [mode, usuario.name, visionEnabled, soundFxEnabled, decir, bombear, callarTodo, hacerTarea]
+    [mode, usuario.name, visionEnabled, soundFxEnabled, decir, bombear, callarTodo, hacerTarea, conv.aura, conv.actualizar]
   );
 
   /** Si el cerebro todavía no está, lo avisa y devuelve true (el turno no sale). */
@@ -514,17 +586,28 @@ export default function App() {
           return;
         case 'recordar':
           hacerTarea('anotar');
-          guardarHecho(it.hecho, { usuario: usuario.name });
           pendienteGenesis.current = it.hecho;
-          decir('Anotado. Si es de la junta, decime «actualiza el cerebro» y queda en Genesis Core.', { emocion: 'orgullo' });
+          // «Anotado» solo con el recibo del servidor (09-estado/memoria.ts).
+          void guardarHecho(it.hecho, { usuario: usuario.name }).then((r) =>
+            r.remoto === 'ok'
+              ? decir('Anotado. Si es de la junta, decime «actualiza el cerebro» y queda en Genesis Core.', { emocion: 'orgullo' })
+              : r.remoto === 'sin-sesion'
+                ? decir('Para recordarlo necesito que entres con tu cuenta.', { emocion: 'neutral' })
+                : decir('No pude guardarlo en el servidor. Probá de nuevo en un momento.', { emocion: 'neutral' })
+          );
           return;
         case 'genesis': {
           const hecho = pendienteGenesis.current || historialRef.current.filter((h) => h.rol === 'user').slice(-1)[0]?.texto || '';
           if (!hecho) return void decir('Decime el hecho primero y después «actualiza el cerebro».', { emocion: 'curioso' });
           hacerTarea('anotar');
-          guardarHecho(`[Genesis] ${hecho}`, { usuario: usuario.name, junta: true });
           pendienteGenesis.current = '';
-          decir('Quedó en Genesis Core. La próxima pregunta ya lo usa.', { emocion: 'orgullo' });
+          void guardarHecho(`[Genesis] ${hecho}`, { usuario: usuario.name, junta: true }).then((r) =>
+            r.remoto === 'ok'
+              ? decir('Quedó en Genesis Core. La próxima pregunta ya lo usa.', { emocion: 'orgullo' })
+              : r.remoto === 'sin-sesion'
+                ? decir('Para guardarlo en Genesis Core necesito que entres con tu cuenta.', { emocion: 'neutral' })
+                : decir('No pude guardarlo en Genesis Core. Probá de nuevo en un momento.', { emocion: 'neutral' })
+          );
           return;
         }
         case 'cantar': {
@@ -590,12 +673,67 @@ export default function App() {
     [usuario.name, soundFxEnabled, decir, pensar, dormir, despertar, callarTodo, cerebroNoListo, hacerTarea]
   );
 
+  /**
+   * La puerta de todo lo que pide la persona (voz, Escribir, ejemplos). Queda en la conversación; si
+   * sale del sistema (mandar, avisar urgente, llamar) no se despacha: se propone en una tarjeta y
+   * espera Confirmar. Lo demás sigue por `comando`, igual que siempre.
+   */
+  const pedir = useCallback(
+    (raw: string) => {
+      const cmd = raw.trim();
+      if (!cmd) return;
+      conv.persona(cmd);
+      const accion = accionSensibleDe(cmd);
+      if (accion) {
+        ultimaInteraccion.current = Date.now();
+        conv.proponer(accion, cmd);
+        // La tarjeta vive en la superficie de trabajo: se pasa ahí para que se vea qué se autoriza.
+        setModoMesa('trabajar');
+        decir('Antes de hacerlo, revisá la tarjeta: a quién va, qué dice, y confirmá.', { emocion: 'neutral' });
+        return;
+      }
+      enComando.current = true;
+      try {
+        comando(cmd);
+      } finally {
+        enComando.current = false;
+      }
+    },
+    [comando, decir, conv.persona, conv.proponer]
+  );
+
+  const confirmarAccion = useCallback(
+    (id: string) => {
+      const e = conv.entradas.find((x): x is EntradaAccion => x.id === id && x.tipo === 'accion');
+      if (!e || e.estado !== 'propuesta') return;
+      conv.actualizar<EntradaAccion>(id, { estado: 'enviando' });
+      playSfx('tap', soundFxEnabled);
+      // El taller del servidor hace el envío sin despertar al modelo: no se espera al cerebro.
+      void pensar(e.pedido, { accionId: id });
+    },
+    [conv.entradas, conv.actualizar, pensar, soundFxEnabled]
+  );
+
+  const cancelarAccion = useCallback(
+    (id: string) => {
+      conv.actualizar<EntradaAccion>(id, { estado: 'cancelada', tsResultado: Date.now() });
+      decir('Listo, no mando nada.', { emocion: 'neutral' });
+    },
+    [conv.actualizar, decir]
+  );
+
   // ---- OÍDO continuo con barge-in.
   useOido({
     activo: micEnabled && !isBooting,
-    onFinal: (t) => comando(t),
+    onFinal: (t) => {
+      setOyendo('');
+      pedir(t);
+    },
     onParcial: (t) => {
       showBubble(t, 2500);
+      setOyendo(t);
+      if (oyendoTimer.current) clearTimeout(oyendoTimer.current);
+      oyendoTimer.current = setTimeout(() => setOyendo(''), 2500);
       setFace((f) => (f === 'SLEEPING' ? f : 'LISTENING'));
     },
     onBargeIn: () => {
@@ -653,243 +791,317 @@ export default function App() {
       {bubble.texto}
     </div>
   );
+  const hayDialogo = dockOpen || settingsOpen || masOpen || accesoOpen || vaultOpen || photosOpen || cameraOpen;
+  const opinar = (v: 1 | -1) => {
+    if (!opinion) return;
+    void opinarTurno(opinion.id, v);
+    setOpinion({ id: opinion.id, estado: 'gracias' });
+  };
+  const alternarMic = () => {
+    if (face === 'SLEEPING') despertar();
+    setMicEnabled((v) => !v);
+    playSfx('tap', soundFxEnabled);
+  };
+  const etiquetaMic = micEnabled ? (escuchando ? 'Micrófono abierto: te está escuchando' : 'Micrófono abierto') : 'Micrófono apagado';
+  const nombreVisible = usuario.authenticated ? usuario.name : '';
+  /** Conversar / Trabajar: un radiogroup con flechas. */
+  const MODOS_MESA: Array<{ id: ModoMesa; label: string; Icono: typeof Mic }> = [
+    { id: 'conversar', label: 'Conversar', Icono: MessagesSquare },
+    { id: 'trabajar', label: 'Trabajar', Icono: LayoutPanelLeft },
+  ];
+  const moverModo = (i: number) => {
+    const j = (i + MODOS_MESA.length) % MODOS_MESA.length;
+    setModoMesa(MODOS_MESA[j].id);
+    document.getElementById(`aura-modo-${MODOS_MESA[j].id}`)?.focus();
+  };
+  const puntoEstado = cerebroListo === 'listo' ? 'bg-(--aura-salvia)' : cerebroListo === 'calentando' ? 'bg-(--aura-oro)' : 'bg-(--aura-barro)';
 
   return (
-    <div id="ultron-app-root" className="aura relative w-screen h-screen supports-[height:100dvh]:h-dvh overflow-hidden bg-[#232528] flex items-center justify-center select-none">
+    <div
+      id="ultron-app-root"
+      className="aura relative w-screen h-screen supports-[height:100dvh]:h-dvh overflow-hidden flex items-center justify-center select-none"
+      style={variablesTema}
+      data-tema={tema}
+      data-modo={modoMesa}
+    >
       <div
         id="ultron-stand-container"
         className={`relative overflow-hidden transition-all duration-300 flex items-center justify-center ${
-          isKioskFrame ? 'w-full max-w-[96vw] max-h-[88vh] aspect-[16/10] rounded-[32px] border-[10px] border-[#46484D] shadow-[0_24px_60px_rgba(0,0,0,0.60)]' : 'w-full h-full'
+          isKioskFrame ? 'w-full max-w-[96vw] max-h-[88vh] aspect-[16/10] rounded-[32px] border-[10px] border-(--aura-borde) shadow-[0_24px_60px_var(--aura-sombra)]' : 'w-full h-full'
         }`}
       >
-        {conSala ? (
-          <div className="absolute inset-0 aura-fondo">
-            <SalaSegura onFallo={() => setConSala(false)}>
-              <Suspense fallback={null}>
-                <Sala
+        {/* Todo lo que queda detrás de un diálogo: inert mientras haya uno abierto (ni Tab ni lector). */}
+        <div id="aura-contenido" className="absolute inset-0" inert={hayDialogo}>
+          <div className={`aura-escenario aura-fondo ${conSala ? '' : 'touch-none sin-seleccion'}`}>
+            {conSala ? (
+              <SalaSegura onFallo={() => setConSala(false)}>
+                <Suspense fallback={null}>
+                  <Sala
+                    key={tema}
+                    estilo={tema === 'claro' ? { paleta: 'piedra' } : undefined}
+                    face={face}
+                    emocion={emocion}
+                    lipLevel={lipLevel}
+                    cameraGaze={cameraGaze}
+                    postura={postura}
+                    pedido={pedido}
+                    entrada={entrada}
+                    onTocar={tocarSala}
+                    onDeslizar={(d) => {
+                      if (d === 'arriba') {
+                        setDockOpen(true);
+                        setSettingsOpen(false);
+                      } else {
+                        setSettingsOpen(true);
+                        setDockOpen(false);
+                      }
+                    }}
+                    onFallo={() => setConSala(false)}
+                  >
+                    {burbujaTexto}
+                  </Sala>
+                </Suspense>
+              </SalaSegura>
+            ) : (
+              <>
+                <FaceCanvas
                   face={face}
                   emocion={emocion}
-                  lipLevel={lipLevel}
+                  funMode={funMode}
+                  mode={mode}
+                  energy={cerebroListo === 'listo' ? 90 : 60}
+                  soundFxEnabled={soundFxEnabled}
                   cameraGaze={cameraGaze}
-                  postura={postura}
-                  pedido={pedido}
-                  entrada={entrada}
-                  onTocar={tocarSala}
-                  onDeslizar={(d) => {
-                    if (d === 'arriba') {
-                      setDockOpen(true);
-                      setSettingsOpen(false);
+                  isCameraFlashing={isCameraFlashing}
+                  lipLevel={lipLevel}
+                  showHud={false}
+                  onFaceChange={cara}
+                  onModeChange={(m) => {
+                    setMode(m);
+                    playSfx(m === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
+                  }}
+                  onSwipeUp={() => {
+                    setDockOpen(true);
+                    setSettingsOpen(false);
+                  }}
+                  onSwipeDown={() => {
+                    setSettingsOpen(true);
+                    setDockOpen(false);
+                  }}
+                  onTriggerVoice={() => {
+                    if (!micEnabled) {
+                      setMicEnabled(true);
+                      decir('aqui', { emocion: 'feliz' });
                     } else {
-                      setSettingsOpen(true);
-                      setDockOpen(false);
+                      setFace('LISTENING');
+                      showBubble('Te escucho');
                     }
                   }}
-                  onFallo={() => setConSala(false)}
+                  onSpeak={(t) => decir(t, { emocion: 'travieso' })}
+                  onWake={despertar}
+                  onSleep={dormir}
+                  onGesto={gesto}
+                  onCloseOverlays={() => {
+                    setDockOpen(false);
+                    setSettingsOpen(false);
+                  }}
+                />
+                {burbujaTexto}
+              </>
+            )}
+          </div>
+
+          {/* Barra de arriba: su nombre y cómo está, el modo de la mesa, y lo tuyo */}
+          <header className="absolute top-3 left-3 right-3 sm:top-4 sm:left-5 sm:right-5 z-20 flex items-center justify-between gap-1 sm:gap-2 pointer-events-none">
+            <div className="flex items-center gap-2 pointer-events-auto shrink-0">
+              <div className="h-11 px-2 rounded-full bg-(--aura-fondo) aura-sombra hidden min-[560px]:flex items-center">
+                <img src="/marca/logo-aura-oscuro.png" alt="AU-RA by Orden Global" className="h-9 w-auto aura-solo-oscuro" draggable={false} />
+                <img src="/marca/logo-aura.png" alt="AU-RA by Orden Global" className="h-9 w-auto aura-solo-claro" draggable={false} />
+              </div>
+              <img src="/icon-192.png" alt="AU-RA" className="w-11 h-11 shrink-0 rounded-full aura-sombra min-[560px]:hidden" draggable={false} />
+              <div className="h-9 px-3 rounded-full bg-(--aura-panel) aura-sombra hidden lg:flex items-center gap-2 text-[14px] font-medium text-(--aura-tinta-2)" title={estadoArranque}>
+                <span className={`w-2 h-2 rounded-full ${puntoEstado} ${cerebroListo === 'calentando' ? 'animate-pulse' : ''}`} aria-hidden="true" />
+                <span>
+                  <span className="sr-only">Estado: </span>
+                  {estadoCerebro}
+                </span>
+              </div>
+            </div>
+
+            <div role="radiogroup" aria-label="Modo de la mesa" className="aura-segmento aura-modos aura-sombra pointer-events-auto">
+              {MODOS_MESA.map((m, i) => (
+                <button
+                  key={m.id}
+                  id={`aura-modo-${m.id}`}
+                  type="button"
+                  role="radio"
+                  aria-checked={modoMesa === m.id}
+                  tabIndex={modoMesa === m.id ? 0 : -1}
+                  onClick={() => setModoMesa(m.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'ArrowRight' || e.key === 'ArrowDown') (e.preventDefault(), moverModo(i + 1));
+                    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') (e.preventDefault(), moverModo(i - 1));
+                  }}
                 >
-                  {burbujaTexto}
-                </Sala>
-              </Suspense>
-            </SalaSegura>
-          </div>
-        ) : (
-          <>
-            <FaceCanvas
-              face={face}
-              emocion={emocion}
-              funMode={funMode}
-              mode={mode}
-              energy={cerebroListo === 'listo' ? 90 : 60}
-              soundFxEnabled={soundFxEnabled}
-              cameraGaze={cameraGaze}
-              isCameraFlashing={isCameraFlashing}
-              lipLevel={lipLevel}
-              showHud={false}
-              onFaceChange={cara}
-              onModeChange={(m) => {
-                setMode(m);
-                playSfx(m === 'GOLD' ? 'gold' : 'mode', soundFxEnabled);
-              }}
-              onSwipeUp={() => {
-                setDockOpen(true);
-                setSettingsOpen(false);
-              }}
-              onSwipeDown={() => {
-                setSettingsOpen(true);
-                setDockOpen(false);
-              }}
-              onTriggerVoice={() => {
-                if (!micEnabled) {
-                  setMicEnabled(true);
-                  decir('aqui', { emocion: 'feliz' });
-                } else {
-                  setFace('LISTENING');
-                  showBubble('Te escucho');
-                }
-              }}
-              onSpeak={(t) => decir(t, { emocion: 'travieso' })}
-              onWake={despertar}
-              onSleep={dormir}
-              onGesto={gesto}
-              onCloseOverlays={() => {
-                setDockOpen(false);
-                setSettingsOpen(false);
-              }}
-            />
-            {burbujaTexto}
-          </>
-        )}
-
-        {/* Barra de arriba: su nombre, cómo está, y lo tuyo */}
-        <div className="absolute top-3 left-3 right-3 sm:top-4 sm:left-5 sm:right-5 z-20 flex items-start justify-between gap-2 pointer-events-none">
-          <div className="flex items-center gap-2 pointer-events-auto min-w-0">
-            <div className="h-11 px-2 rounded-full bg-[#232528] aura-sombra flex items-center">
-              <img src="/marca/logo-aura-oscuro.png" alt="AU-RA by Orden Global" className="h-9 w-auto" draggable={false} />
+                  <m.Icono className="w-4 h-4" aria-hidden="true" />
+                  <span>{m.label}</span>
+                </button>
+              ))}
             </div>
-            <div className="h-9 px-3 rounded-full bg-[#34363A]/90 aura-sombra hidden sm:flex items-center gap-2 text-[13px] font-medium text-[#B9B2A8]" title={estadoArranque}>
-              <span className={`w-2 h-2 rounded-full ${cerebroListo === 'listo' ? 'bg-[#8FA58A]' : cerebroListo === 'calentando' ? 'bg-[#D6B56C] animate-pulse' : 'bg-[#D9825F]'}`} />
-              {estadoCerebro}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 pointer-events-auto">
-            <button
-              type="button"
-              onClick={() => setAccesoOpen(true)}
-              title={usuario.authenticated ? `Sesión: ${usuario.name}` : 'Entrar a la junta'}
-              className={`h-10 px-3.5 rounded-full aura-sombra flex items-center gap-2 text-[13px] font-semibold transition-colors cursor-pointer ${
-                usuario.authenticated ? 'bg-[#2F3A30] text-[#A9C3A4]' : 'bg-[#34363A] text-[#ECE8E2] hover:bg-[#3D3829]'
-              }`}
-            >
-              {usuario.authenticated ? <ShieldCheck className="w-4 h-4" /> : <Fingerprint className="w-4 h-4" />}
-              <span className="hidden sm:inline">{usuario.authenticated ? usuario.name : 'Entrar'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setVisionEnabled((v) => !v);
-                playSfx('tap', soundFxEnabled);
-              }}
-              title={visionEnabled ? 'Te está mirando por la cámara' : 'Que te vea por la cámara'}
-              aria-label="Cámara"
-              aria-pressed={visionEnabled}
-              className={`w-10 h-10 rounded-full aura-sombra flex items-center justify-center transition-colors cursor-pointer ${visionEnabled ? 'bg-[#D6B56C] text-[#232528]' : 'bg-[#34363A] text-[#B9B2A8] hover:bg-[#3D3829]'}`}
-            >
-              <Camera className="w-4 h-4" />
-            </button>
-            <button type="button" onClick={() => setSettingsOpen((v) => !v)} title="Ajustes y qué puede hacer" aria-label="Ajustes" className="w-10 h-10 rounded-full bg-[#34363A] text-[#B9B2A8] hover:bg-[#3D3829] aura-sombra flex items-center justify-center cursor-pointer">
-              <Settings2 className="w-4 h-4" />
-            </button>
-            <button type="button" onClick={toggleFullscreen} title="Pantalla completa" aria-label="Pantalla completa" className="w-10 h-10 rounded-full bg-[#34363A] text-[#B9B2A8] hover:bg-[#3D3829] aura-sombra hidden sm:flex items-center justify-center cursor-pointer">
-              {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
-            </button>
-          </div>
-        </div>
 
-        {/* Abajo: cómo te contesta, el micrófono y escribir */}
-        <div className={`absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-3 right-3 sm:left-5 sm:right-5 z-20 flex items-end justify-between gap-2 pointer-events-none transition-opacity ${dockOpen || settingsOpen ? 'opacity-0' : 'opacity-100'}`}>
-          <div className="pointer-events-auto flex flex-col gap-1">
-            <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[#B9B2A8] pl-2 hidden sm:block">Te contesta</span>
-            <div className="aura-segmento aura-sombra" role="group" aria-label="Cómo te contesta">
-              <button type="button" aria-pressed={postura === 'pie'} onClick={() => setPostura('pie')}>De pie</button>
-              <button type="button" aria-pressed={postura === 'sentada'} onClick={() => setPostura('sentada')}>Sentada</button>
+            <div className="flex items-center gap-1 sm:gap-2 pointer-events-auto shrink-0">
+              <button
+                type="button"
+                onClick={() => setAccesoOpen(true)}
+                title={usuario.authenticated ? `Sesión: ${usuario.name}` : 'Entrar a la junta'}
+                aria-label={usuario.authenticated ? `Sesión de ${usuario.name}` : 'Entrar a la junta'}
+                className={`h-11 min-w-11 px-3 rounded-full aura-sombra flex items-center justify-center gap-2 text-[15px] font-semibold cursor-pointer ${
+                  usuario.authenticated ? 'bg-(--aura-salvia-fondo) text-(--aura-salvia-texto)' : 'bg-(--aura-panel) text-(--aura-tinta) hover:bg-(--aura-oro-suave)'
+                }`}
+              >
+                {usuario.authenticated ? <ShieldCheck className="w-5 h-5" aria-hidden="true" /> : <Fingerprint className="w-5 h-5" aria-hidden="true" />}
+                <span className="hidden md:inline">{usuario.authenticated ? usuario.name : 'Entrar'}</span>
+              </button>
+              <button type="button" onClick={() => setSettingsOpen(true)} title="Ajustes" aria-label="Ajustes" className="aura-redondo">
+                <Settings2 className="w-5 h-5" aria-hidden="true" />
+              </button>
             </div>
-          </div>
+          </header>
 
-          <div className="pointer-events-auto flex flex-col items-center gap-1.5 absolute left-1/2 -translate-x-1/2 bottom-0">
-            {opinion && (
-              <div className="pointer-events-auto flex items-center gap-1 bg-[#34363A] aura-sombra rounded-full px-2 py-1 text-[12px] text-[#B9B2A8]" role="group" aria-label="¿Te sirvió la respuesta?">
-                {opinion.estado === 'gracias' ? (
-                  <span className="px-1">Gracias, lo anoto.</span>
-                ) : (
-                  <>
-                    <span className="px-1">¿Te sirvió?</span>
-                    {([1, -1] as const).map((v) => (
-                      <button
-                        key={v}
-                        type="button"
-                        aria-label={v === 1 ? 'Sí me sirvió' : 'No me sirvió'}
-                        onClick={() => {
-                          void opinarTurno(opinion.id, v);
-                          setOpinion({ id: opinion.id, estado: 'gracias' });
-                        }}
-                        className="w-7 h-7 rounded-full hover:bg-[#3D3829] cursor-pointer"
-                      >
-                        {v === 1 ? '👍' : '👎'}
+          {/* Trabajar: el avatar chico a un lado y, en grande, la conversación con sus resultados. */}
+          {modoMesa === 'trabajar' && (
+            <>
+              <aside className="aura-lado flex-col gap-3" aria-label="AU-RA">
+                <p className="text-[14px] text-(--aura-tinta-2) flex items-center gap-2 px-2">
+                  <span className={`w-2 h-2 rounded-full ${puntoEstado}`} aria-hidden="true" />
+                  {estadoCerebro} · {!micEnabled ? 'micrófono apagado' : escuchando ? 'te escucha' : 'micrófono abierto'}
+                </p>
+                {conv.entradas.length > 0 && (
+                  <div className="flex flex-col gap-2">
+                    <p className="aura-sobretitulo px-2">Probá pedirle</p>
+                    {EJEMPLOS_INICIO.map((e) => (
+                      <button key={e.pedido} type="button" className="aura-chip w-full" onClick={() => pedir(e.pedido)}>
+                        {e.texto}
                       </button>
                     ))}
-                  </>
+                  </div>
                 )}
+              </aside>
+              <main className="aura-trabajo" aria-labelledby="aura-trabajo-titulo">
+                <div className="flex items-center gap-2 pl-4 sm:pl-5 pr-2 py-1.5 border-b border-(--aura-borde)">
+                  <div className="flex-1 min-w-0 flex flex-wrap items-baseline gap-x-3">
+                    <h1 id="aura-trabajo-titulo" className="font-display font-semibold text-[18px] text-(--aura-tinta)">
+                      Conversación
+                    </h1>
+                    <span className="text-[13px] text-(--aura-tinta-2)">Se guarda solo en esta pestaña</span>
+                  </div>
+                  <button type="button" onClick={() => setMasOpen(true)} aria-label="Más opciones" aria-haspopup="dialog" className="aura-redondo plano">
+                    <MoreHorizontal className="w-5 h-5" aria-hidden="true" />
+                  </button>
+                </div>
+                <Conversacion
+                  entradas={conv.entradas}
+                  onConfirmar={confirmarAccion}
+                  onCancelar={cancelarAccion}
+                  opinion={opinion}
+                  onOpinar={opinar}
+                  vacio={<Inicio nombre={nombreVisible} estado={estadoCerebro} onPedir={pedir} />}
+                />
+                <div className="border-t border-(--aura-borde) px-3 sm:px-4 pt-3 pb-3">
+                  <Compositor
+                    id="aura-trabajo-campo"
+                    oyendo={oyendo}
+                    onEnviar={(t) => {
+                      playSfx('tap', soundFxEnabled);
+                      pedir(t);
+                    }}
+                    despues={
+                      <button type="button" onClick={alternarMic} aria-pressed={micEnabled} aria-label={etiquetaMic} className={`aura-mic chico ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}>
+                        {micEnabled ? <Mic className="w-5 h-5" aria-hidden="true" /> : <MicOff className="w-5 h-5" aria-hidden="true" />}
+                      </button>
+                    }
+                  />
+                </div>
+              </main>
+            </>
+          )}
+
+          {/* Conversar: el saludo con ejemplos, y el dock con Escribir, el micrófono al lado y «Más». */}
+          {modoMesa === 'conversar' && (
+            <div className="aura-dock absolute bottom-[calc(12px+env(safe-area-inset-bottom))] left-3 right-3 z-20 flex flex-col items-center gap-3 pointer-events-none">
+              {!isBooting && !conv.entradas.length && !inicioOculto && (
+                <div className="pointer-events-auto w-full max-w-xl">
+                  <Inicio nombre={nombreVisible} estado={estadoCerebro} onPedir={pedir} flotante onCerrar={() => setInicioOculto(true)} />
+                </div>
+              )}
+              {opinion && (
+                <div className="pointer-events-auto flex items-center gap-1 bg-(--aura-panel) aura-sombra rounded-full pl-3 pr-1 py-1 text-[14px] text-(--aura-tinta-2)" role="group" aria-label="¿Te sirvió la respuesta?">
+                  {opinion.estado === 'gracias' ? (
+                    <span className="px-1 py-2.5">Gracias, lo anoto.</span>
+                  ) : (
+                    <>
+                      <span className="pr-1">¿Te sirvió?</span>
+                      {([1, -1] as const).map((v) => (
+                        <button key={v} type="button" aria-label={v === 1 ? 'Sí me sirvió' : 'No me sirvió'} onClick={() => opinar(v)} className="w-11 h-11 rounded-full hover:bg-(--aura-oro-suave) cursor-pointer">
+                          {v === 1 ? '👍' : '👎'}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+              <div className="pointer-events-auto flex items-center justify-center gap-3">
+                <button ref={escribirBtn} type="button" onClick={() => setDockOpen(true)} className="aura-primario" aria-haspopup="dialog">
+                  <Keyboard className="w-5 h-5" aria-hidden="true" />
+                  <span>Escribir</span>
+                </button>
+                <button type="button" onClick={alternarMic} aria-pressed={micEnabled} aria-label={etiquetaMic} className={`aura-mic ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}>
+                  {micEnabled ? <Mic className="w-7 h-7" aria-hidden="true" /> : <MicOff className="w-7 h-7" aria-hidden="true" />}
+                </button>
+                <button type="button" onClick={() => setMasOpen(true)} aria-label="Más opciones" aria-haspopup="dialog" className="aura-redondo !w-12 !h-12">
+                  <MoreHorizontal className="w-5 h-5" aria-hidden="true" />
+                </button>
               </div>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                if (face === 'SLEEPING') despertar();
-                setMicEnabled((v) => !v);
-                playSfx('tap', soundFxEnabled);
-              }}
-              aria-pressed={micEnabled}
-              aria-label={micEnabled ? 'Micrófono abierto: te está escuchando' : 'Micrófono apagado'}
-              className={`aura-mic ${micEnabled ? 'abierto' : ''} ${escuchando ? 'escuchando' : ''}`}
-            >
-              {micEnabled ? <Mic className="w-7 h-7" /> : <MicOff className="w-7 h-7" />}
-            </button>
-            <span className="hidden sm:block text-[12px] font-medium text-[#B9B2A8] bg-[#232528]/85 px-2 py-0.5 rounded-full">
-              {!micEnabled ? 'Micrófono apagado' : escuchando ? 'Te escucho…' : 'Háblale'}
-            </span>
-          </div>
+              <span className="text-[14px] font-medium text-(--aura-tinta-2) bg-(--aura-fondo)/85 px-3 py-0.5 rounded-full" aria-hidden="true">
+                {!micEnabled ? 'Micrófono apagado' : escuchando ? 'Te escucho…' : 'Micrófono abierto · háblale'}
+              </span>
+            </div>
+          )}
 
-          <button
-            type="button"
-            onClick={() => setDockOpen(true)}
-            aria-label="Escribir"
-            className="pointer-events-auto h-12 px-4 rounded-full bg-[#34363A] text-[#ECE8E2] hover:bg-[#3D3829] aura-sombra flex items-center gap-2 text-[14px] font-semibold cursor-pointer"
-          >
-            <Keyboard className="w-4 h-4 text-[#E0C27F]" />
-            <span className="hidden sm:inline">Escribir</span>
-          </button>
+          <VisionOverlay isActive={visionEnabled} stealth onClose={() => setVisionEnabled(false)} onGazeUpdate={setCameraGaze} onEscena={alVerEscena} />
         </div>
-
-        <VisionOverlay isActive={visionEnabled} stealth onClose={() => setVisionEnabled(false)} onGazeUpdate={setCameraGaze} onEscena={alVerEscena} />
-
-        {(dockOpen || settingsOpen) && (
-          <button
-            type="button"
-            aria-label="Cerrar"
-            className="absolute inset-0 z-[25] bg-black/40 cursor-default"
-            onClick={() => {
-              setDockOpen(false);
-              setSettingsOpen(false);
-            }}
-          />
-        )}
 
         <DockDrawer
           isOpen={dockOpen}
-          micEnabled={micEnabled}
+          soundFxEnabled={soundFxEnabled}
+          onClose={() => setDockOpen(false)}
+          volverA={escribirBtn}
+          onSubmitCommand={(c) => {
+            setDockOpen(false);
+            pedir(c);
+          }}
+        />
+
+        <MenuMas
+          abierto={masOpen}
+          onCerrar={() => setMasOpen(false)}
           speakerEnabled={speakerEnabled}
           visionEnabled={visionEnabled}
           isSleeping={face === 'SLEEPING'}
           isKioskFrame={isKioskFrame}
-          soundFxEnabled={soundFxEnabled}
-          onToggleMic={() => {
-            setMicEnabled((v) => !v);
-            playSfx('tap', soundFxEnabled);
-          }}
+          isFullscreen={isFullscreen}
           onToggleSpeaker={() => {
             setSpeakerEnabled((v) => !v);
             playSfx('tap', soundFxEnabled);
           }}
-          onToggleVision={() => setVisionEnabled((v) => !v)}
+          onToggleVision={() => {
+            setVisionEnabled((v) => !v);
+            playSfx('tap', soundFxEnabled);
+          }}
+          onOpenCamera={() => setCameraOpen(true)}
           onToggleSleep={() => (face === 'SLEEPING' ? despertar() : dormir())}
           onToggleKioskFrame={() => setIsKioskFrame((v) => !v)}
-          onOpenCamera={() => {
-            setDockOpen(false);
-            setCameraOpen(true);
-          }}
-          onSubmitCommand={(c) => {
-            setDockOpen(false);
-            comando(c);
-          }}
+          onToggleFullscreen={toggleFullscreen}
         />
 
         <SettingsSheet
@@ -900,6 +1112,14 @@ export default function App() {
           speakerEnabled={speakerEnabled}
           funMode={funMode}
           usuario={usuario}
+          tema={preferenciaTema}
+          onTema={setPreferenciaTema}
+          postura={conSala ? postura : undefined}
+          onPostura={conSala ? setPostura : undefined}
+          estadoCerebro={estadoCerebro}
+          estadoArranque={estadoArranque}
+          hayConversacion={conv.entradas.length > 0}
+          onVaciarConversacion={conv.vaciar}
           onClose={() => setSettingsOpen(false)}
           onSelectMode={(m) => {
             setMode(m);
@@ -917,12 +1137,18 @@ export default function App() {
           onOpenVault={() => setVaultOpen(true)}
           onOpenPhotos={() => setPhotosOpen(true)}
           onProbarVoz={() => decir('Hola. Soy AU-RA. Esta es mi voz, y así me río: je je. ¿Seguimos?', { emocion: 'feliz' })}
-          onEjemplo={(c) => comando(c)}
+          onEjemplo={(c) => pedir(c)}
           onOlvidar={() => {
             historialRef.current = [];
-            olvidarTodo({ usuario: usuario.name });
             setSettingsOpen(false);
-            decir('Listo. Empezamos de cero.', { emocion: 'neutral' });
+            // «Empezamos de cero» solo si el servidor confirmó que olvidó; si no, se dice qué pasó.
+            void olvidarTodo({ usuario: usuario.name }).then((r) =>
+              r.remoto === 'ok'
+                ? decir('Listo. Empezamos de cero.', { emocion: 'neutral' })
+                : r.remoto === 'sin-sesion'
+                  ? decir('Borré lo de esta pantalla. Para olvidar lo guardado en tu cuenta tenés que entrar.', { emocion: 'neutral' })
+                  : decir('Borré lo de esta pantalla, pero el servidor no confirmó el borrado. Probá de nuevo en un momento.', { emocion: 'neutral' })
+            );
           }}
         />
 
@@ -932,12 +1158,15 @@ export default function App() {
           usuario={usuario}
           soundFxEnabled={soundFxEnabled}
           onClose={() => setAccesoOpen(false)}
-          onAuthSuccess={(name, role) => {
+          onAuthSuccess={(name, role, correo) => {
             setUsuario({ name, role, authenticated: true });
+            fijarCuentaMemoria(correo);
             decir(saludoDe(name).id, { emocion: 'feliz' });
           }}
           onLogout={() => {
             setUsuario({ name: '', role: 'Junta Directiva · Orden Global', authenticated: false });
+            // La memoria larga de esta cuenta deja de leerse (queda en su cajón para su vuelta).
+            fijarCuentaMemoria(null);
             // Tableta compartida: quien entre después no hereda la conversación ni las fotos.
             historialRef.current = [];
             pendienteGenesis.current = '';
@@ -964,6 +1193,7 @@ export default function App() {
           onAnalyzePhoto={(dataUrl) => {
             setCameraOpen(false);
             if (cerebroNoListo()) return;
+            conv.persona('¿Qué ves en esta foto?', { conFoto: true });
             setFace('THINKING');
             // La foto tomada, achicada a JPEG de 640 px (no un cuadro en vivo de la cámara).
             void achicarFoto(dataUrl).then((imagen) => {

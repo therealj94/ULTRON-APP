@@ -317,6 +317,8 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
 
     case 'mesa': {
       const n = { ...a, mesa: { hablando: ev.hablando, pensando: ev.pensando } };
+      // Empezó a pensar (la mesa espera al cerebro): lo dice en su globito, cortito y sin repetir.
+      if (ev.pensando && !a.mesa.pensando && !a.oculta && !estaDormida(a.voz)) efectos.push(globo(textoCompa.pensando(), 1600));
       if (ev.hablando) n.sentir = ev.emocion;
       else if (a.voz.estado !== 'hablando') n.sentir = 'neutral';
       return { animo: n, efectos };

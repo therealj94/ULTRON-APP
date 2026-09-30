@@ -365,6 +365,8 @@ const respuesta = (accion: string, p: number, ninguna = 0.05) => ({ status: 200,
 test('Laya «comando»: lo que las reglas no reconocen y Laya decide claro, se hace; en la duda o sin Laya, contesta el cerebro', async () => {
   const antes = process.env.ULTRON_LAYA_URL;
   process.env.ULTRON_LAYA_URL = `http://127.0.0.1:${(laya.address() as AddressInfo).port}`;
+  // Aquí se prueba el Laya del NODO: sin Laya ligera delante (tiene su propia prueba, abajo).
+  process.env.ULTRON_LAYA_LIGERA = '0';
   try {
     _reiniciarLaya();
     // Las reglas van primero: no se le pregunta a Laya lo que ya está claro.
@@ -422,6 +424,7 @@ test('Laya «comando»: lo que las reglas no reconocen y Laya decide claro, se h
   } finally {
     if (antes !== undefined) process.env.ULTRON_LAYA_URL = antes;
     else delete process.env.ULTRON_LAYA_URL;
+    delete process.env.ULTRON_LAYA_LIGERA;
     _reiniciarLaya();
   }
 });

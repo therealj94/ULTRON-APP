@@ -2,7 +2,7 @@
  * Cliente del cerebro. Un turno = POST /api/turno (JSON) o /api/turno/stream (SSE).
  * El servidor devuelve `emocion` (contrato en lib/emocion.ts) además del texto.
  */
-import { leerLarga } from '../09-estado/memoria';
+import { cuentaDeMemoria, leerLarga } from '../09-estado/memoria';
 import { headersMesa } from '../10-infra/sesionCliente';
 import type { Emocion } from '../../lib/emocion';
 import { quitarExpresiones } from '../../lib/expresiones';
@@ -43,6 +43,8 @@ function cuerpo(opts: PeticionTurno) {
     historial: opts.historial || [],
     image: opts.image || undefined,
     memoria: leerLarga(),
+    // De quién es esa memoria: el servidor no la guarda si no es de la sesión que manda el turno.
+    memoriaDe: cuentaDeMemoria() || undefined,
     usuario: opts.usuario,
     correo: opts.correo,
     escena: opts.escena || undefined,

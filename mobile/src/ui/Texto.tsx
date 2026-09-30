@@ -23,8 +23,9 @@ export function Texto({ v = 'cuerpo', color = 'texto', centro, style, ...rest }:
   useFuentes();
   const c = (tema as Record<string, unknown>)[color];
   return (
+    // Sin tope de tamaño (A18): la letra crece con la del sistema y el texto se reacomoda. Quien de
+    // verdad no pueda crecer (un número dentro de un círculo) pasa su propio maxFontSizeMultiplier.
     <Text
-      maxFontSizeMultiplier={1.35}
       {...rest}
       style={[estiloLetra(v), { color: typeof c === 'string' ? c : color }, centro && { textAlign: 'center' }, style]}
     />

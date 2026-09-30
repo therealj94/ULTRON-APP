@@ -54,6 +54,7 @@ const piezas = {
   RECORDATORIOS: 'compa/recordatorios',
   API: 'lib/api',
   APARATO: 'lib/aparato',
+  CUENTA: 'lib/cuenta',
 };
 const lineas = Object.entries(piezas)
   .filter(([, r]) => fs.existsSync(path.join(SRC, r + '.ts')))
