@@ -1,3 +1,4 @@
+import { Dialogo } from './Dialogo';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Camera, X, Download, RotateCcw, Zap, Eye, CheckCircle2 } from 'lucide-react';
 import { playSfx } from '../03-voz/audio';
@@ -211,25 +212,21 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div
-      id="camera-countdown-modal"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 backdrop-blur-md p-4 animate-in fade-in duration-200"
-    >
+    <Dialogo abierto={isOpen} onCerrar={onClose} idTitulo="aura-camara-titulo" id="camera-countdown-modal" claseCapa="items-center justify-center p-3 sm:p-4" clase="aura-sube relative w-full max-w-3xl bg-(--aura-fondo) border border-(--aura-borde) rounded-2xl overflow-hidden shadow-[0_12px_40px_rgba(0,0,0,0.48)] flex flex-col max-h-[92vh]">
       {/* Flash de la foto */}
       {isFlashing && (
-        <div className="fixed inset-0 z-50 bg-[#34363A] pointer-events-none transition-opacity duration-200 opacity-100" />
+        <div className="fixed inset-0 z-50 bg-(--aura-panel) pointer-events-none transition-opacity duration-200 opacity-100" aria-hidden="true" />
       )}
 
-      <div className="relative w-full max-w-3xl bg-[#232528] border border-[#46484D] rounded-2xl overflow-hidden shadow-[0_12px_40px_rgba(0,0,0,0.48)] flex flex-col max-h-[92vh]">
         {/* Modal Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#46484D] bg-[#34363A]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-(--aura-borde) bg-(--aura-panel)">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-[#3D3829] flex items-center justify-center text-[#E0C27F]">
+            <div className="w-9 h-9 rounded-full bg-(--aura-oro-suave) flex items-center justify-center text-(--aura-oro-texto)">
               <Camera className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="text-[#ECE8E2] font-display font-semibold text-lg">Cámara</h3>
-              <p className="text-[13px] text-[#B9B2A8]">
+              <h2 id="aura-camara-titulo" className="text-(--aura-tinta) font-display font-semibold text-lg">Cámara</h2>
+              <p className="text-[13px] text-(--aura-tinta-2)">
                 {capturedImage ? 'Foto tomada. Podés guardarla o tomar otra.' : 'Mirá a la cámara y tocá «Tomar foto».'}
               </p>
             </div>
@@ -239,24 +236,24 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
             type="button"
             onClick={onClose}
             aria-label="Cerrar cámara"
-            className="w-9 h-9 rounded-full bg-[#3A3C41] hover:bg-[#3D3829] flex items-center justify-center text-[#B9B2A8] hover:text-[#ECE8E2] transition-colors cursor-pointer"
+            className="w-9 h-9 rounded-full bg-(--aura-panel-2) hover:bg-(--aura-oro-suave) flex items-center justify-center text-(--aura-tinta-2) hover:text-(--aura-tinta) transition-colors cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Video / Snapshot Viewport */}
-        <div className="relative flex-1 bg-[#232528] overflow-hidden flex items-center justify-center min-h-[380px] max-h-[520px]">
+        <div className="relative flex-1 bg-(--aura-fondo) overflow-hidden flex items-center justify-center min-h-[380px] max-h-[520px]">
           {cameraError ? (
             <div className="text-center p-8 max-w-md">
-              <div className="w-14 h-14 rounded-full bg-[#34363A] border border-[#46484D] text-[#D9825F] flex items-center justify-center mx-auto mb-4">
+              <div className="w-14 h-14 rounded-full bg-(--aura-panel) border border-(--aura-borde) text-(--aura-barro) flex items-center justify-center mx-auto mb-4">
                 <Camera className="w-7 h-7" />
               </div>
-              <p className="text-[#ECE8E2] text-sm mb-4">{cameraError}</p>
+              <p className="text-(--aura-tinta) text-sm mb-4">{cameraError}</p>
               <button
                 type="button"
                 onClick={startCamera}
-                className="px-4 py-2 bg-[#34363A] hover:bg-[#3D3829] border border-[#46484D] rounded-full text-[#ECE8E2] text-[13px] font-semibold transition-colors cursor-pointer"
+                className="px-4 py-2 bg-(--aura-panel) hover:bg-(--aura-oro-suave) border border-(--aura-borde) rounded-full text-(--aura-tinta) text-[13px] font-semibold transition-colors cursor-pointer"
               >
                 Reintentar
               </button>
@@ -269,7 +266,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                 alt="Foto tomada"
                 className="max-h-[500px] w-auto object-contain rounded-lg shadow-lg"
               />
-              <div className="absolute top-4 left-4 bg-[#2F3A30] px-3 py-1.5 rounded-full border border-[#3F4D3F] text-[#A9C3A4] text-[13px] font-semibold flex items-center gap-2">
+              <div className="absolute top-4 left-4 bg-(--aura-salvia-fondo) px-3 py-1.5 rounded-full border border-(--aura-salvia-borde) text-(--aura-salvia-texto) text-[13px] font-semibold flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4" />
                 <span>Foto tomada</span>
               </div>
@@ -287,24 +284,24 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
 
               {/* Guía de encuadre */}
               <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
-                <div className="relative w-64 h-64 rounded-[32px] border-2 border-[#D6B56C]/60" />
+                <div className="relative w-64 h-64 rounded-[32px] border-2 border-(--aura-oro)/60" />
 
-                <div className="absolute bottom-4 left-4 flex items-center gap-2 text-[13px] font-medium text-[#ECE8E2] bg-[#232528]/85 px-3 py-1.5 rounded-full">
-                  <span className="w-2 h-2 rounded-full bg-[#D9825F] animate-pulse" />
+                <div className="absolute bottom-4 left-4 flex items-center gap-2 text-[13px] font-medium text-(--aura-tinta) bg-(--aura-fondo)/85 px-3 py-1.5 rounded-full">
+                  <span className="w-2 h-2 rounded-full bg-(--aura-barro) animate-pulse" />
                   <span>En vivo</span>
                 </div>
               </div>
 
               {/* Glowing Countdown Center Overlay */}
               {countdown !== null && (
-                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-[#232528]/60 animate-in zoom-in duration-200" aria-live="assertive">
+                <div className="absolute inset-0 z-30 flex flex-col items-center justify-center bg-(--aura-fondo)/60 animate-in zoom-in duration-200" aria-live="assertive">
                   <div className="relative flex items-center justify-center">
-                    <div className="w-32 h-32 rounded-full border-4 border-[#D6B56C] animate-spin border-t-transparent" />
-                    <span className="absolute font-display font-bold text-7xl text-[#E0C27F] drop-shadow-[0_8px_24px_rgba(0,0,0,0.34)]">
+                    <div className="w-32 h-32 rounded-full border-4 border-(--aura-oro) animate-spin border-t-transparent" />
+                    <span className="absolute font-display font-bold text-7xl text-(--aura-oro-texto) drop-shadow-[0_8px_24px_rgba(0,0,0,0.34)]">
                       {countdown}
                     </span>
                   </div>
-                  <span className="mt-4 text-[#ECE8E2] text-[15px] font-semibold bg-[#34363A] px-4 py-1.5 rounded-full border border-[#46484D]">
+                  <span className="mt-4 text-(--aura-tinta) text-[15px] font-semibold bg-(--aura-panel) px-4 py-1.5 rounded-full border border-(--aura-borde)">
                     ¡Sonreí!
                   </span>
                 </div>
@@ -314,14 +311,14 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
         </div>
 
         {/* Modal Controls Footer */}
-        <div className="p-4 bg-[#34363A] border-t border-[#46484D] flex flex-wrap items-center justify-between gap-3">
+        <div className="p-4 bg-(--aura-panel) border-t border-(--aura-borde) flex flex-wrap items-center justify-between gap-3">
           {capturedImage ? (
             /* Actions for Captured Photo */
             <div className="w-full flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={handleRetake}
-                className="px-4 py-2.5 rounded-full bg-[#3A3C41] hover:bg-[#3D3829] border border-[#46484D] text-[#ECE8E2] text-[13px] font-semibold flex items-center gap-2 transition-all cursor-pointer"
+                className="px-4 py-2.5 rounded-full bg-(--aura-panel-2) hover:bg-(--aura-oro-suave) border border-(--aura-borde) text-(--aura-tinta) text-[13px] font-semibold flex items-center gap-2 transition-all cursor-pointer"
               >
                 <RotateCcw className="w-4 h-4" />
                 <span>Tomar otra</span>
@@ -335,7 +332,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                       onAnalyzePhoto(capturedImage);
                       onClose();
                     }}
-                    className="px-4 py-2.5 rounded-full bg-[#3D3829] hover:bg-[#46402E] border border-[#46484D] text-[#E0C27F] text-[13px] font-semibold flex items-center gap-2 transition-all cursor-pointer"
+                    className="px-4 py-2.5 rounded-full bg-(--aura-oro-suave) hover:bg-(--aura-oro-suave) border border-(--aura-borde) text-(--aura-oro-texto) text-[13px] font-semibold flex items-center gap-2 transition-all cursor-pointer"
                   >
                     <Eye className="w-4 h-4" />
                     <span>¿Qué ves en la foto?</span>
@@ -345,7 +342,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                 <button
                   type="button"
                   onClick={handleDownload}
-                  className="px-5 py-2.5 rounded-full bg-[#D6B56C] hover:bg-[#E0C27F] text-[#232528] text-[13px] font-semibold flex items-center gap-2 shadow-[0_6px_18px_rgba(0,0,0,0.3)] active:scale-[0.98] transition-all cursor-pointer"
+                  className="px-5 py-2.5 rounded-full bg-(--aura-oro) hover:bg-(--aura-oro-texto) text-(--aura-fondo) text-[13px] font-semibold flex items-center gap-2 shadow-[0_6px_18px_rgba(0,0,0,0.3)] active:scale-[0.98] transition-all cursor-pointer"
                 >
                   <Download className="w-4 h-4" />
                   <span>{downloadSuccess ? 'Guardada en Descargas' : 'Descargar'}</span>
@@ -358,7 +355,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
               <button
                 type="button"
                 onClick={() => setFacingMode((prev) => (prev === 'user' ? 'environment' : 'user'))}
-                className="px-3.5 py-2 rounded-full bg-[#3A3C41] hover:bg-[#3D3829] border border-[#46484D] text-[#B9B2A8] hover:text-[#ECE8E2] text-[13px] font-medium flex items-center gap-2 transition-colors cursor-pointer"
+                className="px-3.5 py-2 rounded-full bg-(--aura-panel-2) hover:bg-(--aura-oro-suave) border border-(--aura-borde) text-(--aura-tinta-2) hover:text-(--aura-tinta) text-[13px] font-medium flex items-center gap-2 transition-colors cursor-pointer"
                 title="Cambiar de cámara"
                 aria-label={facingMode === 'user' ? 'Cámara frontal: cambiar a la trasera' : 'Cámara trasera: cambiar a la frontal'}
               >
@@ -372,9 +369,9 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                   type="button"
                   onClick={takeSnapshot}
                   disabled={Boolean(countdown !== null)}
-                  className="px-4 py-2.5 rounded-full bg-[#3A3C41] hover:bg-[#3D3829] border border-[#46484D] text-[#ECE8E2] text-[13px] font-semibold flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
+                  className="px-4 py-2.5 rounded-full bg-(--aura-panel-2) hover:bg-(--aura-oro-suave) border border-(--aura-borde) text-(--aura-tinta) text-[13px] font-semibold flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
                 >
-                  <Zap className="w-4 h-4 text-[#E0C27F]" />
+                  <Zap className="w-4 h-4 text-(--aura-oro-texto)" />
                   <span>Ahora</span>
                 </button>
 
@@ -383,7 +380,7 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
                   type="button"
                   onClick={startCountdown}
                   disabled={Boolean(countdown !== null)}
-                  className="px-6 py-2.5 rounded-full bg-[#D6B56C] hover:bg-[#E0C27F] text-[#232528] font-semibold text-sm flex items-center gap-2 shadow-[0_6px_18px_rgba(0,0,0,0.3)] active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
+                  className="px-6 py-2.5 rounded-full bg-(--aura-oro) hover:bg-(--aura-oro-texto) text-(--aura-fondo) font-semibold text-sm flex items-center gap-2 shadow-[0_6px_18px_rgba(0,0,0,0.3)] active:scale-[0.98] transition-all disabled:opacity-50 cursor-pointer"
                 >
                   <Camera className="w-4 h-4" />
                   <span>{countdown !== null ? `En ${countdown}…` : 'Tomar foto'}</span>
@@ -392,7 +389,6 @@ export const CameraCountdownModal: React.FC<CameraCountdownModalProps> = ({
             </div>
           )}
         </div>
-      </div>
-    </div>
+      </Dialogo>
   );
 };

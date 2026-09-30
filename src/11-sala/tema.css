@@ -1,33 +1,150 @@
 /*
- * El tema de AU-RA: Grafito (elegido el 25-sep). Grafito y nogal, texto claro, el dorado del anillo
- * como único acento. Redondo y tranquilo, sin ser de niño. Solo vale dentro de `.aura` (la raíz de
- * la app de AU-RA), así que Dr Electrum, que comparte el CSS base, no se entera.
+ * El tema de AU-RA: Grafito (elegido el 25-sep) y su versión clara. Carbón y nogal, texto claro, el
+ * dorado del anillo como único acento; en claro, lino y latón. Redondo y tranquilo, sin ser de niño.
+ *
+ * Aquí NO hay colores: los pone `useTema` (src/01-diseno/useTema.ts) como variables `--aura-*` en la
+ * raíz, desde src/01-diseno/aura.ts, que es donde se mide el contraste. Solo vale dentro de `.aura`
+ * (la raíz de la app de AU-RA), así que Dr Electrum, que comparte el CSS base, no se entera.
  */
 .aura {
-  --aura-fondo: #232528;
-  --aura-panel: #34363A;
-  --aura-oro: #D6B56C;
-  --aura-oro-texto: #E0C27F;
-  --aura-salvia: #8FA58A;
-  --aura-salvia-texto: #A9C3A4;
-  --aura-salvia-fondo: #2F3A30;
-  --aura-barro: #D9825F;
-  --aura-tinta: #ECE8E2;
-  --aura-tinta-2: #B9B2A8;
-  --aura-borde: #46484D;
-  font-family: 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: var(--aura-tipo-familia, 'Figtree', system-ui, sans-serif);
+  font-size: var(--aura-tipo-cuerpo, 16px);
+  line-height: 1.45;
   color: var(--aura-tinta);
+  background-color: var(--aura-fondo);
+  -webkit-tap-highlight-color: transparent;
 }
-.aura .font-mono { font-family: 'Figtree', system-ui, -apple-system, 'Segoe UI', sans-serif; }
-.aura .font-display { font-family: 'Fredoka', 'Figtree', system-ui, sans-serif; letter-spacing: 0.01em; }
+.aura .font-mono { font-family: var(--aura-tipo-familia); }
+.aura .font-display { font-family: var(--aura-tipo-display); letter-spacing: 0.01em; }
 .aura ::-webkit-scrollbar-track { background: transparent; }
-.aura ::-webkit-scrollbar-thumb { background: rgba(214, 181, 108, 0.25); border-radius: 4px; }
-.aura ::-webkit-scrollbar-thumb:hover { background: rgba(214, 181, 108, 0.45); }
-.aura button:focus-visible,
-.aura input:focus-visible { outline: 3px solid var(--aura-oro); outline-offset: 2px; }
+.aura ::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--aura-oro) 35%, transparent); border-radius: 4px; }
+.aura :focus-visible { outline: 3px solid var(--aura-foco); outline-offset: 2px; }
+.aura [role='dialog']:focus-visible,
+.aura [role='dialog']:focus { outline: none; }
+.aura input::placeholder,
+.aura textarea::placeholder { color: var(--aura-tinta-3); opacity: 1; }
+/* El texto de la conversación sí se puede seleccionar y copiar. */
+.aura .aura-seleccionable { user-select: text; -webkit-user-select: text; }
 
-.aura-fondo { background: linear-gradient(180deg, #2C2E32 0%, #232528 100%); }
-.aura-sombra { box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3); }
+.aura-fondo { background: linear-gradient(180deg, color-mix(in srgb, var(--aura-panel) 35%, var(--aura-fondo)) 0%, var(--aura-fondo) 100%); }
+.aura-sombra { box-shadow: 0 6px 18px var(--aura-sombra); }
+
+/* ------------------------------------------------------------------ controles */
+
+/** Botón redondo de icono: 44 px, el objetivo táctil cómodo. */
+.aura-redondo {
+  width: var(--aura-espacio-tactil, 44px);
+  height: var(--aura-espacio-tactil, 44px);
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  display: inline-grid;
+  place-items: center;
+  background: var(--aura-panel);
+  color: var(--aura-tinta-2);
+  box-shadow: 0 6px 18px var(--aura-sombra);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.aura-redondo:hover { background: var(--aura-oro-suave); color: var(--aura-tinta); }
+.aura-redondo[aria-pressed='true'] { color: var(--aura-oro-texto); border-color: var(--aura-oro); }
+.aura-redondo.plano { box-shadow: none; background: var(--aura-panel-2); }
+
+/** La acción principal: relleno dorado. */
+.aura-primario {
+  min-height: var(--aura-espacio-tactilGrande, 48px);
+  padding: 0 20px;
+  border-radius: 999px;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--aura-oro);
+  color: var(--aura-sobre-oro);
+  font: 600 16px var(--aura-tipo-familia);
+  box-shadow: 0 8px 20px color-mix(in srgb, var(--aura-oro) 30%, transparent);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.aura-primario:hover { background: var(--aura-oro-hover); }
+.aura-primario:active { transform: scale(0.97); }
+.aura-primario:disabled { opacity: 0.55; cursor: default; }
+
+/** Botón secundario con borde. */
+.aura-secundario {
+  min-height: var(--aura-espacio-tactil, 44px);
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid var(--aura-borde-campo);
+  background: transparent;
+  color: var(--aura-tinta);
+  font: 600 15px var(--aura-tipo-familia);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.aura-secundario:hover { background: var(--aura-oro-suave); }
+.aura-secundario.peligro { color: var(--aura-barro-texto); border-color: var(--aura-barro-borde); }
+.aura-secundario.peligro:hover { background: var(--aura-barro-fondo); }
+
+/** Campo de texto: 16 px (en iOS, menos que eso hace zoom al enfocar) y borde que se ve. */
+.aura-campo {
+  min-height: var(--aura-espacio-tactilGrande, 48px);
+  min-width: 0;
+  flex: 1;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 1px solid var(--aura-borde-campo);
+  background: var(--aura-panel);
+  color: var(--aura-tinta);
+  font: 400 16px var(--aura-tipo-familia);
+}
+.aura-campo:focus { border-color: var(--aura-foco); outline: none; box-shadow: 0 0 0 2px var(--aura-foco); }
+
+/** Atajos (ejemplos): pastillas de 44 px de alto. */
+.aura-chip {
+  min-height: var(--aura-espacio-tactil, 44px);
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--aura-borde);
+  background: var(--aura-panel);
+  color: var(--aura-tinta);
+  font: 500 14px var(--aura-tipo-familia);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  cursor: pointer;
+  text-align: left;
+}
+.aura-chip:hover { border-color: var(--aura-oro); }
+.aura-chip svg { color: var(--aura-oro-texto); flex: none; }
+
+/** Grupo segmentado (Conversar / Trabajar, tema, postura): un radiogroup de verdad. */
+.aura-segmento { display: inline-flex; background: var(--aura-panel); border: 1px solid var(--aura-borde); border-radius: 999px; padding: 3px; gap: 2px; }
+.aura-segmento button {
+  min-height: 38px;
+  border: none;
+  background: transparent;
+  color: var(--aura-tinta-2);
+  border-radius: 999px;
+  padding: 0 14px;
+  font: 600 14px var(--aura-tipo-familia);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.aura-segmento button:hover { color: var(--aura-tinta); }
+.aura-segmento button[aria-checked='true'],
+.aura-segmento button[aria-pressed='true'] { background: var(--aura-oro); color: var(--aura-sobre-oro); box-shadow: 0 1px 4px var(--aura-sombra); }
+
+/* ------------------------------------------------------------------ la burbuja y el micrófono */
 
 /* La burbuja le sale de la cabeza: la sala publica dónde está (--aura-x/--aura-y) cada cuadro. */
 .aura-burbuja {
@@ -36,16 +153,16 @@
   left: clamp(150px, var(--aura-x, 50%), calc(100% - 150px));
   top: max(118px, var(--aura-y, 30%));
   transform: translate(-50%, calc(-100% - 8px)) scale(0.96);
-  max-width: min(340px, 78vw);
+  max-width: min(360px, 80vw);
   background: var(--aura-panel);
   color: var(--aura-tinta);
   border: 1px solid var(--aura-borde);
   border-radius: 18px;
-  padding: 10px 15px;
-  font-size: 15px;
-  line-height: 1.38;
+  padding: 10px 16px;
+  font-size: 16px;
+  line-height: 1.4;
   text-align: left;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 10px 28px var(--aura-sombra);
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s ease, transform 0.2s ease;
@@ -65,25 +182,31 @@
   border-radius: 3px;
   transform: translateX(-50%) rotate(45deg);
 }
-.aura-burbuja.abajo { left: 50%; top: auto; bottom: 120px; transform: translate(-50%, 0) scale(0.96); text-align: center; }
+.aura-burbuja.abajo { left: 50%; top: auto; bottom: 150px; transform: translate(-50%, 0) scale(0.96); text-align: center; }
 .aura-burbuja.abajo.visible { transform: translate(-50%, 0) scale(1); }
 .aura-burbuja.abajo::after { display: none; }
+/* Trabajando, lo dicho está en la conversación: la burbuja sobraría encima del avatar chico. */
+.aura[data-modo='trabajar'] .aura-burbuja { display: none; }
 
 .aura-mic {
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
+  flex: none;
   border-radius: 50%;
-  border: none;
+  border: 2px solid transparent;
   cursor: pointer;
   display: grid;
   place-items: center;
   background: var(--aura-panel);
   color: var(--aura-tinta-2);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
-  transition: transform 0.15s ease, background 0.2s ease;
+  box-shadow: 0 10px 24px var(--aura-sombra);
+  transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease;
   position: relative;
 }
-.aura-mic.abierto { background: var(--aura-oro); color: var(--aura-fondo); box-shadow: 0 10px 24px rgba(214, 181, 108, 0.3); }
+.aura-mic:hover { background: var(--aura-oro-suave); }
+/* Abierto: anillo dorado; la acción principal (Escribir) conserva el único relleno dorado. */
+.aura-mic.abierto { border-color: var(--aura-oro); color: var(--aura-oro-texto); }
+.aura-mic.chico { width: 48px; height: 48px; box-shadow: none; }
 .aura-mic:active { transform: scale(0.95); }
 .aura-mic.escuchando::before {
   content: '';
@@ -98,19 +221,152 @@
   to { transform: scale(1.25); opacity: 0; }
 }
 
-.aura-segmento { display: inline-flex; background: var(--aura-panel); border: 1px solid var(--aura-borde); border-radius: 999px; padding: 3px; }
-.aura-segmento button {
+/* ------------------------------------------------------------------ diálogos */
+
+.aura-capa { position: absolute; inset: 0; z-index: 40; display: flex; }
+.aura-velo { position: absolute; inset: 0; background: var(--aura-velo); animation: aura-aparece 0.18s ease-out; }
+.aura-velo.claro { background: transparent; }
+.aura-dialogo { position: relative; outline: none; }
+@keyframes aura-aparece { from { opacity: 0; } to { opacity: 1; } }
+@keyframes aura-sube { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes aura-baja { from { transform: translateY(-16px); opacity: 0; } to { transform: none; opacity: 1; } }
+.aura-hoja { background: var(--aura-fondo); color: var(--aura-tinta); border: 1px solid var(--aura-borde); box-shadow: 0 16px 48px var(--aura-sombra); }
+.aura-sube { animation: aura-sube 0.22s ease-out; }
+.aura-baja { animation: aura-baja 0.22s ease-out; }
+
+/* Pestañas de Ajustes: tablist con flechas; en angosto se desplazan en vez de encogerse. */
+.aura-pestanas { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--aura-panel); overflow-x: auto; scrollbar-width: none; }
+.aura-pestanas::-webkit-scrollbar { display: none; }
+.aura-pestanas [role='tab'] {
+  flex: 1 0 auto;
+  min-height: 40px;
+  padding: 0 14px;
   border: none;
+  border-radius: 999px;
   background: transparent;
   color: var(--aura-tinta-2);
-  border-radius: 999px;
-  padding: 8px 14px;
-  font: 600 13px 'Figtree', system-ui, sans-serif;
+  font: 600 14px var(--aura-tipo-familia);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   cursor: pointer;
+  white-space: nowrap;
 }
-.aura-segmento button[aria-pressed='true'] { background: var(--aura-oro); color: var(--aura-fondo); box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
+.aura-pestanas [role='tab'][aria-selected='true'] { background: var(--aura-panel-2); color: var(--aura-tinta); box-shadow: 0 1px 4px var(--aura-sombra); }
+
+.aura-tarjeta { background: var(--aura-panel); border: 1px solid var(--aura-borde); border-radius: var(--aura-radio-tarjeta, 20px); }
+.aura-tarjeta.honda { background: var(--aura-panel-hondo); }
+.aura-sobretitulo { font: 600 13px var(--aura-tipo-familia); letter-spacing: 0.06em; text-transform: uppercase; color: var(--aura-tinta-2); }
+
+/* ------------------------------------------------------------------ la mesa: conversar y trabajar */
+
+/* El escenario (la sala 3D o la cara) ocupa todo al conversar y se vuelve una tarjeta al trabajar. */
+.aura-escenario { position: absolute; inset: 0; overflow: hidden; transition: top 0.3s ease, left 0.3s ease, width 0.3s ease, height 0.3s ease, border-radius 0.3s ease; }
+.aura-trabajo { display: none; }
+
+.aura { --aura-lado-ancho: 340px; --aura-tarjeta-alto: min(calc(var(--aura-lado-ancho) * 1.25), calc(100% - 220px)); }
+.aura[data-modo='trabajar'] .aura-escenario {
+  inset: auto;
+  top: 76px;
+  left: 20px;
+  width: var(--aura-lado-ancho);
+  height: var(--aura-tarjeta-alto);
+  border-radius: 28px;
+  border: 1px solid var(--aura-borde);
+  box-shadow: 0 10px 30px var(--aura-sombra);
+  z-index: 5;
+}
+.aura[data-modo='trabajar'] .aura-trabajo {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  z-index: 10;
+  top: 76px;
+  left: 380px;
+  right: 20px;
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  border-radius: 28px;
+  background: var(--aura-panel-hondo);
+  border: 1px solid var(--aura-borde);
+  box-shadow: 0 10px 30px var(--aura-sombra);
+  overflow: hidden;
+}
+.aura-lado { display: none; }
+.aura[data-modo='trabajar'] .aura-lado {
+  display: flex;
+  position: absolute;
+  z-index: 6;
+  left: 20px;
+  width: var(--aura-lado-ancho);
+  top: calc(76px + var(--aura-tarjeta-alto) + 12px);
+  bottom: calc(16px + env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+@media (max-width: 1023px) {
+  .aura { --aura-lado-ancho: 260px; }
+  .aura[data-modo='trabajar'] .aura-trabajo { left: 296px; }
+}
+/* Teléfono en vertical: el avatar es una franja arriba y la conversación ocupa el resto. */
+@media (max-width: 767px) {
+  .aura[data-modo='trabajar'] .aura-escenario { top: 68px; left: 12px; width: calc(100% - 24px); height: 128px; border-radius: 22px; }
+  .aura[data-modo='trabajar'] .aura-trabajo { top: 208px; left: 12px; right: 12px; border-radius: 22px; }
+  .aura[data-modo='trabajar'] .aura-lado { display: none; }
+}
+/* Pantalla baja (horizontal, o zoom al 200 %): el saludo se queda en lo esencial. */
+@media (max-height: 520px) {
+  .aura-inicio-sub { display: none; }
+}
+/* Teléfono en horizontal: avatar a la izquierda, conversación a la derecha, sin franja. */
+@media (max-height: 520px) and (orientation: landscape) {
+  .aura[data-modo='trabajar'] .aura-escenario { top: 64px; left: 12px; width: 30vw; height: calc(100% - 80px); border-radius: 22px; }
+  .aura[data-modo='trabajar'] .aura-trabajo { top: 64px; left: calc(30vw + 24px); right: 12px; bottom: 12px; border-radius: 22px; }
+  .aura[data-modo='trabajar'] .aura-lado { display: none; }
+}
+
+/* El dock de conversar: Escribir, el micrófono al lado y «Más». */
+.aura[data-modo='trabajar'] .aura-dock { display: none; }
+
+/* Mensajes */
+.aura-mensaje { max-width: min(680px, 92%); border-radius: 20px; padding: 10px 14px; font-size: 16px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.aura-mensaje.persona { align-self: flex-end; background: var(--aura-oro-suave); color: var(--aura-tinta); border-bottom-right-radius: 6px; }
+.aura-mensaje.aura-dice { align-self: flex-start; background: var(--aura-panel); color: var(--aura-tinta); border: 1px solid var(--aura-borde); border-bottom-left-radius: 6px; }
+.aura-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; font-size: 13px; color: var(--aura-tinta-2); }
+.aura-puntos span { display: inline-block; width: 6px; height: 6px; margin-right: 3px; border-radius: 50%; background: var(--aura-oro-texto); animation: aura-punto 1s ease-in-out infinite; }
+.aura-puntos span:nth-child(2) { animation-delay: 0.15s; }
+.aura-puntos span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes aura-punto { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 
 @media (prefers-reduced-motion: reduce) {
   .aura-mic.escuchando::before { animation: none; opacity: 0.8; }
-  .aura-burbuja { transition: none; }
+  .aura-burbuja,
+  .aura-escenario { transition: none; }
+  .aura-velo,
+  .aura-sube,
+  .aura-baja { animation: none; }
+  .aura-puntos span { animation: none; opacity: 0.8; }
+  .aura .animate-pulse,
+  .aura .animate-bounce,
+  .aura .animate-spin { animation: none; }
+}
+
+/* La marca en cada tema: el logo claro trae su fondo crema, que se funde con el lino. */
+.aura-solo-claro { display: none; }
+.aura[data-tema='claro'] .aura-solo-claro { display: block; mix-blend-mode: multiply; }
+.aura[data-tema='claro'] .aura-solo-oscuro { display: none; }
+
+/* En teléfono, Conversar / Trabajar sin icono (cabe con la marca y los dos botones) y, por debajo
+   de 360 px, solo con icono (el nombre sigue para el lector de pantalla). */
+@media (max-width: 479px) {
+  .aura-modos button { padding: 0 11px; font-size: 14px; }
+  .aura-modos button svg { display: none; }
+}
+@media (max-width: 359px) {
+  .aura-modos button svg { display: inline; }
+  .aura-modos button span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
+/* Pestañas de Ajustes en teléfono: dos por fila, todas a la vista. */
+@media (max-width: 639px) {
+  .aura-pestanas { display: grid; grid-template-columns: 1fr 1fr; border-radius: 22px; }
+  .aura-pestanas [role='tab'] { padding: 0 10px; }
 }

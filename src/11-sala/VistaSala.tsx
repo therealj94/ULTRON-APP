@@ -9,6 +9,7 @@ import type { FaceState } from '../types';
 import type { Emocion } from '../../lib/emocion';
 import { crearSala, type SalaControl, type ZonaToque } from './sala';
 import type { Postura, Tarea } from './tareas';
+import type { Estilo } from './estilos';
 
 export type PedidoTarea = { tarea: Tarea; texto?: string; n: number };
 
@@ -24,6 +25,8 @@ export type SalaProps = {
   onTocar?: (zona: ZonaToque) => void;
   onDeslizar?: (dir: 'arriba' | 'abajo') => void;
   onFallo: (motivo: string) => void;
+  /** Paleta y forma; se lee al crear la sala (para cambiarla, se remonta con otra `key`). */
+  estilo?: Partial<Estilo>;
   children?: React.ReactNode;
 };
 
@@ -39,6 +42,7 @@ export default function Sala(p: SalaProps) {
       ctl.current = crearSala(host.current, {
         reducido: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches,
         postura: cb.current.postura,
+        estilo: cb.current.estilo,
         onTocar: (z) => cb.current.onTocar?.(z),
         onDeslizar: (d) => cb.current.onDeslizar?.(d),
         onFallo: (m) => cb.current.onFallo(m),
