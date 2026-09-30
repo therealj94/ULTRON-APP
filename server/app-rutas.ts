@@ -3,7 +3,7 @@
  *
  *   GET  /api/perfil            → { perfil: Perfil | null } (+ lo público de la plataforma, que la web
  *                                  ya leía de esta misma ruta: acento, nombre, modos)
- *   PUT  /api/perfil  Partial<Perfil>  → { perfil }
+ *   PUT  /api/perfil  Partial<Perfil>  → { perfil } (503 `perfil_no_disponible` si el guardado no se pudo leer)
  *   GET  /api/app/acciones      text/event-stream: cada evento `data: {"id","accion"}`
  *                                  (cabecera opcional `x-aura-aparato: <id del teléfono>`)
  *   POST /api/app/contexto      { pantalla, chatAbierto?, contactos, borrador? }
@@ -12,7 +12,7 @@
  * de la sesión firmada, nunca del cuerpo.
  */
 import type express from 'express';
-import { actualizarPerfil, leerPerfil, validarCambios } from '../lib/perfil-persona';
+import { actualizarPerfil, leerPerfil, PerfilNoDisponible, validarCambios } from '../lib/perfil-persona';
 import { aparatoValido, guardarContexto, MAX_CANALES_POR_CUENTA, suscribir, validarContexto } from '../lib/acciones-app';
 import type { Sesion } from './seguridad';
 
@@ -59,8 +59,19 @@ export function montarRutasApp(app: express.Express, d: Deps) {
     if (!s) return sinSesion(res);
     const v = validarCambios(req.body);
     if (v.ok === false) return res.status(400).json({ error: v.error, honesto: true });
-    const { perfil, durable } = await actualizarPerfil(s.correo, v.cambios, { apodo: s.nombre.split(' ')[0] });
-    return res.json({ perfil, durable, honesto: true });
+    try {
+      const { perfil, durable } = await actualizarPerfil(s.correo, v.cambios, { apodo: s.nombre.split(' ')[0] });
+      return res.json({ perfil, durable, honesto: true });
+    } catch (e) {
+      // El guardado no se pudo leer (S3 caído tras un redespliegue): no se pisa lo que no se vio. El
+      // teléfono conserva sus cambios y los vuelve a mandar.
+      if (e instanceof PerfilNoDisponible) {
+        return res.status(503).json({ error: 'Ahora mismo no pude leer tu perfil guardado. Tus cambios siguen en el teléfono; lo intento de nuevo en un momento.', code: 'perfil_no_disponible', honesto: true });
+      }
+      // Express 4 no atrapa el rechazo de un handler async: sin esto la petición quedaba colgada.
+      console.warn('[perfil] no pude guardar', String((e as Error)?.message || e).slice(0, 120));
+      return res.status(500).json({ error: 'No pude guardar tu perfil ahora.', honesto: true });
+    }
   });
 
   /**

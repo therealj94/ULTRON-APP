@@ -229,3 +229,25 @@ test('POST /api/app/contexto: validado, por persona, y el cerebro lo encuentra',
   assert.equal(((await ok.json()) as any).contactos, 1);
   assert.equal(contextoDe('maria@ordenglobal.org')?.chatAbierto?.nombre, 'Beto');
 });
+
+test('PUT /api/perfil con S3 caído y sin copia local: 503 y no se sube nada encima', async () => {
+  const fetchOriginal = globalThis.fetch;
+  let puts = 0;
+  globalThis.fetch = (async (url: any, init: any = {}) => {
+    const u = new URL(String(url));
+    if (!u.hostname.endsWith('.amazonaws.com')) return fetchOriginal(url, init);
+    if (init.method === 'PUT') puts++;
+    return new Response('fuera', { status: 503 });
+  }) as typeof fetch;
+  Object.assign(process.env, { ULTRON_MEMORIA_BUCKET: 'cubo-prueba', AWS_ACCESS_KEY_ID: 'AKIAPRUEBA', AWS_SECRET_ACCESS_KEY: 'secreto-prueba' });
+  try {
+    const s = emitirSesion({ correo: 'sin-s3@x.com', nombre: 'Sin Ese', rol: 'Junta' });
+    const r = await fetch(`${base}/api/perfil`, { method: 'PUT', headers: h(s.token), body: JSON.stringify({ apodo: 'Nuevo' }) });
+    assert.equal(r.status, 503);
+    assert.equal(((await r.json()) as any).code, 'perfil_no_disponible');
+    assert.equal(puts, 0, 'no se pisó el perfil que no se pudo leer');
+  } finally {
+    globalThis.fetch = fetchOriginal;
+    Object.assign(process.env, { ULTRON_MEMORIA_BUCKET: '', AWS_ACCESS_KEY_ID: '', AWS_SECRET_ACCESS_KEY: '' });
+  }
+});
