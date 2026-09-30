@@ -10,7 +10,9 @@ public enum Mano
     VolumenSubir, VolumenBajar, Silenciar, MultimediaPausa, MultimediaSiguiente, MultimediaAnterior,
     Recordar, Callar, Pausa, AbrirChat, Ocultar, Avatar, Escritorio, Bloquear,
     // Nativas 1.1: controles por nombre (UI Automation), ventanas, información del equipo, portapapeles y archivos.
-    Pulsar, QueHay, Ventana, Info, Portapapeles, AbrirArchivo
+    Pulsar, QueHay, Ventana, Info, Portapapeles, AbrirArchivo,
+    // 1.2: música (lo que suena en Spotify, YouTube Music o el navegador), correo y agenda.
+    Musica, Correo, Agenda
 }
 
 /// <summary>Lo que se va a hacer: la mano, su parámetro (qué app, qué búsqueda, qué texto…) y de dónde salió.</summary>
@@ -47,6 +49,7 @@ public static class Intencion
         "win_pausa" => Mano.Pausa, "win_abrir_chat" => Mano.AbrirChat, "win_ocultar" => Mano.Ocultar, "win_avatar" => Mano.Avatar,
         "win_escritorio" => Mano.Escritorio, "win_bloquear" => Mano.Bloquear, "win_pulsar" => Mano.Pulsar, "win_que_hay" => Mano.QueHay,
         "win_ventana" => Mano.Ventana, "win_info" => Mano.Info, "win_portapapeles" => Mano.Portapapeles, "win_abrir_archivo" => Mano.AbrirArchivo,
+        "win_musica" => Mano.Musica, "win_correo" => Mano.Correo, "win_agenda" => Mano.Agenda,
         _ => Mano.Ninguna
     };
 
@@ -56,6 +59,9 @@ public static class Intencion
         if (t.Length == 0 || t.Length > 400) return Pedido.Nada;
         // Lo que se PREGUNTA al equipo (hora, batería, disco, red) se contesta aquí, sin red: va antes que el filtro de preguntas.
         if (Parametros.Info(t) is { } info) return new(Mano.Info, info);
+        if (Parametros.Musica(texto) is { } musica) return new(Mano.Musica, musica);
+        if (Parametros.Correo(t) is { } correo) return new(Mano.Correo, correo);
+        if (Parametros.Agenda(t) is { } agenda) return new(Mano.Agenda, agenda);
         if (Parametros.QueHay.IsMatch(t)) return new(Mano.QueHay);
         if (Parametros.Portapapeles.IsMatch(t)) return new(Mano.Portapapeles, texto.Trim());
         if (Parametros.EsNegacion(t)) return Pedido.Nada;
@@ -132,12 +138,25 @@ public static class Intencion
                 return Parametros.Archivo(texto, true) is { } a2 ? new(mano, a2, null, origen, p) : Pedido.Nada;
             case Mano.Portapapeles:
                 return new(mano, texto.Trim(), null, origen, p);
+            case Mano.Musica:
+                return Parametros.Musica(texto, true) is { } m2 ? new(mano, m2, null, origen, p) : Pedido.Nada;
+            case Mano.Correo:
+                return new(mano, Parametros.Correo(t, true)!, null, origen, p);
+            case Mano.Agenda:
+                return new(mano, Parametros.Agenda(t, true)!, null, origen, p);
             case Mano.MultimediaSiguiente:
                 return new(Parametros.Anterior.IsMatch(t) ? Mano.MultimediaAnterior : mano, "", null, origen, p);
             default:
                 return new(mano, "", null, origen, p);
         }
     }
+
+    /// <summary>
+    /// Lo que la Laya LIGERA nunca decide sola (con efecto o molesto si se equivoca): eso solo por reglas
+    /// exactas o por Laya del nodo. La ligera se queda con lo inofensivo (abrir, buscar, leer, contar…).
+    /// </summary>
+    public static readonly HashSet<Mano> SoloReglasONodo = new()
+    { Mano.Avatar, Mano.Captura, Mano.Bloquear, Mano.Escribir, Mano.Pulsar, Mano.Ventana, Mano.Pausa, Mano.Escritorio, Mano.Silenciar };
 
     /// <summary>La decisión completa. `nodo` es opcional (sin conexión o sin sesión, null).</summary>
     public static async Task<Pedido> Decidir(string texto, Func<string, CancellationToken, Task<DecisionNodo?>>? nodo = null, CancellationToken ct = default)
@@ -146,7 +165,7 @@ public static class Intencion
         if (r.Mano != Mano.Ninguna) return r;
         if (Parametros.EsNegacion(Parametros.Limpiar(texto))) return Pedido.Nada;
         var ligera = LayaLigera.Predecir(texto);
-        if (ligera.Seguro)
+        if (ligera.Seguro && !SoloReglasONodo.Contains(DeEtiqueta(ligera.Etiqueta)))
         {
             var p = ConParametro(DeEtiqueta(ligera.Etiqueta), texto, "laya-ligera", ligera.P);
             if (p.Mano != Mano.Ninguna) return p;
@@ -539,5 +558,58 @@ public static class Parametros
         var o = m.Groups["o"].Value.Trim();
         if (o.Length < 2 || o.Length > 80) return null;
         return BuscarEnOriginal(texto, o) ?? o;
+    }
+
+    // ───────────── 1.2: música, correo y agenda ─────────────
+
+    static readonly Regex QueSuena = new(@"^(?:que (?:esta sonando|suena|cancion es esta|cancion es|cancion esta sonando|musica es esta|estoy escuchando)|quien canta (?:esta cancion|esto)|como se llama esta cancion|what s playing|what is playing|what song is this|who sings this|what am i listening to)$", O);
+    static readonly Regex PonMusica = new(@"^(?:pon(?:me)?|reproduce|toca|tocame|busca|play|put on|search)\s+(?:(?:la |el |una |un |a |the |some )?(?:cancion|canciones|musica|tema|song|songs|music|album|playlist|lista)\s+(?:de\s+|del\s+|by\s+)?)?(?<q>.+?)\s+(?:en|on|in)\s+(?<app>spotify|youtube music|youtube|yt music)$", O);
+    static readonly Regex PonMusicaSinApp = new(@"^(?:pon(?:me)?|reproduce|tocame|play|put on)\s+(?:(?:la |el |una |un |a |the |some )?(?:cancion|canciones|musica|tema|song|songs|music|album|playlist)\s+(?:de\s+|del\s+|by\s+)?)(?<q>.+)$", O);
+
+    /// <summary>«que-suena», «spotify|busqueda», «ytmusic|busqueda», «buscar|busqueda» (la app de música de siempre), o null.</summary>
+    public static string? Musica(string texto, bool laxa = false)
+    {
+        var t = Limpiar(texto);
+        if (QueSuena.IsMatch(t)) return "que-suena";
+        var m = PonMusica.Match(t);
+        if (m.Success)
+        {
+            var q = Regex.Replace(m.Groups["q"].Value.Trim(), @"^(?:some|algo de|un poco de|musica de|music by)\s+", "");
+            if (q.Length < 2 || q.Length > 100) return null;
+            var app = m.Groups["app"].Value.StartsWith("spotify") ? "spotify" : "ytmusic";
+            return app + "|" + (BuscarEnOriginal(texto, q) ?? q);
+        }
+        m = PonMusicaSinApp.Match(t);
+        if (m.Success)
+        {
+            var q = m.Groups["q"].Value.Trim();
+            return q.Length is >= 2 and <= 100 ? "buscar|" + (BuscarEnOriginal(texto, q) ?? q) : null;
+        }
+        return laxa ? "que-suena" : null;
+    }
+
+    static readonly Regex CorreoRe = new(@"^(?:(?:tengo|hay) (?:correos?|emails?|mails?|mensajes? de correo)(?: nuevos?)?|(?:leeme|lee|revisa|revisame|checa|abre) (?:mis |el |los |mi )?(?:correos?|emails?|mails?|bandeja(?: de entrada)?)(?: nuevos?)?|(?:que|cuantos) correos (?:tengo|hay|me llegaron)|me llego (?:algun )?correo|(?:resume|resumeme|resumen de) (?:mis |el |los )?(?:correos?|emails?|bandeja)|lee(?:me)? el ultimo correo|(?:check|read|summarize) (?:my )?(?:emails?|mail|inbox)|(?:any|do i have) new (?:emails?|mail)|read (?:me )?the last email|how many emails do i have)$", O);
+
+    /// <summary>«leer», «resumir» o «contar», o null.</summary>
+    public static string? Correo(string limpio, bool laxa = false)
+    {
+        var t = LayaLigera.Normalizar(limpio);
+        if (!CorreoRe.IsMatch(t)) return laxa ? "leer" : null;
+        if (Regex.IsMatch(t, @"(?:resume|resumeme|resumen|summarize)")) return "resumir";
+        if (Regex.IsMatch(t, @"^(?:tengo|hay|cuantos|me llego|any|do i have|how many)")) return "contar";
+        return "leer";
+    }
+
+    static readonly Regex AgendaRe = new(@"^(?:que tengo (?:hoy|manana|esta semana|pendiente hoy|en la agenda|agendado)|(?:como esta |revisa |leeme |dime )?(?:mi|la) agenda(?: de (?:hoy|manana|la semana))?|(?:cual es |cuando es )?(?:mi )?(?:proxima|siguiente) (?:reunion|cita|junta|evento)|tengo (?:reuniones|citas|juntas|eventos) (?:hoy|manana)|que hay en mi (?:calendario|agenda)(?: hoy| manana)?|what s on my calendar(?: today| tomorrow)?|what do i have (?:today|tomorrow|this week)|my (?:schedule|agenda)(?: today| tomorrow)?|when is my next (?:meeting|appointment)|next meeting)$", O);
+
+    /// <summary>«hoy», «manana», «semana» o «proximo», o null.</summary>
+    public static string? Agenda(string limpio, bool laxa = false)
+    {
+        var t = LayaLigera.Normalizar(limpio);
+        if (!AgendaRe.IsMatch(t)) return laxa ? "hoy" : null;
+        if (Regex.IsMatch(t, @"(?:proxima|siguiente|next)")) return "proximo";
+        if (Regex.IsMatch(t, @"(?:manana|tomorrow)")) return "manana";
+        if (Regex.IsMatch(t, @"(?:semana|week)")) return "semana";
+        return "hoy";
     }
 }

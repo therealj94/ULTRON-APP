@@ -91,6 +91,31 @@ internal sealed class AjustesWindow : Window
         Op("Hablar siempre con la voz de Windows", a.VozDeWindows, v => a.VozDeWindows = v);
         Op("Oír siempre con el dictado de Windows", a.OidoDeWindows, v => a.OidoDeWindows = v);
         raiz.Children.Add(Nota("Aunque estén apagadas, si el servidor no contesta AURA usa la voz y el oído de Windows solas. La pantalla se lee siempre en este equipo (UI Automation y OCR de Windows): al cerebro va solo texto, nunca imágenes."));
+        raiz.Children.Add(Titulo("Cuentas: correo y agenda (avisos en el notch)"));
+        var correoDir = new TextBox { Text = a.CorreoDireccion }; raiz.Children.Add(Caja(correoDir));
+        var correoClave = new PasswordBox { Password = a.CorreoClave, Background = Brushes.Transparent, Foreground = Brushes.White, BorderThickness = new Thickness(0) }; raiz.Children.Add(Caja(correoClave));
+        raiz.Children.Add(Nota("Gmail: usa una «contraseña de aplicación» (Cuenta de Google → Seguridad → Verificación en 2 pasos → Contraseñas de aplicaciones). También Yahoo, iCloud y otros IMAP. Solo se lee: nada se marca ni se borra."));
+        var agendaUrl = new TextBox { Text = a.AgendaUrl }; raiz.Children.Add(Caja(agendaUrl));
+        raiz.Children.Add(Nota("Calendario: en Google Calendar → Configuración del calendario → «Dirección secreta en formato iCal». Pégala aquí (no la compartas)."));
+        var estadoCuentas = Nota("");
+        var probar = new Button { Content = "Probar correo y agenda", Style = (Style)FindResource("Pildora"), HorizontalAlignment = HorizontalAlignment.Left };
+        probar.Click += async (_, _) =>
+        {
+            probar.IsEnabled = false; estadoCuentas.Text = "Probando…";
+            var partes = new System.Collections.Generic.List<string>();
+            if (correoDir.Text.Contains('@'))
+                try { using var c = new Manos.Correo(correoDir.Text, correoClave.Password); partes.Add($"Correo: {await c.Probar()} sin leer."); }
+                catch (Exception ex) { partes.Add("Correo: " + ex.Message); }
+            if (agendaUrl.Text.Trim().Length > 8)
+                try { using var ag = new Manos.AgendaCuenta(agendaUrl.Text.Trim()); var evs = await ag.Cargar(); partes.Add($"Agenda: {System.Linq.Enumerable.Count(evs, x => x.Inicio.Date == DateTime.Today)} eventos hoy."); }
+                catch (Exception ex) { partes.Add("Agenda: " + ex.Message); }
+            estadoCuentas.Text = partes.Count > 0 ? string.Join(" ", partes) : "Escribe tu correo o la dirección del calendario.";
+            probar.IsEnabled = true;
+        };
+        raiz.Children.Add(probar); raiz.Children.Add(estadoCuentas);
+        Op("Avisarme de correos nuevos en el notch", a.AvisarCorreos, v => a.AvisarCorreos = v);
+        Op("Mostrar lo que suena (Spotify, YouTube Music, el navegador)", a.MostrarMusica, v => a.MostrarMusica = v);
+
         raiz.Children.Add(Titulo("Llamadas y video (servicio aparte, opcional)"));
         ConnectionSettings llamadas; try { llamadas = ConnectionStore.Load(); } catch { llamadas = new(); }
         var urlLlamadas = new TextBox { Text = llamadas.Gateway }; raiz.Children.Add(Caja(urlLlamadas));
@@ -108,6 +133,7 @@ internal sealed class AjustesWindow : Window
             catch (AuraError ex) { estado.Text = ex.Message; return; }
             if (a.Correo != correo.Text.Trim().ToLowerInvariant()) { a.Correo = correo.Text.Trim().ToLowerInvariant(); a.Token = ""; }
             if (clave.Password.Length > 0) a.Clave = clave.Password;
+            a.CorreoDireccion = correoDir.Text.Trim(); a.CorreoClave = correoClave.Password; a.AgendaUrl = agendaUrl.Text.Trim();
             if (claveLlamadas.Password.Length > 0 || urlLlamadas.Text.Trim() != llamadas.Gateway)
             {
                 try { ConnectionStore.Save(new ConnectionSettings(urlLlamadas.Text.Trim(), claveLlamadas.Password)); }

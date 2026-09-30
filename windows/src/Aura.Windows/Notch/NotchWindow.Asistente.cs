@@ -50,6 +50,7 @@ public partial class NotchWindow
         Parametros.EsAppConocida = o => comunes(o) || Manos.Aplicaciones.Buscar(o, 80) != null;
         _ = Manos.Aplicaciones.Indexar().ContinueWith(_ => Dispatcher.BeginInvoke(new Action(() => FiltrarApps(this, null!))));
         PintarRecordatorios();
+        IniciarMusicaYCuentas();
         relojRecordatorios.Tick += (_, _) => RevisarRecordatorios();
         relojRecordatorios.Start();
 
@@ -61,7 +62,7 @@ public partial class NotchWindow
 
         altavoz.Empezo += () => Dispatcher.BeginInvoke(new Action(() => { hablandoAhora = true; pensando = false; AvatarPanel.Estado = "speaking"; EstadoPanel.Text = Ingles ? "Speaking…" : "Hablando…"; AbrirOidoParaInterrumpir(); Recalcular(); }));
         altavoz.Frase += f => Dispatcher.BeginInvoke(new Action(() => Subtitulo.Text = Expresiones.Quitar(f).Trim()));
-        altavoz.Nivel += n => { oido.NivelAltavoz = n; Dispatcher.BeginInvoke(new Action(() => { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; if (modo == Modo.Habla) Brillo.Opacity = 0.2 + n * 0.5; })); };
+        altavoz.Nivel += n => { oido.NivelAltavoz = n; Dispatcher.BeginInvoke(new Action(() => { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; if (modo == Modo.Habla) AnimarBrillo(0.2 + n * 0.5); })); };
         altavoz.Termino += () => Dispatcher.BeginInvoke(new Action(AlTerminarDeHablar));
         altavoz.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso("Voz", m, "", "worried"))));
 
@@ -417,6 +418,7 @@ public partial class NotchWindow
         Callar(true);
         GuardarRecuperacion();
         despertador.Dispose(); oido.Dispose(); altavoz.Dispose(); api?.Dispose();
+        musica.Dispose(); correo?.Dispose(); agenda?.Dispose(); relojProgreso.Stop();
         relojRecordatorios.Stop();
     }
 }

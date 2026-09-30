@@ -29,7 +29,10 @@
   "win_ventana",
   "win_info",
   "win_portapapeles",
-  "win_abrir_archivo"
+  "win_abrir_archivo",
+  "win_musica",
+  "win_correo",
+  "win_agenda"
  ],
  "grupos": {
   "win": [
@@ -60,7 +63,10 @@
    "win_ventana",
    "win_info",
    "win_portapapeles",
-   "win_abrir_archivo"
+   "win_abrir_archivo",
+   "win_musica",
+   "win_correo",
+   "win_agenda"
   ]
  },
  "recorte": {

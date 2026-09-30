@@ -84,6 +84,19 @@ jobs:
           name: AURA-Windows-protocol-verification
           path: windows/artifacts/protocol/
           retention-days: 14
+      - name: Animation smoothness (real frame timing through every notch state)
+        shell: pwsh
+        run: |
+          $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--anim-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/anim/result.json" -PassThru
+          if (-not $process.WaitForExit(90000)) { $process.Kill(); throw 'Animation test timeout' }
+          Get-Content ./windows/artifacts/anim/result.json
+          if ($process.ExitCode -ne 0) { throw 'Animation test failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-animation-verification
+          path: windows/artifacts/anim/
+          retention-days: 14
       - name: Native test (UI Automation, OCR, controls, windows, system info, Windows voice)
         shell: pwsh
         run: |

@@ -19,6 +19,9 @@
      <TextBlock x:Name="NombreChico" Text="AU-RA" FontWeight="SemiBold" FontSize="12.5" VerticalAlignment="Center" Margin="8,0,0,0" Opacity="0"/>
     </StackPanel>
     <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,10,0">
+     <!-- Con música sonando, como la isla: la portada y unas barritas. -->
+     <Border x:Name="PortadaChica" Width="20" Height="20" CornerRadius="5" Margin="0,0,6,0" Visibility="Collapsed" Background="{StaticResource Superficie2}"/>
+     <n:Barras x:Name="BarrasMusica" Width="18" Height="12" Margin="0,0,6,0" Visibility="Collapsed"/>
      <Button x:Name="MicChico" Style="{StaticResource Icono}" Content="&#xE720;" Width="28" Height="28" FontSize="13" Opacity="0" Click="Microfono" ToolTip="Hablar · Ctrl+Alt+Espacio" AutomationProperties.Name="Hablar con AURA"/>
      <Ellipse x:Name="PuntoEstado" Width="7" Height="7" Fill="#4CD964" Margin="6,0,4,0" VerticalAlignment="Center" ToolTip="Conectada"/>
     </StackPanel>
@@ -49,6 +52,27 @@
      <TextBlock x:Name="Subtitulo" Text="" FontSize="14" TextWrapping="Wrap" MaxHeight="40" TextTrimming="WordEllipsis" Margin="0,2,0,0"/>
     </StackPanel>
     <n:Barras x:Name="BarrasHabla" Grid.Column="2" Width="44" Height="26" Margin="0,8,18,0" VerticalAlignment="Center"/>
+   </Grid>
+
+   <!-- MÚSICA: lo que suena en Spotify, YouTube Music o el navegador, con sus controles -->
+   <Grid x:Name="CapaMusica" IsHitTestVisible="False" Opacity="0">
+    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+    <Border x:Name="PortadaGrande" Width="58" Height="58" CornerRadius="12" Margin="14,12,0,0" VerticalAlignment="Center" Background="{StaticResource Superficie2}">
+     <n:Glifo x:Name="GlifoMusica" Codigo="&#xE8D6;" Width="22" Height="22" Pincel="{DynamicResource Acento}"/>
+    </Border>
+    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="14,12,10,0">
+     <TextBlock x:Name="TituloMusica" Text="" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+     <TextBlock x:Name="ArtistaMusica" Text="" FontSize="12.5" Foreground="{StaticResource Tenue}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+     <Grid Margin="0,8,0,0">
+      <Border Height="3" CornerRadius="2" Background="{StaticResource Superficie2}"/>
+      <Border x:Name="ProgresoMusica" Height="3" CornerRadius="2" Background="{DynamicResource Acento}" HorizontalAlignment="Left" Width="0"/>
+     </Grid>
+    </StackPanel>
+    <StackPanel Grid.Column="2" Orientation="Horizontal" Margin="0,12,12,0" VerticalAlignment="Center">
+     <Button Style="{StaticResource Icono}" Content="&#xE892;" Click="MusicaAnterior" ToolTip="Anterior" AutomationProperties.Name="Canción anterior"/>
+     <Button x:Name="BotonPlayMusica" Style="{StaticResource Icono}" Content="&#xE769;" Width="40" Height="40" FontSize="18" Click="MusicaPlay" ToolTip="Play / pausa" AutomationProperties.Name="Reproducir o pausar"/>
+     <Button Style="{StaticResource Icono}" Content="&#xE893;" Click="MusicaSiguiente" ToolTip="Siguiente" AutomationProperties.Name="Canción siguiente"/>
+    </StackPanel>
    </Grid>
 
    <!-- AVISO: notificaciones al estilo de la isla (recordatorios, lo que hizo, respuestas) -->

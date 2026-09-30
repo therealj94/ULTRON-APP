@@ -156,5 +156,40 @@ Check(R("abre el último archivo que descargué") is { Mano: Mano.AbrirArchivo, 
 Check(R("abre el archivo del contrato") is { Mano: Mano.AbrirArchivo, Valor: "contrato" }, "archivo por nombre");
 Check(R("dale play").Mano == Mano.MultimediaPausa && R("dale a play").Mano == Mano.MultimediaPausa, "dale play es musica");
 
+// ── 1.2: música, correo, agenda ──
+Check(R("qué está sonando") is { Mano: Mano.Musica, Valor: "que-suena" }, "que suena");
+Check(R("¿quién canta esta canción?") is { Mano: Mano.Musica, Valor: "que-suena" }, "quien canta");
+Check(R("pon Bad Bunny en Spotify") is { Mano: Mano.Musica, Valor: "spotify|Bad Bunny" }, "spotify");
+Check(R("ponme música de Marc Anthony en YouTube Music") is { Mano: Mano.Musica, Valor: "ytmusic|Marc Anthony" }, "yt music");
+Check(R("play some jazz on spotify") is { Mano: Mano.Musica, Valor: "spotify|jazz" }, "play on spotify");
+Check(R("reproduce la canción Despacito") is { Mano: Mano.Musica, Valor: "buscar|Despacito" }, "reproduce cancion");
+Check(R("pon atención").Mano == Mano.Ninguna, "pon atencion sigue sin ser orden");
+Check(R("léeme mis correos") is { Mano: Mano.Correo, Valor: "leer" }, "leer correos");
+Check(R("¿tengo correos nuevos?") is { Mano: Mano.Correo, Valor: "contar" }, "contar correos");
+Check(R("resume mis correos") is { Mano: Mano.Correo, Valor: "resumir" }, "resumir correos");
+Check(R("check my email") is { Mano: Mano.Correo }, "check email");
+Check(R("recuérdame revisar el correo en 20 minutos") is { Mano: Mano.Recordar }, "recordar revisar correo no es correo");
+Check(R("¿qué tengo hoy?") is { Mano: Mano.Agenda, Valor: "hoy" }, "agenda hoy");
+Check(R("qué tengo mañana") is { Mano: Mano.Agenda, Valor: "manana" }, "agenda manana");
+Check(R("cuál es mi próxima reunión") is { Mano: Mano.Agenda, Valor: "proximo" }, "proxima reunion");
+Check(R("tengo una reunión mañana").Mano == Mano.Ninguna, "contar una reunion no es agenda");
+// iCal: zona, UTC, todo el día, repeticiones, exclusiones
+var utc = TimeZoneInfo.Utc;
+var ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Junta directiva\r\nLOCATION:Sala 2\r\nDTSTART:20261001T150000Z\r\nDTEND:20261001T160000Z\r\nEND:VEVENT\r\n"
+        + "BEGIN:VEVENT\r\nSUMMARY:Cumpleaños de\r\n  Karla\r\nDTSTART;VALUE=DATE:20261002\r\nEND:VEVENT\r\n"
+        + "BEGIN:VEVENT\r\nSUMMARY:Standup\r\nDTSTART:20260928T140000Z\r\nDURATION:PT15M\r\nRRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR;COUNT=6\r\nEXDATE:20260930T140000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+var evs = Ical.Eventos(ics, new DateTime(2026, 9, 28), new DateTime(2026, 10, 12), utc);
+Check(evs.Any(e => e.Titulo == "Junta directiva" && e.Inicio == new DateTime(2026, 10, 1, 15, 0, 0) && e.Lugar == "Sala 2"), "ical utc");
+Check(evs.Any(e => e.Titulo == "Cumpleaños de Karla" && e.TodoElDia), "ical todo el dia y linea doblada");
+var standups = evs.Where(e => e.Titulo == "Standup").Select(e => e.Inicio.Day).ToArray();
+Check(standups.SequenceEqual(new[] { 28, 2, 5, 7, 9 }), "ical semanal con exclusion y count: " + string.Join(",", standups));
+Check(evs.First(e => e.Titulo == "Standup").Fin - evs.First(e => e.Titulo == "Standup").Inicio == TimeSpan.FromMinutes(15), "ical duracion");
+
+// La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).
+foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace una captura de pantalla en windows", "ayer me dijiste que bloqueara la compu" })
+{
+    var d = await Intencion.Decidir(f, null);
+    Check(!Intencion.SoloReglasONodo.Contains(d.Mano), "ligera no decide sola: " + f + " → " + d);
+}
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

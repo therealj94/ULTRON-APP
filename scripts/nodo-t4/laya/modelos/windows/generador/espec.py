@@ -32,6 +32,9 @@ DESC = {
  'win_ventana': ('sí: cambiar a otra ventana abierta, o minimizar, maximizar o cerrar una ventana («cambia a chrome», «cierra esta ventana»)', 'no: abrir una app nueva, mostrar el escritorio o esconder a AURA'),
  'win_info': ('sí: preguntar al equipo la hora, la fecha, la batería, el espacio en disco o si hay internet («qué hora es», «cuánta batería me queda»)', 'no: la hora de otro lugar, o la batería de otra cosa'),
  'win_portapapeles': ('sí: hacer algo con el texto copiado («resume lo que copié», «read my clipboard»)', 'no: contar que se copió algo'),
+ 'win_musica': ('sí: saber qué suena o poner música en Spotify o YouTube Music («qué canción es esta», «pon salsa en spotify»)', 'no: hablar de música o pausar/pasar la canción'),
+ 'win_correo': ('sí: leer, contar o resumir los correos de la persona («léeme mis correos»)', 'no: hablar de un correo o redactar uno nuevo'),
+ 'win_agenda': ('sí: lo que tiene en el calendario («qué tengo hoy», «mi próxima reunión»)', 'no: contar que tiene una reunión o crear un recordatorio'),
  'win_abrir_archivo': ('sí: abrir o buscar un archivo del equipo por su nombre, o la última descarga («abre el archivo del contrato»)', 'no: abrir una carpeta o una aplicación'),
 }
 faltan = [i for i in g.ETIQUETAS if i not in DESC]

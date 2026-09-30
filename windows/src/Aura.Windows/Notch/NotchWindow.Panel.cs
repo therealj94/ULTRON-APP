@@ -134,6 +134,10 @@ public partial class NotchWindow
         ajustes.ManosLibres = r.ManosLibres; ajustes.PalabraActivacion = r.PalabraActivacion; ajustes.Interrumpir = r.Interrumpir;
         ajustes.ResponderConVoz = r.ResponderConVoz; ajustes.OcultarEnPantallaCompleta = r.OcultarEnPantallaCompleta;
         ajustes.VozDeWindows = r.VozDeWindows; ajustes.OidoDeWindows = r.OidoDeWindows;
+        bool cambioCuentas = r.CorreoDireccion != ajustes.CorreoDireccion || r.CorreoClave != ajustes.CorreoClave || r.AgendaUrl != ajustes.AgendaUrl;
+        ajustes.CorreoDireccion = r.CorreoDireccion; ajustes.CorreoClave = r.CorreoClave; ajustes.AgendaUrl = r.AgendaUrl;
+        ajustes.AvisarCorreos = r.AvisarCorreos; ajustes.MostrarMusica = r.MostrarMusica;
+        if (cambioCuentas) IniciarCuentas();
         noRenovarHasta = DateTime.MinValue;
         try { ajustes.Guardar(); } catch (Exception ex) { Avisar(new Aviso(T("No guardé los ajustes", "Settings not saved"), ex.Message, "", "worried")); }
         Callar(true); // el turno en curso iba al servidor viejo

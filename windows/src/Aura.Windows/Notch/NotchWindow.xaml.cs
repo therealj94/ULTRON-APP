@@ -16,7 +16,7 @@ using Forms = System.Windows.Forms;
 namespace Aura.Windows.Notch;
 
 /// <summary>Lo que el notch está mostrando. Cada uno tiene su tamaño y su capa.</summary>
-internal enum Modo { Reposo, Escucha, Piensa, Habla, Aviso, Confirma, Panel }
+internal enum Modo { Reposo, Escucha, Piensa, Habla, Musica, Aviso, Confirma, Panel }
 
 /// <summary>Un aviso de la isla: título, cuerpo, icono y (opcional) un botón.</summary>
 internal sealed record Aviso(string Titulo, string Cuerpo, string Icono = "", string Cara = "happy", string? Boton = null, Action? Accion = null, double Segundos = 4.2);
@@ -33,6 +33,8 @@ public partial class NotchWindow : Window
     const double AnchoVentana = 640, Oreja = 10, AltoCompacto = 170;
     readonly bool soloRender;
     readonly Resorte ancho = new(236, 260, 25), alto = new(36, 260, 25), radio = new(13, 260, 25);
+    // El brillo también entra y sale suave; sin brillo, el efecto se quita (una sombra invisible también cuesta dibujarla).
+    readonly Resorte brillo = new(0, 200, 28);
     readonly Dictionary<Modo, (FrameworkElement Capa, Resorte Opacidad)> capas = new();
     readonly Stopwatch reloj = Stopwatch.StartNew();
     TimeSpan ultimo;
@@ -64,6 +66,7 @@ public partial class NotchWindow : Window
         capas[Modo.Escucha] = (CapaEscucha, new Resorte(0, 420, 40));
         capas[Modo.Piensa] = (CapaPiensa, new Resorte(0, 420, 40));
         capas[Modo.Habla] = (CapaHabla, new Resorte(0, 420, 40));
+        capas[Modo.Musica] = (CapaMusica, new Resorte(0, 420, 40));
         capas[Modo.Aviso] = (CapaAviso, new Resorte(0, 420, 40));
         capas[Modo.Confirma] = (CapaConfirma, new Resorte(0, 420, 40));
         capas[Modo.Panel] = (CapaPanel, new Resorte(0, 380, 38));
@@ -97,7 +100,9 @@ public partial class NotchWindow : Window
 
     (double W, double H, double R) Tamano(Modo m) => m switch
     {
-        Modo.Reposo => raton ? (300, 42, 15) : (236, 36, 13),
+        // Con música sonando el reposo se ensancha para su portada y sus barritas, como la isla.
+        Modo.Reposo => raton ? (MusicaSonando ? 330 : 300, 42, 15) : (MusicaSonando ? 290 : 236, 36, 13),
+        Modo.Musica => (450, 94, 28),
         Modo.Escucha => (360, 58, 21),
         Modo.Piensa => (340, 58, 21),
         Modo.Habla => (470, 80, 26),
@@ -118,6 +123,7 @@ public partial class NotchWindow : Window
         if (escuchando) return Modo.Escucha;
         if (pensando) return Modo.Piensa;
         if (hablandoAhora) return Modo.Habla;
+        if (musicaVisible) return Modo.Musica;
         return Modo.Reposo;
     }
 
@@ -149,9 +155,16 @@ public partial class NotchWindow : Window
         NombreChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
         MicChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
         Camara.Margin = new Thickness(0, modo == Modo.Reposo && !raton ? 13 : 14, 0, 0);
-        Brillo.Opacity = modo switch { Modo.Escucha => 0.55, Modo.Habla => 0.35, Modo.Confirma => 0.45, Modo.Aviso => 0.3, _ => 0 };
-        if (soloRender) { ancho.Saltar(w); alto.Saltar(h); radio.Saltar(r); foreach (var (m, (_, op)) in capas) op.Saltar(m == modo ? 1 : 0); Dibujar(); return; }
+        brillo.Objetivo = modo switch { Modo.Escucha => 0.55, Modo.Habla => 0.35, Modo.Confirma => 0.45, Modo.Aviso => 0.3, Modo.Musica => 0.25, _ => 0 };
+        if (soloRender && !pruebaAnimacion) { ancho.Saltar(w); alto.Saltar(h); radio.Saltar(r); brillo.Saltar(brillo.Objetivo); foreach (var (m, (_, op)) in capas) op.Saltar(m == modo ? 1 : 0); Dibujar(); return; }
         if (!animando) { animando = true; ultimo = reloj.Elapsed; CompositionTarget.Rendering += Fotograma; }
+    }
+
+    /// <summary>El brillo sigue la voz sin saltos: cambia su objetivo y deja que el resorte lo lleve.</summary>
+    void AnimarBrillo(double v)
+    {
+        brillo.Objetivo = Math.Clamp(v, 0, 1);
+        if (!animando && !soloRender) { animando = true; ultimo = reloj.Elapsed; CompositionTarget.Rendering += Fotograma; }
     }
 
     void Fotograma(object? s, EventArgs e)
@@ -159,9 +172,9 @@ public partial class NotchWindow : Window
         var ahora = reloj.Elapsed;
         double dt = (ahora - ultimo).TotalSeconds; ultimo = ahora;
         bool saltar = !SystemParameters.ClientAreaAnimation; // movimiento reducido: directo al final, sin animar
-        if (saltar) { ancho.Saltar(ancho.Objetivo); alto.Saltar(alto.Objetivo); radio.Saltar(radio.Objetivo); }
-        else { ancho.Paso(dt); alto.Paso(dt); radio.Paso(dt); }
-        bool quieto = ancho.Quieto && alto.Quieto && radio.Quieto;
+        if (saltar) { ancho.Saltar(ancho.Objetivo); alto.Saltar(alto.Objetivo); radio.Saltar(radio.Objetivo); brillo.Saltar(brillo.Objetivo); }
+        else { ancho.Paso(dt); alto.Paso(dt); radio.Paso(dt); brillo.Paso(dt); }
+        bool quieto = ancho.Quieto && alto.Quieto && radio.Quieto && Math.Abs(brillo.Valor - brillo.Objetivo) < 0.005;
         foreach (var (_, op) in capas.Values) { if (saltar) op.Saltar(op.Objetivo); else op.Paso(dt); quieto &= op.Quieto; }
         Dibujar();
         if (quieto)
@@ -194,11 +207,16 @@ public partial class NotchWindow : Window
     void Dibujar()
     {
         double w = ancho.Valor, h = alto.Valor, r = radio.Valor;
+        var b = Math.Clamp(brillo.Valor, 0, 1);
+        if (b < 0.01) { if (Forma.Effect != null) Forma.Effect = null; }
+        else { if (Forma.Effect == null) Forma.Effect = Brillo; Brillo.Opacity = b; }
+        medidor?.Fotograma(reloj.Elapsed);
         double x0 = (AnchoVentana - w) / 2;
         Forma.Data = Silueta(x0, w, h, r, Oreja);
         Canvas.SetLeft(Contenido, x0); Canvas.SetTop(Contenido, 0);
         Contenido.Width = w; Contenido.Height = h;
         var clip = new RectangleGeometry(new Rect(0, -r, w, h + r), r, r); clip.Freeze();
+        medidor?.Dibujado();
         Contenido.Clip = clip;
         foreach (var (m, (capa, op)) in capas)
         {
@@ -269,6 +287,9 @@ public partial class NotchWindow : Window
     {
         if (modo == Modo.Panel || modo == Modo.Confirma) return;
         if (modo == Modo.Aviso && avisoActual?.Accion != null) { AccionAviso(s, e); return; }
+        // Con música: el primer toque abre su tarjeta; el segundo, el chat.
+        if (modo == Modo.Reposo && MusicaSonando && !musicaVisible) { MostrarTarjetaMusica(6); return; }
+        if (modo == Modo.Musica) { musicaVisible = false; }
         if (modo == Modo.Aviso) SiguienteAviso();
         AbrirPanel(true);
     }

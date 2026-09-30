@@ -78,6 +78,9 @@ LEXICO = {
   '@info': 'hora horas time fecha date dia day bateria battery cargador plugged espacio space disco disk wifi internet conectado connected'.split(),
   '@copia': 'copie copiado copiaste portapapeles clipboard copied'.split(),
   '@archivo': 'archivo archivos file files documento document pdf descarga descargue download downloaded baje'.split(),
+  '@musica2': 'sonando suena cancion canta escuchando playing song sings listening spotify youtube reproduce playlist'.split(),
+  '@correo': 'correo correos email emails mail inbox bandeja'.split(),
+  '@agenda': 'agenda calendario calendar reunion reuniones cita citas meeting meetings schedule junta'.split(),
  },
  'prefijos': {
   '@abrir': 'abre abri inici arranc ejecut lanz'.split(),
@@ -100,6 +103,7 @@ MUESTRAS = ['abre excel', 'open spotify', 'abre descargas', 'busca el precio del
             'redáctame una carta de renuncia', 'qué ves en mi pantalla', 'toma un screenshot', 'súbele al volumen', 'bájale', 'mute',
             'pausa la canción', 'siguiente canción', 'recuérdame en 10 minutos tomar agua', 'cállate', 'pausa todo', 'abre el chat',
             'escóndete', 'cambia a claudio', 'minimiza todo', 'bloquea la compu', 'hola aura, cómo estás', 'ayer abrí word y se trabó',
+            'qué está sonando', 'pon bad bunny en spotify', 'léeme mis correos', 'qué tengo hoy',
             'dale a guardar', 'qué botones hay', 'cierra esta ventana', 'cuánta batería me queda', 'resume lo que copié', 'abre el último archivo que descargué']
 
 

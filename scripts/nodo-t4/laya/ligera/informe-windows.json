@@ -2,64 +2,64 @@
  "dim": 8192,
  "epocas": 10,
  "semilla": 7,
- "temperatura": 0.5047,
- "umbral": 0.97,
- "entrenamiento": 14900,
+ "temperatura": 0.5167,
+ "umbral": 0.98,
+ "entrenamiento": 15847,
  "validacion": {
-  "n": 732,
-  "exactitud": 0.8401639344262295,
-  "cobertura": 0.4380664652567976,
-  "precision_ejecutables": 0.9931506849315068,
-  "decididos": 292,
+  "n": 777,
+  "exactitud": 0.8043758043758044,
+  "cobertura": 0.3545197740112994,
+  "precision_ejecutables": 0.9881422924901185,
+  "decididos": 253,
   "falsos_positivos_en_negativos": 2,
-  "negativos": 70,
+  "negativos": 69,
   "por_etiqueta": {
    "win_ninguna": {
-    "precision": 0.831,
-    "recall": 0.7,
-    "f1": 0.76,
-    "soporte": 70
+    "precision": 0.8,
+    "recall": 0.58,
+    "f1": 0.672,
+    "soporte": 69
    },
    "win_abrir_app": {
-    "precision": 0.706,
-    "recall": 0.818,
-    "f1": 0.758,
+    "precision": 0.689,
+    "recall": 0.705,
+    "f1": 0.697,
     "soporte": 44
    },
    "win_abrir_carpeta": {
-    "precision": 0.837,
+    "precision": 0.651,
     "recall": 0.932,
-    "f1": 0.882,
+    "f1": 0.766,
     "soporte": 44
    },
    "win_buscar_web": {
-    "precision": 0.898,
+    "precision": 0.978,
     "recall": 1.0,
-    "f1": 0.946,
+    "f1": 0.989,
     "soporte": 44
    },
    "win_abrir_web": {
-    "precision": 0.893,
-    "recall": 0.758,
-    "f1": 0.82,
+    "precision": 0.967,
+    "recall": 0.879,
+    "f1": 0.921,
     "soporte": 33
    },
    "win_escribir": {
-    "precision": 0.894,
-    "recall": 0.933,
-    "f1": 0.913,
+    "precision": 0.951,
+    "recall": 0.867,
+    "f1": 0.907,
     "soporte": 45
    },
    "win_redactar": {
-    "precision": 0.926,
-    "recall": 0.909,
-    "f1": 0.917,
+    "precision": 0.927,
+    "recall": 0.927,
+    "f1": 0.927,
     "soporte": 55
    },
    "win_ver_pantalla": {
-    "precision": 0.8,
-    "recall": 0.8,
-    "f1": 0.8,
+    "precision": 0.758,
+    "recall": 0.833,
+    "f1": 0.794,
     "soporte": 30
    },
    "win_captura": {
@@ -69,105 +69,105 @@
     "soporte": 12
    },
    "win_volumen_subir": {
-    "precision": 0.529,
+    "precision": 0.562,
     "recall": 1.0,
-    "f1": 0.692,
+    "f1": 0.72,
     "soporte": 18
    },
    "win_volumen_bajar": {
-    "precision": 0.857,
+    "precision": 0.75,
     "recall": 0.667,
-    "f1": 0.75,
+    "f1": 0.706,
     "soporte": 18
    },
    "win_silenciar": {
-    "precision": 1.0,
+    "precision": 0.75,
     "recall": 0.5,
-    "f1": 0.667,
+    "f1": 0.6,
     "soporte": 12
    },
    "win_multimedia_pausa": {
+    "precision": 0.545,
+    "recall": 1.0,
+    "f1": 0.706,
+    "soporte": 12
+   },
+   "win_multimedia_siguiente": {
     "precision": 0.857,
     "recall": 1.0,
     "f1": 0.923,
     "soporte": 12
    },
-   "win_multimedia_siguiente": {
-    "precision": 1.0,
-    "recall": 1.0,
-    "f1": 1.0,
-    "soporte": 12
-   },
    "win_recordar": {
-    "precision": 0.943,
-    "recall": 1.0,
-    "f1": 0.971,
-    "soporte": 33
-   },
-   "win_callar": {
-    "precision": 1.0,
-    "recall": 0.967,
-    "f1": 0.983,
-    "soporte": 30
-   },
-   "win_pausa": {
-    "precision": 1.0,
-    "recall": 0.667,
-    "f1": 0.8,
-    "soporte": 18
-   },
-   "win_abrir_chat": {
-    "precision": 0.429,
-    "recall": 0.25,
-    "f1": 0.316,
-    "soporte": 24
-   },
-   "win_ocultar": {
-    "precision": 0.1,
-    "recall": 0.083,
-    "f1": 0.091,
-    "soporte": 12
-   },
-   "win_avatar": {
     "precision": 1.0,
     "recall": 0.97,
     "f1": 0.985,
     "soporte": 33
    },
+   "win_callar": {
+    "precision": 0.906,
+    "recall": 0.967,
+    "f1": 0.935,
+    "soporte": 30
+   },
+   "win_pausa": {
+    "precision": 0.923,
+    "recall": 0.667,
+    "f1": 0.774,
+    "soporte": 18
+   },
+   "win_abrir_chat": {
+    "precision": 0.462,
+    "recall": 0.25,
+    "f1": 0.324,
+    "soporte": 24
+   },
+   "win_ocultar": {
+    "precision": 0.214,
+    "recall": 0.25,
+    "f1": 0.231,
+    "soporte": 12
+   },
+   "win_avatar": {
+    "precision": 0.865,
+    "recall": 0.97,
+    "f1": 0.914,
+    "soporte": 33
+   },
    "win_escritorio": {
-    "precision": 0.692,
-    "recall": 0.75,
-    "f1": 0.72,
+    "precision": 0.857,
+    "recall": 0.5,
+    "f1": 0.632,
     "soporte": 12
    },
    "win_bloquear": {
     "precision": 1.0,
-    "recall": 1.0,
-    "f1": 1.0,
+    "recall": 0.833,
+    "f1": 0.909,
     "soporte": 12
    },
    "win_pulsar": {
     "precision": 1.0,
-    "recall": 1.0,
-    "f1": 1.0,
+    "recall": 0.97,
+    "f1": 0.985,
     "soporte": 33
    },
    "win_que_hay": {
-    "precision": 0.667,
+    "precision": 1.0,
     "recall": 0.5,
-    "f1": 0.571,
+    "f1": 0.667,
     "soporte": 12
    },
    "win_ventana": {
-    "precision": 0.72,
-    "recall": 0.783,
-    "f1": 0.75,
+    "precision": 0.645,
+    "recall": 0.87,
+    "f1": 0.741,
     "soporte": 23
    },
    "win_info": {
-    "precision": 0.706,
+    "precision": 0.75,
     "recall": 1.0,
-    "f1": 0.828,
+    "f1": 0.857,
     "soporte": 12
    },
    "win_portapapeles": {
@@ -177,90 +177,108 @@
     "soporte": 12
    },
    "win_abrir_archivo": {
-    "precision": 1.0,
+    "precision": 0.895,
     "recall": 1.0,
-    "f1": 1.0,
+    "f1": 0.944,
     "soporte": 17
+   },
+   "win_musica": {
+    "precision": 0.333,
+    "recall": 0.045,
+    "f1": 0.08,
+    "soporte": 22
+   },
+   "win_correo": {
+    "precision": 1.0,
+    "recall": 0.917,
+    "f1": 0.957,
+    "soporte": 12
+   },
+   "win_agenda": {
+    "precision": 0.6,
+    "recall": 1.0,
+    "f1": 0.75,
+    "soporte": 12
    }
   },
   "por_idioma": {
-   "es": 0.8595238095238096,
-   "en": 0.8141025641025641
+   "es": 0.8378378378378378,
+   "en": 0.7597597597597597
   }
  },
  "prueba": {
-  "n": 1293,
-  "exactitud": 0.7494199535962877,
-  "cobertura": 0.32728842832469773,
-  "precision_ejecutables": 0.9424083769633508,
-  "decididos": 382,
-  "falsos_positivos_en_negativos": 3,
-  "negativos": 135,
+  "n": 1381,
+  "exactitud": 0.7335264301230991,
+  "cobertura": 0.27228915662650605,
+  "precision_ejecutables": 0.9365994236311239,
+  "decididos": 347,
+  "falsos_positivos_en_negativos": 8,
+  "negativos": 136,
   "por_etiqueta": {
    "win_ninguna": {
-    "precision": 0.675,
-    "recall": 0.57,
-    "f1": 0.618,
-    "soporte": 135
+    "precision": 0.664,
+    "recall": 0.551,
+    "f1": 0.602,
+    "soporte": 136
    },
    "win_abrir_app": {
-    "precision": 0.5,
-    "recall": 0.636,
-    "f1": 0.56,
+    "precision": 0.552,
+    "recall": 0.659,
+    "f1": 0.601,
     "soporte": 88
    },
    "win_abrir_carpeta": {
-    "precision": 0.775,
-    "recall": 0.833,
-    "f1": 0.803,
+    "precision": 0.761,
+    "recall": 0.818,
+    "f1": 0.788,
     "soporte": 66
    },
    "win_buscar_web": {
-    "precision": 0.912,
-    "recall": 0.939,
-    "f1": 0.925,
+    "precision": 0.881,
+    "recall": 0.894,
+    "f1": 0.887,
     "soporte": 66
    },
    "win_abrir_web": {
-    "precision": 0.556,
+    "precision": 0.571,
     "recall": 0.455,
-    "f1": 0.5,
+    "f1": 0.506,
     "soporte": 44
    },
    "win_escribir": {
-    "precision": 0.744,
+    "precision": 0.8,
     "recall": 0.877,
-    "f1": 0.805,
+    "f1": 0.837,
     "soporte": 73
    },
    "win_redactar": {
-    "precision": 0.855,
-    "recall": 0.67,
-    "f1": 0.752,
+    "precision": 0.875,
+    "recall": 0.636,
+    "f1": 0.737,
     "soporte": 88
    },
    "win_ver_pantalla": {
-    "precision": 0.686,
+    "precision": 0.571,
     "recall": 1.0,
-    "f1": 0.814,
+    "f1": 0.727,
     "soporte": 48
    },
    "win_captura": {
-    "precision": 0.793,
-    "recall": 0.958,
-    "f1": 0.868,
+    "precision": 0.733,
+    "recall": 0.917,
+    "f1": 0.815,
     "soporte": 24
    },
    "win_volumen_subir": {
-    "precision": 0.706,
+    "precision": 0.686,
     "recall": 1.0,
-    "f1": 0.828,
+    "f1": 0.814,
     "soporte": 24
    },
    "win_volumen_bajar": {
-    "precision": 0.97,
-    "recall": 0.889,
-    "f1": 0.928,
+    "precision": 1.0,
+    "recall": 0.944,
+    "f1": 0.971,
     "soporte": 36
    },
    "win_silenciar": {
@@ -270,87 +288,87 @@
     "soporte": 24
    },
    "win_multimedia_pausa": {
-    "precision": 0.684,
-    "recall": 0.542,
-    "f1": 0.605,
+    "precision": 0.692,
+    "recall": 0.75,
+    "f1": 0.72,
     "soporte": 24
    },
    "win_multimedia_siguiente": {
-    "precision": 0.562,
-    "recall": 0.75,
-    "f1": 0.643,
+    "precision": 0.459,
+    "recall": 0.708,
+    "f1": 0.557,
     "soporte": 24
    },
    "win_recordar": {
-    "precision": 0.978,
-    "recall": 1.0,
-    "f1": 0.989,
+    "precision": 0.932,
+    "recall": 0.932,
+    "f1": 0.932,
     "soporte": 44
    },
    "win_callar": {
-    "precision": 0.933,
+    "precision": 0.875,
     "recall": 0.875,
-    "f1": 0.903,
+    "f1": 0.875,
     "soporte": 48
    },
    "win_pausa": {
     "precision": 1.0,
-    "recall": 0.833,
-    "f1": 0.909,
+    "recall": 0.806,
+    "f1": 0.892,
     "soporte": 36
    },
    "win_abrir_chat": {
-    "precision": 0.756,
+    "precision": 0.674,
     "recall": 0.738,
-    "f1": 0.747,
+    "f1": 0.705,
     "soporte": 42
    },
    "win_ocultar": {
-    "precision": 0.357,
-    "recall": 0.208,
-    "f1": 0.263,
+    "precision": 0.333,
+    "recall": 0.125,
+    "f1": 0.182,
     "soporte": 24
    },
    "win_avatar": {
-    "precision": 0.808,
-    "recall": 0.955,
-    "f1": 0.875,
+    "precision": 0.73,
+    "recall": 0.985,
+    "f1": 0.839,
     "soporte": 66
    },
    "win_escritorio": {
-    "precision": 0.625,
-    "recall": 0.417,
-    "f1": 0.5,
+    "precision": 0.455,
+    "recall": 0.208,
+    "f1": 0.286,
     "soporte": 24
    },
    "win_bloquear": {
-    "precision": 1.0,
-    "recall": 0.833,
-    "f1": 0.909,
+    "precision": 0.905,
+    "recall": 0.792,
+    "f1": 0.844,
     "soporte": 24
    },
    "win_pulsar": {
-    "precision": 0.79,
-    "recall": 0.742,
-    "f1": 0.766,
+    "precision": 0.821,
+    "recall": 0.697,
+    "f1": 0.754,
     "soporte": 66
    },
    "win_que_hay": {
-    "precision": 0.619,
-    "recall": 0.542,
-    "f1": 0.578,
+    "precision": 0.667,
+    "recall": 0.5,
+    "f1": 0.571,
     "soporte": 24
    },
    "win_ventana": {
-    "precision": 0.574,
+    "precision": 0.5,
     "recall": 0.795,
-    "f1": 0.667,
+    "f1": 0.614,
     "soporte": 39
    },
    "win_info": {
-    "precision": 0.56,
-    "recall": 0.583,
-    "f1": 0.571,
+    "precision": 0.591,
+    "recall": 0.542,
+    "f1": 0.565,
     "soporte": 24
    },
    "win_portapapeles": {
@@ -360,386 +378,404 @@
     "soporte": 24
    },
    "win_abrir_archivo": {
-    "precision": 0.9,
-    "recall": 0.409,
-    "f1": 0.563,
+    "precision": 0.885,
+    "recall": 0.523,
+    "f1": 0.657,
     "soporte": 44
+   },
+   "win_musica": {
+    "precision": 0.893,
+    "recall": 0.641,
+    "f1": 0.746,
+    "soporte": 39
+   },
+   "win_correo": {
+    "precision": 0.692,
+    "recall": 0.75,
+    "f1": 0.72,
+    "soporte": 24
+   },
+   "win_agenda": {
+    "precision": 0.812,
+    "recall": 0.542,
+    "f1": 0.65,
+    "soporte": 24
    }
   },
   "por_idioma": {
-   "es": 0.7287899860917941,
-   "en": 0.7752613240418118
+   "es": 0.6996098829648895,
+   "en": 0.7761437908496732
   },
   "errores": [
    {
-    "q": "oye, quiero usar la configuración.",
-    "oro": "win_abrir_app",
-    "dijo": "win_ninguna",
-    "p": 0.594
-   },
-   {
-    "q": "mi batería del carro está mala",
-    "oro": "win_ninguna",
-    "dijo": "win_info",
-    "p": 0.628
-   },
-   {
-    "q": "ayer abrí word y se trabó",
-    "oro": "win_ninguna",
-    "dijo": "win_abrir_app",
-    "p": 0.961
-   },
-   {
-    "q": "aura, hazme el documento de un mensaje de cumpleanos para mi mama porfa",
-    "oro": "win_redactar",
-    "dijo": "win_escribir",
-    "p": 0.437
-   },
-   {
-    "q": "aura, browse for flights to roatan right now",
-    "oro": "win_buscar_web",
-    "dijo": "win_abrir_web",
-    "p": 0.467
-   },
-   {
-    "q": "ábreme el pdf de las fotos del viaje rapidito",
-    "oro": "win_abrir_archivo",
-    "dijo": "win_abrir_app",
-    "p": 0.517
-   },
-   {
-    "q": "kick off outlook",
-    "oro": "win_abrir_app",
-    "dijo": "win_abrir_web",
-    "p": 0.777
-   },
-   {
-    "q": "muestrame lo que dijiste",
-    "oro": "win_abrir_chat",
-    "dijo": "win_ninguna",
-    "p": 0.405
-   },
-   {
-    "q": "oye aura, quiero usar la configuracion",
-    "oro": "win_abrir_app",
-    "dijo": "win_ninguna",
-    "p": 0.743
-   },
-   {
-    "q": "ok, go back a song",
-    "oro": "win_multimedia_siguiente",
-    "dijo": "win_ventana",
-    "p": 0.831
-   },
-   {
-    "q": "can you close your window thank you",
-    "oro": "win_ocultar",
-    "dijo": "win_ventana",
-    "p": 0.99
-   },
-   {
-    "q": "aura, and the weather tomorrow",
-    "oro": "win_ninguna",
-    "dijo": "win_buscar_web",
-    "p": 0.384
-   },
-   {
-    "q": "oye, continúa la canción",
-    "oro": "win_multimedia_pausa",
-    "dijo": "win_multimedia_siguiente",
-    "p": 0.808
-   },
-   {
-    "q": "bring up the desktop thanks",
+    "q": "bueno, abre rapido el escritorio dale",
     "oro": "win_abrir_carpeta",
     "dijo": "win_escritorio",
-    "p": 0.851
+    "p": 0.919
    },
    {
-    "q": "Antonio, pause mode real quick",
-    "oro": "win_pausa",
-    "dijo": "win_avatar",
-    "p": 0.318
-   },
-   {
-    "q": "aura, a que hora es la reunion",
-    "oro": "win_ninguna",
-    "dijo": "win_info",
-    "p": 0.883
-   },
-   {
-    "q": "antonio, bring up linkedin site right now",
-    "oro": "win_abrir_web",
-    "dijo": "win_avatar",
-    "p": 0.268
-   },
-   {
-    "q": "qué le regalo a mi esposa",
-    "oro": "win_ninguna",
-    "dijo": "win_ver_pantalla",
-    "p": 0.319
-   },
-   {
-    "q": "vaya, cierra tu ventana porfis",
-    "oro": "win_ocultar",
-    "dijo": "win_ventana",
-    "p": 0.981
-   },
-   {
-    "q": "ya, necesito ver mis fotos",
-    "oro": "win_abrir_carpeta",
-    "dijo": "win_abrir_app",
-    "p": 0.708
-   },
-   {
-    "q": "select play ok",
-    "oro": "win_pulsar",
-    "dijo": "win_multimedia_pausa",
-    "p": 0.777
-   },
-   {
-    "q": "um, bring up netflix site ok",
-    "oro": "win_abrir_web",
-    "dijo": "win_ventana",
-    "p": 0.532
-   },
-   {
-    "q": "el guardián da miedo",
-    "oro": "win_ninguna",
-    "dijo": "win_avatar",
-    "p": 0.957
-   },
-   {
-    "q": "ok, bring up the desktop real quik",
-    "oro": "win_abrir_carpeta",
-    "dijo": "win_escritorio",
-    "p": 0.786
-   },
-   {
-    "q": "yo, which buttons can i press thank you",
-    "oro": "win_que_hay",
-    "dijo": "win_pulsar",
-    "p": 0.738
-   },
-   {
-    "q": "yo, key in see you tomorrow",
-    "oro": "win_escribir",
-    "dijo": "win_ninguna",
-    "p": 0.422
-   },
-   {
-    "q": "Eh, quiero usar la cámara ya.",
-    "oro": "win_abrir_app",
-    "dijo": "win_abrir_chat",
-    "p": 0.155
-   },
-   {
-    "q": "vaya, quiero usar la configuración rapidito",
-    "oro": "win_abrir_app",
-    "dijo": "win_abrir_chat",
-    "p": 0.181
-   },
-   {
-    "q": "ey, sacame outlook ahorita...",
-    "oro": "win_abrir_app",
-    "dijo": "win_abrir_web",
-    "p": 0.573
-   },
-   {
-    "q": "Hey aura, hazme la descripcion del producto gracias",
-    "oro": "win_redactar",
-    "dijo": "win_abrir_app",
-    "p": 0.132
-   },
-   {
-    "q": "please how is my pc",
-    "oro": "win_info",
-    "dijo": "win_ninguna",
-    "p": 0.722
-   },
-   {
-    "q": "uh, kick off the camera app",
-    "oro": "win_abrir_app",
-    "dijo": "win_silenciar",
-    "p": 0.436
-   },
-   {
-    "q": "hey, can you use excel",
-    "oro": "win_ninguna",
-    "dijo": "win_abrir_app",
-    "p": 0.922
-   },
-   {
-    "q": "eh, quiero entrar a netflix",
-    "oro": "win_abrir_web",
-    "dijo": "win_ninguna",
-    "p": 0.207
-   },
-   {
-    "q": "YA, ASEGURA LA COMPU POR FAVOR",
-    "oro": "win_bloquear",
-    "dijo": "win_info",
-    "p": 0.432
-   },
-   {
-    "q": "ve a la pestaña enviar porfis",
-    "oro": "win_pulsar",
-    "dijo": "win_que_hay",
-    "p": 0.46
-   },
-   {
-    "q": "Abrime mercado libre en chrome si puedes",
-    "oro": "win_abrir_web",
-    "dijo": "win_abrir_app",
-    "p": 0.993
-   },
-   {
-    "q": "vaya, quítate de la pantalla.",
-    "oro": "win_ocultar",
-    "dijo": "win_ver_pantalla",
-    "p": 0.476
-   },
-   {
-    "q": "tell me the time!",
-    "oro": "win_info",
-    "dijo": "win_ninguna",
-    "p": 0.255
-   },
-   {
-    "q": "aura, sales volume went up this month",
-    "oro": "win_ninguna",
-    "dijo": "win_volumen_subir",
-    "p": 0.719
-   },
-   {
-    "q": "qué canción es esta",
-    "oro": "win_ninguna",
-    "dijo": "win_multimedia_siguiente",
-    "p": 0.617
-   },
-   {
-    "q": "mostrame outlook",
-    "oro": "win_abrir_app",
-    "dijo": "win_abrir_web",
-    "p": 0.835
-   },
-   {
-    "q": "could you show me my desktop ok",
+    "q": "claudio, llévame al escritorio grasias",
     "oro": "win_escritorio",
     "dijo": "win_abrir_carpeta",
-    "p": 0.668
+    "p": 0.724
+   },
+   {
+    "q": "qué opinas del clima",
+    "oro": "win_ninguna",
+    "dijo": "win_ver_pantalla",
+    "p": 0.367
+   },
+   {
+    "q": "no cambies de avatar",
+    "oro": "win_ninguna",
+    "dijo": "win_avatar",
+    "p": 0.794
+   },
+   {
+    "q": "Hey claudio, which buttons can i press",
+    "oro": "win_que_hay",
+    "dijo": "win_pulsar",
+    "p": 0.614
+   },
+   {
+    "q": "la ventana de la cocina esta rota",
+    "oro": "win_ninguna",
+    "dijo": "win_ventana",
+    "p": 0.959
+   },
+   {
+    "q": "Hey aura, what am i listening to",
+    "oro": "win_musica",
+    "dijo": "win_ninguna",
+    "p": 0.736
+   },
+   {
+    "q": "fijate, entra a el escritorio",
+    "oro": "win_abrir_carpeta",
+    "dijo": "win_escritorio",
+    "p": 0.656
+   },
+   {
+    "q": "no subas el volumen",
+    "oro": "win_ninguna",
+    "dijo": "win_volumen_subir",
+    "p": 0.663
+   },
+   {
+    "q": "te quiero aura",
+    "oro": "win_ninguna",
+    "dijo": "win_avatar",
+    "p": 0.65
    },
    {
     "q": "quiero usar el panel de control",
     "oro": "win_abrir_app",
     "dijo": "win_abrir_chat",
-    "p": 0.876
+    "p": 0.757
    },
    {
-    "q": "how is my pc pls",
-    "oro": "win_info",
+    "q": "ok aura, hazme la descripcion del producto",
+    "oro": "win_redactar",
+    "dijo": "win_captura",
+    "p": 0.308
+   },
+   {
+    "q": "bueno, hasme la descripción del producto porfa...",
+    "oro": "win_redactar",
+    "dijo": "win_abrir_app",
+    "p": 0.2
+   },
+   {
+    "q": "okay aura, what am i listening to pls",
+    "oro": "win_musica",
+    "dijo": "win_info",
+    "p": 0.282
+   },
+   {
+    "q": "oye aura, quiero usar powerpoint",
+    "oro": "win_abrir_app",
     "dijo": "win_ninguna",
-    "p": 0.875
+    "p": 0.543
    },
    {
-    "q": "hey aura, quiero entrar a linkedin",
+    "q": "Este... abrime mercado libre en chrome",
     "oro": "win_abrir_web",
-    "dijo": "win_ninguna",
-    "p": 0.716
+    "dijo": "win_abrir_app",
+    "p": 0.986
    },
    {
-    "q": "Mire, cierra outlook porfa",
-    "oro": "win_ventana",
-    "dijo": "win_ocultar",
-    "p": 0.606
+    "q": "porfa asegura la compu",
+    "oro": "win_bloquear",
+    "dijo": "win_info",
+    "p": 0.613
    },
    {
-    "q": "type up an email to my teacher now",
-    "oro": "win_redactar",
-    "dijo": "win_escribir",
-    "p": 0.836
+    "q": "Mirá, cierra tu ventana si puedes",
+    "oro": "win_ocultar",
+    "dijo": "win_ventana",
+    "p": 0.933
    },
    {
-    "q": "LA CARPETA AZUL ESTA EN LA MESA",
-    "oro": "win_ninguna",
+    "q": "could you show me my desktop ok",
+    "oro": "win_escritorio",
     "dijo": "win_abrir_carpeta",
-    "p": 0.993
+    "p": 0.664
    },
    {
-    "q": "aura, type up the product description thanks",
-    "oro": "win_redactar",
-    "dijo": "win_escribir",
-    "p": 0.658
+    "q": "MIRA, VE A LA PESTAÑA REVISAR",
+    "oro": "win_pulsar",
+    "dijo": "win_que_hay",
+    "p": 0.224
+   },
+   {
+    "q": "fijate, cuándo es mi siguiente cita porfis",
+    "oro": "win_agenda",
+    "dijo": "win_multimedia_siguiente",
+    "p": 0.473
+   },
+   {
+    "q": "Can you which buttons can i press",
+    "oro": "win_que_hay",
+    "dijo": "win_pulsar",
+    "p": 0.551
+   },
+   {
+    "q": "oye, no subas el volumen",
+    "oro": "win_ninguna",
+    "dijo": "win_volumen_subir",
+    "p": 0.411
+   },
+   {
+    "q": "show me my desktop thanks",
+    "oro": "win_escritorio",
+    "dijo": "win_abrir_carpeta",
+    "p": 0.954
+   },
+   {
+    "q": "oye aura, revísame la bandeja de entrada gracias",
+    "oro": "win_correo",
+    "dijo": "win_ninguna",
+    "p": 0.551
+   },
+   {
+    "q": "eh, ya estubo por favor",
+    "oro": "win_callar",
+    "dijo": "win_info",
+    "p": 0.296
    },
    {
     "q": "could you list the buttons",
     "oro": "win_que_hay",
     "dijo": "win_pulsar",
+    "p": 0.383
+   },
+   {
+    "q": "how is my pc",
+    "oro": "win_info",
+    "dijo": "win_ninguna",
+    "p": 0.876
+   },
+   {
+    "q": "hey aura, entra a el escritorio",
+    "oro": "win_abrir_carpeta",
+    "dijo": "win_escritorio",
+    "p": 0.728
+   },
+   {
+    "q": "ok aura, quitate de la pantalla porfa",
+    "oro": "win_ocultar",
+    "dijo": "win_ver_pantalla",
+    "p": 0.383
+   },
+   {
+    "q": "fijate, revísame la bandeja de entrada",
+    "oro": "win_correo",
+    "dijo": "win_recordar",
+    "p": 0.283
+   },
+   {
+    "q": "type up an email to my teacher now",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.535
+   },
+   {
+    "q": "aura por favor, abrime linkedin en chrome",
+    "oro": "win_abrir_web",
+    "dijo": "win_abrir_app",
+    "p": 0.653
+   },
+   {
+    "q": "next meeting now",
+    "oro": "win_agenda",
+    "dijo": "win_multimedia_siguiente",
+    "p": 0.581
+   },
+   {
+    "q": "hey aura, sales volume went up this month",
+    "oro": "win_ninguna",
+    "dijo": "win_volumen_subir",
+    "p": 0.541
+   },
+   {
+    "q": "alright, type up the product description now",
+    "oro": "win_redactar",
+    "dijo": "win_abrir_chat",
+    "p": 0.431
+   },
+   {
+    "q": "la agenda de mi jefe esta llena...",
+    "oro": "win_ninguna",
+    "dijo": "win_agenda",
     "p": 0.659
    },
    {
-    "q": "más quedito",
-    "oro": "win_volumen_bajar",
-    "dijo": "win_volumen_subir",
-    "p": 0.417
-   },
-   {
-    "q": "resúmeme la historia de honduras.",
+    "q": "oye aura, qué es una captura de pantalla",
     "oro": "win_ninguna",
-    "dijo": "win_buscar_web",
-    "p": 0.364
+    "dijo": "win_captura",
+    "p": 0.985
    },
    {
-    "q": "fijate, tengo internet",
-    "oro": "win_info",
-    "dijo": "win_buscar_web",
-    "p": 0.456
-   },
-   {
-    "q": "type up a birthday message for my mom right now",
-    "oro": "win_redactar",
-    "dijo": "win_escribir",
-    "p": 0.645
-   },
-   {
-    "q": "TELL ME THE TIME",
-    "oro": "win_info",
+    "q": "oye aura, muestrame lo que dijiste",
+    "oro": "win_abrir_chat",
     "dijo": "win_ninguna",
-    "p": 0.255
+    "p": 0.606
    },
    {
-    "q": "PLS HOW IS MY PC",
-    "oro": "win_info",
-    "dijo": "win_ninguna",
-    "p": 0.893
-   },
-   {
-    "q": "eh, ejecuta el panel de control porfis",
-    "oro": "win_abrir_app",
-    "dijo": "win_abrir_chat",
-    "p": 0.771
-   },
-   {
-    "q": "el guardian da miedo",
+    "q": "aura, te kiero aura",
     "oro": "win_ninguna",
     "dijo": "win_avatar",
-    "p": 0.957
+    "p": 0.649
    },
    {
-    "q": "Aura, my car battery is dead",
+    "q": "NECESITO VER MIS FOTOS GRACIAS",
+    "oro": "win_abrir_carpeta",
+    "dijo": "win_abrir_app",
+    "p": 0.624
+   },
+   {
+    "q": "el volumen de ventas subio este mes",
     "oro": "win_ninguna",
-    "dijo": "win_info",
-    "p": 0.6
+    "dijo": "win_volumen_subir",
+    "p": 0.87
+   },
+   {
+    "q": "hey claudio, next meeting pls",
+    "oro": "win_agenda",
+    "dijo": "win_multimedia_siguiente",
+    "p": 0.783
+   },
+   {
+    "q": "vaya, más quedito rapidito...",
+    "oro": "win_volumen_bajar",
+    "dijo": "win_volumen_subir",
+    "p": 0.28
+   },
+   {
+    "q": "antonio, cierra tu ventana gracias",
+    "oro": "win_ocultar",
+    "dijo": "win_ventana",
+    "p": 0.958
+   },
+   {
+    "q": "ANTONIO, GET ME FIREFOX REAL QUICK.",
+    "oro": "win_abrir_app",
+    "dijo": "win_avatar",
+    "p": 0.569
+   },
+   {
+    "q": "este... quiero usar acrobat dale!",
+    "oro": "win_abrir_app",
+    "dijo": "win_abrir_chat",
+    "p": 0.217
+   },
+   {
+    "q": "aura please, bring up netflix site",
+    "oro": "win_abrir_web",
+    "dijo": "win_ventana",
+    "p": 0.49
+   },
+   {
+    "q": "claudio, entra a el escritorio ya",
+    "oro": "win_abrir_carpeta",
+    "dijo": "win_escritorio",
+    "p": 0.618
+   },
+   {
+    "q": "mire, necesito ver mis fotos si puedes",
+    "oro": "win_abrir_carpeta",
+    "dijo": "win_abrir_app",
+    "p": 0.745
+   },
+   {
+    "q": "Ayer abri word y se trabo",
+    "oro": "win_ninguna",
+    "dijo": "win_abrir_app",
+    "p": 0.988
+   },
+   {
+    "q": "como bloqueo mi celular",
+    "oro": "win_ninguna",
+    "dijo": "win_bloquear",
+    "p": 0.657
+   },
+   {
+    "q": "aura, do not do anything else pls",
+    "oro": "win_pausa",
+    "dijo": "win_ninguna",
+    "p": 0.789
+   },
+   {
+    "q": "aura, el volumen de ventas subió este mes",
+    "oro": "win_ninguna",
+    "dijo": "win_volumen_subir",
+    "p": 0.732
+   },
+   {
+    "q": "no cambies de avatar.",
+    "oro": "win_ninguna",
+    "dijo": "win_avatar",
+    "p": 0.794
+   },
+   {
+    "q": "aura por favor, cierra tu ventana",
+    "oro": "win_ocultar",
+    "dijo": "win_ventana",
+    "p": 0.933
+   },
+   {
+    "q": "claudio, quiero entrar a mercado libre ya",
+    "oro": "win_abrir_web",
+    "dijo": "win_avatar",
+    "p": 0.836
+   },
+   {
+    "q": "claudio, qué opciones me da esta pantalla pues",
+    "oro": "win_que_hay",
+    "dijo": "win_ver_pantalla",
+    "p": 0.47
+   },
+   {
+    "q": "Please type up an email to my teacher",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.689
+   },
+   {
+    "q": "el boton de guardar no me funciona",
+    "oro": "win_ninguna",
+    "dijo": "win_pulsar",
+    "p": 0.385
    }
   ]
  },
  "bordes": {
   "n": 24,
   "exactitud": 0.75,
-  "cobertura": 0.6666666666666666,
-  "precision_ejecutables": 0.8461538461538461,
-  "decididos": 13,
-  "falsos_positivos_en_negativos": 1,
+  "cobertura": 0.5555555555555556,
+  "precision_ejecutables": 0.8333333333333334,
+  "decididos": 12,
+  "falsos_positivos_en_negativos": 2,
   "negativos": 6,
   "por_etiqueta": {
    "win_ninguna": {
@@ -909,6 +945,24 @@
     "recall": 0.0,
     "f1": 0.0,
     "soporte": 0
+   },
+   "win_musica": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
+   },
+   "win_correo": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
+   },
+   "win_agenda": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
    }
   },
   "por_idioma": {
@@ -920,91 +974,91 @@
     "q": "recuérdame cómo se llamaba el ingeniero",
     "oro": "win_ninguna",
     "dijo": "win_recordar",
-    "p": 0.503
+    "p": 0.596
    },
    {
     "q": "cállate y abre spotify",
     "oro": "win_callar",
     "dijo": "win_abrir_app",
-    "p": 0.974
+    "p": 0.913
    },
    {
     "q": "ayer me dijiste que bloqueara la compu",
     "oro": "win_ninguna",
     "dijo": "win_bloquear",
-    "p": 0.679
+    "p": 0.786
    },
    {
     "q": "remind me what the engineer is called",
     "oro": "win_ninguna",
     "dijo": "win_recordar",
-    "p": 0.737
+    "p": 0.769
    },
    {
     "q": "cómo se hace una captura de pantalla en windows",
     "oro": "win_ninguna",
     "dijo": "win_captura",
-    "p": 0.984
+    "p": 0.996
    },
    {
     "q": "quién es mejor, claudio o antonio",
     "oro": "win_ninguna",
     "dijo": "win_avatar",
-    "p": 0.927
+    "p": 0.998
    }
   ]
  },
  "compuerta": {
   "aprobada": false,
   "motivos": [
-   "precisión de lo que se ejecutaría 0.942 < 0.97"
+   "precisión de lo que se ejecutaría 0.937 < 0.97"
   ]
  },
  "muestras": [
   {
    "q": "abre excel",
    "etiqueta": "win_abrir_app",
-   "p": 0.995237
+   "p": 0.997889
   },
   {
    "q": "open spotify",
    "etiqueta": "win_abrir_app",
-   "p": 0.999872
+   "p": 0.978812
   },
   {
    "q": "abre descargas",
    "etiqueta": "win_abrir_carpeta",
-   "p": 0.997371
+   "p": 0.89553
   },
   {
    "q": "busca el precio del café",
    "etiqueta": "win_buscar_web",
-   "p": 0.999186
+   "p": 0.999761
   },
   {
    "q": "abre youtube",
    "etiqueta": "win_abrir_web",
-   "p": 0.999625
+   "p": 0.999048
   },
   {
    "q": "escribe hola en el bloc de notas",
    "etiqueta": "win_escribir",
-   "p": 0.999453
+   "p": 0.999698
   },
   {
    "q": "redáctame una carta de renuncia",
    "etiqueta": "win_redactar",
-   "p": 0.99984
+   "p": 0.999927
   },
   {
    "q": "qué ves en mi pantalla",
    "etiqueta": "win_ver_pantalla",
-   "p": 0.999997
+   "p": 0.999998
   },
   {
    "q": "toma un screenshot",
    "etiqueta": "win_captura",
-   "p": 0.999979
+   "p": 0.99999
   },
   {
    "q": "súbele al volumen",
@@ -1014,102 +1068,122 @@
   {
    "q": "bájale",
    "etiqueta": "win_volumen_bajar",
-   "p": 0.999999
+   "p": 0.999995
   },
   {
    "q": "mute",
    "etiqueta": "win_silenciar",
-   "p": 0.999995
+   "p": 0.999993
   },
   {
    "q": "pausa la canción",
    "etiqueta": "win_multimedia_pausa",
-   "p": 0.996251
+   "p": 0.999465
   },
   {
    "q": "siguiente canción",
    "etiqueta": "win_multimedia_siguiente",
-   "p": 0.999998
+   "p": 0.999975
   },
   {
    "q": "recuérdame en 10 minutos tomar agua",
    "etiqueta": "win_recordar",
-   "p": 0.999995
+   "p": 0.999958
   },
   {
    "q": "cállate",
    "etiqueta": "win_callar",
-   "p": 0.999821
+   "p": 0.999648
   },
   {
    "q": "pausa todo",
    "etiqueta": "win_pausa",
-   "p": 0.999841
+   "p": 0.999861
   },
   {
    "q": "abre el chat",
    "etiqueta": "win_abrir_chat",
-   "p": 0.999257
+   "p": 0.997655
   },
   {
    "q": "escóndete",
    "etiqueta": "win_ocultar",
-   "p": 0.999736
+   "p": 0.999894
   },
   {
    "q": "cambia a claudio",
    "etiqueta": "win_avatar",
-   "p": 0.959483
+   "p": 0.950733
   },
   {
    "q": "minimiza todo",
    "etiqueta": "win_escritorio",
-   "p": 0.997452
+   "p": 0.993964
   },
   {
    "q": "bloquea la compu",
    "etiqueta": "win_bloquear",
-   "p": 0.999985
+   "p": 0.999965
   },
   {
    "q": "hola aura, cómo estás",
    "etiqueta": "win_ninguna",
-   "p": 0.993887
+   "p": 0.929825
   },
   {
    "q": "ayer abrí word y se trabó",
    "etiqueta": "win_abrir_app",
-   "p": 0.961255
+   "p": 0.987525
+  },
+  {
+   "q": "qué está sonando",
+   "etiqueta": "win_musica",
+   "p": 0.99832
+  },
+  {
+   "q": "pon bad bunny en spotify",
+   "etiqueta": "win_musica",
+   "p": 0.999223
+  },
+  {
+   "q": "léeme mis correos",
+   "etiqueta": "win_correo",
+   "p": 0.999966
+  },
+  {
+   "q": "qué tengo hoy",
+   "etiqueta": "win_agenda",
+   "p": 0.999665
   },
   {
    "q": "dale a guardar",
    "etiqueta": "win_pulsar",
-   "p": 0.992104
+   "p": 0.996323
   },
   {
    "q": "qué botones hay",
    "etiqueta": "win_que_hay",
-   "p": 0.999969
+   "p": 0.99972
   },
   {
    "q": "cierra esta ventana",
    "etiqueta": "win_ventana",
-   "p": 0.999377
+   "p": 0.996427
   },
   {
    "q": "cuánta batería me queda",
    "etiqueta": "win_info",
-   "p": 0.999576
+   "p": 0.999773
   },
   {
    "q": "resume lo que copié",
    "etiqueta": "win_portapapeles",
-   "p": 0.999983
+   "p": 0.999862
   },
   {
    "q": "abre el último archivo que descargué",
    "etiqueta": "win_abrir_archivo",
-   "p": 0.999948
+   "p": 0.999988
   }
  ],
  "fecha": "2026-09-30"

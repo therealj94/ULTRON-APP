@@ -19,6 +19,13 @@ internal static class Pruebas
         catch (Exception ex) { Directory.CreateDirectory(carpeta); File.WriteAllText(Path.Combine(carpeta, "render-error.txt"), ex.ToString()); Application.Current.Shutdown(1); }
     }
 
+    public static async Task Animacion(string salida)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(salida)!);
+        try { var r = await NotchWindow.ProbarAnimacion(); File.WriteAllText(salida, JsonSerializer.Serialize(r, new JsonSerializerOptions { WriteIndented = true })); Application.Current.Shutdown(0); }
+        catch (Exception ex) { File.WriteAllText(salida, JsonSerializer.Serialize(new { ok = false, error = ex.Message })); Application.Current.Shutdown(1); }
+    }
+
     public static async Task Asistente(string salida)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(salida)!);
@@ -27,8 +34,70 @@ internal static class Pruebas
     }
 }
 
+/// <summary>Tiempos de fotograma del notch: cada cuánto se dibuja y cuánto cuesta dibujar la silueta.</summary>
+internal sealed class MedidorFotogramas
+{
+    readonly System.Collections.Generic.List<double> intervalos = new(), costos = new();
+    readonly System.Diagnostics.Stopwatch costo = new();
+    TimeSpan? anterior;
+    public void Fotograma(TimeSpan ahora) { if (anterior is { } a) intervalos.Add((ahora - a).TotalMilliseconds); anterior = ahora; costo.Restart(); }
+    public void Dibujado() { if (costo.IsRunning) { costos.Add(costo.Elapsed.TotalMilliseconds); costo.Reset(); } }
+    public void Pausa() => anterior = null;
+    static double P(System.Collections.Generic.List<double> l, double q) { if (l.Count == 0) return 0; var o = l.OrderBy(x => x).ToList(); return Math.Round(o[Math.Min(o.Count - 1, (int)(q * o.Count))], 2); }
+    public object Informe() => new
+    {
+        fotogramas = intervalos.Count,
+        fps_medio = intervalos.Count > 0 ? Math.Round(1000 / intervalos.Average(), 1) : 0,
+        intervalo_p50_ms = P(intervalos, 0.5), intervalo_p95_ms = P(intervalos, 0.95), intervalo_max_ms = Math.Round(intervalos.DefaultIfEmpty(0).Max(), 1),
+        saltos_mas_de_50ms = intervalos.Count(x => x > 50),
+        dibujar_p50_ms = P(costos, 0.5), dibujar_p95_ms = P(costos, 0.95),
+    };
+    public double P95 => P(intervalos, 0.95);
+    public double DibujarP95 => P(costos, 0.95);
+}
+
 public partial class NotchWindow
 {
+    internal MedidorFotogramas? medidor;
+    internal bool pruebaAnimacion;
+
+    /// <summary>
+    /// Fluidez: el notch de verdad, visible, pasando por todos sus estados con sus resortes, midiendo cada
+    /// fotograma. Falla si hay tirones grandes (p95 &gt; 100 ms) o si dibujar la silueta cuesta más de 8 ms.
+    /// </summary>
+    internal static async Task<object> ProbarAnimacion()
+    {
+        var w = new NotchWindow(true) { pruebaAnimacion = true, medidor = new MedidorFotogramas() };
+        w.Left = (SystemParameters.PrimaryScreenWidth - AnchoVentana) / 2; w.Top = 0;
+        w.Show();
+        await Task.Delay(400);
+        w.cancion = new Manos.Cancion("Vivir mi vida", "Marc Anthony", "Spotify", true, null, TimeSpan.FromSeconds(40), TimeSpan.FromMinutes(4));
+        w.TituloMusica.Text = w.cancion.Titulo; w.ArtistaMusica.Text = w.cancion.Artista + " · Spotify";
+        async Task Paso(Action a) { a(); w.modo = w.ModoQueToca(); w.Aplicar(); await Task.Delay(750); }
+        void Limpio() { w.escuchando = w.pensando = w.hablandoAhora = w.panelAbierto = w.musicaVisible = false; w.propuesta = null; w.avisoActual = null; w.raton = false; }
+        var reloj = System.Diagnostics.Stopwatch.StartNew();
+        for (int vuelta = 0; vuelta < 2; vuelta++)
+        {
+            await Paso(Limpio);
+            await Paso(() => w.raton = true);
+            await Paso(() => { Limpio(); w.escuchando = true; w.BarrasEscucha.Nivel = 0.7; });
+            await Paso(() => { Limpio(); w.pensando = true; });
+            await Paso(() => { Limpio(); w.hablandoAhora = true; w.AvatarHabla.Boca = 0.8; w.AnimarBrillo(0.6); });
+            await Paso(() => { Limpio(); w.musicaVisible = true; });
+            await Paso(() => { Limpio(); w.avisoActual = new Aviso("Correo de Karla", "La junta se movió al jueves", "\uE715"); w.TituloAviso.Text = "Correo de Karla"; });
+            await Paso(() => { Limpio(); w.propuesta = new Propuesta("¿Bloqueo la computadora?", "", DateTime.Now.AddSeconds(30), () => Task.CompletedTask); });
+            await Paso(() => { Limpio(); w.panelAbierto = true; w.Height = w.AltoPanel + 48; });
+            // Cambio a mitad de camino: el resorte sigue desde donde va, sin saltos.
+            Limpio(); w.modo = w.ModoQueToca(); w.Aplicar(); await Task.Delay(120);
+            await Paso(() => { w.escuchando = true; });
+        }
+        var informe = w.medidor.Informe();
+        var ok = w.medidor.P95 <= 100 && w.medidor.DibujarP95 <= 8;
+        w.Close();
+        if (!ok) throw new Exception("Animación con tirones: " + JsonSerializer.Serialize(informe));
+        return new { ok = true, segundos = Math.Round(reloj.Elapsed.TotalSeconds, 1), medida = informe };
+    }
+
     internal static void RenderizarEstados(string carpeta)
     {
         Directory.CreateDirectory(carpeta);
@@ -62,6 +131,14 @@ public partial class NotchWindow
             w.hablandoAhora = true; w.Subtitulo.Text = "Mañana tienes la junta a las diez y el informe de ventas pendiente."; w.AvatarHabla.Boca = 0.8; w.BarrasHabla.Nivel = 0.8; w.modo = w.ModoQueToca(); Foto($"{avatar}-05-habla"); w.hablandoAhora = false;
             w.avisoActual = new Aviso("Recordatorio", "Tomar agua y estirar las piernas", "");
             w.TituloAviso.Text = w.avisoActual.Titulo; w.CuerpoAviso.Text = w.avisoActual.Cuerpo; w.modo = w.ModoQueToca(); Foto($"{avatar}-06-aviso"); w.avisoActual = null;
+            w.cancion = new Manos.Cancion("Vivir mi vida", "Marc Anthony", "Spotify", true, null, TimeSpan.FromSeconds(80), TimeSpan.FromMinutes(4));
+            w.PortadaChica.Visibility = w.BarrasMusica.Visibility = Visibility.Visible; w.BarrasMusica.Nivel = 0.6;
+            w.modo = w.ModoQueToca(); Foto($"{avatar}-06b-reposo-musica");
+            w.TituloMusica.Text = w.cancion.Titulo; w.ArtistaMusica.Text = "Marc Anthony · Spotify"; w.ProgresoMusica.Width = 90;
+            w.musicaVisible = true; w.modo = w.ModoQueToca(); Foto($"{avatar}-06c-musica"); w.musicaVisible = false; w.cancion = null;
+            w.PortadaChica.Visibility = w.BarrasMusica.Visibility = Visibility.Collapsed;
+            w.avisoActual = new Aviso("Correo de Karla Mejía", "La junta se movió al jueves a las 10", "\uE715");
+            w.TituloAviso.Text = w.avisoActual.Titulo; w.CuerpoAviso.Text = w.avisoActual.Cuerpo; w.IconoAviso.Codigo = "\uE715"; w.modo = w.ModoQueToca(); Foto($"{avatar}-06d-correo"); w.avisoActual = null;
             w.propuesta = new Propuesta("¿Lo escribo en Documento1 - Word?", "Estimado licenciado: le confirmo la reunión del jueves a las diez…", DateTime.Now.AddSeconds(30), () => Task.CompletedTask);
             w.TituloConfirma.Text = w.propuesta.Titulo; w.CuerpoConfirma.Text = w.propuesta.Cuerpo; w.modo = w.ModoQueToca(); Foto($"{avatar}-07-confirma"); w.propuesta = null;
         }

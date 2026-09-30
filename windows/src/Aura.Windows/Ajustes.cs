@@ -37,6 +37,14 @@ internal sealed class Ajustes
     public bool VozDeWindows { get; set; }
     /// <summary>Oír siempre con el dictado de Windows (sin red). Si es false, se usa solo de respaldo.</summary>
     public bool OidoDeWindows { get; set; }
+    /// <summary>Correo por IMAP (Gmail con contraseña de aplicación, Yahoo, iCloud…). Cifrado con DPAPI como todo lo demás.</summary>
+    public string CorreoDireccion { get; set; } = "";
+    public string CorreoClave { get; set; } = "";
+    public bool AvisarCorreos { get; set; } = true;
+    /// <summary>La «dirección secreta en formato iCal» del calendario (Google, Outlook, iCloud).</summary>
+    public string AgendaUrl { get; set; } = "";
+    /// <summary>Mostrar en el notch lo que suena (Spotify, YouTube Music, el navegador…).</summary>
+    public bool MostrarMusica { get; set; } = true;
     public List<Recordatorio> Recordatorios { get; set; } = new();
 
     static string Carpeta => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AuraWindows");

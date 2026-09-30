@@ -1,4 +1,4 @@
-# AURA para Windows 1.1
+# AURA para Windows 1.2
 
 La versión de escritorio de la app AU-RA: **el mismo cerebro (Qwen), las mismas voces (ElevenLabs, una por avatar) y los mismos avatares**, viviendo en un **notch negro arriba al centro de la pantalla** que crece y se encoge como la isla dinámica de Apple. Se le habla, contesta hablando, y hace cosas en la computadora.
 
@@ -33,6 +33,13 @@ AU-RA, Claudio y ANT-ONIO son sus **modelos 3D de la app** (`vendor/aura-avatar-
 
 Atajos: **Ctrl+Alt+Espacio** hablar · **Ctrl+Alt+A** chat · **Ctrl+Alt+W** elegir dónde escribir · **Ctrl+Alt+Esc** pausar todo.
 
+## Música, correo y agenda (1.2)
+
+- **Lo que suena, como la isla de Apple:** cualquier app que se anuncie a Windows (Spotify, YouTube Music, Chrome/Edge con YouTube, el reproductor) aparece en el notch: en reposo, su portada y unas barritas; al cambiar de canción, una tarjeta con portada, canción, artista, progreso y ⏮ ⏯ ⏭. «¿Qué está sonando?», «pon Bad Bunny en Spotify», «ponme salsa en YouTube Music». Pausa/siguiente usan el control multimedia de Windows (y las teclas si no hay). Sin cuentas ni claves. Elegir y reproducir UNA canción exacta necesitaría la API de Spotify con su inicio de sesión: por ahora abre la búsqueda.
+- **Correo (Gmail, Yahoo, iCloud, IMAP):** con una **contraseña de aplicación**, revisa cada minuto y avisa en el notch de cada correo nuevo («Correo de Karla · La junta se movió…», con botón Leer). «Léeme mis correos», «¿tengo correos nuevos?», «resume mis correos» (este último manda el texto al cerebro). Solo lee: nada se marca como leído ni se borra. Outlook.com ya no acepta contraseñas por IMAP (pide inicio de sesión moderno): pendiente.
+- **Agenda:** con la «dirección secreta en formato iCal» de Google Calendar (u Outlook, iCloud) avisa **10 min antes** de cada evento y contesta «¿qué tengo hoy/mañana?», «¿cuál es mi próxima reunión?». Entiende zonas horarias, eventos de todo el día y repeticiones comunes.
+- **Fluidez medida:** el CI pasa el notch real por todos sus estados midiendo cada fotograma; falla si hay tirones (p95 > 100 ms) o si dibujar la silueta cuesta más de 8 ms. El brillo ahora entra y sale suave y, apagado, no se dibuja.
+
 ## Nativo (1.1)
 
 - **Leer la pantalla sin mandar imágenes:** el texto real de la ventana de trabajo con UI Automation y, si trae poco, el **OCR de Windows**, todo en este equipo. Al cerebro va solo el texto (con la pregunta); sin red, AURA lo lee ella misma. Los campos de contraseña nunca se leen.
@@ -62,8 +69,9 @@ Una mano sin su parámetro («abre» sin decir qué) no se hace: contesta el cer
 - Datos: `scripts/nodo-t4/laya/modelos/windows/` (22 manos, español catracho/latino e inglés, errores de dictado, negativos parecidos; entrenamiento, validación y prueba separados por plantilla y por valores). `python generador/generar.py` los regenera.
 - En el nodo: `windows` está en `NUEVOS` de `scripts/nodo-t4/instalar-laya.sh`; `REENTRENAR=windows bash scripts/nodo-t4/instalar-laya.sh` lo entrena en la T4 y lo sirve en `/v1/windows`. El servidor lo pide con `consultarModelo('windows', …)`.
 - En el .exe: `python scripts/nodo-t4/laya/ligera/entrenar_ligera_windows.py` escribe `LayaLigeraModelo.g.cs` y `informe-windows.json`. Las pruebas de C# comprueban que C# da exactamente lo mismo que Python.
-- 28 manos desde la 1.1 (pulsar, qué hay, ventanas, información, portapapeles, archivos). **El modelo del nodo hay que reentrenarlo con `windows`** para que las conozca.
-- Cifras honestas de la ligera (prueba apartada): exactitud 0,75; con su umbral decide sola el 33 % y acierta el 94 % de lo que decide (la compuerta pedía 97 %: por eso las reglas van antes y lo dudoso sube al nodo o al cerebro). El modelo del nodo se mide al entrenarse allí.
+- 31 manos desde la 1.2 (música, correo y agenda se suman a pulsar, qué hay, ventanas, información, portapapeles y archivos). **El modelo del nodo hay que reentrenarlo con `windows`** para que las conozca.
+- La ligera NUNCA decide sola lo que tiene efecto o molesta si se equivoca (avatar, captura, bloquear, escribir, pulsar, ventanas, pausa, escritorio, silencio): eso solo por reglas exactas o Laya del nodo.
+- Cifras honestas de la ligera (prueba apartada): exactitud 0,73; con su umbral decide sola el 27 % y acierta el 94 % de lo que decide (la compuerta pedía 97 %: por eso las reglas van antes y lo dudoso sube al nodo o al cerebro). El modelo del nodo se mide al entrenarse allí.
 
 ## Empezar
 
@@ -71,7 +79,7 @@ Instalar `AURA-Windows-Setup-1.0.0-x64.exe` (por usuario, sin permisos de admini
 
 ## Compilar y probar
 
-- Núcleo (corre en cualquier sistema): `dotnet run --project windows/tests/Aura.Windows.Tests.csproj` — 171 comprobaciones: reglas, casos de la auditoría, horas de recordatorio, confirmaciones, Laya ligera C# = Python, SSE, cortador de frases, resorte.
+- Núcleo (corre en cualquier sistema): `dotnet run --project windows/tests/Aura.Windows.Tests.csproj` — 198 comprobaciones (incluye el lector iCal): reglas, casos de la auditoría, horas de recordatorio, confirmaciones, Laya ligera C# = Python, SSE, cortador de frases, resorte.
 - App: `./windows/scripts/publish.ps1` en Windows con .NET 10 (también compila en Linux con `EnableWindowsTargeting`, sin poder ejecutarse).
 - CI (`.github/workflows/aura-windows.yml`, Windows): pruebas, .exe, **capturas reales de cada estado del notch**, conversación completa contra un servidor AU-RA simulado (`gateway/fixture-aura.mjs`), **prueba nativa** (UI Automation leyendo el Bloc de notas, OCR de Windows, controles por nombre, ventanas, información del equipo, voz de Windows), llamadas, escritura real en el Bloc de notas, instalador, instalar y desinstalar.
 

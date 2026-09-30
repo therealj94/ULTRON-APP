@@ -83,9 +83,9 @@ public partial class NotchWindow
                 case Mano.VolumenSubir: Escritorio.Volumen(true, Parametros.Limpiar(texto).Contains("poco") ? 2 : 5); Hecho(T("Volumen arriba", "Volume up"), "", ""); break;
                 case Mano.VolumenBajar: Escritorio.Volumen(false, Parametros.Limpiar(texto).Contains("poco") ? 2 : 5); Hecho(T("Volumen abajo", "Volume down"), "", ""); break;
                 case Mano.Silenciar: Escritorio.Mute(); Hecho(T("Sonido", "Sound"), T("Silencio activado o quitado", "Mute toggled"), ""); break;
-                case Mano.MultimediaPausa: Escritorio.PlayPausa(); Hecho(T("Música", "Media"), T("Play / pausa", "Play / pause"), ""); break;
-                case Mano.MultimediaSiguiente: Escritorio.Siguiente(); Hecho(T("Siguiente", "Next"), "", ""); break;
-                case Mano.MultimediaAnterior: Escritorio.Anterior(); Hecho(T("Anterior", "Previous"), "", ""); break;
+                case Mano.MultimediaPausa: if (!await musica.PlayPausa()) Escritorio.PlayPausa(); MostrarTarjetaMusica(4); break;
+                case Mano.MultimediaSiguiente: if (!await musica.Siguiente()) Escritorio.Siguiente(); MostrarTarjetaMusica(5); break;
+                case Mano.MultimediaAnterior: if (!await musica.Anterior()) Escritorio.Anterior(); MostrarTarjetaMusica(5); break;
                 case Mano.Escritorio: Escritorio.MostrarEscritorio(); Hecho(T("Escritorio", "Desktop"), "", ""); break;
                 case Mano.Captura:
                 {
@@ -117,6 +117,9 @@ public partial class NotchWindow
                     break;
                 }
                 case Mano.QueHay: QueHay(); break;
+                case Mano.Musica: await HacerMusica(p.Valor); break;
+                case Mano.Correo: await LeerCorreos(p.Valor, hablado); break;
+                case Mano.Agenda: await LeerAgenda(p.Valor); break;
                 case Mano.Pulsar: await PulsarControl(p.Valor); break;
                 case Mano.Ventana: HacerVentana(p.Valor); break;
                 case Mano.Portapapeles: await Portapapeles(texto, hablado); break;

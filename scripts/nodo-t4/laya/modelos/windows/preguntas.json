@@ -222,5 +222,29 @@
    "true": "sí: abrir o buscar un archivo del equipo por su nombre, o la última descarga («abre el archivo del contrato»)",
    "false": "no: abrir una carpeta o una aplicación"
   }
+ },
+ "win_musica": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: saber qué suena o poner música en Spotify o YouTube Music («qué canción es esta», «pon salsa en spotify»)",
+   "false": "no: hablar de música o pausar/pasar la canción"
+  }
+ },
+ "win_correo": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: leer, contar o resumir los correos de la persona («léeme mis correos»)",
+   "false": "no: hablar de un correo o redactar uno nuevo"
+  }
+ },
+ "win_agenda": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: lo que tiene en el calendario («qué tengo hoy», «mi próxima reunión»)",
+   "false": "no: contar que tiene una reunión o crear un recordatorio"
+  }
  }
 }
