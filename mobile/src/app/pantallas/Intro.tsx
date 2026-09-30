@@ -30,6 +30,7 @@ import { FOTOS_CLAUDIO } from '../../avatares/ClaudioRetrato';
 import { FOTOS_CLAUDIO_PIE } from '../../avatares/ClaudioDePie';
 import { Arranque } from '../../screens/Arranque';
 import { cargarHapticos } from '../../ui/hapticos';
+import { FUENTES_ICONOS } from '../../ui/Icono';
 import { cargarFuentes } from '../../ui/tipografia';
 import type { RaizParams } from '../rutas';
 import { reiniciarA } from '../rutas';
@@ -68,6 +69,7 @@ async function precargarAvatares() {
     ...Object.values(FOTOS_CLAUDIO).flatMap((v) => (Array.isArray(v) ? v : [v])),
     ...Object.values(FOTOS_CLAUDIO_PIE),
     require('../../../assets/marca/logo-aura.png'),
+    ...FUENTES_ICONOS,
   ].filter((m): m is number => typeof m === 'number');
   await Asset.loadAsync(fotos);
 }

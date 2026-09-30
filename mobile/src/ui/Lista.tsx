@@ -63,7 +63,7 @@ export function Fila({ titulo, detalle, icono, colorIcono, valor, derecha, onPre
         </View>
       )}
       <View style={s.textos}>
-        <Texto v="cuerpoFuerte" color={destructiva ? 'aviso' : 'texto'} numberOfLines={1}>
+        <Texto v="cuerpoFuerte" color={destructiva ? 'aviso' : 'texto'} numberOfLines={2}>
           {titulo}
         </Texto>
         {!!detalle && (

@@ -64,7 +64,7 @@ export function ListaPermisos({ conBotonTodo = true }: { conBotonTodo?: boolean 
         const ok = !!e && listo(e);
         return (
           <Aparecer key={p.id} retraso={80 + i * 70}>
-            <Tarjeta relleno={MEDIDA.espacio.m} activa={ok}>
+            <Tarjeta relleno={MEDIDA.espacio.m} style={ok ? { borderColor: tema.exito } : undefined}>
               <View style={s.fila}>
                 <View style={[s.icono, { backgroundColor: ok ? tema.exitoFondo : tema.acentoFondo }]}>
                   <Icono nombre={p.icono} tam={20} color={ok ? tema.exito : tema.acentoTexto} />

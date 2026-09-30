@@ -38,7 +38,7 @@ export function PasoPregunta({ pregunta, borrador, cambiar, avanzar }: PropsPaso
     <View style={{ gap: MEDIDA.espacio.xl }}>
       <Aparecer desde="escala">
         <View style={[s.icono, { backgroundColor: tema.acentoFondo, borderColor: tema.acento }]}>
-          <Icono nombre={pregunta.icono} tam={30} color={tema.acentoTexto} grosor={1.8} />
+          <Icono nombre={pregunta.icono} tam={30} color={tema.acentoTexto} />
         </View>
       </Aparecer>
       <View style={{ gap: 8 }}>

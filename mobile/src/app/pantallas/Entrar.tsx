@@ -125,7 +125,7 @@ export function Entrar({ navigation, route }: Props) {
           <BotonCheck hecho animarAlMontar={60} tam={tamAura * 0.3} vibra={false} />
         ) : (
           <View style={[s.sello, { width: tamAura * 0.34, height: tamAura * 0.34, borderRadius: tamAura, backgroundColor: tema.oscuro ? 'rgba(28,29,32,0.7)' : 'rgba(255,255,255,0.75)', borderColor: tema.acento }]}>
-            <Icono nombre="huella" tam={tamAura * 0.16} color={tema.acentoTexto} grosor={1.8} />
+            <Icono nombre="huella" tam={tamAura * 0.16} color={tema.acentoTexto} />
           </View>
         )}
       </View>

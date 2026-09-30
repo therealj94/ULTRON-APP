@@ -12,7 +12,7 @@
  *   BarraProgreso, Puntos              progreso de pasos y puntos de página
  *   Aparecer                           entrada con resorte (fundido + deslizamiento)
  *   Aura                               el anillo dorado que respira (Skia)
- *   Icono                              íconos de línea (Skia)
+ *   Icono                              íconos de línea (PNG teñidos, sin parpadeo)
  *   vibrar                             la háptica de la app (se apaga en Ajustes)
  */
 export { Texto } from './Texto';
@@ -28,6 +28,6 @@ export { Grupo, Fila, Segmentado, Interruptor, type OpcionSegmento } from './Lis
 export { BarraProgreso, Puntos } from './Progreso';
 export { Aparecer } from './Aparecer';
 export { Aura, conAlfa } from './Aura';
-export { Icono, type NombreIcono } from './Icono';
+export { Icono, FUENTES_ICONOS, type NombreIcono } from './Icono';
 export { SelectorIdioma, elegirIdioma } from './SelectorIdioma';
 export { vibrar, fijarHapticos, cargarHapticos, useHapticos, hapticosActivos, type Toque } from './hapticos';

@@ -178,6 +178,18 @@ export function PrimeraVez(_: Props) {
 
   const titulo = paso === 'fiesta' ? tr('Ir a la mesa', 'Go to the desk') : paso === 'permisos' ? tr('Continuar', 'Continue') : tr('Siguiente', 'Next');
 
+  const boton = (tam: 'normal' | 'chico') => (
+    <Boton
+      titulo={titulo}
+      tam={tam}
+      iconoDerecha={paso === 'fiesta' ? undefined : 'flecha'}
+      icono={paso === 'fiesta' ? 'chispas' : undefined}
+      onPress={avanzar}
+      deshabilitado={!puedeSeguir(paso, b)}
+      cargando={terminando}
+    />
+  );
+
   return (
     <KeyboardAvoidingView style={[s.raiz, { backgroundColor: tema.fondo }]} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
       <View style={[s.barra, { paddingTop: ins.top + 6 }]}>
@@ -185,8 +197,10 @@ export function PrimeraVez(_: Props) {
         <View style={s.progreso}>
           <BarraProgreso valor={progreso(i)} alto={5} />
         </View>
-        <View style={[s.lado, { alignItems: 'flex-end' }]}>
+        <View style={[s.lado, { alignItems: 'flex-end' }, horizontal && s.ladoH]}>
           {saltable(paso) && <Boton titulo={tr('Saltar', 'Skip')} variante="fantasma" tam="chico" onPress={saltar} />}
+          {/* Acostado, el botón para seguir va arriba: la pantalla es baja y el paso necesita el alto. */}
+          {horizontal && boton('chico')}
         </View>
       </View>
       <ScrollView
@@ -200,16 +214,7 @@ export function PrimeraVez(_: Props) {
           {contenido}
         </Animated.View>
       </ScrollView>
-      <View style={[s.pie, { paddingBottom: ins.bottom + MEDIDA.espacio.m }, horizontal && s.pieH]}>
-        <Boton
-          titulo={titulo}
-          iconoDerecha={paso === 'fiesta' ? undefined : 'flecha'}
-          icono={paso === 'fiesta' ? 'chispas' : undefined}
-          onPress={avanzar}
-          deshabilitado={!puedeSeguir(paso, b)}
-          cargando={terminando}
-        />
-      </View>
+      {!horizontal && <View style={[s.pie, { paddingBottom: ins.bottom + MEDIDA.espacio.m }]}>{boton('normal')}</View>}
       {paso === 'fiesta' && <LluviaConfeti avatar={b.avatar} />}
     </KeyboardAvoidingView>
   );
@@ -223,5 +228,5 @@ const s = StyleSheet.create({
   contenido: { paddingHorizontal: MEDIDA.espacio.xl, paddingTop: MEDIDA.espacio.l, paddingBottom: MEDIDA.espacio.xxl, flexGrow: 1 },
   contenidoH: { paddingHorizontal: 48 },
   pie: { paddingHorizontal: MEDIDA.espacio.xl, paddingTop: MEDIDA.espacio.s },
-  pieH: { alignItems: 'flex-end', paddingHorizontal: 48 },
+  ladoH: { width: undefined, flexDirection: 'row', alignItems: 'center', gap: 8 },
 });

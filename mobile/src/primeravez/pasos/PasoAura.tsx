@@ -8,8 +8,8 @@ import Animated, { Easing, useAnimatedStyle, useSharedValue, withRepeat, withTim
 import { tr } from '../../i18n';
 import { speak, stopSpeaking } from '../../lib/tts';
 import { MEDIDA, useTema } from '../../nucleo/tema';
-import { Aparecer, Aura, Boton, Icono, Tarjeta, Texto, type NombreIcono } from '../../ui';
-import { EncabezadoPaso } from '../piezas';
+import { Aparecer, Boton, Icono, Tarjeta, Texto, type NombreIcono } from '../../ui';
+import { EncabezadoPaso, VistaAvatar } from '../piezas';
 import type { PropsPaso } from './tipos';
 
 type Poder = { icono: NombreIcono; titulo: () => string; texto: () => string };
@@ -53,7 +53,7 @@ export function PasoAura({ borrador, horizontal }: PropsPaso) {
     <View style={{ gap: MEDIDA.espacio.xl }}>
       <View style={[s.cabeza, horizontal && { flexDirection: 'row', alignItems: 'center' }]}>
         <Latido activo={hablando}>
-          <Aura tam={horizontal ? 110 : 120} particulas={12} color={tema.acento} colorClaro={tema.oscuro ? '#FFF1CC' : '#F3E0B0'} />
+          <VistaAvatar id={borrador.avatar} tam={horizontal ? 120 : 132} />
         </Latido>
         <View style={{ flex: horizontal ? 1 : undefined }}>
           <EncabezadoPaso etiqueta={tr('Conóceme', 'Meet me')} titulo={tr(`Hola, ${apodo}. Soy AURA`, `Hi, ${apodo}. I’m AURA`)} texto={tr('Esto es lo que puedo hacer por ti:', 'Here’s what I can do for you:')} />

@@ -42,7 +42,7 @@ export function BotonRedondo({ icono = 'atras', onPress, etiqueta, tam = 42 }: {
         accessibilityRole="button"
         accessibilityLabel={etiqueta || (icono === 'cerrar' ? tr('Cerrar', 'Close') : tr('Atrás', 'Back'))}
       >
-        <Icono nombre={icono} tam={20} color={tema.texto} grosor={2.2} />
+        <Icono nombre={icono} tam={20} color={tema.texto} />
       </Pressable>
     </Animated.View>
   );

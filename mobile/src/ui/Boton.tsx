@@ -121,11 +121,11 @@ export function Boton({ titulo, onPress, variante = 'principal', cargando, texto
           </>
         ) : (
           <>
-            {typeof icono === 'string' ? <Icono nombre={icono as NombreIcono} tam={tamIcono} color={colorLetra} grosor={2.2} /> : icono}
+            {typeof icono === 'string' ? <Icono nombre={icono as NombreIcono} tam={tamIcono} color={colorLetra} /> : icono}
             <Texto v={tam === 'chico' ? 'chicaFuerte' : 'boton'} color={colorLetra} numberOfLines={1} style={tam === 'chico' ? { fontSize: 14 } : undefined}>
               {titulo}
             </Texto>
-            {iconoDerecha && <Icono nombre={iconoDerecha} tam={tamIcono} color={colorLetra} grosor={2.2} />}
+            {iconoDerecha && <Icono nombre={iconoDerecha} tam={tamIcono} color={colorLetra} />}
           </>
         )}
       </APorPresionar>
