@@ -90,7 +90,7 @@ internal sealed class Actualizador
         // Se verifica otra vez justo antes de correrlo (nadie lo cambió en el disco mientras esperaba).
         if (Sha(Instalador, default).GetAwaiter().GetResult() != Nueva.Sha256) { Lista = false; return false; }
         Centro.Registro.Anotar("actualizar", "instalando " + Nueva.Version);
-        Process.Start(new ProcessStartInfo(Instalador, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS") { UseShellExecute = true });
+        Process.Start(new ProcessStartInfo(Instalador, "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /RELANZAR=1") { UseShellExecute = true });
         return true;
     }
 

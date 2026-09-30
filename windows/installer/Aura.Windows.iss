@@ -34,5 +34,12 @@ Root: HKCU; Subkey: "Software\Classes\ultronfp"; Flags: uninsdeletekey dontcreat
 
 [Run]
 Filename: "{app}\Aura.Windows.exe"; Description: "Abrir AURA"; Flags: nowait postinstall skipifsilent
-; La actualización por el aire corre el instalador en silencio: al terminar, AURA vuelve a abrirse sola.
-Filename: "{app}\Aura.Windows.exe"; Flags: nowait runasoriginaluser; Check: WizardSilent
+; La actualización por el aire corre el instalador en silencio con /RELANZAR=1: al terminar, AURA vuelve a
+; abrirse sola. Sin ese parámetro (una instalación silenciosa cualquiera, o la prueba del CI) no se abre.
+Filename: "{app}\Aura.Windows.exe"; Flags: nowait runasoriginaluser; Check: Relanzar
+
+[Code]
+function Relanzar(): Boolean;
+begin
+  Result := WizardSilent() and (ExpandConstant('{param:RELANZAR|0}') = '1');
+end;
