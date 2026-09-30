@@ -198,6 +198,8 @@ export type ContextoTaller = {
 function cedeALaApp(p: ReturnType<typeof parsePedido>, q: string, manos: readonly string[] | undefined): boolean {
   if (!manos?.length) return false;
   const l = q.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // «llámame a las 5 para recordarme…» es un recordatorio con llamada de AURA, no la llamada de Twilio.
+  if (p.accion === 'llamar' && manos.includes('recordatorio') && /\b(recordarme|recuerdame|recuerdes|acordarme|acuerde|olvide|pase|remind)\b/.test(l)) return true;
   if (p.accion === 'llamar' && manos.includes('llamar') && !/\b(llamame|llamanos|call me)\b/.test(l)) return true;
   if (p.accion === 'urgente' && manos.includes('recordatorio') && /\bavisame\b/.test(l) && !/\b(urgente|alerta junta)\b/.test(l)) return true;
   return false;

@@ -45,7 +45,10 @@ import { ModoConversacion, type ControlesSesion } from '../components/ModoConver
 import { ControlSesion, type EstadoVoz, type VistaSesion } from './sesion';
 import { Precalentador } from './permiso';
 import { coordinarLlamadas } from './llamada';
-import { ContextoApp, PuenteAcciones, decirLectura, type XhrMin } from './acciones';
+import { ContextoApp, PuenteAcciones, decirLectura, decirRecordatorio, type XhrMin } from './acciones';
+import { escucharPorDecir, listarRecordatorios, tomarPorDecir } from './recordatorios';
+import { depsRecordatorios } from './recordatoriosNativo';
+import { LlamadaAura } from './LlamadaAura';
 import { AudioVoz } from './audioVoz';
 import { cabecerasAparato } from '../lib/aparato';
 import { escucharCuenta } from '../pulse/relevo';
@@ -170,6 +173,30 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       emitir('hecho', { accion: a, ok: r.ok, ...(r.detalle ? { detalle: r.detalle } : {}) });
     });
     // Lo que el teléfono lee de un chat («¿qué me dijo Beto?») o encontró al buscar: con la voz de AURA.
+    // Contestó la llamada de un recordatorio: AURA se lo dice con su voz (y la charla sigue). Lo que
+    // quedó guardado antes de montarse la voz (la app se abrió por el toque) se dice ahora.
+    const decirElRecordatorio = () => {
+      const l = tomarPorDecir();
+      if (!l) return;
+      void decirRecordatorio(l.texto, {
+        vista: () => control.vista(),
+        despertar: () => control.silenciar(false),
+        enviarTexto: (t) => !!controles.current?.enviarTexto(t),
+        hablarMesa: (t) => speak(t, { privado: true, onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) }),
+        enLlamada: () => control.vista().suspendida,
+        finDeLlamada: () =>
+          new Promise<void>((listo) => {
+            const off = escuchar('llamada', (e) => {
+              if (e.activa) return;
+              off();
+              // La conversación se reabre sola al colgar: un respiro para que no se crucen.
+              setTimeout(listo, 1500);
+            });
+          }),
+      }).then((como) => miga(`recordatorio contestado: ${como}`));
+    };
+    const offRecordatorio = escucharPorDecir(decirElRecordatorio);
+    decirElRecordatorio();
     const offLectura = escuchar('lectura', (l) => {
       void decirLectura(l, {
         vista: () => control.vista(),
@@ -195,6 +222,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       offPerfil();
       offAccion();
       offLectura();
+      offRecordatorio();
       offLlamada();
     };
   }, [control, precalentar]);
@@ -225,6 +253,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
         return api(RUTA_CONTEXTO, { method: 'POST', body: JSON.stringify(c) }, 10_000);
       },
       contactos: contactosParaAura,
+      recordatorios: () => listarRecordatorios(depsRecordatorios),
       escuchar: (tipo, f) => escuchar(tipo, f as never),
     });
     contexto.current = ctx;
@@ -330,6 +359,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
         />
       ) : null}
       {conCompanera ? <CompaneraSegura /> : null}
+      <LlamadaAura />
     </VozCtx.Provider>
   );
 }

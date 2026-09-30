@@ -132,6 +132,8 @@ export type Contexto = {
   borrador?: string;
   /** Las manos que sabe hacer (MANOS_APP). Un servidor viejo la ignora. */
   manos?: readonly Mano[];
+  /** Los recordatorios puestos (para «¿qué recordatorios tengo?» y «cancela el de las 5»). */
+  recordatorios?: RecordatorioPuesto[];
 };
 
 /* ── eventos entre piezas ────────────────────────────────────────────────────────────────── */
@@ -166,6 +168,12 @@ export type Eventos = {
    * (el servidor lo reconoce y lo dice tal cual, sin cerebro ni memoria). La voz lo pone (VozProvider).
    */
   lectura: { texto: string; boleto?: string };
+  /**
+   * La persona CONTESTÓ la llamada de un recordatorio («llámame a las 5 para recordarme…»): la voz
+   * abre la conversación y AURA se lo dice (VozProvider). Si la app se abrió por el toque, lo mismo
+   * queda guardado en compa/recordatorios.ts (`tomarPorDecir`) hasta que la voz se monte.
+   */
+  recordatorio: { texto: string; base: string };
 };
 
 type Oyente<K extends keyof Eventos> = (dato: Eventos[K]) => void;

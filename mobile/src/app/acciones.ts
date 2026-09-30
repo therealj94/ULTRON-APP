@@ -21,7 +21,9 @@ import { useEffect } from 'react';
 import { setAvatarVoz } from '../lib/tts';
 import { cumpleValido, guardarPerfil } from '../lib/perfil';
 import { emitir, escuchar, type AccionApp, type Perfil } from '../nucleo/contrato';
-import { programarRecordatorio, type ConstantesNotifee, type NotifeeMin } from '../compa/recordatorios';
+import { cancelarRecordatorio, programarRecordatorio } from '../compa/recordatorios';
+// Carga también los manejadores de la llamada de AURA (tienen que existir desde el arranque).
+import { depsRecordatorios } from '../compa/recordatoriosNativo';
 import { tr } from '../i18n';
 import { resolverContacto } from '../pulse/relevo';
 import { fijarPresencia } from '../avatar3d/usePresencia';
@@ -32,18 +34,6 @@ import { usuarioActual } from './sesion';
 
 function hecho(accion: AccionApp, ok: boolean, detalle?: string) {
   emitir('hecho', { accion, ok, detalle });
-}
-
-/** notifee del APK (el mismo del servicio de llamadas), o null si este teléfono no lo tiene. */
-function notifeeReal(): { m: NotifeeMin; k: ConstantesNotifee } | null {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const mod = require('@notifee/react-native');
-    if (!mod?.default?.createTriggerNotification) return null;
-    return { m: mod.default, k: { TriggerType: mod.TriggerType, AlarmType: mod.AlarmType, AuthorizationStatus: mod.AuthorizationStatus, AndroidImportance: mod.AndroidImportance } };
-  } catch {
-    return null;
-  }
 }
 
 /** Un dato del perfil dicho por voz, como cambio del perfil. null si no vale (un cumple que no existe). */
@@ -101,7 +91,10 @@ export function atenderAccion(a: AccionApp) {
       return hecho(a, !!p, p ? undefined : tr('Todavía no tengo tu perfil a mano; inténtalo en un momento.', "I don't have your profile yet; try again in a moment."));
     }
     case 'recordatorio':
-      void programarRecordatorio(a, { notifee: notifeeReal }).then((r) => hecho(a, r.ok, r.detalle));
+      void programarRecordatorio(a, depsRecordatorios).then((r) => hecho(a, r.ok, r.detalle));
+      return;
+    case 'cancelar_recordatorio':
+      void cancelarRecordatorio(a.id, depsRecordatorios).then((r) => hecho(a, r.ok, r.detalle));
       return;
     case 'presencia':
       fijarPresencia(a.valor);

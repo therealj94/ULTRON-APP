@@ -15,9 +15,10 @@ import { ANIMO_INICIAL, expresion, puedeCaminar, reducir } from '../animo.ts';
 import { Gestos } from '../gestos.ts';
 import { pegarABorde, reubicar, yCarril, limitar, destinoPaseo, lugarGlobo } from '../borde.ts';
 import { LectorSse } from '../sse.ts';
-import { PuenteAcciones, ContextoApp, esAccionApp, accionesDelTurno, accionNueva, depurarContactos, VENTANA_MISMA_ACCION_MS, mensajeDeLectura, decirLectura } from '../acciones.ts';
+import { PuenteAcciones, ContextoApp, esAccionApp, accionesDelTurno, accionNueva, depurarContactos, VENTANA_MISMA_ACCION_MS, mensajeDeLectura, decirLectura, mensajeDeRecordatorio, decirRecordatorio } from '../acciones.ts';
+import * as REC from '../recordatorios.ts';
 import { programarRecordatorio, _olvidarRecordatorios, CANAL_RECORDATORIOS } from '../recordatorios.ts';
-import { RE_LECTURA } from '../../../../lib/manos-app.ts';
+import { RE_LECTURA, turnoDeRecordatorio } from '../../../../lib/manos-app.ts';
 import { MANOS_APP } from '../../nucleo/contrato.ts';
 import { AudioVoz } from '../audioVoz.ts';
 import { FIGURAS, mezclarFigura, estiloDe } from '../figura.ts';
@@ -954,6 +955,162 @@ prueba('manos: recordatorio — permiso de avisos, aviso programado una sola vez
   assert.match(negado.detalle, /permiso de avisos/);
   assert.equal(puestos.length, 1);
   assert.equal((await programarRecordatorio({ texto: 'X', cuando: ahora + 7200_000 }, { notifee: () => null, ahora: () => ahora })).ok, false, 'sin notifee se dice');
+});
+
+/** Un notifee falso con lo que usan los recordatorios: guarda lo programado y lo mostrado. */
+function notifeeFalso({ exacto = false, permiso = 1 } = {}) {
+  const K = {
+    TriggerType: { TIMESTAMP: 0 },
+    AlarmType: { SET_AND_ALLOW_WHILE_IDLE: 1, SET_EXACT_AND_ALLOW_WHILE_IDLE: 3 },
+    AuthorizationStatus: { DENIED: 0 },
+    AndroidImportance: { HIGH: 4 },
+    AndroidCategory: { CALL: 'call' },
+    AndroidVisibility: { PUBLIC: 1 },
+    AndroidNotificationSetting: { ENABLED: 1 },
+    EventType: { DISMISSED: 0, PRESS: 1, ACTION_PRESS: 2, DELIVERED: 3 },
+  };
+  const f = { programados: [], canales: [], cancelados: [], quitados: [], mostrados: [] };
+  f.m = {
+    requestPermission: async () => ({ authorizationStatus: permiso }),
+    getNotificationSettings: async () => ({ android: { alarm: exacto ? 1 : 0 } }),
+    createChannel: async (c) => (f.canales.push(c), c.id),
+    createTriggerNotification: async (n, t) => (f.programados.push({ n, t }), n.id),
+    getTriggerNotifications: async () => f.programados.filter((p) => !f.cancelados.includes(p.n.id)).map((p) => ({ notification: p.n, trigger: p.t })),
+    cancelTriggerNotifications: async (ids) => void f.cancelados.push(...ids),
+    cancelNotification: async (id) => void f.quitados.push(id),
+    displayNotification: async (n) => (f.mostrados.push(n), n.id),
+  };
+  f.k = K;
+  f.deps = (ahora) => ({ notifee: () => ({ m: f.m, k: K }), ahora: () => ahora });
+  return f;
+}
+
+prueba('recordatorio con llamada: la llamada, el reintento a los 5 min y el aviso final, programados por adelantado; exacta solo si Android la deja', async () => {
+  _olvidarRecordatorios();
+  const ahora = Date.UTC(2026, 8, 30, 20, 0);
+  const T = ahora + 3 * 3600_000;
+  const f = notifeeFalso();
+  const r = await programarRecordatorio({ texto: 'Tomar la pastilla', cuando: T, llamada: true }, f.deps(ahora));
+  assert.equal(r.ok, true, r.detalle);
+  assert.match(r.detalle, /^Te llamo hoy a las .*unos minutos de diferencia/, 'sin alarma exacta se dice que puede llegar tarde');
+  const base = r.id;
+  assert.deepEqual(f.programados.map((p) => [p.n.id, p.t.timestamp - T, p.t.alarmManager.type]), [
+    [`${base}-l1`, 0, 1],
+    [`${base}-l2`, REC.REINTENTO_MS, 1],
+    [`${base}-final`, REC.AVISO_FINAL_MS, 1],
+  ]);
+  const l1 = f.programados[0].n;
+  assert.equal(l1.android.category, 'call');
+  assert.equal(l1.android.channelId, REC.CANAL_LLAMADA);
+  assert.equal(l1.android.fullScreenAction.launchActivity, 'default', 'pantalla completa con el teléfono bloqueado');
+  assert.deepEqual(l1.android.actions.map((a) => a.pressAction.id), [REC.ACCION_CONTESTAR, REC.ACCION_RECHAZAR]);
+  assert.equal(l1.android.loopSound, true);
+  assert.equal(l1.android.timeoutAfter, REC.SUENA_MS);
+  assert.ok(f.canales.some((c) => c.id === REC.CANAL_LLAMADA && c.importance === 4 && c.sound), 'canal de alta importancia con timbre');
+  // Con «Alarmas y recordatorios» permitido: exacta.
+  const g = notifeeFalso({ exacto: true });
+  const r2 = await programarRecordatorio({ texto: 'Otra', cuando: T + 60_000, llamada: true }, g.deps(ahora));
+  assert.equal(r2.exacto, true);
+  assert.ok(g.programados.every((p) => p.t.alarmManager.type === 3));
+  assert.equal(r2.detalle, `Te llamo ${REC.horaCorta(T + 60_000, ahora)}.`);
+});
+
+prueba('recordatorios: se listan uno por recordatorio y se cancelan enteros (llamada, reintento y aviso final)', async () => {
+  _olvidarRecordatorios();
+  const ahora = Date.UTC(2026, 8, 30, 20, 0);
+  const f = notifeeFalso();
+  const a = await programarRecordatorio({ texto: 'Tomar la pastilla', cuando: ahora + 7200_000, llamada: true }, f.deps(ahora));
+  const b = await programarRecordatorio({ texto: 'Ir al banco', cuando: ahora + 3600_000 }, f.deps(ahora));
+  const lista = await REC.listarRecordatorios(f.deps(ahora));
+  assert.deepEqual(lista, [
+    { id: b.id, texto: 'Ir al banco', cuando: ahora + 3600_000, llamada: false },
+    { id: a.id, texto: 'Tomar la pastilla', cuando: ahora + 7200_000, llamada: true },
+  ]);
+  const c = await REC.cancelarRecordatorio(a.id, f.deps(ahora));
+  assert.equal(c.ok, true);
+  assert.deepEqual(f.cancelados, REC.idsDe(a.id));
+  assert.deepEqual((await REC.listarRecordatorios(f.deps(ahora))).map((x) => x.id), [b.id]);
+  assert.equal((await REC.cancelarRecordatorio(a.id, f.deps(ahora))).ok, false, 'ya no está');
+  assert.equal((await REC.cancelarRecordatorio('../../otra-cosa', f.deps(ahora))).ok, false);
+});
+
+prueba('la llamada de AURA: suena, contestar quita lo que faltaba y se dice UNA vez; rechazar deja el aviso escrito', async () => {
+  _olvidarRecordatorios();
+  const ahora = Date.UTC(2026, 8, 30, 20, 0);
+  const f = notifeeFalso();
+  const r = await programarRecordatorio({ texto: 'Tomar la pastilla', cuando: ahora + 3600_000, llamada: true }, f.deps(ahora));
+  const n1 = f.programados[0].n;
+  const K = f.k;
+  assert.equal(REC.interpretarEvento({ type: K.EventType.DELIVERED, detail: { notification: n1 } }, K)?.que, 'suena');
+  assert.equal(REC.interpretarEvento({ type: K.EventType.PRESS, detail: { notification: n1 } }, K)?.que, 'suena', 'tocar el aviso abre «AURA te llama»');
+  const c = REC.interpretarEvento({ type: K.EventType.ACTION_PRESS, detail: { notification: n1, pressAction: { id: REC.ACCION_CONTESTAR } } }, K);
+  assert.equal(c?.que, 'contestar');
+  assert.deepEqual(c.llamada, { base: r.id, texto: 'Tomar la pastilla', cuando: ahora + 3600_000, paso: 'l1' });
+  assert.equal(REC.interpretarEvento({ type: K.EventType.ACTION_PRESS, detail: { notification: n1, pressAction: { id: REC.ACCION_RECHAZAR } } }, K)?.que, 'rechazar');
+  assert.equal(REC.interpretarEvento({ type: K.EventType.DELIVERED, detail: { notification: f.programados[2].n } }, K), null, 'el aviso final no suena como llamada');
+  assert.equal(REC.interpretarEvento({ type: K.EventType.DELIVERED, detail: { notification: { id: 'pulse2chat-llamada' } } }, K), null, 'la de PULSE2CHAT no es de aquí');
+  assert.equal(REC.interpretarApertura({ notification: n1, pressAction: { id: REC.ACCION_CONTESTAR } }, K)?.que, 'contestar', 'con la app cerrada, Contestar la abre y se contesta');
+  assert.equal(REC.interpretarApertura({ notification: n1, pressAction: { id: REC.ACCION_PANTALLA } }, K)?.que, 'suena', 'la pantalla completa muestra «AURA te llama»');
+  await REC.alContestar(r.id, f.deps(ahora));
+  assert.deepEqual(f.cancelados, [`${r.id}-l2`, `${r.id}-final`]);
+  assert.deepEqual(f.quitados, [`${r.id}-l1`, `${r.id}-l2`]);
+  assert.equal(REC.anotarContestada(c.llamada, ahora), true);
+  assert.equal(REC.anotarContestada(c.llamada, ahora + 1000), false, 'el evento de fondo y el de apertura: una sola vez');
+  assert.equal(REC.tomarPorDecir()?.texto, 'Tomar la pastilla');
+  assert.equal(REC.tomarPorDecir(), null);
+  await REC.alRechazar(c.llamada, f.deps(ahora));
+  assert.equal(f.mostrados.at(-1).id, `${r.id}-final`);
+  assert.equal(f.mostrados.at(-1).body, 'Tomar la pastilla');
+  // En plena llamada de PULSE2CHAT: se quita y se repone al colgar.
+  await REC.aplazar(c.llamada, f.deps(ahora));
+  assert.equal(f.quitados.at(-1), `${r.id}-l1`);
+  await REC.reponer(c.llamada, f.deps(ahora));
+  assert.equal(f.mostrados.at(-1).id, `${r.id}-l1`);
+  assert.equal(f.mostrados.at(-1).android.category, 'call');
+});
+
+prueba('contestó: AURA se lo dice en la conversación (esperando a que termine una llamada de PULSE2CHAT); si no conecta, la voz de la mesa', async () => {
+  assert.match(mensajeDeRecordatorio('Tomar la pastilla'), /^\[\[recordatorio\]\] Tomar la pastilla$/);
+  assert.match(turnoDeRecordatorio(mensajeDeRecordatorio('Tomar la pastilla')), /llamas para recordarme: «Tomar la pastilla»/, 'el servidor lo entiende');
+  let estado = { montada: false, estado: 'cerrada', silenciada: false, dormida: false, suspendida: true };
+  const eventos = [];
+  let terminaLlamada;
+  const d = {
+    vista: () => estado,
+    despertar: () => {
+      eventos.push('despertar');
+      estado = { ...estado, montada: true, estado: 'conectando' };
+      setTimeout(() => (estado = { ...estado, estado: 'escuchando' }), 5);
+    },
+    enviarTexto: (t) => (eventos.push(t), true),
+    hablarMesa: () => assert.fail('conectó: no habla la mesa'),
+    enLlamada: () => estado.suspendida,
+    finDeLlamada: () => new Promise((r) => (terminaLlamada = r)),
+    esperar: (ms) => new Promise((r) => setTimeout(r, Math.min(ms, 2))),
+  };
+  const p = decirRecordatorio('Tomar la pastilla', d);
+  await dormir(10);
+  assert.deepEqual(eventos, [], 'en llamada no hace nada todavía');
+  estado = { ...estado, suspendida: false };
+  terminaLlamada();
+  assert.equal(await p, 'conversacion');
+  assert.deepEqual(eventos, ['despertar', '[[recordatorio]] Tomar la pastilla']);
+  const dichos = [];
+  const sinRed = { ...d, vista: () => ({ montada: true, estado: 'error', silenciada: false, dormida: false, suspendida: false }), despertar: () => {}, enLlamada: () => false, hablarMesa: (t) => dichos.push(t), topeMs: 20 };
+  assert.equal(await decirRecordatorio('Ir al banco', sinRed), 'mesa');
+  assert.deepEqual(dichos, ['Te llamo para recordarte: Ir al banco']);
+});
+
+prueba('el contexto lleva los recordatorios puestos (para decirlos y cancelarlos por voz)', async () => {
+  const ctx = new ContextoApp({
+    enviar: async () => {},
+    contactos: async () => [],
+    recordatorios: async () => [{ id: 'aura-rec-1-a', texto: 'Ir al banco', cuando: 5, llamada: false }],
+    escuchar: () => () => {},
+    esperar: (f) => (f(), () => {}),
+  });
+  const c = await ctx.enviarAhora(true);
+  assert.deepEqual(c.recordatorios, [{ id: 'aura-rec-1-a', texto: 'Ir al banco', cuando: 5, llamada: false }]);
 });
 
 prueba('emoción del texto (conversación fluida)', () => {

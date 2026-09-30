@@ -491,6 +491,37 @@ test('las manos: llamar espera el «sí»; leer vuelve por la voz con su boleto 
     assert.equal(otra.dicho, 'Perdón, no pude leértelo. Pídemelo otra vez.', 'el boleto vale una vez');
     assert.equal(alNodo.length, 0);
 
+    // Internet por voz sigue siendo del cerebro (herramienta web): las manos no se lo quedan.
+    alNodo.length = 0;
+    contestar = () => '[EMO: neutral] Esto dicen las noticias de hoy.';
+    const web = await voz(pase, [{ role: 'user', content: 'busca en internet las noticias de Honduras' }]);
+    assert.equal(web.dicho, 'Esto dicen las noticias de hoy.');
+    assert.ok(alNodo.length > 0 && /BÚSQUEDA WEB/.test(alNodo.at(-1)!.system), 'el cerebro recibe la búsqueda web (en voz, como herramienta)');
+
+    // «llámame a las 5 para recordarme…» por voz: se pregunta; con el «sí», la orden con llamada.
+    const pideLlamada = await voz(pase, [{ role: 'user', content: 'llámame a las 11 de la noche para recordarme la pastilla' }]);
+    assert.match(pideLlamada.dicho, /^¿Te llamo (hoy|mañana) a las 11:00 de la noche para recordarte «La pastilla»\?$/);
+    const siLlamada = await voz(pase, [{ role: 'user', content: 'sí' }]);
+    assert.match(siLlamada.dicho, /^Listo, te llamo /);
+    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'recordatorio' && a.llamada === true && a.texto === 'La pastilla')));
+    // Contestó: el teléfono manda `[[recordatorio]]` y el cerebro recibe la indicación de decírselo.
+    alNodo.length = 0;
+    contestar = () => '[EMO: feliz] ¡Hola! Te llamo para recordarte la pastilla.';
+    const contesta = await voz(pase, [{ role: 'user', content: '[[recordatorio]] La pastilla' }]);
+    assert.equal(contesta.dicho, '¡Hola! Te llamo para recordarte la pastilla.');
+    assert.match(alNodo.at(-1)!.ultimo, /Contesté la llamada de recordatorio .*«La pastilla»/);
+
+    // ¿Qué recordatorios tengo? / cancela el de la pastilla (con el contexto que manda el teléfono).
+    const manana7 = Date.now() + 26 * 3600_000;
+    assert.equal((await contexto({ manos: ['llamar', 'leer', 'recordatorio', 'recordatorio_llamada'], recordatorios: [{ id: 'aura-rec-prueba-1', texto: 'La pastilla', cuando: manana7, llamada: true }] })).status, 200);
+    const lista = await voz(pase, [{ role: 'user', content: '¿qué recordatorios tengo?' }]);
+    assert.match(lista.dicho, /^Tienes un recordatorio: .*«La pastilla» \(te llamo\)\.$/);
+    const cancela = await voz(pase, [{ role: 'user', content: 'cancela el recordatorio de la pastilla' }]);
+    assert.match(cancela.dicho, /^¿Cancelo el recordatorio «La pastilla» de /);
+    const siCancela = await voz(pase, [{ role: 'user', content: 'sí, cancélalo' }]);
+    assert.equal(siCancela.dicho, 'Listo, lo cancelé.');
+    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'cancelar_recordatorio' && a.id === 'aura-rec-prueba-1')));
+
     // Un APK viejo (sin `manos` en el contexto): «llama a mi mamá» va al cerebro y su línea no sale.
     assert.equal((await contexto({})).status, 200);
     contestar = () => '[EMO: neutral] ¿Le marco?\nACCION_APP: {"tipo":"llamar","con":"Mamá","video":false}';

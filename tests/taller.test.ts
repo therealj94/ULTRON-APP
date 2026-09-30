@@ -89,6 +89,8 @@ describe('Taller AU-RA', () => {
   it('con las manos del teléfono, «llama a…» y «avísame a las 5…» son de la app, no de Twilio ni del aviso urgente', async () => {
     const llama = await despacharTaller('oye llama a mi mamá que necesito hablarle', { quien: 'jose', manosApp: ['llamar'] });
     assert.deepEqual(llama.tools, [], 'no toca la caja de llamada');
+    const recuerda = await despacharTaller('llámame a las cinco y cuarenta para recordarme la pastilla', { quien: 'jose', manosApp: ['recordatorio', 'recordatorio_llamada'] });
+    assert.deepEqual(recuerda.tools, [], '«llámame… para recordarme» es un recordatorio con llamada de AURA, no Twilio');
     const avisa = await despacharTaller('avísame a las cinco que saque el pollo', { quien: 'jose', manosApp: ['recordatorio'] });
     assert.deepEqual(avisa.tools, [], 'no manda un aviso urgente a la junta');
     // «llámame» sigue siendo la llamada de Twilio, y «urgente» el aviso, aunque el teléfono tenga manos.

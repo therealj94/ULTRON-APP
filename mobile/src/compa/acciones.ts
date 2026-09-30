@@ -16,7 +16,7 @@
  *
  * Sin React Native: todo lo de afuera entra por `deps` y las pruebas lo corren con un servidor falso.
  */
-import type { AccionApp, Contexto, Eventos, Pantalla } from '../nucleo/contrato';
+import type { AccionApp, Contexto, Eventos, Pantalla, RecordatorioPuesto } from '../nucleo/contrato';
 import { MANOS_APP, RUTA_ACCIONES } from '../nucleo/contrato';
 import { LectorSse, jsonDe } from './sse';
 
@@ -97,6 +97,54 @@ export function esAccionApp(a: any): a is AccionApp {
  */
 export function mensajeDeLectura(boleto: string, texto: string): string {
   return `[[lectura:${boleto}]] ${String(texto || '').replace(/\s+/g, ' ').trim()}`;
+}
+
+/**
+ * La persona contestó la llamada de un recordatorio: así viaja por la conversación de voz y el servidor
+ * lo vuelve la indicación de decírselo (lib/manos-app.ts, turnoDeRecordatorio).
+ */
+export function mensajeDeRecordatorio(texto: string): string {
+  return `[[recordatorio]] ${String(texto || '').replace(/\s+/g, ' ').trim().slice(0, 300)}`;
+}
+
+export type DepsRecordatorioVoz = {
+  vista: () => VistaLectura;
+  /** Abre la conversación (o la despierta si estaba silenciada o dormida). */
+  despertar: () => void;
+  enviarTexto: (t: string) => boolean;
+  hablarMesa: (t: string) => Promise<unknown> | unknown;
+  /** ¿Hay una llamada de PULSE2CHAT en curso? Y una promesa que se cumple cuando termina. */
+  enLlamada: () => boolean;
+  finDeLlamada: () => Promise<void>;
+  esperar?: (ms: number) => Promise<void>;
+  /** Cuánto se espera a que la conversación conecte antes de decirlo con la voz de la mesa. */
+  topeMs?: number;
+};
+
+/**
+ * Contestó la llamada de AURA: se abre la conversación y, en cuanto escucha, AURA le dice el
+ * recordatorio con su voz (y la charla sigue). Si hay una llamada de PULSE2CHAT, espera a que termine.
+ * Si la conversación no conecta a tiempo, lo dice la voz de la mesa.
+ */
+export async function decirRecordatorio(texto: string, d: DepsRecordatorioVoz): Promise<'conversacion' | 'mesa' | 'nada'> {
+  const esperar = d.esperar || ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const limpio = String(texto || '').trim();
+  if (!limpio) return 'nada';
+  if (d.enLlamada()) await d.finDeLlamada();
+  const v = d.vista();
+  if (!v.montada || v.silenciada || v.dormida) d.despertar();
+  const vueltas = Math.ceil((d.topeMs ?? 15_000) / 250);
+  for (let i = 0; i < vueltas; i++) {
+    const x = d.vista();
+    if (x.montada && !x.silenciada && x.estado === 'escuchando') {
+      if (d.enviarTexto(mensajeDeRecordatorio(limpio))) return 'conversacion';
+      break;
+    }
+    await esperar(250);
+  }
+  if (d.vista().suspendida) return 'nada';
+  await d.hablarMesa(`Te llamo para recordarte: ${limpio}`);
+  return 'mesa';
 }
 
 /** Lo que mira `decirLectura` de la sesión de voz (la VistaSesion de sesion.ts). */
@@ -409,6 +457,8 @@ export type DepsContexto = {
   enviar: (c: Contexto) => Promise<unknown>;
   /** Nombres y correos de la gente con la que se puede hablar (nunca mensajes). */
   contactos: () => Promise<Contacto[]>;
+  /** Los recordatorios puestos en el teléfono (se leen en cada envío: es local y barato). */
+  recordatorios?: () => Promise<RecordatorioPuesto[]>;
   escuchar: <K extends 'pantalla' | 'hecho' | 'enviado'>(tipo: K, f: (d: Eventos[K]) => void) => () => void;
   esperar?: Temporizador;
   reloj?: () => number;
@@ -454,6 +504,9 @@ export class ContextoApp {
           this.pronto();
         } else if (h.accion.tipo === 'enviar' || h.accion.tipo === 'descartar') {
           this.borrador = undefined;
+          this.pronto();
+        } else if (h.accion.tipo === 'recordatorio' || h.accion.tipo === 'cancelar_recordatorio') {
+          // La lista de recordatorios cambió: que el servidor la sepa para «¿qué recordatorios tengo?».
           this.pronto();
         }
       }),
@@ -523,6 +576,7 @@ export class ContextoApp {
       ...(this.borrador !== undefined ? { borrador: this.borrador } : {}),
       // Lo que este teléfono sabe hacer: el servidor solo le ofrece (y le manda) esas manos.
       manos: MANOS_APP,
+      ...(this.d.recordatorios ? { recordatorios: await this.d.recordatorios().catch(() => []) } : {}),
     };
     const firma = JSON.stringify(c);
     if (!forzar && firma === this.ultimoEnviado) return null;

@@ -100,7 +100,8 @@
         }
       ],
       "@livekit/react-native-expo-plugin",
-      "./plugins/servicio-llamada"
+      "./plugins/servicio-llamada",
+      "./plugins/recordatorio-llamada"
     ]
   }
 }

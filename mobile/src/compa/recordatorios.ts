@@ -1,30 +1,56 @@
 /**
- * LOS RECORDATORIOS DE AURA: «recuérdame a las 5 llamar a mi mamá» → un aviso local en el teléfono.
+ * LOS RECORDATORIOS DE AURA, en el teléfono.
  *
- * AURA pregunta primero con la hora exacta («¿Te recuerdo "Llamar a mi mamá" hoy a las 5:00 de la
- * tarde?») y el servidor manda `recordatorio` SOLO tras el «sí» (lib/manos-app.ts). Aquí se pone:
- *  · con permiso de avisos (Android 13+ lo pide; si la persona lo negó, se dice cómo activarlo);
- *  · con notifee, que ya está en el APK (lo usa el servicio de las llamadas), como aviso programado.
- *    La alarma es la «inexacta que despierta al teléfono» (SET_AND_ALLOW_WHILE_IDLE): no pide el
- *    permiso de alarmas exactas y en la práctica suena en el minuto, aun con el teléfono dormido;
+ *   «recuérdame a las 5 llamar a mi mamá»          → un AVISO a esa hora.
+ *   «llámame a las 5 para recordarme la pastilla»   → a esa hora AURA TE LLAMA: aviso de llamada
+ *       entrante (categoría llamada, pantalla completa si Android lo deja, timbre en bucle, Contestar /
+ *       Rechazar). Al contestar se abre la app en la conversación con AURA y ella te lo dice con su voz.
+ *       Si no contestas, vuelve a llamar UNA vez a los 5 minutos; si tampoco, queda el aviso normal.
+ *   «¿qué recordatorios tengo?» / «cancela el de las 5» → se leen de aquí (el contexto se los cuenta al
+ *       servidor) y se cancelan aquí, con su «sí».
+ *
+ * AURA pregunta primero con la hora exacta y el servidor manda la orden SOLO tras el «sí»
+ * (lib/manos-app.ts). Cómo se pone:
+ *  · con permiso de avisos (Android 13+; si lo negó, se dice cómo activarlo);
+ *  · con notifee (ya viene en el APK por el servicio de las llamadas). Los avisos programados de notifee
+ *    sobreviven a cerrar la app y a reiniciar el teléfono: su RebootBroadcastReceiver los vuelve a
+ *    agendar al encender (lo declara su manifiesto, con RECEIVE_BOOT_COMPLETED);
+ *  · la alarma EXACTA solo si Android la permite a AU-RA («Alarmas y recordatorios»,
+ *    SCHEDULE_EXACT_ALARM, que ya trae notifee); si no, la inexacta que despierta al teléfono
+ *    (SET_AND_ALLOW_WHILE_IDLE), que puede llegar con unos minutos de diferencia, y se dice.
+ *    USE_EXACT_ALARM NO: Play lo reserva a apps de despertador y calendario;
+ *  · la llamada se programa ENTERA por adelantado (llamada, reintento a los 5 min y aviso final), así
+ *    funciona con la app cerrada; contestar o rechazar cancela lo que falta;
  *  · una sola vez aunque la orden llegue dos veces (por el SSE y en la respuesta del turno).
  * Nada sale del teléfono: el aviso vive en el sistema de Android.
  *
- * Todo lo de afuera entra por `deps`: las pruebas lo corren en node con un notifee falso.
+ * Todo lo de afuera entra por `deps`: las pruebas lo corren en node con un notifee falso. El pegamento
+ * con la app (manejadores de notifee, la pantalla «AURA te llama», las llamadas de PULSE2CHAT) está
+ * en recordatoriosNativo.ts.
  */
 import { tr } from '../i18n';
+import type { RecordatorioPuesto } from '../nucleo/contrato';
 
 /** Lo que se usa de notifee (el de verdad o uno falso). */
 export type NotifeeMin = {
   requestPermission: () => Promise<{ authorizationStatus: number }>;
-  createChannel: (c: { id: string; name: string; importance?: number; sound?: string }) => Promise<string>;
+  getNotificationSettings?: () => Promise<{ android?: { alarm?: number } }>;
+  createChannel: (c: Record<string, unknown>) => Promise<string>;
   createTriggerNotification: (n: Record<string, unknown>, t: Record<string, unknown>) => Promise<string>;
+  getTriggerNotifications?: () => Promise<{ notification: { id?: string; data?: Record<string, unknown> } }[]>;
+  cancelTriggerNotifications?: (ids?: string[]) => Promise<void>;
+  cancelNotification?: (id: string) => Promise<void>;
+  displayNotification?: (n: Record<string, unknown>) => Promise<string>;
 };
 export type ConstantesNotifee = {
   TriggerType: { TIMESTAMP: number };
-  AlarmType: { SET_AND_ALLOW_WHILE_IDLE: number };
+  AlarmType: { SET_AND_ALLOW_WHILE_IDLE: number; SET_EXACT_AND_ALLOW_WHILE_IDLE?: number };
   AuthorizationStatus: { DENIED: number };
   AndroidImportance: { HIGH: number };
+  AndroidCategory?: { CALL: string; REMINDER?: string };
+  AndroidVisibility?: { PUBLIC: number };
+  AndroidNotificationSetting?: { ENABLED: number };
+  EventType?: { DISMISSED: number; PRESS: number; ACTION_PRESS: number; DELIVERED: number };
 };
 
 export type DepsRecordatorio = {
@@ -33,12 +59,25 @@ export type DepsRecordatorio = {
 };
 
 export const CANAL_RECORDATORIOS = 'aura-recordatorios';
+/** Canal propio de la llamada: importancia alta y timbre (los canales de Android no cambian después). */
+export const CANAL_LLAMADA = 'aura-recordatorio-llamada';
 /** Lo que queda por delante como mínimo para poner un aviso (el servidor ya pide un minuto). */
 export const MARGEN_MS = 20_000;
 export const MAX_ADELANTE_MS = 400 * 24 * 3600_000;
 export const VENTANA_REPETIDO_MS = 10_000;
+/** La llamada suena un minuto; el reintento, a los 5 minutos; el aviso final, cuando termina el reintento. */
+export const SUENA_MS = 60_000;
+export const REINTENTO_MS = 5 * 60_000;
+export const AVISO_FINAL_MS = REINTENTO_MS + SUENA_MS;
 
-export type Resultado = { ok: boolean; detalle: string; id?: string };
+/** Los botones y toques de la llamada (los lee recordatoriosNativo.ts). */
+export const ACCION_CONTESTAR = 'aura-rec-contestar';
+export const ACCION_RECHAZAR = 'aura-rec-rechazar';
+export const ACCION_ABRIR = 'aura-rec-abrir';
+export const ACCION_PANTALLA = 'aura-rec-pantalla';
+
+export type Paso = 'aviso' | 'l1' | 'l2' | 'final';
+export type Resultado = { ok: boolean; detalle: string; id?: string; exacto?: boolean };
 
 const recientes = new Map<string, { r: Resultado; en: number }>();
 
@@ -56,14 +95,83 @@ export function horaCorta(cuando: number, ahora: number): string {
   return tr(`el ${d.getDate()}/${d.getMonth() + 1} a las ${reloj}`, `on ${d.getMonth() + 1}/${d.getDate()} at ${relojEn}`);
 }
 
-/** Pone el aviso. Nunca lanza: lo que falle se contesta con un motivo que AURA puede decir. */
-export async function programarRecordatorio(a: { texto: string; cuando: number }, d: DepsRecordatorio): Promise<Resultado> {
+/** El id base de un recordatorio (la misma orden repetida da el mismo id: no se duplica). */
+export function idRecordatorio(cuando: number, texto: string): string {
+  let h = 0;
+  for (const c of texto) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return `aura-rec-${cuando.toString(36)}-${h.toString(36)}`;
+}
+
+/** Los ids de todo lo que se programa para un recordatorio (para cancelarlo entero). */
+export function idsDe(base: string): string[] {
+  return [base, `${base}-l1`, `${base}-l2`, `${base}-final`];
+}
+
+const limpiar = (s: unknown) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, 140);
+
+function datos(base: string, texto: string, cuando: number, paso: Paso, llamada: boolean): Record<string, string> {
+  return { aura: 'recordatorio', base, texto, cuando: String(cuando), paso, llamada: llamada ? '1' : '0' };
+}
+
+/** El aviso de llamada entrante de AURA (la primera y el reintento). */
+export function avisoDeLlamada(base: string, texto: string, cuando: number, paso: 'l1' | 'l2', k: ConstantesNotifee): Record<string, unknown> {
+  return {
+    id: `${base}-${paso}`,
+    title: tr('AURA te llama', 'AURA is calling'),
+    body: tr(`Para recordarte: ${texto}`, `To remind you: ${texto}`),
+    data: datos(base, texto, cuando, paso, true),
+    android: {
+      channelId: CANAL_LLAMADA,
+      category: k.AndroidCategory?.CALL ?? 'call',
+      importance: k.AndroidImportance.HIGH,
+      ...(k.AndroidVisibility ? { visibility: k.AndroidVisibility.PUBLIC } : {}),
+      // Con el teléfono bloqueado, Android abre la app a pantalla completa (si deja a AU-RA usarla;
+      // si no, queda el aviso con timbre). La app muestra «AURA te llama» con Contestar / Rechazar.
+      fullScreenAction: { id: ACCION_PANTALLA, launchActivity: 'default' },
+      pressAction: { id: ACCION_ABRIR, launchActivity: 'default' },
+      actions: [
+        { title: tr('Contestar', 'Answer'), pressAction: { id: ACCION_CONTESTAR, launchActivity: 'default' } },
+        { title: tr('Rechazar', 'Decline'), pressAction: { id: ACCION_RECHAZAR } },
+      ],
+      loopSound: true,
+      ongoing: true,
+      autoCancel: false,
+      lightUpScreen: true,
+      timeoutAfter: SUENA_MS,
+    },
+  };
+}
+
+/** El aviso normal (el de «recuérdame…», o el que queda si no contestó la llamada). */
+export function avisoNormal(base: string, texto: string, cuando: number, paso: 'aviso' | 'final', llamada: boolean, k: ConstantesNotifee): Record<string, unknown> {
+  return {
+    id: paso === 'aviso' ? base : `${base}-final`,
+    title: paso === 'final' ? tr('AURA te llamó para recordarte', 'AURA called to remind you') : tr('AURA te recuerda', 'AURA reminds you'),
+    body: texto,
+    data: datos(base, texto, cuando, paso, llamada),
+    android: { channelId: CANAL_RECORDATORIOS, pressAction: { id: 'default' }, importance: k.AndroidImportance.HIGH },
+  };
+}
+
+async function alarmaExacta(m: NotifeeMin, k: ConstantesNotifee): Promise<boolean> {
+  if (!m.getNotificationSettings || k.AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE === undefined) return false;
+  try {
+    const s = await m.getNotificationSettings();
+    return s?.android?.alarm === (k.AndroidNotificationSetting?.ENABLED ?? 1);
+  } catch {
+    return false;
+  }
+}
+
+/** Pone el recordatorio (aviso o llamada). Nunca lanza: lo que falle se contesta con un motivo que AURA puede decir. */
+export async function programarRecordatorio(a: { texto: string; cuando: number; llamada?: boolean }, d: DepsRecordatorio): Promise<Resultado> {
   const ahora = (d.ahora || Date.now)();
-  const texto = String(a.texto || '').replace(/\s+/g, ' ').trim().slice(0, 140);
+  const texto = limpiar(a.texto);
+  const llamada = a.llamada === true;
   if (!texto) return { ok: false, detalle: tr('No me quedó claro qué recordarte.', "I didn't catch what to remind you.") };
   if (!Number.isFinite(a.cuando) || a.cuando < ahora + MARGEN_MS) return { ok: false, detalle: tr('Esa hora ya pasó. Dime otra.', 'That time already passed. Tell me another one.') };
   if (a.cuando > ahora + MAX_ADELANTE_MS) return { ok: false, detalle: tr('Eso está demasiado lejos para un recordatorio.', "That's too far ahead for a reminder.") };
-  const clave = `${a.cuando}|${texto}`;
+  const clave = `${a.cuando}|${texto}|${llamada ? 1 : 0}`;
   const ya = recientes.get(clave);
   if (ya && ahora - ya.en < VENTANA_REPETIDO_MS) return ya.r;
   const n = d.notifee();
@@ -74,17 +182,32 @@ export async function programarRecordatorio(a: { texto: string; cuando: number }
     if (permiso.authorizationStatus === k.AuthorizationStatus.DENIED) {
       return { ok: false, detalle: tr('Necesito permiso de avisos para recordarte. Actívalo en Ajustes, en Avisos.', 'I need notification permission to remind you. Turn it on in Settings, under Notifications.') };
     }
-    const canal = await m.createChannel({ id: CANAL_RECORDATORIOS, name: tr('Recordatorios de AURA', 'AURA reminders'), importance: k.AndroidImportance.HIGH, sound: 'default' });
-    const id = await m.createTriggerNotification(
-      {
-        id: `aura-rec-${a.cuando.toString(36)}-${(texto.length * 131 + texto.charCodeAt(0)).toString(36)}`,
-        title: tr('AURA te recuerda', 'AURA reminds you'),
-        body: texto,
-        android: { channelId: canal, pressAction: { id: 'default' }, importance: k.AndroidImportance.HIGH },
-      },
-      { type: k.TriggerType.TIMESTAMP, timestamp: a.cuando, alarmManager: { type: k.AlarmType.SET_AND_ALLOW_WHILE_IDLE } }
-    );
-    const r: Resultado = { ok: true, detalle: tr(`Te aviso ${horaCorta(a.cuando, ahora)}.`, `I'll remind you ${horaCorta(a.cuando, ahora)}.`), id };
+    const exacto = await alarmaExacta(m, k);
+    const alarma = { type: exacto ? (k.AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE as number) : k.AlarmType.SET_AND_ALLOW_WHILE_IDLE };
+    const cuando = (t: number) => ({ type: k.TriggerType.TIMESTAMP, timestamp: t, alarmManager: alarma });
+    await m.createChannel({ id: CANAL_RECORDATORIOS, name: tr('Recordatorios de AURA', 'AURA reminders'), importance: k.AndroidImportance.HIGH, sound: 'default' });
+    const base = idRecordatorio(a.cuando, texto);
+    if (llamada) {
+      await m.createChannel({
+        id: CANAL_LLAMADA,
+        name: tr('AURA te llama (recordatorios)', 'AURA calls you (reminders)'),
+        description: tr('Cuando le pides a AURA que te llame para recordarte algo', 'When you ask AURA to call you to remind you of something'),
+        importance: k.AndroidImportance.HIGH,
+        sound: 'default',
+        vibration: true,
+        vibrationPattern: [300, 700, 300, 700],
+        ...(k.AndroidVisibility ? { visibility: k.AndroidVisibility.PUBLIC } : {}),
+      });
+      await m.createTriggerNotification(avisoDeLlamada(base, texto, a.cuando, 'l1', k), cuando(a.cuando));
+      await m.createTriggerNotification(avisoDeLlamada(base, texto, a.cuando, 'l2', k), cuando(a.cuando + REINTENTO_MS));
+      await m.createTriggerNotification(avisoNormal(base, texto, a.cuando, 'final', true, k), cuando(a.cuando + AVISO_FINAL_MS));
+    } else {
+      await m.createTriggerNotification(avisoNormal(base, texto, a.cuando, 'aviso', false, k), cuando(a.cuando));
+    }
+    const hora = horaCorta(a.cuando, ahora);
+    const aprox = exacto ? '' : tr(' Puede llegar con unos minutos de diferencia: para que sea exacto, activa «Alarmas y recordatorios» para AU-RA en Ajustes.', ' It may arrive a few minutes late: for exact timing, allow "Alarms & reminders" for AU-RA in Settings.');
+    const detalle = (llamada ? tr(`Te llamo ${hora}.`, `I'll call you ${hora}.`) : tr(`Te aviso ${hora}.`, `I'll remind you ${hora}.`)) + aprox;
+    const r: Resultado = { ok: true, detalle, id: base, exacto };
     recientes.set(clave, { r, en: ahora });
     if (recientes.size > 50) recientes.delete(recientes.keys().next().value as string);
     return r;
@@ -93,7 +216,155 @@ export async function programarRecordatorio(a: { texto: string; cuando: number }
   }
 }
 
+/** Los recordatorios que siguen puestos (uno por recordatorio, no por cada aviso que lo compone). */
+export async function listarRecordatorios(d: DepsRecordatorio): Promise<RecordatorioPuesto[]> {
+  const n = d.notifee();
+  if (!n?.m.getTriggerNotifications) return [];
+  try {
+    const todos = await n.m.getTriggerNotifications();
+    const out: RecordatorioPuesto[] = [];
+    for (const t of todos) {
+      const x = t?.notification?.data || {};
+      if (x.aura !== 'recordatorio' || (x.paso !== 'aviso' && x.paso !== 'l1')) continue;
+      const cuando = Number(x.cuando);
+      if (!Number.isFinite(cuando) || typeof x.base !== 'string') continue;
+      out.push({ id: x.base, texto: limpiar(x.texto), cuando, llamada: x.llamada === '1' });
+    }
+    return out.sort((a, b) => a.cuando - b.cuando).slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
+/** Cancela un recordatorio entero (el aviso, o la llamada, su reintento y su aviso final). */
+export async function cancelarRecordatorio(id: string, d: DepsRecordatorio): Promise<Resultado> {
+  if (!/^aura-rec-[a-z0-9-]{1,80}$/.test(id)) return { ok: false, detalle: tr('No encuentro ese recordatorio.', "I can't find that reminder.") };
+  const n = d.notifee();
+  if (!n?.m.cancelTriggerNotifications) return { ok: false, detalle: tr('En este teléfono no puedo quitar avisos.', "I can't remove reminders on this phone.") };
+  const puestos = await listarRecordatorios(d);
+  if (!puestos.some((r) => r.id === id)) return { ok: false, detalle: tr('Ese recordatorio ya no está.', "That reminder isn't there anymore.") };
+  try {
+    await n.m.cancelTriggerNotifications(idsDe(id));
+    return { ok: true, detalle: tr('Recordatorio cancelado.', 'Reminder cancelled.') };
+  } catch {
+    return { ok: false, detalle: tr('No pude quitar el recordatorio.', "I couldn't remove the reminder.") };
+  }
+}
+
+/* ── la llamada de AURA cuando llega ─────────────────────────────────────────────────────── */
+
+export type LlamadaRecordatorio = { base: string; texto: string; cuando: number; paso: 'l1' | 'l2' };
+export type EventoNotifee = { type: number; detail?: { notification?: { id?: string; data?: Record<string, unknown> }; pressAction?: { id?: string } } };
+
+/**
+ * Qué significa un evento de notifee para los recordatorios, o null si no es de ellos:
+ *  · `suena`: la llamada llegó (DELIVERED) o la persona la tocó / Android abrió la pantalla completa;
+ *    la app muestra «AURA te llama»;
+ *  · `contestar` / `rechazar`: los botones.
+ */
+export function interpretarEvento(e: EventoNotifee, k: ConstantesNotifee): { que: 'suena' | 'contestar' | 'rechazar'; llamada: LlamadaRecordatorio } | null {
+  const x = e?.detail?.notification?.data || {};
+  if (x.aura !== 'recordatorio' || (x.paso !== 'l1' && x.paso !== 'l2') || typeof x.base !== 'string') return null;
+  const llamada: LlamadaRecordatorio = { base: x.base, texto: limpiar(x.texto), cuando: Number(x.cuando) || 0, paso: x.paso };
+  const T = k.EventType ?? { DISMISSED: 0, PRESS: 1, ACTION_PRESS: 2, DELIVERED: 3 };
+  const accion = e.detail?.pressAction?.id;
+  if (e.type === T.ACTION_PRESS && accion === ACCION_CONTESTAR) return { que: 'contestar', llamada };
+  if (e.type === T.ACTION_PRESS && accion === ACCION_RECHAZAR) return { que: 'rechazar', llamada };
+  if (e.type === T.DELIVERED || e.type === T.PRESS) return { que: 'suena', llamada };
+  return null;
+}
+
+/** Lo que abrió la app (getInitialNotification): contestar desde el botón, o que suene en pantalla. */
+export function interpretarApertura(inicial: { notification?: { data?: Record<string, unknown> }; pressAction?: { id?: string } } | null | undefined, k: ConstantesNotifee) {
+  if (!inicial?.notification) return null;
+  const T = k.EventType ?? { DISMISSED: 0, PRESS: 1, ACTION_PRESS: 2, DELIVERED: 3 };
+  const id = inicial.pressAction?.id;
+  return interpretarEvento({ type: id === ACCION_CONTESTAR || id === ACCION_RECHAZAR ? T.ACTION_PRESS : T.PRESS, detail: { notification: inicial.notification, pressAction: { id } } }, k);
+}
+
+/** Contestó: se quita lo que sonaba y lo que faltaba (reintento y aviso final). */
+export async function alContestar(base: string, d: DepsRecordatorio) {
+  const n = d.notifee();
+  if (!n) return;
+  await n.m.cancelTriggerNotifications?.([`${base}-l2`, `${base}-final`]).catch(() => undefined);
+  for (const id of [`${base}-l1`, `${base}-l2`]) await n.m.cancelNotification?.(id).catch(() => undefined);
+}
+
+/**
+ * Rechazó: no se vuelve a llamar (lo dijo ella), pero el recordatorio queda escrito en el aviso normal,
+ * ya, para que no se pierda.
+ */
+export async function alRechazar(l: LlamadaRecordatorio, d: DepsRecordatorio) {
+  const n = d.notifee();
+  if (!n) return;
+  await alContestar(l.base, d);
+  await n.m.displayNotification?.(avisoNormal(l.base, l.texto, l.cuando, 'final', true, n.k)).catch(() => undefined);
+}
+
+/**
+ * La llamada llegó en plena llamada de PULSE2CHAT: no se le encima. Se quita y se vuelve a poner
+ * cuando esa llamada termine (`reponer`).
+ */
+export async function aplazar(l: LlamadaRecordatorio, d: DepsRecordatorio) {
+  await d.notifee()?.m.cancelNotification?.(`${l.base}-${l.paso}`).catch(() => undefined);
+}
+export async function reponer(l: LlamadaRecordatorio, d: DepsRecordatorio) {
+  const n = d.notifee();
+  await n?.m.displayNotification?.(avisoDeLlamada(l.base, l.texto, l.cuando, l.paso, n.k)).catch(() => undefined);
+}
+
+/* ── «AURA te llama» en la app (la pantalla que se ve al sonar) ───────────────────────────── */
+
+let sonando: LlamadaRecordatorio | null = null;
+const oyentes = new Set<() => void>();
+export const llamadaSonando = () => sonando;
+export function fijarSonando(l: LlamadaRecordatorio | null) {
+  if (sonando?.base === l?.base && sonando?.paso === l?.paso) return;
+  sonando = l;
+  for (const f of [...oyentes]) f();
+}
+export function escucharSonando(f: () => void): () => void {
+  oyentes.add(f);
+  return () => {
+    oyentes.delete(f);
+  };
+}
+
+/*
+ * Lo que AURA tiene que decir porque la persona contestó. Queda guardado hasta que la voz lo toma:
+ * si contestó con la app cerrada, el toque abre la app y la voz se monta DESPUÉS del aviso. Una misma
+ * llamada contestada dos veces (el evento de fondo y el de apertura) se dice una sola.
+ */
+let porDecir: LlamadaRecordatorio | null = null;
+const dichos = new Map<string, number>();
+const oyentesPorDecir = new Set<() => void>();
+export const VENTANA_CONTESTADA_MS = 10 * 60_000;
+
+export function anotarContestada(l: LlamadaRecordatorio, ahora: number = Date.now()): boolean {
+  for (const [b, t] of dichos) if (ahora - t > VENTANA_CONTESTADA_MS) dichos.delete(b);
+  if (dichos.has(l.base)) return false;
+  dichos.set(l.base, ahora);
+  porDecir = l;
+  for (const f of [...oyentesPorDecir]) f();
+  return true;
+}
+/** La voz lo toma (y ya no lo toma nadie más). */
+export function tomarPorDecir(): LlamadaRecordatorio | null {
+  const l = porDecir;
+  porDecir = null;
+  return l;
+}
+export function escucharPorDecir(f: () => void): () => void {
+  oyentesPorDecir.add(f);
+  return () => {
+    oyentesPorDecir.delete(f);
+  };
+}
+
 /** Solo pruebas. */
 export function _olvidarRecordatorios() {
   recientes.clear();
+  sonando = null;
+  porDecir = null;
+  dichos.clear();
 }

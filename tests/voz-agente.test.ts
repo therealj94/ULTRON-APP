@@ -655,3 +655,14 @@ test('la lectura del teléfono («¿qué me dijo Beto?»): con su boleto se dice
     await s.cerrar();
   }
 });
+
+test('contestó la llamada de un recordatorio: `[[recordatorio]]` llega al cerebro como la indicación de decírselo', async () => {
+  const s = await montar(async (t) => t.enviar('done', { reply: '¡Hola! Te llamo para recordarte la pastilla.' }));
+  try {
+    const r = await llm(s.base, paseDe(persona()), [{ role: 'user', content: '[[recordatorio]] Tomar la pastilla' }]);
+    assert.equal(dichoDe(await r.text()), '¡Hola! Te llamo para recordarte la pastilla.');
+    assert.match(String(s.vistos[0].body.message), /^\(Contesté la llamada de recordatorio .*«Tomar la pastilla»/);
+  } finally {
+    await s.cerrar();
+  }
+});
