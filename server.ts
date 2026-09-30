@@ -1916,7 +1916,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   }
 
   // La decisión rápida: tipo de tarea, riesgo, agente, si es un intento de torcer al sistema.
-  const clas = await clasificar(message, 'ultron');
+  // Hablando, Laya tiene un tope más corto: la voz no espera.
+  const clas = await clasificar(message, 'ultron', { voz: !!opciones.voz });
   trazaActual()?.clasificacion(clas);
   trazaActual()?.agente(nombreAgente(clas.agente));
 
