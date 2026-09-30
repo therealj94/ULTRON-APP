@@ -169,10 +169,10 @@ jobs:
           APK="out/${{ matrix.marca }}-${{ steps.version.outputs.version }}.apk"
           SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
           APKSIGNER=$(ls "$SDK"/build-tools/*/apksigner | sort -V | tail -n 1)
-          # apksigner escribe «Signer #1 certificate SHA-256 digest: …» o, según las versiones y el
-          # minSdk, «Signer (minSdkVersion=…) certificate SHA-256 digest: …»: vale cualquiera de las dos.
+          # apksigner escribe «Signer #1 certificate SHA-256 digest: …», «V2 Signer: certificate…» o, según
+          # las versiones y el minSdk, «Signer (minSdkVersion=…) certificate…»: vale cualquiera.
           SALIDA=$("$APKSIGNER" verify --print-certs "$APK" 2>&1 || true)
-          HUELLA=$(printf '%s\n' "$SALIDA" | sed -n 's/^Signer.* certificate SHA-256 digest: //p' | head -n 1 | tr -d ' ' | tr 'a-f' 'A-F' | sed 's/../&:/g; s/:$//')
+          HUELLA=$(printf '%s\n' "$SALIDA" | sed -n 's/^.*Signer.* certificate SHA-256 digest: //p' | head -n 1 | tr -d ' ' | tr 'a-f' 'A-F' | sed 's/../&:/g; s/:$//')
           if [ -z "$HUELLA" ]; then printf '%s\n' "$SALIDA" | head -n 20; fi
           if [ -z "$HUELLA" ]; then
             echo "::error::apksigner no devolvió la huella SHA-256 del APK."
