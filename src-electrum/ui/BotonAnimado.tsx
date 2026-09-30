@@ -21,6 +21,8 @@ import './botonAnimado.css';
 import { TEMA_BOTON, type ColoresBoton, type TamanoBoton, type TipoBoton } from './temaBoton';
 
 export type BotonAnimadoProps = {
+  /** El proyecto no usa @types/react: sin esto, `key` en una lista no pasa tsc. */
+  key?: string;
   texto: string;
   tipo?: TipoBoton;
   tamano?: TamanoBoton;
