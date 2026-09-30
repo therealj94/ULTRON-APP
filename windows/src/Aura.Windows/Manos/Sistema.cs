@@ -28,7 +28,13 @@ internal static class Sistema
         var ahora = DateTime.Now;
         switch (que)
         {
-            case "hora": return en ? $"It's {ahora.ToString("h:mm tt", cultura)}." : $"Son las {ahora.ToString("h:mm tt", cultura).Replace("a. m.", "de la mañana").Replace("p. m.", ahora.Hour >= 19 ? "de la noche" : "de la tarde")}.";
+            case "hora":
+            {
+                int h12 = ahora.Hour % 12 == 0 ? 12 : ahora.Hour % 12;
+                if (en) return $"It's {h12}:{ahora.Minute:00} {(ahora.Hour < 12 ? "a.m." : "p.m.")}.";
+                var parte = ahora.Hour < 12 ? "de la mañana" : ahora.Hour < 19 ? "de la tarde" : "de la noche";
+                return $"{(h12 == 1 ? "Es la" : "Son las")} {h12}:{ahora.Minute:00} {parte}.";
+            }
             case "fecha": return en ? $"Today is {ahora.ToString("dddd, MMMM d", cultura)}." : $"Hoy es {ahora.ToString("dddd d 'de' MMMM", cultura)}.";
             case "bateria":
             {
@@ -50,11 +56,16 @@ internal static class Sistema
             {
                 var activas = NetworkInterface.GetAllNetworkInterfaces().Where(n => n.OperationalStatus == OperationalStatus.Up && n.NetworkInterfaceType is not (NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel)).ToList();
                 if (activas.Count == 0) return en ? "No network connection." : "No hay conexión de red.";
+                var via = activas.Any(n => n.NetworkInterfaceType == NetworkInterfaceType.Wireless80211) ? "Wi-Fi" : "cable";
+                // La misma prueba que usa Windows (NCSI) por HTTP: el ping suele estar bloqueado en redes de empresa.
                 bool internet;
-                try { using var ping = new Ping(); internet = ping.Send("1.1.1.1", 1500).Status == IPStatus.Success; } catch { internet = false; }
-                var wifi = activas.FirstOrDefault(n => n.NetworkInterfaceType == NetworkInterfaceType.Wireless80211);
-                var via = wifi != null ? "Wi-Fi" : en ? "cable" : "cable";
-                return internet ? (en ? $"You're online by {via}." : $"Hay internet, por {via}.") : (en ? $"Connected by {via}, but internet doesn't answer." : $"Estás conectada por {via}, pero internet no responde.");
+                try
+                {
+                    using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                    internet = http.GetStringAsync("http://www.msftconnecttest.com/connecttest.txt").GetAwaiter().GetResult().Contains("Microsoft Connect Test");
+                }
+                catch { internet = false; }
+                return internet ? (en ? $"You're online by {via}." : $"Hay internet, por {via}.") : (en ? $"Connected by {via}, but the internet doesn't answer." : $"Hay conexión por {via}, pero internet no responde.");
             }
             default:
             {
