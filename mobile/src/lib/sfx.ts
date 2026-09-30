@@ -17,7 +17,7 @@ const pool = new Map<SfxName, Audio.Sound>();
 let ready = false;
 
 export async function preloadSfx() {
-  if (ready) return;
+  if (ready || enLlamada) return;
   try {
     await Audio.setAudioModeAsync({
       playsInSilentModeIOS: true,
@@ -43,8 +43,14 @@ export function setSfxEnabled(on: boolean) {
   sfxEnabled = on;
 }
 
+/** En una llamada no suena ningún efecto (ni la risita de la compañera): el audio es de la llamada. */
+let enLlamada = false;
+export function suspenderSfx(on: boolean) {
+  enLlamada = on;
+}
+
 export function playSfx(name: SfxName) {
-  if (!sfxEnabled) return;
+  if (!sfxEnabled || enLlamada) return;
   const s = pool.get(name);
   if (!s) {
     void (async () => {

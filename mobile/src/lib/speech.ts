@@ -93,6 +93,10 @@ export async function ensureSpeechPermissions(): Promise<boolean> {
 
 export async function enableAlwaysOnMic() {
   enabled = true;
+  if (suspendido) {
+    queridoAlVolver.abierto = true;
+    return;
+  }
   if (engine === 'native') {
     if (!native.nativeAvailable()) {
       engine = 'cloud';
@@ -105,16 +109,58 @@ export async function enableAlwaysOnMic() {
   return cloud.enableAlwaysOnMic();
 }
 
+/*
+ * Llamada en curso (voz o video): el oído se suelta del todo y NADIE lo vuelve a armar hasta colgar.
+ * El motor de la nube fija el modo de audio de expo-av al grabar y eso rompe el de la llamada; el
+ * nativo le quita el micrófono. Mientras dure, las órdenes de abrir/pausar/reiniciar se anotan y al
+ * colgar queda exactamente como se pidió por última vez.
+ */
+let suspendido = false;
+/** Lo que se quería antes de (o durante) la llamada: se aplica al colgar. */
+let queridoAlVolver = { abierto: false, pausado: false };
+
+export function oidoSuspendido() {
+  return suspendido;
+}
+
+export async function suspenderOido(on: boolean) {
+  if (suspendido === on) return;
+  if (on) {
+    queridoAlVolver = { abierto: isMicWanted(), pausado: isMicPaused() };
+    suspendido = true;
+    if (engine === 'native') await native.nativeMute();
+    else await cloud.muteMic();
+    return;
+  }
+  suspendido = false;
+  const q = queridoAlVolver;
+  if (engine === 'native') native.nativePause(q.pausado);
+  else cloud.pauseMicForTts(q.pausado);
+  if (enabled && q.abierto) await unmuteMic();
+}
+
 export async function muteMic() {
+  if (suspendido) {
+    queridoAlVolver.abierto = false;
+    return;
+  }
   return engine === 'native' ? native.nativeMute() : cloud.muteMic();
 }
 
 export async function unmuteMic() {
+  if (suspendido) {
+    queridoAlVolver.abierto = true;
+    return;
+  }
   return engine === 'native' ? native.nativeUnmute() : cloud.unmuteMic();
 }
 
 /** Pausa la captura mientras AU-RA habla. */
 export function pauseMicForTts(pause: boolean) {
+  if (suspendido) {
+    queridoAlVolver.pausado = pause;
+    return;
+  }
   if (engine === 'native') native.nativePause(pause);
   else cloud.pauseMicForTts(pause);
 }
@@ -128,10 +174,12 @@ export function isMicPaused() {
 }
 
 export function micWatchdogOk() {
+  if (suspendido) return true;
   return engine === 'native' ? native.nativeWatchdogOk() : cloud.micWatchdogOk();
 }
 
 export async function restartMic() {
+  if (suspendido) return;
   return engine === 'native' ? native.nativeRestart() : cloud.restartMic();
 }
 

@@ -127,6 +127,32 @@ export function faceForEmocion(e: Emocion | null | undefined): FaceState {
   }
 }
 
+/*
+ * La emoción de una frase cuando nadie la manda. En la conversación fluida la voz es de ElevenLabs y
+ * el turno no trae `emocion`: la compañera la deduce del texto para poner la cara que va con lo que
+ * dice. Palabras claras en español e inglés, en orden de fuerza (la risa gana a la alegría, la pena
+ * gana a todo); sin nada claro, una pregunta es curiosidad y un «¡…!» es alegría.
+ */
+const PISTAS: readonly (readonly [Emocion, RegExp])[] = [
+  ['risa', /\b(ja(ja)+|je(je)+|ji(ji)+|ha(ha)+|lol)\b|\[(risa|risita|je)\]|que risa|me muero de risa/],
+  ['triste', /\b(lo siento mucho|lo lamento|lamento|que pena|que tristeza|triste|falleci\w*|sorry to hear|so sorry|sad)\b/],
+  ['molesto', /\b(que rabia|me molesta|me enoja|enojad\w*|basta ya|no es justo|angry|annoying)\b/],
+  ['preocupado', /\b(cuidado|ojo con|peligro\w*|preocup\w*|urgente|careful|warning|danger\w*|worried)\b/],
+  ['sorpresa', /\b(wow|guau|vaya|increible|no me digas|en serio|whoa|no way|amazing)\b|¡no!|de verdad\?|really\?/],
+  ['pensando', /\b(dejame (ver|pensar)|a ver|veamos|mmm+|hmm+|let me (see|think)|lets see)\b/],
+  ['carino', /\b(te quiero|carino|un abrazo|abrazo|love you|hugs?)\b/],
+  ['feliz', /\b(genial|excelente|perfecto|que bien|me alegra|listo|claro que si|con gusto|felicidades|bravo|great|awesome|perfect|glad|done|congrat\w*|wonderful)\b/],
+];
+
+export function emocionDeTexto(texto: string): Emocion {
+  const t = fold(texto);
+  if (!t) return 'neutral';
+  for (const [e, re] of PISTAS) if (re.test(t)) return e;
+  if (/\?\s*$/.test(t)) return 'curioso';
+  if (/!\s*$/.test(t)) return 'feliz';
+  return 'neutral';
+}
+
 export const EMOCION_ETIQUETA: Record<Emocion, string> = {
   neutral: 'Sereno',
   feliz: 'Contento',
