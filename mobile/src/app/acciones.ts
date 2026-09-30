@@ -55,7 +55,7 @@ export function atenderAccion(a: AccionApp) {
       const c = resolverContacto(a.con);
       const correo = c?.correo || (/^[^@\s]+@[^@\s]+$/.test(a.con.trim()) ? a.con.trim().toLowerCase() : '');
       if (!correo) return hecho(a, false, `No encuentro a «${a.con}» entre tus contactos.`);
-      abrirConversacion(correo, c?.nombre);
+      if (!abrirConversacion(correo, c?.nombre)) return hecho(a, false, 'No pude abrir el chat ahora.');
       return hecho(a, true);
     }
     default:

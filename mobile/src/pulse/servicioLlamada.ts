@@ -11,8 +11,10 @@
  * El manifiesto lo declara `plugins/servicio-llamada.js` sobre el servicio de notifee.
  *
  * Android 14 solo deja arrancar un servicio de micrófono con la app DELANTE: por eso llamada.ts lo
- * arranca en cuanto abre el micrófono (la persona acaba de tocar llamar o contestar) y aquí solo se
- * actualiza el texto al conectar.
+ * arranca en cuanto abre el micrófono (la persona acaba de tocar llamar o contestar). Si al conectar
+ * la app ya está detrás, llamada.ts usa `actualizar`: el mismo aviso con el texto nuevo, SIN
+ * `asForegroundService` (Android actualiza la notificación del servicio que ya corre; no se arranca
+ * otro, que es lo que lanzaba la excepción).
  */
 import { Platform } from 'react-native';
 import type * as Notifee from '@notifee/react-native';
@@ -43,6 +45,8 @@ let deseado = false;
 let generacion = 0;
 let canalListo = false;
 let desde = 0;
+/** El servicio quedó arrancado (se mostró su notificación como servicio en primer plano). */
+let activo = false;
 
 /**
  * El botón Colgar de la notificación. Devuelve true si el evento era de la llamada.
@@ -100,43 +104,55 @@ async function asegurarCanal(m: Modulo) {
 
 export type EstadoServicio = 'llamando' | 'conectando' | 'hablando';
 
-/** Arranca el servicio, o actualiza su texto si ya estaba (misma notificación, mismo id). */
-export async function arrancar(o: { nombre: string; video: boolean; estado: EstadoServicio; alColgar: () => void }) {
+export type OpcionesServicio = { nombre: string; video: boolean; estado: EstadoServicio; alColgar: () => void };
+
+/** La notificación de la llamada: la misma para arrancar el servicio y para cambiarle el texto. */
+function aviso(m: Modulo, o: OpcionesServicio, comoServicio: boolean): Notifee.Notification {
+  const T = m.AndroidForegroundServiceType;
+  return {
+    id: ID,
+    title: tr(`Llamada con ${o.nombre} · PULSE2CHAT`, `Call with ${o.nombre} · PULSE2CHAT`),
+    body:
+      o.estado === 'hablando'
+        ? tr('Cifrada de punta a punta', 'End-to-end encrypted')
+        : o.estado === 'llamando'
+          ? tr('Sonando…', 'Ringing…')
+          : tr('Conectando…', 'Connecting…'),
+    android: {
+      channelId: CANAL,
+      ...(comoServicio
+        ? {
+            asForegroundService: true,
+            foregroundServiceTypes: o.video ? [T.FOREGROUND_SERVICE_TYPE_MICROPHONE, T.FOREGROUND_SERVICE_TYPE_CAMERA] : [T.FOREGROUND_SERVICE_TYPE_MICROPHONE],
+          }
+        : {}),
+      category: m.AndroidCategory.CALL,
+      ongoing: true,
+      autoCancel: false,
+      onlyAlertOnce: true,
+      color: '#D6B56C',
+      colorized: false,
+      ...(o.estado === 'hablando' && desde ? { showChronometer: true, timestamp: desde, showTimestamp: true } : {}),
+      // Tocar la notificación vuelve a la app (a la pantalla de la llamada, que está encima de todo).
+      pressAction: { id: 'default', launchActivity: 'default' },
+      actions: [{ title: tr('Colgar', 'Hang up'), pressAction: { id: ACCION_COLGAR } }],
+    },
+  };
+}
+
+/** Arranca el servicio, o actualiza su texto si ya estaba (misma notificación, mismo id). Solo con la app delante. */
+export async function arrancar(o: OpcionesServicio) {
   const m = cargar();
   if (!m) return;
   alColgar = o.alColgar;
   deseado = true;
   const mia = ++generacion;
   if (o.estado === 'hablando' && !desde) desde = Date.now();
-  const T = m.AndroidForegroundServiceType;
   try {
     await asegurarCanal(m);
     if (mia !== generacion || !deseado) return;
-    await m.default.displayNotification({
-      id: ID,
-      title: tr(`Llamada con ${o.nombre} · PULSE2CHAT`, `Call with ${o.nombre} · PULSE2CHAT`),
-      body:
-        o.estado === 'hablando'
-          ? tr('Cifrada de punta a punta', 'End-to-end encrypted')
-          : o.estado === 'llamando'
-            ? tr('Sonando…', 'Ringing…')
-            : tr('Conectando…', 'Connecting…'),
-      android: {
-        channelId: CANAL,
-        asForegroundService: true,
-        foregroundServiceTypes: o.video ? [T.FOREGROUND_SERVICE_TYPE_MICROPHONE, T.FOREGROUND_SERVICE_TYPE_CAMERA] : [T.FOREGROUND_SERVICE_TYPE_MICROPHONE],
-        category: m.AndroidCategory.CALL,
-        ongoing: true,
-        autoCancel: false,
-        onlyAlertOnce: true,
-        color: '#D6B56C',
-        colorized: false,
-        ...(o.estado === 'hablando' && desde ? { showChronometer: true, timestamp: desde, showTimestamp: true } : {}),
-        // Tocar la notificación vuelve a la app (a la pantalla de la llamada, que está encima de todo).
-        pressAction: { id: 'default', launchActivity: 'default' },
-        actions: [{ title: tr('Colgar', 'Hang up'), pressAction: { id: ACCION_COLGAR } }],
-      },
-    });
+    await m.default.displayNotification(aviso(m, o, true));
+    activo = true;
     // Colgaron mientras se mostraba: el servicio que acaba de arrancar se para ya.
     if (!deseado) await quitar(m);
   } catch {
@@ -144,7 +160,26 @@ export async function arrancar(o: { nombre: string; video: boolean; estado: Esta
   }
 }
 
+/**
+ * Con la app detrás: solo el texto nuevo en la notificación del servicio que YA corre (sin
+ * `asForegroundService`, que intentaría arrancarlo otra vez). Si no corre, no hay nada que hacer.
+ */
+export async function actualizar(o: OpcionesServicio) {
+  const m = cargar();
+  if (!m || !activo || !deseado) return;
+  alColgar = o.alColgar;
+  const mia = ++generacion;
+  if (o.estado === 'hablando' && !desde) desde = Date.now();
+  try {
+    await m.default.displayNotification(aviso(m, o, false));
+    if (mia !== generacion || !deseado) await quitar(m);
+  } catch {
+    /* el texto viejo se queda; la llamada sigue */
+  }
+}
+
 async function quitar(m: Modulo) {
+  activo = false;
   try {
     await m.default.stopForegroundService();
   } catch {}

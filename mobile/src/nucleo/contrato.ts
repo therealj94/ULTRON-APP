@@ -106,8 +106,19 @@ export type Eventos = {
   llamada: { activa: boolean; video: boolean };
   /** Cambió la pantalla visible. */
   pantalla: { pantalla: Pantalla; chatAbierto?: { correo: string; nombre: string } | null };
-  /** Se envió un mensaje de chat (para la palomita ✔ y el «listo»). */
-  enviado: { para: string; id?: string };
+  /**
+   * Se envió un mensaje de chat, a mano o por voz: SOLO la palomita ✔ y el globito «Enviado a …»
+   * (`nombre`, como sale en la lista; si no se sabe, el correo). El «¡Listo!» hablado sale del `hecho`
+   * de la acción `enviar`: un mensaje escrito a mano no hace hablar a AURA.
+   */
+  enviado: { para: string; id?: string; nombre?: string };
+  /**
+   * La conversación con ElevenLabs soltó (libre: true) o tomó (libre: false) el audio del teléfono.
+   * Al cerrarse, el SDK para la sesión de audio DESPUÉS de desconectar (`AudioSession.stopAudioSession`);
+   * en Android ese `stop` anula también un `start` pendiente de otro. La llamada espera `libre: true`
+   * (con tope) antes de arrancar su audio, para que el cierre de AURA no le apague el suyo.
+   */
+  voz: { libre: boolean };
   /** El perfil cambió (tema, apodo, avatar…). */
   perfil: Perfil;
 };

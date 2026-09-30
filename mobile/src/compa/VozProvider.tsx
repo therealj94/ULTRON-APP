@@ -12,7 +12,11 @@
  *  · llamadas (llamada.ts): AURA se apaga del todo y vuelve como estaba al colgar;
  *  · el puente de acciones y el contexto (acciones.ts): lo que AURA decide hacer llega por SSE y se
  *    emite en el bus; el teléfono le cuenta al cerebro dónde está la persona y a quién puede escribir;
- *  · `silencio` (del bus) y `perfil` (avatar e idioma).
+ *  · `silencio` (del bus, con lo que de verdad pasó) y `perfil` (avatar e idioma);
+ *  · el audio: cuándo la conversación suelta de verdad el audio del teléfono (audioVoz.ts), avisado en
+ *    el bus (`voz`) para que una llamada no arranque el suyo mientras AURA todavía se cierra;
+ *  · el puente de acciones se detiene con la app detrás y se reanuda al volver (sin SSE en segundo
+ *    plano); al cerrar cada conversación se le avisa al servidor (POST /api/voz/agente/cerrar).
  *
  * La mesa (DeskScreen) lo consume con `useVoz()`. Si una pantalla se monta sin el proveedor,
  * `useVozOpcional()` devuelve null y ella misma se envuelve (ver DeskScreen).
@@ -37,6 +41,8 @@ import { ControlSesion, type EstadoVoz, type VistaSesion } from './sesion';
 import { Precalentador } from './permiso';
 import { coordinarLlamadas } from './llamada';
 import { ContextoApp, PuenteAcciones, type XhrMin } from './acciones';
+import { AudioVoz } from './audioVoz';
+import { cabecerasAparato } from '../lib/aparato';
 import { contactosParaAura } from './contactos';
 import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido } from './canales';
 
@@ -82,7 +88,14 @@ export function vozOcupaMicrofono(v: VistaSesion): boolean {
 }
 
 const pedirPermiso = (avatar: AvatarId, idioma: 'es' | 'en') =>
-  api<{ token: string; pase: string }>('/api/voz/agente', { method: 'POST', body: JSON.stringify({ avatar, idioma }) }, 15_000);
+  api<{ token: string; pase: string; cid?: string }>('/api/voz/agente', { method: 'POST', body: JSON.stringify({ avatar, idioma }) }, 15_000);
+
+/** Se cerró una conversación: el servidor suelta lo suyo (opcional, sin esperar; si falla, vence solo). */
+const avisarCierre = (pase: string) =>
+  void api('/api/voz/agente/cerrar', { method: 'POST', body: JSON.stringify({ pase }) }, 8_000).catch(() => undefined);
+
+/** Una sola para toda la app: la llamada escucha su aviso en el bus (`voz`). */
+const audioVoz = new AudioVoz((libre) => emitir('voz', { libre }));
 
 async function hayToken(): Promise<boolean> {
   return !!(await loadMesaToken().catch(() => ''));
@@ -123,13 +136,18 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   }, [control, idioma]);
 
   // El reloj del silencio largo, segundo plano, perfil, silencio y llamadas.
+  const puenteRef = useRef<PuenteAcciones | null>(null);
   useEffect(() => {
     const tic = setInterval(() => control.tic(), 10_000);
     const app = AppState.addEventListener('change', (st) => {
-      if (st === 'active') precalentar();
-      else if (st === 'background') {
+      if (st === 'active') {
+        precalentar();
+        puenteRef.current?.arrancar();
+      } else if (st === 'background') {
         miga('voz: segundo plano, la conversación se cierra');
         control.segundoPlano();
+        // Sin SSE en segundo plano (batería, datos): al volver se reconecta con Last-Event-ID.
+        puenteRef.current?.parar();
       }
     });
     const offPerfil = escuchar('perfil', (p) => {
@@ -138,12 +156,14 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     });
     const offAccion = escuchar('accion', (a) => {
       if (a.tipo !== 'silencio') return;
-      control.silenciar(a.valor);
-      emitir('hecho', { accion: a, ok: true });
+      const r = control.aplicarSilencio(a.valor);
+      emitir('hecho', { accion: a, ok: r.ok, ...(r.detalle ? { detalle: r.detalle } : {}) });
     });
     const offLlamada = coordinarLlamadas({
       escuchar: (tipo, f) => escuchar(tipo, f),
       sesion: control,
+      // Si la llamada termina con la app detrás, la conversación no se reabre en segundo plano.
+      enPrimerPlano: () => AppState.currentState === 'active',
       suspenderVoz,
       suspenderOido,
       suspenderSfx,
@@ -173,8 +193,11 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       alAccion: (a) => emitir('accion', a),
       // api() renueva la sesión sola si el servidor dice 401.
       renovar: () => api(RUTA_PERFIL, undefined, 10_000).then(() => undefined),
+      // Qué teléfono escucha: el servidor le empuja las acciones al aparato que habló.
+      cabeceras: () => cabecerasAparato(),
       miga,
     });
+    puenteRef.current = puente;
     const ctx = new ContextoApp({
       enviar: async (c: Contexto) => {
         if (!(await hayToken())) return null;
@@ -184,10 +207,11 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       escuchar: (tipo, f) => escuchar(tipo, f as never),
     });
     contexto.current = ctx;
-    puente.arrancar();
+    if (AppState.currentState !== 'background') puente.arrancar();
     ctx.arrancar();
     return () => {
       puente.parar();
+      if (puenteRef.current === puente) puenteRef.current = null;
       ctx.parar();
       contexto.current = null;
     };
@@ -218,6 +242,12 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     nivelExterno(salida);
     nivelOido.emitir(entrada);
   }, []);
+  const alAudio = useCallback((gen: number, que: 'toma' | 'suelta' | 'cerrando') => {
+    if (que === 'toma') audioVoz.tomar(gen);
+    else if (que === 'suelta') audioVoz.soltar(gen);
+    else audioVoz.cerrando(gen);
+  }, []);
+  const alFin = useCallback((_gen: number, pase: string) => avisarCierre(pase), []);
   const permiso = useCallback(() => {
     const v = control.vista();
     return precalentador.tomar(v.avatar, v.idioma, v.intento > 0);
@@ -262,6 +292,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           onMensaje={alMensaje}
           onInterrupcion={alInterrupcion}
           onNiveles={alNiveles}
+          onAudio={alAudio}
+          onFin={alFin}
           controles={controles}
         />
       ) : null}

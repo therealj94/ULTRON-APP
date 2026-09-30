@@ -366,7 +366,7 @@ let serie = 0;
 
 /**
  * Envía un texto con el cifrado normal. Aparece en el hilo en el acto (pendiente), se confirma con el
- * id del relevo y avisa `enviado` (la palomita, el «listo» de AURA). Si falla queda `fallido` en el
+ * id del relevo y avisa `enviado` (la palomita; el «¡Listo!» hablado es del `hecho` de la voz). Si falla queda `fallido` en el
  * hilo, con su texto, para reintentar.
  */
 export async function enviarTexto(correo: string, texto: string, reintento?: string): Promise<Envio> {
@@ -381,7 +381,7 @@ export async function enviarTexto(correo: string, texto: string, reintento?: str
   try {
     const r = await RELEVO.enviar(c, limpio);
     cambiarLocal(c, idLocal, { id: r.id || idLocal, pendiente: false, e2e: r.e2e });
-    emitir('enviado', { para: c, id: r.id });
+    emitir('enviado', { para: c, id: r.id, nombre: RELEVO.contactosConocidos().find((x) => x.correo === c)?.nombre });
     void refrescarHilo(c);
     void refrescarLista();
     return { ok: true, id: r.id, e2e: r.e2e };

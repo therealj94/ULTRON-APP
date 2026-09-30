@@ -1,22 +1,33 @@
 /**
  * A quién le puede escribir AURA: nombres y correos de la gente del chat, nunca sus mensajes.
  *
- * Si el relevo ya trae `contactosConocidos()` (lo agrega el frente del chat de la 5.0) se usa esa;
- * mientras tanto se arma con lo que hay hoy: las conversaciones 1 a 1 y los amigos del círculo. De
- * cada una se toman SOLO `correo` y `nombre` (depurarContactos descarta todo lo demás, incluido el
- * último mensaje que trae cada conversación).
+ * Sale de `RELEVO.contactosConocidos()` (las conversaciones 1 a 1 y los amigos del círculo que el
+ * relevo ya trajo). Es SÍNCRONA: antes se la llamaba con `await nuevo().catch(…)`, el `.catch` de un
+ * arreglo lanzaba un TypeError que se tragaba y al cerebro le llegaba `contactos: []` siempre.
+ *
+ * La lista del relevo solo se llena cuando alguien pide las conversaciones (hasta la 5.0, al abrir los
+ * chats). Si está vacía y hay cuenta, se pide UNA vez por cuenta (`CHATS.refrescarLista`); si la
+ * persona de verdad no tiene contactos, no se vuelve a pedir en cada envío del contexto.
+ *
+ * De cada contacto se toman SOLO `correo` y `nombre` (depurarContactos descarta todo lo demás).
  */
 import * as RELEVO from '../pulse/relevo';
+import * as CHATS from '../pulse/chats';
 import { depurarContactos, type Contacto } from './acciones';
 
-type ConContactos = { contactosConocidos?: () => Promise<unknown[]> };
+/** La cuenta para la que ya se pidió la lista (una vez por cuenta). */
+let pedidaPara = '';
 
 export async function contactosParaAura(): Promise<Contacto[]> {
-  const nuevo = (RELEVO as unknown as ConContactos).contactosConocidos;
-  if (typeof nuevo === 'function') return depurarContactos(await nuevo().catch(() => []));
-  if (!RELEVO.quien()) return [];
-  const [hilos, circulo] = await Promise.all([RELEVO.conversaciones().catch(() => [] as unknown[]), RELEVO.circulo().catch(() => ({ amigos: [] as unknown[] }))]);
-  const deHilos = (hilos as { esGrupo?: boolean; correo?: string; nombre?: string }[]).filter((h) => !h?.esGrupo).map((h) => ({ correo: h?.correo, nombre: h?.nombre }));
-  const amigos = ((circulo as { amigos?: { correo?: string; nombre?: string }[] }).amigos || []).map((a) => ({ correo: a?.correo, nombre: a?.nombre }));
-  return depurarContactos([...deHilos, ...amigos]);
+  const yo = RELEVO.quien()?.correo || '';
+  if (!yo) return [];
+  let lista = depurarContactos(RELEVO.contactosConocidos());
+  if (!lista.length && pedidaPara !== yo) {
+    pedidaPara = yo;
+    await CHATS.refrescarLista().catch(() => undefined);
+    // Pudo salir de la cuenta mientras se pedía: lo de otra persona no se manda.
+    if (RELEVO.quien()?.correo !== yo) return [];
+    lista = depurarContactos(RELEVO.contactosConocidos());
+  }
+  return lista;
 }

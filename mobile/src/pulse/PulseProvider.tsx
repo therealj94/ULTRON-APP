@@ -14,6 +14,9 @@
  * eso a la navegación.
  *
  * La pantalla de llamada se pinta aquí, encima de todo: una llamada no espera a que abras el chat.
+ * Lleva el nombre del contacto como sale en la lista (y lo conserva en «Llamada terminada», cuando el
+ * motor ya soltó con quién era). Salir de la cuenta —a mano o por un 401 del relevo— cuelga la
+ * llamada en curso, con la llave todavía puesta para que el otro lado se entere.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
@@ -80,6 +83,8 @@ export function PulseProvider({
   const [abierto, setAbierto] = useState(false);
   const [conInicial, setConInicial] = useState<string | undefined>(undefined);
   const activa = useRef(AppState.currentState === 'active');
+  /** Cómo se llama la persona de la llamada (se queda después de colgar, para «Llamada terminada»). */
+  const [nombreLlamada, setNombreLlamada] = useState<string | undefined>(undefined);
 
   // La cuenta del chat que ya estaba en este teléfono (la dejó «Entrar con Genesis ID»).
   useEffect(() => {
@@ -109,6 +114,8 @@ export function PulseProvider({
     LLAMADA.arrancar({
       mandar: (para, tipo, datos) => RELEVO.senalar(para, tipo, datos),
       alCambiar: (c) => {
+        const quien = c.conQuien || c.entrante?.de;
+        if (quien) setNombreLlamada(RELEVO.contactosConocidos().find((x) => x.correo === quien)?.nombre);
         setLlamada(c);
         if (c.estado === 'libre') soltarSiDetras();
       },
@@ -119,6 +126,16 @@ export function PulseProvider({
       nombre: (correo) => RELEVO.contactosConocidos().find((c) => c.correo === correo)?.nombre || correo.split('@')[0],
     });
   }, [soltarSiDetras]);
+
+  // Salir de la cuenta (cerrar sesión, o un 401 del relevo) cuelga la llamada en curso ANTES de soltar
+  // la llave: el `cuelgo` sale firmado y el otro no se queda hablando solo.
+  useEffect(
+    () =>
+      RELEVO.antesDeSalir(() => {
+        if (LLAMADA.enLlamada()) LLAMADA.colgar('yo');
+      }),
+    [],
+  );
 
   // La llamada terminó (lo avisa el motor de llamadas por el bus): si la app está detrás, se suelta.
   useEffect(
@@ -244,7 +261,7 @@ export function PulseProvider({
     <PulseCtx.Provider value={valor}>
       {children}
       {abrirChatEnModal ? <PulseChat visible={abierto} conInicial={conInicial} onCerrar={cerrar} /> : null}
-      {llamada.estado !== 'libre' || llamada.motivo ? <PantallaLlamada cuento={llamada} onListo={() => setLlamada(LLAMADA.cuento())} /> : null}
+      {llamada.estado !== 'libre' || llamada.motivo ? <PantallaLlamada cuento={llamada} nombre={nombreLlamada} onListo={() => setLlamada(LLAMADA.cuento())} /> : null}
     </PulseCtx.Provider>
   );
 }

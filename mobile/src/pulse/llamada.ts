@@ -27,6 +27,16 @@
  * si alguien colgó mientras tanto, suelta lo que abrió y se va sin tocar nada. Sin eso, colgar con el
  * diálogo de permisos abierto dejaba el tono sonando, el micrófono abierto y un `llamo` sin destino.
  *
+ * EL AUDIO Y AURA: la conversación con ElevenLabs usa la MISMA sesión de audio de LiveKit, y al
+ * cerrarse la para (después de desconectar). En Android ese `stop` anula incluso un `start` pendiente:
+ * si la llamada arrancaba su audio mientras AURA todavía se cerraba, se quedaba sin audio. Por eso,
+ * antes de arrancar el suyo, la llamada espera el aviso `voz {libre:true}` del bus (con tope de 2,5 s),
+ * y al conectar de verdad lo vuelve a aplicar una vez (por si un cierre tardío se lo apagó igual).
+ *
+ * EL SERVICIO EN SEGUNDO PLANO: Android 14 no deja arrancar un servicio de micrófono con la app
+ * detrás (lanza una excepción nativa). Con la app detrás solo se actualiza el texto de la
+ * notificación del servicio que ya corre; nunca se vuelve a arrancar.
+ *
  * Este archivo no sabe cómo se ve una llamada: entrega el estado y los flujos, la pantalla pinta.
  * Sí avisa en el bus del contrato (`llamada`) cuando empieza y cuando termina: AURA y la mesa se
  * apagan mientras tanto.
@@ -36,7 +46,7 @@ import { Linking, Platform, Vibration } from 'react-native';
 import { Audio } from 'expo-av';
 import { RTCIceCandidate, RTCPeerConnection, RTCSessionDescription, mediaDevices, type MediaStream } from '@livekit/react-native-webrtc';
 import { AudioSession } from '@livekit/react-native';
-import { emitir } from '../nucleo/contrato';
+import { emitir, escuchar } from '../nucleo/contrato';
 import * as SERVICIO from './servicioLlamada';
 
 const HIELO = [
@@ -56,6 +66,8 @@ const ESPERA_REINICIO = 1_500;
 const PLAZO_TURNO = 2_500;
 /** Un `ice` que llega antes que su `llamo` (van en peticiones separadas, sin orden) se guarda este rato. */
 const VIDA_HUERFANO = 10_000;
+/** Lo más que se espera a que la conversación de AURA suelte el audio antes de arrancar el de la llamada. */
+export const PLAZO_VOZ_LIBRE = 2_500;
 
 export type EstadoLlamada = 'libre' | 'llamando' | 'entrando' | 'conectando' | 'hablando';
 export type Motivo =
@@ -284,18 +296,52 @@ async function descargar(s: Audio.Sound) {
   } catch {}
 }
 
+/* ── la voz de AURA suelta el audio ───────────────────────────────────────────────────────── */
+
+/** La conversación con ElevenLabs no tiene tomado el audio (lo avisa el VozProvider por el bus). */
+let vozLibre = true;
+const esperanVoz = new Set<() => void>();
+escuchar('voz', ({ libre }) => {
+  vozLibre = !!libre;
+  if (!vozLibre) return;
+  for (const f of [...esperanVoz]) f();
+});
+
+/** Espera a que AURA suelte el audio, como mucho `tope` ms (si no avisa, la llamada sigue igual). */
+export function esperarVozLibre(tope = PLAZO_VOZ_LIBRE): Promise<void> {
+  if (vozLibre) return Promise.resolve();
+  return new Promise<void>((listo) => {
+    let reloj: ReturnType<typeof setTimeout> | null = null;
+    const fin = () => {
+      esperanVoz.delete(fin);
+      if (reloj) clearTimeout(reloj);
+      reloj = null;
+      listo();
+    };
+    esperanVoz.add(fin);
+    reloj = setTimeout(fin, tope);
+  });
+}
+
+/** ¿La app está delante? (sin AppState, como en las pruebas viejas, se asume que sí). */
+const delante = () => {
+  const st = (RN as { AppState?: { currentState?: string | null } }).AppState?.currentState;
+  return !st || st === 'active';
+};
+
 /* ── el audio de LLAMADA (no el de un video) ──────────────────────────────────────────────── */
 
-async function audioArranca(video: boolean) {
-  porAltavoz = video;
+/** `altavoz`: por dónde sale (por omisión, lo del tipo de llamada; al re-aplicar, lo que eligió la persona). */
+async function audioArranca(video: boolean, altavoz = video) {
+  porAltavoz = altavoz;
   try {
     // Voz: auricular primero (se lleva a la oreja). Video: altavoz (nadie mira pegado a la oreja).
     await AudioSession.configureAudio({
       android: {
-        preferredOutputList: video ? ['bluetooth', 'headset', 'speaker', 'earpiece'] : ['bluetooth', 'headset', 'earpiece', 'speaker'],
+        preferredOutputList: altavoz ? ['bluetooth', 'headset', 'speaker', 'earpiece'] : ['bluetooth', 'headset', 'earpiece', 'speaker'],
         audioTypeOptions: { audioMode: 'inCommunication', audioAttributesUsageType: 'voiceCommunication', audioAttributesContentType: 'speech', audioStreamType: 'voiceCall', manageAudioFocus: true },
       },
-      ios: { defaultOutput: video ? 'speaker' : 'earpiece' },
+      ios: { defaultOutput: altavoz ? 'speaker' : 'earpiece' },
     });
     await AudioSession.startAudioSession();
   } catch {
@@ -434,6 +480,8 @@ function nuevaConexion(): RTCPeerConnection {
       if (estado !== 'hablando') {
         estado = 'hablando';
         arrancarServicio();
+        // Una vez al conectar: si el cierre de AURA le apagó el audio igual (un `stop` tardío), vuelve.
+        void audioArranca(conVideo, porAltavoz);
       }
       anunciar();
     }
@@ -539,14 +587,21 @@ function soltarMedios(flujo: MediaStream | null, conexion: RTCPeerConnection | n
   } catch {}
 }
 
+/**
+ * Arranca el servicio de la llamada o, si ya corre, le cambia el texto. Con la app DETRÁS nunca lo
+ * arranca (Android 14 lanza una excepción nativa con un servicio de micrófono desde segundo plano):
+ * solo actualiza la notificación del que ya está.
+ */
 function arrancarServicio() {
   if (!conQuien) return;
-  void SERVICIO.arrancar({
+  const o = {
     nombre: nombreDe(conQuien),
     video: !!miFlujo?.getVideoTracks?.().length,
-    estado: estado === 'hablando' ? 'hablando' : estado === 'llamando' ? 'llamando' : 'conectando',
+    estado: (estado === 'hablando' ? 'hablando' : estado === 'llamando' ? 'llamando' : 'conectando') as SERVICIO.EstadoServicio,
     alColgar: () => colgar('yo'),
-  });
+  };
+  if (delante()) void SERVICIO.arrancar(o);
+  else void SERVICIO.actualizar(o);
 }
 
 /* ── llamar, contestar, rechazar, colgar ──────────────────────────────────────────────────── */
@@ -582,6 +637,8 @@ export async function llamar(correo: string, quiereVideo: boolean) {
     if (!vigente(mia)) return abandonar(flujo, null);
     miFlujo = flujo;
     conVideo = m.video;
+    await esperarVozLibre();
+    if (!vigente(mia)) return abandonar(flujo, null);
     await audioArranca(m.video);
     if (!vigente(mia)) return abandonar(flujo, null);
     // Aquí la app está delante (se acaba de tocar «llamar»): Android deja arrancar el servicio de micrófono.
@@ -639,6 +696,8 @@ export async function contestar(quiereVideo: boolean) {
     if (!vigente(mia)) return abandonar(flujo, null);
     miFlujo = flujo;
     conVideo = m.video;
+    await esperarVozLibre();
+    if (!vigente(mia)) return abandonar(flujo, null);
     await audioArranca(m.video);
     if (!vigente(mia)) return abandonar(flujo, null);
     arrancarServicio();

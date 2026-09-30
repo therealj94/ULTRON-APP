@@ -11,7 +11,8 @@
  *  · doble toque → se duerme (silencio de verdad: micrófono y voz apagados vía VozProvider) y otro
  *    doble toque la despierta a escuchar;
  *  · la voz: escucha, habla con la emoción del turno, pone cara de «¡uy!» si le hablas encima;
- *  · un mensaje enviado → palomita ✔ y «¡Listo!»;
+ *  · un mensaje enviado → palomita ✔ (a mano o por voz); «¡Listo!» en voz alta solo cuando se lo
+ *    pidieron a ella (el `hecho` de `enviar`); lo que no pudo hacer lo dice, y el agente se entera;
  *  · una llamada → se va; al colgar vuelve contenta.
  *
  * La cara final sale de `expresion()`, por prioridad: levantada, enojo, «¡uy!», dormida, las
@@ -55,6 +56,8 @@ export type Animo = {
   cuenta: number;
   ultimoRonroneo: number;
   ultimaPalomita: number;
+  /** Cuándo dijo «¡Listo!» por un envío (el mismo envío puede avisar dos veces). */
+  ultimoListo: number;
 };
 
 export type Haptica = 'suave' | 'media' | 'fuerte' | 'exito' | 'aviso' | 'seleccion';
@@ -88,7 +91,7 @@ export type EventoAnimo =
   | { tipo: 'interrupcion' }
   | { tipo: 'llamada'; activa: boolean }
   | { tipo: 'hecho'; ok: boolean; accion: AccionApp; detalle?: string }
-  | { tipo: 'enviado'; para: string }
+  | { tipo: 'enviado'; para: string; nombre?: string }
   | { tipo: 'accion'; accion: AccionApp }
   | { tipo: 'tic' };
 
@@ -103,6 +106,7 @@ export const ANIMO_INICIAL: Animo = {
   cuenta: 0,
   ultimoRonroneo: 0,
   ultimaPalomita: -1e12,
+  ultimoListo: -1e12,
 };
 
 /** Cuánto baja la irritación por segundo (se le pasa sola en unos 4 s). */
@@ -278,6 +282,12 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
       const antes = a.voz;
       const v = ev.voz;
       const n = { ...a, voz: v };
+      // La voz quedó suspendida (hay una llamada) y la compañera seguía a la vista: se va. Pasa si se
+      // montó con la llamada ya en curso y no oyó el evento `llamada`.
+      if (v.suspendida && !a.oculta) {
+        efectos.push({ tipo: 'desaparecer' });
+        return { animo: { ...n, oculta: true, levantada: false, reaccion: null, irritacion: 0 }, efectos };
+      }
       if (v.silenciada && !antes.silenciada) efectos.push(globo('Zzz…', 2000));
       else if (v.estado === 'escuchando' && (antes.estado === 'conectando' || (antes.silenciada && !v.silenciada))) {
         efectos.push(globo(textoCompa.escuchando(), 1800));
@@ -326,10 +336,12 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
     }
 
     case 'hecho': {
-      if (ev.accion.tipo === 'enviar') return confirmarEnvio(a, ev.ok, ahora, efectos, ev.accion.para);
+      if (ev.accion.tipo === 'enviar') return envioPedido(a, ev.ok, ahora, efectos, ev.accion.para, ev.detalle);
       if (ev.accion.tipo === 'silencio') return { animo: a, efectos };
       if (!ev.ok) {
-        efectos.push({ tipo: 'haptica', fuerza: 'aviso' }, globo(ev.detalle ? recortar(ev.detalle, 70) : textoCompa.noPude(), 2600, 2));
+        // Lo dice (en voz alta o al agente, que así no se queda diciendo «listo») y lo muestra.
+        const texto = ev.detalle ? recortar(ev.detalle, 70) : textoCompa.noPude();
+        efectos.push({ tipo: 'haptica', fuerza: 'aviso' }, globo(texto, 2600, 2), { tipo: 'confirmar', ok: false, texto: ev.detalle || textoCompa.noPude() });
         return { animo: { ...a, reaccion: reaccion('triste', 1500) }, efectos };
       }
       efectos.push({ tipo: 'brinco', alto: 6 });
@@ -337,7 +349,7 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
     }
 
     case 'enviado':
-      return confirmarEnvio(a, true, ahora, efectos, ev.para);
+      return palomita(a, ahora, efectos, ev.nombre || ev.para);
 
     case 'accion': {
       if (ev.accion.tipo === 'redactar') efectos.push(globo(textoCompa.borrador(recortar(ev.accion.para, 30)), 2600, 1));
@@ -353,19 +365,29 @@ function enojarse(n: Animo, ahora: number, efectos: Efecto[], _azar: () => numbe
   return { animo: n, efectos };
 }
 
-/** Un envío: la palomita ✔ y «¡Listo!» (una sola vez aunque lleguen `hecho` y `enviado` del mismo). */
-function confirmarEnvio(a: Animo, ok: boolean, ahora: number, efectos: Efecto[], para?: string): Salida {
+/** Un mensaje salió (a mano o por voz): la palomita ✔ y «Enviado a …», una sola vez por envío. Muda. */
+function palomita(a: Animo, ahora: number, efectos: Efecto[], para?: string): Salida {
+  if (ahora - a.ultimaPalomita < 2500) return { animo: a, efectos };
+  efectos.push({ tipo: 'palomita' }, { tipo: 'haptica', fuerza: 'exito' }, { tipo: 'brinco', alto: 12 }, globo(textoCompa.enviado(para ? recortar(para, 24) : undefined), 2600, 3));
+  return { animo: { ...a, ultimaPalomita: ahora, reaccion: { exp: 'encantada', hasta: ahora + 1800 } }, efectos };
+}
+
+/**
+ * El resultado de «envíalo» (la acción `enviar`): se lo pidieron a ella, así que lo dice. Bien →
+ * «¡Listo!» (una vez aunque el envío avise dos veces) y la palomita si `enviado` no la puso ya. Mal →
+ * «no pude» con el motivo, que también le llega al agente de voz.
+ */
+function envioPedido(a: Animo, ok: boolean, ahora: number, efectos: Efecto[], para?: string, detalle?: string): Salida {
   if (!ok) {
-    efectos.push({ tipo: 'haptica', fuerza: 'aviso' }, globo(textoCompa.noEnviado(), 2600, 3), { tipo: 'confirmar', ok: false, texto: textoCompa.noEnviado() });
+    efectos.push(
+      { tipo: 'haptica', fuerza: 'aviso' },
+      globo(detalle ? recortar(detalle, 70) : textoCompa.noEnviado(), 2600, 3),
+      { tipo: 'confirmar', ok: false, texto: detalle || textoCompa.noEnviado() }
+    );
     return { animo: { ...a, reaccion: { exp: 'triste', hasta: ahora + 1800 } }, efectos };
   }
-  if (ahora - a.ultimaPalomita < 2500) return { animo: a, efectos };
-  efectos.push(
-    { tipo: 'palomita' },
-    { tipo: 'haptica', fuerza: 'exito' },
-    { tipo: 'brinco', alto: 12 },
-    globo(textoCompa.enviado(para ? recortar(para, 24) : undefined), 2600, 3),
-    { tipo: 'confirmar', ok: true, texto: textoCompa.listo() }
-  );
-  return { animo: { ...a, ultimaPalomita: ahora, reaccion: { exp: 'encantada', hasta: ahora + 1800 } }, efectos };
+  const r = palomita(a, ahora, efectos, para);
+  if (ahora - a.ultimoListo < 2500) return r;
+  efectos.push({ tipo: 'confirmar', ok: true, texto: textoCompa.listo() });
+  return { animo: { ...r.animo, ultimoListo: ahora }, efectos };
 }

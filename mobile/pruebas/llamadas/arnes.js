@@ -83,6 +83,10 @@ function limpiarObs() {
     servicio: { activo: false, notificaciones: [], paradas: 0 },
     notifee: { foreground: [], background: null, tarea: null },
     ajustesAbiertos: 0,
+    /** AppState.currentState que ve llamada.ts ('active' | 'background'). */
+    appState: 'active',
+    /** Cuántas veces se arrancó la sesión de audio (la llamada la re-aplica al conectar). */
+    audioArranques: 0,
   });
 }
 limpiarObs();
@@ -90,6 +94,11 @@ let nSonido = 0;
 
 const RN = {
   Platform: { OS: 'android', Version: 34 },
+  AppState: {
+    get currentState() {
+      return obs.appState;
+    },
+  },
   Vibration: {
     vibrate: (_p, rep) => {
       obs.vibrando = !!rep;
@@ -289,6 +298,7 @@ const mocks = {
       configureAudio: async () => {},
       startAudioSession: async () => {
         obs.audioSesion = 'arrancada';
+        obs.audioArranques++;
       },
       stopAudioSession: async () => {
         obs.audioSesion = 'parada';
@@ -346,4 +356,7 @@ async function nuevo(opciones = {}) {
 const OFERTA = (sdp = 'o') => ({ type: 'offer', sdp });
 const RESPUESTA = (sdp = 'a') => ({ type: 'answer', sdp });
 
-module.exports = { cargar, contrato, obs, tick, flush, conReloj, reset, nuevo, OFERTA, RESPUESTA, WEBRTC, NOTIFEE, SRC };
+/** La sesión de audio simulada: las pruebas la paran «como ElevenLabs» al cerrarse. */
+const AUDIO = mocks['@livekit/react-native'].AudioSession;
+
+module.exports = { cargar, contrato, obs, tick, flush, conReloj, reset, nuevo, OFERTA, RESPUESTA, WEBRTC, NOTIFEE, AUDIO, SRC };

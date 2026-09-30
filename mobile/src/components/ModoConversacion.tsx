@@ -15,6 +15,14 @@
  * Silenciar es de verdad (B5): `isMuted` controlado del proveedor corta el micrófono de WebRTC y el
  * volumen de salida baja a 0, sin cerrar la sesión (al despertarla escucha en el acto).
  *
+ * El audio (B3 de la revisión 5): el SDK para la sesión de audio del teléfono DESPUÉS de desconectar.
+ * Este componente avisa `onAudio` al tomarlo (justo antes de `startSession`), al soltarlo
+ * (`onDisconnect`, o un fallo al abrir) y al pedir el cierre (desmontarse); el VozProvider lo pasa al
+ * bus (`voz`) y una llamada espera a que quede libre antes de arrancar su audio.
+ *
+ * Al terminar una sesión que llegó a abrirse, `onFin` avisa con su pase (el VozProvider se lo cuenta
+ * al servidor: POST /api/voz/agente/cerrar).
+ *
  * Este componente no dibuja nada.
  */
 import { useEffect, useRef, type MutableRefObject } from 'react';
@@ -39,7 +47,7 @@ type Props = {
   gen: number;
   silenciada: boolean;
   /** El permiso de un solo uso (token de ElevenLabs + pase firmado de quién habla). */
-  permiso: () => Promise<{ token: string; pase: string }>;
+  permiso: () => Promise<{ token: string; pase: string; cid?: string }>;
   onEstado: (gen: number, e: EstadoConversacion, detalle?: string) => void;
   /** Una frase terminada: la tuya (`usuario`) o la del avatar (`ultron`). */
   onMensaje: (gen: number, rol: 'usuario' | 'ultron', texto: string) => void;
@@ -48,6 +56,10 @@ type Props = {
   /** Volúmenes a ~20 Hz: su voz (0..1, la boca) y la de la persona (0..1, el anillo que late). */
   onNiveles: (salida: number, entrada: number) => void;
   controles: MutableRefObject<ControlesSesion | null>;
+  /** El audio del teléfono: lo toma, lo soltó, o se pidió cerrar (y se soltará en seguida). */
+  onAudio?: (gen: number, que: 'toma' | 'suelta' | 'cerrando') => void;
+  /** Terminó una sesión que se pidió abrir: su pase, para avisarle al servidor. Una vez por sesión. */
+  onFin?: (gen: number, pase: string) => void;
 };
 
 export function ModoConversacion(p: Props) {
@@ -61,10 +73,10 @@ export function ModoConversacion(p: Props) {
 /** Sin volumen real de la salida más de esto mientras habla, la boca sigue una envolvente de habla (lipsync.ts). */
 const SIN_VOLUMEN_MS = 600;
 
-function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion, onNiveles, controles }: Props) {
+function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion, onNiveles, controles, onAudio, onFin }: Props) {
   const conv = useConversation();
-  const cbs = useRef({ onEstado, onMensaje, onInterrupcion, onNiveles, permiso });
-  cbs.current = { onEstado, onMensaje, onInterrupcion, onNiveles, permiso };
+  const cbs = useRef({ onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin });
+  cbs.current = { onEstado, onMensaje, onInterrupcion, onNiveles, permiso, onAudio, onFin };
   const abierta = useRef(false);
   const hablando = useRef(false);
   const silencio = useRef(silenciada);
@@ -121,11 +133,29 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
     let vivo = true;
     let nivel: ReturnType<typeof setInterval> | null = null;
     const avisar = (e: EstadoConversacion, detalle?: string) => vivo && cbs.current.onEstado(gen, e, detalle);
+    // El audio y el fin se avisan AUNQUE esta generación ya no esté montada: el cierre de verdad
+    // (onDisconnect) llega después de desmontarse, y es justo lo que espera una llamada.
+    let audio: 'sin' | 'tomado' | 'suelto' = 'sin';
+    let pase = '';
+    /** El servidor se entera una sola vez, a lo primero: se desconectó o se pidió cerrar. */
+    const fin = () => {
+      if (pase) cbs.current.onFin?.(gen, pase);
+      pase = '';
+    };
+    const soltarAudio = () => {
+      fin();
+      if (audio !== 'tomado') return;
+      audio = 'suelto';
+      cbs.current.onAudio?.(gen, 'suelta');
+    };
     (async () => {
       avisar('conectando');
       try {
         const r = await cbs.current.permiso();
         if (!vivo) return;
+        audio = 'tomado';
+        pase = r.pase;
+        cbs.current.onAudio?.(gen, 'toma');
         conv.startSession({
           conversationToken: r.token,
           connectionType: 'webrtc',
@@ -156,11 +186,14 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
           },
           onError: (mensaje) => {
             miga(`conversación fluida: error ${String(mensaje).slice(0, 80)}`);
+            // Sin haber conectado, el error es que no abrió: el SDK ya soltó el audio antes de avisar.
+            if (!abierta.current) soltarAudio();
             avisar('error', String(mensaje));
           },
           onDisconnect: () => {
             abierta.current = false;
             hablando.current = false;
+            soltarAudio();
             avisar('cerrada');
           },
         });
@@ -195,6 +228,7 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
           cbs.current.onNiveles(silencio.current ? 0 : salida, entrada);
         }, 50);
       } catch (e: any) {
+        soltarAudio();
         if (!vivo) return;
         miga(`conversación fluida: no abrió (${String(e?.message || e).slice(0, 80)})`);
         avisar('error', String(e?.message || e));
@@ -210,6 +244,10 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
         /* ya cerrada */
       }
       abierta.current = false;
+      // El SDK suelta el audio cuando termina de desconectar (onDisconnect); si nunca avisa, el
+      // VozProvider lo da por suelto a los pocos segundos.
+      if (audio === 'tomado') cbs.current.onAudio?.(gen, 'cerrando');
+      fin();
     };
     // Una sesión por generación: el VozProvider la remonta (key) para abrir otra.
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -253,7 +253,7 @@ export function Companera() {
       ecoMesa.escuchar((e) => despachar({ tipo: 'mesa', hablando: e.hablando, pensando: e.pensando, emocion: e.emocion })),
       escuchar('llamada', ({ activa }) => despachar({ tipo: 'llamada', activa: !!activa })),
       escuchar('hecho', (h) => despachar({ tipo: 'hecho', ok: h.ok, accion: h.accion, detalle: h.detalle })),
-      escuchar('enviado', (e) => despachar({ tipo: 'enviado', para: e.para })),
+      escuchar('enviado', (e) => despachar({ tipo: 'enviado', para: e.para, nombre: e.nombre })),
       escuchar('accion', (a) => despachar({ tipo: 'accion', accion: a })),
       escuchar('pantalla', (p) => {
         pantalla.current = p.pantalla;

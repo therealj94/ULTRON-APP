@@ -3,13 +3,15 @@
  *   POST /api/turno, /api/turno/stream (SSE) · GET|POST /api/tts · POST /api/stt · POST /api/vision/analyze
  *   POST /api/memoria (requiere sesión) · GET|POST /api/cantar · POST /api/orar · GET /api/capacidades · GET /api/health
  * Toda llamada pasa por api(): manda la cabecera de sesión y, si el servidor responde 401, renueva el
- * token con las credenciales guardadas y reintenta una vez.
+ * token con las credenciales guardadas y reintenta una vez. También dice qué teléfono es
+ * (`x-aura-aparato`, ver aparato.ts); los turnos, además, que salen de la app (`x-aura-origen: app`).
  */
 import { API_BASE } from '../config';
 import type { Mode, SessionUser } from '../config';
 import { normalizarEmocion, pelarEtiqueta, type Emocion } from './emocion';
 import { loadCreds, loadMesaToken, saveMesaToken } from './storage';
 import { quitarExpresiones } from './expresiones';
+import { cabecerasAparato } from './aparato';
 import { avatarActual } from '../avatares/actual';
 import { idiomaActual } from '../i18n';
 
@@ -48,12 +50,14 @@ export async function api<T = any>(path: string, init?: RequestInit, timeoutMs =
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const token = await loadMesaToken();
+    const aparato = await cabecerasAparato().catch(() => ({}));
     const res = await fetch(`${API_BASE}${path}`, {
       ...init,
       signal: ctrl.signal,
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
+        ...aparato,
         ...(token ? { 'x-ultron-sesion': token } : {}),
         ...(init?.headers || {}),
       },
@@ -221,7 +225,7 @@ function turnoBody(opts: TurnoOpts) {
 /** Un turno con el cerebro (Qwen 27B). `image` = data URL jpeg opcional para preguntas visuales. */
 export async function turno(opts: TurnoOpts): Promise<ChatResult> {
   try {
-    const data = await api<any>('/api/turno', { method: 'POST', body: turnoBody(opts) }, 70_000);
+    const data = await api<any>('/api/turno', { method: 'POST', body: turnoBody(opts), headers: { 'x-aura-origen': 'app' } }, 70_000);
     const pelado = pelarEtiqueta(String(data.reply || ''));
     const emocion = data.emocion ? normalizarEmocion(data.emocion) : pelado.emocion || 'neutral';
     const voz = data.voz ? pelarEtiqueta(String(data.voz)).texto.trim() : undefined;
@@ -334,9 +338,10 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
     cancelar = () => fail(new Error('cancelado'));
     xhr.ontimeout = () => (full ? finish({ reply: quitarExpresiones(full).trim(), voz: full.trim(), emocion: emocion || 'neutral', error: 'timeout' }) : fail(new Error('timeout')));
     const payload = turnoBody(opts);
-    void loadMesaToken().then((t) => {
+    void Promise.all([loadMesaToken(), cabecerasAparato(true).catch(() => ({}) as Record<string, string>)]).then(([t, extra]) => {
       if (settled) return;
       if (t) xhr.setRequestHeader('x-ultron-sesion', t);
+      for (const [k, v] of Object.entries(extra)) xhr.setRequestHeader(k, v);
       xhr.send(payload);
     });
   });

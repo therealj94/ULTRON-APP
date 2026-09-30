@@ -72,25 +72,57 @@ export function esAccionApp(a: any): a is AccionApp {
 }
 
 /*
- * Las acciones ya hechas, por id. Una misma acción puede llegar dos veces —por el SSE y en el `done`
- * del turno de la mesa— y no debe hacerse dos veces («envíalo» mandaría el mensaje repetido).
+ * Las acciones ya hechas. Una misma acción puede llegar dos veces —por el SSE y en el `done` del
+ * turno de la mesa o de la voz— y no debe hacerse dos veces («envíalo» mandaría el mensaje repetido).
+ *
+ *  · Con id (el servidor responde `acciones: [{ id, accion }]` con el MISMO id que empujó por el SSE):
+ *    un id ya visto no se repite nunca (se guardan los últimos 300).
+ *  · Sin id (un servidor viejo devuelve la AccionApp pelada en el `done`, o el SSE llega sin id): la
+ *    misma acción —mismo contenido— dentro de 5 s se da por repetida. Dos acciones iguales CON ids
+ *    distintos sí son dos (la persona pidió «envíalo» dos veces y el servidor las distinguió).
+ *
+ * Contra lo que sí se compara lo sin id es contra lo de hace 5 s: un «vete atrás» sin id de hace un
+ * minuto no bloquea el de ahora.
  */
-const hechas: string[] = [];
+export const VENTANA_MISMA_ACCION_MS = 5_000;
+type Vista = { id: string; firma: string; en: number };
+const vistas: Vista[] = [];
 
-/** true si esta acción es nueva (y queda anotada); sin id siempre es nueva. */
-export function accionNueva(id?: string | null): boolean {
-  if (!id) return true;
-  if (hechas.includes(id)) return false;
-  hechas.push(id);
-  if (hechas.length > 300) hechas.shift();
+/** La acción en texto estable (claves en orden): dos objetos iguales dan la misma firma. */
+export function firmaAccion(a: unknown): string {
+  if (!a || typeof a !== 'object') return '';
+  const o = a as Record<string, unknown>;
+  return JSON.stringify(Object.keys(o).sort().map((k) => [k, typeof o[k] === 'string' ? String(o[k]).trim() : o[k]]));
+}
+
+/**
+ * true si esta acción es nueva (y queda anotada). `accion` permite reconocer la misma acción que llega
+ * sin id por otro camino; sin id ni acción no hay con qué comparar y es nueva.
+ */
+export function accionNueva(id?: string | null, accion?: unknown, ahora: number = Date.now()): boolean {
+  const i = String(id || '').trim();
+  const firma = accion === undefined ? '' : firmaAccion(accion);
+  if (i && vistas.some((v) => v.id === i)) return false;
+  if (firma) {
+    // La misma acción hace menos de 5 s, y a una de las dos le falta el id: es la misma que volvió.
+    const misma = vistas.find((v) => v.firma === firma && Math.abs(ahora - v.en) <= VENTANA_MISMA_ACCION_MS && (!i || !v.id));
+    if (misma) {
+      if (i && !misma.id) misma.id = i; // si luego llega otra vez con ese id, también se reconoce
+      return false;
+    }
+  }
+  if (!i && !firma) return true;
+  vistas.push({ id: i, firma, en: ahora });
+  if (vistas.length > 300) vistas.shift();
   return true;
 }
 
 /**
- * Las `acciones` que trae el `done` de /api/turno (una lista de AccionApp o de {id, accion}): las
- * válidas y nuevas, en orden. Lo que no se entiende se descarta.
+ * Las `acciones` que trae el `done` de /api/turno (y de /api/turno/stream): `[{ id, accion }]` (el
+ * formato nuevo) o AccionApp sueltas (el viejo). Las válidas y nuevas, en orden; lo que no se entiende
+ * se descarta.
  */
-export function accionesDelTurno(r: unknown): AccionApp[] {
+export function accionesDelTurno(r: unknown, ahora: number = Date.now()): AccionApp[] {
   const lista = (r as { acciones?: unknown } | null)?.acciones;
   if (!Array.isArray(lista)) return [];
   const out: AccionApp[] = [];
@@ -98,7 +130,7 @@ export function accionesDelTurno(r: unknown): AccionApp[] {
     const envuelta = x && typeof x === 'object' && 'accion' in (x as object);
     const accion = envuelta ? (x as { accion: unknown }).accion : x;
     const id = envuelta ? String((x as { id?: unknown }).id || '') : '';
-    if (esAccionApp(accion) && accionNueva(id)) out.push(accion);
+    if (esAccionApp(accion) && accionNueva(id, accion, ahora)) out.push(accion);
   }
   return out;
 }
@@ -115,6 +147,8 @@ export type DepsPuente = {
   alAccion: (a: AccionApp, id?: string) => void;
   /** El servidor dijo 401: renovar la sesión (en la app, una petición por api() que la renueva sola). */
   renovar?: () => Promise<void>;
+  /** Cabeceras de más para el SSE (en la app, `x-aura-aparato`: qué teléfono escucha). */
+  cabeceras?: () => Promise<Record<string, string>>;
   esperar?: Temporizador;
   reloj?: () => number;
   miga?: (t: string) => void;
@@ -213,6 +247,8 @@ export class PuenteAcciones {
     const token = await this.d.token().catch(() => null);
     if (!this.vivo || n !== this.conexion) return;
     if (!token) return this.reintentar(ESPERA_SIN_SESION_MS);
+    const extra = (await this.d.cabeceras?.().catch(() => ({}) as Record<string, string>)) || {};
+    if (!this.vivo || n !== this.conexion) return;
     const x = this.d.xhr();
     this.xhr = x;
     this.lector.reiniciar();
@@ -237,7 +273,7 @@ export class PuenteAcciones {
           this.d.miga?.('acciones: una acción que no conozco');
           continue;
         }
-        if (!accionNueva(id)) continue;
+        if (!accionNueva(id, d.accion)) continue;
         this.fallos = 0;
         this.d.alAccion(d.accion, id || undefined);
       }
@@ -287,6 +323,7 @@ export class PuenteAcciones {
       x.setRequestHeader('Accept', 'text/event-stream');
       x.setRequestHeader('Cache-Control', 'no-cache');
       x.setRequestHeader('x-ultron-sesion', token);
+      for (const [k, v] of Object.entries(extra)) if (v) x.setRequestHeader(k, v);
       if (this.ultimoId) x.setRequestHeader('Last-Event-ID', this.ultimoId);
       x.send();
       this.vigilar(n);
@@ -306,7 +343,7 @@ export type DepsContexto = {
   enviar: (c: Contexto) => Promise<unknown>;
   /** Nombres y correos de la gente con la que se puede hablar (nunca mensajes). */
   contactos: () => Promise<Contacto[]>;
-  escuchar: <K extends 'pantalla' | 'accion' | 'hecho' | 'enviado'>(tipo: K, f: (d: Eventos[K]) => void) => () => void;
+  escuchar: <K extends 'pantalla' | 'hecho' | 'enviado'>(tipo: K, f: (d: Eventos[K]) => void) => () => void;
   esperar?: Temporizador;
   reloj?: () => number;
   /** Cada cuánto se repite mientras hay conversación. */
@@ -341,18 +378,15 @@ export class ContextoApp {
         this.chatAbierto = p.chatAbierto ?? null;
         this.pronto();
       }),
-      this.d.escuchar('accion', (a) => {
-        // El borrador es lo que AURA dejó escrito (lo leyó en voz alta): el cerebro lo necesita para «envíalo».
-        if (a.tipo === 'redactar') {
-          this.borrador = a.texto;
-          this.pronto();
-        } else if (a.tipo === 'descartar') {
-          this.borrador = undefined;
-          this.pronto();
-        }
-      }),
+      // El borrador es lo que AURA dejó escrito (lo leyó en voz alta): el cerebro lo necesita para
+      // «envíalo». Se fija cuando `redactar` salió BIEN (si no encontró a quién, no hay borrador) y se
+      // borra cuando se envió o se descartó de verdad.
       this.d.escuchar('hecho', (h) => {
-        if (h.ok && (h.accion.tipo === 'enviar' || h.accion.tipo === 'descartar')) {
+        if (!h.ok) return;
+        if (h.accion.tipo === 'redactar') {
+          this.borrador = h.accion.texto;
+          this.pronto();
+        } else if (h.accion.tipo === 'enviar' || h.accion.tipo === 'descartar') {
           this.borrador = undefined;
           this.pronto();
         }

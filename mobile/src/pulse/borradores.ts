@@ -120,29 +120,56 @@ async function quienEs(con: string): Promise<Contacto | null> {
   return c;
 }
 
+export type ResultadoEnvio = { ok: boolean; detalle: string; id?: string };
+
+/**
+ * Los envíos por voz en curso, por correo. Un mismo «envíalo» puede llegar dos veces seguidas (por el
+ * SSE y en el `done` del turno, o la persona lo repite): el segundo se SUMA al que ya va —misma
+ * promesa, mismo resultado— en vez de mandar el mensaje otra vez.
+ */
+const enCurso = new Map<string, Promise<ResultadoEnvio>>();
+
 /**
  * Envía el borrador del chat con `correo` (o el abierto, o el último que redactó AURA). Lo usa la
  * voz; el botón Enviar de la pantalla va directo por `CHATS.enviarTexto`.
+ *
+ * El borrador sale del almacén ANTES de esperar al relevo (así nadie más lo encuentra para mandarlo
+ * otra vez) y vuelve a su sitio si el envío falla, salvo que mientras tanto se haya escrito otro.
  */
-export async function enviarBorrador(correo?: string): Promise<{ ok: boolean; detalle: string; id?: string }> {
+export function enviarBorrador(correo?: string): Promise<ResultadoEnvio> {
   const c = (correo || abierto?.correo || ultimoRedactado || '').toLowerCase();
-  if (!c) return { ok: false, detalle: 'No hay ningún chat abierto ni borrador pendiente.' };
+  if (!c) return Promise.resolve({ ok: false, detalle: 'No hay ningún chat abierto ni borrador pendiente.' });
+  const ya = enCurso.get(c);
+  if (ya) return ya;
   const b = borradores[c];
-  if (!b?.texto.trim()) return { ok: false, detalle: 'No hay borrador para enviar en ese chat.' };
-  const r = await CHATS.enviarTexto(c, b.texto);
-  if (!r.ok) {
-    return {
-      ok: false,
-      detalle:
-        r.code === 403
-          ? 'Hace falta que esa persona te acepte para escribirle.'
-          : r.motivo === 'sin-cuenta'
-            ? 'El chat no está conectado.'
-            : 'No se pudo enviar. Revisa la conexión.',
-    };
-  }
+  if (!b?.texto.trim()) return Promise.resolve({ ok: false, detalle: 'No hay borrador para enviar en ese chat.' });
+  const eraUltimo = ultimoRedactado === c;
   quitar(c);
-  return { ok: true, detalle: r.e2e ? 'Enviado, cifrado de punta a punta.' : 'Enviado sin cifrar: esa persona todavía no abrió el chat en ningún aparato.', id: r.id };
+  const p = (async (): Promise<ResultadoEnvio> => {
+    const r = await CHATS.enviarTexto(c, b.texto).catch((): CHATS.Envio => ({ ok: false, motivo: 'sin-red' }));
+    if (!r.ok) {
+      // Vuelve el borrador tal como estaba (con su brillo de voz), si nadie escribió otro encima.
+      if (!borradores[c] && RELEVO.quien()) {
+        borradores = { ...borradores, [c]: b };
+        if (eraUltimo) ultimoRedactado = c;
+        avisar();
+      }
+      return {
+        ok: false,
+        detalle:
+          r.code === 403
+            ? 'Hace falta que esa persona te acepte para escribirle.'
+            : r.motivo === 'sin-cuenta'
+              ? 'El chat no está conectado.'
+              : 'No se pudo enviar. Revisa la conexión.',
+      };
+    }
+    return { ok: true, detalle: r.e2e ? 'Enviado, cifrado de punta a punta.' : 'Enviado sin cifrar: esa persona todavía no abrió el chat en ningún aparato.', id: r.id };
+  })().finally(() => {
+    if (enCurso.get(c) === p) enCurso.delete(c);
+  });
+  enCurso.set(c, p);
+  return p;
 }
 
 /* ── lo que llega por el bus ──────────────────────────────────────────────────────────────── */
@@ -198,6 +225,7 @@ g.__auraBorradores = escuchar('accion', (a) => {
 /** Al salir de la cuenta, los borradores se van con ella. */
 RELEVO.alSalir(() => {
   borradores = {};
+  enCurso.clear();
   ultimoRedactado = null;
   abierto = null;
   avisar();

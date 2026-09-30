@@ -15,8 +15,9 @@
 import type { AvatarId } from '../avatares/catalogo';
 import type { Idioma } from '../i18n';
 
-export type Permiso = { token: string; pase: string; avatar: AvatarId; idioma: Idioma; en: number };
-export type PedirPermiso = (avatar: AvatarId, idioma: Idioma) => Promise<{ token: string; pase: string }>;
+/** `cid`: el id de la conversación en el servidor (lo devuelve /api/voz/agente desde la 5.0). */
+export type Permiso = { token: string; pase: string; cid?: string; avatar: AvatarId; idioma: Idioma; en: number };
+export type PedirPermiso = (avatar: AvatarId, idioma: Idioma) => Promise<{ token: string; pase: string; cid?: string }>;
 
 export const VIDA_PERMISO_MS = 4 * 60_000;
 
@@ -51,7 +52,7 @@ export class Precalentador {
     const p = this.pedir(a, i)
       .then((r) => {
         if (!r?.token || !r?.pase) throw new Error('el servidor no dio permiso de voz');
-        return { token: r.token, pase: r.pase, avatar: a, idioma: i, en: this.reloj() };
+        return { token: r.token, pase: r.pase, ...(r.cid ? { cid: String(r.cid) } : {}), avatar: a, idioma: i, en: this.reloj() };
       })
       .finally(() => this.enCurso.delete(k));
     this.enCurso.set(k, p);

@@ -15,7 +15,8 @@ import { ANIMO_INICIAL, expresion, puedeCaminar, reducir } from '../animo.ts';
 import { Gestos } from '../gestos.ts';
 import { pegarABorde, reubicar, yCarril, limitar, destinoPaseo, lugarGlobo } from '../borde.ts';
 import { LectorSse } from '../sse.ts';
-import { PuenteAcciones, ContextoApp, esAccionApp, accionesDelTurno, accionNueva, depurarContactos } from '../acciones.ts';
+import { PuenteAcciones, ContextoApp, esAccionApp, accionesDelTurno, accionNueva, depurarContactos, VENTANA_MISMA_ACCION_MS } from '../acciones.ts';
+import { AudioVoz } from '../audioVoz.ts';
 import { FIGURAS, mezclarFigura, estiloDe } from '../figura.ts';
 import { emocionDeTexto } from '../../lib/emocion.ts';
 import { emitir, escuchar } from '../../nucleo/contrato.ts';
@@ -178,6 +179,75 @@ prueba('llamada: si estaba cerrada, al colgar sigue cerrada; si estaba silenciad
   off();
 });
 
+prueba('llamada: si termina con la app DETRÁS, la conversación no se reabre (revisión 5, B4)', () => {
+  // Lo que reproducía fondo.mts: la persona se va al inicio en plena llamada y el otro cuelga.
+  const c = new ControlSesion('aura', 'es');
+  c.iniciar();
+  c.alEstado(c.vista().gen, 'escuchando');
+  let delante = true;
+  const off = coordinarLlamadas({ escuchar: (t, f) => escuchar(t, f), sesion: c, enPrimerPlano: () => delante, suspenderVoz() {}, suspenderOido() {}, suspenderSfx() {} });
+  emitir('llamada', { activa: true, video: false });
+  delante = false;
+  c.segundoPlano(); // en llamada no hace nada: la llamada manda
+  emitir('llamada', { activa: false, video: false });
+  assert.equal(c.vista().montada, false, 'ElevenLabs no se remonta en segundo plano');
+  assert.equal(c.vista().suspendida, false);
+  assert.equal(c.vista().estado, 'cerrada');
+  // Al volver no se abre sola (como segundoPlano): la persona la despierta cuando quiera.
+  delante = true;
+  assert.equal(c.vista().montada, false);
+  assert.equal(c.iniciar(), true);
+  assert.equal(c.vista().montada, true);
+  off();
+});
+
+prueba('silencio: el hecho dice lo que de verdad pasó (revisión 5, B12)', () => {
+  const c = new ControlSesion('aura', 'es');
+  assert.equal(c.aplicarSilencio(true).ok, false, 'sin conversación no hay qué silenciar');
+  assert.match(c.aplicarSilencio(true).detalle, /No hay conversación/);
+  c.iniciar();
+  c.alEstado(c.vista().gen, 'escuchando');
+  assert.deepEqual(c.aplicarSilencio(false), { ok: false, detalle: 'Ya estaba escuchando.' });
+  assert.deepEqual(c.aplicarSilencio(true), { ok: true });
+  assert.equal(c.vista().silenciada, true);
+  assert.equal(c.aplicarSilencio(true).ok, false, 'ya estaba en silencio');
+  assert.deepEqual(c.aplicarSilencio(false), { ok: true });
+  assert.equal(c.vista().silenciada, false);
+  c.terminar();
+  assert.deepEqual(c.aplicarSilencio(false), { ok: true }, 'despertar sin sesión la abre');
+  assert.equal(c.vista().montada, true);
+  c.llamada(true);
+  assert.equal(c.aplicarSilencio(false).ok, false, 'en llamada no vuelve');
+  assert.equal(c.aplicarSilencio(true).ok, false, 'en llamada ya está apagada');
+});
+
+prueba('audio de la voz: libre al soltar de verdad; el cierre sin aviso se suelta al tope (revisión 5, B3)', () => {
+  const avisos = [];
+  const relojes = [];
+  const a = new AudioVoz((l) => avisos.push(l), (f, ms) => {
+    const r = { f, ms, vivo: true };
+    relojes.push(r);
+    return () => (r.vivo = false);
+  });
+  assert.equal(a.libre(), true);
+  a.tomar(1);
+  assert.deepEqual(avisos, [false]);
+  // Se reabre (otra generación) antes de que la vieja termine de soltar: sigue ocupada.
+  a.cerrando(1);
+  a.tomar(2);
+  a.soltar(1);
+  assert.equal(a.libre(), false);
+  assert.deepEqual(avisos, [false], 'no avisa libre mientras otra generación tiene el audio');
+  assert.equal(relojes[0].vivo, false, 'el tope de la 1 se cancela al soltar');
+  a.cerrando(2);
+  assert.equal(relojes[1].ms, 4000);
+  relojes[1].f(); // la 2 nunca avisó onDisconnect: se da por suelta al tope
+  assert.equal(a.libre(), true);
+  assert.deepEqual(avisos, [false, true]);
+  a.soltar(2); // el onDisconnect tardío no avisa dos veces
+  assert.deepEqual(avisos, [false, true]);
+});
+
 /* ── generaciones contra un proveedor con candado (como el ConversationProvider del SDK) ─────── */
 
 prueba('generaciones: con key={gen} un arranque pendiente no bloquea al siguiente', async () => {
@@ -324,6 +394,39 @@ prueba('ánimo: un envío da UNA palomita y «¡Listo!» aunque lleguen hecho y 
   assert.equal(expresion(mal.animo, 10), 'triste');
 });
 
+prueba('ánimo: un mensaje escrito a mano pone la palomita pero AURA no dice «¡Listo!» (revisión 5, B5)', () => {
+  const r = reducir(ANIMO_INICIAL, { tipo: 'enviado', para: 'beto@x.com', nombre: 'Beto Pérez' }, 1000);
+  assert.ok(tipos(r.efectos).includes('palomita'));
+  assert.ok(!tipos(r.efectos).includes('confirmar'), 'enviado solo: muda');
+  assert.ok(r.efectos.some((e) => e.tipo === 'globo' && /Beto Pérez/.test(e.texto)), 'el globo lleva el nombre, no el correo');
+  // Por voz: primero `enviado` (lo avisa el chat) y luego el `hecho` de enviar → UN «¡Listo!», sin otra palomita.
+  const h = reducir(r.animo, { tipo: 'hecho', ok: true, accion: { tipo: 'enviar' } }, 1100);
+  assert.ok(!tipos(h.efectos).includes('palomita'));
+  assert.equal(h.efectos.filter((e) => e.tipo === 'confirmar' && e.ok).length, 1);
+  // El mismo envío avisado dos veces (el hecho repetido de un doble «envíalo»): no lo dice dos veces.
+  const h2 = reducir(h.animo, { tipo: 'hecho', ok: true, accion: { tipo: 'enviar' } }, 1300);
+  assert.ok(!tipos(h2.efectos).includes('confirmar'));
+});
+
+prueba('ánimo: lo que no pudo hacer lo dice con el motivo (y el agente se entera) (revisión 5, B6)', () => {
+  const r = reducir(ANIMO_INICIAL, { tipo: 'hecho', ok: false, accion: { tipo: 'redactar', para: 'Zacarías', texto: 'hola' }, detalle: 'No encuentro a «Zacarías» entre tus contactos.' }, 0);
+  const c = r.efectos.find((e) => e.tipo === 'confirmar');
+  assert.ok(c && c.ok === false && /Zacarías/.test(c.texto), JSON.stringify(r.efectos));
+  const e = reducir(ANIMO_INICIAL, { tipo: 'hecho', ok: false, accion: { tipo: 'enviar' }, detalle: 'Hace falta que esa persona te acepte para escribirle.' }, 0);
+  assert.ok(e.efectos.some((x) => x.tipo === 'confirmar' && !x.ok && /acepte/.test(x.texto)));
+  const s = reducir(ANIMO_INICIAL, { tipo: 'hecho', ok: false, accion: { tipo: 'silencio', valor: true }, detalle: 'Ya estaba en silencio.' }, 0);
+  assert.equal(s.efectos.length, 0, 'el silencio no se comenta');
+});
+
+prueba('ánimo: montada con la llamada ya en curso, se esconde al ver la voz suspendida (revisión 5, 13)', () => {
+  const r = reducir(ANIMO_INICIAL, { tipo: 'voz', voz: { estado: 'cerrada', silenciada: false, dormida: false, suspendida: true } }, 0);
+  assert.ok(tipos(r.efectos).includes('desaparecer'));
+  assert.equal(r.animo.oculta, true);
+  // El aviso `llamada` que llega después no la hace desaparecer dos veces; al colgar vuelve.
+  assert.equal(reducir(r.animo, { tipo: 'llamada', activa: true }, 5).efectos.length, 0);
+  assert.ok(tipos(reducir(r.animo, { tipo: 'llamada', activa: false }, 10).efectos).includes('aparecer'));
+});
+
 prueba('ánimo: en la llamada se va y al colgar vuelve contenta; levantarla y soltarla', () => {
   let r = reducir(ANIMO_INICIAL, { tipo: 'llamada', activa: true }, 0);
   assert.ok(tipos(r.efectos).includes('desaparecer'));
@@ -449,6 +552,113 @@ prueba('acciones: validación, las del turno y sin repetir por id', () => {
   assert.deepEqual(l, [{ tipo: 'atras' }, { tipo: 'silencio', valor: true }]);
   assert.equal(accionNueva('x-1'), false, 'si luego llega por el SSE, no se repite');
   assert.deepEqual(accionesDelTurno({ reply: 'hola' }), []);
+});
+
+prueba('acciones: el formato nuevo {id, accion} y el viejo sin id no se hacen dos veces (revisión 5, C1)', () => {
+  const t0 = 1_000_000;
+  // 1) Llega por el SSE con id y el done del turno la trae pelada (servidor viejo): una sola vez.
+  const env1 = { tipo: 'redactar', para: 'Beto', texto: 'uno' };
+  assert.equal(accionNueva('sse-1', env1, t0), true);
+  assert.deepEqual(accionesDelTurno({ acciones: [{ ...env1 }] }, t0 + 300), [], 'pelada tras el SSE: repetida');
+  // 2) Al revés: el done (sin id) primero y el SSE (con id) después, dentro de 5 s; y ese id otra vez.
+  const env2 = { tipo: 'redactar', para: 'Beto', texto: 'dos' };
+  assert.equal(accionesDelTurno({ acciones: [env2] }, t0).length, 1);
+  assert.equal(accionNueva('sse-2', env2, t0 + 4000), false, 'el SSE que llega después: repetido');
+  assert.equal(accionNueva('sse-2', env2, t0 + 60_000), false, 'y ese id ya queda anotado');
+  // 3) El formato nuevo: el done trae {id, accion} con el MISMO id del SSE.
+  const env3 = { tipo: 'redactar', para: 'Beto', texto: 'tres' };
+  assert.equal(accionNueva('sse-3', env3, t0), true);
+  assert.deepEqual(accionesDelTurno({ acciones: [{ id: 'sse-3', accion: env3 }] }, t0 + 100), []);
+  // 4) Sin id por los dos lados: una sola vez (antes el id vacío siempre era «nueva»).
+  const env4 = { tipo: 'redactar', para: 'Beto', texto: 'cuatro' };
+  assert.equal(accionNueva('', env4, t0), true);
+  assert.equal(accionNueva('', { texto: 'cuatro', para: 'Beto ', tipo: 'redactar' }, t0 + 10), false, 'mismo contenido en otro orden: repetida');
+  assert.equal(accionNueva(null, env4, t0 + VENTANA_MISMA_ACCION_MS + 1), true, 'pasados 5 s es otra');
+  // 5) Dos iguales con ids DISTINTOS son dos (la persona lo pidió dos veces y el servidor lo distinguió).
+  const env5 = { tipo: 'redactar', para: 'Beto', texto: 'cinco' };
+  assert.equal(accionNueva('a-5', env5, t0), true);
+  assert.equal(accionNueva('b-5', env5, t0 + 10), true);
+});
+
+prueba('puente + turno: el «enviar» del SSE y el del done no salen dos veces (doble.mts)', async () => {
+  const ejecutadas = [];
+  let xhr;
+  const puente = new PuenteAcciones({
+    base: 'http://x',
+    token: async () => 't',
+    cabeceras: async () => ({ 'x-aura-aparato': 'tel-1' }),
+    xhr: () =>
+      (xhr = {
+        responseText: '',
+        status: 200,
+        readyState: 1,
+        cab: {},
+        onprogress: null,
+        onreadystatechange: null,
+        onerror: null,
+        open() {},
+        setRequestHeader(k, v) {
+          this.cab[k] = v;
+        },
+        send() {},
+        abort() {},
+      }),
+    alAccion: (a, id) => ejecutadas.push({ via: 'sse', a, id }),
+    esperar: () => () => {},
+  });
+  puente.arrancar();
+  await dormir(10);
+  assert.equal(xhr.cab['x-aura-aparato'], 'tel-1', 'el SSE dice qué aparato escucha');
+  const accion = { tipo: 'enviar', para: 'doble-mts' };
+  xhr.responseText = 'id: Ab12Cd\ndata: ' + JSON.stringify({ id: 'Ab12Cd', accion }) + '\n\n';
+  xhr.readyState = 3;
+  xhr.onprogress();
+  for (const a of accionesDelTurno({ reply: 'Listo, enviado', acciones: [accion] })) ejecutadas.push({ via: 'turno', a });
+  // Y un SSE sin id con la misma acción otra vez (el id vacío no es «nueva» sin más).
+  xhr.responseText += 'data: ' + JSON.stringify({ accion }) + '\n\n';
+  xhr.onprogress();
+  puente.parar();
+  assert.equal(ejecutadas.length, 1, JSON.stringify(ejecutadas));
+});
+
+prueba('puente: parado en segundo plano, al volver reconecta con Last-Event-ID (revisión 5, B11)', async () => {
+  let conexiones = 0;
+  const ultimos = [];
+  const s = await servidorFalso((q, r) => {
+    conexiones += 1;
+    ultimos.push(q.headers['last-event-id'] || '');
+    r.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    if (conexiones === 1) r.write('id: f-1\ndata: {"id":"f-1","accion":{"tipo":"abrir","pantalla":"perfil"}}\n\n');
+    else r.write(': latido\n\n');
+  });
+  const recibidas = [];
+  const puente = new PuenteAcciones({
+    base: `http://127.0.0.1:${s.address().port}`,
+    token: async () => 'tok',
+    xhr: () => new XhrNode(),
+    alAccion: (a) => recibidas.push(a),
+    // Las esperas cortas, rápidas; el vigía de silencio (60 s), de verdad: aquí no debe saltar.
+    esperar: (f, ms) => {
+      const t = setTimeout(f, ms >= 60_000 ? ms : Math.min(ms, 30));
+      return () => clearTimeout(t);
+    },
+    silencioMaxMs: 60_000,
+  });
+  puente.arrancar();
+  await dormir(120);
+  puente.parar(); // la app se fue a segundo plano
+  const conectadas = conexiones;
+  await dormir(150);
+  assert.equal(conexiones, conectadas, 'detrás no se reconecta');
+  assert.equal(puente.estado, 'parado');
+  puente.arrancar(); // volvió
+  await dormir(120);
+  puente.parar();
+  s.closeAllConnections?.();
+  s.close();
+  assert.equal(conexiones, conectadas + 1, JSON.stringify({ conectadas, conexiones, ultimos }));
+  assert.equal(ultimos[ultimos.length - 1], 'f-1', 'retoma donde iba');
+  assert.deepEqual(recibidas, [{ tipo: 'abrir', pantalla: 'perfil' }]);
 });
 
 /** Un XMLHttpRequest mínimo sobre http, con responseText que crece (como el de React Native). */
@@ -588,7 +798,7 @@ prueba('puente: 404 prueba cada minuto sin ruido; 500 espera cada vez más; sin 
   s.close();
 });
 
-prueba('contexto: pantalla, borrador de AURA y contactos (solo nombre y correo), nunca mensajes', async () => {
+prueba('contexto: pantalla, borrador de AURA (solo con redactar ok) y contactos (solo nombre y correo), nunca mensajes', async () => {
   const enviados = [];
   const ctx = new ContextoApp({
     enviar: async (c) => enviados.push(JSON.parse(JSON.stringify(c))),
@@ -606,10 +816,17 @@ prueba('contexto: pantalla, borrador de AURA y contactos (solo nombre y correo),
   ctx.arrancar();
   await dormir(20);
   emitir('pantalla', { pantalla: 'chats', chatAbierto: { correo: 'mama@x.com', nombre: 'Mamá' } });
-  emitir('accion', { tipo: 'redactar', para: 'Mamá', texto: 'Llego tarde' });
+  // Pedir `redactar` no basta: el borrador existe cuando salió bien (si no encontró a quién, no hay).
+  const redactar = { tipo: 'redactar', para: 'Mamá', texto: 'Llego tarde' };
+  emitir('accion', redactar);
+  emitir('hecho', { accion: { ...redactar, para: 'Zacarías' }, ok: false, detalle: 'No encuentro a «Zacarías»' });
   await dormir(20);
   let u = enviados[enviados.length - 1];
   assert.equal(u.pantalla, 'chats');
+  assert.equal(u.borrador, undefined, 'un redactar que falló no deja borrador en el contexto');
+  emitir('hecho', { accion: redactar, ok: true, detalle: 'Borrador para Mamá.' });
+  await dormir(20);
+  u = enviados[enviados.length - 1];
   assert.equal(u.borrador, 'Llego tarde');
   assert.deepEqual(u.contactos, [{ correo: 'mama@x.com', nombre: 'Mamá' }]);
   assert.ok(!JSON.stringify(enviados).includes('secreto'));

@@ -400,6 +400,78 @@ async function contestadaEnPie(video = false) {
     afirmar(L.cuento().estado === 'hablando' && !L.cuento().reconectando, 'estado ' + L.cuento().estado);
   });
 
+  /* ── revisión 5: el audio que AURA suelta tarde y el servicio desde segundo plano ── */
+  await prueba('R5-3', 'con AURA cerrándose, la llamada espera «voz libre» y el stop tardío de ElevenLabs no le apaga el audio', async () => {
+    const { L } = await nuevo();
+    const bus = H.contrato();
+    bus.emitir('voz', { libre: false }); // la conversación de AURA tiene el audio
+    const p = L.llamar('b@a.com', false);
+    await tick(800);
+    afirmar(obs.audioArranques === 0, 'arrancó el audio con AURA todavía cerrándose');
+    // Así cierra el SDK de ElevenLabs: primero para la sesión de audio y DESPUÉS avisa (onDisconnect).
+    await H.AUDIO.stopAudioSession();
+    bus.emitir('voz', { libre: true });
+    await conReloj(p);
+    afirmar(obs.audioArranques === 1 && obs.audioSesion === 'arrancada', `audio ${obs.audioSesion} (${obs.audioArranques} arranques)`);
+    L.colgar('yo');
+    await flush();
+  });
+  await prueba('R5-3', 'si AURA nunca avisa, la llamada no espera más de 2,5 s', async () => {
+    const { L } = await nuevo();
+    H.contrato().emitir('voz', { libre: false });
+    const p = L.llamar('b@a.com', false);
+    await tick(2000);
+    afirmar(obs.audioArranques === 0, 'no esperó');
+    await tick(600);
+    afirmar(obs.audioArranques === 1, 'a los 2,6 s todavía sin audio');
+    await conReloj(p);
+    L.colgar('yo');
+    await flush();
+    H.contrato().emitir('voz', { libre: true });
+  });
+  await prueba('R5-3', 'al conectar se re-aplica el audio una vez, respetando el altavoz que eligió la persona', async () => {
+    const n = await nuevo();
+    await conReloj(n.L.llamar('b@a.com', false));
+    await n.L.altavoz(true);
+    await n.L.recibir({ de: 'b@a.com', tipo: 'respuesta', datos: { sdp: RESPUESTA() } });
+    // Un cierre tardío de AURA le apagó el audio justo antes de conectar.
+    await H.AUDIO.stopAudioSession();
+    obs.pcs[obs.pcs.length - 1].conectar();
+    await flush();
+    afirmar(obs.audioArranques === 2 && obs.audioSesion === 'arrancada', `${obs.audioArranques} arranques, ${obs.audioSesion}`);
+    afirmar(n.L.cuento().porAltavoz === true, 'volvió al auricular');
+    // Un reinicio de ICE que vuelve a «connected» no lo re-aplica otra vez.
+    obs.pcs[obs.pcs.length - 1].ice('disconnected');
+    obs.pcs[obs.pcs.length - 1].conectar();
+    await flush();
+    afirmar(obs.audioArranques === 2, 'lo re-aplicó de más: ' + obs.audioArranques);
+  });
+  await prueba('R5-8', 'conecta con la app DETRÁS: no relanza el servicio (Android 14), solo cambia el texto', async () => {
+    const n = await nuevo();
+    await conReloj(n.L.llamar('b@a.com', false));
+    const antes = obs.servicio.notificaciones.length;
+    afirmar(antes === 1 && obs.servicio.notificaciones[0].android.asForegroundService === true, 'no arrancó el servicio al llamar');
+    obs.appState = 'background';
+    await n.L.recibir({ de: 'b@a.com', tipo: 'respuesta', datos: { sdp: RESPUESTA() } });
+    obs.pcs[obs.pcs.length - 1].conectar();
+    await flush();
+    const despues = obs.servicio.notificaciones.slice(antes);
+    afirmar(despues.length === 1, 'notificaciones al conectar: ' + despues.length);
+    afirmar(!despues[0].android.asForegroundService && !despues[0].android.foregroundServiceTypes, 'volvió a pedir el servicio en primer plano desde segundo plano');
+    afirmar(/Cifrada|encrypted/.test(despues[0].body) && despues[0].android.showChronometer, 'no actualizó el texto: ' + despues[0].body);
+    afirmar(obs.servicio.activo, 'el servicio que ya corría se paró');
+    n.L.colgar('yo');
+    await flush();
+    afirmar(!obs.servicio.activo, 'al colgar el servicio sigue');
+  });
+  await prueba('R5-8', 'con la app delante al conectar, el texto se actualiza como siempre', async () => {
+    const n = await llamadaEnPie();
+    const ult = obs.servicio.notificaciones[obs.servicio.notificaciones.length - 1];
+    afirmar(ult.android.asForegroundService === true && /Cifrada|encrypted/.test(ult.body), JSON.stringify(ult.body));
+    n.L.colgar('yo');
+    await flush();
+  });
+
   /* ── M10: liberar pistas ── */
   await prueba('M10', 'al colgar las pistas se paran Y se liberan (release)', async () => {
     const { L } = await nuevo();

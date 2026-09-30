@@ -91,6 +91,18 @@ export function alSalir(f: () => void): () => void {
   };
 }
 
+/**
+ * Lo que hay que hacer ANTES de soltar la cuenta, con la llave todavía puesta: colgar una llamada en
+ * curso (su `cuelgo` sale firmado con esta cuenta; después ya no habría con qué firmarlo).
+ */
+const antesDeSalirHacer = new Set<() => void>();
+export function antesDeSalir(f: () => void): () => void {
+  antesDeSalirHacer.add(f);
+  return () => {
+    antesDeSalirHacer.delete(f);
+  };
+}
+
 /** Quien quiera saber cuándo se entra o se sale de la cuenta (el proveedor, para redibujar). */
 const oyentesCuenta = new Set<() => void>();
 export function escucharCuenta(f: () => void): () => void {
@@ -158,6 +170,13 @@ export async function recuperar(): Promise<Cuenta | null> {
 
 /** Sale del chat en este teléfono: corta la escucha, olvida la cuenta y todo lo abierto en memoria. */
 export async function salir() {
+  for (const f of [...antesDeSalirHacer]) {
+    try {
+      f();
+    } catch {
+      /* colgar no impide salir */
+    }
+  }
   dejarDeEscuchar(true);
   yo = null;
   publicadaPara = null;
@@ -819,14 +838,17 @@ const colas = new Map<string, Promise<unknown>>();
  */
 export function senalar(para: string, tipo: string, datos?: unknown): Promise<{ ok: true }> {
   const clave = String(para || '').toLowerCase();
+  // La cuenta de AHORA: un `cuelgo` pedido justo antes de salir sale firmado aunque la cuenta se suelte
+  // mientras espera su turno en la cola.
+  const cuenta = yo;
   const antes = colas.get(clave) || Promise.resolve();
   const esta = antes
     .catch(() => undefined)
     .then(async () => {
       try {
-        if (!yo) throw Object.assign(new Error('sin cuenta del chat'), { code: 401 });
+        if (!cuenta) throw Object.assign(new Error('sin cuenta del chat'), { code: 401 });
         await miAparato();
-        await pedir('/senal', conAparato(firmado({ para: clave, tipo, datos: datos || {} })));
+        await pedir('/senal', conAparato({ para: clave, tipo, datos: datos || {}, correo: cuenta.correo, llave: cuenta.llave }));
         return { ok: true as const };
       } catch (e: any) {
         const err = (e instanceof Error ? e : new Error(String(e))) as ErrorSenal;

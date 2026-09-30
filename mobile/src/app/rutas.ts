@@ -79,18 +79,26 @@ export const RUTAS_DE_SESION: readonly string[] = ['Mesa', 'Ajustes', 'Perfil', 
 /**
  * El hilo con una persona. Si ya está abierto con ella, se queda; si no, se abre encima de la lista
  * de chats (así «atrás» vuelve a la lista y luego a la mesa, como en cualquier app de mensajes).
+ *
+ * El correo va siempre en minúsculas: el hilo y su borrador (el que AURA dejó por voz) se guardan
+ * así, y «el mismo hilo» se reconoce sin importar cómo vino escrito. Devuelve false si no se pudo
+ * abrir (la navegación no está lista o no hay sesión): así AURA no dice «listo» en falso.
  */
-export function abrirConversacion(con: string, nombre?: string) {
-  if (!nav.isReady()) return;
+export function abrirConversacion(con: string, nombre?: string): boolean {
+  if (!nav.isReady()) return false;
+  const correo = String(con || '').trim().toLowerCase();
+  if (!correo) return false;
   const estado = nav.getRootState();
   const rutas = estado?.routes || [];
-  if (!rutas.some((r) => r.name === 'Mesa')) return;
+  if (!rutas.some((r) => r.name === 'Mesa')) return false;
   const arriba = rutas[rutas.length - 1];
-  if (arriba?.name === 'Conversacion' && (arriba.params as RaizParams['Conversacion'])?.con === con) return;
+  const abiertoCon = String((arriba?.params as RaizParams['Conversacion'] | undefined)?.con || '').toLowerCase();
+  if (arriba?.name === 'Conversacion' && abiertoCon === correo) return true;
   if (arriba?.name === 'Conversacion') {
-    nav.dispatch(StackActions.replace('Conversacion', { con, nombre }));
-    return;
+    nav.dispatch(StackActions.replace('Conversacion', { con: correo, nombre }));
+    return true;
   }
   abrirRuta('Chats');
-  nav.dispatch(StackActions.push('Conversacion', { con, nombre }));
+  nav.dispatch(StackActions.push('Conversacion', { con: correo, nombre }));
+  return true;
 }

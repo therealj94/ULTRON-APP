@@ -10,7 +10,8 @@
  *  · M5: al pasar a segundo plano la sesión seguía abierta (micrófono y minutos de ElevenLabs). Ahora
  *    se cierra.
  *  · Llamadas: una llamada la cierra y al colgar vuelve exactamente como estaba (abierta o no,
- *    silenciada o no).
+ *    silenciada o no). Si la llamada termina con la app DETRÁS, no se reabre: se queda cerrada, como
+ *    al pasar a segundo plano (antes volvía a abrir ElevenLabs con el micrófono en segundo plano).
  *
  * Silenciar (doble toque a la compañera, «cállate», el botón del micrófono) corta el micrófono y la
  * voz AL INSTANTE sin cerrar la sesión, así al despertarla escucha de inmediato. Si pasa mucho rato
@@ -136,6 +137,25 @@ export class ControlSesion {
     this.iniciar();
   }
 
+  /**
+   * La acción `silencio` de AURA, con lo que de verdad pasó (el `hecho` lo cuenta tal cual: un
+   * «cállate» sin conversación abierta no es un «listo»).
+   */
+  aplicarSilencio(valor: boolean): { ok: boolean; detalle?: string } {
+    const v = this.v;
+    if (valor) {
+      if (v.suspendida) return { ok: false, detalle: 'Hay una llamada en curso: AURA ya está apagada.' };
+      if (!v.montada) return { ok: false, detalle: 'No hay conversación abierta que silenciar.' };
+      if (v.silenciada) return { ok: false, detalle: 'Ya estaba en silencio.' };
+      this.silenciar(true);
+      return { ok: this.v.silenciada };
+    }
+    if (v.suspendida) return { ok: false, detalle: 'Hay una llamada en curso: AURA vuelve al colgar.' };
+    if (v.montada && !v.silenciada && v.estado !== 'error') return { ok: false, detalle: 'Ya estaba escuchando.' };
+    this.silenciar(false);
+    return this.v.montada && !this.v.silenciada ? { ok: true } : { ok: false, detalle: 'No se pudo abrir la conversación.' };
+  }
+
   /** El doble toque a la compañera: la duerme si está despierta y la despierta (y escucha) si no. */
   despertarOSilenciar(): 'despierta' | 'duerme' | 'nada' {
     if (this.v.suspendida) return 'nada';
@@ -167,8 +187,12 @@ export class ControlSesion {
     this.poner({ estado: e, ...(e === 'escuchando' || e === 'hablando' ? { intento: 0 } : {}) });
   }
 
-  /** Empezó o terminó una llamada (voz o video). */
-  llamada(activa: boolean) {
+  /**
+   * Empezó o terminó una llamada (voz o video). `enPrimerPlano` (al terminar): si la app está detrás,
+   * la conversación NO se reabre (nada de micrófono ni minutos de ElevenLabs en segundo plano); queda
+   * cerrada, igual que si se hubiera ido a segundo plano sin llamada.
+   */
+  llamada(activa: boolean, enPrimerPlano = true) {
     if (activa) {
       if (this.v.suspendida) return;
       this.alColgar = { montada: this.v.montada, silenciada: this.v.silenciada, dormida: this.v.dormida };
@@ -178,6 +202,10 @@ export class ControlSesion {
     if (!this.v.suspendida) return;
     const antes = this.alColgar || { montada: false, silenciada: false, dormida: false };
     this.alColgar = null;
+    if (!enPrimerPlano) {
+      this.poner({ suspendida: false, montada: false, estado: 'cerrada', silenciada: false, dormida: false, intento: 0 });
+      return;
+    }
     if (antes.montada) {
       if (antes.silenciada) this.silencioDesde = this.reloj();
       this.abrir({ suspendida: false, silenciada: antes.silenciada });
