@@ -95,8 +95,14 @@ public partial class NotchWindow
         else Dispatcher.BeginInvoke(new Action(PrepararCentro), DispatcherPriority.ApplicationIdle);
         Centro.Registro.Anotar("inicio", $"AURA {typeof(NotchWindow).Assembly.GetName().Version} · escucha {ajustes.Escucha} · sesión {(string.IsNullOrEmpty(ajustes.Token) ? "no" : ajustes.Nivel)}");
 
-        var hola = ajustes.Idioma == "en" ? "Hi, I'm " + ajustes.NombreAvatar : "Hola, soy " + ajustes.NombreAvatar;
-        Avisar(new Aviso(hola, ajustes.Idioma == "en" ? "Ctrl+Alt+Space to talk · click me to open the chat" : "Ctrl+Alt+Espacio para hablarme · tócame para abrir el chat", "", "happy", Segundos: 5));
+        // El saludo al arrancar (idea de Coucou, MIT): según la hora, con tu nombre y cómo llamarla.
+        var hora = DateTime.Now.Hour;
+        var quien = ajustes.Nombre.Length > 0 ? ", " + ajustes.Nombre.Split(' ')[0] : "";
+        var hola = hora < 12 ? T("Buenos días", "Good morning") : hora < 19 ? T("Buenas tardes", "Good afternoon") : T("Buenas noches", "Good evening");
+        var como = ajustes.Escucha is "palabra" or "siempre"
+            ? T("Di «Oye " + ajustes.NombreAvatar + "» · suelta un archivo aquí para preguntarme", "Say “Hey " + ajustes.NombreAvatar + "” · drop a file here to ask me")
+            : T("Ctrl+Alt+Espacio para hablarme · tócame para abrir el chat", "Ctrl+Alt+Space to talk · click me to open the chat");
+        Avisar(new Aviso(hola + quien, como, "", "happy", Segundos: 5));
         _ = ComprobarConexion();
     }
 
@@ -345,6 +351,7 @@ public partial class NotchWindow
         Centro.Registro.Anotar("entender", $"{cronoTurno.ElapsedMilliseconds - antesDeEntender} ms · {pedido.Mano} ({pedido.Origen})");
         if (g != generacion) return;
         if (pedido.Mano != Mano.Ninguna) { await Hacer(pedido, texto, hablado); return; }
+        if (await PreguntarArchivo(texto, hablado)) return;
         await Conversar(texto, hablado);
     }
 

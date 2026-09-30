@@ -75,6 +75,8 @@ public partial class NotchWindow : Window
         MouseEnter += (_, _) => { raton = true; Recalcular(); };
         MouseLeave += (_, _) => { raton = false; Recalcular(); };
         Width = AnchoVentana; Height = AltoCompacto;
+        AvatarPanel.Tocable = true;
+        PrepararSoltar();
         Iniciar();
         if (soloRender) { Aplicar(); Dibujar(); return; }
 
