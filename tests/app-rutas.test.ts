@@ -24,6 +24,7 @@ after(() => fs.rmSync(dir, { recursive: true, force: true }));
 const { montarRutasApp, MAX_CANALES_POR_CUENTA } = await import('../server/app-rutas');
 const { emitirSesion, sesionDe, tokenDe, exigirMesa, borrarSesion } = await import('../server/seguridad');
 const { empujarAccion, contextoDe, oyentesDe, _reiniciarAccionesApp } = await import('../lib/acciones-app');
+const AA = await import('../lib/acciones-app');
 
 const app = express();
 app.use(express.json());
@@ -233,6 +234,79 @@ test('POST /api/app/contexto: validado, por persona, y el cerebro lo encuentra',
   assert.equal(ok.status, 200);
   assert.equal(((await ok.json()) as any).contactos, 1);
   assert.equal(contextoDe('maria@ordenglobal.org')?.chatAbierto?.nombre, 'Beto');
+});
+
+test('A20: el contexto es del aparato que lo manda: dos teléfonos de la misma cuenta no se pisan', async () => {
+  _reiniciarAccionesApp();
+  const mandar = (aparato: string, nombre: string) =>
+    fetch(`${base}/api/app/contexto`, {
+      method: 'POST',
+      headers: { ...h(yo.token), 'x-aura-aparato': aparato },
+      body: JSON.stringify({ pantalla: 'chats', chatAbierto: { correo: `${nombre.toLowerCase()}@x.com`, nombre }, contactos: [] }),
+    });
+  assert.equal((await mandar('tel-A', 'Beto')).status, 200);
+  assert.equal((await mandar('tel-B', 'Carla')).status, 200);
+  assert.equal(contextoDe(AA.ambitoApp('maria@ordenglobal.org', 'tel-A'))?.chatAbierto?.nombre, 'Beto');
+  assert.equal(contextoDe(AA.ambitoApp('maria@ordenglobal.org', 'tel-B'))?.chatAbierto?.nombre, 'Carla');
+  assert.equal(contextoDe('maria@ordenglobal.org'), null, 'lo de un aparato no es de la cuenta entera');
+});
+
+test('A20: A propone llamar a X, B propone recordar Y, A confirma: solo la propuesta de A se cumple en A', () => {
+  _reiniciarAccionesApp();
+  const A = AA.ambitoApp('dos@x.com', 'tel-A');
+  const B = AA.ambitoApp('dos@x.com', 'tel-B');
+  AA.abrirTurnoApp(A);
+  AA.anotarPropuesta(A, { tipo: 'llamar', con: 'x@x.com', nombre: 'Xavi', video: false });
+  AA.abrirTurnoApp(B);
+  AA.anotarPropuesta(B, { tipo: 'recordatorio', texto: 'comprar pan', cuando: Date.now() + 3600_000 });
+  // El «sí» llega en el turno siguiente de A.
+  AA.abrirTurnoApp(A);
+  assert.equal(AA.propuestaAnterior(A)?.tipo, 'llamar', 'en A se cumple lo que oyó A');
+  // Cumplir la de A no suelta la de B.
+  empujarAccion('dos@x.com', { tipo: 'llamar', con: 'x@x.com', video: false } as any, { aparato: 'tel-A' });
+  assert.equal(AA.propuestaAnterior(A), null);
+  AA.abrirTurnoApp(B);
+  assert.equal(AA.propuestaAnterior(B)?.tipo, 'recordatorio', 'la de B sigue esperando su «sí» en B');
+});
+
+test('A21: el canal que vuelve con Last-Event-ID recibe lo que se perdió (reciente), y nada si no se conoce el id', async () => {
+  _reiniciarAccionesApp();
+  const s = emitirSesion({ correo: 'tres@x.com', nombre: 'Tres', rol: 'Junta' });
+  const c1 = await abrirCanal(s.token, 'tel-C');
+  let e1 = '';
+  try {
+    assert.ok(await espera(() => oyentesDe('tres@x.com') === 1));
+    e1 = empujarAccion('tres@x.com', { tipo: 'abrir', pantalla: 'chats' }, { aparato: 'tel-C' }).evento.id;
+    assert.ok(await espera(() => c1.texto().includes(e1)));
+  } finally {
+    await c1.cerrar();
+  }
+  await espera(() => oyentesDe('tres@x.com') === 0);
+  // Mientras estaba cortado: dos acciones que no le llegan a nadie.
+  const e2 = empujarAccion('tres@x.com', { tipo: 'redactar', para: 'beto@x.com', texto: 'llego tarde' } as any, { aparato: 'tel-C' });
+  const e3 = empujarAccion('tres@x.com', { tipo: 'abrir', pantalla: 'mesa' }, { aparato: 'tel-C' });
+  assert.equal(e2.entregada + e3.entregada, 0);
+  // Vuelve diciendo que lo último que recibió fue e1.
+  const ctrl = new AbortController();
+  const r = await fetch(`${base}/api/app/acciones`, { headers: { ...h(s.token), 'x-aura-aparato': 'tel-C', 'last-event-id': e1 }, signal: ctrl.signal });
+  let texto = '';
+  const dec = new TextDecoder();
+  const leer = (async () => {
+    try {
+      for await (const t of r.body as any) texto += dec.decode(t, { stream: true });
+    } catch {
+      /* cerrado */
+    }
+  })();
+  assert.ok(await espera(() => texto.includes(e2.evento.id) && texto.includes(e3.evento.id)), texto);
+  assert.ok(!texto.includes(`id: ${e1}\n`), 'lo que ya recibió no se repite');
+  assert.ok(texto.indexOf(e2.evento.id) < texto.indexOf(e3.evento.id), 'en orden');
+  ctrl.abort();
+  await leer;
+  // Un id que no se conoce (otro servidor, o de hace rato): no se adivina.
+  assert.deepEqual(AA.accionesDesde('tres@x.com', 'tel-C', 'no-existe'), []);
+  // Pasado el plazo, nada se repite solo.
+  assert.deepEqual(AA.accionesDesde('tres@x.com', 'tel-C', e1, Date.now() + AA.ACCION_REPETIBLE_MS + 1), []);
 });
 
 test('PUT /api/perfil con S3 caído y sin copia local: 503 y no se sube nada encima', async () => {

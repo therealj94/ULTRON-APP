@@ -105,6 +105,28 @@ export function resetRitmoTest() {
 
 export const TOPE_EXTERNOS_HORA = { identificado: 30, anonimo: 5 };
 
+/* ------------------------------------------------------------------ hechos obligatorios */
+
+type ClaveHecho = keyof NonNullable<Accion['hechos']>;
+
+/**
+ * Los hechos que una herramienta NECESITA para poder correr. Si falta uno (no se consultó, la fuente
+ * falló, vino vacío), se bloquea: la ausencia no es un «sí». Toda acción crítica exige el KYC por
+ * omisión (antes, sin `hechos`, la regla de KYC no miraba nada y dos firmas bastaban); una herramienta
+ * crítica que de verdad no mueve valor a nombre de nadie lo declara con `declararHechosObligatorios`.
+ */
+const hechosDeclarados = new Map<string, ClaveHecho[]>();
+
+export function declararHechosObligatorios(herramienta: string, hechos: ClaveHecho[]) {
+  hechosDeclarados.set(herramienta, [...hechos]);
+}
+
+export function hechosObligatorios(a: Pick<Accion, 'herramienta' | 'efecto'>): ClaveHecho[] {
+  const declarados = hechosDeclarados.get(a.herramienta);
+  if (declarados) return declarados;
+  return a.efecto === 'critico' ? ['kyc'] : [];
+}
+
 /* ------------------------------------------------------------------ las reglas */
 
 export const REGLAS: Regla[] = [
@@ -152,11 +174,25 @@ export const REGLAS: Regla[] = [
     },
   },
   {
+    id: 'hechos-obligatorios',
+    descripcion: 'Una herramienta que necesita hechos comprobados (lo crítico: el KYC) no corre si falta alguno. La ausencia no es un sí.',
+    decidir: (a) => {
+      const faltan = hechosObligatorios(a).filter((k) => a.hechos?.[k] === undefined || a.hechos?.[k] === null);
+      return faltan.length
+        ? {
+            veredicto: 'bloquear',
+            regla: 'hechos-obligatorios',
+            motivo: `Falta comprobar ${faltan.join(', ')} para «${a.herramienta}». Sin eso no se hace, ni con aprobación.`,
+          }
+        : null;
+    },
+  },
+  {
     id: 'kyc-antes-de-mover-valor',
-    descripcion: 'No se transfiere ni se emite nada a nombre de alguien cuyo KYC no esté aprobado. Ni con aprobación.',
+    descripcion: 'No se transfiere ni se emite nada a nombre de alguien cuyo KYC no esté aprobado. Ni con aprobación. Ausente, desconocido, pendiente o rechazado: no.',
     decidir: (a) =>
-      a.efecto === 'critico' && a.hechos?.kyc !== undefined && a.hechos.kyc !== 'aprobado'
-        ? { veredicto: 'bloquear', regla: 'kyc-antes-de-mover-valor', motivo: `El KYC está «${a.hechos.kyc}». Sin KYC aprobado no se mueve valor.` }
+      hechosObligatorios(a).includes('kyc') && a.hechos?.kyc !== 'aprobado'
+        ? { veredicto: 'bloquear', regla: 'kyc-antes-de-mover-valor', motivo: `El KYC está «${a.hechos?.kyc ?? 'sin comprobar'}». Sin KYC aprobado no se mueve valor.` }
         : null,
   },
   {

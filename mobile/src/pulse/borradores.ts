@@ -176,7 +176,9 @@ export function enviarBorrador(correo?: string): Promise<ResultadoEnvio> {
             ? 'Hace falta que esa persona te acepte para escribirle.'
             : r.motivo === 'sin-cuenta'
               ? 'El chat no está conectado.'
-              : 'No se pudo enviar. Revisa la conexión.',
+              : r.motivo === 'sin-aparatos'
+                ? 'No lo envié: esa persona todavía no abrió el chat en ningún aparato y no puedo cifrárselo. El borrador sigue guardado.'
+                : 'No se pudo enviar. Revisa la conexión.',
       };
     }
     const bien = { ok: true, detalle: r.e2e ? 'Enviado, cifrado de punta a punta.' : 'Enviado sin cifrar: esa persona todavía no abrió el chat en ningún aparato.', id: r.id };

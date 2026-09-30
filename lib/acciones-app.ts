@@ -17,6 +17,16 @@
  *    voz—; lo demás (redactar a alguien) lo decide el cerebro con la línea `ACCION_APP: {…}`.
  *  · las MANOS (lib/manos-app.ts): llamar, leer, buscar, idioma, perfil, recordatorio y presentación,
  *    solo si el teléfono las declara; llamar y recordar esperan el «sí» como una PROPUESTA (abajo).
+ *
+ * El contexto, el turno, el borrador y la propuesta que esperan el «sí» son de un ÁMBITO: la cuenta
+ * Y el aparato (`ambitoApp`). Antes eran de la cuenta: con dos teléfonos de la misma persona, uno
+ * pisaba el contexto del otro y un «sí» en el teléfono A podía cumplir la propuesta que oyó el B.
+ * Sin aparato (la web, una app vieja), el ámbito es la cuenta como antes.
+ *
+ * Reconexión (Last-Event-ID): las acciones para un aparato quedan unos segundos en un registro corto;
+ * si su canal se cortó y vuelve diciendo el último id que recibió, se le repite lo que vino después
+ * (el teléfono deduplica por id). Pasado ACCION_REPETIBLE_MS no se repite nada: una llamada de hace
+ * horas no se hace sola al volver.
  */
 import crypto from 'node:crypto';
 import { consultarModelo } from './laya';
@@ -138,7 +148,22 @@ type Oyente = (e: EventoAccion) => void;
 type Canal = { oyente: Oyente; aparato: string | null; desalojar?: () => void };
 /** Por cuenta, en orden de llegada (un Set recorre en el orden en que se añadió): el primero es el más viejo. */
 const canales = new Map<string, Set<Canal>>();
-const clave = (correo: string) => String(correo || '').trim().toLowerCase();
+/** La clave de un correo o de un ámbito (`correo#aparato`): el correo sin mayúsculas, el aparato tal cual. */
+const clave = (correo: string) => {
+  const t = String(correo || '');
+  const i = t.indexOf('#');
+  return i < 0 ? t.trim().toLowerCase() : t.slice(0, i).trim().toLowerCase() + t.slice(i);
+};
+
+/**
+ * El ámbito de lo que espera el «sí» y del contexto: la cuenta y el aparato. Sin aparato válido, la
+ * cuenta sola (la web, una app vieja).
+ */
+export function ambitoApp(correo: string, aparato?: unknown): string {
+  const c = String(correo || '').trim().toLowerCase();
+  const a = aparatoValido(aparato);
+  return a ? `${c}#${a}` : c;
+}
 
 /** Teléfonos (o pestañas) escuchando a la vez por cuenta. Al pasarlo se desaloja el más viejo. */
 export const MAX_CANALES_POR_CUENTA = 8;
@@ -199,6 +224,9 @@ export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: 
   if (accion.tipo === 'leer' || accion.tipo === 'buscar') accion = { ...accion, boleto: anotarLectura(correo) };
   const evento: EventoAccion = { id: crypto.randomBytes(6).toString('base64url'), accion };
   const aparato = aparatoValido(o.aparato);
+  // Lo que espera el «sí» es de ESTE aparato (ámbito), no de la cuenta entera.
+  const amb = ambitoApp(correo, aparato);
+  if (aparato) anotarEnRegistro(amb, evento);
   let entregada = 0;
   for (const c of [...(canales.get(clave(correo)) || [])]) {
     if (aparato && c.aparato !== aparato) continue;
@@ -210,13 +238,44 @@ export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: 
     }
   }
   // Un borrador queda esperando el «sí» del turno siguiente; enviarlo o borrarlo lo cierra.
-  if (accion.tipo === 'redactar') anotarPendiente(correo, { para: accion.para, texto: accion.texto });
-  else if (accion.tipo === 'enviar' || accion.tipo === 'descartar') soltarPendiente(correo);
+  if (accion.tipo === 'redactar') anotarPendiente(amb, { para: accion.para, texto: accion.texto });
+  else if (accion.tipo === 'enviar' || accion.tipo === 'descartar') soltarPendiente(amb);
   // Llamar o recordar ya confirmado: la propuesta se cumplió.
-  else if (accion.tipo === 'llamar' || accion.tipo === 'recordatorio' || accion.tipo === 'cancelar_recordatorio') soltarPropuesta(correo);
+  else if (accion.tipo === 'llamar' || accion.tipo === 'recordatorio' || accion.tipo === 'cancelar_recordatorio') soltarPropuesta(amb);
   // «Respóndele» después de leer: a quien se le leyó.
   if (accion.tipo === 'leer' && accion.de) ultimosLeidos.set(clave(correo), { de: accion.de, t: Date.now() });
   return { evento, entregada };
+}
+
+/* ------------------------------------------------------------------ la reconexión (Last-Event-ID) */
+
+/** Cuánto se puede repetir una acción a un canal que se reconecta. Más tarde, ya no se hace sola. */
+export const ACCION_REPETIBLE_MS = 60_000;
+const MAX_REGISTRO = 20;
+const registro = new Map<string, { evento: EventoAccion; t: number }[]>();
+
+function anotarEnRegistro(amb: string, evento: EventoAccion, ahora = Date.now()) {
+  const k = clave(amb);
+  const lista = (registro.get(k) || []).filter((x) => ahora - x.t < ACCION_REPETIBLE_MS);
+  lista.push({ evento, t: ahora });
+  while (lista.length > MAX_REGISTRO) lista.shift();
+  registro.set(k, lista);
+  if (registro.size > 5000) for (const [kk, v] of registro) if (!v.some((x) => ahora - x.t < ACCION_REPETIBLE_MS)) registro.delete(kk);
+}
+
+/**
+ * Lo que un aparato no recibió: las acciones posteriores a `ultimoId` (el Last-Event-ID con que vuelve
+ * su canal), todavía dentro de ACCION_REPETIBLE_MS. Si no se conoce ese id (el servidor se reinició,
+ * o es de hace rato), nada: no se adivina qué le faltó.
+ */
+export function accionesDesde(correo: string, aparato: unknown, ultimoId: unknown, ahora = Date.now()): EventoAccion[] {
+  const a = aparatoValido(aparato);
+  const id = String(ultimoId ?? '').trim();
+  if (!a || !id) return [];
+  const lista = registro.get(clave(ambitoApp(correo, a))) || [];
+  const i = lista.findIndex((x) => x.evento.id === id);
+  if (i < 0) return [];
+  return lista.slice(i + 1).filter((x) => ahora - x.t < ACCION_REPETIBLE_MS).map((x) => x.evento);
 }
 
 /* ------------------------------------------------------------------ el contexto */
@@ -438,6 +497,7 @@ export function _reiniciarAccionesApp() {
   turnosApp.clear();
   propuestas.clear();
   lecturas.clear();
+  registro.clear();
   ultimosLeidos.clear();
 }
 

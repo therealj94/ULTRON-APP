@@ -334,8 +334,17 @@ function soloPersonas(para: string) {
   }
 }
 
-/** Envía un texto, cerrado siempre que se pueda. `e2e:false` = salió en claro (y se dice). */
-export async function enviar(para: string, texto: string): Promise<{ ok: true; e2e: boolean; id?: string }> {
+/**
+ * Envía un texto CIFRADO de punta a punta. Si no se puede cifrar —el otro no tiene aparatos con llave
+ * (`sin-aparatos`: no abrió el chat en ningún lado, el llavero vino vacío o alguien lo vació), sin red,
+ * sin llave propia— NO sale: lanza con `motivo` y el mensaje queda para reintentar. Antes, sin aparatos,
+ * salía en claro al relevo y el aviso «sin cifrar» llegaba después, cuando ya no había nada que decidir.
+ *
+ * Mandarlo legible solo con una decisión explícita y PREVIA de la persona (`sinCifrar: true`, pedida
+ * por la pantalla antes de enviar). El contrato del relevo no cambia: `{ para, texto }` sigue siendo
+ * el envío en claro que ya aceptaba.
+ */
+export async function enviar(para: string, texto: string, o: { sinCifrar?: boolean } = {}): Promise<{ ok: true; e2e: boolean; id?: string }> {
   para = String(para || '').toLowerCase();
   soloPersonas(para);
   const r = await cerrarPara(para, texto);
@@ -343,7 +352,7 @@ export async function enviar(para: string, texto: string): Promise<{ ok: true; e
     const d = await pedir<{ id?: string }>('/enviar', firmado({ para, cif: r.cerrado }));
     return { ok: true, e2e: true, id: d?.id };
   }
-  if (r.motivo !== 'sin-aparatos') {
+  if (r.motivo !== 'sin-aparatos' || o.sinCifrar !== true) {
     const e: ErrorRelevo = new Error('no se pudo cifrar: ' + r.motivo);
     e.motivo = r.motivo;
     throw e;

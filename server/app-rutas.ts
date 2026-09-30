@@ -14,7 +14,7 @@
  */
 import type express from 'express';
 import { actualizarPerfil, almacenDurable, leerPerfilSeguro, PerfilNoDisponible, validarCambios } from '../lib/perfil-persona';
-import { aparatoValido, guardarContexto, MAX_CANALES_POR_CUENTA, suscribir, validarContexto } from '../lib/acciones-app';
+import { accionesDesde, ambitoApp, aparatoValido, guardarContexto, MAX_CANALES_POR_CUENTA, suscribir, validarContexto } from '../lib/acciones-app';
 import type { Sesion } from './seguridad';
 
 /** Teléfonos (o pestañas) escuchando a la vez por cuenta; al pasarlo se desaloja el canal más viejo. */
@@ -132,6 +132,9 @@ export function montarRutasApp(app: express.Express, d: Deps) {
       // El mismo aparato que vuelve reemplaza a su canal viejo; al tope se desaloja el más viejo.
       { aparato, max: MAX_CANALES_POR_CUENTA, desalojar: () => cerrar('reemplazado') }
     );
+    // Volvió tras un corte diciendo lo último que recibió: se le repite lo que vino después, si es
+    // reciente (el teléfono deduplica por id; lo viejo no se repite).
+    for (const e of accionesDesde(s.correo, aparato, req.headers['last-event-id'])) escribir(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
     latido = setInterval(() => {
       if (!d.sesionDe(req)) return cerrar('sesion');
       escribir(': latido\n\n');
@@ -147,7 +150,8 @@ export function montarRutasApp(app: express.Express, d: Deps) {
     if (!s) return sinSesion(res);
     const v = validarContexto(req.body);
     if (v.ok === false) return res.status(400).json({ error: v.error, honesto: true });
-    guardarContexto(s.correo, v.contexto);
+    // Del aparato que lo manda: dos teléfonos de la misma persona no se pisan el contexto.
+    guardarContexto(ambitoApp(s.correo, req.headers['x-aura-aparato']), v.contexto);
     return res.json({ ok: true, contactos: v.contexto.contactos.length, honesto: true });
   });
 }

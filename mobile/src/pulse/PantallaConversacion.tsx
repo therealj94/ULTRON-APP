@@ -149,6 +149,14 @@ export function PantallaConversacion({ con, nombre, onAtras }: PropsPantallaConv
         if (r.code === 403)
           setAviso(tr(`Hace falta que ${nombreVisto} te acepte para escribirle.`, `${nombreVisto} needs to accept you before you can write.`));
         else if (r.motivo === 'sin-cuenta') setAviso(tr('El chat no está conectado.', 'The chat isn’t connected.'));
+        // Sin aparatos del otro lado no se cifra, y sin cifrar no sale: queda en el hilo para reintentar.
+        else if (r.motivo === 'sin-aparatos')
+          setAviso(
+            tr(
+              `No lo envié: ${nombreVisto} todavía no abrió el chat en ningún aparato y no puedo cifrarlo. Queda aquí para reintentar.`,
+              `Not sent: ${nombreVisto} hasn’t opened the chat on any device yet, so I can’t encrypt it. It stays here to retry.`,
+            ),
+          );
       } else if (!r.e2e) {
         setAviso(
           tr(

@@ -106,7 +106,18 @@ async function arrancarRelevo() {
     await post('/amistad/pedir', { ...a, para: b.correo });
     await post('/amistad/responder', { ...b, de: a.correo, aceptar: true });
   };
-  return { API, post, cuenta, amigos };
+  /**
+   * Que c tenga la app abierta en un aparato: publica una llave P-256 (id = b64url(sha256(pub))[:22],
+   * como el teléfono). Sin aparato, a esa persona no se le puede cifrar y el texto no sale (A06).
+   */
+  const aparato = async (c) => {
+    const { publicKey } = require('crypto').generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const j = publicKey.export({ format: 'jwk' });
+    const pub = Buffer.concat([Buffer.from([4]), Buffer.from(j.x, 'base64url'), Buffer.from(j.y, 'base64url')]).toString('base64url');
+    const id = require('crypto').createHash('sha256').update(Buffer.from(pub, 'base64url')).digest('base64url').slice(0, 22);
+    return post('/llaves/publicar', { ...c, id, pub });
+  };
+  return { API, post, cuenta, amigos, aparato };
 }
 
 /** El código del teléfono (construido con construir.cjs). `MOVIL=` apunta a otro empaquetado. */

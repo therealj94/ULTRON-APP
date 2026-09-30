@@ -16,6 +16,7 @@ import { montarRutasApp } from './server/app-rutas';
 import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
   abrirTurnoApp,
+  ambitoApp,
   anotarPropuesta,
   aparatoValido,
   contextoDe,
@@ -72,7 +73,7 @@ import { AVISO_INYECCION, guiasDeClasificacion, nombreAgente, promptAgente } fro
 import { fichaEnTexto, fichasMencionadas } from './lib/cognitivo/entidades';
 import { esCharlaTrivial, preguntarModeloChico, soloMarcasDeContexto, usarModeloChico } from './lib/cognitivo/modelos';
 import type { Clasificacion } from './lib/cognitivo/traza';
-import { alAvisar, comandoDeAprobacion, resumenParaAviso } from './lib/cognitivo/aprobaciones';
+import { alAvisar, comandoDeAprobacion, reconciliarAprobaciones, resumenParaAviso } from './lib/cognitivo/aprobaciones';
 import { hechoCerebro, lineas as lineasCerebro } from './lib/cerebro';
 import { lineasPorSignificado } from './lib/cognitivo/conocimiento-semantico';
 import { herramientaActiva, herramientaPermitida, perfilPara, type NivelAura } from './lib/perfiles';
@@ -2105,7 +2106,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Mando solo con identidad verificada (sesión firmada o Telegram). El body no escala. Y nunca por la voz.
   const verificado = miembro ? null : quienVerificado(body, body?.sesion || null);
   const mando = !miembro && !opciones.soloConsulta && puedeCambiarSistema(verificado);
-  const contextoApp: ContextoApp | null = correoApp ? contextoDe(correoApp) : null;
+  // Lo de la app (contexto, borrador y propuesta que esperan el «sí») es de este aparato, no de la cuenta.
+  const ambito = correoApp ? ambitoApp(correoApp, body?.aparato) : '';
+  const contextoApp: ContextoApp | null = correoApp ? contextoDe(ambito) : null;
   // Las reglas de la app solo se le enseñan al modelo si el turno viene de la app (o la voz) y hay un
   // teléfono que pueda hacerlas. Lo que el modelo pida en un turno de la web no llega al teléfono.
   const conApp = !!correoApp && turnoDeLaApp(body, opciones) && (!!contextoApp || oyentesDe(correoApp) > 0);
@@ -2486,7 +2489,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const comoLeDecimos = perfilPersona?.apodo || (quien ? nombreDe(quien) : nombre) || undefined;
   const bloquePerfil = lineaPerfil(perfilPersona);
   const bloqueApp = conApp
-    ? instruccionAcciones(contextoApp, { idioma: idiomaTurno, pendiente: pendienteDe(correoApp), propuesta: propuestaDe(correoApp), ultimoLeido: ultimoLeidoDe(correoApp) })
+    ? instruccionAcciones(contextoApp, { idioma: idiomaTurno, pendiente: pendienteDe(ambito), propuesta: propuestaDe(ambito), ultimoLeido: ultimoLeidoDe(correoApp) })
     : '';
 
   // Con un miembro: su cerebro (lo público), sin catálogo del taller ni memoria de la junta
@@ -2786,22 +2789,24 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   if (!correo || !message || body?.image || body?.documento || body?.pdf) return null;
   // Solo si el turno viene de la app (cabecera x-aura-origen) o de la voz: no de la web de la mesa.
   if (!turnoDeLaApp(body, opciones)) return null;
-  const contexto = contextoDe(correo);
+  // Contexto, borrador y propuesta: los de ESTE aparato (dos teléfonos de la misma cuenta no se cruzan).
+  const amb = ambitoApp(correo, body?.aparato);
+  const contexto = contextoDe(amb);
   if (!contexto && oyentesDe(correo) === 0) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
   // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».
   const orden = await ordenRapida(message, {
     idioma: normalizarIdioma(body?.idioma),
     contexto,
-    pendiente: pendienteDe(correo),
-    propuesta: propuestaAnterior(correo),
+    pendiente: pendienteDe(amb),
+    propuesta: propuestaAnterior(amb),
     esCharla: esCharlaTrivial,
     esperaLayaMs: opciones.voz ? Math.min(250, TOPE_PASO_VOZ_MS) : undefined,
   });
   if (!orden || (!orden.accion && !orden.propuesta && !orden.soltarPropuesta && !orden.soloDecir)) return null;
   // Llamar y recordar se preguntan primero: la propuesta espera el «sí» del turno siguiente.
-  if (orden.propuesta) anotarPropuesta(correo, orden.propuesta);
-  if (orden.soltarPropuesta) soltarPropuesta(correo);
+  if (orden.propuesta) anotarPropuesta(amb, orden.propuesta);
+  if (orden.soltarPropuesta) soltarPropuesta(amb);
   // El evento (con su id) va por el canal del aparato y el MISMO va en la respuesta del turno: la
   // app deduplica por id y no hace la acción dos veces (Beto recibió dos mensajes, 29-sep).
   const eventos = orden.accion ? [empujarAccion(correo, orden.accion, { aparato: aparatoValido(body?.aparato) }).evento] : [];
@@ -2821,7 +2826,7 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
  */
 function empezarTurnoDeCuenta(body: any) {
   const correo = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
-  if (correo) abrirTurnoApp(correo);
+  if (correo) abrirTurnoApp(ambitoApp(correo, body?.aparato));
 }
 
 /**
@@ -2844,18 +2849,19 @@ function accionesDelCerebro(
   // El único borrador que un «sí» puede enviar: el de un turno anterior (antes de empujar nada de este).
   // Igual la propuesta: llamar o recordar pedido en ESTE turno no se hace, queda esperando el «sí».
   const nueva: { p: Propuesta | null } = { p: null };
-  const previa = propuestaAnterior(p.correoApp);
+  const amb = ambitoApp(p.correoApp, p.aparato);
+  const previa = propuestaAnterior(amb);
   const listas = prepararAcciones(acciones, {
     mensaje: p.crudo,
     contexto: p.contextoApp,
-    pendiente: pendienteAnterior(p.correoApp),
+    pendiente: pendienteAnterior(amb),
     propuesta: previa,
     alProponer: (x) => (nueva.p = x),
   });
   const eventos = listas.map((a) => empujarAccion(p.correoApp, a, { aparato: p.aparato }).evento);
   const propuesta = nueva.p;
   // La propuesta se anota DESPUÉS de empujar: una llamada cumplida suelta la vieja y no la nueva.
-  if (propuesta) anotarPropuesta(p.correoApp, propuesta);
+  if (propuesta) anotarPropuesta(amb, propuesta);
   const mudo = !extraerEmocion(limpio).texto.trim();
   // El modelo escribió solo la línea: se dice la frase de la acción o, si era una propuesta, la pregunta.
   // Una llamada o un recordatorio que se cumplió: con el nombre y la hora que la persona confirmó.
@@ -3457,6 +3463,13 @@ async function startServer() {
     cargarSesionesCerradas()
       .then((d) => console.log('[AU-RA] sesiones', d))
       .catch((e) => console.warn('[AU-RA] sesiones', String(e?.message || e).slice(0, 160)));
+    // Lo que una caída dejó a medias en la cola de aprobaciones: se retoma o se marca incierto (nunca
+    // se repite a ciegas). Unos segundos después: que los ejecutores y los avisos ya estén registrados.
+    setTimeout(() => {
+      reconciliarAprobaciones()
+        .then((r) => (r.retomadas || r.vencidas || r.inciertas) && console.log('[cognitivo] aprobaciones a medias', r))
+        .catch((e) => console.warn('[cognitivo] aprobaciones a medias', String(e?.message || e).slice(0, 160)));
+    }, 15_000).unref?.();
     cargarMemoria()
       .then(() => console.log('[AU-RA] memoria', estadoMemoria().detalle))
       .catch((e) => console.warn('[AU-RA] memoria', String(e?.message || e).slice(0, 160)));
