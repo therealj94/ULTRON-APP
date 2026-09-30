@@ -39,6 +39,7 @@ import laya
 from laya.common import collate_items
 from safetensors.torch import save_file
 
+from split_windows import split_families
 from comun import cargar_config, decidir, leer_filas, normalizar, recortar
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
@@ -429,14 +430,14 @@ def main_decisor(a):
         else:
             vistas.add(k)
             # El mismo recorte que en servidor.py: lo que se aprende es lo que se ve al servir.
-            unicas.append({'q': recortar(f['q'], rec['cabeza'], rec['cola']), 'e': f['e']})
+            unicas.append({'q': recortar(f['q'], rec['cabeza'], rec['cola']), 'e': f['e'], 'familyId': f.get('familyId')})
     filas = unicas
     if a.limite:
         random.Random(a.semilla).shuffle(filas)
         filas = filas[:a.limite]
     # Como electrum (un 10 %, al menos 40), pero nunca más de un cuarto: con pocos datos (una prueba
     # de humo) el mínimo de 40 se comería todo el entrenamiento.
-    val, ent = estratificar(filas, grupos, a.semilla, min(max(40, len(filas) // 10), len(filas) // 4))
+    val, ent = split_families(filas, a.semilla)
     print(f'{conf["nombre"]}: entrenamiento {len(ent)} · validación {len(val)} · descartadas: '
           f'{en_prueba} por estar en test/bordes/evals, {repetidas} repetidas')
     if not ent or not val:

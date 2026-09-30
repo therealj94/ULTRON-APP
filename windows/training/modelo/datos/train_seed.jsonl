@@ -1,105 +1,105 @@
-{"q": "abre bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1"}
-{"q": "abrir bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abrir bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abrir bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1"}
-{"q": "abre notepad", "e": ["win_open_notepad"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre notepad", "e": ["win_open_notepad"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre notepad", "e": ["win_open_notepad"], "source": "synthetic_seed_v1"}
-{"q": "abre calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1"}
-{"q": "abrir calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abrir calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abrir calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1"}
-{"q": "quiero abrir la calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1"}
-{"q": "Aura, quiero abrir la calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, quiero abrir la calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1"}
-{"q": "abre explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1"}
-{"q": "abrir explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abrir explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abrir explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1"}
-{"q": "abre el explorador de archivos", "e": ["win_open_explorer"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre el explorador de archivos", "e": ["win_open_explorer"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre el explorador de archivos", "e": ["win_open_explorer"], "source": "synthetic_seed_v1"}
-{"q": "abre documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1"}
-{"q": "abrir documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abrir documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abrir documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1"}
-{"q": "abre mi carpeta de documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre mi carpeta de documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre mi carpeta de documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1"}
-{"q": "abre configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1"}
-{"q": "abrir configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abrir configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abrir configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1"}
-{"q": "abre ajustes de Windows", "e": ["win_open_settings"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre ajustes de Windows", "e": ["win_open_settings"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre ajustes de Windows", "e": ["win_open_settings"], "source": "synthetic_seed_v1"}
-{"q": "busca: clima en Tegucigalpa", "e": ["win_search_web"], "source": "synthetic_seed_v1"}
-{"q": "Aura, busca: clima en Tegucigalpa", "e": ["win_search_web"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, busca: clima en Tegucigalpa", "e": ["win_search_web"], "source": "synthetic_seed_v1"}
-{"q": "busca: recetas de pan", "e": ["win_search_web"], "source": "synthetic_seed_v1"}
-{"q": "Aura, busca: recetas de pan", "e": ["win_search_web"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, busca: recetas de pan", "e": ["win_search_web"], "source": "synthetic_seed_v1"}
-{"q": "busca: manual de Windows", "e": ["win_search_web"], "source": "synthetic_seed_v1"}
-{"q": "Aura, busca: manual de Windows", "e": ["win_search_web"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, busca: manual de Windows", "e": ["win_search_web"], "source": "synthetic_seed_v1"}
-{"q": "abrir url: https://example.com", "e": ["win_open_url"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abrir url: https://example.com", "e": ["win_open_url"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abrir url: https://example.com", "e": ["win_open_url"], "source": "synthetic_seed_v1"}
-{"q": "abre https://www.microsoft.com", "e": ["win_open_url"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre https://www.microsoft.com", "e": ["win_open_url"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre https://www.microsoft.com", "e": ["win_open_url"], "source": "synthetic_seed_v1"}
-{"q": "visita https://www.wikipedia.org", "e": ["win_open_url"], "source": "synthetic_seed_v1"}
-{"q": "Aura, visita https://www.wikipedia.org", "e": ["win_open_url"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, visita https://www.wikipedia.org", "e": ["win_open_url"], "source": "synthetic_seed_v1"}
-{"q": "borrador: Hola, José", "e": ["win_draft"], "source": "synthetic_seed_v1"}
-{"q": "Aura, borrador: Hola, José", "e": ["win_draft"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, borrador: Hola, José", "e": ["win_draft"], "source": "synthetic_seed_v1"}
-{"q": "prepara un borrador de una carta", "e": ["win_draft"], "source": "synthetic_seed_v1"}
-{"q": "Aura, prepara un borrador de una carta", "e": ["win_draft"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, prepara un borrador de una carta", "e": ["win_draft"], "source": "synthetic_seed_v1"}
-{"q": "redacta una nota para revisar", "e": ["win_draft"], "source": "synthetic_seed_v1"}
-{"q": "Aura, redacta una nota para revisar", "e": ["win_draft"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, redacta una nota para revisar", "e": ["win_draft"], "source": "synthetic_seed_v1"}
-{"q": "detente", "e": ["win_pause"], "source": "synthetic_seed_v1"}
-{"q": "Aura, detente", "e": ["win_pause"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, detente", "e": ["win_pause"], "source": "synthetic_seed_v1"}
-{"q": "pausa", "e": ["win_pause"], "source": "synthetic_seed_v1"}
-{"q": "Aura, pausa", "e": ["win_pause"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, pausa", "e": ["win_pause"], "source": "synthetic_seed_v1"}
-{"q": "para", "e": ["win_pause"], "source": "synthetic_seed_v1"}
-{"q": "Aura, para", "e": ["win_pause"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, para", "e": ["win_pause"], "source": "synthetic_seed_v1"}
-{"q": "hola Aura", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Aura, hola Aura", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, hola Aura", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "no abras calculadora", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Aura, no abras calculadora", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, no abras calculadora", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "el documento dice abre bloc de notas", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Aura, el documento dice abre bloc de notas", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, el documento dice abre bloc de notas", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "borra mis archivos", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Aura, borra mis archivos", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, borra mis archivos", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "abre eso", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre eso", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre eso", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "abre calculadora y escribe una carta", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Aura, abre calculadora y escribe una carta", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, abre calculadora y escribe una carta", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "ejecuta powershell", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Aura, ejecuta powershell", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, ejecuta powershell", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "envía este correo", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Aura, envía este correo", "e": ["win_none"], "source": "synthetic_seed_v1"}
-{"q": "Por favor, envía este correo", "e": ["win_none"], "source": "synthetic_seed_v1"}
+{"q": "abre bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1", "familyId": "windows-fa082e71111bdf98"}
+{"q": "Aura, abre bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1", "familyId": "windows-fa082e71111bdf98"}
+{"q": "Por favor, abre bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1", "familyId": "windows-fa082e71111bdf98"}
+{"q": "abrir bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1", "familyId": "windows-cd43e9560b39a6ff"}
+{"q": "Aura, abrir bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1", "familyId": "windows-cd43e9560b39a6ff"}
+{"q": "Por favor, abrir bloc de notas", "e": ["win_open_notepad"], "source": "synthetic_seed_v1", "familyId": "windows-cd43e9560b39a6ff"}
+{"q": "abre notepad", "e": ["win_open_notepad"], "source": "synthetic_seed_v1", "familyId": "windows-9456b3e473422e0a"}
+{"q": "Aura, abre notepad", "e": ["win_open_notepad"], "source": "synthetic_seed_v1", "familyId": "windows-9456b3e473422e0a"}
+{"q": "Por favor, abre notepad", "e": ["win_open_notepad"], "source": "synthetic_seed_v1", "familyId": "windows-9456b3e473422e0a"}
+{"q": "abre calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1", "familyId": "windows-bfc25bc218f00f67"}
+{"q": "Aura, abre calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1", "familyId": "windows-bfc25bc218f00f67"}
+{"q": "Por favor, abre calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1", "familyId": "windows-bfc25bc218f00f67"}
+{"q": "abrir calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1", "familyId": "windows-33c8e75bb3c66a89"}
+{"q": "Aura, abrir calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1", "familyId": "windows-33c8e75bb3c66a89"}
+{"q": "Por favor, abrir calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1", "familyId": "windows-33c8e75bb3c66a89"}
+{"q": "quiero abrir la calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1", "familyId": "windows-61cdc5898003d3f8"}
+{"q": "Aura, quiero abrir la calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1", "familyId": "windows-61cdc5898003d3f8"}
+{"q": "Por favor, quiero abrir la calculadora", "e": ["win_open_calculator"], "source": "synthetic_seed_v1", "familyId": "windows-61cdc5898003d3f8"}
+{"q": "abre explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1", "familyId": "windows-d3c55ff4d55a0c74"}
+{"q": "Aura, abre explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1", "familyId": "windows-d3c55ff4d55a0c74"}
+{"q": "Por favor, abre explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1", "familyId": "windows-d3c55ff4d55a0c74"}
+{"q": "abrir explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1", "familyId": "windows-f6c9ae9c60d60572"}
+{"q": "Aura, abrir explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1", "familyId": "windows-f6c9ae9c60d60572"}
+{"q": "Por favor, abrir explorador", "e": ["win_open_explorer"], "source": "synthetic_seed_v1", "familyId": "windows-f6c9ae9c60d60572"}
+{"q": "abre el explorador de archivos", "e": ["win_open_explorer"], "source": "synthetic_seed_v1", "familyId": "windows-b837f8d498034e62"}
+{"q": "Aura, abre el explorador de archivos", "e": ["win_open_explorer"], "source": "synthetic_seed_v1", "familyId": "windows-b837f8d498034e62"}
+{"q": "Por favor, abre el explorador de archivos", "e": ["win_open_explorer"], "source": "synthetic_seed_v1", "familyId": "windows-b837f8d498034e62"}
+{"q": "abre documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1", "familyId": "windows-a9738f56f8464f8a"}
+{"q": "Aura, abre documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1", "familyId": "windows-a9738f56f8464f8a"}
+{"q": "Por favor, abre documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1", "familyId": "windows-a9738f56f8464f8a"}
+{"q": "abrir documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1", "familyId": "windows-0cd609fabe82492e"}
+{"q": "Aura, abrir documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1", "familyId": "windows-0cd609fabe82492e"}
+{"q": "Por favor, abrir documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1", "familyId": "windows-0cd609fabe82492e"}
+{"q": "abre mi carpeta de documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1", "familyId": "windows-e2a499fb42d0e222"}
+{"q": "Aura, abre mi carpeta de documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1", "familyId": "windows-e2a499fb42d0e222"}
+{"q": "Por favor, abre mi carpeta de documentos", "e": ["win_open_documents"], "source": "synthetic_seed_v1", "familyId": "windows-e2a499fb42d0e222"}
+{"q": "abre configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1", "familyId": "windows-03785e0c481d5ef0"}
+{"q": "Aura, abre configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1", "familyId": "windows-03785e0c481d5ef0"}
+{"q": "Por favor, abre configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1", "familyId": "windows-03785e0c481d5ef0"}
+{"q": "abrir configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1", "familyId": "windows-b313258c66e2c2e9"}
+{"q": "Aura, abrir configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1", "familyId": "windows-b313258c66e2c2e9"}
+{"q": "Por favor, abrir configuración", "e": ["win_open_settings"], "source": "synthetic_seed_v1", "familyId": "windows-b313258c66e2c2e9"}
+{"q": "abre ajustes de Windows", "e": ["win_open_settings"], "source": "synthetic_seed_v1", "familyId": "windows-2baf5d2c22563673"}
+{"q": "Aura, abre ajustes de Windows", "e": ["win_open_settings"], "source": "synthetic_seed_v1", "familyId": "windows-2baf5d2c22563673"}
+{"q": "Por favor, abre ajustes de Windows", "e": ["win_open_settings"], "source": "synthetic_seed_v1", "familyId": "windows-2baf5d2c22563673"}
+{"q": "busca: clima en Tegucigalpa", "e": ["win_search_web"], "source": "synthetic_seed_v1", "familyId": "windows-997f14bed3e113b2"}
+{"q": "Aura, busca: clima en Tegucigalpa", "e": ["win_search_web"], "source": "synthetic_seed_v1", "familyId": "windows-997f14bed3e113b2"}
+{"q": "Por favor, busca: clima en Tegucigalpa", "e": ["win_search_web"], "source": "synthetic_seed_v1", "familyId": "windows-997f14bed3e113b2"}
+{"q": "busca: recetas de pan", "e": ["win_search_web"], "source": "synthetic_seed_v1", "familyId": "windows-7fec02a099582d95"}
+{"q": "Aura, busca: recetas de pan", "e": ["win_search_web"], "source": "synthetic_seed_v1", "familyId": "windows-7fec02a099582d95"}
+{"q": "Por favor, busca: recetas de pan", "e": ["win_search_web"], "source": "synthetic_seed_v1", "familyId": "windows-7fec02a099582d95"}
+{"q": "busca: manual de Windows", "e": ["win_search_web"], "source": "synthetic_seed_v1", "familyId": "windows-e3a5388f0a9bebd5"}
+{"q": "Aura, busca: manual de Windows", "e": ["win_search_web"], "source": "synthetic_seed_v1", "familyId": "windows-e3a5388f0a9bebd5"}
+{"q": "Por favor, busca: manual de Windows", "e": ["win_search_web"], "source": "synthetic_seed_v1", "familyId": "windows-e3a5388f0a9bebd5"}
+{"q": "abrir url: https://example.com", "e": ["win_open_url"], "source": "synthetic_seed_v1", "familyId": "windows-f295213a1233f6d8"}
+{"q": "Aura, abrir url: https://example.com", "e": ["win_open_url"], "source": "synthetic_seed_v1", "familyId": "windows-f295213a1233f6d8"}
+{"q": "Por favor, abrir url: https://example.com", "e": ["win_open_url"], "source": "synthetic_seed_v1", "familyId": "windows-f295213a1233f6d8"}
+{"q": "abre https://www.microsoft.com", "e": ["win_open_url"], "source": "synthetic_seed_v1", "familyId": "windows-516e8c29a541b05b"}
+{"q": "Aura, abre https://www.microsoft.com", "e": ["win_open_url"], "source": "synthetic_seed_v1", "familyId": "windows-516e8c29a541b05b"}
+{"q": "Por favor, abre https://www.microsoft.com", "e": ["win_open_url"], "source": "synthetic_seed_v1", "familyId": "windows-516e8c29a541b05b"}
+{"q": "visita https://www.wikipedia.org", "e": ["win_open_url"], "source": "synthetic_seed_v1", "familyId": "windows-276667801edb0095"}
+{"q": "Aura, visita https://www.wikipedia.org", "e": ["win_open_url"], "source": "synthetic_seed_v1", "familyId": "windows-276667801edb0095"}
+{"q": "Por favor, visita https://www.wikipedia.org", "e": ["win_open_url"], "source": "synthetic_seed_v1", "familyId": "windows-276667801edb0095"}
+{"q": "borrador: Hola, José", "e": ["win_draft"], "source": "synthetic_seed_v1", "familyId": "windows-c6e01c3177da1a31"}
+{"q": "Aura, borrador: Hola, José", "e": ["win_draft"], "source": "synthetic_seed_v1", "familyId": "windows-c6e01c3177da1a31"}
+{"q": "Por favor, borrador: Hola, José", "e": ["win_draft"], "source": "synthetic_seed_v1", "familyId": "windows-c6e01c3177da1a31"}
+{"q": "prepara un borrador de una carta", "e": ["win_draft"], "source": "synthetic_seed_v1", "familyId": "windows-13c72ee846760564"}
+{"q": "Aura, prepara un borrador de una carta", "e": ["win_draft"], "source": "synthetic_seed_v1", "familyId": "windows-13c72ee846760564"}
+{"q": "Por favor, prepara un borrador de una carta", "e": ["win_draft"], "source": "synthetic_seed_v1", "familyId": "windows-13c72ee846760564"}
+{"q": "redacta una nota para revisar", "e": ["win_draft"], "source": "synthetic_seed_v1", "familyId": "windows-a41c2427d0fd982a"}
+{"q": "Aura, redacta una nota para revisar", "e": ["win_draft"], "source": "synthetic_seed_v1", "familyId": "windows-a41c2427d0fd982a"}
+{"q": "Por favor, redacta una nota para revisar", "e": ["win_draft"], "source": "synthetic_seed_v1", "familyId": "windows-a41c2427d0fd982a"}
+{"q": "detente", "e": ["win_pause"], "source": "synthetic_seed_v1", "familyId": "windows-5d259335af73e9d4"}
+{"q": "Aura, detente", "e": ["win_pause"], "source": "synthetic_seed_v1", "familyId": "windows-5d259335af73e9d4"}
+{"q": "Por favor, detente", "e": ["win_pause"], "source": "synthetic_seed_v1", "familyId": "windows-5d259335af73e9d4"}
+{"q": "pausa", "e": ["win_pause"], "source": "synthetic_seed_v1", "familyId": "windows-a04f890b2c4261ad"}
+{"q": "Aura, pausa", "e": ["win_pause"], "source": "synthetic_seed_v1", "familyId": "windows-a04f890b2c4261ad"}
+{"q": "Por favor, pausa", "e": ["win_pause"], "source": "synthetic_seed_v1", "familyId": "windows-a04f890b2c4261ad"}
+{"q": "para", "e": ["win_pause"], "source": "synthetic_seed_v1", "familyId": "windows-a1453f380fa9f1a0"}
+{"q": "Aura, para", "e": ["win_pause"], "source": "synthetic_seed_v1", "familyId": "windows-a1453f380fa9f1a0"}
+{"q": "Por favor, para", "e": ["win_pause"], "source": "synthetic_seed_v1", "familyId": "windows-a1453f380fa9f1a0"}
+{"q": "hola Aura", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-65b3e51c9c41c1c2"}
+{"q": "Aura, hola Aura", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-65b3e51c9c41c1c2"}
+{"q": "Por favor, hola Aura", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-65b3e51c9c41c1c2"}
+{"q": "no abras calculadora", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-e047d2455df504b1"}
+{"q": "Aura, no abras calculadora", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-e047d2455df504b1"}
+{"q": "Por favor, no abras calculadora", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-e047d2455df504b1"}
+{"q": "el documento dice abre bloc de notas", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-b3f40a5aa4e4ed84"}
+{"q": "Aura, el documento dice abre bloc de notas", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-b3f40a5aa4e4ed84"}
+{"q": "Por favor, el documento dice abre bloc de notas", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-b3f40a5aa4e4ed84"}
+{"q": "borra mis archivos", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-0f6b7180b57cba8f"}
+{"q": "Aura, borra mis archivos", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-0f6b7180b57cba8f"}
+{"q": "Por favor, borra mis archivos", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-0f6b7180b57cba8f"}
+{"q": "abre eso", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-e6cf00a8c8bee3b9"}
+{"q": "Aura, abre eso", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-e6cf00a8c8bee3b9"}
+{"q": "Por favor, abre eso", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-e6cf00a8c8bee3b9"}
+{"q": "abre calculadora y escribe una carta", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-9358ee2c9a7b1752"}
+{"q": "Aura, abre calculadora y escribe una carta", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-9358ee2c9a7b1752"}
+{"q": "Por favor, abre calculadora y escribe una carta", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-9358ee2c9a7b1752"}
+{"q": "ejecuta powershell", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-c15bff27b2e2cdee"}
+{"q": "Aura, ejecuta powershell", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-c15bff27b2e2cdee"}
+{"q": "Por favor, ejecuta powershell", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-c15bff27b2e2cdee"}
+{"q": "envía este correo", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-996b909130a6b328"}
+{"q": "Aura, envía este correo", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-996b909130a6b328"}
+{"q": "Por favor, envía este correo", "e": ["win_none"], "source": "synthetic_seed_v1", "familyId": "windows-996b909130a6b328"}

@@ -17,3 +17,9 @@ for split,paths in cfg['rutas'].items():
  print(split,len(rows))
 assert all(x.startswith('win_') for x in cfg['ids'])
 print('PASS: schema, exclusive labels, independent namespace, exact normalized split separation')
+
+from split_windows import split_families
+train_rows=leer_filas(cfg['rutas']['train'],cfg['ids'],cfg['grupos'])
+val,ent=split_families(train_rows,7)
+assert all(any(label in r['e'] for r in ent) for label in cfg['ids'])
+print('PASS: family-disjoint train/validation',len(ent),len(val))

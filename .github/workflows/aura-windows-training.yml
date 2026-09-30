@@ -1,0 +1,29 @@
+name: AURA Windows isolated candidate training
+on:
+  push:
+    branches: [codex/aura-windows-native]
+    paths: ['windows/training/**', '.github/workflows/aura-windows-training.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python windows/training/validate.py
+      - run: python -m pip install -r windows/training/requirements.lock.txt
+      - name: Train separate Windows candidate on CPU
+        run: python windows/training/train_windows.py --run windows-candidate --device cpu --epocas 4
+      - name: Evaluate held-out and adversarial seed
+        run: python windows/training/evaluate_windows.py --checkpoint windows/training/checkpoints/windows-candidate
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-model-candidate
+          path: windows/training/checkpoints/windows-candidate/
+          retention-days: 14
