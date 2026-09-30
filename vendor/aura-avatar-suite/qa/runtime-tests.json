@@ -32,8 +32,8 @@
   },
   "claudio": {
    "archivo": "assets/movil/claudio.glb",
-   "bytes": 1119548,
-   "triangulos": 58444,
+   "bytes": 1126928,
+   "triangulos": 58452,
    "llamadas": 20,
    "morphsOk": true,
    "morphsExtra": [],
@@ -47,7 +47,7 @@
   },
   "claudio-bajo": {
    "archivo": "assets/movil/claudio-bajo.glb",
-   "bytes": 667352,
+   "bytes": 669856,
    "triangulos": 22256,
    "llamadas": 8,
    "morphsOk": true,
@@ -62,7 +62,7 @@
   },
   "aura": {
    "archivo": "assets/movil/aura.glb",
-   "bytes": 576412,
+   "bytes": 579580,
    "triangulos": 43376,
    "llamadas": 16,
    "morphsOk": true,
@@ -77,7 +77,7 @@
   },
   "aura-bajo": {
    "archivo": "assets/movil/aura-bajo.glb",
-   "bytes": 375640,
+   "bytes": 377580,
    "triangulos": 16866,
    "llamadas": 6,
    "morphsOk": true,

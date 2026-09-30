@@ -24,7 +24,8 @@ const EMOCIONES=[['feliz','contenta'],['risa','risa'],['triste','triste'],['pens
     const alto=g.max[1]-g.min[1],ancho=Math.max(g.max[0]-g.min[0],g.max[2]-g.min[2]),cy=(g.max[1]+g.min[1])/2,tan=Math.tan(14*Math.PI/180);
     const enc={cuerpo:a=>({objetivo:[0,cy,0],distancia:Math.max(alto*1.12,ancho*1.06/g.aspect)/2/tan,angulo:a}),
      cara:()=>({objetivo:[0,g.rc[1]+.02,0],distancia:Math.max(.62,(g.max[1]-g.cab[1])*1.9/2/tan),angulo:0}),
-     pecho:()=>{const alt=id==='aura'?.78:(g.max[1]-(g.cab[1]-.35));return {objetivo:[0,g.max[1]-alt/2,0],distancia:Math.max(alt*1.08,(id==='aura'?.62:ancho*.9)/g.aspect)/2/tan,angulo:0};}};
+     // Emociones: cabeza y hombros (como las tomas «pecho» de qa/antes, donde la cara llena el ancho).
+     pecho:()=>{const alt=id==='aura'?.78:(g.max[1]-(g.cab[1]-.3));return {objetivo:[0,g.max[1]-alt/2,0],distancia:Math.max(alt*1.04,(id==='aura'?.62:.62)/g.aspect)/2/tan,angulo:0};}};
     const tomas=tema==='claro'?[{n:'frente-tema-claro',e:enc.cuerpo(0),expr:'contenta'}]:[...VISTAS.map(([n,e,a])=>({n,e:enc[e](a),expr:'tranquila'})),...EMOCIONES.map(([n,expr])=>({n:'emocion-'+n,e:enc.pecho(),expr}))];
     for(const t of tomas){
      const url=await page.evaluate(({t})=>QA.tomar({expresion:t.expr,tiempo:1.1,encuadre:t.e}),{t});

@@ -39,7 +39,7 @@ function piel(d){
  if(lado>0){let m=0;for(const yc of [-.12,-.3,-.48])m+=Math.exp(-(((d[1]-yc)/.09)**2));const k=.009*m*lado*suave(.7,.85,Math.abs(d[0]));x+=d[0]*k;z+=d[2]*k*.5;y-=k*.5;}
  if(d[2]<-.2)z-=(-.2-d[2])*.012;
  // Cuencas de los ojos y arco de la ceja.
- for(const o of OJOD){const q=rasgo(d,o,.2,.17);if(q<2){const k=-.008*Math.exp(-q*q*1.8);x+=d[0]*k;y+=d[1]*k;z+=d[2]*k;}
+ for(const o of OJOD){const q=rasgo(d,o,.25,.21);if(q<2){const k=-.009*Math.exp(-q*q*1.8);x+=d[0]*k;y+=d[1]*k;z+=d[2]*k;}
   const qb=rasgo(d,nrm(o[0]*.95,o[1]+.2,o[2]),.24,.1);if(qb<2){const k=.006*Math.exp(-qb*qb*2);z+=k;}}
  // Hocico: empuja hacia adelante (+Z) con la punta más angosta; puente de la nariz hacia la frente.
  const qh=rasgo(d,HOCICO,.44,.34);
@@ -50,11 +50,11 @@ function piel(d){
  return [C.x+x,C.y+y,C.z+z];
 }
 /** Dirección para la rejilla de la piel: u alrededor (0 = nuca, .5 = frente), v de abajo a arriba. */
-const V_BOCA=.345,U_ESQ=.074;
+const V_BOCA=.345,U_ESQ=.086;
 function dirUV(u,v){
  const th=u*TAU;
  // Las filas cercanas a la boca se curvan hacia arriba en los lados: la boca queda en sonrisa.
- const du=u-.5,curvado=1.1*du*du*Math.exp(-(((v-V_BOCA)/.07)**2))*Math.max(0,1-Math.abs(du)/.2);
+ const du=u-.5,curvado=1.5*du*du*Math.exp(-(((v-V_BOCA)/.07)**2))*Math.max(0,1-Math.abs(du)/.2);
  const ph=(v-.5)*Math.PI+curvado*6;
  return [-Math.sin(th)*Math.cos(ph),Math.sin(ph),-Math.cos(th)*Math.cos(ph)];
 }
@@ -94,14 +94,14 @@ export function crearClaudio({calidad='alta'}={}){
   tela:new T.MeshStandardMaterial({name:'tela',color:'#ffffff',vertexColors:true,roughness:.92,normalMap:alta?normalTejido():null,normalScale:new T.Vector2(.7,.7)}),
   brillo:new T.MeshPhysicalMaterial({name:'brillo',color:'#ffffff',vertexColors:true,roughness:.3,clearcoat:.9,clearcoatRoughness:.12}),
   ojo:new T.MeshPhysicalMaterial({name:'ojo',color:'#ffffff',map:texturaOjo(),roughness:.18,clearcoat:1,clearcoatRoughness:.05}),
-  lente:new T.MeshPhysicalMaterial({name:'lente',color:'#e8961c',transparent:true,opacity:.5,roughness:.06,metalness:0,specularIntensity:.5,clearcoat:.6,clearcoatRoughness:.05,depthWrite:false}),
+  lente:new T.MeshPhysicalMaterial({name:'lente',color:'#eea03a',transparent:true,opacity:.34,roughness:.06,metalness:0,specularIntensity:.5,clearcoat:.6,clearcoatRoughness:.05,depthWrite:false}),
   zona:new T.MeshBasicMaterial({name:'zona',transparent:true,opacity:0,depthWrite:false})
  };
  mat.lente.side=T.FrontSide;
  const ojoPos=s=>{const [u,v]=uvDeDir(OJOD[s>0?0:1]);return {u,v,p:pielUV(u,v),n:normalPiel(u,v)};};
  const OJ={I:ojoPos(1),D:ojoPos(-1)};
- const RE=.05; // radio del globo ocular (casquete poco profundo: el párpado lineal no se hunde)
- const centroOjo=s=>{const o=s>0?OJ.I:OJ.D;return [o.p[0]-o.n[0]*.03,o.p[1]-o.n[1]*.03,o.p[2]-o.n[2]*.03];};
+ const RE=RE_G; // radio del globo ocular (casquete poco profundo: el párpado lineal no se hunde)
+ const centroOjo=s=>{const o=s>0?OJ.I:OJ.D;return [o.p[0]-o.n[0]*.044,o.p[1]-o.n[1]*.044,o.p[2]-o.n[2]*.044];};
  const H=manoZorro;
  const esq=new Esqueleto([
   {n:'hips',x:[0,.76,0]},{n:'spine',p:'hips',x:[0,.86,0]},{n:'chest',p:'spine',x:[0,.98,0]},{n:'upperChest',p:'chest',x:[0,1.07,0]},
@@ -200,7 +200,7 @@ export function crearClaudio({calidad='alta'}={}){
   K.agregar(g,{material:'brillo',hueso:'head',cara:true,etiqueta:'nariz',datos,color:COL.nariz,ao:false});}
  for(const s of [1,-1]){
   // Ceja: mechón corto y grueso de pelo más oscuro sobre el ojo (t=0 adentro, 1 afuera).
-  const pts=[];for(let i=0;i<=4;i++){const t=i/4;const d=nrm((.18+.3*t)*s,.47+.05*Math.sin(Math.PI*t)-.03*t,.86-.15*t);const [u,v]=uvDeDir(d);const p=pielUV(u,v),nn=normalPiel(u,v);pts.push([p[0]+nn[0]*.006,p[1]+nn[1]*.006,p[2]+nn[2]*.006]);}
+  const pts=[];for(let i=0;i<=4;i++){const t=i/4;const d=nrm((.18+.3*t)*s,.56+.05*Math.sin(Math.PI*t)-.03*t,.82-.15*t);const [u,v]=uvDeDir(d);const p=pielUV(u,v),nn=normalPiel(u,v);pts.push([p[0]+nn[0]*.006,p[1]+nn[1]*.006,p[2]+nn[2]*.006]);}
   const g=barrido(pts,t=>[.0085*Math.sin(Math.PI*(.12+.76*t))+.002,.0055],{lados:N(10),pasos:N(16),tapas:true});
   const datos=[];const p=g.attributes.position;const cur=curva(pts);const tt=[];for(let i=0;i<=40;i++)tt.push(cur.getPointAt(i/40));
   for(let i=0;i<p.count;i++){let mt=0,md=9;for(let k=0;k<tt.length;k++){const dd=tt[k].distanceToSquared(new T.Vector3(p.getX(i),p.getY(i),p.getZ(i)));if(dd<md){md=dd;mt=k/40;}}datos.push({parte:'ceja',s,t:mt});}
@@ -282,10 +282,10 @@ function bocaReferencia(){
 function parpado(xn,t,arriba,estado,k=1){
  const X=.78*xn;
  if(arriba){
-  const borde={abierto:.56-.18*xn*xn,cerrado:-.1-.12*xn*xn,ancho:.74-.18*xn*xn,entrecerrado:.28-.16*xn*xn,triste:.5-.18*xn*xn}[estado];
+  const borde={abierto:.64-.18*xn*xn,cerrado:-.1-.12*xn*xn,ancho:.8-.16*xn*xn,entrecerrado:.28-.16*xn*xn,triste:.5-.18*xn*xn}[estado];
   const y0=borde,y1=.97;const y=lerp(y0,y1,t);return [X*Math.sqrt(Math.max(.05,1-y*y*.2)),Math.min(.98,y)];
  }
- const borde={abierto:-.5+.12*xn*xn,cerrado:-.12+.05*xn*xn,ancho:-.62+.12*xn*xn,entrecerrado:-.08+.06*xn*xn,triste:-.5+.12*xn*xn}[estado];
+ const borde={abierto:-.56+.12*xn*xn,cerrado:-.12+.05*xn*xn,ancho:-.68+.12*xn*xn,entrecerrado:-.08+.06*xn*xn,triste:-.5+.12*xn*xn}[estado];
  const y=lerp(borde,-.97,t);return [X*Math.sqrt(Math.max(.05,1-y*y*.2)),Math.max(-.98,y)];
 }
 
@@ -296,7 +296,7 @@ function armarLentes(K,OJ,N){
  const envolver=(x,z)=>z-.55*x*x; // la montura abraza la cara
  for(const s of [1,-1]){
   const cx=(s>0?OJ.I.p[0]:OJ.D.p[0])*1.02;
-  const ext=forma(.108,.082,.02),hueco=forma(.082,.056,.013);ext.holes.push(new T.Path(hueco.getPoints(40).reverse()));
+  const ext=forma(.138,.112,.026),hueco=forma(.11,.084,.018);ext.holes.push(new T.Path(hueco.getPoints(40).reverse()));
   const g=new T.ExtrudeGeometry(ext,{depth:.008,bevelEnabled:true,bevelThickness:.0025,bevelSize:.0022,bevelSegments:2,curveSegments:N(14),steps:1});g.deleteAttribute('uv');
   const p=g.attributes.position;for(let i=0;i<p.count;i++){const x=p.getX(i)+cx,y=p.getY(i)+yc,z=p.getZ(i)+zFrente-.004;p.setXYZ(i,x,y,envolver(x,z));}g.computeVertexNormals();
   K.agregar(g,{material:'brillo',hueso:'head',color:COL.montura,ao:false});
@@ -304,11 +304,11 @@ function armarLentes(K,OJ,N){
   const pts=hueco.getSpacedPoints(64);const gl=rejilla(64,4,(u,v)=>{const q=pts[Math.round(u*64)%64];const x=q.x*v*1.03+cx,y=q.y*v*1.03+yc;return [x,y,envolver(x,zFrente+.0045+.005*(1-v*v))];},{cerradaU:true,invertir:true});
   K.agregar(gl,{material:'lente',hueso:'head',ao:false,ocluye:false});
   // Remaches plateados y patilla hacia la oreja.
-  const esq=[cx+s*.046,yc+.024];K.agregar(elipsoide([.0035,.0035,.002],{c:[esq[0],esq[1],envolver(esq[0],zFrente+.0065)],nu:10,nv:6}),{material:'brillo',hueso:'head',color:COL.remache,ao:false});
-  const inicio=[cx+s*.05,yc+.02,envolver(cx+s*.05,zFrente)-.004];
-  K.agregar(barrido([inicio,[s*.2,yc+.022,.03],[s*.222,yc+.012,-.06],[s*.2,yc-.01,-.1]],t=>[.0032,.0055],{lados:8,pasos:N(20),tapas:true,arriba:[0,1,0]}),{material:'brillo',hueso:'head',color:COL.montura,ao:false});
+  const esq=[cx+s*.061,yc+.036];K.agregar(elipsoide([.0035,.0035,.002],{c:[esq[0],esq[1],envolver(esq[0],zFrente+.0065)],nu:10,nv:6}),{material:'brillo',hueso:'head',color:COL.remache,ao:false});
+  const inicio=[cx+s*.066,yc+.03,envolver(cx+s*.066,zFrente)-.004];
+  K.agregar(barrido([inicio,[s*.205,yc+.03,.03],[s*.222,yc+.012,-.06],[s*.2,yc-.01,-.1]],t=>[.0032,.0055],{lados:8,pasos:N(20),tapas:true,arriba:[0,1,0]}),{material:'brillo',hueso:'head',color:COL.montura,ao:false});
  }
- const puente=[[OJ.I.p[0]*.55,yc+.012,envolver(OJ.I.p[0]*.55,zFrente)],[0,yc+.02,envolver(0,zFrente+.004)],[OJ.D.p[0]*.55,yc+.012,envolver(OJ.D.p[0]*.55,zFrente)]];
+ const bx=OJ.I.p[0]*1.02-.064;const puente=[[bx,yc+.018,envolver(bx,zFrente)],[0,yc+.026,envolver(0,zFrente+.004)],[-bx,yc+.018,envolver(-bx,zFrente)]];
  K.agregar(barrido(puente,t=>[.0045,.004],{lados:8,pasos:N(10),tapas:true}),{material:'brillo',hueso:'head',color:COL.montura,ao:false});
 }
 
@@ -463,7 +463,7 @@ function campoClaudio(nombre,info,ctx){
   const rotar=(ax,ay)=>{if(dato.parte!=='globo')return null;const xx=dato.x+ax,yy=dato.y+ay;const n=Math.hypot(xx,yy);const f=n>.999?.999/n:1;return enOjo(xx*f,yy*f,RE_G);};
   switch(nombre.replace(/Left|Right$/,'')){
    case 'eyeBlink':{if(dato.parte==='globo'){// el globo se aplana hacia atrás: el párpado lineal nunca se hunde
-     const k=Math.max(0,Math.cos(Math.asin(Math.min(1,Math.hypot(dato.x,dato.y)))))**2*.007;return [-fw[0]*k,-fw[1]*k,-fw[2]*k];}return lid('cerrado');}
+     const k=Math.max(0,Math.cos(Math.asin(Math.min(1,Math.hypot(dato.x,dato.y)))))**2*.009;return [-fw[0]*k,-fw[1]*k,-fw[2]*k];}return lid('cerrado');}
    case 'eyeSquint':return dato.parte==='parpadoInf'?lid('entrecerrado',.85):dato.parte==='parpadoSup'?lid('entrecerrado',.25):null;
    case 'eyeWide':return lid('ancho');
    case 'cheekSquint':return soloInf('entrecerrado',.45);
@@ -544,7 +544,7 @@ function campoClaudio(nombre,info,ctx){
   default:return null;
  }
 }
-const RE_G=.05;
+const RE_G=.064;
 
 /* ── perfil de animación ────────────────────────────────────────────────────────────────── */
 function perfilClaudio(){

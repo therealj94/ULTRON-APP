@@ -1,0 +1,34 @@
+{
+ "original": "assets/ANT-ONIO.glb (sha intacto)",
+ "movil": ".tmp/crudo/antonio-alta.glb",
+ "vistas": {
+  "cuerpo-frente": {
+   "diferenciaMedia": "1.15 %",
+   "pixelesQueCambian": "1.22 %"
+  },
+  "cuerpo-34": {
+   "diferenciaMedia": "1.18 %",
+   "pixelesQueCambian": "2.57 %"
+  },
+  "cuerpo-perfil": {
+   "diferenciaMedia": "0.66 %",
+   "pixelesQueCambian": "1.21 %"
+  },
+  "cara": {
+   "diferenciaMedia": "0.35 %",
+   "pixelesQueCambian": "0.74 %"
+  },
+  "cara-34": {
+   "diferenciaMedia": "0.38 %",
+   "pixelesQueCambian": "0.8 %"
+  },
+  "manos": {
+   "diferenciaMedia": "1.66 %",
+   "pixelesQueCambian": "2.05 %"
+  },
+  "pies": {
+   "diferenciaMedia": "1.56 %",
+   "pixelesQueCambian": "2.07 %"
+  }
+ }
+}

@@ -3,7 +3,7 @@
   "uri": "ANT-ONIO.glb",
   "mimeType": "model/gltf-binary",
   "validatorVersion": "2.0.0-dev.3.10",
-  "validatedAt": "2026-09-30T05:32:39.607Z",
+  "validatedAt": "2026-09-30T05:46:25.939Z",
   "issues": {
    "numErrors": 0,
    "numWarnings": 0,
@@ -454,7 +454,7 @@
   "uri": "antonio-bajo.glb",
   "mimeType": "model/gltf-binary",
   "validatorVersion": "2.0.0-dev.3.10",
-  "validatedAt": "2026-09-30T05:32:39.757Z",
+  "validatedAt": "2026-09-30T05:46:26.068Z",
   "issues": {
    "numErrors": 0,
    "numWarnings": 0,
@@ -753,7 +753,7 @@
   "uri": "antonio.glb",
   "mimeType": "model/gltf-binary",
   "validatorVersion": "2.0.0-dev.3.10",
-  "validatedAt": "2026-09-30T05:32:39.861Z",
+  "validatedAt": "2026-09-30T05:46:26.177Z",
   "issues": {
    "numErrors": 0,
    "numWarnings": 0,
@@ -1052,7 +1052,7 @@
   "uri": "aura-bajo.glb",
   "mimeType": "model/gltf-binary",
   "validatorVersion": "2.0.0-dev.3.10",
-  "validatedAt": "2026-09-30T05:32:39.900Z",
+  "validatedAt": "2026-09-30T05:46:26.218Z",
   "issues": {
    "numErrors": 0,
    "numWarnings": 0,
@@ -1108,7 +1108,7 @@
      "pointer": "/buffers/0",
      "mimeType": "application/gltf-buffer",
      "storage": "glb",
-     "byteLength": 210992
+     "byteLength": 212876
     },
     {
      "pointer": "/buffers/1",
@@ -1146,7 +1146,7 @@
   "uri": "aura.glb",
   "mimeType": "model/gltf-binary",
   "validatorVersion": "2.0.0-dev.3.10",
-  "validatedAt": "2026-09-30T05:32:39.932Z",
+  "validatedAt": "2026-09-30T05:46:26.241Z",
   "issues": {
    "numErrors": 0,
    "numWarnings": 0,
@@ -1214,7 +1214,7 @@
      "pointer": "/buffers/0",
      "mimeType": "application/gltf-buffer",
      "storage": "glb",
-     "byteLength": 409704
+     "byteLength": 412820
     },
     {
      "pointer": "/buffers/1",
@@ -1265,7 +1265,7 @@
   "uri": "claudio-bajo.glb",
   "mimeType": "model/gltf-binary",
   "validatorVersion": "2.0.0-dev.3.10",
-  "validatedAt": "2026-09-30T05:32:39.982Z",
+  "validatedAt": "2026-09-30T05:46:26.276Z",
   "issues": {
    "numErrors": 0,
    "numWarnings": 0,
@@ -1338,7 +1338,7 @@
      "pointer": "/buffers/0",
      "mimeType": "application/gltf-buffer",
      "storage": "glb",
-     "byteLength": 379332
+     "byteLength": 381812
     },
     {
      "pointer": "/buffers/1",
@@ -1365,7 +1365,7 @@
    "hasTextures": true,
    "hasDefaultScene": true,
    "drawCallCount": 11,
-   "totalVertexCount": 24548,
+   "totalVertexCount": 24546,
    "totalTriangleCount": 23216,
    "maxUVs": 1,
    "maxInfluences": 4,
@@ -1376,7 +1376,7 @@
   "uri": "claudio.glb",
   "mimeType": "model/gltf-binary",
   "validatorVersion": "2.0.0-dev.3.10",
-  "validatedAt": "2026-09-30T05:32:40.038Z",
+  "validatedAt": "2026-09-30T05:46:26.308Z",
   "issues": {
    "numErrors": 0,
    "numWarnings": 0,
@@ -1455,7 +1455,7 @@
      "pointer": "/buffers/0",
      "mimeType": "application/gltf-buffer",
      "storage": "glb",
-     "byteLength": 828156
+     "byteLength": 835520
     },
     {
      "pointer": "/buffers/1",
@@ -1509,7 +1509,7 @@
    "hasDefaultScene": true,
    "drawCallCount": 11,
    "totalVertexCount": 45198,
-   "totalTriangleCount": 59404,
+   "totalTriangleCount": 59412,
    "maxUVs": 1,
    "maxInfluences": 4,
    "maxAttributes": 7

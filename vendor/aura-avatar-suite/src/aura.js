@@ -24,7 +24,7 @@ const zVisor=(x,y)=>{const r=rhoVisor(x,y);return zCasco(x,y)+.0045+.0080*Math.m
 const sobreVisor=(x,y,off)=>[x,y,zVisor(x,y)+off];
 // Cara de luz.
 const OJO={x:.075,y:1.527,a:.031,b:.041};
-const BOCA={y:1.437};
+const BOCA={y:1.446,escala:1.35}; // la boca se lee a distancia de teléfono (escala sobre el contorno base)
 const CAPA={iris:.0035,pupila:.0043,destello:.0051,pestana:.0036,ceja:.0035,boca:.0040,relleno:.0034,rubor:.0030,lengua:.0037};
 
 export function crearAura({calidad='alta'}={}){
@@ -182,15 +182,15 @@ function bocaContorno(t,p){
  const up=lerp(p.upD,p.upI,f),dn=lerp(p.dnD,p.dnI,f);
  const cc=(izq?p.cI:p.cD)*(c*c-.35);let y=(s>=0?up:dn)*s+cc*(s>=0?.55:1);
  x=lerp(x,p.rr*c,p.ro);y=lerp(y,p.rr*s*1.1,p.ro);
- return [x+p.x,y+p.dy];
+ return [(x+p.x)*BOCA.escala,(y+p.dy)*BOCA.escala];
 }
 function bocaPunto(t,k,p){
  const e=1e-3,a=bocaContorno(t,p),b=bocaContorno(t+e,p),c=bocaContorno(t-e,p);
  let nx=b[1]-c[1],ny=-(b[0]-c[0]);const l=Math.hypot(nx,ny)||1;nx/=l;ny/=l;
- const g=.0021*(1-.35*Math.abs(Math.cos(t*TAU))**6);
+ const g=.0026*(1-.35*Math.abs(Math.cos(t*TAU))**6);
  return [a[0]+nx*g*k,BOCA.y+a[1]+ny*g*k];
 }
-function bocaRelleno(t,r,p){const a=bocaContorno(t,p);const cx=p.x,cy=p.dy;return [cx+(a[0]-cx)*r*.96,BOCA.y+cy+(a[1]-cy)*r*.96];}
+function bocaRelleno(t,r,p){const a=bocaContorno(t,p);const cx=p.x*BOCA.escala,cy=p.dy*BOCA.escala;return [cx+(a[0]-cx)*r*.96,BOCA.y+cy+(a[1]-cy)*r*.96];}
 /** Deltas de parámetros de boca por forma ARKit. */
 function bocaParam(nombre){
  const d={};

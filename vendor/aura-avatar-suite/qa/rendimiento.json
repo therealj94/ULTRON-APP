@@ -1,0 +1,97 @@
+{
+ "nota": "Chromium sin pantalla + SwiftShader (CPU), 390×844, dpr 1. Referencia RELATIVA entre modelos, no FPS de teléfono.",
+ "antes": {
+  "antonio": {
+   "archivo": "assets/ANT-ONIO.glb",
+   "bytes": 17802936,
+   "triangulos": 230706,
+   "cargaMs": 266,
+   "fpsSinBloom": 4.8,
+   "llamadasSinBloom": 112,
+   "fpsConBloom": 1,
+   "llamadasConBloom": 226
+  },
+  "claudio": {
+   "archivo": "assets/CLAUDIO.glb",
+   "bytes": 27762844,
+   "triangulos": 352894,
+   "cargaMs": 267,
+   "fpsSinBloom": 3.4,
+   "llamadasSinBloom": 96,
+   "fpsConBloom": 0.9,
+   "llamadasConBloom": 190
+  },
+  "aura": {
+   "archivo": "assets/AURA-ORBE.glb",
+   "bytes": 2119400,
+   "triangulos": 56800,
+   "cargaMs": 27,
+   "fpsSinBloom": 4.2,
+   "llamadasSinBloom": 19,
+   "fpsConBloom": 0.9,
+   "llamadasConBloom": 42
+  }
+ },
+ "despues": {
+  "antonio": {
+   "archivo": "assets/movil/antonio.glb",
+   "bytes": 2562916,
+   "triangulos": 56688,
+   "cargaMs": 113,
+   "fpsSinBloom": 4.8,
+   "llamadasSinBloom": 25,
+   "fpsConBloom": 0.8,
+   "llamadasConBloom": 53
+  },
+  "claudio": {
+   "archivo": "assets/movil/claudio.glb",
+   "bytes": 1125332,
+   "triangulos": 58924,
+   "cargaMs": 40,
+   "fpsSinBloom": 5.8,
+   "llamadasSinBloom": 8,
+   "fpsConBloom": 1.1,
+   "llamadasConBloom": 20
+  },
+  "aura": {
+   "archivo": "assets/movil/aura.glb",
+   "bytes": 579460,
+   "triangulos": 43856,
+   "cargaMs": 39,
+   "fpsSinBloom": 6.1,
+   "llamadasSinBloom": 6,
+   "fpsConBloom": 1.4,
+   "llamadasConBloom": 16
+  },
+  "antonio-bajo": {
+   "archivo": "assets/movil/antonio-bajo.glb",
+   "bytes": 1595640,
+   "triangulos": 23748,
+   "cargaMs": 73,
+   "fpsSinBloom": 5.1,
+   "llamadasSinBloom": 25,
+   "fpsConBloom": 4.3,
+   "llamadasConBloom": 25
+  },
+  "claudio-bajo": {
+   "archivo": "assets/movil/claudio-bajo.glb",
+   "bytes": 673152,
+   "triangulos": 22736,
+   "cargaMs": 26,
+   "fpsSinBloom": 3.7,
+   "llamadasSinBloom": 8,
+   "fpsConBloom": 4.8,
+   "llamadasConBloom": 8
+  },
+  "aura-bajo": {
+   "archivo": "assets/movil/aura-bajo.glb",
+   "bytes": 378684,
+   "triangulos": 17346,
+   "cargaMs": 17,
+   "fpsSinBloom": 4.5,
+   "llamadasSinBloom": 6,
+   "fpsConBloom": 3.9,
+   "llamadasConBloom": 6
+  }
+ }
+}
