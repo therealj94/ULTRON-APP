@@ -6,7 +6,7 @@
 cd "$(dirname "$0")" || exit 1
 node construir.cjs || exit 1
 fallos=0
-for t in envio contactos llamada cabeceras; do
+for t in envio contactos llamada cabeceras manos; do
   echo "\n══ $t"
   timeout 180 node "$t.cjs" || fallos=$((fallos + 1))
 done

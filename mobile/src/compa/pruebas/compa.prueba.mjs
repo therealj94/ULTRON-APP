@@ -15,7 +15,10 @@ import { ANIMO_INICIAL, expresion, puedeCaminar, reducir } from '../animo.ts';
 import { Gestos } from '../gestos.ts';
 import { pegarABorde, reubicar, yCarril, limitar, destinoPaseo, lugarGlobo } from '../borde.ts';
 import { LectorSse } from '../sse.ts';
-import { PuenteAcciones, ContextoApp, esAccionApp, accionesDelTurno, accionNueva, depurarContactos, VENTANA_MISMA_ACCION_MS } from '../acciones.ts';
+import { PuenteAcciones, ContextoApp, esAccionApp, accionesDelTurno, accionNueva, depurarContactos, VENTANA_MISMA_ACCION_MS, mensajeDeLectura, decirLectura } from '../acciones.ts';
+import { programarRecordatorio, _olvidarRecordatorios, CANAL_RECORDATORIOS } from '../recordatorios.ts';
+import { RE_LECTURA } from '../../../../lib/manos-app.ts';
+import { MANOS_APP } from '../../nucleo/contrato.ts';
 import { AudioVoz } from '../audioVoz.ts';
 import { FIGURAS, mezclarFigura, estiloDe } from '../figura.ts';
 import { emocionDeTexto } from '../../lib/emocion.ts';
@@ -852,6 +855,103 @@ prueba('figura: cada expresión se mezcla sin números raros; cada avatar tiene 
   assert.equal(estiloDe('aura').aura, true);
   assert.equal(estiloDe('claudio').retrato, true);
   assert.equal(estiloDe('ojos').main, '#5CE1FF');
+});
+
+prueba('manos: la app valida cada mano como el servidor; lo que no conoce se ignora', () => {
+  assert.equal(esAccionApp({ tipo: 'llamar', con: 'Mamá', video: false }), true);
+  assert.equal(esAccionApp({ tipo: 'llamar', con: 'Mamá' }), false, 'video tiene que venir');
+  assert.equal(esAccionApp({ tipo: 'leer' }), true);
+  assert.equal(esAccionApp({ tipo: 'leer', de: 'beto@x.com', boleto: 'AbCdEfGh12345678' }), true);
+  assert.equal(esAccionApp({ tipo: 'leer', boleto: 'x y' }), false, 'un boleto sin forma no');
+  assert.equal(esAccionApp({ tipo: 'buscar', q: 'dirección' }), true);
+  assert.equal(esAccionApp({ tipo: 'buscar', q: 'd' }), false);
+  assert.equal(esAccionApp({ tipo: 'idioma', valor: 'en' }), true);
+  assert.equal(esAccionApp({ tipo: 'idioma', valor: 'fr' }), false);
+  assert.equal(esAccionApp({ tipo: 'perfil', campo: 'vive', valor: 'San Pedro Sula' }), true);
+  assert.equal(esAccionApp({ tipo: 'perfil', campo: 'clave', valor: 'x' }), false);
+  assert.equal(esAccionApp({ tipo: 'recordatorio', texto: 'Llamar a mi mamá', cuando: Date.now() + 3600_000 }), true);
+  assert.equal(esAccionApp({ tipo: 'recordatorio', texto: 'Llamar', cuando: 'a las 5' }), false);
+  assert.equal(esAccionApp({ tipo: 'presentacion', valor: 'lado' }), true);
+  assert.equal(esAccionApp({ tipo: 'presentacion', valor: 'flotante' }), false);
+  assert.equal(esAccionApp({ tipo: 'borrar_chat', con: 'Beto' }), false);
+  assert.deepEqual(accionesDelTurno({ acciones: [{ id: 'm-1', accion: { tipo: 'volar_dron' } }, { id: 'm-2', accion: { tipo: 'idioma', valor: 'es' } }] }), [{ tipo: 'idioma', valor: 'es' }], 'una mano de un servidor más nuevo se ignora sin romper');
+});
+
+prueba('manos: el contexto le dice al servidor qué manos sabe hacer este teléfono', async () => {
+  const enviados = [];
+  const ctx = new ContextoApp({ enviar: async (c) => enviados.push(c), contactos: async () => [], escuchar: () => () => {}, esperar: (f) => (f(), () => {}) });
+  const c = await ctx.enviarAhora(true);
+  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'presentacion']);
+  assert.deepEqual([...c.manos], [...MANOS_APP]);
+});
+
+prueba('manos: la lectura viaja con la forma que el servidor reconoce', () => {
+  const m = mensajeDeLectura('AbCdEfGh12345678', 'Beto te escribió\nhace un momento: «Ya voy».');
+  const r = RE_LECTURA.exec(m);
+  assert.ok(r, m);
+  assert.equal(r[1], 'AbCdEfGh12345678');
+  assert.equal(r[2], 'Beto te escribió hace un momento: «Ya voy».');
+});
+
+prueba('manos: decirLectura — en la conversación espera su «A ver…» y va con boleto; sin boleto no; sin conversación, la voz de la mesa en privado', async () => {
+  const esperar = () => Promise.resolve();
+  let estado = 'hablando';
+  let vueltas = 0;
+  const enviados = [];
+  const base = { montada: true, silenciada: false, dormida: false, suspendida: false };
+  const conv = {
+    vista: () => {
+      if (++vueltas > 3) estado = 'escuchando';
+      return { ...base, estado };
+    },
+    enviarTexto: (t) => (enviados.push(t), true),
+    hablarMesa: () => assert.fail('con conversación no habla la mesa'),
+    mesaHablando: () => false,
+    vozSuspendida: () => false,
+    esperar,
+  };
+  assert.equal(await decirLectura({ texto: 'Beto: «hola»', boleto: 'AbCdEfGh12345678' }, conv), 'conversacion');
+  assert.equal(enviados[0], '[[lectura:AbCdEfGh12345678]] Beto: «hola»');
+  assert.ok(vueltas > 3, 'esperó a que terminara de hablar');
+  assert.equal(await decirLectura({ texto: 'Beto: «hola»' }, conv), 'nada', 'sin boleto sería un turno normal: el cerebro leería el mensaje');
+  const dichos = [];
+  const mesa = { ...conv, vista: () => ({ ...base, montada: false, estado: 'cerrada' }), enviarTexto: () => assert.fail('sin conversación'), hablarMesa: (t) => dichos.push(t) };
+  assert.equal(await decirLectura({ texto: 'No tienes mensajes nuevos.', boleto: 'AbCdEfGh12345678' }, mesa), 'mesa');
+  assert.deepEqual(dichos, ['No tienes mensajes nuevos.']);
+  for (const v of [{ suspendida: true }, { silenciada: true }, { dormida: true }]) {
+    assert.equal(await decirLectura({ texto: 'x', boleto: 'AbCdEfGh12345678' }, { ...mesa, vista: () => ({ ...base, montada: false, estado: 'cerrada', ...v }) }), 'nada', JSON.stringify(v));
+  }
+});
+
+prueba('manos: recordatorio — permiso de avisos, aviso programado una sola vez, y la hora que ya pasó no', async () => {
+  _olvidarRecordatorios();
+  const ahora = Date.UTC(2026, 8, 30, 20, 0);
+  const K = { TriggerType: { TIMESTAMP: 0 }, AlarmType: { SET_AND_ALLOW_WHILE_IDLE: 1 }, AuthorizationStatus: { DENIED: 0 }, AndroidImportance: { HIGH: 4 } };
+  let permiso = 1;
+  const puestos = [];
+  const m = {
+    requestPermission: async () => ({ authorizationStatus: permiso }),
+    createChannel: async (c) => c.id,
+    createTriggerNotification: async (n, t) => (puestos.push({ n, t }), n.id),
+  };
+  const d = { notifee: () => ({ m, k: K }), ahora: () => ahora };
+  const a = { texto: 'Llamar a mi mamá', cuando: ahora + 3 * 3600_000 };
+  const r = await programarRecordatorio(a, d);
+  assert.equal(r.ok, true, r.detalle);
+  assert.equal(puestos.length, 1);
+  assert.equal(puestos[0].n.body, 'Llamar a mi mamá');
+  assert.equal(puestos[0].n.android.channelId, CANAL_RECORDATORIOS);
+  assert.deepEqual(puestos[0].t, { type: 0, timestamp: a.cuando, alarmManager: { type: 1 } });
+  assert.match(r.detalle, /^Te aviso hoy a las /);
+  assert.deepEqual(await programarRecordatorio(a, d), r, 'la misma orden que vuelve no pone otro aviso');
+  assert.equal(puestos.length, 1);
+  assert.equal((await programarRecordatorio({ texto: 'Tarde', cuando: ahora + 5_000 }, d)).ok, false, 'ya casi pasó');
+  permiso = 0;
+  const negado = await programarRecordatorio({ texto: 'Otra cosa', cuando: ahora + 7200_000 }, d);
+  assert.equal(negado.ok, false);
+  assert.match(negado.detalle, /permiso de avisos/);
+  assert.equal(puestos.length, 1);
+  assert.equal((await programarRecordatorio({ texto: 'X', cuando: ahora + 7200_000 }, { notifee: () => null, ahora: () => ahora })).ok, false, 'sin notifee se dice');
 });
 
 prueba('emoción del texto (conversación fluida)', () => {

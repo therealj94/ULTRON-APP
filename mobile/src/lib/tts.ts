@@ -223,9 +223,15 @@ async function conExtension(path: string, ct: string): Promise<string> {
   }
 }
 
-async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<AVPlaybackSource | null> {
+async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false): Promise<AVPlaybackSource | null> {
   const avatar = avatarActual();
   const idioma = idiomaActual();
+  if (privado) {
+    // Lo que se lee de un chat cifrado: por POST (el texto no va en la URL), `privado` (el servidor no
+    // guarda el audio en su caché) y sin la caché de aquí.
+    const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, privado: true }, 40_000);
+    return uri ? { uri } : null;
+  }
   const key = `${avatar}|${idioma}|${perf}|${emocion}|${text}`;
   const hit = fileCache.get(key);
   if (hit) return { uri: hit };
@@ -516,6 +522,8 @@ export async function speak(
   opts?: SpeakCallbacks & {
     performance?: Perf;
     emocion?: Emocion;
+    /** Texto de un chat de la persona (una lectura): sin caché ni aquí ni en el servidor. */
+    privado?: boolean;
   }
 ): Promise<boolean> {
   const clean = cleanForSpeech(text);
@@ -535,7 +543,7 @@ export async function speak(
   const AHEAD = 2;
   const sources: Array<Promise<AVPlaybackSource | null>> = [];
   const launch = (i: number) => {
-    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion);
+    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion, !!opts?.privado);
   };
   for (let i = 0; i < Math.min(AHEAD + 1, sentences.length); i++) launch(i);
 

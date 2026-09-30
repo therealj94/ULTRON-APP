@@ -13,6 +13,8 @@
  *  · el puente de acciones y el contexto (acciones.ts): lo que AURA decide hacer llega por SSE y se
  *    emite en el bus; el teléfono le cuenta al cerebro dónde está la persona y a quién puede escribir;
  *  · `silencio` (del bus, con lo que de verdad pasó) y `perfil` (avatar e idioma);
+ *  · `lectura` (del bus): lo que el teléfono leyó de un chat o encontró al buscar, dicho con la voz de
+ *    AURA sin pasar por el cerebro (acciones.ts, `decirLectura`);
  *  · el audio: cuándo la conversación suelta de verdad el audio del teléfono (audioVoz.ts), avisado en
  *    el bus (`voz`) para que una llamada no arranque el suyo mientras AURA todavía se cierra;
  *  · el puente de acciones se detiene con la app detrás y se reanuda al volver (sin SSE en segundo
@@ -40,7 +42,7 @@ import { ModoConversacion, type ControlesSesion } from '../components/ModoConver
 import { ControlSesion, type EstadoVoz, type VistaSesion } from './sesion';
 import { Precalentador } from './permiso';
 import { coordinarLlamadas } from './llamada';
-import { ContextoApp, PuenteAcciones, type XhrMin } from './acciones';
+import { ContextoApp, PuenteAcciones, decirLectura, type XhrMin } from './acciones';
 import { AudioVoz } from './audioVoz';
 import { cabecerasAparato } from '../lib/aparato';
 import { escucharCuenta } from '../pulse/relevo';
@@ -160,6 +162,16 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       const r = control.aplicarSilencio(a.valor);
       emitir('hecho', { accion: a, ok: r.ok, ...(r.detalle ? { detalle: r.detalle } : {}) });
     });
+    // Lo que el teléfono lee de un chat («¿qué me dijo Beto?») o encontró al buscar: con la voz de AURA.
+    const offLectura = escuchar('lectura', (l) => {
+      void decirLectura(l, {
+        vista: () => control.vista(),
+        enviarTexto: (t) => !!controles.current?.enviarTexto(t),
+        hablarMesa: (t) => speak(t, { privado: true, onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) }),
+        mesaHablando: () => ecoMesa.ultimo().hablando,
+        vozSuspendida,
+      }).then((como) => miga(`lectura: ${como}`));
+    });
     const offLlamada = coordinarLlamadas({
       escuchar: (tipo, f) => escuchar(tipo, f),
       sesion: control,
@@ -175,6 +187,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       app.remove();
       offPerfil();
       offAccion();
+      offLectura();
       offLlamada();
     };
   }, [control, precalentar]);

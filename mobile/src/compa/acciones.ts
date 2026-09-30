@@ -17,7 +17,7 @@
  * Sin React Native: todo lo de afuera entra por `deps` y las pruebas lo corren con un servidor falso.
  */
 import type { AccionApp, Contexto, Eventos, Pantalla } from '../nucleo/contrato';
-import { RUTA_ACCIONES } from '../nucleo/contrato';
+import { MANOS_APP, RUTA_ACCIONES } from '../nucleo/contrato';
 import { LectorSse, jsonDe } from './sse';
 
 /** Lo que se usa de un XMLHttpRequest (el de React Native o uno falso en las pruebas). */
@@ -43,7 +43,9 @@ const temporizador: Temporizador = (f, ms) => {
 const PANTALLAS: readonly Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil'];
 const TEMAS = ['oscuro', 'claro', 'sistema'];
 const AVATARES = ['ojos', 'aura', 'claudio'];
+const CAMPOS_PERFIL = ['apodo', 'cumple', 'vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'otros'];
 const txt = (v: unknown, max = 2000) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
+const boletoOk = (v: unknown) => v === undefined || (typeof v === 'string' && /^[A-Za-z0-9_-]{8,40}$/.test(v));
 
 /** ¿Es una acción que la app sabe hacer? Lo que no, se descarta (un servidor más nuevo no rompe nada). */
 export function esAccionApp(a: any): a is AccionApp {
@@ -66,9 +68,70 @@ export function esAccionApp(a: any): a is AccionApp {
       return a.para === undefined || txt(a.para, 200);
     case 'silencio':
       return typeof a.valor === 'boolean';
+    // Las manos: con la misma forma estricta que valida el servidor.
+    case 'llamar':
+      return txt(a.con, 254) && typeof a.video === 'boolean';
+    case 'leer':
+      return (a.de === undefined || txt(a.de, 254)) && boletoOk(a.boleto);
+    case 'buscar':
+      return txt(a.q, 80) && a.q.trim().length >= 2 && boletoOk(a.boleto);
+    case 'idioma':
+      return a.valor === 'es' || a.valor === 'en';
+    case 'perfil':
+      return CAMPOS_PERFIL.includes(a.campo) && txt(a.valor, 300);
+    case 'recordatorio':
+      return txt(a.texto, 140) && typeof a.cuando === 'number' && Number.isFinite(a.cuando);
+    case 'presentacion':
+      return a.valor === 'completa' || a.valor === 'lado';
     default:
       return false;
   }
+}
+
+/**
+ * La lectura del teléfono tal como viaja por la conversación de voz: el servidor la reconoce por el
+ * boleto (lib/manos-app.ts, RE_LECTURA) y la dice tal cual, sin pasar por el cerebro.
+ */
+export function mensajeDeLectura(boleto: string, texto: string): string {
+  return `[[lectura:${boleto}]] ${String(texto || '').replace(/\s+/g, ' ').trim()}`;
+}
+
+/** Lo que mira `decirLectura` de la sesión de voz (la VistaSesion de sesion.ts). */
+type VistaLectura = { montada: boolean; estado: string; silenciada: boolean; dormida: boolean; suspendida: boolean };
+
+export type DepsLectura = {
+  vista: () => VistaLectura;
+  /** Un mensaje hacia la conversación fluida abierta (sendUserMessage). false: no se pudo. */
+  enviarTexto: (t: string) => boolean;
+  /** La voz de la mesa, en modo privado (sin caché). */
+  hablarMesa: (t: string) => Promise<unknown> | unknown;
+  mesaHablando: () => boolean;
+  vozSuspendida: () => boolean;
+  esperar?: (ms: number) => Promise<void>;
+};
+
+/**
+ * Dice la lectura del teléfono con la voz de AURA:
+ *  · con la conversación fluida abierta, como `[[lectura:<boleto>]] …` (el servidor la dice tal cual,
+ *    sin cerebro); espera a que AURA termine su «A ver…» para no cortarse sola. Sin boleto NO se
+ *    manda: sería un turno normal y el cerebro leería el mensaje de otra persona;
+ *  · sin conversación, con la voz de la mesa en modo privado, cuando nadie esté hablando;
+ *  · en una llamada, silenciada o dormida, no se dice (la persona pidió silencio o está hablando).
+ */
+export async function decirLectura(l: { texto: string; boleto?: string }, d: DepsLectura): Promise<'conversacion' | 'mesa' | 'nada'> {
+  const esperar = d.esperar || ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const texto = String(l.texto || '').trim();
+  const v = d.vista();
+  if (!texto || v.suspendida || v.silenciada || v.dormida) return 'nada';
+  if (v.montada) {
+    if (!l.boleto) return 'nada';
+    for (let i = 0; i < 30 && d.vista().estado === 'hablando'; i++) await esperar(200);
+    return d.enviarTexto(mensajeDeLectura(l.boleto, texto)) ? 'conversacion' : 'nada';
+  }
+  if (d.vozSuspendida()) return 'nada';
+  for (let i = 0; i < 25 && d.mesaHablando(); i++) await esperar(200);
+  await d.hablarMesa(texto);
+  return 'mesa';
 }
 
 /*
@@ -455,6 +518,8 @@ export class ContextoApp {
       chatAbierto: this.chatAbierto,
       contactos: await this.contactos(),
       ...(this.borrador !== undefined ? { borrador: this.borrador } : {}),
+      // Lo que este teléfono sabe hacer: el servidor solo le ofrece (y le manda) esas manos.
+      manos: MANOS_APP,
     };
     const firma = JSON.stringify(c);
     if (!forzar && firma === this.ultimoEnviado) return null;

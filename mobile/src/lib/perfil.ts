@@ -26,7 +26,7 @@ import { saveSettings } from './storage';
 import { setAvatarVoz } from './tts';
 import { normalizarAvatarId, type AvatarId } from '../avatares/catalogo';
 import { fijarIdioma, idiomaActual, normalizarIdioma } from '../i18n';
-import { emitir, RUTA_PERFIL, type Encuesta, type Perfil, type Tema } from '../nucleo/contrato';
+import { emitir, RUTA_PERFIL, type Encuesta, type Perfil, type Presentacion, type Tema } from '../nucleo/contrato';
 import { fijarTema, temaElegido } from '../nucleo/tema';
 
 /* ── forma y reglas (puras: las prueba node) ─────────────────────────────────────────────── */
@@ -36,6 +36,7 @@ export const MAX_CAMPO_ENCUESTA = 300;
 export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'otros'] as const;
 export type CampoEncuesta = (typeof CAMPOS_ENCUESTA)[number];
 const TEMAS: Tema[] = ['oscuro', 'claro', 'sistema'];
+const PRESENTACIONES: Presentacion[] = ['completa', 'lado'];
 const DIAS_DEL_MES = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 /** Texto de una línea, sin caracteres de control y recortado (las mismas reglas que el servidor). */
@@ -115,9 +116,9 @@ export function normalizarPerfil(raw: unknown): Perfil | null {
   if (ng) p.nombreGenesis = ng;
   const c = cumpleValido(r.cumple);
   if (c) p.cumple = c;
+  if (PRESENTACIONES.includes(r.presentacion as Presentacion)) p.presentacion = r.presentacion as Presentacion;
   return p;
 }
-
 /**
  * Aplica cambios sobre un perfil. La encuesta se mezcla campo por campo (un campo vacío se borra);
  * `cumple: ''` lo borra; `nombreGenesis` solo lo pone el servidor, así que aquí se respeta el que hay
@@ -132,6 +133,7 @@ export function aplicarCambios(base: Perfil, c: Partial<Perfil>, ahora: number):
   if (c.avatar !== undefined) p.avatar = normalizarAvatarId(c.avatar);
   if (c.tema !== undefined && TEMAS.includes(c.tema)) p.tema = c.tema;
   if (c.idioma !== undefined) p.idioma = normalizarIdioma(c.idioma);
+  if (c.presentacion !== undefined && PRESENTACIONES.includes(c.presentacion)) p.presentacion = c.presentacion;
   if (c.completado !== undefined) p.completado = !!c.completado;
   if (c.nombreGenesis !== undefined && !base.nombreGenesis) {
     const ng = textoLimpio(c.nombreGenesis, 120);
@@ -163,6 +165,7 @@ export function cuerpoPut(p: Perfil, cambios: Partial<Perfil>): Record<string, u
   if (cambios.avatar !== undefined) b.avatar = p.avatar;
   if (cambios.tema !== undefined) b.tema = p.tema;
   if (cambios.idioma !== undefined) b.idioma = p.idioma;
+  if (cambios.presentacion !== undefined && p.presentacion) b.presentacion = p.presentacion;
   if (cambios.completado !== undefined) b.completado = p.completado;
   if (cambios.cumple !== undefined) b.cumple = p.cumple || '';
   if (cambios.encuesta !== undefined) {

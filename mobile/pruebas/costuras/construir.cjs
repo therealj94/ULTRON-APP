@@ -50,6 +50,8 @@ const piezas = {
   SESION: 'compa/sesion',
   COMPA_LLAMADA: 'compa/llamada',
   AUDIO_VOZ: 'compa/audioVoz',
+  MANOS: 'pulse/manos',
+  RECORDATORIOS: 'compa/recordatorios',
   API: 'lib/api',
   APARATO: 'lib/aparato',
 };

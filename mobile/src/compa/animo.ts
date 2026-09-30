@@ -338,6 +338,12 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
     case 'hecho': {
       if (ev.accion.tipo === 'enviar') return envioPedido(a, ev.ok, ahora, efectos, ev.accion.para, ev.detalle);
       if (ev.accion.tipo === 'silencio') return { animo: a, efectos };
+      // Leer y buscar dicen su resultado (o su fallo) con la lectura: aquí no se repite en voz.
+      if (ev.accion.tipo === 'leer' || ev.accion.tipo === 'buscar') {
+        if (ev.ok) return { animo: a, efectos: [...efectos, { tipo: 'brinco', alto: 6 }] };
+        efectos.push({ tipo: 'haptica', fuerza: 'aviso' }, globo(ev.detalle ? recortar(ev.detalle, 70) : textoCompa.noPude(), 2600, 2));
+        return { animo: { ...a, reaccion: reaccion('triste', 1500) }, efectos };
+      }
       if (!ev.ok) {
         // Lo dice (en voz alta o al agente, que así no se queda diciendo «listo») y lo muestra.
         const texto = ev.detalle ? recortar(ev.detalle, 70) : textoCompa.noPude();
