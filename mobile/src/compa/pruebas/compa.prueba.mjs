@@ -18,7 +18,9 @@ import { LectorSse } from '../sse.ts';
 import { PuenteAcciones, ContextoApp, esAccionApp, accionesDelTurno, accionNueva, depurarContactos, VENTANA_MISMA_ACCION_MS, mensajeDeLectura, decirLectura, mensajeDeRecordatorio, decirRecordatorio } from '../acciones.ts';
 import * as REC from '../recordatorios.ts';
 import { programarRecordatorio, _olvidarRecordatorios, CANAL_RECORDATORIOS } from '../recordatorios.ts';
-import { RE_LECTURA, turnoDeRecordatorio } from '../../../../lib/manos-app.ts';
+// Del servidor (lib/manos-app.ts), con import dinámico: el typecheck de la app (mobile/tsconfig, que
+// incluye estas pruebas) no debe seguir hasta el código del servidor y sus dependencias (undici).
+const { RE_LECTURA, turnoDeRecordatorio } = await import(new URL('../../../../lib/manos-app.ts', import.meta.url).href);
 import { MANOS_APP } from '../../nucleo/contrato.ts';
 import { AudioVoz } from '../audioVoz.ts';
 import { FIGURAS, mezclarFigura, estiloDe } from '../figura.ts';
