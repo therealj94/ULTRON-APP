@@ -185,13 +185,14 @@ export function promptMemoria(quien: MiembroId | null, opts: { nivel?: NivelAura
   /*
    * Un miembro de la comunidad (entró por Genesis abierto, no está en el padrón) no tiene cajón aquí
    * y no ve NADA de la junta: ni sus hechos compartidos, ni los cambios que pidió, ni la memoria de
-   * nadie. Solo se le dice al modelo con quién habla.
+   * nadie. Su memoria personal vive en lib/memoria-miembro.ts; esto es solo para cuando habla sin
+   * sesión (sin cuenta no hay de quién guardar).
    */
   if (opts.nivel === 'miembro') {
     const n = String(opts.nombre || '').trim() || 'un miembro de la comunidad';
     return [
       `HABLAS CON: ${n}, miembro de la comunidad de Orden Global (no es de la junta).`,
-      'MEMORIA: de los miembros no se guarda memoria de largo plazo. Usa el hilo de esta conversación; no prometas recordar para siempre ni recites nada de otras personas.',
+      'MEMORIA: habla sin su cuenta, así que no hay memoria guardada que usar. Usa el hilo de esta conversación; no prometas recordar ni recites nada de otras personas.',
     ].join('\n');
   }
   const a = cache || leerDisco();

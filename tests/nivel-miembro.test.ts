@@ -23,6 +23,7 @@ process.env.ULTRON_SESIONES_CERRADAS_ARCHIVO = path.join(dir, 'cerradas.json');
 process.env.ULTRON_SESION_SECRETO = 'secreto-de-prueba-largo-para-las-sesiones-nivel';
 process.env.ULTRON_MEMORIA_BUCKET = '';
 process.env.ULTRON_PADRON = '';
+process.env.ULTRON_MEMORIA_MIEMBROS_DIR = path.join(dir, 'memoria-miembros');
 
 const { nivelDeCorreo, nivelDePeticion, rolVisible, nivelMasEstrecho, exigirJunta, ROL_MIEMBRO, ROL_JUNTA } = await import('../server/nivel');
 const { emitirSesion, emitirTokenMcp } = await import('../server/seguridad');
@@ -30,7 +31,9 @@ const { reiniciarPadron } = await import('../lib/acceso');
 const { quienVerificado, resolverQuien, guardarHechoQuien, fotoMemoria, resetMemoriaTest, promptMemoria } = await import('../lib/memoria');
 const { personalidadDelTurno } = await import('../server/prompt-turno');
 const { construirMensajes } = await import('../lib/qwen');
-const { perfilPara, perfilActivo, herramientaPermitida, GENESIS_MIEMBRO, PERFILES } = await import('../lib/perfiles');
+const { perfilPara, perfilActivo, herramientaPermitida, GENESIS_MIEMBRO, PERFILES, SOLO_JUNTA } = await import('../lib/perfiles');
+const { instruccionAcciones } = await import('../lib/acciones-app');
+const { recordarTurnoMiembro, guardarHechoMiembro, cargarMiembro, promptMemoriaMiembro, hiloMiembro, olvidarMiembro, fotoMemoriaMiembro, esHechoDeMiembro, _olvidarCacheMiembros } = await import('../lib/memoria-miembro');
 const { buildPersonality } = await import('../server/desk');
 const { promptHonesto, SYSTEM_PROMPT_HONESTO } = await import('../lib/prompts/honestidad');
 const { promptAgente, AGENTES_AURA } = await import('../lib/cognitivo/agentes');
@@ -210,21 +213,89 @@ test('el taller no corre NADA para un miembro, aunque diga el nombre de José y 
     enviados.push(x);
     return { ok: true, detalle: 'enviado' };
   };
+  const originalWa = canales.whatsapp;
+  (canales as any).whatsapp = async (x: unknown) => {
+    enviados.push(x);
+    return { ok: true, detalle: 'enviado' };
+  };
+  // Aunque (por un error río arriba) viniera con la identidad de José y mando: el nivel manda.
+  const comoMiembro = { quien: 'jose', nivel: 'mando' as const, prueba: 'sesion' as const, canal: 'mesa' as const, nivelAura: 'miembro' as const };
   try {
-    for (const pedido of ['manda por telegram: hola junta', 'mándame un pdf por telegram', 'cómo está el sistema', 'redespliega la mesa', 'pendientes', 'anota: comprar pan', 'abre la bóveda', 'urgente avísame']) {
-      // Aunque (por un error río arriba) viniera con la identidad de José y mando: el nivel manda.
-      const r = await despacharTaller(pedido, { quien: 'jose', nivel: 'mando', prueba: 'sesion', canal: 'mesa', nivelAura: 'miembro' });
+    // Lo que es de la junta: no corre, y el modelo sabe que no es para miembros.
+    for (const pedido of ['manda por telegram: hola junta', 'mándame un pdf por telegram', 'cómo está el sistema', 'redespliega la mesa', 'pendientes', 'abre la bóveda', 'urgente avísame']) {
+      const r = await despacharTaller(pedido, comoMiembro);
       assert.deepEqual(r.tools, [], `«${pedido}» no dispara herramientas`);
-      assert.deepEqual(r.hechos, [TALLER_SOLO_JUNTA]);
+      assert.deepEqual(r.hechos, [TALLER_SOLO_JUNTA], pedido);
       assert.equal(r.decir, undefined, 'sin frase de taller: contesta el modelo');
     }
-    assert.equal(enviados.length, 0, 'nada salió al Telegram de la organización');
+    // Lo que es SUYO y el taller confundía (recordatorios, llamadas, mensajes a sus contactos): el
+    // taller no lo toca ni lo niega; lo resuelven las acciones de su app.
+    for (const pedido of ['anota: comprar pan', 'recuérdame llamar a mi mamá a las cinco', 'llámame en diez minutos', 'mándale un whatsapp a Beto que ya voy']) {
+      const r = await despacharTaller(pedido, comoMiembro);
+      assert.deepEqual(r, { hechos: [], tools: [] }, `«${pedido}» no se niega ni se corre en el taller`);
+    }
+    assert.equal(enviados.length, 0, 'nada salió por los canales de la organización');
     // La junta, como siempre.
     const j = await despacharTaller('pendientes', { quien: 'jose', nivel: 'mando', prueba: 'sesion', canal: 'mesa' });
     assert.deepEqual(j.tools, ['tareas']);
   } finally {
     (canales as any).telegram = original;
+    (canales as any).whatsapp = originalWa;
   }
+});
+
+test('para un miembro siguen la web, la memoria personal, la visión, los PDF, los precios y TODAS las acciones de la app', () => {
+  resetMemoriaTest();
+  const m = perfilPara('miembro');
+  for (const h of ['web', 'memoria', 'vision', 'pdf', 'metales', 'fx', 'canto'] as const) {
+    assert.ok(m.herramientas.includes(h), `el miembro conserva «${h}»`);
+    assert.ok(herramientaPermitida(m, h, 'miembro'));
+  }
+  // Lo ÚNICO que no tiene un miembro: telegram y taller (más el conocimiento interno y el rol).
+  assert.deepEqual([...SOLO_JUNTA], ['telegram', 'taller']);
+  // Las acciones de la app (pantallas, mensajes, llamadas, recordatorios…) no se filtran por nivel:
+  // el bloque que arma lib/acciones-app.ts llega entero al prompt del miembro.
+  const ctx = { pantalla: 'chats' as const, contactos: [{ correo: 'mama@x.com', nombre: 'Mamá' }], at: Date.now() };
+  const bloqueApp = instruccionAcciones(ctx as any, { idioma: 'es' });
+  assert.ok(bloqueApp.includes('ACCION_APP'));
+  const sys = personalidadDelTurno({ nivel: 'miembro', nombre: 'Ana', canal: 'mesa', modo: 'CONVERSACION', mando: false, quien: null, quienMem: null, bloqueApp, hechos: [] });
+  assert.ok(sys.includes(bloqueApp), 'las acciones de la app, tal cual');
+  assert.match(sys, /las acciones de su app/);
+  const conHarness = construirMensajes({ personalidad: sys, user: 'recuérdame llamar a mi mamá a las cinco y busca el clima de mañana', nivel: 'miembro', harness: true }).messages[0].content;
+  assert.match(conHarness, /PEDIR_HERRAMIENTA: web/, 'la web sigue en su harness');
+  assert.match(conHarness, /PEDIR_HERRAMIENTA: leer/);
+});
+
+test('memoria personal del miembro: por correo, solo suya; ni otro miembro ni la junta la ven', async () => {
+  _olvidarCacheMiembros();
+  await recordarTurnoMiembro({ correo: 'Ana.Lopez@gmail.com', rol: 'user', texto: 'recuerda que mi hija se llama Sofía' });
+  await recordarTurnoMiembro({ correo: 'ana.lopez@gmail.com', rol: 'ultron', texto: 'Anotado: Sofía.' });
+  await recordarTurnoMiembro({ correo: 'ana.lopez@gmail.com', rol: 'user', texto: '¿qué es orden global?' });
+  await guardarHechoMiembro('ana.lopez@gmail.com', 'Vive en Comayagua');
+  await cargarMiembro('pedro@gmail.com');
+  const deAna = promptMemoriaMiembro('ana.lopez@gmail.com', 'Ana');
+  assert.match(deAna, /Sofía/);
+  assert.match(deAna, /Vive en Comayagua/);
+  assert.match(deAna, /Miembro: ¿qué es orden global\?/, 'el hilo se etiqueta como miembro, no como junta');
+  assert.equal(/LO QUE ANA TE PIDIÓ RECORDAR:[^]*¿qué es orden global\?[^]*HILO CORTO/.test(deAna), false, 'una pregunta no se guarda como hecho');
+  const dePedro = promptMemoriaMiembro('pedro@gmail.com', 'Pedro');
+  assert.equal(dePedro.includes('Sofía') || dePedro.includes('Comayagua'), false, 'otro miembro no ve nada');
+  assert.equal(hiloMiembro('pedro@gmail.com').length, 0);
+  // Sobrevive a un redespliegue (disco; en producción, también S3).
+  _olvidarCacheMiembros();
+  await cargarMiembro('ana.lopez@gmail.com');
+  assert.match(promptMemoriaMiembro('ana.lopez@gmail.com', 'Ana'), /Sofía/);
+  // Y no toca la memoria de la junta.
+  resetMemoriaTest();
+  assert.equal(JSON.stringify(fotoMemoria('jose')).includes('Sofía'), false);
+  assert.equal(fotoMemoriaMiembro('ana.lopez@gmail.com').junta.length, 0);
+  // Olvidar borra solo lo suyo.
+  await guardarHechoMiembro('pedro@gmail.com', 'Le gusta el café');
+  await olvidarMiembro('ana.lopez@gmail.com');
+  assert.equal(promptMemoriaMiembro('ana.lopez@gmail.com', 'Ana').includes('Sofía'), false);
+  assert.match(promptMemoriaMiembro('pedro@gmail.com', 'Pedro'), /café/);
+  assert.equal(esHechoDeMiembro('¿qué es orden global?'), false);
+  assert.equal(esHechoDeMiembro('recuerda que mañana tengo cita'), true);
 });
 
 test('el harness no corre sistema ni ejecutor para un miembro aunque el modelo los pida', async () => {

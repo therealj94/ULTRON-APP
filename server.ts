@@ -11,6 +11,7 @@ import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, est
 import { lineaAvatar, normalizarAvatar, normalizarIdioma, NOMBRE_AVATAR, type AvatarVoz } from './server/eleven';
 import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
 import { personalidadDelTurno } from './server/prompt-turno';
+import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
@@ -1737,8 +1738,8 @@ function juntarOllama(raw: string) {
 
 
 /**
- * Lo que ve un miembro de la comunidad en /api/memoria: nada de la junta (ni sus hechos compartidos,
- * ni los cambios, ni quiénes son) y nada de nadie. De los miembros no se guarda memoria todavía.
+ * Lo que ve en /api/memoria quien es miembro y habla sin sesión (la mesa abierta por IP): nada de la
+ * junta (ni sus hechos compartidos, ni los cambios, ni quiénes son) y nada de nadie.
  */
 function memoriaDeMiembro() {
   return {
@@ -1749,13 +1750,18 @@ function memoriaDeMiembro() {
     privada: { corta: [], larga: [] },
     junta: [],
     cambios: [],
-    guardado: false,
-    nota: 'De los miembros de la comunidad no se guarda memoria de largo plazo todavía.',
+    nota: 'Entra con tu cuenta para que AU-RA te recuerde.',
   };
 }
 
 app.get('/api/memoria', exigirMesa, async (req, res) => {
-  if (nivelDePeticion(req) === 'miembro') return res.json(memoriaDeMiembro());
+  if (nivelDePeticion(req) === 'miembro') {
+    // Su memoria personal (por el correo de su sesión); de la junta, nada.
+    const correo = sesionDe(req)?.correo;
+    if (!correo) return res.json(memoriaDeMiembro());
+    await cargarMiembro(correo);
+    return res.json(fotoMemoriaMiembro(correo));
+  }
   await cargarMemoria();
   const s = sesionDe(req);
   const quien = resolverQuien(req.query, s);
@@ -1764,9 +1770,16 @@ app.get('/api/memoria', exigirMesa, async (req, res) => {
 
 /** Escribir u olvidar memoria exige sesión firmada: la identidad sale del token, no del body. */
 app.post('/api/memoria', exigirSesion, limitar(60), async (req, res) => {
-  // Un miembro no escribe en la memoria de la junta (antes, sin cajón propio, su hecho caía en los
-  // HECHOS COMPARTIDOS DE LA JUNTA). Se le contesta bien, sin guardar, y se le dice por qué.
-  if (nivelDePeticion(req) === 'miembro') return res.json({ ok: true, ...memoriaDeMiembro() });
+  // Un miembro escribe (u olvida) SU memoria personal, por el correo de su sesión. Nunca la de la
+  // junta: antes, sin cajón propio, su hecho caía en los HECHOS COMPARTIDOS DE LA JUNTA.
+  if (nivelDePeticion(req) === 'miembro') {
+    const correo = sesionDe(req)!.correo;
+    const hechoM = String(req.body?.hecho || '').trim().slice(0, 400);
+    if (req.body?.olvidar) await olvidarMiembro(correo);
+    else if (hechoM) await guardarHechoMiembro(correo, hechoM);
+    else await cargarMiembro(correo);
+    return res.json({ ok: true, ...(req.body?.olvidar ? { olvidado: true } : {}), ...fotoMemoriaMiembro(correo) });
+  }
   await cargarMemoria();
   const s = sesionDe(req);
   const quien = quienVerificado(req.body, s);
@@ -2009,6 +2022,28 @@ function cupoDeMiembro(req: express.Request, res: express.Response, next: expres
   return res.status(429).json({ error: 'Vas muy rápido. Dame un minuto y seguimos.', code: 'demasiados_turnos', honesto: true });
 }
 
+/**
+ * El correo con que se guarda la memoria personal de un MIEMBRO (lib/memoria-miembro.ts): el de su
+ * sesión firmada o su pase de voz, en la mesa. Vacío para la junta (su memoria es la de siempre) y
+ * para quien habla sin sesión (sin cuenta no hay de quién guardar).
+ */
+function correoDeMemoriaMiembro(body: any): string {
+  if (body?.nivel === 'junta' || body?.canal === 'telegram') return '';
+  return body?.sesion?.correo ? String(body.sesion.correo).trim().toLowerCase() : '';
+}
+
+/**
+ * Dónde se anota un turno según quién habla: la memoria de la junta (lib/memoria.ts, por persona del
+ * padrón) o la personal del miembro (por su correo). Nunca las dos, y nunca la de otro.
+ */
+function recordarSegunNivel(body: any, o: { quienMem: string | null; rol: 'user' | 'ultron'; texto: string; canal: CanalMem; esperar?: boolean }): Promise<void> {
+  if (body?.nivel !== 'junta') {
+    const correo = correoDeMemoriaMiembro(body);
+    return correo ? recordarTurnoMiembro({ correo, rol: o.rol, texto: o.texto, canal: o.canal, esperar: o.esperar }) : Promise.resolve();
+  }
+  return recordarTurno({ quien: o.quienMem, rol: o.rol, texto: o.texto, canal: o.canal, esperar: o.esperar });
+}
+
 async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const t0 = Date.now();
   const message = String(body?.message || body?.text || '').trim();
@@ -2033,6 +2068,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const nivel: NivelAura = body?.nivel === 'junta' ? 'junta' : 'miembro';
   const miembro = nivel === 'miembro';
   const perfil = perfilPara(nivel);
+  // La memoria personal de un miembro va por su correo (lib/memoria-miembro.ts), aparte de la junta.
+  const correoMem = correoDeMemoriaMiembro(body);
+  if (correoMem) await aTiempoParaVoz(voz, 'memoria del miembro', cargarMiembro(correoMem).then(() => undefined), undefined);
   // A un miembro no se le reconoce por el nombre que escribió: «José» en el cuerpo no es José.
   const quien = miembro ? null : resolverQuien(body, body?.sesion || null);
   // Mando solo con identidad verificada (sesión firmada o Telegram). El body no escala. Y nunca por la voz.
@@ -2053,7 +2091,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const memSt = estadoMemoria();
   if (message) {
     // En la memoria de este proceso ya; la copia a disco y S3 sigue en la cola sin retrasar la respuesta.
-    await aTiempoParaVoz(voz, 'hilo', recordarTurno({ quien: quienMem, rol: 'user', texto: message, canal, esperar: false }), undefined);
+    await aTiempoParaVoz(voz, 'hilo', recordarSegunNivel(body, { quienMem, rol: 'user', texto: message, canal, esperar: false }), undefined);
   }
   const clienteHilo = Array.isArray(body?.historial)
     ? (body.historial as any[]).map((x) => ({
@@ -2061,7 +2099,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
         texto: String(x?.texto || x?.content || ''),
       }))
     : [];
-  const durable = hiloDe(quienMem).map((t) => ({ rol: t.rol, texto: t.texto }));
+  const durable = (miembro ? hiloMiembro(correoMem) : hiloDe(quienMem)).map((t) => ({ rol: t.rol, texto: t.texto }));
   const hiloTodo = durable.length >= 2 ? durable : [...clienteHilo, ...durable];
   const hiloPrevio = hiloTodo.filter(
     (t, i) => !(i === hiloTodo.length - 1 && t.rol === 'user' && t.texto === message)
@@ -2071,7 +2109,10 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Hechos que manda el cliente solo entran con sesión firmada (si no, cualquiera envenena la memoria).
   const largaApp: string[] = body?.sesion && Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
   for (const h of largaApp) {
-    if (h.trim().length > 8) await guardarHechoQuien({ quien: quienMem, hecho: h.trim().slice(0, 400), canal: 'mesa' });
+    if (h.trim().length <= 8) continue;
+    // Los de un miembro, a SU memoria; nunca a la de la junta.
+    if (miembro) await guardarHechoMiembro(correoMem, h.trim().slice(0, 400));
+    else await guardarHechoQuien({ quien: quienMem, hecho: h.trim().slice(0, 400), canal: 'mesa' });
   }
 
   // La decisión rápida: tipo de tarea, riesgo, agente, si es un intento de torcer al sistema.
@@ -2125,7 +2166,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   hechos.push(
     miembro
       ? `CONTEXTO: hablas con ${nombre || 'un miembro de la comunidad'}, miembro de la comunidad de Orden Global (entró con su Genesis ID; no es de la junta). ` +
-          'Web, oro, tipo de cambio, PDF, fotos y visión, sí. Taller, Telegram de la organización, estado de los sistemas y lo interno de la junta, no.'
+          'Web, oro, tipo de cambio, PDF, fotos y visión, su memoria personal y las acciones de su app (pantallas, mensajes, llamadas, recordatorios), sí. Taller, Telegram de la organización, estado de los sistemas y lo interno de la junta, no.'
       : `CONTEXTO INTERNO (no lo menciones salvo que te pregunten por el sistema): hablas con ${nombreDe(quien)}; ` +
           (memSt.durable ? 'memoria durable activa; ' : 'memoria durable no disponible en este momento (no lo digas, solo no prometas recordar para siempre); ') +
           (mando
@@ -2427,6 +2468,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     bloqueApp,
     lineaAvatar: lineaAvatar(normalizarAvatar(body?.avatar), normalizarIdioma(body?.idioma)),
     hechos,
+    memoriaMiembro: correoMem ? promptMemoriaMiembro(correoMem, comoLeDecimos) : undefined,
   });
 
   const compuesto = construirMensajes({ personalidad, user: mensajeHilo || message, canal, historial: hilo, nivel });
@@ -2721,11 +2763,11 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   // El evento (con su id) va por el canal del aparato y el MISMO va en la respuesta del turno: la
   // app deduplica por id y no hace la acción dos veces (Beto recibió dos mensajes, 29-sep).
   const { evento } = empujarAccion(correo, orden.accion, { aparato: aparatoValido(body?.aparato) });
-  // El turno queda en el hilo como cualquier otro (sin esperar a S3).
-  const quienMem = quienVerificado(body, body?.sesion || null);
+  // El turno queda en el hilo como cualquier otro (sin esperar a S3): el de la junta o el del miembro.
+  const quienMem = body?.nivel === 'junta' ? quienVerificado(body, body?.sesion || null) : null;
   // En orden (lo de la persona y después lo que dijo AU-RA); hablando, con tope: sigue en segundo plano.
-  const hilo = recordarTurno({ quien: quienMem, rol: 'user', texto: message, canal: 'mesa', esperar: false }).then(() =>
-    orden.decir ? recordarTurno({ quien: quienMem, rol: 'ultron', texto: orden.decir, canal: 'mesa', esperar: false }) : undefined
+  const hilo = recordarSegunNivel(body, { quienMem, rol: 'user', texto: message, canal: 'mesa', esperar: false }).then(() =>
+    orden.decir ? recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: orden.decir, canal: 'mesa', esperar: false }) : undefined
   );
   await aTiempoParaVoz(opciones.voz, 'hilo', hilo, undefined);
   return { decir: orden.decir, acciones: [evento], via: `app-${orden.via}` };
@@ -2804,7 +2846,7 @@ async function correrTurnoInterno(body: any, opciones: OpcionesTurno = {}): Prom
     const app = accionesDelCerebro(out.reply, p, delModelo);
     const e = extraerEmocion(app.texto);
     const final: SalidaTurno = { ...out, reply: quitarExpresiones(e.texto).trim(), voz: e.texto.trim(), emocion: out.emocion || e.emocion, acciones: app.acciones };
-    if (final.reply) await recordarTurno({ quien: quienMem, rol: 'ultron', texto: final.reply, canal });
+    if (final.reply) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: final.reply, canal });
     return final;
   };
   if (p.directo) {
@@ -2998,7 +3040,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     const leido = quitarExpresiones(app.texto).trim();
     reg.cerrar({ respuesta: leido, emocion, via });
     send('done', { reply: leido, voz: app.texto.trim(), emocion, ms: Date.now() - t0, via, acciones: app.acciones, trazaId: reg.id });
-    if (leido && !senal?.aborted) await recordarTurno({ quien: quienMem, rol: 'ultron', texto: leido, canal });
+    if (leido && !senal?.aborted) await recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: leido, canal });
     salida.fin();
   };
   send('tools', { tools });

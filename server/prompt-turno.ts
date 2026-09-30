@@ -33,13 +33,18 @@ export type PiezasTurno = {
   /** La línea del avatar (solo en la mesa). */
   lineaAvatar?: string;
   hechos: string[];
+  /**
+   * La memoria personal de un miembro (lib/memoria-miembro.ts: lo suyo y su hilo). Sin ella —un
+   * miembro que habla sin sesión—, solo con quién habla. La junta no la usa: tiene la suya.
+   */
+  memoriaMiembro?: string;
 };
 
 export function personalidadDelTurno(p: PiezasTurno): string {
   const miembro = p.nivel === 'miembro';
   const perfil = p.perfil || perfilPara(p.nivel);
   const recuerdos = miembro
-    ? 'No finjas recuerdos: de los miembros no se guarda memoria de largo plazo; usa el hilo de esta conversación. Nunca hables de lo que dijeron otras personas.'
+    ? 'No finjas recuerdos: solo lo que está en la memoria de esta persona y en el hilo. Nunca hables de lo que dijeron otras personas.'
     : `No finjas recuerdos: solo la memoria de ${p.quien ? nombreDe(p.quien) : 'quien no identifiqué'} y los hechos de junta. No recites la conversación privada del otro.`;
   return `${buildPersonality({ nombre: p.nombre, canal: p.canal, modo: p.modo, mando: p.mando, nivel: p.nivel, perfil })}${p.bloquePerfil ? `\n\n${p.bloquePerfil}` : ''}${p.bloqueApp ? `\n\n${p.bloqueApp}` : ''}
 
@@ -50,5 +55,5 @@ ${promptAgente(p.agente, p.nivel)}
 
 ${recuerdos}
 Modo de mesa pedido: ${p.modo}.${p.canal === 'mesa' && p.lineaAvatar ? `\n${p.lineaAvatar}` : ''}
-HECHOS:\n${p.hechos.join('\n') || '(ninguno)'}\n${miembro ? '' : `${hechosCatalogo()}\n`}${promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre })}`;
+HECHOS:\n${p.hechos.join('\n') || '(ninguno)'}\n${miembro ? '' : `${hechosCatalogo()}\n`}${miembro && p.memoriaMiembro ? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre })}`;
 }

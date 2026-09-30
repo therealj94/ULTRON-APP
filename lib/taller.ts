@@ -195,9 +195,15 @@ export type ContextoTaller = {
   nivelAura?: NivelAura;
 };
 
-/** Lo que el modelo sabe cuando un miembro dispara, sin querer o no, una acción del taller. */
+/**
+ * Lo que el modelo sabe cuando un miembro pide algo que solo es del taller de la junta. Deja claro
+ * que lo de SU teléfono (mensajes, llamadas, recordatorios) sigue: eso va por las acciones de la app.
+ */
 export const TALLER_SOLO_JUNTA =
-  'TALLER: con miembros de la comunidad no hay taller. No mandas mensajes al Telegram, WhatsApp ni correo de la organización, no avisas a la junta, no anotas ni lees pendientes de la junta y no das el estado de los sistemas ni de la bóveda. Si te lo piden, dilo con naturalidad y sigue ayudando con lo demás.';
+  'TALLER: el taller es de la junta, no de los miembros: no mandas nada al Telegram de la organización, no avisas a la junta, no das el estado de sus sistemas ni de la bóveda y no tocas sus pendientes. Si te lo piden, dilo con naturalidad. Lo que la persona pida para SU teléfono (mensajes a sus contactos, llamadas, recordatorios, pantallas) sí se hace, con las acciones de su app si están en este turno.';
+
+/** Las acciones del taller que, pedidas por un miembro, merecen decirle al modelo que no son suyas. */
+const DE_LA_JUNTA = new Set(['sistema', 'mantenimiento', 'redeploy', 'boveda', 'urgente', 'voz', 'listar']);
 
 /** Lo que el taller no hace desde la voz: todo lo que sale del sistema o lo cambia. */
 const FUERA_DE_LA_VOZ = new Set(['redeploy', 'mantenimiento', 'voz', 'urgente', 'llamar', 'enviar']);
@@ -233,9 +239,17 @@ export async function despacharTaller(message: string, opts?: ContextoTaller): P
   const hechos: string[] = [];
   const out = (decir?: string): TallerOut => ({ hechos, tools, decir });
   const ctx: ContextoTaller = opts || {};
-  // Un miembro no llega a ninguna acción: ni a las que leen (sistema, bóveda, pendientes) ni a las
-  // que mandan. Sin `decir`: el modelo contesta lo que haya que contestar, sin frase de taller.
-  if (ctx.nivelAura === 'miembro') return { hechos: [TALLER_SOLO_JUNTA], tools: [] };
+  /*
+   * Un miembro no llega a NINGUNA acción del taller: ni a las que leen (sistema, bóveda, pendientes de
+   * la junta) ni a las que mandan (Telegram, WhatsApp o correo de la organización, llamadas de Twilio,
+   * redespliegue). Sin `decir`: contesta el modelo. Si lo que pidió es de la junta, se le dice al
+   * modelo; si es algo suyo que el taller confundió («anota…», «recuérdame…», «llámame», «mándale un
+   * WhatsApp a Beto»), no se dice nada: eso lo resuelven las acciones de su app.
+   */
+  if (ctx.nivelAura === 'miembro') {
+    const deLaJunta = DE_LA_JUNTA.has(p.accion) || ((p.accion === 'enviar' || p.accion === 'pdf') && p.canal === 'telegram');
+    return { hechos: deLaJunta ? [TALLER_SOLO_JUNTA] : [], tools: [] };
+  }
   const consulta = !puedeCambiarSistema(opts?.quien) || !!opts?.soloConsulta;
 
   if (opts?.soloConsulta && p.accion && (FUERA_DE_LA_VOZ.has(p.accion) || (p.accion === 'pdf' && p.canal))) {

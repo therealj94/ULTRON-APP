@@ -310,7 +310,10 @@ export function catalogoCapacidades(n: EstadoNodos, perfil: PerfilCerebro = perf
       requiere: 'memoria',
       grupo: 'memoria',
       titulo: 'Memoria por miembro',
-      detalle: 'Guarda hechos y el hilo de cada persona en S3. Lo de José no lo ve Carlos.',
+      detalle:
+        perfil.id === 'genesis-miembro'
+          ? 'Tu hilo y lo que le pidas recordar, guardado solo para ti. Nadie más lo ve.'
+          : 'Guarda hechos y el hilo de cada persona en S3. Lo de José no lo ve Carlos.',
       ejemplos: ['recordá que la villa va al setenta por ciento', '¿qué sabés de mí?'],
       vivo: n.memoriaS3,
       falta: n.memoriaS3 ? undefined : 'ULTRON_MEMORIA_BUCKET + AWS_*: se pierde al redesplegar',

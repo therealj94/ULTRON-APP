@@ -538,6 +538,50 @@ test('un miembro de la comunidad (fuera del padrón): lo público, sin taller ni
   const mem = await (await fetch(`${BASE}/api/memoria`, { headers: hm })).json();
   assert.deepEqual(mem.junta, []);
   assert.deepEqual(mem.cambios, []);
+
+  // La versión para todos no es recortada en utilidad: memoria personal, web y TODAS las acciones de
+  // la app (pantallas, mensajes, llamadas, recordatorios) siguen para el miembro.
+  const turnoM = async (message: string, token = m.token) =>
+    (await fetch(`${BASE}/api/turno`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-ultron-sesion': token, 'x-aura-origen': 'app' }, body: JSON.stringify({ message }) })).json() as Promise<any>;
+  contestar = () => '[EMO: feliz] Anotado.';
+  await turnoM('recuerda que mi perro se llama Toby');
+  alNodo.length = 0;
+  await turnoM('explícame qué es Veta Wallet y para qué me sirve a mí');
+  assert.match(alNodo.at(-1)!.system, /Toby/, 'su memoria personal llega a su prompt');
+  assert.match(alNodo.at(-1)!.system, /Esta memoria es solo suya/);
+  const memM = await (await fetch(`${BASE}/api/memoria`, { headers: hm })).json();
+  assert.ok(memM.privada.larga.some((x: any) => /Toby/.test(x.hecho)), '/api/memoria le enseña lo suyo');
+  // Otro miembro y la junta no lo ven.
+  const otroM = emitirSesion({ correo: 'vecino.prueba@gmail.com', nombre: 'Vecino', rol: 'Miembro · Genesis ID' });
+  alNodo.length = 0;
+  await turnoM('explícame qué es Veta Wallet y para qué me sirve a mí', otroM.token);
+  assert.equal(alNodo.at(-1)!.system.includes('Toby'), false, 'lo de un miembro no lo ve otro');
+  alNodo.length = 0;
+  await turno('explícame qué es Veta Wallet y para qué me sirve a mí');
+  assert.equal(alNodo.at(-1)!.system.includes('Toby'), false, 'ni la junta');
+  // Acciones de la app: el camino rápido y lo que escribe el cerebro llegan a SU teléfono.
+  const telM = await canal(m.token);
+  try {
+    const ctxM = await fetch(`${BASE}/api/app/contexto`, { method: 'POST', headers: hm, body: JSON.stringify({ pantalla: 'chats', contactos: [{ correo: 'mama@x.com', nombre: 'Mamá' }] }) });
+    assert.equal(ctxM.status, 200);
+    const atras = await turnoM('vete atrás');
+    assert.deepEqual(atras.acciones.map((e: any) => e.accion), [{ tipo: 'atras' }]);
+    assert.ok(await espera(() => telM.acciones().some((a) => a.tipo === 'atras')), 'la acción llegó a su teléfono');
+    contestar = () => '[EMO: neutral] Le escribo a Mamá: “Ya voy”. ¿Lo envío?\nACCION_APP: {"tipo":"redactar","para":"Mamá","texto":"Ya voy"}';
+    const red = await turnoM('escríbele a mi mamá que ya voy');
+    assert.deepEqual(red.acciones.map((e: any) => e.accion), [{ tipo: 'redactar', para: 'mama@x.com', texto: 'Ya voy' }]);
+    // «Recuérdame…» no se topa con el taller de la junta: el cerebro recibe las acciones de su app.
+    contestar = () => '[EMO: neutral] Te lo recuerdo.';
+    alNodo.length = 0;
+    await turnoM('recuérdame llamar a mi mamá a las cinco de la tarde');
+    const sysR = alNodo.at(-1)!.system;
+    assert.equal(sysR.includes('TALLER:'), false, 'sin negativa del taller');
+    assert.match(sysR, /CONTACTOS \(.*\): Mamá\./, 'con el contexto y las acciones de su teléfono');
+    // Y la web sigue en su harness.
+    assert.match(sysR, /PEDIR_HERRAMIENTA: web/);
+  } finally {
+    await telM.cerrar();
+  }
   // La voz: el mismo cerebro público.
   alNodo.length = 0;
   const v = await voz(paseDe(m), [{ role: 'user', content: 'cuéntame de la cadena 5550 y cómo corre por dentro' }]);
