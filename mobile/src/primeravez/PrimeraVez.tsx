@@ -214,6 +214,8 @@ export function PrimeraVez(_: Props) {
           {horizontal && boton('chico')}
         </View>
       </View>
+      {/* El confeti cae detrás del contenido y del botón: se ve todo, no tapa nada. */}
+      {paso === 'fiesta' && <LluviaConfeti avatar={b.avatar} />}
       <ScrollView
         ref={scroll}
         style={{ flex: 1 }}
@@ -226,7 +228,6 @@ export function PrimeraVez(_: Props) {
         </Animated.View>
       </ScrollView>
       {!horizontal && <View style={[s.pie, { paddingBottom: ins.bottom + MEDIDA.espacio.m }]}>{boton('normal')}</View>}
-      {paso === 'fiesta' && <LluviaConfeti avatar={b.avatar} />}
     </KeyboardAvoidingView>
   );
 }

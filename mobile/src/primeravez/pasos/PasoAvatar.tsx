@@ -4,7 +4,7 @@
  * cambia la voz); «Oír su voz» lo hace presentarse con la suya.
  */
 import { useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import { de, tr, useIdioma } from '../../i18n';
 import { setAvatarVoz, speak, stopSpeaking } from '../../lib/tts';
@@ -48,6 +48,7 @@ function Opcion({ id, activo, onPress }: { id: AvatarId; activo: boolean; onPres
 
 export function PasoAvatar({ borrador, cambiar, horizontal }: PropsPaso) {
   useIdioma();
+  const { height } = useWindowDimensions();
   const a = avatarPorId(borrador.avatar);
   const [hablando, setHablando] = useState(false);
   const elegir = (id: AvatarId) => {
@@ -67,7 +68,7 @@ export function PasoAvatar({ borrador, cambiar, horizontal }: PropsPaso) {
       <EncabezadoPaso etiqueta={tr('Tu compañía', 'Your companion')} titulo={tr('¿Con quién quieres hablar?', 'Who do you want to talk to?')} texto={tr('Los tres tienen el mismo cerebro; cada uno con su cara, su voz y lo suyo.', 'All three share one brain; each with its own face, voice and specialty.')} />
       <View style={[s.vista, horizontal && { flexDirection: 'row', gap: MEDIDA.espacio.xl }]}>
         <Aparecer clave={borrador.avatar} desde="escala">
-          <VistaAvatar id={borrador.avatar} tam={horizontal ? 170 : 200} />
+          <VistaAvatar id={borrador.avatar} tam={horizontal ? 170 : height < 800 ? 164 : 200} />
         </Aparecer>
         <Aparecer clave={`t-${borrador.avatar}`} retraso={60} style={{ alignItems: horizontal ? 'flex-start' : 'center', gap: 4, flexShrink: 1 }}>
           <Texto v="titulo" centro={!horizontal}>
