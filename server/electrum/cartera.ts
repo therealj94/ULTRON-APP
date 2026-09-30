@@ -9,7 +9,7 @@
  */
 import type { Express, Request, Response } from 'express';
 import { exigirPlataforma, limitar } from '../seguridad';
-import { conTextoReparado, consulta, hayBase, hayCarteras } from './db';
+import { conTextoReparado, consulta, enTransaccion, hayBase, hayCarteras } from './db';
 import { NOMBRE_NIVEL, restriccionesDe, type Nivel, type Restricciones } from './restricciones';
 import { significadoEstado } from './estados';
 
@@ -233,5 +233,64 @@ export function montarRutasCartera(app: Express) {
       console.error('[cartera]', String(e?.message || e).slice(0, 200));
       return res.status(500).json({ error: 'No pude analizar la cartera.', honesto: true });
     }
+  });
+}
+
+/**
+ * Una capa que se cargó como concesiones pero es una selección del catastro (sus polígonos caen
+ * ≥ 80 % dentro de concesiones del oficial) se convierte en cartera: cada rasgo se enlaza con SU
+ * concesión oficial —la del mismo expediente si la hay, si no la de más superficie en común— y la
+ * capa duplicada se borra. Pasa cuando el archivo de la cartera y el del catastro se convirtieron
+ * por caminos distintos (NAD27 y WGS84) y la huella exacta no coincide aunque el polígono sea el mismo.
+ */
+export async function carteraDesdeCapa(
+  capaId: number,
+  opts: { nombre?: string; quien?: string | null; borrarCapa?: boolean } = {}
+): Promise<{ ok: boolean; dicho: string; enlazadas: number; total: number }> {
+  if (!hayBase() || !(await hayCarteras())) return { ok: false, dicho: 'Sin base o sin tablas de cartera.', enlazadas: 0, total: 0 };
+  const [k] = await consulta<{ nombre: string }>(`SELECT nombre FROM capa WHERE id = $1`, [capaId]);
+  if (!k) return { ok: false, dicho: `No existe la capa ${capaId}.`, enlazadas: 0, total: 0 };
+  const nombre = (opts.nombre || k.nombre).replace(/[\s_-]*(nad[\s_-]?27|wgs[\s_-]?84)$/i, '').trim() || k.nombre;
+  return enTransaccion(async (q) => {
+    const pares = (await q(
+      `SELECT DISTINCT ON (c.id) c.id AS cid, o.huella, o.expediente, o.nombre, c.atributos
+         FROM concesion c
+         JOIN concesion o ON o.capa_id <> c.capa_id AND o.geom && c.geom AND ST_Intersects(o.geom, c.geom)
+                         AND ST_Area(ST_Intersection(o.geom, c.geom)) >= 0.8 * ST_Area(c.geom)
+        WHERE c.capa_id = $1
+        ORDER BY c.id, (o.expediente IS NOT DISTINCT FROM c.expediente) DESC, ST_Area(ST_Intersection(o.geom, c.geom)) DESC`,
+      [capaId]
+    )) as Array<{ cid: string; huella: string; expediente: string | null; nombre: string; atributos: unknown }>;
+    const [{ n: total }] = (await q(`SELECT count(*)::int AS n FROM concesion WHERE capa_id = $1`, [capaId])) as Array<{ n: number }>;
+    if (!pares.length) return { ok: false, dicho: `Ninguno de los ${total} polígonos de «${k.nombre}» cae en el catastro: no es una cartera.`, enlazadas: 0, total };
+    const [c] = (await q(
+      `INSERT INTO cartera (nombre, origen, por) VALUES ($1, $2, $3)
+       ON CONFLICT (nombre) DO UPDATE SET origen = EXCLUDED.origen, por = EXCLUDED.por, actualizada = now() RETURNING id`,
+      [nombre, `capa ${capaId} (${k.nombre})`, opts.quien || null]
+    )) as Array<{ id: string }>;
+    await q(`DELETE FROM cartera_concesion WHERE cartera_id = $1`, [c.id]);
+    await q(
+      `INSERT INTO cartera_concesion (cartera_id, huella, expediente, nombre, atributos)
+       SELECT $1, x.huella, x.expediente, x.nombre, coalesce(x.atributos, '{}'::jsonb)
+         FROM jsonb_to_recordset($2::jsonb) AS x(huella text, expediente text, nombre text, atributos jsonb)
+       ON CONFLICT (cartera_id, huella) DO NOTHING`,
+      [c.id, JSON.stringify(pares.map(({ huella, expediente, nombre, atributos }) => ({ huella, expediente, nombre, atributos })))]
+    );
+    // La capa solo se borra si TODO lo suyo quedó enlazado: si algo no cae en el catastro, se queda.
+    const completa = pares.length === total;
+    if (opts.borrarCapa !== false && completa) {
+      await q(`DELETE FROM capa WHERE id = $1`, [capaId]);
+      await q(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle) VALUES ($1, 'eliminar', $2, $3)`, [
+        opts.quien || null,
+        `capa ${capaId}`,
+        JSON.stringify({ nombre: k.nombre, concesiones: total, por: 'cartera desde capa', cartera: nombre }),
+      ]);
+    }
+    return {
+      ok: true,
+      dicho: `Cartera «${nombre}»: ${pares.length} de ${total} enlazadas con su concesión del catastro.${completa ? ' La capa duplicada se borró.' : ' Hay polígonos que no caen en el catastro: la capa se deja.'}`,
+      enlazadas: pares.length,
+      total,
+    };
   });
 }

@@ -21,6 +21,7 @@
  * trozos siga encontrándose. Cortar a ciegas cada N caracteres parte tablas y números por la mitad,
  * que en un informe minero es exactamente lo que no se puede partir.
  */
+import { carteraDesdeCapa } from './cartera';
 import { leerConDocling } from '../../lib/cognitivo/documentos';
 import { clasificarDocumento } from './documentos-laya';
 import { indexarPendientes } from './vectores';
@@ -586,6 +587,33 @@ export async function aprender(
 
     const guardado = await guardarCapa(capa, { subidoPor: opts.subidoPor, avisos, archivo: archivo || undefined });
     if (carpeta && guardado.capaId) await consulta(`UPDATE capa SET carpeta = $2 WHERE id = $1`, [guardado.capaId, carpeta]).catch(() => {});
+
+    /*
+     * Una cartera que llegó en otro datum (las zonas de una empresa en NAD27 cuando el catastro se
+     * cargó en WGS84): el polígono es el mismo pero la huella no, y entraba como concesiones nuevas,
+     * duplicando el catastro. Si la capa no se llama como una capa del catastro y casi todo lo suyo
+     * cae dentro de concesiones que ya estaban, es una cartera.
+     */
+    if (guardado.concesiones >= 2 && guardado.capaId && !/concesi[oó]n|derechos? miner|catastro/i.test(capa.nombre)) {
+      const [x] = await consulta<{ dentro: number }>(
+        `SELECT count(*) FILTER (WHERE EXISTS (SELECT 1 FROM concesion o WHERE o.capa_id <> c.capa_id AND o.geom && c.geom
+                  AND ST_Intersects(o.geom, c.geom) AND ST_Area(ST_Intersection(o.geom, c.geom)) >= 0.8 * ST_Area(c.geom)))::int AS dentro
+           FROM concesion c WHERE c.capa_id = $1`,
+        [guardado.capaId]
+      ).catch(() => [{ dentro: 0 }]);
+      if (x && x.dentro >= 0.8 * guardado.concesiones) {
+        const c = await carteraDesdeCapa(guardado.capaId, { quien: opts.subidoPor || null }).catch(() => null);
+        if (c?.ok && c.enlazadas === guardado.concesiones) {
+          if (!opts.sinTraslapes) await recalcularTraslapes();
+          return {
+            clase: 'catastro',
+            dicho: `«${capa.nombre}» es una cartera: sus ${c.total} polígonos son concesiones que ya están en el catastro (en otro datum o con otra digitalización), así que no las dupliqué. ${c.dicho} Pedime «analizá la cartera» para ver restricciones y prioridades.`,
+            avisos,
+            ui: { accion: 'capa', capa_id: null, concesiones: 0, repetidas: c.total, traslapes: 0, cartera: { nombre: capa.nombre, concesiones: c.enlazadas } },
+          };
+        }
+      }
+    }
 
     /*
      * Los traslapes se recalculan cruzando TODAS las concesiones contra todas. Hacerlo después de

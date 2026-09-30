@@ -17,6 +17,8 @@ import { ingerir } from '../server/electrum/gis';
 import { cerrarBase, consulta, guardarCapa, hayBase, rolDeCapa } from '../server/electrum/db';
 import { asegurarBiblioteca } from '../server/electrum/biblioteca';
 import { aplicar, esHistorico, fraseFuente, fuenteCatastro, proponer } from '../server/electrum/ordenar';
+import { carteraDesdeCapa } from '../server/electrum/cartera';
+import { aprender } from '../server/electrum/aprender';
 
 test('los nombres de JICA son históricos; un mapa geológico de JICA sigue siendo roca', () => {
   assert.equal(rolDeCapa('zonas de JICA'), 'historico');
@@ -174,6 +176,31 @@ test('ordenar el catastro', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' },
     assert.ok(r.ok, r.dicho);
     const [{ n }] = await consulta<{ n: number }>('SELECT count(*)::int AS n FROM concesion WHERE capa_id = $1', [of.capaId]);
     assert.equal(n, 2, 'la capa oficial queda completa');
+  });
+
+  await t.test('una cartera que entró como concesiones (otro datum) se convierte en cartera', async () => {
+    const antes = (await consulta<{ n: number }>('SELECT count(*)::int AS n FROM concesion'))[0].n;
+    const zonas = variante('ZONAS EMPRESA NAD27', 0.00001);
+    const r = await guardarCapa(zonas, { subidoPor: 'pruebas' });
+    assert.equal(r.concesiones, 2, 'no son idénticas: entran como concesiones');
+    const c = await carteraDesdeCapa(r.capaId, { quien: 'pruebas' });
+    assert.ok(c.ok, c.dicho);
+    assert.equal(c.enlazadas, 2);
+    const [{ n }] = await consulta<{ n: number }>('SELECT count(*)::int AS n FROM concesion');
+    assert.equal(n, antes, 'la capa duplicada se borró');
+    const [k] = await consulta<{ nombre: string; n: number }>(
+      `SELECT k.nombre, count(*)::int AS n FROM cartera k JOIN cartera_concesion cc ON cc.cartera_id = k.id WHERE k.nombre = 'ZONAS EMPRESA' GROUP BY k.nombre`
+    );
+    assert.equal(k?.n, 2);
+  });
+
+  await t.test('subir una cartera en otro datum la registra como cartera, sin duplicar el catastro', async () => {
+    const antes = (await consulta<{ n: number }>('SELECT count(*)::int AS n FROM concesion'))[0].n;
+    const zonas = variante('ZONAS OTRA EMPRESA', 0.00001);
+    const r = await aprender('zonas-otra-empresa.geojson', Buffer.from(JSON.stringify(zonas.geojson)), { subidoPor: 'pruebas' });
+    assert.match(r.dicho, /es una cartera/, r.dicho);
+    const [{ n }] = await consulta<{ n: number }>('SELECT count(*)::int AS n FROM concesion');
+    assert.equal(n, antes);
   });
 
   await cerrarBase();
