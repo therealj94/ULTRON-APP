@@ -76,10 +76,11 @@ test('PUT /api/perfil: valida, guarda por el correo de la sesión y se lee de vu
 });
 
 /** Abre el canal y junta lo que llega, trozo a trozo. */
-async function abrirCanal(token: string) {
+async function abrirCanal(token: string, aparato?: string, donde = base) {
   const ctrl = new AbortController();
-  const r = await fetch(`${base}/api/app/acciones`, { headers: h(token), signal: ctrl.signal });
+  const r = await fetch(`${donde}/api/app/acciones`, { headers: { ...h(token), ...(aparato ? { 'x-aura-aparato': aparato } : {}) }, signal: ctrl.signal });
   let texto = '';
+  let terminado = false;
   const listo = (async () => {
     if (!r.body) return;
     const dec = new TextDecoder();
@@ -88,10 +89,13 @@ async function abrirCanal(token: string) {
     } catch {
       /* se cerró a propósito */
     }
+    terminado = true;
   })();
   return {
     r,
     texto: () => texto,
+    /** El servidor cerró el canal (o lo cerramos nosotros). */
+    terminado: () => terminado,
     cerrar: async () => {
       ctrl.abort();
       await listo;
@@ -129,19 +133,86 @@ test('el canal de acciones: SSE, varios teléfonos de la misma cuenta, eventos {
   assert.ok(await espera(() => oyentesDe('maria@ordenglobal.org') === 0), 'al cerrarse, se suelta');
 });
 
-test('el canal tiene tope por cuenta, y una sesión cerrada ya no abre', async () => {
+test('el canal tiene tope por cuenta (al pasarlo se desaloja el más viejo), y una sesión cerrada ya no abre', async () => {
   _reiniciarAccionesApp();
   const s = emitirSesion({ correo: 'muchos@x.com', nombre: 'Muchos', rol: 'Junta' });
   const abiertos = [];
-  for (let i = 0; i < MAX_CANALES_POR_CUENTA; i++) abiertos.push(await abrirCanal(s.token));
+  for (let i = 0; i < MAX_CANALES_POR_CUENTA; i++) {
+    abiertos.push(await abrirCanal(s.token));
+    // En orden: el primero es de verdad el más viejo.
+    assert.ok(await espera(() => oyentesDe('muchos@x.com') === i + 1));
+  }
   try {
-    assert.ok(await espera(() => oyentesDe('muchos@x.com') === MAX_CANALES_POR_CUENTA));
-    assert.equal((await fetch(`${base}/api/app/acciones`, { headers: h(s.token) })).status, 429);
+    const nuevo = await abrirCanal(s.token);
+    abiertos.push(nuevo);
+    assert.equal(nuevo.r.status, 200, 'el teléfono nuevo entra (antes: 429)');
+    assert.ok(await espera(() => abiertos[0].terminado()), 'el canal más viejo se cerró');
+    assert.equal(oyentesDe('muchos@x.com'), MAX_CANALES_POR_CUENTA);
+    assert.ok(!abiertos[1].terminado(), 'solo el más viejo');
   } finally {
     for (const a of abiertos) await a.cerrar();
   }
   await borrarSesion(s.token);
   assert.equal((await fetch(`${base}/api/app/acciones`, { headers: h(s.token) })).status, 401);
+});
+
+test('el canal se corta en el latido siguiente si la sesión se cierra, y nunca pasa de su vida máxima', async () => {
+  _reiniciarAccionesApp();
+  const s = emitirSesion({ correo: 'sale@x.com', nombre: 'Sale', rol: 'Junta' });
+  const tel = await abrirCanal(s.token);
+  try {
+    assert.ok(await espera(() => oyentesDe('sale@x.com') === 1));
+    await borrarSesion(s.token);
+    assert.ok(await espera(() => tel.terminado()), 'cerrar sesión corta el canal abierto');
+    assert.match(tel.texto(), /: fin sesion\n/);
+    assert.equal(oyentesDe('sale@x.com'), 0, 'y ya no recibe acciones');
+    assert.equal(empujarAccion('sale@x.com', { tipo: 'atras' }).entregada, 0);
+  } finally {
+    await tel.cerrar();
+  }
+
+  // Vida máxima (corta, en un servidor aparte): el canal se cierra solo y la app vuelve a entrar.
+  const app2 = express();
+  app2.use(express.json());
+  montarRutasApp(app2, { exigirMesa, limitar: pasa, sesionDe, tokenDe, perfilPlataforma: () => ({}), latidoMs: 60, vidaMs: 200 });
+  const srv2 = app2.listen(0, '127.0.0.1');
+  await new Promise((r) => srv2.once('listening', r));
+  const base2 = `http://127.0.0.1:${(srv2.address() as AddressInfo).port}`;
+  const s2 = emitirSesion({ correo: 'vida@x.com', nombre: 'Vida', rol: 'Junta' });
+  const tel2 = await abrirCanal(s2.token, undefined, base2);
+  try {
+    assert.ok(await espera(() => tel2.terminado(), 2000), 'se cerró al cumplir su vida');
+    assert.match(tel2.texto(), /: fin renovar\n/);
+  } finally {
+    await tel2.cerrar();
+    await new Promise((r) => srv2.close(r));
+  }
+});
+
+test('el canal por aparato: la acción va al teléfono del turno; el mismo aparato reemplaza su canal viejo', async () => {
+  _reiniciarAccionesApp();
+  const s = emitirSesion({ correo: 'dos@x.com', nombre: 'Dos', rol: 'Junta' });
+  const a = await abrirCanal(s.token, 'tel-A');
+  const b = await abrirCanal(s.token, 'tel-B');
+  try {
+    assert.ok(await espera(() => oyentesDe('dos@x.com') === 2));
+    const { evento, entregada } = empujarAccion('dos@x.com', { tipo: 'abrir', pantalla: 'chats' }, { aparato: 'tel-B' });
+    assert.equal(entregada, 1);
+    assert.ok(await espera(() => b.texto().includes(evento.id)));
+    assert.ok(!a.texto().includes(evento.id), 'el teléfono A no la recibe');
+    // A se reconecta (su canal viejo quedó colgado): el nuevo reemplaza al viejo, no se suman.
+    const a2 = await abrirCanal(s.token, 'tel-A');
+    try {
+      assert.ok(await espera(() => a.terminado()), 'el canal viejo de A se cerró');
+      assert.match(a.texto(), /: fin reemplazado\n/);
+      assert.equal(oyentesDe('dos@x.com'), 2);
+    } finally {
+      await a2.cerrar();
+    }
+  } finally {
+    await a.cerrar();
+    await b.cerrar();
+  }
 });
 
 test('POST /api/app/contexto: validado, por persona, y el cerebro lo encuentra', async () => {

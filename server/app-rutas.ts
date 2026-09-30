@@ -5,6 +5,7 @@
  *                                  ya leía de esta misma ruta: acento, nombre, modos)
  *   PUT  /api/perfil  Partial<Perfil>  → { perfil }
  *   GET  /api/app/acciones      text/event-stream: cada evento `data: {"id","accion"}`
+ *                                  (cabecera opcional `x-aura-aparato: <id del teléfono>`)
  *   POST /api/app/contexto      { pantalla, chatAbierto?, contactos, borrador? }
  *
  * Todo con la sesión de la mesa: el perfil, el canal y el contexto son de un CORREO, y el correo sale
@@ -12,13 +13,19 @@
  */
 import type express from 'express';
 import { actualizarPerfil, leerPerfil, validarCambios } from '../lib/perfil-persona';
-import { guardarContexto, oyentesDe, suscribir, validarContexto } from '../lib/acciones-app';
+import { aparatoValido, guardarContexto, MAX_CANALES_POR_CUENTA, suscribir, validarContexto } from '../lib/acciones-app';
 import type { Sesion } from './seguridad';
 
-/** Teléfonos (o pestañas) escuchando a la vez por cuenta. Más que esto es un error o un abuso. */
-export const MAX_CANALES_POR_CUENTA = 8;
+/** Teléfonos (o pestañas) escuchando a la vez por cuenta; al pasarlo se desaloja el canal más viejo. */
+export { MAX_CANALES_POR_CUENTA };
 /** Cada cuánto se manda un latido por el canal (los proxies cortan un stream mudo al minuto). */
 export const LATIDO_MS = 20_000;
+/**
+ * Lo más que vive un canal. Al cumplirse se cierra y el teléfono vuelve solo a los 3 s (`retry`),
+ * entrando otra vez con su sesión: un canal no puede quedar abierto para siempre con lo que valía
+ * al abrirse.
+ */
+export const VIDA_CANAL_MS = 30 * 60_000;
 
 type Deps = {
   exigirMesa: express.RequestHandler;
@@ -28,6 +35,7 @@ type Deps = {
   /** Lo público de la plataforma (id, acento, modos…): lo que ya devolvía GET /api/perfil. */
   perfilPlataforma: () => Record<string, unknown>;
   latidoMs?: number;
+  vidaMs?: number;
 };
 
 const sinSesion = (res: express.Response) => res.status(401).json({ error: 'Entra con tu sesión.', code: 'sesion_requerida', honesto: true });
@@ -57,15 +65,18 @@ export function montarRutasApp(app: express.Express, d: Deps) {
 
   /**
    * El canal de acciones: la app lo deja abierto y AURA le manda por aquí lo que tiene que hacer. Un
-   * canal por teléfono, todos los de una cuenta reciben lo mismo. Latido cada 20 s como comentario SSE
-   * (`: latido`), que ningún lector confunde con una acción.
+   * canal por teléfono (`x-aura-aparato`): las acciones de un turno van solo al aparato que lo hizo;
+   * sin aparato, a todos los de la cuenta. Latido cada 20 s como comentario SSE (`: latido`), que
+   * ningún lector confunde con una acción.
+   *
+   * La sesión se vuelve a mirar en CADA latido: si se cerró (salir, cerrar sesión en todos lados) o
+   * la contraseña cambió, el canal se corta ahí (antes seguía recibiendo acciones hasta que el
+   * teléfono lo soltara). Y ningún canal pasa de VIDA_CANAL_MS.
    */
   app.get('/api/app/acciones', d.exigirMesa, d.limitar(30, 60_000, 'app-acciones'), (req, res) => {
     const s = d.sesionDe(req);
     if (!s) return sinSesion(res);
-    if (oyentesDe(s.correo) >= MAX_CANALES_POR_CUENTA) {
-      return res.status(429).json({ error: 'Hay demasiados teléfonos escuchando con esta cuenta.', honesto: true });
-    }
+    const aparato = aparatoValido(req.headers['x-aura-aparato']);
     res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store, no-transform');
     res.setHeader('Connection', 'keep-alive');
@@ -78,17 +89,36 @@ export function montarRutasApp(app: express.Express, d: Deps) {
     };
     // Si se corta, el teléfono vuelve a los 3 s (EventSource lo hace solo con `retry`).
     escribir('retry: 3000\n: canal abierto\n\n');
-    const soltar = suscribir(s.correo, (e) => {
-      if (res.writableEnded || res.destroyed) throw new Error('canal cerrado');
-      escribir(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
-    });
-    const latido = setInterval(() => escribir(': latido\n\n'), d.latidoMs ?? LATIDO_MS);
-    const cerrar = () => {
+    let cerrado = false;
+    let latido: ReturnType<typeof setInterval> | undefined;
+    let vida: ReturnType<typeof setTimeout> | undefined;
+    let soltar: () => void = () => {};
+    // Cierra el canal (una vez). Con motivo, se avisa como comentario SSE antes de cortar.
+    const cerrar = (motivo?: 'sesion' | 'renovar' | 'reemplazado') => {
+      if (cerrado) return;
+      cerrado = true;
       clearInterval(latido);
+      clearTimeout(vida);
       soltar();
+      if (motivo) escribir(`: fin ${motivo}\n\n`);
+      if (!res.writableEnded) res.end();
     };
-    res.on('close', cerrar);
-    res.on('error', cerrar);
+    soltar = suscribir(
+      s.correo,
+      (e) => {
+        if (cerrado || res.writableEnded || res.destroyed) throw new Error('canal cerrado');
+        escribir(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
+      },
+      // El mismo aparato que vuelve reemplaza a su canal viejo; al tope se desaloja el más viejo.
+      { aparato, max: MAX_CANALES_POR_CUENTA, desalojar: () => cerrar('reemplazado') }
+    );
+    latido = setInterval(() => {
+      if (!d.sesionDe(req)) return cerrar('sesion');
+      escribir(': latido\n\n');
+    }, d.latidoMs ?? LATIDO_MS);
+    vida = setTimeout(() => cerrar('renovar'), d.vidaMs ?? VIDA_CANAL_MS);
+    res.on('close', () => cerrar());
+    res.on('error', () => cerrar());
   });
 
   /** Dónde está la persona y a quién puede escribirle. Se guarda unos minutos, solo en memoria. */

@@ -521,3 +521,110 @@ test('soltarSesion: saca del caché sin revocar, y la sesión firmada sigue vali
   const req = { headers: { 'x-ultron-sesion': s.token } } as any;
   assert.equal(sesionDe(req)?.correo, s.correo, 'soltar no es cerrar');
 });
+
+test('una conversación vencida por inactividad no se retoma aunque otra la haya podado del registro', async () => {
+  const s = await montar(async (t) => t.enviar('done', { reply: 'Hola.' }));
+  try {
+    const yo = persona();
+    const msgs = [{ role: 'user', content: 'hola' }];
+    // Una conversación de hace seis minutos sin turnos…
+    const vieja = emitirPase(yo, 'aura', 'es');
+    abrirConversacion(yo.correo, vieja.cid, Date.now() - INACTIVIDAD_MS - 60_000);
+    // …y otra que se abre ahora: al abrirla se poda la vieja del registro.
+    const nueva = paseDe(yo);
+    assert.ok(!_conversaciones().has(vieja.cid), 'la vieja salió del registro');
+    // Antes se «retomaba» como tras un redespliegue y los cinco minutos no se cumplían.
+    assert.equal((await llm(s.base, vieja.pase, msgs)).status, 401, 'vencida por silencio, aunque ya no esté registrada');
+    assert.equal((await llm(s.base, nueva, msgs)).status, 200);
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('un turno que corta a otro a la mitad toma lo que ese alcanzó a decir: el siguiente pide perdón', async () => {
+  let turno = 0;
+  const s = await montar(async (t) => {
+    turno++;
+    if (turno === 1) {
+      t.enviar('delta', { text: 'Primera respuesta, completa y bastante larga.', voz: 'Primera respuesta, completa y bastante larga.' });
+      t.enviar('done', { reply: 'Primera respuesta, completa y bastante larga.' });
+      return;
+    }
+    if (turno === 2) {
+      t.enviar('delta', { text: 'Segunda respuesta que es bastante larga ', voz: 'Segunda respuesta que es bastante larga ' });
+      await new Promise<void>((resolve) => {
+        const iv = setInterval(() => t.enviar('delta', { text: 'y sigue ', voz: 'y sigue ' }), 20);
+        t.senal.addEventListener('abort', () => {
+          clearInterval(iv);
+          resolve();
+        });
+      });
+      return;
+    }
+    t.enviar('delta', { text: 'Te escucho.', voz: 'Te escucho.' });
+    t.enviar('done', { reply: 'Te escucho.' });
+  });
+  try {
+    const yo = persona();
+    const pase = paseDe(yo);
+    const hist = [{ role: 'user', content: 'cuéntame algo' }];
+    assert.equal(dichoDe(await (await llm(s.base, pase, hist)).text()), 'Primera respuesta, completa y bastante larga.');
+    // El segundo turno empieza a hablar y NO se cierra: ElevenLabs manda el tercero encima.
+    const r2 = await llm(s.base, pase, [...hist, { role: 'assistant', content: 'Primera respuesta, completa y bastante larga.' }, { role: 'user', content: '¿y lo otro?' }]);
+    const lector = r2.body!.getReader();
+    await lector.read();
+    await lector.read();
+    await new Promise((r) => setTimeout(r, 60));
+    const r3 = await llm(s.base, pase, [
+      ...hist,
+      { role: 'assistant', content: 'Primera respuesta, completa y bastante larga.' },
+      { role: 'user', content: '¿y lo otro?' },
+      { role: 'assistant', content: 'Segunda respuesta que es...' },
+      { role: 'user', content: 'espera' },
+    ]);
+    assert.match(dichoDe(await r3.text()), /^(¡Ah, perdón!|¡Uy, perdón!|Perdón\.) Te escucho\.$/);
+    assert.equal(s.vistos[2].interrumpida, true);
+    await lector.cancel().catch(() => {});
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('una respuesta que fue solo una acción para la app: la voz dice «Listo.», no «se me fue el hilo»', async () => {
+  const s = await montar(async (t) => t.enviar('done', { reply: '', voz: '', acciones: [{ id: 'abc', accion: { tipo: 'atras' } }] }));
+  try {
+    const r = await llm(s.base, paseDe(persona()), [{ role: 'user', content: 'vete para atrás, por favor' }]);
+    assert.equal(dichoDe(await r.text()), 'Listo.');
+  } finally {
+    await s.cerrar();
+  }
+});
+
+test('el aparato que abre la conversación (x-aura-aparato) va firmado en el pase y llega a cada turno', async () => {
+  const elevenFalso: typeof fetch = (async () => new Response(JSON.stringify({ token: 'tok-el' }), { status: 200, headers: { 'content-type': 'application/json' } })) as any;
+  const s = await montar(async (t) => t.enviar('done', { reply: 'Hola.' }), { fetch: elevenFalso });
+  const antes = process.env.ELEVENLABS_API_KEY;
+  process.env.ELEVENLABS_API_KEY = 'llave-falsa';
+  try {
+    const yo = persona();
+    const abrir = (aparato?: string) =>
+      fetch(`${s.base}/api/voz/agente`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-ultron-sesion': yo.token, ...(aparato ? { 'x-aura-aparato': aparato } : {}) },
+        body: JSON.stringify({ avatar: 'aura', idioma: 'es' }),
+      }).then((r) => r.json() as Promise<any>);
+    const con = await abrir('tel-majo-1');
+    assert.equal(leerPase(con.pase)?.aparato, 'tel-majo-1');
+    assert.ok(con.cid, 'devuelve el cid (para cerrar la conversación)');
+    await (await llm(s.base, con.pase, [{ role: 'user', content: 'hola' }])).text();
+    assert.equal(s.vistos.at(-1)!.body.aparato, 'tel-majo-1', 'el turno sabe a qué teléfono mandar las acciones');
+    const sin = await abrir();
+    assert.equal(leerPase(sin.pase)?.aparato, null, 'sin cabecera, sin aparato (acciones a todos, como antes)');
+    const malo = await abrir('tel majo; <script>');
+    assert.equal(leerPase(malo.pase)?.aparato, null, 'un id sin forma de id no cuenta');
+  } finally {
+    if (antes === undefined) delete process.env.ELEVENLABS_API_KEY;
+    else process.env.ELEVENLABS_API_KEY = antes;
+    await s.cerrar();
+  }
+});
