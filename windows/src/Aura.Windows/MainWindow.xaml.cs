@@ -213,7 +213,7 @@ public partial class MainWindow : Window
         if(target==null){SetStatus("Falta el destino", "Abre Bloc de notas, haz clic en su área editable y pulsa Ctrl+Alt+W. Después vuelve al borrador.");return;}
         string text=Draft.Text;var selected=target;
         if(string.IsNullOrWhiteSpace(text)||text.Length>1000||text.Any(char.IsControl)){SetStatus("Usa un párrafo corto", "La escritura directa admite hasta 1.000 caracteres sin saltos de línea. Guarda el archivo para textos mayores.");return;}
-        if(MessageBox.Show(this,"Se escribirá en: "+selected.Title+"\n\n"+text+"\n\nNo se pulsa Enter. ¿Continuar?","AURA · Confirmar escritura",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes||gate.Paused)return;
+        if(MessageBox.Show(this,"Se escribirá en: "+selected.Title+"\n\n"+text+"\n\nSe escribe en el cursor y se reemplaza la selección actual. No se pulsa Enter. ¿Continuar?","AURA · Confirmar escritura",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes||gate.Paused)return;
         target=null;TargetLabel.Text="Selecciona de nuevo para otra escritura.";writing=new();
         try{await selected.Write(text,writing.Token);if(!gate.Paused)SetStatus("Texto escrito", "Revisa el resultado en Bloc de notas.");}
         catch(OperationCanceledException){if(!gate.Paused)SetStatus("Escritura cancelada", "Puede haber texto parcial. Revisa Bloc de notas.");}

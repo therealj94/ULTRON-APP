@@ -15,6 +15,8 @@ internal sealed class DesktopTarget {
  [DllImport("user32.dll")]static extern IntPtr GetForegroundWindow();
  [DllImport("user32.dll")]static extern uint GetWindowThreadProcessId(IntPtr h,out uint pid);
  [DllImport("user32.dll")]static extern bool SetForegroundWindow(IntPtr h);
+ [DllImport("user32.dll")]static extern short GetAsyncKeyState(int key);
+ static string DocumentTitle(string name)=>name.TrimStart('*',' ','●','•');
  [DllImport("user32.dll")]static extern uint SendInput(uint count,Input[] inputs,int size);
  [StructLayout(LayoutKind.Sequential)]struct Input {public uint type;public InputUnion data;}
  [StructLayout(LayoutKind.Explicit)]struct InputUnion {[FieldOffset(0)]public Keyboard keyboard;[FieldOffset(0)]public Mouse mouse;}
@@ -51,6 +53,8 @@ internal sealed class DesktopTarget {
    cancellation.ThrowIfCancellationRequested();
    if(GetForegroundWindow()!=window||!AutomationElement.FocusedElement.GetRuntimeId().SequenceEqual(runtimeId))throw new InvalidOperationException($"El foco cambió. Escritura detenida después de {written} caracteres; revisa el destino.");
    CheckEditable(element);
+   if(new[]{0x10,0x11,0x12,0x5B,0x5C}.Any(key=>(GetAsyncKeyState(key)&0x8000)!=0))throw new InvalidOperationException("Hay una tecla modificadora presionada. Suéltala y selecciona otra vez el destino; puede haber texto parcial.");
+   if(DocumentTitle(AutomationElement.FromHandle(window).Current.Name)!=DocumentTitle(Title))throw new InvalidOperationException("El documento de destino cambió. Se detuvo la escritura.");
    var events=rune.ToString().SelectMany(c=>new[]{new Input {type=1,data=new(){keyboard=new(){scan=c,flags=4}}},new Input {type=1,data=new(){keyboard=new(){scan=c,flags=6}}}}).ToArray();
    if(SendInput((uint)events.Length,events,Marshal.SizeOf<Input>())!=events.Length)throw new InvalidOperationException("Windows bloqueó la escritura. Puede haber texto parcial; revisa Bloc de notas.");
    written++;if(written%16==0)await Task.Delay(15,cancellation);
