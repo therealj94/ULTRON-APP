@@ -91,6 +91,24 @@ export function alSalir(f: () => void): () => void {
   };
 }
 
+/** Quien quiera saber cuándo se entra o se sale de la cuenta (el proveedor, para redibujar). */
+const oyentesCuenta = new Set<() => void>();
+export function escucharCuenta(f: () => void): () => void {
+  oyentesCuenta.add(f);
+  return () => {
+    oyentesCuenta.delete(f);
+  };
+}
+function avisarCuenta() {
+  for (const f of [...oyentesCuenta]) {
+    try {
+      f();
+    } catch {
+      /* un oyente roto no deja la cuenta a medias */
+    }
+  }
+}
+
 /**
  * Entra al chat con el pase de Genesis que trajo la wallet. Devuelve el correo de la cuenta.
  *
@@ -115,6 +133,7 @@ export async function entrarConPase(pase: string, verificador: string, nombre?: 
       /* sin nombre no pasa nada: se ve la parte de antes de la @ */
     }
   }
+  avisarCuenta();
   return yo;
 }
 
@@ -157,6 +176,7 @@ export async function salir() {
     }
   }
   await SecureStore.deleteItemAsync(CAJON_CUENTA).catch(() => {});
+  avisarCuenta();
 }
 
 export const quien = () => yo;

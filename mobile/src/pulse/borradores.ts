@@ -47,6 +47,12 @@ export function useBorrador(correo: string): Borrador | null {
 
 export const borradorDe = (correo: string): Borrador | null => borradores[String(correo).toLowerCase()] || null;
 
+const todos = () => borradores;
+/** Todos los borradores (correo → borrador), vivos: la lista los enseña como «Borrador: …». */
+export function useBorradores(): Record<string, Borrador> {
+  return useSyncExternalStore(suscribir, todos, todos);
+}
+
 /** Lo que escribe la persona a mano: deja de ser «de voz» (se apaga el brillo dorado). */
 export function escribirBorrador(correo: string, texto: string) {
   const c = String(correo).toLowerCase();
@@ -81,12 +87,28 @@ export function fijarChatAbierto(c: Contacto | null) {
   abierto = c ? { correo: c.correo.toLowerCase(), nombre: c.nombre } : null;
   avisar();
 }
+/** La suelta solo si sigue siendo ESA (al cambiar de hilo, el nuevo pudo fijarse antes de que el viejo se fuera). */
+export function soltarChatAbierto(correo: string) {
+  if (abierto && abierto.correo === String(correo).toLowerCase()) fijarChatAbierto(null);
+}
 export const chatAbierto = (): Contacto | null => abierto;
 
 /** El borrador del chat abierto, para el contexto que se le manda al cerebro. */
 export function borradorActual(): string | undefined {
   return abierto ? borradores[abierto.correo]?.texto : undefined;
 }
+
+/**
+ * La parte del chat del contexto que se le manda al cerebro (`POST /api/app/contexto`): a quién puede
+ * escribirle, qué chat está abierto y su borrador. Solo nombres y el borrador propio, nunca los chats.
+ */
+export function contextoChat(): { chatAbierto: Contacto | null; contactos: Contacto[]; borrador?: string } {
+  const b = borradorActual();
+  return { chatAbierto: abierto, contactos: RELEVO.contactosConocidos(), ...(b ? { borrador: b } : {}) };
+}
+
+/** Avisa cuando cambian los borradores o el chat abierto (para volver a mandar el contexto). */
+export const escucharBorradores = suscribir;
 
 /** Busca a quién; si la lista todavía no se trajo (recién abierta la app), la trae una vez. */
 async function quienEs(con: string): Promise<Contacto | null> {
