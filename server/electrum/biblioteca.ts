@@ -23,7 +23,7 @@
  * Y cada acción que cambia algo queda en la bitácora: quién, qué y cuándo. En un sistema que
  * contesta con fuentes, «¿quién borró el informe de Minas de Oro?» tiene que tener respuesta.
  */
-import { baseTieneRol, consulta, enTransaccion, hayBase } from './db';
+import { baseTieneRol, consulta, enTransaccion, hayBase, olvidarEsquemaV10 } from './db';
 import { cargarTexto, huellaDe, releerDocumento } from './aprender';
 import { olvidarTablero } from './tablero';
 import { bajarExpediente, bucketExpedientes } from '../../lib/s3';
@@ -64,6 +64,31 @@ const ESQUEMA = [
  * cada paso por su cuenta: una base sin `capa.rol` (anterior a la v7) no puede tomar la restricción,
  * y eso no debe dejar sin panel de infraestructura a quien la usa.
  */
+/** Tablas de la v10 que no dependen de `capa.rol`: se aplican siempre. */
+const ESQUEMA_V10_TABLAS = [
+  // El catastro nacional trae la clase en `clasificac` y entró sin tipo: se rellena de sus atributos.
+  `UPDATE concesion SET tipo = trim(coalesce(atributos->>'clasificac', atributos->>'CLASIFICAC')) WHERE tipo IS NULL AND (atributos ? 'clasificac' OR atributos ? 'CLASIFICAC')`,
+  `ALTER TABLE capa ADD COLUMN IF NOT EXISTS huella text`,
+  `CREATE INDEX IF NOT EXISTS capa_huella_idx ON capa (huella)`,
+  `CREATE TABLE IF NOT EXISTS cartera (
+  id          bigserial PRIMARY KEY,
+  nombre      text NOT NULL UNIQUE,
+  origen      text,
+  por         text,
+  creada      timestamptz NOT NULL DEFAULT now(),
+  actualizada timestamptz NOT NULL DEFAULT now()
+)`,
+  `CREATE TABLE IF NOT EXISTS cartera_concesion (
+  cartera_id  bigint NOT NULL REFERENCES cartera(id) ON DELETE CASCADE,
+  huella      text NOT NULL,
+  expediente  text,
+  nombre      text,
+  atributos   jsonb NOT NULL DEFAULT '{}'::jsonb,
+  PRIMARY KEY (cartera_id, huella)
+)`,
+  `CREATE INDEX IF NOT EXISTS cartera_concesion_huella_idx ON cartera_concesion (huella)`,
+];
+
 const ESQUEMA_V10 = [
   `ALTER TABLE capa DROP CONSTRAINT IF EXISTS capa_rol_valido`,
   `ALTER TABLE capa ADD CONSTRAINT capa_rol_valido CHECK (rol IS NULL OR rol IN (
@@ -107,11 +132,15 @@ export function asegurarBiblioteca(): Promise<boolean> {
   if (!listo) {
     listo = (async () => {
       for (const sql of ESQUEMA) await consulta(sql);
+      for (const sql of ESQUEMA_V10_TABLAS) {
+        await consulta(sql).catch((e) => console.error('[biblioteca] v10:', String(e?.message || e).slice(0, 200)));
+      }
       if (await baseTieneRol()) {
         for (const sql of ESQUEMA_V10) {
           await consulta(sql).catch((e) => console.error('[biblioteca] v10:', String(e?.message || e).slice(0, 200)));
         }
       }
+      olvidarEsquemaV10();
       // Una importación que corría DENTRO de este servidor murió con el reinicio: se dice. Las que
       // corren en un trabajo de Render siguen vivas aunque el servidor se reinicie.
       await consulta(`UPDATE importacion SET estado = 'interrumpida', terminada = now() WHERE estado IN ('en_curso', 'parando') AND donde = 'servidor'`);

@@ -20,8 +20,8 @@ export const bienvenidaApagada = (correo: string) => leerPreferencia<boolean>(cl
 
 const OPCIONES: Array<{ modo: ModoRecorrido; titulo: string; texto: string }> = [
   { modo: 'herramientas', titulo: 'Herramientas', texto: 'Los botones y qué hace cada uno' },
-  { modo: 'legal', titulo: 'Legal', texto: 'Conflictos, traslapes y vencimientos' },
-  { modo: 'geologico', titulo: 'Recorrido geológico', texto: 'Olancho, JICA, geoquímica y satélite' },
+  { modo: 'legal', titulo: 'Legal', texto: 'Restricciones, cartera, traslapes y vencimientos' },
+  { modo: 'geologico', titulo: 'Recorrido geológico', texto: 'Geología, geoquímica histórica y satélite' },
   { modo: 'completo', titulo: 'Recorrido completo', texto: 'Todo Dr Electrum en unos minutos' },
 ];
 

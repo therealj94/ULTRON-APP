@@ -51,6 +51,8 @@ import { estadosQueCalzan, fasesDe, significadoEstado } from './estados';
 import { convertir, leerSistema, nombreSistema, sistemaPara, type Sistema } from './datum';
 import { comoSeSabe, idsQueCumplen, mineralDePedido, mineralesPorConcesion } from './minerales';
 import { esHistorico, fraseFuente, fuenteCatastro } from './ordenar';
+import { restriccionesDe, restriccionesEnTexto } from './restricciones';
+import { analizarCartera, carteraEnTexto, carteras } from './cartera';
 
 const nf = (n: number, d = 2) => new Intl.NumberFormat('es-ES', { minimumFractionDigits: d, maximumFractionDigits: d }).format(n);
 const SIN_BASE = 'El catastro no está conectado en este momento, así que no puedo consultarlo. Decilo tal cual y ofrecé seguir con lo que sí tenés.';
@@ -393,7 +395,7 @@ const catastro_en_punto: Herramienta = {
 const concesion_entorno: Herramienta = {
   nombre: 'concesion_entorno',
   descripcion:
-    'Cruza una concesión con las capas cargadas: municipio, áreas protegidas y microcuencas que pisa (ha y %), ríos dentro, caseríos y aldeas cerca, carretera, minería informal, ocurrencias y traslapes. Usala antes de opinar sobre dónde está una concesión o qué riesgos tiene; citá sus cifras tal cual.',
+    'Cruza una concesión con las capas cargadas: municipio, áreas protegidas (con zona núcleo/amortiguamiento y decreto), microcuencas declaradas (acuerdo y población que abastecen), patrimonio forestal, ríos, caseríos, carretera, minería informal, ocurrencias y traslapes, y da el semáforo de restricciones con su base legal. Usala antes de opinar sobre dónde está una concesión, qué riesgos tiene o si se puede trabajar; citá sus cifras tal cual.',
   esquema: {
     type: 'object',
     properties: {
@@ -414,12 +416,13 @@ const concesion_entorno: Herramienta = {
       id = elegida.id;
     }
     if (id == null) return { ok: false, texto: 'Decime de qué concesión: por id o por nombre.' };
-    const e = await entornoDe(id);
+    const [e, rs] = await Promise.all([entornoDe(id), restriccionesDe([id]).catch(() => [])]);
     if (!e) return { ok: false, texto: `La concesión ${id} no está en el catastro o no tiene geometría, así que no hay entorno que cruzar.` };
     // Mientras se cuenta lo que tiene alrededor, el mapa está sobre ella.
     const g = await geometriaDe(id).catch(() => null);
     const mapa = g ? { accion: 'volar', concesion_id: Number(id), centro: g.centro, encuadre: g.encuadre, geojson: g.geojson, resaltar: true } : {};
-    return { ok: true, texto: entornoEnTexto(e), ui: { entorno: e, ...mapa } };
+    const r = rs[0];
+    return { ok: true, texto: entornoEnTexto(e) + (r ? ` ${restriccionesEnTexto(r)}` : ''), ui: { entorno: e, restricciones: r || null, ...mapa } };
   },
 };
 
@@ -968,6 +971,39 @@ const informe_pdf: Herramienta = {
 /* ------------------------------------------------------------------ registro */
 
 /** Las manos de Electrum, por nombre. El panel de especialistas decide cuáles se le ofrecen. */
+/* ------------------------------------------------------------------ carteras */
+
+/**
+ * Una cartera entera de un vistazo: las zonas de una empresa (p. ej. las 90 «Zonas INDEXSA con
+ * anotación provisional»), cada una con su estado, semáforo de restricciones, traslapes con
+ * terceros y prospectividad, ordenadas por prioridad. Es la pregunta de decidir: ¿cuáles trabajo
+ * primero y cuáles no se pueden?
+ */
+const cartera_analisis: Herramienta = {
+  nombre: 'cartera_analisis',
+  descripcion:
+    'Analiza una cartera de concesiones (las zonas de una empresa, p. ej. «Zonas INDEXSA»): estado, hectáreas, semáforo de restricciones (áreas protegidas, microcuencas, forestal, caseríos, traslapes con terceros) y prioridad por prospectividad. Sin nombre, lista las carteras. Usala para «¿cuáles de mis zonas puedo trabajar?», «¿cuántas pisan áreas protegidas?» o «qué priorizo».',
+  esquema: {
+    type: 'object',
+    properties: { nombre: { type: 'string', description: 'Nombre o parte del nombre de la cartera; vacío para listarlas' } },
+  },
+  plataformas: ['electrum'],
+  msMaximo: 45_000,
+  async ejecutar({ nombre }) {
+    if (!hayBase()) return { ok: false, texto: SIN_BASE };
+    if (!nombre) {
+      const xs = await carteras();
+      if (!xs.length) return { ok: true, texto: 'No hay carteras registradas todavía. Se crean al subir una capa con concesiones que ya están en el catastro (por ejemplo, las zonas de una empresa).' };
+      const unica = xs.length === 1 ? await analizarCartera(xs[0].nombre) : null;
+      if (unica && !('error' in unica)) return { ok: true, texto: carteraEnTexto(unica), ui: { cartera: unica } };
+      return { ok: true, texto: `Carteras: ${xs.map((c) => `«${c.nombre}» (${c.concesiones}, ${c.enCatastro} en el catastro vigente)`).join('; ')}.` };
+    }
+    const a = await analizarCartera(String(nombre));
+    if ('error' in a) return { ok: false, texto: a.error };
+    return { ok: true, texto: carteraEnTexto(a), ui: { cartera: a } };
+  },
+};
+
 export const MANOS: Record<string, Herramienta> = {
   catastro_buscar,
   catastro_vencimientos,
@@ -976,6 +1012,7 @@ export const MANOS: Record<string, Herramienta> = {
   coordenadas_convertir,
   catastro_en_punto,
   concesion_entorno,
+  cartera_analisis,
   geologia_zona,
   mapa_geologico,
   gis_traslapes,

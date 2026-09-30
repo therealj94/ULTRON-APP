@@ -993,7 +993,7 @@ function OrdenarCatastro({ onCerrar, onHecho }: { onCerrar: () => void; onHecho:
                         style={{ color: ACCION_ORDEN[f.accion].color }}
                       >
                         {(Object.keys(ACCION_ORDEN) as AccionOrden[])
-                          .filter((a) => f.concesiones > 0 || (a !== 'oficial' && a !== 'borrar'))
+                          .filter((a) => f.concesiones > 0 || a !== 'oficial')
                           .map((a) => (
                             <option key={a} value={a} style={{ color: '#E7EEF2', background: '#0b0e11' }}>
                               {ACCION_ORDEN[a].txt}

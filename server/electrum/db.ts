@@ -12,6 +12,7 @@
  * Todo entra y sale en WGS84 (SRID 4326). Las áreas se piden siempre sobre `geography`, que es la
  * cuenta geodésica; pedirlas sobre `geometry` daría grados cuadrados, que no significan nada.
  */
+import { createHash } from 'node:crypto';
 import { Pool, type PoolClient } from 'pg';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import { areaHectareas, etiqueta, repararTexto, type Capa } from './gis';
@@ -140,7 +141,8 @@ const CAMPOS: Record<string, RegExp[]> = {
   titular: [/^(titular|concesiona|empresa|propietari|solicitante|benefici)/i],
   departamento: [/^(departament|depto|dpto)/i],
   municipio: [/^(municipio|munic|mpio)/i],
-  tipo: [/^(tipo|categoria|clase|modalidad)/i],
+  // `clasificac`: el catastro nacional trae ahí «Pequeña Minería Metálica», «Banco de Préstamo»…
+  tipo: [/^(tipo|categoria|clase|clasific|modalidad)/i],
   mineral: [/^(mineral|sustancia|recurso)/i],
   estado: [/^(estado|situacion|status|vigencia)/i],
   hectareas: [/^(hectarea|hectárea|has?$|area|área|superficie)/i],
@@ -302,6 +304,42 @@ export function baseTieneRol(): Promise<boolean> {
   return conRol;
 }
 
+/** La firma de una capa de geografía: mismas geometrías, misma capa. */
+function firmaDeCapa(capa: Capa): string | null {
+  const fs_ = (capa.geojson.features as Feature[]).filter((f) => f && f.geometry);
+  if (!fs_.length) return null;
+  const h = createHash('md5');
+  h.update(String(fs_.length));
+  for (const f of fs_) h.update(JSON.stringify(f.geometry));
+  return h.digest('hex');
+}
+
+/*
+ * Las columnas y tablas de la v10 se preguntan una vez: el código puede llegar a Render antes que
+ * el esquema, y una carga no se cae por una columna que todavía no existe.
+ */
+let conHuellaCapa: Promise<boolean> | null = null;
+function capaTieneHuella(): Promise<boolean> {
+  conHuellaCapa ||= consulta<{ si: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'capa' AND column_name = 'huella') AS si`
+  )
+    .then((r) => !!r[0]?.si)
+    .catch(() => ((conHuellaCapa = null), false));
+  return conHuellaCapa;
+}
+let conCarteras: Promise<boolean> | null = null;
+export function hayCarteras(): Promise<boolean> {
+  conCarteras ||= consulta<{ si: boolean }>(`SELECT to_regclass('cartera_concesion') IS NOT NULL AS si`)
+    .then((r) => !!r[0]?.si)
+    .catch(() => ((conCarteras = null), false));
+  return conCarteras;
+}
+/** Tras aplicar el esquema, que se vuelva a preguntar. */
+export function olvidarEsquemaV10() {
+  conHuellaCapa = null;
+  conCarteras = null;
+}
+
 /**
  * Guarda una capa leída por el motor GIS. Los polígonos entran como concesiones; lo demás, como
  * entidades geográficas. Todo en una transacción: una carga a medias es peor que ninguna.
@@ -309,7 +347,32 @@ export function baseTieneRol(): Promise<boolean> {
 export async function guardarCapa(
   capa: Capa,
   opts: { archivo?: string; subidoPor?: string; avisos?: unknown[]; comoConcesiones?: boolean } = {}
-): Promise<{ capaId: number; concesiones: number; entidades: number; repetidas: number; reparadas: number; vacias: number }> {
+): Promise<{
+  capaId: number;
+  concesiones: number;
+  entidades: number;
+  repetidas: number;
+  reparadas: number;
+  vacias: number;
+  /** Si la capa era una selección del catastro ya cargado (una cartera), cuál quedó registrada. */
+  cartera?: { nombre: string; concesiones: number } | null;
+}> {
+  /*
+   * Una capa de geografía idéntica a una ya cargada (las mismas áreas protegidas subidas otra vez)
+   * no entra: las entidades no tienen huella por rasgo como las concesiones, y sin esto cada
+   * resubida duplicaba cada área protegida y cada microcuenca, y la ficha contaba dos veces.
+   */
+  const huellaCapa = firmaDeCapa(capa);
+  // Solo en las subidas normales: quien pasa `comoConcesiones` explícito (el paquete de geología)
+  // gestiona él mismo el reemplazo —carga la nueva y DESPUÉS borra la vieja— y saltarse la carga
+  // aquí le haría borrar la única copia.
+  if (huellaCapa && opts.comoConcesiones === undefined && !pareceCatastro(capa.geojson.features as Feature[]) && (await capaTieneHuella())) {
+    const [ya] = await consulta<{ id: string }>(`SELECT id::text FROM capa WHERE huella = $1 LIMIT 1`, [huellaCapa]);
+    if (ya) {
+      const n = (capa.geojson.features as Feature[]).filter((f) => f && f.geometry).length;
+      return { capaId: 0, concesiones: 0, entidades: 0, repetidas: n, reparadas: 0, vacias: 0, cartera: null };
+    }
+  }
   const cliente: PoolClient = await conexion().connect();
   try {
     await cliente.query('BEGIN');
@@ -323,6 +386,8 @@ export async function guardarCapa(
     let nConc = 0;
     let nEnt = 0;
     let nRep = 0;
+    /** Las concesiones del archivo que ya estaban en el catastro: si son casi todas, es una cartera. */
+    const repetidas: Array<{ huella: string; expediente: string | null; nombre: string; props: Record<string, unknown> }> = [];
     /** Polígonos que venían rotos y entraron reparados. */
     let nInv = 0;
     /** Polígonos tan rotos que al repararlos no quedó superficie: no entran. */
@@ -388,8 +453,9 @@ export async function guardarCapa(
          * es del padrón entero, a partir de ahí CADA carga de cualquier persona termina en error.
          * Se repara al entrar (`GEOM_VALIDA`), se mide sobre lo reparado y se avisa de cuántos fueron.
          */
-        const revision = await cliente.query<{ pos: string; repetida: boolean; invalida: boolean; vacia: boolean }>(
+        const revision = await cliente.query<{ pos: string; huella: string; repetida: boolean; invalida: boolean; vacia: boolean }>(
           `SELECT t.pos::text AS pos,
+                  md5(ST_AsBinary(ST_Normalize(${GEOM_VALIDA('t.g')}))) AS huella,
                   EXISTS (SELECT 1 FROM concesion c WHERE c.huella = md5(ST_AsBinary(ST_Normalize(${GEOM_VALIDA('t.g')})))) AS repetida,
                   NOT ST_IsValid(ST_Force2D(ST_GeomFromGeoJSON(t.g))) AS invalida,
                   ST_IsEmpty(${GEOM_VALIDA('t.g')}) AS vacia
@@ -399,6 +465,12 @@ export async function guardarCapa(
         const estado = new Map(revision.rows.map((r) => [Number(r.pos), r]));
         const yaEstan = new Set(revision.rows.filter((r) => r.repetida).map((r) => Number(r.pos)));
         nRep += yaEstan.size;
+        for (const r of revision.rows) {
+          if (!r.repetida) continue;
+          const { f, i } = concesiones[Number(r.pos) - 1];
+          const props = (f.properties || {}) as Record<string, unknown>;
+          repetidas.push({ huella: r.huella, expediente: delDbf(props, 'expediente'), nombre: etiqueta(f, i), props });
+        }
         const vacias = revision.rows.filter((r) => r.vacia && !r.repetida).length;
         nVac += vacias;
 
@@ -469,6 +541,43 @@ export async function guardarCapa(
      * Se borra solo en ese caso exacto —capa de concesiones, todo repetido, nada nuevo—, para que
      * una capa legítimamente vacía o una de entidades geográficas siga registrándose.
      */
+    /*
+     * Una CARTERA: un archivo cuyas concesiones ya están (casi) todas en el catastro, como las 90
+     * «Zonas INDEXSA con anotación provisional», que son 90 derechos del catastro nacional con el
+     * mismo código, nombre y polígono. Descartarlo por repetido era perder lo único que traía: cuáles
+     * son las de la empresa. Se registra la lista (por huella de geometría, que sobrevive a recargar
+     * el catastro) y se puede analizar entera. Volver a subir el MISMO catastro no es una cartera:
+     * si todas vienen de una capa que se llama igual, es una resubida.
+     */
+    let cartera: { nombre: string; concesiones: number } | null = null;
+    if (comoConcesiones && repetidas.length && repetidas.length >= 0.8 * (repetidas.length + nConc) && (await hayCarteras())) {
+      const origen = await cliente.query<{ nombre: string }>(
+        `SELECT DISTINCT k.nombre FROM concesion c JOIN capa k ON k.id = c.capa_id WHERE c.huella = ANY($1::text[])`,
+        [repetidas.map((r) => r.huella)]
+      );
+      const norm = (x: string) => x.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const resubida = origen.rows.length > 0 && origen.rows.every((o) => norm(o.nombre) === norm(capa.nombre));
+      if (!resubida) {
+        const { rows: cr } = await cliente.query<{ id: string }>(
+          `INSERT INTO cartera (nombre, origen, por) VALUES ($1, $2, $3)
+           ON CONFLICT (nombre) DO UPDATE SET origen = EXCLUDED.origen, por = EXCLUDED.por, actualizada = now()
+           RETURNING id::text`,
+          // «ZONAS INDEXSA … NAD27»: el datum es del archivo, no del nombre de la cartera.
+          [capa.nombre.replace(/[\s_-]*(nad[\s_-]?27|wgs[\s_-]?84)$/i, '').trim() || capa.nombre, opts.archivo || capa.nombre, opts.subidoPor || null]
+        );
+        const cid = cr[0].id;
+        await cliente.query(`DELETE FROM cartera_concesion WHERE cartera_id = $1`, [cid]);
+        await cliente.query(
+          `INSERT INTO cartera_concesion (cartera_id, huella, expediente, nombre, atributos)
+           SELECT $1, x.huella, x.expediente, x.nombre, x.atributos
+             FROM jsonb_to_recordset($2::jsonb) AS x(huella text, expediente text, nombre text, atributos jsonb)
+           ON CONFLICT (cartera_id, huella) DO NOTHING`,
+          [cid, JSON.stringify(repetidas.map((r) => ({ huella: r.huella, expediente: r.expediente, nombre: r.nombre, atributos: r.props })))]
+        );
+        cartera = { nombre: capa.nombre.replace(/[\s_-]*(nad[\s_-]?27|wgs[\s_-]?84)$/i, '').trim() || capa.nombre, concesiones: new Set(repetidas.map((r) => r.huella)).size };
+      }
+    }
+
     const noAporto = comoConcesiones && nConc === 0 && nEnt === 0 && nRep > 0;
     if (noAporto) await cliente.query('DELETE FROM capa WHERE id = $1', [capaId]);
     /*
@@ -479,11 +588,14 @@ export async function guardarCapa(
       const rol = rolDeCapa(capa.nombre);
       if (rol) await cliente.query('UPDATE capa SET rol = $2 WHERE id = $1', [capaId, rol]);
     }
+    if (!noAporto && huellaCapa && !comoConcesiones && (await capaTieneHuella())) {
+      await cliente.query('UPDATE capa SET huella = $2 WHERE id = $1', [capaId, huellaCapa]);
+    }
     // Los reparados entraron sin área: se mide sobre la geometría que de verdad quedó guardada.
     if (nInv) await cliente.query('UPDATE concesion SET hectareas = ha_elipsoide(geom) WHERE capa_id = $1 AND hectareas IS NULL', [capaId]);
 
     await cliente.query('COMMIT');
-    return { capaId: noAporto ? 0 : capaId, concesiones: nConc, entidades: nEnt, repetidas: nRep, reparadas: nInv, vacias: nVac };
+    return { capaId: noAporto ? 0 : capaId, concesiones: nConc, entidades: nEnt, repetidas: nRep, reparadas: nInv, vacias: nVac, cartera };
   } catch (e) {
     await cliente.query('ROLLBACK');
     throw e;

@@ -17,6 +17,7 @@
  *
  * Es el mismo principio del canal `ui` de las manos: el modelo pide, el servidor construye.
  */
+import { BASE_LEGAL, NOMBRE_NIVEL, restriccionesDe } from './restricciones';
 import { areaHectareas, perimetroKm } from './gis';
 import {
   buscarConcesiones,
@@ -358,7 +359,7 @@ export async function informeConcesion(
    * porque una capa trae un polígono roto.
    */
   const f = fila;
-  const [geo, entorno, plano] = await Promise.all([
+  const [geo, entorno, plano, restr] = await Promise.all([
     geometriaDe(f.id),
     entornoDe(f.id).catch((e) => {
       console.error('[electrum] entorno de', f.id, String(e?.message || e).slice(0, 200));
@@ -371,9 +372,24 @@ export async function informeConcesion(
       firma: !!opts.presentadoA,
       presentadoA: opts.presentadoA,
     }).catch((e) => ({ error: String(e?.message || e).slice(0, 160) })),
+    restriccionesDe([f.id])
+      .then((xs) => xs[0] || null)
+      .catch((e) => {
+        console.error('[electrum] restricciones de', f.id, String(e?.message || e).slice(0, 200));
+        return null;
+      }),
   ]);
 
   const bloques: Bloque[] = [];
+  // El semáforo va primero: es lo que decide si vale la pena leer el resto.
+  if (restr) {
+    bloques.push({
+      tipo: 'aviso',
+      texto: `Semáforo de restricciones: ${NOMBRE_NIVEL[restr.nivel]}${
+        restr.nivel === 'rojo' ? ' — pisa una zona de exclusión (Art. 48 a) LGM)' : restr.nivel === 'ambar' ? ' — se puede trabajar con condiciones' : ' — sin restricciones en las capas cargadas'
+      }.`,
+    });
+  }
   const avisos = contradicciones(fila);
   const otroMunicipio = municipioContradice(fila.municipio, entorno);
   if (otroMunicipio) avisos.push(otroMunicipio);
@@ -452,6 +468,32 @@ export async function informeConcesion(
 
   if (entorno) bloques.push(...bloquesEntorno(entorno));
 
+  /* --- restricciones: de qué zona, por qué instrumento, con qué nivel --- */
+  if (restr) {
+    bloques.push({ tipo: 'seccion', texto: 'Restricciones para decidir' });
+    if (restr.items.length) {
+      bloques.push({
+        tipo: 'tabla',
+        cabecera: ['Nivel', 'Qué', 'Zona / estado', 'Instrumento', 'ha', '%'],
+        anchos: [1, 3, 2, 2.4, 1, 0.8],
+        filas: restr.items.map((i) => [
+          NOMBRE_NIVEL[i.nivel],
+          `${{ area_protegida: 'Área protegida', microcuenca: 'Microcuenca', forestal: 'Patrimonio forestal', poblados: 'Poblados dentro', traslape: 'Traslape con' }[i.tipo]} ${i.nombre}`,
+          i.zona || (i.tipo === 'traslape' ? i.detalle || '—' : '—'),
+          i.instrumento || '—',
+          i.ha > 0 ? nf(i.ha) : '—',
+          i.pct > 0 ? nf(i.pct) : '—',
+        ]),
+      });
+      const detalles = restr.items.filter((i) => i.detalle && i.tipo !== 'traslape' && i.tipo !== 'poblados');
+      if (detalles.length) bloques.push({ tipo: 'parrafo', texto: detalles.map((i) => `${i.nombre}: ${i.detalle}.`).join(' ') });
+      bloques.push({ tipo: 'nota', texto: `${BASE_LEGAL} El semáforo es una guía para priorizar, no un dictamen: se confirma con ICF e INHGEOMIN.` });
+    } else {
+      bloques.push({ tipo: 'parrafo', texto: 'No pisa áreas protegidas, microcuencas declaradas ni patrimonio forestal, no tiene caseríos dentro ni traslapes con terceros, en las capas cargadas.' });
+    }
+    if (restr.sinRevisar.length) bloques.push({ tipo: 'nota', texto: `No se pudo revisar porque la capa no está cargada: ${restr.sinRevisar.join(', ')}.` });
+  }
+
   /* --- traslapes que le toquen --- */
   const suyos = await traslapesDe(fila.id);
   bloques.push({ tipo: 'seccion', texto: 'Traslapes' });
@@ -512,7 +554,7 @@ export async function informeConcesion(
     nombre: `ficha-${(fila.expediente || fila.nombre).replace(/[^\w.-]+/g, '-').toLowerCase()}.pdf`,
     dicho: `Armé la ficha de ${fila.nombre}${avisos.length ? `, con ${avisos.length} ${avisos.length === 1 ? 'aviso' : 'avisos'} arriba` : ''}${
       suyos.length ? ` y ${suyos.length} ${suyos.length === 1 ? 'traslape' : 'traslapes'}` : ''
-    }${entorno?.alertas.length ? `; el entorno deja ${entorno.alertas.length} ${entorno.alertas.length === 1 ? 'alerta' : 'alertas'}` : ''}${
+    }${restr ? `; semáforo ${NOMBRE_NIVEL[restr.nivel]}` : ''}${entorno?.alertas.length ? `; el entorno deja ${entorno.alertas.length} ${entorno.alertas.length === 1 ? 'alerta' : 'alertas'}` : ''}${
       plano && 'jpeg' in plano ? ', con el plano de situación' : ''
     }.`,
   };

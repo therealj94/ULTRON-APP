@@ -127,7 +127,7 @@ export const ESPECIALISTAS: Especialista[] = [
     ],
     // Los mapas geológicos también son mapas: cuando Laya convoca a geomática por «mapa», tiene que
     // poder dibujarlos, no salir del paso con un PDF.
-    herramientas: ['mapa_geologico', 'geologia_zona', 'informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_en_punto', 'concesion_entorno'],
+    herramientas: ['mapa_geologico', 'geologia_zona', 'informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_en_punto', 'concesion_entorno', 'cartera_analisis'],
     vigila: 'Que nadie mida un área sobre la cuadrícula UTM y la reporte como superficie de terreno.',
   },
   {
@@ -135,13 +135,13 @@ export const ESPECIALISTAS: Especialista[] = [
     nombre: 'Ambiental',
     campo: 'Licencias, drenaje ácido, relaves, cierre y monitoreo.',
     disparo:
-      /\b(ambiental|licencia ambiental|impacto|eia\b|drenaje [aá]cido|dar\b|amd\b|agua|cuenca|contaminaci|mercurio|cianuro|minamata|cierre|remediaci|monitoreo|flora|fauna|comunidad|consulta previa|licencia social|[aá]rea protegida|reforestaci)/i,
+      /\b(ambiental|licencia ambiental|impacto|eia\b|drenaje [aá]cido|dar\b|amd\b|agua|cuenca|contaminaci|mercurio|cianuro|minamata|cierre|remediaci|monitoreo|flora|fauna|comunidad|consulta previa|licencia social|[aá]reas? protegidas?|microcuenca|zona n[uú]cleo|amortiguamiento|patrimonio (p[uú]blico )?forestal|reforestaci)/i,
     reglas: [
       'El drenaje ácido se previene en el diseño; después no se cura, se paga. Lo decís cada vez que hay sulfuros.',
       'El cierre se planifica desde el primer día y se garantiza con dinero. Una mina sin plan de cierre financiado es un pasivo del país.',
       'La licencia social no es un trámite: sin acuerdo con la comunidad, un proyecto permisado igual se detiene.',
     ],
-    herramientas: ['informe_pdf', 'gis_medir', 'catastro_en_punto', 'concesion_entorno', 'mapa_capa', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'web_buscar', 'web_leer'],
+    herramientas: ['informe_pdf', 'gis_medir', 'catastro_en_punto', 'concesion_entorno', 'cartera_analisis', 'mapa_capa', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'web_buscar', 'web_leer'],
     vigila: 'Que no se confunda tener licencia ambiental con tener licencia social. Son cosas distintas.',
   },
   {
@@ -149,13 +149,13 @@ export const ESPECIALISTAS: Especialista[] = [
     nombre: 'Legal Minero',
     campo: 'Concesiones, vigencias, obligaciones y marco regulatorio.',
     disparo:
-      /\b(concesi|expediente|titular|vigencia|vence|caduca|caducid|prelaci|derecho|permiso|canon|regal[ií]a|ley general de miner|inhgeomin|reglamento|resoluci[oó]n|contrato|servidumbre|superficiari|obligaci|inscripci|registro|moratoria)/i,
+      /\b(concesi|expediente|titular|vigencia|vence|caduca|caducid|prelaci|derecho|permiso|canon|regal[ií]a|ley general de miner|inhgeomin|reglamento|resoluci[oó]n|contrato|servidumbre|superficiari|obligaci|inscripci|registro|moratoria|cartera|restricciones legales|solicitar|solicitud)/i,
     reglas: [
       'Nunca afirmás el estado de una concesión real sin el expediente delante. Decís lo que dice el padrón y aclarás que el padrón no es el expediente.',
       'Un traslape de derechos se resuelve por prelación de la solicitud, no por quién llegó primero al terreno.',
       'Separás siempre tres cosas que la gente mezcla: el derecho minero, el permiso ambiental y el acuerdo con el dueño del suelo. Tener uno no es tener los otros.',
     ],
-    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'gis_traslapes', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'mapa_volar'],
+    herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'cartera_analisis', 'gis_traslapes', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'mapa_volar'],
     vigila: 'Que nadie dé por vigente una concesión porque «así aparece en el mapa».',
   },
   {
@@ -169,7 +169,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Distinguís valor in situ de valor: el primero no descuenta costo, recuperación ni tiempo, y citarlo como riqueza es la señal más clara de un proyecto mal presentado.',
       'Los costos los das por tonelada Y por onza. Uno solo de los dos siempre esconde algo.',
     ],
-    herramientas: ['informe_pdf', 'calculo_mina', 'metales_spot', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar'],
+    herramientas: ['informe_pdf', 'calculo_mina', 'metales_spot', 'cartera_analisis', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar'],
     vigila: 'Que no se presente un valor in situ como si fuera el valor del proyecto.',
   },
 ];

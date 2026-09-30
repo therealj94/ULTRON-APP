@@ -599,10 +599,19 @@ export async function aprender(
     // Un archivo entero repetido merece una frase clara, no el resumen de siempre seguido de un
     // «las salté». Quien vuelve a subir algo casi siempre es porque duda de si lo subió.
     const nadaNuevo = !guardado.concesiones && !guardado.entidades && guardado.repetidas > 0;
+    if (nadaNuevo && guardado.cartera) {
+      const n = guardado.cartera.concesiones;
+      return {
+        clase: 'catastro',
+        dicho: `«${guardado.cartera.nombre}» es una cartera: sus ${n} ${n === 1 ? 'concesión ya está' : 'concesiones ya están'} en el catastro con el mismo polígono, así que no dupliqué nada. La registré como cartera; pedime «analizá la cartera ${guardado.cartera.nombre}» para ver restricciones, traslapes y prioridades de cada una.`,
+        avisos,
+        ui: { accion: 'capa', capa_id: null, concesiones: 0, repetidas: guardado.repetidas, traslapes: 0, cartera: guardado.cartera },
+      };
+    }
     if (nadaNuevo) {
       return {
         clase: 'catastro',
-        dicho: `Ese catastro ya estaba cargado: las ${guardado.repetidas} geometrías son las mismas que ya tengo, así que no metí nada y no dupliqué la capa.`,
+        dicho: `Esa capa ya estaba cargada: las ${guardado.repetidas} geometrías son las mismas que ya tengo, así que no metí nada y no dupliqué la capa.`,
         avisos,
         ui: { accion: 'capa', capa_id: null, concesiones: 0, repetidas: guardado.repetidas, traslapes: 0 },
       };
@@ -620,6 +629,9 @@ export async function aprender(
       partes.push(
         `${guardado.repetidas} ${guardado.repetidas === 1 ? 'ya estaba cargada y la salté' : 'ya estaban cargadas y las salté'}: la misma geometría no entra dos veces.`
       );
+    }
+    if (guardado.cartera) {
+      partes.push(`Las que ya estaban forman la cartera «${guardado.cartera.nombre}» (${guardado.cartera.concesiones}): se puede analizar entera.`);
     }
     if (guardado.reparadas) {
       const n = guardado.reparadas;

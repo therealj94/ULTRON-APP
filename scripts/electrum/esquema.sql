@@ -569,6 +569,29 @@ CREATE OR REPLACE FUNCTION electrum_rol_capa(nombre text) RETURNS text AS $$
   FROM (SELECT trim(regexp_replace(lower(unaccent(coalesce(nombre, ''))), '[^a-z0-9]+', ' ', 'g')) AS n) t;
 $$ LANGUAGE sql STABLE;
 
+ALTER TABLE capa ADD COLUMN IF NOT EXISTS huella text;
+CREATE INDEX IF NOT EXISTS capa_huella_idx ON capa (huella);
+
+-- Carteras: una selección del catastro (las zonas de una empresa, las que se presentaron…). Se
+-- guardan por HUELLA de geometría, no por id: el catastro se recarga y los ids cambian, el polígono no.
+CREATE TABLE IF NOT EXISTS cartera (
+  id          bigserial PRIMARY KEY,
+  nombre      text NOT NULL UNIQUE,
+  origen      text,
+  por         text,
+  creada      timestamptz NOT NULL DEFAULT now(),
+  actualizada timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS cartera_concesion (
+  cartera_id  bigint NOT NULL REFERENCES cartera(id) ON DELETE CASCADE,
+  huella      text NOT NULL,
+  expediente  text,
+  nombre      text,
+  atributos   jsonb NOT NULL DEFAULT '{}'::jsonb,
+  PRIMARY KEY (cartera_id, huella)
+);
+CREATE INDEX IF NOT EXISTS cartera_concesion_huella_idx ON cartera_concesion (huella);
+
 -- Las capas de JICA que ya estaban cargadas como entidades sin rol pasan a histórico.
 UPDATE capa c SET rol = 'historico'
  WHERE c.rol IS NULL AND electrum_rol_capa(c.nombre) = 'historico'

@@ -337,6 +337,8 @@ const TILDES: Record<string, string> = {
   'ordo?ez': 'ordoñez', 'caba?as': 'cabañas', 'am?rica': 'américa', 'pe?itas': 'peñitas', 'ren?': 'rené',
   'agr?colas': 'agrícolas', 'garc?a': 'garcía', 'liberte?o': 'liberteño', 'r?cord': 'récord', 'd?az': 'díaz',
   'rub?': 'rubí', 'ilangue?os': 'ilangueños', 'cofrad?a': 'cofradía', 'mart?n': 'martín',
+  // Los .dbf de ICF (áreas protegidas, patrimonio forestal) y la cartera INDEXSA.
+  '??rea': 'área', '?rea': 'área', 'mart?nez': 'martínez', 'an?nima': 'anónima', 'goascor??n': 'goascorán', 'goascor?n': 'goascorán',
 };
 
 /**
