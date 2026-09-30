@@ -1010,6 +1010,28 @@ quitada.
 El id de voz entra en la clave de la caché de audio. Sin eso, el primer cerebro que hablara dejaría
 su timbre guardado y el otro contestaría con la voz ajena.
 
+### Español o inglés, según le hablen
+
+Contesta en **español por defecto** y en **inglés si le hablan en inglés**, por voz o escrito. La
+misma voz del Doctor habla los dos idiomas.
+
+- **Oído** (`/api/electrum/oir`): transcribe en modo `auto`. Scribe detecta el idioma y lo devuelve.
+  Whisper y Gemini no lo dicen, así que se lee del texto (`lib/idioma-detectar.ts`). Si detecta otra
+  lengua (una frase corta en español a veces sale «portugués»), vuelve a oír en español.
+- **Turno**: manda el texto de la pregunta. Si no lo dice («Olancho», «ok»), vale la pista del
+  micrófono y, si tampoco, el idioma de la pregunta anterior. Sin ninguna señal, español. En inglés se
+  añade al final del prompt `LINEA_INGLES`: contestar en inglés y dejar tal cual los nombres propios
+  (concesiones, expedientes, INHGEOMIN).
+- **Voz** (`/api/electrum/voz`): lee en el idioma de la respuesta (`idioma` en el evento `fin`). Las
+  muletillas de espera («Déjeme revisar…» / «Let me check…») van en el idioma de la pregunta y se
+  pronuncian en el suyo.
+- **App**: sigue el idioma de la respuesta para la voz. El dictado del teléfono es del sistema y
+  sigue en `es-HN`; lo escrito en inglés sí se contesta en inglés.
+
+El detector es conservador a propósito: solo dice «inglés» cuando está claro, porque contestar en
+inglés a quien habló en español es peor que lo contrario. Los nombres propios («Minas de Oro», «Santa
+Bárbara») no cuentan.
+
 En la pantalla la voz **arranca apagada**: los navegadores no dejan sonar nada hasta que alguien
 toca algo, y una demostración que empieza hablando sola en una sala de reunión es peor que una que
 espera a que se lo pidan.

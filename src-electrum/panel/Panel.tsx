@@ -27,12 +27,14 @@ import { capturaDelMapa } from '../mapa/captura';
 import { sinMovimiento } from '../movimiento';
 import { ALTURAS, guardarPreferencia, leerPreferencia, repartoDe, siguienteReparto } from '../preferencias';
 import { callar, desbloquear, escucharMudo, estaMudo, hablar, hablarDialogo, prepararRelleno, rellenar, silenciar, suena, type LineaDialogo } from './voz';
-import { FRASES_GENERALES, fraseDeEspera, fraseDeTrabajo } from './trabajando';
+import { FRASES_GENERALES, FRASES_GENERALES_EN, fraseDeEspera, fraseDeTrabajo } from './trabajando';
 import { RETRATOS } from '../personajes/Retratos';
 import { EMOCION_DE, expresionDeLinea } from '../personajes/expresion';
 import { comentar, mesaAbierta, type TemaComentario } from '../personajes/mesa';
 import { pedidoDeFiltro, pedidoDeLugar } from '../../lib/pedidos-mapa';
 import { headersElectrum, SIN_PUERTA } from '../acceso';
+import { fijarIdioma, idiomaActual } from './idioma';
+import { idiomaDelTurno } from '../../lib/idioma-detectar';
 import { Opinion } from './Opinion';
 import { Escuela } from '../escuela/Escuela';
 import { Biblioteca } from '../biblioteca/Biblioteca';
@@ -183,8 +185,11 @@ async function grabar(
        * pasaba de «pasando a texto…» a nada. Quien dictó con las manos sucias no sabía si tenía que
        * repetirlo o esperar.
        */
-      if (j?.texto) alTexto(j.texto);
-      else if (r.status === 401) alFallo(SIN_PUERTA);
+      if (j?.texto) {
+        // Español o inglés, según lo que se dictó: la respuesta y su voz siguen ese idioma.
+        fijarIdioma(j.idioma);
+        alTexto(j.texto);
+      } else if (r.status === 401) alFallo(SIN_PUERTA);
       else if (!r.ok) alFallo(j?.error ? `No te pude oír: ${j.error}` : `No te pude oír: el servidor contestó ${r.status}.`);
       else alFallo('No te entendí nada. Probá otra vez, más cerca del micrófono.');
     } catch {
@@ -550,6 +555,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
       let ultimaFrase = Date.now();
       let esperas = 0;
       const dichas = new Set<string>();
+      // Las muletillas van en el idioma de la pregunta (el mismo criterio que usa el servidor).
+      const idiomaPregunta = idiomaDelTurno(q, idiomaActual());
       const decirTrabajo = (frase: string) => {
         dichas.add(frase);
         ultimaFrase = Date.now();
@@ -559,15 +566,16 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
         });
       };
       if (vozActivaRef.current) {
-        decirTrabajo(fraseDeTrabajo(q));
+        decirTrabajo(fraseDeTrabajo(q, Math.random, idiomaPregunta));
         // La próxima general queda lista para que salga sin espera.
-        prepararRelleno(FRASES_GENERALES[Math.floor(Math.random() * FRASES_GENERALES.length)], headersElectrum());
+        const generales = idiomaPregunta === 'en' ? FRASES_GENERALES_EN : FRASES_GENERALES;
+        prepararRelleno(generales[Math.floor(Math.random() * generales.length)], headersElectrum());
       }
       const relojEspera = window.setInterval(() => {
         if (respondiendo || !vozActivaRef.current || suena() || esperas >= 4) return;
         if (Date.now() - ultimaFrase < 9000) return;
-        let frase = fraseDeEspera(ultimaHerramienta, esperas);
-        if (dichas.has(frase)) frase = fraseDeEspera(null, esperas);
+        let frase = fraseDeEspera(ultimaHerramienta, esperas, idiomaPregunta);
+        if (dichas.has(frase)) frase = fraseDeEspera(null, esperas, idiomaPregunta);
         esperas++;
         decirTrabajo(frase);
       }, 1000);
@@ -616,6 +624,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
             internet: internetRef.current,
             // Con la mesa abierta, contestan los tres discutiendo.
             mesa: mesaAbierta(),
+            // Pista por si la pregunta sola no dice el idioma («Olancho», «ok»).
+            idioma: idiomaActual(),
             hilo: turnosRef.current
               .filter((t) => !t.local)
               .slice(-24)
@@ -708,6 +718,8 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
                 } else if (evento === 'fin') {
                   cerrado = true;
                   respondiendo = true;
+                  // La voz lee en el idioma en que contestó (español si no lo dice).
+                  fijarIdioma(d.idioma);
                   onFace('SPEAKING');
                   // La etiqueta con la que se va a DECIR (v4) manda sobre un «neutral» del cerebro.
                   const deVoz = typeof d.voz === 'string' ? expresionDeLinea(d.voz, true) : 'neutral';

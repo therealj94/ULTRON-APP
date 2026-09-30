@@ -20,6 +20,7 @@
  * El modo «tocar para hablar» apaga esto y deja el botón de dictado de siempre.
  */
 import { headersElectrum } from '../acceso';
+import { fijarIdioma } from './idioma';
 
 export type EstadoOido = 'apagado' | 'pidiendo' | 'escuchando' | 'oyendo' | 'pasando' | 'sin-permiso' | 'sin-soporte';
 
@@ -181,6 +182,7 @@ export function crearOido(op: Opciones) {
           continue;
         }
         const j = await r.json().catch(() => ({}) as any);
+        if (j?.texto) fijarIdioma(j.idioma);
         return String(j?.texto || '').trim();
       } catch {
         if (intento === 0) await new Promise((ok) => setTimeout(ok, 400));
