@@ -105,6 +105,9 @@ export function PulseProvider({ children, abrirChatEnModal = true }: { children:
       },
       traerTurno: RELEVO.turno,
       aparato: RELEVO.miId,
+      // Quién soy (desempate de llamadas cruzadas) y cómo se llama cada contacto (la notificación).
+      correo: () => RELEVO.quien()?.correo || '',
+      nombre: (correo) => RELEVO.contactosConocidos().find((c) => c.correo === correo)?.nombre || correo.split('@')[0],
     });
   }, [soltarSiDetras]);
 

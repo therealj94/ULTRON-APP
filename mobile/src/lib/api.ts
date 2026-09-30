@@ -185,6 +185,8 @@ export type ChatResult = {
   ms?: number;
   via?: string;
   error?: string;
+  /** Lo que AURA pidió hacer en la app (AccionApp del contrato); la mesa lo pasa al bus. */
+  acciones?: unknown;
 };
 
 type TurnoOpts = {
@@ -223,7 +225,7 @@ export async function turno(opts: TurnoOpts): Promise<ChatResult> {
     const pelado = pelarEtiqueta(String(data.reply || ''));
     const emocion = data.emocion ? normalizarEmocion(data.emocion) : pelado.emocion || 'neutral';
     const voz = data.voz ? pelarEtiqueta(String(data.voz)).texto.trim() : undefined;
-    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error };
+    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error, acciones: data.acciones };
   } catch (e: any) {
     return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro' };
   }
@@ -307,6 +309,7 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
             emocion: emocion || 'neutral',
             ms: data.ms,
             via: data.via,
+            acciones: data.acciones,
           };
         } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error') };
       }
