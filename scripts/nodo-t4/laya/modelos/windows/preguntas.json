@@ -1,0 +1,250 @@
+{
+ "win_ninguna": {
+  "type": "noul",
+  "instructions": "¿Esto NO es una orden para la computadora?",
+  "criteria": {
+   "true": "sí: no es una orden para la computadora; es conversación, una pregunta, algo que se cuenta o una negación («¿qué es un notch?», «ayer abrí word y se trabó», «no abras nada»)",
+   "false": "no: es una orden para que AURA haga algo en Windows"
+  }
+ },
+ "win_abrir_app": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: abrir o iniciar una aplicación instalada («abre excel», «launch spotify»)",
+   "false": "no: abrir una carpeta, un archivo o una página web, o una pregunta sobre una app"
+  }
+ },
+ "win_abrir_carpeta": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: abrir una carpeta del equipo («abre descargas», «show me documents»)",
+   "false": "no: abrir una aplicación, un archivo o una página web"
+  }
+ },
+ "win_buscar_web": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: buscar algo en internet («busca el precio del café», «google flights to roatan»)",
+   "false": "no: abrir un sitio concreto, o preguntar algo que el cerebro contesta"
+  }
+ },
+ "win_abrir_web": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: abrir un sitio o página web concreta («abre youtube», «go to gmail»)",
+   "false": "no: buscar un tema en internet o abrir una app instalada"
+  }
+ },
+ "win_escribir": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: escribir o pegar texto en la ventana activa, Word o el Bloc de notas («escribe hola en el bloc de notas»)",
+   "false": "no: redactar un documento nuevo en el borrador o contar que se escribió algo"
+  }
+ },
+ "win_redactar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: componer un documento o texto nuevo («redáctame una carta de renuncia», «draft an email to the bank»)",
+   "false": "no: escribir un texto literal en otra ventana, o preguntar cómo se redacta"
+  }
+ },
+ "win_ver_pantalla": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: mirar, leer o explicar lo que hay en la pantalla («qué ves en mi pantalla»)",
+   "false": "no: guardar una captura, o preguntar qué es una captura"
+  }
+ },
+ "win_captura": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: tomar y guardar una captura de pantalla («toma un screenshot»)",
+   "false": "no: pedir que mire o explique la pantalla"
+  }
+ },
+ "win_volumen_subir": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: subir el volumen del equipo («súbele», «louder»)",
+   "false": "no: bajar o silenciar, o hablar de volumen de ventas"
+  }
+ },
+ "win_volumen_bajar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: bajar el volumen del equipo («bájale», «turn it down»)",
+   "false": "no: subir o silenciar"
+  }
+ },
+ "win_silenciar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: silenciar o volver a activar el sonido del equipo («mute», «quita el mute»)",
+   "false": "no: callar a AURA o bajar el volumen un poco"
+  }
+ },
+ "win_multimedia_pausa": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: pausar o reanudar la música o el video («pausa la canción», «play»)",
+   "false": "no: pausar las acciones de AURA o callarla"
+  }
+ },
+ "win_multimedia_siguiente": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: pasar a la canción siguiente o anterior («next song»)",
+   "false": "no: pausar o preguntar qué canción es"
+  }
+ },
+ "win_recordar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: un recordatorio o temporizador en el tiempo («recuérdame en 10 minutos tomar agua»)",
+   "false": "no: preguntar si AURA recuerda un dato («¿te acuerdas de…?»)"
+  }
+ },
+ "win_callar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: que AURA deje de hablar ya («cállate», «stop talking»)",
+   "false": "no: pausar la música o pausar todas las acciones"
+  }
+ },
+ "win_pausa": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: detener todas las acciones de AURA en la computadora («pausa todo»)",
+   "false": "no: callar la voz o pausar la música"
+  }
+ },
+ "win_abrir_chat": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: abrir el panel de chat de AURA («abre el chat», «expand»)",
+   "false": "no: abrir un chat de otra app o esconder el panel"
+  }
+ },
+ "win_ocultar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: esconder o recoger el panel de AURA al notch («escóndete», «hide»)",
+   "false": "no: abrir el chat o minimizar todas las ventanas"
+  }
+ },
+ "win_avatar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: cambiar de avatar (AU-RA, Claudio, ANT-ONIO, Guardián) («cambia a claudio»)",
+   "false": "no: preguntar por un avatar o hablar de él"
+  }
+ },
+ "win_escritorio": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: mostrar el escritorio minimizando todo («minimiza todo»)",
+   "false": "no: abrir la carpeta Escritorio, o minimizar solo una ventana"
+  }
+ },
+ "win_bloquear": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: bloquear el equipo («bloquea la compu», «lock the pc»)",
+   "false": "no: preguntar cómo se bloquea un teléfono"
+  }
+ },
+ "win_pulsar": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: pulsar un botón, pestaña, menú u opción de la ventana activa por su nombre («dale a guardar», «open the insert tab»)",
+   "false": "no: abrir una aplicación, o preguntar para qué sirve un botón"
+  }
+ },
+ "win_que_hay": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: que AURA diga qué botones u opciones tiene la ventana activa («qué botones hay»)",
+   "false": "no: pedir que explique lo que se ve en pantalla"
+  }
+ },
+ "win_ventana": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: cambiar a otra ventana abierta, o minimizar, maximizar o cerrar una ventana («cambia a chrome», «cierra esta ventana»)",
+   "false": "no: abrir una app nueva, mostrar el escritorio o esconder a AURA"
+  }
+ },
+ "win_info": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: preguntar al equipo la hora, la fecha, la batería, el espacio en disco o si hay internet («qué hora es», «cuánta batería me queda»)",
+   "false": "no: la hora de otro lugar, o la batería de otra cosa"
+  }
+ },
+ "win_portapapeles": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: hacer algo con el texto copiado («resume lo que copié», «read my clipboard»)",
+   "false": "no: contar que se copió algo"
+  }
+ },
+ "win_abrir_archivo": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: abrir o buscar un archivo del equipo por su nombre, o la última descarga («abre el archivo del contrato»)",
+   "false": "no: abrir una carpeta o una aplicación"
+  }
+ },
+ "win_musica": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: saber qué suena o poner música en Spotify o YouTube Music («qué canción es esta», «pon salsa en spotify»)",
+   "false": "no: hablar de música o pausar/pasar la canción"
+  }
+ },
+ "win_correo": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: leer, contar o resumir los correos de la persona («léeme mis correos»)",
+   "false": "no: hablar de un correo o redactar uno nuevo"
+  }
+ },
+ "win_agenda": {
+  "type": "noul",
+  "instructions": "¿Esto es lo que la persona le pide a AURA en su computadora con Windows?",
+  "criteria": {
+   "true": "sí: lo que tiene en el calendario («qué tengo hoy», «mi próxima reunión»)",
+   "false": "no: contar que tiene una reunión o crear un recordatorio"
+  }
+ }
+}

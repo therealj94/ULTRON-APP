@@ -16,6 +16,7 @@ import { personalidadDelTurno } from './server/prompt-turno';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
 import { montarRutasCaras } from './server/caras-rutas';
+import { montarRutasWindows } from './server/windows-rutas';
 import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
   abrirTurnoApp,
@@ -1327,6 +1328,9 @@ montarRutasApp(app, {
 // Las caras que conoce AURA, con permiso y por persona (solo números, nunca fotos).
 montarRutasCaras(app, { exigirMesa, limitar, sesionDe });
 
+// AURA para Windows (el .exe): Laya «windows» del nodo. Cerebro, voz y oído son las rutas de siempre.
+montarRutasWindows(app, { exigirMesa, limitar });
+
 app.get('/api/capacidades', limitar(30), async (req, res) => {
   const s = await medirSalud();
   const canales = catalogoCanales();
@@ -2090,6 +2094,8 @@ const sinDatoVoz = (que: string) =>
  * «vete atrás» escrito en la web de la mesa movía el teléfono de la misma cuenta.
  */
 function turnoDeLaApp(body: any, opciones: OpcionesTurno): boolean {
+  // El escritorio (Windows) tiene sus propias manos: una frase dicha allí no mueve el teléfono.
+  if (body?.origen === 'windows') return false;
   return !!opciones.voz || body?.origen === 'app';
 }
 
@@ -2097,6 +2103,15 @@ function turnoDeLaApp(body: any, opciones: OpcionesTurno): boolean {
  * El cuerpo de un turno HTTP: lo del cliente (sin campos internos) + quién es, desde dónde habla y
  * con qué nivel (junta o miembro, server/nivel.ts). El nivel lo pone SIEMPRE el servidor.
  */
+/**
+ * `app` (la APK 5.0) o `windows` (el .exe de AURA para Windows). Cualquier otra cosa, null (la web).
+ * Windows habla con la voz rápida, pero NUNCA mueve la app del teléfono: no es `app` (turnoDeLaApp).
+ */
+export function origenDe(cabecera: unknown): 'app' | 'windows' | null {
+  const o = String(cabecera || '').trim().toLowerCase();
+  return o === 'app' ? 'app' : o === 'windows' ? 'windows' : null;
+}
+
 function cuerpoTurnoHttp(req: express.Request) {
   const s = sesionDe(req);
   return {
@@ -2105,7 +2120,7 @@ function cuerpoTurnoHttp(req: express.Request) {
     usuario: req.body?.usuario || req.body?.userName || s?.nombre,
     sesion: s,
     nivel: nivelDePeticion(req),
-    origen: String(req.headers['x-aura-origen'] || '').trim().toLowerCase() === 'app' ? 'app' : null,
+    origen: origenDe(req.headers['x-aura-origen']),
     aparato: aparatoValido(req.headers['x-aura-aparato']),
   };
 }
@@ -3145,9 +3160,9 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, (req,
   return turnoEnVivoConTraza(body, salida, { senal: corte.signal, voz: turnoHablado(body) });
 });
 
-/** Un turno que la app mandó dictado por voz (`hablado: true`, solo desde la app 5.0 con su cabecera). */
+/** Un turno dictado por voz (`hablado: true`) desde la app 5.0 o el .exe de Windows, con su cabecera. */
 export function turnoHablado(body: any): boolean {
-  return body?.origen === 'app' && body?.hablado === true;
+  return (body?.origen === 'app' || body?.origen === 'windows') && body?.hablado === true;
 }
 
 async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTurno = {}) {

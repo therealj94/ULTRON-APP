@@ -1,0 +1,795 @@
+{"q": "oye aura, quiero que me hagas una invitación para la fiesta ya", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/17"}
+{"q": "Uh, zip it", "e": ["win_callar"], "l": "en", "t": "win_callar/en/17"}
+{"q": "hey aura, make it louder", "e": ["win_volumen_subir"], "l": "en", "t": "win_volumen_subir/en/7"}
+{"q": "who was george washington", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/7"}
+{"q": "claudio, ponle más volumen pues", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/7"}
+{"q": "oye, escríbeme el informe está listo porfis", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/7"}
+{"q": "yo, run a search on free english courses", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/17"}
+{"q": "type into the active window payment was sent yesterday", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/17"}
+{"q": "aura, create a proposal for the client thank you", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/7"}
+{"q": "este... siguiente tema gracias", "e": ["win_multimedia_siguiente"], "l": "es", "t": "win_multimedia_siguiente/es/7"}
+{"q": "quien fue francisco morazan", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/7"}
+{"q": "mire, alto total ahorita!", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/17"}
+{"q": "para ya gracias...", "e": ["win_callar"], "l": "es", "t": "win_callar/es/27"}
+{"q": "para ya ya", "e": ["win_callar"], "l": "es", "t": "win_callar/es/27"}
+{"q": "baya, busca rápido quién ganó el partido porfis", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/17"}
+{"q": "búscame en la web quién ganó el partido", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/7"}
+{"q": "Ponme una alarma a las 5 para recoger a los cipotes si puedes", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/7"}
+{"q": "look at this error on screen", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/17"}
+{"q": "porfa sin sonido gracias", "e": ["win_silenciar"], "l": "es", "t": "win_silenciar/es/7"}
+{"q": "porfa abre mi archivo de mi currículum", "e": ["win_abrir_archivo"], "l": "es", "t": "win_abrir_archivo/es/7"}
+{"q": "aura please, prepare a draft of a complaint to the power company thank you", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/17"}
+{"q": "RESUME PLAYBACK OK", "e": ["win_multimedia_pausa"], "l": "en", "t": "win_multimedia_pausa/en/7"}
+{"q": "ya, abre mi archivo de mi currículum porfis", "e": ["win_abrir_archivo"], "l": "es", "t": "win_abrir_archivo/es/7"}
+{"q": "open the design tab", "e": ["win_pulsar"], "l": "en", "t": "win_pulsar/en/7"}
+{"q": "yo, volume to zero", "e": ["win_silenciar"], "l": "en", "t": "win_silenciar/en/7"}
+{"q": "este... dale doble clic a formato", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/17"}
+{"q": "eh, saca un borrador de un contrato de alquiler", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/27"}
+{"q": "hey claudio, look at my screen please", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/7"}
+{"q": "ké correos tengo", "e": ["win_correo"], "l": "es", "t": "win_correo/es/7"}
+{"q": "Hey aura, menos bolumen", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/7"}
+{"q": "uh, open the copy tab thank you", "e": ["win_pulsar"], "l": "en", "t": "win_pulsar/en/7"}
+{"q": "aura please, display my documents", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/17"}
+{"q": "Vaya, dale doble clic a siguiente", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/17"}
+{"q": "so, open the vlc program for me", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/17"}
+{"q": "Aura, quién fue francisco morazán", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/7"}
+{"q": "antonio, create a complaint to the power company real quick", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/7"}
+{"q": "ok, turn down the volume", "e": ["win_volumen_bajar"], "l": "en", "t": "win_volumen_bajar/en/7"}
+{"q": "okay aura, i need whatsapp", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/7"}
+{"q": "porfa abre instagram en internet", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/17"}
+{"q": "oye, lee los correos de la escuela si puedes", "e": ["win_correo"], "l": "es", "t": "win_correo/es/17"}
+{"q": "mire, pulsa el boton siguiente por favor", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/7"}
+{"q": "oye, abrete", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/7"}
+{"q": "i have a question!", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/87"}
+{"q": "okay aura, run a search on the dollar exchange rate thanks", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/17"}
+{"q": "So, make it louder", "e": ["win_volumen_subir"], "l": "en", "t": "win_volumen_subir/en/7"}
+{"q": "bueno, lee los correos de don carlos dale", "e": ["win_correo"], "l": "es", "t": "win_correo/es/17"}
+{"q": "aura please, prepare a draft of a rental agreement right now", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/17"}
+{"q": "Porfa estoy libre esta tarde ya", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/17"}
+{"q": "cierra esta ventana porfa", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/7"}
+{"q": "Ok aura, escríbeme hola, ya voy en camino porfis!", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/7"}
+{"q": "ponme una alarma a las 5 para recoger a los cipotes por favor", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/7"}
+{"q": "A ver, checa la pantalla", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/27"}
+{"q": "so, get bigger for me", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/17"}
+{"q": "can you look at this error on screen right now", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/17"}
+{"q": "ok aura, explícame lo que tengo en pantalla", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/17"}
+{"q": "métete a vlc", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/17"}
+{"q": "alright, i want to talk to ant-onio thanks", "e": ["win_avatar"], "l": "en", "t": "win_avatar/en/7"}
+{"q": "yo, stop all actions thank you?", "e": ["win_pausa"], "l": "en", "t": "win_pausa/en/7"}
+{"q": "hey, what can i do in this window", "e": ["win_que_hay"], "l": "en", "t": "win_que_hay/en/7"}
+{"q": "could you minimize file explorer right now", "e": ["win_ventana"], "l": "en", "t": "win_ventana/en/7"}
+{"q": "hey claudio, turn down the volume", "e": ["win_volumen_bajar"], "l": "en", "t": "win_volumen_bajar/en/7"}
+{"q": "claudio, menos volumen gracias", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/7"}
+{"q": "ey, qué correos tengo", "e": ["win_correo"], "l": "es", "t": "win_correo/es/7"}
+{"q": "please write that in word", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/7"}
+{"q": "estoy libre esta tarde rapidito", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/17"}
+{"q": "sácame la carpeta de descargas si puedes", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/17"}
+{"q": "ok aura, no hables mas?", "e": ["win_callar"], "l": "es", "t": "win_callar/es/17"}
+{"q": "abre el sitio de google drive porfis", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/7"}
+{"q": "prepare a draft of a party invitation real quick", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/17"}
+{"q": "display my documents", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/17"}
+{"q": "Arranca telegram pues", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/7"}
+{"q": "aura, sácame la papelera", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/17"}
+{"q": "Ok, open the view tab thanks", "e": ["win_pulsar"], "l": "en", "t": "win_pulsar/en/7"}
+{"q": "ok aura, pon música de salsa si puedes", "e": ["win_musica"], "l": "es", "t": "win_musica/es/7"}
+{"q": "la música de ayer estubo buena", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/17"}
+{"q": "cómo se sierra una ventana en windows", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/127"}
+{"q": "vaya, abre mi archivo de la tarea de ingles si puedes", "e": ["win_abrir_archivo"], "l": "es", "t": "win_abrir_archivo/es/7"}
+{"q": "ponle más volumen", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/7"}
+{"q": "Vaya, corrige lo que copié gracias", "e": ["win_portapapeles"], "l": "es", "t": "win_portapapeles/es/7"}
+{"q": "hey aura, write that in word right now...", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/7"}
+{"q": "UM, PREVIOS SONG REAL QUICK", "e": ["win_multimedia_siguiente"], "l": "en", "t": "win_multimedia_siguiente/en/7"}
+{"q": "hey, my car battery is dead", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/107"}
+{"q": "lee los correos de la escuela rapidito", "e": ["win_correo"], "l": "es", "t": "win_correo/es/17"}
+{"q": "antonio, run a search on how to fix a slow pc right now", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/17"}
+{"q": "sacame mis documentos", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/17"}
+{"q": "please be quiet", "e": ["win_callar"], "l": "en", "t": "win_callar/en/7"}
+{"q": "bueno, abre mi archivo de la tarea de inglés gracias", "e": ["win_abrir_archivo"], "l": "es", "t": "win_abrir_archivo/es/7"}
+{"q": "the music yesterday was great?", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/17"}
+{"q": "ALRIGHT, LOOK UP ONLINE HOW TO FIX A SLOW PC NOW", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/7"}
+{"q": "Para ya", "e": ["win_callar"], "l": "es", "t": "win_callar/es/27"}
+{"q": "teclea eso en el documento", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/27"}
+{"q": "uh, is the wifi working", "e": ["win_info"], "l": "en", "t": "win_info/en/7"}
+{"q": "oye aura, quiero que me hagas una invitación para la fiesta ahorita", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/17"}
+{"q": "open google drive in the browser", "e": ["win_abrir_web"], "l": "en", "t": "win_abrir_web/en/7"}
+{"q": "mira, redacta una invitasión para la fiesta porfis", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/7"}
+{"q": "my car battery is dead", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/107"}
+{"q": "please open my latest download for me", "e": ["win_abrir_archivo"], "l": "en", "t": "win_abrir_archivo/en/7"}
+{"q": "Create a proposal for the client pls", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/7"}
+{"q": "porfa cierra esta ventana", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/7"}
+{"q": "mirá, cambia a la dorada gracias", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/7"}
+{"q": "no me recuerdes nada", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/57"}
+{"q": "mire, cambia a la dorada", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/7"}
+{"q": "Oye, checa la pantalla rapidito", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/27"}
+{"q": "type into the active window payment was sent yesterday now", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/17"}
+{"q": "Abre el sitio de twitter ahorita", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/7"}
+{"q": "pulsa el botón insertar si puedes", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/7"}
+{"q": "so, open the sign out tab ok", "e": ["win_pulsar"], "l": "en", "t": "win_pulsar/en/7"}
+{"q": "sacame documentos", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/17"}
+{"q": "play the song salsa", "e": ["win_musica"], "l": "en", "t": "win_musica/en/7"}
+{"q": "could you display the desktop please", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/17"}
+{"q": "please i want to talk to the fox", "e": ["win_avatar"], "l": "en", "t": "win_avatar/en/7"}
+{"q": "please what emails do i have right now", "e": ["win_correo"], "l": "en", "t": "win_correo/en/7"}
+{"q": "Yo, stop all actions thank you!", "e": ["win_pausa"], "l": "en", "t": "win_pausa/en/7"}
+{"q": "EY, ESCRÍBEME EL INFORME ESTÁ LISTO SI PUEDES", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/7"}
+{"q": "hey, i have a question", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/87"}
+{"q": "Oye, quiero que me hagas un contrato de alquiler ya", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/17"}
+{"q": "okay aura, open google drive in the browser please...", "e": ["win_abrir_web"], "l": "en", "t": "win_abrir_web/en/7"}
+{"q": "porfa arranca vlc por favor", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/7"}
+{"q": "hey, show yourself", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/7"}
+{"q": "hey claudio, what emails do i have right now", "e": ["win_correo"], "l": "en", "t": "win_correo/en/7"}
+{"q": "mirá, lee los correos de la escuela", "e": ["win_correo"], "l": "es", "t": "win_correo/es/17"}
+{"q": "can you i need canva", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/7"}
+{"q": "este... arranca excel dale", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/7"}
+{"q": "ey, teclea eso en el documento pues", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/27"}
+{"q": "aura, who was george washington", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/7"}
+{"q": "mire, cambia a los ojos", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/7"}
+{"q": "Checa la pantalla ya", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/27"}
+{"q": "make it louder pls...", "e": ["win_volumen_subir"], "l": "en", "t": "win_volumen_subir/en/7"}
+{"q": "What emails do i have thanks", "e": ["win_correo"], "l": "en", "t": "win_correo/en/7"}
+{"q": "yo, open tiktok in the browser", "e": ["win_abrir_web"], "l": "en", "t": "win_abrir_web/en/7"}
+{"q": "Ya entendí, para de hablar gracias", "e": ["win_callar"], "l": "es", "t": "win_callar/es/7"}
+{"q": "porfa pulsa el botón copiar ahorita", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/7"}
+{"q": "I HAVE A QUESTION", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/87"}
+{"q": "aura please, write that in word pls", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/7"}
+{"q": "mira, arranca excel por favor", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/7"}
+{"q": "uh, look up online how to fix a slow pc thanks", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/7"}
+{"q": "Ok aura, quita esta bentana", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/17"}
+{"q": "Como se cierra una ventana en windows", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/127"}
+{"q": "Display pictures thanks", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/17"}
+{"q": "look up online restaurants near me!", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/7"}
+{"q": "ok, look at this error on screen now?", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/17"}
+{"q": "ya entendí, para de hablar", "e": ["win_callar"], "l": "es", "t": "win_callar/es/7"}
+{"q": "alright, zip it for me", "e": ["win_callar"], "l": "en", "t": "win_callar/en/17"}
+{"q": "Este... pon un temporizador a las 9", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/17"}
+{"q": "aura, translate hello to spanish", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/47"}
+{"q": "oye, dime algo bonito", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/47"}
+{"q": "take me to the desktop please", "e": ["win_escritorio"], "l": "en", "t": "win_escritorio/en/7"}
+{"q": "aura, abre mi archivo de la tarea de inglés", "e": ["win_abrir_archivo"], "l": "es", "t": "win_abrir_archivo/es/7"}
+{"q": "hey aura, can you use excel?", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/67"}
+{"q": "Busca rapido farmacias de turno por favor", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/17"}
+{"q": "browse my documents thanks", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/7"}
+{"q": "i need control panel thanks", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/7"}
+{"q": "Mira, hazte chiquita", "e": ["win_ocultar"], "l": "es", "t": "win_ocultar/es/7"}
+{"q": "aura please, screenshot this please", "e": ["win_captura"], "l": "en", "t": "win_captura/en/7"}
+{"q": "in 3 minutes remind me to stretch my legs real quick", "e": ["win_recordar"], "l": "en", "t": "win_recordar/en/7"}
+{"q": "ok aura, pon música de juan luis guerra porfis", "e": ["win_musica"], "l": "es", "t": "win_musica/es/7"}
+{"q": "oye, busca rápido tutoriales de excel dale", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/17"}
+{"q": "Aura, alto total ahorita...", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/17"}
+{"q": "eh, quiero que me hagas una invitacion para la fiesta", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/17"}
+{"q": "ok, run a search on the dollar exchange rate real quick", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/17"}
+{"q": "please look at my screen", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/7"}
+{"q": "hey claudio, play the song coldplay", "e": ["win_musica"], "l": "en", "t": "win_musica/en/7"}
+{"q": "Pon musica de musica cristiana", "e": ["win_musica"], "l": "es", "t": "win_musica/es/7"}
+{"q": "mira, corrige lo que copié ya", "e": ["win_portapapeles"], "l": "es", "t": "win_portapapeles/es/7"}
+{"q": "antonio, redacta un contrato de alquiler si puedes", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/7"}
+{"q": "browse the downloads folder", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/7"}
+{"q": "Oye, cierra esta ventana gracias", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/7"}
+{"q": "mire, pon un temporizador en 3 minutos porfa", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/17"}
+{"q": "type into the active window thank you for your time", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/17"}
+{"q": "Eh, alto total", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/17"}
+{"q": "hey, look at my screen now", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/7"}
+{"q": "siguiente tema", "e": ["win_multimedia_siguiente"], "l": "es", "t": "win_multimedia_siguiente/es/7"}
+{"q": "mira, cierra esta ventana...", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/7"}
+{"q": "antonio, busca rápido tutoriales de excel ya", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/17"}
+{"q": "abre el sitio de la página de la sar ya.", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/7"}
+{"q": "eh, escríbeme el informe está listo porfis", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/7"}
+{"q": "bloquea la pc dale", "e": ["win_bloquear"], "l": "es", "t": "win_bloquear/es/7"}
+{"q": "uh, open the control panel program", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/17"}
+{"q": "Aura, resume playback", "e": ["win_multimedia_pausa"], "l": "en", "t": "win_multimedia_pausa/en/7"}
+{"q": "be quiet thank you", "e": ["win_callar"], "l": "en", "t": "win_callar/en/7"}
+{"q": "oye, cómo funcionas", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/77"}
+{"q": "resume lo que dije", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/117"}
+{"q": "aura, ayudame a pensar", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/97"}
+{"q": "mira, abre instagram en internet pues", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/17"}
+{"q": "alright, browse the music folder for me", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/7"}
+{"q": "at 5 remind me to stretch my legs real quick", "e": ["win_recordar"], "l": "en", "t": "win_recordar/en/7"}
+{"q": "alright, browse my documents", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/7"}
+{"q": "oye aura, dicta querida mama ya", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/17"}
+{"q": "ok aura, arranca vlc aorita", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/7"}
+{"q": "QUITA ESTA VENTANA", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/17"}
+{"q": "la música de ayer estuvo buena", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/17"}
+{"q": "ey, teclea eso en el documento dale", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/27"}
+{"q": "vaya, explícame lo que tengo en pantalla porfa", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/17"}
+{"q": "oye aura, minimiza todas las ventanas ahorita", "e": ["win_escritorio"], "l": "es", "t": "win_escritorio/es/7"}
+{"q": "bueno, dale doble clic a compartir", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/17"}
+{"q": "este... busca rapido tutoriales de excel porfa", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/17"}
+{"q": "Prepare a draft of a proposal for the client ok", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/17"}
+{"q": "Este... abre la carpeta mis fotos gracias", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/7"}
+{"q": "ábrete gracias", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/7"}
+{"q": "run a search on how to fix a slow pc", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/17"}
+{"q": "what is a screenshot", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/27"}
+{"q": "okay aura, minimize canva", "e": ["win_ventana"], "l": "en", "t": "win_ventana/en/7"}
+{"q": "antonio, explícame lo que tengo en pantalla", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/17"}
+{"q": "play the song coldplay real quick", "e": ["win_musica"], "l": "en", "t": "win_musica/en/7"}
+{"q": "menos volumen porfis", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/7"}
+{"q": "can you look up online how to fix a slow pc now", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/7"}
+{"q": "hey claudio, open the help tab", "e": ["win_pulsar"], "l": "en", "t": "win_pulsar/en/7"}
+{"q": "display documents thank you", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/17"}
+{"q": "eh, cambia a la hormiga", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/7"}
+{"q": "e, qué puedo tocar aquí rapidito!", "e": ["win_que_hay"], "l": "es", "t": "win_que_hay/es/7"}
+{"q": "OYE, NO ME RECUERDES NADA", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/57"}
+{"q": "este... detén todo gracias", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/7"}
+{"q": "Aura por favor, teclea eso en el documento", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/27"}
+{"q": "yo, secure the computer", "e": ["win_bloquear"], "l": "en", "t": "win_bloquear/en/7"}
+{"q": "No.", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/77"}
+{"q": "my car battery is dead!", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/107"}
+{"q": "no", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/77"}
+{"q": "show yourself now", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/7"}
+{"q": "este... estoy libre esta tarde si puedes.", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/17"}
+{"q": "MIRA, PULSA EL BOTÓN IMPRIMIR AHORITA", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/7"}
+{"q": "Aura por favor, siguiente tema", "e": ["win_multimedia_siguiente"], "l": "es", "t": "win_multimedia_siguiente/es/7"}
+{"q": "please i want to talk to the guardian pls", "e": ["win_avatar"], "l": "en", "t": "win_avatar/en/7"}
+{"q": "resume lo que dije!", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/117"}
+{"q": "aura, i want to talk to claudio", "e": ["win_avatar"], "l": "en", "t": "win_avatar/en/7"}
+{"q": "Aura please, in 3 minutes remind me to stretch my legs real quick?", "e": ["win_recordar"], "l": "en", "t": "win_recordar/en/7"}
+{"q": "hey claudio, type into the active window to do today pls", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/17"}
+{"q": "HEY, SCREENSHOT THIS FOR ME", "e": ["win_captura"], "l": "en", "t": "win_captura/en/7"}
+{"q": "mira, ya entendi, para de hablar", "e": ["win_callar"], "l": "es", "t": "win_callar/es/7"}
+{"q": "mirá, dicta hola, ya voy en camino", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/17"}
+{"q": "Who was george washington.", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/7"}
+{"q": "hey aura, abre la carpeta la carpeta de musica", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/7"}
+{"q": "fijate, ponle más volumen por favor", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/7"}
+{"q": "ALRIGHT, PREPARE A DRAFT OF A COMPLAINT TO THE POWER COMPANY", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/17"}
+{"q": "can you make it louder please", "e": ["win_volumen_subir"], "l": "en", "t": "win_volumen_subir/en/7"}
+{"q": "ESTE... REDACTA UN CONTRATO DE ALQUILER YA", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/7"}
+{"q": "uh, i need control panel.", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/7"}
+{"q": "ok aura, arranca el explorador de archivos rapidito", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/7"}
+{"q": "cómo funcionas", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/77"}
+{"q": "please open the continue tab pls", "e": ["win_pulsar"], "l": "en", "t": "win_pulsar/en/7"}
+{"q": "Metete a el explorador de archivos porfa", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/17"}
+{"q": "e, abre mi archivo de la tarea de inglés ya", "e": ["win_abrir_archivo"], "l": "es", "t": "win_abrir_archivo/es/7"}
+{"q": "mirá, que me atienda el zorro por favor", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/17"}
+{"q": "mirá, dale doble clic a vista", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/17"}
+{"q": "oye, que suene más suave por favor", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/17"}
+{"q": "ey, ya entendi, para de hablar porfis", "e": ["win_callar"], "l": "es", "t": "win_callar/es/7"}
+{"q": "alright, run a search on free english courses", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/17"}
+{"q": "ok aura, explícame lo que tengo en pantalla gracias", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/17"}
+{"q": "hey aura, recommend me some music", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/57"}
+{"q": "Um, previous song", "e": ["win_multimedia_siguiente"], "l": "en", "t": "win_multimedia_siguiente/en/7"}
+{"q": "yo, show yourself", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/7"}
+{"q": "abre google drive en internet", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/17"}
+{"q": "ABRE MI ARCHIVO DE MI CURRÍCULUM DALE", "e": ["win_abrir_archivo"], "l": "es", "t": "win_abrir_archivo/es/7"}
+{"q": "aura, mañana es el cumpleaños de mi mamá", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/37"}
+{"q": "sácame la carpeta de música", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/17"}
+{"q": "um, stop all actions", "e": ["win_pausa"], "l": "en", "t": "win_pausa/en/7"}
+{"q": "aura, recommend me some music", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/57"}
+{"q": "aura, open instagram in the browser right now", "e": ["win_abrir_web"], "l": "en", "t": "win_abrir_web/en/7"}
+{"q": "aura, abre la carpeta la carpeta de descargas ahorita", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/7"}
+{"q": "get bigger!", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/17"}
+{"q": "hey claudio, i want to talk to the ant for me...", "e": ["win_avatar"], "l": "en", "t": "win_avatar/en/7"}
+{"q": "fijate, búscame en la web tutoriales de excel porfa", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/7"}
+{"q": "turn down the volume thank you", "e": ["win_volumen_bajar"], "l": "en", "t": "win_volumen_bajar/en/7"}
+{"q": "aura por favor, abre instagram en internet si puedes", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/17"}
+{"q": "mire, abre mi archivo de la tarea de inglés ya", "e": ["win_abrir_archivo"], "l": "es", "t": "win_abrir_archivo/es/7"}
+{"q": "hey, let me think", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/97"}
+{"q": "PLEASE RESUME PLAYBACK THANKS", "e": ["win_multimedia_pausa"], "l": "en", "t": "win_multimedia_pausa/en/7"}
+{"q": "zip it thank you", "e": ["win_callar"], "l": "en", "t": "win_callar/en/17"}
+{"q": "ok, open instagram in the browser please", "e": ["win_abrir_web"], "l": "en", "t": "win_abrir_web/en/7"}
+{"q": "vaya, redacta una propuesta para el cliente rapidito", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/7"}
+{"q": "um, get bigger right now", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/17"}
+{"q": "a ver, cuánto espacio me queda en el disco por favor", "e": ["win_info"], "l": "es", "t": "win_info/es/7"}
+{"q": "claudio, dicta el informe está listo rapidito", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/17"}
+{"q": "okay aura, improve the text i copied", "e": ["win_portapapeles"], "l": "en", "t": "win_portapapeles/en/7"}
+{"q": "Could you in 3 minutes remind me to stretch my legs ok", "e": ["win_recordar"], "l": "en", "t": "win_recordar/en/7"}
+{"q": "aura por favor, que tengo esta semana pues", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/7"}
+{"q": "aura, corrige lo que copié", "e": ["win_portapapeles"], "l": "es", "t": "win_portapapeles/es/7"}
+{"q": "oye aura, dime algo bonito", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/47"}
+{"q": "ey, ponme una alarma en 3 minutos para la reunión con el ingeniero gracias", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/7"}
+{"q": "Aura por favor, más fuerte ahorita", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/17"}
+{"q": "um, i want to talk to antonio please", "e": ["win_avatar"], "l": "en", "t": "win_avatar/en/7"}
+{"q": "uh, prepare a draft of a proposal for the client", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/17"}
+{"q": "que me atienda la dorada pues", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/17"}
+{"q": "bueno, pon música de juan luis guerra si puedes", "e": ["win_musica"], "l": "es", "t": "win_musica/es/7"}
+{"q": "este... búscame en la web vuelos a roatán gracias...", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/7"}
+{"q": "in 3 minutes remind me to da meeting with the engineer please", "e": ["win_recordar"], "l": "en", "t": "win_recordar/en/7"}
+{"q": "aura, i need control panel", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/7"}
+{"q": "aura, minimiza todas las ventanas", "e": ["win_escritorio"], "l": "es", "t": "win_escritorio/es/7"}
+{"q": "pon un temporizador en 3 minutos gracias", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/17"}
+{"q": "ok, is the wifi working pls", "e": ["win_info"], "l": "en", "t": "win_info/en/7"}
+{"q": "Búscame en la web quién ganó el partido.", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/7"}
+{"q": "ok aura, explícame lo que tengo en pantalla pues", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/17"}
+{"q": "este... no hables más rapidito", "e": ["win_callar"], "l": "es", "t": "win_callar/es/17"}
+{"q": "um, open the vlc program please", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/17"}
+{"q": "aura please, run a search on the dollar exchange rate", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/17"}
+{"q": "hey aura, browse the downloads folder pls", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/7"}
+{"q": "aura, pausa el video porfis", "e": ["win_multimedia_pausa"], "l": "es", "t": "win_multimedia_pausa/es/7"}
+{"q": "QUÉ TENGO ESTA SEMANA", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/7"}
+{"q": "Look at my screen", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/7"}
+{"q": "a ver, explicame lo que tengo en pantalla gracias...", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/17"}
+{"q": "improve the text i copied thank you", "e": ["win_portapapeles"], "l": "en", "t": "win_portapapeles/en/7"}
+{"q": "minimize telegram pls", "e": ["win_ventana"], "l": "en", "t": "win_ventana/en/7"}
+{"q": "mirá, revisa esta ventana gracias", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/7"}
+{"q": "what is a screenshot!", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/27"}
+{"q": "a ver, lee los correos de amason por favor", "e": ["win_correo"], "l": "es", "t": "win_correo/es/17"}
+{"q": "bueno, minimiza todas las ventanas", "e": ["win_escritorio"], "l": "es", "t": "win_escritorio/es/7"}
+{"q": "hey aura, saca un borrador de una propuesta para el cliente rapidito", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/27"}
+{"q": "please zip it thank you", "e": ["win_callar"], "l": "en", "t": "win_callar/en/17"}
+{"q": "Porfa que suene más suave", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/17"}
+{"q": "eh, abrete porfis", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/7"}
+{"q": "vaya, sin sonido si puedes", "e": ["win_silenciar"], "l": "es", "t": "win_silenciar/es/7"}
+{"q": "browse onedrive!", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/7"}
+{"q": "abre mi archivo de la tarea de ingles", "e": ["win_abrir_archivo"], "l": "es", "t": "win_abrir_archivo/es/7"}
+{"q": "ok aura, siguiente tema si puedes", "e": ["win_multimedia_siguiente"], "l": "es", "t": "win_multimedia_siguiente/es/7"}
+{"q": "dime algo bonito", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/47"}
+{"q": "Mira, abre la carpeta la papelera", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/7"}
+{"q": "Ya, abre tu ventana", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/17"}
+{"q": "bueno, ponle mas volumen", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/7"}
+{"q": "Aura, lee los correos de don carlos", "e": ["win_correo"], "l": "es", "t": "win_correo/es/17"}
+{"q": "yo, at 9 remind me to pick up the kids thanks", "e": ["win_recordar"], "l": "en", "t": "win_recordar/en/7"}
+{"q": "aura por favor, cambia a la hormiga por favor", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/7"}
+{"q": "escríbeme querida mamá?", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/7"}
+{"q": "please type into the active window to do today", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/17"}
+{"q": "vaya, detén todo aorita...", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/7"}
+{"q": "yo, turn down the volume", "e": ["win_volumen_bajar"], "l": "en", "t": "win_volumen_bajar/en/7"}
+{"q": "um, improve the text i copied real quick", "e": ["win_portapapeles"], "l": "en", "t": "win_portapapeles/en/7"}
+{"q": "vaya, arranca el calendario ahorita", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/7"}
+{"q": "antonio, redacta una invitación para la fiesta pues", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/7"}
+{"q": "porfa cambia a la dorada", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/7"}
+{"q": "ok, look up online free english courses now", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/7"}
+{"q": "oye, busca rápido farmacias de turno rapidito", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/17"}
+{"q": "bueno, abre instagram en internet porfa", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/17"}
+{"q": "Mirá, lee los correos de la escuela pues", "e": ["win_correo"], "l": "es", "t": "win_correo/es/17"}
+{"q": "Quiero que me hagas un contrato de alquiler porfa", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/17"}
+{"q": "i want to talk to the golden one thanks", "e": ["win_avatar"], "l": "en", "t": "win_avatar/en/7"}
+{"q": "quita esta ventana porfis", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/17"}
+{"q": "let me think", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/97"}
+{"q": "alright, resume playback for me...", "e": ["win_multimedia_pausa"], "l": "en", "t": "win_multimedia_pausa/en/7"}
+{"q": "abre tu ventana", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/17"}
+{"q": "antonio, abre el sitio de twitter porfis", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/7"}
+{"q": "aura, play the song worship music please", "e": ["win_musica"], "l": "en", "t": "win_musica/en/7"}
+{"q": "aura por favor, quiero que me hagas una invitacion para la fiesta?", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/17"}
+{"q": "mira, que me atienda antonio", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/17"}
+{"q": "Antonio, volume to zero", "e": ["win_silenciar"], "l": "en", "t": "win_silenciar/en/7"}
+{"q": "métete a vlc dale", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/17"}
+{"q": "cold you create a party invitation real quick", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/7"}
+{"q": "Más fuerte", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/17"}
+{"q": "oye, abre la página de la sar en internet", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/17"}
+{"q": "screenshot this", "e": ["win_captura"], "l": "en", "t": "win_captura/en/7"}
+{"q": "Oye aura, lee los correos de la escuela.", "e": ["win_correo"], "l": "es", "t": "win_correo/es/17"}
+{"q": "mire, métete a canva", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/17"}
+{"q": "revisa esta ventana...", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/7"}
+{"q": "get bigger", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/17"}
+{"q": "can you in 5 minutes remind me to the meeting with the engineer ok", "e": ["win_recordar"], "l": "en", "t": "win_recordar/en/7"}
+{"q": "ok, what can i do in this window", "e": ["win_que_hay"], "l": "en", "t": "win_que_hay/en/7"}
+{"q": "mira, cuanto espacio me queda en el disco gracias", "e": ["win_info"], "l": "es", "t": "win_info/es/7"}
+{"q": "quiero que me hagas un reclamo para la empresa de luz", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/17"}
+{"q": "a ver, abre google drive en internet", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/17"}
+{"q": "at 5 remind me to pick up the kids thank you", "e": ["win_recordar"], "l": "en", "t": "win_recordar/en/7"}
+{"q": "AURA PLEASE, OPEN GITHUB IN THE BROWSER!", "e": ["win_abrir_web"], "l": "en", "t": "win_abrir_web/en/7"}
+{"q": "hey aura, screenshot", "e": ["win_captura"], "l": "es", "t": "win_captura/es/7"}
+{"q": "fijate, cuánto espacio me queda en el disco por favor", "e": ["win_info"], "l": "es", "t": "win_info/es/7"}
+{"q": "aura, abre el sitio de la página de la sar gracias", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/7"}
+{"q": "este... no hables más rapidito?", "e": ["win_callar"], "l": "es", "t": "win_callar/es/17"}
+{"q": "yo, open the whatsapp program real quick", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/17"}
+{"q": "ya, busca rápido quién ganó el partido dale", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/17"}
+{"q": "open the the calendar program ok", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/17"}
+{"q": "can you is the wifi working", "e": ["win_info"], "l": "en", "t": "win_info/en/7"}
+{"q": "hey, type into the active window payment was sent yesterday", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/17"}
+{"q": "can you open the review tab please", "e": ["win_pulsar"], "l": "en", "t": "win_pulsar/en/7"}
+{"q": "UM, CREATE A RENTAL AGREEMENT PLS", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/7"}
+{"q": "hey claudio, secure the computer now", "e": ["win_bloquear"], "l": "en", "t": "win_bloquear/en/7"}
+{"q": "Hey aura, ponme una alarma a las 5 para recoger a los cipotes pues", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/7"}
+{"q": "can you open github in the browser", "e": ["win_abrir_web"], "l": "en", "t": "win_abrir_web/en/7"}
+{"q": "YO, LOOK UP ONLINE HOW TO FIX A SLOW PC FOR ME", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/7"}
+{"q": "dicta querida mamá", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/17"}
+{"q": "oye, olvide pagar la tarjeta", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/67"}
+{"q": "Antonio, métete a excel porfa", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/17"}
+{"q": "ya, más fuerte rapidito", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/17"}
+{"q": "hey aura, siguiente tema ahorita", "e": ["win_multimedia_siguiente"], "l": "es", "t": "win_multimedia_siguiente/es/7"}
+{"q": "saca un borrador de una invitación para la fiesta ahorita!", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/27"}
+{"q": "is the wifi working", "e": ["win_info"], "l": "en", "t": "win_info/en/7"}
+{"q": "fijate, que suene más suave", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/17"}
+{"q": "create a complaint to the power company please!", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/7"}
+{"q": "MIRA, DALE DOBLE CLIC A AGREGAR RAPIDITO!", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/17"}
+{"q": "Aura por favor, que suene más suave gracias", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/17"}
+{"q": "Secure the computer thank you", "e": ["win_bloquear"], "l": "en", "t": "win_bloquear/en/7"}
+{"q": "ey, cambia a claudio ahorita", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/7"}
+{"q": "porfa sin sonido!", "e": ["win_silenciar"], "l": "es", "t": "win_silenciar/es/7"}
+{"q": "aura, revisa esta ventana", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/7"}
+{"q": "eh, hazte chiquita gracias...", "e": ["win_ocultar"], "l": "es", "t": "win_ocultar/es/7"}
+{"q": "hey claudio, prepare a draft of a rental agreement", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/17"}
+{"q": "Um, i want to talk to the ant real quick", "e": ["win_avatar"], "l": "en", "t": "win_avatar/en/7"}
+{"q": "Pon un temporizador en 3 minutos ahorita", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/17"}
+{"q": "hey claudio, is the wifi working", "e": ["win_info"], "l": "en", "t": "win_info/en/7"}
+{"q": "mirá, corrige lo que copié", "e": ["win_portapapeles"], "l": "es", "t": "win_portapapeles/es/7"}
+{"q": "Hey aura, the music yesterday was great", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/17"}
+{"q": "antonio, play the song coldplay thank you", "e": ["win_musica"], "l": "en", "t": "win_musica/en/7"}
+{"q": "aura, stop all actions for me", "e": ["win_pausa"], "l": "en", "t": "win_pausa/en/7"}
+{"q": "mirá, sácame la carpeta del trabajo ahorita", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/17"}
+{"q": "mi computadora esta lenta, por que sera", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/27"}
+{"q": "fijate, sácame la carpeta de descargas porfis", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/17"}
+{"q": "vaya, dicta el informe está listo por favor", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/17"}
+{"q": "antonio, busca rapido tutoriales de excel ya", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/17"}
+{"q": "abre instagram en internet si puedes", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/17"}
+{"q": "antonio, abre el sitio de la página de la sar dale", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/7"}
+{"q": "yo, make it louder", "e": ["win_volumen_subir"], "l": "en", "t": "win_volumen_subir/en/7"}
+{"q": "take me to the desktop", "e": ["win_escritorio"], "l": "en", "t": "win_escritorio/en/7"}
+{"q": "the music yesterday was great", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/17"}
+{"q": "claudio, qué tengo esta semana?", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/7"}
+{"q": "aura, let me think", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/97"}
+{"q": "PORFA ABRE TU VENTANA", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/17"}
+{"q": "mire, estoy libre esta tarde por favor", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/17"}
+{"q": "Este... ponme una alarma en 3 minutos para la reunion con el ingeniero", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/7"}
+{"q": "hey claudio, prepare a draft of a rental agreement now", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/17"}
+{"q": "ok, screenshot this real quick", "e": ["win_captura"], "l": "en", "t": "win_captura/en/7"}
+{"q": "oye aura, abre la carpeta mis fotos pues.", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/7"}
+{"q": "please improve the text i copied pls", "e": ["win_portapapeles"], "l": "en", "t": "win_portapapeles/en/7"}
+{"q": "mira, escribeme hola, ya voy en camino pues", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/7"}
+{"q": "aura, búscame en la web precio de laptops pues", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/7"}
+{"q": "claudio, búscame en la web farmacias de turno ya", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/7"}
+{"q": "can you play the song coldplay right now!", "e": ["win_musica"], "l": "en", "t": "win_musica/en/7"}
+{"q": "eh, qué correos tengo porfa", "e": ["win_correo"], "l": "es", "t": "win_correo/es/7"}
+{"q": "secure the computer for me", "e": ["win_bloquear"], "l": "en", "t": "win_bloquear/en/7"}
+{"q": "Aura, i need the calendar pls?", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/7"}
+{"q": "porfa bloqueá la pc", "e": ["win_bloquear"], "l": "es", "t": "win_bloquear/es/7"}
+{"q": "please what emails do i have ok", "e": ["win_correo"], "l": "en", "t": "win_correo/en/7"}
+{"q": "abre la carpeta la carpeta del trabajo ahorita", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/7"}
+{"q": "ok aura, buscame en la web precio de laptops", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/7"}
+{"q": "uh, what can i do in this window", "e": ["win_que_hay"], "l": "en", "t": "win_que_hay/en/7"}
+{"q": "vaya, detén todo", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/7"}
+{"q": "Este... que me atienda la hormiga pues", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/17"}
+{"q": "oye, saca un borrador de un contrato de alquiler dale", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/27"}
+{"q": "aura, type into the active window thank you for your time", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/17"}
+{"q": "Oye, screenshot ya", "e": ["win_captura"], "l": "es", "t": "win_captura/es/7"}
+{"q": "get out of the way real quick", "e": ["win_ocultar"], "l": "en", "t": "win_ocultar/en/7"}
+{"q": "uh, type into the active window thank you for your time real quick.", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/17"}
+{"q": "ya, que suene mas suave por favor", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/17"}
+{"q": "mire, ábrete rapidito", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/7"}
+{"q": "ya, búscame en la web quién ganó el partido gracias.", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/7"}
+{"q": "get bigger pls", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/17"}
+{"q": "oye aura, sácame imágenes", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/17"}
+{"q": "ok aura, checa la pantalla", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/27"}
+{"q": "okay aura, previous song", "e": ["win_multimedia_siguiente"], "l": "en", "t": "win_multimedia_siguiente/en/7"}
+{"q": "olvide pagar la tarjeta", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/67"}
+{"q": "y el clima para mañana", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/87"}
+{"q": "mira, que me atienda el guardian", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/17"}
+{"q": "um, run a search on how to fix a slow pc", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/17"}
+{"q": "porfa que puedo tocar aqui por favor", "e": ["win_que_hay"], "l": "es", "t": "win_que_hay/es/7"}
+{"q": "no hables mas", "e": ["win_callar"], "l": "es", "t": "win_callar/es/17"}
+{"q": "yo, show yourself ok", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/7"}
+{"q": "Hey, what is a screenshot", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/27"}
+{"q": "aura por favor, arranca google earth dale", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/7"}
+{"q": "porfa hazte chiquita porfa", "e": ["win_ocultar"], "l": "es", "t": "win_ocultar/es/7"}
+{"q": "mi computadora esta lenta, por que sera!", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/27"}
+{"q": "um, minimize canva", "e": ["win_ventana"], "l": "en", "t": "win_ventana/en/7"}
+{"q": "hey claudio, browse the recycle bin real quick", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/7"}
+{"q": "open the the calendar program", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/17"}
+{"q": "OK AURA, PONME UNA ALARMA EN 3 MINUTOS PARA LA REUNION CON EL INGENIERO", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/7"}
+{"q": "mirá, qué tengo esta semana pues", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/7"}
+{"q": "claudio, redacta un contrato de alquiler rapidito", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/7"}
+{"q": "arranca el calendario pues", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/7"}
+{"q": "arranca whatsapp", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/7"}
+{"q": "mira, sácame onedrive", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/17"}
+{"q": "alright, prepare a draft of a proposal for the client for me", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/17"}
+{"q": "ok, play the song coldplay", "e": ["win_musica"], "l": "en", "t": "win_musica/en/7"}
+{"q": "mire, ponme una alarma a las 5 para recoger a los cipotes pues", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/7"}
+{"q": "Hey aura, dale doble clic a agregar rapidito", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/17"}
+{"q": "Aura please, display the work folder thank you", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/17"}
+{"q": "abre la carpeta descargas ya", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/7"}
+{"q": "Display downloads", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/17"}
+{"q": "eh, cierra esta ventana rapidito", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/7"}
+{"q": "ya, sin sonido pues", "e": ["win_silenciar"], "l": "es", "t": "win_silenciar/es/7"}
+{"q": "redacta una propuesta para el cliente", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/7"}
+{"q": "cuanto espacio me queda en el disco...", "e": ["win_info"], "l": "es", "t": "win_info/es/7"}
+{"q": "mira, lee los correos de don carlos porfa", "e": ["win_correo"], "l": "es", "t": "win_correo/es/17"}
+{"q": "Play the song salsa real quick", "e": ["win_musica"], "l": "en", "t": "win_musica/en/7"}
+{"q": "vaya, pausa el video gracias", "e": ["win_multimedia_pausa"], "l": "es", "t": "win_multimedia_pausa/es/7"}
+{"q": "pausa el video ya", "e": ["win_multimedia_pausa"], "l": "es", "t": "win_multimedia_pausa/es/7"}
+{"q": "ok aura, pausa el video dale", "e": ["win_multimedia_pausa"], "l": "es", "t": "win_multimedia_pausa/es/7"}
+{"q": "bueno, pon música de salsa gracias", "e": ["win_musica"], "l": "es", "t": "win_musica/es/7"}
+{"q": "Ponme una alarma en 5 minutos para estirar las piernas ya", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/7"}
+{"q": "ya, métete a vlc", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/17"}
+{"q": "mira, qué tengo esta semana por favor", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/7"}
+{"q": "oye aura, ya entendí, para de hablar", "e": ["win_callar"], "l": "es", "t": "win_callar/es/7"}
+{"q": "Browse the recycle bin thank you!", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/7"}
+{"q": "aura, que puedo tocar aqui ya", "e": ["win_que_hay"], "l": "es", "t": "win_que_hay/es/7"}
+{"q": "fijate, cuánto espacio me queda en el disco...", "e": ["win_info"], "l": "es", "t": "win_info/es/7"}
+{"q": "vaya, minimiza todas las ventanas rapidito", "e": ["win_escritorio"], "l": "es", "t": "win_escritorio/es/7"}
+{"q": "Abre la carpeta la carpeta de imágenes rapidito", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/7"}
+{"q": "can you use excel", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/67"}
+{"q": "look at this error on screen for me", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/17"}
+{"q": "hey, previous song", "e": ["win_multimedia_siguiente"], "l": "en", "t": "win_multimedia_siguiente/en/7"}
+{"q": "pon música de salsa", "e": ["win_musica"], "l": "es", "t": "win_musica/es/7"}
+{"q": "aura, mejor no", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/107"}
+{"q": "open the excel program please", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/17"}
+{"q": "aura, minimiza todas las ventanas porfis", "e": ["win_escritorio"], "l": "es", "t": "win_escritorio/es/7"}
+{"q": "abre el sitio de twitter porfis", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/7"}
+{"q": "saca un borrador de un contrato de alquiler grasias", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/27"}
+{"q": "mirá, sin sonido", "e": ["win_silenciar"], "l": "es", "t": "win_silenciar/es/7"}
+{"q": "escríbeme querida mamá", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/7"}
+{"q": "hey claudio, minimize excel real quick...", "e": ["win_ventana"], "l": "en", "t": "win_ventana/en/7"}
+{"q": "be quiet", "e": ["win_callar"], "l": "en", "t": "win_callar/en/7"}
+{"q": "porfa pon un temporizador a las 9 gracias", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/17"}
+{"q": "mas fuerte", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/17"}
+{"q": "búscame en la web tutoriales de excel gracias...", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/7"}
+{"q": "what can i do in this window", "e": ["win_que_hay"], "l": "en", "t": "win_que_hay/en/7"}
+{"q": "eh, pon un temporizador a las 9", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/17"}
+{"q": "antonio, type into the active window thank you for your time", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/17"}
+{"q": "Aura please, minimize the calendar thank you", "e": ["win_ventana"], "l": "en", "t": "win_ventana/en/7"}
+{"q": "ayudame a pensar", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/97"}
+{"q": "Okay aura, look at this error on screen ok.", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/17"}
+{"q": "a ver, escríbeme querida mamá", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/7"}
+{"q": "hey aura, screenshot pues", "e": ["win_captura"], "l": "es", "t": "win_captura/es/7"}
+{"q": "aura, métete a excel", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/17"}
+{"q": "minimize the calendar", "e": ["win_ventana"], "l": "en", "t": "win_ventana/en/7"}
+{"q": "could you play the song worship music thank you...", "e": ["win_musica"], "l": "en", "t": "win_musica/en/7"}
+{"q": "ok, get out of the way thanks", "e": ["win_ocultar"], "l": "en", "t": "win_ocultar/en/7"}
+{"q": "BUSCA RÁPIDO TUTORIALES DE EXCEL", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/17"}
+{"q": "claudio, checa la pantalla si puedes", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/27"}
+{"q": "OYE, LEE LOS CORREOS DE PAYPAL PORFA", "e": ["win_correo"], "l": "es", "t": "win_correo/es/17"}
+{"q": "Um, create a rental agreement thanks", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/7"}
+{"q": "Alright, be quiet for me", "e": ["win_callar"], "l": "en", "t": "win_callar/en/7"}
+{"q": "open my latest download", "e": ["win_abrir_archivo"], "l": "en", "t": "win_abrir_archivo/en/7"}
+{"q": "mirá, redacta una propuesta para el cliente porfa", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/7"}
+{"q": "mira, pulsa el botón archivo porfa", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/7"}
+{"q": "mire, abre la carpeta descargas dale", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/7"}
+{"q": "Y el clima para manana", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/87"}
+{"q": "ok, type into the active window to do today thank you", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/17"}
+{"q": "ey, bloqueá la pc", "e": ["win_bloquear"], "l": "es", "t": "win_bloquear/es/7"}
+{"q": "eh, que puedo tocar aqui", "e": ["win_que_hay"], "l": "es", "t": "win_que_hay/es/7"}
+{"q": "um, screenshot this pls", "e": ["win_captura"], "l": "en", "t": "win_captura/en/7"}
+{"q": "Claudio, abre la carpeta mis fotos ya", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/7"}
+{"q": "so, run a search on restaurants near me", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/17"}
+{"q": "please zip it for me", "e": ["win_callar"], "l": "en", "t": "win_callar/en/17"}
+{"q": "vaya, más fuerte!", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/17"}
+{"q": "so, make it louder for me", "e": ["win_volumen_subir"], "l": "en", "t": "win_volumen_subir/en/7"}
+{"q": "ponle mas volumen", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/7"}
+{"q": "Okay aura, open my latest download", "e": ["win_abrir_archivo"], "l": "en", "t": "win_abrir_archivo/en/7"}
+{"q": "display my music", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/17"}
+{"q": "Vaya, dale doble clic a agregar", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/17"}
+{"q": "aura please, resume playback thanks", "e": ["win_multimedia_pausa"], "l": "en", "t": "win_multimedia_pausa/en/7"}
+{"q": "ey, quiero que me hagas un contrato de alquiler rapidito", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/17"}
+{"q": "abre tu ventana por favor", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/17"}
+{"q": "bueno, pon música de juan luis guerra...", "e": ["win_musica"], "l": "es", "t": "win_musica/es/7"}
+{"q": "Abre el sitio de twitter dale", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/7"}
+{"q": "SO, GET OUT OF THE WAY NOW.", "e": ["win_ocultar"], "l": "en", "t": "win_ocultar/en/7"}
+{"q": "okay aura, write that in word right now...", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/7"}
+{"q": "oye aura, pon música de salsa", "e": ["win_musica"], "l": "es", "t": "win_musica/es/7"}
+{"q": "yo, what emails do i have thank you", "e": ["win_correo"], "l": "en", "t": "win_correo/en/7"}
+{"q": "mire, bloqueá la pc gracias...", "e": ["win_bloquear"], "l": "es", "t": "win_bloquear/es/7"}
+{"q": "revisa esta ventana", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/7"}
+{"q": "Escríbeme el informe está listo", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/7"}
+{"q": "Abre el sitio de instagram", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/7"}
+{"q": "improve the text i copied right now", "e": ["win_portapapeles"], "l": "en", "t": "win_portapapeles/en/7"}
+{"q": "okay aura, zip it thank you", "e": ["win_callar"], "l": "en", "t": "win_callar/en/17"}
+{"q": "hey aura, alto total ahorita", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/17"}
+{"q": "antonio, minimize excel please", "e": ["win_ventana"], "l": "en", "t": "win_ventana/en/7"}
+{"q": "hey aura, pon un temporizador en 3 minutos gracias", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/17"}
+{"q": "ábrete por favor", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/7"}
+{"q": "oye, menos volumen", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/7"}
+{"q": "a ver, estoy libre esta tarde", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/17"}
+{"q": "Uh, at 9 remind me to stretch my legs thanks", "e": ["win_recordar"], "l": "en", "t": "win_recordar/en/7"}
+{"q": "hey aura, metete a canva ya", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/17"}
+{"q": "aura, abre tu ventana", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/17"}
+{"q": "ya, para ya pues", "e": ["win_callar"], "l": "es", "t": "win_callar/es/27"}
+{"q": "hey, browse onedrive for me", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/7"}
+{"q": "cambia a la dorada ahorita", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/7"}
+{"q": "a ver, dale doble clic a aceptar porfa", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/17"}
+{"q": "a ver, abre el sitio de instagram ya", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/7"}
+{"q": "i want to talk to the golden one right now", "e": ["win_avatar"], "l": "en", "t": "win_avatar/en/7"}
+{"q": "Saca un borrador de un reclamo para la empresa de luz ahorita", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/27"}
+{"q": "hey claudio, open instagram in the browser pls", "e": ["win_abrir_web"], "l": "en", "t": "win_abrir_web/en/7"}
+{"q": "Aura, look at my screen pls", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/7"}
+{"q": "ey, qué puedo tocar aquí si puedes", "e": ["win_que_hay"], "l": "es", "t": "win_que_hay/es/7"}
+{"q": "que tengo esta semana", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/7"}
+{"q": "Yo, browse my photos", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/7"}
+{"q": "hey aura, my agenda today please", "e": ["win_agenda"], "l": "en", "t": "win_agenda/en/7"}
+{"q": "oye, abre twitter en internet", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/17"}
+{"q": "Ayúdame a pensar", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/97"}
+{"q": "bueno, dicta querida mama ya", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/17"}
+{"q": "pon un temporizador en 5 minutos gracias", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/17"}
+{"q": "métete a excel rapidito", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/17"}
+{"q": "aura, cambia a antonio porfis", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/7"}
+{"q": "metete a el explorador de archivos", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/17"}
+{"q": "a ver, cambia a ant-onio por favor", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/7"}
+{"q": "eh, escribeme querida mama", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/7"}
+{"q": "Ey, quita esta ventana ahorita", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/17"}
+{"q": "yo, open my latest download!", "e": ["win_abrir_archivo"], "l": "en", "t": "win_abrir_archivo/en/7"}
+{"q": "aura, la musica de ayer estuvo buena", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/17"}
+{"q": "vaya, dale doble clic a abrir si puedes", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/17"}
+{"q": "ponme una alarma en 3 minutos para recoger a los cipotes por favor...", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/7"}
+{"q": "in 5 minutes remind me to pick up the kids thank you", "e": ["win_recordar"], "l": "en", "t": "win_recordar/en/7"}
+{"q": "Oye, teclea eso en el documento", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/27"}
+{"q": "so, my agenda today", "e": ["win_agenda"], "l": "en", "t": "win_agenda/en/7"}
+{"q": "Uh, write that in word thanks", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/7"}
+{"q": "CÓMO SE CIERRA UNA VENTANA EN WINDOWS", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/127"}
+{"q": "Aura please, i need vlc", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/7"}
+{"q": "lee los correos de amazon rapidito", "e": ["win_correo"], "l": "es", "t": "win_correo/es/17"}
+{"q": "mi computadora está lenta, por qué será", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/27"}
+{"q": "oye aura, no hables mas!", "e": ["win_callar"], "l": "es", "t": "win_callar/es/17"}
+{"q": "Vaya, ábrete porfa", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/7"}
+{"q": "ya, que me atienda ant-onio si puedes", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/17"}
+{"q": "antonio, previous song real quick", "e": ["win_multimedia_siguiente"], "l": "en", "t": "win_multimedia_siguiente/en/7"}
+{"q": "oye, saca un borrador de una invitación para la fiesta por favor", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/27"}
+{"q": "antonio, i want to talk to the ant please", "e": ["win_avatar"], "l": "en", "t": "win_avatar/en/7"}
+{"q": "mire, siguiente tema pues", "e": ["win_multimedia_siguiente"], "l": "es", "t": "win_multimedia_siguiente/es/7"}
+{"q": "Hey aura, translate hello to spanish", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/47"}
+{"q": "could you open my latest download", "e": ["win_abrir_archivo"], "l": "en", "t": "win_abrir_archivo/en/7"}
+{"q": "hey, open the view tab", "e": ["win_pulsar"], "l": "en", "t": "win_pulsar/en/7"}
+{"q": "este... checa la pantalla pues", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/27"}
+{"q": "eh, sácame la papelera pues", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/17"}
+{"q": "hey, secure the computer", "e": ["win_bloquear"], "l": "en", "t": "win_bloquear/en/7"}
+{"q": "oye aura, quita esta ventana pues...", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/17"}
+{"q": "pulsa el botón pegar!", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/7"}
+{"q": "ok, volume to zero.", "e": ["win_silenciar"], "l": "en", "t": "win_silenciar/en/7"}
+{"q": "yo, what emails do i have", "e": ["win_correo"], "l": "en", "t": "win_correo/en/7"}
+{"q": "vaya, bloqueá la pc.", "e": ["win_bloquear"], "l": "es", "t": "win_bloquear/es/7"}
+{"q": "mirá, dicta el informe está listo", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/17"}
+{"q": "hey, create a rental agreement real quick", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/7"}
+{"q": "mañana es el cumpleaños de mi mamá", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/37"}
+{"q": "eh, pulsa el botón nuevo", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/7"}
+{"q": "Aura, resume playback now", "e": ["win_multimedia_pausa"], "l": "en", "t": "win_multimedia_pausa/en/7"}
+{"q": "Qué correos tengo ya", "e": ["win_correo"], "l": "es", "t": "win_correo/es/7"}
+{"q": "hey, i need whatsapp", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/7"}
+{"q": "LOOK UP ONLINE FREE ENGLISH COURSES", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/7"}
+{"q": "deten todo", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/7"}
+{"q": "eh, ke me atienda la hormiga por favor", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/17"}
+{"q": "Mira, alto total ya", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/17"}
+{"q": "ok aura, quiero que me hagas una propuesta para el cliente pues", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/17"}
+{"q": "Can you display my documents", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/17"}
+{"q": "hey aura, menos volumen", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/7"}
+{"q": "ok, my agenda today please", "e": ["win_agenda"], "l": "en", "t": "win_agenda/en/7"}
+{"q": "mire, abre la página de la sar en internet", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/17"}
+{"q": "minimize telegram", "e": ["win_ventana"], "l": "en", "t": "win_ventana/en/7"}
+{"q": "open the excel program for me?", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/17"}
+{"q": "Que suene más suave gracias", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/17"}
+{"q": "hey claudio, open instagram in the browser please", "e": ["win_abrir_web"], "l": "en", "t": "win_abrir_web/en/7"}
+{"q": "ey, cuánto espacio me queda en el disco ya", "e": ["win_info"], "l": "es", "t": "win_info/es/7"}
+{"q": "Qué correos tengo", "e": ["win_correo"], "l": "es", "t": "win_correo/es/7"}
+{"q": "bloqueá la pc porfa", "e": ["win_bloquear"], "l": "es", "t": "win_bloquear/es/7"}
+{"q": "ya, abre mi archivo de mi currículum rapidito", "e": ["win_abrir_archivo"], "l": "es", "t": "win_abrir_archivo/es/7"}
+{"q": "mejor no", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/107"}
+{"q": "hey, the blue folder is on the table", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/37"}
+{"q": "fijate, dicta querida mamá porfis", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/17"}
+{"q": "fijate, sácame la papelera", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/17"}
+{"q": "Um, take me to the desktop", "e": ["win_escritorio"], "l": "en", "t": "win_escritorio/en/7"}
+{"q": "aura please, play da song coldplay real quick", "e": ["win_musica"], "l": "en", "t": "win_musica/en/7"}
+{"q": "aura, ponme una alarma a las 5 para recoger a los cipotes", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/7"}
+{"q": "yo, my agenda today right now", "e": ["win_agenda"], "l": "en", "t": "win_agenda/en/7"}
+{"q": "Pon un temporizador a las 5", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/17"}
+{"q": "uh, i need file explorer now", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/7"}
+{"q": "corrige lo que copié porfa", "e": ["win_portapapeles"], "l": "es", "t": "win_portapapeles/es/7"}
+{"q": "hey aura, ya entendí, para de hablar dale", "e": ["win_callar"], "l": "es", "t": "win_callar/es/7"}
+{"q": "so, look at my screen now", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/7"}
+{"q": "Turn down the volume real quick", "e": ["win_volumen_bajar"], "l": "en", "t": "win_volumen_bajar/en/7"}
+{"q": "open the send tab please", "e": ["win_pulsar"], "l": "en", "t": "win_pulsar/en/7"}
+{"q": "can you my agenda today thanks", "e": ["win_agenda"], "l": "en", "t": "win_agenda/en/7"}
+{"q": "oye, qué puedo tocar aquí", "e": ["win_que_hay"], "l": "es", "t": "win_que_hay/es/7"}
+{"q": "oye aura, estoy libre esta tarde", "e": ["win_agenda"], "l": "es", "t": "win_agenda/es/17"}
+{"q": "este... pausa el video rapidito", "e": ["win_multimedia_pausa"], "l": "es", "t": "win_multimedia_pausa/es/7"}
+{"q": "saca un borrador de una propuesta para el cliente ahorita", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/27"}
+{"q": "mañana es el cumpleaños de mi mamá!", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/37"}
+{"q": "oye aura, no hables más?", "e": ["win_callar"], "l": "es", "t": "win_callar/es/17"}
+{"q": "abre tu ventana si puedes...", "e": ["win_abrir_chat"], "l": "es", "t": "win_abrir_chat/es/17"}
+{"q": "antonio, previous song", "e": ["win_multimedia_siguiente"], "l": "en", "t": "win_multimedia_siguiente/en/7"}
+{"q": "the blue folder is on the table", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/37"}
+{"q": "oye, busca rápido farmacias de turno", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/17"}
+{"q": "alto total gracias", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/17"}
+{"q": "mire, redacta una propuesta para el cliente por favor", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/7"}
+{"q": "hazte chiquita gracias", "e": ["win_ocultar"], "l": "es", "t": "win_ocultar/es/7"}
+{"q": "claudio, screenshot dale", "e": ["win_captura"], "l": "es", "t": "win_captura/es/7"}
+{"q": "oye, dicta querida mamá gracias", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/17"}
+{"q": "so, volume to zero please", "e": ["win_silenciar"], "l": "en", "t": "win_silenciar/en/7"}
+{"q": "stop all actions real quick", "e": ["win_pausa"], "l": "en", "t": "win_pausa/en/7"}
+{"q": "eh, busca rápido quién ganó el partido gracias", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/17"}
+{"q": "hey aura, look up online the dollar exchange rate please", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/7"}
+{"q": "aura, at 9 remind me to pick up the kids", "e": ["win_recordar"], "l": "en", "t": "win_recordar/en/7"}
+{"q": "look up online how to fix a slow pc", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/7"}
+{"q": "hey aura, detén todo si puedes", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/7"}
+{"q": "Can you what can i do in this window", "e": ["win_que_hay"], "l": "en", "t": "win_que_hay/en/7"}
+{"q": "Vaya, arranca canva porfis", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/7"}
+{"q": "hey aura, look up online restaurants near me real quick", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/7"}
+{"q": "aura, what can i do in this window", "e": ["win_que_hay"], "l": "en", "t": "win_que_hay/en/7"}
+{"q": "take me to the desktop ok", "e": ["win_escritorio"], "l": "en", "t": "win_escritorio/en/7"}
+{"q": "abre mi archivo de mi currículum", "e": ["win_abrir_archivo"], "l": "es", "t": "win_abrir_archivo/es/7"}
+{"q": "AURA, RESUME LO QUE DIJE", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/117"}
+{"q": "aura please, be quiet for me", "e": ["win_callar"], "l": "en", "t": "win_callar/en/7"}
+{"q": "este... redacta una propuesta para el cliente", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/7"}
+{"q": "aura por favor, dicta el informe esta listo rapidito!", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/17"}
+{"q": "i need telegram real quick", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/7"}
+{"q": "fijate, pulsa el boton pegar si puedes", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/7"}
+{"q": "mira, métete a whatsapp porfis", "e": ["win_abrir_app"], "l": "es", "t": "win_abrir_app/es/17"}
+{"q": "bueno, pon un temporizador en 3 minutos porfa", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/17"}
+{"q": "ok aura, corrige lo que copie", "e": ["win_portapapeles"], "l": "es", "t": "win_portapapeles/es/7"}
+{"q": "oye, quien fue francisco morazan", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/7"}
+{"q": "aura, dale doble clic a opciones", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/17"}
+{"q": "fijate, pulsa el boton archivo rapidito", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/7"}
+{"q": "ALRIGHT, OPEN THE SEARCH TAB THANKS", "e": ["win_pulsar"], "l": "en", "t": "win_pulsar/en/7"}
+{"q": "i need whatsapp real quick", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/7"}
+{"q": "SCREENSHOT", "e": ["win_captura"], "l": "es", "t": "win_captura/es/7"}
+{"q": "aura please, take me to the desktop", "e": ["win_escritorio"], "l": "en", "t": "win_escritorio/en/7"}
+{"q": "type into the active window payment was sent yesterday thank you", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/17"}
+{"q": "please minimize canva", "e": ["win_ventana"], "l": "en", "t": "win_ventana/en/7"}
+{"q": "hey aura, turn down the volume please", "e": ["win_volumen_bajar"], "l": "en", "t": "win_volumen_bajar/en/7"}
+{"q": "oye aura, hazte chiquita porfis", "e": ["win_ocultar"], "l": "es", "t": "win_ocultar/es/7"}
+{"q": "Que me atienda la hormiga", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/17"}
+{"q": "Fijate, pon un temporizador a las 9 ahorita", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/17"}
+{"q": "Stop all actions", "e": ["win_pausa"], "l": "en", "t": "win_pausa/en/7"}
+{"q": "alright, volume to zero thank you", "e": ["win_silenciar"], "l": "en", "t": "win_silenciar/en/7"}
+{"q": "oye aura, abre la carpeta onedrive ahorita", "e": ["win_abrir_carpeta"], "l": "es", "t": "win_abrir_carpeta/es/7"}
+{"q": "Mirá, búscame en la web farmacias de turno porfis", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/7"}
+{"q": "my agenda today", "e": ["win_agenda"], "l": "en", "t": "win_agenda/en/7"}
+{"q": "mejor no?", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/107"}
+{"q": "porfa para ya ya", "e": ["win_callar"], "l": "es", "t": "win_callar/es/27"}
+{"q": "Hey aura, can you use excel", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/67"}
+{"q": "A ver, revisa esta ventana ahorita", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/7"}
+{"q": "um, look up online the dollar exchange rate please?", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/7"}
+{"q": "pulsa el botón siguiente por favor", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/7"}
+{"q": "Aura, get out of the way please", "e": ["win_ocultar"], "l": "en", "t": "win_ocultar/en/7"}
+{"q": "could you display my music pls", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/17"}
+{"q": "um, minimize whatsapp ok...", "e": ["win_ventana"], "l": "en", "t": "win_ventana/en/7"}
+{"q": "vaya, saca un borrador de una propuesta para el cliente", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/27"}
+{"q": "IMPROVE THE TEXT I COPIED THANKS", "e": ["win_portapapeles"], "l": "en", "t": "win_portapapeles/en/7"}
+{"q": "open google drive in the browser real quick", "e": ["win_abrir_web"], "l": "en", "t": "win_abrir_web/en/7"}
+{"q": "oye, minimiza todas las ventanas dale", "e": ["win_escritorio"], "l": "es", "t": "win_escritorio/es/7"}
+{"q": "no...", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/77"}
+{"q": "fijate, pon musica de musica cristiana porfis?", "e": ["win_musica"], "l": "es", "t": "win_musica/es/7"}
+{"q": "claudio, cambia a la dorada rapidito?", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/7"}
+{"q": "recommend me some music", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/57"}
+{"q": "antonio, take me to the desktop ok", "e": ["win_escritorio"], "l": "en", "t": "win_escritorio/en/7"}
+{"q": "hey aura, is the wifi working now", "e": ["win_info"], "l": "en", "t": "win_info/en/7"}
+{"q": "antonio, para ya porfa", "e": ["win_callar"], "l": "es", "t": "win_callar/es/27"}
+{"q": "show yourself", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/7"}
+{"q": "screenshot?", "e": ["win_captura"], "l": "es", "t": "win_captura/es/7"}
+{"q": "Please show yourself ok", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/7"}
+{"q": "ey, quiero que me hagas una invitación para la fiesta.", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/17"}
+{"q": "ok, create a party invitation now", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/7"}
+{"q": "porfa redacta una propuesta para el cliente pues.", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/7"}
+{"q": "antonio, búscame en la web kién ganó el partido ahorita", "e": ["win_buscar_web"], "l": "es", "t": "win_buscar_web/es/7"}
+{"q": "que me atienda la hormiga dale", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/17"}
+{"q": "aura please, run a search on the dollar exchange rate pls", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/17"}
+{"q": "mire, teclea eso en el documento si puedes", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/27"}
+{"q": "play the song coldplay please", "e": ["win_musica"], "l": "en", "t": "win_musica/en/7"}
+{"q": "porfa abre el sitio de instagram porfa", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/7"}
+{"q": "run a search on free english courses", "e": ["win_buscar_web"], "l": "en", "t": "win_buscar_web/en/17"}
+{"q": "escríbeme hola, ya voy en camino ya", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/7"}
+{"q": "please secure the computer pls", "e": ["win_bloquear"], "l": "en", "t": "win_bloquear/en/7"}
+{"q": "hey claudio, get out of the way pls?", "e": ["win_ocultar"], "l": "en", "t": "win_ocultar/en/7"}
+{"q": "aura, the blue folder is on the table", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/37"}
+{"q": "ponle más volumen rapidito", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/7"}
+{"q": "eh, pon música de juan luis guerra.", "e": ["win_musica"], "l": "es", "t": "win_musica/es/7"}
+{"q": "mira, menos volumen porfa", "e": ["win_volumen_bajar"], "l": "es", "t": "win_volumen_bajar/es/7"}
+{"q": "ok aura, dicta hola, ya voy en camino porfis", "e": ["win_escribir"], "l": "es", "t": "win_escribir/es/17"}
+{"q": "Um, open instagram in the browser now", "e": ["win_abrir_web"], "l": "en", "t": "win_abrir_web/en/7"}
+{"q": "yo, prepare a draft of a rental agreement", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/17"}
+{"q": "browse videos please", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/7"}
+{"q": "could you get bigger", "e": ["win_abrir_chat"], "l": "en", "t": "win_abrir_chat/en/17"}
+{"q": "MIRA, SACA UN BORRADOR DE UNA PROPUESTA PARA EL CLIENTE RAPIDITO", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/27"}
+{"q": "okay aura, volume to zero ok", "e": ["win_silenciar"], "l": "en", "t": "win_silenciar/en/7"}
+{"q": "ey, sin sonido", "e": ["win_silenciar"], "l": "es", "t": "win_silenciar/es/7"}
+{"q": "ok, open the the calendar program pls", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/17"}
+{"q": "write that in word", "e": ["win_escribir"], "l": "en", "t": "win_escribir/en/7"}
+{"q": "vaya, abre google drive en internet?", "e": ["win_abrir_web"], "l": "es", "t": "win_abrir_web/es/17"}
+{"q": "olvidé pagar la tarjeta", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/67"}
+{"q": "aura, detén todo pues", "e": ["win_pausa"], "l": "es", "t": "win_pausa/es/7"}
+{"q": "hey aura, display the pictures folder pls", "e": ["win_abrir_carpeta"], "l": "en", "t": "win_abrir_carpeta/en/17"}
+{"q": "claudio, que me atienda la dorada por favor", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/17"}
+{"q": "mira, ponme una alarma en 3 minutos para estirar las piernas pues", "e": ["win_recordar"], "l": "es", "t": "win_recordar/es/7"}
+{"q": "aura, qué correos tengo rapidito", "e": ["win_correo"], "l": "es", "t": "win_correo/es/7"}
+{"q": "vaya, quiero que me hagas un contrato de alquiler pues", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/17"}
+{"q": "create a complaint to the power company!", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/7"}
+{"q": "Pausa el video si puedes", "e": ["win_multimedia_pausa"], "l": "es", "t": "win_multimedia_pausa/es/7"}
+{"q": "saca un borrador de un reclamo para la empresa de luz dale", "e": ["win_redactar"], "l": "es", "t": "win_redactar/es/27"}
+{"q": "open the canva program thanks", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/17"}
+{"q": "screenshot this thank you", "e": ["win_captura"], "l": "en", "t": "win_captura/en/7"}
+{"q": "yo, be quiet thanks", "e": ["win_callar"], "l": "en", "t": "win_callar/en/7"}
+{"q": "vaya, cierra esta ventana", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/7"}
+{"q": "please open the print tab", "e": ["win_pulsar"], "l": "en", "t": "win_pulsar/en/7"}
+{"q": "como funcionas", "e": ["win_ninguna"], "l": "es", "t": "win_ninguna/es/77"}
+{"q": "please create a proposal for the client real quick", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/7"}
+{"q": "hey claudio, get out of the way thanks", "e": ["win_ocultar"], "l": "en", "t": "win_ocultar/en/7"}
+{"q": "i want to talk to the eyes please", "e": ["win_avatar"], "l": "en", "t": "win_avatar/en/7"}
+{"q": "open the telegram program", "e": ["win_abrir_app"], "l": "en", "t": "win_abrir_app/en/17"}
+{"q": "ke me atienda el guardián pues", "e": ["win_avatar"], "l": "es", "t": "win_avatar/es/17"}
+{"q": "dale doble clic a agregar por favor", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/17"}
+{"q": "pon música de salsa gracias", "e": ["win_musica"], "l": "es", "t": "win_musica/es/7"}
+{"q": "please look at this error on screen", "e": ["win_ver_pantalla"], "l": "en", "t": "win_ver_pantalla/en/17"}
+{"q": "porfa más fuerte pues", "e": ["win_volumen_subir"], "l": "es", "t": "win_volumen_subir/es/17"}
+{"q": "pulsa el botón nuevo si puedes", "e": ["win_pulsar"], "l": "es", "t": "win_pulsar/es/7"}
+{"q": "translate hello to spanish", "e": ["win_ninguna"], "l": "en", "t": "win_ninguna/en/47"}
+{"q": "fijate, quita esta ventana ya", "e": ["win_ventana"], "l": "es", "t": "win_ventana/es/17"}
+{"q": "antonio, open my latest download?", "e": ["win_abrir_archivo"], "l": "en", "t": "win_abrir_archivo/en/7"}
+{"q": "prepare a draft of a party invitation for me...", "e": ["win_redactar"], "l": "en", "t": "win_redactar/en/17"}
+{"q": "ok aura, hazte chiquita por favor", "e": ["win_ocultar"], "l": "es", "t": "win_ocultar/es/7"}
+{"q": "mira, revisa esta ventana ya", "e": ["win_ver_pantalla"], "l": "es", "t": "win_ver_pantalla/es/7"}

@@ -1,0 +1,24 @@
+{"q": "abre la calculadora y después busca el precio del dólar", "e": ["win_abrir_app"], "l": "es", "t": "borde"}
+{"q": "no abras word, mejor busca cómo hacer una tabla", "e": ["win_buscar_web"], "l": "es", "t": "borde"}
+{"q": "qué es mejor para redactar, word o notion", "e": ["win_ninguna"], "l": "es", "t": "borde"}
+{"q": "recuérdame cómo se llamaba el ingeniero", "e": ["win_ninguna"], "l": "es", "t": "borde"}
+{"q": "escribe una carta de renuncia", "e": ["win_redactar"], "l": "es", "t": "borde"}
+{"q": "escribe hola mundo en el bloc de notas", "e": ["win_escribir"], "l": "es", "t": "borde"}
+{"q": "cállate y abre spotify", "e": ["win_callar"], "l": "es", "t": "borde"}
+{"q": "ayer me dijiste que bloqueara la compu", "e": ["win_ninguna"], "l": "es", "t": "borde"}
+{"q": "open youtube and play something", "e": ["win_abrir_web"], "l": "en", "t": "borde"}
+{"q": "remind me what the engineer is called", "e": ["win_ninguna"], "l": "en", "t": "borde"}
+{"q": "write a resignation letter", "e": ["win_redactar"], "l": "en", "t": "borde"}
+{"q": "type hello world in notepad", "e": ["win_escribir"], "l": "en", "t": "borde"}
+{"q": "what do you see", "e": ["win_ver_pantalla"], "l": "en", "t": "borde"}
+{"q": "qué ves", "e": ["win_ver_pantalla"], "l": "es", "t": "borde"}
+{"q": "bideo siguiente", "e": ["win_multimedia_siguiente"], "l": "es", "t": "borde"}
+{"q": "súbele tantito", "e": ["win_volumen_subir"], "l": "es", "t": "borde"}
+{"q": "abre la carpeta de descargas y la calculadora", "e": ["win_abrir_carpeta"], "l": "es", "t": "borde"}
+{"q": "cómo se hace una captura de pantalla en windows", "e": ["win_ninguna"], "l": "es", "t": "borde"}
+{"q": "lock screen please", "e": ["win_bloquear"], "l": "en", "t": "borde"}
+{"q": "mute that song", "e": ["win_silenciar"], "l": "en", "t": "borde"}
+{"q": "pausa", "e": ["win_multimedia_pausa"], "l": "es", "t": "borde"}
+{"q": "pon a claudio", "e": ["win_avatar"], "l": "es", "t": "borde"}
+{"q": "quién es mejor, claudio o antonio", "e": ["win_ninguna"], "l": "es", "t": "borde"}
+{"q": "buscame un buen restaurante", "e": ["win_buscar_web"], "l": "es", "t": "borde"}

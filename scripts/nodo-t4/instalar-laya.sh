@@ -3,6 +3,8 @@
 #   electrum   qué especialistas convoca Dr Electrum (POST /decidir, lo usa lib/laya.ts)
 #   mensaje    decisiones sobre cada mensaje de AU-RA / PULSE2CHAT (POST /v1/mensaje)
 #   documento  qué es un fragmento de expediente y qué trae (POST /v1/documento)
+#   comando    la orden dicha en voz alta: Dr Electrum y las manos de AU-RA (POST /v1/comando)
+#   windows    la mano de AURA para Windows que pidió la persona (POST /v1/windows, lo pide el .exe por /api/windows/intencion)
 #
 # Ajusta Laya multilingüe con los datos de scripts/nodo-t4/laya/datos (electrum) y de
 # scripts/nodo-t4/laya/modelos/<nombre>/datos (en la GPU tarda unos minutos cada uno), y lo deja como
@@ -14,6 +16,7 @@
 #   bash scripts/nodo-t4/instalar-laya.sh                      # instala, entrena lo que no tenga modelo, arranca
 #   REENTRENAR=1 bash scripts/nodo-t4/instalar-laya.sh         # vuelve a entrenar los tres (tras cambiar los datos)
 #   REENTRENAR=mensaje bash scripts/nodo-t4/instalar-laya.sh   # solo ese (o «electrum», o «mensaje,documento»)
+#   REENTRENAR=windows bash scripts/nodo-t4/instalar-laya.sh   # solo el del .exe (receta rápida en su modelo.json)
 #   Con datos reales de la Escuela en /opt/laya-reales (ver scripts/entrenamiento/README.md) se suman solos.
 #   Un modelo reentrenado se promueve solo si no empeora al anterior en las pruebas (FORZAR=1 lo salta).
 set -euo pipefail
@@ -21,7 +24,7 @@ AQUI="$(cd "$(dirname "$0")/laya" && pwd)"
 BASE="${LAYA_BASE:-/opt/laya}"
 PUERTO="${LAYA_PUERTO:-8792}"
 MODELO="$BASE/modelo-electrum"
-NUEVOS=(mensaje documento comando)
+NUEVOS=(mensaje documento comando windows)
 ENTORNO=/etc/laya-electrum.env
 
 sudo mkdir -p "$BASE" && sudo chown "$(id -u):$(id -g)" "$BASE"
@@ -43,7 +46,20 @@ done
 # comparar). El rechazado queda en <dir>.rechazado para mirarlo.
 promover() {  # promover <dir actual> <dir nuevo> <argumentos de evaluar.py…>
   local actual="$1" nuevo="$2"; shift 2
-  if [ ! -f "$actual/model.safetensors" ] || [ "${FORZAR:-0}" = 1 ]; then
+  if [ "${FORZAR:-0}" = 1 ]; then
+    rm -rf "$actual" && mv "$nuevo" "$actual"; return 0
+  fi
+  if [ ! -f "$actual/model.safetensors" ]; then
+    # La primera vez no hay con qué comparar, pero un mínimo (MINIMO_COMPARAR) se exige igual: el nuevo
+    # se compara consigo mismo, así solo cuenta el mínimo.
+    if [ -n "${MINIMO_COMPARAR:-}" ]; then
+      (cd "$BASE" && venv/bin/python evaluar.py --modelo "$nuevo" "$@" --json "$nuevo.nuevo.json" >/dev/null)
+      if ! (cd "$BASE" && venv/bin/python comparar.py "$nuevo.nuevo.json" "$nuevo.nuevo.json" ${MINIMO_COMPARAR}); then
+        rm -rf "$actual.rechazado" && mv "$nuevo" "$actual.rechazado"
+        echo "AVISO: el primer $(basename "$actual") no llega al mínimo; no se instala (quedó en $actual.rechazado; FORZAR=1 lo instala igual)"
+        return 0
+      fi
+    fi
     rm -rf "$actual" && mv "$nuevo" "$actual"; return 0
   fi
   (cd "$BASE" && venv/bin/python evaluar.py --modelo "$actual" "$@" --json "$nuevo.viejo.json" >/dev/null \
@@ -91,6 +107,9 @@ for n in "${NUEVOS[@]}"; do
       # «comando»: las manos de AU-RA (grupo app) se ejecutan sin esperar al cerebro; el nuevo no entra
       # si en la prueba de AU-RA (evals = test_app.jsonl, español e inglés) acierta menos del 85 %.
       minimo=""; [ "$n" = comando ] && minimo="--minimo evals:app=0.85"
+      # «windows»: el .exe ejecuta la mano que diga Laya cuando va segura; en su prueba apartada
+      # (español e inglés, 31 manos) tiene que acertar al menos el 90 % para entrar.
+      [ "$n" = windows ] && minimo="--minimo test:win=0.90"
       MINIMO_COMPARAR="$minimo" promover "$dir" "$dir.nuevo" --modelo-dir "modelos/$n"
     else
       echo "AVISO: falló el entrenamiento de $n; se deja el checkpoint anterior (si lo hay)"

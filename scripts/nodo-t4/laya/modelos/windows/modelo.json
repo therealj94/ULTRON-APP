@@ -1,0 +1,95 @@
+{
+ "nombre": "windows",
+ "descripcion": "Qué MANO de AURA para Windows pidió la persona (grupo win, exclusivo), en español e inglés. Lo lee el servidor AU-RA en /api/windows/intencion para el .exe. ESPEC.md.",
+ "ids": [
+  "win_ninguna",
+  "win_abrir_app",
+  "win_abrir_carpeta",
+  "win_buscar_web",
+  "win_abrir_web",
+  "win_escribir",
+  "win_redactar",
+  "win_ver_pantalla",
+  "win_captura",
+  "win_volumen_subir",
+  "win_volumen_bajar",
+  "win_silenciar",
+  "win_multimedia_pausa",
+  "win_multimedia_siguiente",
+  "win_recordar",
+  "win_callar",
+  "win_pausa",
+  "win_abrir_chat",
+  "win_ocultar",
+  "win_avatar",
+  "win_escritorio",
+  "win_bloquear",
+  "win_pulsar",
+  "win_que_hay",
+  "win_ventana",
+  "win_info",
+  "win_portapapeles",
+  "win_abrir_archivo",
+  "win_musica",
+  "win_correo",
+  "win_agenda"
+ ],
+ "grupos": {
+  "win": [
+   "win_ninguna",
+   "win_abrir_app",
+   "win_abrir_carpeta",
+   "win_buscar_web",
+   "win_abrir_web",
+   "win_escribir",
+   "win_redactar",
+   "win_ver_pantalla",
+   "win_captura",
+   "win_volumen_subir",
+   "win_volumen_bajar",
+   "win_silenciar",
+   "win_multimedia_pausa",
+   "win_multimedia_siguiente",
+   "win_recordar",
+   "win_callar",
+   "win_pausa",
+   "win_abrir_chat",
+   "win_ocultar",
+   "win_avatar",
+   "win_escritorio",
+   "win_bloquear",
+   "win_pulsar",
+   "win_que_hay",
+   "win_ventana",
+   "win_info",
+   "win_portapapeles",
+   "win_abrir_archivo",
+   "win_musica",
+   "win_correo",
+   "win_agenda"
+  ]
+ },
+ "recorte": {
+  "cabeza": 120,
+  "cola": 120
+ },
+ "datos": {
+  "train": [
+   "datos/train_*.jsonl"
+  ],
+  "test": [
+   "datos/test.jsonl"
+  ],
+  "bordes": [
+   "datos/bordes.jsonl"
+  ]
+ },
+ "entrenamiento": {
+  "epocas": 5,
+  "lote": 64,
+  "micro": 64,
+  "negativos": 8,
+  "lr": 4e-05,
+  "lr_cabeza": 0.0003
+ }
+}
