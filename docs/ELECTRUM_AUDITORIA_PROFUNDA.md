@@ -214,9 +214,9 @@ con documentos reales ni en la base de producción.
 
 - **Organización de cada persona:**
   - la que diga el padrón (`organizacion`, o sexta columna en `ULTRON_PADRON`);
-  - si no, la casa, cuando el correo es de Orden Global o no hay correo;
-  - si no, el dominio del correo;
-  - con un correo público (gmail…), la persona sola.
+  - si no, quien José puso a mano en el padrón es de la casa: es su equipo y hasta hoy veía todo;
+  - una cuenta aprobada desde la página: la casa si el correo es de Orden Global; si no, el
+    dominio del correo; con un correo público (gmail…), la persona sola.
 - **Ámbito de la petición:** un middleware abre el ámbito de la organización para todo
   `/api/electrum`; también se abre en MCP y en Telegram. Documentos, capas y carteras filtran
   solos. Los invitados de la demo miran lo de la casa (H06).
@@ -237,8 +237,8 @@ con documentos reales ni en la base de producción.
 ## Lo que queda
 
 - **H11:** pantalla de revisión humana de fotos transcritas.
-- **H14:** la organización de las cuentas aprobadas desde la web sale del correo. Si un cliente usa
-  gmail, hay que ponerle la organización en el padrón.
+- **H14:** a un cliente que José agregue a mano en `ULTRON_PADRON` hay que ponerle la
+  organización (sexta columna); sin ella se trata como del equipo de la casa.
 - **H18:** legibilidad en exteriores (contraste y tamaños) sin medir en un teléfono al sol.
 
 ## Pruebas de esta versión
