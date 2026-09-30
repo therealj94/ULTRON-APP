@@ -48,6 +48,13 @@ const ESCENAS = [
   ['barra-en-vivo-360', '?p=vivo', 360, 780],
   ['mas-360', '?p=mas', 360, 780],
   ['mas-412-letra-grande', '?p=mas&escala=1.6', 412, 915],
+  // La hoja «Más» (José: en su Samsung las tarjetas salían apiladas): letra 1.0, 1.3 y 2.0; 360/412; acostado.
+  ['mas-360-letra-1.3', '?p=mas&escala=1.3', 360, 780],
+  ['mas-360-letra-2.0', '?p=mas&escala=2', 360, 780],
+  ['mas-412-letra-1.3', '?p=mas&escala=1.3', 412, 915],
+  ['mas-412-letra-2.0', '?p=mas&escala=2', 412, 915],
+  ['mas-apaisada', '?p=mas', 780, 360],
+  ['mas-apaisada-letra-2.0', '?p=mas&escala=2', 915, 412],
   ['tutorial-1-hablar', '?p=tutorial&paso=0', 360, 780],
   ['tutorial-3-chat', '?p=tutorial&paso=2', 360, 780],
   ['tutorial-7-camara', '?p=tutorial&paso=6', 360, 780],
@@ -113,6 +120,39 @@ for (const [nombre, qs, w, h] of ESCENAS) {
     );
     botones.push(...deLlamada.map((b) => ({ ...b, llamada: true })));
     if (!deLlamada.length && !qs.includes('e=colgada') && !qs.includes('e=perdida')) botones.push({ l: 'la llamada no tiene botones', x: -1, d: 0, alto: 0 });
+  }
+  // La hoja «Más»: ninguna tarjeta se encima con otra (los rectángulos medidos), todas dentro de lo ancho
+  // y de 48 px o más; lo que no cabe de alto tiene que poder desplazarse (su contenedor desplazable).
+  if (qs.includes('p=mas')) {
+    const t = await pag.evaluate(() => {
+      const tarjetas = [...document.querySelectorAll('[aria-label]')]
+        .filter((e) => /^(Conversar|Que |Colgar|Escribir|Cámara|Caras|Avatar|Modo |Qué puedo|Ajustes|Chats)/.test(e.getAttribute('aria-label') || '') && e.getAttribute('aria-label').includes('. '))
+        .map((e) => {
+          const r = e.getBoundingClientRect();
+          let p = e.parentElement;
+          let desplaza = false;
+          while (p) {
+            const cs = getComputedStyle(p);
+            if (/(auto|scroll)/.test(cs.overflowY) && p.scrollHeight > p.clientHeight) desplaza = true;
+            p = p.parentElement;
+          }
+          return { l: e.getAttribute('aria-label').split('.')[0], x: r.left, y: r.top, w: r.width, h: r.height, desplaza };
+        });
+      return tarjetas;
+    });
+    for (let i = 0; i < t.length; i++)
+      for (let j = i + 1; j < t.length; j++) {
+        const a = t[i], b = t[j];
+        const ix = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+        const iy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+        if (ix > 1 && iy > 1) botones.push({ l: `«${a.l}» se encima con «${b.l}»`, x: -1, d: 0, alto: 0 });
+      }
+    for (const a of t) {
+      if (a.h < 48 || a.x < 0 || a.x + a.w > w + 1) botones.push({ l: `tarjeta «${a.l}» ${Math.round(a.w)}×${Math.round(a.h)}`, x: -1, d: 0, alto: 0 });
+      if (a.y + a.h > h + 1 && !a.desplaza) botones.push({ l: `tarjeta «${a.l}» fuera de la pantalla y sin desplazamiento`, x: -1, d: 0, alto: 0 });
+    }
+    if (t.length < 8) botones.push({ l: `la hoja tiene ${t.length} tarjetas`, x: -1, d: 0, alto: 0 });
+    console.log(`     hoja «Más»: ${t.length} tarjetas, ${t.filter((a) => a.y + a.h > h).length} por debajo (desplazables)`);
   }
   const malos = botones.filter((b) => b.x < 0 || b.d > w || b.alto < 48 || (b.llamada && (b.ancho < 48 || b.abajo > h || b.arriba < 0)));
   if (qs.includes('p=barra') || qs.includes('p=vivo')) {

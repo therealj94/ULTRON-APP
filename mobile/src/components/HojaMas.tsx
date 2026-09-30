@@ -14,9 +14,17 @@
  *   · Qué puedo hacer   — el recorrido corto (src/tutorial);
  *   · Ajustes           — el menú completo de la mesa (DeskMenu).
  * Cada mosaico dice su estado debajo del nombre (p. ej. «Solo ahora · 8 min»).
+ *
+ * El layout, a prueba de Android (José, Samsung con Android 16: las tarjetas salían apiladas como una
+ * baraja y la hoja cortada): antes la caja y el mosaico llevaban `flex: 1`, que en Yoga es base 0; con
+ * la altura por contenido, la celda medía solo su relleno y cada tarjeta se desbordaba encima de la
+ * siguiente. Ahora las alturas salen del contenido (`minHeight`, `flexGrow` sin base 0), la rejilla va
+ * dentro de un ScrollView que se encoge para caber en la hoja (si no cabe, se desplaza; nunca se
+ * comprime) y cada celda es una fracción del ancho real de la rejilla. Nada depende de una animación:
+ * sin ella se ve igual.
  */
 import { useMemo } from 'react';
-import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { tr } from '../i18n';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
 import { Hoja } from '../ui/Hoja';
@@ -74,25 +82,25 @@ export function HojaMas(p: Props) {
     { id: 'tutorial', icono: 'ayuda', titulo: tr('Qué puedo hacer', 'What I can do'), sub: tr('Un recorrido corto', 'A short tour') },
     { id: 'ajustes', icono: 'ajustes', titulo: tr('Ajustes', 'Settings'), sub: tr('Todo lo de la mesa', 'Everything else') },
   ];
+  // Cada celda, una fracción del ancho REAL de la rejilla (el porcentaje se resuelve contra lo que mide de
+  // verdad, con el borde y el relleno de la hoja; un número calculado a mano quedaba 2 px corto y partía la fila).
   const ancho = `${100 / columnas}%` as const;
   return (
     <Hoja visible={p.visible} onCerrar={p.onCerrar} titulo={tr('Más', 'More')}>
-      <View style={st.rejilla}>
+      <ScrollView style={st.desplazable} contentContainerStyle={st.rejilla} showsVerticalScrollIndicator={false} bounces={false} keyboardShouldPersistTaps="handled">
         {mosaicos.map((m) => (
           <View key={m.id} style={[st.celda, { width: ancho }]}>
             <Tocable
               onPress={() => p.onOpcion(m.id)}
               vibrar
               hundir={0.97}
-              caja={st.llenar}
+              caja={st.caja}
               etiqueta={`${m.titulo}. ${m.sub}`}
               style={[st.mosaico, m.activo && { borderColor: tema.acento, backgroundColor: tema.acentoFondo }]}
             >
               <Icono nombre={m.icono} tam={26} color={m.activo ? tema.acentoTexto : tema.texto} grosor={1.9} lleno={m.icono === 'puntos'} />
               <View style={st.textos}>
-                <Text style={st.titulo} numberOfLines={3}>
-                  {m.titulo}
-                </Text>
+                <Text style={st.titulo}>{m.titulo}</Text>
                 <Text style={st.sub} numberOfLines={3}>
                   {m.sub}
                 </Text>
@@ -100,18 +108,22 @@ export function HojaMas(p: Props) {
             </Tocable>
           </View>
         ))}
-      </View>
+      </ScrollView>
     </Hoja>
   );
 }
 
 function estilos(p: Paleta) {
   return StyleSheet.create({
-    rejilla: { flexDirection: 'row', flexWrap: 'wrap', marginHorizontal: -MEDIDA.espacio.xs },
+    // Se encoge para caber en la hoja (maxHeight 90 %); lo que no cabe se desplaza, no se comprime.
+    // El margen negativo va en el ScrollView (no en su contenido, que él recorta): las celdas llegan al borde.
+    desplazable: { flexGrow: 0, flexShrink: 1, marginHorizontal: -MEDIDA.espacio.xs },
+    rejilla: { flexDirection: 'row', flexWrap: 'wrap', paddingBottom: MEDIDA.espacio.xs },
     celda: { padding: MEDIDA.espacio.xs },
-    llenar: { flex: 1 },
+    // Sin `flex: 1` (base 0): en Android colapsaba la celda a su relleno y las tarjetas se apilaban.
+    caja: { flexGrow: 1 },
     mosaico: {
-      flex: 1,
+      flexGrow: 1,
       minHeight: 76,
       flexDirection: 'row',
       alignItems: 'center',
