@@ -6,6 +6,14 @@
  * - Se reinicia solo ante `end`, `no-speech`, `network`, etc. Si el servicio no existe
  *   (`service-not-allowed` / `language-not-supported`) avisa con onUnavailable para caer a la nube.
  * - Se pausa mientras AU-RA habla (evita que se escuche a sí mismo).
+ * - `abort()` del módulo contesta SIEMPRE con un `end` que llega DESPUÉS (aunque no hubiera nada
+ *   escuchando; lo documenta también electrum/dictado.ts). Antes ese `end` viejo caía encima del
+ *   arranque siguiente: borraba `starting`, programaba OTRO `start()` y el módulo destruía el
+ *   reconocedor que se estaba creando (Android contesta con `busy`/`client` y vuelta a empezar). El
+ *   motor quedaba «encendido» y sin oír, y el vigilante lo daba por bueno porque llegaban eventos.
+ *   Ahora cada `abort()` cuenta un `end` pendiente que se descarta si ya hay otro arranque en curso.
+ * - VIDA: solo cuentan los eventos de un reconocedor que de verdad escucha (`start`, volumen, voz,
+ *   resultados). Un bucle de `error` + `end` no es vida: el vigilante lo ve y lo reinicia.
  */
 import { Platform } from 'react-native';
 import { localeActual } from '../i18n';
@@ -32,6 +40,12 @@ let starting = false;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
 let subs: Array<{ remove: () => void }> = [];
 let lastEventAt = Date.now();
+/** Último evento de un reconocedor que escucha de verdad (start, volumen, voz, resultado). */
+let ultimaVidaAt = 0;
+/** Desde cuándo corre el plazo de gracia de un arranque pedido (abrir, soltar la pausa, reiniciar). */
+let plazoDesde = Date.now();
+/** `end` que todavía van a llegar por los `abort()` pedidos (uno por cada uno). */
+let finesPendientes = 0;
 let lastPartial = '';
 let lastFinalAt = 0;
 let lastFinalText = '';
@@ -61,6 +75,13 @@ export async function ensureNativePermissions(): Promise<boolean> {
   }
 }
 
+/** Algo que prueba que el reconocedor está oyendo. */
+function vida() {
+  const t = Date.now();
+  lastEventAt = t;
+  ultimaVidaAt = t;
+}
+
 function emitListening(on: boolean) {
   if (running === on) return;
   running = on;
@@ -80,7 +101,7 @@ function attach() {
   const M = ExpoSpeechRecognitionModule;
   subs.push(
     M.addListener('start', () => {
-      lastEventAt = Date.now();
+      vida();
       starting = false;
       consecutiveFails = 0;
       emitListening(true);
@@ -88,13 +109,13 @@ function attach() {
   );
   subs.push(
     M.addListener('speechstart', () => {
-      lastEventAt = Date.now();
+      vida();
       if (!paused) cb.onSpeechStart?.();
     })
   );
   subs.push(
     M.addListener('volumechange', (e: any) => {
-      lastEventAt = Date.now();
+      vida();
       // rango -2..10 → 0..1
       const v = typeof e?.value === 'number' ? Math.max(0, Math.min(1, (e.value + 1) / 9)) : 0;
       if (!paused) cb.onLevel?.(v);
@@ -102,7 +123,7 @@ function attach() {
   );
   subs.push(
     M.addListener('result', (e: any) => {
-      lastEventAt = Date.now();
+      vida();
       if (paused) return;
       const text = String(e?.results?.[0]?.transcript || '').trim();
       if (!text) return;
@@ -123,9 +144,10 @@ function attach() {
   subs.push(
     M.addListener('error', (e: any) => {
       lastEventAt = Date.now();
-      starting = false;
       const code = String(e?.error || 'unknown') as ExpoSpeechRecognitionErrorCode | string;
+      // El «aborted» es el eco de un abort() pedido: no toca el arranque que pueda venir detrás.
       if (code === 'aborted') return;
+      starting = false;
       if (code === 'service-not-allowed' || code === 'language-not-supported' || code === 'not-allowed') {
         unavailable = code !== 'not-allowed';
         emitListening(false);
@@ -142,6 +164,11 @@ function attach() {
   subs.push(
     M.addListener('end', () => {
       lastEventAt = Date.now();
+      if (finesPendientes > 0) {
+        finesPendientes -= 1;
+        // El `end` de un abort() viejo: si ya se pidió otro arranque (o ya arrancó), no es de él.
+        if (starting || running) return;
+      }
       starting = false;
       emitListening(false);
       if (wanted && !paused) scheduleRestart(consecutiveFails > 3 ? 900 : 120);
@@ -208,8 +235,10 @@ async function stop(abort = true) {
     restartTimer = null;
   }
   try {
-    if (abort) ExpoSpeechRecognitionModule.abort();
-    else ExpoSpeechRecognitionModule.stop();
+    if (abort) {
+      ExpoSpeechRecognitionModule.abort();
+      finesPendientes += 1;
+    } else ExpoSpeechRecognitionModule.stop();
   } catch {
     /* */
   }
@@ -217,10 +246,16 @@ async function stop(abort = true) {
   emitListening(false);
 }
 
+/** Desde ahora cuenta el plazo para dar señales de vida (al abrir, al soltar la pausa, al reiniciar). */
+function darPlazo() {
+  plazoDesde = Date.now();
+}
+
 export async function nativeEnable() {
   wanted = true;
   unavailable = false;
   consecutiveFails = 0;
+  darPlazo();
   await start();
 }
 
@@ -230,6 +265,7 @@ export async function nativeMute() {
 }
 
 export async function nativeUnmute() {
+  if (!wanted) darPlazo();
   wanted = true;
   await start();
 }
@@ -241,6 +277,7 @@ export function nativePause(pause: boolean) {
     void stop(true);
   } else {
     lastPartial = '';
+    darPlazo();
     scheduleRestart(150);
   }
 }
@@ -252,23 +289,64 @@ export function nativeIsPaused() {
   return paused;
 }
 
-/** ¿Está vivo? Si lleva >8 s sin ningún evento estando activo, algo se colgó. */
+/** Sin señales de vida más de esto (queriendo oír y sin pausa), el reconocedor está muerto o mudo. */
+export const SIN_VIDA_MS = 8000;
+
+/**
+ * ¿Está vivo? Queriendo oír y sin pausa, tiene que haber dado señales de vida (start, volumen, voz,
+ * resultados) en los últimos SIN_VIDA_MS. Un bucle de `error` + `end` NO cuenta (antes sí: cualquier
+ * evento lo daba por bueno y un reconocedor que fallaba al arrancar una y otra vez nunca se reiniciaba).
+ */
 export function nativeWatchdogOk() {
   if (!wanted || paused) return true;
-  if (!running && !starting && !restartTimer) return false;
-  return Date.now() - lastEventAt < 8000;
+  const t = Date.now();
+  return t - ultimaVidaAt < SIN_VIDA_MS || t - plazoDesde < SIN_VIDA_MS;
+}
+
+/**
+ * ¿Dio señales de vida DE VERDAD hace poco? (sin contar el plazo de gracia de un arranque). El
+ * vigilante solo da por revivido un reconocedor así; si no, cada reinicio le regalaba otro plazo y
+ * nunca llegaba al tope.
+ */
+export function nativeVidaReciente() {
+  if (!wanted || paused) return true;
+  return Date.now() - ultimaVidaAt < SIN_VIDA_MS;
+}
+
+/**
+ * ¿Está oyendo AHORA? Para la etiqueta: «te escucho» solo si el reconocedor escucha (entre frase y
+ * frase se reinicia en ~300 ms) o acaba de pedirse y está en su plazo corto de arranque.
+ */
+export function nativeEscuchando(plazoMs = 2500) {
+  if (!wanted || paused || unavailable) return false;
+  const t = Date.now();
+  return running || t - ultimaVidaAt < plazoMs || t - plazoDesde < plazoMs;
 }
 
 export async function nativeRestart() {
+  darPlazo();
   await stop(true);
   await sleep(250);
   consecutiveFails = 0;
+  darPlazo();
   if (wanted && !paused) await start();
+}
+
+/**
+ * Reabrir de verdad (el oído vuelve de otro dueño o el doble toque lo pide): un reconocedor NUEVO,
+ * no el que quedó de antes. Quiere oír aunque estuviera silenciado.
+ */
+export async function nativeReabrir() {
+  wanted = true;
+  unavailable = false;
+  await nativeRestart();
 }
 
 export async function nativeDestroy() {
   wanted = false;
   await stop(true);
   detach();
+  // Los `end` que falten llegan sin oyentes: no hay que descartar nada al volver a enganchar.
+  finesPendientes = 0;
   cb = {};
 }

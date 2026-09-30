@@ -15,7 +15,9 @@ const FRASES: Record<GrupoFrase, () => string[]> = {
   levantar: () => [tr('¡Wiii!', 'Wheee!'), tr('¡Uy, qué alto!', 'Whoa, so high!'), tr('¿A dónde vamos?', 'Where are we going?')],
   soltar: () => [tr('¡Uf!', 'Oof!'), tr('Aquí me quedo', 'I’ll stay here'), tr('¡Aterricé!', 'Landed!')],
   dormir: () => [tr('Zzz… dos toques y despierto', 'Zzz… tap twice to wake me')],
-  despertar: () => [tr('¡Aquí estoy! Te escucho', 'I’m here! I’m listening')],
+  // Al tocarla todavía no escucha nadie (la conversación empieza a conectar): «te escucho» lo dice
+  // cuando de verdad escucha (el estado `escuchando` de la voz), no antes.
+  despertar: () => [tr('¡Aquí estoy!', 'I’m here!')],
   volver: () => [tr('¡Ya volví!', 'I’m back!'), tr('¿Qué tal la llamada?', 'How was the call?')],
   dormidaToque: () => [tr('Zzz… (dos toques y despierto)', 'Zzz… (tap twice to wake me)')],
 };
@@ -40,4 +42,9 @@ export const textoCompa = {
   noPude: () => deEstado('no_pude'),
   borrador: (para: string) => tr(`✎ Borrador para ${para}`, `✎ Draft for ${para}`),
   noAbrio: () => tr('No pude conectarme. Tócame dos veces para intentar otra vez', 'I couldn’t connect. Tap me twice to try again'),
+  /** Colgó y quedó en espera (modo llamada): cómo volver a llamarla. */
+  enEspera: () => {
+    const n = avatarActual() === 'claudio' ? 'Claudio' : avatarActual() === 'antonio' ? 'Antonio' : avatarActual() === 'ojos' ? tr('Guardián', 'Guardian') : 'AU-RA';
+    return tr(`En espera · di «${n}»`, `Standby · say "${n}"`);
+  },
 };

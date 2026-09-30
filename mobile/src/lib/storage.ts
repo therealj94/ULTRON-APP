@@ -22,7 +22,29 @@ const KEYS = {
   settings: 'ultron_fp_settings_v2',
   fingerprint: 'ultron_fp_fingerprint_v2',
   mesaToken: 'ultron_fp_mesa_token_v2',
+  vozHoy: 'ultron_fp_voz_hoy_v1',
 } as const;
+
+/** Los minutos de llamada de hoy (en este teléfono): lo que se ve junto al estado de la llamada. */
+export type VozHoy = { dia: string; ms: number };
+
+export async function loadVozHoy(dia: string): Promise<number> {
+  try {
+    const raw = await AsyncStorage.getItem(KEYS.vozHoy);
+    const v = raw ? (JSON.parse(raw) as VozHoy) : null;
+    return v && v.dia === dia && Number.isFinite(v.ms) ? Math.max(0, v.ms) : 0;
+  } catch {
+    return 0;
+  }
+}
+
+export async function saveVozHoy(v: VozHoy) {
+  try {
+    await AsyncStorage.setItem(KEYS.vozHoy, JSON.stringify(v));
+  } catch {
+    /* sin almacenamiento: se cuenta en memoria */
+  }
+}
 
 /**
  * Lo que se escribía y nadie leía: el historial del chat (todos los usuarios juntos) y una ficha por
@@ -64,6 +86,11 @@ export type AppSettings = {
   tutorialVisto: Record<string, boolean>;
   /** La mesa para charlar (avatar grande) o para trabajar (avatar compacto + la conversación escrita). */
   modoMesa: 'charlar' | 'trabajar';
+  /**
+   * MODO LLAMADA (compa/llamadaCiclo.ts): la voz como una llamada con ElevenLabs Agents, en espera
+   * barata con el oído del teléfono y colgando sola. Apagado, todo lo atiende el oído del teléfono.
+   */
+  vozLlamada: boolean;
 };
 export type ConocerProgress = {
   correo: string;
@@ -88,6 +115,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   carasActivas: {},
   tutorialVisto: {},
   modoMesa: 'charlar',
+  vozLlamada: true,
 };
 
 export async function saveSession(user: SessionUser | null) {

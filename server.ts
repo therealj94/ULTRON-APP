@@ -48,6 +48,7 @@ import { detectarIdioma } from './lib/idioma-detectar';
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
+import { respuestaCharla } from './lib/charla-rapida';
 import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
@@ -3171,6 +3172,45 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     reg.cerrar({ respuesta: rapida.decir, emocion: 'neutral', via: rapida.via });
     send('done', { reply: rapida.decir, voz: rapida.decir, emocion: 'neutral', ms: 0, via: rapida.via, acciones: rapida.acciones, trazaId: reg.id });
     return salida.fin();
+  }
+  /*
+   * «¿Es una orden clara?» (la app en ESPERA del modo llamada, mobile/src/compa/llamadaCiclo.ts): lo que
+   * la persona dijo con la palabra de activación se prueba primero por el camino rápido; si no es una
+   * orden, NO se despierta al cerebro: la app abre la llamada y lo manda como primer mensaje.
+   */
+  if (body?.soloRapido === true && turnoDeLaApp(body, opciones)) {
+    reg.cerrar({ respuesta: '', emocion: 'neutral', via: 'solo-rapido' });
+    send('done', { reply: '', voz: '', emocion: 'neutral', ms: 0, via: 'solo-rapido', rapido: false, trazaId: reg.id });
+    return salida.fin();
+  }
+  /*
+   * LA CHARLA DE SIEMPRE, AL INSTANTE (hablada): «hola», «¿cómo estás?», «gracias», «adiós». José:
+   * «"¿cómo estás?" demasiado lenta». Antes pasaba por preparar el turno (memoria, clasificación) y el
+   * modelo chico (apagado por omisión: entonces el 27B). Ahora, si por su forma es solo charla
+   * (esCharlaTrivial), contesta el banco del avatar en el acto; el hilo se anota sin esperar.
+   */
+  if (opciones.voz && !body?.image) {
+    // Cómo se le dice: su apodo si el perfil ya está en memoria (sin ir a buscarlo), si no su nombre.
+    const correoCharla = body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
+    const apodo = correoCharla ? perfilEnCache(correoCharla)?.apodo : '';
+    const charla = respuestaCharla(String(body?.message || body?.text || ''), {
+      avatar: normalizarAvatar(body?.avatar),
+      idioma,
+      nombre: apodo || String(body?.usuario || body?.userName || '').trim().split(/\s+/)[0] || null,
+    });
+    if (charla) {
+      const quienMem = body?.nivel === 'junta' ? quienVerificado(body, body?.sesion || null) : null;
+      const mensaje = String(body?.message || body?.text || '').trim();
+      void recordarSegunNivel(body, { quienMem, rol: 'user', texto: mensaje, canal: 'mesa', esperar: false })
+        .then(() => recordarSegunNivel(body, { quienMem, rol: 'ultron', texto: charla.texto, canal: 'mesa', esperar: false }))
+        .catch(() => {});
+      send('tools', { tools: [] });
+      send('emocion', { emocion: charla.emocion });
+      soltar('delta', charla.texto);
+      reg.cerrar({ respuesta: charla.texto, emocion: charla.emocion, via: 'charla-rapida' });
+      send('done', { reply: charla.texto, voz: charla.texto, emocion: charla.emocion, ms: 0, via: 'charla-rapida', acciones: [], trazaId: reg.id });
+      return salida.fin();
+    }
   }
 
   const p = await prepararTurno(body, opciones);
