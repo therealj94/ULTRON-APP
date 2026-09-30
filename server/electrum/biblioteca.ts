@@ -96,29 +96,10 @@ const ESQUEMA_V10 = [
      'ocurrencia', 'zona_informal', 'forestal',
      'litologia', 'falla', 'placa', 'provincia_geologica', 'tracto_permisivo',
      'historico', 'proyecto'))`,
-  `CREATE OR REPLACE FUNCTION electrum_rol_capa(nombre text) RETURNS text AS $f$
-  SELECT CASE
-    WHEN n ~ 'tractos? permisiv|permissive' THEN 'tracto_permisivo'
-    WHEN n ~ 'placas? tectonic|limites? de placas?|plate boundar|pb2002' THEN 'placa'
-    WHEN n ~ 'provincias? geologic|geologic provinc' THEN 'provincia_geologica'
-    WHEN n ~ '(^| )fallas?( |$)|(^| )faults?( |$)|lineamiento|estructuras? geologic|estructural' THEN 'falla'
-    WHEN n ~ 'geolog|litolog|litholog|intrusiv|(^| )plutones?( |$)' THEN 'litologia'
-    WHEN n ~ '(^| )jica( |$)|(^| )mmaj( |$)|historic' THEN 'historico'
-    WHEN n ~ 'microcuenca|cuencas? declarada' THEN 'microcuenca'
-    WHEN n ~ 'informal|artesanal|guiris|pequena mineria|(^| )mape( |$)' THEN 'zona_informal'
-    WHEN n ~ 'ocurrencia|yacimiento|defomin|indicio|prospecto' THEN 'ocurrencia'
-    WHEN n ~ 'protegida|sinaph|reserva biologica|parque nacional|refugio de vida' THEN 'area_protegida'
-    WHEN n ~ 'forestal|bosque' THEN 'forestal'
-    WHEN n ~ 'caserio|aldea|poblad|comunidad|localidad|asentamiento|ciudad' THEN 'poblado'
-    WHEN n ~ 'carretera|(^| )(red vial|vias?|caminos?|rutas?)( |$)' THEN 'carretera'
-    WHEN n ~ 'departament' THEN 'departamento'
-    WHEN n ~ 'municipi|municipal' THEN 'municipio'
-    WHEN n ~ 'red hidric|hidrograf|(^| )(rios?|quebradas?|drenajes?|cauces?)( |$)' THEN 'rio'
-  END
-  FROM (SELECT trim(regexp_replace(lower(unaccent(coalesce(nombre, ''))), '[^a-z0-9]+', ' ', 'g')) AS n) t;
-$f$ LANGUAGE sql STABLE;`,
+  // Sin reemplazar electrum_rol_capa(): en producción su dueño es el administrador de la base y el
+  // usuario de la aplicación no puede («must be owner of function»). El patrón es el de `rolDeCapa`.
   `UPDATE capa c SET rol = 'historico'
-    WHERE c.rol IS NULL AND electrum_rol_capa(c.nombre) = 'historico'
+    WHERE c.rol IS NULL AND lower(c.nombre) ~ '(^|[^a-z])(jica|mmaj)([^a-z]|$)|historic'
       AND EXISTS (SELECT 1 FROM entidad_geo e WHERE e.capa_id = c.id)`,
   `INSERT INTO esquema_version (version, nota)
      VALUES (10, 'catastro oficial único; capas de referencia: histórico y proyecto')

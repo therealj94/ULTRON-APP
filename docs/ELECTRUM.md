@@ -851,6 +851,19 @@ entrar: subir otra vez AREAS PROTEGIDAS decía «la cargué» y la ficha contaba
 Volver a subir el mismo catastro no crea cartera. La fecha vacía del .dbf (30-11-1899) no entra
 como vencimiento: 703 concesiones salían «vencidas hace 46 324 días».
 
+**Lo que pasó al ordenar producción (30-09-2026).** La corrida en seco destapó que el catastro de
+junio estaba PARTIDO: la capa oficial tenía 653 concesiones y las otras 423 estaban en las trece
+capas «por estado», subidas un minuto antes desde el mismo archivo en WGS84 (al cargar el oficial,
+sus polígonos idénticos no entraron dos veces). Ordenar solo por capa se las habría llevado. Ahora
+la misma exportación se reconoce por la firma de campos del .dbf y se adopta en la capa oficial
+antes de borrar. Resultado aplicado: **1076 concesiones en un solo catastro (antes 1782), 93
+traslapes (antes 1191)**; `v_concesion_minera` (703, otra fuente, fechas vacías) quedó como
+histórico; 13 copias de capas de geología y zonas borradas. Las 90 zonas INDEXSA venían en NAD27 y
+el catastro en WGS84: la huella no coincidía y entraron como concesiones; `carteraDesdeCapa` las
+enlazó por superficie (≥ 80 %) con su concesión oficial y borró la copia. El cargador ya lo hace
+solo cuando una capa sin nombre de catastro cae casi entera sobre concesiones existentes.
+En producción el dueño de `electrum_rol_capa()` es el administrador: el arranque no la reemplaza.
+
 Esquema **v10** (lo aplica el servidor al arrancar): roles `historico` y `proyecto`, `capa.huella`,
 `cartera`, `cartera_concesion`, y el `tipo` de las concesiones sacado de `clasificac`.
 
