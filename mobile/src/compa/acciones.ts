@@ -71,6 +71,38 @@ export function esAccionApp(a: any): a is AccionApp {
   }
 }
 
+/*
+ * Las acciones ya hechas, por id. Una misma acción puede llegar dos veces —por el SSE y en el `done`
+ * del turno de la mesa— y no debe hacerse dos veces («envíalo» mandaría el mensaje repetido).
+ */
+const hechas: string[] = [];
+
+/** true si esta acción es nueva (y queda anotada); sin id siempre es nueva. */
+export function accionNueva(id?: string | null): boolean {
+  if (!id) return true;
+  if (hechas.includes(id)) return false;
+  hechas.push(id);
+  if (hechas.length > 300) hechas.shift();
+  return true;
+}
+
+/**
+ * Las `acciones` que trae el `done` de /api/turno (una lista de AccionApp o de {id, accion}): las
+ * válidas y nuevas, en orden. Lo que no se entiende se descarta.
+ */
+export function accionesDelTurno(r: unknown): AccionApp[] {
+  const lista = (r as { acciones?: unknown } | null)?.acciones;
+  if (!Array.isArray(lista)) return [];
+  const out: AccionApp[] = [];
+  for (const x of lista) {
+    const envuelta = x && typeof x === 'object' && 'accion' in (x as object);
+    const accion = envuelta ? (x as { accion: unknown }).accion : x;
+    const id = envuelta ? String((x as { id?: unknown }).id || '') : '';
+    if (esAccionApp(accion) && accionNueva(id)) out.push(accion);
+  }
+  return out;
+}
+
 export type EstadoPuente = 'parado' | 'conectando' | 'abierto' | 'esperando';
 
 export type DepsPuente = {
@@ -102,7 +134,6 @@ export class PuenteAcciones {
   private cancelarEspera: (() => void) | null = null;
   private cancelarVigia: (() => void) | null = null;
   private lector = new LectorSse();
-  private vistos: string[] = [];
   private ultimoId = '';
   private vivo = false;
   private conexion = 0;
@@ -202,15 +233,11 @@ export class PuenteAcciones {
         const d = jsonDe<{ id?: string; accion?: unknown }>(ev);
         if (!d) continue;
         const id = String(d.id || ev.id || '');
-        if (id) {
-          if (this.vistos.includes(id)) continue;
-          this.vistos.push(id);
-          if (this.vistos.length > 200) this.vistos.shift();
-        }
         if (!esAccionApp(d.accion)) {
           this.d.miga?.('acciones: una acción que no conozco');
           continue;
         }
+        if (!accionNueva(id)) continue;
         this.fallos = 0;
         this.d.alAccion(d.accion, id || undefined);
       }

@@ -54,7 +54,10 @@ import { ClaudioDePie } from '../avatares/ClaudioDePie';
 import { SelectorAvatar } from '../avatares/SelectorAvatar';
 import { avatarPorId, distribucion, type AvatarId } from '../avatares/catalogo';
 import { AccionesAvatar } from '../components/AccionesAvatar';
-import { ModoConversacion, type EstadoConversacion } from '../components/ModoConversacion';
+import { VozProvider, useVoz, useVozOpcional, vozOcupaMicrofono } from '../compa/VozProvider';
+import { avisarMesa, mensajeVoz, sueloCompa } from '../compa/canales';
+import { accionesDelTurno } from '../compa/acciones';
+import { emitir, escuchar } from '../nucleo/contrato';
 import { usePulse } from '../pulse/PulseProvider';
 import { ChatMesa } from '../components/ChatMesa';
 import { avatarActual } from '../avatares/actual';
@@ -96,7 +99,26 @@ const GAG_FRASE: Record<string, FraseId> = { sad: 'triste', angry: 'molesto', st
 const haptic = (kind: 'light' | 'medium' = 'light') =>
   Haptics.impactAsync(kind === 'light' ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
 
-export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
+/**
+ * La mesa. La conversación fluida vive en el VozProvider (src/compa), montado encima de todas las
+ * pantallas; si alguien monta la mesa sin él, la mesa se lo pone a sí misma y sigue igual.
+ */
+export function DeskScreen(props: Props) {
+  const voz = useVozOpcional();
+  if (voz) return <Mesa {...props} />;
+  return (
+    <VozProvider>
+      <Mesa {...props} />
+    </VozProvider>
+  );
+}
+
+/** Las acciones que el cerebro decidió en el turno de la mesa van al bus (la app las hace). */
+function emitirAccionesDelTurno(r: unknown) {
+  for (const a of accionesDelTurno(r)) emitir('accion', a);
+}
+
+function Mesa({ user, onLogout, recienElegido = false }: Props) {
   // PULSE2CHAT: el chat y las llamadas entre personas con Genesis ID (ver src/pulse).
   const pulse = usePulse();
   // Toda la mesa se redibuja si cambia el idioma (desde el menú), y el oído vuelve a arrancar en
@@ -177,19 +199,24 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
   const [avatar, setAvatar] = useState<AvatarId | null>(null);
   /** Lo que se dijo en la mesa, para el chat del modo cuadro (vertical). */
   const [mensajes, setMensajes] = useState<Turn[]>([]);
-  /** Conversación fluida (ElevenLabs Agents): el micrófono y la voz van por WebRTC mientras dura. */
-  const [conversando, setConversando] = useState(false);
   /*
-   * Durante la conversación fluida el micrófono que manda es el de WebRTC (ElevenLabs), no el de la
-   * mesa. Silenciar la mesa ahí dejaba el ícono en 🔇 mientras la voz seguía saliendo. Este estado
-   * es el de ESE micrófono; el botón de siempre lo maneja mientras se conversa.
+   * Conversación fluida (ElevenLabs Agents), del VozProvider: el micrófono y la voz van por WebRTC
+   * mientras dura. Durante ella el micrófono que manda es el de WebRTC, no el de la mesa: el botón
+   * de siempre lo silencia (de verdad: micrófono y voz) mientras se conversa.
    */
-  const [convSilencio, setConvSilencio] = useState(false);
-  useEffect(() => {
-    if (conversando) setConvSilencio(false);
-  }, [conversando]);
+  const voz = useVoz();
+  const vozRef = useRef(voz);
+  vozRef.current = voz;
+  const conversando = voz.vista.montada;
+  const convSilencio = voz.vista.silenciada;
+  const estadoConv = voz.vista.estado;
+  /** La conversación tiene el micrófono (abierta, o dormida por un silencio largo): la mesa no oye ni habla sola (M3). */
+  const vozOcupa = vozOcupaMicrofono(voz.vista);
+  const conversandoRef = useRef(vozOcupa);
+  conversandoRef.current = vozOcupa;
+  /** Hay una llamada: la mesa calla, no oye y apaga la cámara hasta colgar. */
+  const enLlamadaRef = useRef(false);
   const micApagado = conversando ? convSilencio : micMuted;
-  const [estadoConv, setEstadoConv] = useState<EstadoConversacion>('cerrada');
   const { width: anchoPantalla, height: altoPantalla } = useWindowDimensions();
   const horizontal = anchoPantalla >= altoPantalla;
 
@@ -297,6 +324,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
   /** Fin de cualquier audio: mic de vuelta, cara en reposo, HUD según mute real (ref, no closure). */
   const settle = useCallback(() => {
     speakingRef.current = false;
+    avisarMesa({ hablando: false, pensando: false });
     pauseMicForTts(false);
     setFace(restFace());
     idleStatus();
@@ -305,6 +333,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
   const onAudio = useCallback((f: FaceState) => {
     pauseMicForTts(true);
     speakingRef.current = true;
+    avisarMesa({ hablando: true, pensando: false });
     setStatus('speaking');
     setFace(f);
   }, []);
@@ -316,7 +345,10 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
       if (emocion !== 'neutral') setEmocion(emocion);
       const f = nextFace || (performance === 'sing' ? 'SING' : faceForEmocion(emocion));
       showBubble(text);
+      // En la conversación fluida (o en una llamada) la mesa no habla encima: se lee, no se oye (M3).
+      if (conversandoRef.current || enLlamadaRef.current) return;
       logUltron(text);
+      avisarMesa({ emocion, texto: quitarExpresiones(text).trim() });
       speakingRef.current = true;
       setFace(f);
       setStatus('speaking');
@@ -482,6 +514,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
     async (cmd: string, opts?: { image?: string }) => {
       setFace('THINKING');
       setStatus('thinking');
+      avisarMesa({ pensando: true });
       setToolHint('');
       const base = {
         message: cmd,
@@ -518,6 +551,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
                 emocion = e;
                 reacted = true;
                 setEmocion(e);
+                avisarMesa({ emocion: e });
                 cancelMmm();
                 setFace(faceForEmocion(e));
                 speaker?.setEmocion(e);
@@ -551,6 +585,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
               if (speaker) (speaker as StreamSpeaker).cancel();
               return;
             }
+            emitirAccionesDelTurno(result);
             if (speaker) {
               (speaker as StreamSpeaker).end();
               await (speaker as StreamSpeaker).done;
@@ -597,6 +632,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
           if (turnoCancelado.current) return;
         }
         setToolHint('');
+        emitirAccionesDelTurno(out);
         if (failed(out)) {
           const auth = /sesión|privado|401/i.test(String(out.error || ''));
           if (auth) {
@@ -619,6 +655,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
         await say(out.voz || out.reply, faceForEmocion(out.emocion), { emocion: out.emocion });
       } finally {
         cancelMmm();
+        avisarMesa({ pensando: false });
         if (!speakingRef.current) {
           pauseMicForTts(false);
           idleStatus();
@@ -866,6 +903,13 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
     (zone: TouchZone, _x: number, _y: number) => {
       pausarMirada();
       lastUserAt.current = Date.now();
+      if (conversandoRef.current) {
+        // Conversando, tocarla no la hace hablar encima: sonríe y ya.
+        void haptic('light');
+        setFace('HAPPY');
+        setTimeout(() => setFace(restFace()), 700);
+        return;
+      }
       const now = Date.now();
       const sinceLast = now - lastTapAt.current;
       lastTapAt.current = now;
@@ -945,9 +989,10 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
   const onRub = useCallback(() => {
     irritationRef.current = 0;
     setIrritation(0);
-    playSfx('purr');
     void haptic('light');
     setFace('HAPPY');
+    if (conversandoRef.current) return;
+    playSfx('purr');
     if (speakingRef.current || handling.current) return;
     void (async () => {
       // Primero el «aww» grabado, después la frase.
@@ -959,6 +1004,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
   /** Mantener pulsado: duerme / despierta. */
   const onLongPress = useCallback(() => {
     void haptic('medium');
+    if (conversandoRef.current) return;
     if (presenceRef.current === 'sleep') return wakeUp();
     if (speakingRef.current || handling.current) return;
     setPresence('sleep');
@@ -1023,7 +1069,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
       const g = Math.sqrt(x * x + y * y + z * z);
       const jerk = Math.abs(g - last);
       last = g;
-      if (jerk > 1.6 && Date.now() - lastShakeAt > 4000 && !speakingRef.current && !handling.current) {
+      if (jerk > 1.6 && Date.now() - lastShakeAt > 4000 && !speakingRef.current && !handling.current && !conversandoRef.current && !enLlamadaRef.current) {
         lastShakeAt = Date.now();
         setFace('SURPRISED');
         playSfx('tap');
@@ -1124,7 +1170,8 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
   // Watchdog del micrófono: si el bucle se cuelga, reinicio duro.
   useEffect(() => {
     const id = setInterval(() => {
-      if (micMutedRef.current || speakingRef.current) return;
+      // Con la conversación o una llamada el micrófono es de otro: no se reinicia el de la mesa.
+      if (micMutedRef.current || speakingRef.current || conversandoRef.current || enLlamadaRef.current) return;
       if (!micWatchdogOk()) {
         setStatus('reconnect');
         void restartMic().then(() => idleStatus());
@@ -1147,6 +1194,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
   // Comentario proactivo: si la escena cambia y hay calma, el cerebro mira un frame y comenta (máx. 1 cada 2 min).
   const onScene = useCallback(
     (_summary: string, labels: string[]) => {
+      if (conversandoRef.current) return;
       const prev = sceneRef.current;
       const cur = labels.join(',');
       sceneRef.current = cur;
@@ -1196,7 +1244,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
       setVerPersona((v) => (v === hay ? v : hay));
       const att = !hay ? 0 : e.principal?.mirando ? 1 : 0.5;
       setAtencion((a) => (a === att ? a : att));
-      if (!e.eventos.length) return;
+      if (!e.eventos.length || conversandoRef.current) return;
       const calm = !handling.current && !speakingRef.current;
       for (const ev of e.eventos) {
         if (ev === 'llego') {
@@ -1259,74 +1307,130 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
     setAvatar(id);
     setAvatarVoz(id);
     await saveSettings({ avatar: id, avatarElegido: true });
-    void say(de(avatarPorId(id).presentacion), 'HAPPY', { emocion: 'feliz' });
+    if (!conversandoRef.current) void say(de(avatarPorId(id).presentacion), 'HAPPY', { emocion: 'feliz' });
   };
 
   /**
    * Conversar de corrido (como el modo voz de ChatGPT): se suelta el micrófono de la mesa y la voz
-   * de la mesa, y los toma la sesión de ElevenLabs (ModoConversacion). Al terminar, todo vuelve.
+   * de la mesa, y los toma la sesión de ElevenLabs (VozProvider). Nada se espera antes de pedirla:
+   * el permiso ya está precalentado y soltar el micrófono tarda menos que conectar.
    */
-  const toggleConversar = async () => {
+  const toggleConversar = () => {
     void haptic('medium');
     if (conversando) {
-      setConversando(false);
+      voz.terminar();
       return;
     }
-    await stopSpeaking();
+    void stopSpeaking();
     speakingRef.current = false;
-    await muteMic();
+    void muteMic();
     setMenuOpen(false);
-    setConversando(true);
+    voz.iniciar();
   };
-  const alEstadoConv = useCallback(
-    (e: EstadoConversacion, detalle?: string) => {
-      setEstadoConv(e);
-      if (e === 'hablando') {
-        setFace('SPEAKING');
-        setStatus('speaking');
-      } else if (e === 'escuchando') {
-        setFace('LISTENING');
-        setStatus('listening');
-        setListening(true);
-      } else if (e === 'conectando') {
-        setFace('THINKING');
-        setStatus('thinking');
-      } else if (e === 'error' || e === 'cerrada') {
-        setConversando(false);
-        if (e === 'error') {
-          miga(`conversación: ${String(detalle || '').slice(0, 80)}`);
-          showBubble(tr('No pude abrir la conversación fluida. Sigo contigo por la mesa.', 'I couldn’t open the live conversation. I’m still here on the desk.'));
+
+  // Lo que pasa en la conversación, en la cara y la línea de estado de la mesa.
+  const estadoAntes = useRef(estadoConv);
+  useEffect(() => {
+    const antes = estadoAntes.current;
+    estadoAntes.current = estadoConv;
+    if (!conversando) {
+      if (estadoConv === 'error' && antes !== 'error') {
+        miga(`conversación: ${String(voz.vista.detalle || '').slice(0, 80)}`);
+        showBubble(tr('No pude abrir la conversación fluida. Sigo contigo por la mesa.', 'I couldn’t open the live conversation. I’m still here on the desk.'));
+      }
+      return;
+    }
+    if (convSilencio) {
+      setFace(restFace());
+      setStatus('muted');
+    } else if (estadoConv === 'hablando') {
+      setFace('SPEAKING');
+      setStatus('speaking');
+    } else if (estadoConv === 'escuchando') {
+      setFace('LISTENING');
+      setStatus('listening');
+      setListening(true);
+    } else if (estadoConv === 'conectando') {
+      setFace('THINKING');
+      setStatus('thinking');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversando, convSilencio, estadoConv]);
+
+  // Lo que se dice en la conversación va al chat y a la burbuja de la mesa; lo tuyo cuenta como actividad.
+  useEffect(
+    () =>
+      mensajeVoz.escuchar((m) => {
+        if (!m) return;
+        if (m.rol === 'usuario') {
+          lastUserAt.current = Date.now();
+          historial.current = [...historial.current, { rol: 'usuario' as const, texto: m.texto }].slice(-12);
+          setMensajes((l) => [...l, { rol: 'usuario' as const, texto: m.texto }].slice(-80));
+        } else {
+          logUltron(m.texto);
+          showBubble(m.texto);
+          if (m.emocion !== 'neutral') setEmocion(m.emocion);
         }
-      }
-    },
-    [showBubble]
-  );
-  const alMensajeConv = useCallback(
-    (rol: 'usuario' | 'ultron', texto: string) => {
-      if (rol === 'usuario') {
-        historial.current = [...historial.current, { rol: 'usuario' as const, texto }].slice(-12);
-        setMensajes((m) => [...m, { rol: 'usuario' as const, texto }].slice(-80));
-      } else {
-        logUltron(texto);
-        showBubble(texto);
-      }
-    },
+      }),
     [logUltron, showBubble]
   );
-  // Al terminar la conversación fluida, la mesa recupera el micrófono (si no estaba en silencio).
-  const convPrevia = useRef(false);
+
+  // El micrófono de la mesa se suelta solo mientras la conversación lo tiene, y vuelve en cuanto lo suelta.
+  const ocupaAntes = useRef(false);
   useEffect(() => {
-    if (convPrevia.current && !conversando) {
+    if (vozOcupa && !ocupaAntes.current) void muteMic();
+    if (!vozOcupa && ocupaAntes.current) {
       setFace(restFace());
-      if (!micMutedRef.current) void unmuteMic().then(() => setStatus('listening'));
+      if (!micMutedRef.current && !enLlamadaRef.current) void unmuteMic().then(() => setStatus('listening'));
       else setStatus('muted');
     }
-    convPrevia.current = conversando;
-  }, [conversando, restFace]);
+    ocupaAntes.current = vozOcupa;
+  }, [vozOcupa, restFace]);
+
+  // La voz toma el avatar de la mesa; al entrar se deja el permiso de la conversación listo.
+  useEffect(() => {
+    if (avatar) vozRef.current.fijarAvatar(avatar);
+  }, [avatar]);
+  useEffect(() => {
+    vozRef.current.precalentar();
+  }, []);
+
+  /*
+   * Llamadas: al empezar, la mesa corta lo que pensaba o decía, apaga la cámara (sin guardarlo: es
+   * por la llamada) y se queda quieta; el oído y la voz los suspende el VozProvider. Al colgar, la
+   * cámara vuelve si estaba encendida.
+   */
+  const visionAntesLlamada = useRef<boolean | null>(null);
+  useEffect(
+    () =>
+      escuchar('llamada', ({ activa }) => {
+        if (!!activa === enLlamadaRef.current) return;
+        enLlamadaRef.current = !!activa;
+        if (activa) {
+          turnoCancelado.current = true;
+          abortTurno.current?.();
+          pending.current = null;
+          void stopSpeaking();
+          speakingRef.current = false;
+          setToolHint('');
+          setVisionOn((v) => {
+            visionAntesLlamada.current = v;
+            return false;
+          });
+          setFace(restFace());
+          setStatus('muted');
+        } else {
+          if (visionAntesLlamada.current) setVisionOn(true);
+          visionAntesLlamada.current = null;
+          idleStatus();
+        }
+      }),
+    [idleStatus, restFace]
+  );
 
   const toggleMute = async () => {
     if (conversando) {
-      setConvSilencio((v) => !v);
+      voz.silenciar(!convSilencio);
       return;
     }
     if (!micMutedRef.current) {
@@ -1412,6 +1516,15 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
   const sendDraft = () => {
     const t = draft.trim();
     if (!t) return;
+    // Conversando, lo escrito va a la conversación (la mesa no contesta encima, M3).
+    if (conversandoRef.current) {
+      if (!voz.enviarTexto(t)) return;
+      setDraft('');
+      lastUserAt.current = Date.now();
+      historial.current = [...historial.current, { rol: 'usuario' as const, texto: t }].slice(-12);
+      setMensajes((l) => [...l, { rol: 'usuario' as const, texto: t }].slice(-80));
+      return;
+    }
     setDraft('');
     setMenuOpen(false);
     void handleCommand(t);
@@ -1530,6 +1643,14 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
     );
   const esClaudio = avatarId === 'claudio';
   const acciones = avatarPorId(avatarId).acciones;
+  // La compañera pasea por encima de lo que no se debe tapar: la barra de escribir del chat de la
+  // mesa (cuadro), los botones (acostado) o los botones con los atajos (de pie, sin cuadro).
+  const sueloMesa = enCuadro ? (horizontal ? 84 : 92) : horizontal ? 88 : 150;
+  useEffect(() => {
+    sueloCompa.emitir(sueloMesa);
+  }, [sueloMesa]);
+  useEffect(() => () => sueloCompa.emitir(88), []);
+
   const onAccion = (pedido: string) => {
     void haptic('light');
     void handleCommand(pedido);
@@ -1578,7 +1699,7 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
               onCambiarAvatar={() => setEligiendo('menu')}
               conversando={conversando}
               conectando={conversando && estadoConv === 'conectando'}
-              onConversar={() => void toggleConversar()}
+              onConversar={toggleConversar}
             />
           </View>
         </>
@@ -1625,7 +1746,8 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
 
         <View style={[styles.controles, !horizontal && styles.controlesV]} pointerEvents="box-none">
           <Pressable
-            onPress={() => void toggleConversar()}
+            onPress={toggleConversar}
+            onPressIn={() => !conversando && voz.precalentar()}
             accessibilityRole="button"
             accessibilityState={{ selected: conversando }}
             accessibilityLabel={conversando ? tr('Terminar la conversación', 'End the conversation') : tr('Conversar de corrido', 'Talk freely')}
@@ -1669,8 +1791,6 @@ export function DeskScreen({ user, onLogout, recienElegido = false }: Props) {
         </View>
         </>
       )}
-
-      <ModoConversacion activa={conversando} silenciado={convSilencio} avatar={avatarId} idioma={idioma} onEstado={alEstadoConv} onMensaje={alMensajeConv} />
 
       <DeskMenu
         visible={menuOpen}

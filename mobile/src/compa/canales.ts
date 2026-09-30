@@ -61,3 +61,16 @@ export const ecoMesa = canal<EcoMesa>({ hablando: false, pensando: false, emocio
 export function avisarMesa(cambio: Partial<Omit<EcoMesa, 'en'>>) {
   ecoMesa.emitir({ ...ecoMesa.ultimo(), ...cambio, en: Date.now() });
 }
+
+/** Una frase terminada de la conversación fluida: la tuya o la de AURA (con la emoción que se le nota). */
+export type MensajeVoz = { rol: 'usuario' | 'ultron'; texto: string; emocion: Emocion; en: number };
+export const mensajeVoz = canal<MensajeVoz | null>(null);
+
+/** Le hablaron encima mientras hablaba: se calló (el número cambia con cada interrupción). */
+export const interrupcionVoz = canal(0);
+
+/**
+ * Lo que la compañera no debe tapar abajo, en px (la barra de escribir de la pantalla visible, los
+ * botones de la mesa). Cada pantalla lo fija; el teclado se suma aparte.
+ */
+export const sueloCompa = canal(88);
