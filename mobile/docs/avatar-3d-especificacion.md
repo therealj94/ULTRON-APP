@@ -387,8 +387,11 @@ mapeo), reescribe `src/avatar3d/modelo.ts` y rehace las fotos 2D de ANT-ONIO. De
 src/avatar3d/pruebas/avatar3d.prueba.mjs` y `node pruebas/avatar3d/navegador.mjs assets/avatar3d/<avatar>.glb`.
 
 Medido el 30-sep («avatares HD»), recorte de la cara frente al original de Codex en la misma escena y
-la misma luz (SSIM, 10 emociones, 390×844): antes claudio 0,869 / antonio 0,926 / aura 0,999; ahora
-claudio 0,995 / antonio 0,998 / aura 1,000 (ver el informe de la rama). Alta: aura 0,42 MB / 56 800
+la misma luz (SSIM medio de 10 emociones, 390×844 · 1080×1920): antes claudio 0,869 · 0,846, antonio
+0,926 · 0,913, aura 0,999 · 0,999; ahora claudio 0,996 · 0,992 (mínimo 0,989), antonio 0,998 · 0,997,
+aura 1,000 · 1,000. Carga en la escena (Chromium con WebGL por software, relativo; envío + primer
+cuadro): aura 396 → 476 ms, claudio 2 040 → 2 483 ms, antonio 1 344 → 2 070 ms (la espera máxima
+es 15 s). Alta: aura 0,42 MB / 56 800
 triángulos, claudio 3,95 MB / 224 340, antonio 2,94 MB / 135 540; ligera: claudio 2,53 MB / 103 126,
 antonio 2,11 MB / 74 156. La APK/OTA pasa de 4,35 MB de GLB (2,30 comprimidos) a 12,53 MB (7,27
 comprimidos; 4,86 MB son las ligeras). La huella nativa no cambia: se publica por aire.
