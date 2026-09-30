@@ -48,17 +48,34 @@ export function nuevoReto(): { verificador: string; reto: string } {
   return { verificador, reto };
 }
 
-/** Lee `pase`, `error` y `estado` de la vuelta (`ultronfp://sso?…`). */
+/** `decodeURIComponent` que no lanza: un `%` roto en el enlace es un valor que no vino. */
+function descifrarParte(s: string): string | null {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lee `pase`, `error` y `estado` de la vuelta (`ultronfp://sso?…`). El prefijo es EXACTO —después de
+ * `sso` solo `?`, `/`, `#` o el fin—: `ultronfp://ssoXYZ` no es una vuelta. Y nunca lanza: esto corre
+ * dentro del oyente de Linking, y un enlace con un `%` roto tumbaba ese oyente y la espera quedaba
+ * sorda hasta el plazo de cinco minutos.
+ */
 export function leerVuelta(url: string | null | undefined): { pase?: string; error?: string; estado?: string } | null {
   const u = String(url || '');
   if (!u.toLowerCase().startsWith(VUELTA)) return null;
+  const siguiente = u.charAt(VUELTA.length);
+  if (siguiente && siguiente !== '?' && siguiente !== '/' && siguiente !== '#') return null;
   const q = u.includes('?') ? u.slice(u.indexOf('?') + 1).split('#')[0] : '';
   const r: Record<string, string> = {};
   for (const par of q.split('&')) {
     if (!par) continue;
     const i = par.indexOf('=');
-    const k = decodeURIComponent(i < 0 ? par : par.slice(0, i));
-    const v = i < 0 ? '' : decodeURIComponent(par.slice(i + 1));
+    const k = descifrarParte(i < 0 ? par : par.slice(0, i));
+    const v = i < 0 ? '' : descifrarParte(par.slice(i + 1));
+    if (k == null || v == null) continue;
     if (k === 'pase' || k === 'error' || k === 'estado') r[k] = v;
   }
   return r;
@@ -78,6 +95,21 @@ async function leerPendiente(): Promise<Pendiente | null> {
 }
 const olvidarPendiente = () => SecureStore.deleteItemAsync(CAJON).catch(() => {});
 
+/**
+ * El enlace con el que arrancó la app se usa UNA vez. Sin esta marca, al salir de la cuenta y volver a
+ * la pantalla de entrada, `retomarSiVolvio` leía otra vez el mismo `getInitialURL()` —Android lo
+ * guarda mientras viva el proceso— y lo intentaba canjear de nuevo.
+ */
+let inicialConsumido = false;
+
+/** Al salir: se olvida el pedido a medias y el enlace inicial queda gastado. */
+export function olvidarEntrada() {
+  inicialConsumido = true;
+  void olvidarPendiente();
+}
+// El relevo avisa al salir de la cuenta (App.tsx llama a `salir` del relevo al cerrar sesión).
+RELEVO.alSalir(olvidarEntrada);
+
 async function walletWeb(): Promise<string> {
   try {
     const c = await api<{ walletWeb?: string }>('/api/genesis/config', undefined, 8_000);
@@ -89,15 +121,16 @@ async function walletWeb(): Promise<string> {
 }
 
 /**
- * Espera a que vuelva `ultronfp://sso…` de la app Orden Global.
+ * Espera a que vuelva `ultronfp://sso…` de la app Orden Global con el `estado` de este pedido.
  *
  * Y si la persona vuelve a AU-RA SIN el enlace —la app Orden Global instalada es de antes de este
  * cambio y no sabe qué es `destino=aura`, o la persona tocó «atrás»— se deja de esperar enseguida
  * (1,5 s de gracia) en vez de dejarla cinco minutos mirando un botón que no responde: `null` y se
  * sigue por la web de la wallet.
  */
-function esperarVuelta(ms: number): Promise<string | null> {
-  return new Promise((listo) => {
+function esperarVuelta(ms: number, estadoPedido: string): { promesa: Promise<string | null>; cancelar: () => void } {
+  let cancelar = () => {};
+  const promesa = new Promise<string | null>((listo) => {
     let hecho = false;
     let seFue = false;
     let gracia: ReturnType<typeof setTimeout> | null = null;
@@ -110,8 +143,10 @@ function esperarVuelta(ms: number): Promise<string | null> {
       if (gracia) clearTimeout(gracia);
       listo(url);
     };
+    // Solo la vuelta de ESTE pedido (su `estado`) termina la espera: un enlace roto o viejo que llegue
+    // antes no se la lleva —antes la cerraba, y la vuelta buena de después ya no tenía quién la oyera—.
     const sub = Linking.addEventListener('url', ({ url }) => {
-      if (leerVuelta(url)) terminar(url);
+      if (leerVuelta(url)?.estado === estadoPedido) terminar(url);
     });
     const estado = AppState.addEventListener('change', (st) => {
       if (st !== 'active') {
@@ -122,28 +157,32 @@ function esperarVuelta(ms: number): Promise<string | null> {
       if (seFue) gracia = setTimeout(() => terminar(null), 1500);
     });
     const t = setTimeout(() => terminar(null), ms);
+    cancelar = () => terminar(null);
   });
+  return { promesa, cancelar };
 }
 
 /** Pide el pase a la wallet (app o web) y devuelve el enlace de vuelta, o null si no volvió. */
 async function pedirPase(reto: string, estado: string): Promise<string | null> {
   const q = `reto=${encodeURIComponent(reto)}&estado=${encodeURIComponent(estado)}`;
   // 1. La app Orden Global. Si no está instalada, openURL falla y se sigue con la web.
-  const espera = esperarVuelta(5 * 60_000);
+  const espera = esperarVuelta(5 * 60_000, estado);
   try {
     await Linking.openURL(`vetawallet://sso?destino=aura&${q}`);
-    const url = await espera;
+    const url = await espera.promesa;
     if (url) return url;
     // Volvió sin pase: la app Orden Global no lo dio. Se sigue por la web, con el MISMO reto.
   } catch {
-    /* no está la app: la web */
+    // No está la app: la web. La espera se suelta YA —antes quedaban sus oyentes de Linking y de
+    // AppState vivos cinco minutos, y el de AppState podía «terminar» la de la web al volver—.
+    espera.cancelar();
   }
   // 2. La web de la wallet, en una pestaña segura del sistema que vuelve sola a ultronfp://sso.
   const r = await WebBrowser.openAuthSessionAsync(`${await walletWeb()}?${q}`, VUELTA);
   return r.type === 'success' ? r.url : null;
 }
 
-/** Canjea la vuelta: sesión de AU-RA y, con el mismo pase, el chat. */
+/** Canjea la vuelta: sesión de AU-RA y, con el mismo pase, el chat (sin tocar el nombre del chat). */
 async function completar(url: string, p: Pendiente): Promise<ResultadoGenesis> {
   const v = leerVuelta(url);
   if (!v || v.estado !== p.estado) return { ok: false, codigo: 'ESTADO', mensaje: 'Esa respuesta no es de este inicio de sesión. Probá de nuevo.' };
@@ -178,7 +217,12 @@ export async function entrarConGenesis(): Promise<ResultadoGenesis> {
   const p: Pendiente = { verificador, estado: azarB64(12), en: Date.now() };
   await guardarPendiente(p);
   const url = await pedirPase(reto, p.estado);
-  if (!url) return { ok: false, codigo: 'SIN_VUELTA', mensaje: 'No volvió la respuesta de la wallet.' };
+  if (!url) {
+    // Sin vuelta no queda nada que retomar: el pedido pendiente se borra (si no, un arranque en frío
+    // posterior lo encontraba y esperaba una respuesta que ya no iba a llegar).
+    await olvidarPendiente();
+    return { ok: false, codigo: 'SIN_VUELTA', mensaje: 'No volvió la respuesta de la wallet.' };
+  }
   return completar(url, p);
 }
 
@@ -187,8 +231,10 @@ export async function entrarConGenesis(): Promise<ResultadoGenesis> {
  * enlace de vuelta. Esto lo recoge y termina la entrada.
  */
 export async function retomarSiVolvio(): Promise<ResultadoGenesis | null> {
+  if (inicialConsumido) return null;
   const url = await Linking.getInitialURL().catch(() => null);
   if (!leerVuelta(url)) return null;
+  inicialConsumido = true;
   const p = await leerPendiente();
   if (!p) return null;
   return completar(url as string, p);

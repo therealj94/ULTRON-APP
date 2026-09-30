@@ -8,6 +8,8 @@
  */
 import * as Crypto from 'expo-crypto';
 
+const TROZO = 1024;
+
 export function ponerElAzar(): boolean {
   const g = globalThis as any;
   if (!g.crypto) {
@@ -22,8 +24,11 @@ export function ponerElAzar(): boolean {
     g.crypto.getRandomValues = (arr: ArrayBufferView) => {
       // Cualquier vista tipada, no solo Uint8Array: devolver ceros callados sería el peor fallo posible.
       if (!ArrayBuffer.isView(arr)) throw new TypeError('se esperaba una vista tipada');
-      const bytes = Crypto.getRandomBytes(arr.byteLength);
-      new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength).set(bytes);
+      // El tope de WebCrypto (64 KiB por llamada) se respeta igual que en un navegador.
+      if (arr.byteLength > 65536) throw new RangeError('getRandomValues: más de 65536 bytes');
+      // expo-crypto da como mucho 1024 bytes por llamada (y LANZA si se le piden más): se llena a trozos.
+      const destino = new Uint8Array(arr.buffer, arr.byteOffset, arr.byteLength);
+      for (let i = 0; i < destino.length; i += TROZO) destino.set(Crypto.getRandomBytes(Math.min(TROZO, destino.length - i)), i);
       return arr;
     };
     return true;
