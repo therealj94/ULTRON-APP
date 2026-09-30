@@ -12,7 +12,7 @@
  *    los dos enviaban: Beto recibía el mensaje dos veces.
  *  · el CONTEXTO: el teléfono cuenta dónde está (pantalla, chat abierto, a quién puede escribirle,
  *    el borrador). Vive en memoria unos minutos; nunca el contenido de los chats, solo nombres.
- *  · las ÓRDENES: las simples y claras (atrás, abrir, tema, avatar, silencio, y el «sí, envíalo» de
+ *  · las ÓRDENES: las simples y claras (atrás, abrir, tema, avatar, silencio, presencia, y el «sí, envíalo» de
  *    un borrador) se resuelven aquí SIN esperar al modelo grande —es lo que baja la latencia de la
  *    voz—; lo demás (redactar a alguien) lo decide el cerebro con la línea `ACCION_APP: {…}`.
  */
@@ -22,6 +22,8 @@ import { consultarModelo } from './laya';
 export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil';
 export type TemaApp = 'oscuro' | 'claro' | 'sistema';
 export type AvatarApp = 'ojos' | 'aura' | 'claudio';
+/** Cómo está AURA en el teléfono: chiquita caminando, al lado de los chats o a pantalla completa. */
+export type PresenciaApp = 'paseo' | 'lado' | 'completa';
 
 export type AccionApp =
   | { tipo: 'atras' }
@@ -32,7 +34,8 @@ export type AccionApp =
   | { tipo: 'redactar'; para: string; texto: string }
   | { tipo: 'enviar'; para?: string }
   | { tipo: 'descartar' }
-  | { tipo: 'silencio'; valor: boolean };
+  | { tipo: 'silencio'; valor: boolean }
+  | { tipo: 'presencia'; valor: PresenciaApp };
 
 export type Contacto = { correo: string; nombre: string };
 export type ContextoApp = {
@@ -45,6 +48,7 @@ export type ContextoApp = {
 const PANTALLAS: Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil'];
 const TEMAS: TemaApp[] = ['oscuro', 'claro', 'sistema'];
 const AVATARES: AvatarApp[] = ['ojos', 'aura', 'claudio'];
+const PRESENCIAS: PresenciaApp[] = ['paseo', 'lado', 'completa'];
 export const MAX_TEXTO_BORRADOR = 2000;
 export const MAX_CONTACTOS = 300;
 
@@ -71,6 +75,8 @@ export function validarAccion(x: unknown): AccionApp | null {
       return AVATARES.includes(a.valor as AvatarApp) ? { tipo: 'avatar', valor: a.valor as AvatarApp } : null;
     case 'silencio':
       return typeof a.valor === 'boolean' ? { tipo: 'silencio', valor: a.valor } : null;
+    case 'presencia':
+      return PRESENCIAS.includes(a.valor as PresenciaApp) ? { tipo: 'presencia', valor: a.valor as PresenciaApp } : null;
     case 'abrir_chat': {
       const con = linea(a.con, 254);
       return con ? { tipo: 'abrir_chat', con } : null;
@@ -431,8 +437,8 @@ export function instruccionAcciones(ctx: ContextoApp | null, o: { idioma?: 'es' 
   const lineas = [
     'APP (puedes manejar la app de la persona): para hacer algo en su teléfono, escribe al final de tu respuesta UNA línea sola por acción, así:',
     'ACCION_APP: {"tipo":"atras"}',
-    'Las acciones: {"tipo":"atras"} · {"tipo":"abrir","pantalla":"mesa|chats|ajustes|perfil"} · {"tipo":"tema","valor":"oscuro|claro|sistema"} · {"tipo":"avatar","valor":"ojos|aura|claudio"} · {"tipo":"abrir_chat","con":"<nombre>"} · {"tipo":"redactar","para":"<nombre>","texto":"<mensaje>"} · {"tipo":"enviar","para":"<nombre>"} · {"tipo":"descartar"} · {"tipo":"silencio","valor":true}.',
-    'Cuándo: «vete atrás / regresa» → atras. «abre ajustes / los chats / la mesa / mi perfil» → abrir. «ponlo oscuro / claro» → tema. «cambia a Claudio / a AU-RA / al Guardián» → avatar (Guardián = ojos). «cállate / silencio» → silencio.',
+    'Las acciones: {"tipo":"atras"} · {"tipo":"abrir","pantalla":"mesa|chats|ajustes|perfil"} · {"tipo":"tema","valor":"oscuro|claro|sistema"} · {"tipo":"avatar","valor":"ojos|aura|claudio"} · {"tipo":"abrir_chat","con":"<nombre>"} · {"tipo":"redactar","para":"<nombre>","texto":"<mensaje>"} · {"tipo":"enviar","para":"<nombre>"} · {"tipo":"descartar"} · {"tipo":"silencio","valor":true} · {"tipo":"presencia","valor":"completa|lado|paseo"}.',
+    'Cuándo: «vete atrás / regresa» → atras. «abre ajustes / los chats / la mesa / mi perfil» → abrir. «ponlo oscuro / claro» → tema. «cambia a Claudio / a AU-RA / al Guardián» → avatar (Guardián = ojos). «cállate / silencio» → silencio. «ponte a pantalla completa / en grande» → presencia completa; «ponte al lado (del chat)» → presencia lado; «ponte chiquita / vuelve a caminar» → presencia paseo.',
     '«Escríbele a X que …»: busca a X en CONTACTOS (por nombre o parentesco: «mi mamá» es el contacto que se llama así). Si está, redactar con el mensaje escrito como lo escribiría la persona (en primera persona: «dile que llego tarde» → «Llego tarde»), y DI el borrador en voz alta: «Le escribo a Beto: “Llego tarde”. ¿Lo envío?». Si no está o hay dos parecidos, NO redactes: pregunta a quién.',
     'Enviar SOLO si la persona lo confirma de forma explícita («sí», «envíalo», «mándalo») en el turno siguiente a oír el borrador: entonces enviar y di «¡Listo, enviado!». Aunque la orden de redactar diga «y mándalo», primero redacta y pregunta; nunca redactar y enviar en la misma respuesta. «Bórralo / no lo mandes» → descartar. Nunca envíes por tu cuenta.',
     'La línea ACCION_APP no se lee ni se dice: la hace la app. No expliques la línea ni la menciones.',
@@ -472,8 +478,8 @@ const PANTALLA_DE: Array<[RegExp, Pantalla]> = [
 ];
 
 const DICHOS: Record<'es' | 'en', Record<string, string>> = {
-  es: { atras: 'Listo.', ajustes: 'Abro ajustes.', chats: 'Abro tus chats.', mesa: 'Vamos a la mesa.', perfil: 'Abro tu perfil.', oscuro: 'Listo, en oscuro.', claro: 'Listo, en claro.', sistema: 'Listo, como el sistema.', ojos: 'Te paso con el Guardián.', aura: 'Aquí AU-RA.', claudio: '¡Va! Te paso con Claudio.', silencio: 'Va.', habla: 'Aquí estoy.', enviar: '¡Listo, enviado!', descartar: 'Listo, lo borré.' },
-  en: { atras: 'Done.', ajustes: 'Opening settings.', chats: 'Opening your chats.', mesa: 'Back to the desk.', perfil: 'Opening your profile.', oscuro: 'Done, dark it is.', claro: 'Done, light it is.', sistema: 'Done, following the system.', ojos: 'Switching you to the Guardian.', aura: 'AU-RA here.', claudio: 'Sure! Switching you to Claudio.', silencio: 'Okay.', habla: "I'm here.", enviar: 'Done, sent!', descartar: 'Okay, I deleted it.' },
+  es: { completa: 'Aquí estoy, de frente.', lado: 'Me pongo a tu lado.', paseo: 'Me hago chiquita.', atras: 'Listo.', ajustes: 'Abro ajustes.', chats: 'Abro tus chats.', mesa: 'Vamos a la mesa.', perfil: 'Abro tu perfil.', oscuro: 'Listo, en oscuro.', claro: 'Listo, en claro.', sistema: 'Listo, como el sistema.', ojos: 'Te paso con el Guardián.', aura: 'Aquí AU-RA.', claudio: '¡Va! Te paso con Claudio.', silencio: 'Va.', habla: 'Aquí estoy.', enviar: '¡Listo, enviado!', descartar: 'Listo, lo borré.' },
+  en: { completa: 'Here I am, full screen.', lado: "I'll stay by your side.", paseo: "I'll make myself small.", atras: 'Done.', ajustes: 'Opening settings.', chats: 'Opening your chats.', mesa: 'Back to the desk.', perfil: 'Opening your profile.', oscuro: 'Done, dark it is.', claro: 'Done, light it is.', sistema: 'Done, following the system.', ojos: 'Switching you to the Guardian.', aura: 'AU-RA here.', claudio: 'Sure! Switching you to Claudio.', silencio: 'Okay.', habla: "I'm here.", enviar: 'Done, sent!', descartar: 'Okay, I deleted it.' },
 };
 
 /**
@@ -493,6 +499,8 @@ export function dichoDeAcciones(acciones: AccionApp[], idioma?: 'es' | 'en'): st
       return d[a.valor];
     case 'silencio':
       return a.valor ? d.silencio : d.habla;
+    case 'presencia':
+      return d[a.valor];
     case 'enviar':
       return d.enviar;
     case 'descartar':
@@ -559,6 +567,9 @@ export function ordenPorReglas(
     return hecho({ tipo: 'tema', valor }, d[valor]);
   }
 
+  const presencia = presenciaDicha(q);
+  if (presencia) return hecho({ tipo: 'presencia', valor: presencia }, d[presencia]);
+
   const avatar = /^(?:cambia(?:me)?|pasa(?:me)?|pon(?:me)?|quiero hablar con|habla(?:me)? como|switch|change)(?: (?:a|al|con|to))? (claudio|aura|au ra|au-ra|guardian|ojos)$/.exec(q);
   if (avatar) {
     const valor: AvatarApp = avatar[1] === 'claudio' ? 'claudio' : avatar[1] === 'guardian' || avatar[1] === 'ojos' ? 'ojos' : 'aura';
@@ -572,6 +583,20 @@ export function ordenPorReglas(
   if (/^((ya )?puedes hablar|vuelve a hablar|vuelve a escuchar|despierta|you can talk now|unmute)$/.test(q)) {
     return hecho({ tipo: 'silencio', valor: false }, d.habla);
   }
+  return null;
+}
+
+/**
+ * «Ponte a pantalla completa», «ponte al lado», «hazte chiquita»: cómo quiere tener a AURA. Solo
+ * frases que empiezan por la orden: «la pantalla completa del juego» no mueve a nadie.
+ */
+function presenciaDicha(q: string): PresenciaApp | null {
+  const verbo = '(?:ponte|pon(?:te)?|hazte|quedate|ven(?:te)?|muevete|pasate|vete|sal|muestrate|go|stay|move|make yourself|be)';
+  if (new RegExp(`^(?:${verbo} )?(?:a |en |de )?(?:la )?(?:pantalla completa|full ?screen|grande|en grande|de frente)$`).test(q) && !/^(grande|de frente)$/.test(q)) return 'completa';
+  if (new RegExp(`^(?:${verbo} )(?:a mi |al |a un |de |en el |por un |by my |to the |on the )?(?:lado|ladito|costado|side)(?: del chat| de los chats| de la pantalla| of the chat)?$`).test(q)) return 'lado';
+  if (/^(?:al lado|a mi lado)(?: del chat| de los chats)?$/.test(q)) return 'lado';
+  if (new RegExp(`^(?:${verbo} )(?:(?:mas )?(?:chiquita|chiquito|pequena|pequeno|chica|chico|normal|small)|a caminar)$`).test(q)) return 'paseo';
+  if (/^(?:vuelve a caminar|camina|minimizate|achicate|encogete|walk around)$/.test(q)) return 'paseo';
   return null;
 }
 

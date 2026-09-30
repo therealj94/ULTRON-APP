@@ -43,6 +43,7 @@ const temporizador: Temporizador = (f, ms) => {
 const PANTALLAS: readonly Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil'];
 const TEMAS = ['oscuro', 'claro', 'sistema'];
 const AVATARES = ['ojos', 'aura', 'claudio'];
+const PRESENCIAS = ['paseo', 'lado', 'completa'];
 const txt = (v: unknown, max = 2000) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
 
 /** ¿Es una acción que la app sabe hacer? Lo que no, se descarta (un servidor más nuevo no rompe nada). */
@@ -66,6 +67,8 @@ export function esAccionApp(a: any): a is AccionApp {
       return a.para === undefined || txt(a.para, 200);
     case 'silencio':
       return typeof a.valor === 'boolean';
+    case 'presencia':
+      return PRESENCIAS.includes(a.valor);
     default:
       return false;
   }

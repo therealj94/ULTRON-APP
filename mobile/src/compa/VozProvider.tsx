@@ -16,7 +16,10 @@
  *  · el audio: cuándo la conversación suelta de verdad el audio del teléfono (audioVoz.ts), avisado en
  *    el bus (`voz`) para que una llamada no arranque el suyo mientras AURA todavía se cierra;
  *  · el puente de acciones se detiene con la app detrás y se reanuda al volver (sin SSE en segundo
- *    plano); al cerrar cada conversación se le avisa al servidor (POST /api/voz/agente/cerrar).
+ *    plano); al cerrar cada conversación se le avisa al servidor (POST /api/voz/agente/cerrar);
+ *  · la boca de AURA como señal para cualquier cuerpo (avatar3d/senalVoz.ts): el nivel de la voz
+ *    (la de la mesa y la de la conversación) entra ahí, y una interrupción la cierra;
+ *  · junto a la compañera, AURA a pantalla completa cuando la persona lo pide (avatar3d/EscenarioAura).
  *
  * La mesa (DeskScreen) lo consume con `useVoz()`. Si una pantalla se monta sin el proveedor,
  * `useVozOpcional()` devuelve null y ella misma se envuelve (ver DeskScreen).
@@ -28,7 +31,7 @@ import { api } from '../lib/api';
 import { loadMesaToken } from '../lib/storage';
 import { miga } from '../lib/reporte';
 import { emocionDeTexto } from '../lib/emocion';
-import { nivelExterno, speak, suspenderVoz, vozSuspendida } from '../lib/tts';
+import { escucharNivelVoz, nivelExterno, speak, suspenderVoz, vozSuspendida } from '../lib/tts';
 import { pauseMicForTts, suspenderOido } from '../lib/speech';
 import { suspenderSfx } from '../lib/sfx';
 import { quitarExpresiones } from '../lib/expresiones';
@@ -46,6 +49,7 @@ import { cabecerasAparato } from '../lib/aparato';
 import { escucharCuenta } from '../pulse/relevo';
 import { contactosParaAura } from './contactos';
 import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido } from './canales';
+import { senalVoz } from '../avatar3d/senalVoz';
 
 export type ApiVoz = {
   vista: VistaSesion;
@@ -130,6 +134,9 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       if (ok) void precalentador.precalentar(v.avatar, v.idioma);
     });
   }, [control, precalentador]);
+
+  // La boca de AURA para cualquier cuerpo: el mismo nivel que mueve la cara de la mesa.
+  useEffect(() => escucharNivelVoz((l) => senalVoz.nivel(l)), []);
 
   // El idioma elegido manda en la voz (el avatar lo fija la mesa o el perfil).
   useEffect(() => {
@@ -244,7 +251,9 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   );
   const alInterrupcion = useCallback(
     (gen: number) => {
-      if (gen === control.vista().gen) interrupcionVoz.emitir(interrupcionVoz.ultimo() + 1);
+      if (gen !== control.vista().gen) return;
+      interrupcionVoz.emitir(interrupcionVoz.ultimo() + 1);
+      senalVoz.cortar();
     },
     [control]
   );
@@ -315,9 +324,11 @@ export function VozProvider({ children, conCompanera = true }: Props) {
 /*
  * La compañera se carga con require dentro de un try (como CaraSegura): Skia y Reanimated son
  * módulos nativos; si en algún teléfono fallan, AURA se queda sin su figurita pero la app y la voz
- * siguen. Un error al dibujar la apaga sin tumbar lo demás.
+ * siguen. Un error al dibujar la apaga sin tumbar lo demás. AURA a pantalla completa va en el mismo
+ * límite (usa la misma figurita).
  */
 let moduloCompa: typeof import('./Companera') | null = null;
+let moduloEscenario: typeof import('../avatar3d/EscenarioAura') | null = null;
 let falloCompa = false;
 
 class LimiteCompa extends Component<{ children: ReactNode }, { roto: boolean }> {
@@ -338,6 +349,8 @@ function CompaneraSegura() {
     try {
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       moduloCompa = require('./Companera') as typeof import('./Companera');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      moduloEscenario = require('../avatar3d/EscenarioAura') as typeof import('../avatar3d/EscenarioAura');
     } catch (e) {
       falloCompa = true;
       miga(`compañera: no cargó (${String(e instanceof Error ? e.message : e).slice(0, 80)})`);
@@ -345,9 +358,11 @@ function CompaneraSegura() {
   }
   if (!moduloCompa) return null;
   const C = moduloCompa.Companera;
+  const E = moduloEscenario?.EscenarioAura;
   return (
     <LimiteCompa>
       <C />
+      {E ? <E /> : null}
     </LimiteCompa>
   );
 }

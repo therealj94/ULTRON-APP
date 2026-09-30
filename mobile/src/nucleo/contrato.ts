@@ -10,6 +10,7 @@
  * Nada de React aquí: lo importan la voz, el relevo y las pantallas por igual.
  */
 import type { AvatarId } from '../avatares/catalogo';
+import type { ModoPresencia } from '../avatar3d/tipos';
 import type { Idioma } from '../i18n';
 
 /* ── el perfil ───────────────────────────────────────────────────────────────────────────── */
@@ -45,6 +46,11 @@ export type Perfil = {
   encuesta: Encuesta;
   /** true cuando terminó la primera vez (o la saltó a propósito). */
   completado: boolean;
+  /**
+   * Cómo quiere tener a AURA mientras usa la app: caminando chiquita (paseo, la de siempre), al lado
+   * de los chats (lado) o a pantalla completa (completa). Sin valor, paseo. Ver avatar3d/presencia.ts.
+   */
+  presencia?: ModoPresencia;
   /** Milisegundos. */
   actualizado: number;
 };
@@ -76,7 +82,9 @@ export type AccionApp =
   /** Borra el borrador sin enviarlo. */
   | { tipo: 'descartar' }
   /** true = AURA se calla y deja de escuchar; false = vuelve. */
-  | { tipo: 'silencio'; valor: boolean };
+  | { tipo: 'silencio'; valor: boolean }
+  /** «Ponte a pantalla completa» / «ponte al lado» / «ponte chiquita»: cómo se presenta (se guarda en el perfil). */
+  | { tipo: 'presencia'; valor: ModoPresencia };
 
 /**
  * Servidor → teléfono (con la sesión de la mesa):

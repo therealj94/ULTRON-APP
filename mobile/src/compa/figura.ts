@@ -75,6 +75,7 @@ export const FIGURAS: Record<Expresion, Figura> = {
   triste: { ...BASE, pena: 1, tapa: 0.22, miradaY: 0.35, boca: -0.8, ancho: 0.8, estirar: -0.03 },
   uy: { ...BASE, apretar: 1, boca: -0.2, abierta: 0.25, ancho: 0.75, rubor: 0.6, estirar: -0.06 },
   levantada: { ...BASE, pupila: 1.25, boca: 0.2, abierta: 0.45, ancho: 0.7, estirar: 0.1, rubor: 0.3 },
+  timida: { ...BASE, sonrisa: 0.5, boca: 0.7, ancho: 0.8, rubor: 1, miradaX: -0.35, miradaY: 0.4, tapa: 0.15, estirar: -0.02 },
 };
 
 export function mezclarFigura(a: Figura, b: Figura, t: number): Figura {
@@ -201,6 +202,7 @@ export function fotoClaudio(e: Expresion): 'base' | 'risa' | 'sorpresa' | 'pensa
     case 'contenta':
     case 'encantada':
     case 'levantada':
+    case 'timida':
       return 'risa';
     case 'sorprendida':
     case 'uy':
