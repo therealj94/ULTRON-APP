@@ -15,6 +15,8 @@
  *  · `silencio` (del bus, con lo que de verdad pasó) y `perfil` (avatar e idioma);
  *  · `lectura` (del bus): lo que el teléfono leyó de un chat o encontró al buscar, dicho con la voz de
  *    AURA sin pasar por el cerebro (acciones.ts, `decirLectura`);
+ *  · la llamada de un recordatorio («llámame a las 5 para recordarme…»): la pantalla «AURA te llama»
+ *    (LlamadaAura.tsx) y, al contestar, abrir la conversación para que ella lo diga (`decirRecordatorio`);
  *  · el audio: cuándo la conversación suelta de verdad el audio del teléfono (audioVoz.ts), avisado en
  *    el bus (`voz`) para que una llamada no arranque el suyo mientras AURA todavía se cierra;
  *  · el puente de acciones se detiene con la app detrás y se reanuda al volver (sin SSE en segundo

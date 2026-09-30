@@ -51,8 +51,8 @@ let activo = false;
 /**
  * El botón Colgar de la notificación. Devuelve true si el evento era de la llamada.
  *
- * notifee acepta UN SOLO manejador de segundo plano (`onBackgroundEvent`) para toda la app: si otra
- * pieza registra el suyo, tiene que llamar primero a esta función y no hacer nada más si da true.
+ * notifee acepta UN SOLO manejador de segundo plano (`onBackgroundEvent`) para toda la app: vive aquí,
+ * y las demás piezas se suman con `sumarManejadorDeFondo` (reciben lo que no es de esta llamada).
  */
 export function manejarEventoLlamada(evento: { type: number; detail?: any }): boolean {
   const m = cargar();
