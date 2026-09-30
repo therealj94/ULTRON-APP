@@ -389,6 +389,15 @@ export function Recorrido({
             : [];
         const nombresHistoricos = t?.fuente?.historicas ?? capas.filter((x) => x.rol === 'historico').map((x) => x.nombre);
         const hayCatastroViejo = nombresHistoricos.some((n) => !/jica|mmaj/i.test(n));
+        /*
+         * Qué catastro es, dicho desde el dato (no con una fecha escrita a mano): el nombre de la capa
+         * vigente si está ordenado en una sola; si hay varias mezcladas, se dice así, sin elegir una.
+         */
+        const fuenteDicha = t?.fuente?.vigente
+          ? `el catastro vigente de INHGEOMIN, «${enOracion(t.fuente.vigente)}»`
+          : (t?.fuente?.capasVigentes ?? 0) > 1
+            ? `el catastro cargado, todavía en ${t!.fuente!.capasVigentes} capas sin ordenar`
+            : 'el catastro minero nacional vigente';
         if (!sigue()) return;
         const limpiar = () => {
           c.current.rasters([]);
@@ -460,7 +469,7 @@ export function Recorrido({
               orbitar(26, 26_000);
               const cuantas = t ? `${plural(t.total.concesiones, 'concesión', 'concesiones')} y ${nf(t.total.hectareas)} hectáreas` : 'todo el catastro minero nacional';
               // Qué catastro es: el vigente, con su nombre, para que nadie crea que ve información vieja.
-              const fuente = t?.fuente?.vigente ? `el catastro vigente de INHGEOMIN, «${enOracion(t.fuente.vigente)}»` : 'el catastro minero nacional vigente';
+              const fuente = fuenteDicha;
               if (modo === 'legal') {
                 await conversar([
                   { quien: 'tatiana', texto: `[serious] Hoy miramos ${fuente} con ojos legales: ${cuantas}, cada una cruzada con las áreas protegidas, el agua, las comunidades y los demás derechos.` },
@@ -572,7 +581,7 @@ export function Recorrido({
               await conversar([
                 {
                   quien: 'electrum',
-                  texto: `[thoughtful] Antes de la geología, una aclaración importante. Lo que ve ${historicasCapas.length ? 'punteado en sepia' : 'en los mapas escaneados'} es histórico: los estudios de la agencia japonesa JICA, entre 1978 y 2003${hayCatastroViejo ? ', y el catastro de años anteriores' : ''}. No es el catastro vigente: ese es el de INHGEOMIN a junio de 2026, y es el único que cuento en las cifras.`,
+                  texto: `[thoughtful] Antes de la geología, una aclaración importante. Lo que ve ${historicasCapas.length ? 'punteado en sepia' : 'en los mapas escaneados'} es histórico: los estudios de la agencia japonesa JICA, entre 1978 y 2003${hayCatastroViejo ? ', y el catastro de años anteriores' : ''}. No es el catastro vigente: las cifras salen solo de ${fuenteDicha}.`,
                   al: () => orbitar(20, 24_000),
                 },
                 { quien: 'tatiana', texto: '[curious] ¿Y entonces para qué nos sirve algo tan viejo, doctor?' },

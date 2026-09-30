@@ -28,6 +28,7 @@ export type DatosTablero = {
     /** Titulares distintos: lo único a verificar como posible conflicto (server/electrum/tablero.ts). */
     entreTitulares?: { total: number; hectareas: number };
     mismoTitular?: { total: number; hectareas: number };
+    sinTitular?: { total: number; hectareas: number };
     /** El mismo derecho repetido en el padrón (mismo expediente o nombre). */
     mismoNombre?: { total: number; hectareas: number };
     mayores: Array<{ a: string; b: string; ha: number; aId: number; bId: number }>;
@@ -446,7 +447,8 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                     {!!d.traslapes.mismoNombre?.total && (
                       <>
                         {' '}Aparte, {nf(d.traslapes.mismoNombre.total)} ({nf(d.traslapes.mismoNombre.hectareas)} ha) son el mismo derecho repetido en el padrón (mismo expediente o nombre)
-                        {d.traslapes.mismoTitular?.total ? ` y ${nf(d.traslapes.mismoTitular.total)} son del mismo titular` : ''}.
+                        {d.traslapes.mismoTitular?.total ? `; ${nf(d.traslapes.mismoTitular.total)} son del mismo titular` : ''}
+                        {d.traslapes.sinTitular?.total ? `; ${nf(d.traslapes.sinTitular.total)} tienen una parte sin titular en el padrón` : ''}.
                       </>
                     )}
                   </p>

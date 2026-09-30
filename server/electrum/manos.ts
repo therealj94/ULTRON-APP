@@ -192,7 +192,7 @@ const catastro_resumen: Herramienta = {
       })(),
       t.porClase.length ? `Por clase: ${lista(t.porClase, t.porClase.length)}.` : '',
       t.porDepartamento.length ? `Departamentos con más: ${lista(t.porDepartamento, 4)}.` : '',
-      `Traslapes: el catastro marca ${n0(t.traslapes.total)} (${n0(t.traslapes.hectareas)} ha); a verificar entre titulares distintos: ${n0(t.traslapes.entreTitulares?.total ?? t.traslapes.total)} (${n0(t.traslapes.entreTitulares?.hectareas ?? t.traslapes.hectareas)} ha)${t.traslapes.mismoNombre.total ? `; ${n0(t.traslapes.mismoNombre.total)} son el mismo derecho repetido en el padrón` : ''}${t.traslapes.mismoTitular?.total ? `; ${n0(t.traslapes.mismoTitular.total)} del mismo titular` : ''}. Ninguno es pleito dado por hecho.`,
+      `Traslapes: el catastro marca ${n0(t.traslapes.total)} (${n0(t.traslapes.hectareas)} ha); a verificar entre titulares distintos: ${n0(t.traslapes.entreTitulares?.total ?? t.traslapes.total)} (${n0(t.traslapes.entreTitulares?.hectareas ?? t.traslapes.hectareas)} ha)${t.traslapes.mismoNombre.total ? `; ${n0(t.traslapes.mismoNombre.total)} son el mismo derecho repetido en el padrón` : ''}${t.traslapes.mismoTitular?.total ? `; ${n0(t.traslapes.mismoTitular.total)} del mismo titular` : ''}${t.traslapes.sinTitular?.total ? `; ${n0(t.traslapes.sinTitular.total)} con una parte sin titular en el padrón` : ''}. Ninguno es pleito dado por hecho.`,
       t.areasProtegidas
         ? `${n0(t.areasProtegidas.concesiones)} pisan áreas protegidas (${n0(t.areasProtegidas.hectareas)} ha).`
         : t.incompletas.includes('areas_protegidas')

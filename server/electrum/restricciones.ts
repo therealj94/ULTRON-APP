@@ -22,7 +22,7 @@
  * Todo sale de PostGIS, set a set: la cartera entera (90 zonas) se revisa en tres consultas, no
  * en noventa.
  */
-import { conTextoReparado, consultaConTope, hayBase } from './db';
+import { claseTraslapeSql, conTextoReparado, consultaConTope, hayBase } from './db';
 import { capasPorRol } from './entorno';
 
 /**
@@ -156,11 +156,11 @@ async function socialesYTerceros(ids: number[], poblados: number[]) {
       `WITH ${FUENTE}
        SELECT s.id::text AS cid, o.nombre AS con, o.titular, s.ha::float8 AS ha_c,
               (ST_Area(ST_Intersection(s.geom, o.geom)::geography) / 10000.0)::float8 AS ha
-         FROM src s JOIN concesion o ON o.id <> s.id AND o.geom && s.geom AND ST_Intersects(o.geom, s.geom)
-        WHERE coalesce(lower(o.titular), '') <> coalesce(lower((SELECT titular FROM concesion WHERE id = s.id)), '')
-          -- El mismo expediente repetido en el padrón no es un tercero.
-          AND coalesce(nullif(lower(trim(o.expediente)), ''), '#' || o.id::text)
-              <> coalesce(nullif(lower(trim((SELECT expediente FROM concesion WHERE id = s.id))), ''), '#' || s.id::text)`,
+         FROM src s JOIN concesion sc ON sc.id = s.id
+         JOIN concesion o ON o.id <> s.id AND o.geom && s.geom AND ST_Intersects(o.geom, s.geom)
+        -- La misma clasificación que el tablero y el chat (db.ts): solo cuenta como tercero lo que
+        -- es de otro titular conocido; el mismo derecho repetido o sin titular no.
+        WHERE ${claseTraslapeSql('sc', 'o')} = 'entre_titulares'`,
       [ids]
     ),
   ]);

@@ -43,6 +43,8 @@ export type Tablero = {
     entreTitulares: { total: number; hectareas: number };
     /** Dos derechos del mismo titular que se tocan: sin contraparte. */
     mismoTitular: { total: number; hectareas: number };
+    /** A una de las dos le falta el titular en el padrón: no se sabe si hay otra parte. */
+    sinTitular: { total: number; hectareas: number };
     /**
      * El mismo derecho repetido en el padrón (mismo expediente o nombre). Se llama así por
      * compatibilidad; incluye el mismo expediente con otro nombre.
@@ -61,9 +63,11 @@ export type Tablero = {
    */
   incompletas: string[];
   /**
-   * De dónde salen las cifras: la capa del catastro vigente (la de más concesiones) y las capas de
-   * referencia que NO cuentan (históricas: JICA, el catastro viejo). Así el recorrido y el chat dicen
-   * «catastro a junio de 2026» y no dejan pensar que se está mostrando información vieja.
+   * De dónde salen las cifras: la capa del catastro vigente y las capas de referencia que NO
+   * cuentan (históricas: JICA, el catastro viejo). Así el recorrido dice qué catastro es y no deja
+   * pensar que muestra información vieja. `vigente` solo tiene nombre cuando el catastro está
+   * ordenado en UNA capa: con varias mezcladas no hay «el vigente» (ordenar.ts, fraseFuente), y
+   * nombrar la más grande le atribuiría cifras que suman todas.
    */
   fuente?: { vigente: string | null; capasVigentes: number; historicas: string[] };
   ms: number;
@@ -166,7 +170,7 @@ async function calcular(tope = TOPE): Promise<Tablero> {
     q<{ nombre: string; n: number }>(`SELECT k.nombre, count(*)::int AS n FROM concesion c JOIN capa k ON k.id = c.capa_id GROUP BY k.id, k.nombre ORDER BY n DESC`),
     q<{ nombre: string }>(`SELECT nombre FROM capa WHERE rol = 'historico' ORDER BY nombre`),
   ])
-    .then(([vig, his]) => ({ vigente: vig[0]?.nombre ?? null, capasVigentes: vig.length, historicas: his.map((h) => h.nombre) }))
+    .then(([vig, his]) => ({ vigente: vig.length === 1 ? vig[0].nombre : null, capasVigentes: vig.length, historicas: his.map((h) => h.nombre) }))
     .catch(() => undefined);
   const [total, porEstado, porClase, porDepartamento, tr, mayores, ap, mc, pob] = await Promise.all([
     q<{ n: number; ha: number }>(`SELECT count(*)::int AS n, coalesce(sum(hectareas), 0)::float8 AS ha FROM concesion`),
@@ -236,6 +240,7 @@ async function calcular(tope = TOPE): Promise<Tablero> {
       hectareas: Math.round(tr.hectareas),
       entreTitulares: { total: tr.entreTitulares.total, hectareas: Math.round(tr.entreTitulares.hectareas) },
       mismoTitular: { total: tr.mismoTitular.total, hectareas: Math.round(tr.mismoTitular.hectareas) },
+      sinTitular: { total: tr.sinTitular.total, hectareas: Math.round(tr.sinTitular.hectareas) },
       mismoNombre: { total: tr.repetidos.total, hectareas: Math.round(tr.repetidos.hectareas) },
       mayores: mayores.map((m) => ({ a: m.a, b: m.b, ha: r1(m.ha), aId: Number(m.a_id), bId: Number(m.b_id) })),
     },

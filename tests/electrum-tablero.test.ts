@@ -51,8 +51,8 @@ test('tablero nacional, contra PostGIS', { skip: hayBase() ? false : 'sin ELECTR
   await consulta('TRUNCATE traslape, concesion, entidad_geo, capa RESTART IDENTITY CASCADE');
   await guardarCapa(
     capa('CONCESION METALICA OTORGADA PARA EXPLOTAR', [
-      [{ NOMBRE: 'Cerro Azul', ESTADO: 'Otorgada' }, caja(-87.2, 14.8, -87.18, 14.82)],
-      [{ NOMBRE: 'La Vecina', ESTADO: 'Explotar' }, caja(-87.19, 14.8, -87.17, 14.82)],
+      [{ NOMBRE: 'Cerro Azul', ESTADO: 'Otorgada', TITULAR: 'Minera Azul' }, caja(-87.2, 14.8, -87.18, 14.82)],
+      [{ NOMBRE: 'La Vecina', ESTADO: 'Explotar', TITULAR: 'Minera Vecina' }, caja(-87.19, 14.8, -87.17, 14.82)],
     ]),
     { comoConcesiones: true }
   );

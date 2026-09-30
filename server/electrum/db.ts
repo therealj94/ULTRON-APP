@@ -857,13 +857,21 @@ export async function encuadreCatastro(): Promise<[number, number, number, numbe
  *    o un error de digitalización; se resuelve por la prelación de la solicitud.
  * Con `ca` y `cb` = las dos concesiones.
  */
-export const CLASE_TRASLAPE = `CASE
-    WHEN (nullif(trim(ca.expediente), '') IS NOT NULL AND lower(trim(ca.expediente)) = lower(trim(cb.expediente)))
-      OR lower(trim(ca.nombre)) = lower(trim(cb.nombre)) THEN 'repetido'
-    WHEN nullif(trim(ca.titular), '') IS NOT NULL AND lower(trim(ca.titular)) = lower(trim(cb.titular)) THEN 'mismo_titular'
+export function claseTraslapeSql(a: string, b: string): string {
+  return `CASE
+    WHEN (nullif(trim(${a}.expediente), '') IS NOT NULL AND lower(trim(${a}.expediente)) = lower(trim(${b}.expediente)))
+      OR lower(trim(${a}.nombre)) = lower(trim(${b}.nombre)) THEN 'repetido'
+    WHEN nullif(trim(${a}.titular), '') IS NULL OR nullif(trim(${b}.titular), '') IS NULL THEN 'sin_titular'
+    WHEN lower(trim(${a}.titular)) = lower(trim(${b}.titular)) THEN 'mismo_titular'
     ELSE 'entre_titulares' END`;
+}
+/**
+ * Con `ca` y `cb`. `sin_titular`: a una de las dos le falta el titular en el padrón, así que no se
+ * puede decir si son dueños distintos: se cuenta aparte, no como «entre titulares».
+ */
+export const CLASE_TRASLAPE = claseTraslapeSql('ca', 'cb');
 
-export type ClaseTraslape = 'repetido' | 'mismo_titular' | 'entre_titulares';
+export type ClaseTraslape = 'repetido' | 'mismo_titular' | 'sin_titular' | 'entre_titulares';
 
 /** Los mayores traslapes. Primero los que hay que verificar (entre titulares), después el resto. */
 export async function traslapes(limite = 50): Promise<Array<{ a: string; b: string; hectareas: number; a_id: number; b_id: number; clase: ClaseTraslape }>> {
@@ -885,6 +893,8 @@ export type ResumenTraslapes = {
   ajenos: number;
   entreTitulares: { total: number; hectareas: number };
   mismoTitular: { total: number; hectareas: number };
+  /** A una de las dos le falta el titular: no se sabe si hay otra parte. */
+  sinTitular: { total: number; hectareas: number };
   repetidos: { total: number; hectareas: number };
 };
 
@@ -913,6 +923,7 @@ export async function resumenTraslapes(): Promise<ResumenTraslapes> {
     ajenos: entreTitulares.total,
     entreTitulares,
     mismoTitular: de('mismo_titular'),
+    sinTitular: de('sin_titular'),
     repetidos: de('repetido'),
   };
 }
@@ -920,6 +931,7 @@ export async function resumenTraslapes(): Promise<ResumenTraslapes> {
 const NOMBRE_CLASE: Record<ClaseTraslape, string> = {
   entre_titulares: 'a verificar',
   mismo_titular: 'mismo titular',
+  sin_titular: 'sin titular en el padrón',
   repetido: 'repetido en el padrón',
 };
 export function nombreClaseTraslape(c: ClaseTraslape): string {
@@ -939,6 +951,7 @@ export function fraseTraslapes(r: ResumenTraslapes, formato: (n: number, d?: num
     `${nf(r.entreTitulares.total)} entre titulares distintos (${nf(Math.round(r.entreTitulares.hectareas))} ha): esos hay que verificarlos con INHGEOMIN; pueden ser un conflicto o un error de digitalización, y se resuelven por la prelación de la solicitud`,
     ...(r.repetidos.total ? [`${nf(r.repetidos.total)} son el mismo derecho repetido en el padrón (mismo expediente o nombre, ${nf(Math.round(r.repetidos.hectareas))} ha): se aclaran con INHGEOMIN, no son pleito`] : []),
     ...(r.mismoTitular.total ? [`${nf(r.mismoTitular.total)} son del mismo titular (${nf(Math.round(r.mismoTitular.hectareas))} ha): no hay contraparte`] : []),
+    ...(r.sinTitular.total ? [`${nf(r.sinTitular.total)} tienen una parte sin titular en el padrón (${nf(Math.round(r.sinTitular.hectareas))} ha): primero hay que saber de quién es`] : []),
   ];
   return `El catastro marca ${nf(r.total)} ${r.total === 1 ? 'traslape' : 'traslapes'} (${nf(Math.round(r.hectareas))} ha): ${partes.join('; ')}.`;
 }
