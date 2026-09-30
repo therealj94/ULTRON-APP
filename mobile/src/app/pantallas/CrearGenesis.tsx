@@ -11,6 +11,10 @@
  * registra o entra). Si la app no está instalada, se abre su página en Google Play. «Registrarme en
  * la web» abre Veta Wallet en `/#verificar`, la misma verificación en la web (sin sesión, pasa antes
  * por la puerta de registro).
+ *
+ * `motivo: 'sin-gid'`: llegó aquí porque la wallet contestó que no tiene Genesis ID (Entrar.tsx); se
+ * dice arriba, para que no parezca que la entrada simplemente falló. (Quien lo tiene y está en
+ * verificación NO llega aquí: Entrar le muestra su propia tarjeta.)
  */
 import { Linking, StyleSheet, View } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
@@ -83,14 +87,14 @@ export function CrearGenesis({ navigation, route }: Props) {
       onAtras={() => navigation.goBack()}
     >
       <View style={{ gap: MEDIDA.espacio.m }}>
-        {route.params?.sinVerificar && (
+        {route.params?.motivo === 'sin-gid' && (
           <Aparecer desde="escala">
             <View style={[s.aviso, { backgroundColor: tema.acentoFondo }]} accessibilityRole="alert">
               <Icono nombre="info" tam={18} color={tema.acentoTexto} />
               <Texto v="chica" color="texto" style={{ flex: 1 }}>
                 {tr(
-                  'Tu Genesis ID todavía no está verificado. Termina la verificación en tu wallet y vuelve.',
-                  'Your Genesis ID isn’t verified yet. Finish the verification in your wallet and come back.'
+                  'Tu wallet todavía no tiene un Genesis ID. Créalo con estos tres pasos y vuelve a entrar.',
+                  'Your wallet doesn’t have a Genesis ID yet. Create one with these three steps and sign in again.'
                 )}
               </Texto>
             </View>
