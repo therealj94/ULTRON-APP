@@ -46,6 +46,7 @@ import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDe
 import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
 import { aparatoValido, lecturaDe, turnoDeRecordatorio } from '../lib/acciones-app';
+import { preguntaSigues, RE_LLAMADA, RE_SIGUES, saludoDeLlamada } from '../lib/manos-app';
 import { nivelDeCorreo, nivelMasEstrecho, nivelValido, type NivelAura } from './nivel';
 import { anotarVoz, fraseTopeVoz, restanteVozMs } from './tope-voz';
 // El banco de frases de estado es uno solo, el de la app (sin React Native: se empaqueta aquí igual).
@@ -634,6 +635,19 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const lectura = lecturaDe(pase.correo, mensaje, ahora);
     if (lectura) {
       const texto = lectura.ok ? quitarExpresiones(lectura.texto).trim() || PHRASES.noLei[pase.idioma] : PHRASES.noLei[pase.idioma];
+      escribir(trozoOpenAI(id, modelo, texto));
+      conv.ultimaDicha = texto;
+      escribir(trozoOpenAI(id, modelo, null, 'stop'));
+      return cerrar();
+    }
+    /*
+     * LA LLAMADA DEL AVATAR (compa/llamadaCiclo.ts): la persona contestó la llamada que pidió («llámame»)
+     * y el teléfono manda `[[llamada]]`: se saluda como quien llama, AL INSTANTE y sin cerebro. Tras tres
+     * minutos sin que nadie hable manda `[[sigues]]`: «¿Sigues ahí?», también sin cerebro. Ninguno de los
+     * dos queda en el hilo (no son algo que la persona haya dicho).
+     */
+    if (RE_LLAMADA.test(mensaje) || RE_SIGUES.test(mensaje)) {
+      const texto = RE_LLAMADA.test(mensaje) ? saludoDeLlamada(pase.idioma, conv.turnos) : preguntaSigues(pase.idioma);
       escribir(trozoOpenAI(id, modelo, texto));
       conv.ultimaDicha = texto;
       escribir(trozoOpenAI(id, modelo, null, 'stop'));

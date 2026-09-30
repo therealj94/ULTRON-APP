@@ -2883,6 +2883,11 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
     esperaLayaMs: opciones.voz ? Math.min(250, TOPE_PASO_VOZ_MS) : undefined,
   });
   if (!orden || (!orden.accion && !orden.propuesta && !orden.soltarPropuesta && !orden.soloDecir)) return null;
+  // «Llámame» dicho EN la llamada del avatar: ya están hablando (no suena otra encima).
+  if (opciones.voz && orden.accion?.tipo === 'llamame') {
+    orden.accion = null;
+    orden.decir = orden.decir && /[a-z]/i.test(orden.decir) && /calling/i.test(orden.decir) ? "We're already on a call. Tell me!" : 'Ya estamos en llamada. ¡Dime!';
+  }
   // Llamar y recordar se preguntan primero: la propuesta espera el «sí» del turno siguiente.
   if (orden.propuesta) anotarPropuesta(amb, orden.propuesta);
   if (orden.soltarPropuesta) soltarPropuesta(amb);

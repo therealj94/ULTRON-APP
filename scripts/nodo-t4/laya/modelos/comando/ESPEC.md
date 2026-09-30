@@ -17,8 +17,8 @@ grupo por frase). Cada producto lee el suyo:
     envíalo» / «bórralo» de un borrador), `app_leer`, `app_responder`, `app_buscar_chats`,
     `app_silenciar_chat`;
   · llamadas y recordatorios: `app_llamar`, `app_videollamar`, `app_colgar`, `app_recordar`,
-    `app_llamar_recordar` («llámame a las 5 para recordarme…»), `app_listar_recordatorios`,
-    `app_cancelar_recordatorio`;
+    `app_llamar_recordar` («llámame a las 5 para recordarme…», timers y despertadores),
+    `app_listar_recordatorios`, `app_cancelar_recordatorio`, `app_llamame` («llámame»: el avatar llama ya);
   · `app_perfil` (apodo, dónde vive, cumpleaños…) y `app_buscar_internet`.
   Laya decide QUÉ mano; a quién, a qué hora o qué texto lo sacan las reglas o el cerebro. NO existen en
   el código (y no tienen etiqueta): abrir otra app del teléfono, mover/rotar/acercar el avatar por voz.
@@ -39,8 +39,10 @@ Reglas de etiquetado de `app`:
 - Lo que se CUENTA no es orden: «mi mamá me llamó ayer», «Beto me dijo que venía» → `app_ninguna`.
 - Pedir un dato de memoria no es un recordatorio: «recuérdame quién ganó el mundial» → `app_ninguna`.
 - «llámame» + nombre es el apodo (`app_perfil`); «llámame a X» es llamar a X por mí (`app_llamar`);
-  «llámame» solo es la llamada de Twilio del taller (`app_ninguna`); «llámame a las 5 para…» es
-  `app_llamar_recordar`.
+  «llámame» solo (o «hazme una llamada», «call me») es `app_llamame`: el avatar llama a la persona ya
+  (mobile/src/compa/llamadaCiclo.ts; antes era la llamada de Twilio del taller y llevaba `app_ninguna`);
+  «llámame a las 5 para…», «ponme un timer de 10 minutos» y «despiértame a las 6» son
+  `app_llamar_recordar` (el avatar llama a esa hora).
 - Modismos: «ponte las pilas» → `app_ninguna`; «cuelga la ropa» → `app_ninguna`.
 - «cállate» es `accion: callar` y `app_callar` (cada producto lo lee de su grupo); «cierra esto» es
   `accion: cerrar` y `app_atras`.

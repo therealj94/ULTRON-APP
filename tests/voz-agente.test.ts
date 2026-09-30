@@ -668,6 +668,22 @@ test('contestó la llamada de un recordatorio: `[[recordatorio]]` llega al cereb
   }
 });
 
+test('la llamada del avatar: `[[llamada]]` saluda como quien llama y `[[sigues]]` pregunta «¿Sigues ahí?», al instante y sin cerebro', async () => {
+  const s = await montar(async (t) => t.enviar('done', { reply: 'no debería llegar aquí' }));
+  try {
+    const t0 = Date.now();
+    const hola = dichoDe(await (await llm(s.base, paseDe(persona()), [{ role: 'user', content: '[[llamada]]' }])).text());
+    const ms = Date.now() - t0;
+    console.log(`[latencia] llamada del avatar: saludo al contestar en ${ms} ms (sin cerebro)`);
+    assert.match(hola, /Aquí estoy|en la línea/);
+    const sigues = dichoDe(await (await llm(s.base, paseDe(persona()), [{ role: 'user', content: '[[sigues]]' }])).text());
+    assert.equal(sigues, '¿Sigues ahí?');
+    assert.equal(s.vistos.length, 0, 'el cerebro no los vio');
+  } finally {
+    await s.cerrar();
+  }
+});
+
 test('el puente por omisión (José: «el "déjame ver" solo si lleva bastante tiempo»): ~4,5 s, después del relleno del agente; un cerebro que contesta en 1,8 s no lo oye', async () => {
   const { PUENTE_VOZ_MS } = await import('../server/voz-agente');
   const { ESPERA_FRASE_MS, frasesDe } = await import('../mobile/src/compa/frasesEstado');

@@ -33,11 +33,11 @@ const contactos = NOMBRES.map((n, i) => ({ correo: `c${i}@prueba.hn`, nombre: n 
 const AHORA = Date.now()
 const TEXTOS = ['tomar la pastilla', 'sacar la basura', 'pagar la luz', 'la reunión con el ingeniero', 'take my pills', 'buy bread', 'go to church']
 const recordatorios = TEXTOS.map((t, i) => ({ id: `aura-rec-eval-${i}`, texto: t, cuando: AHORA + (6 + i) * 3600_000, llamada: i % 2 === 0 }))
-const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada']
+const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame']
 const contexto = { pantalla: 'mesa', contactos, manos: MANOS, recordatorios }
 
 /** Lo que hizo el camino rápido → la etiqueta del grupo `app` (app_ninguna = lo pasó al cerebro). */
-function etiqueta(o) {
+function etiqueta(o, q = '') {
   if (!o) return 'app_ninguna'
   const p = o.propuesta
   if (p?.tipo === 'llamar') return p.video ? 'app_videollamar' : 'app_llamar'
@@ -60,6 +60,9 @@ function etiqueta(o) {
     case 'descartar': return 'app_descartar'
     case 'redactar': return 'app_redactar'
     case 'abrir_chat': return 'app_abrir_chat'
+    case 'llamame': return 'app_llamame'
+    // Con la mano `llamame` todo recordatorio se pone directo y llama: la etiqueta la decide cómo se pidió.
+    case 'recordatorio': return /ll[aá]m|m[aá]rc|timbr|call|ring|phone|despi[eé]r|levant|wake|timer|temporizador|countdown|cuenta regresiva/i.test(q) ? 'app_llamar_recordar' : 'app_recordar'
     default: return 'app_ninguna'
   }
 }
@@ -118,13 +121,13 @@ for (const archivo of archivos) {
   const opts = (f) => ({ contexto, idioma: detectarIdioma(f.q) ?? 'es', ahora: AHORA })
   const antes = medir('antes (reglas)', filas, (f) => {
     const o = ordenPorReglas(f.q, opts(f))
-    return { etiqueta: etiqueta(o), decir: o?.decir, via: o?.via }
+    return { etiqueta: etiqueta(o, f.q), decir: o?.decir, via: o?.via }
   })
   const despuesRes = []
   const t0 = performance.now()
   for (const f of filas) {
     const o = await ordenRapida(f.q, opts(f))
-    despuesRes.push({ etiqueta: etiqueta(o), decir: o?.decir, via: o?.via })
+    despuesRes.push({ etiqueta: etiqueta(o, f.q), decir: o?.decir, via: o?.via })
   }
   const despues = { nombre: 'después (reglas + Laya ligera)', res: despuesRes, ms: (performance.now() - t0) / Math.max(1, filas.length) }
   const nombre = archivo.split('/').pop()

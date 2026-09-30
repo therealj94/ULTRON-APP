@@ -49,6 +49,12 @@ import {
   buscarRecordatorios,
   listaDeRecordatorios,
   turnoDeRecordatorio,
+  horaCorta,
+  RE_LLAMAME,
+  saludoDeLlamada,
+  preguntaSigues,
+  RE_LLAMADA,
+  RE_SIGUES,
   type RecordatorioApp,
 } from '../lib/manos-app';
 import { resolverContacto } from '../lib/acciones-app';
@@ -63,7 +69,9 @@ const CONTACTOS = [
   { correo: 'ana.lopez@x.com', nombre: 'Ana López' },
   { correo: 'ana.ruiz@x.com', nombre: 'Ana Ruiz' },
 ];
-const TODAS = [...MANOS];
+// Las manos de un APK anterior (sin `llamame`): llamar y recordar esperan el «sí». La mano nueva (el
+// avatar llama y los recordatorios se ponen directo) tiene sus pruebas al final.
+const TODAS = MANOS.filter((m) => m !== 'llamame');
 const conManos: ContextoApp = { pantalla: 'mesa', contactos: CONTACTOS, manos: TODAS };
 const viejo: ContextoApp = { pantalla: 'mesa', contactos: CONTACTOS };
 
@@ -484,4 +492,95 @@ test('el habla de aquí: muletillas, «q», palabras repetidas, «la Ana», «bi
     const r = ordenPorReglas(t, { ...o, contexto: conRecs });
     assert.equal(r?.accion ?? r?.propuesta ?? null, null, t);
   }
+});
+
+/* ── la llamada del avatar (mano `llamame`): «llámame» y los recordatorios / timers que llaman ── */
+
+const conLlamame: ContextoApp = { pantalla: 'mesa', contactos: CONTACTOS, manos: [...MANOS] };
+
+test('«llámame» (y cómo se dice aquí y en inglés): el avatar llama YA, sin «sí» y sin cerebro, medido', () => {
+  const o = { contexto: conLlamame, ahora: AHORA };
+  const dichas = ['llámame', 'Llámame', 'Aura, llámame porfa', 'hazme una llamada', 'márcame un ratito', '¿me llamas?', 'quiero que me llames', 'llámame ahorita que quiero platicar', 'hazme una llamadita', 'ponte en llamada conmigo', 'call me', 'Give me a call please', 'can you call me', "let's talk on a call", 'call me now'];
+  for (const t of dichas) {
+    const t0 = performance.now();
+    const r = ordenPorReglas(t, { ...o, idioma: /[a-z]/.test(t) && /call/i.test(t) ? 'en' : 'es' });
+    const ms = performance.now() - t0;
+    assert.deepEqual(r?.accion, { tipo: 'llamame' }, t);
+    assert.equal(r?.via, 'reglas', t);
+    assert.ok(!r?.propuesta, `${t}: sin propuesta (lo pidió ella)`);
+    assert.ok(ms < 20, `${t}: ${ms.toFixed(2)} ms`);
+  }
+  assert.match(ordenPorReglas('llámame', o)!.decir, /te llamo/);
+  assert.match(ordenPorReglas('call me', { ...o, idioma: 'en' })!.decir, /calling you/i);
+  // Lo que se parece y NO es «llámame ya»: el apodo, llamar a otro, un recordatorio, algo que se cuenta.
+  assert.deepEqual(ordenPorReglas('llámame Chepe', o)?.accion, { tipo: 'perfil', campo: 'apodo', valor: 'Chepe' });
+  assert.equal((ordenPorReglas('llámame a beto', o)?.propuesta as any)?.con, 'beto@x.com');
+  assert.equal(ordenPorReglas('llámame a las 5 para recordarme la pastilla', o)?.accion?.tipo, 'recordatorio');
+  for (const t of ['mi mamá me llamó ayer', '¿me llamaste?', 'nadie me llama', 'call me crazy but i like it', 'llámame luego si puedes mañana']) {
+    assert.notDeepEqual(ordenPorReglas(t, o)?.accion, { tipo: 'llamame' }, t);
+  }
+  // Un APK sin la mano no la recibe.
+  assert.equal(ordenPorReglas('llámame', { contexto: conManos, ahora: AHORA })?.accion?.tipo, undefined);
+  assert.ok(RE_LLAMAME.test('llamame'));
+});
+
+test('con la mano `llamame`, recordatorios, timers y despertadores se ponen DIRECTO y llaman, con la hora dicha («Listo, te llamo a las 2:00 p. m.»)', () => {
+  const temprano = msDeHN(2026, 9, 30, 11, 0); // 11:00 a. m. en Honduras
+  const o = { contexto: conLlamame, ahora: temprano };
+  const beto = ordenPorReglas('recuérdame a las 2 pm llamar a Beto', o)!;
+  assert.deepEqual(beto.accion, { tipo: 'recordatorio', texto: 'Llamar a Beto', cuando: hn(30, 14), llamada: true });
+  assert.equal(beto.decir, 'Listo, te llamo a las 2:00 p. m.');
+  assert.ok(!beto.propuesta, 'directo, sin «¿te llamo…?»');
+  const timer = ordenPorReglas('ponme un timer de 10 minutos', o)!;
+  assert.deepEqual(timer.accion, { tipo: 'recordatorio', texto: 'Se cumplió tu timer de 10 minutos', cuando: temprano + 10 * 60_000, llamada: true });
+  assert.equal(timer.decir, 'Listo, te llamo en 10 minutos, a las 11:10 a. m.');
+  const media = ordenPorReglas('temporizador de media hora para la estufa', o)!;
+  assert.equal((media.accion as any).cuando, temprano + 30 * 60_000);
+  assert.equal((media.accion as any).texto, 'La estufa');
+  // «despiértame a las 6» es de mañana (a las 11 a. m., mañana a las 6:00 a. m.; no hoy a las 6 de la tarde).
+  const desp = ordenPorReglas('despiértame a las 6', o)!;
+  assert.deepEqual(desp.accion, { tipo: 'recordatorio', texto: 'Hora de despertar', cuando: msDeHN(2026, 10, 1, 6, 0), llamada: true });
+  assert.equal(desp.decir, 'Listo, te llamo mañana a las 6:00 a. m.');
+  assert.equal((ordenPorReglas('despiértame a las 6 de la tarde', o)!.accion as any).cuando, hn(30, 18));
+  const en = ordenPorReglas('set a timer for 5 minutes', { ...o, idioma: 'en' })!;
+  assert.equal((en.accion as any).cuando, temprano + 5 * 60_000);
+  assert.equal(en.decir, "Done, I'll call you in 5 minutes, at 11:05 AM.");
+  assert.equal((ordenPorReglas('wake me up at 7', { ...o, idioma: 'en' })!.accion as any).cuando, msDeHN(2026, 10, 1, 7, 0));
+  assert.equal((ordenPorReglas('pon una alarma a las 5 para la pastilla', o)!.accion as any).texto, 'La pastilla');
+  // Un timer de segundos no es un recordatorio (menos de un minuto): contesta el cerebro.
+  assert.equal(ordenPorReglas('ponme un timer de 30 segundos', o), null);
+  // Cancelarlo sigue pidiendo el «sí».
+  assert.equal(ordenPorReglas('cancela el recordatorio de las 5', { contexto: { ...conLlamame, recordatorios: RECS }, ahora: AHORA })?.propuesta?.tipo, 'cancelar_recordatorio');
+});
+
+test('la hora corta de la confirmación, en hora de Honduras', () => {
+  assert.equal(horaCorta(hn(30, 14), AHORA - 3 * 3600_000), 'a las 2:00 p. m.');
+  assert.equal(horaCorta(hn(30, 13), AHORA - 3 * 3600_000), 'a la 1:00 p. m.');
+  assert.equal(horaCorta(msDeHN(2026, 10, 1, 6, 30), AHORA), 'mañana a las 6:30 a. m.');
+  assert.equal(horaCorta(msDeHN(2026, 10, 3, 9, 0), AHORA), 'el sábado 3 de octubre a las 9:00 a. m.');
+  assert.equal(horaCorta(hn(30, 14), AHORA - 3 * 3600_000, 'en'), 'at 2:00 PM');
+});
+
+test('el cerebro con la mano `llamame`: el recordatorio sale directo (sin propuesta) y «llamame» también', () => {
+  const props: unknown[] = [];
+  const out = prepararAcciones(
+    [
+      { tipo: 'recordatorio', texto: 'La pastilla', cuando: hn(30, 17) },
+      { tipo: 'llamame' },
+    ],
+    { mensaje: 'recuérdame la pastilla a las 5 y llámame', contexto: conLlamame, alProponer: (p) => props.push(p), ahora: AHORA }
+  );
+  assert.deepEqual(out, [{ tipo: 'recordatorio', texto: 'La pastilla', cuando: hn(30, 17), llamada: true }, { tipo: 'llamame' }]);
+  assert.deepEqual(props, []);
+  // Sin la mano (APK anterior): «llamame» no sale.
+  assert.deepEqual(prepararAcciones([{ tipo: 'llamame' }], { mensaje: 'llámame', contexto: conManos, ahora: AHORA }), []);
+});
+
+test('lo que dice el avatar al contestar y a los tres minutos de silencio: al instante, sin cerebro', () => {
+  assert.ok(RE_LLAMADA.test('[[llamada]]') && !RE_LLAMADA.test('[[llamada]] algo'));
+  assert.ok(RE_SIGUES.test('[[sigues]]'));
+  assert.match(saludoDeLlamada('es', 0), /Aquí estoy/);
+  assert.match(saludoDeLlamada('en', 1), /line/);
+  assert.equal(preguntaSigues('es'), '¿Sigues ahí?');
+  assert.equal(preguntaSigues('en'), 'Are you still there?');
 });

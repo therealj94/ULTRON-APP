@@ -2,53 +2,53 @@
  "dim": 8192,
  "epocas": 12,
  "semilla": 7,
- "temperatura": 0.5047,
- "umbral": 0.88,
- "entrenamiento": 8031,
+ "temperatura": 0.5547,
+ "umbral": 0.86,
+ "entrenamiento": 8282,
  "validacion": {
-  "n": 1178,
-  "exactitud": 0.8259762308998302,
-  "cobertura": 0.46554149085794655,
-  "precision_decide": 0.9700598802395209,
-  "precision_ejecutables": 0.9565217391304348,
-  "ejecutables_decididos": 184,
+  "n": 1220,
+  "exactitud": 0.8040983606557377,
+  "cobertura": 0.40720961281708945,
+  "precision_decide": 0.9675324675324676,
+  "precision_ejecutables": 0.9548022598870056,
+  "ejecutables_decididos": 177,
   "falsos_positivos_en_negativos": 3,
-  "negativos": 467,
+  "negativos": 471,
   "por_etiqueta": {
    "app_ninguna": {
-    "precision": 0.837,
-    "recall": 0.91,
-    "f1": 0.872,
-    "soporte": 467
+    "precision": 0.796,
+    "recall": 0.943,
+    "f1": 0.863,
+    "soporte": 471
    },
    "app_recordar": {
-    "precision": 0.92,
-    "recall": 0.767,
-    "f1": 0.836,
+    "precision": 0.675,
+    "recall": 0.9,
+    "f1": 0.771,
     "soporte": 30
    },
    "app_llamar_recordar": {
-    "precision": 0.885,
-    "recall": 0.958,
-    "f1": 0.92,
-    "soporte": 24
+    "precision": 0.962,
+    "recall": 0.658,
+    "f1": 0.781,
+    "soporte": 38
    },
    "app_listar_recordatorios": {
-    "precision": 0.81,
-    "recall": 0.85,
-    "f1": 0.829,
+    "precision": 0.737,
+    "recall": 0.7,
+    "f1": 0.718,
     "soporte": 20
    },
    "app_cancelar_recordatorio": {
-    "precision": 0.824,
-    "recall": 0.933,
-    "f1": 0.875,
+    "precision": 0.917,
+    "recall": 0.733,
+    "f1": 0.815,
     "soporte": 30
    },
    "app_llamar": {
-    "precision": 0.857,
-    "recall": 0.8,
-    "f1": 0.828,
+    "precision": 0.667,
+    "recall": 0.667,
+    "f1": 0.667,
     "soporte": 30
    },
    "app_videollamar": {
@@ -58,117 +58,117 @@
     "soporte": 30
    },
    "app_colgar": {
-    "precision": 0.905,
+    "precision": 0.864,
     "recall": 0.95,
-    "f1": 0.927,
+    "f1": 0.905,
     "soporte": 20
    },
    "app_leer": {
-    "precision": 0.68,
-    "recall": 0.654,
-    "f1": 0.667,
+    "precision": 0.9,
+    "recall": 0.692,
+    "f1": 0.783,
     "soporte": 26
    },
    "app_responder": {
     "precision": 1.0,
-    "recall": 0.875,
-    "f1": 0.933,
+    "recall": 0.958,
+    "f1": 0.979,
     "soporte": 24
    },
    "app_buscar_chats": {
-    "precision": 0.944,
-    "recall": 0.708,
-    "f1": 0.81,
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1": 0.667,
     "soporte": 24
    },
    "app_silenciar_chat": {
-    "precision": 0.5,
-    "recall": 0.25,
-    "f1": 0.333,
+    "precision": 0.455,
+    "recall": 0.208,
+    "f1": 0.286,
     "soporte": 24
    },
    "app_idioma": {
-    "precision": 0.842,
+    "precision": 0.889,
     "recall": 1.0,
-    "f1": 0.914,
+    "f1": 0.941,
     "soporte": 16
    },
    "app_perfil": {
-    "precision": 0.619,
-    "recall": 0.433,
-    "f1": 0.51,
+    "precision": 0.692,
+    "recall": 0.3,
+    "f1": 0.419,
     "soporte": 30
    },
    "app_presencia": {
-    "precision": 0.865,
-    "recall": 0.833,
-    "f1": 0.849,
+    "precision": 1.0,
+    "recall": 0.796,
+    "f1": 0.887,
     "soporte": 54
    },
    "app_buscar_internet": {
     "precision": 1.0,
-    "recall": 0.806,
-    "f1": 0.893,
+    "recall": 0.516,
+    "f1": 0.681,
     "soporte": 31
    },
    "app_atras": {
-    "precision": 0.906,
+    "precision": 0.806,
     "recall": 0.935,
-    "f1": 0.921,
+    "f1": 0.866,
     "soporte": 31
    },
    "app_abrir": {
-    "precision": 0.756,
-    "recall": 0.85,
-    "f1": 0.8,
+    "precision": 0.882,
+    "recall": 0.75,
+    "f1": 0.811,
     "soporte": 40
    },
    "app_tema": {
-    "precision": 0.958,
-    "recall": 0.958,
-    "f1": 0.958,
+    "precision": 0.923,
+    "recall": 1.0,
+    "f1": 0.96,
     "soporte": 24
    },
    "app_avatar": {
-    "precision": 0.6,
+    "precision": 0.656,
     "recall": 0.875,
-    "f1": 0.712,
+    "f1": 0.75,
     "soporte": 24
    },
    "app_abrir_chat": {
     "precision": 0.5,
-    "recall": 0.375,
-    "f1": 0.429,
+    "recall": 0.5,
+    "f1": 0.5,
     "soporte": 24
    },
    "app_redactar": {
-    "precision": 0.923,
+    "precision": 0.96,
     "recall": 0.8,
-    "f1": 0.857,
+    "f1": 0.873,
     "soporte": 30
    },
    "app_enviar": {
-    "precision": 0.824,
-    "recall": 0.7,
-    "f1": 0.757,
+    "precision": 0.765,
+    "recall": 0.65,
+    "f1": 0.703,
     "soporte": 20
    },
    "app_descartar": {
-    "precision": 0.643,
+    "precision": 0.6,
     "recall": 0.562,
-    "f1": 0.6,
+    "f1": 0.581,
     "soporte": 16
    },
    "app_callar": {
-    "precision": 0.706,
+    "precision": 0.727,
     "recall": 0.75,
-    "f1": 0.727,
+    "f1": 0.738,
     "soporte": 32
    },
    "app_hablar": {
-    "precision": 0.615,
-    "recall": 0.4,
-    "f1": 0.485,
+    "precision": 0.571,
+    "recall": 0.6,
+    "f1": 0.585,
     "soporte": 20
    },
    "app_camara": {
@@ -178,81 +178,87 @@
     "soporte": 16
    },
    "app_ayuda": {
-    "precision": 0.765,
-    "recall": 0.619,
-    "f1": 0.684,
+    "precision": 0.818,
+    "recall": 0.429,
+    "f1": 0.562,
     "soporte": 21
+   },
+   "app_llamame": {
+    "precision": 0.625,
+    "recall": 0.625,
+    "f1": 0.625,
+    "soporte": 24
    }
   }
  },
  "test_app": {
-  "n": 1281,
-  "exactitud": 0.7634660421545667,
-  "cobertura": 0.48118279569892475,
-  "precision_decide": 0.9780621572212066,
-  "precision_ejecutables": 0.975177304964539,
-  "ejecutables_decididos": 282,
-  "falsos_positivos_en_negativos": 10,
-  "negativos": 165,
+  "n": 1343,
+  "exactitud": 0.7803425167535368,
+  "cobertura": 0.48208191126279865,
+  "precision_decide": 0.9823008849557522,
+  "precision_ejecutables": 0.9865319865319865,
+  "ejecutables_decididos": 297,
+  "falsos_positivos_en_negativos": 0,
+  "negativos": 171,
   "por_etiqueta": {
    "app_ninguna": {
-    "precision": 0.433,
-    "recall": 0.691,
-    "f1": 0.533,
-    "soporte": 165
+    "precision": 0.476,
+    "recall": 0.86,
+    "f1": 0.613,
+    "soporte": 171
    },
    "app_recordar": {
-    "precision": 0.868,
-    "recall": 0.589,
-    "f1": 0.702,
+    "precision": 0.649,
+    "recall": 0.661,
+    "f1": 0.655,
     "soporte": 56
    },
    "app_llamar_recordar": {
-    "precision": 0.61,
-    "recall": 0.9,
-    "f1": 0.727,
-    "soporte": 40
+    "precision": 0.756,
+    "recall": 0.574,
+    "f1": 0.653,
+    "soporte": 54
    },
    "app_listar_recordatorios": {
-    "precision": 0.76,
-    "recall": 0.633,
-    "f1": 0.691,
+    "precision": 0.88,
+    "recall": 0.733,
+    "f1": 0.8,
     "soporte": 30
    },
    "app_cancelar_recordatorio": {
     "precision": 1.0,
-    "recall": 0.35,
-    "f1": 0.519,
+    "recall": 0.325,
+    "f1": 0.491,
     "soporte": 40
    },
    "app_llamar": {
-    "precision": 0.7,
-    "recall": 0.75,
-    "f1": 0.724,
+    "precision": 0.682,
+    "recall": 0.536,
+    "f1": 0.6,
     "soporte": 56
    },
    "app_videollamar": {
     "precision": 1.0,
-    "recall": 0.975,
-    "f1": 0.987,
+    "recall": 1.0,
+    "f1": 1.0,
     "soporte": 40
    },
    "app_colgar": {
     "precision": 1.0,
-    "recall": 0.967,
-    "f1": 0.983,
+    "recall": 1.0,
+    "f1": 1.0,
     "soporte": 30
    },
    "app_leer": {
-    "precision": 0.875,
-    "recall": 0.795,
-    "f1": 0.833,
+    "precision": 1.0,
+    "recall": 0.773,
+    "f1": 0.872,
     "soporte": 44
    },
    "app_responder": {
     "precision": 1.0,
-    "recall": 0.971,
-    "f1": 0.985,
+    "recall": 1.0,
+    "f1": 1.0,
     "soporte": 34
    },
    "app_buscar_chats": {
@@ -262,9 +268,9 @@
     "soporte": 40
    },
    "app_silenciar_chat": {
-    "precision": 0.862,
-    "recall": 0.625,
-    "f1": 0.725,
+    "precision": 0.846,
+    "recall": 0.825,
+    "f1": 0.835,
     "soporte": 40
    },
    "app_idioma": {
@@ -274,33 +280,33 @@
     "soporte": 30
    },
    "app_perfil": {
-    "precision": 0.712,
-    "recall": 0.544,
-    "f1": 0.617,
+    "precision": 0.778,
+    "recall": 0.412,
+    "f1": 0.538,
     "soporte": 68
    },
    "app_presencia": {
-    "precision": 0.913,
+    "precision": 0.977,
     "recall": 1.0,
-    "f1": 0.955,
+    "f1": 0.988,
     "soporte": 42
    },
    "app_buscar_internet": {
-    "precision": 0.727,
-    "recall": 0.167,
-    "f1": 0.271,
+    "precision": 1.0,
+    "recall": 0.188,
+    "f1": 0.316,
     "soporte": 48
    },
    "app_atras": {
-    "precision": 1.0,
+    "precision": 0.904,
     "recall": 0.87,
-    "f1": 0.931,
+    "f1": 0.887,
     "soporte": 54
    },
    "app_abrir": {
-    "precision": 0.77,
+    "precision": 0.904,
     "recall": 0.87,
-    "f1": 0.817,
+    "f1": 0.887,
     "soporte": 54
    },
    "app_tema": {
@@ -310,111 +316,117 @@
     "soporte": 42
    },
    "app_avatar": {
-    "precision": 0.667,
+    "precision": 0.844,
     "recall": 0.905,
-    "f1": 0.768,
+    "f1": 0.874,
     "soporte": 42
    },
    "app_abrir_chat": {
     "precision": 1.0,
-    "recall": 0.9,
-    "f1": 0.947,
+    "recall": 0.95,
+    "f1": 0.974,
     "soporte": 40
    },
    "app_redactar": {
-    "precision": 0.894,
+    "precision": 0.857,
     "recall": 0.875,
-    "f1": 0.884,
+    "f1": 0.866,
     "soporte": 48
    },
    "app_enviar": {
     "precision": 1.0,
-    "recall": 0.6,
-    "f1": 0.75,
+    "recall": 0.733,
+    "f1": 0.846,
     "soporte": 30
    },
    "app_descartar": {
-    "precision": 0.906,
+    "precision": 0.967,
     "recall": 0.967,
-    "f1": 0.935,
+    "f1": 0.967,
     "soporte": 30
    },
    "app_callar": {
-    "precision": 0.824,
-    "recall": 1.0,
-    "f1": 0.903,
+    "precision": 0.909,
+    "recall": 0.952,
+    "f1": 0.93,
     "soporte": 42
    },
    "app_hablar": {
-    "precision": 0.941,
-    "recall": 0.444,
-    "f1": 0.604,
+    "precision": 0.829,
+    "recall": 0.806,
+    "f1": 0.817,
     "soporte": 36
    },
    "app_camara": {
-    "precision": 0.906,
-    "recall": 0.967,
-    "f1": 0.935,
+    "precision": 0.968,
+    "recall": 1.0,
+    "f1": 0.984,
     "soporte": 30
    },
    "app_ayuda": {
-    "precision": 0.686,
+    "precision": 0.8,
     "recall": 0.8,
-    "f1": 0.738,
+    "f1": 0.8,
     "soporte": 30
+   },
+   "app_llamame": {
+    "precision": 0.549,
+    "recall": 0.667,
+    "f1": 0.602,
+    "soporte": 42
    }
   },
   "por_idioma": {
    "es": {
-    "n": 722,
-    "exactitud": 0.7673130193905817,
-    "cobertura": 0.46835443037974683,
-    "precision_decide": 0.9735973597359736,
-    "precision_ejecutables": 0.975,
-    "ejecutables_decididos": 160,
-    "falsos_positivos_en_negativos": 7,
-    "negativos": 90,
+    "n": 755,
+    "exactitud": 0.7986754966887417,
+    "cobertura": 0.47129909365558914,
+    "precision_decide": 0.9871794871794872,
+    "precision_ejecutables": 0.9938650306748467,
+    "ejecutables_decididos": 163,
+    "falsos_positivos_en_negativos": 0,
+    "negativos": 93,
     "por_etiqueta": {
      "app_ninguna": {
-      "precision": 0.347,
-      "recall": 0.656,
-      "f1": 0.454,
-      "soporte": 90
+      "precision": 0.425,
+      "recall": 0.849,
+      "f1": 0.566,
+      "soporte": 93
      },
      "app_recordar": {
-      "precision": 0.92,
-      "recall": 0.719,
-      "f1": 0.807,
+      "precision": 0.923,
+      "recall": 0.75,
+      "f1": 0.828,
       "soporte": 32
      },
      "app_llamar_recordar": {
-      "precision": 0.913,
-      "recall": 0.875,
-      "f1": 0.894,
-      "soporte": 24
+      "precision": 0.905,
+      "recall": 0.633,
+      "f1": 0.745,
+      "soporte": 30
      },
      "app_listar_recordatorios": {
-      "precision": 0.812,
-      "recall": 0.722,
-      "f1": 0.765,
+      "precision": 0.833,
+      "recall": 0.833,
+      "f1": 0.833,
       "soporte": 18
      },
      "app_cancelar_recordatorio": {
       "precision": 1.0,
-      "recall": 0.333,
-      "f1": 0.5,
+      "recall": 0.292,
+      "f1": 0.452,
       "soporte": 24
      },
      "app_llamar": {
-      "precision": 0.771,
-      "recall": 0.844,
-      "f1": 0.806,
+      "precision": 0.926,
+      "recall": 0.781,
+      "f1": 0.847,
       "soporte": 32
      },
      "app_videollamar": {
       "precision": 1.0,
-      "recall": 0.958,
-      "f1": 0.979,
+      "recall": 1.0,
+      "f1": 1.0,
       "soporte": 24
      },
      "app_colgar": {
@@ -424,27 +436,27 @@
       "soporte": 18
      },
      "app_leer": {
-      "precision": 0.864,
-      "recall": 0.95,
-      "f1": 0.905,
+      "precision": 1.0,
+      "recall": 0.9,
+      "f1": 0.947,
       "soporte": 20
      },
      "app_responder": {
       "precision": 1.0,
-      "recall": 0.95,
-      "f1": 0.974,
+      "recall": 1.0,
+      "f1": 1.0,
       "soporte": 20
      },
      "app_buscar_chats": {
-      "precision": 0.889,
+      "precision": 0.727,
       "recall": 0.667,
-      "f1": 0.762,
+      "f1": 0.696,
       "soporte": 24
      },
      "app_silenciar_chat": {
-      "precision": 0.765,
-      "recall": 0.542,
-      "f1": 0.634,
+      "precision": 0.769,
+      "recall": 0.833,
+      "f1": 0.8,
       "soporte": 24
      },
      "app_idioma": {
@@ -454,9 +466,9 @@
       "soporte": 18
      },
      "app_perfil": {
-      "precision": 0.826,
-      "recall": 0.528,
-      "f1": 0.644,
+      "precision": 1.0,
+      "recall": 0.361,
+      "f1": 0.531,
       "soporte": 36
      },
      "app_presencia": {
@@ -466,21 +478,21 @@
       "soporte": 24
      },
      "app_buscar_internet": {
-      "precision": 0.6,
-      "recall": 0.125,
-      "f1": 0.207,
+      "precision": 1.0,
+      "recall": 0.167,
+      "f1": 0.286,
       "soporte": 24
      },
      "app_atras": {
-      "precision": 1.0,
-      "recall": 0.767,
-      "f1": 0.868,
+      "precision": 0.828,
+      "recall": 0.8,
+      "f1": 0.814,
       "soporte": 30
      },
      "app_abrir": {
-      "precision": 0.806,
+      "precision": 0.879,
       "recall": 0.967,
-      "f1": 0.879,
+      "f1": 0.921,
       "soporte": 30
      },
      "app_tema": {
@@ -490,21 +502,21 @@
       "soporte": 24
      },
      "app_avatar": {
-      "precision": 0.706,
-      "recall": 1.0,
-      "f1": 0.828,
+      "precision": 0.846,
+      "recall": 0.917,
+      "f1": 0.88,
       "soporte": 24
      },
      "app_abrir_chat": {
       "precision": 1.0,
-      "recall": 0.833,
-      "f1": 0.909,
+      "recall": 0.917,
+      "f1": 0.957,
       "soporte": 24
      },
      "app_redactar": {
       "precision": 1.0,
-      "recall": 0.792,
-      "f1": 0.884,
+      "recall": 0.75,
+      "f1": 0.857,
       "soporte": 24
      },
      "app_enviar": {
@@ -514,69 +526,75 @@
       "soporte": 18
      },
      "app_descartar": {
-      "precision": 0.944,
+      "precision": 1.0,
       "recall": 0.944,
-      "f1": 0.944,
+      "f1": 0.971,
       "soporte": 18
      },
      "app_callar": {
-      "precision": 0.8,
-      "recall": 1.0,
-      "f1": 0.889,
+      "precision": 0.88,
+      "recall": 0.917,
+      "f1": 0.898,
       "soporte": 24
      },
      "app_hablar": {
-      "precision": 1.0,
-      "recall": 0.222,
-      "f1": 0.364,
+      "precision": 0.846,
+      "recall": 0.611,
+      "f1": 0.71,
       "soporte": 18
      },
      "app_camara": {
-      "precision": 0.85,
-      "recall": 0.944,
-      "f1": 0.895,
+      "precision": 0.947,
+      "recall": 1.0,
+      "f1": 0.973,
       "soporte": 18
      },
      "app_ayuda": {
-      "precision": 1.0,
+      "precision": 0.857,
       "recall": 0.667,
-      "f1": 0.8,
+      "f1": 0.75,
       "soporte": 18
+     },
+     "app_llamame": {
+      "precision": 0.88,
+      "recall": 0.917,
+      "f1": 0.898,
+      "soporte": 24
      }
     }
    },
    "en": {
-    "n": 559,
-    "exactitud": 0.7584973166368515,
-    "cobertura": 0.49793388429752067,
-    "precision_decide": 0.9836065573770492,
-    "precision_ejecutables": 0.9754098360655737,
-    "ejecutables_decididos": 122,
-    "falsos_positivos_en_negativos": 3,
-    "negativos": 75,
+    "n": 588,
+    "exactitud": 0.7568027210884354,
+    "cobertura": 0.49607843137254903,
+    "precision_decide": 0.9762845849802372,
+    "precision_ejecutables": 0.9776119402985075,
+    "ejecutables_decididos": 134,
+    "falsos_positivos_en_negativos": 0,
+    "negativos": 78,
     "por_etiqueta": {
      "app_ninguna": {
-      "precision": 0.591,
-      "recall": 0.733,
-      "f1": 0.655,
-      "soporte": 75
+      "precision": 0.553,
+      "recall": 0.872,
+      "f1": 0.677,
+      "soporte": 78
      },
      "app_recordar": {
-      "precision": 0.769,
-      "recall": 0.417,
-      "f1": 0.541,
+      "precision": 0.419,
+      "recall": 0.542,
+      "f1": 0.473,
       "soporte": 24
      },
      "app_llamar_recordar": {
-      "precision": 0.417,
-      "recall": 0.938,
-      "f1": 0.577,
-      "soporte": 16
+      "precision": 0.6,
+      "recall": 0.5,
+      "f1": 0.545,
+      "soporte": 24
      },
      "app_listar_recordatorios": {
-      "precision": 0.667,
-      "recall": 0.5,
-      "f1": 0.571,
+      "precision": 1.0,
+      "recall": 0.583,
+      "f1": 0.737,
       "soporte": 12
      },
      "app_cancelar_recordatorio": {
@@ -586,9 +604,9 @@
       "soporte": 16
      },
      "app_llamar": {
-      "precision": 0.6,
-      "recall": 0.625,
-      "f1": 0.612,
+      "precision": 0.294,
+      "recall": 0.208,
+      "f1": 0.244,
       "soporte": 24
      },
      "app_videollamar": {
@@ -599,14 +617,14 @@
      },
      "app_colgar": {
       "precision": 1.0,
-      "recall": 0.917,
-      "f1": 0.957,
+      "recall": 1.0,
+      "f1": 1.0,
       "soporte": 12
      },
      "app_leer": {
-      "precision": 0.889,
+      "precision": 1.0,
       "recall": 0.667,
-      "f1": 0.762,
+      "f1": 0.8,
       "soporte": 24
      },
      "app_responder": {
@@ -616,15 +634,15 @@
       "soporte": 14
      },
      "app_buscar_chats": {
-      "precision": 0.8,
+      "precision": 1.0,
       "recall": 1.0,
-      "f1": 0.889,
+      "f1": 1.0,
       "soporte": 16
      },
      "app_silenciar_chat": {
       "precision": 1.0,
-      "recall": 0.75,
-      "f1": 0.857,
+      "recall": 0.812,
+      "f1": 0.897,
       "soporte": 16
      },
      "app_idioma": {
@@ -634,33 +652,33 @@
       "soporte": 12
      },
      "app_perfil": {
-      "precision": 0.621,
-      "recall": 0.562,
-      "f1": 0.59,
+      "precision": 0.652,
+      "recall": 0.469,
+      "f1": 0.545,
       "soporte": 32
      },
      "app_presencia": {
-      "precision": 0.818,
+      "precision": 0.947,
       "recall": 1.0,
-      "f1": 0.9,
+      "f1": 0.973,
       "soporte": 18
      },
      "app_buscar_internet": {
-      "precision": 0.833,
+      "precision": 1.0,
       "recall": 0.208,
-      "f1": 0.333,
+      "f1": 0.345,
       "soporte": 24
      },
      "app_atras": {
       "precision": 1.0,
-      "recall": 1.0,
-      "f1": 1.0,
+      "recall": 0.958,
+      "f1": 0.979,
       "soporte": 24
      },
      "app_abrir": {
-      "precision": 0.72,
+      "precision": 0.947,
       "recall": 0.75,
-      "f1": 0.735,
+      "f1": 0.837,
       "soporte": 24
      },
      "app_tema": {
@@ -670,9 +688,9 @@
       "soporte": 18
      },
      "app_avatar": {
-      "precision": 0.609,
-      "recall": 0.778,
-      "f1": 0.683,
+      "precision": 0.842,
+      "recall": 0.889,
+      "f1": 0.865,
       "soporte": 18
      },
      "app_abrir_chat": {
@@ -682,33 +700,33 @@
       "soporte": 16
      },
      "app_redactar": {
-      "precision": 0.821,
-      "recall": 0.958,
-      "f1": 0.885,
+      "precision": 0.774,
+      "recall": 1.0,
+      "f1": 0.873,
       "soporte": 24
      },
      "app_enviar": {
-      "precision": 0.0,
-      "recall": 0.0,
-      "f1": 0.0,
+      "precision": 1.0,
+      "recall": 0.333,
+      "f1": 0.5,
       "soporte": 12
      },
      "app_descartar": {
-      "precision": 0.857,
+      "precision": 0.923,
       "recall": 1.0,
-      "f1": 0.923,
+      "f1": 0.96,
       "soporte": 12
      },
      "app_callar": {
-      "precision": 0.857,
+      "precision": 0.947,
       "recall": 1.0,
-      "f1": 0.923,
+      "f1": 0.973,
       "soporte": 18
      },
      "app_hablar": {
-      "precision": 0.923,
-      "recall": 0.667,
-      "f1": 0.774,
+      "precision": 0.818,
+      "recall": 1.0,
+      "f1": 0.9,
       "soporte": 18
      },
      "app_camara": {
@@ -718,384 +736,390 @@
       "soporte": 12
      },
      "app_ayuda": {
-      "precision": 0.522,
+      "precision": 0.75,
       "recall": 1.0,
-      "f1": 0.686,
+      "f1": 0.857,
       "soporte": 12
+     },
+     "app_llamame": {
+      "precision": 0.231,
+      "recall": 0.333,
+      "f1": 0.273,
+      "soporte": 18
      }
     }
    }
   },
   "errores": [
    {
-    "q": "so, remove my reminder to buy bread",
+    "q": "Ya, borra el de la reunion con el ingeniero por favor",
     "oro": "app_cancelar_recordatorio",
-    "dijo": "app_listar_recordatorios",
-    "p": 0.398
+    "dijo": "app_buscar_chats",
+    "p": 0.645
    },
    {
-    "q": "ya no me avises de sacar la basura porfa.",
-    "oro": "app_cancelar_recordatorio",
-    "dijo": "app_silenciar_chat",
-    "p": 0.265
-   },
-   {
-    "q": "Vaya, ¿qué dicen las noticias del clima en san pedro sula?",
-    "oro": "app_buscar_internet",
-    "dijo": "app_ninguna",
-    "p": 0.816
-   },
-   {
-    "q": "aura la cámara lenta se ve bonita",
-    "oro": "app_ninguna",
-    "dijo": "app_camara",
-    "p": 0.911
-   },
-   {
-    "q": "Eso me recuerda a mi abuelo.",
-    "oro": "app_ninguna",
-    "dijo": "app_recordar",
-    "p": 0.496
-   },
-   {
-    "q": "¿qué tengo pendiente? por favor.",
-    "oro": "app_listar_recordatorios",
-    "dijo": "app_ninguna",
-    "p": 0.799
-   },
-   {
-    "q": "Aura, how long does a call last",
-    "oro": "app_ninguna",
-    "dijo": "app_llamar",
-    "p": 0.364
-   },
-   {
-    "q": "porfa quita las notificaciones de la ana",
-    "oro": "app_silenciar_chat",
-    "dijo": "app_ninguna",
-    "p": 0.806
-   },
-   {
-    "q": "oye, me llamo josé",
-    "oro": "app_ninguna",
-    "dijo": "app_llamar",
-    "p": 0.629
-   },
-   {
-    "q": "oye aura, ve al chat con mi papá por favor",
-    "oro": "app_abrir_chat",
-    "dijo": "app_abrir",
-    "p": 0.437
-   },
-   {
-    "q": "Aura por favor, quita las notificaciones del licenciado",
-    "oro": "app_silenciar_chat",
-    "dijo": "app_ninguna",
-    "p": 0.481
-   },
-   {
-    "q": "oye aura, desmutéate",
-    "oro": "app_hablar",
-    "dijo": "app_ninguna",
-    "p": 0.273
-   },
-   {
-    "q": "sácame de aquí",
-    "oro": "app_atras",
-    "dijo": "app_ninguna",
-    "p": 0.756
-   },
-   {
-    "q": "I want to know the weather in san pedro sula, look it up",
-    "oro": "app_buscar_internet",
-    "dijo": "app_ninguna",
-    "p": 0.814
-   },
-   {
-    "q": "antonio send that message thank you",
-    "oro": "app_enviar",
-    "dijo": "app_redactar",
-    "p": 0.511
-   },
-   {
-    "q": "i am from choluteca thank you",
+    "q": "fíjate que de ahora en adelante dime majo ahorita",
     "oro": "app_perfil",
     "dijo": "app_ninguna",
-    "p": 0.464
-   },
-   {
-    "q": "don't let me forget to take out the trash at 5 pm for me",
-    "oro": "app_recordar",
-    "dijo": "app_llamar_recordar",
-    "p": 0.685
-   },
-   {
-    "q": "could you call me in half an hour to remind me to take out the trash",
-    "oro": "app_llamar_recordar",
-    "dijo": "app_recordar",
-    "p": 0.596
-   },
-   {
-    "q": "can you cancel the call at 5 pm",
-    "oro": "app_cancelar_recordatorio",
-    "dijo": "app_llamar_recordar",
-    "p": 0.455
-   },
-   {
-    "q": "Como se usa esto ya",
-    "oro": "app_ayuda",
-    "dijo": "app_ninguna",
-    "p": 0.652
-   },
-   {
-    "q": "antonio look up a recipe for baleadas.",
-    "oro": "app_buscar_internet",
-    "dijo": "app_avatar",
-    "p": 0.255
-   },
-   {
-    "q": "Mira, hazme acordar en media hora de la junta de las tres",
-    "oro": "app_recordar",
-    "dijo": "app_ninguna",
-    "p": 0.969
-   },
-   {
-    "q": "could you phone uncle tony",
-    "oro": "app_llamar",
-    "dijo": "app_ninguna",
-    "p": 0.615
-   },
-   {
-    "q": "¿en qué chat está el código? ahorita",
-    "oro": "app_buscar_chats",
-    "dijo": "app_ninguna",
-    "p": 0.766
-   },
-   {
-    "q": "Hey claudio, anything from uncle tony.",
-    "oro": "app_leer",
-    "dijo": "app_ninguna",
-    "p": 0.483
-   },
-   {
-    "q": "yo, listen to to me again.",
-    "oro": "app_hablar",
-    "dijo": "app_perfil",
-    "p": 0.746
-   },
-   {
-    "q": "what are my alerts",
-    "oro": "app_listar_recordatorios",
-    "dijo": "app_ayuda",
-    "p": 0.352
-   },
-   {
-    "q": "please send that message",
-    "oro": "app_enviar",
-    "dijo": "app_redactar",
-    "p": 0.67
-   },
-   {
-    "q": "cancel the call on friday at 3",
-    "oro": "app_cancelar_recordatorio",
-    "dijo": "app_llamar_recordar",
-    "p": 0.388
-   },
-   {
-    "q": "borra el el de sacar la basura",
-    "oro": "app_cancelar_recordatorio",
-    "dijo": "app_ninguna",
-    "p": 0.813
-   },
-   {
-    "q": "look up a recipe for baleadas",
-    "oro": "app_buscar_internet",
-    "dijo": "app_ninguna",
-    "p": 0.31
-   },
-   {
-    "q": "hey send that message.",
-    "oro": "app_enviar",
-    "dijo": "app_redactar",
-    "p": 0.466
-   },
-   {
-    "q": "oye dame las noticias del clima en san pedro sula",
-    "oro": "app_buscar_internet",
-    "dijo": "app_ninguna",
-    "p": 0.952
-   },
-   {
-    "q": "la camara lenta se ve bonita",
-    "oro": "app_ninguna",
-    "dijo": "app_camara",
-    "p": 0.811
-   },
-   {
-    "q": "i want 2 know the the weather in san pedro sula look it up",
-    "oro": "app_buscar_internet",
-    "dijo": "app_ninguna",
-    "p": 0.826
-   },
-   {
-    "q": "cómo se usa esto",
-    "oro": "app_ayuda",
-    "dijo": "app_ninguna",
-    "p": 0.85
-   },
-   {
-    "q": "From now on call me champ",
-    "oro": "app_perfil",
-    "dijo": "app_llamar",
-    "p": 0.496
-   },
-   {
-    "q": "So listen to me again.",
-    "oro": "app_hablar",
-    "dijo": "app_perfil",
-    "p": 0.513
-   },
-   {
-    "q": "Fijate que me dicen pelon pelon",
-    "oro": "app_perfil",
-    "dijo": "app_leer",
-    "p": 0.556
-   },
-   {
-    "q": "¿que hay en internet del clima en san pedro sula? mi reina",
-    "oro": "app_buscar_internet",
-    "dijo": "app_ninguna",
-    "p": 0.623
+    "p": 0.82
    },
    {
     "q": "oye, hazme acordar pasado mañana a las 8 de la junta de las tres dale dale",
     "oro": "app_recordar",
     "dijo": "app_ninguna",
-    "p": 0.944
+    "p": 0.921
    },
    {
-    "q": "Oye aura despierta",
-    "oro": "app_hablar",
+    "q": "please could you call me at 11 pm to remind me to the 3 o clock meeting thanks",
+    "oro": "app_llamar_recordar",
+    "dijo": "app_recordar",
+    "p": 0.923
+   },
+   {
+    "q": "ya, ¿qué hay en internet de la receta de las baleadas?",
+    "oro": "app_buscar_internet",
     "dijo": "app_ninguna",
-    "p": 0.395
+    "p": 0.779
    },
    {
-    "q": "send the message.",
+    "q": "hey send that message.",
     "oro": "app_enviar",
-    "dijo": "app_buscar_chats",
-    "p": 0.666
+    "dijo": "app_redactar",
+    "p": 0.61
    },
    {
-    "q": "Hey my whatsapp profile",
-    "oro": "app_ninguna",
-    "dijo": "app_abrir",
-    "p": 0.858
-   },
-   {
-    "q": "Antonio i am from houston",
-    "oro": "app_perfil",
-    "dijo": "app_avatar",
-    "p": 0.398
-   },
-   {
-    "q": "call pastor mike right now for me",
-    "oro": "app_llamar",
-    "dijo": "app_llamar_recordar",
-    "p": 0.599
-   },
-   {
-    "q": "Borra el de sacar la ropa",
-    "oro": "app_cancelar_recordatorio",
+    "q": "Yamame en media hora para que no se me olvide sacar la ropa",
+    "oro": "app_llamar_recordar",
     "dijo": "app_ninguna",
-    "p": 0.955
+    "p": 0.815
    },
    {
-    "q": "hey claudio, listen to me again",
-    "oro": "app_hablar",
-    "dijo": "app_avatar",
-    "p": 0.327
+    "q": "call pastor mike for me",
+    "oro": "app_llamar",
+    "dijo": "app_llamame",
+    "p": 0.266
    },
    {
-    "q": "Quita las notificaciones del pastor",
+    "q": "eh, dame las noticias de la receta de las baleadas",
+    "oro": "app_buscar_internet",
+    "dijo": "app_ninguna",
+    "p": 0.695
+   },
+   {
+    "q": "So, i am from choluteca",
+    "oro": "app_perfil",
+    "dijo": "app_ninguna",
+    "p": 0.959
+   },
+   {
+    "q": "Quita las notificaciones del pastor ahorita",
     "oro": "app_silenciar_chat",
     "dijo": "app_ninguna",
-    "p": 0.808
-   },
-   {
-    "q": "Yo call ana right now",
-    "oro": "app_llamar",
-    "dijo": "app_perfil",
-    "p": 0.384
+    "p": 0.852
    },
    {
     "q": "A ver, sácame de aquí",
     "oro": "app_atras",
     "dijo": "app_ninguna",
-    "p": 0.937
+    "p": 0.745
    },
    {
-    "q": "porfa desmutéate",
-    "oro": "app_hablar",
-    "dijo": "app_ninguna",
-    "p": 0.461
+    "q": "don't let me forget to take out the trash at 5 pm for me",
+    "oro": "app_recordar",
+    "dijo": "app_llamar_recordar",
+    "p": 0.537
    },
    {
-    "q": "Antonio, look up a recipe for baleadas for me.",
+    "q": "can you i want to know a recipe for baleadas, look it up",
     "oro": "app_buscar_internet",
     "dijo": "app_perfil",
-    "p": 0.354
+    "p": 0.231
    },
    {
-    "q": "oye desmutéate ya",
-    "oro": "app_hablar",
-    "dijo": "app_ninguna",
-    "p": 0.635
-   },
-   {
-    "q": "Aura cuanto dura una llamada.",
-    "oro": "app_ninguna",
-    "dijo": "app_llamar",
-    "p": 0.939
-   },
-   {
-    "q": "claudio, ¿que ¿que me mandaron?",
-    "oro": "app_leer",
-    "dijo": "app_avatar",
-    "p": 0.474
-   },
-   {
-    "q": "ya, quita las notificaciones de la ana",
-    "oro": "app_silenciar_chat",
+    "q": "ok, phone ana",
+    "oro": "app_llamar",
     "dijo": "app_ninguna",
     "p": 0.645
    },
    {
-    "q": "Los ajustes de precio subieron",
+    "q": "aura, explicame que es un recordatorio",
     "oro": "app_ninguna",
-    "dijo": "app_abrir",
-    "p": 0.619
+    "dijo": "app_listar_recordatorios",
+    "p": 0.83
    },
    {
-    "q": "so, i have no minutes left to call",
+    "q": "Could you remove my reminder 2 the 3 o clock meeting",
+    "oro": "app_cancelar_recordatorio",
+    "dijo": "app_recordar",
+    "p": 0.834
+   },
+   {
+    "q": "Hey aura i want to know the weather in san pedro sula look it up",
+    "oro": "app_buscar_internet",
+    "dijo": "app_ninguna",
+    "p": 0.789
+   },
+   {
+    "q": "¿en qué chat está el código? pues.",
+    "oro": "app_buscar_chats",
+    "dijo": "app_ninguna",
+    "p": 0.965
+   },
+   {
+    "q": "could you make sure i remember to the 3 o clock meeting on friday at 3.",
+    "oro": "app_recordar",
+    "dijo": "app_ninguna",
+    "p": 0.729
+   },
+   {
+    "q": "antonio, silencio porfa ahorita.",
+    "oro": "app_callar",
+    "dijo": "app_hablar",
+    "p": 0.497
+   },
+   {
+    "q": "Este... ya no me avises de la reunión con el ingeniero",
+    "oro": "app_cancelar_recordatorio",
+    "dijo": "app_silenciar_chat",
+    "p": 0.586
+   },
+   {
+    "q": "borra el de la reunión con el ingeniero",
+    "oro": "app_cancelar_recordatorio",
+    "dijo": "app_buscar_chats",
+    "p": 0.802
+   },
+   {
+    "q": "ey, silencio un ratito si puedes",
+    "oro": "app_callar",
+    "dijo": "app_hablar",
+    "p": 0.455
+   },
+   {
+    "q": "fíjate que dame un timbrazo en media hora para sacar la ropa dale",
+    "oro": "app_llamar_recordar",
+    "dijo": "app_ninguna",
+    "p": 0.597
+   },
+   {
+    "q": "este hazme acordar a las 2 y cuarto de la reunion con el ingeniero",
+    "oro": "app_recordar",
+    "dijo": "app_ninguna",
+    "p": 0.565
+   },
+   {
+    "q": "hey i have no minutes left to call",
     "oro": "app_ninguna",
     "dijo": "app_llamar_recordar",
-    "p": 0.49
+    "p": 0.358
+   },
+   {
+    "q": "um check the web for the weather in san pedro sula thanks.",
+    "oro": "app_buscar_internet",
+    "dijo": "app_ninguna",
+    "p": 0.833
+   },
+   {
+    "q": "Um phone uncle tony tony now",
+    "oro": "app_llamar",
+    "dijo": "app_ninguna",
+    "p": 0.679
+   },
+   {
+    "q": "can you call my phone",
+    "oro": "app_llamame",
+    "dijo": "app_llamar",
+    "p": 0.96
+   },
+   {
+    "q": "Ok aura, ¿en qué chat está el código? pues",
+    "oro": "app_buscar_chats",
+    "dijo": "app_ninguna",
+    "p": 0.772
+   },
+   {
+    "q": "so make sure i remember 2 the meeting with the engineer in half an hour",
+    "oro": "app_recordar",
+    "dijo": "app_ninguna",
+    "p": 0.652
+   },
+   {
+    "q": "Antonio, ¿qué dicen las noticias del clima en san pedro sula?",
+    "oro": "app_buscar_internet",
+    "dijo": "app_ninguna",
+    "p": 0.593
+   },
+   {
+    "q": "hey aura from now on call me champ real quick",
+    "oro": "app_perfil",
+    "dijo": "app_llamame",
+    "p": 0.664
+   },
+   {
+    "q": "call pastor mike right now",
+    "oro": "app_llamar",
+    "dijo": "app_ninguna",
+    "p": 0.404
+   },
+   {
+    "q": "Fijate que hazme acordar pasado manana a las 8 de la junta de las tres",
+    "oro": "app_recordar",
+    "dijo": "app_ninguna",
+    "p": 0.891
+   },
+   {
+    "q": "ok, switch to the eyes",
+    "oro": "app_avatar",
+    "dijo": "app_ninguna",
+    "p": 0.179
+   },
+   {
+    "q": "eh, ahora trabajo en una ferretería pues",
+    "oro": "app_perfil",
+    "dijo": "app_ninguna",
+    "p": 0.889
+   },
+   {
+    "q": "hey, could u call me on friday at 3 to remind me to the meeting with the engineer",
+    "oro": "app_llamar_recordar",
+    "dijo": "app_recordar",
+    "p": 0.697
+   },
+   {
+    "q": "aura let's talk on a call",
+    "oro": "app_llamame",
+    "dijo": "app_llamar",
+    "p": 0.506
+   },
+   {
+    "q": "ey borra el de sacar la basura ahorita",
+    "oro": "app_cancelar_recordatorio",
+    "dijo": "app_ninguna",
+    "p": 0.834
+   },
+   {
+    "q": "antonio pásame a los chats.",
+    "oro": "app_abrir",
+    "dijo": "app_avatar",
+    "p": 0.919
+   },
+   {
+    "q": "¿en qué chat está la foto del recibo? ahorita",
+    "oro": "app_buscar_chats",
+    "dijo": "app_ninguna",
+    "p": 0.919
+   },
+   {
+    "q": "antonio, from now on call me champ",
+    "oro": "app_perfil",
+    "dijo": "app_llamame",
+    "p": 0.696
+   },
+   {
+    "q": "hey aura, ¿qué dicen las noticias del clima en san pedro sula?",
+    "oro": "app_buscar_internet",
+    "dijo": "app_ninguna",
+    "p": 0.782
+   },
+   {
+    "q": "porfa ¿en qué chat está la foto del recibo?",
+    "oro": "app_buscar_chats",
+    "dijo": "app_ninguna",
+    "p": 0.927
+   },
+   {
+    "q": "aura, phone pastor mike",
+    "oro": "app_llamar",
+    "dijo": "app_ninguna",
+    "p": 0.722
+   },
+   {
+    "q": "dile al licenciado que la junta de las tres",
+    "oro": "app_redactar",
+    "dijo": "app_ninguna",
+    "p": 0.974
+   },
+   {
+    "q": "hey, i moved 2 houston",
+    "oro": "app_perfil",
+    "dijo": "app_ninguna",
+    "p": 0.598
    },
    {
     "q": "fíjate que quiero volver atrás",
     "oro": "app_atras",
     "dijo": "app_ninguna",
-    "p": 0.573
+    "p": 0.538
+   },
+   {
+    "q": "aura please, look up a recipe for baleadas",
+    "oro": "app_buscar_internet",
+    "dijo": "app_perfil",
+    "p": 0.311
+   },
+   {
+    "q": "antonio, look up a recipe for baleadas",
+    "oro": "app_buscar_internet",
+    "dijo": "app_perfil",
+    "p": 0.298
+   },
+   {
+    "q": "alright i wanna know the weather in san pedro sula look it up pls",
+    "oro": "app_buscar_internet",
+    "dijo": "app_ninguna",
+    "p": 0.909
+   },
+   {
+    "q": "Vaya, quita las notificaciones del pastor",
+    "oro": "app_silenciar_chat",
+    "dijo": "app_ninguna",
+    "p": 0.484
+   },
+   {
+    "q": "hey claudio look up the weather in san pedro sula",
+    "oro": "app_buscar_internet",
+    "dijo": "app_ninguna",
+    "p": 0.801
+   },
+   {
+    "q": "make sure i remember to the 3 o clock meeting at 5 pm now.",
+    "oro": "app_recordar",
+    "dijo": "app_ninguna",
+    "p": 0.487
+   },
+   {
+    "q": "Pon la conversacion con el pastor ahorita",
+    "oro": "app_abrir_chat",
+    "dijo": "app_ninguna",
+    "p": 0.621
+   },
+   {
+    "q": "bueno ahora trabajo en una ferretería",
+    "oro": "app_perfil",
+    "dijo": "app_ninguna",
+    "p": 0.594
+   },
+   {
+    "q": "please silence uncle tony thank you",
+    "oro": "app_silenciar_chat",
+    "dijo": "app_hablar",
+    "p": 0.488
+   },
+   {
+    "q": "so, check the web for the weather in san pedro sula",
+    "oro": "app_buscar_internet",
+    "dijo": "app_ninguna",
+    "p": 0.894
    }
   ]
  },
  "test_electrum": {
   "n": 151,
   "exactitud": 0.9735099337748344,
-  "cobertura": 0.55,
+  "cobertura": 0.6,
   "precision_decide": 1.0,
   "precision_ejecutables": 1.0,
-  "ejecutables_decididos": 9,
+  "ejecutables_decididos": 10,
   "falsos_positivos_en_negativos": 0,
   "negativos": 131,
   "por_etiqueta": {
@@ -1266,29 +1290,35 @@
     "recall": 1.0,
     "f1": 1.0,
     "soporte": 2
+   },
+   "app_llamame": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
    }
   }
  },
  "bordes_aura": {
   "n": 61,
-  "exactitud": 0.7540983606557377,
-  "cobertura": 0.9411764705882353,
-  "precision_decide": 0.8421052631578947,
+  "exactitud": 0.8360655737704918,
+  "cobertura": 1.0,
+  "precision_decide": 0.868421052631579,
   "precision_ejecutables": 0.8333333333333334,
   "ejecutables_decididos": 18,
-  "falsos_positivos_en_negativos": 6,
+  "falsos_positivos_en_negativos": 4,
   "negativos": 27,
   "por_etiqueta": {
    "app_ninguna": {
     "precision": 1.0,
-    "recall": 0.481,
-    "f1": 0.65,
+    "recall": 0.667,
+    "f1": 0.8,
     "soporte": 27
    },
    "app_recordar": {
-    "precision": 0.667,
+    "precision": 1.0,
     "recall": 1.0,
-    "f1": 0.8,
+    "f1": 1.0,
     "soporte": 2
    },
    "app_llamar_recordar": {
@@ -1310,9 +1340,9 @@
     "soporte": 1
    },
    "app_llamar": {
-    "precision": 0.429,
+    "precision": 0.75,
     "recall": 1.0,
-    "f1": 0.6,
+    "f1": 0.857,
     "soporte": 3
    },
    "app_videollamar": {
@@ -1352,15 +1382,15 @@
     "soporte": 1
    },
    "app_idioma": {
-    "precision": 0.4,
+    "precision": 0.5,
     "recall": 1.0,
-    "f1": 0.571,
+    "f1": 0.667,
     "soporte": 2
    },
    "app_perfil": {
-    "precision": 0.5,
+    "precision": 1.0,
     "recall": 0.5,
-    "f1": 0.5,
+    "f1": 0.667,
     "soporte": 2
    },
    "app_presencia": {
@@ -1370,9 +1400,9 @@
     "soporte": 2
    },
    "app_buscar_internet": {
-    "precision": 0.5,
+    "precision": 1.0,
     "recall": 1.0,
-    "f1": 0.667,
+    "f1": 1.0,
     "soporte": 1
    },
    "app_atras": {
@@ -1436,39 +1466,45 @@
     "soporte": 1
    },
    "app_camara": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "soporte": 1
+   },
+   "app_ayuda": {
     "precision": 0.5,
     "recall": 1.0,
     "f1": 0.667,
     "soporte": 1
    },
-   "app_ayuda": {
-    "precision": 1.0,
-    "recall": 1.0,
-    "f1": 1.0,
-    "soporte": 1
+   "app_llamame": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
    }
   },
   "por_idioma": {
    "es": {
     "n": 54,
-    "exactitud": 0.7407407407407407,
-    "cobertura": 0.9285714285714286,
-    "precision_decide": 0.8387096774193549,
+    "exactitud": 0.8333333333333334,
+    "cobertura": 1.0,
+    "precision_decide": 0.8709677419354839,
     "precision_ejecutables": 0.8181818181818182,
     "ejecutables_decididos": 11,
-    "falsos_positivos_en_negativos": 5,
+    "falsos_positivos_en_negativos": 3,
     "negativos": 26,
     "por_etiqueta": {
      "app_ninguna": {
       "precision": 1.0,
-      "recall": 0.5,
-      "f1": 0.667,
+      "recall": 0.692,
+      "f1": 0.818,
       "soporte": 26
      },
      "app_recordar": {
-      "precision": 0.667,
+      "precision": 1.0,
       "recall": 1.0,
-      "f1": 0.8,
+      "f1": 1.0,
       "soporte": 2
      },
      "app_llamar_recordar": {
@@ -1490,9 +1526,9 @@
       "soporte": 1
      },
      "app_llamar": {
-      "precision": 0.333,
+      "precision": 0.667,
       "recall": 1.0,
-      "f1": 0.5,
+      "f1": 0.8,
       "soporte": 2
      },
      "app_videollamar": {
@@ -1532,15 +1568,15 @@
       "soporte": 1
      },
      "app_idioma": {
-      "precision": 0.333,
+      "precision": 0.5,
       "recall": 1.0,
-      "f1": 0.5,
+      "f1": 0.667,
       "soporte": 1
      },
      "app_perfil": {
-      "precision": 0.5,
+      "precision": 1.0,
       "recall": 0.5,
-      "f1": 0.5,
+      "f1": 0.667,
       "soporte": 2
      },
      "app_presencia": {
@@ -1550,9 +1586,9 @@
       "soporte": 1
      },
      "app_buscar_internet": {
-      "precision": 0.5,
+      "precision": 1.0,
       "recall": 1.0,
-      "f1": 0.667,
+      "f1": 1.0,
       "soporte": 1
      },
      "app_atras": {
@@ -1616,16 +1652,22 @@
       "soporte": 1
      },
      "app_camara": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "soporte": 1
+     },
+     "app_ayuda": {
       "precision": 0.5,
       "recall": 1.0,
       "f1": 0.667,
       "soporte": 1
      },
-     "app_ayuda": {
-      "precision": 1.0,
-      "recall": 1.0,
-      "f1": 1.0,
-      "soporte": 1
+     "app_llamame": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "soporte": 0
      }
     }
    },
@@ -1806,6 +1848,12 @@
       "recall": 0.0,
       "f1": 0.0,
       "soporte": 0
+     },
+     "app_llamame": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "soporte": 0
      }
     }
    }
@@ -1814,68 +1862,68 @@
    {
     "q": "llámame chepe",
     "oro": "app_perfil",
-    "dijo": "app_llamar",
-    "p": 0.658
+    "dijo": "app_llamame",
+    "p": 0.943
    },
    {
     "q": "llámame a mi mamá",
     "oro": "app_llamar",
     "dijo": "app_llamar",
-    "p": 0.995
+    "p": 0.934
    },
    {
     "q": "llámame a las 5 para recordarme la pastilla",
     "oro": "app_llamar_recordar",
     "dijo": "app_llamar_recordar",
-    "p": 1.0
+    "p": 0.992
    },
    {
     "q": "recuérdame a las 5 llamar a mi mamá",
     "oro": "app_recordar",
     "dijo": "app_recordar",
-    "p": 0.963
+    "p": 0.993
    },
    {
     "q": "llámame",
     "oro": "app_ninguna",
-    "dijo": "app_llamar",
-    "p": 0.878
+    "dijo": "app_llamame",
+    "p": 0.992
    },
    {
     "q": "recuérdame quién ganó el mundial del 86",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.854
+    "p": 0.962
    },
    {
     "q": "¿te acuerdas de lo que te dije?",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.886
+    "p": 0.963
    },
    {
     "q": "mi mamá me llamó ayer",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.541
+    "p": 0.926
    },
    {
     "q": "¿cómo se llama tu mamá?",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.709
+    "p": 0.894
    },
    {
     "q": "ponte las pilas",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.948
+    "p": 0.949
    },
    {
     "q": "ponte al lado del chat",
     "oro": "app_presencia",
     "dijo": "app_presencia",
-    "p": 0.996
+    "p": 0.982
    },
    {
     "q": "ponte a pantalla completa",
@@ -1887,7 +1935,7 @@
     "q": "cuelga la ropa",
     "oro": "app_ninguna",
     "dijo": "app_colgar",
-    "p": 0.991
+    "p": 0.983
    },
    {
     "q": "cuelga",
@@ -1899,13 +1947,13 @@
     "q": "¿qué me dijo beto?",
     "oro": "app_leer",
     "dijo": "app_leer",
-    "p": 1.0
+    "p": 0.993
    },
    {
     "q": "beto me dijo que venía",
     "oro": "app_ninguna",
     "dijo": "app_leer",
-    "p": 0.976
+    "p": 0.506
    },
    {
     "q": "respóndele que ya voy",
@@ -1917,43 +1965,43 @@
     "q": "contéstame bien",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.509
+    "p": 0.587
    },
    {
     "q": "busca en mis chats la dirección",
     "oro": "app_buscar_chats",
     "dijo": "app_buscar_chats",
-    "p": 0.999
+    "p": 0.998
    },
    {
     "q": "busca en internet la dirección del banco",
     "oro": "app_buscar_internet",
     "dijo": "app_buscar_internet",
-    "p": 0.988
+    "p": 0.924
    },
    {
     "q": "¿cómo busco algo en internet?",
     "oro": "app_ninguna",
-    "dijo": "app_buscar_internet",
-    "p": 0.611
+    "dijo": "app_ninguna",
+    "p": 0.938
    },
    {
     "q": "háblame en inglés",
     "oro": "app_idioma",
     "dijo": "app_idioma",
-    "p": 0.999
+    "p": 0.995
    },
    {
     "q": "¿hablas inglés?",
     "oro": "app_ninguna",
     "dijo": "app_idioma",
-    "p": 0.985
+    "p": 0.86
    },
    {
     "q": "¿cómo se dice hola en inglés?",
     "oro": "app_ninguna",
-    "dijo": "app_idioma",
-    "p": 0.613
+    "dijo": "app_ninguna",
+    "p": 0.918
    },
    {
     "q": "silencia el chat de beto",
@@ -1965,91 +2013,91 @@
     "q": "cállate",
     "oro": "app_callar",
     "dijo": "app_callar",
-    "p": 1.0
+    "p": 0.999
    },
    {
     "q": "vivo en san pedro sula",
     "oro": "app_perfil",
     "dijo": "app_perfil",
-    "p": 0.998
+    "p": 0.967
    },
    {
     "q": "vivo feliz",
     "oro": "app_ninguna",
-    "dijo": "app_perfil",
-    "p": 0.704
+    "dijo": "app_ninguna",
+    "p": 0.872
    },
    {
     "q": "cancela el recordatorio de las 5",
     "oro": "app_cancelar_recordatorio",
     "dijo": "app_cancelar_recordatorio",
-    "p": 1.0
+    "p": 0.999
    },
    {
     "q": "cancela",
     "oro": "app_ninguna",
     "dijo": "app_cancelar_recordatorio",
-    "p": 0.998
+    "p": 0.98
    },
    {
     "q": "hazle bideollamada a la ana",
     "oro": "app_videollamar",
     "dijo": "app_videollamar",
-    "p": 0.999
+    "p": 0.998
    },
    {
     "q": "llama mi mama",
     "oro": "app_llamar",
     "dijo": "app_llamar",
-    "p": 0.972
+    "p": 0.986
    },
    {
     "q": "q recordatorios tengo",
     "oro": "app_listar_recordatorios",
     "dijo": "app_listar_recordatorios",
-    "p": 1.0
+    "p": 0.999
    },
    {
     "q": "ayer hicimos videollamada con la abuela",
     "oro": "app_ninguna",
     "dijo": "app_videollamar",
-    "p": 0.853
+    "p": 0.673
    },
    {
     "q": "go back",
     "oro": "app_atras",
     "dijo": "app_atras",
-    "p": 1.0
+    "p": 0.999
    },
    {
     "q": "regresé ayer de tegus",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.947
+    "p": 0.983
    },
    {
     "q": "no hay vuelta atrás",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.9
+    "p": 0.791
    },
    {
     "q": "abre ajustes",
     "oro": "app_abrir",
     "dijo": "app_abrir",
-    "p": 1.0
+    "p": 0.999
    },
    {
     "q": "abre el chat de beto",
     "oro": "app_abrir_chat",
     "dijo": "app_abrir_chat",
-    "p": 0.99
+    "p": 0.951
    },
    {
     "q": "abre tu corazón",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.952
+    "p": 0.926
    },
    {
     "q": "dark mode",
@@ -2061,25 +2109,25 @@
     "q": "está bien oscuro afuera",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.838
+    "p": 0.67
    },
    {
     "q": "cambia a claudio",
     "oro": "app_avatar",
     "dijo": "app_avatar",
-    "p": 1.0
+    "p": 0.998
    },
    {
     "q": "mi sobrino se llama antonio",
     "oro": "app_ninguna",
     "dijo": "app_llamar",
-    "p": 0.96
+    "p": 0.77
    },
    {
     "q": "escríbele a beto que llego tarde",
     "oro": "app_redactar",
     "dijo": "app_redactar",
-    "p": 1.0
+    "p": 0.999
    },
    {
     "q": "sí, envíalo",
@@ -2091,7 +2139,7 @@
     "q": "sí",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.385
+    "p": 0.825
    },
    {
     "q": "no lo mandes",
@@ -2103,13 +2151,13 @@
     "q": "stop talking",
     "oro": "app_callar",
     "dijo": "app_callar",
-    "p": 0.994
+    "p": 0.998
    },
    {
     "q": "mi hijo no se calla nunca",
     "oro": "app_ninguna",
-    "dijo": "app_llamar",
-    "p": 0.38
+    "dijo": "app_ninguna",
+    "p": 0.47
    },
    {
     "q": "ya puedes hablar",
@@ -2126,32 +2174,32 @@
    {
     "q": "la cámara de mi cel es mala",
     "oro": "app_ninguna",
-    "dijo": "app_camara",
-    "p": 0.561
+    "dijo": "app_ninguna",
+    "p": 0.578
    },
    {
     "q": "¿qué puedes hacer?",
     "oro": "app_ayuda",
     "dijo": "app_ayuda",
-    "p": 0.866
+    "p": 0.899
    },
    {
     "q": "necesito ayuda con la tarea de mate",
     "oro": "app_ninguna",
-    "dijo": "app_ninguna",
-    "p": 0.53
+    "dijo": "app_ayuda",
+    "p": 0.488
    },
    {
     "q": "call my mom",
     "oro": "app_llamar",
     "dijo": "app_llamar",
-    "p": 0.996
+    "p": 0.988
    },
    {
     "q": "my mom called me yesterday",
     "oro": "app_ninguna",
     "dijo": "app_ninguna",
-    "p": 0.981
+    "p": 0.996
    },
    {
     "q": "remind me at 5 to take my pills",
@@ -2162,8 +2210,8 @@
    {
     "q": "remind me who won the world cup",
     "oro": "app_ninguna",
-    "dijo": "app_recordar",
-    "p": 0.278
+    "dijo": "app_ninguna",
+    "p": 0.52
    },
    {
     "q": "switch to spanish",
@@ -2175,89 +2223,91 @@
     "q": "do you speak spanish",
     "oro": "app_ninguna",
     "dijo": "app_idioma",
-    "p": 0.986
+    "p": 0.966
    }
   ]
  },
  "curva": [
   {
    "umbral": 0.5,
-   "val_cobertura": 0.783,
-   "val_precision_ejecutables": 0.868,
-   "test_cobertura": 0.767,
-   "test_precision_ejecutables": 0.914,
-   "test_falsos_positivos": 27
+   "val_cobertura": 0.724,
+   "val_precision_ejecutables": 0.862,
+   "test_cobertura": 0.75,
+   "test_precision_ejecutables": 0.919,
+   "test_falsos_positivos": 14
   },
   {
    "umbral": 0.6,
-   "val_cobertura": 0.71,
-   "val_precision_ejecutables": 0.894,
-   "test_cobertura": 0.705,
-   "test_precision_ejecutables": 0.944,
-   "test_falsos_positivos": 24
+   "val_cobertura": 0.637,
+   "val_precision_ejecutables": 0.88,
+   "test_cobertura": 0.698,
+   "test_precision_ejecutables": 0.942,
+   "test_falsos_positivos": 8
   },
   {
    "umbral": 0.7,
-   "val_cobertura": 0.637,
-   "val_precision_ejecutables": 0.924,
-   "test_cobertura": 0.636,
-   "test_precision_ejecutables": 0.961,
-   "test_falsos_positivos": 20
+   "val_cobertura": 0.546,
+   "val_precision_ejecutables": 0.922,
+   "test_cobertura": 0.626,
+   "test_precision_ejecutables": 0.967,
+   "test_falsos_positivos": 4
   },
   {
    "umbral": 0.8,
-   "val_cobertura": 0.558,
-   "val_precision_ejecutables": 0.933,
-   "test_cobertura": 0.559,
-   "test_precision_ejecutables": 0.966,
-   "test_falsos_positivos": 16
+   "val_cobertura": 0.455,
+   "val_precision_ejecutables": 0.923,
+   "test_cobertura": 0.548,
+   "test_precision_ejecutables": 0.976,
+   "test_falsos_positivos": 3
   },
   {
    "umbral": 0.85,
-   "val_cobertura": 0.499,
-   "val_precision_ejecutables": 0.948,
-   "test_cobertura": 0.511,
-   "test_precision_ejecutables": 0.967,
-   "test_falsos_positivos": 13
-  },
-  {
-   "umbral": 0.9,
-   "val_cobertura": 0.436,
-   "val_precision_ejecutables": 0.959,
-   "test_cobertura": 0.462,
-   "test_precision_ejecutables": 0.978,
-   "test_falsos_positivos": 9
-  },
-  {
-   "umbral": 0.95,
-   "val_cobertura": 0.329,
-   "val_precision_ejecutables": 0.956,
-   "test_cobertura": 0.358,
-   "test_precision_ejecutables": 1.0,
+   "val_cobertura": 0.414,
+   "val_precision_ejecutables": 0.945,
+   "test_cobertura": 0.5,
+   "test_precision_ejecutables": 0.984,
    "test_falsos_positivos": 1
   },
   {
+   "umbral": 0.9,
+   "val_cobertura": 0.362,
+   "val_precision_ejecutables": 0.975,
+   "test_cobertura": 0.424,
+   "test_precision_ejecutables": 0.993,
+   "test_falsos_positivos": 0
+  },
+  {
+   "umbral": 0.95,
+   "val_cobertura": 0.276,
+   "val_precision_ejecutables": 0.967,
+   "test_cobertura": 0.323,
+   "test_precision_ejecutables": 0.995,
+   "test_falsos_positivos": 0
+  },
+  {
    "umbral": 0.98,
-   "val_cobertura": 0.219,
-   "val_precision_ejecutables": 0.955,
-   "test_cobertura": 0.25,
+   "val_cobertura": 0.174,
+   "val_precision_ejecutables": 0.947,
+   "test_cobertura": 0.224,
    "test_precision_ejecutables": 1.0,
    "test_falsos_positivos": 0
   },
   {
    "umbral": 0.99,
-   "val_cobertura": 0.163,
-   "val_precision_ejecutables": 0.94,
-   "test_cobertura": 0.177,
+   "val_cobertura": 0.115,
+   "val_precision_ejecutables": 0.93,
+   "test_cobertura": 0.148,
    "test_precision_ejecutables": 1.0,
    "test_falsos_positivos": 0
   }
  ],
- "ms_por_prediccion_python": 0.1706,
+ "ms_por_prediccion_python": 0.1387,
  "compuerta": {
   "aprobada": true,
   "motivos": [],
-  "anterior": null
+  "anterior": {
+   "exactitud": 0.7634660421545667
+  }
  },
  "fecha": "2026-09-30"
 }

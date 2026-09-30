@@ -34,6 +34,8 @@ import { predecirApp, UMBRAL_LIGERA } from './laya-ligera';
 import {
   confirmaPropuesta,
   dichoDeMano,
+  dichoDeProgramada,
+  RE_LLAMAME,
   dichoDePropuesta,
   dichoNegado,
   manoDe,
@@ -740,6 +742,8 @@ export function dichoDeAcciones(acciones: AccionApp[], idioma?: 'es' | 'en'): st
       return en ? 'I left you the draft. Should I send it?' : 'Te dejé el borrador. ¿Lo envío?';
     case 'abrir_chat':
       return en ? 'Opening the chat.' : 'Abro el chat.';
+    case 'recordatorio':
+      return a.cuando > Date.now() ? dichoDeProgramada(a, en ? 'en' : 'es') : dichoDeMano(a, en ? 'en' : 'es');
     default:
       return manoDe(a) ? dichoDeMano(a as AccionMano, en ? 'en' : 'es') : d.atras;
   }
@@ -938,6 +942,16 @@ export function ordenDeEtiqueta(
       const v = unoSolo(IDIOMA_DICHO, q);
       if (!v) return null;
       const accion: AccionMano = { tipo: 'idioma', valor: v };
+      return hecho(accion, dichoDeMano(accion, idioma));
+    }
+    // «Llámame» dicho de otra forma («oye, llámame un ratito que quiero platicar»): el avatar llama ya.
+    // Solo si la frase pide que LA llamen (me / call me) y no nombra a nadie ni una hora.
+    case 'app_llamame': {
+      if (!puedeMano(o.contexto, 'llamame') || n > 8) return null;
+      const pide = RE_LLAMAME.test(q) || /\b(llamame|llamarme|me llames|me llamas|marcame|timbrame|call me|ring me|phone me|give me a (call|ring))\b/.test(q);
+      if (!pide || /\b(a las?|a la|at \d|en \d+|in \d+|manana|tomorrow|recuerd|remind|para que|so i)\b/.test(q)) return null;
+      if (contactoMencionado(q, o.contexto?.contactos || []).tipo !== 'ninguno') return null;
+      const accion: AccionMano = { tipo: 'llamame' };
       return hecho(accion, dichoDeMano(accion, idioma));
     }
     case 'app_llamar':
@@ -1197,6 +1211,14 @@ export function prepararAcciones(
         cumplida = true;
         out.push({ tipo: 'llamar', con: p.con, video: p.video });
       } else proponer({ tipo: 'llamar', con: r.contacto.correo, nombre: r.contacto.nombre, video: a.video });
+      continue;
+    }
+    // Con la app que sabe que el avatar llama, un recordatorio (o un timer) se pone directo: lo dice con la
+    // hora («Listo, te llamo a las 2:00 p. m.») y se cancela con la voz si hacía falta.
+    if (a.tipo === 'recordatorio' && puedeMano(o.contexto, 'llamame')) {
+      if (a.cuando < ahora + 15_000 || cumplida) continue;
+      cumplida = true;
+      out.push({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando, ...(a.llamada || puedeMano(o.contexto, 'recordatorio_llamada') ? { llamada: true } : {}) });
       continue;
     }
     if (a.tipo === 'recordatorio') {

@@ -452,6 +452,40 @@ test('el cerebro contesta solo con la acción: se dice la frase de esa acción, 
   }
 });
 
+test('la llamada del avatar: «llámame» y «ponme un timer» por el camino rápido, sin cerebro y medidos; en la llamada, «llámame» no suena otra', { skip: !listo }, async () => {
+  const tel = await canal();
+  try {
+    const r = await fetch(`${BASE}/api/app/contexto`, {
+      method: 'POST',
+      headers: h(),
+      body: JSON.stringify({ pantalla: 'mesa', contactos: [{ correo: 'beto@x.com', nombre: 'Beto Pérez' }], manos: ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame'] }),
+    });
+    assert.equal(r.status, 200);
+    alNodo.length = 0;
+    const t0 = Date.now();
+    const llamame = await turno('llámame');
+    const ms = Date.now() - t0;
+    console.log(`[latencia] «llámame» por el camino rápido: ${ms} ms de punta a punta (sin cerebro)`);
+    assert.equal(llamame.via, 'app-reglas');
+    assert.equal(llamame.reply, '¡Va, ya te llamo!');
+    assert.deepEqual(llamame.acciones.map((e: any) => e.accion), [{ tipo: 'llamame' }]);
+    assert.equal(alNodo.length, 0, 'el cerebro no se enteró');
+    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'llamame')), 'la orden llegó al teléfono por su canal');
+    // Un timer: directo, con la hora dicha, y con llamada.
+    const timer = await turno('ponme un timer de 10 minutos');
+    assert.equal(timer.via, 'app-reglas');
+    assert.match(timer.reply, /^Listo, te llamo en 10 minutos, a las? \d{1,2}:\d{2} [ap]\. m\.$/);
+    assert.equal(timer.acciones[0].accion.tipo, 'recordatorio');
+    assert.equal(timer.acciones[0].accion.llamada, true);
+    assert.equal(alNodo.length, 0);
+    // En la llamada (la voz), «llámame» no manda otra llamada.
+    const enLlamada = await voz(paseDe(), [{ role: 'user', content: 'llámame' }]);
+    assert.equal(enLlamada.dicho, 'Ya estamos en llamada. ¡Dime!');
+  } finally {
+    await tel.cerrar();
+  }
+});
+
 test('las manos: llamar espera el «sí»; leer vuelve por la voz con su boleto y sin el cerebro; un APK viejo no las ve', { skip: !listo }, async () => {
   const tel = await canal();
   const contexto = (extra: Record<string, unknown>) =>

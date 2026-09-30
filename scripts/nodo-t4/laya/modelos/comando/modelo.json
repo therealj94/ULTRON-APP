@@ -69,7 +69,8 @@
   "app_callar",
   "app_hablar",
   "app_camara",
-  "app_ayuda"
+  "app_ayuda",
+  "app_llamame"
  ],
  "grupos": {
   "accion": [
@@ -142,7 +143,8 @@
    "app_callar",
    "app_hablar",
    "app_camara",
-   "app_ayuda"
+   "app_ayuda",
+   "app_llamame"
   ]
  },
  "recorte": {

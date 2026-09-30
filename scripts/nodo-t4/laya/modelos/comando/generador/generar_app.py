@@ -432,6 +432,26 @@ MAS = {
   'en': ['what are your features', 'give me some help', 'how does the app work', 'show me the commands', 'what can i ask you'],
  },
 }
+# La LLAMADA DEL AVATAR (mobile/src/compa/llamadaCiclo.ts, lib/manos-app.ts `llamame`): «llámame» sin hora
+# ni nombre es que el avatar llame a la persona AHORA (antes era la llamada de Twilio del taller y llevaba
+# app_ninguna). Y los timers y despertadores son recordatorios con llamada (el avatar llama a esa hora).
+T['app_llamame'] = {
+ 'es': ['llámame', 'hazme una llamada', 'márcame', 'llámame ahorita', 'dame una llamada', 'échame una llamada', 'tímbrame', '¿me llamas?',
+        'quiero que me llames', 'llámame que quiero platicar', 'márcame un ratito', 'háblame por teléfono', '¿me puedes llamar?', 'llámame tú',
+        'necesito que me llames ya', 'ponte en llamada conmigo', 'hablemos por llamada', 'llámame al celular', 'dame un timbrazo', 'márcame vos',
+        'llámame porfa que me aburro', 'quiero hablar contigo por llamada', 'hazme una llamadita', 'llámame un rato'],
+ 'en': ['call me', 'give me a call', 'call me now', 'ring me', 'phone me', 'can you call me', 'call me right now', 'give me a ring',
+        "let's talk on a call", 'start a call with me', 'call me up', 'i want you to call me', 'call me please i am bored', 'hop on a call with me',
+        'could you give me a call', 'call my phone', 'i need you to call me now', 'call me real quick'],
+}
+MAS['app_llamar_recordar']['es'] = MAS['app_llamar_recordar']['es'] + [
+ 'ponme un timer de 10 minutos', 'pon un temporizador de cinco minutos', 'despiértame {h}', 'timer de media hora', 'activa un temporizador de 20 minutos para {x}',
+ 'hazme un timer de una hora', 'cuenta regresiva de 15 minutos', 'despiértame mañana a las 6', 'programa un timer de 3 minutos para los huevos', 'levántame {h}',
+ 'pon el temporizador de 40 minutos', 'despiértame {h} que tengo que {x}']
+MAS['app_llamar_recordar']['en'] = MAS['app_llamar_recordar']['en'] + [
+ 'set a timer for 10 minutes', 'start a 5 minute timer', 'timer for half an hour', 'wake me up {h}', 'set a timer for 20 minutes to {x}',
+ 'countdown 15 minutes', 'wake me up tomorrow at 6', 'set a 3 minute timer for the eggs', 'wake me {h} so i can {x}']
+
 for _e, _d in MAS.items():
     for _l, _ps in _d.items():
         T[_e][_l] = T[_e][_l] + _ps
@@ -523,6 +543,11 @@ NINGUNA['en'] += [
  'the meeting topic was the budget', 'i moved to a new house and i am happy', 'the screen is dirty', 'how many chats can i have',
  'the government help never came', 'summer is coming back soon', 'you remember it, not me', 'tell me if you hear anything about politics',
 ]
+
+NINGUNA['es'] += ['¿me llamaste?', 'nadie me llama ya', 'no me llames tan tarde', 'el timer del horno se arruinó', 'me despertó el ruido',
+                  'llámalo como quieras', 'mi mamá quiere que la llames', 'ayer me llamaron del banco']
+NINGUNA['en'] += ['did you call me', 'nobody calls me anymore', 'the oven timer broke', 'the noise woke me up', 'call me crazy but i like it',
+                  'they called me from the bank yesterday']
 
 # Proporción de cada conjunto (por plantilla o por frase): 70 % entrenamiento, 15 % validación, 15 % prueba.
 CICLO = ['train', 'train', 'test', 'train', 'train', 'val', 'train', 'train', 'test', 'train', 'train', 'val', 'train', 'train', 'train',
