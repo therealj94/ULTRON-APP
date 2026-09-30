@@ -56,7 +56,7 @@ import { cabecerasAparato } from '../lib/aparato';
 import { escucharCuenta } from '../pulse/relevo';
 import { contactosParaAura } from './contactos';
 import { ecoMesa, interrupcionVoz, mensajeVoz, nativoAtiende, nivelOido } from './canales';
-import { CicloLlamada, avisoMinutos, type Decision, type EfectoCiclo, type EstadoCiclo } from './llamadaCiclo';
+import { CicloLlamada, avisoMinutos, diaHonduras, type Decision, type EfectoCiclo, type EstadoCiclo } from './llamadaCiclo';
 import { loadSettings, loadVozHoy, saveSettings, saveVozHoy } from '../lib/storage';
 import { avatarPorId } from '../avatares/catalogo';
 import { de } from '../i18n';
@@ -205,6 +205,10 @@ export function VozProvider({ children, conCompanera = true }: Props) {
           case 'dormir':
             control.dormir();
             break;
+          case 'despertarOido':
+            // Fuera del silenciado sin sesión: la sesión «dormida» suelta el audio y el oído del teléfono vuelve.
+            control.terminar();
+            break;
           case 'primerMensaje':
             // Lo dicho en espera, como primer mensaje: no se pierde la primera frase.
             if (controles.current?.enviarTexto(ef.texto)) mensajeVoz.emitir({ rol: 'usuario', texto: ef.texto, emocion: 'neutral', en: Date.now() });
@@ -230,7 +234,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   // El modo llamada (Ajustes) y los minutos de hoy.
   useEffect(() => {
     let vivo = true;
-    const dia = new Date().toISOString().slice(0, 10);
+    const dia = diaHonduras();
     void loadSettings().then((s) => {
       if (!vivo) return;
       const on = s.vozLlamada !== false;
@@ -270,7 +274,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       ejecutar(ciclo.tic());
       setLlamadaLista(ciclo.llamadaDisponible());
       const b = baseHoy.current;
-      const dia = new Date().toISOString().slice(0, 10);
+      const dia = diaHonduras();
       if (b.dia && b.dia !== dia) baseHoy.current = { dia, ms: 0, ciclo0: ciclo.usadoMs() };
       const hoy = baseHoy.current.ms + (ciclo.usadoMs() - baseHoy.current.ciclo0);
       setUsadoHoyMs((x) => (Math.abs(x - hoy) >= 1000 ? hoy : x));

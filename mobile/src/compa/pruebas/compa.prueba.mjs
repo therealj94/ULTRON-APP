@@ -19,6 +19,7 @@ import {
   SILENCIO_COLGAR_MS,
   avisoMinutos,
   conNombre,
+  diaHonduras,
   esDespedida,
   etiquetaCiclo,
   ruidoPermite,
@@ -1761,6 +1762,82 @@ prueba('ciclo: los minutos conectados cuentan solo con sesión (en espera no se 
   assert.equal(c.usadoMs(), 90_000);
   r.t += 60 * 60_000;
   assert.equal(c.usadoMs(), 90_000);
+});
+
+prueba('ciclo (Codex P2): los minutos de «hoy» cuentan por el día de Honduras, igual que el servidor', async () => {
+  const { diaHonduras: diaServidor } = await import(new URL('../../../../server/tope-voz.ts', import.meta.url).href);
+  // A las 23:30 de Honduras ya es el día siguiente en UTC: antes la cuenta se reiniciaba ahí.
+  const noche = Date.UTC(2026, 8, 30, 5, 30); // 30-sep 05:30 UTC = 29-sep 23:30 en Tegucigalpa
+  assert.equal(new Date(noche).toISOString().slice(0, 10), '2026-09-30', 'UTC ya cambió de día');
+  assert.equal(diaHonduras(noche), '2026-09-29');
+  for (const t of [noche, Date.UTC(2026, 8, 30, 6, 0), Date.UTC(2026, 8, 30, 5, 59, 59), Date.UTC(2026, 11, 31, 23, 0), Date.UTC(2027, 0, 1, 6, 1), Date.UTC(2026, 2, 8, 12, 0)]) {
+    assert.equal(diaHonduras(t), diaServidor(t), new Date(t).toISOString());
+  }
+});
+
+prueba('ciclo (Codex P2): «sin minutos» no es para siempre — vuelve con el día nuevo de Honduras, tras la espera o con un permiso con cupo', () => {
+  const inicio = Date.UTC(2026, 8, 30, 18, 0); // 12:00 en Honduras
+  const lleno = () => {
+    const r = { t: inicio };
+    const c = new CicloLlamada({ reloj: () => r.t });
+    c.encender();
+    c.despertar('hola');
+    c.fallo('HTTP 429 · tope de voz');
+    assert.equal(c.llamadaDisponible(), false);
+    return { c, r };
+  };
+  // Solo el cambio de día: se agota a las 23:50 de Honduras y a las 00:05 vuelve.
+  const r2 = { t: Date.UTC(2026, 9, 1, 5, 50) };
+  const b = new CicloLlamada({ reloj: () => r2.t });
+  b.encender();
+  b.despertar('hola');
+  b.fallo('HTTP 429');
+  r2.t = Date.UTC(2026, 9, 1, 5, 59);
+  assert.equal(b.llamadaDisponible(), false, '23:59 de Honduras: el mismo día, sin cupo');
+  r2.t = Date.UTC(2026, 9, 1, 6, 5);
+  assert.equal(b.llamadaDisponible(), true, 'día nuevo de Honduras: cupo renovado');
+  assert.equal(b.frase('Aura, hola', { mesaVisible: true, ruido: 0 }).tipo, 'despertar');
+  // Tras la espera, sin cambio de día.
+  const c = lleno();
+  c.r.t += 6 * 60 * 60_000;
+  assert.equal(c.c.llamadaDisponible(), true);
+  // Un permiso nuevo con cupo (otra vía que ya lo pidió) también lo quita.
+  const d = lleno();
+  d.c.fijarTope(4 * 60_000);
+  assert.equal(d.c.llamadaDisponible(), true);
+  d.c.fijarTope(0);
+  assert.equal(d.c.llamadaDisponible(), true, 'un cupo en cero no inventa un tope nuevo: eso lo dice el 429');
+});
+
+prueba('ciclo (Codex P2): apagar el modo llamada estando silenciado sin sesión devuelve el oído del teléfono', () => {
+  const { c } = cicloDePrueba();
+  const ctl = new ControlSesion('aura', 'es');
+  const ocupa = () => ctl.vista().montada || ctl.vista().dormida; // VozProvider.vozOcupaMicrofono
+  const ejecutar = (ef) => {
+    for (const e of ef) {
+      if (e.tipo === 'dormir') ctl.dormir();
+      if (e.tipo === 'despertarOido') ctl.terminar();
+      if (e.tipo === 'cerrar') ctl.terminar();
+      if (e.tipo === 'abrir') ctl.iniciar();
+    }
+  };
+  c.encender();
+  ejecutar(c.dobleToque()); // en espera: silenciado sin sesión
+  assert.equal(c.estado(), 'silenciado');
+  assert.equal(ocupa(), true, 'silenciado: nadie escucha (correcto)');
+  const ef = c.fijarActivo(false);
+  assert.deepEqual(ef, [{ tipo: 'despertarOido' }], 'antes: [] y el audio quedaba en una conversación inexistente');
+  ejecutar(ef);
+  assert.equal(ocupa(), false, 'el oído del teléfono vuelve a ser el dueño');
+  assert.equal(c.estado(), 'espera');
+  // Apagarlo en espera no hace nada (el oído ya es del teléfono); en llamada, cuelga.
+  const otro = cicloDePrueba();
+  otro.c.encender();
+  assert.deepEqual(otro.c.fijarActivo(false), []);
+  otro.c.fijarActivo(true);
+  otro.c.despertar(null);
+  otro.c.conectado();
+  assert.deepEqual(otro.c.fijarActivo(false).map((e) => e.tipo), ['cerrar']);
 });
 
 for (const [nombre, f] of pruebas) {
