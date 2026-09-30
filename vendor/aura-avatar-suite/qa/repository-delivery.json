@@ -1,0 +1,16 @@
+{
+  "cleanCheckoutRestoresModels": true,
+  "secondRunPreservesFiles": true,
+  "models": {
+    "ANT-ONIO": {
+      "bytes": 17802936,
+      "sha256": "8685b383ecbe3e1cc785fc857f17f1b138f58f2ba409b5eef0ecfe00ad5e2a1f",
+      "matchesDeliveredModel": true
+    },
+    "CLAUDIO": {
+      "bytes": 27762844,
+      "sha256": "c8c7d19100e63856b8779b13794c34a465a111d07746222b73d1daffb8249a85",
+      "matchesDeliveredModel": true
+    }
+  }
+}

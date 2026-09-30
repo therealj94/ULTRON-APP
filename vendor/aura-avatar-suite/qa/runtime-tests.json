@@ -1,0 +1,125 @@
+{
+  "claudio": {
+    "stats": {
+      "meshes": 89,
+      "triangles": 352894,
+      "joints": 43,
+      "drawCalls": 116
+    },
+    "clips": [
+      "neutral",
+      "feliz",
+      "risa",
+      "sorpresa",
+      "curioso",
+      "pensando",
+      "preocupado",
+      "triste",
+      "molesto",
+      "cansado",
+      "carino",
+      "orgullo",
+      "travieso",
+      "canto",
+      "oracion",
+      "escepticismo",
+      "alarma",
+      "firme",
+      "seco",
+      "escuchando",
+      "dormido",
+      "saludar",
+      "lentes",
+      "asentir",
+      "negar",
+      "explicar",
+      "celebrar",
+      "corazon",
+      "senalar",
+      "caminar"
+    ],
+    "finite": true,
+    "sad": true,
+    "speech": true,
+    "stopped": true,
+    "reload": {
+      "clips": 30,
+      "finite": true
+    },
+    "mobile": {
+      "noOverflow": true,
+      "canvasWidth": 390
+    }
+  },
+  "aura": {
+    "stats": {
+      "meshes": 18,
+      "triangles": 56800,
+      "joints": 11,
+      "drawCalls": 40
+    },
+    "clips": [
+      "neutral",
+      "feliz",
+      "risa",
+      "sorpresa",
+      "curioso",
+      "pensando",
+      "preocupado",
+      "triste",
+      "molesto",
+      "cansado",
+      "carino",
+      "orgullo",
+      "travieso",
+      "canto",
+      "oracion",
+      "escepticismo",
+      "alarma",
+      "firme",
+      "seco",
+      "escuchando",
+      "dormido",
+      "saludar",
+      "lentes",
+      "asentir",
+      "negar",
+      "explicar",
+      "celebrar",
+      "corazon",
+      "senalar",
+      "caminar"
+    ],
+    "finite": true,
+    "sad": true,
+    "speech": true,
+    "stopped": true,
+    "reload": {
+      "clips": 30,
+      "finite": true
+    },
+    "mobile": {
+      "noOverflow": true,
+      "canvasWidth": 390
+    }
+  },
+  "audio": {
+    "drives": true,
+    "stops": true
+  },
+  "bridge": {
+    "ready": true,
+    "state": true,
+    "speech": true,
+    "rejectsNaN": true,
+    "stop": true,
+    "noFakeSuccess": true
+  },
+  "errors": [],
+  "antonioApprovedModel": {
+    "unchanged": true,
+    "sha256": "8685b383ecbe3e1cc785fc857f17f1b138f58f2ba409b5eef0ecfe00ad5e2a1f",
+    "source": "Approved revision 2"
+  },
+  "hostIntegration": "Not compiled in the host app; TSX syntax checked only"
+}
