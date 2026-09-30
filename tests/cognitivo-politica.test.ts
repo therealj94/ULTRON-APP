@@ -48,7 +48,7 @@ test('cambiar el sistema exige mando con prueba', () => {
 
 test('lo crítico va a dos firmas; con dos firmas ya no vuelve a la cola', () => {
   const kyc = { kyc: 'aprobado' as const };
-  const d = evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: kyc }));
+  const d = evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens' }));
   assert.equal(d.veredicto, 'revision');
   assert.equal(d.necesarias, 2);
   assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: kyc, aprobada: { id: 'a', firmas: ['medardo'] } })).veredicto, 'revision');
@@ -66,6 +66,10 @@ test('R6/A12: sin KYC comprobado lo crítico no pasa, ni con dos firmas (matriz 
     assert.equal(d.veredicto, 'bloquear', `KYC ${kyc ?? 'ausente'}`);
   }
   assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: { kyc: 'aprobado' }, aprobada: firmas })).veredicto, 'permitir');
+  // Al PEDIRLA sin el dato: no se ejecuta, va a la cola (y al ejecutar se comprueba con la fuente).
+  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens' })).veredicto, 'revision');
+  // Al pedirla con un KYC negativo: bloqueo desde ya.
+  assert.equal(evaluar(con({ efecto: 'critico', herramienta: 'transferir_tokens', hechos: { kyc: 'rechazado' } })).veredicto, 'bloquear');
   // Lo no crítico no exige KYC.
   assert.equal(evaluar(con({ efecto: 'escritura', herramienta: 'anotar' })).veredicto, 'permitir');
 });
