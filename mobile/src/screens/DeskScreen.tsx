@@ -1424,6 +1424,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           pending.current = null;
           void stopSpeaking();
           speakingRef.current = false;
+          avisarMesa({ hablando: false, pensando: false });
           setToolHint('');
           setVisionOn((v) => {
             visionAntesLlamada.current = v;
