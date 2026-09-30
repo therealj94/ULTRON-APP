@@ -15,6 +15,8 @@
  *   · no está → queda una solicitud de acceso con su GID verificado, para aprobar desde el panel
  *     de siempre. Aprobada, la próxima vez entra con el mismo botón;
  *   · AURA_GENESIS_ABIERTO=1 → cualquier identidad verificada entra (lo decide José, no el código).
+ *     Quien entra así sin estar en el padrón es MIEMBRO de la comunidad, no junta (server/nivel.ts):
+ *     rol «Miembro · Genesis ID», cerebro público, sin taller ni Telegram de la organización.
  *
  * La clave de la app `aura` en Genesis vive en GENESIS_API_KEY_AURA (o GENESIS_API_KEY) y no sale
  * de aquí: con ella solo se puede preguntar si un pase HECHO PARA AU-RA vale.

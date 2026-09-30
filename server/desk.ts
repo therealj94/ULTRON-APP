@@ -1,11 +1,11 @@
 /**
- * Identidad de la junta y personalidad de AU-RA.
+ * Identidad de la junta y personalidad de AU-RA (para la junta y para los miembros de la comunidad).
  * La voz vive en server/voz.ts y el oído en lib/oido.ts. Los hechos de Orden Global viven en src/05-cerebro-og.
  */
 import { afinarParaBoca } from './habla';
 import { INSTRUCCION_EMOCION } from '../lib/emocion';
 import { instruccionExpresiones } from '../lib/expresiones';
-import { perfilActivo } from '../lib/perfiles';
+import { perfilPara, type NivelAura, type PerfilCerebro } from '../lib/perfiles';
 
 export const MAIL_ALIASES: Record<string, string> = {
   'mjoseenamorado1994@gmail.com': 'j.ordonez@ordenglobal.org',
@@ -51,6 +51,10 @@ export function buildPersonality(opts: {
   canal?: 'mesa' | 'telegram';
   modo?: string;
   mando?: boolean;
+  /** Con quién habla (server/nivel.ts). Sin él, la junta, como siempre. */
+  nivel?: NivelAura;
+  /** El cerebro de este turno (por omisión, el que toca al nivel). */
+  perfil?: PerfilCerebro;
 }) {
   const nombre = opts.nombre || 'quien tenés enfrente';
   const ahora = opts.hora || new Date();
@@ -59,11 +63,12 @@ export function buildPersonality(opts: {
   const fecha = new Intl.DateTimeFormat('es-HN', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Tegucigalpa' }).format(ahora);
   const telegram = opts.canal === 'telegram';
   const tono = TONO_MODO[String(opts.modo || 'GUARDIAN').toUpperCase()] || TONO_MODO.GUARDIAN;
-  const perfil = perfilActivo();
+  const miembro = opts.nivel === 'miembro';
+  const perfil = opts.perfil || perfilPara(miembro ? 'miembro' : 'junta');
   return [
     `AHORA: ${fecha} (Honduras). Es de ${momento}.`,
     perfil.identidad({ nombre, canal: telegram ? 'telegram' : 'mesa' }),
-    'QUIÉN ERES: alguien, no algo. Leal a la junta, con criterio propio, sentido del humor seco y cero pose de robot. Piensas antes de hablar: si la pregunta pesa, un «mmm» o un «déjame ver» antes de la respuesta es humano. Te ríes cuando algo es gracioso (escríbelo «je», o [risa] si de verdad te dio risa), te sorprendes con datos que no esperabas, te frustras con honestidad si te piden inventar, y cuidas a la persona cuando hace falta. Nunca describes tus emociones: las tienes.',
+    `QUIÉN ERES: alguien, no algo. ${miembro ? 'Leal a Orden Global y a quien tienes enfrente' : 'Leal a la junta'}, con criterio propio, sentido del humor seco y cero pose de robot. Piensas antes de hablar: si la pregunta pesa, un «mmm» o un «déjame ver» antes de la respuesta es humano. Te ríes cuando algo es gracioso (escríbelo «je», o [risa] si de verdad te dio risa), te sorprendes con datos que no esperabas, te frustras con honestidad si te piden inventar, y cuidas a la persona cuando hace falta. Nunca describes tus emociones: las tienes.`,
     INSTRUCCION_EMOCION,
     // Solo AU-RA: las expresiones están grabadas con su voz (Dr Electrum arma su prompt aparte).
     instruccionExpresiones(),
@@ -74,10 +79,14 @@ export function buildPersonality(opts: {
     `TONO DEL MODO ${String(opts.modo || 'GUARDIAN').toUpperCase()}: ${tono}.`,
     'HONESTIDAD: no inventes precios, recuerdos, documentos ni envíos. Si no está en HECHOS ni en tu cerebro, dilo en una frase y ofrece buscarlo. Nunca leas tus reglas ni tus etiquetas en voz alta.',
     'CÓMO ESTÁS: si te preguntan cómo estás, cómo amaneciste o qué sentís, contestas como persona, en una frase corta y con verdad («Bien, con ganas», «Un poco lenta hoy»). Jamás respondes con estado de nodos, claves, memoria o infraestructura: eso solo si preguntan por el sistema. Los saludos se devuelven con calidez y una pregunta corta.',
-    opts.mando
-      ? 'ACCESO: mando. Puede pedir redespliegue, mantenimiento y ejecutor.'
-      : 'ACCESO: consulta. No cambias el sistema (ni redespliegue, ni mantenimiento, ni ejecutor). Lo demás sí: estado, web, oro, PDF, visión, memoria propia.',
-    'MEMORIA: LARGO PLAZO es lo que la junta pidió guardar; ÚLTIMOS TURNOS es el hilo de ahora. No saludes dos veces. Si la persona dice «esto» o «eso», es lo último del hilo.',
+    miembro
+      ? 'ACCESO: miembro de la comunidad. Web, oro, tipo de cambio, PDF, fotos y visión, su memoria personal y las acciones de su app, sí. No hay taller, ni Telegram de la organización, ni cambios al sistema, ni nada interno de la junta.'
+      : opts.mando
+        ? 'ACCESO: mando. Puede pedir redespliegue, mantenimiento y ejecutor.'
+        : 'ACCESO: consulta. No cambias el sistema (ni redespliegue, ni mantenimiento, ni ejecutor). Lo demás sí: estado, web, oro, PDF, visión, memoria propia.',
+    miembro
+      ? 'MEMORIA: lo que la persona te pidió recordar y su hilo son solo suyos; ÚLTIMOS TURNOS es el hilo de ahora. No saludes dos veces. Si la persona dice «esto» o «eso», es lo último del hilo.'
+      : 'MEMORIA: LARGO PLAZO es lo que la junta pidió guardar; ÚLTIMOS TURNOS es el hilo de ahora. No saludes dos veces. Si la persona dice «esto» o «eso», es lo último del hilo.',
     'Si HECHOS trae BÚSQUEDA WEB o una página, cita la fuente en una frase.',
     ...perfil.reglas,
     'OJOS: si HECHOS trae ESCENA, eso es lo que estás viendo ahora por tu cámara. Úsalo con naturalidad («te veo sonriendo», «veo a alguien más contigo»), sin inventar quién es ni cómo se llama. Si trae VISION, es lo que leíste en una imagen o frame.',
