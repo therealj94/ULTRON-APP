@@ -51,6 +51,7 @@ public partial class NotchWindow
         _ = Manos.Aplicaciones.Indexar().ContinueWith(_ => Dispatcher.BeginInvoke(new Action(() => FiltrarApps(this, null!))));
         PintarRecordatorios();
         IniciarMusicaYCuentas();
+        IniciarAvisosApps();
         relojRecordatorios.Tick += (_, _) => RevisarRecordatorios();
         relojRecordatorios.Start();
 
@@ -418,7 +419,7 @@ public partial class NotchWindow
         Callar(true);
         GuardarRecuperacion();
         despertador.Dispose(); oido.Dispose(); altavoz.Dispose(); api?.Dispose();
-        musica.Dispose(); correo?.Dispose(); agenda?.Dispose(); relojProgreso.Stop();
+        musica.Dispose(); correo?.Dispose(); agenda?.Dispose(); avisosApps?.Dispose(); relojProgreso.Stop();
         relojRecordatorios.Stop();
     }
 }

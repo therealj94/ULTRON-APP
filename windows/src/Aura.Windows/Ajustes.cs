@@ -55,6 +55,14 @@ internal sealed class Ajustes
     public string GoogleClientId { get; set; } = "";
     public string GoogleClientSecret { get; set; } = "";
     public string MicrosoftClientId { get; set; } = "";
+    /// <summary>Mostrar en el notch las notificaciones de las demás apps (WhatsApp, Teams, Outlook…).</summary>
+    public bool AvisosDeApps { get; set; } = true;
+    /// <summary>Solo decir de qué app es, sin el texto (para cuando hay gente mirando la pantalla).</summary>
+    public bool AvisosPrivados { get; set; }
+    /// <summary>Leerlas en voz alta al llegar.</summary>
+    public bool AvisosEnVoz { get; set; }
+    /// <summary>Apps cuyas notificaciones no salen en el notch (por nombre: «WhatsApp»).</summary>
+    public List<string> AppsSilenciadas { get; set; } = new();
     public List<Recordatorio> Recordatorios { get; set; } = new();
 
     static string Carpeta => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AuraWindows");
@@ -70,6 +78,7 @@ internal sealed class Ajustes
             if (a.Avatar is not ("aura" or "claudio" or "antonio" or "ojos")) a.Avatar = "aura";
             if (a.Idioma is not ("es" or "en")) a.Idioma = "es";
             a.Conexiones ??= new();
+            a.AppsSilenciadas ??= new();
             return a;
         }
         catch { return new Ajustes(); }

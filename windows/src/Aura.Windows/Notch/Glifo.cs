@@ -52,6 +52,9 @@ internal sealed class Glifo : FrameworkElement
         ["\uE8D6"] = "M9 18V5l11-2v13 M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z M20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
         ["\uE715"] = "M3 6h18v12H3Z M3 7l9 6 9-6",
         ["\uE787"] = "M4 6h16v14H4Z M4 10h16 M8 3v5 M16 3v5",
+        // 1.4: campana (notificaci\u00F3n de otra app) y globo de chat (WhatsApp, Teams, Telegram\u2026)
+        ["\uEA8F"] = "M6 16V11a6 6 0 0 1 12 0v5l2 2H4Z M10 20a2 2 0 0 0 4 0",
+        ["\uE8F2"] = "M4 5h16v11h-9l-5 4v-4H4Z M8 9.5h8 M8 12.5h5",
         [""] = "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2Z",
     };
 

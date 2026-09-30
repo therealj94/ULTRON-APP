@@ -252,6 +252,25 @@ Check(LectorApis.SpotifyMotivo("{\"error\":{\"status\":404,\"reason\":\"NO_ACTIV
 Check(LectorApis.YoutubePrimero("{\"items\":[{\"id\":{\"kind\":\"youtube#channel\"}},{\"id\":{\"videoId\":\"v1\"},\"snippet\":{\"title\":\"Vivir Mi Vida &amp; m&aacute;s\"}}]}") is { Id: "v1", Titulo: "Vivir Mi Vida & más" }, "youtube primero");
 Check(LectorApis.Cuenta("{\"sub\":\"1\",\"email\":\"yo@gmail.com\"}") == "yo@gmail.com" && LectorApis.Cuenta("{\"userPrincipalName\":\"a@outlook.com\",\"mail\":null}") == "a@outlook.com", "cuenta");
 
+// Notificaciones de otras apps: el toast de Windows → app, título, cuerpo, sitio
+var toastWa = "<toast launch=\"x\"><visual><binding template=\"ToastGeneric\"><text>Karla</text><text>¿Vienes a la junta?</text><text>Traigo el informe</text></binding></visual></toast>";
+var av = AvisosApps.Leer(7, "5319275A.WhatsAppDesktop_cv1g1gvanyjgm!App", toastWa, 134036928000000000);
+Check(av is { Id: 7, App: "WhatsApp", Titulo: "Karla", Cuerpo: "¿Vienes a la junta? · Traigo el informe", Sitio: "" }, "toast whatsapp: " + av);
+var toastWeb = "﻿<toast><visual><binding template=\"ToastGeneric\"><text>Nuevo mensaje</text><text>Hola</text><text placement=\"attribution\">web.whatsapp.com</text></binding><binding template=\"ToastText02\"><text>otro</text></binding></visual></toast>\0";
+Check(AvisosApps.Leer(8, "Chrome", toastWeb, 0) is { App: "Chrome", Titulo: "Nuevo mensaje", Cuerpo: "Hola", Sitio: "web.whatsapp.com" }, "toast web con sitio y BOM");
+Check(AvisosApps.Leer(9, "x", "<toast><visual><binding template=\"ToastGeneric\"><image src=\"a.png\"/></binding></visual></toast>", 0) is null, "toast sin texto");
+Check(AvisosApps.Leer(9, "x", "<tile><visual/></tile>", 0) is null && AvisosApps.Leer(9, "x", "no es xml <", 0) is null, "no toast / xml roto");
+Check(AvisosApps.NombreApp("Microsoft.Office.OUTLOOK.EXE.15") == "Outlook" && AvisosApps.NombreApp("MSTeams_8wekyb3d8bbwe!MSTeams") == "Teams"
+      && AvisosApps.NombreApp("Contoso.Ventas_abc123def!App") == "Ventas" && AvisosApps.NombreApp("{6D809377-6AF0-444B-8957-A3773F02200E}\\Foo\\bar.exe") == "Bar", "nombres de app: " + AvisosApps.NombreApp("{6D809377-6AF0-444B-8957-A3773F02200E}\\Foo\\bar.exe"));
+Check(AvisosApps.EsPropia("Aura.Windows") && !AvisosApps.EsPropia("Chrome"), "aura no se avisa a si misma");
+Check(R("¿qué notificaciones tengo?") is { Mano: Mano.Notificaciones, Valor: "leer" }, "que notificaciones");
+Check(R("léeme la última notificación") is { Mano: Mano.Notificaciones, Valor: "ultima" }, "ultima notificacion");
+Check(R("qué me llegó") is { Mano: Mano.Notificaciones, Valor: "leer" }, "que me llego");
+Check(R("silencia las notificaciones de WhatsApp") is { Mano: Mano.Notificaciones, Valor: "silenciar|whatsapp" }, "silenciar app");
+Check(R("vuelve a mostrar las notificaciones de WhatsApp") is { Mano: Mano.Notificaciones, Valor: "activar|whatsapp" }, "activar app");
+Check(R("read my notifications") is { Mano: Mano.Notificaciones, Valor: "leer" } && R("mute Slack notifications") is { Valor: "silenciar|slack" }, "notificaciones en ingles: " + R("mute Slack notifications"));
+Check(R("me llegó algún correo") is { Mano: Mano.Correo }, "correo sigue siendo correo");
+
 // La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).
 foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace una captura de pantalla en windows", "ayer me dijiste que bloqueara la compu" })
 {

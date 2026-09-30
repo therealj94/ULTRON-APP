@@ -193,6 +193,24 @@ internal sealed class AjustesWindow : Window
         Op("Avisarme de correos nuevos en el notch", a.AvisarCorreos, v => a.AvisarCorreos = v);
         Op("Mostrar lo que suena (Spotify, YouTube Music, el navegador)", a.MostrarMusica, v => a.MostrarMusica = v);
 
+        raiz.Children.Add(Titulo("Notificaciones de otras apps"));
+        Op("Mostrarlas en el notch (WhatsApp, Teams, Outlook, Chrome…)", a.AvisosDeApps, v => a.AvisosDeApps = v);
+        Op("Solo decir de qué app es, sin el texto (privado)", a.AvisosPrivados, v => a.AvisosPrivados = v);
+        Op("Leerlas en voz alta al llegar", a.AvisosEnVoz, v => a.AvisosEnVoz = v);
+        var silenciadas = Nota("");
+        void PintarSilenciadas() => silenciadas.Text = a.AppsSilenciadas.Count == 0
+            ? "Ninguna app en silencio. Di «silencia las notificaciones de WhatsApp» para quitar una."
+            : "En silencio: " + string.Join(", ", a.AppsSilenciadas) + ". Di «vuelve a mostrar las notificaciones de …» para devolverla.";
+        PintarSilenciadas();
+        raiz.Children.Add(silenciadas);
+        if (a.AppsSilenciadas.Count > 0)
+        {
+            var todas = new Button { Content = "Quitar todos los silencios", Style = (Style)FindResource("Pildora"), HorizontalAlignment = HorizontalAlignment.Left };
+            todas.Click += (_, _) => { a.AppsSilenciadas.Clear(); PintarSilenciadas(); todas.IsEnabled = false; };
+            raiz.Children.Add(todas);
+        }
+        raiz.Children.Add(Nota("AURA lee las notificaciones que Windows ya guarda en esta PC, solo para mostrarlas; no salen del equipo. Es lo mismo que ves en el centro de notificaciones."));
+
         raiz.Children.Add(Titulo("Llamadas y video (servicio aparte, opcional)"));
         ConnectionSettings llamadas; try { llamadas = ConnectionStore.Load(); } catch { llamadas = new(); }
         var urlLlamadas = new TextBox { Text = llamadas.Gateway }; raiz.Children.Add(Caja(urlLlamadas));
