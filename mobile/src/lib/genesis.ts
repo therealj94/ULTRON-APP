@@ -121,14 +121,14 @@ async function walletWeb(): Promise<string> {
 }
 
 /**
- * Espera a que vuelva `ultronfp://sso…` de la app Orden Global.
+ * Espera a que vuelva `ultronfp://sso…` de la app Orden Global con el `estado` de este pedido.
  *
  * Y si la persona vuelve a AU-RA SIN el enlace —la app Orden Global instalada es de antes de este
  * cambio y no sabe qué es `destino=aura`, o la persona tocó «atrás»— se deja de esperar enseguida
  * (1,5 s de gracia) en vez de dejarla cinco minutos mirando un botón que no responde: `null` y se
  * sigue por la web de la wallet.
  */
-function esperarVuelta(ms: number): { promesa: Promise<string | null>; cancelar: () => void } {
+function esperarVuelta(ms: number, estadoPedido: string): { promesa: Promise<string | null>; cancelar: () => void } {
   let cancelar = () => {};
   const promesa = new Promise<string | null>((listo) => {
     let hecho = false;
@@ -143,8 +143,10 @@ function esperarVuelta(ms: number): { promesa: Promise<string | null>; cancelar:
       if (gracia) clearTimeout(gracia);
       listo(url);
     };
+    // Solo la vuelta de ESTE pedido (su `estado`) termina la espera: un enlace roto o viejo que llegue
+    // antes no se la lleva —antes la cerraba, y la vuelta buena de después ya no tenía quién la oyera—.
     const sub = Linking.addEventListener('url', ({ url }) => {
-      if (leerVuelta(url)) terminar(url);
+      if (leerVuelta(url)?.estado === estadoPedido) terminar(url);
     });
     const estado = AppState.addEventListener('change', (st) => {
       if (st !== 'active') {
@@ -164,7 +166,7 @@ function esperarVuelta(ms: number): { promesa: Promise<string | null>; cancelar:
 async function pedirPase(reto: string, estado: string): Promise<string | null> {
   const q = `reto=${encodeURIComponent(reto)}&estado=${encodeURIComponent(estado)}`;
   // 1. La app Orden Global. Si no está instalada, openURL falla y se sigue con la web.
-  const espera = esperarVuelta(5 * 60_000);
+  const espera = esperarVuelta(5 * 60_000, estado);
   try {
     await Linking.openURL(`vetawallet://sso?destino=aura&${q}`);
     const url = await espera.promesa;

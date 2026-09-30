@@ -35,6 +35,7 @@ const ss = globalThis.__ss;
     lanzo = true;
   }
   ok('el oyente de Linking no lanza con un enlace roto', !lanzo);
+  ok('…y la espera sigue viva para la vuelta buena', rn.url.length === 1);
   const pend = JSON.parse(ss.m.get('aura.genesis.pendiente'));
   globalThis.__api = async (ruta) => (ruta === '/api/genesis/entrar' ? { token: 't', miembro: { nombre: 'Ana', correo: 'a@b.c', rol: 'x', gid: 'GEN-AAAA-BBBB-C' } } : {});
   rn.url[0]({ url: `ultronfp://sso?pase=PASE&estado=${pend.estado}` });
@@ -48,12 +49,16 @@ const ss = globalThis.__ss;
   rn.inicial = 'ultronfp://sso?pase=PASE&estado=EST1';
   const r1 = await GENESIS.retomarSiVolvio();
   ok('el arranque en frío retoma la vuelta', r1 && r1.ok === true);
-  // Sale; empieza otro pedido (queda pendiente) y vuelve a montarse la pantalla de entrada.
+  // Un pedido quedó a medias (con el mismo estado del enlace inicial) y la persona sale de la cuenta.
+  ss.m.set('aura.genesis.pendiente', JSON.stringify({ verificador, estado: 'EST1', en: Date.now() }));
   await RELEVO.salir();
+  await espera(10);
+  ok('salir borra el pedido pendiente', !ss.m.has('aura.genesis.pendiente'));
+  // Aunque vuelva a haber un pendiente con ese estado, el enlace inicial ya está gastado.
   ss.m.set('aura.genesis.pendiente', JSON.stringify({ verificador, estado: 'EST1', en: Date.now() }));
   const r2 = await GENESIS.retomarSiVolvio();
   ok('tras salir, el mismo enlace inicial NO se vuelve a canjear', r2 === null, JSON.stringify(r2));
-  ok('salir borra el pedido pendiente', !ss.m.has('aura.genesis.pendiente'));
+  ss.m.delete('aura.genesis.pendiente');
 
   console.log('\nB2 · sin app ni web: nada colgado\n');
   rn.openURL = async () => {
