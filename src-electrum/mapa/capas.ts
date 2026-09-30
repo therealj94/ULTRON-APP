@@ -222,6 +222,8 @@ export const ESTILO_ROL: Record<string, { color: string; relleno: number; ancho:
   forestal: { color: '#1B9E5A', relleno: 0.16, ancho: 1, nombre: 'Patrimonio forestal' },
   provincia_geologica: { color: '#C9A0FF', relleno: 0, ancho: 1.4, guiones: [4, 2], nombre: 'Provincias geológicas' },
   municipio: { color: '#FFFFFF', relleno: 0, ancho: 0.8, nombre: 'Municipios' },
+  proyecto: { color: '#FFB020', relleno: 0.12, ancho: 1.6, guiones: [2, 1], nombre: 'Proyectos propios' },
+  historico: { color: '#B8A68A', relleno: 0.06, ancho: 1.2, guiones: [4, 3], nombre: 'Histórico (JICA y otros)' },
 };
 
 /** Las tres capas de dibujo de una capa encendida: relleno, trazo y puntos. */

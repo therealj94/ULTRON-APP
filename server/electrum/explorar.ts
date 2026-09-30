@@ -302,6 +302,9 @@ export const ROLES_VISIBLES: RolCapa[] = [
   'provincia_geologica',
   'placa',
   'municipio',
+  // Referencia (v10): se encienden a mano; el catastro principal es el oficial.
+  'proyecto',
+  'historico',
 ];
 const MAX_RASGOS = 20000;
 

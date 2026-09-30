@@ -124,7 +124,7 @@ const TAREA_REGLAS: Record<Plataforma, Regla[]> = {
   electrum: [
     ['informe', /\b(informe|reporte|pdf)/],
     ['consulta_catastro', /\b(busca concesion|concesiones en|de quien es|que hay en el punto|que concesiones vencen)/],
-    ['legal_minero', /\b(inhgeomin|ley general|canon|vigencia|vence|caduc|prelaci|servidumbre|expediente|titular|contrato|regalia|moratoria|obligaciones|cesion|derechos mineros|arrendamiento)/],
+    ['legal_minero', /\b(inhgeomin|ley general|canon|vigencia|vence|caduc|prelaci|servidumbre|expediente|titular|contrato|regalia|moratoria|obligaciones|cesion|derechos mineros|arrendamiento|cartera|restricciones legales|solicitar)/],
     ['gis', /\b(mapa|capa|traslap|superposic|coordenad|utm|wgs84|nad27|epsg|hectarea|perimetro|poligono|kml|shapefile|georreferenc|curvas de nivel)/],
     ['economia', /\b(van\b|tir\b|npv|irr|capex|opex|aisc|ley de corte|costo|flujo de caja)/],
     ['documento', /\b(lee|resume|documento)/],

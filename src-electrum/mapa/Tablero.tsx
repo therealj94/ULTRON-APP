@@ -101,6 +101,21 @@ function Barras({ filas, color = AMBAR }: { filas: Array<{ nombre: string; n: nu
   );
 }
 
+/** Lo que manda /api/electrum/cartera para la pantalla. */
+type DatosCartera = {
+  cartera: string;
+  enCatastro: number;
+  hectareas: number;
+  porNivel: { rojo: number; ambar: number; verde: number; incompleto?: number };
+  filas: Array<{ id: number; nombre: string; estado: string | null; hectareas: number; prospectividad: number | null; nivel: 'rojo' | 'ambar' | 'verde' | 'incompleto'; motivos: Array<{ tipo: string; nombre: string; zona: string | null; pct: number }> }>;
+};
+const SEMAFORO = {
+  verde: { color: '#2ECC71', txt: 'sin restricciones' },
+  ambar: { color: '#FFB020', txt: 'con condiciones' },
+  rojo: { color: '#E0765F', txt: 'zona de exclusión' },
+  incompleto: { color: '#8FA3B0', txt: 'sin revisar completo' },
+} as const;
+
 function Tarjeta({ titulo, children, className = '' }: { titulo: string; children: ReactNode; className?: string }) {
   return (
     <section className={`rounded-xl border border-white/10 bg-white/[0.03] p-3 ${className}`}>
@@ -187,6 +202,8 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
   const [error, setError] = useState<string | null>(null);
   const [prospectas, setProspectas] = useState<Prospecta[]>([]);
   const [perdidas, setPerdidas] = useState<Perdida[]>([]);
+  const [cartera, setCartera] = useState<DatosCartera | null>(null);
+  const [verCartera, setVerCartera] = useState<'rojo' | 'ambar' | 'verde' | 'incompleto' | null>(null);
   const caja = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -195,6 +212,10 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
     pedirTablero().then(setDatos, (e) => setError(String(e?.message || e)));
     void pedirJson<Prospecta>('/api/electrum/prospectividad', 'ranking').then(setProspectas);
     void pedirJson<Perdida>('/api/electrum/satelite/mayores', 'lista').then(setPerdidas);
+    void fetch('/api/electrum/cartera', { headers: headersElectrum() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => setCartera(j?.analisis || null))
+      .catch(() => setCartera(null));
     const k = (e: KeyboardEvent) => e.key === 'Escape' && onCerrar();
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
@@ -261,6 +282,51 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                 {d.incompletas.map((x) => ({ areas_protegidas: 'áreas protegidas', microcuencas: 'microcuencas', poblados: 'caseríos', departamentos: 'departamentos' })[x] || x).join(', ')}
                 . Se completa solo en un momento.
               </p>
+            )}
+
+            {cartera && cartera.filas.length > 0 && (
+              <Tarjeta titulo={`Cartera · ${cartera.cartera} · ${nf(cartera.enCatastro)} zonas, ${nf(cartera.hectareas)} ha`}>
+                <div className={`mb-2 grid gap-2 ${cartera.porNivel.incompleto ? 'grid-cols-2 md:grid-cols-4' : 'grid-cols-3'}`}>
+                  {(cartera.porNivel.incompleto ? (['verde', 'incompleto', 'ambar', 'rojo'] as const) : (['verde', 'ambar', 'rojo'] as const)).map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setVerCartera((v) => (v === n ? null : n))}
+                      aria-pressed={verCartera === n}
+                      className={`rounded-lg border px-2 py-1.5 text-left cursor-pointer ${verCartera === n ? 'border-white/40 bg-white/[0.07]' : 'border-white/10 hover:border-white/25'}`}
+                    >
+                      <div className="font-display text-[22px] font-bold leading-none" style={{ color: SEMAFORO[n].color }}>
+                        {cartera.porNivel[n] ?? 0}
+                      </div>
+                      <div className="mt-1 text-[11px] leading-snug text-[#9FB0B8]">{SEMAFORO[n].txt}</div>
+                    </button>
+                  ))}
+                </div>
+                <ol className="max-h-64 space-y-0.5 overflow-y-auto">
+                  {cartera.filas
+                    .filter((f) => !verCartera || f.nivel === verCartera)
+                    .slice(0, 60)
+                    .map((f) => (
+                      <li key={f.id}>
+                        <button type="button" onClick={() => onIr(f.id)} className="flex w-full items-baseline gap-2 rounded-md px-1.5 py-1 text-left text-[12.5px] hover:bg-white/[0.06] cursor-pointer">
+                          <span className="mt-[3px] h-2 w-2 shrink-0 rounded-full" style={{ background: SEMAFORO[f.nivel].color }} aria-label={SEMAFORO[f.nivel].txt} />
+                          <span className="min-w-0 flex-1">
+                            <Nombre texto={f.nombre} />
+                            <span className="text-[#7F939D]">
+                              {' '}
+                              · {f.estado || 's/e'} · {nf(f.hectareas, 1)} ha
+                              {f.motivos.length > 0 && ` · ${f.motivos.map((m) => `${m.nombre}${m.zona ? ` (${m.zona})` : ''} ${nf(m.pct, 1)} %`).join('; ')}`}
+                            </span>
+                          </span>
+                          {f.prospectividad != null && <span className="shrink-0 font-mono text-[11px]" style={{ color: colorProsp(f.prospectividad) }}>{f.prospectividad}</span>}
+                        </button>
+                      </li>
+                    ))}
+                </ol>
+                <p className="mt-2 border-t border-white/[0.07] pt-2 text-[11px] leading-snug text-[#7F939D]">
+                  Rojo: pisa área protegida o microcuenca declarada (Art. 48 a) Ley General de Minería). Ámbar: se trabaja con condiciones (microcuenca en trámite, patrimonio forestal, caseríos, traslape). Guía para priorizar, no dictamen.
+                </p>
+              </Tarjeta>
             )}
 
             <div className="grid gap-3 md:grid-cols-3">
@@ -372,7 +438,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
               )}
             </div>
             <p className="pb-2 text-[11px] text-[#61717A]">
-              Cruces hechos en PostGIS con las capas cargadas (catastro nacional, áreas protegidas, microcuencas declaradas y caseríos) y mediciones de Copernicus Sentinel-2. Actualizado{' '}
+              Cruces hechos en PostGIS con las capas cargadas (catastro nacional, áreas protegidas, microcuencas declaradas, patrimonio forestal y caseríos) y mediciones de Copernicus Sentinel-2. Actualizado{' '}
               {new Date(d.generado).toLocaleString('es-HN')}.
             </p>
           </div>

@@ -56,7 +56,9 @@ export type RolVisible =
   | 'forestal'
   | 'provincia_geologica'
   | 'placa'
-  | 'municipio';
+  | 'municipio'
+  | 'proyecto'
+  | 'historico';
 
 /** Una capa encendida encima del catastro (geología, fallas, áreas protegidas…). */
 export type CapaExtra = { id: number; nombre: string; rol: RolVisible; geojson: FeatureCollection };

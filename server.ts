@@ -101,6 +101,7 @@ import { montarRutasMuestras } from './server/electrum/muestras';
 import { montarRutasSatelite, perdidaPorConcesion } from './server/electrum/satelite';
 import { montarRutasExportar } from './server/electrum/exportar';
 import { montarRutasProspectividad, puntajesPorConcesion } from './server/electrum/prospectividad';
+import { montarRutasCartera } from './server/electrum/cartera';
 import { montarRutasArea } from './server/electrum/area';
 import { iniciarAlertas } from './server/electrum/alertas';
 import { montarRutasTimelapse } from './server/electrum/timelapse';
@@ -1428,6 +1429,7 @@ if (ES_ELECTRUM) montarRutasMuestras(app);
 if (ES_ELECTRUM) montarRutasSatelite(app);
 if (ES_ELECTRUM) montarRutasExportar(app);
 if (ES_ELECTRUM) montarRutasProspectividad(app);
+if (ES_ELECTRUM) montarRutasCartera(app);
 if (ES_ELECTRUM) montarRutasArea(app);
 if (ES_ELECTRUM) montarRutasTimelapse(app);
 

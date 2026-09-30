@@ -96,6 +96,15 @@ async function json<T>(url: string): Promise<T> {
   });
 }
 
+/** Lo que manda /api/electrum/cartera: el resumen para decidir, sin geometrías. */
+type DatosCartera = {
+  cartera: string;
+  total: number;
+  enCatastro: number;
+  hectareas: number;
+  porNivel: { rojo: number; ambar: number; verde: number; incompleto?: number };
+  filas: Array<{ id: number; nombre: string; estado: string | null; hectareas: number; prospectividad: number | null; nivel: 'rojo' | 'ambar' | 'verde' | 'incompleto'; motivos: Array<{ tipo: string; nombre: string; zona: string | null; pct: number }> }>;
+};
 const ficha = (id: number) => json<Ficha & { encuadre: [number, number, number, number] | null }>(`/api/electrum/mapa/concesion/${id}`).catch(() => null);
 const capa = (c: { id: number; nombre: string } | undefined) =>
   c ? json<{ rol: any; geojson: any }>(`/api/electrum/mapa/capa/${c.id}`).then((r) => ({ id: c.id, nombre: c.nombre, rol: r.rol, geojson: r.geojson }) as CapaExtra).catch(() => null) : Promise.resolve(null);
@@ -325,6 +334,10 @@ export function Recorrido({
             : Promise.resolve([] as Array<{ id: number; nombre: string; puntaje: number }>),
           completo || modo === 'geologico' ? json<any>('/api/electrum/mapa/muestras').catch(() => null) : Promise.resolve(null),
         ]);
+        const cartera =
+          completo || modo === 'legal'
+            ? await json<{ analisis: DatosCartera | null }>('/api/electrum/cartera').then((j) => j.analisis).catch(() => null)
+            : null;
         const catastro = catastroGuardado() ?? (await json<{ geojson: any }>('/api/electrum/catastro.geojson').then((j) => j.geojson).catch(() => null));
         if (!sigue()) return;
 
@@ -348,10 +361,15 @@ export function Recorrido({
          */
         const venc = vencimientos(catastro);
         const traslapeMayor = t?.traslapes?.mayores?.[0];
-        const [fTraslape, fProspecta] = await Promise.all([
+        // De la cartera: la más prioritaria (verde) y la roja más grande, para mostrar las dos puntas.
+        const cVerde = cartera?.filas.find((f) => f.nivel === 'verde');
+        const cRoja = cartera?.filas.filter((f) => f.nivel === 'rojo').sort((a, b) => b.hectareas - a.hectareas)[0];
+        const [fTraslape, fProspecta, fRoja] = await Promise.all([
           (modo === 'legal' || completo) && traslapeMayor ? ficha(traslapeMayor.aId) : Promise.resolve(null),
           modo === 'herramientas' && (enZona[0] || ranking[0]) ? ficha((enZona[0] || ranking[0]).id) : Promise.resolve(null),
+          cRoja ? ficha(cRoja.id) : Promise.resolve(null),
         ]);
+        const microcuencas = cartera ? await capa(capas.find((x) => x.rol === 'microcuenca')) : null;
         if (!sigue()) return;
         const limpiar = () => {
           c.current.rasters([]);
@@ -444,7 +462,8 @@ export function Recorrido({
             },
           },
           potencial: {
-            hay: true,
+            // Sin ranking no hay nada que contar: encender la capa vacía era mostrar un mapa en blanco.
+            hay: ranking.length > 0,
             correr: async () => {
               capitulo(++i, { titulo: 'El potencial de cada concesión', chips: ranking.slice(0, 3).map((r) => `${nombreParaDecir(r.nombre)} · ${r.puntaje}`) });
               await conversar([
@@ -456,7 +475,7 @@ export function Recorrido({
                     mover({ accion: 'camara', centro: [-86.6, 14.6], zoom: 7.4, inclinacion: 62, giro: 12, ms: 5000 });
                   },
                 },
-                { quien: 'electrum', texto: '[thoughtful] A cada una le calculo un puntaje de prospectividad de cero a cien, con la geología, la geoquímica de JICA y el satélite. En rojo, las más prometedoras.', al: () => orbitar(-22, 22_000) },
+                { quien: 'electrum', texto: '[thoughtful] A cada una le calculo un puntaje de prospectividad de cero a cien, con la geología, la geoquímica histórica de JICA y el satélite. En rojo, las más prometedoras.', al: () => orbitar(-22, 22_000) },
                 ...(ranking.length >= 3 ? [{ quien: 'electrum' as const, texto: `Hoy encabezan ${nombreParaDecir(ranking[0].nombre)}, ${nombreParaDecir(ranking[1].nombre)} y ${nombreParaDecir(ranking[2].nombre)}.` }] : []),
                 { quien: 'tatiana', texto: '[serious] Y las que laten son alertas: las que vencen pronto o las que perdieron vegetación. Esas me toca revisarlas a mí primero.' },
                 { quien: 'chema', texto: 'Mientras nadie tenga que acordarse de memoria, doctor, vamos bien.' },
@@ -516,7 +535,7 @@ export function Recorrido({
               capitulo(++i, {
                 titulo: `La zona con más información: ${zona!.nombre}`,
                 cifras: [
-                  { valor: mapas.length, etiqueta: 'mapas de JICA' },
+                  { valor: mapas.length, etiqueta: 'mapas históricos' },
                   { valor: enZona.length, etiqueta: 'concesiones' },
                   { valor: enZona.reduce((s, x) => s + x.ha, 0), etiqueta: 'hectáreas' },
                 ],
@@ -528,7 +547,7 @@ export function Recorrido({
               await conversar([
                 {
                   quien: 'electrum',
-                  texto: `[warmly] Ahora vamos a la zona donde más información tengo: ${zona!.nombre}. Aquí se juntan ${plural(mapas.length, 'mapa', 'mapas')} de la agencia japonesa JICA, georreferenciados sobre el terreno real, las fallas y ${plural(enZona.length, 'concesión', 'concesiones')}.`,
+                  texto: `[warmly] Ahora vamos a la zona donde más información tengo: ${zona!.nombre}. Aquí se juntan ${plural(mapas.length, 'mapa', 'mapas')} históricos de la agencia japonesa JICA, de 1978 a 2003, georreferenciados sobre el terreno real, las fallas y ${plural(enZona.length, 'concesión', 'concesiones')}.`,
                   al: () => {
                     c.current.rasters([{ ...(mapas[0] as RasterEscaneado), opacidad: 0.82 }]);
                     if (fallas) c.current.capas(() => [fallas]);
@@ -540,7 +559,7 @@ export function Recorrido({
                   ? [{ quien: 'electrum' as const, texto: '[thoughtful] Mire el mapa estructural: las fallas y fracturas por donde subieron los fluidos que dejaron los metales.', al: () => c.current.rasters([{ ...(mapas[1] as RasterEscaneado), opacidad: 0.82 }]) }]
                   : []),
                 ...(mapas[2]
-                  ? [{ quien: 'electrum' as const, texto: 'Y estas son las anomalías geoquímicas que midió JICA en los ríos. Donde coinciden fallas, intrusivos y anomalías, ahí conviene explorar.', al: () => c.current.rasters([{ ...(mapas[2] as RasterEscaneado), opacidad: 0.8 }]) }]
+                  ? [{ quien: 'electrum' as const, texto: 'Y estas son las anomalías geoquímicas que midió JICA en los ríos entre 1978 y 2003: son históricas, sirven para saber dónde mirar, no reemplazan el muestreo de hoy. Donde coinciden fallas, intrusivos y anomalías, ahí conviene explorar.', al: () => c.current.rasters([{ ...(mapas[2] as RasterEscaneado), opacidad: 0.8 }]) }]
                   : []),
                 { quien: 'chema', texto: 'Si es veta de cuarzo con oro libre, gravimetría y una cianuración pequeña. Si viene amarrado en sulfuros, ya hablamos de flotación.' },
                 { quien: 'tatiana', texto: '[thoughtful] Y cualquiera de las dos necesita agua y un sitio seguro para los relaves. Eso lo voy mirando desde ya.' },
@@ -579,7 +598,7 @@ export function Recorrido({
               capitulo(++i, {
                 titulo: 'Geoquímica de campo',
                 cifras: [
-                  { valor: oro!.total, etiqueta: 'muestras de JICA' },
+                  { valor: oro!.total, etiqueta: 'muestras históricas' },
                   { valor: oro!.maxGt, etiqueta: 'g/t de oro, la más alta', d: 1 },
                   { valor: oro!.sobreUnGramo, etiqueta: 'sobre 1 g/t' },
                 ],
@@ -645,6 +664,55 @@ export function Recorrido({
               ]);
             },
           },
+          cartera: {
+            hay: !!(cartera && cartera.filas.length && cRoja && fRoja?.geojson && fRoja.encuadre),
+            correr: async () => {
+              const k = cartera!;
+              capitulo(++i, {
+                titulo: `Su cartera: ${nombreParaDecir(k.cartera)}`,
+                cifras: [
+                  { valor: k.porNivel.verde, etiqueta: 'sin restricciones' },
+                  { valor: k.porNivel.ambar, etiqueta: 'con condiciones' },
+                  { valor: k.porNivel.rojo, etiqueta: 'en zona de exclusión' },
+                ],
+              });
+              c.current.muestras(null);
+              c.current.rasters([]);
+              c.current.prospectividad(false);
+              c.current.capas(() => [protegidas, microcuencas].filter((x): x is NonNullable<typeof x> => !!x));
+              await irConFicha(fRoja!);
+              orbitar(-40, 30_000);
+              const motivo = cRoja!.motivos[0];
+              await conversar([
+                {
+                  quien: 'tatiana',
+                  texto: `[serious] Ahora sus zonas. De las ${nf(k.enCatastro)} de la cartera, ${plural(k.porNivel.verde, 'no tiene', 'no tienen')} ninguna restricción en las capas cargadas, ${nf(k.porNivel.ambar)} se pueden trabajar con condiciones y ${plural(k.porNivel.rojo, 'cae', 'caen')} en zona de exclusión.`,
+                },
+                {
+                  quien: 'electrum',
+                  texto: `[thoughtful] Esta es ${nombreParaDecir(cRoja!.nombre)}: ${
+                    motivo
+                      ? motivo.tipo === 'area_protegida'
+                        ? `el ${nf(motivo.pct)} por ciento cae en el área protegida ${motivo.nombre}${motivo.zona ? `, zona de ${motivo.zona.toLowerCase()}` : ''}`
+                        : motivo.tipo === 'microcuenca'
+                          ? `el ${nf(motivo.pct)} por ciento cae en la microcuenca ${motivo.nombre}, que abastece de agua a una comunidad`
+                          : `pisa ${motivo.nombre}`
+                      : 'tiene restricciones'
+                  }. La Ley General de Minería, en su artículo cuarenta y ocho, no permite derechos mineros ahí.`,
+                },
+                ...(cVerde
+                  ? [
+                      {
+                        quien: 'electrum' as const,
+                        texto: `[warmly] Y para empezar, la que yo priorizaría es ${nombreParaDecir(cVerde.nombre)}: ${nf(cVerde.hectareas)} hectáreas sin restricciones${cVerde.prospectividad != null ? ` y ${cVerde.prospectividad} puntos de prospectividad` : ''}.`,
+                      },
+                    ]
+                  : []),
+                { quien: 'chema', texto: '[chuckles] O sea que la plata se pone primero donde sí se puede trabajar.' },
+                { quien: 'tatiana', texto: 'Exacto. Y cada ficha trae el semáforo con el decreto y el acuerdo que lo respaldan, listo para llevar al ICF y a INHGEOMIN.' },
+              ]);
+            },
+          },
           traslapes: {
             hay: !!(t && fTraslape?.geojson && fTraslape.encuadre && traslapeMayor),
             correr: async () => {
@@ -664,7 +732,7 @@ export function Recorrido({
                 { quien: 'tatiana', texto: '[curious] ¿Y cuál es el más grande, doctor?' },
                 { quien: 'electrum', texto: `Entre ${nombreParaDecir(traslapeMayor!.a)} y ${nombreParaDecir(traslapeMayor!.b)}: ${nf(traslapeMayor!.ha, 1)} hectáreas. Eso se resuelve por la prelación de la solicitud, no por quién llegó primero al terreno.` },
                 ...(t!.traslapes.mismoNombre?.total
-                  ? [{ quien: 'tatiana' as const, texto: `[thoughtful] Y ${nf(t!.traslapes.mismoNombre.total)} son entre concesiones con el mismo nombre: parecen registros duplicados que conviene depurar con INHGEOMIN.` }]
+                  ? [{ quien: 'tatiana' as const, texto: `[thoughtful] Y ${nf(t!.traslapes.mismoNombre.total)} son entre concesiones con el mismo nombre: son derechos del padrón oficial que se llaman igual y se pisan: conviene aclararlos con INHGEOMIN antes de invertir en cualquiera de los dos.` }]
                   : []),
               ]);
             },
@@ -712,7 +780,7 @@ export function Recorrido({
                 { quien: 'electrum', texto: '[thoughtful] Tengo leídos los documentos legales: las reformas del Decreto 109-2019 a la Ley General de Minería y los formularios de INHGEOMIN, de exploración, explotación, beneficio, comercialización y declaración jurada.' },
                 { quien: 'chema', texto: '[curious] ¿Y está al día, doctor? Que la ley ha cambiado.' },
                 { quien: 'electrum', texto: '[serious] Al día. El Decreto 18-2024 prohibió concesiones en áreas protegidas y zonas de agua declaradas, y en junio de 2026 la Sala de lo Constitucional anuló en parte siete artículos, entre ellos los de plazos y consulta. Cuando le cito algo, le digo la fecha y la fuente.' },
-                { quien: 'tatiana', texto: 'Y lo ambiental lo llevo yo: la licencia de SERNA, la constancia del ICF sobre áreas protegidas y los plazos de cada trámite.' },
+                { quien: 'tatiana', texto: 'Y lo ambiental lo llevo yo: la licencia de MiAmbiente, la constancia del ICF sobre áreas protegidas y los plazos de cada trámite.' },
                 { quien: 'electrum', texto: '[warmly] Pregúntenos qué pide un trámite o qué dice un artículo y le contestamos citando el documento. En cada ficha, «Analizar» le hace el análisis legal y ambiental completo.' },
               ]);
             },
@@ -728,7 +796,7 @@ export function Recorrido({
             hay: true,
             correr: () =>
               senalar('[data-tour="capas"]', 'Capas', [
-                'Aquí enciende capas: geología, fallas, áreas protegidas, microcuencas, los mapas de JICA, las muestras y el satélite. Cada una con su leyenda y su transparencia.',
+                'Aquí enciende capas: geología, fallas, áreas protegidas, microcuencas, los mapas históricos de JICA, las muestras y el satélite. Cada una con su leyenda y su transparencia.',
               ]),
           },
           herramientasMapa: {
@@ -917,9 +985,9 @@ export function Recorrido({
 
         const ORDEN: Record<ModoRecorrido, string[]> = {
           // El completo lo cuenta todo: la geología, lo legal y las herramientas, en ese orden.
-          completo: ['intro', 'potencial', 'satelite', 'zona', 'analisis', 'oro', 'conflictos', 'traslapes', 'vencimientos', 'marco', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'mesa', 'manos', 'cierre'],
+          completo: ['intro', 'potencial', 'satelite', 'zona', 'analisis', 'oro', 'conflictos', 'cartera', 'traslapes', 'vencimientos', 'marco', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'mesa', 'manos', 'cierre'],
           geologico: ['intro', 'zona', 'analisis', 'oro', 'alteracion', 'geologicoVivo', 'mesa', 'cierre'],
-          legal: ['intro', 'conflictos', 'traslapes', 'vencimientos', 'marco', 'mesa', 'cierre'],
+          legal: ['intro', 'conflictos', 'cartera', 'traslapes', 'vencimientos', 'marco', 'mesa', 'cierre'],
           herramientas: ['barra', 'capasBoton', 'herramientasMapa', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'chat', 'mesa', 'manos', 'pestanas', 'reparto', 'cierre'],
         };
         const lista = ORDEN[modo].filter((k) => C[k].hay);

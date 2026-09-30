@@ -108,6 +108,8 @@ test('el entorno de una concesión, cruzado en PostGIS', { skip: HAY ? false : '
       'Límites de placas tectónicas PB2002', 'Provincias geológicas USGS Caribe', 'Tractos permisivos pórfido de cobre USGS',
       'Yacimientos y prospectos pórfido de cobre USGS', 'Yacimientos MRDS USGS', 'Mapa geologico 1:50000 Minas de Oro',
       'Intrusivos Olancho', 'Lineamientos Landsat', 'Falla de Guayape', 'Plutones terciarios',
+      // Referencia (v10): lo de JICA es histórico, salvo que sea un mapa de roca.
+      'zonas de JICA', 'zona de estudio 3 fases jica', 'JICA-MMAJ zonas', 'Mapa geológico JICA Olancho', 'Catastro histórico 2015',
     ];
     const filas = await consulta<{ n: string; rol: string | null }>(`SELECT n, electrum_rol_capa(n) AS rol FROM unnest($1::text[]) AS n`, [nombres]);
     for (const f of filas) assert.equal(f.rol, rolDeCapa(f.n), `«${f.n}»: la base dice ${f.rol}, la aplicación ${rolDeCapa(f.n)}`);

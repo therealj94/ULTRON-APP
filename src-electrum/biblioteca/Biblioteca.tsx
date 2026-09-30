@@ -131,7 +131,7 @@ export function Biblioteca() {
   const [trayendo, setTrayendo] = useState(false);
   const [elegidos, setElegidos] = useState<Map<string, Item>>(new Map());
   const [abierto, setAbierto] = useState<Item | null>(null);
-  const [modal, setModal] = useState<'' | 'mover' | 'borrar' | 'importar' | 'bitacora' | 'carpeta'>('');
+  const [modal, setModal] = useState<'' | 'mover' | 'borrar' | 'importar' | 'bitacora' | 'carpeta' | 'ordenar'>('');
   const [aviso, setAviso] = useState<{ txt: string; malo?: boolean } | null>(null);
   const [vuelta, setVuelta] = useState(0);
   const [releyendo, setReleyendo] = useState<{ hechos: number; total: number } | null>(null);
@@ -282,6 +282,7 @@ export function Biblioteca() {
       {/* ------------------------------------------------ acciones generales */}
       <div className="shrink-0 px-4 pb-2 flex flex-wrap items-center gap-1.5">
         {puedeOrdenar && <Subir carpeta={lugar && lugar !== '~' && lugar !== '!' ? lugar : null} alTerminar={recargar} avisar={avisar} />}
+        {esMando && <Boton onClick={() => setModal('ordenar')}>Ordenar catastro</Boton>}
         {esMando && resumen.cubo && <Boton onClick={() => setModal('importar')}>Importar del cubo</Boton>}
         <Boton onClick={() => setModal('bitacora')}>Bitácora</Boton>
         <Boton className="md:hidden" onClick={() => setVerArbol((v) => !v)}>
@@ -478,6 +479,16 @@ export function Biblioteca() {
       )}
       {modal === 'importar' && <Importar onCerrar={() => setModal('')} alCambio={recargar} />}
       {modal === 'bitacora' && <Bitacora onCerrar={() => setModal('')} />}
+      {modal === 'ordenar' && (
+        <OrdenarCatastro
+          onCerrar={() => setModal('')}
+          onHecho={(txt) => {
+            setModal('');
+            avisar(txt);
+            recargar();
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -895,6 +906,140 @@ function Borrar({ items, onCerrar, onBorrar }: { items: Item[]; onCerrar: () => 
           }}
         >
           {yendo ? 'borrando…' : 'Eliminar'}
+        </Boton>
+      </div>
+    </Modal>
+  );
+}
+
+/* --------------------------------------------------------------------------- ordenar catastro */
+
+type AccionOrden = 'oficial' | 'borrar' | 'historico' | 'proyecto' | 'dejar';
+type FilaOrden = { capaId: number; nombre: string; carpeta: string | null; concesiones: number; repetidas: number; rol: string | null; accion: AccionOrden; motivo: string };
+
+const ACCION_ORDEN: Record<AccionOrden, { txt: string; color: string }> = {
+  oficial: { txt: 'Catastro oficial', color: '#9BE8B9' },
+  borrar: { txt: 'Borrar (versión vieja)', color: ROJO },
+  historico: { txt: 'Histórico', color: '#B8A68A' },
+  proyecto: { txt: 'Proyecto propio', color: AMBAR },
+  dejar: { txt: 'Dejar como está', color: '#8FA3B0' },
+};
+
+/**
+ * Un solo catastro. El servidor propone qué es cada capa (server/electrum/ordenar.ts); aquí se
+ * revisa, se corrige lo que haga falta y se aplica. Proponer no cambia nada.
+ */
+function OrdenarCatastro({ onCerrar, onHecho }: { onCerrar: () => void; onHecho: (txt: string) => void }) {
+  const [filas, setFilas] = useState<FilaOrden[] | null>(null);
+  const [error, setError] = useState('');
+  const [frase, setFrase] = useState('');
+  const [yendo, setYendo] = useState(false);
+
+  useEffect(() => {
+    void (async () => {
+      const r = await pedir<{ filas: FilaOrden[] }>(`${R}/ordenar`);
+      if (!r.ok) return setError(r.j.error || 'No pude calcular la propuesta.');
+      setFilas(r.j.filas || []);
+    })();
+  }, []);
+
+  const cambiar = (capaId: number, accion: AccionOrden) =>
+    setFilas((xs) =>
+      (xs || []).map((f) =>
+        f.capaId === capaId ? { ...f, accion } : accion === 'oficial' && f.accion === 'oficial' ? { ...f, accion: 'dejar' } : f
+      )
+    );
+  const cuenta = (a: AccionOrden) => (filas || []).filter((f) => f.accion === a);
+  const oficiales = cuenta('oficial');
+  const quedan = oficiales.reduce((s, f) => s + f.concesiones, 0) + cuenta('dejar').reduce((s, f) => s + f.concesiones, 0);
+
+  return (
+    <Modal titulo="Ordenar el catastro" onCerrar={onCerrar} ancho={860}>
+      <div className="space-y-2 text-[13px] text-[#C9D5DB] leading-relaxed">
+        <p>
+          Un solo catastro: el oficial es lo que cuentan las herramientas, el tablero y el mapa. Las versiones viejas se borran (el original en el cubo queda). Lo histórico y
+          los proyectos propios pasan a capas que se encienden en el mapa, sin contar como concesiones.
+        </p>
+        {!filas && !error && <p className="text-[#8FA3B0]">Calculando la propuesta…</p>}
+        {filas && !filas.length && <p className="text-[#8FA3B0]">No hay capas de concesiones cargadas.</p>}
+        {filas && filas.length > 0 && (
+          <div className="max-h-[52vh] overflow-y-auto rounded-lg border border-white/10">
+            <table className="w-full text-[12px]">
+              <thead className="sticky top-0 bg-[#0b0e11] text-left font-mono text-[9.5px] tracking-[0.14em] uppercase text-[#6C7F89]">
+                <tr>
+                  <th className="px-2 py-1.5">Capa</th>
+                  <th className="px-2 py-1.5 text-right">Concesiones</th>
+                  <th className="px-2 py-1.5 text-right">Ya en el oficial</th>
+                  <th className="px-2 py-1.5">Qué hacer</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filas.map((f) => (
+                  <tr key={f.capaId} className="border-t border-white/[0.06] align-top">
+                    <td className="px-2 py-1.5">
+                      <div className="text-[#E7EEF2]">{f.nombre}</div>
+                      <div className="text-[11px] text-[#7F939D] truncate max-w-[340px]" title={f.carpeta || ''}>
+                        {f.carpeta || 'sin carpeta'} · {f.motivo}
+                      </div>
+                    </td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{nf(f.concesiones)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums">{f.concesiones ? nf(f.repetidas) : '—'}</td>
+                    <td className="px-2 py-1.5">
+                      <select
+                        value={f.accion}
+                        onChange={(e) => cambiar(f.capaId, e.target.value as AccionOrden)}
+                        aria-label={`Qué hacer con ${f.nombre}`}
+                        className="rounded-md bg-white/[0.06] border border-white/12 px-2 py-1 text-[12px] focus:outline-none"
+                        style={{ color: ACCION_ORDEN[f.accion].color }}
+                      >
+                        {(Object.keys(ACCION_ORDEN) as AccionOrden[])
+                          .filter((a) => f.concesiones > 0 || a !== 'oficial')
+                          .map((a) => (
+                            <option key={a} value={a} style={{ color: '#E7EEF2', background: '#0b0e11' }}>
+                              {ACCION_ORDEN[a].txt}
+                            </option>
+                          ))}
+                      </select>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {filas && filas.length > 0 && (
+          <p className="text-[12px] text-[#9FB0B8]">
+            Quedan {nf(quedan)} concesiones en el catastro. Se borran {nf(cuenta('borrar').length)} capas; pasan a histórico {nf(cuenta('historico').length)} y a proyecto{' '}
+            {nf(cuenta('proyecto').length)}.
+          </p>
+        )}
+        {oficiales.length !== 1 && filas && filas.length > 0 && <p style={{ color: ROJO }}>Elegí exactamente una capa como catastro oficial.</p>}
+        {filas && filas.length > 0 && (
+          <label className="block">
+            <span className="text-[12px] text-[#9FB0B8]">Escribí ORDENAR para confirmar</span>
+            <input value={frase} onChange={(e) => setFrase(e.target.value)} className="mt-1 w-full rounded-lg bg-white/[0.06] border border-white/12 px-3 py-2 text-[14px] text-[#E7EEF2] focus:outline-none focus:border-[#FFAE3B]/60" />
+          </label>
+        )}
+        {error && <p style={{ color: ROJO }}>{error}</p>}
+      </div>
+      <div className="mt-4 flex justify-end gap-2">
+        <Boton onClick={onCerrar}>Cancelar</Boton>
+        <Boton
+          peligro
+          disabled={yendo || !filas || oficiales.length !== 1 || frase.trim().toUpperCase() !== 'ORDENAR'}
+          onClick={async () => {
+            setYendo(true);
+            setError('');
+            const r = await pedir<{ ok: boolean; dicho: string }>(`${R}/ordenar`, {
+              method: 'POST',
+              body: JSON.stringify({ confirmo: true, decision: (filas || []).map(({ capaId, accion }) => ({ capaId, accion })) }),
+            });
+            setYendo(false);
+            if (!r.ok || !r.j.ok) return setError(r.j.dicho || r.j.error || 'No pude ordenar el catastro.');
+            onHecho(r.j.dicho);
+          }}
+        >
+          {yendo ? 'ordenando…' : 'Aplicar'}
         </Boton>
       </div>
     </Modal>
