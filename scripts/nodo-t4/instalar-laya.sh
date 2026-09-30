@@ -3,6 +3,8 @@
 #   electrum   qué especialistas convoca Dr Electrum (POST /decidir, lo usa lib/laya.ts)
 #   mensaje    decisiones sobre cada mensaje de AU-RA / PULSE2CHAT (POST /v1/mensaje)
 #   documento  qué es un fragmento de expediente y qué trae (POST /v1/documento)
+#   comando    la orden dicha en voz alta: Dr Electrum y las manos de AU-RA (POST /v1/comando)
+#   windows    la mano de AURA para Windows que pidió la persona (POST /v1/windows, lo pide el .exe por /api/windows/intencion)
 #
 # Ajusta Laya multilingüe con los datos de scripts/nodo-t4/laya/datos (electrum) y de
 # scripts/nodo-t4/laya/modelos/<nombre>/datos (en la GPU tarda unos minutos cada uno), y lo deja como
@@ -21,7 +23,7 @@ AQUI="$(cd "$(dirname "$0")/laya" && pwd)"
 BASE="${LAYA_BASE:-/opt/laya}"
 PUERTO="${LAYA_PUERTO:-8792}"
 MODELO="$BASE/modelo-electrum"
-NUEVOS=(mensaje documento comando)
+NUEVOS=(mensaje documento comando windows)
 ENTORNO=/etc/laya-electrum.env
 
 sudo mkdir -p "$BASE" && sudo chown "$(id -u):$(id -g)" "$BASE"

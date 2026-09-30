@@ -1,5 +1,7 @@
 # AURA Windows 0.4 — instrucciones de ejecución para Claude
 
+> **Estado 30-sep-2026 (Claude):** entregado AURA para Windows 1.0 sobre esta base. Ver `windows/README.md`: notch nuevo con resortes, avatares 3D de la app, cerebro/voz/oído del mismo servidor AU-RA, Laya «windows» en el nodo y ligera en el .exe. Este plan queda como historial.
+
 Actualizado: 30 de septiembre de 2026. Responsable de producto: Medardo.
 Repositorio: `therealj94/ULTRON-APP`. Rama: `codex/aura-windows-native`. PR: https://github.com/therealj94/ULTRON-APP/pull/85
 

@@ -1,0 +1,370 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Threading;
+using Aura.Windows.Core;
+using Aura.Windows.Voz;
+
+namespace Aura.Windows.Notch;
+
+/// <summary>
+/// La conversación: ESCUCHAR (el oído del servidor) → ENTENDER (reglas, Laya ligera, Laya del nodo) →
+/// HACER una mano o PREGUNTAR al cerebro (Qwen, el mismo de la app) → HABLAR con la voz del avatar
+/// (ElevenLabs en el servidor), frase por frase mientras el cerebro sigue escribiendo. Hablarle
+/// mientras habla la interrumpe; en manos libres vuelve a escuchar sola al terminar.
+/// </summary>
+public partial class NotchWindow
+{
+    internal Ajustes ajustes = new();
+    AuraApi? api;
+    readonly Oido oido = new();
+    readonly Altavoz altavoz = new();
+    readonly Despertador despertador = new();
+    readonly CortadorFrases cortador = new();
+    readonly List<Turno> historial = new();
+    readonly DispatcherTimer relojRecordatorios = new() { Interval = TimeSpan.FromSeconds(5) };
+    CancellationTokenSource? turno, voz;
+    bool escuchando, pensando, hablandoAhora, panelAbierto, pausado, continuo, turnoEnCurso;
+    long generacion;
+    string ultimaRespuesta = "";
+    string emocionActual = "neutral";
+
+    void Iniciar()
+    {
+        ajustes = soloRender ? new Ajustes() : Ajustes.Cargar();
+        AplicarAvatar(ajustes.Avatar, false);
+        AvisoCuenta.Visibility = string.IsNullOrEmpty(ajustes.Token) ? Visibility.Visible : Visibility.Collapsed;
+        if (soloRender) return;
+        CrearApi();
+        RecuperarBorrador();
+        _ = Manos.Aplicaciones.Indexar().ContinueWith(_ => Dispatcher.BeginInvoke(new Action(() => FiltrarApps(this, null!))));
+        PintarRecordatorios();
+        relojRecordatorios.Tick += (_, _) => RevisarRecordatorios();
+        relojRecordatorios.Start();
+
+        oido.Nivel += n => Dispatcher.BeginInvoke(new Action(() => { BarrasEscucha.Nivel = n; if (escuchando) { EscalaAnillo.ScaleX = EscalaAnillo.ScaleY = 1 + n * 0.5; } }));
+        oido.EmpezoAHablar += () => Dispatcher.BeginInvoke(new Action(AlEmpezarAHablar));
+        oido.Frase += wav => Dispatcher.BeginInvoke(new Action(() => _ = AlTerminarFrase(wav)));
+        oido.SeCanso += () => Dispatcher.BeginInvoke(new Action(() => { if (hablandoAhora || pensando) return; CerrarOido(); continuo = false; Recalcular(); }));
+        oido.Fallo += m => Dispatcher.BeginInvoke(new Action(() => { CerrarOido(); continuo = false; Avisar(new Aviso("Micrófono", m, "", "worried", Segundos: 6)); Recalcular(); }));
+
+        altavoz.Empezo += () => Dispatcher.BeginInvoke(new Action(() => { hablandoAhora = true; pensando = false; AvatarPanel.Estado = "speaking"; EstadoPanel.Text = Ingles ? "Speaking…" : "Hablando…"; AbrirOidoParaInterrumpir(); Recalcular(); }));
+        altavoz.Frase += f => Dispatcher.BeginInvoke(new Action(() => Subtitulo.Text = Expresiones.Quitar(f).Trim()));
+        altavoz.Nivel += n => { oido.NivelAltavoz = n; Dispatcher.BeginInvoke(new Action(() => { AvatarHabla.Boca = n; AvatarPanel.Boca = n; BarrasHabla.Nivel = n; if (modo == Modo.Habla) Brillo.Opacity = 0.2 + n * 0.5; })); };
+        altavoz.Termino += () => Dispatcher.BeginInvoke(new Action(AlTerminarDeHablar));
+        altavoz.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso("Voz", m, "", "worried"))));
+
+        despertador.Desperto += () => Dispatcher.BeginInvoke(new Action(() => { if (!escuchando && !pausado && !pensando) { Callar(); continuo = ajustes.ManosLibres; EmpezarAEscuchar(); } }));
+        if (ajustes.PalabraActivacion) { var e = despertador.Encender(ajustes.Idioma); if (e != null) Avisar(new Aviso("Palabra de activación", e, "", "worried", Segundos: 7)); }
+
+        var hola = ajustes.Idioma == "en" ? "Hi, I'm " + ajustes.NombreAvatar : "Hola, soy " + ajustes.NombreAvatar;
+        Avisar(new Aviso(hola, ajustes.Idioma == "en" ? "Ctrl+Alt+Space to talk · click me to open the chat" : "Ctrl+Alt+Espacio para hablarme · tócame para abrir el chat", "", "happy", Segundos: 5));
+        _ = ComprobarConexion();
+    }
+
+    void CrearApi()
+    {
+        api?.Dispose();
+        try { api = new AuraApi(ajustes.Servidor, string.IsNullOrEmpty(ajustes.Token) ? null : ajustes.Token) { Renovar = RenovarSesion }; }
+        catch (AuraError ex) { api = null; Avisar(new Aviso("Revisa el servidor", ex.Message, "", "worried")); }
+    }
+
+    async Task<string?> RenovarSesion(CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(ajustes.Correo) || string.IsNullOrEmpty(ajustes.Clave)) return null;
+        try
+        {
+            using var otra = new AuraApi(ajustes.Servidor);
+            var (token, nombre, _) = await otra.Entrar(ajustes.Correo, ajustes.Clave, ct);
+            ajustes.Token = token; if (nombre.Length > 0) ajustes.Nombre = nombre; ajustes.Guardar();
+            return token;
+        }
+        catch { return null; }
+    }
+
+    async Task ComprobarConexion()
+    {
+        bool ok = api != null && await api.Salud();
+        PuntoEstado.Fill = new SolidColorBrush(pausado ? Color.FromRgb(0xFF, 0x9F, 0x0A) : ok ? Color.FromRgb(0x4C, 0xD9, 0x64) : Color.FromRgb(0x8E, 0x8E, 0x93));
+        PuntoEstado.ToolTip = pausado ? "En pausa" : ok ? "Conectada a AU-RA" : "Sin conexión con el servidor";
+        if (!ok && api != null) Avisar(new Aviso("Sin conexión", "No alcanzo el servidor AU-RA. Las manos de la computadora siguen funcionando.", "", "worried", Segundos: 6));
+    }
+
+    // ───────────────────────────── escuchar ─────────────────────────────
+
+    internal void Microfono(object s, RoutedEventArgs e)
+    {
+        if (pausado) { Reanudar(); return; }
+        if (escuchando && !hablandoAhora) { CerrarOido(); continuo = false; Recalcular(); return; }
+        Callar();
+        continuo = ajustes.ManosLibres;
+        EmpezarAEscuchar();
+    }
+
+    void EmpezarAEscuchar()
+    {
+        if (pausado || soloRender) return;
+        oido.ModoInterrupcion = false;
+        oido.Continuo = false;
+        oido.EsperaMaxMs = continuo ? 7000 : 9000;
+        oido.Abrir();
+        if (!oido.Abierto) return;
+        escuchando = true;
+        TextoEscucha.Text = propuesta != null ? (ajustes.Idioma == "en" ? "Say yes or no…" : "Dime sí o no…") : ajustes.Idioma == "en" ? "I'm listening…" : "Te escucho…";
+        LuzMic.Opacity = 1; AnilloMic.Opacity = 0.9;
+        AvatarPanel.Estado = "listening";
+        EstadoPanel.Text = TextoEscucha.Text;
+        Recalcular();
+    }
+
+    /// <summary>Mientras AURA habla, el oído queda en modo interrupción (más umbral: su propia voz no la corta).</summary>
+    void AbrirOidoParaInterrumpir()
+    {
+        if (!ajustes.Interrumpir || pausado || soloRender) return;
+        oido.ModoInterrupcion = true;
+        oido.Continuo = true;
+        oido.Abrir();
+        LuzMic.Opacity = oido.Abierto ? 1 : 0;
+    }
+
+    void CerrarOido()
+    {
+        oido.Cerrar();
+        escuchando = false;
+        LuzMic.Opacity = 0; AnilloMic.Opacity = 0;
+        BarrasEscucha.Nivel = 0;
+        if (!hablandoAhora && !pensando) { AvatarPanel.Estado = EstadoDeEmocion(emocionActual); EstadoPanel.Text = pausado ? "En pausa" : "Aquí contigo"; }
+    }
+
+    void AlEmpezarAHablar()
+    {
+        if (hablandoAhora || pensando)
+        {
+            // Le hablaron encima: se calla ya y escucha (el audio ya viene grabando desde antes).
+            generacion++;
+            turno?.Cancel(); voz?.Cancel();
+            altavoz.Detener();
+            hablandoAhora = false; pensando = false; turnoEnCurso = false;
+            oido.ModoInterrupcion = false;
+        }
+        escuchando = true;
+        TextoEscucha.Text = ajustes.Idioma == "en" ? "Listening…" : "Te escucho…";
+        Recalcular();
+    }
+
+    async Task AlTerminarFrase(byte[] wav)
+    {
+        if (pausado) return;
+        oido.Cerrar();
+        escuchando = false; LuzMic.Opacity = 0; AnilloMic.Opacity = 0;
+        if (api == null) { Avisar(new Aviso("Conecta AURA", "Configura el servidor en Ajustes.", "", "worried")); return; }
+        pensando = true; TextoPiensa.Text = ajustes.Idioma == "en" ? "Transcribing…" : "Te entendí, un momento…"; Recalcular();
+        long g = ++generacion;
+        string texto;
+        try { texto = await api.Oir(wav, ajustes.Idioma); }
+        catch (AuraError ex) { if (g != generacion) return; pensando = false; continuo = false; Avisar(new Aviso("No pude oírte", ex.Message, "", "worried")); Recalcular(); return; }
+        if (g != generacion) return;
+        pensando = false;
+        if (texto.Length == 0)
+        {
+            if (continuo) EmpezarAEscuchar();
+            else { Avisar(new Aviso(ajustes.Idioma == "en" ? "I didn't catch that" : "No alcancé a oírte", ajustes.Idioma == "en" ? "Try again or type it." : "Inténtalo otra vez o escríbemelo.", "", "worried", Segundos: 3)); Recalcular(); }
+            return;
+        }
+        await Procesar(texto, true);
+    }
+
+    // ───────────────────────────── entender y contestar ─────────────────────────────
+
+    static readonly Regex Si = new(@"^(?:si|sip|dale|hazlo|ok|okay|okey|claro|adelante|confirmo|va|de una|por supuesto|yes|yep|yeah|sure|do it|go ahead|confirm)\b", RegexOptions.Compiled);
+    static readonly Regex No = new(@"^(?:no|nel|cancela|cancelalo|mejor no|para|nope|cancel|stop|don t|dont)\b", RegexOptions.Compiled);
+
+    internal async Task Procesar(string texto, bool hablado)
+    {
+        texto = texto.Trim();
+        if (texto.Length == 0 || pausado) return;
+        if (propuesta != null)
+        {
+            var t = Parametros.Limpiar(texto);
+            if (Si.IsMatch(t)) { await Responder(true); return; }
+            if (No.IsMatch(t)) { await Responder(false); return; }
+        }
+        AgregarMensaje("Tú", texto);
+        long g = ++generacion;
+        Pedido pedido;
+        try { pedido = await Intencion.Decidir(texto, api != null ? api.Intencion : null); }
+        catch { pedido = Pedido.Nada; }
+        if (g != generacion) return;
+        if (pedido.Mano != Mano.Ninguna) { await Hacer(pedido, texto, hablado); return; }
+        await Conversar(texto, hablado);
+    }
+
+    /// <summary>Le pregunta al cerebro (Qwen, el mismo de la app) y habla la respuesta mientras llega.</summary>
+    internal async Task<Respuesta?> Conversar(string texto, bool hablado, bool redactar = false)
+    {
+        if (api == null) { Avisar(new Aviso("Conecta AURA", "Configura el servidor en Ajustes.", "", "worried")); return null; }
+        Callar(false);
+        long g = ++generacion;
+        var cts = turno = new CancellationTokenSource();
+        var vcts = voz = new CancellationTokenSource();
+        cortador.Reiniciar();
+        pensando = true; turnoEnCurso = true;
+        TextoPiensa.Text = texto;
+        AvatarPanel.Estado = "thinking"; EstadoPanel.Text = ajustes.Idioma == "en" ? "Thinking…" : "Pensando…";
+        Recalcular();
+        var burbuja = redactar ? null : AgregarMensaje(ajustes.NombreAvatar, "");
+        bool conVoz = ajustes.ResponderConVoz && !redactar && !soloRender;
+        string emocion = "neutral";
+        int dichas = 0;
+        Respuesta? r = null;
+        try
+        {
+            r = await api.Turno(texto, historial, ajustes.Nombre.Length > 0 ? ajustes.Nombre : Environment.UserName, ajustes.Avatar, ajustes.Idioma, hablado,
+                alTrozo: trozo => Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (g != generacion) return;
+                    if (burbuja != null) burbuja.Text += Expresiones.Quitar(trozo);
+                    if (burbuja != null) Desplazar.ScrollToEnd();
+                    if (conVoz) foreach (var f in cortador.Agregar(trozo)) { Decir(f, emocion, vcts.Token); dichas++; }
+                })),
+                alEmocion: e => Dispatcher.BeginInvoke(new Action(() => { if (g != generacion) return; emocion = e; emocionActual = e; AvatarPanel.Estado = hablandoAhora ? "speaking" : EstadoDeEmocion(e); })),
+                alReemplazo: nuevo => Dispatcher.BeginInvoke(new Action(() => { if (g == generacion && burbuja != null) burbuja.Text = Expresiones.Quitar(nuevo); })),
+                ct: cts.Token);
+        }
+        catch (OperationCanceledException) { return null; }
+        catch (AuraError ex)
+        {
+            if (g != generacion) return null;
+            pensando = false; turnoEnCurso = false; continuo = false;
+            if (burbuja != null) burbuja.Text = ex.Message;
+            Avisar(new Aviso(ajustes.Idioma == "en" ? "Couldn't reach AURA" : "No pude pensar ahora", ex.Message, "", "worried", Segundos: 6));
+            Recalcular();
+            return null;
+        }
+        if (g != generacion) return null;
+        // Lo que quedó sin cerrar con punto también se dice.
+        if (conVoz && cortador.Resto() is { } resto) { Decir(resto, emocion, vcts.Token); dichas++; }
+        turnoEnCurso = false;
+        if (burbuja != null && r.Texto.Length > 0) burbuja.Text = r.Texto;
+        if (r.Error != null && r.Texto.Length == 0 && burbuja != null) burbuja.Text = r.Error;
+        ultimaRespuesta = r.Texto;
+        historial.Add(new Turno("usuario", texto));
+        historial.Add(new Turno("ultron", r.Texto.Length > 4000 ? r.Texto[..4000] : r.Texto));
+        while (historial.Count > 20) historial.RemoveRange(0, 2);
+        emocionActual = r.Emocion;
+        // Con voz, el altavoz decide cuándo termina (Empezo/Termino): así el notch no parpadea entre piensa y habla.
+        // Si ya terminó de sonar todo antes de que el cerebro cerrara el turno, se cierra aquí.
+        if (conVoz && dichas > 0 && !altavoz.Ocupado) AlTerminarDeHablar();
+        if (!conVoz || dichas == 0)
+        {
+            pensando = false;
+            if (!redactar && !panelAbierto && r.Texto.Length > 0 && !conVoz) Avisar(new Aviso(ajustes.NombreAvatar, r.Texto, "", EstadoDeEmocion(r.Emocion), "Ver", () => AbrirPanel(true), 8));
+            AvatarPanel.Estado = EstadoDeEmocion(r.Emocion);
+            if (!conVoz && continuo && !redactar) EmpezarAEscuchar();
+        }
+        Recalcular();
+        return r;
+    }
+
+    /// <summary>Pide la voz de una frase (sin esperar) y la pone en la cola del altavoz.</summary>
+    internal void Decir(string frase, string emocion = "neutral", CancellationToken ct = default)
+    {
+        if (!ajustes.ResponderConVoz || api == null || soloRender || string.IsNullOrWhiteSpace(frase)) return;
+        var a = api; var avatar = ajustes.Avatar; var idioma = ajustes.Idioma;
+        var tarea = Task.Run(async () =>
+        {
+            try { return (Audio?)await a.Voz(frase, emocion, avatar, idioma, ct); }
+            catch (OperationCanceledException) { return null; }
+            catch (AuraError ex) { _ = Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso("Voz", ex.Message, "", "worried")))); return null; }
+        });
+        altavoz.Encolar(tarea, frase);
+    }
+
+    /// <summary>Una frase corta de AURA (confirmaciones): se dice y se muestra en el notch.</summary>
+    void Contestar(string frase, string emocion = "feliz")
+    {
+        Subtitulo.Text = frase;
+        if (voz == null || voz.IsCancellationRequested) voz = new CancellationTokenSource();
+        Decir(frase, emocion, voz.Token);
+    }
+
+    void AlTerminarDeHablar()
+    {
+        hablandoAhora = false;
+        AvatarHabla.Boca = AvatarPanel.Boca = 0;
+        if (turnoEnCurso) { pensando = true; Recalcular(); return; }
+        pensando = false;
+        AvatarPanel.Estado = EstadoDeEmocion(emocionActual);
+        oido.ModoInterrupcion = false;
+        if (continuo && !pausado) EmpezarAEscuchar();
+        else if (propuesta != null && !pausado) { continuo = false; EmpezarAEscuchar(); }
+        else CerrarOido();
+        Recalcular();
+    }
+
+    /// <summary>Calla la voz y corta el turno en curso.</summary>
+    internal void Callar(bool terminarSesion = false)
+    {
+        generacion++;
+        turno?.Cancel(); voz?.Cancel(); voz = null;
+        altavoz.Detener();
+        hablandoAhora = false; pensando = false; turnoEnCurso = false;
+        if (terminarSesion) { continuo = false; CerrarOido(); }
+        Recalcular();
+    }
+
+    internal void PausarTodo()
+    {
+        Callar(true);
+        propuesta = null; relojPropuesta?.Stop();
+        escribiendo?.Cancel(); destino = null;
+        pausado = true;
+        BotonPausa.Content = "";
+        PuntoEstado.Fill = new SolidColorBrush(Color.FromRgb(0xFF, 0x9F, 0x0A));
+        EstadoPanel.Text = ajustes.Idioma == "en" ? "Paused" : "En pausa";
+        Avisar(new Aviso(ajustes.Idioma == "en" ? "Paused" : "En pausa", ajustes.Idioma == "en" ? "Microphone, voice and actions stopped. Tap the mic to resume." : "Micrófono, voz y acciones detenidos. Toca el micrófono para seguir.", "", "worried", Segundos: 4));
+    }
+
+    void Reanudar()
+    {
+        pausado = false;
+        BotonPausa.Content = "";
+        EstadoPanel.Text = "Aquí contigo";
+        _ = ComprobarConexion();
+        Avisar(new Aviso(ajustes.Idioma == "en" ? "I'm back" : "Aquí estoy", "", "", "happy", Segundos: 1.8));
+    }
+
+    static string EstadoDeEmocion(string e) => e switch
+    {
+        "feliz" or "risa" or "carino" or "orgullo" or "travieso" or "canto" or "sorpresa" => "happy",
+        "preocupado" or "triste" or "alarma" or "molesto" or "cansado" => "worried",
+        "pensando" or "curioso" or "escepticismo" => "thinking",
+        _ => "idle",
+    };
+
+    internal void AplicarAvatar(string id, bool guardar = true)
+    {
+        ajustes.Avatar = id;
+        var color = id switch { "claudio" => Color.FromRgb(0xF4, 0xAD, 0x72), "antonio" => Color.FromRgb(0x45, 0xC9, 0xDE), "ojos" => Color.FromRgb(0x5C, 0xE1, 0xFF), _ => Color.FromRgb(0xD6, 0xB5, 0x6C) };
+        Application.Current.Resources["Acento"] = new SolidColorBrush(color);
+        Application.Current.Resources["AcentoSuave"] = new SolidColorBrush(Color.FromArgb(0x33, color.R, color.G, color.B));
+        Brillo.Color = color;
+        foreach (var a in new[] { AvatarChico, AvatarEscucha, AvatarPiensa, AvatarHabla, AvatarAviso, AvatarConfirma, AvatarPanel }) a.Avatar = id;
+        AvatarView.Precargar(id);
+        NombreChico.Text = NombreHabla.Text = NombrePanel.Text = ajustes.NombreAvatar;
+        if (guardar && !soloRender) { try { ajustes.Guardar(); } catch { } }
+    }
+
+    void Terminar()
+    {
+        Callar(true);
+        GuardarRecuperacion();
+        despertador.Dispose(); oido.Dispose(); altavoz.Dispose(); api?.Dispose();
+        relojRecordatorios.Stop();
+    }
+}

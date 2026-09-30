@@ -222,11 +222,11 @@ export async function saludLaya(esperaMs = 2000): Promise<{ ok: boolean; status:
  * El recorte es el mismo que aplica el nodo a cada modelo: así lo que viaja cabe en el cuerpo (16 KB
  * uno, 64 KB un lote) y lo medido allá es lo que se manda desde aquí.
  */
-export type ModeloLaya = 'mensaje' | 'documento' | 'comando';
+export type ModeloLaya = 'mensaje' | 'documento' | 'comando' | 'windows';
 // Documento: hasta 900 caracteres enteros, mitad y mitad (el encabezado dice qué es; el final trae la
 // firma, el sello y los plazos). Es el `recorte` de scripts/nodo-t4/laya/modelos/documento/modelo.json.
-// Comando: frases dichas en voz alta, cortas; 120 + 120 como en modelos/comando/modelo.json.
-export const RECORTE_MODELO: Record<ModeloLaya, [number, number]> = { mensaje: [CABEZA, COLA], documento: [450, 450], comando: [120, 120] };
+// Comando y windows: frases dichas en voz alta, cortas; 120 + 120 como en modelos/<nombre>/modelo.json.
+export const RECORTE_MODELO: Record<ModeloLaya, [number, number]> = { mensaje: [CABEZA, COLA], documento: [450, 450], comando: [120, 120], windows: [120, 120] };
 /** Lo que devuelve el nodo por cada texto. */
 export type RespuestaModelo = {
   /** P(sí) calibrada de cada pregunta. */

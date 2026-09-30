@@ -1,0 +1,972 @@
+{
+ "dim": 8192,
+ "epocas": 10,
+ "semilla": 7,
+ "temperatura": 0.5291,
+ "umbral": 0.98,
+ "entrenamiento": 12324,
+ "validacion": {
+  "n": 614,
+  "exactitud": 0.8355048859934854,
+  "cobertura": 0.3960216998191682,
+  "precision_ejecutables": 0.9954337899543378,
+  "decididos": 219,
+  "falsos_positivos_en_negativos": 0,
+  "negativos": 61,
+  "por_etiqueta": {
+   "win_ninguna": {
+    "precision": 0.716,
+    "recall": 0.787,
+    "f1": 0.75,
+    "soporte": 61
+   },
+   "win_abrir_app": {
+    "precision": 0.688,
+    "recall": 0.75,
+    "f1": 0.717,
+    "soporte": 44
+   },
+   "win_abrir_carpeta": {
+    "precision": 0.816,
+    "recall": 0.909,
+    "f1": 0.86,
+    "soporte": 44
+   },
+   "win_buscar_web": {
+    "precision": 0.917,
+    "recall": 1.0,
+    "f1": 0.957,
+    "soporte": 44
+   },
+   "win_abrir_web": {
+    "precision": 0.931,
+    "recall": 0.818,
+    "f1": 0.871,
+    "soporte": 33
+   },
+   "win_escribir": {
+    "precision": 0.896,
+    "recall": 0.956,
+    "f1": 0.925,
+    "soporte": 45
+   },
+   "win_redactar": {
+    "precision": 0.98,
+    "recall": 0.891,
+    "f1": 0.933,
+    "soporte": 55
+   },
+   "win_ver_pantalla": {
+    "precision": 0.966,
+    "recall": 0.933,
+    "f1": 0.949,
+    "soporte": 30
+   },
+   "win_captura": {
+    "precision": 0.8,
+    "recall": 1.0,
+    "f1": 0.889,
+    "soporte": 12
+   },
+   "win_volumen_subir": {
+    "precision": 0.562,
+    "recall": 1.0,
+    "f1": 0.72,
+    "soporte": 18
+   },
+   "win_volumen_bajar": {
+    "precision": 0.923,
+    "recall": 0.667,
+    "f1": 0.774,
+    "soporte": 18
+   },
+   "win_silenciar": {
+    "precision": 0.857,
+    "recall": 0.5,
+    "f1": 0.632,
+    "soporte": 12
+   },
+   "win_multimedia_pausa": {
+    "precision": 0.706,
+    "recall": 1.0,
+    "f1": 0.828,
+    "soporte": 12
+   },
+   "win_multimedia_siguiente": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "soporte": 12
+   },
+   "win_recordar": {
+    "precision": 0.97,
+    "recall": 0.97,
+    "f1": 0.97,
+    "soporte": 33
+   },
+   "win_callar": {
+    "precision": 1.0,
+    "recall": 0.933,
+    "f1": 0.966,
+    "soporte": 30
+   },
+   "win_pausa": {
+    "precision": 0.929,
+    "recall": 0.722,
+    "f1": 0.813,
+    "soporte": 18
+   },
+   "win_abrir_chat": {
+    "precision": 0.429,
+    "recall": 0.25,
+    "f1": 0.316,
+    "soporte": 24
+   },
+   "win_ocultar": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 12
+   },
+   "win_avatar": {
+    "precision": 0.912,
+    "recall": 0.939,
+    "f1": 0.925,
+    "soporte": 33
+   },
+   "win_escritorio": {
+    "precision": 0.889,
+    "recall": 0.667,
+    "f1": 0.762,
+    "soporte": 12
+   },
+   "win_bloquear": {
+    "precision": 1.0,
+    "recall": 0.917,
+    "f1": 0.957,
+    "soporte": 12
+   }
+  },
+  "por_idioma": {
+   "es": 0.8547008547008547,
+   "en": 0.8098859315589354
+  }
+ },
+ "prueba": {
+  "n": 1062,
+  "exactitud": 0.78060263653484,
+  "cobertura": 0.29242262540021347,
+  "precision_ejecutables": 0.9607142857142857,
+  "decididos": 280,
+  "falsos_positivos_en_negativos": 6,
+  "negativos": 125,
+  "por_etiqueta": {
+   "win_ninguna": {
+    "precision": 0.672,
+    "recall": 0.624,
+    "f1": 0.647,
+    "soporte": 125
+   },
+   "win_abrir_app": {
+    "precision": 0.7,
+    "recall": 0.557,
+    "f1": 0.62,
+    "soporte": 88
+   },
+   "win_abrir_carpeta": {
+    "precision": 0.8,
+    "recall": 0.848,
+    "f1": 0.824,
+    "soporte": 66
+   },
+   "win_buscar_web": {
+    "precision": 0.921,
+    "recall": 0.879,
+    "f1": 0.899,
+    "soporte": 66
+   },
+   "win_abrir_web": {
+    "precision": 0.585,
+    "recall": 0.545,
+    "f1": 0.565,
+    "soporte": 44
+   },
+   "win_escribir": {
+    "precision": 0.699,
+    "recall": 0.89,
+    "f1": 0.783,
+    "soporte": 73
+   },
+   "win_redactar": {
+    "precision": 1.0,
+    "recall": 0.636,
+    "f1": 0.778,
+    "soporte": 88
+   },
+   "win_ver_pantalla": {
+    "precision": 0.667,
+    "recall": 1.0,
+    "f1": 0.8,
+    "soporte": 48
+   },
+   "win_captura": {
+    "precision": 0.8,
+    "recall": 0.833,
+    "f1": 0.816,
+    "soporte": 24
+   },
+   "win_volumen_subir": {
+    "precision": 0.667,
+    "recall": 1.0,
+    "f1": 0.8,
+    "soporte": 24
+   },
+   "win_volumen_bajar": {
+    "precision": 1.0,
+    "recall": 0.833,
+    "f1": 0.909,
+    "soporte": 36
+   },
+   "win_silenciar": {
+    "precision": 1.0,
+    "recall": 0.958,
+    "f1": 0.979,
+    "soporte": 24
+   },
+   "win_multimedia_pausa": {
+    "precision": 0.682,
+    "recall": 0.625,
+    "f1": 0.652,
+    "soporte": 24
+   },
+   "win_multimedia_siguiente": {
+    "precision": 0.697,
+    "recall": 0.958,
+    "f1": 0.807,
+    "soporte": 24
+   },
+   "win_recordar": {
+    "precision": 1.0,
+    "recall": 0.909,
+    "f1": 0.952,
+    "soporte": 44
+   },
+   "win_callar": {
+    "precision": 0.935,
+    "recall": 0.896,
+    "f1": 0.915,
+    "soporte": 48
+   },
+   "win_pausa": {
+    "precision": 0.969,
+    "recall": 0.861,
+    "f1": 0.912,
+    "soporte": 36
+   },
+   "win_abrir_chat": {
+    "precision": 0.762,
+    "recall": 0.762,
+    "f1": 0.762,
+    "soporte": 42
+   },
+   "win_ocultar": {
+    "precision": 0.889,
+    "recall": 0.667,
+    "f1": 0.762,
+    "soporte": 24
+   },
+   "win_avatar": {
+    "precision": 0.695,
+    "recall": 1.0,
+    "f1": 0.82,
+    "soporte": 66
+   },
+   "win_escritorio": {
+    "precision": 0.562,
+    "recall": 0.375,
+    "f1": 0.45,
+    "soporte": 24
+   },
+   "win_bloquear": {
+    "precision": 1.0,
+    "recall": 0.958,
+    "f1": 0.979,
+    "soporte": 24
+   }
+  },
+  "por_idioma": {
+   "es": 0.7491525423728813,
+   "en": 0.8199152542372882
+  },
+  "errores": [
+   {
+    "q": "yo, type up a birthday message for my mom real quick",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.457
+   },
+   {
+    "q": "claudio, quiero entrar a netflix",
+    "oro": "win_abrir_web",
+    "dijo": "win_avatar",
+    "p": 0.851
+   },
+   {
+    "q": "escribí pendientes de hoy ya",
+    "oro": "win_escribir",
+    "dijo": "win_ninguna",
+    "p": 0.616
+   },
+   {
+    "q": "um, kick off firefox real quick",
+    "oro": "win_abrir_app",
+    "dijo": "win_avatar",
+    "p": 0.528
+   },
+   {
+    "q": "hey aura, get me acrobat for me",
+    "oro": "win_abrir_app",
+    "dijo": "win_ninguna",
+    "p": 0.528
+   },
+   {
+    "q": "oye, ayer abri word y se trabo",
+    "oro": "win_ninguna",
+    "dijo": "win_abrir_app",
+    "p": 0.951
+   },
+   {
+    "q": "quiero entrar a netflix si puedes.",
+    "oro": "win_abrir_web",
+    "dijo": "win_avatar",
+    "p": 0.293
+   },
+   {
+    "q": "aura, qué dice internet de cómo está el dólar, búscalo",
+    "oro": "win_buscar_web",
+    "dijo": "win_ninguna",
+    "p": 0.555
+   },
+   {
+    "q": "aura, avisame a las 12 que tengo pagar la tarjeta dale",
+    "oro": "win_recordar",
+    "dijo": "win_ninguna",
+    "p": 0.486
+   },
+   {
+    "q": "Put the lok screen on",
+    "oro": "win_bloquear",
+    "dijo": "win_escribir",
+    "p": 0.41
+   },
+   {
+    "q": "fijate, despeja la pantalla ahorita",
+    "oro": "win_escritorio",
+    "dijo": "win_ver_pantalla",
+    "p": 0.561
+   },
+   {
+    "q": "mostrame la música",
+    "oro": "win_abrir_carpeta",
+    "dijo": "win_multimedia_pausa",
+    "p": 0.681
+   },
+   {
+    "q": "fijate, hazme la descripción del producto pues",
+    "oro": "win_redactar",
+    "dijo": "win_multimedia_pausa",
+    "p": 0.241
+   },
+   {
+    "q": "vaya, más quedito ahorita",
+    "oro": "win_volumen_bajar",
+    "dijo": "win_volumen_subir",
+    "p": 0.509
+   },
+   {
+    "q": "hey, compose a birthday message for my mom",
+    "oro": "win_redactar",
+    "dijo": "win_ninguna",
+    "p": 0.625
+   },
+   {
+    "q": "Hey, show me my desktop",
+    "oro": "win_escritorio",
+    "dijo": "win_abrir_carpeta",
+    "p": 0.937
+   },
+   {
+    "q": "muestrame lo que dijiste",
+    "oro": "win_abrir_chat",
+    "dijo": "win_ninguna",
+    "p": 0.462
+   },
+   {
+    "q": "a ver, abrime netflix en chrome rapidito",
+    "oro": "win_abrir_web",
+    "dijo": "win_abrir_app",
+    "p": 0.747
+   },
+   {
+    "q": "fijate, entra a el escritorio",
+    "oro": "win_abrir_carpeta",
+    "dijo": "win_escritorio",
+    "p": 0.508
+   },
+   {
+    "q": "claudio, mostrame outlook",
+    "oro": "win_abrir_app",
+    "dijo": "win_abrir_web",
+    "p": 0.33
+   },
+   {
+    "q": "my phone screen cracked",
+    "oro": "win_ninguna",
+    "dijo": "win_captura",
+    "p": 0.524
+   },
+   {
+    "q": "Claudio, quiero entrar a mercado libre si puedes",
+    "oro": "win_abrir_web",
+    "dijo": "win_avatar",
+    "p": 0.817
+   },
+   {
+    "q": "type up a memo for the staff please",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.771
+   },
+   {
+    "q": "mire, hazme el documento de un mensaje de cumpleaños para mi mamá",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.428
+   },
+   {
+    "q": "Please type up an email to my teacher",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.694
+   },
+   {
+    "q": "The notepad thing was a joke",
+    "oro": "win_ninguna",
+    "dijo": "win_abrir_app",
+    "p": 0.389
+   },
+   {
+    "q": "alright, type up the product description now",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.734
+   },
+   {
+    "q": "yo, pause mode",
+    "oro": "win_pausa",
+    "dijo": "win_multimedia_pausa",
+    "p": 0.766
+   },
+   {
+    "q": "browse for flights to roatan thank you",
+    "oro": "win_buscar_web",
+    "dijo": "win_abrir_web",
+    "p": 0.416
+   },
+   {
+    "q": "muéstrame lo que dijiste porfa",
+    "oro": "win_abrir_chat",
+    "dijo": "win_ver_pantalla",
+    "p": 0.41
+   },
+   {
+    "q": "aura, hazme el documento de un mensaje de cumpleanos para mi mama porfa",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.537
+   },
+   {
+    "q": "could you show me my desktop ok",
+    "oro": "win_escritorio",
+    "dijo": "win_abrir_carpeta",
+    "p": 0.834
+   },
+   {
+    "q": "type up an email to my teacher now",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.604
+   },
+   {
+    "q": "eh, ejecuta el panel de control porfis",
+    "oro": "win_abrir_app",
+    "dijo": "win_abrir_chat",
+    "p": 0.764
+   },
+   {
+    "q": "Antonio, browse for flights to roatan",
+    "oro": "win_buscar_web",
+    "dijo": "win_avatar",
+    "p": 0.851
+   },
+   {
+    "q": "hey aura, quiero entrar a linkedin",
+    "oro": "win_abrir_web",
+    "dijo": "win_ninguna",
+    "p": 0.493
+   },
+   {
+    "q": "explain this",
+    "oro": "win_ninguna",
+    "dijo": "win_ver_pantalla",
+    "p": 0.611
+   },
+   {
+    "q": "quiet real quick",
+    "oro": "win_callar",
+    "dijo": "win_pausa",
+    "p": 0.437
+   },
+   {
+    "q": "oye, el guardian da miedo",
+    "oro": "win_ninguna",
+    "dijo": "win_avatar",
+    "p": 0.633
+   },
+   {
+    "q": "más quedito",
+    "oro": "win_volumen_bajar",
+    "dijo": "win_volumen_subir",
+    "p": 0.576
+   },
+   {
+    "q": "claudio, quiero entrar a mercado libre ya",
+    "oro": "win_abrir_web",
+    "dijo": "win_avatar",
+    "p": 0.814
+   },
+   {
+    "q": "antonio, escribeme un mensaje de cumpleanos para mi mama",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.655
+   },
+   {
+    "q": "porfa muestrame lo que dijiste...",
+    "oro": "win_abrir_chat",
+    "dijo": "win_ver_pantalla",
+    "p": 0.431
+   },
+   {
+    "q": "más quedito.",
+    "oro": "win_volumen_bajar",
+    "dijo": "win_volumen_subir",
+    "p": 0.576
+   },
+   {
+    "q": "Que cancion es esta",
+    "oro": "win_ninguna",
+    "dijo": "win_multimedia_siguiente",
+    "p": 0.501
+   },
+   {
+    "q": "hey aura, escríbeme un memorando para el personal",
+    "oro": "win_redactar",
+    "dijo": "win_ninguna",
+    "p": 0.695
+   },
+   {
+    "q": "hey claudio, go back a song real quick",
+    "oro": "win_multimedia_siguiente",
+    "dijo": "win_abrir_app",
+    "p": 0.253
+   },
+   {
+    "q": "vaya, despeja la pantalla gracias",
+    "oro": "win_escritorio",
+    "dijo": "win_ver_pantalla",
+    "p": 0.771
+   },
+   {
+    "q": "kick off outlook",
+    "oro": "win_abrir_app",
+    "dijo": "win_abrir_web",
+    "p": 0.773
+   },
+   {
+    "q": "Mostrame el panel de control?",
+    "oro": "win_abrir_app",
+    "dijo": "win_abrir_chat",
+    "p": 0.872
+   },
+   {
+    "q": "hey, recommend me some music",
+    "oro": "win_ninguna",
+    "dijo": "win_abrir_carpeta",
+    "p": 0.7
+   },
+   {
+    "q": "aura por favor, suficiente",
+    "oro": "win_callar",
+    "dijo": "win_ninguna",
+    "p": 0.257
+   },
+   {
+    "q": "vaya, más quedito rapidito...",
+    "oro": "win_volumen_bajar",
+    "dijo": "win_volumen_subir",
+    "p": 0.626
+   },
+   {
+    "q": "mira, hazme el documento de la descripcion del producto",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.442
+   },
+   {
+    "q": "aura, browse for flights to roatan right now",
+    "oro": "win_buscar_web",
+    "dijo": "win_avatar",
+    "p": 0.388
+   },
+   {
+    "q": "hey aura, quitate de la pantalla",
+    "oro": "win_ocultar",
+    "dijo": "win_ver_pantalla",
+    "p": 0.376
+   },
+   {
+    "q": "nos bemos",
+    "oro": "win_ninguna",
+    "dijo": "win_escribir",
+    "p": 0.77
+   },
+   {
+    "q": "Nos vemos",
+    "oro": "win_ninguna",
+    "dijo": "win_escribir",
+    "p": 0.981
+   },
+   {
+    "q": "aura please, key in see you tomorrow thanks",
+    "oro": "win_escribir",
+    "dijo": "win_ninguna",
+    "p": 0.302
+   },
+   {
+    "q": "bueno, hazme el documento de un mensaje de cumpleaños para mi mamá si puedes",
+    "oro": "win_redactar",
+    "dijo": "win_escribir",
+    "p": 0.524
+   }
+  ]
+ },
+ "bordes": {
+  "n": 24,
+  "exactitud": 0.7916666666666666,
+  "cobertura": 0.6111111111111112,
+  "precision_ejecutables": 1.0,
+  "decididos": 11,
+  "falsos_positivos_en_negativos": 0,
+  "negativos": 6,
+  "por_etiqueta": {
+   "win_ninguna": {
+    "precision": 1.0,
+    "recall": 0.5,
+    "f1": 0.667,
+    "soporte": 6
+   },
+   "win_abrir_app": {
+    "precision": 0.5,
+    "recall": 1.0,
+    "f1": 0.667,
+    "soporte": 1
+   },
+   "win_abrir_carpeta": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "soporte": 1
+   },
+   "win_buscar_web": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "soporte": 2
+   },
+   "win_abrir_web": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "soporte": 1
+   },
+   "win_escribir": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "soporte": 2
+   },
+   "win_redactar": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "soporte": 2
+   },
+   "win_ver_pantalla": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "soporte": 2
+   },
+   "win_captura": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
+   },
+   "win_volumen_subir": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "soporte": 1
+   },
+   "win_volumen_bajar": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
+   },
+   "win_silenciar": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "soporte": 1
+   },
+   "win_multimedia_pausa": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 1
+   },
+   "win_multimedia_siguiente": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1": 1.0,
+    "soporte": 1
+   },
+   "win_recordar": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
+   },
+   "win_callar": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 1
+   },
+   "win_pausa": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
+   },
+   "win_abrir_chat": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
+   },
+   "win_ocultar": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
+   },
+   "win_avatar": {
+    "precision": 0.5,
+    "recall": 1.0,
+    "f1": 0.667,
+    "soporte": 1
+   },
+   "win_escritorio": {
+    "precision": 0.0,
+    "recall": 0.0,
+    "f1": 0.0,
+    "soporte": 0
+   },
+   "win_bloquear": {
+    "precision": 0.5,
+    "recall": 1.0,
+    "f1": 0.667,
+    "soporte": 1
+   }
+  },
+  "por_idioma": {
+   "es": 0.7058823529411765,
+   "en": 1.0
+  },
+  "errores": [
+   {
+    "q": "cállate y abre spotify",
+    "oro": "win_callar",
+    "dijo": "win_abrir_app",
+    "p": 0.974
+   },
+   {
+    "q": "ayer me dijiste que bloqueara la compu",
+    "oro": "win_ninguna",
+    "dijo": "win_bloquear",
+    "p": 0.851
+   },
+   {
+    "q": "cómo se hace una captura de pantalla en windows",
+    "oro": "win_ninguna",
+    "dijo": "win_captura",
+    "p": 0.976
+   },
+   {
+    "q": "pausa",
+    "oro": "win_multimedia_pausa",
+    "dijo": "win_pausa",
+    "p": 0.642
+   },
+   {
+    "q": "quién es mejor, claudio o antonio",
+    "oro": "win_ninguna",
+    "dijo": "win_avatar",
+    "p": 0.671
+   }
+  ]
+ },
+ "compuerta": {
+  "aprobada": false,
+  "motivos": [
+   "precisión de lo que se ejecutaría 0.961 < 0.97"
+  ]
+ },
+ "muestras": [
+  {
+   "q": "abre excel",
+   "etiqueta": "win_abrir_app",
+   "p": 0.989371
+  },
+  {
+   "q": "open spotify",
+   "etiqueta": "win_abrir_app",
+   "p": 0.999869
+  },
+  {
+   "q": "abre descargas",
+   "etiqueta": "win_abrir_carpeta",
+   "p": 0.99955
+  },
+  {
+   "q": "busca el precio del café",
+   "etiqueta": "win_buscar_web",
+   "p": 0.999952
+  },
+  {
+   "q": "abre youtube",
+   "etiqueta": "win_abrir_web",
+   "p": 0.99949
+  },
+  {
+   "q": "escribe hola en el bloc de notas",
+   "etiqueta": "win_escribir",
+   "p": 0.999893
+  },
+  {
+   "q": "redáctame una carta de renuncia",
+   "etiqueta": "win_redactar",
+   "p": 0.999956
+  },
+  {
+   "q": "qué ves en mi pantalla",
+   "etiqueta": "win_ver_pantalla",
+   "p": 0.999998
+  },
+  {
+   "q": "toma un screenshot",
+   "etiqueta": "win_captura",
+   "p": 0.999986
+  },
+  {
+   "q": "súbele al volumen",
+   "etiqueta": "win_volumen_subir",
+   "p": 0.999997
+  },
+  {
+   "q": "bájale",
+   "etiqueta": "win_volumen_bajar",
+   "p": 0.999977
+  },
+  {
+   "q": "mute",
+   "etiqueta": "win_silenciar",
+   "p": 0.999977
+  },
+  {
+   "q": "pausa la canción",
+   "etiqueta": "win_multimedia_pausa",
+   "p": 0.996211
+  },
+  {
+   "q": "siguiente canción",
+   "etiqueta": "win_multimedia_siguiente",
+   "p": 0.999991
+  },
+  {
+   "q": "recuérdame en 10 minutos tomar agua",
+   "etiqueta": "win_recordar",
+   "p": 0.999946
+  },
+  {
+   "q": "cállate",
+   "etiqueta": "win_callar",
+   "p": 0.999525
+  },
+  {
+   "q": "pausa todo",
+   "etiqueta": "win_pausa",
+   "p": 0.999963
+  },
+  {
+   "q": "abre el chat",
+   "etiqueta": "win_abrir_chat",
+   "p": 0.999277
+  },
+  {
+   "q": "escóndete",
+   "etiqueta": "win_ocultar",
+   "p": 0.999151
+  },
+  {
+   "q": "cambia a claudio",
+   "etiqueta": "win_avatar",
+   "p": 0.96696
+  },
+  {
+   "q": "minimiza todo",
+   "etiqueta": "win_escritorio",
+   "p": 0.999143
+  },
+  {
+   "q": "bloquea la compu",
+   "etiqueta": "win_bloquear",
+   "p": 0.999993
+  },
+  {
+   "q": "hola aura, cómo estás",
+   "etiqueta": "win_ninguna",
+   "p": 0.998483
+  },
+  {
+   "q": "ayer abrí word y se trabó",
+   "etiqueta": "win_abrir_app",
+   "p": 0.984287
+  }
+ ],
+ "fecha": "2026-09-30"
+}

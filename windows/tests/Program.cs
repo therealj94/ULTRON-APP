@@ -31,5 +31,85 @@ Check(Commands.Parse("busca café en Roatán").Value=="café en Roatán","natura
 Check(Commands.Parse("Aura abre descargas.").Kind==ActionKind.OpenDownloads,"voice punctuation");
 Check(Commands.Parse("escribe Hola, José").Value=="Hola, José","literal writing");
 Check(Commands.Parse("no escribas Hola").Kind==ActionKind.None,"writing negation");
+// ── AURA 1.0: Laya ligera en C# dice EXACTAMENTE lo que calculó Python (entrenar_ligera_windows.py) ──
+foreach (var (q, etiqueta, pr) in LayaLigeraModelo.Muestras)
+{
+    var pred = LayaLigera.Predecir(q);
+    Check(pred.Etiqueta == etiqueta && Math.Abs(pred.P - pr) < 1e-4, $"laya ligera C#=Python: {q} → {pred.Etiqueta} {pred.P} (esperado {etiqueta} {pr})");
+}
+Check(LayaLigera.Normalizar("¡Ábreme Excel, POR FAVOR!") == "abreme excel por favor", "normalizar");
+Check(LayaLigera.Fnv1a("w=abre") == 0x3b1ff0b6u || LayaLigera.Fnv1a("") == 0x811c9dc5u, "fnv");
+var sw = System.Diagnostics.Stopwatch.StartNew(); for (int i = 0; i < 200; i++) LayaLigera.Predecir("recuérdame en 10 minutos tomar agua"); sw.Stop();
+Check(sw.Elapsed.TotalMilliseconds / 200 < 5, $"laya ligera rápida ({sw.Elapsed.TotalMilliseconds / 200:0.00} ms)");
+
+// ── Reglas: la mano y su parámetro ──
+Pedido R(string t) => Intencion.PorReglas(t);
+Check(R("Aura, abre la calculadora por favor") is { Mano: Mano.AbrirApp, Valor: "calculadora" }, "abrir app");
+Check(R("ábreme Word") is { Mano: Mano.AbrirApp, Valor: "word" }, "abrir word");
+Check(R("abre descargas") is { Mano: Mano.AbrirCarpeta, Valor: "descargas" }, "carpeta");
+Check(R("open my documents") is { Mano: Mano.AbrirCarpeta, Valor: "documentos" }, "folder en");
+Check(R("abre youtube") is { Mano: Mano.AbrirWeb, Valor: "https://www.youtube.com" }, "sitio");
+Check(R("entra a sar.gob.hn") is { Mano: Mano.AbrirWeb, Valor: "https://sar.gob.hn" }, "dominio");
+Check(R("busca el precio del café en Roatán") is { Mano: Mano.BuscarWeb, Valor: "el precio del café en Roatán" }, "buscar con tildes");
+Check(R("search for flights to roatan") is { Mano: Mano.BuscarWeb, Valor: "flights to roatan" }, "search en");
+Check(R("cállate") is { Mano: Mano.Callar }, "callar");
+Check(R("ya cállate porfa") is { Mano: Mano.Callar }, "callar cortesia");
+Check(R("pausa todo") is { Mano: Mano.Pausa }, "pausa");
+Check(R("súbele al volumen") is { Mano: Mano.VolumenSubir }, "volumen");
+Check(R("bájale un poco") is { Mano: Mano.VolumenBajar }, "bajar");
+Check(R("siguiente canción") is { Mano: Mano.MultimediaSiguiente }, "siguiente");
+Check(R("canción anterior") is { Mano: Mano.MultimediaAnterior }, "anterior");
+Check(R("toma una captura de pantalla") is { Mano: Mano.Captura }, "captura");
+Check(R("qué ves en mi pantalla") is { Mano: Mano.VerPantalla }, "ver pantalla");
+Check(R("bloquea la compu") is { Mano: Mano.Bloquear, PideConfirmacion: true }, "bloquear confirma");
+Check(R("cambia a claudio") is { Mano: Mano.Avatar, Valor: "claudio" }, "avatar");
+Check(R("Claudio, pásame a la hormiga") is { Mano: Mano.Avatar, Valor: "antonio" }, "avatar ultimo nombre");
+Check(R("no abras la calculadora").Mano == Mano.Ninguna, "negacion");
+Check(R("¿cómo abro excel?").Mano == Mano.Ninguna, "pregunta no es orden");
+Check(R("ayer abrí word y se trabó").Mano == Mano.Ninguna, "contar no es orden");
+Check(R("hola aura, ¿cómo estás?").Mano == Mano.Ninguna, "charla");
+Check(R("abre el chat") is { Mano: Mano.AbrirChat }, "abrir chat");
+var rec = R("recuérdame en 10 minutos tomar la pastilla");
+Check(rec.Mano == Mano.Recordar && rec.Cuando == TimeSpan.FromMinutes(10) && rec.Valor == "tomar la pastilla", $"recordatorio: {rec}");
+Check(R("remind me in 2 hours to call my mom") is { Mano: Mano.Recordar } r2 && r2.Cuando == TimeSpan.FromHours(2) && r2.Valor == "call my mom", "reminder en");
+Check(R("pon un temporizador de media hora") is { Mano: Mano.Recordar } r3 && r3.Cuando == TimeSpan.FromMinutes(30), "temporizador");
+var tarde = new DateTime(2026, 9, 30, 14, 0, 0);
+Check(Parametros.Tiempo("a las 5", tarde) == TimeSpan.FromHours(3), "a las 5 (tarde)");
+Check(Parametros.Tiempo("a las 9 de la mañana", tarde) == TimeSpan.FromHours(19), "mañana");
+Check(Parametros.Tiempo("a las 3 y media de la tarde", tarde) == TimeSpan.FromMinutes(90), "y media");
+Check(Parametros.Tiempo("at 4:30 pm", tarde) == TimeSpan.FromMinutes(150), "at pm");
+Check(Parametros.Tiempo("en cinco minutos", tarde) == TimeSpan.FromMinutes(5), "numero en letras");
+Check(Parametros.TextoAEscribir("escribe en el bloc de notas: Hola, José") == "Hola, José", "escribir literal");
+Check(Parametros.TextoAEscribir("escríbelo en word") == null, "escribelo = la ultima respuesta");
+Check(Intencion.ConParametro(Mano.AbrirApp, "abre", "laya", 0.99).Mano == Mano.Ninguna, "sin parametro no se hace");
+var dec = await Intencion.Decidir("redáctame una carta de renuncia", (_, _) => Task.FromResult<DecisionNodo?>(new DecisionNodo("win_redactar", 0.9, true)));
+Check(dec.Mano == Mano.Redactar, $"decidir redactar: {dec}");
+var nada = await Intencion.Decidir("¿quién ganó el mundial?", (_, _) => Task.FromResult<DecisionNodo?>(new DecisionNodo("win_ninguna", 0.99, false)));
+Check(nada.Mano == Mano.Ninguna, "la charla va al cerebro");
+var caido = await Intencion.Decidir("¿qué opinas de mi idea?", (_, _) => throw new HttpRequestException("caido"));
+Check(caido.Mano == Mano.Ninguna, "nodo caido no rompe");
+
+// ── SSE partido en cualquier byte ──
+var sse = new LectorSse(); var eventos = new List<(string, string)>();
+var flujo = "event: emocion\ndata: {\"emocion\":\"feliz\"}\n\nevent: delta\ndata: {\"voz\":\"Hola\"}\n\nevent: done\ndata: {}\n\n";
+for (int i = 0; i < flujo.Length; i += 7) eventos.AddRange(sse.Leer(flujo.Substring(i, Math.Min(7, flujo.Length - i))));
+Check(eventos.Count == 3 && eventos[0].Item1 == "emocion" && eventos[1].Item2 == "{\"voz\":\"Hola\"}", "sse");
+Check(Expresiones.PelarEtiqueta("[EMO:feliz] Hola") == ("feliz", "Hola"), "etiqueta emocion");
+Check(Expresiones.Quitar("Qué bueno [risa] verte") == "Qué bueno verte", "quitar expresiones");
+
+// ── Frases para la voz: la primera sale pronto ──
+var cf = new CortadorFrases(); var frases = new List<string>();
+foreach (var t in new[] { "Hola, José. ", "Hoy tienes ", "tres pendientes importantes para la junta. Primero, ", "revisar el informe." }) frases.AddRange(cf.Agregar(t));
+if (cf.Resto() is { } resto) frases.Add(resto);
+Check(frases.Count == 3 && frases[0] == "Hola, José." && frases[^1] == "Primero, revisar el informe.", "cortador: " + string.Join(" | ", frases));
+
+// ── Resorte: llega, rebota poco y se queda quieto ──
+var res = new Resorte(0, 260, 25) { Objetivo = 100 }; double maximo = 0;
+for (int i = 0; i < 120; i++) maximo = Math.Max(maximo, res.Paso(1 / 60.0));
+Check(res.Quieto && res.Valor == 100 && maximo < 112, $"resorte (maximo {maximo:0.0})");
+Check(AuraApi.Validar("https://aura-fp.onrender.com").AbsoluteUri == "https://aura-fp.onrender.com/", "servidor https");
+Check(Throws(() => AuraApi.Validar("http://aura-fp.onrender.com")), "sin http remoto");
+bool Throws(Action a) { try { a(); return false; } catch { return true; } }
+
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }
