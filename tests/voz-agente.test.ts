@@ -115,6 +115,10 @@ test('¿la respuesta anterior quedó cortada? Se compara lo que dijimos con lo q
   ];
   assert.equal(asistenteTruncado(hist('El oro está a tres mil'), dicha), true, 'solo llegó el principio');
   assert.equal(asistenteTruncado(hist('El oro está a tres mil…'), dicha), true, 'con puntos suspensivos también');
+  // La forma documentada de agent_response_correction: el recorte termina en «...».
+  const en = 'Let me tell you about the complete history of gold prices this year.';
+  assert.equal(asistenteTruncado([{ role: 'assistant', content: 'Let me tell you about...' }, { role: 'user', content: 'wait' }], en), true, 'recorte de ElevenLabs con ...');
+  assert.equal(asistenteTruncado([{ role: 'system', content: 'x' }, { role: 'assistant', content: [{ type: 'text', text: 'Let me tell you' }] }, { role: 'user', content: 'stop' }], en), true, 'contenido en partes');
   assert.equal(asistenteTruncado(hist(dicha), dicha), false, 'la dijo entera');
   assert.equal(asistenteTruncado(hist('Otra cosa completamente distinta'), dicha), false, 'no es la nuestra: no se adivina');
   assert.equal(asistenteTruncado([{ role: 'user', content: 'hola' }], dicha), false, 'sin respuesta anterior');

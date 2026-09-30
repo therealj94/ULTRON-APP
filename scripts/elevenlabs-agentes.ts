@@ -12,29 +12,42 @@
  * ElevenLabs; no se imprime. Es idempotente: si un agente con ese nombre ya existe, lo actualiza.
  * Imprime los ids para pegarlos en AGENTES (server/voz-agente.ts).
  */
+import { pathToFileURL } from 'node:url';
 import { secretoDerivado } from '../server/seguridad';
 import { ETIQUETA_SECRETO_LLM } from '../server/voz-agente';
 import { NOMBRE_AVATAR, VOCES_ELEVEN, type AvatarVoz, type Idioma } from '../server/eleven';
 
 const API = 'https://api.elevenlabs.io/v1';
-const key = String(process.env.ELEVENLABS_API_KEY || '').trim();
-if (!key || !process.env.ULTRON_SESION_SECRETO) {
-  console.error('Faltan ELEVENLABS_API_KEY y ULTRON_SESION_SECRETO en el entorno.');
-  process.exit(1);
-}
+const key = () => String(process.env.ELEVENLABS_API_KEY || '').trim();
 const iUrl = process.argv.indexOf('--url');
 const BASE = (iUrl > 0 ? process.argv[iUrl + 1] : 'https://aura-fp.onrender.com').replace(/\/+$/, '');
 
+/** Solo lo que dice QUÉ falló: un código corto que ElevenLabs pone en `detail.status`, si es eso. */
+const CODIGO = /^[a-z0-9_.-]{1,60}$/i;
+
+/**
+ * El error de una llamada a ElevenLabs, dicho SIN su cuerpo (auditoría del 29-sep). El cuerpo de un
+ * error puede traer la configuración entera del agente, el valor de un secreto que se acaba de
+ * mandar o datos de la cuenta, y este script se corre en terminales que se copian a chats. Se dice
+ * el método, la ruta (sin la consulta), el estado y, si ElevenLabs lo da, su código corto.
+ */
+export function errorSeguro(metodo: string, ruta: string, status: number, cuerpo: unknown): Error & { status: number } {
+  const d: any = (cuerpo as any)?.detail;
+  const codigo = typeof d?.status === 'string' && CODIGO.test(d.status) ? d.status : typeof d?.[0]?.type === 'string' && CODIGO.test(d[0].type) ? d[0].type : '';
+  const sinConsulta = String(ruta).split('?')[0];
+  return Object.assign(new Error(`${metodo} ${sinConsulta} → ${status}${codigo ? ` (${codigo})` : ''}`), { status });
+}
+
 async function api(ruta: string, init: RequestInit = {}): Promise<any> {
-  const r = await fetch(`${API}${ruta}`, { ...init, headers: { 'xi-api-key': key, 'Content-Type': 'application/json', ...(init.headers || {}) } });
+  const r = await fetch(`${API}${ruta}`, { ...init, headers: { 'xi-api-key': key(), 'Content-Type': 'application/json', ...(init.headers || {}) } });
   const texto = await r.text();
   let j: any = null;
   try {
     j = JSON.parse(texto);
   } catch {
-    j = { crudo: texto.slice(0, 300) };
+    j = null;
   }
-  if (!r.ok) throw Object.assign(new Error(`${init.method || 'GET'} ${ruta} → ${r.status}: ${JSON.stringify(j).slice(0, 400)}`), { status: r.status, cuerpo: j });
+  if (!r.ok) throw errorSeguro(String(init.method || 'GET'), ruta, r.status, j);
   return j;
 }
 
@@ -106,6 +119,10 @@ function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: 
 }
 
 async function main() {
+  if (!key() || !process.env.ULTRON_SESION_SECRETO) {
+    console.error('Faltan ELEVENLABS_API_KEY y ULTRON_SESION_SECRETO en el entorno.');
+    process.exit(1);
+  }
   const secretId = await secreto();
   console.log('secreto aura-llm listo');
   const existentes: any[] = (await api('/convai/agents?page_size=100')).agents || [];
@@ -142,4 +159,11 @@ async function main() {
   console.log(JSON.stringify(ids, null, 2));
 }
 
-await main();
+// Solo al correrlo (no al importarlo, como hacen las pruebas de errorSeguro). Un fallo se dice con su
+// mensaje, nunca con el objeto entero: Node imprimiría todas sus propiedades.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main().catch((e: any) => {
+    console.error(`No se pudo: ${String(e?.message || e).slice(0, 300)}`);
+    process.exit(1);
+  });
+}

@@ -26,6 +26,7 @@ import {
   type ContextoApp,
 } from './lib/acciones-app';
 import { quitarExpresiones } from './lib/expresiones';
+import { puntoDeCorte } from './lib/trozos';
 import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
@@ -1870,14 +1871,15 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const nombre = String(body?.usuario || body?.userName || '').trim().slice(0, 40);
   const canal: CanalMem = body?.canal === 'telegram' ? 'telegram' : 'mesa';
   const idiomaTurno = normalizarIdioma(body?.idioma);
+  // El perfil y la app son de quien tiene sesión (o pase de voz): por correo, no por miembro de la junta.
+  // El perfil se pide ya, a la par de la memoria (la primera vez puede ir a S3); se espera al armar el prompt.
+  const correoApp = canal === 'mesa' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
+  const perfilPedido: Promise<Perfil | null> = correoApp ? leerPerfil(correoApp).catch(() => null) : Promise.resolve(null);
   await cargarMemoria();
   const quien = resolverQuien(body, body?.sesion || null);
   // Mando solo con identidad verificada (sesión firmada o Telegram). El body no escala. Y nunca por la voz.
   const verificado = quienVerificado(body, body?.sesion || null);
   const mando = !opciones.soloConsulta && puedeCambiarSistema(verificado);
-  // El perfil y la app son de quien tiene sesión (o pase de voz): por correo, no por miembro de la junta.
-  const correoApp = canal === 'mesa' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
-  const perfilPersona: Perfil | null = correoApp ? await leerPerfil(correoApp).catch(() => null) : null;
   const contextoApp: ContextoApp | null = correoApp ? contextoDe(correoApp) : null;
   // Las reglas de la app solo se le enseñan al modelo si hay un teléfono que pueda hacerlas.
   const conApp = !!correoApp && (!!contextoApp || oyentesDe(correoApp) > 0);
@@ -2200,6 +2202,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     );
   }
   // Cómo le decimos: el apodo que eligió en su perfil manda sobre el nombre del padrón.
+  const perfilPersona = await perfilPedido;
   const comoLeDecimos = perfilPersona?.apodo || (quien ? nombreDe(quien) : nombre) || undefined;
   const bloquePerfil = lineaPerfil(perfilPersona);
   const bloqueApp = conApp ? instruccionAcciones(contextoApp, { idioma: idiomaTurno, pendiente: pendienteDe(correoApp) }) : '';
@@ -2801,7 +2804,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
         return;
       }
       // Soltar solo hasta la última frase cerrada; lo que queda puede ser una línea de pedido.
-      const corte = Math.max(cuerpo.lastIndexOf('. '), cuerpo.lastIndexOf('? '), cuerpo.lastIndexOf('! '), cuerpo.lastIndexOf('\n'));
+      const corte = puntoDeCorte(cuerpo, enviado);
       if (corte > enviado) {
         soltar('delta', cuerpo.slice(enviado, corte + 1));
         enviado = corte + 1;

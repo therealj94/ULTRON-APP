@@ -262,8 +262,9 @@ export async function cargarSesionesCerradas(): Promise<string> {
 }
 
 /**
- * Saca del caché en memoria una sesión de UN solo uso (la del turno interno de la voz). No la
- * revoca —vence sola en minutos—; solo evita que cada turno deje un objeto para siempre en el mapa.
+ * Saca del caché en memoria una sesión de UN solo uso. No la revoca —vence sola—; solo evita que
+ * deje un objeto para siempre en el mapa. (La voz ya no la usa: su turno corre en proceso, sin
+ * sesión interna; queda para cualquier llamada interna que la necesite.)
  */
 export function soltarSesion(token?: string) {
   if (token) sesiones.delete(token);

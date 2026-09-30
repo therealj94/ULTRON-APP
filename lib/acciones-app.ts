@@ -296,11 +296,21 @@ export function decibleHasta(parcial: string): string {
   return t;
 }
 
-/** «sí», «envíalo», «mándalo»: lo único que deja enviar un borrador. */
+/**
+ * «sí», «envíalo», «mándalo»: lo único que deja enviar un borrador. El «sí» tiene que ABRIR la frase
+ * (en «si puedes, cámbialo» es un «if», no un permiso) y un «no», «espera» o «todavía» en cualquier
+ * parte lo deja sin enviar: ante la duda, AU-RA vuelve a preguntar, que es barato; un mensaje mandado
+ * no se desmanda.
+ */
 export function confirmaEnvio(mensaje: string): boolean {
-  const q = plegar(mensaje);
-  if (/\b(no|todavia no|aun no|espera|don'?t|not yet)\b/.test(q) && !/^(si|yes)\b/.test(q)) return false;
-  return /\b(si|sip|claro|dale|envialo|enviala|envia|enviar|mandalo|mandala|manda|mandar|yes|send|go ahead)\b/.test(q);
+  const q = plegar(mensaje).replace(/[.,;:!?¡¿"'«»“”]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!q) return false;
+  if (/\b(no|nop|nel|todavia|aun|espera|esperate|cancela|cancelalo|borra|borralo|don ?t|not|wait|cancel|hold on)\b/.test(q)) return false;
+  // «Sí» con tilde, o «si» solo (con su coma o al final); «si puedes…» sin tilde es condicional.
+  const crudo = String(mensaje || '').trim().toLowerCase();
+  if (/^[¡!\s]*(sí|sip|simón)(?=[\s,.!;:]|$)/.test(crudo) || /^[¡!\s]*si\s*([,.!;:]|$)/.test(crudo) || /^si (envialo|enviala|mandalo|mandala|claro|por favor|dale)\b/.test(q)) return true;
+  if (/^(sip|simon|claro|dale|va|sale|ok|okay|perfecto|correcto|de acuerdo|yes|yep|yeah|sure)\b/.test(q)) return true;
+  return /\b(envialo|enviala|mandalo|mandala|envialo ya|send it|go ahead)\b/.test(q) || /\b(envia|manda|enviale|mandale|send)( el| ese| este| the| that)? (mensaje|borrador|message|draft)\b/.test(q);
 }
 
 /**
@@ -378,7 +388,7 @@ export function ordenPorReglas(
       const para = o.pendiente?.para || o.contexto?.chatAbierto?.correo;
       return hecho(para ? { tipo: 'enviar', para } : { tipo: 'enviar' }, d.enviar);
     }
-    if (/^(no|nop|mejor no|borralo|borrala|descartalo|descartala|no lo envies|no lo mandes|cancela|cancelalo|olvidalo|delete it|cancel|dont send it|no thanks)$/.test(q)) {
+    if (/^(no|nop|mejor no|borralo|borrala|descartalo|descartala|no lo envies|no lo mandes|cancela|cancelalo|olvidalo|delete it|cancel|don ?t send it|no thanks)$/.test(q)) {
       return hecho({ tipo: 'descartar' }, d.descartar);
     }
   }
@@ -411,7 +421,8 @@ export function ordenPorReglas(
   if (/^(callate|calla|silencio|shh+|chito|deja de hablar|deja de escuchar|no hables|shut up|be quiet|quiet|stop talking|hush|mute|silence)( (un|por un|el) (rato|ratito|momento|segundo))?$/.test(q)) {
     return hecho({ tipo: 'silencio', valor: true }, d.silencio);
   }
-  if (/^(ya puedes hablar|vuelve a hablar|vuelve a escuchar|despierta|you can talk now|unmute)$/.test(q)) {
+  // «ya» se va con los vocativos del principio: «ya puedes hablar» llega como «puedes hablar».
+  if (/^((ya )?puedes hablar|vuelve a hablar|vuelve a escuchar|despierta|you can talk now|unmute)$/.test(q)) {
     return hecho({ tipo: 'silencio', valor: false }, d.habla);
   }
   return null;

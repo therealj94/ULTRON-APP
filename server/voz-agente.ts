@@ -223,11 +223,16 @@ function textoDe(content: unknown): string {
 const aplanar = (s: string) => s.replace(/\s+/g, ' ').trim();
 
 /**
- * ¿La respuesta anterior quedó cortada? ElevenLabs no documenta cómo marca una interrupción en el
- * historial del «LLM propio» (29-sep: la documentación de Agents no lo dice), así que no se adivina
- * con palabras: se compara lo que NOSOTROS le dimos a la voz en el turno anterior con el último
- * mensaje de asistente que ElevenLabs manda de vuelta. Si el suyo es un pedazo del principio del
- * nuestro, la voz no llegó a decirlo entero: la persona la interrumpió.
+ * ¿La respuesta anterior quedó cortada? La página del «LLM propio» no dice cómo llega una
+ * interrupción; lo que sí documenta ElevenLabs (eventos del cliente, `agent_response_correction`)
+ * es que al interrumpir recorta la respuesta del agente a lo que alcanzó a decir
+ * («Let me tell you about the complete history…» → «Let me tell you about...»), y ese recorte es
+ * el mensaje de asistente que vuelve en el historial del turno siguiente. No hay bandera aparte.
+ *
+ * Así que no se adivina con palabras: se compara lo que NOSOTROS le dimos a la voz en el turno
+ * anterior con el último mensaje de asistente que manda ElevenLabs. Si el suyo es un pedazo del
+ * principio del nuestro (con o sin los «...» del recorte), la persona la interrumpió. La otra señal
+ * es directa: ElevenLabs cerró la petición mientras la voz todavía recibía texto (`conv.cortada`).
  */
 export function asistenteTruncado(messages: unknown, ultimaDicha: string): boolean {
   const nuestra = aplanar(quitarExpresiones(ultimaDicha || ''));
