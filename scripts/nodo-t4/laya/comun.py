@@ -92,7 +92,7 @@ def cargar_config(directorio):
             'recorte': {'cabeza': cabeza, 'cola': cola}, 'rutas': rutas}
 
 
-def leer_filas(rutas, ids, grupos, estricto=True, origen=False):
+def leer_filas(rutas, ids, grupos, estricto=True, origen=False, recortar_a_ids=False):
     """Filas {"q", "e", ...} de varios .jsonl, validadas contra ids y grupos exclusivos.
 
     Conserva los demás campos (p. ej. «c», la categoría de un caso de borde; «nota»). Con origen,
@@ -120,6 +120,11 @@ def leer_filas(rutas, ids, grupos, estricto=True, origen=False):
                     continue
                 e = list(dict.fromkeys(e))
                 raras = [x for x in e if x not in ids]
+                if raras and recortar_a_ids:
+                    # Al evaluar un checkpoint VIEJO con datos nuevos (p. ej. «comando» sin el grupo `app`
+                    # de AU-RA): las etiquetas que ese checkpoint no conoce se quitan, no son un error.
+                    e = [x for x in e if x in ids]
+                    raras = []
                 if raras:
                     errores.append(f'{r}:{n} etiqueta rara {raras}')
                     continue

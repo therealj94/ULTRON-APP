@@ -27,6 +27,7 @@ import {
   dichoNegado,
   manoDe,
   instruccionManos,
+  limpiarDicho,
   manoPorReglas,
   MAX_LECTURA,
   niegaPropuesta,
@@ -461,6 +462,14 @@ export type Resolucion = { tipo: 'uno'; contacto: Contacto } | { tipo: 'varios';
 export function resolverContacto(dicho: string, contactos: Contacto[]): Resolucion {
   const q = plegar(dicho).replace(/^(a |al |con )/, '').replace(/^(mi|mis|my) /, '').trim();
   if (!q || !contactos.length) return { tipo: 'ninguno' };
+  const r = resolverSinArticulo(q, contactos);
+  // «la Ana», «el profe Carlos», «don Ramón»: como se dice aquí. Si con el artículo no hay nadie, sin él.
+  if (r.tipo === 'ninguno' && /^(la|el|los|las|don|dona|dono) ./.test(q)) return resolverSinArticulo(q.replace(/^(la|el|los|las|don|dona|dono) /, ''), contactos);
+  return r;
+}
+
+function resolverSinArticulo(q: string, contactos: Contacto[]): Resolucion {
+  if (!q) return { tipo: 'ninguno' };
   const exacto = contactos.filter((c) => c.correo === q || plegar(c.nombre) === q || plegar(c.nombre).replace(/^(mi|my) /, '') === q);
   if (exacto.length === 1) return { tipo: 'uno', contacto: exacto[0] };
   if (exacto.length > 1) return { tipo: 'varios', opciones: exacto.slice(0, 5) };
@@ -619,11 +628,12 @@ export type OrdenRapida = {
 
 /** Sin acentos, sin signos, sin el «AURA,» del principio ni el «por favor» del final. */
 function frase(texto: string): string {
-  let q = plegar(texto).replace(/[.,;:!?¡¿"'«»“”]+/g, ' ').replace(/\s+/g, ' ').trim();
-  const vocativo = /^(oye|hey|ey|aura|au ra|au-ra|claudio|guardian|porfa|por favor|please|ok|okay|ya|a ver|mira)\s+/;
-  for (let i = 0; i < 3 && vocativo.test(q); i++) q = q.replace(vocativo, '');
-  q = q.replace(/\s+(por favor|porfa|please|ya|ahora)$/, '').trim();
-  return q;
+  const q = plegar(texto).replace(/[.,;:!?¡¿"'«»“”]+/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!q) return q;
+  // Las mismas muletillas y cortesías que quitan las manos («mire», «fíjate que», «porfis», «gracias»).
+  const w = q.split(' ');
+  limpiarDicho(w);
+  return w.join(' ');
 }
 
 const PANTALLA_DE: Array<[RegExp, Pantalla]> = [

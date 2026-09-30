@@ -318,5 +318,133 @@
    "true": "sí: apagar el control con las manos o la cámara («apaga las manos», «quita el air touch»)",
    "false": "no: encenderlo"
   }
+ },
+ "app_ninguna": {
+  "type": "noul",
+  "instructions": "¿Esto NO es una orden para la app AU-RA (recordar, llamar, leer o buscar mensajes, idioma, perfil, cómo se muestra AURA, buscar en internet)?",
+  "criteria": {
+   "true": "sí: es charla, una pregunta, algo que se cuenta, o una orden del mapa de Dr Electrum («mi mamá me llamó ayer», «¿hablas inglés?», «acércate»)",
+   "false": "no: le pide a AURA que haga una de sus manos en la app"
+  }
+ },
+ "app_recordar": {
+  "type": "noul",
+  "instructions": "¿Pide que AURA le ponga un RECORDATORIO (un aviso a una hora)?",
+  "criteria": {
+   "true": "sí: «recuérdame a las 5 llamar a mi mamá», «avísame en media hora que saque la ropa»",
+   "false": "no: pide un dato de memoria («recuérdame quién ganó»), o que AURA lo llame para recordarle"
+  }
+ },
+ "app_llamar_recordar": {
+  "type": "noul",
+  "instructions": "¿Pide que AURA lo LLAME a una hora para recordarle algo?",
+  "criteria": {
+   "true": "sí: «llámame a las 5 para recordarme la pastilla», «márcame mañana y recuérdame la cita»",
+   "false": "no: un recordatorio sin llamada, o llamar a otra persona"
+  }
+ },
+ "app_listar_recordatorios": {
+  "type": "noul",
+  "instructions": "¿Pregunta qué recordatorios tiene puestos?",
+  "criteria": {
+   "true": "sí: «¿qué recordatorios tengo?», «mis recordatorios»",
+   "false": "no: pone o cancela uno, u otra cosa"
+  }
+ },
+ "app_cancelar_recordatorio": {
+  "type": "noul",
+  "instructions": "¿Pide cancelar o quitar un recordatorio?",
+  "criteria": {
+   "true": "sí: «cancela el recordatorio de las 5», «ya no me recuerdes la pastilla»",
+   "false": "no: un «cancela» suelto u otra cosa"
+  }
+ },
+ "app_llamar": {
+  "type": "noul",
+  "instructions": "¿Pide llamar por teléfono (voz) a un contacto?",
+  "criteria": {
+   "true": "sí: «llama a mi mamá», «márcale a Beto», «llámame a mi hermano»",
+   "false": "no: videollamada, apodo («llámame Chepe») o contar una llamada"
+  }
+ },
+ "app_videollamar": {
+  "type": "noul",
+  "instructions": "¿Pide hacer una VIDEOllamada a un contacto?",
+  "criteria": {
+   "true": "sí: «hazle videollamada a Beto», «llama a Ana por video»",
+   "false": "no: llamada de voz o contar una videollamada"
+  }
+ },
+ "app_colgar": {
+  "type": "noul",
+  "instructions": "¿Pide colgar o terminar la llamada?",
+  "criteria": {
+   "true": "sí: «cuelga», «corta la llamada»",
+   "false": "no: colgar ropa o un cuadro"
+  }
+ },
+ "app_leer": {
+  "type": "noul",
+  "instructions": "¿Pide que le lea sus mensajes (de alguien o los nuevos)?",
+  "criteria": {
+   "true": "sí: «¿qué me dijo Beto?», «léeme mis mensajes», «¿tengo mensajes?»",
+   "false": "no: cuenta lo que alguien dijo"
+  }
+ },
+ "app_responder": {
+  "type": "noul",
+  "instructions": "¿Pide responder un mensaje de chat?",
+  "criteria": {
+   "true": "sí: «respóndele que ya voy», «contéstale a Beto que sí»",
+   "false": "no: le pide a AURA que conteste ella"
+  }
+ },
+ "app_buscar_chats": {
+  "type": "noul",
+  "instructions": "¿Pide buscar algo DENTRO de sus chats o mensajes?",
+  "criteria": {
+   "true": "sí: «busca en mis chats la dirección», «¿dónde me mandaron el número?»",
+   "false": "no: buscar en internet"
+  }
+ },
+ "app_silenciar_chat": {
+  "type": "noul",
+  "instructions": "¿Pide silenciar o volver a activar los avisos de un chat?",
+  "criteria": {
+   "true": "sí: «silencia el chat de Beto», «activa los avisos de Ana»",
+   "false": "no: que AURA se calle («cállate»)"
+  }
+ },
+ "app_idioma": {
+  "type": "noul",
+  "instructions": "¿Pide que AURA le hable en otro idioma?",
+  "criteria": {
+   "true": "sí: «háblame en inglés», «switch to Spanish»",
+   "false": "no: pregunta si habla un idioma o pide una traducción"
+  }
+ },
+ "app_perfil": {
+  "type": "noul",
+  "instructions": "¿Le cuenta a AURA algo de sí para que lo recuerde (apodo, dónde vive, trabajo, gustos, cumpleaños)?",
+  "criteria": {
+   "true": "sí: «dime Chepe», «vivo en San Pedro Sula», «mi cumpleaños es el 14 de marzo»",
+   "false": "no: charla («vivo feliz», «trabajo mucho»)"
+  }
+ },
+ "app_presencia": {
+  "type": "noul",
+  "instructions": "¿Pide cambiar cómo se muestra AURA (pantalla completa, al lado del chat, chiquita caminando)?",
+  "criteria": {
+   "true": "sí: «ponte a pantalla completa», «ponte al lado», «hazte chiquita»",
+   "false": "no: un modismo («ponte las pilas»)"
+  }
+ },
+ "app_buscar_internet": {
+  "type": "noul",
+  "instructions": "¿Pide buscar algo en internet o en las noticias?",
+  "criteria": {
+   "true": "sí: «busca en internet…», «¿qué dicen las noticias de…?»",
+   "false": "no: buscar en sus chats, o preguntar cómo se busca"
+  }
  }
 }

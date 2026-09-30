@@ -463,3 +463,25 @@ test('internet por voz sigue siendo del cerebro: «busca en internet…», «¿q
   // Las reglas de las manos no se las quedan.
   for (const t of ['busca en internet las noticias de Honduras', '¿qué dicen las noticias de la selección?', 'búscame en internet el precio del café']) assert.equal(ordenPorReglas(t, { contexto: conManos, ahora: AHORA }), null, t);
 });
+
+test('el habla de aquí: muletillas, «q», palabras repetidas, «la Ana», «bideollamada», «llama mi mamá por video»', () => {
+  const o = { contexto: conManos, ahora: AHORA };
+  assert.equal(ordenPorReglas('Mire, llama a mi mamá porfis', o)?.propuesta?.tipo, 'llamar');
+  assert.equal(ordenPorReglas('fíjate que ¿qué me dijo beto? gracias', o)?.accion?.tipo, 'leer');
+  assert.equal(ordenPorReglas('mi reina q recordatorios tengo', { ...o, contexto: conRecs })?.soloDecir, true);
+  assert.deepEqual(ordenPorReglas('léeme los los mensajes de mi mamá', o)?.accion, { tipo: 'leer', de: 'mama@x.com' });
+  assert.equal((ordenPorReglas('hazle bideollamada a beto', o)?.propuesta as any)?.video, true);
+  assert.equal((ordenPorReglas('llama mi mamá por video', o)?.propuesta as any)?.video, true);
+  assert.equal((ordenPorReglas('llámame a beto', o)?.propuesta as any)?.con, 'beto@x.com', '«llámame a X»: llámale a X por mí');
+  assert.equal((ordenPorReglas('quiero hablar con mi mamá, llámale', o)?.propuesta as any)?.con, 'mama@x.com');
+  assert.equal(resolverContacto('la ana lópez', CONTACTOS).tipo, 'uno', '«la Ana López»: sin el artículo');
+  assert.deepEqual(ordenPorReglas('vivo en san pedro sula', o)?.accion, { tipo: 'perfil', campo: 'vive', valor: 'San Pedro Sula' }, 'un lugar conocido sin mayúsculas');
+  assert.deepEqual(ordenPorReglas('mi cumpleaños es el 14 de marzo', o)?.accion, { tipo: 'perfil', campo: 'cumple', valor: '03-14' });
+  assert.equal(ordenPorReglas('ya no me avises de beto', { ...o, contexto: conRecs }), null, '«ya no me avises de Beto» no es cancelar un recordatorio');
+  assert.equal(ordenPorReglas('ya no me recuerdes la pastilla', { ...o, contexto: conRecs })?.propuesta?.tipo, 'cancelar_recordatorio');
+  // Y lo que parece y no es, sigue sin ser.
+  for (const t of ['mi mamá me llamó ayer', 'ponte las pilas', 'cuelga la ropa', '¿hablas inglés?', 'recuérdame quién ganó el mundial', 'vivo feliz', 'beto me dijo que venía']) {
+    const r = ordenPorReglas(t, { ...o, contexto: conRecs });
+    assert.equal(r?.accion ?? r?.propuesta ?? null, null, t);
+  }
+});

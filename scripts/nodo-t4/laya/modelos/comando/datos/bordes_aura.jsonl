@@ -1,0 +1,34 @@
+{"q": "llámame chepe", "e": ["ninguna", "app_perfil"], "nota": "«llámame» + nombre es el apodo, no una llamada"}
+{"q": "llámame a mi mamá", "e": ["ninguna", "app_llamar"], "nota": "«llámame a X» en Honduras: llámale a X por mí"}
+{"q": "llámame a las 5 para recordarme la pastilla", "e": ["ninguna", "app_llamar_recordar"], "nota": "llamada + recordar = recordatorio con llamada"}
+{"q": "recuérdame a las 5 llamar a mi mamá", "e": ["ninguna", "app_recordar"], "nota": "«llamar» dentro del texto del recordatorio"}
+{"q": "llámame", "e": ["ninguna", "app_ninguna"], "nota": "sin a quién ni para qué: es la llamada de Twilio del taller"}
+{"q": "recuérdame quién ganó el mundial del 86", "e": ["ninguna", "app_ninguna"], "nota": "pide un dato, no un recordatorio"}
+{"q": "¿te acuerdas de lo que te dije?", "e": ["ninguna", "app_ninguna"], "nota": "pregunta de memoria"}
+{"q": "mi mamá me llamó ayer", "e": ["ninguna", "app_ninguna"], "nota": "cuenta algo, no ordena"}
+{"q": "¿cómo se llama tu mamá?", "e": ["ninguna", "app_ninguna"], "nota": "«llama» de nombre"}
+{"q": "ponte las pilas", "e": ["ninguna", "app_ninguna"], "nota": "modismo: apúrate"}
+{"q": "ponte al lado del chat", "e": ["ninguna", "app_presencia"], "nota": ""}
+{"q": "ponte a pantalla completa", "e": ["pantalla_completa", "app_presencia"], "nota": "en los dos productos es poner la pantalla completa"}
+{"q": "cuelga la ropa", "e": ["ninguna", "app_ninguna"], "nota": "colgar de tender"}
+{"q": "cuelga", "e": ["ninguna", "app_colgar"], "nota": ""}
+{"q": "¿qué me dijo beto?", "e": ["ninguna", "app_leer"], "nota": "pregunta que SÍ es orden: leer"}
+{"q": "beto me dijo que venía", "e": ["ninguna", "app_ninguna"], "nota": "cuenta lo que dijo Beto"}
+{"q": "respóndele que ya voy", "e": ["ninguna", "app_responder"], "nota": ""}
+{"q": "contéstame bien", "e": ["ninguna", "app_ninguna"], "nota": "le pide a AURA una respuesta, no responder un chat"}
+{"q": "busca en mis chats la dirección", "e": ["ninguna", "app_buscar_chats"], "nota": ""}
+{"q": "busca en internet la dirección del banco", "e": ["ninguna", "app_buscar_internet"], "nota": "misma palabra, otro lugar"}
+{"q": "¿cómo busco algo en internet?", "e": ["ninguna", "app_ninguna"], "nota": "pregunta cómo, no ordena"}
+{"q": "háblame en inglés", "e": ["ninguna", "app_idioma"], "nota": ""}
+{"q": "¿hablas inglés?", "e": ["ninguna", "app_ninguna"], "nota": "pregunta"}
+{"q": "¿cómo se dice hola en inglés?", "e": ["ninguna", "app_ninguna"], "nota": "traducción, no cambio de idioma"}
+{"q": "silencia el chat de beto", "e": ["ninguna", "app_silenciar_chat"], "nota": "no es «cállate»"}
+{"q": "cállate", "e": ["callar", "app_ninguna"], "nota": "callar es del grupo accion (AU-RA lo lee de ahí)"}
+{"q": "vivo en san pedro sula", "e": ["ninguna", "app_perfil"], "nota": ""}
+{"q": "vivo feliz", "e": ["ninguna", "app_ninguna"], "nota": "no es un lugar"}
+{"q": "cancela el recordatorio de las 5", "e": ["ninguna", "app_cancelar_recordatorio"], "nota": ""}
+{"q": "cancela", "e": ["ninguna", "app_ninguna"], "nota": "suelto: es el «no» de un borrador o una propuesta"}
+{"q": "hazle bideollamada a la ana", "e": ["ninguna", "app_videollamar"], "nota": "dictado: b por v"}
+{"q": "llama mi mama", "e": ["ninguna", "app_llamar"], "nota": "dictado: sin «a» y sin tildes"}
+{"q": "q recordatorios tengo", "e": ["ninguna", "app_listar_recordatorios"], "nota": "dictado: «q»"}
+{"q": "ayer hicimos videollamada con la abuela", "e": ["ninguna", "app_ninguna"], "nota": "cuenta, no ordena"}

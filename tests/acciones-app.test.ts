@@ -388,8 +388,10 @@ test('Laya «comando»: lo que las reglas no reconocen y Laya decide claro, se h
     // Laya lento: no se espera más del tope (la voz no espera).
     responder = () => ({ ...respuesta('callar', 0.95), demora: 1500 });
     const t0 = Date.now();
-    assert.equal(await ordenRapida('shhh ya por favor ahorita', { esperaLayaMs: 120 }), null);
+    assert.equal(await ordenRapida('bájale tantito ahí', { esperaLayaMs: 120 }), null);
     assert.ok(Date.now() - t0 < 1000, 'soltó a tiempo');
+    // «shhh ya por favor ahorita»: sin la cortesía del final queda «shhh», que las reglas ya conocen.
+    assert.deepEqual(await ordenRapida('shhh ya por favor ahorita', { esperaLayaMs: 120 }), { accion: { tipo: 'silencio', valor: true }, decir: 'Va.', via: 'reglas' });
 
     // Laya roto: tampoco.
     _reiniciarLaya();

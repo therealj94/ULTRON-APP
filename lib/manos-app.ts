@@ -347,28 +347,53 @@ export function palabras(texto: string): { q: string; orig: string[] } {
       q.push(/^[ap]\.m$/.test(p) ? p[0] + 'm' : p);
     }
   }
-  const vocativo = /^(oye|hey|ey|aura|au-ra|claudio|guardian|porfa|please|ok|okay|mira)$/;
-  for (let i = 0; i < 3 && q.length && vocativo.test(q[0]); i++) {
-    q.shift();
-    orig.shift();
-  }
-  if (q[0] === 'au' && q[1] === 'ra') {
-    q.splice(0, 2);
-    orig.splice(0, 2);
-  }
-  if (q.length >= 2 && q[0] === 'por' && q[1] === 'favor') {
-    q.splice(0, 2);
-    orig.splice(0, 2);
-  }
-  while (q.length && /^(porfa|please|pues|ya)$/.test(q[q.length - 1])) {
-    q.pop();
-    orig.pop();
-  }
-  if (q.length >= 2 && q[q.length - 2] === 'por' && q[q.length - 1] === 'favor') {
-    q.splice(-2);
-    orig.splice(-2);
-  }
+  limpiarDicho(q, orig);
   return { q: q.join(' '), orig };
+}
+
+/*
+ * Lo que la gente dice ALREDEDOR de la orden, al principio o al final: el vocativo («AURA», «mi
+ * reina»), muletillas («mire», «fíjate que», «este…», «bueno») y cortesía («porfa», «porfis», «gracias»,
+ * «si puedes», «ahorita»). Sin quitarlas, «Mire, llama a mi mamá porfis» no casaba con nada.
+ */
+const INICIO = [
+  'oye', 'hey', 'ey', 'aura', 'au ra', 'au-ra', 'claudio', 'guardian', 'porfa', 'por favor', 'please', 'ok', 'okay', 'ya', 'a ver', 'mira', 'mire',
+  'fijate que', 'fijate q', 'fijese que', 'bueno', 'este', 'mi reina', 'mi amor', 'mi vida', 'eh', 'ah', 'vaya', 'hola',
+].map((m) => m.split(' '));
+const FIN = ['por favor', 'porfa', 'porfis', 'please', 'ya', 'ahora', 'ahorita', 'pues', 'dale', 'gracias', 'si puedes', 'rapido', 'mi reina', 'aura'].map((m) => m.split(' '));
+
+/**
+ * Deja la orden sola (en `q` y, alineado, en `orig`): sin muletillas al principio ni al final, con «q»
+ * como «que» y sin la palabra repetida que deja el dictado («los los», «switch switch»).
+ */
+export function limpiarDicho(q: string[], orig: string[] = q.slice()): void {
+  for (let i = 0; i < q.length; i++) if (q[i] === 'q') q[i] = 'que';
+  // Primero las muletillas («fíjate que ¿qué me dijo…» no pierde su «qué»), después lo repetido.
+  quitarMuletillas(q, orig);
+  for (let i = q.length - 1; i > 0; i--) {
+    if (q[i] === q[i - 1] && !/^\d+$/.test(q[i])) {
+      q.splice(i, 1);
+      orig.splice(i, 1);
+    }
+  }
+  quitarMuletillas(q, orig);
+}
+
+function quitarMuletillas(q: string[], orig: string[]): void {
+  const empieza = (m: string[]) => m.length < q.length && m.every((w, j) => q[j] === w);
+  const termina = (m: string[]) => m.length < q.length && m.every((w, j) => q[q.length - m.length + j] === w);
+  for (let vueltas = 0; vueltas < 6; vueltas++) {
+    const m = INICIO.find(empieza);
+    if (!m) break;
+    q.splice(0, m.length);
+    orig.splice(0, m.length);
+  }
+  for (let vueltas = 0; vueltas < 4; vueltas++) {
+    const m = FIN.find(termina);
+    if (!m) break;
+    q.splice(-m.length);
+    orig.splice(-m.length);
+  }
 }
 
 /** Las palabras originales que corresponden a un grupo de la expresión (por su posición en `q`). */
@@ -404,10 +429,14 @@ type OpcionesMano = {
 
 const HORA = String.raw`(?<h>\d{1,2}|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?:(?: y)? (?<m>\d{2}|media|cuarto))?(?: (?<t>de la manana|de la tarde|de la noche|de la madrugada|del mediodia|am|pm|a m|p m))?`;
 const HORA_EN = String.raw`(?<h>\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)(?: (?<m>\d{2}))?(?: (?<t>am|pm|a m|p m|in the morning|in the afternoon|in the evening|at night))?`;
-const PEDIR_RECORDAR = String.raw`(?:recuerdame|recordame|recuerdeme|ponme un recordatorio(?: para)?|pon un recordatorio(?: para)?|avisame)`;
+const PEDIR_RECORDAR = String.raw`(?:recuerdame|recordame|recuerdeme|recuerdamelo|ponme un recordatorio(?: para)?|pon un recordatorio(?: para)?|avisame|hazme acordar|haceme acordar|no me dejes olvidar)`;
 /** «llámame…» / «márcame…» + «para recordarme…»: el recordatorio que suena como llamada de AURA. */
-const PEDIR_LLAMADA = String.raw`(?:llamame|marcame|hazme una llamada|haceme una llamada|timbrame)`;
-const PARA_RECORDAR = String.raw`(?:para |y )?(?:recordarme|recuerdame|que me recuerdes|acordarme de|que me acuerde de|que no se me olvide|que no se me pase)(?: que| de)?`;
+const PEDIR_LLAMADA = String.raw`(?:llamame|marcame|hazme una llamada|haceme una llamada|dame una llamada|echame una llamada|timbrame)`;
+/** «para recordarme…», «y recuérdame…», o solo «para…» / «que…» («llámame a las 5 que tengo que ir al banco»). */
+const PARA_RECORDAR = String.raw`(?:(?:para |y )?(?:recordarme|recuerdame|que me recuerdes|acordarme de|que me acuerde de|que no se me olvide|que no se me pase)(?: que| de)?|para|que)`;
+/** Ciudades y lugares de Honduras: «vivo en san pedro sula» sin mayúsculas (el dictado no las pone). */
+const LUGARES_HN = /^(tegucigalpa|tegus|comayaguela|san pedro sula|sps|la ceiba|choloma|el progreso|comayagua|choluteca|danli|juticalpa|puerto cortes|siguatepeque|santa rosa de copan|roatan|tela|olanchito|catacamas|la lima|villanueva|la paz|santa barbara|gracias|copan|trujillo|yoro|nacaome|la esperanza|ocotepeque|honduras|estados unidos|espana|mexico|guatemala|el salvador|nicaragua|costa rica)$/;
+const MESES_NUM: Record<string, number> = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8, septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
 const DENTRO = String.raw`(?:en|dentro de) (?<n>\d+|un|una|media|dos|tres|cuatro|cinco|diez|quince|veinte|treinta|cuarenta|cincuenta) (?<u>minutos?|horas?|hora)`;
 
 /**
@@ -440,10 +469,17 @@ export function manoPorReglas(texto: string, o: OpcionesMano): ResultadoMano | n
   }
   // Qué recordatorios tiene y cancelar uno: con lo que el teléfono contó en su contexto.
   if (puede('recordatorio') && ctx.recordatorios && n <= 12) {
-    if (/^(?:(?:que|cuales) recordatorios tengo(?: pendientes)?|tengo recordatorios(?: pendientes)?|mis recordatorios|(?:dime|leeme|lee|muestrame|ensename) (?:mis|los) recordatorios|recordatorios pendientes|que me tienes que recordar|what reminders do i have|my reminders|list (?:my )?reminders)$/.test(q)) {
+    if (/^(?:(?:que|cuales|cuantos) recordatorios tengo(?: pendientes)?|tengo recordatorios(?: pendientes)?|mis recordatorios|(?:dime|leeme|lee|muestrame|ensename|repasame) (?:mis|los) recordatorios|recordatorios pendientes|que me tienes que recordar|para cuando tengo recordatorios|que avisos me pusiste|que recordatorios me pusiste|tengo algo pendiente que me recuerdes|what reminders do i have|my reminders|list (?:my )?reminders)$/.test(q)) {
       return { tipo: 'decir', decir: listaDeRecordatorios(ctx.recordatorios, ahora, o.idioma) };
     }
-    const c = /^(?:cancela|quita|borra|elimina|anula|cancel|delete|remove)(?:me|lo|la)? (?:el|la|mi|the|my) (?:(?:recordatorio|aviso|reminder|llamada de recordatorio)(?: (?:de|del|para|que|of|for|at|a))?|de|del)(?: (?<resto>.+))?$/.exec(q);
+    const explicito = /^(?:cancela|quita|borra|elimina|anula|cancel|delete|remove)(?:me|lo|la)? (?:el|la|mi|the|my) (?:(?:recordatorio|aviso|reminder|llamada de recordatorio|llamada)(?: (?:de|del|para|que|of|for|at|a))?|de|del)(?: (?<resto>.+))?$/.exec(q);
+    // «ya no me recuerdes la pastilla», «no me llames a las 5»: solo si calza con un recordatorio puesto
+    // («ya no me avises de Beto» es otra cosa: silenciar un chat).
+    const indirecto = explicito
+      ? null
+      : /^(?:ya )?no me (?:recuerdes|llames)(?: (?:de|lo de|para))? (?<resto>.+?)(?: (?:cancelalo|quitalo|borralo))?$/.exec(q) ||
+        /^ya no (?:necesito|quiero) el (?:recordatorio|aviso) (?:de |del |para )?(?<resto>.+)$/.exec(q);
+    const c = explicito || indirecto;
     if (c) {
       const hallados = buscarRecordatorios(ctx.recordatorios, c.groups?.resto || '', ahora);
       if (hallados.length === 1) {
@@ -451,34 +487,44 @@ export function manoPorReglas(texto: string, o: OpcionesMano): ResultadoMano | n
         const p: Propuesta = { tipo: 'cancelar_recordatorio', id: r.id, texto: r.texto, cuando: r.cuando, llamada: r.llamada };
         return { tipo: 'propuesta', propuesta: p, decir: preguntaDePropuesta(p, o.idioma, ahora) };
       }
-      if (!hallados.length) return { tipo: 'decir', decir: en ? "I can't find that reminder." : 'No encuentro ese recordatorio.' };
-      return null; // dos que calzan: que pregunte el cerebro cuál
+      if (!hallados.length && explicito) return { tipo: 'decir', decir: en ? "I can't find that reminder." : 'No encuentro ese recordatorio.' };
+      return null; // dos que calzan (o un «no me…» que no calza): que pregunte el cerebro
     }
   }
   if (n > 9) return null;
 
   if (puede('llamar')) {
     const video =
-      /^(?:(?:haz(?:me|le)?|hace(?:me|le)?|inicia|empieza|pon(?:me)?) (?:una )?)?(?:video ?llamada|videollamada|video call|videocall)(?: (?:a|al|con|with|to))? (?<con>.+)$/d.exec(q) ||
+      /^(?:(?:haz(?:me|le)?|hace(?:me|le)?|inicia|empieza|pon(?:me)?) (?:una )?)?(?:video ?llamada|videollamada|bideo ?llamada|bideollamada|video call|videocall)(?: (?:a|al|con|with|to))? (?<con>.+)$/d.exec(q) ||
       /^(?:video ?llama(?:le)?|videollama(?:le)?|llama(?:le)?(?: por| en) video(?: a| al)?|video call) (?:a |al )?(?<con>.+)$/d.exec(q);
-    const voz = video ? null : /^(?:llama(?:le)?|marca(?:le)?|haz(?:me|le)? una llamada|hace(?:me|le)? una llamada|comunicame|call|phone|ring)(?: (?:a|al|con|to))? (?<con>.+)$/d.exec(q);
-    const m = video || voz;
+    const video2 = video ? null : /^(?:llama(?:le)?|marca(?:le)?) (?:a |al )?(?<con>.+?) (?:por|en|con) video$/d.exec(q) || /^(?:ponme en video con|llamada con video a|conectame por video con|quiero videollamada con) (?<con>.+)$/d.exec(q);
+    const voz =
+      video || video2
+        ? null
+        : /^(?:llama(?:le)?|marca(?:le)?|timbra(?:le)?|haz(?:me|le)? una llamada|hace(?:me|le)? una llamada|dale una llamada|echale una llamada|comunicame|ponme en llamada|call|phone|ring)(?: al (?:celular|cel|telefono))?(?: (?:a|al|con|to))? (?<con>.+)$/d.exec(q) ||
+          /^llamame (?:a|al) (?<con>.+)$/d.exec(q) ||
+          /^quiero hablar con (?<con>.+?) (?:llamale|marcale|llamala|marcala)$/d.exec(q);
+    const m = video || video2 || voz;
     if (m?.groups?.con) {
       const c = uno(m.groups.con);
       if (!c) return null;
-      const p: Propuesta = { tipo: 'llamar', con: c.correo, nombre: c.nombre, video: !!video };
+      const p: Propuesta = { tipo: 'llamar', con: c.correo, nombre: c.nombre, video: !!(video || video2) };
       return { tipo: 'propuesta', propuesta: p, decir: preguntaDePropuesta(p, o.idioma, ahora) };
     }
   }
 
   if (puede('leer')) {
-    const todo = /^(?:(?:lee(?:me)?|leer) (?:mis|los) mensajes(?: nuevos| sin leer)?|que mensajes tengo|tengo mensajes(?: nuevos)?|hay mensajes(?: nuevos)?|me escribio alguien|alguien me escribio|read (?:me )?my messages|any new messages|do i have (?:any )?(?:new )?messages)$/.test(q);
+    const todo = /^(?:(?:lee(?:me)?|leer) (?:mis|los) mensajes(?: nuevos| sin leer)?|leeme lo nuevo|que mensajes tengo|tengo mensajes(?: nuevos| sin leer)?|hay mensajes(?: nuevos)?|me escribio alguien|alguien me escribio|read (?:me )?my messages|any new messages|do i have (?:any )?(?:new )?messages)$/.test(q);
     if (todo) return { tipo: 'accion', accion: { tipo: 'leer' }, decir: en ? 'Let me see…' : 'A ver…' };
     const de =
       /^(?:que|q) (?:me )?(?:dijo|escribio|mando|puso|contesto|respondio) (?<de>.+)$/d.exec(q) ||
       /^(?:lee(?:me)?|leer) (?:el|los) (?:ultimos? )?mensajes? (?:de|del) (?<de>.+)$/d.exec(q) ||
       /^(?:lee(?:me)?) lo (?:ultimo )?(?:de|que (?:me )?(?:dijo|escribio|mando)) (?<de>.+)$/d.exec(q) ||
       /^(?:tengo|hay) mensajes? (?:nuevos? )?de (?<de>.+)$/d.exec(q) ||
+      /^(?:me escribio|me mando algo|me contesto) (?<de>.+)$/d.exec(q) ||
+      /^(?:lee(?:me)?) (?:el chat|la conversacion|los mensajes) (?:de|con) (?<de>.+)$/d.exec(q) ||
+      /^(?:lee(?:me)?) lo que me (?:mando|escribio|dijo) (?<de>.+)$/d.exec(q) ||
+      /^(?:que|q) dice el (?:ultimo )?mensaje de (?<de>.+)$/d.exec(q) ||
       /^what did (?<de>.+) (?:say|write|send)(?: me)?$/d.exec(q) ||
       /^read (?:me )?(?:the )?(?:last )?messages? from (?<de>.+)$/d.exec(q);
     if (de?.groups?.de) {
@@ -490,8 +536,10 @@ export function manoPorReglas(texto: string, o: OpcionesMano): ResultadoMano | n
 
   if (puede('buscar')) {
     const m =
-      /^(?:busca(?:me)?|encuentra(?:me)?|search(?: for)?) (?:en (?:los |mis )?(?:chats?|mensajes|conversaciones)|in (?:my )?(?:chats|messages)) (?:el mensaje |los mensajes |donde dice |que diga |lo de |sobre |acerca de )?(?<q>.+)$/d.exec(q) ||
-      /^(?:busca(?:me)?|encuentra(?:me)?) (?:el|los) mensajes? (?:sobre|que dice|que diga|donde dice|con la palabra|acerca de) (?<q>.+)$/d.exec(q);
+      /^(?:busca(?:me)?|encuentra(?:me)?|search(?: for)?) (?:en (?:los |las |mis )?(?:chats?|mensajes|conversaciones)|in (?:my )?(?:chats|messages)) (?:el mensaje |los mensajes |donde dice |que diga |lo de |sobre |acerca de )?(?<q>.+)$/d.exec(q) ||
+      /^(?:busca(?:me)?|encuentra(?:me)?) (?:el|los) mensajes? (?:sobre|que dice|que diga|donde dice|con la palabra|acerca de) (?<q>.+)$/d.exec(q) ||
+      /^(?:busca(?:me)?|encuentra(?:me)?) en el chat (?<q>.+)$/d.exec(q) ||
+      /^(?:donde|en que chat|quien) (?:me )?(?:mandaron|mando|pasaron|paso|enviaron|envio|dijeron|esta) (?<q>.+)$/d.exec(q);
     if (m?.groups?.q) {
       const busca = linea(tramo(q, orig, m.indices?.groups?.q), MAX_BUSQUEDA);
       if (busca.length >= 2) return { tipo: 'accion', accion: { tipo: 'buscar', q: busca }, decir: en ? 'Let me look.' : 'Déjame buscar.' };
@@ -499,7 +547,10 @@ export function manoPorReglas(texto: string, o: OpcionesMano): ResultadoMano | n
   }
 
   if (puede('idioma')) {
-    const m = /^(?:habla(?:me)?|contestame|responde(?:me)?|cambia(?:te|lo)?|pasate|ponte|pon(?:lo|la)?|switch|change|talk|speak)(?: (?:el idioma|al idioma|de idioma|the language|language))?(?: (?:a|al|en|in|to))? (?<l>ingles|espanol|english|spanish|castellano)$/.exec(q);
+    const m =
+      /^(?:habla(?:me)?|contestame|responde(?:me)?|cambia(?:te|lo)?|pasate|ponte|pon(?:lo|la)?|volvamos|regresa|switch|change|talk(?: to me)?|speak)(?: (?:el idioma|al idioma|de idioma|the language|language))?(?: (?:a|al|en|in|to))? (?<l>ingles|espanol|english|spanish|castellano)$/.exec(q) ||
+      /^(?:de ahora en adelante|desde ahora|ya) en (?<l>ingles|espanol|castellano)$/.exec(q) ||
+      /^(?<l>english|spanish|ingles|espanol) please$/.exec(q);
     if (m?.groups?.l) {
       const valor: IdiomaApp = /ingles|english/.test(m.groups.l) ? 'en' : 'es';
       return { tipo: 'accion', accion: { tipo: 'idioma', valor }, decir: valor === 'en' ? "Sure, I'll speak English from now on." : 'Listo, ahora te hablo en español.' };
@@ -522,11 +573,19 @@ export function manoPorReglas(texto: string, o: OpcionesMano): ResultadoMano | n
     const vive = /^(?:ahora )?(?:vivo|resido|me mude|me cambie|i live|i moved) (?:en|a|para|in|to) (?<v>.+)$/d.exec(q);
     if (vive?.groups?.v) {
       const valor = tramo(q, orig, vive.indices?.groups?.v);
-      // Una ciudad viene con mayúscula («San Pedro Sula»); «vivo en paz» no es un lugar.
-      if (valor.split(' ').length <= 5 && /^\p{Lu}/u.test(valor)) {
-        const v = linea(valor, MAX_CAMPO);
+      // Una ciudad viene con mayúscula («San Pedro Sula») o es un lugar conocido; «vivo en paz» no es un lugar.
+      if (valor.split(' ').length <= 5 && (/^\p{Lu}/u.test(valor) || LUGARES_HN.test(vive.groups.v))) {
+        const v = linea(capitalizar(valor), MAX_CAMPO);
         return { tipo: 'accion', accion: { tipo: 'perfil', campo: 'vive', valor: v }, decir: en ? `Got it: you live in ${v}.` : `Anotado: vives en ${v}.` };
       }
+    }
+    // «mi cumpleaños es el 14 de marzo» → cumple 03-14 (solo mes y día).
+    const cumple = /^(?:mi cumpleanos es|cumplo anos|mi cumple es|naci)(?: el)? (?<d>\d{1,2}) de (?<m>[a-z]+)$/.exec(q);
+    if (cumple?.groups) {
+      const mes = MESES_NUM[cumple.groups.m];
+      const dia = Number(cumple.groups.d);
+      const valor = mes ? cumpleValido(`${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`) : null;
+      if (valor) return { tipo: 'accion', accion: { tipo: 'perfil', campo: 'cumple', valor }, decir: en ? 'Got it, I wrote down your birthday.' : 'Anotado tu cumpleaños.' };
     }
   }
 
