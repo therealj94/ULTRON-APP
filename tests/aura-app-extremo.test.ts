@@ -89,7 +89,9 @@ const puerto = (s: http.Server) => (s.address() as AddressInfo).port;
 
 const PORT = 7960 + Math.floor(Math.random() * 30);
 const BASE = `http://127.0.0.1:${PORT}`;
-const proc: ChildProcess = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), path.join(RAIZ, 'server.ts')], {
+// La red de afuera lenta, como en el CI (tests/red-lenta.ts): lo que espere a internet antes de la
+// primera palabra se nota aquí igual que allá, y ninguna petición sale de la máquina.
+const proc: ChildProcess = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), '--import', path.join(RAIZ, 'tests', 'red-lenta.ts'), path.join(RAIZ, 'server.ts')], {
   cwd: tmp,
   env: {
     // Solo lo que hace falta: nada de las llaves del entorno de quien corre las pruebas.
@@ -109,6 +111,7 @@ const proc: ChildProcess = spawn(process.execPath, ['--import', import.meta.reso
     ULTRON_LAYA_URL: `http://127.0.0.1:${puerto(laya)}`,
     ULTRON_LAYA_CLAVE: 'laya-falsa',
     TSX_TSCONFIG_PATH: path.join(RAIZ, 'tsconfig.json'),
+    RED_LENTA_MS: '2500',
   },
   stdio: ['ignore', 'ignore', 'pipe'],
   detached: true,
@@ -140,9 +143,16 @@ for (let i = 0; i < 240 && !listo; i++) {
 
 const yo = emitirSesion({ correo: 'majo.prueba@ordenglobal.org', nombre: 'María José', rol: 'Junta' });
 const h = (token = yo.token) => ({ 'content-type': 'application/json', 'x-ultron-sesion': token });
-const turno = async (message: string, extra: Record<string, unknown> = {}) => (await fetch(`${BASE}/api/turno`, { method: 'POST', headers: h(), body: JSON.stringify({ message, ...extra }) })).json() as Promise<any>;
-async function turnoStream(message: string) {
-  const r = await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: h(), body: JSON.stringify({ message }) });
+/**
+ * Las cabeceras de un turno: por omisión, como lo manda la app 5.0 (`x-aura-origen: app`, y el id de
+ * su aparato si se da). `web: true` es la web de la mesa (sin marca de origen).
+ */
+type Desde = { web?: boolean; aparato?: string };
+const hTurno = (o: Desde = {}) => ({ ...h(), ...(o.web ? {} : { 'x-aura-origen': 'app' }), ...(o.aparato ? { 'x-aura-aparato': o.aparato } : {}) });
+const turno = async (message: string, extra: Record<string, unknown> = {}, o: Desde = {}) =>
+  (await fetch(`${BASE}/api/turno`, { method: 'POST', headers: hTurno(o), body: JSON.stringify({ message, ...extra }) })).json() as Promise<any>;
+async function turnoStream(message: string, o: Desde = {}) {
+  const r = await fetch(`${BASE}/api/turno/stream`, { method: 'POST', headers: hTurno(o), body: JSON.stringify({ message }) });
   return (await r.text())
     .split('\n\n')
     .map((b) => ({ ev: /^event: (\w+)/m.exec(b)?.[1], data: /^data: (.*)$/m.exec(b)?.[1] }))
@@ -188,10 +198,10 @@ async function voz(pase: string, messages: unknown[], o: { cortarTras?: number }
 function paseDe(s = yo, avatar: 'ojos' | 'aura' | 'claudio' = 'aura', idioma: 'es' | 'en' = 'es') {
   return emitirPase(s, avatar, idioma).pase;
 }
-/** El canal de acciones de un teléfono. */
-async function canal(token = yo.token) {
+/** El canal de acciones de un teléfono (con su id de aparato, si se da). */
+async function canal(token = yo.token, aparato?: string) {
   const ctrl = new AbortController();
-  const r = await fetch(`${BASE}/api/app/acciones`, { headers: h(token), signal: ctrl.signal });
+  const r = await fetch(`${BASE}/api/app/acciones`, { headers: { ...h(token), ...(aparato ? { 'x-aura-aparato': aparato } : {}) }, signal: ctrl.signal });
   let texto = '';
   const leyendo = (async () => {
     try {
@@ -203,6 +213,7 @@ async function canal(token = yo.token) {
   await new Promise((r) => setTimeout(r, 100));
   return {
     acciones: () => [...texto.matchAll(/^data: (\{.*\})$/gm)].map((m) => JSON.parse(m[1]).accion),
+    eventos: () => [...texto.matchAll(/^data: (\{.*\})$/gm)].map((m) => JSON.parse(m[1]) as { id: string; accion: any }),
     cerrar: async () => {
       ctrl.abort();
       await leyendo;
@@ -272,14 +283,17 @@ test('acciones: el camino rápido va al canal del teléfono sin el 27B; «escrí
 
     alNodo.length = 0;
     const atras = await turno('vete atrás');
-    assert.deepEqual(atras.acciones, [{ tipo: 'atras' }]);
+    // La respuesta trae el evento con el MISMO id que va por el canal: la app lo hace una sola vez.
+    assert.equal(atras.acciones.length, 1);
+    assert.deepEqual(atras.acciones[0].accion, { tipo: 'atras' });
+    assert.match(atras.acciones[0].id, /^[A-Za-z0-9_-]{8}$/);
     assert.equal(atras.via, 'app-reglas');
     assert.equal(alNodo.length, 0, 'sin el modelo grande');
-    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'atras')));
+    assert.ok(await espera(() => tel.eventos().some((e) => e.id === atras.acciones[0].id && e.accion.tipo === 'atras')), 'el mismo id por el canal');
 
     // Lo que las reglas no conocen y Laya «comando» decide claro.
     const calla = await turno('ya no me hables tanto');
-    assert.deepEqual(calla.acciones, [{ tipo: 'silencio', valor: true }]);
+    assert.deepEqual(calla.acciones.map((e: any) => e.accion), [{ tipo: 'silencio', valor: true }]);
     assert.equal(calla.via, 'app-laya');
     assert.ok(alLaya.some((l) => l.startsWith('/v1/comando ')));
 
@@ -295,9 +309,9 @@ test('acciones: el camino rápido va al canal del teléfono sin el 27B; «escrí
     assert.ok(!/ACCION_APP/.test(texto), texto);
     const done = ev.find((e) => e.ev === 'done')!.data;
     assert.equal(done.reply, 'Le escribo a Beto: “Llego tarde”. ¿Lo envío?');
-    assert.deepEqual(done.acciones, [{ tipo: 'redactar', para: 'beto@x.com', texto: 'Llego tarde' }]);
+    assert.deepEqual(done.acciones.map((e: any) => e.accion), [{ tipo: 'redactar', para: 'beto@x.com', texto: 'Llego tarde' }]);
     assert.match(alNodo.at(-1)!.system, /CONTACTOS \(.*\): Beto Pérez, Mamá\./, 'el cerebro recibe el contexto del teléfono');
-    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'redactar')));
+    assert.ok(await espera(() => tel.eventos().some((e) => e.id === done.acciones[0].id)), 'el done y el canal llevan el mismo id');
 
     // Un «enviar» que el cerebro escriba sin que la persona lo confirme no sale.
     contestar = () => 'Listo.\nACCION_APP: {"tipo":"enviar","para":"Beto"}';
@@ -310,9 +324,105 @@ test('acciones: el camino rápido va al canal del teléfono sin el 27B; «escrí
     alNodo.length = 0;
     const si = await turno('sí');
     assert.equal(si.reply, '¡Listo, enviado!');
-    assert.deepEqual(si.acciones, [{ tipo: 'enviar', para: 'beto@x.com' }]);
+    assert.deepEqual(si.acciones.map((e: any) => e.accion), [{ tipo: 'enviar', para: 'beto@x.com' }]);
     assert.equal(alNodo.length, 0);
     assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'enviar')));
+  } finally {
+    await tel.cerrar();
+  }
+});
+
+test('el «sí» solo en el turno siguiente; «y mándalo» redacta y pregunta; ok/dale no envían', { skip: !listo }, async () => {
+  const tel = await canal();
+  const enviados = () => tel.acciones().filter((a) => a.tipo === 'enviar').length;
+  try {
+    const redactar = '[EMO: neutral] Le escribo a Beto: “Llego tarde”. ¿Lo envío?\nACCION_APP: {"tipo":"redactar","para":"Beto","texto":"Llego tarde"}';
+    // Borrador, una pregunta cualquiera en medio, y después «sí»: no se envía (ya nadie hablaba de eso).
+    contestar = () => redactar;
+    await turno('escríbele a Beto que llego tarde');
+    contestar = () => '[EMO: neutral] El oro va bien.';
+    await turno('explícame cómo va el proyecto de la planta de beneficio este trimestre');
+    const antes = enviados();
+    contestar = () => '[EMO: neutral] ¿Qué cosa?\nACCION_APP: {"tipo":"enviar","para":"Beto"}';
+    const tarde = await turno('sí');
+    assert.deepEqual(tarde.acciones, [], 'un turno de por medio suelta el borrador');
+    // «ok» / «dale» al borrador del turno anterior: tampoco.
+    contestar = () => redactar;
+    await turno('escríbele a Beto que llego tarde');
+    contestar = () => '[EMO: neutral] ¿Lo envío?\nACCION_APP: {"tipo":"enviar","para":"Beto"}';
+    const dale = await turno('dale');
+    assert.deepEqual(dale.acciones, [], '«dale» no es un «sí» para enviar');
+    // «escríbele… y mándalo»: el cerebro pide redactar Y enviar en la misma respuesta → solo redacta.
+    contestar = () =>
+      '[EMO: neutral] Le escribo a Mamá: “Ya voy”. ¿Lo envío?\nACCION_APP: {"tipo":"redactar","para":"Mamá","texto":"Ya voy"}\nACCION_APP: {"tipo":"enviar","para":"Mamá"}';
+    const junto = await turno('escríbele a mi mamá que ya voy y mándalo');
+    assert.deepEqual(junto.acciones.map((e: any) => e.accion.tipo), ['redactar']);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(enviados(), antes, 'nada se envió');
+  } finally {
+    await tel.cerrar();
+  }
+});
+
+test('las acciones van solo al aparato que hizo el turno; la web de la mesa no mueve el teléfono', { skip: !listo }, async () => {
+  const telA = await canal(yo.token, 'tel-A');
+  const telB = await canal(yo.token, 'tel-B');
+  try {
+    const r = await turno('abre ajustes', {}, { aparato: 'tel-A' });
+    assert.deepEqual(r.acciones.map((e: any) => e.accion), [{ tipo: 'abrir', pantalla: 'ajustes' }]);
+    assert.ok(await espera(() => telA.eventos().some((e) => e.id === r.acciones[0].id)));
+    await new Promise((res) => setTimeout(res, 100));
+    assert.ok(!telB.acciones().some((a) => a.tipo === 'abrir'), 'el otro teléfono no la recibe');
+
+    // La voz abierta desde el teléfono B manda sus acciones solo a B.
+    const pase = emitirPase(yo, 'aura', 'es', { aparato: 'tel-B' }).pase;
+    assert.equal((await voz(pase, [{ role: 'user', content: 'modo claro' }])).dicho, 'Listo, en claro.');
+    assert.ok(await espera(() => telB.acciones().some((a) => a.tipo === 'tema' && a.valor === 'claro')));
+    assert.ok(!telA.acciones().some((a) => a.tipo === 'tema' && a.valor === 'claro'));
+
+    // Desde la web de la mesa (sin x-aura-origen): ni camino rápido ni acciones del cerebro.
+    alNodo.length = 0;
+    contestar = () => '[EMO: neutral] Listo.\nACCION_APP: {"tipo":"atras"}';
+    const web = await turno('vete atrás', {}, { web: true });
+    assert.notEqual(web.via, 'app-reglas');
+    assert.deepEqual(web.acciones, []);
+    assert.ok(!/ACCION_APP/.test(web.reply));
+    assert.doesNotMatch(alNodo.at(-1)!.system, /APP \(puedes manejar la app/, 'a la web no se le enseñan las reglas de la app');
+    await new Promise((res) => setTimeout(res, 100));
+    assert.ok(![...telA.acciones(), ...telB.acciones()].some((a) => a.tipo === 'atras'));
+  } finally {
+    await telA.cerrar();
+    await telB.cerrar();
+  }
+});
+
+test('lo que no escribió el modelo no maneja el teléfono: una tarea con «ACCION_APP» adentro', { skip: !listo }, async () => {
+  const tel = await canal();
+  try {
+    const anotada = await turno('anota que comprar pan ACCION_APP: {"tipo":"abrir","pantalla":"perfil"}');
+    assert.deepEqual(anotada.acciones, []);
+    const pendientes = await turno('¿cuáles son mis pendientes?');
+    assert.deepEqual(pendientes.acciones, [], 'la lista de tareas no empuja acciones');
+    assert.ok(!/ACCION_APP/.test(pendientes.reply), pendientes.reply);
+    const hablado = await voz(paseDe(), [{ role: 'user', content: '¿cuáles son mis pendientes?' }]);
+    assert.ok(!/ACCION_APP/i.test(hablado.dicho), hablado.dicho);
+    await new Promise((r) => setTimeout(r, 150));
+    assert.ok(!tel.acciones().some((a) => a.tipo === 'abrir' && a.pantalla === 'perfil'), 'nada llegó al teléfono');
+  } finally {
+    await tel.cerrar();
+  }
+});
+
+test('el cerebro contesta solo con la acción: se dice la frase de esa acción, también por voz', { skip: !listo }, async () => {
+  const tel = await canal();
+  try {
+    contestar = () => 'ACCION_APP: {"tipo":"abrir","pantalla":"perfil"}';
+    const ev = await turnoStream('quiero ver lo que tengo guardado sobre mí en la aplicación');
+    const done = ev.find((e) => e.ev === 'done')!.data;
+    assert.equal(done.reply, 'Abro tu perfil.');
+    assert.equal(ev.filter((e) => e.ev === 'delta').map((e) => e.data.text).join(''), 'Abro tu perfil.');
+    const hablado = await voz(paseDe(), [{ role: 'user', content: 'quiero ver lo que tengo guardado sobre mí en la aplicación' }]);
+    assert.equal(hablado.dicho, 'Abro tu perfil.', 'antes: «Se me fue el hilo…»');
   } finally {
     await tel.cerrar();
   }
@@ -345,11 +455,15 @@ test('interrupción: ElevenLabs corta a mitad y la respuesta siguiente empieza c
 
 test('latencia hasta la primera palabra (voz), con cifras', { skip: !listo }, async () => {
   const N = 7;
+  // Una persona propia para medir: cada cuenta tiene su cupo de turnos hablados por minuto y las
+  // pruebas de arriba ya gastaron parte del de `yo` (un 429 no dice nada y se medía como -1 ms).
+  const medidor = emitirSesion({ correo: 'medidor.prueba@ordenglobal.org', nombre: 'Medidor', rol: 'Junta' });
   const medir = async (nombre: string, fn: () => Promise<{ primeraMs: number; totalMs: number }>) => {
     const p: number[] = [];
     const t: number[] = [];
     for (let i = 0; i < N; i++) {
       const r = await fn();
+      assert.ok(r.primeraMs >= 0, `${nombre}: no dijo nada`);
       p.push(r.primeraMs);
       t.push(r.totalMs);
     }
@@ -360,22 +474,33 @@ test('latencia hasta la primera palabra (voz), con cifras', { skip: !listo }, as
   primerTokenMs = 250;
   pasoMs = 15;
   contestar = () => 'Mira, lo que pasa con la planta de beneficio este trimestre es que avanzó bastante, sobre todo en la parte eléctrica. Te cuento el detalle cuando quieras.';
-  const charla = await medir('charla «hola» (modelo chico)', () => voz(paseDe(), [{ role: 'user', content: 'hola' }]));
+  const charla = await medir('charla «hola» (modelo chico)', () => voz(paseDe(medidor), [{ role: 'user', content: 'hola' }]));
   const orden = await medir('orden de app «vete atrás» (camino rápido)', async () => {
-    const tel = await canal();
+    const tel = await canal(medidor.token);
     try {
-      return await voz(paseDe(), [{ role: 'user', content: 'vete atrás' }]);
+      return await voz(paseDe(medidor), [{ role: 'user', content: 'vete atrás' }]);
     } finally {
       await tel.cerrar();
     }
   });
-  const pregunta = await medir('pregunta al 27B (primer token del nodo a 250 ms, un trozo cada 15 ms)', () => voz(paseDe(), [{ role: 'user', content: 'explícame cómo va el proyecto de la planta de beneficio este trimestre' }]));
+  const pregunta = await medir('pregunta al 27B (primer token del nodo a 250 ms, un trozo cada 15 ms)', () => voz(paseDe(medidor), [{ role: 'user', content: 'explícame cómo va el proyecto de la planta de beneficio este trimestre' }]));
+  // Con la red de afuera lenta (tests/red-lenta.ts), un dato que va a internet (el spot del oro) no
+  // puede frenar la primera palabra: la voz sigue sin él tras TOPE_PASO_VOZ_MS.
+  // Otra persona: la de arriba ya gastó su cupo de turnos por minuto con las mediciones anteriores.
+  const otra = emitirSesion({ correo: 'otra.prueba@ordenglobal.org', nombre: 'Otra Persona', rol: 'Junta' });
+  const conDato = await medir('pregunta con un dato de internet «¿cómo va el oro?» (la red tarda 2,5 s)', async () => {
+    const r = await voz(paseDe(otra), [{ role: 'user', content: '¿cómo va el precio del oro esta semana en los mercados?' }]);
+    assert.equal(r.status, 200);
+    assert.ok(r.dicho.length > 20, r.dicho);
+    return r;
+  });
   primerTokenMs = 0;
   pasoMs = 4;
   // Holgado a propósito (máquinas de CI lentas): lo que se mira es el orden de magnitud.
   assert.ok(charla.primeraMs < 1500);
   assert.ok(orden.primeraMs < 1500);
   assert.ok(pregunta.primeraMs < 250 + 1500);
+  assert.ok(conDato.primeraMs < 250 + 1500, 'lo que espera a internet no frena la voz');
   // La primera frase larga sale en la coma, antes de que el 27B termine de escribir.
   assert.ok(pregunta.primeraMs < pregunta.totalMs - 100, 'la voz empieza antes de que termine la respuesta');
 });

@@ -113,7 +113,16 @@ export type DepsGenesis = {
    */
   sembrarPerfil?: (correo: string, g: { nombreGenesis: string; cumple: string | null; apodo: string }) => Promise<unknown>;
   fetch?: typeof fetch;
+  /** Lo más que la entrada espera a sembrar el perfil (ESPERA_SEMBRAR_MS; las pruebas lo acortan). */
+  esperaSembrarMs?: number;
 };
+
+/**
+ * Lo más que la entrada con Genesis espera a que se siembre el perfil. Sembrar lee y escribe S3 (hasta
+ * 12 s cada paso si S3 anda mal) y la persona esperaba todo eso para entrar. Pasado el tope, entra y el
+ * sembrado sigue en segundo plano.
+ */
+export const ESPERA_SEMBRAR_MS = 1500;
 
 const MENSAJE: Record<FalloPase['codigo'], string> = {
   SIN_GENESIS: 'El ingreso con Genesis ID no está configurado en este servidor.',
@@ -163,9 +172,12 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
     const s = d.emitirSesion({ correo, nombre, rol });
     console.log(`[genesis] ${v.gid} entró a AU-RA`);
     if (d.sembrarPerfil) {
-      await d
-        .sembrarPerfil(correo, { nombreGenesis: v.nombreCompleto, cumple: v.cumple, apodo: nombre })
+      const sembrado = Promise.resolve()
+        .then(() => d.sembrarPerfil!(correo, { nombreGenesis: v.nombreCompleto, cumple: v.cumple, apodo: nombre }))
         .catch((e: any) => console.warn('[genesis] no pude sembrar el perfil', String(e?.message || e).slice(0, 120)));
+      let reloj: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([sembrado, new Promise<void>((r) => (reloj = setTimeout(r, d.esperaSembrarMs ?? ESPERA_SEMBRAR_MS)))]);
+      clearTimeout(reloj);
     }
     return res.json({
       ok: true,

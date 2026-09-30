@@ -207,13 +207,17 @@ function escribirEnDisco(correo: string, p: Perfil) {
 }
 
 /**
- * El perfil de un correo, o null si todavía no tiene. Primero la caché, después el disco, después S3
- * (y lo que trae S3 se queda en disco y en caché). Nunca lanza.
+ * El perfil de un correo, distinguiendo «no tiene» (`{ ok: true, perfil: null }`) de «no se pudo
+ * leer» (`{ ok: false }`: S3 no contestó y ni la caché ni el disco lo tienen). Primero la caché,
+ * después el disco, después S3 (y lo que trae S3 se queda en disco y en caché). Nunca lanza.
+ *
+ * La diferencia importa al ESCRIBIR: antes un S3 caído se leía como «no tiene perfil», se creaba uno
+ * nuevo y se subía encima del de verdad (apodo, cumpleaños y encuesta perdidos tras un redespliegue).
  */
-export async function leerPerfil(correo: string): Promise<Perfil | null> {
+export async function leerPerfilSeguro(correo: string): Promise<{ ok: true; perfil: Perfil | null } | { ok: false }> {
   const c = correoNormal(correo);
-  if (!c) return null;
-  if (cache.has(c)) return cache.get(c) ?? null;
+  if (!c) return { ok: true, perfil: null };
+  if (cache.has(c)) return { ok: true, perfil: cache.get(c) ?? null };
   let p = leerDeDisco(c);
   if (!p && s3Listo()) {
     const r = await s3GetJson(claveS3(c)).catch(() => ({ ok: false, json: null }) as { ok: boolean; json: unknown });
@@ -222,11 +226,28 @@ export async function leerPerfil(correo: string): Promise<Perfil | null> {
       if (p) escribirEnDisco(c, p);
     } else if (!r.ok) {
       // S3 no contestó: no se guarda «no tiene perfil» en la caché, o no volvería a preguntar.
-      return null;
+      return { ok: false };
     }
   }
   cache.set(c, p);
-  return p;
+  return { ok: true, perfil: p };
+}
+
+/**
+ * El perfil de un correo, o null si no tiene o no se pudo leer (para LEER: el prompt, GET /api/perfil).
+ * Para escribir encima, leerPerfilSeguro.
+ */
+export async function leerPerfil(correo: string): Promise<Perfil | null> {
+  const r = await leerPerfilSeguro(correo);
+  return r.ok ? r.perfil : null;
+}
+
+/** No se pudo leer el perfil guardado (S3 caído): no se escribe encima de lo que no se vio. */
+export class PerfilNoDisponible extends Error {
+  constructor() {
+    super('No se pudo leer el perfil guardado.');
+    this.name = 'PerfilNoDisponible';
+  }
 }
 
 /** Lo que haya en caché, sin esperar a nada (para el camino más rápido de la voz). */
@@ -245,9 +266,14 @@ export async function guardarPerfil(correo: string, p: Perfil): Promise<{ durabl
   return { durable: r.ok };
 }
 
-/** Aplica cambios validados sobre lo que haya (o sobre un perfil nuevo) y lo guarda. */
+/**
+ * Aplica cambios validados sobre lo que haya (o sobre un perfil nuevo, si de verdad no tiene) y lo
+ * guarda. Si el guardado no se pudo leer, lanza PerfilNoDisponible y no escribe nada.
+ */
 export async function actualizarPerfil(correo: string, cambios: Cambios, base: { apodo?: string } = {}): Promise<{ perfil: Perfil; durable: boolean }> {
-  const previo = (await leerPerfil(correo)) || perfilInicial({ apodo: base.apodo });
+  const leido = await leerPerfilSeguro(correo);
+  if (!leido.ok) throw new PerfilNoDisponible();
+  const previo = leido.perfil || perfilInicial({ apodo: base.apodo });
   const perfil = aplicarCambios(previo, cambios);
   const { durable } = await guardarPerfil(correo, perfil);
   return { perfil, durable };
@@ -256,9 +282,13 @@ export async function actualizarPerfil(correo: string, cambios: Cambios, base: {
 /**
  * La primera entrada con Genesis ID: si la persona no tiene perfil, se crea con lo que compartió
  * Genesis (nombre y cumple). Si ya tenía, solo se completan los huecos: lo que ella escribió manda.
+ * Si el guardado no se pudo leer (S3 caído), no se escribe nada y devuelve null: la próxima entrada
+ * lo vuelve a intentar.
  */
-export async function sembrarDesdeGenesis(correo: string, g: { nombreGenesis?: string; cumple?: string; apodo?: string }): Promise<Perfil> {
-  const previo = await leerPerfil(correo);
+export async function sembrarDesdeGenesis(correo: string, g: { nombreGenesis?: string; cumple?: string; apodo?: string }): Promise<Perfil | null> {
+  const leido = await leerPerfilSeguro(correo);
+  if (!leido.ok) return null;
+  const previo = leido.perfil;
   if (!previo) {
     const p = perfilInicial(g);
     await guardarPerfil(correo, p);

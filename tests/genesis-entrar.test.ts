@@ -225,3 +225,20 @@ test('el cumple de Genesis: solo MM-DD válido (de una fecha entera se toma mes 
   assert.equal(cumpleDeGenesis(undefined), null);
   assert.equal(cumpleDeGenesis(314), null);
 });
+
+test('entrar no espera a que S3 termine de sembrar el perfil: pasado el tope entra y el sembrado sigue', async () => {
+  let terminado = false;
+  const m = await montar(['ana@prueba.local'], () => new Promise<void>((r) => setTimeout(() => ((terminado = true), r()), 8000).unref()));
+  try {
+    respuesta = valido({ perfil: { ...PERFIL, cumple: '03-14' } });
+    const t0 = Date.now();
+    const r = await m.entrar({ pase: 'PASE', verificador: VERIF });
+    const ms = Date.now() - t0;
+    assert.equal(r.status, 200);
+    assert.ok(r.body.token);
+    assert.ok(ms < 3000, `entró en ${ms} ms (antes esperaba al GET y al PUT de S3, hasta 12 s cada uno)`);
+    assert.equal(terminado, false, 'el sembrado sigue en segundo plano');
+  } finally {
+    await m.cerrar();
+  }
+});

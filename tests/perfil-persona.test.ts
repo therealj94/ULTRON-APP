@@ -22,6 +22,8 @@ const {
   perfilInicial,
   cumpleValido,
   leerPerfil,
+  leerPerfilSeguro,
+  PerfilNoDisponible,
   guardarPerfil,
   actualizarPerfil,
   sembrarDesdeGenesis,
@@ -194,4 +196,49 @@ test('lo que lee el cerebro: apodo, cumple (y felicitar ese día), dónde vive, 
   assert.equal(esSuCumple(bisiesto, new Date('2027-02-28T18:00:00Z')), true);
   assert.equal(esSuCumple(bisiesto, new Date('2028-02-28T18:00:00Z')), false);
   assert.equal(esSuCumple(bisiesto, new Date('2028-02-29T18:00:00Z')), true);
+});
+
+test('con S3 caído y sin copia local, NO se escribe encima: actualizar lanza y Genesis no siembra', async () => {
+  const cubo = new Map<string, string>();
+  let caido = false;
+  let puts = 0;
+  const fetchOriginal = globalThis.fetch;
+  globalThis.fetch = (async (url: any, init: any = {}) => {
+    const u = new URL(String(url));
+    if (!u.hostname.endsWith('.amazonaws.com')) return fetchOriginal(url, init);
+    if (caido) return new Response('fuera', { status: 503 });
+    const k = decodeURIComponent(u.pathname);
+    if (init.method === 'PUT') {
+      puts++;
+      cubo.set(k, Buffer.from(init.body).toString('utf8'));
+      return new Response('', { status: 200 });
+    }
+    return cubo.has(k) ? new Response(cubo.get(k), { status: 200 }) : new Response('NoSuchKey', { status: 404 });
+  }) as typeof fetch;
+  Object.assign(process.env, { ULTRON_MEMORIA_BUCKET: 'cubo-prueba', AWS_ACCESS_KEY_ID: 'AKIAPRUEBA', AWS_SECRET_ACCESS_KEY: 'secreto-prueba' });
+  try {
+    await actualizarPerfil('majo@x.com', { apodo: 'Majo', cumple: '09-30', encuesta: { vive: 'Comayagua' } });
+    const guardado = [...cubo.values()][0];
+    const antes = puts;
+    // Redespliegue con S3 caído: ni caché ni disco.
+    _olvidarCachePerfiles();
+    fs.rmSync(dir, { recursive: true, force: true });
+    caido = true;
+    assert.deepEqual(await leerPerfilSeguro('majo@x.com'), { ok: false }, '«no se pudo leer» no es «no tiene»');
+    await assert.rejects(actualizarPerfil('majo@x.com', { tema: 'claro' }), PerfilNoDisponible);
+    assert.equal(await sembrarDesdeGenesis('majo@x.com', { nombreGenesis: 'María José', cumple: '01-01', apodo: 'María' }), null);
+    caido = false;
+    assert.equal(puts, antes, 'nada se subió encima');
+    assert.equal([...cubo.values()][0], guardado);
+    const vuelto = await leerPerfil('majo@x.com');
+    assert.equal(vuelto?.apodo, 'Majo', 'el perfil de verdad sigue ahí');
+    assert.equal(vuelto?.cumple, '09-30');
+    assert.equal(vuelto?.encuesta.vive, 'Comayagua');
+    // Un correo que de verdad no tiene perfil sí se crea (S3 contesta 404).
+    assert.deepEqual(await leerPerfilSeguro('nadie@x.com'), { ok: true, perfil: null });
+  } finally {
+    globalThis.fetch = fetchOriginal;
+    Object.assign(process.env, { ULTRON_MEMORIA_BUCKET: '', AWS_ACCESS_KEY_ID: '', AWS_SECRET_ACCESS_KEY: '' });
+    _olvidarCachePerfiles();
+  }
 });
