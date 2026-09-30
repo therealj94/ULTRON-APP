@@ -17,7 +17,7 @@ import { Asset } from 'expo-asset';
 import * as SplashScreen from 'expo-splash-screen';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { APP_VERSION, type SessionUser } from '../../config';
-import { healthCheck } from '../../lib/api';
+import { comprobarSesion, healthCheck } from '../../lib/api';
 import { retomarSiVolvio, type ResultadoGenesis } from '../../lib/genesis';
 import { cargarPerfil } from '../../lib/perfil';
 import { iniciarReporte, miga } from '../../lib/reporte';
@@ -34,7 +34,7 @@ import { FUENTES_ICONOS } from '../../ui/Icono';
 import { cargarFuentes } from '../../ui/tipografia';
 import type { RaizParams } from '../rutas';
 import { reiniciarA } from '../rutas';
-import { bienvenidaVista, entrarCon, fijarUsuario, type Compartido } from '../sesion';
+import { bienvenidaVista, entrarCon, fijarUsuario, soltarSesionCaida, type Compartido } from '../sesion';
 
 type Props = NativeStackScreenProps<RaizParams, 'Intro'>;
 
@@ -114,16 +114,26 @@ export function Intro(_: Props) {
     await conTope(preloadSfx(), 2_500);
     marcar('voces');
     // Sin servidor se entra igual (la mesa tiene modo local); solo se avisa.
-    const salud = await conTope(healthCheck(), sesion ? 2_500 : 4_000);
+    // Con sesión, de paso se pregunta si el servidor todavía la reconoce: un token vencido (el de
+    // Genesis dura 14 días y no se renueva solo) dejaba a la persona «dentro» con todo roto.
+    const [salud, estadoSesion] = await Promise.all([
+      conTope(healthCheck(), sesion ? 2_500 : 4_000),
+      sesion ? conTope(comprobarSesion(sesion.correo), 4_000) : Promise.resolve(null),
+    ]);
     if (!salud) setAviso(tr('Sin conexión con el servidor: entras en modo local', 'No connection to the server: you’re entering local mode'));
     marcar('servidor');
+    const caida = !!sesion && estadoSesion === 'caida';
+    if (caida) await soltarSesionCaida();
 
     // ¿Volvía de la wallet cuando Android cerró la app?
     let vuelta: ResultadoGenesis | null = null;
     if (!sesion) vuelta = await conTope(retomarSiVolvio(), 20_000);
     const vista = sesion ? true : await bienvenidaVista();
 
-    if (sesion) destino.current = () => reiniciarA(completado ? 'Mesa' : 'PrimeraVez', { desdeIntro: true });
+    if (caida) {
+      const m = tr('Tu sesión terminó. Vuelve a entrar con tu Genesis ID.', 'Your session ended. Sign in again with your Genesis ID.');
+      destino.current = () => reiniciarA('Entrar', { desdeIntro: true, aviso: m });
+    } else if (sesion) destino.current = () => reiniciarA(completado ? 'Mesa' : 'PrimeraVez', { desdeIntro: true });
     else if (vuelta && vuelta.ok) {
       const g = vuelta as ResultadoGenesis & { genesis?: Compartido };
       const u: SessionUser = { name: vuelta.miembro.nombre, role: vuelta.miembro.rol, correo: vuelta.miembro.correo };

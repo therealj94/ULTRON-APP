@@ -9,7 +9,7 @@
 import { API_BASE } from '../config';
 import type { Mode, SessionUser } from '../config';
 import { normalizarEmocion, pelarEtiqueta, type Emocion } from './emocion';
-import { loadCreds, loadMesaToken, saveMesaToken } from './storage';
+import { loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage';
 import { quitarExpresiones } from './expresiones';
 import { cabecerasAparato } from './aparato';
 import { avatarActual } from '../avatares/actual';
@@ -20,8 +20,12 @@ let refreshing: Promise<boolean> | null = null;
 async function renovarSesion(): Promise<boolean> {
   if (refreshing) return refreshing;
   refreshing = (async () => {
-    const creds = await loadCreds();
+    const [creds, sesion] = await Promise.all([loadCreds(), loadSession()]);
     if (!creds?.correo || !creds?.clave) return false;
+    // Solo la clave de QUIEN está dentro. En un teléfono compartido la guardada puede ser de otra
+    // persona (entró con clave y salió; ahora está alguien que entró con Genesis): renovar con ella
+    // metía perfil, memoria y voz en la cuenta ajena mientras la pantalla seguía mostrando al primero.
+    if (!sesion?.correo || creds.correo.trim().toLowerCase() !== sesion.correo.trim().toLowerCase()) return false;
     try {
       const res = await fetch(`${API_BASE}/api/ultron/entrar`, {
         method: 'POST',
@@ -81,6 +85,39 @@ export async function api<T = any>(path: string, init?: RequestInit, timeoutMs =
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * ¿Sigue viva la sesión guardada de esta persona? Lo pregunta la intro antes de abrir la mesa:
+ *   viva    → el servidor la reconoce (o se renovó con la clave de esta misma persona)
+ *   caida   → el servidor dice que no, o que es de otra cuenta: hay que volver a entrar
+ *   sin_red → no se pudo preguntar: se entra igual (la mesa tiene modo local)
+ * Quien entró con Genesis no tiene clave para renovar: al vencer su token vuelve a la entrada en vez
+ * de quedarse «dentro» con una sesión que el servidor ya no acepta.
+ */
+export async function comprobarSesion(correo: string, timeoutMs = 3_000): Promise<'viva' | 'caida' | 'sin_red'> {
+  const quien = correo.trim().toLowerCase();
+  const pregunta = async (): Promise<'viva' | 'caida' | 'sin_red'> => {
+    const token = await loadMesaToken();
+    if (!token) return 'caida';
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${API_BASE}/api/ultron/sesion`, { signal: ctrl.signal, headers: { Accept: 'application/json', 'x-ultron-sesion': token } });
+      if (!res.ok) return res.status === 401 ? 'caida' : 'sin_red';
+      const data: any = await res.json().catch(() => null);
+      if (!data || typeof data.authenticated !== 'boolean') return 'sin_red';
+      if (!data.authenticated) return 'caida';
+      return String(data.user?.correo || '').trim().toLowerCase() === quien ? 'viva' : 'caida';
+    } catch {
+      return 'sin_red';
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const r = await pregunta();
+  if (r !== 'caida') return r;
+  return (await renovarSesion()) ? pregunta() : 'caida';
 }
 
 /** Cabecera de sesión para descargas de audio (FileSystem/XHR no pasan por api()). */

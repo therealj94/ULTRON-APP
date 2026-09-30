@@ -5,3 +5,5 @@ exports.saveMesaToken = async (t) => {
   m.token = t;
 };
 exports.loadCreds = async () => m.creds;
+// Quién está dentro (lib/storage.loadSession): la renovación solo usa la clave de esa persona.
+exports.loadSession = async () => m.sesion || null;
