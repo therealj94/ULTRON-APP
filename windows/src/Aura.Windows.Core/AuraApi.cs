@@ -121,6 +121,64 @@ public sealed class AuraApi : IDisposable
         return (token!, nombre, mail);
     }
 
+    /// <summary>La web de la wallet para pedir el pase (la da el servidor; si no contesta, la de siempre).</summary>
+    public async Task<string> WalletWeb(CancellationToken ct = default)
+    {
+        try
+        {
+            using var r = await Enviar(() => Pedido(HttpMethod.Get, "api/genesis/config"), ct, TimeSpan.FromSeconds(8), renovar: false).ConfigureAwait(false);
+            using var j = await Json(r, ct).ConfigureAwait(false);
+            if (j.RootElement.TryGetProperty("walletWeb", out var w) && w.GetString() is { } web && web.StartsWith("https://", StringComparison.Ordinal)) return web;
+        }
+        catch (AuraError) { }
+        return GenesisSso.WalletWebPorDefecto;
+    }
+
+    static Miembro LeerMiembro(JsonElement raiz, string correoPorOmision = "")
+    {
+        var m = raiz.TryGetProperty("miembro", out var x) ? x : raiz.TryGetProperty("user", out var u) ? u : default;
+        string S(string k) => m.ValueKind == JsonValueKind.Object && m.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+        var correo = S("correo"); if (correo.Length == 0) correo = correoPorOmision;
+        var rol = S("rol");
+        var nivel = S("nivel"); if (nivel.Length == 0) nivel = rol.Contains("Junta", StringComparison.OrdinalIgnoreCase) ? "junta" : "miembro";
+        return new Miembro(S("nombre"), correo, rol, S("gid"), nivel);
+    }
+
+    /// <summary>Canjea el pase de Genesis ID por la sesión de AU-RA (el pase se gasta aquí una vez).</summary>
+    public async Task<(string Token, Miembro Miembro, string? NombreGenesis)> EntrarGenesis(string pase, string verificador, CancellationToken ct = default)
+    {
+        using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/genesis/entrar", new { pase, verificador }), ct, TimeSpan.FromSeconds(25), renovar: false).ConfigureAwait(false);
+        using var j = await Json(r, ct).ConfigureAwait(false);
+        var raiz = j.RootElement;
+        var token = raiz.TryGetProperty("token", out var t) ? t.GetString() : null;
+        if (string.IsNullOrEmpty(token)) throw new AuraError("AU-RA no devolvió una sesión.");
+        Token = token;
+        string? nombreGenesis = raiz.TryGetProperty("genesis", out var g) && g.ValueKind == JsonValueKind.Object && g.TryGetProperty("nombre", out var gn) ? gn.GetString() : null;
+        return (token!, LeerMiembro(raiz), nombreGenesis);
+    }
+
+    /// <summary>Quién es la sesión actual (null si venció o no hay).</summary>
+    public async Task<Miembro?> Sesion(CancellationToken ct = default)
+    {
+        if (string.IsNullOrEmpty(Token)) return null;
+        try
+        {
+            using var r = await Enviar(() => Pedido(HttpMethod.Get, "api/ultron/sesion"), ct, TimeSpan.FromSeconds(10), renovar: false).ConfigureAwait(false);
+            using var j = await Json(r, ct).ConfigureAwait(false);
+            if (j.RootElement.TryGetProperty("authenticated", out var a) && a.ValueKind == JsonValueKind.False) return null;
+            return LeerMiembro(j.RootElement);
+        }
+        catch (AuraError) { return null; }
+    }
+
+    /// <summary>Cierra la sesión en el servidor (el token deja de servir).</summary>
+    public async Task Salir(CancellationToken ct = default)
+    {
+        try { using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/ultron/salir", new { }), ct, TimeSpan.FromSeconds(8), renovar: false).ConfigureAwait(false); }
+        catch (AuraError) { }
+        Token = null;
+    }
+
     public async Task<bool> Salud(CancellationToken ct = default)
     {
         try { using var r = await Enviar(() => Pedido(HttpMethod.Get, "api/health"), ct, TimeSpan.FromSeconds(10)).ConfigureAwait(false); return true; }
@@ -232,20 +290,30 @@ public sealed class AuraApi : IDisposable
         return j.RootElement.TryGetProperty("summary", out var s) ? (s.GetString() ?? "").Trim() : "";
     }
 
-    /// <summary>Laya «windows» en el nodo. Null si no hay sesión, no hay Laya o tardó.</summary>
+    /// <summary>Hasta cuándo no se le pregunta al nodo (no tiene el modelo «windows», no contesta o tardó).</summary>
+    DateTime nodoApagadoHasta = DateTime.MinValue;
+    public bool NodoDisponible => !string.IsNullOrEmpty(Token) && DateTime.UtcNow >= nodoApagadoHasta;
+
+    /// <summary>
+    /// Laya «windows» en el nodo. Null si no hay sesión, no hay Laya o tardó. Si el nodo no tiene el modelo
+    /// (o falla), no se le vuelve a preguntar en 5 minutos: así cada frase no paga una espera inútil.
+    /// </summary>
     public async Task<DecisionNodo?> Intencion(string texto, CancellationToken ct = default)
     {
-        if (string.IsNullOrEmpty(Token)) return null;
+        if (!NodoDisponible) return null;
         try
         {
             // Sin renovar la sesión: Laya es un atajo; un login por cada frase podría bloquear la cuenta.
-            using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/windows/intencion", new { texto }), ct, TimeSpan.FromMilliseconds(1600), renovar: false).ConfigureAwait(false);
+            using var r = await Enviar(() => Pedido(HttpMethod.Post, "api/windows/intencion", new { texto }), ct, TimeSpan.FromMilliseconds(1100), renovar: false).ConfigureAwait(false);
             using var j = await Json(r, ct).ConfigureAwait(false);
             var raiz = j.RootElement;
             var et = raiz.TryGetProperty("etiqueta", out var e) && e.ValueKind == JsonValueKind.String ? e.GetString() : null;
+            var motivo = raiz.TryGetProperty("motivo", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() ?? "" : "";
+            if (et == null && motivo != "ok") nodoApagadoHasta = DateTime.UtcNow.AddMinutes(5);
             return new DecisionNodo(et, raiz.TryGetProperty("p", out var p) ? p.GetDouble() : 0, raiz.TryGetProperty("seguro", out var s) && s.GetBoolean());
         }
-        catch (AuraError) { return null; }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested) { nodoApagadoHasta = DateTime.UtcNow.AddMinutes(2); return null; }
+        catch (AuraError) { nodoApagadoHasta = DateTime.UtcNow.AddMinutes(2); return null; }
         catch (Exception e) when (e is InvalidOperationException or KeyNotFoundException or FormatException) { return null; }
     }
 

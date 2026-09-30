@@ -14,7 +14,9 @@ public enum Mano
     // 1.2: música (lo que suena en Spotify, YouTube Music o el navegador), correo y agenda.
     Musica, Correo, Agenda,
     // 1.4: las notificaciones de las demás apps (solo por reglas: Laya no tiene esta etiqueta todavía).
-    Notificaciones
+    Notificaciones,
+    // 2.0: la cartera de Veta Wallet (solo lectura) y los atajos del equipo (solo por reglas).
+    Cartera, Atajo
 }
 
 /// <summary>Lo que se va a hacer: la mano, su parámetro (qué app, qué búsqueda, qué texto…) y de dónde salió.</summary>
@@ -63,6 +65,8 @@ public static class Intencion
         if (Parametros.Info(t) is { } info) return new(Mano.Info, info);
         if (Parametros.Musica(texto) is { } musica) return new(Mano.Musica, musica);
         if (Parametros.Notificaciones(t) is { } avisos) return new(Mano.Notificaciones, avisos);
+        if (Parametros.Cartera(t) is { } cartera) return new(Mano.Cartera, cartera);
+        if (Parametros.Atajo(t) is { } atajo) return new(Mano.Atajo, atajo);
         if (Parametros.Correo(t) is { } correo) return new(Mano.Correo, correo);
         if (Parametros.Agenda(t) is { } agenda) return new(Mano.Agenda, agenda);
         if (Parametros.QueHay.IsMatch(t)) return new(Mano.QueHay);
@@ -633,6 +637,125 @@ public static class Parametros
         if (AvisosLeer.IsMatch(t)) return "leer";
         if (AvisosActivar.Match(t) is { Success: true } a) return "activar|" + a.Groups["app"].Value.Trim();
         if (AvisosSilenciar.Match(t) is { Success: true } m && !Regex.IsMatch(m.Groups["app"].Value, @"^(?:nada|eso|esto|mas)$")) return "silenciar|" + m.Groups["app"].Value.Trim();
+        return null;
+    }
+
+    static readonly string Monedas = "origen|origenes|auka|agka|ondk|mnka|ibs|harv|aubex|asl|love|rest|sol|ait|agro|political";
+    static readonly Regex CarteraRe = new(@"^(?:cuanto (?:dinero |plata |pisto )?(?:tengo|hay)(?: en (?:mi|la) (?:cartera|wallet|billetera|veta(?: wallet)?))?|cuanto (?<m>" + Monedas + @") (?:tengo|hay|me queda)|cuantos? (?<m>" + Monedas + @") tengo|(?:cual es |dime |revisa |muestrame )?(?:mi )?(?:saldo|balance)(?: de (?<m>" + Monedas + @"))?(?: en (?:veta|la wallet|mi cartera))?|(?:como esta|revisa|abre) mi (?:cartera|wallet|billetera)|que tengo en (?:mi|la) (?:cartera|wallet|billetera)|how much (?<m>" + Monedas + @") do i have|how much (?:money )?do i have(?: in my wallet)?|(?:what s|whats|what is) my balance|my (?:wallet )?balance|check my wallet)$", O);
+
+    /// <summary>«todo» o el símbolo («ORIGEN»), o null.</summary>
+    public static string? Cartera(string limpio)
+    {
+        var t = LayaLigera.Normalizar(limpio);
+        var m = CarteraRe.Match(t);
+        if (!m.Success) return null;
+        var mon = m.Groups["m"].Value;
+        return mon.Length == 0 ? "todo" : mon.StartsWith("origen") ? "ORIGEN" : mon.ToUpperInvariant();
+    }
+
+    // ───────────── 2.0: atajos del teclado, Configuración de Windows, brillo y tema ─────────────
+
+    static readonly (Regex Frase, string Teclas)[] Atajos =
+    {
+        (new(@"^(?:copia(?:lo|la)?(?: eso| esto)?|copy(?: that| it| this)?)$", O), "CTRL+C"),
+        (new(@"^(?:pega(?:lo|la)?(?: aqui)?|paste(?: it| here)?)$", O), "CTRL+V"),
+        (new(@"^(?:corta(?:lo|la)?|cut(?: it| that)?)$", O), "CTRL+X"),
+        (new(@"^(?:deshaz(?: eso)?|deshacer|undo(?: that)?)$", O), "CTRL+Z"),
+        (new(@"^(?:rehaz(?: eso)?|rehacer|redo(?: that)?)$", O), "CTRL+Y"),
+        (new(@"^(?:selecciona(?:lo)? todo|select all)$", O), "CTRL+A"),
+        (new(@"^(?:guarda(?:lo|la)?|guarda (?:el|este) (?:archivo|documento)|guarda los cambios|save(?: it| the file| changes)?)$", O), "CTRL+S"),
+        (new(@"^(?:imprime(?:lo|la)?|imprimir|print(?: it| this)?)$", O), "CTRL+P"),
+        (new(@"^(?:busca en (?:la|esta) pagina|find on (?:the |this )?page)$", O), "CTRL+F"),
+        (new(@"^(?:(?:abre (?:una )?)?(?:nueva pestana|pestana nueva)|new tab|open a new tab)$", O), "CTRL+T"),
+        (new(@"^(?:cierra (?:la |esta )?pestana|close (?:the |this )?tab)$", O), "CTRL+W"),
+        (new(@"^(?:(?:la )?siguiente pestana|pestana siguiente|next tab)$", O), "CTRL+TAB"),
+        (new(@"^(?:(?:la )?pestana anterior|previous tab)$", O), "CTRL+SHIFT+TAB"),
+        (new(@"^(?:reabre la pestana|abre la pestana que cerre|reopen (?:the )?(?:closed )?tab)$", O), "CTRL+SHIFT+T"),
+        (new(@"^(?:recarga(?: la pagina)?|actualiza la pagina|refresh(?: the page)?|reload(?: the page)?)$", O), "F5"),
+        (new(@"^(?:ve atras|pagina anterior|go back|back)$", O), "ALT+LEFT"),
+        (new(@"^(?:ve adelante|pagina siguiente|go forward|forward)$", O), "ALT+RIGHT"),
+        (new(@"^(?:cambia de ventana|la otra ventana|alt tab|switch windows)$", O), "ALT+TAB"),
+        (new(@"^(?:(?:pon|manda|mueve) (?:la|esta) ventana a la izquierda|ventana a la izquierda|snap (?:the |this )?window left)$", O), "WIN+LEFT"),
+        (new(@"^(?:(?:pon|manda|mueve) (?:la|esta) ventana a la derecha|ventana a la derecha|snap (?:the |this )?window right)$", O), "WIN+RIGHT"),
+        (new(@"^(?:pantalla completa|ponlo en pantalla completa|full ?screen)$", O), "F11"),
+        (new(@"^(?:baja la pagina|desplazate (?:hacia )?abajo|bajale a la pagina|scroll down|page down)$", O), "PAGEDOWN"),
+        (new(@"^(?:sube la pagina|desplazate (?:hacia )?arriba|scroll up|page up)$", O), "PAGEUP"),
+        (new(@"^(?:acerca(?:lo)?|mas grande(?: la letra)?|agranda(?: la letra)?|zoom in)$", O), "CTRL+PLUS"),
+        (new(@"^(?:aleja(?:lo)?|mas pequeno|achica(?: la letra)?|zoom out)$", O), "CTRL+MINUS"),
+        (new(@"^(?:tamano normal|zoom normal|reset zoom)$", O), "CTRL+0"),
+        (new(@"^(?:(?:dale|presiona|pulsa) enter|enter|press enter)$", O), "ENTER"),
+        (new(@"^(?:(?:presiona|pulsa) escape|escape|press escape)$", O), "ESC"),
+        (new(@"^(?:abre el menu (?:de )?inicio|menu inicio|open (?:the )?start menu)$", O), "WIN"),
+        (new(@"^(?:vista de tareas|todas las ventanas|task view)$", O), "WIN+TAB"),
+    };
+
+    static readonly Dictionary<string, string> TeclasDichas = new()
+    {
+        ["control"] = "CTRL", ["ctrl"] = "CTRL", ["control izquierdo"] = "CTRL", ["alt"] = "ALT", ["shift"] = "SHIFT", ["mayuscula"] = "SHIFT", ["mayusculas"] = "SHIFT",
+        ["windows"] = "WIN", ["tecla windows"] = "WIN", ["win"] = "WIN", ["enter"] = "ENTER", ["intro"] = "ENTER", ["escape"] = "ESC", ["esc"] = "ESC",
+        ["tab"] = "TAB", ["tabulador"] = "TAB", ["espacio"] = "SPACE", ["space"] = "SPACE", ["borrar"] = "BACKSPACE", ["retroceso"] = "BACKSPACE", ["backspace"] = "BACKSPACE",
+        ["suprimir"] = "DELETE", ["delete"] = "DELETE", ["supr"] = "DELETE", ["inicio"] = "HOME", ["home"] = "HOME", ["fin"] = "END", ["end"] = "END",
+        ["arriba"] = "UP", ["abajo"] = "DOWN", ["izquierda"] = "LEFT", ["derecha"] = "RIGHT", ["up"] = "UP", ["down"] = "DOWN", ["left"] = "LEFT", ["right"] = "RIGHT",
+        ["mas"] = "PLUS", ["menos"] = "MINUS", ["plus"] = "PLUS", ["minus"] = "MINUS",
+    };
+
+    static readonly Regex Presiona = new(@"^(?:presiona|pulsa|oprime|aprieta|teclea|press|hit)\s+(?:la tecla |las teclas |el atajo |the key |keys )?(?<t>.{1,40})$", O);
+
+    /// <summary>«presiona control shift s» → «CTRL+SHIFT+S». Null si no se entiende o es peligrosa (Alt+F4, Ctrl+Alt+Supr).</summary>
+    public static string? TeclasDe(string dicho)
+    {
+        var partes = new List<string>();
+        var t = Regex.Replace(dicho, @"\s*(?:\+|\by\b|\band\b|\bmas\b(?= [a-z]))\s*", " ").Trim();
+        var palabras = t.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        for (int i = 0; i < palabras.Length; i++)
+        {
+            if (i + 1 < palabras.Length && TeclasDichas.TryGetValue(palabras[i] + " " + palabras[i + 1], out var doble)) { partes.Add(doble); i++; continue; }
+            var p = palabras[i];
+            if (TeclasDichas.TryGetValue(p, out var k)) partes.Add(k);
+            else if (Regex.IsMatch(p, "^[a-z0-9]$")) partes.Add(p.ToUpperInvariant());
+            else if (Regex.IsMatch(p, "^f(?:[1-9]|1[0-2])$")) partes.Add(p.ToUpperInvariant());
+            else return null;
+        }
+        if (partes.Count == 0 || partes.Count > 4) return null;
+        var combo = string.Join("+", partes.Distinct());
+        if (combo is "ALT+F4" || (combo.Contains("CTRL") && combo.Contains("ALT") && combo.Contains("DELETE"))) return null;
+        return combo;
+    }
+
+    static readonly (Regex Frase, string Pagina)[] Configuraciones =
+    {
+        (new(@"(?:wifi|wi fi|red inalambrica|wireless)", O), "network-wifi"), (new(@"(?:bluetooth|dispositivos)", O), "bluetooth"),
+        (new(@"(?:pantalla|monitor|resolucion|display|screen)", O), "display"), (new(@"(?:sonido|audio|sound|parlantes|bocinas)", O), "sound"),
+        (new(@"(?:red|internet|network|ethernet)", O), "network-status"), (new(@"(?:energia|bateria|power|battery)", O), "powersleep"),
+        (new(@"(?:actualizaciones|windows update|update)", O), "windowsupdate"), (new(@"(?:privacidad|privacy)", O), "privacy"),
+        (new(@"(?:camara|camera)", O), "privacy-webcam"), (new(@"(?:microfono|microphone)", O), "privacy-microphone"),
+        (new(@"(?:notificaciones|notifications)", O), "notifications"), (new(@"(?:fondo(?: de pantalla)?|wallpaper|background|personalizacion)", O), "personalization-background"),
+        (new(@"(?:impresoras?|printers?)", O), "printers"), (new(@"(?:aplicaciones|apps|programas)", O), "appsfeatures"),
+        (new(@"(?:almacenamiento|disco|storage)", O), "storagesense"), (new(@"(?:mouse|raton)", O), "mousetouchpad"),
+        (new(@"(?:teclado|keyboard)", O), "typing"), (new(@"(?:idioma|language)", O), "regionlanguage"), (new(@"(?:hora|fecha|time|date)", O), "dateandtime"),
+        (new(@"(?:cuentas?|accounts?|usuario)", O), "accounts"), (new(@"(?:proyectar|segunda pantalla|project)", O), "project"),
+    };
+    static readonly Regex AbreConfiguracion = new(@"^(?:abre|abreme|ve a|muestrame|open|go to|show me)\s+(?:la |las )?(?:configuracion|ajustes|opciones|settings)\s+(?:de(?:l| la| las| los)?\s+|for\s+|of\s+)?(?<q>.{2,30})$|^(?:open|show)\s+(?<q>.{2,30}?)\s+settings$", O);
+    static readonly Regex Brillo = new(@"^(?:(?<d>sube|subele|aumenta|mas|turn up|increase|raise)\s+(?:el |the )?(?:brillo|brightness)|(?<d>baja|bajale|disminuye|menos|turn down|decrease|lower)\s+(?:el |the )?(?:brillo|brightness)|(?:pon |ponle |set )?(?:el |the )?(?:brillo|brightness)\s+(?:al?|to|en)\s+(?<n>\d{1,3})(?:\s*(?:%|por ciento|percent))?)$", O);
+
+    /// <summary>«teclas|CTRL+S», «config|network-wifi», «brillo|+», «brillo|70», «tema|oscuro», o null.</summary>
+    public static string? Atajo(string limpio)
+    {
+        var t = LayaLigera.Normalizar(limpio);
+        foreach (var (frase, teclas) in Atajos) if (frase.IsMatch(t)) return "teclas|" + teclas;
+        if (Presiona.Match(t) is { Success: true } p && TeclasDe(p.Groups["t"].Value) is { } combo) return "teclas|" + combo;
+        if (AbreConfiguracion.Match(t) is { Success: true } c)
+        {
+            foreach (var (frase, pagina) in Configuraciones) if (frase.IsMatch(c.Groups["q"].Value)) return "config|" + pagina;
+        }
+        if (Regex.IsMatch(t, @"^(?:abre (?:la )?configuracion(?: de windows)?|open settings)$")) return "config|";
+        if (Brillo.Match(t) is { Success: true } b)
+        {
+            if (b.Groups["n"].Success) return "brillo|" + Math.Clamp(int.Parse(b.Groups["n"].Value), 0, 100);
+            return "brillo|" + (Regex.IsMatch(b.Groups["d"].Value, "^(?:sube|subele|aumenta|mas|turn up|increase|raise)") ? "+" : "-");
+        }
+        var tema = Regex.Match(t, @"^(?:(?:pon|activa|cambia a|switch to|turn on)\s+(?:el )?)?(?:modo|tema)\s+(?<t>oscuro|claro)$|^(?:(?:switch to|turn on)\s+)?(?<t>dark|light) mode$");
+        if (tema.Success) return "tema|" + (tema.Groups["t"].Value is "oscuro" or "dark" ? "oscuro" : "claro");
         return null;
     }
 }

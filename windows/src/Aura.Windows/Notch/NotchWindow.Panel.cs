@@ -39,6 +39,7 @@ public partial class NotchWindow
         var pila = new StackPanel();
         if (!mio) pila.Children.Add(new TextBlock { Text = quien, FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = (Brush)FindResource("Acento"), Margin = new Thickness(0, 0, 0, 4) });
         pila.Children.Add(cuerpo);
+        EspejarBurbuja(quien, cuerpo);
         if (!mio)
         {
             var fila = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
@@ -121,7 +122,11 @@ public partial class NotchWindow
         catch (Exception ex) { Avisar(new Aviso(T("Llamadas", "Calls"), ex.Message, "", "worried")); }
     }
 
-    internal void AbrirAjustes(object s, RoutedEventArgs e)
+    /// <summary>Ajustes vive en el Centro (con secciones y la explicación de cada opción).</summary>
+    internal void AbrirAjustes(object s, RoutedEventArgs e) { e.Handled = true; AbrirCentro("ajustes"); }
+
+    /// <summary>La ventana de ajustes vieja (1.x): queda para quien no tenga WebView2.</summary>
+    internal void AbrirAjustesClasicos(object s, RoutedEventArgs e)
     {
         var v = new AjustesWindow(ajustes) { Owner = this };
         if (v.ShowDialog() != true) return;

@@ -271,6 +271,52 @@ Check(R("vuelve a mostrar las notificaciones de WhatsApp") is { Mano: Mano.Notif
 Check(R("read my notifications") is { Mano: Mano.Notificaciones, Valor: "leer" } && R("mute Slack notifications") is { Valor: "silenciar|slack" }, "notificaciones en ingles: " + R("mute Slack notifications"));
 Check(R("me llegó algún correo") is { Mano: Mano.Correo }, "correo sigue siendo correo");
 
+// Genesis ID como la app: reto, URL de la wallet y la vuelta ultronfp://sso
+var (verG, retoG, estG) = GenesisSso.Nuevo();
+Check(verG.Length == 43 && retoG == GenesisSso.Reto(verG) && estG.Length == 16, "genesis reto");
+Check(GenesisSso.Reto("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk") == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "genesis reto = sha256 ascii (como la app)");
+Check(GenesisSso.Url(null, "R+/", "E") == "https://app.vetawallet.com/#sso-aura?reto=R%2B%2F&estado=E" && GenesisSso.Url("http://malo", "r", "e").StartsWith("https://app.vetawallet.com/"), "genesis url");
+Check(GenesisSso.LeerVuelta("ultronfp://sso?pase=abc%2Bd&estado=E1") is { Pase: "abc+d", Estado: "E1", Error: null }, "vuelta con pase");
+Check(GenesisSso.LeerVuelta("\"ultronfp://sso/?error=cancelado&estado=E2\"") is { Error: "cancelado", Estado: "E2" }, "vuelta con error y comillas");
+Check(GenesisSso.LeerVuelta("https://aura-fp.onrender.com/sso?pase=p&estado=e") is { Pase: "p" }, "vuelta https");
+Check(GenesisSso.LeerVuelta("ultronfp://ssoXYZ?pase=p") is null && GenesisSso.LeerVuelta("https://aura-fp.onrender.com.malo/sso?pase=p") is null && GenesisSso.LeerVuelta("http://x") is null, "vueltas falsas");
+Check(GenesisSso.LeerVuelta("ultronfp://sso?pase=%E0%A4%A&estado=e") is { Estado: "e" }, "vuelta con % roto no lanza");
+
+// Cartera Veta Wallet (solo lectura): saldos de la cadena 5550 como los lee la wallet
+Check(CarteraVeta.EsDireccion("0x6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B") && !CarteraVeta.EsDireccion("0x123") && !CarteraVeta.EsDireccion("6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B"), "direccion valida");
+Check(CarteraVeta.DatosBalanceOf("0x6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B") == "0x70a08231" + "0000000000000000000000006facc8df79cedc6c5065442ce27e915aa3a26b9b", "balanceOf");
+Check(CarteraVeta.Cantidad("0x1bc16d674ec80000") == 2m && CarteraVeta.Cantidad("0x0") == 0 && CarteraVeta.Cantidad("0x") == 0 && CarteraVeta.Cantidad("0xzz") == 0 && CarteraVeta.Cantidad(null) == 0, "cantidad 18 decimales");
+Check(CarteraVeta.Cantidad("0x" + new string('0', 63) + "1") == 0.000000000000000001m, "cantidad minima");
+Check(CarteraVeta.Precio("ORIGEN", 3110.35m, 30m) == 3110.35m / 31.1035m / 55m && CarteraVeta.Precio("AGKA", 3110m, 30m) == 30m && CarteraVeta.Precio("ONDK", 3110m, 30m) == null && CarteraVeta.Precio("LOVE", null, null) == 0.1m, "precios");
+var loteJson = CarteraVeta.ArmarLote("0x6Facc8Df79cEDc6C5065442ce27e915Aa3a26B9B");
+Check(loteJson.Contains("\"eth_getBalance\"") && loteJson.Contains("\"eth_call\"") && loteJson.Contains("\"id\":14"), "lote rpc");
+var hexes = CarteraVeta.LeerLote("[{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":\"0x3635c9adc5dea00000\"},{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":\"0x1bc16d674ec80000\"},{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32000}}]");
+var saldosCartera = CarteraVeta.Saldos(hexes, 3110.35m, 30m);
+Check(saldosCartera[0] is { Simbolo: "ORIGEN", Cantidad: 1000m } && saldosCartera[1].Cantidad == 2m && saldosCartera[2].Cantidad == 0 && saldosCartera[1].ValorUsd == 6220.70m, "saldos: " + saldosCartera[0] + " " + saldosCartera[1]);
+Check(CarteraVeta.Decir(saldosCartera, "origen", false).StartsWith("Tienes 1,000 ORIGEN (unos 1,818"), "decir origen: " + CarteraVeta.Decir(saldosCartera, "origen", false));
+Check(CarteraVeta.Decir(saldosCartera, null, false).StartsWith("Tienes unos 8,038.7 dólares: 2 AUKA, 1,000 ORIGEN") || CarteraVeta.Decir(saldosCartera, null, false).StartsWith("Tienes unos 8,039 dólares"), "decir todo: " + CarteraVeta.Decir(saldosCartera, null, false));
+Check(CarteraVeta.Decir(new List<Saldo>(), null, true) == "Your wallet is empty.", "cartera vacia");
+
+Check(R("¿cuánto tengo?") is { Mano: Mano.Cartera, Valor: "todo" } && R("cuánto ORIGEN tengo") is { Mano: Mano.Cartera, Valor: "ORIGEN" } && R("cuántos orígenes tengo") is { Valor: "ORIGEN" }, "cartera por voz: " + R("cuántos orígenes tengo"));
+Check(R("mi saldo de AUKA") is { Mano: Mano.Cartera, Valor: "AUKA" } && R("how much origen do I have") is { Valor: "ORIGEN" } && R("check my wallet") is { Mano: Mano.Cartera }, "cartera variantes");
+Check(R("cuánto tengo que pagar de luz").Mano != Mano.Cartera && R("cuánto tiempo tengo").Mano != Mano.Cartera, "cartera no se confunde");
+
+// Más control del equipo: atajos, Configuración de Windows, brillo y tema
+Check(R("cópialo") is { Mano: Mano.Atajo, Valor: "teclas|CTRL+C" } && R("pega aquí") is { Valor: "teclas|CTRL+V" } && R("guarda el archivo") is { Valor: "teclas|CTRL+S" }, "atajos basicos");
+Check(R("nueva pestaña") is { Valor: "teclas|CTRL+T" } && R("cierra la pestaña") is { Valor: "teclas|CTRL+W" } && R("pon la ventana a la izquierda") is { Valor: "teclas|WIN+LEFT" }, "atajos de pestañas y ventanas");
+Check(R("presiona control shift s") is { Mano: Mano.Atajo, Valor: "teclas|CTRL+SHIFT+S" } && R("press alt + tab") is { Valor: "teclas|ALT+TAB" } && R("presiona f5") is { Valor: "teclas|F5" }, "presiona combo: " + R("presiona control shift s"));
+Check(R("presiona alt f4").Mano != Mano.Atajo && R("presiona control alt suprimir").Mano != Mano.Atajo, "combos peligrosos no");
+Check(R("abre la configuración de wifi") is { Mano: Mano.Atajo, Valor: "config|network-wifi" } && R("open bluetooth settings") is { Valor: "config|bluetooth" } && R("abre la configuración") is { Valor: "config|" }, "configuracion: " + R("open bluetooth settings"));
+Check(R("sube el brillo") is { Valor: "brillo|+" } && R("baja el brillo") is { Valor: "brillo|-" } && R("pon el brillo al 70") is { Valor: "brillo|70" }, "brillo");
+Check(R("activa el modo oscuro") is { Valor: "tema|oscuro" } && R("light mode") is { Valor: "tema|claro" }, "tema");
+Check(R("baja") is { Mano: Mano.VolumenBajar } && R("sube el volumen") is { Mano: Mano.VolumenSubir } && R("baja la página") is { Valor: "teclas|PAGEDOWN" }, "volumen sigue siendo volumen");
+
+var sonando = LectorApis.SpotifyEstado("{\"is_playing\":true,\"progress_ms\":61000,\"shuffle_state\":false,\"repeat_state\":\"off\",\"device\":{\"name\":\"MI-PC\",\"volume_percent\":70},\"item\":{\"uri\":\"spotify:track:9\",\"name\":\"Tití Me Preguntó\",\"duration_ms\":243000,\"artists\":[{\"name\":\"Bad Bunny\"}],\"album\":{\"name\":\"Un Verano Sin Ti\",\"images\":[{\"url\":\"https://i.scdn.co/a.jpg\"}]}}}");
+Check(sonando is { Titulo: "Tití Me Preguntó", Artista: "Bad Bunny", Sonando: true, ProgresoMs: 61000, DuracionMs: 243000, Dispositivo: "MI-PC", Volumen: 70, Portada: "https://i.scdn.co/a.jpg" }, "spotify estado");
+Check(LectorApis.SpotifyEstado("") is null && LectorApis.SpotifyEstado("{\"is_playing\":false,\"item\":null}") is null, "spotify sin nada");
+var resultados = LectorApis.SpotifyResultados("{\"tracks\":{\"items\":[{\"uri\":\"spotify:track:1\",\"name\":\"A\",\"duration_ms\":1000,\"artists\":[{\"name\":\"X\"}],\"album\":{\"images\":[]}}]},\"artists\":{\"items\":[{\"uri\":\"spotify:artist:2\",\"name\":\"X\",\"images\":[{\"url\":\"u\"}]}]},\"playlists\":{\"items\":[null,{\"uri\":\"spotify:playlist:3\",\"name\":\"P\",\"owner\":{\"display_name\":\"Spotify\"},\"images\":[]}]}}");
+Check(resultados.Select(x => x.Tipo + ":" + x.Titulo).SequenceEqual(new[] { "cancion:A", "artista:X", "playlist:P" }), "spotify resultados");
+
 // La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).
 foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace una captura de pantalla en windows", "ayer me dijiste que bloqueara la compu" })
 {

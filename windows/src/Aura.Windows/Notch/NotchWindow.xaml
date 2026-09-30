@@ -22,7 +22,9 @@
      <!-- Con música sonando, como la isla: la portada y unas barritas. -->
      <Border x:Name="PortadaChica" Width="20" Height="20" CornerRadius="5" Margin="0,0,6,0" Visibility="Collapsed" Background="{StaticResource Superficie2}"/>
      <n:Barras x:Name="BarrasMusica" Width="18" Height="12" Margin="0,0,6,0" Visibility="Collapsed"/>
-     <Button x:Name="MicChico" Style="{StaticResource Icono}" Content="&#xE720;" Width="28" Height="28" FontSize="13" Opacity="0" Click="Microfono" ToolTip="Hablar · Ctrl+Alt+Espacio" AutomationProperties.Name="Hablar con AURA"/>
+     <Button x:Name="BotonCentroChico" Style="{StaticResource Icono}" Content="&#xE8A9;" Width="28" Height="28" FontSize="13" Opacity="0" Click="AbrirCentroClic" ToolTip="Abrir el Centro (chats, música, cartera, ajustes) · Ctrl+Alt+C" AutomationProperties.Name="Abrir el Centro"/>
+     <Button x:Name="BotonSilencio" Style="{StaticResource Icono}" Content="&#xEC54;" Width="28" Height="28" FontSize="13" Opacity="0" Click="SilencioClic" ToolTip="Silenciar el micrófono: AURA deja de escucharte hasta que lo vuelvas a tocar" AutomationProperties.Name="Silenciar el micrófono"/>
+     <Button x:Name="MicChico" Style="{StaticResource Icono}" Content="&#xE720;" Width="28" Height="28" FontSize="13" Opacity="0" Click="Microfono" ToolTip="Hablarle ahora · Ctrl+Alt+Espacio" AutomationProperties.Name="Hablar con AURA"/>
      <Ellipse x:Name="PuntoEstado" Width="7" Height="7" Fill="#4CD964" Margin="6,0,4,0" VerticalAlignment="Center" ToolTip="Conectada"/>
     </StackPanel>
    </Grid>

@@ -85,8 +85,9 @@ public partial class NotchWindow : Window
             // Sin Alt+Tab, y sin robar el foco al hacer clic (la app donde trabajas sigue activa).
             SetWindowLong(fuente.Handle, -20, GetWindowLong(fuente.Handle, -20) | 0x80 | 0x08000000);
             bool ok = RegisterHotKey(fuente.Handle, 1, 0x4003, 0x20) & RegisterHotKey(fuente.Handle, 2, 0x4003, 0x1B)
-                    & RegisterHotKey(fuente.Handle, 3, 0x4003, 0x57) & RegisterHotKey(fuente.Handle, 4, 0x4003, 0x41);
-            if (!ok) Avisar(new Aviso("Un atajo está ocupado", "Otra app usa Ctrl+Alt+Espacio, W, A o Esc. Toca el notch o usa la bandeja.", "", "worried"));
+                    & RegisterHotKey(fuente.Handle, 3, 0x4003, 0x57) & RegisterHotKey(fuente.Handle, 4, 0x4003, 0x41)
+                    & RegisterHotKey(fuente.Handle, 5, 0x4003, 0x43);
+            if (!ok) Avisar(new Aviso("Un atajo está ocupado", "Otra app usa Ctrl+Alt+Espacio, W, A, C o Esc. Toca el notch o usa la bandeja.", "", "worried"));
             Ubicar();
         };
         Loaded += (_, _) => { Ubicar(); Aplicar(); Dibujar(); };
@@ -101,7 +102,7 @@ public partial class NotchWindow : Window
     (double W, double H, double R) Tamano(Modo m) => m switch
     {
         // Con música sonando el reposo se ensancha para su portada y sus barritas, como la isla.
-        Modo.Reposo => raton ? (MusicaSonando ? 330 : 300, 42, 15) : (MusicaSonando ? 290 : 236, 36, 13),
+        Modo.Reposo => raton ? (MusicaSonando ? 400 : 370, 42, 15) : (MusicaSonando ? 290 : 236, 36, 13),
         Modo.Musica => (450, 94, 28),
         Modo.Escucha => (360, 58, 21),
         Modo.Piensa => (340, 58, 21),
@@ -154,6 +155,9 @@ public partial class NotchWindow : Window
         // En reposo con el ratón encima: su nombre y el micrófono.
         NombreChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
         MicChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
+        BotonCentroChico.Opacity = modo == Modo.Reposo && raton ? 1 : 0;
+        // El micrófono silenciado se ve SIEMPRE (tachado, en rojo): nunca quedas sin saber si te oye.
+        BotonSilencio.Opacity = modo == Modo.Reposo && (raton || microSilenciado) ? 1 : 0;
         Camara.Margin = new Thickness(0, modo == Modo.Reposo && !raton ? 13 : 14, 0, 0);
         brillo.Objetivo = modo switch { Modo.Escucha => 0.55, Modo.Habla => 0.35, Modo.Confirma => 0.45, Modo.Aviso => 0.3, Modo.Musica => 0.25, _ => 0 };
         if (soloRender && !pruebaAnimacion) { ancho.Saltar(w); alto.Saltar(h); radio.Saltar(r); brillo.Saltar(brillo.Objetivo); foreach (var (m, (_, op)) in capas) op.Saltar(m == modo ? 1 : 0); Dibujar(); return; }
@@ -313,6 +317,7 @@ public partial class NotchWindow : Window
                 case 2: PausarTodo(); break;
                 case 3: ElegirDestino(); break;
                 case 4: AbrirPanel(!panelAbierto); break;
+                case 5: AbrirCentro(); break;
             }
             manejado = true;
         }
@@ -325,10 +330,11 @@ public partial class NotchWindow : Window
         bandeja = new Forms.NotifyIcon { Icon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? System.Drawing.SystemIcons.Application, Text = "AURA", Visible = true };
         bandeja.MouseClick += (_, e) => { if (e.Button == Forms.MouseButtons.Left) Dispatcher.Invoke(() => AbrirPanel(!panelAbierto)); };
         var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Abrir AURA  (Ctrl+Alt+A)", null, (_, _) => Dispatcher.Invoke(() => AbrirPanel(true)));
+        menu.Items.Add("Abrir el Centro  (Ctrl+Alt+C)", null, (_, _) => Dispatcher.Invoke(() => AbrirCentro()));
+        menu.Items.Add("Chat rápido en el notch  (Ctrl+Alt+A)", null, (_, _) => Dispatcher.Invoke(() => AbrirPanel(true)));
         menu.Items.Add("Hablar  (Ctrl+Alt+Espacio)", null, (_, _) => Dispatcher.Invoke(() => Microfono(this, new RoutedEventArgs())));
         menu.Items.Add("Pausar todo  (Ctrl+Alt+Esc)", null, (_, _) => Dispatcher.Invoke(PausarTodo));
-        menu.Items.Add("Ajustes", null, (_, _) => Dispatcher.Invoke(() => AbrirAjustes(this, new RoutedEventArgs())));
+        menu.Items.Add("Ajustes", null, (_, _) => Dispatcher.Invoke(() => AbrirCentro("ajustes")));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Salir", null, (_, _) => Dispatcher.Invoke(Close));
         bandeja.ContextMenuStrip = menu;
@@ -365,7 +371,7 @@ public partial class NotchWindow : Window
         CompositionTarget.Rendering -= Fotograma;
         vigia.Stop(); relojAviso?.Stop();
         Terminar();
-        if (fuente != null) { for (int i = 1; i <= 4; i++) UnregisterHotKey(fuente.Handle, i); fuente.RemoveHook(Gancho); }
+        if (fuente != null) { for (int i = 1; i <= 5; i++) UnregisterHotKey(fuente.Handle, i); fuente.RemoveHook(Gancho); }
         if (bandeja != null) { bandeja.Visible = false; bandeja.Dispose(); }
         // En las pruebas del CI la que termina es la prueba (con su resultado escrito), no la ventana.
         if (!soloRender) Application.Current.Shutdown();

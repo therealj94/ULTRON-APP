@@ -63,6 +63,18 @@ internal sealed class Ajustes
     public bool AvisosEnVoz { get; set; }
     /// <summary>Apps cuyas notificaciones no salen en el notch (por nombre: «WhatsApp»).</summary>
     public List<string> AppsSilenciadas { get; set; } = new();
+    /// <summary>Lo que dijo AU-RA de quién entró: rol, nivel («junta» o «miembro») y el Genesis ID.</summary>
+    public string Rol { get; set; } = "";
+    public string Nivel { get; set; } = "";
+    public string Gid { get; set; } = "";
+    /// <summary>true = entró con Genesis ID (sin clave guardada: al vencer la sesión se vuelve a entrar).</summary>
+    public bool PorGenesis { get; set; }
+    /// <summary>Ya vio la guía de la primera vez.</summary>
+    public bool PrimeraVezHecha { get; set; }
+    /// <summary>Cómo escucha: «pedir» (tecla o clic), «palabra» («Oye AURA», en la PC) o «siempre» (atenta mientras hay conversación).</summary>
+    public string Escucha { get; set; } = "palabra";
+    /// <summary>La dirección pública de Veta Wallet (0x…) para leer los saldos. Solo lectura: nunca mueve dinero.</summary>
+    public string CarteraDireccion { get; set; } = "";
     public List<Recordatorio> Recordatorios { get; set; } = new();
 
     static string Carpeta => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AuraWindows");
@@ -79,6 +91,7 @@ internal sealed class Ajustes
             if (a.Idioma is not ("es" or "en")) a.Idioma = "es";
             a.Conexiones ??= new();
             a.AppsSilenciadas ??= new();
+            if (a.Escucha is not ("pedir" or "palabra" or "siempre")) a.Escucha = a.PalabraActivacion ? "palabra" : "pedir";
             return a;
         }
         catch { return new Ajustes(); }
