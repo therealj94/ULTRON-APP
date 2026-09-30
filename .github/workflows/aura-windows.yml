@@ -1,7 +1,7 @@
 name: AURA Windows
 on:
   push:
-    branches: [codex/aura-windows-native, ccr-a300ded3-ru9biy]
+    branches: [main, codex/aura-windows-native, ccr-a300ded3-ru9biy]
     paths: ['windows/**', 'scripts/nodo-t4/laya/modelos/windows/**', '.github/workflows/aura-windows.yml']
   pull_request:
     paths: ['windows/**', '.github/workflows/aura-windows.yml']
@@ -12,6 +12,9 @@ jobs:
   native:
     runs-on: windows-latest
     timeout-minutes: 35
+    # Solo el paso final (publicar el instalador desde main) escribe: crea o actualiza la release «aura-windows».
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
@@ -167,6 +170,36 @@ jobs:
           name: AURA-Windows-Setup-x64
           path: windows/artifacts/installer/
           retention-days: 14
+      # Descarga directa y fija, solo desde main y con TODAS las pruebas de arriba en verde:
+      # https://github.com/therealj94/ULTRON-APP/releases/download/aura-windows/AURA-Windows-Setup-x64.exe
+      # No se marca como «latest» (esa es la del APK).
+      - name: Name the installer for the direct download
+        if: github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          $setup = Get-Item ./windows/artifacts/installer/*.exe | Select-Object -First 1
+          New-Item -ItemType Directory -Force ./windows/artifacts/release | Out-Null
+          Copy-Item $setup.FullName ./windows/artifacts/release/AURA-Windows-Setup-x64.exe
+          $hash = (Get-FileHash ./windows/artifacts/release/AURA-Windows-Setup-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  AURA-Windows-Setup-x64.exe" | Set-Content ./windows/artifacts/release/AURA-Windows-Setup-x64.exe.sha256
+          $version = ([xml](Get-Content ./windows/src/Aura.Windows/Aura.Windows.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          "AURA_VERSION=$version" >> $env:GITHUB_ENV
+      - name: Publish the installer as a direct download (main only)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: aura-windows
+          name: AURA para Windows
+          make_latest: false
+          body: |
+            **AURA para Windows ${{ env.AURA_VERSION }}** — instalador para tu usuario (no pide administrador).
+
+            Descarga: [AURA-Windows-Setup-x64.exe](https://github.com/therealj94/ULTRON-APP/releases/download/aura-windows/AURA-Windows-Setup-x64.exe)
+
+            Commit `${{ github.sha }}`, con todas las pruebas del CI de Windows en verde. Windows puede decir «Windows protegió tu PC» porque el instalador aún no está firmado: «Más información» → «Ejecutar de todas formas».
+          files: |
+            windows/artifacts/release/AURA-Windows-Setup-x64.exe
+            windows/artifacts/release/AURA-Windows-Setup-x64.exe.sha256
       - name: Prepare verified installer transfer parts
         shell: pwsh
         run: ./windows/scripts/package-delivery.ps1
