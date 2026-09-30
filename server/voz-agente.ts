@@ -119,6 +119,18 @@ export function leerPase(token: string, ahora = Date.now()): Pase | null {
   };
 }
 
+/**
+ * Un pase NUESTRO (bien firmado, de esta versión) que ya venció hace poco: su idioma, o null. No da
+ * acceso a nada; sirve para despedirse con una frase en vez de dejar a la persona oyendo silencio
+ * (ElevenLabs deja seguir la conversación hasta 30 minutos y el pase dura 20).
+ */
+export function idiomaDePaseVencido(token: string, ahora = Date.now()): Idioma | null {
+  const d = leerDato('voz', token);
+  if (!d?.correo || !d?.cid || !d?.h || !Number(d.exp)) return null;
+  const exp = Number(d.exp);
+  return ahora > exp && ahora - exp < 60 * 60_000 ? normalizarIdioma(d.idioma) : null;
+}
+
 /* ------------------------------------------------------------------ las conversaciones vivas */
 
 type Conversacion = {
@@ -351,6 +363,7 @@ type Deps = {
 const PHRASES = {
   hilo: { es: 'Se me fue el hilo. ¿Me lo repites?', en: 'I lost my train of thought. Can you say it again?' },
   corte: { es: 'Perdón, se me cortó un segundo. ¿Me lo repites?', en: 'Sorry, I lost the connection for a second. Can you repeat that?' },
+  vencida: { es: 'Llevamos un buen rato hablando y esta conversación se cerró. Tócame para empezar otra y seguimos.', en: "We've been talking for a while and this conversation closed. Tap me to start a new one and we'll keep going." },
   tarde: { es: 'Perdón, me estoy tardando demasiado. ¿Me lo preguntas otra vez?', en: "Sorry, I'm taking too long. Could you ask me again?" },
 };
 
@@ -419,8 +432,21 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     };
     if (!bearer || !mismoSecreto(secretoDerivado(ETIQUETA_SECRETO_LLM), bearer)) return negar('unauthorized');
     const ahora = Date.now();
-    const pase = leerPase(String(req.headers['x-pase'] || ''), ahora);
-    if (!pase) return negar('pase vencido o inválido');
+    const crudo = String(req.headers['x-pase'] || '');
+    const pase = leerPase(crudo, ahora);
+    if (!pase) {
+      // Un pase de verdad que llegó a su tope: la voz se despide (frase fija, sin cerebro ni memoria).
+      const idioma = idiomaDePaseVencido(crudo, ahora);
+      if (!idioma) return negar('pase vencido o inválido');
+      const id = `chatcmpl-${crypto.randomBytes(8).toString('hex')}`;
+      const modelo = String(req.body?.model || 'aura');
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store, no-transform');
+      res.write(trozoOpenAI(id, modelo, null, null, true));
+      res.write(trozoOpenAI(id, modelo, PHRASES.vencida[idioma]));
+      res.write(trozoOpenAI(id, modelo, null, 'stop'));
+      return res.end('data: [DONE]\n\n');
+    }
     if (!sesionSigueViva({ huella: pase.h, correo: pase.correo, at: pase.sat, exp: pase.sexp }, ahora)) return negar('la sesión de este pase se cerró');
     const conv = tocarConversacion(pase, ahora);
     if (!conv) return negar('conversación cerrada o vencida');

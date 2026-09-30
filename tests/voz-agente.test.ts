@@ -253,6 +253,25 @@ test('un pase de una sesión cerrada (o con la clave cambiada después) ya no ha
   }
 });
 
+test('un pase de verdad que llegó a su tope: la voz se despide con una frase fija, sin cerebro', async () => {
+  const s = await montar(async (t) => t.enviar('done', { reply: 'no debería oírse' }));
+  try {
+    const yo = persona();
+    const viejo = emitirPase(yo, 'aura', 'en', { ahora: Date.now() - 21 * 60_000 }).pase;
+    const r = await llm(s.base, viejo, [{ role: 'user', content: 'hello?' }]);
+    assert.equal(r.status, 200);
+    const texto = await r.text();
+    assert.match(dichoDe(texto), /this conversation closed/);
+    assert.match(texto, /data: \[DONE\]\n\n$/);
+    assert.equal(s.vistos.length, 0, 'el cerebro no se entera');
+    // Uno inventado o de otra firma sigue siendo 401; y sin la llave de ElevenLabs, ni la despedida.
+    assert.equal((await llm(s.base, viejo.slice(0, -3) + 'abc', [{ role: 'user', content: 'x' }])).status, 401);
+    assert.equal((await llm(s.base, viejo, [{ role: 'user', content: 'x' }], { authorization: 'Bearer mala' })).status, 401);
+  } finally {
+    await s.cerrar();
+  }
+});
+
 test('la conversación: se cierra desde el teléfono, vence sin turnos y hay tope por cuenta', async () => {
   const s = await montar(async (t) => t.enviar('done', { reply: 'Hola.' }));
   try {

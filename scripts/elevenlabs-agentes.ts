@@ -14,7 +14,7 @@
  */
 import { pathToFileURL } from 'node:url';
 import { secretoDerivado } from '../server/seguridad';
-import { ETIQUETA_SECRETO_LLM } from '../server/voz-agente';
+import { ETIQUETA_SECRETO_LLM, PASE_TTL_MS } from '../server/voz-agente';
 import { NOMBRE_AVATAR, VOCES_ELEVEN, type AvatarVoz, type Idioma } from '../server/eleven';
 
 const API = 'https://api.elevenlabs.io/v1';
@@ -112,7 +112,8 @@ function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: 
         merge_with_default_ignore_terms: true,
         soft_timeout_config: { timeout_seconds: 2.5, message: idioma === 'en' ? 'Hmm… let me see.' : 'Mmm… a ver.' },
       },
-      conversation: { max_duration_seconds: 1800 },
+      // Lo mismo que dura un pase (PASE_TTL_MS en server/voz-agente.ts): más allá, la voz solo se despide.
+      conversation: { max_duration_seconds: Math.floor(PASE_TTL_MS / 1000) },
     },
     platform_settings: { auth: { enable_auth: true } },
   };
