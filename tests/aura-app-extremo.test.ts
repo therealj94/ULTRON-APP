@@ -89,7 +89,9 @@ const puerto = (s: http.Server) => (s.address() as AddressInfo).port;
 
 const PORT = 7960 + Math.floor(Math.random() * 30);
 const BASE = `http://127.0.0.1:${PORT}`;
-const proc: ChildProcess = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), path.join(RAIZ, 'server.ts')], {
+// La red de afuera lenta, como en el CI (tests/red-lenta.ts): lo que espere a internet antes de la
+// primera palabra se nota aquí igual que allá, y ninguna petición sale de la máquina.
+const proc: ChildProcess = spawn(process.execPath, ['--import', import.meta.resolve('tsx'), '--import', path.join(RAIZ, 'tests', 'red-lenta.ts'), path.join(RAIZ, 'server.ts')], {
   cwd: tmp,
   env: {
     // Solo lo que hace falta: nada de las llaves del entorno de quien corre las pruebas.
@@ -109,6 +111,7 @@ const proc: ChildProcess = spawn(process.execPath, ['--import', import.meta.reso
     ULTRON_LAYA_URL: `http://127.0.0.1:${puerto(laya)}`,
     ULTRON_LAYA_CLAVE: 'laya-falsa',
     TSX_TSCONFIG_PATH: path.join(RAIZ, 'tsconfig.json'),
+    RED_LENTA_MS: '2500',
   },
   stdio: ['ignore', 'ignore', 'pipe'],
   detached: true,
@@ -370,12 +373,23 @@ test('latencia hasta la primera palabra (voz), con cifras', { skip: !listo }, as
     }
   });
   const pregunta = await medir('pregunta al 27B (primer token del nodo a 250 ms, un trozo cada 15 ms)', () => voz(paseDe(), [{ role: 'user', content: 'explícame cómo va el proyecto de la planta de beneficio este trimestre' }]));
+  // Con la red de afuera lenta (tests/red-lenta.ts), un dato que va a internet (el spot del oro) no
+  // puede frenar la primera palabra: la voz sigue sin él tras TOPE_PASO_VOZ_MS.
+  // Otra persona: la de arriba ya gastó su cupo de turnos por minuto con las mediciones anteriores.
+  const otra = emitirSesion({ correo: 'otra.prueba@ordenglobal.org', nombre: 'Otra Persona', rol: 'Junta' });
+  const conDato = await medir('pregunta con un dato de internet «¿cómo va el oro?» (la red tarda 2,5 s)', async () => {
+    const r = await voz(paseDe(otra), [{ role: 'user', content: '¿cómo va el precio del oro esta semana en los mercados?' }]);
+    assert.equal(r.status, 200);
+    assert.ok(r.dicho.length > 20, r.dicho);
+    return r;
+  });
   primerTokenMs = 0;
   pasoMs = 4;
   // Holgado a propósito (máquinas de CI lentas): lo que se mira es el orden de magnitud.
   assert.ok(charla.primeraMs < 1500);
   assert.ok(orden.primeraMs < 1500);
   assert.ok(pregunta.primeraMs < 250 + 1500);
+  assert.ok(conDato.primeraMs < 250 + 1500, 'lo que espera a internet no frena la voz');
   // La primera frase larga sale en la coma, antes de que el 27B termine de escribir.
   assert.ok(pregunta.primeraMs < pregunta.totalMs - 100, 'la voz empieza antes de que termine la respuesta');
 });
