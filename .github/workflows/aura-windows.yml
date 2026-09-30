@@ -81,6 +81,19 @@ jobs:
             Get-Content ./windows/artifacts/protocol/assistant.json
             if ($process.ExitCode -ne 0) { throw 'Assistant integration failed' }
           } finally { Stop-Process -Id $fixture.Id -ErrorAction SilentlyContinue }
+      - name: Centro (WebView2) renders every section with sample data
+        shell: pwsh
+        run: |
+          $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--centro-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/centro" -PassThru
+          if (-not $process.WaitForExit(120000)) { $process.Kill(); throw 'Centro test timeout' }
+          Get-Content ./windows/artifacts/centro/resultado.json
+          if ($process.ExitCode -ne 0) { throw 'Centro test failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-centro
+          path: windows/artifacts/centro/
+          retention-days: 14
       - name: Other apps' notifications in the notch (Windows notification database, read-only)
         shell: pwsh
         run: |

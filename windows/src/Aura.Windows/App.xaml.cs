@@ -9,6 +9,7 @@ namespace Aura.Windows;
 public partial class App : Application
 {
     Mutex? unica;
+    readonly CancellationTokenSource fin = new();
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -26,17 +27,29 @@ public partial class App : Application
                 case "--native-self-test": _ = NativoSelfTest.Run(salida); return;
                 case "--conexiones-self-test": _ = ConexionesSelfTest.Run(salida); return;
                 case "--avisos-self-test": _ = AvisosSelfTest.Run(salida); return;
+                case "--centro-self-test": _ = CentroSelfTest.Run(salida); return;
                 case "--anim-self-test": _ = Pruebas.Animacion(salida); return;
                 case "--rtc-self-test":
                     Directory.CreateDirectory(Path.GetDirectoryName(salida)!);
                     MainWindow = new CallWindow(true, salida); MainWindow.Show(); return;
             }
         }
+        var pedido = Centro.Protocolo.PedidoDe(e.Args);
         unica = new Mutex(true, @"Local\Aura.Windows.Notch", out bool primera);
-        if (!primera) { Shutdown(); return; }
-        MainWindow = new NotchWindow();
-        MainWindow.Show();
+        if (!primera)
+        {
+            // Ya hay una AURA: le pasa el pedido (la vuelta de Genesis ID o «abrir el Centro») y se cierra.
+            Centro.Protocolo.Enviar(pedido ?? "--centro");
+            Shutdown(); return;
+        }
+        Centro.Protocolo.Registrar();
+        var notch = new NotchWindow();
+        MainWindow = notch;
+        Centro.Protocolo.Llego += p => notch.Dispatcher.BeginInvoke(new Action(() => notch.PedidoExterno(p)));
+        Centro.Protocolo.Escuchar(fin.Token);
+        notch.Show();
+        if (pedido != null) notch.Dispatcher.BeginInvoke(new Action(() => notch.PedidoExterno(pedido)), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
     }
 
-    protected override void OnExit(ExitEventArgs e) { unica?.Dispose(); base.OnExit(e); }
+    protected override void OnExit(ExitEventArgs e) { fin.Cancel(); unica?.Dispose(); base.OnExit(e); }
 }

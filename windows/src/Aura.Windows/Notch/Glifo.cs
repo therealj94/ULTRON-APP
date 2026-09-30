@@ -52,6 +52,13 @@ internal sealed class Glifo : FrameworkElement
         ["\uE8D6"] = "M9 18V5l11-2v13 M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z M20 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
         ["\uE715"] = "M3 6h18v12H3Z M3 7l9 6 9-6",
         ["\uE787"] = "M4 6h16v14H4Z M4 10h16 M8 3v5 M16 3v5",
+        // 2.0: micrófono tachado (silenciado) y la cuadrícula del Centro
+        ["\uEC54"] = "M12 3a3 3 0 0 1 3 3v6a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3Z M6 11a6 6 0 0 0 12 0 M12 17v4 M9 21h6 M4 4 20 20",
+        ["\uE8A9"] = "M4 4h7v7H4Z M13 4h7v7h-7Z M4 13h7v7H4Z M13 13h7v7h-7Z",
+        ["\uE8C7"] = "M3 7h18v12H3Z M3 7l3-3h12l3 3 M16 13h2",
+        ["\uE765"] = "M3 6h18v12H3Z M7 10h1 M11 10h1 M15 10h1 M8 14h8",
+        ["\uE706"] = "M12 8a4 4 0 1 0 .01 0Z M12 2v2 M12 20v2 M2 12h2 M20 12h2 M5 5l1.5 1.5 M17.5 17.5 19 19 M5 19l1.5-1.5 M17.5 6.5 19 5",
+        ["\uE793"] = "M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z",
         // 1.4: campana (notificaci\u00F3n de otra app) y globo de chat (WhatsApp, Teams, Telegram\u2026)
         ["\uEA8F"] = "M6 16V11a6 6 0 0 1 12 0v5l2 2H4Z M10 20a2 2 0 0 0 4 0",
         ["\uE8F2"] = "M4 5h16v11h-9l-5 4v-4H4Z M8 9.5h8 M8 12.5h5",

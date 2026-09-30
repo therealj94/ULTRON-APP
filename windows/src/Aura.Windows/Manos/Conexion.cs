@@ -234,6 +234,78 @@ internal static class SpotifyWeb
         throw new InvalidOperationException($"Te abrí {eleccion.Descripcion} en Spotify; dale play ahí (no encontré un dispositivo listo).");
     }
 
+    /// <summary>Lo que suena en la cuenta (null si nada).</summary>
+    public static async Task<SpotifySonando?> Estado(Conexion c, CancellationToken ct = default)
+    {
+        var (e, cuerpo) = await c.Pedir(HttpMethod.Get, $"{c.Config.Api}/v1/me/player", ct: ct);
+        if (e == 204 || cuerpo.Length == 0) return null;
+        if (e is < 200 or >= 300) throw new InvalidOperationException(e == 403 ? "Spotify no dio permiso: tu correo tiene que estar en «User Management» de la app (y la cuenta dueña, en Premium)." : $"Spotify contestó {e}.");
+        return LectorApis.SpotifyEstado(cuerpo);
+    }
+
+    public static async Task<List<SpotifyResultado>> Buscar(Conexion c, string q, CancellationToken ct = default) =>
+        LectorApis.SpotifyResultados(await c.Json($"{c.Config.Api}/v1/search?type=track,artist,playlist&limit=8&q={Uri.EscapeDataString(q)}", ct: ct));
+
+    /// <summary>Pone una canción (uri de track) o un contexto (artista, álbum, playlist) en el dispositivo activo o el primero.</summary>
+    public static async Task PonerUri(Conexion c, string uri, CancellationToken ct = default)
+    {
+        if (!System.Text.RegularExpressions.Regex.IsMatch(uri, @"^spotify:(?:track|artist|album|playlist):[A-Za-z0-9]+$")) throw new InvalidOperationException("Eso no es algo de Spotify.");
+        var cuerpo = uri.StartsWith("spotify:track:", StringComparison.Ordinal)
+            ? System.Text.Json.JsonSerializer.Serialize(new { uris = new[] { uri } })
+            : System.Text.Json.JsonSerializer.Serialize(new { context_uri = uri });
+        await Reproducir(c, cuerpo, uri, ct);
+    }
+
+    static async Task Reproducir(Conexion c, string cuerpo, string uri, CancellationToken ct)
+    {
+        for (int intento = 0; intento < 3; intento++)
+        {
+            var (e, r) = await c.Pedir(HttpMethod.Put, $"{c.Config.Api}/v1/me/player/play", cuerpo, ct: ct);
+            if (e is >= 200 and < 300) return;
+            if (e == 403 || LectorApis.SpotifyMotivo(r) == "PREMIUM_REQUIRED") { Abrir(uri); throw new InvalidOperationException("Te la abrí en Spotify: controlarlo desde otra app es solo con Premium."); }
+            if (e != 404) throw new InvalidOperationException($"Spotify contestó {e} al poner la música.");
+            var disp = LectorApis.SpotifyDispositivos(await c.Json($"{c.Config.Api}/v1/me/player/devices", ct: ct));
+            if (disp.Count > 0)
+            {
+                var (e2, _) = await c.Pedir(HttpMethod.Put, $"{c.Config.Api}/v1/me/player/play?device_id={Uri.EscapeDataString(disp[0].Id)}", cuerpo, ct: ct);
+                if (e2 is >= 200 and < 300) return;
+            }
+            else if (intento == 0) Abrir("spotify:");
+            await Task.Delay(TimeSpan.FromSeconds(intento == 0 ? 4 : 3), ct);
+        }
+        Abrir(uri);
+        throw new InvalidOperationException("Te la abrí en Spotify; dale play ahí (no encontré un dispositivo listo).");
+    }
+
+    /// <summary>play, pausa, siguiente, anterior, volumen:N, posicion:MS, aleatorio:true|false.</summary>
+    public static async Task Control(Conexion c, string accion, CancellationToken ct = default)
+    {
+        var partes = accion.Split(':', 2);
+        (HttpMethod m, string ruta) = partes[0] switch
+        {
+            "play" => (HttpMethod.Put, "/v1/me/player/play"),
+            "pausa" => (HttpMethod.Put, "/v1/me/player/pause"),
+            "siguiente" => (HttpMethod.Post, "/v1/me/player/next"),
+            "anterior" => (HttpMethod.Post, "/v1/me/player/previous"),
+            "volumen" when int.TryParse(partes.ElementAtOrDefault(1), out var v) => (HttpMethod.Put, $"/v1/me/player/volume?volume_percent={Math.Clamp(v, 0, 100)}"),
+            "posicion" when int.TryParse(partes.ElementAtOrDefault(1), out var p) => (HttpMethod.Put, $"/v1/me/player/seek?position_ms={Math.Max(0, p)}"),
+            "aleatorio" => (HttpMethod.Put, $"/v1/me/player/shuffle?state={(partes.ElementAtOrDefault(1) == "true" ? "true" : "false")}"),
+            _ => throw new InvalidOperationException("Acción de música desconocida."),
+        };
+        var (e, _) = await c.Pedir(m, c.Config.Api + ruta, m == HttpMethod.Put && partes[0] == "play" ? null : null, ct: ct);
+        if (e is >= 200 and < 300) return;
+        throw new InvalidOperationException(e == 404 ? "No hay un Spotify sonando en ningún dispositivo. Pon algo primero." : e == 403 ? "Controlar Spotify desde otra app es solo con Premium." : $"Spotify contestó {e}.");
+    }
+
+    public static async Task<List<(string Id, string Nombre, bool Activo)>> Dispositivos(Conexion c, CancellationToken ct = default) =>
+        LectorApis.SpotifyDispositivos(await c.Json($"{c.Config.Api}/v1/me/player/devices", ct: ct));
+
+    public static async Task Transferir(Conexion c, string id, CancellationToken ct = default)
+    {
+        var (e, _) = await c.Pedir(HttpMethod.Put, $"{c.Config.Api}/v1/me/player", System.Text.Json.JsonSerializer.Serialize(new { device_ids = new[] { id }, play = true }), ct: ct);
+        if (e is < 200 or >= 300) throw new InvalidOperationException($"Spotify no cambió de dispositivo ({e}).");
+    }
+
     static void Abrir(string uri)
     {
         if (!uri.StartsWith("spotify:", StringComparison.Ordinal)) return; // solo la app de Spotify, nunca otra cosa

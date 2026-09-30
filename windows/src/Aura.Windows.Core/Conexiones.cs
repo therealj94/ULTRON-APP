@@ -289,4 +289,43 @@ public static class LectorApis
             if (S(r, p) is { Length: > 0 } v) return v;
         return "";
     }
+
+    // ───────────── Spotify: el reproductor del Centro ─────────────
+
+    static string Imagen(JsonElement album) => A(album, "images").Select(x => S(x, "url")).FirstOrDefault(u => u.Length > 0) ?? "";
+
+    /// <summary>Lo que suena (GET /v1/me/player): null si no hay nada (204 o sin item).</summary>
+    public static SpotifySonando? SpotifyEstado(string json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        using var d = JsonDocument.Parse(json);
+        var r = d.RootElement;
+        var it = O(r, "item");
+        if (it.ValueKind != JsonValueKind.Object) return null;
+        var disp = O(r, "device");
+        return new SpotifySonando(S(it, "uri"), S(it, "name"), string.Join(", ", A(it, "artists").Select(a => S(a, "name")).Where(x => x.Length > 0)),
+            S(O(it, "album"), "name"), Imagen(O(it, "album")),
+            O(r, "is_playing").ValueKind == JsonValueKind.True,
+            O(r, "progress_ms").TryGetInt32(out var p) ? p : 0, O(it, "duration_ms").TryGetInt32(out var dur) ? dur : 0,
+            S(disp, "name"), O(disp, "volume_percent").TryGetInt32(out var v) ? v : -1,
+            O(r, "shuffle_state").ValueKind == JsonValueKind.True, S(r, "repeat_state"));
+    }
+
+    /// <summary>Resultados de búsqueda para el Centro: canciones, artistas y playlists (sin los huecos nulos de Spotify).</summary>
+    public static List<SpotifyResultado> SpotifyResultados(string json)
+    {
+        using var d = JsonDocument.Parse(json);
+        var r = d.RootElement;
+        var lista = new List<SpotifyResultado>();
+        foreach (var t in A(O(r, "tracks"), "items").Where(x => x.ValueKind == JsonValueKind.Object))
+            lista.Add(new SpotifyResultado("cancion", S(t, "uri"), S(t, "name"), string.Join(", ", A(t, "artists").Select(a => S(a, "name"))), Imagen(O(t, "album")), O(t, "duration_ms").TryGetInt32(out var du) ? du : 0));
+        foreach (var a in A(O(r, "artists"), "items").Where(x => x.ValueKind == JsonValueKind.Object))
+            lista.Add(new SpotifyResultado("artista", S(a, "uri"), S(a, "name"), "Artista", A(a, "images").Select(x => S(x, "url")).FirstOrDefault(u => u.Length > 0) ?? "", 0));
+        foreach (var pl in A(O(r, "playlists"), "items").Where(x => x.ValueKind == JsonValueKind.Object))
+            lista.Add(new SpotifyResultado("playlist", S(pl, "uri"), S(pl, "name"), S(O(pl, "owner"), "display_name"), A(pl, "images").Select(x => S(x, "url")).FirstOrDefault(u => u.Length > 0) ?? "", 0));
+        return lista.Where(x => x.Uri.StartsWith("spotify:", StringComparison.Ordinal)).ToList();
+    }
 }
+
+public sealed record SpotifySonando(string Uri, string Titulo, string Artista, string Album, string Portada, bool Sonando, int ProgresoMs, int DuracionMs, string Dispositivo, int Volumen, bool Aleatorio, string Repetir);
+public sealed record SpotifyResultado(string Tipo, string Uri, string Titulo, string Subtitulo, string Imagen, int DuracionMs);

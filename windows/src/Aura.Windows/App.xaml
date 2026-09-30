@@ -13,6 +13,19 @@
 
   <Style TargetType="TextBlock"><Setter Property="FontFamily" Value="{StaticResource Letra}"/><Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="FontSize" Value="13"/></Style>
 
+  <!-- Las descripciones de los botones: oscuras como el notch. Sin esto, el texto blanco global quedaba
+       sobre el fondo blanco de Windows y se veía un recuadro vacío. -->
+  <Style TargetType="ToolTip">
+   <Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/><Setter Property="FontSize" Value="12"/>
+   <Setter Property="HasDropShadow" Value="True"/><Setter Property="Placement" Value="Bottom"/><Setter Property="VerticalOffset" Value="6"/>
+   <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToolTip">
+    <Border Background="#F21C1C21" BorderBrush="{StaticResource Linea}" BorderThickness="1" CornerRadius="10" Padding="10,6" MaxWidth="280">
+     <ContentPresenter TextElement.Foreground="{StaticResource Texto}">
+      <ContentPresenter.Resources><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="Foreground" Value="{StaticResource Texto}"/></Style></ContentPresenter.Resources>
+     </ContentPresenter>
+    </Border></ControlTemplate></Setter.Value></Setter>
+  </Style>
+
   <Style x:Key="Pildora" TargetType="Button">
    <Setter Property="Foreground" Value="{StaticResource Texto}"/><Setter Property="Background" Value="{StaticResource Superficie2}"/><Setter Property="FontFamily" Value="{StaticResource Letra}"/>
    <Setter Property="FontSize" Value="13"/><Setter Property="Padding" Value="14,8"/><Setter Property="Margin" Value="0,0,8,8"/><Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>

@@ -1,7 +1,7 @@
 [Setup]
 AppId={{771C9ED5-39B8-4A11-A1DE-606D406422A3}
 AppName=AURA
-AppVersion=1.4.0
+AppVersion=2.0.0
 AppPublisher=Orden Global
 DefaultDirName={localappdata}\Programs\AuraWindows
 DefaultGroupName=AURA
@@ -10,7 +10,7 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0.17763
 OutputDir=..\artifacts\installer
-OutputBaseFilename=AURA-Windows-Setup-1.4.0-x64
+OutputBaseFilename=AURA-Windows-Setup-2.0.0-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -28,5 +28,9 @@ Source: "..\artifacts\win-x64\*"; DestDir: "{app}"; Excludes: "*.pdb"; Flags: ig
 Name: "{group}\AURA"; Filename: "{app}\Aura.Windows.exe"
 Name: "{autodesktop}\AURA"; Filename: "{app}\Aura.Windows.exe"; Tasks: desktopicon
 Name: "{userstartup}\AURA"; Filename: "{app}\Aura.Windows.exe"; Tasks: startup
+[Registry]
+; El enlace ultronfp:// (la vuelta de Genesis ID) lo registra AURA al abrirse; al desinstalar se quita.
+Root: HKCU; Subkey: "Software\Classes\ultronfp"; Flags: uninsdeletekey dontcreatekey
+
 [Run]
 Filename: "{app}\Aura.Windows.exe"; Description: "Abrir AURA"; Flags: nowait postinstall skipifsilent

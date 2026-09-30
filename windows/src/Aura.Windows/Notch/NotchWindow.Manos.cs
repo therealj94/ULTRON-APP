@@ -14,7 +14,8 @@ using Aura.Windows.Manos;
 namespace Aura.Windows.Notch;
 
 /// <summary>Algo que espera tu «sí» (escribir en otra ventana, bloquear), con su plazo.</summary>
-internal sealed record Propuesta(string Titulo, string Cuerpo, DateTime Vence, Func<Task> Hacer);
+/// <summary>Algo que espera el «sí». `AlNegar`: lo que se hace con el «no» o al vencer (p. ej. rechazar una llamada).</summary>
+internal sealed record Propuesta(string Titulo, string Cuerpo, DateTime Vence, Func<Task> Hacer, Func<Task>? AlNegar = null);
 
 /// <summary>
 /// Las manos: cada pedido hace UNA cosa conocida y lo dice en el notch. Lo que no se deshace solo
@@ -133,6 +134,14 @@ public partial class NotchWindow
                 case Mano.Correo: await LeerCorreos(p.Valor, hablado); break;
                 case Mano.Agenda: await LeerAgenda(p.Valor); break;
                 case Mano.Notificaciones: await HacerNotificaciones(p.Valor); break;
+                case Mano.Cartera: await HacerCartera(p.Valor); break;
+                case Mano.Pulse: HacerPulse(p.Valor); break;
+                case Mano.Dormir:
+                    microSilenciado = true; continuo = false; CerrarOido(); AplicarEscucha();
+                    Avisar(new Aviso(T("Micrófono apagado", "Microphone off"), T("Ya no te escucho. Toca el micrófono del notch o Ctrl+Alt+Espacio para volver.", "Not listening. Tap the notch mic or Ctrl+Alt+Space to come back."), "\uEC54", "idle", Segundos: 4));
+                    Centro.Registro.Anotar("microfono", "apagado por voz");
+                    break;
+                case Mano.Atajo: HacerAtajo(p.Valor); break;
                 case Mano.Pulsar: await PulsarControl(p.Valor); break;
                 case Mano.Ventana: HacerVentana(p.Valor); break;
                 case Mano.Portapapeles: await Portapapeles(texto, hablado); break;
@@ -285,32 +294,37 @@ public partial class NotchWindow
     {
         var texto = valor.Length > 0 ? valor : Borrador.Text.Length > 0 ? Borrador.Text : ultimaRespuesta;
         if (string.IsNullOrWhiteSpace(texto)) { NoPude(T("No tengo nada que escribir todavía. Dime qué escribo o pídeme un borrador.", "I have nothing to type yet. Tell me what to write or ask for a draft.")); return; }
-        if (destino == null)
+        Escritura sel;
+        try { sel = await Escritura.Tomar(destinoElegido != IntPtr.Zero ? destinoElegido : Pantalla.UltimaAjena); }
+        catch (Exception ex) { NoPude(ex.Message); return; }
+        async System.Threading.Tasks.Task Escribir()
         {
+            escribiendo = new CancellationTokenSource();
             try
             {
-                if (IsActive && Pantalla.UltimaAjena != IntPtr.Zero) { Ventanas.AlFrente(Pantalla.UltimaAjena); await System.Threading.Tasks.Task.Delay(250); }
-                destino = DesktopTarget.Capture();
+                var n = await sel.Escribir(texto, escribiendo.Token);
+                Centro.Registro.Anotar("escribir", $"{n} letras en {sel.App}");
+                Hecho(T("Escrito", "Typed"), sel.Titulo.Length > 0 ? sel.Titulo : sel.App, "\uE70F");
             }
-            catch (Exception ex) { NoPude(ex.Message); return; }
-        }
-        var sel = destino;
-        Proponer(new Propuesta(T("¿Lo escribo en ", "Type it into ") + sel.Title + "?", texto.Length > 140 ? texto[..140] + "…" : texto, DateTime.Now.AddSeconds(30), async () =>
-        {
-            destino = null;
-            escribiendo = new CancellationTokenSource();
-            try { await sel.Write(texto, escribiendo.Token); Hecho(T("Escrito", "Typed"), sel.Title, "\uE70F", T("Listo, ya está escrito.", "Done, it's typed.")); }
             finally { escribiendo.Dispose(); escribiendo = null; }
-        }));
+        }
+        // Corto y de una línea: se escribe ya (así se usa: «escribe hola»). Largo: se confirma primero.
+        if (texto.Length <= 280 && texto.Split('\n').Length <= 3) { await Escribir(); return; }
+        Proponer(new Propuesta(T("¿Lo escribo en ", "Type it into ") + (sel.Titulo.Length > 0 ? sel.Titulo : sel.App) + "?", texto.Length > 140 ? texto[..140] + "…" : texto, DateTime.Now.AddSeconds(30), Escribir));
     }
 
     /// <summary>Ctrl+Alt+W: esta ventana (Word o Bloc de notas) es el destino de la próxima escritura.</summary>
     internal void ElegirDestino()
     {
         if (pausado) return;
-        try { destino = DesktopTarget.Capture(); DestinoTexto.Text = T("Destino: ", "Target: ") + destino.Title; Avisar(new Aviso(T("Destino elegido", "Target selected"), destino.Title, "", "happy")); }
-        catch (Exception ex) { destino = null; Avisar(new Aviso(T("Elige Word o el Bloc de notas", "Pick Word or Notepad"), ex.Message, "", "worried", Segundos: 6)); }
+        destinoElegido = GetForegroundWindowPublico();
+        var titulo = Ventanas.Abiertas().Find(v => v.Handle == destinoElegido)?.Titulo ?? T("esta ventana", "this window");
+        DestinoTexto.Text = T("Destino: ", "Target: ") + titulo;
+        Avisar(new Aviso(T("Destino elegido", "Target selected"), titulo, "", "happy"));
     }
+
+    IntPtr destinoElegido;
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "GetForegroundWindow")] static extern IntPtr GetForegroundWindowPublico();
 
     void Proponer(Propuesta p)
     {
@@ -335,7 +349,7 @@ public partial class NotchWindow
         propuesta = null; relojPropuesta?.Stop();
         Recalcular();
         if (p == null) return;
-        if (!si || pausado || DateTime.Now > p.Vence) { destino = null; Avisar(new Aviso(T("No lo hice", "Didn't do it"), motivo ?? T("Cancelado.", "Cancelled."), "", "idle", Segundos: 2.4)); return; }
+        if (!si || pausado || DateTime.Now > p.Vence) { destino = null; if (p.AlNegar != null) { try { await p.AlNegar(); } catch (Exception ex) { Centro.Registro.Anotar("propuesta", ex.Message); } } Avisar(new Aviso(T("No lo hice", "Didn't do it"), motivo ?? T("Cancelado.", "Cancelled."), "", "idle", Segundos: 2.4)); return; }
         try { await p.Hacer(); }
         catch (Exception ex) { NoPude(ex.Message); }
     }
