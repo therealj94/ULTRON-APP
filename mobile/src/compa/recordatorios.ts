@@ -397,10 +397,12 @@ const dichos = new Map<string, number>();
 const oyentesPorDecir = new Set<() => void>();
 export const VENTANA_CONTESTADA_MS = 10 * 60_000;
 
-export function anotarContestada(l: LlamadaRecordatorio, ahora: number = Date.now()): boolean {
+export function anotarContestada(l: LlamadaRecordatorio, ahora: number = Date.now(), avisar = true): boolean {
   for (const [b, t] of dichos) if (ahora - t > VENTANA_CONTESTADA_MS) dichos.delete(b);
   if (dichos.has(l.base)) return false;
   dichos.set(l.base, ahora);
+  // Contestada en la pantalla de la llamada (el ciclo ya lo sabe): se anota y no se avisa a nadie más.
+  if (!avisar) return true;
   porDecir = l;
   for (const f of [...oyentesPorDecir]) f();
   return true;

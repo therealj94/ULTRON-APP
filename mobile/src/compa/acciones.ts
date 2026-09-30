@@ -86,6 +86,8 @@ export function esAccionApp(a: any): a is AccionApp {
       return txt(a.texto, 140) && typeof a.cuando === 'number' && Number.isFinite(a.cuando) && (a.llamada === undefined || typeof a.llamada === 'boolean');
     case 'cancelar_recordatorio':
       return typeof a.id === 'string' && /^aura-rec-[a-z0-9-]{1,80}$/.test(a.id);
+    case 'llamame':
+      return true;
     default:
       return false;
   }

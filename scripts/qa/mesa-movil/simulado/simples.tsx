@@ -22,6 +22,7 @@ export const BlurView = View;
 
 // react-native-safe-area-context: un teléfono típico con barra de gestos (24 arriba, 16 abajo).
 export const useSafeAreaInsets = () => ({ top: 24, bottom: 16, left: 0, right: 0 });
+export const initialWindowMetrics = { insets: { top: 24, bottom: 16, left: 0, right: 0 }, frame: { x: 0, y: 0, width: 0, height: 0 } };
 export const SafeAreaProvider = ({ children }: { children: ReactNode }) => <>{children}</>;
 
 // react-native-gesture-handler: Gesture.Pan()… devuelve más cadena; el detector solo pinta a sus hijos.
@@ -37,3 +38,7 @@ export const almacen = {
   setItem: async (k: string, v: string) => void m.set(k, v),
   removeItem: async (k: string) => void m.delete(k),
 };
+
+// expo-keep-awake: la pantalla del navegador no se apaga.
+export const activateKeepAwakeAsync = async () => {};
+export const deactivateKeepAwake = async () => {};

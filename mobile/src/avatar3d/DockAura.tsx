@@ -20,6 +20,7 @@ import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { idiomaActual, tr, useIdioma } from '../i18n';
 import { motivoFalloVoz } from '../compa/duenoAudio';
+import { etiquetaCiclo } from '../compa/llamadaCiclo';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
 import type { Pantalla } from '../nucleo/contrato';
 import { useVozOpcional, type ApiVoz } from '../compa/VozProvider';
@@ -88,8 +89,11 @@ export function textoEstado(e: EstadoAvatar, voz: ApiVoz): string {
   if (v.montada && v.estado === 'conectando') return tr('Conectando…', 'Connecting…');
   if (e.hablando) return tr('Hablando', 'Speaking');
   if (e.pensando) return tr('Pensando…', 'Thinking…');
+  // La llamada del avatar: en qué punto está (te llama, en llamada, silenciada) y los minutos de hoy.
+  const enCiclo = etiquetaCiclo(voz.ciclo, voz.nombreLlamada, idiomaActual(), voz.usadoHoyMs);
+  if (enCiclo) return enCiclo.texto;
   if (e.escuchando) return tr('Te escucho', 'I’m listening');
-  return tr('Toca el micrófono para hablarle', 'Tap the mic to talk to her');
+  return tr('Toca el micrófono y te llama', 'Tap the mic and she calls you');
 }
 
 /** ¿La conversación está abierta y oyendo? (el micrófono la silencia; si no, la abre o la despierta). */
@@ -102,10 +106,10 @@ export function BotonMicrofono({ voz, p, tam = 44 }: { voz: ApiVoz; p: Paleta; t
   const abierta = vozAbiertaAhora(voz);
   return (
     <Tocable
-      onPress={() => (abierta ? voz.silenciar(true) : voz.iniciar())}
+      onPress={() => (abierta ? voz.silenciar(true) : voz.ciclo === 'silenciado' ? voz.silenciar(false) : voz.iniciar())}
       deshabilitado={voz.vista.suspendida}
       vibrar
-      etiqueta={abierta ? tr('Silenciar a AURA', 'Mute AURA') : tr('Hablarle a AURA', 'Talk to AURA')}
+      etiqueta={abierta ? tr('Silenciar a AURA', 'Mute AURA') : voz.ciclo === 'silenciado' ? tr('Volver a escuchar a AURA', 'Listen to AURA again') : tr('Que AURA te llame', 'Have AURA call you')}
       style={[s.redondo, { width: tam, height: tam, borderRadius: tam / 2, backgroundColor: abierta ? p.acento : p.superficie2 }]}
     >
       <Icono nombre={abierta ? 'microfono' : 'microfonoNo'} tam={Math.round(tam * 0.5)} color={abierta ? p.sobreAcento : p.texto2} grosor={2} />

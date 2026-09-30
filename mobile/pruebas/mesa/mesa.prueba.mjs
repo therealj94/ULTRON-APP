@@ -191,6 +191,23 @@ prueba('caras: el permiso es por persona y revocable; al cerebro solo le llega �
 
 /* ── el recorrido ────────────────────────────────────────────────────────────────────────── */
 
+prueba('hoja «Más» (José, Samsung Android 16: tarjetas apiladas como baraja): alturas por contenido, sin base 0, con desplazamiento', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'mobile/src/components/HojaMas.tsx'), 'utf8');
+  const estilo = (nombre) => {
+    const m = new RegExp(`\\n    ${nombre}: \\{([\\s\\S]*?)\\n?    ?\\},?\\n`).exec(src.slice(src.indexOf('function estilos')));
+    assert.ok(m, `falta el estilo ${nombre}`);
+    return m[1];
+  };
+  // `flex: 1` es base 0 en Yoga: con la altura por contenido, la celda medía solo su relleno (8 dp) y
+  // cada tarjeta se desbordaba sobre la siguiente. Se reprodujo con Yoga (el motor de Android).
+  for (const n of ['celda', 'caja', 'mosaico']) assert.doesNotMatch(estilo(n), /(^|[\s{,])flex:\s*1\b/, `${n} sin flex: 1`);
+  assert.match(estilo('mosaico'), /minHeight:\s*76/, 'la tarjeta mide por contenido, al menos 76 dp');
+  assert.match(estilo('desplazable'), /flexShrink:\s*1/, 'la rejilla se encoge para caber en la hoja…');
+  assert.match(src, /<ScrollView[^>]*style=\{st\.desplazable\}[^>]*contentContainerStyle=\{st\.rejilla\}/, '…dentro de un ScrollView (lo que no cabe se desplaza)');
+  assert.match(src, /<Text style=\{st\.titulo\}>\{m\.titulo\}<\/Text>/, 'el título no se corta (numberOfLines solo en el subtítulo)');
+  assert.match(src, /width:\s*ancho\s*\}/, 'cada celda es una fracción del ancho real de la rejilla');
+});
+
 prueba('recorrido: cada paso nombra de dónde sale y esos archivos EXISTEN (nada inventado)', () => {
   const pasos = pasosTutorial('Claudio');
   assert.ok(pasos.length >= 6 && pasos.length <= 9, 'corto');

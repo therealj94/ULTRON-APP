@@ -104,12 +104,14 @@ export type AccionApp =
    */
   | { tipo: 'recordatorio'; texto: string; cuando: number; llamada?: boolean }
   /** Quita un recordatorio (por el id que el teléfono contó en su contexto). Solo tras el «sí». */
-  | { tipo: 'cancelar_recordatorio'; id: string };
+  | { tipo: 'cancelar_recordatorio'; id: string }
+  /** «Llámame»: el avatar llama a la persona, ya (la pantalla «te está llamando»; compa/llamadaCiclo.ts). */
+  | { tipo: 'llamame' };
 
 export type CampoPerfil = 'apodo' | 'cumple' | keyof Encuesta;
 
 /** Las manos que este teléfono sabe hacer: van en el contexto para que el servidor las ofrezca. */
-export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada'] as const;
+export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame'] as const;
 export type Mano = (typeof MANOS_APP)[number];
 
 /** Un recordatorio puesto en el teléfono (lo cuenta en el contexto para decirlo y cancelarlo por voz). */

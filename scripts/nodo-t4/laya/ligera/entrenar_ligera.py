@@ -51,7 +51,7 @@ INFORME = os.path.join(AQUI, 'informe.json')
 # Las manos que el camino rápido puede EJECUTAR sin cerebro (con su parámetro sacado de la frase) o
 # PROPONER (llamar: con su «sí»). La precisión que exige la compuerta es sobre estas.
 EJECUTABLES = ['app_atras', 'app_abrir', 'app_tema', 'app_avatar', 'app_callar', 'app_hablar', 'app_presencia', 'app_idioma',
-               'app_llamar', 'app_videollamar']
+               'app_llamar', 'app_videollamar', 'app_llamame']
 
 
 # ------------------------------------------------------------------ rasgos (igual en lib/laya-ligera.ts)

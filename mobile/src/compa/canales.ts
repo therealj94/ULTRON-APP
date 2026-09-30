@@ -39,8 +39,18 @@ export function canal<T>(inicial: T): Canal<T> {
   };
 }
 
-/** Volumen de la voz de la PERSONA en la conversación fluida (0..1, ~20 Hz): el anillo que late al oír. */
+/**
+ * Volumen de la voz de la PERSONA (0..1, ~20 Hz): el anillo que late al oír. Lo emite quien tenga el
+ * micrófono: la conversación fluida o, con la mesa tapada, el oído del teléfono que atiende la compañera.
+ */
 export const nivelOido = canal(0);
+
+/**
+ * ¿El oído del teléfono está escuchando DE VERDAD para AURA fuera de la conversación en vivo? (un
+ * reconocedor vivo, no solo pedido). La compañera pone cara de escuchar y dice «te escucho» solo así.
+ */
+export const oidoTelefono = canal(false);
+
 
 /** Lo que hace la mesa con su propia voz (fuera de la conversación fluida), para que la compañera lo refleje. */
 export type EcoMesa = {

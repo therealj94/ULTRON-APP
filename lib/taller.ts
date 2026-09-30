@@ -211,13 +211,15 @@ export const TALLER_SOLO_JUNTA =
 /** Las acciones del taller que, pedidas por un miembro, merecen decirle al modelo que no son suyas. */
 const DE_LA_JUNTA = new Set(['sistema', 'mantenimiento', 'redeploy', 'boveda', 'urgente', 'voz', 'listar']);
 
-/** ¿El pedido es de las manos de la app y no del taller? («llámame» sigue siendo la llamada de Twilio). */
+/** ¿El pedido es de las manos de la app y no del taller? («llámame» es la llamada de Twilio salvo con la mano `llamame`). */
 function cedeALaApp(p: ReturnType<typeof parsePedido>, q: string, manos: readonly string[] | undefined): boolean {
   if (!manos?.length) return false;
   const l = q.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
   // «llámame a las 5 para recordarme…» es un recordatorio con llamada de AURA, no la llamada de Twilio.
   if (p.accion === 'llamar' && manos.includes('recordatorio') && /\b(recordarme|recuerdame|recuerdes|acordarme|acuerde|olvide|pase|remind)\b/.test(l)) return true;
   if (p.accion === 'llamar' && manos.includes('llamar') && !/\b(llamame|llamanos|call me)\b/.test(l)) return true;
+  // Con la app que sabe que el avatar llama, «llámame» es SU llamada (suena el teléfono), no la de Twilio.
+  if (p.accion === 'llamar' && manos.includes('llamame') && /\b(llamame|call me)\b/.test(l)) return true;
   if (p.accion === 'urgente' && manos.includes('recordatorio') && /\bavisame\b/.test(l) && !/\b(urgente|alerta junta)\b/.test(l)) return true;
   return false;
 }

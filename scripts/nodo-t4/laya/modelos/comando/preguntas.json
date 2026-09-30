@@ -542,5 +542,13 @@
    "true": "sí: «ayuda», «tutorial», «¿qué puedes hacer?», «how do I use you»",
    "false": "no: ayuda con otra cosa (una tarea, un nombre para un negocio)"
   }
+ },
+ "app_llamame": {
+  "type": "noul",
+  "instructions": "¿Pide que AURA lo llame AHORA (sin hora ni recordatorio): «llámame», «hazme una llamada»?",
+  "criteria": {
+   "true": "sí: «llámame», «márcame un ratito», «call me», «give me a call»",
+   "false": "no: «llámame a Beto» (llamar a otro), «llámame Chepe» (apodo), «llámame a las 5 para…» (recordatorio), contar que alguien llamó"
+  }
  }
 }

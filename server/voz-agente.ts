@@ -46,10 +46,11 @@ import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDe
 import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
 import { aparatoValido, lecturaDe, turnoDeRecordatorio } from '../lib/acciones-app';
+import { preguntaSigues, RE_LLAMADA, RE_SIGUES, saludoDeLlamada } from '../lib/manos-app';
 import { nivelDeCorreo, nivelMasEstrecho, nivelValido, type NivelAura } from './nivel';
 import { anotarVoz, fraseTopeVoz, restanteVozMs } from './tope-voz';
 // El banco de frases de estado es uno solo, el de la app (sin React Native: se empaqueta aquí igual).
-import { esRelleno, estadoDeEspera, fraseDeEstado, quitarRellenoInicial } from '../mobile/src/compa/frasesEstado';
+import { ESPERA_FRASE_MS, esRelleno, estadoDeEspera, fraseDeEstado, quitarRellenoInicial } from '../mobile/src/compa/frasesEstado';
 
 /** La etiqueta del secreto que ElevenLabs manda como Bearer. Cambiarla invalida el guardado allá. */
 export const ETIQUETA_SECRETO_LLM = 'elevenlabs-llm-v1';
@@ -67,8 +68,12 @@ export const TURNO_VOZ_MS = 45_000;
  * EL PUENTE: si en este tiempo el cerebro no dijo nada, AURA dice una frase corta del estado en que está
  * («Déjame revisar…», «Buscando…», «Sacando cuentas…»), con la forma de ser del avatar y en su idioma,
  * en vez de quedarse callada. Una orden rápida o una charla contestan antes y no lo oyen nunca.
+ * En la llamada, el agente de ElevenLabs ya dice su propio relleno corto («Mmm… a ver.») a los ~2,5 s;
+ * por eso el puente va 2 s después (~4,5 s): si el cerebro sigue callado, se oye el ESTADO («Estoy
+ * revisando…»), no dos muletillas seguidas. Antes 1,2 s, y salía en turnos que iban a contestar
+ * enseguida (José: «no se siente conversación fluida»).
  */
-export const PUENTE_VOZ_MS = 1_200;
+export const PUENTE_VOZ_MS = ESPERA_FRASE_MS + 2_000;
 
 /**
  * Un agente de ElevenLabs por avatar e idioma (voz, idioma del reconocimiento y del turno). Los crea
@@ -507,7 +512,8 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       const p = emitirPase(s, avatar, idioma, { modo: req.body?.mode ?? req.body?.modo, aparato: aparatoValido(req.headers['x-aura-aparato']), nivel, topeMs: restante });
       const { cerradas } = abrirConversacion(s.correo, p.cid);
       if (cerradas) console.log(`[voz agente] ${cerradas} conversación(es) vieja(s) cerrada(s) por el tope de ${MAX_CONVERSACIONES}`);
-      return res.json({ token: j.token, agente, avatar, idioma, pase: p.pase, cid: p.cid, vence: new Date(p.exp).toISOString(), honesto: true });
+      // `restanteMs` (solo miembros): lo que le queda de voz hoy; el teléfono avisa antes de agotarlo.
+      return res.json({ token: j.token, agente, avatar, idioma, pase: p.pase, cid: p.cid, vence: new Date(p.exp).toISOString(), ...(restante !== undefined ? { restanteMs: restante } : {}), honesto: true });
     } catch (e: any) {
       console.warn('[voz agente] token', String(e?.name || 'error'));
       return res.status(502).json({ error: 'No pude abrir la conversación ahora. Intenta en un momento.', honesto: true });
@@ -629,6 +635,19 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     const lectura = lecturaDe(pase.correo, mensaje, ahora);
     if (lectura) {
       const texto = lectura.ok ? quitarExpresiones(lectura.texto).trim() || PHRASES.noLei[pase.idioma] : PHRASES.noLei[pase.idioma];
+      escribir(trozoOpenAI(id, modelo, texto));
+      conv.ultimaDicha = texto;
+      escribir(trozoOpenAI(id, modelo, null, 'stop'));
+      return cerrar();
+    }
+    /*
+     * LA LLAMADA DEL AVATAR (compa/llamadaCiclo.ts): la persona contestó la llamada que pidió («llámame»)
+     * y el teléfono manda `[[llamada]]`: se saluda como quien llama, AL INSTANTE y sin cerebro. Tras tres
+     * minutos sin que nadie hable manda `[[sigues]]`: «¿Sigues ahí?», también sin cerebro. Ninguno de los
+     * dos queda en el hilo (no son algo que la persona haya dicho).
+     */
+    if (RE_LLAMADA.test(mensaje) || RE_SIGUES.test(mensaje)) {
+      const texto = RE_LLAMADA.test(mensaje) ? saludoDeLlamada(pase.idioma, conv.turnos) : preguntaSigues(pase.idioma);
       escribir(trozoOpenAI(id, modelo, texto));
       conv.ultimaDicha = texto;
       escribir(trozoOpenAI(id, modelo, null, 'stop'));

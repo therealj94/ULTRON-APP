@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { miga, reportarEstado } from '../lib/reporte';
-import { Alert, AppState, Animated, BackHandler, Linking, PanResponder, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { AccessibilityInfo, Alert, AppState, Animated, BackHandler, Linking, PanResponder, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import { useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
@@ -20,6 +20,7 @@ import { GENEROS, generoPorId, interpretar, type Gag } from '../lib/intenciones'
 import { ayuda, CONOCER_CORE, CONOCER_QUESTIONS, fechaLocal, horaLocal, preguntaConocer } from '../lib/knowledge';
 import { lineas, lineasGag } from '../lib/lineas';
 import {
+  caerANube,
   currentSttEngine,
   destroySpeech,
   enableAlwaysOnMic,
@@ -27,7 +28,10 @@ import {
   isMicPaused,
   micWatchdogOk,
   muteMic,
+  oidoEscuchando,
+  oidoVivoDeVerdad,
   pauseMicForTts,
+  reabrirMic,
   restartMic,
   setSpeechCallbacks,
   setSttEngine,
@@ -58,7 +62,8 @@ import { SelectorAvatar } from '../avatares/SelectorAvatar';
 import { avatarPorId, conFotos, distribucion, type AvatarId } from '../avatares/catalogo';
 import { AccionesAvatar } from '../components/AccionesAvatar';
 import { VozProvider, useVoz, useVozOpcional, vozOcupaMicrofono } from '../compa/VozProvider';
-import { avisarMesa, mensajeVoz, sueloCompa } from '../compa/canales';
+import { avisarMesa, mensajeVoz, nivelOido, oidoTelefono, sueloCompa } from '../compa/canales';
+import { etiquetaCiclo, llamadaActiva, llamadaTerminada } from '../compa/llamadaCiclo';
 import { accionesDelTurno } from '../compa/acciones';
 import { emitir, escuchar } from '../nucleo/contrato';
 import { usePulse } from '../pulse/PulseProvider';
@@ -67,9 +72,10 @@ import { ALTO_BARRA, BarraMesa } from '../components/BarraMesa';
 import { HojaMas, type OpcionMas } from '../components/HojaMas';
 import { Tutorial } from '../tutorial/Tutorial';
 import { conTutorialVisto, tocaTutorial } from '../tutorial/pasos';
-import { OidoMesa, duenoAudio, motivoFalloVoz } from '../compa/duenoAudio';
+import { OidoMesa, VigilanteOido, duenoAudio, motivoFalloVoz, oidoPropio } from '../compa/duenoAudio';
+import { ESPERA_FRASE_MS } from '../compa/frasesEstado';
 import { ControlCamara, conPreferencia, pedidoDeCamara, prefiereSiempre, respuestaModoCamara, type EstadoCamara } from '../lib/camaraModo';
-import { marcoMesa, useMesaVisible } from '../avatar3d/usePresencia';
+import { marcoMesa, useMesaVisible, useModoPresencia } from '../avatar3d/usePresencia';
 import { useCaras, type ApiCaras } from '../caras/useCaras';
 import { avatarActual } from '../avatares/actual';
 import { orientar } from '../lib/orientacion';
@@ -235,8 +241,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   const conversando = voz.vista.montada;
   const convSilencio = voz.vista.silenciada;
   const estadoConv = voz.vista.estado;
-  /** La conversación tiene el micrófono (abierta, o dormida por un silencio largo): la mesa no oye ni habla sola (M3). */
-  const vozOcupa = vozOcupaMicrofono(voz.vista);
+  /**
+   * La llamada del avatar tiene el micrófono (suena, conecta o se habla; o la sesión dormida por un
+   * silencio largo): la mesa no oye ni habla sola (M3). Al colgar, el oído de la mesa vuelve.
+   */
+  const vozOcupa = vozOcupaMicrofono(voz.vista) || llamadaActiva(voz.ciclo);
   const conversandoRef = useRef(vozOcupa);
   conversandoRef.current = vozOcupa;
   /** Hay una llamada: la mesa calla, no oye y apaga la cámara hasta colgar. */
@@ -260,6 +269,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * la pila no gasta batería ni reinicia un micrófono que es de otro).
    */
   const mesaActiva = mesaVisible && appActiva;
+  /**
+   * La compañera se ve (los chats, Ajustes o el perfil encima de la mesa; chiquita, al lado o a
+   * pantalla completa): entonces el oído de la mesa sigue abierto y ella atiende (compa/duenoAudio.ts).
+   */
+  const modoPresencia = useModoPresencia();
+  const companeraVisible = modoPresencia === 'paseo' || modoPresencia === 'lado' || modoPresencia === 'completa';
   const { width: anchoPantalla, height: altoPantalla } = useWindowDimensions();
   const horizontal = anchoPantalla >= altoPantalla;
 
@@ -314,6 +329,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     oidoMesa.current = new OidoMesa({
       muteMic,
       unmuteMic,
+      reabrirMic,
       pauseMicForTts,
       stopSpeaking,
       cancelarTurno: () => {
@@ -343,7 +359,15 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   }, []);
 
   const restFace = useCallback((): FaceState => (presenceRef.current === 'sleep' ? 'SLEEPING' : 'IDLE'), []);
-  const idleStatus = useCallback(() => setStatus(micMutedRef.current ? 'muted' : 'listening'), []);
+  /**
+   * La línea de estado en reposo. «Escuchando» solo si un motor escucha de verdad (speech.oidoEscuchando):
+   * pedir que escuche no es que escuche. Con el audio de otro (la conversación, una llamada) no se toca.
+   */
+  const idleStatus = useCallback(() => {
+    if (micMutedRef.current) return setStatus('muted');
+    if (!oidoMesa.current?.oye()) return;
+    setStatus(oidoEscuchando() ? 'listening' : 'reconnect');
+  }, []);
 
   /**
    * ¿La escena sigue valiendo como hecho? La ventana depende del MOTOR y del MODO, porque cada
@@ -421,9 +445,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       if (emocion !== 'neutral') setEmocion(emocion);
       const f = nextFace || (performance === 'sing' ? 'SING' : faceForEmocion(emocion));
       showBubble(text);
-      // En la conversación fluida, en una llamada o tapada por otra pantalla, la mesa no habla: se lee,
-      // no se oye (M3; un solo dueño del audio).
-      if (conversandoRef.current || enLlamadaRef.current || !mesaVisibleRef.current) return;
+      // En la conversación fluida o en una llamada la mesa no habla: se lee, no se oye (M3; un solo
+      // dueño del audio). Tapada por los chats sí, si el audio es de la compañera: ella lo dice.
+      if (conversandoRef.current || enLlamadaRef.current || !oidoMesa.current?.puedeHablar()) return;
       logUltron(text);
       avisarMesa({ emocion, texto: quitarExpresiones(text).trim() });
       speakingRef.current = true;
@@ -696,10 +720,16 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       ultimoHablado.current = false;
       let emocion: Emocion = 'neutral';
       let reacted = false;
-      // Un solo relleno si el cerebro tarda (inmediato con imagen): «mmm, déjame ver» con la voz del avatar.
-      const mmm = () =>
+      // Un solo relleno y solo si el cerebro de verdad tarda (ESPERA_FRASE_MS, ~2,5 s; inmediato con
+      // imagen, que siempre tarda): «mmm, déjame ver» con la voz del avatar. Antes salía a los 700 ms,
+      // en casi todos los turnos, y la respuesta ESPERABA a que terminara (StreamSpeaker no corta la
+      // frase en curso): el relleno no tapaba la espera, la alargaba. Lo que contesta el camino rápido
+      // llega mucho antes y no lo oye nunca (el primer trozo lo cancela).
+      const mmm = () => {
+        if (!oidoMesa.current?.puedeHablar()) return;
         void speak(frase(pick(['mmm', 'unmomento'] as const)), { onAudioStart: () => pauseMicForTts(true), onEnd: () => !speakingRef.current && pauseMicForTts(false) });
-      let mmmTimer: ReturnType<typeof setTimeout> | null = opts?.image ? (mmm(), null) : setTimeout(mmm, 700);
+      };
+      let mmmTimer: ReturnType<typeof setTimeout> | null = opts?.image ? (mmm(), null) : setTimeout(mmm, ESPERA_FRASE_MS);
       const cancelMmm = () => {
         if (mmmTimer) clearTimeout(mmmTimer);
         mmmTimer = null;
@@ -731,7 +761,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
                   speaker = new StreamSpeaker({
                     emocion,
                     onAudioStart: () => onAudio(faceForEmocion(emocion)),
-                    onSentence: (sentence) => showBubble(sentence),
+                    onSentence: (sentence) => {
+                      showBubble(sentence);
+                      // Con la mesa tapada lo dice la compañera: su globito lee lo mismo que suena.
+                      avisarMesa({ texto: quitarExpresiones(sentence).trim(), emocion });
+                    },
                   });
                 }
                 speaker.push(piece);
@@ -947,6 +981,11 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         switch (intent.tipo) {
           case 'despertar':
             return void (await say(tr('Aquí estoy.', 'I’m here.'), 'HAPPY', { emocion: 'feliz' }));
+          case 'llamame':
+            // La llamada del avatar suena YA (sin ir al servidor): la mesa no dice nada encima del timbre.
+            miga('mesa: «llámame» → la llamada del avatar');
+            if (vozRef.current.llamame()) return;
+            return void (await say(tr('Ahora no puedo llamarte: hay otra llamada.', "I can't call you right now: there's another call."), 'CONCERNED', { emocion: 'preocupado' }));
           case 'dormir':
             setPresence('sleep');
             presenceRef.current = 'sleep';
@@ -1274,6 +1313,10 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   // ---------- Voz ----------
   // Lo dicho en voz alta llega marcado (`hablado`): el servidor lo atiende con los topes de la voz.
+  /*
+   * Lo que oye el reconocedor del teléfono va a la mesa, siempre (sin palabra de activación ni «espera»:
+   * la llamada del avatar se pide con «llámame» y la reconoce `interpretar` aquí mismo, sin red).
+   */
   const onSpeechFinal = useCallback(
     (text: string) => {
       ultimoHablado.current = true;
@@ -1281,7 +1324,6 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     },
     [handleCommand]
   );
-
   useEffect(() => {
     setSpeechCallbacks({
       onSpeechStart: () => {
@@ -1295,6 +1337,8 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
       },
       onLevel: (l) => {
         if (nivelVisible.current) setLevel(l);
+        // Con la mesa tapada, el anillo de la compañera late con la voz de la persona (la oye ella).
+        if (oidoMesa.current?.actual() === 'companera') nivelOido.emitir(l);
       },
       onFinal: (t) => {
         setPartial('');
@@ -1345,7 +1389,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         await enableAlwaysOnMic();
         oidoListo.current = true;
         // Si mientras tanto el audio pasó a otro (la conversación, una llamada, otra pantalla), se suelta.
-        if (oidoMesa.current?.actual() !== 'mesa') void muteMic();
+        if (!oidoMesa.current?.oye()) void muteMic();
         setStatus('listening');
       } else setStatus(micOk ? 'muted' : 'offline');
 
@@ -1369,35 +1413,47 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Watchdog del micrófono: si el bucle se cuelga, reinicio duro.
+  /*
+   * El vigilante del oído (compa/duenoAudio.ts, VigilanteOido): con la app delante y el oído NUESTRO
+   * (en la mesa o, con la mesa tapada, en la compañera). Antes solo corría con la mesa a la vista: en
+   * los chats nadie cuidaba el oído. Suelta una pausa colgada, reinicia al reconocedor que no da
+   * señales de vida (un bucle de errores no es vida), y tras varios intentos pasa a la nube. De paso,
+   * la etiqueta y la cara de la compañera dicen «te escucho» solo si un motor escucha.
+   */
+  const vigilante = useRef<VigilanteOido | null>(null);
+  if (!vigilante.current) {
+    vigilante.current = new VigilanteOido({
+      esNuestro: () => oidoPropio(oidoMesa.current?.actual() ?? null) && !conversandoRef.current && !enLlamadaRef.current,
+      silenciado: () => micMutedRef.current || !oidoListo.current,
+      hablando: () => speakingRef.current,
+      pensando: () => handling.current,
+      pausado: isMicPaused,
+      soltarPausa: () => pauseMicForTts(false),
+      vivo: micWatchdogOk,
+      revivio: oidoVivoDeVerdad,
+      reiniciar: () => restartMic(),
+      caerANube,
+      miga,
+    });
+  }
   useEffect(() => {
-    if (!mesaActiva) return;
-    let pausadoSinVoz = 0;
-    const id = setInterval(() => {
-      // Con la conversación, una llamada u otra pantalla el micrófono es de otro: no se toca el de la mesa.
-      if (oidoMesa.current?.actual() !== 'mesa') return;
-      if (micMutedRef.current || speakingRef.current || conversandoRef.current || enLlamadaRef.current) {
-        pausadoSinVoz = 0;
-        return;
-      }
-      // Pausado «por la voz» sin que nadie hable dos vueltas seguidas: una voz cortada que no avisó.
-      // Antes esto dejaba a la mesa sorda (el guardián daba por bueno un micrófono pausado).
-      if (isMicPaused() && !handling.current) {
-        if (++pausadoSinVoz >= 2) {
-          miga('oído de la mesa: pausa colgada sin voz, se suelta');
-          pauseMicForTts(false);
-          pausadoSinVoz = 0;
-        }
-        return;
-      }
-      pausadoSinVoz = 0;
-      if (!micWatchdogOk()) {
-        setStatus('reconnect');
-        void restartMic().then(() => idleStatus());
-      }
-    }, 3000);
+    if (!appActiva) {
+      oidoTelefono.emitir(false);
+      return;
+    }
+    const revisar = () => {
+      const r = vigilante.current!.revisar();
+      const nuestro = oidoPropio(oidoMesa.current?.actual() ?? null) && !conversandoRef.current && !enLlamadaRef.current;
+      const oye = nuestro && !micMutedRef.current && oidoEscuchando();
+      oidoTelefono.emitir(oye);
+      if (!nuestro || !oidoListo.current || micMutedRef.current || speakingRef.current || handling.current) return;
+      if (r === 'reinicia' || r === 'nube' || r === 'sordo' || !oye) setStatus('reconnect');
+      else setStatus('listening');
+    };
+    revisar();
+    const id = setInterval(revisar, 3000);
     return () => clearInterval(id);
-  }, [idleStatus, mesaActiva]);
+  }, [appActiva]);
 
   // Mirada errante (único generador): se pausa si hay dedo, toque reciente o persona en cámara.
   useEffect(() => {
@@ -1538,15 +1594,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    */
   const toggleConversar = () => {
     void haptic('medium');
-    if (conversando) {
-      voz.terminar();
-      return;
-    }
-    void stopSpeaking();
-    speakingRef.current = false;
-    void muteMic();
     setMenuOpen(false);
-    voz.iniciar();
+    // En llamada, cuelga; sonando, rechaza; si no, que el avatar llame (la pantalla entrante).
+    voz.alternar();
   };
 
   // Lo que pasa en la conversación, en la cara y la línea de estado de la mesa.
@@ -1561,8 +1611,12 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         // de la mesa ya volvió: el dueño del audio vuelve a ser la mesa (efecto de abajo).
         const motivo = motivoFalloVoz(voz.vista.detalle, idiomaActual() === 'en');
         const texto = tr(`No pude abrir la conversación en vivo: ${motivo}. Sigo escuchándote por aquí.`, `I couldn’t open the live conversation: ${motivo}. I’m still listening here.`);
-        if (mesaVisibleRef.current) void say(texto, 'CONCERNED', { emocion: 'preocupado' });
-        else showBubble(texto);
+        // Un respiro: primero el dueño del audio vuelve al oído del teléfono (efecto de abajo), y así
+        // lo dice la mesa o, con la mesa tapada, la compañera.
+        setTimeout(() => {
+          if (oidoMesa.current?.puedeHablar()) void say(texto, 'CONCERNED', { emocion: 'preocupado' });
+          else showBubble(texto);
+        }, 0);
       }
       return;
     }
@@ -1611,19 +1665,22 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
 
   // Un solo dueño del audio: la llamada, la conversación en vivo o la mesa (solo si se la ve).
   useEffect(() => {
-    const dueno = duenoAudio({ enLlamada, conversacion: vozOcupa, mesaVisible, appActiva });
+    const dueno = duenoAudio({ enLlamada, conversacion: vozOcupa, mesaVisible, appActiva, companeraVisible });
     const hizo = oidoMesa.current!.aplicar(dueno);
     if (hizo === 'suelta') {
       speakingRef.current = false;
       avisarMesa({ hablando: false, pensando: false });
+      oidoTelefono.emitir(false);
       setToolHint('');
       setFace(restFace());
-      if (dueno !== 'conversacion') setStatus('muted');
+      // Suena la llamada del avatar (todavía sin sesión): la mesa no escucha; la línea dice «te llama…».
+      if (dueno !== 'conversacion' || !vozRef.current.vista.montada) setStatus('muted');
     } else if (hizo === 'toma') {
       setFace(restFace());
-      setStatus(micMutedRef.current ? 'muted' : 'listening');
+      // Se reabrió un reconocedor nuevo: «escuchando» cuando de verdad escuche (el vigilante lo mira).
+      setStatus(micMutedRef.current ? 'muted' : oidoEscuchando() ? 'listening' : 'reconnect');
     }
-  }, [enLlamada, vozOcupa, mesaVisible, appActiva, restFace]);
+  }, [enLlamada, vozOcupa, mesaVisible, appActiva, companeraVisible, restFace]);
 
   // La voz toma el avatar de la mesa; al entrar se deja el permiso de la conversación listo.
   useEffect(() => {
@@ -1778,7 +1835,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     })
   ).current;
 
-  const dotColor =
+  const dotColorNativo =
     status === 'muted' ? T.aviso : status === 'reconnect' || status === 'thinking' ? avatarPorId(avatar || 'aura').tema.acento : status === 'offline' ? T.texto3 : T.activo;
   /*
    * EL PUNTO ÚNICO donde la mesa dice qué está haciendo (el HUD y la cabecera del chat de la mesa).
@@ -1786,7 +1843,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
    * (fraseDeEstado(estado, avatar, idioma), en la capa de lógica): cuando llegue, entra AQUÍ y en
    * avatar3d/DockAura.textoEstado, sin copiar el banco.
    */
-  const statusLabel =
+  const statusLabelNativo =
     toolHint ? toolHint :
     status === 'listening'
       ? listening
@@ -1805,6 +1862,23 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               : status === 'offline'
                 ? tr('sin mic', 'no mic')
                 : tr('iniciando', 'starting');
+
+  /*
+   * LA LLAMADA DEL AVATAR: mientras suena o se habla, la línea dice en qué punto está (te llama, en
+   * llamada, silenciado) y los minutos de voz de hoy. Fuera de la llamada, lo de siempre.
+   */
+  const enAccion = !!toolHint || status === 'thinking' || status === 'speaking' || status === 'orando' || status === 'offline';
+  const etiquetaLlamada = !enAccion || llamadaActiva(voz.ciclo) ? etiquetaCiclo(voz.ciclo, voz.nombreLlamada, idiomaActual(), voz.usadoHoyMs) : null;
+  const statusLabel = etiquetaLlamada ? etiquetaLlamada.texto : statusLabelNativo;
+  const dotColor = etiquetaLlamada
+    ? etiquetaLlamada.tono === 'verde'
+      ? '#3FB950'
+      : etiquetaLlamada.tono === 'ambar'
+        ? T.aviso
+        : etiquetaLlamada.tono === 'azul'
+          ? avatarPorId(avatar || 'aura').tema.acento
+          : T.texto3
+    : dotColorNativo;
 
   // Qué avatar se ve y cómo se reparte la pantalla (Claudio: retrato acostado, de pie derecho).
   const avatarId: AvatarId = avatar || 'aura';
@@ -1913,7 +1987,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         respaldo={fotosCara}
         onTap={() => onTap('face', 0, 0)}
         onLongPress={onLongPress}
-        activo={mesaActiva}
+        activo={mesaActiva && !(llamadaActiva(voz.ciclo) && !voz.llamada.minimizada)}
       />
     ) : (
       fotosCara
@@ -1923,6 +1997,26 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   );
   const esClaudio = conFotos(avatarId);
   const acciones = avatarPorId(avatarId).acciones;
+  /*
+   * Colgó la llamada del avatar con la mesa delante: el avatar grande vuelve ENTRANDO desde un lado y
+   * se acomoda en su lugar (en los chats lo hace la compañera, caminando). Con «reducir movimiento», no.
+   */
+  const entradaX = useRef(new Animated.Value(0)).current;
+  const cicloAntes = useRef(voz.ciclo);
+  useEffect(() => {
+    const antes = cicloAntes.current;
+    cicloAntes.current = voz.ciclo;
+    const venia = llamadaActiva(antes) || llamadaTerminada(antes);
+    if (voz.ciclo !== 'reposo' || !venia || !mesaVisibleRef.current) return;
+    void AccessibilityInfo.isReduceMotionEnabled()
+      .catch(() => false)
+      .then((quieto) => {
+        if (quieto) return;
+        entradaX.setValue(-anchoPantalla);
+        Animated.spring(entradaX, { toValue: 0, damping: 16, stiffness: 90, mass: 1, useNativeDriver: true }).start();
+      });
+  }, [voz.ciclo, entradaX, anchoPantalla]);
+  const caraEntrando = <Animated.View style={{ flex: 1, transform: [{ translateX: entradaX }] }}>{caraNode}</Animated.View>;
   // La compañera pasea por encima de lo que no se debe tapar: los atajos y la barra de escribir del
   // chat de la mesa (cuadro) o los botones con los atajos (de pie); acostado, solo los botones.
   const sueloMesa = enCuadro || !horizontal ? 150 : 88;
@@ -2006,7 +2100,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
               horizontal ? { width: cuadroW } : { height: cuadroH },
             ]}
           >
-            {caraNode}
+            {caraEntrando}
           </View>
           <View style={{ flex: 1 }}>
             <ChatMesa
@@ -2033,7 +2127,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           </View>
         </>
       ) : (
-        caraNode
+        caraEntrando
       )}
 
       {!enCuadro && (
@@ -2080,7 +2174,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
           onMas={() => setMasAbierto(true)}
           onTerminar={toggleConversar}
           // Los atajos de este avatar (su oficio): una fila que se desliza de lado, justo encima de la barra.
-          encima={<AccionesAvatar acciones={acciones} tema={tema} onAccion={onAccion} />}
+          encima={<AccionesAvatar acciones={acciones} tema={tema} onAccion={onAccion} llamame={llamadaActiva(voz.ciclo) ? undefined : { etiqueta: tr('Llámame', 'Call me'), onPress: toggleConversar }} />}
           onAlto={setAltoAbajo}
         />
 
@@ -2097,7 +2191,7 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
         onCerrar={() => setMasAbierto(false)}
         onOpcion={alOpcionMas}
         nombreAvatar={de(avatarPorId(avatarId).nombre)}
-        conversando={conversando}
+        conversando={llamadaActiva(voz.ciclo)}
         estadoCamara={textoCamara}
         camaraEncendida={visionOn}
         estadoCaras={caras.estadoTexto}

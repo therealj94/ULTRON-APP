@@ -1,778 +1,820 @@
-{"q": "mi reina, vuelve a activar los avisos de don ramon", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
-{"q": "minimízate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/17"}
-{"q": "ok, i like soccer pls", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/5"}
-{"q": "Okay aura, please speak english.", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/11"}
-{"q": "oye aura quiero ver lo que hable con don chepe", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
-{"q": "Hey claudio i need a reminder at six to go to the bank", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
-{"q": "Busca en las conversaciones la cuenta del banco mi reina", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
-{"q": "claudio, no me interrumpas y callate porfis.", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/17"}
-{"q": "ya enciende la cámara para que me veas dale", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/11"}
-{"q": "mire ponte al lado del chat.", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/5"}
-{"q": "Mandale a mi jefe que ya salí gracias", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
-{"q": "um stop notifying me about about my sister.", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
-{"q": "elimina el recordatorio de mandar el informe", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
-{"q": "abre las conversaciones.", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/11"}
-{"q": "ey, vámonos para atrás si puedes", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/25"}
-{"q": "Okay aura cancel the message", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/5"}
-{"q": "ok, disconnect the call", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/5"}
-{"q": "Aura, can you help me think", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/131"}
-{"q": "vuelve a activar los avisos de mi jefe ahorita", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
-{"q": "Ok aura dale enviaselo", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/17"}
-{"q": "ya timbra a don chepe", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
-{"q": "aura pls, use the system theme thanks", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/5"}
-{"q": "mi reina, dale, envíaselo", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/17"}
-{"q": "antonio, send my sister a text saying i am outside", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
-{"q": "fíjate que que no se me olvide ir al banco recuérdamelo a la una porfis", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
-{"q": "oye hay que llamar a las cosas por su nombre", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/85"}
-{"q": "fíjate que quiero hablar con don chepe, llámale", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
-{"q": "Achícate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/11"}
-{"q": "Vuelve a hablarme", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/17"}
-{"q": "so, change avatar to antonio", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/11"}
-{"q": "vaya textea a mi compadre que ya casi", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/11"}
-{"q": "activa el modo oscuro gracias.", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/5"}
-{"q": "porfa quiero videollamada con don chepe", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
-{"q": "Yo, could you call my sister.", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
-{"q": "ya vamonos para atras", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/25"}
-{"q": "Aura por favor, colgá ya ya", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/5"}
-{"q": "Qué dicen en internet de cómo está el dólar dale", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
-{"q": "aura pls, send the draft", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/5"}
-{"q": "a ver recuerdame el nombre de esa cancion.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/91"}
-{"q": "elimina el recordatorio de mandar el informe.", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
-{"q": "so, send my sister a text saying i am outside", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
-{"q": "mire, ¿qué alarmas me pusiste?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/17"}
-{"q": "uh get my husband on the phone right now now", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
-{"q": "timbra a don ramon", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
-{"q": "yo, shh", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/17"}
-{"q": "what does the internet say about when olimpia plays", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
-{"q": "Antonio make it light", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/17"}
-{"q": "porfa no mejor bórralo", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/11"}
-{"q": "ok aura, lee el chat de mi jefe", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
-{"q": "Qué dicen en internet de cómo está el dólar ahorita.", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
-{"q": "antonio, muéstrame los comandos dale", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/17"}
-{"q": "aura please get my sister on the phone", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
-{"q": "match my phone theme", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/11"}
-{"q": "aura my daughters are at school", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/17"}
-{"q": "Aura, back to where i was", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/17"}
-{"q": "ponle un mensaje a mi jefe que ya salí", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
-{"q": "escucho música cristiana", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/11"}
-{"q": "send my husband a text saying i am outside.", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
-{"q": "le marcas a mi compadre compadre porfa", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
-{"q": "claudio, respóndele que no puedo ahorita", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/5"}
-{"q": "hey, what alarms did you set", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/11"}
-{"q": "uh give me a ring tomorrow at 7 to send the report please", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
-{"q": "Fijate q llamame manana a las 7 q tengo q mandar el informe porfis", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
-{"q": "Hey aura, bring me to the home screen", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/17"}
-{"q": "Antonio textea a don ramon que ya casi", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/11"}
-{"q": "hey respond that i cannot real quick", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/5"}
-{"q": "cambia de tema", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/71"}
-{"q": "Could you i need a reminder at six to take my medicine now.", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
-{"q": "porfa buscá el partido del olimpia en google.", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
-{"q": "mi reina, muéstrame mis chats por favor favor", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/5"}
-{"q": "aura, el mensaje llegó tarde.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/177"}
-{"q": "um, reply in english", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/5"}
-{"q": "aura, muestrame la pantalla de perfil", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/25"}
-{"q": "Fíjate q achícate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/11"}
-{"q": "a ver, necesito que me avises a la una para ir al banco", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
-{"q": "mi reina, no me interrumpas y cállate", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/17"}
-{"q": "Open the chat list real quick", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/11"}
-{"q": "mire, escuchame de nuevo", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/11"}
-{"q": "ey, llamame a la una que tengo que tomar la medicina", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
-{"q": "So, what do u do in your free time.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/117"}
-{"q": "ey, ¿me escribió mi jefe?", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
-{"q": "oye aura, márcame mañana a las 7 para recordarme mandar el informe que se me olvida please", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
-{"q": "mirá, quiero hablar con mi compadre, llámale", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
-{"q": "Ya, videollamada a mi jefe porfa.", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
-{"q": "eh volvé atrás", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/17"}
-{"q": "mira, videollama a don ramón.", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
-{"q": "abre lo de mi jefe si puedes", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
-{"q": "explain what a reminder is", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/51"}
-{"q": "ok aura, cierra esta pantalla", "e": ["cerrar", "app_atras"], "l": "es", "t": "app_atras/es/11"}
-{"q": "could you camera off ok.", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/5"}
-{"q": "i moved to to a new house and i am happy", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/157"}
-{"q": "respond that i cannot", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/5"}
-{"q": "um, what alarms did you set", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/11"}
-{"q": "me encanta el café", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/25"}
-{"q": "can you call me at 1 to remind me to take my medicine", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
-{"q": "Ok what alarms did you set", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/11"}
-{"q": "alright walk around again for me.", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/5"}
-{"q": "mmm", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/37"}
-{"q": "Oye lee el chat de mi jefe.", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
-{"q": "oye, buscá en internet el partido del olimpia", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
-{"q": "okay aura instructions now", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/5"}
-{"q": "Um that reminds me of my grandpa", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/105"}
-{"q": "mira, ¿le marcas a mi jefe? por favor", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
-{"q": "antonio, pon la app en negro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/11"}
-{"q": "Hey aura, can you call me at six to remind me to go to the bank", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
-{"q": "So, look the dollar exchange rate up online", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
-{"q": "¿que me tienes que recordar?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/5"}
-{"q": "eh, buenos días aura", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/25"}
-{"q": "hey turn the camera off please", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/11"}
-{"q": "mira lee lo que me escribieron", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/17"}
-{"q": "so, reply in english.", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/5"}
-{"q": "Drop the at 1 reminder", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
-{"q": "marcame a la una para recordarme ir al banco que se me olvida.", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
-{"q": "could you change avatar to antonio", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/11"}
-{"q": "búscame en las conversaciones la cuenta del banco ya", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
-{"q": "mire, callate un momento", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/11"}
-{"q": "could you send the draft right right now.", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/5"}
-{"q": "mire, quiero hablar con don chepe, llamale", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
-{"q": "aura please unmute the chat with my husband", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
-{"q": "a ver busca en internet como esta el dolar", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
-{"q": "um, i hate late calls", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/45"}
-{"q": "so stop being quiet", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/11"}
-{"q": "I am at the the table eating", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/137"}
-{"q": "activa el modo oscuro ya", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/5"}
-{"q": "hey, bring aura back", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/5"}
-{"q": "Mi reina muéstrame mis chats please", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/5"}
-{"q": "okay aura, make it light", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/17"}
-{"q": "claudio, olvida el recordatorio de ir al banco ahorita", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
-{"q": "Stop notifying me about my sister pls", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
-{"q": "Can you stop notifying me about my husband for me", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
-{"q": "eh la pantalla del cel se me quebro", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/117"}
-{"q": "claudio, muéstrame los comandos por favor", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/17"}
-{"q": "um let me call you back back later i am busy", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/125"}
-{"q": "ok aura, trabajo de maestra", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/5"}
-{"q": "aura, activa el modo oscuro porfa", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/5"}
-{"q": "ok aura qué dicen en internet del partido del olimpia", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
-{"q": "aura, fill the screen real quick.", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/17"}
-{"q": "Uh, video call karla pls pls", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
-{"q": "Um remove the reminder at six now", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
-{"q": "me gustan los días claros", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/171"}
-{"q": "alright, hang up please please", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/11"}
-{"q": "porfa calla un rato mi reina", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/5"}
-{"q": "Cancel the message", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/5"}
-{"q": "alright show me the chat with my husband", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/11"}
-{"q": "mirá habla en inglés", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/5"}
-{"q": "A ver, ¿y tu que haces en tu tiempo tiempo libre?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/151"}
-{"q": "se me olvidó el paraguas", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/57"}
-{"q": "um undo that screen right now", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/11"}
-{"q": "oye aura escuchame de nuevo", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/11"}
-{"q": "Um, be small again", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/11"}
-{"q": "Antonio dale envíaselo", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/17"}
-{"q": "could you give me a ring tomorrow at 7 to take my medicine.", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
-{"q": "aura pls, show me the the chat with my sister pls", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/11"}
-{"q": "a ver, muéstrame la pantalla de perfil.", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/25"}
-{"q": "instructions real quick", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/5"}
-{"q": "hey aura, turn the camera off.", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/11"}
-{"q": "este... timbra a mi jefe ya", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
-{"q": "hey aura, aura, minimízate ahorita", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/17"}
-{"q": "mi reina, despiertate aura", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/5"}
-{"q": "silence", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/5"}
-{"q": "a ver, ponle tema oscuro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/17"}
-{"q": "ya corta eso gracias", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/11"}
-{"q": "Oye aura vuelva activar los avisos de mi compadre", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
-{"q": "drop the tomorrow at 7 reminder", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
-{"q": "Hey aura, silence.", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/5"}
-{"q": "yo use the system theme", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/5"}
-{"q": "uh remove the reminder at six thanks", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
-{"q": "Oye aura, respondele a mi jefe que perfecto porfis", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
-{"q": "Oye aura pon la app en negro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/11"}
-{"q": "¿me escribio mi jefe?", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
-{"q": "Aura cómo funciona esto", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/11"}
-{"q": "mire, instrucciones instrucciones", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/5"}
-{"q": "Claudio despiértate aura", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/5"}
-{"q": "mira, trabajo de maestra", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/5"}
-{"q": "porfa busca el partido del olimpia en google", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
-{"q": "minimizate minimizate.", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/17"}
-{"q": "so, what did karla text me thanks", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
-{"q": "Antonio, let my sister know i left already", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/5"}
-{"q": "claudio cállate un momento", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/11"}
-{"q": "could you call my husband", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
-{"q": "Eh, me gustan los días claros", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/171"}
-{"q": "Aura, do you remember what i told you", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/5"}
-{"q": "claudio, marcame a las seis para recordarme tomar la medicina que se me olvida please.", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
-{"q": "antonio, abre las conversaciones.", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/11"}
-{"q": "hazte chiquita otra vez", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/25"}
-{"q": "Um sounds good", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/31"}
-{"q": "no, no, espera", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/137"}
-{"q": "Ok aura videollama a don ramón", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
-{"q": "hey, close this this", "e": ["cerrar", "app_atras"], "l": "en", "t": "app_atras/en/5"}
-{"q": "eh, acuérdame a la una de mandar el informe", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
-{"q": "ok aura, quiero practicar inglés, háblame en inglés gracias", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/11"}
-{"q": "um, my daughters are at school", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/17"}
-{"q": "ponle un mensaje a mi jefe que ya sali.", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
-{"q": "Trabajo trabajo de maestra", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/5"}
-{"q": "Alright, respond that i cannot.", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/5"}
-{"q": "mira, sí, envíalo por por favor", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/11"}
-{"q": "Vaya vuelve a hablarme", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/17"}
-{"q": "uh open the chat list", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/11"}
-{"q": "camera off", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/5"}
-{"q": "hey aura, i need a reminder at six to send the report", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
-{"q": "could you stop being quiet please", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/11"}
-{"q": "ok aura, quiero hablar con mi jefe, yámale ahorita", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
-{"q": "fíjate q la pantalla del cel se me quebró", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/117"}
-{"q": "hey, camera off thanks", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/5"}
-{"q": "aura fill the screen", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/17"}
-{"q": "Aura, send the draft now.", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/5"}
-{"q": "mira elimina el recordatorio de ir al banco", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
-{"q": "Yo, pull up my messages with my sister thanks", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
-{"q": "aura por favor, abre lo de don ramon porfa", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
-{"q": "a ver lee lo que me escribieron gracias", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/17"}
-{"q": "bueno buscá el partido del olimpia olimpia en google", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
-{"q": "can you unmute the chat with my husband please", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
-{"q": "aura, el inglés es difícil", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/17"}
-{"q": "uh walk around again ok", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/5"}
-{"q": "Ey me escribió mi compadre.", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
-{"q": "so, anything new pls", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/11"}
-{"q": "my name is joe but call me sunshine right now", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
-{"q": "eh se me olvido el paraguas", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/57"}
-{"q": "Respóndele que está bien ya", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/17"}
-{"q": "Fijate que ¿y tu que haces en tu tiempo libre?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/151"}
-{"q": "yo can you call me at six to remind remind me to go to the bank", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
-{"q": "oye, dale, envíaselo", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/17"}
-{"q": "can you put a reminder for send the report at six", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
-{"q": "pásame a hablar con aura pues.", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/17"}
-{"q": "mi reina, habla en inglés inglés please", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/5"}
-{"q": "No, espera", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/137"}
-{"q": "can you anything new", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/11"}
-{"q": "a ver, abre lo de mi compadre.", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
-{"q": "pull up my messages with my sister", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
-{"q": "can you cancel the message", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/5"}
-{"q": "ok, hang up please", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/11"}
-{"q": "So, change avatar to antonio.", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/11"}
-{"q": "ey, escucho musica cristiana.", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/11"}
-{"q": "Stop listening please", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/11"}
-{"q": "Fijate que habla en ingles ingles", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/5"}
-{"q": "Necesito que me avises en 5 minutos para ir ir al banco", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
-{"q": "ya, cuelga esa llamada pues", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/17"}
-{"q": "give me a ring at 1 to send the report report", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
-{"q": "Turn the camera off", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/11"}
-{"q": "mire, no, mejor borralo.", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/11"}
-{"q": "aura help me think of a name for my business", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/85"}
-{"q": "¿que alarmas me pusiste?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/17"}
-{"q": "oye aura, pon la app en negro negro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/11"}
-{"q": "hey how do you say hello in spanish", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/65"}
-{"q": "ya, activa los avisos de mi compadre.", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
-{"q": "ey, borra el recordatorio de tomar la medicina pues", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
-{"q": "the silence of the night.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/91"}
-{"q": "a ver lupita cumple quince anos", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/97"}
-{"q": "how do you say hello in spanish", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/65"}
-{"q": "so, ok.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/25"}
-{"q": "yo, pull up my messages with my husband.", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
-{"q": "me escribió mi jefe", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
-{"q": "Porfa ¿le marcas a mi compadre?", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
-{"q": "please please stop being quiet", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/11"}
-{"q": "Envía el mensaje", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/5"}
-{"q": "hey, undo that screen", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/11"}
-{"q": "porfa shhh", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/25"}
-{"q": "um close this.", "e": ["cerrar", "app_atras"], "l": "en", "t": "app_atras/en/5"}
-{"q": "so i work at a bank thanks.", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/17"}
-{"q": "Ey buscame en las conversaciones la cuenta del banco pues", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
-{"q": "how much is an international call", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/37"}
-{"q": "Okay aura, which chat has the bank account", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
-{"q": "vaya, acuerdame a las seis de mandar el informe mi reina", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
-{"q": "aura, did you read the book i told you about", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/11"}
-{"q": "ya, ya, hazte chiquita otra vez", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/25"}
-{"q": "shhh", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/25"}
-{"q": "Hey hey claudio, what does the internet say about the dollar exchange rate.", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
-{"q": "Um, send my husband a text saying i am outside", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
-{"q": "aura te quiero mucho.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/157"}
-{"q": "use the system theme", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/5"}
-{"q": "um, i texted texted my daughter yesterday", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/145"}
-{"q": "um, i sent the package yesterday", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/97"}
-{"q": "Um, shh", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/17"}
-{"q": "vaya, ponle un mensaje a don chepe que ya salí gracias.", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
-{"q": "mira mi mamá quiere hablar contigo", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/165"}
-{"q": "Hey claudio, hang up pls", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/11"}
-{"q": "hey aura, textea a don ramón que ya casi", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/11"}
-{"q": "uh, respond that i cannot for me", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/5"}
-{"q": "oye, cambia el mundo, empieza por ti", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/105"}
-{"q": "anything new", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/11"}
-{"q": "aura acuérdame en 5 minutos de ir al banco pues.", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
-{"q": "alright, drop the at 1 1 reminder thank you", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
-{"q": "aura, cuelga esa llamada", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/17"}
-{"q": "Este llamame a la una que tengo que mandar el informe", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
-{"q": "mira, activa el modo oscuro please.", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/5"}
-{"q": "Mire, acuerdame en 5 minutos de ir al banco por favor", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
-{"q": "Aura please back to where i was", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/17"}
-{"q": "este... respóndele a don ramón que perfecto", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
-{"q": "Oye, mandale a mi compadre que ya salí ahorita", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
-{"q": "Claudio ve para atrás", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/5"}
-{"q": "aura please pull up my messages with my sister.", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
-{"q": "Este activa la visión", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/5"}
-{"q": "ok aura, sí, envíalo por favor", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/11"}
-{"q": "oye aura respóndele que está bien", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/17"}
-{"q": "Oye, hay que llamar a las cosas por su nombre", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/85"}
-{"q": "hey claudio where is the engineer's email in my chats", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
-{"q": "fíjate que qué dicen en internet del partido del olimpia", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
-{"q": "use the system theme for me", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/5"}
-{"q": "hey claudio, let my husband know i left already", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/5"}
-{"q": "ya, cuelga esa llamada", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/17"}
-{"q": "Could you which chat has the engineer's email", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
-{"q": "abre la pantalla de chats por favor.", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/17"}
-{"q": "ya, cambia el avatar", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/11"}
-{"q": "aura, be small again ok", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/11"}
-{"q": "mira pásame a hablar con aura mi reina", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/17"}
-{"q": "Aura, mi mamá quiere hablar contigo", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/165"}
-{"q": "claudio, volve atras", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/17"}
-{"q": "could you give me a ring at 1 to send the report", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
-{"q": "Mire, calla un rato", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/5"}
-{"q": "Stop being quiet", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/11"}
-{"q": "vaya abre el inicio porfa", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/31"}
-{"q": "Fíjate que ¿qué me tienes que recordar?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/5"}
-{"q": "Mirá, activa la visión", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/5"}
-{"q": "aura por favor videollamada a don chepe porfa pues", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
-{"q": "Could u call karla ok", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
-{"q": "Video call karla please ok", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
-{"q": "este... activa los avisos de mi jefe", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
-{"q": "Aura por favor sí envíalo por favor", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/11"}
-{"q": "porfa no mejor borralo", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/11"}
-{"q": "change avatar to antonio.", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/11"}
-{"q": "Oye escucho música cristiana", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/11"}
-{"q": "hey aura, remove the reminder at six", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
-{"q": "Videollama a mi compadre por favor", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
-{"q": "remove the reminder tomorrow at 7", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
-{"q": "yo, can you call me tomorrow at 7 to remind me to send the report", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
-{"q": "give me a ring tomorrow at 7 to take my medicine", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
-{"q": "escuchame de nuevo si puedes", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/11"}
-{"q": "olvida el recordatorio de tomar la medicina si puedes", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
-{"q": "mi reina, respóndele a mi compadre que perfecto.", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
-{"q": "Mi reina, ¿cómo funciona esto? gracias", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/11"}
-{"q": "Mire, activa los avisos de mi jefe", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
-{"q": "ya, timbra a mi compadre mi reina.", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
-{"q": "ya, muéstrame la pantalla de perfil", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/25"}
-{"q": "quiero practicar inglés, háblame en inglés ya.", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/11"}
-{"q": "bueno, despiertate aura dale.", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/5"}
-{"q": "Aura, quiero videollamada con mi jefe pues.", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
-{"q": "Tell me about the history of honduras", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/57"}
-{"q": "Hey, what does the internet say about when olimpia plays thanks", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
-{"q": "a ver, marcame en 5 minutos para recordarme mandar el informe q se me olvida", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
-{"q": "Aura por favor muestrame los comandos", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/17"}
-{"q": "Olvídalo no lo mandes", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/5"}
-{"q": "ok wake up aura", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/5"}
-{"q": "ok give me some help", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/11"}
-{"q": "antonio, wake up aura now", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/5"}
-{"q": "contestame bien", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/65"}
-{"q": "so how much is an international call", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/37"}
-{"q": "no me interrumpas y callate", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/17"}
-{"q": "¿me escribio mi compadre?", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
-{"q": "Instructions ok", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/5"}
-{"q": "eh, ¿qué alarmas me pusiste?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/17"}
-{"q": "a ver, mis chats están llenos de memes", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/131"}
-{"q": "este... ve para atrás", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/5"}
-{"q": "ok, respond to my sister that it is fine", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
-{"q": "aura, open the chat list", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/11"}
-{"q": "Bueno, envia el mensaje", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/5"}
-{"q": "lee lo que me escribieron", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/17"}
-{"q": "oye aura, márcame en 5 minutos para para recordarme mandar el informe que se me olvida", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
-{"q": "Stop listening", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/11"}
-{"q": "what did karla text me please", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
-{"q": "A ver quién es beto", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/77"}
-{"q": "aura did did you read the book i told you about", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/11"}
-{"q": "uh make a video call to karla for me", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
-{"q": "hey aura, send it now", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/11"}
-{"q": "so get my sister on the phone", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
-{"q": "okay aura stop listening now", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/11"}
-{"q": "uh what did karla text me.", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
-{"q": "look when olimpia plays up online now", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
-{"q": "oye aura ya corta eso", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/11"}
-{"q": "so did you get home ok", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/111"}
-{"q": "unmute the chat with my husband for me", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
-{"q": "Please my name is joe but call me sunshine", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
-{"q": "ok, make it light", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/17"}
-{"q": "fíjate que la ropa está oscura", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/145"}
-{"q": "Respóndele que no puedo", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/5"}
-{"q": "ya mandale a mi jefe que ya salí", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
-{"q": "uh put a reminder for send the report tomorrow at 7 for me.", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
-{"q": "aura please, bring out the guardian thanks", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/17"}
-{"q": "ya, ponle tema oscuro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/17"}
-{"q": "eh, ¿te acuerdas de lo que te conte?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/5"}
-{"q": "ey, achicate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/11"}
-{"q": "do you you remember what i told you.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/5"}
-{"q": "aura, ¿cuantos chats puedo tener?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/191"}
-{"q": "Let me call you back later i am busy", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/125"}
-{"q": "ok, do not send that", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/11"}
-{"q": "vaya vámonos para atrás porfa.", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/25"}
-{"q": "hey hey claudio, my name is joe but call me sunshine", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
-{"q": "aura please, please speak english real quick.", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/11"}
-{"q": "hey claudio, send my husband a text saying i am outside", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
-{"q": "hey claudio do not send that", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/11"}
-{"q": "Ok fill the screen", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/17"}
-{"q": "okay aura, make a video call to my sister.", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
-{"q": "ok aura, enciende la camara para que me veas please", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/11"}
-{"q": "vaya olvidalo no no lo mandes please", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/5"}
-{"q": "mira, la ropa está está oscura", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/145"}
-{"q": "Send my husband a text saying i am outside now", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
-{"q": "volve atras gracias.", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/17"}
-{"q": "necesito que me avises mañana a las 7 para ir al banco dale", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
-{"q": "ok aura abre lo de don chepe", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
-{"q": "Um, stop notifying me about karla", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
-{"q": "Um pull up my messages with karla ok.", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
-{"q": "mire, respondele que esta bien porfis", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/17"}
-{"q": "busca en internet como esta el dolar", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
-{"q": "Mira no envíes nada todavía primero pensemos", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/125"}
-{"q": "porfa cambia el avatar", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/11"}
-{"q": "aura please, respond to my husband that it is fine", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
-{"q": "Busca en internet el partido del olimpia ahorita", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
-{"q": "mi reina, que no se me olvide ir al banco, recuérdamelo a la una.", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
-{"q": "Vaya, acuérdame mañana a las 7 de ir al banco", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
-{"q": "hey aura, acuérdame a las seis de mandar el informe", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
-{"q": "where is the bank account in my my chats.", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
-{"q": "Mirá elimina el recordatorio de mandar el informe", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
-{"q": "bueno, videollamada a don chepe porfa", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
-{"q": "aura, ponme a claudio", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/5"}
-{"q": "pls show me my messages thank you", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/5"}
-{"q": "antonio timbra a don ramon pues", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
-{"q": "aura, abre las conversaciones", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/11"}
-{"q": "aura please, look the dollar exchange rate up online for me", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
-{"q": "oye aura quiero videollamada con mi compadre gracias", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
-{"q": "uh, fill the screen thanks", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/17"}
-{"q": "please get karla on the phone", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
-{"q": "okay aura, undo that screen.", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/11"}
-{"q": "oye aura, quiero videollamada con don chepe porfa", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
-{"q": "Instrucciones mi reina", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/5"}
-{"q": "mira el inglés es difícil", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/17"}
-{"q": "mi reina vuelve a activar los avisos de mi jefe", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
-{"q": "aura que silencio tan raro", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/185"}
-{"q": "alright, shh shh thanks", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/17"}
-{"q": "Oye aura, ponle un mensaje a don chepe que ya sali", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
-{"q": "Este me encanta el café", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/25"}
-{"q": "hey aura which chat has the engineer's email now", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
-{"q": "aura drop the at six reminder", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
-{"q": "aura did you get home ok", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/111"}
-{"q": "Instructions", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/5"}
-{"q": "put a reminder for send the report at six", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
-{"q": "Oye abre el inicio", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/31"}
-{"q": "antonio bring aura back", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/5"}
-{"q": "muestrame la pantaya de perfil", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/25"}
-{"q": "Antonio antonio my name is joe but call me doc", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
-{"q": "Turn the camera off real quick", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/11"}
-{"q": "where is the bank account in my chats", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
-{"q": "busca en las conversaciones la cuenta del banco ahorita", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
-{"q": "Pon la app en negro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/11"}
-{"q": "bueno videollama don chepe.", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
-{"q": "hey claudio, anything new", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/11"}
-{"q": "Hey i sent the package yesterday", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/97"}
-{"q": "oye, instrucciones", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/5"}
-{"q": "hazte chiquita otra vez por favor", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/25"}
-{"q": "llamame mañana a las 7 que tengo que tomar la medicina", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
-{"q": "uh what did my husband text me pls.", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
-{"q": "ok aura cumplo anos el 3 de julio.", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/17"}
-{"q": "Um i need a reminder at 1 to go to the bank", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
-{"q": "eh llamame en 5 minutos que tengo que tomar la medicina porfis.", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
-{"q": "oye quiero ver lo que hablé con don chepe ya", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
-{"q": "Vaya, buscá en internet el partido del olimpia", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
-{"q": "hey, there is a mango tree behind the house", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/77"}
-{"q": "Mira lee el chat de don chepe", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
-{"q": "Ok aura, ya corta eso", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/11"}
-{"q": "i do not read texts while driving", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/71"}
-{"q": "mi reina, ya corta eso por favor", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/11"}
-{"q": "Porfa quiero hablar con don ramón, llámale gracias", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
-{"q": "mira, mis chats estan llenos de memes", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/131"}
-{"q": "um i like soccer.", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/5"}
-{"q": "A ver ok", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/31"}
-{"q": "fijate que videollamada a mi compadre porfa ya", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
-{"q": "Bueno, márcame a la una para recordarme ir al banco que se me olvida", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
-{"q": "Bueno, me encanta el café", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/25"}
-{"q": "ok where is the bank account in my chats", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
-{"q": "Mira, ok", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/31"}
-{"q": "aura por por favor elimina el recordatorio de mandar el informe", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
-{"q": "close this", "e": ["cerrar", "app_atras"], "l": "en", "t": "app_atras/en/5"}
-{"q": "hey aura show me my messages thanks.", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/5"}
-{"q": "El mensaje llegó tarde", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/177"}
-{"q": "could you bring out the guardian", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/17"}
-{"q": "mi sobrino se llama antonio.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/111"}
-{"q": "yo stop notifying me about my husband", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
-{"q": "aura, slow motion looks nice", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/151"}
-{"q": "aura por favor, ponte al lado del chat.", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/5"}
+{"q": "Mi reina levántame en 5 minutos please", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/25"}
+{"q": "um how many reminders do i have", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/5"}
+{"q": "please hang up please", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/11"}
 {"q": "hey claudio go to the chats", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/25"}
-{"q": "aura, cuelga cuelga la ropa en el patio", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/11"}
-{"q": "i work at a bank", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/17"}
-{"q": "yo, match my phone theme", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/11"}
-{"q": "A ver le marcas a mi compadre", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
-{"q": "Could you bring aura back", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/5"}
-{"q": "aura olvidalo no lo mandes.", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/5"}
-{"q": "Ya abre la la pantalla de chats", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/17"}
-{"q": "porfa lee el chat de don ramón.", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
-{"q": "Ya, ¿qué alarmas me pusiste? por favor", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/17"}
-{"q": "aura, aura, explain what a reminder is", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/51"}
-{"q": "quiero ver lo que hablé con don chepe", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
-{"q": "oye minimízate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/17"}
-{"q": "put put a reminder for take my medicine at 1", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
-{"q": "Ok aura, que no se me olvide tomar la medicina, recuérdamelo en 5 minutos", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
-{"q": "cambia el avatar", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/11"}
-{"q": "Video call karla please.", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
-{"q": "Pls let karla know i left already thank you", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/5"}
-{"q": "hey give me some help.", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/11"}
-{"q": "please drop the tomorrow at 7 reminder", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
-{"q": "buscá cómo está el dólar en google", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
-{"q": "hey claudio, disconnect the call", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/5"}
-{"q": "mira cierra esta pantalla", "e": ["cerrar", "app_atras"], "l": "es", "t": "app_atras/es/11"}
-{"q": "aura, reply in english real quick", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/5"}
-{"q": "stop listening pls", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/11"}
-{"q": "ponle un mensaje a mi jefe q ya salí", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
-{"q": "antonio get my husband on the phone", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
-{"q": "mira ponte al lado del chat", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/5"}
-{"q": "Hey aura, escuchame de nuevo", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/11"}
-{"q": "Que me tienes que recordar mi reina", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/5"}
-{"q": "so, tell me about the history of honduras", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/57"}
-{"q": "hey aura, borra el recordatorio de tomar la medicina por favor", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
-{"q": "Claudio, quiero ver lo que hable con don chepe si puedes", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
-{"q": "Unmute the chat with my sister pls", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
-{"q": "can u what did my sister text me thank you you", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
-{"q": "Antonio, busca en las conversaciones la foto del carro si puedes", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
-{"q": "Please which chat has the engineer's email", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
-{"q": "oye, volve atras", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/17"}
-{"q": "um look when olimpia plays up online for me", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
-{"q": "so make a video call to my sister", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
-{"q": "aura please, bring me 2 the home screen.", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/17"}
-{"q": "alright what alarms did you set", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/11"}
-{"q": "antonio, how many reminders do i have for me", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/5"}
-{"q": "hey get my husband on the phone phone", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
-{"q": "aura por favor ponme a claudio gracias.", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/5"}
-{"q": "ok which chat has the engineer's email pls.", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
-{"q": "eh, muéstrame mis chats", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/5"}
-{"q": "ponme a claudio", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/5"}
-{"q": "A ver, ¿te acuerdas de lo que te conté?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/5"}
-{"q": "go to the chats pls", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/25"}
-{"q": "Ya, olvida el recordatorio de mandar el informe dale.", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
-{"q": "aura, activa la visión", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/5"}
-{"q": "aura ok", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/25"}
-{"q": "i like soccer ok", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/5"}
-{"q": "ey videoyamada a mi compadre porfa", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
-{"q": "please can you call me at 1 to remind me to send the report now", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
-{"q": "busca en internet el partido del olimpia.", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
-{"q": "activa la visión ya", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/5"}
-{"q": "i moved to a new house and i'm happy.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/157"}
-{"q": "so, go to the chats thanks", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/25"}
-{"q": "claudio, busca en las conversaciones la cuenta del banco", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
-{"q": "aura, buenos dias aura", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/25"}
-{"q": "antonio, cierra esta pantalla", "e": ["cerrar", "app_atras"], "l": "es", "t": "app_atras/es/11"}
-{"q": "Can you unmute the chat with my husband", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
-{"q": "oye quiero bideollamada con don ramón", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
-{"q": "borra el recordatorio de tomar la medicina", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
-{"q": "yo, make a video call to my sister", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
-{"q": "ey calla un rato rato.", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/5"}
-{"q": "porfa hazte chiquita otra vez", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/25"}
-{"q": "can u drop the at 1 reminder", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
-{"q": "show me my messages right now.", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/5"}
-{"q": "uh, undo that screen", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/11"}
-{"q": "vaya, cuelga esa llamada porfa.", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/17"}
-{"q": "alright put a reminder for send the report tomorrow at 7 real quick", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
-{"q": "mira, respóndele a mi compadre que perfecto", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
-{"q": "can you video call karla please", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
-{"q": "so the silence of the night", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/91"}
-{"q": "be small again", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/11"}
-{"q": "fíjate que mmm", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/37"}
-{"q": "ey trabajo de maestra ya", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/5"}
-{"q": "aura please respond to my sister that it is fine", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
-{"q": "what do you do in your free time.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/117"}
-{"q": "match my phone theme please", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/11"}
-{"q": "Cuelga la ropa en el patio", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/11"}
-{"q": "Videollama a don ramón", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
-{"q": "Aura qué tengo agendado contigo", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/11"}
-{"q": "bueno, bueno, ¿le marcas a mi jefe?", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
-{"q": "Claudio, quiero practicar inglés, háblame en inglés", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/11"}
-{"q": "alright where is the bank account in my chats", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
-{"q": "Oye, respóndele a don chepe que perfecto please", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
-{"q": "Mira, buscame en las conversaciones la cuenta del banco pues", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
-{"q": "cancel the message ok", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/5"}
-{"q": "can you shh ok", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/17"}
-{"q": "uh what does the the internet say about when olimpia plays", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
-{"q": "Okay aura, remove the reminder at 1", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
-{"q": "pásame a hablar con con aura", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/17"}
-{"q": "aura por favor buscame en las conversaciones la cuenta del banco", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
-{"q": "Eh, no envíes nada todavía, primero pensemos", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/125"}
-{"q": "ok, video call call my sister please", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
-{"q": "fijate que el profe carlos es bien estricto", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/51"}
-{"q": "Claudio, lee lo que me escribieron", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/17"}
-{"q": "Can u send it now", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/11"}
-{"q": "aura, help me think of a a name for my business.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/85"}
-{"q": "quiero ver lo que hablé con mi compadre", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
-{"q": "ve para atrás", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/5"}
-{"q": "porfa respóndele que no puedo", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/5"}
-{"q": "cambia cambia el avatar", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/11"}
-{"q": "Eh, ¿como funciona esto? porfis", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/11"}
-{"q": "bueno vámonos para atrás mi reina", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/25"}
-{"q": "necesito que me avises en 5 minutos para ir al banco", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
-{"q": "te quiero mucho", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/157"}
-{"q": "a ver, vuelve a activar los avisos de don ramon", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
-{"q": "could you video call karla please", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
-{"q": "oye, cumplo años el 3 de julio", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/17"}
-{"q": "Quiero videollamada con don ramon", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
-{"q": "hey aura cierra esta pantalla si puedes", "e": ["cerrar", "app_atras"], "l": "es", "t": "app_atras/es/11"}
-{"q": "ok, my name is joe but call me doc", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
-{"q": "please be small again", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/11"}
-{"q": "hey aura me encanta el café.", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/25"}
-{"q": "vaya, instrucciones dale", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/5"}
-{"q": "please send it now", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/11"}
-{"q": "Colgá", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/5"}
-{"q": "aura, abre lo de mi compadre gracias", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
-{"q": "bueno, respóndele q no puedo", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/5"}
-{"q": "aura por favor, olvida el recordatorio de mandar el informe", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
-{"q": "Alright i need need a reminder tomorrow at 7 to send the report", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
-{"q": "Ok, bring out the guardian", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/17"}
-{"q": "shhh gracias gracias", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/25"}
-{"q": "eh, contéstame bien", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/65"}
-{"q": "ey sí envíalo por favor", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/11"}
-{"q": "i texted my daughter yesterday", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/145"}
-{"q": "cuántos chats puedo tener", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/191"}
-{"q": "Elimina el recordatorio de mandar el informe ya", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
-{"q": "que no se me olvide tomar la medicina, recuérdamelo mañana a las 7 por favor", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
+{"q": "Eh, llamame al celular porfa", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/17"}
 {"q": "Uh, show me the chat with karla", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/11"}
-{"q": "A ver, que silencio silencio tan raro", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/185"}
-{"q": "Olvida el recordatorio recordatorio de mandar el informe dale", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
-{"q": "could you let my sister know i left already ok", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/5"}
-{"q": "videollamada a mi compadre porfa", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
-{"q": "qué dicen en internet del partido del olimpia gracias", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
-{"q": "um respond to my husband that it is fine.", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
-{"q": "Mi sobrino se llama antonio", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/111"}
-{"q": "vaya, vuelve a activar los avisos de mi jefe", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
-{"q": "mire achicate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/11"}
-{"q": "A ver, quiero ver lo que hablé con don ramón ahorita", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
-{"q": "a ver, cumplo anos el 3 de julio pues.", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/17"}
-{"q": "Aura, silence please", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/5"}
-{"q": "i do not read texts while driving.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/71"}
-{"q": "bueno busca en las conversaciones la foto del carro.", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
-{"q": "aura, textea a don ramón que ya casi please", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/11"}
-{"q": "lee el chat de mi compadre", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
-{"q": "How many reminders do i have", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/5"}
-{"q": "okay aura, camera off pls", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/5"}
-{"q": "Uh respond to my sister that it is fine", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
-{"q": "mirá, abre lo de mi compadre pues", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
-{"q": "Mire, no me interrumpas y callate", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/17"}
-{"q": "qué dicen en internet del partido del del olimpia.", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
-{"q": "vaya, ponle un mensaje a don ramón que ya salí", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
-{"q": "um bring out the guardian.", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/17"}
-{"q": "Aura por favor, abre la pantalla de chats por favor", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/17"}
-{"q": "hey aura make a video call to my sister", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
-{"q": "alright, where is the engineer's email in my chats for me", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
-{"q": "Mire, quiero practicar inglés, háblame en inglés mi reina", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/11"}
-{"q": "um, can you help me think", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/131"}
-{"q": "i am at the table eating", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/137"}
-{"q": "please let my husband know i left already please", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/5"}
-{"q": "ya, ponte al lado del chat dale.", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/5"}
-{"q": "antonio borra el recordatorio de tomar la medicina", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
-{"q": "lupita cumple quince anos", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/97"}
-{"q": "eh, abre las conversaciones dale", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/11"}
-{"q": "back to where i was", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/17"}
-{"q": "Could you show me the chat with karla", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/11"}
-{"q": "aura cumplo años el 3 3 de julio porfa", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/17"}
-{"q": "Um could you call my sister", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
 {"q": "yo, close this thanks.", "e": ["cerrar", "app_atras"], "l": "en", "t": "app_atras/en/5"}
-{"q": "do not send that", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/11"}
-{"q": "Llamame mañana a las 7 que tengo que tomar la medicina porfa", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
-{"q": "hey claudio, can you call me at 1 to remind me to send the report.", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
-{"q": "Antonio, antonio, abre el inicio", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/31"}
-{"q": "aura, bring aura back", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/5"}
-{"q": "Ya, ¿qué tengo agendado contigo?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/11"}
-{"q": "ya, shhh si puedes", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/25"}
-{"q": "cállate un momento", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/11"}
-{"q": "antonio reply in english", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/5"}
-{"q": "A ver, ponme a claudio pues", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/5"}
-{"q": "Porfa ponle tema oscuro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/17"}
-{"q": "claudio, que no se me olvide tomar la medicina, recuerdamelo a las seis", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
-{"q": "put a reminder for go to the bank at six", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
-{"q": "ok, give me some help.", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/11"}
-{"q": "aura, that reminds me of my grandpa.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/105"}
-{"q": "stop notifying me about karla right now", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
-{"q": "Ok aura mandale a don chepe que ya sali", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
-{"q": "eh, ¿quien es beto?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/77"}
-{"q": "busca en las conversaciones la cuenta del banco por favor", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
-{"q": "um sounds good.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/31"}
-{"q": "Aura, envia el mensaje.", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/5"}
-{"q": "i like soccer", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/5"}
-{"q": "olvídalo, no lo mandes por favor", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/5"}
-{"q": "yo hang up please", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/11"}
-{"q": "porfa escucho música cristiana", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/11"}
-{"q": "A a ver mi esposa trabaja en el banco", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/45"}
-{"q": "A ver, envía el mensaje porfis", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/5"}
-{"q": "yo could you call karla pls", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
-{"q": "claudio habla en inglés", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/5"}
-{"q": "vaya, que no se me olvide tomar la medicina, recuerdamelo en 5 minutos", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
-{"q": "antonio buscame en las conversaciones la foto del carro porfis.", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
+{"q": "look when olimpia plays up online right now", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
+{"q": "give me a ring at six to send the report thanks", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
 {"q": "textea a mi jefe que ya casi", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/11"}
-{"q": "bueno, busca el partido del olimpia en google", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
-{"q": "textea a don ramon que ya casi", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/11"}
-{"q": "remove the reminder at six", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
-{"q": "Mi esposa trabaja en el banco.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/45"}
-{"q": "Which chat has the engineer's email", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
-{"q": "Claudio, lee el chat de don ramón", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
-{"q": "Colgá porfa", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/5"}
-{"q": "olvida el recordatorio de ir al banco", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
-{"q": "Aura por favor qué tengo agendado contigo si puedes", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/11"}
-{"q": "enciende la camara para que me veas pues", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/11"}
-{"q": "fíjate que ¿me escribió mi compadre?", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
-{"q": "uh show me my messages", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/5"}
-{"q": "make a video call to my husband", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
-{"q": "este necesito que me avises a la una para ir al banco si puedes", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
-{"q": "look the dollar exchange rate up online please.", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
-{"q": "so, how many reminders do i have", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/5"}
-{"q": "slow motion looks nice", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/151"}
-{"q": "okay aura, unmute the chat with my sister", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
-{"q": "wake up aura", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/5"}
-{"q": "¿qué me tienes que recordar?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/5"}
-{"q": "Timbra a mi jefe", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
-{"q": "vaya, colga si puedes", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/5"}
-{"q": "please what did did my husband text me thank you", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
-{"q": "el profe carlos es bien estricto", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/51"}
-{"q": "antonio match my phone theme", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/11"}
-{"q": "i hate late calls", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/45"}
-{"q": "could you wake up aura", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/5"}
-{"q": "Could you call my sister", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
-{"q": "Okay aura, i need a reminder at 1 to send the report", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
-{"q": "aura, aura, ¿cómo funciona esto?", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/11"}
-{"q": "mire vuelve a hablarme hablarme.", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/17"}
-{"q": "what does the internet say about when olimpia plays for me", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
-{"q": "abre la pantalla de chats", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/17"}
-{"q": "um, i work at a bank", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/17"}
-{"q": "ok, open the chat list ok", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/11"}
-{"q": "Claudio, borra el recordatorio de ir al banco", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
-{"q": "alright make it light ok", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/17"}
-{"q": "alright send it now", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/11"}
-{"q": "alright, give me a ring at 1 to go to the bank", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
-{"q": "Bideollama mi compadre", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
-{"q": "ey, buscame en las conversaciones la foto del carro", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
-{"q": "Disconnect the call", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/5"}
-{"q": "¿le marcas a don ramon?", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
-{"q": "Vaya, abre el inicio por favor", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/31"}
-{"q": "there is a mango tree behind the house", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/77"}
-{"q": "alright, bring me to the home screen thank you", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/17"}
-{"q": "hey claudio, respond to my sister that it is fine.", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
-{"q": "eh respóndele que está bien porfa", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/17"}
-{"q": "Yo, walk around again", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/5"}
-{"q": "fijate que calla un rato", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/5"}
-{"q": "hey claudio i work at a bank", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/17"}
-{"q": "ok aura, cállate un momento", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/11"}
-{"q": "mira, ve para atrás", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/5"}
-{"q": "please what does the internet say about when olimpia plays", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
-{"q": "oye cambia el mundo empieza por ti", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/105"}
-{"q": "Antonio, my name is joe but call me sunshine", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
-{"q": "pasame a hablar con aura.", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/17"}
-{"q": "enciende la cámara para que me veas", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/11"}
-{"q": "ya, respóndele a don chepe que perfecto", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
-{"q": "fíjate que mandale a mi jefe que ya salí", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
+{"q": "ya búscame en las conversaciones la cuenta del banco ahorita", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
+{"q": "aura por favor respóndele a don ramón que perfecto", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
+{"q": "Aura please back to where i was", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/17"}
+{"q": "oye oye aura, ¿le marcas a don ramón?", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
 {"q": "um let my husband know i left already", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/5"}
-{"q": "aura, back to where i was now", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/17"}
-{"q": "okay aura pull up my messages with my husband", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
+{"q": "aura please, look when olimpia plays up online", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
+{"q": "Okay aura, i need a reminder at 1 to send the report", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
+{"q": "ok, do not send that", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/11"}
+{"q": "a ver respondele que no puedo", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/5"}
+{"q": "porfa calla un rato mi reina", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/5"}
+{"q": "antonio make a video call to my sister pls", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
+{"q": "Mirá cuelga esa llamada porfa", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/17"}
+{"q": "Lee el chat de mi jefe por favor", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
+{"q": "so, so, countdown 15 minutes", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/17"}
+{"q": "hey, tell me about the history of honduras.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/57"}
+{"q": "so that reminds me of my grandpa", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/105"}
+{"q": "silence", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/5"}
+{"q": "Aura, borra el recordatorio de mandar el informe mi reina", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
+{"q": "mire, escuchame de nuevo", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/11"}
+{"q": "aura, abre lo de mi compadre gracias", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
+{"q": "Um, what do you do in your free time.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/117"}
+{"q": "Mire, acuerdame en 5 minutos de ir al banco por favor", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
+{"q": "ey, vámonos para atrás si puedes", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/25"}
+{"q": "give me some help", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/11"}
+{"q": "Um pull up my messages with karla ok.", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
+{"q": "claudio, elimina el recordatorio de tomar la medicina please", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
+{"q": "Um, do you remember what i told you", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/5"}
+{"q": "lee lo que me escribieron.", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/17"}
+{"q": "oye, dale, envíaselo", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/17"}
+{"q": "can you call me at 1 to remind me to take my medicine", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
+{"q": "ey sí envíalo por favor", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/11"}
+{"q": "Aura por favor, respóndele a mi jefe que perfecto", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
+{"q": "can you i want you to call me", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/11"}
+{"q": "can you help me think", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/131"}
+{"q": "ok drop the at 1 reminder.", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
+{"q": "Okay aura, what does the internet say about when olimpia plays", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
+{"q": "ya quiero hablar con don ramon llamale porfa", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
+{"q": "Ya, que dicen en internet de como esta el dolar.", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
+{"q": "Um, my daughters are at school", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/17"}
+{"q": "aura, the silence of the night", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/91"}
+{"q": "mi reina, que no se me olvide ir al banco, recuérdamelo a la una.", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
+{"q": "mire, callate un momento", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/11"}
+{"q": "Um, ok.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/25"}
+{"q": "oye, el profe carlos carlos es bien estricto", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/51"}
+{"q": "Bueno, envia el mensaje", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/5"}
+{"q": "Ok, instructions", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/5"}
+{"q": "what do you do in your free time.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/117"}
+{"q": "bueno vámonos para atrás mi reina", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/25"}
+{"q": "Stop listening", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/11"}
+{"q": "claudio me escribió mi compadre", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
+{"q": "antonio buscá cómo está el dólar en google porfa", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
+{"q": "Hey claudio, what does the internet say about when olimpia plays", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
+{"q": "aura how much is an international call", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/37"}
+{"q": "aura, unmute the chat with my sister.", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
+{"q": "mira qué me tienes tienes que recordar.", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/5"}
+{"q": "where is the engineer's email in my chats pls", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
+{"q": "eh mi sobrino se llama antonio.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/111"}
+{"q": "uh walk around again ok", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/5"}
+{"q": "Vaya, borra el recordatorio de ir al banco", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
+{"q": "aura por favor, ¿como funciona esto? pues.", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/11"}
+{"q": "so, help me think of a name for my business", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/85"}
+{"q": "aura please, remove the reminder at six real quick", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
+{"q": "um, can you call me now", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/5"}
+{"q": "Oye y tú qué haces en tu tiempo libre", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/151"}
+{"q": "este... ve para atrás", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/5"}
+{"q": "okay aura can you call me.", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/5"}
+{"q": "Um, shh", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/17"}
+{"q": "So, change avatar to antonio.", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/11"}
+{"q": "Hey aura, could you call my sister", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
+{"q": "okay aura, undo that screen.", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/11"}
+{"q": "please send it now", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/11"}
+{"q": "A ver colgá", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/5"}
+{"q": "porfa buscá en internet el partido del olimpia.", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
+{"q": "so i work at a bank thanks.", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/17"}
+{"q": "ok aura, trabajo de maestra", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/5"}
+{"q": "antonio, wake up aura now", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/5"}
+{"q": "okay aura get my sister on the phone pls", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
+{"q": "Mira, nadie me llama ya ya", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/197"}
+{"q": "um, can you call me at 1 to remind me to go to the bank for me", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
+{"q": "Mirá qué alarmas me pusiste", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/17"}
+{"q": "the silence of the night", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/91"}
+{"q": "uh open the chat list", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/11"}
+{"q": "Mira, que dicen en internet del partido del olimpia", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
+{"q": "eh, lee el chat de don chepe", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
+{"q": "aura please, please speak english real quick.", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/11"}
+{"q": "bideoyama a don ramón", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
+{"q": "oye, busca en las conversaciones la cuenta del banco", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
+{"q": "respondele que esta bien", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/17"}
+{"q": "Aura el ingles es dificil.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/17"}
 {"q": "Bueno, muéstrame mis chats", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/5"}
-{"q": "mira necesito que me avises mañana a las 7 para mandar el informe", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
-{"q": "hey go to the chats", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/25"}
-{"q": "antonio, do not send that pls", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/11"}
-{"q": "porfa activa los avisos de mi compadre", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
-{"q": "Claudio, buscá el partido del olimpia en google ya", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
-{"q": "Bueno, quiero hablar con don ramon, llamale", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
-{"q": "a ver, no, mejor bórralo", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/11"}
+{"q": "fíjate que que no se me olvide ir al banco recuérdamelo a la una porfis", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
+{"q": "mira ponte al lado del chat", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/5"}
+{"q": "Oye, me gustan los días claros", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/171"}
+{"q": "antonio, activa la visión", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/5"}
 {"q": "show me the chat with my sister", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/11"}
-{"q": "Antonio, send the draft", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/5"}
-{"q": "Ey, activa los avisos de mi jefe", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
-{"q": "Could you how many reminders do i have thank you.", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/5"}
+{"q": "um, i texted my daughter yesterday yesterday", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/145"}
+{"q": "oye, cumplo años el 3 de julio", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/17"}
+{"q": "Necesito que me avises en 5 minutos para ir ir al banco", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
+{"q": "Envía el mensaje", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/5"}
+{"q": "¿le marcas a mi compadre?", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
+{"q": "Um i moved to a new house and i am happy.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/157"}
+{"q": "porfa shhh", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/25"}
+{"q": "alright make it light ok", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/17"}
+{"q": "Achícate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/11"}
+{"q": "which chat has has the engineer's email", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
+{"q": "alright, what did karla text me", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
+{"q": "Llamame mañana a las 7 que tengo que tomar la medicina porfa", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
+{"q": "Mira activa la vision", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/5"}
+{"q": "alright show me the chat with my husband", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/11"}
+{"q": "quiero hablar con don ramon, llamale", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
+{"q": "could you send the draft right right now.", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/5"}
+{"q": "a ver, marcame en 5 minutos para recordarme mandar el informe q se me olvida", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
+{"q": "Ey vuelve a activar los avisos de mi compadre ya", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
+{"q": "Antonio, my name is joe but call me sunshine", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
+{"q": "Mi reina, muéstrame los comandos", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/17"}
+{"q": "este activa los avisos de mi jefe dale dale.", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
+{"q": "vaya textea a mi compadre que ya casi", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/11"}
+{"q": "uh, instructions", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/5"}
+{"q": "hey claudio, respond that i cannot thanks", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/5"}
+{"q": "porfa videollama a mi jefe.", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
+{"q": "um i sent the package yesterday", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/97"}
+{"q": "alright, shh shh thanks", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/17"}
+{"q": "aura pls, send the draft", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/5"}
+{"q": "Fijate q llamame manana a las 7 q tengo q mandar el informe porfis", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
+{"q": "antonio, which chat has the bank account", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
+{"q": "aura please, bring out the guardian thanks", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/17"}
+{"q": "Claudio, lee lo que me escribieron please", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/17"}
+{"q": "hey aura, enciende la camara para que me veas.", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/11"}
+{"q": "quiero videollamada con don ramón", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
+{"q": "put a reminder for go to the bank at six", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
+{"q": "a ver, muéstrame la pantalla de perfil.", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/25"}
+{"q": "hazte chiquita otra vez", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/25"}
+{"q": "antonio, llamame al celular", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/17"}
+{"q": "uh, fill the screen thanks", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/17"}
+{"q": "Fíjate que te acuerdas de lo que te conté", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/5"}
+{"q": "Olvida el recordatorio de ir al banco", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
+{"q": "hey, which chat has the bank account", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
+{"q": "antonio, timbra a mi compadre", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
+{"q": "Hey aura, silence.", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/5"}
+{"q": "mire achicate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/11"}
+{"q": "back to where i was", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/17"}
+{"q": "hey aura, i need a reminder at six to send the report", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
+{"q": "Mandale a mi jefe que ya salí gracias", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
+{"q": "Mira, el profe carlos es bien estricto", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/51"}
+{"q": "Um, send my husband a text saying i am outside", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
+{"q": "Contestame bien", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/65"}
+{"q": "ok aura, quiero practicar inglés, háblame en inglés gracias", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/11"}
+{"q": "No, no, espera.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/137"}
+{"q": "ok, camera off", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/5"}
+{"q": "que no se me olvide tomar la medicina, recuérdamelo mañana a las 7 por favor", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
+{"q": "send my husband a text saying i am outside.", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
+{"q": "make a video call to my husband", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
+{"q": "Buscame en las conversaciones la cuenta del banco", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
+{"q": "Vaya levántame en 5 minutos", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/25"}
+{"q": "hey claudio where is the bank account in my chats", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
+{"q": "oye aura escuchame de nuevo", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/11"}
+{"q": "so there is a mango tree behind the house", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/77"}
+{"q": "Este me encanta el café", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/25"}
+{"q": "mire ponte al lado del chat.", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/5"}
+{"q": "Aura, envia el mensaje.", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/5"}
+{"q": "so how do you say hello in spanish", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/65"}
+{"q": "get my sister on the phone thanks", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
+{"q": "eh mi mama quiere hablar contigo", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/165"}
+{"q": "antonio, pon la app en negro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/11"}
+{"q": "minimízate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/17"}
+{"q": "mi reina, busca como esta el dolar en google.", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
+{"q": "quiero practicar inglés, háblame en inglés ya.", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/11"}
+{"q": "Antonio, antonio, abre el inicio", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/31"}
+{"q": "could you bring out the guardian", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/17"}
+{"q": "um undo that screen right now", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/11"}
+{"q": "hey claudio how many reminders do i have", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/5"}
+{"q": "uh show me my messages", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/5"}
+{"q": "porfa lee el chat de don ramon", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
+{"q": "qué me tienes que recordar", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/5"}
+{"q": "antonio, call me real quick", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/17"}
+{"q": "Stop being quiet", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/11"}
+{"q": "hey aura countdown 15 minutes.", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/17"}
+{"q": "could you stop being quiet please", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/11"}
+{"q": "hey nobody calls me anymore.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/165"}
+{"q": "Alright i need need a reminder tomorrow at 7 to send the report", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
+{"q": "Mira videollamada a mi compadre porfa", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
+{"q": "um i like soccer.", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/5"}
+{"q": "Hey aura, bring me to the home screen", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/17"}
+{"q": "show me my messages right now.", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/5"}
 {"q": "ok, ok, pls speak english", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/11"}
-{"q": "A ver, mandale a don ramon que ya sali", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
-{"q": "give me some help help", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/11"}
-{"q": "Aura, ponle tema oscuro.", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/17"}
-{"q": "mi reina, vuelve a hablarme", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/17"}
-{"q": "alright please speak english", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/11"}
-{"q": "A ver, ¿que tengo agendado contigo?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/11"}
-{"q": "aura por favor borra el recordatorio de ir al banco porfis", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
-{"q": "um, disconnect the call thanks", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/5"}
-{"q": "um, bring me 2 the home screen", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/17"}
-{"q": "Aura cambia de tema", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/71"}
-{"q": "Antonio, look when olimpia plays up online", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
-{"q": "Oye, activa los avisos de mi jefe", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
-{"q": "fijate que despiertate aura.", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/5"}
-{"q": "Hey show me the chat with my sister", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/11"}
-{"q": "Recuérdame el nombre de esa canción", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/91"}
-{"q": "Uh, walk around again", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/5"}
+{"q": "mire, instrucciones porfis.", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/5"}
+{"q": "put put a reminder for take my medicine at 1", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
+{"q": "so stop being quiet", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/11"}
+{"q": "aura please which chat has the engineer's email", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
+{"q": "uh, make a video call to my husband", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
+{"q": "Hey claudio, what alarms did you set", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/11"}
+{"q": "ya, videollama mi jefe", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
+{"q": "enciende la cámara para q me veas si puedes", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/11"}
+{"q": "look when olimpia plays up online", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
+{"q": "mis chats están llenos de memes", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/131"}
+{"q": "este elimina el recordatorio de tomar la medicina", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
+{"q": "Ok, bring out the guardian", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/17"}
+{"q": "uh, can you call me", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/5"}
+{"q": "Oye abre el inicio", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/31"}
+{"q": "Yo, walk around again", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/5"}
+{"q": "bueno, despiertate aura dale.", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/5"}
+{"q": "quiero hablar con don chepe llámale", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
+{"q": "Fijate que busca en internet internet como esta el dolar", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
+{"q": "aura fill the screen", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/17"}
+{"q": "la pantalla del cel se me quebró", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/117"}
+{"q": "aura please stop notifying me me about my husband", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
+{"q": "respóndele a don chepe que perfecto", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
+{"q": "vaya qué me tienes que recordar", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/5"}
+{"q": "antonio, cierra esta pantalla", "e": ["cerrar", "app_atras"], "l": "es", "t": "app_atras/es/11"}
+{"q": "yo use the system theme", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/5"}
+{"q": "remove the reminder tomorrow at 7 for me", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
+{"q": "claudio, no me interrumpas y callate porfis.", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/17"}
+{"q": "Um explain what a reminder is", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/51"}
+{"q": "a ver, abre lo de mi compadre.", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
+{"q": "ok video call karla please", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
+{"q": "ya lee el chat de mi compadre", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
+{"q": "ey trabajo de maestra ya", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/5"}
+{"q": "activa el modo oscuro gracias.", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/5"}
+{"q": "marcame a la una para recordarme ir al banco que se me olvida.", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
+{"q": "Okay aura, call me real quick", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/17"}
+{"q": "Antonio, stop notifying me about karla thank you", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
+{"q": "Aura please, give me some help please", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/11"}
+{"q": "claudio, marcame a las seis para recordarme tomar la medicina que se me olvida please.", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
+{"q": "Aura, give me a ring at six 2 take my medicine pls", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
+{"q": "ponle un mensaje a mi jefe q ya salí", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
+{"q": "can you shh ok", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/17"}
+{"q": "volve atras gracias.", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/17"}
+{"q": "aura, instructions now", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/5"}
+{"q": "Could you give me a ring at 1 to go to the bank", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
+{"q": "Alright, get karla on the phone", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
+{"q": "ya, ponle tema oscuro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/17"}
+{"q": "Stop listening please", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/11"}
+{"q": "hey aura show me my messages thanks.", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/5"}
+{"q": "Fíjate que muéstrame los comandos porfis.", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/17"}
+{"q": "nobody calls me anymore.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/165"}
+{"q": "Fíjate que olvida el recordatorio de ir al banco", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
+{"q": "Aura, activa los avisos de mi jefe", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
+{"q": "please let my husband know i left already please", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/5"}
+{"q": "how much is an international call", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/37"}
+{"q": "A ver quiero hablar con mi jefe llamale", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
+{"q": "yo what does the internet say about when olimpia plays", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
+{"q": "Este... ¿me escribio mi compadre?", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
+{"q": "porfa llamame al celular", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/17"}
+{"q": "um close this.", "e": ["cerrar", "app_atras"], "l": "en", "t": "app_atras/en/5"}
+{"q": "Respond that that i cannot.", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/5"}
+{"q": "oye aura, llámame al celular", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/17"}
+{"q": "okay aura, give me some help", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/11"}
+{"q": "Ey, busca como esta el dolar en google", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
+{"q": "hey, undo that screen", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/11"}
+{"q": "yo, match my phone theme", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/11"}
+{"q": "hey aura, respóndele a mi compadre que perfecto", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
+{"q": "aura respondele que no puedo porfis", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/5"}
+{"q": "vaya, ponle un mensaje a don chepe que ya salí gracias.", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
+{"q": "oye aura quiero ver lo que hable con don chepe", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
+{"q": "mirá, abre lo de mi compadre pues", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
+{"q": "alright put a reminder for send the report tomorrow at 7 real quick", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
+{"q": "a ver timbra a don ramón por favor.", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
+{"q": "Alright respond that i cannot", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/5"}
 {"q": "Hey claudio, silence now", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/5"}
-{"q": "este... este... muéstrame los comandos dale", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/17"}
+{"q": "ey, llamame a la una que tengo que tomar la medicina", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
+{"q": "fijate que calla un rato", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/5"}
+{"q": "ok aura, sí, envíalo por favor", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/11"}
+{"q": "alright anything new", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/11"}
+{"q": "La ropa esta oscura", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/145"}
+{"q": "Ok aura dale enviaselo", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/17"}
+{"q": "hey aura, activa los avisos de don ramón dale", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
+{"q": "hey aura, textea a don ramón que ya casi", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/11"}
+{"q": "claudio habla en inglés", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/5"}
+{"q": "stop notifying me about karla", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
+{"q": "um, bring me 2 the home screen", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/17"}
+{"q": "Uh where is the bank account in my chats", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
+{"q": "Trabajo trabajo de maestra", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/5"}
+{"q": "Eh, ¿qué me tienes que recordar?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/5"}
+{"q": "can you cancel the message", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/5"}
+{"q": "hey aura, aura, minimízate ahorita", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/17"}
+{"q": "Aura please, get my husband on the phone", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
+{"q": "drop the tomorrow at 7 reminder", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
+{"q": "ok, i like soccer pls", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/5"}
+{"q": "mi reina, despiertate aura", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/5"}
+{"q": "Fíjate que mi esposa trabaja en el banco", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/45"}
+{"q": "ya respondele a mi jefe jefe q perfecto gracias", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
+{"q": "elimina el recordatorio de mandar el informe", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
+{"q": "escucho música cristiana", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/11"}
+{"q": "A ver, ya corta eso", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/11"}
+{"q": "aura pls, where is the bank account in my my chats for me.", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
+{"q": "antonio unmute the chat with my sister real quick", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
+{"q": "okay aura, what does the internet say about the dollar exchange rate", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
+{"q": "alright please speak english", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/11"}
+{"q": "a ver, necesito que me avises a la una para ir al banco", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
+{"q": "ok remove the reminder at 1 pls", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
+{"q": "a ver ok", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/31"}
+{"q": "can u could u call my sister pls", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
+{"q": "abre la pantalla de chats por favor.", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/17"}
+{"q": "mira, elimina el recordatorio de mandar el informe gracias", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
+{"q": "alright disconnect the call.", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/5"}
+{"q": "aura por favor, ponte al lado del chat.", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/5"}
+{"q": "nadie me llama ya", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/197"}
+{"q": "bueno elimina el recordatorio de ir al banco pues.", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
+{"q": "Antonio dale envíaselo", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/17"}
+{"q": "porfa pon un temporizador de cinco minutos por favor", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/17"}
+{"q": "hey hey claudio, my name is joe but call me sunshine", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
+{"q": "eh, hay que llamar a las cosas por su nombre", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/85"}
+{"q": "mira, sí, envíalo por por favor", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/11"}
+{"q": "vaya vámonos para atrás porfa.", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/25"}
+{"q": "so, drop the at six reminder please", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
+{"q": "no me interrumpas y callate", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/17"}
+{"q": "porfa escucho música cristiana", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/11"}
+{"q": "borra el recordatorio de tomar la medicina", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
+{"q": "alright, what alarms did u set", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/11"}
+{"q": "cambia cambia el avatar", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/11"}
+{"q": "alright send it now", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/11"}
+{"q": "oye minimízate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/17"}
+{"q": "Oye escucho música cristiana", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/11"}
+{"q": "mi reina, muéstrame mis chats por favor favor", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/5"}
+{"q": "aura remove the reminder at six", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
+{"q": "eh, muéstrame mis chats", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/5"}
+{"q": "A ver, quiero ver lo que hablé con don ramón ahorita", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
+{"q": "alright, bring me to the home screen thank you", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/17"}
+{"q": "yo, respond that i cannot", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/5"}
+{"q": "Porfa ponle tema oscuro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/17"}
+{"q": "turn the camera off real quick", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/11"}
+{"q": "aura, reply in english real quick", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/5"}
+{"q": "mira mi sobrino se llama antonio.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/111"}
+{"q": "yo camera off", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/5"}
+{"q": "Please my name is joe but call me sunshine", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
+{"q": "abre las conversaciones.", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/11"}
+{"q": "hey aura, video call my sister pls.", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
+{"q": "te acuerdas de lo que te conté", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/5"}
+{"q": "este pon un temporizador de cinco minutos ya", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/17"}
+{"q": "Okay aura, please speak english.", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/11"}
+{"q": "mi reina, dale, envíaselo", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/17"}
+{"q": "Contestame bien.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/65"}
+{"q": "a ver, levantame a la una", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/25"}
+{"q": "hey aura, cuelga esa llamada", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/17"}
+{"q": "alright, what does the internet say about when olimpia plays", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
+{"q": "Okay aura cancel the message", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/5"}
+{"q": "respond to my husband that it is fine", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
+{"q": "put a reminder for send the report at six", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
+{"q": "antonio bring aura back", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/5"}
+{"q": "Oye, mandale a mi compadre que ya salí ahorita", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
+{"q": "hey, close this this", "e": ["cerrar", "app_atras"], "l": "en", "t": "app_atras/en/5"}
+{"q": "eh, activa los avisos de don ramón", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
+{"q": "um, explain what a reminder is.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/51"}
+{"q": "mirá habla en inglés", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/5"}
+{"q": "So, respond to my sister that it is fine thank you", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
+{"q": "eh te quiero mucho", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/157"}
+{"q": "Hey aura, escuchame de nuevo", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/11"}
+{"q": "shhh", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/25"}
+{"q": "disconnect the call", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/5"}
+{"q": "Hey claudio i need a reminder at six to go to the bank", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
+{"q": "so, change avatar to antonio", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/11"}
+{"q": "mi reina, vuelve a hablarme", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/17"}
+{"q": "Could you i need a reminder at six to take my medicine now.", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
+{"q": "so, go to the chats thanks", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/25"}
+{"q": "vaya olvidalo no no lo mandes please", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/5"}
+{"q": "Um, be small again", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/11"}
+{"q": "Aura, back to where i was", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/17"}
+{"q": "um, i hate late calls", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/45"}
+{"q": "cambia el avatar", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/11"}
+{"q": "ok aura abre lo de don chepe", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
+{"q": "um, i work at a bank", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/17"}
+{"q": "what did my husband text me real quick.", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
+{"q": "aura pls, show me the the chat with my sister pls", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/11"}
+{"q": "mire vuelve a hablarme hablarme.", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/17"}
+{"q": "fijate que se me olvido el paraguas", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/57"}
+{"q": "Este quiero videollamada con don chepe ya", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
+{"q": "Aura por favor, abre la pantalla de chats por favor", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/17"}
+{"q": "bueno timbra a mi compadre", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
+{"q": "Alright, disconnect the call", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/5"}
+{"q": "respóndele a don ramón que perfecto si puedes", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/11"}
+{"q": "Claudio, búscame en las conversaciones la cuenta del banco", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
+{"q": "abre lo de mi jefe si puedes", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
+{"q": "aura olvidalo no lo mandes.", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/5"}
+{"q": "antonio, where is the bank account in my chats now", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
+{"q": "so, send my sister a text saying i am outside", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
+{"q": "mira, activa el modo oscuro please.", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/5"}
+{"q": "eh, instrucciones.", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/5"}
+{"q": "eh, abre las conversaciones dale", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/11"}
+{"q": "Aura, silence please", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/5"}
+{"q": "aura, tell me about the history of honduras", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/57"}
+{"q": "can u call me real quick thanks", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/17"}
+{"q": "make a video call to my sister please", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
+{"q": "Que dicen en internet de como esta el dolar", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
+{"q": "buscá cómo está el dólar en google", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
+{"q": "mi reina, habla en inglés inglés please", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/5"}
+{"q": "antonio what did my sister text me pls", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
+{"q": "mi reina, colga", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/5"}
+{"q": "Turn the camera off ok", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/11"}
+{"q": "Mire, calla un rato", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/5"}
+{"q": "No envíes nada todavía, primero pensemos", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/125"}
+{"q": "Mira, cambia de tema.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/71"}
+{"q": "Mi reina muéstrame mis chats please", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/5"}
+{"q": "Antonio, send the draft", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/5"}
+{"q": "aura, textea a don ramón que ya casi please", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/11"}
+{"q": "mira, ¿cuantos chats puedo tener?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/191"}
+{"q": "¿quién es beto?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/77"}
+{"q": "fíjate que respóndele que está bien", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/17"}
+{"q": "mira necesito que me avises mañana a las 7 para mandar el informe", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
+{"q": "abre la pantalla de chats", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/17"}
+{"q": "um video call my husband please ok.", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
+{"q": "ok, turn the camera off.", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/11"}
+{"q": "Oye aura pon la app en negro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/11"}
+{"q": "oye aura, pon la app en negro negro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/11"}
+{"q": "Can you remove the reminder at 1 thank you", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
+{"q": "Could you show me the chat with karla", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/11"}
+{"q": "i want you 2 call me", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/11"}
+{"q": "okay aura unmute the chat with karla real quick", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
+{"q": "so, reply in english.", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/5"}
+{"q": "um, reply in english", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/5"}
+{"q": "a ver me escribió mi jefe", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
+{"q": "vaya, quiero videollamada con don ramón si puedes", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
+{"q": "Ok fill the screen", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/17"}
+{"q": "give me a ring at 1 to go to the bank bank", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
+{"q": "change avatar to antonio.", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/11"}
+{"q": "Oye, elimina el recordatorio de mandar el informe", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/5"}
+{"q": "Fíjate que busca en las conversaciones la foto del carro porfa.", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
+{"q": "fíjate q olvida el recordatorio de mandar el informe porfis", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
+{"q": "hazte chiquita otra vez por favor", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/25"}
+{"q": "turn the camera off", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/11"}
+{"q": "vaya abre el inicio porfa", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/31"}
+{"q": "aura, videollama a don don chepe ahorita", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
+{"q": "Mirá le marcas a don ramón", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
+{"q": "aura please, hang up please please.", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/11"}
+{"q": "mira, ve para atrás", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/5"}
+{"q": "No, espera", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/137"}
+{"q": "busca en internet el partido del olimpia", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
+{"q": "aura por favor, abre lo de don ramon porfa", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/5"}
+{"q": "Um i need a reminder at 1 to go to the bank", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/11"}
+{"q": "could you change avatar to antonio", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/11"}
+{"q": "Antonio antonio my name is joe but call me doc", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
+{"q": "ok aura búscame en las conversaciones la foto del carro", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
+{"q": "yo, shh", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/17"}
+{"q": "pull up my messages with my sister", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
+{"q": "Hey, i am at the table eating", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/137"}
+{"q": "ponle un mensaje a mi jefe que ya salí", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
+{"q": "Ey vuelve a activar los avisos de mi jefe jefe", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
+{"q": "hey aura, quiero videollamada con don ramón dale.", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
+{"q": "Como funciona esto si puedes", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/11"}
+{"q": "cancel the message ok", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/5"}
+{"q": "aura please pull up my messages with my sister.", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
+{"q": "aura, ok", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/25"}
+{"q": "Could you where is the bank account in my chats right now", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/11"}
+{"q": "ya, muéstrame la pantalla de perfil", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/25"}
+{"q": "How do u say hello in spanish", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/65"}
+{"q": "A ver, ¿cuántos chats puedo tener?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/191"}
+{"q": "Yo, pull up my messages with my sister thanks", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
+{"q": "Claudio, quiero practicar inglés, háblame en inglés", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/11"}
+{"q": "llamame mañana a las 7 que tengo que tomar la medicina", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
+{"q": "antonio, ¿le marcas a mi compadre? por favor", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
+{"q": "please please stop being quiet", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/11"}
+{"q": "which chat has the bank account.", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
+{"q": "ya, videollamada a mi jefe porfa mi reina", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
+{"q": "Uh, walk around again", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/5"}
+{"q": "vaya, ponle un mensaje a don ramón que ya salí", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
+{"q": "Hey aura what alarms did you set", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/11"}
+{"q": "okay aura, make it light", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/17"}
+{"q": "Cancel the message", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/5"}
+{"q": "hey claudio, video call my husband please", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
+{"q": "aura cumplo años el 3 3 de julio porfa", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/17"}
+{"q": "hey aura what did karla text me pls", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
+{"q": "uh put a reminder for send the report tomorrow at 7 for me.", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
+{"q": "muestrame la pantaya de perfil", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/25"}
+{"q": "Échame una llamada", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/5"}
+{"q": "stop listening pls", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/11"}
+{"q": "Hey respond to karla that it is fine", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
+{"q": "anything new thank you", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/11"}
+{"q": "antonio get my sister on the phone", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
+{"q": "porfa hazte chiquita otra vez", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/25"}
+{"q": "Antonio make it light", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/17"}
+{"q": "give me a ring at 1 to send the report", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
+{"q": "aura por favor, borra el recordatorio de mandar el informe", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
+{"q": "aura, be small again ok", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/11"}
+{"q": "porfa me escribió don chepe pues", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
+{"q": "A ver, ponme a claudio pues", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/5"}
+{"q": "activa el modo oscuro ya", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/5"}
+{"q": "hey, slow motion looks nice", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/151"}
+{"q": "ok, my name is joe but call me doc", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
+{"q": "hey claudio i work at a bank", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/17"}
+{"q": "ponle un mensaje a mi jefe que ya sali.", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
+{"q": "quiero ver lo que hablé con don chepe", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
+{"q": "hey aura, acuérdame a las seis de mandar el informe", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
+{"q": "Mirá, timbra a mi compadre", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
+{"q": "please be small again", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/11"}
+{"q": "uh, could you call my sister", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
+{"q": "Can you anything new", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/11"}
+{"q": "necesito que me avises mañana a las 7 para ir al banco dale", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
+{"q": "ok aura cumplo anos el 3 de julio.", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/17"}
+{"q": "Oye aura, ponle un mensaje a don chepe que ya sali", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/17"}
+{"q": "aura, que silencio tan raro", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/185"}
+{"q": "Eh, recuerdame el nombre de esa cancion", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/91"}
+{"q": "um, remove the reminder at six", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/11"}
+{"q": "eh volvé atrás", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/17"}
+{"q": "claudio, ¿qué tengo agendado contigo?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/11"}
+{"q": "Ok aura mandale a don chepe que ya sali", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
+{"q": "Mirá olvida el recordatorio de mandar el informe", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
+{"q": "Let me call you back later i am busy", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/125"}
+{"q": "Bueno ya corta eso dale", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/11"}
+{"q": "qué dicen en internet de cómo está el dólar", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
+{"q": "okay aura pull up my messages with my husband", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
+{"q": "could you let my sister know i left already ok", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/5"}
+{"q": "Could you bring aura back", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/5"}
+{"q": "Pls let karla know i left already thank you", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/5"}
+{"q": "Bueno, márcame a la una para recordarme ir al banco que se me olvida", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
+{"q": "I am at the table eating", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/137"}
+{"q": "hey aura cierra esta pantalla si puedes", "e": ["cerrar", "app_atras"], "l": "es", "t": "app_atras/es/11"}
+{"q": "Mira, mis chats están llenos de memes", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/131"}
+{"q": "could you wake up aura", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/5"}
+{"q": "Vaya vuelve a hablarme", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/17"}
+{"q": "ya mandale a mi jefe que ya salí", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
+{"q": "cállate un momento", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/11"}
+{"q": "please could you call karla", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
+{"q": "eh, acuérdame a la una de mandar el informe", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
+{"q": "Aura, ponle tema oscuro.", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/17"}
+{"q": "Pon la app en negro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/11"}
+{"q": "buscá en internet cómo está el dólar si puedes.", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
+{"q": "Antonio, unmute the chat with karla", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
+{"q": "a ver busca en las conversaciones la cuenta del del banco ya.", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
+{"q": "shhh gracias gracias", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/25"}
+{"q": "la ropa está oscura", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/145"}
+{"q": "hey claudio, disconnect the call", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/5"}
+{"q": "Este llamame a la una que tengo que mandar el informe", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
+{"q": "alright, can you call me", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/5"}
+{"q": "A ver, mandale a don ramon que ya sali", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
+{"q": "um, hang up please thanks", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/11"}
+{"q": "Ey ya corta eso", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/11"}
+{"q": "a ver, mi mama quiere hablar contigo", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/165"}
+{"q": "ya vamonos para atras", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/25"}
+{"q": "este necesito que me avises a la una para ir al banco si puedes", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
+{"q": "vaya, que no se me olvide tomar la medicina, recuerdamelo en 5 minutos", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
+{"q": "can you what does the internet say about the dollar exchange rate thanks", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/5"}
+{"q": "el mensaje llego tarde", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/177"}
+{"q": "oye cuelga la ropa en el patio", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/11"}
+{"q": "porfa no mejor bórralo", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/11"}
+{"q": "mira, olvida el recordatorio de tomar la medicina", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
+{"q": "cambia de tema", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/71"}
+{"q": "Lupita lupita cumple quince años", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/97"}
+{"q": "I do not read texts while driving", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/71"}
+{"q": "eh echame una llamada.", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/5"}
+{"q": "countdown 15 minutes", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/17"}
+{"q": "eh lupita cumple quince años", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/97"}
+{"q": "Aura por favor, colgá", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/5"}
+{"q": "Okay aura unmute the chat with my sister.", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
+{"q": "borra el recordatorio de mandar el informe porfa", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
+{"q": "fijate que cambia el mundo empieza por ti", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/105"}
+{"q": "so did u get home ok.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/111"}
+{"q": "oye activa la vision pues", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/5"}
+{"q": "um, can you help me think.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/131"}
+{"q": "Este... activa los avisos de don chepe.", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
+{"q": "ey, achicate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/11"}
+{"q": "ok aura, cállate un momento", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/11"}
+{"q": "claudio, que no se me olvide tomar la medicina, recuerdamelo a las seis", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
+{"q": "i moved to a new house and i am happy", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/157"}
+{"q": "eh llamame en 5 minutos que tengo que tomar la medicina porfis.", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/5"}
+{"q": "ve para atrás", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/5"}
+{"q": "ok, video call my husband please real quick", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
+{"q": "can u can u call me tomorrow at 7 to remind me to go to the bank", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
+{"q": "Vaya, abre el inicio por favor", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/31"}
+{"q": "um, drop the tomorrow at 7 reminder now", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
+{"q": "aura, abre las conversaciones", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/11"}
+{"q": "do you remember what i told you", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/5"}
+{"q": "aura, se me olvidó el paraguas", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/57"}
+{"q": "do not send that", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/11"}
+{"q": "Recuerdame el nombre de esa cancion", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/91"}
+{"q": "aura, look the dollar exchange rate up online", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
+{"q": "ok how many reminders do i have now", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/5"}
+{"q": "claudio lee el chat de mi compadre", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
+{"q": "mire, borra el recordatorio de mandar el informe", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/17"}
+{"q": "antonio reply in english", "e": ["ninguna", "app_idioma"], "l": "en", "t": "app_idioma/en/5"}
+{"q": "vaya, acuerdame a las seis de mandar el informe mi reina", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
+{"q": "oye mi esposa trabaja en el banco.", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/45"}
+{"q": "respond to my my sister that it is fine real quick.", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
+{"q": "hey claudio, let my husband know i left already", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/5"}
+{"q": "Antonio get karla on the phone", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/5"}
+{"q": "vuelve a activar los avisos de don ramón", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
+{"q": "mirá, ¿le marcas a mi jefe? por favor", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
+{"q": "mira, trabajo de maestra", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/5"}
+{"q": "a ver, respóndele que está bien please", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/17"}
+{"q": "oye aura, márcame mañana a las 7 para recordarme mandar el informe que se me olvida please", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
+{"q": "did you get home ok", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/111"}
+{"q": "Mire, quiero practicar inglés, háblame en inglés mi reina", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/11"}
+{"q": "a ver, no, mejor bórralo", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/11"}
+{"q": "oye aura háblame por teléfono", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/11"}
+{"q": "Can u i want u 2 call me", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/11"}
+{"q": "um, instructions real quick", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/5"}
+{"q": "Mira, lee lo q me escribieron", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/17"}
+{"q": "claudio, volve atras", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/17"}
+{"q": "Ya cómo funciona esto", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/11"}
+{"q": "Hey show me the chat with my sister", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/11"}
+{"q": "antonio match my phone theme", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/11"}
+{"q": "ok, open the chat list ok", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/11"}
+{"q": "Hey help me think of a name for my business", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/85"}
+{"q": "aura, fill the screen real quick.", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/17"}
+{"q": "mira cierra esta pantalla", "e": ["cerrar", "app_atras"], "l": "es", "t": "app_atras/es/11"}
+{"q": "Fíjate q achícate", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/11"}
+{"q": "a ver, ponle tema oscuro", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/17"}
+{"q": "necesito que me avises en 5 minutos para ir al banco", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/17"}
+{"q": "Bueno, ¿me escribió don chepe?", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
+{"q": "um i hate late calls", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/45"}
+{"q": "oye aura, pon un temporizador de cinco minutos", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/17"}
+{"q": "ok aura, ¿cómo funciona esto? porfa.", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/11"}
+{"q": "Antonio, let my sister know i left already", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/5"}
+{"q": "please stop notifying me about karla please", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
+{"q": "i like soccer ok", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/5"}
+{"q": "That reminds me of my grandpa", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/105"}
+{"q": "Hey, sounds good", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/31"}
+{"q": "use the system theme", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/5"}
+{"q": "Olvídalo no lo mandes", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/5"}
+{"q": "okay aura, anything new.", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/11"}
+{"q": "porfa no mejor borralo", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/11"}
+{"q": "A ver, envía el mensaje porfis", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/5"}
+{"q": "uh, undo that screen", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/11"}
+{"q": "give give me some help", "e": ["ninguna", "app_ayuda"], "l": "en", "t": "app_ayuda/en/11"}
+{"q": "hey aura, what alarms did you you set real quick", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/11"}
+{"q": "aura, make a video call 2 karla", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
+{"q": "porfa cambia el avatar", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/11"}
+{"q": "bueno, hablame por telefono", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/11"}
+{"q": "so respond to my husband that it is fine", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
+{"q": "i sent the package yesterday yesterday", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/97"}
+{"q": "me gustan los dias claros claros", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/171"}
+{"q": "aura pls, use the system theme thanks", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/5"}
+{"q": "Oye aura videollamada a mi jefe porfa", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
+{"q": "can you put a reminder for send the report at six", "e": ["ninguna", "app_recordar"], "l": "en", "t": "app_recordar/en/5"}
+{"q": "yo, give me a ring at six to send the report for me", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/11"}
+{"q": "mi reina, no me interrumpas y cállate", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/17"}
+{"q": "oye, activa los avisos de mi compadre porfa", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/5"}
+{"q": "Eh, ¿quién es beto?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/77"}
+{"q": "antonio, buscá en internet cómo está el dólar", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
+{"q": "vuelve a activar los avisos de don ramon", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
+{"q": "Can u send it now", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/11"}
+{"q": "Hey, camera off.", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/5"}
+{"q": "videollama don ramon", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
+{"q": "Eh, buenos días aura", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/25"}
+{"q": "Did u read the book i told u about", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/11"}
+{"q": "claudio cállate un momento", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/11"}
+{"q": "mire, no, mejor borralo.", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/11"}
+{"q": "aura, no envíes nada todavía, todavía, primero pensemos", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/125"}
+{"q": "match my phone theme", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/11"}
+{"q": "respond to karla that it is fine thank you.", "e": ["ninguna", "app_responder"], "l": "en", "t": "app_responder/en/11"}
+{"q": "Hey aura, could you call my husband.", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
+{"q": "hey, did you read the book i told you about", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/11"}
+{"q": "ya, ponte al lado del chat dale.", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/5"}
+{"q": "ok, drop the tomorrow at 7 reminder.", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
+{"q": "hey, call me real quick", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/17"}
+{"q": "busca en las conversaciones la cuenta del banco", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
+{"q": "Levántame en 5 minutos", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/25"}
+{"q": "Mira videollamada a mi jefe porfa", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
+{"q": "videollamada a mi jefe porfa", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
+{"q": "make a video call to karla", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/5"}
+{"q": "mira enciende la camara para que me veas porfa", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/11"}
+{"q": "aura please, video call karla please", "e": ["ninguna", "app_videollamar"], "l": "en", "t": "app_videollamar/en/11"}
+{"q": "ya olvida el recordatorio de mandar el informe mi reina", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "es", "t": "app_cancelar_recordatorio/es/11"}
+{"q": "let me call you back later, i am busy", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/125"}
+{"q": "Hey, i do not read texts while driving", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/71"}
+{"q": "Búscame en las conversaciones la cuenta del banco por favor favor", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
+{"q": "claudio, ¿qué alarmas me pusiste? por favor", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/17"}
+{"q": "ok aura, cierra esta pantalla", "e": ["cerrar", "app_atras"], "l": "es", "t": "app_atras/es/11"}
+{"q": "oye aura, márcame en 5 minutos para para recordarme mandar el informe que se me olvida", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/11"}
+{"q": "um bring out the guardian.", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/17"}
+{"q": "aura acuérdame en 5 minutos de ir al banco pues.", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
+{"q": "go to the chats pls", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/25"}
+{"q": "eh, muéstrame los comandos", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/17"}
+{"q": "hey aura quiero hablar con don chepe llámale mi reina.", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
+{"q": "so i texted my daughter yesterday.", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/145"}
+{"q": "Send my husband a text saying i am outside now", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
+{"q": "ey, lee lo que me escribieron si puedes", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/17"}
+{"q": "sounds good", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/31"}
+{"q": "Ok ok aura, levantame a las seis ya", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/25"}
+{"q": "¿y tu que haces haces en tu tiempo libre?", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/151"}
+{"q": "ya, quiero hablar con don chepe, yamale", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/5"}
+{"q": "oye quiero ver lo que hablé con don chepe ya", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
+{"q": "a ver, cumplo anos el 3 de julio pues.", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/17"}
+{"q": "there is a mango tree behind the house", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/77"}
+{"q": "textea a don ramon que ya casi", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/11"}
+{"q": "aura, buscá cómo está el dólar en google", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
+{"q": "Aura por favor sí envíalo por favor", "e": ["ninguna", "app_enviar"], "l": "es", "t": "app_enviar/es/11"}
+{"q": "pls show me my messages thank you", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/5"}
+{"q": "quiero ver lo que hablé con mi compadre", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
+{"q": "Fijate que habla en ingles ingles", "e": ["ninguna", "app_idioma"], "l": "es", "t": "app_idioma/es/5"}
+{"q": "ya, shhh si puedes", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/25"}
+{"q": "Antonio textea a don ramon que ya casi", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/11"}
+{"q": "Vaya, acuérdame mañana a las 7 de ir al banco", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/11"}
+{"q": "eh cuelga esa llamada si puedes", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/17"}
+{"q": "what did my husband text me", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
+{"q": "cuelga la ropa en el patio", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/11"}
+{"q": "mira pásame a hablar con aura mi reina", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/17"}
+{"q": "que tengo agendado contigo", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/11"}
+{"q": "aura, back to where i was now", "e": ["ninguna", "app_atras"], "l": "en", "t": "app_atras/en/17"}
+{"q": "buscá el partido del olimpia en google por favor", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/17"}
+{"q": "Mira buscame en las conversaciones la cuenta del banco", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/11"}
+{"q": "Ok aura, que no se me olvide tomar la medicina, recuérdamelo en 5 minutos", "e": ["ninguna", "app_recordar"], "l": "es", "t": "app_recordar/es/5"}
+{"q": "Aura, ¿que alarmas me pusiste?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/17"}
+{"q": "a ver respóndele que no puedo", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/5"}
+{"q": "can you call me at 1 to remind me to go to the bank.", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
+{"q": "my name is joe but call me sunshine right now", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/11"}
+{"q": "Aura por favor, levántame en 5 minutos pues.", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/25"}
+{"q": "aura por favor, quiero bideollamada con mi compadre.", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
+{"q": "i work at a bank", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/17"}
+{"q": "close this", "e": ["cerrar", "app_atras"], "l": "en", "t": "app_atras/en/5"}
+{"q": "mira, muestrame los comandos dale", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/17"}
+{"q": "Claudio despiértate aura", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/5"}
+{"q": "ya, ¿que tengo agendado contigo? porfa", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/11"}
+{"q": "minimizate minimizate.", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/17"}
+{"q": "hey aura, how many reminders do i have.", "e": ["ninguna", "app_listar_recordatorios"], "l": "en", "t": "app_listar_recordatorios/en/5"}
+{"q": "ey activa la visión", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/5"}
+{"q": "antonio, send my sister a text saying i am outside", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
+{"q": "olvídalo, no lo mandes por favor", "e": ["ninguna", "app_descartar"], "l": "es", "t": "app_descartar/es/5"}
+{"q": "Aura please which chat has the bank account", "e": ["ninguna", "app_buscar_chats"], "l": "en", "t": "app_buscar_chats/en/5"}
+{"q": "alright walk around again for me.", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/5"}
+{"q": "uh, camera off", "e": ["ninguna", "app_camara"], "l": "en", "t": "app_camara/en/5"}
+{"q": "Aura, instrucciones", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/5"}
+{"q": "mi reina instrucciones", "e": ["ninguna", "app_ayuda"], "l": "es", "t": "app_ayuda/es/5"}
+{"q": "oye hay que llamar a las cosas por su nombre", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/85"}
+{"q": "aura, qué dicen en internet de cómo está el dólar please", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
+{"q": "Aura, send the draft now.", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/5"}
+{"q": "pásame a hablar con aura pues.", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/17"}
+{"q": "fijate que la pantaya del cel se me quebro", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/117"}
+{"q": "aura, activa el modo oscuro porfa", "e": ["ninguna", "app_tema"], "l": "es", "t": "app_tema/es/5"}
+{"q": "fijate que despiertate aura.", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/5"}
+{"q": "respóndele que no puedo por favor", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/5"}
+{"q": "oye te quiero mucho", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/157"}
+{"q": "aura, muestrame la pantalla de perfil", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/25"}
+{"q": "mira, mira, mmm", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/37"}
+{"q": "ya, cambia el avatar", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/11"}
+{"q": "vuelve a activar los avisos de mi jefe mi reina", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
+{"q": "Open the chat list real quick", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/11"}
+{"q": "ponme a claudio", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/5"}
+{"q": "le marcas a mi jefe", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/17"}
+{"q": "Bueno, me encanta el café", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/25"}
+{"q": "Okay aura, stop notifying me about my husband right now", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
+{"q": "hey claudio do not send that", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/11"}
+{"q": "ok aura bideollama a don chepe.", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/5"}
+{"q": "mire, hablame por telefono por favor", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/11"}
+{"q": "mira, échame una llamada porfa", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/5"}
+{"q": "aura, ponme a claudio", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/5"}
+{"q": "ey calla un rato rato.", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/5"}
+{"q": "ok, make it light", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/17"}
+{"q": "Oye qué dicen en internet de cómo está el dólar mi reina", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/11"}
+{"q": "antonio, abre las conversaciones.", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/11"}
+{"q": "ok wake up aura", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/5"}
+{"q": "fíjate que mandale a mi jefe que ya salí", "e": ["ninguna", "app_redactar"], "l": "es", "t": "app_redactar/es/5"}
+{"q": "a ver qué silencio tan raro", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/185"}
+{"q": "oye, cambia el mundo, empieza por ti", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/105"}
+{"q": "El inglés es difícil", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/17"}
+{"q": "fijate que lee el chat de don ramon si puedes", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/11"}
+{"q": "Aura ok", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/31"}
+{"q": "Claudio ve para atrás", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/5"}
+{"q": "Stop notifying me about my sister.", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/5"}
+{"q": "can you i want you to call me now now", "e": ["ninguna", "app_llamame"], "l": "en", "t": "app_llamame/en/11"}
+{"q": "mira, buenos días aura", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/25"}
+{"q": "wake up aura", "e": ["ninguna", "app_hablar"], "l": "en", "t": "app_hablar/en/5"}
+{"q": "ya, ya, hazte chiquita otra vez", "e": ["ninguna", "app_presencia"], "l": "es", "t": "app_presencia/es/25"}
+{"q": "Vuelve a activar los avisos de don ramón por favor", "e": ["ninguna", "app_silenciar_chat"], "l": "es", "t": "app_silenciar_chat/es/11"}
+{"q": "hey aura me encanta el café.", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/25"}
+{"q": "¿qué alarmas me pusiste?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/17"}
+{"q": "pasame a hablar con aura.", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/17"}
+{"q": "mi reina, videollamada a don chepe porfa dale", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/17"}
+{"q": "buscá en internet el partido del olimpia si puedes", "e": ["ninguna", "app_buscar_internet"], "l": "es", "t": "app_buscar_internet/es/5"}
+{"q": "respóndele que está bien", "e": ["ninguna", "app_responder"], "l": "es", "t": "app_responder/es/17"}
+{"q": "hey, bring aura back", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/5"}
+{"q": "Fíjate que mmm", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/37"}
+{"q": "Antonio, unmute the chat with karla now", "e": ["ninguna", "app_silenciar_chat"], "l": "en", "t": "app_silenciar_chat/en/11"}
+{"q": "be small again", "e": ["ninguna", "app_presencia"], "l": "en", "t": "app_presencia/en/11"}
+{"q": "can you look when olimpia plays up online", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
+{"q": "Ya abre la la pantalla de chats", "e": ["ninguna", "app_abrir"], "l": "es", "t": "app_abrir/es/17"}
+{"q": "aura, bring aura back", "e": ["ninguna", "app_avatar"], "l": "en", "t": "app_avatar/en/5"}
+{"q": "Oye aura, busca en las conversaciones la foto del carro por favor", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
+{"q": "okay aura stop listening now", "e": ["callar", "app_callar"], "l": "en", "t": "app_callar/en/11"}
+{"q": "aura por favor, pon un temporizador de cinco minutos gracias", "e": ["ninguna", "app_llamar_recordar"], "l": "es", "t": "app_llamar_recordar/es/17"}
+{"q": "mi reina, ya corta eso", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/11"}
+{"q": "yo, pull up my messages with my husband.", "e": ["ninguna", "app_abrir_chat"], "l": "en", "t": "app_abrir_chat/en/5"}
+{"q": "hey, can you call me at 1 to remind me to take my medicine", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
+{"q": "um, look the dollar exchange rate up online", "e": ["ninguna", "app_buscar_internet"], "l": "en", "t": "app_buscar_internet/en/11"}
+{"q": "hey claudio, send my husband a text saying i am outside", "e": ["ninguna", "app_redactar"], "l": "en", "t": "app_redactar/en/11"}
+{"q": "antonio, do not send that pls", "e": ["ninguna", "app_descartar"], "l": "en", "t": "app_descartar/en/11"}
+{"q": "Alright, can you call me at 1 to remind me to take my medicine thanks", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/5"}
+{"q": "use the system theme for me", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/5"}
+{"q": "Claudio, quiero ver lo que hable con don chepe si puedes", "e": ["ninguna", "app_abrir_chat"], "l": "es", "t": "app_abrir_chat/es/11"}
+{"q": "my daughters are at school", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/17"}
+{"q": "aura, open the chat list", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/11"}
+{"q": "escuchame de nuevo si puedes", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/11"}
+{"q": "okay aura hang up please", "e": ["ninguna", "app_colgar"], "l": "en", "t": "app_colgar/en/11"}
+{"q": "Oye, echame una llamada", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/5"}
+{"q": "Vaya, enciende la cámara para q me veas ya.", "e": ["ninguna", "app_camara"], "l": "es", "t": "app_camara/es/11"}
+{"q": "hey aura, send it now", "e": ["ninguna", "app_enviar"], "l": "en", "t": "app_enviar/en/11"}
+{"q": "me encanta el café", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/25"}
+{"q": "pásame a hablar con con aura", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/17"}
+{"q": "Ey cuelga esa llamada", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/17"}
+{"q": "claudio, timbra a mi compadre", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
+{"q": "um slow motion looks nice", "e": ["ninguna", "app_ninguna"], "l": "en", "t": "app_ninguna/en/151"}
+{"q": "fíjate que busca en las conversaciones la foto del carro dale", "e": ["ninguna", "app_buscar_chats"], "l": "es", "t": "app_buscar_chats/es/5"}
+{"q": "Timbra a mi jefe", "e": ["ninguna", "app_llamar"], "l": "es", "t": "app_llamar/es/11"}
+{"q": "ey, escucho musica cristiana.", "e": ["ninguna", "app_perfil"], "l": "es", "t": "app_perfil/es/11"}
+{"q": "colgá", "e": ["ninguna", "app_colgar"], "l": "es", "t": "app_colgar/es/5"}
+{"q": "Um, could you call my husband", "e": ["ninguna", "app_llamar"], "l": "en", "t": "app_llamar/en/11"}
+{"q": "fíjate que el mensaje yegó tarde", "e": ["ninguna", "app_ninguna"], "l": "es", "t": "app_ninguna/es/177"}
+{"q": "hey go to the chats", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/25"}
+{"q": "Vuelve a hablarme", "e": ["ninguna", "app_hablar"], "l": "es", "t": "app_hablar/es/17"}
+{"q": "aura, drop the at six reminder", "e": ["ninguna", "app_cancelar_recordatorio"], "l": "en", "t": "app_cancelar_recordatorio/en/5"}
+{"q": "i like soccer", "e": ["ninguna", "app_perfil"], "l": "en", "t": "app_perfil/en/5"}
+{"q": "aura por favor me escribió mi compadre", "e": ["ninguna", "app_leer"], "l": "es", "t": "app_leer/es/5"}
+{"q": "háblame por teléfono gracias", "e": ["ninguna", "app_llamame"], "l": "es", "t": "app_llamame/es/11"}
+{"q": "Um, what did my husband text me", "e": ["ninguna", "app_leer"], "l": "en", "t": "app_leer/en/5"}
+{"q": "match my phone theme please", "e": ["ninguna", "app_tema"], "l": "en", "t": "app_tema/en/11"}
+{"q": "aura por favor ponme a claudio gracias.", "e": ["ninguna", "app_avatar"], "l": "es", "t": "app_avatar/es/5"}
+{"q": "oye, volve atras", "e": ["ninguna", "app_atras"], "l": "es", "t": "app_atras/es/17"}
+{"q": "Mire, no me interrumpas y callate", "e": ["callar", "app_callar"], "l": "es", "t": "app_callar/es/17"}
+{"q": "Vaya quiero videollamada con don chepe mi reina", "e": ["ninguna", "app_videollamar"], "l": "es", "t": "app_videollamar/es/11"}
+{"q": "aura please, bring me 2 the home screen.", "e": ["ninguna", "app_abrir"], "l": "en", "t": "app_abrir/en/17"}
+{"q": "porfa ¿qué tengo agendado contigo?", "e": ["ninguna", "app_listar_recordatorios"], "l": "es", "t": "app_listar_recordatorios/es/11"}
+{"q": "countdown countdown 15 minutes", "e": ["ninguna", "app_llamar_recordar"], "l": "en", "t": "app_llamar_recordar/en/17"}

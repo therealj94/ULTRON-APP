@@ -49,9 +49,28 @@ export type Opciones = {
   silencioCierraMs?: number;
   /** Reintentos automáticos si falla al abrir. */
   reintentos?: number;
+  /** «Conectando…» más de esto sin conectar cuenta como fallo (CONECTAR_MAX_MS). */
+  conectarMaxMs?: number;
+  /** Abierta y sin silencio, sin nada del micrófono en este rato: no le llega la voz (SORDA_MS). */
+  sordaMs?: number;
 };
 
 export const SILENCIO_CIERRA_MS = 3 * 60_000;
+/**
+ * Lo más que puede quedarse «Conectando…». Antes no había tope: si la conexión no terminaba nunca, la
+ * sesión seguía «montada» para siempre, el audio seguía siendo suyo y NADIE más escuchaba (la mesa y
+ * la compañera le ceden el micrófono a la conversación). Fallar aquí hace el reintento de siempre y,
+ * si tampoco, suelta el audio: el oído del teléfono vuelve.
+ */
+export const CONECTAR_MAX_MS = 12_000;
+/**
+ * Conectada, sin silencio, y en todo este rato ni una muestra del micrófono por encima del piso
+ * (UMBRAL_ENTRADA) ni una frase de la persona: el micrófono de WebRTC no le llega (otro lo tiene, el
+ * sistema lo silenció). Se trata como un fallo al abrir y el audio vuelve al oído del teléfono.
+ */
+export const SORDA_MS = 15_000;
+/** Un micrófono vivo nunca da un cero perfecto (ruido de fondo): por debajo de esto es que no llega nada. */
+export const UMBRAL_ENTRADA = 0.0005;
 
 export class ControlSesion {
   private v: VistaSesion;
@@ -62,11 +81,21 @@ export class ControlSesion {
   private reloj: () => number;
   private silencioCierraMs: number;
   private reintentos: number;
+  private conectarMaxMs: number;
+  private sordaMs: number;
+  /** Desde cuándo está «conectando» la generación vigente. */
+  private conectandoDesde = 0;
+  /** Desde cuándo escucha sin silencio (0: no escucha o está silenciada). */
+  private oyendoDesde = -1;
+  /** Le llegó algo del micrófono (o una frase de la persona) en esta generación. */
+  private oyoAlgo = false;
 
   constructor(avatar: AvatarId, idioma: Idioma, o: Opciones = {}) {
     this.reloj = o.reloj || Date.now;
     this.silencioCierraMs = o.silencioCierraMs ?? SILENCIO_CIERRA_MS;
     this.reintentos = o.reintentos ?? 1;
+    this.conectarMaxMs = o.conectarMaxMs ?? CONECTAR_MAX_MS;
+    this.sordaMs = o.sordaMs ?? SORDA_MS;
     this.v = { gen: 0, montada: false, estado: 'cerrada', silenciada: false, dormida: false, suspendida: false, avatar, idioma, intento: 0 };
   }
 
@@ -86,8 +115,55 @@ export class ControlSesion {
     if (!('detalle' in cambio)) delete n.detalle;
     const igual = (Object.keys(n) as (keyof VistaSesion)[]).every((k) => n[k] === this.v[k]) && Object.keys(this.v).length === Object.keys(n).length;
     if (igual) return;
+    const antes = this.v;
     this.v = n;
+    this.anotarPlazos(antes, n);
     for (const f of [...this.oyentes]) f(n);
+  }
+
+  /** Los relojes del vigilante: desde cuándo conecta y desde cuándo escucha sin silencio. */
+  private anotarPlazos(antes: VistaSesion, n: VistaSesion) {
+    const ahora = this.reloj();
+    if (n.gen !== antes.gen) {
+      this.oyoAlgo = false;
+      this.oyendoDesde = -1;
+    }
+    if (n.montada && n.estado === 'conectando' && (n.gen !== antes.gen || antes.estado !== 'conectando' || !antes.montada)) this.conectandoDesde = ahora;
+    const oyendo = n.montada && !n.silenciada && (n.estado === 'escuchando' || n.estado === 'hablando');
+    if (!oyendo) this.oyendoDesde = -1;
+    else if (this.oyendoDesde < 0) this.oyendoDesde = ahora;
+  }
+
+  /** El volumen del micrófono de la conversación (0..1, ~20 Hz). */
+  entrada(nivel: number) {
+    if (nivel > UMBRAL_ENTRADA && this.v.montada) this.oyoAlgo = true;
+  }
+
+  /** La conversación entendió una frase de la persona: le llega la voz. */
+  oyoFrase() {
+    if (this.v.montada) this.oyoAlgo = true;
+  }
+
+  /**
+   * El vigilante de la conversación (cada segundo): «Conectando…» sin tope, o abierta y sin que le
+   * llegue nada del micrófono, cuentan como un fallo al abrir (reintento y, si tampoco, se suelta el
+   * audio). Devuelve lo que hizo.
+   */
+  revisar(): 'nada' | 'no-conecto' | 'sorda' {
+    const v = this.v;
+    if (!v.montada || v.suspendida) return 'nada';
+    const ahora = this.reloj();
+    if (v.estado === 'conectando' && ahora - this.conectandoDesde >= this.conectarMaxMs) {
+      this.alEstado(v.gen, 'error', 'no conectó a tiempo');
+      return 'no-conecto';
+    }
+    if (this.oyendoDesde >= 0 && !this.oyoAlgo && ahora - this.oyendoDesde >= this.sordaMs) {
+      // Sin reintento: la persona ya lleva un rato hablándole a nadie. El audio vuelve al oído del
+      // teléfono en el acto (y se le dice por qué).
+      this.poner({ montada: false, estado: 'error', silenciada: false, intento: 0, detalle: 'no llegó audio del micrófono' });
+      return 'sorda';
+    }
+    return 'nada';
   }
 
   /** Una generación nueva: la sesión anterior (si había) se desmonta y se monta otra limpia. */
@@ -107,6 +183,15 @@ export class ControlSesion {
     }
     this.abrir({ silenciada: false });
     return true;
+  }
+
+  /**
+   * Silenciado SIN sesión (se silenció mucho rato):
+   * nadie escucha, ni la sesión ni el oído del teléfono (vozOcupaMicrofono: dormida). Despertar la reabre.
+   */
+  dormir() {
+    if (this.v.suspendida) return;
+    this.poner({ montada: false, estado: 'cerrada', silenciada: true, dormida: true, intento: 0 });
   }
 
   terminar() {

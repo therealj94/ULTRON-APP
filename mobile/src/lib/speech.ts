@@ -183,6 +183,50 @@ export async function restartMic() {
   return engine === 'native' ? native.nativeRestart() : cloud.restartMic();
 }
 
+/**
+ * Reabrir el oído DE VERDAD: un reconocedor nuevo que quiere oír, sin pausa (el oído vuelve de la
+ * conversación en vivo o de una llamada, o el doble toque lo pide). No es «unmute»: el de antes pudo
+ * quedar colgado mientras otro tenía el micrófono.
+ */
+export async function reabrirMic() {
+  if (suspendido) {
+    queridoAlVolver = { abierto: true, pausado: false };
+    return;
+  }
+  if (engine === 'native') {
+    native.nativePause(false);
+    return native.nativeReabrir();
+  }
+  cloud.pauseMicForTts(false);
+  await cloud.unmuteMic();
+  return cloud.restartMic();
+}
+
+/**
+ * ¿Hay un motor oyendo AHORA? La etiqueta «te escucho» sale de aquí, no de lo que se pidió: pedir
+ * que escuche no es que escuche.
+ */
+/** ¿Dio señales de vida de verdad hace poco? (sin el plazo de gracia de un arranque; el vigilante). */
+export function oidoVivoDeVerdad(): boolean {
+  if (suspendido) return true;
+  return engine === 'native' ? native.nativeVidaReciente() : cloud.micWatchdogOk();
+}
+
+export function oidoEscuchando(): boolean {
+  if (suspendido) return false;
+  return engine === 'native' ? native.nativeEscuchando() : cloud.escuchandoAhora();
+}
+
+/**
+ * El reconocedor del teléfono no revive ni reiniciándolo: el oído sigue por la nube (Whisper en el
+ * servidor). Devuelve false si ya estaba en la nube (no hay a dónde caer).
+ */
+export async function caerANube(motivo: string): Promise<boolean> {
+  if (engine === 'cloud') return false;
+  await switchEngine('cloud', motivo);
+  return true;
+}
+
 export async function destroySpeech() {
   enabled = false;
   await native.nativeDestroy();

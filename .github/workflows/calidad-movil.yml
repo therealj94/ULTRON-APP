@@ -52,7 +52,7 @@ jobs:
         run: npm test
 
       # Los arneses del teléfono: identidad y aislamiento, costuras entre frentes, chat, llamadas,
-      # la compañera, el avatar y la sincronía de la boca.
+      # la compañera, el avatar, la sincronía de la boca, la mesa y el oído (la secuencia de José).
       - name: Arneses de la app
         working-directory: mobile
         run: |
@@ -64,3 +64,5 @@ jobs:
           npx tsx src/compa/pruebas/compa.prueba.mjs
           npx tsx src/avatar3d/pruebas/avatar3d.prueba.mjs
           npx tsx src/avatar3d/pruebas/sincronia.prueba.mjs
+          npx tsx pruebas/mesa/mesa.prueba.mjs
+          sh pruebas/oido/todas.sh

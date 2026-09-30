@@ -24,6 +24,15 @@ import type { Emocion } from '../lib/emocion';
 import type { EstadoVoz } from './sesion';
 import type { ZonaToque } from '../avatar3d/tipos';
 import { fraseCompa, textoCompa, type GrupoFrase } from './frases';
+import { ESPERA_FRASE_MS } from './frasesEstado';
+import { llamadaActiva, llamadaTerminada, type EstadoCiclo } from './llamadaCiclo';
+
+/**
+ * El globito de «pensando…» solo si la mesa lleva este rato esperando al cerebro (el mismo número que
+ * el «déjame ver» de la voz). Antes salía al instante en cada turno, también en los que contestaban
+ * enseguida.
+ */
+export const GLOBO_PENSANDO_MS = ESPERA_FRASE_MS;
 
 export type Expresion =
   | 'tranquila'
@@ -53,6 +62,17 @@ export type Animo = {
   /** La emoción de lo que está diciendo (conversación fluida o mesa). */
   sentir: Emocion;
   mesa: { hablando: boolean; pensando: boolean };
+  /** Desde cuándo la mesa espera al cerebro (0: no espera). */
+  pensandoDesde: number;
+  /** Ya dijo «pensando…» en su globito en esta espera. */
+  pensandoDicho: boolean;
+  /**
+   * El oído del teléfono escucha DE VERDAD para ella (con la mesa tapada, sin conversación en vivo):
+   * pone cara de escuchar. Solo lo dice un reconocedor vivo (canales.oidoTelefono), no lo pedido.
+   */
+  oido: boolean;
+  /** La llamada del avatar (compa/llamadaCiclo.ts; null sin ella): mientras suena o se habla, no se ve. */
+  ciclo: EstadoCiclo | null;
   levantada: boolean;
   /** En llamada: no se ve. */
   oculta: boolean;
@@ -79,6 +99,8 @@ export type Efecto =
   /** Confirmar en voz alta (sin conversación abierta, la voz de la mesa; con ella, un aviso al agente). */
   | { tipo: 'confirmar'; ok: boolean; texto: string }
   | { tipo: 'aparecer' }
+  /** Colgó la llamada del avatar: vuelve CAMINANDO desde el borde de la pantalla hasta su lugar. */
+  | { tipo: 'entrarCaminando' }
   | { tipo: 'desaparecer' };
 
 export type EventoAnimo =
@@ -93,6 +115,10 @@ export type EventoAnimo =
   /** AURA dijo algo. `mostrar`: si va en su globito (en la mesa ya lo muestra la burbuja grande). */
   | { tipo: 'dijo'; texto: string; emocion: Emocion; mostrar: boolean }
   | { tipo: 'mesa'; hablando: boolean; pensando: boolean; emocion: Emocion }
+  /** El oído del teléfono escucha (o dejó de escuchar) de verdad. */
+  | { tipo: 'oido'; escuchando: boolean }
+  /** La llamada del avatar cambió de estado. */
+  | { tipo: 'ciclo'; estado: EstadoCiclo | null }
   | { tipo: 'interrupcion' }
   | { tipo: 'llamada'; activa: boolean }
   | { tipo: 'hecho'; ok: boolean; accion: AccionApp; detalle?: string }
@@ -106,6 +132,10 @@ export const ANIMO_INICIAL: Animo = {
   voz: { estado: 'cerrada', silenciada: false, dormida: false, suspendida: false },
   sentir: 'neutral',
   mesa: { hablando: false, pensando: false },
+  pensandoDesde: 0,
+  pensandoDicho: false,
+  oido: false,
+  ciclo: null,
   levantada: false,
   oculta: false,
   cuenta: 0,
@@ -170,6 +200,8 @@ export function expresion(a: Animo, ahora: number): Expresion {
   if (hablando(a)) return expresionDeEmocion(a.sentir);
   if (a.mesa.pensando || a.voz.estado === 'conectando') return 'piensa';
   if (a.voz.estado === 'escuchando') return 'escucha';
+  // Sin conversación en vivo, el oído del teléfono la hace escuchar (si de verdad escucha).
+  if (a.oido && !vozAbierta(a.voz)) return 'escucha';
   return 'tranquila';
 }
 
@@ -211,8 +243,38 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
     case 'tic': {
       const irritacion = Math.max(0, a.irritacion - CALMA_POR_S * 0.5);
       const reaccionViva = a.reaccion && a.reaccion.hasta > ahora ? a.reaccion : null;
-      if (irritacion === a.irritacion && reaccionViva === a.reaccion) return { animo: a, efectos };
-      return { animo: { ...a, irritacion, reaccion: reaccionViva }, efectos };
+      // La mesa lleva un buen rato esperando al cerebro: ahora sí, «pensando…» (una vez por espera).
+      const tocaPensando = a.mesa.pensando && !a.pensandoDicho && ahora - a.pensandoDesde >= GLOBO_PENSANDO_MS && !a.mesa.hablando;
+      if (!tocaPensando && irritacion === a.irritacion && reaccionViva === a.reaccion) return { animo: a, efectos };
+      const n = { ...a, irritacion, reaccion: reaccionViva };
+      if (tocaPensando) {
+        n.pensandoDicho = true;
+        if (!a.oculta && !estaDormida(a.voz)) efectos.push(globo(textoCompa.pensando(), 1600));
+      }
+      return { animo: n, efectos };
+    }
+
+    case 'oido': {
+      if (a.oido === ev.escuchando) return { animo: a, efectos };
+      return { animo: { ...a, oido: ev.escuchando }, efectos };
+    }
+
+    case 'ciclo': {
+      if (a.ciclo === ev.estado) return { animo: a, efectos };
+      const n = { ...a, ciclo: ev.estado };
+      // La llamada del avatar (suena, se habla o se ve cómo terminó) ES su presencia: la compañera no se
+      // duplica. Al volver a reposo entra caminando desde el borde (si no hay otra llamada encima).
+      const tapa = (e: EstadoCiclo | null) => !!e && (llamadaActiva(e) || llamadaTerminada(e));
+      if (tapa(ev.estado) && !tapa(a.ciclo)) {
+        if (!a.oculta) efectos.push({ tipo: 'desaparecer' });
+        return { animo: { ...n, oculta: true, levantada: false, reaccion: null, irritacion: 0 }, efectos };
+      }
+      if (!tapa(ev.estado) && tapa(a.ciclo) && !a.voz.suspendida) {
+        const v = { ...n, oculta: false, cuenta: a.cuenta + 1, reaccion: reaccion('contenta', 2200) };
+        efectos.push({ tipo: 'entrarCaminando' }, globo(frase('volver', v), 2200));
+        return { animo: v, efectos };
+      }
+      return { animo: n, efectos };
     }
 
     case 'toque': {
@@ -254,9 +316,14 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
     case 'dobleToque': {
       if (a.oculta || a.voz.suspendida) return { animo: a, efectos };
       const n = { ...a, cuenta: a.cuenta + 1 };
+      // Fuera de una llamada no hay nada que silenciar: se dice cómo llamarla.
+      if (a.ciclo !== 'en_llamada' && a.ciclo !== 'silenciado' && !vozAbierta(a.voz)) {
+        efectos.push({ tipo: 'haptica', fuerza: 'suave' }, { tipo: 'brinco', alto: 8 }, globo(textoCompa.pideLlamada(), 2600, 2));
+        return { animo: n, efectos };
+      }
       efectos.push({ tipo: 'alternarVoz' });
-      // Lo mismo que decide ControlSesion.despertarOSilenciar: abierta y sin silencio → se duerme.
-      const seDuerme = vozAbierta(a.voz);
+      // Lo mismo que decide quien atiende el toque (VozProvider.despertarOSilenciar): en llamada, se silencia.
+      const seDuerme = a.ciclo ? a.ciclo === 'en_llamada' : vozAbierta(a.voz);
       if (seDuerme) {
         n.reaccion = null;
         efectos.push({ tipo: 'haptica', fuerza: 'suave' }, globo(frase('dormir', n), 2600, 2));
@@ -294,6 +361,11 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
         efectos.push({ tipo: 'desaparecer' });
         return { animo: { ...n, oculta: true, levantada: false, reaccion: null, irritacion: 0 }, efectos };
       }
+      // Escondida (la llamada del avatar es su presencia): sus globitos no se ven, no se dicen.
+      if (a.oculta) {
+        if (v.estado !== 'hablando' && !a.mesa.hablando) n.sentir = 'neutral';
+        return { animo: n, efectos };
+      }
       if (v.silenciada && !antes.silenciada) efectos.push(globo('Zzz…', 2000));
       else if (v.estado === 'escuchando' && (antes.estado === 'conectando' || (antes.silenciada && !v.silenciada))) {
         efectos.push(globo(textoCompa.escuchando(), 1800));
@@ -317,8 +389,15 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
 
     case 'mesa': {
       const n = { ...a, mesa: { hablando: ev.hablando, pensando: ev.pensando } };
-      // Empezó a pensar (la mesa espera al cerebro): lo dice en su globito, cortito y sin repetir.
-      if (ev.pensando && !a.mesa.pensando && !a.oculta && !estaDormida(a.voz)) efectos.push(globo(textoCompa.pensando(), 1600));
+      // Empezó a pensar (la mesa espera al cerebro): se anota desde cuándo. El globito sale con el
+      // `tic` si la espera pasa de GLOBO_PENSANDO_MS (antes, al instante en cada turno).
+      if (ev.pensando && !a.mesa.pensando) {
+        n.pensandoDesde = ahora;
+        n.pensandoDicho = false;
+      } else if (!ev.pensando) {
+        n.pensandoDesde = 0;
+        n.pensandoDicho = false;
+      }
       if (ev.hablando) n.sentir = ev.emocion;
       else if (a.voz.estado !== 'hablando') n.sentir = 'neutral';
       return { animo: n, efectos };

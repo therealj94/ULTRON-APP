@@ -11,7 +11,9 @@
  * silencia de verdad (VozProvider). La boca sigue la voz real (avatar3d/senalVoz: nivel y forma;
  * la de la mesa y la de la conversación fluida) y la cara, la emoción de lo que dice.
  *
- * En una llamada se va (con animación) y vuelve al colgar.
+ * En una llamada se va (con animación) y vuelve al colgar. La llamada del avatar (LlamadaAvatar) ES su
+ * presencia mientras dura: no se duplican. Al colgar, entra CAMINANDO desde el borde de la pantalla
+ * (el clip «caminar» del 3D si el modelo lo trae, o la figurita a pasitos) y saluda al llegar.
  *
  * Es también el ALMA de los otros cuerpos de AURA (avatar3d/contrato.ts): publica lo que siente
  * (`estadoAvatar`) y escucha los toques que le cuentan el panel al lado de los chats y la pantalla
@@ -53,7 +55,7 @@ import { FIGURAS, VIVO_QUIETO, estiloDe, fotoClaudio, medidas, mezclarFigura, ty
 import { grabarCompa, grabarVacioCompa } from './pintarCompa';
 import { Gestos, type SalidaGesto } from './gestos';
 import { destinoPaseo, msPaseo, pegarABorde, reubicar, yCarril, type Marco, type Posicion } from './borde';
-import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido, sueloCompa } from './canales';
+import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido, oidoTelefono, sueloCompa } from './canales';
 import { estadoAvatar, estadoDesdeAnimo, gestoDeEvento, mismoEstado, toqueAvatar, type EstadoAvatar } from '../avatar3d/contrato';
 import { zona2D } from '../avatar3d/mapeo';
 import { cuerposAparte, marcoMesa, useModoPresencia } from '../avatar3d/usePresencia';
@@ -198,6 +200,8 @@ export function Companera() {
   const [globo, setGlobo] = useState<Globo | null>(null);
   const globoRef = useRef<Globo | null>(null);
   const pantalla = useRef<Pantalla>('mesa');
+  /** Lo último que dijo la voz de la mesa (para no repetir el mismo globito con cada aviso de la mesa). */
+  const textoMesa = useRef(ecoMesa.ultimo().texto);
   const vozRef = useRef(voz);
   vozRef.current = voz;
   const caminarRef = useRef<{ detener: () => void } | null>(null);
@@ -297,6 +301,9 @@ export function Companera() {
             setOculta(false);
             visible.value = withSpring(1, MEDIDA.resorte.vivo);
             break;
+          case 'entrarCaminando':
+            entrarCaminandoRef.current();
+            break;
           case 'desaparecer':
             caminarRef.current?.detener();
             visible.value = withTiming(0, { duration: 260 }, (fin) => {
@@ -340,6 +347,10 @@ export function Companera() {
   useEffect(() => {
     despachar({ tipo: 'voz', voz: { estado: v.estado, silenciada: v.silenciada, dormida: v.dormida, suspendida: v.suspendida } });
   }, [despachar, v.estado, v.silenciada, v.dormida, v.suspendida]);
+  // La llamada del avatar: mientras suena o se habla, la compañera no está (la llamada es su presencia).
+  useEffect(() => {
+    despachar({ tipo: 'ciclo', estado: voz.ciclo });
+  }, [despachar, voz.ciclo]);
   useEffect(() => {
     const offs = [
       mensajeVoz.escuchar((m) => {
@@ -347,7 +358,15 @@ export function Companera() {
         despachar({ tipo: 'dijo', texto: m.texto, emocion: m.emocion, mostrar: pantalla.current !== 'mesa' });
       }),
       interrupcionVoz.escuchar(() => despachar({ tipo: 'interrupcion' })),
-      ecoMesa.escuchar((e) => despachar({ tipo: 'mesa', hablando: e.hablando, pensando: e.pensando, emocion: e.emocion })),
+      ecoMesa.escuchar((e) => {
+        despachar({ tipo: 'mesa', hablando: e.hablando, pensando: e.pensando, emocion: e.emocion });
+        // Con la mesa tapada, lo que dice su voz lo dice ella: su globito lo lee (en la mesa ya está la burbuja grande).
+        if (e.texto && e.texto !== textoMesa.current) {
+          textoMesa.current = e.texto;
+          despachar({ tipo: 'dijo', texto: e.texto, emocion: e.emocion, mostrar: pantalla.current !== 'mesa' });
+        }
+      }),
+      oidoTelefono.escuchar((on) => despachar({ tipo: 'oido', escuchando: on })),
       escuchar('llamada', ({ activa }) => despachar({ tipo: 'llamada', activa: !!activa })),
       escuchar('hecho', (h) => despachar({ tipo: 'hecho', ok: h.ok, accion: h.accion, detalle: h.detalle })),
       escuchar('enviado', (e) => despachar({ tipo: 'enviado', para: e.para, nombre: e.nombre })),
@@ -467,6 +486,46 @@ export function Companera() {
     paso.value = withTiming(0, { duration: 180 });
     publicar();
   }, [caminando, paso, publicar, x]);
+  /*
+   * Colgó la llamada del avatar: entra caminando desde el borde más cercano a su lugar (el cuerpo 3D
+   * pone su clip «caminar» porque se publica `caminando`; la figurita da pasitos) y saluda al llegar.
+   * Con «reducir movimiento», aparece con un fundido corto en su lugar.
+   */
+  const entrarCaminando = useCallback(() => {
+    caminarRef.current?.detener();
+    const m = marcoRef.current;
+    const lugar = pos.current;
+    setOculta(false);
+    if (reducido) {
+      visible.value = withTiming(1, { duration: 160 });
+      return;
+    }
+    const desdeIzq = lugar.x + LADO / 2 < m.ancho / 2;
+    const inicio = desdeIzq ? -LADO : m.ancho;
+    cancelAnimation(x);
+    x.value = inicio;
+    visible.value = 1;
+    dirRef.current = desdeIzq ? 1 : -1;
+    dir.value = dirRef.current;
+    caminarRef.current = { detener: detenerPaseo };
+    publicar();
+    caminando.value = withTiming(1, { duration: 120 });
+    paso.value = 0;
+    paso.value = withRepeat(withTiming(1, { duration: 520, easing: Easing.linear }), -1, false);
+    const ms = Math.max(900, Math.min(2600, msPaseo(inicio, lugar.x, 150)));
+    x.value = withTiming(lugar.x, { duration: ms, easing: Easing.out(Easing.quad) }, (fin) => {
+      if (fin) scheduleOnRN(llegoSaludando);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reducido, detenerPaseo, publicar]);
+  const llegoSaludando = useCallback(() => {
+    llego();
+    gestoRef.current = { nombre: 'saludar', n: (gestoRef.current?.n || 0) + 1 };
+    salto.value = withSequence(withTiming(-12, { duration: 160 }), withSpring(0, MEDIDA.resorte.vivo));
+    publicar();
+  }, [llego, publicar, salto]);
+  const entrarCaminandoRef = useRef(entrarCaminando);
+  entrarCaminandoRef.current = entrarCaminando;
   useEffect(() => {
     if (reducido) return;
     let t: ReturnType<typeof setTimeout>;
@@ -702,7 +761,7 @@ export function Companera() {
           accessible
           accessibilityRole="button"
           accessibilityLabel={tr('AURA, tu compañera', 'AURA, your companion')}
-          accessibilityHint={tr('Toca para saludarla; toca dos veces para silenciarla o despertarla; mantén para moverla', 'Tap to say hi; double-tap to mute or wake her; hold to move her')}
+          accessibilityHint={tr('Toca para saludarla; dile «llámame» y te llama; mantén para moverla', 'Tap to say hi; say "call me" and she calls you; hold to move her')}
         >
           <AvatarVivo
             avatar={avatar}

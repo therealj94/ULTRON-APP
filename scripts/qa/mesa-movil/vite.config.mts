@@ -9,9 +9,22 @@ const raiz = path.resolve(import.meta.dirname, '../../..');
 const simulado = path.resolve(import.meta.dirname, 'simulado');
 const rnSimulado = path.resolve(simulado, 'react-native.tsx');
 
+/**
+ * Las fotos que la app pide con `require('…/foto.webp')` (Metro): en el navegador, la URL del archivo
+ * (`{ uri }`, como las toma <Image>). Así se ven los retratos de Claudio y ANT-ONIO en la llamada.
+ */
+const requireDeFotos = {
+  name: 'require-de-fotos',
+  transform(codigo: string, id: string) {
+    if (!/\.(t|j)sx?$/.test(id) || !codigo.includes('require(')) return null;
+    const nuevo = codigo.replace(/require\((['"])([^'"]+\.(?:webp|png|jpe?g))\1\)/g, (_m, _q, ruta) => `({ uri: new URL(${JSON.stringify(ruta)}, import.meta.url).href })`);
+    return nuevo === codigo ? null : { code: nuevo, map: null };
+  },
+};
+
 export default defineConfig({
   root: import.meta.dirname,
-  plugins: [react()],
+  plugins: [react(), requireDeFotos],
   resolve: {
     extensions: ['.web.tsx', '.web.ts', '.tsx', '.ts', '.jsx', '.js'],
     dedupe: ['react', 'react-dom'],
@@ -24,6 +37,8 @@ export default defineConfig({
       'expo-haptics': path.resolve(simulado, 'simples.tsx'),
       'expo-font': path.resolve(simulado, 'simples.tsx'),
       'expo-blur': path.resolve(simulado, 'simples.tsx'),
+      'expo-keep-awake': path.resolve(simulado, 'simples.tsx'),
+      'expo-linear-gradient': path.resolve(simulado, 'gradiente.tsx'),
       '@react-native-async-storage/async-storage': path.resolve(simulado, 'storage.ts'),
       'react-native': rnSimulado,
       react: path.resolve(raiz, 'node_modules/react'),

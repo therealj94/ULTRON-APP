@@ -307,6 +307,11 @@ export function isMicPaused() {
   return paused;
 }
 
+/** ¿Está grabando para oír ahora? (el bucle vivo, queriendo oír y sin pausa). */
+export function escuchandoAhora() {
+  return loopAlive && wanted && !paused && Date.now() - lastLoopAt < 4000;
+}
+
 export function micWatchdogOk() {
   return !loopAlive || Date.now() - lastLoopAt < 4000;
 }

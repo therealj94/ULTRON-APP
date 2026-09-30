@@ -2,13 +2,13 @@
   "expo": {
     "name": "AU-RA FP",
     "slug": "ultron-fp",
-    "version": "4.7.0",
+    "version": "5.1.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "android": {
       "package": "link.ordenglobal.ultronfp",
-      "versionCode": 50,
+      "versionCode": 51,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -40,17 +40,17 @@
       "policy": "fingerprint"
     },
     "updates": {
-      "url": "https://u.expo.dev/d41656ec-6fc7-4fd2-b183-eba687473fd9",
+      "url": "https://u.expo.dev/58d1d3e5-9d36-466a-8e0c-86a17994de99",
       "checkAutomatically": "ON_LOAD",
       "fallbackToCacheTimeout": 0
     },
     "extra": {
       "ultronUrl": "https://ultron-looi-desk.onrender.com",
       "eas": {
-        "projectId": "d41656ec-6fc7-4fd2-b183-eba687473fd9"
+        "projectId": "58d1d3e5-9d36-466a-8e0c-86a17994de99"
       }
     },
-    "owner": "vetawallet",
+    "owner": "ordenglobal",
     "plugins": [
       [
         "expo-build-properties",

@@ -62,12 +62,15 @@ const nodo = http.createServer((req, res) => {
   });
 });
 const alChico: string[] = [];
+/** Lo que tarda el modelo chico en contestar entero (no hace stream). */
+let chicoMs = 0;
 const chico = http.createServer((req, res) => {
   let c = '';
   req.on('data', (d) => (c += d));
-  req.on('end', () => {
+  req.on('end', async () => {
     const j = JSON.parse(c || '{}');
     alChico.push(String(j.messages?.[0]?.content || ''));
+    if (chicoMs) await new Promise((r) => setTimeout(r, chicoMs));
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ choices: [{ message: { content: '[EMO: feliz] ¡Muy bien! ¿Y tú?' } }] }));
   });
 });
@@ -106,7 +109,7 @@ const proc: ChildProcess = spawn(process.execPath, ['--import', import.meta.reso
     ULTRON_NODO_URL: `http://127.0.0.1:${puerto(nodo)}`,
     ULTRON_NODO_SECRETO: 'prueba',
     MODELO_CHICO_URL: `http://127.0.0.1:${puerto(chico)}`,
-    MODELO_CHICO_MODO: 'activo',
+    MODELO_CHICO_MODO: process.env.PRUEBA_CHICO_MODO || 'activo',
     MODELO_CHICO_NOMBRE: 'chico-falso',
     ULTRON_LAYA_URL: `http://127.0.0.1:${puerto(laya)}`,
     ULTRON_LAYA_CLAVE: 'laya-falsa',
@@ -256,12 +259,19 @@ test('el perfil llega al prompt en cada turno: texto y voz, con los tres avatare
     assert.match(alNodo.at(-1)!.system, /Le dices «Majo»/, `perfil en la voz de ${avatar}`);
     assert.match(alNodo.at(-1)!.system, /Su familia: dos gatos/);
   }
-  // El modelo chico también le dice por su apodo, y habla como el avatar.
+  // El modelo chico también le dice por su apodo, y habla como el avatar (charla que no es un saludo,
+  // un gracias ni una despedida: esas las contesta el banco al instante, abajo).
   alChico.length = 0;
-  const hola = await voz(paseDe(yo, 'claudio'), [{ role: 'user', content: 'hola' }]);
-  assert.equal(hola.dicho, '¡Muy bien! ¿Y tú?');
+  const ligera = await voz(paseDe(yo, 'claudio'), [{ role: 'user', content: 'muy bien, igualmente' }]);
+  assert.equal(ligera.dicho, '¡Muy bien! ¿Y tú?');
   assert.match(alChico.at(-1)!, /Te habla Majo/);
   assert.match(alChico.at(-1)!, /Claudio/);
+  // «Hola» hablado: el banco de Claudio, con su apodo, sin modelo (charla-rapida).
+  alChico.length = 0;
+  alNodo.length = 0;
+  const hola = await voz(paseDe(yo, 'claudio'), [{ role: 'user', content: 'hola' }]);
+  assert.match(hola.dicho, /Majo/, hola.dicho);
+  assert.equal(alChico.length + alNodo.length, 0, 'ni el chico ni el 27B para un «hola»');
 });
 
 test('la voz corre sin mando: «redespliega» se contesta con la negativa y no despierta al 27B', { skip: !listo }, async () => {
@@ -442,6 +452,45 @@ test('el cerebro contesta solo con la acción: se dice la frase de esa acción, 
   }
 });
 
+test('la llamada del avatar: «llámame» y «ponme un timer» por el camino rápido, sin cerebro y medidos; en la llamada, «llámame» no suena otra', { skip: !listo }, async () => {
+  const tel = await canal();
+  try {
+    const r = await fetch(`${BASE}/api/app/contexto`, {
+      method: 'POST',
+      headers: h(),
+      body: JSON.stringify({ pantalla: 'mesa', contactos: [{ correo: 'beto@x.com', nombre: 'Beto Pérez' }], manos: ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame'] }),
+    });
+    assert.equal(r.status, 200);
+    alNodo.length = 0;
+    const t0 = Date.now();
+    const llamame = await turno('llámame');
+    const ms = Date.now() - t0;
+    console.log(`[latencia] «llámame» por el camino rápido: ${ms} ms de punta a punta (sin cerebro)`);
+    assert.equal(llamame.via, 'app-reglas');
+    assert.equal(llamame.reply, '¡Va, ya te llamo!');
+    assert.deepEqual(llamame.acciones.map((e: any) => e.accion), [{ tipo: 'llamame' }]);
+    assert.equal(alNodo.length, 0, 'el cerebro no se enteró');
+    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'llamame')), 'la orden llegó al teléfono por su canal');
+    // Un timer: directo, con la hora dicha, y con llamada.
+    const timer = await turno('ponme un timer de 10 minutos');
+    assert.equal(timer.via, 'app-reglas');
+    assert.match(timer.reply, /^Listo, te llamo en 10 minutos, a las? \d{1,2}:\d{2} [ap]\. m\.$/);
+    assert.equal(timer.acciones[0].accion.tipo, 'recordatorio');
+    assert.equal(timer.acciones[0].accion.llamada, true);
+    assert.equal(alNodo.length, 0);
+    // En la llamada (la voz), «llámame» no manda otra llamada.
+    const enLlamada = await voz(paseDe(), [{ role: 'user', content: 'llámame' }]);
+    assert.equal(enLlamada.dicho, 'Ya estamos en llamada. ¡Dime!');
+    // Y en la llamada, un timer también va por el camino rápido (sin cerebro), con la hora dicha.
+    alNodo.length = 0;
+    const timerVoz = await voz(paseDe(), [{ role: 'user', content: 'ponme un timer de 5 minutos' }]);
+    assert.match(timerVoz.dicho, /^Listo, te llamo en 5 minutos, a las? \d{1,2}:\d{2} [ap]\. m\.$/);
+    assert.equal(alNodo.length, 0, 'sin cerebro también en la llamada');
+  } finally {
+    await tel.cerrar();
+  }
+});
+
 test('las manos: llamar espera el «sí»; leer vuelve por la voz con su boleto y sin el cerebro; un APK viejo no las ve', { skip: !listo }, async () => {
   const tel = await canal();
   const contexto = (extra: Record<string, unknown>) =>
@@ -600,7 +649,7 @@ test('latencia hasta la primera palabra (voz), con cifras', { skip: !listo }, as
   primerTokenMs = 250;
   pasoMs = 15;
   contestar = () => 'Mira, lo que pasa con la planta de beneficio este trimestre es que avanzó bastante, sobre todo en la parte eléctrica. Te cuento el detalle cuando quieras.';
-  const charla = await medir('charla «hola» (modelo chico)', () => voz(paseDe(medidor), [{ role: 'user', content: 'hola' }]));
+  const charla = await medir('charla «hola» (charla rápida, sin modelo)', () => voz(paseDe(medidor), [{ role: 'user', content: 'hola' }]));
   const orden = await medir('orden de app «vete atrás» (camino rápido)', async () => {
     const tel = await canal(medidor.token);
     try {
@@ -710,6 +759,125 @@ test('latencia de la mesa con la cámara como en 4.7.0 (escena en cada turno + l
   // Lo que espera a internet ya no frena la primera palabra de la mesa hablada (la red tarda 2,5 s).
   assert.ok(hablado.primeraMs < 250 + 1500, `la mesa hablada no espera a internet (${hablado.primeraMs} ms)`);
   assert.ok(hablado.primeraMs < sinCamara.primeraMs - 1000, 'y es más rápida que la mesa tratada como escrita');
+});
+
+/**
+ * Un turno HABLADO de la mesa tal como lo manda la app (hablado, historial, memoria, su aparato),
+ * tramo por tramo: cuándo llega la emoción, el primer trozo, la primera FRASE entera (lo que la app
+ * manda a /api/tts) y el final, y quién contestó (modelo chico o 27B).
+ */
+async function turnoMesaHablado(message: string, token = yo.token) {
+  const t0 = performance.now();
+  const r = await fetch(`${BASE}/api/turno/stream`, {
+    method: 'POST',
+    headers: { ...h(token), 'x-aura-origen': 'app', 'x-aura-aparato': 'tel-latencia' },
+    body: JSON.stringify({ message, mode: 'GUARDIAN', userName: 'María José', historial: [{ rol: 'usuario', texto: 'hola' }, { rol: 'ultron', texto: 'Hola, aquí estoy.' }], memoria: [], hablado: true }),
+  });
+  const t: { emocion: number; delta: number; frase: number; done: number; via: string } = { emocion: -1, delta: -1, frase: -1, done: -1, via: '' };
+  let texto = '';
+  let buf = '';
+  const dec = new TextDecoder();
+  for await (const trozo of r.body as any) {
+    buf += dec.decode(trozo, { stream: true });
+    let i: number;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const b = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      const ev = /^event: (\w+)/m.exec(b)?.[1];
+      const ahora = performance.now() - t0;
+      if (ev === 'emocion' && t.emocion < 0) t.emocion = ahora;
+      if (ev === 'delta') {
+        if (t.delta < 0) t.delta = ahora;
+        try {
+          texto += JSON.parse(/^data: (.*)$/m.exec(b)?.[1] || '{}').text || '';
+        } catch {
+          /* */
+        }
+        // La app corta la primera frase en [.!?…], o en su coma pasados ~28 caracteres (StreamSpeaker):
+        // ahí ya pide su audio.
+        const limpio = texto.replace(/\[[^\]]*\]/g, '').trim();
+        if (t.frase < 0 && (/[.!?…](\s|$)/.test(limpio.slice(5)) || /^[\s\S]{27,}?[^\d\s][,;:](\s|$)/.test(limpio))) t.frase = ahora;
+      }
+      if (ev === 'done' && t.done < 0) {
+        t.done = ahora;
+        if (t.frase < 0) t.frase = ahora;
+        try {
+          t.via = String(JSON.parse(/^data: (.*)$/m.exec(b)?.[1] || '{}').via || '');
+        } catch {
+          /* */
+        }
+      }
+    }
+  }
+  return t;
+}
+
+test('latencia del turno hablado de la mesa, tramo por tramo: charla («¿cómo estás?») y pregunta normal, con cifras', { skip: !listo }, async () => {
+  const N = 5;
+  // Tiempos como los del nodo de verdad (T4): el 27B tarda en dar su primer token y el chico contesta entero.
+  primerTokenMs = 1200;
+  pasoMs = 25;
+  chicoMs = 350;
+  contestar = () => '[EMO: neutral] Te recomiendo empezar por lo más urgente, revisar tus pendientes y dejar un rato para descansar.';
+  const med = async (nombre: string, msg: string, persona = yo) => {
+    const filas: Array<{ emocion: number; delta: number; frase: number; done: number; via: string }> = [];
+    const chico0 = alChico.length;
+    const nodo0 = alNodo.length;
+    for (let i = 0; i < N; i++) filas.push(await turnoMesaHablado(msg, persona.token));
+    const m = (k: 'emocion' | 'delta' | 'frase' | 'done') => Math.round(mediana(filas.map((f) => f[k])));
+    const quien = alChico.length > chico0 ? `modelo chico (${alChico.length - chico0}/${N})` : '';
+    const grande = alNodo.length > nodo0 ? `27B (${alNodo.length - nodo0}/${N})` : '';
+    const vias = [...new Set(filas.map((f) => f.via))].join(',');
+    const fila = { emocion: m('emocion'), delta: m('delta'), frase: m('frase'), done: m('done'), quien: [quien, grande].filter(Boolean).join(' + ') || `sin modelo (${vias})` };
+    console.log(`[latencia] mesa hablada ${nombre}: emoción ${fila.emocion} ms · primer trozo ${fila.delta} ms · primera frase entera ${fila.frase} ms · final ${fila.done} ms · contestó: ${fila.quien} (mediana de ${N})`);
+    return fila;
+  };
+  const charla = await med('«¿cómo estás?»', '¿cómo estás?');
+  const hola = await med('«hola, buenos días»', 'hola, buenos días');
+  const otra = emitirSesion({ correo: 'bilingue.prueba@ordenglobal.org', nombre: 'Bilingue', rol: 'Junta' });
+  const pregunta = await med('pregunta normal «¿qué me recomiendas para hoy?» (27B a 1200 ms)', '¿qué me recomiendas para hoy?', otra);
+  primerTokenMs = 0;
+  pasoMs = 4;
+  chicoMs = 0;
+  // La charla de siempre la contesta el banco del avatar al instante (charla-rapida): ni el chico ni el 27B.
+  assert.match(charla.quien, /sin modelo \(charla-rapida\)/, `«¿cómo estás?» lo contestó: ${charla.quien}`);
+  assert.match(hola.quien, /sin modelo \(charla-rapida\)/, `«hola, buenos días» lo contestó: ${hola.quien}`);
+  assert.ok(charla.frase < 300, `charla: primera frase en ${charla.frase} ms (antes ~360 con el chico a 350 ms, y el 27B si el chico está apagado)`);
+  assert.ok(hola.frase < 300, `saludo: primera frase en ${hola.frase} ms`);
+  // La pregunta normal: la primera frase sale en cuanto el 27B la escribe (sin esperar la respuesta entera).
+  assert.ok(pregunta.frase < pregunta.done, 'la primera frase sale antes de que el 27B termine');
+  assert.ok(pregunta.delta < 1200 + 400, `pregunta: primer trozo en ${pregunta.delta} ms (27B a 1200 ms)`);
+});
+
+test('modo llamada en espera: «Aura, …» se prueba primero por el camino rápido (soloRapido); si no es orden, no despierta al cerebro', { skip: !listo }, async () => {
+  const tel = await canal(yo.token, 'tel-espera');
+  try {
+    const pedir = async (message: string) => {
+      const r = await fetch(`${BASE}/api/turno/stream`, {
+        method: 'POST',
+        headers: { ...h(), 'x-aura-origen': 'app', 'x-aura-aparato': 'tel-espera' },
+        body: JSON.stringify({ message, hablado: true, soloRapido: true, historial: [], memoria: [] }),
+      });
+      const eventos = (await r.text())
+        .split('\n\n')
+        .map((b) => ({ ev: /^event: (\w+)/m.exec(b)?.[1], data: /^data: (.*)$/m.exec(b)?.[1] }))
+        .filter((e) => e.ev && e.data)
+        .map((e) => ({ ev: e.ev!, data: JSON.parse(e.data!) }));
+      return eventos.find((e) => e.ev === 'done')?.data;
+    };
+    alNodo.length = 0;
+    alChico.length = 0;
+    // Una orden clara: se resuelve ya (la acción al teléfono), sin conectar la llamada.
+    const orden = await pedir('vete atrás');
+    assert.match(String(orden?.via || ''), /^app-/, JSON.stringify(orden));
+    // No es orden: vuelve sin respuesta para que la app abra la llamada con esto como primer mensaje.
+    const charla = await pedir('explícame cómo va el proyecto de la planta de beneficio');
+    assert.equal(charla?.rapido, false);
+    assert.equal(charla?.reply, '');
+    assert.equal(alNodo.length + alChico.length, 0, 'ni el 27B ni el chico: eso lo contestará la llamada');
+  } finally {
+    await tel.cerrar();
+  }
 });
 
 test('un miembro de la comunidad (fuera del padrón): lo público, sin taller ni nada de la junta, en texto y en voz', { skip: !listo }, async () => {

@@ -14,7 +14,8 @@
 // Traducción: una acción o propuesta de las manos → su etiqueta (llamar con video → app_videollamar,
 // recordatorio con llamada → app_llamar_recordar…); `presencia` → app_presencia; lo que solo se
 // contesta (qué recordatorios tengo) → app_listar_recordatorios; las órdenes de siempre (atrás, tema,
-// silencio…) y lo que las reglas no reconocen → app_ninguna (ahí contesta el cerebro).
+// silencio…) y lo que las reglas no reconocen → app_ninguna (ahí contesta el cerebro). «llámame» → app_llamame; con la
+// mano `llamame` el recordatorio sale como acción directa (su etiqueta, por cómo se pidió: llamada/timer o aviso).
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -33,12 +34,12 @@ const TEXTOS = ['tomar la pastilla', 'llamar a mi mamá', 'sacar la ropa', 'paga
 const hoy = new Date(AHORA - 6 * 3600_000)
 const aLas = (h) => Date.UTC(hoy.getUTCFullYear(), hoy.getUTCMonth(), hoy.getUTCDate() + 1, h + 6, 0)
 const recordatorios = TEXTOS.map((t, i) => ({ id: `aura-rec-eval-${i}`, texto: t, cuando: aLas(6 + i), llamada: i % 2 === 0 }))
-const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada']
+const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame']
 const contexto = { pantalla: 'mesa', contactos, manos: MANOS, recordatorios }
-const CUBRE = ['app_ninguna', 'app_recordar', 'app_llamar_recordar', 'app_listar_recordatorios', 'app_cancelar_recordatorio', 'app_llamar', 'app_videollamar',
+const CUBRE = ['app_ninguna', 'app_llamame', 'app_recordar', 'app_llamar_recordar', 'app_listar_recordatorios', 'app_cancelar_recordatorio', 'app_llamar', 'app_videollamar',
   'app_colgar', 'app_leer', 'app_responder', 'app_buscar_chats', 'app_silenciar_chat', 'app_idioma', 'app_perfil', 'app_presencia', 'app_buscar_internet']
 
-function etiqueta(o) {
+function etiqueta(o, q = '') {
   if (!o) return 'app_ninguna'
   const p = o.propuesta
   if (p?.tipo === 'llamar') return p.video ? 'app_videollamar' : 'app_llamar'
@@ -52,6 +53,9 @@ function etiqueta(o) {
     case 'idioma': return 'app_idioma'
     case 'perfil': return 'app_perfil'
     case 'presencia': return 'app_presencia'
+    case 'llamame': return 'app_llamame'
+    // Con la mano `llamame` todo recordatorio se pone directo y llama: la etiqueta la decide cómo se pidió.
+    case 'recordatorio': return /ll[aá]m|m[aá]rc|timbr|call|ring|phone|despi[eé]r|levant|wake|timer|temporizador|countdown|cuenta regresiva/i.test(q) ? 'app_llamar_recordar' : 'app_recordar'
     case 'redactar': return 'app_responder'
     default: return 'app_ninguna'
   }
@@ -72,7 +76,7 @@ for (const archivo of archivos) {
     const oro = f.e.find((x) => x.startsWith('app_')) || 'app_ninguna'
     // Inglés si trae palabras de inglés y ninguna de español (hay frases mezcladas: cuentan como español).
     const idioma = /\b(the|to|my|call|read|what|switch|speak|go|search|list|mute|hang|reply|cancel|remind|reminders|messages)\b/i.test(f.q) && !/\b(de|que|las|mi|el|la|los|no|ya|por|para|en)\b/i.test(f.q) ? 'en' : 'es'
-    const dicho = etiqueta(ordenPorReglas(f.q, { contexto, idioma, ahora: AHORA }))
+    const dicho = etiqueta(ordenPorReglas(f.q, { contexto, idioma, ahora: AHORA }), f.q)
     filas.push({ ...f, oro, dicho })
     if (anotar) console.log(JSON.stringify({ ...f, reglas: [...f.e.filter((x) => !x.startsWith('app_')), dicho], reglas_cubre: CUBRE }))
   }

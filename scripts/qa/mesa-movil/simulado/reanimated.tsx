@@ -35,11 +35,18 @@ export const withDelay = <T,>(_ms: number, v: T) => v;
 export const withSequence = <T,>(...vs: T[]) => vs[vs.length - 1];
 export const withRepeat = <T,>(v: T) => v;
 export const cancelAnimation = () => {};
+export const runOnJS = <F,>(f: F) => f;
+export const Extrapolation = { CLAMP: 'clamp', EXTEND: 'extend', IDENTITY: 'identity' };
 export const interpolate = (x: number, entrada: number[], salida: number[]) => {
-  const [a, b] = entrada;
-  const [c, d] = salida;
-  const t = Math.max(0, Math.min(1, (x - a) / (b - a || 1)));
-  return c + (d - c) * t;
+  // Por tramos, como Reanimated (con CLAMP en los extremos): [0, 0.6, 1] → [0, 0.4, 1] también.
+  if (x <= entrada[0]) return salida[0];
+  for (let i = 1; i < entrada.length; i++) {
+    if (x <= entrada[i]) {
+      const t = (x - entrada[i - 1]) / (entrada[i] - entrada[i - 1] || 1);
+      return salida[i - 1] + (salida[i] - salida[i - 1]) * t;
+    }
+  }
+  return salida[salida.length - 1];
 };
 export const Easing = new Proxy({}, { get: () => (x: unknown) => x });
 export const FadeIn = cadena();
@@ -48,6 +55,9 @@ export const FadeInRight = cadena();
 export const FadeOutLeft = cadena();
 export const SlideInDown = cadena();
 export const Layout = cadena();
+export const FadeInDown = cadena();
+export const FadeInUp = cadena();
+export const ZoomIn = cadena();
 
 // Animated.View y compañía, sin las props de animación de entrada/salida.
 const sinAnim = (C: any) =>

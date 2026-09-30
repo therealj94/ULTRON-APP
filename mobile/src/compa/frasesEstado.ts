@@ -21,6 +21,16 @@
  */
 import type { ExpresionAvatar } from '../avatar3d/tipos';
 
+/**
+ * Cuánto se espera al cerebro antes de decir una frase de espera («déjame ver», «pensando…»), en la
+ * voz y en el globito: la mesa, la compañera y el puente de voz del servidor usan el mismo número.
+ * José: «el "déjame ver" solo si lleva bastante tiempo o toma mucho pensar; no se siente conversación
+ * fluida». Antes: 0,7 s en la mesa (y la respuesta esperaba a que el relleno terminara de sonar),
+ * 1,2 s en el puente y al instante en el globito. Una charla o una orden rápida contestan antes y no
+ * lo oyen nunca.
+ */
+export const ESPERA_FRASE_MS = 2_500;
+
 export const ESTADOS_FRASE = [
   'escuchando',
   'conectando',
