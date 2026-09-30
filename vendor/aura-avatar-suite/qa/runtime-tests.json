@@ -1,125 +1,117 @@
 {
+ "modelos": {
+  "antonio": {
+   "archivo": "assets/movil/antonio.glb",
+   "bytes": 2560088,
+   "triangulos": 56208,
+   "llamadas": 53,
+   "morphsOk": true,
+   "morphsExtra": [],
+   "clipsOk": true,
+   "zonas": true,
+   "camaras": true,
+   "finito": true,
+   "triste": true,
+   "boca": true,
+   "cierra": true
+  },
+  "antonio-bajo": {
+   "archivo": "assets/movil/antonio-bajo.glb",
+   "bytes": 1592812,
+   "triangulos": 23268,
+   "llamadas": 25,
+   "morphsOk": true,
+   "morphsExtra": [],
+   "clipsOk": true,
+   "zonas": true,
+   "camaras": true,
+   "finito": true,
+   "triste": true,
+   "boca": true,
+   "cierra": true
+  },
   "claudio": {
-    "stats": {
-      "meshes": 89,
-      "triangles": 352894,
-      "joints": 43,
-      "drawCalls": 116
-    },
-    "clips": [
-      "neutral",
-      "feliz",
-      "risa",
-      "sorpresa",
-      "curioso",
-      "pensando",
-      "preocupado",
-      "triste",
-      "molesto",
-      "cansado",
-      "carino",
-      "orgullo",
-      "travieso",
-      "canto",
-      "oracion",
-      "escepticismo",
-      "alarma",
-      "firme",
-      "seco",
-      "escuchando",
-      "dormido",
-      "saludar",
-      "lentes",
-      "asentir",
-      "negar",
-      "explicar",
-      "celebrar",
-      "corazon",
-      "senalar",
-      "caminar"
-    ],
-    "finite": true,
-    "sad": true,
-    "speech": true,
-    "stopped": true,
-    "reload": {
-      "clips": 30,
-      "finite": true
-    },
-    "mobile": {
-      "noOverflow": true,
-      "canvasWidth": 390
-    }
+   "archivo": "assets/movil/claudio.glb",
+   "bytes": 1119548,
+   "triangulos": 58444,
+   "llamadas": 20,
+   "morphsOk": true,
+   "morphsExtra": [],
+   "clipsOk": true,
+   "zonas": true,
+   "camaras": true,
+   "finito": true,
+   "triste": true,
+   "boca": true,
+   "cierra": true
+  },
+  "claudio-bajo": {
+   "archivo": "assets/movil/claudio-bajo.glb",
+   "bytes": 667352,
+   "triangulos": 22256,
+   "llamadas": 8,
+   "morphsOk": true,
+   "morphsExtra": [],
+   "clipsOk": true,
+   "zonas": true,
+   "camaras": true,
+   "finito": true,
+   "triste": true,
+   "boca": true,
+   "cierra": true
   },
   "aura": {
-    "stats": {
-      "meshes": 18,
-      "triangles": 56800,
-      "joints": 11,
-      "drawCalls": 40
-    },
-    "clips": [
-      "neutral",
-      "feliz",
-      "risa",
-      "sorpresa",
-      "curioso",
-      "pensando",
-      "preocupado",
-      "triste",
-      "molesto",
-      "cansado",
-      "carino",
-      "orgullo",
-      "travieso",
-      "canto",
-      "oracion",
-      "escepticismo",
-      "alarma",
-      "firme",
-      "seco",
-      "escuchando",
-      "dormido",
-      "saludar",
-      "lentes",
-      "asentir",
-      "negar",
-      "explicar",
-      "celebrar",
-      "corazon",
-      "senalar",
-      "caminar"
-    ],
-    "finite": true,
-    "sad": true,
-    "speech": true,
-    "stopped": true,
-    "reload": {
-      "clips": 30,
-      "finite": true
-    },
-    "mobile": {
-      "noOverflow": true,
-      "canvasWidth": 390
-    }
+   "archivo": "assets/movil/aura.glb",
+   "bytes": 576412,
+   "triangulos": 43376,
+   "llamadas": 16,
+   "morphsOk": true,
+   "morphsExtra": [],
+   "clipsOk": true,
+   "zonas": true,
+   "camaras": true,
+   "finito": true,
+   "triste": true,
+   "boca": true,
+   "cierra": true
   },
-  "audio": {
-    "drives": true,
-    "stops": true
-  },
-  "bridge": {
-    "ready": true,
-    "state": true,
-    "speech": true,
-    "rejectsNaN": true,
-    "stop": true,
-    "noFakeSuccess": true
-  },
-  "errors": [],
-  "antonioApprovedModel": {
-    "unchanged": true,
-    "sha256": "8685b383ecbe3e1cc785fc857f17f1b138f58f2ba409b5eef0ecfe00ad5e2a1f",
-    "source": "Approved revision 2"
-  },
-  "hostIntegration": "Not compiled in the host app; TSX syntax checked only"
+  "aura-bajo": {
+   "archivo": "assets/movil/aura-bajo.glb",
+   "bytes": 375640,
+   "triangulos": 16866,
+   "llamadas": 6,
+   "morphsOk": true,
+   "morphsExtra": [],
+   "clipsOk": true,
+   "zonas": true,
+   "camaras": true,
+   "finito": true,
+   "triste": true,
+   "boca": true,
+   "cierra": true
+  }
+ },
+ "errores": [],
+ "orbita": {
+  "distanciaMinima": 0.038,
+  "peor": "senalar t=1.47",
+  "verticesMano": 3252
+ },
+ "estudio": {
+  "sinDesborde": true,
+  "errores": []
+ },
+ "audio": {
+  "mueve": true,
+  "cierra": true
+ },
+ "puente": {
+  "estado": true,
+  "boca": true,
+  "nan": true,
+  "cierra": true,
+  "sinExito": true,
+  "nuevo": true
+ },
+ "revisorApp": {}
 }

@@ -17,7 +17,7 @@ export type AvatarWebViewProps = {
   speechLevelSource: (cb: (level01: number) => void) => () => void;
   /** Hacia dónde mira la persona según la cámara (-1..1). */
   mirada: { x: number; y: number; activa: boolean };
-  onTocar: (zona: 'cuerpo' | 'cabeza') => void;
+  onTocar: (zona: 'cuerpo' | 'cabeza' | 'mejilla' | 'panza') => void;
   onFallo: (motivo: string) => void;
 };
 
@@ -100,7 +100,7 @@ function AvatarWebViewInner({id, face, emocion, pedido, speechLevelSource, mirad
           return;
         }
         case 'tocar':
-          return cb.current.onTocar(m.zona === 'cabeza' ? 'cabeza' : 'cuerpo');
+          return cb.current.onTocar(m.zona === 'cabeza' || m.zona === 'mejilla' || m.zona === 'panza' ? m.zona : 'cuerpo');
         case 'fallo':
           return fallar(m.motivo || 'la sala falló al arrancar');
       }

@@ -1,4 +1,4 @@
-import {EMOTIONS,GESTURES,STATES} from './avatar.js';
+import {EMOTIONS,GESTURES,STATES} from './vocabulario.js';
 export const FACE_STATES={IDLE:'idle',LISTENING:'listening',THINKING:'thinking',SPEAKING:'speaking',SLEEPING:'sleeping',SCAN:'reading',SING:'speaking',PRAY:'idle',HAPPY:'success'};
 export const TASK_GESTURES={buscar:'lentes',leer:'lentes',anotar:'asentir',enviar:'senalar',oro:'explicar',mirar:'lentes'};
 const finite=n=>typeof n==='number'&&Number.isFinite(n);

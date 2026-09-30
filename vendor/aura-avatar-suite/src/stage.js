@@ -1,44 +1,76 @@
-import * as THREE from 'three';
+import * as T from 'three';
 import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
-import {RoomEnvironment} from 'three/addons/environments/RoomEnvironment.js';
-import {createAvatar,CHARACTERS} from './characters.js';
+import {CHARACTERS} from './characters.js';
+import {crearEscenario} from './escenario.js';
 import {AntonioAudio} from './audio.js';
 
-export function mountAvatar(host,{id='antonio',quality='high',transparent=false,onTap=()=>{}}={}){
-  const spec=CHARACTERS[id];if(!spec)throw new TypeError('Avatar desconocido');
-  const renderer=new THREE.WebGLRenderer({antialias:true,alpha:transparent,preserveDrawingBuffer:true,powerPreference:'high-performance'});
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,quality==='high'?1.6:1));renderer.shadowMap.enabled=quality==='high';renderer.shadowMap.type=THREE.VSMShadowMap;
-  renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.05;renderer.setClearColor('#15171b',transparent?0:1);host.appendChild(renderer.domElement);
-  const scene=new THREE.Scene();const camera=new THREE.PerspectiveCamera(34,1,.1,50);camera.position.set(...spec.camera);
-  const pmrem=new THREE.PMREMGenerator(renderer);const room=new RoomEnvironment();const env=pmrem.fromScene(room,.07);scene.environment=env.texture;scene.environmentIntensity=.55;room.dispose();pmrem.dispose();
-  scene.add(new THREE.HemisphereLight('#e1eaff','#6b4536',1.05));
-  const key=new THREE.DirectionalLight('#fff1db',2.45);key.position.set(-3,5.5,6);key.castShadow=true;key.shadow.mapSize.set(2048,2048);key.shadow.camera.left=-3;key.shadow.camera.right=3;key.shadow.camera.top=6;key.shadow.camera.bottom=-3;key.shadow.normalBias=.003;key.shadow.bias=-.00003;key.shadow.radius=4;key.shadow.blurSamples=12;scene.add(key);
-  const rim=new THREE.DirectionalLight('#eac4a1',2.8);rim.position.set(3,4,-3);scene.add(rim);
-  const fill=new THREE.DirectionalLight('#9acbff',.65);fill.position.set(3,2,5);scene.add(fill);
-  const avatar=createAvatar(id,{quality});scene.add(avatar.root);const audio=new AntonioAudio(avatar);
-  const floor=new THREE.Mesh(new THREE.CircleGeometry(200,80),new THREE.ShadowMaterial({color:'#000000',opacity:.25}));floor.rotation.x=-Math.PI/2;floor.position.y=.296;floor.receiveShadow=true;if(!transparent)scene.add(floor);
-  const ring=new THREE.Mesh(new THREE.TorusGeometry(1.1,.009,8,96),new THREE.MeshBasicMaterial({color:'#1d899c',transparent:true,opacity:.35}));ring.rotation.x=Math.PI/2;ring.position.y=.16;// The hero is grounded by a soft shadow, without a decorative pedestal.
-  const shadowCanvas=document.createElement('canvas');shadowCanvas.width=shadowCanvas.height=128;const ctx=shadowCanvas.getContext('2d'),gradient=ctx.createRadialGradient(64,64,4,64,64,62);gradient.addColorStop(0,'rgba(0,0,0,.65)');gradient.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=gradient;ctx.fillRect(0,0,128,128);
-  const shadow=new THREE.Mesh(new THREE.PlaneGeometry(2.5,2),new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(shadowCanvas),transparent:true,depthWrite:false}));shadow.rotation.x=-Math.PI/2;shadow.position.set(0,.298,0);if(!transparent)scene.add(shadow);
-  const controls=new OrbitControls(camera,renderer.domElement);controls.target.set(...spec.target);controls.enableDamping=true;controls.dampingFactor=.07;controls.minDistance=3.4;controls.maxDistance=13;controls.maxPolarAngle=Math.PI*.56;controls.enablePan=false;
-  const clock=new THREE.Clock();let time=0,frame,paused=false,disposed=false,hidden=false,manualTime=null;const pointer={x:0,y:0};let down=null;
-  const resize=()=>{const w=host.clientWidth,h=host.clientHeight;if(!w||!h)return;renderer.setSize(w,h);camera.aspect=w/h;camera.updateProjectionMatrix();if(manualTime!==null)renderer.render(scene,camera);};const observer=new ResizeObserver(resize);observer.observe(host);resize();
-  const move=e=>{const rect=renderer.domElement.getBoundingClientRect();pointer.x=(e.clientX-rect.left)/rect.width*2-1;pointer.y=(e.clientY-rect.top)/rect.height*2-1;if(!down)avatar.lookAt(pointer.x,pointer.y);};
-  const leave=()=>{avatar.lookAt(0,0);};const start=e=>{down={x:e.clientX,y:e.clientY};};
-  const end=e=>{if(down&&Math.hypot(e.clientX-down.x,e.clientY-down.y)<7){const rect=renderer.domElement.getBoundingClientRect(),ray=new THREE.Raycaster();ray.setFromCamera(new THREE.Vector2((e.clientX-rect.left)/rect.width*2-1,-((e.clientY-rect.top)/rect.height*2-1)),camera);const hit=ray.intersectObject(avatar.root,true)[0];if(hit){avatar.playGesture('saludar');onTap(hit.point.y>(id==='aura'?2.65:3.05)?'cabeza':'cuerpo');}}down=null;};
-  renderer.domElement.addEventListener('pointermove',move);renderer.domElement.addEventListener('pointerleave',leave);renderer.domElement.addEventListener('pointerdown',start);renderer.domElement.addEventListener('pointerup',end);
-  const vis=()=>{hidden=document.hidden;clock.getDelta();};document.addEventListener('visibilitychange',vis);
-  const motionQuery=window.matchMedia('(prefers-reduced-motion: reduce)');avatar.reducedMotion=motionQuery.matches;const motion=e=>{avatar.reducedMotion=e.matches;};motionQuery.addEventListener('change',motion);
-  const render=()=>{if(disposed)return;frame=requestAnimationFrame(render);const dt=Math.min(clock.getDelta(),.05);if(hidden||manualTime!==null)return;if(!paused){time+=dt;audio.update(dt);avatar.update(dt,time);}controls.update();renderer.render(scene,camera);};render();
-  return {avatar,audio,renderer,scene,camera,controls,
-    setPaused(value){paused=value;if(value)audio.audio?.pause();},
-    get paused(){return paused;},
-    resetCamera(){camera.position.set(...spec.camera);controls.target.set(...spec.target);controls.update();},
-    closeup(){camera.position.set(...spec.closeCamera);controls.target.set(...spec.closeTarget);controls.update();},
-    renderAt(t){manualTime=t;avatar.update(1/24,t,true);controls.update();renderer.render(scene,camera);},
-    resume(){manualTime=null;},
-    screenshot(){renderer.render(scene,camera);return renderer.domElement.toDataURL('image/png');},
-    stats(){let meshes=0,triangles=0;avatar.root.traverse(o=>{if(o.isMesh){meshes++;triangles+=(o.geometry.index?.count||o.geometry.attributes.position.count)/3;}});return {meshes,triangles,joints:avatar.anim.length,drawCalls:renderer.info.render.calls};},
-    dispose(){disposed=true;cancelAnimationFrame(frame);observer.disconnect();document.removeEventListener('visibilitychange',vis);motionQuery.removeEventListener('change',motion);for(const [e,f]of [['pointermove',move],['pointerleave',leave],['pointerdown',start],['pointerup',end]])renderer.domElement.removeEventListener(e,f);controls.dispose();audio.dispose();avatar.dispose();floor.geometry.dispose();floor.material.dispose();ring.geometry.dispose();ring.material.dispose();shadow.geometry.dispose();shadow.material.map.dispose();shadow.material.dispose();env.dispose();renderer.dispose();renderer.domElement.remove();}
-  };
+// Escenario del estudio y de los adaptadores (web y WebView) con los GLB MÓVILES de assets/movil/.
+// Mantiene la API de la entrega anterior (mountAvatar → stage.avatar.setEmotion/setState/
+// playGesture/lookAt/setSpeech) y la traduce al vocabulario común (caras de la app, visemas de
+// Oculus y clips en español). El GLB se carga en segundo plano; lo pedido antes queda en cola.
+
+const EMOCION={neutral:'tranquila',feliz:'contenta',risa:'risa',sorpresa:'sorprendida',curioso:'curiosa',pensando:'piensa',preocupado:'triste',triste:'triste',molesto:'enojada',cansado:'uy',carino:'timida',orgullo:'contenta',travieso:'curiosa',canto:'encantada',oracion:'dormida',escepticismo:'curiosa',alarma:'sorprendida',firme:'enojada',seco:'tranquila'};
+const GESTO={lentes:'toque_mejilla',asentir:'gusto',negar:'enojo',explicar:'senalar',corazon:'gusto'};
+const VISEMA={A:'aa',E:'E',I:'I',O:'O',U:'U',MBP:'PP',sil:'sil'};
+const ESTADO={idle:{},listening:{escuchando:true},thinking:{pensando:true},speaking:{},working:{pensando:true},reading:{escuchando:true},success:{},needs_user:{escuchando:true},offline:{silenciado:true},sleeping:{silenciado:true}};
+
+function deBase64(b64){const s=atob(b64),b=new Uint8Array(s.length);for(let i=0;i<s.length;i++)b[i]=s.charCodeAt(i);return b.buffer;}
+async function glbDe(id,calidad){
+ const emb=globalThis.__AVATAR_GLB?.[id];if(emb)return deBase64(emb);
+ const url=(globalThis.__AVATAR_GLB_BASE||'assets/movil/')+id+(calidad==='low'?'-bajo':'')+'.glb';
+ const r=await fetch(url);if(!r.ok)throw Error('No se pudo cargar '+url);return r.arrayBuffer();
+}
+
+/** Controlador con la API anterior; aplica al Controlador real cuando el GLB termina de cargar. */
+function crearAvatar(){
+ const cola={emocion:'tranquila',intensidad:1,estado:'idle',hablando:false,boca:[0,'sil'],mirar:null,gestos:[]};
+ let ctrl=null;
+ const aplicar=()=>{if(!ctrl)return;ctrl.setExpresion(cola.emocion,cola.intensidad);ctrl.setEstado({escuchando:false,pensando:false,silenciado:false,...ESTADO[cola.estado]});
+  ctrl.setBoca(cola.boca[0],cola.boca[1]);if(cola.mirar)ctrl.mirar(...cola.mirar);else ctrl.mirarFrente();for(const g of cola.gestos.splice(0))ctrl.hacerGesto(g);};
+ const a={
+  get emotion(){return cola.emocionOriginal||cola.emocion;},get state(){return cola.estado;},get speech(){return cola.boca[0];},
+  intensity:1,reducedMotion:false,
+  setEmotion(e,i=1){cola.emocionOriginal=e;cola.emocion=EMOCION[e]||e;cola.intensidad=Math.max(0,Math.min(1,+i||0));a.intensity=cola.intensidad;aplicar();},
+  setExpresion(e,i=1){a.setEmotion(e,i);},
+  setState(s){cola.estado=ESTADO[s]?s:'idle';aplicar();},
+  playGesture(g){const n=GESTO[g]||g;if(n==='caminar'){ctrl?.setEstado({caminando:true});setTimeout(()=>ctrl?.setEstado({caminando:false}),2200);return;}cola.gestos.push(n);aplicar();},
+  lookAt(x,y){cola.mirar=Math.abs(x)+Math.abs(y)<1e-3?null:[x,y];aplicar();},
+  setSpeech(n,v='A'){cola.boca=[Math.max(0,Math.min(1,+n||0)),VISEMA[v]||v];aplicar();},
+  reset(){Object.assign(cola,{emocion:'tranquila',intensidad:1,estado:'idle',boca:[0,'sil'],mirar:null,gestos:[]});aplicar();},
+  update(dt){ctrl?.update(dt);},
+  _conectar(c){ctrl=c;aplicar();},get ctrl(){return ctrl;},
+  dispose(){ctrl?.dispose();}
+ };
+ return a;
+}
+
+export function mountAvatar(host,{id='antonio',quality='high',transparent=false,fondo='#1c1d20',bloom=true,onTap=()=>{},onListo=()=>{},onFallo=()=>{}}={}){
+ const spec=CHARACTERS[id];if(!spec)throw new TypeError('Avatar desconocido');
+ const lienzo=document.createElement('canvas');lienzo.style.cssText='display:block;width:100%;height:100%;touch-action:none';host.appendChild(lienzo);
+ const esc=crearEscenario(lienzo,{transparente:transparent,fondo,calidad:quality==='low'?'baja':'alta',bloom});
+ const avatar=crearAvatar(),audio=new AntonioAudio(avatar);
+ const controls=new OrbitControls(esc.camara,lienzo);controls.enableDamping=true;controls.dampingFactor=.08;controls.enablePan=false;controls.minDistance=.6;controls.maxDistance=8;controls.maxPolarAngle=Math.PI*.58;
+ let listo=false,disposed=false,paused=false,frame=0,prev=performance.now(),tiempoManual=null,camaraBase=null;
+ const encuadrar=e=>{esc.encuadrar(e);const obj=esc.modelo?.getObjectByName(e==='retrato'?'camara_retrato':'camara_cuerpo');const w=new T.Vector3();if(obj)obj.getWorldPosition(w);controls.target.set(0,obj?w.y:1,0);controls.update();};
+ const resize=()=>{const w=host.clientWidth,h=host.clientHeight;if(!w||!h)return;esc.tamano(w,h);if(listo)encuadrar(camaraBase||'cuerpo');};
+ const obs=new ResizeObserver(resize);obs.observe(host);resize();
+ glbDe(id,quality).then(buf=>esc.cargar(buf)).then(({ctrl,tCarga})=>{if(disposed)return;listo=true;avatar._conectar(ctrl);ctrl.reducido=avatar.reducedMotion;resize();encuadrar('cuerpo');onListo({tCarga,...esc.stats()});}).catch(e=>{console.error(e);onFallo(String(e?.message||e));});
+ // Toque: zona por rayo contra los colisionadores del modelo (cabeza, mejilla, panza, cuerpo).
+ let abajo=null;const ray=new T.Raycaster();
+ const pd=e=>{abajo={x:e.clientX,y:e.clientY};};
+ const pu=e=>{if(abajo&&Math.hypot(e.clientX-abajo.x,e.clientY-abajo.y)<7&&listo){const r=lienzo.getBoundingClientRect();ray.setFromCamera(new T.Vector2((e.clientX-r.left)/r.width*2-1,-((e.clientY-r.top)/r.height*2-1)),esc.camara);const z=avatar.ctrl.zonaEn(ray);if(z)onTap(z);}abajo=null;};
+ const pm=e=>{if(abajo)return;const r=lienzo.getBoundingClientRect();avatar.lookAt(((e.clientX-r.left)/r.width*2-1)*.8,((e.clientY-r.top)/r.height*2-1)*.8);};
+ const pl=()=>avatar.lookAt(0,0);
+ lienzo.addEventListener('pointerdown',pd);lienzo.addEventListener('pointerup',pu);lienzo.addEventListener('pointermove',pm);lienzo.addEventListener('pointerleave',pl);
+ const bucle=t=>{if(disposed)return;frame=requestAnimationFrame(bucle);const dt=Math.min(.05,(t-prev)/1000);prev=t;if(tiempoManual!==null||document.hidden)return;if(!paused){audio.update(dt);avatar.update(dt);}controls.update();esc.dibujar();};
+ frame=requestAnimationFrame(bucle);
+ return {avatar,audio,renderer:esc.renderer,scene:esc.escena,camera:esc.camara,controls,escenario:esc,
+  get listo(){return listo;},get paused(){return paused;},
+  setPaused(v){paused=v;if(v)audio.audio?.pause();},
+  resetCamera(){camaraBase='cuerpo';encuadrar('cuerpo');},closeup(){camaraBase='retrato';encuadrar('retrato');},
+  renderAt(t){tiempoManual=t;esc.dibujar();},resume(){tiempoManual=null;},
+  screenshot(){esc.dibujar();return lienzo.toDataURL('image/png');},
+  stats(){const s=esc.stats();return {meshes:s.mallas,triangles:s.triangulos,drawCalls:s.llamadas};},
+  dispose(){disposed=true;cancelAnimationFrame(frame);obs.disconnect();for(const [e,f] of [['pointerdown',pd],['pointerup',pu],['pointermove',pm],['pointerleave',pl]])lienzo.removeEventListener(e,f);controls.dispose();audio.dispose();avatar.dispose();esc.dispose();lienzo.remove();}
+ };
 }

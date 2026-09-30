@@ -1,17 +1,25 @@
 {
   "name": "aura-avatar-suite",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "AURA, Claudio and approved ANT-ONIO articulated 3D delivery",
+  "description": "AURA · avatares 3D móviles (ANT-ONIO optimizado, Claudio y AU-RA rediseñados) generados por código",
   "scripts": {
+    "generar": "node tools/generar.cjs",
+    "movil": "node tools/movil.mjs",
+    "modelos": "npm run generar && npm run movil",
     "build": "node tools/build.mjs",
     "test": "node --test tools/contracts.test.mjs",
     "qa": "node tools/qa.cjs",
     "validate": "node tools/validate.cjs",
-    "preview": "node tools/preview.cjs",
+    "capturas": "node tools/capturas-despues.cjs",
+    "capturas-antes": "node tools/capturas-antes.cjs",
+    "comparar-antonio": "node tools/comparar-antonio.cjs",
+    "rendimiento": "node tools/rendimiento.cjs",
+    "video": "node tools/video.cjs",
+    "hojas": "node tools/hojas.mjs",
     "restore-models": "node tools/restore-models.mjs",
-    "prebuild": "npm run restore-models",
+    "pregenerar": "npm run restore-models",
     "preqa": "npm run restore-models",
     "prevalidate": "npm run restore-models"
   },
@@ -22,6 +30,12 @@
     "@sparticuz/chromium": "^138.0.2",
     "gltf-validator": "^2.0.0-dev.3.10",
     "esbuild": "0.25.5",
-    "playwright": "1.62.1"
+    "playwright": "1.62.1",
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/extensions": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
+    "meshoptimizer": "0.25.0",
+    "sharp": "0.35.5",
+    "three-mesh-bvh": "0.9.1"
   }
 }
