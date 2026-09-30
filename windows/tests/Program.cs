@@ -323,6 +323,14 @@ Check(R("mándale un mensaje a Karla que ya voy en camino") is { Mano: Mano.Puls
 Check(R("text John that I'm running late") is { Valor: "mensaje|john|I'm running late" }, "text en ingles: " + R("text John that I'm running late"));
 Check(R("llama la atención").Mano != Mano.Pulse, "llamar la atencion no es llamada");
 
+// «Oye AURA» en una sola frase y apagar el micrófono por voz
+Check(Parametros.QuitarNombre("Oye AURA, abre el bloc de notas", out var resto1) && resto1 == "abre el bloc de notas", "oye aura + orden: " + resto1);
+Check(Parametros.QuitarNombre("aura", out var resto2) && resto2 == "", "solo el nombre");
+Check(Parametros.QuitarNombre("Hey Claudio what time is it", out var resto3) && resto3 == "what time is it", "hey claudio");
+Check(!Parametros.QuitarNombre("la aurora boreal es bonita", out _) && !Parametros.QuitarNombre("mañana voy a Laura", out _), "no despierta con otra cosa");
+Check(R("deja de escucharme") is { Mano: Mano.Dormir } && R("apágate") is { Mano: Mano.Dormir } && R("stop listening") is { Mano: Mano.Dormir } && R("silénciate") is { Mano: Mano.Dormir }, "dormir");
+Check(R("cállate") is { Mano: Mano.Callar } && R("silencia la computadora") is { Mano: Mano.Silenciar }, "callar y mute siguen igual");
+
 // La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).
 foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace una captura de pantalla en windows", "ayer me dijiste que bloqueara la compu" })
 {

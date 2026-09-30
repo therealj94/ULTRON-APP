@@ -18,7 +18,9 @@ public enum Mano
     // 2.0: la cartera de Veta Wallet (solo lectura) y los atajos del equipo (solo por reglas).
     Cartera, Atajo,
     // 2.0: PULSE2CHAT por voz (llamar, videollamar, mandar un mensaje).
-    Pulse
+    Pulse,
+    // 2.0: apagar el micrófono por voz («deja de escuchar»).
+    Dormir
 }
 
 /// <summary>Lo que se va a hacer: la mano, su parámetro (qué app, qué búsqueda, qué texto…) y de dónde salió.</summary>
@@ -75,6 +77,7 @@ public static class Intencion
         if (Parametros.QueHay.IsMatch(t)) return new(Mano.QueHay);
         if (Parametros.Portapapeles.IsMatch(t)) return new(Mano.Portapapeles, texto.Trim());
         if (Parametros.EsNegacion(t)) return Pedido.Nada;
+        if (Parametros.Dormir.IsMatch(t)) return new(Mano.Dormir);
         if (Parametros.Callar.IsMatch(t)) return new(Mano.Callar);
         if (Parametros.PausaTodo.IsMatch(t)) return new(Mano.Pausa);
         if (Parametros.SubirVolumen.IsMatch(t)) return new(Mano.VolumenSubir);
@@ -779,5 +782,27 @@ public static class Parametros
             return "mensaje|" + m.Groups["c"].Value.Trim() + "|" + dicho.Trim();
         }
         return null;
+    }
+
+    /// <summary>«Deja de escucharme»: apaga el micrófono (se vuelve a prender con el botón del notch o Ctrl+Alt+Espacio).</summary>
+    public static readonly Regex Dormir = new(@"^(?:apagate|apaga(?:te)? el (?:microfono|mic)|deja de escuchar(?:me)?|ya no (?:me )?escuches|no me escuches|silenciate|silencia(?:te)? el microfono|mutea(?:te)? el microfono|duermete|a dormir|desactiva el (?:microfono|mic)|cierra el microfono|stop listening(?: to me)?|mute (?:yourself|the mic|the microphone)|turn off the (?:mic|microphone))$", O);
+
+    static readonly Regex Despertar = new(@"^(?:(?:oye|hey|ey|ok|okay|hola|hi|hello|a ver|mira)\s+)?(?:aura|au ra|laura|a u r a|claudio|antonio|guardian)\b[\s,.:!?]*", O);
+
+    /// <summary>
+    /// La frase empieza por el nombre («Oye AURA, abre Excel»): true y lo que sigue sin el nombre («abre Excel»,
+    /// o vacío si solo la llamaron). Así «Oye AURA» funciona sin reconocedor de Windows y en una sola frase.
+    /// </summary>
+    public static bool QuitarNombre(string texto, out string resto)
+    {
+        resto = texto;
+        var n = LayaLigera.Normalizar(texto);
+        var m = Despertar.Match(n);
+        if (!m.Success) return false;
+        // Cuántas palabras del original se comen el saludo y el nombre.
+        int palabras = m.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length;
+        var originales = texto.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        resto = string.Join(' ', originales.Skip(palabras)).TrimStart(',', '.', ':', ';', '!', '?', ' ');
+        return true;
     }
 }

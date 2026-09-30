@@ -136,6 +136,11 @@ public partial class NotchWindow
                 case Mano.Notificaciones: await HacerNotificaciones(p.Valor); break;
                 case Mano.Cartera: await HacerCartera(p.Valor); break;
                 case Mano.Pulse: HacerPulse(p.Valor); break;
+                case Mano.Dormir:
+                    microSilenciado = true; continuo = false; CerrarOido(); AplicarEscucha();
+                    Avisar(new Aviso(T("Micrófono apagado", "Microphone off"), T("Ya no te escucho. Toca el micrófono del notch o Ctrl+Alt+Espacio para volver.", "Not listening. Tap the notch mic or Ctrl+Alt+Space to come back."), "\uEC54", "idle", Segundos: 4));
+                    Centro.Registro.Anotar("microfono", "apagado por voz");
+                    break;
                 case Mano.Atajo: HacerAtajo(p.Valor); break;
                 case Mano.Pulsar: await PulsarControl(p.Valor); break;
                 case Mano.Ventana: HacerVentana(p.Valor); break;

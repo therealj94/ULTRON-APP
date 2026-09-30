@@ -37,6 +37,8 @@ public partial class NotchWindow
     string ultimaRespuesta = "";
     string emocionActual = "neutral";
     bool microSilenciado;
+    /// <summary>La persona pidió hablar (tecla, clic, «Oye AURA» de Windows): la próxima frase cuenta sin decir el nombre.</summary>
+    bool llamadaExplicita;
     DateTime ultimaCharla = DateTime.MinValue;
     readonly System.Diagnostics.Stopwatch cronoTurno = new();
     bool primerAudioAnotado;
@@ -60,7 +62,7 @@ public partial class NotchWindow
         {
             RevisarRecordatorios();
             // «Siempre atenta»: si algo cerró el micrófono (un aviso, una acción), vuelve a escuchar sola.
-            if (ajustes.Escucha == "siempre" && !microSilenciado && !pausado && !escuchando && !hablandoAhora && !pensando && propuesta == null && !soloRender)
+            if (ajustes.Escucha is "siempre" or "palabra" && !microSilenciado && !pausado && !escuchando && !hablandoAhora && !pensando && propuesta == null && !soloRender)
             { continuo = true; EmpezarAEscuchar(); }
         };
         relojRecordatorios.Start();
@@ -78,7 +80,14 @@ public partial class NotchWindow
         altavoz.Fallo += m => Dispatcher.BeginInvoke(new Action(() => Avisar(new Aviso("Voz", m, "", "worried"))));
 
         // Su propia voz («…soy AU-RA») no la despierta: mientras suena algo, la palabra de activación no cuenta.
-        despertador.Desperto += () => Dispatcher.BeginInvoke(new Action(() => { if (!escuchando && !pausado && !pensando && !hablandoAhora && !altavoz.Ocupado) { Callar(); continuo = ajustes.ManosLibres; EmpezarAEscuchar(); } }));
+        despertador.Desperto += () => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (pausado || microSilenciado || pensando || hablandoAhora || altavoz.Ocupado) return;
+            Centro.Registro.Anotar("despertar", "Windows oyó «Oye AURA»");
+            llamadaExplicita = true; ultimaCharla = DateTime.Now; continuo = ajustes.ManosLibres;
+            if (!escuchando) { Callar(); EmpezarAEscuchar(); }
+            TextoEscucha.Text = T("Te escucho…", "Listening…"); Recalcular();
+        }));
         AplicarEscucha();
         // Primera vez (o sin sesión): se abre el Centro con la entrada y la guía; después AURA vive en el notch.
         if (string.IsNullOrEmpty(ajustes.Token) || !ajustes.PrimeraVezHecha)
@@ -134,6 +143,8 @@ public partial class NotchWindow
     internal void Microfono(object s, RoutedEventArgs e)
     {
         if (pausado) { Reanudar(); return; }
+        if (microSilenciado) { microSilenciado = false; AplicarEscucha(); Avisar(new Aviso(T("Te escucho de nuevo", "Listening again"), "", "\uE720", "happy", Segundos: 1.6)); }
+        llamadaExplicita = true; ultimaCharla = DateTime.Now;
         if (escuchando && !hablandoAhora) { CerrarOido(); continuo = false; Recalcular(); return; }
         Callar();
         continuo = ajustes.ManosLibres;
@@ -144,8 +155,8 @@ public partial class NotchWindow
     {
         if (pausado || soloRender) return;
         oido.ModoInterrupcion = false;
-        // «Siempre atenta»: el micrófono no se cansa; cada frase se oye y solo se atiende si es para AURA.
-        oido.Continuo = ajustes.Escucha == "siempre";
+        // «Oye AURA» y «siempre atenta»: el micrófono no se cansa; cada frase se oye y solo se atiende si es para AURA.
+        oido.Continuo = ajustes.Escucha is "siempre" or "palabra";
         oido.EsperaMaxMs = continuo ? 7000 : 9000;
         oido.Abrir();
         if (!oido.Abierto) return;
@@ -199,7 +210,17 @@ public partial class NotchWindow
         bool eraInterrupcion = oido.ModoInterrupcion;
         oido.Cerrar();
         escuchando = false; LuzMic.Opacity = 0; AnilloMic.Opacity = 0;
-        pensando = true; TextoPiensa.Text = T("Te entendí, un momento…", "Got it, one moment…"); Recalcular();
+        // Sin conversación ni llamada explícita, una frase larguísima (la tele, una charla al lado) no se manda a transcribir:
+        // «Oye AURA, …» cabe en 12 segundos.
+        bool esperandoNombre = ajustes.Escucha is "siempre" or "palabra" && !llamadaExplicita && propuesta == null
+                               && DateTime.Now - ultimaCharla > (ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(45));
+        if (esperandoNombre && !eraInterrupcion && wav.Length > 44 + 12 * 32000)
+        {
+            if (!microSilenciado && !pausado) EmpezarAEscuchar();
+            return;
+        }
+        // Mientras solo se espera el nombre, el notch no cambia a «pensando»: no parpadea con cada ruido.
+        if (!esperandoNombre) { pensando = true; TextoPiensa.Text = T("Te entendí, un momento…", "Got it, one moment…"); Recalcular(); }
         long g = ++generacion;
         string texto = "";
         string? error = null;
@@ -213,20 +234,39 @@ public partial class NotchWindow
         if (texto.Length == 0)
         {
             // Ruido (la tele, el ventilador): después de dos vacías seguidas, deja de escuchar sola.
-            if (ajustes.Escucha == "siempre" && !eraInterrupcion && !microSilenciado) { vaciasSeguidas = 0; EmpezarAEscuchar(); }
+            if (ajustes.Escucha is "siempre" or "palabra" && !eraInterrupcion && !microSilenciado) { vaciasSeguidas = 0; EmpezarAEscuchar(); }
             else if (continuo && ++vaciasSeguidas < 2 && !eraInterrupcion) EmpezarAEscuchar();
             else { vaciasSeguidas = 0; continuo = false; if (!eraInterrupcion) Avisar(new Aviso(T("No alcancé a oírte", "I didn't catch that"), T("Inténtalo otra vez o escríbemelo.", "Try again or type it."), "", "worried", Segundos: 3)); Recalcular(); }
             return;
         }
         vaciasSeguidas = 0;
         Centro.Registro.Anotar("oir", $"{cronoTurno.ElapsedMilliseconds} ms · {texto.Length} letras");
-        // «Siempre atenta» sin conversación en curso: solo se atiende si la frase la nombra («AURA, …»).
-        if (ajustes.Escucha == "siempre" && !eraInterrupcion && propuesta == null && DateTime.Now - ultimaCharla > TimeSpan.FromMinutes(2) && !LaNombra(texto))
+        // Sin conversación en curso, solo se atiende lo que empieza por su nombre: «Oye AURA, abre Excel»
+        // (en una frase) o «Oye AURA» sola (contesta «¿sí?» y escucha). En conversación, todo cuenta.
+        bool enCharla = DateTime.Now - ultimaCharla < (ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(45));
+        if (ajustes.Escucha is "siempre" or "palabra" && !eraInterrupcion && propuesta == null && !llamadaExplicita)
         {
-            pensando = false; Recalcular();
-            if (!microSilenciado && !pausado) EmpezarAEscuchar();
-            return;
+            if (Parametros.QuitarNombre(texto, out var resto))
+            {
+                Centro.Registro.Anotar("despertar", resto.Length == 0 ? "me llamaron" : "me llamaron con orden");
+                if (resto.Length == 0)
+                {
+                    ultimaCharla = DateTime.Now; pensando = false;
+                    Contestar(T("¿Sí?", "Yes?"), "feliz");
+                    if (!hablandoAhora) EmpezarAEscuchar();
+                    Recalcular();
+                    return;
+                }
+                texto = resto;
+            }
+            else if (!enCharla)
+            {
+                pensando = false; Recalcular();
+                if (!microSilenciado && !pausado) EmpezarAEscuchar();
+                return;
+            }
         }
+        llamadaExplicita = false;
         ultimaCharla = DateTime.Now;
         await Procesar(texto, true);
     }
@@ -267,7 +307,7 @@ public partial class NotchWindow
             var e = despertador.Encender(ajustes.Idioma);
             if (e != null && ajustes.Escucha == "palabra") Avisar(new Aviso(T("Palabra de activación", "Wake word"), e, "", "worried", Segundos: 7));
         }
-        if (ajustes.Escucha == "siempre" && !escuchando && !hablandoAhora && !pensando) { continuo = true; EmpezarAEscuchar(); }
+        if (ajustes.Escucha is "siempre" or "palabra" && !escuchando && !hablandoAhora && !pensando) { continuo = true; EmpezarAEscuchar(); }
         Recalcular();
     }
 
