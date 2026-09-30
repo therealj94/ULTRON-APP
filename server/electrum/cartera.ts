@@ -12,6 +12,8 @@ import { exigirPlataforma, limitar } from '../seguridad';
 import { conTextoReparado, consulta, enTransaccion, hayBase, hayCarteras } from './db';
 import { NOMBRE_NIVEL, restriccionesDe, type Nivel, type Restricciones } from './restricciones';
 import { significadoEstado } from './estados';
+import { selloInsumos } from './prospectividad';
+import { sqlCarteraVisible } from './organizacion';
 
 export type ResumenCartera = { id: number; nombre: string; concesiones: number; enCatastro: number; actualizada: string };
 
@@ -23,6 +25,7 @@ export async function carteras(): Promise<ResumenCartera[]> {
        FROM cartera k
        LEFT JOIN cartera_concesion cc ON cc.cartera_id = k.id
        LEFT JOIN LATERAL (SELECT id FROM concesion WHERE huella = cc.huella LIMIT 1) c ON true
+      WHERE true${sqlCarteraVisible('k')}
       GROUP BY k.id ORDER BY k.actualizada DESC`
   )
     .then(conTextoReparado)
@@ -94,10 +97,17 @@ export async function analizarCartera(nombre?: string | null): Promise<AnalisisC
       : Promise.resolve([]),
     restriccionesDe(ids),
     ids.length
-      ? consulta<{ id: string; puntaje: number }>(
-          `SELECT concesion_id::text AS id, puntaje FROM prospectividad_concesion WHERE concesion_id = ANY($1::bigint[])`,
-          [ids]
-        ).catch(() => [])
+      ? // Solo lo evaluado con el algoritmo e insumos de hoy, y con algo medido: sin datos no es un
+        // puntaje bajo (auditoría H07) y lo calculado con otra versión está pendiente (H15).
+        selloInsumos()
+          .then((sello) =>
+            consulta<{ id: string; puntaje: number }>(
+              `SELECT concesion_id::text AS id, puntaje FROM prospectividad_concesion
+                WHERE concesion_id = ANY($1::bigint[]) AND datos->>'sello' = $2 AND coalesce((datos->>'cobertura')::int, 0) > 0`,
+              [ids, sello]
+            )
+          )
+          .catch(() => [])
       : Promise.resolve([]),
   ]);
   const rPor = new Map(rs.map((r) => [r.concesionId, r]));

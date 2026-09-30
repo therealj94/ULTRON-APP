@@ -50,6 +50,7 @@ export function ojoQueLeyo(via: string): string {
 }
 import { ingerir, resumenCapa, resumenTraslapes, revisarZip, type Aviso } from './gis';
 import { verImagen, vistaFallida } from '../../lib/vision';
+import { asegurarOrganizacion, organizacionParaGuardar, sqlDocumentoVisible } from './organizacion';
 
 export type Aprendido = {
   clase: 'catastro' | 'documento' | 'nada';
@@ -724,11 +725,12 @@ export async function aprender(
     // La huella se mira ANTES de extraer el texto, y es lo que hace reanudable una carga grande:
     // al relanzar una carpeta de miles de expedientes, los ya cargados se saltan en un md5 en vez
     // de volver a parsear el PDF entero para acabar descubriendo que ya estaba.
+    await asegurarOrganizacion();
     const huella = huellaDe(datos);
     const [previo] = await consulta<{ id: number; paginas: number | null; meta: Record<string, any> | null; n: number }>(
       `SELECT d.id, d.paginas, d.meta, (SELECT count(*)::int FROM fragmento f WHERE f.documento_id = d.id) AS n
          FROM documento d
-        WHERE d.huella = $1 AND COALESCE(d.concesion_id, -1) = COALESCE($2::bigint, -1) LIMIT 1`,
+        WHERE d.huella = $1 AND COALESCE(d.concesion_id, -1) = COALESCE($2::bigint, -1)${sqlDocumentoVisible('d')} LIMIT 1`,
       [huella, opts.concesionId ?? null]
     );
     /*
@@ -832,7 +834,7 @@ export async function aprender(
       `SELECT d.id, f.texto FROM documento d
          JOIN fragmento f ON f.documento_id = d.id AND f.orden = 0 AND f.pagina = $3
         WHERE d.huella IS NULL AND d.nombre = $1 AND d.paginas = $2
-          AND COALESCE(d.concesion_id, -1) = COALESCE($4::bigint, -1)
+          AND COALESCE(d.concesion_id, -1) = COALESCE($4::bigint, -1)${sqlDocumentoVisible('d')}
         LIMIT 1`,
       [nombre, paginas.length, trozos[0].pagina, opts.concesionId ?? null]
     );
@@ -861,10 +863,11 @@ export async function aprender(
     };
     const doc = await enTransaccion(async (q) => {
       const [fila] = await q(
-        `INSERT INTO documento (nombre, tipo, concesion_id, paginas, subido_por, huella, carpeta, archivo, meta)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        `INSERT INTO documento (nombre, tipo, concesion_id, paginas, subido_por, huella, carpeta, archivo, meta, organizacion)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          ON CONFLICT DO NOTHING RETURNING id`,
-        [nombre, opts.tipoDoc || tipoPorDefecto, opts.concesionId ?? null, paginas.length, opts.subidoPor || null, huella, carpeta, archivo, JSON.stringify(meta)]
+        // De la organización de quien lo sube (auditoría H14); lo de la casa queda como siempre.
+        [nombre, opts.tipoDoc || tipoPorDefecto, opts.concesionId ?? null, paginas.length, opts.subidoPor || null, huella, carpeta, archivo, JSON.stringify(meta), organizacionParaGuardar()]
       );
       if (!fila) return null;
       // Inserción en bloque: un informe de 43-101 son miles de trozos y uno por uno tarda minutos.

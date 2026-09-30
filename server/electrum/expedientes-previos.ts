@@ -16,6 +16,8 @@
  * la pregunta y, si no nombra ninguno, lo último que se dijo antes («¿y qué concluye?»).
  */
 import { buscarEnExpedientes, consulta, hayBase, type HitExpediente } from './db';
+import { COMO_CITAR } from './evidencias';
+import { sqlDocumentoVisible } from './organizacion';
 
 /**
  * Una pregunta sobre lo que dice un papel. Se queda corto a propósito: una pregunta de catastro o de
@@ -58,7 +60,7 @@ export async function documentoNombrado(texto: string): Promise<{ id: number; no
   const filas = await consulta<{ id: number; nombre: string; puntos: number }>(
     `SELECT d.id, d.nombre, (${suma}) AS puntos
        FROM documento d
-      WHERE EXISTS (SELECT 1 FROM fragmento f WHERE f.documento_id = d.id)
+      WHERE EXISTS (SELECT 1 FROM fragmento f WHERE f.documento_id = d.id)${sqlDocumentoVisible('d')}
       ORDER BY puntos DESC, (SELECT count(*) FROM fragmento f WHERE f.documento_id = d.id) DESC, d.id DESC
       LIMIT 2`,
     palabras
@@ -83,7 +85,10 @@ export async function expedientesDeLaPregunta(mensaje: string, opts: { antes?: s
   const hits: HitExpediente[] = await buscarEnExpedientes(String(mensaje).slice(0, 400), opts.limite ?? 4, nombrado ? { documento: `#${nombrado.id}` } : {}).catch(() => []);
   return {
     documento: nombrado?.nombre ?? null,
-    trozos: hits.map((h) => `- ${h.documento}${h.pagina ? `, p. ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').trim().slice(0, 500)}»`),
+    trozos: hits.map(
+      (h) =>
+        `- ${h.codigo ? `[${h.codigo}] ` : ''}${h.transcripcion ? '[FOTO TRANSCRITA, SIN REVISAR] ' : ''}${h.documento}${h.pagina ? `, p. ${h.pagina}` : ''}: «${h.texto.replace(/\s+/g, ' ').trim().slice(0, 500)}»`
+    ),
   };
 }
 
@@ -93,5 +98,5 @@ export function bloqueExpedientes(p: Previos, puedeLeer: boolean): string {
     ? `lo que encontró la búsqueda DENTRO de «${p.documento}», que es el documento que nombran`
     : 'lo que encontró la búsqueda en todos los documentos (son de documentos distintos: fijate de cuál es cada trozo antes de citarlo)';
   const leer = puedeLeer ? '; para leer el capítulo o la tabla entera, expediente_leer con ese documento y página' : '';
-  return `DE LOS EXPEDIENTES CARGADOS, ${de}. Son trozos cortos; citá documento y página${leer}:\n${p.trozos.join('\n')}`;
+  return `DE LOS EXPEDIENTES CARGADOS, ${de}. Son trozos cortos${leer}. ${COMO_CITAR}\n${p.trozos.join('\n')}`;
 }

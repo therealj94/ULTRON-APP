@@ -600,3 +600,29 @@ UPDATE capa c SET rol = 'historico'
 INSERT INTO esquema_version (version, nota)
 VALUES (10, 'catastro oficial único; capas de referencia: histórico y proyecto')
 ON CONFLICT (version) DO NOTHING;
+
+-- ---------------------------------------------------------------- v11: organizaciones (auditoría H14)
+-- Lo de un cliente no lo ve otro. Solo AGREGA columnas nulas: lo cargado antes queda de la casa
+-- (documentos y carteras: `coalesce(organizacion, casa)`) o común (capas sin organización). La
+-- aplicación hace lo mismo sola al arrancar (server/electrum/organizacion.ts, asegurarOrganizacion).
+
+ALTER TABLE documento ADD COLUMN IF NOT EXISTS organizacion text;
+ALTER TABLE capa      ADD COLUMN IF NOT EXISTS organizacion text;
+ALTER TABLE cartera   ADD COLUMN IF NOT EXISTS organizacion text;
+CREATE INDEX IF NOT EXISTS documento_organizacion_idx ON documento (organizacion);
+CREATE INDEX IF NOT EXISTS capa_organizacion_idx ON capa (organizacion);
+CREATE INDEX IF NOT EXISTS cartera_organizacion_idx ON cartera (organizacion);
+-- La bitácora también: cada organización lee solo sus anotaciones (revisión de Codex en #87).
+ALTER TABLE biblioteca_bitacora ADD COLUMN IF NOT EXISTS organizacion text;
+CREATE INDEX IF NOT EXISTS biblioteca_bitacora_organizacion_idx ON biblioteca_bitacora (organizacion);
+
+-- «Ya entró» es por organización: el mismo PDF de un cliente entra como suyo. Primero el índice
+-- nuevo y después se quita el viejo, para no quedar ni un momento sin protección contra duplicados.
+CREATE UNIQUE INDEX IF NOT EXISTS documento_huella_org_idx
+  ON documento (huella, COALESCE(concesion_id, -1), COALESCE(organizacion, ''))
+  WHERE huella IS NOT NULL;
+DROP INDEX IF EXISTS documento_huella_idx;
+
+INSERT INTO esquema_version (version, nota)
+VALUES (11, 'organizaciones: lo de un cliente no lo ve otro')
+ON CONFLICT (version) DO NOTHING;

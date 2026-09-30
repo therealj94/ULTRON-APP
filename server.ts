@@ -93,7 +93,7 @@ import {
   claveHiloDe,
   quienDelHilo,
   fusionarHiloElectrum,
-  hiloDe as hiloElectrumDe,
+  cargarHilo as cargarHiloElectrum,
   hiloDelCliente,
   olvidarHilo,
   recordarHilo,
@@ -122,11 +122,13 @@ import { montarRutasMuestras } from './server/electrum/muestras';
 import { montarRutasSatelite, perdidaPorConcesion } from './server/electrum/satelite';
 import { montarRutasExportar } from './server/electrum/exportar';
 import { montarRutasProspectividad, puntajesPorConcesion } from './server/electrum/prospectividad';
+import { montarRutasPreferencias } from './server/electrum/preferencias';
+import { asegurarOrganizacion, conOrganizacion, ORGANIZACION_DEMO, organizacionDePersona, sqlCapaVisible, sqlDocumentoVisible } from './server/electrum/organizacion';
 import { montarRutasCartera } from './server/electrum/cartera';
 import { montarRutasArea } from './server/electrum/area';
 import { iniciarAlertas } from './server/electrum/alertas';
 import { montarRutasTimelapse } from './server/electrum/timelapse';
-import { asegurarBiblioteca } from './server/electrum/biblioteca';
+import { anotar as anotarBitacora, asegurarBiblioteca } from './server/electrum/biblioteca';
 import { expedientesListo, guardarExpediente } from './lib/s3';
 import { createHash, randomBytes } from 'node:crypto';
 import { personaPorCorreoExacto, puedeEntrar } from './lib/acceso';
@@ -224,6 +226,18 @@ app.use('/api', (req, res, next) => {
     error: `Esto es ${PLATAFORMA === 'electrum' ? 'Dr Electrum FP' : 'AU-RA FP'}. Esa ruta es de la otra plataforma.`,
     honesto: true,
   });
+});
+
+/*
+ * DE QUÉ ORGANIZACIÓN ES LA PETICIÓN (auditoría H14). Todo `/api/electrum` corre dentro de su
+ * ámbito: las consultas de documentos, capas y carteras filtran solas por él. Los invitados de la
+ * demo miran lo de la casa (H06, decidido por José).
+ */
+app.use('/api/electrum', (req, _res, next) => {
+  const org = esInvitado(req) ? ORGANIZACION_DEMO : organizacionDePersona(identidadDe(req)?.persona);
+  // Las columnas se aseguran una vez; si aún no están, los filtros fallan cerrado para los clientes.
+  if (hayBaseElectrum()) void asegurarOrganizacion().catch(() => {});
+  conOrganizacion(org, next);
 });
 
 // Nodos. Nada hardcodeado que no sea el modelo por defecto.
@@ -375,8 +389,14 @@ app.get('/api/nodo/listo', limitar(60), async (_req, res) => {
 
 /** El turno de Electrum: panel de especialistas + harness con manos + órdenes para el mapa. */
 app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+  const inicio = Date.now();
   const mensaje = String(req.body?.mensaje || '').slice(0, 4000).trim();
   if (!mensaje) return res.status(400).json({ error: 'Falta el mensaje.', honesto: true });
+  // Si se corta la conexión, se corta el turno: el modelo y la herramienta en curso (auditoría H09).
+  const corte = new AbortController();
+  res.on('close', () => {
+    if (!res.writableEnded) corte.abort();
+  });
   try {
     // Antes esto era `quienVerificado(req)`, con la PETICIÓN donde va el CUERPO: leía
     // `req.telegramUserId`, que no existe, así que Dr Electrum nunca supo con quién hablaba y el
@@ -384,7 +404,7 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
     const id = identidadDe(req);
     const clave = claveHiloDe(id?.persona.id, req, 'mesa');
     const historial = fusionarHiloElectrum({
-      servidor: hiloElectrumDe(clave),
+      servidor: await cargarHiloElectrum(clave),
       cliente: hiloDelCliente(req.body?.hilo),
       mensaje,
     });
@@ -399,8 +419,9 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
         prueba: id ? 'sesion' : null,
         duenio: quienDelHilo(id?.persona.id, req),
       },
-      { historial, idioma: req.body?.idioma }
+      { historial, idioma: req.body?.idioma, senal: corte.signal, inicio }
     );
+    if (corte.signal.aborted) return;
     recordarHilo(clave, mensaje, salida.texto);
     res.json({ ...salida, honesto: true });
   } catch (e: any) {
@@ -414,6 +435,16 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
  * ser un lujo: quien consultó el expediente de un concesionario necesita dejar la pantalla limpia
  * antes de que se siente otro.
  */
+/**
+ * Lo que se venía hablando, para retomarlo en otro aparato o tras cerrar la pestaña (auditoría H17).
+ * Solo el hilo de quien lo pide: el suyo si tiene sesión, el de su visitante si entró con la llave.
+ */
+app.get('/api/electrum/hilo', exigirPlataforma('electrum'), limitar(60), async (req, res) => {
+  const id = identidadDe(req);
+  const turnos = await cargarHiloElectrum(claveHiloDe(id?.persona.id, req, 'mesa'));
+  res.json({ turnos, honesto: true });
+});
+
 app.delete('/api/electrum/hilo', exigirPlataforma('electrum'), limitar(30), (req, res) => {
   // Solo el hilo de quien lo pide: el suyo si tiene sesión, el de su navegador si entró con la llave.
   const id = identidadDe(req);
@@ -460,26 +491,29 @@ app.get('/api/electrum/expedientes', exigirPlataforma('electrum'), limitar(60), 
   try {
     // `unaccent` para que «Danlí» y «Danli» encuentren lo mismo, como en el resto de la plataforma.
     // `%` y `_` se buscan tal cual: «EXP_2021» no puede volverse un comodín que trae cualquier cosa.
-    const filtro = q ? `WHERE unaccent(lower(nombre)) LIKE unaccent(lower($1)) ESCAPE '\\'` : '';
+    const busca = q ? ` AND unaccent(lower(nombre)) LIKE unaccent(lower($1)) ESCAPE '\\'` : '';
     const args = q ? [`%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`] : [];
+    // Solo lo de su organización (auditoría H14): las capas comunes y lo suyo.
+    const deCapas = `WHERE true${sqlCapaVisible('capa')}`;
+    const deDocs = `WHERE true${sqlDocumentoVisible('documento')}`;
 
-    const [tc] = await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM capa ${filtro}`, args);
-    const [td] = await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM documento ${filtro}`, args);
+    const [tc] = await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM capa ${deCapas}${busca}`, args);
+    const [td] = await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM documento ${deDocs}${busca}`, args);
     /*
      * Cuántos hay EN TOTAL, al margen de la búsqueda. Sin esto, una búsqueda sin resultados decía
      * «hay 0 capas y 0 expedientes cargados» —el total filtrado, o sea cero— y eso le cuenta a
      * quien busca que el catastro está vacío cuando lo que pasa es que su palabra no aparece.
      */
-    const [ec] = q ? await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM capa`) : [tc];
-    const [ed] = q ? await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM documento`) : [td];
+    const [ec] = q ? await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM capa ${deCapas}`) : [tc];
+    const [ed] = q ? await consultaElectrum<{ n: string }>(`SELECT count(*)::text AS n FROM documento ${deDocs}`) : [td];
 
     const capas = await consultaElectrum(
-      `SELECT id, nombre, formato, origen_crs, entidades, subido FROM capa ${filtro}
+      `SELECT id, nombre, formato, origen_crs, entidades, subido FROM capa ${deCapas}${busca}
         ORDER BY subido DESC LIMIT ${limite} OFFSET ${desde}`,
       args
     );
     const documentos = await consultaElectrum(
-      `SELECT id, nombre, tipo, paginas, subido, subido_por FROM documento ${filtro}
+      `SELECT id, nombre, tipo, paginas, subido, subido_por FROM documento ${deDocs}${busca}
         ORDER BY subido DESC LIMIT ${limite} OFFSET ${desde}`,
       args
     );
@@ -788,6 +822,7 @@ app.get('/api/electrum/salud', exigirPlataforma('electrum'), limitar(60), async 
  * Un WebSocket añadiría una conexión bidireccional que nadie usa y que Render tendría que sostener.
  */
 app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30), async (req, res) => {
+  const inicio = Date.now();
   const mensaje = String(req.body?.mensaje || '').slice(0, 4000).trim();
   res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
@@ -813,15 +848,20 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
    * guardara, la pregunta siguiente se contestaría sobre algo que para él no existe.
    */
   let seFue = false;
+  const corte = new AbortController();
   res.on('close', () => {
-    if (!res.writableEnded) seFue = true;
+    if (!res.writableEnded) {
+      seFue = true;
+      // Cancelación real (auditoría H09): corta la llamada al modelo y la espera de la herramienta.
+      corte.abort();
+    }
   });
 
   try {
     const id = identidadDe(req);
     const clave = claveHiloDe(id?.persona.id, req, 'mesa');
     const historial = fusionarHiloElectrum({
-      servidor: hiloElectrumDe(clave),
+      servidor: await cargarHiloElectrum(clave),
       cliente: hiloDelCliente(req.body?.hilo),
       mensaje,
     });
@@ -831,6 +871,8 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
       {
         historial,
         abandonado: () => seFue,
+        senal: corte.signal,
+        inicio,
         internet: req.body?.internet === true,
         // La mesa técnica abierta en pantalla: contestan los tres, discutiendo, hasta que se cierre.
         mesa: req.body?.mesa === true,
@@ -1200,6 +1242,15 @@ app.get('/api/electrum/informe/:id', exigirPlataforma('electrum'), limitar(60), 
   // Un mapa geológico viaja por el mismo almacén: se sirve como imagen, en línea, para verlo sin bajarlo.
   // Un invitado lo ve en el visor pero no recibe la orden de guardarlo.
   const imagen = r.informe.tipo === 'image/jpeg';
+  /*
+   * Auditoría H06, decidido por José (30-sep-2026): la demo SÍ ve informes con datos reales. `inline`
+   * no impide guardarlos —cualquier visor los baja—, así que no se presenta como protección: lo que
+   * hay es rastro. Cada entrega a un invitado queda en la bitácora con su visitante opaco (hasheado),
+   * el nombre del informe y cuándo.
+   */
+  if (esInvitado(req) && hayBaseElectrum()) {
+    void anotarBitacora(quienDelHilo(id?.persona.id, req), 'informe_demo', r.informe.nombre, { tipo: r.informe.tipo || 'application/pdf', bytes: r.informe.pdf.length });
+  }
   res.setHeader('Content-Type', imagen ? 'image/jpeg' : 'application/pdf');
   res.setHeader('Content-Disposition', `${imagen || esInvitado(req) ? 'inline' : 'attachment'}; filename="${r.informe.nombre}"`);
   res.setHeader('Cache-Control', 'private, no-store');
@@ -1484,6 +1535,7 @@ if (ES_ELECTRUM) montarRutasMuestras(app);
 if (ES_ELECTRUM) montarRutasSatelite(app);
 if (ES_ELECTRUM) montarRutasExportar(app);
 if (ES_ELECTRUM) montarRutasProspectividad(app);
+if (ES_ELECTRUM) montarRutasPreferencias(app);
 if (ES_ELECTRUM) montarRutasCartera(app);
 if (ES_ELECTRUM) montarRutasArea(app);
 if (ES_ELECTRUM) montarRutasTimelapse(app);
@@ -3476,6 +3528,7 @@ async function startServer() {
     if (ES_ELECTRUM) mantenerTableroCaliente();
     mantenerCuentasAlDia();
     if (ES_ELECTRUM && hayBaseElectrum()) void asegurarBiblioteca();
+    if (ES_ELECTRUM && hayBaseElectrum()) void asegurarOrganizacion().catch((e) => console.error('[electrum] organización:', String(e?.message || e).slice(0, 160)));
     // Cada plataforma registra SU bot. Los dos desde el mismo proceso era la costura más fácil de
     // olvidar: un despliegue de Dr Electrum se quedaba con el webhook del bot de la junta.
     if (ES_ULTRON) {

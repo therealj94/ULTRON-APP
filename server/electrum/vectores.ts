@@ -13,6 +13,7 @@
 import { consulta, filtroDocumento, hayBase } from './db';
 import { embeddingsConfigurados, literalPg, vectorDe, vectorizar } from '../../lib/cognitivo/embeddings';
 import { disponible } from '../../lib/cognitivo/interruptor';
+import { sqlDocumentoVisible } from './organizacion';
 
 let columna: { valor: boolean; t: number } | null = null;
 
@@ -86,7 +87,7 @@ export async function indexarPendientes(opts: { documentoId?: number; maximo?: n
   return hechos;
 }
 
-export type HitVector = { id: number; documento: string; pagina: number | null; texto: string; similitud: number };
+export type HitVector = { id: number; documento: string; documento_id?: number; transcripcion?: boolean; pagina: number | null; texto: string; similitud: number };
 
 /** Los fragmentos más cercanos a la pregunta, por coseno. Vacío si no hay vectores. */
 export async function buscarPorSignificado(texto: string, limite = 30, opts: { documento?: string } = {}): Promise<HitVector[]> {
@@ -96,9 +97,10 @@ export async function buscarPorSignificado(texto: string, limite = 30, opts: { d
   const filtro = filtroDocumento(opts.documento, 3);
   const filas = await consulta<HitVector>(
     `SELECT f.id, d.nombre AS documento, f.pagina, left(f.texto, 700) AS texto,
+            d.id::int AS documento_id, (d.meta->>'origen' = 'foto_transcrita' AND coalesce(d.meta->>'revisado', 'false') <> 'true') AS transcripcion,
             (1 - (f.embedding <=> $1::vector))::float8 AS similitud
        FROM fragmento f JOIN documento d ON d.id = f.documento_id
-      WHERE f.embedding IS NOT NULL${filtro.sql}
+      WHERE f.embedding IS NOT NULL${filtro.sql}${sqlDocumentoVisible('d')}
       ORDER BY f.embedding <=> $1::vector
       LIMIT $2`,
     [literalPg(v), limite, ...filtro.args]

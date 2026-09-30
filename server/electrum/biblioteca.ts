@@ -27,6 +27,7 @@ import { baseTieneRol, consulta, enTransaccion, hayBase, olvidarEsquemaV10 } fro
 import { cargarTexto, huellaDe, releerDocumento } from './aprender';
 import { olvidarTablero } from './tablero';
 import { bajarExpediente, bucketExpedientes } from '../../lib/s3';
+import { asegurarOrganizacion, organizacionActual, organizacionParaGuardar, sqlCapaPropia, sqlCapaVisible, sqlDocumentoVisible } from './organizacion';
 
 /* ------------------------------------------------------------------------------ esquema */
 
@@ -186,7 +187,7 @@ async function itemsCte(): Promise<string> {
     SELECT documento_id, count(*)::int AS n, coalesce(sum(length(texto)), 0)::int AS car, ${sinv} AS sinv
       FROM fragmento GROUP BY documento_id
   ),
-  rep AS (SELECT lower(nombre) AS ln FROM documento GROUP BY 1 HAVING count(*) > 1),
+  rep AS (SELECT lower(nombre) AS ln FROM documento d WHERE true${sqlDocumentoVisible('d')} GROUP BY 1 HAVING count(*) > 1),
   items AS (
     SELECT 'documento'::text AS clase, d.id, d.nombre, d.carpeta, d.subido, d.subido_por,
            coalesce(d.tipo, 'otro') AS detalle, coalesce(d.paginas, 0) AS cantidad,
@@ -200,11 +201,13 @@ async function itemsCte(): Promise<string> {
       FROM documento d
       LEFT JOIN f ON f.documento_id = d.id
       LEFT JOIN rep ON rep.ln = lower(d.nombre)
+     WHERE true${sqlDocumentoVisible('d')}
     UNION ALL
     SELECT 'capa', c.id, c.nombre, c.carpeta, c.subido, c.subido_por, c.formato, c.entidades,
            0, 0, 0, (c.archivo IS NOT NULL), lower(substring(c.archivo from '\.([A-Za-z0-9]+)$')), NULL::timestamptz,
            CASE WHEN c.entidades = 0 THEN 'vacia' ELSE 'ok' END
       FROM capa c
+     WHERE true${sqlCapaVisible('c')}
   )`;
 }
 
@@ -393,18 +396,21 @@ function origenVisible(archivo: string): string {
 /* ------------------------------------------------------------------------------ bitácora */
 
 export async function anotar(quien: string | null | undefined, accion: string, objeto: string, detalle: Record<string, unknown> = {}) {
-  await consulta(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle) VALUES ($1,$2,$3,$4)`, [
+  // Cada anotación es de la organización de quien la hizo, y cada una lee solo las suyas (H14).
+  await asegurarOrganizacion().catch(() => {});
+  await consulta(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle, organizacion) VALUES ($1,$2,$3,$4,$5)`, [
     quien || null,
     accion,
     objeto.slice(0, 300),
     JSON.stringify(detalle),
+    organizacionParaGuardar(),
   ]).catch((e) => console.error('[biblioteca] no pude anotar en la bitácora:', String(e?.message || e).slice(0, 160)));
 }
 
 export async function bitacora(limite = 100) {
   await asegurarBiblioteca();
   return consulta<{ id: number; cuando: string; quien: string | null; accion: string; objeto: string; detalle: any }>(
-    `SELECT id, cuando, quien, accion, objeto, detalle FROM biblioteca_bitacora ORDER BY cuando DESC, id DESC LIMIT $1`,
+    `SELECT id, cuando, quien, accion, objeto, detalle FROM biblioteca_bitacora d WHERE true${sqlDocumentoVisible('d')} ORDER BY cuando DESC, id DESC LIMIT $1`,
     [Math.max(1, Math.min(500, limite))]
   );
 }
@@ -426,8 +432,22 @@ export function refsValidas(v: unknown): Ref[] {
 
 const ids = (refs: Ref[], clase: Ref['clase']) => refs.filter((r) => r.clase === clase).map((r) => r.id);
 
+/**
+ * De lo pedido, solo lo que es de la organización de quien pide (auditoría H14): un cliente no
+ * mueve, renombra, relee ni borra lo de otro, ni las capas comunes. Fuera de un ámbito, todo.
+ */
+async function propios(refs: Ref[]): Promise<Ref[]> {
+  if (!organizacionActual()) return refs;
+  const d = ids(refs, 'documento');
+  const c = ids(refs, 'capa');
+  const okD = d.length ? await consulta<{ id: string }>(`SELECT id::text FROM documento d WHERE id = ANY($1::bigint[])${sqlDocumentoVisible('d')}`, [d]) : [];
+  const okC = c.length ? await consulta<{ id: string }>(`SELECT id::text FROM capa k WHERE id = ANY($1::bigint[])${sqlCapaPropia('k')}`, [c]) : [];
+  return [...okD.map((x) => ({ clase: 'documento' as const, id: Number(x.id) })), ...okC.map((x) => ({ clase: 'capa' as const, id: Number(x.id) }))];
+}
+
 export async function mover(refs: Ref[], carpeta: unknown, quien?: string | null) {
   await asegurarBiblioteca();
+  refs = await propios(refs);
   const destino = normalizarCarpeta(carpeta);
   const docs = ids(refs, 'documento');
   const capas = ids(refs, 'capa');
@@ -446,6 +466,7 @@ export async function renombrarItem(ref: Ref, nombre: unknown, quien?: string | 
     .trim()
     .slice(0, 200);
   if (!limpio) return { ok: false as const, error: 'El nombre no puede quedar vacío.' };
+  if (!(await propios([ref])).length) return { ok: false as const, error: 'Ya no existe.' };
   const tabla = ref.clase === 'documento' ? 'documento' : 'capa';
   const [antes] = await consulta<{ nombre: string }>(`SELECT nombre FROM ${tabla} WHERE id = $1`, [ref.id]);
   if (!antes) return { ok: false as const, error: 'Ya no existe.' };
@@ -471,7 +492,7 @@ export async function renombrarCarpeta(de: unknown, a: unknown, quien?: string |
             SET carpeta = CASE WHEN carpeta = $1 THEN $2::text
                                WHEN $2::text IS NULL THEN substr(carpeta, length($1) + 2)
                                ELSE $2::text || substr(carpeta, length($1) + 1) END
-          WHERE carpeta = $1 OR carpeta LIKE $3 ESCAPE '\\'
+          WHERE (carpeta = $1 OR carpeta LIKE $3 ESCAPE '\\')${tabla === 'documento' ? sqlDocumentoVisible(tabla) : sqlCapaPropia(tabla)}
           RETURNING id`,
         [origen, destino, likeEscapado(origen) + '/%']
       );
@@ -489,6 +510,8 @@ export async function renombrarCarpeta(de: unknown, a: unknown, quien?: string |
  */
 export async function eliminar(refs: Ref[], quien?: string | null) {
   await asegurarBiblioteca();
+  await asegurarOrganizacion().catch(() => {});
+  refs = await propios(refs);
   const docs = ids(refs, 'documento');
   const capas = ids(refs, 'capa');
   const quitados: Array<{ clase: string; id: number; nombre: string; archivo: string | null; huella?: string | null; concesiones?: number }> = [];
@@ -507,10 +530,11 @@ export async function eliminar(refs: Ref[], quien?: string | null) {
     // no lo vuelve a traer, ni de esa clave ni de una copia en otra carpeta (ver importar.ts). Si la
     // anotación fallara aparte, lo borrado reviviría en silencio.
     for (const x of quitados) {
-      await q(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle) VALUES ($1, 'eliminar', $2, $3)`, [
+      await q(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle, organizacion) VALUES ($1, 'eliminar', $2, $3, $4)`, [
         quien || null,
         `${x.clase} ${x.id}`,
         JSON.stringify({ nombre: x.nombre, archivo: x.archivo, huella: x.huella, concesiones: x.concesiones }),
+        organizacionParaGuardar(),
       ]);
     }
   });
@@ -521,6 +545,7 @@ export async function eliminar(refs: Ref[], quien?: string | null) {
 /** Volver a leer un documento desde su original en el cubo. */
 export async function releer(id: number, quien?: string | null) {
   await asegurarBiblioteca();
+  if (!(await propios([{ clase: 'documento', id }])).length) return { ok: false, dicho: 'Ese documento ya no existe.' };
   const [d] = await consulta<{ nombre: string; archivo: string | null }>(`SELECT nombre, archivo FROM documento WHERE id = $1`, [id]);
   if (!d) return { ok: false, dicho: 'Ese documento ya no existe.' };
   const m = /^s3:\/\/([^/]+)\/(.+)$/.exec(d.archivo || '');
@@ -542,6 +567,7 @@ export async function releer(id: number, quien?: string | null) {
 /** Cargar el texto de otra lectura (un OCR) en un documento que ya está. Ver `cargarTexto`. */
 export async function cargarTextoEn(id: number, nombre: string, datos: Buffer, quien?: string | null, forzar = false) {
   await asegurarBiblioteca();
+  if (!(await propios([{ clase: 'documento', id }])).length) return { ok: false as const, dicho: 'Ese documento ya no existe.' };
   const r = await cargarTexto(id, nombre, datos, { forzar, por: quien });
   if (r.ok) await consulta(`UPDATE documento SET releido = now() WHERE id = $1`, [id]);
   await anotar(quien, 'texto', `documento ${id}`, { archivo: nombre, ok: r.ok, antes: r.antes, ahora: r.ahora, forzar });
@@ -566,10 +592,10 @@ export async function anotarSinTexto(p: {
   await asegurarBiblioteca();
   const paginas = p.paginas && p.paginas > 0 ? Math.floor(p.paginas) : null;
   const r = await consulta<{ id: number }>(
-    `INSERT INTO documento (nombre, tipo, paginas, subido_por, huella, carpeta, archivo, meta)
-     VALUES ($1, 'escaneo', $2, $3, $4, $5, $6, $7)
+    `INSERT INTO documento (nombre, tipo, paginas, subido_por, huella, carpeta, archivo, meta, organizacion)
+     VALUES ($1, 'escaneo', $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT DO NOTHING RETURNING id`,
-    [p.nombre, paginas, p.por || null, huellaDe(p.datos), p.carpeta, p.archivo, JSON.stringify({ pendiente: 'ocr', motivo: p.motivo.slice(0, 200) })]
+    [p.nombre, paginas, p.por || null, huellaDe(p.datos), p.carpeta, p.archivo, JSON.stringify({ pendiente: 'ocr', motivo: p.motivo.slice(0, 200) }), organizacionParaGuardar()]
   );
   return r[0] ? Number(r[0].id) : null;
 }

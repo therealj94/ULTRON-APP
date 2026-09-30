@@ -19,6 +19,7 @@
 import type { Geometry, Position } from 'geojson';
 import { conTextoReparado, consultaConTope, hayBase, type RolCapa } from './db';
 import { capasPorRol, nombreDe } from './entorno';
+import { sqlCapaVisible } from './organizacion';
 
 const TOPE_MS = 10000;
 const consulta = <T = any>(sql: string, params: unknown[] = []) => consultaConTope<T>(sql, params, TOPE_MS).then(conTextoReparado);
@@ -211,7 +212,7 @@ export async function resolverZona(z: Zona): Promise<ZonaResuelta | { error: str
   if (z.capa && z.capa.trim()) {
     const [f] = await fila(
       `SELECT k.nombre, (SELECT ST_Union(e.geom) FROM entidad_geo e WHERE e.capa_id = k.id AND GeometryType(e.geom) ~ 'POLYGON') AS g
-         FROM capa k WHERE k.nombre ILIKE '%' || $1 || '%'
+         FROM capa k WHERE k.nombre ILIKE '%' || $1 || '%'${sqlCapaVisible('k')}
         ORDER BY (lower(k.nombre) = lower($1)) DESC, length(k.nombre) LIMIT 1`,
       [z.capa.trim()]
     );

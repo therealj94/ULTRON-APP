@@ -26,6 +26,7 @@
  */
 import type { Geometry } from 'geojson';
 import { baseTieneRol, conTextoReparado, consultaConTope, hayBase, nombreClaseTraslape, rolDeCapa, traslapesDe, type ClaseTraslape, type RolCapa, type RolEntorno } from './db';
+import { sqlCapaVisible } from './organizacion';
 
 /**
  * Cada consulta del entorno la corta la base a los 8 s: una capa lenta no se queda con el pool. Y
@@ -163,7 +164,7 @@ export async function capasPorRol(): Promise<CapaRol[]> {
   const tiene = await baseTieneRol();
   const filas = await consulta<{ id: string; nombre: string; rol: string | null }>(
     `SELECT id::text, nombre, ${tiene ? 'rol' : 'NULL::text AS rol'}
-       FROM capa WHERE EXISTS (SELECT 1 FROM entidad_geo e WHERE e.capa_id = capa.id)`
+       FROM capa WHERE EXISTS (SELECT 1 FROM entidad_geo e WHERE e.capa_id = capa.id)${sqlCapaVisible('capa')}`
   );
   return filas
     .map((f) => ({ id: Number(f.id), nombre: f.nombre, rol: (tiene ? f.rol : rolDeCapa(f.nombre)) as RolCapa | null }))

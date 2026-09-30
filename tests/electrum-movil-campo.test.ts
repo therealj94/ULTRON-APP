@@ -12,6 +12,7 @@ import {
   hiloParaMandar,
   informeDe,
   lineaDeEstado,
+  alFinalDelHilo,
   nombreDeCarpeta,
   nombreDeFoto,
   nombreDeNivel,
@@ -141,4 +142,12 @@ test('las frases nuevas: la cámara no es la subida, y el informe caducado dice 
   assert.doesNotMatch(cam, /señal/);
   const caducado = 'Ese informe ya no está. Se guardan media hora porque describen el catastro del momento; pedime otro.';
   assert.equal(fraseDeError(new ErrorHttp(404, caducado), 'informe'), `No pude guardar el informe. ${caducado}`);
+});
+
+// Auditoría H16: la app bajaba al final con cada cambio de tamaño, aunque se estuviera releyendo.
+test('el hilo sigue el final solo si ya se estaba al final', () => {
+  assert.equal(alFinalDelHilo({ y: 920, alto: 1500, visible: 560 }), true, 'a 20 px del final: sigue');
+  assert.equal(alFinalDelHilo({ y: 1000, alto: 1500, visible: 500 }), true, 'justo al final');
+  assert.equal(alFinalDelHilo({ y: 200, alto: 1500, visible: 500 }), false, 'releyendo arriba: no se lo arrastra');
+  assert.equal(alFinalDelHilo({ y: 0, alto: 300, visible: 500 }), true, 'hilo más corto que la pantalla');
 });

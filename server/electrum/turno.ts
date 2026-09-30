@@ -9,6 +9,7 @@
  * de un chatbot que suena convincente.
  */
 import { enTurno, iniciarTraza, trazaActual } from '../../lib/cognitivo/traza';
+import { conEvidencias, evidenciasDelTurno, verificarCitas } from './evidencias';
 import { clasificar } from '../../lib/cognitivo/clasificador';
 import { AVISO_INYECCION, guiasDeClasificacion } from '../../lib/cognitivo/agentes';
 import { MEMORIA_ESTRUCTURADA } from '../../lib/manos/memoria';
@@ -62,6 +63,8 @@ export type RespuestaTurno = {
   trazaId?: string;
   /** En qué idioma contestó: el de quien preguntó; español si no se sabe. La voz lo lee en ese. */
   idioma?: IdiomaTurno;
+  /** Las citas que se comprobaron contra lo leído: documento y página, para abrirlas (auditoría H13). */
+  citas?: Array<{ codigo: string; documentoId: number; documento: string; pagina: number | null }>;
 };
 
 /**
@@ -81,18 +84,28 @@ export type RespuestaTurno = {
  * que el contrato fuera papel mojado.
  */
 export const PRESUPUESTO_TURNO_MS = 50_000;
+
+/** Lo que le queda al turno desde que llegó la petición. Nunca negativo. */
+export function msRestanteDelTurno(inicio: number, ahora = Date.now()): number {
+  return Math.max(0, PRESUPUESTO_TURNO_MS - (ahora - inicio));
+}
 /** Lo que esperan la pantalla y el teléfono. Tiene que ser MAYOR que el presupuesto del turno. */
 export const ESPERA_CLIENTE_MS = 75_000;
-/** Ni una llamada eterna ni una que no alcanza a pensar. */
-const MIN_LLAMADA_MS = 8_000;
+/**
+ * Ni una llamada eterna ni una que no alcanza a pensar. Antes había además un MÍNIMO de 8 s que se
+ * daba aunque al turno le quedaran 2: así se pasaba de su presupuesto (auditoría H08). Ahora, con
+ * menos de lo que hace falta para pensar, no se llama y el bucle cierra con lo que tiene.
+ */
+const MIN_PARA_PENSAR_MS = 1_500;
 const MAX_LLAMADA_MS = 60_000;
 
 /**
  * Pregunta al nodo. Devuelve el mensaje entero para poder leer `tool_calls` nativo si el servidor
  * lo trae; si no, el harness lo saca del texto en formato Hermes.
  */
-async function pensarConQwen(mensajes: Mensaje[], herramientas: unknown[], msRestante: number) {
-  const tope = Math.min(MAX_LLAMADA_MS, Math.max(MIN_LLAMADA_MS, msRestante));
+async function pensarConQwen(mensajes: Mensaje[], herramientas: unknown[], msRestante: number, senal?: AbortSignal) {
+  if (msRestante < MIN_PARA_PENSAR_MS) throw new Error('sin tiempo para pensar');
+  const tope = Math.min(MAX_LLAMADA_MS, msRestante);
   const r = await fetchNodo(`${NODO_URL}/api/chat`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-ultron-secreto': NODO_SECRETO },
@@ -104,7 +117,8 @@ async function pensarConQwen(mensajes: Mensaje[], herramientas: unknown[], msRes
       tools: herramientas,
       options: { temperature: 0.4 },
     }),
-    signal: AbortSignal.timeout(tope),
+    // Se corta por tiempo o porque quien preguntaba se fue (auditoría H09), lo que pase primero.
+    signal: senal ? AbortSignal.any([AbortSignal.timeout(tope), senal]) : AbortSignal.timeout(tope),
   });
   /*
    * Un nodo que contesta 502 o 500 NO contestó.
@@ -161,6 +175,17 @@ export type OpcionesTurno = {
   /** ¿Se fue quien preguntaba? El turno deja de empezar cosas nuevas. */
   abandonado?: () => boolean;
   /**
+   * Se dispara cuando quien preguntaba se fue: corta la llamada al modelo y deja de esperar la
+   * herramienta en curso (auditoría H09). La ruta la ata a `res.on('close')`.
+   */
+  senal?: AbortSignal;
+  /**
+   * Cuándo llegó la petición (ms). El presupuesto del turno se cuenta DESDE AHÍ, no desde que
+   * empieza el bucle: clasificar, buscar en expedientes y en internet también gastan del mismo
+   * reloj (auditoría H08). Sin él, desde que empieza el turno.
+   */
+  inicio?: number;
+  /**
    * Quien pregunta pidió buscar en internet (el botón «Internet» de la pantalla). La búsqueda la
    * hace el servidor ANTES de pensar: no queda a criterio del modelo si busca o no, y las fuentes
    * llegan pegadas a la pregunta para que las cite.
@@ -180,7 +205,8 @@ export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: Op
   const reg = iniciarTraza({ plataforma: 'electrum', canal: ctx.canal, quien: ctx.quien, nivel: ctx.nivel, pregunta: mensaje });
   return enTurno(reg, async () => {
     try {
-      const r = await turnoElectrumInterno(mensaje, ctx, opciones);
+      // Lo que se lea en el turno queda como evidencia citable y se verifica al final (H13).
+      const r = await conEvidencias(() => turnoElectrumInterno(mensaje, ctx, opciones));
       if (r.panel) reg.agente(r.panel);
       reg.cerrar({ respuesta: r.texto, emocion: r.emocion, via: r.fin });
       return { ...r, trazaId: reg.id };
@@ -217,7 +243,8 @@ async function bloqueInternet(mensaje: string, enVivo?: (e: EnVivo) => void): Pr
 }
 
 async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: OpcionesTurno): Promise<RespuestaTurno> {
-  const { historial = [], enVivo, abandonado } = opciones;
+  const { historial = [], enVivo, abandonado, senal } = opciones;
+  const inicio = opciones.inicio ?? Date.now();
   // Español por defecto; inglés si le hablan en inglés. Sin señal en el mensaje, la pista del
   // micrófono y, si no, el idioma de la última pregunta.
   const ultimaPregunta = [...historial].reverse().find((m) => m.role === 'user');
@@ -329,9 +356,11 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     ],
     herramientas,
     ctx,
-    pensar: ({ mensajes, herramientas: nativas, msRestante }) => pensarConQwen(mensajes, nativas, msRestante),
-    presupuesto: { rondas: 3, llamadas: 8, ms: PRESUPUESTO_TURNO_MS },
+    pensar: ({ mensajes, herramientas: nativas, msRestante, senal: s }) => pensarConQwen(mensajes, nativas, msRestante, s),
+    // Lo que queda del reloj único que empezó al llegar la petición (auditoría H08).
+    presupuesto: { rondas: 3, llamadas: 8, ms: msRestanteDelTurno(inicio) },
     abandonado,
+    senal,
     alVivo: enVivo
       ? (t, ui) => {
           enVivo({ herramienta: { herramienta: t.llamada.nombre, ok: t.ok, resumen: t.resumen, ms: t.ms } });
@@ -340,7 +369,17 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
       : undefined,
   });
 
-  const emo = extraerEmocion(r.texto);
+  /*
+   * Las citas se comprueban contra lo leído en ESTE turno (auditoría H13): `[D12-p5]` pasa a
+   * «(documento, p. 5)» si esa página se leyó, y si no se quita y se dice. Va antes de todo lo
+   * demás para que la pantalla, la voz y Telegram reciban lo mismo.
+   */
+  const verificadas = verificarCitas(r.texto, evidenciasDelTurno(), idioma === 'en' ? 'en' : 'es');
+  const pasoCitas = verificadas.quitadas.length
+    ? { herramienta: 'citas', ok: false, resumen: `citas sin respaldo quitadas: ${verificadas.quitadas.join(', ')}`, ms: 0 }
+    : null;
+  if (pasoCitas) trazaActual()?.paso(pasoCitas);
+  const emo = extraerEmocion(verificadas.texto);
   // Las expresiones de voz ([risa], [suspiro]…) son de AU-RA y suenan con la voz de Dora. Si el
   // modelo del doctor escribe una, no se enseña ni se oye: su voz las quita (server/voz.ts) y aquí
   // salen del texto que llega a la pantalla, al hilo y a Telegram.
@@ -365,6 +404,7 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
    */
   const ui = [...r.ui];
   const traza = r.traza.map((t) => ({ herramienta: t.llamada.nombre, ok: t.ok, resumen: t.resumen, ms: t.ms }));
+  if (pasoCitas) traza.push(pasoCitas);
   let final = texto;
   try {
     const g = await garantizarMapa({ mensaje, texto, ui, historial, canal: ctx.canal, herramientas: traza.filter((t) => t.ok).map((t) => t.resumen).join('\n') });
@@ -415,5 +455,6 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     ui,
     fin: r.fin,
     idioma,
+    ...(verificadas.citas.length ? { citas: verificadas.citas.map((c) => ({ codigo: c.codigo, documentoId: c.documentoId, documento: c.documento, pagina: c.pagina })) } : {}),
   };
 }

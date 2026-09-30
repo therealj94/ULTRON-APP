@@ -20,6 +20,8 @@ import { areaHectareas, etiqueta, repararTexto, type Capa } from './gis';
 import { buscarPorSignificado } from './vectores';
 import { fundirPorRango } from '../../lib/cognitivo/embeddings';
 import { trazaActual } from '../../lib/cognitivo/traza';
+import { anotarEvidencia } from './evidencias';
+import { organizacionParaGuardar, sqlDocumentoVisible } from './organizacion';
 
 let pool: Pool | null = null;
 
@@ -366,10 +368,16 @@ export async function guardarCapa(
    * resubida duplicaba cada área protegida y cada microcuenca, y la ficha contaba dos veces.
    */
   const huellaCapa = firmaDeCapa(capa);
+  /*
+   * Lo que sube un cliente (auditoría H14) entra como capa de PROYECTO suya: geografía, nunca
+   * concesiones. Como concesiones se sumaría al padrón nacional que ven todos, a los traslapes y a
+   * los tableros. Y no se compara con las capas de otros: su copia es suya.
+   */
+  const organizacion = organizacionParaGuardar();
   // Solo en las subidas normales: quien pasa `comoConcesiones` explícito (el paquete de geología)
   // gestiona él mismo el reemplazo —carga la nueva y DESPUÉS borra la vieja— y saltarse la carga
   // aquí le haría borrar la única copia.
-  if (huellaCapa && opts.comoConcesiones === undefined && !pareceCatastro(capa.geojson.features as Feature[]) && (await capaTieneHuella())) {
+  if (!organizacion && huellaCapa && opts.comoConcesiones === undefined && !pareceCatastro(capa.geojson.features as Feature[]) && (await capaTieneHuella())) {
     const conGeom = (capa.geojson.features as Feature[]).filter((f) => f && f.geometry);
     const n = conGeom.length;
     let [ya] = await consulta<{ id: string }>(`SELECT id::text FROM capa WHERE huella = $1 LIMIT 1`, [huellaCapa]);
@@ -432,7 +440,7 @@ export async function guardarCapa(
      * no rasgo a rasgo: una capa es de una cosa o de la otra, y decidir por rasgo deja la mitad de
      * un shapefile en cada tabla.
      */
-    const comoConcesiones = opts.comoConcesiones ?? pareceCatastro(capa.geojson.features as Feature[]);
+    const comoConcesiones = organizacion ? false : (opts.comoConcesiones ?? pareceCatastro(capa.geojson.features as Feature[]));
 
     /*
      * En bloques, no de una en una.
@@ -609,7 +617,9 @@ export async function guardarCapa(
      * El rol, solo para geografía: una capa de derechos mineros que se llame «Concesiones del
      * municipio de Danlí» no es un municipio, y con rol la ficha la cruzaría como tal.
      */
-    else if (!comoConcesiones && nEnt > 0 && (await baseTieneRol())) {
+    else if (organizacion) {
+      await cliente.query(`UPDATE capa SET organizacion = $2${(await baseTieneRol()) ? ", rol = 'proyecto'" : ''} WHERE id = $1`, [capaId, organizacion]);
+    } else if (!comoConcesiones && nEnt > 0 && (await baseTieneRol())) {
       const rol = rolDeCapa(capa.nombre);
       if (rol) await cliente.query('UPDATE capa SET rol = $2 WHERE id = $1', [capaId, rol]);
     }
@@ -1193,13 +1203,13 @@ export async function buscarPorTexto(
    */
   const SQL = (op: string) => `
     WITH q AS (SELECT ${op} AS tq)
-    SELECT f.id, d.nombre AS documento, f.pagina,
+    SELECT f.id, d.nombre AS documento, f.pagina, d.id::int AS documento_id, (d.meta->>'origen' = 'foto_transcrita' AND coalesce(d.meta->>'revisado', 'false') <> 'true') AS transcripcion,
            ts_headline('spanish', f.texto, q.tq,
              'MaxWords=55, MinWords=25, ShortWord=3, MaxFragments=2, FragmentDelimiter=" … ", StartSel="", StopSel=""') AS texto,
            ts_rank(f.tsv, q.tq)::float8 AS puntaje
     FROM fragmento f
     JOIN documento d ON d.id = f.documento_id, q
-    WHERE f.tsv @@ q.tq${filtro.sql}
+    WHERE f.tsv @@ q.tq${filtro.sql}${sqlDocumentoVisible('d')}
     ORDER BY puntaje DESC
     LIMIT $2`;
 
@@ -1228,17 +1238,29 @@ export async function buscarPorTexto(
 async function primerosFragmentos(documento: string | undefined, limite: number) {
   const filtro = filtroDocumento(documento, 2);
   if (!filtro.sql) return [];
-  return consulta<{ id: number; documento: string; pagina: number | null; texto: string; puntaje: number }>(
-    `SELECT f.id, d.nombre AS documento, f.pagina, left(f.texto, 700) AS texto, 0::float8 AS puntaje
+  return consulta<{ id: number; documento: string; documento_id: number; transcripcion: boolean; pagina: number | null; texto: string; puntaje: number }>(
+    `SELECT f.id, d.nombre AS documento, f.pagina, d.id::int AS documento_id, (d.meta->>'origen' = 'foto_transcrita' AND coalesce(d.meta->>'revisado', 'false') <> 'true') AS transcripcion, left(f.texto, 700) AS texto, 0::float8 AS puntaje
        FROM fragmento f JOIN documento d ON d.id = f.documento_id
-      WHERE f.orden < 3${filtro.sql}
+      WHERE f.orden < 3${filtro.sql}${sqlDocumentoVisible('d')}
       ORDER BY d.id, f.orden
       LIMIT $1`,
     [limite, ...filtro.args]
   );
 }
 
-export type HitExpediente = { documento: string; pagina: number | null; texto: string; puntaje: number; via?: 'texto' | 'significado' | 'ambos' };
+export type HitExpediente = {
+  documento: string;
+  pagina: number | null;
+  texto: string;
+  puntaje: number;
+  via?: 'texto' | 'significado' | 'ambos';
+  /** Número del documento: con la página, el localizador que se puede comprobar (auditoría H13). */
+  documentoId?: number;
+  /** El código con que se cita: `D12-p5`. */
+  codigo?: string;
+  /** Viene de una foto transcrita que nadie revisó todavía (auditoría H11). */
+  transcripcion?: boolean;
+};
 
 /**
  * La búsqueda de expedientes que usa Dr Electrum: HÍBRIDA si hay vectores (texto completo +
@@ -1251,19 +1273,27 @@ export async function buscarEnExpedientes(texto: string, limite = 8, opts: { doc
     buscarPorSignificado(texto, Math.max(limite, 20), opts).catch(() => []),
   ]);
   let hits: HitExpediente[];
+  const deFila = (x: { documento_id?: number; transcripcion?: boolean }) => ({
+    documentoId: x.documento_id != null ? Number(x.documento_id) : undefined,
+    transcripcion: x.transcripcion === true || undefined,
+  });
   if (!porSignificado.length) {
-    hits = porTexto.slice(0, limite).map(({ id: _id, ...h }) => ({ ...h, via: 'texto' as const }));
+    hits = porTexto.slice(0, limite).map(({ id: _id, documento_id, transcripcion, ...h }: any) => ({ ...h, ...deFila({ documento_id, transcripcion }), via: 'texto' as const }));
   } else {
-    const fundidos = fundirPorRango<{ id: number; documento: string; pagina: number | null; texto: string }>([porTexto, porSignificado], (x) => String(x.id));
+    const fundidos = fundirPorRango<{ id: number; documento: string; pagina: number | null; texto: string; documento_id?: number; transcripcion?: boolean }>([porTexto, porSignificado], (x) => String(x.id));
     hits = fundidos.slice(0, limite).map(({ item, puntaje, de }) => ({
       documento: item.documento,
       pagina: item.pagina,
       texto: item.texto,
+      ...deFila(item),
       puntaje: Math.round(puntaje * 10000) / 10000,
       via: de.length > 1 ? ('ambos' as const) : de[0] === 0 ? ('texto' as const) : ('significado' as const),
     }));
   }
-  for (const h of hits) trazaActual()?.documento({ fuente: h.documento, ref: h.pagina ? `p. ${h.pagina}` : undefined, puntaje: h.puntaje });
+  for (const h of hits) {
+    trazaActual()?.documento({ fuente: h.documento, ref: h.pagina ? `p. ${h.pagina}` : undefined, puntaje: h.puntaje });
+    if (h.documentoId != null) h.codigo = anotarEvidencia({ documentoId: h.documentoId, documento: h.documento, pagina: h.pagina, transcripcion: h.transcripcion });
+  }
   return hits;
 }
 
@@ -1275,6 +1305,8 @@ export type LecturaSeguida =
   | {
       ok: true;
       documento: string;
+      /** El número del documento: con la página arma el código de cita `D12-p5` (auditoría H13). */
+      documentoId: number;
       carpeta: string | null;
       desde: number;
       hasta: number;
@@ -1314,7 +1346,7 @@ export async function leerSeguido(
   const candidatos = await consulta<{ id: number; nombre: string; carpeta: string | null; n: number; ultima: number | null }>(
     `SELECT d.id, d.nombre, d.carpeta, count(f.id)::int AS n, max(f.pagina) AS ultima
        FROM documento d JOIN fragmento f ON f.documento_id = d.id
-      WHERE true${filtro.sql}
+      WHERE true${filtro.sql}${sqlDocumentoVisible('d')}
       GROUP BY d.id
       ORDER BY (unaccent(lower(d.nombre)) LIKE unaccent(lower($1)) ESCAPE '\\') DESC, count(f.id) DESC, d.id DESC
       LIMIT 6`,
@@ -1374,9 +1406,13 @@ export async function leerSeguido(
     if (prox?.p != null) sigue = { pagina: Number(prox.p), trozo: 0 };
   }
   trazaActual()?.documento({ fuente: d.nombre, ref: conPaginas ? `pp. ${inicio}-${Math.max(inicio, hasta)}` : undefined, puntaje: 1 });
+  // Cada página leída queda como evidencia citable del turno (auditoría H13); sin páginas, el documento.
+  if (conPaginas) for (let p = inicio; p <= Math.max(inicio, hasta) && p < inicio + 40; p += 1) anotarEvidencia({ documentoId: Number(d.id), documento: d.nombre, pagina: p });
+  else anotarEvidencia({ documentoId: Number(d.id), documento: d.nombre, pagina: null });
   return {
     ok: true,
     documento: d.nombre,
+    documentoId: Number(d.id),
     carpeta: d.carpeta,
     desde: inicio,
     hasta: Math.max(inicio - 1, hasta),

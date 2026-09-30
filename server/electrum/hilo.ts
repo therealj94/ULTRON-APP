@@ -126,11 +126,12 @@ export function hiloDe(clave: string): TurnoHilo[] {
 }
 
 /**
- * Los hilos de Telegram se guardan también en la base (cognitivo.hilo). En la pantalla el cliente
- * manda su copia en cada turno y un redespliegue no pierde nada; en Telegram no hay cliente, y cada
- * despliegue de Render dejaba al Doctor sin saber de qué se venía hablando.
+ * Los hilos se guardan también en la base (cognitivo.hilo): Telegram, que no tiene cliente, y la
+ * mesa (auditoría H17). En la mesa el navegador guardaba su copia solo en la pestaña: cambiar de
+ * aparato o cerrar la pestaña con el servidor recién redesplegado era empezar de cero. Caducan
+ * igual, a las seis horas, y van con los secretos tapados.
  */
-const persistente = (clave: string) => clave.endsWith('·telegram') && tipo() === 'postgres';
+const persistente = (clave: string) => (clave.endsWith('·telegram') || /·mesa(·|$)/.test(clave)) && tipo() === 'postgres';
 
 /** Trae de la base el hilo que no está en memoria (tras un redespliegue). Nunca falla. */
 export async function cargarHilo(clave: string): Promise<TurnoHilo[]> {

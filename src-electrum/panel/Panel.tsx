@@ -364,6 +364,25 @@ export function Panel({ abierto, vista, alto, onAlto, onFace, onEmocion, onUi, o
   const turnosRef = useRef<Turno[]>(turnos);
   turnosRef.current = turnos;
   /*
+   * La pestaña se cerró o es otro aparato: lo que se venía hablando se retoma del servidor, que lo
+   * guarda por persona (auditoría H17). Solo si la pantalla arrancó en blanco y nadie escribió aún.
+   */
+  useEffect(() => {
+    if (turnosRef.current.length) return;
+    let vivo = true;
+    void fetch('/api/electrum/hilo', { headers: headersElectrum() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        const del: Array<{ rol: string; texto: string }> = Array.isArray(j?.turnos) ? j.turnos : [];
+        if (!vivo || !del.length || turnosRef.current.length) return;
+        setTurnos(del.map((t) => ({ de: t.rol === 'electrum' ? ('electrum' as const) : ('persona' as const), texto: String(t.texto || '') })));
+      })
+      .catch(() => {});
+    return () => {
+      vivo = false;
+    };
+  }, []);
+  /*
    * La concesión que se está mirando: la última a la que voló el mapa por una herramienta.
    *
    * Sin esto el botón PDF armaba siempre el informe de la cartera entera, aunque la conversación

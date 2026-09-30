@@ -47,6 +47,16 @@ export type Persona = {
   apodos: string[];
   /** Plataformas a las que entra. Lo que no está aquí, no existe para esa persona. */
   acceso: Partial<Record<Plataforma, Nivel>>;
+  /**
+   * De qué organización es (auditoría H14): lo que cargue lo ve solo su organización. Sin esto se
+   * deduce del correo (server/electrum/organizacion.ts).
+   */
+  organizacion?: string;
+  /**
+   * De dónde salió: `web` es una cuenta aprobada desde la página (server/cuentas.ts); lo demás lo
+   * puso José a mano en el padrón. Decide la organización por defecto (H14).
+   */
+  origen?: 'web';
 };
 
 export type Identificacion = { persona: Persona; prueba: Prueba };
@@ -129,8 +139,8 @@ function nivelValido(v: unknown): Nivel | null {
  *
  *   Líneas — una persona por línea, cinco columnas separadas por `|`:
  *
- *     id | nombre | correos | telegram | accesos
- *     perez | Ing. Pérez | perez@mina.hn | 445566 | electrum=escribe
+ *     id | nombre | correos | telegram | accesos | organización (opcional)
+ *     perez | Ing. Pérez | perez@mina.hn | 445566 | electrum=escribe | minas-del-norte
  *     jose  |           |               | 111222  | electrum=mando
  *
  *   Las columnas vacías no borran: se FUNDE con lo que ya había para ese id. Así se le agrega un
@@ -167,6 +177,8 @@ function delEntorno(): Persona[] {
       correos: c[2] ? c[2].split(',') : [],
       telegram: c[3] ? c[3].split(',') : [],
       acceso,
+      // Sexta columna, opcional: la organización (auditoría H14).
+      organizacion: c[5] || undefined,
     });
     if (p) out.push(p);
   }
@@ -188,6 +200,7 @@ function normalizar(x: any): Persona | null {
     telegram: (Array.isArray(x?.telegram) ? x.telegram : lista(x?.telegram)).map((s: unknown) => String(s).trim()).filter(Boolean),
     apodos: (Array.isArray(x?.apodos) ? x.apodos : lista(x?.apodos)).map(fold).filter(Boolean),
     acceso,
+    ...(x?.organizacion ? { organizacion: fold(x.organizacion).replace(/[^a-z0-9.-]+/g, '-').slice(0, 60) } : {}),
   };
 }
 
@@ -224,7 +237,10 @@ let cache: { llave: string; gente: Persona[] } | null = null;
  */
 let aprobadas: { version: number; gente: Persona[] } = { version: 0, gente: [] };
 export function fijarCuentasAprobadas(gente: Array<Partial<Persona> & { id: string }>) {
-  const limpias = gente.map(normalizar).filter((p): p is Persona => !!p && p.correos.length > 0);
+  const limpias = gente
+    .map(normalizar)
+    .filter((p): p is Persona => !!p && p.correos.length > 0)
+    .map((p) => ({ ...p, origen: 'web' as const }));
   aprobadas = { version: aprobadas.version + 1, gente: limpias };
 }
 
@@ -243,6 +259,7 @@ function fundir(a: Persona, b: Persona): Persona {
     telegram: [...new Set([...a.telegram, ...b.telegram])],
     apodos: [...new Set([...a.apodos, ...b.apodos])],
     acceso: { ...a.acceso, ...b.acceso },
+    ...(b.organizacion || a.organizacion ? { organizacion: b.organizacion || a.organizacion } : {}),
   };
 }
 

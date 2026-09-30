@@ -73,15 +73,6 @@ test('el hilo de Telegram sobrevive a un redespliegue', { skip: hayBase() ? fals
   }
 });
 
-test('los hilos de la pantalla no van a la base: el cliente ya lleva su copia', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async () => {
-  const clave = claveHilo(`jose-${Date.now()}`, 'mesa');
-  recordarHilo(clave, 'hola', 'buenas');
-  await new Promise((r) => setTimeout(r, 100));
-  const [f] = await sql(`SELECT 1 FROM cognitivo.hilo WHERE clave = $1`, [clave]);
-  assert.equal(f, undefined);
-  olvidarHilo(clave);
-});
-
 test('en la base el hilo va con los secretos tapados, y el caducado se borra', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async () => {
   const clave = claveHilo(`tg:secreto-${Date.now()}`, 'telegram');
   const esperar = async (cond: () => Promise<boolean>) => {
@@ -104,6 +95,23 @@ test('en la base el hilo va con los secretos tapados, y el caducado se borra', {
     assert.equal((await sql(`SELECT 1 FROM cognitivo.hilo WHERE clave = $1`, [clave]))[0], undefined);
   } finally {
     relojDeHilo(() => Date.now());
+    await sql(`DELETE FROM cognitivo.hilo WHERE clave = $1`, [clave]).catch(() => {});
+  }
+});
+
+// Auditoría H17: la conversación de la mesa también sobrevive a un redespliegue y a cambiar de aparato.
+test('el hilo de la mesa también se guarda en la base', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' }, async () => {
+  const clave = claveHilo(`prueba-mesa-${Date.now()}`, 'mesa');
+  try {
+    recordarHilo(clave, '¿qué vence este año?', 'Vencen 12 concesiones.');
+    for (let i = 0; i < 50; i++) {
+      const [f] = await sql<{ n: number }>(`SELECT jsonb_array_length(turnos)::int AS n FROM cognitivo.hilo WHERE clave = $1`, [clave]);
+      if (f?.n === 2) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    olvidarHilo();
+    assert.deepEqual((await cargarHilo(clave)).map((t) => t.texto), ['¿qué vence este año?', 'Vencen 12 concesiones.']);
+  } finally {
     await sql(`DELETE FROM cognitivo.hilo WHERE clave = $1`, [clave]).catch(() => {});
   }
 });

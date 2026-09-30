@@ -14,6 +14,8 @@
  *
  * Sin ninguna de las dos, el servidor contesta 401 y la pantalla lo dice. No hay modo invitado.
  */
+
+import { olvidarPrefsUsuario } from './preferencias';
 const LLAVE = 'electrum_llave';
 const SESION = 'ultron_sesion_token';
 
@@ -156,6 +158,8 @@ export function guardarLlave(llave: string): Donde {
  * sería dejar una abierta creyendo que se cerró.
  */
 export function salir() {
+  // Las preferencias de pantalla son de la persona que sale, no de la que entre después.
+  olvidarPrefsUsuario();
   // El servidor también la cierra: si no, el token seguiría valiendo en cualquier copia. Sin esperar la
   // respuesta: sin red, igual se borra de aquí.
   const sesion = guardado(SESION);

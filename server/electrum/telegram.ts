@@ -20,6 +20,7 @@
 import { comandoDeAprobacion } from '../../lib/cognitivo/aprobaciones';
 import crypto from 'node:crypto';
 import { archivoTelegram, parsearUpdateTelegram, type TgParsed } from '../../lib/telegram-in';
+import { conOrganizacion, organizacionDePersona } from './organizacion';
 import { identificar, nivelDe, padron, type Identificacion, type Nivel } from '../../lib/acceso';
 import { extraerPdf } from '../../lib/leer-pdf';
 import { aprender } from './aprender';
@@ -434,7 +435,7 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
   }
 
   const geo = await archivoGeo(update, token).catch(() => null);
-  const archivo: Atendido | null = await atenderArchivo(parsed, geo, quien).catch((e: any) => {
+  const archivo: Atendido | null = await conOrganizacion(organizacionDePersona(quien.id?.persona), () => atenderArchivo(parsed, geo, quien)).catch((e: any) => {
     // El motivo técnico (a veces con la dirección de la base) va al registro, no al chat.
     console.warn('[electrum] telegram archivo', String(e?.message || e).slice(0, 180));
     return { dicho: 'Se me cayó leyendo el archivo. Volvé a mandármelo; si se repite, avisale a José.' };
@@ -472,7 +473,8 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
   });
   const conArchivo = archivo?.contexto ? `${archivo.contexto}\n\n` : '';
 
-  const salida = await turnoElectrum(
+  // Por Telegram ve lo de su organización, igual que en la pantalla (auditoría H14).
+  const salida = await conOrganizacion(organizacionDePersona(quien.id?.persona), () => turnoElectrum(
     `${conArchivo}${mensaje}`,
     {
       quien: quien.id?.persona.id || null,
@@ -483,7 +485,7 @@ export async function procesarElectrumTelegram(update: any): Promise<{ estado: s
       prueba: quien.id?.prueba ?? null,
     },
     { historial }
-  );
+  ));
 
   const texto = [archivo?.dicho, salida.texto].filter(Boolean).join('\n\n') || 'No pude contestar eso ahora mismo.';
   await responderElectrum(parsed.chatId, texto);
