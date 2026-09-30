@@ -149,7 +149,9 @@ export function validarAccion(x: unknown): AccionApp | null {
 
 export type EventoAccion = { id: string; accion: AccionApp };
 type Oyente = (e: EventoAccion) => void;
-type Canal = { oyente: Oyente; aparato: string | null; desalojar?: () => void };
+/** Un evento del canal que NO es una acción (hoy solo `ambiente`): va con su propio `event:` del SSE. */
+type OyenteEvento = (nombre: string, datos: unknown) => void;
+type Canal = { oyente: Oyente; aparato: string | null; desalojar?: () => void; alEvento?: OyenteEvento };
 /** Por cuenta, en orden de llegada (un Set recorre en el orden en que se añadió): el primero es el más viejo. */
 const canales = new Map<string, Set<Canal>>();
 /** La clave de un correo o de un ámbito (`correo#aparato`): el correo sin mayúsculas, el aparato tal cual. */
@@ -188,7 +190,7 @@ export function aparatoValido(x: unknown): string | null {
  *    nuevo es el teléfono que la persona tiene en la mano; el viejo casi siempre es un canal muerto.
  * `desalojar` es cómo cerrar ese canal desde aquí (la ruta termina la respuesta SSE).
  */
-export function suscribir(correo: string, oyente: Oyente, o: { aparato?: string | null; desalojar?: () => void; max?: number } = {}): () => void {
+export function suscribir(correo: string, oyente: Oyente, o: { aparato?: string | null; desalojar?: () => void; max?: number; alEvento?: OyenteEvento } = {}): () => void {
   const k = clave(correo);
   let s = canales.get(k);
   if (!s) canales.set(k, (s = new Set()));
@@ -204,7 +206,7 @@ export function suscribir(correo: string, oyente: Oyente, o: { aparato?: string 
   if (aparato) for (const c of [...s]) if (c.aparato === aparato) fuera(c);
   const max = Math.max(1, o.max ?? MAX_CANALES_POR_CUENTA);
   while (s.size >= max) fuera(s.values().next().value as Canal);
-  const canal: Canal = { oyente, aparato, desalojar: o.desalojar };
+  const canal: Canal = { oyente, aparato, desalojar: o.desalojar, alEvento: o.alEvento };
   s.add(canal);
   return () => {
     s!.delete(canal);
@@ -214,6 +216,37 @@ export function suscribir(correo: string, oyente: Oyente, o: { aparato?: string 
 
 export function oyentesDe(correo: string): number {
   return canales.get(clave(correo))?.size || 0;
+}
+
+/**
+ * EL SONIDO DE FONDO de la conversación (la «animación» sonora mientras AURA hace una tarea lenta):
+ * tecleo al buscar, hojas al leer, lápiz al calcular. `on: false` lo para.
+ *
+ * NO es una acción: no pasa por `validarAccion` (el modelo no puede pedirlo con ACCION_APP), no queda
+ * en el registro de reconexión (un sonido de hace diez segundos no se repite al volver) y no se
+ * deduplica. Viaja por el MISMO canal del teléfono (GET /api/app/acciones) como `event: ambiente`; un
+ * teléfono que no lo conoce lo salta (solo lee `message`/`accion`). Va SOLO al aparato de la
+ * conversación: sin aparato no va a nadie (no suena en el otro teléfono de la persona).
+ */
+export const SONIDOS_AMBIENTE = ['teclado', 'papel', 'lapiz'] as const;
+export type SonidoAmbiente = (typeof SONIDOS_AMBIENTE)[number];
+export type EventoAmbiente = { sonido: SonidoAmbiente | null; on: boolean };
+
+export function empujarAmbiente(correo: string, aparato: string | null | undefined, e: EventoAmbiente): number {
+  const ap = aparatoValido(aparato);
+  if (!ap) return 0;
+  const datos: EventoAmbiente = { sonido: e.on && e.sonido && SONIDOS_AMBIENTE.includes(e.sonido) ? e.sonido : null, on: !!e.on && !!e.sonido };
+  let entregado = 0;
+  for (const c of [...(canales.get(clave(correo)) || [])]) {
+    if (c.aparato !== ap || !c.alEvento) continue;
+    try {
+      c.alEvento('ambiente', datos);
+      entregado++;
+    } catch {
+      /* ese canal se fue */
+    }
+  }
+  return entregado;
 }
 
 /**

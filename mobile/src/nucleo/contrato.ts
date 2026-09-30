@@ -127,6 +127,17 @@ export type RecordatorioPuesto = { id: string; texto: string; cuando: number; ll
 export const RUTA_ACCIONES = '/api/app/acciones';
 export const RUTA_CONTEXTO = '/api/app/contexto';
 
+/**
+ * Por el MISMO canal de acciones, durante la conversación: `event: ambiente` + `data: {"sonido","on"}`.
+ * Es el sonido de fondo mientras AURA hace una tarea lenta (tecleo al buscar, hojas al leer, lápiz al
+ * calcular); `on: false` lo quita. No es una acción (no lleva id, no se deduplica ni se repite al
+ * reconectar) y solo llega al aparato de la conversación. Un teléfono que no lo conoce lo salta.
+ * Los mismos nombres que compa/frasesEstado.ts (SONIDOS_AMBIENTE) y lib/acciones-app.ts.
+ */
+export const EVENTO_AMBIENTE = 'ambiente';
+export type SonidoAmbiente = 'teclado' | 'papel' | 'lapiz';
+export type Ambiente = { sonido: SonidoAmbiente | null; on: boolean };
+
 export type Contexto = {
   pantalla: Pantalla;
   chatAbierto?: { correo: string; nombre: string } | null;
@@ -176,6 +187,8 @@ export type Eventos = {
    * queda guardado en compa/recordatorios.ts (`tomarPorDecir`) hasta que la voz se monte.
    */
   recordatorio: { texto: string; base: string };
+  /** El sonido de fondo de una tarea lenta en la conversación (llega por el canal de acciones). */
+  ambiente: Ambiente;
 };
 
 type Oyente<K extends keyof Eventos> = (dato: Eventos[K]) => void;

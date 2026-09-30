@@ -16,8 +16,8 @@
  *
  * Sin React Native: todo lo de afuera entra por `deps` y las pruebas lo corren con un servidor falso.
  */
-import type { AccionApp, Contexto, Eventos, Pantalla, RecordatorioPuesto } from '../nucleo/contrato';
-import { MANOS_APP, RUTA_ACCIONES } from '../nucleo/contrato';
+import type { AccionApp, Ambiente, Contexto, Eventos, Pantalla, RecordatorioPuesto } from '../nucleo/contrato';
+import { EVENTO_AMBIENTE, MANOS_APP, RUTA_ACCIONES } from '../nucleo/contrato';
 import { LectorSse, jsonDe } from './sse';
 
 /** Lo que se usa de un XMLHttpRequest (el de React Native o uno falso en las pruebas). */
@@ -91,6 +91,15 @@ export function esAccionApp(a: any): a is AccionApp {
     default:
       return false;
   }
+}
+
+const SONIDOS = ['teclado', 'papel', 'lapiz'];
+
+/** El `data` de un `event: ambiente`, validado: un sonido que no conozco es «sin sonido». */
+export function ambienteDe(d: any): Ambiente | null {
+  if (!d || typeof d !== 'object' || typeof d.on !== 'boolean') return null;
+  const sonido = d.on && SONIDOS.includes(d.sonido) ? (d.sonido as Ambiente['sonido']) : null;
+  return { sonido, on: !!sonido };
 }
 
 /**
@@ -261,6 +270,8 @@ export type DepsPuente = {
   xhr: () => XhrMin;
   /** Por cada acción válida y nueva. */
   alAccion: (a: AccionApp, id?: string) => void;
+  /** El sonido de fondo de la conversación (`event: ambiente`). Sin esto, se salta. */
+  alAmbiente?: (a: Ambiente) => void;
   /** El servidor dijo 401: renovar la sesión (en la app, una petición por api() que la renueva sola). */
   renovar?: () => Promise<void>;
   /** Cabeceras de más para el SSE (en la app, `x-aura-aparato`: qué teléfono escucha). */
@@ -381,6 +392,11 @@ export class PuenteAcciones {
       this.vigilar(n);
       for (const ev of this.lector.leer(texto)) {
         if (ev.id) this.ultimoId = ev.id;
+        if (ev.evento === EVENTO_AMBIENTE) {
+          const a = ambienteDe(jsonDe(ev));
+          if (a) this.d.alAmbiente?.(a);
+          continue;
+        }
         if (ev.evento !== 'message' && ev.evento !== 'accion') continue;
         const d = jsonDe<{ id?: string; accion?: unknown }>(ev);
         if (!d) continue;

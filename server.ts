@@ -2053,7 +2053,19 @@ app.post('/api/stt', exigirMesaODesk, limitar(60), async (req, res) => {
  *  · `interrumpida`: la persona cortó la respuesta anterior (la voz ya le dijo «perdón»).
  *  · `voz`: el turno es hablado; se saltan los pasos caros que una charla no necesita.
  */
-type OpcionesTurno = { soloConsulta?: boolean; senal?: AbortSignal; interrumpida?: boolean; voz?: boolean };
+type OpcionesTurno = {
+  soloConsulta?: boolean;
+  senal?: AbortSignal;
+  interrumpida?: boolean;
+  voz?: boolean;
+  /**
+   * El turno EMPIEZA una tarea que puede tardar (una herramienta del harness, un precio, un taller…):
+   * la conversación de voz (server/voz-agente.ts) la usa para decir a tiempo «déjame buscarlo…» y para
+   * poner el sonido de fondo en el teléfono. Se avisa lo antes posible: el harness en cuanto el modelo
+   * escribe PEDIR_HERRAMIENTA, antes de terminar su respuesta. El SSE de la mesa no la usa.
+   */
+  alTarea?: (herramienta: string) => void;
+};
 
 /**
  * Lo más que UN paso puede demorar la primera palabra de la voz (memoria, Laya, fichas, significado,
@@ -2301,7 +2313,15 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
 
 
   try {
+    const avisarTarea = (h: string) => {
+      try {
+        opciones.alTarea?.(h);
+      } catch {
+        /* quien escucha no rompe el turno */
+      }
+    };
     if (/\b(oro|gold|xau|onza)\b/.test(q)) {
+      avisarTarea('oro');
       const s = await aTiempoParaVoz(voz, 'oro', spotMetal('XAU'), null);
       if (!s) hechos.push(sinDatoVoz('SPOT XAU/USD'));
       else {
@@ -2311,6 +2331,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       }
     }
     if (/\b(plata|silver|xag)\b/.test(q)) {
+      avisarTarea('plata');
       const s = await aTiempoParaVoz(voz, 'plata', spotMetal('XAG'), null);
       if (!s) hechos.push(sinDatoVoz('SPOT XAG/USD'));
       else {
@@ -2328,6 +2349,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       }
       const calc = resolverCalculoMina(message, { precioOnza });
       if (calc) {
+        avisarTarea('calculo-mina');
         hechos.push(
           `CÁLCULO DE MINA (${calc.tipo}) — lo hizo la plataforma, este número es el bueno, no lo recalcules:\n${calc.texto}\nFórmula: ${calc.formula}`
         );
@@ -2438,6 +2460,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       tools.push('vision');
     }
     if (image) {
+      avisarTarea('vision');
       const vista = await verImagen(String(image));
       // Un fallo de visión NO se le pasa crudo al modelo: lo parafraseaba como «la cámara me muestra un
       // error técnico», que no le dice nada a nadie. Se le da la frase que tiene que decir.
@@ -2454,6 +2477,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
     }
     const doc = body?.documento || body?.pdf;
     if (doc) {
+      avisarTarea('pdf-leer');
       const filename = String(doc.filename || 'archivo.pdf');
       const buf =
         bufferDeCualquier(doc.buffer) ||
@@ -2823,6 +2847,8 @@ async function bucleHarness(o: {
   senal?: AbortSignal;
   /** Con quién habla (server/nivel.ts). Sin él, la junta. */
   nivel?: NivelAura;
+  /** Se va a correr esta herramienta (la voz dice «déjame buscarlo…» y pone el sonido de fondo). */
+  alTarea?: (herramienta: string) => void;
 }): Promise<{ reply: string; via: string }> {
   let reply = o.reply;
   let via = `${ULTRON_NODO_URL}/api/chat`;
@@ -2832,6 +2858,11 @@ async function bucleHarness(o: {
     const ped = extraerPedidoHerramienta(reply);
     if (!ped) break;
     o.tools.push(ped.herramienta);
+    try {
+      o.alTarea?.(ped.herramienta);
+    } catch {
+      /* quien escucha no rompe el turno */
+    }
     const tH = Date.now();
     // Lo que devuelve la herramienta (una página, una búsqueda) no lo escribió el modelo: si trae la
     // marca de acción, se rompe aquí, antes de ir al prompt o de pegarse a la respuesta parcial.
@@ -3160,7 +3191,8 @@ montarVozAgente(app, {
         return { ...t.body, nivel, sesion: { correo: t.persona.correo, nombre: t.persona.nombre, rol: rolVisible(t.persona.correo, nivel) } };
       })(),
       { enviar: t.enviar, fin: () => {} },
-      { soloConsulta: true, senal: t.senal, interrumpida: t.interrumpida, voz: true }
+      // Las tareas lentas se le avisan a la voz como un evento más del turno (`tarea`).
+      { soloConsulta: true, senal: t.senal, interrumpida: t.interrumpida, voz: true, alTarea: (herramienta) => t.enviar('tarea', { herramienta }) }
     ),
 });
 
@@ -3340,6 +3372,20 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     let enviado = 0;
     let emocion: Emocion | null = null;
     let pedido = false;
+    // La herramienta que pidió el modelo, avisada en cuanto se lee su nombre (antes de que termine de
+    // escribir y mucho antes de correrla): la voz sabe YA que va a tardar.
+    let tareaAvisada = false;
+    const avisarPedido = (texto: string) => {
+      if (tareaAvisada || !opciones.alTarea) return;
+      const ped = extraerPedidoHerramienta(texto);
+      if (!ped) return;
+      tareaAvisada = true;
+      try {
+        opciones.alTarea(ped.herramienta);
+      } catch {
+        /* quien escucha no rompe el turno */
+      }
+    };
 
     const procesar = (piece: string) => {
       full += piece;
@@ -3353,6 +3399,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
       cuerpo = decibleHasta(extraerEmocion(full).texto);
       if (/PEDIR_HERRAMIENTA/i.test(cuerpo)) {
         pedido = true;
+        avisarPedido(cuerpo);
         return;
       }
       // Soltar solo hasta la última frase cerrada; lo que queda puede ser una línea de pedido.
@@ -3404,7 +3451,7 @@ async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTu
     let reply = extraerEmocion(full).texto;
     let via = `${ULTRON_NODO_URL}/api/chat`;
     if (pedido) {
-      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel });
+      const h = await bucleHarness({ reply, system, message, hechos, hilo, tools, mando, senal, nivel: p.nivel, alTarea: opciones.alTarea });
       const e = extraerEmocion(h.reply);
       emocion = e.emocion;
       send('emocion', { emocion });
