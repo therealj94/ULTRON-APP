@@ -12,6 +12,11 @@
  * la de la mesa y la de la conversación fluida) y la cara, la emoción de lo que dice.
  *
  * En una llamada se va (con animación) y vuelve al colgar.
+ *
+ * Es también el ALMA de los otros cuerpos de AURA (avatar3d/contrato.ts): publica lo que siente
+ * (`estadoAvatar`) y escucha los toques que le cuentan el panel al lado de los chats y la pantalla
+ * completa (`toqueAvatar`). Cuando AURA está en uno de esos, esta figurita se aparta (sigue sintiendo).
+ * Su propio cuerpo es AvatarVivo: el 3D si hay modelo y el teléfono lo aguanta; si no, la figurita.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Keyboard, PanResponder, StyleSheet, Text, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
@@ -45,6 +50,10 @@ import { grabarCompa, grabarVacioCompa } from './pintarCompa';
 import { Gestos, type SalidaGesto } from './gestos';
 import { destinoPaseo, msPaseo, pegarABorde, reubicar, yCarril, type Marco, type Posicion } from './borde';
 import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido, sueloCompa } from './canales';
+import { estadoAvatar, estadoDesdeAnimo, gestoDeEvento, mismoEstado, toqueAvatar, type EstadoAvatar } from '../avatar3d/contrato';
+import { zona2D } from '../avatar3d/mapeo';
+import { cuerposAparte } from '../avatar3d/usePresencia';
+import { AvatarVivo } from '../avatar3d/AvatarVivo';
 
 /** Lado de su caja (px). El cuerpo es ~54 % del lado; el resto es aura, sombra y brinco. */
 const LADO = 104;
@@ -95,6 +104,16 @@ export function Companera() {
   const sacude = useSharedValue(0);
   const visible = useSharedValue(1);
   const [oculta, setOculta] = useState(false);
+  // AURA está en otro lado (al lado de los chats o a pantalla completa): esta figurita se aparta.
+  const [aparte, setAparte] = useState(cuerposAparte.ultimo() > 0);
+  const aparteRef = useRef(aparte);
+  aparteRef.current = aparte;
+  const enOtroLado = useSharedValue(aparte ? 0 : 1);
+  useEffect(() => cuerposAparte.escuchar((n) => setAparte(n > 0)), []);
+  useEffect(() => {
+    enOtroLado.value = withTiming(aparte ? 0 : 1, { duration: 220 });
+    if (aparte) caminarRef.current?.detener();
+  }, [aparte, enOtroLado]);
 
   // El marco cambió (teclado, giro, otra pantalla): la misma posición, corregida, con resorte.
   const llevando = useRef(false);
@@ -142,15 +161,34 @@ export function Companera() {
   const caminarRef = useRef<{ detener: () => void } | null>(null);
   const recalcTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // ---- lo que ven los otros cuerpos (el contrato del avatar): se publica solo si cambió
+  const gestoRef = useRef<EstadoAvatar['gesto']>(null);
+  const dirRef = useRef<-1 | 1>(1);
+  const mirarRef = useRef<EstadoAvatar['mirar']>({ x: 0, y: 0, activa: false });
+  const [estadoCuerpo, setEstadoCuerpo] = useState<EstadoAvatar>(estadoAvatar.ultimo());
+  const publicar = useCallback(() => {
+    const e = estadoDesdeAnimo(animo.current, Date.now(), {
+      caminando: !!caminarRef.current,
+      dir: dirRef.current,
+      mirar: mirarRef.current,
+      gesto: gestoRef.current,
+      globo: globoRef.current && globoRef.current.hasta > Date.now() ? globoRef.current.texto : '',
+    });
+    if (mismoEstado(e, estadoAvatar.ultimo())) return;
+    estadoAvatar.emitir(e);
+    setEstadoCuerpo(e);
+  }, []);
+
   const recalcular = useCallback(() => {
     const ahora = Date.now();
     const a = animo.current;
     setExp(expresion(a, ahora));
     if (!puedeCaminar(a, ahora)) caminarRef.current?.detener();
+    publicar();
     // La cara de reacción vence sola: se vuelve a mirar entonces.
     if (recalcTimer.current) clearTimeout(recalcTimer.current);
     if (a.reaccion && a.reaccion.hasta > ahora) recalcTimer.current = setTimeout(() => recalcular(), a.reaccion.hasta - ahora + 20);
-  }, []);
+  }, [publicar]);
 
   const ponerGlobo = useCallback((texto: string, ms: number, prioridad: number) => {
     const ahora = Date.now();
@@ -159,17 +197,19 @@ export function Companera() {
     const nuevo = { texto, prioridad, hasta: ahora + ms, n: (g?.n || 0) + 1 };
     globoRef.current = nuevo;
     setGlobo(nuevo);
-  }, []);
+    publicar();
+  }, [publicar]);
   useEffect(() => {
     if (!globo) return;
     const t = setTimeout(() => {
       if (globoRef.current?.n === globo.n) {
         globoRef.current = null;
         setGlobo(null);
+        publicar();
       }
     }, Math.max(0, globo.hasta - Date.now()));
     return () => clearTimeout(t);
-  }, [globo]);
+  }, [globo, publicar]);
 
   const ejecutar = useCallback(
     (efectos: Efecto[]) => {
@@ -229,13 +269,28 @@ export function Companera() {
 
   const despachar = useCallback(
     (ev: EventoAnimo) => {
-      const { animo: n, efectos } = reducir(animo.current, ev, Date.now());
-      const cambio = n !== animo.current;
+      const antes = animo.current;
+      const { animo: n, efectos } = reducir(antes, ev, Date.now());
+      const cambio = n !== antes;
       animo.current = n;
+      // El gesto de cuerpo que acompaña (el 3D lo hace con una animación; la figurita, con el brinco).
+      const g = gestoDeEvento(ev, antes, n, efectos);
+      if (g) gestoRef.current = { nombre: g, n: (gestoRef.current?.n || 0) + 1 };
       if (efectos.length) ejecutar(efectos);
       if (cambio) recalcular();
+      else if (g) publicar();
     },
-    [ejecutar, recalcular]
+    [ejecutar, publicar, recalcular]
+  );
+
+  // Los toques que llegan de los otros cuerpos (el panel, la pantalla completa), con su zona.
+  useEffect(
+    () =>
+      toqueAvatar.escuchar((t) => {
+        if (!t) return;
+        despachar(t.gesto === 'toque' ? { tipo: 'toque', zona: t.zona } : { tipo: t.gesto });
+      }),
+    [despachar]
   );
 
   // La voz (estado de la sesión), lo que dice, las interrupciones y lo que hace la mesa.
@@ -353,7 +408,8 @@ export function Companera() {
     caminando.value = withTiming(0, { duration: 180 });
     cancelAnimation(paso);
     paso.value = withTiming(0, { duration: 160 });
-  }, [caminando, paso, x]);
+    publicar();
+  }, [caminando, paso, publicar, x]);
   const llego = useCallback(() => {
     if (!caminarRef.current) return;
     caminarRef.current = null;
@@ -361,7 +417,8 @@ export function Companera() {
     caminando.value = withTiming(0, { duration: 220 });
     cancelAnimation(paso);
     paso.value = withTiming(0, { duration: 180 });
-  }, [caminando, paso, x]);
+    publicar();
+  }, [caminando, paso, publicar, x]);
   useEffect(() => {
     if (reducido) return;
     let t: ReturnType<typeof setTimeout>;
@@ -371,6 +428,7 @@ export function Companera() {
         const ok =
           !caminarRef.current &&
           !llevando.current &&
+          !aparteRef.current &&
           pos.current.borde === 'abajo' &&
           ahora - ultimoOido.current > 3000 &&
           puedeCaminar(animo.current, ahora);
@@ -380,7 +438,9 @@ export function Companera() {
           const ms2 = msPaseo(x.value, destino);
           if (ms2 > 300) {
             caminarRef.current = { detener: detenerPaseo };
-            dir.value = withTiming(destino > x.value ? 1 : -1, { duration: 150 });
+            dirRef.current = destino > x.value ? 1 : -1;
+            publicar();
+            dir.value = withTiming(dirRef.current, { duration: 150 });
             caminando.value = withTiming(1, { duration: 200 });
             paso.value = 0;
             paso.value = withRepeat(withTiming(1, { duration: 560, easing: Easing.linear }), -1, false);
@@ -397,7 +457,7 @@ export function Companera() {
       clearTimeout(t);
       detenerPaseo();
     };
-  }, [caminando, detenerPaseo, dir, llego, paso, reducido, x]);
+  }, [caminando, detenerPaseo, dir, llego, paso, publicar, reducido, x]);
 
   // ---- el tacto
   const gestos = useRef(new Gestos({ radio: LADO * 0.3 })).current;
@@ -408,6 +468,9 @@ export function Companera() {
       for (const g of sal) {
         switch (g.gesto) {
           case 'toque':
+            // Dónde la tocaron en su cuerpecito: arriba la cabeza, a los lados la mejilla, abajo la panza.
+            despachar({ tipo: 'toque', zona: zona2D(g.x - x.value, g.y - y.value, M.cx, M.cy, M.R) });
+            break;
           case 'dobleToque':
           case 'molestar':
           case 'caricia':
@@ -442,7 +505,7 @@ export function Companera() {
         }
       }
     },
-    [despachar, detenerPaseo, x, y]
+    [M, despachar, detenerPaseo, x, y]
   );
   const programarVencer = useCallback(() => {
     if (vencerTimer.current) clearTimeout(vencerTimer.current);
@@ -468,6 +531,7 @@ export function Companera() {
       dedoX.value = withSpring(Math.max(-1, Math.min(1, (px - cx) / (LADO * 0.35))), { stiffness: 200, damping: 16 });
       dedoY.value = withSpring(Math.max(-1, Math.min(1, (py - cy) / (LADO * 0.35))), { stiffness: 200, damping: 16 });
       dedo.value = withTiming(1, { duration: 120 });
+      mirarRef.current = { x: Math.max(-1, Math.min(1, (px - cx) / (LADO * 0.35))), y: Math.max(-1, Math.min(1, (py - cy) / (LADO * 0.35))), activa: true };
     },
     [dedo, dedoX, dedoY, x, y]
   );
@@ -495,6 +559,7 @@ export function Companera() {
           const { pageX, pageY } = e.nativeEvent;
           alGesto(gestos.subir(Date.now(), pageX, pageY));
           dedo.value = withDelay(700, withTiming(0, { duration: 500 }));
+          mirarRef.current = { x: 0, y: 0, activa: false };
           programarVencer();
         },
         onPanResponderTerminate: () => {
@@ -538,8 +603,12 @@ export function Companera() {
   }, [M, estilo]);
 
   const estiloCaja = useAnimatedStyle(() => ({
-    opacity: visible.value,
-    transform: [{ translateX: x.value + sacude.value }, { translateY: y.value + salto.value }, { scale: 0.4 + 0.6 * visible.value }],
+    opacity: visible.value * enOtroLado.value,
+    transform: [
+      { translateX: x.value + sacude.value },
+      { translateY: y.value + salto.value },
+      { scale: (0.4 + 0.6 * visible.value) * (0.6 + 0.4 * enOtroLado.value) },
+    ],
   }));
 
   // El globito: encima (o debajo si está arriba), sin salirse de la pantalla.
@@ -561,7 +630,7 @@ export function Companera() {
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      <Animated.View style={[s.caja, estiloCaja]} pointerEvents={oculta ? 'none' : 'box-none'}>
+      <Animated.View style={[s.caja, estiloCaja]} pointerEvents={oculta || aparte ? 'none' : 'box-none'}>
         {globo ? (
           <Animated.View pointerEvents="none" style={[s.globoFila, { width: anchoGlobo, left: LADO / 2 - anchoGlobo / 2 }, estiloGlobo]} onLayout={medirGlobo}>
             <View style={[s.globo, { borderColor: estilo.main }]}>
@@ -579,17 +648,30 @@ export function Companera() {
           accessibilityLabel={tr('AURA, tu compañera', 'AURA, your companion')}
           accessibilityHint={tr('Toca para saludarla; toca dos veces para silenciarla o despertarla; mantén para moverla', 'Tap to say hi; double-tap to mute or wake her; hold to move her')}
         >
-          <Canvas style={s.lienzo} pointerEvents="none">
-            <Picture picture={cuadro} />
-          </Canvas>
-          {estilo.retrato ? (
-            <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2 }]}>
-              <Image source={FOTOS_CLAUDIO[fotoClaudio(exp)]} style={s.foto} resizeMode="cover" />
-              {fotoClaudio(exp) === 'base' ? (
-                <Animated.Image source={FOTOS_CLAUDIO.habla[1]} style={[s.foto, StyleSheet.absoluteFill, hablaOpac]} resizeMode="cover" />
-              ) : null}
-            </View>
-          ) : null}
+          <AvatarVivo
+            avatar={avatar}
+            camara="cuerpo"
+            estado={estadoCuerpo}
+            ancho={LADO}
+            alto={LADO}
+            fpsMax={30}
+            activo={!oculta && !aparte}
+            respaldo={
+              <>
+                <Canvas style={s.lienzo} pointerEvents="none">
+                  <Picture picture={cuadro} />
+                </Canvas>
+                {estilo.retrato ? (
+                  <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2 }]}>
+                    <Image source={FOTOS_CLAUDIO[fotoClaudio(exp)]} style={s.foto} resizeMode="cover" />
+                    {fotoClaudio(exp) === 'base' ? (
+                      <Animated.Image source={FOTOS_CLAUDIO.habla[1]} style={[s.foto, StyleSheet.absoluteFill, hablaOpac]} resizeMode="cover" />
+                    ) : null}
+                  </View>
+                ) : null}
+              </>
+            }
+          />
         </View>
       </Animated.View>
     </View>

@@ -28,6 +28,7 @@ import { normalizarAvatarId, type AvatarId } from '../avatares/catalogo';
 import { fijarIdioma, idiomaActual, normalizarIdioma } from '../i18n';
 import { emitir, RUTA_PERFIL, type Encuesta, type Perfil, type Tema } from '../nucleo/contrato';
 import { fijarTema, temaElegido } from '../nucleo/tema';
+import { normalizarPresencia } from '../avatar3d/presencia';
 
 /* ── forma y reglas (puras: las prueba node) ─────────────────────────────────────────────── */
 
@@ -115,6 +116,8 @@ export function normalizarPerfil(raw: unknown): Perfil | null {
   if (ng) p.nombreGenesis = ng;
   const c = cumpleValido(r.cumple);
   if (c) p.cumple = c;
+  const pr = normalizarPresencia(r.presencia);
+  if (pr) p.presencia = pr;
   return p;
 }
 
@@ -133,6 +136,10 @@ export function aplicarCambios(base: Perfil, c: Partial<Perfil>, ahora: number):
   if (c.tema !== undefined && TEMAS.includes(c.tema)) p.tema = c.tema;
   if (c.idioma !== undefined) p.idioma = normalizarIdioma(c.idioma);
   if (c.completado !== undefined) p.completado = !!c.completado;
+  if (c.presencia !== undefined) {
+    const pr = normalizarPresencia(c.presencia);
+    if (pr) p.presencia = pr;
+  }
   if (c.nombreGenesis !== undefined && !base.nombreGenesis) {
     const ng = textoLimpio(c.nombreGenesis, 120);
     if (ng) p.nombreGenesis = ng;
@@ -164,6 +171,7 @@ export function cuerpoPut(p: Perfil, cambios: Partial<Perfil>): Record<string, u
   if (cambios.tema !== undefined) b.tema = p.tema;
   if (cambios.idioma !== undefined) b.idioma = p.idioma;
   if (cambios.completado !== undefined) b.completado = p.completado;
+  if (cambios.presencia !== undefined && p.presencia) b.presencia = p.presencia;
   if (cambios.cumple !== undefined) b.cumple = p.cumple || '';
   if (cambios.encuesta !== undefined) {
     const e: Record<string, string> = {};
@@ -209,6 +217,9 @@ export function fusionar(local: Perfil | null, servidor: Perfil | null, pendient
   if (!local) return servidor;
   let base = servidor;
   if (!base.nombreGenesis && local.nombreGenesis) base = { ...base, nombreGenesis: local.nombreGenesis };
+  // Cómo tener a AURA es de este teléfono mientras el servidor no lo guarde: un servidor que todavía no
+  // conoce el campo no lo borra (ni se le reenvía para siempre, como a un hueco).
+  if (!base.presencia && local.presencia) base = { ...base, presencia: local.presencia };
   const cambios = juntarCambios(huecosDelServidor(local, servidor), pendiente || {});
   if (!Object.keys(cambios).length) return base;
   return aplicarCambios(base, cambios, Math.max(local.actualizado, servidor.actualizado));

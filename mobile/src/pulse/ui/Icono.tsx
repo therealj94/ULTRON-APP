@@ -30,6 +30,12 @@ const TRAZOS = {
   reloj: 'M3.5 12 A8.5 8.5 0 1 0 20.5 12 A8.5 8.5 0 1 0 3.5 12 Z M12 7.5 V12 L15 14',
   alerta: 'M3.5 12 A8.5 8.5 0 1 0 20.5 12 A8.5 8.5 0 1 0 3.5 12 Z M12 7.5 V12.5 M12 16 V16.2',
   chispa: 'M12 3 C12.6 8.4 15.6 11.4 21 12 C15.6 12.6 12.6 15.6 12 21 C11.4 15.6 8.4 12.6 3 12 C8.4 11.4 11.4 8.4 12 3 Z',
+  // AURA al lado de los chats: agrandarla, acoplarla, achicarla, y su micrófono.
+  expandir: 'M4 9 V4 H9 M15 4 H20 V9 M20 15 V20 H15 M9 20 H4 V15',
+  achicar: 'M9 4 V9 H4 M20 9 H15 V4 M15 20 V15 H20 M4 15 H9 V20',
+  acoplar: 'M4.5 5 H19.5 A1.5 1.5 0 0 1 21 6.5 V17.5 A1.5 1.5 0 0 1 19.5 19 H4.5 A1.5 1.5 0 0 1 3 17.5 V6.5 A1.5 1.5 0 0 1 4.5 5 Z M14.5 5 V19',
+  microfono: 'M9 6 A3 3 0 0 1 15 6 V11 A3 3 0 0 1 9 11 Z M5.5 10.5 A6.5 6.5 0 0 0 18.5 10.5 M12 17 V20.5 M8.5 20.5 H15.5',
+  microfonoNo: 'M9 6 A3 3 0 0 1 15 6 V11 A3 3 0 0 1 9 11 Z M5.5 10.5 A6.5 6.5 0 0 0 18.5 10.5 M12 17 V20.5 M8.5 20.5 H15.5 M4 4 L20 20',
 } as const;
 
 export type NombreIcono = keyof typeof TRAZOS;
