@@ -155,7 +155,7 @@ const ORBITA: { icono: NombreIcono; es: string; en: string }[] = [
 function Satelite({ i, total, giro, radio, children }: { i: number; total: number; giro: SharedValue<number>; radio: number; children: ReactNode }) {
   const a = useAnimatedStyle(() => {
     const ang = (i / total) * Math.PI * 2 + giro.value * Math.PI * 2 - Math.PI / 2;
-    return { transform: [{ translateX: Math.cos(ang) * radio }, { translateY: Math.sin(ang) * radio * 0.82 }] };
+    return { transform: [{ translateX: Math.cos(ang) * radio * 0.8 }, { translateY: Math.sin(ang) * radio * 0.86 }] };
   });
   return <Animated.View style={[s.satelite, a]}>{children}</Animated.View>;
 }

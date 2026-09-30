@@ -94,10 +94,21 @@ export function PrimeraVez(_: Props) {
     }));
   }, [perfil, usuario]);
 
-  const cambiar = useCallback((c: Partial<Borrador>) => setB((x) => ({ ...x, ...c })), []);
+  // Si el servidor contesta tarde que esta persona ya había terminado la primera vez (otro teléfono,
+  // o la intro no alcanzó a esperarlo), no se la hace repetir: a la mesa, antes de que toque nada.
+  const tocado = useRef(false);
+  useEffect(() => {
+    if (perfil?.completado && !tocado.current && i === 0 && !terminando) reiniciarA('Mesa');
+  }, [perfil, i, terminando]);
+
+  const cambiar = useCallback((c: Partial<Borrador>) => {
+    tocado.current = true;
+    setB((x) => ({ ...x, ...c }));
+  }, []);
 
   const ir = useCallback(
     (n: number, d: 1 | -1) => {
+      tocado.current = true;
       void stopSpeaking();
       setDir(d);
       setI(n);
