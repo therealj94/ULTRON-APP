@@ -230,7 +230,10 @@ async function reemplazarFragmentos(id: number, paginas: number, trozos: Array<{
       });
       await q(`INSERT INTO fragmento (documento_id, pagina, orden, texto) VALUES ${marcas.join(',')}`, args);
     }
-    await q(`UPDATE documento SET paginas = $2 WHERE id = $1`, [id, paginas]);
+    await q(
+      `UPDATE documento SET paginas = $2, meta = COALESCE(meta, '{}'::jsonb) || jsonb_build_object('fragmentos', $3::int) WHERE id = $1`,
+      [id, paginas, trozos.length]
+    );
   });
   void indexarPendientes({ documentoId: id }).catch((e) => console.error('[electrum] no pude vectorizar', nombre, String(e?.message || e).slice(0, 120)));
 }
@@ -738,6 +741,18 @@ export async function aprender(
     const incompleto = !!previo && (Number.isFinite(esperados) && esperados > 0 ? previo.n < esperados : previo.n === 0);
     if (previo && incompleto) {
       console.warn(`[electrum] «${nombre}» estaba a medias (${previo.n}${esperados ? ` de ${esperados}` : ''} fragmentos): lo vuelvo a cargar entero`);
+      // Se repara en su lugar —mismo documento, fragmentos nuevos en una transacción— para no perder
+      // su id ni lo que lo referencia. Una foto se vuelve a transcribir desde cero.
+      const leido = imagen ? null : await leerDocumento(nombre, datos);
+      if (leido && leido.ok !== false) {
+        await reemplazarFragmentos(previo.id, leido.paginas.length, leido.trozos, nombre);
+        return {
+          clase: 'documento',
+          dicho: `«${nombre}» había quedado a medias (${previo.n} fragmentos). Lo volví a leer entero: ${leido.paginas.length} páginas, ${leido.trozos.length} fragmentos.`,
+          avisos: leido.avisos,
+          ui: { accion: 'documento', documento_id: previo.id, nombre, paginas: leido.paginas.length, fragmentos: leido.trozos.length, reparado: true },
+        };
+      }
       await consulta(`DELETE FROM documento WHERE id = $1`, [previo.id]);
     }
     const ya = previo && !incompleto ? previo : null;
