@@ -105,6 +105,32 @@ export function resetRitmoTest() {
 
 export const TOPE_EXTERNOS_HORA = { identificado: 30, anonimo: 5 };
 
+/* ------------------------------------------------------------------ hechos obligatorios */
+
+type ClaveHecho = keyof NonNullable<Accion['hechos']>;
+
+/**
+ * Los hechos que una herramienta NECESITA para poder correr. Toda acción crítica exige el KYC por
+ * omisión (antes, sin `hechos`, la regla de KYC no miraba nada y dos firmas bastaban); una herramienta
+ * crítica que de verdad no mueve valor a nombre de nadie lo declara con `declararHechosObligatorios`.
+ *
+ * Al PEDIRLA, que falte un hecho no la ejecuta: va a la cola de aprobación (lo crítico ya va ahí) y el
+ * servidor lo comprueba con su fuente al ejecutar (aprobaciones.ts). Al EJECUTARLA (con la aprobación
+ * ya concedida), si falta uno —no se consultó, la fuente falló, vino vacío— se bloquea: la ausencia no
+ * es un «sí». Un hecho presente y negativo (KYC pendiente, rechazado…) bloquea siempre.
+ */
+const hechosDeclarados = new Map<string, ClaveHecho[]>();
+
+export function declararHechosObligatorios(herramienta: string, hechos: ClaveHecho[]) {
+  hechosDeclarados.set(herramienta, [...hechos]);
+}
+
+export function hechosObligatorios(a: Pick<Accion, 'herramienta' | 'efecto'>): ClaveHecho[] {
+  const declarados = hechosDeclarados.get(a.herramienta);
+  if (declarados) return declarados;
+  return a.efecto === 'critico' ? ['kyc'] : [];
+}
+
 /* ------------------------------------------------------------------ las reglas */
 
 export const REGLAS: Regla[] = [
@@ -152,12 +178,32 @@ export const REGLAS: Regla[] = [
     },
   },
   {
+    id: 'hechos-obligatorios',
+    descripcion: 'Una herramienta que necesita hechos comprobados (lo crítico: el KYC) no se ejecuta si falta alguno, ni con la aprobación concedida. La ausencia no es un sí.',
+    decidir: (a) => {
+      // Al pedirla todavía no se ejecuta (va a revisión): los hechos se comprueban frescos al ejecutar.
+      if (!a.aprobada) return null;
+      const faltan = hechosObligatorios(a).filter((k) => a.hechos?.[k] === undefined || a.hechos?.[k] === null);
+      return faltan.length
+        ? {
+            veredicto: 'bloquear',
+            regla: 'hechos-obligatorios',
+            motivo: `Falta comprobar ${faltan.join(', ')} para «${a.herramienta}». Sin eso no se hace, ni con aprobación.`,
+          }
+        : null;
+    },
+  },
+  {
     id: 'kyc-antes-de-mover-valor',
-    descripcion: 'No se transfiere ni se emite nada a nombre de alguien cuyo KYC no esté aprobado. Ni con aprobación.',
-    decidir: (a) =>
-      a.efecto === 'critico' && a.hechos?.kyc !== undefined && a.hechos.kyc !== 'aprobado'
-        ? { veredicto: 'bloquear', regla: 'kyc-antes-de-mover-valor', motivo: `El KYC está «${a.hechos.kyc}». Sin KYC aprobado no se mueve valor.` }
-        : null,
+    descripcion: 'No se transfiere ni se emite nada a nombre de alguien cuyo KYC no esté aprobado. Ni con aprobación. Al ejecutar: ausente, desconocido, pendiente o rechazado, no.',
+    decidir: (a) => {
+      const kyc = a.hechos?.kyc;
+      const exigido = hechosObligatorios(a).includes('kyc') || (a.efecto === 'critico' && kyc !== undefined);
+      if (!exigido || kyc === 'aprobado') return null;
+      // Sin dato al pedirlo: a revisión (lo decide la regla de lo crítico); al ejecutar, bloqueo.
+      if (kyc === undefined && !a.aprobada) return null;
+      return { veredicto: 'bloquear', regla: 'kyc-antes-de-mover-valor', motivo: `El KYC está «${kyc ?? 'sin comprobar'}». Sin KYC aprobado no se mueve valor.` };
+    },
   },
   {
     id: 'emision-exige-firmas-de-junta',

@@ -12,46 +12,98 @@ import { normalizarEmocion, pelarEtiqueta, type Emocion } from './emocion';
 import { loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage';
 import { quitarExpresiones } from './expresiones';
 import { cabecerasAparato } from './aparato';
+import { generacionCuenta, sigueVigente } from './cuenta';
 import { avatarActual } from '../avatares/actual';
 import { idiomaActual } from '../i18n';
 
-let refreshing: Promise<boolean> | null = null;
+/** Tope de una renovación del token: una que nunca contesta no puede retener las peticiones. */
+export const TOPE_RENOVAR_MS = 10_000;
 
+let refreshing: { gen: number; p: Promise<boolean> } | null = null;
+
+/**
+ * Renueva el token con la clave guardada de QUIEN está dentro. Una sola renovación en vuelo por
+ * generación de la sesión (lib/cuenta.ts): si la persona cambia mientras viaja, la respuesta vieja
+ * NO se guarda (sería un token ajeno), y la renovación de la persona nueva es otra.
+ */
 async function renovarSesion(): Promise<boolean> {
-  if (refreshing) return refreshing;
-  refreshing = (async () => {
+  const gen = generacionCuenta();
+  if (refreshing && refreshing.gen === gen) return refreshing.p;
+  const p = (async () => {
     const [creds, sesion] = await Promise.all([loadCreds(), loadSession()]);
     if (!creds?.correo || !creds?.clave) return false;
     // Solo la clave de QUIEN está dentro. En un teléfono compartido la guardada puede ser de otra
     // persona (entró con clave y salió; ahora está alguien que entró con Genesis): renovar con ella
     // metía perfil, memoria y voz en la cuenta ajena mientras la pantalla seguía mostrando al primero.
-    if (!sesion?.correo || creds.correo.trim().toLowerCase() !== sesion.correo.trim().toLowerCase()) return false;
+    const quien = creds.correo.trim().toLowerCase();
+    if (!sesion?.correo || quien !== sesion.correo.trim().toLowerCase()) return false;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TOPE_RENOVAR_MS);
     try {
       const res = await fetch(`${API_BASE}/api/ultron/entrar`, {
         method: 'POST',
+        signal: ctrl.signal,
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ correo: creds.correo, clave: creds.clave }),
       });
       const data: any = await res.json().catch(() => ({}));
       if (!res.ok || !data?.token) return false;
+      // Antes de guardar: ¿sigue dentro la misma persona, en la misma sesión? Si salió o entró otra
+      // mientras viajaba, este token no es de nadie que esté aquí.
+      const ahora = await loadSession().catch(() => null);
+      if (!sigueVigente(gen) || String(ahora?.correo || '').trim().toLowerCase() !== quien) return false;
       await saveMesaToken(String(data.token));
       return true;
     } catch {
       return false;
+    } finally {
+      clearTimeout(timer);
     }
   })().finally(() => {
-    refreshing = null;
+    if (refreshing?.p === p) refreshing = null;
   });
-  return refreshing;
+  refreshing = { gen, p };
+  return p;
 }
 
 function esSesionCaida(status: number, data: any) {
   return status === 401 || data?.code === 'sesion_requerida' || /sesión requerida|privado/i.test(String(data?.error || ''));
 }
 
+/** Lo que se espera ante un 429: lo que diga `Retry-After` (en segundos), acotado. */
+function esperaDe429(res: Response): number {
+  const s = Number(res.headers?.get?.('retry-after'));
+  return Number.isFinite(s) && s > 0 ? Math.min(5_000, s * 1000) : 900;
+}
+
+/** La promesa, o false si antes llega el límite. */
+function hastaElLimite(p: Promise<boolean>, limite: number): Promise<boolean> {
+  return new Promise((listo) => {
+    const t = setTimeout(() => listo(false), Math.max(0, limite - Date.now()));
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        listo(v);
+      },
+      () => {
+        clearTimeout(t);
+        listo(false);
+      }
+    );
+  });
+}
+
+/**
+ * Una petición al backend. `timeoutMs` es el tope TOTAL (reintento de 429 y renovación incluidos):
+ * reintentar no vuelve a empezar la cuenta.
+ */
 export async function api<T = any>(path: string, init?: RequestInit, timeoutMs = 30_000, retry401 = true): Promise<T> {
+  return pedirApi<T>(path, init, Date.now() + timeoutMs, retry401);
+}
+
+async function pedirApi<T>(path: string, init: RequestInit | undefined, limite: number, reintentar: boolean): Promise<T> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  const timer = setTimeout(() => ctrl.abort(), Math.max(1, limite - Date.now()));
   try {
     const token = await loadMesaToken();
     const aparato = await cabecerasAparato().catch(() => ({}));
@@ -68,13 +120,17 @@ export async function api<T = any>(path: string, init?: RequestInit, timeoutMs =
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      if (res.status === 429 && retry401) {
-        await new Promise((r) => setTimeout(r, 900));
-        return api<T>(path, init, timeoutMs, false);
+      if (res.status === 429 && reintentar) {
+        const espera = esperaDe429(res);
+        if (Date.now() + espera < limite) {
+          await new Promise((r) => setTimeout(r, espera));
+          return pedirApi<T>(path, init, limite, false);
+        }
       }
-      if (retry401 && esSesionCaida(res.status, data) && !path.includes('/entrar')) {
-        const ok = await renovarSesion();
-        if (ok) return api<T>(path, init, timeoutMs, false);
+      if (reintentar && esSesionCaida(res.status, data) && !path.includes('/entrar')) {
+        // La renovación también cuenta contra el tope total: una que no contesta no retiene la petición.
+        const ok = await hastaElLimite(renovarSesion(), limite);
+        if (ok && Date.now() < limite) return pedirApi<T>(path, init, limite, false);
       }
       const err = new Error((data as any).error || `HTTP ${res.status}`);
       (err as any).status = res.status;
@@ -192,13 +248,33 @@ export async function pedirCuenta(nombre: string, correo: string, motivo: string
   return data.message || 'Recibimos tu solicitud. Cuando sea revisada te escribiremos a ese correo.';
 }
 
-export async function logoutRemote() {
+/**
+ * Cierra la sesión del token que había AL EMPEZAR (el de A), y solo ese:
+ *  · lo suelta de este teléfono en el acto, si sigue siendo el guardado (si alguien ya entró con otro,
+ *    el suyo no se toca);
+ *  · lo revoca en el servidor con ESE token en la cabecera, sin pasar por api(): un 401 no dispara la
+ *    renovación del token que se está cerrando, y una respuesta tardía no borra el de quien entró
+ *    después (antes, al terminar, guardaba null encima del token de B).
+ * `token` permite pasar el que se capturó antes; sin él, se lee el guardado.
+ */
+export async function logoutRemote(token?: string | null) {
+  const cerrar = token === undefined ? await loadMesaToken().catch(() => '') : token || '';
+  if (!cerrar) return;
+  if ((await loadMesaToken().catch(() => '')) === cerrar) await saveMesaToken(null);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6_000);
   try {
-    await api('/api/ultron/salir', { method: 'POST', body: '{}' }, 6_000);
+    await fetch(`${API_BASE}/api/ultron/salir`, {
+      method: 'POST',
+      signal: ctrl.signal,
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', 'x-ultron-sesion': cerrar },
+      body: '{}',
+    });
   } catch {
-    /* offline ok */
+    /* sin red: el token ya no está en el teléfono y vence solo */
+  } finally {
+    clearTimeout(timer);
   }
-  await saveMesaToken(null);
 }
 
 /**

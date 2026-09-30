@@ -91,6 +91,16 @@ test('aplicar: la encuesta se mezcla campo a campo; un vacío borra; el cumple s
   assert.equal(p.apodo, 'José');
 });
 
+test('A05: sin S3 el disco solo cuenta como durable si se declara persistente (PERFIL_DISCO_DURABLE)', async () => {
+  assert.equal((await actualizarPerfil('disco@x.com', { apodo: 'Uno' })).durable, false);
+  process.env.PERFIL_DISCO_DURABLE = '1';
+  try {
+    assert.equal((await actualizarPerfil('disco@x.com', { apodo: 'Dos' })).durable, true);
+  } finally {
+    delete process.env.PERFIL_DISCO_DURABLE;
+  }
+});
+
 test('guardar y leer por correo (sin S3: disco y caché); un redespliegue sin S3 conserva el disco', async () => {
   const { perfil, durable } = await actualizarPerfil('Ana@X.com', { apodo: 'Anita', encuesta: { vive: 'San Pedro Sula' } });
   assert.equal(durable, false, 'sin S3 no es duradero, y se dice');

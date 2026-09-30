@@ -46,6 +46,8 @@ function sseFalso() {
   const A = await R.cuenta('José');
   const B = await R.cuenta('Beto Pérez');
   await R.amigos(A, B);
+  // Beto tiene la app abierta en su teléfono: lo que se le manda sale cifrado (sin aparato no saldría).
+  await R.aparato(B);
   await entrarComo(M, A);
   const compa = companera();
   const hechos = [];

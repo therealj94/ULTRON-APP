@@ -58,6 +58,53 @@ const nc = require('node:crypto');
   ok('el mensaje trae la llave de la foto por dentro', !!(conFoto && conFoto.llaveArchivo && conFoto.ivArchivo && conFoto.texto === 'mira'));
   const uri = await RELEVO.archivoAbierto(conFoto.archivo, conFoto.llaveArchivo, conFoto.ivArchivo);
   ok('y la foto abre igual a la que salió', uri && Buffer.from(uri.split(',')[1], 'base64').equals(Buffer.from(foto, 'base64')));
+
+  // A06 · el texto tampoco se degrada a claro. Antes, a quien no tenía aparatos, salía `{ para, texto }`
+  // legible al relevo y la burbuja decía «sin cifrar» después. Ahora no sale sin decisión previa.
+  console.log('\nA06 · sin aparatos del otro lado, el texto no sale en claro\n');
+  const enClaro = [];
+  globalThis.fetch = (u, o) => {
+    try {
+      if (String(u).endsWith('/enviar') && typeof JSON.parse(o?.body || '{}').texto === 'string') enClaro.push(JSON.parse(o.body).texto);
+    } catch {}
+    return fetchReal(u, o);
+  };
+  let motivoTexto = '';
+  try {
+    await RELEVO.enviar(N.correo, 'secreto para Nadia');
+  } catch (e) {
+    motivoTexto = e.motivo || e.message;
+  }
+  ok('A06: texto a quien no tiene aparatos: no sale, y dice por qué', motivoTexto === 'sin-aparatos', motivoTexto);
+  ok('A06: …y al relevo no llegó nada legible', enClaro.length === 0, JSON.stringify(enClaro));
+  const bandejaN = (await R.post('/bandeja', { ...N, desde: V.correo })).mensajes || [];
+  ok('A06: Nadia no tiene ningún mensaje en claro de Vera', !bandejaN.some((m) => m.texto === 'secreto para Nadia'), JSON.stringify(bandejaN.map((m) => m.texto)));
+  // El directorio de llaves que miente (vacío para quien SÍ tiene aparatos: Yago publicó su llave)
+  // tampoco abre la puerta al claro.
+  const Y = await R.cuenta('Yago');
+  await R.amigos(Y, V);
+  {
+    const { publicKey: pk } = nc.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const jy = pk.export({ format: 'jwk' });
+    const puby = Buffer.concat([Buffer.from([4]), Buffer.from(jy.x, 'base64url'), Buffer.from(jy.y, 'base64url')]).toString('base64url');
+    await R.post('/llaves/publicar', { ...Y, id: CANDADO.idDeAparato(puby), pub: puby });
+  }
+  const fetchVacio = globalThis.fetch;
+  globalThis.fetch = (u, o) => {
+    if (String(u).endsWith('/llaves/de')) return Promise.resolve(new Response(JSON.stringify({ llaves: {} }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    return fetchVacio(u, o);
+  };
+  let motivoVacio = '';
+  try {
+    await RELEVO.enviar(Y.correo, 'secreto para Yago');
+  } catch (e) {
+    motivoVacio = e.motivo || e.message;
+  }
+  globalThis.fetch = fetchVacio;
+  ok('A06: un directorio de llaves vacío (degradado a propósito) no hace salir el texto en claro', motivoVacio === 'sin-aparatos' && !enClaro.includes('secreto para Yago'), motivoVacio || 'salió');
+  // Con decisión explícita y previa, el envío en claro de siempre (el contrato del relevo no cambió).
+  const claro = await RELEVO.enviar(N.correo, 'aviso sin cifrar', { sinCifrar: true });
+  ok('con decisión previa explícita sí sale, marcado e2e:false', claro.e2e === false && enClaro.includes('aviso sin cifrar'));
   globalThis.fetch = fetchReal;
 
   console.log('\nB4 · las fotos abiertas: tope y salida\n');

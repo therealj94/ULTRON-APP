@@ -231,13 +231,27 @@ const CLAVE = (correo: string) => `aura.perfil.v1:${correo.trim().toLowerCase()}
 const CLAVE_PENDIENTE = (correo: string) => `aura.perfil.pendiente.v1:${correo.trim().toLowerCase()}`;
 
 let dueno = '';
+/**
+ * La generación del almacén: cambia al cambiar de dueño y al soltarlo. Toda operación asíncrona la
+ * captura al empezar y la vuelve a mirar después de cada `await`: una lectura (local o del servidor)
+ * que llega tarde, de otra persona o de una sesión anterior de la misma (A → B → A), no aplica nada.
+ */
+let generacion = 0;
 let actual: Perfil | null = null;
 let pendiente: Partial<Perfil> | null = null;
 let reintento: ReturnType<typeof setTimeout> | null = null;
 let espera = 4_000;
 let enviando: Promise<void> | null = null;
-/** El servidor contestó alguna vez en esta sesión (Ajustes lo muestra: «guardado en tu cuenta»). */
-let sincronizado = false;
+/**
+ * Dónde está lo último de esta persona:
+ *   local     → solo en este teléfono (todavía no contestó el servidor);
+ *   recibido  → el servidor lo tiene, pero dijo que NO quedó en almacenamiento durable (`durable:
+ *               false`: sin S3, o S3 falló): un redespliegue lo puede perder, así que lo pendiente
+ *               sigue pendiente y se reenvía;
+ *   durable   → el servidor confirmó que quedó guardado de verdad.
+ */
+export type EstadoPerfil = 'local' | 'recibido' | 'durable';
+let estado: EstadoPerfil = 'local';
 const oyentes = new Set<() => void>();
 
 function avisar() {
@@ -254,8 +268,14 @@ export function perfilActual(): Perfil | null {
   return actual;
 }
 
+/** Guardado de verdad en la cuenta: el servidor lo confirmó durable y no queda nada por mandar. */
 export function perfilSincronizado(): boolean {
-  return sincronizado && !pendiente;
+  return estado === 'durable' && !pendiente;
+}
+
+/** Para Ajustes y el perfil: local, recibido (sin garantía) o durable, y si queda algo por mandar. */
+export function estadoPerfil(): { estado: EstadoPerfil; pendiente: boolean } {
+  return { estado, pendiente: !!pendiente };
 }
 
 /** El perfil vigente; redibuja al cambiar. null mientras no hay sesión. */
@@ -297,12 +317,21 @@ function poner(p: Perfil) {
   emitir('perfil', p);
 }
 
+/**
+ * Guarda en la caché de este teléfono. Claves y valores se toman ANTES del primer `await`: si mientras
+ * escribe cambia la persona, lo que se escribe sigue siendo de quien era (y en su clave), nunca el
+ * perfil de uno en la clave del otro.
+ */
 async function guardarLocal() {
   if (!dueno) return;
+  const clave = CLAVE(dueno);
+  const clavePendiente = CLAVE_PENDIENTE(dueno);
+  const perfil = JSON.stringify(actual);
+  const lote = pendiente ? JSON.stringify(pendiente) : null;
   try {
-    await AsyncStorage.setItem(CLAVE(dueno), JSON.stringify(actual));
-    if (pendiente) await AsyncStorage.setItem(CLAVE_PENDIENTE(dueno), JSON.stringify(pendiente));
-    else await AsyncStorage.removeItem(CLAVE_PENDIENTE(dueno));
+    await AsyncStorage.setItem(clave, perfil);
+    if (lote) await AsyncStorage.setItem(clavePendiente, lote);
+    else await AsyncStorage.removeItem(clavePendiente);
   } catch {
     /* sin almacenamiento, vive en memoria hasta que se pueda */
   }
@@ -317,26 +346,32 @@ function programarReintento() {
   espera = Math.min(espera * 2, 5 * 60_000);
 }
 
-/** Manda lo pendiente. Un fallo (404, 5xx, sin red) lo deja para después, sin avisar a nadie. */
+/**
+ * Manda lo pendiente. Un fallo (404, 5xx, sin red) lo deja para después, sin avisar a nadie. El lote
+ * sale de la cola SOLO con recibo durable del servidor (`durable: true`); con `durable: false` el
+ * servidor lo tiene pero puede perderlo, y se reintenta (el PUT es idempotente: mismos valores).
+ * Devuelve true si quedó durable.
+ */
 export async function enviarPendiente(): Promise<boolean> {
   if (enviando) {
     await enviando;
-    return !pendiente;
+    return !pendiente && estado === 'durable';
   }
-  if (!pendiente || !actual || !dueno) return !pendiente;
-  const quien = dueno;
+  if (!pendiente || !actual || !dueno) return !pendiente && estado === 'durable';
+  const gen = generacion;
   const lote = pendiente;
   const cuerpo = cuerpoPut(actual, lote);
   let ok = false;
   enviando = (async () => {
     try {
-      const r = await api<{ perfil?: unknown }>(RUTA_PERFIL, { method: 'PUT', body: JSON.stringify(cuerpo) }, 12_000);
-      if (quien !== dueno) return;
-      ok = true;
-      sincronizado = true;
-      espera = 4_000;
-      // Lo que se cambió mientras viajaba este lote sigue pendiente.
-      pendiente = pendiente === lote ? null : pendiente;
+      const r = await api<{ perfil?: unknown; durable?: boolean }>(RUTA_PERFIL, { method: 'PUT', body: JSON.stringify(cuerpo) }, 12_000);
+      if (gen !== generacion) return;
+      const durable = r?.durable === true;
+      ok = durable;
+      estado = durable ? 'durable' : 'recibido';
+      if (durable) espera = 4_000;
+      // Lo que se cambió mientras viajaba este lote sigue pendiente; el lote mismo, solo si no quedó durable.
+      if (durable) pendiente = pendiente === lote ? null : pendiente;
       const delServidor = normalizarPerfil(r?.perfil);
       const huecos = huecosDelServidor(actual, delServidor);
       if (Object.keys(huecos).length) pendiente = juntarCambios(huecos, pendiente || {});
@@ -348,7 +383,7 @@ export async function enviarPendiente(): Promise<boolean> {
       await guardarLocal();
     } catch (e: any) {
       // 400 = el servidor no acepta ese valor: no se reintenta lo mismo para siempre.
-      if (e?.status === 400) {
+      if (e?.status === 400 && gen === generacion) {
         pendiente = pendiente === lote ? null : pendiente;
         await guardarLocal();
       }
@@ -376,28 +411,40 @@ export async function cargarPerfil(
   const c = String(correo || '').trim().toLowerCase();
   if (c !== dueno) {
     dueno = c;
+    generacion++;
     actual = null;
     pendiente = null;
-    sincronizado = false;
+    estado = 'local';
     espera = 4_000;
     if (reintento) clearTimeout(reintento);
     reintento = null;
   }
+  const gen = generacion;
+  /** ¿Sigue siendo esta carga la de la persona que está dentro? Se mira después de cada `await`. */
+  const vigente = () => gen === generacion && dueno === c;
   let local: Perfil | null = null;
+  let pen: unknown = null;
   try {
     local = normalizarPerfil(JSON.parse((await AsyncStorage.getItem(CLAVE(c))) || 'null'));
-    const pen = JSON.parse((await AsyncStorage.getItem(CLAVE_PENDIENTE(c))) || 'null');
-    pendiente = pen && typeof pen === 'object' ? (pen as Partial<Perfil>) : null;
+    pen = JSON.parse((await AsyncStorage.getItem(CLAVE_PENDIENTE(c))) || 'null');
   } catch {
     local = null;
   }
+  // La lectura local llegó tarde (ya está otra persona, o esta misma en otra sesión): no se aplica.
+  if (!vigente()) return (actual ?? perfilInicial({ ahora: Date.now() })) as Perfil;
+  pendiente = pen && typeof pen === 'object' ? juntarCambios(pen as Partial<Perfil>, pendiente || {}) : pendiente;
   if (local) poner(local);
 
   const traer = (async () => {
     try {
-      const r = await api<{ perfil?: unknown }>(RUTA_PERFIL, undefined, o.topeMs ?? 8_000);
-      if (dueno !== c) return;
-      sincronizado = true;
+      const r = await api<{ perfil?: unknown; durable?: boolean; disponible?: boolean }>(RUTA_PERFIL, undefined, o.topeMs ?? 8_000);
+      if (!vigente()) return;
+      // `disponible: false`: el servidor no pudo leer lo guardado (S3 caído). Un perfil null ahí no
+      // quiere decir «no tiene perfil»: no se toma como respuesta, se sigue con lo local.
+      if (r?.disponible === false) throw new Error('perfil no disponible');
+      // El servidor tiene lo de esta persona; es durable solo si él lo dice (almacén durable) y aquí
+      // no queda nada por mandar.
+      if (estado !== 'durable') estado = r?.durable === true ? 'durable' : 'recibido';
       const servidor = normalizarPerfil(r?.perfil);
       // Lo que el servidor perdió (o nunca recibió) se le vuelve a mandar.
       const huecos = huecosDelServidor(actual, servidor);
@@ -407,7 +454,7 @@ export async function cargarPerfil(
     } catch {
       /* 404, 5xx o sin red: se sigue con lo local */
     }
-    if (dueno !== c) return;
+    if (!vigente()) return;
     if (!actual) {
       poner(
         perfilInicial({
@@ -426,7 +473,7 @@ export async function cargarPerfil(
       if (Object.keys(huecos).length) poner(aplicarCambios(actual, huecos, actual.actualizado));
     }
     await guardarLocal();
-    if (pendiente) void enviarPendiente();
+    if (vigente() && pendiente) void enviarPendiente();
   })();
 
   if (o.esperarServidor === false && actual) {
@@ -468,8 +515,9 @@ export function soltarPerfil() {
   if (reintento) clearTimeout(reintento);
   reintento = null;
   dueno = '';
+  generacion++;
   actual = null;
   pendiente = null;
-  sincronizado = false;
+  estado = 'local';
   avisar();
 }

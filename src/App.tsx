@@ -13,7 +13,7 @@ import { useOido } from './03-voz/useOido';
 import { opinarTurno, pedirTurnoStream } from './04-cerebro/turno';
 import { detectarIntencion } from './04-cerebro/intenciones';
 import { grabFrame, achicarFoto } from './04-cerebro/grabFrame';
-import { guardarHecho, olvidarTodo } from './09-estado/memoria';
+import { fijarCuentaMemoria, guardarHecho, olvidarTodo } from './09-estado/memoria';
 import { headersMesa } from './10-infra/sesionCliente';
 import { cargarPerfil, perfil as perfilActual } from './perfil';
 import type { Emocion } from '../lib/emocion';
@@ -289,7 +289,11 @@ export default function App() {
     fetch('/api/ultron/sesion', { headers: headersMesa() })
       .then((r) => r.json())
       .then((d) => {
-        if (vivo && d.authenticated && d.user) setUsuario({ name: d.user.nombre || '', role: d.user.rol || 'Junta Directiva · Orden Global', authenticated: true });
+        if (vivo && d.authenticated && d.user) {
+          setUsuario({ name: d.user.nombre || '', role: d.user.rol || 'Junta Directiva · Orden Global', authenticated: true });
+          // La memoria larga de este navegador es POR CUENTA (09-estado/memoria.ts).
+          fijarCuentaMemoria(d.user.correo);
+        }
       })
       .catch(() => {});
     setEstadoArranque('buscando el cerebro');
@@ -315,8 +319,12 @@ export default function App() {
   useEffect(() => {
     if (cerebroListo === 'listo') return;
     let vivo = true;
-    const sondear = () =>
-      fetch('/api/nodo/listo')
+    // Una sola consulta en vuelo (el servidor puede tardar hasta calentar): sin solapar sondeos.
+    let enVuelo = false;
+    const sondear = () => {
+      if (enVuelo) return;
+      enVuelo = true;
+      fetch('/api/nodo/listo', { signal: AbortSignal.timeout(50_000) })
         .then((r) => r.json())
         .then((d) => {
           if (!vivo) return;
@@ -329,7 +337,11 @@ export default function App() {
             }
           } else setCerebroListo((s) => (s === 'listo' ? s : 'calentando'));
         })
-        .catch(() => vivo && setCerebroListo((s) => (s === 'listo' ? s : 'frio')));
+        .catch(() => vivo && setCerebroListo((s) => (s === 'listo' ? s : 'frio')))
+        .finally(() => {
+          enVuelo = false;
+        });
+    };
     if (!isBooting) sondear();
     const id = setInterval(sondear, 4000);
     return () => {
@@ -574,17 +586,28 @@ export default function App() {
           return;
         case 'recordar':
           hacerTarea('anotar');
-          guardarHecho(it.hecho, { usuario: usuario.name });
           pendienteGenesis.current = it.hecho;
-          decir('Anotado. Si es de la junta, decime «actualiza el cerebro» y queda en Genesis Core.', { emocion: 'orgullo' });
+          // «Anotado» solo con el recibo del servidor (09-estado/memoria.ts).
+          void guardarHecho(it.hecho, { usuario: usuario.name }).then((r) =>
+            r.remoto === 'ok'
+              ? decir('Anotado. Si es de la junta, decime «actualiza el cerebro» y queda en Genesis Core.', { emocion: 'orgullo' })
+              : r.remoto === 'sin-sesion'
+                ? decir('Para recordarlo necesito que entres con tu cuenta.', { emocion: 'neutral' })
+                : decir('No pude guardarlo en el servidor. Probá de nuevo en un momento.', { emocion: 'neutral' })
+          );
           return;
         case 'genesis': {
           const hecho = pendienteGenesis.current || historialRef.current.filter((h) => h.rol === 'user').slice(-1)[0]?.texto || '';
           if (!hecho) return void decir('Decime el hecho primero y después «actualiza el cerebro».', { emocion: 'curioso' });
           hacerTarea('anotar');
-          guardarHecho(`[Genesis] ${hecho}`, { usuario: usuario.name, junta: true });
           pendienteGenesis.current = '';
-          decir('Quedó en Genesis Core. La próxima pregunta ya lo usa.', { emocion: 'orgullo' });
+          void guardarHecho(`[Genesis] ${hecho}`, { usuario: usuario.name, junta: true }).then((r) =>
+            r.remoto === 'ok'
+              ? decir('Quedó en Genesis Core. La próxima pregunta ya lo usa.', { emocion: 'orgullo' })
+              : r.remoto === 'sin-sesion'
+                ? decir('Para guardarlo en Genesis Core necesito que entres con tu cuenta.', { emocion: 'neutral' })
+                : decir('No pude guardarlo en Genesis Core. Probá de nuevo en un momento.', { emocion: 'neutral' })
+          );
           return;
         }
         case 'cantar': {
@@ -1117,9 +1140,15 @@ export default function App() {
           onEjemplo={(c) => pedir(c)}
           onOlvidar={() => {
             historialRef.current = [];
-            olvidarTodo({ usuario: usuario.name });
             setSettingsOpen(false);
-            decir('Listo. Empezamos de cero.', { emocion: 'neutral' });
+            // «Empezamos de cero» solo si el servidor confirmó que olvidó; si no, se dice qué pasó.
+            void olvidarTodo({ usuario: usuario.name }).then((r) =>
+              r.remoto === 'ok'
+                ? decir('Listo. Empezamos de cero.', { emocion: 'neutral' })
+                : r.remoto === 'sin-sesion'
+                  ? decir('Borré lo de esta pantalla. Para olvidar lo guardado en tu cuenta tenés que entrar.', { emocion: 'neutral' })
+                  : decir('Borré lo de esta pantalla, pero el servidor no confirmó el borrado. Probá de nuevo en un momento.', { emocion: 'neutral' })
+            );
           }}
         />
 
@@ -1129,12 +1158,15 @@ export default function App() {
           usuario={usuario}
           soundFxEnabled={soundFxEnabled}
           onClose={() => setAccesoOpen(false)}
-          onAuthSuccess={(name, role) => {
+          onAuthSuccess={(name, role, correo) => {
             setUsuario({ name, role, authenticated: true });
+            fijarCuentaMemoria(correo);
             decir(saludoDe(name).id, { emocion: 'feliz' });
           }}
           onLogout={() => {
             setUsuario({ name: '', role: 'Junta Directiva · Orden Global', authenticated: false });
+            // La memoria larga de esta cuenta deja de leerse (queda en su cajón para su vuelta).
+            fijarCuentaMemoria(null);
             // Tableta compartida: quien entre después no hereda la conversación ni las fotos.
             historialRef.current = [];
             pendienteGenesis.current = '';

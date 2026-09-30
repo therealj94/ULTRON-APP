@@ -12,6 +12,14 @@ const { ok, fin, espera, arrancarRelevo, movil, entrarComo } = require('./comun.
   const C = await R.cuenta('Roberto Castillo');
   await R.amigos(A, B);
   await R.amigos(A, C);
+  // María tiene la app abierta en un aparato (su llave publicada): lo que se le envía sale cifrado.
+  // Sin aparato no saldría (auditoría A06: no hay envío en claro sin decisión previa).
+  {
+    const { publicKey } = require('node:crypto').generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const j = publicKey.export({ format: 'jwk' });
+    const pub = Buffer.concat([Buffer.from([4]), Buffer.from(j.x, 'base64url'), Buffer.from(j.y, 'base64url')]).toString('base64url');
+    await R.post('/llaves/publicar', { ...B, id: M.CANDADO.idDeAparato(pub), pub });
+  }
   await entrarComo(M, A);
 
   const eventos = [];
@@ -49,7 +57,7 @@ const { ok, fin, espera, arrancarRelevo, movil, entrarComo } = require('./comun.
   ok('enviar: avisa `enviado` con el id del relevo', env && env.d.para === B.correo && !!env.d.id);
   ok('el borrador se va al enviar', BORRADORES.borradorDe(B.correo) === null);
   const enRelevo = (await R.post('/bandeja', { ...B, desde: A.correo })).mensajes || [];
-  ok('llegó al relevo (en claro solo si María no tiene aparato)', enRelevo.some((m) => m.id === env.d.id));
+  ok('llegó al relevo, cifrado', enRelevo.some((m) => m.id === env.d.id && !!m.cif));
   const hilo = CHATS.estadoHilo(B.correo).mensajes || [];
   ok('y aparece en el hilo abierto sin recargar', hilo.some((m) => m.texto === 'Llego en veinte minutos!' && !m.pendiente));
 

@@ -5,6 +5,8 @@ import path from 'path';
 import { promisify } from 'util';
 import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
+import { crearComprobadorListo } from './lib/nodo-listo';
+import { sanearDiag } from './lib/diag-saneador';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
@@ -17,6 +19,7 @@ import { montarRutasCaras } from './server/caras-rutas';
 import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
   abrirTurnoApp,
+  ambitoApp,
   anotarPropuesta,
   aparatoValido,
   contextoDe,
@@ -45,7 +48,7 @@ import { detectarIdioma } from './lib/idioma-detectar';
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
-import { emitirSesion, borrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
+import { emitirSesion, borrarSesion, cerrarSesion, sesionDe, tokenDe, exigirSesion, exigirMesa, exigirMesaODesk, limitar, urlPublica, mesaAutorizada, cuerpoHttp, gastarCupo, esperaEntrada, anotarFalloEntrada, anotarExitoEntrada, cargarSesionesCerradas } from './server/seguridad';
 import { canales, leerPdf, telegramFoto, telegramVoz } from './lib/canales';
 import { catalogoCanales, fotoSistema } from './lib/sistema';
 import { despacharTaller, hechosCatalogo } from './lib/taller';
@@ -74,7 +77,7 @@ import { AVISO_INYECCION, guiasDeClasificacion, nombreAgente, promptAgente } fro
 import { fichaEnTexto, fichasMencionadas } from './lib/cognitivo/entidades';
 import { esCharlaTrivial, preguntarModeloChico, soloMarcasDeContexto, usarModeloChico } from './lib/cognitivo/modelos';
 import type { Clasificacion } from './lib/cognitivo/traza';
-import { alAvisar, comandoDeAprobacion, resumenParaAviso } from './lib/cognitivo/aprobaciones';
+import { alAvisar, comandoDeAprobacion, reconciliarAprobaciones, resumenParaAviso } from './lib/cognitivo/aprobaciones';
 import { hechoCerebro, lineas as lineasCerebro } from './lib/cerebro';
 import { lineasPorSignificado } from './lib/cognitivo/conocimiento-semantico';
 import { herramientaActiva, herramientaPermitida, perfilPara, type NivelAura } from './lib/perfiles';
@@ -125,7 +128,7 @@ import { iniciarAlertas } from './server/electrum/alertas';
 import { montarRutasTimelapse } from './server/electrum/timelapse';
 import { asegurarBiblioteca } from './server/electrum/biblioteca';
 import { expedientesListo, guardarExpediente } from './lib/s3';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { personaPorCorreoExacto, puedeEntrar } from './lib/acceso';
 import { puedeEscribir } from './lib/acceso';
 import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
@@ -329,11 +332,12 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-/** Calienta Qwen 27B. La mesa espera `listo` antes de dejar hablar. */
-app.get('/api/nodo/listo', async (_req, res) => {
-  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
-    return res.json({ listo: false, motivo: 'sin nodo', honesto: true });
-  }
+/**
+ * Calienta Qwen 27B. La mesa espera `listo` antes de dejar hablar. Una sola comprobación en vuelo y el
+ * resultado guardado (lib/nodo-listo.ts), con limitador por IP: una visita o un curioso no gastan una
+ * inferencia por consulta.
+ */
+const nodoListo = crearComprobadorListo(async () => {
   const t0 = Date.now();
   try {
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
@@ -348,10 +352,17 @@ app.get('/api/nodo/listo', async (_req, res) => {
       }),
       signal: AbortSignal.timeout(45000),
     });
-    return res.json({ listo: r.ok, ms: Date.now() - t0, honesto: true });
+    return { listo: r.ok, ms: Date.now() - t0 };
   } catch (e: any) {
-    return res.json({ listo: false, ms: Date.now() - t0, motivo: String(e?.message || e).slice(0, 160), honesto: true });
+    return { listo: false, ms: Date.now() - t0, motivo: String(e?.message || e).slice(0, 160) };
   }
+});
+app.get('/api/nodo/listo', limitar(60), async (_req, res) => {
+  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
+    return res.json({ listo: false, motivo: 'sin nodo', honesto: true });
+  }
+  const e = await nodoListo.estado();
+  return res.json({ ...e, honesto: true });
 });
 
 /** Catálogo de capacidades: la única lista de lo que AU-RA puede hacer, con estado real. */
@@ -1565,8 +1576,10 @@ app.get('/api/ultron/sesion', async (req, res) => {
 
 app.post('/api/ultron/salir', limitar(30), async (req, res) => {
   // El token deja de valer en el servidor, no solo en este aparato.
-  const cerrada = await borrarSesion(tokenDe(req)).catch(() => false);
-  res.json({ ok: true, cerrada, message: 'Sesión cerrada.' });
+  // `durable`: la revocación quedó guardada (S3, o el disco sin S3). Si no, se dice: un redespliegue
+  // podría olvidarla antes de que el token venza solo.
+  const { cerrada, durable } = await cerrarSesion(tokenDe(req)).catch(() => ({ cerrada: false, durable: false }));
+  res.json({ ok: true, cerrada, durable, message: cerrada && !durable ? 'Sesión cerrada en este servidor; no pude guardar el cierre de forma durable.' : 'Sesión cerrada.' });
 });
 
 
@@ -1902,23 +1915,23 @@ app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
  * logs de Render. Sin sesión (una app que se está cayendo no puede autenticarse) y con rate limit.
  */
 app.post('/api/diag', limitar(40), (req, res) => {
-  const b = req.body || {};
-  // Todo lo que llega aquí es de un cliente sin sesión: corto y en una sola línea, para que nadie pueda
-  // inflar los logs ni escribir líneas falsas con saltos de línea.
-  const una = (v: unknown, n: number) => String(v ?? '?').replace(/[\r\n]+/g, ' ').slice(0, n);
-  const cab = `[APK ${una(b.version, 24)} ${una(b.plataforma, 16)} ${una(b.dispositivo, 60)} ses=${una(b.sesion, 40)}]`;
-  const tipo = String(b.tipo || 'estado');
-  if (tipo === 'crash-previo') {
-    console.error(`${cab} CRASH. Murió en: ${una(b.murio_en, 120)}`);
-  } else if (tipo === 'error-js') {
-    console.error(`${cab} ERROR JS${b.fatal ? ' FATAL' : ''}: ${una(b.error, 300)}`);
-    if (b.stack) console.error(`${cab} stack: ${String(b.stack).slice(0, 900)}`);
+  // Todo lo que llega aquí es de un cliente sin sesión: solo los campos conocidos, cortos, en una sola
+  // línea (nadie infla los logs ni escribe líneas falsas) y con lo sensible tapado —tokens, claves,
+  // correos, parámetros de URL, teléfonos— (lib/diag-saneador.ts). Cada reporte lleva un id de
+  // incidencia que se devuelve: con él se encuentra en el log sin contar nada más.
+  const b = sanearDiag(req.body);
+  const incidencia = randomBytes(5).toString('hex');
+  const cab = `[APK ${b.version} ${b.plataforma} ${b.dispositivo} ses=${b.sesion} inc=${incidencia}]`;
+  if (b.tipo === 'crash-previo') {
+    console.error(`${cab} CRASH. Murió en: ${b.murio_en || '?'}`);
+  } else if (b.tipo === 'error-js' || b.tipo === 'promesa') {
+    console.error(`${cab} ERROR JS${b.fatal ? ' FATAL' : ''}: ${b.error || '?'}`);
+    if (b.stack) console.error(`${cab} stack: ${b.stack}`);
   } else {
-    console.log(`${cab} ${una(b.nota || 'estado', 300)}`);
+    console.log(`${cab} ${b.nota || 'estado'}`);
   }
-  const migas = Array.isArray(b.migas) ? b.migas.slice(-40) : [];
-  if (migas.length) console.log(`${cab} migas: ${migas.map(String).join(' | ').slice(0, 1800)}`);
-  res.json({ ok: true, honesto: true });
+  if (b.migas.length) console.log(`${cab} migas: ${b.migas.join(' | ').slice(0, 1800)}`);
+  res.json({ ok: true, incidencia, honesto: true });
 });
 
 app.get('/api/cantar', (_req, res) => {
@@ -2114,7 +2127,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   // Mando solo con identidad verificada (sesión firmada o Telegram). El body no escala. Y nunca por la voz.
   const verificado = miembro ? null : quienVerificado(body, body?.sesion || null);
   const mando = !miembro && !opciones.soloConsulta && puedeCambiarSistema(verificado);
-  const contextoApp: ContextoApp | null = correoApp ? contextoDe(correoApp) : null;
+  // Lo de la app (contexto, borrador y propuesta que esperan el «sí») es de este aparato, no de la cuenta.
+  const ambito = correoApp ? ambitoApp(correoApp, body?.aparato) : '';
+  const contextoApp: ContextoApp | null = correoApp ? contextoDe(ambito) : null;
   // Las reglas de la app solo se le enseñan al modelo si el turno viene de la app (o la voz) y hay un
   // teléfono que pueda hacerlas. Lo que el modelo pida en un turno de la web no llega al teléfono.
   const conApp = !!correoApp && turnoDeLaApp(body, opciones) && (!!contextoApp || oyentesDe(correoApp) > 0);
@@ -2145,7 +2160,11 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const mensajeHilo = resolverReferencia(message, hiloPrevio);
   const hilo: MsgHilo[] = fusionarHilo({ durable, cliente: clienteHilo, mensaje: message, max: 16 });
   // Hechos que manda el cliente solo entran con sesión firmada (si no, cualquiera envenena la memoria).
-  const largaApp: string[] = body?.sesion && Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
+  // Y si el cliente dice de quién es esa memoria (`memoriaDe`, la mesa web), tiene que ser de la misma
+  // sesión: en una tableta compartida, lo de A no se guarda como de B.
+  const memoriaDe = typeof body?.memoriaDe === 'string' ? body.memoriaDe.trim().toLowerCase() : '';
+  const memoriaPropia = !memoriaDe || memoriaDe === String(body?.sesion?.correo || '').trim().toLowerCase();
+  const largaApp: string[] = body?.sesion && memoriaPropia && Array.isArray(body?.memoria) ? body.memoria.map((x: any) => String(x)).slice(0, 24) : [];
   for (const h of largaApp) {
     if (h.trim().length <= 8) continue;
     // Los de un miembro, a SU memoria; nunca a la de la junta.
@@ -2494,7 +2513,7 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const comoLeDecimos = perfilPersona?.apodo || (quien ? nombreDe(quien) : nombre) || undefined;
   const bloquePerfil = lineaPerfil(perfilPersona);
   const bloqueApp = conApp
-    ? instruccionAcciones(contextoApp, { idioma: idiomaTurno, pendiente: pendienteDe(correoApp), propuesta: propuestaDe(correoApp), ultimoLeido: ultimoLeidoDe(correoApp) })
+    ? instruccionAcciones(contextoApp, { idioma: idiomaTurno, pendiente: pendienteDe(ambito), propuesta: propuestaDe(ambito), ultimoLeido: ultimoLeidoDe(correoApp) })
     : '';
 
   // Con un miembro: su cerebro (lo público), sin catálogo del taller ni memoria de la junta
@@ -2794,7 +2813,9 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   if (!correo || !message || body?.image || body?.documento || body?.pdf) return null;
   // Solo si el turno viene de la app (cabecera x-aura-origen) o de la voz: no de la web de la mesa.
   if (!turnoDeLaApp(body, opciones)) return null;
-  const contexto = contextoDe(correo);
+  // Contexto, borrador y propuesta: los de ESTE aparato (dos teléfonos de la misma cuenta no se cruzan).
+  const amb = ambitoApp(correo, body?.aparato);
+  const contexto = contextoDe(amb);
   if (!contexto && oyentesDe(correo) === 0) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
   // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».
@@ -2803,15 +2824,15 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   const orden = await ordenRapida(message, {
     idioma: detectarIdioma(message) ?? normalizarIdioma(body?.idioma),
     contexto,
-    pendiente: pendienteDe(correo),
-    propuesta: propuestaAnterior(correo),
+    pendiente: pendienteDe(amb),
+    propuesta: propuestaAnterior(amb),
     esCharla: esCharlaTrivial,
     esperaLayaMs: opciones.voz ? Math.min(250, TOPE_PASO_VOZ_MS) : undefined,
   });
   if (!orden || (!orden.accion && !orden.propuesta && !orden.soltarPropuesta && !orden.soloDecir)) return null;
   // Llamar y recordar se preguntan primero: la propuesta espera el «sí» del turno siguiente.
-  if (orden.propuesta) anotarPropuesta(correo, orden.propuesta);
-  if (orden.soltarPropuesta) soltarPropuesta(correo);
+  if (orden.propuesta) anotarPropuesta(amb, orden.propuesta);
+  if (orden.soltarPropuesta) soltarPropuesta(amb);
   // El evento (con su id) va por el canal del aparato y el MISMO va en la respuesta del turno: la
   // app deduplica por id y no hace la acción dos veces (Beto recibió dos mensajes, 29-sep).
   const eventos = orden.accion ? [empujarAccion(correo, orden.accion, { aparato: aparatoValido(body?.aparato) }).evento] : [];
@@ -2831,7 +2852,7 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
  */
 function empezarTurnoDeCuenta(body: any) {
   const correo = body?.canal !== 'telegram' && body?.sesion?.correo ? String(body.sesion.correo).toLowerCase() : '';
-  if (correo) abrirTurnoApp(correo);
+  if (correo) abrirTurnoApp(ambitoApp(correo, body?.aparato));
 }
 
 /**
@@ -2854,18 +2875,19 @@ function accionesDelCerebro(
   // El único borrador que un «sí» puede enviar: el de un turno anterior (antes de empujar nada de este).
   // Igual la propuesta: llamar o recordar pedido en ESTE turno no se hace, queda esperando el «sí».
   const nueva: { p: Propuesta | null } = { p: null };
-  const previa = propuestaAnterior(p.correoApp);
+  const amb = ambitoApp(p.correoApp, p.aparato);
+  const previa = propuestaAnterior(amb);
   const listas = prepararAcciones(acciones, {
     mensaje: p.crudo,
     contexto: p.contextoApp,
-    pendiente: pendienteAnterior(p.correoApp),
+    pendiente: pendienteAnterior(amb),
     propuesta: previa,
     alProponer: (x) => (nueva.p = x),
   });
   const eventos = listas.map((a) => empujarAccion(p.correoApp, a, { aparato: p.aparato }).evento);
   const propuesta = nueva.p;
   // La propuesta se anota DESPUÉS de empujar: una llamada cumplida suelta la vieja y no la nueva.
-  if (propuesta) anotarPropuesta(p.correoApp, propuesta);
+  if (propuesta) anotarPropuesta(amb, propuesta);
   const mudo = !extraerEmocion(limpio).texto.trim();
   // El modelo escribió solo la línea: se dice la frase de la acción o, si era una propuesta, la pregunta.
   // Una llamada o un recordatorio que se cumplió: con el nombre y la hora que la persona confirmó.
@@ -3475,6 +3497,13 @@ async function startServer() {
     cargarSesionesCerradas()
       .then((d) => console.log('[AU-RA] sesiones', d))
       .catch((e) => console.warn('[AU-RA] sesiones', String(e?.message || e).slice(0, 160)));
+    // Lo que una caída dejó a medias en la cola de aprobaciones: se retoma o se marca incierto (nunca
+    // se repite a ciegas). Unos segundos después: que los ejecutores y los avisos ya estén registrados.
+    setTimeout(() => {
+      reconciliarAprobaciones()
+        .then((r) => (r.retomadas || r.vencidas || r.inciertas) && console.log('[cognitivo] aprobaciones a medias', r))
+        .catch((e) => console.warn('[cognitivo] aprobaciones a medias', String(e?.message || e).slice(0, 160)));
+    }, 15_000).unref?.();
     cargarMemoria()
       .then(() => console.log('[AU-RA] memoria', estadoMemoria().detalle))
       .catch((e) => console.warn('[AU-RA] memoria', String(e?.message || e).slice(0, 160)));

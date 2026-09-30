@@ -21,8 +21,17 @@
  *    USE_EXACT_ALARM NO: Play lo reserva a apps de despertador y calendario;
  *  · la llamada se programa ENTERA por adelantado (llamada, reintento a los 5 min y aviso final), así
  *    funciona con la app cerrada; contestar o rechazar cancela lo que falta;
- *  · una sola vez aunque la orden llegue dos veces (por el SSE y en la respuesta del turno).
+ *  · una sola vez aunque la orden llegue dos veces (por el SSE y en la respuesta del turno);
+ *  · TODO o NADA: si falla un paso de la llamada, se quita lo que ya se había puesto (o se dice que
+ *    quedó a medias, si ni eso se pudo), en vez de contestar «no pude» con una llamada ya agendada.
  * Nada sale del teléfono: el aviso vive en el sistema de Android.
+ *
+ * DE QUIÉN ES CADA AVISO (teléfono compartido): cada aviso lleva el SEUDÓNIMO de su dueño (lib/cuenta.ts,
+ * no el correo) y su id lo incluye. Listar, cancelar, la lectura por voz y lo que pasa al sonar solo
+ * ven los de quien está dentro; los viejos sin dueño no se le atribuyen a nadie. Al cerrar sesión los
+ * avisos de esa persona SIGUEN puestos (son suyos, los espera), pero nadie más los lista, los cancela
+ * ni los oye. Con el teléfono bloqueado el aviso es PRIVADO: Android enseña que hay un aviso de AU-RA,
+ * no lo que dice (según el ajuste de la pantalla de bloqueo del teléfono).
  *
  * Todo lo de afuera entra por `deps`: las pruebas lo corren en node con un notifee falso. El pegamento
  * con la app (manejadores de notifee, la pantalla «AURA te llama», las llamadas de PULSE2CHAT) está
@@ -48,7 +57,7 @@ export type ConstantesNotifee = {
   AuthorizationStatus: { DENIED: number };
   AndroidImportance: { HIGH: number };
   AndroidCategory?: { CALL: string; REMINDER?: string };
-  AndroidVisibility?: { PUBLIC: number };
+  AndroidVisibility?: { PUBLIC: number; PRIVATE?: number };
   AndroidNotificationSetting?: { ENABLED: number };
   EventType?: { DISMISSED: number; PRESS: number; ACTION_PRESS: number; DELIVERED: number };
 };
@@ -56,6 +65,8 @@ export type ConstantesNotifee = {
 export type DepsRecordatorio = {
   notifee: () => { m: NotifeeMin; k: ConstantesNotifee } | null;
   ahora?: () => number;
+  /** El seudónimo de quien está dentro ('' sin nadie): de quién son los avisos que se ponen y se ven. */
+  dueno?: () => string;
 };
 
 export const CANAL_RECORDATORIOS = 'aura-recordatorios';
@@ -77,7 +88,8 @@ export const ACCION_ABRIR = 'aura-rec-abrir';
 export const ACCION_PANTALLA = 'aura-rec-pantalla';
 
 export type Paso = 'aviso' | 'l1' | 'l2' | 'final';
-export type Resultado = { ok: boolean; detalle: string; id?: string; exacto?: boolean };
+/** `parcial`: falló a medias y no se pudo deshacer lo que ya estaba puesto (se dice, no se esconde). */
+export type Resultado = { ok: boolean; detalle: string; id?: string; exacto?: boolean; parcial?: boolean };
 
 const recientes = new Map<string, { r: Resultado; en: number }>();
 
@@ -95,11 +107,20 @@ export function horaCorta(cuando: number, ahora: number): string {
   return tr(`el ${d.getDate()}/${d.getMonth() + 1} a las ${reloj}`, `on ${d.getMonth() + 1}/${d.getDate()} at ${relojEn}`);
 }
 
-/** El id base de un recordatorio (la misma orden repetida da el mismo id: no se duplica). */
-export function idRecordatorio(cuando: number, texto: string): string {
+/**
+ * El id base de un recordatorio. La misma orden repetida (misma hora, mismo texto, mismo dueño) da el
+ * mismo id: no se duplica, ni tras reiniciar. El dueño entra en el id: la misma orden de dos personas
+ * son dos avisos, y uno no pisa al otro.
+ */
+export function idRecordatorio(cuando: number, texto: string, dueno = ''): string {
   let h = 0;
-  for (const c of texto) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  for (const c of `${dueno}|${texto}`) h = (h * 31 + c.charCodeAt(0)) >>> 0;
   return `aura-rec-${cuando.toString(36)}-${h.toString(36)}`;
+}
+
+/** Visibilidad en la pantalla bloqueada: privada (Android oculta el contenido), si notifee la trae. */
+function privado(k: ConstantesNotifee): Record<string, unknown> {
+  return k.AndroidVisibility ? { visibility: k.AndroidVisibility.PRIVATE ?? 0 } : {};
 }
 
 /** Los ids de todo lo que se programa para un recordatorio (para cancelarlo entero). */
@@ -109,22 +130,23 @@ export function idsDe(base: string): string[] {
 
 const limpiar = (s: unknown) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, 140);
 
-function datos(base: string, texto: string, cuando: number, paso: Paso, llamada: boolean): Record<string, string> {
-  return { aura: 'recordatorio', base, texto, cuando: String(cuando), paso, llamada: llamada ? '1' : '0' };
+function datos(base: string, texto: string, cuando: number, paso: Paso, llamada: boolean, dueno: string): Record<string, string> {
+  return { aura: 'recordatorio', base, texto, cuando: String(cuando), paso, llamada: llamada ? '1' : '0', dueno };
 }
 
 /** El aviso de llamada entrante de AURA (la primera y el reintento). */
-export function avisoDeLlamada(base: string, texto: string, cuando: number, paso: 'l1' | 'l2', k: ConstantesNotifee): Record<string, unknown> {
+export function avisoDeLlamada(base: string, texto: string, cuando: number, paso: 'l1' | 'l2', k: ConstantesNotifee, dueno = ''): Record<string, unknown> {
   return {
     id: `${base}-${paso}`,
     title: tr('AURA te llama', 'AURA is calling'),
     body: tr(`Para recordarte: ${texto}`, `To remind you: ${texto}`),
-    data: datos(base, texto, cuando, paso, true),
+    data: datos(base, texto, cuando, paso, true, dueno),
     android: {
       channelId: CANAL_LLAMADA,
       category: k.AndroidCategory?.CALL ?? 'call',
       importance: k.AndroidImportance.HIGH,
-      ...(k.AndroidVisibility ? { visibility: k.AndroidVisibility.PUBLIC } : {}),
+      // Privada (antes pública): bloqueado, se ve que AURA llama, no para qué.
+      ...privado(k),
       // Con el teléfono bloqueado, Android abre la app a pantalla completa (si deja a AU-RA usarla;
       // si no, queda el aviso con timbre). La app muestra «AURA te llama» con Contestar / Rechazar.
       fullScreenAction: { id: ACCION_PANTALLA, launchActivity: 'default' },
@@ -143,13 +165,13 @@ export function avisoDeLlamada(base: string, texto: string, cuando: number, paso
 }
 
 /** El aviso normal (el de «recuérdame…», o el que queda si no contestó la llamada). */
-export function avisoNormal(base: string, texto: string, cuando: number, paso: 'aviso' | 'final', llamada: boolean, k: ConstantesNotifee): Record<string, unknown> {
+export function avisoNormal(base: string, texto: string, cuando: number, paso: 'aviso' | 'final', llamada: boolean, k: ConstantesNotifee, dueno = ''): Record<string, unknown> {
   return {
     id: paso === 'aviso' ? base : `${base}-final`,
     title: paso === 'final' ? tr('AURA te llamó para recordarte', 'AURA called to remind you') : tr('AURA te recuerda', 'AURA reminds you'),
     body: texto,
-    data: datos(base, texto, cuando, paso, llamada),
-    android: { channelId: CANAL_RECORDATORIOS, pressAction: { id: 'default' }, importance: k.AndroidImportance.HIGH },
+    data: datos(base, texto, cuando, paso, llamada, dueno),
+    android: { channelId: CANAL_RECORDATORIOS, pressAction: { id: 'default' }, importance: k.AndroidImportance.HIGH, ...privado(k) },
   };
 }
 
@@ -171,12 +193,21 @@ export async function programarRecordatorio(a: { texto: string; cuando: number; 
   if (!texto) return { ok: false, detalle: tr('No me quedó claro qué recordarte.', "I didn't catch what to remind you.") };
   if (!Number.isFinite(a.cuando) || a.cuando < ahora + MARGEN_MS) return { ok: false, detalle: tr('Esa hora ya pasó. Dime otra.', 'That time already passed. Tell me another one.') };
   if (a.cuando > ahora + MAX_ADELANTE_MS) return { ok: false, detalle: tr('Eso está demasiado lejos para un recordatorio.', "That's too far ahead for a reminder.") };
-  const clave = `${a.cuando}|${texto}|${llamada ? 1 : 0}`;
+  // Sin dueño no se pone: un aviso de nadie lo vería (y lo cancelaría) quien entre después.
+  const dueno = d.dueno?.() || '';
+  if (!dueno) return { ok: false, detalle: tr('Para ponerte un recordatorio tienes que entrar con tu cuenta.', 'Sign in to your account to set a reminder.') };
+  const clave = `${dueno}|${a.cuando}|${texto}|${llamada ? 1 : 0}`;
   const ya = recientes.get(clave);
   if (ya && ahora - ya.en < VENTANA_REPETIDO_MS) return ya.r;
   const n = d.notifee();
   if (!n) return { ok: false, detalle: tr('En este teléfono no puedo poner avisos.', "I can't set reminders on this phone.") };
   const { m, k } = n;
+  // Lo que ya quedó agendado de ESTE recordatorio: si un paso falla, se quita (todo o nada).
+  const puestos: string[] = [];
+  const poner = async (aviso: Record<string, unknown>, disparo: Record<string, unknown>) => {
+    await m.createTriggerNotification(aviso, disparo);
+    puestos.push(String(aviso.id));
+  };
   try {
     const permiso = await m.requestPermission();
     if (permiso.authorizationStatus === k.AuthorizationStatus.DENIED) {
@@ -186,7 +217,7 @@ export async function programarRecordatorio(a: { texto: string; cuando: number; 
     const alarma = { type: exacto ? (k.AlarmType.SET_EXACT_AND_ALLOW_WHILE_IDLE as number) : k.AlarmType.SET_AND_ALLOW_WHILE_IDLE };
     const cuando = (t: number) => ({ type: k.TriggerType.TIMESTAMP, timestamp: t, alarmManager: alarma });
     await m.createChannel({ id: CANAL_RECORDATORIOS, name: tr('Recordatorios de AURA', 'AURA reminders'), importance: k.AndroidImportance.HIGH, sound: 'default' });
-    const base = idRecordatorio(a.cuando, texto);
+    const base = idRecordatorio(a.cuando, texto, dueno);
     if (llamada) {
       await m.createChannel({
         id: CANAL_LLAMADA,
@@ -198,11 +229,11 @@ export async function programarRecordatorio(a: { texto: string; cuando: number; 
         vibrationPattern: [300, 700, 300, 700],
         ...(k.AndroidVisibility ? { visibility: k.AndroidVisibility.PUBLIC } : {}),
       });
-      await m.createTriggerNotification(avisoDeLlamada(base, texto, a.cuando, 'l1', k), cuando(a.cuando));
-      await m.createTriggerNotification(avisoDeLlamada(base, texto, a.cuando, 'l2', k), cuando(a.cuando + REINTENTO_MS));
-      await m.createTriggerNotification(avisoNormal(base, texto, a.cuando, 'final', true, k), cuando(a.cuando + AVISO_FINAL_MS));
+      await poner(avisoDeLlamada(base, texto, a.cuando, 'l1', k, dueno), cuando(a.cuando));
+      await poner(avisoDeLlamada(base, texto, a.cuando, 'l2', k, dueno), cuando(a.cuando + REINTENTO_MS));
+      await poner(avisoNormal(base, texto, a.cuando, 'final', true, k, dueno), cuando(a.cuando + AVISO_FINAL_MS));
     } else {
-      await m.createTriggerNotification(avisoNormal(base, texto, a.cuando, 'aviso', false, k), cuando(a.cuando));
+      await poner(avisoNormal(base, texto, a.cuando, 'aviso', false, k, dueno), cuando(a.cuando));
     }
     const hora = horaCorta(a.cuando, ahora);
     const aprox = exacto ? '' : tr(' Puede llegar con unos minutos de diferencia: para que sea exacto, activa «Alarmas y recordatorios» para AU-RA en Ajustes.', ' It may arrive a few minutes late: for exact timing, allow "Alarms & reminders" for AU-RA in Settings.');
@@ -212,20 +243,40 @@ export async function programarRecordatorio(a: { texto: string; cuando: number; 
     if (recientes.size > 50) recientes.delete(recientes.keys().next().value as string);
     return r;
   } catch {
+    if (puestos.length) {
+      // Falló a medias: lo que alcanzó a quedar agendado se quita. Si ni eso se puede, se dice.
+      const quitado = m.cancelTriggerNotifications ? await m.cancelTriggerNotifications(puestos).then(() => true, () => false) : false;
+      if (!quitado) {
+        return {
+          ok: false,
+          parcial: true,
+          id: puestos[0].replace(/-(l1|l2|final)$/, ''),
+          detalle: tr(
+            'El recordatorio quedó a medias y no pude quitar lo que alcancé a poner: puede sonar una vez. Dime «cancela el recordatorio» para quitarlo.',
+            'The reminder was only partly set and I couldn’t remove what I had set: it may ring once. Say "cancel the reminder" to remove it.'
+          ),
+        };
+      }
+    }
     return { ok: false, detalle: tr('No pude poner el recordatorio.', "I couldn't set the reminder.") };
   }
 }
 
-/** Los recordatorios que siguen puestos (uno por recordatorio, no por cada aviso que lo compone). */
+/**
+ * Los recordatorios que siguen puestos DE QUIEN ESTÁ DENTRO (uno por recordatorio, no por cada aviso que
+ * lo compone). Sin nadie dentro, ninguno. Los de otra persona, y los viejos sin dueño, no se listan.
+ */
 export async function listarRecordatorios(d: DepsRecordatorio): Promise<RecordatorioPuesto[]> {
   const n = d.notifee();
-  if (!n?.m.getTriggerNotifications) return [];
+  const dueno = d.dueno?.() || '';
+  if (!n?.m.getTriggerNotifications || !dueno) return [];
   try {
     const todos = await n.m.getTriggerNotifications();
     const out: RecordatorioPuesto[] = [];
     for (const t of todos) {
       const x = t?.notification?.data || {};
       if (x.aura !== 'recordatorio' || (x.paso !== 'aviso' && x.paso !== 'l1')) continue;
+      if (x.dueno !== dueno) continue;
       const cuando = Number(x.cuando);
       if (!Number.isFinite(cuando) || typeof x.base !== 'string') continue;
       out.push({ id: x.base, texto: limpiar(x.texto), cuando, llamada: x.llamada === '1' });
@@ -236,7 +287,7 @@ export async function listarRecordatorios(d: DepsRecordatorio): Promise<Recordat
   }
 }
 
-/** Cancela un recordatorio entero (el aviso, o la llamada, su reintento y su aviso final). */
+/** Cancela un recordatorio entero (el aviso, o la llamada, su reintento y su aviso final). Solo uno propio. */
 export async function cancelarRecordatorio(id: string, d: DepsRecordatorio): Promise<Resultado> {
   if (!/^aura-rec-[a-z0-9-]{1,80}$/.test(id)) return { ok: false, detalle: tr('No encuentro ese recordatorio.', "I can't find that reminder.") };
   const n = d.notifee();
@@ -253,7 +304,7 @@ export async function cancelarRecordatorio(id: string, d: DepsRecordatorio): Pro
 
 /* ── la llamada de AURA cuando llega ─────────────────────────────────────────────────────── */
 
-export type LlamadaRecordatorio = { base: string; texto: string; cuando: number; paso: 'l1' | 'l2' };
+export type LlamadaRecordatorio = { base: string; texto: string; cuando: number; paso: 'l1' | 'l2'; dueno?: string };
 export type EventoNotifee = { type: number; detail?: { notification?: { id?: string; data?: Record<string, unknown> }; pressAction?: { id?: string } } };
 
 /**
@@ -265,7 +316,7 @@ export type EventoNotifee = { type: number; detail?: { notification?: { id?: str
 export function interpretarEvento(e: EventoNotifee, k: ConstantesNotifee): { que: 'suena' | 'contestar' | 'rechazar'; llamada: LlamadaRecordatorio } | null {
   const x = e?.detail?.notification?.data || {};
   if (x.aura !== 'recordatorio' || (x.paso !== 'l1' && x.paso !== 'l2') || typeof x.base !== 'string') return null;
-  const llamada: LlamadaRecordatorio = { base: x.base, texto: limpiar(x.texto), cuando: Number(x.cuando) || 0, paso: x.paso };
+  const llamada: LlamadaRecordatorio = { base: x.base, texto: limpiar(x.texto), cuando: Number(x.cuando) || 0, paso: x.paso, dueno: typeof x.dueno === 'string' ? x.dueno : '' };
   const T = k.EventType ?? { DISMISSED: 0, PRESS: 1, ACTION_PRESS: 2, DELIVERED: 3 };
   const accion = e.detail?.pressAction?.id;
   if (e.type === T.ACTION_PRESS && accion === ACCION_CONTESTAR) return { que: 'contestar', llamada };
@@ -298,7 +349,7 @@ export async function alRechazar(l: LlamadaRecordatorio, d: DepsRecordatorio) {
   const n = d.notifee();
   if (!n) return;
   await alContestar(l.base, d);
-  await n.m.displayNotification?.(avisoNormal(l.base, l.texto, l.cuando, 'final', true, n.k)).catch(() => undefined);
+  await n.m.displayNotification?.(avisoNormal(l.base, l.texto, l.cuando, 'final', true, n.k, l.dueno || '')).catch(() => undefined);
 }
 
 /**
@@ -310,7 +361,13 @@ export async function aplazar(l: LlamadaRecordatorio, d: DepsRecordatorio) {
 }
 export async function reponer(l: LlamadaRecordatorio, d: DepsRecordatorio) {
   const n = d.notifee();
-  await n?.m.displayNotification?.(avisoDeLlamada(l.base, l.texto, l.cuando, l.paso, n.k)).catch(() => undefined);
+  await n?.m.displayNotification?.(avisoDeLlamada(l.base, l.texto, l.cuando, l.paso, n.k, l.dueno || '')).catch(() => undefined);
+}
+
+/** ¿Esta llamada es de quien está dentro? Las de otra persona (o sin dueño) no se enseñan ni se dicen. */
+export function esDeQuienEsta(l: LlamadaRecordatorio, d: DepsRecordatorio): boolean {
+  const dueno = d.dueno?.() || '';
+  return !!dueno && l.dueno === dueno;
 }
 
 /* ── «AURA te llama» en la app (la pantalla que se ve al sonar) ───────────────────────────── */

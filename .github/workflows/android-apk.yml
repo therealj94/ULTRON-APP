@@ -7,6 +7,11 @@ on:
     paths:
       - "mobile/**"
       - ".github/workflows/android-apk.yml"
+      - ".github/workflows/calidad-movil.yml"
+      # Lo que decide cómo sale la APK (firma, huella, comprobación por dentro).
+      - "scripts/qa/firma-release.mjs"
+      - "scripts/qa/comprobar-apk.mjs"
+      - "scripts/qa/runtime-android.mjs"
 concurrency:
   group: apk-${{ github.ref }}
   cancel-in-progress: true
@@ -15,7 +20,12 @@ permissions:
   contents: write
 
 jobs:
+  # Las pruebas funcionales ANTES de compilar: una APK no sale de un commit que rompe una prueba.
+  calidad:
+    uses: ./.github/workflows/calidad-movil.yml
+
   apk:
+    needs: calidad
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # A nivel de TRABAJO, no de paso. `expo-constants` instala una tarea de Gradle que REGENERA
@@ -94,8 +104,11 @@ jobs:
       # verifica si la APK va firmada con una llave nuestra: la keystore debug del template es la
       # misma en todos los proyectos y su huella es pública. Con ANDROID_KEYSTORE_BASE64 y
       # ANDROID_KEYSTORE_PASSWORD (PKCS12; alias ANDROID_KEY_ALIAS, por omisión «aura»; clave de la
-      # llave ANDROID_KEY_PASSWORD, por omisión la del almacén) el release se firma con ella. Sin
-      # ellos, keystore debug como siempre, sin fallar.
+      # llave ANDROID_KEY_PASSWORD, por omisión la del almacén) el release se firma con ella.
+      #
+      # Sin ellos: en MAIN (producción) el flujo FALLA —una APK de producción firmada con la llave
+      # pública del template no es una identidad segura ni actualiza las instaladas—; en una rama
+      # (canal `pruebas`) se firma con la debug, avisando.
       #
       # La keystore se decodifica en RUNNER_TEMP (fuera del repo, 0600) y se borra al terminar. Las
       # claves no se escriben en ningún archivo ni en la línea de comandos: el build.gradle que
@@ -109,7 +122,11 @@ jobs:
           AURA_FIRMA_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'aura' }}
         run: |
           if [ -z "$FIRMA_KEYSTORE_B64" ] || [ -z "$AURA_FIRMA_CLAVE" ]; then
-            echo "Sin ANDROID_KEYSTORE_BASE64 o ANDROID_KEYSTORE_PASSWORD: el release se firma con la keystore debug del template."
+            if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+              echo "::error::Sin ANDROID_KEYSTORE_BASE64 o ANDROID_KEYSTORE_PASSWORD no se compila la APK de producción: no se firma con la keystore debug del template."
+              exit 1
+            fi
+            echo "::warning::Rama de pruebas sin keystore propia: el release se firma con la keystore debug del template (solo canal pruebas)."
             echo "firma=debug" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -165,6 +182,8 @@ jobs:
       # (no supuesta). En la forma «AB:CD:…» que va tal cual en ANDROID_CERT_SHA256 del servidor.
       - name: Huella del certificado
         working-directory: mobile
+        env:
+          HUELLA_AUTORIZADA: ${{ vars.ANDROID_CERT_SHA256_AUTORIZADA || '3A:2E:DC:D5:23:2C:F0:6F:2F:8E:96:AE:F6:FC:40:D0:1D:61:5A:E2:4C:8E:59:66:BA:A1:03:83:51:55:70:5F' }}
         run: |
           APK="out/${{ matrix.marca }}-${{ steps.version.outputs.version }}.apk"
           SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
@@ -180,6 +199,13 @@ jobs:
           fi
           echo "SHA-256 del certificado (${{ matrix.variante }}, firma ${{ steps.firma.outputs.firma }}): $HUELLA"
           echo "SHA-256 del certificado de ${{ matrix.titulo }} (firma ${{ steps.firma.outputs.firma }}): \`$HUELLA\`" >> "$GITHUB_STEP_SUMMARY"
+          # En main, la huella tiene que ser la AUTORIZADA (la de la llave con que se publicaron las APK
+          # instaladas y la que declara assetlinks). Otra huella no actualizaría las instaladas.
+          # La variable del repositorio ANDROID_CERT_SHA256_AUTORIZADA la cambia sin tocar el flujo.
+          if [ "$GITHUB_REF" = "refs/heads/main" ] && [ "$HUELLA" != "$HUELLA_AUTORIZADA" ]; then
+            echo "::error::La APK quedó firmada con $HUELLA y la autorizada es $HUELLA_AUTORIZADA. No se publica."
+            exit 1
+          fi
 
       # Comprobar el APK por dentro, no confiar en que salió bien.
       #

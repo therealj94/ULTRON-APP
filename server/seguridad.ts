@@ -192,9 +192,16 @@ export function leerDato(prefijo: string, token: string): any | null {
  * Un token firmado vale por sí solo 14 días: borrarlo del Map no lo mataba, y «Cerrar sesión» dejaba
  * viva la copia de quien la hubiera sacado del teléfono o del navegador. Aquí se anota su huella hasta
  * que habría vencido. Se guarda en disco y en S3 (si hay), para que un redespliegue no lo resucite.
+ *
+ * Una revocación VIGENTE nunca se descarta para ahorrar memoria: antes, pasadas 5.000, se tiraban las
+ * que vencían antes aunque todavía no hubieran vencido, y esos tokens volvían a valer. Solo se podan
+ * las vencidas. Cada huella son unas decenas de bytes y solo se anota un token que este servidor firmó
+ * y que no ha vencido (no se puede llenar con basura); pasar de AVISO_CERRADAS se avisa en el log.
+ * Antes de escribir en S3 se mezcla lo que ya hay allá: otra réplica pudo cerrar sesiones en medio.
  */
 const CERRADAS_S3 = 'ultron/sesiones-cerradas.json';
-const MAX_CERRADAS = 5000;
+const AVISO_CERRADAS = 5000;
+let avisadoTope = false;
 const cerradas = new Map<string, number>(); // huella → cuándo habría vencido
 let cerradasDeDisco = false;
 
@@ -225,30 +232,45 @@ function leerCerradasDeDisco() {
   }
 }
 
+/** Solo se van las VENCIDAS: una revocación vigente no se tira nunca. */
 function podarCerradas() {
   const ahora = Date.now();
   for (const [h, v] of cerradas) if (v <= ahora) cerradas.delete(h);
-  // Tope: se van las que vencen antes (son las que menos riesgo dejan).
-  if (cerradas.size > MAX_CERRADAS) {
-    const orden = [...cerradas].sort((a, b) => a[1] - b[1]);
-    for (const [h] of orden.slice(0, cerradas.size - MAX_CERRADAS)) cerradas.delete(h);
+  if (cerradas.size > AVISO_CERRADAS && !avisadoTope) {
+    avisadoTope = true;
+    console.warn(`[AU-RA] sesiones cerradas: ${cerradas.size} vigentes (más de ${AVISO_CERRADAS}). No se descartan; conviene un almacén compartido con vencimiento.`);
   }
 }
 
-async function guardarCerradas() {
+/**
+ * Guarda las cerradas. Devuelve si quedó DURABLE: en S3 si lo hay; sin S3, en el disco (lo más que hay).
+ * Un fallo no se esconde: lo sabe quien cerró la sesión.
+ */
+async function guardarCerradas(): Promise<boolean> {
+  let enDisco = false;
+  let enS3 = false;
+  if (s3Listo()) {
+    // Lo que otra réplica anotó mientras tanto no se pisa con esta copia.
+    const previo = await s3GetJson(CERRADAS_S3).catch(() => ({ ok: false, json: null }) as { ok: boolean; json: unknown });
+    if (previo.ok) mezclarCerradas(previo.json);
+  }
   const datos = Object.fromEntries(cerradas);
   try {
     const f = archivoCerradas();
     fs.mkdirSync(path.dirname(f), { recursive: true });
     fs.writeFileSync(`${f}.tmp`, JSON.stringify(datos));
     fs.renameSync(`${f}.tmp`, f);
+    enDisco = true;
   } catch (e: any) {
     console.warn('[AU-RA] sesiones cerradas: no pude escribir el disco', String(e?.message || e).slice(0, 120));
   }
   if (s3Listo()) {
     const r = await s3PutJson(CERRADAS_S3, datos).catch((e) => ({ ok: false, detalle: String(e?.message || e) }));
     if (!r.ok) console.warn('[AU-RA] sesiones cerradas: S3 no guardó', String(r.detalle).slice(0, 120));
+    enS3 = !!r.ok;
+    return enS3;
   }
+  return enDisco;
 }
 
 /** Al arrancar: trae las sesiones cerradas de S3 (el disco de Render se borra al redesplegar). */
@@ -270,20 +292,34 @@ export function soltarSesion(token?: string) {
   if (token) sesiones.delete(token);
 }
 
-/** Cierra la sesión de verdad: el token deja de valer aquí y en cualquier copia. */
-export async function borrarSesion(token?: string): Promise<boolean> {
-  if (!token) return false;
+/**
+ * Cierra la sesión de verdad: el token deja de valer aquí y en cualquier copia. `cerrada`: quedó
+ * revocada en este proceso; `durable`: además quedó guardada (S3, o el disco si no hay S3). Un
+ * `durable: false` no es un cierre fallido, pero un redespliegue podría olvidarlo: se dice.
+ */
+export async function cerrarSesion(token?: string): Promise<{ cerrada: boolean; durable: boolean }> {
+  if (!token) return { cerrada: false, durable: false };
   sesiones.delete(token);
   // Solo se anota lo que este servidor firmó: si no, cualquiera llenaría la lista con basura.
   const p = cuerpoFirmado(token);
-  if (!p) return false;
+  if (!p) return { cerrada: false, durable: false };
   const vence = Number(p.exp) || Number(p.at) + SESION_TTL_MS || Date.now() + SESION_TTL_MS;
-  if (vence <= Date.now()) return false;
+  if (vence <= Date.now()) return { cerrada: false, durable: false };
   leerCerradasDeDisco();
   cerradas.set(huellaToken(token), vence);
   podarCerradas();
-  await guardarCerradas();
-  return true;
+  const durable = await guardarCerradas().catch(() => false);
+  return { cerrada: true, durable };
+}
+
+/** Cierra la sesión (ver cerrarSesion). true si quedó revocada. */
+export async function borrarSesion(token?: string): Promise<boolean> {
+  return (await cerrarSesion(token)).cerrada;
+}
+
+/** Solo pruebas: cuántas revocaciones vigentes hay y si una huella sigue anotada. */
+export function _cerradasParaPruebas() {
+  return { total: cerradas.size, anotada: (token: string) => sesionCerrada(token) };
 }
 
 function sesionCerrada(token: string) {

@@ -1,0 +1,14 @@
+#!/bin/sh
+# De quién es cada cosa en un teléfono compartido (auditoría A02–A07, A13, A19, A24): token,
+# perfil, recordatorios, chat (sin envío en claro) y la barrera de la OTA. Construye el paquete para node y corre cada
+# prueba. Sin relevo ni servidor: todo lo de afuera va simulado.
+# IDENTIDAD=/ruta/otro-paquete.cjs corre las mismas pruebas contra otro código (ver construir.cjs).
+cd "$(dirname "$0")" || exit 1
+node construir.cjs || exit 1
+fallos=0
+for t in sesion perfil recordatorios chat cifrado; do
+  echo "\n══ $t"
+  timeout 120 node "$t.cjs" || fallos=$((fallos + 1))
+done
+echo "\n$fallos prueba(s) con fallos"
+exit $fallos

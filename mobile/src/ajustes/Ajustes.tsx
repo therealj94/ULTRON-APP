@@ -17,7 +17,7 @@ import { StyleSheet, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { APP_VERSION } from '../config';
 import { de, tr, useIdioma, type Idioma } from '../i18n';
-import { cumpleLegible, guardarPerfil, perfilSincronizado, usePerfil } from '../lib/perfil';
+import { cumpleLegible, estadoPerfil, guardarPerfil, perfilSincronizado, usePerfil } from '../lib/perfil';
 import { setAvatarVoz } from '../lib/tts';
 import type { Tema } from '../nucleo/contrato';
 import { MEDIDA } from '../nucleo/tema';
@@ -161,8 +161,13 @@ export function Ajustes({ navigation }: Props) {
           <Texto v="mini" color="texto3" style={[fuenteDisplay(), { fontSize: 13, letterSpacing: 2 }]}>
             powered by ORDEN GLOBAL
           </Texto>
+          {/* Guardado de verdad solo con recibo durable del servidor; «recibido» no es lo mismo. */}
           <Texto v="mini" color={perfilSincronizado() ? 'exito' : 'texto3'}>
-            {perfilSincronizado() ? tr('Tu perfil está guardado en tu cuenta', 'Your profile is saved to your account') : tr('Tu perfil se guarda en tu cuenta al haber conexión', 'Your profile syncs to your account when online')}
+            {perfilSincronizado()
+              ? tr('Tu perfil está guardado en tu cuenta', 'Your profile is saved to your account')
+              : estadoPerfil().estado === 'recibido'
+                ? tr('Tu perfil llegó al servidor, pero aún no quedó guardado del todo: lo reintento solo', 'Your profile reached the server but isn’t fully saved yet: retrying on my own')
+                : tr('Tu perfil se guarda en tu cuenta al haber conexión', 'Your profile syncs to your account when online')}
           </Texto>
         </View>
       </View>

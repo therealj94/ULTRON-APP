@@ -38,6 +38,7 @@ const lineas = [
   existe('pulse/chats.ts') ? `export * as CHATS from ${JSON.stringify(path.join(SRC, 'pulse/chats'))};` : '',
   existe('pulse/borradores.ts') ? `export * as BORRADORES from ${JSON.stringify(path.join(SRC, 'pulse/borradores'))};` : '',
   existe('nucleo/contrato.ts') ? `export * as CONTRATO from ${JSON.stringify(path.join(SRC, 'nucleo/contrato'))};` : '',
+  existe('lib/cuenta.ts') ? `export * as CUENTA from ${JSON.stringify(path.join(SRC, 'lib/cuenta'))};` : '',
   existe('pulse/ui/formato.ts') ? `export * as FORMATO from ${JSON.stringify(path.join(SRC, 'pulse/ui/formato'))};` : '',
   `export * as AZAR from ${JSON.stringify(path.join(SRC, 'pulse/azar'))};`,
 ];

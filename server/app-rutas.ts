@@ -1,9 +1,10 @@
 /**
  * LAS RUTAS DE LA APP 5.0 (contrato: mobile/src/nucleo/contrato.ts).
  *
- *   GET  /api/perfil            → { perfil: Perfil | null } (+ lo público de la plataforma, que la web
- *                                  ya leía de esta misma ruta: acento, nombre, modos)
- *   PUT  /api/perfil  Partial<Perfil>  → { perfil } (503 `perfil_no_disponible` si el guardado no se pudo leer)
+ *   GET  /api/perfil            → { perfil: Perfil | null, disponible, durable } (+ lo público de la
+ *                                  plataforma, que la web ya leía de esta misma ruta: acento, nombre, modos)
+ *   PUT  /api/perfil  Partial<Perfil>  → { perfil, durable } (503 `perfil_no_disponible` si el guardado
+ *                                  no se pudo leer). El teléfono saca el cambio de su cola solo con `durable: true`.
  *   GET  /api/app/acciones      text/event-stream: cada evento `data: {"id","accion"}`
  *                                  (cabecera opcional `x-aura-aparato: <id del teléfono>`)
  *   POST /api/app/contexto      { pantalla, chatAbierto?, contactos, borrador? }
@@ -12,8 +13,8 @@
  * de la sesión firmada, nunca del cuerpo.
  */
 import type express from 'express';
-import { actualizarPerfil, leerPerfil, PerfilNoDisponible, validarCambios } from '../lib/perfil-persona';
-import { aparatoValido, guardarContexto, MAX_CANALES_POR_CUENTA, suscribir, validarContexto } from '../lib/acciones-app';
+import { actualizarPerfil, almacenDurable, leerPerfilSeguro, PerfilNoDisponible, validarCambios } from '../lib/perfil-persona';
+import { accionesDesde, ambitoApp, aparatoValido, guardarContexto, MAX_CANALES_POR_CUENTA, suscribir, validarContexto } from '../lib/acciones-app';
 import type { Sesion } from './seguridad';
 
 /** Teléfonos (o pestañas) escuchando a la vez por cuenta; al pasarlo se desaloja el canal más viejo. */
@@ -53,9 +54,13 @@ export function montarRutasApp(app: express.Express, d: Deps) {
   app.get('/api/perfil', d.limitar(60), async (req, res) => {
     const s = d.sesionDe(req);
     if (!s && d.tokenDe(req)) return sinSesion(res);
-    const perfil = s ? await leerPerfil(s.correo) : null;
+    // `disponible: false` = no se pudo leer lo guardado (S3 caído): el teléfono no debe tomar ese
+    // `perfil: null` como «no tiene perfil». `durable`: si este servicio guarda de verdad (S3 o disco
+    // declarado persistente); sin eso, lo que tiene puede perderse en un redespliegue.
+    const leido = s ? await leerPerfilSeguro(s.correo) : null;
+    const perfil = leido && leido.ok ? leido.perfil : null;
     res.setHeader('Cache-Control', 'no-store');
-    return res.json({ ...d.perfilPlataforma(req), perfil, honesto: true });
+    return res.json({ ...d.perfilPlataforma(req), perfil, ...(s ? { disponible: !!leido?.ok, durable: almacenDurable() } : {}), honesto: true });
   });
 
   app.put('/api/perfil', d.exigirMesa, d.limitar(30), async (req, res) => {
@@ -127,6 +132,9 @@ export function montarRutasApp(app: express.Express, d: Deps) {
       // El mismo aparato que vuelve reemplaza a su canal viejo; al tope se desaloja el más viejo.
       { aparato, max: MAX_CANALES_POR_CUENTA, desalojar: () => cerrar('reemplazado') }
     );
+    // Volvió tras un corte diciendo lo último que recibió: se le repite lo que vino después, si es
+    // reciente (el teléfono deduplica por id; lo viejo no se repite).
+    for (const e of accionesDesde(s.correo, aparato, req.headers['last-event-id'])) escribir(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
     latido = setInterval(() => {
       if (!d.sesionDe(req)) return cerrar('sesion');
       escribir(': latido\n\n');
@@ -142,7 +150,8 @@ export function montarRutasApp(app: express.Express, d: Deps) {
     if (!s) return sinSesion(res);
     const v = validarContexto(req.body);
     if (v.ok === false) return res.status(400).json({ error: v.error, honesto: true });
-    guardarContexto(s.correo, v.contexto);
+    // Del aparato que lo manda: dos teléfonos de la misma persona no se pisan el contexto.
+    guardarContexto(ambitoApp(s.correo, req.headers['x-aura-aparato']), v.contexto);
     return res.json({ ok: true, contactos: v.contexto.contactos.length, honesto: true });
   });
 }

@@ -25,6 +25,7 @@ export type TipoAuditoria =
   | 'aprobacion.aprobada'
   | 'aprobacion.rechazada'
   | 'aprobacion.vencida'
+  | 'aprobacion.incierta'
   | 'aprobacion.ejecutada'
   | 'entidad.cambio'
   | 'sistema.cambio';

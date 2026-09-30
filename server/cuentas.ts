@@ -21,6 +21,7 @@
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { Pool } from 'pg';
+import { configTls } from '../lib/ssl-base';
 import { fijarCuentasAprobadas, personaPorCorreoExacto, type Nivel, type Plataforma } from '../lib/acceso';
 import { DOMINIO_CODIGO, fijarClaveCambiadaEn } from './seguridad';
 
@@ -120,11 +121,12 @@ function conexion(): Pool {
     const url = urlCuentas();
     if (!url) throw new Error('sin base de cuentas');
     pool = new Pool({
-      connectionString: url,
+      // TLS verificado (lib/ssl-base.ts): la URL sin sus parámetros de TLS y el objeto que de verdad usa pg.
+      // Un certificado propio se declara con su CA (BASE_SSL_CA o sslrootcert), no apagando la verificación.
+      ...configTls(url),
       max: 3,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 8_000,
-      ssl: /sslmode=require/.test(url) ? { rejectUnauthorized: false } : undefined,
     });
     pool.on('error', (e) => console.error('[cuentas] conexión perdida:', String(e?.message || e).slice(0, 160)));
   }

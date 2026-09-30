@@ -329,7 +329,8 @@ async function completar(url: string, p: Pendiente): Promise<ResultadoGenesis> {
   // chat ofrece conectarse después. Con tope: AU-RA ya aceptó, y un relevo lento dejaba el botón
   // girando hasta un minuto. Si contesta después del tope, la cuenta del chat queda guardada igual
   // (entrarConPase la guarda al terminar) y la pantalla de chats la encuentra.
-  const alta = RELEVO.entrarConPase(v.pase, p.verificador, data.miembro.nombre).then(
+  // El chat queda ligado a esta persona de AU-RA (la sesión todavía no se fijó: se dice quién es).
+  const alta = RELEVO.entrarConPase(v.pase, p.verificador, data.miembro.nombre, data.miembro.correo).then(
     () => true,
     () => false
   );
