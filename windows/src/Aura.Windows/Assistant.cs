@@ -37,8 +37,8 @@ public partial class MainWindow {
   stack.Children.Add(new TextBox{Text=text,IsReadOnly=true,TextWrapping=TextWrapping.Wrap,BorderThickness=new Thickness(0),Background=Brushes.Transparent,Padding=new Thickness(0),FontSize=15});
   if(who=="AURA"){
    var row=new WrapPanel{Margin=new Thickness(0,12,0,0)};
-   var use=new Button{Content="Usar como borrador",FontSize=12,Padding=new Thickness(10,6)};use.Click+=(_,_)=>UseDraft(text);row.Children.Add(use);
-   var read=new Button{Content="Escuchar",FontSize=12,Padding=new Thickness(10,6)};read.Click+=(_,_)=>Speak(text);row.Children.Add(read);stack.Children.Add(row);
+   var use=new Button{Content="Usar como borrador",FontSize=12,Padding=new Thickness(10,6,10,6)};use.Click+=(_,_)=>UseDraft(text);row.Children.Add(use);
+   var read=new Button{Content="Escuchar",FontSize=12,Padding=new Thickness(10,6,10,6)};read.Click+=(_,_)=>Speak(text);row.Children.Add(read);stack.Children.Add(row);
   }
   Messages.Children.Add(new Border{Child=stack,Background=new SolidColorBrush(who=="Tú"?Color.FromRgb(28,29,34):Color.FromRgb(17,18,21)),CornerRadius=new CornerRadius(15),Padding=new Thickness(15),Margin=new Thickness(who=="Tú"?28:0,8,who=="Tú"?0:12,4)});
   // Bound the in-memory view as well as model history.
@@ -64,7 +64,7 @@ public partial class MainWindow {
    var answer=reply.GetProperty("content").GetString()??"";if(string.IsNullOrWhiteSpace(answer)||answer.Length>32000)throw new InvalidOperationException("La respuesta recibida no es válida.");
    lastResponse=answer;history.Add(turn);history.Add(new{role="assistant",content=answer.Length>8000?answer[..8000]:answer});while(history.Count>12)history.RemoveRange(0,2);
    AddMessage("AURA",answer);SetStatus("Aquí tienes","Puedes escuchar la respuesta o llevarla a tu borrador.");
-   if(ReadAloud.IsChecked==true)Speak(answer);else if(continuousSession)Dispatcher.BeginInvoke(new Action(()=>BeginListening(true)));
+   if(ReadAloud.IsChecked==true)Speak(answer);else if(continuousSession)_=Dispatcher.BeginInvoke(new Action(()=>BeginListening(true)));
   }catch(OperationCanceledException){if(run==assistantGeneration)SetStatus("Respuesta detenida","Puedes continuar cuando quieras.");}
   catch(Exception ex){if(run==assistantGeneration){SetStatus("No pude conectar con AURA",ex.Message+" Revisa Ajustes.");ConversationInput.Text=text;continuousSession=false;}}
   finally{if(ReferenceEquals(assistantRequest,cts)){assistantRequest=null;UpdateControls();}cts.Dispose();}

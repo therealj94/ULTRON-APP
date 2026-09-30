@@ -26,7 +26,7 @@ public partial class MainWindow : Window
     SpeechRecognitionEngine? speech;
     long voiceGeneration;
     DateTimeOffset voiceDeadline;
-    bool expanded, dirty; int blinkTick; long inputRevision;
+    bool expanded, dirty; long inputRevision;
     HwndSource? source;
     ChatWindow? chat; CallWindow? call; DesktopTarget? target; CancellationTokenSource? writing; CancellationTokenSource? interpretation;
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint modifiers, uint key);
@@ -158,7 +158,7 @@ public partial class MainWindow : Window
     }
     void OnClosing(object? s, CancelEventArgs e) {
         SaveRecovery();
-        if(!dirty || string.IsNullOrEmpty(Draft.Text)) return;
+        if(!dirty || string.IsNullOrEmpty(Draft.Text) || savedDraft==Draft.Text) return;
         var choice = MessageBox.Show(this, "¿Guardar el borrador antes de salir?\nSí: guardar · No: descartar · Cancelar: volver", "AURA · Borrador sin guardar", MessageBoxButton.YesNoCancel, MessageBoxImage.Question);
         if(choice == MessageBoxResult.Cancel) e.Cancel = true;
         if(choice == MessageBoxResult.Yes) {
