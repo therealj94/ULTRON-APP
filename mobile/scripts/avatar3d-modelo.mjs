@@ -22,7 +22,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { ARKIT_52, BYTES_MAX_NODOS, MAPEO_BASE, PRESUPUESTO_NODOS, buscarNombre, combinarMapeo, nombreVisema } from '../src/avatar3d/mapeo.ts';
+import { ARKIT_52, MAPEO_BASE, VARIANTES_NODOS, buscarNombre, combinarMapeo, nombreVisema } from '../src/avatar3d/mapeo.ts';
 import { GESTOS_AVATAR, VISEMAS } from '../src/avatar3d/tipos.ts';
 
 const MOVIL = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -164,7 +164,7 @@ const plano = (s) => String(s || '').toLowerCase().replace(/^mixamorig:?/, '').r
  * Revisa un .glb (Buffer) con su mapeo (o null). Devuelve { errores, avisos, resumen }. Nunca lanza:
  * un archivo ilegible es un error más.
  */
-export function revisarGlb(buf, mapeoParcial = null) {
+export function revisarGlb(buf, mapeoParcial = null, { variante = 'alta' } = {}) {
   const errores = [];
   const avisos = [];
   const resumen = { bytes: buf.length };
@@ -176,7 +176,7 @@ export function revisarGlb(buf, mapeoParcial = null) {
   }
   const j = g.json;
   const mapeo = combinarMapeo(MAPEO_BASE, mapeoParcial);
-  if (mapeo.rig === 'nodos') return revisarNodos(buf, g, mapeo, { errores, avisos, resumen });
+  if (mapeo.rig === 'nodos') return revisarNodos(buf, g, mapeo, { errores, avisos, resumen }, variante === 'ligera' ? LIMITES_NODOS_LIGERO : LIMITES_NODOS);
   const humanoide = (mapeoParcial && mapeoParcial.humanoide) || {};
 
   // Formato y tamaño.
@@ -300,23 +300,31 @@ export function revisarGlb(buf, mapeoParcial = null) {
 
 /* ── los rigs de nodos (los avatares de Codex) ─────────────────────────────────────────────── */
 
-/** Los límites de un modelo «nodos» en el teléfono (mapeo.ts: PRESUPUESTO_NODOS, BYTES_MAX_NODOS). */
-export const LIMITES_NODOS = { bytesMax: BYTES_MAX_NODOS, triangulosAviso: 50_000, triangulosMax: PRESUPUESTO_NODOS, texturaMax: 1024 };
+/** Los límites de un modelo «nodos» en el teléfono, por variante (mapeo.ts: VARIANTES_NODOS). */
+export const LIMITES_NODOS = { bytesMax: VARIANTES_NODOS.alta.bytes, triangulosAviso: VARIANTES_NODOS.alta.triangulos, triangulosMax: VARIANTES_NODOS.alta.triangulosMax, texturaMax: 2048 };
+export const LIMITES_NODOS_LIGERO = { bytesMax: VARIANTES_NODOS.ligera.bytes, triangulosAviso: VARIANTES_NODOS.ligera.triangulos, triangulosMax: VARIANTES_NODOS.ligera.triangulosMax, texturaMax: 1024 };
+/**
+ * En un rig «nodos» el brillo de tela y pelo (KHR_materials_sheen) SÍ va: viene en el original de
+ * Codex (el pelaje y la ropa de Claudio y ANT-ONIO) y quitarlo era perder calidad. En calidad «media»
+ * y «baja» la escena lo apaga (escena.ts, rebajar).
+ */
+const EXTENSIONES_OK_NODOS = [...EXTENSIONES_OK, 'KHR_materials_sheen'];
+const EXTENSIONES_NO_NODOS = EXTENSIONES_NO.filter((e) => !EXTENSIONES_OK_NODOS.includes(e));
 
 /**
  * El perfil «nodos» no tiene esqueleto con piel, ni ARKit, ni zonas: lo que exige es lo que su
  * mapeo nombra (la cabeza, las formas de boca de los visemas y cada clip de fondo, de cara y de
- * gesto) y que quepa en el teléfono (≤ 3 MB, triángulos, texturas ≤ 1024, sin Draco).
+ * gesto) y que quepa en el teléfono (peso, triángulos y texturas de su variante, sin Draco).
  */
-function revisarNodos(buf, g, mapeo, { errores, avisos, resumen }) {
+function revisarNodos(buf, g, mapeo, { errores, avisos, resumen }, lim) {
   const j = g.json;
   resumen.rig = 'nodos';
   if (j.asset?.version !== '2.0') errores.push(`asset.version es «${j.asset?.version}»; hace falta «2.0»`);
-  if (buf.length > LIMITES_NODOS.bytesMax) errores.push(`pesa ${(buf.length / 1048576).toFixed(2)} MB; el máximo es ${LIMITES_NODOS.bytesMax / 1048576} MB`);
-  for (const e of j.extensionsRequired || []) if (!EXTENSIONES_OK.includes(e)) errores.push(`exige la extensión ${e}, que la escena no lee`);
+  if (buf.length > lim.bytesMax) errores.push(`pesa ${(buf.length / 1048576).toFixed(2)} MB; el máximo es ${lim.bytesMax / 1048576} MB`);
+  for (const e of j.extensionsRequired || []) if (!EXTENSIONES_OK_NODOS.includes(e)) errores.push(`exige la extensión ${e}, que la escena no lee`);
   for (const e of j.extensionsUsed || []) {
-    if (EXTENSIONES_NO.includes(e)) errores.push(`usa ${e} (no permitida: ver §3 de la especificación)`);
-    else if (!EXTENSIONES_OK.includes(e)) avisos.push(`usa ${e}, que la escena ignora`);
+    if (EXTENSIONES_NO_NODOS.includes(e)) errores.push(`usa ${e} (no permitida: ver §3 de la especificación)`);
+    else if (!EXTENSIONES_OK_NODOS.includes(e)) avisos.push(`usa ${e}, que la escena ignora`);
   }
   if ((j.buffers || []).some((b) => b.uri)) errores.push('tiene buffers externos (uri): todo tiene que ir dentro del .glb');
   if ((j.images || []).some((i) => i.uri)) errores.push('tiene imágenes externas (uri): todo tiene que ir dentro del .glb');
@@ -334,8 +342,8 @@ function revisarNodos(buf, g, mapeo, { errores, avisos, resumen }) {
   }
   resumen.triangulos = Math.round(triangulos);
   resumen.primitivas = primitivas;
-  if (resumen.triangulos > LIMITES_NODOS.triangulosMax) errores.push(`${resumen.triangulos} triángulos; el máximo es ${LIMITES_NODOS.triangulosMax}`);
-  else if (resumen.triangulos > LIMITES_NODOS.triangulosAviso) avisos.push(`${resumen.triangulos} triángulos; lo recomendado es hasta ${LIMITES_NODOS.triangulosAviso}`);
+  if (resumen.triangulos > lim.triangulosMax) errores.push(`${resumen.triangulos} triángulos; el máximo es ${lim.triangulosMax}`);
+  else if (resumen.triangulos > lim.triangulosAviso) avisos.push(`${resumen.triangulos} triángulos; lo recomendado es hasta ${lim.triangulosAviso}`);
 
   resumen.texturas = [];
   for (const [i, img] of (j.images || []).entries()) {
@@ -347,7 +355,7 @@ function revisarNodos(buf, g, mapeo, { errores, avisos, resumen }) {
       continue;
     }
     resumen.texturas.push(`${md.ancho}×${md.alto} ${md.tipo}`);
-    if (md.ancho > LIMITES_NODOS.texturaMax || md.alto > LIMITES_NODOS.texturaMax) errores.push(`la imagen ${i} mide ${md.ancho}×${md.alto}; el máximo es ${LIMITES_NODOS.texturaMax}`);
+    if (md.ancho > lim.texturaMax || md.alto > lim.texturaMax) errores.push(`la imagen ${i} mide ${md.ancho}×${md.alto}; el máximo es ${lim.texturaMax}`);
   }
 
   const nombres = (j.nodes || []).map((n) => n.name || '');
@@ -387,6 +395,13 @@ export function generarRegistro(modelos) {
       `    huella: '${m.huella}',\n` +
       `    bytes: ${m.bytes},\n` +
       `    mapeo: ${m.mapeo ? JSON.stringify(m.mapeo) : 'null'},\n` +
+      (m.ligero
+        ? `    ligero: {\n` +
+          `      fuente: require('../../assets/avatar3d/${m.avatar}-ligero.glb'),\n` +
+          `      huella: '${m.ligero.huella}',\n` +
+          `      bytes: ${m.ligero.bytes},\n` +
+          `    },\n`
+        : '') +
       `  },\n`
   );
   return `${cabeza}export const MODELOS_3D: Partial<Record<AvatarId, ModeloAvatar3D>> = {\n${filas.join('')}};\n`;
@@ -404,7 +419,15 @@ export function modelosEnCarpeta(carpeta = CARPETA) {
     const r = revisarGlb(buf, mapeo);
     const { humanoide, ...mapeoEscena } = mapeo || {};
     void humanoide;
-    out.push({ avatar, bytes: buf.length, huella: createHash('sha256').update(buf).digest('hex').slice(0, 16), mapeo: mapeo ? mapeoEscena : null, ...r });
+    const huella = (b) => createHash('sha256').update(b).digest('hex').slice(0, 16);
+    // La variante ligera (rig «nodos», mapeo.ts: VARIANTES_NODOS), si la tubería la dejó.
+    const rutaLigero = path.join(carpeta, `${avatar}${VARIANTES_NODOS.ligera.sufijo}.glb`);
+    let ligero = null;
+    if (fs.existsSync(rutaLigero)) {
+      const bl = fs.readFileSync(rutaLigero);
+      ligero = { bytes: bl.length, huella: huella(bl), ...revisarGlb(bl, mapeo, { variante: 'ligera' }) };
+    }
+    out.push({ avatar, bytes: buf.length, huella: huella(buf), mapeo: mapeo ? mapeoEscena : null, ...r, ligero });
   }
   return out;
 }
@@ -428,8 +451,11 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     process.exit(r.errores.length ? 1 : 0);
   } else if (orden === 'registrar') {
     const modelos = modelosEnCarpeta();
-    for (const m of modelos) imprimir(`${m.avatar}.glb`, m);
-    if (modelos.some((m) => m.errores.length)) {
+    for (const m of modelos) {
+      imprimir(`${m.avatar}.glb`, m);
+      if (m.ligero) imprimir(`${m.avatar}-ligero.glb`, m.ligero);
+    }
+    if (modelos.some((m) => m.errores.length || m.ligero?.errores.length)) {
       console.error('\nNo se registra: hay modelos que no cumplen la especificación.');
       process.exit(1);
     }

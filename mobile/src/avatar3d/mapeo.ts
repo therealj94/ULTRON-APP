@@ -280,10 +280,24 @@ export const PERFIL_NODOS: MapeoParcial = {
 
 /**
  * Lo que puede costar un modelo «nodos» en el teléfono (lo exige el revisor, y la tubería
- * scripts/avatar3d-assets.mjs simplifica hasta que entra): triángulos y peso del .glb.
+ * scripts/avatar3d-assets.mjs simplifica hasta que entra): triángulos y peso del .glb, por variante.
+ *
+ *  · «alta» ({avatar}.glb): la que se ve. Sin pérdida visible frente al original de Codex: la cabeza
+ *    entera (cara, ojos, boca, lentes, orejas, pelaje) va sin simplificar y el cuerpo, con error acotado
+ *    (menos de un píxel) hasta `triangulos` o hasta donde ese error deja. Por eso puede pasarse del
+ *    objetivo hasta `triangulosMax`: Claudio, con su pelaje de cintas (~96 000 triángulos solo el pelo,
+ *    y aligerarlo más se nota), queda en ~224 000;
+ *  · «ligera» ({avatar}-ligero.glb): la del teléfono que no dio los cuadros con la alta (capacidad.ts,
+ *    varianteQueToca). Cuerpo, cráneo, orejas y pelo más simplificados; lo que hace la expresión (ojos,
+ *    cejas, boca, labios, lentes, nariz) queda como el original, aunque se pase del objetivo (Claudio:
+ *    ~100 000). Solo existe si la alta se pasa del objetivo de la ligera (AU-RA no la necesita).
  */
-export const PRESUPUESTO_NODOS = 70_000;
-export const BYTES_MAX_NODOS = 3 * 1024 * 1024;
+export const VARIANTES_NODOS = {
+  alta: { sufijo: '', triangulos: 150_000, triangulosMax: 240_000, bytes: 8 * 1024 * 1024 },
+  ligera: { sufijo: '-ligero', triangulos: 70_000, triangulosMax: 110_000, bytes: 3 * 1024 * 1024 },
+} as const;
+export const PRESUPUESTO_NODOS = VARIANTES_NODOS.alta.triangulos;
+export const BYTES_MAX_NODOS = VARIANTES_NODOS.alta.bytes;
 
 /* ── estado → blendshapes ────────────────────────────────────────────────────────────────── */
 

@@ -107,24 +107,35 @@ const camara = new THREE.PerspectiveCamera(28, 1, 0.01, 100);
 let dpr = 1;
 let cielo: THREE.HemisphereLight | null = null;
 let entorno: THREE.Texture | null = null;
+/** Cuánto alumbra el cielo con reflejos del entorno y sin ellos (calidad «baja»). */
+const CIELO = { conEntorno: 1.05, sinEntorno: 1.5 };
 
 if (renderer) {
   renderer.setClearColor(0x000000, 0);
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1;
-  // Luz de estudio suave: cielo y suelo, una principal cálida y un contraluz que la despega del fondo.
-  cielo = new THREE.HemisphereLight(0xfff7ee, 0x3a3530, 0.7);
+  renderer.toneMappingExposure = 1.05;
+  // EL ESTUDIO: el mismo de la demo de Codex (vendor/aura-avatar-suite/src/stage.js), que es la
+  // referencia de cómo se ven los tres: cielo frío y suelo cálido, la principal desde arriba a la
+  // izquierda, un contraluz cálido que dibuja el contorno (orejas, pelo, antenas) y un relleno frío
+  // que da el reflejo azulado del visor de AU-RA. Las posiciones sirven
+  // tal cual: los modelos vienen en las mismas unidades y en el mismo lugar que en la demo.
+  // Sin sombras propias: con un mapa de sombras de teléfono salían manchas en la esclerótica y las
+  // mejillas (los párpados y los lentes se sombreaban mal); la sombra de contacto basta para apoyarlo.
+  cielo = new THREE.HemisphereLight(0xe1eaff, 0x6b4536, CIELO.conEntorno);
   escena.add(cielo);
-  const principal = new THREE.DirectionalLight(0xfff1e0, 1.6);
-  principal.position.set(1.2, 2.4, 2.6);
+  const principal = new THREE.DirectionalLight(0xfff1db, 2.45);
+  principal.position.set(-3, 5.5, 6);
   escena.add(principal);
-  const contra = new THREE.DirectionalLight(0xd6b56c, 0.9);
-  contra.position.set(-2, 2.2, -2.2);
-  escena.add(contra);
+  const contorno = new THREE.DirectionalLight(0xeac4a1, 2.8);
+  contorno.position.set(3, 4, -3);
+  escena.add(contorno);
+  const relleno = new THREE.DirectionalLight(0x9acbff, 0.65);
+  relleno.position.set(3, 2, 5);
+  escena.add(relleno);
   try {
     const pmrem = new THREE.PMREMGenerator(renderer);
-    entorno = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    entorno = pmrem.fromScene(new RoomEnvironment(), 0.07).texture;
     escena.environment = entorno;
     escena.environmentIntensity = 0.55;
     pmrem.dispose();
@@ -132,6 +143,31 @@ if (renderer) {
     /* sin entorno, las luces bastan */
   }
 }
+
+/* ── la sombra de contacto y el brillo de lo que emite luz ───────────────────────────────── */
+
+/** Un degradé redondo (negro para la sombra, blanco para el brillo), en un lienzo chico. */
+function degradeRedondo(paradas: [number, string][]): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const x = c.getContext('2d')!;
+  const g = x.createRadialGradient(64, 64, 1, 64, 64, 63);
+  for (const [t, col] of paradas) g.addColorStop(t, col);
+  x.fillStyle = g;
+  x.fillRect(0, 0, 128, 128);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/**
+ * La sombra de contacto: una mancha suave bajo los pies (la de la demo de Codex, que la dibuja igual),
+ * así el personaje se apoya en la pantalla en vez de flotar. Solo si el modelo llega al suelo
+ * (AU-RA flota: no lleva). Es un plano con un degradé: casi no cuesta.
+ */
+let sombraContacto: THREE.Mesh | null = null;
+/** El brillo de los ojos y las luces que emiten (AU-RA): un halo suave, aditivo, en calidad «alta». */
+const halos: THREE.Sprite[] = [];
 
 function ajustarTamano() {
   if (!renderer) return;
@@ -165,6 +201,8 @@ const morphsDeClip = new Set<THREE.Mesh>();
 /** La cabeza con geometría (rig «nodos»): su centro en coordenadas de la cabeza y su radio. */
 let cabezaCentro: THREE.Vector3 | null = null;
 let cabezaRadio = 0;
+let cabezaAlto = 0;
+let cabezaAncho = 0;
 let clips: string[] = [];
 let caja = new THREE.Box3();
 let tieneBocaMorph = false;
@@ -245,6 +283,7 @@ function preparar(g: GLTF) {
   mezclador.update(0);
   modelo.updateMatrixWorld(true);
   caja = new THREE.Box3().setFromObject(modelo);
+  vestirEscena();
   aplicarCalidad(calidad);
   actualizarBase(true);
   renderer.render(escena, camara);
@@ -259,6 +298,58 @@ function preparar(g: GLTF) {
   cuadrosMedidos = 0;
 }
 
+/**
+ * Lo que la escena le pone alrededor al modelo, sin tocarlo: la sombra de contacto bajo los pies y el
+ * halo de las piezas chicas que emiten luz (los ojos y las cejas doradas de AU-RA).
+ */
+function vestirEscena() {
+  if (!modelo) return;
+  const alto = Math.max(0.01, caja.max.y - caja.min.y);
+  const escalaMundo = new THREE.Vector3();
+  for (const m of cuerpo) {
+    const mats = ([] as THREE.Material[]).concat(m.material as THREE.Material | THREE.Material[]);
+    // El halo: materiales que emiten de verdad (color y fuerza), no el tinte tenue del pelaje; y solo
+    // en piezas chicas (un ojo, una ceja): en la boca o una pieza grande taparía la cara.
+    const f = mats[0] as THREE.MeshStandardMaterial;
+    const luz = f?.emissive ? Math.max(f.emissive.r, f.emissive.g, f.emissive.b) * (f.emissiveIntensity ?? 1) : 0;
+    if (mats.some((x) => x.transparent) || luz < 0.4 || !m.geometry) continue;
+    m.geometry.computeBoundingBox();
+    const b = m.geometry.boundingBox!;
+    const t = b.getSize(new THREE.Vector3());
+    m.getWorldScale(escalaMundo);
+    if (Math.max(t.x * escalaMundo.x, t.y * escalaMundo.y) > alto * 0.08) continue;
+    const halo = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: texturaHalo(), color: f.emissive.clone(), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, opacity: 0.22, toneMapped: false })
+    );
+    // Un poco adelante de la pieza (el modelo mira hacia +Z), para que no lo tape la superficie de al lado.
+    halo.position.copy(b.getCenter(new THREE.Vector3())).add(new THREE.Vector3(0, 0, Math.max(t.z, 0.01)));
+    const lado = Math.max(t.x, t.y) * 1.9;
+    halo.scale.set(lado, lado, 1);
+    halo.renderOrder = 2;
+    halo.name = 'halo';
+    m.add(halo);
+    halos.push(halo);
+  }
+  // Solo si pisa: la parte más baja cerca del suelo (Claudio, ANT-ONIO). AU-RA flota.
+  if (caja.min.y < alto * 0.15) {
+    const huella = Math.max(caja.max.x - caja.min.x, caja.max.z - caja.min.z) * 0.62;
+    sombraContacto = new THREE.Mesh(
+      new THREE.PlaneGeometry(1, 1),
+      new THREE.MeshBasicMaterial({ map: degradeRedondo([[0, 'rgba(0,0,0,0.62)'], [0.45, 'rgba(0,0,0,0.3)'], [1, 'rgba(0,0,0,0)']]), transparent: true, depthWrite: false, toneMapped: false })
+    );
+    sombraContacto.rotation.x = -Math.PI / 2;
+    sombraContacto.scale.set(huella, huella * 0.8, 1);
+    sombraContacto.position.set(0, caja.min.y + 0.002, 0);
+    sombraContacto.renderOrder = -1;
+    escena.add(sombraContacto);
+  }
+}
+
+let texHalo: THREE.CanvasTexture | null = null;
+function texturaHalo() {
+  return (texHalo ||= degradeRedondo([[0, 'rgba(255,255,255,1)'], [0.25, 'rgba(255,255,255,0.45)'], [1, 'rgba(255,255,255,0)']]));
+}
+
 /** La cabeza de un rig «nodos» tiene geometría adentro: su caja da el centro y el tamaño de verdad. */
 function medirCabeza() {
   cabezaCentro = null;
@@ -270,6 +361,8 @@ function medirCabeza() {
   if (b.isEmpty()) return;
   const t = b.getSize(new THREE.Vector3());
   cabezaRadio = Math.max(t.x, t.y) / 2;
+  cabezaAlto = t.y;
+  cabezaAncho = t.x;
   cabezaCentro = h.worldToLocal(b.getCenter(new THREE.Vector3()));
 }
 
@@ -363,7 +456,9 @@ function aplicarCalidad(c: Calidad) {
   for (const v of viejos) v.dispose();
   escena.environment = c === 'baja' ? null : entorno;
   // Sin reflejos del entorno, el cielo alumbra un poco más para que no se apague.
-  if (cielo) cielo.intensity = c === 'baja' ? 1.15 : 0.7;
+  if (cielo) cielo.intensity = c === 'baja' ? CIELO.sinEntorno : CIELO.conEntorno;
+  // El halo, solo en «alta».
+  for (const h of halos) h.visible = c === 'alta';
   ajustarTamano();
 }
 
@@ -372,8 +467,26 @@ function aplicarCalidad(c: Calidad) {
 const v1 = new THREE.Vector3();
 const v2 = new THREE.Vector3();
 
+/** ¿La vista es chica (el modo «lado»: una franja de ~116 px)? Ahí el retrato es solo la cabeza. */
+const LIENZO_CHICO = 200;
+function lienzoChico() {
+  return Math.min(w.innerWidth || lienzo.clientWidth || 999, w.innerHeight || lienzo.clientHeight || 999) < LIENZO_CHICO;
+}
+
+/** Solo pruebas (__avatarPrueba.vista): una cámara fija y un giro del modelo, para comparar tomas. */
+let vistaPrueba: { pos: number[]; mira: number[]; fov: number; giro: number } | null = null;
+
 function encuadrar(c: Camara) {
   if (!modelo) return;
+  if (vistaPrueba) {
+    camara.fov = vistaPrueba.fov;
+    camara.position.fromArray(vistaPrueba.pos);
+    camara.near = 0.01;
+    camara.far = 100;
+    camara.lookAt(v1.fromArray(vistaPrueba.mira));
+    camara.updateProjectionMatrix();
+    return;
+  }
   // Un nodo de cámara en el modelo manda (quien hizo el modelo sabe dónde se ve mejor).
   const nodo = modelo.getObjectByName(c === 'retrato' ? mapeo.camaras.retrato : mapeo.camaras.cuerpo);
   if (nodo) {
@@ -390,11 +503,17 @@ function encuadrar(c: Camara) {
   const tanMedio = Math.tan(THREE.MathUtils.degToRad(camara.fov / 2));
   let objetivo: THREE.Vector3;
   let cuadro: number;
-  if (c === 'retrato' && cabezaCentro) {
+  if (c === 'retrato' && cabezaCentro && lienzoChico()) {
+    // Rig «nodos» en un recuadro chico (el modo «lado» en el teléfono: ~116 px): la cabeza entera
+    // llena el cuadro, sin hombros, para que la cara (ojos, boca, cejas) se lea a ese tamaño.
+    const cabeza = centroCabeza(v2)!;
+    cuadro = Math.min(Math.max(cabezaAlto * 1.06, (cabezaAncho * 1.04) / Math.max(0.3, camara.aspect)), alto * 1.12);
+    objetivo = new THREE.Vector3(cabeza.x, cuadro >= alto ? centro.y : cabeza.y, cabeza.z);
+  } else if (c === 'retrato' && cabezaCentro) {
     // Rig «nodos»: la cabeza entera y un poco de hombros (sus cabezas son grandes, no de persona).
     // Si la cabeza es casi todo el cuerpo (AU-RA, un orbe), el retrato es el cuerpo entero.
     const cabeza = centroCabeza(v2)!;
-    cuadro = Math.min(Math.max(cabezaRadio * 3.1, alto * 0.3), alto * 1.12);
+    cuadro = Math.min(Math.max(cabezaRadio * 2.8, alto * 0.3), alto * 1.12);
     const medio = cuadro / 2;
     // Que no corte las orejas ni las antenas, y que no baje más allá de los pies.
     const y = cuadro >= alto ? centro.y : Math.max(caja.min.y + medio, Math.max(cabeza.y - cabezaRadio * 0.35, caja.max.y + alto * 0.02 - medio));
@@ -471,6 +590,11 @@ function terminoGesto(a: THREE.AnimationAction) {
 
 let mirX = 0;
 let mirY = 0;
+/** La mirada viva (sin `mirar` activo): a dónde se fueron los ojos y cuándo se mueven otra vez. */
+const ojeada = { x: 0, y: 0 };
+let ojoX = 0;
+let ojoY = 0;
+let proximaOjeada = 1.5;
 let giro = 0;
 let parpadeo = 0;
 let proximoParpadeo = 1.5;
@@ -508,17 +632,31 @@ function actualizar(dt: number) {
   const my = estado.mirar.activa ? Math.max(-1, Math.min(1, estado.mirar.y)) : 0;
   mirX = suave(mirX, mx, 5, dt);
   mirY = suave(mirY, my, 5, dt);
+  // La mirada viva: sin nadie a quien mirar, los ojos se pasean solos (saltitos cortos cada 1,2–3,5 s,
+  // casi siempre cerca del centro, como quien piensa o escucha). No con los ojos cerrados ni en
+  // movimiento reducido (ni en las tomas fijas de las pruebas). La cabeza apenas acompaña.
+  const vaga = !estado.mirar.activa && !reducido && !vistaPrueba && !estado.silenciado && estado.expresion !== 'dormida';
+  proximaOjeada -= dt;
+  if (proximaOjeada <= 0) {
+    proximaOjeada = 1.2 + Math.random() * 2.3;
+    const lejos = Math.random() < 0.25;
+    ojeada.x = vaga ? (Math.random() * 2 - 1) * (lejos ? 0.6 : 0.25) : 0;
+    ojeada.y = vaga ? (Math.random() * 2 - 1) * (lejos ? 0.3 : 0.12) : 0;
+  }
+  if (!vaga) ojeada.x = ojeada.y = 0;
+  ojoX = suave(ojoX, ojeada.x, 22, dt);
+  ojoY = suave(ojoY, ojeada.y, 22, dt);
   girar(huesos.cuello, mirY * 0.12, mirX * 0.2);
-  girar(huesos.cabeza, mirY * 0.18, mirX * 0.32);
-  girar(huesos.ojoIzq, mirY * 0.2, mirX * 0.35);
-  girar(huesos.ojoDer, mirY * 0.2, mirX * 0.35);
+  girar(huesos.cabeza, mirY * 0.18 + ojoY * 0.03, mirX * 0.32 + ojoX * 0.05);
+  girar(huesos.ojoIzq, (mirY + ojoY) * 0.2, (mirX + ojoX) * 0.35);
+  girar(huesos.ojoDer, (mirY + ojoY) * 0.2, (mirX + ojoX) * 0.35);
   // Sin animación de reposo, respira sola (un vaivén apenas visible del pecho).
   if (!baseActual && !reducido) girar(huesos.pecho, Math.sin(tiempo * 1.7) * 0.015, Math.sin(tiempo * 0.45) * 0.02);
 
   // Paseando, el cuerpo gira hacia donde va.
   if (modelo) {
     giro = suave(giro, estado.caminando ? estado.dir * 0.9 : 0, 6, dt);
-    modelo.rotation.y = giro;
+    modelo.rotation.y = giro + (vistaPrueba?.giro || 0);
   }
 
   // El parpadeo: cada 2,5–6 s, 140 ms. Dormida o en silencio, los ojos quedan cerrados (lo pone la expresión).
@@ -724,6 +862,19 @@ w.__avatarPrueba = {
     medido = true;
     for (let t = 0; t < segundos; t += 1 / 30) actualizar(1 / 30);
     renderer.render(escena, camara);
+  },
+  /** Cámara fija (posición, a dónde mira, apertura) y el modelo girado `giro` radianes; null vuelve al encuadre. */
+  vista(v: { pos: number[]; mira: number[]; fov?: number; giro?: number } | null) {
+    vistaPrueba = v ? { pos: v.pos, mira: v.mira, fov: Number(v.fov) || 28, giro: Number(v.giro) || 0 } : null;
+    encuadrar(camaraPedida);
+  },
+  /** La caja del modelo y la de la cabeza, en el mundo (para calcular tomas iguales en otra escena). */
+  medidas() {
+    if (!modelo) return null;
+    modelo.updateMatrixWorld(true);
+    const b = new THREE.Box3().setFromObject(modelo);
+    const h = huesos.cabeza ? new THREE.Box3().setFromObject(huesos.cabeza) : null;
+    return { caja: [...b.min.toArray(), ...b.max.toArray()], cabeza: h ? [...h.min.toArray(), ...h.max.toArray()] : null };
   },
 };
 

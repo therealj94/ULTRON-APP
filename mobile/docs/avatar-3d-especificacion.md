@@ -333,12 +333,25 @@ escena, traducido en `mobile/src/avatar3d/mapeo.ts` (`PERFIL_NODOS`):
 - La voz va **encima** de la boca del clip: la suelta hasta un 80 % mientras habla y la suma de las
   formas no pasa de 1 (lo mismo que hacía su controlador).
 - Toques sin colisionadores: la zona sale de la caja de la cabeza (su geometría), no de un radio fijo.
-- Retrato: cabeza entera y hombros; si la cabeza es casi todo el cuerpo (AU-RA) se ve entera.
+- Retrato: cabeza entera y hombros; si la cabeza es casi todo el cuerpo (AU-RA) se ve entera. En un
+  recuadro chico (< 200 px: la franja del modo «lado», ~116 px) el retrato es solo la cabeza, que
+  llena el cuadro: la cara se lee a ese tamaño.
+- Mirada viva: sin nadie a quien mirar, los ojos se pasean solos (saltitos cortos cada 1,2–3,5 s);
+  el parpadeo y la respiración vienen horneados en los clips de Codex.
+
+**El estudio** (30-sep, «avatares HD»): la luz de la demo de Codex (`vendor/aura-avatar-suite/src/stage.js`),
+que es la referencia de cómo se ven: ACES a 1,05, entorno `RoomEnvironment` por PMREM, cielo frío y
+suelo cálido, principal arriba a la izquierda, contraluz cálido (contorno de orejas, pelo y antenas) y
+relleno frío (el reflejo azulado del visor de AU-RA). Más una sombra de contacto bajo los pies (Claudio
+y ANT-ONIO; AU-RA flota) y, en `alta`, un halo suave aditivo en las piezas chicas que emiten luz (los
+ojos y cejas doradas de AU-RA). Sin sombras propias: con un mapa de sombras de teléfono salían manchas
+en la esclerótica y las mejillas.
 
 **Calidad automática** (`capacidad.ts`, `almacen.ts`): la escena mide sus cuadros y baja sola de
 `alta` (hasta 2×, materiales de Codex) a `media` (1,5×, sin barniz ni brillo especular) y a `baja`
 (1×, materiales estándar sin relieve ni reflejos); si ni así pasa de 24 fps, cae al 2D. El nivel que
-aguantó se recuerda por modelo (huella) dos semanas. No hay sombras ni bloom en ningún nivel.
+aguantó se recuerda por modelo (huella) dos semanas. Si ni en `baja` da los cuadros con la variante
+alta, se prueba la **ligera** (otra huella; `capacidad.ts`, `varianteQueToca`) antes de caer al 2D.
 
 **Dónde se ve.** AU-RA conserva su **sala** en la mesa (silla, escritorio, tareas con objetos: la sala
 es la mesa y no se reemplaza; no se muestra ninguna opción «sentada» del cuerpo nuevo). Su cuerpo 3D
@@ -352,14 +365,30 @@ renderizan desde su modelo: `scripts/avatar3d-fotos.mjs`).
     npm run avatar3d
 
 Empaqueta la escena, toma de la entrega el GLB final si existe (si no, uno provisional desde los
-originales), lo pasa por gltf-transform (morphs con nombre, sin `KHR_materials_sheen`, dedup, resample,
-simplify hasta 70 mil triángulos si hace falta, texturas WebP ≤ 1024, meshopt; un Draco de entrada se
-convierte a meshopt: la escena solo lleva ese decodificador, empaquetado, sin CDN), lo revisa con el
-perfil «nodos» (≤ 3 MB, triángulos, clips y formas de boca que pide el mapeo), reescribe
-`src/avatar3d/modelo.ts` y rehace las fotos 2D de ANT-ONIO. Después: `cd mobile && npx tsx
+originales) y saca DOS variantes por avatar (`mapeo.ts`, `VARIANTES_NODOS`):
+
+- **alta** (`<avatar>.glb`), sin pérdida visible frente al original: morphs con nombre, dedup y prune,
+  **sin remuestrear las animaciones** (el `resample` de antes movía cabeza y torso unas décimas de grado
+  en cada pose: solo eso corría la cara varios píxeles), **con** `KHR_materials_sheen` (el brillo de
+  pelo y tela del original), la cabeza entera sin simplificar (cara, ojos, párpados, boca, labios,
+  cejas, lentes, orejas, pelaje, antenas), el cuerpo con error acotado en unidades del modelo (≤ 0,001:
+  menos de un píxel aun en el retrato), la punta de cada cinta del pelaje (dos vértices a 0,00003) en
+  un vértice (3 triángulos en vez de 4, misma silueta), texturas WebP 92–95 en su tamaño (512) y
+  meshopt con posición a 16 bits y normales a 12. Objetivo 150 mil triángulos, tope 240 mil (Claudio
+  se pasa: solo su pelaje son ~96 mil y aligerarlo más se nota);
+- **ligera** (`<avatar>-ligero.glb`), para el teléfono que no aguanta la alta: cuerpo, cráneo, orejas y
+  pelo más simplificados (la mitad de los pelos, el doble de anchos), pero ojos, cejas, boca, labios,
+  nariz y lentes como el original. ≤ 3 MB y ≤ 110 mil triángulos. Solo si la alta pasa de 70 mil
+  (AU-RA no la necesita).
+
+Un Draco de entrada se convierte a meshopt (la escena solo lleva ese decodificador, empaquetado, sin
+CDN). Revisa las dos con el perfil «nodos» (peso, triángulos, clips y formas de boca que pide el
+mapeo), reescribe `src/avatar3d/modelo.ts` y rehace las fotos 2D de ANT-ONIO. Después: `cd mobile && npx tsx
 src/avatar3d/pruebas/avatar3d.prueba.mjs` y `node pruebas/avatar3d/navegador.mjs assets/avatar3d/<avatar>.glb`.
 
-Medido el 30-sep con los provisionales: aura 0,38 MB / 56 800 triángulos, claudio 1,99 MB / 68 538,
-antonio 1,78 MB / 69 697; la página de la escena 678 KB (antes 673); la APK/OTA suma 4,35 MB de GLB
-(2,3 MB comprimidos) y 0,39 MB de fotos de ANT-ONIO; el bundle JS, 25 KB. La huella nativa no cambia:
-se publica por aire.
+Medido el 30-sep («avatares HD»), recorte de la cara frente al original de Codex en la misma escena y
+la misma luz (SSIM, 10 emociones, 390×844): antes claudio 0,869 / antonio 0,926 / aura 0,999; ahora
+claudio 0,995 / antonio 0,998 / aura 1,000 (ver el informe de la rama). Alta: aura 0,42 MB / 56 800
+triángulos, claudio 3,95 MB / 224 340, antonio 2,94 MB / 135 540; ligera: claudio 2,53 MB / 103 126,
+antonio 2,11 MB / 74 156. La APK/OTA pasa de 4,35 MB de GLB (2,30 comprimidos) a 12,53 MB (7,27
+comprimidos; 4,86 MB son las ligeras). La huella nativa no cambia: se publica por aire.
