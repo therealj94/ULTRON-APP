@@ -23,7 +23,9 @@ export function avatar3d(id: string, clase = 'avatar3d'): Avatar3D {
   };
   addEventListener('message', alMensaje);
   function respaldo() {
-    cont.replaceChildren(h('img', { src: `avatar/${id}.png`, alt: '', style: 'width:100%;height:100%;object-fit:contain' }));
+    // Sin WebGL o si la sala tarda: la hoja del avatar del notch (primer cuadro), o los ojos del Guardián.
+    if (id === 'ojos') { cont.replaceChildren(h('div', { class: 'ojos' }, h('i'), h('i'))); return; }
+    cont.replaceChildren(h('div', { class: 'avatar-hoja', role: 'img', 'aria-label': id, style: `background-image:url(avatar/${id}-idle.png)` }));
   }
   function montar() {
     listo = false;

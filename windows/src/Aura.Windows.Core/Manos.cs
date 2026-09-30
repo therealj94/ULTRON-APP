@@ -16,7 +16,9 @@ public enum Mano
     // 1.4: las notificaciones de las demás apps (solo por reglas: Laya no tiene esta etiqueta todavía).
     Notificaciones,
     // 2.0: la cartera de Veta Wallet (solo lectura) y los atajos del equipo (solo por reglas).
-    Cartera, Atajo
+    Cartera, Atajo,
+    // 2.0: PULSE2CHAT por voz (llamar, videollamar, mandar un mensaje).
+    Pulse
 }
 
 /// <summary>Lo que se va a hacer: la mano, su parámetro (qué app, qué búsqueda, qué texto…) y de dónde salió.</summary>
@@ -66,6 +68,7 @@ public static class Intencion
         if (Parametros.Musica(texto) is { } musica) return new(Mano.Musica, musica);
         if (Parametros.Notificaciones(t) is { } avisos) return new(Mano.Notificaciones, avisos);
         if (Parametros.Cartera(t) is { } cartera) return new(Mano.Cartera, cartera);
+        if (Parametros.Pulse(texto) is { } pulse) return new(Mano.Pulse, pulse);
         if (Parametros.Atajo(t) is { } atajo) return new(Mano.Atajo, atajo);
         if (Parametros.Correo(t) is { } correo) return new(Mano.Correo, correo);
         if (Parametros.Agenda(t) is { } agenda) return new(Mano.Agenda, agenda);
@@ -756,6 +759,25 @@ public static class Parametros
         }
         var tema = Regex.Match(t, @"^(?:(?:pon|activa|cambia a|switch to|turn on)\s+(?:el )?)?(?:modo|tema)\s+(?<t>oscuro|claro)$|^(?:(?:switch to|turn on)\s+)?(?<t>dark|light) mode$");
         if (tema.Success) return "tema|" + (tema.Groups["t"].Value is "oscuro" or "dark" ? "oscuro" : "claro");
+        return null;
+    }
+
+    static readonly Regex PulseLlamar = new(@"^(?:(?:llama(?:le)?|marcale|marca)\s+a|hazle una llamada a|(?:haz|hacer|hazme) una llamada (?:a|con)|call)\s+(?<c>[a-z][a-z .'-]{1,40})$", O);
+    static readonly Regex PulseVideo = new(@"^(?:(?:hazle una |haz una |inicia una )?videollamada (?:a|con)|video ?llama(?:le)? a|(?:video ?call|facetime))\s+(?<c>[a-z][a-z .'-]{1,40})$", O);
+    static readonly Regex PulseMensaje = new(@"^(?:mandale|enviale|escribele|mandale un mensaje a|enviale un mensaje a|escribele un mensaje a|manda(?:le)? un mensaje a|dile a)\s+(?:a\s+)?(?<c>[a-z][a-z'-]{1,20}(?: [a-z][a-z'-]{1,20})?)\s+(?:que|diciendo que|diciendole que|:)\s+(?<t>.{1,500})$|^(?:text|message|tell)\s+(?<c>[a-z][a-z'-]{1,20})\s+(?:that\s+)?(?<t>.{1,500})$", O);
+
+    /// <summary>«llamada|voz|karla», «llamada|video|karla», «mensaje|karla|ya voy» (el texto como se dijo), o null.</summary>
+    public static string? Pulse(string texto)
+    {
+        var t = Limpiar(texto);
+        var n = LayaLigera.Normalizar(t);
+        if (PulseVideo.Match(n) is { Success: true } v) return "llamada|video|" + v.Groups["c"].Value.Trim();
+        if (PulseLlamar.Match(n) is { Success: true } l && !Regex.IsMatch(l.Groups["c"].Value, @"^(?:la atencion|atencion|me|el|la|un|una)\b")) return "llamada|voz|" + l.Groups["c"].Value.Trim();
+        if (PulseMensaje.Match(n) is { Success: true } m)
+        {
+            var dicho = BuscarEnOriginal(texto, m.Groups["t"].Value) ?? m.Groups["t"].Value;
+            return "mensaje|" + m.Groups["c"].Value.Trim() + "|" + dicho.Trim();
+        }
         return null;
     }
 }

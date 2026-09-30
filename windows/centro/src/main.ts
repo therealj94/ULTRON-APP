@@ -7,7 +7,9 @@ import './estilos.css';
 import { h, icono, vacio } from './ui';
 import { al, pedir } from './puente';
 import { cargar, estado, alCambiar, T } from './estado';
-import { entrada } from './vistas/entrada';
+import { entrada, alEntrarConPase } from './vistas/entrada';
+import { conectarConPase, iniciarPulse } from './pulse';
+import './pulseVoz';
 import { vistaInicio } from './vistas/inicio';
 import { vistaChat } from './vistas/chat';
 import { vistaPulse } from './vistas/pulse';
@@ -77,11 +79,18 @@ export async function recoger() {
 }
 
 al<string>('ir', (id) => ir(id));
+// Las vistas piden cambiar de sección o marcar una con un punto (PULSE2CHAT: mensaje o llamada nueva).
+window.addEventListener('centro:ir', (e) => ir(String((e as CustomEvent).detail)));
+window.addEventListener('centro:marcar', (e) => { const d = (e as CustomEvent).detail ?? {}; marcar(String(d.id), !!d.si); });
+// El mismo pase de Genesis abre PULSE2CHAT (una vez) al entrar.
+alEntrarConPase.fn = (pase, verificador, nombre, correo) => conectarConPase(pase, verificador, nombre, correo);
 al('salio', () => location.reload());
 
 (async () => {
   await cargar();
   if (!estado().sesion || estado().primeraVez) await entrada(raiz);
   armazon();
+  // PULSE2CHAT escucha siempre (llamadas y mensajes llegan aunque no estés en su sección).
+  iniciarPulse(estado().sesion?.correo).catch(() => null);
   alCambiar(() => { /* las vistas se actualizan solas con sus propios oyentes */ });
 })();

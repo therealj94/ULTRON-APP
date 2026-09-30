@@ -121,6 +121,16 @@ internal sealed class CentroWindow : Window
 
     void Responder(object o) { if (listo) Dispatcher.BeginInvoke(new Action(() => { try { web.CoreWebView2?.PostWebMessageAsJson(JsonSerializer.Serialize(o, Json)); } catch { } })); }
 
+    /// <summary>Foto de la página (pruebas del CI): PNG en `archivo`.</summary>
+    public async Task Fotografiar(string archivo)
+    {
+        using var f = File.Create(archivo);
+        await web.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, f);
+    }
+
+    /// <summary>Corre JavaScript en la página (pruebas del CI) y devuelve el resultado en JSON.</summary>
+    public Task<string> Ejecutar(string js) => web.CoreWebView2.ExecuteScriptAsync(js);
+
     /// <summary>Un evento a la página (estado, llamadas, chat…).</summary>
     public void Emitir(string evento, object? datos) => Responder(new { evento, datos });
 

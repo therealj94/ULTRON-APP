@@ -1,0 +1,2 @@
+/* Estilos de PULSE2CHAT (provisional: los completa el módulo de PULSE). */
+.p2c-vista { display: flex; gap: 14px; height: calc(100vh - 68px); }

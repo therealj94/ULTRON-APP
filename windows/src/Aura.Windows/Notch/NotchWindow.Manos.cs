@@ -135,6 +135,7 @@ public partial class NotchWindow
                 case Mano.Agenda: await LeerAgenda(p.Valor); break;
                 case Mano.Notificaciones: await HacerNotificaciones(p.Valor); break;
                 case Mano.Cartera: await HacerCartera(p.Valor); break;
+                case Mano.Pulse: HacerPulse(p.Valor); break;
                 case Mano.Atajo: HacerAtajo(p.Valor); break;
                 case Mano.Pulsar: await PulsarControl(p.Valor); break;
                 case Mano.Ventana: HacerVentana(p.Valor); break;

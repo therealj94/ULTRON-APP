@@ -124,3 +124,24 @@ input:focus, textarea:focus { border-color: var(--acento); }
 .pasos i.hecho { background: var(--acento); }
 .encoger { animation: encoger .6s cubic-bezier(.6, 0, .4, 1) forwards; }
 @keyframes encoger { to { transform: translateY(-46vh) scale(.08); opacity: 0; border-radius: 40px; } }
+
+/* ── chat con AURA ── */
+.vista.chat { display: flex; flex-direction: column; height: calc(100vh - 68px); }
+.chat-lista { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 6px 4px 16px; }
+.burbuja { max-width: 72%; padding: 11px 15px; border-radius: 18px; line-height: 1.5; white-space: pre-wrap; animation: entra .25s; }
+.burbuja.mia { align-self: flex-end; background: var(--acento-suave); border-bottom-right-radius: 6px; }
+.burbuja.suya { align-self: flex-start; background: var(--superficie2); border-bottom-left-radius: 6px; }
+.burbuja .quien { display: block; color: var(--acento); font-weight: 600; font-size: 11.5px; margin-bottom: 4px; }
+.compositor { display: flex; align-items: flex-end; gap: 10px; padding-top: 10px; border-top: 1px solid var(--linea); }
+.compositor textarea { flex: 1; }
+
+/* ── música ── */
+.reproductor { background: linear-gradient(135deg, var(--acento-suave), var(--superficie) 60%); }
+.resultados .item img { flex: none; }
+
+/* ── avatar de respaldo (sin WebGL): el primer cuadro de su hoja, o los ojos del Guardián ── */
+.avatar-hoja { width: 100%; height: 100%; background-repeat: no-repeat; background-size: 600% 400%; background-position: 0 0; animation: respira 4s ease-in-out infinite; }
+@keyframes respira { 50% { transform: translateY(-3px) scale(1.01); } }
+.ojos { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; gap: 18%; }
+.ojos i { width: 16%; aspect-ratio: 1; border-radius: 50%; background: #5ce1ff; box-shadow: 0 0 30px #5ce1ff; animation: parpadea 5s infinite; }
+@keyframes parpadea { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.1); } }

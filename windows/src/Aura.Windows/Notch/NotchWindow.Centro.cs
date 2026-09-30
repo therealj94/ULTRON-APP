@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using Aura.Windows.Centro;
 using Aura.Windows.Core;
 
@@ -29,6 +30,44 @@ public partial class NotchWindow
     static readonly HttpClient relevoHttp = new() { Timeout = TimeSpan.FromSeconds(65) };
     const string RelevoBase = "https://cerebro.ordenscan.com/mensajes";
     static readonly Regex RutaRelevo = new("^/[a-z0-9/_-]{1,60}$");
+
+    /// <summary>
+    /// Arranca el Centro escondido (con sesión): así PULSE2CHAT escucha llamadas y mensajes aunque nunca lo
+    /// abras. WebView2 necesita que la ventana exista; se muestra fuera de la vista y se esconde al cargar.
+    /// </summary>
+    internal void PrepararCentro()
+    {
+        if (soloRender || centro != null || string.IsNullOrEmpty(ajustes.Token)) return;
+        centro = new CentroWindow(ManejarCentro) { ShowActivated = false, ShowInTaskbar = false, Left = -32000, Top = -32000, WindowStartupLocation = WindowStartupLocation.Manual };
+        centro.Listo += () => Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (centro == null) return;
+            centro.Hide();
+            centro.ShowInTaskbar = true;
+            centro.Left = (SystemParameters.WorkArea.Width - centro.Width) / 2; centro.Top = (SystemParameters.WorkArea.Height - centro.Height) / 2;
+        }), DispatcherPriority.ApplicationIdle);
+        centro.Show();
+    }
+
+    /// <summary>«llamada|voz|karla», «llamada|video|karla», «mensaje|karla|texto». Los mensajes esperan el «sí».</summary>
+    void HacerPulse(string valor)
+    {
+        var p = valor.Split('|', 3);
+        if (p.Length < 3) return;
+        void Mandar(object accion) { if (centro == null) PrepararCentro(); centro?.Emitir("pulse.accion", accion); }
+        if (p[0] == "llamada")
+        {
+            AbrirCentro("pulse");
+            // La página tarda un momento en cargar si el Centro no estaba abierto.
+            Dispatcher.BeginInvoke(new Action(() => Mandar(new { tipo = "llamada", video = p[1] == "video", con = p[2] })), DispatcherPriority.ApplicationIdle);
+            Hecho(p[1] == "video" ? T("Videollamada", "Video call") : T("Llamando", "Calling"), p[2], "\uE717");
+            return;
+        }
+        var con = p[1];
+        var cuerpo = p[2];
+        Proponer(new Propuesta(T($"¿Le mando a {con}?", $"Send to {con}?"), "«" + (cuerpo.Length > 140 ? cuerpo[..140] + "…" : cuerpo) + "»", DateTime.Now.AddSeconds(30),
+            () => { Mandar(new { tipo = "mensaje", con, texto = cuerpo }); return Task.CompletedTask; }));
+    }
 
     /// <summary>Abre (o trae al frente) el Centro.</summary>
     internal void AbrirCentro(string? seccion = null)
@@ -111,6 +150,9 @@ public partial class NotchWindow
                 return true;
             }
             case "chat.callar": Callar(); return true;
+            case "chat.hablar":
+                Microfono(this, new RoutedEventArgs()); return true;
+            case "inicio.dia": return await ResumenDelDia();
             case "diagnostico.leer": return Registro.Ultimo(400);
             case "diagnostico.carpeta": Process.Start(new ProcessStartInfo("explorer.exe", "\"" + Registro.Carpeta + "\"") { UseShellExecute = true }); return true;
             default:
@@ -119,6 +161,37 @@ public partial class NotchWindow
                 if (metodo is "conectar" or "desconectar") return await ManejarConexion(metodo, Texto(a, "servicio"));
                 throw new InvalidOperationException("Método desconocido: " + metodo);
         }
+    }
+
+    /// <summary>Para el Inicio del Centro: lo de hoy en la agenda, correos sin leer y los últimos avisos de las apps.</summary>
+    async Task<object> ResumenDelDia()
+    {
+        object[] eventos = Array.Empty<object>();
+        int? correos = null;
+        string[] ultimos = Array.Empty<string>();
+        if (agenda != null)
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+                await agenda.Cargar(cts.Token);
+                var hoy = DateTime.Now;
+                eventos = agenda.Entre(hoy, hoy.Date.AddDays(1)).Take(5)
+                    .Select(e => (object)new { hora = e.TodoElDia ? T("todo el día", "all day") : e.Inicio.ToString("h:mm tt"), titulo = e.Titulo }).ToArray();
+            }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { Registro.Anotar("inicio", "agenda: " + ex.Message); }
+        }
+        if (correo != null)
+        {
+            try { using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8)); correos = (await correo.NoLeidos(30, cts.Token)).Count; }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { Registro.Anotar("inicio", "correo: " + ex.Message); }
+        }
+        if (avisosApps != null)
+        {
+            try { ultimos = (await Task.Run(() => avisosApps.Recientes(6))).Where(x => !AvisosApps.EsPropia(x.Aumid) && !Silenciada(x.App)).Take(3).Select(x => $"{x.App}: {x.Titulo}").ToArray(); }
+            catch (Exception ex) when (ex is not OutOfMemoryException) { Registro.Anotar("inicio", "avisos: " + ex.Message); }
+        }
+        return new { eventos, correos, avisos = ultimos };
     }
 
     static string Recortar(string s, int n) => s.Length > n ? s[..n] + "…" : s;

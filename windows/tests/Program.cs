@@ -317,6 +317,12 @@ Check(LectorApis.SpotifyEstado("") is null && LectorApis.SpotifyEstado("{\"is_pl
 var resultados = LectorApis.SpotifyResultados("{\"tracks\":{\"items\":[{\"uri\":\"spotify:track:1\",\"name\":\"A\",\"duration_ms\":1000,\"artists\":[{\"name\":\"X\"}],\"album\":{\"images\":[]}}]},\"artists\":{\"items\":[{\"uri\":\"spotify:artist:2\",\"name\":\"X\",\"images\":[{\"url\":\"u\"}]}]},\"playlists\":{\"items\":[null,{\"uri\":\"spotify:playlist:3\",\"name\":\"P\",\"owner\":{\"display_name\":\"Spotify\"},\"images\":[]}]}}");
 Check(resultados.Select(x => x.Tipo + ":" + x.Titulo).SequenceEqual(new[] { "cancion:A", "artista:X", "playlist:P" }), "spotify resultados");
 
+// PULSE2CHAT por voz
+Check(R("llama a Karla") is { Mano: Mano.Pulse, Valor: "llamada|voz|karla" } && R("hazle una videollamada a Karla Pérez") is { Valor: "llamada|video|karla perez" } && R("call John") is { Valor: "llamada|voz|john" }, "llamar: " + R("hazle una videollamada a Karla Pérez"));
+Check(R("mándale un mensaje a Karla que ya voy en camino") is { Mano: Mano.Pulse, Valor: "mensaje|karla|ya voy en camino" }, "mensaje: " + R("mándale un mensaje a Karla que ya voy en camino"));
+Check(R("text John that I'm running late") is { Valor: "mensaje|john|I'm running late" }, "text en ingles: " + R("text John that I'm running late"));
+Check(R("llama la atención").Mano != Mano.Pulse, "llamar la atencion no es llamada");
+
 // La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).
 foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace una captura de pantalla en windows", "ayer me dijiste que bloqueara la compu" })
 {

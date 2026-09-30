@@ -29,4 +29,10 @@ for (const id of ['aura', 'claudio', 'antonio']) {
   const html = readFileSync(f, 'utf8').replace('<body', shim + '<body');
   writeFileSync(join(salida, 'avatar', `${id}.html`), html);
 }
+// La hoja «idle» de cada avatar (la misma del notch) para el respaldo sin WebGL.
+const hojas = join(aqui, '..', 'src', 'Aura.Windows', 'AvatarAssets');
+for (const id of ['aura', 'claudio', 'antonio']) {
+  const f = join(hojas, id, 'idle.png');
+  if (existsSync(f)) cpSync(f, join(salida, 'avatar', `${id}-idle.png`));
+}
 console.log('Centro armado en', salida);

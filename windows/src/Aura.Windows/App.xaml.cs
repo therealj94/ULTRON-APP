@@ -27,6 +27,7 @@ public partial class App : Application
                 case "--native-self-test": _ = NativoSelfTest.Run(salida); return;
                 case "--conexiones-self-test": _ = ConexionesSelfTest.Run(salida); return;
                 case "--avisos-self-test": _ = AvisosSelfTest.Run(salida); return;
+                case "--centro-self-test": _ = CentroSelfTest.Run(salida); return;
                 case "--anim-self-test": _ = Pruebas.Animacion(salida); return;
                 case "--rtc-self-test":
                     Directory.CreateDirectory(Path.GetDirectoryName(salida)!);

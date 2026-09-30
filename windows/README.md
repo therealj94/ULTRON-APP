@@ -33,6 +33,20 @@ AU-RA, Claudio y ANT-ONIO son sus **modelos 3D de la app** (`vendor/aura-avatar-
 
 Atajos: **Ctrl+Alt+Espacio** hablar · **Ctrl+Alt+A** chat · **Ctrl+Alt+W** elegir dónde escribir · **Ctrl+Alt+Esc** pausar todo.
 
+## AURA 2.0: el Centro
+
+**El Centro** (Ctrl+Alt+C, o el botón de cuadritos del notch) es la ventana grande de AURA, hecha con WebView2 (`windows/centro`, TypeScript sin framework, servida como `https://centro.aura.local/`):
+
+- **Entrada como la app**: intro animada (halo, anillo, partículas y el avatar 3D de la app), **Entrar con Genesis ID** (Veta Wallet autoriza; AURA nunca ve la contraseña; reto tipo PKCE; la wallet vuelve a `ultronfp://sso`, que AURA registra para tu cuenta de Windows) o con correo y clave (junta). El mismo pase abre también PULSE2CHAT. Guía de la primera vez: avatar, cómo te escucha y cómo se usa.
+- **Inicio**: saludo, tu cartera, lo que suena y tu día (agenda, correos, últimos avisos).
+- **Chat**: el mismo del notch, en grande.
+- **PULSE2CHAT**: chats cifrados de punta a punta, llamadas y videollamadas (el mismo relevo y cifrado que la app; este equipo es un aparato más con su propia llave). Las llamadas entrantes suenan en el notch aunque el Centro esté cerrado («sí» contesta, «no» rechaza). Por voz: «llama a Karla», «videollamada con Karla», «mándale un mensaje a Karla que ya voy» (con confirmación).
+- **Música**: reproductor de Spotify (portada, progreso, controles, volumen, dispositivos) y búsqueda para poner canciones con un clic.
+- **Cartera**: saldos de Veta Wallet **solo lectura** (ORIGEN y los tokens de la red 5550, mismos contratos y precios que la wallet). «¿Cuánto ORIGEN tengo?». Enviar se hace en Veta Wallet.
+- **Ajustes**: por secciones, cada opción con su explicación; conexiones (Spotify, Google, Microsoft), notificaciones, privacidad y **diagnóstico** (el registro `%LOCALAPPDATA%\AuraWindows\aura.log`, con los tiempos de cada paso y sin secretos, para copiarlo si algo falla).
+
+**El notch** ganó: botón para **silenciar el micrófono** (tachado en rojo, siempre visible), botón del Centro, modos de escucha («Oye AURA», «siempre atenta», «solo si lo pido»), respuesta más rápida (la Laya del nodo no se consulta si no tiene el modelo), **escritura en cualquier app** («escribe hola»: corto va directo; largo pide confirmación; nunca en contraseñas), y **control del equipo** por voz: «cópialo», «pégalo», «guárdalo», «nueva pestaña», «pon la ventana a la izquierda», «presiona control shift s», «abre la configuración de wifi», «sube el brillo», «activa el modo oscuro».
+
 ## Notificaciones de otras apps (1.4)
 
 Lo que le llega a Windows de **WhatsApp, Teams, Outlook, Telegram, Slack, Chrome/Edge** (notificaciones web, con el sitio) y cualquier otra app sale en el notch como en la isla de Apple: la app, quién y qué dice, con el botón **Abrir** (abre esa app). Por voz: «¿qué notificaciones tengo?», «léeme la última notificación», «silencia las notificaciones de WhatsApp», «vuelve a mostrar las de WhatsApp». En Ajustes: apagarlas, **modo privado** (solo la app, sin el texto) y **leerlas en voz alta**.

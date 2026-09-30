@@ -83,6 +83,7 @@ public partial class NotchWindow
         // Primera vez (o sin sesión): se abre el Centro con la entrada y la guía; después AURA vive en el notch.
         if (string.IsNullOrEmpty(ajustes.Token) || !ajustes.PrimeraVezHecha)
             Dispatcher.BeginInvoke(new Action(() => AbrirCentro()), DispatcherPriority.ApplicationIdle);
+        else Dispatcher.BeginInvoke(new Action(PrepararCentro), DispatcherPriority.ApplicationIdle);
         Centro.Registro.Anotar("inicio", $"AURA {typeof(NotchWindow).Assembly.GetName().Version} · escucha {ajustes.Escucha} · sesión {(string.IsNullOrEmpty(ajustes.Token) ? "no" : ajustes.Nivel)}");
 
         var hola = ajustes.Idioma == "en" ? "Hi, I'm " + ajustes.NombreAvatar : "Hola, soy " + ajustes.NombreAvatar;
