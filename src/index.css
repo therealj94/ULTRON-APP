@@ -1,4 +1,7 @@
 @import "tailwindcss";
+/* Tailwind busca clases en todo el repo; vendor/ trae HTML de varios MB con modelos en base64 y
+   la compilación pasaba de 8 GB (Render la mataba por memoria). Ahí no hay clases de la web. */
+@source not "../vendor";
 
 @layer base {
   :root {
