@@ -51,27 +51,93 @@ function SinCuenta({ onAtras }: { onAtras?: () => void }) {
   const pulse = usePulseSiHay();
   const ins = useSafeAreaInsets();
   return (
-    <View style={{ flex: 1, backgroundColor: p.fondo, paddingTop: ins.top, paddingBottom: ins.bottom }}>
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: p.fondo,
+        paddingTop: ins.top,
+        paddingBottom: ins.bottom,
+      }}
+    >
       {onAtras ? (
-        <Tocable onPress={onAtras} etiqueta={tr('Volver', 'Back')} caja={{ margin: MEDIDA.espacio.s, alignSelf: 'flex-start' }} style={{ width: 44, height: 44, alignItems: 'center', justifyContent: 'center' }}>
+        <Tocable
+          onPress={onAtras}
+          etiqueta={tr('Volver', 'Back')}
+          caja={{ margin: MEDIDA.espacio.s, alignSelf: 'flex-start' }}
+          style={{
+            width: 44,
+            height: 44,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
           <Icono nombre="atras" color={p.texto} tam={24} grosor={2} />
         </Tocable>
       ) : null}
-      <View style={{ flex: 1, justifyContent: 'center', paddingHorizontal: MEDIDA.espacio.xxl }}>
-        <View style={{ width: 88, height: 88, borderRadius: 44, backgroundColor: p.acentoFondo, alignItems: 'center', justifyContent: 'center', marginBottom: MEDIDA.espacio.xl }}>
+      <View
+        style={{
+          flex: 1,
+          justifyContent: 'center',
+          paddingHorizontal: MEDIDA.espacio.xxl,
+        }}
+      >
+        <View
+          style={{
+            width: 88,
+            height: 88,
+            borderRadius: 44,
+            backgroundColor: p.acentoFondo,
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: MEDIDA.espacio.xl,
+          }}
+        >
           <Icono nombre="burbujas" tam={44} color={p.acentoTexto} grosor={1.6} />
         </View>
-        <Text style={{ color: p.acentoTexto, fontSize: MEDIDA.letra.chica, fontWeight: '800', letterSpacing: 2 }}>PULSE2CHAT</Text>
-        <Text style={{ color: p.texto, fontSize: MEDIDA.letra.titulo, fontWeight: '700', marginTop: MEDIDA.espacio.s }}>
+        <Text
+          style={{
+            color: p.acentoTexto,
+            fontSize: MEDIDA.letra.chica,
+            fontWeight: '800',
+            letterSpacing: 2,
+          }}
+        >
+          PULSE2CHAT
+        </Text>
+        <Text
+          style={{
+            color: p.texto,
+            fontSize: MEDIDA.letra.titulo,
+            fontWeight: '700',
+            marginTop: MEDIDA.espacio.s,
+          }}
+        >
           {tr('Tu chat de Orden Global, aquí', 'Your Orden Global chat, here')}
         </Text>
-        <Text style={{ color: p.texto2, fontSize: MEDIDA.letra.cuerpo, lineHeight: 22, marginTop: MEDIDA.espacio.m }}>
+        <Text
+          style={{
+            color: p.texto2,
+            fontSize: MEDIDA.letra.cuerpo,
+            lineHeight: 22,
+            marginTop: MEDIDA.espacio.m,
+          }}
+        >
           {tr(
             'Los mismos contactos y conversaciones que en la app Orden Global, cifrados de punta a punta. Se conecta con tu Genesis ID: tu wallet te pide permiso y vuelves aquí.',
-            'The same contacts and conversations as in the Orden Global app, end-to-end encrypted. It connects with your Genesis ID: your wallet asks for permission and you come back here.'
+            'The same contacts and conversations as in the Orden Global app, end-to-end encrypted. It connects with your Genesis ID: your wallet asks for permission and you come back here.',
           )}
         </Text>
-        {pulse?.error ? <Text style={{ color: p.aviso, fontSize: MEDIDA.letra.chica + 1, marginTop: MEDIDA.espacio.m }}>{pulse.error}</Text> : null}
+        {pulse?.error ? (
+          <Text
+            style={{
+              color: p.aviso,
+              fontSize: MEDIDA.letra.chica + 1,
+              marginTop: MEDIDA.espacio.m,
+            }}
+          >
+            {pulse.error}
+          </Text>
+        ) : null}
         {pulse ? (
           <BotonChat
             titulo={tr('Conectar con Genesis ID', 'Connect with Genesis ID')}
@@ -116,7 +182,11 @@ function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string,
   }, []);
 
   const qn = RELEVO.normalizar(q);
-  const coincide = useCallback((x: { nombre: string; correo: string; gid?: string }) => !qn || RELEVO.normalizar(x.nombre).includes(qn) || x.correo.includes(qn) || (x.gid || '').toLowerCase().includes(qn), [qn]);
+  const coincide = useCallback(
+    (x: { nombre: string; correo: string; gid?: string }) =>
+      !qn || RELEVO.normalizar(x.nombre).includes(qn) || x.correo.includes(qn) || (x.gid || '').toLowerCase().includes(qn),
+    [qn],
+  );
 
   // Gente fuera del círculo, en el relevo: solo con dos letras o más y sin martillar al teclear.
   useEffect(() => {
@@ -146,23 +216,40 @@ function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string,
     const out: Item[] = [];
     const recibidas = (circ?.recibidas || []).filter(coincide);
     if (recibidas.length) {
-      out.push({ tipo: 'titulo', clave: 't-sol', texto: tr('Solicitudes', 'Requests') });
+      out.push({
+        tipo: 'titulo',
+        clave: 't-sol',
+        texto: tr('Solicitudes', 'Requests'),
+      });
       for (const x of recibidas) out.push({ tipo: 'solicitud', clave: 's-' + x.correo, persona: x });
     }
     const charlas = conv.filter(coincide);
-    if (charlas.length && (recibidas.length || qn)) out.push({ tipo: 'titulo', clave: 't-conv', texto: tr('Conversaciones', 'Chats') });
+    if (charlas.length && (recibidas.length || qn))
+      out.push({
+        tipo: 'titulo',
+        clave: 't-conv',
+        texto: tr('Conversaciones', 'Chats'),
+      });
     for (const c of charlas) out.push({ tipo: 'charla', clave: 'c-' + c.correo, c });
     const conCharla = new Set(conv.map((c) => c.correo));
     const amigos = (circ?.amigos || []).filter((a) => !conCharla.has(a.correo) && coincide(a));
     if (amigos.length) {
-      out.push({ tipo: 'titulo', clave: 't-circ', texto: tr('Tu círculo', 'Your circle') });
+      out.push({
+        tipo: 'titulo',
+        clave: 't-circ',
+        texto: tr('Tu círculo', 'Your circle'),
+      });
       for (const a of amigos) out.push({ tipo: 'amigo', clave: 'a-' + a.correo, persona: a });
     }
     if (remotos) {
       const conocidos = new Set([...conCharla, ...(circ?.amigos || []).map((a) => a.correo), ...(circ?.recibidas || []).map((a) => a.correo)]);
       const nuevos = remotos.filter((r) => !conocidos.has(r.correo));
       if (nuevos.length) {
-        out.push({ tipo: 'titulo', clave: 't-rem', texto: tr('Personas en PULSE2CHAT', 'People on PULSE2CHAT') });
+        out.push({
+          tipo: 'titulo',
+          clave: 't-rem',
+          texto: tr('Personas en PULSE2CHAT', 'People on PULSE2CHAT'),
+        });
         for (const r of nuevos) out.push({ tipo: 'remoto', clave: 'r-' + r.correo, persona: r });
       }
     }
@@ -200,8 +287,21 @@ function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string,
               </Text>
             </View>
           </View>
-          <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: MEDIDA.espacio.m, gap: MEDIDA.espacio.s }}>
-            <BotonChat chico variante="contorno" titulo={tr('Rechazar', 'Decline')} onPress={() => void responder(x.correo, false)} deshabilitado={respondiendo[x.correo]} />
+          <View
+            style={{
+              flexDirection: 'row',
+              justifyContent: 'flex-end',
+              marginTop: MEDIDA.espacio.m,
+              gap: MEDIDA.espacio.s,
+            }}
+          >
+            <BotonChat
+              chico
+              variante="contorno"
+              titulo={tr('Rechazar', 'Decline')}
+              onPress={() => void responder(x.correo, false)}
+              deshabilitado={respondiendo[x.correo]}
+            />
             <BotonChat chico titulo={tr('Aceptar', 'Accept')} onPress={() => void responder(x.correo, true)} cargando={respondiendo[x.correo]} />
           </View>
         </Animated.View>
@@ -217,7 +317,7 @@ function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string,
           <Avatar nombre={c.nombre} foto={c.foto} anillo={sinLeer} enLinea={c.enLinea} />
           <View style={s.filaCuerpo}>
             <View style={s.filaArriba}>
-              <Text style={[s.nombre, sinLeer && { fontWeight: '800' }]} numberOfLines={1}>
+              <Text style={[s.nombre, { flex: 1 }, sinLeer && { fontWeight: '800' }]} numberOfLines={1}>
                 {c.nombre}
               </Text>
               <Text style={[s.hora, sinLeer && { color: p.acentoTexto, fontWeight: '700' }]}>{cuandoLista(c.ultimo?.cuando || 0)}</Text>
@@ -250,7 +350,13 @@ function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string,
     const x = item.persona;
     const lazo = item.tipo === 'amigo' ? 'amigos' : lazos[x.correo] || x.lazo || 'no';
     return (
-      <Tocable onPress={lazo === 'amigos' ? () => onAbrir(x.correo, x.nombre) : undefined} hundir={0.985} ripple={p.acentoFondo} etiqueta={x.nombre} style={s.fila}>
+      <Tocable
+        onPress={lazo === 'amigos' ? () => onAbrir(x.correo, x.nombre) : undefined}
+        hundir={0.985}
+        ripple={p.acentoFondo}
+        etiqueta={x.nombre}
+        style={s.fila}
+      >
         <Avatar nombre={x.nombre} foto={x.foto} enLinea={x.enLinea} />
         <View style={s.filaCuerpo}>
           <Text style={s.nombre} numberOfLines={1}>
@@ -282,9 +388,20 @@ function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string,
               <Icono nombre="atras" color={p.texto} tam={24} grosor={2} />
             </Tocable>
           ) : null}
-          <View style={{ flex: 1, marginLeft: onAtras ? MEDIDA.espacio.xs : MEDIDA.espacio.s }}>
+          <View
+            style={{
+              flex: 1,
+              marginLeft: onAtras ? MEDIDA.espacio.xs : MEDIDA.espacio.s,
+            }}
+          >
             <Text style={s.titulo}>{tr('Chats', 'Chats')}</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 2 }}>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginTop: 2,
+              }}
+            >
               <Icono nombre="candado" tam={12} color={p.exito} grosor={2.2} />
               <Text style={[s.detalle, { marginLeft: 4, marginTop: 0, color: p.texto3 }]} numberOfLines={1}>
                 {tr('Cifrado de punta a punta', 'End-to-end encrypted')}
@@ -332,22 +449,33 @@ function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string,
           contentContainerStyle={{ paddingBottom: ins.bottom + 96 }}
           ListEmptyComponent={
             qn && !buscando ? (
-              <Text style={[s.detalle, { textAlign: 'center', marginTop: MEDIDA.espacio.xxl, paddingHorizontal: MEDIDA.espacio.xl }]}>
+              <Text
+                style={[
+                  s.detalle,
+                  {
+                    textAlign: 'center',
+                    marginTop: MEDIDA.espacio.xxl,
+                    paddingHorizontal: MEDIDA.espacio.xl,
+                  },
+                ]}
+              >
                 {tr('Nadie con ese nombre. Prueba con su correo o su Genesis ID.', 'No one by that name. Try their email or Genesis ID.')}
               </Text>
             ) : null
           }
         />
       )}
-      <Tocable
-        onPress={() => setHoja(true)}
-        vibrar
-        etiqueta={tr('Agregar a alguien', 'Add someone')}
-        caja={[s.flotante, { bottom: ins.bottom + MEDIDA.espacio.xl }]}
-        style={s.flotanteBoton}
-      >
-        <Icono nombre="personaMas" tam={26} color={p.sobreAcento} grosor={2} />
-      </Tocable>
+      {vacio ? null : (
+        <Tocable
+          onPress={() => setHoja(true)}
+          vibrar
+          etiqueta={tr('Agregar a alguien', 'Add someone')}
+          caja={[s.flotante, { bottom: ins.bottom + MEDIDA.espacio.xl }]}
+          style={s.flotanteBoton}
+        >
+          <Icono nombre="personaMas" tam={26} color={p.sobreAcento} grosor={2} />
+        </Tocable>
+      )}
       {hoja ? <HojaAgregar yo={yo} onCerrar={() => setHoja(false)} onAbrir={onAbrir} /> : null}
     </View>
   );
@@ -373,11 +501,42 @@ function Esqueleto({ p }: { p: Paleta }) {
   return (
     <Animated.View style={[{ paddingTop: MEDIDA.espacio.s }, st]}>
       {[0, 1, 2, 3, 4].map((i) => (
-        <View key={i} style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: MEDIDA.espacio.l, paddingVertical: MEDIDA.espacio.m }}>
-          <View style={{ width: 52, height: 52, borderRadius: 26, backgroundColor: p.superficie2 }} />
+        <View
+          key={i}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            paddingHorizontal: MEDIDA.espacio.l,
+            paddingVertical: MEDIDA.espacio.m,
+          }}
+        >
+          <View
+            style={{
+              width: 52,
+              height: 52,
+              borderRadius: 26,
+              backgroundColor: p.superficie2,
+            }}
+          />
           <View style={{ flex: 1, marginLeft: MEDIDA.espacio.m }}>
-            <View style={{ width: `${45 + ((i * 17) % 30)}%`, height: 13, borderRadius: 7, backgroundColor: p.superficie2 }} />
-            <View style={{ width: `${60 + ((i * 23) % 30)}%`, height: 11, borderRadius: 6, backgroundColor: p.superficie2, marginTop: 9, opacity: 0.7 }} />
+            <View
+              style={{
+                width: `${45 + ((i * 17) % 30)}%`,
+                height: 13,
+                borderRadius: 7,
+                backgroundColor: p.superficie2,
+              }}
+            />
+            <View
+              style={{
+                width: `${60 + ((i * 23) % 30)}%`,
+                height: 11,
+                borderRadius: 6,
+                backgroundColor: p.superficie2,
+                marginTop: 9,
+                opacity: 0.7,
+              }}
+            />
           </View>
         </View>
       ))}
@@ -387,19 +546,63 @@ function Esqueleto({ p }: { p: Paleta }) {
 
 function Vacio({ p, onAgregar }: { p: Paleta; onAgregar: () => void }) {
   return (
-    <Animated.View entering={FadeIn.duration(MEDIDA.duracion.lenta)} style={{ flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: MEDIDA.espacio.xxl, paddingBottom: 80 }}>
-      <View style={{ width: 132, height: 132, borderRadius: 66, backgroundColor: p.acentoFondo, alignItems: 'center', justifyContent: 'center' }}>
-        <View style={{ width: 92, height: 92, borderRadius: 46, backgroundColor: p.fondo, alignItems: 'center', justifyContent: 'center', opacity: 0.9 }}>
+    <Animated.View
+      entering={FadeIn.duration(MEDIDA.duracion.lenta)}
+      style={{
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: MEDIDA.espacio.xxl,
+        paddingBottom: 80,
+      }}
+    >
+      <View
+        style={{
+          width: 132,
+          height: 132,
+          borderRadius: 66,
+          backgroundColor: p.acentoFondo,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <View
+          style={{
+            width: 92,
+            height: 92,
+            borderRadius: 46,
+            backgroundColor: p.fondo,
+            alignItems: 'center',
+            justifyContent: 'center',
+            opacity: 0.9,
+          }}
+        >
           <Icono nombre="burbujas" tam={50} color={p.acentoTexto} grosor={1.5} />
         </View>
       </View>
-      <Text style={{ color: p.texto, fontSize: MEDIDA.letra.grande + 3, fontWeight: '700', marginTop: MEDIDA.espacio.xl, textAlign: 'center' }}>
+      <Text
+        style={{
+          color: p.texto,
+          fontSize: MEDIDA.letra.grande + 3,
+          fontWeight: '700',
+          marginTop: MEDIDA.espacio.xl,
+          textAlign: 'center',
+        }}
+      >
         {tr('Tus conversaciones aparecerán aquí', 'Your chats will show up here')}
       </Text>
-      <Text style={{ color: p.texto2, fontSize: MEDIDA.letra.cuerpo, lineHeight: 22, marginTop: MEDIDA.espacio.s, textAlign: 'center' }}>
+      <Text
+        style={{
+          color: p.texto2,
+          fontSize: MEDIDA.letra.cuerpo,
+          lineHeight: 22,
+          marginTop: MEDIDA.espacio.s,
+          textAlign: 'center',
+        }}
+      >
         {tr(
           'Agrega a alguien con su correo o su Genesis ID. Todo lo que se escriban va cifrado de punta a punta.',
-          'Add someone with their email or Genesis ID. Everything you write to each other is end-to-end encrypted.'
+          'Add someone with their email or Genesis ID. Everything you write to each other is end-to-end encrypted.',
         )}
       </Text>
       <BotonChat titulo={tr('Agregar a alguien', 'Add someone')} icono="personaMas" onPress={onAgregar} caja={{ marginTop: MEDIDA.espacio.xl }} />
@@ -486,7 +689,9 @@ function HojaAgregar({ yo, onCerrar, onAbrir }: { yo: string; onCerrar: () => vo
         <Animated.View style={[s.hoja, { paddingBottom: ins.bottom + MEDIDA.espacio.xl }, hojaSt]}>
           <View style={s.asa} />
           <Text style={[s.titulo, { fontSize: MEDIDA.letra.grande + 3 }]}>{tr('Agregar a alguien', 'Add someone')}</Text>
-          <Text style={[s.detalle, { marginTop: MEDIDA.espacio.xs }]}>{tr('Con su correo o su Genesis ID (GEN-…).', 'With their email or Genesis ID (GEN-…).')}</Text>
+          <Text style={[s.detalle, { marginTop: MEDIDA.espacio.xs }]}>
+            {tr('Con su correo o su Genesis ID (GEN-…).', 'With their email or Genesis ID (GEN-…).')}
+          </Text>
           <TextInput
             value={texto}
             onChangeText={(v) => {
@@ -503,8 +708,25 @@ function HojaAgregar({ yo, onCerrar, onAbrir }: { yo: string; onCerrar: () => vo
             onSubmitEditing={() => void enviar()}
             style={s.campo}
           />
-          {mensaje ? <Text style={{ color: bien ? p.exito : p.aviso, fontSize: MEDIDA.letra.chica + 1, marginTop: MEDIDA.espacio.s, lineHeight: 19 }}>{mensaje}</Text> : null}
-          <View style={{ flexDirection: 'row', gap: MEDIDA.espacio.s, marginTop: MEDIDA.espacio.l }}>
+          {mensaje ? (
+            <Text
+              style={{
+                color: bien ? p.exito : p.aviso,
+                fontSize: MEDIDA.letra.chica + 1,
+                marginTop: MEDIDA.espacio.s,
+                lineHeight: 19,
+              }}
+            >
+              {mensaje}
+            </Text>
+          ) : null}
+          <View
+            style={{
+              flexDirection: 'row',
+              gap: MEDIDA.espacio.s,
+              marginTop: MEDIDA.espacio.l,
+            }}
+          >
             {res?.estado === 'amigos' && res.correo ? (
               <BotonChat
                 titulo={tr('Escribirle', 'Write')}
@@ -515,8 +737,16 @@ function HojaAgregar({ yo, onCerrar, onAbrir }: { yo: string; onCerrar: () => vo
                 }}
                 caja={{ flex: 1 }}
               />
+            ) : res?.estado === 'enviada' ? (
+              <BotonChat titulo={tr('Listo', 'Done')} icono="palomita" onPress={cerrar} caja={{ flex: 1 }} />
             ) : (
-              <BotonChat titulo={tr('Enviar solicitud', 'Send request')} onPress={() => void enviar()} cargando={enviando} deshabilitado={!texto.trim()} caja={{ flex: 1 }} />
+              <BotonChat
+                titulo={tr('Enviar solicitud', 'Send request')}
+                onPress={() => void enviar()}
+                cargando={enviando}
+                deshabilitado={!texto.trim()}
+                caja={{ flex: 1 }}
+              />
             )}
           </View>
           <Text style={[s.detalle, { marginTop: MEDIDA.espacio.l, textAlign: 'center' }]}>
@@ -535,9 +765,23 @@ function HojaAgregar({ yo, onCerrar, onAbrir }: { yo: string; onCerrar: () => vo
 
 function estilos(p: Paleta) {
   return StyleSheet.create({
-    cabecera: { paddingHorizontal: MEDIDA.espacio.s, paddingBottom: MEDIDA.espacio.m, backgroundColor: p.fondo },
-    botonCab: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-    titulo: { color: p.texto, fontSize: MEDIDA.letra.enorme - 4, fontWeight: '800', letterSpacing: -0.5 },
+    cabecera: {
+      paddingHorizontal: MEDIDA.espacio.s,
+      paddingBottom: MEDIDA.espacio.m,
+      backgroundColor: p.fondo,
+    },
+    botonCab: {
+      width: 44,
+      height: 44,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    titulo: {
+      color: p.texto,
+      fontSize: MEDIDA.letra.enorme - 4,
+      fontWeight: '800',
+      letterSpacing: -0.5,
+    },
     buscador: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -549,9 +793,22 @@ function estilos(p: Paleta) {
       borderRadius: MEDIDA.radio.m,
       backgroundColor: p.superficie2,
     },
-    buscadorTxt: { flex: 1, color: p.texto, fontSize: MEDIDA.letra.cuerpo, paddingVertical: 0 },
-    banda: { backgroundColor: p.avisoFondo, paddingVertical: MEDIDA.espacio.s, paddingHorizontal: MEDIDA.espacio.l },
-    bandaTxt: { color: p.aviso, fontSize: MEDIDA.letra.chica + 1, fontWeight: '600' },
+    buscadorTxt: {
+      flex: 1,
+      color: p.texto,
+      fontSize: MEDIDA.letra.cuerpo,
+      paddingVertical: 0,
+    },
+    banda: {
+      backgroundColor: p.avisoFondo,
+      paddingVertical: MEDIDA.espacio.s,
+      paddingHorizontal: MEDIDA.espacio.l,
+    },
+    bandaTxt: {
+      color: p.aviso,
+      fontSize: MEDIDA.letra.chica + 1,
+      fontWeight: '600',
+    },
     seccion: {
       color: p.texto3,
       fontSize: MEDIDA.letra.chica,
@@ -562,18 +819,80 @@ function estilos(p: Paleta) {
       marginTop: MEDIDA.espacio.l,
       marginBottom: MEDIDA.espacio.xs,
     },
-    fila: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: MEDIDA.espacio.l, paddingVertical: MEDIDA.espacio.m - 2 },
-    filaCuerpo: { flex: 1, marginLeft: MEDIDA.espacio.m, minHeight: 52, justifyContent: 'center', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: p.borde, paddingBottom: 2 },
+    fila: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingHorizontal: MEDIDA.espacio.l,
+      paddingVertical: MEDIDA.espacio.m - 2,
+    },
+    filaCuerpo: {
+      flex: 1,
+      marginLeft: MEDIDA.espacio.m,
+      minHeight: 52,
+      justifyContent: 'center',
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderBottomColor: p.borde,
+      paddingBottom: 2,
+    },
     filaArriba: { flexDirection: 'row', alignItems: 'center' },
     filaAbajo: { flexDirection: 'row', alignItems: 'center', marginTop: 3 },
-    nombre: { flex: 1, color: p.texto, fontSize: MEDIDA.letra.grande - 1, fontWeight: '600' },
-    hora: { color: p.texto3, fontSize: MEDIDA.letra.chica, marginLeft: MEDIDA.espacio.s },
-    detalle: { color: p.texto2, fontSize: MEDIDA.letra.cuerpo - 1, marginTop: 2 },
-    insignia: { minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 6, backgroundColor: p.acento, alignItems: 'center', justifyContent: 'center', marginLeft: MEDIDA.espacio.s },
-    insigniaTxt: { color: p.sobreAcento, fontSize: MEDIDA.letra.chica, fontWeight: '800' },
-    tarjeta: { marginHorizontal: MEDIDA.espacio.l, marginVertical: MEDIDA.espacio.xs, padding: MEDIDA.espacio.m, borderRadius: MEDIDA.radio.m, backgroundColor: p.superficie, borderWidth: StyleSheet.hairlineWidth, borderColor: p.borde },
-    flotante: { position: 'absolute', right: MEDIDA.espacio.xl, shadowColor: '#000', shadowOpacity: 0.25, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 6, borderRadius: 30 },
-    flotanteBoton: { width: 60, height: 60, borderRadius: 30, backgroundColor: p.acento, alignItems: 'center', justifyContent: 'center' },
+    nombre: {
+      color: p.texto,
+      fontSize: MEDIDA.letra.grande - 1,
+      fontWeight: '600',
+    },
+    hora: {
+      color: p.texto3,
+      fontSize: MEDIDA.letra.chica,
+      marginLeft: MEDIDA.espacio.s,
+    },
+    detalle: {
+      color: p.texto2,
+      fontSize: MEDIDA.letra.cuerpo - 1,
+      marginTop: 2,
+    },
+    insignia: {
+      minWidth: 22,
+      height: 22,
+      borderRadius: 11,
+      paddingHorizontal: 6,
+      backgroundColor: p.acento,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginLeft: MEDIDA.espacio.s,
+    },
+    insigniaTxt: {
+      color: p.sobreAcento,
+      fontSize: MEDIDA.letra.chica,
+      fontWeight: '800',
+    },
+    tarjeta: {
+      marginHorizontal: MEDIDA.espacio.l,
+      marginVertical: MEDIDA.espacio.xs,
+      padding: MEDIDA.espacio.m,
+      borderRadius: MEDIDA.radio.m,
+      backgroundColor: p.superficie,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: p.borde,
+    },
+    flotante: {
+      position: 'absolute',
+      right: MEDIDA.espacio.xl,
+      shadowColor: '#000',
+      shadowOpacity: 0.25,
+      shadowRadius: 10,
+      shadowOffset: { width: 0, height: 4 },
+      elevation: 6,
+      borderRadius: 30,
+    },
+    flotanteBoton: {
+      width: 60,
+      height: 60,
+      borderRadius: 30,
+      backgroundColor: p.acento,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
     hoja: {
       backgroundColor: p.superficie,
       borderTopLeftRadius: MEDIDA.radio.xl,
@@ -581,7 +900,14 @@ function estilos(p: Paleta) {
       paddingHorizontal: MEDIDA.espacio.xl,
       paddingTop: MEDIDA.espacio.m,
     },
-    asa: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: p.borde, marginBottom: MEDIDA.espacio.l },
+    asa: {
+      alignSelf: 'center',
+      width: 40,
+      height: 5,
+      borderRadius: 3,
+      backgroundColor: p.borde,
+      marginBottom: MEDIDA.espacio.l,
+    },
     campo: {
       marginTop: MEDIDA.espacio.l,
       height: 50,

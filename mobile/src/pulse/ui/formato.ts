@@ -28,7 +28,10 @@ export function diasAtras(ms: number, ahora = Date.now()): number {
 export function hora(ms: number): string {
   if (!ms) return '';
   try {
-    return new Date(ms).toLocaleTimeString(localeActual(), { hour: '2-digit', minute: '2-digit' });
+    return new Date(ms).toLocaleTimeString(localeActual(), {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
   } catch {
     const d = new Date(ms);
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -86,7 +89,12 @@ export function recortar(texto: string, max = 80): string {
     .replace(/\s+/g, ' ')
     .trim();
   const letras = Array.from(plano);
-  return letras.length > max ? letras.slice(0, max - 1).join('').trimEnd() + '…' : plano;
+  return letras.length > max
+    ? letras
+        .slice(0, max - 1)
+        .join('')
+        .trimEnd() + '…'
+    : plano;
 }
 
 /** Lo que se lee debajo del nombre en la lista: el último mensaje, dicho con la verdad de su sobre. */
@@ -142,7 +150,11 @@ export function filasDelHilo(mensajes: ConEstado[], yo: string, leidoHasta: numb
     const m = mensajes[i];
     const dia = inicioDelDia(m.cuando || ahora);
     if (dia !== diaAnterior) {
-      filas.push({ tipo: 'dia', clave: 'dia-' + dia, texto: etiquetaDia(m.cuando || ahora, ahora) });
+      filas.push({
+        tipo: 'dia',
+        clave: 'dia-' + dia,
+        texto: etiquetaDia(m.cuando || ahora, ahora),
+      });
       diaAnterior = dia;
     }
     const antes = mensajes[i - 1];

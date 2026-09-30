@@ -38,10 +38,36 @@ export function Avatar({ nombre, foto, tam = 52, anillo, enLinea }: Props) {
       }}
     >
       {url ? (
-        <Image source={{ uri: url }} onError={() => setRota(true)} style={{ width: cara, height: cara, borderRadius: cara / 2, backgroundColor: p.superficie2 }} />
+        <Image
+          source={{ uri: url }}
+          onError={() => setRota(true)}
+          style={{
+            width: cara,
+            height: cara,
+            borderRadius: cara / 2,
+            backgroundColor: p.superficie2,
+          }}
+        />
       ) : (
-        <View style={{ width: cara, height: cara, borderRadius: cara / 2, backgroundColor: p.acentoFondo, alignItems: 'center', justifyContent: 'center' }}>
-          <Text style={{ color: p.acentoTexto, fontSize: Math.round(cara * 0.38), fontWeight: '700', letterSpacing: 0.5 }} allowFontScaling={false}>
+        <View
+          style={{
+            width: cara,
+            height: cara,
+            borderRadius: cara / 2,
+            backgroundColor: p.acentoFondo,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Text
+            style={{
+              color: p.acentoTexto,
+              fontSize: Math.round(cara * 0.38),
+              fontWeight: '700',
+              letterSpacing: 0.5,
+            }}
+            allowFontScaling={false}
+          >
             {iniciales(nombre)}
           </Text>
         </View>

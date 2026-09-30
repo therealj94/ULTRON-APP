@@ -29,15 +29,51 @@ type Props = {
 function Palomitas({ pendiente, leido, color }: { pendiente?: boolean; leido: boolean; color: string }) {
   if (pendiente) {
     return (
-      <View style={{ width: 11, height: 11, borderRadius: 5.5, borderWidth: 1.3, borderColor: color, marginLeft: 4, opacity: 0.8 }}>
-        <View style={{ position: 'absolute', left: 3.6, top: 1.4, width: 1.3, height: 3.6, backgroundColor: color }} />
-        <View style={{ position: 'absolute', left: 3.6, top: 4.2, width: 3, height: 1.3, backgroundColor: color }} />
+      <View
+        style={{
+          width: 11,
+          height: 11,
+          borderRadius: 5.5,
+          borderWidth: 1.3,
+          borderColor: color,
+          marginLeft: 4,
+          opacity: 0.8,
+        }}
+      >
+        <View
+          style={{
+            position: 'absolute',
+            left: 3.6,
+            top: 1.4,
+            width: 1.3,
+            height: 3.6,
+            backgroundColor: color,
+          }}
+        />
+        <View
+          style={{
+            position: 'absolute',
+            left: 3.6,
+            top: 4.2,
+            width: 3,
+            height: 1.3,
+            backgroundColor: color,
+          }}
+        />
       </View>
     );
   }
   return (
     <Text
-      style={{ color, fontSize: 12, fontWeight: leido ? '800' : '600', marginLeft: 4, letterSpacing: leido ? -4.5 : 0, paddingRight: leido ? 4.5 : 0, opacity: leido ? 1 : 0.75 }}
+      style={{
+        color,
+        fontSize: 12,
+        fontWeight: leido ? '800' : '600',
+        marginLeft: 4,
+        letterSpacing: leido ? -4.5 : 0,
+        paddingRight: leido ? 4.5 : 0,
+        opacity: leido ? 1 : 0.75,
+      }}
       allowFontScaling={false}
       accessibilityLabel={leido ? tr('Leído', 'Read') : tr('Enviado', 'Sent')}
     >
@@ -62,7 +98,7 @@ function FotoMensaje({ m, ancho, onVer, p }: { m: RELEVO.Mensaje; ancho: number;
         Image.getSize(
           u,
           (w, h) => vivo && w > 0 && h > 0 && setProp(Math.min(1.4, Math.max(0.6, h / w))),
-          () => undefined
+          () => undefined,
         );
     });
     return () => {
@@ -72,21 +108,57 @@ function FotoMensaje({ m, ancho, onVer, p }: { m: RELEVO.Mensaje; ancho: number;
   const alto = Math.round(ancho * prop);
   if (uri === undefined) {
     return (
-      <View style={{ width: ancho, height: ancho * 0.75, borderRadius: MEDIDA.radio.m - 4, backgroundColor: p.superficie2, alignItems: 'center', justifyContent: 'center' }}>
+      <View
+        style={{
+          width: ancho,
+          height: ancho * 0.75,
+          borderRadius: MEDIDA.radio.m - 4,
+          backgroundColor: p.superficie2,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
         <ActivityIndicator color={p.acento} />
       </View>
     );
   }
   if (!uri) {
     return (
-      <View style={{ width: ancho, height: 90, borderRadius: MEDIDA.radio.m - 4, backgroundColor: p.superficie2, alignItems: 'center', justifyContent: 'center', padding: MEDIDA.espacio.m }}>
-        <Text style={{ color: p.texto3, fontSize: MEDIDA.letra.chica, textAlign: 'center' }}>{tr('No se pudo abrir la foto', 'Couldn’t open the photo')}</Text>
+      <View
+        style={{
+          width: ancho,
+          height: 90,
+          borderRadius: MEDIDA.radio.m - 4,
+          backgroundColor: p.superficie2,
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: MEDIDA.espacio.m,
+        }}
+      >
+        <Text
+          style={{
+            color: p.texto3,
+            fontSize: MEDIDA.letra.chica,
+            textAlign: 'center',
+          }}
+        >
+          {tr('No se pudo abrir la foto', 'Couldn’t open the photo')}
+        </Text>
       </View>
     );
   }
   return (
     <Pressable onPress={() => onVer?.(uri)} accessibilityRole="imagebutton" accessibilityLabel={tr('Ver foto', 'View photo')}>
-      <Image source={{ uri }} style={{ width: ancho, height: alto, borderRadius: MEDIDA.radio.m - 4, backgroundColor: p.superficie2 }} resizeMode="cover" />
+      <Image
+        source={{ uri }}
+        style={{
+          width: ancho,
+          height: alto,
+          borderRadius: MEDIDA.radio.m - 4,
+          backgroundColor: p.superficie2,
+        }}
+        resizeMode="cover"
+      />
     </Pressable>
   );
 }
@@ -108,7 +180,18 @@ function BurbujaBase({ fila, anchoMax, onReintentar, onDescartar, onVerFoto }: P
   const h = hora(m.cuando);
   const meta = (
     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-      {!!marca && <Text style={{ color: mio ? tenue : p.aviso, fontSize: 11, opacity: mio ? 0.8 : 1, marginRight: 4 }}>{marca}</Text>}
+      {!!marca && (
+        <Text
+          style={{
+            color: mio ? tenue : p.aviso,
+            fontSize: 11,
+            opacity: mio ? 0.8 : 1,
+            marginRight: 4,
+          }}
+        >
+          {marca}
+        </Text>
+      )}
       <Text style={{ color: tenue, fontSize: 11, opacity: mio ? 0.75 : 1 }} allowFontScaling={false}>
         {h}
       </Text>
@@ -116,7 +199,9 @@ function BurbujaBase({ fila, anchoMax, onReintentar, onDescartar, onVerFoto }: P
     </View>
   );
   // El hueco invisible que le guarda el sitio a la hora al final del último renglón.
-  const hueco = ' '.repeat(marca ? 9 : 3) + (mio ? '  ' : '') + ' ';
+  // Se mide a ojo lo que ocupa la hora (y la marca y las palomitas) en espacios «eme» del texto (16 px).
+  const anchoMeta = h.length * 5.6 + (marca ? marca.length * 5.6 + 4 : 0) + (mio ? 18 : 0) + 2;
+  const hueco = '\u2003'.repeat(Math.ceil(anchoMeta / 16));
   const radio = MEDIDA.radio.l - 4;
   const r = { tl: radio, tr: radio, bl: radio, br: radio };
   // Pegadas al mismo lado: la esquina de ese lado se achica, como un solo bloque.
@@ -132,12 +217,26 @@ function BurbujaBase({ fila, anchoMax, onReintentar, onDescartar, onVerFoto }: P
   const anchoFoto = Math.min(260, anchoMax - 8);
 
   const cuerpo = m.borrado ? (
-    <Text style={{ color: tenue, fontStyle: 'italic', fontSize: MEDIDA.letra.cuerpo - 1, opacity: 0.85 }}>
+    <Text
+      style={{
+        color: tenue,
+        fontStyle: 'italic',
+        fontSize: MEDIDA.letra.cuerpo - 1,
+        opacity: 0.85,
+      }}
+    >
       {tr('Mensaje borrado', 'Message deleted')}
       <Text style={{ color: 'transparent' }}>{hueco}</Text>
     </Text>
   ) : m.cerrado ? (
-    <Text style={{ color: tenue, fontStyle: 'italic', fontSize: MEDIDA.letra.cuerpo - 1, opacity: 0.9 }}>
+    <Text
+      style={{
+        color: tenue,
+        fontStyle: 'italic',
+        fontSize: MEDIDA.letra.cuerpo - 1,
+        opacity: 0.9,
+      }}
+    >
       {'🔒 ' + tr('Cifrado para otro de tus aparatos', 'Encrypted for another of your devices')}
       <Text style={{ color: 'transparent' }}>{hueco}</Text>
     </Text>
@@ -145,7 +244,16 @@ function BurbujaBase({ fila, anchoMax, onReintentar, onDescartar, onVerFoto }: P
     <>
       {esFoto ? <FotoMensaje m={m} ancho={anchoFoto} onVer={onVerFoto} p={p} /> : null}
       {m.texto ? (
-        <Text selectable style={{ color: letra, fontSize: MEDIDA.letra.cuerpo + 1, lineHeight: 22, marginTop: esFoto ? 6 : 0, paddingHorizontal: esFoto ? 4 : 0 }}>
+        <Text
+          selectable
+          style={{
+            color: letra,
+            fontSize: MEDIDA.letra.cuerpo + 1,
+            lineHeight: 22,
+            marginTop: esFoto ? 6 : 0,
+            paddingHorizontal: esFoto ? 4 : 0,
+          }}
+        >
           {m.texto}
           <Text style={{ color: 'transparent' }}>{hueco}</Text>
         </Text>
@@ -156,7 +264,12 @@ function BurbujaBase({ fila, anchoMax, onReintentar, onDescartar, onVerFoto }: P
   );
 
   return (
-    <View style={{ alignItems: mio ? 'flex-end' : 'flex-start', marginTop: primera ? MEDIDA.espacio.s : 2 }}>
+    <View
+      style={{
+        alignItems: mio ? 'flex-end' : 'flex-start',
+        marginTop: primera ? MEDIDA.espacio.s : 2,
+      }}
+    >
       <View style={{ flexDirection: 'row', alignItems: 'center' }}>
         {mio && m.fallido ? (
           <Pressable
@@ -165,7 +278,15 @@ function BurbujaBase({ fila, anchoMax, onReintentar, onDescartar, onVerFoto }: P
             hitSlop={10}
             accessibilityRole="button"
             accessibilityLabel={tr('Reintentar el envío', 'Retry sending')}
-            style={{ width: 24, height: 24, borderRadius: 12, backgroundColor: p.aviso, alignItems: 'center', justifyContent: 'center', marginRight: MEDIDA.espacio.s }}
+            style={{
+              width: 24,
+              height: 24,
+              borderRadius: 12,
+              backgroundColor: p.aviso,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginRight: MEDIDA.espacio.s,
+            }}
           >
             <Text style={{ color: '#fff', fontWeight: '900', fontSize: 14 }}>!</Text>
           </Pressable>
@@ -187,13 +308,53 @@ function BurbujaBase({ fila, anchoMax, onReintentar, onDescartar, onVerFoto }: P
           {ultima ? (
             mio ? (
               <>
-                <View style={{ position: 'absolute', backgroundColor: fondo, width: 20, height: 22, bottom: 0, right: -9, borderBottomLeftRadius: 22 }} />
-                <View style={{ position: 'absolute', backgroundColor: p.fondo, width: 20, height: 32, bottom: -6, right: -20, borderBottomLeftRadius: 16 }} />
+                <View
+                  style={{
+                    position: 'absolute',
+                    backgroundColor: fondo,
+                    width: 20,
+                    height: 25,
+                    bottom: 0,
+                    right: -10,
+                    borderBottomLeftRadius: 25,
+                  }}
+                />
+                <View
+                  style={{
+                    position: 'absolute',
+                    backgroundColor: p.fondo,
+                    width: 20,
+                    height: 35,
+                    bottom: -6,
+                    right: -20,
+                    borderBottomLeftRadius: 18,
+                  }}
+                />
               </>
             ) : (
               <>
-                <View style={{ position: 'absolute', backgroundColor: fondo, width: 20, height: 22, bottom: 0, left: -9, borderBottomRightRadius: 22 }} />
-                <View style={{ position: 'absolute', backgroundColor: p.fondo, width: 20, height: 32, bottom: -6, left: -20, borderBottomRightRadius: 16 }} />
+                <View
+                  style={{
+                    position: 'absolute',
+                    backgroundColor: fondo,
+                    width: 20,
+                    height: 25,
+                    bottom: 0,
+                    left: -10,
+                    borderBottomRightRadius: 25,
+                  }}
+                />
+                <View
+                  style={{
+                    position: 'absolute',
+                    backgroundColor: p.fondo,
+                    width: 20,
+                    height: 35,
+                    bottom: -6,
+                    left: -20,
+                    borderBottomRightRadius: 18,
+                  }}
+                />
               </>
             )
           ) : null}
@@ -201,7 +362,15 @@ function BurbujaBase({ fila, anchoMax, onReintentar, onDescartar, onVerFoto }: P
           <View
             style={
               esFoto && !m.texto
-                ? { position: 'absolute', right: 10, bottom: 9, backgroundColor: 'rgba(0,0,0,0.42)', borderRadius: 10, paddingHorizontal: 7, paddingVertical: 2 }
+                ? {
+                    position: 'absolute',
+                    right: 10,
+                    bottom: 9,
+                    backgroundColor: 'rgba(0,0,0,0.42)',
+                    borderRadius: 10,
+                    paddingHorizontal: 7,
+                    paddingVertical: 2,
+                  }
                 : { position: 'absolute', right: 10, bottom: 5 }
             }
           >
@@ -217,7 +386,14 @@ function BurbujaBase({ fila, anchoMax, onReintentar, onDescartar, onVerFoto }: P
         </View>
       </View>
       {mio && m.fallido ? (
-        <Text style={{ color: p.aviso, fontSize: MEDIDA.letra.chica, marginTop: 3, marginRight: 4 }}>
+        <Text
+          style={{
+            color: p.aviso,
+            fontSize: MEDIDA.letra.chica,
+            marginTop: 3,
+            marginRight: 4,
+          }}
+        >
           {tr('No se envió. Toca ! para reintentar; mantén para quitarlo.', 'Not sent. Tap ! to retry; hold to remove.')}
         </Text>
       ) : null}
@@ -235,5 +411,5 @@ export const Burbuja = memo(
     a.fila.leido === b.fila.leido &&
     a.anchoMax === b.anchoMax &&
     a.onReintentar === b.onReintentar &&
-    a.onVerFoto === b.onVerFoto
+    a.onVerFoto === b.onVerFoto,
 );

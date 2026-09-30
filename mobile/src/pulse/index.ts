@@ -10,7 +10,18 @@ export { PantallaChats, type PropsPantallaChats } from './PantallaChats';
 export { PantallaConversacion, type PropsPantallaConversacion } from './PantallaConversacion';
 export { PulseChat } from './PulseChat';
 export { PulseProvider, usePulse, usePulseSiHay } from './PulseProvider';
-export { resolverContacto, contactosConocidos, escucharConocidos, escucharCuenta, quien, salir, llaveVolatil, senalar, type ErrorSenal, type MotivoSenal } from './relevo';
+export {
+  resolverContacto,
+  contactosConocidos,
+  escucharConocidos,
+  escucharCuenta,
+  quien,
+  salir,
+  llaveVolatil,
+  senalar,
+  type ErrorSenal,
+  type MotivoSenal,
+} from './relevo';
 export {
   borradorActual,
   borradorDe,

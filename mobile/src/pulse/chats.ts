@@ -251,6 +251,12 @@ AppState.addEventListener('change', (st: AppStateStatus) => {
   if (activa && !antes) for (const f of [...alVolver]) f();
 });
 
+// Apareció la cuenta (se recuperó al arrancar, o se entró con Genesis): lo que ya estaba montado
+// pregunta en el acto en vez de esperar su próxima vuelta con las manos vacías.
+RELEVO.escucharCuenta(() => {
+  if (RELEVO.quien()) for (const f of [...alVolver]) f();
+});
+
 /**
  * Repite `tarea` mientras haya quien mire. La siguiente vuelta se agenda al TERMINAR la anterior
  * (nunca se pisan) y solo con la app delante. Devuelve la función que lo para.

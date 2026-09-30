@@ -8,7 +8,7 @@
 import { useMemo } from 'react';
 import { Canvas, Group, Path, Skia } from '@shopify/react-native-skia';
 import type { SharedValue } from 'react-native-reanimated';
-import type { StyleProp, ViewStyle } from 'react-native';
+import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
 
 const TRAZOS = {
   atras: 'M15 5 L8 12 L15 19',
@@ -19,7 +19,8 @@ const TRAZOS = {
   llamar:
     'M6.6 3.5 L9.2 3.5 L10.5 7.6 L8.6 9.4 C9.7 11.8 12.2 14.3 14.6 15.4 L16.4 13.5 L20.5 14.8 L20.5 17.4 C20.5 19 19.2 20.3 17.6 20.1 C10.2 19.3 4.7 13.8 3.9 6.4 C3.7 4.8 5 3.5 6.6 3.5 Z',
   video: 'M4 7 H14 A2 2 0 0 1 16 9 V15 A2 2 0 0 1 14 17 H4 A2 2 0 0 1 2 15 V9 A2 2 0 0 1 4 7 Z M16 10.5 L21.5 7.5 V16.5 L16 13.5',
-  candado: 'M6.5 11 H17.5 A1.5 1.5 0 0 1 19 12.5 V18.5 A1.5 1.5 0 0 1 17.5 20 H6.5 A1.5 1.5 0 0 1 5 18.5 V12.5 A1.5 1.5 0 0 1 6.5 11 Z M8.5 11 V8 A3.5 3.5 0 0 1 15.5 8 V11',
+  candado:
+    'M6.5 11 H17.5 A1.5 1.5 0 0 1 19 12.5 V18.5 A1.5 1.5 0 0 1 17.5 20 H6.5 A1.5 1.5 0 0 1 5 18.5 V12.5 A1.5 1.5 0 0 1 6.5 11 Z M8.5 11 V8 A3.5 3.5 0 0 1 15.5 8 V11',
   escudo: 'M12 3 L19.5 6 V11.5 C19.5 16 16.3 19.6 12 21 C7.7 19.6 4.5 16 4.5 11.5 V6 Z M8.8 12 L11 14.2 L15.4 9.8',
   enviar: 'M4.5 12 L19.5 4.5 L15 19.5 L11.2 12.8 Z M11.2 12.8 L19.5 4.5',
   palomita: 'M5 12.5 L10 17.5 L19 7',
@@ -61,9 +62,11 @@ function trazo(n: NombreIcono) {
 export function Icono({ nombre, tam = 24, color, grosor = 1.8, lleno, fin, opacidad, style }: Props) {
   const camino = useMemo(() => trazo(nombre), [nombre]);
   const escala = useMemo(() => [{ scale: tam / 24 }], [tam]);
+  // Plano (no una lista): el lienzo de Skia en la web lo pasa tal cual a un <div>.
+  const caja = useMemo(() => StyleSheet.flatten([{ width: tam, height: tam }, style]), [tam, style]);
   if (!camino) return null;
   return (
-    <Canvas style={[{ width: tam, height: tam }, style]} pointerEvents="none">
+    <Canvas style={caja} pointerEvents="none">
       <Group transform={escala} opacity={opacidad ?? 1}>
         <Path
           path={camino}

@@ -25,7 +25,11 @@ export function PulseChat({ visible, conInicial, onCerrar }: { visible: boolean;
   useEffect(() => {
     if (visible && conInicial) {
       const c = RELEVO.resolverContacto(conInicial);
-      setVista({ tipo: 'hilo', con: c?.correo || conInicial, nombre: c?.nombre });
+      setVista({
+        tipo: 'hilo',
+        con: c?.correo || conInicial,
+        nombre: c?.nombre,
+      });
     }
     if (!visible) setVista({ tipo: 'lista' });
   }, [visible, conInicial]);
@@ -51,7 +55,18 @@ export function PulseChat({ visible, conInicial, onCerrar }: { visible: boolean;
         <View style={{ flex: 1, backgroundColor: p.fondo }}>
           <PantallaChats onAbrir={(con, nombre) => setVista({ tipo: 'hilo', con, nombre })} onAtras={onCerrar} />
           {vista.tipo === 'hilo' ? (
-            <Animated.View entering={SlideInRight.duration(260)} exiting={SlideOutRight.duration(220)} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: p.fondo }}>
+            <Animated.View
+              entering={SlideInRight.duration(260)}
+              exiting={SlideOutRight.duration(220)}
+              style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: p.fondo,
+              }}
+            >
               <PantallaConversacion key={vista.con} con={vista.con} nombre={vista.nombre} onAtras={() => setVista({ tipo: 'lista' })} />
             </Animated.View>
           ) : null}

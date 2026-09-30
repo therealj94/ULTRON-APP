@@ -114,7 +114,7 @@ export function PulseProvider({ children, abrirChatEnModal = true }: { children:
       escuchar('llamada', (e) => {
         if (!e.activa) soltarSiDetras();
       }),
-    [soltarSiDetras]
+    [soltarSiDetras],
   );
 
   // Escuchar el buzón mientras la app está delante y hay cuenta.
@@ -187,7 +187,11 @@ export function PulseProvider({ children, abrirChatEnModal = true }: { children:
         const correo = correoDe(a.con);
         const ok = /^[^@\s]+@[^@\s]+$/.test(correo);
         if (ok) abrir(correo);
-        emitir('hecho', { accion: a, ok, ...(ok ? {} : { detalle: `No encuentro a «${a.con}» entre tus contactos.` }) });
+        emitir('hecho', {
+          accion: a,
+          ok,
+          ...(ok ? {} : { detalle: `No encuentro a «${a.con}» entre tus contactos.` }),
+        });
       } else if (a.tipo === 'abrir' && a.pantalla === 'chats') {
         abrir();
         emitir('hecho', { accion: a, ok: true });
@@ -199,8 +203,19 @@ export function PulseProvider({ children, abrirChatEnModal = true }: { children:
   }, [abrirChatEnModal, abrir, cerrar]);
 
   const valor = useMemo<Ctx>(
-    () => ({ cuenta, conectando, error, conectar, salir, llamada, escribiendo, abierto, abrir, cerrar }),
-    [cuenta, conectando, error, conectar, salir, llamada, escribiendo, abierto, abrir, cerrar]
+    () => ({
+      cuenta,
+      conectando,
+      error,
+      conectar,
+      salir,
+      llamada,
+      escribiendo,
+      abierto,
+      abrir,
+      cerrar,
+    }),
+    [cuenta, conectando, error, conectar, salir, llamada, escribiendo, abierto, abrir, cerrar],
   );
 
   return (

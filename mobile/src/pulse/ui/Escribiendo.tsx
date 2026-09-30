@@ -4,12 +4,41 @@
  */
 import { useEffect } from 'react';
 import { View } from 'react-native';
-import Animated, { cancelAnimation, Easing, useAnimatedStyle, useSharedValue, withDelay, withRepeat, withSequence, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, {
+  cancelAnimation,
+  Easing,
+  useAnimatedStyle,
+  useSharedValue,
+  withDelay,
+  withRepeat,
+  withSequence,
+  withTiming,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { MEDIDA, useTema } from '../../nucleo/tema';
 
 function Punto({ v, color }: { v: SharedValue<number>; color: string }) {
-  const st = useAnimatedStyle(() => ({ opacity: 0.35 + v.value * 0.65, transform: [{ translateY: -v.value * 3.5 }] }), [v]);
-  return <Animated.View style={[{ width: 7, height: 7, borderRadius: 3.5, backgroundColor: color, marginHorizontal: 2.5 }, st]} />;
+  const st = useAnimatedStyle(
+    () => ({
+      opacity: 0.35 + v.value * 0.65,
+      transform: [{ translateY: -v.value * 3.5 }],
+    }),
+    [v],
+  );
+  return (
+    <Animated.View
+      style={[
+        {
+          width: 7,
+          height: 7,
+          borderRadius: 3.5,
+          backgroundColor: color,
+          marginHorizontal: 2.5,
+        },
+        st,
+      ]}
+    />
+  );
 }
 
 export function Escribiendo() {
@@ -21,7 +50,14 @@ export function Escribiendo() {
     const ola = (v: SharedValue<number>, retraso: number) => {
       v.value = withDelay(
         retraso,
-        withRepeat(withSequence(withTiming(1, { duration: 300, easing: Easing.out(Easing.quad) }), withTiming(0, { duration: 300, easing: Easing.in(Easing.quad) }), withTiming(0, { duration: 300 })), -1)
+        withRepeat(
+          withSequence(
+            withTiming(1, { duration: 300, easing: Easing.out(Easing.quad) }),
+            withTiming(0, { duration: 300, easing: Easing.in(Easing.quad) }),
+            withTiming(0, { duration: 300 }),
+          ),
+          -1,
+        ),
       );
     };
     ola(a, 0);

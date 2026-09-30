@@ -51,7 +51,14 @@ export function BotonChat({ titulo, onPress, variante = 'lleno', icono, cargando
               <Icono nombre={icono} tam={chico ? 16 : 20} color={color} grosor={2} />
             </View>
           ) : null}
-          <Text style={{ color, fontSize: chico ? MEDIDA.letra.chica + 1 : MEDIDA.letra.cuerpo + 1, fontWeight: '700' }} numberOfLines={1}>
+          <Text
+            style={{
+              color,
+              fontSize: chico ? MEDIDA.letra.chica + 1 : MEDIDA.letra.cuerpo + 1,
+              fontWeight: '700',
+            }}
+            numberOfLines={1}
+          >
             {titulo}
           </Text>
         </>

@@ -26,7 +26,20 @@ type Props = {
   hitSlop?: number;
 };
 
-export function Tocable({ onPress, onLongPress, children, style, caja, hundir = 0.96, vibrar, deshabilitado, etiqueta, rol = 'button', ripple, hitSlop }: Props) {
+export function Tocable({
+  onPress,
+  onLongPress,
+  children,
+  style,
+  caja,
+  hundir = 0.96,
+  vibrar,
+  deshabilitado,
+  etiqueta,
+  rol = 'button',
+  ripple,
+  hitSlop,
+}: Props) {
   const escala = useSharedValue(1);
   const animado = useAnimatedStyle(() => ({ transform: [{ scale: escala.value }] }), [escala]);
   return (

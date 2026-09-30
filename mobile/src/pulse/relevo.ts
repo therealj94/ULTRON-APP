@@ -146,6 +146,7 @@ export async function recuperar(): Promise<Cuenta | null> {
     const c = JSON.parse(g) as Cuenta;
     if (!c?.correo || !c?.llave) return null;
     yo = c;
+    avisarCuenta();
     await publicarMiLlave();
     return yo;
   } catch (e: any) {
