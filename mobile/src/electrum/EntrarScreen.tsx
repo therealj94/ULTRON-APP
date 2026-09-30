@@ -9,12 +9,13 @@
  * parte de no hacer perder el tiempo a nadie.
  */
 import { useRef, useState } from 'react';
-import { ActivityIndicator, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, useWindowDimensions, View } from 'react-native';
 import { UltronFace } from '../components/UltronFace';
 import { ACENTO } from '../variante';
 import { entrar, guardarLlave, guardarSesion, porQueNoAbre, probarPuerta } from './api';
 import { fraseDeError } from './frases';
 import { useBordes } from './useBordes';
+import { BotonAnimado } from './BotonAnimado';
 
 // Los textos de ayuda que se escriben en las cajas: el gris de antes (#5E7078) daba 4:1 sobre
 // negro, por debajo de lo legible. Este da 5:1.
@@ -199,16 +200,9 @@ export function EntrarScreen({ onDentro, motivo = '' }: { onDentro: () => void; 
           </Text>
         )}
 
-        <Pressable
-          onPress={() => void intentar()}
-          disabled={!listo || yendo}
-          accessibilityRole="button"
-          accessibilityLabel="Entrar"
-          accessibilityState={{ disabled: !listo || yendo, busy: yendo }}
-          style={[s.boton, (!listo || yendo) && { opacity: 0.35 }]}
-        >
-          {yendo ? <ActivityIndicator color="#000" /> : <Text style={s.botonTexto}>ENTRAR</Text>}
-        </Pressable>
+        <View style={s.boton}>
+          <BotonAnimado completo tamano="lg" texto="ENTRAR" etiqueta="Entrar" loading={yendo} disabled={!listo} onPress={() => void intentar()} />
+        </View>
       </View>
       </View>
 
@@ -244,8 +238,7 @@ const s = StyleSheet.create({
   campo: { backgroundColor: 'rgba(255,255,255,0.06)', borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)', borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, color: '#E7EEF2', fontSize: 15 },
   aviso: { color: '#8FA3B0', fontSize: 12, lineHeight: 18 },
   fallo: { color: '#D9705A', fontSize: 13, lineHeight: 19 },
-  boton: { backgroundColor: ACENTO, borderRadius: 12, paddingVertical: 14, minHeight: 48, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
-  botonTexto: { color: '#000', fontWeight: '700', fontSize: 14, letterSpacing: 2 },
+  boton: { marginTop: 4 },
   // El aviso legal se tiene que poder leer: #3A4A5A a 10 pt daba 2,3:1 sobre negro. #8FA3B0 da 8:1.
   pie: { position: 'absolute', bottom: 8, left: 0, right: 0, color: '#8FA3B0', fontSize: 12, lineHeight: 16, textAlign: 'center', paddingHorizontal: 30 },
 });
