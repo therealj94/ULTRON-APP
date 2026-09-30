@@ -1,0 +1,31 @@
+name: AURA Windows independent
+on:
+  push:
+    branches: [codex/aura-windows-native]
+    paths: ['windows/**', '.github/workflows/aura-windows.yml']
+  pull_request:
+    paths: ['windows/**', '.github/workflows/aura-windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python windows/training/validate.py
+      - name: Core tests and portable executable
+        shell: pwsh
+        run: ./windows/scripts/publish.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Windows-x64-preview
+          path: windows/artifacts/win-x64/
+          retention-days: 14

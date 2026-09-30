@@ -1,0 +1,44 @@
+{
+  "nombre": "windows_command_v1",
+  "ids": [
+    "win_open_notepad",
+    "win_open_calculator",
+    "win_open_explorer",
+    "win_open_documents",
+    "win_open_settings",
+    "win_search_web",
+    "win_open_url",
+    "win_draft",
+    "win_pause",
+    "win_none"
+  ],
+  "grupos": {
+    "windows": [
+      "win_open_notepad",
+      "win_open_calculator",
+      "win_open_explorer",
+      "win_open_documents",
+      "win_open_settings",
+      "win_search_web",
+      "win_open_url",
+      "win_draft",
+      "win_pause",
+      "win_none"
+    ]
+  },
+  "recorte": {
+    "cabeza": 2000,
+    "cola": 2000
+  },
+  "datos": {
+    "train": [
+      "datos/train_seed.jsonl"
+    ],
+    "test": [
+      "datos/test.jsonl"
+    ],
+    "bordes": [
+      "datos/bordes.jsonl"
+    ]
+  }
+}
