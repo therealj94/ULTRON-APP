@@ -181,21 +181,37 @@ export function juntarCambios(a: Partial<Perfil>, b: Partial<Perfil>): Partial<P
 }
 
 /**
- * Local contra servidor al cargar: si aquí hay cambios que el servidor no tiene (pendientes), se
- * quedan los de aquí encima de lo del servidor y se vuelven a mandar; si no, manda el servidor
- * (puede haber cambiado desde la web u otro teléfono). Un campo que el servidor no tiene (el apodo
- * vacío de un perfil recién sembrado) no borra el de aquí.
+ * Lo que este teléfono sabe y el servidor no: el apodo, el cumpleaños, cada respuesta de la
+ * encuesta y el «completado». Un servidor sin almacenamiento durable (Render sin S3) puede volver
+ * vacío después de un redespliegue, y contestar un PUT con un perfil recién sembrado: eso no puede
+ * borrar lo que la persona contó. Lo que falta allá se vuelve a mandar. Borrar algo se hace desde
+ * aquí (se manda vacío a propósito), así que un hueco del servidor nunca es una orden de borrar.
+ */
+export function huecosDelServidor(local: Perfil | null, servidor: Perfil | null): Partial<Perfil> {
+  const h: Partial<Perfil> = {};
+  if (!local || !servidor) return h;
+  if (local.apodo && !servidor.apodo) h.apodo = local.apodo;
+  if (local.cumple && !servidor.cumple) h.cumple = local.cumple;
+  if (local.completado && !servidor.completado) h.completado = true;
+  const enc: Encuesta = {};
+  for (const k of CAMPOS_ENCUESTA) if (local.encuesta[k] && !servidor.encuesta[k]) enc[k] = local.encuesta[k];
+  if (Object.keys(enc).length) h.encuesta = enc;
+  return h;
+}
+
+/**
+ * Local contra servidor: manda el servidor en las preferencias (avatar, tema, idioma: pudieron
+ * cambiarse desde la web u otro teléfono), pero lo que aquí se sabe y allá falta se conserva
+ * (`huecosDelServidor`), y los cambios pendientes de este teléfono van encima de todo.
  */
 export function fusionar(local: Perfil | null, servidor: Perfil | null, pendiente: Partial<Perfil> | null): Perfil | null {
   if (!servidor) return local;
   if (!local) return servidor;
   let base = servidor;
-  if (!base.apodo && local.apodo) base = { ...base, apodo: local.apodo };
   if (!base.nombreGenesis && local.nombreGenesis) base = { ...base, nombreGenesis: local.nombreGenesis };
-  if (pendiente && Object.keys(pendiente).length) return aplicarCambios(base, pendiente, Math.max(local.actualizado, servidor.actualizado));
-  // Sin pendientes, «completado» nunca retrocede por una copia vieja del servidor.
-  if (local.completado && !base.completado && local.actualizado > servidor.actualizado) base = { ...base, completado: true };
-  return base;
+  const cambios = juntarCambios(huecosDelServidor(local, servidor), pendiente || {});
+  if (!Object.keys(cambios).length) return base;
+  return aplicarCambios(base, cambios, Math.max(local.actualizado, servidor.actualizado));
 }
 
 /* ── el almacén ──────────────────────────────────────────────────────────────────────────── */
@@ -311,6 +327,8 @@ export async function enviarPendiente(): Promise<boolean> {
       // Lo que se cambió mientras viajaba este lote sigue pendiente.
       pendiente = pendiente === lote ? null : pendiente;
       const delServidor = normalizarPerfil(r?.perfil);
+      const huecos = huecosDelServidor(actual, delServidor);
+      if (Object.keys(huecos).length) pendiente = juntarCambios(huecos, pendiente || {});
       if (delServidor && actual) {
         // El servidor devuelve el perfil entero: se toma su `actualizado` y lo que puso él (nombreGenesis).
         const junto = fusionar(actual, delServidor, pendiente);
@@ -370,6 +388,9 @@ export async function cargarPerfil(
       if (dueno !== c) return;
       sincronizado = true;
       const servidor = normalizarPerfil(r?.perfil);
+      // Lo que el servidor perdió (o nunca recibió) se le vuelve a mandar.
+      const huecos = huecosDelServidor(actual, servidor);
+      if (Object.keys(huecos).length) pendiente = juntarCambios(huecos, pendiente || {});
       const junto = fusionar(actual, servidor, pendiente);
       if (junto) poner(junto);
     } catch {

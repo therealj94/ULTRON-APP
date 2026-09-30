@@ -228,5 +228,5 @@ const s = StyleSheet.create({
   contenido: { paddingHorizontal: MEDIDA.espacio.xl, paddingTop: MEDIDA.espacio.l, paddingBottom: MEDIDA.espacio.xxl, flexGrow: 1 },
   contenidoH: { paddingHorizontal: 48 },
   pie: { paddingHorizontal: MEDIDA.espacio.xl, paddingTop: MEDIDA.espacio.s },
-  ladoH: { width: undefined, flexDirection: 'row', alignItems: 'center', gap: 8 },
+  ladoH: { width: 'auto', minWidth: 72, flexDirection: 'row', alignItems: 'center', gap: 8 },
 });

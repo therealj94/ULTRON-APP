@@ -88,6 +88,7 @@ export function PantallaConCabecera({ titulo, subtitulo, onAtras, derecha, child
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        <View style={s.columna}>
         <Animated.View style={[s.tituloGrande, aTituloGrande]}>
           <Texto v="heroe" accessibilityRole="header">
             {titulo}
@@ -99,6 +100,7 @@ export function PantallaConCabecera({ titulo, subtitulo, onAtras, derecha, child
           )}
         </Animated.View>
         {children}
+        </View>
       </Animated.ScrollView>
 
       <View style={[s.barra, { height: altoBarra, paddingTop: ins.top }]} pointerEvents="box-none">
@@ -123,6 +125,8 @@ export function PantallaConCabecera({ titulo, subtitulo, onAtras, derecha, child
 
 const s = StyleSheet.create({
   raiz: { flex: 1 },
+  /** En horizontal o en tableta, una columna legible al centro (como Ajustes del sistema). */
+  columna: { width: '100%', maxWidth: 680, alignSelf: 'center' },
   redondo: { alignItems: 'center', justifyContent: 'center', borderWidth: StyleSheet.hairlineWidth * 2 },
   tituloGrande: { paddingTop: 8, paddingBottom: 22, paddingHorizontal: 4, transformOrigin: 'left' },
   barra: { position: 'absolute', top: 0, left: 0, right: 0 },
