@@ -1,0 +1,144 @@
+name: AURA Windows independent
+on:
+  push:
+    branches: [codex/aura-windows-native]
+    paths: ['windows/**', '.github/workflows/aura-windows.yml']
+  pull_request:
+    paths: ['windows/**', '.github/workflows/aura-windows.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test windows/gateway/server.test.mjs
+      - run: python windows/training/validate.py
+      - name: Core tests and portable executable
+        shell: pwsh
+        run: ./windows/scripts/publish.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Windows-x64-preview
+          path: windows/artifacts/win-x64/
+          retention-days: 14
+      - name: Render real WPF views and validate interaction state
+        shell: pwsh
+        run: |
+          $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--render-preview', "$env:GITHUB_WORKSPACE/windows/artifacts/design" -PassThru
+          if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'WPF render timeout' }
+          if ($process.ExitCode -ne 0) { Get-Content ./windows/artifacts/design/render-error.txt; throw 'WPF render failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-design-review
+          path: windows/artifacts/design/
+          retention-days: 14
+      - name: WebRTC transport test with synthetic audio and video
+        shell: pwsh
+        run: |
+          $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--rtc-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/rtc/result.json" -PassThru
+          if (-not $process.WaitForExit(60000)) { $process.Kill(); throw 'RTC test timeout' }
+          Get-Content ./windows/artifacts/rtc/result.json
+          if ($process.ExitCode -ne 0) { throw 'RTC transport test failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-RTC-verification
+          path: windows/artifacts/rtc/
+          retention-days: 14
+      - name: Native gateway and DPAPI integration test
+        shell: pwsh
+        run: |
+          $fixture = Start-Process node -ArgumentList "$env:GITHUB_WORKSPACE/windows/gateway/fixture-server.mjs" -PassThru
+          try {
+            $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--gateway-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/protocol/result.json" -PassThru
+            if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Gateway protocol test timeout' }
+            Get-Content ./windows/artifacts/protocol/result.json
+            if ($process.ExitCode -ne 0) { throw 'Gateway protocol test failed' }
+            $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--assistant-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/protocol/assistant.json" -PassThru
+            if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Assistant test timeout' }
+            Get-Content ./windows/artifacts/protocol/assistant.json
+            if ($process.ExitCode -ne 0) { throw 'Assistant integration failed' }
+          } finally { Stop-Process -Id $fixture.Id -ErrorAction SilentlyContinue }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-protocol-verification
+          path: windows/artifacts/protocol/
+          retention-days: 14
+      - name: Real Notepad writing test on isolated runner
+        shell: pwsh
+        run: |
+          $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--desktop-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/desktop/result.json" -PassThru
+          if (-not $process.WaitForExit(45000)) { $process.Kill(); throw 'Desktop writing test timeout' }
+          Get-Content ./windows/artifacts/desktop/result.json
+          if ($process.ExitCode -ne 0) { throw 'Desktop writing test failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-desktop-verification
+          path: windows/artifacts/desktop/result.json
+          retention-days: 14
+      - name: Build per-user Windows installer
+        shell: pwsh
+        run: |
+          $compiler = "${env:ProgramFiles(x86)}/Inno Setup 6/ISCC.exe"
+          if (-not (Test-Path $compiler)) { throw 'Inno Setup 6 is required on this runner' }
+          & $compiler windows/installer/Aura.Windows.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+      - name: Install and uninstall smoke test
+        shell: pwsh
+        run: |
+          $target = "$env:RUNNER_TEMP/AuraInstalled"
+          $setup = Get-Item ./windows/artifacts/installer/*.exe
+          $process = Start-Process $setup.FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$target" -PassThru -Wait
+          if ($process.ExitCode -ne 0 -or -not (Test-Path "$target/Aura.Windows.exe") -or -not (Test-Path "$target/CallAssets/call.html")) { throw 'Install failed' }
+          $process = Start-Process "$target/Aura.Windows.exe" -ArgumentList '--render-preview', "$env:GITHUB_WORKSPACE/windows/artifacts/installed-design" -PassThru
+          if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Installed app timeout' }
+          if ($process.ExitCode -ne 0) { throw 'Installed app render failed' }
+          $process = Start-Process "$target/unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -PassThru -Wait
+          if ($process.ExitCode -ne 0 -or (Test-Path "$target/Aura.Windows.exe")) { throw 'Uninstall failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Windows-Setup-x64
+          path: windows/artifacts/installer/
+          retention-days: 14
+      - name: Prepare verified installer transfer parts
+        shell: pwsh
+        run: ./windows/scripts/package-delivery.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Windows-delivery-part-01
+          path: windows/artifacts/delivery/part-01/
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Windows-delivery-part-02
+          path: windows/artifacts/delivery/part-02/
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Windows-delivery-part-03
+          path: windows/artifacts/delivery/part-03/
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Windows-delivery-part-04
+          path: windows/artifacts/delivery/part-04/
+          if-no-files-found: ignore
+          retention-days: 14

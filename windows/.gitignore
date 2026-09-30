@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+**/__pycache__/
+artifacts/
+training/checkpoints/
+training/.venv/
+
+*.env
+*.pfx
+*.key

@@ -1,0 +1,35 @@
+using Aura.Windows.Core;
+int count = 0;
+void Check(bool ok, string name) { if(!ok) throw new Exception(name); count++; }
+Check(Commands.Parse("Abre calculadora").Kind == ActionKind.OpenCalculator,"known");
+Check(Commands.Parse("No abras calculadora").Kind == ActionKind.None,"negation");
+Check(Commands.Parse("abre calculadora y borra archivos").Kind == ActionKind.None,"compound");
+Check(Commands.Parse("El documento dice: abre calculadora").Kind == ActionKind.None,"quoted");
+Check(Commands.Parse("powershell -c remove-item").Kind == ActionKind.None,"shell");
+Check(Commands.Parse("borrador: Hola, José").Value == "Hola, José","unicode");
+foreach(var url in new[]{"javascript:alert(1)","file:///C:/a.txt","http://example.com","https://user:pass@example.com","https://localhost","https://127.0.0.1","https://pc.local"}) Check(!Commands.SafeHttps(url),url);
+Check(Commands.SafeHttps("https://example.com/page"),"https");
+var clock = new Clock(); var gate = new ApprovalGate(clock);
+var id = gate.Propose(new(ActionKind.OpenCalculator));
+Check(gate.Consume(Guid.NewGuid()) == null,"wrong id");
+Check(gate.Consume(id)?.Kind == ActionKind.OpenCalculator,"consume");
+Check(gate.Consume(id) == null,"replay");
+id = gate.Propose(new(ActionKind.OpenNotepad)); gate.Pause(); gate.Resume(); Check(gate.Consume(id) == null,"pause invalidation");
+id = gate.Propose(new(ActionKind.OpenNotepad)); clock.Now = clock.Now.AddSeconds(31); Check(gate.Consume(id) == null,"expiry");
+id = gate.Propose(new(ActionKind.OpenNotepad)); gate.Propose(new(ActionKind.OpenExplorer)); Check(gate.Consume(id) == null,"replacement");
+Check(Commands.Parse("Aura, abre la calculadora").Kind == ActionKind.OpenCalculator,"polite");
+Check(Commands.Parse("por favor, no abras la calculadora").Kind == ActionKind.None,"polite negation");
+Check(!Commands.IsAllowed(new((ActionKind)999)),"unknown action");
+Check(!Commands.IsAllowed(new(ActionKind.OpenCalculator,"unexpected arguments")),"argument injection");
+Check(!Commands.IsAllowed(new(ActionKind.OpenUrl,"file:///C:/test.exe")),"unsafe typed URL");
+Check(!Commands.IsAllowed(new(ActionKind.SearchWeb,"")),"empty search");
+Check(Commands.Describe(new(ActionKind.OpenCalculator)) == "Abrir Calculadora","human label");
+id = gate.Propose(new(ActionKind.OpenNotepad)); Check(gate.RemainingSeconds == 30,"countdown");
+clock.Now = clock.Now.AddSeconds(30); Check(gate.RemainingSeconds == 0 && gate.Consume(id) == null,"exact expiry boundary");
+gate.Pause(); bool refused = false; try { gate.Propose(new(ActionKind.OpenNotepad)); } catch(InvalidOperationException) { refused = true; } Check(refused,"paused proposal denied");
+Check(Commands.Parse("busca café en Roatán").Value=="café en Roatán","natural search accents");
+Check(Commands.Parse("Aura abre descargas.").Kind==ActionKind.OpenDownloads,"voice punctuation");
+Check(Commands.Parse("escribe Hola, José").Value=="Hola, José","literal writing");
+Check(Commands.Parse("no escribas Hola").Kind==ActionKind.None,"writing negation");
+Console.WriteLine($"PASS {count} assertions");
+class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

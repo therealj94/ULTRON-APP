@@ -1,0 +1,9 @@
+# Versions from the repository's working T4 environment (26 September 2026).
+# Installed separately for Windows training; never upgrade shared app environments.
+torch==2.14.0
+laya==0.3.20
+transformers==5.17.0
+tokenizers==0.23.2
+huggingface_hub==1.33.0
+safetensors==0.8.0
+numpy==2.5.3

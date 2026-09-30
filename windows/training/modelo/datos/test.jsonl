@@ -1,0 +1,10 @@
+{"q": "Pon en pantalla el editor de notas de Windows", "e": ["win_open_notepad"], "source": "manual_seed_v1"}
+{"q": "Necesito hacer una cuenta, inicia la calculadora", "e": ["win_open_calculator"], "source": "manual_seed_v1"}
+{"q": "Muéstrame el gestor de archivos del PC", "e": ["win_open_explorer"], "source": "manual_seed_v1"}
+{"q": "Llévame a la carpeta Documentos de este usuario", "e": ["win_open_documents"], "source": "manual_seed_v1"}
+{"q": "Quiero cambiar los ajustes del sistema; muéstralos", "e": ["win_open_settings"], "source": "manual_seed_v1"}
+{"q": "Consulta en internet cómo cultivar tomates", "e": ["win_search_web"], "source": "manual_seed_v1"}
+{"q": "Entra a la página https://example.org", "e": ["win_open_url"], "source": "manual_seed_v1"}
+{"q": "Deja una propuesta de texto para agradecer la reunión", "e": ["win_draft"], "source": "manual_seed_v1"}
+{"q": "Suspende inmediatamente todas tus acciones", "e": ["win_pause"], "source": "manual_seed_v1"}
+{"q": "¿Qué puede hacer este asistente?", "e": ["win_none"], "source": "manual_seed_v1"}
