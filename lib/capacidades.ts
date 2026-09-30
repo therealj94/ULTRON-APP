@@ -99,7 +99,7 @@ export function catalogoCapacidades(n: EstadoNodos, perfil: PerfilCerebro = perf
       id: 'chat',
       grupo: 'herramientas',
       titulo: 'Conversar y razonar',
-      detalle: 'Cerebro Qwen 3.8 27B en nodo propio. Piensa antes de hablar, recuerda el hilo y no inventa.',
+      detalle: 'Cerebro Qwen 3.8 27B en nodo propio. Piensa antes de hablar y recuerda el hilo. Puede equivocarse: para cifras y noticias usa las herramientas con fuente, y lo importante conviene comprobarlo.',
       ejemplos: ['¿qué opinás de abrir sociedad en Próspera?', 'resumime lo de ayer'],
       vivo: n.qwen,
       falta: n.qwen ? undefined : 'nodo Qwen no responde',
@@ -208,7 +208,7 @@ export function catalogoCapacidades(n: EstadoNodos, perfil: PerfilCerebro = perf
       id: 'oido',
       grupo: 'voz',
       titulo: 'Oír y transcribir',
-      detalle: 'Escucha continua; podés interrumpirlo hablando. Notas de voz por Telegram también. Transcribe con Whisper en el servidor propio de AU-RA (Voicebox); Gemini de reserva.',
+      detalle: 'Escucha continua; podés interrumpirla hablando. En la web transcribe el reconocimiento de voz del navegador (en Chrome y Edge, un servicio de Google o Microsoft). Las notas de voz de Telegram las transcribe Whisper en el servidor de voz de AU-RA (Voicebox) o, si no contesta, Gemini de Google.',
       ejemplos: ['(hablá cuando la luz esté cian)'],
       vivo: n.oido,
       falta: n.oido ? undefined : 'VOICEBOX_URL + VOICEBOX_CLAVE o GEMINI_API_KEY',
@@ -312,8 +312,8 @@ export function catalogoCapacidades(n: EstadoNodos, perfil: PerfilCerebro = perf
       titulo: 'Memoria por miembro',
       detalle:
         perfil.id === 'genesis-miembro'
-          ? 'Tu hilo y lo que le pidas recordar, guardado solo para ti. Nadie más lo ve.'
-          : 'Guarda hechos y el hilo de cada persona en S3. Lo de José no lo ve Carlos.',
+          ? 'Tu hilo y lo que le pidas recordar se guardan asociados a tu cuenta, en S3 cuando está configurado. Los turnos de otras cuentas no los reciben.'
+          : 'Guarda hechos y el hilo de cada persona en S3, separados por cuenta: los turnos de Carlos no reciben lo de José.',
       ejemplos: ['recordá que la villa va al setenta por ciento', '¿qué sabés de mí?'],
       vivo: n.memoriaS3,
       falta: n.memoriaS3 ? undefined : 'ULTRON_MEMORIA_BUCKET + AWS_*: se pierde al redesplegar',

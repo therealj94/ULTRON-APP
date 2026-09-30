@@ -1,3 +1,4 @@
+import { Dialogo } from './Dialogo';
 import React, { useEffect, useState } from 'react';
 import { ShieldCheck, X, KeyRound, Loader2 } from 'lucide-react';
 import { headersMesa } from '../10-infra/sesionCliente';
@@ -56,38 +57,36 @@ export const UltronVaultModal: React.FC<Props> = ({ isOpen, onClose, onSpeak }) 
   };
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/55 backdrop-blur-md">
-      <div className="w-full max-w-lg max-h-[85vh] overflow-y-auto bg-[#34363A] border border-[#46484D] rounded-2xl p-5 shadow-[0_8px_24px_rgba(0,0,0,0.34)] flex flex-col gap-3 relative">
-        <button type="button" onClick={onClose} className="absolute top-4 right-4 p-1.5 rounded text-[#B9B2A8] hover:text-[#ECE8E2] cursor-pointer" aria-label="Cerrar">
+    <Dialogo abierto={isOpen} onCerrar={onClose} idTitulo="aura-boveda-titulo" claseCapa="items-center justify-center p-3 sm:p-4" clase="aura-sube w-full max-w-lg max-h-[85vh] overflow-y-auto bg-(--aura-panel) border border-(--aura-borde) rounded-2xl p-5 shadow-[0_8px_24px_rgba(0,0,0,0.34)] flex flex-col gap-3 relative">
+        <button type="button" onClick={onClose} className="absolute top-4 right-4 p-1.5 rounded text-(--aura-tinta-2) hover:text-(--aura-tinta) cursor-pointer" aria-label="Cerrar">
           <X className="w-5 h-5" />
         </button>
-        <div className="flex items-center gap-2 text-[#E0C27F]">
+        <div className="flex items-center gap-2 text-(--aura-oro-texto)">
           <ShieldCheck className="w-5 h-5" />
-          <h2 className="font-display font-bold tracking-wider">BÓVEDA</h2>
+          <h2 id="aura-boveda-titulo" className="font-display font-bold tracking-wider">BÓVEDA</h2>
         </div>
-        <p className="text-[13px] text-[#B9B2A8] font-mono">{resumen || 'Qué claves tiene la mesa. Nunca se muestran valores.'}</p>
-        {error && <div className="text-[13px] text-[#E39A7A] font-mono">{error}</div>}
+        <p className="text-[13px] text-(--aura-tinta-2) font-mono">{resumen || 'Qué claves tiene la mesa. Nunca se muestran valores.'}</p>
+        {error && <div className="text-[13px] text-(--aura-barro-texto) font-mono">{error}</div>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {cajas.map((c) => (
-            <div key={c.id} className={`p-2.5 rounded-xl border text-xs ${c.configured ? 'border-emerald-400/30 bg-emerald-400/5' : 'border-amber-400/30 bg-amber-400/5'}`}>
+            <div key={c.id} className={`p-2.5 rounded-xl border text-xs ${c.configured ? 'border-(--aura-salvia-borde) bg-(--aura-salvia-fondo)' : 'border-(--aura-barro-borde) bg-(--aura-barro-fondo)'}`}>
               <div className="flex items-center justify-between">
-                <span className="text-[#ECE8E2] font-medium">{c.name}</span>
-                <span className={`text-[12px] font-mono ${c.configured ? 'text-emerald-400' : 'text-[#E39A7A]'}`}>{c.configured ? '● lista' : '○ falta'}</span>
+                <span className="text-(--aura-tinta) font-medium">{c.name}</span>
+                <span className={`text-[12px] font-mono ${c.configured ? 'text-(--aura-ok-texto)' : 'text-(--aura-barro-texto)'}`}>{c.configured ? '● lista' : '○ falta'}</span>
               </div>
-              <div className="text-[12px] text-[#B9B2A8] mt-0.5">{c.configured ? c.usa : c.falta}</div>
+              <div className="text-[12px] text-(--aura-tinta-2) mt-0.5">{c.configured ? c.usa : c.falta}</div>
             </div>
           ))}
         </div>
-        <div className="mt-1 p-3 rounded-xl border border-[#46484D] bg-[#34363A]/90 flex flex-col gap-2">
-          <div className="text-[12px] font-display tracking-normal text-[#B9B2A8]">LLAVE DE VOZ (VOICEBOX) · solo mando con sesión</div>
+        <div className="mt-1 p-3 rounded-xl border border-(--aura-borde) bg-(--aura-panel)/90 flex flex-col gap-2">
+          <div className="text-[12px] font-display tracking-normal text-(--aura-tinta-2)">LLAVE DE VOZ (VOICEBOX) · solo mando con sesión</div>
           <div className="flex gap-2">
-            <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="pegar clave" className="flex-1 px-3 py-2 bg-[#34363A]/90 border border-[#46484D] rounded-lg text-xs font-mono text-[#ECE8E2] focus:border-[#D6B56C] focus:outline-none" />
-            <button type="button" onClick={guardar} disabled={guardando || key.trim().length < 10} className="px-3 py-2 rounded-lg border border-[#46484D] text-[#E0C27F] text-xs font-display tracking-wider hover:bg-[#D6B56C]/15 disabled:opacity-40 flex items-center gap-1.5 cursor-pointer">
+            <input type="password" value={key} onChange={(e) => setKey(e.target.value)} placeholder="pegar clave" className="flex-1 px-3 py-2 bg-(--aura-panel)/90 border border-(--aura-borde) rounded-lg text-xs font-mono text-(--aura-tinta) focus:border-(--aura-oro) focus:outline-none" />
+            <button type="button" onClick={guardar} disabled={guardando || key.trim().length < 10} className="px-3 py-2 rounded-lg border border-(--aura-borde) text-(--aura-oro-texto) text-xs font-display tracking-wider hover:bg-(--aura-oro)/15 disabled:opacity-40 flex items-center gap-1.5 cursor-pointer">
               {guardando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />} GUARDAR
             </button>
           </div>
         </div>
-      </div>
-    </div>
+      </Dialogo>
   );
 };

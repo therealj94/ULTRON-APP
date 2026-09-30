@@ -7,3 +7,5 @@ export { UltronVaultModal } from './UltronVaultModal';
 export { VisionOverlay } from './VisionOverlay';
 export { PhotoCaptureModal } from './PhotoCaptureModal';
 export { CameraCountdownModal } from './CameraCountdownModal';
+export { MenuMas } from './MenuMas';
+export { Dialogo } from './Dialogo';
