@@ -20,6 +20,7 @@ import { StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { idiomaActual, tr, useIdioma } from '../i18n';
 import { motivoFalloVoz } from '../compa/duenoAudio';
+import { etiquetaCiclo } from '../compa/llamadaCiclo';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
 import type { Pantalla } from '../nucleo/contrato';
 import { useVozOpcional, type ApiVoz } from '../compa/VozProvider';
@@ -88,6 +89,8 @@ export function textoEstado(e: EstadoAvatar, voz: ApiVoz): string {
   if (v.montada && v.estado === 'conectando') return tr('Conectando…', 'Connecting…');
   if (e.hablando) return tr('Hablando', 'Speaking');
   if (e.pensando) return tr('Pensando…', 'Thinking…');
+  // Modo llamada: en qué punto del ciclo está (en llamada, en espera con su nombre, silenciada) y los minutos de hoy.
+  if (voz.modoLlamada && voz.llamadaLista) return etiquetaCiclo(voz.ciclo, voz.nombreLlamada, idiomaActual(), voz.usadoHoyMs).texto;
   if (e.escuchando) return tr('Te escucho', 'I’m listening');
   return tr('Toca el micrófono para hablarle', 'Tap the mic to talk to her');
 }

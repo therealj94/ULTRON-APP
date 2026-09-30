@@ -668,6 +668,37 @@ test('contestó la llamada de un recordatorio: `[[recordatorio]]` llega al cereb
   }
 });
 
+test('el puente por omisión (José: «el "déjame ver" solo si lleva bastante tiempo»): ~4,5 s, después del relleno del agente; un cerebro que contesta en 1,8 s no lo oye', async () => {
+  const { PUENTE_VOZ_MS } = await import('../server/voz-agente');
+  const { ESPERA_FRASE_MS, frasesDe } = await import('../mobile/src/compa/frasesEstado');
+  // Después del relleno propio del agente (~2,5 s), para no sonar dos muletillas seguidas.
+  assert.equal(PUENTE_VOZ_MS, ESPERA_FRASE_MS + 2_000, 'el puente de la llamada va después del relleno del agente');
+  assert.ok(PUENTE_VOZ_MS >= 4_000 && PUENTE_VOZ_MS <= 5_000, `umbral ${PUENTE_VOZ_MS} ms (antes 1200)`);
+  const espera = (ms: number) => async (t: TurnoVoz) => {
+    await new Promise((r) => setTimeout(r, ms));
+    t.enviar('delta', { text: 'El oro está a tres mil.', voz: 'El oro está a tres mil.' });
+    t.enviar('done', { reply: 'El oro está a tres mil.' });
+  };
+  // Con el umbral de siempre (sin `puenteMs`): 1,8 s de cerebro → sin frase de espera.
+  const medio = await montar(espera(1_800));
+  try {
+    const t0 = Date.now();
+    const dicho = dichoDe(await (await llm(medio.base, paseDe(persona(), 'claudio', 'es'), [{ role: 'user', content: 'busca el precio del oro hoy' }])).text());
+    console.log(`[latencia] voz en vivo: cerebro a 1800 ms → primera palabra del cerebro, sin «déjame ver» (${Date.now() - t0} ms en total)`);
+    assert.equal(dicho, 'El oro está a tres mil.', 'antes (1,2 s) aquí salía «Buscando…» delante');
+  } finally {
+    await medio.cerrar();
+  }
+  // Un cerebro que de verdad tarda (5 s) sí lo oye.
+  const lento = await montar(espera(5_000));
+  try {
+    const dicho = dichoDe(await (await llm(lento.base, paseDe(persona(), 'claudio', 'es'), [{ role: 'user', content: 'busca el precio del oro hoy' }])).text());
+    assert.ok(frasesDe('buscando', 'claudio', 'es').some((f) => dicho.startsWith(f)), dicho);
+  } finally {
+    await lento.cerrar();
+  }
+});
+
 test('el puente: si el cerebro tarda, dice una frase de espera del avatar y en su idioma; el cerebro no repite muletilla', async () => {
   const { frasesDe } = await import('../mobile/src/compa/frasesEstado');
   // Un cerebro lento que además empieza con «Mmm, déjame ver.»: eso ya se dijo con el puente.

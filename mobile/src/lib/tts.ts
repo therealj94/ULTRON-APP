@@ -658,9 +658,17 @@ export class StreamSpeaker {
     this.buf += piece;
     // corta en fin de oración; deja el resto en buffer
     const m = this.buf.match(/^([\s\S]*?[.!?…])(\s+|$)([\s\S]*)$/);
+    // La PRIMERA frase larga sale en su coma (como la corta el servidor, lib/trozos COMA_PRIMERA): su
+    // audio se pide mientras el cerebro sigue escribiendo. Antes esperaba al punto y una respuesta de
+    // una sola frase sonaba recién al final.
+    const coma = !m && !this.sources.size ? this.buf.match(/^([\s\S]{27,}?[^\d\s][,;:])(\s+|$)([\s\S]*)$/) : null;
     if (m && m[1].trim().length >= 6) {
       const sentence = cleanForSpeech(m[1]);
       this.buf = m[3] || '';
+      if (sentence) this.enqueue(sentence);
+    } else if (coma) {
+      const sentence = cleanForSpeech(coma[1]);
+      this.buf = coma[3] || '';
       if (sentence) this.enqueue(sentence);
     } else if (this.buf.length > 220) {
       const cut = this.buf.lastIndexOf(',');

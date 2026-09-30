@@ -43,7 +43,8 @@ import * as Haptics from 'expo-haptics';
 import { playSfx } from '../lib/sfx';
 import { senalVoz } from '../avatar3d/senalVoz';
 import { miga } from '../lib/reporte';
-import { tr } from '../i18n';
+import { idiomaActual, tr } from '../i18n';
+import { etiquetaCiclo, type TonoCiclo } from './llamadaCiclo';
 import { MEDIDA } from '../nucleo/tema';
 import { escuchar, type Pantalla } from '../nucleo/contrato';
 import { FOTOS_CLAUDIO, fotosRetrato } from '../avatares/ClaudioRetrato';
@@ -53,7 +54,7 @@ import { FIGURAS, VIVO_QUIETO, estiloDe, fotoClaudio, medidas, mezclarFigura, ty
 import { grabarCompa, grabarVacioCompa } from './pintarCompa';
 import { Gestos, type SalidaGesto } from './gestos';
 import { destinoPaseo, msPaseo, pegarABorde, reubicar, yCarril, type Marco, type Posicion } from './borde';
-import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido, sueloCompa } from './canales';
+import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido, oidoTelefono, sueloCompa } from './canales';
 import { estadoAvatar, estadoDesdeAnimo, gestoDeEvento, mismoEstado, toqueAvatar, type EstadoAvatar } from '../avatar3d/contrato';
 import { zona2D } from '../avatar3d/mapeo';
 import { cuerposAparte, marcoMesa, useModoPresencia } from '../avatar3d/usePresencia';
@@ -198,6 +199,8 @@ export function Companera() {
   const [globo, setGlobo] = useState<Globo | null>(null);
   const globoRef = useRef<Globo | null>(null);
   const pantalla = useRef<Pantalla>('mesa');
+  /** Lo último que dijo la voz de la mesa (para no repetir el mismo globito con cada aviso de la mesa). */
+  const textoMesa = useRef(ecoMesa.ultimo().texto);
   const vozRef = useRef(voz);
   vozRef.current = voz;
   const caminarRef = useRef<{ detener: () => void } | null>(null);
@@ -340,6 +343,11 @@ export function Companera() {
   useEffect(() => {
     despachar({ tipo: 'voz', voz: { estado: v.estado, silenciada: v.silenciada, dormida: v.dormida, suspendida: v.suspendida } });
   }, [despachar, v.estado, v.silenciada, v.dormida, v.suspendida]);
+  // El ciclo de la llamada (modo llamada): el doble toque silencia o despierta según esto.
+  const cicloVisible = voz.modoLlamada && voz.llamadaLista ? voz.ciclo : null;
+  useEffect(() => {
+    despachar({ tipo: 'ciclo', estado: cicloVisible });
+  }, [despachar, cicloVisible]);
   useEffect(() => {
     const offs = [
       mensajeVoz.escuchar((m) => {
@@ -347,7 +355,15 @@ export function Companera() {
         despachar({ tipo: 'dijo', texto: m.texto, emocion: m.emocion, mostrar: pantalla.current !== 'mesa' });
       }),
       interrupcionVoz.escuchar(() => despachar({ tipo: 'interrupcion' })),
-      ecoMesa.escuchar((e) => despachar({ tipo: 'mesa', hablando: e.hablando, pensando: e.pensando, emocion: e.emocion })),
+      ecoMesa.escuchar((e) => {
+        despachar({ tipo: 'mesa', hablando: e.hablando, pensando: e.pensando, emocion: e.emocion });
+        // Con la mesa tapada, lo que dice su voz lo dice ella: su globito lo lee (en la mesa ya está la burbuja grande).
+        if (e.texto && e.texto !== textoMesa.current) {
+          textoMesa.current = e.texto;
+          despachar({ tipo: 'dijo', texto: e.texto, emocion: e.emocion, mostrar: pantalla.current !== 'mesa' });
+        }
+      }),
+      oidoTelefono.escuchar((on) => despachar({ tipo: 'oido', escuchando: on })),
       escuchar('llamada', ({ activa }) => despachar({ tipo: 'llamada', activa: !!activa })),
       escuchar('hecho', (h) => despachar({ tipo: 'hecho', ok: h.ok, accion: h.accion, detalle: h.detalle })),
       escuchar('enviado', (e) => despachar({ tipo: 'enviado', para: e.para, nombre: e.nombre })),
@@ -679,6 +695,8 @@ export function Companera() {
     altoGlobo.value = e.nativeEvent.layout.height;
   };
 
+  const etiquetaCompa = etiquetaCiclo(voz.ciclo, voz.nombreLlamada, idiomaActual(), voz.usadoHoyMs);
+
   // Claudio y ANT-ONIO: su retrato en un círculo (la foto va con la expresión; al hablar, la de boca abierta).
   const lado = M.R * 1.86;
   const fotos = fotosRetrato(avatar) || FOTOS_CLAUDIO;
@@ -729,10 +747,21 @@ export function Companera() {
             }
           />
         </View>
+        {cicloVisible && !oculta && !apartada ? (
+          // El estado de la llamada, siempre a la vista: verde en llamada, gris en espera, ámbar silenciada.
+          <View pointerEvents="none" style={s.pastilla}>
+            <View style={[s.punto, { backgroundColor: TONO_CICLO[etiquetaCompa.tono] }]} />
+            <Text style={s.pastillaTexto} numberOfLines={1}>
+              {etiquetaCompa.texto}
+            </Text>
+          </View>
+        ) : null}
       </Animated.View>
     </View>
   );
 }
+
+const TONO_CICLO: Record<TonoCiclo, string> = { verde: '#3FB950', azul: '#58A6FF', gris: '#8B8F96', ambar: '#E3B341' };
 
 const s = StyleSheet.create({
   caja: { position: 'absolute', left: 0, top: 0, width: LADO, height: LADO },
@@ -755,4 +784,16 @@ const s = StyleSheet.create({
     elevation: 6,
   },
   globoTexto: { color: '#ECE8E2', fontSize: 14, lineHeight: 19, textAlign: 'center' },
+  pastilla: {
+    position: 'absolute',
+    bottom: -4,
+    alignSelf: 'center',
+    left: -30,
+    right: -30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  punto: { width: 7, height: 7, borderRadius: 4, marginRight: 5 },
+  pastillaTexto: { color: '#ECE8E2', fontSize: 11, backgroundColor: 'rgba(28,29,32,0.78)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, overflow: 'hidden' },
 });
