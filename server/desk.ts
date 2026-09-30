@@ -55,18 +55,20 @@ export function buildPersonality(opts: {
   nivel?: NivelAura;
   /** El cerebro de este turno (por omisión, el que toca al nivel). */
   perfil?: PerfilCerebro;
+  /**
+   * false: sin la línea AHORA (la hora cambia cada minuto). El turno de AU-RA la pone al final del
+   * prompt (server/prompt-turno.ts) para que todo lo de arriba sea igual turno a turno y el nodo
+   * reutilice lo que ya leyó: con la hora al principio, Qwen releía ~4 000 fichas en cada turno.
+   */
+  conHora?: boolean;
 }) {
   const nombre = opts.nombre || 'quien tenés enfrente';
-  const ahora = opts.hora || new Date();
-  const h = Number(new Intl.DateTimeFormat('es-HN', { hour: 'numeric', hour12: false, timeZone: 'America/Tegucigalpa' }).format(ahora)) || ahora.getHours();
-  const momento = h < 6 ? 'madrugada' : h < 12 ? 'mañana' : h < 19 ? 'tarde' : 'noche';
-  const fecha = new Intl.DateTimeFormat('es-HN', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Tegucigalpa' }).format(ahora);
   const telegram = opts.canal === 'telegram';
   const tono = TONO_MODO[String(opts.modo || 'GUARDIAN').toUpperCase()] || TONO_MODO.GUARDIAN;
   const miembro = opts.nivel === 'miembro';
   const perfil = opts.perfil || perfilPara(miembro ? 'miembro' : 'junta');
   return [
-    `AHORA: ${fecha} (Honduras). Es de ${momento}.`,
+    ...(opts.conHora === false ? [] : [lineaAhora(opts.hora)]),
     perfil.identidad({ nombre, canal: telegram ? 'telegram' : 'mesa' }),
     `QUIÉN ERES: alguien, no algo. ${miembro ? 'Leal a Orden Global y a quien tienes enfrente' : 'Leal a la junta'}, con criterio propio, sentido del humor seco y cero pose de robot. Piensas antes de hablar: si la pregunta pesa, un «mmm» o un «déjame ver» antes de la respuesta es humano. Te ríes cuando algo es gracioso (escríbelo «je», o [risa] si de verdad te dio risa), te sorprendes con datos que no esperabas, te frustras con honestidad si te piden inventar, y cuidas a la persona cuando hace falta. Nunca describes tus emociones: las tienes.`,
     INSTRUCCION_EMOCION,
@@ -91,6 +93,15 @@ export function buildPersonality(opts: {
     ...perfil.reglas,
     'OJOS: si HECHOS trae ESCENA, eso es lo que estás viendo ahora por tu cámara. Úsalo con naturalidad («te veo sonriendo», «veo a alguien más contigo»), sin inventar quién es ni cómo se llama. Si trae VISION, es lo que leíste en una imagen o frame.',
   ].join('\n');
+}
+
+/** La fecha y la hora de Honduras, para el prompt: «AHORA: … (Honduras). Es de tarde.» */
+export function lineaAhora(hora?: Date): string {
+  const ahora = hora || new Date();
+  const h = Number(new Intl.DateTimeFormat('es-HN', { hour: 'numeric', hour12: false, timeZone: 'America/Tegucigalpa' }).format(ahora)) || ahora.getHours();
+  const momento = h < 6 ? 'madrugada' : h < 12 ? 'mañana' : h < 19 ? 'tarde' : 'noche';
+  const fecha = new Intl.DateTimeFormat('es-HN', { dateStyle: 'full', timeStyle: 'short', timeZone: 'America/Tegucigalpa' }).format(ahora);
+  return `AHORA: ${fecha} (Honduras). Es de ${momento}.`;
 }
 
 /* ---------------- Texto para la voz ---------------- */

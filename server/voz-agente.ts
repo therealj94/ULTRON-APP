@@ -466,6 +466,12 @@ type Deps = {
   puenteMs?: number;
   /** Junta o miembro por correo (server/nivel.ts; las pruebas pueden poner otro). */
   nivelDe?: (correo: string) => NivelAura;
+  /**
+   * Deja al cerebro con lo fijo del prompt de esta persona ya leído (server.ts calentarCerebro). Se
+   * llama al pedir el permiso, que el teléfono pide mientras suena la llamada: al contestar, la primera
+   * pregunta no espera a que el nodo lea miles de fichas. Sin esperar, y si falla no pasa nada.
+   */
+  calentar?: (correo: string) => void;
 };
 
 const PHRASES = {
@@ -514,6 +520,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       // El aparato (x-aura-aparato) va en el pase: lo que pida esta conversación va solo a ese teléfono.
       const p = emitirPase(s, avatar, idioma, { modo: req.body?.mode ?? req.body?.modo, aparato: aparatoValido(req.headers['x-aura-aparato']), nivel, topeMs: restante });
       const { cerradas } = abrirConversacion(s.correo, p.cid);
+      d.calentar?.(s.correo);
       if (cerradas) console.log(`[voz agente] ${cerradas} conversación(es) vieja(s) cerrada(s) por el tope de ${MAX_CONVERSACIONES}`);
       // `restanteMs` (solo miembros): lo que le queda de voz hoy; el teléfono avisa antes de agotarlo.
       return res.json({ token: j.token, agente, avatar, idioma, pase: p.pase, cid: p.cid, vence: new Date(p.exp).toISOString(), ...(restante !== undefined ? { restanteMs: restante } : {}), honesto: true });

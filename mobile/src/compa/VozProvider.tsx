@@ -36,7 +36,7 @@ import { SafeAreaInsetsContext, initialWindowMetrics } from 'react-native-safe-a
 import { API_BASE } from '../config';
 import { api } from '../lib/api';
 import { loadMesaToken } from '../lib/storage';
-import { miga } from '../lib/reporte';
+import { miga, reportarEstado } from '../lib/reporte';
 import { emocionDeTexto } from '../lib/emocion';
 import { escucharNivelVoz, nivelExterno, speak, stopSpeaking, suspenderVoz, vozSuspendida } from '../lib/tts';
 import { pauseMicForTts, suspenderOido } from '../lib/speech';
@@ -216,7 +216,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
             control.iniciar();
             break;
           case 'cerrar':
-            miga(`llamada del avatar: cuelga (${ef.motivo})`);
+            // Con el registro de toda la llamada: si se cortó sola, en el servidor se ve por qué.
+            reportarEstado(`llamada del avatar: cuelga (${ef.motivo})`);
             control.terminar();
             break;
           case 'silenciar':
