@@ -162,12 +162,17 @@ export function expresion(a: Animo, ahora: number): Expresion {
   return 'tranquila';
 }
 
-/** ¿Puede pasear? Solo libre: sin conversación, sin hablar, despierta, sin que la tengan en la mano. */
+/**
+ * ¿Puede pasear? Libre o escuchando en silencio (la conversación puede durar todo el chat con los
+ * amigos: no se queda tiesa). Se detiene si habla, piensa, conecta, duerme, la tienen en la mano o
+ * pone una cara de reacción. Que la persona le hable lo decide el componente con el volumen del
+ * micrófono (se detiene y la mira).
+ */
 export function puedeCaminar(a: Animo, ahora: number): boolean {
   if (a.oculta || a.levantada || estaDormida(a.voz) || hablando(a) || a.mesa.pensando) return false;
-  if (a.voz.estado === 'conectando' || a.voz.estado === 'escuchando' || a.voz.estado === 'hablando') return false;
+  if (a.voz.estado === 'conectando' || a.voz.estado === 'hablando') return false;
   const e = expresion(a, ahora);
-  return e === 'tranquila' || e === 'contenta';
+  return e === 'tranquila' || e === 'contenta' || e === 'escucha';
 }
 
 type Salida = { animo: Animo; efectos: Efecto[] };
