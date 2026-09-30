@@ -19,3 +19,4 @@ data/sesiones-cerradas.json
 voces-prueba/
 # Datos de entrenamiento exportados de las trazas (preguntas reales): nunca al repositorio.
 entrenamiento/salida/
+data/perfiles/

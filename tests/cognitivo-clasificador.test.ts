@@ -219,6 +219,23 @@ test('modo laya: si Laya tarda de más o contesta basura, salen las reglas sin e
   }
 });
 
+test('modo laya, hablando: el tope es más corto (la voz no espera los 800 ms); escrito, el de siempre', async () => {
+  const media = await layaFalso(() => respuestaLaya('tarea_mercado', ['razonar']), 450);
+  try {
+    _reiniciarLaya();
+    const t0 = Date.now();
+    const voz = await conEntorno({ ULTRON_LAYA_URL: media.url, CLASIFICADOR_MODO: 'laya', CLASIFICADOR_LAYA_MS: undefined, ULTRON_LAYA_TIMEOUT_MS: undefined }, () => clasificar('precio del oro', 'ultron', { voz: true }));
+    assert.equal(voz.fuente, 'reglas', 'a los 300 ms la voz sigue con las reglas');
+    assert.ok(Date.now() - t0 < 440, `no esperó a Laya (${Date.now() - t0} ms)`);
+    _reiniciarLaya();
+    const escrito = await conEntorno({ ULTRON_LAYA_URL: media.url, CLASIFICADOR_MODO: 'laya', CLASIFICADOR_LAYA_MS: undefined, ULTRON_LAYA_TIMEOUT_MS: undefined }, () => clasificar('precio del oro', 'ultron'));
+    assert.equal(escrito.fuente, 'laya', 'escrito, 450 ms caben en los 800');
+  } finally {
+    media.cerrar();
+    _reiniciarLaya();
+  }
+});
+
 test('modo sombra: decide con reglas y guarda lo de Laya para comparar', async () => {
   const l = await layaFalso(() => respuestaLaya('tarea_mercado', ['razonar']));
   try {

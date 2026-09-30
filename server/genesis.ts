@@ -15,6 +15,8 @@
  *   · no está → queda una solicitud de acceso con su GID verificado, para aprobar desde el panel
  *     de siempre. Aprobada, la próxima vez entra con el mismo botón;
  *   · AURA_GENESIS_ABIERTO=1 → cualquier identidad verificada entra (lo decide José, no el código).
+ *     Quien entra así sin estar en el padrón es MIEMBRO de la comunidad, no junta (server/nivel.ts):
+ *     rol «Miembro · Genesis ID», cerebro público, sin taller ni Telegram de la organización.
  *
  * La clave de la app `aura` en Genesis vive en GENESIS_API_KEY_AURA (o GENESIS_API_KEY) y no sale
  * de aquí: con ella solo se puede preguntar si un pase HECHO PARA AU-RA vale.
@@ -31,7 +33,12 @@ export const genesisConfigurado = () => Boolean(clave());
 export const walletWeb = () => (process.env.AURA_WALLET_WEB || 'https://app.vetawallet.com').replace(/\/+$/, '');
 export const genesisAbierto = () => process.env.AURA_GENESIS_ABIERTO === '1';
 
-export type PaseVerificado = { gid: string; correo: string; nombre: string };
+/**
+ * `nombre` es el primer nombre para saludar; `nombreCompleto`, el legal tal cual lo dio Genesis; y
+ * `cumple`, solo mes y día (MM-DD), que Genesis comparte con las apps que tienen el alcance
+ * `gid.cumple`. Si no viene (la app no lo tiene, o la persona no lo dio), no pasa nada.
+ */
+export type PaseVerificado = { gid: string; correo: string; nombre: string; nombreCompleto: string; cumple: string | null };
 export type FalloPase = { estado: 401 | 503; codigo: 'SIN_GENESIS' | 'GENESIS_CAIDO' | 'PASE_INVALIDO' | 'SIN_VERIFICAR' | 'MAL_CONFIGURADO'; detalle?: string };
 
 /** El primer nombre para saludar; el nombre legal completo no hace falta en la mesa. */
@@ -40,6 +47,28 @@ function nombreCorto(legal: unknown): string {
   if (!n) return '';
   const p = n.split(' ')[0];
   return p.charAt(0).toUpperCase() + p.slice(1).toLowerCase();
+}
+
+/** El nombre completo con mayúscula inicial en cada palabra («ANA MARÍA LÓPEZ» → «Ana María López»). */
+function nombreCompleto(legal: unknown): string {
+  return String(legal || '')
+    .replace(/[\u0000-\u001f\u007f]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 120)
+    .toLowerCase()
+    .replace(/(^|[\s'-])(\p{L})/gu, (_m, sep: string, l: string) => sep + l.toUpperCase());
+}
+
+const DIAS_DEL_MES = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+/** «MM-DD» válido, o null. Si Genesis mandara una fecha entera («1994-03-14»), se toma solo mes y día. */
+export function cumpleDeGenesis(v: unknown): string | null {
+  const s = String(v ?? '').trim();
+  const m = /^(?:\d{4}-)?(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const mes = Number(m[1]);
+  const dia = Number(m[2]);
+  return mes >= 1 && mes <= 12 && dia >= 1 && dia <= DIAS_DEL_MES[mes - 1] ? `${m[1]}-${m[2]}` : null;
 }
 
 /** Le pregunta a Genesis si el pase vale para AU-RA, con el verificador del reto. */
@@ -68,7 +97,7 @@ export async function verificarPase(pase: string, verificador: string, f: typeof
   // gid.perfil / gid.correo): es culpa nuestra y se dice como tal, no se deja entrar a ciegas.
   if (!j.perfil || typeof j.perfil !== 'object' || !correo.includes('@') || !GID.test(gid)) return { estado: 503, codigo: 'MAL_CONFIGURADO' };
   if (j.perfil.verificada !== true) return { estado: 401, codigo: 'SIN_VERIFICAR' };
-  return { gid, correo, nombre: nombreCorto(j.perfil.nombre) };
+  return { gid, correo, nombre: nombreCorto(j.perfil.nombre), nombreCompleto: nombreCompleto(j.perfil.nombre), cumple: cumpleDeGenesis(j.perfil.cumple) };
 }
 
 export type DepsGenesis = {
@@ -80,8 +109,22 @@ export type DepsGenesis = {
   emitirSesion: (u: { correo: string; nombre: string; rol: string }) => { token: string };
   /** Deja la solicitud de acceso para que la apruebe José. Devuelve false si no se pudo guardar. */
   pedirAcceso: (s: { nombre: string; correo: string; motivo: string }) => Promise<boolean>;
+  /**
+   * Si la persona no tiene perfil todavía, se crea uno con lo que compartió Genesis (nombre completo
+   * y cumple, completado: false); si ya tenía, solo se llenan los huecos. Un fallo aquí no impide entrar.
+   */
+  sembrarPerfil?: (correo: string, g: { nombreGenesis: string; cumple: string | null; apodo: string }) => Promise<unknown>;
   fetch?: typeof fetch;
+  /** Lo más que la entrada espera a sembrar el perfil (ESPERA_SEMBRAR_MS; las pruebas lo acortan). */
+  esperaSembrarMs?: number;
 };
+
+/**
+ * Lo más que la entrada con Genesis espera a que se siembre el perfil. Sembrar lee y escribe S3 (hasta
+ * 12 s cada paso si S3 anda mal) y la persona esperaba todo eso para entrar. Pasado el tope, entra y el
+ * sembrado sigue en segundo plano.
+ */
+export const ESPERA_SEMBRAR_MS = 1500;
 
 const MENSAJE: Record<FalloPase['codigo'], string> = {
   SIN_GENESIS: 'El ingreso con Genesis ID no está configurado en este servidor.',
@@ -130,7 +173,21 @@ export function montarRutasGenesis(app: Express, d: DepsGenesis) {
     const { nombre, rol } = d.nombreYRol(correo, v.nombre);
     const s = d.emitirSesion({ correo, nombre, rol });
     console.log(`[genesis] ${v.gid} entró a AU-RA`);
-    return res.json({ ok: true, token: s.token, miembro: { nombre, correo, rol, gid: v.gid }, por: 'genesis' });
+    if (d.sembrarPerfil) {
+      const sembrado = Promise.resolve()
+        .then(() => d.sembrarPerfil!(correo, { nombreGenesis: v.nombreCompleto, cumple: v.cumple, apodo: nombre }))
+        .catch((e: any) => console.warn('[genesis] no pude sembrar el perfil', String(e?.message || e).slice(0, 120)));
+      let reloj: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([sembrado, new Promise<void>((r) => (reloj = setTimeout(r, d.esperaSembrarMs ?? ESPERA_SEMBRAR_MS)))]);
+      clearTimeout(reloj);
+    }
+    return res.json({
+      ok: true,
+      token: s.token,
+      miembro: { nombre, correo, rol, gid: v.gid },
+      genesis: { nombre: v.nombreCompleto || null, cumple: v.cumple },
+      por: 'genesis',
+    });
   });
 }
 

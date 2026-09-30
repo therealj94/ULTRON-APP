@@ -1,0 +1,27 @@
+{
+  "name": "aura-avatar-suite",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AURA, Claudio and approved ANT-ONIO articulated 3D delivery",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "test": "node --test tools/contracts.test.mjs",
+    "qa": "node tools/qa.cjs",
+    "validate": "node tools/validate.cjs",
+    "preview": "node tools/preview.cjs",
+    "restore-models": "node tools/restore-models.mjs",
+    "prebuild": "npm run restore-models",
+    "preqa": "npm run restore-models",
+    "prevalidate": "npm run restore-models"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@sparticuz/chromium": "^138.0.2",
+    "gltf-validator": "^2.0.0-dev.3.10",
+    "esbuild": "0.25.5",
+    "playwright": "1.62.1"
+  }
+}

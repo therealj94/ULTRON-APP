@@ -338,8 +338,10 @@ export async function leerPagina(url: string, maxChars = 1800): Promise<string> 
 
 export function consultaWeb(message: string): string | null {
   const q = message.trim();
+  // «busca en mis chats…» es buscar en PULSE2CHAT (lo hace el teléfono), no en internet.
+  if (/\b(?:en|in) (?:los |mis |my )?(?:chats?|mensajes|conversaciones|messages)\b/i.test(q)) return null;
   const m = q.match(
-    /^(?:(?:ultron|aura|au-ra|au ra|dr\.? electrum|doctor electrum|doctor|electrum)[,\s]+)?(?:busc[aá](?:me)?(?: en (?:internet|la web))?|investig[aá]|googlea|averigu[aá]|consult[aá] en internet|qu[eé] dice internet (?:de|sobre)|noticias (?:de|sobre)|qu[eé] hay de nuevo (?:de|sobre)|dame informaci[oó]n (?:de|sobre))\s+(.+)$/i
+    /^(?:(?:ultron|aura|au-ra|au ra|dr\.? electrum|doctor electrum|doctor|electrum)[,\s]+)?(?:b[uú]sc[aá](?:me)?(?: en (?:internet|la web|google))?|investig[aá](?:me)?|googlea|averigu[aá](?:me)?|consult[aá] en internet|qu[eé] dice internet (?:de|sobre)|noticias (?:de|sobre)|qu[eé] hay de nuevo (?:de|sobre)|dame informaci[oó]n (?:de|sobre)|search (?:the web |online |the internet |google )?for|look up|google)\s+(.+)$/i
   );
   if (m) return m[1].replace(/[?¿.!]+$/g, '').trim();
   if (/\b(noticias|[uú]ltimas noticias|qu[eé] pas[oó] hoy|hoy en el mundo)\b/i.test(q)) return q.replace(/[?¿.!]+$/g, '');

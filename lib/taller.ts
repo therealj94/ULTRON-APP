@@ -10,6 +10,7 @@ import { fotoBoveda, clave } from './boveda';
 import { dictarSistema, notaDeVoz, pideNotaDeVoz } from './voz';
 import { puedeCambiarSistema, type MiembroId } from './junta';
 import type { Nivel } from './acceso';
+import type { NivelAura } from './perfiles/tipos';
 import { autorizar, textoDeDecision, type Efecto } from './cognitivo/politica';
 import { registrarEjecutor } from './cognitivo/aprobaciones';
 
@@ -34,7 +35,8 @@ export function parsePedido(raw: string): {
         ? 'correo'
         : null;
   if (/\b(boveda|cajas de (la )?boveda|abri la boveda|abre la boveda)\b/.test(l)) return { accion: 'boveda', canal, texto: q };
-  if (/\b(redeploy|redespleg|reinicia(r)? la mesa|nuevo deploy)\b/.test(l)) return { accion: 'redeploy', canal, texto: q };
+  // «redespliega», «redesplegar», «redespliégala»: el verbo cambia la raíz (antes solo casaba «redeploy»).
+  if (/\b(redeploy|redespl(?:ie|ié|e)g\w*|reinicia(r)? la mesa|nuevo deploy)\b/.test(l)) return { accion: 'redeploy', canal, texto: q };
   if (pideNotaDeVoz(q)) return { accion: 'voz', canal: canal || 'telegram', texto: q };
   if (/\b(mantenimiento|repara|arregla|diagnostico|diagnóstico)\b/.test(l)) return { accion: 'mantenimiento', canal, texto: q };
   // «¿cómo está el oro?» o «¿cómo está Pedro?» no preguntan por el sistema: solo cuenta si dice de qué.
@@ -179,7 +181,49 @@ export type ContextoTaller = {
   prueba?: 'sesion' | 'telegram' | 'nombre' | null;
   canal?: 'mesa' | 'telegram';
   riesgo?: number | null;
+  /**
+   * El turno llega por la conversación fluida (un pase de voz, no una sesión): solo consulta. Nada
+   * que salga del sistema (Telegram, WhatsApp, correo, urgente, llamada) ni que lo cambie
+   * (redespliegue, mantenimiento), aunque quien hable tenga mando. Eso se pide en la mesa.
+   */
+  soloConsulta?: boolean;
+  /**
+   * Con quién habla (server/nivel.ts). Un miembro de la comunidad no tiene taller: ni estado del
+   * sistema, ni bóveda, ni pendientes de la junta, ni envíos al Telegram de la organización.
+   * Sin este campo, junta (como siempre).
+   */
+  nivelAura?: NivelAura;
+  /**
+   * Las manos que el teléfono de este turno hace por su cuenta (lib/manos-app.ts). Con ellas, «llama
+   * a Beto» es una llamada de PULSE2CHAT (con su «sí»), no la de Twilio; y «avísame a las 5 que…» es
+   * un recordatorio, no un aviso urgente a la junta.
+   */
+  manosApp?: readonly string[];
 };
+
+/**
+ * Lo que el modelo sabe cuando un miembro pide algo que solo es del taller de la junta. Deja claro
+ * que lo de SU teléfono (mensajes, llamadas, recordatorios) sigue: eso va por las acciones de la app.
+ */
+export const TALLER_SOLO_JUNTA =
+  'TALLER: el taller es de la junta, no de los miembros: no mandas nada al Telegram de la organización, no avisas a la junta, no das el estado de sus sistemas ni de la bóveda y no tocas sus pendientes. Si te lo piden, dilo con naturalidad. Lo que la persona pida para SU teléfono (mensajes a sus contactos, llamadas, recordatorios, pantallas) sí se hace, con las acciones de su app si están en este turno.';
+
+/** Las acciones del taller que, pedidas por un miembro, merecen decirle al modelo que no son suyas. */
+const DE_LA_JUNTA = new Set(['sistema', 'mantenimiento', 'redeploy', 'boveda', 'urgente', 'voz', 'listar']);
+
+/** ¿El pedido es de las manos de la app y no del taller? («llámame» sigue siendo la llamada de Twilio). */
+function cedeALaApp(p: ReturnType<typeof parsePedido>, q: string, manos: readonly string[] | undefined): boolean {
+  if (!manos?.length) return false;
+  const l = q.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  // «llámame a las 5 para recordarme…» es un recordatorio con llamada de AURA, no la llamada de Twilio.
+  if (p.accion === 'llamar' && manos.includes('recordatorio') && /\b(recordarme|recuerdame|recuerdes|acordarme|acuerde|olvide|pase|remind)\b/.test(l)) return true;
+  if (p.accion === 'llamar' && manos.includes('llamar') && !/\b(llamame|llamanos|call me)\b/.test(l)) return true;
+  if (p.accion === 'urgente' && manos.includes('recordatorio') && /\bavisame\b/.test(l) && !/\b(urgente|alerta junta)\b/.test(l)) return true;
+  return false;
+}
+
+/** Lo que el taller no hace desde la voz: todo lo que sale del sistema o lo cambia. */
+const FUERA_DE_LA_VOZ = new Set(['redeploy', 'mantenimiento', 'voz', 'urgente', 'llamar', 'enviar']);
 
 /**
  * Pasa la acción por las reglas y, si la dejan, la corre. Si no, devuelve el texto de la decisión
@@ -207,12 +251,31 @@ async function conPermiso(nombre: keyof typeof ACCIONES_TALLER, args: Record<str
 
 export async function despacharTaller(message: string, opts?: ContextoTaller): Promise<TallerOut> {
   const p = parsePedido(message);
-  if (!p.accion) return { hechos: [], tools: [] };
+  if (!p.accion || cedeALaApp(p, message, opts?.manosApp)) return { hechos: [], tools: [] };
   const tools: string[] = [];
   const hechos: string[] = [];
   const out = (decir?: string): TallerOut => ({ hechos, tools, decir });
   const ctx: ContextoTaller = opts || {};
-  const consulta = !puedeCambiarSistema(opts?.quien);
+  /*
+   * Un miembro no llega a NINGUNA acción del taller: ni a las que leen (sistema, bóveda, pendientes de
+   * la junta) ni a las que mandan (Telegram, WhatsApp o correo de la organización, llamadas de Twilio,
+   * redespliegue). Sin `decir`: contesta el modelo. Si lo que pidió es de la junta, se le dice al
+   * modelo; si es algo suyo que el taller confundió («anota…», «recuérdame…», «llámame», «mándale un
+   * WhatsApp a Beto»), no se dice nada: eso lo resuelven las acciones de su app.
+   */
+  if (ctx.nivelAura === 'miembro') {
+    const deLaJunta = DE_LA_JUNTA.has(p.accion) || ((p.accion === 'enviar' || p.accion === 'pdf') && p.canal === 'telegram');
+    return { hechos: deLaJunta ? [TALLER_SOLO_JUNTA] : [], tools: [] };
+  }
+  const consulta = !puedeCambiarSistema(opts?.quien) || !!opts?.soloConsulta;
+
+  if (opts?.soloConsulta && p.accion && (FUERA_DE_LA_VOZ.has(p.accion) || (p.accion === 'pdf' && p.canal))) {
+    tools.push(p.accion);
+    hechos.push(
+      'ACCESO (conversación de voz): solo consulta. Desde la voz no mando mensajes, avisos urgentes ni llamadas, no redespliego y no hago mantenimiento. Se pide en la mesa, con la sesión abierta. Lo demás (estado, oro, web, pendientes, memoria) sí.'
+    );
+    return out('Eso no lo hago desde la conversación de voz. Pídemelo escrito en la mesa y lo vemos.');
+  }
 
   if (consulta && (p.accion === 'redeploy' || p.accion === 'mantenimiento')) {
     tools.push(p.accion);

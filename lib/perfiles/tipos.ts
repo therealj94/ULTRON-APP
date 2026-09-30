@@ -57,3 +57,22 @@ export type PerfilCerebro = {
 export function tiene(perfil: PerfilCerebro, h: Herramienta) {
   return perfil.herramientas.includes(h);
 }
+
+/**
+ * Con quién habla AU-RA (server/nivel.ts lo decide por el correo de la sesión): la junta, o un
+ * miembro de la comunidad que entró con su Genesis ID y no está en el padrón.
+ */
+export type NivelAura = 'junta' | 'miembro';
+
+/**
+ * Lo que un miembro no tiene NUNCA, diga lo que diga el perfil y pida lo que pida el modelo: el
+ * Telegram de la organización (manda al chat de la junta, lib/canales.ts) y el taller (estado del
+ * sistema, bóveda, pendientes de la junta, envíos, redespliegue).
+ */
+export const SOLO_JUNTA: readonly Herramienta[] = ['telegram', 'taller'];
+
+/** ¿Puede usarse esta herramienta con este perfil y con quien habla? */
+export function herramientaPermitida(perfil: PerfilCerebro, h: Herramienta, nivel: NivelAura): boolean {
+  if (nivel === 'miembro' && SOLO_JUNTA.includes(h)) return false;
+  return perfil.herramientas.includes(h);
+}

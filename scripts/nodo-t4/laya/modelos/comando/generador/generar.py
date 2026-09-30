@@ -8,6 +8,11 @@ favor», «doctor»), muletillas («eh», «a ver», «este»), habla hondureña
 de OTRAS plantillas y de otra semilla: mide si el modelo entendió la orden o solo memorizó frases.
 bordes.jsonl lo escribe una persona (casos difíciles) y no se toca aquí.
 
+El modelo es COMPARTIDO con AU-RA: cada frase lleva además una etiqueta del grupo `app` (las manos de
+AURA, ver generar_aura.py). Para las frases de Electrum casi siempre es `app_ninguna`; las de pantalla
+completa / mitad son `app_presencia` (en AU-RA, cómo se presenta AURA) y «busca en internet…»,
+`app_buscar_internet`. La etiqueta se añade al escribir: las frases y la semilla no cambian.
+
 Solo biblioteca estándar y determinista (misma semilla → mismos archivos).
 """
 import json
@@ -250,6 +255,15 @@ def ruido(s, r):
     return ' '.join(s.split())
 
 
+def app_de(frase, accion):
+    """La etiqueta del grupo `app` (AU-RA) de una frase de Electrum. No usa el azar: las frases no cambian."""
+    if accion in ('pantalla_completa', 'salir_pantalla', 'mitad'):
+        return 'app_presencia'
+    if 'internet' in sin_tildes(frase.lower()) or 'en la web' in frase.lower():
+        return 'app_buscar_internet'
+    return 'app_ninguna'
+
+
 def rellenar(p, r):
     return p.replace('{m}', r.choice(MAPA)).replace('{e}', r.choice(ESTA))
 
@@ -268,14 +282,14 @@ def generar(plantillas, ninguna, n_por, r):
             if s.lower() in vistos:
                 continue
             vistos.add(s.lower())
-            filas.append({'q': s, 'e': [accion]})
+            filas.append({'q': s, 'e': [accion, app_de(s, accion)]})
     vistos = set()
     for base in ninguna:
         for _ in range(3):
             s = ruido(r.choice(['', '', '', 'doctor, ', 'oye, ', 'a ver, ', 'eh, ']) + base, r)
             if s.lower() not in vistos:
                 vistos.add(s.lower())
-                filas.append({'q': s, 'e': ['ninguna']})
+                filas.append({'q': s, 'e': ['ninguna', app_de(s, 'ninguna')]})
     r.shuffle(filas)
     return filas
 

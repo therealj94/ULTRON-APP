@@ -161,6 +161,19 @@ export function firmarDato(prefijo: string, dato: object): string {
   return `${prefijo}.${body}.${sig}`;
 }
 
+/**
+ * Un secreto propio de un uso (p. ej. la llave que ElevenLabs manda a nuestro cerebro), derivado del
+ * de las sesiones: no hace falta otra variable en Render, y rotar ULTRON_SESION_SECRETO lo rota.
+ */
+export function secretoDerivado(etiqueta: string): string {
+  return crypto.createHmac('sha256', secretoSesion()).update(`derivado:${etiqueta}`).digest('base64url');
+}
+
+/** Compara dos secretos sin filtrar por el tiempo cuánto coinciden. */
+export function mismoSecreto(esperado: string, dado: string): boolean {
+  return firmaCanonica(esperado, dado);
+}
+
 export function leerDato(prefijo: string, token: string): any | null {
   const partes = String(token || '').split('.');
   if (partes.length !== 3 || partes[0] !== prefijo) return null;
@@ -248,6 +261,15 @@ export async function cargarSesionesCerradas(): Promise<string> {
   return r.ok ? `${cerradas.size} cerradas (S3)` : `${cerradas.size} cerradas; S3 no respondió: ${r.detalle}`;
 }
 
+/**
+ * Saca del caché en memoria una sesión de UN solo uso. No la revoca —vence sola—; solo evita que
+ * deje un objeto para siempre en el mapa. (La voz ya no la usa: su turno corre en proceso, sin
+ * sesión interna; queda para cualquier llamada interna que la necesite.)
+ */
+export function soltarSesion(token?: string) {
+  if (token) sesiones.delete(token);
+}
+
 /** Cierra la sesión de verdad: el token deja de valer aquí y en cualquier copia. */
 export async function borrarSesion(token?: string): Promise<boolean> {
   if (!token) return false;
@@ -268,6 +290,28 @@ function sesionCerrada(token: string) {
   leerCerradasDeDisco();
   const v = cerradas.get(huellaToken(token));
   return v !== undefined && v > Date.now();
+}
+
+/**
+ * La huella de una sesión: lo que se anota al cerrarla. Un pase de voz lleva la huella de la sesión
+ * que lo pidió (no la sesión misma) para poder preguntar en cada turno si esa sesión sigue viva.
+ */
+export function huellaSesion(token: string): string {
+  return huellaToken(token);
+}
+
+/**
+ * ¿La sesión de esa huella sigue valiendo? No se cerró («Cerrar sesión» en cualquier aparato), no
+ * venció y la contraseña no cambió después de abrirla. Es lo mismo que mira sesionDe, pero sin el
+ * token: lo usa el pase de la voz, que no lleva la sesión dentro.
+ */
+export function sesionSigueViva(o: { huella: string; correo: string; at: number; exp?: number }, ahora = Date.now()): boolean {
+  leerCerradasDeDisco();
+  const cerrada = cerradas.get(o.huella);
+  if (cerrada !== undefined && cerrada > ahora) return false;
+  if (o.exp && ahora > o.exp) return false;
+  const desde = claveCambiadaEn(String(o.correo || '').toLowerCase());
+  return !(desde && o.at < desde);
 }
 
 /** Solo pruebas: olvida el caché en memoria (no las cerradas), como tras un redespliegue. */
@@ -425,6 +469,23 @@ export function limitar(max: number, ventanaMs = 60_000, grupo?: string) {
   };
 }
 
+/**
+ * Un cupo con la clave que se quiera (no la IP): la voz lo cuenta por PERSONA, porque todos los turnos
+ * de ElevenLabs llegan de las mismas pocas IPs de sus servidores. Devuelve true si todavía hay cupo
+ * (y lo gasta).
+ */
+export function gastarCupo(claveCupo: string, max: number, ventanaMs = 60_000, ahora = Date.now()): boolean {
+  const k = `cupo:${claveCupo}`;
+  const arr = (hits.get(k) || []).filter((t) => ahora - t < ventanaMs);
+  if (arr.length >= max) {
+    hits.set(k, arr);
+    return false;
+  }
+  arr.push(ahora);
+  hits.set(k, arr);
+  return true;
+}
+
 /* ------------------------------------------------------- intentos de clave por cuenta */
 
 /**
@@ -565,6 +626,7 @@ export function exigirPlataforma(plataforma: Plataforma) {
  */
 export function cuerpoHttp(body: unknown): Record<string, unknown> {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return {};
-  const { telegramUserId: _u, telegramChatId: _c, canal: _canal, sesion: _s, ...resto } = body as Record<string, unknown>;
+  // `nivel` (junta o miembro) tampoco: lo pone el servidor por el correo de la sesión (server/nivel.ts).
+  const { telegramUserId: _u, telegramChatId: _c, canal: _canal, sesion: _s, nivel: _n, ...resto } = body as Record<string, unknown>;
   return resto;
 }

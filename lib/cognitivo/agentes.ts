@@ -10,6 +10,7 @@
  * se puede hacer lo sigue decidiendo el motor de reglas, contesté quien contesté.
  */
 import type { Clasificacion } from './traza';
+import type { NivelAura } from '../perfiles/tipos';
 
 export type AgenteAura = {
   id: string;
@@ -90,10 +91,45 @@ export const AGENTES_AURA: Record<string, AgenteAura> = {
   },
 };
 
-/** El trozo de system para el agente del turno. Vacío para `general` o si no hay agente. */
-export function promptAgente(id: string | null | undefined): string {
-  const a = id ? AGENTES_AURA[id] : undefined;
-  if (!a) return '';
+/**
+ * Lo que cambia de un agente cuando habla con un MIEMBRO de la comunidad (server/nivel.ts): sin
+ * referencias a la mecánica interna de la junta (firmas, mando, taller, validadores, emisiones).
+ */
+const PARA_MIEMBRO: Record<string, Partial<Pick<AgenteAura, 'reglas' | 'fuentes'>>> = {
+  financiero: { fuentes: ['herramientas de mercado del turno', 'lo público de Orden Global (equivalencias)'] },
+  legal: {
+    reglas: [
+      'Separas lo que dice un documento de lo que opinas; citas cláusula o artículo cuando lo tienes.',
+      'Próspera y el caso CIADI no son juicios de Orden Global: no los mezcles.',
+      'No das dictamen: señalas riesgos y recomiendas consultar a un abogado para decidir.',
+    ],
+  },
+  compliance: {
+    reglas: [
+      'Sin KYC aprobado no se mueve valor: lo dices siempre.',
+      'Las remesas son calculadora hasta que haya licencia por país: no afirmas un riel regulado.',
+      'Si algo huele a lavado o sanción, lo dices claro y recomiendas no seguir.',
+    ],
+  },
+  blockchain: {
+    reglas: [
+      'Datos públicos de la L1 (chain id, consenso, explorador) del cerebro; saldos y transacciones, solo con herramienta.',
+      'Nunca pides ni repites claves privadas o semillas.',
+      'Emitir, transferir o firmar no depende de ti: explicas cómo funciona, no lo prometes.',
+    ],
+    fuentes: ['lo público de Orden Global (L1, tokens)', 'herramientas de cadena del turno'],
+  },
+  operaciones: { fuentes: ['el resultado de la acción del turno'] },
+};
+
+/**
+ * El trozo de system para el agente del turno. Vacío para `general` o si no hay agente. Con un
+ * miembro de la comunidad, las reglas y fuentes de PARA_MIEMBRO.
+ */
+export function promptAgente(id: string | null | undefined, nivel: NivelAura = 'junta'): string {
+  const base = id ? AGENTES_AURA[id] : undefined;
+  if (!base) return '';
+  const a = nivel === 'miembro' ? { ...base, ...PARA_MIEMBRO[base.id] } : base;
   return [
     `AGENTE DE ESTE TURNO: ${a.nombre}.`,
     ...a.reglas.map((r) => `- ${r}`),

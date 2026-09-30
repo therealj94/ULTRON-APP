@@ -9,6 +9,7 @@ import { esHechoLargo, semillaLarga } from '../server/hechos';
 import { miembrosUltron, nombreDe, puedeCambiarSistema, quienEs, type MiembroId } from './junta';
 import { bucketMemoria, s3GetJson, s3Listo, s3PutJson } from './s3';
 import { capasHilo } from './conversacion';
+import type { NivelAura } from './perfiles/tipos';
 
 export type CanalMem = 'mesa' | 'telegram' | 'sistema';
 
@@ -180,7 +181,20 @@ export function hiloDe(quien: MiembroId | null): TurnoMem[] {
   return a.perfiles[quien]?.corta || [];
 }
 
-export function promptMemoria(quien: MiembroId | null): string {
+export function promptMemoria(quien: MiembroId | null, opts: { nivel?: NivelAura; nombre?: string } = {}): string {
+  /*
+   * Un miembro de la comunidad (entró por Genesis abierto, no está en el padrón) no tiene cajón aquí
+   * y no ve NADA de la junta: ni sus hechos compartidos, ni los cambios que pidió, ni la memoria de
+   * nadie. Su memoria personal vive en lib/memoria-miembro.ts; esto es solo para cuando habla sin
+   * sesión (sin cuenta no hay de quién guardar).
+   */
+  if (opts.nivel === 'miembro') {
+    const n = String(opts.nombre || '').trim() || 'un miembro de la comunidad';
+    return [
+      `HABLAS CON: ${n}, miembro de la comunidad de Orden Global (no es de la junta).`,
+      'MEMORIA: habla sin su cuenta, así que no hay memoria guardada que usar. Usa el hilo de esta conversación; no prometas recordar ni recites nada de otras personas.',
+    ].join('\n');
+  }
   const a = cache || leerDisco();
   const id = quien;
   const nombre = nombreDe(id);
@@ -210,6 +224,12 @@ export async function recordarTurno(opts: {
   rol: 'user' | 'ultron';
   texto: string;
   canal: CanalMem;
+  /**
+   * false: vuelve en cuanto el turno está en la memoria de este proceso y deja la copia a disco y S3
+   * en la cola, sin esperarla. Es lo que usa el turno ANTES de pensar: esperar el PUT a S3 (cientos
+   * de ms) retrasaba la primera palabra de cada respuesta, y la cola ya guarda en orden.
+   */
+  esperar?: boolean;
 }): Promise<void> {
   const a = await cargarMemoria();
   const texto = String(opts.texto || '').trim().slice(0, 4000);
@@ -234,7 +254,12 @@ export async function recordarTurno(opts: {
     }
   }
   cache = a;
-  await enqueue(() => persistirMemoria().then(() => undefined));
+  const guardado = enqueue(() => persistirMemoria().then(() => undefined));
+  if (opts.esperar === false) {
+    guardado.catch((e) => console.warn('[memoria] no se guardó el turno', String(e?.message || e).slice(0, 120)));
+    return;
+  }
+  await guardado;
 }
 
 export async function registrarCambio(opts: { quien: MiembroId | null; canal: CanalMem; que: string }): Promise<void> {
@@ -259,6 +284,10 @@ export async function guardarHechoQuien(opts: {
   const hecho = String(opts.hecho || '').trim().slice(0, 400);
   if (!hecho) return;
   const a = await cargarMemoria();
+  // Al pool de la junta solo va lo que se manda ahí a propósito (`junta: true`, que el servidor pone
+  // solo con mando). Un hecho sin dueño verificado —un miembro de la comunidad, una sesión fuera del
+  // padrón— antes caía en los HECHOS COMPARTIDOS DE LA JUNTA; ahora no se guarda.
+  if (!opts.junta && !opts.quien) return;
   const item: HechoMem = {
     hecho,
     t: Date.now(),
@@ -315,7 +344,7 @@ export function fotoMemoria(quien: MiembroId | null) {
  */
 export function resolverQuien(body: any, sesion?: { nombre?: string; correo?: string } | null): MiembroId | null {
   if (sesion && (sesion.correo || sesion.nombre)) {
-    const deSesion = quienEs({ nombre: String(sesion.nombre || ''), correo: String(sesion.correo || '') });
+    const deSesion = quienDeSesion(sesion);
     if (deSesion) return deSesion;
   }
   const porTelegram = quienEs({ telegramUserId: body?.telegramUserId, telegramChatId: body?.telegramChatId });
@@ -327,10 +356,20 @@ export function resolverQuien(body: any, sesion?: { nombre?: string; correo?: st
   });
 }
 
-/** Identidad verificada: sesión firmada o Telegram. Lo que diga el body no cuenta. */
+/**
+ * Quién es la persona de una sesión firmada: SOLO por su correo. El nombre de la sesión lo elige quien
+ * entra (Genesis lo toma de su identidad; el cerebro remoto, de su cuenta): con él, un miembro de la
+ * comunidad llamado «José» pasaba por José, con su memoria y con mando. Sin correo del padrón, nadie.
+ */
+function quienDeSesion(sesion: { nombre?: string; correo?: string }): MiembroId | null {
+  const correo = String(sesion.correo || '').trim();
+  return correo ? quienEs({ correo }) : null;
+}
+
+/** Identidad verificada: sesión firmada (por su correo) o Telegram. Lo que diga el body no cuenta. */
 export function quienVerificado(body: any, sesion?: { nombre?: string; correo?: string } | null): MiembroId | null {
   if (sesion && (sesion.correo || sesion.nombre)) {
-    return quienEs({ nombre: String(sesion.nombre || ''), correo: String(sesion.correo || '') });
+    return quienDeSesion(sesion);
   }
   return quienEs({ telegramUserId: body?.telegramUserId, telegramChatId: body?.telegramChatId });
 }

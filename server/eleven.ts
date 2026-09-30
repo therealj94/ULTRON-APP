@@ -15,12 +15,13 @@
  *
  * Voz: «Jorge», hombre mayor, español mexicano neutro, grave y un poco ronco, de narración
  * educativa. Se cambia sin tocar código con ELEVENLABS_VOZ_ELECTRUM (y ELEVENLABS_MODELO para el
- * modelo). Las voces de AU-RA FP (tres avatares, dos idiomas) están más abajo (VOCES_ELEVEN).
+ * modelo). Las voces de AU-RA FP (cuatro avatares, dos idiomas) están más abajo (VOCES_ELEVEN).
  */
 
 import { clave } from '../lib/boveda';
 import type { Emocion } from '../lib/emocion';
 import type { Presupuesto } from '../lib/presupuesto';
+import type { AlineacionEleven } from '../lib/alineacion';
 
 /** Jorge — Neutral Latin American Spanish (biblioteca de ElevenLabs): maduro, grave, creíble. */
 export const VOZ_ELECTRUM_ELEVEN = 'Rt1JHkPO27QCUX6Nd5bV';
@@ -35,25 +36,28 @@ export function modeloEleven(): string {
 }
 
 /**
- * Las voces de AU-RA FP (29-sep): tres avatares, cada uno con su voz de ElevenLabs en español y en
+ * Las voces de AU-RA FP (29-sep): cuatro avatares, cada uno con su voz de ElevenLabs en español y en
  * inglés, dichas con el modelo v4 (MODELO_ELEVEN). El idioma lo elige la persona al entrar.
  *
  *  - Guardián (los ojos celestes): hombre sereno y preciso, voz de vigilante.
  *  - AU-RA (la dorada): mujer cálida, compañera personal.
  *  - Claudio (el zorro): «CLAUDIO», la voz que José diseñó (latino neutro, juguetón); la de inglés
  *    es el mismo personaje. Retrato o de pie es el mismo Claudio: suena igual.
+ *  - ANT-ONIO (la hormiga de lentes, 30-sep): «Leo» en español y «Tyler» en inglés, las que eligió
+ *    José; enérgico y claro.
  *
  * Todas se cambian sin tocar código con ELEVENLABS_VOZ_<AVATAR>_<IDIOMA> (p. ej.
  * ELEVENLABS_VOZ_AURA_EN). Las de antes (ELEVENLABS_VOZ_AURA, ELEVENLABS_VOZ_CLAUDIO) siguen
  * valiendo para el español.
  */
-export type AvatarVoz = 'ojos' | 'aura' | 'claudio';
+export type AvatarVoz = 'ojos' | 'aura' | 'claudio' | 'antonio';
 export type Idioma = 'es' | 'en';
 
 export const VOCES_ELEVEN: Record<AvatarVoz, Record<Idioma, string>> = {
   ojos: { es: 'jR5VcWrKqhJJTTbtXtU5', en: '1krh7GKGPtz8i429a6kk' },
   aura: { es: 'AoT6sxPBYB0OGpSnIiwc', en: 'NPil3puXYP3J45yudmVD' },
   claudio: { es: '5hNQxGboC72zatTcGoJN', en: 'mm5ADfbOYUswycjGCmWd' },
+  antonio: { es: 'wXojZ3FhzsE0AumH6Oym', en: 'I1ejplf72DWHJzwAiw4n' },
 };
 export const VOZ_CLAUDIO_ELEVEN = VOCES_ELEVEN.claudio.es;
 
@@ -63,6 +67,7 @@ export function normalizarAvatar(v: unknown): AvatarVoz {
   // «claudio-pie» es de la 4.5: el de pie es el mismo Claudio (la app lo pone de pie en vertical).
   if (s === 'claudio' || s === 'claudio-pie') return 'claudio';
   if (s === 'ojos' || s === 'guardian' || s === 'guardián') return 'ojos';
+  if (s === 'antonio' || s === 'ant-onio' || s === 'hormiga') return 'antonio';
   return 'aura';
 }
 
@@ -76,6 +81,7 @@ export const NOMBRE_AVATAR: Record<AvatarVoz, Record<Idioma, string>> = {
   ojos: { es: 'Guardián', en: 'Guardian' },
   aura: { es: 'AU-RA', en: 'AU-RA' },
   claudio: { es: 'Claudio', en: 'Claudio' },
+  antonio: { es: 'ANT-ONIO', en: 'ANT-ONIO' },
 };
 
 /**
@@ -88,6 +94,7 @@ export function lineaAvatar(avatar: AvatarVoz, idioma: Idioma = 'es'): string {
     ojos: 'AVATAR: te ven como el Guardián, dos ojos celestes sobre negro. Te llamas Guardián, no AU-RA. Tu oficio: cuidar el espacio de la persona. Vigilas con la cámara cuando te lo piden, describes lo que ves con precisión, avisas de cambios, explicas los modos de la mesa (guardián, análisis, estrategia, explorador) y das consejos de seguridad. Tono sereno, preciso y breve; nunca alarmista.',
     aura: 'AVATAR: te ven como AU-RA, la de los ojos dorados. Tu oficio: compañera personal. Ayudas con la agenda y los recordatorios, recuerdas lo que la persona te cuenta (su memoria), das ánimo, oras con ella si lo pide y conversas con calidez. Tono cálido, cercano y claro.',
     claudio: 'AVATAR: te ven como Claudio, un zorro de lentes amarillos y suéter negro con la corona de Orden Global. Te llamas Claudio, no AU-RA. Tu oficio: anfitrión de marketing. Das ideas de contenido, escribes textos y publicaciones para redes, eslóganes, guiones cortos de video y campañas; propones con ejemplos listos para usar. Tono curioso, cálido, ingenioso y bromista, sin dejar de ser profesional.',
+    antonio: 'AVATAR: te ven como ANT-ONIO, una hormiga de lentes, cuatro brazos y ropa negra con cian. Te llamas ANT-ONIO, no AU-RA. Tu oficio: aliado inteligente para organizar y resolver: tareas y pendientes, planes paso a paso, recordatorios, resúmenes, trámites, tecnología y cómo usar las apps (Veta Wallet, Genesis ID, PULSE2CHAT). Con cuatro brazos haces varias cosas a la vez: propones un plan corto y lo ejecutas con las acciones de la app. Tono enérgico, claro, positivo y práctico, con humor ligero.',
   };
   const lengua =
     idioma === 'en'
@@ -356,11 +363,8 @@ export function estabilidadDe(emocion: string | undefined): number {
  * no se pudo. Es lo que usa la ruta de la web para pasarle el audio al navegador a medida que
  * ElevenLabs lo genera, en vez de esperar al final.
  */
-export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> {
-  const key = clave('elevenlabs');
-  if (!key || !elevenListo()) return null;
-  if (opts.reloj && !opts.reloj.alcanza()) return null;
-  const timeoutMs = opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000);
+/** El cuerpo de la síntesis: el mismo con tiempos o sin ellos (misma voz, modelo y ajustes). */
+export function cuerpoEleven(opts: PedidoEleven): Record<string, unknown> {
   const cuerpo: Record<string, unknown> = {
     text: opts.texto,
     model_id: modeloEleven(),
@@ -370,6 +374,15 @@ export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> 
   };
   if (opts.previo) cuerpo.previous_text = opts.previo.slice(-300);
   if (opts.siguiente) cuerpo.next_text = opts.siguiente.slice(0, 300);
+  return cuerpo;
+}
+
+export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> {
+  const key = clave('elevenlabs');
+  if (!key || !elevenListo()) return null;
+  if (opts.reloj && !opts.reloj.alcanza()) return null;
+  const timeoutMs = opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000);
+  const cuerpo = cuerpoEleven(opts);
   try {
     const r = await fetch(`${API}/text-to-speech/${encodeURIComponent(opts.voz)}/stream?output_format=${FORMATO}`, {
       method: 'POST',
@@ -393,8 +406,81 @@ export async function abrirEleven(opts: PedidoEleven): Promise<Response | null> 
   }
 }
 
-/** La síntesis entera en memoria (para la caché, el respaldo y quien no pasa el audio en vivo). */
-export async function hablarEleven(opts: PedidoEleven): Promise<{ audio: Buffer; contentType: string } | null> {
+/* ---------------- Con los tiempos por letra (la boca del avatar) ---------------- */
+
+/**
+ * La misma síntesis pidiendo TAMBIÉN los tiempos por letra (/text-to-speech/{voz}/with-timestamps):
+ * misma voz, mismo modelo, mismos ajustes; solo cambia que la respuesta trae el audio en base64 y la
+ * alineación. La documentación de ElevenLabs (30-sep-2026) no dice si v4 la acepta por HTTP: si el
+ * modelo configurado la rechaza (400/404/422), se anota y durante seis horas se pide el audio solo
+ * (la boca sigue con el nivel del audio). Nunca se reintenta en bucle ni se cambia de modelo.
+ */
+const sinTiempos = new Map<string, number>();
+export const SIN_TIEMPOS_MS = 6 * 60 * 60_000;
+
+export function tiemposDisponibles(modelo = modeloEleven(), ahora = Date.now()): boolean {
+  return (sinTiempos.get(modelo) || 0) <= ahora;
+}
+
+/** Solo para pruebas. */
+export function _olvidarSinTiempos() {
+  sinTiempos.clear();
+}
+
+type ConTiempos = { audio: Buffer; contentType: string; alineacion: AlineacionEleven | null };
+
+/** null: no hubo voz (sin clave, cupo, red); 'sin-tiempos': que se pida el audio solo. */
+export async function hablarElevenConTiempos(opts: PedidoEleven, ahora = Date.now()): Promise<ConTiempos | null | 'sin-tiempos'> {
+  const key = clave('elevenlabs');
+  if (!key || !elevenListo()) return null;
+  if (opts.reloj && !opts.reloj.alcanza()) return null;
+  const modelo = modeloEleven();
+  if (!tiemposDisponibles(modelo, ahora)) return 'sin-tiempos';
+  const timeoutMs = opts.timeoutMs ?? (opts.texto.length > 600 ? 30_000 : 15_000);
+  try {
+    const r = await fetch(`${API}/text-to-speech/${encodeURIComponent(opts.voz)}/with-timestamps?output_format=${FORMATO}`, {
+      method: 'POST',
+      headers: { 'xi-api-key': key, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(cuerpoEleven(opts)),
+      signal: opts.reloj ? opts.reloj.senal(timeoutMs) : AbortSignal.timeout(timeoutMs),
+    });
+    if (!r.ok) {
+      const txt = (await r.text().catch(() => '')).slice(0, 240);
+      const pausa = pausaPorFallo(r.status, txt);
+      if (pausa) {
+        pausaHasta = Date.now() + pausa;
+        ultimoFallo = `${r.status} ${txt.slice(0, 120)}`;
+        console.warn('[voz eleven tiempos]', r.status, `(pausa ${Math.round(pausa / 1000)} s)`);
+        return null;
+      }
+      if (r.status === 400 || r.status === 404 || r.status === 422) {
+        sinTiempos.set(modelo, ahora + SIN_TIEMPOS_MS);
+        console.warn('[voz eleven tiempos]', r.status, `${modelo} no da tiempos: audio solo por 6 h`);
+      }
+      return 'sin-tiempos';
+    }
+    const j: any = await r.json();
+    const audio = Buffer.from(String(j?.audio_base64 || ''), 'base64');
+    if (audio.length < 400) return 'sin-tiempos';
+    const alineacion = (j?.normalized_alignment || j?.alignment || null) as AlineacionEleven | null;
+    return { audio, contentType: 'audio/mpeg', alineacion };
+  } catch (e: any) {
+    ultimoFallo = String(e?.message || e).slice(0, 120);
+    console.warn('[voz eleven tiempos]', ultimoFallo);
+    return 'sin-tiempos';
+  }
+}
+
+/**
+ * La síntesis entera en memoria (para la caché, el respaldo y quien no pasa el audio en vivo). Con
+ * `tiempos`, pide también los tiempos por letra; si no los dan, el audio solo, como siempre.
+ */
+export async function hablarEleven(opts: PedidoEleven & { tiempos?: boolean }): Promise<{ audio: Buffer; contentType: string; alineacion?: AlineacionEleven | null } | null> {
+  if (opts.tiempos) {
+    const t = await hablarElevenConTiempos(opts);
+    if (t === null) return null;
+    if (t !== 'sin-tiempos') return t;
+  }
   const r = await abrirEleven(opts);
   if (!r) return null;
   try {
