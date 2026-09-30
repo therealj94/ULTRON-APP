@@ -804,6 +804,56 @@ Queda aparte la capa «Calles»: las teselas públicas de OpenStreetMap contesta
 navegador con su política de uso. Se resuelve con las teselas propias servidas desde el nodo
 (Protomaps), que está pendiente junto con la puerta TLS del nodo.
 
+## Un solo catastro, restricciones y carteras — **hecho y probado contra PostGIS (30-09-2026)**
+
+**El problema.** En producción se habían ido subiendo varias versiones del catastro a la vez: el
+nacional de junio de 2026 (1080 derechos), trece capas «por estado» de otra exportación, los
+polígonos de los proyectos propios y zonas de JICA. Todo lo que traía titular entró como concesión:
+1782 «concesiones», 1191 traslapes, 219 de ellos entre una concesión y su propia copia. Las cifras,
+los vencimientos y el recorrido salían de esa mezcla.
+
+**Ordenar el catastro** (`server/electrum/ordenar.ts`, Infraestructura → «Ordenar catastro», solo
+mando, con la palabra ORDENAR; o `scripts/electrum/ordenar-catastro.ts [--aplicar]`). Primero
+propone, capa por capa, y nada cambia hasta aplicar:
+
+| Acción | Qué es | Qué pasa |
+|---|---|---|
+| oficial | el catastro vigente (el de «derechos mineros» con más concesiones; a igualdad, el más reciente) | se queda en `concesion`: es lo único que cuentan herramientas, tablero, mapa y recorrido |
+| borrar | una exportación vieja del mismo padrón (≥ 60 % de sus concesiones caen ≥ 80 % dentro del oficial) o una capa de geografía repetida | se borra con bitácora; el original en el cubo queda |
+| histórico | JICA-MMAJ y estudios viejos | pasa a entidades con rol `historico`: capa que se enciende a mano |
+| proyecto | polígonos propios dibujados sobre derechos | rol `proyecto`; los derechos oficiales que tapan entran a una **cartera** con el nombre de su carpeta |
+
+**Restricciones** (`server/electrum/restricciones.ts`). Para cada concesión: de qué área protegida
+(y de qué **zona**: núcleo, amortiguamiento…), con qué decreto, categoría, co-manejador y vigencia
+del plan de manejo; qué microcuenca (declarada o en trámite, acuerdo, población que abastece) y
+qué patrimonio forestal (régimen y acuerdo). Todo sale de los .dbf de ICF, que antes se tiraban.
+Semáforo con base legal citada del documento cargado (Ley General de Minería, Decreto 238-2012,
+Art. 48 a), pág. 11):
+
+- **rojo**: pisa un área protegida declarada (cualquier zona) o una microcuenca declarada;
+- **ámbar**: microcuenca en trámite, patrimonio forestal, caseríos dentro, traslape con otro titular;
+- **verde**: nada de eso *en las capas cargadas*; una capa que falta se dice, no da verde.
+
+Menos de 0,05 ha o de 0,5 % es ruido de borde y no cuenta. La ficha (`concesion_entorno`) y el PDF
+lo traen; el semáforo va lo primero en la ficha.
+
+**Carteras** (`server/electrum/cartera.ts`, tabla `cartera`/`cartera_concesion`). Una capa cuyas
+concesiones ya están (≥ 80 %) en el catastro no se descarta: se registra como cartera, por huella
+de geometría (sobrevive a recargar el catastro). Caso real: las 90 «Zonas INDEXSA con anotación
+provisional» son 90 derechos del catastro con el mismo código, nombre y polígono. `cartera_analisis`
+(y `/api/electrum/cartera`, la tarjeta del tablero y el capítulo «Su cartera» del recorrido) dan
+estado, semáforo y prioridad. Con los datos reales: **74 verdes, 1 ámbar, 15 rojas**; Río Alao
+(S-Explorar, 1000,6 ha) cae 99,3 % en amortiguamiento y 0,7 % en núcleo de Montaña de Botaderos
+Carlos Escaleras Mejía (Decreto 127-2012 y 18-2024).
+
+**No duplicar.** Una capa de geografía idéntica (misma huella de todas sus geometrías) no vuelve a
+entrar: subir otra vez AREAS PROTEGIDAS decía «la cargué» y la ficha contaba cada parque dos veces.
+Volver a subir el mismo catastro no crea cartera. La fecha vacía del .dbf (30-11-1899) no entra
+como vencimiento: 703 concesiones salían «vencidas hace 46 324 días».
+
+Esquema **v10** (lo aplica el servidor al arrancar): roles `historico` y `proyecto`, `capa.huella`,
+`cartera`, `cartera_concesion`, y el `tipo` de las concesiones sacado de `clasificac`.
+
 ## Estado
 
 | Pieza | Estado |

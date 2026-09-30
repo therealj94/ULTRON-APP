@@ -252,6 +252,15 @@ const TEXTO_UNIDAD = `(coalesce(e.atributos->>'DESCRIPCION', '') || ' ' || coale
 const ES_INTRUSIVA = `(coalesce(e.atributos->>'CLASE_ROCA', '') = 'intrusiva' OR (coalesce(e.atributos->>'CLASE_ROCA', '') = '' AND ${TEXTO_UNIDAD} ~* 'plut|intrus|granit|diorit|tonalit|batolit'))`;
 const ES_CARBONATO = `(coalesce(e.atributos->>'CLASE_ROCA', 'sedimentaria') IN ('sedimentaria', '') AND ${TEXTO_UNIDAD} ~* 'caliz|carbonat|limestone|marin')`;
 const ATR = (patron: string) => `(SELECT trim(a.v) FROM jsonb_each_text(e.atributos) AS a(k, v) WHERE a.k ~* '${patron}' AND a.v ~ '[A-Za-z]' LIMIT 1)`;
+/*
+ * El nombre de una unidad de roca. Los mapas geológicos locales (Minas de Oro, Olancho, La Lola…)
+ * no traen UNIDAD/DESCRIPCION como los de data/geologia, y la unidad salía «entidad 61» o «0 0»: el
+ * nombre de relleno del cargador o un código vacío. Solo vale un texto con letras; si no hay, se busca
+ * en los campos con que esos mapas suelen llamarla.
+ */
+const CON_LETRA = (x: string) => `(CASE WHEN ${x} ~ '[A-Za-z]' AND ${x} !~ '^entidad [0-9]+$' THEN trim(${x}) END)`;
+const ATR_UNIDAD = '^(unidad|unit|simbol|símbol|symbol|sigla|cod_?geo|glg|formac|litolog|lithol)';
+const ATR_DESCRIPCION = '^(descrip|desc_|litolog|lithol|tipo_?roca|roca|rock|formac)';
 
 /* ------------------------------------------------------------------ el análisis */
 
@@ -281,8 +290,8 @@ export async function geologiaDe(z: Zona): Promise<Geologia | { error: string }>
       ? consulta<{ u: string; d: string; ed: string; cl: string; capa: string; ha: number; km: number }>(
           `WITH ${Z('$3')},
            t AS (
-             SELECT coalesce(nullif(e.atributos->>'UNIDAD', ''), e.nombre, 'sin código') AS u,
-                    coalesce(nullif(e.atributos->>'DESCRIPCION', ''), e.nombre, '') AS d,
+             SELECT coalesce(${CON_LETRA(`e.atributos->>'UNIDAD'`)}, ${ATR(ATR_UNIDAD)}, ${CON_LETRA('e.nombre')}, 'sin nombre') AS u,
+                    coalesce(${CON_LETRA(`e.atributos->>'DESCRIPCION'`)}, ${ATR(ATR_DESCRIPCION)}, '') AS d,
                     coalesce(e.atributos->>'EDAD', '') AS ed, coalesce(e.atributos->>'CLASE_ROCA', '') AS cl,
                     k.nombre AS capa, ${VALIDA} AS g
                FROM entidad_geo e JOIN capa k ON k.id = e.capa_id, z
@@ -394,7 +403,10 @@ export async function geologiaDe(z: Zona): Promise<Geologia | { error: string }>
 
   /* --- litología --- */
   const todas: Unidad[] = unidades.map((u) => ({
-    unidad: u.u, descripcion: u.d, edad: u.ed, clase: aClase(u.cl, `${u.d} ${u.u}`), capa: u.capa,
+    unidad: u.u === 'sin nombre' ? `unidad sin nombre (${u.capa})` : u.u,
+    // La misma palabra como unidad y descripción se decía dos veces («Tv tv»).
+    descripcion: norm(u.d) === norm(u.u) ? '' : u.d,
+    edad: u.ed, clase: aClase(u.cl, `${u.d} ${u.u}`), capa: u.capa,
     ha: r2(u.ha || 0), pct: zona.ha > 0 ? r2(((u.ha || 0) / zona.ha) * 100) : 0, km: r2(u.km || 0),
   }));
   const dentro = todas.filter((u) => u.ha > 0.01).sort((a, b) => b.ha - a.ha);
@@ -523,9 +535,9 @@ export function indiciosDe(g: Geologia): Geologia['indicios'] {
       !!i.dentro.length || !!cercano,
       2,
       i.dentro.length
-        ? `Hay roca intrusiva dentro: ${i.dentro.map((u) => `${u.unidad} (${u.descripcion.toLowerCase()}, ${nf(u.pct)} %)`).join('; ')}.`
+        ? `Hay roca intrusiva dentro: ${i.dentro.map((u) => `${u.unidad} (${u.descripcion ? `${u.descripcion.toLowerCase()}, ` : ''}${nf(u.pct)} %)`).join('; ')}.`
         : cercano
-          ? `Hay un intrusivo a ${km1(cercano.km)}: ${cercano.unidad} (${cercano.descripcion.toLowerCase()}).`
+          ? `Hay un intrusivo a ${km1(cercano.km)}: ${cercano.unidad}${cercano.descripcion ? ` (${cercano.descripcion.toLowerCase()})` : ''}.`
           : 'No hay roca intrusiva dentro ni a menos de 5 km en el mapa cargado.',
       [M.porfido, M.skarn, M.vetasIntrusivo]
     );
@@ -643,14 +655,14 @@ export function geologiaEnTexto(g: Geologia): string {
   l.push(`GEOLOGÍA — ${g.zona.nombre} (${nf(g.zona.ha, 0)} ha; entorno de ${g.radioKm} km).`);
   if (g.faltan.length) l.push(`No cargado (no lo afirmo ni lo niego): ${g.faltan.join(', ')}.`);
   if (g.litologia.dentro.length) {
-    l.push(`Rocas${g.escala ? ` (mapa ${g.escala})` : ''}: ${g.litologia.dentro.slice(0, 6).map((u) => `${u.unidad} ${u.descripcion.toLowerCase()}${u.edad ? `, ${u.edad}` : ''} — ${nf(u.pct)} %`).join('; ')}.`);
+    l.push(`Rocas${g.escala ? ` (mapa ${g.escala})` : ''}: ${g.litologia.dentro.slice(0, 6).map((u) => `${u.unidad}${u.descripcion ? ` ${u.descripcion.toLowerCase()}` : ''}${u.edad ? `, ${u.edad}` : ''} — ${nf(u.pct)} %`).join('; ')}.`);
   }
   const i = g.intrusivos;
   if (g.fuentes.litologia?.length) {
     l.push(
       i.dentro.length
         ? `Intrusivos dentro: ${i.dentro.map((u) => `${u.unidad} (${nf(u.pct)} %)`).join(', ')}; ${nf(i.kmContactoDentro)} km de contacto intrusivo dentro.`
-        : i.cerca.length ? `Intrusivo más cercano: ${i.cerca[0].unidad} ${i.cerca[0].descripcion.toLowerCase()}, a ${km1(i.cerca[0].km)}.` : `Sin intrusivos a menos de ${g.radioKm} km.`
+        : i.cerca.length ? `Intrusivo más cercano: ${i.cerca[0].unidad}${i.cerca[0].descripcion ? ` ${i.cerca[0].descripcion.toLowerCase()}` : ''}, a ${km1(i.cerca[0].km)}.` : `Sin intrusivos a menos de ${g.radioKm} km.`
     );
     if (i.kmContactoCarbonato > 0) l.push(`Contacto intrusivo–estratos marinos en el entorno: ${nf(i.kmContactoCarbonato)} km (ambiente de skarn).`);
   }

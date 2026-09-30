@@ -169,6 +169,29 @@ test('catastro en PostGIS', { skip: HAY ? false : 'sin ELECTRUM_DB_URL: no hay b
     assert.equal(await recalcularTraslapes(), 1, 'sigue habiendo un solo traslape, no cuatro');
   });
 
+  // Con el catastro de junio de 2026, 703 concesiones salían «vencidas hace 46 324 días (1899-11-30)»:
+  // es la fecha VACÍA del .dbf leída como fecha. No es un vencimiento, es la falta de uno.
+  await t.test('la fecha vacía del .dbf (1899) no entra como vencimiento', async () => {
+    const copia = structuredClone(capa!);
+    const f = copia.geojson.features[0] as any;
+    const mover = (c: any): any => (typeof c[0] === 'number' ? [c[0] + 1, c[1]] : c.map(mover));
+    f.geometry.coordinates = mover(f.geometry.coordinates);
+    f.properties = { ...f.properties, VENCE: new Date(Date.UTC(1899, 10, 30)), OTORGADA: '1899-12-30' };
+    copia.geojson.features = [f];
+    const r = await guardarCapa(copia, { avisos: [], subidoPor: 'pruebas' });
+    try {
+      assert.equal(r.concesiones, 1);
+      const [c] = await consulta<{ vence: string | null; otorgada: string | null }>(
+        `SELECT vence::text, otorgada::text FROM concesion WHERE capa_id = $1`,
+        [r.capaId]
+      );
+      assert.equal(c.vence, null);
+      assert.equal(c.otorgada, null);
+    } finally {
+      await consulta('DELETE FROM capa WHERE id = $1', [r.capaId]);
+    }
+  });
+
   // ── Reanudar una carga grande ───────────────────────────────────────────────────────────────
   //
   // 1,2 GB de expedientes no entran de una sentada: se corta la red, se cae la sesión, alguien hace
