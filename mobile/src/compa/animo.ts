@@ -136,9 +136,11 @@ export function expresionDeEmocion(e: Emocion): Expresion {
       return 'encantada';
     case 'sorpresa':
       return 'sorprendida';
-    case 'curioso':
     case 'pensando':
       return 'piensa';
+    case 'curioso':
+      // Una pregunta se dice con la cara tranquila (los puntitos de pensar, hablando, confunden).
+      return 'tranquila';
     case 'preocupado':
     case 'triste':
     case 'cansado':

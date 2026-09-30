@@ -601,7 +601,7 @@ const s = StyleSheet.create({
   cuerpo: { width: LADO, height: LADO },
   lienzo: { width: LADO, height: LADO },
   retrato: { position: 'absolute', overflow: 'hidden', backgroundColor: '#1F1B18' },
-  foto: { width: '100%', height: '100%', transform: [{ scale: 1.9 }, { translateY: 14 }] },
+  foto: { width: '100%', height: '100%', transform: [{ scale: 1.5 }, { translateY: 9 }] },
   globoFila: { position: 'absolute', top: 0, alignItems: 'center' },
   globo: {
     maxWidth: '100%',

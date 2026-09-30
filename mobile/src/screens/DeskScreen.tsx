@@ -1394,6 +1394,18 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
   useEffect(() => {
     vozRef.current.precalentar();
   }, []);
+  // El perfil cambió en otra pantalla (ajustes, la primera vez): la mesa toma el avatar nuevo en silencio.
+  useEffect(
+    () =>
+      escuchar('perfil', (p) => {
+        setAvatar((antes) => {
+          if (antes === p.avatar) return antes;
+          setAvatarVoz(p.avatar);
+          return p.avatar;
+        });
+      }),
+    []
+  );
 
   /*
    * Llamadas: al empezar, la mesa corta lo que pensaba o decía, apaga la cámara (sin guardarlo: es
@@ -1643,9 +1655,9 @@ function Mesa({ user, onLogout, recienElegido = false }: Props) {
     );
   const esClaudio = avatarId === 'claudio';
   const acciones = avatarPorId(avatarId).acciones;
-  // La compañera pasea por encima de lo que no se debe tapar: la barra de escribir del chat de la
-  // mesa (cuadro), los botones (acostado) o los botones con los atajos (de pie, sin cuadro).
-  const sueloMesa = enCuadro ? (horizontal ? 84 : 92) : horizontal ? 88 : 150;
+  // La compañera pasea por encima de lo que no se debe tapar: los atajos y la barra de escribir del
+  // chat de la mesa (cuadro) o los botones con los atajos (de pie); acostado, solo los botones.
+  const sueloMesa = enCuadro || !horizontal ? 150 : 88;
   useEffect(() => {
     sueloCompa.emitir(sueloMesa);
   }, [sueloMesa]);
