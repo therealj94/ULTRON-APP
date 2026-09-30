@@ -48,7 +48,9 @@ const nodo = http.createServer((req, res) => {
     const msgs = j.messages || [];
     const ultimo = String(msgs.at(-1)?.content || '');
     const dicho = ultimo.split('\n\nJunta: ').pop() || '';
-    alNodo.push({ system: String(msgs[0]?.content || ''), ultimo, stream: !!j.stream });
+    // `system` es todo lo que el modelo recibe como instrucciones: el system (lo fijo) y el contexto del
+    // turno, que va en el mensaje de la persona (server/prompt-turno.ts, para que el nodo reutilice lo leído).
+    alNodo.push({ system: `${String(msgs[0]?.content || '')}\n${ultimo}`, ultimo, stream: !!j.stream });
     const respuesta = contestar(dicho);
     if (!j.stream) return res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ message: { content: respuesta } }));
     res.writeHead(200, { 'content-type': 'application/x-ndjson' });

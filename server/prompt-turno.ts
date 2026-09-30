@@ -51,8 +51,13 @@ export type PiezasTurno = {
  *
  * 30-sep: con la hora y los HECHOS mezclados arriba, el nodo releía ~4 000 fichas en cada turno y la
  * primera palabra de la llamada tardaba 7–9 s (ElevenLabs corta a los 4).
+ *
+ * `contexto` es lo del turno sin los HECHOS. El turno de AU-RA lo manda en el MENSAJE de la persona, no
+ * en el system: el Qwen de la A10G (llama.cpp con decodificación especulativa) solo puede volver atrás
+ * hasta un punto guardado, y guarda uno al empezar cada mensaje de la persona, nunca dentro del system.
+ * Con cualquier cosa que cambie dentro del system, relee todo (medido: 6 s por turno con 5 800 fichas).
  */
-export function piezasDelTurno(p: PiezasTurno, hora?: Date): { fijo: string; delTurno: string } {
+export function piezasDelTurno(p: PiezasTurno, hora?: Date): { fijo: string; delTurno: string; contexto: string } {
   const miembro = p.nivel === 'miembro';
   const perfil = p.perfil || perfilPara(p.nivel);
   const recuerdos = miembro
@@ -66,17 +71,19 @@ ${perfil.conocimiento}
 ${recuerdos}
 ${miembro ? '' : `${hechosCatalogo()}\n`}${miembro && p.memoriaMiembro ? p.memoriaMiembro : promptMemoria(p.quienMem, { nivel: p.nivel, nombre: p.nombre })}`;
   const agente = promptAgente(p.agente, p.nivel);
-  const delTurno = [
+  // Lo del turno sin los HECHOS (el turno los pone él mismo, y el harness les suma lo que devuelve cada
+  // herramienta): va en el MENSAJE de la persona, no en el system (server.ts mensajesQwen).
+  const contexto = [
     lineaAhora(hora),
     p.bloquePerfil || '',
     `Modo de mesa pedido: ${p.modo}.${p.canal === 'mesa' && p.lineaAvatar ? `\n${p.lineaAvatar}` : ''}`,
     agente,
     p.bloqueApp || '',
-    `HECHOS:\n${p.hechos.join('\n') || '(ninguno)'}`,
   ]
     .filter((x) => x.trim())
     .join('\n\n');
-  return { fijo, delTurno };
+  const delTurno = `${contexto}\n\nHECHOS:\n${p.hechos.join('\n') || '(ninguno)'}`;
+  return { fijo, delTurno, contexto };
 }
 
 /** El prompt del turno de una pieza (lo fijo y después lo del turno). */
