@@ -10,19 +10,20 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { CONECTAR_MAX_MS, ControlSesion, SORDA_MS } from '../sesion.ts';
 import {
-  AVISO_TOPE_MS,
   CicloLlamada,
-  REINTENTO_LLAMADA_MS,
-  RUIDO_MAX,
-  SILENCIADO_CIERRA_MS,
-  SILENCIO_COLGAR_MAX_MS,
-  SILENCIO_COLGAR_MS,
+  ESPERA_SIGUES_MS,
+  FIN_VISIBLE_MS,
+  MENSAJE_LLAMAME,
+  MENSAJE_SIGUES,
+  PREGUNTA_SIGUES_MS,
+  SONAR_MS,
   avisoMinutos,
-  conNombre,
   diaHonduras,
-  esDespedida,
   etiquetaCiclo,
-  ruidoPermite,
+  leyendaLlamada,
+  llamadaActiva,
+  llamadaTerminada,
+  relojLlamada,
 } from '../llamadaCiclo.ts';
 import { Precalentador } from '../permiso.ts';
 import { coordinarLlamadas } from '../llamada.ts';
@@ -384,7 +385,7 @@ prueba('ánimo: con la conversación abierta no hace ruidos (el micrófono los o
   assert.equal(expresion(r2.animo, 20), 'encantada');
 });
 
-prueba('ánimo: doble toque duerme (silencio de verdad) y otro la despierta', () => {
+prueba('ánimo: doble toque con la sesión abierta la silencia; fuera de una llamada dice cómo llamarla (y nunca «te escucho» sin que nadie escuche)', () => {
   let a = reducir(ANIMO_INICIAL, { tipo: 'voz', voz: vozAbierta }, 0).animo;
   let r = reducir(a, { tipo: 'dobleToque' }, 10);
   assert.ok(tipos(r.efectos).includes('alternarVoz'));
@@ -392,11 +393,12 @@ prueba('ánimo: doble toque duerme (silencio de verdad) y otro la despierta', ()
   a = reducir(r.animo, { tipo: 'voz', voz: { ...vozAbierta, silenciada: true } }, 20).animo;
   assert.equal(expresion(a, 30), 'dormida');
   assert.equal(puedeCaminar(a, 30), false);
+  // Sin llamada (la llamada del avatar se pide con «llámame»): no hay nada que despertar con dos toques.
   r = reducir(a, { tipo: 'dobleToque' }, 40);
-  assert.ok(tipos(r.efectos).includes('alternarVoz'));
-  // Al tocarla todavía no escucha nadie: el globito no puede decir «te escucho» (José: «me dice
+  assert.ok(!tipos(r.efectos).includes('alternarVoz'));
+  assert.ok(r.efectos.some((e) => e.tipo === 'globo' && /llámame/.test(e.texto)), 'reacciona al toque y dice cómo llamarla');
+  // Al tocarla nadie escucha todavía: el globito no puede decir «te escucho» (José: «me dice
   // "estoy escuchando" pero nunca me escuchó»). Lo dice cuando la voz de verdad escucha.
-  assert.ok(r.efectos.some((e) => e.tipo === 'globo'), 'reacciona al toque');
   assert.ok(!r.efectos.some((e) => e.tipo === 'globo' && /escucho|listening|oídos|ears/i.test(e.texto)), JSON.stringify(r.efectos));
   const oye = reducir(r.animo, { tipo: 'voz', voz: vozAbierta }, 60);
   assert.ok(oye.efectos.some((e) => e.tipo === 'globo'), '«te escucho» cuando la voz escucha');
@@ -931,7 +933,7 @@ prueba('manos: el contexto le dice al servidor qué manos sabe hacer este teléf
   const enviados = [];
   const ctx = new ContextoApp({ enviar: async (c) => enviados.push(c), contactos: async () => [], escuchar: () => () => {}, esperar: (f) => (f(), () => {}) });
   const c = await ctx.enviarAhora(true);
-  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada']);
+  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'llamame']);
   assert.deepEqual([...c.manos], [...MANOS_APP]);
 });
 
@@ -1546,229 +1548,226 @@ prueba('frases de estado: la compañera las usa en su globito (con su avatar e i
   }
 });
 
-/* ── el ciclo de la llamada (José 30-sep: llamada, pero sin quedar conectada siempre) ─────────── */
+/* ── la llamada del avatar (José 30-sep: «le digo que me llame y hace la animación "te están llamando"») ── */
 
 function cicloDePrueba(o = {}) {
-  const r = { t: 0 };
-  const { nombre, idioma, ...resto } = o;
-  const c = new CicloLlamada({ reloj: () => r.t, nombre: () => nombre || 'AU-RA', idioma: () => idioma || 'es', ...resto });
+  const r = { t: Date.UTC(2026, 8, 30, 20, 0) };
+  const c = new CicloLlamada({ reloj: () => r.t, idioma: () => 'es', ...o });
   const tipos2 = (ef) => ef.map((e) => e.tipo);
   return { c, r, tipos2 };
 }
+const RECL = { tipo: 'recordatorio', texto: 'Llamar a Beto', base: 'aura-rec-x1', paso: 'l1', cuando: Date.UTC(2026, 8, 30, 20, 0), dueno: 'seu1' };
 
-prueba('ciclo: la palabra de activación es el nombre del avatar («ahora» nunca), y se quita de la frase', () => {
-  assert.deepEqual(conNombre('Aura, ¿qué hora es?', 'AU-RA'), { tenia: true, resto: '¿qué hora es?' });
-  assert.equal(conNombre('oye aura apaga la cámara', 'AU-RA').resto, 'apaga la cámara');
-  assert.equal(conNombre('¿qué hora es, Aura?', 'AU-RA').resto, '¿qué hora es');
-  assert.equal(conNombre('au ra, ven', 'AU-RA').tenia, true);
-  assert.equal(conNombre('ahora no puedo', 'AU-RA').tenia, false, '«ahora» no la despierta');
-  assert.equal(conNombre('Laura vino ayer', 'AU-RA').tenia, false);
-  assert.equal(conNombre('Claudio, ¿cómo va el oro?', 'Claudio').resto, '¿cómo va el oro?');
-  assert.equal(conNombre('antonio abre mis chats', 'ANT-ONIO').resto, 'abre mis chats');
-  assert.equal(conNombre('Guardián, ¿estás ahí?', 'Guardián').tenia, true);
-  assert.equal(conNombre('Aura', 'AU-RA').resto, '', 'solo el nombre: abre la llamada sin primer mensaje');
-});
-
-prueba('ciclo: en espera despierta con su nombre; de frente a la mesa sin nombre solo con poco ruido; en los chats sin nombre no', () => {
-  const { c } = cicloDePrueba();
-  c.encender();
-  assert.equal(c.estado(), 'espera');
-  assert.deepEqual(c.frase('Aura, apaga la cámara', { mesaVisible: false, ruido: 0.9 }), { tipo: 'despertar', resto: 'apaga la cámara', porNombre: true });
-  assert.equal(c.frase('¿qué hora es?', { mesaVisible: true, ruido: 0.1 }).tipo, 'despertar', 'de frente a la mesa, callado: le habla a ella');
-  assert.equal(c.frase('¿qué hora es?', { mesaVisible: true, ruido: 0.6 }).tipo, 'ignorar', 'con la tele: pide su nombre');
-  assert.equal(c.frase('¿qué hora es?', { mesaVisible: true, ruido: null }).tipo, 'ignorar', 'sin saber el ruido: pide su nombre');
-  assert.equal(c.frase('ya voy mamá', { mesaVisible: false, ruido: 0.05 }).tipo, 'ignorar', 'en los chats se habla con los amigos');
-  assert.equal(c.frase('mmm', { mesaVisible: true, ruido: 0.05 }).tipo, 'ignorar', 'una palabra suelta no');
-  assert.ok(ruidoPermite(RUIDO_MAX) && !ruidoPermite(RUIDO_MAX + 0.01));
-});
-
-prueba('ciclo: despertar con lo dicho → conectando → en llamada, y lo dicho entra como primer mensaje (no se pierde)', () => {
-  const { c, tipos2 } = cicloDePrueba();
-  c.encender();
-  assert.deepEqual(tipos2(c.despertar('¿qué hora es?')), ['abrir']);
-  assert.equal(c.estado(), 'conectando');
-  const ef = c.conectado();
-  assert.equal(c.estado(), 'en_llamada');
-  assert.deepEqual(ef, [{ tipo: 'primerMensaje', texto: '¿qué hora es?' }]);
-  assert.deepEqual(c.conectado(), [], 'una sola vez');
-});
-
-prueba('ciclo: cuelga tras 30 s de silencio sin turnos (más si la charla fue intensa, máx 60 s) y dice una frase breve', () => {
-  const { c, r, tipos2 } = cicloDePrueba({ nombre: 'Claudio' });
-  c.encender();
-  c.despertar(null);
-  c.conectado();
-  c.agente(true);
-  r.t += 3000;
-  c.agente(false);
-  r.t += SILENCIO_COLGAR_MS - 1;
-  assert.deepEqual(c.tic(), []);
-  r.t += 1;
-  const ef = c.tic();
-  assert.deepEqual(tipos2(ef), ['cerrar']);
-  assert.equal(c.estado(), 'cerrando');
-  const fin = c.cerrada();
-  assert.equal(c.estado(), 'espera');
-  assert.equal(fin[0].tipo, 'despedida');
-  assert.match(fin[0].texto, /Claudio/, 'dice cómo volver a llamarla');
-  // Charla intensa (muchos turnos seguidos): espera más, sin pasar de 60 s.
-  c.despertar(null);
-  c.conectado();
-  for (let i = 0; i < 12; i++) {
-    r.t += 8000;
-    c.turnoUsuario('y entonces qué más');
-    c.agente(true);
-    r.t += 4000;
-    c.agente(false);
-  }
-  assert.equal(c.silencioColgarMs(), SILENCIO_COLGAR_MAX_MS);
-  r.t += SILENCIO_COLGAR_MS + 1000;
-  assert.deepEqual(c.tic(), [], 'con charla intensa todavía no');
-  r.t += SILENCIO_COLGAR_MAX_MS;
-  assert.deepEqual(tipos2(c.tic()), ['cerrar']);
-  // Mientras ella habla no cuelga, por largo que sea.
-  c.cerrada();
-  c.despertar(null);
-  c.conectado();
-  c.agente(true);
-  r.t += 5 * 60_000;
-  assert.deepEqual(c.tic(), []);
-});
-
-prueba('ciclo: «gracias, eso es todo» / «bye»: cuelga cuando ella termina de despedirse (sin frase extra)', () => {
-  const { c, tipos2 } = cicloDePrueba();
-  for (const adios of ['Gracias, eso es todo', 'adiós', 'bye', "that's all", 'nos vemos']) {
-    assert.ok(esDespedida(adios), adios);
-    c.encender();
-    c.despertar(null);
-    c.conectado();
-    c.turnoUsuario(adios);
-    assert.deepEqual(c.agente(true), []);
-    assert.deepEqual(tipos2(c.agente(false)), ['cerrar']);
-    assert.deepEqual(c.cerrada(), [], 'ella ya se despidió: sin frase de colgar');
-    assert.equal(c.estado(), 'espera');
-  }
-  assert.ok(!esDespedida('gracias, ¿y el oro?') && !esDespedida('ahora sí'), 'no cuelga por un «gracias» a secas');
-});
-
-prueba('ciclo: la app detrás cuelga y apaga; al volver, en espera', () => {
-  const { c, tipos2 } = cicloDePrueba();
-  c.encender();
-  c.despertar('hola');
-  c.conectado();
-  assert.deepEqual(tipos2(c.apagar()), ['cerrar']);
-  c.cerrada();
-  assert.equal(c.estado(), 'apagado');
-  assert.equal(c.frase('Aura, hola', { mesaVisible: true, ruido: 0 }).tipo, 'ignorar', 'apagado no escucha');
-  c.encender();
-  assert.equal(c.estado(), 'espera');
-});
-
-prueba('ciclo: doble toque = interruptor silenciar / volver a escuchar (mute real), también en espera', () => {
+prueba('ciclo: la máquina entera — REPOSO → SONANDO → CONECTANDO → EN_LLAMADA ↔ SILENCIADO → COLGADA → REPOSO', () => {
   const { c, r, tipos2 } = cicloDePrueba();
-  c.encender();
-  c.despertar(null);
-  c.conectado();
+  const vistos = [];
+  c.suscribir((e) => vistos.push(e));
+  assert.equal(c.estado(), 'reposo');
+  assert.equal(c.sesionViva(), false, 'en reposo no hay sesión de ElevenLabs');
+  assert.deepEqual(c.llamar({ tipo: 'llamame' }), [{ tipo: 'timbre', on: true }]);
+  assert.equal(c.estado(), 'sonando');
+  assert.equal(c.sesionViva(), false, 'sonando tampoco (no se cobra hasta contestar)');
+  assert.deepEqual(tipos2(c.contestar()), ['timbre', 'contestada', 'abrir']);
+  assert.equal(c.estado(), 'conectando');
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: MENSAJE_LLAMAME }], '«llámame»: el primer mensaje es [[llamada]] (saluda como quien llama)');
+  assert.equal(c.estado(), 'en_llamada');
   assert.deepEqual(c.dobleToque(), [{ tipo: 'silenciar', valor: true }]);
   assert.equal(c.estado(), 'silenciado');
-  assert.ok(c.sesionViva(), 'la sesión sigue (mute), al despertar escucha en el acto');
   assert.deepEqual(c.dobleToque(), [{ tipo: 'silenciar', valor: false }]);
   assert.equal(c.estado(), 'en_llamada');
-  // Silenciado mucho rato: la sesión se cierra (no gasta) y sigue silenciado.
-  c.dobleToque();
-  r.t += SILENCIADO_CIERRA_MS;
-  assert.deepEqual(tipos2(c.tic()), ['dormir']);
-  assert.equal(c.estado(), 'silenciado');
-  assert.equal(c.sesionViva(), false);
-  // Otro doble toque: a escuchar (la llamada).
-  assert.deepEqual(tipos2(c.dobleToque()), ['abrir']);
-  assert.equal(c.estado(), 'conectando');
-  // En espera, el doble toque también silencia (nadie escucha).
-  c.conectado();
-  c.tocarHablar();
-  c.cerrada();
-  assert.equal(c.estado(), 'espera');
-  assert.deepEqual(tipos2(c.dobleToque()), ['dormir']);
-  assert.equal(c.estado(), 'silenciado');
+  r.t += 90_000;
+  assert.deepEqual(c.colgar(), [{ tipo: 'cerrar', motivo: 'persona' }]);
+  assert.equal(c.estado(), 'colgada');
+  assert.equal(c.motivo(), 'persona');
+  assert.deepEqual(c.cerrada(), [], 'el cierre que pedimos no cuenta como corte');
+  r.t += FIN_VISIBLE_MS;
+  c.tic();
+  assert.equal(c.estado(), 'reposo', 'se ve «Llamada terminada» un momento y vuelve a reposo');
+  assert.deepEqual(vistos, ['sonando', 'conectando', 'en_llamada', 'silenciado', 'en_llamada', 'colgada', 'reposo']);
+  assert.equal(c.usadoMs(), 90_000, 'solo se cobra lo conectado');
 });
 
-prueba('ciclo: si no conecta, atiende el oído del teléfono con lo que quedó por contestar, y espera antes de reintentar', () => {
+prueba('ciclo: rechazar → RECHAZADA; no contestar en 60 s → PERDIDA; «llámame» en llamada no suena otra', () => {
+  const a = cicloDePrueba();
+  a.c.llamar({ tipo: 'llamame' });
+  assert.deepEqual(a.tipos2(a.c.rechazar()), ['timbre', 'rechazada']);
+  assert.equal(a.c.estado(), 'rechazada');
+  const b = cicloDePrueba();
+  b.c.llamar(RECL);
+  b.r.t += SONAR_MS - 1000;
+  assert.deepEqual(b.c.tic(), []);
+  b.r.t += 1000;
+  assert.deepEqual(b.c.tic(), [{ tipo: 'timbre', on: false }, { tipo: 'perdida', origen: RECL }]);
+  assert.equal(b.c.estado(), 'perdida');
+  assert.equal(b.c.contestar().length, 0, 'perdida ya no se contesta en la app (el reintento de notifee vuelve a llamar)');
+  const d = cicloDePrueba();
+  d.c.llamar({ tipo: 'llamame' });
+  d.c.contestar();
+  d.c.conectado();
+  assert.deepEqual(d.c.llamar({ tipo: 'llamame' }), []);
+  assert.equal(d.c.estado(), 'en_llamada');
+  // Un recordatorio que llega en plena llamada se dice por la misma llamada (y se da por contestado).
+  assert.deepEqual(d.tipos2(d.c.llamar(RECL)), ['contestada', 'decirEnLlamada']);
+  assert.equal(d.c.llamar(RECL)[1].texto, '[[recordatorio]] Llamar a Beto');
+});
+
+prueba('ciclo: recordatorio → a la hora suena → contestar → el PRIMER MENSAJE es el recordatorio (y la charla sigue)', () => {
+  const { c, tipos2 } = cicloDePrueba();
+  assert.deepEqual(tipos2(c.llamar(RECL)), ['timbre']);
+  assert.equal(c.origen().texto, 'Llamar a Beto');
+  const ef = c.contestar();
+  assert.deepEqual(tipos2(ef), ['timbre', 'contestada', 'abrir']);
+  assert.deepEqual(ef[1].origen, RECL, 'contestada: se quitan el reintento y el aviso final (recordatoriosNativo)');
+  assert.deepEqual(c.conectado(), [{ tipo: 'primerMensaje', texto: '[[recordatorio]] Llamar a Beto' }]);
+  assert.equal(mensajeDeRecordatorio('Llamar a Beto'), '[[recordatorio]] Llamar a Beto', 'la misma forma que manda compa/acciones.ts');
+  c.turnoUsuario('gracias, ¿y qué más tengo hoy?');
+  assert.equal(c.estado(), 'en_llamada', 'sigue la conversación hasta que cuelgue');
+});
+
+prueba('ciclo: silencio 3 min → «¿sigues ahí?» → 20 s sin respuesta → cuelga; si contesta, sigue', () => {
   const { c, r } = cicloDePrueba();
-  c.encender();
-  c.despertar('¿cuánto está el oro?');
-  const ef = c.fallo('no conectó a tiempo');
-  assert.deepEqual(ef, [{ tipo: 'alNativo', texto: '¿cuánto está el oro?', motivo: 'no conectó a tiempo' }]);
-  assert.equal(c.estado(), 'espera');
-  assert.equal(c.frase('Aura, hola', { mesaVisible: true, ruido: 0 }).tipo, 'nativo', 'mientras tanto contesta la mesa');
-  r.t += REINTENTO_LLAMADA_MS;
-  assert.equal(c.frase('Aura, hola', { mesaVisible: true, ruido: 0 }).tipo, 'despertar');
+  c.llamar({ tipo: 'llamame' });
+  c.contestar();
+  c.conectado();
+  r.t += PREGUNTA_SIGUES_MS - 1000;
+  assert.deepEqual(c.tic(), []);
+  r.t += 1000;
+  assert.deepEqual(c.tic(), [{ tipo: 'sigues' }]);
+  assert.equal(MENSAJE_SIGUES, '[[sigues]]');
+  // El avatar lo dice (2 s): su propio «¿sigues ahí?» no reinicia la cuenta; los 20 s cuentan desde que terminó.
+  c.agente(true);
+  r.t += 2000;
+  c.agente(false);
+  r.t += ESPERA_SIGUES_MS - 1000;
+  assert.deepEqual(c.tic(), []);
+  r.t += 1000;
+  assert.deepEqual(c.tic(), [{ tipo: 'cerrar', motivo: 'silencio' }]);
+  assert.equal(c.estado(), 'colgada');
+  assert.equal(c.motivo(), 'silencio');
+  // Si contesta a tiempo, la llamada sigue y la cuenta vuelve a empezar.
+  const b = cicloDePrueba();
+  b.c.llamar({ tipo: 'llamame' });
+  b.c.contestar();
+  b.c.conectado();
+  b.r.t += PREGUNTA_SIGUES_MS;
+  b.c.tic();
+  b.r.t += 5000;
+  b.c.turnoUsuario('sí, aquí estoy');
+  b.r.t += ESPERA_SIGUES_MS * 2;
+  assert.deepEqual(b.c.tic(), []);
+  assert.equal(b.c.estado(), 'en_llamada');
+  // Mientras hablan (el avatar contando algo largo) no pregunta nada.
+  b.c.agente(true);
+  b.r.t += PREGUNTA_SIGUES_MS * 2;
+  assert.deepEqual(b.c.tic(), []);
+  // Configurable.
+  const corto = cicloDePrueba({ preguntaMs: 10_000, esperaSiguesMs: 5_000 });
+  corto.c.llamar({ tipo: 'llamame' });
+  corto.c.contestar();
+  corto.c.conectado();
+  corto.r.t += 10_000;
+  assert.deepEqual(corto.c.tic(), [{ tipo: 'sigues' }]);
+  corto.r.t += 5_000;
+  assert.deepEqual(corto.c.tic(), [{ tipo: 'cerrar', motivo: 'silencio' }]);
+  // Silenciada, cuelga pasado lo mismo (no puede preguntar).
+  const mudo = cicloDePrueba();
+  mudo.c.llamar({ tipo: 'llamame' });
+  mudo.c.contestar();
+  mudo.c.conectado();
+  mudo.c.dobleToque();
+  mudo.r.t += PREGUNTA_SIGUES_MS + ESPERA_SIGUES_MS;
+  assert.deepEqual(mudo.c.tic(), [{ tipo: 'cerrar', motivo: 'silencio' }]);
 });
 
-prueba('ciclo: topes de voz — avisa antes de agotarlos y, agotados, cae al oído del teléfono', () => {
-  const { c, r, tipos2 } = cicloDePrueba({ idioma: 'es' });
-  c.encender();
+prueba('ciclo: colgar corta la sesión y devuelve el oído de la mesa (con el ControlSesion y el dueño del audio reales)', () => {
+  const { c } = cicloDePrueba();
+  const ctl = new ControlSesion('aura', 'es');
+  const ejecutar = (ef) => {
+    for (const e of ef) {
+      if (e.tipo === 'abrir') ctl.iniciar();
+      if (e.tipo === 'cerrar') ctl.terminar();
+      if (e.tipo === 'silenciar') ctl.silenciar(e.valor);
+    }
+  };
+  // Lo que decide DeskScreen: la llamada (sonando o hablando) ocupa el micrófono; si no, la mesa.
+  const dueno = () => duenoAudio({ enLlamada: false, conversacion: ctl.vista().montada || ctl.vista().dormida || llamadaActiva(c.estado()), mesaVisible: true, appActiva: true, companeraVisible: false });
+  assert.equal(dueno(), 'mesa', 'en reposo, la mesa oye (su oído de siempre)');
+  ejecutar(c.llamar({ tipo: 'llamame' }));
+  assert.equal(dueno(), 'conversacion', 'sonando, la mesa suelta el oído (no transcribe el timbre)');
+  ejecutar(c.contestar());
+  ctl.alEstado(ctl.vista().gen, 'escuchando');
+  ejecutar(c.conectado());
+  assert.equal(ctl.vista().montada, true);
+  assert.equal(dueno(), 'conversacion');
+  ejecutar(c.colgar());
+  assert.equal(ctl.vista().montada, false, 'la sesión de ElevenLabs se cerró');
+  assert.equal(dueno(), 'mesa', 'y el oído vuelve a la mesa');
+  ejecutar(c.cerrada());
+  assert.equal(c.estado(), 'colgada');
+});
+
+prueba('ciclo: la app detrás cuelga; una llamada de PULSE2CHAT encima la corta; si no conecta, lo dice la mesa (con el recordatorio)', () => {
+  const a = cicloDePrueba();
+  a.c.llamar({ tipo: 'llamame' });
+  a.c.contestar();
+  a.c.conectado();
+  assert.deepEqual(a.c.apagar(), [{ tipo: 'cerrar', motivo: 'segundo_plano' }]);
+  assert.equal(a.c.estado(), 'colgada');
+  // «Llámame» sonando con la app detrás: perdida. Un recordatorio lo sigue sonando notifee.
+  const b = cicloDePrueba();
+  b.c.llamar({ tipo: 'llamame' });
+  assert.deepEqual(b.tipos2(b.c.apagar()), ['timbre', 'perdida']);
+  const b2 = cicloDePrueba();
+  b2.c.llamar(RECL);
+  assert.deepEqual(b2.c.apagar(), [{ tipo: 'timbre', on: false }]);
+  assert.equal(b2.c.estado(), 'sonando');
+  // PULSE2CHAT: la sesión se cerró por su lado.
+  const d = cicloDePrueba();
+  d.c.llamar({ tipo: 'llamame' });
+  d.c.contestar();
+  d.c.conectado();
+  assert.deepEqual(d.c.cerrada('otra_llamada'), [{ tipo: 'cerrar', motivo: 'otra_llamada' }], 'se avisa al control para que no la reabra al colgar la otra');
+  assert.equal(d.c.motivo(), 'otra_llamada');
+  // No conectó: la mesa dice el recordatorio con su voz.
+  const e = cicloDePrueba();
+  e.c.llamar(RECL);
+  e.c.contestar();
+  assert.deepEqual(e.c.fallo('no conectó a tiempo'), [{ tipo: 'alNativo', texto: 'Llamar a Beto', motivo: 'no conectó a tiempo' }]);
+  assert.equal(e.c.estado(), 'colgada');
+  assert.equal(e.c.motivo(), 'fallo');
+});
+
+prueba('ciclo: minutos — avisa antes de agotarlos, cuelga al agotarse; sin minutos «llámame» no suena y un recordatorio lo dice la mesa', () => {
+  const { c, r, tipos2 } = cicloDePrueba();
   c.fijarTope(5 * 60_000);
-  c.despertar(null);
-  assert.deepEqual(c.conectado(), []);
-  r.t += 5 * 60_000 - AVISO_TOPE_MS - 1;
+  c.llamar({ tipo: 'llamame' });
+  c.contestar();
+  c.conectado();
+  r.t += 3 * 60_000 - 1000;
   c.turnoUsuario('sigo');
   assert.deepEqual(c.tic(), []);
-  r.t += 2;
-  const ef = c.tic();
-  assert.deepEqual(tipos2(ef), ['avisoTope']);
-  assert.match(avisoMinutos(ef[0].restanteMs, 'es'), /2 minutos de voz/);
-  assert.deepEqual(c.tic(), [], 'avisa una vez');
-  // Se acaban en plena llamada: cuelga y atiende el oído del teléfono.
-  r.t += AVISO_TOPE_MS;
-  c.turnoUsuario('una más');
-  assert.deepEqual(tipos2(c.tic()), ['cerrar', 'alNativo']);
-  c.cerrada();
-  assert.equal(c.estado(), 'espera');
-  assert.equal(c.frase('Aura, hola', { mesaVisible: true, ruido: 0 }).tipo, 'nativo');
-  // Otro teléfono ya los gastó: el servidor contesta 429 al abrir.
-  const otro = cicloDePrueba();
-  otro.c.encender();
-  otro.c.despertar('hola');
-  assert.equal(otro.c.fallo('HTTP 429 · Por hoy ya usamos tus 10 minutos de voz')[0].motivo, 'tope');
-  otro.r.t += 60 * 60_000;
-  assert.equal(otro.c.frase('Aura, hola', { mesaVisible: true, ruido: 0 }).tipo, 'nativo');
-  r.t += 60 * 60_000;
-  assert.equal(c.frase('Aura, hola', { mesaVisible: true, ruido: 0 }).tipo, 'nativo', 'sin minutos: contesta la mesa con el oído del teléfono');
-  assert.equal(c.despertar('hola')[0].tipo, 'alNativo');
-});
-
-prueba('ciclo: el indicador (en llamada verde, en espera con su nombre, silenciado, apagado) y los minutos de hoy', () => {
-  assert.deepEqual(etiquetaCiclo('en_llamada', 'AU-RA', 'es', 3 * 60_000 + 5000), { texto: 'en llamada · 3 min hoy', tono: 'verde' });
-  assert.deepEqual(etiquetaCiclo('espera', 'Claudio', 'es'), { texto: 'en espera · di «Claudio»', tono: 'gris' });
-  assert.equal(etiquetaCiclo('silenciado', 'AU-RA', 'en').tono, 'ambar');
-  assert.equal(etiquetaCiclo('apagado', 'AU-RA', 'es').texto, 'apagado');
-  assert.equal(etiquetaCiclo('conectando', 'AU-RA', 'es').tono, 'azul');
-});
-
-prueba('ciclo: los minutos conectados cuentan solo con sesión (en espera no se cobra nada)', () => {
-  const { c, r } = cicloDePrueba();
-  c.encender();
-  r.t += 10 * 60_000;
-  assert.equal(c.usadoMs(), 0, 'en espera: cero minutos');
-  c.despertar(null);
   r.t += 1000;
-  c.conectado();
-  r.t += 59_000;
-  c.dobleToque(); // silenciado con sesión: sigue contando
-  r.t += 30_000;
-  c.dobleToque();
-  c.tocarHablar();
-  c.cerrada();
-  assert.equal(c.usadoMs(), 90_000);
-  r.t += 60 * 60_000;
-  assert.equal(c.usadoMs(), 90_000);
+  assert.deepEqual(tipos2(c.tic()), ['avisoTope']);
+  assert.match(avisoMinutos(2 * 60_000, 'es'), /2 minutos/);
+  r.t += 2 * 60_000;
+  assert.deepEqual(c.tic(), [{ tipo: 'cerrar', motivo: 'tope' }]);
+  assert.equal(c.llamadaDisponible(), false);
+  c.listo();
+  assert.deepEqual(c.llamar({ tipo: 'llamame' }), [{ tipo: 'alNativo', texto: null, motivo: 'tope' }], 'sin minutos, «llámame» no suena');
+  assert.equal(c.estado(), 'reposo');
+  assert.deepEqual(tipos2(c.llamar(RECL)), ['timbre'], 'el recordatorio suena igual (tiene hora)');
+  assert.deepEqual(c.contestar(), [{ tipo: 'timbre', on: false }, { tipo: 'contestada', origen: RECL }, { tipo: 'alNativo', texto: 'Llamar a Beto', motivo: 'tope' }], 'y al contestar lo dice la mesa');
+  // Un 429 al abrir también cuenta.
+  const b = cicloDePrueba();
+  b.c.llamar({ tipo: 'llamame' });
+  b.c.contestar();
+  assert.equal(b.c.fallo('HTTP 429 · tope de voz')[0].motivo, 'tope');
+  assert.equal(b.c.llamadaDisponible(), false);
 });
 
 prueba('ciclo (Codex P2): los minutos de «hoy» cuentan por el día de Honduras, igual que el servidor', async () => {
   const { diaHonduras: diaServidor } = await import(new URL('../../../../server/tope-voz.ts', import.meta.url).href);
-  // A las 23:30 de Honduras ya es el día siguiente en UTC: antes la cuenta se reiniciaba ahí.
   const noche = Date.UTC(2026, 8, 30, 5, 30); // 30-sep 05:30 UTC = 29-sep 23:30 en Tegucigalpa
-  assert.equal(new Date(noche).toISOString().slice(0, 10), '2026-09-30', 'UTC ya cambió de día');
   assert.equal(diaHonduras(noche), '2026-09-29');
   for (const t of [noche, Date.UTC(2026, 8, 30, 6, 0), Date.UTC(2026, 8, 30, 5, 59, 59), Date.UTC(2026, 11, 31, 23, 0), Date.UTC(2027, 0, 1, 6, 1), Date.UTC(2026, 2, 8, 12, 0)]) {
     assert.equal(diaHonduras(t), diaServidor(t), new Date(t).toISOString());
@@ -1776,68 +1775,77 @@ prueba('ciclo (Codex P2): los minutos de «hoy» cuentan por el día de Honduras
 });
 
 prueba('ciclo (Codex P2): «sin minutos» no es para siempre — vuelve con el día nuevo de Honduras, tras la espera o con un permiso con cupo', () => {
-  const inicio = Date.UTC(2026, 8, 30, 18, 0); // 12:00 en Honduras
-  const lleno = () => {
-    const r = { t: inicio };
+  const agotado = (t0) => {
+    const r = { t: t0 };
     const c = new CicloLlamada({ reloj: () => r.t });
-    c.encender();
-    c.despertar('hola');
-    c.fallo('HTTP 429 · tope de voz');
+    c.llamar({ tipo: 'llamame' });
+    c.contestar();
+    c.fallo('HTTP 429');
     assert.equal(c.llamadaDisponible(), false);
     return { c, r };
   };
-  // Solo el cambio de día: se agota a las 23:50 de Honduras y a las 00:05 vuelve.
-  const r2 = { t: Date.UTC(2026, 9, 1, 5, 50) };
-  const b = new CicloLlamada({ reloj: () => r2.t });
-  b.encender();
-  b.despertar('hola');
-  b.fallo('HTTP 429');
-  r2.t = Date.UTC(2026, 9, 1, 5, 59);
-  assert.equal(b.llamadaDisponible(), false, '23:59 de Honduras: el mismo día, sin cupo');
-  r2.t = Date.UTC(2026, 9, 1, 6, 5);
-  assert.equal(b.llamadaDisponible(), true, 'día nuevo de Honduras: cupo renovado');
-  assert.equal(b.frase('Aura, hola', { mesaVisible: true, ruido: 0 }).tipo, 'despertar');
-  // Tras la espera, sin cambio de día.
-  const c = lleno();
-  c.r.t += 6 * 60 * 60_000;
-  assert.equal(c.c.llamadaDisponible(), true);
-  // Un permiso nuevo con cupo (otra vía que ya lo pidió) también lo quita.
-  const d = lleno();
+  const a = agotado(Date.UTC(2026, 9, 1, 5, 50)); // 23:50 de Honduras
+  a.r.t = Date.UTC(2026, 9, 1, 5, 59);
+  assert.equal(a.c.llamadaDisponible(), false, '23:59 de Honduras: el mismo día, sin cupo');
+  a.r.t = Date.UTC(2026, 9, 1, 6, 5);
+  assert.equal(a.c.llamadaDisponible(), true, 'día nuevo de Honduras: cupo renovado');
+  a.c.listo();
+  assert.deepEqual(a.c.llamar({ tipo: 'llamame' }), [{ tipo: 'timbre', on: true }]);
+  const b = agotado(Date.UTC(2026, 8, 30, 18, 0));
+  b.r.t += 6 * 60 * 60_000;
+  assert.equal(b.c.llamadaDisponible(), true);
+  const d = agotado(Date.UTC(2026, 8, 30, 18, 0));
   d.c.fijarTope(4 * 60_000);
   assert.equal(d.c.llamadaDisponible(), true);
-  d.c.fijarTope(0);
-  assert.equal(d.c.llamadaDisponible(), true, 'un cupo en cero no inventa un tope nuevo: eso lo dice el 429');
 });
 
-prueba('ciclo (Codex P2): apagar el modo llamada estando silenciado sin sesión devuelve el oído del teléfono', () => {
-  const { c } = cicloDePrueba();
-  const ctl = new ControlSesion('aura', 'es');
-  const ocupa = () => ctl.vista().montada || ctl.vista().dormida; // VozProvider.vozOcupaMicrofono
-  const ejecutar = (ef) => {
-    for (const e of ef) {
-      if (e.tipo === 'dormir') ctl.dormir();
-      if (e.tipo === 'despertarOido') ctl.terminar();
-      if (e.tipo === 'cerrar') ctl.terminar();
-      if (e.tipo === 'abrir') ctl.iniciar();
-    }
-  };
-  c.encender();
-  ejecutar(c.dobleToque()); // en espera: silenciado sin sesión
-  assert.equal(c.estado(), 'silenciado');
-  assert.equal(ocupa(), true, 'silenciado: nadie escucha (correcto)');
-  const ef = c.fijarActivo(false);
-  assert.deepEqual(ef, [{ tipo: 'despertarOido' }], 'antes: [] y el audio quedaba en una conversación inexistente');
-  ejecutar(ef);
-  assert.equal(ocupa(), false, 'el oído del teléfono vuelve a ser el dueño');
-  assert.equal(c.estado(), 'espera');
-  // Apagarlo en espera no hace nada (el oído ya es del teléfono); en llamada, cuelga.
-  const otro = cicloDePrueba();
-  otro.c.encender();
-  assert.deepEqual(otro.c.fijarActivo(false), []);
-  otro.c.fijarActivo(true);
-  otro.c.despertar(null);
-  otro.c.conectado();
-  assert.deepEqual(otro.c.fijarActivo(false).map((e) => e.tipo), ['cerrar']);
+prueba('ciclo: lo que se ve — leyendas de la pantalla, la línea de la mesa (solo en llamada) y el cronómetro', () => {
+  assert.equal(leyendaLlamada('sonando', { idioma: 'es', origen: { tipo: 'llamame' }, motivo: null, duracionMs: 0 }), 'te está llamando');
+  assert.equal(leyendaLlamada('sonando', { idioma: 'es', origen: RECL, motivo: null, duracionMs: 0 }), 'Llamada de recordatorio');
+  assert.equal(leyendaLlamada('en_llamada', { idioma: 'es', origen: null, motivo: null, duracionMs: 187_000 }), '3:07');
+  assert.equal(leyendaLlamada('silenciado', { idioma: 'en', origen: null, motivo: null, duracionMs: 5_000 }), 'Muted · 0:05');
+  assert.equal(leyendaLlamada('colgada', { idioma: 'es', origen: null, motivo: 'silencio', duracionMs: 200_000 }), 'Colgó: nadie hablaba · 3:20');
+  assert.equal(leyendaLlamada('perdida', { idioma: 'es', origen: null, motivo: null, duracionMs: 0 }), 'Llamada perdida');
+  assert.equal(relojLlamada(3_725_000), '1:02:05');
+  assert.equal(etiquetaCiclo('reposo', 'AU-RA', 'es'), null, 'fuera de la llamada, la mesa dice lo de siempre');
+  assert.deepEqual(etiquetaCiclo('en_llamada', 'AU-RA', 'es', 120_000), { texto: 'en llamada · 2 min hoy', tono: 'verde' });
+  assert.equal(etiquetaCiclo('sonando', 'Claudio', 'es').texto, 'Claudio te llama…');
+  assert.ok(llamadaActiva('sonando') && llamadaActiva('silenciado') && !llamadaActiva('colgada') && llamadaTerminada('perdida'));
+});
+
+prueba('ánimo: mientras hay llamada del avatar la compañera no se ve; al colgar entra CAMINANDO y saluda', () => {
+  let a = ANIMO_INICIAL;
+  let r = reducir(a, { tipo: 'ciclo', estado: 'sonando' }, 1000, () => 0.5);
+  assert.deepEqual(r.efectos.map((e) => e.tipo), ['desaparecer']);
+  assert.equal(r.animo.oculta, true);
+  a = r.animo;
+  for (const e of ['conectando', 'en_llamada', 'silenciado', 'en_llamada', 'colgada']) {
+    r = reducir(a, { tipo: 'ciclo', estado: e }, 2000, () => 0.5);
+    assert.deepEqual(r.efectos, [], `${e}: sigue sin verse (la llamada es su presencia)`);
+    a = r.animo;
+  }
+  r = reducir(a, { tipo: 'ciclo', estado: 'reposo' }, 3000, () => 0.5);
+  assert.equal(r.efectos[0].tipo, 'entrarCaminando');
+  assert.equal(r.animo.oculta, false);
+  // Fuera de una llamada, el doble toque dice cómo llamarla (no hay nada que silenciar).
+  const d = reducir(r.animo, { tipo: 'dobleToque' }, 4000, () => 0.5);
+  assert.ok(!d.efectos.some((e) => e.tipo === 'alternarVoz'));
+  assert.ok(d.efectos.some((e) => e.tipo === 'globo' && /llámame|call me/i.test(e.texto)));
+});
+
+prueba('«llámame» en la mesa: lo reconoce el intérprete del teléfono (sin red), medido; «llámame Chepe» no', async () => {
+  const { interpretar } = await import('../../lib/intenciones.ts');
+  for (const f of ['llámame', 'Aura, llámame porfa', 'hazme una llamada', '¿me llamas?', 'call me', 'give me a call please']) {
+    const t0 = performance.now();
+    const i = interpretar(f);
+    const ms = performance.now() - t0;
+    assert.equal(i.tipo, 'llamame', f);
+    assert.ok(ms < 5, `${f}: ${ms.toFixed(3)} ms`);
+  }
+  for (const f of ['llámame Chepe', 'llámame a Beto', 'llámame a las 5 para recordarme la pastilla', 'mi mamá me llamó ayer']) assert.notEqual(interpretar(f).tipo, 'llamame', f);
+  // El teléfono le dice al servidor que sabe esta mano (así el camino rápido del servidor también la usa).
+  assert.ok(MANOS_APP.includes('llamame'));
+  assert.ok(esAccionApp({ tipo: 'llamame' }));
 });
 
 for (const [nombre, f] of pruebas) {

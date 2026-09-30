@@ -60,9 +60,6 @@ type Props = {
   onSetSttEngine: (e: SttEngine) => void;
   onToggleProactive: () => void;
   onToggleSfx: () => void;
-  /** MODO LLAMADA (compa/llamadaCiclo.ts): la voz como una llamada que cuelga sola. */
-  modoLlamada?: boolean;
-  onToggleLlamada?: () => void;
   onForget: () => void;
   onSearch: (q: string) => void;
   onLogout: () => void;
@@ -477,17 +474,6 @@ export function DeskMenu(p: Props) {
             <Chip on={p.settings.sttEngine === 'native'} label={tr('Teléfono', 'Phone')} sub={tr('Google · en vivo', 'Google · live')} onPress={() => p.onSetSttEngine('native')} />
             <Chip on={p.settings.sttEngine === 'cloud'} label={tr('Nube', 'Cloud')} sub={tr('en el servidor', 'on the server')} onPress={() => p.onSetSttEngine('cloud')} />
           </View>
-          {p.onToggleLlamada ? (
-            <View style={styles.row}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>{tr('Modo llamada', 'Call mode')}</Text>
-                <Text style={styles.sub}>
-                  {tr('Dile su nombre y habla como en una llamada; cuelga sola al quedarse en silencio. Apagado, contesta por el oído del teléfono.', 'Say its name and talk like on a call; it hangs up by itself after a silence. Off, it answers through the phone’s ear.')}
-                </Text>
-              </View>
-              <Switch value={!!p.modoLlamada} onValueChange={p.onToggleLlamada} accessibilityLabel={tr('Modo llamada', 'Call mode')} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.panel} />
-            </View>
-          ) : null}
           <View style={styles.row}>
             <View>
               <Text style={styles.label}>{tr('Comenta lo que ve', 'Comments on what it sees')}</Text>

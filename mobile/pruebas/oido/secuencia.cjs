@@ -4,9 +4,9 @@
 // En cada paso se mira QUIÉN tiene el audio (el dueño), QUÉ motor está vivo (el reconocedor del
 // teléfono o la conversación en vivo), quién oyó lo que dijo la persona y qué dice la etiqueta.
 //
-// La conversación en vivo (ElevenLabs por WebRTC) se prueba en tres casos, porque en el teléfono no se
-// sabe cuál le tocó a José: conecta y oye; se queda «Conectando…» para siempre; conecta pero el
-// micrófono de WebRTC no le llega (cero perfecto).
+// La conversación en vivo (ElevenLabs por WebRTC) es la LLAMADA DEL AVATAR: se pide con «llámame» y se
+// contesta. Se prueba en tres casos, porque en el teléfono no se sabe cuál le tocó a José: conecta y oye;
+// se queda «Conectando…» para siempre; conecta pero el micrófono de WebRTC no le llega (cero perfecto).
 //
 // Lo que en la app hace DeskScreen (el efecto del dueño, el vigilante, la etiqueta) aquí va copiado en
 // pocas líneas (`montarApp`): lo que decide está en los módulos reales, esto solo los conecta igual.
@@ -19,7 +19,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const reloj = require('./reloj.cjs');
 const M = require(process.env.OIDO || path.join(__dirname, 'out/oido.cjs'));
-const { SPEECH, DUENO, SESION, ANIMO } = M;
+const { SPEECH, DUENO, SESION, ANIMO, INTENCIONES } = M;
 const mundo = globalThis.__mundo;
 /** ¿Este paquete trae el arreglo? (si no, es el código de main y se conecta como en main). */
 const NUEVO = typeof DUENO.VigilanteOido === 'function';
@@ -58,26 +58,34 @@ async function montarApp({ voz = 'conecta', llamada = false } = {}) {
     miga: (t) => app.migas.push(t),
   });
   oido.fijar('mesa');
-  // El MODO LLAMADA (compa/llamadaCiclo.ts, el real), conectado como en el VozProvider.
-  const ciclo = llamada && M.CICLO ? new M.CICLO.CicloLlamada({ nombre: () => 'AU-RA', idioma: () => 'es' }) : null;
+  // LA LLAMADA DEL AVATAR (compa/llamadaCiclo.ts, la real), conectada como en el VozProvider.
+  const ciclo = M.CICLO && M.CICLO.CicloLlamada.prototype.llamar ? new M.CICLO.CicloLlamada({ idioma: () => 'es' }) : null;
   app.ciclo = ciclo;
-  app.rapidas = [];
-  app.despedidas = [];
+  app.timbre = false;
+  app.minimizada = false;
+  app.efectosLlamada = [];
+  app.caminando = [];
   const ejecutar = (ef) => {
     for (const e of ef || []) {
-      if (e.tipo === 'abrir') control.iniciar();
-      else if (e.tipo === 'cerrar') control.terminar();
+      app.efectosLlamada.push(e.tipo);
+      if (e.tipo === 'timbre') app.timbre = e.on;
+      else if (e.tipo === 'abrir') {
+        app.minimizada = false;
+        control.iniciar();
+      } else if (e.tipo === 'cerrar') control.terminar();
       else if (e.tipo === 'silenciar') control.silenciar(e.valor);
-      else if (e.tipo === 'dormir') control.dormir();
-      else if (e.tipo === 'primerMensaje') app.oidos.push({ por: 'conversacion (primer mensaje)', texto: e.texto, dueno: oido.actual() });
-      else if (e.tipo === 'despedida') {
-        app.despedidas.push(e.texto);
-        void decir(e.texto);
-      } else if (e.tipo === 'alNativo' && e.texto) void decir(`Respuesta a «${e.texto}»`);
+      else if (e.tipo === 'primerMensaje' || e.tipo === 'decirEnLlamada') app.oidos.push({ por: 'conversacion (primer mensaje)', texto: e.texto, dueno: oido.actual() });
+      else if (e.tipo === 'sigues') app.oidos.push({ por: 'conversacion (¿sigues ahí?)', texto: '[[sigues]]', dueno: oido.actual() });
+      else if (e.tipo === 'alNativo' && e.texto) void decir(`Te llamo para recordarte: ${e.texto}`);
     }
   };
+  // «Llámame» (VozProvider.llamame) y la pantalla (LlamadaAvatar): contestar, colgar, minimizar.
+  app.llamame = () => ejecutar(ciclo.llamar({ tipo: 'llamame' }));
+  app.contestar = () => ejecutar(ciclo.contestar());
+  app.colgar = () => ejecutar(ciclo.colgar());
   app.ejecutar = ejecutar;
-  const vozOcupa = () => control.vista().montada || control.vista().dormida;
+  // DeskScreen: la llamada del avatar (suena, conecta o se habla) ocupa el micrófono; si no, la sesión dormida.
+  const vozOcupa = () => control.vista().montada || control.vista().dormida || (!!ciclo && M.CICLO.llamadaActiva(ciclo.estado()));
   const mesaVisible = () => app.pantalla === 'mesa';
   const nuestro = () => (DUENO.oidoPropio ? DUENO.oidoPropio(oido.actual()) : oido.actual() === 'mesa') && !vozOcupa() && !app.enLlamada;
   const idle = () => {
@@ -92,7 +100,7 @@ async function montarApp({ voz = 'conecta', llamada = false } = {}) {
     const hizo = oido.aplicar(d);
     if (hizo === 'suelta') {
       app.hablando = false;
-      if (d !== 'conversacion') app.status = 'muted';
+      if (d !== 'conversacion' || !control.vista().montada) app.status = 'muted';
     } else if (hizo === 'toma') app.status = app.micMuted ? 'muted' : NUEVO && !SPEECH.oidoEscuchando() ? 'reconnect' : 'listening';
     return d;
   };
@@ -112,21 +120,13 @@ async function montarApp({ voz = 'conecta', llamada = false } = {}) {
   };
   SPEECH.setSpeechCallbacks({
     onFinal: (t) => {
-      // En la espera del modo llamada, lo que oye el teléfono se decide en el ciclo (DeskScreen.onSpeechFinal).
-      if (ciclo && ciclo.estado() === 'espera') {
-        const d = ciclo.frase(t, { mesaVisible: mesaVisible(), ruido: 0.1 });
-        app.oidos.push({ por: 'telefono (espera)', texto: t, dueno: oido.actual(), decision: d.tipo });
-        if (d.tipo === 'ignorar') return;
-        if (d.tipo === 'despertar') {
-          // El camino rápido (soloRapido) resuelve las órdenes claras sin conectar la llamada.
-          if (/\b(apaga|abre|vete|pon|cambia)\b/i.test(d.resto)) {
-            app.rapidas.push(d.resto);
-            void decir(`Listo: ${d.resto}`);
-            return;
-          }
-          ejecutar(ciclo.despertar(d.resto));
-          return;
-        }
+      // La mesa (DeskScreen.handleCommand): «llámame» lo reconoce el intérprete del teléfono, sin red.
+      if (ciclo && INTENCIONES && INTENCIONES.interpretar(t).tipo === 'llamame') {
+        app.oidos.push({ por: 'telefono', texto: t, dueno: oido.actual() });
+        app.llamameEn = Date.now();
+        app.llamame();
+        app.sonoEn = Date.now();
+        return;
       }
       app.oidos.push({ por: 'telefono', texto: t, dueno: oido.actual() });
       app.pensando = true;
@@ -147,6 +147,7 @@ async function montarApp({ voz = 'conecta', llamada = false } = {}) {
         if (ciclo) ejecutar(ciclo.dobleToque());
         else control.despertarOSilenciar();
       }
+      if (e.tipo === 'entrarCaminando') app.caminando.push(Date.now());
     }
   };
   // La conversación en vivo simulada (ModoConversacion con key={gen}).
@@ -197,8 +198,9 @@ async function montarApp({ voz = 'conecta', llamada = false } = {}) {
       if (v.estado === 'hablando' && a.estado !== 'hablando') ef.push(...ciclo.agente(true));
       if (a.estado === 'hablando' && v.estado !== 'hablando') ef.push(...ciclo.agente(false));
       if (!v.montada && v.estado === 'error' && (a.montada || a.estado !== 'error')) ef.push(...ciclo.fallo(v.detalle));
-      else if (a.montada && !v.montada) ef.push(...ciclo.cerrada());
+      else if (a.montada && !v.montada) ef.push(...ciclo.cerrada(v.suspendida ? 'otra_llamada' : a.silenciada ? 'silencio' : 'cortada'));
       ejecutar(ef);
+      aplicar();
     }
     // La línea de estado de la mesa durante la conversación (DeskScreen: lo que dice la sesión).
     if (v.montada) app.status = v.silenciada ? 'muted' : v.estado === 'conectando' ? 'thinking' : v.estado === 'hablando' ? 'speaking' : v.estado === 'escuchando' ? 'listening' : app.status;
@@ -216,6 +218,19 @@ async function montarApp({ voz = 'conecta', llamada = false } = {}) {
   function motorOyendo() {
     return conversacionOye() || telefonoOye();
   }
+  // La compañera escucha el estado de la llamada (Companera → animo 'ciclo'); DeskScreen, el dueño del audio.
+  if (ciclo)
+    ciclo.suscribir((e) => {
+      despachar({ tipo: 'ciclo', estado: e });
+      aplicar();
+      if (e === 'reposo') app.minimizada = false;
+    });
+  // VozProvider: entrar a otra pantalla con la llamada viva la minimiza (sigue oyendo).
+  app.irA = (pantalla) => {
+    app.pantalla = pantalla;
+    if (ciclo && pantalla !== 'mesa' && M.CICLO.llamadaActiva(ciclo.estado()) && ciclo.estado() !== 'sonando') app.minimizada = true;
+    aplicar();
+  };
   app.control = control;
   app.oido = oido;
   app.motorOyendo = motorOyendo;
@@ -293,7 +308,7 @@ async function montarApp({ voz = 'conecta', llamada = false } = {}) {
   }
   // El vigía de la conversación (VozProvider): solo existe con el arreglo.
   if (typeof control.revisar === 'function') cada(() => control.revisar(), 1000);
-  // El reloj del ciclo (VozProvider): colgar por silencio, cerrar la sesión silenciada.
+  // El reloj del ciclo (VozProvider): no contestó, «¿sigues ahí?», colgar por silencio, volver a reposo.
   if (ciclo) cada(() => ejecutar(ciclo.tic()), 1000);
   app.cerrar = () => {
     intervalos.forEach(clearInterval);
@@ -306,7 +321,6 @@ async function montarApp({ voz = 'conecta', llamada = false } = {}) {
   await SPEECH.enableAlwaysOnMic();
   app.oidoListo = true;
   app.status = 'listening';
-  if (ciclo) ejecutar(ciclo.encender());
   await avanzar(500);
   return app;
 }
@@ -347,21 +361,23 @@ for (const voz of ['conecta', 'cuelga', 'sorda']) {
     r = await decirYEsperar(app, 'qué hora es', '2 hablarle a la compañera');
     chequear(r.quien === 'telefono', '2: la compañera en el chat escucha (José: «me dejó de escuchar»)');
     chequear(r.respuesta?.sono, '2: y contesta con la voz');
-    // 3) Doble toque: «estoy escuchando».
+    // 3) «Llámame» desde el chat → contesta: la conversación en vivo es la llamada del avatar.
     const g0 = app.globos.length;
-    app.despachar({ tipo: 'dobleToque' });
-    const alTocar = app.globos.slice(g0);
-    for (const g of alTocar) if (/escucho|listening/i.test(g.texto)) chequear(g.oye, `3: al tocarla dice «${g.texto}» y ningún motor escucha`);
+    await decirYEsperar(app, 'llámame', '3 «llámame» (en el chat)');
+    chequear(app.ciclo.estado() === 'sonando', `3: «llámame» hace sonar la llamada (${app.ciclo.estado()})`);
+    app.contestar();
     await avanzar(1000);
-    evidencia(app, '3 doble toque (+1 s)');
+    evidencia(app, '3 contestó (+1 s)');
+    for (const g of app.globos.slice(g0)) if (/escucho|listening/i.test(g.texto)) chequear(g.oye, `3: dice «${g.texto}» y ningún motor escucha`);
     if (voz !== 'conecta') {
-      // La conversación no llega a oír: el vigilante lo ve y el oído del teléfono vuelve.
+      // La llamada no llega a oír: el vigilante lo ve, cuelga y el oído del teléfono vuelve.
       await avanzar(30_000);
-      evidencia(app, '3 doble toque (+31 s)');
+      evidencia(app, '3 contestó (+31 s)');
+      chequear(app.ciclo.estado() !== 'en_llamada', `3: una llamada que no oye no se queda viva (${app.ciclo.estado()})`);
     }
     const g1 = app.globos.length;
-    r = await decirYEsperar(app, 'mándale un mensaje a beto', '3 hablarle tras el doble toque');
-    chequear(r.quien !== 'nadie', '3: tras el doble toque alguien escucha de verdad (José: «nunca me escuchó»)');
+    r = await decirYEsperar(app, 'mándale un mensaje a beto', '3 hablarle tras contestar');
+    chequear(r.quien !== 'nadie', '3: tras contestar alguien escucha de verdad (José: «nunca me escuchó»)');
     for (const g of app.globos.slice(g1)) if (/escucho|listening/i.test(g.texto)) chequear(g.oye, `3: globito «${g.texto}» sin motor`);
     // 4) Vuelve a la mesa grande.
     app.pantalla = 'mesa';
@@ -375,83 +391,135 @@ for (const voz of ['conecta', 'cuelga', 'sorda']) {
     evidencia(app, '4 mesa grande (+20 s)');
     r = await decirYEsperar(app, 'gracias', '4 hablarle otra vez');
     chequear(r.quien !== 'nadie', '4: y sigue escuchando 20 s después');
-    app.control.terminar();
-    await avanzar(1000);
+    app.colgar();
+    await avanzar(4000);
+    r = await decirYEsperar(app, 'hola otra vez', '5 colgó: hablarle a la mesa');
+    chequear(r.quien === 'telefono', '5: al colgar, la mesa vuelve a escuchar');
   });
 }
 
-prueba('MODO LLAMADA (por omisión): espera barata → «Aura, …» → llamada que sigue viva de la mesa al chat y de vuelta → doble toque silencia → cuelga sola → orden suelta sin llamada', async () => {
-  if (!M.CICLO) {
-    chequear(false, 'este código no tiene el modo llamada (compa/llamadaCiclo.ts)');
+prueba('LA LLAMADA DEL AVATAR de punta a punta: mesa habla → «llámame» → suena → contestar → hablar → minimizar → chats → volver → colgar → la compañera entra caminando → la mesa vuelve a escuchar', async () => {
+  const app = await montarApp();
+  const c = app.ciclo;
+  if (!c) {
+    chequear(false, 'este código no tiene la llamada del avatar (compa/llamadaCiclo.ts)');
     return;
   }
-  const app = await montarApp({ llamada: true });
-  const c = app.ciclo;
   const quien = () => (app.conversacionOye() ? 'conversacion' : app.telefonoOye() ? 'telefono' : 'nadie');
   const paso = (nombre) => {
     evidencia(app, nombre);
-    console.log(`     ciclo=${c.estado()} · conectado ${Math.round(c.usadoMs() / 1000)} s`);
-    // Un solo motor vivo: en llamada solo la conversación; en espera solo el teléfono; silenciado, nadie.
+    console.log(`     llamada=${c.estado()}${app.minimizada ? ' (minimizada)' : ''} · timbre=${app.timbre ? 'suena' : 'no'} · conectado ${Math.round(c.usadoMs() / 1000)} s`);
+    // Un solo motor vivo: en llamada solo la conversación; en reposo solo el teléfono; sonando o silenciado, nadie.
     if (c.estado() === 'en_llamada') chequear(quien() === 'conversacion', `${nombre}: en llamada oye ${quien()}`);
-    if (c.estado() === 'espera') chequear(quien() === 'telefono', `${nombre}: en espera oye ${quien()}`);
-    if (c.estado() === 'silenciado') chequear(quien() === 'nadie', `${nombre}: silenciado y oye ${quien()}`);
+    if (c.estado() === 'reposo') chequear(quien() === 'telefono', `${nombre}: en reposo oye ${quien()}`);
+    if (c.estado() === 'sonando' || c.estado() === 'silenciado') chequear(quien() === 'nadie', `${nombre}: ${c.estado()} y oye ${quien()}`);
   };
-  paso('1 mesa, en espera');
-  chequear(c.estado() === 'espera', '1: arranca en espera (sin gastar minutos)');
-  // Sin su nombre, de frente a la mesa y en silencio: también (y lo dicho no se pierde).
-  let r = await decirYEsperar(app, 'Aura, ¿cómo estás hoy?', '2 «Aura, ¿cómo estás hoy?»');
+  paso('1 mesa, en reposo');
+  chequear(!app.control.vista().montada, '1: sin llamada no hay sesión de ElevenLabs (ni escucha para despertar)');
+  let r = await decirYEsperar(app, 'hola aura, ¿cómo estás?', '1 hablarle a la mesa');
+  chequear(r.quien === 'telefono' && r.respuesta?.sono, '1: la mesa oye y contesta con su oído de siempre');
+  // «Llámame»: el intérprete de la mesa, sin red ni cerebro.
+  r = await decirYEsperar(app, 'llámame', '2 «llámame»');
+  const ms = app.sonoEn - app.llamameEn;
+  console.log(`   · [latencia] «llámame» → suena en ${ms} ms desde que el oído entregó la frase (sin red ni cerebro)`);
+  chequear(ms <= 50, `2: suena al instante (${ms} ms)`);
+  paso('2 suena («te está llamando»)');
+  chequear(c.estado() === 'sonando' && app.timbre, '2: suena con timbre');
+  chequear(app.oido.actual() !== 'mesa', '2: sonando, la mesa suelta el oído (no transcribe el timbre)');
+  chequear(app.caminando.length === 0, '2: la compañera no aparece (la llamada es su presencia)');
+  // Contestar.
+  app.contestar();
   await avanzar(1500);
-  paso('2 llamada conectada');
-  chequear(c.estado() === 'en_llamada', '2: la palabra de activación abre la llamada');
-  chequear(app.oidos.some((o) => o.por === 'conversacion (primer mensaje)' && /cómo estás hoy/.test(o.texto)), '2: lo dicho en espera entra como primer mensaje');
+  paso('3 contestó');
+  chequear(c.estado() === 'en_llamada' && !app.timbre, '3: en llamada y el timbre calló');
+  chequear(app.oidos.some((o) => o.por === 'conversacion (primer mensaje)' && o.texto === '[[llamada]]'), '3: el primer mensaje es [[llamada]] (saluda como quien llama)');
   const gen = app.control.vista().gen;
-  // A los chats: la misma llamada sigue (no se corta ni queda sorda).
-  app.pantalla = 'chats';
-  app.aplicar();
+  r = await decirYEsperar(app, '¿qué hay de nuevo hoy?', '4 hablar en la llamada');
+  chequear(r.quien === 'conversacion', '4: la oye la llamada');
+  // Minimizar: entrar a los chats la hace pequeña y SIGUE ESCUCHANDO.
+  app.irA('chats');
   await avanzar(500);
-  paso('3 chats (compañera chica)');
-  r = await decirYEsperar(app, 'escríbele a beto que ya voy', '3 hablarle en el chat');
-  chequear(r.quien === 'conversacion', '3: en el chat la oye la misma llamada');
-  chequear(app.control.vista().gen === gen, '3: sin reconectar al cambiar de pantalla');
-  // Doble toque: silencio de verdad.
-  app.despachar({ tipo: 'dobleToque' });
-  await avanzar(300);
-  paso('4 doble toque (silenciado)');
-  chequear(c.estado() === 'silenciado', '4: el doble toque silencia');
-  r = await decirYEsperar(app, 'esto no lo tiene que oír', '4 hablarle silenciada');
-  chequear(r.quien === 'nadie', '4: silenciada no oye nadie (ni el teléfono)');
-  app.despachar({ tipo: 'dobleToque' });
-  await avanzar(300);
-  paso('5 doble toque (otra vez escucha)');
-  chequear(c.estado() === 'en_llamada', '5: el segundo doble toque vuelve a escuchar');
-  r = await decirYEsperar(app, 'ya puedes oír', '5 hablarle');
-  chequear(r.quien === 'conversacion', '5: vuelve a oír la llamada');
-  // De vuelta a la mesa grande: la misma llamada.
-  app.pantalla = 'mesa';
-  app.aplicar();
+  paso('5 chats (llamada minimizada)');
+  chequear(app.minimizada, '5: entrar a los chats minimiza la llamada');
+  r = await decirYEsperar(app, 'escríbele a beto que ya voy', '5 hablar desde los chats');
+  chequear(r.quien === 'conversacion' && app.control.vista().gen === gen, '5: la misma llamada sigue oyendo en los chats (sin reconectar)');
+  // Volver: tocar la píldora y la mesa.
+  app.minimizada = false;
+  app.irA('mesa');
   await avanzar(500);
-  paso('6 mesa grande');
-  r = await decirYEsperar(app, '¿y qué más?', '6 hablarle en la mesa');
-  chequear(r.quien === 'conversacion' && app.control.vista().gen === gen, '6: la misma llamada en la mesa grande');
-  // Silencio: cuelga sola, dice cómo volver a llamarla y queda en espera.
-  await avanzar(75_000);
-  paso('7 tras el silencio');
-  chequear(c.estado() === 'espera', '7: colgó sola tras el silencio');
-  chequear(app.despedidas.length === 1 && /AU-RA/.test(app.despedidas[0]), `7: se despidió breve (${app.despedidas[0]})`);
+  paso('6 de vuelta en la mesa');
+  r = await decirYEsperar(app, '¿y qué más?', '6 hablar en la mesa');
+  chequear(r.quien === 'conversacion' && app.control.vista().gen === gen, '6: la misma llamada');
+  // Doble toque en la pantalla de la llamada: silencio de verdad y vuelta.
+  app.ejecutar(c.dobleToque());
+  await avanzar(300);
+  paso('7 silenciada (doble toque)');
+  r = await decirYEsperar(app, 'esto no lo tiene que oír', '7 hablar silenciada');
+  chequear(r.quien === 'nadie', '7: silenciada no oye nadie (ni el teléfono)');
+  app.ejecutar(c.dobleToque());
+  await avanzar(300);
+  // Colgar.
   const usado = c.usadoMs();
-  // Una orden suelta en espera: el camino rápido la resuelve sin conectar la llamada.
-  r = await decirYEsperar(app, 'Aura, abre mis chats', '8 «Aura, abre mis chats»');
-  await avanzar(2000);
-  paso('8 orden suelta');
-  chequear(app.rapidas.includes('abre mis chats'), '8: la orden va por el camino rápido');
-  chequear(c.estado() === 'espera' && c.usadoMs() === usado, '8: sin abrir la llamada (cero minutos)');
-  // Algo dicho al aire en los chats sin su nombre: se ignora (no abre llamadas por la tele).
-  app.pantalla = 'chats';
-  app.aplicar();
+  app.colgar();
+  await avanzar(600);
+  paso('8 colgó');
+  chequear(!app.control.vista().montada, '8: colgar corta la sesión de ElevenLabs');
+  chequear(c.estado() === 'colgada', '8: «Llamada terminada»');
+  await avanzar(3000);
+  paso('9 reposo');
+  chequear(c.estado() === 'reposo', '9: vuelve a reposo');
+  chequear(app.caminando.length === 1, '9: la compañera entra caminando al colgar');
+  r = await decirYEsperar(app, 'gracias por la llamada', '10 hablarle a la mesa');
+  chequear(r.quien === 'telefono' && r.respuesta?.sono, '10: la mesa vuelve a escuchar y contestar');
+  chequear(c.usadoMs() === usado + 0 || c.usadoMs() - usado < 1000, '10: después de colgar no se cobra nada');
+  console.log(`   · minutos conectados en este recorrido: ${(c.usadoMs() / 60_000).toFixed(1)} min`);
+});
+
+prueba('recordatorio que llama: a la hora suena → contestar → el primer mensaje es el recordatorio; si no contesta, perdida y la mesa sigue oyendo', async () => {
+  const app = await montarApp();
+  const c = app.ciclo;
+  const REC = { tipo: 'recordatorio', texto: 'Llamar a Beto', base: 'aura-rec-x', paso: 'l1', cuando: Date.now(), dueno: 'yo' };
+  app.ejecutar(c.llamar(REC));
   await avanzar(300);
-  await decirYEsperar(app, 'ya voy mamá', '9 al aire en los chats');
-  chequear(c.estado() === 'espera', '9: sin su nombre en los chats no abre la llamada');
-  console.log(`   · minutos conectados en esta secuencia: ${(c.usadoMs() / 60_000).toFixed(1)} min`);
+  evidencia(app, 'a la hora: suena');
+  chequear(c.estado() === 'sonando' && app.timbre, 'suena a la hora');
+  app.contestar();
+  await avanzar(1500);
+  evidencia(app, 'contestó');
+  chequear(app.oidos.some((o) => o.por === 'conversacion (primer mensaje)' && o.texto === '[[recordatorio]] Llamar a Beto'), 'el primer mensaje de la sesión es el recordatorio');
+  chequear(app.efectosLlamada.includes('contestada'), 'contestada: se quitan el reintento y el aviso final');
+  const r = await decirYEsperar(app, 'gracias, ¿algo más?', 'sigue la charla');
+  chequear(r.quien === 'conversacion', 'y sigue la conversación');
+  app.colgar();
+  await avanzar(4000);
+  // Otra: no contesta.
+  app.ejecutar(c.llamar({ ...REC, base: 'aura-rec-y' }));
+  await avanzar(61_000);
+  evidencia(app, 'no contestó (61 s)');
+  chequear(app.efectosLlamada.includes('perdida'), 'queda como perdida (el reintento de notifee ya está programado)');
+  await avanzar(3000);
+  const r2 = await decirYEsperar(app, 'qué hora es', 'la mesa tras la perdida');
+  chequear(r2.quien === 'telefono', 'la mesa vuelve a escuchar');
+});
+
+prueba('silencio: 3 min sin que nadie hable → «¿sigues ahí?» → 20 s sin respuesta → cuelga y la mesa vuelve a escuchar', async () => {
+  const app = await montarApp();
+  const c = app.ciclo;
+  app.llamame();
+  app.contestar();
+  await avanzar(1500);
+  chequear(c.estado() === 'en_llamada', 'en llamada');
+  await avanzar(3 * 60_000 + 1000);
+  evidencia(app, '3 min en silencio');
+  chequear(app.oidos.some((o) => o.por === 'conversacion (¿sigues ahí?)'), 'pregunta «¿sigues ahí?»');
+  chequear(c.estado() === 'en_llamada', 'todavía no cuelga');
+  await avanzar(21_000);
+  evidencia(app, '+20 s sin respuesta');
+  chequear(c.motivo() === 'silencio' && !app.control.vista().montada, 'colgó por silencio');
+  await avanzar(3000);
+  const r = await decirYEsperar(app, 'hola', 'la mesa tras colgar sola');
+  chequear(r.quien === 'telefono', 'la mesa vuelve a escuchar');
+  console.log(`   · conectado: ${(c.usadoMs() / 60_000).toFixed(1)} min (3 min de gracia + 20 s)`);
 });
 
 prueba('el reconocedor del teléfono falla al arrancar una y otra vez (error + end, sin «start»): se reinicia, pasa a la nube y la etiqueta no miente', async () => {

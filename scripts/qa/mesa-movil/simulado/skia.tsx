@@ -15,9 +15,12 @@ export function Canvas({ style, children }: { style?: any; children?: ReactNode 
   return h('svg', { width: w, height: alto, viewBox: `0 0 ${w} ${alto}`, style: { overflow: 'visible', display: 'block' } }, children);
 }
 
-export function Group({ transform, opacity, children }: { transform?: { scale?: number }[]; opacity?: number; children?: ReactNode }) {
+export function Group({ transform, opacity, origin, children }: { transform?: { scale?: number; rotate?: number }[]; opacity?: number; origin?: { x: number; y: number }; children?: ReactNode }) {
   const e = transform?.find((t) => t.scale !== undefined)?.scale ?? 1;
-  return h('g', { transform: `scale(${e})`, opacity: typeof opacity === 'number' ? opacity : 1 }, children);
+  const r = transform?.find((t) => t.rotate !== undefined)?.rotate;
+  // El giro (el auricular colgado de la llamada) alrededor de su `origin`, como en Skia.
+  const giro = r !== undefined ? ` translate(${origin?.x ?? 0} ${origin?.y ?? 0}) rotate(${(r * 180) / Math.PI}) translate(${-(origin?.x ?? 0)} ${-(origin?.y ?? 0)})` : '';
+  return h('g', { transform: `scale(${e})${giro}`, opacity: typeof opacity === 'number' ? opacity : 1 }, children);
 }
 
 export function Path({ path, color, style, strokeWidth }: { path: Camino; color: string; style?: 'fill' | 'stroke'; strokeWidth?: number }) {

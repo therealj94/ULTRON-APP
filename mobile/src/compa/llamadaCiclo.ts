@@ -1,93 +1,103 @@
 /**
- * EL CICLO DE LA LLAMADA: cuándo AURA está en llamada (ElevenLabs Agents), cuándo en espera barata y
- * cuándo cuelga. Una máquina de estados explícita, pura (sin React Native) y probada en Node.
+ * LA LLAMADA DEL AVATAR: una máquina de estados explícita, pura (sin React Native) y probada en Node.
  *
- * José (30-sep): la voz tiene que sentirse como una llamada, pero NO quedar conectada siempre (los
- * minutos de ElevenLabs se cobran mientras la sesión está abierta). Su uso real: «hablamos bastante
- * al principio y luego lo dejamos». Así que:
+ * José (30-sep, segundo diseño): «En vez de decirle el nombre, le digo que me llame y hace la animación
+ * "te están llamando" como PULSE2CHAT, con el avatar; contesto y ahí empieza la llamada. Sirve también
+ * para "recuérdame a las 2 pm tal cosa": me llama a esa hora, me dice y me habla hasta que yo cuelgue.»
  *
- *   APAGADO ──app delante──▶ ESPERA ──«Aura, …» / tocar Hablar──▶ CONECTANDO ──▶ EN_LLAMADA
- *      ▲                      ▲  │                                     │            │   ▲
- *      │                      │  └─doble toque─▶ SILENCIADO ◀─doble toque┘            │   │
- *      │                      │                                                      ▼   │
- *      └──app detrás──── CERRANDO ◀── silencio sin turnos (30–60 s) / «gracias, eso es todo» ─┘
+ *   REPOSO ──llamar (llámame / recordatorio / timer)──▶ SONANDO ──contestar──▶ CONECTANDO ──▶ EN_LLAMADA
+ *     ▲                                                 │    │                                  ▲    │
+ *     │                                      rechazar ◀─┘    └─▶ no contestó (60 s)          doble toque
+ *     │                                          │                    │                          ▼    │
+ *     │                                      RECHAZADA             PERDIDA                   SILENCIADO
+ *     │                                          │                    │                           │
+ *     └──────────── (se muestra un momento) ─────┴──── COLGADA ◀── colgar / silencio / tope / fallo ┘
  *
- *  · ESPERA: escucha barata y local con el reconocedor del teléfono (sin minutos de ElevenLabs). Se
- *    despierta con la PALABRA DE ACTIVACIÓN (el nombre del avatar: «Aura», «Claudio», «Antonio»,
- *    «Guardián») o tocando Hablar. Con la mesa grande delante y poco ruido, también sin el nombre
- *    (quien le habla de frente a la mesa le habla a ella; con la tele o gente alrededor, no: ver
- *    `ruidoPermite`). Lo dicho en ESPERA no se pierde: entra como PRIMER MENSAJE de la llamada, o se
- *    resuelve por el camino rápido (reglas + Laya) si es una orden clara, sin conectar nada.
- *  · EN_LLAMADA: turnos, interrupciones y voz de ElevenLabs con nuestro cerebro como LLM.
- *  · Cuelga sola tras un silencio sin turnos (30 s desde la última respuesta; si la charla fue intensa,
- *    hasta 60 s), con una frase de cierre («Gracias, eso es todo», «adiós», «bye», «that's all»:
- *    cuelga cuando ella termina de despedirse) o al irse la app de primer plano. Al colgar por
- *    silencio dice una frase breve (con la voz de la mesa, sin gastar un turno) y vuelve a ESPERA.
- *  · SILENCIADO (doble toque): micrófono de la sesión en mute de verdad; otro doble toque, a escuchar.
- *    Silenciado mucho rato, la sesión se cierra (no gasta) y sigue silenciado hasta que la despierten.
- *  · Topes: los minutos por nivel del servidor (server/tope-voz.ts); avisa antes de agotarlos y, al
- *    agotarse o si la llamada no conecta, el oído del teléfono atiende (la mesa contesta con su voz).
+ *  · Fuera de una llamada NO hay sesión de ElevenLabs ni escucha para despertar: la mesa tiene su oído
+ *    de siempre (botón Hablar, reconocedor del teléfono). «Llámame» lo reconoce el camino rápido (la
+ *    mesa en el teléfono, las reglas y Laya ligera en el servidor) y llega aquí como `llamar`.
+ *  · SONANDO: la pantalla «te está llamando» con la cara del avatar, timbre y vibración (efecto
+ *    `timbre`). Con la app cerrada o el teléfono bloqueado, la de un recordatorio la hace sonar el aviso
+ *    a pantalla completa de notifee (compa/recordatorios.ts), y sus botones llegan aquí igual.
+ *  · Al contestar se abre la sesión (efecto `abrir`); al conectar, el PRIMER MENSAJE es el motivo de la
+ *    llamada: `[[llamada]]` (llámame: saluda como quien llama) o `[[recordatorio]] <texto>` (lo dice y
+ *    sigue la charla). Dura HASTA QUE LA PERSONA CUELGUE.
+ *  · Protección de minutos: tras `preguntaMs` (3 min) sin que nadie hable, el avatar pregunta «¿sigues
+ *    ahí?» (efecto `sigues`); si nadie contesta en `esperaSiguesMs` (20 s) después de preguntar, cuelga.
+ *    Silenciada, cuelga pasado lo mismo (no puede preguntar). Configurable.
+ *  · Topes: los minutos por nivel del servidor (server/tope-voz.ts): avisa antes de agotarlos y, al
+ *    agotarse, cuelga. Sin minutos, «llámame» no suena (lo dice la mesa) y un recordatorio suena igual
+ *    pero, al contestar, lo dice la mesa con su voz. «Sin minutos» se vence con el día de Honduras.
+ *  · Doble toque (en la pantalla de la llamada): silenciar / volver a escuchar (mute de verdad).
  *
  * Entra un evento (con la hora), sale el estado nuevo y los EFECTOS que el VozProvider ejecuta.
  */
 import type { Idioma } from '../i18n';
 
-export type EstadoCiclo = 'apagado' | 'espera' | 'conectando' | 'en_llamada' | 'silenciado' | 'cerrando';
+export type EstadoCiclo = 'reposo' | 'sonando' | 'conectando' | 'en_llamada' | 'silenciado' | 'colgada' | 'perdida' | 'rechazada';
 
-export type MotivoCierre = 'silencio' | 'despedida' | 'segundo_plano' | 'apagar' | 'boton';
+/** Por qué suena: la persona pidió que la llamara, o un recordatorio / timer que ella programó. */
+export type OrigenLlamada =
+  | { tipo: 'llamame' }
+  | { tipo: 'recordatorio'; texto: string; base: string; paso: 'l1' | 'l2'; cuando: number; dueno?: string }
+  /** La sesión se abrió por otro lado (un botón «en vivo» viejo): se sigue como una llamada, sin timbre. */
+  | { tipo: 'directa' };
+
+export type MotivoFin = 'persona' | 'silencio' | 'tope' | 'fallo' | 'segundo_plano' | 'otra_llamada' | 'cortada';
 
 export type EfectoCiclo =
+  /** El timbre y la vibración de la llamada entrante (con la app delante). */
+  | { tipo: 'timbre'; on: boolean }
   /** Abrir la sesión de ElevenLabs (ControlSesion.iniciar). */
   | { tipo: 'abrir' }
   /** Cerrarla (ControlSesion.terminar). */
-  | { tipo: 'cerrar'; motivo: MotivoCierre }
+  | { tipo: 'cerrar'; motivo: MotivoFin }
   /** Mute real del micrófono de la sesión abierta (y su voz). */
   | { tipo: 'silenciar'; valor: boolean }
-  /** Silenciado sin sesión: nadie escucha (ni la sesión ni el oído del teléfono). */
-  | { tipo: 'dormir' }
-  /** Salir del silenciado sin sesión: el oído del teléfono vuelve a escuchar (ControlSesion.terminar). */
-  | { tipo: 'despertarOido' }
-  /** Lo dicho en ESPERA, como primer mensaje de la llamada recién conectada. */
+  /** El motivo de la llamada, como primer mensaje de la sesión recién conectada. */
   | { tipo: 'primerMensaje'; texto: string }
-  /** La frase breve al colgar por silencio (con la voz de la mesa, sin gastar un turno de la llamada). */
-  | { tipo: 'despedida'; texto: string }
+  /** Un recordatorio que llegó en plena llamada: se le dice por la misma llamada. */
+  | { tipo: 'decirEnLlamada'; texto: string }
+  /** Nadie habla hace rato: el avatar pregunta «¿sigues ahí?» (el servidor lo dice sin cerebro). */
+  | { tipo: 'sigues' }
   /** Quedan pocos minutos de voz hoy. */
   | { tipo: 'avisoTope'; restanteMs: number }
-  /** La llamada no está (no conectó, sin minutos): el oído del teléfono atiende; `texto` lo que quedó por contestar. */
+  /** Contestó: lo que faltaba del recordatorio (reintento, aviso final) se quita. */
+  | { tipo: 'contestada'; origen: OrigenLlamada }
+  /** Rechazó: el recordatorio queda escrito en un aviso normal. */
+  | { tipo: 'rechazada'; origen: OrigenLlamada }
+  /** No contestó: el reintento de notifee (ya programado) sigue su curso y queda como perdida. */
+  | { tipo: 'perdida'; origen: OrigenLlamada }
+  /** La llamada no está (sin minutos, no conectó): lo dice la mesa con su voz. `texto`: el recordatorio. */
   | { tipo: 'alNativo'; texto: string | null; motivo: string };
-
-export type Decision =
-  /** Despertar la llamada con `resto` (primero se prueba el camino rápido si es una orden). */
-  | { tipo: 'despertar'; resto: string; porNombre: boolean }
-  /** No iba para ella (sin nombre, en los chats o con ruido): se deja pasar. */
-  | { tipo: 'ignorar' }
-  /** Sin llamada disponible (modo llamada apagado, sin minutos, fallando): lo contesta la mesa. */
-  | { tipo: 'nativo' };
 
 export type OpcionesCiclo = {
   reloj?: () => number;
-  /** El nombre del avatar activo (palabra de activación). */
-  nombre?: () => string;
   idioma?: () => Idioma;
-  /** Silencio sin turnos para colgar (base y máximo, ms). */
-  silencioBaseMs?: number;
-  silencioMaxMs?: number;
-  /** Silenciado con la sesión abierta más de esto: la sesión se cierra (sigue silenciado). */
-  silenciadoCierraMs?: number;
+  /** Cuánto suena antes de quedar perdida (como el aviso de notifee: SUENA_MS). */
+  sonarMs?: number;
+  /** Sin que nadie hable esto, el avatar pregunta «¿sigues ahí?». */
+  preguntaMs?: number;
+  /** Y sin respuesta esto después de preguntar, cuelga. */
+  esperaSiguesMs?: number;
   /** Aviso cuando quede esto o menos de voz hoy. */
   avisoTopeMs?: number;
-  /** Espera tras un fallo al conectar (se duplica con cada fallo seguido, hasta 5 min). */
-  reintentoMs?: number;
+  /** Lo que se ve «Llamada terminada» antes de volver a REPOSO. */
+  finVisibleMs?: number;
 };
 
-export const SILENCIO_COLGAR_MS = 30_000;
-export const SILENCIO_COLGAR_MAX_MS = 60_000;
-export const SILENCIADO_CIERRA_MS = 2 * 60_000;
+export const SONAR_MS = 60_000;
+export const PREGUNTA_SIGUES_MS = 3 * 60_000;
+export const ESPERA_SIGUES_MS = 20_000;
 export const AVISO_TOPE_MS = 2 * 60_000;
-export const REINTENTO_LLAMADA_MS = 30_000;
-const REINTENTO_MAX_MS = 5 * 60_000;
+export const FIN_VISIBLE_MS = 2_200;
 /** Sin minutos hoy: no se intenta de nuevo en este rato (el día de Honduras cambia antes o el teléfono se reinicia). */
 const TOPE_ESPERA_MS = 6 * 60 * 60_000;
+
+export const MENSAJE_LLAMAME = '[[llamada]]';
+export const MENSAJE_SIGUES = '[[sigues]]';
+/** El recordatorio tal como viaja por la conversación (lo mismo que compa/acciones.ts, mensajeDeRecordatorio). */
+export const mensajeRecordatorio = (texto: string) => `[[recordatorio]] ${String(texto || '').replace(/\s+/g, ' ').trim().slice(0, 300)}`;
 
 /**
  * El día de Honduras (AAAA-MM-DD), como lo cuenta el servidor para el tope de voz (server/tope-voz.ts,
@@ -98,147 +108,75 @@ export function diaHonduras(ahora = Date.now()): string {
   return new Date(ahora - 6 * 60 * 60_000).toISOString().slice(0, 10);
 }
 
-/* ── la palabra de activación ────────────────────────────────────────────────────────────── */
-
-const plano = (s: string) =>
-  String(s || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/[^a-z0-9ñ\s-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-/**
- * Cómo suena cada nombre en el reconocedor. «AU-RA» sale «aura», «au ra», «a u r a»; NUNCA se toma
- * «ahora» (la palabra más común que se le parece). ANT-ONIO sale «antonio» o «ant onio».
- */
-export function variantesNombre(nombre: string): string[] {
-  const p = plano(nombre).replace(/-/g, ' ');
-  const junto = p.replace(/\s+/g, '');
-  const v = new Set([p, junto]);
-  if (junto === 'aura') ['aura', 'au ra', 'a u r a'].forEach((x) => v.add(x));
-  if (junto === 'antonio') ['antonio', 'ant onio', 'ant-onio'].forEach((x) => v.add(x));
-  if (junto === 'guardian') ['guardian', 'guardián'].forEach((x) => v.add(plano(x)));
-  return [...v].filter(Boolean);
-}
-
-/**
- * ¿La frase trae el nombre (al principio, al final o suelto)? Devuelve lo dicho sin él («Aura, ¿qué
- * hora es?» → «¿qué hora es?»). Solo cuenta como palabra entera.
- */
-export function conNombre(texto: string, nombre: string): { tenia: boolean; resto: string } {
-  const original = String(texto || '').trim();
-  const p = plano(original).replace(/-/g, ' ');
-  for (const v of variantesNombre(nombre)) {
-    const re = new RegExp(`(^|\\s)(oye |hey |hola |ok |okay )?${v.replace(/\s+/g, '\\s+')}(\\s|$)`);
-    if (!re.test(p)) continue;
-    // Quitar el nombre (y un «oye»/«hey» delante) del texto original, con su coma.
-    const reOrig = new RegExp(`(^|[\\s,¡¿])((?:oye|hey|hola|ok|okay)[\\s,]+)?${v.split(/\s+/).map((x) => `${x}[\\s-]*`).join('')}[\\s,.:;!?]*`, 'i');
-    const sinTildes = original.normalize('NFD').replace(/[̀-ͯ]/g, '');
-    const m = reOrig.exec(sinTildes);
-    let resto = original;
-    if (m) resto = (original.slice(0, m.index + m[1].length) + ' ' + original.slice(m.index + m[0].length)).replace(/\s+/g, ' ').trim();
-    resto = resto.replace(/^[,.;:\s]+/, '').replace(/[,;:\s]+$/, '');
-    return { tenia: true, resto };
-  }
-  return { tenia: false, resto: original };
-}
-
-/** Frases con que la persona cierra la charla: se cuelga cuando ella termina de despedirse. */
-const RE_CIERRE =
-  /\b(gracias,? (eso es todo|es todo|nada mas|ya esta)|eso es todo|es todo por (ahora|hoy)|nada mas,? gracias|adios|hasta luego|hasta manana|nos vemos|chao|chau|bye|goodbye|that'?s all|that is all|see you|talk (to you )?later|thanks,? that'?s it)\b/;
-export function esDespedida(texto: string): boolean {
-  return RE_CIERRE.test(plano(String(texto || '').replace(/['’]/g, '')).replace(/-/g, ' '));
-}
-
-/**
- * Sin el nombre, ¿se le habla a ella? Solo con la MESA grande delante (quien mira al avatar de frente
- * le habla a él; en los chats se habla con los amigos) y si el ruido de fondo lo permite: con la tele
- * o gente alrededor el reconocedor transcribe frases ajenas y cada una abriría una llamada (minutos).
- *
- * `ruido`: el nivel de fondo entre frases, 0..1, del volumen que da el reconocedor (0 silencio, 1
- * gritos); null si no se sabe (entonces no: se pide el nombre). El umbral (RUIDO_MAX) sale de la
- * escala del reconocedor (rmsdB −2..10 → 0..1): una habitación callada queda por debajo de ~0,2 y
- * una tele a volumen de sala sube de ~0,35; se deja un margen. Cada decisión deja una miga con el
- * nivel medido, para ajustar el número con los datos del teléfono de José.
- */
-export const RUIDO_MAX = 0.3;
-export function ruidoPermite(ruido: number | null | undefined): boolean {
-  return typeof ruido === 'number' && Number.isFinite(ruido) && ruido <= RUIDO_MAX;
-}
-
-/** Una frase que parece dicha a alguien (no un «mmm» ni una palabra suelta de fondo). */
-function dirigida(texto: string): boolean {
-  const palabras = plano(texto).split(' ').filter(Boolean);
-  return palabras.length >= 2 && palabras.length <= 30;
-}
-
-/** Lo que dice al colgar por silencio: breve, amable y con cómo volver a llamarla. */
-export function fraseColgar(nombre: string, idioma: Idioma, n = 0): string {
-  const quien = nombre || 'AU-RA';
-  const es = [`Aquí estaré. Si me necesitas, di «${quien}».`, `Te dejo tranquilo. Di «${quien}» y vuelvo.`, `Cuelgo por ahora. Llámame con «${quien}».`];
-  const en = [`I'll be here. Say "${quien}" if you need me.`, `I'll let you be. Say "${quien}" and I'm back.`, `Hanging up for now. Call me with "${quien}".`];
-  const l = idioma === 'en' ? en : es;
-  return l[((n % l.length) + l.length) % l.length];
-}
-
 /** El aviso de minutos (para el agente, que se lo dice a la persona con naturalidad). */
 export function avisoMinutos(restanteMs: number, idioma: Idioma): string {
   const min = Math.max(1, Math.round(restanteMs / 60_000));
   return idioma === 'en'
-    ? `[app] This person has about ${min} minute${min === 1 ? '' : 's'} of voice left today. Tell them briefly and naturally; after that the call ends and the phone keeps listening.`
-    : `[app] A esta persona le queda${min === 1 ? '' : 'n'} unos ${min} minuto${min === 1 ? '' : 's'} de voz por hoy. Díselo breve y con naturalidad; después la llamada se corta y el teléfono sigue escuchando.`;
+    ? `[app] This person has about ${min} minute${min === 1 ? '' : 's'} of voice left today. Tell them briefly and naturally; after that the call ends.`
+    : `[app] A esta persona le queda${min === 1 ? '' : 'n'} unos ${min} minuto${min === 1 ? '' : 's'} de voz por hoy. Díselo breve y con naturalidad; después la llamada se corta.`;
 }
 
-/* ── la máquina ──────────────────────────────────────────────────────────────────────────── */
+/** ¿Hay llamada a la vista (suena, conecta o se habla)? Mientras tanto la mesa no escucha ni habla. */
+export function llamadaActiva(e: EstadoCiclo): boolean {
+  return e === 'sonando' || e === 'conectando' || e === 'en_llamada' || e === 'silenciado';
+}
+
+/** ¿Terminó hace nada (se ve «Llamada terminada» un momento)? */
+export function llamadaTerminada(e: EstadoCiclo): boolean {
+  return e === 'colgada' || e === 'perdida' || e === 'rechazada';
+}
 
 export class CicloLlamada {
-  private e: EstadoCiclo = 'apagado';
+  private e: EstadoCiclo = 'reposo';
   private desde: number;
   private reloj: () => number;
-  private o: Required<Omit<OpcionesCiclo, 'reloj' | 'nombre' | 'idioma'>>;
-  private nombre: () => string;
-  private idioma: () => Idioma;
+  private o: Required<Omit<OpcionesCiclo, 'reloj' | 'idioma'>>;
   private oyentes = new Set<(e: EstadoCiclo) => void>();
-  /** Lo dicho en ESPERA que abrió la llamada: su primer mensaje. */
-  private pendiente: string | null = null;
-  /** SILENCIADO con la sesión todavía abierta (mute) o ya cerrada. */
-  private sesionEnSilencio = false;
+  private origen_: OrigenLlamada | null = null;
+  private motivo_: MotivoFin | null = null;
   private agenteHablando = false;
-  private ultimaActividad = 0;
-  /** Turnos de la persona en esta llamada (sus horas): la charla intensa alarga la espera para colgar. */
-  private turnos: number[] = [];
-  private despedidaPedida = false;
-  private motivoCierre: MotivoCierre | null = null;
-  private fallos = 0;
-  private sinLlamadaHasta = 0;
+  /** La última vez que alguien habló (la persona o el avatar). */
+  private ultimaVoz = 0;
+  /** Cuándo preguntó «¿sigues ahí?» (0: no preguntó) y cuándo terminó de decirlo. */
+  private preguntado = 0;
+  private finPregunta = 0;
   private topeAgotado = false;
+  private sinLlamadaHasta = 0;
+  private diaTope = '';
   private restanteMs: number | null = null;
   private avisado = false;
   private conectadaDesde = 0;
   private usado = 0;
   private sesionDesde = -1;
-  private despedidas = 0;
-  /** Modo llamada encendido (Ajustes). Apagado, todo lo atiende el oído del teléfono como antes. */
-  private activo = true;
+  /** Estamos colgando nosotros (el `cerrada` que venga después no es un corte). */
+  private cerrandoNosotros = false;
 
   constructor(o: OpcionesCiclo = {}) {
     this.reloj = o.reloj || Date.now;
-    this.nombre = o.nombre || (() => 'AU-RA');
-    this.idioma = o.idioma || (() => 'es');
     this.o = {
-      silencioBaseMs: o.silencioBaseMs ?? SILENCIO_COLGAR_MS,
-      silencioMaxMs: o.silencioMaxMs ?? SILENCIO_COLGAR_MAX_MS,
-      silenciadoCierraMs: o.silenciadoCierraMs ?? SILENCIADO_CIERRA_MS,
+      sonarMs: o.sonarMs ?? SONAR_MS,
+      preguntaMs: o.preguntaMs ?? PREGUNTA_SIGUES_MS,
+      esperaSiguesMs: o.esperaSiguesMs ?? ESPERA_SIGUES_MS,
       avisoTopeMs: o.avisoTopeMs ?? AVISO_TOPE_MS,
-      reintentoMs: o.reintentoMs ?? REINTENTO_LLAMADA_MS,
+      finVisibleMs: o.finVisibleMs ?? FIN_VISIBLE_MS,
     };
     this.desde = this.reloj();
   }
 
   estado(): EstadoCiclo {
     return this.e;
+  }
+  /** Por qué suena o sonó la llamada vigente (null en reposo). */
+  origen(): OrigenLlamada | null {
+    return this.origen_;
+  }
+  /** Por qué terminó (en COLGADA). */
+  motivo(): MotivoFin | null {
+    return this.motivo_;
+  }
+  /** Desde cuándo se habla (para el cronómetro); 0 si no conectó. */
+  conectadaEn(): number {
+    return this.conectadaDesde;
   }
 
   suscribir(f: (e: EstadoCiclo) => void): () => void {
@@ -250,7 +188,7 @@ export class CicloLlamada {
 
   /** ¿Hay sesión de ElevenLabs viva (se cobra)? */
   sesionViva(): boolean {
-    return this.e === 'conectando' || this.e === 'en_llamada' || this.e === 'cerrando' || (this.e === 'silenciado' && this.sesionEnSilencio);
+    return this.e === 'conectando' || this.e === 'en_llamada' || this.e === 'silenciado';
   }
 
   /** Lo conectado (ms) desde que se creó el ciclo: los minutos que ElevenLabs cobra. */
@@ -258,57 +196,32 @@ export class CicloLlamada {
     return this.usado + (this.sesionDesde >= 0 ? this.reloj() - this.sesionDesde : 0);
   }
 
-  /** ¿Se puede llamar ahora? (modo llamada encendido, con minutos y sin estar esperando tras un fallo). */
+  /** ¿Hay minutos para una llamada ahora? «Sin minutos» se vence con el día de Honduras o tras la espera. */
   llamadaDisponible(): boolean {
-    this.revisarTopeVencido();
-    return this.activo && !this.topeAgotado && this.reloj() >= this.sinLlamadaHasta;
-  }
-
-  /**
-   * Sin minutos no es para siempre: se vuelve a intentar al pasar la espera o al cambiar el día de
-   * Honduras (cuando el servidor renueva el cupo, server/tope-voz.ts). Antes quedaba agotado mientras el
-   * proceso siguiera vivo: nunca más abría la llamada ni pedía permiso.
-   */
-  private revisarTopeVencido() {
-    if (!this.topeAgotado) return;
-    const ahora = this.reloj();
-    if (ahora >= this.sinLlamadaHasta || diaHonduras(ahora) !== this.diaTope) {
-      this.topeAgotado = false;
-      this.sinLlamadaHasta = 0;
+    if (this.topeAgotado) {
+      const ahora = this.reloj();
+      if (ahora >= this.sinLlamadaHasta || diaHonduras(ahora) !== this.diaTope) {
+        this.topeAgotado = false;
+        this.sinLlamadaHasta = 0;
+      }
     }
-  }
-  /** El día de Honduras en que se agotaron los minutos. */
-  private diaTope = '';
-
-  /**
-   * Encender o apagar el modo llamada (Ajustes). Apagarlo cuelga lo que haya; y si estaba silenciado
-   * sin sesión (doble toque en espera: ControlSesion dormida), devuelve el oído del teléfono. Antes no
-   * había efecto: la sesión «dormida» seguía teniendo el audio (vozOcupaMicrofono) y nadie escuchaba.
-   */
-  fijarActivo(on: boolean): EfectoCiclo[] {
-    if (this.activo === on) return [];
-    this.activo = on;
-    if (on) return [];
-    if (this.sesionViva()) return this.cerrar('apagar', 'espera');
-    if (this.e === 'silenciado') {
-      this.ir('espera');
-      this.sesionEnSilencio = false;
-      return [{ tipo: 'despertarOido' }];
-    }
-    return [];
+    return !this.topeAgotado;
   }
 
-  /**
-   * Lo que le queda de voz hoy (del permiso del servidor; null: sin tope, la junta). Un permiso con cupo
-   * también quita el «sin minutos» (el servidor dice que sí hay).
-   */
+  /** Lo que le queda de voz hoy (del permiso del servidor; null: sin tope). Un cupo quita el «sin minutos». */
   fijarTope(restanteMs: number | null) {
     this.restanteMs = restanteMs;
     this.avisado = false;
     if (restanteMs === null || restanteMs > 0) {
       this.topeAgotado = false;
-      if (this.sinLlamadaHasta > this.reloj()) this.sinLlamadaHasta = 0;
+      this.sinLlamadaHasta = 0;
     }
+  }
+
+  private agotar(ahora: number) {
+    this.topeAgotado = true;
+    this.diaTope = diaHonduras(ahora);
+    this.sinLlamadaHasta = ahora + TOPE_ESPERA_MS;
   }
 
   private ir(n: EstadoCiclo) {
@@ -326,234 +239,250 @@ export class CicloLlamada {
     for (const f of [...this.oyentes]) f(n);
   }
 
-  /** Recalcula la sesión viva cuando cambia `sesionEnSilencio` sin cambiar de estado. */
-  private cuentaSesion() {
-    const ahora = this.reloj();
-    const viva = this.sesionViva();
-    if (viva && this.sesionDesde < 0) this.sesionDesde = ahora;
-    if (!viva && this.sesionDesde >= 0) {
-      this.usado += ahora - this.sesionDesde;
-      this.sesionDesde = -1;
-    }
-  }
-
-  private cerrar(motivo: MotivoCierre, luego: EstadoCiclo = 'espera'): EfectoCiclo[] {
-    this.motivoCierre = motivo;
-    this.despedidaPedida = false;
+  /** Terminar: COLGADA (con su motivo). Cerrar la sesión si la había. */
+  private terminar(motivo: MotivoFin, cerrarSesion: boolean): EfectoCiclo[] {
+    const ef: EfectoCiclo[] = [];
+    if (this.e === 'sonando') ef.push({ tipo: 'timbre', on: false });
+    this.motivo_ = motivo;
     this.agenteHablando = false;
-    this.pendiente = null;
-    const efectos: EfectoCiclo[] = [{ tipo: 'cerrar', motivo }];
-    this.ir('cerrando');
-    // La sesión se cierra en el acto (ControlSesion.terminar): CERRANDO dura hasta que avisa `cerrada`.
-    this.siguienteAlCerrar = luego;
-    return efectos;
-  }
-  private siguienteAlCerrar: EstadoCiclo = 'espera';
-
-  /** Cuánto silencio sin turnos antes de colgar: 30 s, y hasta 60 s si la charla fue intensa. */
-  silencioColgarMs(): number {
-    const ahora = this.reloj();
-    const recientes = this.turnos.filter((t) => ahora - t <= 3 * 60_000).length;
-    return Math.min(this.o.silencioMaxMs, this.o.silencioBaseMs + 5_000 * Math.max(0, recientes - 2));
+    this.preguntado = 0;
+    if (cerrarSesion) {
+      this.cerrandoNosotros = true;
+      ef.push({ tipo: 'cerrar', motivo });
+    }
+    this.ir('colgada');
+    return ef;
   }
 
   /* ── eventos ── */
 
-  /** La app está delante y hay sesión: a escuchar barato. */
-  encender(): EfectoCiclo[] {
-    if (this.e === 'apagado') this.ir('espera');
-    return [];
-  }
-
-  /** La app se fue detrás (o se cerró la sesión de la cuenta): se cuelga y no escucha nadie. */
-  apagar(): EfectoCiclo[] {
-    if (this.sesionViva()) return this.cerrar('segundo_plano', 'apagado');
-    this.pendiente = null;
-    this.sesionEnSilencio = false;
-    this.ir('apagado');
-    return [];
-  }
-
   /**
-   * Una frase que el oído del teléfono transcribió en ESPERA. `mesaVisible`: la mesa grande delante;
-   * `ruido`: el fondo entre frases (0..1). Decide si despierta la llamada, se ignora o la contesta la mesa.
+   * Que suene: «llámame» o la hora de un recordatorio / timer. En plena llamada, un recordatorio se le
+   * dice por la misma llamada; otro «llámame» no hace nada (ya están hablando).
    */
-  frase(texto: string, ctx: { mesaVisible: boolean; ruido: number | null }): Decision {
-    if (this.e !== 'espera') return { tipo: 'ignorar' };
-    if (!this.llamadaDisponible()) return { tipo: 'nativo' };
-    const n = conNombre(texto, this.nombre());
-    if (n.tenia) return { tipo: 'despertar', resto: n.resto, porNombre: true };
-    if (ctx.mesaVisible && ruidoPermite(ctx.ruido) && dirigida(texto)) return { tipo: 'despertar', resto: String(texto || '').trim(), porNombre: false };
-    return { tipo: 'ignorar' };
-  }
-
-  /** Abrir la llamada (con lo dicho en ESPERA como primer mensaje, si lo hay). */
-  despertar(texto?: string | null): EfectoCiclo[] {
-    if (this.e === 'conectando' || this.e === 'en_llamada' || this.e === 'cerrando') return [];
-    if (this.e === 'silenciado' && this.sesionEnSilencio) return this.dobleToque();
-    if (!this.llamadaDisponible()) {
-      // Sin llamada (sin minutos, fallando): lo atiende el oído del teléfono.
-      if (this.e === 'apagado' || this.e === 'silenciado') this.ir('espera');
-      return [{ tipo: 'alNativo', texto: texto?.trim() || null, motivo: this.topeAgotado ? 'tope' : this.activo ? 'reintento' : 'apagado' }];
+  llamar(origen: OrigenLlamada): EfectoCiclo[] {
+    if (this.e === 'sonando') {
+      // Un recordatorio encima de un «llámame» que suena: manda el recordatorio (es lo que tenía hora).
+      if (origen.tipo === 'recordatorio' && this.origen_?.tipo !== 'recordatorio') this.origen_ = origen;
+      return [];
     }
-    this.pendiente = texto?.trim() || null;
-    this.sesionEnSilencio = false;
-    this.despedidaPedida = false;
-    this.turnos = [];
+    if (this.sesionViva()) {
+      if (origen.tipo !== 'recordatorio') return [];
+      return [
+        { tipo: 'contestada', origen },
+        { tipo: 'decirEnLlamada', texto: mensajeRecordatorio(origen.texto) },
+      ];
+    }
+    // Sin minutos, «llámame» no suena (lo dice la mesa); un recordatorio sí (se dice con la mesa al contestar).
+    if (origen.tipo === 'llamame' && !this.llamadaDisponible()) return [{ tipo: 'alNativo', texto: null, motivo: 'tope' }];
+    this.origen_ = origen;
+    this.motivo_ = null;
+    this.conectadaDesde = 0;
+    this.ir('sonando');
+    return [{ tipo: 'timbre', on: true }];
+  }
+
+  /** Contestó (el botón de la pantalla o el del aviso). */
+  contestar(): EfectoCiclo[] {
+    if (this.e !== 'sonando' || !this.origen_) return [];
+    const origen = this.origen_;
+    const ef: EfectoCiclo[] = [{ tipo: 'timbre', on: false }, { tipo: 'contestada', origen }];
+    if (!this.llamadaDisponible()) {
+      // Sin minutos: el recordatorio lo dice la mesa con su voz; no se abre nada.
+      this.motivo_ = 'tope';
+      this.ir('colgada');
+      ef.push({ tipo: 'alNativo', texto: origen.tipo === 'recordatorio' ? origen.texto : null, motivo: 'tope' });
+      return ef;
+    }
+    this.agenteHablando = false;
+    this.preguntado = 0;
     this.ir('conectando');
-    return [{ tipo: 'abrir' }];
+    ef.push({ tipo: 'abrir' });
+    return ef;
   }
 
-  /** Colgar a pedido (el botón, «cuelga»): a ESPERA. */
+  /** Rechazó. */
+  rechazar(): EfectoCiclo[] {
+    if (this.e !== 'sonando' || !this.origen_) return [];
+    const origen = this.origen_;
+    this.motivo_ = null;
+    this.ir('rechazada');
+    return [
+      { tipo: 'timbre', on: false },
+      { tipo: 'rechazada', origen },
+    ];
+  }
+
+  /** Colgar (el botón rojo, la píldora, «cuelga»). */
   colgar(): EfectoCiclo[] {
-    if (!this.sesionViva() || this.e === 'cerrando') return [];
-    return this.cerrar('boton', 'espera');
+    if (!this.sesionViva()) return [];
+    return this.terminar('persona', true);
   }
 
-  /** Tocar «Hablar» / «Conversar»: en llamada, cuelga; si no, llama. */
-  tocarHablar(): EfectoCiclo[] {
-    if (this.e === 'en_llamada' || this.e === 'conectando' || (this.e === 'silenciado' && this.sesionEnSilencio)) return this.cerrar('boton', 'espera');
-    return this.despertar(null);
-  }
-
-  /** La sesión se abrió por otro lado (el botón «en vivo», el fin de una llamada de PULSE): se sigue. */
+  /** La sesión se abrió por otro lado (un botón «en vivo» viejo): se sigue como llamada, sin timbre. */
   sesionAbriendo(): EfectoCiclo[] {
-    if (this.e === 'espera' || this.e === 'apagado' || (this.e === 'silenciado' && !this.sesionEnSilencio)) {
-      this.pendiente = null;
-      this.turnos = [];
+    if (this.e === 'reposo' || llamadaTerminada(this.e)) {
+      this.origen_ = { tipo: 'directa' };
+      this.motivo_ = null;
+      this.conectadaDesde = 0;
       this.ir('conectando');
     }
     return [];
   }
 
-  /** La sesión conectó: en llamada, y lo dicho en ESPERA entra como primer mensaje. */
+  /** La sesión conectó: en llamada, y el motivo de la llamada entra como primer mensaje. */
   conectado(): EfectoCiclo[] {
     if (this.e !== 'conectando') {
-      if (this.e === 'espera' || this.e === 'apagado') this.sesionAbriendo();
+      if (this.e === 'reposo' || llamadaTerminada(this.e)) this.sesionAbriendo();
       else return [];
     }
-    const efectos: EfectoCiclo[] = [];
-    this.fallos = 0;
-    this.ultimaActividad = this.reloj();
-    this.conectadaDesde = this.reloj();
+    const ahora = this.reloj();
+    this.ultimaVoz = ahora;
+    this.conectadaDesde = ahora;
     this.avisado = false;
+    this.cerrandoNosotros = false;
     this.ir('en_llamada');
-    if (this.pendiente) efectos.push({ tipo: 'primerMensaje', texto: this.pendiente });
-    this.pendiente = null;
+    const ef: EfectoCiclo[] = [];
+    const o = this.origen_;
+    if (o?.tipo === 'llamame') ef.push({ tipo: 'primerMensaje', texto: MENSAJE_LLAMAME });
+    else if (o?.tipo === 'recordatorio') ef.push({ tipo: 'primerMensaje', texto: mensajeRecordatorio(o.texto) });
     const aviso = this.revisarTope();
-    if (aviso) efectos.push(aviso);
-    return efectos;
+    if (aviso) ef.push(aviso);
+    return ef;
   }
 
-  /** No conectó (o se cayó sin llegar a oír): el oído del teléfono atiende, y se espera antes de reintentar. */
+  /** No conectó (o se cayó sin llegar a oír): COLGADA y la mesa lo dice (con el recordatorio, si era uno). */
   fallo(detalle?: string): EfectoCiclo[] {
+    if (!this.sesionViva()) return [];
     const d = String(detalle || '').toLowerCase();
     const tope = /\b429\b|tope|minutos|minutes/.test(d);
-    const pendiente = this.pendiente;
-    this.pendiente = null;
-    if (this.e !== 'conectando' && this.e !== 'en_llamada' && this.e !== 'cerrando' && this.e !== 'silenciado') return [];
-    this.fallos += 1;
-    if (tope) {
-      this.topeAgotado = true;
-      this.diaTope = diaHonduras(this.reloj());
-      this.sinLlamadaHasta = this.reloj() + TOPE_ESPERA_MS;
-    } else {
-      this.sinLlamadaHasta = this.reloj() + Math.min(REINTENTO_MAX_MS, this.o.reintentoMs * 2 ** (this.fallos - 1));
-    }
-    this.ir('espera');
-    this.sesionEnSilencio = false;
-    return [{ tipo: 'alNativo', texto: pendiente, motivo: tope ? 'tope' : d || 'fallo' }];
+    if (tope) this.agotar(this.reloj());
+    const o = this.origen_;
+    // Lo que no alcanzó a decir el avatar: el recordatorio, si todavía no conectó (en llamada ya lo dijo).
+    const texto = o?.tipo === 'recordatorio' && this.e === 'conectando' ? o.texto : null;
+    const ef = this.terminar(tope ? 'tope' : 'fallo', false);
+    ef.push({ tipo: 'alNativo', texto, motivo: tope ? 'tope' : d || 'fallo' });
+    return ef;
   }
 
-  /** La sesión terminó de cerrarse (la cerramos nosotros o ElevenLabs por su lado). */
-  cerrada(): EfectoCiclo[] {
-    const efectos: EfectoCiclo[] = [];
-    if (this.e === 'cerrando') {
-      const motivo = this.motivoCierre;
-      this.motivoCierre = null;
-      this.ir(this.siguienteAlCerrar);
-      if (motivo === 'silencio') efectos.push({ tipo: 'despedida', texto: fraseColgar(this.nombre(), this.idioma(), this.despedidas++) });
-      return efectos;
+  /** La sesión terminó de cerrarse (la cerramos nosotros, o ElevenLabs / una llamada de PULSE por su lado). */
+  cerrada(motivo: MotivoFin = 'cortada'): EfectoCiclo[] {
+    if (this.cerrandoNosotros && !this.sesionViva()) {
+      this.cerrandoNosotros = false;
+      return [];
     }
-    if (this.e === 'en_llamada' || this.e === 'conectando') this.ir('espera');
-    else if (this.e === 'silenciado' && this.sesionEnSilencio) {
-      this.sesionEnSilencio = false;
-      this.cuentaSesion();
-    }
-    return efectos;
+    if (!this.sesionViva()) return [];
+    // Se cortó sola: se cuelga, y se le avisa al control para que no la reabra (cerrar es idempotente).
+    return this.terminar(motivo, true);
   }
 
-  /** La persona dijo algo en la llamada. */
-  turnoUsuario(texto: string): EfectoCiclo[] {
+  /** La persona dijo algo en la llamada: contesta el «¿sigues ahí?» y reinicia la cuenta. */
+  turnoUsuario(_texto?: string): EfectoCiclo[] {
     if (this.e !== 'en_llamada') return [];
-    const ahora = this.reloj();
-    this.ultimaActividad = ahora;
-    this.turnos.push(ahora);
-    if (this.turnos.length > 40) this.turnos.shift();
-    if (esDespedida(texto)) this.despedidaPedida = true;
+    this.ultimaVoz = this.reloj();
+    this.preguntado = 0;
+    this.finPregunta = 0;
     return [];
   }
 
-  /** El agente empezó o terminó de hablar. */
+  /** El avatar empezó o terminó de hablar. Lo que dice cuenta como voz, salvo su propio «¿sigues ahí?». */
   agente(hablando: boolean): EfectoCiclo[] {
     if (this.e !== 'en_llamada' && this.e !== 'silenciado') return [];
     this.agenteHablando = hablando;
-    this.ultimaActividad = this.reloj();
-    // Se despidió de la persona que se despidió: ahora sí se cuelga (sin frase extra).
-    if (!hablando && this.despedidaPedida && this.e === 'en_llamada') return this.cerrar('despedida', 'espera');
+    const ahora = this.reloj();
+    if (this.preguntado) {
+      if (!hablando) this.finPregunta = ahora;
+    } else this.ultimaVoz = ahora;
     return [];
   }
 
-  /** Doble toque: interruptor silenciar / volver a escuchar. */
+  /** Doble toque o el botón del micrófono: silenciar / volver a escuchar. */
   dobleToque(): EfectoCiclo[] {
+    if (this.e === 'en_llamada') {
+      this.ir('silenciado');
+      return [{ tipo: 'silenciar', valor: true }];
+    }
+    if (this.e === 'silenciado') {
+      this.ultimaVoz = this.reloj();
+      this.preguntado = 0;
+      this.ir('en_llamada');
+      return [{ tipo: 'silenciar', valor: false }];
+    }
+    return [];
+  }
+
+  /** La app se fue detrás: la llamada se cuelga (sin micrófono ni minutos en segundo plano). */
+  apagar(): EfectoCiclo[] {
+    if (this.sesionViva()) return this.terminar('segundo_plano', true);
+    if (this.e === 'sonando') {
+      // «Llámame» suena solo en la app: detrás, perdida. Un recordatorio lo sigue sonando notifee.
+      if (this.origen_?.tipo === 'recordatorio') return [{ tipo: 'timbre', on: false }];
+      const origen = this.origen_!;
+      this.ir('perdida');
+      return [
+        { tipo: 'timbre', on: false },
+        { tipo: 'perdida', origen },
+      ];
+    }
+    return [];
+  }
+
+  /** La pantalla ya mostró cómo terminó: a REPOSO. */
+  listo(): EfectoCiclo[] {
+    if (llamadaTerminada(this.e)) {
+      this.origen_ = null;
+      this.ir('reposo');
+    }
+    return [];
+  }
+
+  /** El reloj (cada segundo): no contestó, «¿sigues ahí?», colgar por silencio, los minutos. */
+  tic(): EfectoCiclo[] {
+    const ahora = this.reloj();
     switch (this.e) {
-      case 'en_llamada':
-        this.sesionEnSilencio = true;
-        this.ir('silenciado');
-        return [{ tipo: 'silenciar', valor: true }];
-      case 'silenciado':
-        if (this.sesionEnSilencio) {
-          this.ultimaActividad = this.reloj();
-          this.ir('en_llamada');
-          this.sesionEnSilencio = false;
-          return [{ tipo: 'silenciar', valor: false }];
-        }
-        return this.despertar(null);
-      case 'espera':
-        this.sesionEnSilencio = false;
-        this.ir('silenciado');
-        return [{ tipo: 'dormir' }];
-      case 'conectando': {
-        const ef = this.cerrar('apagar', 'silenciado');
-        this.sesionEnSilencio = false;
-        return [...ef, { tipo: 'dormir' }];
+      case 'sonando': {
+        if (ahora - this.desde < this.o.sonarMs) return [];
+        const origen = this.origen_!;
+        this.ir('perdida');
+        return [
+          { tipo: 'timbre', on: false },
+          { tipo: 'perdida', origen },
+        ];
       }
+      case 'en_llamada': {
+        if (this.restanteMs !== null && this.restanteMs - (ahora - this.conectadaDesde) <= 0) {
+          this.agotar(ahora);
+          return this.terminar('tope', true);
+        }
+        const aviso = this.revisarTope();
+        if (aviso) return [aviso];
+        if (this.agenteHablando) return [];
+        if (!this.preguntado) {
+          if (ahora - this.ultimaVoz >= this.o.preguntaMs) {
+            this.preguntado = ahora;
+            this.finPregunta = 0;
+            return [{ tipo: 'sigues' }];
+          }
+          return [];
+        }
+        if (ahora - Math.max(this.preguntado, this.finPregunta) >= this.o.esperaSiguesMs) return this.terminar('silencio', true);
+        return [];
+      }
+      case 'silenciado':
+        if (this.restanteMs !== null && this.restanteMs - (ahora - this.conectadaDesde) <= 0) {
+          this.agotar(ahora);
+          return this.terminar('tope', true);
+        }
+        if (ahora - this.desde >= this.o.preguntaMs + this.o.esperaSiguesMs) return this.terminar('silencio', true);
+        return [];
+      case 'colgada':
+      case 'perdida':
+      case 'rechazada':
+        if (ahora - this.desde >= this.o.finVisibleMs) this.listo();
+        return [];
       default:
         return [];
     }
-  }
-
-  /** El reloj (cada segundo): colgar por silencio, cerrar la sesión silenciada, el aviso de minutos. */
-  tic(): EfectoCiclo[] {
-    const ahora = this.reloj();
-    if (this.e === 'en_llamada') {
-      // Se acabaron los minutos de hoy en plena llamada: se cuelga y atiende el oído del teléfono.
-      if (this.restanteMs !== null && this.restanteMs - (ahora - this.conectadaDesde) <= 0) {
-        this.topeAgotado = true;
-        this.diaTope = diaHonduras(ahora);
-        this.sinLlamadaHasta = ahora + TOPE_ESPERA_MS;
-        return [...this.cerrar('apagar', 'espera'), { tipo: 'alNativo', texto: null, motivo: 'tope' }];
-      }
-      const aviso = this.revisarTope();
-      if (aviso) return [aviso];
-      if (!this.agenteHablando && ahora - this.ultimaActividad >= this.silencioColgarMs()) return this.cerrar('silencio', 'espera');
-    }
-    if (this.e === 'silenciado' && this.sesionEnSilencio && ahora - this.desde >= this.o.silenciadoCierraMs) {
-      this.sesionEnSilencio = false;
-      this.cuentaSesion();
-      return [{ tipo: 'dormir' }];
-    }
-    return [];
   }
 
   private revisarTope(): EfectoCiclo | null {
@@ -565,9 +494,16 @@ export class CicloLlamada {
   }
 }
 
-/* ── el indicador ────────────────────────────────────────────────────────────────────────── */
+/* ── lo que se ve ────────────────────────────────────────────────────────────────────────── */
 
-export type TonoCiclo = 'verde' | 'azul' | 'gris' | 'ambar';
+/** «3:07» / «1:02:05». */
+export function relojLlamada(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
 
 /** Minutos de voz para leer («3 min», «<1 min»). */
 export function textoMinutos(ms: number): string {
@@ -575,25 +511,51 @@ export function textoMinutos(ms: number): string {
   return min < 1 ? '<1 min' : `${min} min`;
 }
 
-/**
- * Lo que se ve del ciclo en la mesa y junto a la compañera: verde en llamada, azul llamando o
- * colgando, gris en espera o apagado, ámbar silenciado; y los minutos de voz de hoy.
- */
-export function etiquetaCiclo(e: EstadoCiclo, nombre: string, idioma: Idioma, usadoHoyMs = 0): { texto: string; tono: TonoCiclo } {
+/** La leyenda de la pantalla de la llamada, según el estado y cómo terminó. */
+export function leyendaLlamada(e: EstadoCiclo, o: { idioma: Idioma; origen: OrigenLlamada | null; motivo: MotivoFin | null; duracionMs: number }): string {
+  const en = o.idioma === 'en';
+  const dur = o.duracionMs >= 1000 ? ` · ${relojLlamada(o.duracionMs)}` : '';
+  switch (e) {
+    case 'sonando':
+      return o.origen?.tipo === 'recordatorio' ? (en ? 'Reminder call' : 'Llamada de recordatorio') : en ? 'is calling you' : 'te está llamando';
+    case 'conectando':
+      return en ? 'Connecting…' : 'Conectando…';
+    case 'en_llamada':
+      return relojLlamada(o.duracionMs);
+    case 'silenciado':
+      return `${en ? 'Muted' : 'Silenciado'} · ${relojLlamada(o.duracionMs)}`;
+    case 'rechazada':
+      return en ? 'Call declined' : 'Llamada rechazada';
+    case 'perdida':
+      return en ? 'Missed call' : 'Llamada perdida';
+    case 'colgada':
+      if (o.motivo === 'silencio') return (en ? 'Hung up: nobody was talking' : 'Colgó: nadie hablaba') + dur;
+      if (o.motivo === 'tope') return en ? 'No voice minutes left today' : 'Se acabaron los minutos de voz de hoy';
+      if (o.motivo === 'fallo') return en ? 'The call couldn’t connect' : 'No se pudo conectar la llamada';
+      if (o.motivo === 'otra_llamada') return en ? 'Another call came in' : 'Entró otra llamada';
+      if (o.motivo === 'cortada') return (en ? 'The call dropped' : 'Se cortó la llamada') + dur;
+      return (en ? 'Call ended' : 'Llamada terminada') + dur;
+    default:
+      return '';
+  }
+}
+
+export type TonoCiclo = 'verde' | 'azul' | 'gris' | 'ambar';
+
+/** La línea de estado de la mesa y del panel durante una llamada (null fuera de ella: lo de siempre). */
+export function etiquetaCiclo(e: EstadoCiclo, nombre: string, idioma: Idioma, usadoHoyMs = 0): { texto: string; tono: TonoCiclo } | null {
   const en = idioma === 'en';
   const hoy = usadoHoyMs >= 30_000 ? ` · ${textoMinutos(usadoHoyMs)} ${en ? 'today' : 'hoy'}` : '';
   switch (e) {
+    case 'sonando':
+      return { texto: en ? `${nombre} is calling…` : `${nombre} te llama…`, tono: 'azul' };
+    case 'conectando':
+      return { texto: en ? 'connecting…' : 'conectando…', tono: 'azul' };
     case 'en_llamada':
       return { texto: (en ? 'on call' : 'en llamada') + hoy, tono: 'verde' };
-    case 'conectando':
-      return { texto: en ? 'calling…' : 'llamando…', tono: 'azul' };
-    case 'cerrando':
-      return { texto: en ? 'hanging up…' : 'colgando…', tono: 'azul' };
     case 'silenciado':
       return { texto: (en ? 'muted · double-tap to talk' : 'silenciado · dos toques para hablar') + hoy, tono: 'ambar' };
-    case 'espera':
-      return { texto: (en ? `standby · say "${nombre}"` : `en espera · di «${nombre}»`) + hoy, tono: 'gris' };
     default:
-      return { texto: en ? 'off' : 'apagado', tono: 'gris' };
+      return null;
   }
 }

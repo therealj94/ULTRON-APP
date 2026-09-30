@@ -11,7 +11,9 @@
  * silencia de verdad (VozProvider). La boca sigue la voz real (avatar3d/senalVoz: nivel y forma;
  * la de la mesa y la de la conversación fluida) y la cara, la emoción de lo que dice.
  *
- * En una llamada se va (con animación) y vuelve al colgar.
+ * En una llamada se va (con animación) y vuelve al colgar. La llamada del avatar (LlamadaAvatar) ES su
+ * presencia mientras dura: no se duplican. Al colgar, entra CAMINANDO desde el borde de la pantalla
+ * (el clip «caminar» del 3D si el modelo lo trae, o la figurita a pasitos) y saluda al llegar.
  *
  * Es también el ALMA de los otros cuerpos de AURA (avatar3d/contrato.ts): publica lo que siente
  * (`estadoAvatar`) y escucha los toques que le cuentan el panel al lado de los chats y la pantalla
@@ -43,8 +45,7 @@ import * as Haptics from 'expo-haptics';
 import { playSfx } from '../lib/sfx';
 import { senalVoz } from '../avatar3d/senalVoz';
 import { miga } from '../lib/reporte';
-import { idiomaActual, tr } from '../i18n';
-import { etiquetaCiclo, type TonoCiclo } from './llamadaCiclo';
+import { tr } from '../i18n';
 import { MEDIDA } from '../nucleo/tema';
 import { escuchar, type Pantalla } from '../nucleo/contrato';
 import { FOTOS_CLAUDIO, fotosRetrato } from '../avatares/ClaudioRetrato';
@@ -300,6 +301,9 @@ export function Companera() {
             setOculta(false);
             visible.value = withSpring(1, MEDIDA.resorte.vivo);
             break;
+          case 'entrarCaminando':
+            entrarCaminandoRef.current();
+            break;
           case 'desaparecer':
             caminarRef.current?.detener();
             visible.value = withTiming(0, { duration: 260 }, (fin) => {
@@ -343,11 +347,10 @@ export function Companera() {
   useEffect(() => {
     despachar({ tipo: 'voz', voz: { estado: v.estado, silenciada: v.silenciada, dormida: v.dormida, suspendida: v.suspendida } });
   }, [despachar, v.estado, v.silenciada, v.dormida, v.suspendida]);
-  // El ciclo de la llamada (modo llamada): el doble toque silencia o despierta según esto.
-  const cicloVisible = voz.modoLlamada && voz.llamadaLista ? voz.ciclo : null;
+  // La llamada del avatar: mientras suena o se habla, la compañera no está (la llamada es su presencia).
   useEffect(() => {
-    despachar({ tipo: 'ciclo', estado: cicloVisible });
-  }, [despachar, cicloVisible]);
+    despachar({ tipo: 'ciclo', estado: voz.ciclo });
+  }, [despachar, voz.ciclo]);
   useEffect(() => {
     const offs = [
       mensajeVoz.escuchar((m) => {
@@ -483,6 +486,46 @@ export function Companera() {
     paso.value = withTiming(0, { duration: 180 });
     publicar();
   }, [caminando, paso, publicar, x]);
+  /*
+   * Colgó la llamada del avatar: entra caminando desde el borde más cercano a su lugar (el cuerpo 3D
+   * pone su clip «caminar» porque se publica `caminando`; la figurita da pasitos) y saluda al llegar.
+   * Con «reducir movimiento», aparece con un fundido corto en su lugar.
+   */
+  const entrarCaminando = useCallback(() => {
+    caminarRef.current?.detener();
+    const m = marcoRef.current;
+    const lugar = pos.current;
+    setOculta(false);
+    if (reducido) {
+      visible.value = withTiming(1, { duration: 160 });
+      return;
+    }
+    const desdeIzq = lugar.x + LADO / 2 < m.ancho / 2;
+    const inicio = desdeIzq ? -LADO : m.ancho;
+    cancelAnimation(x);
+    x.value = inicio;
+    visible.value = 1;
+    dirRef.current = desdeIzq ? 1 : -1;
+    dir.value = dirRef.current;
+    caminarRef.current = { detener: detenerPaseo };
+    publicar();
+    caminando.value = withTiming(1, { duration: 120 });
+    paso.value = 0;
+    paso.value = withRepeat(withTiming(1, { duration: 520, easing: Easing.linear }), -1, false);
+    const ms = Math.max(900, Math.min(2600, msPaseo(inicio, lugar.x, 150)));
+    x.value = withTiming(lugar.x, { duration: ms, easing: Easing.out(Easing.quad) }, (fin) => {
+      if (fin) scheduleOnRN(llegoSaludando);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reducido, detenerPaseo, publicar]);
+  const llegoSaludando = useCallback(() => {
+    llego();
+    gestoRef.current = { nombre: 'saludar', n: (gestoRef.current?.n || 0) + 1 };
+    salto.value = withSequence(withTiming(-12, { duration: 160 }), withSpring(0, MEDIDA.resorte.vivo));
+    publicar();
+  }, [llego, publicar, salto]);
+  const entrarCaminandoRef = useRef(entrarCaminando);
+  entrarCaminandoRef.current = entrarCaminando;
   useEffect(() => {
     if (reducido) return;
     let t: ReturnType<typeof setTimeout>;
@@ -695,8 +738,6 @@ export function Companera() {
     altoGlobo.value = e.nativeEvent.layout.height;
   };
 
-  const etiquetaCompa = etiquetaCiclo(voz.ciclo, voz.nombreLlamada, idiomaActual(), voz.usadoHoyMs);
-
   // Claudio y ANT-ONIO: su retrato en un círculo (la foto va con la expresión; al hablar, la de boca abierta).
   const lado = M.R * 1.86;
   const fotos = fotosRetrato(avatar) || FOTOS_CLAUDIO;
@@ -720,7 +761,7 @@ export function Companera() {
           accessible
           accessibilityRole="button"
           accessibilityLabel={tr('AURA, tu compañera', 'AURA, your companion')}
-          accessibilityHint={tr('Toca para saludarla; toca dos veces para silenciarla o despertarla; mantén para moverla', 'Tap to say hi; double-tap to mute or wake her; hold to move her')}
+          accessibilityHint={tr('Toca para saludarla; dile «llámame» y te llama; mantén para moverla', 'Tap to say hi; say "call me" and she calls you; hold to move her')}
         >
           <AvatarVivo
             avatar={avatar}
@@ -747,21 +788,10 @@ export function Companera() {
             }
           />
         </View>
-        {cicloVisible && !oculta && !apartada ? (
-          // El estado de la llamada, siempre a la vista: verde en llamada, gris en espera, ámbar silenciada.
-          <View pointerEvents="none" style={s.pastilla}>
-            <View style={[s.punto, { backgroundColor: TONO_CICLO[etiquetaCompa.tono] }]} />
-            <Text style={s.pastillaTexto} numberOfLines={1}>
-              {etiquetaCompa.texto}
-            </Text>
-          </View>
-        ) : null}
       </Animated.View>
     </View>
   );
 }
-
-const TONO_CICLO: Record<TonoCiclo, string> = { verde: '#3FB950', azul: '#58A6FF', gris: '#8B8F96', ambar: '#E3B341' };
 
 const s = StyleSheet.create({
   caja: { position: 'absolute', left: 0, top: 0, width: LADO, height: LADO },
@@ -784,16 +814,4 @@ const s = StyleSheet.create({
     elevation: 6,
   },
   globoTexto: { color: '#ECE8E2', fontSize: 14, lineHeight: 19, textAlign: 'center' },
-  pastilla: {
-    position: 'absolute',
-    bottom: -4,
-    alignSelf: 'center',
-    left: -30,
-    right: -30,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  punto: { width: 7, height: 7, borderRadius: 4, marginRight: 5 },
-  pastillaTexto: { color: '#ECE8E2', fontSize: 11, backgroundColor: 'rgba(28,29,32,0.78)', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 8, overflow: 'hidden' },
 });

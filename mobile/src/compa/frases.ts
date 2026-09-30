@@ -42,9 +42,6 @@ export const textoCompa = {
   noPude: () => deEstado('no_pude'),
   borrador: (para: string) => tr(`✎ Borrador para ${para}`, `✎ Draft for ${para}`),
   noAbrio: () => tr('No pude conectarme. Tócame dos veces para intentar otra vez', 'I couldn’t connect. Tap me twice to try again'),
-  /** Colgó y quedó en espera (modo llamada): cómo volver a llamarla. */
-  enEspera: () => {
-    const n = avatarActual() === 'claudio' ? 'Claudio' : avatarActual() === 'antonio' ? 'Antonio' : avatarActual() === 'ojos' ? tr('Guardián', 'Guardian') : 'AU-RA';
-    return tr(`En espera · di «${n}»`, `Standby · say "${n}"`);
-  },
+  /** Fuera de una llamada: cómo pedirle que llame. */
+  pideLlamada: () => tr('Dime «llámame» y te llamo', 'Say "call me" and I’ll call you'),
 };

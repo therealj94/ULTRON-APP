@@ -25,7 +25,7 @@ import type { EstadoVoz } from './sesion';
 import type { ZonaToque } from '../avatar3d/tipos';
 import { fraseCompa, textoCompa, type GrupoFrase } from './frases';
 import { ESPERA_FRASE_MS } from './frasesEstado';
-import type { EstadoCiclo } from './llamadaCiclo';
+import { llamadaActiva, llamadaTerminada, type EstadoCiclo } from './llamadaCiclo';
 
 /**
  * El globito de «pensando…» solo si la mesa lleva este rato esperando al cerebro (el mismo número que
@@ -71,7 +71,7 @@ export type Animo = {
    * pone cara de escuchar. Solo lo dice un reconocedor vivo (canales.oidoTelefono), no lo pedido.
    */
   oido: boolean;
-  /** El ciclo de la llamada (modo llamada; null sin él): el doble toque silencia o despierta según esto. */
+  /** La llamada del avatar (compa/llamadaCiclo.ts; null sin ella): mientras suena o se habla, no se ve. */
   ciclo: EstadoCiclo | null;
   levantada: boolean;
   /** En llamada: no se ve. */
@@ -99,6 +99,8 @@ export type Efecto =
   /** Confirmar en voz alta (sin conversación abierta, la voz de la mesa; con ella, un aviso al agente). */
   | { tipo: 'confirmar'; ok: boolean; texto: string }
   | { tipo: 'aparecer' }
+  /** Colgó la llamada del avatar: vuelve CAMINANDO desde el borde de la pantalla hasta su lugar. */
+  | { tipo: 'entrarCaminando' }
   | { tipo: 'desaparecer' };
 
 export type EventoAnimo =
@@ -115,7 +117,7 @@ export type EventoAnimo =
   | { tipo: 'mesa'; hablando: boolean; pensando: boolean; emocion: Emocion }
   /** El oído del teléfono escucha (o dejó de escuchar) de verdad. */
   | { tipo: 'oido'; escuchando: boolean }
-  /** El ciclo de la llamada cambió (modo llamada). */
+  /** La llamada del avatar cambió de estado. */
   | { tipo: 'ciclo'; estado: EstadoCiclo | null }
   | { tipo: 'interrupcion' }
   | { tipo: 'llamada'; activa: boolean }
@@ -260,8 +262,18 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
     case 'ciclo': {
       if (a.ciclo === ev.estado) return { animo: a, efectos };
       const n = { ...a, ciclo: ev.estado };
-      // Colgó y quedó en espera: se lo dice en su globito (la frase de colgar la dice su voz).
-      if (ev.estado === 'espera' && (a.ciclo === 'cerrando' || a.ciclo === 'en_llamada') && !a.oculta) efectos.push(globo(textoCompa.enEspera(), 2400));
+      // La llamada del avatar (suena, se habla o se ve cómo terminó) ES su presencia: la compañera no se
+      // duplica. Al volver a reposo entra caminando desde el borde (si no hay otra llamada encima).
+      const tapa = (e: EstadoCiclo | null) => !!e && (llamadaActiva(e) || llamadaTerminada(e));
+      if (tapa(ev.estado) && !tapa(a.ciclo)) {
+        if (!a.oculta) efectos.push({ tipo: 'desaparecer' });
+        return { animo: { ...n, oculta: true, levantada: false, reaccion: null, irritacion: 0 }, efectos };
+      }
+      if (!tapa(ev.estado) && tapa(a.ciclo) && !a.voz.suspendida) {
+        const v = { ...n, oculta: false, cuenta: a.cuenta + 1, reaccion: reaccion('contenta', 2200) };
+        efectos.push({ tipo: 'entrarCaminando' }, globo(frase('volver', v), 2200));
+        return { animo: v, efectos };
+      }
       return { animo: n, efectos };
     }
 
@@ -304,10 +316,14 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
     case 'dobleToque': {
       if (a.oculta || a.voz.suspendida) return { animo: a, efectos };
       const n = { ...a, cuenta: a.cuenta + 1 };
+      // Fuera de una llamada no hay nada que silenciar: se dice cómo llamarla.
+      if (a.ciclo !== 'en_llamada' && a.ciclo !== 'silenciado' && !vozAbierta(a.voz)) {
+        efectos.push({ tipo: 'haptica', fuerza: 'suave' }, { tipo: 'brinco', alto: 8 }, globo(textoCompa.pideLlamada(), 2600, 2));
+        return { animo: n, efectos };
+      }
       efectos.push({ tipo: 'alternarVoz' });
-      // Lo mismo que decide quien atiende el toque: sin modo llamada, ControlSesion.despertarOSilenciar
-      // (abierta y sin silencio → se duerme); con él, el ciclo (en llamada o en espera → se silencia).
-      const seDuerme = a.ciclo ? a.ciclo === 'en_llamada' || a.ciclo === 'espera' || a.ciclo === 'conectando' : vozAbierta(a.voz);
+      // Lo mismo que decide quien atiende el toque (VozProvider.despertarOSilenciar): en llamada, se silencia.
+      const seDuerme = a.ciclo ? a.ciclo === 'en_llamada' : vozAbierta(a.voz);
       if (seDuerme) {
         n.reaccion = null;
         efectos.push({ tipo: 'haptica', fuerza: 'suave' }, globo(frase('dormir', n), 2600, 2));
@@ -344,6 +360,11 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
       if (v.suspendida && !a.oculta) {
         efectos.push({ tipo: 'desaparecer' });
         return { animo: { ...n, oculta: true, levantada: false, reaccion: null, irritacion: 0 }, efectos };
+      }
+      // Escondida (la llamada del avatar es su presencia): sus globitos no se ven, no se dicen.
+      if (a.oculta) {
+        if (v.estado !== 'hablando' && !a.mesa.hablando) n.sentir = 'neutral';
+        return { animo: n, efectos };
       }
       if (v.silenciada && !antes.silenciada) efectos.push(globo('Zzz…', 2000));
       else if (v.estado === 'escuchando' && (antes.estado === 'conectando' || (antes.silenciada && !v.silenciada))) {

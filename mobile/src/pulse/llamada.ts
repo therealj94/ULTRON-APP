@@ -360,7 +360,7 @@ async function audioTermina() {
  * `preferredOutputList`), y el auricular solo si no hay otra cosa. Antes iba siempre al auricular y,
  * con el carro o los audífonos puestos, la llamada se dejaba de oír donde la persona la esperaba.
  */
-async function salidaSinAltavoz(): Promise<string> {
+export async function salidaSinAltavoz(): Promise<string> {
   const hay = await AudioSession.getAudioOutputs().catch(() => [] as string[]);
   return ['bluetooth', 'headset', 'earpiece'].find((s) => hay.includes(s)) || 'earpiece';
 }

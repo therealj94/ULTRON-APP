@@ -30,6 +30,10 @@ const check = (frase, esperado, ctx = {}) => {
   console.log(`${tag}  ${JSON.stringify(frase).padEnd(58)} → ${JSON.stringify(out)}`);
 };
 
+console.log('\n— «Llámame»: la llamada del avatar suena ya (sin servidor); lo parecido, no —');
+for (const f of ['llámame', 'Aura, llámame porfa', 'hazme una llamada', 'márcame un ratito', '¿me llamas?', 'quiero que me llames', 'call me', 'give me a call please', 'ponte en llamada conmigo']) check(f, 'llamame');
+for (const f of ['llámame Chepe', 'llámame a Beto', 'llámame a las 5 para recordarme la pastilla', 'mi mamá me llamó ayer', '¿me llamaste?', 'call me crazy']) check(f, (o) => o.tipo !== 'llamame');
+
 console.log('\n— Secuestros de la auditoría: deben ir al cerebro —');
 check('para mañana recuérdame revisar el contrato de la mina', 'cerebro');
 check('para mañana necesito el informe', 'cerebro');

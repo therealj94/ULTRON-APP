@@ -319,8 +319,8 @@ type TurnoOpts = {
   /** Lo dijo en voz alta (el oído de la mesa): el servidor no espera a internet más de lo que espera la voz. */
   hablado?: boolean;
   /**
-   * Solo el camino rápido (el modo llamada en espera): si es una orden clara se resuelve; si no, el
-   * servidor contesta `via: 'solo-rapido'` sin despertar al cerebro y la app abre la llamada.
+   * Solo el camino rápido: si es una orden clara se resuelve; si no, el servidor contesta
+   * `via: 'solo-rapido'` sin despertar al cerebro (la usaba la espera del modo llamada anterior).
    */
   soloRapido?: boolean;
 };

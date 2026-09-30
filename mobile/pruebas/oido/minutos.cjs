@@ -1,55 +1,52 @@
-// [minutos] CUÁNTO SE COBRA UNA SESIÓN TÍPICA CON EL CICLO DE LA LLAMADA (compa/llamadaCiclo.ts, el real).
+// [minutos] CUÁNTO SE COBRA LA LLAMADA DEL AVATAR (compa/llamadaCiclo.ts, el real).
 //
 // El uso de José: «hablamos bastante al principio y luego lo dejamos». Sesión simulada de 25 min:
-//   · 0–5 min: charla intensa (una frase suya cada ~20 s, ella contesta ~6 s);
-//   · 5–25 min: silencio, con dos órdenes sueltas («Aura, apaga la cámara» a los 12 min y «Aura, abre
-//     mis chats» a los 19 min), que el camino rápido resuelve sin conectar la llamada.
-// Se compara con «siempre conectado» (la sesión abierta todo el rato con la app delante) y con lo que
-// costaría si cada orden suelta abriera la llamada y colgara por silencio.
+//   · 0 s: «llámame» → suena 4 s → contesta;
+//   · 0–5 min: charla intensa (una frase suya cada ~20 s, el avatar contesta ~6 s);
+//   · 5–25 min: deja el teléfono SIN COLGAR (el peor caso), con dos órdenes sueltas a la mesa a los 12 y
+//     19 min (ya colgó sola: las resuelve el camino rápido de la mesa, sin llamada).
+// Se compara con «sin protección» (la sesión abierta hasta el final) y con colgar a mano a los 5 min.
+// Fuera de la llamada no hay sesión de ElevenLabs (ni escucha para despertar): cero minutos.
 'use strict';
 
 const assert = require('node:assert/strict');
 const path = require('path');
 const M = require(process.env.OIDO || path.join(__dirname, 'out/oido.cjs'));
-if (!M.CICLO) {
-  console.log('[minutos] este código no tiene el ciclo de la llamada (main): siempre conectado mientras se habla = 25 min en la sesión típica');
+if (!M.CICLO || typeof M.CICLO.CicloLlamada.prototype.llamar !== 'function') {
+  console.log('[minutos] este código no tiene la llamada del avatar («llámame»): falla');
   process.exit(1);
 }
 const { CicloLlamada } = M.CICLO;
 
-function simular({ ordenesAbrenLlamada = false } = {}) {
+function simular({ cuelgaA = null, sinProteccion = false } = {}) {
   let t = 0;
-  const c = new CicloLlamada({ reloj: () => t, nombre: () => 'AU-RA', idioma: () => 'es' });
+  const c = new CicloLlamada({ reloj: () => t, idioma: () => 'es', ...(sinProteccion ? { preguntaMs: 1e12 } : {}) });
   const cola = [];
   const en = (ms, f) => cola.push({ ms, f });
+  const efectos = [];
   const ejecutar = (ef) => {
     for (const e of ef) {
+      efectos.push(e.tipo);
       // La sesión: conecta ~1,2 s después de abrirla; al cerrar, se da por cerrada enseguida.
       if (e.tipo === 'abrir') en(t + 1200, () => ejecutar(c.conectado()));
       if (e.tipo === 'cerrar') en(t + 300, () => ejecutar(c.cerrada()));
+      // «¿Sigues ahí?»: el avatar lo dice (~1,5 s); nadie contesta (el teléfono quedó en la mesa).
+      if (e.tipo === 'sigues') {
+        en(t + 800, () => ejecutar(c.agente(true)));
+        en(t + 2300, () => ejecutar(c.agente(false)));
+      }
     }
   };
-  const decir = (frase, esOrden) => {
-    if (c.estado() === 'en_llamada') {
-      ejecutar(c.turnoUsuario(frase));
-      en(t + 1000, () => ejecutar(c.agente(true)));
-      en(t + 7000, () => ejecutar(c.agente(false)));
-      return;
-    }
-    const d = c.frase(frase, { mesaVisible: true, ruido: 0.1 });
-    if (d.tipo !== 'despertar') return;
-    if (esOrden && !ordenesAbrenLlamada) return; // el camino rápido la resolvió: sin llamada
-    ejecutar(c.despertar(d.resto));
-    // Si abrió la llamada por una orden, ella contesta y queda en silencio.
-    en(t + 2500, () => ejecutar(c.agente(true)));
-    en(t + 5500, () => ejecutar(c.agente(false)));
+  const decir = (frase) => {
+    if (c.estado() !== 'en_llamada') return;
+    ejecutar(c.turnoUsuario(frase));
+    en(t + 1000, () => ejecutar(c.agente(true)));
+    en(t + 7000, () => ejecutar(c.agente(false)));
   };
-  c.encender();
-  // 5 min de charla intensa.
-  decir('Aura, hola, ¿cómo va todo?', false);
-  for (let s = 20; s < 300; s += 20) en(s * 1000, () => decir('y entonces, ¿qué más me cuentas de eso?', false));
-  en(12 * 60_000, () => decir('Aura, apaga la cámara', true));
-  en(19 * 60_000, () => decir('Aura, abre mis chats', true));
+  ejecutar(c.llamar({ tipo: 'llamame' }));
+  en(4000, () => ejecutar(c.contestar()));
+  for (let s = 20; s < 300; s += 20) en(s * 1000, () => decir('y entonces, ¿qué más me cuentas de eso?'));
+  if (cuelgaA) en(cuelgaA, () => ejecutar(c.colgar()));
   const FIN = 25 * 60_000;
   const estados = {};
   let antes = c.estado();
@@ -66,18 +63,21 @@ function simular({ ordenesAbrenLlamada = false } = {}) {
     t += 250;
   }
   estados[antes] = (estados[antes] || 0) + (t - desde);
-  return { conectadoMs: c.usadoMs(), estados };
+  return { conectadoMs: c.usadoMs(), estados, efectos, motivo: c.motivo() };
 }
 
 const min = (ms) => (ms / 60_000).toFixed(1);
-const ciclo = simular();
-const conOrdenes = simular({ ordenesAbrenLlamada: true });
-const siempre = 25 * 60_000;
-console.log(`[minutos] sesión típica de 25 min (5 min de charla intensa + 20 min de silencio con 2 órdenes sueltas):`);
-console.log(`[minutos]   siempre conectado: ${min(siempre)} min de ElevenLabs`);
-console.log(`[minutos]   ciclo de la llamada: ${min(ciclo.conectadoMs)} min (${Math.round((1 - ciclo.conectadoMs / siempre) * 100)} % menos) · en espera ${min(ciclo.estados.espera || 0)} min sin gastar`);
-console.log(`[minutos]   (si cada orden suelta abriera la llamada: ${min(conOrdenes.conectadoMs)} min; el camino rápido las resuelve sin conectar)`);
-assert.ok(ciclo.conectadoMs <= 7 * 60_000, `conectado ${min(ciclo.conectadoMs)} min`);
-assert.ok(ciclo.conectadoMs >= 5 * 60_000, 'la charla de 5 min sí va en llamada');
-assert.ok(conOrdenes.conectadoMs > ciclo.conectadoMs);
+const olvida = simular();
+const aMano = simular({ cuelgaA: 5 * 60_000 + 10_000 });
+const sin = simular({ sinProteccion: true });
+console.log('[minutos] «llámame» + 5 min de charla intensa, y el teléfono queda SIN COLGAR 20 min:');
+console.log(`[minutos]   sin protección: ${min(sin.conectadoMs)} min de ElevenLabs`);
+console.log(`[minutos]   con «¿sigues ahí?» (3 min + 20 s): ${min(olvida.conectadoMs)} min (${Math.round((1 - olvida.conectadoMs / sin.conectadoMs) * 100)} % menos) · colgó por ${olvida.motivo}`);
+console.log(`[minutos]   si cuelga a mano a los 5:10: ${min(aMano.conectadoMs)} min · en reposo ${min(aMano.estados.reposo || 0)} min sin gastar (sin sesión ni escucha)`);
+assert.equal(olvida.motivo, 'silencio');
+assert.ok(olvida.efectos.includes('sigues'), 'preguntó «¿sigues ahí?» antes de colgar');
+assert.ok(olvida.conectadoMs <= 9 * 60_000, `conectado ${min(olvida.conectadoMs)} min`);
+assert.ok(olvida.conectadoMs >= 8 * 60_000, 'la charla de 5 min y los 3 min de gracia sí van en llamada');
+assert.ok(aMano.conectadoMs <= 5.3 * 60_000);
+assert.ok(sin.conectadoMs > 24 * 60_000);
 console.log('\nminutos bien');

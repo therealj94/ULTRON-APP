@@ -15,8 +15,10 @@
  *  · `silencio` (del bus, con lo que de verdad pasó) y `perfil` (avatar e idioma);
  *  · `lectura` (del bus): lo que el teléfono leyó de un chat o encontró al buscar, dicho con la voz de
  *    AURA sin pasar por el cerebro (acciones.ts, `decirLectura`);
- *  · la llamada de un recordatorio («llámame a las 5 para recordarme…»): la pantalla «AURA te llama»
- *    (LlamadaAura.tsx) y, al contestar, abrir la conversación para que ella lo diga (`decirRecordatorio`);
+ *  · LA LLAMADA DEL AVATAR (llamadaCiclo.ts + LlamadaAvatar.tsx): «llámame» o un recordatorio / timer
+ *    hacen sonar la pantalla «te está llamando» (timbre y vibración, timbre.ts); al contestar se abre la
+ *    conversación con el motivo como primer mensaje y dura hasta que la persona cuelga; se minimiza a una
+ *    píldora para usar la app (entrar a los chats la minimiza sola) y no hay sesión fuera de ella;
  *  · el audio: cuándo la conversación suelta de verdad el audio del teléfono (audioVoz.ts), avisado en
  *    el bus (`voz`) para que una llamada no arranque el suyo mientras AURA todavía se cierra;
  *  · el puente de acciones se detiene con la app detrás y se reanuda al volver (sin SSE en segundo
@@ -29,7 +31,7 @@
  * `useVozOpcional()` devuelve null y ella misma se envuelve (ver DeskScreen).
  */
 import { Component, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { API_BASE } from '../config';
 import { api } from '../lib/api';
 import { loadMesaToken } from '../lib/storage';
@@ -39,7 +41,7 @@ import { escucharNivelVoz, nivelExterno, speak, stopSpeaking, suspenderVoz, vozS
 import { pauseMicForTts, suspenderOido } from '../lib/speech';
 import { suspenderSfx } from '../lib/sfx';
 import { quitarExpresiones } from '../lib/expresiones';
-import { idiomaActual, useIdioma } from '../i18n';
+import { idiomaActual, tr, useIdioma } from '../i18n';
 import { avatarActual } from '../avatares/actual';
 import type { AvatarId } from '../avatares/catalogo';
 import { emitir, escuchar, RUTA_CONTEXTO, RUTA_PERFIL, type Contexto } from '../nucleo/contrato';
@@ -47,59 +49,63 @@ import { ModoConversacion, type ControlesSesion } from '../components/ModoConver
 import { ControlSesion, type EstadoVoz, type VistaSesion } from './sesion';
 import { Precalentador } from './permiso';
 import { coordinarLlamadas } from './llamada';
-import { ContextoApp, PuenteAcciones, decirLectura, decirRecordatorio, type XhrMin } from './acciones';
-import { escucharPorDecir, listarRecordatorios, tomarPorDecir } from './recordatorios';
-import { depsRecordatorios } from './recordatoriosNativo';
-import { LlamadaAura } from './LlamadaAura';
+import { ContextoApp, PuenteAcciones, decirLectura, type XhrMin } from './acciones';
+import { escucharPorDecir, escucharSonando, listarRecordatorios, llamadaSonando, tomarPorDecir, type LlamadaRecordatorio } from './recordatorios';
+import { callarAvisoQueSuena, contestadaEnPantalla, depsRecordatorios, perdidaEnPantalla, rechazar as rechazarRecordatorio } from './recordatoriosNativo';
+import { LlamadaAvatar, type VistaLlamada } from './LlamadaAvatar';
+import { callarTimbre, sonarTimbre } from './timbre';
 import { AudioVoz } from './audioVoz';
 import { cabecerasAparato } from '../lib/aparato';
 import { escucharCuenta } from '../pulse/relevo';
 import { contactosParaAura } from './contactos';
-import { ecoMesa, interrupcionVoz, mensajeVoz, nativoAtiende, nivelOido } from './canales';
-import { CicloLlamada, avisoMinutos, diaHonduras, type Decision, type EfectoCiclo, type EstadoCiclo } from './llamadaCiclo';
-import { loadSettings, loadVozHoy, saveSettings, saveVozHoy } from '../lib/storage';
+import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido } from './canales';
+import { CicloLlamada, MENSAJE_SIGUES, avisoMinutos, diaHonduras, llamadaActiva, type EfectoCiclo, type EstadoCiclo, type OrigenLlamada } from './llamadaCiclo';
+import { loadVozHoy, saveVozHoy } from '../lib/storage';
 import { avatarPorId } from '../avatares/catalogo';
 import { de } from '../i18n';
 import { senalVoz } from '../avatar3d/senalVoz';
 
 export type ApiVoz = {
   vista: VistaSesion;
-  /** Abrir la conversación (o despertarla si estaba silenciada). false: hay una llamada. */
+  /** La llamada del avatar (compa/llamadaCiclo.ts), para pintarla y decidir quién oye. */
+  llamada: Omit<VistaLlamada, 'avatar' | 'idioma'>;
+  /** «Llámame»: que el avatar llame ya (suena la pantalla entrante). false: no se pudo (otra llamada, sin minutos). */
+  llamame: () => boolean;
+  contestar: () => void;
+  rechazar: () => void;
+  colgar: () => void;
+  /** Minimizar la llamada (píldora) o agrandarla. */
+  minimizar: (si: boolean) => void;
+  /** Compatibilidad (el botón «en vivo» del panel): que el avatar llame. */
   iniciar: () => boolean;
+  /** Colgar la llamada. */
   terminar: () => void;
+  /** En llamada, cuelga; si no, que llame. */
   alternar: () => void;
-  /** Micrófono y voz apagados (true) o de vuelta (false; sin sesión, la abre). */
+  /** En llamada: micrófono y voz apagados (true) o de vuelta (false). Fuera de una llamada no hace nada. */
   silenciar: (valor: boolean) => void;
-  /** El doble toque a la compañera. */
+  /** El doble toque: en llamada, silenciar / volver a escuchar. */
   despertarOSilenciar: () => 'despierta' | 'duerme' | 'nada';
-  /** Dejar el permiso listo (al entrar, al tocar a la compañera, al rozar «Conversar»). */
+  /** Dejar el permiso listo (al entrar, al sonar la llamada). */
   precalentar: () => void;
   /** El avatar de la mesa cambió: la voz se reabre con él. */
   fijarAvatar: (id: AvatarId) => void;
-  /** Un texto escrito hacia la conversación abierta. false: no hay conversación. */
+  /** Un texto escrito hacia la llamada abierta. false: no hay llamada. */
   enviarTexto: (texto: string) => boolean;
   /** Un dato para el agente sin que cuente como turno. */
   avisarAgente: (texto: string) => boolean;
   /** La persona está escribiendo: que no la interrumpa. */
   actividad: () => void;
-  /** «¡Listo!» / «no pude» en voz alta: al agente si hay conversación; si no, con la voz de la mesa. */
+  /** «¡Listo!» / «no pude» en voz alta: al agente si hay llamada; si no, con la voz de la mesa. */
   confirmar: (ok: boolean, texto: string) => void;
-  /** MODO LLAMADA (compa/llamadaCiclo.ts): encendido (Ajustes; por omisión, sí). */
-  modoLlamada: boolean;
-  /** El ciclo: apagado, espera, conectando, en llamada, silenciado, colgando. */
+  /** El estado de la llamada del avatar. */
   ciclo: EstadoCiclo;
-  /** Lo que el oído del teléfono transcribió en ESPERA: despertar la llamada, ignorarlo o que lo conteste la mesa. */
-  enEspera: (texto: string, ctx: { mesaVisible: boolean; ruido: number | null }) => Decision;
-  /** Abrir la llamada con lo dicho en espera (lo que no era una orden rápida) como primer mensaje. */
-  despertar: (texto?: string | null) => void;
   /** Minutos de llamada de hoy en este teléfono (ms). */
   usadoHoyMs: number;
-  /** El nombre con que se la llama (la palabra de activación del avatar). */
+  /** El nombre del avatar que llama. */
   nombreLlamada: string;
-  /** ¿Se puede llamar ahora? (con minutos y sin esperar tras un fallo). Si no, atiende el oído del teléfono. */
+  /** ¿Hay minutos para una llamada ahora? */
   llamadaLista: boolean;
-  /** Encender o apagar el modo llamada (se guarda). */
-  fijarModoLlamada: (on: boolean) => void;
 };
 
 const VozCtx = createContext<ApiVoz | null>(null);
@@ -163,84 +169,107 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   }, [control, precalentador]);
 
   /*
-   * EL CICLO DE LA LLAMADA (compa/llamadaCiclo.ts): cuándo la sesión de ElevenLabs se abre (la palabra
-   * de activación en espera, tocar Hablar), cuándo cuelga (silencio sin turnos, una despedida, la app
-   * detrás) y el doble toque. El ciclo decide; aquí se ejecutan sus efectos sobre el ControlSesion.
+   * LA LLAMADA DEL AVATAR (compa/llamadaCiclo.ts): «llámame» o un recordatorio la hacen sonar; al
+   * contestar se abre la sesión de ElevenLabs y dura hasta que la persona cuelga (o nadie habla y no
+   * contesta el «¿sigues ahí?»). Fuera de la llamada no hay sesión ni escucha para despertar: la mesa
+   * tiene su oído de siempre. El ciclo decide; aquí se ejecutan sus efectos.
    */
   const cic = useRef<CicloLlamada | null>(null);
-  if (!cic.current) {
-    cic.current = new CicloLlamada({
-      nombre: () => de(avatarPorId(control.vista().avatar).nombre),
-      idioma: () => control.vista().idioma,
-    });
-  }
+  if (!cic.current) cic.current = new CicloLlamada({ idioma: () => control.vista().idioma });
   const ciclo = cic.current;
   const estadoCiclo = useSyncExternalStore(
     useCallback((f: () => void) => ciclo.suscribir(f), [ciclo]),
     () => ciclo.estado(),
     () => ciclo.estado()
   );
-  const [modoLlamada, setModoLlamada] = useState(true);
-  const modoRef = useRef(true);
-  modoRef.current = modoLlamada;
+  const [minimizada, setMinimizada] = useState(false);
+  const [altavoz, setAltavoz] = useState(true);
   /** Minutos de llamada de hoy (lo guardado del día + lo de este ciclo). */
   const [usadoHoyMs, setUsadoHoyMs] = useState(0);
   const [llamadaLista, setLlamadaLista] = useState(true);
   const baseHoy = useRef({ dia: '', ms: 0, ciclo0: 0 });
-  const nAtiende = useRef(0);
+  /** Lo que dice la mesa cuando la llamada no está (sin minutos, no conectó): con su voz, breve. */
+  const decirConLaMesa = useCallback((texto: string) => {
+    if (vozSuspendida()) return;
+    void speak(texto, { privado: true, onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) });
+  }, []);
+  const recordatorioDe = (o: OrigenLlamada): LlamadaRecordatorio | null =>
+    o.tipo === 'recordatorio' ? { base: o.base, texto: o.texto, cuando: o.cuando, paso: o.paso, dueno: o.dueno } : null;
   const ejecutar = useCallback(
     (efectos: EfectoCiclo[]) => {
       for (const ef of efectos) {
         switch (ef.tipo) {
+          case 'timbre':
+            if (ef.on) {
+              // Suena: la mesa se calla, el permiso de la sesión se deja listo (contestar = solo conectar).
+              void stopSpeaking();
+              setMinimizada(false);
+              void sonarTimbre();
+              precalentarRef.current();
+              miga('llamada del avatar: suena');
+            } else callarTimbre();
+            break;
           case 'abrir':
+            setMinimizada(false);
+            setAltavoz(true);
             control.iniciar();
             break;
           case 'cerrar':
-            miga(`llamada: cuelga (${ef.motivo})`);
+            miga(`llamada del avatar: cuelga (${ef.motivo})`);
             control.terminar();
             break;
           case 'silenciar':
             control.silenciar(ef.valor);
             break;
-          case 'dormir':
-            control.dormir();
-            break;
-          case 'despertarOido':
-            // Fuera del silenciado sin sesión: la sesión «dormida» suelta el audio y el oído del teléfono vuelve.
-            control.terminar();
-            break;
           case 'primerMensaje':
-            // Lo dicho en espera, como primer mensaje: no se pierde la primera frase.
-            if (controles.current?.enviarTexto(ef.texto)) mensajeVoz.emitir({ rol: 'usuario', texto: ef.texto, emocion: 'neutral', en: Date.now() });
-            else nativoAtiende.emitir({ texto: ef.texto, motivo: 'no se pudo enviar a la llamada', n: ++nAtiende.current });
+          case 'decirEnLlamada':
+          case 'sigues': {
+            const texto = ef.tipo === 'sigues' ? MENSAJE_SIGUES : ef.texto;
+            if (controles.current?.enviarTexto(texto)) break;
+            // Recién conectada, el control puede tardar un instante: se reintenta una vez.
+            setTimeout(() => {
+              if (controles.current?.enviarTexto(texto)) return;
+              miga(`llamada del avatar: no se pudo mandar ${texto.slice(0, 20)}`);
+              const rec = /^\[\[recordatorio\]\]\s*(.+)$/.exec(texto);
+              if (rec) decirConLaMesa(tr(`Te llamo para recordarte: ${rec[1]}`, `I'm calling to remind you: ${rec[1]}`));
+            }, 600);
             break;
-          case 'despedida':
-            // Breve y con la voz de la mesa: no gasta un turno de la llamada (ya colgada).
-            if (!vozSuspendida() && !ecoMesa.ultimo().hablando) void speak(ef.texto, { onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) });
-            break;
+          }
           case 'avisoTope':
-            miga(`llamada: quedan ${Math.round(ef.restanteMs / 1000)} s de voz hoy`);
+            miga(`llamada del avatar: quedan ${Math.round(ef.restanteMs / 1000)} s de voz hoy`);
             controles.current?.avisar(avisoMinutos(ef.restanteMs, control.vista().idioma));
             break;
+          case 'contestada': {
+            const l = recordatorioDe(ef.origen);
+            if (l) void contestadaEnPantalla(l);
+            miga(`llamada del avatar: contestada (${ef.origen.tipo})`);
+            break;
+          }
+          case 'rechazada': {
+            const l = recordatorioDe(ef.origen);
+            if (l) void rechazarRecordatorio(l);
+            miga(`llamada del avatar: rechazada (${ef.origen.tipo})`);
+            break;
+          }
+          case 'perdida':
+            if (ef.origen.tipo === 'recordatorio') perdidaEnPantalla();
+            miga(`llamada del avatar: perdida (${ef.origen.tipo})`);
+            break;
           case 'alNativo':
-            miga(`llamada: atiende el oído del teléfono (${ef.motivo.slice(0, 60)})`);
-            nativoAtiende.emitir({ texto: ef.texto, motivo: ef.motivo, n: ++nAtiende.current });
+            miga(`llamada del avatar: la dice la mesa (${ef.motivo.slice(0, 60)})`);
+            if (ef.texto) decirConLaMesa(tr(`Te llamo para recordarte: ${ef.texto}`, `I'm calling to remind you: ${ef.texto}`));
+            else if (ef.motivo === 'tope') decirConLaMesa(tr('Hoy ya no te quedan minutos de llamada. Sigo escuchándote por aquí.', 'You have no call minutes left today. I’m still listening here.'));
+            // Si no conectó, el porqué lo dice la mesa (DeskScreen: motivoFalloVoz), una sola vez.
             break;
         }
       }
     },
-    [control]
+    [control, decirConLaMesa]
   );
-  // El modo llamada (Ajustes) y los minutos de hoy.
+  // Los minutos de hoy.
   useEffect(() => {
     let vivo = true;
     const dia = diaHonduras();
-    void loadSettings().then((s) => {
-      if (!vivo) return;
-      const on = s.vozLlamada !== false;
-      setModoLlamada(on);
-      ejecutar(ciclo.fijarActivo(on));
-    });
     void loadVozHoy(dia).then((ms) => {
       if (!vivo) return;
       baseHoy.current = { dia, ms, ciclo0: ciclo.usadoMs() };
@@ -249,28 +278,26 @@ export function VozProvider({ children, conCompanera = true }: Props) {
     return () => {
       vivo = false;
     };
-  }, [ciclo, ejecutar]);
+  }, [ciclo]);
   // Lo que pasa en la sesión, contado al ciclo: conectó, habla, falló, se cerró.
   useEffect(() => {
     let antes = control.vista();
     return control.suscribir((v) => {
       const a = antes;
       antes = v;
-      if (!modoRef.current) return;
       const ef: EfectoCiclo[] = [];
       if (v.montada && v.estado === 'conectando' && (!a.montada || a.gen !== v.gen)) ef.push(...ciclo.sesionAbriendo());
       if (v.montada && (v.estado === 'escuchando' || v.estado === 'hablando') && a.estado === 'conectando') ef.push(...ciclo.conectado());
       if (v.estado === 'hablando' && a.estado !== 'hablando') ef.push(...ciclo.agente(true));
       if (a.estado === 'hablando' && v.estado !== 'hablando') ef.push(...ciclo.agente(false));
       if (!v.montada && v.estado === 'error' && (a.montada || a.estado !== 'error')) ef.push(...ciclo.fallo(v.detalle));
-      else if (a.montada && !v.montada) ef.push(...ciclo.cerrada());
+      else if (a.montada && !v.montada) ef.push(...ciclo.cerrada(v.suspendida ? 'otra_llamada' : a.silenciada ? 'silencio' : 'cortada'));
       ejecutar(ef);
     });
   }, [control, ciclo, ejecutar]);
-  // El reloj del ciclo (colgar por silencio, cerrar la sesión silenciada, el aviso de minutos) y los minutos de hoy.
+  // El reloj del ciclo (no contestó, «¿sigues ahí?», colgar por silencio, minutos) y los minutos de hoy.
   useEffect(() => {
     const t = setInterval(() => {
-      if (!modoRef.current) return;
       ejecutar(ciclo.tic());
       setLlamadaLista(ciclo.llamadaDisponible());
       const b = baseHoy.current;
@@ -288,10 +315,26 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       clearInterval(g);
     };
   }, [ciclo, ejecutar]);
-  // En espera, el permiso de la próxima llamada ya listo (despertar = solo conectar).
+  // Fuera de la llamada, la píldora no tiene sentido: la próxima empieza grande.
   useEffect(() => {
-    if (estadoCiclo === 'espera') precalentar();
-  }, [estadoCiclo, precalentar]);
+    if (estadoCiclo === 'reposo') setMinimizada(false);
+    if (estadoCiclo === 'reposo' || estadoCiclo === 'colgada' || estadoCiclo === 'perdida' || estadoCiclo === 'rechazada') callarTimbre();
+  }, [estadoCiclo]);
+  const precalentarRef = useRef(precalentar);
+  precalentarRef.current = precalentar;
+
+  /** «Llámame» (la mesa, la hoja «Más», el atajo, la orden del servidor): suena la llamada del avatar. */
+  const llamame = useCallback((): boolean => {
+    if (control.vista().suspendida) {
+      miga('llamada del avatar: hay otra llamada, no suena');
+      return false;
+    }
+    const antes = ciclo.estado();
+    ejecutar(ciclo.llamar({ tipo: 'llamame' }));
+    return ciclo.estado() === 'sonando' || antes !== 'reposo';
+  }, [control, ciclo, ejecutar]);
+  const llamameRef = useRef(llamame);
+  llamameRef.current = llamame;
 
   // La boca de AURA para cualquier cuerpo: el mismo nivel que mueve la cara de la mesa.
   useEffect(() => escucharNivelVoz((l) => senalVoz.nivel(l)), []);
@@ -311,19 +354,12 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       const r = control.revisar();
       if (r !== 'nada') miga(`voz: ${r === 'sorda' ? 'abierta pero sin audio del micrófono' : 'no conectó a tiempo'}; el audio vuelve al oído del teléfono`);
     }, 1_000);
-    // El ciclo de la llamada: con la app delante y sesión, en espera; detrás, apagado (cuelga).
-    const encenderCiclo = () =>
-      void hayToken().then((ok) => {
-        if (ok && AppState.currentState === 'active') ejecutar(ciclo.encender());
-      });
-    encenderCiclo();
     const app = AppState.addEventListener('change', (st) => {
       if (st === 'active') {
         precalentar();
         puenteRef.current?.arrancar();
-        encenderCiclo();
       } else if (st === 'background') {
-        miga('voz: segundo plano, la conversación se cierra');
+        miga('voz: segundo plano, la llamada del avatar se cuelga');
         ejecutar(ciclo.apagar());
         control.segundoPlano();
         // Sin SSE en segundo plano (batería, datos): al volver se reconecta con Last-Event-ID.
@@ -335,44 +371,51 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       precalentar();
     });
     const offAccion = escuchar('accion', (a) => {
+      // «Llámame» que resolvió el servidor (el camino rápido o el cerebro): suena la llamada del avatar.
+      if (a.tipo === 'llamame') {
+        const ok = llamameRef.current();
+        emitir('hecho', { accion: a, ok, ...(ok ? {} : { detalle: tr('Ahora no puedo llamarte: hay otra llamada.', "I can't call you right now: there's another call.") }) });
+        return;
+      }
       if (a.tipo !== 'silencio') return;
-      if (modoRef.current) {
-        // En modo llamada, «cállate» / «ya puedes hablar» es el mismo interruptor que el doble toque.
-        const e = ciclo.estado();
-        const quiereSilencio = !!a.valor;
-        const cambia = quiereSilencio ? e === 'en_llamada' || e === 'espera' : e === 'silenciado';
+      // En la llamada, «cállate» / «ya puedes hablar» es el mismo interruptor que el doble toque.
+      const e = ciclo.estado();
+      if (e === 'en_llamada' || e === 'silenciado') {
+        const cambia = a.valor ? e === 'en_llamada' : e === 'silenciado';
         if (cambia) ejecutar(ciclo.dobleToque());
-        emitir('hecho', { accion: a, ok: cambia, ...(cambia ? {} : { detalle: quiereSilencio ? 'Ya estaba en silencio.' : 'Ya estaba escuchando.' }) });
+        emitir('hecho', { accion: a, ok: cambia, ...(cambia ? {} : { detalle: a.valor ? 'Ya estaba en silencio.' : 'Ya estaba escuchando.' }) });
         return;
       }
       const r = control.aplicarSilencio(a.valor);
       emitir('hecho', { accion: a, ok: r.ok, ...(r.detalle ? { detalle: r.detalle } : {}) });
     });
-    // Lo que el teléfono lee de un chat («¿qué me dijo Beto?») o encontró al buscar: con la voz de AURA.
-    // Contestó la llamada de un recordatorio: AURA se lo dice con su voz (y la charla sigue). Lo que
-    // quedó guardado antes de montarse la voz (la app se abrió por el toque) se dice ahora.
-    const decirElRecordatorio = () => {
+    // Entrar a los chats (o a cualquier otra pantalla) con la llamada viva la hace pequeña: sigue oyendo.
+    const offPantalla = escuchar('pantalla', (p) => {
+      if (p.pantalla !== 'mesa' && llamadaActiva(ciclo.estado()) && ciclo.estado() !== 'sonando') setMinimizada(true);
+    });
+    // Un recordatorio que llama: suena en la app (notifee lo avisó con la app delante o la abrió). Solo
+    // el de quien está dentro (recordatoriosNativo ya filtra por dueño).
+    const origenDe = (l: LlamadaRecordatorio): OrigenLlamada => ({ tipo: 'recordatorio', texto: l.texto, base: l.base, paso: l.paso, cuando: l.cuando, dueno: l.dueno });
+    const alSonar = () => {
+      const l = llamadaSonando();
+      if (!l) return;
+      ejecutar(ciclo.llamar(origenDe(l)));
+      // Con la app delante suena la pantalla del avatar: el aviso de notifee se calla (un solo timbre).
+      if (ciclo.estado() === 'sonando' && AppState.currentState === 'active') void callarAvisoQueSuena(l);
+    };
+    const offSonando = escucharSonando(alSonar);
+    alSonar();
+    // Contestó desde el aviso (la app estaba cerrada o detrás): la llamada se abre directo. Lo que quedó
+    // guardado antes de montarse la voz (la app se abrió por el toque) se atiende ahora.
+    const alContestarAviso = () => {
       const l = tomarPorDecir();
       if (!l) return;
-      void decirRecordatorio(l.texto, {
-        vista: () => control.vista(),
-        despertar: () => control.silenciar(false),
-        enviarTexto: (t) => !!controles.current?.enviarTexto(t),
-        hablarMesa: (t) => speak(t, { privado: true, onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) }),
-        enLlamada: () => control.vista().suspendida,
-        finDeLlamada: () =>
-          new Promise<void>((listo) => {
-            const off = escuchar('llamada', (e) => {
-              if (e.activa) return;
-              off();
-              // La conversación se reabre sola al colgar: un respiro para que no se crucen.
-              setTimeout(listo, 1500);
-            });
-          }),
-      }).then((como) => miga(`recordatorio contestado: ${como}`));
+      const o = ciclo.origen();
+      if (!(ciclo.estado() === 'sonando' && o?.tipo === 'recordatorio' && o.base === l.base)) ejecutar(ciclo.llamar(origenDe(l)));
+      ejecutar(ciclo.contestar());
     };
-    const offRecordatorio = escucharPorDecir(decirElRecordatorio);
-    decirElRecordatorio();
+    const offRecordatorio = escucharPorDecir(alContestarAviso);
+    alContestarAviso();
     const offLectura = escuchar('lectura', (l) => {
       void decirLectura(l, {
         vista: () => control.vista(),
@@ -400,6 +443,8 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       offAccion();
       offLectura();
       offRecordatorio();
+      offSonando();
+      offPantalla();
       offLlamada();
     };
   }, [control, precalentar, ciclo, ejecutar]);
@@ -471,7 +516,7 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       if (!limpio) return;
       if (rol === 'usuario') {
         control.oyoFrase();
-        if (modoRef.current) ejecutar(ciclo.turnoUsuario(limpio));
+        ejecutar(ciclo.turnoUsuario(limpio));
       }
       mensajeVoz.emitir({ rol, texto: limpio, emocion: rol === 'ultron' ? emocionDeTexto(texto) : 'neutral', en: Date.now() });
     },
@@ -508,44 +553,51 @@ export function VozProvider({ children, conCompanera = true }: Props) {
   }, [control, precalentador, ciclo]);
 
   const nombreLlamada = de(avatarPorId(vista.avatar).nombre);
-  const valor = useMemo<ApiVoz>(
-    () => ({
+  /** Altavoz o auricular (audífonos si hay), como en una llamada de PULSE2CHAT (pulse/llamada.ts). */
+  const cambiarAltavoz = useCallback(async (on: boolean) => {
+    setAltavoz(on);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { AudioSession } = require('@livekit/react-native') as typeof import('@livekit/react-native');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { salidaSinAltavoz } = require('../pulse/llamada') as typeof import('../pulse/llamada');
+      if (Platform.OS === 'ios') await AudioSession.selectAudioOutput(on ? 'force_speaker' : 'default');
+      else await AudioSession.selectAudioOutput(on ? 'speaker' : await salidaSinAltavoz());
+    } catch (e) {
+      miga(`llamada del avatar: no pude cambiar la salida (${String(e instanceof Error ? e.message : e).slice(0, 60)})`);
+    }
+  }, []);
+  // Al conectar, por el altavoz (el avatar se mira de frente); el botón lo pasa al auricular.
+  useEffect(() => {
+    if (estadoCiclo === 'en_llamada' && ciclo.conectadaEn() && Date.now() - ciclo.conectadaEn() < 1500) void cambiarAltavoz(true);
+  }, [estadoCiclo, ciclo, cambiarAltavoz]);
+  const valor = useMemo<ApiVoz>(() => {
+    const enLlamada = () => ciclo.estado() === 'en_llamada' || ciclo.estado() === 'silenciado';
+    const colgar = () => ejecutar(ciclo.colgar());
+    return {
       vista,
-      // En modo llamada, abrir/colgar/silenciar pasan por el ciclo (un solo lugar decide); sin él, como antes.
-      iniciar: () => {
-        if (!modoLlamada) return control.iniciar();
-        if (control.vista().suspendida) return false;
-        ejecutar(ciclo.despertar(null));
-        return true;
-      },
-      terminar: () => (modoLlamada ? ejecutar(ciclo.colgar()) : control.terminar()),
-      alternar: () => (modoLlamada ? ejecutar(ciclo.tocarHablar()) : control.alternar()),
+      llamada: { estado: estadoCiclo, origen: ciclo.origen(), motivo: ciclo.motivo(), conectadaEn: ciclo.conectadaEn(), minimizada, altavoz },
+      llamame,
+      contestar: () => ejecutar(ciclo.contestar()),
+      rechazar: () => ejecutar(ciclo.rechazar()),
+      colgar,
+      minimizar: (si) => setMinimizada(si && llamadaActiva(ciclo.estado())),
+      iniciar: llamame,
+      terminar: colgar,
+      alternar: () => (llamadaActiva(ciclo.estado()) ? (ciclo.estado() === 'sonando' ? ejecutar(ciclo.rechazar()) : colgar()) : void llamame()),
       silenciar: (v) => {
-        if (!modoLlamada) return control.silenciar(v);
         const e = ciclo.estado();
-        if (v ? e === 'en_llamada' || e === 'espera' : e === 'silenciado') ejecutar(ciclo.dobleToque());
-        else if (!v && e !== 'en_llamada' && e !== 'conectando') ejecutar(ciclo.despertar(null));
+        if (v ? e === 'en_llamada' : e === 'silenciado') ejecutar(ciclo.dobleToque());
       },
       despertarOSilenciar: () => {
-        if (!modoLlamada) return control.despertarOSilenciar();
-        const antes = ciclo.estado();
+        if (!enLlamada()) return 'nada';
         ejecutar(ciclo.dobleToque());
-        const ahora = ciclo.estado();
-        return ahora === antes ? 'nada' : ahora === 'silenciado' ? 'duerme' : 'despierta';
+        return ciclo.estado() === 'silenciado' ? 'duerme' : 'despierta';
       },
-      modoLlamada,
       ciclo: estadoCiclo,
-      enEspera: (texto, ctx) => (modoLlamada ? ciclo.frase(texto, ctx) : { tipo: 'nativo' }),
-      despertar: (texto) => ejecutar(ciclo.despertar(texto ?? null)),
       usadoHoyMs,
       nombreLlamada,
       llamadaLista,
-      fijarModoLlamada: (on) => {
-        setModoLlamada(on);
-        void saveSettings({ vozLlamada: on });
-        ejecutar(ciclo.fijarActivo(on));
-        if (on && AppState.currentState === 'active') ejecutar(ciclo.encender());
-      },
       precalentar,
       fijarAvatar: (id) => {
         control.perfil(id, control.vista().idioma);
@@ -555,14 +607,13 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       actividad: () => controles.current?.actividad(),
       confirmar: (ok, texto) => {
         if (controles.current?.avisar(`[app] ${ok ? 'Hecho' : 'No se pudo'}: ${texto}`)) return;
-        // Sin conversación: con la voz de la mesa, solo si nadie está hablando y no hay llamada.
+        // Sin llamada: con la voz de la mesa, solo si nadie está hablando y no suena nada.
         const v = control.vista();
-        if (v.suspendida || v.silenciada || v.dormida || vozSuspendida() || ecoMesa.ultimo().hablando) return;
+        if (v.suspendida || v.silenciada || v.dormida || vozSuspendida() || ecoMesa.ultimo().hablando || llamadaActiva(ciclo.estado())) return;
         void speak(texto, { onAudioStart: () => pauseMicForTts(true), onEnd: () => pauseMicForTts(false) });
       },
-    }),
-    [vista, control, precalentar, modoLlamada, estadoCiclo, ciclo, ejecutar, usadoHoyMs, nombreLlamada, llamadaLista]
-  );
+    };
+  }, [vista, control, precalentar, estadoCiclo, ciclo, ejecutar, usadoHoyMs, nombreLlamada, llamadaLista, minimizada, altavoz, llamame]);
 
   return (
     <VozCtx.Provider value={valor}>
@@ -583,7 +634,17 @@ export function VozProvider({ children, conCompanera = true }: Props) {
         />
       ) : null}
       {conCompanera ? <CompaneraSegura /> : null}
-      <LlamadaAura />
+      <LlamadaAvatar
+        v={{ ...valor.llamada, avatar: vista.avatar, idioma: vista.idioma }}
+        onContestar={valor.contestar}
+        onRechazar={valor.rechazar}
+        onColgar={valor.colgar}
+        onSilenciar={() => ejecutar(ciclo.dobleToque())}
+        onAltavoz={() => void cambiarAltavoz(!altavoz)}
+        onMinimizar={valor.minimizar}
+        nivelVoz={escucharNivelVoz}
+        cuerpo3D={cuerpo3DLlamada(vista.avatar)}
+      />
     </VozCtx.Provider>
   );
 }
@@ -609,6 +670,42 @@ class LimiteCompa extends Component<{ children: ReactNode }, { roto: boolean }> 
   render() {
     return this.state.roto ? null : this.props.children;
   }
+}
+
+/*
+ * La cara 3D de la llamada (avatar3d/CuerpoLlamada), cargada como la compañera: si el módulo nativo no
+ * está o el 3D revienta al dibujar, la llamada sigue con la foto o los anillos (su respaldo 2D).
+ */
+let moduloCuerpoLlamada: typeof import('../avatar3d/CuerpoLlamada') | null | undefined;
+class LimiteCuerpo extends Component<{ children: ReactNode; respaldo: ReactNode }, { roto: boolean }> {
+  state = { roto: false };
+  static getDerivedStateFromError() {
+    return { roto: true };
+  }
+  componentDidCatch(e: unknown) {
+    miga(`llamada del avatar: el 3D se apagó (${String(e instanceof Error ? e.message : e).slice(0, 80)})`);
+  }
+  render() {
+    return this.state.roto ? this.props.respaldo : this.props.children;
+  }
+}
+function cuerpo3DLlamada(avatar: AvatarId): ((lado: number, respaldo: ReactNode) => ReactNode) | undefined {
+  if (moduloCuerpoLlamada === undefined) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      moduloCuerpoLlamada = require('../avatar3d/CuerpoLlamada') as typeof import('../avatar3d/CuerpoLlamada');
+    } catch (e) {
+      moduloCuerpoLlamada = null;
+      miga(`llamada del avatar: sin 3D (${String(e instanceof Error ? e.message : e).slice(0, 80)})`);
+    }
+  }
+  const C = moduloCuerpoLlamada?.CuerpoLlamada;
+  if (!C) return undefined;
+  return (lado, respaldo) => (
+    <LimiteCuerpo respaldo={respaldo}>
+      <C avatar={avatar} lado={lado} respaldo={respaldo} />
+    </LimiteCuerpo>
+  );
 }
 
 function CompaneraSegura() {

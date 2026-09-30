@@ -5,6 +5,11 @@
 //   tutorial    el recorrido de primera vez (`&paso=N`)
 //   transicion  un cuadro de la transición grande → chiquita al entrar al chat (`&h=0..1`: 1 sobre la
 //               mesa, 0 en su lugar), con la misma cuenta de la app (avatar3d/presencia.haciaMarco)
+//   llamada     LA LLAMADA DEL AVATAR (compa/LlamadaAvatar, el componente real): `&e=` sonando,
+//               conectando, en_llamada, silenciado, colgada, perdida; `&a=` aura/claudio/antonio/ojos;
+//               `&rec=1` un recordatorio; `&min=1` minimizada sobre los chats
+//   compania    un cuadro de la compañera entrando caminando al colgar (`&t=0..1`), con la cuenta de
+//               la app (compa/borde: su lugar en el borde de abajo; entra desde el borde más cercano)
 // `&escala=1.6` agranda la letra como el «Tamaño de fuente» de Android.
 import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -16,6 +21,10 @@ import { Tutorial } from '@movil/src/tutorial/Tutorial';
 import { avatarPorId } from '@movil/src/avatares/catalogo';
 import { haciaMarco } from '@movil/src/avatar3d/presencia';
 import { T } from '@movil/src/tema';
+import { LlamadaAvatar } from '@movil/src/compa/LlamadaAvatar';
+import { yCarril } from '@movil/src/compa/borde';
+import type { AvatarId } from '@movil/src/avatares/catalogo';
+import type { EstadoCiclo } from '@movil/src/compa/llamadaCiclo';
 import fotoPie from '@movil/assets/avatares/claudio-pie/base.webp';
 import fotoRetrato from '@movil/assets/avatares/claudio/base.webp';
 
@@ -118,7 +127,68 @@ function Transicion({ h }: { h: number }) {
   );
 }
 
+/** La llamada del avatar con el componente de la app, en un estado fijo (el reloj quieto a las 3:07). */
+function Llamada() {
+  const e = (q.get('e') || 'sonando') as EstadoCiclo;
+  const a = (q.get('a') || 'claudio') as AvatarId;
+  const min = q.get('min') === '1';
+  const ahora = 1_000_000;
+  const origen = q.get('rec') === '1' ? { tipo: 'recordatorio' as const, texto: 'Llamar a Beto', base: 'aura-rec-x', paso: 'l1' as const, cuando: ahora } : { tipo: 'llamame' as const };
+  const conectada = e === 'en_llamada' || e === 'silenciado' || e === 'colgada';
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      {min ? <Chats corrida={0} /> : <Mesa />}
+      <LlamadaAvatar
+        v={{ estado: e, origen, motivo: e === 'colgada' ? 'persona' : null, conectadaEn: conectada ? ahora - 187_000 : 0, minimizada: min, altavoz: true, avatar: a, idioma: 'es' }}
+        onContestar={() => {}}
+        onRechazar={() => {}}
+        onColgar={() => {}}
+        onSilenciar={() => {}}
+        onAltavoz={() => {}}
+        onMinimizar={() => {}}
+        ahora={() => ahora}
+      />
+    </View>
+  );
+}
+
+/**
+ * Un cuadro de la compañera entrando caminando al colgar: desde el borde más cercano hasta su lugar
+ * en el borde de abajo (compa/Companera, entrarCaminando), con el pasito de la figurita.
+ */
+function Compania({ t }: { t: number }) {
+  const { width, height } = useWindowDimensions();
+  const LADO = 104;
+  const marco = { ancho: width, alto: height, lado: LADO, margen: 4, suelo: 88, techo: 28 };
+  const lugarX = Math.max(4, width - LADO - 18);
+  const inicio = width; // su lugar está a la derecha: entra por la derecha
+  const suave = 1 - (1 - t) * (1 - t); // Easing.out(quad), como en la app
+  const x = inicio + (lugarX - inicio) * suave;
+  const brinco = t < 1 ? -Math.abs(Math.sin(t * Math.PI * 7)) * 5 : 0;
+  const lado = LADO * 0.54 * 1.86 * 0.5;
+  return (
+    <View style={StyleSheet.absoluteFill}>
+      <Chats corrida={0} />
+      <View style={{ position: 'absolute', left: x, top: yCarril(marco) + brinco, width: LADO, height: LADO, alignItems: 'center', justifyContent: 'center' }}>
+        <View style={{ width: lado * 2, height: lado * 2, borderRadius: lado, overflow: 'hidden', borderWidth: 2.5, borderColor: tema.acento, backgroundColor: '#1F1B18' }}>
+          <Image source={{ uri: fotoRetrato }} style={{ width: '100%', height: '100%', transform: [{ scale: 1.5 }, { translateY: 9 }, { scaleX: -1 }] }} resizeMode="cover" />
+        </View>
+        {t >= 1 ? (
+          <View style={{ position: 'absolute', top: -34, backgroundColor: 'rgba(28,29,32,0.94)', borderColor: tema.acento, borderWidth: 1, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 5 }}>
+            <Text style={{ color: '#ECE8E2', fontSize: 13 }}>¡Aquí sigo!</Text>
+          </View>
+        ) : null}
+      </View>
+      <View style={s.leyenda}>
+        <Text style={s.leyendaTexto}>{`colgó → la compañera entra caminando · t = ${t.toFixed(2)}${t >= 1 ? ' · saluda' : ''}`}</Text>
+      </View>
+    </View>
+  );
+}
+
 function Pantalla() {
+  if (cual === 'llamada') return <Llamada />;
+  if (cual === 'compania') return <Compania t={Number(q.get('t') ?? 0.5)} />;
   if (cual === 'vivo') return <Mesa conversando />;
   if (cual === 'mas')
     return (

@@ -55,6 +55,25 @@ const ESCENAS = [
   ['transicion-2', '?p=transicion&h=0.7', 360, 780],
   ['transicion-3', '?p=transicion&h=0.4', 360, 780],
   ['transicion-4-chiquita', '?p=transicion&h=0', 360, 780],
+  // La llamada del avatar (compa/LlamadaAvatar): entrante, en llamada, minimizada sobre los chats, colgada
+  // y la compañera entrando caminando; en 360 y 412 de ancho, acostado y con la letra grande.
+  ['llamada-1-entrante-claudio-360', '?p=llamada&e=sonando&a=claudio', 360, 780],
+  ['llamada-1-entrante-aura-412', '?p=llamada&e=sonando&a=aura', 412, 915],
+  ['llamada-1-entrante-recordatorio-360', '?p=llamada&e=sonando&a=antonio&rec=1', 360, 780],
+  ['llamada-1-entrante-apaisada', '?p=llamada&e=sonando&a=claudio', 780, 360],
+  ['llamada-2-conectando-360', '?p=llamada&e=conectando&a=claudio', 360, 780],
+  ['llamada-3-en-llamada-claudio-360', '?p=llamada&e=en_llamada&a=claudio', 360, 780],
+  ['llamada-3-en-llamada-aura-412', '?p=llamada&e=en_llamada&a=aura', 412, 915],
+  ['llamada-3-en-llamada-letra-grande', '?p=llamada&e=en_llamada&a=claudio&escala=1.6', 412, 915],
+  ['llamada-3-silenciada-360', '?p=llamada&e=silenciado&a=claudio', 360, 780],
+  ['llamada-3-en-llamada-apaisada', '?p=llamada&e=en_llamada&a=antonio', 780, 360],
+  ['llamada-4-minimizada-sobre-chats-360', '?p=llamada&e=en_llamada&a=claudio&min=1', 360, 780],
+  ['llamada-4-minimizada-sobre-chats-412', '?p=llamada&e=silenciado&a=aura&min=1', 412, 915],
+  ['llamada-5-colgada-360', '?p=llamada&e=colgada&a=claudio', 360, 780],
+  ['llamada-5-perdida-360', '?p=llamada&e=perdida&a=claudio&rec=1', 360, 780],
+  ['llamada-6-compania-entra-1', '?p=compania&t=0.15', 360, 780],
+  ['llamada-6-compania-entra-2', '?p=compania&t=0.55', 360, 780],
+  ['llamada-6-compania-entra-3-llego', '?p=compania&t=1', 360, 780],
 ];
 
 // Un Chromium ya instalado: CHROMIUM_PATH, o el de PLAYWRIGHT_BROWSERS_PATH aunque sea de otra versión de Playwright.
@@ -84,7 +103,18 @@ for (const [nombre, qs, w, h] of ESCENAS) {
       .filter((b) => /Abrir tus chats|micrófono|Más opciones/.test(b.l || ''))
       .map((b) => ({ l: b.l.slice(0, 28), x: Math.round(b.r.left), d: Math.round(b.r.right), alto: Math.round(b.r.height) }))
   );
-  const malos = botones.filter((b) => b.x < 0 || b.d > w || b.alto < 48);
+  // En la llamada del avatar: cada botón (rechazar, contestar, silenciar, altavoz, minimizar, colgar, la píldora) dentro y de 48 px o más.
+  if (qs.includes('p=llamada')) {
+    const deLlamada = await pag.evaluate(() =>
+      [...document.querySelectorAll('[aria-label]')]
+        .map((e) => ({ l: e.getAttribute('aria-label'), r: e.getBoundingClientRect() }))
+        .filter((b) => /Rechazar|contestar|Silenciar|Silenciado|Altavoz|Minimizar|Colgar|volver a la llamada/.test(b.l || ''))
+        .map((b) => ({ l: b.l.slice(0, 28), x: Math.round(b.r.left), d: Math.round(b.r.right), arriba: Math.round(b.r.top), abajo: Math.round(b.r.bottom), alto: Math.round(b.r.height), ancho: Math.round(b.r.width) }))
+    );
+    botones.push(...deLlamada.map((b) => ({ ...b, llamada: true })));
+    if (!deLlamada.length && !qs.includes('e=colgada') && !qs.includes('e=perdida')) botones.push({ l: 'la llamada no tiene botones', x: -1, d: 0, alto: 0 });
+  }
+  const malos = botones.filter((b) => b.x < 0 || b.d > w || b.alto < 48 || (b.llamada && (b.ancho < 48 || b.abajo > h || b.arriba < 0)));
   if (qs.includes('p=barra') || qs.includes('p=vivo')) {
     if (botones.length !== 3) malos.push({ l: `hay ${botones.length} botones en la barra (deben ser 3)` });
   }

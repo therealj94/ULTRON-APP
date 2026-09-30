@@ -51,12 +51,6 @@ export const nivelOido = canal(0);
  */
 export const oidoTelefono = canal(false);
 
-/**
- * La llamada no está (no conectó, sin minutos, modo llamada apagado): el oído del teléfono y la mesa
- * atienden. `texto`: lo que la persona dijo en espera y quedó por contestar (la mesa lo contesta).
- */
-export type AtiendeNativo = { texto: string | null; motivo: string; n: number };
-export const nativoAtiende = canal<AtiendeNativo | null>(null);
 
 /** Lo que hace la mesa con su propia voz (fuera de la conversación fluida), para que la compañera lo refleje. */
 export type EcoMesa = {

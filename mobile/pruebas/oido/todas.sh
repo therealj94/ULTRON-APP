@@ -2,8 +2,10 @@
 # El oído de la app con el código real (lib/speech*, compa/duenoAudio, compa/sesion, compa/animo) y lo
 # nativo simulado: la secuencia que José probó en la APK 5.1 (mesa → chats → doble toque → mesa), el
 # reconocedor que falla al arrancar, el `end` tardío de un abort() y [latencia]: cuándo empieza a sonar
-# la respuesta de la mesa según lo que tarde el cerebro (y si suena «déjame ver»), el MODO LLAMADA
-# (espera → llamada → silenciado → cuelga sola) y [minutos]: lo conectado en una sesión típica.
+# la respuesta de la mesa según lo que tarde el cerebro (y si suena «déjame ver»), LA LLAMADA DEL AVATAR
+# de punta a punta (mesa habla → «llámame» → suena → contestar → hablar → minimizar → chats → volver →
+# colgar → la compañera entra caminando → la mesa vuelve a escuchar; el recordatorio que llama; el
+# «¿sigues ahí?») y [minutos]: lo conectado en una llamada típica.
 # SRC=/copia/de/main/mobile/src sh todas.sh corre las mismas pruebas contra otro código (y falla con main).
 cd "$(dirname "$0")" || exit 1
 if [ -n "$SRC" ]; then SALIDA="${SALIDA:-out/oido-otro.cjs}"; export SALIDA; fi

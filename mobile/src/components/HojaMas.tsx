@@ -3,7 +3,8 @@
  * avatar mientras no se abre. Sube desde abajo (ui/Hoja: arrastrar para cerrar, velo, «atrás»).
  *
  * En una rejilla de mosaicos grandes (≥ 72 dp de alto, dos columnas en vertical, cuatro acostado):
- *   · Conversar en vivo — hablar de corrido con el avatar, como una llamada (ElevenLabs);
+ *   · Que te llame     — el avatar te llama (la pantalla «te está llamando», compa/LlamadaAvatar) y
+ *                         hablan de corrido hasta que cuelgues; en la llamada, «Colgar»;
  *   · Escribir          — el teclado y el menú de siempre;
  *   · Cámara            — apagada / solo ahora / siempre (lib/camaraModo.ts);
  *   · Caras             — reconocer a la persona y a quien presente, con permiso (src/caras);
@@ -29,6 +30,7 @@ type Props = {
   onCerrar: () => void;
   onOpcion: (o: OpcionMas) => void;
   nombreAvatar: string;
+  /** Hay llamada del avatar (suena o se habla): el mosaico cuelga. */
   conversando: boolean;
   /** Lo que se lee debajo de «Cámara» («Apagada», «Solo ahora · 8 min», «Siempre»). */
   estadoCamara: string;
@@ -54,8 +56,8 @@ export function HojaMas(p: Props) {
     {
       id: 'envivo',
       icono: 'llamar',
-      titulo: p.conversando ? tr('Terminar en vivo', 'End live talk') : tr('Conversar en vivo', 'Live conversation'),
-      sub: p.conversando ? tr(`Hablando con ${p.nombreAvatar}`, `Talking with ${p.nombreAvatar}`) : tr('De corrido, como una llamada', 'Hands-free, like a call'),
+      titulo: p.conversando ? tr('Colgar', 'Hang up') : tr(`Que ${p.nombreAvatar} te llame`, `Have ${p.nombreAvatar} call you`),
+      sub: p.conversando ? tr(`En llamada con ${p.nombreAvatar}`, `On a call with ${p.nombreAvatar}`) : tr('Suena como una llamada y hablan de corrido', 'Rings like a call, then you talk hands-free'),
       activo: p.conversando,
     },
     { id: 'escribir', icono: 'teclado', titulo: tr('Escribir', 'Type'), sub: tr('El teclado y el menú', 'Keyboard and menu') },

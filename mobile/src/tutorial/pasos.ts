@@ -69,13 +69,13 @@ export function pasosTutorial(avatar: string): PasoTutorial[] {
     {
       id: 'recordatorios',
       icono: 'reloj',
-      titulo: tr('Recordatorios, y te llama', 'Reminders, and it calls you'),
+      titulo: tr('Te llama, y te recuerda', 'It calls you, and reminds you'),
       texto: tr(
-        `Pídele que te recuerde algo a una hora. Si le dices «llámame», a esa hora ${avatar} te llama a pantalla completa y te lo dice con su voz.`,
-        `Ask for a reminder at a time. If you say “call me”, at that time ${avatar} calls you full screen and tells you out loud.`
+        `Dile «llámame» y ${avatar} te llama como una llamada de verdad: contestas y hablan de corrido hasta que cuelgues. Con «recuérdame a las 2…» o «ponme un timer», a esa hora te llama y te lo dice.`,
+        `Say “call me” and ${avatar} calls you like a real call: answer and talk hands-free until you hang up. With “remind me at 2…” or “set a timer”, it calls you at that time and tells you.`
       ),
-      ejemplo: tr('«Llámame a las 5 para recordarme el banco»', '“Call me at 5 to remind me about the bank”'),
-      fuente: 'compa/recordatorios.ts · compa/LlamadaAura.tsx · contrato (recordatorio con llamada)',
+      ejemplo: tr('«Llámame» · «Recuérdame a las 2 llamar a Beto» · «Ponme un timer de 10 minutos»', '“Call me” · “Remind me at 2 to call Beto” · “Set a 10-minute timer”'),
+      fuente: 'compa/llamadaCiclo.ts · compa/LlamadaAvatar.tsx · compa/recordatorios.ts · lib/manos-app.ts (llamame, recordatorio)',
     },
     {
       id: 'internet',

@@ -186,7 +186,7 @@ export class ControlSesion {
   }
 
   /**
-   * Silenciado SIN sesión (el modo llamada en espera recibe un doble toque, o se silenció mucho rato):
+   * Silenciado SIN sesión (se silenció mucho rato):
    * nadie escucha, ni la sesión ni el oído del teléfono (vozOcupaMicrofono: dormida). Despertar la reabre.
    */
   dormir() {

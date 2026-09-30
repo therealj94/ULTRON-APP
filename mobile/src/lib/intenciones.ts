@@ -16,6 +16,8 @@ export type Intencion =
   | { tipo: 'despertar' }
   | { tipo: 'dormir' }
   | { tipo: 'callar' }
+  /** «Llámame»: el avatar llama a la persona (compa/llamadaCiclo.ts), al instante y sin red. */
+  | { tipo: 'llamame' }
   | { tipo: 'modo'; modo: Mode; frase: string }
   | { tipo: 'menu' }
   | { tipo: 'catalogo' }
@@ -248,6 +250,14 @@ const REGLAS: Regla[] = [
     max: 3,
     re: /^(callate|silencio|basta|shh+|para|para ya|ya callate|callate ya|silencio por favor|stop|alto)$/,
     build: () => ({ tipo: 'callar' }),
+  },
+  {
+    // La misma frase que reconoce el servidor (lib/manos-app.ts, RE_LLAMAME), aquí para que suene YA:
+    // sin ir al servidor ni al cerebro. «llámame Chepe» (apodo) y «llámame a Beto» no casan.
+    id: 'llamame',
+    max: 9,
+    re: /^(?:(?:um|uh|eh|este|okay|ok|hey|antonio|so|can you|could you|puedes|podrias|me puedes|me podrias|quiero que|necesito que|mejor|claudio|guardian) )*(?:llamame|hazme una llamadita|haceme una llamadita|ponte en llamada conmigo|hablemos por llamada|hablemos por telefono|lets talk on a call|call my phone|llamarme|me llames|me llamas|marcame|marcarme|timbrame|hazme una llamada|haceme una llamada|dame una llamada|echame una llamada|dame un timbrazo|hablame por telefono|llamame por telefono|call me|give me a call|ring me|phone me|call me up|give me a ring)(?: (?:ahorita|ya|ahora|un rato|un ratito|porfa|porfis|por favor|please|now|right now|quiero platicar|que quiero platicar|que quiero hablar|para platicar|para hablar|quiero hablar contigo|al celular|al telefono|tu|vos|real quick|me|ok|for me|pues|dale|gracias))*$/,
+    build: () => ({ tipo: 'llamame' }),
   },
   {
     id: 'conocer_salir',

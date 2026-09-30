@@ -39,6 +39,8 @@ const piezas = {
   DUENO: 'compa/duenoAudio',
   SESION: 'compa/sesion',
   CICLO: 'compa/llamadaCiclo',
+  // El intérprete de la mesa: «llámame» lo reconoce aquí, sin red.
+  INTENCIONES: 'lib/intenciones',
   ANIMO: 'compa/animo',
   I18N: 'i18n',
   // La voz de la mesa (speak, StreamSpeaker) y sus frases: para medir cuándo empieza a sonar la respuesta.

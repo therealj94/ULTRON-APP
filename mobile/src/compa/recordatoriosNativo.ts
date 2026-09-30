@@ -6,6 +6,8 @@
  *    cerrada (el ÚNICO manejador de fondo de notifee vive en pulse/servicioLlamada.ts, que le pasa
  *    aquí lo que no es de la llamada de PULSE2CHAT);
  *  · lo que abrió la app (getInitialNotification): «Contestar» desde el aviso, o la pantalla completa;
+ *  · la pantalla de la llamada es la del avatar (LlamadaAvatar, con el ciclo de compa/llamadaCiclo.ts):
+ *    `sonar` la pone a sonar (VozProvider escucha `llamadaSonando`) y sus botones vuelven aquí;
  *  · no encimarse a una llamada de PULSE2CHAT en curso: la llamada de AURA se quita y se vuelve a
  *    poner cuando la otra termina (lo avisa el bus, `llamada`).
  *
@@ -74,13 +76,37 @@ export async function contestar(l: R.LlamadaRecordatorio) {
   if (R.anotarContestada(l)) emitir('recordatorio', { texto: l.texto, base: l.base });
 }
 
+/**
+ * Contestó en la pantalla de la llamada del avatar (compa/LlamadaAvatar.tsx): el ciclo ya abre la
+ * conversación; aquí solo se calla el aviso y se quita lo que faltaba (reintento y aviso final).
+ */
+export async function contestadaEnPantalla(l: R.LlamadaRecordatorio) {
+  if (!R.esDeQuienEsta(l, depsRecordatorios)) return callarAjena(l);
+  R.fijarSonando(null);
+  R.anotarContestada(l, Date.now(), false);
+  await R.alContestar(l.base, depsRecordatorios);
+}
+
+/**
+ * Con la app delante suena la pantalla del avatar (con su timbre): el aviso de notifee que sonaba a la
+ * vez se calla para no oír dos timbres. El reintento y el aviso final siguen programados.
+ */
+export async function callarAvisoQueSuena(l: R.LlamadaRecordatorio) {
+  await R.aplazar(l, depsRecordatorios);
+}
+
+/** No contestó en la app (sonó su minuto): el reintento y el aviso final de notifee siguen puestos. */
+export function perdidaEnPantalla() {
+  R.fijarSonando(null);
+}
+
 export async function rechazar(l: R.LlamadaRecordatorio) {
   if (!R.esDeQuienEsta(l, depsRecordatorios)) return callarAjena(l);
   R.fijarSonando(null);
   await R.alRechazar(l, depsRecordatorios);
 }
 
-/** Suena: la pantalla «AURA te llama» solo para su dueño. */
+/** Suena: la pantalla de la llamada del avatar, solo para su dueño. */
 function sonar(l: R.LlamadaRecordatorio) {
   if (R.esDeQuienEsta(l, depsRecordatorios)) R.fijarSonando(l);
 }

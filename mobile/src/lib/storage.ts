@@ -87,8 +87,8 @@ export type AppSettings = {
   /** La mesa para charlar (avatar grande) o para trabajar (avatar compacto + la conversación escrita). */
   modoMesa: 'charlar' | 'trabajar';
   /**
-   * MODO LLAMADA (compa/llamadaCiclo.ts): la voz como una llamada con ElevenLabs Agents, en espera
-   * barata con el oído del teléfono y colgando sola. Apagado, todo lo atiende el oído del teléfono.
+   * El interruptor del modo llamada anterior (espera con el nombre del avatar). Ya no se usa: la llamada
+   * del avatar se pide con «llámame» (compa/llamadaCiclo.ts). Queda para no romper lo guardado.
    */
   vozLlamada: boolean;
 };
