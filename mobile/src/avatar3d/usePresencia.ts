@@ -9,7 +9,7 @@ import { canal } from '../compa/canales';
 import { useVozOpcional } from '../compa/VozProvider';
 import { escuchar, type Pantalla } from '../nucleo/contrato';
 import { estadoAvatar } from './contrato';
-import { modoEfectivo, PRESENCIA_POR_OMISION } from './presencia';
+import { modoEfectivo, PRESENCIA_POR_OMISION, type Marco, type ModoVisible } from './presencia';
 import type { ModoPresencia } from './tipos';
 
 /** Lo elegido antes de que haya perfil (o si no se pudo guardar): vive en memoria. */
@@ -54,7 +54,7 @@ export function usePantallaVisible(): Visible {
 }
 
 /** El modo que toca en la pantalla visible. */
-export function useModoPresencia(): ModoPresencia | 'oculta' {
+export function useModoPresencia(): ModoVisible {
   const preferencia = usePreferenciaPresencia();
   const { pantalla } = usePantallaVisible();
   const voz = useVozOpcional();
@@ -69,6 +69,25 @@ export function useEsLaVisible(pantalla: Pantalla, chat: string | null): boolean
   const v = usePantallaVisible();
   return v.pantalla === pantalla && v.chat === (chat ? chat.toLowerCase() : null);
 }
+
+/**
+ * ¿La mesa es la que se ve? Sin navegación que la anuncie (una mesa montada sola, sin la carcasa),
+ * la pantalla es null y la mesa es lo único que hay: cuenta como visible.
+ */
+export function mesaEsVisible(p: Pantalla | null): boolean {
+  return p === 'mesa' || p === null;
+}
+
+export function useMesaVisible(): boolean {
+  return mesaEsVisible(usePantallaVisible().pantalla);
+}
+
+/**
+ * Dónde está el cuerpo grande de la mesa en la ventana (lo publica la mesa al medirse). La compañera
+ * sale de ahí encogiéndose al dejar la mesa y crece hacia ahí al volver (una sola AURA que cambia de
+ * tamaño, no dos).
+ */
+export const marcoMesa = canal<Marco | null>(null);
 
 /** Lo que siente el alma (la compañera), para dibujarlo en otro cuerpo. */
 export function useEstadoAvatar() {

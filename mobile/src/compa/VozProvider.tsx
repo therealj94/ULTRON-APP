@@ -35,7 +35,7 @@ import { api } from '../lib/api';
 import { loadMesaToken } from '../lib/storage';
 import { miga } from '../lib/reporte';
 import { emocionDeTexto } from '../lib/emocion';
-import { escucharNivelVoz, nivelExterno, speak, suspenderVoz, vozSuspendida } from '../lib/tts';
+import { escucharNivelVoz, nivelExterno, speak, stopSpeaking, suspenderVoz, vozSuspendida } from '../lib/tts';
 import { pauseMicForTts, suspenderOido } from '../lib/speech';
 import { suspenderSfx } from '../lib/sfx';
 import { quitarExpresiones } from '../lib/expresiones';
@@ -277,6 +277,11 @@ export function VozProvider({ children, conCompanera = true }: Props) {
       contexto.current = null;
     };
   }, [precalentador]);
+  // Un solo dueño del audio (compa/duenoAudio.ts): al abrirse la conversación en vivo, venga de donde
+  // venga (la mesa, la compañera, el panel), la voz de la mesa se calla. Nunca dos voces a la vez.
+  useEffect(() => {
+    if (vista.montada) void stopSpeaking();
+  }, [vista.montada, vista.gen]);
   const conversando = vista.montada && (vista.estado === 'escuchando' || vista.estado === 'hablando');
   useEffect(() => {
     contexto.current?.fijarConversando(conversando);

@@ -13,6 +13,7 @@ import { montarVozAgente, type TurnoVoz } from './server/voz-agente';
 import { personalidadDelTurno } from './server/prompt-turno';
 import { cargarMiembro, fotoMemoriaMiembro, guardarHechoMiembro, hiloMiembro, olvidarMiembro, promptMemoriaMiembro, recordarTurnoMiembro } from './lib/memoria-miembro';
 import { montarRutasApp } from './server/app-rutas';
+import { montarRutasCaras } from './server/caras-rutas';
 import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
   abrirTurnoApp,
@@ -1259,6 +1260,9 @@ montarRutasApp(app, {
     return { id: p.id, cerebro: p.cerebro, plataforma: p.plataforma, proposito: p.proposito, acento: p.acento, demo: p.demo, modos: p.modos, herramientas: p.herramientas };
   },
 });
+
+// Las caras que conoce AURA, con permiso y por persona (solo números, nunca fotos).
+montarRutasCaras(app, { exigirMesa, limitar, sesionDe });
 
 app.get('/api/capacidades', limitar(30), async (req, res) => {
   const s = await medirSalud();
@@ -3055,8 +3059,16 @@ app.post('/api/turno/stream', exigirMesaODesk, limitar(60), cupoDeMiembro, (req,
       if (!res.writableEnded) res.end();
     },
   };
-  return turnoEnVivoConTraza(body, salida, { senal: corte.signal });
+  // La mesa del teléfono es de VOZ (oye, piensa, habla): lo que dijo en voz alta lleva los topes de la
+  // voz (TOPE_PASO_VOZ_MS por paso que espera a internet o a la base). Antes esperaba como la mesa
+  // escrita y, con la red lenta del campo, la primera palabra tardaba segundos.
+  return turnoEnVivoConTraza(body, salida, { senal: corte.signal, voz: turnoHablado(body) });
 });
+
+/** Un turno que la app mandó dictado por voz (`hablado: true`, solo desde la app 5.0 con su cabecera). */
+export function turnoHablado(body: any): boolean {
+  return body?.origen === 'app' && body?.hablado === true;
+}
 
 async function turnoEnVivo(body: any, salida: SalidaEnVivo, opciones: OpcionesTurno = {}) {
   const reg = trazaActual()!;

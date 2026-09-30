@@ -53,6 +53,17 @@ export type AppSettings = {
   avatarElegido: boolean;
   /** Idioma de la interfaz, de la voz y de las respuestas. Se elige en la entrada. */
   idioma: Idioma;
+  /**
+   * Quién eligió la cámara «siempre» (por correo). Nadie más la tiene encendida al entrar: desde la OTA de la mesa
+   * arranca APAGADA (lib/camaraModo.ts). `visionEnabled` ya no la enciende.
+   */
+  camaraSiempre: Record<string, boolean>;
+  /** Quién activó el reconocimiento de caras (por correo → cuándo). Sin esto no se analiza ninguna cara. */
+  carasActivas: Record<string, number>;
+  /** Quién ya vio (o saltó para siempre) el recorrido de primera vez (por correo). */
+  tutorialVisto: Record<string, boolean>;
+  /** La mesa para charlar (avatar grande) o para trabajar (avatar compacto + la conversación escrita). */
+  modoMesa: 'charlar' | 'trabajar';
 };
 export type ConocerProgress = {
   correo: string;
@@ -73,6 +84,10 @@ const DEFAULT_SETTINGS: AppSettings = {
   avatar: 'aura',
   avatarElegido: false,
   idioma: 'es',
+  camaraSiempre: {},
+  carasActivas: {},
+  tutorialVisto: {},
+  modoMesa: 'charlar',
 };
 
 export async function saveSession(user: SessionUser | null) {

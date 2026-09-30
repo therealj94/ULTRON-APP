@@ -17,6 +17,10 @@
  * (`estadoAvatar`) y escucha los toques que le cuentan el panel al lado de los chats y la pantalla
  * completa (`toqueAvatar`). Cuando AURA está en uno de esos, esta figurita se aparta (sigue sintiendo).
  * Su propio cuerpo es AvatarVivo: el 3D si hay modelo y el teléfono lo aguanta; si no, la figurita.
+ *
+ * En la mesa NO se ve: la mesa ya es AURA, grande y de frente (avatar3d/presencia.ts, cuerpoVisible).
+ * Al salir de la mesa nace del cuerpo grande y se encoge hasta su lugar; al volver, crece hacia él y
+ * se funde. Una sola AURA que cambia de tamaño, nunca dos (ni dos escenas 3D vivas a la vez).
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Keyboard, PanResponder, StyleSheet, Text, View, useWindowDimensions, type LayoutChangeEvent } from 'react-native';
@@ -52,7 +56,8 @@ import { destinoPaseo, msPaseo, pegarABorde, reubicar, yCarril, type Marco, type
 import { ecoMesa, interrupcionVoz, mensajeVoz, nivelOido, sueloCompa } from './canales';
 import { estadoAvatar, estadoDesdeAnimo, gestoDeEvento, mismoEstado, toqueAvatar, type EstadoAvatar } from '../avatar3d/contrato';
 import { zona2D } from '../avatar3d/mapeo';
-import { cuerposAparte } from '../avatar3d/usePresencia';
+import { cuerposAparte, marcoMesa, useModoPresencia } from '../avatar3d/usePresencia';
+import { haciaMarco, transicionMesa, type ModoVisible } from '../avatar3d/presencia';
 import { AvatarVivo } from '../avatar3d/AvatarVivo';
 
 /** Lado de su caja (px). El cuerpo es ~54 % del lado; el resto es aura, sombra y brinco. */
@@ -114,6 +119,41 @@ export function Companera() {
     enOtroLado.value = withTiming(aparte ? 0 : 1, { duration: 220 });
     if (aparte) caminarRef.current?.detener();
   }, [aparte, enOtroLado]);
+
+  // En la mesa, la mesa es AURA: esta figurita no se ve. Al irse de la mesa sale del cuerpo grande
+  // encogiéndose; al volver crece hacia él y se funde (`haciaMesa`: 0 en su lugar, 1 sobre la mesa).
+  const modo = useModoPresencia();
+  const enMesa = modo === 'mesa';
+  const apartada = aparte || enMesa;
+  aparteRef.current = apartada;
+  const haciaMesa = useSharedValue(enMesa ? 1 : 0);
+  const mesaDx = useSharedValue(0);
+  const mesaDy = useSharedValue(0);
+  const mesaEscala = useSharedValue(1);
+  const modoAntes = useRef<ModoVisible>(modo);
+  useEffect(() => {
+    const antes = modoAntes.current;
+    modoAntes.current = modo;
+    const t = transicionMesa(antes, modo);
+    const marcoM = marcoMesa.ultimo();
+    if (!t || !marcoM || reducido) {
+      haciaMesa.value = withTiming(enMesa ? 1 : 0, { duration: reducido ? 0 : 200 });
+      if (enMesa) caminarRef.current?.detener();
+      return;
+    }
+    const h = haciaMarco({ x: x.value, y: y.value, lado: LADO }, marcoM);
+    mesaDx.value = h.dx;
+    mesaDy.value = h.dy;
+    mesaEscala.value = h.escala;
+    if (t === 'crecer') {
+      caminarRef.current?.detener();
+      haciaMesa.value = withTiming(1, { duration: 420, easing: Easing.inOut(Easing.cubic) });
+    } else {
+      haciaMesa.value = 1;
+      haciaMesa.value = withTiming(0, { duration: 560, easing: Easing.out(Easing.cubic) });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo]);
 
   // El marco cambió (teclado, giro, otra pantalla): la misma posición, corregida, con resorte.
   const llevando = useRef(false);
@@ -612,14 +652,19 @@ export function Companera() {
     }
   }, [M, estilo]);
 
-  const estiloCaja = useAnimatedStyle(() => ({
-    opacity: visible.value * enOtroLado.value,
-    transform: [
-      { translateX: x.value + sacude.value },
-      { translateY: y.value + salto.value },
-      { scale: (0.4 + 0.6 * visible.value) * (0.6 + 0.4 * enOtroLado.value) },
-    ],
-  }));
+  const estiloCaja = useAnimatedStyle(() => {
+    const h = haciaMesa.value;
+    // Grande sobre la mesa casi no se ve; se hace visible mientras se encoge (y al revés al crecer).
+    const opMesa = Math.max(0, Math.min(1, (1 - h) * 2.2));
+    return {
+      opacity: visible.value * enOtroLado.value * opMesa,
+      transform: [
+        { translateX: x.value + sacude.value + h * mesaDx.value },
+        { translateY: y.value + salto.value + h * mesaDy.value },
+        { scale: (0.4 + 0.6 * visible.value) * (0.6 + 0.4 * enOtroLado.value) * (1 + h * (mesaEscala.value - 1)) },
+      ],
+    };
+  });
 
   // El globito: encima (o debajo si está arriba), sin salirse de la pantalla.
   const altoGlobo = useSharedValue(40);
@@ -641,7 +686,7 @@ export function Companera() {
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
-      <Animated.View style={[s.caja, estiloCaja]} pointerEvents={oculta || aparte ? 'none' : 'box-none'}>
+      <Animated.View style={[s.caja, estiloCaja]} pointerEvents={oculta || apartada ? 'none' : 'box-none'}>
         {globo ? (
           <Animated.View pointerEvents="none" style={[s.globoFila, { width: anchoGlobo, left: LADO / 2 - anchoGlobo / 2 }, estiloGlobo]} onLayout={medirGlobo}>
             <View style={[s.globo, { borderColor: estilo.main }]}>
@@ -666,7 +711,7 @@ export function Companera() {
             ancho={LADO}
             alto={LADO}
             fpsMax={30}
-            activo={!oculta && !aparte}
+            activo={!oculta && !apartada}
             respaldo={
               <>
                 <Canvas style={s.lienzo} pointerEvents="none">

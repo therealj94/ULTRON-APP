@@ -27,9 +27,14 @@ type Props = {
   respaldo: ReactNode;
   onTap: () => void;
   onLongPress: () => void;
+  /**
+   * false: la mesa está tapada (los chats o Ajustes encima; la pila nativa la deja montada debajo).
+   * Sin escena 3D gastando batería detrás: la única que vive es la de la compañera que se ve.
+   */
+  activo?: boolean;
 };
 
-export function CuerpoMesa({ avatar, camara, face, emocion, mirada, respaldo, onTap, onLongPress }: Props) {
+export function CuerpoMesa({ avatar, camara, face, emocion, mirada, respaldo, onTap, onLongPress, activo = true }: Props) {
   const [lugar, setLugar] = useState({ w: 0, h: 0 });
   const [gesto, setGesto] = useState<EstadoAvatar['gesto']>(null);
   const cuerpo = useRef<ControlCuerpo>(null);
@@ -58,7 +63,7 @@ export function CuerpoMesa({ avatar, camara, face, emocion, mirada, respaldo, on
       accessibilityRole="imagebutton"
     >
       {lugar.w > 0 && lugar.h > 0 ? (
-        <AvatarVivo ref={cuerpo} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} fpsMax={60} respaldo={respaldo} />
+        <AvatarVivo ref={cuerpo} avatar={avatar} camara={camara} estado={estado} ancho={lugar.w} alto={lugar.h} fpsMax={60} respaldo={respaldo} activo={activo} />
       ) : (
         respaldo
       )}

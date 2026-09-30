@@ -46,7 +46,8 @@ export const OSCURO: Paleta = {
   borde: '#46484D',
   texto: '#ECE8E2',
   texto2: '#B9B2A8',
-  texto3: '#8A847C',
+  // ≥ 4,5:1 sobre los cuatro fondos (A17; antes #8A847C: 3,27:1 sobre superficie2). Prueba: nucleo/pruebas.
+  texto3: '#A8A197',
   acento: '#D6B56C',
   acentoTexto: '#E0C27F',
   acentoFondo: '#3D3829',
@@ -71,7 +72,8 @@ export const CLARO: Paleta = {
   borde: '#DED6C9',
   texto: '#23211E',
   texto2: '#5E5850',
-  texto3: '#8C857B',
+  // ≥ 4,5:1 sobre los cuatro fondos (A17; antes #8C857B: 3,30:1 sobre fondo y 3,02:1 sobre fondo2).
+  texto3: '#6B655C',
   acento: '#B8913F',
   acentoTexto: '#8E6C24',
   acentoFondo: '#F3E7C9',
