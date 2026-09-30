@@ -246,11 +246,11 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
    * sonido se descarga al terminar, y VOZ, el micrófono y una pregunta nueva lo cortan.
    */
   const decir = useCallback(
-    async (t: string, emocion?: string) => {
+    async (t: string, emocion?: string, idioma?: 'es' | 'en') => {
       callar();
       if (!vozActivaRef.current || !t.trim()) return;
       const mio = vozTurno.current;
-      const url = await voz(t, emocion);
+      const url = await voz(t, emocion, idioma);
       if (!url || mio !== vozTurno.current || !vozActivaRef.current || !montado.current) return;
       try {
         const { sound } = await Audio.Sound.createAsync({ uri: url }, { shouldPlay: true });
@@ -341,7 +341,8 @@ export function CampoScreen({ onSalir }: { onSalir: (motivo?: string) => void })
           informe: informe ? { ...informe, estado: { fase: 'listo' } } : undefined,
         });
         caraAhora('SPEAKING');
-        void decir(dicho, r.emocion);
+        // En el idioma en que contestó: inglés si le hablaron en inglés.
+        void decir(dicho, r.emocion, r.idioma);
       } catch (e: any) {
         // El detalle técnico, al registro; en el hilo, qué pasó y qué hacer (ver frases.ts).
         console.warn('[electrum] turno:', e?.name, e?.status ?? '', e?.message || e);

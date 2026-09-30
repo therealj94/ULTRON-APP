@@ -348,7 +348,7 @@ app.post('/api/electrum/turno', exigirPlataforma('electrum'), limitar(30), async
         mensaje,
         prueba: id ? 'sesion' : null,
       },
-      { historial }
+      { historial, idioma: req.body?.idioma }
     );
     recordarHilo(clave, mensaje, salida.texto);
     res.json({ ...salida, honesto: true });
@@ -780,6 +780,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
         internet: req.body?.internet === true,
         // La mesa técnica abierta en pantalla: contestan los tres, discutiendo, hasta que se cierre.
         mesa: req.body?.mesa === true,
+        idioma: req.body?.idioma,
         enVivo: (e) => {
           if (e.panel) enviar('panel', { panel: e.panel });
           if (e.herramienta) enviar('herramienta', e.herramienta);
@@ -788,7 +789,7 @@ app.post('/api/electrum/turno/stream', exigirPlataforma('electrum'), limitar(30)
       }
     );
     if (!seFue) recordarHilo(clave, mensaje, salida.texto);
-    enviar('fin', { texto: salida.texto, voz: salida.voz, voces: salida.voces, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin, trazaId: salida.trazaId });
+    enviar('fin', { texto: salida.texto, voz: salida.voz, voces: salida.voces, emocion: salida.emocion, panel: salida.panel, traza: salida.traza, fin: salida.fin, trazaId: salida.trazaId, idioma: salida.idioma });
   } catch (e: any) {
     console.error('[electrum] turno en vivo falló:', String(e?.message || e).slice(0, 200));
     enviar('error', { error: 'Se me cayó el turno. Volvé a preguntarme.' });
@@ -974,9 +975,10 @@ app.post('/api/electrum/oir', exigirPlataforma('electrum'), limitar(40), async (
   const audio = bufferDeCualquier(req.body?.audio);
   if (!audio || audio.length < 400) return res.status(400).json({ error: 'No me llegó audio.', honesto: true });
   try {
-    const oido = await transcribirAudio({ audio, mime: String(req.body?.mime || 'audio/webm'), language: 'es', plataforma: 'electrum' });
+    // Español o inglés, lo que se hable: el transcriptor lo detecta y la respuesta sigue ese idioma.
+    const oido = await transcribirAudio({ audio, mime: String(req.body?.mime || 'audio/webm'), language: 'auto', plataforma: 'electrum' });
     if (!oido.texto) return res.status(200).json({ texto: '', detalle: oido.detalle, via: oido.via, honesto: true });
-    return res.json({ texto: oido.texto, via: oido.via, honesto: true });
+    return res.json({ texto: oido.texto, via: oido.via, idioma: oido.idioma || 'es', honesto: true });
   } catch (e: any) {
     return res.status(502).json({ error: String(e?.message || e).slice(0, 160), honesto: true });
   }
@@ -1081,7 +1083,8 @@ app.post('/api/electrum/voz', exigirPlataforma('electrum'), limitar(90), async (
   try {
     // La pantalla habla por trozos: lo de antes y lo de después hacen que la entonación no se corte.
     const vecino = (v: unknown) => (typeof v === 'string' ? v.slice(0, 400) : undefined);
-    const pedido = { texto, emocion: req.body?.emocion, plataforma: 'electrum' as const, previo: vecino(req.body?.previo), siguiente: vecino(req.body?.siguiente) };
+    // idioma: el de la respuesta que se lee (el turno lo devuelve); español si no llega.
+    const pedido = { texto, emocion: req.body?.emocion, plataforma: 'electrum' as const, previo: vecino(req.body?.previo), siguiente: vecino(req.body?.siguiente), idioma: normalizarIdioma(req.body?.idioma) };
     /*
      * EN VIVO: el audio de ElevenLabs se le pasa al navegador a medida que se genera (el primer
      * pedazo sale a los ≈0,3 s) y al final queda en la caché. Si ElevenLabs no abre, Voicebox.
