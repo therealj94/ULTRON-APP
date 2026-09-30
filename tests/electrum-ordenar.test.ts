@@ -158,11 +158,12 @@ test('ordenar el catastro', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' },
 
   await t.test('catastro partido sin huellas: la misma exportación (mismos campos) se junta en el oficial', async () => {
     await consulta('TRUNCATE traslape, concesion, entidad_geo, capa RESTART IDENTITY CASCADE');
-    const todo = variante('DERECHOS MINEROS EN HONDURAS A JUNIO 2026', 0, { codigo: 1, nombre_zon: 'x' });
+    const todo = variante('DERECHOS MINEROS EN HONDURAS A JUNIO 2026', 0, { nombre_zon: 'x' });
+    (todo.geojson.features as any[]).forEach((f, k) => (f.properties.codigo = 100 + k));
     const parte = structuredClone(todo);
     parte.nombre = 'ARTESANAL NO METALICA DELIMITADA';
     parte.geojson.features = [(parte.geojson.features as Feature[])[0]];
-    const otro = variante('MINAS DE ORO I', 3, { codigo: 1, nombre_zon: 'x' });
+    const otro = variante('MINAS DE ORO I', 3, { codigo: 900, nombre_zon: 'x' });
     const pe = await guardarCapa(parte, { subidoPor: 'pruebas' });
     const of = await guardarCapa(todo, { subidoPor: 'pruebas' });
     const pr = await guardarCapa(otro, { subidoPor: 'pruebas' });
@@ -201,6 +202,55 @@ test('ordenar el catastro', { skip: hayBase() ? false : 'sin ELECTRUM_DB_URL' },
     assert.match(r.dicho, /es una cartera/, r.dicho);
     const [{ n }] = await consulta<{ n: number }>('SELECT count(*)::int AS n FROM concesion');
     assert.equal(n, antes);
+  });
+
+  await t.test('una exportación VIEJA con los mismos campos no se cuela en el oficial', async () => {
+    await consulta('TRUNCATE traslape, concesion, entidad_geo, capa RESTART IDENTITY CASCADE');
+    const todo = variante('DERECHOS MINEROS EN HONDURAS A JUNIO 2026', 0, { nombre_zon: 'x' });
+    (todo.geojson.features as any[]).forEach((f, k) => (f.properties.codigo = 100 + k));
+    const unaOficial = structuredClone(todo);
+    unaOficial.geojson.features = [(unaOficial.geojson.features as Feature[])[0]];
+    const of = await guardarCapa(unaOficial, { subidoPor: 'pruebas' });
+    // La vieja: una que sigue vigente (corrida un metro, mismo expediente) y una caducada lejos.
+    const vieja = structuredClone(todo);
+    vieja.nombre = 'CONCESIÓN METÁLICA OTORGADA PARA EXPLORAR';
+    const fs0 = vieja.geojson.features as any[];
+    fs0[0] = { ...fs0[0], geometry: { ...fs0[0].geometry, coordinates: mover(fs0[0].geometry.coordinates, 0.00001) } };
+    fs0[1] = { ...fs0[1], geometry: { ...fs0[1].geometry, coordinates: mover(fs0[1].geometry.coordinates, 2) } };
+    const vj = await guardarCapa(vieja, { subidoPor: 'pruebas' });
+    const p = await proponer(of.capaId);
+    const f = p.filas.find((x) => x.capaId === vj.capaId)!;
+    assert.equal(f.adoptables || 0, 0, 'la caducada no pasa al oficial');
+    const r = await aplicar(p.filas.map(({ capaId, accion }) => ({ capaId, accion })), 'pruebas');
+    assert.ok(r.ok, r.dicho);
+    const [{ n }] = await consulta<{ n: number }>('SELECT count(*)::int AS n FROM concesion WHERE capa_id = $1', [of.capaId]);
+    assert.equal(n, 1, 'el oficial no ganó ninguna concesión de la exportación vieja');
+  });
+
+  await t.test('si quien ordena cambia a «dejar» una capa adoptable, no se toca', async () => {
+    await consulta('TRUNCATE traslape, concesion, entidad_geo, capa RESTART IDENTITY CASCADE');
+    const todo = variante('DERECHOS MINEROS EN HONDURAS A JUNIO 2026', 0, { nombre_zon: 'x' });
+    (todo.geojson.features as any[]).forEach((f, k) => (f.properties.codigo = 100 + k));
+    const parte = structuredClone(todo);
+    parte.nombre = 'ARTESANAL METALICA DELIMITADA';
+    parte.geojson.features = [(parte.geojson.features as Feature[])[0]];
+    const pe = await guardarCapa(parte, { subidoPor: 'pruebas' });
+    const of = await guardarCapa(todo, { subidoPor: 'pruebas' });
+    const p = await proponer(of.capaId);
+    assert.equal(p.filas.find((x) => x.capaId === pe.capaId)!.accion, 'borrar');
+    const r = await aplicar(p.filas.map(({ capaId, accion }) => ({ capaId, accion: capaId === pe.capaId ? ('dejar' as const) : accion })), 'pruebas');
+    assert.ok(r.ok, r.dicho);
+    const [{ n }] = await consulta<{ n: number }>('SELECT count(*)::int AS n FROM concesion WHERE capa_id = $1', [pe.capaId]);
+    assert.equal(n, 1, 'la capa que se decidió dejar sigue con su concesión');
+  });
+
+  await t.test('una capa con nombre de catastro no se convierte en cartera al subirla', async () => {
+    const antes = (await consulta<{ n: number }>('SELECT count(*)::int AS n FROM concesion'))[0].n;
+    const z = variante('SOLICITUD PARA EXPLORAR', 0.00001);
+    const r = await aprender('solicitud-para-explorar.geojson', Buffer.from(JSON.stringify(z.geojson)), { subidoPor: 'pruebas' });
+    assert.doesNotMatch(r.dicho, /es una cartera/);
+    const [{ n }] = await consulta<{ n: number }>('SELECT count(*)::int AS n FROM concesion');
+    assert.equal(n, antes + 2);
   });
 
   await cerrarBase();

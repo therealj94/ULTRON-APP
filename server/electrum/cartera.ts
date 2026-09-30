@@ -268,7 +268,8 @@ export async function carteraDesdeCapa(
        ON CONFLICT (nombre) DO UPDATE SET origen = EXCLUDED.origen, por = EXCLUDED.por, actualizada = now() RETURNING id`,
       [nombre, `capa ${capaId} (${k.nombre})`, opts.quien || null]
     )) as Array<{ id: string }>;
-    await q(`DELETE FROM cartera_concesion WHERE cartera_id = $1`, [c.id]);
+    // Se SUMAN a los miembros que ya tenga (revisión de Codex en #78): en una subida mezclada, los
+    // polígonos idénticos ya los registró el cargador y aquí solo llegan los corridos.
     await q(
       `INSERT INTO cartera_concesion (cartera_id, huella, expediente, nombre, atributos)
        SELECT $1, x.huella, x.expediente, x.nombre, coalesce(x.atributos, '{}'::jsonb)

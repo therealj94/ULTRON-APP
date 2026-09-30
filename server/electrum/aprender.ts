@@ -22,6 +22,7 @@
  * que en un informe minero es exactamente lo que no se puede partir.
  */
 import { carteraDesdeCapa } from './cartera';
+import { ES_CAPA_CATASTRO } from './ordenar';
 import { leerConDocling } from '../../lib/cognitivo/documentos';
 import { clasificarDocumento } from './documentos-laya';
 import { indexarPendientes } from './vectores';
@@ -594,7 +595,9 @@ export async function aprender(
      * duplicando el catastro. Si la capa no se llama como una capa del catastro y casi todo lo suyo
      * cae dentro de concesiones que ya estaban, es una cartera.
      */
-    if (guardado.concesiones >= 2 && guardado.capaId && !/concesi[oó]n|derechos? miner|catastro/i.test(capa.nombre)) {
+    // La misma regla de nombres de capa del catastro que usa ordenar (revisión de Codex en #78):
+    // «SOLICITUD PARA EXPLORAR» o «ARTESANAL … DELIMITADA» son catastro, nunca una cartera.
+    if (guardado.concesiones >= 2 && guardado.capaId && !ES_CAPA_CATASTRO.test(capa.nombre)) {
       const [x] = await consulta<{ dentro: number }>(
         `SELECT count(*) FILTER (WHERE EXISTS (SELECT 1 FROM concesion o WHERE o.capa_id <> c.capa_id AND o.geom && c.geom
                   AND ST_Intersects(o.geom, c.geom) AND ST_Area(ST_Intersection(o.geom, c.geom)) >= 0.8 * ST_Area(c.geom)))::int AS dentro
