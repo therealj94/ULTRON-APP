@@ -27,7 +27,7 @@
   "type": "noul",
   "instructions": "¿Esto es lo que la persona le ordena a la pantalla de Dr Electrum?",
   "criteria": {
-   "true": "sí: que se calle o deje de hablar ahora («silencio», «cállate», «deja de hablar»)",
+   "true": "sí: que se calle o deje de hablar ahora («silencio», «cállate», «deja de hablar», «stop talking»)",
    "false": "no: parar el recorrido o cerrar una ventana"
   }
  },
@@ -321,7 +321,7 @@
  },
  "app_ninguna": {
   "type": "noul",
-  "instructions": "¿Esto NO es una orden para la app AU-RA (recordar, llamar, leer o buscar mensajes, idioma, perfil, cómo se muestra AURA, buscar en internet)?",
+  "instructions": "¿Esto NO es una orden para la app AU-RA (navegar, tema, avatar, callar, cámara, ayuda, chats y mensajes, llamar, recordar, idioma, perfil, cómo se muestra AURA, buscar en internet)?",
   "criteria": {
    "true": "sí: es charla, una pregunta, algo que se cuenta, o una orden del mapa de Dr Electrum («mi mamá me llamó ayer», «¿hablas inglés?», «acércate»)",
    "false": "no: le pide a AURA que haga una de sus manos en la app"
@@ -445,6 +445,102 @@
   "criteria": {
    "true": "sí: «busca en internet…», «¿qué dicen las noticias de…?»",
    "false": "no: buscar en sus chats, o preguntar cómo se busca"
+  }
+ },
+ "app_atras": {
+  "type": "noul",
+  "instructions": "¿Pide volver a la pantalla anterior o cerrar la que está abierta en la app?",
+  "criteria": {
+   "true": "sí: «vete atrás», «regresa», «cierra esto», «go back»",
+   "false": "no: contar que regresó de un viaje, «no hay vuelta atrás», «atrás de la casa»"
+  }
+ },
+ "app_abrir": {
+  "type": "noul",
+  "instructions": "¿Pide abrir una pantalla de la app (la mesa, los chats, los ajustes o el perfil)?",
+  "criteria": {
+   "true": "sí: «abre ajustes», «muéstrame mis chats», «ve a la mesa», «open my profile»",
+   "false": "no: abrir el chat de UNA persona, «abre tu corazón», o una pregunta sobre los ajustes"
+  }
+ },
+ "app_tema": {
+  "type": "noul",
+  "instructions": "¿Pide cambiar el tema de la app (oscuro, claro o como el sistema)?",
+  "criteria": {
+   "true": "sí: «ponlo oscuro», «modo claro», «dark mode»",
+   "false": "no: comentar que está oscuro afuera o que la ropa es clara"
+  }
+ },
+ "app_avatar": {
+  "type": "noul",
+  "instructions": "¿Pide cambiar de avatar (AU-RA, Claudio, ANT-ONIO o el Guardián)?",
+  "criteria": {
+   "true": "sí: «cambia a Claudio», «pásame con AU-RA», «switch to Antonio»",
+   "false": "no: hablar de alguien que se llama Antonio o de la película Avatar"
+  }
+ },
+ "app_abrir_chat": {
+  "type": "noul",
+  "instructions": "¿Pide abrir la conversación con UNA persona en los chats?",
+  "criteria": {
+   "true": "sí: «abre el chat de Beto», «open my chat with Ana»",
+   "false": "no: abrir la lista de chats, leer o escribirle un mensaje"
+  }
+ },
+ "app_redactar": {
+  "type": "noul",
+  "instructions": "¿Pide escribirle o mandarle un mensaje NUEVO a alguien (AURA lo redacta y pregunta antes de enviar)?",
+  "criteria": {
+   "true": "sí: «escríbele a Beto que llego tarde», «dile a mi mamá que ya voy», «text Ana that I am late»",
+   "false": "no: contestar el último mensaje, confirmar el envío, o «dile a tu jefe que eres buena»"
+  }
+ },
+ "app_enviar": {
+  "type": "noul",
+  "instructions": "¿Confirma que se ENVÍE el mensaje que AURA ya redactó?",
+  "criteria": {
+   "true": "sí: «sí, envíalo», «mándalo», «send it»",
+   "false": "no: un «sí» suelto, «no lo mandes», o pedir que redacte algo nuevo"
+  }
+ },
+ "app_descartar": {
+  "type": "noul",
+  "instructions": "¿Pide borrar o no enviar el borrador de mensaje?",
+  "criteria": {
+   "true": "sí: «bórralo», «no lo mandes», «don't send it»",
+   "false": "no: un «no» suelto o «cancela» sin decir qué"
+  }
+ },
+ "app_callar": {
+  "type": "noul",
+  "instructions": "¿Pide que AURA se calle, deje de hablar o de escuchar ahora (interrumpirla)?",
+  "criteria": {
+   "true": "sí: «cállate», «silencio», «deja de hablar», «stop talking»",
+   "false": "no: silenciar el chat de alguien, «mi hijo no se calla», o la tele en silencio"
+  }
+ },
+ "app_hablar": {
+  "type": "noul",
+  "instructions": "¿Pide que AURA vuelva a hablar o a escuchar después de estar callada?",
+  "criteria": {
+   "true": "sí: «ya puedes hablar», «despierta», «unmute»",
+   "false": "no: pedirle que hable en otro idioma o de un tema"
+  }
+ },
+ "app_camara": {
+  "type": "noul",
+  "instructions": "¿Pide encender o apagar la cámara (la visión de AURA)?",
+  "criteria": {
+   "true": "sí: «activa la cámara», «mírame», «apaga la cámara», «camera off»",
+   "false": "no: hablar de la cámara del teléfono o de una foto"
+  }
+ },
+ "app_ayuda": {
+  "type": "noul",
+  "instructions": "¿Pide ayuda para usar la app, el tutorial o saber qué puede hacer AURA?",
+  "criteria": {
+   "true": "sí: «ayuda», «tutorial», «¿qué puedes hacer?», «how do I use you»",
+   "false": "no: ayuda con otra cosa (una tarea, un nombre para un negocio)"
   }
  }
 }

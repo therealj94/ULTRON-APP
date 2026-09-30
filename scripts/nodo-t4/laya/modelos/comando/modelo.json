@@ -1,6 +1,6 @@
 {
  "nombre": "comando",
- "descripcion": "Qué ORDEN dio la persona en voz alta. Grupo accion: la orden de pantalla de Dr Electrum (o ninguna). Grupo app: la mano de AURA en la app AU-RA (o app_ninguna). Modelo compartido: cada producto lee su grupo. ESPEC.md.",
+ "descripcion": "Qué ORDEN dio la persona en voz alta. Grupo accion: la orden de pantalla de Dr Electrum (o ninguna). Grupo app: la mano de AURA en la app AU-RA (o app_ninguna), en español y en inglés. Modelo compartido: cada producto lee su grupo. ESPEC.md.",
  "ids": [
   "ninguna",
   "siguiente",
@@ -57,7 +57,19 @@
   "app_idioma",
   "app_perfil",
   "app_presencia",
-  "app_buscar_internet"
+  "app_buscar_internet",
+  "app_atras",
+  "app_abrir",
+  "app_tema",
+  "app_avatar",
+  "app_abrir_chat",
+  "app_redactar",
+  "app_enviar",
+  "app_descartar",
+  "app_callar",
+  "app_hablar",
+  "app_camara",
+  "app_ayuda"
  ],
  "grupos": {
   "accion": [
@@ -118,7 +130,19 @@
    "app_idioma",
    "app_perfil",
    "app_presencia",
-   "app_buscar_internet"
+   "app_buscar_internet",
+   "app_atras",
+   "app_abrir",
+   "app_tema",
+   "app_avatar",
+   "app_abrir_chat",
+   "app_redactar",
+   "app_enviar",
+   "app_descartar",
+   "app_callar",
+   "app_hablar",
+   "app_camara",
+   "app_ayuda"
   ]
  },
  "recorte": {
@@ -132,8 +156,11 @@
   "test": [
    "datos/test.jsonl"
   ],
+  "val": [
+   "datos/val_app.jsonl"
+  ],
   "evals": [
-   "datos/test_aura.jsonl"
+   "datos/test_app.jsonl"
   ],
   "bordes": [
    "datos/bordes.jsonl",

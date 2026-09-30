@@ -20,6 +20,7 @@
  */
 import crypto from 'node:crypto';
 import { consultarModelo } from './laya';
+import { predecirApp, UMBRAL_LIGERA } from './laya-ligera';
 import {
   confirmaPropuesta,
   dichoDeMano,
@@ -31,6 +32,7 @@ import {
   manoPorReglas,
   MAX_LECTURA,
   niegaPropuesta,
+  preguntaDePropuesta,
   puedeMano,
   RE_LECTURA,
   validarMano,
@@ -619,7 +621,8 @@ export function instruccionAcciones(
 export type OrdenRapida = {
   accion: AccionApp | null;
   decir: string;
-  via: 'reglas' | 'laya';
+  /** Quién lo decidió: las reglas, Laya ligera (aquí mismo, sin red) o Laya «comando» del nodo. */
+  via: 'reglas' | 'ligera' | 'laya';
   propuesta?: Propuesta;
   soltarPropuesta?: boolean;
   /** Solo hay que contestar (qué recordatorios tiene), sin acción ni propuesta. */
@@ -800,14 +803,173 @@ function presenciaDicha(q: string): PresenciaApp | null {
   return null;
 }
 
-/** Lo que Laya «comando» sabe de pantallas y sirve aquí (el resto de su lista es del mapa de Electrum). */
-const DE_LAYA: Record<string, { accion: AccionApp; dicho: 'silencio' | 'atras' }> = {
-  callar: { accion: { tipo: 'silencio', valor: true }, dicho: 'silencio' },
-  cerrar: { accion: { tipo: 'atras' }, dicho: 'atras' },
-};
+/**
+ * Lo que Laya «comando» del nodo sabía de pantallas ANTES del grupo `app` completo (su grupo `accion`,
+ * que es del mapa de Electrum): callar y cerrar. Un checkpoint viejo sigue sirviendo por aquí.
+ */
+const DE_LAYA_ACCION: Record<string, string> = { callar: 'app_callar', cerrar: 'app_atras' };
 /** Las mismas exigencias que server/electrum/comando-voz.ts: la orden gana claro y «ninguna» no le discute. */
 const P_MINIMA_LAYA = 0.6;
 const P_NINGUNA_MAXIMA_LAYA = 0.45;
+/** Laya ligera: «esto NO es una orden» con esta seguridad ahorra preguntarle al nodo (hasta 250 ms en voz). */
+const P_NINGUNA_LIGERA = 0.97;
+/** Las manos sin parámetro (atrás, callar, volver a hablar) solo en frases cortas: en una larga, el cerebro. */
+const PALABRAS_SIN_PARAMETRO = 6;
+const SIN_PARAMETRO = new Set(['app_atras', 'app_callar', 'app_hablar']);
+const UMBRAL_CON_PARAMETRO = 0.6;
+/** Más que esto no es una orden de la app dicha de corrido: ni Laya ligera la mira. */
+const PALABRAS_MAX_LIGERA = 10;
+
+/**
+ * La mano que Laya decidió (el del nodo o el ligero), convertida en lo que hace la app, SOLO si el
+ * parámetro sale claro de la frase: qué pantalla, qué tema, qué avatar, cómo se presenta, qué idioma, a
+ * quién llamar. Si no sale (o sale más de uno), null: contesta el cerebro. Laya acelera la intención;
+ * nunca inventa el parámetro ni se salta el «sí»: llamar sale como PROPUESTA.
+ */
+export function ordenDeEtiqueta(
+  etiqueta: string,
+  texto: string,
+  via: OrdenRapida['via'],
+  o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; ahora?: number } = {}
+): OrdenRapida | null {
+  const q = frase(texto);
+  if (!q) return null;
+  const n = q.split(' ').length;
+  const idioma = o.idioma === 'en' ? 'en' : 'es';
+  const d = DICHOS[idioma];
+  const hecho = (accion: AccionApp, decir: string): OrdenRapida => ({ accion, decir, via });
+  switch (etiqueta) {
+    // Las tres sin parámetro, cortas y sin nada en la frase que diga lo contrario: «bring AU-RA back» no
+    // es atrás (nombra un avatar), «stop being quiet» no es callar (es volver a hablar).
+    case 'app_atras':
+      return n <= PALABRAS_SIN_PARAMETRO && !RE_CONTRA_ATRAS.test(q) ? hecho({ tipo: 'atras' }, d.atras) : null;
+    // Laya ligera además tiene que ver la palabra (un «callar» sin nada de callar es un salto del
+    // clasificador); el Laya del nodo, que entiende más, solo no puede tener lo contrario.
+    case 'app_callar':
+      return n <= PALABRAS_SIN_PARAMETRO && (via !== 'ligera' || RE_CALLAR.test(q)) && !RE_HABLAR.test(q) ? hecho({ tipo: 'silencio', valor: true }, d.silencio) : null;
+    case 'app_hablar':
+      return n <= PALABRAS_SIN_PARAMETRO && (via !== 'ligera' || RE_HABLAR.test(q)) && !RE_CALLAR_YA.test(q) ? hecho({ tipo: 'silencio', valor: false }, d.habla) : null;
+    case 'app_abrir': {
+      // Con un verbo de ir o abrir: «los ajustes de precio subieron» nombra una pantalla y no pide nada.
+      const p = RE_IR_A.test(q) ? unoSolo(PANTALLA_DICHA, q) : null;
+      return p ? hecho({ tipo: 'abrir', pantalla: p }, d[p]) : null;
+    }
+    case 'app_tema': {
+      let v = unoSolo(TEMA_DICHO, q);
+      // «quita el modo oscuro», «turn off dark mode»: lo contrario de lo que se nombra.
+      if (v && v !== 'sistema' && /\b(quita|quitale|apaga|desactiva|turn off|disable|no more|ya no)\b/.test(q)) v = v === 'oscuro' ? 'claro' : 'oscuro';
+      return v ? hecho({ tipo: 'tema', valor: v }, d[v]) : null;
+    }
+    case 'app_avatar': {
+      // Sin el vocativo del principio: «Claudio, cambia a AU-RA» es AU-RA.
+      const sinVocativo = q.replace(/^(hey |oye |ey )?(aura|au ra|claudio|antonio|ant onio|guardian)\s+(?=\S)/, '');
+      // Y con un verbo de cambiar: «wake up AU-RA» nombra un avatar pero no pide cambiarlo.
+      const v = RE_CAMBIAR_AVATAR.test(sinVocativo) ? unoSolo(AVATAR_DICHO, sinVocativo) : null;
+      return v ? hecho({ tipo: 'avatar', valor: v }, d[v]) : null;
+    }
+    case 'app_presencia': {
+      // «sal de pantalla completa» no dice a dónde: el cerebro.
+      if (/\b(sal|salir|salte|exit|leave|quita)\b/.test(q)) return null;
+      const v = unoSolo(PRESENCIA_DICHA, q);
+      return v ? hecho({ tipo: 'presencia', valor: v }, d[v]) : null;
+    }
+    case 'app_idioma': {
+      if (!puedeMano(o.contexto, 'idioma')) return null;
+      const v = unoSolo(IDIOMA_DICHO, q);
+      if (!v) return null;
+      const accion: AccionMano = { tipo: 'idioma', valor: v };
+      return hecho(accion, dichoDeMano(accion, idioma));
+    }
+    case 'app_llamar':
+    case 'app_videollamar': {
+      if (!puedeMano(o.contexto, 'llamar')) return null;
+      const r = contactoMencionado(q, o.contexto?.contactos || []);
+      if (r.tipo !== 'uno') return null;
+      const propuesta: Propuesta = { tipo: 'llamar', con: r.contacto.correo, nombre: r.contacto.nombre, video: etiqueta === 'app_videollamar' };
+      return { accion: null, decir: preguntaDePropuesta(propuesta, idioma, o.ahora), via, propuesta };
+    }
+    default:
+      return null;
+  }
+}
+
+/** Lo que tiene que decir (o no puede decir) una frase para que Laya valga por sí sola en las manos sin parámetro. */
+const RE_CALLAR = /\b(callate|calla|callar|silencio|shh+|chito|quiet|hush|shut|zip|mute|basta|enough|no (me )?hables|deja de hablar|para de hablar|stop talking|stop listening|deja de escuchar|para|stop|pausa|pause)\b/;
+const RE_HABLAR =
+  /\b(unmute|desmutea(te)?|quita(te)? el silencio|sal del silencio|stop being quiet|no te calles|ya no estes callad[ao]|habla|hablar|hablame|talk|speak|despierta|despiertate|wake|escuchame|listen)\b/;
+const RE_CALLAR_YA = /\b(callate|shut up|be quiet|no hables|deja de hablar|stop talking|para de hablar)\b/;
+const RE_IR_A =
+  /\b(abre|abreme|abrime|abrir|open|ve|vete|go|vamos|entra|entrar|muestra|muestrame|ensena|ensename|show|lleva|llevame|take|bring|pull|pasa|pasame|pon|ponme|regresa|vuelve|quiero ver|want to see|switch|metete|get me)\b/;
+const RE_CAMBIAR_AVATAR =
+  /\b(cambia|cambiame|cambiate|pasa|pasame|pon|ponme|switch|change|swap|bring|put|quiero|want|let me|dejame|como|as|salga|venga|atienda|use|usa|give me|regresa|vuelve|back|instead|platicar|hablar con|talk to|chat with|avatar)\b/;
+const RE_CONTRA_ATRAS = /\b(aura|au ra|claudio|antonio|guardian|ajustes|settings|chats?|perfil|profile|mesa|home|oscuro|claro|dark|light|llamada|call)\b/;
+
+/** El único valor cuya expresión aparece en la frase; si no aparece ninguno o aparecen dos distintos, null. */
+function unoSolo<T extends string>(tabla: Array<[RegExp, T]>, q: string): T | null {
+  const vistos = new Set(tabla.filter(([re]) => re.test(q)).map(([, v]) => v));
+  return vistos.size === 1 ? [...vistos][0] : null;
+}
+const PANTALLA_DICHA: Array<[RegExp, Pantalla]> = [
+  [/\b(ajustes|configuracion|preferencias|opciones|settings|preferences)\b/, 'ajustes'],
+  [/\b(chats|mensajes|conversaciones|messages|conversations|chat list|pulse2chat)\b/, 'chats'],
+  [/\b(mesa|inicio|home|pantalla principal|main screen|desk)\b/, 'mesa'],
+  [/\b(perfil|profile|(lo )?que (sabes|sabe|conoces) de mi|what you know about me)\b/, 'perfil'],
+];
+const TEMA_DICHO: Array<[RegExp, TemaApp]> = [
+  [/\b(oscuro|oscura|negro|negra|noche|nocturno|dark|night|black)\b/, 'oscuro'],
+  [/\b(claro|clara|blanco|blanca|dia|light|white)\b/, 'claro'],
+  [/\b(sistema|automatico|auto|system|telefono|phone)\b/, 'sistema'],
+];
+const AVATAR_DICHO: Array<[RegExp, AvatarApp]> = [
+  [/\bclaudio\b/, 'claudio'],
+  [/\b(antonio|ant onio|ant-onio)\b/, 'antonio'],
+  [/\b(guardian|ojos|eyes)\b/, 'ojos'],
+  [/\b(aura|au ra|au-ra)\b/, 'aura'],
+];
+const PRESENCIA_DICHA: Array<[RegExp, PresenciaApp]> = [
+  [/\b(pantalla completa|full ?screen|toda la pantalla|whole screen|fill the screen|grande|grandota|grandote|big|bigger|de frente)\b/, 'completa'],
+  [/\b(lado|ladito|costado|side|next to me|acoplate|dock)\b/, 'lado'],
+  [/\b(chiquita|chiquito|pequena|pequeno|pequenita|small|shrink|minimizate|minimize|achicate|encogete|camina|caminar|walk|esquina|orillita|corner)\b/, 'paseo'],
+];
+const IDIOMA_DICHO: Array<[RegExp, 'es' | 'en']> = [
+  [/\b(ingles|english)\b/, 'en'],
+  [/\b(espanol|spanish|castellano)\b/, 'es'],
+];
+
+/** El parentesco en inglés, como se guarda aquí el contacto («my mom» → «mamá»). */
+const PARENTESCO_EN: Record<string, string> = {
+  mom: 'mama', mother: 'mama', mommy: 'mama', dad: 'papa', father: 'papa', wife: 'esposa', husband: 'esposo', brother: 'hermano',
+  sister: 'hermana', grandma: 'abuela', grandmother: 'abuela', grandpa: 'abuelo', grandfather: 'abuelo', son: 'hijo', daughter: 'hija',
+  boss: 'jefe', aunt: 'tia', uncle: 'tio', cousin: 'primo', 'mother in law': 'suegra', neighbor: 'vecina',
+};
+
+/**
+ * ¿A quién nombra la frase? Se prueba cada contacto: todas las palabras de su nombre (sin «mi», «don»,
+ * «la»…) tienen que estar en la frase, en orden; «my mom» vale por «Mamá». Uno solo; si son varios, se
+ * queda el de nombre más largo SOLO si contiene a los demás («Beto Pérez» sobre «Beto»); si no, varios.
+ */
+export function contactoMencionado(q: string, contactos: Contacto[]): Resolucion {
+  if (!contactos.length) return { tipo: 'ninguno' };
+  let dicho = ` ${plegar(q)} `;
+  for (const [en, es] of Object.entries(PARENTESCO_EN)) dicho = dicho.replace(new RegExp(` (?:(?:my|mi) )?${en} `, 'g'), ` mi ${es} `);
+  const palabrasDe = (c: Contacto) =>
+    plegar(c.nombre)
+      .split(' ')
+      .filter((x) => x && !/^(mi|my|don|dona|la|el|los|las|seno|profe|doctor|dr|lic|licenciado)$/.test(x));
+  let hallados = contactos.filter((c) => {
+    const w = palabrasDe(c);
+    return w.length > 0 && dicho.includes(` ${w.join(' ')} `);
+  });
+  // Nadie con el nombre entero: por el primer nombre («Beto» por «Beto Pérez»), si no se confunde.
+  if (!hallados.length) hallados = contactos.filter((c) => (palabrasDe(c)[0]?.length ?? 0) >= 3 && dicho.includes(` ${palabrasDe(c)[0]} `));
+  if (hallados.length === 1) return { tipo: 'uno', contacto: hallados[0] };
+  if (hallados.length > 1) {
+    const largo = [...hallados].sort((a, b) => b.nombre.length - a.nombre.length)[0];
+    if (hallados.every((c) => c === largo || plegar(largo.nombre).includes(plegar(c.nombre)))) return { tipo: 'uno', contacto: largo };
+    return { tipo: 'varios', opciones: hallados.slice(0, 5) };
+  }
+  return { tipo: 'ninguno' };
+}
 
 /**
  * ¿La frase tiene forma de orden de pantalla? Solo entonces vale la pena preguntarle a Laya: antes se
@@ -820,13 +982,51 @@ export function pareceOrden(texto: string): boolean {
   const q = frase(texto);
   if (!q) return false;
   if (/^(que|como|cuando|donde|quien|quienes|cual|cuales|cuanto|cuanta|cuantos|por que|porque|what|how|when|where|who|why|which)\b/.test(q)) return false;
-  return /\b(quit|cierr|cerra|call|shh|silenci|habl|baj|sub|par[ae]\b|detente|deten|dej|paus|apag|prend|encend|acerc|alej|pantalla|volumen|ruido|mute|stop|close|quiet|hush|shut)/.test(q);
+  return /\b(quit|cierr|cerra|call|shh|silenci|habl|baj|sub|par[ae]\b|detente|deten|dej|paus|apag|prend|encend|acerc|alej|pantalla|volumen|ruido|mute|stop|close|quiet|hush|shut|abr|open|regres|atras|back|vuelv|tema|modo|mode|dark|oscur|switch|avatar|claudio|antonio|guardian)/.test(q);
 }
 
 /**
- * El camino rápido entero: reglas primero (sin red); si no casan, la frase es corta y TIENE FORMA de
- * orden, Laya «comando» con un tope corto (la voz no espera). Si Laya no está, tarda o duda, null:
- * contesta el cerebro.
+ * Laya LIGERA (lib/laya-ligera.ts) sobre la frase: la mano, si la ve clara y su parámetro sale de la
+ * frase; `ninguna` si está segura de que NO es una orden (no vale la pena preguntarle al nodo); null
+ * si duda.
+ */
+export function ordenPorLigera(
+  texto: string,
+  o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; ahora?: number } = {}
+): OrdenRapida | 'ninguna' | null {
+  const q = frase(texto);
+  if (!q || q.split(' ').length > PALABRAS_MAX_LIGERA) return null;
+  // Una pregunta («¿hablas inglés?», «do you speak Spanish») o algo que se cuenta («estoy viendo una
+  // película en pantalla completa», «my WhatsApp profile») no la ejecuta Laya: el cerebro.
+  if (RE_PREGUNTA.test(q) || RE_RELATO.test(q)) return null;
+  // Texto con estructura (llaves, la marca de acción) no es una orden dicha: una tarea anotada con
+  // «ACCION_APP: {…}» adentro no abre nada (la marca la maneja extraerAcciones, solo del cerebro).
+  if (RE_ESTRUCTURA.test(String(texto || ''))) return null;
+  const r = predecirApp(texto);
+  if (r.etiqueta === 'app_ninguna') return r.p >= P_NINGUNA_LIGERA ? 'ninguna' : null;
+  // Las que llevan parámetro tienen un segundo filtro (el parámetro tiene que salir de la frase) y aguantan
+  // un umbral más bajo, elegido en validación (val_app.jsonl: ningún falso positivo ni mano equivocada).
+  if (r.p < (SIN_PARAMETRO.has(r.etiqueta) ? UMBRAL_LIGERA : Number(process.env.UMBRAL_PARAM || UMBRAL_CON_PARAMETRO))) return null;
+  return ordenDeEtiqueta(r.etiqueta, texto, 'ligera', o);
+}
+
+const RE_PREGUNTA =
+  /^(que|como|cuando|donde|quien|quienes|cual|cuales|cuanto|cuanta|cuantos|por que|porque|hablas|sabes|conoces|tienes|eres|estas|what|how|when|where|who|why|which|do you|does|did you|are you|is it|is there|have you)\b/;
+const RE_ESTRUCTURA = /[{}[\]<>]|ACCI[OÓ]N[\s_-]?APP|https?:\/\//i;
+const RE_RELATO = /^(yo |i |i m |im |mi |my |me |estoy|estaba|estuve|fui|fuimos|ayer|yesterday|we |anota|apunta|agrega|note |write down|add )|\b(pelicula|movie|juego|game|whatsapp|facebook|instagram)\b/;
+
+/** ¿Laya ligera en el camino rápido? Sí, salvo ULTRON_LAYA_LIGERA=0 (para comparar con y sin). */
+const ligeraActiva = () => process.env.ULTRON_LAYA_LIGERA !== '0';
+
+/**
+ * El camino rápido entero, del más rápido al más lento, y en cada paso solo si está claro:
+ *  1. las reglas (sin red, microsegundos);
+ *  2. Laya ligera (sin red, décimas de milisegundo): si ve la mano clara y su parámetro sale de la frase;
+ *  3. si la frase es corta, TIENE FORMA de orden y Laya ligera no está segura de que no lo es, Laya
+ *     «comando» del nodo con un tope corto (la voz no espera): su grupo `app` (o, con un checkpoint
+ *     viejo, callar/cerrar de `accion`).
+ * Si nadie lo ve claro, null: contesta el cerebro. Enviar y borrar un borrador solo los deciden las
+ * reglas; llamar sale siempre como propuesta que espera el «sí».
  */
 export async function ordenRapida(
   texto: string,
@@ -837,19 +1037,33 @@ export async function ordenRapida(
     propuesta?: Propuesta | null;
     esperaLayaMs?: number;
     esCharla?: (t: string) => boolean;
+    /** false: sin Laya ligera (las pruebas del Laya del nodo; ULTRON_LAYA_LIGERA=0 hace lo mismo). */
+    ligera?: boolean;
+    ahora?: number;
   } = {}
 ): Promise<OrdenRapida | null> {
   const r = ordenPorReglas(texto, o);
   if (r) return r;
   const q = frase(texto);
-  if (!q || q.split(' ').length > 6 || o.esCharla?.(texto) || !pareceOrden(texto)) return null;
+  if (!q || o.esCharla?.(texto)) return null;
+  if (o.ligera !== false && ligeraActiva()) {
+    const l = ordenPorLigera(texto, o);
+    if (l === 'ninguna') return null;
+    if (l) return l;
+  }
+  if (q.split(' ').length > 6 || !pareceOrden(texto)) return null;
   const { resultado } = await consultarModelo('comando', q, { esperaMs: o.esperaLayaMs ?? 350 });
-  const id = resultado?.grupos?.accion;
-  if (!id || !DE_LAYA[id]) return null;
-  const p = Number(resultado!.p?.[id] ?? 0);
-  if (p < P_MINIMA_LAYA || Number(resultado!.p?.ninguna ?? 0) > P_NINGUNA_MAXIMA_LAYA) return null;
-  const d = DICHOS[o.idioma === 'en' ? 'en' : 'es'];
-  return { accion: DE_LAYA[id].accion, decir: d[DE_LAYA[id].dicho], via: 'laya' };
+  if (!resultado) return null;
+  // El grupo `app` si el checkpoint lo trae; si no (o dice app_ninguna), lo de pantallas de `accion`.
+  const app = resultado.grupos?.app;
+  const deApp = app && app !== 'app_ninguna' ? app : null;
+  const deAccion = DE_LAYA_ACCION[resultado.grupos?.accion] || null;
+  const etiqueta = deApp || deAccion;
+  if (!etiqueta) return null;
+  const p = Number(resultado.p?.[deApp ? deApp : resultado.grupos.accion] ?? 0);
+  const ninguna = Number((deApp ? resultado.p?.app_ninguna : resultado.p?.ninguna) ?? 0);
+  if (p < P_MINIMA_LAYA || ninguna > P_NINGUNA_MAXIMA_LAYA) return null;
+  return ordenDeEtiqueta(etiqueta, texto, 'laya', o);
 }
 
 /**

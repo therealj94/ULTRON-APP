@@ -40,6 +40,7 @@ import {
   type Propuesta,
   type EventoAccion,
 } from './lib/acciones-app';
+import { detectarIdioma } from './lib/idioma-detectar';
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
@@ -2784,8 +2785,10 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   if (!contexto && oyentesDe(correo) === 0) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
   // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».
+  // En el idioma en que le hablaron: «go back» con la app en español se contesta en inglés (la
+  // lectura del texto es conservadora; si no se puede saber, el idioma de la app).
   const orden = await ordenRapida(message, {
-    idioma: normalizarIdioma(body?.idioma),
+    idioma: detectarIdioma(message) ?? normalizarIdioma(body?.idioma),
     contexto,
     pendiente: pendienteDe(correo),
     propuesta: propuestaAnterior(correo),

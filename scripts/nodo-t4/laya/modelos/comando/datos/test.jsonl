@@ -13,10 +13,10 @@
 {"q": "oye da la vuelta de dron ya", "e": ["orbitar", "app_ninguna"]}
 {"q": "mira, dale una vuelta entera.", "e": ["orbitar", "app_ninguna"]}
 {"q": "ey sácame el pdf de esta ya.", "e": ["ficha_pdf", "app_ninguna"]}
-{"q": "a ver la pestaña de chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "a ver la pestaña de chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "Mira la pestana de archivos por favor", "e": ["abrir_expedientes", "app_ninguna"]}
 {"q": "a ver arma la ficha de la concesion los pinares", "e": ["ninguna", "app_ninguna"]}
-{"q": "este... quita ese recuadro gracias", "e": ["cerrar", "app_ninguna"]}
+{"q": "este... quita ese recuadro gracias", "e": ["cerrar", "app_atras"]}
 {"q": "Eh, ¿el 3d es exacto?", "e": ["ninguna", "app_ninguna"]}
 {"q": "que se vea más la conversación", "e": ["mas_chat", "app_ninguna"]}
 {"q": "porfa orienta el mapa como siempre un poquito", "e": ["norte_arriba", "app_ninguna"]}
@@ -35,7 +35,7 @@
 {"q": "doctor, no quiero mas tour", "e": ["detener", "app_ninguna"]}
 {"q": "ey, deja el norte hacia arriba", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "Este... despliégame las capas.", "e": ["abrir_capas", "app_ninguna"]}
-{"q": "dale, ya no me hables porfa", "e": ["callar", "app_ninguna"]}
+{"q": "dale, ya no me hables porfa", "e": ["callar", "app_callar"]}
 {"q": "Doctor electrum, quiero el mapa de calles.", "e": ["fondo_calles", "app_ninguna"]}
 {"q": "a ver llévame a la mina de san juan", "e": ["ninguna", "app_ninguna"]}
 {"q": "eh gira la economía alrededor del oro.", "e": ["ninguna", "app_ninguna"]}
@@ -56,7 +56,7 @@
 {"q": "quiero la vista inclinada", "e": ["inclinar", "app_ninguna"]}
 {"q": "ensename donde ando", "e": ["mi_ubicacion", "app_ninguna"]}
 {"q": "vaya, mitad y mitad la pantalla.", "e": ["mitad", "app_presencia"]}
-{"q": "guarda silencio doctor un poquito", "e": ["callar", "app_ninguna"]}
+{"q": "guarda silencio doctor un poquito", "e": ["callar", "app_callar"]}
 {"q": "Doctor electrum, vamos al proximo.", "e": ["siguiente", "app_ninguna"]}
 {"q": "partido en dos pues", "e": ["mitad", "app_presencia"]}
 {"q": "A ver, quiero la ficha impresa de esta", "e": ["ficha_pdf", "app_ninguna"]}
@@ -84,7 +84,7 @@
 {"q": "Ahora quiero que me guíes por la plataforma", "e": ["abrir_recorrido", "app_ninguna"]}
 {"q": "ey partido en dos rapido", "e": ["mitad", "app_presencia"]}
 {"q": "eh sacame de la pantalla completa", "e": ["salir_pantalla", "app_presencia"]}
-{"q": "arranca el tutorial.", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "arranca el tutorial.", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "la pestana de infraestructura", "e": ["abrir_infra", "app_ninguna"]}
 {"q": "Ey, activa la vista tridimensional porfa", "e": ["relieve_3d", "app_ninguna"]}
 {"q": "Dale quiero ver honduras completa doctor", "e": ["ver_pais", "app_ninguna"]}
@@ -101,20 +101,20 @@
 {"q": "doctor electrum, bajame el mapa.", "e": ["mover_abajo", "app_ninguna"]}
 {"q": "a ver perfecto gracias", "e": ["ninguna", "app_ninguna"]}
 {"q": "ponlo a todo lo que da la pantalla ya", "e": ["pantalla_completa", "app_presencia"]}
-{"q": "a ver cierra esa ventanita si puedes", "e": ["cerrar", "app_ninguna"]}
+{"q": "a ver cierra esa ventanita si puedes", "e": ["cerrar", "app_atras"]}
 {"q": "por favor llevalo para la derecha", "e": ["mover_derecha", "app_ninguna"]}
-{"q": "a ver, llevame al chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "a ver, llevame al chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "doctor deja el norte hacia arriba", "e": ["norte_arriba", "app_ninguna"]}
 {"q": "que es la vista cenital", "e": ["ninguna", "app_ninguna"]}
 {"q": "oye sí la primera.", "e": ["ninguna", "app_ninguna"]}
 {"q": "sácame el pdf de esta gracias", "e": ["ficha_pdf", "app_ninguna"]}
 {"q": "Bueno ponle el fondo de satélite rápido", "e": ["fondo_satelite", "app_ninguna"]}
 {"q": "mira, agrándame el mapa ya.", "e": ["mas_mapa", "app_ninguna"]}
-{"q": "mira arranca el tutorial ahí", "e": ["abrir_recorrido", "app_ninguna"]}
+{"q": "mira arranca el tutorial ahí", "e": ["abrir_recorrido", "app_ayuda"]}
 {"q": "oye, abre el resumen de cifras", "e": ["abrir_tablero", "app_ninguna"]}
-{"q": "Mira llévame al chat", "e": ["abrir_consulta", "app_ninguna"]}
+{"q": "Mira llévame al chat", "e": ["abrir_consulta", "app_abrir"]}
 {"q": "mira rótalo para la derecha", "e": ["rotar_derecha", "app_ninguna"]}
-{"q": "guarda silencio doctor gracias", "e": ["callar", "app_ninguna"]}
+{"q": "guarda silencio doctor gracias", "e": ["callar", "app_callar"]}
 {"q": "ponle el fondo de calles", "e": ["fondo_calles", "app_ninguna"]}
 {"q": "Oiga gíralo como las agujas del reloj", "e": ["rotar_derecha", "app_ninguna"]}
 {"q": "Dale hazle un analisis a esta porfa", "e": ["analizar", "app_ninguna"]}
@@ -125,7 +125,7 @@
 {"q": "bueno ya no quiero las manos", "e": ["manos_off", "app_ninguna"]}
 {"q": "Eh, vista desde el cielo derecha hacia abajo", "e": ["vista_cenital", "app_ninguna"]}
 {"q": "alejalo mas", "e": ["zoom_menos", "app_ninguna"]}
-{"q": "cierra esa ventanita", "e": ["cerrar", "app_ninguna"]}
+{"q": "cierra esa ventanita", "e": ["cerrar", "app_atras"]}
 {"q": "ey que se vea más la conversación", "e": ["mas_chat", "app_ninguna"]}
 {"q": "Por favor vuelve a la ventana normal gracias", "e": ["salir_pantalla", "app_presencia"]}
 {"q": "doctor, llevalo para la izquierda", "e": ["mover_izquierda", "app_ninguna"]}
