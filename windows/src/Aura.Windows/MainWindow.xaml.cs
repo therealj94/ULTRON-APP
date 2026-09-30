@@ -127,7 +127,7 @@ public partial class MainWindow : Window
         State.Text = gate.Paused ? "En pausa" : speech != null ? "Te escucho…" : assistantRequest != null ? "Pensando…" : speaking ? "Hablando…" : "Aquí, contigo";
         PauseButton.Content = gate.Paused ? "Reanudar acciones" : "Pausar acciones";
         PrepareButton.IsEnabled = VoiceButton.IsEnabled = CopyButton.IsEnabled = SaveButton.IsEnabled = WriteButton.IsEnabled = !gate.Paused;
-        Avatar.Opacity = gate.Paused ? 0.5 : 1;
+        Avatar.Opacity = gate.Paused ? 0.5 : 1; Avatar.IsEnabled = !gate.Paused;
         SendButton.IsEnabled = !gate.Paused;
         Avatar.SetState(gate.Paused ? "idle" : speech != null ? "listening" : assistantRequest != null ? "thinking" : speaking ? "speaking" : "idle");
     }

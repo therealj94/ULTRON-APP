@@ -20,7 +20,7 @@ Para hablar: instalar reconocimiento y voz en español en Windows y tocar el mic
 
 ## Límites de distribución
 
-El ejecutable funciona localmente para acciones y borradores. La conversación inteligente requiere el servidor Windows conectado al Qwen real. No se ha configurado una URL ni credenciales de producción. No hay control universal del escritorio, lectura de pantalla ni ejecución de shell. No hay entrenamiento Laya certificado, actualizador automático ni firma Authenticode del propietario. La configuración de voz y pruebas físicas de micrófono dependen del equipo.
+El ejecutable funciona localmente para acciones y borradores. La conversación inteligente requiere el servidor Windows conectado al Qwen real. No se ha configurado una URL ni credenciales de producción. No hay control universal del escritorio, lectura de pantalla ni ejecución de shell. El entrenamiento candidato recuperado (run 36698779613) obtuvo 1/10 aciertos con abstención en el pequeño test semilla; no se activa ni se presenta en la interfaz. No hay entrenamiento Laya certificado, actualizador automático ni firma Authenticode del propietario. La configuración de voz y pruebas físicas de micrófono dependen del equipo.
 
 ## Compilar y verificar
 

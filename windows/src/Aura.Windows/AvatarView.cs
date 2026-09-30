@@ -16,7 +16,7 @@ public sealed class AvatarView : Image {
    var bitmap=new BitmapImage(new Uri("pack://application:,,,/AvatarAssets/"+name+".png"));bitmap.Freeze();var list=new BitmapSource[24];
    for(int i=0;i<24;i++){var crop=new CroppedBitmap(bitmap,new Int32Rect(i%6*192,i/6*192,192,192));crop.Freeze();list[i]=crop;}clips[name]=list;
   }
-  Source=clips[state][0];timer.Tick+=(_,_)=>{if(!IsVisible||!SystemParameters.ClientAreaAnimation)return;frame=(frame+1)%24;Source=clips[state=="speaking"&&!phoneme?"idle":state][frame];};
+  Source=clips[state][0];timer.Tick+=(_,_)=>{if(!IsVisible||!IsEnabled||!SystemParameters.ClientAreaAnimation)return;frame=(frame+1)%24;Source=clips[state=="speaking"&&!phoneme?"idle":state][frame];};
   Loaded+=(_,_)=>timer.Start();Unloaded+=(_,_)=>timer.Stop();
  }
  public void SetState(string value){value=clips.ContainsKey(value)?value:"idle";if(state==value)return;state=value;frame=0;Source=clips[state][0];}
