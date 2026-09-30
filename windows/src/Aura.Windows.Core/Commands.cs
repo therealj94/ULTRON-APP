@@ -12,9 +12,11 @@ public static class Commands
     {
         if (input.Length > 4000) return new(ActionKind.None);
         var s = Normalize(input);
+        foreach (var polite in new[] { "aura, ", "por favor, " })
+            if (s.StartsWith(polite, StringComparison.Ordinal)) s = s[polite.Length..].Trim();
         var exact = s switch {
-            "abre bloc de notas" or "abrir bloc de notas" or "abre notepad" => ActionKind.OpenNotepad,
-            "abre calculadora" or "abrir calculadora" => ActionKind.OpenCalculator,
+            "abre bloc de notas" or "abrir bloc de notas" or "abre el bloc de notas" or "abre notepad" => ActionKind.OpenNotepad,
+            "abre calculadora" or "abrir calculadora" or "abre la calculadora" => ActionKind.OpenCalculator,
             "abre explorador" or "abrir explorador" => ActionKind.OpenExplorer,
             "abre documentos" or "abrir documentos" => ActionKind.OpenDocuments,
             "abre configuracion" or "abrir configuracion" => ActionKind.OpenSettings,
@@ -31,6 +33,23 @@ public static class Commands
         }
         return new(ActionKind.None);
     }
+    public static string Describe(Command command) => command.Kind switch {
+        ActionKind.OpenNotepad => "Abrir Bloc de notas",
+        ActionKind.OpenCalculator => "Abrir Calculadora",
+        ActionKind.OpenExplorer => "Abrir Explorador de archivos",
+        ActionKind.OpenDocuments => "Abrir tu carpeta Documentos",
+        ActionKind.OpenSettings => "Abrir Configuración de Windows",
+        ActionKind.SearchWeb => "Buscar en el navegador: " + command.Value,
+        ActionKind.OpenUrl => "Abrir esta página: " + command.Value,
+        ActionKind.Draft => "Preparar este borrador: " + command.Value,
+        ActionKind.Pause => "Pausar acciones", _ => "Orden no reconocida"
+    };
+    public static bool IsAllowed(Command command) => Enum.IsDefined(command.Kind) && command.Value.Length <= 4000 && (command.Kind switch {
+        ActionKind.None or ActionKind.Pause => false,
+        ActionKind.OpenUrl => SafeHttps(command.Value),
+        ActionKind.SearchWeb or ActionKind.Draft => !string.IsNullOrWhiteSpace(command.Value),
+        _ => command.Value.Length == 0
+    });
     public static bool SafeHttps(string value) => Uri.TryCreate(value, UriKind.Absolute, out var u) && u.Scheme == Uri.UriSchemeHttps && string.IsNullOrEmpty(u.UserInfo) && !u.IsLoopback && Uri.CheckHostName(u.Host) == UriHostNameType.Dns && u.Host.Contains('.') && !u.Host.EndsWith(".local", StringComparison.OrdinalIgnoreCase);
 }
 public sealed class ApprovalGate
@@ -40,9 +59,10 @@ public sealed class ApprovalGate
     private Command? pending;
     private DateTimeOffset expires;
     public bool Paused { get; private set; }
+    public int RemainingSeconds => token == null ? 0 : Math.Max(0, (int)Math.Ceiling((expires - clock.GetUtcNow()).TotalSeconds));
     public ApprovalGate(TimeProvider? clock = null) => this.clock = clock ?? TimeProvider.System;
     public Guid Propose(Command command) {
-        if (Paused || command.Kind is ActionKind.None or ActionKind.Pause) throw new InvalidOperationException("Acciones pausadas o comando inválido.");
+        if (Paused || !Commands.IsAllowed(command)) throw new InvalidOperationException("Acciones pausadas o comando inválido.");
         token = Guid.NewGuid(); pending = command; expires = clock.GetUtcNow().AddSeconds(30); return token.Value;
     }
     public Command? Consume(Guid id) {

@@ -17,5 +17,15 @@ Check(gate.Consume(id) == null,"replay");
 id = gate.Propose(new(ActionKind.OpenNotepad)); gate.Pause(); gate.Resume(); Check(gate.Consume(id) == null,"pause invalidation");
 id = gate.Propose(new(ActionKind.OpenNotepad)); clock.Now = clock.Now.AddSeconds(31); Check(gate.Consume(id) == null,"expiry");
 id = gate.Propose(new(ActionKind.OpenNotepad)); gate.Propose(new(ActionKind.OpenExplorer)); Check(gate.Consume(id) == null,"replacement");
+Check(Commands.Parse("Aura, abre la calculadora").Kind == ActionKind.OpenCalculator,"polite");
+Check(Commands.Parse("por favor, no abras la calculadora").Kind == ActionKind.None,"polite negation");
+Check(!Commands.IsAllowed(new((ActionKind)999)),"unknown action");
+Check(!Commands.IsAllowed(new(ActionKind.OpenCalculator,"unexpected arguments")),"argument injection");
+Check(!Commands.IsAllowed(new(ActionKind.OpenUrl,"file:///C:/test.exe")),"unsafe typed URL");
+Check(!Commands.IsAllowed(new(ActionKind.SearchWeb,"")),"empty search");
+Check(Commands.Describe(new(ActionKind.OpenCalculator)) == "Abrir Calculadora","human label");
+id = gate.Propose(new(ActionKind.OpenNotepad)); Check(gate.RemainingSeconds == 30,"countdown");
+clock.Now = clock.Now.AddSeconds(30); Check(gate.RemainingSeconds == 0 && gate.Consume(id) == null,"exact expiry boundary");
+gate.Pause(); bool refused = false; try { gate.Propose(new(ActionKind.OpenNotepad)); } catch(InvalidOperationException) { refused = true; } Check(refused,"paused proposal denied");
 Console.WriteLine($"PASS {count} assertions");
 class Clock : TimeProvider { public DateTimeOffset Now = DateTimeOffset.UtcNow; public override DateTimeOffset GetUtcNow() => Now; }

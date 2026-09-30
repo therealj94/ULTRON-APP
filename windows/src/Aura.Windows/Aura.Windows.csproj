@@ -1,4 +1,4 @@
 <Project Sdk="Microsoft.NET.Sdk">
-<PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable><AssemblyName>Aura.Windows</AssemblyName><ApplicationManifest>app.manifest</ApplicationManifest></PropertyGroup>
+<PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms><ImplicitUsings>disable</ImplicitUsings><Nullable>enable</Nullable><Version>0.2.0</Version><AssemblyName>Aura.Windows</AssemblyName><ApplicationManifest>app.manifest</ApplicationManifest></PropertyGroup>
 <ItemGroup><ProjectReference Include="../Aura.Windows.Core/Aura.Windows.Core.csproj"/><PackageReference Include="System.Speech" Version="10.0.0"/></ItemGroup>
 </Project>

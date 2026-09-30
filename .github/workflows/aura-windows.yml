@@ -29,3 +29,15 @@ jobs:
           name: AURA-Windows-x64-preview
           path: windows/artifacts/win-x64/
           retention-days: 14
+      - name: Render real WPF views and validate interaction state
+        shell: pwsh
+        run: |
+          $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--render-preview', "$env:GITHUB_WORKSPACE/windows/artifacts/design" -PassThru
+          if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'WPF render timeout' }
+          if ($process.ExitCode -ne 0) { Get-Content ./windows/artifacts/design/render-error.txt; throw 'WPF render failed' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-design-review
+          path: windows/artifacts/design/
+          retention-days: 14
