@@ -4,11 +4,15 @@
  *
  *   npx tsx scripts/electrum/ordenar-catastro.ts              propuesta; no cambia nada
  *   npx tsx scripts/electrum/ordenar-catastro.ts --aplicar    aplica la propuesta tal cual
+ *   … --oficial-huellas huellas.txt                            huellas del archivo oficial (una por
+ *                                                             línea): lo que sea del archivo cuenta
+ *                                                             como oficial aunque esté en otra capa
  *
  * Antes de proponer aplica el esquema del panel (con la v10), como hace el servidor al arrancar.
  */
+import fs from 'node:fs';
 import { asegurarBiblioteca } from '../../server/electrum/biblioteca';
-import { cerrarBase, hayBase } from '../../server/electrum/db';
+import { cerrarBase, consulta, hayBase } from '../../server/electrum/db';
 import { aplicar, fraseFuente, fuenteCatastro, proponer } from '../../server/electrum/ordenar';
 
 async function main() {
@@ -16,12 +20,19 @@ async function main() {
   if (!(await asegurarBiblioteca())) throw new Error('No pude preparar el esquema del panel.');
   const aplicarlo = process.argv.includes('--aplicar');
   console.log('[ordenar] antes:', fraseFuente(await fuenteCatastro()));
-  const { oficial, filas } = await proponer();
+  const i = process.argv.indexOf('--oficial-huellas');
+  const huellas = i > 0 ? [...new Set(fs.readFileSync(process.argv[i + 1], 'utf8').split(/\s+/).filter((h) => /^[0-9a-f]{32}$/.test(h)))] : [];
+  if (huellas.length) {
+    const [{ n }] = await consulta<{ n: number }>(`SELECT count(DISTINCT huella)::int AS n FROM concesion WHERE huella = ANY($1::text[])`, [huellas]);
+    console.log(`[ordenar] huellas del archivo oficial: ${huellas.length}; en la base: ${n}`);
+  }
+  const { oficial, filas } = await proponer(null, huellas);
   console.log('[ordenar] propuesta ' + JSON.stringify({ oficial, filas }));
   if (!aplicarlo) return console.log('[ordenar] en seco: no se cambió nada.');
   const r = await aplicar(
     filas.map(({ capaId, accion }) => ({ capaId, accion })),
-    'ordenar-catastro (trabajo)'
+    'ordenar-catastro (trabajo)',
+    huellas
   );
   console.log('[ordenar] resultado ' + JSON.stringify(r));
   console.log('[ordenar] después:', fraseFuente(await fuenteCatastro()));

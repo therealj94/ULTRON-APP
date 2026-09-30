@@ -36,6 +36,8 @@ export type FilaPropuesta = {
   concesiones: number;
   /** De esas, cuántas caen casi enteras (≥ 80 % del área) dentro de una concesión oficial. */
   repetidas: number;
+  /** De esas, cuántas SON del archivo oficial (misma huella): pasan a la capa oficial al aplicar. */
+  adoptables?: number;
   rol: string | null;
   accion: Accion;
   motivo: string;
@@ -63,9 +65,32 @@ function elegirOficial(capas: Array<{ id: number; nombre: string; n: number; sub
  * vieja del mismo padrón. Una capa chica con otro nombre («MINAS DE ORO I», «Monarka») que calza
  * con el oficial es un proyecto propio dibujado sobre su derecho: no se borra, pasa a proyecto.
  */
+/** Más derechos que esto en una capa que no es el oficial: es un padrón, no un proyecto. */
+const CATASTRO_ENTERO = 50;
+
+/** Los nombres de los campos del .dbf de una concesión, ordenados: la firma de su exportación. */
+const FIRMA_SQL = (t: string) => `(SELECT string_agg(k, ',' ORDER BY k) FROM jsonb_object_keys(${t}.atributos) AS k)`;
+
+/** La firma más común entre las concesiones de la capa oficial. */
+async function firmaDeCampos(capaId: number): Promise<string | null> {
+  const [f] = await consulta<{ firma: string | null }>(
+    `SELECT ${FIRMA_SQL('c')} AS firma FROM concesion c WHERE c.capa_id = $1 GROUP BY 1 ORDER BY count(*) DESC LIMIT 1`,
+    [capaId]
+  );
+  return f?.firma || null;
+}
+
 const ES_CAPA_CATASTRO = /concesi[oó]n|derechos? miner|catastro|artesanal|delimitad|otorgad|solicitud|explotar|explorar|suspenso|peque.a miner|banco de pr/i;
 
-export async function proponer(oficialId?: number | null): Promise<{ oficial: number | null; filas: FilaPropuesta[] }> {
+/**
+ * El catastro oficial puede estar PARTIDO entre capas. Pasó en producción: las trece capas «por
+ * estado» se subieron antes que el archivo de junio de 2026, y al cargar este sus 427 polígonos
+ * idénticos no entraron otra vez (la huella lo impide), así que la capa oficial quedó con 653 de
+ * 1080. Ordenar solo por capa habría sacado del catastro 427 concesiones vigentes. Con las huellas
+ * del archivo oficial (`huellas`), toda concesión que sea del archivo cuenta como oficial, esté en la
+ * capa que esté, y al aplicar pasa a la capa oficial antes de borrar nada.
+ */
+export async function proponer(oficialId?: number | null, huellas: string[] = []): Promise<{ oficial: number | null; filas: FilaPropuesta[] }> {
   if (!hayBase()) return { oficial: null, filas: [] };
   const conConcesiones = await consulta<{ id: string; nombre: string; carpeta: string | null; rol: string | null; n: number; subido: string }>(
     `SELECT k.id::text, k.nombre, k.carpeta, k.rol, count(c.id)::int AS n, k.subido::text AS subido
@@ -90,20 +115,94 @@ export async function proponer(oficialId?: number | null): Promise<{ oficial: nu
     : [];
   const rep = new Map(repetidas.map((r) => [Number(r.capa_id), r.n]));
 
+  /*
+   * Con huellas: lo que es del archivo oficial se adopta, y lo que queda se compara contra el
+   * oficial COMPLETO (la capa oficial más lo adoptable), no contra la capa partida.
+   */
+  const adopt = new Map<number, number>();
+  /*
+   * Sin huellas, la misma exportación se reconoce por sus CAMPOS: en producción la capa oficial y
+   * las trece «por estado» traen exactamente codigo, nombre_zon, concesiona, estado, hectarea y
+   * clasificac, y ningún código repetido entre ellas; un catastro viejo de otra fuente trae otros
+   * (fecha_inic, id_expedie…). Lo que tiene la firma del oficial y NO lo repite (no cae ≥ 80 %
+   * dentro de una oficial) es la parte del oficial que quedó guardada en otra capa.
+   */
+  const firma = oficial && !huellas.length ? await firmaDeCampos(oficial) : null;
+  // Solo de capas con nombre de capa del catastro: un proyecto propio con los mismos campos no entra.
+  const elegibles = capas.filter((c) => c.id !== oficial && ES_CAPA_CATASTRO.test(c.nombre)).map((c) => c.id);
+  if (oficial && firma && elegibles.length) {
+    const xs = await consulta<{ capa_id: string; adoptables: number }>(
+      `SELECT c.capa_id::text, count(*)::int AS adoptables
+         FROM concesion c
+        WHERE c.capa_id = ANY($3::bigint[]) AND ${FIRMA_SQL('c')} = $2
+          AND NOT EXISTS (SELECT 1 FROM concesion o WHERE o.capa_id = $1 AND o.geom && c.geom AND ST_Intersects(o.geom, c.geom)
+                            AND ST_Area(ST_Intersection(o.geom, c.geom)) >= 0.8 * ST_Area(c.geom))
+        GROUP BY c.capa_id`,
+      [oficial, firma, elegibles]
+    );
+    for (const x of xs) adopt.set(Number(x.capa_id), x.adoptables);
+    // Lo que queda se compara contra el oficial completo: la capa oficial más lo adoptable.
+    const r2 = await consulta<{ capa_id: string; rep: number }>(
+      `WITH ofi AS (
+         SELECT geom FROM concesion WHERE capa_id = $1
+         UNION ALL
+         SELECT c.geom FROM concesion c WHERE c.capa_id = ANY($3::bigint[]) AND ${FIRMA_SQL('c')} = $2
+       )
+       SELECT c.capa_id::text, count(*)::int AS rep
+         FROM concesion c
+        WHERE c.capa_id <> $1 AND NOT (c.capa_id = ANY($3::bigint[]) AND ${FIRMA_SQL('c')} IS NOT DISTINCT FROM $2)
+          AND EXISTS (SELECT 1 FROM ofi o WHERE o.geom && c.geom AND ST_Intersects(o.geom, c.geom)
+                        AND ST_Area(ST_Intersection(o.geom, c.geom)) >= 0.8 * ST_Area(c.geom))
+        GROUP BY c.capa_id`,
+      [oficial, firma, elegibles]
+    );
+    for (const x of r2) rep.set(Number(x.capa_id), x.rep);
+  }
+  if (oficial && huellas.length) {
+    const xs = await consulta<{ capa_id: string; adoptables: number; rep: number }>(
+      `WITH of AS (SELECT geom FROM concesion WHERE capa_id = $1 OR huella = ANY($2::text[]))
+       SELECT c.capa_id::text,
+              count(*) FILTER (WHERE c.huella = ANY($2::text[]))::int AS adoptables,
+              count(*) FILTER (WHERE NOT (c.huella = ANY($2::text[])) AND EXISTS (
+                SELECT 1 FROM of o WHERE o.geom && c.geom AND ST_Intersects(o.geom, c.geom)
+                  AND ST_Area(ST_Intersection(o.geom, c.geom)) >= 0.8 * ST_Area(c.geom)))::int AS rep
+         FROM concesion c WHERE c.capa_id <> $1 GROUP BY c.capa_id`,
+      [oficial, huellas]
+    );
+    for (const x of xs) {
+      adopt.set(Number(x.capa_id), x.adoptables);
+      rep.set(Number(x.capa_id), x.rep);
+    }
+  }
+
   const filas: FilaPropuesta[] = capas.map((c) => {
     const r = rep.get(c.id) || 0;
-    const base = { capaId: c.id, nombre: c.nombre, carpeta: c.carpeta, concesiones: c.n, repetidas: r, rol: c.rol };
+    const ad = adopt.get(c.id) || 0;
+    const resto = c.n - ad;
+    const base = { capaId: c.id, nombre: c.nombre, carpeta: c.carpeta, concesiones: c.n, repetidas: r, adoptables: ad, rol: c.rol };
     if (c.id === oficial) return { ...base, accion: 'oficial', motivo: 'Catastro vigente: el que cuentan las herramientas y el mapa.' };
-    if (ES_HISTORICO.test(`${c.nombre} ${c.carpeta || ''}`)) return { ...base, accion: 'historico', motivo: 'Estudio viejo (JICA): contexto, no catastro.' };
-    if (c.n > 0 && r / c.n >= PARTE_REPETIDA && (ES_CAPA_CATASTRO.test(c.nombre) || c.n > 5)) {
-      return { ...base, accion: 'borrar', motivo: `${r} de ${c.n} ya están en el catastro oficial: es una versión vieja del mismo.` };
+    if (ad > 0 && resto === 0) {
+      return { ...base, accion: 'borrar', motivo: `Sus ${ad} concesiones son del archivo oficial: pasan a la capa oficial y la capa, vacía, se borra.` };
+    }
+    const pre = ad ? `${ad} son del archivo oficial y pasan a la capa oficial; de las ${resto} restantes, ` : '';
+    if (ES_HISTORICO.test(`${c.nombre} ${c.carpeta || ''}`)) return { ...base, accion: 'historico', motivo: `${pre}Estudio viejo (JICA): contexto, no catastro.` };
+    if (resto > 0 && r / resto >= PARTE_REPETIDA && (ES_CAPA_CATASTRO.test(c.nombre) || resto > 5)) {
+      return { ...base, accion: 'borrar', motivo: `${pre}${r} de ${resto} caen dentro del catastro oficial: es una versión vieja del mismo.` };
+    }
+    /*
+     * Un padrón entero de otra fuente o de otra fecha (cientos de derechos, casi ninguno en el
+     * oficial) no es un proyecto propio: es un catastro viejo. Se guarda como histórico, que se ve
+     * en el mapa y no cuenta.
+     */
+    if (resto > CATASTRO_ENTERO) {
+      return { ...base, accion: 'historico', motivo: `${pre}Catastro viejo o de otra fuente: ${r} de ${resto} están en el oficial y el resto ya no. Queda como histórico, no cuenta.` };
     }
     return {
       ...base,
       accion: 'proyecto',
       motivo: r
-        ? `${r} de ${c.n} calzan con derechos del oficial: queda como proyecto y esos derechos entran a la cartera «${nombreCartera(c)}».`
-        : 'Polígonos propios: se ven en el mapa, no cuentan como catastro.',
+        ? `${pre}${r} de ${resto} calzan con derechos del oficial: queda como proyecto y esos derechos entran a la cartera «${nombreCartera(c)}».`
+        : `${pre}Polígonos propios: se ven en el mapa, no cuentan como catastro.`,
     };
   });
 
@@ -178,7 +277,7 @@ export type Resultado = {
  * Aplica lo decidido. Todo en UNA transacción: un catastro a medio ordenar es peor que el desorden
  * de antes. Los traslapes se recalculan al final, fuera, porque son del padrón entero.
  */
-export async function aplicar(decision: Array<{ capaId: number; accion: Accion }>, quien?: string | null): Promise<Resultado> {
+export async function aplicar(decision: Array<{ capaId: number; accion: Accion }>, quien?: string | null, huellas: string[] = []): Promise<Resultado> {
   const nada = { borradas: 0, aReferencia: 0, concesionesAntes: 0, concesionesDespues: 0, traslapes: null };
   if (!hayBase()) return { ok: false, dicho: 'El catastro no está conectado.', ...nada };
   const limpia = decision.filter((d) => Number.isInteger(d.capaId) && d.capaId > 0 && ACCIONES.includes(d.accion));
@@ -192,6 +291,35 @@ export async function aplicar(decision: Array<{ capaId: number; accion: Accion }
   const { borradas, aReferencia, enCarteras } = await enTransaccion(async (q) => {
     let borradas = 0;
     let aReferencia = 0;
+
+    // Primero, lo que es del archivo oficial pasa a la capa oficial: después ya se puede borrar sin
+    // llevarse ninguna concesión vigente por delante.
+    const ofi = de('oficial')[0];
+    const firma = ofi && !huellas.length ? await firmaDeCampos(ofi) : null;
+    const elegibles = ofi
+      ? ((await q(`SELECT id, nombre FROM capa WHERE id <> $1`, [ofi])) as Array<{ id: string; nombre: string }>)
+          .filter((k) => ES_CAPA_CATASTRO.test(k.nombre))
+          .map((k) => Number(k.id))
+      : [];
+    if (ofi && (huellas.length || (firma && elegibles.length))) {
+      const movidas = (await q(
+        huellas.length
+          ? `UPDATE concesion SET capa_id = $1 WHERE huella = ANY($2::text[]) AND capa_id IS DISTINCT FROM $1 RETURNING id`
+          : `UPDATE concesion c SET capa_id = $1
+              WHERE c.capa_id = ANY($3::bigint[]) AND ${FIRMA_SQL('c')} = $2
+                AND NOT EXISTS (SELECT 1 FROM concesion o WHERE o.capa_id = $1 AND o.geom && c.geom AND ST_Intersects(o.geom, c.geom)
+                                  AND ST_Area(ST_Intersection(o.geom, c.geom)) >= 0.8 * ST_Area(c.geom))
+              RETURNING c.id`,
+        huellas.length ? [ofi, huellas] : [ofi, firma, elegibles]
+      )) as unknown[];
+      if (movidas.length) {
+        await q(`INSERT INTO biblioteca_bitacora (quien, accion, objeto, detalle) VALUES ($1, 'mover', $2, $3)`, [
+          quien || null,
+          `capa ${ofi}`,
+          JSON.stringify({ concesiones: movidas.length, por: 'ordenar catastro', motivo: 'concesiones del archivo oficial guardadas en otras capas' }),
+        ]);
+      }
+    }
 
     const borrar = de('borrar');
     if (borrar.length) {
