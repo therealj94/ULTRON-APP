@@ -18,11 +18,11 @@ import { FIGURAS } from '../../compa/figura.ts';
 import { esAccionApp } from '../../compa/acciones.ts';
 import { estadoAvatar, estadoDesdeAnimo, estadoDesdeMesa, gestoDeEvento, mismoEstado } from '../contrato.ts';
 import { ESTADO_INICIAL, EXPRESIONES_AVATAR, VISEMAS, GESTOS_AVATAR } from '../tipos.ts';
-import { ARKIT_52, BYTES_MAX_NODOS, MAPEO_BASE, PERFIL_NODOS, buscarNombre, claveBase, clipBase, clipGesto, combinarMapeo, nombreVisema, pesosObjetivo, zona2D, zonaDeNodo, zonaPorPosicion } from '../mapeo.ts';
+import { ARKIT_52, BYTES_MAX_NODOS, VARIANTES_NODOS, MAPEO_BASE, PERFIL_NODOS, buscarNombre, claveBase, clipBase, clipGesto, combinarMapeo, nombreVisema, pesosObjetivo, zona2D, zonaDeNodo, zonaPorPosicion } from '../mapeo.ts';
 import { LineaVisemas, componerBoca, visemaDeEspectro, visemaDeLetra, visemasDeTexto, HZ_MIN, HZ_MAX } from '../visemas.ts';
 import { SenalVoz } from '../senalVoz.ts';
 import { ANCHO_PARA_PANEL, disposicionDock, modoEfectivo, normalizarPresencia, siguienteModo } from '../presencia.ts';
-import { FPS_MINIMO, OLVIDO_MS, anotarCalidad, anotarFallo, calidadInicial, cuerpoQueToca, puede3D, veredictoRendimiento } from '../capacidad.ts';
+import { FPS_MINIMO, OLVIDO_MS, anotarCalidad, anotarFallo, calidadInicial, cuerpoQueToca, puede3D, varianteQueToca, veredictoRendimiento } from '../capacidad.ts';
 
 // modelo.ts pide los .glb con `require` (Metro los empaqueta); en Node, un .glb es su ruta.
 createRequire(import.meta.url)('node:module').Module._extensions['.glb'] = (m, archivo) => {
@@ -584,7 +584,7 @@ prueba('revisor: con un .mapeo.json, los nombres propios del modelo cuentan', as
   assert.deepEqual(con.errores, []);
 });
 
-prueba('revisor nodos: los tres modelos de Codex cumplen (≤ 3 MB, triángulos, clips y formas de boca del perfil)', async () => {
+prueba('revisor nodos: los tres modelos de Codex cumplen (alta ≤ 8 MB, ligera ≤ 3 MB y 110 000 triángulos, 30 clips y formas de boca)', async () => {
   const R = await import('../../../scripts/avatar3d-modelo.mjs');
   const modelos = R.modelosEnCarpeta();
   assert.deepEqual(modelos.map((m) => m.avatar), ['aura', 'claudio', 'antonio']);
@@ -595,7 +595,44 @@ prueba('revisor nodos: los tres modelos de Codex cumplen (≤ 3 MB, triángulos,
     assert.ok(m.resumen.triangulos <= R.LIMITES_NODOS.triangulosMax, `${m.avatar}: ${m.resumen.triangulos} triángulos`);
     assert.equal(m.resumen.animaciones.length, 30);
     assert.deepEqual(m.mapeo, { perfil: 'nodos' });
+    // La ligera: solo si la alta no cabe ya en su presupuesto (AU-RA no la necesita).
+    if (m.resumen.triangulos <= VARIANTES_NODOS.ligera.triangulos) assert.equal(m.ligero, null, `${m.avatar}: sin ligera`);
+    else {
+      assert.ok(m.ligero, `${m.avatar}: trae ligera`);
+      assert.deepEqual(m.ligero.errores, [], `${m.avatar}-ligero: ${m.ligero.errores.join('; ')}`);
+      assert.ok(m.ligero.bytes <= VARIANTES_NODOS.ligera.bytes);
+      assert.ok(m.ligero.resumen.triangulos <= VARIANTES_NODOS.ligera.triangulosMax, `${m.avatar}-ligero: ${m.ligero.resumen.triangulos}`);
+      assert.ok(m.ligero.resumen.triangulos < m.resumen.triangulos * 0.6, `${m.avatar}-ligero: bastante más liviana que la alta`);
+      assert.equal(m.ligero.resumen.animaciones.length, 30);
+      assert.equal(m.ligero.resumen.blendshapes, m.resumen.blendshapes, 'los mismos morphs de boca');
+    }
   }
+});
+
+prueba('revisor nodos: el brillo de tela y pelo (sheen) del original SÍ pasa en un rig «nodos»; en uno humanoide sigue fuera', async () => {
+  const R = await import('../../../scripts/avatar3d-modelo.mjs');
+  const m = {
+    asset: { version: '2.0' },
+    extensionsUsed: ['KHR_materials_sheen'],
+    nodes: [{ name: 'body', children: [1] }, { name: 'head', children: [2] }, { name: 'mouth', mesh: 0 }],
+    meshes: [{ extras: { targetNames: BOCA_CODEX }, primitives: [{ attributes: { POSITION: 0 }, indices: 1, targets: BOCA_CODEX.map(() => ({ POSITION: 0 })) }] }],
+    accessors: [{ count: 900 }, { count: 3000 }, { count: 10, max: [4.7] }],
+    animations: CLIPS_CODEX.map((name) => ({ name, samplers: [{ input: 2 }], channels: [] })),
+  };
+  assert.deepEqual(R.revisarGlb(glbDePrueba(m), { perfil: 'nodos' }).errores, []);
+  const humano = modeloQueCumple();
+  humano.extensionsUsed = [...(humano.extensionsUsed || []), 'KHR_materials_sheen'];
+  assert.match(R.revisarGlb(glbDePrueba(humano)).errores.join('\n'), /sheen/);
+});
+
+prueba('2D: qué variante se prueba (la alta; si falló, la ligera; si también, ninguna)', () => {
+  assert.equal(varianteQueToca({ puedeAlta: true, hayLigera: true, puedeLigera: true }), 'alta');
+  assert.equal(varianteQueToca({ puedeAlta: false, hayLigera: true, puedeLigera: true }), 'ligera');
+  assert.equal(varianteQueToca({ puedeAlta: false, hayLigera: true, puedeLigera: false }), null);
+  assert.equal(varianteQueToca({ puedeAlta: false, hayLigera: false, puedeLigera: true }), null, 'AU-RA no tiene ligera');
+  assert.equal(varianteQueToca({ puedeAlta: true, hayLigera: false, puedeLigera: false }), 'alta');
+  // Las dos variantes tienen huellas distintas: el fallo de una no apaga la otra.
+  for (const m of Object.values(MODELOS_3D)) if (m?.ligero) assert.notEqual(m.ligero.huella, m.huella);
 });
 
 prueba('revisor nodos: dice qué falta (una forma de boca, un clip, la cabeza) y lo que se pasa (peso, Draco)', async () => {
@@ -615,12 +652,17 @@ prueba('revisor nodos: dice qué falta (una forma de boca, un clip, la cabeza) y
   m.animations = m.animations.filter((a) => a.name !== 'carino');
   m.nodes[1].name = 'cabeza_rara';
   m.extensionsUsed.push('KHR_draco_mesh_compression');
-  m.accessors[1].count = 300000;
+  m.accessors[1].count = 900000;
   const todo = R.revisarGlb(glbDePrueba(m), mapeo).errores.join('\n');
-  for (const falta of ['round', 'carino', 'cabeza', 'KHR_draco_mesh_compression', '100000 triángulos']) assert.match(todo, new RegExp(falta), falta);
+  for (const falta of ['round', 'carino', 'cabeza', 'KHR_draco_mesh_compression', '300000 triángulos']) assert.match(todo, new RegExp(falta), falta);
+  // La ligera tiene sus propios límites: 120 000 triángulos pasan en la alta y no en la ligera.
+  const medio = bueno();
+  medio.accessors[1].count = 360000;
+  assert.deepEqual(R.revisarGlb(glbDePrueba(medio), mapeo).errores, []);
+  assert.match(R.revisarGlb(glbDePrueba(medio), mapeo, { variante: 'ligera' }).errores.join('\n'), /120000 triángulos; el máximo es 110000/);
   const pesado = Buffer.concat([glbDePrueba(bueno()), Buffer.alloc(BYTES_MAX_NODOS)]);
   pesado.writeUInt32LE(pesado.length, 8);
-  assert.match(R.revisarGlb(pesado, mapeo).errores.join('\n'), /el máximo es 3 MB/);
+  assert.match(R.revisarGlb(pesado, mapeo).errores.join('\n'), /el máximo es 8 MB/);
 });
 
 prueba('revisor: el registro de la app coincide con assets/avatar3d (AU-RA, Claudio y ANT-ONIO; el Guardián en 2D)', async () => {
