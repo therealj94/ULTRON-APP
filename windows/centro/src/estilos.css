@@ -117,6 +117,7 @@ input:focus, textarea:focus { border-color: var(--acento); }
 .panel-entrar h2 { font: 600 24px var(--titulo); margin: 18px 0 6px; }
 .panel-entrar p { color: var(--tenue); margin: 0 0 20px; }
 .panel-entrar .btn { width: 100%; justify-content: center; padding: 13px; margin-bottom: 10px; }
+.panel-entrar .fila .btn { width: auto; min-width: 130px; margin-bottom: 0; }
 .separador { display: flex; align-items: center; gap: 10px; color: var(--tenue); font-size: 12px; margin: 14px 0; }
 .separador::before, .separador::after { content: ""; flex: 1; height: 1px; background: var(--linea); }
 .pasos { display: flex; gap: 6px; justify-content: center; margin-bottom: 18px; }

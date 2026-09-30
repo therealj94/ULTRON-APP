@@ -20,7 +20,8 @@ await build({
 });
 cpSync(join(aqui, 'public'), salida, { recursive: true });
 
-const shim = '<script>window.ReactNativeWebView={postMessage:function(s){try{parent.postMessage({avatar3d:JSON.parse(s)},"*")}catch(e){}}};' +
+// Mismo color-scheme que la página: si no coinciden, Chromium pinta el iframe sobre un fondo blanco opaco.
+const shim = '<meta name="color-scheme" content="dark"><style>:root,html,body{color-scheme:dark;background:transparent!important}</style><script>window.ReactNativeWebView={postMessage:function(s){try{parent.postMessage({avatar3d:JSON.parse(s)},"*")}catch(e){}}};' +
   'addEventListener("message",function(e){if(e.data&&e.data.aAvatar&&window.__aura)window.__aura(e.data.aAvatar)});</script>';
 const origen = join(aqui, '..', '..', 'vendor', 'aura-avatar-suite', 'integration');
 for (const id of ['aura', 'claudio', 'antonio']) {
