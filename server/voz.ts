@@ -404,6 +404,8 @@ export async function abrirVozEnVivo(opts: {
   plataforma?: 'ultron' | 'electrum';
   previo?: string;
   siguiente?: string;
+  /** Español o inglés: el de la respuesta que se lee. */
+  idioma?: Idioma | string;
 }): Promise<
   | { tipo: 'cache'; habla: Habla }
   | { tipo: 'vivo'; contentType: string; motor: string; cuerpo: ReadableStream<Uint8Array>; guardar: (audio: Buffer) => void }
@@ -411,11 +413,13 @@ export async function abrirVozEnVivo(opts: {
 > {
   const emocion = normalizarEmocion(opts.emocion);
   const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
-  const p = pedidoEleven({ ...opts, emocion, performance: 'speak', plataforma });
+  const idioma = normalizarIdioma(opts.idioma);
+  const p = pedidoEleven({ ...opts, emocion, performance: 'speak', plataforma, idioma });
   if (!p) return null;
   const hit = cacheGet(p.clave);
   if (hit) return { tipo: 'cache', habla: { audio: hit.audio, contentType: hit.contentType, motor: hit.motor, cache: true, ms: 0 } };
-  const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad });
+  // Sin el idioma, ElevenLabs leía todo como español (language_code 'es'), inglés incluido.
+  const r = await abrirEleven({ texto: p.guion, voz: p.voz, previo: opts.previo, siguiente: opts.siguiente, estabilidad: p.estabilidad, idioma });
   if (!r?.body) return null;
   return {
     tipo: 'vivo',
@@ -458,7 +462,8 @@ export async function hablar(opts: {
   const emocion = normalizarEmocion(opts.emocion);
   const plataforma = opts.plataforma === 'electrum' ? 'electrum' : 'ultron';
   const avatar = plataforma === 'ultron' ? normalizarAvatar(opts.avatar) : 'aura';
-  const idioma = plataforma === 'ultron' ? normalizarIdioma(opts.idioma) : 'es';
+  // Dr Electrum también habla inglés cuando le hablan en inglés (el turno devuelve el idioma).
+  const idioma = normalizarIdioma(opts.idioma);
 
   /*
    * Primero ElevenLabs: cada avatar de AU-RA FP tiene su voz v4 en español y en inglés, y Dr

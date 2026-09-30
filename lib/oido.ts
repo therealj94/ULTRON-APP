@@ -6,8 +6,10 @@
 
 import { clave } from './boveda';
 import { presupuesto, type Presupuesto } from './presupuesto';
+import { detectarIdioma, idiomaDeCodigo, type IdiomaTurno } from './idioma-detectar';
 
-export type Oido = { texto: string; via: string; detalle: string };
+/** `idioma`: en qué idioma habló (es/en), cuando se pidió `language: 'auto'`. */
+export type Oido = { texto: string; via: string; detalle: string; idioma?: IdiomaTurno };
 
 /**
  * Lo que contesta un proveedor. `null`: no está configurado o se cayó, que pruebe el siguiente.
@@ -15,7 +17,7 @@ export type Oido = { texto: string; via: string; detalle: string };
  * igual que un fallo y el mismo silencio se le mandaba a cada proveedor de la cadena — una factura
  * por proveedor por un bolsillo que rozó el micrófono.
  */
-export type Escucha = { texto: string; via: string } | null;
+export type Escucha = { texto: string; via: string; /** Código tal como lo dio el proveedor, si lo dio. */ idioma?: string } | null;
 
 export type ProveedorOido = {
   nombre: string;
@@ -63,7 +65,10 @@ async function transcribirGemini(audio: Buffer, mime: string, language: string, 
             parts: [
               { inline_data: { mime_type: mime || 'audio/ogg', data: audio.toString('base64') } },
               {
-                text: `Transcribe el audio a ${language === 'es' ? 'español' : language}. Devuelve SOLO el texto dicho, sin comillas ni explicación. Si no hay voz, responde VACIO.`,
+                text:
+                  language === 'auto'
+                    ? 'Transcribe el audio en el idioma en que se habla (español o inglés), sin traducirlo. Devuelve SOLO el texto dicho, sin comillas ni explicación. Si no hay voz, responde VACIO.'
+                    : `Transcribe el audio a ${language === 'es' ? 'español' : language}. Devuelve SOLO el texto dicho, sin comillas ni explicación. Si no hay voz, responde VACIO.`,
               },
             ],
           },
@@ -103,7 +108,8 @@ async function transcribirVoicebox(audio: Buffer, mime: string, language: string
   if (!base || !llave) return null;
   const form = new FormData();
   form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `voz.${extensionDe(mime)}`);
-  form.append('language', language);
+  // Sin idioma, Whisper lo detecta solo.
+  if (language !== 'auto') form.append('language', language);
   form.append('model', 'turbo');
   const r = await fetch(`${base}/transcribe`, { method: 'POST', headers: { 'X-Voz-Clave': llave }, body: form, signal: reloj.senal(12000) });
   if (!r.ok) {
@@ -118,7 +124,7 @@ async function transcribirVoicebox(audio: Buffer, mime: string, language: string
   }
   const texto = j.text.trim();
   if (texto.length < 2 || STT_BASURA.test(texto)) return { texto: '', via: 'voicebox:whisper' };
-  return { texto: texto.slice(0, 4000), via: 'voicebox:whisper' };
+  return { texto: texto.slice(0, 4000), via: 'voicebox:whisper', idioma: typeof j.language === 'string' ? j.language : undefined };
 }
 
 /**
@@ -172,7 +178,8 @@ async function transcribirEleven(audio: Buffer, mime: string, language: string, 
   const form = new FormData();
   form.append('file', new Blob([new Uint8Array(audio)], { type: mime }), `voz.${extensionDe(mime)}`);
   form.append('model_id', process.env.ELEVENLABS_STT_MODELO || 'scribe_v2');
-  form.append('language_code', language);
+  // Sin language_code, Scribe detecta el idioma y lo devuelve.
+  if (language !== 'auto') form.append('language_code', language);
   form.append('tag_audio_events', 'false');
   // Una pista por campo: un arreglo JSON en un solo campo lo rechaza por «caracteres inválidos».
   for (const t of TERMINOS_ELECTRUM) form.append('keyterms', t);
@@ -188,7 +195,7 @@ async function transcribirEleven(audio: Buffer, mime: string, language: string, 
   }
   const texto = j.text.trim();
   if (texto.length < 2 || STT_BASURA.test(texto)) return { texto: '', via: 'elevenlabs:scribe' };
-  return { texto: texto.slice(0, 4000), via: 'elevenlabs:scribe' };
+  return { texto: texto.slice(0, 4000), via: 'elevenlabs:scribe', idioma: typeof j.language_code === 'string' ? j.language_code : undefined };
 }
 
 /** El orden: el Whisper propio (gratis), y Gemini de reserva. */
@@ -236,6 +243,7 @@ export async function oirEnCadena(
 export async function transcribirAudio(opts: {
   audio: Buffer;
   mime?: string;
+  /** 'es', 'en'… o 'auto': que el transcriptor detecte si es español o inglés (y lo devuelva en `idioma`). */
   language?: string;
   /** Lo que el cliente está dispuesto a esperar. Sin él, los topes de siempre (Telegram no tiene apuro). */
   presupuesto?: Presupuesto;
@@ -246,7 +254,7 @@ export async function transcribirAudio(opts: {
 }): Promise<Oido> {
   const buf = opts.audio?.length ? opts.audio : Buffer.alloc(0);
   const mime = String(opts.mime || 'audio/ogg').split(';')[0].trim() || 'audio/ogg';
-  const language = (opts.language || 'es').slice(0, 2);
+  const language = opts.language === 'auto' ? 'auto' : (opts.language || 'es').slice(0, 2);
   if (buf.length < 80) {
     return { texto: '', via: 'vacio', detalle: 'Audio vacío. No pude oír nada. Escríbeme.' };
   }
@@ -254,9 +262,23 @@ export async function transcribirAudio(opts: {
     return { texto: '', via: 'grande', detalle: `Audio de ${buf.length} bytes. Máximo 8 MB. No lo oí.` };
   }
   const reloj = opts.presupuesto || presupuesto(PRESUPUESTO_SIN_APURO_MS);
-  const { escucha, intentados, motivo } = await oirEnCadena(opts.proveedores || (opts.plataforma === 'electrum' ? PROVEEDORES_OIDO_ELECTRUM : PROVEEDORES_OIDO), buf, mime, language, reloj);
+  const proveedores = opts.proveedores || (opts.plataforma === 'electrum' ? PROVEEDORES_OIDO_ELECTRUM : PROVEEDORES_OIDO);
+  let { escucha, intentados, motivo } = await oirEnCadena(proveedores, buf, mime, language, reloj);
+  let idioma: IdiomaTurno | undefined;
+  if (language === 'auto' && escucha?.texto) {
+    const dicho = idiomaDeCodigo(escucha.idioma);
+    // Detectó otra lengua (una frase corta en español a veces sale «portugués» o «italiano»): se vuelve
+    // a oír en español, que es lo que se habla aquí, en vez de contestarle a una transcripción ajena.
+    if (escucha.idioma && !dicho && reloj.alcanza()) {
+      const otra = await oirEnCadena(proveedores, buf, mime, 'es', reloj);
+      if (otra.escucha?.texto) ({ escucha, intentados, motivo } = otra);
+      idioma = 'es';
+    } else {
+      idioma = dicho || detectarIdioma(escucha.texto) || 'es';
+    }
+  }
   if (escucha?.texto) {
-    return { texto: escucha.texto, via: escucha.via, detalle: `Oí ${escucha.texto.length} caracteres.` };
+    return { texto: escucha.texto, via: escucha.via, detalle: `Oí ${escucha.texto.length} caracteres.`, ...(idioma ? { idioma } : {}) };
   }
   if (escucha) {
     return { texto: '', via: escucha.via, detalle: 'Oí el archivo pero no había voz. Escríbeme o vuelve a hablar.' };

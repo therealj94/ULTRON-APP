@@ -142,6 +142,8 @@ export type Turno = {
   panel: string;
   traza: Traza[];
   ui: Array<Record<string, unknown>>;
+  /** En qué idioma contestó: inglés si le hablaron en inglés; si no, español. */
+  idioma?: 'es' | 'en';
 };
 
 /**
@@ -214,13 +216,13 @@ export function salud(): Promise<Salud> {
 }
 
 /** La voz del doctor (WAV de Voicebox, perfil Alex). Se pide aparte porque no devuelve JSON. */
-export async function voz(texto: string, emocion?: string): Promise<string | null> {
+export async function voz(texto: string, emocion?: string, idioma?: 'es' | 'en'): Promise<string | null> {
   const tope = conTope(30_000);
   try {
     const r = await fetch(`${API_BASE}/api/electrum/voz`, {
       method: 'POST',
       headers: cabeceras({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ texto: texto.slice(0, 1200), emocion }),
+      body: JSON.stringify({ texto: texto.slice(0, 1200), emocion, idioma }),
       signal: tope.signal,
     });
     if (!r.ok) return null;

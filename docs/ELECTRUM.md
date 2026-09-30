@@ -851,6 +851,19 @@ entrar: subir otra vez AREAS PROTEGIDAS decía «la cargué» y la ficha contaba
 Volver a subir el mismo catastro no crea cartera. La fecha vacía del .dbf (30-11-1899) no entra
 como vencimiento: 703 concesiones salían «vencidas hace 46 324 días».
 
+**Lo que pasó al ordenar producción (30-09-2026).** La corrida en seco destapó que el catastro de
+junio estaba PARTIDO: la capa oficial tenía 653 concesiones y las otras 423 estaban en las trece
+capas «por estado», subidas un minuto antes desde el mismo archivo en WGS84 (al cargar el oficial,
+sus polígonos idénticos no entraron dos veces). Ordenar solo por capa se las habría llevado. Ahora
+la misma exportación se reconoce por la firma de campos del .dbf y se adopta en la capa oficial
+antes de borrar. Resultado aplicado: **1076 concesiones en un solo catastro (antes 1782), 93
+traslapes (antes 1191)**; `v_concesion_minera` (703, otra fuente, fechas vacías) quedó como
+histórico; 13 copias de capas de geología y zonas borradas. Las 90 zonas INDEXSA venían en NAD27 y
+el catastro en WGS84: la huella no coincidía y entraron como concesiones; `carteraDesdeCapa` las
+enlazó por superficie (≥ 80 %) con su concesión oficial y borró la copia. El cargador ya lo hace
+solo cuando una capa sin nombre de catastro cae casi entera sobre concesiones existentes.
+En producción el dueño de `electrum_rol_capa()` es el administrador: el arranque no la reemplaza.
+
 Esquema **v10** (lo aplica el servidor al arrancar): roles `historico` y `proyecto`, `capa.huella`,
 `cartera`, `cartera_concesion`, y el `tipo` de las concesiones sacado de `clasificac`.
 
@@ -996,6 +1009,28 @@ quitada.
 
 El id de voz entra en la clave de la caché de audio. Sin eso, el primer cerebro que hablara dejaría
 su timbre guardado y el otro contestaría con la voz ajena.
+
+### Español o inglés, según le hablen
+
+Contesta en **español por defecto** y en **inglés si le hablan en inglés**, por voz o escrito. La
+misma voz del Doctor habla los dos idiomas.
+
+- **Oído** (`/api/electrum/oir`): transcribe en modo `auto`. Scribe detecta el idioma y lo devuelve.
+  Whisper y Gemini no lo dicen, así que se lee del texto (`lib/idioma-detectar.ts`). Si detecta otra
+  lengua (una frase corta en español a veces sale «portugués»), vuelve a oír en español.
+- **Turno**: manda el texto de la pregunta. Si no lo dice («Olancho», «ok»), vale la pista del
+  micrófono y, si tampoco, el idioma de la pregunta anterior. Sin ninguna señal, español. En inglés se
+  añade al final del prompt `LINEA_INGLES`: contestar en inglés y dejar tal cual los nombres propios
+  (concesiones, expedientes, INHGEOMIN).
+- **Voz** (`/api/electrum/voz`): lee en el idioma de la respuesta (`idioma` en el evento `fin`). Las
+  muletillas de espera («Déjeme revisar…» / «Let me check…») van en el idioma de la pregunta y se
+  pronuncian en el suyo.
+- **App**: sigue el idioma de la respuesta para la voz. El dictado del teléfono es del sistema y
+  sigue en `es-HN`; lo escrito en inglés sí se contesta en inglés.
+
+El detector es conservador a propósito: solo dice «inglés» cuando está claro, porque contestar en
+inglés a quien habló en español es peor que lo contrario. Los nombres propios («Minas de Oro», «Santa
+Bárbara») no cuentan.
 
 En la pantalla la voz **arranca apagada**: los navegadores no dejan sonar nada hasta que alguien
 toca algo, y una demostración que empieza hablando sola en una sala de reunión es peor que una que

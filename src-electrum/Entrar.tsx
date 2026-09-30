@@ -20,6 +20,7 @@ import { useState, type FormEvent } from 'react';
 import { almacenamientoFragil, guardarLlave, guardarSesion, porQueNoAbre, puertaAbierta, type Donde } from './acceso';
 import { OlvideClave, SolicitarAcceso, entrarConCodigo, pareceCodigo } from '../src/cuentas/Cuentas';
 import { TEMA_ELECTRUM } from './Cuenta';
+import { BotonAnimado } from './ui/BotonAnimado';
 
 const ACENTO = '#FFAE3B';
 
@@ -162,14 +163,7 @@ export function Entrar({ onAbierta, modoInicial = 'correo', aviso = '' }: { onAb
                 onChange={(e) => setClave(e.target.value)}
                 disabled={yendo}
               />
-              <button
-                type="submit"
-                disabled={yendo || !correo.trim() || !clave}
-                className="w-full rounded-lg py-2.5 text-[15px] font-semibold text-black transition-opacity disabled:opacity-35"
-                style={{ background: ACENTO }}
-              >
-                {yendo ? 'Entrando…' : 'Entrar'}
-              </button>
+              <BotonAnimado enviar completo tamano="lg" texto={yendo ? 'Entrando…' : 'Entrar'} loading={yendo} disabled={!correo.trim() || !clave} />
               <div className="flex items-center justify-between pt-1 text-[12px]">
                 <button type="button" onClick={() => { setModo('olvide'); setFallo(''); }} className="text-[#8FA3B0] hover:text-[#E7EEF2] transition-colors cursor-pointer">
                   ¿Olvidaste tu contraseña?
@@ -191,14 +185,7 @@ export function Entrar({ onAbierta, modoInicial = 'correo', aviso = '' }: { onAb
                 onChange={(e) => setLlave(e.target.value)}
                 disabled={yendo}
               />
-              <button
-                type="submit"
-                disabled={yendo || !llave.trim()}
-                className="w-full rounded-lg py-2.5 text-[15px] font-semibold text-black transition-opacity disabled:opacity-35"
-                style={{ background: ACENTO }}
-              >
-                {yendo ? 'Probando…' : 'Entrar con el código'}
-              </button>
+              <BotonAnimado enviar completo tamano="lg" texto={yendo ? 'Probando…' : 'Entrar con el código'} loading={yendo} disabled={!llave.trim()} />
             </form>
           )}
 

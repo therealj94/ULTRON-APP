@@ -39,6 +39,7 @@
     "pngjs": "^7.0.0",
     "proj4": "^2.22.0",
     "react": "^19.0.1",
+    "react-awesome-button": "^7.0.5",
     "react-dom": "^19.0.1",
     "shpjs": "^6.2.0",
     "three": "^0.186.1",

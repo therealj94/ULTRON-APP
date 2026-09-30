@@ -1,0 +1,69 @@
+/*
+ * Ajustes de Dr Electrum sobre react-awesome-button. Los colores vienen de temaBoton.ts como
+ * variables en línea; aquí solo va lo que depende del dispositivo o de la preferencia del sistema.
+ * Selectores `.aws-btn.electrum-btn` (dos clases) para ganarle a los de la librería sin !important.
+ */
+.aws-btn.electrum-btn {
+  --button-default-height: var(--electrum-alto);
+  --transform-speed: var(--electrum-velocidad);
+}
+
+/* Foco de teclado: la librería quita el outline de todos sus botones. */
+.aws-btn.electrum-btn:focus-visible {
+  outline: 2px solid var(--electrum-foco);
+  outline-offset: 3px;
+  border-radius: calc(var(--button-default-border-radius) + 3px);
+}
+
+/* En pantallas táctiles ningún botón baja de 44 px de alto. */
+@media (pointer: coarse) {
+  .aws-btn.electrum-btn {
+    --button-default-height: max(44px, var(--electrum-alto));
+  }
+}
+
+.aws-btn.electrum-btn--completo {
+  display: block;
+  width: 100%;
+}
+
+.aws-btn.electrum-btn[aria-busy='true'],
+.aws-btn.electrum-btn[aria-disabled='true'] {
+  cursor: default;
+}
+
+.electrum-btn__contenido {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.electrum-btn__giro {
+  width: 1em;
+  height: 1em;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: electrum-btn-giro 0.7s linear infinite;
+}
+
+@keyframes electrum-btn-giro {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aws-btn.electrum-btn {
+    --transform-speed: 0s;
+  }
+  .aws-btn.electrum-btn .aws-btn__wrapper,
+  .aws-btn.electrum-btn .aws-btn__content {
+    transition: none;
+  }
+  /* El giro sigue (dice «trabajando»), pero lento. */
+  .electrum-btn__giro {
+    animation-duration: 2.4s;
+  }
+}

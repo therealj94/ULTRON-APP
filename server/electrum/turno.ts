@@ -33,6 +33,14 @@ import { PERFILES } from '../../lib/perfiles';
 import { personaPorId } from '../../lib/acceso';
 import { personalidadElectrum } from './personalidad';
 import { buscarWebDetallado, consultaWeb, leerPagina, resumenMotores } from '../../src/06-manos/web';
+import { detectarIdioma, idiomaDelTurno, type IdiomaTurno } from '../../lib/idioma-detectar';
+
+/**
+ * Le hablaron en inglés. El prompt entero está en español (personalidad, panel, cerebro), así que
+ * sin esto el modelo contesta en español aunque la pregunta llegue en inglés.
+ */
+export const LINEA_INGLES =
+  'LANGUAGE: the person is speaking ENGLISH. Answer ENTIRELY in natural English (en-US), even though this prompt, the tools, the catastro and the documents are in Spanish: translate what you quote. Keep proper names exactly as they are (concession names, expediente numbers, INHGEOMIN, SERNA, departments, laws). Switch back to Spanish only if they write in Spanish.';
 
 export type RespuestaTurno = {
   /** Lo que se DICE: el texto con las etiquetas de expresión de v4 ([thoughtful]…), si las hay. */
@@ -52,6 +60,8 @@ export type RespuestaTurno = {
   fin: string;
   /** Para dejar la opinión («sirvió / no sirvió») sobre esta respuesta y para auditarla. */
   trazaId?: string;
+  /** En qué idioma contestó: el de quien preguntó; español si no se sabe. La voz lo lee en ese. */
+  idioma?: IdiomaTurno;
 };
 
 /**
@@ -158,6 +168,11 @@ export type OpcionesTurno = {
   internet?: boolean;
   /** La mesa técnica está abierta en pantalla: cada pregunta la discuten los tres. */
   mesa?: boolean;
+  /**
+   * Pista de idioma cuando el mensaje solo no lo dice («Olancho», «ok»): lo que detectó el
+   * micrófono o el idioma en que se venía hablando. El texto del mensaje manda sobre la pista.
+   */
+  idioma?: string;
 };
 
 export async function turnoElectrum(mensaje: string, ctx: Contexto, opciones: OpcionesTurno = {}): Promise<RespuestaTurno> {
@@ -203,6 +218,10 @@ async function bloqueInternet(mensaje: string, enVivo?: (e: EnVivo) => void): Pr
 
 async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: OpcionesTurno): Promise<RespuestaTurno> {
   const { historial = [], enVivo, abandonado } = opciones;
+  // Español por defecto; inglés si le hablan en inglés. Sin señal en el mensaje, la pista del
+  // micrófono y, si no, el idioma de la última pregunta.
+  const ultimaPregunta = [...historial].reverse().find((m) => m.role === 'user');
+  const idioma = idiomaDelTurno(mensaje, opciones.idioma, ultimaPregunta ? detectarIdioma(String(ultimaPregunta.content || '')) : null);
   // El botón «Internet», o pedirlo con palabras («buscá en internet…», «noticias de…»): por
   // pantalla, por voz o por Telegram, igual.
   const internet = opciones.internet === true || consultaWeb(mensaje) !== null;
@@ -260,6 +279,8 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     '',
     'CEREBRO DE MINAS:',
     CONOCIMIENTO_MINAS,
+    // Al final, para que pese más que el resto del prompt, que está en español.
+    ...(idioma === 'en' ? ['', LINEA_INGLES] : []),
   ].join('\n');
 
   // Las fichas de lo que se nombra en la pregunta van pegadas a ella: lo que se sabe con certeza.
@@ -287,7 +308,11 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
 
   if (!NODO_URL || !NODO_SECRETO) {
     return {
-      texto: 'No alcanzo mi cerebro ahora mismo. No te voy a inventar una respuesta: dame un momento y volvé a preguntarme.',
+      texto:
+        idioma === 'en'
+          ? "I can't reach my brain right now. I won't make up an answer: give me a moment and ask me again."
+          : 'No alcanzo mi cerebro ahora mismo. No te voy a inventar una respuesta: dame un momento y volvé a preguntarme.',
+      idioma,
       emocion: 'preocupado',
       panel: nombrePanel,
       traza: [],
@@ -329,8 +354,10 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
   const texto =
     limpio ||
     (buenas.length
-      ? `${buenas.map((t) => t.resumen).join(' ')} No alcancé a redactarlo mejor; si querés, volvé a preguntármelo.`
-      : 'No me salió ninguna respuesta esta vez. No te voy a inventar una: volvé a preguntármelo.');
+      ? `${buenas.map((t) => t.resumen).join(' ')} ${idioma === 'en' ? "I couldn't word it better; ask me again if you like." : 'No alcancé a redactarlo mejor; si querés, volvé a preguntármelo.'}`
+      : idioma === 'en'
+        ? "I didn't get an answer this time. I won't make one up: please ask me again."
+        : 'No me salió ninguna respuesta esta vez. No te voy a inventar una: volvé a preguntármelo.');
   /*
    * El mapa no depende de que el modelo se acuerde de moverlo (mapa-garantia.ts): si se pidió ver
    * algo, o la respuesta dice que lo enseñó, y no salió ninguna orden para el mapa, se vuela aquí;
@@ -387,5 +414,6 @@ async function turnoElectrumInterno(mensaje: string, ctx: Contexto, opciones: Op
     traza,
     ui,
     fin: r.fin,
+    idioma,
   };
 }

@@ -17,6 +17,8 @@
  */
 
 import { guardarPreferencia, leerPreferencia } from '../preferencias';
+import { idiomaActual } from './idioma';
+import { detectarIdioma } from '../../lib/idioma-detectar';
 
 /** Medio segundo de silencio en WAV: lo que suena al desbloquear el reproductor. */
 const SILENCIO =
@@ -221,13 +223,15 @@ async function sintetizar(
   headers: Record<string, string>,
   previo: string | undefined,
   siguiente: string | undefined,
-  senal: AbortSignal
+  senal: AbortSignal,
+  idioma: 'es' | 'en' = idiomaActual()
 ): Promise<Response> {
   const r = await fetch('/api/electrum/voz', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
     // Los vecinos van para que la voz enlace la entonación entre trozos (ElevenLabs los usa).
-    body: JSON.stringify({ texto, emocion, previo, siguiente }),
+    // El idioma de la respuesta que se lee: el servidor elige cómo pronunciarla.
+    body: JSON.stringify({ texto, emocion, previo, siguiente, idioma }),
     signal: senal,
   });
   if (!r.ok) {
@@ -405,7 +409,8 @@ const rellenosGuardados = new Map<string, Blob>();
 async function blobDeRelleno(texto: string, headers: Record<string, string>, senal?: AbortSignal): Promise<Blob> {
   const guardado = rellenosGuardados.get(texto);
   if (guardado) return guardado;
-  const r = await sintetizar(texto, 'pensando', headers, undefined, undefined, senal || new AbortController().signal);
+  // Una muletilla se dice en SU idioma («Déjeme revisar…» en español aunque la charla sea en inglés).
+  const r = await sintetizar(texto, 'pensando', headers, undefined, undefined, senal || new AbortController().signal, detectarIdioma(texto) || 'es');
   const blob = await r.blob();
   if (blob.size > 0) {
     if (rellenosGuardados.size > 40) rellenosGuardados.delete(rellenosGuardados.keys().next().value as string);

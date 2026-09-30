@@ -30,6 +30,18 @@ export const FRASES_GENERALES = [
   'Eh… ya le digo, déjeme ver…',
 ];
 
+/** Cuando le hablan en inglés: las mismas muletillas, sin temas (los temas se reconocen en español). */
+export const FRASES_GENERALES_EN = [
+  'Let me check…',
+  'One moment, I’m looking it up…',
+  'Let me see…',
+  'I’m going through the records…',
+  'Give me a second…',
+  'I’m pulling the data together…',
+  'Good question, let me look…',
+  'Let me confirm that…',
+];
+
 type Tema = { si: RegExp; frases: string[] };
 
 /** De lo más concreto a lo más general: gana el primero que calza. */
@@ -87,7 +99,8 @@ const TEMAS: Tema[] = [
 let vuelta = 0;
 
 /** Lo primero que dice al recibir una pregunta. `azar` solo existe para las pruebas. */
-export function fraseDeTrabajo(pregunta: string, azar: () => number = Math.random): string {
+export function fraseDeTrabajo(pregunta: string, azar: () => number = Math.random, idioma: 'es' | 'en' = 'es'): string {
+  if (idioma === 'en') return FRASES_GENERALES_EN[Math.floor(azar() * FRASES_GENERALES_EN.length) % FRASES_GENERALES_EN.length];
   const t = normalizarDicho(pregunta);
   const tema = TEMAS.find((x) => x.si.test(t));
   // Una de cada tres veces, aunque haya tema, una general: que no suene a menú.
@@ -118,8 +131,10 @@ const TRAS_HERRAMIENTA: Record<string, string> = {
 };
 
 const SIGUE = ['Sigo en eso, ya casi…', 'Esto lleva un poquito más, ya casi termino…', 'Estoy terminando de redactarlo…', 'Ya casi lo tengo…'];
+const SIGUE_EN = ['Still on it, almost there…', 'This takes a little longer, nearly done…', 'I’m finishing the write-up…', 'Almost got it…'];
 
 /** La frase de «sigo en eso». `n` es cuántas van en este turno. */
-export function fraseDeEspera(herramienta: string | null, n: number): string {
+export function fraseDeEspera(herramienta: string | null, n: number, idioma: 'es' | 'en' = 'es'): string {
+  if (idioma === 'en') return SIGUE_EN[n % SIGUE_EN.length];
   return (herramienta && TRAS_HERRAMIENTA[herramienta]) || SIGUE[n % SIGUE.length];
 }
