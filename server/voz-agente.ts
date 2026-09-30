@@ -39,7 +39,7 @@ import { quitarExpresiones } from '../lib/expresiones';
 import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
 import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
-import { aparatoValido, lecturaDe } from '../lib/acciones-app';
+import { aparatoValido, lecturaDe, turnoDeRecordatorio } from '../lib/acciones-app';
 
 /** La etiqueta del secreto que ElevenLabs manda como Bearer. Cambiarla invalida el guardado allá. */
 export const ETIQUETA_SECRETO_LLM = 'elevenlabs-llm-v1';
@@ -541,6 +541,12 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       escribir(trozoOpenAI(id, modelo, null, 'stop'));
       return cerrar();
     }
+    /*
+     * La persona CONTESTÓ la llamada de un recordatorio (lo programó ella: «llámame a las 5 para
+     * recordarme…»): el teléfono abrió la conversación y manda `[[recordatorio]] <texto>`. El cerebro
+     * recibe la indicación de saludar como quien llama y decírselo; después la charla sigue normal.
+     */
+    const deRecordatorio = turnoDeRecordatorio(mensaje, pase.idioma);
 
     const corte = new AbortController();
     conv.enCurso = corte;
@@ -613,7 +619,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
 
     const t = d
       .turno({
-        body: { message: mensaje, mode: pase.modo, usuario: pase.nombre, correo: pase.correo, avatar: pase.avatar, idioma: pase.idioma, canal: 'mesa', aparato: pase.aparato },
+        body: { message: deRecordatorio ?? mensaje, mode: pase.modo, usuario: pase.nombre, correo: pase.correo, avatar: pase.avatar, idioma: pase.idioma, canal: 'mesa', aparato: pase.aparato },
         persona: { correo: pase.correo, nombre: pase.nombre, rol: pase.rol },
         interrumpida,
         senal,

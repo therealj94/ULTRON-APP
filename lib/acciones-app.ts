@@ -25,7 +25,7 @@ import {
   dichoDeMano,
   dichoDePropuesta,
   dichoNegado,
-  esMano,
+  manoDe,
   instruccionManos,
   manoPorReglas,
   MAX_LECTURA,
@@ -34,12 +34,15 @@ import {
   RE_LECTURA,
   validarMano,
   validarManos,
+  validarRecordatorios,
   type AccionMano,
   type Mano,
   type Propuesta,
+  type RecordatorioApp,
 } from './manos-app';
 
-export type { AccionMano, Mano, Propuesta } from './manos-app';
+export type { AccionMano, Mano, Propuesta, RecordatorioApp } from './manos-app';
+export { turnoDeRecordatorio } from './manos-app';
 export { dichoDePropuesta, preguntaDePropuesta } from './manos-app';
 
 export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil';
@@ -67,6 +70,8 @@ export type ContextoApp = {
   borrador?: string;
   /** Las manos nuevas que ESTE teléfono sabe hacer. Un APK viejo no la manda: sin manos nuevas. */
   manos?: Mano[];
+  /** Los recordatorios que tiene puestos (para decirlos y cancelarlos por voz). */
+  recordatorios?: RecordatorioApp[];
 };
 
 const PANTALLAS: Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil'];
@@ -201,7 +206,7 @@ export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: 
   if (accion.tipo === 'redactar') anotarPendiente(correo, { para: accion.para, texto: accion.texto });
   else if (accion.tipo === 'enviar' || accion.tipo === 'descartar') soltarPendiente(correo);
   // Llamar o recordar ya confirmado: la propuesta se cumplió.
-  else if (accion.tipo === 'llamar' || accion.tipo === 'recordatorio') soltarPropuesta(correo);
+  else if (accion.tipo === 'llamar' || accion.tipo === 'recordatorio' || accion.tipo === 'cancelar_recordatorio') soltarPropuesta(correo);
   // «Respóndele» después de leer: a quien se le leyó.
   if (accion.tipo === 'leer' && accion.de) ultimosLeidos.set(clave(correo), { de: accion.de, t: Date.now() });
   return { evento, entregada };
@@ -246,6 +251,8 @@ export function validarContexto(cuerpo: unknown): { ok: true; contexto: Contexto
   if (borrador) ctx.borrador = borrador;
   const manos = validarManos(b.manos);
   if (manos?.length) ctx.manos = manos;
+  const recordatorios = validarRecordatorios(b.recordatorios);
+  if (recordatorios) ctx.recordatorios = recordatorios;
   return { ok: true, contexto: ctx };
 }
 
@@ -594,7 +601,15 @@ export function instruccionAcciones(
  * Lo que decide el camino rápido: una acción para empujar, o una PROPUESTA que queda esperando el
  * «sí» (llamar, recordar), o soltar la que esperaba («no, mejor no»). Siempre con lo que se dice.
  */
-export type OrdenRapida = { accion: AccionApp | null; decir: string; via: 'reglas' | 'laya'; propuesta?: Propuesta; soltarPropuesta?: boolean };
+export type OrdenRapida = {
+  accion: AccionApp | null;
+  decir: string;
+  via: 'reglas' | 'laya';
+  propuesta?: Propuesta;
+  soltarPropuesta?: boolean;
+  /** Solo hay que contestar (qué recordatorios tiene), sin acción ni propuesta. */
+  soloDecir?: boolean;
+};
 
 /** Sin acentos, sin signos, sin el «AURA,» del principio ni el «por favor» del final. */
 function frase(texto: string): string {
@@ -645,7 +660,7 @@ export function dichoDeAcciones(acciones: AccionApp[], idioma?: 'es' | 'en'): st
     case 'abrir_chat':
       return en ? 'Opening the chat.' : 'Abro el chat.';
     default:
-      return esMano(a.tipo) ? dichoDeMano(a as AccionMano, en ? 'en' : 'es') : d.atras;
+      return manoDe(a) ? dichoDeMano(a as AccionMano, en ? 'en' : 'es') : d.atras;
   }
 }
 
@@ -669,16 +684,22 @@ export function ordenPorReglas(
       if (p.tipo === 'recordatorio' && p.cuando < ahora + 15_000) {
         return { accion: null, decir: idioma === 'en' ? 'That time already passed. Tell me another one.' : 'Esa hora ya pasó. Dime otra.', via: 'reglas', soltarPropuesta: true };
       }
-      const accion: AccionApp = p.tipo === 'llamar' ? { tipo: 'llamar', con: p.con, video: p.video } : { tipo: 'recordatorio', texto: p.texto, cuando: p.cuando };
+      const accion: AccionApp =
+        p.tipo === 'llamar'
+          ? { tipo: 'llamar', con: p.con, video: p.video }
+          : p.tipo === 'cancelar_recordatorio'
+            ? { tipo: 'cancelar_recordatorio', id: p.id }
+            : { tipo: 'recordatorio', texto: p.texto, cuando: p.cuando, ...(p.llamada ? { llamada: true } : {}) };
       return { accion, decir: dichoDePropuesta(p, idioma, ahora), via: 'reglas' };
     }
-    if (niegaPropuesta(texto)) return { accion: null, decir: dichoNegado(p, idioma), via: 'reglas', soltarPropuesta: true };
+    if (niegaPropuesta(texto, p.tipo)) return { accion: null, decir: dichoNegado(p, idioma), via: 'reglas', soltarPropuesta: true };
   }
   const r = q.split(' ').length <= 8 ? reglasDeSiempre(q, o) : null;
   if (r) return r;
   // Las manos nuevas que este teléfono sabe hacer.
   const m = manoPorReglas(texto, { idioma, contexto: o.contexto, resolver: resolverContacto, ahora });
   if (!m) return null;
+  if (m.tipo === 'decir') return { accion: null, decir: m.decir, via: 'reglas', soloDecir: true };
   return m.tipo === 'propuesta' ? { accion: null, decir: m.decir, via: 'reglas', propuesta: m.propuesta } : { accion: m.accion, decir: m.decir, via: 'reglas' };
 }
 
@@ -835,7 +856,28 @@ export function prepararAcciones(
   };
   for (const a of acciones) {
     // Una mano que este teléfono no sabe hacer (APK viejo) no sale: no haría nada y AURA diría «listo».
-    if (esMano(a.tipo) && !puedeMano(o.contexto, a.tipo)) continue;
+    const mano = manoDe(a);
+    if (mano && !puedeMano(o.contexto, mano)) {
+      // Un recordatorio con llamada en un teléfono que solo sabe avisar: el mismo, como aviso.
+      if (a.tipo === 'recordatorio' && a.llamada && puedeMano(o.contexto, 'recordatorio')) {
+        const p = o.propuesta;
+        if (!cumplida && p?.tipo === 'recordatorio' && !conRedactar && p.cuando >= ahora + 15_000 && confirmaPropuesta('recordatorio', o.mensaje)) {
+          cumplida = true;
+          out.push({ tipo: 'recordatorio', texto: p.texto, cuando: p.cuando });
+        } else if (a.cuando >= ahora + 15_000) proponer({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando });
+      }
+      continue;
+    }
+    if (a.tipo === 'cancelar_recordatorio') {
+      const r = o.contexto?.recordatorios?.find((x) => x.id === a.id);
+      if (!r) continue; // solo los que el teléfono dijo tener
+      const p = o.propuesta;
+      if (!cumplida && p?.tipo === 'cancelar_recordatorio' && p.id === r.id && !conRedactar && confirmaPropuesta('cancelar_recordatorio', o.mensaje)) {
+        cumplida = true;
+        out.push({ tipo: 'cancelar_recordatorio', id: r.id });
+      } else proponer({ tipo: 'cancelar_recordatorio', id: r.id, texto: r.texto, cuando: r.cuando, llamada: r.llamada });
+      continue;
+    }
     if (a.tipo === 'llamar') {
       const r = resolverContacto(a.con, contactos);
       if (r.tipo !== 'uno') continue; // el cerebro debió preguntar a quién
@@ -851,8 +893,8 @@ export function prepararAcciones(
       const p = o.propuesta;
       if (!cumplida && p?.tipo === 'recordatorio' && !conRedactar && p.cuando >= ahora + 15_000 && confirmaPropuesta('recordatorio', o.mensaje)) {
         cumplida = true;
-        out.push({ tipo: 'recordatorio', texto: p.texto, cuando: p.cuando });
-      } else if (a.cuando >= ahora + 15_000) proponer({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando });
+        out.push({ tipo: 'recordatorio', texto: p.texto, cuando: p.cuando, ...(p.llamada ? { llamada: true } : {}) });
+      } else if (a.cuando >= ahora + 15_000) proponer({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando, ...(a.llamada ? { llamada: true } : {}) });
       continue;
     }
     if (a.tipo === 'leer') {

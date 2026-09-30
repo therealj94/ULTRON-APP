@@ -2618,7 +2618,7 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
     esCharla: esCharlaTrivial,
     esperaLayaMs: opciones.voz ? Math.min(250, TOPE_PASO_VOZ_MS) : undefined,
   });
-  if (!orden || (!orden.accion && !orden.propuesta && !orden.soltarPropuesta)) return null;
+  if (!orden || (!orden.accion && !orden.propuesta && !orden.soltarPropuesta && !orden.soloDecir)) return null;
   // Llamar y recordar se preguntan primero: la propuesta espera el «sí» del turno siguiente.
   if (orden.propuesta) anotarPropuesta(correo, orden.propuesta);
   if (orden.soltarPropuesta) soltarPropuesta(correo);
