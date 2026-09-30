@@ -1,8 +1,5 @@
 name: AURA Windows isolated candidate training
 on:
-  push:
-    branches: [codex/aura-windows-native]
-    paths: ['windows/training/**', '.github/workflows/aura-windows-training.yml']
   workflow_dispatch:
 permissions:
   contents: read

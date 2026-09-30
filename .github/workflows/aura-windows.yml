@@ -58,6 +58,22 @@ jobs:
           name: AURA-Windows-RTC-verification
           path: windows/artifacts/rtc/
           retention-days: 14
+      - name: Native gateway and DPAPI integration test
+        shell: pwsh
+        run: |
+          $fixture = Start-Process node -ArgumentList "$env:GITHUB_WORKSPACE/windows/gateway/fixture-server.mjs" -PassThru
+          try {
+            $process = Start-Process ./windows/artifacts/win-x64/Aura.Windows.exe -ArgumentList '--gateway-self-test', "$env:GITHUB_WORKSPACE/windows/artifacts/protocol/result.json" -PassThru
+            if (-not $process.WaitForExit(30000)) { $process.Kill(); throw 'Gateway protocol test timeout' }
+            Get-Content ./windows/artifacts/protocol/result.json
+            if ($process.ExitCode -ne 0) { throw 'Gateway protocol test failed' }
+          } finally { Stop-Process -Id $fixture.Id -ErrorAction SilentlyContinue }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: AURA-Windows-protocol-verification
+          path: windows/artifacts/protocol/
+          retention-days: 14
       - name: Build per-user Windows installer
         shell: pwsh
         run: |

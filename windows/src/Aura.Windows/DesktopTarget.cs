@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Linq;
+using System.IO;
 using System.Text;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -29,6 +30,11 @@ internal sealed class DesktopTarget {
  public static DesktopTarget Capture(){
   var h=GetForegroundWindow();GetWindowThreadProcessId(h,out var id);using var p=Process.GetProcessById((int)id);
   if(!p.ProcessName.Equals("notepad",StringComparison.OrdinalIgnoreCase))throw new InvalidOperationException("Por ahora la escritura directa solo admite Bloc de notas. Haz clic en su área de texto y usa Ctrl+Alt+W.");
+  string executable=Path.GetFullPath(p.MainModule?.FileName ?? "");
+  string win=Environment.GetFolderPath(Environment.SpecialFolder.Windows);
+  string store=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),"WindowsApps","Microsoft.WindowsNotepad_");
+  bool trusted=executable.Equals(Path.Combine(win,"System32","notepad.exe"),StringComparison.OrdinalIgnoreCase)||executable.Equals(Path.Combine(win,"notepad.exe"),StringComparison.OrdinalIgnoreCase)||executable.StartsWith(store,StringComparison.OrdinalIgnoreCase);
+  if(!trusted)throw new InvalidOperationException("El destino no es una instalación reconocida de Bloc de notas de Windows.");
   var element=AutomationElement.FocusedElement;
   if(element.Current.ProcessId!=(int)id)throw new InvalidOperationException("El campo seleccionado pertenece a otra aplicación.");
   CheckEditable(element);return new(h,(int)id,p.StartTime,element);

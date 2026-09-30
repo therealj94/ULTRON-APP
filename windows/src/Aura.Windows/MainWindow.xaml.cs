@@ -11,6 +11,7 @@ using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using Aura.Windows.Core;
 using Forms = System.Windows.Forms;
@@ -25,9 +26,9 @@ public partial class MainWindow : Window
     SpeechRecognitionEngine? speech;
     long voiceGeneration;
     DateTimeOffset voiceDeadline;
-    bool expanded, dirty;
+    bool expanded, dirty; int blinkTick; long inputRevision;
     HwndSource? source;
-    ChatWindow? chat; CallWindow? call; DesktopTarget? target; CancellationTokenSource? writing;
+    ChatWindow? chat; CallWindow? call; DesktopTarget? target; CancellationTokenSource? writing; CancellationTokenSource? interpretation;
     [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr h, int id, uint modifiers, uint key);
     [DllImport("user32.dll")] static extern bool UnregisterHotKey(IntPtr h, int id);
     public MainWindow(bool renderOnly = false) {
@@ -50,7 +51,7 @@ public partial class MainWindow : Window
         };
         ticker.Tick += (_, _) => Tick(); ticker.Start();
         Closing += OnClosing;
-        Closed += (_, _) => { ticker.Stop(); StopVoice(); StopNetwork(); writing?.Cancel(); tray.Dispose(); if(source != null) { UnregisterHotKey(source.Handle, 1); UnregisterHotKey(source.Handle, 2); UnregisterHotKey(source.Handle, 3); source.RemoveHook(Hook); } };
+        Closed += (_, _) => { ticker.Stop(); StopVoice(); StopNetwork(); writing?.Cancel(); interpretation?.Cancel(); tray.Dispose(); if(source != null) { UnregisterHotKey(source.Handle, 1); UnregisterHotKey(source.Handle, 2); UnregisterHotKey(source.Handle, 3); source.RemoveHook(Hook); } };
     }
     void SetStatus(string title, string message) { StatusTitle.Text = title; Status.Text = message; }
     IntPtr Hook(IntPtr h, int msg, IntPtr w, IntPtr l, ref bool handled) {
@@ -65,6 +66,7 @@ public partial class MainWindow : Window
         Left = area.Left + (area.Width - Width) / 2; Top = area.Top;
     }
     void Tick() {
+        if(++blinkTick%8==0 && !gate.Paused && SystemParameters.ClientAreaAnimation) { var scale=new ScaleTransform(1,1);Eyes.RenderTransformOrigin=new Point(.5,.5);Eyes.RenderTransform=scale;scale.BeginAnimation(ScaleTransform.ScaleYProperty,new DoubleAnimation(1,.08,TimeSpan.FromMilliseconds(130)){AutoReverse=true}); }
         if (ApprovalActions.Visibility == Visibility.Visible) {
             int seconds = gate.RemainingSeconds;
             if (seconds <= 0) { ClearApproval(); SetStatus("Confirmación vencida", "Prepara la acción otra vez para continuar."); }
@@ -77,6 +79,7 @@ public partial class MainWindow : Window
     void HidePanel(object s, RoutedEventArgs e) { ClearApproval(); StopVoice(); Hide(); }
     void Quick(object s, RoutedEventArgs e) { Input.Text = (string)((Button)s).Tag; Prepare(s,e); }
     void InputChanged(object s, TextChangedEventArgs e) {
+        inputRevision++;interpretation?.Cancel();
         if (ApprovalActions == null || ApprovalActions.Visibility != Visibility.Visible) return;
         ClearApproval(); SetStatus("Orden actualizada", "Prepara de nuevo la acción para confirmar el texto actualizado.");
     }
@@ -108,7 +111,7 @@ public partial class MainWindow : Window
         } catch(Exception ex) { SetStatus("No se completó", ex.Message); }
     }
     void Cancel(object s, RoutedEventArgs e) { ClearApproval(); SetStatus("Acción cancelada", "No se ejecutó la propuesta. Puedes preparar otra."); }
-    void PauseAll() { gate.Pause(); StopNetwork(); writing?.Cancel(); target=null; TargetLabel.Text="Selecciona Bloc de notas con Ctrl+Alt+W."; ClearApproval(); StopVoice(); UpdateControls(); SetStatus("AURA está en pausa", "Se cancelaron las propuestas y el micrófono. Los programas que ya abriste siguen abiertos."); }
+    void PauseAll() { inputRevision++;gate.Pause(); StopNetwork(); writing?.Cancel(); interpretation?.Cancel(); target=null; TargetLabel.Text="Selecciona Bloc de notas con Ctrl+Alt+W."; ClearApproval(); StopVoice(); UpdateControls(); SetStatus("AURA está en pausa", "Se cancelaron las propuestas y el micrófono. Los programas que ya abriste siguen abiertos."); }
     void TogglePause(object s, RoutedEventArgs e) { if(gate.Paused) { gate.Resume(); UpdateControls(); SetStatus("Lista para ayudarte", "Puedes preparar una nueva acción."); } else PauseAll(); }
     void UpdateControls() {
         State.Text = gate.Paused ? "Acciones pausadas" : speech != null ? "Escuchando…" : "Lista para ayudarte";
@@ -173,8 +176,23 @@ public partial class MainWindow : Window
         if(e.Key == Key.Escape) { ClearApproval(); StopVoice(); Expand(false); e.Handled = true; }
         if(e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control && Workspace.SelectedIndex == 0) { Prepare(s, e); e.Handled = true; }
     }
+    async void InterpretIntent(object s, RoutedEventArgs e) {
+        if(gate.Paused||interpretation!=null||string.IsNullOrWhiteSpace(Input.Text))return;
+        string text=Input.Text;long revision=inputRevision;interpretation=new();ClearApproval();SetStatus("Interpretando con Laya Windows", "La orden se envía al gateway configurado. Todavía no se ejecuta nada.");
+        try{
+            using var client=new GatewayClient(ConnectionStore.Load());
+            var reply=await client.Post("v1/intent",new{text},interpretation.Token);
+            if(gate.Paused||inputRevision!=revision||Input.Text!=text||interpretation.IsCancellationRequested)return;
+            string? intent=reply.GetProperty("intent").GetString();
+            var kind=intent switch {"win_open_notepad"=>ActionKind.OpenNotepad,"win_open_calculator"=>ActionKind.OpenCalculator,"win_open_explorer"=>ActionKind.OpenExplorer,"win_open_documents"=>ActionKind.OpenDocuments,"win_open_settings"=>ActionKind.OpenSettings,_=>ActionKind.None};
+            if(kind==ActionKind.None){SetStatus("No hay una acción segura para proponer", "Usa los botones o indica los argumentos con «busca:», «abrir url:» o «borrador:». Puedes pausar con el botón o atajo.");return;}
+            var command=new Command(kind);approval=gate.Propose(command);SetStatus("Propuesta experimental de Laya", Commands.Describe(command)+". Revisa que coincida con tu intención.");Countdown.Text="Puedes confirmar durante 30 s.";Countdown.Visibility=ApprovalActions.Visibility=Visibility.Visible;
+        }catch(OperationCanceledException){if(!gate.Paused&&revision==inputRevision)SetStatus("Interpretación cancelada", "No se ejecutó ninguna acción.");}
+        catch(Exception ex){if(!gate.Paused&&revision==inputRevision)SetStatus("Laya Windows no disponible",ex.Message);}
+        finally{interpretation.Dispose();interpretation=null;}
+    }
     void StopNetwork() { chat?.Close(); chat=null; call?.Close(); call=null; }
-    void OpenSettings(object s, RoutedEventArgs e) { var dialog=new SettingsWindow {Owner=this};if(dialog.ShowDialog()==true){StopNetwork();SetStatus("Conexión guardada", "Abre una conversación o una llamada con la configuración nueva.");} }
+    void OpenSettings(object s, RoutedEventArgs e) { var dialog=new SettingsWindow {Owner=this};if(dialog.ShowDialog()==true){inputRevision++;interpretation?.Cancel();StopNetwork();SetStatus("Conexión guardada", "Abre una conversación o una llamada con la configuración nueva.");} }
     void OpenChat(object s, RoutedEventArgs e) {
         if(gate.Paused)return;
         try { if(chat==null){chat=new ChatWindow(text=>{if(gate.Paused)return;if(dirty && MessageBox.Show(this,"¿Reemplazar el borrador actual con esta respuesta?","AURA",MessageBoxButton.YesNo)!=MessageBoxResult.Yes)return;Draft.Text=text;Expand(true);Workspace.SelectedIndex=1;});chat.Closed+=(_,_)=>chat=null;} chat.Show();chat.Activate(); }
@@ -194,6 +212,7 @@ public partial class MainWindow : Window
         if(gate.Paused||writing!=null)return;
         if(target==null){SetStatus("Falta el destino", "Abre Bloc de notas, haz clic en su área editable y pulsa Ctrl+Alt+W. Después vuelve al borrador.");return;}
         string text=Draft.Text;var selected=target;
+        if(string.IsNullOrWhiteSpace(text)||text.Length>1000||text.Any(char.IsControl)){SetStatus("Usa un párrafo corto", "La escritura directa admite hasta 1.000 caracteres sin saltos de línea. Guarda el archivo para textos mayores.");return;}
         if(MessageBox.Show(this,"Se escribirá en: "+selected.Title+"\n\n"+text+"\n\nNo se pulsa Enter. ¿Continuar?","AURA · Confirmar escritura",MessageBoxButton.YesNo,MessageBoxImage.Question)!=MessageBoxResult.Yes||gate.Paused)return;
         target=null;TargetLabel.Text="Selecciona de nuevo para otra escritura.";writing=new();
         try{await selected.Write(text,writing.Token);if(!gate.Paused)SetStatus("Texto escrito", "Revisa el resultado en Bloc de notas.");}
