@@ -127,7 +127,7 @@ export const ESPECIALISTAS: Especialista[] = [
     ],
     // Los mapas geológicos también son mapas: cuando Laya convoca a geomática por «mapa», tiene que
     // poder dibujarlos, no salir del paso con un PDF.
-    herramientas: ['mapa_geologico', 'geologia_zona', 'informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_en_punto', 'concesion_entorno', 'cartera_analisis'],
+    herramientas: ['mapa_geologico', 'geologia_zona', 'informe_pdf', 'gis_medir', 'gis_traslapes', 'mapa_volar', 'mapa_capa', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_en_punto', 'concesion_entorno'],
     vigila: 'Que nadie mida un área sobre la cuadrícula UTM y la reporte como superficie de terreno.',
   },
   {
@@ -169,7 +169,7 @@ export const ESPECIALISTAS: Especialista[] = [
       'Distinguís valor in situ de valor: el primero no descuenta costo, recuperación ni tiempo, y citarlo como riqueza es la señal más clara de un proyecto mal presentado.',
       'Los costos los das por tonelada Y por onza. Uno solo de los dos siempre esconde algo.',
     ],
-    herramientas: ['informe_pdf', 'calculo_mina', 'metales_spot', 'cartera_analisis', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar'],
+    herramientas: ['informe_pdf', 'calculo_mina', 'metales_spot', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'web_buscar'],
     vigila: 'Que no se presente un valor in situ como si fuera el valor del proyecto.',
   },
 ];

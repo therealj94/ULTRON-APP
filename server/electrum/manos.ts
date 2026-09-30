@@ -395,12 +395,12 @@ const catastro_en_punto: Herramienta = {
 const concesion_entorno: Herramienta = {
   nombre: 'concesion_entorno',
   descripcion:
-    'Cruza una concesión con las capas cargadas: municipio, áreas protegidas (con zona núcleo/amortiguamiento y decreto), microcuencas declaradas (acuerdo y población que abastecen), patrimonio forestal, ríos, caseríos, carretera, minería informal, ocurrencias y traslapes, y da el semáforo de restricciones con su base legal. Usala antes de opinar sobre dónde está una concesión, qué riesgos tiene o si se puede trabajar; citá sus cifras tal cual.',
+    'Entorno y semáforo de restricciones de una concesión (áreas protegidas, microcuencas, forestal, caseríos, traslapes): usala antes de opinar si se puede trabajar.',
   esquema: {
     type: 'object',
     properties: {
-      concesion_id: { type: 'integer', description: 'Id de la concesión (de catastro_buscar)' },
-      nombre: { type: 'string', description: 'Si no tenés el id, el nombre o expediente' },
+      concesion_id: { type: 'integer', description: 'Id (de catastro_buscar)' },
+      nombre: { type: 'string', description: 'O su nombre o expediente' },
     },
   },
   plataformas: ['electrum'],
@@ -982,10 +982,10 @@ const informe_pdf: Herramienta = {
 const cartera_analisis: Herramienta = {
   nombre: 'cartera_analisis',
   descripcion:
-    'Analiza una cartera de concesiones (las zonas de una empresa, p. ej. «Zonas INDEXSA»): estado, hectáreas, semáforo de restricciones (áreas protegidas, microcuencas, forestal, caseríos, traslapes con terceros) y prioridad por prospectividad. Sin nombre, lista las carteras. Usala para «¿cuáles de mis zonas puedo trabajar?», «¿cuántas pisan áreas protegidas?» o «qué priorizo».',
+    'Semáforo de una cartera; sin nombre, las lista.',
   esquema: {
     type: 'object',
-    properties: { nombre: { type: 'string', description: 'Nombre o parte del nombre de la cartera; vacío para listarlas' } },
+    properties: { nombre: { type: 'string', description: 'Nombre' } },
   },
   plataformas: ['electrum'],
   msMaximo: 45_000,

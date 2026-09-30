@@ -611,7 +611,7 @@ export async function aprender(
     if (nadaNuevo) {
       return {
         clase: 'catastro',
-        dicho: `Esa capa ya estaba cargada: las ${guardado.repetidas} geometrías son las mismas que ya tengo, así que no metí nada y no dupliqué la capa.`,
+        dicho: `Ese archivo ya estaba cargado: las ${guardado.repetidas} geometrías son las mismas que ya tengo, así que no metí nada y no dupliqué la capa.`,
         avisos,
         ui: { accion: 'capa', capa_id: null, concesiones: 0, repetidas: guardado.repetidas, traslapes: 0 },
       };

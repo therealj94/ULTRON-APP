@@ -550,7 +550,8 @@ export async function guardarCapa(
      * si todas vienen de una capa que se llama igual, es una resubida.
      */
     let cartera: { nombre: string; concesiones: number } | null = null;
-    if (comoConcesiones && repetidas.length && repetidas.length >= 0.8 * (repetidas.length + nConc) && (await hayCarteras())) {
+    // Una sola concesión repetida no es una cartera: es la misma subida otra vez con otro nombre.
+    if (comoConcesiones && repetidas.length >= 2 && repetidas.length >= 0.8 * (repetidas.length + nConc) && (await hayCarteras())) {
       const origen = await cliente.query<{ nombre: string }>(
         `SELECT DISTINCT k.nombre FROM concesion c JOIN capa k ON k.id = c.capa_id WHERE c.huella = ANY($1::text[])`,
         [repetidas.map((r) => r.huella)]
