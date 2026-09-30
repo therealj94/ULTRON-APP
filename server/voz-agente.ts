@@ -48,6 +48,8 @@ import { modoValido } from './desk';
 import { aparatoValido, lecturaDe, turnoDeRecordatorio } from '../lib/acciones-app';
 import { nivelDeCorreo, nivelMasEstrecho, nivelValido, type NivelAura } from './nivel';
 import { anotarVoz, fraseTopeVoz, restanteVozMs } from './tope-voz';
+// El banco de frases de estado es uno solo, el de la app (sin React Native: se empaqueta aquí igual).
+import { esRelleno, estadoDeEspera, fraseDeEstado, quitarRellenoInicial } from '../mobile/src/compa/frasesEstado';
 
 /** La etiqueta del secreto que ElevenLabs manda como Bearer. Cambiarla invalida el guardado allá. */
 export const ETIQUETA_SECRETO_LLM = 'elevenlabs-llm-v1';
@@ -61,6 +63,12 @@ export const MAX_CONVERSACIONES = 3;
 export const CUPO_TURNOS_MIN = 30;
 /** Lo que puede tardar un turno hablado antes de pedir perdón y soltar a la persona. */
 export const TURNO_VOZ_MS = 45_000;
+/**
+ * EL PUENTE: si en este tiempo el cerebro no dijo nada, AURA dice una frase corta del estado en que está
+ * («Déjame revisar…», «Buscando…», «Sacando cuentas…»), con la forma de ser del avatar y en su idioma,
+ * en vez de quedarse callada. Una orden rápida o una charla contestan antes y no lo oyen nunca.
+ */
+export const PUENTE_VOZ_MS = 1_200;
 
 /**
  * Un agente de ElevenLabs por avatar e idioma (voz, idioma del reconocimiento y del turno). Los crea
@@ -446,6 +454,8 @@ type Deps = {
   fetch?: typeof fetch;
   /** Tope de un turno hablado (TURNO_VOZ_MS; las pruebas lo acortan). */
   turnoMs?: number;
+  /** Cuánto se espera al cerebro antes de decir la frase de espera (PUENTE_VOZ_MS; 0 la apaga). */
+  puenteMs?: number;
   /** Junta o miembro por correo (server/nivel.ts; las pruebas pueden poner otro). */
   nivelDe?: (correo: string) => NivelAura;
 };
@@ -668,6 +678,30 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       conv.algoEnCurso = false;
     }
     const inicioPropio = dicho.length;
+    // El puente: si el cerebro tarda, una frase de espera (no cuenta como «ya dijo algo»: si después
+    // falla, igual se explica). Lo que el cerebro diga después no puede empezar con otra muletilla.
+    let puenteDicho = false;
+    let primerTrozo = true;
+    // Desde dónde empieza lo que dice el CEREBRO (después del perdón y del puente, si los hubo).
+    let inicioCerebro = inicioPropio;
+    const msPuente = d.puenteMs ?? PUENTE_VOZ_MS;
+    const puente =
+      msPuente > 0
+        ? setTimeout(() => {
+            if (algo || terminado || corte.signal.aborted) return;
+            decir(`${fraseDeEstado(estadoDeEspera(mensaje), pase.avatar, pase.idioma).texto} `);
+            algo = false;
+            conv.algoEnCurso = false;
+            puenteDicho = true;
+            inicioCerebro = dicho.length;
+          }, msPuente)
+        : null;
+    /** Lo que dice el cerebro, sin la muletilla del principio si ya se dijo la frase de espera. */
+    const sinRelleno = (t: string) => {
+      if (!puenteDicho || !primerTrozo || !t.trim()) return t;
+      primerTrozo = false;
+      return esRelleno(t) ? '' : quitarRellenoInicial(t.replace(/^\s+/, ''));
+    };
 
     const reloj = AbortSignal.timeout(d.turnoMs ?? TURNO_VOZ_MS);
     const senal = AbortSignal.any([corte.signal, reloj]);
@@ -679,14 +713,14 @@ export function montarVozAgente(app: express.Express, d: Deps) {
       if (terminado || senal.aborted) return;
       if (evento === 'delta') {
         // La voz del agente lee el texto tal cual: sin las marcas de expresión de la mesa.
-        const crudo = quitarExpresiones(String(datos?.voz ?? datos?.text ?? ''));
+        const crudo = sinRelleno(quitarExpresiones(String(datos?.voz ?? datos?.text ?? '')));
         // Al quitar una marca del principio queda un espacio: el primer trozo empieza limpio.
-        decir(dicho.length > inicioPropio ? crudo : crudo.replace(/^\s+/, ''));
+        decir(dicho.length > inicioCerebro ? crudo : crudo.replace(/^\s+/, ''));
       } else if (evento === 'replace') {
         const nuevo = quitarExpresiones(String(datos?.voz ?? datos?.text ?? ''));
-        decir(restoDeReemplazo(dicho.slice(inicioPropio), nuevo));
+        decir(restoDeReemplazo(dicho.slice(inicioCerebro), nuevo));
       } else if (evento === 'done') {
-        if (!algo) decir(quitarExpresiones(String(datos?.voz ?? datos?.reply ?? '')).trim());
+        if (!algo) decir(sinRelleno(quitarExpresiones(String(datos?.voz ?? datos?.reply ?? '')).trim()));
         // Solo acciones y nada que decir (un cerebro viejo, o la frase se perdió): «Listo.», no «se me
         // fue el hilo» mientras la app sí la hace.
         if (!algo && Array.isArray(datos?.acciones) && datos.acciones.length) decir(PHRASES.listo[pase.idioma]);
@@ -718,6 +752,7 @@ export function montarVozAgente(app: express.Express, d: Deps) {
         }
       );
     await Promise.race([fin, t]);
+    if (puente) clearTimeout(puente);
     if (corte.signal.aborted) {
       // La persona interrumpió (o llegó otro turno de esta conversación, que ya tomó lo que este dijo
       // como `ultimaDicha`): nadie espera esto. Si la petición sigue abierta, se cierra bien para que

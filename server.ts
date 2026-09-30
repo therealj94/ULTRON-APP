@@ -41,6 +41,7 @@ import {
   type Propuesta,
   type EventoAccion,
 } from './lib/acciones-app';
+import { detectarIdioma } from './lib/idioma-detectar';
 import { redirigirADominio } from './server/dominio';
 import { quitarExpresiones } from './lib/expresiones';
 import { puntoDeCorte } from './lib/trozos';
@@ -2299,6 +2300,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
         }
       }
     }
+    // En voz, si el cerebro tarda, la app ya dice por él una frase corta de espera (el puente de
+    // server/voz-agente.ts, con el banco de mobile/src/compa/frasesEstado.ts): la respuesta no repite otra.
+    if (voz) hechos.push('VOZ: si tardas, ya se dijo por ti una frase corta de espera («déjame ver…»). No empieces con muletillas de espera («mmm», «a ver», «déjame revisar», «un momento»): ve directo a la respuesta.');
     const red = pedidoRed(message, hiloPrevio);
     if (red && voz) {
       // La búsqueda previa era lo que hacía esperar 3-4 s a la voz antes de la primera palabra (CI del
@@ -2794,8 +2798,10 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   if (!contexto && oyentesDe(correo) === 0) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
   // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».
+  // En el idioma en que le hablaron: «go back» con la app en español se contesta en inglés (la
+  // lectura del texto es conservadora; si no se puede saber, el idioma de la app).
   const orden = await ordenRapida(message, {
-    idioma: normalizarIdioma(body?.idioma),
+    idioma: detectarIdioma(message) ?? normalizarIdioma(body?.idioma),
     contexto,
     pendiente: pendienteDe(correo),
     propuesta: propuestaAnterior(correo),

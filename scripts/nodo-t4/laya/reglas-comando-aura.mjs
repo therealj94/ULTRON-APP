@@ -3,8 +3,8 @@
 // a las etiquetas del grupo `app`, para medir lo que ya cubren las reglas y compararlas con Laya.
 //
 //   cd scripts/nodo-t4/laya
-//   npx tsx reglas-comando-aura.mjs modelos/comando/datos/test_aura.jsonl modelos/comando/datos/bordes_aura.jsonl
-//   npx tsx reglas-comando-aura.mjs --anotar modelos/comando/datos/test_aura.jsonl > /tmp/test-aura-reglas.jsonl
+//   npx tsx reglas-comando-aura.mjs modelos/comando/datos/test_app.jsonl modelos/comando/datos/bordes_aura.jsonl
+//   npx tsx reglas-comando-aura.mjs --anotar modelos/comando/datos/test_app.jsonl > /tmp/test-aura-reglas.jsonl
 //   python evaluar.py --modelo /opt/laya/modelo-comando --modelo-dir modelos/comando --evals /tmp/test-aura-reglas.jsonl
 //
 // Con --anotar escribe cada fila con `reglas` y `reglas_cubre` (lo que lee evaluar.py); sin él, imprime

@@ -23,7 +23,7 @@
 {"q": "¿hablas inglés?", "e": ["ninguna", "app_ninguna"], "nota": "pregunta"}
 {"q": "¿cómo se dice hola en inglés?", "e": ["ninguna", "app_ninguna"], "nota": "traducción, no cambio de idioma"}
 {"q": "silencia el chat de beto", "e": ["ninguna", "app_silenciar_chat"], "nota": "no es «cállate»"}
-{"q": "cállate", "e": ["callar", "app_ninguna"], "nota": "callar es del grupo accion (AU-RA lo lee de ahí)"}
+{"q": "cállate", "e": ["callar", "app_callar"], "nota": "callar en los dos grupos: Electrum lo lee de accion, AU-RA de app"}
 {"q": "vivo en san pedro sula", "e": ["ninguna", "app_perfil"], "nota": ""}
 {"q": "vivo feliz", "e": ["ninguna", "app_ninguna"], "nota": "no es un lugar"}
 {"q": "cancela el recordatorio de las 5", "e": ["ninguna", "app_cancelar_recordatorio"], "nota": ""}
@@ -32,3 +32,30 @@
 {"q": "llama mi mama", "e": ["ninguna", "app_llamar"], "nota": "dictado: sin «a» y sin tildes"}
 {"q": "q recordatorios tengo", "e": ["ninguna", "app_listar_recordatorios"], "nota": "dictado: «q»"}
 {"q": "ayer hicimos videollamada con la abuela", "e": ["ninguna", "app_ninguna"], "nota": "cuenta, no ordena"}
+{"q": "go back", "e": ["ninguna", "app_atras"], "nota": "inglés, la orden más corta"}
+{"q": "regresé ayer de tegus", "e": ["ninguna", "app_ninguna"], "nota": "cuenta un regreso, no es «atrás»"}
+{"q": "no hay vuelta atrás", "e": ["ninguna", "app_ninguna"], "nota": "modismo con «atrás»"}
+{"q": "abre ajustes", "e": ["ninguna", "app_abrir"], "nota": ""}
+{"q": "abre el chat de beto", "e": ["ninguna", "app_abrir_chat"], "nota": "el chat de UNA persona, no la lista"}
+{"q": "abre tu corazón", "e": ["ninguna", "app_ninguna"], "nota": "«abre» sin pantalla"}
+{"q": "dark mode", "e": ["ninguna", "app_tema"], "nota": ""}
+{"q": "está bien oscuro afuera", "e": ["ninguna", "app_ninguna"], "nota": "comenta, no cambia el tema"}
+{"q": "cambia a claudio", "e": ["ninguna", "app_avatar"], "nota": ""}
+{"q": "mi sobrino se llama antonio", "e": ["ninguna", "app_ninguna"], "nota": "un nombre de avatar dentro de una frase que cuenta"}
+{"q": "escríbele a beto que llego tarde", "e": ["ninguna", "app_redactar"], "nota": "mensaje nuevo: AURA redacta y pregunta"}
+{"q": "sí, envíalo", "e": ["ninguna", "app_enviar"], "nota": "confirmación explícita; solo vale si hay borrador (lo decide la regla)"}
+{"q": "sí", "e": ["ninguna", "app_ninguna"], "nota": "un «sí» suelto no envía nada por Laya"}
+{"q": "no lo mandes", "e": ["ninguna", "app_descartar"], "nota": ""}
+{"q": "stop talking", "e": ["callar", "app_callar"], "nota": "inglés"}
+{"q": "mi hijo no se calla nunca", "e": ["ninguna", "app_ninguna"], "nota": "«calla» de otro"}
+{"q": "ya puedes hablar", "e": ["ninguna", "app_hablar"], "nota": ""}
+{"q": "apaga la cámara", "e": ["ninguna", "app_camara"], "nota": "la cámara de AURA"}
+{"q": "la cámara de mi cel es mala", "e": ["ninguna", "app_ninguna"], "nota": "habla de su teléfono"}
+{"q": "¿qué puedes hacer?", "e": ["ninguna", "app_ayuda"], "nota": "pregunta que SÍ es mano: la ayuda"}
+{"q": "necesito ayuda con la tarea de mate", "e": ["ninguna", "app_ninguna"], "nota": "ayuda con otra cosa: el cerebro"}
+{"q": "call my mom", "e": ["ninguna", "app_llamar"], "nota": "inglés"}
+{"q": "my mom called me yesterday", "e": ["ninguna", "app_ninguna"], "nota": "inglés, cuenta una llamada"}
+{"q": "remind me at 5 to take my pills", "e": ["ninguna", "app_recordar"], "nota": "inglés"}
+{"q": "remind me who won the world cup", "e": ["ninguna", "app_ninguna"], "nota": "inglés, pide un dato"}
+{"q": "switch to spanish", "e": ["ninguna", "app_idioma"], "nota": ""}
+{"q": "do you speak spanish", "e": ["ninguna", "app_ninguna"], "nota": "pregunta, no cambia el idioma"}

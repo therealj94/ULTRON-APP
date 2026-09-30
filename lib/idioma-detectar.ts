@@ -12,11 +12,18 @@ export type IdiomaTurno = 'es' | 'en';
 
 // Palabras frecuentes que en el otro idioma no existen o casi no se usan. Nada ambiguo: fuera
 // «no», «me», «a», «ok», «mapa/map» quedan porque son distintos.
+// «hey» y «okay» no cuentan: en Honduras se dicen en español («hey AURA, tengo mensajes»).
 const INGLES = new Set(
-  'the is are was were be been what which who whom where when how why do does did can could would should will shall show tell give list find please about this that these those there here it its of in on at for with and or to an from near into by my your our their his her we they i you he she have has had not yes thanks thank hello hi hey okay map maps many much any some all each every mining mine mines concession concessions gold silver copper license licenses permit permits area areas owner owners holder near nearby latest new old what\'s where\'s how\'s i\'m don\'t can\'t let check see look looking give get got going still almost just moment second question good done nearly finishing'.split(' ')
+  ('the is are was were be been what which who whom where when how why do does did can could would should will shall show tell give list find please about this that these those there here it its of in on at for with and or to an from near into by my your our their his her we they i you he she have has had not yes thanks thank hello hi map maps many much any some all each every mining mine mines concession concessions gold silver copper license licenses permit permits area areas owner owners holder near nearby latest new old what\'s where\'s how\'s i\'m don\'t can\'t let check see look looking give get got going still almost just moment second question good done nearly finishing' +
+    // Las órdenes de la app dichas en inglés (AU-RA): «stop talking», «dark theme», «hang up», «read me my reminders».
+    ' stop talking talk speak dark theme wake up read reminders reminder remind hang call reply turn off notifications start again listen take back go open settings switch mode send delete discard mute unmute screen fullscreen messages message profile camera help draft cancel light quiet shut silence text now right'
+  ).split(' ')
 );
 const ESPANOL = new Set(
-  'el la los las del de que qué en y es son era fue por para con una uno unos unas cuál cuáles cual dónde donde cómo como cuánto cuánta cuántos cuántas cuando cuándo quién quien quiénes muestra muéstrame mostrame mostrá dame decime dime hay está están esta este esto estos estas eso esa ese mi mis tu tus su sus al lo le les se sí si pero más muy también hola gracias quiero necesito puedes podés ver mapa mapas concesión concesiones oro plata cobre titular titulares cerca nuevo nueva viejo vos usted ustedes nos hacé haz busca buscá cuáles estoy voy vamos un ya deme déjeme momento ahora sobre entre tiene tienen'.split(' ')
+  ('el la los las del de que qué en y es son era fue por para con una uno unos unas cuál cuáles cual dónde donde cómo como cuánto cuánta cuántos cuántas cuando cuándo quién quien quiénes muestra muéstrame mostrame mostrá dame decime dime hay está están esta este esto estos estas eso esa ese mi mis tu tus su sus al lo le les se sí si pero más muy también hola gracias quiero necesito puedes podés ver mapa mapas concesión concesiones oro plata cobre titular titulares cerca nuevo nueva viejo vos usted ustedes nos hacé haz busca buscá cuáles estoy voy vamos un ya deme déjeme momento ahora sobre entre tiene tienen' +
+    // Las órdenes de la app dichas en español (AU-RA), también sin tildes como las deja el dictado.
+    ' tengo mensajes silencio vuelve chiquita chiquito modo claro oscuro cambia despierta hazte llevame atras regresa mandalo envialo borralo recordatorios recordatorio llama llamale marcale llamada videollamada cuelga pantalla completa ajustes perfil abre ponte ponlo pon callate calla habla hablame recuerdame avisame dile escribele contestale respondele lee leeme buscame porfa pues ahorita vaya oye ayuda camara'
+  ).split(' ')
 );
 
 export function detectarIdioma(texto: string): IdiomaTurno | null {

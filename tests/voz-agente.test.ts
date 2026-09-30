@@ -148,7 +148,7 @@ test('eventosSSE: lee eventos a trozos y suelta el lector al abortar', async () 
 });
 
 /** Un servidor con las rutas reales y un cerebro falso en proceso. */
-async function montar(cerebro: (t: TurnoVoz) => Promise<void>, o: { fetch?: typeof fetch; turnoMs?: number } = {}) {
+async function montar(cerebro: (t: TurnoVoz) => Promise<void>, o: { fetch?: typeof fetch; turnoMs?: number; puenteMs?: number } = {}) {
   const app = express();
   app.use(express.json());
   const vistos: TurnoVoz[] = [];
@@ -163,6 +163,7 @@ async function montar(cerebro: (t: TurnoVoz) => Promise<void>, o: { fetch?: type
     },
     fetch: o.fetch,
     turnoMs: o.turnoMs,
+    puenteMs: o.puenteMs,
   });
   const srv = app.listen(0);
   await new Promise((r) => srv.once('listening', r));
@@ -664,5 +665,59 @@ test('contestó la llamada de un recordatorio: `[[recordatorio]]` llega al cereb
     assert.match(String(s.vistos[0].body.message), /^\(Contesté la llamada de recordatorio .*«Tomar la pastilla»/);
   } finally {
     await s.cerrar();
+  }
+});
+
+test('el puente: si el cerebro tarda, dice una frase de espera del avatar y en su idioma; el cerebro no repite muletilla', async () => {
+  const { frasesDe } = await import('../mobile/src/compa/frasesEstado');
+  // Un cerebro lento que además empieza con «Mmm, déjame ver.»: eso ya se dijo con el puente.
+  const lento = await montar(
+    async (t) => {
+      await new Promise((r) => setTimeout(r, 250));
+      t.enviar('delta', { text: 'Mmm, déjame ver. ', voz: 'Mmm, déjame ver. ' });
+      t.enviar('delta', { text: 'El oro está a tres mil.', voz: 'El oro está a tres mil.' });
+      t.enviar('done', { reply: 'Mmm, déjame ver. El oro está a tres mil.' });
+    },
+    { puenteMs: 60 }
+  );
+  try {
+    const yo = persona();
+    const es = dichoDe(await (await llm(lento.base, paseDe(yo, 'claudio', 'es'), [{ role: 'user', content: 'busca el precio del oro hoy' }])).text());
+    const puente = frasesDe('buscando', 'claudio', 'es').find((f) => es.startsWith(f));
+    assert.ok(puente, `empieza con una frase de «buscando» de Claudio: ${es}`);
+    assert.equal(es, `${puente} El oro está a tres mil.`, 'sin la muletilla del cerebro');
+    const en = dichoDe(await (await llm(lento.base, paseDe(persona(), 'ojos', 'en'), [{ role: 'user', content: 'what do you think about it' }])).text());
+    const p2 = frasesDe('pensando', 'ojos', 'en').find((f) => en.startsWith(f));
+    assert.ok(p2, `el Guardián en inglés, pensando: ${en}`);
+  } finally {
+    await lento.cerrar();
+  }
+  // Un cerebro rápido no oye puente, y su respuesta queda intacta (la muletilla solo sobra si hubo puente).
+  const rapido = await montar(
+    async (t) => {
+      t.enviar('delta', { text: 'Mmm, déjame ver. Todo bien.', voz: 'Mmm, déjame ver. Todo bien.' });
+      t.enviar('done', { reply: 'Mmm, déjame ver. Todo bien.' });
+    },
+    { puenteMs: 400 }
+  );
+  try {
+    const dicho = dichoDe(await (await llm(rapido.base, paseDe(persona(), 'aura', 'es'), [{ role: 'user', content: '¿cómo estás?' }])).text());
+    assert.equal(dicho, 'Mmm, déjame ver. Todo bien.');
+  } finally {
+    await rapido.cerrar();
+  }
+  // Si el cerebro falla después del puente, igual se explica (el puente no cuenta como «ya dijo algo»).
+  const falla = await montar(
+    async (t) => {
+      await new Promise((r) => setTimeout(r, 150));
+      t.enviar('error', { error: 'x' });
+    },
+    { puenteMs: 40 }
+  );
+  try {
+    const dicho = dichoDe(await (await llm(falla.base, paseDe(persona(), 'claudio', 'es'), [{ role: 'user', content: 'explícame el plan' }])).text());
+    assert.match(dicho, /Se me fue el hilo\. ¿Me lo repites\?$/);
+  } finally {
+    await falla.cerrar();
   }
 });

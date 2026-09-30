@@ -2,7 +2,9 @@
  * Lo que dice la compañera en sus globitos. Cortito, con gracia, en el idioma elegido (tr al momento
  * de decirlo, así cambia con el idioma sin reiniciar nada).
  */
-import { tr } from '../i18n';
+import { idiomaActual, tr } from '../i18n';
+import { avatarActual } from '../avatares/actual';
+import { fraseDeEstado, type EstadoFrase } from './frasesEstado';
 
 export type GrupoFrase = 'toque' | 'caricia' | 'enojo' | 'levantar' | 'soltar' | 'dormir' | 'despertar' | 'volver' | 'dormidaToque';
 
@@ -24,14 +26,18 @@ export function fraseCompa(grupo: GrupoFrase, n: number): string {
   return l[((n % l.length) + l.length) % l.length];
 }
 
+/** Una frase del banco de estados (compa/frasesEstado.ts) con el avatar y el idioma de ahora, sin repetir seguidas. */
+const deEstado = (estado: EstadoFrase) => fraseDeEstado(estado, avatarActual(), idiomaActual()).texto;
+
 export const textoCompa = {
-  escuchando: () => tr('Te escucho…', 'Listening…'),
-  conectando: () => tr('Un segundito…', 'One sec…'),
-  perdon: () => tr('¡Ah, perdón! Dime, te escucho…', 'Oh, sorry! Go ahead, I’m listening…'),
+  escuchando: () => deEstado('escuchando'),
+  conectando: () => deEstado('conectando'),
+  pensando: () => deEstado('pensando'),
+  perdon: () => deEstado('disculpa'),
   enviado: (para?: string) => (para ? tr(`✔ ¡Listo! Enviado a ${para}`, `✔ Done! Sent to ${para}`) : tr('✔ ¡Listo! Enviado', '✔ Done! Sent')),
   noEnviado: () => tr('No pude enviarlo', 'I couldn’t send it'),
-  listo: () => tr('¡Listo!', 'Done!'),
-  noPude: () => tr('No pude hacerlo', 'I couldn’t do it'),
+  listo: () => deEstado('listo'),
+  noPude: () => deEstado('no_pude'),
   borrador: (para: string) => tr(`✎ Borrador para ${para}`, `✎ Draft for ${para}`),
   noAbrio: () => tr('No pude conectarme. Tócame dos veces para intentar otra vez', 'I couldn’t connect. Tap me twice to try again'),
 };

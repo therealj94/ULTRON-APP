@@ -27,6 +27,17 @@ import { OidoMesa, duenoAudio, motivoFalloVoz } from '../duenoAudio.ts';
 import { FIGURAS, mezclarFigura, estiloDe } from '../figura.ts';
 import { emocionDeTexto } from '../../lib/emocion.ts';
 import { emitir, escuchar } from '../../nucleo/contrato.ts';
+import { ESTADOS_FRASE, EMOCION_DE_ESTADO, MemoriaFrases, fraseDeEstado, frasesDe, esRelleno, quitarRellenoInicial, estadoDeEspera } from '../frasesEstado.ts';
+import { EXPRESIONES_AVATAR } from '../../avatar3d/tipos.ts';
+import { EMOCIONES } from '../../lib/emocion.ts';
+import { AVATARES } from '../../avatares/catalogo.ts';
+import { textoCompa } from '../frases.ts';
+import { createRequire } from 'node:module';
+// El idioma y el avatar de ahora son datos de módulo: se fijan en la MISMA copia que leen frases.ts y
+// animo.ts (tsx las carga como CommonJS; un import de ESM aquí sería otra copia).
+const { fijarAvatar } = createRequire(import.meta.url)('../../avatares/actual.ts');
+const { fijarIdioma } = createRequire(import.meta.url)('../../i18n.ts');
+const { detectarIdioma } = await import(new URL('../../../../lib/idioma-detectar.ts', import.meta.url).href);
 
 let fallos = 0;
 let n = 0;
@@ -1241,6 +1252,114 @@ prueba('emoción del texto (conversación fluida)', () => {
   assert.equal(emocionDeTexto('¿A quién se lo mando?'), 'curioso');
   assert.equal(emocionDeTexto('Wow, no me digas'), 'sorpresa');
   assert.equal(emocionDeTexto('Son las tres'), 'neutral');
+});
+
+/* ── el banco de frases de estado (escuchando, pensando, revisando… por avatar e idioma) ───────── */
+
+const AVATARES_BANCO = ['ojos', 'aura', 'claudio', 'antonio'];
+
+prueba('frases de estado: cada estado, avatar e idioma tiene variedad (≥5) y frases cortas', () => {
+  assert.deepEqual([...AVATARES.map((a) => a.id)].sort(), [...AVATARES_BANCO].sort(), 'los mismos avatares que el catálogo');
+  let total = 0;
+  for (const e of ESTADOS_FRASE) for (const a of AVATARES_BANCO) for (const i of ['es', 'en']) {
+    const l = frasesDe(e, a, i);
+    total += l.length;
+    assert.ok(l.length >= 5, `${e}/${a}/${i}: ${l.length}`);
+    assert.equal(new Set(l).size, l.length, `${e}/${a}/${i} sin repetidas`);
+    for (const f of l) assert.ok(f.length <= 48 && f.split(' ').length <= 9, `larga: «${f}»`);
+  }
+  assert.ok(total >= 850, `total ${total}`);
+});
+
+prueba('frases de estado: no se repiten seguidas y recuerdan las últimas', () => {
+  const m = new MemoriaFrases();
+  let azar = 0.1;
+  const paso = () => (azar = (azar * 9301 + 0.49297) % 1);
+  for (const e of ESTADOS_FRASE) for (const a of AVATARES_BANCO) {
+    const vistas = [];
+    for (let k = 0; k < 40; k++) vistas.push(fraseDeEstado(e, a, 'es', { memoria: m, azar: paso }).texto);
+    for (let k = 1; k < vistas.length; k++) assert.notEqual(vistas[k], vistas[k - 1], `${e}/${a}: repitió «${vistas[k]}»`);
+    const n = frasesDe(e, a, 'es').length;
+    const ventana = Math.min(4, n - 1);
+    for (let k = ventana; k < vistas.length; k++) assert.ok(!vistas.slice(k - ventana, k).includes(vistas[k]), `${e}/${a}: «${vistas[k]}» dentro de las últimas ${ventana}`);
+    assert.ok(new Set(vistas).size >= Math.min(n, 5), `${e}/${a}: poca variedad`);
+  }
+  // Aunque cambie el estado, la misma frase no sale dos veces seguidas.
+  const otra = new MemoriaFrases();
+  const a1 = fraseDeEstado('pensando', 'aura', 'es', { memoria: otra, azar: () => 0 }).texto;
+  const a2 = fraseDeEstado('revisando', 'aura', 'es', { memoria: otra, azar: () => 0 }).texto;
+  assert.notEqual(a1, a2);
+});
+
+prueba('frases de estado: cada idioma en su idioma; sin género; el Guardián sereno y breve', () => {
+  for (const e of ESTADOS_FRASE) for (const a of AVATARES_BANCO) {
+    for (const f of frasesDe(e, a, 'en')) {
+      assert.ok(!/[ñ¿¡áéíóú]/i.test(f), `en con español: «${f}»`);
+      assert.notEqual(detectarIdioma(f), 'es', `en detectada como español: «${f}»`);
+    }
+    for (const f of frasesDe(e, a, 'es')) assert.notEqual(detectarIdioma(f), 'en', `es detectada como inglés: «${f}»`);
+    for (const f of [...frasesDe(e, a, 'es'), ...frasesDe(e, a, 'en')]) {
+      assert.ok(!/\b(estoy|quedé|quede) (list[oa]|content[oa]|cansad[oa]|segur[oa])\b/i.test(f), `con género: «${f}»`);
+      assert.ok(!/\[/.test(f), `sin etiquetas de expresión en el globito: «${f}»`);
+    }
+  }
+  const largo = (a) => {
+    const l = ESTADOS_FRASE.flatMap((e) => frasesDe(e, a, 'es'));
+    return l.reduce((s, f) => s + f.length, 0) / l.length;
+  };
+  assert.ok(largo('ojos') < largo('claudio') && largo('ojos') < largo('antonio'), 'el Guardián habla más corto');
+  assert.ok(!frasesDe('alegria', 'ojos', 'es').includes('¡Qué alegre!'), 'el Guardián no usa la calidez de las de base');
+  assert.ok(frasesDe('pensando', 'antonio', 'es').some((f) => /cuatro/.test(f)), 'ANT-ONIO y sus cuatro brazos');
+  assert.ok(frasesDe('buscando', 'claudio', 'es').some((f) => /olfate/i.test(f)), 'Claudio, el zorro, olfatea');
+});
+
+prueba('frases de estado: cada estado va a una cara, una emoción y una cara de mesa que YA existen', () => {
+  const CARAS_MESA = ['IDLE', 'LISTENING', 'THINKING', 'SPEAKING', 'HAPPY', 'CONCERNED', 'ANGRY', 'SLEEPING', 'STARTLE', 'WINK', 'CONFUSED', 'MUSIC', 'SCAN', 'YAWNING', 'LAUGH', 'SURPRISED', 'SAD', 'TIRED', 'SING', 'CURIOUS', 'PROUD', 'PRAY'];
+  for (const e of ESTADOS_FRASE) {
+    const m = EMOCION_DE_ESTADO[e];
+    assert.ok(EXPRESIONES_AVATAR.includes(m.expresion), `${e}: ${m.expresion}`);
+    assert.ok(EMOCIONES.includes(m.emocion), `${e}: ${m.emocion}`);
+    assert.ok(CARAS_MESA.includes(m.cara), `${e}: ${m.cara}`);
+    const f = fraseDeEstado(e, 'aura', 'es');
+    assert.equal(f.expresion, m.expresion);
+  }
+  assert.equal(EMOCION_DE_ESTADO.escuchando.expresion, 'escucha');
+  assert.equal(EMOCION_DE_ESTADO.pensando.expresion, 'piensa');
+  assert.equal(EMOCION_DE_ESTADO.sorpresa.expresion, 'sorprendida');
+});
+
+prueba('frases de estado: la muletilla del cerebro sobra tras el puente; qué estado toca por la pregunta', () => {
+  assert.equal(esRelleno('Mmm, déjame ver.'), true);
+  assert.equal(esRelleno('Let me check…'), true);
+  assert.equal(esRelleno('El oro está a tres mil.'), false);
+  assert.equal(quitarRellenoInicial('Mmm, déjame ver. El oro subió.'), 'El oro subió.');
+  assert.equal(quitarRellenoInicial('Un momento. Hmm, a ver, ya: son las tres.'), 'Ya: son las tres.');
+  assert.equal(quitarRellenoInicial('Bienvenido de vuelta.'), 'Bienvenido de vuelta.');
+  assert.equal(estadoDeEspera('busca el precio del oro'), 'buscando');
+  assert.equal(estadoDeEspera('¿cuánto es 15 x 3?'), 'calculando');
+  assert.equal(estadoDeEspera('revisa mis pendientes'), 'revisando');
+  assert.equal(estadoDeEspera('¿qué opinas de la reunión?'), 'pensando');
+});
+
+prueba('frases de estado: la compañera las usa en su globito (con su avatar e idioma) y dice «pensando» al esperar', () => {
+  fijarAvatar('claudio');
+  fijarIdioma('en');
+  try {
+    const vistas = new Set();
+    for (let k = 0; k < 12; k++) vistas.add(textoCompa.escuchando());
+    assert.ok(vistas.size >= 4, 'varía');
+    for (const f of vistas) assert.ok(frasesDe('escuchando', 'claudio', 'en').includes(f), f);
+    const r = reducir(ANIMO_INICIAL, { tipo: 'mesa', hablando: false, pensando: true, emocion: 'neutral' }, 0);
+    const g = r.efectos.find((e) => e.tipo === 'globo');
+    assert.ok(g && frasesDe('pensando', 'claudio', 'en').includes(g.texto), JSON.stringify(r.efectos));
+    // Seguir pensando no repite el globito.
+    const r2 = reducir(r.animo, { tipo: 'mesa', hablando: false, pensando: true, emocion: 'neutral' }, 10);
+    assert.ok(!r2.efectos.some((e) => e.tipo === 'globo'));
+    assert.ok(frasesDe('disculpa', 'claudio', 'en').every((f) => /sorry/i.test(f)), 'el perdón de la interrupción dice «sorry»');
+  } finally {
+    fijarAvatar('aura');
+    fijarIdioma('es');
+  }
 });
 
 for (const [nombre, f] of pruebas) {
