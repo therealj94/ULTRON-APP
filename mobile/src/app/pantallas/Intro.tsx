@@ -88,11 +88,12 @@ export function Intro(_: Props) {
   const arrancar = useCallback(async () => {
     const inicio = Date.now();
     await iniciarReporte();
+    // La app arranca siempre en vertical (aunque el teléfono esté acostado); la mesa la suelta después
+    // de la bienvenida. Primero el bloqueo y después se quita el nativo: así nunca asoma la intro
+    // acostada (con tope, por si algún teléfono no contesta el bloqueo).
+    await conTope(orientar('vertical'), 1_200);
     // El nativo se quita cuando la intro ya está pintada (negro sobre negro: no se nota el paso).
     void SplashScreen.hideAsync().catch(() => {});
-    // La app arranca siempre en vertical (aunque el teléfono esté acostado); la mesa la suelta después
-    // de la bienvenida.
-    void orientar('vertical');
 
     const [ajustes, sesion] = await Promise.all([loadSettings(), loadSession(), conTope(cargarFuentes(), 2_500), cargarHapticos()]);
     fijarIdioma(ajustes.idioma);

@@ -18,10 +18,12 @@
  *   · CORREO_SIN_CONFIRMAR, LIMITE (esperar) y RED (reintentar): cada uno con su título y qué hacer.
  *   · Correo y clave quedan como «Otras formas de entrar», chiquito: para la junta y el modo local.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
+import { orientar } from '../../lib/orientacion';
 import { APP_VERSION } from '../../config';
 import { entrarConGenesis, type ResultadoGenesis } from '../../lib/genesis';
 import { abrirAppOrdenGlobal } from './CrearGenesis';
@@ -124,6 +126,12 @@ function Aviso({ icono, titulo, texto, tono }: { icono: NombreIcono; titulo: str
 
 export function Entrar({ navigation, route }: Props) {
   useIdioma();
+  // La entrada va siempre en vertical, también al volver aquí después de cerrar sesión.
+  useFocusEffect(
+    useCallback(() => {
+      void orientar('vertical');
+    }, [])
+  );
   const tema = useTema();
   const ins = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
