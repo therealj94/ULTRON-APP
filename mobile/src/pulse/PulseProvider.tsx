@@ -62,7 +62,16 @@ function correoDe(con: string): string {
   return RELEVO.resolverContacto(c)?.correo || c;
 }
 
-export function PulseProvider({ children, abrirChatEnModal = true }: { children: ReactNode; abrirChatEnModal?: boolean }) {
+export function PulseProvider({
+  children,
+  abrirChatEnModal = true,
+  alAbrir,
+}: {
+  children: ReactNode;
+  abrirChatEnModal?: boolean;
+  /** Con la navegación nueva: cómo abrir la lista (sin `con`) o el hilo con alguien, en vez de la ventana. */
+  alAbrir?: (con?: string) => void;
+}) {
   const [cuenta, setCuenta] = useState<RELEVO.Cuenta | null>(null);
   const [conectando, setConectando] = useState(false);
   const [error, setError] = useState('');
@@ -170,10 +179,20 @@ export function PulseProvider({ children, abrirChatEnModal = true }: { children:
     setCuenta(null);
   }, []);
 
-  const abrir = useCallback((con?: string) => {
-    setConInicial(con ? correoDe(con) : undefined);
-    setAbierto(true);
-  }, []);
+  const alAbrirRef = useRef(alAbrir);
+  alAbrirRef.current = alAbrir;
+  const abrir = useCallback(
+    (con?: string) => {
+      // Con la navegación nueva, «abrir el chat» (el botón de la mesa, un aviso) va a sus pantallas.
+      if (!abrirChatEnModal && alAbrirRef.current) {
+        alAbrirRef.current(con ? correoDe(con) : undefined);
+        return;
+      }
+      setConInicial(con ? correoDe(con) : undefined);
+      setAbierto(true);
+    },
+    [abrirChatEnModal],
+  );
   const cerrar = useCallback(() => {
     setAbierto(false);
     // Al cerrar la ventana del chat se vuelve a la mesa (la ventana se abre desde ahí).
@@ -224,7 +243,7 @@ export function PulseProvider({ children, abrirChatEnModal = true }: { children:
   return (
     <PulseCtx.Provider value={valor}>
       {children}
-      <PulseChat visible={abierto} conInicial={conInicial} onCerrar={cerrar} />
+      {abrirChatEnModal ? <PulseChat visible={abierto} conInicial={conInicial} onCerrar={cerrar} /> : null}
       {llamada.estado !== 'libre' || llamada.motivo ? <PantallaLlamada cuento={llamada} onListo={() => setLlamada(LLAMADA.cuento())} /> : null}
     </PulseCtx.Provider>
   );

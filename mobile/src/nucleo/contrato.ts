@@ -145,5 +145,5 @@ export const PERMISOS_ANDROID = [
   'android.permission.CAMERA',
   'android.permission.BLUETOOTH_CONNECT',
   'android.permission.POST_NOTIFICATIONS',
-  'android.permission.ACCESS_COARSE_LOCATION',
 ] as const;
+/* La ubicación NO: AU-RA la bloquea a propósito en app.config.js (ninguna función la usa). */

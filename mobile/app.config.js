@@ -73,7 +73,8 @@ module.exports = ({ config }) => {
   if (variante !== 'electrum') {
     return {
       ...expo,
-      userInterfaceStyle: 'dark',
+      // «automatic»: el tema «Sistema» de la 5.0 sigue al teléfono (con «dark» Android siempre dice oscuro).
+      userInterfaceStyle: 'automatic',
       plugins: conPlugin(expo.plugins, 'expo-splash-screen', (o) => ({ ...o, backgroundColor: AURA_FONDO })),
       android: {
         ...expo.android,

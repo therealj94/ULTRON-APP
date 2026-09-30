@@ -6,7 +6,14 @@
  *   NavigationContainer     → native-stack: cada pantalla es una pantalla nativa de Android, con sus
  *                             transiciones del sistema (deslizar desde la derecha, fundido)
  *
- * Rutas: Intro → Bienvenida → Entrar ⇄ CrearGenesis / OtrasFormas → PrimeraVez → Mesa ⇄ Ajustes ⇄ Perfil.
+ * Rutas: Intro → Bienvenida → Entrar ⇄ CrearGenesis / OtrasFormas → PrimeraVez → Mesa ⇄ Ajustes ⇄ Perfil,
+ * y Mesa ⇄ Chats ⇄ Conversacion.
+ *
+ * El chat (PulseProvider: cuenta, buzón, llamadas) y la voz de AURA (VozProvider: conversación con
+ * ElevenLabs, la compañera flotante, el puente de acciones) envuelven la navegación entera: AURA sigue
+ * oyendo mientras la persona chatea, y una llamada suena en cualquier pantalla. Se rehacen al cambiar
+ * de persona (key por correo) para que nada de una sesión quede vivo en la siguiente. La compañera se
+ * dibuja solo en las pantallas de la sesión, no en la intro ni en la entrada.
  *
  * Las pantallas que reemplazan la pila (desde la intro, al entrar, al salir) entran fundiéndose;
  * las que se abren encima (Ajustes, Crea tu Genesis ID), deslizándose desde la derecha.
@@ -16,7 +23,7 @@
  * ruta se avisa por el bus (`emitir('pantalla', …)`) para que AURA sepa dónde está la persona, y lo
  * que AURA pide por el bus («vete atrás», «abre ajustes», «pon el tema claro») lo atiende acciones.ts.
  */
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AppState, Platform, type AppStateStatus } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -29,6 +36,8 @@ import { useIdioma } from '../i18n';
 import { emitir } from '../nucleo/contrato';
 import { useTema, type Paleta } from '../nucleo/tema';
 import { alElegirIdioma } from '../ui/SelectorIdioma';
+import { PulseProvider } from '../pulse/PulseProvider';
+import { VozProvider } from '../compa/VozProvider';
 import { Ajustes } from '../ajustes/Ajustes';
 import { LoQueSabe } from '../ajustes/LoQueSabe';
 import { PrimeraVez } from '../primeravez/PrimeraVez';
@@ -38,8 +47,10 @@ import { CrearGenesis } from './pantallas/CrearGenesis';
 import { Entrar } from './pantallas/Entrar';
 import { Intro } from './pantallas/Intro';
 import { Mesa } from './pantallas/Mesa';
+import { Chats, Conversacion } from './pantallas/Chats';
 import { OtrasFormas } from './pantallas/OtrasFormas';
-import { nav, pantallaDeRuta, type RaizParams } from './rutas';
+import { abrirConversacion, abrirRuta, nav, pantallaDeRuta, RUTAS_DE_SESION, type RaizParams } from './rutas';
+import { useUsuario } from './sesion';
 
 const Pila = createNativeStackNavigator<RaizParams>();
 
@@ -64,10 +75,19 @@ async function estiloBarraAndroid(oscuro: boolean) {
   }
 }
 
+/** El botón Chat de la mesa (o un aviso) abre las pantallas del chat, no una ventana encima. */
+function abrirChat(con?: string) {
+  if (con) abrirConversacion(con);
+  else abrirRuta('Chats');
+}
+
 export function AppAura() {
   useIdioma();
   const tema = useTema();
   useAccionesDeAura();
+  const usuario = useUsuario();
+  const [ruta, setRuta] = useState<string | undefined>(undefined);
+  const enSesion = !!usuario && !!ruta && RUTAS_DE_SESION.includes(ruta);
 
   // El fondo de la ventana (lo que se ve detrás del teclado y entre pantallas) y los iconos de abajo.
   useEffect(() => {
@@ -103,11 +123,15 @@ export function AppAura() {
   return (
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: tema.fondo }}>
       <SafeAreaProvider>
+        <PulseProvider key={`p:${usuario?.correo || 'nadie'}`} abrirChatEnModal={false} alAbrir={abrirChat}>
+        <VozProvider key={`v:${usuario?.correo || 'nadie'}`} conCompanera={enSesion}>
         <NavigationContainer
           ref={nav}
           theme={temaNav}
+          onReady={() => setRuta(nav.getCurrentRoute()?.name)}
           onStateChange={() => {
             const r = nav.getCurrentRoute()?.name;
+            setRuta(r);
             const p = pantallaDeRuta(r);
             if (p) emitir('pantalla', { pantalla: p });
           }}
@@ -132,8 +156,12 @@ export function AppAura() {
             <Pila.Screen name="Mesa" component={Mesa} options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: '#1C1D20' }, ...inmersiva }} />
             <Pila.Screen name="Ajustes" component={Ajustes} />
             <Pila.Screen name="Perfil" component={LoQueSabe} />
+            <Pila.Screen name="Chats" component={Chats} />
+            <Pila.Screen name="Conversacion" component={Conversacion} />
           </Pila.Navigator>
         </NavigationContainer>
+        </VozProvider>
+        </PulseProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

@@ -10,6 +10,7 @@ import { T, SOMBRA } from '../tema';
 import { de, tr, useIdioma, type Bilingue } from '../i18n';
 import { AVATARES, avatarPorId, type AvatarId } from '../avatares/catalogo';
 import { SelectorIdioma } from '../ui/SelectorIdioma';
+import { emitir } from '../nucleo/contrato';
 
 const MODES: Array<{ id: Mode; label: Bilingue; hint: Bilingue }> = [
   { id: 'GUARDIAN', label: { es: 'Guardián', en: 'Guardian' }, hint: { es: 'vigila', en: 'watches' } },
@@ -447,6 +448,22 @@ export function DeskMenu(p: Props) {
           )}
 
           <Text style={styles.section}>{tr('Ajustes', 'Settings')}</Text>
+          {/* Los Ajustes de la 5.0 (tema, perfil, lo que AURA sabe de ti, permisos) son una pantalla propia. */}
+          <Pressable
+            onPress={() => {
+              p.onClose();
+              emitir('accion', { tipo: 'abrir', pantalla: 'ajustes' });
+            }}
+            style={styles.row}
+            accessibilityRole="button"
+            accessibilityLabel={tr('Abrir Ajustes', 'Open Settings')}
+          >
+            <View>
+              <Text style={styles.label}>{tr('Tema, perfil y permisos', 'Theme, profile and permissions')}</Text>
+              <Text style={styles.sub}>{tr('Oscuro o claro, cómo te digo, lo que sé de ti', 'Dark or light, what I call you, what I know about you')}</Text>
+            </View>
+            <Text style={styles.label}>›</Text>
+          </Pressable>
           <Text style={styles.label}>{tr('Voz', 'Voice')}</Text>
           <Text style={styles.sub}>
             {de(av.voz)}. {tr('Todo se dice en vivo con su voz; ya no hay frases grabadas.', 'Everything is spoken live in its voice; there are no recorded phrases anymore.')}

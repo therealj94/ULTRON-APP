@@ -11,6 +11,7 @@
  * (`pantalla`) al abrirse y al cerrarse, para que AURA sepa en qué chat está la persona.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { sueloCompa } from '../compa/canales';
 import {
   ActivityIndicator,
   FlatList,
@@ -61,6 +62,8 @@ export function PantallaConversacion({ con, nombre, onAtras }: PropsPantallaConv
   const ins = useSafeAreaInsets();
   const { width } = useWindowDimensions();
   const correo = String(con || '').toLowerCase();
+  // Al salir del hilo, la compañera vuelve a su suelo de siempre.
+  useEffect(() => () => sueloCompa.emitir(88), []);
   const pulse = usePulseSiHay();
   const yo = (pulse ? pulse.cuenta : RELEVO.quien())?.correo || '';
 
@@ -308,7 +311,11 @@ export function PantallaConversacion({ con, nombre, onAtras }: PropsPantallaConv
             <Text style={s.deVozTxt}>{tr('AURA lo escribió por ti · revísalo y envíalo', 'AURA wrote this for you · review and send')}</Text>
           </Animated.View>
         ) : null}
-        <View style={[s.componer, { paddingBottom: (teclado ? 0 : ins.bottom) + MEDIDA.espacio.s }]}>
+        <View
+          style={[s.componer, { paddingBottom: (teclado ? 0 : ins.bottom) + MEDIDA.espacio.s }]}
+          // La compañera AURA flota encima de todo: que no tape la barra de escribir (el teclado se suma solo).
+          onLayout={(e) => sueloCompa.emitir(Math.round(e.nativeEvent.layout.height) + 12)}
+        >
           <View style={{ flex: 1 }}>
             {deVoz ? <Brillo p={p} /> : null}
             <View style={[s.caja, deVoz && { borderColor: p.acento, borderWidth: 1.5 }]}>

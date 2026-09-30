@@ -58,12 +58,6 @@ export const INFO_PERMISOS: readonly InfoPermiso[] = [
     porque: () => tr('Para avisarte de mensajes, llamadas y recordatorios.', 'To let you know about messages, calls and reminders.'),
     desde: 33,
   },
-  {
-    id: 'android.permission.ACCESS_COARSE_LOCATION',
-    icono: 'ubicacion',
-    titulo: () => tr('Ubicación aproximada', 'Approximate location'),
-    porque: () => tr('Para el clima y lo que hay cerca. Nunca tu dirección exacta.', 'For the weather and what’s nearby. Never your exact address.'),
-  },
 ];
 
 const CLAVE_BLOQUEADOS = 'aura.permisos.bloqueados.v1';

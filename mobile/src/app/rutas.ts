@@ -4,6 +4,7 @@
  *
  *   Intro → Bienvenida (primera vez sin sesión) → Entrar ⇄ CrearGenesis / OtrasFormas
  *        → PrimeraVez (si el perfil no está completado) → Mesa ⇄ Ajustes ⇄ Perfil
+ *                                                           Mesa ⇄ Chats ⇄ Conversacion
  */
 import { CommonActions, createNavigationContainerRef, StackActions } from '@react-navigation/native';
 import type { Pantalla } from '../nucleo/contrato';
@@ -18,13 +19,18 @@ export type RaizParams = {
   Mesa: { desdeIntro?: boolean; recienElegido?: boolean } | undefined;
   Ajustes: undefined;
   Perfil: undefined;
+  Chats: undefined;
+  Conversacion: { con: string; nombre?: string };
 };
 
 export type NombreRuta = keyof RaizParams;
 
 export const nav = createNavigationContainerRef<RaizParams>();
 
-/** La ruta visible → la `Pantalla` del contrato (las de entrada no cuentan: AURA no vive ahí). */
+/**
+ * La ruta visible → la `Pantalla` del contrato (las de entrada no cuentan: AURA no vive ahí). Las
+ * del chat no se anuncian desde aquí: lo hacen sus pantallas, que saben además con quién se habla.
+ */
 export function pantallaDeRuta(r: string | undefined): Pantalla | null {
   if (r === 'Mesa') return 'mesa';
   if (r === 'Ajustes') return 'ajustes';
@@ -46,7 +52,7 @@ export function reiniciarA<R extends NombreRuta>(ruta: R, params?: RaizParams[R]
  * Abre una pantalla de la sesión. Si ya está en la pila, se vuelve a ella (no se apilan dos Ajustes);
  * la mesa es siempre la base.
  */
-export function abrirRuta(ruta: 'Mesa' | 'Ajustes' | 'Perfil') {
+export function abrirRuta(ruta: 'Mesa' | 'Ajustes' | 'Perfil' | 'Chats') {
   if (!nav.isReady()) return;
   const estado = nav.getRootState();
   const nombres = estado?.routes.map((r) => r.name) || [];
@@ -65,4 +71,26 @@ export function atras(): boolean {
   if (!nav.isReady() || !nav.canGoBack()) return false;
   nav.goBack();
   return true;
+}
+
+/** Las rutas donde la sesión está abierta: ahí vive AURA (la compañera y su voz). */
+export const RUTAS_DE_SESION: readonly string[] = ['Mesa', 'Ajustes', 'Perfil', 'Chats', 'Conversacion'];
+
+/**
+ * El hilo con una persona. Si ya está abierto con ella, se queda; si no, se abre encima de la lista
+ * de chats (así «atrás» vuelve a la lista y luego a la mesa, como en cualquier app de mensajes).
+ */
+export function abrirConversacion(con: string, nombre?: string) {
+  if (!nav.isReady()) return;
+  const estado = nav.getRootState();
+  const rutas = estado?.routes || [];
+  if (!rutas.some((r) => r.name === 'Mesa')) return;
+  const arriba = rutas[rutas.length - 1];
+  if (arriba?.name === 'Conversacion' && (arriba.params as RaizParams['Conversacion'])?.con === con) return;
+  if (arriba?.name === 'Conversacion') {
+    nav.dispatch(StackActions.replace('Conversacion', { con, nombre }));
+    return;
+  }
+  abrirRuta('Chats');
+  nav.dispatch(StackActions.push('Conversacion', { con, nombre }));
 }

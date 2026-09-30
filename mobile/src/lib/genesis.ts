@@ -34,8 +34,10 @@ const VIDA_PEDIDO_MS = 10 * 60_000;
 
 type Pendiente = { verificador: string; estado: string; en: number };
 export type Miembro = { nombre: string; correo: string; rol: string; gid: string };
+/** Lo que Genesis ID compartió con permiso de la persona (la primera vez lo muestra con ✔). */
+export type DatosGenesis = { nombre?: string | null; cumple?: string | null };
 export type ResultadoGenesis =
-  | { ok: true; miembro: Miembro; chat: boolean }
+  | { ok: true; miembro: Miembro; chat: boolean; genesis?: DatosGenesis }
   | { ok: false; codigo: string; mensaje: string; gid?: string };
 
 const azarB64 = (n: number) => aB64(Crypto.getRandomBytes(n));
@@ -190,7 +192,7 @@ async function completar(url: string, p: Pendiente): Promise<ResultadoGenesis> {
   if (v.error === 'cancelado') return { ok: false, codigo: 'CANCELADO', mensaje: 'Cancelaste la entrada con Genesis ID.' };
   if (v.error === 'sin-gid') return { ok: false, codigo: 'SIN_GID', mensaje: 'Tu Genesis ID todavía no está verificado. Completá la verificación en tu wallet.' };
   if (v.error || !v.pase) return { ok: false, codigo: 'FALLO', mensaje: 'La wallet no pudo darte el pase. Probá de nuevo.' };
-  let data: { token?: string; miembro?: Miembro };
+  let data: { token?: string; miembro?: Miembro; genesis?: DatosGenesis };
   try {
     data = await api('/api/genesis/entrar', { method: 'POST', body: JSON.stringify({ pase: v.pase, verificador: p.verificador }) }, 20_000, false);
   } catch (e: any) {
@@ -208,7 +210,7 @@ async function completar(url: string, p: Pendiente): Promise<ResultadoGenesis> {
   } catch {
     chat = false;
   }
-  return { ok: true, miembro: data.miembro, chat };
+  return { ok: true, miembro: data.miembro, chat, ...(data.genesis ? { genesis: data.genesis } : {}) };
 }
 
 /** Todo el viaje: reto, wallet, vuelta y canje. */
