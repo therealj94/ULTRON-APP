@@ -19,4 +19,23 @@ export type ModeloAvatar3D = {
   mapeo: MapeoParcial | null;
 };
 
-export const MODELOS_3D: Partial<Record<AvatarId, ModeloAvatar3D>> = {};
+export const MODELOS_3D: Partial<Record<AvatarId, ModeloAvatar3D>> = {
+  aura: {
+    fuente: require('../../assets/avatar3d/aura.glb'),
+    huella: 'beca685af4b701e1',
+    bytes: 394444,
+    mapeo: {"perfil":"nodos"},
+  },
+  claudio: {
+    fuente: require('../../assets/avatar3d/claudio.glb'),
+    huella: 'b89067afc912a1b4',
+    bytes: 2086684,
+    mapeo: {"perfil":"nodos"},
+  },
+  antonio: {
+    fuente: require('../../assets/avatar3d/antonio.glb'),
+    huella: 'd8947ff81ea0e394',
+    bytes: 1869468,
+    mapeo: {"perfil":"nodos"},
+  },
+};

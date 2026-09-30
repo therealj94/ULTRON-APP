@@ -5,13 +5,13 @@
  * si no hay modelo o falla, es esto lo que se ve.
  *
  * Lo vivo se mueve como en la compañera: respira, parpadea, la boca sigue a la voz (senalVoz), el
- * anillo late cuando le hablan (nivelOido), los zzz y los puntitos. Claudio va con su retrato.
+ * anillo late cuando le hablan (nivelOido), los zzz y los puntitos. Claudio y ANT-ONIO van con su retrato.
  */
 import { useEffect, useMemo } from 'react';
 import { Image, StyleSheet, View } from 'react-native';
 import { Canvas, Picture, Skia } from '@shopify/react-native-skia';
 import Animated, { Easing, cancelAnimation, useAnimatedStyle, useDerivedValue, useReducedMotion, useSharedValue, withRepeat, withSequence, withSpring, withTiming } from 'react-native-reanimated';
-import { FOTOS_CLAUDIO } from '../avatares/ClaudioRetrato';
+import { FOTOS_CLAUDIO, fotosRetrato } from '../avatares/ClaudioRetrato';
 import { FIGURAS, VIVO_QUIETO, estiloDe, fotoClaudio, medidas, mezclarFigura, type Figura } from '../compa/figura';
 import { grabarCompa, grabarVacioCompa } from '../compa/pintarCompa';
 import { nivelOido } from '../compa/canales';
@@ -116,6 +116,7 @@ export function Figura2D({ avatar, estado, ancho, alto }: PropsCuerpo) {
 
   // El retrato de Claudio con el mismo encuadre que en la compañera (allí, 9 px bajados sobre 52).
   const ladoFoto = M.R * 1.86;
+  const fotos = fotosRetrato(avatar) || FOTOS_CLAUDIO;
   const hablaOpac = useAnimatedStyle(() => ({ opacity: voz.value > 0.18 ? 1 : 0 }));
 
   return (
@@ -125,10 +126,10 @@ export function Figura2D({ avatar, estado, ancho, alto }: PropsCuerpo) {
           <Picture picture={cuadro} />
         </Canvas>
         {estilo.retrato ? (
-          <View style={[s.retrato, { width: ladoFoto, height: ladoFoto, borderRadius: ladoFoto / 2, left: M.cx - ladoFoto / 2, top: M.cy - ladoFoto / 2 }]}>
-            <Image source={FOTOS_CLAUDIO[fotoClaudio(exp)]} style={[s.foto, { transform: [{ scale: 1.5 }, { translateY: ladoFoto * 0.172 }] }]} resizeMode="cover" />
+          <View style={[s.retrato, { width: ladoFoto, height: ladoFoto, borderRadius: ladoFoto / 2, left: M.cx - ladoFoto / 2, top: M.cy - ladoFoto / 2, backgroundColor: estilo.cuerpo }]}>
+            <Image source={fotos[fotoClaudio(exp)]} style={[s.foto, { transform: [{ scale: 1.5 }, { translateY: ladoFoto * 0.172 }] }]} resizeMode="cover" />
             {fotoClaudio(exp) === 'base' ? (
-              <Animated.Image source={FOTOS_CLAUDIO.habla[1]} style={[s.foto, StyleSheet.absoluteFill, { transform: [{ scale: 1.5 }, { translateY: ladoFoto * 0.172 }] }, hablaOpac]} resizeMode="cover" />
+              <Animated.Image source={fotos.habla[1]} style={[s.foto, StyleSheet.absoluteFill, { transform: [{ scale: 1.5 }, { translateY: ladoFoto * 0.172 }] }, hablaOpac]} resizeMode="cover" />
             ) : null}
           </View>
         ) : null}

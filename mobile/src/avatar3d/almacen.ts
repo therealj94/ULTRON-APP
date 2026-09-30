@@ -1,12 +1,15 @@
 /**
  * Dónde se recuerda que este teléfono no aguantó el 3D (AsyncStorage, por huella del modelo), para
- * no volver a intentarlo cada vez que se abre un chat. La decisión está en capacidad.ts.
+ * no volver a intentarlo cada vez que se abre un chat, y con qué calidad sí lo aguantó. La decisión
+ * está en capacidad.ts.
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { miga } from '../lib/reporte';
-import { anotarFallo, puede3D, type RegistroCapacidad } from './capacidad';
+import { anotarCalidad, anotarFallo, calidadInicial, puede3D, type RegistroCalidad, type RegistroCapacidad } from './capacidad';
+import type { Calidad } from './tipos';
 
 const CLAVE = 'aura.avatar3d.capacidad.v1';
+const CLAVE_CALIDAD = 'aura.avatar3d.calidad.v1';
 
 let registro: RegistroCapacidad | null = null;
 let cargando: Promise<void> | null = null;
@@ -41,4 +44,36 @@ export function recordarFallo3D(huella: string, motivo: string) {
   miga(`avatar 3D: vuelve a 2D (${String(motivo).slice(0, 80)})`);
   registro = anotarFallo(registro, huella, motivo, Date.now());
   void AsyncStorage.setItem(CLAVE, JSON.stringify(registro)).catch(() => {});
+}
+
+/* ── la calidad ──────────────────────────────────────────────────────────────────────────── */
+
+let calidades: RegistroCalidad | null = null;
+let cargandoCalidad: Promise<void> | null = null;
+
+function cargarCalidad(): Promise<void> {
+  if (!cargandoCalidad) {
+    cargandoCalidad = AsyncStorage.getItem(CLAVE_CALIDAD)
+      .then((t) => {
+        const r = JSON.parse(t || 'null');
+        calidades = r && typeof r === 'object' && !Array.isArray(r) ? (r as RegistroCalidad) : {};
+      })
+      .catch(() => {
+        calidades = {};
+      });
+  }
+  return cargandoCalidad;
+}
+
+/** Con qué calidad arranca este modelo (la que aguantó la última vez). */
+export async function calidadGuardada(huella: string): Promise<Calidad> {
+  await cargarCalidad();
+  return calidadInicial(calidades, huella, Date.now());
+}
+
+/** La escena se quedó bien en esta calidad: la próxima vez arranca ahí. */
+export function recordarCalidad(huella: string, calidad: Calidad) {
+  if (calidades?.[huella]?.calidad === calidad) return;
+  calidades = anotarCalidad(calidades, huella, calidad, Date.now());
+  void AsyncStorage.setItem(CLAVE_CALIDAD, JSON.stringify(calidades)).catch(() => {});
 }

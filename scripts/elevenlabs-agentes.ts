@@ -1,11 +1,14 @@
 #!/usr/bin/env -S npx tsx
 /**
- * Crea (o actualiza) los seis agentes de ElevenLabs de la conversación fluida de AU-RA FP: uno por
- * avatar (Guardián, AU-RA, Claudio) e idioma (español, inglés). Cada agente escucha, detecta el
+ * Crea (o actualiza) los ocho agentes de ElevenLabs de la conversación fluida de AU-RA FP: uno por
+ * avatar (Guardián, AU-RA, Claudio, ANT-ONIO) e idioma (español, inglés). Cada agente escucha, detecta el
  * turno, se deja interrumpir y habla con la voz v4 del avatar; para pensar llama a nuestro cerebro
  * (server/voz-agente.ts, `/api/voz/llm`) como «LLM propio».
  *
- *   ELEVENLABS_API_KEY=… ULTRON_SESION_SECRETO=… npx tsx scripts/elevenlabs-agentes.ts [--url https://aura-fp.onrender.com]
+ *   ELEVENLABS_API_KEY=… ULTRON_SESION_SECRETO=… npx tsx scripts/elevenlabs-agentes.ts [--url https://aura-fp.onrender.com] [--solo antonio]
+ *
+ * `--solo <avatar>` crea o actualiza SOLO los agentes de ese avatar (los demás no se tocan) y, si el
+ * secreto «aura-llm» ya existe, lo usa tal cual en vez de reescribirlo.
  *
  * ULTRON_SESION_SECRETO tiene que ser el MISMO que usa el servidor en Render: de él se deriva la
  * llave que ElevenLabs manda en cada turno (secretoDerivado). La llave se guarda en los secretos de
@@ -21,6 +24,17 @@ const API = 'https://api.elevenlabs.io/v1';
 const key = () => String(process.env.ELEVENLABS_API_KEY || '').trim();
 const iUrl = process.argv.indexOf('--url');
 const BASE = (iUrl > 0 ? process.argv[iUrl + 1] : 'https://aura-fp.onrender.com').replace(/\/+$/, '');
+
+export const AVATARES_AGENTE: AvatarVoz[] = ['ojos', 'aura', 'claudio', 'antonio'];
+
+/** Qué avatares tocar: todos, o solo el de `--solo <avatar>` (uno que no existe es un error, no «todos»). */
+export function avataresPedidos(argv: readonly string[]): AvatarVoz[] {
+  const i = argv.indexOf('--solo');
+  if (i < 0) return AVATARES_AGENTE;
+  const uno = String(argv[i + 1] || '').trim().toLowerCase() as AvatarVoz;
+  if (!AVATARES_AGENTE.includes(uno)) throw new Error(`--solo: avatar desconocido (${AVATARES_AGENTE.join(', ')})`);
+  return [uno];
+}
 
 /** Solo lo que dice QUÉ falló: un código corto que ElevenLabs pone en `detail.status`, si es eso. */
 const CODIGO = /^[a-z0-9_.-]{1,60}$/i;
@@ -51,12 +65,16 @@ async function api(ruta: string, init: RequestInit = {}): Promise<any> {
   return j;
 }
 
-/** El secreto «aura-llm» en ElevenLabs: se crea si falta y se reemplaza si ya estaba. */
-async function secreto(): Promise<string> {
+/**
+ * El secreto «aura-llm» en ElevenLabs: se crea si falta y se reemplaza si ya estaba. Con
+ * `conservar` (el modo --solo), uno que ya existe se usa tal cual: no se toca lo de los demás agentes.
+ */
+async function secreto(conservar = false): Promise<string> {
   const nombre = 'aura-llm';
   const valor = secretoDerivado(ETIQUETA_SECRETO_LLM);
   const lista = await api('/convai/secrets');
   const viejo = (lista.secrets || []).find((s: any) => s.name === nombre);
+  if (viejo && conservar) return viejo.secret_id;
   if (viejo) {
     await api(`/convai/secrets/${viejo.secret_id}`, { method: 'PATCH', body: JSON.stringify({ type: 'update', name: nombre, value: valor }) });
     return viejo.secret_id;
@@ -69,7 +87,11 @@ const PRIMERA: Record<AvatarVoz, Record<Idioma, string>> = {
   ojos: { es: 'Te escucho.', en: 'I’m listening.' },
   aura: { es: 'Aquí estoy. Te escucho.', en: 'I’m here. I’m listening.' },
   claudio: { es: '¡Aquí estoy! Cuéntame.', en: 'I’m here! Tell me.' },
+  antonio: { es: '¡Aquí ANT-ONIO! ¿En qué te echo una mano?', en: 'ANT-ONIO here! What can I help you with?' },
 };
+
+/** Lo que el reconocimiento tiene que oír bien (nombres propios de la app). */
+export const PALABRAS_ASR = ['AU-RA', 'Aura', 'Claudio', 'ANT-ONIO', 'Antonio', 'Orden Global', 'Guardián', 'Genesis ID', 'Veta Wallet'];
 
 /** Lo que no hay que tomar como interrupción: asentir mientras el avatar habla. */
 const ASENTIR: Record<Idioma, string[]> = {
@@ -102,7 +124,7 @@ function config(avatar: AvatarVoz, idioma: Idioma, secretId: string, modeloTts: 
         },
       },
       tts: { model_id: modeloTts, voice_id: VOCES_ELEVEN[avatar][idioma] },
-      asr: { provider: 'scribe_realtime', quality: 'high', keywords: ['AU-RA', 'Aura', 'Claudio', 'Orden Global', 'Guardián', 'Genesis ID', 'Veta Wallet'] },
+      asr: { provider: 'scribe_realtime', quality: 'high', keywords: PALABRAS_ASR },
       turn: {
         turn_model: 'turn_v3',
         turn_eagerness: 'normal',
@@ -124,11 +146,13 @@ async function main() {
     console.error('Faltan ELEVENLABS_API_KEY y ULTRON_SESION_SECRETO en el entorno.');
     process.exit(1);
   }
-  const secretId = await secreto();
-  console.log('secreto aura-llm listo');
+  const avatares = avataresPedidos(process.argv);
+  const solo = avatares.length === 1 && process.argv.includes('--solo');
+  const secretId = await secreto(solo);
+  console.log(solo ? `secreto aura-llm listo (solo ${avatares[0]})` : 'secreto aura-llm listo');
   const existentes: any[] = (await api('/convai/agents?page_size=100')).agents || [];
   const ids: Record<string, Record<string, string>> = {};
-  for (const avatar of ['ojos', 'aura', 'claudio'] as AvatarVoz[]) {
+  for (const avatar of avatares) {
     ids[avatar] = {};
     for (const idioma of ['es', 'en'] as Idioma[]) {
       let hecho: string | null = null;

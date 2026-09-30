@@ -16,14 +16,19 @@ import { fileURLToPath } from 'node:url';
 import { ANIMO_INICIAL, reducir, EXPRESIONES } from '../../compa/animo.ts';
 import { FIGURAS } from '../../compa/figura.ts';
 import { esAccionApp } from '../../compa/acciones.ts';
-import { estadoAvatar, estadoDesdeAnimo, gestoDeEvento, mismoEstado } from '../contrato.ts';
+import { estadoAvatar, estadoDesdeAnimo, estadoDesdeMesa, gestoDeEvento, mismoEstado } from '../contrato.ts';
 import { ESTADO_INICIAL, EXPRESIONES_AVATAR, VISEMAS, GESTOS_AVATAR } from '../tipos.ts';
-import { ARKIT_52, MAPEO_BASE, buscarNombre, claveBase, clipBase, clipGesto, combinarMapeo, nombreVisema, pesosObjetivo, zona2D, zonaDeNodo, zonaPorPosicion } from '../mapeo.ts';
+import { ARKIT_52, BYTES_MAX_NODOS, MAPEO_BASE, PERFIL_NODOS, buscarNombre, claveBase, clipBase, clipGesto, combinarMapeo, nombreVisema, pesosObjetivo, zona2D, zonaDeNodo, zonaPorPosicion } from '../mapeo.ts';
 import { LineaVisemas, componerBoca, visemaDeEspectro, visemaDeLetra, visemasDeTexto, HZ_MIN, HZ_MAX } from '../visemas.ts';
 import { SenalVoz } from '../senalVoz.ts';
 import { ANCHO_PARA_PANEL, disposicionDock, modoEfectivo, normalizarPresencia, siguienteModo } from '../presencia.ts';
-import { FPS_MINIMO, OLVIDO_MS, anotarFallo, cuerpoQueToca, puede3D, veredictoRendimiento } from '../capacidad.ts';
-import { MODELOS_3D } from '../modelo.ts';
+import { FPS_MINIMO, OLVIDO_MS, anotarCalidad, anotarFallo, calidadInicial, cuerpoQueToca, puede3D, veredictoRendimiento } from '../capacidad.ts';
+
+// modelo.ts pide los .glb con `require` (Metro los empaqueta); en Node, un .glb es su ruta.
+createRequire(import.meta.url)('node:module').Module._extensions['.glb'] = (m, archivo) => {
+  m.exports = archivo;
+};
+const { MODELOS_3D } = await import('../modelo.ts');
 
 const AQUI = path.dirname(fileURLToPath(import.meta.url));
 const MOVIL = path.resolve(AQUI, '../../..');
@@ -205,6 +210,70 @@ prueba('mapeo: nombres de otro modelo (Mixamo, mayúsculas, un .mapeo.json) se e
   assert.equal(combinarMapeo(MAPEO_BASE, null), MAPEO_BASE);
 });
 
+/* ── el perfil «nodos» (los avatares de Codex) ────────────────────────────────────────────── */
+
+const CLIPS_CODEX = ['neutral', 'feliz', 'risa', 'sorpresa', 'curioso', 'pensando', 'preocupado', 'triste', 'molesto', 'cansado', 'carino', 'orgullo', 'travieso', 'canto', 'oracion', 'escepticismo', 'alarma', 'firme', 'seco', 'escuchando', 'dormido', 'saludar', 'lentes', 'asentir', 'negar', 'explicar', 'celebrar', 'corazon', 'senalar', 'caminar'];
+const BOCA_CODEX = ['open', 'laugh', 'round', 'wide', 'frown', 'closed'];
+
+prueba('nodos: el perfil traduce el vocabulario de Codex; la cara de cada expresión es su clip', () => {
+  const m = combinarMapeo(MAPEO_BASE, { perfil: 'nodos' });
+  assert.equal(m.rig, 'nodos');
+  assert.equal(MAPEO_BASE.rig, 'humanoide', 'el perfil no ensucia el mapeo base');
+  // Cada expresión de AURA tiene su emoción de Codex, y todas existen en los clips.
+  for (const e of EXPRESIONES_AVATAR) assert.ok(buscarNombre(m.animaciones.expresiones[e], CLIPS_CODEX), e);
+  for (const g of GESTOS_AVATAR) assert.ok(clipGesto(g, m, CLIPS_CODEX), g);
+  assert.equal(clipBase(estado(), m, CLIPS_CODEX), 'neutral');
+  assert.equal(clipBase(estado({ expresion: 'contenta' }), m, CLIPS_CODEX), 'feliz');
+  assert.equal(clipBase(estado({ expresion: 'timida' }), m, CLIPS_CODEX), 'carino');
+  assert.equal(clipBase(estado({ expresion: 'enojada', hablando: true }), m, CLIPS_CODEX), 'molesto', 'hablando enojada: la cara enojada, la boca con la voz');
+  assert.equal(clipBase(estado({ hablando: true }), m, CLIPS_CODEX), 'neutral');
+  assert.equal(clipBase(estado({ escuchando: true }), m, CLIPS_CODEX), 'escuchando');
+  assert.equal(clipBase(estado({ silenciado: true }), m, CLIPS_CODEX), 'dormido');
+  assert.equal(clipBase(estado({ caminando: true, expresion: 'contenta' }), m, CLIPS_CODEX), 'caminar', 'paseando, camina aunque esté contenta');
+  assert.equal(clipBase(estado({ pensando: true }), m, CLIPS_CODEX), 'pensando');
+  // Tocarla: cabeza asiente (le gusta), mejilla se lleva la mano al pecho (tímida), enojo niega.
+  assert.equal(clipGesto('toque_cabeza', m, CLIPS_CODEX), 'asentir');
+  assert.equal(clipGesto('toque_mejilla', m, CLIPS_CODEX), 'corazon');
+  assert.equal(clipGesto('enojo', m, CLIPS_CODEX), 'negar');
+  // El ojo izquierdo del personaje es su lado +1 (mira hacia +Z); AU-RA tiene un solo `gaze`.
+  assert.equal(buscarNombre(m.huesos.ojoIzq, ['head', 'gaze_-1', 'gaze_1']), 'gaze_1');
+  assert.equal(buscarNombre(m.huesos.ojoDer, ['head', 'gaze_-1', 'gaze_1']), 'gaze_-1');
+  assert.equal(buscarNombre(m.huesos.ojoDer, ['head', 'gaze']), null, 'AU-RA: el único ojo no se gira dos veces');
+  // Un humanoide sigue igual: sin clips de cara, la expresión no elige el fondo.
+  assert.equal(clipBase(estado({ expresion: 'contenta' }), MAPEO_BASE, ['idle', 'feliz']), 'idle');
+});
+
+prueba('nodos: la boca de la voz sale de sus seis formas (O/U redonda, E/I ancha, P cerrada), sin ARKit', () => {
+  const m = combinarMapeo(MAPEO_BASE, { perfil: 'nodos' });
+  const hay = soloEstos(BOCA_CODEX);
+  const o = pesosObjetivo(estado({ hablando: true, expresion: 'contenta' }), { nivel: 0.7, visema: 'O', peso: 1 }, m, hay);
+  assert.ok(o.round > 0.8, JSON.stringify(o));
+  assert.equal(Object.keys(o).filter((k) => !BOCA_CODEX.includes(k)).length, 0, 'solo formas que el modelo tiene');
+  assert.ok(pesosObjetivo(estado({ hablando: true }), { nivel: 0.7, visema: 'I', peso: 1 }, m, hay).wide > 0.8);
+  assert.equal(pesosObjetivo(estado({ hablando: true }), { nivel: 0.7, visema: 'PP', peso: 1 }, m, hay).closed, 0.945);
+  assert.ok(pesosObjetivo(estado({ hablando: true }), { nivel: 0.7, visema: 'aa', peso: 1 }, m, hay).open > 0.9);
+  assert.deepEqual(pesosObjetivo(estado({ expresion: 'contenta' }), { nivel: 0, visema: 'sil', peso: 0 }, m, hay), {}, 'callada: la cara es del clip');
+  assert.deepEqual(pesosObjetivo(estado({ silenciado: true }), { nivel: 0.9, visema: 'aa', peso: 1 }, m, hay), {}, 'en silencio no mueve la boca');
+  // Todos los visemas nombran solo formas de Codex.
+  for (const v of VISEMAS) for (const k of Object.keys(PERFIL_NODOS.visemas[v])) assert.ok(BOCA_CODEX.includes(k), `${v}: ${k}`);
+});
+
+prueba('mesa: la cara de la mesa (FaceState + emoción del turno) → el estado del cuerpo 3D', () => {
+  assert.equal(estadoDesdeMesa('IDLE', 'neutral').expresion, 'tranquila');
+  assert.equal(estadoDesdeMesa('IDLE', 'feliz').expresion, 'contenta', 'en reposo, la emoción del turno afina la cara');
+  const habla = estadoDesdeMesa('SPEAKING', 'molesto');
+  assert.equal(habla.hablando, true);
+  assert.equal(habla.expresion, 'enojada');
+  assert.equal(estadoDesdeMesa('LAUGH', 'triste').expresion, 'encantada', 'una cara explícita de la mesa manda sobre la emoción');
+  assert.equal(estadoDesdeMesa('SLEEPING', 'neutral').silenciado, true);
+  assert.equal(estadoDesdeMesa('LISTENING', 'neutral').escuchando, true);
+  assert.equal(estadoDesdeMesa('THINKING', 'neutral').pensando, true);
+  assert.equal(estadoDesdeMesa('RARO', 'raro').expresion, 'tranquila');
+  const mira = estadoDesdeMesa('IDLE', 'neutral', { mirar: { x: 0.4, y: -0.2, activa: true }, gesto: { nombre: 'toque_cabeza', n: 3 } });
+  assert.deepEqual(mira.mirar, { x: 0.4, y: -0.2, activa: true });
+  assert.deepEqual(mira.gesto, { nombre: 'toque_cabeza', n: 3 });
+});
+
 prueba('mapeo: zonas por nombre de nodo, por posición (3D sin colisionadores) y en la figurita 2D', () => {
   assert.equal(zonaDeNodo('zona_mejilla_izq', MAPEO_BASE), 'mejilla');
   assert.equal(zonaDeNodo('Zona_Cabeza', MAPEO_BASE), 'cabeza');
@@ -310,8 +379,10 @@ prueba('señal de voz: el nivel publica la boca; el espectro vale 200 ms; la ali
 
 /* ── la caída al 2D ──────────────────────────────────────────────────────────────────────── */
 
-prueba('2D: un avatar sin modelo registrado (hoy, todos) se dibuja con la figurita, tal cual', () => {
-  for (const avatar of ['ojos', 'aura', 'claudio']) {
+prueba('2D: un avatar sin modelo registrado (el Guardián) se dibuja con la figurita, tal cual; los demás traen el suyo', () => {
+  assert.equal(MODELOS_3D.ojos, undefined, 'el Guardián no tiene cuerpo 3D');
+  for (const avatar of ['aura', 'claudio', 'antonio']) assert.ok(MODELOS_3D[avatar], `${avatar}: modelo registrado`);
+  for (const avatar of ['ojos', 'aura', 'claudio', 'antonio']) {
     if (MODELOS_3D[avatar]) continue;
     assert.equal(cuerpoQueToca({ hayModelo: false, puedeProbar: true, activo: true, listo: false }), '2d', avatar);
   }
@@ -332,6 +403,19 @@ prueba('2D: el 3D se intenta solo si el teléfono no falló con ESE modelo; se o
   const r2 = anotarFallo(r, 'nuevo', 'x'.repeat(500), t + OLVIDO_MS + 5);
   assert.equal(r2.abc, undefined, 'lo viejo se limpia');
   assert.equal(r2.nuevo.motivo.length, 120);
+});
+
+prueba('calidad: arranca en la que aguantó ESE modelo; se olvida en dos semanas; un modelo nuevo arranca en alta', () => {
+  const t = 5_000_000;
+  assert.equal(calidadInicial(null, 'abc', t), 'alta');
+  const r = anotarCalidad(null, 'abc', 'media', t);
+  assert.equal(calidadInicial(r, 'abc', t + 1000), 'media');
+  assert.equal(calidadInicial(r, 'otro', t + 1000), 'alta');
+  assert.equal(calidadInicial(r, 'abc', t + OLVIDO_MS + 1), 'alta');
+  assert.equal(calidadInicial({ abc: { calidad: 'ultra', en: t } }, 'abc', t), 'alta', 'lo raro no vale');
+  const r2 = anotarCalidad(r, 'nuevo', 'baja', t + OLVIDO_MS + 5);
+  assert.equal(r2.abc, undefined, 'lo viejo se limpia');
+  assert.equal(r2.nuevo.calidad, 'baja');
 });
 
 prueba('2D: qué cuerpo se ve en cada momento (y el rendimiento que hace caer)', () => {
@@ -500,7 +584,46 @@ prueba('revisor: con un .mapeo.json, los nombres propios del modelo cuentan', as
   assert.deepEqual(con.errores, []);
 });
 
-prueba('revisor: el registro de la app coincide con assets/avatar3d (hoy vacío: todos en 2D)', async () => {
+prueba('revisor nodos: los tres modelos de Codex cumplen (≤ 3 MB, triángulos, clips y formas de boca del perfil)', async () => {
+  const R = await import('../../../scripts/avatar3d-modelo.mjs');
+  const modelos = R.modelosEnCarpeta();
+  assert.deepEqual(modelos.map((m) => m.avatar), ['aura', 'claudio', 'antonio']);
+  for (const m of modelos) {
+    assert.deepEqual(m.errores, [], `${m.avatar}: ${m.errores.join('; ')}`);
+    assert.equal(m.resumen.rig, 'nodos');
+    assert.ok(m.bytes <= BYTES_MAX_NODOS, `${m.avatar}: ${m.bytes} bytes`);
+    assert.ok(m.resumen.triangulos <= R.LIMITES_NODOS.triangulosMax, `${m.avatar}: ${m.resumen.triangulos} triángulos`);
+    assert.equal(m.resumen.animaciones.length, 30);
+    assert.deepEqual(m.mapeo, { perfil: 'nodos' });
+  }
+});
+
+prueba('revisor nodos: dice qué falta (una forma de boca, un clip, la cabeza) y lo que se pasa (peso, Draco)', async () => {
+  const R = await import('../../../scripts/avatar3d-modelo.mjs');
+  const bueno = () => ({
+    asset: { version: '2.0' },
+    extensionsUsed: ['EXT_meshopt_compression', 'KHR_mesh_quantization'],
+    nodes: [{ name: 'body', children: [1] }, { name: 'head', children: [2] }, { name: 'mouth', mesh: 0 }],
+    meshes: [{ extras: { targetNames: BOCA_CODEX }, primitives: [{ attributes: { POSITION: 0 }, indices: 1, targets: BOCA_CODEX.map(() => ({ POSITION: 0 })) }] }],
+    accessors: [{ count: 900 }, { count: 3000 }, { count: 10, max: [4.7] }],
+    animations: CLIPS_CODEX.map((name) => ({ name, samplers: [{ input: 2 }], channels: [] })),
+  });
+  const mapeo = { perfil: 'nodos' };
+  assert.deepEqual(R.revisarGlb(glbDePrueba(bueno()), mapeo).errores, []);
+  const m = bueno();
+  m.meshes[0].extras.targetNames = BOCA_CODEX.filter((n) => n !== 'round');
+  m.animations = m.animations.filter((a) => a.name !== 'carino');
+  m.nodes[1].name = 'cabeza_rara';
+  m.extensionsUsed.push('KHR_draco_mesh_compression');
+  m.accessors[1].count = 300000;
+  const todo = R.revisarGlb(glbDePrueba(m), mapeo).errores.join('\n');
+  for (const falta of ['round', 'carino', 'cabeza', 'KHR_draco_mesh_compression', '100000 triángulos']) assert.match(todo, new RegExp(falta), falta);
+  const pesado = Buffer.concat([glbDePrueba(bueno()), Buffer.alloc(BYTES_MAX_NODOS)]);
+  pesado.writeUInt32LE(pesado.length, 8);
+  assert.match(R.revisarGlb(pesado, mapeo).errores.join('\n'), /el máximo es 3 MB/);
+});
+
+prueba('revisor: el registro de la app coincide con assets/avatar3d (AU-RA, Claudio y ANT-ONIO; el Guardián en 2D)', async () => {
   const R = await import('../../../scripts/avatar3d-modelo.mjs');
   const modelos = R.modelosEnCarpeta();
   assert.equal(fs.readFileSync(R.REGISTRO, 'utf8'), R.generarRegistro(modelos), 'corre `npx tsx scripts/avatar3d-modelo.mjs registrar`');

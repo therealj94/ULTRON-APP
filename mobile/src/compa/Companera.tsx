@@ -42,7 +42,7 @@ import { miga } from '../lib/reporte';
 import { tr } from '../i18n';
 import { MEDIDA } from '../nucleo/tema';
 import { escuchar, type Pantalla } from '../nucleo/contrato';
-import { FOTOS_CLAUDIO } from '../avatares/ClaudioRetrato';
+import { FOTOS_CLAUDIO, fotosRetrato } from '../avatares/ClaudioRetrato';
 import { useVoz } from './VozProvider';
 import { ANIMO_INICIAL, expresion, puedeCaminar, reducir, type Animo, type Efecto, type EventoAnimo, type Expresion, type Haptica } from './animo';
 import { FIGURAS, VIVO_QUIETO, estiloDe, fotoClaudio, medidas, mezclarFigura, type Figura } from './figura';
@@ -624,8 +624,9 @@ export function Companera() {
     altoGlobo.value = e.nativeEvent.layout.height;
   };
 
-  // Claudio: su retrato en un círculo (la foto va con la expresión; al hablar, la de boca abierta).
+  // Claudio y ANT-ONIO: su retrato en un círculo (la foto va con la expresión; al hablar, la de boca abierta).
   const lado = M.R * 1.86;
+  const fotos = fotosRetrato(avatar) || FOTOS_CLAUDIO;
   const hablaOpac = useAnimatedStyle(() => ({ opacity: vozNivel.value > 0.18 ? 1 : 0 }));
 
   return (
@@ -662,10 +663,10 @@ export function Companera() {
                   <Picture picture={cuadro} />
                 </Canvas>
                 {estilo.retrato ? (
-                  <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2 }]}>
-                    <Image source={FOTOS_CLAUDIO[fotoClaudio(exp)]} style={s.foto} resizeMode="cover" />
+                  <View pointerEvents="none" style={[s.retrato, { width: lado, height: lado, borderRadius: lado / 2, left: M.cx - lado / 2, top: M.cy - lado / 2, backgroundColor: estilo.cuerpo }]}>
+                    <Image source={fotos[fotoClaudio(exp)]} style={s.foto} resizeMode="cover" />
                     {fotoClaudio(exp) === 'base' ? (
-                      <Animated.Image source={FOTOS_CLAUDIO.habla[1]} style={[s.foto, StyleSheet.absoluteFill, hablaOpac]} resizeMode="cover" />
+                      <Animated.Image source={fotos.habla[1]} style={[s.foto, StyleSheet.absoluteFill, hablaOpac]} resizeMode="cover" />
                     ) : null}
                   </View>
                 ) : null}

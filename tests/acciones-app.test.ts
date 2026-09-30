@@ -54,6 +54,7 @@ test('validarAccion: solo las formas del contrato; lo demás es null', () => {
   assert.deepEqual(validarAccion({ tipo: 'tema', valor: 'claro' }), { tipo: 'tema', valor: 'claro' });
   assert.equal(validarAccion({ tipo: 'tema', valor: 'rosa' }), null);
   assert.deepEqual(validarAccion({ tipo: 'avatar', valor: 'claudio' }), { tipo: 'avatar', valor: 'claudio' });
+  assert.deepEqual(validarAccion({ tipo: 'avatar', valor: 'antonio' }), { tipo: 'avatar', valor: 'antonio' });
   assert.equal(validarAccion({ tipo: 'avatar', valor: 'hal' }), null);
   assert.deepEqual(validarAccion({ tipo: 'silencio', valor: true }), { tipo: 'silencio', valor: true });
   assert.equal(validarAccion({ tipo: 'silencio', valor: 'sí' }), null);
@@ -215,6 +216,8 @@ test('el camino rápido por reglas: las órdenes simples y claras, y nada que se
   assert.deepEqual(o('modo claro'), { tipo: 'tema', valor: 'claro' });
   assert.deepEqual(o('dark mode'), { tipo: 'tema', valor: 'oscuro' });
   assert.deepEqual(o('cambia a Claudio'), { tipo: 'avatar', valor: 'claudio' });
+  assert.deepEqual(o('cambia a ANT-ONIO'), { tipo: 'avatar', valor: 'antonio' });
+  assert.deepEqual(o('quiero hablar con antonio'), { tipo: 'avatar', valor: 'antonio' });
   assert.deepEqual(o('pásame con el guardián'.replace('el ', '')), { tipo: 'avatar', valor: 'ojos' });
   assert.deepEqual(o('cállate'), { tipo: 'silencio', valor: true });
   assert.deepEqual(o('ya puedes hablar'), { tipo: 'silencio', valor: false });

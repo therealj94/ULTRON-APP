@@ -1,7 +1,7 @@
 /**
  * «¿Con quién quieres hablar?»: se elige al entrar (después de la clave) y se cambia desde el menú.
  *
- * Tres tarjetas grandes, cada una con los colores de su avatar: el retrato, el nombre, su oficio,
+ * Una tarjeta grande por avatar, cada una con sus colores: el retrato, el nombre, su oficio,
  * qué voz tiene y qué sabe hacer. Arriba, el idioma (español o inglés), que también decide la voz.
  * Tocar una tarjeta la elige: vibra, se ilumina con su color, se dibuja su palomita ✔ y la mesa la
  * presenta con su voz. La elección también queda en el perfil (lib/perfil.ts), así que Ajustes y el
@@ -41,7 +41,7 @@ export function SelectorAvatar({ nombre, saludo, actual, onElegir, onCerrar }: P
     Animated.timing(entrada, { toValue: 1, duration: 420, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
   }, [entrada]);
 
-  const ancho = horizontal ? Math.min(250, (width - 96) / 3) : Math.min(width - 40, 440);
+  const ancho = horizontal ? Math.min(250, (width - 82 - 14 * AVATARES.length) / AVATARES.length) : Math.min(width - 40, 440);
   const alto = horizontal ? Math.min(height - 150, 310) : 156;
 
   return (

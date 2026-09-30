@@ -13,7 +13,7 @@ import Animated, { Easing, useAnimatedStyle, useSharedValue, withDelay, withRepe
 import { tr, useIdioma } from '../i18n';
 import { MEDIDA, useTema } from '../nucleo/tema';
 import { avatarPorId, type AvatarId } from '../avatares/catalogo';
-import { FOTOS_CLAUDIO } from '../avatares/ClaudioRetrato';
+import { fotosRetrato } from '../avatares/ClaudioRetrato';
 import { Aparecer, Aura, Texto, vibrar } from '../ui';
 import { DIAS_POR_MES } from './flujo';
 
@@ -150,8 +150,8 @@ export function VistaAvatar({ id, tam }: { id: AvatarId; tam: number }) {
         <Aura tam={tam} particulas={16} color={a.tema.acento} colorClaro={a.tema.acentoTexto} />
       </View>
       <Animated.View style={[{ width: cara, height: cara, borderRadius: cara / 2, backgroundColor: a.tema.fondo, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: 2, borderColor: a.tema.acento }, aFlota]}>
-        {id === 'claudio' ? (
-          <Animated.Image source={FOTOS_CLAUDIO.base} resizeMode="cover" style={{ width: '100%', height: '100%' }} />
+        {fotosRetrato(id) ? (
+          <Animated.Image source={fotosRetrato(id)!.base} resizeMode="cover" style={{ width: '100%', height: '100%' }} />
         ) : (
           <OjosVivos color={a.tema.acento} lado={cara} />
         )}

@@ -27,7 +27,7 @@ import { ESPERA_LISTO_MS, veredictoRendimiento } from './capacidad';
 import { senalVoz } from './senalVoz';
 import type { ModeloAvatar3D } from './modelo';
 import type { PropsCuerpo } from './contrato';
-import type { AlaEscena, DeLaEscena, InfoModelo, ZonaToque } from './tipos';
+import type { AlaEscena, Calidad, DeLaEscena, InfoModelo, ZonaToque } from './tipos';
 
 /** Bytes por pedazo: múltiplo de 3, así cada pedazo es base64 completo (sin relleno en medio). */
 const PASO = 3 * 65536;
@@ -46,13 +46,17 @@ type Props = PropsCuerpo & {
   /** El modelo cargó y ya se dibujó el primer cuadro. */
   onListo: (info: InfoModelo) => void;
   onFallo: (motivo: string) => void;
+  /** La escena dio los cuadros en esta calidad (se recuerda por modelo). */
+  onCalidad?: (calidad: Calidad) => void;
   /** Tope de resolución (la compañera chiquita no necesita 3×). */
   dprMax?: number;
   reducido?: boolean;
+  /** Con qué calidad arranca (la que aguantó la última vez este modelo en este teléfono). */
+  calidad?: Calidad;
 };
 
 export const Avatar3D = forwardRef<ControlAvatar3D, Props>(function Avatar3D(
-  { modelo, camara, estado, ancho, alto, fpsMax = 60, dprMax = 2, reducido = false, onListo, onFallo },
+  { modelo, camara, estado, ancho, alto, fpsMax = 60, dprMax = 2, reducido = false, calidad = 'alta', onListo, onFallo, onCalidad },
   ref
 ) {
   const web = useRef<WebView>(null);
@@ -61,8 +65,8 @@ export const Avatar3D = forwardRef<ControlAvatar3D, Props>(function Avatar3D(
   const caida = useRef(false);
   const ultimo = useRef({ estado, camara });
   ultimo.current = { estado, camara };
-  const cb = useRef({ onListo, onFallo });
-  cb.current = { onListo, onFallo };
+  const cb = useRef({ onListo, onFallo, onCalidad });
+  cb.current = { onListo, onFallo, onCalidad };
   const zonas = useRef(new Map<number, (z: ZonaToque | null) => void>());
   const nZona = useRef(0);
 
@@ -172,7 +176,7 @@ export const Avatar3D = forwardRef<ControlAvatar3D, Props>(function Avatar3D(
         case 'lista':
           if (lista.current) return;
           lista.current = true;
-          enviar({ tipo: 'config', camara: ultimo.current.camara, fpsMax, dprMax, mapeo: modelo.mapeo, reducido });
+          enviar({ tipo: 'config', camara: ultimo.current.camara, fpsMax, dprMax, mapeo: modelo.mapeo, reducido, calidad });
           void mandarModelo();
           return;
         case 'listo':
@@ -186,13 +190,14 @@ export const Avatar3D = forwardRef<ControlAvatar3D, Props>(function Avatar3D(
           return;
         case 'rendimiento':
           if (veredictoRendimiento(m) === 'caer') fallar(`el teléfono no da los cuadros (${m.fps} fps)`);
+          else if (m.calidad) cb.current.onCalidad?.(m.calidad);
           return;
         case 'fallo':
           fallar(m.motivo || 'la escena 3D falló');
           return;
       }
     },
-    [dprMax, enviar, fallar, fpsMax, mandarModelo, modelo.mapeo, reducido]
+    [calidad, dprMax, enviar, fallar, fpsMax, mandarModelo, modelo.mapeo, reducido]
   );
 
   return (

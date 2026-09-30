@@ -1,6 +1,6 @@
 /**
- * (c) El avatar: Guardián, AU-RA o Claudio. Arriba el elegido, vivo (parpadea, mira, flota dentro
- * de su aura, con sus colores); abajo las tres tarjetas. Tocar una la elige al momento (vibra y
+ * (c) El avatar: Guardián, AU-RA, Claudio o ANT-ONIO. Arriba el elegido, vivo (parpadea, mira, flota
+ * dentro de su aura, con sus colores); abajo una tarjeta por avatar. Tocar una la elige al momento (vibra y
  * cambia la voz); «Oír su voz» lo hace presentarse con la suya.
  */
 import { useState } from 'react';
@@ -94,7 +94,7 @@ export function PasoAvatar({ borrador, cambiar, horizontal }: PropsPaso) {
 
 const s = StyleSheet.create({
   vista: { alignItems: 'center', gap: MEDIDA.espacio.m },
-  fila: { flexDirection: 'row', gap: 10 },
+  fila: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 6 },
   opcion: { alignItems: 'center', gap: 8, paddingVertical: 14, paddingHorizontal: 8, borderRadius: MEDIDA.radio.l },
   mini: { width: 56, height: 56, borderRadius: 28, overflow: 'hidden', borderWidth: 1.5 },
 });

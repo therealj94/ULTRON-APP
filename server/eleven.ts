@@ -15,7 +15,7 @@
  *
  * Voz: «Jorge», hombre mayor, español mexicano neutro, grave y un poco ronco, de narración
  * educativa. Se cambia sin tocar código con ELEVENLABS_VOZ_ELECTRUM (y ELEVENLABS_MODELO para el
- * modelo). Las voces de AU-RA FP (tres avatares, dos idiomas) están más abajo (VOCES_ELEVEN).
+ * modelo). Las voces de AU-RA FP (cuatro avatares, dos idiomas) están más abajo (VOCES_ELEVEN).
  */
 
 import { clave } from '../lib/boveda';
@@ -35,25 +35,28 @@ export function modeloEleven(): string {
 }
 
 /**
- * Las voces de AU-RA FP (29-sep): tres avatares, cada uno con su voz de ElevenLabs en español y en
+ * Las voces de AU-RA FP (29-sep): cuatro avatares, cada uno con su voz de ElevenLabs en español y en
  * inglés, dichas con el modelo v4 (MODELO_ELEVEN). El idioma lo elige la persona al entrar.
  *
  *  - Guardián (los ojos celestes): hombre sereno y preciso, voz de vigilante.
  *  - AU-RA (la dorada): mujer cálida, compañera personal.
  *  - Claudio (el zorro): «CLAUDIO», la voz que José diseñó (latino neutro, juguetón); la de inglés
  *    es el mismo personaje. Retrato o de pie es el mismo Claudio: suena igual.
+ *  - ANT-ONIO (la hormiga de lentes, 30-sep): «Leo» en español y «Tyler» en inglés, las que eligió
+ *    José; enérgico y claro.
  *
  * Todas se cambian sin tocar código con ELEVENLABS_VOZ_<AVATAR>_<IDIOMA> (p. ej.
  * ELEVENLABS_VOZ_AURA_EN). Las de antes (ELEVENLABS_VOZ_AURA, ELEVENLABS_VOZ_CLAUDIO) siguen
  * valiendo para el español.
  */
-export type AvatarVoz = 'ojos' | 'aura' | 'claudio';
+export type AvatarVoz = 'ojos' | 'aura' | 'claudio' | 'antonio';
 export type Idioma = 'es' | 'en';
 
 export const VOCES_ELEVEN: Record<AvatarVoz, Record<Idioma, string>> = {
   ojos: { es: 'jR5VcWrKqhJJTTbtXtU5', en: '1krh7GKGPtz8i429a6kk' },
   aura: { es: 'AoT6sxPBYB0OGpSnIiwc', en: 'NPil3puXYP3J45yudmVD' },
   claudio: { es: '5hNQxGboC72zatTcGoJN', en: 'mm5ADfbOYUswycjGCmWd' },
+  antonio: { es: 'wXojZ3FhzsE0AumH6Oym', en: 'I1ejplf72DWHJzwAiw4n' },
 };
 export const VOZ_CLAUDIO_ELEVEN = VOCES_ELEVEN.claudio.es;
 
@@ -63,6 +66,7 @@ export function normalizarAvatar(v: unknown): AvatarVoz {
   // «claudio-pie» es de la 4.5: el de pie es el mismo Claudio (la app lo pone de pie en vertical).
   if (s === 'claudio' || s === 'claudio-pie') return 'claudio';
   if (s === 'ojos' || s === 'guardian' || s === 'guardián') return 'ojos';
+  if (s === 'antonio' || s === 'ant-onio' || s === 'hormiga') return 'antonio';
   return 'aura';
 }
 
@@ -76,6 +80,7 @@ export const NOMBRE_AVATAR: Record<AvatarVoz, Record<Idioma, string>> = {
   ojos: { es: 'Guardián', en: 'Guardian' },
   aura: { es: 'AU-RA', en: 'AU-RA' },
   claudio: { es: 'Claudio', en: 'Claudio' },
+  antonio: { es: 'ANT-ONIO', en: 'ANT-ONIO' },
 };
 
 /**
@@ -88,6 +93,7 @@ export function lineaAvatar(avatar: AvatarVoz, idioma: Idioma = 'es'): string {
     ojos: 'AVATAR: te ven como el Guardián, dos ojos celestes sobre negro. Te llamas Guardián, no AU-RA. Tu oficio: cuidar el espacio de la persona. Vigilas con la cámara cuando te lo piden, describes lo que ves con precisión, avisas de cambios, explicas los modos de la mesa (guardián, análisis, estrategia, explorador) y das consejos de seguridad. Tono sereno, preciso y breve; nunca alarmista.',
     aura: 'AVATAR: te ven como AU-RA, la de los ojos dorados. Tu oficio: compañera personal. Ayudas con la agenda y los recordatorios, recuerdas lo que la persona te cuenta (su memoria), das ánimo, oras con ella si lo pide y conversas con calidez. Tono cálido, cercano y claro.',
     claudio: 'AVATAR: te ven como Claudio, un zorro de lentes amarillos y suéter negro con la corona de Orden Global. Te llamas Claudio, no AU-RA. Tu oficio: anfitrión de marketing. Das ideas de contenido, escribes textos y publicaciones para redes, eslóganes, guiones cortos de video y campañas; propones con ejemplos listos para usar. Tono curioso, cálido, ingenioso y bromista, sin dejar de ser profesional.',
+    antonio: 'AVATAR: te ven como ANT-ONIO, una hormiga de lentes, cuatro brazos y ropa negra con cian. Te llamas ANT-ONIO, no AU-RA. Tu oficio: aliado inteligente para organizar y resolver: tareas y pendientes, planes paso a paso, recordatorios, resúmenes, trámites, tecnología y cómo usar las apps (Veta Wallet, Genesis ID, PULSE2CHAT). Con cuatro brazos haces varias cosas a la vez: propones un plan corto y lo ejecutas con las acciones de la app. Tono enérgico, claro, positivo y práctico, con humor ligero.',
   };
   const lengua =
     idioma === 'en'

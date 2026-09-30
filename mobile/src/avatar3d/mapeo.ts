@@ -35,7 +35,17 @@ export type HuesoClave = 'cadera' | 'pecho' | 'cuello' | 'cabeza' | 'ojoIzq' | '
 
 export type Pesos = Record<string, number>;
 
+/**
+ * Cómo está armado el modelo por dentro:
+ *  · «humanoide» → el de la especificación: esqueleto VRM con piel, ARKit 52 y visemas `viseme_*`;
+ *  · «nodos»     → los de Codex (AU-RA, Claudio, ANT-ONIO): una jerarquía de nodos articulados y seis
+ *    morph targets de boca, con la cara de cada emoción HORNEADA en su animación (30 clips con la pose
+ *    completa). Ahí la expresión es un clip, no pesos, y los gestos mueven el cuerpo sin tocar la cara.
+ */
+export type Rig = 'humanoide' | 'nodos';
+
 export type Mapeo = {
+  rig: Rig;
   /** Cada cara → pesos de blendshapes (0..1). Lo que el modelo no tenga se ignora. */
   expresiones: Record<ExpresionAvatar, Pesos>;
   /** Cada visema → pesos, si el modelo trae los `viseme_*`. */
@@ -47,7 +57,11 @@ export type Mapeo = {
   /** Blendshapes de la boca que la expresión suelta un poco mientras habla (no pelean con los visemas). */
   bocaDeExpresion: string[];
   /** Nombres posibles de cada animación, en orden de preferencia. */
-  animaciones: { base: Record<BaseAvatar, string[]>; gestos: Record<GestoAvatar, string[]> };
+  /**
+   * Nombres posibles de cada animación, en orden de preferencia. `expresiones`: la cara como clip
+   * (rig «nodos»); si la expresión tiene el suyo, manda sobre el reposo, la escucha y el habla.
+   */
+  animaciones: { base: Record<BaseAvatar, string[]>; gestos: Record<GestoAvatar, string[]>; expresiones: Partial<Record<ExpresionAvatar, string[]>> };
   huesos: Record<HuesoClave, string[]>;
   /** Prefijo del nombre de un nodo colisionador → zona (`zona_mejilla_izq` → mejilla). */
   zonas: Record<string, ZonaToque>;
@@ -56,12 +70,15 @@ export type Mapeo = {
 };
 
 export type MapeoParcial = {
+  /** Un perfil entero de nombres (hoy, «nodos»: los rigs de Codex); lo demás del parcial va encima. */
+  perfil?: 'nodos';
+  rig?: Rig;
   expresiones?: Partial<Record<ExpresionAvatar, Pesos>>;
   visemas?: Partial<Record<Visema, Pesos>>;
   visemasArkit?: Partial<Record<Visema, Pesos>>;
   parpadeo?: string[];
   bocaDeExpresion?: string[];
-  animaciones?: { base?: Partial<Record<BaseAvatar, string[]>>; gestos?: Partial<Record<GestoAvatar, string[]>> };
+  animaciones?: { base?: Partial<Record<BaseAvatar, string[]>>; gestos?: Partial<Record<GestoAvatar, string[]>>; expresiones?: Partial<Record<ExpresionAvatar, string[]>> };
   huesos?: Partial<Record<HuesoClave, string[]>>;
   zonas?: Record<string, ZonaToque>;
   camaras?: Partial<Mapeo['camaras']>;
@@ -73,8 +90,10 @@ function ambos(raiz: string, peso: number): Pesos {
 }
 
 const VISEMAS_LISTA: Visema[] = ['sil', 'PP', 'FF', 'TH', 'DD', 'kk', 'CH', 'SS', 'nn', 'RR', 'aa', 'E', 'I', 'O', 'U'];
+const EXPRESIONES_LISTA: ExpresionAvatar[] = ['tranquila', 'contenta', 'encantada', 'enojada', 'dormida', 'escucha', 'piensa', 'sorprendida', 'triste', 'uy', 'levantada', 'timida'];
 
 export const MAPEO_BASE: Mapeo = {
+  rig: 'humanoide',
   expresiones: {
     tranquila: {},
     contenta: { ...ambos('mouthSmile', 0.6), ...ambos('cheekSquint', 0.3), ...ambos('eyeSquint', 0.18) },
@@ -132,6 +151,7 @@ export const MAPEO_BASE: Mapeo = {
       salir: ['salir', 'exit', 'desaparecer'],
       despertar: ['despertar', 'wake', 'Standing'],
     },
+    expresiones: {},
   },
   huesos: {
     cadera: ['hips', 'Hips', 'mixamorig:Hips', 'J_Bip_C_Hips'],
@@ -149,7 +169,9 @@ export const MAPEO_BASE: Mapeo = {
 /** El mapeo por omisión con los cambios de un modelo encima (cada entrada reemplaza a la suya). */
 export function combinarMapeo(base: Mapeo, p: MapeoParcial | null | undefined): Mapeo {
   if (!p || typeof p !== 'object') return base;
+  if (p.perfil === 'nodos' && base.rig !== 'nodos') base = combinarMapeo(base, PERFIL_NODOS);
   return {
+    rig: p.rig === 'nodos' || p.rig === 'humanoide' ? p.rig : base.rig,
     expresiones: { ...base.expresiones, ...(p.expresiones || {}) } as Mapeo['expresiones'],
     visemas: { ...base.visemas, ...(p.visemas || {}) } as Mapeo['visemas'],
     visemasArkit: { ...base.visemasArkit, ...(p.visemasArkit || {}) } as Mapeo['visemasArkit'],
@@ -158,12 +180,110 @@ export function combinarMapeo(base: Mapeo, p: MapeoParcial | null | undefined): 
     animaciones: {
       base: { ...base.animaciones.base, ...(p.animaciones?.base || {}) } as Mapeo['animaciones']['base'],
       gestos: { ...base.animaciones.gestos, ...(p.animaciones?.gestos || {}) } as Mapeo['animaciones']['gestos'],
+      expresiones: { ...base.animaciones.expresiones, ...(p.animaciones?.expresiones || {}) },
     },
     huesos: { ...base.huesos, ...(p.huesos || {}) } as Mapeo['huesos'],
     zonas: { ...base.zonas, ...(p.zonas || {}) },
     camaras: { ...base.camaras, ...(p.camaras || {}) },
   };
 }
+
+/* ── el perfil «nodos»: el vocabulario de los avatares de Codex traducido al de AURA ─────────── */
+
+/**
+ * Los avatares de Codex (vendor/aura-avatar-suite) traen su propio controlador (src/avatar.js), que
+ * ARMA el personaje en JavaScript y lo anima nodo por nodo. Aquí no se usa: la app carga el .glb
+ * optimizado y la escena lo anima con los 30 clips que ese mismo controlador horneó (las poses
+ * completas de 19 emociones, escuchar, dormir y 9 gestos). Lo que el clip no puede hacer en vivo
+ * (la boca con la voz, la mirada, el gesto encima de la cara) lo hace la escena con estos nombres:
+ *
+ *   · la cara de cada expresión de AURA → su emoción de Codex (tímida → cariño, uy → preocupado…);
+ *   · los visemas → sus seis formas de boca, como las elige su controlador (O/U redonda, E/I ancha,
+ *     P/B/M cerrada, lo demás abierta), mezcladas con la boca de la emoción que la voz suelta un 80 %;
+ *   · los toques y gestos del alma → sus gestos (cabeza: asiente, le gusta; mejilla: la mano al
+ *     pecho, tímida; panza: celebra, risueña; enojo: niega);
+ *   · la mirada → su nodo `head` y los ojos `gaze_±1` (AU-RA tiene uno solo, `gaze`).
+ *
+ * Su lado −1 queda a la derecha del personaje (mira hacia +Z), así que el ojo izquierdo es `gaze_1`.
+ */
+export const PERFIL_NODOS: MapeoParcial = {
+  rig: 'nodos',
+  // La cara la pone el clip: sin pesos de ARKit (ni «rubor»).
+  expresiones: Object.fromEntries(EXPRESIONES_LISTA.map((e) => [e, {}])) as Record<ExpresionAvatar, Pesos>,
+  visemas: {
+    sil: {},
+    PP: { closed: 1 },
+    FF: { closed: 0.45, wide: 0.35 },
+    TH: { open: 0.35, wide: 0.3 },
+    DD: { open: 0.55, wide: 0.15 },
+    kk: { open: 0.6 },
+    CH: { round: 0.55, wide: 0.25 },
+    SS: { wide: 0.75, open: 0.1 },
+    nn: { open: 0.35, closed: 0.2 },
+    RR: { open: 0.45, round: 0.25 },
+    aa: { open: 1 },
+    E: { wide: 0.85, open: 0.25 },
+    I: { wide: 0.9, open: 0.1 },
+    O: { round: 1, open: 0.2 },
+    U: { round: 0.95 },
+  },
+  // Parpadean dentro de cada clip (su controlador lo horneó cada 4,7 s).
+  parpadeo: [],
+  bocaDeExpresion: [],
+  animaciones: {
+    base: {
+      idle: ['neutral'],
+      caminar: ['caminar'],
+      escuchar: ['escuchando'],
+      hablar: ['neutral'],
+      pensar: ['pensando'],
+      dormir: ['dormido'],
+      levantada: ['alarma'],
+    },
+    gestos: {
+      saludar: ['saludar'],
+      senalar: ['senalar'],
+      toque_cabeza: ['asentir'],
+      toque_mejilla: ['corazon'],
+      toque_panza: ['celebrar'],
+      enojo: ['negar'],
+      gusto: ['celebrar'],
+      entrar: ['saludar'],
+      salir: ['saludar'],
+      despertar: ['asentir'],
+    },
+    expresiones: {
+      tranquila: ['neutral'],
+      contenta: ['feliz'],
+      encantada: ['risa'],
+      enojada: ['molesto'],
+      dormida: ['dormido'],
+      escucha: ['escuchando'],
+      piensa: ['pensando'],
+      sorprendida: ['sorpresa'],
+      triste: ['triste'],
+      uy: ['preocupado'],
+      levantada: ['alarma'],
+      timida: ['carino'],
+    },
+  },
+  huesos: {
+    cadera: ['body'],
+    pecho: ['torso'],
+    cuello: [],
+    cabeza: ['head'],
+    ojoIzq: ['gaze_1', 'gaze'],
+    ojoDer: ['gaze_-1'],
+    mandibula: [],
+  },
+};
+
+/**
+ * Lo que puede costar un modelo «nodos» en el teléfono (lo exige el revisor, y la tubería
+ * scripts/avatar3d-assets.mjs simplifica hasta que entra): triángulos y peso del .glb.
+ */
+export const PRESUPUESTO_NODOS = 70_000;
+export const BYTES_MAX_NODOS = 3 * 1024 * 1024;
 
 /* ── estado → blendshapes ────────────────────────────────────────────────────────────────── */
 
@@ -198,7 +318,8 @@ export function pesosObjetivo(e: EstadoAvatar, boca: Boca, m: Mapeo, hay: (nombr
     sumar(suelta, 1);
   } else sumar(cara, 1);
   if (!habla) return out;
-  const conVisemas = hay(nombreVisema('aa'));
+  // Con los visemas propios del modelo (los `viseme_*`, o las formas que nombre su mapeo) se usan esos.
+  const conVisemas = Object.keys(m.visemas.aa || {}).some(hay);
   const tabla = conVisemas ? m.visemas : m.visemasArkit;
   const forma = tabla[boca.visema] || {};
   const peso = limitar01(boca.peso);
@@ -251,9 +372,16 @@ export function buscarNombre(candidatos: readonly string[], disponibles: readonl
   return null;
 }
 
+/** Con estas animaciones de fondo, una expresión con clip propio (rig «nodos») pone la cara entera. */
+const BASES_CON_CARA: readonly BaseAvatar[] = ['idle', 'hablar', 'escuchar'];
+
 /** La animación de fondo que el modelo sí tiene para este estado (con sus respaldos), o null. */
 export function clipBase(e: EstadoAvatar, m: Mapeo, clips: readonly string[]): string | null {
   let k: BaseAvatar | null = claveBase(e);
+  if (BASES_CON_CARA.includes(k) && e.expresion !== 'tranquila') {
+    const n = buscarNombre(m.animaciones.expresiones?.[e.expresion] || [], clips);
+    if (n) return n;
+  }
   while (k) {
     const n = buscarNombre(m.animaciones.base[k], clips);
     if (n) return n;

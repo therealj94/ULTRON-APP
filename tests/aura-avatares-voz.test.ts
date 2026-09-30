@@ -1,21 +1,30 @@
 /**
- * La app de AU-RA tiene tres avatares (Guardián, AU-RA y Claudio) y cada uno suena distinto en
- * español y en inglés (server/eleven.ts). Un avatar o idioma desconocido nunca cambia la voz.
+ * La app de AU-RA tiene cuatro avatares (Guardián, AU-RA, Claudio y ANT-ONIO) y cada uno suena
+ * distinto en español y en inglés (server/eleven.ts). Un avatar o idioma desconocido nunca cambia la
+ * voz, y agregar uno no cambia las de los demás.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { cantar, oracionPorTema, ORACION_DEL_DIA_EN } from '../server/voz';
 import { afinarParaBocaIngles } from '../server/habla';
-import { lineaAvatar, normalizarAvatar, normalizarIdioma, vozEleven, VOCES_ELEVEN, VOZ_CLAUDIO_ELEVEN, VOZ_ELECTRUM_ELEVEN } from '../server/eleven';
+import { lineaAvatar, NOMBRE_AVATAR, normalizarAvatar, normalizarIdioma, vozEleven, VOCES_ELEVEN, VOZ_CLAUDIO_ELEVEN, VOZ_ELECTRUM_ELEVEN } from '../server/eleven';
+import { AGENTES, MODO_DE_AVATAR } from '../server/voz-agente';
+import { AVATARES_AGENTE, PALABRAS_ASR, avataresPedidos } from '../scripts/elevenlabs-agentes';
 
-test('avatar: solo los tres conocidos; «claudio-pie» (4.5) es Claudio; cualquier otra cosa es AU-RA', () => {
+const AVATARES = ['ojos', 'aura', 'claudio', 'antonio'] as const;
+
+test('avatar: solo los cuatro conocidos; «claudio-pie» (4.5) es Claudio; cualquier otra cosa es AU-RA', () => {
   assert.equal(normalizarAvatar('claudio'), 'claudio');
   assert.equal(normalizarAvatar(' CLAUDIO-PIE '), 'claudio');
   assert.equal(normalizarAvatar('ojos'), 'ojos');
   assert.equal(normalizarAvatar('Guardián'), 'ojos');
+  assert.equal(normalizarAvatar('antonio'), 'antonio');
+  assert.equal(normalizarAvatar(' ANT-ONIO '), 'antonio');
+  assert.equal(normalizarAvatar('hormiga'), 'antonio');
   assert.equal(normalizarAvatar(undefined), 'aura');
   assert.equal(normalizarAvatar('electrum'), 'aura');
   assert.equal(normalizarAvatar(['claudio']), 'aura');
+  assert.equal(normalizarAvatar(['antonio']), 'aura');
 });
 
 test('idioma: inglés solo si lo pide; todo lo demás es español', () => {
@@ -28,13 +37,39 @@ test('idioma: inglés solo si lo pide; todo lo demás es español', () => {
   assert.equal(normalizarIdioma(undefined), 'es');
 });
 
-test('voz por avatar e idioma: seis voces distintas; Dr Electrum no cambia', () => {
+test('las voces y los agentes de Guardián, AU-RA y Claudio siguen siendo los mismos (ANT-ONIO no los tocó)', () => {
+  // Si alguien cambia uno de estos ids, esta prueba tiene que fallar: son las voces que eligió José.
+  assert.deepEqual(VOCES_ELEVEN.ojos, { es: 'jR5VcWrKqhJJTTbtXtU5', en: '1krh7GKGPtz8i429a6kk' });
+  assert.deepEqual(VOCES_ELEVEN.aura, { es: 'AoT6sxPBYB0OGpSnIiwc', en: 'NPil3puXYP3J45yudmVD' });
+  assert.deepEqual(VOCES_ELEVEN.claudio, { es: '5hNQxGboC72zatTcGoJN', en: 'mm5ADfbOYUswycjGCmWd' });
+  assert.deepEqual(VOCES_ELEVEN.antonio, { es: 'wXojZ3FhzsE0AumH6Oym', en: 'I1ejplf72DWHJzwAiw4n' });
+  assert.deepEqual(Object.keys(VOCES_ELEVEN), [...AVATARES]);
+  assert.deepEqual(AGENTES.ojos, { es: 'agent_3401m3qbvq59eqcv17ecpxxdp7en', en: 'agent_1801m3qbvrrye0zbpgxawy3cqfqt' });
+  assert.deepEqual(AGENTES.aura, { es: 'agent_6801m3qbvv83fzgvg42eev85m8m5', en: 'agent_3301m3qbvws7ez6rajshn8akxjbs' });
+  assert.deepEqual(AGENTES.claudio, { es: 'agent_3501m3qbvyc5e9b946hm5byv3c7g', en: 'agent_4901m3qbw01me4kt40nqkgy60ykm' });
+  assert.deepEqual(AGENTES.antonio, { es: 'agent_6901m3r708f4e15vgc39yj4g8vw7', en: 'agent_3501m3r70c76e6nrvch0ewjcqkys' });
+  assert.deepEqual(Object.keys(AGENTES), [...AVATARES]);
+  assert.deepEqual(NOMBRE_AVATAR.antonio, { es: 'ANT-ONIO', en: 'ANT-ONIO' });
+  assert.deepEqual(MODO_DE_AVATAR, { ojos: 'GUARDIAN', aura: 'CONVERSACION', claudio: 'CREATIVE', antonio: 'ANALYTICAL' });
+});
+
+test('el script de agentes: los cuatro por omisión; --solo toca uno y rechaza lo desconocido; el ASR oye «ANT-ONIO»', () => {
+  assert.deepEqual(AVATARES_AGENTE, [...AVATARES]);
+  assert.deepEqual(avataresPedidos(['node', 'x']), [...AVATARES]);
+  assert.deepEqual(avataresPedidos(['node', 'x', '--solo', 'antonio']), ['antonio']);
+  assert.deepEqual(avataresPedidos(['node', 'x', '--solo', 'Claudio']), ['claudio']);
+  assert.throws(() => avataresPedidos(['node', 'x', '--solo', 'electrum']), /desconocido/);
+  assert.throws(() => avataresPedidos(['node', 'x', '--solo']), /desconocido/);
+  for (const p of ['ANT-ONIO', 'Antonio', 'AU-RA', 'Claudio']) assert.ok(PALABRAS_ASR.includes(p), p);
+});
+
+test('voz por avatar e idioma: ocho voces distintas; Dr Electrum no cambia', () => {
   const claves = Object.keys(process.env).filter((k) => k.startsWith('ELEVENLABS_VOZ_'));
   const antes = Object.fromEntries(claves.map((k) => [k, process.env[k]]));
   for (const k of claves) delete process.env[k];
   try {
     const todas = new Set<string>();
-    for (const a of ['ojos', 'aura', 'claudio'] as const) {
+    for (const a of AVATARES) {
       for (const i of ['es', 'en'] as const) {
         const v = vozEleven('ultron', a, i);
         assert.equal(v, VOCES_ELEVEN[a][i]);
@@ -42,7 +77,7 @@ test('voz por avatar e idioma: seis voces distintas; Dr Electrum no cambia', () 
         todas.add(String(v));
       }
     }
-    assert.equal(todas.size, 6, 'cada avatar e idioma con su propia voz');
+    assert.equal(todas.size, 8, 'cada avatar e idioma con su propia voz');
     assert.equal(VOZ_CLAUDIO_ELEVEN, '5hNQxGboC72zatTcGoJN');
     assert.equal(vozEleven('ultron', 'aura'), VOCES_ELEVEN.aura.es);
     // El avatar es cosa de la app de AU-RA: al doctor no le cambia la voz.
@@ -67,7 +102,10 @@ test('el cerebro sabe quién está en la mesa, su oficio y en qué idioma contes
   assert.match(lineaAvatar('aura'), /agenda/);
   assert.doesNotMatch(lineaAvatar('aura'), /INGLÉS/);
   assert.match(lineaAvatar('aura', 'en'), /Responde SIEMPRE en inglés/);
-  for (const a of ['ojos', 'aura', 'claudio'] as const) assert.ok(lineaAvatar(a, 'en').length < 900);
+  assert.match(lineaAvatar('antonio'), /Te llamas ANT-ONIO, no AU-RA/);
+  assert.match(lineaAvatar('antonio'), /organizar y resolver/);
+  assert.match(lineaAvatar('antonio', 'en'), /Responde SIEMPRE en inglés/);
+  for (const a of AVATARES) assert.ok(lineaAvatar(a, 'en').length < 900, a);
 });
 
 test('en inglés la boca no pasa cifras a palabras en español', () => {
@@ -82,4 +120,5 @@ test('el repertorio grabado es de AU-RA: Claudio y el Guardián no lo cantan con
   assert.equal(await cantar({ id: 'jesus', avatar: 'claudio' }), null);
   assert.equal(await cantar({ id: 'waymaker', avatar: 'claudio-pie' }), null);
   assert.equal(await cantar({ id: 'waymaker', avatar: 'ojos' }), null);
+  assert.equal(await cantar({ id: 'jesus', avatar: 'antonio' }), null);
 });

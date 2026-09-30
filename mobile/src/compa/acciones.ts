@@ -42,7 +42,7 @@ const temporizador: Temporizador = (f, ms) => {
 
 const PANTALLAS: readonly Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil'];
 const TEMAS = ['oscuro', 'claro', 'sistema'];
-const AVATARES = ['ojos', 'aura', 'claudio'];
+const AVATARES = ['ojos', 'aura', 'claudio', 'antonio'];
 const PRESENCIAS = ['paseo', 'lado', 'completa'];
 const txt = (v: unknown, max = 2000) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
 

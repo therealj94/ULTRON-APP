@@ -157,15 +157,15 @@ export type EstiloCompa = {
   /** El aura dorada de AU-RA alrededor. */
   aura: boolean;
   rubor: string;
-  /** Claudio: su retrato va encima (en un círculo) y no se dibujan ojos ni boca. */
+  /** Claudio y ANT-ONIO: su retrato va encima (en un círculo) y no se dibujan ojos ni boca. */
   retrato: boolean;
 };
 
-const ACENTOS: Record<AvatarId, string> = { ojos: '#5CE1FF', aura: '#D6B56C', claudio: '#FF9A4D' };
+const ACENTOS: Record<AvatarId, string> = { ojos: '#5CE1FF', aura: '#D6B56C', claudio: '#FF9A4D', antonio: '#45C9DE' };
 
 export function estiloDe(id: AvatarId): EstiloCompa {
   const main = ACENTOS[id] || ACENTOS.aura;
-  const cuerpo = id === 'ojos' ? '#061318' : id === 'aura' ? '#1B1C1F' : '#1F1B18';
+  const cuerpo = id === 'ojos' ? '#061318' : id === 'aura' ? '#1B1C1F' : id === 'antonio' ? '#171B1E' : '#1F1B18';
   return {
     main,
     hi: mezclarHex(main, '#FFFFFF', id === 'aura' ? 0.62 : 0.72),
@@ -174,7 +174,7 @@ export function estiloDe(id: AvatarId): EstiloCompa {
     cuerpo,
     aura: id === 'aura',
     rubor: id === 'ojos' ? '#FF7FA8' : '#FF8A7A',
-    retrato: id === 'claudio',
+    retrato: id === 'claudio' || id === 'antonio',
   };
 }
 
@@ -196,7 +196,7 @@ export function rebotePaso(v: VivoCompa, R: number): { alto: number; giro: numbe
   return { alto: Math.abs(s) * R * 0.14 * v.caminando, giro: (s * 5 + v.dir * 3) * v.caminando };
 }
 
-/** Qué foto de Claudio va con cada expresión (reutiliza sus fotos de la mesa). */
+/** Qué foto del retrato (Claudio o ANT-ONIO) va con cada expresión (las mismas de la mesa). */
 export function fotoClaudio(e: Expresion): 'base' | 'risa' | 'sorpresa' | 'pensando' | 'sueno' | 'aparta' {
   switch (e) {
     case 'contenta':

@@ -20,7 +20,7 @@ import path from 'node:path';
 import { s3GetJson, s3Listo, s3PutJson } from './s3';
 
 export type Tema = 'oscuro' | 'claro' | 'sistema';
-export type AvatarPerfil = 'ojos' | 'aura' | 'claudio';
+export type AvatarPerfil = 'ojos' | 'aura' | 'claudio' | 'antonio';
 export type IdiomaPerfil = 'es' | 'en';
 /** Cómo tiene a AURA en el teléfono: caminando chiquita, al lado de los chats o a pantalla completa. */
 export type PresenciaPerfil = 'paseo' | 'lado' | 'completa';
@@ -51,7 +51,7 @@ export type Perfil = {
 export const MAX_APODO = 40;
 export const MAX_CAMPO_ENCUESTA = 300;
 export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'otros'] as const;
-const AVATARES: AvatarPerfil[] = ['ojos', 'aura', 'claudio'];
+const AVATARES: AvatarPerfil[] = ['ojos', 'aura', 'claudio', 'antonio'];
 const TEMAS: Tema[] = ['oscuro', 'claro', 'sistema'];
 const PRESENCIAS: PresenciaPerfil[] = ['paseo', 'lado', 'completa'];
 const DIAS_DEL_MES = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
@@ -93,7 +93,7 @@ export function validarCambios(cuerpo: unknown): { ok: true; cambios: Cambios } 
     c.apodo = apodo;
   }
   if (b.avatar !== undefined) {
-    if (!AVATARES.includes(b.avatar as AvatarPerfil)) return { ok: false, error: 'Ese avatar no existe (ojos, aura o claudio).' };
+    if (!AVATARES.includes(b.avatar as AvatarPerfil)) return { ok: false, error: 'Ese avatar no existe (ojos, aura, claudio o antonio).' };
     c.avatar = b.avatar as AvatarPerfil;
   }
   if (b.tema !== undefined) {
