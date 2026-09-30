@@ -242,3 +242,9 @@ test('con S3 caído y sin copia local, NO se escribe encima: actualizar lanza y 
     _olvidarCachePerfiles();
   }
 });
+
+test('la presentación del avatar (completa o al lado) se valida y se guarda; un valor raro se rechaza', () => {
+  assert.deepEqual(validarCambios({ presentacion: 'lado' }), { ok: true, cambios: { presentacion: 'lado' } });
+  assert.deepEqual(validarCambios({ presentacion: 'completa' }), { ok: true, cambios: { presentacion: 'completa' } });
+  assert.equal(validarCambios({ presentacion: 'flotante' }).ok, false);
+});

@@ -18,6 +18,27 @@
  */
 import crypto from 'node:crypto';
 import { consultarModelo } from './laya';
+import {
+  confirmaPropuesta,
+  dichoDeMano,
+  dichoDePropuesta,
+  dichoNegado,
+  esMano,
+  instruccionManos,
+  manoPorReglas,
+  MAX_LECTURA,
+  niegaPropuesta,
+  puedeMano,
+  RE_LECTURA,
+  validarMano,
+  validarManos,
+  type AccionMano,
+  type Mano,
+  type Propuesta,
+} from './manos-app';
+
+export type { AccionMano, Mano, Propuesta } from './manos-app';
+export { preguntaDePropuesta } from './manos-app';
 
 export type Pantalla = 'mesa' | 'chats' | 'ajustes' | 'perfil';
 export type TemaApp = 'oscuro' | 'claro' | 'sistema';
@@ -32,7 +53,9 @@ export type AccionApp =
   | { tipo: 'redactar'; para: string; texto: string }
   | { tipo: 'enviar'; para?: string }
   | { tipo: 'descartar' }
-  | { tipo: 'silencio'; valor: boolean };
+  | { tipo: 'silencio'; valor: boolean }
+  /** Las manos nuevas (llamar, leer, buscar, idioma, perfil, recordatorio, presentación): lib/manos-app.ts. */
+  | AccionMano;
 
 export type Contacto = { correo: string; nombre: string };
 export type ContextoApp = {
@@ -40,6 +63,8 @@ export type ContextoApp = {
   chatAbierto?: Contacto | null;
   contactos: Contacto[];
   borrador?: string;
+  /** Las manos nuevas que ESTE teléfono sabe hacer. Un APK viejo no la manda: sin manos nuevas. */
+  manos?: Mano[];
 };
 
 const PANTALLAS: Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil'];
@@ -84,8 +109,11 @@ export function validarAccion(x: unknown): AccionApp | null {
       const para = linea(a.para, 254);
       return para ? { tipo: 'enviar', para } : { tipo: 'enviar' };
     }
-    default:
-      return null;
+    default: {
+      // Las manos nuevas, con su forma estricta; un tipo que nadie conoce es null.
+      const m = validarMano(a);
+      return m === undefined ? null : m;
+    }
   }
 }
 
@@ -153,6 +181,8 @@ export function oyentesDe(correo: string): number {
  * cuántos canales llegó.
  */
 export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: string | null } = {}): { evento: EventoAccion; entregada: number } {
+  // Leer y buscar llevan un boleto de un solo uso: con él vuelve la lectura del teléfono (lecturaDe).
+  if (accion.tipo === 'leer' || accion.tipo === 'buscar') accion = { ...accion, boleto: anotarLectura(correo) };
   const evento: EventoAccion = { id: crypto.randomBytes(6).toString('base64url'), accion };
   const aparato = aparatoValido(o.aparato);
   let entregada = 0;
@@ -168,6 +198,10 @@ export function empujarAccion(correo: string, accion: AccionApp, o: { aparato?: 
   // Un borrador queda esperando el «sí» del turno siguiente; enviarlo o borrarlo lo cierra.
   if (accion.tipo === 'redactar') anotarPendiente(correo, { para: accion.para, texto: accion.texto });
   else if (accion.tipo === 'enviar' || accion.tipo === 'descartar') soltarPendiente(correo);
+  // Llamar o recordar ya confirmado: la propuesta se cumplió.
+  else if (accion.tipo === 'llamar' || accion.tipo === 'recordatorio') soltarPropuesta(correo);
+  // «Respóndele» después de leer: a quien se le leyó.
+  if (accion.tipo === 'leer' && accion.de) ultimosLeidos.set(clave(correo), { de: accion.de, t: Date.now() });
   return { evento, entregada };
 }
 
@@ -208,6 +242,8 @@ export function validarContexto(cuerpo: unknown): { ok: true; contexto: Contexto
   } else if (b.chatAbierto === null) ctx.chatAbierto = null;
   const borrador = linea(b.borrador, MAX_TEXTO_BORRADOR);
   if (borrador) ctx.borrador = borrador;
+  const manos = validarManos(b.manos);
+  if (manos?.length) ctx.manos = manos;
   return { ok: true, contexto: ctx };
 }
 
@@ -257,11 +293,15 @@ export function abrirTurnoApp(correo: string): number {
   turnosApp.set(k, n);
   const p = pendientes.get(k);
   if (p && p.turno !== n - 1) pendientes.delete(k);
+  const pr = propuestas.get(k);
+  if (pr && pr.turno !== n - 1) propuestas.delete(k);
   return n;
 }
 
 export function anotarPendiente(correo: string, p: { para: string; texto: string }, ahora = Date.now()) {
   pendientes.set(clave(correo), { para: p.para, texto: p.texto, t: ahora, turno: turnoAppActual(correo) });
+  // Un «sí» tiene UN significado: el borrador nuevo reemplaza a la llamada o al recordatorio que esperaba.
+  propuestas.delete(clave(correo));
 }
 
 /** El borrador de AU-RA que espera (del turno anterior, o recién redactado en este), o null. */
@@ -288,12 +328,101 @@ export function soltarPendiente(correo: string) {
   pendientes.delete(clave(correo));
 }
 
+/* ------------------------------------------------------------------ lo que espera el «sí»: llamar y recordar */
+
+/**
+ * Llamar y poner un recordatorio NUNCA salen en el turno en que se piden: AURA pregunta («¿Llamo a
+ * tu mamá?») y la propuesta espera aquí, en el servidor, el «sí» del turno SIGUIENTE, con las mismas
+ * reglas que el borrador: cualquier otro turno la suelta, tres minutos de tope, y una propuesta nueva
+ * (o un borrador nuevo) reemplaza a la vieja. Lo que se hace al confirmar es LA PROPUESTA (a quién,
+ * a qué hora), no lo que el modelo escriba en ese turno.
+ */
+type PropuestaGuardada = { p: Propuesta; t: number; turno: number };
+const propuestas = new Map<string, PropuestaGuardada>();
+
+export function anotarPropuesta(correo: string, p: Propuesta, ahora = Date.now()) {
+  propuestas.set(clave(correo), { p, t: ahora, turno: turnoAppActual(correo) });
+  pendientes.delete(clave(correo));
+}
+
+/** La propuesta que espera (de este turno o del anterior), o null. */
+export function propuestaDe(correo: string, ahora = Date.now()): Propuesta | null {
+  const v = propuestas.get(clave(correo));
+  if (!v) return null;
+  if (ahora - v.t > PENDIENTE_TTL_MS || v.turno < turnoAppActual(correo) - 1) {
+    propuestas.delete(clave(correo));
+    return null;
+  }
+  return v.p;
+}
+
+/** La que la persona YA OYÓ (de un turno anterior): la única que un «sí» puede cumplir. */
+export function propuestaAnterior(correo: string, ahora = Date.now()): Propuesta | null {
+  const p = propuestaDe(correo, ahora);
+  const v = propuestas.get(clave(correo));
+  return p && v && v.turno < turnoAppActual(correo) ? p : null;
+}
+
+export function soltarPropuesta(correo: string) {
+  propuestas.delete(clave(correo));
+}
+
+/* ------------------------------------------------------------------ las lecturas del teléfono */
+
+/**
+ * Leer y buscar: el teléfono abre los mensajes (el servidor no puede: van cifrados) y dice el
+ * resultado con la voz de AURA. En la conversación fluida eso vuelve como un mensaje
+ * `[[lectura:<boleto>]] <texto>`; el boleto lo inventa empujarAccion, vale UNA vez y unos minutos.
+ */
+export const LECTURA_TTL_MS = 3 * 60_000;
+const lecturas = new Map<string, Map<string, number>>();
+const ultimosLeidos = new Map<string, { de: string; t: number }>();
+
+function anotarLectura(correo: string, ahora = Date.now()): string {
+  const k = clave(correo);
+  let m = lecturas.get(k);
+  if (!m) lecturas.set(k, (m = new Map()));
+  for (const [b, t] of m) if (ahora - t > LECTURA_TTL_MS) m.delete(b);
+  while (m.size >= 4) m.delete(m.keys().next().value as string);
+  const boleto = crypto.randomBytes(12).toString('base64url');
+  m.set(boleto, ahora);
+  return boleto;
+}
+
+/**
+ * ¿Este mensaje de la conversación es la lectura del teléfono? null si no tiene la forma (es un turno
+ * normal). Con la forma: `{ ok: true, texto }` si el boleto es de esta cuenta, vigente y sin usar (y
+ * queda gastado), o `{ ok: false }`. En los dos casos el texto NO va al cerebro: lo que dice un
+ * mensaje recibido no le da órdenes a nadie; se dice tal cual (sin la marca de acción) o no se dice.
+ */
+export function lecturaDe(correo: string, mensaje: string, ahora = Date.now()): { ok: true; texto: string } | { ok: false } | null {
+  const m = RE_LECTURA.exec(String(mensaje || ''));
+  if (!m) return null;
+  const k = clave(correo);
+  const t = lecturas.get(k)?.get(m[1]);
+  if (t === undefined) return { ok: false };
+  lecturas.get(k)!.delete(m[1]);
+  if (ahora - t > LECTURA_TTL_MS) return { ok: false };
+  const texto = neutralizarMarca(linea(m[2], MAX_LECTURA));
+  return texto ? { ok: true, texto } : { ok: false };
+}
+
+/** A quién se le leyó de último (para «respóndele»), si fue hace poco. */
+export function ultimoLeidoDe(correo: string, ahora = Date.now()): string | null {
+  const v = ultimosLeidos.get(clave(correo));
+  if (!v || ahora - v.t > CONTEXTO_TTL_MS) return null;
+  return v.de;
+}
+
 /** Solo pruebas. */
 export function _reiniciarAccionesApp() {
   canales.clear();
   contextos.clear();
   pendientes.clear();
   turnosApp.clear();
+  propuestas.clear();
+  lecturas.clear();
+  ultimosLeidos.clear();
 }
 
 /* ------------------------------------------------------------------ a quién se refiere */
@@ -427,7 +556,10 @@ function esOrdenDeRedactar(q: string): boolean {
  * Las reglas del prompt para usar la app, con lo que el teléfono contó de dónde está la persona.
  * Solo se pegan si hay un teléfono escuchando o un contexto reciente: en Telegram no hay app.
  */
-export function instruccionAcciones(ctx: ContextoApp | null, o: { idioma?: 'es' | 'en'; pendiente?: { para: string; texto: string } | null } = {}): string {
+export function instruccionAcciones(
+  ctx: ContextoApp | null,
+  o: { idioma?: 'es' | 'en'; pendiente?: { para: string; texto: string } | null; propuesta?: Propuesta | null; ultimoLeido?: string | null; ahora?: number } = {}
+): string {
   const lineas = [
     'APP (puedes manejar la app de la persona): para hacer algo en su teléfono, escribe al final de tu respuesta UNA línea sola por acción, así:',
     'ACCION_APP: {"tipo":"atras"}',
@@ -448,12 +580,19 @@ export function instruccionAcciones(ctx: ContextoApp | null, o: { idioma?: 'es' 
     lineas.push('CONTACTOS: el teléfono no mandó la lista todavía. Si te piden escribirle a alguien, pregunta a quién o pide que abra los chats.');
   }
   if (o.pendiente) lineas.push(`BORRADOR QUE ESPERA SU «SÍ»: para ${o.pendiente.para}: «${o.pendiente.texto.slice(0, 300)}».`);
+  // Las manos nuevas, solo las que este teléfono sabe hacer (un APK viejo no ve ninguna).
+  const leido = o.ultimoLeido ? ctx?.contactos.find((c) => c.correo === o.ultimoLeido)?.nombre || o.ultimoLeido : null;
+  lineas.push(...instruccionManos(ctx, { propuesta: o.propuesta, ultimoLeido: leido, ahora: o.ahora }));
   return lineas.join('\n');
 }
 
 /* ------------------------------------------------------------------ el camino rápido */
 
-export type OrdenRapida = { accion: AccionApp | null; decir: string; via: 'reglas' | 'laya' };
+/**
+ * Lo que decide el camino rápido: una acción para empujar, o una PROPUESTA que queda esperando el
+ * «sí» (llamar, recordar), o soltar la que esperaba («no, mejor no»). Siempre con lo que se dice.
+ */
+export type OrdenRapida = { accion: AccionApp | null; decir: string; via: 'reglas' | 'laya'; propuesta?: Propuesta; soltarPropuesta?: boolean };
 
 /** Sin acentos, sin signos, sin el «AURA,» del principio ni el «por favor» del final. */
 function frase(texto: string): string {
@@ -502,7 +641,7 @@ export function dichoDeAcciones(acciones: AccionApp[], idioma?: 'es' | 'en'): st
     case 'abrir_chat':
       return en ? 'Opening the chat.' : 'Abro el chat.';
     default:
-      return d.atras;
+      return esMano(a.tipo) ? dichoDeMano(a as AccionMano, en ? 'en' : 'es') : d.atras;
   }
 }
 
@@ -512,10 +651,35 @@ export function dichoDeAcciones(acciones: AccionApp[], idioma?: 'es' | 'en'): st
  */
 export function ordenPorReglas(
   texto: string,
-  o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; pendiente?: { para: string; texto: string } | null } = {}
+  o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; pendiente?: { para: string; texto: string } | null; propuesta?: Propuesta | null; ahora?: number } = {}
 ): OrdenRapida | null {
   const q = frase(texto);
-  if (!q || q.split(' ').length > 8) return null;
+  if (!q) return null;
+  const idioma = o.idioma === 'en' ? 'en' : 'es';
+  const ahora = o.ahora ?? Date.now();
+  // La propuesta que espera (llamar, recordar), de un turno anterior: «sí» / «llámale» la cumple,
+  // «no» la suelta. Otra frase cualquiera sigue su camino (y el turno siguiente la soltará).
+  if (o.propuesta) {
+    const p = o.propuesta;
+    if (confirmaPropuesta(p.tipo, texto)) {
+      if (p.tipo === 'recordatorio' && p.cuando < ahora + 15_000) {
+        return { accion: null, decir: idioma === 'en' ? 'That time already passed. Tell me another one.' : 'Esa hora ya pasó. Dime otra.', via: 'reglas', soltarPropuesta: true };
+      }
+      const accion: AccionApp = p.tipo === 'llamar' ? { tipo: 'llamar', con: p.con, video: p.video } : { tipo: 'recordatorio', texto: p.texto, cuando: p.cuando };
+      return { accion, decir: dichoDePropuesta(p, idioma, ahora), via: 'reglas' };
+    }
+    if (niegaPropuesta(texto)) return { accion: null, decir: dichoNegado(p, idioma), via: 'reglas', soltarPropuesta: true };
+  }
+  const r = q.split(' ').length <= 8 ? reglasDeSiempre(q, o) : null;
+  if (r) return r;
+  // Las manos nuevas que este teléfono sabe hacer.
+  const m = manoPorReglas(texto, { idioma, contexto: o.contexto, resolver: resolverContacto, ahora });
+  if (!m) return null;
+  return m.tipo === 'propuesta' ? { accion: null, decir: m.decir, via: 'reglas', propuesta: m.propuesta } : { accion: m.accion, decir: m.decir, via: 'reglas' };
+}
+
+/** Las órdenes simples de siempre (borrador, atrás, abrir, tema, avatar, silencio), sobre la frase ya limpia. */
+function reglasDeSiempre(q: string, o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; pendiente?: { para: string; texto: string } | null }): OrdenRapida | null {
   const d = DICHOS[o.idioma === 'en' ? 'en' : 'es'];
   const hecho = (accion: AccionApp, decir: string): OrdenRapida => ({ accion, decir, via: 'reglas' });
 
@@ -605,7 +769,14 @@ export function pareceOrden(texto: string): boolean {
  */
 export async function ordenRapida(
   texto: string,
-  o: { idioma?: 'es' | 'en'; contexto?: ContextoApp | null; pendiente?: { para: string; texto: string } | null; esperaLayaMs?: number; esCharla?: (t: string) => boolean } = {}
+  o: {
+    idioma?: 'es' | 'en';
+    contexto?: ContextoApp | null;
+    pendiente?: { para: string; texto: string } | null;
+    propuesta?: Propuesta | null;
+    esperaLayaMs?: number;
+    esCharla?: (t: string) => boolean;
+  } = {}
 ): Promise<OrdenRapida | null> {
   const r = ordenPorReglas(texto, o);
   if (r) return r;
@@ -629,16 +800,66 @@ export async function ordenRapida(
  * Y va siempre al destinatario de ese borrador (`para = pendiente.para`), diga lo que diga el modelo.
  * Enviar por cuenta propia no es de AU-RA.
  */
-export function prepararAcciones(acciones: AccionApp[], o: { mensaje: string; contexto?: ContextoApp | null; pendiente?: { para: string; texto: string } | null }): AccionApp[] {
+export function prepararAcciones(
+  acciones: AccionApp[],
+  o: {
+    mensaje: string;
+    contexto?: ContextoApp | null;
+    pendiente?: { para: string; texto: string } | null;
+    /** La propuesta (llamar, recordar) de un turno ANTERIOR: la única que este mensaje puede confirmar. */
+    propuesta?: Propuesta | null;
+    /** Una llamada o un recordatorio pedido en ESTE turno no se hace: se propone (espera el «sí»). */
+    alProponer?: (p: Propuesta) => void;
+    ahora?: number;
+  }
+): AccionApp[] {
   const out: AccionApp[] = [];
   const contactos = o.contexto?.contactos || [];
+  const ahora = o.ahora ?? Date.now();
   const aCorreo = (nombre: string) => {
     const r = resolverContacto(nombre, contactos);
     return r.tipo === 'uno' ? r.contacto.correo : nombre;
   };
   const conRedactar = acciones.some((a) => a.tipo === 'redactar');
   let enviado = false;
+  let propuesto = false;
+  let cumplida = false;
+  const proponer = (p: Propuesta) => {
+    if (propuesto || conRedactar) return;
+    propuesto = true;
+    o.alProponer?.(p);
+  };
   for (const a of acciones) {
+    // Una mano que este teléfono no sabe hacer (APK viejo) no sale: no haría nada y AURA diría «listo».
+    if (esMano(a.tipo) && !puedeMano(o.contexto, a.tipo)) continue;
+    if (a.tipo === 'llamar') {
+      const r = resolverContacto(a.con, contactos);
+      if (r.tipo !== 'uno') continue; // el cerebro debió preguntar a quién
+      const p = o.propuesta;
+      // Confirmar es cumplir LA PROPUESTA (a quién y si es video), nunca lo que el modelo escriba.
+      if (!cumplida && p?.tipo === 'llamar' && p.con === r.contacto.correo && !conRedactar && confirmaPropuesta('llamar', o.mensaje)) {
+        cumplida = true;
+        out.push({ tipo: 'llamar', con: p.con, video: p.video });
+      } else proponer({ tipo: 'llamar', con: r.contacto.correo, nombre: r.contacto.nombre, video: a.video });
+      continue;
+    }
+    if (a.tipo === 'recordatorio') {
+      const p = o.propuesta;
+      if (!cumplida && p?.tipo === 'recordatorio' && !conRedactar && p.cuando >= ahora + 15_000 && confirmaPropuesta('recordatorio', o.mensaje)) {
+        cumplida = true;
+        out.push({ tipo: 'recordatorio', texto: p.texto, cuando: p.cuando });
+      } else if (a.cuando >= ahora + 15_000) proponer({ tipo: 'recordatorio', texto: a.texto, cuando: a.cuando });
+      continue;
+    }
+    if (a.tipo === 'leer') {
+      // El boleto lo pone empujarAccion; lo que traiga de afuera no cuenta.
+      out.push(a.de ? { tipo: 'leer', de: aCorreo(a.de) } : { tipo: 'leer' });
+      continue;
+    }
+    if (a.tipo === 'buscar') {
+      out.push({ tipo: 'buscar', q: a.q });
+      continue;
+    }
     if (a.tipo === 'enviar') {
       if (enviado || !o.pendiente || conRedactar || !confirmaEnvio(o.mensaje)) continue;
       enviado = true;

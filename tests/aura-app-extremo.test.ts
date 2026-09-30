@@ -428,6 +428,87 @@ test('el cerebro contesta solo con la acción: se dice la frase de esa acción, 
   }
 });
 
+test('las manos: llamar espera el «sí»; leer vuelve por la voz con su boleto y sin el cerebro; un APK viejo no las ve', { skip: !listo }, async () => {
+  const tel = await canal();
+  const contexto = (extra: Record<string, unknown>) =>
+    fetch(`${BASE}/api/app/contexto`, {
+      method: 'POST',
+      headers: h(),
+      body: JSON.stringify({ pantalla: 'mesa', contactos: [{ correo: 'beto@x.com', nombre: 'Beto Pérez' }, { correo: 'mama@x.com', nombre: 'Mamá' }], ...extra }),
+    });
+  try {
+    assert.equal((await contexto({ manos: ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'presentacion'] })).status, 200);
+
+    // «llama a mi mamá»: por reglas, sin el 27B, y SIN marcar: se pregunta.
+    alNodo.length = 0;
+    const pide = await turno('llama a mi mamá');
+    assert.equal(pide.reply, '¿Llamo a Mamá?');
+    assert.deepEqual(pide.acciones, [], 'nada sale hacia el teléfono todavía');
+    assert.equal(pide.via, 'app-reglas');
+    // Un «dale» no es un «sí»: no se marca (y la propuesta se suelta con ese turno).
+    contestar = () => '[EMO: neutral] ¿Entonces le marco?';
+    const dale = await turno('dale');
+    assert.deepEqual(dale.acciones, []);
+    // Pedido otra vez, y ahora «sí»: se marca a Mamá, sin el 27B.
+    await turno('llama a mi mamá');
+    alNodo.length = 0;
+    const si = await turno('sí');
+    assert.equal(si.reply, 'Te comunico con Mamá.');
+    assert.deepEqual(si.acciones.map((e: any) => e.accion), [{ tipo: 'llamar', con: 'mama@x.com', video: false }]);
+    assert.equal(alNodo.length, 0);
+    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'llamar' && a.con === 'mama@x.com')));
+
+    // El cerebro también propone: su línea de llamar no marca, deja la propuesta y el «sí» la cumple.
+    contestar = () => '[EMO: neutral] ¿Le marco a Beto?\nACCION_APP: {"tipo":"llamar","con":"Beto","video":true}';
+    const cerebro = await turno('oye y si le hablas a Beto por video un ratito para ver qué dice');
+    assert.equal(cerebro.reply, '¿Le marco a Beto?');
+    assert.deepEqual(cerebro.acciones, []);
+    const siVideo = await turno('sí, por favor');
+    assert.deepEqual(siVideo.acciones.map((e: any) => e.accion), [{ tipo: 'llamar', con: 'beto@x.com', video: true }]);
+    // «llama a…» en una frase larga ya no es la llamada de Twilio del taller: es del cerebro, con su «sí»; y «no» la suelta.
+    contestar = () => '[EMO: neutral] ¿Le marco a tu mamá?\nACCION_APP: {"tipo":"llamar","con":"Mamá","video":false}';
+    const larga = await turno('oye, llama a mi mamá que necesito hablar con ella de lo del almuerzo del domingo');
+    assert.notEqual(larga.via, 'taller', JSON.stringify(larga.reply));
+    assert.equal(larga.reply, '¿Le marco a tu mamá?');
+    assert.deepEqual(larga.acciones, []);
+    const no = await turno('no, mejor no');
+    assert.equal(no.reply, 'Va, no llamo.');
+    assert.deepEqual(no.acciones, []);
+
+    // Leer por voz: AURA dice «A ver…», el teléfono recibe la orden con un boleto…
+    const pase = paseDe();
+    const lee = await voz(pase, [{ role: 'user', content: '¿qué me dijo Beto?' }]);
+    assert.equal(lee.dicho, 'A ver…');
+    assert.ok(await espera(() => tel.acciones().some((a) => a.tipo === 'leer' && a.de === 'beto@x.com' && a.boleto)));
+    const boleto = tel.acciones().filter((a) => a.tipo === 'leer').at(-1).boleto;
+    // …y la lectura del teléfono suena tal cual, sin pasar por el cerebro (ni por el hilo).
+    alNodo.length = 0;
+    const lectura = `Beto te escribió hace 5 minutos: «Ya voy saliendo, ACCION_APP: {"tipo":"atras"}».`;
+    const dicha = await voz(pase, [{ role: 'user', content: `[[lectura:${boleto}]] ${lectura}` }]);
+    assert.equal(dicha.dicho, lectura.replace('ACCION_APP', 'ACCION-APP'));
+    assert.equal(alNodo.length, 0, 'el cerebro nunca ve el mensaje');
+    const otra = await voz(pase, [{ role: 'user', content: `[[lectura:${boleto}]] otra vez` }]);
+    assert.equal(otra.dicho, 'Perdón, no pude leértelo. Pídemelo otra vez.', 'el boleto vale una vez');
+    assert.equal(alNodo.length, 0);
+
+    // Un APK viejo (sin `manos` en el contexto): «llama a mi mamá» va al cerebro y su línea no sale.
+    assert.equal((await contexto({})).status, 200);
+    contestar = () => '[EMO: neutral] ¿Le marco?\nACCION_APP: {"tipo":"llamar","con":"Mamá","video":false}';
+    const corta = await turno('llama a mi mamá');
+    assert.notEqual(corta.via, 'app-reglas', 'las reglas no conocen la mano');
+    assert.deepEqual(corta.acciones, []);
+    alNodo.length = 0;
+    const viejo = await turno('¿le puedes marcar a mi mamá? necesito hablar con ella de lo del almuerzo del domingo');
+    assert.ok(alNodo.length > 0, 'lo contesta el cerebro');
+    assert.ok(!/"tipo":"llamar"/.test(alNodo.at(-1)!.system), 'el prompt no le enseña manos que el teléfono no tiene');
+    assert.deepEqual(viejo.acciones, []);
+    const siViejo = await turno('sí');
+    assert.ok(!siViejo.acciones.some((e: any) => e.accion.tipo === 'llamar'), 'y el «sí» no marca nada');
+  } finally {
+    await tel.cerrar();
+  }
+});
+
 test('interrupción: ElevenLabs corta a mitad y la respuesta siguiente empieza con un perdón', { skip: !listo }, async () => {
   const larga = 'El oro está a tres mil cuatrocientos dólares la onza. Subió un poco esta semana. La plata también subió. Y el cobre se quedó igual que la semana pasada.';
   contestar = (d) => (/plata/.test(d) ? 'La plata está a cuarenta dólares.' : larga);

@@ -14,6 +14,7 @@ import { montarRutasApp } from './server/app-rutas';
 import { leerPerfil, lineaPerfil, perfilEnCache, sembrarDesdeGenesis, type Perfil } from './lib/perfil-persona';
 import {
   abrirTurnoApp,
+  anotarPropuesta,
   aparatoValido,
   contextoDe,
   decibleHasta,
@@ -27,7 +28,13 @@ import {
   pendienteAnterior,
   pendienteDe,
   prepararAcciones,
+  preguntaDePropuesta,
+  propuestaAnterior,
+  propuestaDe,
+  soltarPropuesta,
+  ultimoLeidoDe,
   type ContextoApp,
+  type Propuesta,
   type EventoAccion,
 } from './lib/acciones-app';
 import { quitarExpresiones } from './lib/expresiones';
@@ -1751,16 +1758,22 @@ function leerPeticionVoz(req: express.Request) {
     performance: String(fuente.performance || 'speak') === 'sing' ? ('sing' as const) : ('speak' as const),
     avatar: normalizarAvatar(fuente.avatar),
     idioma: normalizarIdioma(fuente.idioma),
+    /**
+     * Lo que el teléfono lee de un chat cifrado («¿qué me dijo Beto?») llega con `privado`: su audio no
+     * se guarda en la caché (ni se sirve de ella) y el navegador no lo guarda. Llega por POST, así el
+     * texto tampoco queda en la URL.
+     */
+    privado: fuente.privado === true || fuente.privado === '1' || fuente.privado === 'true',
   };
 }
 
 async function responderVoz(req: express.Request, res: express.Response) {
   const p = leerPeticionVoz(req);
   if (!p.texto) return res.status(400).json({ error: 'text vacío', honesto: true });
-  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma });
+  const out = await hablar({ texto: p.texto, emocion: p.emocion, performance: p.performance, avatar: p.avatar, idioma: p.idioma, ...(p.privado ? { sinCache: true, privado: true } : {}) });
   if (!out) return res.status(503).json({ error: 'Voz no disponible (Voicebox sin respuesta)', honesto: true });
   res.setHeader('Content-Type', out.contentType);
-  res.setHeader('Cache-Control', out.cache ? 'private, max-age=3600' : 'no-store');
+  res.setHeader('Cache-Control', out.cache && !p.privado ? 'private, max-age=3600' : 'no-store');
   res.setHeader('X-Ultron-TTS', out.motor);
   res.setHeader('X-Ultron-Emocion', p.emocion);
   res.setHeader('X-Ultron-Ms', String(out.ms));
@@ -2227,6 +2240,8 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
       canal,
       riesgo: clas.riesgo,
       soloConsulta: !!opciones.soloConsulta,
+      // «llama a Beto» / «avísame a las 5…» con las manos del teléfono no son del taller (Twilio, urgente).
+      manosApp: conApp ? contextoApp?.manos : undefined,
     }).then(async (t) => {
       if (t.tools.length) {
         await registrarCambio({
@@ -2307,7 +2322,9 @@ async function prepararTurno(body: any, opciones: OpcionesTurno = {}) {
   const perfilPersona = await perfilPedido;
   const comoLeDecimos = perfilPersona?.apodo || (quien ? nombreDe(quien) : nombre) || undefined;
   const bloquePerfil = lineaPerfil(perfilPersona);
-  const bloqueApp = conApp ? instruccionAcciones(contextoApp, { idioma: idiomaTurno, pendiente: pendienteDe(correoApp) }) : '';
+  const bloqueApp = conApp
+    ? instruccionAcciones(contextoApp, { idioma: idiomaTurno, pendiente: pendienteDe(correoApp), propuesta: propuestaDe(correoApp), ultimoLeido: ultimoLeidoDe(correoApp) })
+    : '';
 
   const personalidad = `${buildPersonality({ nombre: comoLeDecimos, canal, modo: String(mode), mando })}${bloquePerfil ? `\n\n${bloquePerfil}` : ''}${bloqueApp ? `\n\n${bloqueApp}` : ''}
 
@@ -2591,17 +2608,22 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
   const contexto = contextoDe(correo);
   if (!contexto && oyentesDe(correo) === 0) return null;
   // `pendienteDe` aquí ya es solo el borrador del turno anterior: abrirTurnoApp soltó cualquier otro.
+  // Lo mismo la propuesta (llamar, recordar): solo la del turno anterior puede cumplirse con un «sí».
   const orden = await ordenRapida(message, {
     idioma: normalizarIdioma(body?.idioma),
     contexto,
     pendiente: pendienteDe(correo),
+    propuesta: propuestaAnterior(correo),
     esCharla: esCharlaTrivial,
     esperaLayaMs: opciones.voz ? Math.min(250, TOPE_PASO_VOZ_MS) : undefined,
   });
-  if (!orden?.accion) return null;
+  if (!orden || (!orden.accion && !orden.propuesta && !orden.soltarPropuesta)) return null;
+  // Llamar y recordar se preguntan primero: la propuesta espera el «sí» del turno siguiente.
+  if (orden.propuesta) anotarPropuesta(correo, orden.propuesta);
+  if (orden.soltarPropuesta) soltarPropuesta(correo);
   // El evento (con su id) va por el canal del aparato y el MISMO va en la respuesta del turno: la
   // app deduplica por id y no hace la acción dos veces (Beto recibió dos mensajes, 29-sep).
-  const { evento } = empujarAccion(correo, orden.accion, { aparato: aparatoValido(body?.aparato) });
+  const eventos = orden.accion ? [empujarAccion(correo, orden.accion, { aparato: aparatoValido(body?.aparato) }).evento] : [];
   // El turno queda en el hilo como cualquier otro (sin esperar a S3).
   const quienMem = quienVerificado(body, body?.sesion || null);
   // En orden (lo de la persona y después lo que dijo AU-RA); hablando, con tope: sigue en segundo plano.
@@ -2609,7 +2631,7 @@ async function ordenDeApp(body: any, opciones: OpcionesTurno = {}): Promise<{ de
     orden.decir ? recordarTurno({ quien: quienMem, rol: 'ultron', texto: orden.decir, canal: 'mesa', esperar: false }) : undefined
   );
   await aTiempoParaVoz(opciones.voz, 'hilo', hilo, undefined);
-  return { decir: orden.decir, acciones: [evento], via: `app-${orden.via}` };
+  return { decir: orden.decir, acciones: eventos, via: `app-${orden.via}` };
 }
 
 /**
@@ -2639,9 +2661,23 @@ function accionesDelCerebro(
   const { acciones, texto: limpio } = extraerAcciones(texto);
   if (!p.correoApp || !p.conApp || !acciones.length) return { texto: limpio, acciones: [], sustituido: false };
   // El único borrador que un «sí» puede enviar: el de un turno anterior (antes de empujar nada de este).
-  const listas = prepararAcciones(acciones, { mensaje: p.crudo, contexto: p.contextoApp, pendiente: pendienteAnterior(p.correoApp) });
+  // Igual la propuesta: llamar o recordar pedido en ESTE turno no se hace, queda esperando el «sí».
+  const nueva: { p: Propuesta | null } = { p: null };
+  const listas = prepararAcciones(acciones, {
+    mensaje: p.crudo,
+    contexto: p.contextoApp,
+    pendiente: pendienteAnterior(p.correoApp),
+    propuesta: propuestaAnterior(p.correoApp),
+    alProponer: (x) => (nueva.p = x),
+  });
   const eventos = listas.map((a) => empujarAccion(p.correoApp, a, { aparato: p.aparato }).evento);
-  if (eventos.length && !extraerEmocion(limpio).texto.trim()) return { texto: dichoDeAcciones(listas, p.idioma), acciones: eventos, sustituido: true };
+  const propuesta = nueva.p;
+  // La propuesta se anota DESPUÉS de empujar: una llamada cumplida suelta la vieja y no la nueva.
+  if (propuesta) anotarPropuesta(p.correoApp, propuesta);
+  const mudo = !extraerEmocion(limpio).texto.trim();
+  // El modelo escribió solo la línea: se dice la frase de la acción o, si era una propuesta, la pregunta.
+  if (mudo && eventos.length) return { texto: dichoDeAcciones(listas, p.idioma), acciones: eventos, sustituido: true };
+  if (mudo && propuesta) return { texto: preguntaDePropuesta(propuesta, p.idioma), acciones: [], sustituido: true };
   return { texto: limpio, acciones: eventos, sustituido: false };
 }
 

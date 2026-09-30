@@ -85,4 +85,19 @@ describe('Taller AU-RA', () => {
     assert.ok(rJ.tools.includes('sistema'));
     assert.equal(/consulta/.test(rJ.decir || ''), false);
   });
+
+  it('con las manos del teléfono, «llama a…» y «avísame a las 5…» son de la app, no de Twilio ni del aviso urgente', async () => {
+    const llama = await despacharTaller('oye llama a mi mamá que necesito hablarle', { quien: 'jose', manosApp: ['llamar'] });
+    assert.deepEqual(llama.tools, [], 'no toca la caja de llamada');
+    const avisa = await despacharTaller('avísame a las cinco que saque el pollo', { quien: 'jose', manosApp: ['recordatorio'] });
+    assert.deepEqual(avisa.tools, [], 'no manda un aviso urgente a la junta');
+    // «llámame» sigue siendo la llamada de Twilio, y «urgente» el aviso, aunque el teléfono tenga manos.
+    const llamame = await despacharTaller('llámame y dime hola', { quien: 'jose', manosApp: ['llamar'], soloConsulta: true });
+    assert.ok(llamame.tools.includes('llamar'));
+    const urgente = await despacharTaller('avísame urgente a la junta', { quien: 'jose', manosApp: ['recordatorio'], soloConsulta: true });
+    assert.ok(urgente.tools.includes('urgente'));
+    // Sin manos (un APK viejo), todo como antes.
+    const antes = await despacharTaller('llama a mi mamá', { quien: 'jose', soloConsulta: true });
+    assert.ok(antes.tools.includes('llamar'));
+  });
 });

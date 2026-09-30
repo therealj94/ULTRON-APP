@@ -186,7 +186,22 @@ export type ContextoTaller = {
    * (redespliegue, mantenimiento), aunque quien hable tenga mando. Eso se pide en la mesa.
    */
   soloConsulta?: boolean;
+  /**
+   * Las manos que el teléfono de este turno hace por su cuenta (lib/manos-app.ts). Con ellas, «llama
+   * a Beto» es una llamada de PULSE2CHAT (con su «sí»), no la de Twilio; y «avísame a las 5 que…» es
+   * un recordatorio, no un aviso urgente a la junta.
+   */
+  manosApp?: readonly string[];
 };
+
+/** ¿El pedido es de las manos de la app y no del taller? («llámame» sigue siendo la llamada de Twilio). */
+function cedeALaApp(p: ReturnType<typeof parsePedido>, q: string, manos: readonly string[] | undefined): boolean {
+  if (!manos?.length) return false;
+  const l = q.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (p.accion === 'llamar' && manos.includes('llamar') && !/\b(llamame|llamanos|call me)\b/.test(l)) return true;
+  if (p.accion === 'urgente' && manos.includes('recordatorio') && /\bavisame\b/.test(l) && !/\b(urgente|alerta junta)\b/.test(l)) return true;
+  return false;
+}
 
 /** Lo que el taller no hace desde la voz: todo lo que sale del sistema o lo cambia. */
 const FUERA_DE_LA_VOZ = new Set(['redeploy', 'mantenimiento', 'voz', 'urgente', 'llamar', 'enviar']);
@@ -217,7 +232,7 @@ async function conPermiso(nombre: keyof typeof ACCIONES_TALLER, args: Record<str
 
 export async function despacharTaller(message: string, opts?: ContextoTaller): Promise<TallerOut> {
   const p = parsePedido(message);
-  if (!p.accion) return { hechos: [], tools: [] };
+  if (!p.accion || cedeALaApp(p, message, opts?.manosApp)) return { hechos: [], tools: [] };
   const tools: string[] = [];
   const hechos: string[] = [];
   const out = (decir?: string): TallerOut => ({ hechos, tools, decir });

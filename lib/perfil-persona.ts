@@ -22,6 +22,8 @@ import { s3GetJson, s3Listo, s3PutJson } from './s3';
 export type Tema = 'oscuro' | 'claro' | 'sistema';
 export type AvatarPerfil = 'ojos' | 'aura' | 'claudio';
 export type IdiomaPerfil = 'es' | 'en';
+/** Cómo se muestra el avatar: en pantalla completa o a un lado. */
+export type Presentacion = 'completa' | 'lado';
 
 export type Encuesta = {
   vive?: string;
@@ -40,6 +42,8 @@ export type Perfil = {
   idioma: IdiomaPerfil;
   nombreGenesis?: string;
   cumple?: string;
+  /** Sin elegir todavía: la app usa su modo de siempre. */
+  presentacion?: Presentacion;
   encuesta: Encuesta;
   completado: boolean;
   actualizado: number;
@@ -99,6 +103,10 @@ export function validarCambios(cuerpo: unknown): { ok: true; cambios: Cambios } 
   if (b.idioma !== undefined) {
     if (b.idioma !== 'es' && b.idioma !== 'en') return { ok: false, error: 'El idioma es es o en.' };
     c.idioma = b.idioma;
+  }
+  if (b.presentacion !== undefined) {
+    if (b.presentacion !== 'completa' && b.presentacion !== 'lado') return { ok: false, error: 'La presentación es completa o lado.' };
+    c.presentacion = b.presentacion;
   }
   if (b.cumple !== undefined) {
     // Vacío o null = «no quiero decirlo»: se borra.
@@ -163,7 +171,17 @@ export function aplicarCambios(base: Perfil, c: Cambios, ahora = Date.now()): Pe
 function sanear(raw: unknown): Perfil | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
-  const v = validarCambios({ apodo: r.apodo, avatar: r.avatar, tema: r.tema, idioma: r.idioma, cumple: r.cumple || undefined, completado: r.completado, encuesta: r.encuesta || {} });
+  const v = validarCambios({
+    apodo: r.apodo,
+    avatar: r.avatar,
+    tema: r.tema,
+    idioma: r.idioma,
+    cumple: r.cumple || undefined,
+    completado: r.completado,
+    encuesta: r.encuesta || {},
+    // Un valor raro guardado no tumba el perfil entero: se queda sin elegir.
+    presentacion: r.presentacion === 'completa' || r.presentacion === 'lado' ? r.presentacion : undefined,
+  });
   if (!v.ok) return null;
   const p = aplicarCambios(perfilInicial({ nombreGenesis: String(r.nombreGenesis || '') }), v.cambios, Number(r.actualizado) || 0);
   return p;

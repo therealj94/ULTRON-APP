@@ -21,8 +21,10 @@
  *    Decisión explícita (revisión 5.0, B7): lo que SÍ se puede desde la voz sin mando es (1) enviar
  *    un borrador de PULSE2CHAT que AU-RA redactó y la persona oyó, con su «sí» explícito en el turno
  *    siguiente (lib/acciones-app.ts: el envío lo hace el teléfono del aparato de esta conversación),
- *    y (2) anotar y cerrar pendientes del taller (tarea_anotar / tarea_cerrar). Son de la persona y
- *    no cambian el sistema; por eso no se cierran aquí.
+ *    y (2) anotar y cerrar pendientes del taller (tarea_anotar / tarea_cerrar), y (3) las manos de la
+ *    app (lib/manos-app.ts): llamar y poner un recordatorio, SIEMPRE con su «sí» del turno siguiente;
+ *    leer y buscar en sus chats (lo hace su teléfono), idioma, perfil y presentación. Son de la persona
+ *    y no cambian el sistema; por eso no se cierran aquí.
  *  · Va atado a la SESIÓN que lo pidió (su huella): si esa sesión se cierra o la contraseña cambia,
  *    el pase deja de valer en el siguiente turno, no a los 30 minutos.
  *  · Va atado a UNA conversación (un nonce `cid`): vence tras 5 minutos sin turnos (cada turno lo
@@ -37,7 +39,7 @@ import { quitarExpresiones } from '../lib/expresiones';
 import { firmarDato, gastarCupo, huellaSesion, leerDato, mismoSecreto, secretoDerivado, sesionSigueViva, type Sesion } from './seguridad';
 import { normalizarAvatar, normalizarIdioma, type AvatarVoz, type Idioma } from './eleven';
 import { modoValido } from './desk';
-import { aparatoValido } from '../lib/acciones-app';
+import { aparatoValido, lecturaDe } from '../lib/acciones-app';
 
 /** La etiqueta del secreto que ElevenLabs manda como Bearer. Cambiarla invalida el guardado allá. */
 export const ETIQUETA_SECRETO_LLM = 'elevenlabs-llm-v1';
@@ -398,6 +400,7 @@ const PHRASES = {
   vencida: { es: 'Llevamos un buen rato hablando y esta conversación se cerró. Tócame para empezar otra y seguimos.', en: "We've been talking for a while and this conversation closed. Tap me to start a new one and we'll keep going." },
   tarde: { es: 'Perdón, me estoy tardando demasiado. ¿Me lo preguntas otra vez?', en: "Sorry, I'm taking too long. Could you ask me again?" },
   listo: { es: 'Listo.', en: 'Done.' },
+  noLei: { es: 'Perdón, no pude leértelo. Pídemelo otra vez.', en: "Sorry, I couldn't read it to you. Ask me again." },
 };
 
 export function montarVozAgente(app: express.Express, d: Deps) {
@@ -521,6 +524,20 @@ export function montarVozAgente(app: express.Express, d: Deps) {
     };
     escribir(trozoOpenAI(id, modelo, null, null, true));
     if (!mensaje) {
+      escribir(trozoOpenAI(id, modelo, null, 'stop'));
+      return cerrar();
+    }
+    /*
+     * LA LECTURA DEL TELÉFONO («¿qué me dijo Beto?», el resultado de una búsqueda): el teléfono abrió
+     * los mensajes cifrados y manda el texto para que suene con la voz de AURA. Se dice TAL CUAL y
+     * aquí termina: no pasa por el cerebro (lo que escribió otra persona no le da órdenes a nadie), ni
+     * se guarda en el hilo ni en la memoria. Sin un boleto vigente de esta cuenta no se dice nada.
+     */
+    const lectura = lecturaDe(pase.correo, mensaje, ahora);
+    if (lectura) {
+      const texto = lectura.ok ? quitarExpresiones(lectura.texto).trim() || PHRASES.noLei[pase.idioma] : PHRASES.noLei[pase.idioma];
+      escribir(trozoOpenAI(id, modelo, texto));
+      conv.ultimaDicha = texto;
       escribir(trozoOpenAI(id, modelo, null, 'stop'));
       return cerrar();
     }
