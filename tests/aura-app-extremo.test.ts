@@ -437,7 +437,7 @@ test('las manos: llamar espera el «sí»; leer vuelve por la voz con su boleto 
       body: JSON.stringify({ pantalla: 'mesa', contactos: [{ correo: 'beto@x.com', nombre: 'Beto Pérez' }, { correo: 'mama@x.com', nombre: 'Mamá' }], ...extra }),
     });
   try {
-    assert.equal((await contexto({ manos: ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'presentacion'] })).status, 200);
+    assert.equal((await contexto({ manos: ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada'] })).status, 200);
 
     // «llama a mi mamá»: por reglas, sin el 27B, y SIN marcar: se pregunta.
     alNodo.length = 0;

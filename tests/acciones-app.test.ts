@@ -420,3 +420,35 @@ test('Laya «comando»: lo que las reglas no reconocen y Laya decide claro, se h
     _reiniciarLaya();
   }
 });
+
+test('presencia: «ponte a pantalla completa / al lado / chiquita» se resuelven sin el modelo; lo parecido no', () => {
+  assert.deepEqual(validarAccion({ tipo: 'presencia', valor: 'lado' }), { tipo: 'presencia', valor: 'lado' });
+  assert.equal(validarAccion({ tipo: 'presencia', valor: 'flotando' }), null);
+  const casos: Array<[string, string]> = [
+    ['Ponte a pantalla completa', 'completa'],
+    ['AURA, ponte en grande', 'completa'],
+    ['pantalla completa', 'completa'],
+    ['full screen', 'completa'],
+    ['ponte al lado', 'lado'],
+    ['ponte al lado del chat', 'lado'],
+    ['quédate a mi lado', 'lado'],
+    ['al lado', 'lado'],
+    ['stay by my side', 'lado'],
+    ['ponte chiquita', 'paseo'],
+    ['hazte más chiquita', 'paseo'],
+    ['vuelve a caminar', 'paseo'],
+  ];
+  for (const [dicho, valor] of casos) {
+    const r = ordenPorReglas(dicho);
+    assert.deepEqual(r?.accion, { tipo: 'presencia', valor }, dicho);
+    assert.ok(r?.decir, dicho);
+  }
+  for (const t of ['la pantalla completa del juego', 'grande', 'está al lado de la casa', 'qué grande']) {
+    assert.notEqual(ordenPorReglas(t)?.accion?.tipo, 'presencia', t);
+  }
+  // Las órdenes de siempre siguen iguales.
+  assert.deepEqual(ordenPorReglas('ponlo oscuro')?.accion, { tipo: 'tema', valor: 'oscuro' });
+  assert.deepEqual(ordenPorReglas('abre los chats')?.accion, { tipo: 'abrir', pantalla: 'chats' });
+  assert.equal(dichoDeAcciones([{ tipo: 'presencia', valor: 'lado' }]), 'Me pongo a tu lado.');
+  assert.match(instruccionAcciones(null), /"tipo":"presencia"/);
+});

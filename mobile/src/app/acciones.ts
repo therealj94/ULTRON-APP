@@ -8,8 +8,10 @@
  *   abrir_chat  → la conversación con esa persona (por correo o por nombre, con `resolverContacto`)
  *   idioma      → lo guarda en el perfil (la app y la voz cambian de idioma)
  *   perfil      → un dato de «lo que sabe de mí» (apodo, cumple o un campo de la encuesta)
- *   presentacion→ completa | lado, en el perfil (la UI de los modos lo lee de ahí o de este mismo bus)
- *   recordatorio→ un aviso local a esa hora (compa/recordatorios.ts; el servidor ya pidió el «sí»)
+ *   recordatorio→ un aviso local (o una llamada de AURA) a esa hora (compa/recordatorios.ts; el
+ *                 servidor ya pidió el «sí»); cancelar_recordatorio lo quita
+ *   presencia   → cómo se presenta AURA (chiquita caminando, al lado de los chats, a pantalla
+ *                 completa): se guarda en el perfil y la ven la compañera, el panel y la pantalla completa
  *
  * Las demás acciones (redactar, enviar, descartar, silencio, llamar, leer, buscar) son del chat y de
  * la compañera: aquí no se tocan. Cada acción atendida se contesta con `emitir('hecho', …)` para que
@@ -22,6 +24,7 @@ import { emitir, escuchar, type AccionApp, type Perfil } from '../nucleo/contrat
 import { programarRecordatorio, type ConstantesNotifee, type NotifeeMin } from '../compa/recordatorios';
 import { tr } from '../i18n';
 import { resolverContacto } from '../pulse/relevo';
+import { fijarPresencia } from '../avatar3d/usePresencia';
 import { abrirConversacion, abrirRuta, atras, rutaActual } from './rutas';
 import { usuarioActual } from './sesion';
 
@@ -90,10 +93,6 @@ export function atenderAccion(a: AccionApp) {
     case 'idioma':
       guardarPerfil({ idioma: a.valor });
       return hecho(a, true);
-    case 'presentacion':
-      // Sin perfil cargado igual vale: la UI de los modos también escucha esta acción en el bus.
-      guardarPerfil({ presentacion: a.valor });
-      return hecho(a, true);
     case 'perfil': {
       const cambio = cambioDePerfil(a.campo, a.valor);
       if (!cambio) return hecho(a, false, tr('Ese dato no me quedó claro; dímelo otra vez.', "I didn't get that right; tell me again."));
@@ -104,6 +103,9 @@ export function atenderAccion(a: AccionApp) {
     case 'recordatorio':
       void programarRecordatorio(a, { notifee: notifeeReal }).then((r) => hecho(a, r.ok, r.detalle));
       return;
+    case 'presencia':
+      fijarPresencia(a.valor);
+      return hecho(a, true);
     default:
       return;
   }

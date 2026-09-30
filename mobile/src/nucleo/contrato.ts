@@ -10,13 +10,12 @@
  * Nada de React aquí: lo importan la voz, el relevo y las pantallas por igual.
  */
 import type { AvatarId } from '../avatares/catalogo';
+import type { ModoPresencia } from '../avatar3d/tipos';
 import type { Idioma } from '../i18n';
 
 /* ── el perfil ───────────────────────────────────────────────────────────────────────────── */
 
 export type Tema = 'oscuro' | 'claro' | 'sistema';
-/** Cómo se muestra el avatar: en pantalla completa o a un lado (la UI de los modos la lee del perfil). */
-export type Presentacion = 'completa' | 'lado';
 
 /** Lo que la persona contó en la primera vez. Todo opcional salvo lo que la app necesita para arrancar. */
 export type Encuesta = {
@@ -44,11 +43,14 @@ export type Perfil = {
   nombreGenesis?: string;
   /** Solo mes y día («03-14»): el año no hace falta para felicitar. */
   cumple?: string;
-  /** Sin elegir todavía: la app usa su modo de siempre. */
-  presentacion?: Presentacion;
   encuesta: Encuesta;
   /** true cuando terminó la primera vez (o la saltó a propósito). */
   completado: boolean;
+  /**
+   * Cómo quiere tener a AURA mientras usa la app: caminando chiquita (paseo, la de siempre), al lado
+   * de los chats (lado) o a pantalla completa (completa). Sin valor, paseo. Ver avatar3d/presencia.ts.
+   */
+  presencia?: ModoPresencia;
   /** Milisegundos. */
   actualizado: number;
 };
@@ -81,6 +83,8 @@ export type AccionApp =
   | { tipo: 'descartar' }
   /** true = AURA se calla y deja de escuchar; false = vuelve. */
   | { tipo: 'silencio'; valor: boolean }
+  /** «Ponte a pantalla completa» / «ponte al lado» / «ponte chiquita»: cómo se presenta (se guarda en el perfil). */
+  | { tipo: 'presencia'; valor: ModoPresencia }
   /*
    * LAS MANOS (lib/manos-app.ts en el servidor). Solo llegan si este teléfono las declaró en su
    * contexto (`manos`); un APK viejo no las declara y, si le llegara una, su puente la ignora.
@@ -94,15 +98,22 @@ export type AccionApp =
   | { tipo: 'idioma'; valor: Idioma }
   /** Un dato de «lo que sabe de mí»: apodo, cumple (MM-DD) o un campo de la encuesta. */
   | { tipo: 'perfil'; campo: CampoPerfil; valor: string }
-  /** Aviso local a esa hora (epoch ms). El servidor lo manda SOLO tras el «sí» de la persona. */
-  | { tipo: 'recordatorio'; texto: string; cuando: number }
-  | { tipo: 'presentacion'; valor: Presentacion };
+  /**
+   * Aviso local a esa hora (epoch ms). Con `llamada`, a esa hora AURA «te llama» (aviso de llamada
+   * entrante a pantalla completa; al contestar, te lo dice con su voz). Solo tras el «sí» de la persona.
+   */
+  | { tipo: 'recordatorio'; texto: string; cuando: number; llamada?: boolean }
+  /** Quita un recordatorio (por el id que el teléfono contó en su contexto). Solo tras el «sí». */
+  | { tipo: 'cancelar_recordatorio'; id: string };
 
 export type CampoPerfil = 'apodo' | 'cumple' | keyof Encuesta;
 
 /** Las manos que este teléfono sabe hacer: van en el contexto para que el servidor las ofrezca. */
-export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'presentacion'] as const;
+export const MANOS_APP = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada'] as const;
 export type Mano = (typeof MANOS_APP)[number];
+
+/** Un recordatorio puesto en el teléfono (lo cuenta en el contexto para decirlo y cancelarlo por voz). */
+export type RecordatorioPuesto = { id: string; texto: string; cuando: number; llamada: boolean };
 
 /**
  * Servidor → teléfono (con la sesión de la mesa):

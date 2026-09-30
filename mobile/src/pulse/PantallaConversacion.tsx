@@ -9,6 +9,10 @@
  *
  * Desacoplada de la navegación: `con` (correo), `nombre` si ya se sabe, y `onAtras`. Avisa al bus
  * (`pantalla`) al abrirse y al cerrarse, para que AURA sepa en qué chat está la persona.
+ *
+ * AURA puede estar al lado mientras se chatea (avatar3d/DockAura.tsx): el botón de la cabecera la
+ * acopla o la devuelve a caminar; acoplada, empuja el hilo (franja arriba o panel a la derecha) sin
+ * tapar la caja de escribir.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { sueloCompa } from '../compa/canales';
@@ -46,6 +50,7 @@ import { Escribiendo } from './ui/Escribiendo';
 import { Icono } from './ui/Icono';
 import { Tocable } from './ui/Tocable';
 import { filasDelHilo, type Fila } from './ui/formato';
+import { AuraAlLado, BotonAuraAlLado } from '../avatar3d/DockAura';
 
 export type PropsPantallaConversacion = {
   /** Correo de la otra persona. */
@@ -241,6 +246,7 @@ export function PantallaConversacion({ con, nombre, onAtras }: PropsPantallaConv
             </View>
           </View>
         </Pressable>
+        <BotonAuraAlLado color={p.texto2} colorActivo={p.acentoTexto} />
         <Tocable onPress={() => llamar(true)} deshabilitado={ocupado} etiqueta={tr('Videollamada', 'Video call')} hitSlop={4} style={s.botonCab}>
           <Icono nombre="video" color={p.acentoTexto} tam={24} grosor={1.9} />
         </Tocable>
@@ -249,6 +255,7 @@ export function PantallaConversacion({ con, nombre, onAtras }: PropsPantallaConv
         </Tocable>
       </View>
 
+      <AuraAlLado pantalla="chats" chat={correo}>
       <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
         {hilo.error === 'sin-permiso' || hilo.error === 'sin-red' || aviso ? (
           <View style={s.banda}>
@@ -339,6 +346,7 @@ export function PantallaConversacion({ con, nombre, onAtras }: PropsPantallaConv
           </View>
         </View>
       </KeyboardAvoidingView>
+      </AuraAlLado>
 
       {/* el código de seguridad */}
       {codigo !== undefined ? (

@@ -13,7 +13,7 @@ export type RaizParams = {
   Intro: undefined;
   Bienvenida: { desdeIntro?: boolean } | undefined;
   Entrar: { desdeIntro?: boolean; aviso?: string; codigo?: string } | undefined;
-  CrearGenesis: { sinVerificar?: boolean } | undefined;
+  CrearGenesis: { motivo?: 'sin-gid' } | undefined;
   OtrasFormas: undefined;
   PrimeraVez: { desdeIntro?: boolean } | undefined;
   Mesa: { desdeIntro?: boolean; recienElegido?: boolean } | undefined;

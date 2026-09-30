@@ -9,7 +9,13 @@
  *   · Si falla, el mensaje del servidor en una tarjeta debajo (no un aviso que tapa la pantalla).
  *   · PENDIENTE: «Tu acceso está en revisión» (José aprueba las solicitudes); el mismo botón sirve
  *     cuando la aprueben.
- *   · SIN_GID o «No tengo Genesis ID» → «Crea tu Genesis ID», con los tres pasos.
+ *   · SIN_GID (la wallet no tiene Genesis ID) o «No tengo Genesis ID» → «Crea tu Genesis ID», con los
+ *     tres pasos.
+ *   · GID_PENDIENTE: el Genesis ID existe y está en verificación. Tarjeta propia, sin mandar a crear
+ *     otro: el mismo botón sirve cuando lo aprueben.
+ *   · NO_VINCULADA: la cuenta de la wallet no está atada a un Genesis ID; cómo vincularlo y un botón
+ *     que abre la app Orden Global.
+ *   · CORREO_SIN_CONFIRMAR, LIMITE (esperar) y RED (reintentar): cada uno con su título y qué hacer.
  *   · Correo y clave quedan como «Otras formas de entrar», chiquito: para la junta y el modo local.
  */
 import { useEffect, useRef, useState } from 'react';
@@ -18,6 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { APP_VERSION } from '../../config';
 import { entrarConGenesis, type ResultadoGenesis } from '../../lib/genesis';
+import { abrirAppOrdenGlobal } from './CrearGenesis';
 import { miga } from '../../lib/reporte';
 import { tr, useIdioma } from '../../i18n';
 import { MEDIDA, useTema } from '../../nucleo/tema';
@@ -32,8 +39,62 @@ type Estado =
   | { tipo: 'listo' }
   | { tipo: 'esperando' }
   | { tipo: 'exito'; nombre: string }
-  | { tipo: 'error'; mensaje: string }
-  | { tipo: 'pendiente' };
+  | { tipo: 'error'; mensaje: string; codigo?: string }
+  | { tipo: 'pendiente' }
+  | { tipo: 'gidPendiente' }
+  | { tipo: 'noVinculada' };
+
+/**
+ * El estado de la pantalla para un código de src/lib/genesis.ts (los del contrato con la wallet y los
+ * del servidor). SIN_GID y CANCELADO no llegan a tarjeta: el primero va a «Crea tu Genesis ID» y el
+ * segundo deja la pantalla como estaba.
+ */
+function estadoPorCodigo(codigo: string | undefined, mensaje: string): Estado {
+  if (codigo === 'PENDIENTE') return { tipo: 'pendiente' };
+  if (codigo === 'GID_PENDIENTE') return { tipo: 'gidPendiente' };
+  if (codigo === 'NO_VINCULADA') return { tipo: 'noVinculada' };
+  if (codigo === 'CANCELADO' || codigo === 'SIN_GID') return { tipo: 'listo' };
+  return { tipo: 'error', mensaje, codigo };
+}
+
+/**
+ * Título y texto de la tarjeta de error. Los códigos con trato propio se escriben aquí (y se
+ * traducen al dibujar, por si cambia el idioma con la tarjeta puesta); el resto muestra el mensaje
+ * que trajo el error.
+ */
+function textoError(codigo: string | undefined, mensaje: string): { titulo: string; texto: string } {
+  switch (codigo) {
+    case 'CORREO_SIN_CONFIRMAR':
+      return {
+        titulo: tr('Confirma tu correo', 'Confirm your email'),
+        texto: tr(
+          'Tu correo todavía no está confirmado en la wallet. Abre el enlace que te mandó Orden Global y vuelve a intentar.',
+          'Your email isn’t confirmed in the wallet yet. Open the link Orden Global sent you and try again.'
+        ),
+      };
+    case 'LIMITE':
+      return {
+        titulo: tr('Demasiados intentos', 'Too many attempts'),
+        texto: tr('Por seguridad hay que esperar un poco. Espera unos minutos y vuelve a intentar.', 'For your security, please wait a bit. Wait a few minutes and try again.'),
+      };
+    case 'RED':
+    case 'GENESIS_CAIDO':
+      return {
+        titulo: tr('Genesis ID no respondió', 'Genesis ID didn’t respond'),
+        texto: tr(
+          'No se pudo comprobar tu identidad por un problema de conexión. Revisa tu internet y toca «Intentar de nuevo».',
+          'Your identity couldn’t be checked because of a connection problem. Check your internet and tap “Try again”.'
+        ),
+      };
+    case 'SIN_CONEXION':
+      return {
+        titulo: tr('Sin conexión con AURA', 'No connection to AURA'),
+        texto: tr('Revisa tu internet y toca «Intentar de nuevo».', 'Check your internet and tap “Try again”.'),
+      };
+    default:
+      return { titulo: tr('No se pudo entrar', 'Couldn’t sign in'), texto: mensaje };
+  }
+}
 
 /** El aviso de la tarjeta de estado (error o revisión), con su ícono y su color. */
 function Aviso({ icono, titulo, texto, tono }: { icono: NombreIcono; titulo: string; texto?: string; tono: 'aviso' | 'acento' }) {
@@ -67,16 +128,22 @@ export function Entrar({ navigation, route }: Props) {
   const ins = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const horizontal = width > height && width > 600;
-  const inicial: Estado =
-    route.params?.codigo === 'PENDIENTE' ? { tipo: 'pendiente' } : route.params?.aviso ? { tipo: 'error', mensaje: route.params.aviso } : { tipo: 'listo' };
+  const inicial: Estado = route.params?.codigo
+    ? estadoPorCodigo(route.params.codigo, route.params.aviso || '')
+    : route.params?.aviso
+      ? { tipo: 'error', mensaje: route.params.aviso }
+      : { tipo: 'listo' };
   const [estado, setEstado] = useState<Estado>(inicial);
   const vivo = useRef(true);
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    // Volvía de la wallet en un arranque en frío (Intro) sin Genesis ID: a crearlo, como en caliente.
+    if (route.params?.codigo === 'SIN_GID') navigation.navigate('CrearGenesis', { motivo: 'sin-gid' });
+    return () => {
       vivo.current = false;
-    },
-    []
-  );
+    };
+    // Solo al montar: el código del arranque se atiende una vez.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const alVolver = async (r: ResultadoGenesis) => {
     if (!vivo.current) return;
@@ -89,17 +156,14 @@ export function Entrar({ navigation, route }: Props) {
       return;
     }
     if (r.codigo === 'CANCELADO') return setEstado({ tipo: 'listo' });
-    if (r.codigo === 'PENDIENTE') {
-      vibrar('aviso');
-      return setEstado({ tipo: 'pendiente' });
-    }
     if (r.codigo === 'SIN_GID') {
       setEstado({ tipo: 'listo' });
-      navigation.navigate('CrearGenesis', { sinVerificar: true });
+      navigation.navigate('CrearGenesis', { motivo: 'sin-gid' });
       return;
     }
-    vibrar('error');
-    setEstado({ tipo: 'error', mensaje: r.mensaje });
+    const e = estadoPorCodigo(r.codigo, r.mensaje);
+    vibrar(e.tipo === 'error' ? 'error' : 'aviso');
+    setEstado(e);
   };
 
   const entrarGenesis = async () => {
@@ -157,7 +221,7 @@ export function Entrar({ navigation, route }: Props) {
         </Texto>
       </View>
 
-      {estado.tipo === 'error' && <Aviso icono="alerta" tono="aviso" titulo={tr('No se pudo entrar', 'Couldn’t sign in')} texto={estado.mensaje} />}
+      {estado.tipo === 'error' && <Aviso icono="alerta" tono="aviso" {...textoError(estado.codigo, estado.mensaje)} />}
       {estado.tipo === 'pendiente' && (
         <Aviso
           icono="reloj"
@@ -169,10 +233,36 @@ export function Entrar({ navigation, route }: Props) {
           )}
         />
       )}
+      {estado.tipo === 'gidPendiente' && (
+        <Aviso
+          icono="reloj"
+          tono="acento"
+          titulo={tr('Tu Genesis ID está en verificación', 'Your Genesis ID is being verified')}
+          texto={tr(
+            'Cuando lo aprueben, entras con este mismo botón. No hace falta crear otro.',
+            'Once it’s approved, sign in with this same button. No need to create another one.'
+          )}
+        />
+      )}
+      {estado.tipo === 'noVinculada' && (
+        <Aviso
+          icono="wallet"
+          tono="acento"
+          titulo={tr('Vincula tu Genesis ID a tu wallet', 'Link your Genesis ID to your wallet')}
+          texto={tr(
+            'Tu cuenta de la wallet todavía no está atada a un Genesis ID. Abre la app Orden Global, vincula tu Genesis ID a esa cuenta y vuelve a tocar «Intentar de nuevo».',
+            'Your wallet account isn’t tied to a Genesis ID yet. Open the Orden Global app, link your Genesis ID to that account and tap “Try again”.'
+          )}
+        />
+      )}
 
       <View style={{ gap: MEDIDA.espacio.m }}>
         <Boton
-          titulo={estado.tipo === 'pendiente' || estado.tipo === 'error' ? tr('Intentar de nuevo', 'Try again') : tr('Entrar con Genesis ID', 'Sign in with Genesis ID')}
+          titulo={
+            estado.tipo === 'pendiente' || estado.tipo === 'error' || estado.tipo === 'gidPendiente' || estado.tipo === 'noVinculada'
+              ? tr('Intentar de nuevo', 'Try again')
+              : tr('Entrar con Genesis ID', 'Sign in with Genesis ID')
+          }
           icono="huella"
           onPress={() => void entrarGenesis()}
           cargando={esperando}
@@ -180,7 +270,14 @@ export function Entrar({ navigation, route }: Props) {
           deshabilitado={estado.tipo === 'exito'}
           etiqueta={tr('Entrar con Genesis ID desde tu wallet Orden Global', 'Sign in with Genesis ID from your Orden Global wallet')}
         />
-        <Boton titulo={tr('No tengo Genesis ID', 'I don’t have a Genesis ID')} variante="secundario" onPress={() => navigation.navigate('CrearGenesis')} deshabilitado={esperando || estado.tipo === 'exito'} />
+        {estado.tipo === 'noVinculada' ? (
+          <Boton titulo={tr('Abrir la app Orden Global', 'Open the Orden Global app')} icono="wallet" variante="secundario" onPress={() => void abrirAppOrdenGlobal()} />
+        ) : (
+          // Con el Genesis ID en verificación no se ofrece crear otro: ya tiene uno, solo falta que lo aprueben.
+          estado.tipo !== 'gidPendiente' && (
+            <Boton titulo={tr('No tengo Genesis ID', 'I don’t have a Genesis ID')} variante="secundario" onPress={() => navigation.navigate('CrearGenesis')} deshabilitado={esperando || estado.tipo === 'exito'} />
+          )
+        )}
       </View>
 
       <View style={s.confianza}>

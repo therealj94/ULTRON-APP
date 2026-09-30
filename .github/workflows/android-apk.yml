@@ -90,12 +90,54 @@ jobs:
         # equivocada es peor que ninguna condición.
         run: npx expo prebuild -p android --no-install
 
-      # Release = JS empaquetado + Hermes. Firmado con la keystore debug del template
-      # para instalar directo; para Play Store se cambia la firma.
+      # FIRMA PROPIA. El App Link de AU-RA (/.well-known/assetlinks.json del servidor) solo se
+      # verifica si la APK va firmada con una llave nuestra: la keystore debug del template es la
+      # misma en todos los proyectos y su huella es pública. Con ANDROID_KEYSTORE_BASE64 y
+      # ANDROID_KEYSTORE_PASSWORD (PKCS12; alias ANDROID_KEY_ALIAS, por omisión «aura»; clave de la
+      # llave ANDROID_KEY_PASSWORD, por omisión la del almacén) el release se firma con ella. Sin
+      # ellos, keystore debug como siempre, sin fallar.
+      #
+      # La keystore se decodifica en RUNNER_TEMP (fuera del repo, 0600) y se borra al terminar. Las
+      # claves no se escriben en ningún archivo ni en la línea de comandos: el build.gradle que
+      # parchea scripts/qa/firma-release.mjs las lee del entorno cuando compila.
+      - name: Firma del release
+        id: firma
+        working-directory: mobile
+        env:
+          FIRMA_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          AURA_FIRMA_CLAVE: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          AURA_FIRMA_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'aura' }}
+        run: |
+          if [ -z "$FIRMA_KEYSTORE_B64" ] || [ -z "$AURA_FIRMA_CLAVE" ]; then
+            echo "Sin ANDROID_KEYSTORE_BASE64 o ANDROID_KEYSTORE_PASSWORD: el release se firma con la keystore debug del template."
+            echo "firma=debug" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          DIR="$RUNNER_TEMP/firma-apk"
+          mkdir -p "$DIR"
+          chmod 700 "$DIR"
+          ARCHIVO="$DIR/release.keystore"
+          (umask 077 && printf '%s' "$FIRMA_KEYSTORE_B64" | tr -d ' \r\n' | base64 -d > "$ARCHIVO")
+          # Que abra con esa clave y tenga ese alias ANTES de gastar veinte minutos compilando.
+          if ! keytool -list -keystore "$ARCHIVO" -storepass:env AURA_FIRMA_CLAVE -alias "$AURA_FIRMA_ALIAS" > /dev/null 2>&1; then
+            rm -f "$ARCHIVO"
+            echo "::error::La keystore de ANDROID_KEYSTORE_BASE64 no abre con ANDROID_KEYSTORE_PASSWORD o no tiene el alias (ANDROID_KEY_ALIAS, por omisión «aura»)."
+            exit 1
+          fi
+          node ../scripts/qa/firma-release.mjs android/app/build.gradle
+          echo "AURA_FIRMA_ARCHIVO=$ARCHIVO" >> "$GITHUB_ENV"
+          echo "firma=propia" >> "$GITHUB_OUTPUT"
+
+      # Release = JS empaquetado + Hermes. Firmado con la keystore propia si el paso anterior la
+      # preparó; si no, con la keystore debug del template (para instalar directo).
       - name: Release APK
         working-directory: mobile/android
         env:
           GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
+          # Las lee el bloque de firma que inyecta firma-release.mjs (sin él, no las usa nadie).
+          AURA_FIRMA_CLAVE: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          AURA_FIRMA_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'aura' }}
+          AURA_FIRMA_CLAVE_LLAVE: ${{ secrets.ANDROID_KEY_PASSWORD || secrets.ANDROID_KEYSTORE_PASSWORD }}
           # La huella que va dentro de la APK es la de ANTES de compilar: la misma que calcula
           # `eas update` al publicar (que no compila). Si Gradle la recalcula por su cuenta, lo hace
           # con lo que la compilación ya escribió y sale otra, y ninguna actualización le llegaría
@@ -104,6 +146,10 @@ jobs:
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon --stacktrace -PreactNativeArchitectures=arm64-v8a,armeabi-v7a
+
+      - name: Borrar la keystore
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/firma-apk"
 
       - name: Rename APK
         id: version
@@ -114,6 +160,22 @@ jobs:
           mkdir -p out
           cp android/app/build/outputs/apk/release/app-release.apk "out/${{ matrix.marca }}-${VERSION}.apk"
           ls -la out
+
+      # La huella SHA-256 del certificado con que QUEDÓ firmado el APK, leída del APK con apksigner
+      # (no supuesta). En la forma «AB:CD:…» que va tal cual en ANDROID_CERT_SHA256 del servidor.
+      - name: Huella del certificado
+        working-directory: mobile
+        run: |
+          APK="out/${{ matrix.marca }}-${{ steps.version.outputs.version }}.apk"
+          SDK="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          APKSIGNER=$(ls "$SDK"/build-tools/*/apksigner | sort -V | tail -n 1)
+          HUELLA=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1 | tr 'a-f' 'A-F' | sed 's/../&:/g; s/:$//')
+          if [ -z "$HUELLA" ]; then
+            echo "::error::apksigner no devolvió la huella SHA-256 del APK."
+            exit 1
+          fi
+          echo "SHA-256 del certificado (${{ matrix.variante }}, firma ${{ steps.firma.outputs.firma }}): $HUELLA"
+          echo "SHA-256 del certificado de ${{ matrix.titulo }} (firma ${{ steps.firma.outputs.firma }}): \`$HUELLA\`" >> "$GITHUB_STEP_SUMMARY"
 
       # Comprobar el APK por dentro, no confiar en que salió bien.
       #

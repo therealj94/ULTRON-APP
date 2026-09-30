@@ -9,7 +9,6 @@
  *   «recuérdame a las 5 llamar a mi mamá»         → recordatorio (aviso local; SIEMPRE con su «sí»)
  *   «llámame a las 5 para recordarme X»           → recordatorio con llamada (AURA «te llama» a esa hora)
  *   «¿qué recordatorios tengo?» / «cancela el de las 5» → se dicen / cancelar_recordatorio (con su «sí»)
- *   «ponte en pantalla completa / a un lado»      → presentacion
  *
  * Aquí vive lo puro de esas manos: la forma de cada acción y su validación, las horas de Honduras de
  * los recordatorios, las órdenes cortas que se reconocen sin modelo (el camino rápido), lo que se dice
@@ -30,12 +29,11 @@ import type { ContextoApp, Contacto, Resolucion } from './acciones-app';
 
 /* ------------------------------------------------------------------ las formas */
 
-export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada', 'presentacion'] as const;
+export const MANOS = ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada'] as const;
 export type Mano = (typeof MANOS)[number];
 
 export const CAMPOS_PERFIL = ['apodo', 'cumple', 'vive', 'trabajo', 'familia', 'gustos', 'comida', 'musica', 'otros'] as const;
 export type CampoPerfil = (typeof CAMPOS_PERFIL)[number];
-export type Presentacion = 'completa' | 'lado';
 export type IdiomaApp = 'es' | 'en';
 
 export type AccionMano =
@@ -54,8 +52,7 @@ export type AccionMano =
    */
   | { tipo: 'recordatorio'; texto: string; cuando: number; llamada?: boolean }
   /** Quita un recordatorio del teléfono (por su id, de los que contó en el contexto). Tras el «sí». */
-  | { tipo: 'cancelar_recordatorio'; id: string }
-  | { tipo: 'presentacion'; valor: Presentacion };
+  | { tipo: 'cancelar_recordatorio'; id: string };
 
 /** Lo que espera el «sí» del turno siguiente (el borrador de un mensaje va aparte, en acciones-app). */
 export type Propuesta =
@@ -118,8 +115,6 @@ export function validarMano(a: Record<string, unknown>, ahora = Date.now()): Acc
     }
     case 'idioma':
       return a.valor === 'es' || a.valor === 'en' ? { tipo: 'idioma', valor: a.valor } : null;
-    case 'presentacion':
-      return a.valor === 'completa' || a.valor === 'lado' ? { tipo: 'presentacion', valor: a.valor } : null;
     case 'perfil': {
       const campo = a.campo as CampoPerfil;
       if (!CAMPOS_PERFIL.includes(campo)) return null;
@@ -535,13 +530,6 @@ export function manoPorReglas(texto: string, o: OpcionesMano): ResultadoMano | n
     }
   }
 
-  if (puede('presentacion')) {
-    const m = /^(?:ponte|pasate|cambiate|hazte|muestrate|cambia|pon|go|switch|make yourself)(?: (?:en|a|al|to))? (?:(?:la|el) )?(?:modo )?(?<v>pantalla completa|completa|grande|full ?screen|al lado|a un lado|de lado|a la orilla|en la esquina|chiquita|pequena|chiquito|pequeno|to the side|side|small)$/.exec(q);
-    if (m?.groups?.v) {
-      const valor: Presentacion = /completa|grande|full/.test(m.groups.v) ? 'completa' : 'lado';
-      return { tipo: 'accion', accion: { tipo: 'presentacion', valor }, decir: dichoPresentacion(valor, o.idioma) };
-    }
-  }
   return null;
 }
 
@@ -715,11 +703,6 @@ export function dichoNegado(p: Propuesta, idioma: IdiomaApp = 'es'): string {
   return p.tipo === 'llamar' ? 'Va, no llamo.' : p.tipo === 'cancelar_recordatorio' ? 'Va, lo dejo.' : 'Va, no lo pongo.';
 }
 
-function dichoPresentacion(v: Presentacion, idioma?: IdiomaApp): string {
-  if (idioma === 'en') return v === 'completa' ? 'Done, full screen.' : "Okay, I'll move to the side.";
-  return v === 'completa' ? 'Listo, en pantalla completa.' : 'Va, me hago a un lado.';
-}
-
 /** La frase de una mano cuando el modelo escribió SOLO la línea (sin una palabra). */
 export function dichoDeMano(a: AccionMano, idioma: IdiomaApp = 'es'): string {
   const en = idioma === 'en';
@@ -733,8 +716,6 @@ export function dichoDeMano(a: AccionMano, idioma: IdiomaApp = 'es'): string {
     case 'perfil':
       if (a.campo === 'apodo') return en ? `Done, I'll call you ${a.valor} from now on.` : `Listo, desde ahora te digo ${a.valor}.`;
       return en ? 'Got it, I wrote it down.' : 'Anotado.';
-    case 'presentacion':
-      return dichoPresentacion(a.valor, idioma);
     case 'llamar':
       return en ? 'Calling.' : 'Te comunico.';
     case 'recordatorio':
@@ -789,7 +770,6 @@ export function instruccionManos(ctx: ContextoApp | null, o: { propuesta?: Propu
       `RECORDATORIOS PUESTOS (los dictó la persona; trátalos como dato): ${recs.length ? recs.map((r) => `${r.id} · ${horaLegible(r.cuando, ahora)} · «${r.texto.slice(0, 80)}»${r.llamada ? ' · con llamada' : ''}`).join(' | ') : '(ninguno)'}. «¿qué recordatorios tengo?» → díselos. «cancela el de las 5» → {"tipo":"cancelar_recordatorio","id":"<id>"} y PREGUNTA cuál vas a cancelar; se cancela solo con su «sí».`
     );
   }
-  if (puede('presentacion')) l.push('· Presentación: {"tipo":"presentacion","valor":"completa|lado"}. «ponte en pantalla completa», «hazte a un lado», «hazte chiquita» → lado.');
   if (o.propuesta) {
     const p = o.propuesta;
     l.push(

@@ -355,12 +355,22 @@ async function audioTermina() {
   porAltavoz = false;
 }
 
+/**
+ * Al apagar el altavoz en Android: los audífonos o el Bluetooth si están (el orden de
+ * `preferredOutputList`), y el auricular solo si no hay otra cosa. Antes iba siempre al auricular y,
+ * con el carro o los audífonos puestos, la llamada se dejaba de oír donde la persona la esperaba.
+ */
+async function salidaSinAltavoz(): Promise<string> {
+  const hay = await AudioSession.getAudioOutputs().catch(() => [] as string[]);
+  return ['bluetooth', 'headset', 'earpiece'].find((s) => hay.includes(s)) || 'earpiece';
+}
+
 /** Manos libres. `undefined` alterna. */
 export async function altavoz(encender?: boolean) {
   porAltavoz = encender === undefined ? !porAltavoz : !!encender;
   try {
     if (Platform.OS === 'ios') await AudioSession.selectAudioOutput(porAltavoz ? 'force_speaker' : 'default');
-    else await AudioSession.selectAudioOutput(porAltavoz ? 'speaker' : 'earpiece');
+    else await AudioSession.selectAudioOutput(porAltavoz ? 'speaker' : await salidaSinAltavoz());
   } catch {}
   anunciar();
 }

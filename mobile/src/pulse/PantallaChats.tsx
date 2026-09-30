@@ -16,6 +16,7 @@ import Animated, { cancelAnimation, FadeIn, useAnimatedStyle, useSharedValue, wi
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { emitir } from '../nucleo/contrato';
 import { MEDIDA, useTema, type Paleta } from '../nucleo/tema';
+import { AuraAlLado, BotonAuraAlLado } from '../avatar3d/DockAura';
 import { tr, useIdioma } from '../i18n';
 import * as RELEVO from './relevo';
 import * as CHATS from './chats';
@@ -408,6 +409,7 @@ function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string,
               </Text>
             </View>
           </View>
+          <BotonAuraAlLado color={p.texto2} colorActivo={p.acentoTexto} />
         </View>
         <View style={s.buscador}>
           <Icono nombre="buscar" tam={18} color={p.texto3} grosor={2} />
@@ -430,6 +432,7 @@ function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string,
           ) : null}
         </View>
       </View>
+      <AuraAlLado pantalla="chats" chat={null}>
       {lista.error === 'sin-red' ? (
         <View style={s.banda}>
           <Text style={s.bandaTxt}>{tr('Sin conexión con el chat. Reintentando…', 'No connection to the chat. Retrying…')}</Text>
@@ -465,6 +468,7 @@ function Lista({ yo, onAbrir, onAtras }: { yo: string; onAbrir: (correo: string,
           }
         />
       )}
+      </AuraAlLado>
       {vacio ? null : (
         <Tocable
           onPress={() => setHoja(true)}

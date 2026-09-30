@@ -44,6 +44,7 @@ const PANTALLAS: readonly Pantalla[] = ['mesa', 'chats', 'ajustes', 'perfil'];
 const TEMAS = ['oscuro', 'claro', 'sistema'];
 const AVATARES = ['ojos', 'aura', 'claudio'];
 const CAMPOS_PERFIL = ['apodo', 'cumple', 'vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'otros'];
+const PRESENCIAS = ['paseo', 'lado', 'completa'];
 const txt = (v: unknown, max = 2000) => typeof v === 'string' && v.trim().length > 0 && v.length <= max;
 const boletoOk = (v: unknown) => v === undefined || (typeof v === 'string' && /^[A-Za-z0-9_-]{8,40}$/.test(v));
 
@@ -68,6 +69,8 @@ export function esAccionApp(a: any): a is AccionApp {
       return a.para === undefined || txt(a.para, 200);
     case 'silencio':
       return typeof a.valor === 'boolean';
+    case 'presencia':
+      return PRESENCIAS.includes(a.valor);
     // Las manos: con la misma forma estricta que valida el servidor.
     case 'llamar':
       return txt(a.con, 254) && typeof a.video === 'boolean';
@@ -80,9 +83,9 @@ export function esAccionApp(a: any): a is AccionApp {
     case 'perfil':
       return CAMPOS_PERFIL.includes(a.campo) && txt(a.valor, 300);
     case 'recordatorio':
-      return txt(a.texto, 140) && typeof a.cuando === 'number' && Number.isFinite(a.cuando);
-    case 'presentacion':
-      return a.valor === 'completa' || a.valor === 'lado';
+      return txt(a.texto, 140) && typeof a.cuando === 'number' && Number.isFinite(a.cuando) && (a.llamada === undefined || typeof a.llamada === 'boolean');
+    case 'cancelar_recordatorio':
+      return typeof a.id === 'string' && /^aura-rec-[a-z0-9-]{1,80}$/.test(a.id);
     default:
       return false;
   }

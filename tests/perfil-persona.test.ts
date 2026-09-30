@@ -243,8 +243,15 @@ test('con S3 caído y sin copia local, NO se escribe encima: actualizar lanza y 
   }
 });
 
-test('la presentación del avatar (completa o al lado) se valida y se guarda; un valor raro se rechaza', () => {
-  assert.deepEqual(validarCambios({ presentacion: 'lado' }), { ok: true, cambios: { presentacion: 'lado' } });
-  assert.deepEqual(validarCambios({ presentacion: 'completa' }), { ok: true, cambios: { presentacion: 'completa' } });
-  assert.equal(validarCambios({ presentacion: 'flotante' }).ok, false);
+test('presencia: paseo, lado o completa; otra cosa es error; un perfil guardado con un valor raro se lee sin ella', async () => {
+  assert.deepEqual(validarCambios({ presencia: 'lado' }), { ok: true, cambios: { presencia: 'lado' } });
+  assert.equal(validarCambios({ presencia: 'volando' }).ok, false);
+  const p = aplicarCambios(perfilInicial({ apodo: 'José', ahora: 1 }), { presencia: 'completa' }, 2);
+  assert.equal(p.presencia, 'completa');
+  await guardarPerfil('presencia@x.com', { ...p, presencia: 'flotando' as never });
+  _olvidarCachePerfiles();
+  const leido = await leerPerfil('presencia@x.com');
+  assert.ok(leido, 'el perfil entero no se pierde por un campo raro');
+  assert.equal(leido!.apodo, 'José');
+  assert.equal(leido!.presencia, undefined);
 });

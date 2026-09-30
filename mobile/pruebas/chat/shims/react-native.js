@@ -19,4 +19,10 @@ exports.AppState = {
     return { remove() { oy.app = oy.app.filter((x) => x !== f); } };
   },
 };
-exports.Platform = { OS: 'android', select: (o) => o.android ?? o.default };
+// `__rn.os` deja probar otra plataforma (por omisión, Android).
+exports.Platform = {
+  get OS() {
+    return oy.os || 'android';
+  },
+  select: (o) => o[oy.os || 'android'] ?? o.default,
+};

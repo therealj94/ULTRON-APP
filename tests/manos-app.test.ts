@@ -94,8 +94,7 @@ test('validarAccion: cada mano con su forma estricta; el boleto nunca viene de a
   assert.equal(validarAccion({ tipo: 'buscar', q: 'a' }), null);
   assert.deepEqual(validarAccion({ tipo: 'idioma', valor: 'en' }), { tipo: 'idioma', valor: 'en' });
   assert.equal(validarAccion({ tipo: 'idioma', valor: 'fr' }), null);
-  assert.deepEqual(validarAccion({ tipo: 'presentacion', valor: 'lado' }), { tipo: 'presentacion', valor: 'lado' });
-  assert.equal(validarAccion({ tipo: 'presentacion', valor: 'flotante' }), null);
+  assert.equal(validarAccion({ tipo: 'presentacion', valor: 'lado' }), null, 'la presentación es la `presencia` de la rama del avatar 3D');
   assert.deepEqual(validarAccion({ tipo: 'perfil', campo: 'apodo', valor: 'Chepe' }), { tipo: 'perfil', campo: 'apodo', valor: 'Chepe' });
   assert.equal((validarAccion({ tipo: 'perfil', campo: 'apodo', valor: 'x'.repeat(90) }) as any).valor.length, 40);
   assert.deepEqual(validarAccion({ tipo: 'perfil', campo: 'cumple', valor: '03-14' }), { tipo: 'perfil', campo: 'cumple', valor: '03-14' });
@@ -126,9 +125,8 @@ test('el prompt: las manos solo si el teléfono las sabe hacer, con la hora de H
   assert.match(nuevo, /Tú NO ves los mensajes/);
   assert.match(nuevo, /"tipo":"recordatorio"/);
   assert.match(nuevo, /AHORA en Honduras: miércoles 30 de septiembre de 2026/);
-  assert.match(nuevo, /"tipo":"presentacion"/);
   const antes = instruccionAcciones(viejo, { ahora: AHORA });
-  for (const m of ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'presentacion']) assert.ok(!antes.includes(`"tipo":"${m}"`), `un APK viejo no ve ${m}`);
+  for (const m of ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio']) assert.ok(!antes.includes(`"tipo":"${m}"`), `un APK viejo no ve ${m}`);
   const solo = instruccionAcciones({ ...conManos, manos: ['idioma'] }, { ahora: AHORA });
   assert.match(solo, /"tipo":"idioma"/);
   assert.ok(!solo.includes('"tipo":"llamar"'));
@@ -224,9 +222,9 @@ test('reglas · leer, buscar, idioma, perfil y presentación', () => {
   assert.equal(ordenPorReglas('dime chistes', o), null, 'en minúscula y sin «de ahora en adelante», «dime…» es cuéntame');
   assert.deepEqual(ordenPorReglas('Vivo en San Pedro Sula', o)?.accion, { tipo: 'perfil', campo: 'vive', valor: 'San Pedro Sula' });
   assert.equal(ordenPorReglas('vivo en paz', o), null, 'no es un lugar');
-  assert.deepEqual(ordenPorReglas('ponte en pantalla completa', o)?.accion, { tipo: 'presentacion', valor: 'completa' });
-  assert.deepEqual(ordenPorReglas('hazte a un lado', o)?.accion, { tipo: 'presentacion', valor: 'lado' });
-  assert.deepEqual(ordenPorReglas('hazte chiquita', o)?.accion, { tipo: 'presentacion', valor: 'lado' });
+  // La presentación es la `presencia` del avatar 3D (reglas de siempre, también en un APK viejo).
+  assert.deepEqual(ordenPorReglas('ponte a pantalla completa', o)?.accion, { tipo: 'presencia', valor: 'completa' });
+  assert.deepEqual(ordenPorReglas('hazte chiquita', o)?.accion, { tipo: 'presencia', valor: 'paseo' });
   // «Lo que sabe de mí» es la pantalla de Perfil (una acción de siempre: también en un APK viejo).
   assert.deepEqual(ordenPorReglas('muéstrame lo que sabes de mí', o)?.accion, { tipo: 'abrir', pantalla: 'perfil' });
   assert.deepEqual(ordenPorReglas('abre lo que sabes de mí', { contexto: viejo, ahora: AHORA })?.accion, { tipo: 'abrir', pantalla: 'perfil' });
@@ -234,7 +232,7 @@ test('reglas · leer, buscar, idioma, perfil y presentación', () => {
   assert.deepEqual(ordenPorReglas('abre ajustes', o)?.accion, { tipo: 'abrir', pantalla: 'ajustes' });
   assert.deepEqual(ordenPorReglas('ponlo oscuro', o)?.accion, { tipo: 'tema', valor: 'oscuro' });
   // Sin la mano, nada.
-  for (const t of ['¿Qué me dijo Beto?', 'busca en mis chats la dirección', 'háblame en inglés', 'Dime Chepe', 'ponte en pantalla completa']) assert.equal(ordenPorReglas(t, { contexto: viejo, ahora: AHORA }), null, t);
+  for (const t of ['¿Qué me dijo Beto?', 'busca en mis chats la dirección', 'háblame en inglés', 'Dime Chepe']) assert.equal(ordenPorReglas(t, { contexto: viejo, ahora: AHORA }), null, t);
 });
 
 test('palabras: plegadas para reconocer, originales para guardar, sin vocativo ni «por favor»', () => {
@@ -283,10 +281,9 @@ test('prepararAcciones: un APK viejo no recibe manos; leer resuelve el nombre y 
   const acciones: AccionApp[] = [
     { tipo: 'leer', de: 'Beto', boleto: 'inventado-por-el-modelo' },
     { tipo: 'idioma', valor: 'en' },
-    { tipo: 'presentacion', valor: 'lado' },
   ];
   assert.deepEqual(prepararAcciones(acciones, { mensaje: 'x', contexto: viejo }), []);
-  assert.deepEqual(prepararAcciones(acciones, { mensaje: 'x', contexto: conManos }), [{ tipo: 'leer', de: 'beto@x.com' }, { tipo: 'idioma', valor: 'en' }, { tipo: 'presentacion', valor: 'lado' }]);
+  assert.deepEqual(prepararAcciones(acciones, { mensaje: 'x', contexto: conManos }), [{ tipo: 'leer', de: 'beto@x.com' }, { tipo: 'idioma', valor: 'en' }]);
   assert.deepEqual(prepararAcciones([{ tipo: 'atras' }], { mensaje: 'x', contexto: viejo }), [{ tipo: 'atras' }], 'lo de siempre sigue');
 });
 
@@ -337,7 +334,7 @@ test('solo la línea, sin una palabra: la frase de la mano', () => {
   assert.equal(dichoDeAcciones([{ tipo: 'leer' }]), 'A ver…');
   assert.equal(dichoDeAcciones([{ tipo: 'idioma', valor: 'en' }]), "Sure, I'll speak English from now on.");
   assert.equal(dichoDeAcciones([{ tipo: 'perfil', campo: 'apodo', valor: 'Chepe' }]), 'Listo, desde ahora te digo Chepe.');
-  assert.equal(dichoDeAcciones([{ tipo: 'presentacion', valor: 'completa' }], 'en'), 'Done, full screen.');
+  assert.equal(dichoDeAcciones([{ tipo: 'recordatorio', texto: 'X', cuando: 1, llamada: true }]), 'Listo, te llamo.');
 });
 
 test('manoPorReglas sin contexto o sin manos no hace nada', () => {

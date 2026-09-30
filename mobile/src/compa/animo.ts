@@ -4,7 +4,8 @@
  * Es una máquina pura (entra un evento y la hora, sale el ánimo nuevo y los efectos), así se prueba
  * en Node y el componente solo dibuja y ejecuta los efectos:
  *
- *  · tocarla → le gusta (ojos felices, brinquito, háptica suave; a veces una risita o una frase);
+ *  · tocarla → le gusta (ojos felices, brinquito, háptica suave; a veces una risita o una frase); si
+ *    el cuerpo sabe dónde (avatar3d/contrato.ts), la mejilla la pone tímida y la panza, risueña;
  *  · acariciarla (arrastrar suave encima) → encantada, se le pasa el enojo;
  *  · muchos toques rápidos → se enoja (ceño, se sacude, «¡oye!») y se le pasa sola en unos segundos;
  *  · mantenerla → la levantas; soltarla → aterriza con un brinco;
@@ -21,6 +22,7 @@
 import type { AccionApp } from '../nucleo/contrato';
 import type { Emocion } from '../lib/emocion';
 import type { EstadoVoz } from './sesion';
+import type { ZonaToque } from '../avatar3d/tipos';
 import { fraseCompa, textoCompa, type GrupoFrase } from './frases';
 
 export type Expresion =
@@ -34,9 +36,11 @@ export type Expresion =
   | 'sorprendida'
   | 'triste'
   | 'uy'
-  | 'levantada';
+  | 'levantada'
+  /** Le tocaron la mejilla: sonríe y baja la mirada, con rubor. */
+  | 'timida';
 
-export const EXPRESIONES: readonly Expresion[] = ['tranquila', 'contenta', 'encantada', 'enojada', 'dormida', 'escucha', 'piensa', 'sorprendida', 'triste', 'uy', 'levantada'];
+export const EXPRESIONES: readonly Expresion[] = ['tranquila', 'contenta', 'encantada', 'enojada', 'dormida', 'escucha', 'piensa', 'sorprendida', 'triste', 'uy', 'levantada', 'timida'];
 
 export type VozVista = { estado: EstadoVoz; silenciada: boolean; dormida: boolean; suspendida: boolean };
 
@@ -78,7 +82,8 @@ export type Efecto =
   | { tipo: 'desaparecer' };
 
 export type EventoAnimo =
-  | { tipo: 'toque' }
+  /** `zona`: dónde la tocaron, si el cuerpo lo sabe (la mejilla la pone tímida; la panza, risueña). */
+  | { tipo: 'toque'; zona?: ZonaToque }
   | { tipo: 'molestar' }
   | { tipo: 'caricia' }
   | { tipo: 'dobleToque' }
@@ -219,10 +224,11 @@ export function reducir(a: Animo, ev: EventoAnimo, ahora: number, azar: () => nu
         return { animo: n, efectos };
       }
       if (n.irritacion >= 0.9) return enojarse(n, ahora, efectos, azar);
-      n.reaccion = reaccion('contenta', 1400);
-      efectos.push({ tipo: 'haptica', fuerza: 'suave' }, { tipo: 'brinco', alto: 10 });
+      // La mejilla la pone tímida; la panza le da cosquillas (más risa); la cabeza, contenta.
+      n.reaccion = ev.zona === 'mejilla' ? reaccion('timida', 1600) : ev.zona === 'panza' ? reaccion('encantada', 1400) : reaccion('contenta', 1400);
+      efectos.push({ tipo: 'haptica', fuerza: 'suave' }, { tipo: 'brinco', alto: ev.zona === 'mejilla' ? 5 : 10 });
       // A veces una risita (nunca con la conversación abierta: el micrófono la oiría) y a veces una frase.
-      if (!vozAbierta(a.voz) && azar() < 0.45) efectos.push({ tipo: 'sonido', nombre: 'giggle' });
+      if (!vozAbierta(a.voz) && azar() < (ev.zona === 'panza' ? 0.8 : 0.45)) efectos.push({ tipo: 'sonido', nombre: 'giggle' });
       if (n.cuenta % 3 === 1) efectos.push(globo(frase('toque', n), 1800));
       return { animo: n, efectos };
     }

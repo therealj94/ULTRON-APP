@@ -23,12 +23,18 @@
  * Al terminar una sesión que llegó a abrirse, `onFin` avisa con su pase (el VozProvider se lo cuenta
  * al servidor: POST /api/voz/agente/cerrar).
  *
+ * La forma de la boca (avatar3d/senalVoz.ts): si algún cuerpo dibuja visemas (el 3D), cada 50 ms se
+ * lee también el espectro de la voz del agente; y si ElevenLabs manda la alineación por letra
+ * (`onAudioAlignment`, solo cuando el audio viaja en eventos), se pasa tal cual. Sin nadie que lo
+ * pida, el espectro no se mide (tiene costo: LiveKit lo calcula en nativo).
+ *
  * Este componente no dibuja nada.
  */
 import { useEffect, useRef, type MutableRefObject } from 'react';
 import { ConversationProvider, useConversation } from '@elevenlabs/react-native';
 import { envolventeLibre } from '../lib/lipsync';
 import { miga } from '../lib/reporte';
+import { senalVoz } from '../avatar3d/senalVoz';
 import type { EstadoVoz } from '../compa/sesion';
 
 export type EstadoConversacion = EstadoVoz;
@@ -184,6 +190,9 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
           onInterruption: () => {
             if (vivo) cbs.current.onInterrupcion(gen);
           },
+          onAudioAlignment: (al) => {
+            if (vivo) senalVoz.alineacion(al);
+          },
           onError: (mensaje) => {
             miga(`conversación fluida: error ${String(mensaje).slice(0, 80)}`);
             // Sin haber conectado, el error es que no abrió: el SDK ya soltó el audio antes de avisar.
@@ -224,6 +233,14 @@ function Sesion({ gen, silenciada, permiso, onEstado, onMensaje, onInterrupcion,
           } else {
             sinVolumenDesde = 0;
             if (!hablando.current) envolvente = null;
+          }
+          // El espectro, antes del nivel: el nivel es el que publica la boca nueva.
+          if (hablando.current && senalVoz.quiereForma()) {
+            try {
+              senalVoz.espectro(convRef.current.getOutputByteFrequencyData());
+            } catch {
+              /* sin espectro: la forma sale del volumen */
+            }
           }
           cbs.current.onNiveles(silencio.current ? 0 : salida, entrada);
         }, 50);

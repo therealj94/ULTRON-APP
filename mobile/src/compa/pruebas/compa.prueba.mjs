@@ -871,8 +871,10 @@ prueba('manos: la app valida cada mano como el servidor; lo que no conoce se ign
   assert.equal(esAccionApp({ tipo: 'perfil', campo: 'clave', valor: 'x' }), false);
   assert.equal(esAccionApp({ tipo: 'recordatorio', texto: 'Llamar a mi mamá', cuando: Date.now() + 3600_000 }), true);
   assert.equal(esAccionApp({ tipo: 'recordatorio', texto: 'Llamar', cuando: 'a las 5' }), false);
-  assert.equal(esAccionApp({ tipo: 'presentacion', valor: 'lado' }), true);
-  assert.equal(esAccionApp({ tipo: 'presentacion', valor: 'flotante' }), false);
+  assert.equal(esAccionApp({ tipo: 'recordatorio', texto: 'Pastilla', cuando: Date.now() + 3600_000, llamada: true }), true);
+  assert.equal(esAccionApp({ tipo: 'cancelar_recordatorio', id: 'aura-rec-abc-12' }), true);
+  assert.equal(esAccionApp({ tipo: 'cancelar_recordatorio', id: '../../x' }), false);
+  assert.equal(esAccionApp({ tipo: 'presentacion', valor: 'lado' }), false, 'es `presencia` (avatar 3D)');
   assert.equal(esAccionApp({ tipo: 'borrar_chat', con: 'Beto' }), false);
   assert.deepEqual(accionesDelTurno({ acciones: [{ id: 'm-1', accion: { tipo: 'volar_dron' } }, { id: 'm-2', accion: { tipo: 'idioma', valor: 'es' } }] }), [{ tipo: 'idioma', valor: 'es' }], 'una mano de un servidor más nuevo se ignora sin romper');
 });
@@ -881,7 +883,7 @@ prueba('manos: el contexto le dice al servidor qué manos sabe hacer este teléf
   const enviados = [];
   const ctx = new ContextoApp({ enviar: async (c) => enviados.push(c), contactos: async () => [], escuchar: () => () => {}, esperar: (f) => (f(), () => {}) });
   const c = await ctx.enviarAhora(true);
-  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'presentacion']);
+  assert.deepEqual([...c.manos], ['llamar', 'leer', 'buscar', 'idioma', 'perfil', 'recordatorio', 'recordatorio_llamada']);
   assert.deepEqual([...c.manos], [...MANOS_APP]);
 });
 

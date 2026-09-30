@@ -102,6 +102,7 @@ import { identidadDe, exigirPlataforma, esInvitado } from './server/seguridad';
 import { cuentaDe, cuentasDisponibles, crearSolicitud, entrarConCuenta, mantenerCuentasAlDia } from './server/cuentas';
 import { aprobadores, montarRutasCuentas, plantilla } from './server/cuentas-rutas';
 import { montarRutasGenesis } from './server/genesis';
+import { montarEnlacesApp } from './server/enlaces-app';
 import { enviarCorreo } from './lib/correo-ses';
 import { montarRutasBiblioteca } from './server/electrum/biblioteca-rutas';
 import { montarRutasTeselas } from './server/electrum/teselas';
@@ -1467,6 +1468,8 @@ montarRutasCuentas(app, {
  * la persona; si entra lo decide el padrón. Ver server/genesis.ts.
  */
 if (!ES_ELECTRUM) {
+  // La vuelta de la wallet por https (App Links) y su declaración para Android: server/enlaces-app.ts.
+  montarEnlacesApp(app);
   montarRutasGenesis(app, {
     limitar,
     normalizarCorreo,

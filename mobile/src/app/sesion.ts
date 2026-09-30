@@ -11,7 +11,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { SessionUser } from '../config';
 import { logoutRemote } from '../lib/api';
 import { cargarPerfil, soltarPerfil } from '../lib/perfil';
-import { borrarRastrosViejos, saveSession } from '../lib/storage';
+import { borrarRastrosViejos, getFingerprintUnlock, loadCreds, saveCreds, saveMesaToken, saveSession } from '../lib/storage';
 import { salir as salirDelChat } from '../pulse/relevo';
 import { miga } from '../lib/reporte';
 import { reiniciarA } from './rutas';
@@ -82,17 +82,45 @@ export async function marcarBienvenidaVista() {
 export async function entrarCon(u: SessionUser, compartido?: Compartido | null) {
   miga('entró: cargando perfil');
   const s = { ...u, correo: u.correo.trim().toLowerCase() };
+  await olvidarClaveAjena(s.correo);
   await saveSession(s).catch(() => {});
   fijarUsuario(s);
   const p = await cargarPerfil(s.correo, { nombre: s.name, genesis: compartido || null, topeMs: 6_000 });
   reiniciarA(p.completado ? 'Mesa' : 'PrimeraVez');
 }
 
+/** La clave guardada de OTRA persona no sobrevive a que entre alguien distinto en este teléfono. */
+async function olvidarClaveAjena(correo: string) {
+  const creds = await loadCreds();
+  if (creds?.correo && creds.correo.trim().toLowerCase() !== correo) await saveCreds(null);
+}
+
+async function guardarClaveSoloConHuella(correo: string) {
+  const [creds, huella] = await Promise.all([loadCreds(), getFingerprintUnlock()]);
+  if (!creds) return;
+  const mismo = (c?: string) => !!c && !!correo && c.trim().toLowerCase() === correo.trim().toLowerCase();
+  if (!(huella?.enabled && mismo(huella.correo) && mismo(creds.correo))) await saveCreds(null);
+}
+
+/**
+ * La sesión guardada ya no vale (venció, la cerraron en otro lado o es de otra cuenta): se borra aquí
+ * sin pasar por el servidor, y la intro lleva a la entrada con el aviso.
+ */
+export async function soltarSesionCaida() {
+  miga('sesión guardada caída: a la entrada');
+  await Promise.all([saveSession(null), saveMesaToken(null)]).catch(() => {});
+  soltarPerfil();
+  fijarUsuario(null);
+}
+
 /** Cerrar sesión desde la mesa o desde Ajustes: vuelve a la entrada. */
 export function salirDeLaSesion() {
   miga('cerrando sesión');
   // El historial del turno vive en la mesa y se va con ella; la memoria de largo plazo es por
-  // persona. Las credenciales guardadas se quedan: las usa «Otras formas de entrar».
+  // persona. La clave guardada solo se queda si su dueño activó entrar con huella (la usa «Otras
+  // formas de entrar»); si no, se va: en un teléfono compartido nadie debe quedar con la ajena.
+  const quien = usuario?.correo || '';
+  void guardarClaveSoloConHuella(quien);
   void saveSession(null);
   void logoutRemote();
   void borrarRastrosViejos();

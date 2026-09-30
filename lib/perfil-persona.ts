@@ -22,8 +22,8 @@ import { s3GetJson, s3Listo, s3PutJson } from './s3';
 export type Tema = 'oscuro' | 'claro' | 'sistema';
 export type AvatarPerfil = 'ojos' | 'aura' | 'claudio';
 export type IdiomaPerfil = 'es' | 'en';
-/** Cómo se muestra el avatar: en pantalla completa o a un lado. */
-export type Presentacion = 'completa' | 'lado';
+/** Cómo tiene a AURA en el teléfono: caminando chiquita, al lado de los chats o a pantalla completa. */
+export type PresenciaPerfil = 'paseo' | 'lado' | 'completa';
 
 export type Encuesta = {
   vive?: string;
@@ -42,10 +42,9 @@ export type Perfil = {
   idioma: IdiomaPerfil;
   nombreGenesis?: string;
   cumple?: string;
-  /** Sin elegir todavía: la app usa su modo de siempre. */
-  presentacion?: Presentacion;
   encuesta: Encuesta;
   completado: boolean;
+  presencia?: PresenciaPerfil;
   actualizado: number;
 };
 
@@ -54,6 +53,7 @@ export const MAX_CAMPO_ENCUESTA = 300;
 export const CAMPOS_ENCUESTA = ['vive', 'comida', 'musica', 'familia', 'trabajo', 'gustos', 'otros'] as const;
 const AVATARES: AvatarPerfil[] = ['ojos', 'aura', 'claudio'];
 const TEMAS: Tema[] = ['oscuro', 'claro', 'sistema'];
+const PRESENCIAS: PresenciaPerfil[] = ['paseo', 'lado', 'completa'];
 const DIAS_DEL_MES = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 /** Texto limpio de una línea: sin caracteres de control ni saltos (van al prompt), recortado. */
@@ -104,10 +104,6 @@ export function validarCambios(cuerpo: unknown): { ok: true; cambios: Cambios } 
     if (b.idioma !== 'es' && b.idioma !== 'en') return { ok: false, error: 'El idioma es es o en.' };
     c.idioma = b.idioma;
   }
-  if (b.presentacion !== undefined) {
-    if (b.presentacion !== 'completa' && b.presentacion !== 'lado') return { ok: false, error: 'La presentación es completa o lado.' };
-    c.presentacion = b.presentacion;
-  }
   if (b.cumple !== undefined) {
     // Vacío o null = «no quiero decirlo»: se borra.
     if (b.cumple === null || b.cumple === '') c.cumple = '';
@@ -120,6 +116,10 @@ export function validarCambios(cuerpo: unknown): { ok: true; cambios: Cambios } 
   if (b.completado !== undefined) {
     if (typeof b.completado !== 'boolean') return { ok: false, error: 'completado es verdadero o falso.' };
     c.completado = b.completado;
+  }
+  if (b.presencia !== undefined) {
+    if (!PRESENCIAS.includes(b.presencia as PresenciaPerfil)) return { ok: false, error: 'La presencia es paseo, lado o completa.' };
+    c.presencia = b.presencia as PresenciaPerfil;
   }
   if (b.encuesta !== undefined) {
     if (!b.encuesta || typeof b.encuesta !== 'object' || Array.isArray(b.encuesta)) return { ok: false, error: 'La encuesta tiene que ser un objeto.' };
@@ -179,8 +179,8 @@ function sanear(raw: unknown): Perfil | null {
     cumple: r.cumple || undefined,
     completado: r.completado,
     encuesta: r.encuesta || {},
-    // Un valor raro guardado no tumba el perfil entero: se queda sin elegir.
-    presentacion: r.presentacion === 'completa' || r.presentacion === 'lado' ? r.presentacion : undefined,
+    // Un valor viejo o raro no invalida el perfil entero: se queda sin presencia (paseo).
+    presencia: PRESENCIAS.includes(r.presencia as PresenciaPerfil) ? r.presencia : undefined,
   });
   if (!v.ok) return null;
   const p = aplicarCambios(perfilInicial({ nombreGenesis: String(r.nombreGenesis || '') }), v.cambios, Number(r.actualizado) || 0);
