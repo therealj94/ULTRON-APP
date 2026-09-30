@@ -50,6 +50,7 @@ internal sealed class MedidorFotogramas
         fps_medio = intervalos.Count > 0 ? Math.Round(1000 / intervalos.Average(), 1) : 0,
         intervalo_p50_ms = P(intervalos, 0.5), intervalo_p95_ms = P(intervalos, 0.95), intervalo_max_ms = Math.Round(intervalos.DefaultIfEmpty(0).Max(), 1),
         saltos_mas_de_50ms = intervalos.Count(x => x > 50),
+        animaciones_del_sistema = SystemParameters.ClientAreaAnimation,
         dibujar_p50_ms = P(costos, 0.5), dibujar_p95_ms = P(costos, 0.95),
     };
     public double P95 => P(intervalos, 0.95);

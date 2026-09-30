@@ -39,6 +39,18 @@ public partial class NotchWindow
         AgregarMensaje(ajustes.NombreAvatar, titulo + (cuerpo.Length > 0 ? " · " + cuerpo : ""));
     }
 
+    /// <summary>Un botón de música: la tarjeta es la respuesta (sin hablar encima de la canción); sin tarjeta, un aviso.</summary>
+    void HechoMusica(string titulo, double segundos)
+    {
+        if (cancion != null && ajustes.MostrarMusica)
+        {
+            MostrarTarjetaMusica(segundos);
+            AgregarMensaje(ajustes.NombreAvatar, titulo);
+            if (continuo) EmpezarAEscuchar();
+        }
+        else Hecho(titulo, "", "");
+    }
+
     void NoPude(string motivo)
     {
         pensando = false;
@@ -83,9 +95,9 @@ public partial class NotchWindow
                 case Mano.VolumenSubir: Escritorio.Volumen(true, Parametros.Limpiar(texto).Contains("poco") ? 2 : 5); Hecho(T("Volumen arriba", "Volume up"), "", ""); break;
                 case Mano.VolumenBajar: Escritorio.Volumen(false, Parametros.Limpiar(texto).Contains("poco") ? 2 : 5); Hecho(T("Volumen abajo", "Volume down"), "", ""); break;
                 case Mano.Silenciar: Escritorio.Mute(); Hecho(T("Sonido", "Sound"), T("Silencio activado o quitado", "Mute toggled"), ""); break;
-                case Mano.MultimediaPausa: if (!await musica.PlayPausa()) Escritorio.PlayPausa(); MostrarTarjetaMusica(4); break;
-                case Mano.MultimediaSiguiente: if (!await musica.Siguiente()) Escritorio.Siguiente(); MostrarTarjetaMusica(5); break;
-                case Mano.MultimediaAnterior: if (!await musica.Anterior()) Escritorio.Anterior(); MostrarTarjetaMusica(5); break;
+                case Mano.MultimediaPausa: if (!await musica.PlayPausa()) Escritorio.PlayPausa(); HechoMusica(T("Play / pausa", "Play / pause"), 4); break;
+                case Mano.MultimediaSiguiente: if (!await musica.Siguiente()) Escritorio.Siguiente(); HechoMusica(T("Siguiente canción", "Next track"), 5); break;
+                case Mano.MultimediaAnterior: if (!await musica.Anterior()) Escritorio.Anterior(); HechoMusica(T("Canción anterior", "Previous track"), 5); break;
                 case Mano.Escritorio: Escritorio.MostrarEscritorio(); Hecho(T("Escritorio", "Desktop"), "", ""); break;
                 case Mano.Captura:
                 {

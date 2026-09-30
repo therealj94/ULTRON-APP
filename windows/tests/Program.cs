@@ -173,6 +173,13 @@ Check(R("¿qué tengo hoy?") is { Mano: Mano.Agenda, Valor: "hoy" }, "agenda hoy
 Check(R("qué tengo mañana") is { Mano: Mano.Agenda, Valor: "manana" }, "agenda manana");
 Check(R("cuál es mi próxima reunión") is { Mano: Mano.Agenda, Valor: "proximo" }, "proxima reunion");
 Check(R("tengo una reunión mañana").Mano == Mano.Ninguna, "contar una reunion no es agenda");
+Check(R("busca recetas de pupusas en youtube").Mano != Mano.Musica, "busca en youtube es web, no musica: " + R("busca recetas de pupusas en youtube"));
+Check(R("busca Shakira en Spotify") is { Mano: Mano.Musica, Valor: "spotify|Shakira" }, "busca en spotify si es musica");
+Check(R("pon a Shakira en Spotify") is { Mano: Mano.Musica, Valor: "spotify|Shakira" }, "pon a shakira: " + R("pon a Shakira en Spotify"));
+Check(R("lee el correo de Juan") is { Mano: Mano.Correo, Valor: "de|juan" }, "correo de juan: " + R("lee el correo de Juan"));
+Check(R("¿tengo correos de Amazon?") is { Mano: Mano.Correo, Valor: "de|amazon" }, "correos de amazon: " + R("¿tengo correos de Amazon?"));
+Check(R("qué tengo hoy en la agenda") is { Mano: Mano.Agenda, Valor: "hoy" }, "hoy en la agenda");
+Check(R("qué tengo en mi calendario mañana") is { Mano: Mano.Agenda, Valor: "manana" }, "calendario manana");
 // iCal: zona, UTC, todo el día, repeticiones, exclusiones
 var utc = TimeZoneInfo.Utc;
 var ics = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:Junta directiva\r\nLOCATION:Sala 2\r\nDTSTART:20261001T150000Z\r\nDTEND:20261001T160000Z\r\nEND:VEVENT\r\n"
@@ -183,6 +190,27 @@ Check(evs.Any(e => e.Titulo == "Junta directiva" && e.Inicio == new DateTime(202
 Check(evs.Any(e => e.Titulo == "Cumpleaños de Karla" && e.TodoElDia), "ical todo el dia y linea doblada");
 var standups = evs.Where(e => e.Titulo == "Standup").Select(e => e.Inicio.Day).ToArray();
 Check(standups.SequenceEqual(new[] { 28, 2, 5, 7, 9 }), "ical semanal con exclusion y count: " + string.Join(",", standups));
+Check(evs.Where(e => e.Titulo == "Standup").All(e => e.Inicio.TimeOfDay == new TimeSpan(14, 0, 0)), "ical semanal conserva la hora (no la suma dos veces)");
+// Alarmas dentro del evento, mensual día 31 y «2.º martes», serie vieja, cancelados y movidos, BYDAY vacío, zona con cambio de horario
+var ics2 = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\nSUMMARY:Dentista\r\nDTSTART:20261005T160000Z\r\nDTEND:20261005T170000Z\r\nBEGIN:VALARM\r\nTRIGGER:-PT10M\r\nDESCRIPTION:Alarma\r\nSUMMARY:No soy el evento\r\nEND:VALARM\r\nEND:VEVENT\r\n"
+    + "BEGIN:VEVENT\r\nUID:b\r\nSUMMARY:Pago\r\nDTSTART:20260131T090000Z\r\nRRULE:FREQ=MONTHLY\r\nEND:VEVENT\r\n"
+    + "BEGIN:VEVENT\r\nUID:c\r\nSUMMARY:Comite\r\nDTSTART:20260113T100000Z\r\nRRULE:FREQ=MONTHLY;BYDAY=2TU\r\nEND:VEVENT\r\n"
+    + "BEGIN:VEVENT\r\nUID:d\r\nSUMMARY:Diaria vieja\r\nDTSTART:20150101T080000Z\r\nRRULE:FREQ=DAILY\r\nEND:VEVENT\r\n"
+    + "BEGIN:VEVENT\r\nUID:e\r\nSUMMARY:Cancelada\r\nSTATUS:CANCELLED\r\nDTSTART:20261006T100000Z\r\nEND:VEVENT\r\n"
+    + "BEGIN:VEVENT\r\nUID:f\r\nSUMMARY:Clase\r\nDTSTART:20260929T120000Z\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT\r\n"
+    + "BEGIN:VEVENT\r\nUID:f\r\nRECURRENCE-ID:20261006T120000Z\r\nSUMMARY:Clase movida\r\nDTSTART:20261007T180000Z\r\nEND:VEVENT\r\n"
+    + "BEGIN:VEVENT\r\nUID:g\r\nSUMMARY:Rara\r\nDTSTART:20261001T100000Z\r\nRRULE:FREQ=WEEKLY;BYDAY=\r\nEND:VEVENT\r\n"
+    + "BEGIN:VEVENT\r\nUID:h\r\nSUMMARY:NY\r\nDTSTART;TZID=America/New_York:20261026T090000\r\nRRULE:FREQ=WEEKLY;COUNT=2\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+var evs2 = Ical.Eventos(ics2, new DateTime(2026, 9, 28), new DateTime(2026, 11, 12), utc);
+Check(evs2.Count(e => e.Titulo == "Dentista") == 1 && !evs2.Any(e => e.Titulo == "No soy el evento"), "ical valarm no pisa el evento");
+Check(evs2.Where(e => e.Titulo == "Pago").Select(e => e.Inicio.Day).SequenceEqual(new[] { 31 }), "ical mensual dia 31 no deriva: " + string.Join(",", evs2.Where(e => e.Titulo == "Pago").Select(e => e.Inicio.ToString("MM-dd"))));
+Check(evs2.Where(e => e.Titulo == "Comite").Select(e => e.Inicio.ToString("MM-dd")).SequenceEqual(new[] { "10-13", "11-10" }), "ical segundo martes: " + string.Join(",", evs2.Where(e => e.Titulo == "Comite").Select(e => e.Inicio.ToString("MM-dd"))));
+Check(evs2.Count(e => e.Titulo == "Diaria vieja") >= 40, "ical serie diaria desde 2015 sigue apareciendo: " + evs2.Count(e => e.Titulo == "Diaria vieja"));
+Check(!evs2.Any(e => e.Titulo == "Cancelada"), "ical cancelado no aparece");
+Check(evs2.Where(e => e.Titulo.StartsWith("Clase")).Select(e => e.Titulo + e.Inicio.ToString("MM-dd")).SequenceEqual(new[] { "Clase09-29", "Clase movida10-07", "Clase10-13" }), "ical ocurrencia movida: " + string.Join(",", evs2.Where(e => e.Titulo.StartsWith("Clase")).Select(e => e.Titulo + e.Inicio.ToString("MM-dd"))));
+Check(evs2.Any(e => e.Titulo == "Dentista"), "ical BYDAY vacio no tumba el resto");
+Check(evs2.Where(e => e.Titulo == "NY").Select(e => e.Inicio.Hour).SequenceEqual(new[] { 13, 14 }), "ical zona con cambio de horario: " + string.Join(",", evs2.Where(e => e.Titulo == "NY").Select(e => e.Inicio.ToString("MM-dd HH"))));
+Check(Ical.Eventos("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nSUMMARY:x\r\nDTSTART:20261001T100000Z\r\nRRULE:FREQ=MONTHLY;BYDAY=TU\r\nEND:VEVENT\r\nEND:VCALENDAR", new DateTime(2026, 9, 28), new DateTime(2026, 10, 30), utc) is { Count: 0 }, "ical regla no soportada no inventa fechas");
 Check(evs.First(e => e.Titulo == "Standup").Fin - evs.First(e => e.Titulo == "Standup").Inicio == TimeSpan.FromMinutes(15), "ical duracion");
 
 // La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).

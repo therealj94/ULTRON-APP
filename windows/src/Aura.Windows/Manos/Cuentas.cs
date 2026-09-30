@@ -26,7 +26,7 @@ internal sealed class Correo : IDisposable
     readonly string direccion, clave, servidor;
     readonly int puerto;
     CancellationTokenSource? vigia;
-    uint mayorVisto;
+    uint mayorVisto, validez;
     bool primera = true;
     public event Action<Carta>? Nuevo;
     public event Action<string>? Fallo;
@@ -35,8 +35,9 @@ internal sealed class Correo : IDisposable
     public Correo(string direccion, string clave, string? servidor = null)
     {
         this.direccion = direccion.Trim();
-        this.clave = clave.Replace(" ", ""); // la contraseña de aplicación de Google viene en grupos de 4
         (this.servidor, puerto) = servidor is { Length: > 0 } ? (servidor, 993) : Servidor(this.direccion);
+        // La contraseña de aplicación de Google viene en grupos de 4 con espacios; otras claves pueden llevarlos.
+        this.clave = this.servidor.Contains("gmail", StringComparison.OrdinalIgnoreCase) ? clave.Replace(" ", "") : clave;
     }
 
     /// <summary>El servidor IMAP de los proveedores comunes, por el dominio de la dirección.</summary>
@@ -75,6 +76,8 @@ internal sealed class Correo : IDisposable
         using var c = await Conectar(ct);
         var bandeja = c.Inbox;
         await bandeja.OpenAsync(FolderAccess.ReadOnly, ct);
+        // Si el servidor renumeró la bandeja (UIDVALIDITY), los números viejos ya no sirven: se vuelve a empezar sin anunciar todo.
+        if (bandeja.UidValidity != validez) { if (validez != 0) { mayorVisto = 0; primera = true; } validez = bandeja.UidValidity; }
         var ids = await bandeja.SearchAsync(SearchQuery.NotSeen.And(SearchQuery.DeliveredAfter(DateTime.Now.AddDays(-14))), ct);
         var ultimos = ids.OrderByDescending(i => i.Id).Take(max).ToList();
         var lista = new List<Carta>();
@@ -111,8 +114,8 @@ internal sealed class Correo : IDisposable
                     if (cartas.Count > 0) mayorVisto = Math.Max(mayorVisto, cartas.Max(x => x.Id));
                     primera = false; fallos = 0;
                 }
-                catch (OperationCanceledException) { break; }
-                catch (Exception ex) { if (++fallos == 3) Fallo?.Invoke(ex.Message); }
+                catch (OperationCanceledException) when (cts.IsCancellationRequested) { break; }
+                catch (Exception ex) { if (++fallos == 3) Fallo?.Invoke(ex is OperationCanceledException ? "El servidor de correo no respondió a tiempo." : ex.Message); }
                 try { await Task.Delay(TimeSpan.FromSeconds(fallos > 0 ? Math.Min(600, 60 * fallos) : 60), cts.Token); } catch { break; }
             }
         });
@@ -134,8 +137,11 @@ internal sealed class AgendaCuenta : IDisposable
 
     public AgendaCuenta(string url)
     {
-        if (!Commands.SafeHttps(url.Replace("webcal://", "https://"))) throw new InvalidOperationException("La dirección del calendario tiene que ser https (o webcal).");
-        this.url = url.Replace("webcal://", "https://");
+        url = url.Trim();
+        if (url.StartsWith("webcal://", StringComparison.OrdinalIgnoreCase) || url.StartsWith("webcals://", StringComparison.OrdinalIgnoreCase))
+            url = "https://" + url[(url.IndexOf("://", StringComparison.Ordinal) + 3)..];
+        if (!Commands.SafeHttps(url)) throw new InvalidOperationException("La dirección del calendario tiene que ser https (o webcal).");
+        this.url = url;
     }
 
     public async Task<List<Evento>> Cargar(CancellationToken ct = default)
@@ -155,16 +161,22 @@ internal sealed class AgendaCuenta : IDisposable
         _ = Task.Run(async () =>
         {
             var recargar = DateTime.MinValue;
+            int fallos = 0;
             while (!cts.IsCancellationRequested)
             {
                 try
                 {
-                    if (DateTime.Now >= recargar) { await Cargar(cts.Token); recargar = DateTime.Now.AddMinutes(15); }
+                    if (DateTime.Now >= recargar) { await Cargar(cts.Token); recargar = DateTime.Now.AddMinutes(15); fallos = 0; }
                     foreach (var e in eventos.Where(e => !e.TodoElDia && e.Inicio > DateTime.Now && e.Inicio - DateTime.Now <= TimeSpan.FromMinutes(10)))
                         if (avisados.Add(e.Titulo + e.Inicio.Ticks)) Pronto?.Invoke(e);
                 }
-                catch (OperationCanceledException) { break; }
-                catch (Exception ex) { Fallo?.Invoke(ex.Message); recargar = DateTime.Now.AddMinutes(15); }
+                catch (OperationCanceledException) when (cts.IsCancellationRequested) { break; }
+                catch (Exception ex)
+                {
+                    // Un corte de red pasajero no merece aviso; tres seguidos, sí (una vez).
+                    if (++fallos == 3) Fallo?.Invoke(ex is OperationCanceledException ? "El calendario no respondió a tiempo." : ex.Message);
+                    recargar = DateTime.Now.AddMinutes(fallos < 3 ? 2 : 15);
+                }
                 try { await Task.Delay(TimeSpan.FromSeconds(30), cts.Token); } catch { break; }
             }
         });

@@ -150,14 +150,21 @@ public partial class NotchWindow
         if (correo == null) { NoPude(T("Conecta tu correo en Ajustes → Cuentas (Gmail con contraseña de aplicación).", "Connect your email in Settings → Accounts (Gmail with an app password).")); return; }
         pensando = true; TextoPiensa.Text = T("Revisando tu correo…", "Checking your email…"); Recalcular();
         System.Collections.Generic.List<Carta> cartas;
-        try { cartas = await correo.NoLeidos(que == "contar" ? 50 : 8); }
+        var de = que.StartsWith("de|") ? LayaLigera.Normalizar(que[3..]) : null;
+        try { cartas = await correo.NoLeidos(que == "contar" || de != null ? 50 : 8); }
         catch (Exception ex) { NoPude(ex.Message); return; }
         pensando = false;
+        if (de != null)
+        {
+            cartas = cartas.Where(c => LayaLigera.Normalizar(c.De).Contains(de, StringComparison.Ordinal)).Take(8).ToList();
+            if (cartas.Count == 0) { Hecho(T("Nada de " + que[3..], "Nothing from " + que[3..]), correo.Direccion, "", T($"No tienes correos sin leer de {que[3..]}.", $"No unread email from {que[3..]}.")); return; }
+            que = "leer";
+        }
         if (cartas.Count == 0) { Hecho(T("Sin correos nuevos", "No new email"), correo.Direccion, "", T("No tienes correos sin leer.", "You have no unread email.")); return; }
         if (que == "contar")
         {
-            var de = string.Join(", ", cartas.Take(3).Select(c => c.De));
-            Hecho(T($"{cartas.Count} sin leer", $"{cartas.Count} unread"), de, "", T($"Tienes {cartas.Count} correos sin leer; los últimos, de {de}.", $"You have {cartas.Count} unread emails; the latest from {de}."));
+            var quienes = string.Join(", ", cartas.Take(3).Select(c => c.De));
+            Hecho(T($"{cartas.Count} sin leer", $"{cartas.Count} unread"), quienes, "", T($"Tienes {cartas.Count} correos sin leer; los últimos, de {quienes}.", $"You have {cartas.Count} unread emails; the latest from {quienes}."));
             return;
         }
         var lista = string.Join("\n", cartas.Select(c => $"• {c.De}: {c.Asunto}"));

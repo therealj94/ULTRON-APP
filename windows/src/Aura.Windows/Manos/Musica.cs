@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using GSMTC = global::Windows.Media.Control;
 
@@ -20,6 +21,7 @@ internal sealed class Musica : IDisposable
     GSMTC.GlobalSystemMediaTransportControlsSessionManager? gestor;
     GSMTC.GlobalSystemMediaTransportControlsSession? sesion;
     Cancion? ultima;
+    int lectura; // cada lectura lleva número: si llega tarde una vieja, no pisa a la nueva
     public Cancion? Actual => ultima;
     /// <summary>Cambió la canción o su estado (llega desde otro hilo).</summary>
     public event Action<Cancion?, bool>? Cambio;
@@ -29,24 +31,28 @@ internal sealed class Musica : IDisposable
         try
         {
             gestor = await GSMTC.GlobalSystemMediaTransportControlsSessionManager.RequestAsync();
-            gestor.CurrentSessionChanged += (_, _) => Enganchar(gestor.GetCurrentSession());
+            gestor.CurrentSessionChanged += AlCambiarSesion;
             Enganchar(gestor.GetCurrentSession());
         }
         catch { gestor = null; } // Windows sin control multimedia: la música se maneja con las teclas de siempre.
     }
 
+    void AlCambiarSesion(GSMTC.GlobalSystemMediaTransportControlsSessionManager g, GSMTC.CurrentSessionChangedEventArgs e) => Enganchar(g.GetCurrentSession());
+
     void Enganchar(GSMTC.GlobalSystemMediaTransportControlsSession? s)
     {
-        if (sesion != null) { sesion.MediaPropertiesChanged -= AlCambiar; sesion.PlaybackInfoChanged -= AlCambiar; }
+        if (sesion != null) { sesion.MediaPropertiesChanged -= AlCambiar; sesion.PlaybackInfoChanged -= AlCambiar; sesion.TimelinePropertiesChanged -= AlCambiar; }
         sesion = s;
-        if (s != null) { s.MediaPropertiesChanged += AlCambiar; s.PlaybackInfoChanged += AlCambiar; }
+        if (s != null) { s.MediaPropertiesChanged += AlCambiar; s.PlaybackInfoChanged += AlCambiar; s.TimelinePropertiesChanged += AlCambiar; }
         _ = Leer();
     }
 
     void AlCambiar(GSMTC.GlobalSystemMediaTransportControlsSession s, object e) => _ = Leer();
+    DateTime leidaEn;
 
     async Task Leer()
     {
+        var yo = Interlocked.Increment(ref lectura);
         var s = sesion;
         if (s == null) { var habia = ultima != null; ultima = null; if (habia) Cambio?.Invoke(null, true); return; }
         try
@@ -67,10 +73,20 @@ internal sealed class Musica : IDisposable
                 }
                 catch { }
             }
-            var c = new Cancion(props.Title ?? "", props.Artist ?? props.AlbumArtist ?? "", NombreApp(s.SourceAppUserModelId),
-                info.PlaybackStatus == GSMTC.GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing, portada, linea.Position, linea.EndTime - linea.StartTime);
+            if (yo != Volatile.Read(ref lectura)) return; // ya hay una lectura más nueva en camino
+            bool sonando = info.PlaybackStatus == GSMTC.GlobalSystemMediaTransportControlsSessionPlaybackStatus.Playing;
+            // La posición es la de LastUpdatedTime: se lleva a «ahora» si está sonando.
+            var pos = linea.Position;
+            var desde = DateTimeOffset.Now - linea.LastUpdatedTime;
+            if (sonando && desde > TimeSpan.Zero && desde < TimeSpan.FromHours(1)) pos += desde;
+            var c = new Cancion(props.Title ?? "", string.IsNullOrEmpty(props.Artist) ? props.AlbumArtist ?? "" : props.Artist, NombreApp(s.SourceAppUserModelId),
+                sonando, portada, pos, linea.EndTime - linea.StartTime);
             bool nueva = ultima == null || ultima.Titulo != c.Titulo || ultima.Artista != c.Artista;
-            bool distinta = nueva || ultima!.Sonando != c.Sonando;
+            // También cuenta si llegó la portada tarde o si se adelantó/atrasó la canción (más de 3 s de diferencia).
+            bool distinta = nueva || ultima!.Sonando != c.Sonando || (ultima.Portada == null) != (c.Portada == null)
+                         || c.Duracion != ultima.Duracion
+                         || Math.Abs((c.Posicion - (ultima.Posicion + (ultima.Sonando ? DateTime.Now - leidaEn : TimeSpan.Zero))).TotalSeconds) > 3;
+            leidaEn = DateTime.Now;
             ultima = c;
             if (distinta && c.Titulo.Length > 0) Cambio?.Invoke(c, nueva);
         }
@@ -102,5 +118,9 @@ internal sealed class Musica : IDisposable
         return "YouTube Music";
     }
 
-    public void Dispose() { if (sesion != null) { sesion.MediaPropertiesChanged -= AlCambiar; sesion.PlaybackInfoChanged -= AlCambiar; } }
+    public void Dispose()
+    {
+        if (gestor != null) gestor.CurrentSessionChanged -= AlCambiarSesion;
+        if (sesion != null) { sesion.MediaPropertiesChanged -= AlCambiar; sesion.PlaybackInfoChanged -= AlCambiar; sesion.TimelinePropertiesChanged -= AlCambiar; }
+    }
 }

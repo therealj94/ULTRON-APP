@@ -572,9 +572,11 @@ public static class Parametros
         var t = Limpiar(texto);
         if (QueSuena.IsMatch(t)) return "que-suena";
         var m = PonMusica.Match(t);
+        // «busca X en youtube» es una búsqueda web (videos), no música: solo «busca … en spotify / youtube music» lo es.
+        if (m.Success && Regex.IsMatch(t, @"^(?:busca|search)\b") && m.Groups["app"].Value == "youtube") return laxa ? "que-suena" : null;
         if (m.Success)
         {
-            var q = Regex.Replace(m.Groups["q"].Value.Trim(), @"^(?:some|algo de|un poco de|musica de|music by)\s+", "");
+            var q = Regex.Replace(m.Groups["q"].Value.Trim(), @"^(?:some|algo de|un poco de|musica de|music by|a)\s+", "");
             if (q.Length < 2 || q.Length > 100) return null;
             var app = m.Groups["app"].Value.StartsWith("spotify") ? "spotify" : "ytmusic";
             return app + "|" + (BuscarEnOriginal(texto, q) ?? q);
@@ -582,25 +584,27 @@ public static class Parametros
         m = PonMusicaSinApp.Match(t);
         if (m.Success)
         {
-            var q = m.Groups["q"].Value.Trim();
+            var q = Regex.Replace(m.Groups["q"].Value.Trim(), @"^a\s+", "");
             return q.Length is >= 2 and <= 100 ? "buscar|" + (BuscarEnOriginal(texto, q) ?? q) : null;
         }
         return laxa ? "que-suena" : null;
     }
 
+    static readonly Regex CorreoDe = new(@"^(?:leeme|lee|revisa|hay|tengo|busca|read|check|any) (?:(?:el|los|un|algun|mis|my|the) )?(?:ultimo )?(?:correos?|emails?|mails?|mensajes? de correo) (?:nuevos? )?(?:de|del|from) (?<de>[a-z0-9 ._-]{2,40})$", O);
     static readonly Regex CorreoRe = new(@"^(?:(?:tengo|hay) (?:correos?|emails?|mails?|mensajes? de correo)(?: nuevos?)?|(?:leeme|lee|revisa|revisame|checa|abre) (?:mis |el |los |mi )?(?:correos?|emails?|mails?|bandeja(?: de entrada)?)(?: nuevos?)?|(?:que|cuantos) correos (?:tengo|hay|me llegaron)|me llego (?:algun )?correo|(?:resume|resumeme|resumen de) (?:mis |el |los )?(?:correos?|emails?|bandeja)|lee(?:me)? el ultimo correo|(?:check|read|summarize) (?:my )?(?:emails?|mail|inbox)|(?:any|do i have) new (?:emails?|mail)|read (?:me )?the last email|how many emails do i have)$", O);
 
     /// <summary>«leer», «resumir» o «contar», o null.</summary>
     public static string? Correo(string limpio, bool laxa = false)
     {
         var t = LayaLigera.Normalizar(limpio);
+        if (CorreoDe.Match(t) is { Success: true } md) return "de|" + md.Groups["de"].Value.Trim();
         if (!CorreoRe.IsMatch(t)) return laxa ? "leer" : null;
         if (Regex.IsMatch(t, @"(?:resume|resumeme|resumen|summarize)")) return "resumir";
         if (Regex.IsMatch(t, @"^(?:tengo|hay|cuantos|me llego|any|do i have|how many)")) return "contar";
         return "leer";
     }
 
-    static readonly Regex AgendaRe = new(@"^(?:que tengo (?:hoy|manana|esta semana|pendiente hoy|en la agenda|agendado)|(?:como esta |revisa |leeme |dime )?(?:mi|la) agenda(?: de (?:hoy|manana|la semana))?|(?:cual es |cuando es )?(?:mi )?(?:proxima|siguiente) (?:reunion|cita|junta|evento)|tengo (?:reuniones|citas|juntas|eventos) (?:hoy|manana)|que hay en mi (?:calendario|agenda)(?: hoy| manana)?|what s on my calendar(?: today| tomorrow)?|what do i have (?:today|tomorrow|this week)|my (?:schedule|agenda)(?: today| tomorrow)?|when is my next (?:meeting|appointment)|next meeting)$", O);
+    static readonly Regex AgendaRe = new(@"^(?:que tengo (?:hoy|manana|esta semana|pendiente hoy|en la agenda|agendado)(?: en (?:la|mi) (?:agenda|calendario))?|que tengo en (?:la|mi) (?:agenda|calendario)(?: (?:hoy|manana|esta semana|para hoy|para manana))?|(?:como esta |revisa |leeme |dime )?(?:mi|la) agenda(?: de (?:hoy|manana|la semana))?|(?:cual es |cuando es )?(?:mi )?(?:proxima|siguiente) (?:reunion|cita|junta|evento)|tengo (?:reuniones|citas|juntas|eventos) (?:hoy|manana)|que hay en mi (?:calendario|agenda)(?: hoy| manana)?|what s on my calendar(?: today| tomorrow)?|what do i have (?:today|tomorrow|this week)|my (?:schedule|agenda)(?: today| tomorrow)?|when is my next (?:meeting|appointment)|next meeting)$", O);
 
     /// <summary>«hoy», «manana», «semana» o «proximo», o null.</summary>
     public static string? Agenda(string limpio, bool laxa = false)

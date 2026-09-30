@@ -138,6 +138,8 @@ public partial class NotchWindow
         ajustes.CorreoDireccion = r.CorreoDireccion; ajustes.CorreoClave = r.CorreoClave; ajustes.AgendaUrl = r.AgendaUrl;
         ajustes.AvisarCorreos = r.AvisarCorreos; ajustes.MostrarMusica = r.MostrarMusica;
         if (cambioCuentas) IniciarCuentas();
+        if (!ajustes.MostrarMusica) musicaVisible = false;
+        AlCambiarMusica(cancion, false); // mostrar u ocultar la música al momento
         noRenovarHasta = DateTime.MinValue;
         try { ajustes.Guardar(); } catch (Exception ex) { Avisar(new Aviso(T("No guardé los ajustes", "Settings not saved"), ex.Message, "", "worried")); }
         Callar(true); // el turno en curso iba al servidor viejo

@@ -171,15 +171,19 @@ public partial class NotchWindow : Window
     {
         var ahora = reloj.Elapsed;
         double dt = (ahora - ultimo).TotalSeconds; ultimo = ahora;
-        bool saltar = !SystemParameters.ClientAreaAnimation; // movimiento reducido: directo al final, sin animar
+        medidor?.Fotograma(ahora);
+        // Movimiento reducido: directo al final, sin animar (la prueba de fluidez anima siempre, para medir los resortes).
+        bool saltar = !pruebaAnimacion && !SystemParameters.ClientAreaAnimation;
         if (saltar) { ancho.Saltar(ancho.Objetivo); alto.Saltar(alto.Objetivo); radio.Saltar(radio.Objetivo); brillo.Saltar(brillo.Objetivo); }
         else { ancho.Paso(dt); alto.Paso(dt); radio.Paso(dt); brillo.Paso(dt); }
         bool quieto = ancho.Quieto && alto.Quieto && radio.Quieto && Math.Abs(brillo.Valor - brillo.Objetivo) < 0.005;
         foreach (var (_, op) in capas.Values) { if (saltar) op.Saltar(op.Objetivo); else op.Paso(dt); quieto &= op.Quieto; }
         Dibujar();
+        medidor?.Dibujado();
         if (quieto)
         {
             CompositionTarget.Rendering -= Fotograma; animando = false;
+            medidor?.Pausa(); // el tiempo quieto no es un fotograma lento
             if (!panelAbierto && Height > AltoCompacto + 1) Height = AltoCompacto;
         }
     }
@@ -210,13 +214,11 @@ public partial class NotchWindow : Window
         var b = Math.Clamp(brillo.Valor, 0, 1);
         if (b < 0.01) { if (Forma.Effect != null) Forma.Effect = null; }
         else { if (Forma.Effect == null) Forma.Effect = Brillo; Brillo.Opacity = b; }
-        medidor?.Fotograma(reloj.Elapsed);
         double x0 = (AnchoVentana - w) / 2;
         Forma.Data = Silueta(x0, w, h, r, Oreja);
         Canvas.SetLeft(Contenido, x0); Canvas.SetTop(Contenido, 0);
         Contenido.Width = w; Contenido.Height = h;
         var clip = new RectangleGeometry(new Rect(0, -r, w, h + r), r, r); clip.Freeze();
-        medidor?.Dibujado();
         Contenido.Clip = clip;
         foreach (var (m, (capa, op)) in capas)
         {
