@@ -41,7 +41,7 @@ El conjunto debe funcionar degradado: sin red se pueden abrir programas y trabaj
 
 ## Diseño de interacción
 
-**Notch cerrado:** propuesta de tamaño final 220–280 × 54–64 DIP; avatar de 32–40 DIP, indicador de estado y expansión. La preview usa 420 × 92 DIP para disponer de controles de desarrollo: reducirlo y mover botones al panel tras pruebas de accesibilidad. No robar foco al aparecer una respuesta ni capturar teclas fuera de sus atajos. Ocultar o atenuar durante pantalla completa según preferencia. Ofrecer monitor principal/activo/elegido; recordar por identificador de pantalla y recuperar si se desconecta.
+**Notch cerrado:** propuesta de tamaño final 220–280 × 54–64 DIP; avatar de 32–40 DIP, indicador de estado y expansión. La preview 0.2 usa 286 × 78 DIP y mueve las acciones al panel con pestañas. Verificar accesibilidad, escala y ergonomía en un equipo real antes de reducir más. No robar foco al aparecer una respuesta ni capturar teclas fuera de sus atajos. Ocultar o atenuar durante pantalla completa según preferencia. Ofrecer monitor principal/activo/elegido; recordar por identificador de pantalla y recuperar si se desconecta.
 
 **Panel abierto:** conversación en la parte superior, tarjetas de acciones con objetivo, progreso y resultado, editor lateral o inferior de borradores, controles de voz y cancelación siempre visibles. Evitar un formulario interminable. El texto técnico y los nombres de enums de la preview deben sustituirse por etiquetas claras en español.
 
