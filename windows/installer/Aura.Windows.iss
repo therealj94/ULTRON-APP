@@ -34,3 +34,5 @@ Root: HKCU; Subkey: "Software\Classes\ultronfp"; Flags: uninsdeletekey dontcreat
 
 [Run]
 Filename: "{app}\Aura.Windows.exe"; Description: "Abrir AURA"; Flags: nowait postinstall skipifsilent
+; La actualización por el aire corre el instalador en silencio: al terminar, AURA vuelve a abrirse sola.
+Filename: "{app}\Aura.Windows.exe"; Flags: nowait runasoriginaluser; Check: WizardSilent

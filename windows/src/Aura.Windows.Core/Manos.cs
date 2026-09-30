@@ -197,6 +197,31 @@ public static class Intencion
     }
 }
 
+/// <summary>
+/// Lo que el transcriptor «oye» en el ruido o en el silencio (frases de cierre de videos, subtítulos) y el
+/// eco de la propia voz de AURA. Nada de eso es la persona hablando: no se atiende.
+/// </summary>
+public static class Fantasma
+{
+    static readonly System.Text.RegularExpressions.Regex Frases = new(
+        @"^(?:(?:muchas )?gracias(?: por (?:ver|mirar|escuchar|su atencion|tu atencion|ver el video|vernos))?|hasta la proxima|hasta luego|nos vemos(?: en el (?:proximo|siguiente) (?:video|capitulo))?|chao|chau|adios|bye|suscribete(?: al canal)?|dale like|subtitulos?(?: realizados)? (?:por|de) .*|amara\.?org.*|musica|aplausos|risas|silencio|espera un momentito|un momentito|thank you(?: for watching)?|thanks for watching|see you next time|you|ok|okay|mm+|hmm+|eh+|ah+)$",
+        System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>¿Es una alucinación del transcriptor o el eco de lo último que dijo AURA?</summary>
+    public static bool Es(string texto, string? ultimoDicho = null)
+    {
+        var t = LayaLigera.Normalizar(texto).Trim();
+        if (t.Length == 0) return true;
+        if (Frases.IsMatch(t)) return true;
+        if (!string.IsNullOrWhiteSpace(ultimoDicho) && t.Length >= 6)
+        {
+            var dicho = LayaLigera.Normalizar(ultimoDicho!);
+            if (dicho.Contains(t)) return true;
+        }
+        return false;
+    }
+}
+
 /// <summary>Las reglas que sacan el parámetro de la frase: qué app, qué carpeta, qué sitio, qué buscar, cuándo.</summary>
 public static class Parametros
 {

@@ -137,6 +137,14 @@ internal sealed class CentroWindow : Window
     /// <summary>Trae el Centro al frente (y a una sección, si se pide).</summary>
     public void Mostrar(string? seccion = null)
     {
+        // Si se abrió mientras se preparaba escondido, aún no tenía botón en la barra de tareas ni lugar en la
+        // pantalla: minimizarla la hacía «desaparecer». Siempre con su botón y centrada en la pantalla.
+        ShowInTaskbar = true;
+        if (Left < -10000 || Top < -10000)
+        {
+            Left = (SystemParameters.WorkArea.Width - Width) / 2 + SystemParameters.WorkArea.Left;
+            Top = (SystemParameters.WorkArea.Height - Height) / 2 + SystemParameters.WorkArea.Top;
+        }
         if (!IsVisible) Show();
         if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
         Activate();

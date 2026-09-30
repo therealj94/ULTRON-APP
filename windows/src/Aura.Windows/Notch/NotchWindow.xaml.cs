@@ -74,6 +74,12 @@ public partial class NotchWindow : Window
         Contenido.MouseLeftButtonUp += ClicForma;
         MouseEnter += (_, _) => { raton = true; Recalcular(); };
         MouseLeave += (_, _) => { raton = false; Recalcular(); };
+        // Clic en otra ventana: el panel se recoge solo (salvo que estés hablando, escribiendo o haya algo que confirmar).
+        Deactivated += (_, _) =>
+        {
+            if (panelAbierto && propuesta == null && !escuchando && !pensando && !hablandoAhora && Entrada.Text.Length == 0)
+                AbrirPanel(false);
+        };
         Width = AnchoVentana; Height = AltoCompacto;
         AvatarPanel.Tocable = true;
         PrepararSoltar();

@@ -195,8 +195,10 @@ jobs:
           Copy-Item $setup.FullName ./windows/artifacts/release/AURA-Windows-Setup-x64.exe
           $hash = (Get-FileHash ./windows/artifacts/release/AURA-Windows-Setup-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  AURA-Windows-Setup-x64.exe" | Set-Content ./windows/artifacts/release/AURA-Windows-Setup-x64.exe.sha256
-          $version = ([xml](Get-Content ./windows/src/Aura.Windows/Aura.Windows.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          $version = "2.0.$env:GITHUB_RUN_NUMBER"
           "AURA_VERSION=$version" >> $env:GITHUB_ENV
+          # La ficha que AURA lee para actualizarse sola: si el commit no es el suyo, baja el .exe y comprueba este SHA-256.
+          @{ version = $version; commit = "$env:GITHUB_SHA"; sha256 = $hash } | ConvertTo-Json | Set-Content ./windows/artifacts/release/aura-windows.json
       - name: Publish the installer as a direct download (main only)
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
@@ -213,6 +215,7 @@ jobs:
           files: |
             windows/artifacts/release/AURA-Windows-Setup-x64.exe
             windows/artifacts/release/AURA-Windows-Setup-x64.exe.sha256
+            windows/artifacts/release/aura-windows.json
       - name: Prepare verified installer transfer parts
         shell: pwsh
         run: ./windows/scripts/package-delivery.ps1

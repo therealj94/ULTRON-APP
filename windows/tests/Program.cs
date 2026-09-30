@@ -331,6 +331,11 @@ Check(!Parametros.QuitarNombre("la aurora boreal es bonita", out _) && !Parametr
 Check(R("deja de escucharme") is { Mano: Mano.Dormir } && R("apágate") is { Mano: Mano.Dormir } && R("stop listening") is { Mano: Mano.Dormir } && R("silénciate") is { Mano: Mano.Dormir }, "dormir");
 Check(R("cállate") is { Mano: Mano.Callar } && R("silencia la computadora") is { Mano: Mano.Silenciar }, "callar y mute siguen igual");
 
+// Lo que el transcriptor inventa en el ruido y el eco de AURA no se atienden
+Check(Fantasma.Es("¡Hasta la próxima!") && Fantasma.Es("Espera un momentito.") && Fantasma.Es("Gracias por ver el video") && Fantasma.Es("Subtítulos realizados por la comunidad de Amara.org"), "fantasmas del transcriptor");
+Check(Fantasma.Es("claro que sí, te lo abro", "¡Claro que sí, te lo abro ahora mismo!"), "eco de lo que dijo AURA");
+Check(!Fantasma.Es("abre el bloc de notas") && !Fantasma.Es("hasta qué hora abre el banco") && !Fantasma.Es("gracias, ahora pon música", null), "lo real sí pasa");
+
 // La ligera nunca cambia de avatar, captura, bloquea… por su cuenta (sin reglas ni nodo).
 foreach (var f in new[] { "quién es mejor, claudio o antonio", "cómo se hace una captura de pantalla en windows", "ayer me dijiste que bloqueara la compu" })
 {

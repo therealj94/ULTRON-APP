@@ -89,6 +89,7 @@ public partial class NotchWindow
             TextoEscucha.Text = T("Te escucho…", "Listening…"); Recalcular();
         }));
         AplicarEscucha();
+        IniciarActualizaciones();
         // Primera vez (o sin sesión): se abre el Centro con la entrada y la guía; después AURA vive en el notch.
         if (string.IsNullOrEmpty(ajustes.Token) || !ajustes.PrimeraVezHecha)
             Dispatcher.BeginInvoke(new Action(() => AbrirCentro()), DispatcherPriority.ApplicationIdle);
@@ -247,6 +248,14 @@ public partial class NotchWindow
         }
         vaciasSeguidas = 0;
         Centro.Registro.Anotar("oir", $"{cronoTurno.ElapsedMilliseconds} ms · {texto.Length} letras");
+        // «¡Hasta la próxima!», «Gracias por ver»…: el transcriptor inventando en el ruido, o el eco de AURA. No es la persona.
+        if (propuesta == null && Fantasma.Es(texto, ultimaRespuesta))
+        {
+            Centro.Registro.Anotar("oir", "descartado: ruido o eco");
+            pensando = false; Recalcular();
+            if (!microSilenciado && !pausado && ajustes.Escucha is "siempre" or "palabra") EmpezarAEscuchar();
+            return;
+        }
         // Sin conversación en curso, solo se atiende lo que empieza por su nombre: «Oye AURA, abre Excel»
         // (en una frase) o «Oye AURA» sola (contesta «¿sí?» y escucha). En conversación, todo cuenta.
         bool enCharla = DateTime.Now - ultimaCharla < (ajustes.Escucha == "siempre" ? TimeSpan.FromMinutes(2) : TimeSpan.FromSeconds(45));
@@ -406,6 +415,8 @@ public partial class NotchWindow
         turnoEnCurso = false;
         if (burbuja != null && r.Texto.Length > 0) burbuja.Text = r.Texto;
         if (r.Error != null && r.Texto.Length == 0 && burbuja != null) burbuja.Text = r.Error;
+        // Nunca una burbuja vacía: si no llegó nada, se quita.
+        if (burbuja != null && string.IsNullOrWhiteSpace(burbuja.Text)) QuitarBurbuja(burbuja);
         ultimaRespuesta = r.Texto;
         historial.Add(new Turno("usuario", texto));
         historial.Add(new Turno("ultron", r.Texto.Length > 4000 ? r.Texto[..4000] : r.Texto));

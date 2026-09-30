@@ -65,6 +65,13 @@ public partial class NotchWindow
         return cuerpo;
     }
 
+    void QuitarBurbuja(TextBlock cuerpo)
+    {
+        DependencyObject? d = cuerpo;
+        while (d != null && d is not Border { Parent: Panel }) d = VisualTreeHelper.GetParent(d) ?? LogicalTreeHelper.GetParent(d);
+        if (d is Border b && b.Parent == Mensajes) Mensajes.Children.Remove(b);
+    }
+
     void EntradaTecla(object s, KeyEventArgs e)
     {
         Pista.Visibility = Entrada.Text.Length == 0 && e.Key != Key.Enter ? Visibility.Visible : Visibility.Collapsed;

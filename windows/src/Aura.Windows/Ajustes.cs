@@ -26,6 +26,8 @@ internal sealed class Ajustes
     public string Idioma { get; set; } = "es";
     /// <summary>Después de contestar, vuelve a escuchar sola (conversación continua).</summary>
     public bool ManosLibres { get; set; } = true;
+    /// <summary>Instalar sola las versiones nuevas cuando no estás usando la PC (si no, avisa y esperas el botón).</summary>
+    public bool ActualizarSolo { get; set; } = true;
     /// <summary>«Oye AURA» / «Hey AURA» la despierta (micrófono abierto con el indicador encendido).</summary>
     public bool PalabraActivacion { get; set; }
     /// <summary>Hablarle mientras habla la interrumpe.</summary>

@@ -39,6 +39,7 @@ public partial class NotchWindow
     {
         if (soloRender || centro != null || string.IsNullOrEmpty(ajustes.Token)) return;
         centro = new CentroWindow(ManejarCentro) { ShowActivated = false, ShowInTaskbar = false, Left = -32000, Top = -32000, WindowStartupLocation = WindowStartupLocation.Manual };
+        centro.Activated += (_, _) => { if (panelAbierto) AbrirPanel(false); };
         centro.Listo += () => Dispatcher.BeginInvoke(new Action(() =>
         {
             if (centro == null) return;
@@ -76,6 +77,8 @@ public partial class NotchWindow
         if (centro == null)
         {
             centro = new CentroWindow(ManejarCentro);
+            // Con el Centro al frente, el panel del notch se recoge: no lo tapa.
+            centro.Activated += (_, _) => { if (panelAbierto) AbrirPanel(false); };
             centro.Mostrar(seccion);
             return;
         }
@@ -154,6 +157,9 @@ public partial class NotchWindow
                 Microfono(this, new RoutedEventArgs()); return true;
             case "inicio.dia": return await ResumenDelDia();
             case "diagnostico.leer": return Registro.Ultimo(400);
+            case "actualizar.estado": return EstadoActualizacion();
+            case "actualizar.buscar": await BuscarActualizacion(true); return EstadoActualizacion();
+            case "actualizar.instalar": return InstalarActualizacion();
             case "diagnostico.carpeta": Process.Start(new ProcessStartInfo("explorer.exe", "\"" + Registro.Carpeta + "\"") { UseShellExecute = true }); return true;
             default:
                 if (metodo.StartsWith("spotify.", StringComparison.Ordinal)) return await ManejarSpotify(metodo, a);
@@ -282,7 +288,7 @@ public partial class NotchWindow
         manosLibres = ajustes.ManosLibres, interrumpir = ajustes.Interrumpir, responderConVoz = ajustes.ResponderConVoz,
         ocultarEnPantallaCompleta = ajustes.OcultarEnPantallaCompleta, vozDeWindows = ajustes.VozDeWindows, oidoDeWindows = ajustes.OidoDeWindows,
         avisosDeApps = ajustes.AvisosDeApps, avisosPrivados = ajustes.AvisosPrivados, avisosEnVoz = ajustes.AvisosEnVoz, appsSilenciadas = ajustes.AppsSilenciadas,
-        avisarCorreos = ajustes.AvisarCorreos, mostrarMusica = ajustes.MostrarMusica,
+        avisarCorreos = ajustes.AvisarCorreos, mostrarMusica = ajustes.MostrarMusica, actualizarSolo = ajustes.ActualizarSolo,
         correoDireccion = ajustes.CorreoDireccion, agendaUrl = ajustes.AgendaUrl, tieneClaveCorreo = ajustes.CorreoClave.Length > 0,
         carteraDireccion = ajustes.CarteraDireccion, servidor = ajustes.Servidor,
         clientes = new { spotify = ajustes.SpotifyClientId, google = ajustes.GoogleClientId, microsoft = ajustes.MicrosoftClientId },
@@ -300,6 +306,7 @@ public partial class NotchWindow
                 case "idioma" when p.Value.GetString() is "es" or "en": ajustes.Idioma = p.Value.GetString()!; escucha = true; break;
                 case "escucha" when p.Value.GetString() is "pedir" or "palabra" or "siempre": ajustes.Escucha = p.Value.GetString()!; escucha = true; break;
                 case "manosLibres": ajustes.ManosLibres = p.Value.GetBoolean(); break;
+                case "actualizarSolo": ajustes.ActualizarSolo = p.Value.GetBoolean(); break;
                 case "interrumpir": ajustes.Interrumpir = p.Value.GetBoolean(); break;
                 case "responderConVoz": ajustes.ResponderConVoz = p.Value.GetBoolean(); break;
                 case "ocultarEnPantallaCompleta": ajustes.OcultarEnPantallaCompleta = p.Value.GetBoolean(); break;
