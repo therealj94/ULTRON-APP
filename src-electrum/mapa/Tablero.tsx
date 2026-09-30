@@ -20,7 +20,18 @@ export type DatosTablero = {
   porEstado: Array<{ nombre: string; n: number; ha: number }>;
   porClase: Array<{ nombre: string; n: number; ha: number }>;
   porDepartamento: Array<{ nombre: string; n: number }>;
-  traslapes: { total: number; hectareas: number; mismoNombre?: { total: number; hectareas: number }; mayores: Array<{ a: string; b: string; ha: number; aId: number; bId: number }> };
+  /** De dónde salen las cifras (server/electrum/tablero.ts). */
+  fuente?: { vigente: string | null; capasVigentes: number; historicas: string[] };
+  traslapes: {
+    total: number;
+    hectareas: number;
+    /** Titulares distintos: lo único a verificar como posible conflicto (server/electrum/tablero.ts). */
+    entreTitulares?: { total: number; hectareas: number };
+    mismoTitular?: { total: number; hectareas: number };
+    /** El mismo derecho repetido en el padrón (mismo expediente o nombre). */
+    mismoNombre?: { total: number; hectareas: number };
+    mayores: Array<{ a: string; b: string; ha: number; aId: number; bId: number }>;
+  };
   areasProtegidas: { concesiones: number; hectareas: number; lista: Conflicto[] } | null;
   microcuencas: { concesiones: number; hectareas: number; lista: Conflicto[] } | null;
   poblados: { concesiones: number; caserios: number; lista: Array<{ id: number; concesion: string; n: number; nombres: string[] }> } | null;
@@ -263,9 +274,10 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
             <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
               <Cifra etiqueta="concesiones en el catastro" valor={d.total.concesiones} />
               <Cifra etiqueta="hectáreas concesionadas" valor={d.total.hectareas} sufijo="ha" />
+              {/* Solo los de titulares distintos: los repetidos del padrón y los del mismo dueño no son conflicto. */}
               <Cifra
-                etiqueta={`traslapes entre derechos (${nf(d.traslapes.hectareas)} ha)${d.traslapes.mismoNombre?.total ? ` · ${nf(d.traslapes.mismoNombre.total)} posibles duplicados del padrón` : ''}`}
-                valor={d.traslapes.total}
+                etiqueta={`traslapes a verificar entre titulares (${nf(d.traslapes.entreTitulares?.hectareas ?? d.traslapes.hectareas)} ha)${d.traslapes.mismoNombre?.total ? ` · ${nf(d.traslapes.mismoNombre.total)} repetidos del padrón` : ''}`}
+                valor={d.traslapes.entreTitulares?.total ?? d.traslapes.total}
                 color="#FFD98A"
               />
               {d.areasProtegidas && (
@@ -415,7 +427,7 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                 </Tarjeta>
               )}
               {d.traslapes.mayores.length > 0 && (
-                <Tarjeta titulo="Mayores traslapes entre concesiones distintas">
+                <Tarjeta titulo="Traslapes a verificar (titulares distintos)">
                   <ol className="space-y-1">
                     {d.traslapes.mayores.map((t, i) => (
                       <li key={`${t.aId}-${t.bId}`}>
@@ -429,11 +441,15 @@ export function Tablero({ abierto, onCerrar, onIr }: { abierto: boolean; onCerra
                       </li>
                     ))}
                   </ol>
-                  {!!d.traslapes.mismoNombre?.total && (
-                    <p className="mt-2 border-t border-white/[0.07] pt-2 text-[11.5px] leading-snug text-[#9FB0B8]">
-                      Aparte, {nf(d.traslapes.mismoNombre.total)} traslapes ({nf(d.traslapes.mismoNombre.hectareas)} ha) son entre concesiones con el mismo nombre: posibles registros duplicados en el padrón, para revisar con INHGEOMIN.
-                    </p>
-                  )}
+                  <p className="mt-2 border-t border-white/[0.07] pt-2 text-[11.5px] leading-snug text-[#9FB0B8]">
+                    Un traslape no es un pleito: puede ser un conflicto o un error de digitalización. Se verifica con INHGEOMIN y se resuelve por la prelación de la solicitud.
+                    {!!d.traslapes.mismoNombre?.total && (
+                      <>
+                        {' '}Aparte, {nf(d.traslapes.mismoNombre.total)} ({nf(d.traslapes.mismoNombre.hectareas)} ha) son el mismo derecho repetido en el padrón (mismo expediente o nombre)
+                        {d.traslapes.mismoTitular?.total ? ` y ${nf(d.traslapes.mismoTitular.total)} son del mismo titular` : ''}.
+                      </>
+                    )}
+                  </p>
                 </Tarjeta>
               )}
             </div>

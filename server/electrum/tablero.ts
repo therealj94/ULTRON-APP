@@ -17,7 +17,7 @@
  *  · la capa de caseríos incluye algún polígono que lo cubre todo: los caseríos se cuentan solo
  *    como puntos.
  */
-import { conTextoReparado, consultaConTope, hayBase, resumenTraslapes } from './db';
+import { CLASE_TRASLAPE, conTextoReparado, consultaConTope, hayBase, resumenTraslapes } from './db';
 import { capasPorRol, nombreDe } from './entorno';
 
 const TOPE = 20000;
@@ -36,9 +36,19 @@ export type Tablero = {
   traslapes: {
     total: number;
     hectareas: number;
-    /** Entre concesiones con el mismo nombre: el mismo derecho cargado dos veces, casi siempre. */
+    /**
+     * Entre titulares distintos: lo único que puede ser un conflicto. Aun así es algo A VERIFICAR
+     * (puede ser un error de digitalización), no un pleito dado por hecho.
+     */
+    entreTitulares: { total: number; hectareas: number };
+    /** Dos derechos del mismo titular que se tocan: sin contraparte. */
+    mismoTitular: { total: number; hectareas: number };
+    /**
+     * El mismo derecho repetido en el padrón (mismo expediente o nombre). Se llama así por
+     * compatibilidad; incluye el mismo expediente con otro nombre.
+     */
     mismoNombre: { total: number; hectareas: number };
-    /** Los mayores entre concesiones DISTINTAS, que son los que importan. */
+    /** Los mayores ENTRE TITULARES DISTINTOS, que son los que hay que verificar. */
     mayores: Array<{ a: string; b: string; ha: number; aId: number; bId: number }>;
   };
   areasProtegidas: { concesiones: number; hectareas: number; lista: Conflicto[] } | null;
@@ -50,6 +60,12 @@ export type Tablero = {
    * figurar acá.
    */
   incompletas: string[];
+  /**
+   * De dónde salen las cifras: la capa del catastro vigente (la de más concesiones) y las capas de
+   * referencia que NO cuentan (históricas: JICA, el catastro viejo). Así el recorrido y el chat dicen
+   * «catastro a junio de 2026» y no dejan pensar que se está mostrando información vieja.
+   */
+  fuente?: { vigente: string | null; capasVigentes: number; historicas: string[] };
   ms: number;
 };
 
@@ -146,6 +162,12 @@ async function calcular(tope = TOPE): Promise<Tablero> {
   const capas = await capasPorRol();
   const de = (rol: string) => capas.filter((c) => c.rol === rol).map((c) => c.id);
 
+  const fuenteP = Promise.all([
+    q<{ nombre: string; n: number }>(`SELECT k.nombre, count(*)::int AS n FROM concesion c JOIN capa k ON k.id = c.capa_id GROUP BY k.id, k.nombre ORDER BY n DESC`),
+    q<{ nombre: string }>(`SELECT nombre FROM capa WHERE rol = 'historico' ORDER BY nombre`),
+  ])
+    .then(([vig, his]) => ({ vigente: vig[0]?.nombre ?? null, capasVigentes: vig.length, historicas: his.map((h) => h.nombre) }))
+    .catch(() => undefined);
   const [total, porEstado, porClase, porDepartamento, tr, mayores, ap, mc, pob] = await Promise.all([
     q<{ n: number; ha: number }>(`SELECT count(*)::int AS n, coalesce(sum(hectareas), 0)::float8 AS ha FROM concesion`),
     q<{ nombre: string | null; n: number; ha: number }>(
@@ -170,13 +192,15 @@ async function calcular(tope = TOPE): Promise<Tablero> {
         ), [])
       : Promise.resolve([]),
     resumenTraslapes(),
-    // Se separan los de mismo nombre: en el padrón nacional muchos «traslapes» son el mismo derecho
-    // cargado desde dos capas («Las Joyas con Las Joyas»), y listarlos como conflicto confunde.
-    q<{ a: string; b: string; ha: number; a_id: string; b_id: string; mismo: boolean }>(
-      `SELECT ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS ha, t.a_id::text, t.b_id::text,
-              lower(unaccent(trim(ca.nombre))) = lower(unaccent(trim(cb.nombre))) AS mismo
+    // Solo los que hay que verificar: en el padrón nacional muchos «traslapes» son el mismo derecho
+    // repetido («Monte Redondo (Embargo)» tres veces, expediente 98) o del mismo titular, y
+    // listarlos como conflicto confunde (CLASE_TRASLAPE en db.ts).
+    q<{ a: string; b: string; ha: number; a_id: string; b_id: string }>(
+      `SELECT ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS ha, t.a_id::text, t.b_id::text
          FROM traslape t JOIN concesion ca ON ca.id = t.a_id JOIN concesion cb ON cb.id = t.b_id
-        ORDER BY t.hectareas DESC`
+        WHERE ${CLASE_TRASLAPE} = 'entre_titulares'
+        ORDER BY t.hectareas DESC
+        LIMIT 8`
     ),
     opcional('areas_protegidas', conflictos(de('area_protegida'), 'area_protegida', tope), null),
     opcional('microcuencas', conflictos(de('microcuenca'), 'microcuenca', tope), null),
@@ -210,14 +234,10 @@ async function calcular(tope = TOPE): Promise<Tablero> {
     traslapes: {
       total: tr.total,
       hectareas: Math.round(tr.hectareas),
-      mismoNombre: {
-        total: mayores.filter((m) => m.mismo).length,
-        hectareas: Math.round(mayores.filter((m) => m.mismo).reduce((s, m) => s + m.ha, 0)),
-      },
-      mayores: mayores
-        .filter((m) => !m.mismo)
-        .slice(0, 8)
-        .map((m) => ({ a: m.a, b: m.b, ha: r1(m.ha), aId: Number(m.a_id), bId: Number(m.b_id) })),
+      entreTitulares: { total: tr.entreTitulares.total, hectareas: Math.round(tr.entreTitulares.hectareas) },
+      mismoTitular: { total: tr.mismoTitular.total, hectareas: Math.round(tr.mismoTitular.hectareas) },
+      mismoNombre: { total: tr.repetidos.total, hectareas: Math.round(tr.repetidos.hectareas) },
+      mayores: mayores.map((m) => ({ a: m.a, b: m.b, ha: r1(m.ha), aId: Number(m.a_id), bId: Number(m.b_id) })),
     },
     areasProtegidas: ap,
     microcuencas: mc,
@@ -229,6 +249,7 @@ async function calcular(tope = TOPE): Promise<Tablero> {
         }
       : null,
     incompletas,
+    fuente: await fuenteP,
     ms: Date.now() - t0,
   };
 }

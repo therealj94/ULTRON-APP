@@ -4,7 +4,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { analisisDeFicha, concesionesEn, focoDeOro, nombreDePila, saludoHonduras, vencimientos, zonaMasRica, type Encuadre } from '../src-electrum/demo/guion';
+import { analisisDeFicha, concesionesEn, enOracion, focoDeOro, nombreDePila, saludoHonduras, vencimientos, zonaMasRica, type Encuadre } from '../src-electrum/demo/guion';
 
 const OLANCHO: Encuadre = [-87, 14.6079, -86.4999, 15.3967];
 const HN: Encuadre = [-89.4, 12.9, -83.1, 16.6];
@@ -117,4 +117,10 @@ test('vencimientos: en 90 días, en el año y vencidas; las fechas imposibles no
   const catastro = { features: [f('2026-10-15'), f('2027-03-01'), f('2028-01-01'), f('2025-01-01'), f('1899-11-30'), f(null)] } as any;
   assert.deepEqual(vencimientos(catastro, new Date('2026-09-28T12:00:00Z')), { noventa: 1, anio: 2, vencidas: 1 });
   assert.deepEqual(vencimientos(null), { noventa: 0, anio: 0, vencidas: 0 });
+});
+
+test('el nombre del catastro vigente se dice como oración, sin gritar', () => {
+  assert.equal(enOracion('DERECHOS MINEROS EN HONDURAS A JUNIO 2026'), 'Derechos mineros en Honduras a junio 2026');
+  assert.equal(enOracion('Catastro de INHGEOMIN'), 'Catastro de INHGEOMIN');
+  assert.equal(enOracion('CATASTRO INHGEOMIN 2026'), 'Catastro INHGEOMIN 2026');
 });

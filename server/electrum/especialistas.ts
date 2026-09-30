@@ -152,7 +152,7 @@ export const ESPECIALISTAS: Especialista[] = [
       /\b(concesi|expediente|titular|vigencia|vence|caduca|caducid|prelaci|derecho|permiso|canon|regal[ií]a|ley general de miner|inhgeomin|reglamento|resoluci[oó]n|contrato|servidumbre|superficiari|obligaci|inscripci|registro|moratoria|cartera|restricciones legales|solicitar|solicitud)/i,
     reglas: [
       'Nunca afirmás el estado de una concesión real sin el expediente delante. Decís lo que dice el padrón y aclarás que el padrón no es el expediente.',
-      'Un traslape de derechos se resuelve por prelación de la solicitud, no por quién llegó primero al terreno.',
+      'Un traslape se verifica con INHGEOMIN; si es real, manda la prelación. Mismo expediente o titular no es pleito.',
       'Separás siempre tres cosas que la gente mezcla: el derecho minero, el permiso ambiental y el acuerdo con el dueño del suelo. Tener uno no es tener los otros.',
     ],
     herramientas: ['informe_pdf', 'catastro_buscar', 'catastro_resumen', 'catastro_contar', 'coordenadas_convertir', 'catastro_vencimientos', 'catastro_en_punto', 'concesion_entorno', 'cartera_analisis', 'gis_traslapes', 'expediente_buscar', 'expediente_listar', 'expediente_leer', 'documento_revisar', 'mapa_volar'],

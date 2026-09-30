@@ -265,7 +265,7 @@ test('el entorno de una concesión, cruzado en PostGIS', { skip: HAY ? false : '
     assert.equal(vacio!.rios.estado, 'no-cargada');
     assert.equal(vacio!.faltan.length, 10);
     // Solo queda lo que no depende de capas: el traslape con la vecina.
-    assert.deepEqual(vacio!.alertas, ['Se pisa con 1 otro derecho: La Vecina (59,8 ha).']);
+    assert.deepEqual(vacio!.alertas, ['Se pisa con 1 otro derecho: La Vecina (59,8 ha). Con titulares distintos es algo a verificar con INHGEOMIN, no un pleito dado por hecho.']);
   });
 
   t.after(async () => {

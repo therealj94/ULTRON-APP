@@ -21,7 +21,7 @@ import type { CapaExtra, Fondo, Margen, OrdenMapa, RasterEncendido, RasterEscane
 import { catastroGuardado } from '../mapa/captura';
 import type { MuestrasEncendidas } from '../mapa/CapasControl';
 import { Contador, pedirTablero, type DatosTablero } from '../mapa/Tablero';
-import { analisisDeFicha, centroDe, concesionesEn, focoDeOro, fold, nombreParaDecir, vencimientos, zonaMasRica, type Ficha } from './guion';
+import { analisisDeFicha, centroDe, concesionesEn, enOracion, focoDeOro, fold, nombreParaDecir, vencimientos, zonaMasRica, type Ficha } from './guion';
 import { ALTURAS } from '../preferencias';
 
 export { nombreParaDecir } from './guion';
@@ -370,6 +370,25 @@ export function Recorrido({
           cRoja ? ficha(cRoja.id) : Promise.resolve(null),
         ]);
         const microcuencas = cartera ? await capa(capas.find((x) => x.rol === 'microcuenca')) : null;
+        /*
+         * LO HISTÓRICO (JICA y el catastro viejo): capas de referencia, rol `historico`. Se ven con su
+         * propio estilo (punteado sepia) y NUNCA cuentan en las cifras del catastro vigente. Primero
+         * las de JICA; como mucho dos, que el mapa no se vuelva un mantel.
+         */
+        const historicasCapas =
+          completo || modo === 'geologico'
+            ? (
+                await Promise.all(
+                  capas
+                    .filter((x) => x.rol === 'historico')
+                    .sort((a, b) => Number(/jica|mmaj/i.test(b.nombre)) - Number(/jica|mmaj/i.test(a.nombre)))
+                    .slice(0, 2)
+                    .map((x) => capa(x))
+                )
+              ).filter((x): x is CapaExtra => !!x && !!x.geojson?.features?.length)
+            : [];
+        const nombresHistoricos = t?.fuente?.historicas ?? capas.filter((x) => x.rol === 'historico').map((x) => x.nombre);
+        const hayCatastroViejo = nombresHistoricos.some((n) => !/jica|mmaj/i.test(n));
         if (!sigue()) return;
         const limpiar = () => {
           c.current.rasters([]);
@@ -431,7 +450,7 @@ export function Recorrido({
                   ? [
                       { valor: t.total.concesiones, etiqueta: 'concesiones' },
                       { valor: t.total.hectareas, etiqueta: 'hectáreas' },
-                      { valor: t.traslapes.total, etiqueta: 'traslapes' },
+                      { valor: t.traslapes.entreTitulares?.total ?? t.traslapes.total, etiqueta: 'traslapes a verificar' },
                       ...(t.poblados ? [{ valor: t.poblados.caserios, etiqueta: 'caseríos dentro' }] : []),
                     ]
                   : undefined,
@@ -440,9 +459,11 @@ export function Recorrido({
               await pausa(1800);
               orbitar(26, 26_000);
               const cuantas = t ? `${plural(t.total.concesiones, 'concesión', 'concesiones')} y ${nf(t.total.hectareas)} hectáreas` : 'todo el catastro minero nacional';
+              // Qué catastro es: el vigente, con su nombre, para que nadie crea que ve información vieja.
+              const fuente = t?.fuente?.vigente ? `el catastro vigente de INHGEOMIN, «${enOracion(t.fuente.vigente)}»` : 'el catastro minero nacional vigente';
               if (modo === 'legal') {
                 await conversar([
-                  { quien: 'tatiana', texto: `[serious] Hoy miramos el catastro con ojos legales: ${cuantas}, cada una cruzada con las áreas protegidas, el agua, las comunidades y los demás derechos.` },
+                  { quien: 'tatiana', texto: `[serious] Hoy miramos ${fuente} con ojos legales: ${cuantas}, cada una cruzada con las áreas protegidas, el agua, las comunidades y los demás derechos.` },
                   { quien: 'electrum', texto: '[thoughtful] Y con sus fechas. Lo que un regulador o un abogado necesita saber antes de firmar nada.' },
                 ]);
               } else if (modo === 'geologico') {
@@ -454,7 +475,7 @@ export function Recorrido({
                 await conversar([
                   { quien: 'electrum', texto: '[warmly] Buenas. Soy Dr Electrum. Esto es Honduras, con su relieve real, en tres dimensiones.' },
                   { quien: 'tatiana', texto: '[curious] Doctor, ¿y todo eso que brilla encima del mapa?' },
-                  { quien: 'electrum', texto: `El catastro minero nacional completo: ${cuantas}. Y cada concesión cruzada con la geología, el satélite, las áreas protegidas, el agua y las comunidades.`, al: () => orbitar(30, 30_000) },
+                  { quien: 'electrum', texto: `Es ${fuente}: ${cuantas}. Y cada concesión cruzada con la geología, el satélite, las áreas protegidas, el agua y las comunidades.`, al: () => orbitar(30, 30_000) },
                   { quien: 'chema', texto: '[chuckles] O sea que antes de ir al monte ya sabemos qué nos vamos a encontrar.' },
                   { quien: 'electrum', texto: '[warmly] Exacto, Don Chema. Hoy les enseñamos cómo lo trabajamos los tres: yo la geología, usted la planta y la ingeniera Tatiana la obra y los permisos.' },
                 ]);
@@ -528,12 +549,58 @@ export function Recorrido({
               }
             },
           },
+          historico: {
+            // Hay algo que explicar si hay capas históricas, mapas de JICA o sus muestras.
+            hay: historicasCapas.length > 0 || !!(zona && zona.mapas.length) || !!oro,
+            correr: async () => {
+              capitulo(++i, {
+                titulo: 'Lo histórico: lo que se sabía antes',
+                chips: ['Histórico · no es el catastro vigente'],
+                cifras: [
+                  ...(nombresHistoricos.length ? [{ valor: nombresHistoricos.length, etiqueta: 'capas históricas' }] : []),
+                  ...(zona?.mapas.length ? [{ valor: zona.mapas.length, etiqueta: 'mapas JICA en la zona' }] : []),
+                  ...(oro ? [{ valor: oro.total, etiqueta: 'muestras de JICA' }] : []),
+                ],
+              });
+              c.current.tocar(null);
+              c.current.rasters([]);
+              c.current.muestras(null);
+              c.current.prospectividad(false);
+              c.current.capas(() => historicasCapas);
+              mover({ accion: 'encuadrar', encuadre: HONDURAS, inclinacion: 45, giro: -10, ms: 5000 });
+              await pausa(1500);
+              await conversar([
+                {
+                  quien: 'electrum',
+                  texto: `[thoughtful] Antes de la geología, una aclaración importante. Lo que ve ${historicasCapas.length ? 'punteado en sepia' : 'en los mapas escaneados'} es histórico: los estudios de la agencia japonesa JICA, entre 1978 y 2003${hayCatastroViejo ? ', y el catastro de años anteriores' : ''}. No es el catastro vigente: ese es el de INHGEOMIN a junio de 2026, y es el único que cuento en las cifras.`,
+                  al: () => orbitar(20, 24_000),
+                },
+                { quien: 'tatiana', texto: '[curious] ¿Y entonces para qué nos sirve algo tan viejo, doctor?' },
+                {
+                  quien: 'electrum',
+                  texto: 'Para tres cosas. Primero, dice dónde ya se encontró mineralización: JICA muestreó ríos y rocas y marcó anomalías de oro, plata y cobre. Eso ahorra años de exploración de base.',
+                },
+                {
+                  quien: 'electrum',
+                  texto: 'Segundo, cruzado con el catastro de hoy me dice qué concesiones vigentes tienen antecedentes favorables: por eso entra en el puntaje de prospectividad. Y tercero, sirve de antecedente técnico para sustentar una solicitud o presentarle un proyecto a un inversionista.',
+                },
+                ...(hayCatastroViejo
+                  ? [{ quien: 'tatiana' as const, texto: '[thoughtful] Y el catastro viejo me sirve a mí: veo qué derechos existieron y ya no están. Un área que estuvo concesionada y quedó libre tiene historia, y conviene saberla antes de pedirla.' }]
+                  : []),
+                { quien: 'chema', texto: '[thoughtful] Y a mí me adelanta qué roca y qué mineral esperar, antes de pensar en planta.' },
+                { quien: 'tatiana', texto: '[serious] Pero ojo con lo que NO es: no da derechos ni dice quién es dueño hoy, y una ley de oro de hace cuarenta años no es una reserva. Para un inversionista hay que muestrear de nuevo, con un estándar como NI 43-101 o JORC.' },
+                { quien: 'electrum', texto: '[warmly] Exacto. Lo histórico dice dónde mirar; el catastro vigente, qué se puede pedir; y el muestreo nuevo, cuánto vale.' },
+              ]);
+              c.current.capas(() => []);
+            },
+          },
           zona: {
             hay: !!(zona && zona.mapas.length),
             correr: async () => {
               const mapas = zona!.mapas;
               capitulo(++i, {
                 titulo: `La zona con más información: ${zona!.nombre}`,
+                chips: ['Histórico · JICA 1978–2003'],
                 cifras: [
                   { valor: mapas.length, etiqueta: 'mapas históricos' },
                   { valor: enZona.length, etiqueta: 'concesiones' },
@@ -597,6 +664,7 @@ export function Recorrido({
             correr: async () => {
               capitulo(++i, {
                 titulo: 'Geoquímica de campo',
+                chips: ['Histórico · JICA 1978–2003'],
                 cifras: [
                   { valor: oro!.total, etiqueta: 'muestras históricas' },
                   { valor: oro!.maxGt, etiqueta: 'g/t de oro, la más alta', d: 1 },
@@ -716,23 +784,30 @@ export function Recorrido({
           traslapes: {
             hay: !!(t && fTraslape?.geojson && fTraslape.encuadre && traslapeMayor),
             correr: async () => {
+              /*
+               * Un traslape no es un pleito. La mayor parte de lo que marca el catastro es el mismo
+               * derecho repetido en el padrón («Monte Redondo (Embargo)» tres veces, expediente 98) o
+               * del mismo titular. Lo único a verificar es entre titulares distintos, y se cuenta así.
+               */
+              const tr = t!.traslapes;
+              const aVerificar = tr.entreTitulares ?? { total: tr.total, hectareas: tr.hectareas };
               capitulo(++i, {
-                titulo: 'Derechos que se pisan',
+                titulo: 'Traslapes a verificar',
                 cifras: [
-                  { valor: t!.traslapes.total, etiqueta: 'traslapes' },
-                  { valor: t!.traslapes.hectareas, etiqueta: 'hectáreas en disputa' },
-                  ...(t!.traslapes.mismoNombre ? [{ valor: t!.traslapes.mismoNombre.total, etiqueta: 'con el mismo nombre' }] : []),
+                  { valor: aVerificar.total, etiqueta: 'entre titulares distintos' },
+                  { valor: aVerificar.hectareas, etiqueta: 'hectáreas a verificar' },
+                  ...(tr.mismoNombre?.total ? [{ valor: tr.mismoNombre.total, etiqueta: 'repetidos del padrón' }] : []),
                 ],
               });
               c.current.capas(() => []);
               await irConFicha(fTraslape!);
               orbitar(50, 30_000);
               await conversar([
-                { quien: 'electrum', texto: `[serious] Cruzo cada concesión con todas las demás: hay ${plural(t!.traslapes.total, 'traslape', 'traslapes')} entre derechos, ${nf(t!.traslapes.hectareas)} hectáreas que dos titulares reclaman a la vez. En el mapa van rayados.` },
+                { quien: 'electrum', texto: `[serious] Cruzo cada concesión con todas las demás. Entre titulares distintos hay ${plural(aVerificar.total, 'traslape', 'traslapes')}, ${nf(aVerificar.hectareas)} hectáreas. Ojo: eso no quiere decir que haya pleito. Es algo a verificar. En el mapa van rayados.` },
                 { quien: 'tatiana', texto: '[curious] ¿Y cuál es el más grande, doctor?' },
-                { quien: 'electrum', texto: `Entre ${nombreParaDecir(traslapeMayor!.a)} y ${nombreParaDecir(traslapeMayor!.b)}: ${nf(traslapeMayor!.ha, 1)} hectáreas. Eso se resuelve por la prelación de la solicitud, no por quién llegó primero al terreno.` },
-                ...(t!.traslapes.mismoNombre?.total
-                  ? [{ quien: 'tatiana' as const, texto: `[thoughtful] Y ${nf(t!.traslapes.mismoNombre.total)} son entre concesiones con el mismo nombre: son derechos del padrón oficial que se llaman igual y se pisan: conviene aclararlos con INHGEOMIN antes de invertir en cualquiera de los dos.` }]
+                { quien: 'electrum', texto: `Entre ${nombreParaDecir(traslapeMayor!.a)} y ${nombreParaDecir(traslapeMayor!.b)}: ${nf(traslapeMayor!.ha, 1)} hectáreas. Puede ser un conflicto o un error de digitalización del padrón: se confirma con INHGEOMIN, y si es real se resuelve por la prelación de la solicitud.` },
+                ...(tr.mismoNombre?.total
+                  ? [{ quien: 'tatiana' as const, texto: `[thoughtful] Y ${nf(tr.mismoNombre.total)} cruces más son el mismo derecho repetido en el padrón oficial, con el mismo expediente o nombre${tr.mismoTitular?.total ? `, y ${nf(tr.mismoTitular.total)} son del mismo titular` : ''}. Eso no es pleito: se aclara con INHGEOMIN.` }]
                   : []),
               ]);
             },
@@ -985,8 +1060,8 @@ export function Recorrido({
 
         const ORDEN: Record<ModoRecorrido, string[]> = {
           // El completo lo cuenta todo: la geología, lo legal y las herramientas, en ese orden.
-          completo: ['intro', 'potencial', 'satelite', 'zona', 'analisis', 'oro', 'conflictos', 'cartera', 'traslapes', 'vencimientos', 'marco', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'mesa', 'manos', 'cierre'],
-          geologico: ['intro', 'zona', 'analisis', 'oro', 'alteracion', 'geologicoVivo', 'mesa', 'cierre'],
+          completo: ['intro', 'potencial', 'satelite', 'historico', 'zona', 'analisis', 'oro', 'conflictos', 'cartera', 'traslapes', 'vencimientos', 'marco', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'mesa', 'manos', 'cierre'],
+          geologico: ['intro', 'historico', 'zona', 'analisis', 'oro', 'alteracion', 'geologicoVivo', 'mesa', 'cierre'],
           legal: ['intro', 'conflictos', 'cartera', 'traslapes', 'vencimientos', 'marco', 'mesa', 'cierre'],
           herramientas: ['barra', 'capasBoton', 'herramientasMapa', 'fichaBotones', 'geologicoVivo', 'timelapse', 'mapaVoz', 'chat', 'mesa', 'manos', 'pestanas', 'reparto', 'cierre'],
         };

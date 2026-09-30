@@ -29,6 +29,8 @@ import {
   contarPorVencer,
   porVencer,
   resumenTraslapes,
+  fraseTraslapes,
+  nombreClaseTraslape,
   traslapes,
   traslapesDe,
   distinguir,
@@ -679,16 +681,13 @@ export async function informeCartera(opts: OpcionesInforme = {}): Promise<Inform
       {
         tipo: 'aviso',
         texto:
-          `Hay ${pisan.total} ${pisan.total === 1 ? 'traslape' : 'traslapes'}, ${nf(pisan.hectareas)} hectáreas en común` +
-          `${pisan.ajenos ? `; ${pisan.ajenos} entre titulares distintos` : ''}. ` +
-          `Un traslape es un conflicto de derechos hasta que alguien demuestre prelación.` +
-          (pisan.total > pisadas.length ? ` La tabla trae los ${pisadas.length} mayores.` : ''),
+          fraseTraslapes(pisan, nf) + (pisan.total > pisadas.length ? ` La tabla trae los ${pisadas.length} mayores, primero los que hay que verificar.` : ''),
       },
       {
         tipo: 'tabla',
-        cabecera: ['Concesión', 'Se pisa con', 'Hectáreas'],
-        anchos: [2, 2, 1],
-        filas: pisadas.map((t) => [t.a, t.b, nf(t.hectareas)]),
+        cabecera: ['Concesión', 'Se pisa con', 'Hectáreas', 'Qué es'],
+        anchos: [2, 2, 1, 2],
+        filas: pisadas.map((t) => [t.a, t.b, nf(t.hectareas), nombreClaseTraslape(t.clase)]),
       }
     );
   }

@@ -304,7 +304,7 @@ test('catastro en PostGIS', { skip: HAY ? false : 'sin ELECTRUM_DB_URL: no hay b
       assert.ok(n > 20, `hacen falta más de 20 para la prueba, hay ${n}`);
 
       const r = await manosDe(['gis_traslapes'])[0].ejecutar({}, {} as never);
-      assert.match(r.texto, new RegExp(`^Hay ${n} traslapes`), `contestó: ${r.texto}`);
+      assert.match(r.texto, new RegExp(`^El catastro marca ${n} traslapes`), `contestó: ${r.texto}`);
 
       const informe = await informeCartera({ quien: 'pruebas' });
       assert.ok(!('error' in informe));

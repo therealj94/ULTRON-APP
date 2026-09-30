@@ -25,7 +25,7 @@
  * que sobrevive a ese filtro se mide en metros sobre `geography`. Las consultas corren en paralelo.
  */
 import type { Geometry } from 'geojson';
-import { baseTieneRol, conTextoReparado, consultaConTope, hayBase, rolDeCapa, traslapesDe, type RolCapa, type RolEntorno } from './db';
+import { baseTieneRol, conTextoReparado, consultaConTope, hayBase, nombreClaseTraslape, rolDeCapa, traslapesDe, type ClaseTraslape, type RolCapa, type RolEntorno } from './db';
 
 /**
  * Cada consulta del entorno la corta la base a los 8 s: una capa lenta no se queda con el pool. Y
@@ -58,7 +58,8 @@ export type Entorno = {
   carretera: Seccion<{ km: number | null; franja: boolean }>;
   zonasInformales: Seccion<{ lista: Punto[] }>;
   ocurrencias: Seccion<{ lista: Punto[] }>;
-  traslapes: Array<{ con: string; conId: number; hectareas: number; pct: number }>;
+  /** `clase`: entre titulares (a verificar), mismo titular o repetido en el padrón. Sin ella (un área dibujada), a verificar. */
+  traslapes: Array<{ con: string; conId: number; hectareas: number; pct: number; clase?: ClaseTraslape }>;
   /** Roles sin capa cargada: esos cruces no se hicieron. */
   faltan: RolCapa[];
   alertas: string[];
@@ -250,6 +251,7 @@ export async function entornoDe(idPedido: number | string): Promise<Entorno | nu
         conId: Number(Number(t.a_id) === id ? t.b_id : t.a_id),
         hectareas: t.hectareas,
         pct: ha > 0 ? (t.hectareas / ha) * 100 : 0,
+        clase: t.clase,
       }))
     );
   return entornoCon({ param: id, geom: GEOM_CONCESION }, { id, nombre: c.nombre, ha }, traslapes, t0);
@@ -556,7 +558,11 @@ export function alertasDe(e: Entorno): string[] {
     if (c.length) a.push(`${plural(c.length, 'zona de minería informal', 'zonas de minería informal')} a menos de ${RADIO_LEJOS_M / 1000} km; la más cercana, ${c[0].nombre}, a ${km1(c[0].km)}.`);
   }
   if (e.traslapes.length) {
-    a.push(`Se pisa con ${plural(e.traslapes.length, 'otro derecho', 'otros derechos')}: ${lista(e.traslapes.map((t) => `${t.con} (${ha1(t.hectareas)})`), 3)}.`);
+    // Qué es cada cruce: el mismo derecho repetido en el padrón no es un conflicto con otro dueño.
+    a.push(
+      `Se pisa con ${plural(e.traslapes.length, 'otro derecho', 'otros derechos')}: ${lista(e.traslapes.map((t) => `${t.con} (${ha1(t.hectareas)}${t.clase && t.clase !== 'entre_titulares' ? `, ${nombreClaseTraslape(t.clase)}` : ''})`), 3)}.` +
+        (e.traslapes.some((t) => !t.clase || t.clase === 'entre_titulares') ? ' Con titulares distintos es algo a verificar con INHGEOMIN, no un pleito dado por hecho.' : ' No hay otro titular de por medio: es para aclarar en el padrón.')
+    );
   }
   if (e.ocurrencias.estado === 'ok' && e.ocurrencias.lista.length) {
     const d = e.ocurrencias.lista.filter((o) => o.dentro).length;

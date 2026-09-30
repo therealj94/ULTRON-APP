@@ -32,6 +32,8 @@ import {
   porVencer,
   vencenEnAnio,
   resumenTraslapes,
+  fraseTraslapes,
+  nombreClaseTraslape,
   traslapes,
   distinguir,
   unicaExacta,
@@ -190,7 +192,7 @@ const catastro_resumen: Herramienta = {
       })(),
       t.porClase.length ? `Por clase: ${lista(t.porClase, t.porClase.length)}.` : '',
       t.porDepartamento.length ? `Departamentos con más: ${lista(t.porDepartamento, 4)}.` : '',
-      `Traslapes: ${n0(t.traslapes.total)} (${n0(t.traslapes.hectareas)} ha)${t.traslapes.mismoNombre.total ? `, de ellos ${n0(t.traslapes.mismoNombre.total)} entre concesiones con el mismo nombre (probablemente cargadas dos veces)` : ''}.`,
+      `Traslapes: el catastro marca ${n0(t.traslapes.total)} (${n0(t.traslapes.hectareas)} ha); a verificar entre titulares distintos: ${n0(t.traslapes.entreTitulares?.total ?? t.traslapes.total)} (${n0(t.traslapes.entreTitulares?.hectareas ?? t.traslapes.hectareas)} ha)${t.traslapes.mismoNombre.total ? `; ${n0(t.traslapes.mismoNombre.total)} son el mismo derecho repetido en el padrón` : ''}${t.traslapes.mismoTitular?.total ? `; ${n0(t.traslapes.mismoTitular.total)} del mismo titular` : ''}. Ninguno es pleito dado por hecho.`,
       t.areasProtegidas
         ? `${n0(t.areasProtegidas.concesiones)} pisan áreas protegidas (${n0(t.areasProtegidas.hectareas)} ha).`
         : t.incompletas.includes('areas_protegidas')
@@ -536,16 +538,14 @@ const gis_traslapes: Herramienta = {
     if (!hayBase()) return { ok: false, texto: SIN_BASE };
     const t = await traslapes(20);
     // El total se cuenta aparte: la lista trae los 20 mayores y «hay 20» sería falso con 96 cargados.
-    const { total, hectareas, ajenos } = await resumenTraslapes();
+    const r = await resumenTraslapes();
     if (!t.length) return { ok: true, texto: 'No hay traslapes en el catastro cargado: ninguna concesión se pisa con otra.', ui: { filas: [] } };
-    const lista = t.slice(0, 5).map((x) => `${x.a} con ${x.b}, ${nf(x.hectareas)} ha`);
+    // Primero los que hay que verificar (titulares distintos); los repetidos del padrón no son pleito.
+    const lista = t.slice(0, 5).map((x) => `${x.a} con ${x.b}, ${nf(x.hectareas)} ha (${nombreClaseTraslape(x.clase)})`);
     return {
       ok: true,
-      texto:
-        `Hay ${total} ${total === 1 ? 'traslape' : 'traslapes'}, ${nf(hectareas)} ha en común` +
-        `${ajenos ? ` (${ajenos} entre titulares distintos)` : ''}. ` +
-        `${total > 5 ? 'Los mayores' : 'Son'}: ${lista.join('; ')}. Se resuelven por prelación de la solicitud.`,
-      ui: { filas: t, total },
+      texto: `${fraseTraslapes(r, nf)} Los mayores: ${lista.join('; ')}. No lo presentes como pleito: es algo a verificar.`,
+      ui: { filas: t, total: r.total },
     };
   },
 };

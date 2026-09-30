@@ -847,40 +847,106 @@ export async function encuadreCatastro(): Promise<[number, number, number, numbe
 }
 
 /** Traslapes guardados, del más grande al más chico, con los nombres de las dos partes. */
-export async function traslapes(limite = 50): Promise<Array<{ a: string; b: string; hectareas: number; a_id: number; b_id: number }>> {
+/**
+ * QUÉ CLASE DE TRASLAPE ES. No todo cruce de polígonos es un pleito:
+ *  · `repetido`: el mismo derecho dos veces en el padrón (mismo expediente, o mismo nombre). Así
+ *    viene en el archivo oficial de INHGEOMIN —«Monte Redondo (Embargo)» tres veces, expediente 98,
+ *    mismo titular— y se aclara con INHGEOMIN, no se disputa.
+ *  · `mismo_titular`: dos derechos del mismo dueño que se tocan. No hay contraparte.
+ *  · `entre_titulares`: dueños distintos. Esto es lo que hay que verificar: puede ser un conflicto
+ *    o un error de digitalización; se resuelve por la prelación de la solicitud.
+ * Con `ca` y `cb` = las dos concesiones.
+ */
+export const CLASE_TRASLAPE = `CASE
+    WHEN (nullif(trim(ca.expediente), '') IS NOT NULL AND lower(trim(ca.expediente)) = lower(trim(cb.expediente)))
+      OR lower(trim(ca.nombre)) = lower(trim(cb.nombre)) THEN 'repetido'
+    WHEN nullif(trim(ca.titular), '') IS NOT NULL AND lower(trim(ca.titular)) = lower(trim(cb.titular)) THEN 'mismo_titular'
+    ELSE 'entre_titulares' END`;
+
+export type ClaseTraslape = 'repetido' | 'mismo_titular' | 'entre_titulares';
+
+/** Los mayores traslapes. Primero los que hay que verificar (entre titulares), después el resto. */
+export async function traslapes(limite = 50): Promise<Array<{ a: string; b: string; hectareas: number; a_id: number; b_id: number; clase: ClaseTraslape }>> {
   return consulta(
-    `SELECT ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS hectareas, t.a_id, t.b_id
+    `SELECT ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS hectareas, t.a_id, t.b_id, ${CLASE_TRASLAPE} AS clase
      FROM traslape t
      JOIN concesion ca ON ca.id = t.a_id
      JOIN concesion cb ON cb.id = t.b_id
-     ORDER BY t.hectareas DESC
+     ORDER BY (${CLASE_TRASLAPE}) = 'entre_titulares' DESC, t.hectareas DESC
      LIMIT $1`,
     [limite]
   );
 }
 
+export type ResumenTraslapes = {
+  total: number;
+  hectareas: number;
+  /** Titulares distintos (se mantiene por compatibilidad: es `entreTitulares.total`). */
+  ajenos: number;
+  entreTitulares: { total: number; hectareas: number };
+  mismoTitular: { total: number; hectareas: number };
+  repetidos: { total: number; hectareas: number };
+};
+
 /**
- * Cuántos traslapes hay y cuánta superficie pisan, contando TODOS.
+ * Cuántos traslapes hay y cuánta superficie pisan, contando TODOS, y cuántos de cada clase.
  *
  * `traslapes()` trae los mayores con un límite, que está bien para una tabla pero no para una cifra:
  * con 96 traslapes cargados, «hay 60» salía de contar la lista recortada. El total se pide aparte.
  */
-export async function resumenTraslapes(): Promise<{ total: number; hectareas: number; ajenos: number }> {
-  const [r] = await consulta<{ total: number; hectareas: number; ajenos: number }>(
-    `SELECT count(*)::int AS total,
-            coalesce(sum(t.hectareas), 0)::float8 AS hectareas,
-            count(*) FILTER (WHERE coalesce(ca.titular, '') <> coalesce(cb.titular, ''))::int AS ajenos
+export async function resumenTraslapes(): Promise<ResumenTraslapes> {
+  const filas = await consulta<{ clase: ClaseTraslape; n: number; ha: number }>(
+    `SELECT ${CLASE_TRASLAPE} AS clase, count(*)::int AS n, coalesce(sum(t.hectareas), 0)::float8 AS ha
      FROM traslape t
      JOIN concesion ca ON ca.id = t.a_id
-     JOIN concesion cb ON cb.id = t.b_id`
+     JOIN concesion cb ON cb.id = t.b_id
+     GROUP BY 1`
   );
-  return { total: Number(r?.total || 0), hectareas: Number(r?.hectareas || 0), ajenos: Number(r?.ajenos || 0) };
+  const de = (c: ClaseTraslape) => {
+    const f = filas.find((x) => x.clase === c);
+    return { total: Number(f?.n || 0), hectareas: Number(f?.ha || 0) };
+  };
+  const entreTitulares = de('entre_titulares');
+  return {
+    total: filas.reduce((s, f) => s + Number(f.n), 0),
+    hectareas: filas.reduce((s, f) => s + Number(f.ha), 0),
+    ajenos: entreTitulares.total,
+    entreTitulares,
+    mismoTitular: de('mismo_titular'),
+    repetidos: de('repetido'),
+  };
+}
+
+const NOMBRE_CLASE: Record<ClaseTraslape, string> = {
+  entre_titulares: 'a verificar',
+  mismo_titular: 'mismo titular',
+  repetido: 'repetido en el padrón',
+};
+export function nombreClaseTraslape(c: ClaseTraslape): string {
+  return NOMBRE_CLASE[c] || c;
+}
+
+/**
+ * Los traslapes dichos como son. El total que marca el catastro, y enseguida cuántos son de verdad
+ * a verificar: sin esto «93 traslapes, 11.865 ha en disputa» sonaba a pleito, cuando la mayor parte
+ * de esas hectáreas eran el mismo derecho repetido en el padrón.
+ */
+export function fraseTraslapes(r: ResumenTraslapes, formato: (n: number, d?: number) => string): string {
+  if (!r.total) return 'Ninguna concesión se pisa con otra.';
+  // Cuentas y hectáreas enteras: «26,00 traslapes» no es cómo se dice.
+  const nf = (n: number) => formato(Math.round(n), 0);
+  const partes = [
+    `${nf(r.entreTitulares.total)} entre titulares distintos (${nf(Math.round(r.entreTitulares.hectareas))} ha): esos hay que verificarlos con INHGEOMIN; pueden ser un conflicto o un error de digitalización, y se resuelven por la prelación de la solicitud`,
+    ...(r.repetidos.total ? [`${nf(r.repetidos.total)} son el mismo derecho repetido en el padrón (mismo expediente o nombre, ${nf(Math.round(r.repetidos.hectareas))} ha): se aclaran con INHGEOMIN, no son pleito`] : []),
+    ...(r.mismoTitular.total ? [`${nf(r.mismoTitular.total)} son del mismo titular (${nf(Math.round(r.mismoTitular.hectareas))} ha): no hay contraparte`] : []),
+  ];
+  return `El catastro marca ${nf(r.total)} ${r.total === 1 ? 'traslape' : 'traslapes'} (${nf(Math.round(r.hectareas))} ha): ${partes.join('; ')}.`;
 }
 
 /** Los traslapes de UNA concesión, todos: no los que entren entre los mayores del país. */
-export async function traslapesDe(id: number): Promise<Array<{ a: string; b: string; hectareas: number; a_id: number; b_id: number }>> {
+export async function traslapesDe(id: number): Promise<Array<{ a: string; b: string; hectareas: number; a_id: number; b_id: number; clase: ClaseTraslape }>> {
   return consulta(
-    `SELECT ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS hectareas, t.a_id, t.b_id
+    `SELECT ca.nombre AS a, cb.nombre AS b, t.hectareas::float8 AS hectareas, t.a_id, t.b_id, ${CLASE_TRASLAPE} AS clase
      FROM traslape t
      JOIN concesion ca ON ca.id = t.a_id
      JOIN concesion cb ON cb.id = t.b_id
