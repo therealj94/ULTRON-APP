@@ -245,9 +245,9 @@ export function leerMensaje(r: RespuestaModelo, plataforma: Plataforma): Clasifi
   } as Clasificacion;
 }
 
-export async function clasificarConLaya(mensaje: string, plataforma: Plataforma): Promise<Clasificacion | null> {
+export async function clasificarConLaya(mensaje: string, plataforma: Plataforma, esperaMs = espera()): Promise<Clasificacion | null> {
   if (!layaDelNodo()) return null;
-  const { resultado, ms } = await consultarModelo('mensaje', mensaje, { esperaMs: espera() });
+  const { resultado, ms } = await consultarModelo('mensaje', mensaje, { esperaMs });
   const c = resultado ? leerMensaje(resultado, plataforma) : null;
   return c ? { ...c, ms } : null;
 }
@@ -264,18 +264,25 @@ export function modoClasificador(): ModoClasificador {
  * La clasificación del turno. Nunca falla y nunca tarda más que el tope de Laya: si Laya no está,
  * no contesta o contesta basura, sale la de reglas.
  */
-export async function clasificar(mensaje: string, plataforma: Plataforma): Promise<Clasificacion> {
+/**
+ * Lo más que espera a Laya un turno HABLADO. En la T4 contesta en ~35 ms; si un día tarda, la voz no
+ * se queda muda los 800 ms del tope general: sale la clasificación de reglas.
+ */
+export const ESPERA_LAYA_VOZ_MS = 300;
+
+export async function clasificar(mensaje: string, plataforma: Plataforma, o: { voz?: boolean } = {}): Promise<Clasificacion> {
   const reglas = clasificarConReglas(mensaje, plataforma);
+  const tope = o.voz ? Math.min(espera(), ESPERA_LAYA_VOZ_MS) : espera();
   const modo = modoClasificador();
   if (modo === 'reglas' || !layaConfigurado()) return reglas;
   if (modo === 'sombra') {
     // En sombra lo de Laya no decide nada: no se espera. Se pega a la traza del turno cuando llegue
     // (en la T4 tarda ~35 ms; el turno, segundos).
     const traza = trazaActual();
-    void clasificarConLaya(mensaje, plataforma).then((l) => traza?.sombraClasificacion(l ? ({ ...l, sombra: undefined } as any) : null));
+    void clasificarConLaya(mensaje, plataforma, tope).then((l) => traza?.sombraClasificacion(l ? ({ ...l, sombra: undefined } as any) : null));
     return { ...reglas, sombra: null };
   }
-  const deLaya = await clasificarConLaya(mensaje, plataforma);
+  const deLaya = await clasificarConLaya(mensaje, plataforma, tope);
   if (!deLaya) return { ...reglas, sombra: null };
   return combinar(deLaya, reglas, plataforma);
 }

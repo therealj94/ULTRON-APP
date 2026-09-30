@@ -3,11 +3,11 @@
  *
  *  · Guardián: dos anillos celestes con su pupila, sobre negro (como su cara en la mesa).
  *  · AU-RA: los mismos anillos en dorado, sobre grafito.
- *  · Claudio: su foto.
+ *  · Claudio y ANT-ONIO: su foto (la de ANT-ONIO sale de su modelo 3D).
  */
 import { Image, StyleSheet, View } from 'react-native';
 import { avatarPorId, type AvatarId } from './catalogo';
-import { FOTOS_CLAUDIO } from './ClaudioRetrato';
+import { fotosRetrato } from './ClaudioRetrato';
 
 function Ojos({ color, fondo, lado }: { color: string; fondo: string; lado: number }) {
   const ojo = Math.round(lado * 0.3);
@@ -28,10 +28,11 @@ function Ojos({ color, fondo, lado }: { color: string; fondo: string; lado: numb
 
 export function MiniAvatar({ id, lado }: { id: AvatarId; lado: number }) {
   const a = avatarPorId(id);
-  if (id === 'claudio') {
+  const fotos = fotosRetrato(id);
+  if (fotos) {
     return (
       <View style={[s.caja, { backgroundColor: a.tema.fondo }]}>
-        <Image source={FOTOS_CLAUDIO.base} resizeMode="contain" style={s.img} />
+        <Image source={fotos.base} resizeMode="contain" style={s.img} />
       </View>
     );
   }

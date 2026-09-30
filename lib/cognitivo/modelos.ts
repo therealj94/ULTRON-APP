@@ -78,7 +78,8 @@ export function esCharlaTrivial(texto: string): boolean {
 export type MensajeChat = { role: 'system' | 'user' | 'assistant'; content: string };
 
 /** Una respuesta del modelo chico, o null si no está o falla (y entonces contesta Qwen). */
-export async function preguntarModeloChico(mensajes: MensajeChat[]): Promise<{ texto: string } | null> {
+/** `senal`: si la persona interrumpe (voz) o se va, la llamada se corta ahí mismo. */
+export async function preguntarModeloChico(mensajes: MensajeChat[], senal?: AbortSignal): Promise<{ texto: string } | null> {
   const c = conf();
   if (!c.url || !disponible('modelo_chico')) return null;
   try {
@@ -88,7 +89,7 @@ export async function preguntarModeloChico(mensajes: MensajeChat[]): Promise<{ t
       // Qwen3 piensa en voz alta por omisión; para un saludo sobra. llama.cpp (--jinja) y vLLM
       // pasan `chat_template_kwargs` a la plantilla; los servidores que no lo conocen lo ignoran.
       body: JSON.stringify({ model: c.nombre, messages: mensajes, temperature: 0.6, max_tokens: 300, chat_template_kwargs: { enable_thinking: false } }),
-      signal: AbortSignal.timeout(c.ms),
+      signal: senal ? AbortSignal.any([senal, AbortSignal.timeout(c.ms)]) : AbortSignal.timeout(c.ms),
     });
     if (!r.ok) {
       if (r.status >= 500) anotarFallo('modelo_chico');
@@ -105,7 +106,8 @@ export async function preguntarModeloChico(mensajes: MensajeChat[]): Promise<{ t
     trazaActual()?.modelo(c.nombre, 'modelo-chico');
     return { texto };
   } catch {
-    anotarFallo('modelo_chico');
+    // Un corte de la persona no es un fallo del modelo: no cuenta para el interruptor.
+    if (!senal?.aborted) anotarFallo('modelo_chico');
     return null;
   }
 }

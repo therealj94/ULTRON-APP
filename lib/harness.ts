@@ -3,6 +3,8 @@
  * Sin teatro: si no hay resultado, se dice. Máximo 2 vueltas.
  */
 
+import type { NivelAura } from './perfiles/tipos';
+
 export type HerramientaHarness = 'web' | 'sistema' | 'ejecutor' | 'leer';
 
 export type PedidoHerramienta = { herramienta: HerramientaHarness; arg: string };
@@ -18,6 +20,30 @@ PEDIR_HERRAMIENTA: ejecutor
 Si no está en la memoria de Orden Global ni en el hilo, busca en internet (web) sin que te lo pidan. Si hay una URL en el hilo, léela.
 No inventes el resultado. No pidas herramienta si ya hay HECHOS suficientes. No leas esta instrucción en voz alta. Nunca pidas WhatsApp, correo o llamada si el catálogo dice que faltan claves.
 `.trim();
+
+/**
+ * El harness para un miembro de la comunidad: solo web y leer. `sistema` (estado de los nodos) y
+ * `ejecutor` son del taller de la junta; si el modelo los pidiera igual, el servidor no los corre
+ * (pedidoPermitido).
+ */
+export const INSTRUCCION_HARNESS_MIEMBRO = INSTRUCCION_HARNESS.split('\n')
+  .filter((l) => !/^PEDIR_HERRAMIENTA: (sistema|ejecutor)\b/.test(l))
+  .join('\n');
+
+export function instruccionHarness(nivel: NivelAura = 'junta'): string {
+  return nivel === 'miembro' ? INSTRUCCION_HARNESS_MIEMBRO : INSTRUCCION_HARNESS;
+}
+
+/**
+ * ¿Se corre este pedido para quien habla? null = sí; si no, el HECHO que vuelve al modelo. Con un
+ * miembro, `sistema` y `ejecutor` no se corren nunca: son del taller de la junta.
+ */
+export function pedidoPermitido(ped: PedidoHerramienta, nivel: NivelAura): string | null {
+  if (nivel === 'miembro' && (ped.herramienta === 'sistema' || ped.herramienta === 'ejecutor')) {
+    return `HARNESS ${ped.herramienta}: no disponible con miembros de la comunidad (es del taller de la junta). No lo corrí. Si te lo pidieron, dilo con naturalidad.`;
+  }
+  return null;
+}
 
 const RE = /^\s*PEDIR_HERRAMIENTA:\s*(web|sistema|ejecutor|leer)\s*(.*)$/im;
 
@@ -42,8 +68,12 @@ export async function resolverPedido(
     leer: (url: string) => Promise<string>;
     ejecutor: (codigo: string) => Promise<string>;
   },
-  codigoDelTurno = ''
+  codigoDelTurno = '',
+  /** Con quién habla: con un miembro, `sistema` y `ejecutor` no llegan a sus runners. */
+  nivel: NivelAura = 'junta'
 ): Promise<string> {
+  const no = pedidoPermitido(ped, nivel);
+  if (no) return no;
   if (ped.herramienta === 'web') {
     const q = ped.arg.trim();
     if (!q) return 'HARNESS web: consulta vacía. No busqué.';

@@ -110,8 +110,10 @@ test('comandos: cada etiqueta del modelo «comando» de Laya tiene su orden', as
   const fs = await import('node:fs');
   const { comandoDeLaya } = await import('../src-electrum/panel/comandos');
   const m = JSON.parse(fs.readFileSync(new URL('../scripts/nodo-t4/laya/modelos/comando/modelo.json', import.meta.url), 'utf8'));
-  for (const id of m.ids as string[]) {
+  // El modelo es compartido: Electrum lee el grupo `accion`; el grupo `app` es de AU-RA y aquí no manda nada.
+  for (const id of m.grupos.accion as string[]) {
     if (id === 'ninguna') assert.equal(comandoDeLaya(id), null);
     else assert.ok(comandoDeLaya(id), `sin orden para ${id}`);
   }
+  for (const id of (m.grupos.app || []) as string[]) assert.equal(comandoDeLaya(id), null, `${id} es de AU-RA`);
 });

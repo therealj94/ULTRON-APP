@@ -219,6 +219,9 @@ def resumen(filas, clave, ids, grupos, cubre=None):
     m['f1_micro'] = 2 * prec * rec / max(1e-9, prec + rec)
     con_soporte = [v['f1'] for v in pe.values() if v['soporte']]
     m['f1_macro'] = sum(con_soporte) / max(1, len(con_soporte))
+    # Cuántas etiquetas sueltas hay: con 0 (todo en grupos, como «comando») el F1 macro no dice nada
+    # y comparar.py decide por la exactitud de cada grupo.
+    m['sueltas'] = len(pe)
     return m
 
 
@@ -231,7 +234,8 @@ def anotar_decisor(m, filas, umbrales=None):
 
 
 def leer_conjunto(rutas, m):
-    filas = leer_filas(rutas, m.ids, m.grupos, origen=True)
+    # Un checkpoint anterior puede no conocer etiquetas nuevas de los datos: se recortan a las suyas.
+    filas = leer_filas(rutas, m.ids, m.grupos, origen=True, recortar_a_ids=True)
     for f in filas:
         if 'reglas' in f:
             f['reglas_cubre'] = f.get('reglas_cubre') or []

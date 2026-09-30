@@ -73,11 +73,29 @@ module.exports = ({ config }) => {
   if (variante !== 'electrum') {
     return {
       ...expo,
-      userInterfaceStyle: 'dark',
+      // «automatic»: el tema «Sistema» de la 5.0 sigue al teléfono (con «dark» Android siempre dice oscuro).
+      userInterfaceStyle: 'automatic',
       plugins: conPlugin(expo.plugins, 'expo-splash-screen', (o) => ({ ...o, backgroundColor: AURA_FONDO })),
       android: {
         ...expo.android,
         adaptiveIcon: { ...expo.android?.adaptiveIcon, backgroundColor: AURA_ICONO },
+        /*
+         * La vuelta de la wallet por https (App Link verificado). `ultronfp://` lo puede declarar
+         * cualquier app; `https://aura-fp.onrender.com/sso` solo se le entrega a la app que ese
+         * dominio reconoce en /.well-known/assetlinks.json (paquete + huella de la firma; ver
+         * server/enlaces-app.ts). Sin verificar, Android abre el enlace en el navegador y la página
+         * /sso devuelve a la persona aquí con un intent atado al paquete. Solo AU-RA: Dr Electrum no
+         * entra con Genesis ID.
+         */
+        intentFilters: [
+          ...(expo.android?.intentFilters || []),
+          {
+            action: 'VIEW',
+            autoVerify: true,
+            category: ['BROWSABLE', 'DEFAULT'],
+            data: [{ scheme: 'https', host: 'aura-fp.onrender.com', pathPrefix: '/sso' }],
+          },
+        ],
         /*
          * AU-RA no pide la ubicación, y hay que decirlo explícitamente.
          *

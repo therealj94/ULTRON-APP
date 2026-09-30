@@ -6,8 +6,9 @@
 
 import { FEW_SHOT_HONESTO } from './prompts/few-shot';
 import { COT_FORZADO, esTareaDeCodigo, requiereCot } from './prompts/cot';
-import { HONESTIDAD_CONVERSACION, SYSTEM_PROMPT_HONESTO, TEXTO_TELEGRAM, VOZ_ESCRITORIO } from './prompts/honestidad';
-import { INSTRUCCION_HARNESS } from './harness';
+import { HONESTIDAD_CONVERSACION, promptHonesto, TEXTO_TELEGRAM, VOZ_ESCRITORIO } from './prompts/honestidad';
+import { instruccionHarness } from './harness';
+import type { NivelAura } from './perfiles/tipos';
 import { buscarSnippets } from './rag';
 import { esSaludoCorto, type MsgHilo } from './conversacion';
 
@@ -31,6 +32,8 @@ export function construirMensajes(opts: {
   canal?: 'mesa' | 'telegram';
   historial?: MsgHilo[];
   harness?: boolean;
+  /** Con quién habla (server/nivel.ts). Un miembro no oye «asistente de la junta» ni ve sistema/ejecutor. */
+  nivel?: NivelAura;
 }): { messages: ChatMessage[]; meta: MensajesMeta } {
   const user = String(opts.user || '').trim();
   const codigo = esTareaDeCodigo(user);
@@ -42,10 +45,11 @@ export function construirMensajes(opts: {
 
   // Código: el prompt largo de honestidad (4 bloques, trazas). Conversación: la versión corta,
   // para que el 27B no arrastre reglas de tests y complejidad a una charla de mesa.
-  const parts: string[] = [codigo ? SYSTEM_PROMPT_HONESTO : HONESTIDAD_CONVERSACION];
+  const nivel: NivelAura = opts.nivel === 'miembro' ? 'miembro' : 'junta';
+  const parts: string[] = [codigo ? promptHonesto(nivel) : HONESTIDAD_CONVERSACION];
   if (!codigo) parts.push(telegram ? TEXTO_TELEGRAM : VOZ_ESCRITORIO);
   parts.push(String(opts.personalidad || '').trim());
-  if (harness) parts.push(INSTRUCCION_HARNESS);
+  if (harness) parts.push(instruccionHarness(nivel));
   if (cot) parts.push(COT_FORZADO);
   if (fewShot) parts.push(FEW_SHOT_HONESTO);
 

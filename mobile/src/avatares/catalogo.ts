@@ -1,13 +1,19 @@
 /**
  * Los avatares de AU-RA FP. Se elige uno al entrar.
  *
- * Tres personajes, un solo cerebro (mismas herramientas y memoria), pero cada uno con su cara, su
+ * Cuatro personajes, un solo cerebro (mismas herramientas y memoria), pero cada uno con su cara, su
  * voz, sus colores y su oficio: la interfaz y los atajos cambian con él.
  *
  *  · Guardián (los ojos celestes): cuida el espacio. Cámara, vigilancia, modos.
  *  · AU-RA (la dorada): compañera personal. Agenda, recordatorios, memoria, oración, canto.
  *  · Claudio (el zorro): anfitrión de marketing. Ideas, textos y publicaciones para redes.
  *    Acostado se le ve de retrato; derecho, de cuerpo entero a pantalla completa (está parado).
+ *  · ANT-ONIO (la hormiga de lentes y cuatro brazos): aliado para organizar y resolver. Tareas,
+ *    planes, recordatorios, trámites y cómo usar las apps. Se reparte la pantalla como Claudio.
+ *
+ * Claudio, AU-RA y ANT-ONIO tienen cuerpo 3D (avatar3d/modelo.ts) cuando el teléfono lo aguanta; si
+ * no, Claudio y ANT-ONIO se ven con sus fotos (las de ANT-ONIO salen de su modelo) y AU-RA con su
+ * figurita.
  *
  * Guardián y AU-RA, en vertical, se hacen un cuadro arriba con el chat abajo.
  *
@@ -16,7 +22,7 @@
  */
 import type { Bilingue } from '../i18n';
 
-export type AvatarId = 'ojos' | 'aura' | 'claudio';
+export type AvatarId = 'ojos' | 'aura' | 'claudio' | 'antonio';
 
 /**
  * Un atajo del avatar: lo que se ve en el botón y lo que se le pide a la mesa al tocarlo. Si el
@@ -101,13 +107,34 @@ export const AVATARES: readonly Avatar[] = [
       { id: 'guion', etiqueta: { es: 'Guion de video', en: 'Video script' }, pedido: { es: 'Escribe un guion de video de 30 segundos para redes. Pregúntame el tema primero.', en: 'Write a 30-second social video script. Ask me the topic first.' } },
     ],
   },
+  {
+    id: 'antonio',
+    nombre: { es: 'ANT-ONIO', en: 'ANT-ONIO' },
+    descripcion: { es: 'La hormiga de lentes y cuatro brazos. Enérgico y práctico.', en: 'The ant with glasses and four arms. Energetic and practical.' },
+    oficio: { es: 'Tu aliado para resolver', en: 'Your ally to get things done' },
+    voz: { es: 'Voz de hombre, enérgica y clara', en: 'Energetic, clear male voice' },
+    presentacion: { es: '¡Aquí ANT-ONIO! Con cuatro brazos hacemos varias cosas a la vez. ¿Qué resolvemos?', en: 'ANT-ONIO here! Four arms, several things at once. What are we solving?' },
+    tema: { acento: '#45C9DE', acentoTexto: '#8FE3F0', acentoFondo: 'rgba(69,201,222,0.15)', sobreAcento: '#04161A', fondo: '#171B1E' },
+    acciones: [
+      { id: 'plan', etiqueta: { es: 'Plan paso a paso', en: 'Step-by-step plan' }, pedido: { es: 'Ayúdame a armar un plan paso a paso. Pregúntame primero qué quiero lograr.', en: 'Help me build a step-by-step plan. First ask me what I want to achieve.' } },
+      { id: 'pendientes', etiqueta: { es: 'Mis pendientes', en: 'My to-dos' }, pedido: { es: 'Organicemos mis pendientes: pregúntame qué tengo y los ordenamos por prioridad.', en: 'Let’s organize my to-dos: ask me what I have and we’ll sort them by priority.' } },
+      { id: 'resumen', etiqueta: { es: 'Resúmeme algo', en: 'Summarize this' }, pedido: { es: 'Quiero un resumen corto y claro. Pregúntame de qué.', en: 'I want a short, clear summary. Ask me what about.' } },
+      { id: 'apps', etiqueta: { es: '¿Cómo uso la app?', en: 'How do I use the app?' }, pedido: { es: 'Explícame en pasos cortos cómo hacer algo en Veta Wallet, Genesis ID o PULSE2CHAT. Pregúntame qué necesito.', en: 'Explain in short steps how to do something in Veta Wallet, Genesis ID or PULSE2CHAT. Ask me what I need.' } },
+    ],
+  },
 ];
 
 export function normalizarAvatarId(v: unknown): AvatarId {
   // «claudio-pie» es de la 4.5: el de pie es el mismo Claudio (se pone de pie en vertical).
   if (v === 'claudio' || v === 'claudio-pie') return 'claudio';
   if (v === 'ojos') return 'ojos';
+  if (v === 'antonio' || v === 'ant-onio') return 'antonio';
   return 'aura';
+}
+
+/** ¿Se le ve con fotos (retrato acostado, de pie derecho) cuando no hay 3D? Claudio y ANT-ONIO. */
+export function conFotos(id: AvatarId): boolean {
+  return id === 'claudio' || id === 'antonio';
 }
 
 export function avatarPorId(id: AvatarId): Avatar {
@@ -118,13 +145,13 @@ export type Distribucion = {
   /** `completa`: el avatar ocupa todo y el chat flota encima. `cuadro`: recuadro + chat. */
   tipo: 'completa' | 'cuadro';
   chat: 'abajo' | 'lado' | 'flota';
-  /** Solo Claudio: retrato acostado, de cuerpo entero derecho. */
+  /** Claudio y ANT-ONIO: retrato acostado, de cuerpo entero derecho. */
   pose: 'retrato' | 'pie' | null;
 };
 
 /** Cómo se reparte la pantalla para este avatar en esta orientación. */
 export function distribucion(id: AvatarId, horizontal: boolean): Distribucion {
-  if (id === 'claudio') return { tipo: 'completa', chat: 'flota', pose: horizontal ? 'retrato' : 'pie' };
+  if (conFotos(id)) return { tipo: 'completa', chat: 'flota', pose: horizontal ? 'retrato' : 'pie' };
   if (horizontal) return { tipo: 'completa', chat: 'flota', pose: null };
   return { tipo: 'cuadro', chat: 'abajo', pose: null };
 }

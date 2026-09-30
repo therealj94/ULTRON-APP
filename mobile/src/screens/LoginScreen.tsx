@@ -1,47 +1,33 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Animated,
-  BackHandler,
-  Easing,
-  View,
-  Text,
-  Pressable,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-  Switch,
-  ScrollView,
-  Image,
-  useWindowDimensions,
-} from 'react-native';
-import * as Haptics from 'expo-haptics';
-import { T, SOMBRA } from '../tema';
-import { Boton } from '../ui/Boton';
-import { Campo } from '../ui/Campo';
-import { MiniAvatar } from '../avatares/MiniAvatar';
-import { AVATARES } from '../avatares/catalogo';
-import { SelectorIdioma } from '../ui/SelectorIdioma';
-import { de, tr, useIdioma } from '../i18n';
+/**
+ * «OTRAS FORMAS DE ENTRAR»: el correo y la clave de AU-RA, la huella y el modo local de la mesa.
+ *
+ * La puerta principal es Genesis ID (src/app/pantallas/Entrar.tsx). Esto queda para la junta —las
+ * cuentas de José y Medardo, que entran con su clave o con la huella— y para abrir la mesa sin
+ * servidor. Toda la lógica de antes sigue igual (clave guardada que no se muestra, huella solo con la
+ * clave guardada, modo local si el servidor no contesta, crear cuenta y recuperar la clave); cambia
+ * cómo se ve: la cabecera grande que colapsa, las cuentas en una lista del sistema y los campos, los
+ * botones y los colores del sistema de diseño (claro u oscuro, según el tema).
+ *
+ * Fases: pick (elegir cuenta) → clave | quick (huella) | crear | olvide. El «atrás» de la cabecera y
+ * el de Android vuelven a la fase anterior; desde la primera, a la entrada con Genesis ID.
+ */
+import { useEffect, useMemo, useState } from 'react';
+import { BackHandler, KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 import * as LocalAuthentication from 'expo-local-authentication';
-import {
-  DESK_USERS,
-  findDeskUserByEmail,
-  normalizeDeskEmail,
-  type DeskUser,
-  type SessionUser,
-} from '../config';
+import { de, tr, useIdioma } from '../i18n';
+import { DESK_USERS, findDeskUserByEmail, normalizeDeskEmail, type DeskUser, type SessionUser } from '../config';
 import { loginBiometric, loginClave, olvideClave, pedirCuenta } from '../lib/api';
 import { miga } from '../lib/reporte';
-import {
-  getFingerprintUnlock,
-  loadCreds,
-  saveCreds,
-  saveSession,
-  setFingerprintUnlock,
-} from '../lib/storage';
+import { getFingerprintUnlock, loadCreds, saveCreds, saveSession, setFingerprintUnlock } from '../lib/storage';
+import { AVATARES } from '../avatares/catalogo';
+import { MiniAvatar } from '../avatares/MiniAvatar';
+import { MEDIDA, useTema } from '../nucleo/tema';
+import { Aparecer, Boton, Campo, Fila, Grupo, Icono, Interruptor, PantallaConCabecera, Texto, vibrar } from '../ui';
 
 type Props = {
   onAuthenticated: (user: SessionUser) => void;
+  /** Volver a la entrada con Genesis ID (desde la primera fase). */
+  onAtras?: () => void;
 };
 
 type Fase = 'pick' | 'clave' | 'quick' | 'crear' | 'olvide';
@@ -53,9 +39,22 @@ const OTRO_TEMPLATE: DeskUser = {
   role: 'Junta Directiva · Orden Global',
 };
 
-export function LoginScreen({ onAuthenticated }: Props) {
-  // El idioma se elige aquí (arriba a la derecha): toda la pantalla se redibuja al cambiarlo.
+/** La inicial en su círculo dorado (las cuentas de la junta en la lista). */
+function Inicial({ letra }: { letra: string }) {
+  const tema = useTema();
+  return (
+    <View style={[est.inicial, { backgroundColor: tema.acentoFondo }]}>
+      <Texto v="cuerpoFuerte" color="acentoTexto">
+        {letra}
+      </Texto>
+    </View>
+  );
+}
+
+export function LoginScreen({ onAuthenticated, onAtras }: Props) {
+  // El idioma se elige en la entrada: toda la pantalla se redibuja al cambiarlo.
   useIdioma();
+  const tema = useTema();
   const [selected, setSelected] = useState<DeskUser>(DESK_USERS[0]);
   const [customCorreo, setCustomCorreo] = useState('');
   const [phase, setPhase] = useState<Fase>('pick');
@@ -65,27 +64,6 @@ export function LoginScreen({ onAuthenticated }: Props) {
   const [nuevoMotivo, setNuevoMotivo] = useState('');
   const [correoOlvido, setCorreoOlvido] = useState('');
   const [listo, setListo] = useState('');
-  const { width, height } = useWindowDimensions();
-  const horizontal = width > height;
-  // Cada cambio de paso entra deslizándose, como una pantalla nativa (no aparece de golpe).
-  const entrada = useRef(new Animated.Value(1)).current;
-  useEffect(() => {
-    entrada.setValue(0);
-    Animated.timing(entrada, { toValue: 1, duration: 260, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-  }, [phase, entrada]);
-  // Atrás de Android: vuelve al paso anterior en vez de cerrar la app.
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (phase === 'crear' || phase === 'olvide' || phase === 'clave') {
-        setError('');
-        setListo('');
-        setPhase(phase === 'clave' ? 'pick' : 'clave');
-        return true;
-      }
-      return false;
-    });
-    return () => sub.remove();
-  }, [phase]);
   const [clave, setClave] = useState('');
   /** Hay una clave guardada en este teléfono (no se muestra; la usan la huella y la renovación). */
   const [claveGuardada, setClaveGuardada] = useState(false);
@@ -94,8 +72,27 @@ export function LoginScreen({ onAuthenticated }: Props) {
   const [fingerprintAvailable, setFingerprintAvailable] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [logoReady, setLogoReady] = useState(false);
   const [savedName, setSavedName] = useState<string | null>(null);
+
+  /** La fase anterior (la que abre «atrás»); null = salir de esta pantalla. */
+  const faseAnterior = (f: Fase): Fase | null => (f === 'pick' ? null : f === 'clave' || f === 'quick' ? 'pick' : 'clave');
+  const volver = () => {
+    const a = faseAnterior(phase);
+    setError('');
+    setListo('');
+    if (a) setPhase(a);
+    else onAtras?.();
+  };
+  // Atrás de Android: vuelve al paso anterior en vez de salir.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (!faseAnterior(phase)) return false;
+      volver();
+      return true;
+    });
+    return () => sub.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   const activeUser: DeskUser = useMemo(() => {
     if (selected.id !== 'otro') return selected;
@@ -112,7 +109,6 @@ export function LoginScreen({ onAuthenticated }: Props) {
   }, [selected, customCorreo]);
 
   useEffect(() => {
-    const t = setTimeout(() => setLogoReady(true), 60);
     let vivo = true;
     void (async () => {
       // Un sensor que no responde no puede dejar la entrada colgada: sin huella, se entra con clave.
@@ -167,7 +163,6 @@ export function LoginScreen({ onAuthenticated }: Props) {
     })();
     return () => {
       vivo = false;
-      clearTimeout(t);
     };
   }, []);
 
@@ -339,7 +334,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
   const irA = (f: Fase) => {
     setError('');
     setListo('');
-    void Haptics.selectionAsync().catch(() => {});
+    vibrar('seleccion');
     if (f === 'olvide' && !correoOlvido) setCorreoOlvido(activeUser.correo || '');
     setPhase(f);
   };
@@ -351,7 +346,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
     setError('');
     try {
       setListo(await olvideClave(correo));
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      vibrar('exito');
     } catch (e: any) {
       setError(!e?.status ? tr('Sin conexión con el servidor. Intenta en un momento.', 'No connection to the server. Try again in a moment.') : e?.message || tr('No pude enviar el enlace.', 'Couldn’t send the link.'));
     } finally {
@@ -367,7 +362,7 @@ export function LoginScreen({ onAuthenticated }: Props) {
     setError('');
     try {
       setListo(await pedirCuenta(nuevoNombre, nuevoCorreo, nuevoMotivo));
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      vibrar('exito');
     } catch (e: any) {
       setError(!e?.status ? tr('Sin conexión con el servidor. Intenta en un momento.', 'No connection to the server. Try again in a moment.') : e?.message || tr('No pude enviar la solicitud.', 'Couldn’t send the request.'));
     } finally {
@@ -377,7 +372,15 @@ export function LoginScreen({ onAuthenticated }: Props) {
 
 
   const titulo =
-    phase === 'crear' ? tr('Pedir acceso', 'Request access') : phase === 'olvide' ? tr('Recuperar clave', 'Recover password') : phase === 'quick' ? `${tr('Hola', 'Hi')}, ${savedName}` : phase === 'pick' ? tr('¿Quién entra?', 'Who’s signing in?') : tr('Entrar', 'Sign in');
+    phase === 'crear'
+      ? tr('Pedir acceso', 'Request access')
+      : phase === 'olvide'
+        ? tr('Recuperar clave', 'Recover password')
+        : phase === 'quick'
+          ? `${tr('Hola', 'Hi')}, ${savedName}`
+          : phase === 'pick'
+            ? tr('Otras formas de entrar', 'Other ways in')
+            : tr('Entrar con clave', 'Sign in with password');
   const subtitulo =
     phase === 'crear'
       ? tr('AU-RA es privada: tu solicitud la revisa la administración de Orden Global.', 'AU-RA is private: Orden Global’s administration reviews your request.')
@@ -386,245 +389,161 @@ export function LoginScreen({ onAuthenticated }: Props) {
         : phase === 'quick'
           ? tr('Tu huella abre la mesa.', 'Your fingerprint opens the desk.')
           : phase === 'pick'
-            ? tr('Elige tu cuenta de la junta.', 'Choose your board account.')
+            ? tr('Con tu cuenta de AU-RA: correo y clave, o tu huella.', 'With your AU-RA account: email and password, or your fingerprint.')
             : activeUser.correo || tr('Tu correo de Orden Global', 'Your Orden Global email');
 
-  const marca = (
-    <View style={[styles.marca, horizontal && styles.marcaHorizontal]}>
-      <Image
-        source={require('../../assets/marca/logo-aura.png')}
-        resizeMode="contain"
-        accessibilityLabel="AU-RA by Orden Global"
-        style={[horizontal ? styles.logoGrande : styles.logo, { opacity: logoReady ? 1 : 0 }]}
-      />
-      {horizontal && (
-        <>
-          <Text style={styles.lemaGrande}>{tr('Tu mesa de trabajo con voz, ojos y memoria.', 'Your workspace with a voice, eyes and memory.')}</Text>
-          <View style={styles.trio} accessibilityLabel={AVATARES.map((a) => de(a.nombre)).join(', ')}>
-            {AVATARES.map((a) => (
-              <View key={a.id} style={[styles.trioFoto, { borderColor: a.tema.acento }]}>
-                <MiniAvatar id={a.id} lado={76} />
-              </View>
-            ))}
-          </View>
-          <Text style={styles.trioTexto}>{AVATARES.map((a) => de(a.nombre)).join(' · ')}</Text>
-          <Text style={styles.trioNota}>{tr('Eliges con quién hablar al entrar.', 'You pick who to talk to after signing in.')}</Text>
-          <View style={{ marginTop: 14 }}>
-            <SelectorIdioma />
-          </View>
-        </>
-      )}
-    </View>
+  const errorVisible = !!error && (
+    <Aparecer desde="escala">
+      <View style={[est.error, { backgroundColor: tema.avisoFondo }]} accessibilityRole="alert" accessibilityLiveRegion="polite">
+        <Icono nombre="alerta" tam={17} color={tema.aviso} />
+        <Texto v="chica" color="aviso" style={{ flex: 1 }}>
+          {error}
+        </Texto>
+      </View>
+    </Aparecer>
   );
 
-  const tarjeta = (
-    <Animated.View
-      style={[
-        styles.card,
-        horizontal && styles.cardCompacta,
-        { opacity: entrada, transform: [{ translateX: entrada.interpolate({ inputRange: [0, 1], outputRange: [24, 0] }) }] },
-      ]}
-    >
-      <Text style={[styles.titulo, horizontal && { fontSize: 20 }]}>{titulo}</Text>
-      <Text style={[styles.subtitulo, horizontal && { marginBottom: 8 }]} numberOfLines={2}>{subtitulo}</Text>
+  const hecho = (texto: string, volverA: Fase) => (
+    <Aparecer desde="escala" style={{ gap: MEDIDA.espacio.l }}>
+      <View style={[est.listo, { backgroundColor: tema.exitoFondo }]}>
+        <Icono nombre="check" tam={20} color={tema.exito} />
+        <Texto v="cuerpo" color="texto" style={{ flex: 1 }}>
+          {texto}
+        </Texto>
+      </View>
+      <Boton titulo={tr('Volver a entrar', 'Back to sign in')} onPress={() => irA(volverA)} />
+    </Aparecer>
+  );
 
-      {phase === 'quick' ? (
-        <View style={styles.bloque}>
-          <Boton titulo={tr('Entrar con huella', 'Sign in with fingerprint')} onPress={() => void enterWithFingerprint()} cargando={loading} />
-          <Boton titulo={tr('Usar clave', 'Use password')} variante="contorno" onPress={() => irA('clave')} />
-          <Boton titulo={tr('Cambiar de cuenta', 'Switch account')} variante="texto" onPress={() => irA('pick')} />
-        </View>
-      ) : phase === 'pick' ? (
-        <View style={styles.bloque}>
+  let contenido;
+  if (phase === 'quick') {
+    contenido = (
+      <View style={est.bloque}>
+        <Boton titulo={tr('Entrar con huella', 'Sign in with fingerprint')} icono="huella" onPress={() => void enterWithFingerprint()} cargando={loading} />
+        <Boton titulo={tr('Usar clave', 'Use password')} variante="secundario" onPress={() => irA('clave')} />
+        <Boton titulo={tr('Cambiar de cuenta', 'Switch account')} variante="fantasma" onPress={() => irA('pick')} />
+        {errorVisible}
+      </View>
+    );
+  } else if (phase === 'pick') {
+    contenido = (
+      <View style={est.bloque}>
+        <Grupo titulo={tr('Cuentas de la junta', 'Board accounts')}>
           {DESK_USERS.map((u) => (
-            <Pressable
-              key={u.id}
-              onPress={() => pickUser(u)}
-              android_ripple={{ color: 'rgba(214,181,108,0.14)' }}
-              style={({ pressed }) => [styles.userBtn, horizontal && styles.userBtnCompacto, pressed && styles.userBtnPress]}
-              accessibilityRole="button"
-              accessibilityLabel={`${u.name}, ${u.correo}`}
-            >
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>{u.name[0]}</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.userName}>{u.name}</Text>
-                <Text style={styles.userMail}>{u.correo}</Text>
-              </View>
-              <Text style={styles.flecha}>›</Text>
-            </Pressable>
+            <Fila key={u.id} titulo={u.name} detalle={u.correo} derecha={<Inicial letra={u.name[0]} />} onPress={() => pickUser(u)} />
           ))}
-          <Pressable
-            onPress={() => pickUser(OTRO_TEMPLATE)}
-            android_ripple={{ color: 'rgba(214,181,108,0.14)' }}
-            style={({ pressed }) => [styles.userBtn, horizontal && styles.userBtnCompacto, pressed && styles.userBtnPress]}
-            accessibilityRole="button"
-            accessibilityLabel={tr('Otra cuenta: escribir correo', 'Another account: type email')}
-          >
-            <View style={[styles.avatar, { backgroundColor: T.fondo2 }]}>
-              <Text style={[styles.avatarText, { color: T.texto2 }]}>+</Text>
+          <Fila titulo={tr('Otra cuenta', 'Another account')} detalle={tr('Entrar con otro correo', 'Sign in with another email')} icono="correo" onPress={() => pickUser(OTRO_TEMPLATE)} />
+        </Grupo>
+        <Grupo>
+          <Fila titulo={tr('Pedir acceso', 'Request access')} detalle={tr('AU-RA es privada: lo aprueba Orden Global', 'AU-RA is private: Orden Global approves it')} icono="mas" onPress={() => irA('crear')} />
+          <Fila titulo={tr('Olvidé mi clave', 'Forgot my password')} icono="llave" onPress={() => irA('olvide')} />
+        </Grupo>
+        {errorVisible}
+        <View style={est.trio} accessibilityLabel={AVATARES.map((a) => de(a.nombre)).join(', ')}>
+          {AVATARES.map((a) => (
+            <View key={a.id} style={[est.trioFoto, { borderColor: tema.borde }]}>
+              <MiniAvatar id={a.id} lado={52} />
             </View>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.userName}>{tr('Otra cuenta', 'Another account')}</Text>
-              <Text style={styles.userMail}>{tr('Entrar con otro correo', 'Sign in with another email')}</Text>
-            </View>
-            <Text style={styles.flecha}>›</Text>
-          </Pressable>
-          <View style={styles.filaEnlaces}>
-            <Boton titulo={tr('Crear cuenta', 'Create account')} variante="texto" onPress={() => irA('crear')} />
-            <Boton titulo={tr('Olvidé mi clave', 'Forgot my password')} variante="texto" onPress={() => irA('olvide')} />
-          </View>
+          ))}
         </View>
-      ) : phase === 'crear' ? (
-        <View style={styles.bloque}>
-          {listo ? (
-            <>
-              <Text style={styles.listo}>{listo}</Text>
-              <Boton titulo={tr('Volver a entrar', 'Back to sign in')} onPress={() => irA('pick')} />
-            </>
-          ) : (
-            <>
-              <Campo etiqueta={tr('Nombre completo', 'Full name')} value={nuevoNombre} onChangeText={setNuevoNombre} autoCapitalize="words" autoComplete="name" textContentType="name" />
-              <Campo etiqueta={tr('Correo', 'Email')} value={nuevoCorreo} onChangeText={setNuevoCorreo} keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
-              <Campo etiqueta={tr('¿Para qué necesitas el acceso?', 'Why do you need access?')} value={nuevoMotivo} onChangeText={setNuevoMotivo} autoCapitalize="sentences" multiline style={{ minHeight: 64, textAlignVertical: 'top' }} />
-              {!!error && <Text style={styles.error}>{error}</Text>}
-              <Boton titulo={tr('Enviar solicitud', 'Send request')} onPress={() => void enviarSolicitud()} cargando={loading} />
-              <Boton titulo={tr('Ya tengo cuenta', 'I already have an account')} variante="texto" onPress={() => irA('pick')} />
-            </>
-          )}
-        </View>
-      ) : phase === 'olvide' ? (
-        <View style={styles.bloque}>
-          {listo ? (
-            <>
-              <Text style={styles.listo}>{listo}</Text>
-              <Boton titulo={tr('Volver a entrar', 'Back to sign in')} onPress={() => irA('clave')} />
-            </>
-          ) : (
-            <>
-              <Campo
-                etiqueta={tr('Correo de tu cuenta', 'Your account email')}
-                value={correoOlvido}
-                onChangeText={setCorreoOlvido}
-                keyboardType="email-address"
-                autoComplete="email"
-                textContentType="emailAddress"
-                onSubmitEditing={() => void enviarOlvido()}
-              />
-              {!!error && <Text style={styles.error}>{error}</Text>}
-              <Boton titulo={tr('Enviarme el enlace', 'Send me the link')} onPress={() => void enviarOlvido()} cargando={loading} />
-              <Boton titulo={tr('Volver', 'Back')} variante="texto" onPress={() => irA('clave')} />
-            </>
-          )}
-        </View>
-      ) : (
-        <View style={styles.bloque}>
-          <Pressable onPress={() => irA('pick')} style={styles.cuentaChip} accessibilityRole="button" accessibilityLabel={`${tr('Cambiar de cuenta', 'Switch account')} (${activeUser.name || selected.name})`}>
-            <View style={styles.avatarChico}>
-              <Text style={styles.avatarChicoText}>{(activeUser.name || selected.name || '?')[0]}</Text>
-            </View>
-            <Text style={styles.cuentaNombre}>{activeUser.name || selected.name}</Text>
-            <Text style={styles.cuentaCambiar}>{tr('Cambiar', 'Switch')}</Text>
-          </Pressable>
-          {selected.id === 'otro' && (
-            <Campo etiqueta={tr('Correo', 'Email')} value={customCorreo} onChangeText={setCustomCorreo} placeholder="correo@ordenglobal.org" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
-          )}
-          <Campo
-            etiqueta={tr('Clave', 'Password')}
-            clave
-            value={clave}
-            onChangeText={setClave}
-            autoComplete="current-password"
-            textContentType="password"
-            onSubmitEditing={() => void enterWithClave()}
-            returnKeyType="go"
+        <Texto v="chica" color="texto3" centro>
+          {tr('Guardián, AU-RA y Claudio te esperan adentro.', 'Guardian, AU-RA and Claudio are waiting inside.')}
+        </Texto>
+      </View>
+    );
+  } else if (phase === 'crear') {
+    contenido = listo ? (
+      hecho(listo, 'pick')
+    ) : (
+      <View style={est.bloque}>
+        <Campo etiqueta={tr('Nombre completo', 'Full name')} value={nuevoNombre} onChangeText={setNuevoNombre} autoCapitalize="words" autoComplete="name" textContentType="name" />
+        <Campo etiqueta={tr('Correo', 'Email')} value={nuevoCorreo} onChangeText={setNuevoCorreo} keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
+        <Campo etiqueta={tr('¿Para qué necesitas el acceso?', 'Why do you need access?')} value={nuevoMotivo} onChangeText={setNuevoMotivo} autoCapitalize="sentences" multiline style={{ minHeight: 72, textAlignVertical: 'top' }} />
+        {errorVisible}
+        <Boton titulo={tr('Enviar solicitud', 'Send request')} onPress={() => void enviarSolicitud()} cargando={loading} />
+        <Boton titulo={tr('Ya tengo cuenta', 'I already have an account')} variante="fantasma" onPress={() => irA('pick')} />
+      </View>
+    );
+  } else if (phase === 'olvide') {
+    contenido = listo ? (
+      hecho(listo, 'clave')
+    ) : (
+      <View style={est.bloque}>
+        <Campo
+          etiqueta={tr('Correo de tu cuenta', 'Your account email')}
+          value={correoOlvido}
+          onChangeText={setCorreoOlvido}
+          keyboardType="email-address"
+          autoComplete="email"
+          textContentType="emailAddress"
+          onSubmitEditing={() => void enviarOlvido()}
+        />
+        {errorVisible}
+        <Boton titulo={tr('Enviarme el enlace', 'Send me the link')} icono="correo" onPress={() => void enviarOlvido()} cargando={loading} />
+      </View>
+    );
+  } else {
+    contenido = (
+      <View style={est.bloque}>
+        <Grupo>
+          <Fila
+            titulo={activeUser.name || selected.name}
+            detalle={selected.id === 'otro' ? tr('Otra cuenta', 'Another account') : activeUser.correo}
+            derecha={<Inicial letra={(activeUser.name || selected.name || '?')[0]} />}
+            valor={tr('Cambiar', 'Switch')}
+            onPress={() => irA('pick')}
           />
-          <View style={styles.row}>
-            <Text style={styles.rowLabel}>{tr('Guardar la clave en este teléfono', 'Save the password on this phone')}</Text>
-            <Switch value={remember} onValueChange={setRemember} accessibilityLabel={tr('Guardar la clave', 'Save the password')} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.texto} />
-          </View>
+        </Grupo>
+        {selected.id === 'otro' && (
+          <Campo etiqueta={tr('Correo', 'Email')} value={customCorreo} onChangeText={setCustomCorreo} placeholder="correo@ordenglobal.org" keyboardType="email-address" autoComplete="email" textContentType="emailAddress" />
+        )}
+        <Campo
+          etiqueta={tr('Clave', 'Password')}
+          clave
+          value={clave}
+          onChangeText={setClave}
+          autoComplete="current-password"
+          textContentType="password"
+          onSubmitEditing={() => void enterWithClave()}
+          returnKeyType="go"
+        />
+        <Grupo>
+          <Fila titulo={tr('Guardar la clave en este teléfono', 'Save the password on this phone')} icono="candado" derecha={<Interruptor valor={remember} onCambiar={setRemember} etiqueta={tr('Guardar la clave', 'Save the password')} />} />
           {fingerprintAvailable && (
-            <View style={styles.row}>
-              <Text style={styles.rowLabel}>{tr('Entrar con huella la próxima vez', 'Use fingerprint next time')}</Text>
-              <Switch value={useFingerprint} onValueChange={setUseFingerprint} accessibilityLabel={tr('Entrar con huella', 'Sign in with fingerprint')} trackColor={{ true: T.activo, false: T.borde }} thumbColor={T.texto} />
-            </View>
+            <Fila titulo={tr('Entrar con huella la próxima vez', 'Use fingerprint next time')} icono="huella" derecha={<Interruptor valor={useFingerprint} onCambiar={setUseFingerprint} etiqueta={tr('Entrar con huella', 'Sign in with fingerprint')} />} />
           )}
-          {!!error && <Text style={styles.error}>{error}</Text>}
-          <Boton titulo={tr('Entrar', 'Sign in')} onPress={() => void enterWithClave()} cargando={loading} />
-          <Boton titulo={tr('Entrar solo al escritorio', 'Open the desk only')} variante="secundario" onPress={() => void entrarEscritorio()} deshabilitado={loading} />
-          {fingerprintAvailable && remember && useFingerprint && claveGuardada && (
-            <Boton titulo={tr('Usar mi huella', 'Use my fingerprint')} variante="contorno" onPress={() => void enterWithFingerprint()} deshabilitado={loading} />
-          )}
-          <View style={styles.filaEnlaces}>
-            <Boton titulo={tr('Olvidé mi clave', 'Forgot my password')} variante="texto" onPress={() => irA('olvide')} />
-            <Boton titulo={tr('Crear cuenta', 'Create account')} variante="texto" onPress={() => irA('crear')} />
-          </View>
+        </Grupo>
+        {errorVisible}
+        <Boton titulo={tr('Entrar', 'Sign in')} onPress={() => void enterWithClave()} cargando={loading} />
+        <Boton titulo={tr('Entrar solo al escritorio', 'Open the desk only')} variante="secundario" onPress={() => void entrarEscritorio()} deshabilitado={loading} />
+        {fingerprintAvailable && remember && useFingerprint && claveGuardada && (
+          <Boton titulo={tr('Usar mi huella', 'Use my fingerprint')} icono="huella" variante="secundario" onPress={() => void enterWithFingerprint()} deshabilitado={loading} />
+        )}
+        <View style={est.enlaces}>
+          <Boton titulo={tr('Olvidé mi clave', 'Forgot my password')} variante="fantasma" tam="chico" onPress={() => irA('olvide')} />
+          <Boton titulo={tr('Pedir acceso', 'Request access')} variante="fantasma" tam="chico" onPress={() => irA('crear')} />
         </View>
-      )}
-    </Animated.View>
-  );
+      </View>
+    );
+  }
 
   return (
-    <KeyboardAvoidingView style={styles.root} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
-      <View pointerEvents="none" style={styles.brillo} />
-      {/* En vertical el idioma va arriba a la derecha; acostado, debajo de los avatares. */}
-      {!horizontal && (
-        <View style={styles.idioma}>
-          <SelectorIdioma />
-        </View>
-      )}
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, horizontal && styles.scrollHorizontal]}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
-      >
-        {marca}
-        <View style={[styles.columnaTarjeta, horizontal && { flex: 1, maxWidth: 460 }]}>{tarjeta}</View>
-      </ScrollView>
+    <KeyboardAvoidingView style={{ flex: 1, backgroundColor: tema.fondo }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <PantallaConCabecera titulo={titulo} subtitulo={subtitulo} onAtras={volver}>
+        <Aparecer clave={phase} desde="derecha" distancia={24} style={{ width: '100%', maxWidth: 520, alignSelf: 'center' }}>
+          {contenido}
+        </Aparecer>
+      </PantallaConCabecera>
     </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: T.fondo },
-  brillo: { position: 'absolute', top: -180, right: -140, width: 420, height: 420, borderRadius: 420, backgroundColor: 'rgba(214,181,108,0.035)' },
-  scroll: { flex: 1, width: '100%' },
-  scrollContent: { flexGrow: 1, alignItems: 'center', justifyContent: 'center', paddingTop: 64, paddingBottom: 28, paddingHorizontal: 18, gap: 18 },
-  scrollHorizontal: { flexDirection: 'row', gap: 40, paddingHorizontal: 40, paddingTop: 12, paddingBottom: 12 },
-  marca: { alignItems: 'center' },
-  marcaHorizontal: { flex: 1, maxWidth: 420, alignItems: 'flex-start' },
-  logo: { width: 260, height: 98 },
-  logoGrande: { width: 320, height: 120, marginLeft: -12 },
-  lemaGrande: { color: T.texto2, fontSize: 18, lineHeight: 26, marginTop: 6, maxWidth: 340 },
-  trio: { flexDirection: 'row', gap: 12, marginTop: 22 },
-  trioFoto: { width: 76, height: 76, borderRadius: 22, backgroundColor: T.panel, overflow: 'hidden', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: T.borde },
-  trioTexto: { color: T.texto2, fontSize: 13, marginTop: 8, letterSpacing: 0.5, fontWeight: '600' },
-  trioNota: { color: T.texto3, fontSize: 12, marginTop: 2 },
-  idioma: { position: 'absolute', top: 14, right: 16, zIndex: 5 },
-  columnaTarjeta: { width: '100%', maxWidth: 460, alignItems: 'center' },
-  cardCompacta: { padding: 16, gap: 2 },
-  card: { width: '100%', borderRadius: 28, backgroundColor: T.panel, padding: 22, gap: 6, borderWidth: 1, borderColor: T.borde, ...SOMBRA },
-  titulo: { color: T.texto, fontSize: 24, fontWeight: '800' },
-  subtitulo: { color: T.texto2, fontSize: 14, lineHeight: 20, marginBottom: 12 },
-  bloque: { gap: 12, width: '100%' },
-  userBtn: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderRadius: 18, backgroundColor: T.fondo, borderWidth: 1, borderColor: T.borde, overflow: 'hidden' },
-  userBtnCompacto: { paddingVertical: 8 },
-  userBtnPress: { borderColor: T.principal, transform: [{ scale: 0.985 }] },
-  avatar: { width: 44, height: 44, borderRadius: 22, backgroundColor: T.principalFondo, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: T.principalTexto, fontWeight: '800', fontSize: 18 },
-  userName: { color: T.texto, fontSize: 16, fontWeight: '700' },
-  userMail: { color: T.texto3, fontSize: 12, marginTop: 1 },
-  flecha: { color: T.texto3, fontSize: 26, marginLeft: 4 },
-  filaEnlaces: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
-  cuentaChip: { flexDirection: 'row', alignItems: 'center', gap: 10, alignSelf: 'flex-start', backgroundColor: T.fondo, borderRadius: 999, paddingVertical: 6, paddingLeft: 6, paddingRight: 14, borderWidth: 1, borderColor: T.borde, minHeight: 44 },
-  avatarChico: { width: 30, height: 30, borderRadius: 15, backgroundColor: T.principalFondo, alignItems: 'center', justifyContent: 'center' },
-  avatarChicoText: { color: T.principalTexto, fontWeight: '800', fontSize: 14 },
-  cuentaNombre: { color: T.texto, fontSize: 15, fontWeight: '700' },
-  cuentaCambiar: { color: T.principalTexto, fontSize: 13, fontWeight: '600', marginLeft: 4 },
-  row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
-  rowLabel: { color: T.texto, fontSize: 14, flex: 1 },
-  error: { color: T.avisoTexto, fontSize: 13 },
-  listo: { color: T.activoTexto, fontSize: 15, lineHeight: 22, backgroundColor: T.activoFondo, borderRadius: 16, padding: 14 },
+const est = StyleSheet.create({
+  bloque: { gap: MEDIDA.espacio.l, width: '100%' },
+  inicial: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  error: { flexDirection: 'row', gap: 10, padding: 12, borderRadius: MEDIDA.radio.m, alignItems: 'center' },
+  listo: { flexDirection: 'row', gap: 12, padding: 16, borderRadius: MEDIDA.radio.m, alignItems: 'flex-start' },
+  enlaces: { flexDirection: 'row', justifyContent: 'space-between' },
+  trio: { flexDirection: 'row', gap: 12, justifyContent: 'center', marginTop: MEDIDA.espacio.s },
+  trioFoto: { width: 52, height: 52, borderRadius: 16, overflow: 'hidden', borderWidth: StyleSheet.hairlineWidth * 2 },
 });

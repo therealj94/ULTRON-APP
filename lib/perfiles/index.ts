@@ -6,11 +6,13 @@
  * y se cae a Genesis, que es lo seguro.
  */
 import { GENESIS } from './genesis';
+import { GENESIS_MIEMBRO } from './genesis-miembro';
 import { MINAS } from './minas';
-import type { Herramienta, PerfilCerebro } from './tipos';
+import { SOLO_JUNTA, type Herramienta, type NivelAura, type PerfilCerebro } from './tipos';
 
-export type { Herramienta, PerfilCerebro } from './tipos';
-export { tiene } from './tipos';
+export type { Herramienta, NivelAura, PerfilCerebro } from './tipos';
+export { tiene, herramientaPermitida, SOLO_JUNTA } from './tipos';
+export { GENESIS_MIEMBRO } from './genesis-miembro';
 
 export const PERFILES: Record<string, PerfilCerebro> = {
   [GENESIS.id]: GENESIS,
@@ -34,6 +36,25 @@ export function fijarPerfil(id: string | null) {
   elegido = id ? PERFILES[id] || null : null;
 }
 
-export function herramientaActiva(h: Herramienta) {
-  return perfilActivo().herramientas.includes(h);
+export function herramientaActiva(h: Herramienta, nivel: NivelAura = 'junta') {
+  return perfilPara(nivel).herramientas.includes(h);
+}
+
+const recortados = new Map<string, PerfilCerebro>();
+
+/**
+ * El cerebro con que se habla según QUIÉN habla (el nivel lo decide el servidor, server/nivel.ts).
+ * La junta: el perfil activo, como siempre. Un miembro: en Genesis Core, GENESIS_MIEMBRO (lo público,
+ * sin taller ni Telegram); en otro perfil, ese mismo sin las herramientas que son solo de la junta.
+ */
+export function perfilPara(nivel: NivelAura): PerfilCerebro {
+  const base = perfilActivo();
+  if (nivel !== 'miembro') return base;
+  if (base.id === GENESIS.id) return GENESIS_MIEMBRO;
+  let r = recortados.get(base.id);
+  if (!r) {
+    r = { ...base, herramientas: base.herramientas.filter((h) => !SOLO_JUNTA.includes(h)) };
+    recortados.set(base.id, r);
+  }
+  return r;
 }

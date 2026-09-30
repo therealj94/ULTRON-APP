@@ -1,0 +1,111 @@
+/**
+ * EL PEGAMENTO DE LOS RECORDATORIOS CON EL TELÉFONO (la lógica está en recordatorios.ts).
+ *
+ *  · notifee del APK (el mismo del servicio de las llamadas), o null si no está;
+ *  · los eventos de la llamada de AURA: con la app delante (onForegroundEvent) y con la app detrás o
+ *    cerrada (el ÚNICO manejador de fondo de notifee vive en pulse/servicioLlamada.ts, que le pasa
+ *    aquí lo que no es de la llamada de PULSE2CHAT);
+ *  · lo que abrió la app (getInitialNotification): «Contestar» desde el aviso, o la pantalla completa;
+ *  · no encimarse a una llamada de PULSE2CHAT en curso: la llamada de AURA se quita y se vuelve a
+ *    poner cuando la otra termina (lo avisa el bus, `llamada`).
+ *
+ * Se carga con la app (lo importa app/acciones.ts): notifee pide que los manejadores existan desde el
+ * arranque, también cuando Android despierta la app solo para entregar un evento de fondo.
+ */
+import { emitir, escuchar } from '../nucleo/contrato';
+import { sumarManejadorDeFondo } from '../pulse/servicioLlamada';
+import * as R from './recordatorios';
+
+type NotifeeCompleto = R.NotifeeMin & {
+  onForegroundEvent: (f: (e: R.EventoNotifee) => void) => () => void;
+  getInitialNotification?: () => Promise<{ notification?: { data?: Record<string, unknown> }; pressAction?: { id?: string } } | null>;
+};
+
+let cargado: { m: NotifeeCompleto; k: R.ConstantesNotifee } | null | undefined;
+/** notifee del APK, o null si este teléfono no lo tiene (un APK sin él, o node). */
+export function notifeeReal(): { m: NotifeeCompleto; k: R.ConstantesNotifee } | null {
+  if (cargado !== undefined) return cargado;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('@notifee/react-native');
+    if (!mod?.default?.createTriggerNotification) return (cargado = null);
+    cargado = {
+      m: mod.default,
+      k: {
+        TriggerType: mod.TriggerType,
+        AlarmType: mod.AlarmType,
+        AuthorizationStatus: mod.AuthorizationStatus,
+        AndroidImportance: mod.AndroidImportance,
+        AndroidCategory: mod.AndroidCategory,
+        AndroidVisibility: mod.AndroidVisibility,
+        AndroidNotificationSetting: mod.AndroidNotificationSetting,
+        EventType: mod.EventType,
+      },
+    };
+  } catch {
+    cargado = null;
+  }
+  return cargado;
+}
+
+export const depsRecordatorios: R.DepsRecordatorio = { notifee: notifeeReal };
+
+let enLlamada = false;
+let aplazadas: R.LlamadaRecordatorio[] = [];
+
+/** La persona contestó (el botón del aviso o el de la pantalla «AURA te llama»). */
+export async function contestar(l: R.LlamadaRecordatorio) {
+  R.fijarSonando(null);
+  await R.alContestar(l.base, depsRecordatorios);
+  if (R.anotarContestada(l)) emitir('recordatorio', { texto: l.texto, base: l.base });
+}
+
+export async function rechazar(l: R.LlamadaRecordatorio) {
+  R.fijarSonando(null);
+  await R.alRechazar(l, depsRecordatorios);
+}
+
+/** Un evento de notifee: true si era de los recordatorios. */
+export async function atenderEvento(e: R.EventoNotifee): Promise<boolean> {
+  const n = notifeeReal();
+  if (!n) return false;
+  const r = R.interpretarEvento(e, n.k);
+  if (!r) return false;
+  if (r.que === 'contestar') await contestar(r.llamada);
+  else if (r.que === 'rechazar') await rechazar(r.llamada);
+  else if (enLlamada) {
+    // En plena llamada de PULSE2CHAT no suena encima: vuelve cuando esa termine.
+    await R.aplazar(r.llamada, depsRecordatorios);
+    if (!aplazadas.some((x) => x.base === r.llamada.base)) aplazadas.push(r.llamada);
+  } else R.fijarSonando(r.llamada);
+  return true;
+}
+
+(function registrar() {
+  const n = notifeeReal();
+  if (!n) return;
+  try {
+    n.m.onForegroundEvent((e) => void atenderEvento(e));
+  } catch {
+    /* sin eventos en primer plano, el aviso igual suena y abre la app */
+  }
+  sumarManejadorDeFondo(atenderEvento);
+  escuchar('llamada', ({ activa }) => {
+    enLlamada = !!activa;
+    if (!activa && aplazadas.length) {
+      const ya = aplazadas;
+      aplazadas = [];
+      for (const l of ya) void R.reponer(l, depsRecordatorios);
+    }
+  });
+  void n.m
+    .getInitialNotification?.()
+    .then((ini) => {
+      const r = R.interpretarApertura(ini, n.k);
+      if (!r) return;
+      if (r.que === 'contestar') void contestar(r.llamada);
+      else if (r.que === 'rechazar') void rechazar(r.llamada);
+      else R.fijarSonando(r.llamada);
+    })
+    .catch(() => undefined);
+})();

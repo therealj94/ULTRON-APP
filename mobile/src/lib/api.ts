@@ -3,13 +3,15 @@
  *   POST /api/turno, /api/turno/stream (SSE) · GET|POST /api/tts · POST /api/stt · POST /api/vision/analyze
  *   POST /api/memoria (requiere sesión) · GET|POST /api/cantar · POST /api/orar · GET /api/capacidades · GET /api/health
  * Toda llamada pasa por api(): manda la cabecera de sesión y, si el servidor responde 401, renueva el
- * token con las credenciales guardadas y reintenta una vez.
+ * token con las credenciales guardadas y reintenta una vez. También dice qué teléfono es
+ * (`x-aura-aparato`, ver aparato.ts); los turnos, además, que salen de la app (`x-aura-origen: app`).
  */
 import { API_BASE } from '../config';
 import type { Mode, SessionUser } from '../config';
 import { normalizarEmocion, pelarEtiqueta, type Emocion } from './emocion';
-import { loadCreds, loadMesaToken, saveMesaToken } from './storage';
+import { loadCreds, loadMesaToken, loadSession, saveMesaToken } from './storage';
 import { quitarExpresiones } from './expresiones';
+import { cabecerasAparato } from './aparato';
 import { avatarActual } from '../avatares/actual';
 import { idiomaActual } from '../i18n';
 
@@ -18,8 +20,12 @@ let refreshing: Promise<boolean> | null = null;
 async function renovarSesion(): Promise<boolean> {
   if (refreshing) return refreshing;
   refreshing = (async () => {
-    const creds = await loadCreds();
+    const [creds, sesion] = await Promise.all([loadCreds(), loadSession()]);
     if (!creds?.correo || !creds?.clave) return false;
+    // Solo la clave de QUIEN está dentro. En un teléfono compartido la guardada puede ser de otra
+    // persona (entró con clave y salió; ahora está alguien que entró con Genesis): renovar con ella
+    // metía perfil, memoria y voz en la cuenta ajena mientras la pantalla seguía mostrando al primero.
+    if (!sesion?.correo || creds.correo.trim().toLowerCase() !== sesion.correo.trim().toLowerCase()) return false;
     try {
       const res = await fetch(`${API_BASE}/api/ultron/entrar`, {
         method: 'POST',
@@ -48,12 +54,14 @@ export async function api<T = any>(path: string, init?: RequestInit, timeoutMs =
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const token = await loadMesaToken();
+    const aparato = await cabecerasAparato().catch(() => ({}));
     const res = await fetch(`${API_BASE}${path}`, {
       ...init,
       signal: ctrl.signal,
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
+        ...aparato,
         ...(token ? { 'x-ultron-sesion': token } : {}),
         ...(init?.headers || {}),
       },
@@ -77,6 +85,39 @@ export async function api<T = any>(path: string, init?: RequestInit, timeoutMs =
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * ¿Sigue viva la sesión guardada de esta persona? Lo pregunta la intro antes de abrir la mesa:
+ *   viva    → el servidor la reconoce (o se renovó con la clave de esta misma persona)
+ *   caida   → el servidor dice que no, o que es de otra cuenta: hay que volver a entrar
+ *   sin_red → no se pudo preguntar: se entra igual (la mesa tiene modo local)
+ * Quien entró con Genesis no tiene clave para renovar: al vencer su token vuelve a la entrada en vez
+ * de quedarse «dentro» con una sesión que el servidor ya no acepta.
+ */
+export async function comprobarSesion(correo: string, timeoutMs = 3_000): Promise<'viva' | 'caida' | 'sin_red'> {
+  const quien = correo.trim().toLowerCase();
+  const pregunta = async (): Promise<'viva' | 'caida' | 'sin_red'> => {
+    const token = await loadMesaToken();
+    if (!token) return 'caida';
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${API_BASE}/api/ultron/sesion`, { signal: ctrl.signal, headers: { Accept: 'application/json', 'x-ultron-sesion': token } });
+      if (!res.ok) return res.status === 401 ? 'caida' : 'sin_red';
+      const data: any = await res.json().catch(() => null);
+      if (!data || typeof data.authenticated !== 'boolean') return 'sin_red';
+      if (!data.authenticated) return 'caida';
+      return String(data.user?.correo || '').trim().toLowerCase() === quien ? 'viva' : 'caida';
+    } catch {
+      return 'sin_red';
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const r = await pregunta();
+  if (r !== 'caida') return r;
+  return (await renovarSesion()) ? pregunta() : 'caida';
 }
 
 /** Cabecera de sesión para descargas de audio (FileSystem/XHR no pasan por api()). */
@@ -185,6 +226,8 @@ export type ChatResult = {
   ms?: number;
   via?: string;
   error?: string;
+  /** Lo que AURA pidió hacer en la app (AccionApp del contrato); la mesa lo pasa al bus. */
+  acciones?: unknown;
 };
 
 type TurnoOpts = {
@@ -219,11 +262,11 @@ function turnoBody(opts: TurnoOpts) {
 /** Un turno con el cerebro (Qwen 27B). `image` = data URL jpeg opcional para preguntas visuales. */
 export async function turno(opts: TurnoOpts): Promise<ChatResult> {
   try {
-    const data = await api<any>('/api/turno', { method: 'POST', body: turnoBody(opts) }, 70_000);
+    const data = await api<any>('/api/turno', { method: 'POST', body: turnoBody(opts), headers: { 'x-aura-origen': 'app' } }, 70_000);
     const pelado = pelarEtiqueta(String(data.reply || ''));
     const emocion = data.emocion ? normalizarEmocion(data.emocion) : pelado.emocion || 'neutral';
     const voz = data.voz ? pelarEtiqueta(String(data.voz)).texto.trim() : undefined;
-    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error };
+    return { reply: quitarExpresiones(pelado.texto).trim(), voz, emocion, mode: data.mode, ms: data.ms, via: data.via, error: data.error, acciones: data.acciones };
   } catch (e: any) {
     return { reply: '', emocion: 'neutral', error: e?.message || 'Sin conexión al cerebro' };
   }
@@ -307,6 +350,7 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
             emocion: emocion || 'neutral',
             ms: data.ms,
             via: data.via,
+            acciones: data.acciones,
           };
         } else if (ev === 'error') done = { reply: quitarExpresiones(full), voz: full, emocion: emocion || 'neutral', error: String(data.error || 'error') };
       }
@@ -331,9 +375,10 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
     cancelar = () => fail(new Error('cancelado'));
     xhr.ontimeout = () => (full ? finish({ reply: quitarExpresiones(full).trim(), voz: full.trim(), emocion: emocion || 'neutral', error: 'timeout' }) : fail(new Error('timeout')));
     const payload = turnoBody(opts);
-    void loadMesaToken().then((t) => {
+    void Promise.all([loadMesaToken(), cabecerasAparato(true).catch(() => ({}) as Record<string, string>)]).then(([t, extra]) => {
       if (settled) return;
       if (t) xhr.setRequestHeader('x-ultron-sesion', t);
+      for (const [k, v] of Object.entries(extra)) xhr.setRequestHeader(k, v);
       xhr.send(payload);
     });
   });
@@ -352,7 +397,8 @@ export function turnoStream(opts: TurnoOpts, h: StreamHandlers): { promise: Prom
 
 /** GET /api/tts?text=&emocion=&performance=&avatar=&idioma= → audio con la voz del avatar (cabecera X-Ultron-TTS con el motor). */
 export function ttsUrl(text: string, performance: 'speak' | 'sing', emocion: Emocion = 'neutral', avatar = 'aura', idioma = 'es') {
-  const q = new URLSearchParams({ text, performance, emocion, avatar, idioma });
+  // `tiempos=1`: que el servidor mande también los tiempos por letra (la boca a tiempo, avatar3d/sincronia.ts).
+  const q = new URLSearchParams({ text, performance, emocion, avatar, idioma, tiempos: '1' });
   return `${API_BASE}/api/tts?${q.toString()}`;
 }
 

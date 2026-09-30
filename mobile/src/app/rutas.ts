@@ -1,0 +1,104 @@
+/**
+ * LAS RUTAS DE LA APP (native-stack) y la referencia a la navegación para quien no es pantalla: el
+ * bus de acciones de AURA («vete atrás», «abre ajustes»), la sesión al cerrarse, la intro al terminar.
+ *
+ *   Intro → Bienvenida (primera vez sin sesión) → Entrar ⇄ CrearGenesis / OtrasFormas
+ *        → PrimeraVez (si el perfil no está completado) → Mesa ⇄ Ajustes ⇄ Perfil
+ *                                                           Mesa ⇄ Chats ⇄ Conversacion
+ */
+import { CommonActions, createNavigationContainerRef, StackActions } from '@react-navigation/native';
+import type { Pantalla } from '../nucleo/contrato';
+
+export type RaizParams = {
+  Intro: undefined;
+  Bienvenida: { desdeIntro?: boolean } | undefined;
+  Entrar: { desdeIntro?: boolean; aviso?: string; codigo?: string } | undefined;
+  CrearGenesis: { motivo?: 'sin-gid' } | undefined;
+  OtrasFormas: undefined;
+  PrimeraVez: { desdeIntro?: boolean } | undefined;
+  Mesa: { desdeIntro?: boolean; recienElegido?: boolean } | undefined;
+  Ajustes: undefined;
+  Perfil: undefined;
+  Chats: undefined;
+  Conversacion: { con: string; nombre?: string };
+};
+
+export type NombreRuta = keyof RaizParams;
+
+export const nav = createNavigationContainerRef<RaizParams>();
+
+/**
+ * La ruta visible → la `Pantalla` del contrato (las de entrada no cuentan: AURA no vive ahí). Las
+ * del chat no se anuncian desde aquí: lo hacen sus pantallas, que saben además con quién se habla.
+ */
+export function pantallaDeRuta(r: string | undefined): Pantalla | null {
+  if (r === 'Mesa') return 'mesa';
+  if (r === 'Ajustes') return 'ajustes';
+  if (r === 'Perfil') return 'perfil';
+  return null;
+}
+
+export function rutaActual(): NombreRuta | undefined {
+  return nav.isReady() ? (nav.getCurrentRoute()?.name as NombreRuta | undefined) : undefined;
+}
+
+/** Deja la pila con una sola pantalla (entrar, salir, terminar la primera vez): «atrás» no vuelve. */
+export function reiniciarA<R extends NombreRuta>(ruta: R, params?: RaizParams[R]) {
+  if (!nav.isReady()) return;
+  nav.dispatch(CommonActions.reset({ index: 0, routes: [{ name: ruta, params }] }));
+}
+
+/**
+ * Abre una pantalla de la sesión. Si ya está en la pila, se vuelve a ella (no se apilan dos Ajustes);
+ * la mesa es siempre la base.
+ */
+export function abrirRuta(ruta: 'Mesa' | 'Ajustes' | 'Perfil' | 'Chats') {
+  if (!nav.isReady()) return;
+  const estado = nav.getRootState();
+  const nombres = estado?.routes.map((r) => r.name) || [];
+  if (!nombres.includes('Mesa')) return;
+  const i = nombres.lastIndexOf(ruta);
+  if (i >= 0) {
+    const sobran = nombres.length - 1 - i;
+    if (sobran > 0) nav.dispatch(StackActions.pop(sobran));
+    return;
+  }
+  if (ruta === 'Perfil' && !nombres.includes('Ajustes')) nav.dispatch(StackActions.push('Ajustes'));
+  nav.dispatch(StackActions.push(ruta));
+}
+
+export function atras(): boolean {
+  if (!nav.isReady() || !nav.canGoBack()) return false;
+  nav.goBack();
+  return true;
+}
+
+/** Las rutas donde la sesión está abierta: ahí vive AURA (la compañera y su voz). */
+export const RUTAS_DE_SESION: readonly string[] = ['Mesa', 'Ajustes', 'Perfil', 'Chats', 'Conversacion'];
+
+/**
+ * El hilo con una persona. Si ya está abierto con ella, se queda; si no, se abre encima de la lista
+ * de chats (así «atrás» vuelve a la lista y luego a la mesa, como en cualquier app de mensajes).
+ *
+ * El correo va siempre en minúsculas: el hilo y su borrador (el que AURA dejó por voz) se guardan
+ * así, y «el mismo hilo» se reconoce sin importar cómo vino escrito. Devuelve false si no se pudo
+ * abrir (la navegación no está lista o no hay sesión): así AURA no dice «listo» en falso.
+ */
+export function abrirConversacion(con: string, nombre?: string): boolean {
+  if (!nav.isReady()) return false;
+  const correo = String(con || '').trim().toLowerCase();
+  if (!correo) return false;
+  const estado = nav.getRootState();
+  const rutas = estado?.routes || [];
+  if (!rutas.some((r) => r.name === 'Mesa')) return false;
+  const arriba = rutas[rutas.length - 1];
+  const abiertoCon = String((arriba?.params as RaizParams['Conversacion'] | undefined)?.con || '').toLowerCase();
+  if (arriba?.name === 'Conversacion' && abiertoCon === correo) return true;
+  if (arriba?.name === 'Conversacion') {
+    nav.dispatch(StackActions.replace('Conversacion', { con: correo, nombre }));
+    return true;
+  }
+  abrirRuta('Chats');
+  nav.dispatch(StackActions.push('Conversacion', { con: correo, nombre }));
+  return true;
+}

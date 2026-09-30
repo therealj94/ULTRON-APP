@@ -1,0 +1,37 @@
+/**
+ * Lo que dice la compañera en sus globitos. Cortito, con gracia, en el idioma elegido (tr al momento
+ * de decirlo, así cambia con el idioma sin reiniciar nada).
+ */
+import { tr } from '../i18n';
+
+export type GrupoFrase = 'toque' | 'caricia' | 'enojo' | 'levantar' | 'soltar' | 'dormir' | 'despertar' | 'volver' | 'dormidaToque';
+
+const FRASES: Record<GrupoFrase, () => string[]> = {
+  toque: () => [tr('¡Jiji!', 'Hehe!'), tr('¡Me gusta!', 'I like that!'), tr('¿Me llamabas?', 'You called?'), tr('¡Hola, hola!', 'Hi there!'), tr('Aquí estoy', 'Right here')],
+  caricia: () => [tr('Mmm… qué rico', 'Mmm… so nice'), tr('¡Otra vez!', 'Again!'), tr('Me encanta', 'I love it'), tr('¡Jiji, cosquillas!', 'Hehe, tickles!')],
+  enojo: () => [tr('¡Oye!', 'Hey!'), tr('¡Ya, ya, ya!', 'Okay, okay!'), tr('¡Me vas a marear!', 'You’ll make me dizzy!'), tr('¡Oye, que duele!', 'Hey, that hurts!')],
+  levantar: () => [tr('¡Wiii!', 'Wheee!'), tr('¡Uy, qué alto!', 'Whoa, so high!'), tr('¿A dónde vamos?', 'Where are we going?')],
+  soltar: () => [tr('¡Uf!', 'Oof!'), tr('Aquí me quedo', 'I’ll stay here'), tr('¡Aterricé!', 'Landed!')],
+  dormir: () => [tr('Zzz… dos toques y despierto', 'Zzz… tap twice to wake me')],
+  despertar: () => [tr('¡Aquí estoy! Te escucho', 'I’m here! I’m listening')],
+  volver: () => [tr('¡Ya volví!', 'I’m back!'), tr('¿Qué tal la llamada?', 'How was the call?')],
+  dormidaToque: () => [tr('Zzz… (dos toques y despierto)', 'Zzz… (tap twice to wake me)')],
+};
+
+/** Una frase del grupo; `n` elige cuál (la máquina lleva la cuenta, así no se repite seguido). */
+export function fraseCompa(grupo: GrupoFrase, n: number): string {
+  const l = FRASES[grupo]();
+  return l[((n % l.length) + l.length) % l.length];
+}
+
+export const textoCompa = {
+  escuchando: () => tr('Te escucho…', 'Listening…'),
+  conectando: () => tr('Un segundito…', 'One sec…'),
+  perdon: () => tr('¡Ah, perdón! Dime, te escucho…', 'Oh, sorry! Go ahead, I’m listening…'),
+  enviado: (para?: string) => (para ? tr(`✔ ¡Listo! Enviado a ${para}`, `✔ Done! Sent to ${para}`) : tr('✔ ¡Listo! Enviado', '✔ Done! Sent')),
+  noEnviado: () => tr('No pude enviarlo', 'I couldn’t send it'),
+  listo: () => tr('¡Listo!', 'Done!'),
+  noPude: () => tr('No pude hacerlo', 'I couldn’t do it'),
+  borrador: (para: string) => tr(`✎ Borrador para ${para}`, `✎ Draft for ${para}`),
+  noAbrio: () => tr('No pude conectarme. Tócame dos veces para intentar otra vez', 'I couldn’t connect. Tap me twice to try again'),
+};

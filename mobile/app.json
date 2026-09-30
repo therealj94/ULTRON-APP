@@ -2,13 +2,13 @@
   "expo": {
     "name": "AU-RA FP",
     "slug": "ultron-fp",
-    "version": "4.6.0",
+    "version": "4.7.0",
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "android": {
       "package": "link.ordenglobal.ultronfp",
-      "versionCode": 49,
+      "versionCode": 50,
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO",
@@ -17,7 +17,17 @@
         "android.permission.ACCESS_NETWORK_STATE",
         "android.permission.WAKE_LOCK",
         "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT"
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+        "android.permission.FOREGROUND_SERVICE_CAMERA",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE"
+      ],
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW"
       ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
@@ -88,7 +98,10 @@
             "com.google.android.as"
           ]
         }
-      ]
+      ],
+      "@livekit/react-native-expo-plugin",
+      "./plugins/servicio-llamada",
+      "./plugins/recordatorio-llamada"
     ]
   }
 }

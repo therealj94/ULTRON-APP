@@ -13,8 +13,10 @@
  *  - Expresiones ([risa], [suspiro]…, src/lib/expresiones.ts): viajan dentro del texto y la voz las
  *    actúa; las demás etiquetas se quitan antes de pedir voz.
  *  - Reacciones sin palabras (speakReaccion): una expresión corta dicha por el avatar.
- *  - Lip-sync: cada reproducción emite un nivel 0..1 a 20 Hz (setSpeechLevelListener) calculado con
- *    lipsync.ts sobre positionMillis (expo-av no da metering al reproducir).
+ *  - Lip-sync: cada reproducción emite un nivel 0..1 (setSpeechLevelListener) sobre la posición REAL
+ *    del audio (positionMillis de expo-av, interpolada entre avisos). Si el servidor mandó los tiempos
+ *    por letra (cabecera X-Ultron-Alineacion), la boca sale de ellos: el visema exacto de cada letra,
+ *    30 veces por segundo, a senalVoz (avatar3d/sincronia.ts). Si no, la envolvente de lipsync.ts.
  *
  * Todo lo que suena pasa por playPrepared() y comparte la generación `gen`: stopSpeaking() corta
  * cualquier cosa, y cada función avisa onStart/onAudioStart/onEnd para que la mesa pause el mic.
@@ -29,6 +31,8 @@ import { frase, reaccionDe, type FraseId } from './frases';
 import { soloExpresiones } from './expresiones';
 import type { AvatarId } from '../avatares/catalogo';
 import { avatarActual, fijarAvatar } from '../avatares/actual';
+import { senalVoz } from '../avatar3d/senalVoz';
+import { ADELANTO_MS, BocaAlineada, Envolvente, PASO_BOCA_MS, RelojReproduccion, leerAlineacion, type AlineacionAudio } from '../avatar3d/sincronia';
 import { idiomaActual } from '../i18n';
 
 type Perf = 'speak' | 'sing';
@@ -44,6 +48,18 @@ export type SpeakCallbacks = {
 
 let current: Audio.Sound | null = null;
 let gen = 0;
+
+/** Los tiempos por letra de cada audio descargado (por su ruta en el teléfono) y de cada sonido preparado. */
+const alineaciones = new Map<string, AlineacionAudio>();
+const alineacionDeSonido = new WeakMap<Audio.Sound, AlineacionAudio>();
+
+/** Una cabecera, sin importar mayúsculas (Android e iOS no las devuelven igual). */
+function cabecera(h: unknown, nombre: string): string {
+  if (!h || typeof h !== 'object') return '';
+  const n = nombre.toLowerCase();
+  for (const [k, v] of Object.entries(h as Record<string, unknown>)) if (k.toLowerCase() === n) return String(v ?? '');
+  return '';
+}
 
 /** Quién habla: decide la voz que se pide al servidor (`avatar` en /api/tts). */
 export function setAvatarVoz(id: AvatarId) {
@@ -62,6 +78,7 @@ function guardarEnCache(key: string, uri: string) {
   while (fileCache.size > CACHE_MAX) {
     const [viejo, ruta] = fileCache.entries().next().value as [string, string];
     fileCache.delete(viejo);
+    alineaciones.delete(ruta);
     void FileSystem.deleteAsync(ruta, { idempotent: true }).catch(() => {});
   }
 }
@@ -77,11 +94,45 @@ export function setSpeechLevelListener(cb: ((level01: number) => void) | null) {
   levelListener = cb;
   lastLevel = -1;
 }
+/**
+ * Más oyentes del mismo nivel: la compañera AURA (src/compa) mueve su boquita con la misma voz que la
+ * cara de la mesa, sin quitarle a la mesa su suscripción de siempre.
+ */
+const nivelOyentes = new Set<(level01: number) => void>();
+export function escucharNivelVoz(cb: (level01: number) => void): () => void {
+  nivelOyentes.add(cb);
+  return () => {
+    nivelOyentes.delete(cb);
+  };
+}
 function emitLevel(v: number) {
   const q = Math.round(Math.max(0, Math.min(1, v)) * 50) / 50;
   if (q === lastLevel) return;
   lastLevel = q;
   levelListener?.(q);
+  for (const f of nivelOyentes) f(q);
+}
+
+// ---------------------------------------------------------------- llamadas
+/**
+ * En una llamada (voz o video) la mesa no suena: nada se prepara ni se reproduce, y sobre todo no se
+ * vuelve a fijar el modo de audio de expo-av (lo pone en modo multimedia y la llamada se oiría por el
+ * altavoz equivocado o se cortaría). Al colgar, el modo se vuelve a fijar en la siguiente locución.
+ */
+let suspendida = false;
+export function suspenderVoz(on: boolean) {
+  if (suspendida === on) return;
+  suspendida = on;
+  if (on) void stopSpeaking();
+  else audioModeSet = false;
+}
+export function vozSuspendida() {
+  return suspendida;
+}
+
+/** El nivel de boca de una voz que no suena por aquí (la conversación fluida, por WebRTC). */
+export function nivelExterno(v01: number) {
+  emitLevel(v01);
 }
 
 /** Texto para pedir voz: sin markdown ni emojis. Las expresiones conocidas se quedan (suenan); el resto de corchetes, no. */
@@ -125,7 +176,7 @@ export function splitSentences(text: string): string[] {
 
 let audioModeSet = false;
 async function ensureAudioMode() {
-  if (audioModeSet) return;
+  if (audioModeSet || suspendida) return;
   try {
     await Audio.setAudioModeAsync({
       allowsRecordingIOS: true,
@@ -189,9 +240,15 @@ async function conExtension(path: string, ct: string): Promise<string> {
   }
 }
 
-async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<AVPlaybackSource | null> {
+async function fetchSource(text: string, perf: Perf, emocion: Emocion, privado = false): Promise<AVPlaybackSource | null> {
   const avatar = avatarActual();
   const idioma = idiomaActual();
+  if (privado) {
+    // Lo que se lee de un chat cifrado: por POST (el texto no va en la URL), `privado` (el servidor no
+    // guarda el audio en su caché) y sin la caché de aquí.
+    const uri = await downloadPost(TTS_ENDPOINT, { text, performance: perf, emocion, avatar, idioma, privado: true }, 40_000);
+    return uri ? { uri } : null;
+  }
   const key = `${avatar}|${idioma}|${perf}|${emocion}|${text}`;
   const hit = fileCache.get(key);
   if (hit) return { uri: hit };
@@ -204,6 +261,8 @@ async function fetchSource(text: string, perf: Perf, emocion: Emocion): Promise<
       const info = await FileSystem.getInfoAsync(path);
       if (r.status === 200 && info.exists && (info.size || 0) > 64 && (!ct || /audio|octet/.test(ct))) {
         const uri = await conExtension(path, ct);
+        const al = leerAlineacion(cabecera(r.headers, 'X-Ultron-Alineacion'));
+        if (al) alineaciones.set(uri, al);
         guardarEnCache(key, uri);
         return { uri };
       }
@@ -270,8 +329,12 @@ async function downloadPost(url: string, body: Record<string, unknown>, timeoutM
 // ---------------------------------------------------------------- reproducción
 
 async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
+  if (suspendida) return null;
   try {
     const { sound } = await Audio.Sound.createAsync(source, { shouldPlay: false, progressUpdateIntervalMillis: 50 });
+    const uri = typeof source === 'object' && source && 'uri' in source ? String((source as { uri?: string }).uri || '') : '';
+    const al = uri ? alineaciones.get(uri) : undefined;
+    if (al) alineacionDeSonido.set(sound, al);
     return sound;
   } catch {
     return null;
@@ -281,28 +344,44 @@ async function prepare(source: AVPlaybackSource): Promise<Audio.Sound | null> {
 type PlayMeta = { text?: string | null; kind?: EnvelopeKind };
 
 /**
- * Reproduce y, mientras suena, emite el nivel de boca: envolvente por sílabas del texto (si se conoce y
- * cuadra con la duración real) o libre. La posición se interpola entre actualizaciones de estado para
- * mantener 20 Hz aunque Android reporte más lento.
+ * Reproduce y, mientras suena, emite el nivel de boca sobre la posición real del audio (interpolada
+ * entre avisos de expo-av). Con los tiempos por letra del servidor: el visema exacto de cada letra
+ * (un poco adelantado, ADELANTO_MS, por lo que tarda en llegar a la pantalla), abriendo rápido y
+ * cerrando suave. Sin ellos: la envolvente por sílabas del texto (si cuadra con la duración) o libre.
  */
 function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: PlayMeta = {}): Promise<void> {
   return new Promise<void>((resolve) => {
     let done = false;
     let guard: ReturnType<typeof setTimeout> | null = null;
     let env: ((posMs: number) => number) | null = null;
-    let playing = false;
-    let lastPos = 0;
-    let lastAt = Date.now();
     const kind: EnvelopeKind = meta.kind || 'speak';
+    const reloj = new RelojReproduccion();
+    const al = alineacionDeSonido.get(sound);
+    const alineada = al ? new BocaAlineada(al) : null;
+    const suave = new Envolvente();
+    let antes = Date.now();
     const tick = setInterval(() => {
-      if (!playing) return emitLevel(0);
-      const pos = lastPos + (Date.now() - lastAt);
+      const ahora = Date.now();
+      const dt = ahora - antes;
+      antes = ahora;
+      if (!reloj.activo) {
+        suave.cortar();
+        senalVoz.formaReproducida(null);
+        return emitLevel(0);
+      }
+      const pos = reloj.posicion(ahora);
+      if (alineada) {
+        const b = alineada.en(pos + ADELANTO_MS);
+        senalVoz.formaReproducida(b.visema);
+        return emitLevel(suave.seguir(b.nivel, dt));
+      }
       emitLevel((env || (env = envolventeLibre(kind)))(pos));
-    }, 50);
+    }, alineada ? PASO_BOCA_MS : 50);
     const end = () => {
       if (done) return;
       done = true;
       clearInterval(tick);
+      senalVoz.formaReproducida(null);
       emitLevel(0);
       if (guard) clearTimeout(guard);
       if (current === sound) current = null;
@@ -316,9 +395,7 @@ function playPrepared(sound: Audio.Sound, my: number, maxMs = 25_000, meta: Play
         if ((st as any).error) end();
         return;
       }
-      playing = st.isPlaying;
-      lastPos = st.positionMillis || 0;
-      lastAt = Date.now();
+      reloj.aviso(st.positionMillis || 0, Date.now(), st.isPlaying);
       if (st.durationMillis && !guard) {
         guard = setTimeout(end, st.durationMillis + 1500);
         env = envolventeDeTexto(meta.text, st.durationMillis, kind);
@@ -334,6 +411,9 @@ export async function stopSpeaking() {
   gen += 1;
   const s = current;
   current = null;
+  // La boca se cierra ya, no cuando el reproductor termine de parar.
+  senalVoz.formaReproducida(null);
+  emitLevel(0);
   if (s) {
     try {
       await s.stopAsync();
@@ -481,6 +561,8 @@ export async function speak(
   opts?: SpeakCallbacks & {
     performance?: Perf;
     emocion?: Emocion;
+    /** Texto de un chat de la persona (una lectura): sin caché ni aquí ni en el servidor. */
+    privado?: boolean;
   }
 ): Promise<boolean> {
   const clean = cleanForSpeech(text);
@@ -500,7 +582,7 @@ export async function speak(
   const AHEAD = 2;
   const sources: Array<Promise<AVPlaybackSource | null>> = [];
   const launch = (i: number) => {
-    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion);
+    if (i < sentences.length && !sources[i]) sources[i] = fetchSource(sentences[i], perf, emocion, !!opts?.privado);
   };
   for (let i = 0; i < Math.min(AHEAD + 1, sentences.length); i++) launch(i);
 

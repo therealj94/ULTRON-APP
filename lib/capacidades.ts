@@ -6,7 +6,7 @@
  */
 
 import { EMOCIONES, EMOCION_INFO, type Emocion } from './emocion';
-import { perfilActivo, type Herramienta } from './perfiles';
+import { perfilActivo, type Herramienta, type PerfilCerebro } from './perfiles';
 
 export type GrupoCapacidad = 'herramientas' | 'voz' | 'personalidad' | 'gestos' | 'canales' | 'memoria';
 
@@ -89,7 +89,11 @@ export const GESTOS_TACTILES = [
   { id: 'camara', zona: 'Cámara frontal activa', hace: 'los ojos te siguen; se duerme si te vas' },
 ] as const;
 
-export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
+/**
+ * `perfil`: el cerebro de quien pregunta (server/nivel.ts + perfilPara). A un miembro de la comunidad
+ * no se le prometen el Telegram de la junta ni el taller: su perfil no los tiene.
+ */
+export function catalogoCapacidades(n: EstadoNodos, perfil: PerfilCerebro = perfilActivo()): Capacidad[] {
   const her: Capacidad[] = [
     {
       id: 'chat',
@@ -303,9 +307,13 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
   const memoria: Capacidad[] = [
     {
       id: 'memoria',
+      requiere: 'memoria',
       grupo: 'memoria',
       titulo: 'Memoria por miembro',
-      detalle: 'Guarda hechos y el hilo de cada persona en S3. Lo de José no lo ve Carlos.',
+      detalle:
+        perfil.id === 'genesis-miembro'
+          ? 'Tu hilo y lo que le pidas recordar, guardado solo para ti. Nadie más lo ve.'
+          : 'Guarda hechos y el hilo de cada persona en S3. Lo de José no lo ve Carlos.',
       ejemplos: ['recordá que la villa va al setenta por ciento', '¿qué sabés de mí?'],
       vivo: n.memoriaS3,
       falta: n.memoriaS3 ? undefined : 'ULTRON_MEMORIA_BUCKET + AWS_*: se pierde al redesplegar',
@@ -314,9 +322,14 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
     {
       id: 'cerebro',
       grupo: 'memoria',
-      titulo: `Cerebro ${perfilActivo().cerebro}`,
-      detalle: perfilActivo().proposito,
-      ejemplos: perfilActivo().id === 'minas' ? ['¿qué es un pórfido?', 'diferencia entre recurso y reserva'] : ['¿qué es ORIGEN?', 'actualiza el cerebro'],
+      titulo: `Cerebro ${perfil.cerebro}`,
+      detalle: perfil.proposito,
+      ejemplos:
+        perfil.id === 'minas'
+          ? ['¿qué es un pórfido?', 'diferencia entre recurso y reserva']
+          : perfil.id === 'genesis-miembro'
+            ? ['¿qué es ORIGEN?', '¿para qué sirve Veta Wallet?']
+            : ['¿qué es ORIGEN?', 'actualiza el cerebro'],
       vivo: true,
       donde: 'ambas',
     },
@@ -347,7 +360,7 @@ export function catalogoCapacidades(n: EstadoNodos): Capacidad[] {
     },
   ];
 
-  const tiene = new Set(perfilActivo().herramientas);
+  const tiene = new Set(perfil.herramientas);
   return [...her, ...minas, ...voz, ...personalidad, ...gestos, ...canales, ...memoria].filter((c) => !c.requiere || tiene.has(c.requiere));
 }
 

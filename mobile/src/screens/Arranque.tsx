@@ -1,104 +1,208 @@
 /**
- * La pantalla de carga: del ícono a la app sin corte.
+ * LA INTRO: «PULSE 2CHAT × AURA — powered by ORDEN GLOBAL».
  *
- * El arranque nativo de Android dibuja el planeta de AU-RA centrado sobre grafito antes de que exista
- * JavaScript. Esta pantalla pone el MISMO planeta en el MISMO lugar y tamaño, así que el paso del
- * nativo a la app no se nota: el planeta empieza a flotar, su anillo se enciende, sube el nombre y
- * debajo se ve qué se está cargando de verdad (sesión, avatares, voces, servidor), con una barra que
- * avanza con los pasos reales, no con un reloj.
+ * Una apertura de cine, corta: sobre negro se enciende el aura dorada (halo que respira, anillo que
+ * gira, motas que orbitan), las letras de PULSE 2CHAT suben una por una, cae el «×» y AURA aparece
+ * en oro con un brillo que la cruza, como la luz sobre una moneda. Abajo, «powered by ORDEN GLOBAL»
+ * y una línea dorada que avanza con lo que de verdad se está cargando (sesión, perfil, avatares,
+ * voces, servidor), no con un reloj.
+ *
+ * Dura ~2,4 s la primera vez y ~1,2 s si ya hay sesión (`rapido`). Al terminar (`salir`), el aura se
+ * abre hacia afuera, todo se desvanece y avisa `onFin`: la navegación funde a la pantalla siguiente.
+ *
+ * Es oscura en los dos temas a propósito: el arranque nativo de Android es negro y el paso de uno a
+ * otro no se nota. Todo se mueve en el hilo de la interfaz (Reanimated + Skia).
  */
-import { useEffect, useRef } from 'react';
-import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-import { T } from '../tema';
-import { tr } from '../i18n';
+import { useEffect } from 'react';
+import { StyleSheet, View, useWindowDimensions } from 'react-native';
+import Animated, { Easing, interpolate, useAnimatedStyle, useDerivedValue, useSharedValue, withDelay, withTiming, type SharedValue } from 'react-native-reanimated';
+import { Canvas, Group, LinearGradient, Text as SkTexto, useFont, vec } from '@shopify/react-native-skia';
+import { LinearGradient as Degradado } from 'expo-linear-gradient';
+import { scheduleOnRN } from 'react-native-worklets';
+import { Aura } from '../ui/Aura';
+import { Texto } from '../ui/Texto';
+import { fuente, fuenteDisplay } from '../ui/tipografia';
 
+/** Se conserva el tipo de antes: la intro sigue mostrando pasos reales. */
 export type PasoArranque = { id: string; texto: string; hecho: boolean };
 
 type Props = {
-  pasos: PasoArranque[];
+  /** 0..1, lo que va cargado. */
+  progreso: number;
+  /** Qué se está cargando ahora («Afinando las voces»). */
+  texto: string;
   version: string;
-  opacity?: Animated.Value;
   /** Si algo no se pudo (sin red), se dice aquí en vez de quedarse girando. */
   aviso?: string;
+  /** Ya hay sesión: la misma apertura, a doble velocidad. */
+  rapido?: boolean;
+  /** true = terminar: el aura se abre y se funde. */
+  salir?: boolean;
+  onFin?: () => void;
 };
 
-/** El mismo lado que el arranque nativo (plugin expo-splash-screen, imageWidth 220). */
-export const LADO_PLANETA = 220;
+const ORO = '#D6B56C';
+const ORO_CLARO = '#FFF1CC';
+const MARFIL = '#ECE8E2';
+const PULSE = 'PULSE 2CHAT';
 
-export function Arranque({ pasos, version, opacity, aviso }: Props) {
-  const flota = useRef(new Animated.Value(0)).current;
-  const halo = useRef(new Animated.Value(0)).current;
-  const nombre = useRef(new Animated.Value(0)).current;
-  const barra = useRef(new Animated.Value(0)).current;
+function Letra({ c, i, t0, paso, avance, tam }: { c: string; i: number; t0: number; paso: number; avance: SharedValue<number>; tam: number }) {
+  const a = useAnimatedStyle(() => {
+    const inicio = t0 + i * paso;
+    const p = interpolate(avance.value, [inicio, inicio + 380], [0, 1], 'clamp');
+    return { opacity: p, transform: [{ translateY: (1 - p) * 14 }] };
+  });
+  return (
+    <Animated.Text style={[s.letra, fuente('extra'), { fontSize: tam, letterSpacing: tam * 0.38 }, a]} allowFontScaling={false}>
+      {c === ' ' ? ' ' : c}
+    </Animated.Text>
+  );
+}
 
-  const hechos = pasos.filter((p) => p.hecho).length;
-  const actual = pasos.find((p) => !p.hecho);
+/** «AURA» en oro de verdad (degradado de Skia) con el brillo que la cruza. */
+function Marca({ ancho, alto, tam, brillo }: { ancho: number; alto: number; tam: number; brillo: SharedValue<number> }) {
+  const f = useFont(require('../../assets/fuentes/CormorantGaramond-SemiBold.ttf'), tam);
+  const pos = useDerivedValue(() => {
+    const b = brillo.value;
+    return [0, Math.max(0.001, b - 0.12), b, Math.min(0.999, b + 0.12), 1];
+  });
+  if (!f) {
+    // Mientras Skia lee la fuente (décimas), la misma palabra con la serif del sistema.
+    return (
+      <Texto v="marca" color={ORO} centro style={{ fontSize: tam, lineHeight: alto, letterSpacing: tam * 0.12 }} allowFontScaling={false}>
+        AURA
+      </Texto>
+    );
+  }
+  const texto = 'AURA';
+  // Espaciado de marca: cada letra por su lado, con aire.
+  const aire = tam * 0.12;
+  const anchos = texto.split('').map((l) => f.getGlyphWidths(f.getGlyphIDs(l)).reduce((x, y) => x + y, 0));
+  const total = anchos.reduce((x, y) => x + y, 0) + aire * (texto.length - 1);
+  let x = (ancho - total) / 2;
+  const base = alto * 0.78;
+  return (
+    <Canvas style={{ width: ancho, height: alto }} pointerEvents="none">
+      <Group>
+        {texto.split('').map((l, i) => {
+          const xi = x;
+          x += anchos[i] + aire;
+          return <SkTexto key={i} x={xi} y={base} text={l} font={f} />;
+        })}
+        <LinearGradient start={vec((ancho - total) / 2, 0)} end={vec((ancho + total) / 2, alto)} colors={['#B8913F', '#E9CF8E', ORO_CLARO, '#E9CF8E', '#A8832F']} positions={pos} />
+      </Group>
+    </Canvas>
+  );
+}
+
+export function Arranque({ progreso, texto, version, aviso, rapido, salir, onFin }: Props) {
+  const { width, height } = useWindowDimensions();
+  const horizontal = width > height;
+  // Acostado, el pie ocupa la parte de abajo: el aura se achica y sube para no pisarlo.
+  const tamAura = horizontal ? Math.min(300, height * 0.64) : Math.min(360, width * 0.92, height * 0.5);
+  const tamMarca = Math.round(tamAura * 0.2);
+  const vel = rapido ? 0.55 : 1;
+
+  /** El reloj de la apertura en milisegundos (todo lo demás se deriva de aquí). */
+  const avance = useSharedValue(0);
+  const encendido = useSharedValue(0);
+  const expansion = useSharedValue(0);
+  const brillo = useSharedValue(0);
+  const fundido = useSharedValue(1);
+  const barra = useSharedValue(0);
 
   useEffect(() => {
-    const f = Animated.loop(
-      Animated.sequence([
-        Animated.timing(flota, { toValue: 1, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-        Animated.timing(flota, { toValue: 0, duration: 1600, easing: Easing.inOut(Easing.sin), useNativeDriver: true }),
-      ])
-    );
-    const h = Animated.loop(
-      Animated.sequence([
-        Animated.timing(halo, { toValue: 1, duration: 1300, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.timing(halo, { toValue: 0, duration: 1300, easing: Easing.in(Easing.quad), useNativeDriver: true }),
-      ])
-    );
-    f.start();
-    h.start();
-    Animated.timing(nombre, { toValue: 1, duration: 700, delay: 250, easing: Easing.out(Easing.cubic), useNativeDriver: true }).start();
-    return () => {
-      f.stop();
-      h.stop();
-    };
-  }, [flota, halo, nombre]);
+    const total = 2000;
+    avance.value = withTiming(total, { duration: total * vel, easing: Easing.linear });
+    encendido.value = withTiming(1, { duration: 900 * vel, easing: Easing.out(Easing.cubic) });
+    brillo.value = withDelay(900 * vel, withTiming(1, { duration: 1100 * vel, easing: Easing.inOut(Easing.cubic) }));
+  }, [avance, encendido, brillo, vel]);
 
   useEffect(() => {
-    Animated.timing(barra, { toValue: pasos.length ? hechos / pasos.length : 0, duration: 380, easing: Easing.out(Easing.quad), useNativeDriver: false }).start();
-  }, [hechos, pasos.length, barra]);
+    barra.value = withTiming(Math.max(0, Math.min(1, progreso)), { duration: 420, easing: Easing.out(Easing.cubic) });
+  }, [progreso, barra]);
+
+  useEffect(() => {
+    if (!salir) return;
+    expansion.value = withTiming(1, { duration: 620, easing: Easing.in(Easing.cubic) });
+    fundido.value = withTiming(0, { duration: 520, easing: Easing.in(Easing.quad) }, (fin) => {
+      if (fin && onFin) scheduleOnRN(onFin);
+    });
+  }, [salir, expansion, fundido, onFin]);
+
+  const aPor = useAnimatedStyle(() => {
+    const p = interpolate(avance.value, [650, 900], [0, 1], 'clamp');
+    return { opacity: p, transform: [{ scale: 0.6 + 0.4 * p }, { rotate: `${(1 - p) * -90}deg` }] };
+  });
+  const aMarca = useAnimatedStyle(() => {
+    const p = interpolate(avance.value, [760, 1300], [0, 1], 'clamp');
+    return { opacity: p, transform: [{ scale: 0.94 + 0.06 * p }, { translateY: (1 - p) * 10 }] };
+  });
+  const aPie = useAnimatedStyle(() => ({ opacity: interpolate(avance.value, [1150, 1600], [0, 1], 'clamp') }));
+  const aContenido = useAnimatedStyle(() => ({ opacity: fundido.value, transform: [{ scale: 1 + (1 - fundido.value) * 0.07 }] }));
+  const aBarra = useAnimatedStyle(() => ({ width: `${barra.value * 100}%` }));
 
   return (
-    <Animated.View style={[s.raiz, opacity ? { opacity } : null]} pointerEvents={opacity ? 'none' : 'auto'}>
-      {/* El planeta queda centrado exacto, como el nativo; lo demás se acomoda debajo sin moverlo. */}
-      <View style={s.centro}>
-        <Animated.View style={[s.halo, { opacity: halo.interpolate({ inputRange: [0, 1], outputRange: [0.05, 0.2] }), transform: [{ scale: halo.interpolate({ inputRange: [0, 1], outputRange: [0.92, 1.08] }) }] }]} />
-        <Animated.Image
-          source={require('../../assets/splash-icon.png')}
-          resizeMode="contain"
-          accessibilityLabel="AU-RA"
-          style={[s.planeta, { transform: [{ translateY: flota.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) }] }]}
-        />
-      </View>
-      <Animated.View style={[s.debajo, { opacity: nombre, transform: [{ translateY: nombre.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }] }]}>
-        <Text style={s.marca}>AU-RA</Text>
-        <Text style={s.lema}>by Orden Global</Text>
-        <View style={s.pista}>
-          <Animated.View style={[s.relleno, { width: barra.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }) }]} />
+    <Animated.View style={[StyleSheet.absoluteFill, s.raiz]} accessibilityLabel="PULSE 2CHAT × AURA, powered by ORDEN GLOBAL" accessibilityRole="progressbar" accessibilityValue={{ min: 0, max: 100, now: Math.round(progreso * 100) }}>
+      <Degradado colors={['#0B0B0D', '#16171A', '#0B0B0D']} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} />
+      <View style={[s.centro, horizontal && { paddingBottom: 96 }]} pointerEvents="none">
+        <View style={{ width: tamAura, height: tamAura, alignItems: 'center', justifyContent: 'center' }}>
+          <View style={StyleSheet.absoluteFill}>
+            <Aura tam={tamAura} particulas={34} color={ORO} colorClaro={ORO_CLARO} encendido={encendido} expansion={expansion} />
+          </View>
+          <Animated.View style={[s.pila, aContenido]}>
+            <View style={s.filaLetras}>
+              {PULSE.split('').map((c, i) => (
+                <Letra key={i} c={c} i={i} t0={220} paso={38} avance={avance} tam={Math.max(10, Math.round(tamAura * 0.037))} />
+              ))}
+            </View>
+            <Animated.Text style={[s.por, fuente('medio'), aPor]} allowFontScaling={false}>
+              ×
+            </Animated.Text>
+            <Animated.View style={aMarca}>
+              <Marca ancho={tamAura} alto={Math.round(tamMarca * 1.2)} tam={tamMarca} brillo={brillo} />
+            </Animated.View>
+          </Animated.View>
         </View>
-        <Text style={[s.paso, !!aviso && s.aviso]} accessibilityLiveRegion="polite">
-          {aviso || actual?.texto || tr('Listo', 'Ready')}
-        </Text>
+      </View>
+
+      <Animated.View style={[s.pie, horizontal && s.pieHorizontal, aPie, aContenido]} pointerEvents="none">
+        <View style={s.powered}>
+          <Texto v="mini" color="rgba(236,232,226,0.5)" style={{ letterSpacing: 1.2 }} allowFontScaling={false}>
+            powered by
+          </Texto>
+          <Texto v="cuerpo" color={MARFIL} style={[fuenteDisplay(), s.orden]} allowFontScaling={false}>
+            ORDEN GLOBAL
+          </Texto>
+        </View>
+        <View style={s.pista}>
+          <Animated.View style={[s.relleno, aBarra]}>
+            <Degradado colors={['#8E6C24', ORO, ORO_CLARO]} start={{ x: 0, y: 0.5 }} end={{ x: 1, y: 0.5 }} style={StyleSheet.absoluteFill} />
+          </Animated.View>
+        </View>
+        <Texto v="chica" color={aviso ? '#E39A7A' : 'rgba(236,232,226,0.55)'} centro numberOfLines={2} style={s.paso}>
+          {aviso || texto}
+        </Texto>
+        <Texto v="mini" color="rgba(236,232,226,0.28)" centro>
+          v{version}
+        </Texto>
       </Animated.View>
-      <Text style={s.version}>v{version}</Text>
     </Animated.View>
   );
 }
 
 const s = StyleSheet.create({
-  raiz: { ...StyleSheet.absoluteFillObject, backgroundColor: T.fondo, alignItems: 'center', justifyContent: 'center' },
-  centro: { width: LADO_PLANETA, height: LADO_PLANETA, alignItems: 'center', justifyContent: 'center' },
-  halo: { position: 'absolute', width: LADO_PLANETA * 0.78, height: LADO_PLANETA * 0.78, borderRadius: LADO_PLANETA, backgroundColor: 'rgba(214,181,108,0.35)' },
-  planeta: { width: LADO_PLANETA, height: LADO_PLANETA },
-  // Debajo del planeta, sin empujarlo: posición absoluta desde el centro de la pantalla.
-  debajo: { position: 'absolute', top: '50%', marginTop: LADO_PLANETA / 2 - 6, alignItems: 'center', width: 280 },
-  marca: { color: T.texto, fontSize: 30, fontWeight: '800', letterSpacing: 6 },
-  lema: { color: T.texto3, fontSize: 12, letterSpacing: 2, marginTop: 2 },
-  pista: { width: 180, height: 3, borderRadius: 2, backgroundColor: T.panel, marginTop: 18, overflow: 'hidden' },
-  relleno: { height: 3, borderRadius: 2, backgroundColor: T.principal },
-  paso: { color: T.texto2, fontSize: 13, marginTop: 10 },
-  aviso: { color: T.avisoTexto },
-  version: { position: 'absolute', bottom: 18, color: T.texto3, fontSize: 11 },
+  raiz: { backgroundColor: '#0B0B0D', zIndex: 50 },
+  centro: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  pila: { alignItems: 'center', justifyContent: 'center' },
+  filaLetras: { flexDirection: 'row' },
+  letra: { color: MARFIL, fontSize: 13, letterSpacing: 5, includeFontPadding: false },
+  por: { color: ORO, fontSize: 22, lineHeight: 26, marginTop: 4, marginBottom: -4 },
+  pie: { position: 'absolute', left: 0, right: 0, bottom: 34, alignItems: 'center', gap: 10 },
+  pieHorizontal: { bottom: 14, gap: 6 },
+  powered: { alignItems: 'center', gap: 1, marginBottom: 6 },
+  orden: { fontSize: 17, lineHeight: 20, letterSpacing: 4 },
+  pista: { width: 148, height: 2, borderRadius: 1, backgroundColor: 'rgba(236,232,226,0.12)', overflow: 'hidden' },
+  relleno: { height: 2, borderRadius: 1, overflow: 'hidden' },
+  paso: { maxWidth: 300, minHeight: 18 },
 });

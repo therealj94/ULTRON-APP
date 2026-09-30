@@ -7,8 +7,9 @@
  * voz, el mismo que mueve la boca de AU-RA (tres cuadros de habla sacados de la misma foto). Encima de eso respira, sigue con la cabeza la mirada (la
  * cámara o el dedo) y de vez en cuando mira a un lado.
  *
- * No es un modelo 3D: es 2,5D con fotos. Un Claudio 3D de verdad (girar la cabeza, parpadear) pide
- * un modelo con huesos y caras que hoy no existe.
+ * Es 2,5D con fotos: el respaldo de su cuerpo 3D (avatar3d/AvatarVivo) cuando el teléfono no lo
+ * aguanta o mientras arranca. ANT-ONIO usa este mismo retrato con sus fotos (`fotos`), sacadas de su
+ * modelo 3D con scripts/avatar3d-fotos.mjs: mismos nombres, mismas medidas.
  */
 import { memo, useEffect, useMemo, useRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, View, type ImageSourcePropType } from 'react-native';
@@ -36,7 +37,32 @@ const HABLA: ImageSourcePropType[] = [
 
 const ORDEN: FotoRetrato[] = ['base', 'canta', 'risa', 'sorpresa', 'pensando', 'sueno', 'mira', 'aparta', 'perfil'];
 
-export const FOTOS_CLAUDIO = { ...FOTOS, habla: HABLA };
+/** Las fotos de un retrato: una por estado de la cara y los tres cuadros de habla. */
+export type FotosRetrato = Record<FotoRetrato, ImageSourcePropType> & { habla: ImageSourcePropType[] };
+
+export const FOTOS_CLAUDIO: FotosRetrato = { ...FOTOS, habla: HABLA };
+
+export const FOTOS_ANTONIO: FotosRetrato = {
+  base: require('../../assets/avatares/antonio/base.webp'),
+  canta: require('../../assets/avatares/antonio/canta.webp'),
+  risa: require('../../assets/avatares/antonio/risa.webp'),
+  sorpresa: require('../../assets/avatares/antonio/sorpresa.webp'),
+  pensando: require('../../assets/avatares/antonio/pensando.webp'),
+  sueno: require('../../assets/avatares/antonio/sueno.webp'),
+  mira: require('../../assets/avatares/antonio/mira.webp'),
+  aparta: require('../../assets/avatares/antonio/aparta.webp'),
+  perfil: require('../../assets/avatares/antonio/perfil.webp'),
+  habla: [
+    require('../../assets/avatares/antonio/habla1.webp'),
+    require('../../assets/avatares/antonio/habla2.webp'),
+    require('../../assets/avatares/antonio/habla3.webp'),
+  ],
+};
+
+/** Las fotos del retrato de un avatar que se ve con fotos (Claudio, ANT-ONIO), o null. */
+export function fotosRetrato(id: string): FotosRetrato | null {
+  return id === 'claudio' ? FOTOS_CLAUDIO : id === 'antonio' ? FOTOS_ANTONIO : null;
+}
 
 type Props = {
   face: FaceState;
@@ -46,11 +72,15 @@ type Props = {
   speechLevelSource?: (cb: (nivel: number) => void) => () => void;
   /** Lado del cuadro que lo contiene; por omisión llena el padre. */
   tamano?: number;
+  /** Las fotos (por omisión, las de Claudio). */
+  fotos?: FotosRetrato;
+  /** Cómo se llama para el lector de pantalla. */
+  nombre?: string;
   onTap?: () => void;
   onLongPress?: () => void;
 };
 
-function ClaudioRetratoBase({ face, gazeX = 0, gazeY = 0, speechLevelSource, tamano, onTap, onLongPress }: Props) {
+function ClaudioRetratoBase({ face, gazeX = 0, gazeY = 0, speechLevelSource, tamano, fotos = FOTOS_CLAUDIO, nombre = 'Claudio', onTap, onLongPress }: Props) {
   const opac = useRef(Object.fromEntries(ORDEN.map((f) => [f, new Animated.Value(f === 'base' ? 1 : 0)])) as Record<FotoRetrato, Animated.Value>).current;
   /** Qué cuadro de habla se ve (0 = ninguno, la boca cerrada de la base). Sin fundido: la boca salta. */
   const boca = useRef(HABLA_RETRATO.map(() => new Animated.Value(0))).current;
@@ -159,14 +189,14 @@ function ClaudioRetratoBase({ face, gazeX = 0, gazeY = 0, speechLevelSource, tam
   const caja = tamano ? { width: tamano, height: tamano } : StyleSheet.absoluteFillObject;
 
   return (
-    <Pressable onPress={onTap} onLongPress={onLongPress} delayLongPress={500} style={[styles.raiz, caja]} accessibilityRole="imagebutton" accessibilityLabel="Claudio">
+    <Pressable onPress={onTap} onLongPress={onLongPress} delayLongPress={500} style={[styles.raiz, caja]} accessibilityRole="imagebutton" accessibilityLabel={nombre}>
       <View pointerEvents="none" style={styles.halo} />
       <Animated.View pointerEvents="none" style={[styles.lienzo, { transform }]}>
         {ORDEN.map((f) => (
-          <Animated.Image key={f} source={FOTOS[f]} resizeMode="contain" style={[styles.foto, { opacity: opac[f] }]} fadeDuration={0} />
+          <Animated.Image key={f} source={fotos[f]} resizeMode="contain" style={[styles.foto, { opacity: opac[f] }]} fadeDuration={0} />
         ))}
         {/* Los cuadros de habla van encima de la base (misma pose, solo cambia la boca). */}
-        {HABLA.map((src, i) => (
+        {fotos.habla.map((src, i) => (
           <Animated.Image key={`habla${i}`} source={src} resizeMode="contain" style={[styles.foto, { opacity: Animated.multiply(boca[i], opac.base) }]} fadeDuration={0} />
         ))}
       </Animated.View>

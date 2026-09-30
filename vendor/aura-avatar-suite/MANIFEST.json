@@ -1,0 +1,671 @@
+{
+  "name": "AURA · Avatares 3D",
+  "version": "1.0.0",
+  "built_at": "2026-09-30T02:19:44.827449+00:00",
+  "repository_reviewed": "therealj94/ULTRON-APP",
+  "reviewed_commit": "794cc8369fa9c50600e283043217e6b55508d731",
+  "status": {
+    "antonio": "Approved revision 2, unchanged GLB",
+    "claudio": "New 3D proposal",
+    "aura": "New refinement of selected Grafito · Orbe",
+    "deployment": "Not deployed",
+    "voice": "Not connected"
+  },
+  "runtime": {
+    "claudio": {
+      "stats": {
+        "meshes": 89,
+        "triangles": 352894,
+        "joints": 43,
+        "drawCalls": 116
+      },
+      "clips": [
+        "neutral",
+        "feliz",
+        "risa",
+        "sorpresa",
+        "curioso",
+        "pensando",
+        "preocupado",
+        "triste",
+        "molesto",
+        "cansado",
+        "carino",
+        "orgullo",
+        "travieso",
+        "canto",
+        "oracion",
+        "escepticismo",
+        "alarma",
+        "firme",
+        "seco",
+        "escuchando",
+        "dormido",
+        "saludar",
+        "lentes",
+        "asentir",
+        "negar",
+        "explicar",
+        "celebrar",
+        "corazon",
+        "senalar",
+        "caminar"
+      ],
+      "finite": true,
+      "sad": true,
+      "speech": true,
+      "stopped": true,
+      "reload": {
+        "clips": 30,
+        "finite": true
+      },
+      "mobile": {
+        "noOverflow": true,
+        "canvasWidth": 390
+      }
+    },
+    "aura": {
+      "stats": {
+        "meshes": 18,
+        "triangles": 56800,
+        "joints": 11,
+        "drawCalls": 40
+      },
+      "clips": [
+        "neutral",
+        "feliz",
+        "risa",
+        "sorpresa",
+        "curioso",
+        "pensando",
+        "preocupado",
+        "triste",
+        "molesto",
+        "cansado",
+        "carino",
+        "orgullo",
+        "travieso",
+        "canto",
+        "oracion",
+        "escepticismo",
+        "alarma",
+        "firme",
+        "seco",
+        "escuchando",
+        "dormido",
+        "saludar",
+        "lentes",
+        "asentir",
+        "negar",
+        "explicar",
+        "celebrar",
+        "corazon",
+        "senalar",
+        "caminar"
+      ],
+      "finite": true,
+      "sad": true,
+      "speech": true,
+      "stopped": true,
+      "reload": {
+        "clips": 30,
+        "finite": true
+      },
+      "mobile": {
+        "noOverflow": true,
+        "canvasWidth": 390
+      }
+    },
+    "audio": {
+      "drives": true,
+      "stops": true
+    },
+    "bridge": {
+      "ready": true,
+      "state": true,
+      "speech": true,
+      "rejectsNaN": true,
+      "stop": true,
+      "noFakeSuccess": true
+    },
+    "errors": [],
+    "antonioApprovedModel": {
+      "unchanged": true,
+      "sha256": "8685b383ecbe3e1cc785fc857f17f1b138f58f2ba409b5eef0ecfe00ad5e2a1f",
+      "source": "Approved revision 2"
+    },
+    "hostIntegration": "Not compiled in the host app; TSX syntax checked only"
+  },
+  "validation": {
+    "ANT-ONIO": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "CLAUDIO": {
+      "errors": 0,
+      "warnings": 0
+    },
+    "AURA-ORBE": {
+      "errors": 0,
+      "warnings": 0
+    }
+  },
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 3837,
+      "sha256": "40575b65054f4b6b5518af5f7d45707f9fe0bd3b15976663fe32db92844711ca"
+    },
+    {
+      "path": "CLAUDE-INTEGRACION.md",
+      "bytes": 8031,
+      "sha256": "bb9339ef0a656c2c98b8c83d347b2fbadd5cc40c715a82e4ab4132255b496afc"
+    },
+    {
+      "path": "THIRD-PARTY-NOTICES.txt",
+      "bytes": 1182,
+      "sha256": "a2ec24c052e6b9013c9147e4b3f20ea9f438470e0d603073fb646b735d9c2742"
+    },
+    {
+      "path": "package.json",
+      "bytes": 787,
+      "sha256": "658eb62e76cc8f3cbc27e5351a5746f260cae5f36cc9ecf0c544eb2254d2663d"
+    },
+    {
+      "path": "package-lock.json",
+      "bytes": 24694,
+      "sha256": "18aa47f4183e086af495c8f6580689e565685da860bebf8ae02e8b24050fbfce"
+    },
+    {
+      "path": "index.html",
+      "bytes": 5118,
+      "sha256": "67ed76e4edd20d725f399720cf3ba115bde2d9b5c0efe11f6ab1087718366e06"
+    },
+    {
+      "path": "app.js",
+      "bytes": 925160,
+      "sha256": "0c467c4eb5da57d6fe5ec0787f6e113e2d6fa7ac4e6a8963fdc2454525b8c3ef"
+    },
+    {
+      "path": "AVATARES-AURA-DEMO.html",
+      "bytes": 930265,
+      "sha256": "1111a92818a429c0bceab9d02debb9c3e6db171f6ba665d94bf8d5f9ec1451c7"
+    },
+    {
+      "path": "AVATARES-AURA-PREVIEW.mp4",
+      "bytes": 707101,
+      "sha256": "a476f71338f815dfd9db3f593ebecc383511001f0feea086718fda1c652f0f2f"
+    },
+    {
+      "path": "AVATARES-AURA-VISTA.png",
+      "bytes": 293727,
+      "sha256": "c4901eae42c21b59d4e893dd08012942e1012082239d39b83de9160c3a200495"
+    },
+    {
+      "path": "src/protocol.d.ts",
+      "bytes": 233,
+      "sha256": "452dc34ae1d0b427f621843c427a278e2a7378d16d75c9c623854638da20d176"
+    },
+    {
+      "path": "src/claudio.js",
+      "bytes": 30924,
+      "sha256": "ef9322615002ebaad756b9a948f33e7db054f1527d64c971d827106ad493a575"
+    },
+    {
+      "path": "src/main.js",
+      "bytes": 4142,
+      "sha256": "c0e0967f117da50e8142edc32e5fdc6b0931e90d57f2eb44e933df0a161de374"
+    },
+    {
+      "path": "src/stage.js",
+      "bytes": 6844,
+      "sha256": "e28cef352203ebfdcd30a316dbe0aa57e914d7ae52712a03d716a32bf26a1ae8"
+    },
+    {
+      "path": "src/embed.js",
+      "bytes": 764,
+      "sha256": "c62913256ab48509526660ab29972e6a555c67acd11fb88613ca1c0c5ef11b63"
+    },
+    {
+      "path": "src/avatar.js",
+      "bytes": 31164,
+      "sha256": "015ac38f372d89570c18a556e8d3f24033752a70b2d46de29f1224ff47b3ddca"
+    },
+    {
+      "path": "src/characters.js",
+      "bytes": 970,
+      "sha256": "f2f5fa6b9400e25a0fe32d86655ebc21072aceac506813699c6683c86e3d9c9d"
+    },
+    {
+      "path": "src/audio.js",
+      "bytes": 2783,
+      "sha256": "4bc371b6eb94964f539c658dd63e87c62a082d7edb2a10b2a6608c9388c039a5"
+    },
+    {
+      "path": "src/protocol.js",
+      "bytes": 1638,
+      "sha256": "0c344f84d4acc05f87f0f5d124c832598b06bb7bb9aca36382401eb8cebb8e89"
+    },
+    {
+      "path": "src/sculpt.js",
+      "bytes": 10154,
+      "sha256": "bcece000cc04cad4b761be5aa3047dacc926728f35b40663e9776445448ba4ba"
+    },
+    {
+      "path": "src/fox-sculpt.js",
+      "bytes": 2641,
+      "sha256": "712f32c7deff2aa32bda1b26f1b1b97996713a4b7189d3d2dda498997e6c7e39"
+    },
+    {
+      "path": "src/aura.js",
+      "bytes": 8565,
+      "sha256": "af1eaf944146fb594a2b278ffdde4c0caa857998738ceb123cea75bf4477c5e7"
+    },
+    {
+      "path": "src/fur.js",
+      "bytes": 3087,
+      "sha256": "534a8114924c0d7033879b5a1cee035ce524f387b8373c50d31a75af3e69e882"
+    },
+    {
+      "path": "src/stage.d.ts",
+      "bytes": 1172,
+      "sha256": "cdaf1f3a9a4487edd6bdfb0da005791b747f20c9ac9795b44af13ce076eef010"
+    },
+    {
+      "path": "integration/embed.bundle.js",
+      "bytes": 683849,
+      "sha256": "5cb672fc5c509335d2b11e983fe46c9f916992d60a5ab582813343900a05f4c9"
+    },
+    {
+      "path": "integration/AvatarWebView.tsx",
+      "bytes": 5658,
+      "sha256": "e6a59ca0f68229b6ba89befab071ca501899fc20a605683e099413982fb9a3d7"
+    },
+    {
+      "path": "integration/AvatarView.tsx",
+      "bytes": 2192,
+      "sha256": "2f6eaf6a00becfd16d76024599c138b267e178f4257d4e15bd60de81e46b3dc3"
+    },
+    {
+      "path": "integration/aura-embed.html",
+      "bytes": 684175,
+      "sha256": "35123e7ab5e63c122ed3504a0717941cf44fae7f334627aeab7dd5813544e494"
+    },
+    {
+      "path": "integration/claudio-embed.html",
+      "bytes": 684178,
+      "sha256": "6142f5428d15ba867accff4ad93881478ffbc13ee8bbae8f1c3441ac4e6caf14"
+    },
+    {
+      "path": "integration/avatarHtml.ts",
+      "bytes": 2095027,
+      "sha256": "62c6fe11e01e3c0fc58ff3c9a496f01aad4db003b657bd44d68edfe771d7f171"
+    },
+    {
+      "path": "integration/antonio-embed.html",
+      "bytes": 684178,
+      "sha256": "c4825db5edfc2b74a5baa46f528c05c735f3bb32d35e803475b3be34ba53aced"
+    },
+    {
+      "path": "assets/AURA-ORBE.glb",
+      "bytes": 2119400,
+      "sha256": "72f510c2930f50be80684a9b53543a5eb6b72000e59f60646c33c41334df3020"
+    },
+    {
+      "path": "assets/CLAUDIO.glb",
+      "bytes": 27762844,
+      "sha256": "c8c7d19100e63856b8779b13794c34a465a111d07746222b73d1daffb8249a85"
+    },
+    {
+      "path": "assets/ANT-ONIO.glb",
+      "bytes": 17802936,
+      "sha256": "8685b383ecbe3e1cc785fc857f17f1b138f58f2ba409b5eef0ecfe00ad5e2a1f"
+    },
+    {
+      "path": "referencias/CLAUDIO-cuerpo-original.webp",
+      "bytes": 71624,
+      "sha256": "f2fdeec44b2883d6c802a5cf06e8c9691e62daf21c4b14f53fed5e53a95350c6"
+    },
+    {
+      "path": "referencias/AURA-grafito-orbe-original.png",
+      "bytes": 400498,
+      "sha256": "c3bc2a3192663d38bcfb593baebb439cd9245a6efc34e95e2db1337b1100662e"
+    },
+    {
+      "path": "referencias/ORIGEN.md",
+      "bytes": 626,
+      "sha256": "e050bac8dac362b31eeb3866ae6605f4e3d3b9b4fe6cad6ff9d0eeb869711f06"
+    },
+    {
+      "path": "referencias/CLAUDIO-retrato-original.webp",
+      "bytes": 65452,
+      "sha256": "74e0d0b726eaab4b1a0eabc4c8a856b790f309e0e3df5c10ab7c802aa72b6547"
+    },
+    {
+      "path": "ant-onio-aprobado/APROBACION.md",
+      "bytes": 790,
+      "sha256": "ac994656d18d2be349e2134667c43e0df40a4102d954b958eff745943cabf427"
+    },
+    {
+      "path": "tools/build.mjs",
+      "bytes": 1419,
+      "sha256": "d462e2dbc6b07c55b0f6d3b33690536f45cfd27371ea7d984b1551e4a9a33c60"
+    },
+    {
+      "path": "tools/qa.cjs",
+      "bytes": 6612,
+      "sha256": "77e304569bbb6b1f39deaa58eb494f68b8448fa81c494e4f4e3f54017ac5919f"
+    },
+    {
+      "path": "tools/preview.cjs",
+      "bytes": 3435,
+      "sha256": "0c9a8b4a816a440746f0fdc6dd010b063a60ae4ed8af3299b6fd9775ea743c29"
+    },
+    {
+      "path": "tools/validate.cjs",
+      "bytes": 602,
+      "sha256": "fb717efeb93466a5bdbdacae84cee39869826b166acd610da157816823c3572d"
+    },
+    {
+      "path": "tools/contracts.test.mjs",
+      "bytes": 1781,
+      "sha256": "f06dabcd2d5933ccf7226bc1ec8e7073f0241b28b403657398971c6fcc33f536"
+    },
+    {
+      "path": "tools/package.py",
+      "bytes": 2060,
+      "sha256": "add30b4d1d7977dac542d8fc4fc08d3cedf51612045f846e8c887550bb0cd96a"
+    },
+    {
+      "path": "qa/claudio-curioso.png",
+      "bytes": 191843,
+      "sha256": "8186c0ec7372b6c267cc12138f879a70e9975cecd4d811fd7ee8864a9d174687"
+    },
+    {
+      "path": "qa/runtime-tests.json",
+      "bytes": 2217,
+      "sha256": "811f4d841b21b23944dc94d7fb6fecbb866ddd1a7d01012f13bd3b634b0c5783"
+    },
+    {
+      "path": "qa/aura-face.png",
+      "bytes": 191017,
+      "sha256": "662eff62263f18ef7e32257ca31c06a03166ad1c8f347de37ad355c485b96bce"
+    },
+    {
+      "path": "qa/claudio-carino.png",
+      "bytes": 196134,
+      "sha256": "d6af32be6c22d024cada73fd2ce4ef5d1213545f46292da7277d51442d51c294"
+    },
+    {
+      "path": "qa/claudio-risa.png",
+      "bytes": 201573,
+      "sha256": "aa6a7ab88b4709259e8463ec0af4b53b0fa2ffd8e6d62c0f90c452fd74cd4fd5"
+    },
+    {
+      "path": "qa/aura-pensando.png",
+      "bytes": 110590,
+      "sha256": "cbd08fe753cbef1d8d855c24b397884a16d4125b58589b348a07004500a16a16"
+    },
+    {
+      "path": "qa/antonio-mobile.png",
+      "bytes": 92595,
+      "sha256": "4940e0cd908b9e639904dda7f3c367caa7a052beea36064040cd363928e6a3e3"
+    },
+    {
+      "path": "qa/claudio-mobile.png",
+      "bytes": 105164,
+      "sha256": "c142af2c304630adf69c3892c1dc3c65c381f88e57f4b41ed00342a464ab7c3a"
+    },
+    {
+      "path": "qa/aura-risa.png",
+      "bytes": 114270,
+      "sha256": "9ca414bcba4dec67e379990faf744660dfc7aa44d83e7b2d6cbe16335d7423e1"
+    },
+    {
+      "path": "qa/aura-mobile.png",
+      "bytes": 70536,
+      "sha256": "7b187f6aa12c207390c7b0d12930f227baeb09017116dd5a38116d4339422589"
+    },
+    {
+      "path": "qa/claudio-face.png",
+      "bytes": 299594,
+      "sha256": "0b872f3d99e3e6b0be95d7ace375b01f0d543743a905040c129bda4cf510d333"
+    },
+    {
+      "path": "qa/aura-carino.png",
+      "bytes": 110199,
+      "sha256": "308ea804454912af07c86a4f440f6c947b74e3e08d0bccd683b17ac796936304"
+    },
+    {
+      "path": "qa/aura-feliz.png",
+      "bytes": 109302,
+      "sha256": "c4ad1062ef049bcb0b14dc32007ccacf02900dcaf0b60e1a5995d75728f7b1b6"
+    },
+    {
+      "path": "qa/mobile-layout.json",
+      "bytes": 290,
+      "sha256": "7e716446c38e5a91a4a1fc9d2a8837f1075b181d5492c7f7fd5c8e66b77f4744"
+    },
+    {
+      "path": "qa/claudio-triste.png",
+      "bytes": 199249,
+      "sha256": "675d6ec36d0ac986f84fbaee1c6498a8f371c0beac88d78e9bd5079ef7a0b2b2"
+    },
+    {
+      "path": "qa/aura-desktop.png",
+      "bytes": 167568,
+      "sha256": "93ea2f8b2d76383d6882d78c27ea9ad5fa81bbf0c55fad9969fa88ee03c86c36"
+    },
+    {
+      "path": "qa/claudio-desktop.png",
+      "bytes": 257428,
+      "sha256": "2de13149dd605a5cbd7e5a49ad5586785ea4bf454edc46cf225edc5f8e2370f7"
+    },
+    {
+      "path": "qa/claudio-pensando.png",
+      "bytes": 194986,
+      "sha256": "75d4b5b1db9bb7a864c9bf717f7c2697f2f1b4e4c63bacc276d711b38dce1167"
+    },
+    {
+      "path": "qa/aura-curioso.png",
+      "bytes": 104826,
+      "sha256": "606d6290c3b1cd0809f282a1d82eadb0672d81469f6641f53436ed2683f4f609"
+    },
+    {
+      "path": "qa/aura-triste.png",
+      "bytes": 103629,
+      "sha256": "c74237fc97fb3726257d633c0be4eadbdf63c292f57859f9bebcca1ba16731a3"
+    },
+    {
+      "path": "qa/gltf-validation.json",
+      "bytes": 32365,
+      "sha256": "297ce136d98315cfb2deabd5dd7e810e14d45939fab7c59babada889db40f3c3"
+    },
+    {
+      "path": "qa/claudio-feliz.png",
+      "bytes": 203867,
+      "sha256": "587c66b7ee605ce89960d0bcff17133113c94ebdaa799c0f59faa9d2bc290930"
+    },
+    {
+      "path": ".gitattributes",
+      "bytes": 519,
+      "sha256": "6da1749c1463d51591c638fd8692ac70bfc0d72d5bc2cd2caba48ed0859fd404"
+    },
+    {
+      "path": ".gitignore",
+      "bytes": 163,
+      "sha256": "2037da59edbc0636838139151526fe93a2a86090d4d345df8603d4c4fb4c6fbd"
+    },
+    {
+      "path": "assets/model-parts.json",
+      "bytes": 5917,
+      "sha256": "cb42afa0199bd3a2abaccc96ae85175ef20ae66caf581888891b093cc510bef5"
+    },
+    {
+      "path": "tools/restore-models.mjs",
+      "bytes": 1546,
+      "sha256": "1dccb7dcfba18195f21a6b72a758c515abd446d79f000827c0509636c34d8e84"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-003",
+      "bytes": 1500000,
+      "sha256": "c058f583df7de71cf0ae4b988cb05087d00ff5eeb9f53143d9c9ae98a796469a"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-012",
+      "bytes": 1302936,
+      "sha256": "51feaf4d00ed1bb47e93ac66245572d672d789aeaf01280a3ec6839b8fcb35ac"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-017",
+      "bytes": 1500000,
+      "sha256": "780467a3972a3982531e4cda692ca3eabee71bf034f0d87478ce8935ea400949"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-001",
+      "bytes": 1500000,
+      "sha256": "f1e48ebfcd3e3743cb52a4a509a25e7b3c8eabae27c0907e92b7369bb7a57d5d"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-011",
+      "bytes": 1500000,
+      "sha256": "6314681e54e395975fbf3bfa2818400b1fa3ce802408a21689e7dcb2006e2812"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-005",
+      "bytes": 1500000,
+      "sha256": "59d04d513505a4104a48f47d51b2d7068e046dc2ab29b4d932ece1bd46028423"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-009",
+      "bytes": 1500000,
+      "sha256": "1922cfeda065e8c40c9b14fa404dcb207599c49ce790abbdef9bdc25f7edda65"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-006",
+      "bytes": 1500000,
+      "sha256": "61d8ab87277c585ff958cfd9341d4b03730dbf2b5ebb652e123b916dbdc4a32f"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-014",
+      "bytes": 1500000,
+      "sha256": "8f7be5edaab3cb2c26bd754c623d422ed576f56f377968cd079d68859fa0d02f"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-018",
+      "bytes": 1500000,
+      "sha256": "256603e3c653ca036b28b71ea9a1fbae28eb6579f45677f06660290aec16e7c3"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-011",
+      "bytes": 1500000,
+      "sha256": "bbc9724d777557d13f49314963c424c6ffe5d1c1507f6a094300843704760a65"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-007",
+      "bytes": 1500000,
+      "sha256": "2b6eecc24e07aba54ff99c8d31ee281f3e3d7668cafc7f1472620246b3b0ab20"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-009",
+      "bytes": 1500000,
+      "sha256": "3a3f4733c9c406b4b58e81ab885abddfba16e2f032a148373c099997329a5471"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-015",
+      "bytes": 1500000,
+      "sha256": "90e69bace37d99019d083e555e6b311a12b5ec112e34073cdcb0289e07ebf3d9"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-001",
+      "bytes": 1500000,
+      "sha256": "c69af385318588dc650b13142584768b8a30bebb18c03e9ee3b0fe1e706aa298"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-002",
+      "bytes": 1500000,
+      "sha256": "ab86ab2b1e773221a1a1683c8cb288157d91bee332eb1c923f89160f5abcbcc5"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-004",
+      "bytes": 1500000,
+      "sha256": "d1d41b11b6f6fe9afb63371fe6089abf2b8da0cb4cb0678c8f66ca693c2709f0"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-010",
+      "bytes": 1500000,
+      "sha256": "c6bbfc50b79b7ca7146099b82417c3089d018f02a6aa20af2de585b748828155"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-004",
+      "bytes": 1500000,
+      "sha256": "022613f78c26cf57cfab79bb8e2d1eb4c310cd18a005a9aa71311afebfa95d15"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-007",
+      "bytes": 1500000,
+      "sha256": "024c9c491e6f1fcc5c3184b7e8fad7993c73c0c6385318e64d4023d2c7236868"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-008",
+      "bytes": 1500000,
+      "sha256": "b9ab65880cb3c6eb6f83311d9001ae0c6b4f26bad5253f88d86cd4e9aa4d8571"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-012",
+      "bytes": 1500000,
+      "sha256": "89d0af534dcc0153c7de90ce038e70b12ac1f521546d5c1ffa8041399ee2e863"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-003",
+      "bytes": 1500000,
+      "sha256": "e411006d9d34e5d8624964472455f724cb0150cd5290282f9d239c4d3da7949f"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-002",
+      "bytes": 1500000,
+      "sha256": "d1f2b76ae8749e23d2010fd7913673c2b85056861566b0e27facc9d97998c1cb"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-005",
+      "bytes": 1500000,
+      "sha256": "4972432a31fcdf894dc8e40b4df9b718da2884c03f5c7541d10fead12ac6d26e"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-013",
+      "bytes": 1500000,
+      "sha256": "11c2308bb3405a0e37ab173b5a2174fc04257956d90d566696a20062bcce5482"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-016",
+      "bytes": 1500000,
+      "sha256": "f47ddad4f5dec52e0cbf04f8df345cdd59eed419b31c00aca204c59bb32f7ca5"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-006",
+      "bytes": 1500000,
+      "sha256": "d0dd256fd52a9c59a6716040643f076af1b64a889eb0f7c757b26d6eaf1048b2"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-010",
+      "bytes": 1500000,
+      "sha256": "0fee187beb324475d603aa88d94f81a1e893df58de05a86d20cd2c0a754edf06"
+    },
+    {
+      "path": "assets/model-parts/CLAUDIO.glb.part-019",
+      "bytes": 762844,
+      "sha256": "83dc42d2f2d494ca1fd2cf2ed9fc10ffd0664f82862692fdfffbc2abf8c0ef91"
+    },
+    {
+      "path": "assets/model-parts/ANT-ONIO.glb.part-008",
+      "bytes": 1500000,
+      "sha256": "e862d16d9729ddc5cd3ddea716aa1030f8f946feb0ee8a5489cfe0ca1b719009"
+    }
+  ],
+  "repository_delivery": {
+    "path": "vendor/aura-avatar-suite",
+    "entry_guide": "CLAUDE-AVATARES-3D.md",
+    "runtime_integration": false,
+    "large_model_storage": "SHA-256 verified binary parts; npm run restore-models restores exact original GLBs"
+  }
+}
