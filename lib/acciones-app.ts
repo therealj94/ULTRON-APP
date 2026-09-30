@@ -1006,7 +1006,7 @@ export function ordenPorLigera(
   if (r.etiqueta === 'app_ninguna') return r.p >= P_NINGUNA_LIGERA ? 'ninguna' : null;
   // Las que llevan parámetro tienen un segundo filtro (el parámetro tiene que salir de la frase) y aguantan
   // un umbral más bajo, elegido en validación (val_app.jsonl: ningún falso positivo ni mano equivocada).
-  if (r.p < (SIN_PARAMETRO.has(r.etiqueta) ? UMBRAL_LIGERA : Number(process.env.UMBRAL_PARAM || UMBRAL_CON_PARAMETRO))) return null;
+  if (r.p < (SIN_PARAMETRO.has(r.etiqueta) ? UMBRAL_LIGERA : UMBRAL_CON_PARAMETRO)) return null;
   return ordenDeEtiqueta(r.etiqueta, texto, 'ligera', o);
 }
 
