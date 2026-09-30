@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Pool } from 'pg';
+import { configTls } from '../ssl-base';
 import { ESQUEMA_COGNITIVO } from './esquema';
 
 let pool: Pool | null = null;
@@ -31,11 +32,11 @@ function conexion(): Pool {
   if (!pool) {
     const url = urlBase();
     pool = new Pool({
-      connectionString: url,
+      // TLS verificado (lib/ssl-base.ts): la URL sin sus parámetros de TLS y el objeto que de verdad usa pg.
+      ...configTls(url),
       max: 4,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 6_000,
-      ssl: /sslmode=require/.test(url) ? { rejectUnauthorized: false } : undefined,
     });
     // Un cliente ocioso que se cae no puede tumbar el proceso.
     pool.on('error', (e) => console.error('[cognitivo] conexión perdida:', String(e?.message || e).slice(0, 160)));

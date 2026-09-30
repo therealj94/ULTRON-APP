@@ -1,0 +1,66 @@
+name: Calidad (antes de publicar la app)
+
+# El MISMO conjunto de pruebas funcionales que la web, más los arneses del teléfono, como paso
+# obligatorio ANTES de compilar una APK (android-apk.yml) o de publicar una OTA (ota.yml). Antes esos
+# flujos solo hacían typecheck: un cambio en `mobile/**` que rompía una prueba (que vive en `npm test`,
+# ignorado por web.yml para esos cambios) podía salir por aire igual.
+#
+# Se llama desde los otros flujos (`uses: ./.github/workflows/calidad-movil.yml`); también a mano.
+# Sin Postgres: las pruebas del catastro de Dr Electrum se saltan (las corre web.yml con PostGIS).
+# Los arneses del chat contra el relevo real se saltan si el relevo no está (vive en otro repositorio).
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  calidad:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_ENV: test
+      ULTRON_MEMORIA_BUCKET: ""
+      AWS_ACCESS_KEY_ID: ""
+      AWS_SECRET_ACCESS_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mobile/package-lock.json
+
+      - name: Dependencias (raíz)
+        run: npm ci
+      - name: Dependencias (app)
+        working-directory: mobile
+        run: npm ci
+
+      - name: Typecheck (raíz)
+        run: npx tsc --noEmit
+      - name: Typecheck (app)
+        working-directory: mobile
+        run: npm run typecheck
+
+      # Las pruebas de siempre (incluyen la lógica de la app que se prueba en node).
+      - name: Pruebas (npm test)
+        run: npm test
+
+      # Los arneses del teléfono: identidad y aislamiento, costuras entre frentes, chat, llamadas,
+      # la compañera, el avatar y la sincronía de la boca.
+      - name: Arneses de la app
+        working-directory: mobile
+        run: |
+          set -e
+          sh pruebas/identidad/todas.sh
+          sh pruebas/costuras/todas.sh
+          sh pruebas/chat/todas.sh
+          node pruebas/llamadas/pruebas.js
+          npx tsx src/compa/pruebas/compa.prueba.mjs
+          npx tsx src/avatar3d/pruebas/avatar3d.prueba.mjs
+          npx tsx src/avatar3d/pruebas/sincronia.prueba.mjs

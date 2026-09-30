@@ -5,6 +5,8 @@ import path from 'path';
 import { promisify } from 'util';
 import zlib from 'zlib';
 import { createServer as createViteServer } from 'vite';
+import { crearComprobadorListo } from './lib/nodo-listo';
+import { sanearDiag } from './lib/diag-saneador';
 import { autocuraDe, fetchNodo, saludNodo, nodoConfigurado, NODO_URL as ULTRON_NODO_URL, NODO_SECRETO as ULTRON_NODO_SECRETO, NODO_MODELO as ULTRON_NODO_MODELO } from './lib/nodo';
 import { JUNTA, buildPersonality, decodeDataUrl, normalizarCorreo, buscarWeb, leerPagina } from './server/desk';
 import { hablar, abrirVozEnVivo, cantar, orar, repertorio, cancionPorPedido, estadoVoz, saludVoz, vozDe, sinEtiquetas } from './server/voz';
@@ -123,7 +125,7 @@ import { iniciarAlertas } from './server/electrum/alertas';
 import { montarRutasTimelapse } from './server/electrum/timelapse';
 import { asegurarBiblioteca } from './server/electrum/biblioteca';
 import { expedientesListo, guardarExpediente } from './lib/s3';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { personaPorCorreoExacto, puedeEntrar } from './lib/acceso';
 import { puedeEscribir } from './lib/acceso';
 import { identificar, nivelDe, padron, personaPorId } from './lib/acceso';
@@ -327,11 +329,12 @@ app.get('/api/health', async (req, res) => {
   });
 });
 
-/** Calienta Qwen 27B. La mesa espera `listo` antes de dejar hablar. */
-app.get('/api/nodo/listo', async (_req, res) => {
-  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
-    return res.json({ listo: false, motivo: 'sin nodo', honesto: true });
-  }
+/**
+ * Calienta Qwen 27B. La mesa espera `listo` antes de dejar hablar. Una sola comprobación en vuelo y el
+ * resultado guardado (lib/nodo-listo.ts), con limitador por IP: una visita o un curioso no gastan una
+ * inferencia por consulta.
+ */
+const nodoListo = crearComprobadorListo(async () => {
   const t0 = Date.now();
   try {
     const r = await fetchNodo(`${ULTRON_NODO_URL}/api/chat`, {
@@ -346,10 +349,17 @@ app.get('/api/nodo/listo', async (_req, res) => {
       }),
       signal: AbortSignal.timeout(45000),
     });
-    return res.json({ listo: r.ok, ms: Date.now() - t0, honesto: true });
+    return { listo: r.ok, ms: Date.now() - t0 };
   } catch (e: any) {
-    return res.json({ listo: false, ms: Date.now() - t0, motivo: String(e?.message || e).slice(0, 160), honesto: true });
+    return { listo: false, ms: Date.now() - t0, motivo: String(e?.message || e).slice(0, 160) };
   }
+});
+app.get('/api/nodo/listo', limitar(60), async (_req, res) => {
+  if (!ULTRON_NODO_URL || !ULTRON_NODO_SECRETO) {
+    return res.json({ listo: false, motivo: 'sin nodo', honesto: true });
+  }
+  const e = await nodoListo.estado();
+  return res.json({ ...e, honesto: true });
 });
 
 /** Catálogo de capacidades: la única lista de lo que AU-RA puede hacer, con estado real. */
@@ -1894,23 +1904,23 @@ app.all('/api/orar', exigirMesaODesk, limitar(12), async (req, res) => {
  * logs de Render. Sin sesión (una app que se está cayendo no puede autenticarse) y con rate limit.
  */
 app.post('/api/diag', limitar(40), (req, res) => {
-  const b = req.body || {};
-  // Todo lo que llega aquí es de un cliente sin sesión: corto y en una sola línea, para que nadie pueda
-  // inflar los logs ni escribir líneas falsas con saltos de línea.
-  const una = (v: unknown, n: number) => String(v ?? '?').replace(/[\r\n]+/g, ' ').slice(0, n);
-  const cab = `[APK ${una(b.version, 24)} ${una(b.plataforma, 16)} ${una(b.dispositivo, 60)} ses=${una(b.sesion, 40)}]`;
-  const tipo = String(b.tipo || 'estado');
-  if (tipo === 'crash-previo') {
-    console.error(`${cab} CRASH. Murió en: ${una(b.murio_en, 120)}`);
-  } else if (tipo === 'error-js') {
-    console.error(`${cab} ERROR JS${b.fatal ? ' FATAL' : ''}: ${una(b.error, 300)}`);
-    if (b.stack) console.error(`${cab} stack: ${String(b.stack).slice(0, 900)}`);
+  // Todo lo que llega aquí es de un cliente sin sesión: solo los campos conocidos, cortos, en una sola
+  // línea (nadie infla los logs ni escribe líneas falsas) y con lo sensible tapado —tokens, claves,
+  // correos, parámetros de URL, teléfonos— (lib/diag-saneador.ts). Cada reporte lleva un id de
+  // incidencia que se devuelve: con él se encuentra en el log sin contar nada más.
+  const b = sanearDiag(req.body);
+  const incidencia = randomBytes(5).toString('hex');
+  const cab = `[APK ${b.version} ${b.plataforma} ${b.dispositivo} ses=${b.sesion} inc=${incidencia}]`;
+  if (b.tipo === 'crash-previo') {
+    console.error(`${cab} CRASH. Murió en: ${b.murio_en || '?'}`);
+  } else if (b.tipo === 'error-js' || b.tipo === 'promesa') {
+    console.error(`${cab} ERROR JS${b.fatal ? ' FATAL' : ''}: ${b.error || '?'}`);
+    if (b.stack) console.error(`${cab} stack: ${b.stack}`);
   } else {
-    console.log(`${cab} ${una(b.nota || 'estado', 300)}`);
+    console.log(`${cab} ${b.nota || 'estado'}`);
   }
-  const migas = Array.isArray(b.migas) ? b.migas.slice(-40) : [];
-  if (migas.length) console.log(`${cab} migas: ${migas.map(String).join(' | ').slice(0, 1800)}`);
-  res.json({ ok: true, honesto: true });
+  if (b.migas.length) console.log(`${cab} migas: ${b.migas.join(' | ').slice(0, 1800)}`);
+  res.json({ ok: true, incidencia, honesto: true });
 });
 
 app.get('/api/cantar', (_req, res) => {

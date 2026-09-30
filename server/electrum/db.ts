@@ -14,6 +14,7 @@
  */
 import { createHash } from 'node:crypto';
 import { Pool, type PoolClient } from 'pg';
+import { configTls } from '../../lib/ssl-base';
 import type { Feature, FeatureCollection, Geometry } from 'geojson';
 import { areaHectareas, etiqueta, repararTexto, type Capa } from './gis';
 import { buscarPorSignificado } from './vectores';
@@ -31,12 +32,12 @@ function conexion(): Pool {
     const url = process.env.ELECTRUM_DB_URL;
     if (!url) throw new Error('Falta ELECTRUM_DB_URL: no hay catastro conectado.');
     pool = new Pool({
-      connectionString: url,
+      // TLS verificado (lib/ssl-base.ts): la URL sin sus parámetros de TLS y el objeto que de verdad usa pg.
+      // Un certificado propio se declara con su CA (BASE_SSL_CA o sslrootcert), no apagando la verificación.
+      ...configTls(url),
       max: 8,
       idleTimeoutMillis: 30_000,
       connectionTimeoutMillis: 8_000,
-      // El nodo propio usa certificado propio; fuera de eso, TLS normal.
-      ssl: /sslmode=require/.test(url) ? { rejectUnauthorized: false } : undefined,
     });
     /*
      * Un cliente ocioso que pierde la conexión —la base se reinicia, el túnel se corta, el TLS se

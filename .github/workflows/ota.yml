@@ -9,6 +9,7 @@ on:
     paths:
       - "mobile/**"
       - ".github/workflows/ota.yml"
+      - ".github/workflows/calidad-movil.yml"
   workflow_dispatch:
     inputs:
       accion:
@@ -26,9 +27,17 @@ permissions:
   contents: read
 
 jobs:
+  # Las pruebas funcionales ANTES de publicar: una OTA no sale de un commit que rompe una prueba. La
+  # marcha atrás de emergencia (`volver-a-la-apk`) no espera a las pruebas: no publica JS nuevo.
+  calidad:
+    if: github.ref == 'refs/heads/main' && inputs.accion != 'volver-a-la-apk'
+    uses: ./.github/workflows/calidad-movil.yml
+
   ota:
-    # Solo desde main: el canal `production` es el de las APK de main.
-    if: github.ref == 'refs/heads/main'
+    needs: calidad
+    # Solo desde main: el canal `production` es el de las APK de main. Y solo con las pruebas en verde
+    # (o para volver al JS de la APK, que no las necesita).
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && (needs.calidad.result == 'success' || inputs.accion == 'volver-a-la-apk') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # El secreto EXPO_TOKEN va en los secretos del repositorio (Settings → Secrets → Actions). Quien
