@@ -98,3 +98,30 @@ jobs:
           name: AURA-Windows-Setup-x64
           path: windows/artifacts/installer/
           retention-days: 14
+      - name: Prepare verified installer transfer parts
+        shell: pwsh
+        run: ./windows/scripts/package-delivery.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Windows-delivery-part-01
+          path: windows/artifacts/delivery/part-01/
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Windows-delivery-part-02
+          path: windows/artifacts/delivery/part-02/
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Windows-delivery-part-03
+          path: windows/artifacts/delivery/part-03/
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AURA-Windows-delivery-part-04
+          path: windows/artifacts/delivery/part-04/
+          if-no-files-found: ignore
+          retention-days: 14

@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 const token = () => randomBytes(24).toString('base64url');
 const eq = (a,b) => typeof a==='string' && typeof b==='string' && Buffer.byteLength(a)===Buffer.byteLength(b) && timingSafeEqual(Buffer.from(a),Buffer.from(b));
 export function createGateway(config) {
- if (!config.apiToken || config.apiToken.length < 32) throw Error('WINDOWS_API_TOKEN must contain at least 32 characters');
+ if (!config.apiToken || config.apiToken.length < 32 || config.apiToken.startsWith('REPLACE_')) throw Error('WINDOWS_API_TOKEN must contain at least 32 characters');
  const rooms=new Map(), limits=new Map();
  const now=config.now || Date.now;
  const json=(res,status,body)=>{res.writeHead(status,{'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});res.end(JSON.stringify(body));};

@@ -24,3 +24,10 @@ test('Windows chat and two-party call signaling',async()=>{
  }finally{await new Promise(r=>s.close(r));}
 });
 test('No implicit deployment credentials',()=>assert.throws(()=>createGateway({apiToken:''})));
+test('Windows intent namespace cannot accept an app model',async()=>{
+ let model='comando';
+ const s=createGateway({apiToken:key,layaUrl:'https://intent.invalid',layaToken:'separate-token',fetch:async()=>Response.json({model,intent:'win_open_notepad',confidence:.99,margin:.8})});
+ await new Promise(r=>s.listen(0,'127.0.0.1',r));
+ const call=()=>fetch(`http://127.0.0.1:${s.address().port}/v1/intent`,{method:'POST',headers:{Authorization:`Bearer ${key}`,'Content-Type':'application/json'},body:JSON.stringify({text:'abre notas'})});
+ try{assert.equal((await call()).status,502);model='windows_command_v1';assert.equal((await call()).status,200);}finally{await new Promise(r=>s.close(r));}
+});

@@ -4,3 +4,7 @@
 artifacts/
 training/checkpoints/
 training/.venv/
+
+*.env
+*.pfx
+*.key

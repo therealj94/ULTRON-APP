@@ -8,7 +8,7 @@ from comun import cargar_config
 from entrenar import codificar,logits_de,matriz
 p=argparse.ArgumentParser();p.add_argument('--checkpoint',required=True);p.add_argument('--port',type=int,default=8797);p.add_argument('--device',default='cpu');a=p.parse_args()
 key=os.environ.get('WINDOWS_LAYA_TOKEN','')
-if len(key)<32:raise SystemExit('WINDOWS_LAYA_TOKEN must be at least 32 characters')
+if len(key)<32 or key.startswith('REPLACE_'):raise SystemExit('WINDOWS_LAYA_TOKEN must be at least 32 characters')
 torch.set_num_threads(2)
 checkpoint=Path(a.checkpoint);cfg=cargar_config(str(checkpoint));agent=laya.load(str(checkpoint),device=a.device)
 if cfg['nombre']!='windows_command_v1' or agent.cfg.get('decisor',{}).get('nombre')!='windows_command_v1':raise SystemExit('Refusing non-Windows model')
@@ -33,6 +33,7 @@ class Handler(BaseHTTPRequestHandler):
    order=probs.argsort()[::-1];top,second=int(order[0]),int(order[1]);score=float(probs[top]);margin=float(probs[top]-probs[second])
    intent=ids[top] if score>=.9 and margin>=.2 else 'win_none'
    self.reply(200,{'model':'windows_command_v1','intent':intent,'confidence':score,'margin':margin,'candidate':True})
+  except Exception:self.reply(503,{'error':'inference_failed'})
   finally:busy.release()
 print('AURA Windows intent service on loopback; no texts logged',flush=True)
 ThreadingHTTPServer(('127.0.0.1',a.port),Handler).serve_forever()
