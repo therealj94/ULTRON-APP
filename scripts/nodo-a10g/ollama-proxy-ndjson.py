@@ -75,6 +75,11 @@ def chat():
         "max_tokens": int(op.get("num_predict") or 1536),
         "temperature": float(op["temperature"]) if op.get("temperature") is not None else 0.7,
     }
+    # 1-oct: el espacio (slot) de cada persona. Lo leido de ella queda en ESE espacio y un reintento
+    # cae ahi mismo (espera la lectura en curso y la reutiliza) en vez de releer todo en otro.
+    slot = op.get("id_slot")
+    if isinstance(slot, int) and not isinstance(slot, bool) and 0 <= slot < 16:
+        payload["id_slot"] = slot
     # Las herramientas NO se mandan a llama: quien llama las describe en el system (formato Hermes)
     # y lee las <tool_call> del texto. Mandarlas ademas las duplicaba en el prompt.
     def generate():
@@ -141,13 +146,28 @@ def precalentar():
         return jsonify({"ok": False, "error": "system vacio o demasiado largo"}), 400
     try:
         t0 = time.time()
-        plantilla = requests.post(LLAMA + "/apply-template", json={"messages": [{"role": "system", "content": system}, {"role": "user", "content": "x"}]}, timeout=10).json().get("prompt") or ""
-        i = plantilla.find(system)
-        fin = plantilla.find("<|im_end|>", i + len(system)) if i >= 0 else -1
-        if fin < 0:
-            return jsonify({"ok": False, "error": "no encontre el system en la plantilla"}), 500
-        prefijo = plantilla[: fin + len("<|im_end|>\n")]
-        r = requests.post(LLAMA + "/completion", json={"prompt": prefijo, "n_predict": 0, "cache_prompt": True}, timeout=90).json()
+        # 1-oct: con el historial (mensajes) queda leido tambien, hasta donde empezara el mensaje nuevo; y en
+        # el espacio (slot) de la persona, donde caeran sus turnos.
+        hist = [m for m in (data.get("mensajes") or []) if isinstance(m, dict) and m.get("role") in ("user", "assistant") and isinstance(m.get("content"), str)]
+        MARCA = "\u2063PRECALENTAR\u2063"
+        plantilla = requests.post(LLAMA + "/apply-template", json={"messages": [{"role": "system", "content": system}] + hist + [{"role": "user", "content": MARCA}]}, timeout=10).json().get("prompt") or ""
+        if hist:
+            k = plantilla.rfind(MARCA)
+            inicio = plantilla.rfind("<|im_start|>", 0, k) if k >= 0 else -1
+            if inicio < 0:
+                return jsonify({"ok": False, "error": "no encontre el mensaje nuevo en la plantilla"}), 500
+            prefijo = plantilla[:inicio]
+        else:
+            i = plantilla.find(system)
+            fin = plantilla.find("<|im_end|>", i + len(system)) if i >= 0 else -1
+            if fin < 0:
+                return jsonify({"ok": False, "error": "no encontre el system en la plantilla"}), 500
+            prefijo = plantilla[: fin + len("<|im_end|>\n")]
+        cuerpo = {"prompt": prefijo, "n_predict": 0, "cache_prompt": True}
+        slot = data.get("id_slot")
+        if isinstance(slot, int) and not isinstance(slot, bool) and 0 <= slot < 16:
+            cuerpo["id_slot"] = slot
+        r = requests.post(LLAMA + "/completion", json=cuerpo, timeout=90).json()
         tm = r.get("timings") or {}
         return jsonify({"ok": True, "leidas": tm.get("prompt_n"), "reusadas": tm.get("cache_n"), "ms": int((time.time() - t0) * 1000)})
     except Exception as e:

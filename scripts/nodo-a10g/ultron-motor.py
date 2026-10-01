@@ -157,7 +157,18 @@ class Motor(BaseHTTPRequestHandler):
             sistema = pedido.get('system')
             if not isinstance(sistema, str) or not sistema:
                 return self._json(400, {'error': 'falta system', 'codigo': 'SIN_SYSTEM'})
-            self._reenviar('POST', ruta, json.dumps({'system': sistema}).encode())
+            limpio = {'system': sistema}
+            # 1-oct: el historial que va despues del system (queda leido entero) y el espacio de la
+            # persona en llama.cpp. Solo mensajes de texto con rol de usuario o asistente.
+            msgs = pedido.get('mensajes')
+            if isinstance(msgs, list) and len(msgs) <= 200:
+                ok = [m for m in msgs if isinstance(m, dict) and m.get('role') in ('user', 'assistant') and isinstance(m.get('content'), str)]
+                if ok:
+                    limpio['mensajes'] = [{'role': m['role'], 'content': m['content']} for m in ok]
+            slot = pedido.get('id_slot')
+            if isinstance(slot, int) and not isinstance(slot, bool) and 0 <= slot < 16:
+                limpio['id_slot'] = slot
+            self._reenviar('POST', ruta, json.dumps(limpio).encode())
             return
         if ruta == '/api/embed':
             # Los vectores van con SU modelo, que es otro y chico. Del pedido
