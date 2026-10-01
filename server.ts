@@ -4024,7 +4024,7 @@ async function procesarTelegram(update: any) {
   const quiereVoz = parsed.comando === '/audio' || pideNotaDeVoz(texto);
   if (quiereVoz && !yaMandóVoz) {
     // La nota lleva las expresiones (se oyen); el mensaje de texto, no (se leerían).
-    const audio = await notaDeVoz((out.voz || reply).slice(0, 400));
+    const audio = await notaDeVoz((out.voz || reply).slice(0, 400), out.emocion);
     if (audio) await telegramVoz({ buf: audio, caption: 'AU-RA', chatId: parsed.chatId });
   }
 }
@@ -4104,6 +4104,9 @@ async function startServer() {
     // El tablero nacional precalculado, para que la primera vez que alguien lo abre ya esté listo.
     if (ES_ELECTRUM) mantenerTableroCaliente();
     mantenerCuentasAlDia();
+    // La salud se mide una vez al arrancar: así el primer /api/health tras un despliegue ya contesta con
+    // la verdad desde la caché (saludRapida), y no con «sin cerebro» por no haber medido todavía.
+    void medirSalud().catch(() => undefined);
     if (ES_ELECTRUM && hayBaseElectrum()) void asegurarBiblioteca();
     if (ES_ELECTRUM && hayBaseElectrum()) void asegurarOrganizacion().catch((e) => console.error('[electrum] organización:', String(e?.message || e).slice(0, 160)));
     // Cada plataforma registra SU bot. Los dos desde el mismo proceso era la costura más fácil de

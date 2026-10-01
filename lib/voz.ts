@@ -3,11 +3,13 @@
  */
 
 import { notaDeVozBuffer } from '../server/voz';
+import { normalizarEmocion } from './emocion';
 import type { Nodo } from './sistema';
 import type { Canal } from './sistema';
 
-export async function notaDeVoz(texto: string): Promise<Buffer | undefined> {
-  return notaDeVozBuffer(texto);
+/** Con la emoción del turno, la nota lleva su tono de voz v4 (server/eleven.ts, TONO_V4), como la mesa. */
+export async function notaDeVoz(texto: string, emocion?: string): Promise<Buffer | undefined> {
+  return notaDeVozBuffer(texto, normalizarEmocion(emocion));
 }
 
 export function dictarSistema(foto: { nodos: Nodo[]; canales: Canal[] }): string {

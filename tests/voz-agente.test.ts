@@ -1038,13 +1038,15 @@ test('buscar en sus chats: el tecleo sigue mientras el teléfono busca y se quit
   }
 });
 
-test('etiquetas de audio v4: a veces la frase de espera lleva una (de las que v4 interpreta), nunca en el globito', async () => {
+test('etiquetas de audio v4: casi siempre la frase de espera lleva una del catálogo verificado, variada, nunca en el globito', async () => {
   const { frasesDe, vozDeEspera } = await import('../mobile/src/compa/frasesEstado');
-  const PERMITIDAS = ['[thoughtful]', '[curious]', '[calm]', '[exhales]', '[laughs softly]', '[chuckles]'];
-  // La función sola: con azar bajo lleva etiqueta, con azar alto no; el Guardián nunca se ríe.
-  assert.equal(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.9), 'Buscando…');
-  assert.equal(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.1), '[curious] Buscando…');
-  for (let k = 0; k < 30; k++) assert.doesNotMatch(vozDeEspera('Casi listo.', 'seguimiento', 'ojos', () => k / 90), /laughs|chuckles/);
+  const { ETIQUETAS_VERIFICADAS, MemoriaEtiquetas } = await import('../mobile/src/compa/etiquetasVoz');
+  const PERMITIDAS: readonly string[] = ETIQUETAS_VERIFICADAS.map((e) => `[${e}]`);
+  // La función sola: con azar alto va sin etiqueta; con azar bajo, una del catálogo; el Guardián nunca se ríe.
+  const me = new MemoriaEtiquetas();
+  assert.equal(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.9, me), 'Buscando…');
+  assert.match(vozDeEspera('Buscando…', 'buscando', 'aura', () => 0.1, me), /^\[[a-z -]+\] Buscando…$/);
+  for (let k = 0; k < 30; k++) assert.doesNotMatch(vozDeEspera('Casi listo.', 'seguimiento', 'ojos', () => k / 90, me), /laughs|chuckles|giggles/);
   // Por la ruta: con etiquetas encendidas, lo que se dice es «[etiqueta] frase» o la frase sola.
   const s = await montar(
     async (t) => {
@@ -1059,7 +1061,7 @@ test('etiquetas de audio v4: a veces la frase de espera lleva una (de las que v4
     const yo = persona();
     for (let k = 0; k < 12; k++) {
       const dicho = dichoDe(await (await llm(s.base, paseDe(yo, 'claudio', 'es'), [{ role: 'user', content: `explícame la regla ${k}` }])).text());
-      const m = /^(\[[a-z ]+\] )?(.*) Ya está\.$/.exec(dicho);
+      const m = /^(\[[a-z -]+\] )?(.*) Ya está\.$/.exec(dicho);
       assert.ok(m, dicho);
       if (m[1]) {
         con++;
@@ -1067,7 +1069,7 @@ test('etiquetas de audio v4: a veces la frase de espera lleva una (de las que v4
       }
       assert.ok(frasesDe('pensando', 'claudio', 'es').includes(m[2]), m[2]);
     }
-    assert.ok(con < 12, 'con mesura: no todas');
+    assert.ok(con >= 4 && con < 12, `casi siempre con etiqueta, pero no todas: ${con}/12`);
   } finally {
     await s.cerrar();
   }

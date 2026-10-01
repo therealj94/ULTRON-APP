@@ -27,6 +27,7 @@
  * DICE, nunca al banco ni al globito.
  */
 import type { ExpresionAvatar } from '../avatar3d/tipos';
+import { conEtiqueta, type MemoriaEtiquetas } from './etiquetasVoz';
 
 /**
  * Cuánto se espera al cerebro antes de decir una frase de espera («déjame ver», «pensando…»), en la
@@ -100,43 +101,53 @@ const BASE: Record<EstadoFrase, Lista> = {
     en: ['I’m listening…', 'Go ahead…', 'I’m here, tell me.', 'I’m all ears.', 'Tell me…', 'Go on, I’m listening.'],
   },
   conectando: {
-    es: ['Un segundito…', 'Ya casi…', 'Conectando…', 'Dame un momentito…', 'Ahorita estoy contigo.'],
-    en: ['One sec…', 'Almost there…', 'Connecting…', 'Just a moment…', 'With you in a second.'],
+    es: ['Un segundito…', 'Ya casi…', 'Conectando…', 'Dame un momentito…', 'Ahorita estoy contigo.',
+      'Ya voy…', 'Enseguida estoy…', 'Un momentito y empezamos…', 'Acomodándome…', 'Casi listo para ti…',
+    ],
+    en: ['One sec…', 'Almost there…', 'Connecting…', 'Just a moment…', 'With you in a second.',
+      'Coming…', 'Be right there…', 'One moment and we’ll start…', 'Getting settled…', 'Almost ready for you…',
+    ],
   },
   pensando: {
     es: [
-      'Déjame pensarlo…', 'Mmm, a ver…', 'Dame un segundo…', 'Estoy pensando…', 'Buena pregunta, a ver…', 'Déjame ver…',
-      'Déjame darle una pensada…', 'Un momentito, lo pienso…', 'Déjame acomodar las ideas…', 'Mmm, interesante… déjame ver.',
+      'Déjame pensarlo…', 'Mmm, a ver…', 'Dame un segundo…', 'Estoy pensando…', 'Buena pregunta, a ver…',
+      'Déjame darle una pensada…', 'Un momentito, lo pienso…', 'Déjame acomodar las ideas…', 'Mmm, interesante…',
       'Dame chance de pensarlo…', 'A ver cómo te lo explico…', 'Pensando, pensando…', 'Buena esa, déjame pensar…',
+      'A ver, a ver…', 'Interesante pregunta…', 'Ok, pensemos…', 'Uy, esa tiene su ciencia…', 'Vamos por partes…', 'Ajá, ya lo voy entendiendo…', 'Eso tiene miga, un momento…', 'Lo estoy armando en la cabeza…', 'Ok, ok, ya lo voy viendo…', 'Espérame tantito…', 'Pensemos esto bien…', 'Ya le estoy dando forma…',
     ],
     en: [
-      'Let me think…', 'Hmm, let’s see…', 'Give me a second…', 'Thinking…', 'Good question, let’s see…', 'Let me see…',
-      'Let me mull it over…', 'One moment, thinking…', 'Let me sort my thoughts…', 'Hmm, interesting… let me see.',
+      'Let me think…', 'Hmm, let’s see…', 'Give me a second…', 'Thinking…', 'Good question, let’s see…',
+      'Let me mull it over…', 'One moment, thinking…', 'Let me sort my thoughts…', 'Hmm, interesting…',
       'Give me a moment to think…', 'Let me figure out how to say it…', 'Thinking, thinking…', 'Good one, let me think…',
+      'Okay, let’s think…', 'Interesting question…', 'Let’s take it step by step…', 'Ooh, that one’s tricky…', 'Right, I’m piecing it together…', 'Hang on a sec…', 'Okay, okay, I see where this goes…', 'Let’s think this through…', 'Working it out…', 'Bear with me…', 'Alright, putting it together…', 'Shaping it up…',
     ],
   },
   revisando: {
     es: [
       'Estoy revisando…', 'Déjame revisar…', 'Lo reviso ahorita…', 'Revisando lo que hay…', 'Voy a confirmarlo…', 'Déjame confirmar…',
-      'Déjame chequearlo…', 'Voy a echarle un ojo…', 'Revisando con calma…', 'Déjame ver bien…', 'Lo estoy verificando…',
+      'Déjame chequearlo…', 'Voy a echarle un ojo…', 'Revisando con calma…', 'A ver bien…', 'Lo estoy verificando…',
       'Un momento, lo reviso…', 'Revisando los detalles…', 'Déjame asegurarme…',
+      'Ok, revisemos…', 'Repasando todo…', 'Chequeo rápido…', 'Comprobando…', 'Mirando los detalles…', 'Que no se me pase nada…', 'Ya lo estoy revisando…', 'Contrastando datos…', 'Un repaso y te digo…', 'Ajá, revisando…',
     ],
     en: [
       'Checking…', 'Let me check…', 'Looking into it…', 'Going over it…', 'Let me confirm…', 'Double-checking…',
       'Let me double-check…', 'Taking a look…', 'Checking carefully…', 'Let me look closely…', 'Verifying it…',
       'One moment, checking…', 'Going over the details…', 'Let me make sure…',
+      'Okay, let’s review…', 'Going through it all…', 'Quick check…', 'Verifying…', 'Looking at the details…', 'Making sure nothing slips…', 'Already reviewing it…', 'Cross-checking…', 'One pass and I’ll tell you…', 'Uh-huh, checking…',
     ],
   },
   buscando: {
     es: [
       'Déjame buscarlo…', 'Lo estoy buscando…', 'Buscando…', 'Ya lo busco…', 'Voy a averiguar…', 'A ver qué encuentro…',
       'Buscando en internet…', 'Déjame investigar tantito…', 'Voy a ver qué dice la red…', 'Consultando…', 'Rastreando la info…',
-      'Ya estoy buscando…', 'Déjame ver qué hay…', 'Buscando lo más reciente…',
+      'Ya estoy buscando…', 'A ver qué hay por ahí…', 'Buscando lo más reciente…',
+      'Ok, a buscar…', 'Ya voy tras eso…', 'Investigando…', 'Rastreando…', 'Preguntándole a la red…', 'Sigo la pista…', 'Busco y te cuento…', 'Revisando fuentes…', 'Mirando qué se dice…', 'Echando la red…',
     ],
     en: [
       'Let me look it up…', 'Searching…', 'Looking for it…', 'On it, searching…', 'Let me find out…', 'Let’s see what I find…',
       'Searching online…', 'Let me dig a little…', 'Let me see what the web says…', 'Looking it up…', 'Tracking down the info…',
       'Already searching…', 'Let me see what’s out there…', 'Finding the latest…',
+      'Okay, searching…', 'Going after it…', 'Investigating…', 'Tracking it down…', 'Asking the web…', 'Following the trail…', 'I’ll search and tell you…', 'Checking sources…', 'Seeing what people say…', 'Casting the net…',
     ],
   },
   calculando: {
@@ -144,11 +155,13 @@ const BASE: Record<EstadoFrase, Lista> = {
       'Sacando cuentas…', 'Déjame calcular…', 'Haciendo los números…', 'Un segundo, calculo…', 'Calculando…',
       'Déjame sacar la cuenta…', 'Números, números…', 'Haciendo cuentas…', 'Calculo y te digo…', 'Déjame hacer la operación…',
       'Sumando y restando…', 'Un momento, saco cuentas…', 'Cuadrando números…', 'Déjame revisar los números…',
+      'Cuentas en marcha…', 'Ok, a sacar números…', 'Echando números…', 'Haciendo la cuenta…', 'Calculadora mental encendida…', 'Multiplicando…', 'Un cálculo rápido…', 'Saco la cuenta y te digo…', 'Afinando los números…', 'Cuadrando cifras…',
     ],
     en: [
       'Crunching numbers…', 'Let me calculate…', 'Doing the math…', 'One sec, calculating…', 'Calculating…',
       'Let me work it out…', 'Numbers, numbers…', 'Adding it up…', 'I’ll calculate and tell you…', 'Let me run the math…',
       'Adding and subtracting…', 'One moment, doing the math…', 'Balancing the numbers…', 'Let me check the numbers…',
+      'Math in progress…', 'Okay, running numbers…', 'Number crunching…', 'Doing the sum…', 'Mental calculator on…', 'Multiplying…', 'Quick calculation…', 'I’ll do the math and tell you…', 'Fine-tuning the numbers…', 'Squaring the figures…',
     ],
   },
   abriendo: {
@@ -156,35 +169,41 @@ const BASE: Record<EstadoFrase, Lista> = {
       'Ya lo abro.', 'Abriendo…', 'Va, lo abro.', 'Enseguida.', 'Ahí te va.',
       'Ya voy.', 'Abriendo, un segundo…', 'Déjame abrirlo.', 'Cargando…', 'Va, ahorita lo abro.', 'Ahí va.',
       'Lo abro de una vez.', 'Enseguida lo tienes.', 'Preparándolo…',
+      'Listo, ahí va…', 'Ahorita lo pongo…', 'Te lo abro…', 'Va saliendo…', 'Abriéndolo para ti…',
     ],
     en: [
       'Opening it.', 'Opening…', 'Sure, opening it.', 'Right away.', 'Here it comes.',
       'On my way.', 'Opening, one sec…', 'Let me open it.', 'Loading…', 'Sure, opening it now.', 'There it goes.',
       'Opening it right now.', 'You’ll have it in a sec.', 'Getting it ready…',
+      'Okay, here it goes…', 'Putting it up now…', 'Opening it for you…', 'Coming right up…', 'Opening it for you now…',
     ],
   },
   leyendo: {
     es: [
       'Déjame leerlo…', 'Leyendo…', 'Lo estoy leyendo…', 'Déjame echarle una leída…', 'Leyendo con calma…', 'Voy leyendo…',
-      'Déjame ver qué dice…', 'Hojeando el documento…', 'Leyendo la página…', 'Un momento, lo leo…', 'Déjame leer bien…',
+      'A ver qué dice…', 'Hojeando el documento…', 'Leyendo la página…', 'Un momento, lo leo…', 'Déjame leer bien…',
       'Revisando lo que dice…', 'Leyendo el texto…', 'Pasando las páginas…',
+      'Leyendo, leyendo…', 'Ok, a leer…', 'Pasando la vista…', 'Leo y te resumo…', 'Ya voy por la mitad…', 'Subrayando lo importante…', 'Recorriendo el texto…', 'Ajá, leyendo…', 'Buscando lo que importa…', 'Leyendo entre líneas…',
     ],
     en: [
       'Let me read it…', 'Reading…', 'I’m reading it…', 'Let me give it a read…', 'Reading carefully…', 'Reading through…',
       'Let me see what it says…', 'Skimming the document…', 'Reading the page…', 'One moment, reading it…', 'Let me read it properly…',
       'Going over what it says…', 'Reading the text…', 'Flipping through the pages…',
+      'Reading, reading…', 'Okay, reading…', 'Scanning it…', 'I’ll read and sum it up…', 'Halfway through…', 'Highlighting the key bits…', 'Going through the text…', 'Uh-huh, reading…', 'Finding what matters…', 'Reading between the lines…',
     ],
   },
   mirando: {
     es: [
-      'Déjame mirar…', 'Mirando…', 'A ver qué veo…', 'Déjame enfocar…', 'Estoy mirando…', 'Déjame ver bien la imagen…',
+      'Déjame mirar…', 'Mirando…', 'A ver qué veo…', 'Déjame enfocar…', 'Estoy mirando…', 'Viendo bien la imagen…',
       'Mirando con cuidado…', 'Un momento, observo…', 'A ver, a ver qué hay…', 'Enfocando…', 'Déjame fijarme…',
       'Observando…', 'Viendo qué hay…', 'Déjame acercarme…',
+      'Ok, a ver…', 'Fijándome bien…', 'Ajá, ya veo algo…', 'Mirando de cerca…', 'Echándole un ojo…', 'Observando con calma…', 'Ya casi distingo…', 'Viendo los detalles…', 'A ver qué tenemos…', 'Mirando con lupa…',
     ],
     en: [
       'Let me look…', 'Looking…', 'Let’s see what I see…', 'Let me focus…', 'I’m looking…', 'Let me see the image…',
       'Looking carefully…', 'One moment, observing…', 'Let’s see what’s there…', 'Focusing…', 'Let me take a look…',
       'Observing…', 'Seeing what’s there…', 'Let me zoom in…',
+      'Okay, let’s see…', 'Looking closely…', 'Uh-huh, I see something…', 'Taking a close look…', 'Eyeing it…', 'Observing calmly…', 'Almost making it out…', 'Looking at the details…', 'Let’s see what we have…', 'Looking with a magnifier…',
     ],
   },
   seguimiento: {
@@ -192,11 +211,13 @@ const BASE: Record<EstadoFrase, Lista> = {
       'Ya casi lo tengo…', 'Un poquito más…', 'Sigo en eso…', 'Ya mero…', 'Falta poquito…', 'Está tardando un poco, ya casi…',
       'Aguántame tantito…', 'Ya casi termino…', 'Dame un ratito más…', 'Casi, casi…', 'Ahí va saliendo…',
       'Perdón la espera, ya casi…', 'Un momentito más…', 'Sigo aquí, ya casi…',
+      'Ya casi, te lo prometo…', 'Ahí vamos…', 'Un toque más…', 'Ya casi sale…', 'Gracias por esperar…', 'Esto está tardando, pero ya…', 'En nada lo tienes…', 'Sigo, no me he ido…', 'Ya está saliendo…', 'Último empujón…',
     ],
     en: [
       'Almost got it…', 'Just a bit more…', 'Still on it…', 'Nearly there…', 'Not much longer…', 'It’s taking a bit, almost…',
       'Bear with me a sec…', 'Almost done…', 'Give me a little longer…', 'Almost, almost…', 'It’s coming together…',
       'Sorry for the wait, almost…', 'Just one more moment…', 'Still here, almost there…',
+      'Almost, I promise…', 'Getting there…', 'One more touch…', 'It’s almost out…', 'Thanks for waiting…', 'Taking a while, but nearly…', 'You’ll have it in no time…', 'Still here, haven’t left…', 'It’s coming out now…', 'Last push…',
     ],
   },
   esperando_confirmacion: {
@@ -283,15 +304,15 @@ const PROPIAS: Record<AvatarFrase, Partial<Record<EstadoFrase, Lista>>> = {
     escuchando: { es: ['Aquí estoy, cuéntame.', 'Te escucho, dime.', 'Dime, que aquí estoy.'], en: ['I’m right here, tell me.', 'I’m listening, go on.', 'Tell me, I’m here.'] },
     conectando: { es: ['Ya voy, un segundito…', 'Ahorita estoy contigo…', 'Dame tantito…'], en: ['Coming, one sec…', 'With you in a moment…', 'Just a tiny bit…'] },
     pensando: {
-      es: ['Déjame pensarlo tantito…', 'Mmm, dame un segundito…', 'A ver, a ver…', 'Ay, buena pregunta… déjame ver.', 'Fíjate que… déjame pensar.', 'Dame chancecito…', 'Mmm, ahorita te digo…', 'Déjame pensarlo bonito…'],
-      en: ['Let me think a bit…', 'Hmm, one little second…', 'Let’s see, let’s see…', 'Oh, good question… let me see.', 'You know what… let me think.', 'Give me a tiny moment…', 'Hmm, I’ll tell you in a sec…', 'Let me think it through nicely…'],
+      es: ['Déjame pensarlo tantito…', 'Mmm, dame un segundito…', 'A ver, a ver…', 'Ay, buena pregunta…', 'Fíjate que… déjame pensar.', 'Dame chancecito…', 'Mmm, ahorita te digo…', 'Déjame pensarlo bonito…'],
+      en: ['Let me think a bit…', 'Hmm, one little second…', 'Let’s see, let’s see…', 'Oh, good question…', 'You know what… let me think.', 'Give me a tiny moment…', 'Hmm, I’ll tell you in a sec…', 'Let me think it through nicely…'],
     },
     revisando: {
       es: ['Déjame revisar tantito…', 'Ya lo reviso…', 'Estoy viendo…', 'Ahorita lo reviso…', 'Déjame chequearlo bien…', 'Lo reviso con cariño…', 'Viendo que todo esté bien…', 'Déjame confirmarlo tantito…'],
       en: ['Let me check real quick…', 'Checking it now…', 'I’m looking…', 'Checking it right now…', 'Let me check it properly…', 'Checking it with care…', 'Making sure it’s all good…', 'Let me confirm real quick…'],
     },
     buscando: {
-      es: ['Te lo busco ahorita…', 'Buscando, dame tantito…', 'Déjame ver qué encuentro…', 'Ahorita te lo averiguo…', 'Buscando en internet, ya voy…', 'Déjame buscarte eso…', 'Voy a ver qué dicen por ahí…', 'Te lo investigo tantito…'],
+      es: ['Te lo busco ahorita…', 'Buscando, dame tantito…', 'A ver qué te encuentro…', 'Ahorita te lo averiguo…', 'Buscando en internet, ya voy…', 'Déjame buscarte eso…', 'Voy a ver qué dicen por ahí…', 'Te lo investigo tantito…'],
       en: ['I’ll look it up now…', 'Searching, one sec…', 'Let me see what I find…', 'I’ll find out for you…', 'Searching online, coming…', 'Let me look that up for you…', 'Let me see what they say out there…', 'I’ll dig into it a bit…'],
     },
     calculando: {
@@ -303,7 +324,7 @@ const PROPIAS: Record<AvatarFrase, Partial<Record<EstadoFrase, Lista>>> = {
       en: ['Opening it for you.', 'There, opening it.', 'Sure, right away.', 'Opening it for you now.', 'Happy to, opening it.', 'It’s opening…', 'Putting it up now.', 'Alright, opening it.'],
     },
     leyendo: {
-      es: ['Déjame leértelo tantito…', 'Ahorita lo leo…', 'Leyendo con cariño…', 'Déjame ver qué dice aquí…', 'Lo voy leyendo, ya casi…', 'Hojeando tantito…', 'Leyendo despacito…', 'Déjame leerlo bien…'],
+      es: ['Déjame leértelo tantito…', 'Ahorita lo leo…', 'Leyendo con cariño…', 'A ver qué dice aquí…', 'Lo voy leyendo, ya casi…', 'Hojeando tantito…', 'Leyendo despacito…', 'Déjame leerlo bien…'],
       en: ['Let me read it for you…', 'Reading it now…', 'Reading it with care…', 'Let me see what it says here…', 'Reading through, almost…', 'Skimming a little…', 'Reading slowly…', 'Let me read it well…'],
     },
     mirando: {
@@ -351,7 +372,7 @@ const PROPIAS: Record<AvatarFrase, Partial<Record<EstadoFrase, Lista>>> = {
       en: ['Reading with my fox glasses…', 'Devouring the document…', 'Skimming in style…', 'Reading between the lines…', 'This reads interesting…', 'Flipping pages, sniffing…', 'Fine print, you won’t escape…', 'Speed-reading, fox style…'],
     },
     mirando: {
-      es: ['Ojos de zorro enfocando…', 'A ver qué me enseñas…', 'Mirando con lupa…', 'Esto se ve interesante…', 'Enfocando la mirada…', 'Déjame ver ese detalle…', 'Olfato y vista en acción…', 'Mirando como fotógrafo…'],
+      es: ['Ojos de zorro enfocando…', 'A ver qué me enseñas…', 'Mirando con lupa…', 'Esto se ve interesante…', 'Enfocando la mirada…', 'Ese detalle, a ver…', 'Olfato y vista en acción…', 'Mirando como fotógrafo…'],
       en: ['Fox eyes focusing…', 'Let’s see what you’re showing me…', 'Looking with a magnifier…', 'This looks interesting…', 'Focusing my gaze…', 'Let me see that detail…', 'Nose and eyes in action…', 'Looking like a photographer…'],
     },
     seguimiento: {
@@ -395,7 +416,7 @@ const PROPIAS: Record<AvatarFrase, Partial<Record<EstadoFrase, Lista>>> = {
       en: ['Reading with two arms, noting with two…', 'Skimming at full speed…', 'Reading real quick…', 'Page by page, go!', 'Reading and organizing…', 'Flipping pages fast…', 'Reading in motion…', 'Underlining what matters…'],
     },
     mirando: {
-      es: ['¡Lentes puestos, mirando!', 'Mirando con atención…', 'A ver qué tenemos aquí…', 'Enfocando rapidito…', 'Antenas y ojos atentos…', 'Mirando cada detalle…', 'Escaneando, ¡va!', 'Déjame ver de cerquita…'],
+      es: ['¡Lentes puestos, mirando!', 'Mirando con atención…', 'A ver qué tenemos aquí…', 'Enfocando rapidito…', 'Antenas y ojos atentos…', 'Mirando cada detalle…', 'Escaneando, ¡va!', 'Mirando de cerquita…'],
       en: ['Glasses on, looking!', 'Looking closely…', 'Let’s see what we’ve got…', 'Focusing real quick…', 'Antennas and eyes ready…', 'Looking at every detail…', 'Scanning, go!', 'Let me look up close…'],
     },
     seguimiento: {
@@ -422,27 +443,39 @@ export function frasesDe(estado: EstadoFrase, avatar: AvatarFrase = 'aura', idio
 
 /**
  * Lo que se dijo hace poco, para no repetir: las últimas de cada estado (hasta 4, o las que haya menos
- * una) y la última de todas (que no salga la misma aunque cambie el estado).
+ * una) y la última de todas (que no salga la misma aunque cambie el estado). Tampoco abre igual que
+ * las dos anteriores: «Déjame pensarlo…» y luego «Déjame revisar…» son frases distintas pero suenan a
+ * lo mismo (José: «no escuchemos siempre lo mismo»).
  */
 export class MemoriaFrases {
   private recientes = new Map<string, string[]>();
   private ultima = '';
+  private arranques: string[] = [];
   elegir(opciones: readonly string[], clave: string, azar: () => number = Math.random): string {
     if (!opciones.length) return '';
     const antes = this.recientes.get(clave) || [];
     const tope = Math.min(4, opciones.length - 1);
     const sinUltima = opciones.filter((o) => o !== this.ultima);
     const libres = sinUltima.filter((o) => !antes.includes(o));
-    const pool = libres.length ? libres : sinUltima.length ? sinUltima : [...opciones];
+    const base = libres.length ? libres : sinUltima.length ? sinUltima : [...opciones];
+    const otroArranque = base.filter((o) => !this.arranques.includes(arranqueDe(o)));
+    const pool = otroArranque.length ? otroArranque : base;
     const elegida = pool[Math.floor(azar() * pool.length) % pool.length];
     this.recientes.set(clave, tope > 0 ? [...antes, elegida].slice(-tope) : []);
     this.ultima = elegida;
+    this.arranques = [...this.arranques, arranqueDe(elegida)].slice(-2);
     return elegida;
   }
   olvidar() {
     this.recientes.clear();
     this.ultima = '';
+    this.arranques = [];
   }
+}
+
+/** La primera palabra, sin signos ni tildes: «¡Déjame…» y «Déjame» abren igual. */
+export function arranqueDe(frase: string): string {
+  return plano(frase).split(' ')[0] || '';
 }
 
 const memoria = new MemoriaFrases();
@@ -554,43 +587,12 @@ export const MAX_SEGUIMIENTOS = 2;
 /* ------------------------------------------------------------------ la voz v4: etiquetas de audio */
 
 /**
- * ETIQUETAS DE AUDIO EN LA VOZ v4 (eleven_v4_turbo). Comprobado el 30-sep con la API de ElevenLabs
- * (texto a voz con la voz de Claudio y el modelo v4, y después speech-to-text `scribe_v1` con
- * `tag_audio_events`):
- *  · «[sighs] Déjame revisar eso.» → «[suspiro] Déjame revisar eso»: suspira, NO dice «sighs».
- *  · «[exhales] Buscando en internet.» → «[suspiro] Buscando en Internet» (en inglés: «[sighs] Almost got it»).
- *  · «[laughs softly] Ya casi lo tengo.» y «[chuckles] Ya casi, ya casi.» → «[risa] …»: se ríe bajito.
- *  · «[thoughtful] …», «[curious] …», «[calm] …», «[whispers] …»: no se oyen como palabra (dirigen el tono).
- * Control: el mismo texto con eleven_flash_v2_5 transcribe «Thoughtful. Mmm, a ver…», «Laugh softly. Ya
- * casi…», «Exhales. Buscando…»: ese modelo SÍ las lee. Con v4 ninguna de las once salió leída.
- * Por eso las frases de espera de la voz llevan a veces (una de cada ~3, nunca en el globito ni en el
- * texto que se lee) una etiqueta: de tono al buscar o pensar, y una risita o una exhalación en la
- * de seguimiento. El Guardián, sereno: solo tono tranquilo o una exhalación, nunca risa.
+ * La frase de espera como la DICE la voz v4: casi siempre con una etiqueta de audio delante, elegida
+ * del catálogo (compa/etiquetasVoz.ts: verificadas con la API, por avatar y por momento, sin repetir
+ * las últimas). El texto sin etiqueta (el que se lee o va al globito) es `texto` tal cual.
  */
-const ETIQUETAS_V4: Record<'ojos' | 'otros', Partial<Record<EstadoFrase, readonly string[]>>> = {
-  ojos: { pensando: ['[calm]'], revisando: ['[calm]'], buscando: ['[calm]'], leyendo: ['[calm]'], calculando: ['[calm]'], mirando: ['[calm]'], seguimiento: ['[calm]', '[exhales]'] },
-  otros: {
-    pensando: ['[thoughtful]'],
-    revisando: ['[thoughtful]'],
-    buscando: ['[curious]'],
-    leyendo: ['[thoughtful]'],
-    calculando: ['[thoughtful]'],
-    mirando: ['[curious]'],
-    seguimiento: ['[laughs softly]', '[exhales]', '[chuckles]'],
-  },
-};
-/** Una de cada cuántas frases de espera lleva etiqueta (con mesura: si todas la llevan, cansa). */
-export const CADA_ETIQUETA = 3;
-
-/**
- * La frase de espera como la DICE la voz v4: a veces con su etiqueta de audio delante. `azar` decide
- * (0..1). El texto sin etiqueta (el que se lee o va al globito) es `texto` tal cual.
- */
-export function vozDeEspera(texto: string, estado: EstadoFrase, avatar: AvatarFrase = 'aura', azar: () => number = Math.random): string {
-  const lista = ETIQUETAS_V4[avatar === 'ojos' ? 'ojos' : 'otros'][estado];
-  if (!lista?.length || !texto || azar() * CADA_ETIQUETA >= 1) return texto;
-  const etiqueta = lista[Math.floor(azar() * lista.length) % lista.length];
-  return `${etiqueta} ${texto}`;
+export function vozDeEspera(texto: string, estado: EstadoFrase, avatar: AvatarFrase = 'aura', azar: () => number = Math.random, memoria?: MemoriaEtiquetas): string {
+  return conEtiqueta(texto, estado, avatar, { azar, memoria });
 }
 
 /**
