@@ -128,7 +128,7 @@ test('la ficha de manos: cada mano existe de verdad en su plataforma, y entra en
   };
   for (const [donde, manos] of Object.entries(FICHA) as Array<[keyof typeof FICHA, (typeof FICHA)['app']]>)
     for (const m of manos) assert.ok(existe(m.de, donde), `${donde}: «${m.es}» dice usar «${m.de}», que no existe ahí`);
-  assert.match(fichaManosPrompt('web'), /no llamas, no mandas mensajes/);
+  assert.match(fichaManosPrompt('web'), /no llamas, no mandas mensajes de PULSE2CHAT/);
   assert.match(fichaManosPrompt('app', 'en'), /YOUR HANDS HERE/);
   assert.match(fichaManosPrompt('windows'), /programas/);
   // Rota: dos veces seguidas no nombra siempre lo mismo.

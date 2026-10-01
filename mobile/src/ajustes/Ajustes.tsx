@@ -6,7 +6,7 @@
  *   Tu perfil     apodo, avatar (con su vista viva), cumpleaños
  *   Apariencia    Oscuro · Claro · Sistema (cambia al instante)
  *   Idioma        Español · English (la interfaz, la voz y las respuestas)
- *   AURA          «Lo que AURA sabe de ti» (la ruta Perfil) y la vibración
+ *   AURA          «Lo que AURA sabe de ti» (la ruta Perfil), tus correos (ajustes/Correos.tsx) y la vibración
  *   Computadora   quién maneja su computadora en la nube: gratis (modelo propio) o Claude (de pago)
  *   Privacidad    los permisos del teléfono, con su ✔
  *   Cerrar sesión (con confirmación) y la versión
@@ -29,6 +29,7 @@ import { Aparecer, Boton, Campo, Chip, Fila, Grupo, Hoja, Interruptor, PantallaC
 import { fuenteDisplay } from '../ui/tipografia';
 import { armarCumple, leerCumple } from '../primeravez/flujo';
 import { ListaPermisos } from '../primeravez/ListaPermisos';
+import { HojaCorreos, useCuentasCorreo } from './Correos';
 import { INFO_PERMISOS, estadosPermisos, listo } from '../primeravez/permisos';
 import { SelectorCumple, VistaAvatar } from '../primeravez/piezas';
 import type { RaizParams } from '../app/rutas';
@@ -44,7 +45,7 @@ function lineaOta(idioma: Idioma): string {
 }
 
 type Props = NativeStackScreenProps<RaizParams, 'Ajustes'>;
-type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | null;
+type HojaAbierta = 'apodo' | 'avatar' | 'cumple' | 'permisos' | 'salir' | 'correos' | null;
 
 export function Ajustes({ navigation }: Props) {
   const idioma = useIdioma();
@@ -55,6 +56,7 @@ export function Ajustes({ navigation }: Props) {
   const [apodo, setApodo] = useState(perfil?.apodo || '');
   const [cumple, setCumple] = useState<{ mes: number | null; dia: number | null }>({ mes: null, dia: null });
   const [permisosOk, setPermisosOk] = useState<number | null>(null);
+  const { cuentas: correos } = useCuentasCorreo(hoja === 'correos');
 
   useEffect(() => {
     if (hoja !== null) return;
@@ -144,6 +146,13 @@ export function Ajustes({ navigation }: Props) {
         <Aparecer retraso={160}>
           <Grupo titulo="AURA">
             <Fila titulo={tr('Lo que AURA sabe de ti', 'What AURA knows about you')} detalle={tr('Lo que le contaste: verlo, cambiarlo o borrarlo', 'What you told her: see, change or erase it')} icono="corazon" onPress={() => navigation.navigate('Perfil')} />
+            <Fila
+              titulo={tr('Tus correos', 'Your email')}
+              detalle={tr('Para que AURA los revise y te ayude a contestar', 'So AURA can check them and help you reply')}
+              icono="correo"
+              valor={correos === null ? '' : String(correos.length)}
+              onPress={() => abrir('correos')}
+            />
             <Fila titulo={tr('Vibración', 'Vibration')} detalle={tr('Al tocar botones y al completar algo', 'When tapping buttons and completing things')} icono="tocar" derecha={<Interruptor valor={hapticos} onCambiar={(v) => void fijarHapticos(v)} etiqueta={tr('Vibración', 'Vibration')} />} />
           </Grupo>
         </Aparecer>
@@ -262,6 +271,8 @@ export function Ajustes({ navigation }: Props) {
           )}
         </View>
       </Hoja>
+
+      <HojaCorreos visible={hoja === 'correos'} onCerrar={() => setHoja(null)} />
 
       <Hoja visible={hoja === 'permisos'} onCerrar={() => setHoja(null)} titulo={tr('Permisos', 'Permissions')} subtitulo={tr('Toca un permiso para darlo. Si lo bloqueaste, te llevo a los ajustes del teléfono.', 'Tap one to allow it. If you blocked it, I’ll take you to your phone settings.')}>
         <ListaPermisos />

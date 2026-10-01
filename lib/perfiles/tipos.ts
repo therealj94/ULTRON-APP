@@ -24,6 +24,7 @@ export type Herramienta =
   | 'canto' // repertorio y oración: el cuerpo puede, pero no toda plataforma lo ofrece
   | 'calculos-mina' // ley, tonelaje, onzas, recuperación, strip ratio, cutoff
   | 'concesiones' // fichas de concesiones y permisos
+  | 'correo' // revisar y contestar su correo, de cualquier proveedor (server/correo.ts)
   | 'computadora'; // su propia computadora en la nube: navegar, llenar formularios, comparar (scripts/nodo-computadora)
 
 export type PerfilCerebro = {

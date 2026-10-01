@@ -16,7 +16,7 @@
  * grabada. tests/manos-ficha.test.ts vigila que cada mano de la ficha exista en su plataforma.
  */
 import type { Idioma } from '../server/eleven';
-import { computadoraDisponible } from './harness';
+import { computadoraDisponible, correoDisponible } from './harness';
 
 export type PlataformaManos = 'app' | 'web' | 'windows' | 'electrum';
 
@@ -31,6 +31,7 @@ type Mano = {
 
 /** Las manos que dependen de un servicio aparte: sin él configurado, no se ofrecen. */
 function disponible(m: Mano): boolean {
+  if (m.de === 'correo') return correoDisponible();
   return m.de !== 'computadora' || computadoraDisponible();
 }
 
@@ -55,6 +56,7 @@ export const FICHA: Record<PlataformaManos, readonly Mano[]> = {
     { de: 'perfil', es: 'acordarme de lo que me cuentes de ti', en: 'remember what you tell me about yourself' },
     { de: 'abrir', es: 'abrir pantallas de la app o cambiar el tema', en: 'open app screens or change the theme' },
     { de: 'computadora', es: 'usar mi propia computadora en la nube para hacer cosas en páginas por ti', en: 'use my own cloud computer to do things on websites for you', ejemplo: { es: '«usa tu computadora y compárame precios de vuelos a Miami»', en: '“use your computer and compare flight prices to Miami”' } },
+    { de: 'correo', es: 'revisar y contestar tu correo, sea Gmail, Outlook, Yahoo o el de tu empresa', en: 'check and answer your email, whether Gmail, Outlook, Yahoo or your work address', ejemplo: { es: '«revisa mi correo y contéstale a Beto que sí la recibí»', en: '“check my email and tell Beto I got it”' } },
   ],
   web: [
     { de: 'chat', es: 'platicar contigo por voz o por escrito', en: 'talk with you by voice or text' },
@@ -65,6 +67,7 @@ export const FICHA: Record<PlataformaManos, readonly Mano[]> = {
     { de: 'fx', es: 'convertir lempiras a dólares', en: 'convert lempiras to dollars' },
     { de: 'pagina', es: 'leerte páginas web', en: 'read web pages for you' },
     { de: 'computadora', es: 'usar mi propia computadora en la nube para hacer cosas en páginas por ti', en: 'use my own cloud computer to do things on websites for you' },
+    { de: 'correo', es: 'revisar y contestar tu correo, sea Gmail, Outlook, Yahoo o el de tu empresa', en: 'check and answer your email, whether Gmail, Outlook, Yahoo or your work address' },
   ],
   windows: [
     { de: 'AbrirApp', es: 'abrir o cerrar programas', en: 'open or close programs', ejemplo: { es: '«abre Excel»', en: '“open Excel”' } },
@@ -99,8 +102,8 @@ const NO_AQUI: Record<PlataformaManos, { es: string; en: string }> = {
     en: 'you do not control the person’s computer (that is AURA for Windows): yours is a separate one in the cloud, and you never pay or enter passwords with it',
   },
   web: {
-    es: 'desde la web no llamas, no mandas mensajes, no pones recordatorios ni lees chats (eso lo hace la app del teléfono); si te lo piden, dilo y ofrece hacerlo desde la app',
-    en: 'from the web you do not call, send messages, set reminders or read chats (the phone app does that); if asked, say so and offer the app',
+    es: 'desde la web no llamas, no mandas mensajes de PULSE2CHAT, no pones recordatorios ni lees chats (eso lo hace la app del teléfono); si te lo piden, dilo y ofrece hacerlo desde la app',
+    en: 'from the web you do not call, send PULSE2CHAT messages, set reminders or read chats (the phone app does that); if asked, say so and offer the app',
   },
   windows: { es: 'no mueves la app del teléfono desde aquí', en: 'you do not move the phone app from here' },
   electrum: { es: 'no inventas datos de concesiones: lo que no esté en las herramientas, lo dices', en: 'never invent concession data: if the tools don’t have it, say so' },
