@@ -62,7 +62,19 @@ export function montarRutasWindows(app: express.Express, d: Deps) {
     res.setHeader('Cache-Control', 'no-store');
     res.json({ ...clientesOauth(d.entorno ?? process.env), honesto: true });
   });
-  app.get('/api/windows/salud', d.limitar(30), (_req, res) => {
+  // ?probar=1: una pregunta de verdad al modelo «windows» con una frase fija (nunca texto de nadie), para saber
+  // si ya está instalado sin esperar a que alguien hable. Una vez por minuto como mucho: no gasta la GPU.
+  let prueba: { cuando: number; datos: unknown } | null = null;
+  app.get('/api/windows/salud', d.limitar(30), async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    if (req.query?.probar === '1') {
+      if (!prueba || Date.now() - prueba.cuando > 60_000) {
+        const { resultado, motivo, ms } = await consultar('windows', 'abre la calculadora', { esperaMs: 3000 });
+        const etiqueta = resultado?.grupos?.win ?? null;
+        prueba = { cuando: Date.now(), datos: { frase: 'abre la calculadora', etiqueta, p: etiqueta ? Number(resultado!.p[etiqueta] ?? 0) : 0, ms, motivo: motivo ?? null } };
+      }
+      return res.json({ laya: estadoLaya(), prueba: prueba.datos, honesto: true });
+    }
     res.json({ laya: estadoLaya(), honesto: true });
   });
 }
